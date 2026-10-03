@@ -7,8 +7,29 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <algorithm>
+
+#include "Units.hpp"
+
+namespace {
+// A length typed in the shown unit (UI-123); the check takes mm, kept in the box's "mm" property.
+void lengthBox(QDoubleSpinBox* box, double mm, double maxMm) {
+  auto show = [box, maxMm] {
+    QSignalBlocker block(box);
+    box->setDecimals(units::decimalsFor(0.01));
+    box->setRange(0, units::toDisplay(units::Kind::Length, maxMm));
+    box->setSuffix(' ' + units::symbol(units::Kind::Length));
+    box->setValue(units::toDisplay(units::Kind::Length, box->property("mm").toDouble()));
+  };
+  box->setProperty("mm", mm);
+  box->setSingleStep(0.1);
+  QObject::connect(box, &QDoubleSpinBox::valueChanged, box, [box](double v) { box->setProperty("mm", units::fromDisplay(units::Kind::Length, v)); });
+  QObject::connect(units::notifier(), &units::Notifier::changed, box, show);
+  show();
+}
+}  // namespace
 
 CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   auto* v = new QVBoxLayout(this);
@@ -19,10 +40,7 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   auto* fi = new QFormLayout(m_interference);
   fi->setContentsMargins(0, 0, 0, 0);
   m_clearance = new QDoubleSpinBox(m_interference);
-  m_clearance->setRange(0, 1000);
-  m_clearance->setDecimals(2);
-  m_clearance->setSingleStep(0.1);
-  m_clearance->setSuffix(tr(" mm"));
+  lengthBox(m_clearance, 0, 1000);
   m_clearance->setToolTip(tr("Also list pairs closer than this; 0 lists only overlaps"));
   fi->addRow(tr("Clearance"), m_clearance);
   v->addWidget(m_interference);
@@ -39,11 +57,7 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   m_overhang->setSuffix(tr(" deg"));
   fp->addRow(tr("Overhang"), m_overhang);
   m_minWall = new QDoubleSpinBox(m_print);
-  m_minWall->setRange(0, 100);
-  m_minWall->setDecimals(2);
-  m_minWall->setSingleStep(0.1);
-  m_minWall->setValue(0.8);
-  m_minWall->setSuffix(tr(" mm"));
+  lengthBox(m_minWall, 0.8, 100);
   fp->addRow(tr("Minimum wall"), m_minWall);
   v->addWidget(m_print);
   auto* row = new QHBoxLayout();
@@ -64,6 +78,7 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
     if (row >= 0 && static_cast<size_t>(row) < m_findings.size()) emit findingActivated(m_findings[static_cast<size_t>(row)]);
   });
   begin(Mode::Interference);
+  connect(units::notifier(), &units::Notifier::changed, this, [this] { if (!m_result.is_null()) setResult(m_result); });
 }
 
 void CheckPanel::begin(Mode mode) {
@@ -73,6 +88,7 @@ void CheckPanel::begin(Mode mode) {
   m_findings.clear();
   m_list->clear();
   m_status->clear();
+  m_result = opad::json();
   showFindings();
 }
 
@@ -84,11 +100,12 @@ void CheckPanel::showFindings() {
 }
 
 opad::json CheckPanel::options() const {
-  if (m_mode == Mode::Interference) return {{"clearance_mm", m_clearance->value()}};
-  return {{"build_direction", m_direction->currentData().toString().toStdString()}, {"overhang_deg", m_overhang->value()}, {"min_wall_mm", m_minWall->value()}};
+  if (m_mode == Mode::Interference) return {{"clearance_mm", m_clearance->property("mm").toDouble()}};
+  return {{"build_direction", m_direction->currentData().toString().toStdString()}, {"overhang_deg", m_overhang->value()}, {"min_wall_mm", m_minWall->property("mm").toDouble()}};
 }
 
 void CheckPanel::setRunning(const QString& status) {
+  m_result = opad::json();
   m_findings.clear();
   m_list->clear();
   m_status->setText(status);
@@ -103,6 +120,7 @@ void CheckPanel::setFailed(const QString& error) {
 }
 
 void CheckPanel::setResult(const opad::json& r) {
+  m_result = r;
   m_run->setEnabled(true);
   m_findings.clear();
   m_list->clear();
@@ -110,8 +128,8 @@ void CheckPanel::setResult(const opad::json& r) {
   if (m_mode == Mode::Interference) {
     for (const auto& f : r.value("items", opad::json::array())) {
       const QString pair = tr("%1 and %2").arg(name(f, "a_name"), name(f, "b_name"));
-      m_list->addItem(f.value("kind", "") == "interference" ? tr("%1: overlap %2 mm³").arg(pair).arg(f.value("volume_mm3", 0.0), 0, 'f', 3)
-                                                             : tr("%1: %2 mm apart").arg(pair).arg(f.value("distance_mm", 0.0), 0, 'f', 3));
+      m_list->addItem(f.value("kind", "") == "interference" ? tr("%1: overlap %2").arg(pair, units::format(units::Kind::Volume, f.value("volume_mm3", 0.0)))
+                                                             : tr("%1: %2 apart").arg(pair, units::format(units::Kind::Length, f.value("distance_mm", 0.0))));
       m_findings.push_back(f);
     }
     const int overlaps = r.value("interferences", 0), close = r.value("too_close", 0);
@@ -134,17 +152,17 @@ void CheckPanel::setResult(const opad::json& r) {
     const bool mesh = body.value("mesh", false);
     auto faces = [](const opad::json& f) { return f.contains("faces") ? f["faces"] : opad::json::array({f.value("face", 0)}); };
     for (const auto& o : body.value("overhangs", opad::json::array()))
-      add(mesh ? tr("%1: overhang up to %2° over %3 mm²").arg(who).arg(o.value("overhang_deg", 0.0), 0, 'f', 0).arg(o.value("area_mm2", 0.0), 0, 'f', 1)
+      add(mesh ? tr("%1: overhang up to %2° over %3").arg(who).arg(o.value("overhang_deg", 0.0), 0, 'f', 0).arg(units::format(units::Kind::Area, o.value("area_mm2", 0.0), 1))
                : tr("%1: face %2 overhangs %3°").arg(who).arg(o.value("face", 0)).arg(o.value("overhang_deg", 0.0), 0, 'f', 0),
           faces(o), "overhang");
     for (const auto& w : body.value("thin_walls", opad::json::array()))
-      add(mesh ? tr("%1: wall %2 mm thin over %3 triangles").arg(who).arg(w.value("thickness_mm", 0.0), 0, 'f', 2).arg(w.value("triangles", 0))
-               : tr("%1: wall %2 mm at face %3").arg(who).arg(w.value("thickness_mm", 0.0), 0, 'f', 2).arg(w.value("face", 0)),
+      add(mesh ? tr("%1: wall %2 thin over %3 triangles").arg(who, units::format(units::Kind::Length, w.value("thickness_mm", 0.0))).arg(w.value("triangles", 0))
+               : tr("%1: wall %2 at face %3").arg(who, units::format(units::Kind::Length, w.value("thickness_mm", 0.0))).arg(w.value("face", 0)),
           faces(w), "thin_wall");
     if (const int more = body.value("more_overhangs", 0) + body.value("more_thin_walls", 0); more > 0)
       add(tr("%1: %2 smaller findings not listed").arg(who).arg(more), opad::json::array(), "more");
     for (const auto& t : body.value("thin_features", opad::json::array()))
-      add(tr("%1: face %2 is %3 mm wide").arg(who).arg(t.value("face", 0)).arg(t.value("width_mm", 0.0), 0, 'f', 2), opad::json::array({t.value("face", 0)}), "thin_feature");
+      add(tr("%1: face %2 is %3 wide").arg(who).arg(t.value("face", 0)).arg(units::format(units::Kind::Length, t.value("width_mm", 0.0))), opad::json::array({t.value("face", 0)}), "thin_feature");
     if (body.value("contact_area_mm2", 0.0) <= 0)
       add(tr("%1: nothing rests on the build plate").arg(who), opad::json::array(), "no_contact");
   }

@@ -142,6 +142,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool measurementHasMultipleAxes() const;
   void clearDimension();
   void setMeasurementSelectionLocked(bool locked) { m_measureSelectionLocked = locked; }
+  QStringList measurementCaptions() const { return m_measureCaptions; }  // the labels as drawn (benches)
 
   // Guided tools (distance, angle, ...: the tool asks for one pick per step). While accumulating, a plain click
   // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
@@ -393,6 +394,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<Handle(AIS_InteractiveObject)> m_labels;
   std::vector<Handle(AIS_InteractiveObject)> m_dimension;
   opad::json m_measurement;
+  QStringList m_measureCaptions;
   Graphic3d_WorldViewProjState m_measureCamera;
   QSize m_measureSize;
   struct NoteMark { gp_Pnt at; std::string style; opad::json drawing; };

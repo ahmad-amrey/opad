@@ -23,6 +23,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 
 void MainWindow::buildViewActions() {
   addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
@@ -233,7 +234,7 @@ void MainWindow::updateChips() {
     opad::Vec3 o = m_section->origin(), n = m_section->normal();
     int axis = std::fabs(n[0]) > 0.9 ? 0 : std::fabs(n[1]) > 0.9 ? 1 : 2;
     const char axes[] = {'X', 'Y', 'Z'};
-    section = QString("Section %1 = %2 mm").arg(axes[axis]).arg(o[axis], 0, 'f', 0);
+    section = QString("Section %1 = %2").arg(axes[axis]).arg(units::format(units::Kind::Length, o[axis]));
   }
   m_chips->set(mode, proj, section, m_viewport->isIsolated() ? tr("Isolated · %1 bodies").arg(m_viewport->isolatedCount()) : QString(),
                action("view.2d")->isChecked());

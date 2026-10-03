@@ -16,6 +16,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 
 // The window's other parts live in MainWindow<Area>.cpp: File, View, Panels, Ribbon (menus, ribbon, Tools), Status (status
 // bar, git), Selection (selection, properties, context menu), Inspect, Annotate, Edit, Design and Bench.
@@ -228,7 +229,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (!valid) return m_viewport->clearPreview();
     const opad::Vec3& a = m_toolPoints[0].second;
     const double d = std::sqrt((a[0] - p[0]) * (a[0] - p[0]) + (a[1] - p[1]) * (a[1] - p[1]) + (a[2] - p[2]) * (a[2] - p[2]));
-    m_viewport->showPreview(a, p, QString::fromUtf8("≈ %1 mm").arg(d, 0, 'f', 1));
+    m_viewport->showPreview(a, p, QString::fromUtf8("≈ %1").arg(units::format(units::Kind::Length, d)));
   });
   connect(m_empty, &EmptyState::openRequested, action("file.open"), &QAction::trigger);
   connect(m_empty, &EmptyState::importRequested, action("file.new"), &QAction::trigger);

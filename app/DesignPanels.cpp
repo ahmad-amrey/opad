@@ -13,6 +13,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 
 namespace {
 
@@ -74,7 +75,11 @@ void ExprEdit::evaluate() {
     const std::string text = m_edit->text().trimmed().toStdString();
     const double v = table.as(m_dim, text);
     opad::design::Quantity q{v, m_dim == opad::design::Dim::Length ? 1 : 0, m_dim == opad::design::Dim::Angle};
-    m_value->setText(QString::fromUtf8("= ") + QString::fromStdString(opad::design::format_quantity(q)));
+    // Lengths and angles in the shown unit and precision (UI-123), anything else as the expression engine says it.
+    const QString shown = m_dim == opad::design::Dim::Length  ? units::format(units::Kind::Length, v)
+                          : m_dim == opad::design::Dim::Angle ? units::format(units::Kind::Angle, v * 180 / M_PI)
+                                                              : QString::fromStdString(opad::design::format_quantity(q));
+    m_value->setText(QString::fromUtf8("= ") + shown);
     m_value->setStyleSheet(QString("color: %1;").arg(theme::css(t.fg3)));
     m_valid = true;
   } catch (const std::exception& e) {

@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QLabel>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QStatusBar>
@@ -14,6 +15,7 @@
 
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 
 void MainWindow::buildStatusBar() {
   const Tokens& t = theme::current();
@@ -28,9 +30,7 @@ void MainWindow::buildStatusBar() {
   m_statusHover->setAlignment(Qt::AlignCenter);
   m_statusHover->setObjectName("tertiary");
   m_statusSel = new QLabel(this);
-  m_statusUnits = new QLabel("mm", this);
-  m_statusUnits->setContentsMargins(6, 2, 14, 2);
-  m_statusUnits->setMinimumWidth(m_statusUnits->sizeHint().width());
+  buildUnitsButton();
   m_progress = new ProgressStrip(this);
   m_jobs = new JobRunner(m_progress, this);
   m_viewport->setJobs(m_jobs);
@@ -69,6 +69,81 @@ void MainWindow::buildStatusBar() {
   statusBar()->setSizeGripEnabled(false);
   connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) { m_statusHover->setVisible(!shown); });  // free room for the bars
   for (AreaController* area : m_areas) area->statusWidgets(statusBar());
+}
+
+// The shown length unit (UI-123), live: the document's units op, or the session's in viewer mode. A click offers the
+// document unit (one units op through the design, so expressions without a unit regenerate) and the display precision.
+void MainWindow::buildUnitsButton() {
+  units::loadSettings();
+  m_statusUnits = new QToolButton(this);
+  m_statusUnits->setObjectName("statusUnits");
+  m_statusUnits->setAutoRaise(true);
+  m_statusUnits->setPopupMode(QToolButton::InstantPopup);
+  m_statusUnits->setFocusPolicy(Qt::NoFocus);
+  m_statusUnits->setStyleSheet("QToolButton#statusUnits { padding: 2px 14px 2px 8px; } QToolButton#statusUnits::menu-indicator { image: none; width: 0; }");
+  auto* menu = new QMenu(m_statusUnits);
+  m_statusUnits->setMenu(menu);
+  auto shown = [this] {
+    const auto& d = units::current();
+    m_statusUnits->setText(units::symbol(units::Kind::Length));
+    QString tip = tr("Lengths are shown in %1. Click to change the document unit or the precision.").arg(units::unitName(d.length).toLower());
+    if (!units::sessionUnit().empty()) tip += '\n' + tr("Viewer mode: shown in %1 for this session; the file says %2.").arg(units::unitName(d.length).toLower(), units::unitName(units::documentUnit()).toLower());
+    m_statusUnits->setToolTip(tip);
+    m_statusUnits->setAccessibleName(tr("Units: %1").arg(units::unitName(d.length)));
+  };
+  connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+    menu->clear();
+    const auto& d = units::current();
+    menu->addSection(m_doc->browse ? tr("Show lengths in") : tr("Document unit"));
+    for (const QString& unit : units::lengthUnits()) {
+      const std::string u = unit.toStdString();
+      QAction* a = menu->addAction(QString("%1 (%2)").arg(units::unitName(u), units::symbol(units::Kind::Length, units::Display{u})));
+      a->setObjectName("unit." + unit);
+      a->setCheckable(true);
+      a->setChecked(d.length == u);
+      a->setEnabled(m_doc->hasDocument);
+      connect(a, &QAction::triggered, this, [this, u] { setDocumentUnit(u); });
+    }
+    menu->addSection(tr("Precision"));
+    auto* decimals = menu->addMenu(tr("Decimal places"));
+    for (int n = 0; n <= 6; ++n) {
+      QAction* a = decimals->addAction(QString::number(n));
+      a->setCheckable(true);
+      a->setChecked(d.decimals == n);
+      connect(a, &QAction::triggered, this, [n] { units::setPrecision(n, units::current().radians, units::current().fraction); });
+    }
+    QAction* fractions = menu->addAction(tr("Fractions of an inch (1/64)"));
+    fractions->setCheckable(true);
+    fractions->setChecked(d.fraction > 0);
+    fractions->setEnabled(d.length == "in");
+    connect(fractions, &QAction::toggled, this, [](bool on) { units::setPrecision(units::current().decimals, units::current().radians, on ? 64 : 0); });
+    QAction* radians = menu->addAction(tr("Angles in radians"));
+    radians->setCheckable(true);
+    radians->setChecked(d.radians);
+    connect(radians, &QAction::toggled, this, [](bool on) { units::setPrecision(units::current().decimals, on, units::current().fraction); });
+  });
+  connect(m_doc, &AppDocument::aboutToReplace, this, [] { units::setSessionUnit({}); });
+  connect(m_doc, &AppDocument::changed, this, [this] { units::setDocumentUnit(m_doc->hasDocument ? m_doc->scene.units : m_doc->doc.header.units); });
+  connect(units::notifier(), &units::Notifier::changed, this, [this, shown] {
+    shown();
+    refreshToolUi();  // the result rows of a guided tool
+    updateChips();    // the section chip
+  });
+  units::setDocumentUnit(m_doc->scene.units);
+  shown();
+}
+
+// A viewer-mode file is not changed: it is shown in that unit for the session. A document gets a units op, applied
+// through the design so that values typed without a unit are read in the new one (and regenerate).
+void MainWindow::setDocumentUnit(const std::string& unit) {
+  if (!m_doc->hasDocument) return;
+  if (m_doc->browse) {
+    units::setSessionUnit(unit == units::documentUnit() ? std::string() : unit);
+    statusBar()->showMessage(tr("Lengths are shown in %1; the file is not changed (viewer mode).").arg(units::unitName(unit).toLower()), 6000);
+    return;
+  }
+  if (unit == m_doc->scene.units) return;
+  m_design->applyOps({opad::json{{"op", "units"}, {"length", unit}}}, tr("Change document units"));
 }
 
 void MainWindow::updateTitle() {

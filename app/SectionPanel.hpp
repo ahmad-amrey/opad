@@ -36,6 +36,7 @@ class SectionPanel : public QWidget {
   void applyNamed(const std::string& id);
  private:
   void emitChange();
+  void describe();  // the value and state text, in the shown unit
   void setAlong(double along);  // slider from a distance along the axis (or the picked normal)
   AppDocument* m_doc;
   bool m_enabled = false;

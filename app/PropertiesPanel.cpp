@@ -4,14 +4,17 @@
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QSet>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <optional>
 #include <set>
 #include <string>
 
 #include "I18n.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 
 namespace {
 constexpr int kPropKeyRole = Qt::UserRole + 3;  // properties table: the untranslated property name
@@ -39,6 +42,17 @@ QString fmtComponent(double v) {
   return s == "-0" ? QString("0") : s;
 }
 
+// What a property measures, from its name: shown in the document's unit (UI-123); directions and counts stay as they are.
+std::optional<units::Kind> measureOf(const QString& key) {
+  static const QSet<QString> lengths = {"length", "radius", "diameter", "distance", "thickness", "diagonal", "center", "center_of_mass",
+                                        "start", "end", "origin", "point", "bbox min", "bbox max", "bbox size"};
+  if (lengths.contains(key)) return units::Kind::Length;
+  if (key == "area") return units::Kind::Area;
+  if (key == "volume") return units::Kind::Volume;
+  if (key == "mass") return units::Kind::Mass;
+  return std::nullopt;
+}
+
 bool isVector(const opad::json& v) {
   if (!v.is_array() || v.size() < 2 || v.size() > 4) return false;
   for (const auto& e : v) if (!e.is_number()) return false;
@@ -48,6 +62,7 @@ bool isVector(const opad::json& v) {
 
 // ---------------------------------------------------------------- PropertiesPanel
 PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
+  connect(units::notifier(), &units::Notifier::changed, this, [this] { if (!m_props.is_null()) fill(); });
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(12, 12, 12, 0);
   layout->setSpacing(4);
@@ -114,11 +129,13 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
   row->setData(0, kPropKeyRole, key);
   row->setForeground(0, t.fg2);
   row->setToolTip(1, fmtValue(v));
+  const auto measure = measureOf(key);
+  auto shown = [&measure](double x) { return measure ? units::toDisplay(*measure, x) : x; };
   if (isVector(v)) {
     // Never elide a coordinate: a vector that does not fit the value column gets one row per component.
     QStringList parts;
-    for (const auto& e : v) parts << fmtComponent(e.get<double>());
-    const QString line = "(" + parts.join(", ") + ")";
+    for (const auto& e : v) parts << fmtComponent(shown(e.get<double>()));
+    const QString line = "(" + parts.join(", ") + ")" + (measure ? ' ' + units::symbol(*measure) : QString());
     if (QFontMetrics(theme::mono(12)).horizontalAdvance(line) + 16 > m_filledWidth) {
       m_splitVectors = true;
       static const char* axes[] = {"X", "Y", "Z", "W"};
@@ -128,7 +145,7 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
         c->setForeground(0, t.fg3);
         c->setText(1, QChar(0x202A) + parts[i] + QChar(0x202C));
         c->setFont(1, theme::mono(12));
-        c->setToolTip(1, fmtNum(v[i].get<double>()));
+        c->setToolTip(1, fmtNum(shown(v[i].get<double>())));
       }
       return;
     }
@@ -136,14 +153,11 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
     row->setFont(1, theme::mono(12));
     return;
   }
-  // Measures say what they measure in (the geometry is stored in mm): "9593.088" alone read as a bare count.
-  QString unit;
-  if (v.is_number()) {
-    if (key == "area") unit = QString::fromUtf8(" mm²");
-    else if (key == "volume") unit = QString::fromUtf8(" mm³");
-    else if (key == "length" || key == "radius" || key == "diameter" || key == "distance" || key == "thickness") unit = " mm";
-  }
-  row->setText(1, QChar(0x202A) + fmtValue(v) + unit + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
+  // Measures say what they measure in, in the document's unit (the geometry is stored in mm): "9593.088" alone read as a
+  // bare count.
+  const QString text = measure && v.is_number() ? units::format(*measure, v.get<double>()) : fmtValue(v);
+  if (measure && v.is_number()) row->setToolTip(1, fmtNum(shown(v.get<double>())) + ' ' + units::symbol(*measure));
+  row->setText(1, QChar(0x202A) + text + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
   if (v.is_number() || v.is_array() || (v.is_string() && key == "key")) row->setFont(1, theme::mono(12));
   if (key == "key" || key == "source_op") row->setForeground(1, t.fg3);
 }

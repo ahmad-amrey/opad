@@ -37,4 +37,7 @@ CASES = [
     ("ribbon-rtl", "box", {"OPAD_BENCH_RIBBON": "1280,1600", "OPAD_BENCH_UISHOT": "{prefix}", "OPAD_LANG": "ar"}),
     # A file of a newer build (unknown op types) opens, hides those records from the timeline and saves them back (UI-65).
     ("tolerant", newer_file, {"OPAD_BENCH_TOLERANT": "{prefix}.opad"}),
+    # The units service (UI-123): the document switched to inches from the status bar, a Distance result in inches, live
+    # precision and fractions, undo back to millimetres. <prefix>.status.png, <prefix>.panel.png.
+    ("units", "box", {"OPAD_BENCH_UNITS": "{prefix}"}),
 ]

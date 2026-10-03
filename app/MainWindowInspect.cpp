@@ -17,6 +17,7 @@
 #include <Bnd_Box.hxx>
 
 #include "I18n.hpp"
+#include "Units.hpp"
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
@@ -295,20 +296,24 @@ void MainWindow::refreshToolUi() {
   QList<QPair<QString, QString>> rows;
   if (done) {
     const opad::json& r = m_lastMeasure;
-    auto num = [](const opad::json& v, int decimals) { double n = v.get<double>(); return QString::number(std::abs(n) < 0.5 * std::pow(10.0, -decimals) ? 0.0 : n, 'f', decimals); };
-    const QString unit = QString::fromStdString(r.value("unit", "mm"));
-    if (r.contains("value")) rows << qMakePair(m_tool.title, QString("%1 %2").arg(num(r["value"], 3), unit));
+    // Results come in mm and degrees; they are shown in the document's unit and precision (UI-123).
+    const units::Kind kind = r.value("unit", "mm") == "deg" ? units::Kind::Angle : units::Kind::Length;
+    if (r.contains("value")) rows << qMakePair(m_tool.title, units::format(kind, r["value"].get<double>()));
     if (r.contains("delta"))
-      for (int i = 0; i < 3; ++i) rows << qMakePair(tr("Δ%1").arg(QChar("XYZ"[i])), (r["delta"][i].get<double>() >= 0.0005 ? "+" : "") + num(r["delta"][i], 3) + " mm");
-    if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), num(r["supplement"], 2) + QString::fromUtf8("°"));
-    if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), num(r["diameter"], 3) + " mm");
+      for (int i = 0; i < 3; ++i) {
+        const double d = r["delta"][i].get<double>();
+        const bool plus = d > 0 && units::number(units::Kind::Length, d) != units::number(units::Kind::Length, 0);
+        rows << qMakePair(tr("Δ%1").arg(QChar("XYZ"[i])), (plus ? "+" : "") + units::format(units::Kind::Length, d));
+      }
+    if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), units::format(units::Kind::Angle, r["supplement"].get<double>()));
+    if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), units::format(units::Kind::Length, r["diameter"].get<double>()));
     for (const char* k : {"size", "min", "max"})
-      if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), QString("(%1, %2, %3) mm").arg(num(r[k][0], 3), num(r[k][1], 3), num(r[k][2], 3)));
+      if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), units::vector(units::Kind::Length, r[k].get<std::array<double, 3>>()));
     if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
   }
   for(size_t i=0;i<m_toolPicks.size();++i) {
     const auto info=m_viewport->circleInfo(m_toolPicks[i]);
-    if(info.contains("diameter")) rows << qMakePair(tr("Circle %1 diameter").arg(i+1),QString::number(info["diameter"].get<double>(),'f',3)+" mm");
+    if(info.contains("diameter")) rows << qMakePair(tr("Circle %1 diameter").arg(i+1),units::format(units::Kind::Length,info["diameter"].get<double>()));
     if(info.contains("segments")) rows << qMakePair(tr("Circle %1 mesh segments (approximate)").arg(i+1),QString::number(info["segments"].get<int>()));
   }
   m_toolSteps->setResult(rows);

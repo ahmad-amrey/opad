@@ -29,6 +29,7 @@
 #include <cmath>
 
 #include "I18n.hpp"
+#include "Units.hpp"
 #include "Jobs.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch_geom.hpp"
@@ -1256,7 +1257,7 @@ void SketchEditor::updateTransient() {
         break;
       case K::Angle:
         if (const auto* from = m_geometry->point(m_sk, m_cursor.target))
-          label = QString::fromUtf8("%1°").arg(std::round(std::atan2(cv - from->y, cu - from->x) * 180 / M_PI));
+          label = units::format(units::Kind::Angle, std::round(std::atan2(cv - from->y, cu - from->x) * 180 / M_PI), units::current().radians ? 3 : 0);
         break;
       case K::Locked:
         d.dashed.push_back({W(m_lockX, m_lockY), W(cu, cv), snapColor});

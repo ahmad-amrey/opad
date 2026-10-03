@@ -11,10 +11,12 @@
 
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "opad/inspect.hpp"
 
 // ---------------------------------------------------------------- SectionPanel
 SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
+  connect(units::notifier(), &units::Notifier::changed, this, [this] { describe(); rebuild(); });
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(12, 8, 12, 8);
   layout->setSpacing(8);
@@ -169,14 +171,18 @@ void SectionPanel::setOrigin(const opad::Vec3& o) {
 }
 
 void SectionPanel::emitChange() {
+  describe();
+  emit planeChanged();
+}
+
+void SectionPanel::describe() {
   const char axes[] = {'X', 'Y', 'Z'};
   opad::Vec3 o = origin();
   const double along = m_pick ? o[0] * m_pickNormal[0] + o[1] * m_pickNormal[1] + o[2] * m_pickNormal[2] : o[m_axis];  // pick mode: distance along the face normal
-  m_value->setText(QString("%1 mm").arg(along, 0, 'f', 1));
+  m_value->setText(units::format(units::Kind::Length, along));
   m_state->setText(!m_enabled ? tr("Section off · press X or use Inspect › Section to enable")
-                   : m_pick ? tr("Section along the picked face = %1 mm · drag the slider or the plane's edge, Shift+X flips").arg(along, 0, 'f', 1)
-                            : tr("Section %1 = %2 mm · drag the slider or the plane's edge, Shift+X flips").arg(axes[m_axis]).arg(o[m_axis], 0, 'f', 1));
-  emit planeChanged();
+                   : m_pick ? tr("Section along the picked face = %1 · drag the slider or the plane's edge, Shift+X flips").arg(units::format(units::Kind::Length, along))
+                            : tr("Section %1 = %2 · drag the slider or the plane's edge, Shift+X flips").arg(axes[m_axis]).arg(units::format(units::Kind::Length, o[m_axis])));
 }
 
 void SectionPanel::setEnabled(bool on) {
@@ -214,7 +220,7 @@ void SectionPanel::rebuild() {
   const char axes[] = {'X', 'Y', 'Z'};
   for (const auto& s : m_doc->scene.sections) {
     int axis = std::fabs(s.normal[0]) > 0.9 ? 0 : std::fabs(s.normal[1]) > 0.9 ? 1 : 2;
-    auto* it = new QListWidgetItem(icons::themed("section", 16), QString("%1        %2 = %3 mm").arg(QString::fromStdString(s.name)).arg(axes[axis]).arg(s.origin[axis], 0, 'f', 1));
+    auto* it = new QListWidgetItem(icons::themed("section", 16), QString("%1        %2 = %3").arg(QString::fromStdString(s.name)).arg(axes[axis]).arg(units::format(units::Kind::Length, s.origin[axis])));
     it->setData(Qt::UserRole, QString::fromStdString(s.id));
     it->setToolTip(tr("Double-click to apply"));
     m_named->addItem(it);

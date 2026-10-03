@@ -24,6 +24,7 @@
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
 class AgentBridge;
+class QToolButton;
 template <class Tag>
 struct MainWindowBench;
 
@@ -85,6 +86,8 @@ class MainWindow : public QMainWindow {
   void bindPanel(QAction* a, QDockWidget* dock);
   void resetLayout();
   void buildStatusBar();
+  void buildUnitsButton();
+  void setDocumentUnit(const std::string& unit);
   void applyTheme(bool dark);
   void refreshIcons();
   void updateTitle();
@@ -238,7 +241,7 @@ class MainWindow : public QMainWindow {
   QLabel* m_statusGit = nullptr;
   QLabel* m_statusHover = nullptr;
   QLabel* m_statusSel = nullptr;
-  QLabel* m_statusUnits = nullptr;
+  QToolButton* m_statusUnits = nullptr;  // the shown length unit (UI-123): a click offers the document's
   QList<QAction*> m_actions;
   CommandRegistry m_commands;  // the record of every action in m_actions, same order
   QAction* m_pinAction = nullptr;

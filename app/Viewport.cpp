@@ -3,6 +3,7 @@
 #include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "Units.hpp"
 #include "opad/mesh.hpp"
 #include <V3d_DirectionalLight.hxx>
 #include "DepthBias.hpp"
@@ -131,6 +132,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   setMinimumSize(200, 150);
   connect(doc, &AppDocument::changed, this, &Viewport::resetHoverFade);
   connect(doc, &AppDocument::changed, this, &Viewport::sync);
+  connect(units::notifier(), &units::Notifier::changed, this, [this] { refreshMeasurement(true); });  // labels in the shown unit
   m_syncTimer.setSingleShot(true);
   m_syncTimer.setInterval(50);
   connect(&m_syncTimer, &QTimer::timeout, this, &Viewport::sync);
@@ -1948,7 +1950,7 @@ void Viewport::paintEvent(QPaintEvent*) {
           opad::Ref ref; ref.body=it->second; ref.kind=Handle(CircleOwner)::DownCast(mine).IsNull()?opad::Ref::Kind::Edge:opad::Ref::Kind::Center; ref.index=mine->index();
           if(sub.ShapeType()==TopAbs_EDGE || ref.kind==opad::Ref::Kind::Center) {
             const auto info=circleInfo(ref);
-            if(info.contains("diameter")) hover+=tr(" | Diameter %1 mm").arg(info["diameter"].get<double>(),0,'f',3);
+            if(info.contains("diameter")) hover+=tr(" | Diameter %1").arg(units::format(units::Kind::Length,info["diameter"].get<double>()));
             if(info.contains("segments")) hover+=tr(" | %1 segments (approximate)").arg(info["segments"].get<int>());
           }
         }

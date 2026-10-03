@@ -1,8 +1,17 @@
 // Benches of the core area (T0), registered through BenchRegistry; cases in tools/bench_cases/core.py.
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
+#include <QMenu>
+#include <QStatusBar>
+#include <QTimer>
+#include <QToolButton>
+#include <QTreeWidget>
 
+#include <cmath>
+#include <functional>
+#include <memory>
 #include <set>
 
 #include "BenchRegistry.hpp"
@@ -10,6 +19,8 @@
 #include "Icons.hpp"
 #include "MainWindow.hpp"
 #include "TimelineWidget.hpp"
+#include "Units.hpp"
+#include "opad/inspect.hpp"
 
 // OPAD_BENCH_SEAMS=1 [OPAD_LANG=ar]: the extension seams (UI-119) in the running app. This bench is itself dispatched
 // by the registry; no two files claim the same bench switch or icon name; the fragments app/i18n/<code>/*.json are
@@ -88,5 +99,94 @@ OPAD_BENCH(OPAD_BENCH_TOLERANT, tolerant) {
               opad::Document::parse(text).ops.size() == w.m_doc->doc.ops.size(),
           "an edit, then Save As writes the newer records back byte for byte");
   QCoreApplication::exit(all ? 0 : 2);
+  return true;
+}
+
+namespace {
+// Polls `done` every 50 ms until it holds or `ms` have passed, then calls `then` with the outcome.
+void pollUntil(QObject* context, std::function<bool()> done, int ms, std::function<void(bool)> then) {
+  auto* timer = new QTimer(context);
+  auto clock = std::make_shared<QElapsedTimer>();
+  clock->start();
+  QObject::connect(timer, &QTimer::timeout, context, [timer, clock, done, ms, then] {
+    const bool ok = done();
+    if (!ok && clock->elapsed() < ms) return;
+    timer->stop();
+    timer->deleteLater();
+    then(ok);
+  });
+  timer->start(50);
+}
+}  // namespace
+
+// OPAD_BENCH_UNITS=<prefix> on the box (30 x 20 x 10 mm): the status bar's unit is live (UI-123). Choosing Inches in its
+// menu appends one units op; a Distance between the two end faces then reads 1.181 in in the tool's result and in the
+// view's label, Properties shows inches, a precision change and fractional inches redraw the result at once, and undo
+// brings millimetres back. <prefix>.status.png / .panel.png are the status bar and the tool panel in inches.
+OPAD_BENCH(OPAD_BENCH_UNITS, units) {
+  auto all = std::make_shared<bool>(true);
+  auto require = [all](bool ok, const QString& what) {
+    trace::log(QString("bench: units: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    *all = *all && ok;
+  };
+  auto finish = [all] { QCoreApplication::exit(*all ? 0 : 2); };
+  auto result = [&w](const QString& key) {
+    const auto* grid = w.m_toolSteps->findChild<QTreeWidget*>();
+    for (int i = 0; grid && i < grid->topLevelItemCount(); ++i)
+      if (grid->topLevelItem(i)->text(0) == key) return grid->topLevelItem(i)->toolTip(1);
+    return QString();
+  };
+  const auto bodies = w.m_doc->scene.all_bodies();
+  require(w.m_statusUnits->text() == "mm" && units::current().length == "mm" && bodies.size() == 1, "a millimetre document shows mm: " + w.m_statusUnits->text());
+  if (bodies.size() != 1) return finish(), true;
+  // The two end faces (normals along X), 30 mm apart.
+  std::vector<opad::Ref> ends;
+  for (int i = 0; i < 6; ++i) {
+    opad::Ref r;
+    r.body = bodies.front();
+    r.kind = opad::Ref::Kind::Face;
+    r.index = i;
+    const auto info = opad::inspect_ref(w.m_doc->doc, w.m_doc->scene, r);
+    if (info.contains("normal") && std::abs(std::abs(info["normal"][0].get<double>()) - 1) < 1e-9) ends.push_back(r);
+  }
+  QMenu* menu = w.m_statusUnits->menu();
+  emit menu->aboutToShow();
+  QAction* inches = menu->findChild<QAction*>("unit.in");
+  require(ends.size() == 2 && inches && inches->isEnabled() && !inches->isChecked(), "the menu offers inches");
+  if (ends.size() != 2 || !inches) return finish(), true;
+  const size_t ops = w.m_doc->doc.ops.size();
+  inches->trigger();
+  pollUntil(&w, [&w] { return w.m_doc->scene.units == "in" && !w.m_doc->designBusy; }, 20000, [&w, require, finish, result, ends, ops](bool switched) {
+    const auto& last = w.m_doc->doc.ops.back();
+    require(switched && w.m_doc->doc.ops.size() == ops + 1 && last.type == "units" && last.data.value("length", "") == "in" &&
+                w.m_statusUnits->text() == "in" && units::current().length == "in",
+            "Inches appends one units op and the status bar follows: " + w.m_statusUnits->text());
+    w.startTool("distance");
+    w.toolPicksChanged(ends, false);
+    pollUntil(&w, [&w] { return !w.m_lastMeasure.is_null(); }, 20000, [&w, require, finish, result](bool measured) {
+      const QString value = result(w.m_tool.title);
+      const QStringList captions = w.m_viewport->measurementCaptions();
+      require(measured && value == "1.181 in" && result(QString::fromUtf8("ΔX")).endsWith(" in"), "the Distance result reads " + value);
+      require(captions.contains(QString::fromUtf8("ΔX +1.181 in")), "the view's label reads " + captions.join(" | "));  // along X only: the axis label
+      QCoreApplication::processEvents();  // the panel fits its result rows
+      w.statusBar()->grab().save(qEnvironmentVariable("OPAD_BENCH_UNITS") + ".status.png");
+      w.m_toolPanel->grab().save(qEnvironmentVariable("OPAD_BENCH_UNITS") + ".panel.png");
+      w.m_props->showEntity("Probe", {}, {}, opad::json{{"volume", 6000.0}, {"center", {25.4, 50.8, 0.0}}, {"normal", {1.0, 0.0, 0.0}}});
+      QStringList shown;
+      for (const auto* item : w.m_props->findChildren<QTreeWidget*>().value(0)->findItems("*", Qt::MatchWildcard)) shown << item->text(1).remove(QChar(0x202A)).remove(QChar(0x202C));
+      require(shown.contains(QString::fromUtf8("0.366 in³")) && shown.contains("(1, 2, 0) in") && shown.contains("(1, 0, 0)"), "Properties in inches: " + shown.join(" | "));
+      const auto typed = units::parse(units::Kind::Length, "1/2");
+      require(typed && std::abs(*typed - 12.7) < 1e-9, "a typed 1/2 reads as half an inch");
+      units::setPrecision(1, false, 0);
+      require(result(w.m_tool.title) == "1.2 in" && w.m_viewport->measurementCaptions().contains(QString::fromUtf8("ΔX +1.2 in")), "one decimal redraws the result: " + result(w.m_tool.title));
+      units::setPrecision(3, false, 64);
+      require(result(w.m_tool.title) == "1 3/16 in", "fractional inches: " + result(w.m_tool.title));
+      units::setPrecision(3, false, 0);
+      w.cancelTool();
+      w.m_doc->undo();
+      require(w.m_doc->scene.units == "mm" && w.m_statusUnits->text() == "mm" && units::current().length == "mm", "undo brings millimetres back: " + w.m_statusUnits->text());
+      finish();
+    });
+  });
   return true;
 }
