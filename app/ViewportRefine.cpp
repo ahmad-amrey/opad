@@ -146,5 +146,5 @@ void Viewport::refineVisible() {
     if (trace::enabled())
       trace::log(QStringLiteral("refine: done in %1 ms (%2 triangles, applied in %3 ms, %4 bodies kept)").arg(started.elapsed()).arg(triangles).arg(applying.elapsed()).arg(m_refined.size()));
     m_refineTimer.start();  // the next candidates, if any are left
-  });
+  }, JobKind::Background);
 }

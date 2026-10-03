@@ -150,6 +150,37 @@ TEST(document_roundtrip_is_byte_stable) {
   CHECK_EQ(std::count(text2.begin(), text2.end(), '\n'), std::count(text1.begin(), text1.end(), '\n') + 1);
 }
 
+// UI-40: a load reports how far through the file it is (read, then parsed, by bytes), only forwards, and stops when told.
+TEST(document_load_reports_progress_by_bytes) {
+  Document d = Document::create();
+  json nodes = json::array();
+  for (int i = 0; i < 400; ++i) {
+    const std::string brep = kFakeBrep + "# body " + std::to_string(i) + "\n";
+    nodes.push_back(body_node(d.add_body(brep, json{{"name", "Part"}}), "Part " + std::to_string(i)));
+  }
+  json imp;
+  imp["op"] = "import";
+  imp["source"] = "many.step";
+  imp["nodes"] = nodes;
+  d.append(imp);
+  for (int i = 0; i < 300; ++i) d.append(json{{"op", "rename"}, {"target", nodes[i]["id"]}, {"name", "Renamed " + std::to_string(i)}});
+  const auto path = std::filesystem::temp_directory_path() / ("opad-progress-" + new_uuid() + ".opad");
+  d.save_as(path);
+  std::vector<double> seen;
+  Document loaded = Document::load(path, [&](double f) { seen.push_back(f); return true; });
+  CHECK_EQ(loaded.body_count(), 400u);
+  CHECK_EQ(loaded.ops.size(), 301u);
+  CHECK_EQ(loaded.serialize(), d.serialize());
+  CHECK(seen.size() >= 20);
+  CHECK(std::is_sorted(seen.begin(), seen.end()));
+  CHECK(seen.front() > 0 && seen.front() <= 0.2 + 1e-9);  // the read: the first fifth
+  CHECK(seen.back() > 0.95 && seen.back() <= 1.0);
+  CHECK(std::any_of(seen.begin(), seen.end(), [](double f) { return f > 0.3 && f < 0.6; }));  // the parse in between
+  size_t calls = 0;
+  CHECK_THROWS(Document::load(path, [&](double) { return ++calls < 5; }));  // cancelled
+  std::filesystem::remove(path);
+}
+
 TEST(document_parse_rejects_corruption) {
   Document d = Document::create();
   std::string key = d.add_body(kFakeBrep, json::object());

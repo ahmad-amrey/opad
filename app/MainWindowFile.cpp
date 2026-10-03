@@ -9,14 +9,18 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QTimer>
 
+#include <algorithm>
 #include <memory>
+#include <utility>
 
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "KeyGuard.hpp"
+#include "Toast.hpp"
 #include "opad/drawing_io.hpp"
 
 void MainWindow::buildFileActions() {
@@ -226,6 +230,7 @@ void MainWindow::beginLoad(std::function<void()> after) {
   m_meshTotal = m_meshRemaining = 0;
   m_viewport->resetMeshing();
   m_loadJob = m_jobs->begin(tr("Loading…"), true);
+  m_viewport->setStreamJob(m_loadJob);  // the display pump is its child: one Cancel stops reading, meshing and showing
   setLoading(true);
   // OPAD_BENCH_LOADSHOT=<prefix>: the status bar every 2 s while the load runs (<prefix>-<n>.png).
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_LOADSHOT"); !shot.isEmpty()) {
@@ -245,20 +250,14 @@ void MainWindow::beginLoad(std::function<void()> after) {
     m_loadJob = nullptr;
     m_afterLoad = nullptr;
     setLoading(false);
+    const QPointer<QAction> deferred = std::exchange(m_afterStream, nullptr);
     if (!ok) {
       if (err.contains("cancel", Qt::CaseInsensitive)) statusBar()->showMessage(tr("Load cancelled"), 4000);
       else QMessageBox::warning(this, tr("OPAD"), err);
     }
     if(ok) {
       m_doc->storeViewerCache(m_jobs);  // a slow viewer read, now meshed: the next open of the file skips it
-      if(!m_doc->path().isEmpty()) m_viewPath=QFileInfo(m_doc->path()).absoluteFilePath();
-      if((!m_benchSelect || qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
-        try {
-          const auto camera=opad::json::parse(m_settings.value("view/lastCamera").toString().toStdString());
-          action("view.ortho")->setChecked(camera.value("projection","")=="orthographic");
-          m_viewport->setCameraJson(camera);
-        } catch(const std::exception&) { /* Ignore stale settings from another version. */ }
-      }
+      if (deferred) QTimer::singleShot(0, deferred, &QAction::trigger);  // the edit asked for while the bodies streamed in
     }
     if (int skipped = m_viewport->skippedCount()) statusBar()->showMessage(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), 8000);
     if (m_benchSelect && !ok && !m_doc->hasDocument) {  // nothing to run the benches on: say so instead of walking an empty scene
@@ -272,22 +271,30 @@ QString MainWindow::meshPhase() const {
   return tr("Tessellating and displaying bodies (%1 of %2)").arg(m_meshTotal - m_meshRemaining).arg(m_meshTotal);
 }
 
-void MainWindow::setLoadPhase(const QString& phase, int pct) {
+// The document's own phases come with their place in the whole load (AppDocument::loadProgress); the display of the bodies
+// fills the rest, from AppDocument::displayStart (UI-40).
+void MainWindow::setLoadPhase(const QString& phase, int pct, int overall) {
   if (!m_loadJob) return;
-  if (trace::enabled()) trace::log(QStringLiteral("load phase: %1 (%2%)").arg(phase).arg(pct));
+  if (overall < 0) overall = m_doc->displayStart() + std::max(pct, 0) * (100 - m_doc->displayStart()) / 100;
+  if (trace::enabled()) trace::log(QStringLiteral("load phase: %1 (%2%, overall %3%)").arg(phase).arg(pct).arg(overall));
   m_loadJob->setPhase(phase, pct);
-  m_loadJob->setOverall(overallPercent(phase, pct));
+  m_loadJob->setOverall(overall);
 }
 
-// Maps a phase name + within-phase percent to an overall 0-100 across reading -> building -> tessellating.
-int MainWindow::overallPercent(const QString& phase, int pct) const {
-  int base = 65, span = 35;  // tessellating + displaying (last phase) by default
-  if (phase.contains("Reading") || phase.contains("Opening")) { base = 0; span = 10; }
-  else if (phase.contains("Translating")) { base = 10; span = 30; }
-  else if (phase.contains("Building")) { base = 40; span = 15; }
-  else if (phase.contains("Preparing")) { base = 55; span = 10; }
-  const int within = pct < 0 ? 0 : pct;
-  return base + within * span / 100;
+void MainWindow::restoreLastView() {
+  if (!m_doc->path().isEmpty()) m_viewPath = QFileInfo(m_doc->path()).absoluteFilePath();
+  if ((m_benchSelect && !qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) || m_viewPath.isEmpty() || m_settings.value("view/lastPath").toString() != m_viewPath) return;
+  try {
+    const auto camera = opad::json::parse(m_settings.value("view/lastCamera").toString().toStdString());
+    action("view.ortho")->setChecked(camera.value("projection", "") == "orthographic");
+    m_viewport->setCameraJson(camera);
+  } catch (const std::exception&) { /* Ignore stale settings from another version. */ }
+}
+
+void MainWindow::deferEdit(QAction* a) {
+  if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
+  m_afterStream = a;  // the last one asked for
+  m_toasts->toast(tr("Still loading: “%1” runs once every body is shown").arg(a->text().remove('&')));
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* e) {

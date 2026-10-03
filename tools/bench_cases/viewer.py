@@ -98,4 +98,11 @@ CASES = [
     # 1,000 boxes and on the Engine.
     ("perf", boxes, {"OPAD_BENCH_PERF": "{prefix}"}),
     ("perf-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_PERF": "{prefix}"}),
+    # Load responsiveness (UI-40): the file opened again is watched; the strip shows the load job throughout and its
+    # progress only rises (per cent while a big .opad is read), the workspace is unlocked once the document is built while
+    # the bodies stream in (a view command runs, an edit waits with a toast and runs after), the display pump is the
+    # load's child, a few full syncs and no empty highlight jobs; then Cancel on the strip as the bodies stream in stops the
+    # load and its pump at once.
+    ("loading", boxes, {"OPAD_BENCH_LOADING": "{prefix}"}),
+    ("loading-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_LOADING": "{prefix}"}),
 ]

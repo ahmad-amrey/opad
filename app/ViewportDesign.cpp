@@ -68,8 +68,8 @@ void Viewport::syncSketches() {
           Bnd_Box box;BRepBndLib::Add(shape,box);prepared->shape=shape;prepared->prs=BodyPrs::build(shape,box);
         },[this,prepared,id,generation](bool ok,const QString&) {
           if(generation!=m_doc->generation || !m_preparedSketches.count(id) || m_preparedSketches[id]!=prepared) return;
-          prepared->ready=ok; if(ok) requestSync();
-        });
+          prepared->ready=ok; if(ok){syncSketches();redrawScene();}  // the sketches only: a full sync walks every body (UI-40)
+        },JobKind::Background);
         continue;
       }
       prepared=found->second;if(!prepared->ready) continue;

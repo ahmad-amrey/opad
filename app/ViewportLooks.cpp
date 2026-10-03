@@ -150,7 +150,7 @@ void Viewport::scheduleLooks() {
     redrawScene();
     if (trace::enabled()) trace::log(QStringLiteral("looks: %1 bodies changed%2").arg(pass->changed).arg(completed ? "" : " (stopped)"));
     if (completed) emit looksApplied();
-  });
+  }, JobKind::Background);
 }
 
 bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look) {

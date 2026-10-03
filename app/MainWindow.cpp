@@ -51,6 +51,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_recovery,&RecoveryManager::status,this,[this](const QString& text){statusBar()->showMessage(text,8000);});
 
   connect(m_doc, &AppDocument::aboutToReplace, this, [this] {
+    if (m_loadJob && m_loadDocDone) m_loadJob->cancel();  // the document whose bodies stream in goes: so does its stream
     saveLastView();
     m_viewPath.clear();
     cancelTool();
@@ -113,9 +114,9 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_viewport, &Viewport::meshingProgress, this, [this](int remaining) {
     m_meshRemaining = remaining;
     if (remaining > m_meshTotal) m_meshTotal = remaining;
-    if (m_loadJob && m_loadDocDone) {
+    if (m_loadJob && m_loadDocDone && !m_loadJob->cancelled()) {
       if (remaining == 0) m_loadJob->finish();
-      else setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : -1);
+      else setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : 0);
     }
     if (m_loadJob) return;
     // Bodies shown after the load (showing a hidden assembly, leaving isolation) stream in the same way: the same
@@ -124,6 +125,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
       if (!m_displayJob) {
         m_displayJob = m_jobs->begin(tr("Displaying bodies"));
         m_displayTotal = 0;
+        m_viewport->setStreamJob(m_displayJob);
         connect(m_displayJob, &Job::cancelRequested, m_viewport, &Viewport::cancelMeshing);
         connect(m_displayJob, &Job::finished, this, [this](bool, const QString&) { m_displayJob = nullptr; });
       }
@@ -148,12 +150,16 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
       m_loadJob->finish(false, err);
       return;
     }
+    // Built (UI-40): the workspace is free at once, the bodies stream in under the load's progress and Cancel, and edits
+    // wait for them (addCommand). The camera the file was last seen with comes now, not over a view being worked in.
+    setLoading(false);
     if (m_afterLoad) m_afterLoad();
     m_afterLoad = nullptr;
-    if (m_meshRemaining > 0) setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : -1);
+    restoreLastView();
+    if (m_meshRemaining > 0) setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : 0);
     else m_loadJob->finish();
   });
-  trace::installUiWatchdog(this);  // logs any UI-thread stall over 250 ms (OPAD_TRACE)
+  trace::installUiWatchdog(this);  // logs any UI-thread stall over OPAD_TRACE_STALL_MS (OPAD_TRACE, UI-11)
   // A name typed into the browser is not taken as one-key commands (UI-09), nor one typed right after a dialog closed.
   m_keyGuard = new KeyGuard([browser = QPointer<BrowserPanel>(m_browser)] { return browser ? browser->renameEditor() : nullptr; }, this);
   qApp->installEventFilter(m_keyGuard);
@@ -315,7 +321,10 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
   if (!a->shortcut().isEmpty()) tip += "  (" + a->shortcut().toString(QKeySequence::NativeText) + ")";
   a->setToolTip(tip);
   connect(a, &QAction::triggered, this, [this, fn, id, a] {
-    if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
+    if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") {
+      if (!m_loadDocDone) return;  // reading and building: the workspace is locked
+      if (m_commands.editsDocument(id)) return deferEdit(a);  // its bodies still stream in
+    }
     m_viewport->resetHoverFade();
     if (m_doc->browse && m_commands.editsDocument(id)) {  // viewer mode: offered, and asks to save first
       if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }

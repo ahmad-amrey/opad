@@ -939,10 +939,18 @@ void Viewport::applySelectionLayers() {
     size_t i=0,removed=0;
   };
   auto state=std::make_shared<State>();
-  for(auto& [id,it]:m_items) {auto prs=m_prs.find(it.key);state->targets.push_back({it.ais,prs==m_prs.end()?nullptr:prs->second});}
-  for(auto& [id,wire]:m_sketchWires) state->targets.push_back({wire.ais,wire.prs});
-  for(const auto& [ais,prs]:state->targets) if(m_ctx->IsSelected(ais) && prs) state->keep.insert(ais.get());
+  // Only what has to change (UI-40): selected objects (Topmost, their glow) and those still in a layer they no longer
+  // belong to. With nothing selected that is nothing, and no job: a load made one per batch of bodies, 70 on the Engine.
+  auto target=[&](const Handle(AIS_Shape)& ais,const std::shared_ptr<BodyPrs>& prs,Graphic3d_ZLayerId rest) {
+    const bool selected=m_ctx->IsSelected(ais);
+    if(!selected && ais->ZLayer()==rest) return;
+    state->targets.push_back({ais,prs});
+    if(selected && prs) state->keep.insert(ais.get());
+  };
+  for(auto& [id,it]:m_items) {auto prs=m_prs.find(it.key);target(it.ais,prs==m_prs.end()?nullptr:prs->second,it.look.layer);}
+  for(auto& [id,wire]:m_sketchWires) target(wire.ais,wire.prs,Graphic3d_ZLayerId_Default);
   for(const auto& [ais,glow]:m_bodyGlows) if(!state->keep.count(ais)) state->stale.push_back(ais);
+  if(state->targets.empty() && state->stale.empty()) return;
   auto update=[this](const Handle(AIS_Shape)& ais,const std::shared_ptr<BodyPrs>& prs) {
     const bool selected=m_ctx->IsSelected(ais);
     Graphic3d_ZLayerId rest=Graphic3d_ZLayerId_Default;  // where its look puts it (UI-121); selected: Topmost, the X-ray, last
@@ -978,7 +986,7 @@ void Viewport::applySelectionLayers() {
     const auto& [ais,prs]=state->targets[state->i++];update(ais,prs);return true;
   };
   if(state->targets.size()+state->stale.size()<=64) {while(step(nullptr)) {} return;}
-  m_bodyGlowJob=m_jobs->sliced(tr("Highlighting %1 selected").arg(state->keep.size()),[step](Job& job){return step(&job);},[this](bool){m_bodyGlowJob=nullptr;redrawScene();});
+  m_bodyGlowJob=m_jobs->sliced(tr("Highlighting %1 selected").arg(state->keep.size()),[step](Job& job){return step(&job);},[this](bool){m_bodyGlowJob=nullptr;redrawScene();},JobKind::Background);
 }
 
 // One translucent box per selected node, covering its bodies; a stand-in for per-object highlighting.
@@ -1105,6 +1113,7 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
 }
 
 void Viewport::isolate(const std::vector<std::string>& ids) {
+  if (ids.empty() && m_isolated.empty()) return;  // not isolated (every document replacement asks): no full sync
   m_isolated.clear();
   for (const auto& id : ids)
     {if(m_doc->scene.sketch(id))m_isolated.insert(id);for (const auto& b : m_doc->scene.bodies_under(id)) m_isolated.insert(b);}
@@ -1168,6 +1177,14 @@ void Viewport::fitNodesWhenReady(std::vector<std::string> ids) {
 void Viewport::cancelMeshing() {
   *m_meshCancel = true;
   m_meshCancel = std::make_shared<std::atomic<bool>>(false);
+  // What was still to come stays out (UI-40), until resetMeshing: the bodies waiting for a mesh and those queued for display.
+  std::lock_guard<std::mutex> lock(m_meshMu);
+  for (const auto& [key, nodes] : m_waiting) m_meshSkipped.insert(key);
+  for (const auto& id : m_displayQueue)
+    if (const opad::Node* n = m_doc->scene.node(id)) m_meshSkipped.insert(n->body_key);
+  m_waiting.clear();
+  m_waitingNodes = 0;
+  m_displayQueue.clear();
 }
 
 void Viewport::resetMeshing() {
@@ -1477,7 +1494,6 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
     }
   }
   if (jobs.empty()) return;
-  emit meshingProgress(static_cast<int>(m_meshing.size()));
   auto alive = m_alive;
   auto cancel = m_meshCancel;
   auto cache = m_doc->doc.shape_cache;  // the worker fills the bbox cache too, so later UI queries are O(1)
@@ -1495,8 +1511,10 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
         if (!*alive) return;
         std::lock_guard<std::mutex> lock(m_meshMu);
         m_meshing.erase(j.key);
-        if (m_activeCache == cache.get()) m_meshSkipped.insert(j.key);
-        QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
+        if (m_activeCache == cache.get()) {
+          m_meshSkipped.insert(j.key);
+          handOver(j.key);
+        }
         continue;
       }
       std::shared_ptr<BodyPrs> prs;
@@ -1512,15 +1530,13 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       } catch (...) {
       }
       if (!*alive) return;
-      {
-        std::lock_guard<std::mutex> lock(m_meshMu);
-        m_meshing.erase(j.key);
-        if (m_activeCache == cache.get()) {  // a newer document owns the bookkeeping otherwise
-          m_meshed.insert(j.key);
-          if (prs) m_prs[j.key] = std::move(prs);
-        }
+      std::lock_guard<std::mutex> lock(m_meshMu);
+      m_meshing.erase(j.key);
+      if (m_activeCache == cache.get()) {  // a newer document owns the bookkeeping otherwise
+        m_meshed.insert(j.key);
+        if (prs) m_prs[j.key] = std::move(prs);
+        handOver(j.key);
       }
-      QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
     }
    });
    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
@@ -1608,6 +1624,76 @@ void Viewport::benchPick() {
   trace::log(QStringLiteral("bench: pick at view centre detected %1; click selected %2 (hover %3 ms, next hover %4 ms, click %5 ms)").arg(hit).arg(m_ctx->NbSelected()).arg(firstMs).arg(nextMs).arg(clock.elapsed()));
 }
 
+// Mesh worker, m_meshMu held: the key goes to the display pump, with one queued pumpMeshed() per batch.
+void Viewport::handOver(const std::string& key) {
+  m_newlyMeshed.push_back(key);
+  if (std::exchange(m_pumpPosted, true)) return;
+  QMetaObject::invokeMethod(this, [this] { pumpMeshed(); }, Qt::QueuedConnection);
+}
+
+// The keys the workers finished (or skipped, cancelled): the bodies that waited for them join the display queue.
+void Viewport::pumpMeshed() {
+  std::vector<std::string> keys;
+  {
+    std::lock_guard<std::mutex> lock(m_meshMu);
+    keys.swap(m_newlyMeshed);
+    m_pumpPosted = false;
+    bool moved = false;
+    for (const auto& key : keys) {
+      auto it = m_waiting.find(key);
+      if (it == m_waiting.end()) continue;
+      m_waitingNodes -= it->second.size();
+      if (m_meshed.count(key))
+        for (auto& id : it->second) m_displayQueue.push_back(std::move(id));
+      m_waiting.erase(it);
+      moved = true;
+    }
+    if (!moved) return;
+  }
+  if (m_displayQueue.empty()) return streamSettled();
+  emit meshingProgress(remainingBodies());
+  runPump();
+}
+
+// One long-lived sliced job displays the queued bodies (UI-40); it ends when the queue runs dry and starts again with the
+// next batch of meshes. It is a child of the job that reports the stream (a load, Displaying bodies), else Background.
+void Viewport::runPump() {
+  if (m_displayJob || m_displayQueue.empty() || !m_jobs) return;
+  m_displayJob = m_jobs->sliced(tr("Displaying bodies"), [this](Job&) {
+    if (m_displayQueue.empty() || m_doc->loading) return false;
+    const std::string id = std::move(m_displayQueue.front());
+    m_displayQueue.pop_front();
+    const size_t before = m_items.size();
+    displayBody(id);
+    m_streamAdded = m_streamAdded || m_items.size() > before;
+    if ((++m_pumpSteps & 15) == 0) {
+      emit meshingProgress(remainingBodies());
+      m_view->Invalidate();
+      requestRedraw();  // bodies appear as they are added
+    }
+    return !m_displayQueue.empty();
+  }, [this](bool completed) {
+    m_displayJob = nullptr;
+    if (!completed) m_displayQueue.clear();  // cancelled with the stream: what is meshed shows on the next change
+    streamSettled();
+  }, m_streamJob ? JobKind::Child : JobKind::Background, m_streamJob);
+}
+
+// The display queue ran dry: progress, the view fitted while a load streams in (at most every 250 ms), and once no body
+// waits for its mesh either, what depends on the whole scene (finishSync: depth bias, grid, refinement, a fit of nodes).
+void Viewport::streamSettled() {
+  emit meshingProgress(remainingBodies());
+  if (m_waitingNodes == 0) return finishSync(0, std::exchange(m_streamAdded, false));
+  if (m_streamAdded && m_needFit && m_fitNodesOnSync.empty() && (!m_streamFit.isValid() || m_streamFit.elapsed() > 250)) {
+    m_view->FitAll(fitBounds(), 0.02, Standard_False);
+    m_streamFit.start();
+  }
+  m_view->Invalidate();
+  requestRedraw();
+}
+
+void Viewport::setStreamJob(Job* job) { m_streamJob = job; }
+
 // Creates the OpenGL viewer ahead of the first document (about 0.7 s) so that opening a file does not pay
 // for it. The native child window exists while hidden, which is all OCCT needs.
 void Viewport::warmUp() {
@@ -1622,7 +1708,13 @@ void Viewport::warmUp() {
 void Viewport::renameBodyKeys(const std::map<std::string, std::string>& keys) {
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
+    for (auto& key : m_newlyMeshed)
+      if (auto it = keys.find(key); it != keys.end()) key = it->second;
     for (const auto& [from, to] : keys) {
+      if (auto it = m_waiting.find(from); it != m_waiting.end()) {
+        m_waiting[to] = std::move(it->second);
+        m_waiting.erase(from);
+      }
       if (m_meshed.erase(from)) m_meshed.insert(to);
       if (m_meshSkipped.erase(from)) m_meshSkipped.insert(to);
       if (auto it = m_prs.find(from); it != m_prs.end()) {
@@ -1643,12 +1735,15 @@ void Viewport::requestSync() {
   if (!m_syncTimer.isActive()) m_syncTimer.start();
 }
 
-// Reconciles the context with the scene. Removals and attribute changes are applied at once (cheap);
-// bodies to display are added by a sliced job because computing a body's presentation and selection
-// entities is the expensive part and must not block the UI (see Jobs.hpp).
+// Reconciles the context with the scene, on document changes only. Removals and attribute changes are applied at once
+// (cheap); the bodies to display go to the display pump's queue (runPump: computing a body's presentation and selection
+// entities is the expensive part and must not block the UI, see Jobs.hpp), those without a mesh wait for it (m_waiting)
+// and join the queue as the mesh workers finish them (pumpMeshed), with no sync per batch (UI-40).
 void Viewport::sync() {
   if (!m_initialised || m_doc->loading) return;
   trace::Scope scope("Viewport::sync");
+  QElapsedTimer clock;
+  clock.start();
   const opad::Scene& scene = m_doc->scene;
   {
     // Mesh bookkeeping is per shape cache: a new document means new TopoDS_Shapes without triangulation.
@@ -1658,6 +1753,7 @@ void Viewport::sync() {
       m_activeCache = cache;
       m_meshed.clear();
       m_meshSkipped.clear();
+      m_newlyMeshed.clear();
       // The last document's display arrays are freed on a worker (UI-41): the Engine's are hundreds of MB in many blocks.
       disposeLater(std::make_shared<std::pair<decltype(m_prs), decltype(m_refined)>>(std::move(m_prs), std::move(m_refined)));
       m_prs.clear();
@@ -1677,6 +1773,8 @@ void Viewport::sync() {
   }
   std::set<std::string> keep, replace;
   std::vector<std::string> pending, toAdd;
+  std::unordered_map<std::string, std::vector<std::string>> waiting;  // body key -> nodes to show once it is meshed
+  size_t waitingNodes = 0;
   bool recoloredSelected = false;
   for (const auto& id : scene.all_bodies()) {
     const opad::Node* n = scene.node(id);
@@ -1698,13 +1796,18 @@ void Viewport::sync() {
       }
       continue;
     }
-    bool meshed;
+    bool meshed, skipped;
     {
       std::lock_guard<std::mutex> lock(m_meshMu);
       meshed = m_meshed.count(n->body_key) > 0;
+      skipped = m_meshSkipped.count(n->body_key) > 0;
     }
+    if (skipped) continue;  // its meshing (or display) was cancelled: reopening the file shows it
     if (!meshed) {
-      pending.push_back(n->body_key);
+      auto& nodes = waiting[n->body_key];
+      if (nodes.empty()) pending.push_back(n->body_key);
+      nodes.push_back(id);
+      ++waitingNodes;
       continue;
     }
     keep.insert(id);
@@ -1722,37 +1825,21 @@ void Viewport::sync() {
   }
   if (removed) removeRetired();
   if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
-  if(removed) applySelectionLayers();
-  if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
+  if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // the retired bodies' selected sub-shapes went with them
+  m_waiting = std::move(waiting);
+  m_waitingNodes = waitingNodes;
+  m_displayQueue.assign(toAdd.begin(), toAdd.end());
   if (!pending.empty()) startMeshing(pending);
   if (layered()) scheduleLooks();  // the hierarchy under a layer's components may have changed
   syncSketches();
   applySelectionLayers();
   if (m_notesRevision != m_doc->revision) updateAnnotations();  // a document change, not a batch of meshes
   updateClipPlanes();
-  if (m_displayJob) m_displayJob->cancel();
-  const int pendingCount = static_cast<int>(pending.size());
-  if (toAdd.empty()) {
-    finishSync(pendingCount, false);
-    return;
-  }
-  emit meshingProgress(pendingCount + static_cast<int>(toAdd.size()));
-  auto ids = std::make_shared<std::vector<std::string>>(std::move(toAdd));
-  auto i = std::make_shared<size_t>(0);
-  m_displayJob = m_jobs->sliced(tr("Displaying %1 bodies").arg(ids->size()), [this, ids, i, pendingCount](Job& j) {
-    if (*i >= ids->size() || m_doc->loading) return false;
-    displayBody((*ids)[*i]);
-    if ((++*i & 15) == 0) {
-      j.setPhase(tr("Displaying %1 bodies").arg(ids->size()), static_cast<int>(*i * 100 / ids->size()));
-      emit meshingProgress(pendingCount + static_cast<int>(ids->size() - *i));
-      m_view->Invalidate();
-      requestRedraw();  // bodies appear as they are added
-    }
-    return *i < ids->size();
-  }, [this, pendingCount](bool completed) {
-    m_displayJob = nullptr;
-    if (completed) finishSync(pendingCount, true);
-  });
+  ++m_syncs;
+  m_syncMs += clock.elapsed();
+  if (m_displayQueue.empty()) return streamSettled();
+  emit meshingProgress(remainingBodies());  // first: the window may make a job to report the stream (the pump's parent)
+  runPump();
 }
 
 // A displayed body that goes (UI-41): erased at once, which only hides it and turns its picking off, and removed from the
@@ -1796,7 +1883,7 @@ void Viewport::removeRetired() {
     flush();
     m_retireJob = nullptr;
     if (!m_retired.empty()) QTimer::singleShot(0, this, &Viewport::removeRetired);  // cancelled: the rest later
-  });
+  }, JobKind::Background);
 }
 
 // Adds one body to the context: presentation + selection entities are computed here.

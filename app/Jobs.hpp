@@ -7,10 +7,17 @@
 //   JobRunner::sliced - UI-thread-only work (OCCT AIS calls, Qt widgets) run in ~10 ms slices between events
 //   JobRunner::begin  - a job driven by something with its own threading (AppDocument loads)
 //
+// Each has a kind (UI-40). The strip shows the oldest Foreground job, and its Cancel cancels that job and its children;
+// a Child job is part of another one (cancelled with it, never shown on its own); a Background job (housekeeping the
+// user did not ask for: highlights, looks, refinement, clearing the view) never takes the strip, only the status bar's
+// activity dot, whose tooltip lists the ones running for 0.5 s.
+//
 // A UI watchdog logs any event-loop stall over OPAD_TRACE_STALL_MS (default 50) so violations are visible; set
 // OPAD_TRACE=1 (stderr) or OPAD_TRACE=<file> to see those and the timing scopes.
 #include <QElapsedTimer>
 #include <QObject>
+#include <QPointer>
+#include <QStringList>
 #include <QString>
 #include <QThread>
 #include <QTimer>
@@ -22,6 +29,8 @@
 
 class ProgressStrip;
 class Job;
+
+enum class JobKind { Foreground, Child, Background };
 
 namespace detail {
 // Shared between a Job (UI thread) and the Progress handles a worker holds; outlives the Job so a worker
@@ -53,6 +62,8 @@ class Job : public QObject {
   ~Job() override;
   bool cancelled() const { return m_state->cancel.load(); }
   bool active() const { return m_active; }
+  JobKind kind() const { return m_kind; }
+  Job* parentJob() const { return m_parent; }  // a Child's, while it exists
   const QString& title() const { return m_title; }
   qint64 elapsedMs() const { return m_clock.elapsed(); }
   Progress progress() const { return Progress(m_state); }
@@ -72,6 +83,8 @@ class Job : public QObject {
   QString m_title;
   bool m_twoBars;
   bool m_active = true;
+  JobKind m_kind = JobKind::Foreground;
+  QPointer<Job> m_parent;
   std::shared_ptr<detail::JobState> m_state;
   QElapsedTimer m_clock;
   QString m_lastPhase;                    // what the strip shows when it appears later than the update
@@ -84,26 +97,35 @@ class JobRunner : public QObject {
   Q_OBJECT
  public:
   explicit JobRunner(ProgressStrip* strip, QObject* parent = nullptr);
-  // A job whose work runs elsewhere; the caller drives setPhase/finish (or cancel via the strip).
-  Job* begin(const QString& title, bool twoBars = false);
+  // A job whose work runs elsewhere; the caller drives setPhase/finish (or cancel via the strip). A Child needs `parent`
+  // (without one it is a Background job).
+  Job* begin(const QString& title, bool twoBars = false, JobKind kind = JobKind::Foreground, Job* parent = nullptr);
   // Runs `work` on a worker thread. Exceptions become a failed finish; `done` runs on the UI thread.
-  Job* async(const QString& title, std::function<void(Progress)> work, std::function<void(bool ok, const QString& error)> done = {});
+  Job* async(const QString& title, std::function<void(Progress)> work, std::function<void(bool ok, const QString& error)> done = {},
+             JobKind kind = JobKind::Foreground, Job* parent = nullptr);
   // `step` does one small unit of UI-thread work and returns true while more remains. It runs in slices of
   // about 10 ms between events, starting on the next event-loop turn (never inside this call). `done(completed)`
   // runs once, before finished(); completed is false when the job was cancelled.
-  Job* sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool completed)> done = {});
+  Job* sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool completed)> done = {},
+              JobKind kind = JobKind::Foreground, Job* parent = nullptr);
   bool busy() const { return !m_jobs.empty(); }
-  Job* current() const { return m_jobs.empty() ? nullptr : m_jobs.back(); }
+  Job* current() const;  // the oldest Foreground job: what the strip shows and cancels
+  QStringList background() const;  // titles of the Background jobs (and orphaned children) running now
+  int begun() const { return m_begun; }  // jobs begun so far (benches count them)
  signals:
   void stripShown(bool shown);  // the owner may hide status-bar widgets that compete for the space
+  void activityChanged(const QStringList& titles);  // Background jobs running for 0.5 s or more; empty when none
  private:
   void slice(Job* j);
   void onFinished(Job* j);
   void refreshStrip();
+  void refreshActivity();
   ProgressStrip* m_strip;
-  std::vector<Job*> m_jobs;
-  QTimer m_showTimer;
+  std::vector<Job*> m_jobs;  // oldest first
+  QTimer m_showTimer, m_activityTimer;
   Job* m_shown = nullptr;
+  QStringList m_activity;
+  int m_begun = 0;
 };
 
 // Drops the last reference to `value` on a worker thread (UI-41): freeing large data (a replaced document, its display

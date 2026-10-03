@@ -127,7 +127,7 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
     parsed->request=json::parse(line.toStdString());const auto name=parsed->request.at("name").get<std::string>();
     validate_input(live_schema(name),parsed->request.value("arguments",json::object()));
     parsed->hash=QCryptographicHash::hash(QByteArray::fromStdString(parsed->request.dump()),QCryptographicHash::Sha256).toHex().toStdString();
-  },[this,session,parsed](bool ok,const QString& error){if(!session->socket)return;if(!ok){fail(session,"invalid_arguments",error);return;}dispatch(session,std::move(parsed->request),std::move(parsed->hash));});
+  },[this,session,parsed](bool ok,const QString& error){if(!session->socket)return;if(!ok){fail(session,"invalid_arguments",error);return;}dispatch(session,std::move(parsed->request),std::move(parsed->hash));},JobKind::Background);
 }
 void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,const std::string& receipt){
   if(!result["structuredContent"].contains("elapsed_ms") && session->requestTimer.isValid())result["structuredContent"]["elapsed_ms"]=session->requestTimer.elapsed();
@@ -159,7 +159,7 @@ void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,cons
     if(!receipt.empty())m_receipts[receipt].response=output;
     if(session->socket && session->socket->state()==QLocalSocket::ConnectedState)session->socket->write(output);
     session->receiving=false;if(session->socket)read(session);
-  });
+  },JobKind::Background);
 }
 void AgentBridge::fail(const std::shared_ptr<Session>& s,const std::string& code,const QString& message,const std::string& receipt){
   if(!receipt.empty())m_receipts[receipt].state=code=="cancelled"?"cancelled":"failed";
@@ -190,7 +190,7 @@ void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Rec
   },[this,session,bytes](bool ok,const QString& error){
     if(!ok){fail(session,"response_cancelled",error);return;}
     if(session->socket)session->socket->write(*bytes);session->receiving=false;if(session->socket)read(session);
-  });
+  },JobKind::Background);
 }
 void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::string hash){
   const auto name=request.at("name").get<std::string>();auto args=request.value("arguments",json::object());

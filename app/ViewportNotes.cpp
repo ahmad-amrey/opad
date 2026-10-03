@@ -192,7 +192,7 @@ void Viewport::updateAnnotations() {
         ++m_anchorsMeasured;
       }
       if (placed) updateAnnotations();
-    });
+    }, JobKind::Background);
   }
   m_noteCamera.Reset();  // so the next frame lays the cards out again
   QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
@@ -389,7 +389,7 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
           mark->fills.push_back((*built)->triangles);
           m_ctx->Redisplay(mark, Standard_False);
           redrawScene();
-        });
+        }, JobKind::Background);
       }
       box = rigid ? opad::body_bbox(m_doc->doc, item->second.key) : opad::node_world_bbox(m_doc->doc, m_doc->scene, target.body);
       boxSegments(box, mark->outline);

@@ -73,6 +73,9 @@ class AppDocument : public QObject {
   // A drawing goes where `placement` puts its XY plane and origin, after `plane` (resolved on the worker) if given.
   void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {});
   void cancelLoad();
+  // Where the display of the bodies starts in the load's overall progress, in per cent (the document's own part comes
+  // before: an .opad file is mostly display work, a translated one mostly translation).
+  int displayStart() const { return m_displayStart; }
   void refresh();
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
   bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
@@ -113,12 +116,14 @@ class AppDocument : public QObject {
   void pathChanged();
   void saved();  // successful explicit Save / Save As, not an open or title change
   void message(const QString& text);
-  void loadProgress(const QString& phase, int percent);  // percent < 0: unknown
+  void loadProgress(const QString& phase, int percent, int overall);  // percent < 0: unknown; overall: of the whole load
   void loadFinished(bool ok, const QString& error);
   void undoChanged();  // stacks or labels changed
 
  private:
-  opad::ImportOptions loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file);
+  opad::ImportOptions loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file, bool opad);
+  void startWorker(std::function<void()> work);
+  int m_displayStart = 45;
   struct Step {
     QString label;
     size_t count = 0;            // ops on the log while the step sits on the undo stack

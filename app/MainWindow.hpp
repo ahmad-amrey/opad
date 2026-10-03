@@ -102,9 +102,13 @@ class MainWindow : public QMainWindow {
   bool maybeSave();
   void showDocument(bool has);
   void beginLoad(std::function<void()> after);
-  void setLoadPhase(const QString& phase, int pct);
+  void setLoadPhase(const QString& phase, int pct, int overall = -1);  // overall < 0: from pct, in the display part
   QString meshPhase() const;
-  int overallPercent(const QString& phase, int pct) const;
+  void restoreLastView();  // the camera this file was last seen with (not in benches)
+  // An edit asked for while the bodies of a load still stream in (UI-40): it runs once they are all shown.
+  void deferEdit(QAction* a);
+  QPointer<QAction> m_afterStream;
+  QLabel* m_activityDot = nullptr;  // Background jobs (Jobs.hpp): shown while any has run 0.5 s, its tooltip names them
   void scheduleSelectionSync();
   // Volume, area and the tight box (TODO 10 B10) of a body or component, measured on a worker, then shown.
   void showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid);

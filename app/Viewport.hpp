@@ -13,6 +13,7 @@
 #include <V3d_Viewer.hxx>
 
 #include <QImage>
+#include <QPointer>
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QWidget>
@@ -106,6 +107,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // A viewer document became editable: the same shapes under content keys. What is meshed and drawn carries over.
   void renameBodyKeys(const std::map<std::string, std::string>& keys);
   int skippedCount() const { return static_cast<int>(m_meshSkipped.size()); }
+  // Bodies to be shown that are not yet: waiting for their mesh or in the display queue (meshingProgress reports it).
+  int remainingBodies() const { return static_cast<int>(m_waitingNodes + m_displayQueue.size()); }
+  // The job that reports bodies streaming in (a load, Displaying bodies): the display pump runs as its child, so its
+  // Cancel stops the pump too (UI-40). Null: the pump is a Background job.
+  void setStreamJob(Job* job);
+  int syncCount() const { return m_syncs; }  // full syncs so far and their time (benches: one per document change)
+  qint64 syncMs() const { return m_syncMs; }
   void fitSelection();
   void fitNodes(const std::vector<std::string>& ids);
   void standardView(const QString& name);
@@ -114,6 +122,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
 
   void warmUp();  // create the OpenGL viewer now rather than on first paint
   void setBlocked(bool on);  // while a file loads: mouse input is ignored (the shade window covers the view)
+  bool blocked() const { return m_blocked; }
+  const Job* pumpJob() const { return m_displayJob; }  // the display pump's job while it runs (benches)
   void benchShot(const QString& path);  // --bench-select with OPAD_BENCH_SHOT: hover the view cube, save a frame
   std::string benchHeaviest() const;       // OPAD_BENCH_FILTER: the body with the most faces, the pick target
   void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
@@ -545,7 +555,24 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::pair<int, int> m_lastSyncedSize{-1, -1};  // Qt size and display-scale stamp for syncWindowSize
   qreal m_cubeScale = 1.0;  // OCCT backing pixels per Qt point
   JobRunner* m_jobs = nullptr;
-  Job* m_displayJob = nullptr;                    // in-flight sync(): bodies being added to the context
+  // Display pump (UI-40): the mesh workers hand finished keys over (handOver, m_meshMu held: m_newlyMeshed, one queued
+  // pumpMeshed per batch); the nodes that waited for them join m_displayQueue, which the display job works through.
+  void handOver(const std::string& key);
+  void pumpMeshed();
+  void runPump();
+  void streamSettled();
+  std::vector<std::string> m_newlyMeshed;  // under m_meshMu
+  bool m_pumpPosted = false;               // under m_meshMu
+  std::unordered_map<std::string, std::vector<std::string>> m_waiting;  // body key -> nodes to show once it is meshed
+  size_t m_waitingNodes = 0;
+  std::deque<std::string> m_displayQueue;
+  bool m_streamAdded = false;  // bodies displayed since the stream last settled completely
+  unsigned m_pumpSteps = 0;
+  QElapsedTimer m_streamFit;   // the last fit while streaming
+  QPointer<Job> m_streamJob;
+  int m_syncs = 0;
+  qint64 m_syncMs = 0;
+  Job* m_displayJob = nullptr;                    // the display pump's job while it runs
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
   Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer

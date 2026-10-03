@@ -199,7 +199,7 @@ void MainWindow::writeSelectionFile() {
       opad::write_text_file(opad::cache_dir() / "selection.json", j.dump(2));
     } catch (const std::exception&) {
     }
-  });
+  }, JobKind::Background);
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {

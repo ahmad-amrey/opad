@@ -12,7 +12,6 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QThread>
-#include <thread>
 
 namespace {
 bool isExternalPath(const QString& path) {
@@ -24,6 +23,7 @@ bool isExternalPath(const QString& path) {
 std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
 QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
+  if (what == "opening") return AppDocument::tr("Opening %1").arg(file);
   if (what == "building") return AppDocument::tr("Building document");
   if (what == "preparing") return AppDocument::tr("Preparing bodies");
   if (what.rfind("translating", 0) == 0) {  // "translating" or "translating <scope> <i>/<n>" from the STEP reader
@@ -32,21 +32,34 @@ QString phaseLabel(const std::string& what, const QString& file) {
   }
   return QString::fromStdString(what);
 }
+// Where a phase lies in the whole load (UI-40): its start and span in per cent. The bodies' display after the document is
+// built takes the rest, from displayStart(). Measured: the Engine .opad reads and parses in 2 s, prepares its bodies in 3 s
+// and displays them in 7 s; a large STEP file is mostly translation (21 of 23 s), meshes and drawings mostly reading.
+std::pair<int, int> phaseSpan(const std::string& what, bool opad) {
+  if (opad) return what == "preparing" ? std::pair{20, 25} : std::pair{0, 20};  // opening: read and parsed by bytes
+  if (what == "reading") return {0, 10};
+  if (what == "building") return {70, 10};
+  if (what == "preparing") return {80, 5};
+  return {10, 60};  // translating, reading a drawing
+}
 }  // namespace
 
 AppDocument::AppDocument(QObject* parent) : QObject(parent), m_storage(std::make_shared<opad::Document>()), doc(*m_storage), m_alive(std::make_shared<std::atomic<bool>>(true)) {}
 
 AppDocument::~AppDocument() { *m_alive = false; }
 
-opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file) {
+opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file, bool opad) {
+  m_displayStart = opad ? 45 : 85;
   opad::ImportOptions o;
   o.author = QSettings().value("user/name").toString().trimmed().toStdString();
   auto last = std::make_shared<std::pair<std::string, int>>("", -2);
   auto lastEmit = std::make_shared<QElapsedTimer>();
   lastEmit->start();
   auto alive = m_alive;
-  o.progress = [this, cancel, alive, last, lastEmit, file](double frac, const std::string& what) {
-    const int pct = (what != "reading" && frac >= 0) ? static_cast<int>(frac * 100.0) : -1;  // reading has no progress source
+  o.progress = [this, cancel, alive, last, lastEmit, file, opad](double frac, const std::string& what) {
+    const int pct = frac >= 0 ? static_cast<int>(frac * 100.0) : -1;  // a STEP file's reading has no progress source
+    const auto [start, span] = phaseSpan(what.substr(0, what.find(' ')), opad);
+    const int overall = start + span * std::max(pct, 0) / 100;
     if (trace::enabled()) trace::log(QStringLiteral("import progress: %1 %2").arg(QString::fromStdString(what)).arg(frac));
     // The STEP reader reports thousands of sub-steps per second; the strip only needs ~20 updates/s, so
     // intermediate ones are dropped unless the phase itself changes.
@@ -55,7 +68,7 @@ opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<b
       *last = {what, pct};
       lastEmit->restart();
       const QString label = phaseLabel(what, file);
-      if (*alive) QMetaObject::invokeMethod(this, [this, label, pct] { emit loadProgress(label, pct); }, Qt::QueuedConnection);
+      if (*alive) QMetaObject::invokeMethod(this, [this, label, pct, overall] { emit loadProgress(label, pct, overall); }, Qt::QueuedConnection);
     }
     return !*cancel;
   };
@@ -83,13 +96,13 @@ void AppDocument::startOpen(const QString& path) {
   const bool external = isExternalPath(path);
   const bool viewer = external && viewerOpens;
   const QString file = QFileInfo(path).fileName() + QStringLiteral(" (%1 MB)").arg(QFileInfo(path).size() / (1024.0 * 1024.0), 0, 'f', 0);
-  opad::ImportOptions o = loadOptions(cancel, file);
+  opad::ImportOptions o = loadOptions(cancel, file, !external);
   o.viewer = viewer;  // viewer mode: nothing is prepared for saving (no healing, BREP text or hashing)
   const QString suffix = QFileInfo(path).suffix().toLower();
   o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
   auto alive = m_alive;
-  emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, external, viewer, o, token, current]() {
+  emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1, 0);
+  startWorker([this, alive, cancel, path, external, viewer, o, token, current]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
     QStringList warnings;
@@ -104,7 +117,7 @@ void AppDocument::startOpen(const QString& path) {
           for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
           slowRead = viewer && clock.elapsed() > 1500;
         }
-      } else *result = opad::Document::load(fsPath(path));
+      } else *result = opad::Document::load(fsPath(path), [&](double f) { return o.progress(f, "opening"); });  // by bytes
       // Parse the bodies here rather than on the UI thread when they are first displayed.
       if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
@@ -142,7 +155,7 @@ void AppDocument::startOpen(const QString& path) {
       if(!warnings.isEmpty()) emit message(warnings.join("; "));
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
-  }).detach();
+  });
 }
 
 void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane) {
@@ -159,7 +172,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   auto cancel = std::make_shared<std::atomic<bool>>(false);
   m_cancel = cancel;
   const QString file = QFileInfo(path).fileName();
-  opad::ImportOptions o = loadOptions(cancel, file);
+  opad::ImportOptions o = loadOptions(cancel, file, false);
   o.parent = parent.toStdString();
   o.placement = placement;
   // Import into a snapshot: selection/render callbacks retain a valid live document.
@@ -169,8 +182,8 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   auto alive = m_alive;
   const unsigned token = ++*m_loadToken;
   auto current = m_loadToken;
-  emit loadProgress(tr("Reading %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, token, current]() mutable {
+  emit loadProgress(tr("Reading %1").arg(file), -1, 0);
+  startWorker([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, token, current]() mutable {
     QString error;
     opad::json r;
     try {
@@ -214,7 +227,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
       }
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
-  }).detach();
+  });
 }
 
 void AppDocument::newDocument() {
@@ -364,6 +377,14 @@ void AppDocument::setRollback(const std::string& opId) {
   if (m_rollback == opId) return;
   m_rollback = opId;
   refresh();
+}
+
+// Loads run on their own thread, owned by Qt (a std::thread that posts to Qt can fault in its TLS cleanup at exit on
+// MinGW, see CLAUDE.md); it deletes itself when done.
+void AppDocument::startWorker(std::function<void()> work) {
+  QThread* t = QThread::create(std::move(work));
+  connect(t, &QThread::finished, t, &QObject::deleteLater);
+  t->start();
 }
 
 // The document being replaced and its scene are freed on a worker (UI-41): the Engine's are op JSON trees, 322 MB of BREP

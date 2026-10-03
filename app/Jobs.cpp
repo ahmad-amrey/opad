@@ -92,11 +92,32 @@ JobRunner::JobRunner(ProgressStrip* strip, QObject* parent) : QObject(parent), m
   m_showTimer.setSingleShot(true);
   m_showTimer.setInterval(kStripDelayMs);
   connect(&m_showTimer, &QTimer::timeout, this, &JobRunner::refreshStrip);
+  m_activityTimer.setSingleShot(true);
+  connect(&m_activityTimer, &QTimer::timeout, this, &JobRunner::refreshActivity);
   connect(m_strip, &ProgressStrip::cancelRequested, this, [this] { if (Job* c = current()) c->cancel(); });
 }
 
-Job* JobRunner::begin(const QString& title, bool twoBars) {
+Job* JobRunner::current() const {
+  for (Job* j : m_jobs)
+    if (j->m_kind == JobKind::Foreground) return j;
+  return nullptr;
+}
+
+QStringList JobRunner::background() const {
+  QStringList out;
+  for (Job* j : m_jobs)
+    if (j->m_kind == JobKind::Background || (j->m_kind == JobKind::Child && !j->m_parent)) out << j->title();
+  return out;
+}
+
+Job* JobRunner::begin(const QString& title, bool twoBars, JobKind kind, Job* parent) {
   Job* j = new Job(title, twoBars, this);
+  ++m_begun;
+  j->m_kind = kind == JobKind::Child && !parent ? JobKind::Background : kind;
+  if (j->m_kind == JobKind::Child) {
+    j->m_parent = parent;
+    connect(parent, &Job::cancelRequested, j, &Job::cancel);  // the strip's Cancel reaches the children
+  }
   m_jobs.push_back(j);
   connect(j, &Job::phaseChanged, this, [this, j](const QString& text, int pct) {
     j->m_lastPhase = text;
@@ -108,13 +129,17 @@ Job* JobRunner::begin(const QString& title, bool twoBars) {
     if (j == m_shown) m_strip->setOverall(pct);
   });
   connect(j, &Job::finished, this, [this, j] { onFinished(j); });
-  if (!m_shown && !m_showTimer.isActive()) m_showTimer.start();
-  else if (m_shown) refreshStrip();  // a newer job takes over the strip
+  if (j->m_kind != JobKind::Foreground) {
+    if (!m_activityTimer.isActive()) m_activityTimer.start(kStripDelayMs);
+  } else if (!m_shown && !m_showTimer.isActive()) {
+    m_showTimer.start();  // the oldest Foreground job keeps the strip once it shows
+  }
   return j;
 }
 
-Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, std::function<void(bool, const QString&)> done) {
-  Job* j = begin(title, false);
+Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, std::function<void(bool, const QString&)> done, JobKind kind,
+                      Job* parent) {
+  Job* j = begin(title, false, kind, parent);
   if (done) connect(j, &Job::finished, j, [done](bool ok, const QString& e) { done(ok, e); });
   Progress p = j->progress();
   // Qt adopts std::threads that post progress. On MinGW/Qt 6.10 their TLS cleanup can fault on exit,
@@ -144,8 +169,8 @@ Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, 
   return j;
 }
 
-Job* JobRunner::sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool)> done) {
-  Job* j = begin(title, false);
+Job* JobRunner::sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool)> done, JobKind kind, Job* parent) {
+  Job* j = begin(title, false, kind, parent);
   j->m_step = std::move(step);
   j->m_stepDone = std::move(done);
   // The first slice runs on the next event-loop turn, never inside this call: a job that completed
@@ -179,7 +204,8 @@ void JobRunner::slice(Job* j) {
 void JobRunner::onFinished(Job* j) {
   m_jobs.erase(std::remove(m_jobs.begin(), m_jobs.end(), j), m_jobs.end());
   j->deleteLater();
-  if (m_jobs.empty()) {
+  refreshActivity();
+  if (!current()) {
     m_showTimer.stop();
     if (m_shown) {
       m_shown = nullptr;
@@ -191,7 +217,24 @@ void JobRunner::onFinished(Job* j) {
   refreshStrip();
 }
 
-// Shows the most recent job in the strip (only after the 0.5 s grace period has elapsed once).
+// The Background jobs (and children whose parent has gone) that have run for the grace period, for the activity dot.
+void JobRunner::refreshActivity() {
+  QStringList titles;
+  qint64 wait = -1;
+  for (Job* j : m_jobs) {
+    if (j->m_kind == JobKind::Foreground || (j->m_kind == JobKind::Child && j->m_parent)) continue;
+    const qint64 left = kStripDelayMs - j->elapsedMs();
+    if (left <= 0) titles << j->title();
+    else wait = wait < 0 ? left : std::min(wait, left);
+  }
+  titles.removeDuplicates();
+  if (wait >= 0) m_activityTimer.start(static_cast<int>(wait) + 1);
+  if (titles == m_activity) return;
+  m_activity = titles;
+  emit activityChanged(titles);
+}
+
+// Shows the oldest Foreground job in the strip (only after the 0.5 s grace period has elapsed once).
 void JobRunner::refreshStrip() {
   Job* c = current();
   if (!c) return;

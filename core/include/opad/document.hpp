@@ -1,5 +1,6 @@
 #pragma once
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -46,8 +47,9 @@ class Document {
  public:
   Document();
   static Document create(const std::string& units = "mm");
-  static Document load(const std::filesystem::path& path);
-  static Document parse(const std::string& text, const std::filesystem::path& origin = {});
+  // `progress` (optional) gets the fraction read and parsed, by bytes, and returns false to cancel (Error "cancelled").
+  static Document load(const std::filesystem::path& path, const std::function<bool(double)>& progress = {});
+  static Document parse(const std::string& text, const std::filesystem::path& origin = {}, const std::function<bool(double)>& progress = {});
 
   std::string serialize() const;
   void save();                                     // to `path`
