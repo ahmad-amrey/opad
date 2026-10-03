@@ -29,6 +29,7 @@ struct Node {
   bool locked = false;  // not picked and not changed, moved or removed (Scene::effectively_locked: or under a locked component)
   json layer;  // a drawing layer as its file had it: {name, off, frozen, locked, plot, linetype, lineweight}; null otherwise
   bool by_layer = false;  // a drawing body in its layer's colour (DXF BYLAYER): a colour given to the layer applies to it
+  json line;  // a drawing body's own {linetype, pattern, lineweight} (DXF entities that set them) over its layer's; null otherwise
   std::string source_op;  // the import op that created it
   std::vector<std::string> modified_by;  // ops that touched this node after import
 };

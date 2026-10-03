@@ -350,6 +350,43 @@ TEST(linetype_patterns_reach_the_layers) {
   CHECK(layers["Plain"] == json({{"name", "Plain"}}));
 }
 
+// TODO 11 UI-92: an entity's own linetype and lineweight put it into a body of its own that carries them (line, over its
+// layer's), with the file's dashes; by block they are the insert's (or its layer's), in model space continuous; one
+// that only repeats its layer's (or Continuous on a continuous layer) stays with the layer's body.
+TEST(entity_linetypes_and_lineweights_reach_their_bodies) {
+  Files f;
+  auto line = [](const char* layer, double y, Groups extra) {
+    Groups g{{0, "LINE"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {11, "10"}, {21, std::to_string(y)}};
+    g.insert(g.end(), extra.begin(), extra.end());
+    return g;
+  };
+  Groups entities;
+  for (const auto& g : {line("Walls", 0, {}), line("Walls", 1, {{6, "CENTER"}}), line("Walls", 2, {{6, "DASHED"}, {370, "50"}}), line("Plain", 3, {{370, "70"}}),
+                        line("Plain", 4, {{6, "CONTINUOUS"}}), line("Plain", 5, {{6, "BYBLOCK"}}),
+                        Groups{{0, "INSERT"}, {8, "Plain"}, {6, "HIDDEN"}, {370, "35"}, {2, "K"}, {10, "0"}, {20, "10"}},
+                        Groups{{0, "INSERT"}, {8, "Walls"}, {2, "K"}, {10, "0"}, {20, "20"}}})
+    entities.insert(entities.end(), g.begin(), g.end());
+  write_text_file(f.dir / "pens.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LTYPE"},
+                                     {0, "LTYPE"}, {2, "DASHED"}, {73, "2"}, {40, "19.05"}, {49, "12.7"}, {49, "-6.35"},
+                                     {0, "LTYPE"}, {2, "CENTER"}, {73, "4"}, {40, "50.8"}, {49, "31.75"}, {49, "-6.35"}, {49, "6.35"}, {49, "-6.35"},
+                                     {0, "ENDTAB"}, {0, "TABLE"}, {2, "LAYER"},
+                                     {0, "LAYER"}, {2, "Walls"}, {62, "1"}, {70, "0"}, {6, "DASHED"}, {370, "50"},
+                                     {0, "LAYER"}, {2, "Plain"}, {62, "5"}, {70, "0"}, {0, "ENDTAB"}}) +
+                      section("BLOCKS", {{0, "BLOCK"}, {2, "K"}, {70, "0"}, {10, "0"}, {20, "0"}, {0, "LINE"}, {8, "0"}, {6, "BYBLOCK"}, {370, "-2"},
+                                         {10, "0"}, {20, "0"}, {11, "1"}, {21, "0"}, {0, "ENDBLK"}}) +
+                      section("ENTITIES", entities) + kEof);
+  for (bool viewer : {true, false}) {
+    const Scene s = resolve(import(f.dir / "pens.dxf", viewer));
+    std::map<std::string, std::vector<json>> lines;
+    for (const auto& id : s.all_bodies()) lines[s.node(id)->name].push_back(s.node(id)->line);
+    for (auto& [name, list] : lines) std::sort(list.begin(), list.end());
+    CHECK(lines["Walls"] == (std::vector<json>{json(), json({{"linetype", "CENTER"}, {"pattern", {31.75, -6.35, 6.35, -6.35}}})}));
+    CHECK(lines["Plain"] == (std::vector<json>{json(), json({{"linetype", "HIDDEN"}, {"lineweight", 0.35}}), json({{"lineweight", 0.7}})}));
+    CHECK(s.tree_json(-1).dump().find("\"line\":{") != std::string::npos);
+  }
+}
+
 // TODO 11 UI-89: the body of a layer's BYLAYER entities says so (by_layer), so a colour given to the layer reaches it and
 // not the entities drawn in colours of their own; a block's layer-0 BYLAYER entities follow the insert's layer.
 TEST(by_layer_bodies_are_marked) {

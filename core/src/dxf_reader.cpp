@@ -302,9 +302,10 @@ struct Ocs {
   gp_XYZ to_wcs(const gp_XYZ& p) const { return to_wcs(p.X(), p.Y(), p.Z()); }
 };
 
-// Geometry by (layer as written, colour key): model space, or a block's content in its own coordinates.
+// Geometry by (layer as written, colour key, linetype, lineweight): model space, or a block's content in its own
+// coordinates. Linetype "" and lineweight -1 are by layer, "BYBLOCK" and -2 by block.
 struct Space {
-  std::map<std::pair<std::string, uint32_t>, TopoDS_Compound> groups;
+  std::map<std::tuple<std::string, uint32_t, std::string, int>, TopoDS_Compound> groups;
 };
 
 // Where an entity's geometry goes and how its points map: drawing units -> mm, minus the model-space shift, z dropped.
@@ -390,6 +391,8 @@ class Reader {
     Space* space;
     std::string layer;
     uint32_t color;
+    std::string linetype;  // "" by layer, "BYBLOCK", else its own (6)
+    int weight = -1;       // 1/100 mm; -1 by layer, -2 by block, -3 the default (370)
   };
 
   void load(const std::filesystem::path& file);
@@ -398,6 +401,9 @@ class Reader {
   std::string decode(std::string_view raw) const;
   const std::string& layer_name(std::string_view raw);
   uint32_t layer_color(const std::string& name) const;
+  Out out(const Fields& f, Space* space);
+  std::string layer_linetype(const std::string& name) const;
+  int layer_weight(const std::string& name) const;
   uint32_t color_of(const Fields& f) const;
   void run(const std::vector<Entity>& list, size_t first, size_t last, Place& at);
   void entity(const Entity& e, Place& at);
@@ -413,7 +419,7 @@ class Reader {
 
   gp_Pnt pnt(const Place& at, const gp_XYZ& wcs) const { return gp_Pnt(wcs.X() * m_unit - at.sx, wcs.Y() * m_unit - at.sy, 0); }
   void add(const Out& o, const TopoDS_Shape& s) {
-    auto& c = o.space->groups[{o.layer, o.color}];
+    auto& c = o.space->groups[{o.layer, o.color, o.linetype, o.weight}];
     if (c.IsNull()) m_builder.MakeCompound(c);
     m_builder.Add(c, s);
   }
@@ -522,6 +528,26 @@ json Reader::Layer::info() const {
 uint32_t Reader::layer_color(const std::string& name) const {
   const auto it = m_layers.find(upper(name));
   return it == m_layers.end() ? kNoColor : it->second.color;
+}
+
+std::string Reader::layer_linetype(const std::string& name) const {
+  const auto it = m_layers.find(upper(name));
+  return it == m_layers.end() || it->second.linetype.empty() ? "Continuous" : it->second.linetype;
+}
+
+int Reader::layer_weight(const std::string& name) const {
+  const auto it = m_layers.find(upper(name));
+  return it == m_layers.end() || it->second.lineweight < 0 ? -3 : it->second.lineweight;
+}
+
+// An entity's layer, colour, linetype and lineweight: what goes into one body with it.
+Reader::Out Reader::out(const Fields& f, Space* space) {
+  Out o{space, layer_name(f.str(8, "0")), color_of(f)};
+  const std::string type = decode(trimmed(f.str(6)));
+  if (const auto u = upper(type); !u.empty() && u != "BYLAYER") o.linetype = u == "BYBLOCK" ? "BYBLOCK" : type;
+  const int weight = f.integer(370, -1);
+  o.weight = weight >= -3 && weight <= 211 ? weight : -1;
+  return o;
 }
 
 uint32_t Reader::color_of(const Fields& f) const {
@@ -714,9 +740,12 @@ void Reader::insert(const Fields& f, const Out& o, const Place& at, std::string_
       const auto p = placement(a11, a12, a21, a22, tx + m11 * ox + m12 * oy, ty + m21 * ox + m22 * oy);
       if (p.kind == Placement::None) return;
       for (const auto& [key, shape] : content.groups) {
-        const auto& [layer, color] = key;
-        Out target{o.space, layer == "0" ? o.layer : layer, color};
+        const auto& [layer, color, linetype, weight] = key;
+        Out target{o.space, layer == "0" ? o.layer : layer, color, linetype, weight};
         if (color == kByBlock) target.color = o.color == kByLayer && o.layer != "0" ? layer_color(o.layer) : o.color;
+        // By block: the insert's own, or by layer its layer's (named, when the content lies on a layer of its own).
+        if (linetype == "BYBLOCK") target.linetype = o.linetype.empty() && target.layer != o.layer ? layer_linetype(o.layer) : o.linetype;
+        if (weight == -2) target.weight = o.weight == -1 && target.layer != o.layer ? layer_weight(o.layer) : o.weight;
         add(target, placed(shape, p));
       }
     }
@@ -725,7 +754,7 @@ void Reader::insert(const Fields& f, const Out& o, const Place& at, std::string_
 void Reader::polyline(const Entity& e, const std::vector<const Entity*>& vertices, Place& at) {
   const auto& f = e.f;
   if (f.integer(60) == 1 || (at.model && f.integer(67) == 1)) return;
-  const Out o{at.space, layer_name(f.str(8, "0")), color_of(f)};
+  const Out o = out(f, at.space);
   const int flags = f.integer(70);
   if (flags & 64) {  // polyface mesh: positions, then faces naming them (negative index = invisible edge)
     std::vector<gp_Pnt> positions;
@@ -781,7 +810,7 @@ void Reader::entity(const Entity& e, Place& at) {
   const auto& f = e.f;
   if (f.integer(60) == 1) return;  // invisible
   if (at.model && f.integer(67) == 1) { ++m_paper; return; }  // paper space (layouts)
-  Out o{at.space, layer_name(f.str(8, "0")), color_of(f)};
+  Out o = out(f, at.space);
   const auto& t = e.type;
   if (t == "LINE") {
     segment(o, pnt(at, f.xyz(10)), pnt(at, f.xyz(11)));
@@ -1420,10 +1449,17 @@ Drawing Reader::read() {
   Place at{&model, distant ? out.origin.X() : 0, distant ? out.origin.Y() : 0, true};
   run(m_model, 0, m_model.size(), at);
 
+  std::map<std::string, std::vector<double>> patterns;  // by the upper-case decoded name
+  for (const auto& [name, d] : m_linetypes) patterns[upper(decode(name))] = d;
   for (const auto& [key, shape] : model.groups) {
-    const auto& [layer, color] = key;
+    const auto& [layer, color, linetype, weight] = key;
     const uint32_t rgb = color == kByLayer ? layer_color(layer) : color == kByBlock ? kNoColor : color;
-    out.add(layer, shape, rgb);
+    // Its own linetype and lineweight (by block in model space: continuous and the default); the layer's own are by layer.
+    Drawing::Pen pen{rgb, linetype == "BYBLOCK" ? "Continuous" : linetype, weight == -2 ? -3 : weight};
+    if (!pen.linetype.empty() && upper(pen.linetype) == upper(layer_linetype(layer))) pen.linetype.clear();
+    if (pen.lineweight != -1 && pen.lineweight == layer_weight(layer)) pen.lineweight = -1;
+    if (const auto p = patterns.find(upper(pen.linetype)); !pen.linetype.empty() && p != patterns.end()) out.patterns[pen.linetype] = p->second;
+    out.add(layer, shape, pen);
     if (color == kByLayer) out.by_layer[layer] = rgb;
     const auto it = m_layers.find(upper(layer));
     out.visible[layer] = it == m_layers.end() || it->second.visible;

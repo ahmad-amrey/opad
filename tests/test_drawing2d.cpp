@@ -255,6 +255,46 @@ TEST(linetypes_draw_as_their_dashes) {
   CHECK(linePattern(many, px).bits != 0xFFFF);
 }
 
+// UI-92: a body's own linetype and lineweight (DXF entities that set them) win over its layer's, also after the layer
+// changes; the rest follow the layer; a plot draws each in its own.
+TEST(own_linetypes_and_lineweights_win_over_the_layers) {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-2d-" + opad::new_uuid());
+  std::filesystem::create_directory(dir);
+  std::ostringstream out;
+  auto g = [&](int code, const std::string& value) { out << code << '\n' << value << '\n'; };
+  g(0, "SECTION"), g(2, "TABLES"), g(0, "TABLE"), g(2, "LAYER"), g(0, "LAYER"), g(2, "Walls"), g(62, "1"), g(70, "0"), g(6, "DASHED"), g(370, "50");
+  g(0, "ENDTAB"), g(0, "ENDSEC"), g(0, "SECTION"), g(2, "ENTITIES");
+  g(0, "LINE"), g(8, "Walls"), g(10, "0"), g(20, "0"), g(11, "10"), g(21, "0");
+  g(0, "LINE"), g(8, "Walls"), g(6, "CENTER"), g(10, "0"), g(20, "1"), g(11, "10"), g(21, "1");
+  g(0, "LINE"), g(8, "Walls"), g(370, "100"), g(10, "0"), g(20, "2"), g(11, "10"), g(21, "2");
+  g(0, "ENDSEC"), g(0, "EOF");
+  opad::write_text_file(dir / "own.dxf", out.str());
+  opad::Document doc = opad::Document::create();
+  opad::import_file(doc, dir / "own.dxf");
+  auto styles = [&doc] {
+    const opad::Scene scene = opad::resolve(doc);
+    std::multiset<std::tuple<std::string, double, bool, bool>> out;
+    for (const auto& id : scene.all_bodies()) {
+      const LineStyle s = lineStyle(scene, *scene.node(id));
+      out.insert({s.linetype, s.lineweight, s.ownType, s.ownWeight});
+    }
+    return out;
+  };
+  using Styles = std::multiset<std::tuple<std::string, double, bool, bool>>;
+  CHECK(styles() == (Styles{{"DASHED", 0.5, false, false}, {"CENTER", 0.5, true, false}, {"DASHED", 1.0, false, true}}));
+  const opad::Scene scene = opad::resolve(doc);
+  opad::commands::run("appearance", setLinetype(byName(scene)["Walls"], "HIDDEN"), &doc);
+  opad::commands::run("appearance", setLineweight(byName(opad::resolve(doc))["Walls"], 0.35), &doc);
+  CHECK(styles() == (Styles{{"HIDDEN", 0.35, false, false}, {"CENTER", 0.35, true, false}, {"HIDDEN", 1.0, false, true}}));
+  const opad::Scene now = opad::resolve(doc);
+  const plot::Sheet sheet = plot::collect(doc, now, plot::plane(doc, now, opad::Frame{}));
+  std::set<std::pair<std::vector<double>, double>> drawn;
+  for (const auto& s : sheet.styles) drawn.insert({s.dashes, s.weight});
+  CHECK(drawn == (std::set<std::pair<std::vector<double>, double>>{{dashes("HIDDEN"), 0.35}, {dashes("CENTER"), 0.35}, {dashes("HIDDEN"), 1.0}}));
+  std::error_code error;
+  std::filesystem::remove_all(dir, error);
+}
+
 // An import that does not say which bodies are in their layer's colour (an earlier build's, an SVG): a layer colour is
 // given to all of its bodies, and a layer state keeps a colour only when they share one.
 TEST(a_layer_colour_without_by_layer_marks_colours_every_body) {

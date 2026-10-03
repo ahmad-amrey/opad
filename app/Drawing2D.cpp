@@ -136,6 +136,26 @@ std::optional<Layer> layerAt(const opad::Scene& scene, const std::string& node) 
   return make(scene, *n, root->name);
 }
 
+LineStyle lineStyle(const opad::Scene& scene, const opad::Node& body) {
+  LineStyle s;
+  const opad::Node* layer = body.parent.empty() ? nullptr : scene.node(body.parent);
+  for (const json* f : {layer ? &fields(*layer) : nullptr, body.line.is_object() ? &body.line : nullptr}) {
+    if (!f) continue;
+    const bool own = f == &body.line;
+    if (f->contains("linetype") && ((*f)["linetype"].is_string() || own)) {
+      s.linetype = (*f)["linetype"].is_string() ? (*f)["linetype"].get<std::string>() : "";
+      s.pattern = patternOf(*f);
+      s.ownType = own;
+    }
+    if (f->contains("lineweight") && (*f)["lineweight"].is_number()) {
+      s.lineweight = (*f)["lineweight"].get<double>();
+      s.ownWeight = own;
+    }
+  }
+  if (upper(s.linetype) == "CONTINUOUS") s.linetype.clear(), s.pattern.clear();
+  return s;
+}
+
 json setOn(const Layer& layer, bool on) {
   json op = {{"target", layer.id}};
   shown(op, on, layer.frozen);

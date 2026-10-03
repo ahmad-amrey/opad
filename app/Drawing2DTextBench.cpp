@@ -1,6 +1,6 @@
-// Benches of drawing text (UI-92): text shaped as a text renderer shapes it, outlined on the load worker (core
-// drawing_text.cpp). Cases in tools/bench_cases/drawing2d.py; the shaping, bidi order and layout alone are
-// tests/test_drawing_text, the DXF placement tests/test_dxf.
+// Benches of drawing text and pens (UI-92): text shaped as a text renderer shapes it, outlined on the load worker (core
+// drawing_text.cpp), and lines in linetypes and lineweights of their own. Cases in tools/bench_cases/drawing2d.py; the
+// shaping, bidi order and layout alone are tests/test_drawing_text, the DXF side tests/test_dxf, line styles test_drawing2d.
 #include <QCoreApplication>
 #include <QImage>
 
@@ -95,6 +95,62 @@ OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
       // "Room غرفة": one line as wide as both words side by side (two words drawn over each other would be about half).
       const QRect line = pixels(mixed);
       require(line.width() > 3 * line.height(), QString("Latin and Arabic in one line lie side by side (%1 x %2 px)").arg(line.width()).arg(line.height()));
+      QCoreApplication::exit(*all ? 0 : 2);
+    });
+  });
+  return true;
+}
+
+// OPAD_BENCH_PENS=<prefix> on a DXF whose Walls layer is dashed and 0.5 mm wide (tools/bench_cases/drawing2d.py
+// pens_file): a line on it in a linetype of its own (CENTER) is drawn in its own dashes and the layer's width, one with a
+// lineweight of its own (1.00 mm) in the layer's dashes and its own width, the layer's other lines in the layer's; a block
+// line by block takes its insert's (HIDDEN on Plain). The layer turned HIDDEN and 0.35 mm in one step: its own lines keep
+// what is theirs. <prefix>.png
+OPAD_BENCH(OPAD_BENCH_PENS, pens) {
+  auto all = std::make_shared<bool>(true);
+  Check require = [all](bool ok, const QString& what) {
+    trace::log(QString("bench: pens: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    *all = *all && ok;
+  };
+  Viewport* v = w.m_viewport;
+  auto settled = [&w, v] {
+    int expected = 0;
+    for (const auto& id : w.m_doc->scene.all_bodies()) expected += w.m_doc->scene.effectively_visible(id);
+    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() >= expected && expected > 0 && !v->looksPending();
+  };
+  pollUntil(&w, settled, 60000, [&w, v, require, all, value, settled](bool shown) {
+    // The body on a layer whose own line style (Node::line) has these fields (null: none), "" none.
+    auto body = [&w](const std::string& layer, const opad::json& line) {
+      for (const auto& id : w.m_doc->scene.bodies_under(layerNamed(w.m_doc->scene, layer))) {
+        const opad::json& own = w.m_doc->scene.node(id)->line;
+        bool match = line.is_null() ? own.is_null() : own.is_object();
+        if (line.is_object())
+          for (const auto& [key, field] : line.items()) match = match && own.value(key, opad::json()) == field;
+        if (match) return id;
+      }
+      return std::string();
+    };
+    auto drawnAs = [v](const std::string& id, const char* linetype, double mm) {
+      const opad::json state = v->benchLookState(id);
+      const drawing2d::LinePattern p = drawing2d::linePattern(drawing2d::dashes(linetype), drawing2d::kPatternPixelsPerMm * v->displayScale() * v->renderScale());
+      return state.is_object() && state.value("linePattern", 0) == p.bits && state.value("lineFactor", 0) == p.factor &&
+             state.value("lineWidth", 0.0) == v->lineWidth(drawing2d::linePoints(mm));
+    };
+    const std::string byLayer = body("Walls", opad::json()), center = body("Walls", {{"linetype", "CENTER"}}),
+                      heavy = body("Walls", {{"lineweight", 1.0}}), byBlock = body("Plain", {{"linetype", "HIDDEN"}});
+    require(shown && !byLayer.empty() && !center.empty() && !heavy.empty() && !byBlock.empty(),
+            QString("the drawing is shown, its lines with styles of their own in bodies of their own (%1 bodies)").arg(v->displayedCount()));
+    if (!shown || byLayer.empty() || center.empty() || heavy.empty() || byBlock.empty()) return QCoreApplication::exit(2);
+    require(drawnAs(byLayer, "DASHED", 0.5) && drawnAs(center, "CENTER", 0.5) && drawnAs(heavy, "DASHED", 1.0) && drawnAs(byBlock, "HIDDEN", -1),
+            "the layer's lines dashed and 0.5 mm, CENTER of its own, 1.00 mm of its own, the block line in its insert's HIDDEN");
+    v->fitAll();
+    const drawing2d::Layer walls = *drawing2d::layerAt(w.m_doc->scene, byLayer);
+    w.m_doc->runAll({{"appearance", drawing2d::setLinetype(walls, "HIDDEN")}, {"appearance", drawing2d::setLineweight(walls, 0.35)}}, "layer pens");
+    pollUntil(&w, [v, drawnAs, byLayer] { return !v->looksPending() && drawnAs(byLayer, "HIDDEN", 0.35); }, 10000,
+              [&w, v, require, all, value, drawnAs, byLayer, center, heavy](bool changed) {
+      require(changed && drawnAs(center, "CENTER", 0.35) && drawnAs(heavy, "HIDDEN", 1.0),
+              "the layer turned HIDDEN and 0.35 mm: its lines follow, the CENTER line keeps its dashes and the heavy one its width");
+      v->grabImage().save(value + ".png");
       QCoreApplication::exit(*all ? 0 : 2);
     });
   });

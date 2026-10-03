@@ -428,9 +428,11 @@ class Drawing2DArea : public AreaController {
     rows += row(tr("Layer"), (layer ? QString::fromStdString(layer->name) : services().document()->nodeName(body->parent)).toHtmlEscaped());
     const QColor colour = body->has_color ? QColor::fromRgbF(body->color[0], body->color[1], body->color[2]) : QColor();
     rows += row(tr("Colour"), colour.isValid() ? QString("<span style=\"color:%1\">&#9632;</span> %1").arg(colour.name()) : tr("Drawing colour").toHtmlEscaped());
-    if (layer) {
-      rows += row(tr("Linetype"), (layer->linetype.empty() ? tr("Continuous") : QString::fromStdString(layer->linetype)).toHtmlEscaped());
-      rows += row(tr("Lineweight"), LayersPanel::weightText(layer->lineweight));
+    if (layer) {  // the object's: its layer's, or its own
+      const drawing2d::LineStyle line = drawing2d::lineStyle(scene, *body);
+      const QString own = " " + tr("(its own)");
+      rows += row(tr("Linetype"), (line.linetype.empty() ? tr("Continuous") : QString::fromStdString(line.linetype)).toHtmlEscaped() + (line.ownType ? own : QString()));
+      rows += row(tr("Lineweight"), LayersPanel::weightText(line.lineweight) + (line.ownWeight ? own : QString()));
     }
     if (m_hovered.contains("radius")) rows += row(tr("Radius"), units::format(units::Kind::Length, m_hovered["radius"].get<double>()));
     if (m_hovered.contains("length")) rows += row(tr("Length"), units::format(units::Kind::Length, m_hovered["length"].get<double>()));

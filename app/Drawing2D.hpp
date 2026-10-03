@@ -80,6 +80,16 @@ constexpr double kPatternPixelsPerMm = 1.25;  // logical pixels per pattern mill
 // A lineweight as wide as on paper at 96 dpi, in screen points, at least one: 0.25 mm and less are hairlines.
 double linePoints(double lineweight);
 
+// How a drawing body's lines are drawn (UI-92): its own linetype and lineweight (DXF entities that set them, Node::line)
+// over its layer's (the parent's Node::layer, as the Layers panel leaves it).
+struct LineStyle {
+  std::string linetype;  // "" continuous
+  std::vector<double> pattern;  // the file's dashes for it; empty: by its name
+  double lineweight = -1;  // mm; < 0 the default
+  bool ownType = false, ownWeight = false;  // the body's own, not its layer's
+};
+LineStyle lineStyle(const opad::Scene& scene, const opad::Node& body);
+
 // Layer states (LAYERSTATE): every layer's on, frozen, locked, plot, colour, linetype and lineweight, saved as
 // `display.layers` of a view op; restoring writes the appearance changes that bring the layers back to it (by layer id,
 // else by name), nothing for a layer already so.

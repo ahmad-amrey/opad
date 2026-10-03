@@ -58,9 +58,9 @@ extern char** environ;
 
 namespace opad {
 namespace detail {
-void Drawing::add(const std::string& layer, const TopoDS_Shape& s, uint32_t color) {
+void Drawing::add(const std::string& layer, const TopoDS_Shape& s, const Pen& pen) {
   if (layers.size() >= 10000 && !layers.count(layer)) throw Error("drawing exceeds 10000 layers");
-  auto& c = layers[layer][color]; if (c.IsNull()) builder.MakeCompound(c);
+  auto& c = layers[layer][pen]; if (c.IsNull()) builder.MakeCompound(c);
   if(transform.is_identity()) builder.Add(c,s);
   else if(mat_is_rigid(transform)) builder.Add(c,BRepBuilderAPI_Transform(s,trsf_from_mat(transform),true).Shape());
   else {
@@ -509,11 +509,19 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     for(const auto& [name, groups]:drawing.layers) {
       if(options.progress && !options.progress(double(children.size())/drawing.layers.size(),"building")) throw Error("cancelled");
       json bodies=json::array();
-      for(const auto& [color, shape]:groups) {  // one body per colour the layer's entities are drawn in
+      for(const auto& [pen, shape]:groups) {  // one body per colour (and own linetype or lineweight) the layer's entities are drawn in
+        const uint32_t color=pen.color;
         json meta={{"representation","drawing2d"},{"layer",name},{"source",file.filename().string()}};
         json body={{"type","body"},{"id",new_uuid()},{"name",name},{"representation","drawing2d"}};
         if(color!=Drawing::kNoColor) meta["color"]=body["color"]={((color>>16)&255)/255.0,((color>>8)&255)/255.0,(color&255)/255.0};
         if(const auto by=drawing.by_layer.find(name);by!=drawing.by_layer.end() && by->second==color) body["by_layer"]=true;  // older builds ignore it
+        json line=json::object();  // its own linetype and lineweight over its layer's (UI-92; older builds ignore it)
+        if(!pen.linetype.empty()) {
+          line["linetype"]=pen.linetype;
+          if(const auto p=drawing.patterns.find(pen.linetype);p!=drawing.patterns.end() && !p->second.empty()) line["pattern"]=p->second;
+        }
+        if(pen.lineweight!=-1) line["lineweight"]=pen.lineweight>=0?pen.lineweight/100.0:-1.0;
+        if(!line.empty()) body["line"]=line;
         body["key"]=detail::store_body(staged,shape,meta,options,false);
         if(bodies.empty() && drawing.images.count(name)) body["raster"]=drawing.images.at(name);
         bodies.push_back(std::move(body));

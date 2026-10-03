@@ -26,18 +26,13 @@ namespace {
 Quantity_Color rgb(const std::array<double, 3>& c) {
   return Quantity_Color(std::clamp(c[0], 0.0, 1.0), std::clamp(c[1], 0.0, 1.0), std::clamp(c[2], 0.0, 1.0), Quantity_TOC_sRGB);
 }
-// A layer's linetype as the view draws it, worked out once per linetype, pattern and scale (the UI thread's).
-drawing2d::LinePattern linePatternOf(const opad::json& fields, double pixelsPerMm) {
+// A linetype as the view draws it, worked out once per linetype, pattern and scale (the UI thread's).
+drawing2d::LinePattern linePatternOf(const drawing2d::LineStyle& style, double pixelsPerMm) {
   static std::map<std::string, drawing2d::LinePattern> known;
-  const std::string linetype = fields.contains("linetype") && fields["linetype"].is_string() ? fields["linetype"].get<std::string>() : "";
-  const opad::json pattern = fields.contains("pattern") ? fields["pattern"] : opad::json();
-  const std::string key = linetype + "|" + pattern.dump() + "|" + std::to_string(pixelsPerMm);
+  std::string key = style.linetype + "|" + std::to_string(pixelsPerMm);
+  for (double d : style.pattern) key += "|" + std::to_string(d);
   if (const auto it = known.find(key); it != known.end()) return it->second;
-  std::vector<double> own;
-  if (pattern.is_array())
-    for (const auto& d : pattern)
-      if (d.is_number()) own.push_back(d.get<double>());
-  return known[key] = drawing2d::linePattern(drawing2d::dashes(linetype, own), pixelsPerMm);
+  return known[key] = drawing2d::linePattern(drawing2d::dashes(style.linetype, style.pattern), pixelsPerMm);
 }
 looks::GhostStyle ghostOf(const Tokens& t) { return {{t.ghost.redF(), t.ghost.greenF(), t.ghost.blueF()}, t.ghost.alphaF()}; }  // the theme's role
 }  // namespace
@@ -52,11 +47,9 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
   base.opacity = body.opacity;
   if (body.representation == "drawing2d" && body.raster.is_null()) {  // a drawing's lines (UI-10), in its layer's weight and type (UI-89)
     if (!body.has_color) base.color = drawingInk();  // DXF colour 7 and no colour: light on dark, dark on light
-    const opad::Node* layer = body.parent.empty() ? nullptr : m_doc->scene.node(body.parent);
-    const opad::json& fields = layer && layer->layer.is_object() ? layer->layer : opad::json::object();
-    const double weight = fields.contains("lineweight") && fields["lineweight"].is_number() ? fields["lineweight"].get<double>() : -1;
-    base.lineWidth = lineWidth(drawing2d::linePoints(weight));  // hairlines at least one screen pixel wide on any display and render scale
-    const drawing2d::LinePattern dashes = linePatternOf(fields, drawing2d::kPatternPixelsPerMm * displayScale() * renderScale());
+    const drawing2d::LineStyle style = drawing2d::lineStyle(m_doc->scene, body);  // or its own (UI-92)
+    base.lineWidth = lineWidth(drawing2d::linePoints(style.lineweight));  // hairlines at least one screen pixel wide on any display and render scale
+    const drawing2d::LinePattern dashes = linePatternOf(style, drawing2d::kPatternPixelsPerMm * displayScale() * renderScale());
     base.linePattern = dashes.bits;
     base.lineFactor = dashes.factor;
   }
