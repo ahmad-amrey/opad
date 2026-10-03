@@ -11,42 +11,12 @@ endif()
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-set(OPAD_APP_SOURCES
-  main.cpp
-  AppDocument.cpp AppDocument.hpp
-  AppSnapshot.cpp SketchRecovery.cpp RecoveryManager.cpp RecoveryManager.hpp
-  AgentBridge.cpp AgentBridge.hpp AgentSettings.cpp AgentWork.cpp AgentBench.cpp AgentRegistration.cpp AgentRegistration.hpp
-  Theme.cpp Theme.hpp
-  Icons.cpp Icons.hpp
-  Ribbon.cpp Ribbon.hpp
-  EmptyState.cpp EmptyState.hpp
-  FileAssociations.cpp FileAssociations.hpp
-  Viewport.cpp ViewportPicking.cpp ViewportPickingBench.cpp ViewportDesign.cpp ViewportInspect.cpp ViewportNotes.cpp ViewportRefine.cpp ViewportSection.cpp Viewport.hpp
-  ViewportSelection.cpp ViewportSettings.cpp
-  ViewportTracking.cpp
-  Notes.cpp Notes.hpp AnnotationEditor.cpp AnnotationEditor.hpp
-  DesignController.cpp DesignController.hpp PlanePicker.cpp PlanePicker.hpp
-  DesignPanels.cpp DesignPanels.hpp
-  CheckPanel.cpp CheckPanel.hpp
-  SketchEditor.cpp SketchNodes.cpp SketchTools.cpp SketchEditor.hpp SketchGeometryCache.cpp SketchGeometryCache.hpp
-  SketchPanel.cpp SketchPanel.hpp SketchWorkflow.cpp
-  DimensionHandle.cpp DimensionHandle.hpp
-  InstanceBrowser.cpp
-  SketchPrimitives.cpp
-  SketchModify.cpp
-  SketchReference.cpp
-  SketchImages.cpp
-  GeometrySelection.cpp
-  Panels.cpp Panels.hpp
-  ShortcutEditor.cpp ShortcutEditor.hpp ShortcutBench.cpp
-  Jobs.cpp Jobs.hpp
-  GuidedTool.cpp GuidedTool.hpp
-  BodyShape.cpp BodyShape.hpp
-  NavCube.cpp NavCube.hpp
-  CrashLog.cpp CrashLog.hpp
-  I18n.cpp I18n.hpp i18n.qrc
-  res.qrc
-  MainWindow.cpp MainWindow.hpp DrawingWizard.cpp DrawingPlacer.cpp DrawingPlacer.hpp ExportDialog.cpp Todo5Bench.cpp Todo9Bench.cpp LargeSketchBench.cpp)
+# Every .cpp/.hpp under app/ is part of the app: CONFIGURE_DEPENDS re-globs at each build, so a new file needs no edit
+# here and parallel branches never meet in a source list. A file for one platform has its own extension (the .mm below)
+# or guards its body; anything else to leave out goes into list(REMOVE_ITEM) here.
+file(GLOB_RECURSE OPAD_APP_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.hpp)
+list(SORT OPAD_APP_SOURCES)
+list(APPEND OPAD_APP_SOURCES res.qrc i18n.qrc)
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)
   find_program(OPAD_SIPS NAMES sips REQUIRED)
