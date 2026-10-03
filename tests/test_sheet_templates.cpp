@@ -325,6 +325,26 @@ TEST(template_from_a_dxf_file) {
   std::filesystem::remove_all(dir, e);
 }
 
+TEST(pictorial_frames_hug_their_linework) {
+  // A cylinder's iso view (its box's corners turned would make the frame about a quarter too big) and a part turned 30
+  // degrees in a front view: their frames are their linework's extent.
+  Document doc = Document::create();
+  run(doc, "feature", {{"kind", "cylinder"}, {"inputs", {{"diameter", "20 mm"}, {"height", "10 mm"}}}});
+  const std::string turned = box(doc, 30, 10, 5);
+  const double c = std::cos(M_PI / 6), s30 = std::sin(M_PI / 6);
+  run(doc, "transform", {{"target", turned}, {"matrix", {c, -s30, 0, 80, s30, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}});
+  const json made = run(doc, "sheet", {{"size", "A3"}, {"views", "front,iso"}, {"scale", "1:1"}});
+  Scene s = resolve(doc);
+  const auto frames = layout(doc, s, *s.sheet(made["id"].get<std::string>()));
+  for (const auto& v : made["views"]) {
+    const ViewFrame& f = frame(frames, v["id"].get<std::string>());
+    const auto g = project(doc, s, view_spec(s, *s.sheet_view(v["id"].get<std::string>())));
+    const std::array<double, 4> lines{f.at[0] + f.scale * (g->bounds[0] - f.centre[0]), f.at[1] + f.scale * (g->bounds[1] - f.centre[1]),
+                                      f.at[0] + f.scale * (g->bounds[2] - f.centre[0]), f.at[1] + f.scale * (g->bounds[3] - f.centre[1])};
+    for (int k = 0; k < 4; ++k) CHECK_NEAR(f.box[size_t(k)], lines[size_t(k)], 0.02);
+  }
+}
+
 TEST(template_fields_from_a_dxf_file) {
   // A company title block with placeholders ({title}, <DWG_NO>, {prop:finish}) and an attribute definition (DRAWN_BY), as
   // CAD templates carry them; its labels are plain text.

@@ -122,6 +122,13 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
               orient(side) == "left" && orient(iso) == "iso" && w.workspaceId() == "drawings" && !page->empty() && page->tabs()->count() == 1,
           "an ISO A3 sheet at 2:1: front, top (below), the view from the left (right of it), iso; shown in its tab");
     check(waitFor(settled, 30000), "every view drawn in its final linework");
+    {
+      double worst = 0;  // a frame's sides from its linework's (the isometric view's included)
+      for (const auto& s : canvas->viewStates())
+        worst = std::max({worst, std::fabs(s.frame.left() - s.linework.left()), std::fabs(s.frame.right() - s.linework.right()),
+                          std::fabs(s.frame.top() - s.linework.top()), std::fabs(s.frame.bottom() - s.linework.bottom())});
+      check(worst < 0.05, QString("every frame hugs its view's linework (at most %1 mm off)").arg(worst, 0, 'f', 3));
+    }
     const QRectF ff = state(front).frame, ft = state(top).frame, fs = state(side).frame, fi = state(iso).frame;
     check(std::fabs(ff.center().x() - ft.center().x()) < 0.01 && ft.center().y() > ff.center().y() && std::fabs(ff.center().y() - fs.center().y()) < 0.01 &&
               fs.center().x() > ff.center().x() && fi.center().x() > ff.center().x() && fi.center().y() > ff.center().y() &&

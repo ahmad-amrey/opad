@@ -9,13 +9,18 @@
 #include <TopoDS.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Cylinder.hxx>
+#include <OSD_Parallel.hxx>
+#include <Standard_Failure.hxx>
+#include <TopLoc_Location.hxx>
 #include <gp_Elips.hxx>
+#include <gp_Trsf.hxx>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <unordered_map>
 
@@ -27,6 +32,11 @@ namespace opad::drawing {
 namespace {
 
 double dot3(const Vec3& a, const Vec3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+// Bodies measured in a turned view's axes (view_extent): body key + turn -> xmin, ymin, xmax, ymax (empty when it could not
+// be measured so). Keys are content addresses: valid for every document.
+std::mutex g_turned_mu;
+std::unordered_map<std::string, std::array<double, 4>> g_turned;
 Vec3 cross3(const Vec3& a, const Vec3& b) { return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}; }
 Vec3 scaled(const Vec3& a, double s) { return {a[0] * s, a[1] * s, a[2] * s}; }
 Vec3 plus3(const Vec3& a, const Vec3& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
@@ -338,7 +348,10 @@ json ViewFrame::to_json() const {
 }
 
 std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const ViewSpec& spec) {
-  // The corners of every body's tight box (moved by its explode offset), in view coordinates.
+  // Bodies square to the view: the corners of their tight boxes (moved by their explode offsets), which is exact. Bodies
+  // seen turned (pictorial views, turned parts) of a part the exact tier draws: measured in the view's axes, where the
+  // turned corners of their own boxes would come out up to a quarter too big (cached by key and turn); of a bigger model
+  // the corners still (a measure per turn of every body would cost as much as the projection).
   Vec3 x, y, z;
   view_axes(spec, x, y, z);
   std::array<double, 4> e{1e300, 1e300, -1e300, -1e300};
@@ -347,7 +360,75 @@ std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const
   for (const auto& [node, world] : bodies)
     if (const Node* n = scene.node(node)) keys.push_back(n->body_key);
   warm_tight_bboxes(doc, keys);
-  for (const auto& [node, world] : bodies) {
+  std::vector<std::string> turned(bodies.size());  // body -> its key and turn, when measured turned
+  std::vector<std::array<double, 9>> turns(bodies.size());
+  bool small = false;
+  {
+    ViewSpec probe = spec;
+    probe.quality = Quality::Auto;
+    try {
+      small = choose_tier(doc, scene, probe) == Quality::Exact;
+    } catch (const std::exception&) {
+    }
+  }
+  std::vector<size_t> missing;
+  for (size_t i = 0; small && i < bodies.size(); ++i) {
+    const Node* n = scene.node(bodies[i].first);
+    if (!n) continue;
+    const Mat4& w = bodies[i].second;
+    const Vec3 rows[3] = {x, y, z};
+    bool square = true;
+    std::string id = n->body_key;
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c) {
+        const double v = rows[r][0] * w.at(0, c) + rows[r][1] * w.at(1, c) + rows[r][2] * w.at(2, c);
+        turns[i][static_cast<size_t>(3 * r + c)] = v;
+        square = square && (std::fabs(v) < 1e-12 || std::fabs(std::fabs(v) - 1) < 1e-12);
+        char text[32];
+        std::snprintf(text, sizeof text, "|%.9f", std::fabs(v) < 5e-10 ? 0.0 : v);
+        id += text;
+      }
+    if (square) continue;
+    turned[i] = id;
+    std::lock_guard<std::mutex> lock(g_turned_mu);
+    if (!g_turned.count(id)) missing.push_back(i);
+  }
+  if (!missing.empty()) {
+    std::vector<std::array<double, 4>> found(missing.size(), {1, 1, -1, -1});
+    OSD_Parallel::For(0, static_cast<int>(missing.size()), [&](int k) {
+      const size_t i = missing[static_cast<size_t>(k)];
+      const auto& r = turns[i];
+      try {
+        gp_Trsf t;
+        t.SetValues(r[0], r[1], r[2], 0, r[3], r[4], r[5], 0, r[6], r[7], r[8], 0);
+        const Bnd_Box b = tight_bbox(body_shape(doc, scene.node(bodies[i].first)->body_key).Moved(TopLoc_Location(t)));
+        if (b.IsVoid()) return;
+        double c[6];
+        b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+        found[static_cast<size_t>(k)] = {c[0], c[1], c[3], c[4]};
+      } catch (const std::exception&) {
+      } catch (const Standard_Failure&) {  // not a rigid turn (a scaled node): its corners
+      }
+    });
+    std::lock_guard<std::mutex> lock(g_turned_mu);
+    if (g_turned.size() > 20000) g_turned.clear();
+    for (size_t k = 0; k < missing.size(); ++k) g_turned[turned[missing[k]]] = found[k];
+  }
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    const auto& [node, world] = bodies[i];
+    if (!turned[i].empty()) {
+      std::array<double, 4> b;
+      {
+        std::lock_guard<std::mutex> lock(g_turned_mu);
+        b = g_turned[turned[i]];
+      }
+      if (b[0] <= b[2]) {  // its turned extent, moved where the node is
+        const Vec3 shift{world.at(0, 3), world.at(1, 3), world.at(2, 3)};
+        const double u = dot3(shift, x), v = dot3(shift, y);
+        e = {std::min(e[0], b[0] + u), std::min(e[1], b[1] + v), std::max(e[2], b[2] + u), std::max(e[3], b[3] + v)};
+        continue;
+      }
+    }
     const Bnd_Box b = node_tight_bbox(doc, scene, node, false);
     if (b.IsVoid()) continue;
     const Mat4 placed = scene.world(node);

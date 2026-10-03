@@ -397,8 +397,24 @@ void SheetCanvas::start() {
         };
         p.setPhase(phase, -1);
         const auto frames = opad::drawing::layout(doc, scene, *sheet);
+        // What the canvas shows of a frame hugs the linework once it is known (a big model's pictorial view is laid out by
+        // its bodies' turned boxes, up to a quarter bigger); the layout itself never depends on what is cached.
+        const auto hug = [](ViewFrame f, const ViewGeometry& g) {
+          if (g.bounds[2] > g.bounds[0] || g.bounds[3] > g.bounds[1])
+            f.box = {f.at[0] + f.scale * (g.bounds[0] - f.centre[0]), f.at[1] + f.scale * (g.bounds[1] - f.centre[1]),
+                     f.at[0] + f.scale * (g.bounds[2] - f.centre[0]), f.at[1] + f.scale * (g.bounds[3] - f.centre[1])};
+          return f;
+        };
         Part f;
         f.frames = frames;
+        for (auto& fr : f.frames) {
+          const opad::SheetView* v = fr.error.empty() ? scene.sheet_view(fr.id) : nullptr;
+          if (!v || p.cancelled()) continue;
+          try {
+            if (const auto g = cached_projection(doc, scene, view_spec(scene, *v))) fr = hug(fr, *g);
+          } catch (const std::exception&) {
+          }
+        }
         send(std::move(f));
         opad::json skipped = opad::json::array();
         auto paper = std::make_shared<Display>();
@@ -428,7 +444,7 @@ void SheetCanvas::start() {
             vp.kind = Part::View;
             vp.id = fr.id;
             vp.display = out;
-            vp.box = fr.box;
+            vp.box = hug(fr, g).box;
             vp.bounds = out->bounds();
             vp.snaps = std::make_shared<const SnapIndex>(*out);
             vp.draft = draft;
