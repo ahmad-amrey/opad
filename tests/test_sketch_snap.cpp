@@ -240,4 +240,31 @@ TEST(a_locked_line_stops_where_other_guides_and_curves_cross_it) {
   CHECK_NEAR(o.v, 12.9 * s30 / c30, 1e-12);
 }
 
+TEST(a_slanted_lock_stops_where_it_crosses_a_grid_line) {
+  // Locked from (-20, -20) towards (0, 10), a 10 grid: the foot of (5.5, 18) is nearest the line's crossing with y = 20
+  // (at x = -20 + 40 * 2 / 3), not with x = 0 or x = 10, nor whole steps from (-20, -20).
+  const double len = std::hypot(20, 30);
+  const Guide lock{-20, -20, 20 / len, 30 / len, 1};
+  const Pick p = along(lock, 5.5, 18, 0.5, 10, {}, {});
+  CHECK(p.by == Pick::By::Guide);
+  CHECK_NEAR(p.u, -20 + 40.0 * 2 / 3, 1e-12);
+  CHECK_NEAR(p.v, 20, 1e-12);
+  // Further along, x = 10 comes first (at y = 25); a node the line runs through is both.
+  const Pick q = along(lock, 12, 25.5, 0.5, 10, {}, {});
+  CHECK_NEAR(q.u, 10, 1e-12);
+  CHECK_NEAR(q.v, 25, 1e-12);
+  const Pick n = along(lock, 1, 10.5, 0.5, 10, {}, {});
+  CHECK_NEAR(n.u, 0, 1e-12);
+  CHECK_NEAR(n.v, 10, 1e-12);
+  // An axis lock: the grid lines across it, as project; a stop within the capture still comes first.
+  double pu, pv;
+  crossGrid({3.3, 1.7, 0, 1, 1}, 9, 6.4, 1, pu, pv);
+  CHECK(pu == 3.3);
+  CHECK_NEAR(pv, 6, 1e-12);
+  crossGrid({3.3, 1.7, 1, 0, 1}, 8.6, 9, 1, pu, pv);
+  CHECK(pv == 1.7);
+  CHECK_NEAR(pu, 9, 1e-12);
+  CHECK(along(lock, 5.5, 18, 0.5, 10, {{0, 18.2, 1, 0, 2}}, {}).by == Pick::By::Cross);
+}
+
 CHECK_MAIN()

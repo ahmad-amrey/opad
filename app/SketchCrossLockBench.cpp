@@ -15,7 +15,8 @@ using namespace opad::design;
 // points offer their crossing (A.x, B.y); the user's case: acquire A, follow A's vertical, hold Shift (the lock), rest
 // on B while locked (acquired), go back level with B far off the line, click: exactly (A.x, B.y); a Shift tap leaves the
 // lock on until Esc (the polyline goes on) or the click; the locked line stops on a circle (and the point lands on it)
-// and on grid lines; at most six tracked points, the oldest out; resting again lets one go; a new tool starts afresh.
+// and on grid lines (a slanted lock where it crosses them); at most six tracked points, the oldest out; resting again
+// lets one go; a new tool starts afresh.
 void SketchEditor::benchCrossLock() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_CROSSLOCK");
   bool ok = true;
@@ -204,6 +205,21 @@ void SketchEditor::benchCrossLock() {
   shift(false);
   sketchMove(0, 10, Qt::NoModifier, false);
   check(!m_lock && exact(m_cursor.u, 0) && exact(m_cursor.v, 10), "Shift let go after a hold: free again");
+
+  // With grid snapping a slanted lock stops where it crosses a grid line (y = 20 here), not whole steps from the corner.
+  f9->trigger();
+  sketchMove(0.3, 9.8, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Grid && exact(m_cursor.u, 0) && exact(m_cursor.v, 10) && step == 10, "with F9 on the corner follows the grid nodes (10 mm)");
+  shift(true);
+  sketchMove(5.5, 18, Qt::ShiftModifier, false);
+  check(m_lock && m_cursor.kind == Snap::Kind::Locked && m_cursor.grid && std::abs(m_cursor.u - (-20 + 40.0 * 2 / 3)) < 1e-9 && exact(m_cursor.v, 20),
+        QString("a slanted lock stops where it crosses the grid line y = 20 (%1, %2)").arg(m_cursor.u, 0, 'g', 12).arg(m_cursor.v, 0, 'g', 12));
+  shot(".slanted.png");
+  sketchMove(12, 25.5, Qt::ShiftModifier, false);
+  check(m_cursor.kind == Snap::Kind::Locked && exact(m_cursor.u, 10) && std::abs(m_cursor.v - 25) < 1e-9, QString("further on, where it crosses x = 10 (%1, %2)").arg(m_cursor.u).arg(m_cursor.v));
+  rest(350);
+  shift(false);
+  f9->trigger();
   setTool("select");
   shot(".png");
   QCoreApplication::exit(ok ? 0 : 2);

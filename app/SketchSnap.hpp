@@ -2,10 +2,10 @@
 // The order the sketch takes its inferences in once no object snap (point, midpoint, quadrant, intersection) holds
 // the pointer: a crossing (two guides, a guide and the angle ray, or either of them and a curve) > a grid node > one
 // guide > the angle ray > a curve > the grid. With grid snapping on, a guide is quantised along itself: an axis guide
-// to the grid lines it crosses, any other (an extension, the angle ray, the Shift lock) by whole steps from its anchor.
+// to the grid lines it crosses, any other (an extension, the angle ray) by whole steps from its anchor.
 // Cross-locking (UI-19): points acquired by resting the pointer on them (track) each add their guides, so two of them
 // cross at (A.x, B.y); Shift locks the pointer onto one guide, and along it (along) it stops where another guide, the
-// angle ray or a curve crosses it, else at whole grid steps.
+// angle ray or a curve crosses it, else where it crosses a grid line (crossGrid: also a slanted lock).
 // No Qt and no sketch here: tests/test_sketch_snap.cpp.
 #include <algorithm>
 #include <cstddef>
@@ -193,9 +193,32 @@ inline bool track(std::vector<int>& tracked, int id, std::size_t most = 6) {
   return true;
 }
 
+// The point of g nearest (u, v) on a grid line (x or y a whole number of steps): for an axis guide the grid lines across
+// it (as project), for a slanted one either set of lines, whichever it meets first.
+inline void crossGrid(const Guide& g, double u, double v, double step, double& pu, double& pv) {
+  const double along = (u - g.x) * g.dx + (v - g.y) * g.dy;
+  double best = HUGE_VAL;
+  pu = g.x + along * g.dx;
+  pv = g.y + along * g.dy;
+  const double fu = pu, fv = pv;
+  if (std::abs(g.dx) > 1e-12) {
+    const double x = onGrid(fu, step), k = (x - g.x) / g.dx;
+    best = std::abs(k - along);
+    pu = x;
+    pv = std::abs(g.dy) < 1e-12 ? g.y : g.y + k * g.dy;
+  }
+  if (std::abs(g.dy) > 1e-12) {
+    const double y = onGrid(fv, step), k = (y - g.y) / g.dy;
+    if (std::abs(k - along) < best) {
+      pu = std::abs(g.dx) < 1e-12 ? g.x : g.x + k * g.dx;
+      pv = y;
+    }
+  }
+}
+
 // The pointer locked onto `lock`: its foot on the line, pulled within t along it to where another guide (not one of
-// the lock's own point) or a curve crosses the line, the nearest; else whole grid steps along it (project), else the
-// foot. Cross: `other` the guide crossing it or `curve` the curve; Guide: on the lock alone (guide stays -1).
+// the lock's own point) or a curve crosses the line, the nearest; else where it crosses a grid line (crossGrid), else
+// the foot. Cross: `other` the guide crossing it or `curve` the curve; Guide: on the lock alone (guide stays -1).
 inline Pick along(const Guide& lock, double u, double v, double t, double step, const std::vector<Guide>& guides, const std::vector<Curve>& curves) {
   Pick p;
   project(lock, u, v, 0, p.u, p.v);
@@ -220,7 +243,7 @@ inline Pick along(const Guide& lock, double u, double v, double t, double step, 
   }
   if (p.by == Pick::By::Cross) return p;
   p.by = Pick::By::Guide;
-  project(lock, u, v, step, p.u, p.v);
+  if (step > 0) crossGrid(lock, u, v, step, p.u, p.v);
   return p;
 }
 }  // namespace sketchsnap

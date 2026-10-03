@@ -566,7 +566,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     curves.push_back(c);curveIds.push_back(e.id);
   }
   using By=sketchsnap::Pick::By;
-  if(m_lock) {  // along the locked line: where another guide, the angle ray or a curve crosses it, else whole grid steps
+  if(m_lock) {  // along the locked line: where another guide, the angle ray or a curve crosses it, else a grid line
     if(angled)guide(ray,{Snap::Kind::Angle,from->id,false,false});
     const auto pick=sketchsnap::along(m_lock->line,u,v,t,step,guides,curves);
     s.u=pick.u;s.v=pick.v;s.kind=Snap::Kind::Locked;s.target=m_lock->line.anchor;s.line=m_lock->line;s.onLine=true;
