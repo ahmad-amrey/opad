@@ -503,6 +503,8 @@ struct SceneBuilder::Impl {
         if (v.is_null()) n->properties.erase(k);
         else n->properties[k] = v;
       }
+    } else if (!Document::known_type(type)) {
+      unresolved(id, type, "needs a newer OPAD (op '" + type + "')");
     }
   }
 

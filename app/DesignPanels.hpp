@@ -14,6 +14,7 @@
 #include <map>
 
 #include "AppDocument.hpp"
+#include "PanelFooter.hpp"
 #include "opad/design/feature.hpp"
 
 // A line edit for an expression ("width / 2 + 3 mm") with its value, or what is wrong with it, underneath.
@@ -84,6 +85,7 @@ class FeaturePanel : public QWidget {
   // As tall as the rows this feature shows (a fillet's two no longer sat in an extrude-sized panel), and wide enough
   // for a pick box beside "By rule…" to say "3 selected" rather than "3 selec…".
   QSize preferredSize(int width) const;
+  PanelFooter* footer() const { return m_footer; }
  signals:
   void inputsChanged();                 // anything that changes the result
   void activeInputChanged(const QString& input);
@@ -115,7 +117,7 @@ class FeaturePanel : public QWidget {
   QLabel* m_status;
   QLabel* m_hiddenWarning;
   QVBoxLayout* m_rows;
-  QPushButton* m_ok;
+  PanelFooter* m_footer;
   struct Row {
     QWidget* row = nullptr;
     ExprEdit* expr = nullptr;

@@ -13,6 +13,7 @@ class QLabel;
 namespace shortcuts {
 enum Scope { Everywhere, OutsideSketch, SketchOnly };
 Scope scope(const QString& id);
+void setScope(const QString& id,Scope scope);  // a command that says its own scope (CommandInfo::scope)
 bool overlaps(const QString& first,const QString& second);
 bool conflicts(const QKeySequence& first,const QKeySequence& second);
 void migrate(QSettings&);

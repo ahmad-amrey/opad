@@ -14,6 +14,7 @@
 
 #include "DrawingsFolder.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
@@ -104,7 +105,7 @@ bool MainWindow::benchDrawings() {
     const QString measured = shownProps();
     check(first.contains("Material=Aluminium 6061") && first.contains(QString::fromUtf8("Density=2.7 g/cm³")) && !first.contains("Mass="),
           "Properties shows the material in force and its density before measuring: " + first);
-    check(measured.contains("Mass=64.8 g") && measured.contains("Volume=24000"), "and the plate's mass (24000 mm3 of aluminium 6061) after: " + measured);
+    check(measured.contains("Mass=" + units::format(units::Kind::Mass, 64.8)) && measured.contains("Volume=24000"), "and the plate's mass (24000 mm3 of aluminium 6061) after: " + measured);
 
     const QString full = "Drawings[Drawing 1[Sheet 1[Front view[60],Left view[balloon!],Isometric view,BREAK SHARP EDGES]]]";
     check(listed() == full, "folder lists drawing > sheet > views with their items > the sheet's note: " + listed());

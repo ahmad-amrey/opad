@@ -226,7 +226,11 @@ void warm_shape_cache(const Document& doc, const std::function<bool(size_t, size
 
 Bnd_Box tight_bbox(const TopoDS_Shape& shape) {
   Bnd_Box box;
-  if (!shape.IsNull()) BRepBndLib::AddOptimal(shape, box, Standard_False, Standard_False);
+  if (shape.IsNull()) return box;
+  BRepBndLib::AddOptimal(shape, box, Standard_False, Standard_False);
+  // A mesh (STL, OBJ, 3MF, glTF) has no surfaces or curves to measure: its triangles are the geometry. Without this the
+  // Bounding box measure said "bounding box is empty" and Properties showed no size for every mesh body.
+  if (box.IsVoid()) BRepBndLib::AddOptimal(shape, box, Standard_True, Standard_False);
   return box;
 }
 

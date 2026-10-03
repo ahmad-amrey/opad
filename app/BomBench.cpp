@@ -19,6 +19,7 @@
 
 #include "BomExport.hpp"
 #include "PartProperties.hpp"
+#include "Units.hpp"
 #include "opad/materials.hpp"
 
 // OPAD_BENCH_BOM=<prefix>: a 60 x 40 x 10 plate and two pins. The Properties panel shows the plate's PART section with
@@ -155,7 +156,7 @@ bool MainWindow::benchBom() {
     measured();
     const QString after = shown();
     check(after.contains("PART=") && after.contains("Part number=OP-2001") && after.contains("Description=Base plate") && after.contains("Vendor=Acme") &&
-              after.contains("Material=Aluminium 6061") && after.contains("Mass=64.8 g"),
+              after.contains("Material=Aluminium 6061") && after.contains("Mass=" + units::format(units::Kind::Mass, 64.8)),
           "the panel shows them at once, and the plate's mass: " + after);
     table->scrollToBottom();
     m_propsPanel->grab().save(prefix + ".properties.png");

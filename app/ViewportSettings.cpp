@@ -150,6 +150,12 @@ void Viewport::setTwoDimensional(bool on) {
         m_view->SetProj(d.Z() < 0 ? V3d_Zpos : V3d_Zneg);
       else if (std::abs(d.X()) >= std::abs(d.Y())) m_view->SetProj(d.X() < 0 ? V3d_Xpos : V3d_Xneg);
       else m_view->SetProj(d.Y() < 0 ? V3d_Ypos : V3d_Yneg);
+      // SetProj keeps where the world origin was on screen, so a model far from it left the view: keep the view centre.
+      if (!m_sketchInput) {
+        const gp_Pnt center = m_threeDimensionalCamera->Center();
+        const auto camera = m_view->Camera();
+        camera->SetEyeAndCenter(camera->Eye().Translated(gp_Vec(camera->Center(), center)), center);
+      }
     }
     setOrthographic(true);
     m_ctx->Deactivate(m_cube);
