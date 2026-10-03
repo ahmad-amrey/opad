@@ -4,6 +4,7 @@
 #include <QDoubleSpinBox>
 #include <QFile>
 #include <QImage>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -20,6 +21,7 @@
 #include "Drawing2DBench.hpp"
 #include "GuidedTool.hpp"
 #include "MainWindow.hpp"
+#include "PanelFooter.hpp"
 #include "PlotDialog.hpp"
 
 using namespace bench2d;
@@ -66,10 +68,11 @@ int thickness(const QImage& image, double k, double x, double y) {
 // layer left out of plots. The Plot command (File menu, Export ribbon) opens the dialog: the extents fit A4 landscape, the
 // preview shows red and blue and no green (three bodies plotted); monochrome leaves no colour; the red line comes out
 // thicker than the frame with lineweights and as thin without; the plot stamp is text along the bottom margin (file,
-// paper, scale) and nothing when off; 1:2 is half size, 2:1 does not fit and says so; the display
-// area is what the view shows; a window picked in the view (its prompt, the dialog away meanwhile) is plotted; a printer
-// (here printing to a PDF file) and a PDF come out as one vector page. <prefix>.dialog.png, .preview.png, .stamp.png
-// (monochrome with the stamp), .pdf, .printer.pdf.
+// paper, scale) and nothing when off; Enter goes to Plot…, never to Pick…; 1:2 is half size, 2:1 does not fit and says so;
+// the display area is what the view shows; a window picked in the view (its prompt, the dialog away meanwhile, object
+// snap's marker shown and the dashed window from the snapped point) is plotted; a printer (here printing to a PDF file)
+// and a PDF come out as one vector page; the file opened again plots its extents. <prefix>.dialog.png, .preview.png,
+// .stamp.png (monochrome with the stamp), .pdf, .printer.pdf.
 // OPAD_BENCH_PLOT_IMAGE=<prefix> on picture.svg (gui_benches' plot-image): a 200 x 100 frame with a red picture embedded
 // at (20, 10), 60 x 40. The plot carries the image (one of two bodies): the preview shows it red where it lies on the
 // page, grey in monochrome, and the PDF holds it as an image. <prefix>.preview.png, .pdf.
@@ -137,7 +140,7 @@ OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
     for (const auto& id : doc->scene.all_bodies()) expected += doc->scene.effectively_visible(id);
     return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() >= expected && expected > 0 && !v->looksPending();
   };
-  pollUntil(&w, settled, 60000, [&w, v, doc, require, all, value](bool shown) {
+  pollUntil(&w, settled, 60000, [&w, v, doc, require, all, value, settled](bool shown) {
     QAction* plotAction = w.action("drawing2d.plot");
     require(shown && plotAction && plotAction->isEnabled(), "the drawing is shown and Plot is enabled");
     if (!shown || !plotAction) return QCoreApplication::exit(2);
@@ -200,6 +203,15 @@ OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
     script->add("1:2", [dialog, require] {
       PlotDialog* d = dialog();
       require(d->settings().stamp.empty() && stampInk(d->previewImage(), d->settings()) == 0, "the stamp off again: the margin is blank");
+      // Enter in the dialog goes to the footer's Plot… (the default button), never to Pick…: with Plot… disabled (here by
+      // hand, so that no file dialog opens; a field's Enter would enable it again) it does nothing.
+      auto* footer = d->findChild<PanelFooter*>();
+      auto* pick = static_cast<QPushButton*>(d->findChild<QWidget*>("plotPick"));
+      require(footer && footer->primary()->isDefault() && !pick->autoDefault() && !pick->isDefault(), "Plot… is the dialog's default button, Pick… is not");
+      footer->setPrimaryEnabled(false);
+      QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+      QCoreApplication::sendEvent(d->findChild<QWidget*>("plotMonochrome"), &enter);
+      require(!d->picking() && d->isVisible(), "Enter does not start a window pick");
       const plot::Placement p = d->placement();
       const auto* info = d->findChild<QLabel*>("plotInfo");
       require(std::abs(p.scale - 0.5) < 1e-12 && !p.clipped && info->text().contains("1:2") && !d->findChild<QLabel*>("plotWarning")->isVisible(), "1:2 draws the frame 100 mm wide: " + info->text());
@@ -221,25 +233,34 @@ OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
       require(d->settings().region == plot::Region::Display && std::abs(p.area.x0 - u0) < 1e-6 && std::abs(p.area.x1 - u1) < 1e-6 && std::abs(p.area.y0 - v0) < 1e-6,
               QString("the display area is what the view shows: %1..%2").arg(p.area.x0).arg(p.area.x1));
       static_cast<QPushButton*>(d->findChild<QWidget*>("plotPick"))->click();
-    }, [&w, dialog] { return dialog()->picking() && !dialog()->isVisible() && w.findChild<PromptBar*>("plotPrompt"); });
+    }, [&w, v, dialog] { return dialog()->picking() && !dialog()->isVisible() && w.findChild<PromptBar*>("plotPrompt") && v->snapIndexesReady(); });
     script->add("window", [v, dialog, require] {
-      require(true, "Pick… hides the dialog and asks for the window's corners");
+      require(v->snapPicks() == Viewport::SnapPicks::Always, "Pick… hides the dialog and asks for the window's corners, object snap on");
       const opad::Frame plane = dialog()->picture()->sheet.plane;
-      for (const auto& [u, w] : {std::pair{10.0, 10.0}, std::pair{110.0, 90.0}}) {
-        const QPointF at = v->widgetPoint(plane.to_world(u, w));
+      auto at = [v, plane](double u, double w, double off = 3) { return QPointF(v->widgetPoint(plane.to_world(u, w))) + QPointF(off, -off); };
+      auto click = [v](const QPointF& at) {
         for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
           QMouseEvent e(type, at, v->mapToGlobal(at), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
           QCoreApplication::sendEvent(v, &e);
         }
-      }
+      };
+      click(at(0, 0));  // beside the frame's corner: its end
+      opad::Vec3 snapped;
+      QString kind;
+      require(v->benchSnap(at(200, 100)) && v->shownSnap(snapped, &kind) && kind == "endpoint", "near the frame's far corner the snap's marker shows during the pick");
+      QMouseEvent move(QEvent::MouseMove, at(200, 100), v->mapToGlobal(at(200, 100)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+      QCoreApplication::sendEvent(v, &move);
+      const QPointF corner = dialog()->rubberCorner();
+      require(std::abs(corner.x() - 200) < 1e-6 && std::abs(corner.y() - 100) < 1e-6, QString("the dashed window follows the snapped point: (%1, %2)").arg(corner.x()).arg(corner.y()));
+      click(at(110, 90, 0));  // nothing to snap to there
     }, [dialog, ready] { return !dialog()->picking() && ready(); });
     script->add("windowed", [&w, v, dialog, require, value] {
       PlotDialog* d = dialog();
       const plot::Placement p = d->placement();
       const double tolerance = 2 * v->pixelSize();
-      require(d->settings().region == plot::Region::Window && !w.findChild<PromptBar*>("plotPrompt") && std::abs(p.area.x0 - 10) < tolerance && std::abs(p.area.y0 - 10) < tolerance &&
-                  std::abs(p.area.x1 - 110) < tolerance && std::abs(p.area.y1 - 90) < tolerance,
-              QString("the window picked in the view is plotted: (%1, %2) to (%3, %4)").arg(p.area.x0).arg(p.area.y0).arg(p.area.x1).arg(p.area.y1));
+      require(d->settings().region == plot::Region::Window && !w.findChild<PromptBar*>("plotPrompt") && std::abs(p.area.x0) < 1e-6 && std::abs(p.area.y0) < 1e-6 &&
+                  std::abs(p.area.x1 - 110) < tolerance && std::abs(p.area.y1 - 90) < tolerance && v->snapPicks() == Viewport::SnapPicks::None,
+              QString("the window picked in the view is plotted, its first corner snapped to the frame's: (%1, %2) to (%3, %4)").arg(p.area.x0).arg(p.area.y0).arg(p.area.x1).arg(p.area.y1));
 #ifdef OPAD_HAVE_PRINT
       d->withPrinter([d, value, require](std::shared_ptr<QPrinter> printer) {  // made on a worker, as Plot… does
         require(bool(printer), "a printer is set up off the UI thread");
@@ -267,6 +288,23 @@ OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
       require(bytes.startsWith("%PDF") && bytes.contains("/MediaBox [0 0 842") && !bytes.contains("/Subtype /Image") && bytes.size() > 500,
               QString("one vector page, A4 landscape (%1 bytes)").arg(bytes.size()));
     });
+    // Another document (the same file opened again): its plot starts from its extents, not the window picked before.
+    auto generation = std::make_shared<unsigned long long>(0);
+    script->add("another document", [&w, doc, generation] {
+      *generation = doc->generation;
+      w.m_benchSelect = false;  // the load does not start this bench again
+      w.openPath(doc->browse ? doc->viewing : doc->path());
+    }, [doc, generation, settled] { return doc->generation != *generation && !doc->loading && settled(); });
+    script->add("plot it", [&w, plotAction] {
+      w.m_benchSelect = true;
+      plotAction->trigger();
+    }, ready);
+    script->add("its extents", [dialog, require] {
+      PlotDialog* d = dialog();
+      require(d->settings().region == plot::Region::Extents && static_cast<QRadioButton*>(d->findChild<QWidget*>("plotExtents"))->isChecked(),
+              "another document's plot starts from its extents, not from the window picked in the last one");
+      d->reject();
+    }, [dialog] { return !dialog()->isVisible(); });
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
   return true;

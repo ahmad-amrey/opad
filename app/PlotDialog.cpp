@@ -271,6 +271,7 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
   m_pick = new QPushButton(tr("Pick…"), this);
   m_pick->setObjectName("plotPick");
   m_pick->setToolTip(tr("Pick two corners in the view (object snap applies)"));
+  m_pick->setAutoDefault(false);  // Enter plots (the footer's primary), never starts a pick
   auto* windowRow = new QHBoxLayout();
   windowRow->addWidget(m_windowRegion);
   windowRow->addWidget(m_pick);
@@ -350,6 +351,7 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
 
   m_footer = new PanelFooter(this);
   m_footer->setPrimary(tr("Plot…"));
+  m_footer->primary()->setDefault(true);  // Enter plots
   outer->addWidget(m_footer);
   connect(m_footer, &PanelFooter::cancelled, this, &QDialog::reject);
   connect(m_footer, &PanelFooter::accepted, this, [this] { plot(); });
@@ -389,6 +391,12 @@ PlotDialog::~PlotDialog() {
 }
 
 void PlotDialog::start() {
+  if (const auto generation = m_services.document()->generation; generation != m_generation) {  // another document: its window is not this one's
+    m_generation = generation;
+    m_hasWindow = false;
+    m_window = {};
+    if (m_windowRegion->isChecked()) m_extents->setChecked(true);
+  }
   m_picture.reset();
   m_preview->setImage({});
   ++m_stamp;
@@ -637,6 +645,8 @@ void PlotDialog::pickWindow() {
   m_prompt->set("plot", tr("Plot window"), {{tr("Pick the first corner"), {}}, {tr("Pick the opposite corner"), {}}}, tr("Esc back to Plot"));
   m_prompt->move(std::max(8, (v->width() - m_prompt->width()) / 2), 44);
   m_prompt->show();
+  m_snapBefore = int(v->snapPicks());
+  v->setSnapPicks(Viewport::SnapPicks::Always);  // the snap's marker shows where a corner would land
   qApp->installEventFilter(this);
 }
 
@@ -644,6 +654,7 @@ void PlotDialog::endPick(bool done) {
   if (!m_picking) return;
   m_picking = false;
   qApp->removeEventFilter(this);
+  m_services.viewport()->setSnapPicks(Viewport::SnapPicks(m_snapBefore));
   if (!m_rubber.IsNull()) {
     m_services.viewport()->removeOverlay(m_rubber);
     m_rubber.Nullify();
@@ -659,12 +670,17 @@ void PlotDialog::endPick(bool done) {
   refresh();
 }
 
-void PlotDialog::pickCorner(const QPointF& widgetPos) {
-  Viewport* v = m_services.viewport();
-  double u, w;
+bool PlotDialog::cornerAt(const QPointF& widgetPos, double& u, double& v) {
+  Viewport* view = m_services.viewport();
   opad::Vec3 snapped;
-  if (v->objectSnap() && v->snapAt(widgetPos, snapped)) m_picture->sheet.plane.to_local(snapped, u, w);
-  else if (!planeAt(widgetPos, u, w)) return;
+  if (!view->objectSnap() || !view->snapAt(widgetPos, snapped)) return planeAt(widgetPos, u, v);
+  m_picture->sheet.plane.to_local(snapped, u, v);
+  return true;
+}
+
+void PlotDialog::pickCorner(const QPointF& widgetPos) {
+  double u, w;
+  if (!cornerAt(widgetPos, u, w)) return;
   if (m_corners++ == 0) {
     m_cornerU = u, m_cornerV = w;
     m_prompt->set("plot", tr("Plot window"), {{tr("Pick the first corner"), tr("First corner")}, {tr("Pick the opposite corner"), {}}}, tr("Esc back to Plot"));
@@ -680,13 +696,14 @@ void PlotDialog::pickCorner(const QPointF& widgetPos) {
 
 void PlotDialog::showRubber(const QPointF& widgetPos) {
   double u, w;
-  if (m_corners != 1 || !planeAt(widgetPos, u, w)) return;
+  if (m_corners != 1 || !cornerAt(widgetPos, u, w)) return;  // from the snapped point, where the click will put it
   const opad::Frame& f = m_picture->sheet.plane;
   auto at = [&f](double x, double y) {
     const opad::Vec3 p = f.to_world(x, y);
     return gp_Pnt(p[0], p[1], p[2]);
   };
   if (std::abs(u - m_cornerU) < 1e-12 || std::abs(w - m_cornerV) < 1e-12) return;
+  m_rubberCorner = {u, w};
   BRepBuilderAPI_MakePolygon outline(at(m_cornerU, m_cornerV), at(u, m_cornerV), at(u, w), at(m_cornerU, w), true);
   Viewport* v = m_services.viewport();
   if (m_rubber.IsNull()) {
