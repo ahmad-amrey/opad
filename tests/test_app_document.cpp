@@ -112,6 +112,23 @@ int main(int argc, char** argv) {
       CHECK(doc.rolledBack() && doc.rollback() == c && doc.scene.feature(a)->inputs["height"] == "6 mm");
       doc.run("rename", opad::json{{"target", doc.scene.all_bodies().front()}, {"name", "x"}});  // anything else: at the end
       CHECK(!doc.rolledBack() && doc.rollback().empty() && doc.scene.feature(c));
+      // How a body looks is view state: a later hide shows on an earlier state where the body is (one whose body comes later
+      // is left out quietly), and hiding while rolled back keeps the roll-back.
+      auto bodyOf = [&](const std::string& op) {
+        for (const auto& id : doc.scene.all_bodies())
+          if (doc.scene.node(id)->source_op == op) return id;
+        return std::string();
+      };
+      const std::string bodyA = bodyOf(a), bodyB = bodyOf(b), bodyC = bodyOf(c);
+      CHECK(!bodyA.empty() && !bodyB.empty() && !bodyC.empty());
+      doc.run("appearance", opad::json{{"target", bodyA}, {"visible", false}});
+      doc.run("appearance", opad::json{{"target", bodyC}, {"visible", false}});
+      doc.rollBackTo(c);
+      CHECK(doc.rolledBack() && !doc.scene.node(bodyA)->visible && !doc.scene.node(bodyC) && doc.scene.unresolved.empty());
+      doc.run("appearance", opad::json{{"target", bodyB}, {"color", {1.0, 0.0, 0.0}}});
+      CHECK(doc.rolledBack() && doc.rollback() == c && doc.scene.node(bodyB)->has_color && !doc.scene.feature(c));
+      doc.undo(3);
+      CHECK(doc.rolledBack() && doc.scene.node(bodyA)->visible && !doc.scene.node(bodyB)->has_color);
       doc.rollBackTo(b);
       doc.setRollback(a);
       doc.commitPlan(opad::design::plan_ops(doc.doc, {opad::design::make_feature_op("box", "D", {{"length", "4 mm"}, {"width", "4 mm"}, {"height", "4 mm"}})}), "box");

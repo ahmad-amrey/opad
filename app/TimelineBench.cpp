@@ -460,7 +460,8 @@ OPAD_BENCH(OPAD_BENCH_TIMELINEPERF, timelineperf) {
 // Shift+Right twice rolls forward to the end, Shift+Home before everything, Shift+End to the end again. Rolled back before
 // Round, editing Boss takes over the roll-back and Esc gives it back; editing it again to 15 mm high and OK commits the
 // edit and leaves the model rolled back before Round with the taller boss; rolled forward, Round sits on it. While a slow
-// save holds the document (as smart selection's copy does), V and the playhead wait for it and are carried out after.
+// save holds the document (as smart selection's copy does), V and the playhead wait for it and are carried out after; V
+// while rolled back hides the body there and the model stays rolled back.
 // Rolled back with Boss's marker current, Del on a picked face deletes nothing (not the body, not the marker) and says why;
 // the marker's Delete then rolls forward and asks about Round (cancelled). Shots: <prefix>.keys.png (the playhead moved by
 // keys, the model not yet), .edited.png (the timeline after the edit).
@@ -626,6 +627,13 @@ OPAD_BENCH(OPAD_BENCH_ROLLBACK, rollback) {
         case 9: {
           if (!waitFor(w.m_doc->rolledBack() && w.m_doc->rollback() == state->round, "the model follows the playhead once the save is done")) return;
           pass("the playhead dropped during a slow save rolled the model back before Round once the document was written");
+          w.m_browser->setSelectedIds({state->body});
+          w.onBrowserSelection({state->body});
+          w.action("edit.hide")->trigger();
+          require(w.m_doc->rolledBack() && w.m_doc->rollback() == state->round && !w.m_doc->node(state->body)->visible, "V while rolled back hides the body there and stays rolled back");
+          w.m_doc->undo();
+          require(w.m_doc->rolledBack() && w.m_doc->rollback() == state->round && w.m_doc->node(state->body)->visible, "undone, still rolled back");
+          pass("V while rolled back hid the body on that state and the model stayed rolled back (how it looks is view state); undone");
           w.action("select.faces")->trigger();
           break;
         }

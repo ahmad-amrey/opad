@@ -401,7 +401,7 @@ bool AppDocument::changesBefore(const std::string& point, size_t from) const {
   const size_t at = std::min(index(point), from);
   for (size_t i = from; i < doc.ops.size(); ++i) {
     const opad::Op& op = doc.ops[i];
-    if (op.type == "regen") continue;
+    if (op.type == "regen" || op.type == "appearance") continue;  // how things look shows on the earlier state too (resolve)
     if ((op.type != "edit" && op.type != "delete") || index(op.data.value("target", "")) >= at) return false;
   }
   return true;

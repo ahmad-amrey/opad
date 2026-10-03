@@ -558,7 +558,13 @@ Scene resolve(const Document& doc, const std::string& until) {
     if (!until.empty() && e.op->id == until) rolledBack = true;
     // Parameters are global (the engine evaluates every feature against all of them), so a rolled-back scene keeps
     // the later ones: editing a feature can use a parameter defined after it.
-    if (rolledBack && e.op->type != "param") continue;
+    // How a node looks is view state, not a step of the model: shown on an earlier state too, where its target is.
+    if (rolledBack && e.op->type == "appearance") {
+      const std::string target = e.data().value("target", "");
+      if (!b.scene().node(target) && !b.scene().sketch(target)) continue;
+    } else if (rolledBack && e.op->type != "param") {
+      continue;
+    }
     try {
       b.apply(e.op->id, e.op->type, e.data());
     } catch (const std::exception& ex) {
