@@ -178,7 +178,8 @@ OPAD_BENCH(OPAD_BENCH_AREA, area) {
 // dividing wall (two bodies) the intersection, picked as the second point (the distance between them is measured); the
 // circle's centre, a quadrant and a point exactly on it; from a picked point, the foot of the perpendicular on the Axis
 // line and the point where a line from a corner touches the circle (both measured); the sketch's kind switches apply
-// (midpoint off: the nearest point instead); F3 off shows nothing, nor does the Objects filter. <prefix>.snap.png,
+// (midpoint off: the nearest point instead); F3 off shows nothing, nor does the Objects filter, nor Radius (it picks a
+// centre); a cancelled indexing leaves no index and is not asked for again until the tool starts anew. <prefix>.snap.png,
 // .perpendicular.png.
 OPAD_BENCH(OPAD_BENCH_OSNAP, osnap) {
   auto all = std::make_shared<bool>(true);
@@ -223,7 +224,19 @@ OPAD_BENCH(OPAD_BENCH_OSNAP, osnap) {
       v->fitAll();
       w.action("inspect.distance")->trigger();
       w.action("select.vertices")->trigger();
-    }, [&w, v] { return w.m_tool.id == "distance" && v->selectionFilter() == Viewport::SelFilter::Vertex && v->snapIndexesReady(); });
+    }, [&w, v] { return w.m_tool.id == "distance" && v->selectionFilter() == Viewport::SelFilter::Vertex; });
+    // The indexing's Cancel (its progress strip): nothing is indexed, nor asked again while this tool runs; the next run asks.
+    script->add("cancel the indexing", [&w, v, require] {
+      const bool ready = v->snapIndexesReady();
+      Job* job = w.m_jobs->current();
+      require(!ready && job, "the first snap asks for the drawings' indexes on a worker");
+      if (job) job->cancel();
+    }, [v] { return v->snapIndexesReady(); });
+    script->add("cancelled", [&w, v, widget, require] {
+      require(v->snapIndexCount() == 0 && !v->benchSnap(widget(30, 0)) && v->snapIndexesReady(), "cancelled: no index, no snap, and not asked again");
+      w.action("inspect.distance")->trigger();
+      w.action("inspect.distance")->trigger();
+    }, [&w, v] { return w.m_tool.id == "distance" && v->selectionFilter() == Viewport::SelFilter::Vertex && v->snapIndexesReady() && v->snapIndexCount() == 3; });
     auto at = std::make_shared<opad::Vec3>();
     script->add("midpoint", [&w, v, widget, same, shown2, at, require, value] {
       const bool hovered = v->benchSnap(widget(30, 0));
@@ -318,7 +331,7 @@ OPAD_BENCH(OPAD_BENCH_OSNAP, osnap) {
 // OPAD_BENCH_OSNAP_SKETCH=<prefix> on a document with one sketch on XY (a 100 x 50 rectangle of lines, a circle at (30, 25)
 // radius 10, gui_benches' osnap-sketch): in the Distance tool with the Vertices filter the sketch's curves snap as a
 // drawing's do (a side's midpoint, the circle's centre and quadrant), a click picks the centre, and from it the
-// perpendicular foot on the top side; the distance between them (25). <prefix>.snap.png.
+// perpendicular foot on the top side; the distance between them (25); the sketch deleted, its index goes. <prefix>.snap.png.
 OPAD_BENCH(OPAD_BENCH_OSNAP_SKETCH, osnapSketch) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -344,7 +357,7 @@ OPAD_BENCH(OPAD_BENCH_OSNAP_SKETCH, osnapSketch) {
   w.action("select.vertices")->trigger();
   v->fitAll();
   // Ready once the sketch is shown and indexed: its side's midpoint snaps.
-  pollUntil(&w, [v, widget] { return v->benchSnap(widget(50, 0)); }, 60000, [&w, v, widget, same, shown2, click, require, all, value](bool ready) {
+  pollUntil(&w, [v, widget] { return v->benchSnap(widget(50, 0)); }, 60000, [&w, v, doc, widget, same, shown2, click, require, all, value](bool ready) {
     auto at = std::make_shared<opad::Vec3>();
     require(ready && shown2("midpoint", *at) && same(*at, 50, 0), "a sketch side's midpoint snaps (the sketch indexed in its plane)");
     if (!ready) return QCoreApplication::exit(2);
@@ -361,10 +374,13 @@ OPAD_BENCH(OPAD_BENCH_OSNAP_SKETCH, osnapSketch) {
       require(v->benchSnap(widget(30, 50)) && shown2("perpendicular", *at) && same(*at, 30, 50), "from it, the foot of the perpendicular on the top side");
       click(widget(30, 50));
     }, [&w] { return w.m_toolPicks.size() == 2 && !w.m_lastMeasure.is_null() && !w.m_measureJob; });
-    script->add("measured", [&w, require] {
+    script->add("measured", [&w, v, doc, require] {
       require(std::abs(w.m_lastMeasure.value("value", 0.0) - 25) < 1e-6, QString("the distance between them: %1").arg(w.m_lastMeasure.value("value", 0.0)));
       w.action("inspect.distance")->trigger();
-    }, [&w] { return w.m_tool.id.isEmpty(); });
+      require(v->snapIndexCount() == 1, "the sketch has its index");
+      doc->run("delete", {{"target", doc->scene.sketches.at(0).id}});
+    }, [&w, v, doc] { return w.m_tool.id.isEmpty() && doc->scene.sketches.empty() && v->snapIndexCount() == 0; });
+    script->add("deleted", [require] { require(true, "a deleted sketch's index goes with it"); });
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
   return true;

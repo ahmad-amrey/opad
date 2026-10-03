@@ -203,7 +203,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool objectSnap() const { return m_objectSnap; }
   bool snapAt(const QPointF& widgetPos, opad::Vec3& world, QString* kind = nullptr);  // any point consumer: false until indexed
   bool shownSnap(opad::Vec3& world, QString* kind = nullptr) const;                // the one the cursor shows now
-  bool snapIndexesReady();  // asks for the missing indexes; true once every displayed drawing has one
+  bool snapIndexesReady();  // asks for the missing indexes; true once every displayed drawing has one (or its indexing was cancelled)
+  int snapIndexCount() const;  // the indexes kept (benches)
   static QString snapWord(const QString& kind);  // "endpoint" -> "Endpoint", translated
   bool benchSnap(const QPointF& widgetPos);  // the snap a mouse move here shows (hidden windows never paint)
   bool pointUnder(const QPointF& widgetPos, opad::Vec3& world);  // the frontmost displayed surface there (one BVH ray), false: none
@@ -605,5 +606,6 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::string sketchSnapKey(const std::string& id);  // a displayed sketch's index key, new with each version of it
   bool objectSnapActive() const;
   void updateObjectSnap();                 // after the hover, every frame
+  void pruneSnapIndexes();                 // in sync: drops the indexes of what the scene no longer has
   bool objectSnapPress(QMouseEvent* e);  // true: the press picks the shown snap
 };

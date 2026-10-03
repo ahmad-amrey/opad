@@ -1659,6 +1659,7 @@ void Viewport::sync() {
       m_refined.clear();
     }
   }
+  pruneSnapIndexes();
   if (!m_isolated.empty()) {  // the mode ends by itself once every isolated object is gone (deleted)
     bool any = false;
     for (const auto& id : m_isolated) {

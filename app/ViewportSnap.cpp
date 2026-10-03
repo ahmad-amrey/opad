@@ -33,6 +33,7 @@ struct ObjectSnapState {
   };
   std::map<std::string, Version> sketches;  // by sketch id: the stamp its index was asked for and that index's key
   int versions = 0;
+  std::set<std::string> declined;  // keys whose indexing was cancelled: not asked again until snapping starts anew
   std::optional<opad::Vec3> from;  // the point picked before
   Job* job = nullptr;
   bool shown = false;
@@ -68,16 +69,33 @@ void Viewport::setSnapFrom(const std::optional<opad::Vec3>& from) {
 void Viewport::setObjectSnap(bool on) {
   m_objectSnap = on;
   QSettings().setValue("view/objectSnap", on);
-  if (m_osnap) m_osnap->cursor = {-1e9, -1e9};
+  if (m_osnap) m_osnap->cursor = {-1e9, -1e9}, m_osnap->declined.clear();
   redrawScene();
 }
 
 void Viewport::setSnapPicks(SnapPicks picks) {
   if (m_snapPicks == picks) return;
   m_snapPicks = picks;
-  if (m_osnap) m_osnap->cursor = {-1e9, -1e9};
+  if (m_osnap) m_osnap->cursor = {-1e9, -1e9}, m_osnap->declined.clear();  // a new pick asks again for what was cancelled
   requestRedraw();  // the marker comes or goes with the next frame
 }
+
+// Indexes of what the scene no longer has (deleted bodies and sketches, another document, a viewer's next keys); hidden
+// bodies keep theirs (a layer walk shows them again).
+void Viewport::pruneSnapIndexes() {
+  if (!m_osnap || (m_osnap->indexes.empty() && m_osnap->sketches.empty() && m_osnap->declined.empty())) return;
+  ObjectSnapState& s = *m_osnap;
+  std::set<std::string> live;
+  for (const auto& id : m_doc->scene.all_bodies())
+    if (const opad::Node* n = m_doc->scene.node(id); n && n->representation == "drawing2d") live.insert(n->body_key);
+  for (auto it = s.sketches.begin(); it != s.sketches.end();)
+    if (m_doc->scene.sketch(it->first)) live.insert(it++->second.key);
+    else it = s.sketches.erase(it);
+  for (auto it = s.indexes.begin(); it != s.indexes.end();) it = live.count(it->first) ? std::next(it) : s.indexes.erase(it);
+  for (auto it = s.declined.begin(); it != s.declined.end();) it = live.count(*it) ? std::next(it) : s.declined.erase(it);
+}
+
+int Viewport::snapIndexCount() const { return m_osnap ? int(m_osnap->indexes.size()) : 0; }
 
 bool Viewport::objectSnapActive() const {
   if (!m_objectSnap || m_snapPicks == SnapPicks::None || m_sketchInput || m_blocked || !m_bodiesPickable || m_ctrlCenterPick) return false;
@@ -120,10 +138,11 @@ bool Viewport::snapIndexesReady() {
   for (const auto& [id, item] : m_items) {
     const opad::Node* node = m_doc->scene.node(id);
     if (!node || node->representation != "drawing2d" || !node->raster.is_null() || !item.rigid || !m_ctx->IsDisplayed(item.ais)) continue;
-    if (!s.indexes.count(item.key) && wanted.insert(item.key).second) missing.push_back({item.key, item.ais->Shape()});
+    if (!s.indexes.count(item.key) && !s.declined.count(item.key) && wanted.insert(item.key).second) missing.push_back({item.key, item.ais->Shape()});
   }
   for (const auto& sketch : m_doc->scene.sketches)
-    if (const std::string key = sketchSnapKey(sketch.id); !key.empty() && !s.indexes.count(key) && wanted.insert(key).second) sketches.push_back({key, sketch.geometry});
+    if (const std::string key = sketchSnapKey(sketch.id); !key.empty() && !s.indexes.count(key) && !s.declined.count(key) && wanted.insert(key).second)
+      sketches.push_back({key, sketch.geometry});
   if (missing.empty() && sketches.empty()) return true;
   if (s.job || !m_jobs) return false;
   auto built = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<const opad::snap2d::Index>>>>();
@@ -148,10 +167,14 @@ bool Viewport::snapIndexesReady() {
       built->push_back({sketches[i].first, opad::snap2d::index_shape(shape)});
       p.setOverall(int(100 * (missing.size() + i + 1) / total));
     }
-  }, [this, built, alive = std::weak_ptr<ObjectSnapState>(m_osnap)](bool, const QString&) {
+  }, [this, built, wanted, alive = std::weak_ptr<ObjectSnapState>(m_osnap)](bool ok, const QString&) {
     const auto state = alive.lock();
     if (!state) return;
     state->job = nullptr;
+    if (!ok) {  // cancelled (its Cancel button) or failed: the worker may still be filling `built`; not asked again for now
+      state->declined.insert(wanted.begin(), wanted.end());
+      return;
+    }
     for (auto& [key, index] : *built) state->indexes[key] = std::move(index);
     state->cursor = {-1e9, -1e9};  // ask again at the next frame
     redrawScene();
