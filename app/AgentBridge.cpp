@@ -104,6 +104,8 @@ json AgentBridge::liveState()const{
   out["profile_selection"]=json::array();const auto profiles=m_viewport->selectedCandidates();
   for(size_t i=0;i<std::min(size_t(100),profiles.size());++i){auto profile=json::parse(profiles[i],nullptr,false);out["profile_selection"].push_back(profile.is_discarded()?json(profiles[i]):profile);}
   if(m_design->sketchActive())out["active_sketch"]=m_design->sketch()->agentContext();
+  // The component the user activated (UI-33): what they work in; pass it as a feature's or sketch's component to follow them.
+  if(const auto& active=m_doc->activeComponent();!active.empty())out["active_component"]={{"id",active},{"name",m_doc->nodeName(active).toStdString()}};
   if(m_prepared)out["prepared"]={{"id",m_prepared->id},{"base_revision",m_prepared->snapshot->revision}};
   return out;
 }

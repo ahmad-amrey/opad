@@ -32,8 +32,8 @@ void MainWindow::buildFileActions() {
     if (p.isEmpty()) return;
     m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
     auto ids = currentNodeIds();
-    QString parent;
-    if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component &&
+    QString parent;  // the active component's (AppDocument::startImport) unless the root is active and one is selected
+    if (m_doc->activeComponent().empty() && ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component &&
         QMessageBox::question(this, tr("Import"), tr("Import under the selected component “%1”?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes)
       parent = QString::fromStdString(ids[0]);
     const QString suffix = QFileInfo(p).suffix().toLower();

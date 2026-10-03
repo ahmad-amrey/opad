@@ -4,6 +4,7 @@
 #include <QEventLoop>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <cmath>
 
 // Document tests do not need the GUI's timing sink or widgets.
 namespace trace { bool enabled() { return false; } void log(const QString&) {} }
@@ -81,6 +82,44 @@ int main(int argc, char** argv) {
       QObject::disconnect(counted);
       doc.undo(3);
       CHECK_EQ(doc.doc.ops.size(), ops);
+    }
+    // The active component (UI-33): session state, checked after every change; imports go into it.
+    {
+      CHECK(doc.activeComponent().empty());
+      int changes = 0;
+      auto counted = QObject::connect(&doc, &AppDocument::activeComponentChanged, &doc, [&changes] { ++changes; });
+      CHECK_THROWS(doc.setActiveComponent(doc.scene.all_bodies().front()));  // a body is no component
+      CHECK_THROWS(doc.setActiveComponent("no-such-node"));
+      const size_t ops = doc.doc.ops.size();
+      const std::string lid = doc.run("component", opad::json{{"name", "Lid"}}).value("id", "");
+      doc.setActiveComponent(lid);
+      doc.setActiveComponent(lid);  // the same again: no signal
+      CHECK(doc.activeComponent() == lid && changes == 1);
+      doc.run("rename", opad::json{{"target", lid}, {"name", "Cover"}});  // edits keep it
+      doc.run("transform", opad::json{{"target", lid}, {"matrix", opad::Mat4::translation(100, 0, 0).to_json()}});
+      CHECK(doc.activeComponent() == lid);
+      doc.startImport(step);  // no parent given: the active component
+      loop.exec();
+      CHECK(success && doc.doc.ops.back().type == "import" && doc.doc.ops.back().data.value("parent", "") == lid);
+      // A drawing placed in world coordinates keeps its place under the moved component: its placement is made relative.
+      const QString svg = tmp.path() + "/plate.svg";
+      opad::write_text_file(svg.toStdString(), R"(<svg width="40mm" viewBox="0 0 40 40"><rect width="20" height="10"/></svg>)");
+      doc.startImport(svg, {}, opad::Mat4::translation(0, 0, 5));
+      loop.exec();
+      const opad::Op& drawing = doc.doc.ops.back();
+      CHECK(success && drawing.type == "import" && drawing.data.value("parent", "") == lid);
+      const opad::Mat4 placed = doc.scene.world(drawing.data["nodes"][0].value("id", ""));
+      CHECK(std::abs(placed.at(0, 3)) < 1e-9 && std::abs(placed.at(2, 3) - 5) < 1e-9);
+      doc.setRollback(doc.scene.node(lid)->source_op);  // rolled back to before it was made: still active
+      CHECK(doc.activeComponent() == lid && !doc.scene.node(lid) && changes == 1);
+      doc.setRollback({});
+      doc.undo(int(doc.doc.ops.size() - ops));  // gone: the root is active
+      CHECK(doc.activeComponent().empty() && changes == 2 && doc.doc.ops.size() == ops);
+      doc.redo(1);
+      doc.setActiveComponent(lid);
+      doc.newDocument();  // another document: the root
+      CHECK(doc.activeComponent().empty() && changes == 4);
+      QObject::disconnect(counted);
     }
     int resets=0;
     QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});

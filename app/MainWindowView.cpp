@@ -26,7 +26,12 @@
 #include "Units.hpp"
 
 void MainWindow::buildViewActions() {
-  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
+  // The selection, else the active component (UI-33), else everything.
+  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] {
+    if (m_design && m_design->sketchActive()) m_design->sketch()->fitSketch();
+    else if (!m_doc->activeComponent().empty() && m_viewport->selection().empty()) m_viewport->fitNodes({m_doc->activeComponent()});
+    else m_viewport->fitSelection();
+  });
   addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(); });
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
   addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Shift+A"),[this] {

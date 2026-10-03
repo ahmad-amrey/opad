@@ -99,7 +99,14 @@ class AppDocument : public QObject {
   const opad::Node* node(const std::string& id) const { return scene.node(id); }
   QString nodeName(const std::string& id) const;
 
+  // The active component (UI-33): session state, never written. New sketches, features, bodies, imports and components
+  // go into it, and the view ghosts everything else. Empty = the document root. Back to the root when it goes (deleted,
+  // undone; not while the scene is rolled back to an earlier op) or another document comes in. Also in viewer mode.
+  const std::string& activeComponent() const { return m_active; }
+  void setActiveComponent(const std::string& id);  // a component of the scene, or empty; throws for anything else
+
  signals:
+  void activeComponentChanged();
   // A viewer document became editable: the same shapes, now under content keys (live key -> content key). Emitted just
   // before the scene changes to them, so a view can keep what it has drawn.
   void bodyKeysRenamed(const std::map<std::string, std::string>& keys);
@@ -125,7 +132,8 @@ class AppDocument : public QObject {
   void markSaved();      // snapshot the state the file holds (or the empty state of a new document)
   void updateDirty();    // dirty = log or body store differs from the snapshot
   static QString labelFor(const std::string& command, const opad::json& args);
-  std::string m_rollback;
+  void checkActive();  // the active component still a component of the (whole) scene, else the root
+  std::string m_rollback, m_active;
   std::vector<Step> m_undo, m_redo;
   int m_undoLimit = 50;
   std::vector<std::string> m_savedIds;
