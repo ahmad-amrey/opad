@@ -97,7 +97,7 @@ class PlotDialog : public QDialog {
 
   AreaServices& m_services;
   std::shared_ptr<const PlotPicture> m_picture;
-  Job *m_collectJob = nullptr, *m_previewJob = nullptr, *m_outputJob = nullptr;
+  Job *m_collectJob = nullptr, *m_previewJob = nullptr, *m_outputJob = nullptr, *m_printerJob = nullptr;
   int m_stamp = 0, m_previewStamp = -1;
   QTimer m_refreshTimer;
   plot::Area m_window;

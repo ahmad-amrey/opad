@@ -313,6 +313,8 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
   m_monochrome->setChecked(settings.value("plot/monochrome", false).toBool());
   m_lineweights->setChecked(settings.value("plot/lineweights", true).toBool());
   (settings.value("plot/output", "pdf").toString() == "printer" && m_printer->isEnabled() ? m_printer : m_pdf)->setChecked(true);
+  if (settings.contains("plot/orientation")) m_orientation->setCurrentIndex(settings.value("plot/orientation").toInt());
+  m_scale->setEnabled(!m_fit->isChecked());
 
   m_refreshTimer.setSingleShot(true);
   m_refreshTimer.setInterval(60);
@@ -331,7 +333,7 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
 
 PlotDialog::~PlotDialog() {
   if (m_picking) endPick(false);
-  for (Job* job : {m_collectJob, m_previewJob})
+  for (Job* job : {m_collectJob, m_previewJob, m_outputJob, m_printerJob})
     if (job) job->cancel();
 }
 
@@ -490,11 +492,14 @@ void PlotDialog::withPrinter(std::function<void(std::shared_ptr<QPrinter>)> then
   const QPageLayout layout = pageLayout(settings());
   auto printer = std::make_shared<std::shared_ptr<QPrinter>>();
   m_footer->setPrimaryEnabled(false);
-  m_services.jobs()->async(tr("Finding the printer"), [layout, printer](Progress) {
+  if (m_printerJob) return;
+  m_printerJob = m_services.jobs()->async(tr("Finding the printer"), [layout, printer](Progress) {
     *printer = std::make_shared<QPrinter>(QPrinter::HighResolution);
     (*printer)->setPageLayout(layout);
     (*printer)->setFullPage(true);
-  }, [this, printer, then](bool ok, const QString&) {
+  }, [this, printer, then](bool ok, const QString& error) {
+    m_printerJob = nullptr;
+    if (error == "cancelled") return;  // the dialog went
     refresh();
     then(ok ? *printer : nullptr);
   });
@@ -521,6 +526,7 @@ void PlotDialog::plotToPdf(const QString& path) {
     painter.end();
   }, [this, path](bool ok, const QString& error) {
     m_outputJob = nullptr;
+    if (error == "cancelled") return;  // the dialog went
     emit plotted(ok, error);
     if (!ok) return m_services.toast(tr("The plot could not be written: %1").arg(i18n::t(error)), QString(), {}, 6000);
     m_services.toast(tr("Plotted to %1").arg(QFileInfo(path).fileName()), tr("Show"), [path] { QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath())); });
@@ -545,6 +551,7 @@ void PlotDialog::plotToPrinter(std::shared_ptr<QPrinter> printer) {
     painter.end();
   }, [this, printer](bool ok, const QString& error) {
     m_outputJob = nullptr;
+    if (error == "cancelled") return;  // the dialog went
     emit plotted(ok, error);
     if (!ok) return m_services.toast(tr("The plot could not be printed: %1").arg(i18n::t(error)), QString(), {}, 6000);
     m_services.toast(printer->outputFileName().isEmpty() ? tr("Plot sent to %1").arg(printer->printerName()) : tr("Plotted to %1").arg(QFileInfo(printer->outputFileName()).fileName()));
