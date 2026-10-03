@@ -68,7 +68,7 @@ py::object run_on(opad::Document* d, const std::string& name, const py::kwargs& 
 
 PYBIND11_MODULE(opad, m) {
   opad::configure_kernel_logging();
-  m.doc() = "OPAD: git-native STEP viewer core. Every method maps to a command of the shared command layer.";
+  m.doc() = "OPAD: git-native CAD and review core. Every method maps to a command of the shared command layer.";
   m.attr("__version__") = opad::version_string();
   m.attr("FORMAT_VERSION") = opad::kFormatVersion;
 

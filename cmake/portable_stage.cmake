@@ -104,6 +104,28 @@ file(WRITE "${OPAD_STAGE}/opad.portable"
   "Delete this file to use the registry and %LOCALAPPDATA% instead.\n")
 file(COPY "${OPAD_SOURCE_DIR}/LICENSE" DESTINATION "${OPAD_STAGE}")
 
+# Third-party notices (TODO 11 UI-13): each staged DLL traced back to where it was copied from, then to its MSYS2
+# package; THIRD-PARTY-NOTICES.txt lists them with version, licence and source, licenses/<package>/ holds their texts.
+file(GLOB_RECURSE _staged_dlls RELATIVE "${OPAD_STAGE}" "${OPAD_STAGE}/*.dll")
+string(REPLACE "|" ";" _notices_files "${OPAD_NOTICES_HEADERS}")
+foreach(_rel IN LISTS _staged_dlls)
+  foreach(_dir IN LISTS OPAD_DLL_DIRS OPAD_QT_PLUGINS)
+    if(EXISTS "${_dir}/${_rel}")
+      list(APPEND _notices_files "${_dir}/${_rel}")
+      break()
+    endif()
+  endforeach()
+endforeach()
+string(REPLACE ";" "|" NOTICES_FILES "${_notices_files}")
+set(NOTICES_OUT "${OPAD_STAGE}/THIRD-PARTY-NOTICES.txt")
+set(NOTICES_LICENSES_DIR "${OPAD_STAGE}/licenses")
+set(NOTICES_OWN "${OPAD_BUILD_DIR}")
+set(NOTICES_PACMAN "${OPAD_PACMAN}")
+set(NOTICES_VERSION "${OPAD_VERSION}")
+set(NOTICES_EXTRA "${OPAD_SOURCE_DIR}/cmake/notices_extra.txt")
+set(NOTICES_SCOPE "This folder ships the DLLs listed below beside opad.exe. The LGPL libraries among them (Qt, Open CASCADE and others) are separate DLLs that you may replace with compatible builds of your own.")
+include("${OPAD_SOURCE_DIR}/cmake/notices.cmake")
+
 # DWG: LibreDWG's dwg2dxf / dxf2dwg (GPLv3) are separate programs OPAD runs. They travel with their licence and their
 # Corresponding Source (GPLv3 section 6): the source tree they were built from and OPAD's scripts that built them.
 if(OPAD_DWG_PROGRAMS)

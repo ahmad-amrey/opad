@@ -35,6 +35,15 @@ TEST(sha256_known_vectors) {
   CHECK_EQ(sha256_hex(million), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
 }
 
+// Third-party notices (TODO 11 UI-13): generated at build time from the link lines, compiled in.
+TEST(third_party_notices_are_compiled_in) {
+  const std::string text = third_party_notices();
+  CHECK(text.rfind("OPAD " + version_string(), 0) == 0 && text.find("third-party notices") != std::string::npos);
+  CHECK(text.find("MIT licence") != std::string::npos && text.find("Trademarks") != std::string::npos);
+  if (text.find("packages.msys2.org") != std::string::npos)  // MSYS2 build: packages, versions and licence texts
+    CHECK(text.find("* opencascade ") != std::string::npos && text.find("Licence texts") != std::string::npos);
+}
+
 TEST(uuid_format_and_uniqueness) {
   std::set<std::string> seen;
   for (int i = 0; i < 1000; ++i) {

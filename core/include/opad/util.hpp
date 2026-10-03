@@ -28,6 +28,9 @@ std::string now_iso8601();
 std::string sha256_hex(std::string_view data);
 std::string default_author();
 std::string version_string();
+// Who else's code this build carries and under which licences (TODO 11 UI-13): THIRD-PARTY-NOTICES.txt beside the
+// program when there is one (the portable package's), else the text compiled in from the link libraries.
+std::string third_party_notices();
 // Routes OCCT kernel messages to stderr (alarms only unless verbose or OPAD_VERBOSE=1) so stdout stays JSON.
 void configure_kernel_logging(bool verbose = false);
 

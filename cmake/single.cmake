@@ -1,6 +1,7 @@
 # Target opad-single: the one-file deliverable of each OS, written to build/<preset>/single.
 #
-#   Windows  OPAD-<version>-windows-x64.exe (+ opad-cli-<version>-windows-x64.exe): the static build's executables,
+#   Windows  OPAD-<version>-windows-x64.exe (+ opad-cli-<version>-windows-x64.exe and THIRD-PARTY-NOTICES.txt, which
+#            the exes also carry compiled in): the static build's executables,
 #            checked to import nothing but Windows' own DLLs (cmake/single_check.cmake). Needs OPAD_STATIC
 #            (preset windows-static); nothing to unpack, settings and cache go to <exe dir>/opad-data.
 #   Linux    OPAD-<version>-linux-x86_64.AppImage: linuxdeploy with its Qt plugin bundles the app, Qt, OCCT and
@@ -22,6 +23,8 @@ if(WIN32)
   set(_single_cmds
     COMMAND ${CMAKE_COMMAND} -E make_directory "${_single_dir}"
     COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:opad>" "${_single_app}"
+    # The notices are compiled into the exes too (Help > Third-party licences, opad-cli licenses); this is the same text.
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" "${_single_dir}/THIRD-PARTY-NOTICES.txt"
     COMMAND ${CMAKE_COMMAND} "-DOPAD_EXE=${_single_app}" "-DOPAD_OBJDUMP=${CMAKE_OBJDUMP}"
             -P "${PROJECT_SOURCE_DIR}/cmake/single_check.cmake")
   set(_single_deps opad)
@@ -69,6 +72,7 @@ elseif(APPLE)
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${_single_dir}"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${_single_dir}"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_BUNDLE_DIR:opad>" "${_single_dir}/OPAD.app"
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" "${_single_dir}/OPAD.app/Contents/Resources/THIRD-PARTY-NOTICES.txt"
     ${_single_plugin_commands}
     COMMAND "${OPAD_MACDEPLOYQT}" "${_single_dir}/OPAD.app" -always-overwrite -no-codesign
             -no-plugins ${_single_plugin_args}
@@ -94,6 +98,7 @@ elseif(UNIX)
             "${OPAD_LINUXDEPLOY}" --appdir "${_single_dir}/AppDir" --executable "$<TARGET_FILE:opad>"
             --desktop-file "${PROJECT_SOURCE_DIR}/app/res/opad.desktop" --icon-file "${_single_dir}/opad.png"
             --plugin qt --output appimage
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" "${_single_dir}/THIRD-PARTY-NOTICES.txt"
     WORKING_DIRECTORY "${_single_dir}"
     DEPENDS opad
     COMMENT "AppImage in ${_single_dir}" VERBATIM)

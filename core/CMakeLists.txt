@@ -20,6 +20,49 @@ if(NOT "${opad_guide_old}" STREQUAL "${opad_guide_cpp}")
   file(WRITE ${opad_guide_out} "${opad_guide_cpp}")
 endif()
 
+# Third-party notices compiled in (TODO 11 UI-13): written at build time by cmake/notices.cmake from the link lines of
+# opad and opad-cli in build.ninja (rewritten only when they change), for Help > Third-party licences and `opad-cli
+# licenses`; the same text is <build>/THIRD-PARTY-NOTICES.txt, which the single-file package ships beside the exe.
+get_filename_component(_opad_msys "${CMAKE_CXX_COMPILER}" DIRECTORY)
+find_program(OPAD_PACMAN pacman HINTS "${_opad_msys}/../../usr/bin" NO_DEFAULT_PATH)
+set(opad_notices_cpp ${CMAKE_CURRENT_BINARY_DIR}/third_party_notices.cpp)
+set(opad_notices_stamp ${CMAKE_CURRENT_BINARY_DIR}/third_party_notices.stamp)
+set(_opad_notices_files "")
+get_target_property(_opad_json_dirs nlohmann_json::nlohmann_json INTERFACE_INCLUDE_DIRECTORIES)
+foreach(_dir IN LISTS _opad_json_dirs)
+  if(EXISTS "${_dir}/nlohmann/json.hpp")
+    list(APPEND _opad_notices_files "${_dir}/nlohmann/json.hpp")  # header-only: compiled into OPAD's own code
+  endif()
+endforeach()
+set(_opad_notices_occt "")
+set(_opad_notices_scope "This list covers the libraries opad and opad-cli are linked against in this build (the portable package lists every DLL it ships instead).")
+if(OPAD_STATIC)
+  if(EXISTS "${OPAD_STATIC_PREFIX}/include/rapidjson/rapidjson.h")  # header-only, compiled into the static OCCT
+    list(APPEND _opad_notices_files "${OPAD_STATIC_PREFIX}/include/rapidjson/rapidjson.h")
+  endif()
+  set(_opad_notices_occt "${_occt_install}|${OPAD_OCCT_VERSION}|${OPAD_OCCT_URL}|${_occt_src}")
+  set(_opad_notices_scope "The single-file programs contain the libraries below, linked in statically.")
+endif()
+string(REPLACE ";" "|" _opad_notices_files "${_opad_notices_files}")
+string(REPLACE ";" "|" _opad_notices_libdirs "${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}")
+string(REPLACE ";" "|" _opad_notices_libs "${CMAKE_CXX_IMPLICIT_LINK_LIBRARIES}")
+set(_opad_notices_ninja "")
+if(CMAKE_GENERATOR STREQUAL "Ninja")
+  set(_opad_notices_ninja ${CMAKE_BINARY_DIR}/build.ninja)
+endif()
+add_custom_command(OUTPUT ${opad_notices_stamp}
+  BYPRODUCTS ${opad_notices_cpp} ${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt
+  COMMAND ${CMAKE_COMMAND} "-DNOTICES_OUT=${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" "-DNOTICES_CPP=${opad_notices_cpp}"
+          "-DNOTICES_NINJA=${_opad_notices_ninja}" "-DNOTICES_TARGETS=^bin/opad(-cli)?([.](exe|cp[^/]*|so))?$"
+          "-DNOTICES_LIBDIRS=${_opad_notices_libdirs}" "-DNOTICES_LIBS=${_opad_notices_libs}" "-DNOTICES_OWN=${CMAKE_BINARY_DIR}" "-DNOTICES_OCCT=${_opad_notices_occt}"
+          "-DNOTICES_FILES=${_opad_notices_files}" "-DNOTICES_PACMAN=${OPAD_PACMAN}" "-DNOTICES_VERSION=${PROJECT_VERSION}"
+          "-DNOTICES_SCOPE=${_opad_notices_scope}" "-DNOTICES_EXTRA=${PROJECT_SOURCE_DIR}/cmake/notices_extra.txt"
+          -P ${PROJECT_SOURCE_DIR}/cmake/notices.cmake
+  COMMAND ${CMAKE_COMMAND} -E touch ${opad_notices_stamp}
+  DEPENDS ${PROJECT_SOURCE_DIR}/cmake/notices.cmake ${PROJECT_SOURCE_DIR}/cmake/notices_extra.txt ${_opad_notices_ninja}
+  COMMENT "Third-party notices from the link libraries"
+  VERBATIM)
+
 add_library(opad_core STATIC
   src/util.cpp
   src/document.cpp
@@ -62,6 +105,8 @@ add_library(opad_core STATIC
   src/design/engine.cpp
   src/design/features.cpp
   src/design/commands_design.cpp
+  src/notices.cpp
+  ${opad_notices_cpp} ${opad_notices_stamp}
   ${CMAKE_CURRENT_BINARY_DIR}/agent_guide.cpp)
 add_library(opad::core ALIAS opad_core)
 

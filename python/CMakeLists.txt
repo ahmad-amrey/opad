@@ -11,6 +11,8 @@ target_link_libraries(opad_python PRIVATE opad::core)
 
 if(SKBUILD)
   install(TARGETS opad_python LIBRARY DESTINATION . RUNTIME DESTINATION .)
+  # The libraries the module links (core/CMakeLists.txt writes the list at build time); the repaired wheel adds OCCT's.
+  install(FILES ${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt DESTINATION . OPTIONAL)
 else()
   install(TARGETS opad_python LIBRARY DESTINATION python RUNTIME DESTINATION python)
 endif()

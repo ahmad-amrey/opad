@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "opad"
 version = "0.1.0"
-description = "OPAD: git-native STEP viewer core - document format, STEP I/O, inspection, headless rendering"
+description = "OPAD: git-native CAD and review core - document format, STEP I/O, inspection, headless rendering"
 readme = "../README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"

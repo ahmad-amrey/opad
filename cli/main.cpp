@@ -37,7 +37,7 @@ int opad_live_mcp(int argc,char** argv);
 namespace {
 
 void print_usage() {
-  std::printf("opad-cli %s - git-native STEP viewer, headless interface\n\n", opad::version_string().c_str());
+  std::printf("opad-cli %s - git-native CAD and review, headless interface\n\n", opad::version_string().c_str());
   std::printf("usage: opad-cli [--plugin <lib>]... [--compact] <command> [<doc>] [args...]\n\n");
   std::printf("  <doc> is a .opad document, or any file OPAD reads (STEP, IGES, STL, 3MF, OBJ, DXF, SVG, ...) opened read-only.\n");
   std::printf("  Arguments are --key value pairs (JSON values are parsed: numbers, true/false, [..], {..}).\n\n");
@@ -53,6 +53,7 @@ void print_usage() {
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
   std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");
+  std::printf("  licenses                      the third-party notices of this build (plain text)\n");
   std::printf("\nreferences: <uuid> | <uuid>/face/N | <uuid>/edge/N | <uuid>/vertex/N | point/x,y,z\n");
   std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list),\n");
   std::printf("             OPAD_USE_ODA=1 (DWG through an installed ODA File Converter instead of LibreDWG; ODA's terms allow\n");
@@ -289,6 +290,11 @@ int main(int argc, char** argv) {
     }
     for (const auto& p : plugins) opad::load_plugin(p);
 
+    if (command == "licenses") {  // what this build carries of others' code, and under which licences (text, not JSON)
+      const std::string text = opad::third_party_notices();
+      std::fwrite(text.data(), 1, text.size(), stdout);
+      return 0;
+    }
     if (command == "thumbnail") {
       if (positional.empty() || !args.contains("out")) throw opad::Error("usage: opad-cli thumbnail <file> --out <png|bgra> [--size 256]");
       const json out = thumbnail(positional[0], args["out"].get<std::string>(), args.value("size", 256));

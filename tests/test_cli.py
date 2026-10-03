@@ -212,8 +212,19 @@ def deterministic_builds():
     assert other != first  # random ids and the clock without it
 
 
+def licenses():
+    # The third-party notices compiled into the build (TODO 11 UI-13): plain text, not JSON.
+    p = subprocess.run([CLI, "licenses"], capture_output=True, encoding="utf-8")
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.startswith("OPAD ") and "third-party notices" in p.stdout.splitlines()[0], p.stdout[:200]
+    assert "MIT licence" in p.stdout and "Trademarks" in p.stdout
+    if "packages.msys2.org" in p.stdout:  # built against MSYS2: the packages and their licence texts are named
+        assert "* opencascade " in p.stdout and "LGPL-2.1" in p.stdout and "Licence texts" in p.stdout
+
+
 test(basic_workflow)
 test(git_merge_story)
 test(deterministic_builds)
+test(licenses)
 shutil.rmtree(tmp, ignore_errors=True)
 sys.exit(1 if FAILED else 0)

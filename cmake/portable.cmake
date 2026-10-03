@@ -35,6 +35,15 @@ if(TARGET opad-dwg)
   string(REPLACE ";" "|" _opad_portable_dwg "${OPAD_DWG_PROGRAMS}")
   list(APPEND _opad_portable_deps opad-dwg)
 endif()
+# Third-party notices: where windeployqt takes the Qt plugins from (to find their package), headers compiled in.
+execute_process(COMMAND "${_opad_qmake}" -query QT_INSTALL_PLUGINS OUTPUT_VARIABLE _opad_qt_plugins OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+set(_opad_portable_headers "")
+get_target_property(_opad_json_dirs nlohmann_json::nlohmann_json INTERFACE_INCLUDE_DIRECTORIES)
+foreach(_dir IN LISTS _opad_json_dirs)
+  if(EXISTS "${_dir}/nlohmann/json.hpp")
+    set(_opad_portable_headers "${_dir}/nlohmann/json.hpp")
+  endif()
+endforeach()
 
 add_custom_target(opad-portable
   COMMAND ${CMAKE_COMMAND}
@@ -46,6 +55,11 @@ add_custom_target(opad-portable
     "-DOPAD_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
     "-DOPAD_DWG_PROGRAMS=${_opad_portable_dwg}"
     "-DOPAD_ALLOW_GPL_DLLS=${OPAD_ALLOW_GPL_DLLS}"
+    "-DOPAD_BUILD_DIR=${CMAKE_BINARY_DIR}"
+    "-DOPAD_VERSION=${PROJECT_VERSION}"
+    "-DOPAD_PACMAN=${OPAD_PACMAN}"
+    "-DOPAD_QT_PLUGINS=${_opad_qt_plugins}"
+    "-DOPAD_NOTICES_HEADERS=${_opad_portable_headers}"
     -P "${PROJECT_SOURCE_DIR}/cmake/portable_stage.cmake"
   DEPENDS ${_opad_portable_deps}
   COMMENT "Staging the portable package"
