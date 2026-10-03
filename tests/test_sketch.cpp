@@ -165,6 +165,43 @@ TEST(sketch_builders_and_remove) {
   sk.remove(12345);  // unknown: no-op
 }
 
+// UI-29: next_id reads only what was appended since its last call, yet always answers as a scan of every list would, whatever
+// the callers did in between (builders, direct pushes, removals, lists cut, reordered or replaced, a renumbered last item).
+TEST(next_id_running_maximum_matches_a_full_scan) {
+  Sketch sk;
+  auto scan = [&] {
+    int top = sk.id_watermark;
+    for (const auto& p : sk.points) top = std::max(top, p.id);
+    for (const auto& e : sk.entities) top = std::max(top, e.id);
+    for (const auto& c : sk.constraints) top = std::max(top, c.id);
+    for (const auto& i : sk.images) top = std::max(top, i.at("id").get<int>());
+    for (const auto& p : sk.patterns) top = std::max(top, p.at("id").get<int>());
+    return top + 1;
+  };
+  unsigned seed = 7;
+  auto next = [&](unsigned n) { seed = seed * 1103515245u + 12345u; return (seed >> 8) % n; };
+  for (int step = 0; step < 4000; ++step) {
+    switch (next(10)) {
+      case 0: case 1: case 2: sk.add_point(next(100), next(100)); break;
+      case 3: if (sk.points.size() >= 2) sk.add_line(sk.points[next(unsigned(sk.points.size()))].id, sk.points.back().id); break;
+      case 4: if (!sk.entities.empty() && sk.entities.back().type == SkEntity::Type::Line) sk.add_constraint(CT::Horizontal, {sk.entities.back().id}); break;
+      case 5: if (!sk.points.empty()) sk.remove(sk.points[next(unsigned(sk.points.size()))].id); break;
+      case 6: if (!sk.entities.empty()) sk.remove(sk.entities[next(unsigned(sk.entities.size()))].id); break;
+      case 7: {  // a caller's own push of a point with an id it chose, erased again now and then (no watermark)
+        sk.points.push_back({sk.next_id() + int(next(3)), 1, 1, false});
+        if (next(2)) std::erase_if(sk.points, [&](const SkPoint& p) { return p.id == sk.points.back().id; });
+        break;
+      }
+      case 8:  // reordered, or the last point renumbered below the others
+        if (next(2)) std::reverse(sk.points.begin(), sk.points.end());
+        else if (!sk.points.empty() && std::none_of(sk.entities.begin(), sk.entities.end(), [&](const SkEntity& e) { return std::count(e.p.begin(), e.p.end(), sk.points.back().id); })) sk.points.back().id = -int(step);
+        break;
+      default: sk.images.push_back({{"id", sk.next_id()}}); if (next(3) == 0) sk.images.erase(sk.images.begin()); break;
+    }
+    CHECK_EQ(sk.next_id(), scan());
+  }
+}
+
 // ---------------------------------------------------------------- solver
 TEST(solve_rectangle_and_resize) {
   Rect r = make_rect(20, 8);

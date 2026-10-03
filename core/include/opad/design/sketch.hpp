@@ -94,13 +94,19 @@ struct Sketch {
   json images = json::array(); // embedded raster backdrops, each with a stable ID
   json patterns = json::array(); // associative patterns, maps refer to stable point/entity IDs
   mutable int id_watermark = 0; // never recycle a deleted ID
+  // next_id's running maximum (TODO 11 UI-29: it read every list on every call, so building n items took n² steps): how
+  // much of each list (points, entities, constraints, images, patterns) it has read, the id it read last in each, and
+  // the largest. Only what was appended since is read; a list that shrank, or whose last read item is no longer the
+  // same, is read again. (An id changed in place before that item could only leave a gap; nothing raises one.)
+  struct IdScan { size_t n[5] = {}; int last[5] = {}; int top = 0; };
+  mutable IdScan id_scan;
 
   SkPoint* point(int id);
   const SkPoint* point(int id) const;
   SkEntity* entity(int id);
   const SkEntity* entity(int id) const;
   SkConstraint* constraint(int id);
-  int next_id() const;  // above both the live IDs and the deletion watermark
+  int next_id() const;  // above both the live IDs and the deletion watermark; amortised O(1) while the lists grow
 
   // Convenience builders (ids are allocated here). They add no constraints.
   int add_point(double x, double y, bool fixed = false);

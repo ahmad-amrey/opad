@@ -298,3 +298,54 @@ TEST(drawing_placement_is_kept_by_its_sketch) {
   for (const auto& id : resolve(placed).all_bodies()) both.push_back({id, false});
   CHECK_THROWS(design::drawing_frame(resolve(placed), both));
 }
+
+// UI-29: a drawing converts in O(n log n) (ids from a counter, one validation), a drawing over the 100,000 cap fails before
+// anything is converted, and a cancelled conversion stops (wizard previews made stale by the next change).
+TEST(drawing_conversion_scales_fails_fast_and_cancels) {
+  Files f;
+  auto drawing = [&](const char* name, int n) {
+    std::string text = "0\nSECTION\n2\nENTITIES\n";
+    for (int i = 0; i < n; ++i) {  // separate segments in rows: nothing to join or fit
+      const int x = (i % 500) * 3, y = (i / 500) * 3;
+      text += "0\nLINE\n8\nLines\n10\n" + std::to_string(x) + "\n20\n" + std::to_string(y) + "\n11\n" + std::to_string(x + 2) + "\n21\n" + std::to_string(y + 1) + "\n";
+    }
+    write_text_file(f.dir / name, text + "0\nENDSEC\n0\nEOF\n");
+    auto d = Document::create();
+    import_file(d, f.dir / name);
+    return d;
+  };
+  auto seconds = [](auto start) { return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(); };
+  const auto big = drawing("big.dxf", 40000);
+  const auto scene = resolve(big);
+  std::vector<design::DrawingLayer> layers;
+  for (const auto& id : scene.all_bodies()) layers.push_back({id, false});
+  auto start = std::chrono::steady_clock::now();
+  const auto sk = design::drawing_sketch(big, scene, layers, Frame{}, .01);
+  const double took = seconds(start);
+  std::cerr << "40000 segments converted in " << took << " s" << std::endl;
+  CHECK_EQ(sk.entities.size(), size_t(40000));
+  CHECK_EQ(sk.points.size(), size_t(80000));
+  CHECK_EQ(sk.next_id(), 120001);
+  CHECK(took < 20);  // was minutes (each id and point lookup scanned the whole sketch)
+  int polls = 0;
+  try {
+    design::drawing_sketch(big, scene, layers, Frame{}, .01, [&] { return ++polls > 3; });
+    CHECK(false);
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()) == "cancelled");
+  }
+  CHECK_EQ(polls, 4);
+  const auto over = drawing("over.dxf", 100001);
+  const auto overScene = resolve(over);
+  layers.clear();
+  for (const auto& id : overScene.all_bodies()) layers.push_back({id, false});
+  start = std::chrono::steady_clock::now();
+  try {
+    design::drawing_sketch(over, overScene, layers, Frame{}, .01, [] { throw Error("converted before the cap was checked"); return false; });
+    CHECK(false);
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()).find("100,000") != std::string::npos);
+  }
+  std::cerr << "over the cap refused in " << seconds(start) << " s" << std::endl;
+  CHECK(seconds(start) < 10);
+}

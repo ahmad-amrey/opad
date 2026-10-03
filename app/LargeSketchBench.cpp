@@ -14,16 +14,20 @@ bool MainWindow::benchLargeSketch() {
   auto doc=std::make_shared<opad::Document>(m_doc->doc);
   auto scene=std::make_shared<opad::Scene>(m_doc->scene);
   auto sk=std::make_shared<opad::design::Sketch>();auto metrics=std::make_shared<opad::json>();
-  m_jobs->async(tr("Converting drawing layers"),[doc,scene,sk,metrics](Progress){
+  m_jobs->async(tr("Converting drawing layers"),[doc,scene,sk,metrics](Progress p){
     std::vector<opad::design::DrawingLayer> layers;
     for(const auto& id:scene->all_bodies())if(scene->node(id)->representation=="drawing2d")layers.push_back({id,false});
-    QElapsedTimer time;time.start();*sk=opad::design::drawing_sketch(*doc,*scene,layers,{},.01);
+    QElapsedTimer time;time.start();*sk=opad::design::drawing_sketch(*doc,*scene,layers,{},.01,[p]{return p.cancelled();});
     (*metrics)["conversion_ms"]=time.nsecsElapsed()/1e6;(*metrics)["entities"]=sk->entities.size();(*metrics)["points"]=sk->points.size();
     trace::log("large benchmark: converted "+QString::fromStdString(metrics->dump()));
+    // UI-29: O(n log n), was minutes for 100k (every id and point lookup scanned the sketch).
+    const double perEntity=(*metrics)["conversion_ms"].get<double>()/std::max<size_t>(1,sk->entities.size());
+    if(sk->entities.size()<10000 || perEntity>0.25)throw opad::Error(QString("drawing to sketch took %1 ms per curve over %2 curves").arg(perEntity).arg(sk->entities.size()).toStdString());
+    trace::log(QString("bench: large sketch: %1 curves converted in %2 ms PASS").arg(sk->entities.size()).arg((*metrics)["conversion_ms"].get<double>()));
     time.restart();auto solved=opad::design::solve(*sk);(*metrics)["solve_ms"]=time.nsecsElapsed()/1e6;
     if(!solved.converged)throw opad::Error("large drawing solve failed");
   },[this,output,sk,metrics](bool ok,const QString& error){
-    if(!ok){trace::log("large benchmark FAIL: "+error);QCoreApplication::exit(2);return;}
+    if(!ok){trace::log("bench: large sketch FAIL: "+error);QCoreApplication::exit(2);return;}
     QElapsedTimer time;time.start();m_design->sketch()->begin({},"Drawing benchmark",{{"base","xy"}},{},sk->to_json());
     (*metrics)["open_ms"]=time.nsecsElapsed()/1e6;
     m_design->sketch()->benchLarge(output,*metrics);
@@ -96,9 +100,9 @@ void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
       if(restored!=expected)throw opad::Error("selection changed sketch geometry");
       m_viewport->grabImage().save(output+".png");
       opad::write_text_file(output.toStdString(),run->metrics.dump(2));
-      trace::log("large benchmark PASS: "+QString::fromStdString(run->metrics.dump()));
+      trace::log("bench: large sketch: hover, pan, drag, undo and box selection PASS: "+QString::fromStdString(run->metrics.dump()));
       end();QCoreApplication::exit(0);
     }
-  }catch(const std::exception& e){timer->stop();trace::log(QString("large benchmark FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});
+  }catch(const std::exception& e){timer->stop();trace::log(QString("bench: large sketch FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});
   timer->start();
 }

@@ -121,8 +121,9 @@ void MainWindow::drawingToSketch() {
     const auto chosen=layers(); const auto plane=state->plane; const auto frame=state->frame; const double tol=tolerance->value(); const auto title=name->text().trimmed().toStdString();
     if(commit) { state->applying=true; update(); }
     state->job=m_jobs->async(commit?tr("Converting drawing layers"):tr("Previewing curves"),[=](Progress p) {
-      *geometry=opad::design::drawing_sketch(*snapshot,opad::resolve(*snapshot),chosen,frame,tol); if(p.cancelled()) return;
-      if(!commit) { BRep_Builder b; b.MakeCompound(*shape); for(const auto& e:opad::design::sketch_edges(*geometry,frame,true)) b.Add(*shape,e);Bnd_Box bounds;BRepBndLib::Add(*shape,bounds);*presentation=BodyPrs::build(*shape,bounds); }
+      // A preview the next change made stale stops at once (UI-29: they ran on for 45 s each, stacking up).
+      *geometry=opad::design::drawing_sketch(*snapshot,opad::resolve(*snapshot),chosen,frame,tol,[p]{return p.cancelled();}); if(p.cancelled()) return;
+      if(!commit) { BRep_Builder b; b.MakeCompound(*shape); for(const auto& e:opad::design::sketch_edges(*geometry,frame,true)) b.Add(*shape,e);if(p.cancelled()) return;Bnd_Box bounds;BRepBndLib::Add(*shape,bounds);*presentation=BodyPrs::build(*shape,bounds); }
     },[=,this](bool ok,const QString& error) {
       if(!guard || state->closed || serial!=state->serial || generation!=m_doc->generation) return;
       state->job=nullptr;

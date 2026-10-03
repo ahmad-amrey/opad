@@ -15,13 +15,14 @@
 #include <TColgp_Array1OfPnt.hxx>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <set>
 
 namespace opad::design {
 namespace {
 // Only join smooth degree-two chains. Branches and sharp joins remain explicit
 // endpoints, so fitting cannot round off corners or change connectivity.
-void reconstruct(Sketch& sk,double tolerance) {
+void reconstruct(Sketch& sk,double tolerance,const std::function<bool()>& cancelled={}) {
   std::map<int,std::vector<size_t>> adjacent;
   std::map<int,gp_Pnt> pts;
   for(const auto& p:sk.points) pts[p.id]=gp_Pnt(p.x,p.y,0);
@@ -34,6 +35,7 @@ void reconstruct(Sketch& sk,double tolerance) {
   int next=sk.next_id();
   auto addPoint=[&](const gp_Pnt& p) {int id=next++; sk.points.push_back({id,p.X(),p.Y(),false}); return id;};
   for(size_t seed=0;seed<sk.entities.size();++seed) {
+    if(cancelled && seed%1024==0 && cancelled()) throw Error("cancelled");
     if(used[seed]) continue;
     const auto original=sk.entities[seed];
     if(original.type!=SkEntity::Type::Line) {out.push_back(original);used[seed]=true;continue;}
@@ -129,39 +131,54 @@ Frame drawing_frame(const Scene& scene,const std::vector<DrawingLayer>& layers) 
   if(first) throw Error("Select drawing layers to convert");
   return out;
 }
-Sketch drawing_sketch(const Document& doc,const Scene& scene,const std::vector<DrawingLayer>& layers,const Frame& frame,double tolerance) {
+Sketch drawing_sketch(const Document& doc,const Scene& scene,const std::vector<DrawingLayer>& layers,const Frame& frame,double tolerance,
+                      const std::function<bool()>& cancelled) {
   if(!(tolerance>0) || !std::isfinite(tolerance)) throw Error("Curve tolerance must be positive");
-  Sketch result; std::set<std::string> used;
-  std::map<std::pair<long long,long long>,int> points;
-  auto point=[&](const gp_Pnt& p) {
-    double u,v; frame.to_local({p.X(),p.Y(),p.Z()},u,v);
-    const auto key=std::make_pair(std::llround(u*1e7),std::llround(v*1e7));
-    auto [it,added]=points.emplace(key,0); if(added) it->second=result.add_point(u,v); return it->second;
-  };
-  const auto normal=frame.normal(); const gp_Dir axis(normal[0],normal[1],normal[2]);
+  // The layers' shapes first, counted (UI-29): over the cap it fails at once instead of after converting 100k curves.
+  constexpr size_t cap=100000;
+  struct Source { TopoDS_Shape shape; TopTools_IndexedMapOfShape edges; bool construction; };
+  std::vector<Source> sources; std::set<std::string> used; size_t count=0;
   for(const auto& layer:layers) {
     if(!used.insert(layer.id).second) continue;
     const auto* node=scene.node(layer.id);
     if(!node || node->representation!="drawing2d") throw Error("Select drawing layers to convert");
     if(!node->raster.is_null()) throw Error("Raster images have no editable vector curves; exclude the image layer");
-    const auto shape=node_world_shape(doc,scene,layer.id);
-    for(TopExp_Explorer vertices(shape,TopAbs_VERTEX,TopAbs_EDGE);vertices.More();vertices.Next()) {
-      SkEntity e;e.type=SkEntity::Type::Point;e.p={point(BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current())))};
-      e.id=result.next_id();e.construction=layer.construction;result.entities.push_back(std::move(e));
-    }
-    TopTools_IndexedMapOfShape edges; TopExp::MapShapes(shape,TopAbs_EDGE,edges);
+    Source source{node_world_shape(doc,scene,layer.id),{},layer.construction};
+    TopExp::MapShapes(source.shape,TopAbs_EDGE,source.edges); count+=size_t(source.edges.Extent());
+    for(TopExp_Explorer vertices(source.shape,TopAbs_VERTEX,TopAbs_EDGE);vertices.More();vertices.Next()) ++count;
+    if(count>cap) throw Error("Converted sketch exceeds 100,000 entities; select fewer layers or increase tolerance");
+    sources.push_back(std::move(source));
+  }
+  // Ids from one counter, curves pushed as they are (validate checks the whole sketch once at the end): the builders look
+  // every point up by scanning, so n curves took n² steps (45 s, then the cap).
+  Sketch result; int next=1;
+  std::map<std::pair<long long,long long>,int> points;
+  auto point=[&](const gp_Pnt& p) {
+    double u,v; frame.to_local({p.X(),p.Y(),p.Z()},u,v);
+    if(!std::isfinite(u) || !std::isfinite(v)) throw Error("sketch: point coordinates are not numbers");
+    const auto key=std::make_pair(std::llround(u*1e7),std::llround(v*1e7));
+    auto [it,added]=points.emplace(key,0); if(added) { it->second=next++; result.points.push_back({it->second,u,v,false}); } return it->second;
+  };
+  auto add=[&](SkEntity e) { e.id=next++; result.entities.push_back(std::move(e)); };
+  auto curve=[&](SkEntity::Type type,std::vector<int> p,bool construction,double r=0) { SkEntity e; e.type=type; e.p=std::move(p); e.r=r; e.construction=construction; add(std::move(e)); };
+  const auto normal=frame.normal(); const gp_Dir axis(normal[0],normal[1],normal[2]);
+  size_t done=0;
+  for(const auto& [shape,edges,construction]:sources) {
+    for(TopExp_Explorer vertices(shape,TopAbs_VERTEX,TopAbs_EDGE);vertices.More();vertices.Next())
+      curve(SkEntity::Type::Point,{point(BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current())))},construction);
     for(int i=1;i<=edges.Extent();++i) {
+      if(cancelled && ++done%1024==0 && cancelled()) throw Error("cancelled");
       BRepAdaptor_Curve c(TopoDS::Edge(edges(i))); const double first=c.FirstParameter(),last=c.LastParameter();
       if(c.GetType()==GeomAbs_Circle && std::abs(c.Circle().Axis().Direction().Dot(axis))>1-1e-8) {
         const int center=point(c.Circle().Location());
-        if(last-first>=2*M_PI-1e-8) result.add_circle(center,c.Circle().Radius(),layer.construction);
+        if(last-first>=2*M_PI-1e-8) curve(SkEntity::Type::Circle,{center},construction,c.Circle().Radius());
         else {
           int a=point(c.Value(first)),b=point(c.Value(last));
           if(c.Circle().Axis().Direction().Dot(axis)<0) std::swap(a,b);
-          if(a!=b) result.add_arc(center,a,b,layer.construction);
+          if(a!=b) curve(SkEntity::Type::Arc,{center,a,b},construction);
         }
       } else {
-        auto line=[&](const gp_Pnt& a,const gp_Pnt& b) { int ia=point(a),ib=point(b); if(ia!=ib) result.add_line(ia,ib,layer.construction); };
+        auto line=[&](const gp_Pnt& a,const gp_Pnt& b) { int ia=point(a),ib=point(b); if(ia!=ib) curve(SkEntity::Type::Line,{ia,ib},construction); };
         if(c.GetType()==GeomAbs_Line) line(c.Value(first),c.Value(last));
         else {
           // Preserve the source basis exactly. Projecting its poles is an exact affine
@@ -169,17 +186,16 @@ Sketch drawing_sketch(const Document& doc,const Scene& scene,const std::vector<D
           Handle(Geom_Curve) source=Handle(Geom_Curve)::DownCast(c.Curve().Curve()->Transformed(c.Trsf()));
           Handle(Geom_TrimmedCurve) trimmed=new Geom_TrimmedCurve(source,first,last);
           auto spline=GeomConvert::CurveToBSplineCurve(trimmed);
-          SkEntity e; e.type=SkEntity::Type::Spline; e.degree=spline->Degree(); e.periodic=spline->IsPeriodic(); e.construction=layer.construction;
+          SkEntity e; e.type=SkEntity::Type::Spline; e.degree=spline->Degree(); e.periodic=spline->IsPeriodic(); e.construction=construction;
           for(int j=1;j<=spline->NbPoles();++j) { e.p.push_back(point(spline->Pole(j))); e.weights.push_back(spline->Weight(j)); }
           for(int j=1;j<=spline->NbKnots();++j) { e.knots.push_back(spline->Knot(j)); e.multiplicities.push_back(spline->Multiplicity(j)); }
-          e.id=result.next_id(); result.entities.push_back(std::move(e));
+          add(std::move(e));
         }
       }
-      if(result.entities.size()>100000) throw Error("Converted sketch exceeds 100,000 entities; select fewer layers or increase tolerance");
     }
   }
   if(result.entities.empty()) throw Error("No vector curves in the selected layers");
-  reconstruct(result,tolerance);
+  reconstruct(result,tolerance,cancelled);
   result.validate(); return result;
 }
 }
