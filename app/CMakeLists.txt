@@ -47,6 +47,7 @@ set(OPAD_APP_SOURCES
   I18n.cpp I18n.hpp i18n.qrc
   CommandHelp.cpp CommandHelp.hpp help.qrc
   RichTip.cpp RichTip.hpp
+  HelpClip.cpp HelpClip.hpp
   HelpBench.cpp
   res.qrc
   MainWindow.cpp MainWindow.hpp DrawingWizard.cpp DrawingPlacer.cpp DrawingPlacer.hpp ExportDialog.cpp Todo5Bench.cpp Todo9Bench.cpp LargeSketchBench.cpp)

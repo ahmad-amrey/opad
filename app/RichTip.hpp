@@ -30,9 +30,10 @@ class RichTip : public QWidget {
   // The QAction of a command id (MainWindow::action): its icon, live shortcut and enabled state. A QToolButton's
   // default action is used without it.
   static void setActionLookup(std::function<QAction*(const QString&)> lookup);
-  // UI-107: the expanded card's clip, made for the record's clip id (nullptr: no slot).
+  // UI-107: the expanded card's clip, made for the record's clip id (nullptr: no slot); `has` says which ids have one
+  // (all when not given), so a command without a clip keeps the narrower card.
   using ClipFactory = std::function<QWidget*(const QString& clip, QWidget* parent)>;
-  static void setClipFactory(ClipFactory factory);
+  static void setClipFactory(ClipFactory factory, std::function<bool(const QString&)> has = {});
   static constexpr int kMargin = 6;    // translucent rim for the shadow, as ToolPanel
   static constexpr QSize kClip{288, 162};
 

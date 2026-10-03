@@ -2,6 +2,7 @@
   <qresource prefix="/">
     <file>help/commands.json</file>
     <file>help/commands.ar.json</file>
+    <file>help/clips.json</file>
     <file>i18n/ar/help.json</file>
   </qresource>
 </RCC>

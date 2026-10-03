@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument("--output", type=Path, default=ROOT / "build" / "gui-benches")
     args = parser.parse_args()
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # trace tails carry Arabic in the -ar cases
     app, cli, output = args.app.resolve(), args.cli.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="opad-gui-") as directory:
@@ -66,6 +67,10 @@ def main():
             # UI-106: help for every command, the rich hover card on ribbon buttons (English, then Arabic right to left).
             ("richtip", box, {"OPAD_BENCH_RICHTIP": "{prefix}"}),
             ("richtip-ar", box, {"OPAD_BENCH_RICHTIP": "{prefix}", "OPAD_LANG": "ar"}),
+            # UI-107: every animated help clip loads, moves and renders in budget (contact sheets in <output>/clips), the
+            # player runs only while visible, holds still with reduced motion and plays in the rich card; Arabic mirrored.
+            ("clips", empty, {"OPAD_BENCH_CLIPS": "{prefix}"}),
+            ("clips-ar", empty, {"OPAD_BENCH_CLIPS": "{prefix}", "OPAD_LANG": "ar"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

@@ -1,6 +1,7 @@
 #include "RichTip.hpp"
 
 #include "CommandHelp.hpp"
+#include "HelpClip.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 
@@ -16,25 +17,13 @@
 #include <QToolButton>
 #include <QVariantAnimation>
 #include <algorithm>
-#ifdef Q_OS_WIN
-#include <windows.h>
-#endif
 
 namespace {
 QPointer<RichTip> g_tip;
 std::function<QAction*(const QString&)> g_lookup;
 RichTip::ClipFactory g_clips;
+std::function<bool(const QString&)> g_hasClip;
 constexpr int kPad = 12, kMinText = 200, kMaxText = 336, kShowMs = 450, kGraceMs = 300, kGrowMs = 120;
-
-// Windows' "animation effects" switch (reduced motion) is the default; ui/tipAnimate overrides it.
-bool animations() {
-  bool on = true;
-#ifdef Q_OS_WIN
-  BOOL enabled = TRUE;
-  if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0)) on = enabled;
-#endif
-  return QSettings().value("ui/tipAnimate", on).toBool();
-}
 
 // "Ctrl+Shift+U" -> Ctrl, Shift, U (a "+" key stays one cap); the first chord only.
 QStringList keyParts(const QKeySequence& key) {
@@ -98,7 +87,10 @@ void RichTip::detach(QWidget* w) {
 }
 
 void RichTip::setActionLookup(std::function<QAction*(const QString&)> lookup) { g_lookup = std::move(lookup); }
-void RichTip::setClipFactory(ClipFactory factory) { g_clips = std::move(factory); }
+void RichTip::setClipFactory(ClipFactory factory, std::function<bool(const QString&)> has) {
+  g_clips = std::move(factory);
+  g_hasClip = std::move(has);
+}
 
 int RichTip::mode() { return QSettings().value("ui/tips", 2).toInt(); }
 
@@ -117,6 +109,7 @@ QAction* RichTip::actionFor() const {
 }
 
 void RichTip::showFor(QWidget* target, State state) {
+  if (target != m_target) delete m_clip;  // another command: its own clip
   m_target = target;
   m_id = m_attached.value(target);
   m_suppressed = nullptr;
@@ -169,7 +162,7 @@ void RichTip::hover(QWidget* target) {
 
 void RichTip::present(State state) {
   if (m_target) m_anchor = QRect(m_target->mapToGlobal(QPoint(0, 0)), m_target->size());
-  const bool grow = m_state == State::Compact && state == State::Expanded && isVisible() && animations();
+  const bool grow = m_state == State::Compact && state == State::Expanded && isVisible() && clips::animations();
   m_show.stop();
   m_expand.stop();
   m_state = state;
@@ -195,10 +188,11 @@ void RichTip::relayout(State state) {
   m_icon = a && icons::has(a->data().toString()) ? a->data().toString() : QString();
   const bool expanded = state == State::Expanded;
   m_details = expanded ? details : QString();
-  m_expandable = !details.isEmpty() || (g_clips && h);
+  const bool clip = g_clips && h && (!g_hasClip || g_hasClip(h->clip));
+  m_expandable = !details.isEmpty() || clip;
   m_hint = !expanded && m_expandable ? tr("Shift or F1 for more") : QString();
   if (!expanded) delete m_clip;
-  else if (!m_clip && g_clips && h && (m_clip = g_clips(h->clip, this)) && m_clip->parentWidget() != this) m_clip->setParent(this);
+  else if (!m_clip && clip && (m_clip = g_clips(h->clip, this)) && m_clip->parentWidget() != this) m_clip->setParent(this);
 
   // One width for both states (it never jumps sideways when the card grows): what the longest text needs, clamped.
   const QFontMetrics title(titleFont()), body(bodyFont()), key(theme::mono(11));
@@ -209,7 +203,7 @@ void RichTip::relayout(State state) {
   int natural = iconWidth + title.horizontalAdvance(m_title) + (keysWidth ? 16 + keysWidth : 0);
   for (const QString& text : {m_summary, details}) natural = std::max(natural, body.horizontalAdvance(text));
   if (!m_requirement.isEmpty()) natural = std::max(natural, 20 + body.horizontalAdvance(m_requirement));
-  if (g_clips && h) natural = std::max(natural, kClip.width());
+  if (clip) natural = std::max(natural, kClip.width());
   const int w = std::clamp(natural, kMinText, kMaxText), x = kMargin + kPad;
   int y = kMargin + 10;
   const int titleWidth = w - iconWidth - (keysWidth ? keysWidth + 12 : 0);

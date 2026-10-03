@@ -5,6 +5,8 @@
 #include "DrawingPlacer.hpp"
 #include "RecoveryManager.hpp"
 #include "AgentBridge.hpp"
+#include "HelpClip.hpp"
+#include "RichTip.hpp"
 
 #include <QToolButton>
 #include <QToolTip>
@@ -82,6 +84,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildDocks();
   buildStatusBar();
   buildDesign();
+  RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);  // UI-107
   m_recovery=new RecoveryManager(m_doc,m_design,m_jobs,this);
   m_agent=new AgentBridge(m_doc,m_design,m_viewport,m_jobs,this);
   m_agent->bench();
@@ -2525,6 +2528,7 @@ void MainWindow::runBench() {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_LEAVE")){const bool ok=m_viewport->benchLeave();QCoreApplication::exit(ok?0:2);return;}
   if(benchShortcuts())return;
   if(benchRichTip())return;
+  if(benchClips())return;
   if(benchDrawingImport())return;
   if(benchTodo9())return;
   if(benchAnnotateLarge())return;

@@ -1,7 +1,11 @@
 // Command help (UI-106): every command id the app registers has an English record and its Arabic translation, the
-// registry's lookups, search and tooltips, and the rich card's states, timing and layout (offscreen).
+// registry's lookups, search and tooltips, and the rich card's states, timing and layout (offscreen). The animated
+// clips (UI-107): the library, rendering, translations, the loader's checks and templates, the player.
 #include "CommandHelp.hpp"
+#include "HelpClip.hpp"
+#include "I18n.hpp"
 #include "RichTip.hpp"
+#include "Theme.hpp"
 #include "check.hpp"
 #include "opad/design/feature.hpp"
 #include <QAction>
@@ -110,7 +114,7 @@ TEST(help_area_strings_are_translated) {
   const QJsonObject fragment = QJsonDocument::fromJson(source("app/i18n/ar/help.json").toUtf8()).object();
   for (auto it = fragment.begin(); it != fragment.end(); ++it) arabic.insert(it.key(), it.value());
   QStringList strings;
-  for (const char* file : {"app/RichTip.cpp", "app/RichTip.hpp", "app/CommandHelp.cpp", "app/HelpBench.cpp"})
+  for (const char* file : {"app/RichTip.cpp", "app/RichTip.hpp", "app/CommandHelp.cpp", "app/HelpBench.cpp", "app/HelpClip.cpp", "app/HelpClip.hpp"})
     for (const auto& m : QRegularExpression(R"re(\btr\("((?:[^"\\]|\\.)*)"\))re").globalMatch(source(file))) strings << m.captured(1);
   CHECK(strings.size() >= 2);
   for (const QString& s : strings)
@@ -193,6 +197,155 @@ TEST(rich_tip_states_and_layout) {
   CHECK(tip->layoutDirection() == Qt::RightToLeft);
   QApplication::setLayoutDirection(Qt::LeftToRight);
   tip->hideTip();
+  RichTip::detach(button);
+}
+
+// UI-107: the clips. The library loads without a problem and has the clips the help promises, with contiguous steps.
+TEST(clips_load_cleanly) {
+  clips::load();
+  if (!clips::problems().isEmpty()) throw check::Failure(clips::problems().join("; ").toStdString());
+  CHECK(clips::ids().size() >= 30);
+  for (const char* id : {"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.slot", "sketch.polygon", "sketch.offset", "sketch.trim", "sketch.fillet",
+                         "sketch.dimension", "sketch.c.horizontal", "sketch.c.coincident", "design.extrude", "design.revolve", "design.fillet", "design.chamfer", "design.shell",
+                         "design.hole", "design.pattern_rect", "design.mirror", "inspect.section", "inspect.distance", "inspect.angle", "inspect.radius", "assembly.explode",
+                         "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView"})
+    if (!clips::has(id)) throw check::Failure(std::string("no clip ") + id);
+  for (const QString& id : clips::ids()) {
+    const auto steps = clips::steps(id);
+    CHECK(!steps.isEmpty());
+    double at = 0;
+    for (const auto& s : steps) {
+      if (std::abs(s.from - at) > 1e-9 || s.to <= s.from) throw check::Failure(id.toStdString() + ": steps leave a gap");
+      at = s.to;
+    }
+    if (std::abs(at - clips::duration(id)) > 1e-9) throw check::Failure(id.toStdString() + ": the last step does not end the clip");
+    CHECK(clips::stepAt(id, 0) == 0 && clips::stepAt(id, clips::duration(id)) == steps.size() - 1);
+    CHECK(clips::stillTime(id) > 0 && clips::stillTime(id) <= clips::duration(id));
+  }
+  // Every command id with a clip of its own has a help record (future commands name theirs here first).
+  for (const QString& id : clips::ids())
+    if (!help::find(id) && !QStringList{"assembly.explode", "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView"}.contains(id))
+      throw check::Failure(id.toStdString() + ": a clip for no command");
+}
+
+// Every clip renders at its start, middle and end; it moves; the still frame is steady; right to left mirrors the
+// chrome (caption bar, cards) and nothing else changes size.
+TEST(clips_render_and_move) {
+  clips::load();
+  const Tokens dark = theme::tokens(true), light = theme::tokens(false);
+  for (const QString& id : clips::ids()) {
+    clips::Options o;
+    o.tokens = &dark;
+    const double d = clips::duration(id);
+    const QImage start = clips::frame(id, 0, {288, 162}, 1, o), mid = clips::frame(id, d / 2, {288, 162}, 1, o), end = clips::frame(id, d, {288, 162}, 1, o);
+    if (start.isNull() || mid.isNull() || end.isNull()) throw check::Failure(id.toStdString() + ": no frame");
+    if (start == mid && mid == end) throw check::Failure(id.toStdString() + ": does not move");
+    o.tokens = &light;
+    if (clips::frame(id, d / 2, {288, 162}, 1, o) == mid) throw check::Failure(id.toStdString() + ": ignores the theme");
+    o.tokens = &dark;
+    o.rtl = true;
+    if (clips::frame(id, d / 2, {288, 162}, 1, o) == mid) throw check::Failure(id.toStdString() + ": the caption bar is not mirrored");
+    o.rtl = false;
+    o.still = true;
+    CHECK(clips::frame(id, clips::stillTime(id), {288, 162}, 1, o) == clips::frame(id, clips::stillTime(id), {288, 162}, 1, o));
+  }
+  // An unknown clip paints the empty background.
+  CHECK(!clips::frame("no.such.clip", 1, {50, 30}).isNull());
+}
+
+// Every caption, label and card text of every clip is translated into Arabic (app/i18n/ar.json or the help area's
+// app/i18n/ar/help.json); the help area's own ones translate at run time once the Arabic help is loaded.
+TEST(clip_texts_are_translated) {
+  QJsonObject arabic = QJsonDocument::fromJson(source("app/i18n/ar.json").toUtf8()).object();
+  const QJsonObject fragment = QJsonDocument::fromJson(source("app/i18n/ar/help.json").toUtf8()).object();
+  for (auto it = fragment.begin(); it != fragment.end(); ++it) arabic.insert(it.key(), it.value());
+  clips::load();
+  QStringList missing;
+  for (const QString& id : clips::ids())
+    for (const QString& text : clips::texts(id)) if (arabic.value(text).toString().isEmpty()) missing << id + ": " + text;
+  if (!missing.isEmpty()) throw check::Failure("no Arabic for " + missing.join(" | ").toStdString());
+  help::load("ar");
+  CHECK_EQ(i18n::t("Click the start point"), fragment.value("Click the start point").toString());
+  help::load("en");
+}
+
+// The loader names what is wrong, expands templates with arithmetic on their parameters, and keeps clip fields over
+// template fields.
+TEST(clip_loader_checks_and_templates) {
+  QTemporaryDir dir;
+  QFile f(dir.filePath("clips.json"));
+  CHECK(f.open(QIODevice::WriteOnly));
+  f.write(R"({"templates": {
+    "mark": {"params": {"at": null, "t": 1}, "items": [{"el": "snap", "kind": "endpoint", "at": "$at", "keys": [["$t-0.5", {"opacity": 0}], ["$t+0.25", {"opacity": 1}]]}]},
+    "whole": {"params": {"caption": null}, "duration": 3, "items": [{"el": "grid"}], "steps": [{"to": 3, "caption": "$caption"}]}},
+   "clips": [
+    {"id": "ok", "duration": 2, "extent": [-5, -5, 5, 5], "items": [{"use": "mark", "args": {"at": [1, 1]}}, {"el": "cursor", "keys": [[0, {"pos": [0, 0]}], [1, {"pos": [2, 2], "click": 1}]]}],
+     "steps": [{"to": 1, "caption": "One"}, {"to": 2, "caption": "Two"}]},
+    {"id": "whole", "template": "whole", "args": {"caption": "From the template"}, "duration": 4, "items": [{"el": "label", "at": [0, 0], "text": "Extra"}]},
+    {"id": "bad", "items": [{"el": "nope"}, {"el": "poly", "colour": "red"}, {"use": "missing"}, {"el": "poly", "color": "purple"}, {"use": "mark"},
+                            {"el": "cursor", "keys": [[2, {"pos": [0, 0]}], [1, {"pos": [1, 1]}]]}, {"el": "cursor", "badge": "no-such-icon"}]}]})");
+  f.close();
+  clips::load(f.fileName());
+  const QString problems = clips::problems().join("\n");
+  for (const char* expected : {"bad: unknown element nope", "bad: poly: unknown property colour", "bad: unknown template missing", "bad: poly.color: unknown colour purple",
+                               "bad: template mark needs at", "bad: cursor: keys must be [time, {...}] in time order", "bad: cursor: no icon no-such-icon", "bad: no steps"})
+    if (!problems.contains(expected)) throw check::Failure("missing problem \"" + std::string(expected) + "\" in:\n" + problems.toStdString());
+  CHECK(!problems.contains("ok:") && !problems.contains("whole:"));
+  CHECK(clips::has("ok") && clips::duration("ok") == 2 && clips::steps("ok").size() == 2 && clips::stepAt("ok", 1.5) == 1);
+  CHECK(clips::duration("whole") == 4 && clips::steps("whole").value(0).caption == "From the template");
+  CHECK(clips::texts("whole").contains("From the template") && clips::texts("whole").contains("Extra"));
+  // The click is a ripple while playing and a numbered badge in the still frame.
+  clips::Options still;
+  still.still = true;
+  CHECK(clips::frame("ok", 1.1, {288, 162}) != clips::frame("ok", 1.1, {288, 162}, 1, still));
+  clips::load();
+}
+
+// The player runs a timer only while visible and not reduced to its still frame; a step loops inside its segment.
+TEST(clip_view_plays_only_when_visible) {
+  clips::load();
+  QSettings().setValue("ui/tipAnimate", true);
+  ClipView view("design.extrude");
+  CHECK(!view.playing() && view.sizeHint() == QSize(288, 162));
+  view.resize(288, 162);
+  view.show();
+  CHECK(view.playing() && !view.still());
+  QTest::qWait(300);
+  CHECK(view.time() > 0.15 && view.time() < 1.5);
+  view.setStep(1);
+  const auto steps = clips::steps("design.extrude");
+  CHECK(view.time() >= steps[1].from - 1e-9 && view.time() <= steps[1].to + 1e-9);
+  view.hide();
+  CHECK(!view.playing());
+  QSettings().setValue("ui/tipAnimate", false);
+  view.setStep(-1);
+  view.show();
+  CHECK(!view.playing() && view.still() && view.time() == clips::stillTime("design.extrude"));
+  CHECK(!view.grab().toImage().isNull());
+  view.setClip("no.such.clip");
+  CHECK(!view.playing());
+}
+
+// The rich card's clip slot only for commands whose clip exists, when the factory says which do.
+TEST(rich_tip_clip_slot_follows_the_library) {
+  help::load("en");
+  QWidget window;
+  auto* button = new QToolButton(&window);
+  auto* quit = new QAction("Quit", &window);
+  quit->setObjectName("file.quit");
+  button->setDefaultAction(quit);
+  window.show();
+  RichTip::attach(button, "file.quit");
+  RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);
+  RichTip* tip = RichTip::instance();
+  tip->showFor(button, RichTip::State::Expanded);
+  CHECK(!tip->clip());
+  tip->hideTip();
+  RichTip::attach(button, "design.extrude");
+  tip->showFor(button, RichTip::State::Expanded);
+  CHECK(qobject_cast<ClipView*>(tip->clip()) && static_cast<ClipView*>(tip->clip())->clip() == "design.extrude");
+  tip->hideTip();
+  RichTip::setClipFactory(nullptr);
   RichTip::detach(button);
 }
 

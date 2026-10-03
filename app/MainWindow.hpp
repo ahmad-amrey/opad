@@ -82,6 +82,7 @@ class MainWindow : public QMainWindow {
   bool benchShortcuts();
   bool benchViewer();  // OPAD_BENCH_VIEWER
   bool benchRichTip();  // OPAD_BENCH_RICHTIP: command help coverage and the rich hover card (HelpBench.cpp)
+  bool benchClips();  // OPAD_BENCH_CLIPS: the animated help clips, contact sheets and the player (HelpBench.cpp)
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);

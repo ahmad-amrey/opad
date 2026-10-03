@@ -1,0 +1,723 @@
+{
+ "@about": "Animated help clips (UI-107), played by ClipView (app/HelpClip.hpp): vector items keyframed in seconds, model coordinates in millimetres (plane view: x right, y up; iso view: z up). Captions, label/chip texts and card titles/rows are English source text translated through app/i18n/<lang>/help.json. All artwork is original and procedural.",
+ "templates": {
+  "sketchScene": {"params": {}, "items": [{"el": "grid", "spacing": 5}, {"el": "axes"}]},
+  "isoScene": {"params": {"area": [-30, -22, 30, 22]}, "items": [{"el": "grid", "spacing": 10, "area": "$area"}, {"el": "axes", "len": 6}]},
+  "sketchDraw": {"params": {"badge": null, "keys": null}, "items": [{"el": "cursor", "kind": "cross", "badge": "$badge", "keys": "$keys"}]},
+  "pickFace": {"params": {"face": null, "hover": null, "pick": null, "until": 100},
+   "items": [
+    {"el": "poly", "points": "$face", "closed": true, "width": 0, "fill": "glow", "fillOpacity": 0.45, "from": "$hover", "to": "$pick", "fade": 0.08},
+    {"el": "poly", "points": "$face", "closed": true, "color": "sel", "width": 1.6, "fill": "sel", "fillOpacity": 0.38, "from": "$pick", "to": "$until", "fade": 0.1}]},
+  "pickEdge": {"params": {"edge": null, "hover": null, "pick": null, "until": 100},
+   "items": [
+    {"el": "poly", "points": "$edge", "color": "glow", "width": 6.5, "from": "$hover", "to": "$pick", "fade": 0.08},
+    {"el": "poly", "points": "$edge", "color": "sel", "width": 2.8, "from": "$pick", "to": "$until", "fade": 0.1}]},
+  "dragHandle": {"params": {"at0": null, "at1": null, "dir": [0, 0, 1], "t0": null, "t1": null, "v0": null, "v1": null, "unit": " mm", "from": null, "to": null, "dx": 16, "dy": -8},
+   "items": [
+    {"el": "arrow", "dir": "$dir", "at": "$at0", "from": "$from", "to": "$to", "keys": [["$t0", {"at": "$at0"}], ["$t1", {"at": "$at1"}]]},
+    {"el": "hud", "dx": "$dx", "dy": "$dy", "unit": "$unit", "dec": 1, "fields": ["$v0"], "from": "$from", "to": "$to", "keys": [["$t0", {"fields": ["$v0"]}], ["$t1", {"fields": ["$v1"]}]]}]},
+  "typedValue": {"params": {"t": null, "s1": null, "s2": null, "press": null, "at": "cursor", "dx": 16, "dy": -8, "caps": ["Enter"], "field": ""},
+   "items": [
+    {"el": "hud", "at": "$at", "dx": "$dx", "dy": "$dy", "fields": ["$field"], "focus": 0, "typed": "", "from": "$t", "to": "$press", "fade": 0,
+     "keys": [["$t+0.12", {"typed": "$s1"}], ["$t+0.27", {"typed": "$s2"}]]},
+    {"el": "key", "caps": "$caps", "press": "$press", "from": "$press-0.25", "to": "$press+0.45"}]},
+  "patternCopy": {"params": {"profile": null, "at": [0, 0, 0], "height": 6, "offset": [0, 0, 0], "rot": 0, "t0": 1.9, "t1": 2.9, "done": 3.6},
+   "items": [
+    {"el": "solid", "profile": "$profile", "at": "$at", "height": "$height", "tone": "sel", "pivot": [0, 0, 0], "from": "$t0", "fade": 0,
+     "keys": [["$t0", {"offset": [0, 0, 0], "rot": 0, "opacity": 0, "toneAmount": 0.35}], ["$t0+0.2", {"opacity": 1}], ["$t1", {"offset": "$offset", "rot": "$rot"}],
+              ["$done", {"toneAmount": 0.35}], ["$done+0.2", {"toneAmount": 0}]]}]},
+  "constraint1": {"params": {"a": null, "a2": null, "pa": null, "glyph": null, "ga": null, "gdx": 0, "gdy": -14, "caption1": "Click the line", "caption2": null},
+   "duration": 3.8, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "poly", "points": "$a", "color": "glow", "width": 6.5, "from": 0.55, "to": 1.0, "fade": 0.08},
+    {"el": "poly", "points": "$a", "dots": true, "color": "fg", "keys": [[1.0, {"color": "sel", "points": "$a"}], [1.3, {"points": "$a"}], [2.0, {"points": "$a2"}], [2.6, {"color": "fg"}]]},
+    {"el": "glyph", "kind": "$glyph", "at": "$ga", "dx": "$gdx", "dy": "$gdy", "from": 2.0},
+    {"el": "cursor", "keys": [[0, {"pos": [-24, -11]}], [1.0, {"pos": "$pa", "click": 1}], [2.3, {"pos": "$pa"}], [3.1, {"pos": [-22, 10]}]]}
+   ],
+   "steps": [{"to": 1.1, "caption": "$caption1"}, {"to": 3.8, "caption": "$caption2"}]},
+  "constraint": {"params": {"a": null, "a2": null, "b": null, "pa": null, "pb": null, "glyph": null, "ga": null, "gb": null, "gadx": 0, "gady": -14, "gbdx": 0, "gbdy": -14,
+                            "caption1": "Click the first line", "caption2": "Click the second line", "caption3": null},
+   "duration": 4.4, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "poly", "points": "$b", "color": "glow", "width": 6.5, "from": 1.45, "to": 1.9, "fade": 0.08},
+    {"el": "poly", "points": "$b", "dots": true, "color": "fg", "keys": [[1.9, {"color": "sel"}], [3.0, {"color": "fg"}]]},
+    {"el": "poly", "points": "$a", "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
+    {"el": "poly", "points": "$a", "dots": true, "color": "fg", "keys": [[0.9, {"color": "sel", "points": "$a"}], [2.1, {"points": "$a"}], [2.8, {"points": "$a2"}], [3.0, {"color": "fg"}]]},
+    {"el": "glyph", "kind": "$glyph", "at": "$ga", "dx": "$gadx", "dy": "$gady", "from": 2.8},
+    {"el": "glyph", "kind": "$glyph", "at": "$gb", "dx": "$gbdx", "dy": "$gbdy", "from": 2.8},
+    {"el": "cursor", "keys": [[0, {"pos": [-24, -11]}], [0.9, {"pos": "$pa", "click": 1}], [1.9, {"pos": "$pb", "click": 1}], [2.5, {"pos": "$pb"}], [3.4, {"pos": [-24, 10]}]]}
+   ],
+   "steps": [{"to": 1.0, "caption": "$caption1"}, {"to": 2.0, "caption": "$caption2"}, {"to": 4.4, "caption": "$caption3"}]},
+  "edgeFeature": {"params": {"p0": null, "p1": null, "v1": null, "caption2": null, "caption3": null},
+   "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -16, 20, 16]}},
+    {"el": "solid", "plane": "yz", "at": [-14, 0, 0], "height": 28, "profile": "$p0", "tone": "sel", "toneAmount": 0,
+     "keys": [[2.3, {"profile": "$p0", "toneAmount": 0}], [2.5, {"toneAmount": 0.3}], [3.2, {"profile": "$p1"}], [3.6, {"toneAmount": 0.3}], [3.8, {"toneAmount": 0}]]},
+    {"use": "pickEdge", "args": {"edge": [[-14, -10, 12], [14, -10, 12]], "hover": 0.5, "pick": 0.9, "until": 2.4}},
+    {"use": "pickEdge", "args": {"edge": [[-14, 10, 12], [14, 10, 12]], "hover": 1.25, "pick": 1.6, "until": 2.4}},
+    {"use": "dragHandle", "args": {"at0": [2, -10, 12], "at1": [2, -10, 12], "dir": [0, -1, 1], "t0": 2.5, "t1": 3.2, "v0": 0, "v1": "$v1", "from": 2.0, "to": 3.6, "dx": 18, "dy": -6}},
+    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "cursor", "keys": [[0, {"pos": [-8, -24, 0]}], [0.9, {"pos": [2, -10, 12], "click": 1}], [1.6, {"pos": [6, 10, 12], "click": 1}], [2.3, {"pos": [2, -12, 14]}],
+                              [2.5, {"pos": [2, -12, 14], "down": true}], [3.2, {"pos": [2, -14.5, 16.5], "down": false}], [3.9, {"pos": [2, -14.5, 16.5]}], [4.6, {"pos": [14, -20, 4]}]]}
+   ],
+   "steps": [{"to": 1.7, "caption": "Select the edges"}, {"to": 3.4, "caption": "$caption2"}, {"to": 5.0, "caption": "$caption3"}]}
+ },
+ "clips": [
+  {
+   "id": "sketch.line", "duration": 4.8, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "poly", "points": [[-20, -9], [10, -9], [10, 8]], "closed": true, "fill": "sel", "fillOpacity": 0.16, "width": 0, "from": 3.85, "fade": 0.3},
+    {"el": "poly", "points": [[-20, -9], [10, -9]], "dots": true, "from": 2.05, "fade": 0},
+    {"el": "poly", "points": [[10, -9], [10, 8]], "dots": true, "from": 3.0, "fade": 0},
+    {"el": "poly", "points": [[10, 8], [-20, -9]], "dots": true, "from": 3.8, "fade": 0},
+    {"el": "poly", "color": "hov", "from": 0.6, "to": 2.05, "fade": 0, "points": [[-20, -9], "cursor"], "keys": [[1.9, {"points": [[-20, -9], "cursor"]}], [1.91, {"points": [[-20, -9], [10, -9]]}]]},
+    {"el": "poly", "color": "hov", "points": [[10, -9], "cursor"], "from": 2.05, "to": 3.0, "fade": 0},
+    {"el": "poly", "color": "hov", "points": [[10, 8], "cursor"], "from": 3.0, "to": 3.8, "fade": 0},
+    {"el": "glyph", "kind": "horizontal", "at": [-5, -9], "dx": 0, "dy": 13, "from": 0.9},
+    {"el": "glyph", "kind": "vertical", "at": [10, 0], "dx": 13, "dy": 0, "from": 2.6},
+    {"el": "snap", "kind": "endpoint", "at": [-20, -9], "from": 3.4, "to": 3.85},
+    {"el": "hud", "origin": [-20, -9], "fields": ["{len} mm", "{ang}°"], "typed": "", "focus": -1, "from": 0.7, "to": 2.05,
+     "keys": [[1.55, {"focus": 0}], [1.65, {"typed": "3"}], [1.8, {"typed": "30"}]]},
+    {"el": "hud", "origin": [10, -9], "fields": ["{len} mm", "{ang}°"], "from": 2.2, "to": 3.0},
+    {"el": "key", "caps": ["Enter"], "press": 2.05, "from": 1.9, "to": 2.6},
+    {"use": "sketchDraw", "args": {"badge": "line", "keys": [[0, {"pos": [-27, -2]}], [0.6, {"pos": [-20, -9], "click": 1}], [1.5, {"pos": [4, -9]}], [2.15, {"pos": [4.5, -8]}],
+                                                       [3.0, {"pos": [10, 8], "click": 1}], [3.8, {"pos": [-20, -9], "click": 1}], [4.5, {"pos": [-25, -3]}]]}}
+   ],
+   "steps": [
+    {"to": 0.7, "caption": "Click the start point"},
+    {"to": 2.2, "caption": "Type a length and press Enter"},
+    {"to": 3.1, "caption": "Click the next point"},
+    {"to": 4.8, "caption": "Click the start again to close it"}
+   ]
+  },
+  {
+   "id": "sketch.rect", "duration": 4.4, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "rect", "corners": [[-18, -9], [12, 7]], "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.5, "fade": 0.3},
+    {"el": "rect", "corners": [[-18, -9], [12, 7]], "dots": true, "from": 2.4, "fade": 0},
+    {"el": "rect", "color": "hov", "from": 0.7, "to": 2.4, "fade": 0, "corners": [[-18, -9], "cursor"],
+     "keys": [[1.85, {"corners": [[-18, -9], "cursor"]}], [1.86, {"corners": [[-18, -9], [12, 4]]}], [2.25, {"corners": [[-18, -9], [12, 4]]}], [2.32, {"corners": [[-18, -9], [12, 7]]}]]},
+    {"el": "glyph", "kind": "horizontal", "at": [-3, -9], "dx": 0, "dy": 13, "from": 2.4},
+    {"el": "glyph", "kind": "vertical", "at": [12, -1], "dx": 13, "dy": 0, "from": 2.4},
+    {"el": "hud", "origin": [-18, -9], "fields": ["{w} mm", "{h} mm"], "typed": "", "focus": -1, "from": 0.8, "to": 2.4,
+     "keys": [[1.55, {"focus": 0}], [1.65, {"typed": "3"}], [1.75, {"typed": "30"}], [1.9, {"focus": 1, "typed": "", "fields": ["30.0 mm", "{h} mm"]}], [2.0, {"typed": "1"}], [2.1, {"typed": "16"}]]},
+    {"el": "key", "caps": ["Tab"], "press": 1.88, "from": 1.75, "to": 2.15},
+    {"el": "key", "caps": ["Enter"], "press": 2.38, "from": 2.2, "to": 2.9},
+    {"use": "sketchDraw", "args": {"badge": "rect", "keys": [[0, {"pos": [-26, -3]}], [0.7, {"pos": [-18, -9], "click": 1}], [1.5, {"pos": [8, 4]}], [2.6, {"pos": [8, 4]}], [3.4, {"pos": [17, -4]}]]}}
+   ],
+   "steps": [
+    {"to": 0.8, "caption": "Click the first corner"},
+    {"to": 2.4, "caption": "Click the opposite corner or type sizes"},
+    {"to": 4.4, "caption": "The sides stay horizontal and vertical"}
+   ]
+  },
+  {
+   "id": "sketch.circle", "duration": 4.2, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "circle", "center": [-4, 0], "r": 12, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.5, "fade": 0.3},
+    {"el": "circle", "center": [-4, 0], "r": 12, "from": 2.45, "fade": 0},
+    {"el": "poly", "points": [[-4, 0], [-4, 0]], "width": 0, "dots": true, "from": 0.7, "fade": 0},
+    {"el": "poly", "points": [[-4, 0], "cursor"], "color": "fg3", "dash": true, "width": 1.2, "from": 0.7, "to": 2.45, "fade": 0},
+    {"el": "circle", "center": [-4, 0], "color": "hov", "r": "cursor", "from": 0.7, "to": 2.45, "fade": 0, "keys": [[1.9, {"r": "cursor"}], [1.91, {"r": 12}]]},
+    {"el": "hud", "origin": [-4, 0], "fields": ["Ø {dia} mm"], "typed": "", "focus": -1, "from": 0.8, "to": 2.45, "keys": [[1.55, {"focus": 0}], [1.65, {"typed": "2"}], [1.8, {"typed": "24"}]]},
+    {"el": "key", "caps": ["Enter"], "press": 2.4, "from": 2.2, "to": 2.9},
+    {"use": "sketchDraw", "args": {"badge": "circle", "keys": [[0, {"pos": [-22, 6]}], [0.7, {"pos": [-4, 0], "click": 1}], [1.5, {"pos": [5, 6]}], [2.6, {"pos": [5, 6]}], [3.4, {"pos": [16, -6]}]]}}
+   ],
+   "steps": [
+    {"to": 0.8, "caption": "Click the centre"},
+    {"to": 2.4, "caption": "Move to size it, or type the diameter"},
+    {"to": 4.2, "caption": "Press Enter or click to place it"}
+   ]
+  },
+  {
+   "id": "sketch.arc3", "duration": 4.4, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "poly", "points": [[-16, -6], "cursor"], "color": "hov", "dash": true, "width": 1.3, "from": 0.7, "to": 1.7, "fade": 0},
+    {"el": "poly", "points": [[-16, -6], [14, -6]], "color": "fg3", "dash": true, "width": 1.1, "from": 1.7, "to": 3.2, "fade": 0.1},
+    {"el": "arc", "through": [[-16, -6], [14, -6], "cursor"], "color": "hov", "from": 1.75, "to": 3.2, "fade": 0},
+    {"el": "arc", "through": [[-16, -6], [14, -6], [1, 8]], "from": 3.2, "fade": 0},
+    {"el": "poly", "points": [[-16, -6], [-16, -6]], "width": 0, "dots": true, "from": 0.7, "fade": 0},
+    {"el": "poly", "points": [[14, -6], [14, -6]], "width": 0, "dots": true, "from": 1.7, "fade": 0},
+    {"use": "sketchDraw", "args": {"badge": "arc3", "keys": [[0, {"pos": [-24, 3]}], [0.7, {"pos": [-16, -6], "click": 1}], [1.7, {"pos": [14, -6], "click": 1}], [2.5, {"pos": [3, 11]}],
+                                                       [3.0, {"pos": [1, 8]}], [3.2, {"pos": [1, 8], "click": 1}], [4.0, {"pos": [12, 10]}]]}}
+   ],
+   "steps": [
+    {"to": 0.8, "caption": "Click the start point"},
+    {"to": 1.8, "caption": "Click the end point"},
+    {"to": 4.4, "caption": "Move to bend it, then click"}
+   ]
+  },
+  {
+   "id": "sketch.slot", "duration": 4.6, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "slot", "c1": [-12, 0], "c2": [12, 0], "r": 6, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 3.1, "fade": 0.3},
+    {"el": "slot", "c1": [-12, 0], "c2": [12, 0], "r": 6, "from": 3.05, "fade": 0},
+    {"el": "poly", "points": [[-12, 0], "cursor"], "color": "fg3", "dash": true, "width": 1.2, "from": 0.7, "to": 1.8, "fade": 0},
+    {"el": "poly", "points": [[-12, 0], [12, 0]], "color": "fg3", "dash": true, "width": 1.1, "dots": true, "from": 1.8, "fade": 0},
+    {"el": "slot", "c1": [-12, 0], "c2": [12, 0], "r": "cursor", "color": "hov", "from": 1.85, "to": 3.05, "fade": 0},
+    {"el": "glyph", "kind": "horizontal", "at": [0, 0], "dx": 0, "dy": -12, "from": 1.0, "to": 1.85},
+    {"el": "hud", "origin": [-12, 0], "fields": ["{len} mm", "{ang}°"], "from": 0.8, "to": 1.8},
+    {"el": "hud", "fields": [0.2], "unit": " mm", "dec": 1, "from": 1.9, "to": 3.05, "keys": [[1.9, {"fields": [0.2]}], [2.9, {"fields": [12]}]]},
+    {"use": "sketchDraw", "args": {"badge": "slot", "keys": [[0, {"pos": [-24, -8]}], [0.7, {"pos": [-12, 0], "click": 1}], [1.7, {"pos": [12, 0]}], [1.8, {"pos": [12, 0], "click": 1}],
+                                                       [2.9, {"pos": [8, 6]}], [3.05, {"pos": [8, 6], "click": 1}], [3.9, {"pos": [19, 10]}]]}}
+   ],
+   "steps": [
+    {"to": 0.8, "caption": "Click the first centre"},
+    {"to": 1.9, "caption": "Click the second centre"},
+    {"to": 4.6, "caption": "Move out to the width and click"}
+   ]
+  },
+  {
+   "id": "sketch.polygon", "duration": 4.6, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "polygon", "center": [4, 0], "n": 6, "corner": [15, 4], "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 3.0, "fade": 0.3},
+    {"el": "polygon", "center": [4, 0], "n": 6, "corner": [15, 4], "dots": true, "from": 2.95, "fade": 0},
+    {"el": "circle", "center": [4, 0], "r": "cursor", "color": "fg3", "dash": true, "width": 1, "from": 1.45, "to": 2.95, "fade": 0},
+    {"el": "poly", "points": [[4, 0], "cursor"], "color": "fg3", "dash": true, "width": 1.1, "from": 1.45, "to": 2.95, "fade": 0},
+    {"el": "polygon", "center": [4, 0], "n": 6, "corner": "cursor", "color": "hov", "from": 1.45, "to": 2.95, "fade": 0},
+    {"el": "poly", "points": [[4, 0], [4, 0]], "width": 0, "dots": true, "from": 1.4, "fade": 0},
+    {"el": "card", "screen": [0.03, 0.06], "w": 110, "title": "Polygon", "rows": [["Sides", "5"]], "hl": -1, "to": 1.5,
+     "keys": [[0.45, {"hl": 0}], [0.6, {"rows": [["Sides", "5"]]}], [0.61, {"rows": [["Sides", "6"]]}], [1.0, {"hl": -1}]]},
+    {"use": "sketchDraw", "args": {"badge": "polygon", "keys": [[0, {"pos": [-8, 10]}], [1.4, {"pos": [4, 0], "click": 1}], [2.1, {"pos": [14, -4]}], [2.8, {"pos": [15, 4]}],
+                                                          [2.95, {"pos": [15, 4], "click": 1}], [3.8, {"pos": [22, 10]}]]}}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Set the number of sides"},
+    {"to": 1.5, "caption": "Click the centre"},
+    {"to": 4.6, "caption": "Move to turn and size it, then click"}
+   ]
+  },
+  {
+   "id": "sketch.offset", "duration": 4.8, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "rect", "corners": [[-16, -6], [8, 6]], "color": "glow", "width": 6.5, "from": 0.55, "to": 0.9, "fade": 0.08},
+    {"el": "rect", "corners": [[-16, -6], [8, 6]], "dots": true, "color": "fg", "keys": [[0.9, {"color": "sel"}], [3.4, {"color": "fg"}]]},
+    {"el": "rect", "color": "hov", "dash": true, "from": 1.1, "to": 3.4, "fade": 0, "corners": [[-16, -6], [8, 6]],
+     "keys": [[1.6, {"corners": [[-16, -6], [8, 6]]}], [2.5, {"corners": [[-20, -10], [12, 10]]}], [2.95, {"corners": [[-20, -10], [12, 10]]}], [3.1, {"corners": [[-21, -11], [13, 11]]}]]},
+    {"el": "rect", "corners": [[-21, -11], [13, 11]], "dots": true, "from": 3.4, "fade": 0},
+    {"use": "dragHandle", "args": {"at0": [8, 0], "at1": [12, 0], "dir": [1, 0], "t0": 1.6, "t1": 2.5, "v0": 0, "v1": 4, "from": 1.1, "to": 2.7, "dx": 16, "dy": -30}},
+    {"el": "arrow", "dir": [1, 0], "at": [12, 0], "from": 2.7, "to": 3.4, "fade": 0, "keys": [[2.95, {"at": [12, 0]}], [3.1, {"at": [13, 0]}]]},
+    {"use": "typedValue", "args": {"t": 2.7, "s1": "5", "s2": "5", "press": 3.35, "dx": 16, "dy": -30, "field": "4.0 mm"}},
+    {"use": "sketchDraw", "args": {"badge": "offset", "keys": [[0, {"pos": [-22, -11]}], [0.9, {"pos": [-4, -6], "click": 1}], [1.4, {"pos": [11, 0]}], [1.6, {"pos": [11, 0], "down": true}],
+                                                         [2.5, {"pos": [15, 0], "down": false}], [3.6, {"pos": [15, 0]}], [4.3, {"pos": [22, -8]}]]}}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Click a curve: its chain is picked"},
+    {"to": 3.1, "caption": "Drag the arrow or type the distance"},
+    {"to": 4.8, "caption": "Press Enter to place the copy"}
+   ]
+  },
+  {
+   "id": "sketch.trim", "duration": 4.4, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "poly", "points": [[-20, 2], [-8, 2]], "dots": true},
+    {"el": "poly", "points": [[8, 2], [20, 2]], "dots": true},
+    {"el": "poly", "points": [[-8, 2], [8, 2]], "to": 1.6, "fade": 0.15},
+    {"el": "poly", "points": [[-8, 2], [8, 2]], "color": "red", "width": 2.6, "from": 1.0, "to": 1.6, "fade": 0.1},
+    {"el": "poly", "points": [[-8, -10], [-8, 2]], "dots": true},
+    {"el": "poly", "points": [[-8, 2], [-8, 11]], "to": 3.0, "fade": 0.15},
+    {"el": "poly", "points": [[-8, 2], [-8, 11]], "color": "red", "width": 2.6, "from": 2.4, "to": 3.0, "fade": 0.1},
+    {"el": "poly", "points": [[8, -10], [8, 11]], "dots": true},
+    {"use": "sketchDraw", "args": {"badge": "trim", "keys": [[0, {"pos": [-20, -8]}], [1.0, {"pos": [1, 2]}], [1.6, {"pos": [1, 2], "click": 1}], [2.4, {"pos": [-8, 7]}],
+                                                       [3.0, {"pos": [-8, 7], "click": 1}], [3.8, {"pos": [-18, 10]}]]}}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "Hover a piece: it lights red"},
+    {"to": 2.2, "caption": "Click to remove it"},
+    {"to": 4.4, "caption": "Click more pieces to keep trimming"}
+   ]
+  },
+  {
+   "id": "sketch.fillet", "duration": 4.4, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "poly", "points": [[-6, -8], [8, -8], [8, 6]], "color": "glow", "width": 6.5, "from": 0.8, "to": 1.3, "fade": 0.08},
+    {"el": "poly", "dots": true, "points": [[-18, -8], [8, -8]], "keys": [[1.5, {"points": [[-18, -8], [8, -8]]}], [2.2, {"points": [[-18, -8], [2, -8]]}]]},
+    {"el": "poly", "dots": true, "points": [[8, -8], [8, 10]], "keys": [[1.5, {"points": [[8, -8], [8, 10]]}], [2.2, {"points": [[8, -2], [8, 10]]}]]},
+    {"el": "arc", "start": -90, "sweep": 90, "center": [8, -8], "r": 0.01, "from": 1.5, "fade": 0, "keys": [[1.5, {"center": [8, -8], "r": 0.01}], [2.2, {"center": [2, -2], "r": 6}]]},
+    {"el": "glyph", "kind": "tangent", "at": [2, -8], "dx": 0, "dy": 13, "from": 2.3},
+    {"el": "glyph", "kind": "tangent", "at": [8, -2], "dx": 13, "dy": 0, "from": 2.3},
+    {"el": "card", "screen": [0.03, 0.06], "w": 110, "title": "Fillet", "rows": [["Radius", "6 mm"]], "to": 2.6},
+    {"use": "sketchDraw", "args": {"badge": "fillet", "keys": [[0, {"pos": [-14, 4]}], [1.0, {"pos": [7, -7]}], [1.3, {"pos": [7, -7], "click": 1}], [2.4, {"pos": [7, -7]}], [3.2, {"pos": [17, 6]}]]}}
+   ],
+   "steps": [
+    {"to": 0.8, "caption": "Set the radius"},
+    {"to": 1.4, "caption": "Click the corner"},
+    {"to": 4.4, "caption": "An arc replaces the corner"}
+   ]
+  },
+  {
+   "id": "sketch.dimension", "duration": 4.8, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "poly", "points": [[-20, -6], [4, -6]], "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
+    {"el": "poly", "dots": true, "color": "fg", "points": [[-20, -6], [4, -6]],
+     "keys": [[0.9, {"color": "sel"}], [1.9, {"color": "fg"}], [2.85, {"points": [[-20, -6], [4, -6]]}], [3.3, {"points": [[-20, -6], [20, -6]]}]]},
+    {"el": "dim", "a": [-20, -6], "b": [4, -6], "value": "24.00", "color": "hov", "offset": 4, "from": 0.95, "fade": 0,
+     "keys": [[0.95, {"offset": 4}], [1.9, {"offset": 38, "color": "fg"}], [2.0, {"color": "sel"}], [2.85, {"b": [4, -6], "value": "40.00"}], [3.3, {"b": [20, -6], "color": "fg"}]]},
+    {"use": "typedValue", "args": {"t": 2.0, "s1": "4", "s2": "40", "press": 2.85, "at": [-8, 2], "dx": -14, "dy": -40, "field": "24.00"}},
+    {"use": "sketchDraw", "args": {"badge": "dimension", "keys": [[0, {"pos": [-24, 6]}], [0.9, {"pos": [-10, -6], "click": 1}], [1.8, {"pos": [-6, 2]}], [1.9, {"pos": [-6, 2], "click": 1}],
+                                                            [2.3, {"pos": [-1, -2]}], [3.4, {"pos": [-1, -2]}], [4.2, {"pos": [-17, 10]}]]}}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Click the line to measure"},
+    {"to": 2.0, "caption": "Click to place the dimension"},
+    {"to": 4.8, "caption": "Type the value: the line follows"}
+   ]
+  },
+  {"id": "sketch.c.horizontal", "template": "constraint1",
+   "args": {"a": [[-14, -7], [12, 3]], "a2": [[-14, -2], [12, -2]], "pa": [-1, -2], "glyph": "horizontal", "ga": [-1, -2], "caption2": "The line turns level and stays level"}},
+  {"id": "sketch.c.vertical", "template": "constraint1",
+   "args": {"a": [[-6, -9], [4, 9]], "a2": [[-1, -9], [-1, 9]], "pa": [-1, 0], "glyph": "vertical", "ga": [-1, 0], "gdx": 14, "gdy": 0, "caption2": "The line turns upright and stays so"}},
+  {"id": "sketch.c.coincident", "template": "constraint",
+   "args": {"a": [[-18, 8], [-2, 2]], "a2": [[-18, 8], [-2, -6]], "b": [[-14, -6], [18, -6]], "pa": [-2, 2], "pb": [10, -6], "glyph": "coincident", "ga": [-2, -6], "gb": [-2, -6],
+            "gady": 13, "gbdy": 13, "caption1": "Click a point", "caption2": "Click the curve or point to join", "caption3": "The point moves onto it"}},
+  {"id": "sketch.c.parallel", "template": "constraint",
+   "args": {"a": [[-16, -6], [14, -12]], "a2": [[-16, -12], [14, -6]], "b": [[-16, 4], [14, 10]], "pa": [-1, -9], "pb": [-1, 7], "glyph": "parallel", "ga": [-1, -9], "gb": [-1, 7],
+            "caption3": "The first line turns parallel"}},
+  {"id": "sketch.c.perpendicular", "template": "constraint",
+   "args": {"a": [[0, -4], [9, 9]], "a2": [[4.5, -5.4], [4.5, 10.4]], "b": [[-18, -7], [16, -7]], "pa": [4.5, 2.5], "pb": [-10, -7], "glyph": "perpendicular", "ga": [4.5, 2.5], "gb": [-10, -7],
+            "gadx": 14, "gady": 0, "gbdy": 13, "caption3": "The first line turns square to it"}},
+  {"id": "sketch.c.equal", "template": "constraint",
+   "args": {"a": [[-14, 5], [-4, 5]], "a2": [[-14, 5], [10, 5]], "b": [[-14, -6], [10, -6]], "pa": [-9, 5], "pb": [0, -6], "glyph": "equal", "ga": [-2, 5], "gb": [-2, -6],
+            "caption2": "Click the line to match", "caption3": "The lengths become equal"}},
+  {
+   "id": "sketch.c.tangent", "duration": 4.4, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "circle", "center": [2, -3], "r": 7, "color": "glow", "width": 6.5, "from": 1.45, "to": 1.9, "fade": 0.08},
+    {"el": "circle", "center": [2, -3], "r": 7, "color": "fg", "keys": [[1.9, {"color": "sel"}], [3.0, {"color": "fg"}]]},
+    {"el": "poly", "points": [[-18, 10], [18, 6]], "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
+    {"el": "poly", "dots": true, "color": "fg", "points": [[-18, 10], [18, 6]], "keys": [[0.9, {"color": "sel", "points": [[-18, 10], [18, 6]]}], [2.1, {"points": [[-18, 10], [18, 6]]}], [2.8, {"points": [[-18, 4], [18, 4]]}], [3.0, {"color": "fg"}]]},
+    {"el": "glyph", "kind": "tangent", "at": [2, 4], "dx": 0, "dy": -14, "from": 2.8},
+    {"el": "cursor", "keys": [[0, {"pos": [-24, -11]}], [0.9, {"pos": [-8, 8.9], "click": 1}], [1.9, {"pos": [8.06, -6.5], "click": 1}], [2.5, {"pos": [8.06, -6.5]}], [3.4, {"pos": [-22, -10]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Click the line"},
+    {"to": 2.0, "caption": "Click the arc or circle"},
+    {"to": 4.4, "caption": "They touch without crossing"}
+   ]
+  },
+  {
+   "id": "sketch.c.concentric", "duration": 4.4, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "circle", "center": [6, -1], "r": 10, "color": "glow", "width": 6.5, "from": 1.45, "to": 1.9, "fade": 0.08},
+    {"el": "circle", "center": [6, -1], "r": 10, "color": "fg", "keys": [[1.9, {"color": "sel"}], [3.0, {"color": "fg"}]]},
+    {"el": "circle", "center": [-14, 4], "r": 4, "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
+    {"el": "circle", "r": 4, "color": "fg", "center": [-14, 4], "keys": [[0.9, {"color": "sel", "center": [-14, 4]}], [2.1, {"center": [-14, 4]}], [2.8, {"center": [6, -1]}], [3.0, {"color": "fg"}]]},
+    {"el": "poly", "points": [[6, -1], [6, -1]], "width": 0, "dots": true},
+    {"el": "glyph", "kind": "concentric", "at": [6, -1], "dx": 0, "dy": -14, "from": 2.8},
+    {"el": "cursor", "keys": [[0, {"pos": [-24, -11]}], [0.9, {"pos": [-10, 4], "click": 1}], [1.9, {"pos": [16, -1], "click": 1}], [2.5, {"pos": [16, -1]}], [3.4, {"pos": [-22, -10]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Click the first circle or arc"},
+    {"to": 2.0, "caption": "Click the second one"},
+    {"to": 4.4, "caption": "Their centres meet"}
+   ]
+  },
+  {
+   "id": "design.extrude", "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-25, -20, 25, 20]}},
+    {"el": "shape", "profile": {"rect": [0, 0, 30, 18], "round": 3}, "holes": [{"circle": [7, 0, 4]}], "fill": "fg3", "fillOpacity": 0.18, "color": "fg2", "width": 1.3,
+     "keys": [[0.6, {"fill": "fg3", "fillOpacity": 0.18}], [0.75, {"fill": "glow", "fillOpacity": 0.4}], [1.0, {"fill": "sel", "fillOpacity": 0.32}]]},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 18], "round": 3}, "holes": [{"circle": [7, 0, 4]}], "tone": "sel", "from": 1.2, "fade": 0,
+     "keys": [[1.2, {"height": 0.01, "toneAmount": 0.35, "opacity": 0.85}], [1.5, {"height": 6}], [1.6, {"height": 6}], [2.6, {"height": 14}], [2.95, {"height": 14}], [3.2, {"height": 20}],
+              [3.35, {"toneAmount": 0.35, "opacity": 0.85}], [3.6, {"toneAmount": 0, "opacity": 1}]]},
+    {"el": "arrow", "dir": [0, 0, 1], "from": 1.2, "to": 3.35,
+     "keys": [[1.2, {"at": [-7, 0, 0]}], [1.5, {"at": [-7, 0, 6]}], [1.6, {"at": [-7, 0, 6]}], [2.6, {"at": [-7, 0, 14]}], [2.95, {"at": [-7, 0, 14]}], [3.2, {"at": [-7, 0, 20]}]]},
+    {"el": "hud", "dx": 16, "dy": -8, "dec": 1, "unit": " mm", "fields": [0], "from": 1.3, "to": 2.7, "keys": [[1.2, {"fields": [0]}], [1.5, {"fields": [6]}], [1.6, {"fields": [6]}], [2.6, {"fields": [14]}]]},
+    {"use": "typedValue", "args": {"t": 2.7, "s1": "2", "s2": "20", "press": 3.35, "field": "14.0 mm"}},
+    {"el": "cursor", "keys": [[0, {"pos": [-24, -16, 0]}], [0.9, {"pos": [-4, -5, 0]}], [1.0, {"pos": [-4, -5, 0], "click": 1}], [1.45, {"pos": [-7, 0, 9]}], [1.6, {"pos": [-7, 0, 9], "down": true}],
+                              [2.6, {"pos": [-7, 0, 17], "down": false}], [3.4, {"pos": [-7, 0, 17]}], [4.2, {"pos": [-20, -12, 14]}]]}
+   ],
+   "steps": [
+    {"to": 1.1, "caption": "Select a profile or a planar face"},
+    {"to": 3.3, "caption": "Drag the arrow, or type the distance"},
+    {"to": 5.0, "caption": "Press Enter to create the body"}
+   ]
+  },
+  {
+   "id": "design.revolve", "duration": 5.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -20, 20, 20]}},
+    {"el": "poly", "closed": true, "points": [[0, 0, 0], [12, 0, 0], [12, 0, 4], [6, 0, 4], [6, 0, 16], [10, 0, 16], [10, 0, 20], [0, 0, 20]], "color": "fg2", "width": 1.3, "fill": "fg3", "fillOpacity": 0.18,
+     "keys": [[0.55, {"fill": "fg3", "fillOpacity": 0.18}], [0.7, {"fill": "glow", "fillOpacity": 0.4}], [0.95, {"fill": "sel", "fillOpacity": 0.32}]]},
+    {"el": "poly", "points": [[0, 0, -4], [0, 0, 26]], "color": "glow", "width": 6.5, "from": 1.5, "to": 1.9, "fade": 0.08},
+    {"el": "lathe", "profile": [[0, 0], [12, 0], [12, 4], [6, 4], [6, 16], [10, 16], [10, 20], [0, 20]], "tone": "sel", "from": 2.1, "fade": 0,
+     "keys": [[2.1, {"sweep": -1, "toneAmount": 0.35, "opacity": 0.85}], [3.6, {"sweep": -360}], [4.0, {"toneAmount": 0.35, "opacity": 0.85}], [4.25, {"toneAmount": 0, "opacity": 1}]]},
+    {"el": "poly", "points": [[0, 0, -4], [0, 0, 26]], "dash": true, "color": "fg2", "width": 1.2, "keys": [[1.9, {"color": "sel", "width": 2}], [4.0, {"color": "fg2", "width": 1.2}]]},
+    {"el": "hud", "at": [12, 0, 10], "dx": 14, "dy": -8, "unit": "°", "dec": 0, "fields": [0], "from": 2.1, "to": 4.0, "keys": [[2.1, {"fields": [0]}], [3.6, {"fields": [360]}]]},
+    {"el": "key", "caps": ["Enter"], "press": 4.0, "from": 3.8, "to": 4.5},
+    {"el": "cursor", "keys": [[0, {"pos": [-14, -14, 0]}], [0.95, {"pos": [9, 0, 8], "click": 1}], [1.9, {"pos": [0, 0, 23], "click": 1}], [2.6, {"pos": [0, 0, 23]}], [3.5, {"pos": [-14, -10, 26]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select the profile"},
+    {"to": 2.0, "caption": "Select the axis to turn it about"},
+    {"to": 5.4, "caption": "Set the angle and press Enter"}
+   ]
+  },
+  {"id": "design.fillet", "template": "edgeFeature",
+   "args": {"p0": {"rect": [0, 6, 20, 12], "round": [0, 0, 0, 0]}, "p1": {"rect": [0, 6, 20, 12], "round": [0, 0, 4, 4]}, "v1": 4,
+            "caption2": "Drag the arrow or type the radius", "caption3": "Press Enter to round the edges"}},
+  {"id": "design.chamfer", "template": "edgeFeature",
+   "args": {"p0": {"rect": [0, 6, 20, 12], "chamfer": [0, 0, 0, 0]}, "p1": {"rect": [0, 6, 20, 12], "chamfer": [0, 0, 4, 4]}, "v1": 4,
+            "caption2": "Drag the arrow or type the distance", "caption3": "Press Enter to bevel the edges"}},
+  {
+   "id": "design.shell", "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 28, 18]}, "height": 14, "holes": [{"rect": [0, 0, 0.01, 0.01], "depth": 12}], "tone": "sel", "toneAmount": 0,
+     "keys": [[2.2, {"holes": [{"rect": [0, 0, 0.01, 0.01], "depth": 12}], "toneAmount": 0}], [2.4, {"toneAmount": 0.3}], [3.1, {"holes": [{"rect": [0, 0, 24, 14], "depth": 12}]}],
+              [3.6, {"toneAmount": 0.3}], [3.8, {"toneAmount": 0}]]},
+    {"use": "pickFace", "args": {"face": [[-14, -9, 14], [14, -9, 14], [14, 9, 14], [-14, 9, 14]], "hover": 0.5, "pick": 0.9, "until": 2.3}},
+    {"el": "card", "screen": [0.03, 0.06], "w": 120, "title": "Shell", "rows": [["Thickness", "2 mm"], ["Direction", "Inside"]], "from": 1.3, "to": 3.8},
+    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "cursor", "keys": [[0, {"pos": [-10, -22, 0]}], [0.9, {"pos": [4, -2, 14], "click": 1}], [2.0, {"pos": [4, -2, 14]}], [3.0, {"pos": [22, -12, 16]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select the faces to open"},
+    {"to": 3.4, "caption": "Set the wall thickness"},
+    {"to": 5.0, "caption": "Press Enter to hollow the body"}
+   ]
+  },
+  {
+   "id": "design.hole", "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-26, -18, 26, 18]}},
+    {"el": "camera", "center": [-8, 0]},
+    {"el": "solid", "profile": {"rect": [0, 0, 40, 22], "round": 2}, "height": 6, "tone": "sel", "toneAmount": 0,
+     "holes": [{"circle": [-12, 0, 0.01]}, {"circle": [0, 0, 0.01]}, {"circle": [12, 0, 0.01]}],
+     "keys": [[2.1, {"holes": [{"circle": [-12, 0, 0.01]}, {"circle": [0, 0, 0.01]}, {"circle": [12, 0, 0.01]}], "toneAmount": 0}], [2.3, {"toneAmount": 0.3}],
+              [2.9, {"holes": [{"circle": [-12, 0, 3]}, {"circle": [0, 0, 3]}, {"circle": [12, 0, 3]}]}], [3.6, {"toneAmount": 0.3}], [3.8, {"toneAmount": 0}]]},
+    {"el": "poly", "points": [[-12, 0, 6], [-12, 0, 6]], "width": 0, "dots": true, "color": "fg", "to": 2.3, "keys": [[0.7, {"color": "sel"}]]},
+    {"el": "poly", "points": [[0, 0, 6], [0, 0, 6]], "width": 0, "dots": true, "color": "fg", "to": 2.3, "keys": [[1.2, {"color": "sel"}]]},
+    {"el": "poly", "points": [[12, 0, 6], [12, 0, 6]], "width": 0, "dots": true, "color": "fg", "to": 2.3, "keys": [[1.7, {"color": "sel"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 124, "title": "Hole", "rows": [["Diameter", "6 mm"], ["Depth", "Through all"]], "from": 1.9, "to": 3.8},
+    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "cursor", "keys": [[0, {"pos": [-22, -16, 6]}], [0.7, {"pos": [-12, 0, 6], "click": 1}], [1.2, {"pos": [0, 0, 6], "click": 1}], [1.7, {"pos": [12, 0, 6], "click": 1}], [2.6, {"pos": [24, -10, 8]}]]}
+   ],
+   "steps": [
+    {"to": 1.8, "caption": "Select sketch points"},
+    {"to": 3.4, "caption": "Set the diameter and the depth"},
+    {"to": 5.0, "caption": "Press Enter to drill the holes"}
+   ]
+  },
+  {
+   "id": "design.pattern_rect", "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-26, -18, 26, 18]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 46, 30], "round": 2}, "height": 3},
+    {"use": "patternCopy", "args": {"profile": {"circle": [-15, -8, 3]}, "at": [0, 0, 3], "offset": [0, 16, 0]}},
+    {"use": "patternCopy", "args": {"profile": {"circle": [-15, -8, 3]}, "at": [0, 0, 3], "offset": [15, 16, 0]}},
+    {"use": "patternCopy", "args": {"profile": {"circle": [-15, -8, 3]}, "at": [0, 0, 3], "offset": [30, 16, 0]}},
+    {"el": "solid", "profile": {"circle": [-15, -8, 3]}, "at": [0, 0, 3], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.8, {"toneAmount": 0.45}], [3.6, {"toneAmount": 0.45}], [3.8, {"toneAmount": 0}]]},
+    {"use": "patternCopy", "args": {"profile": {"circle": [-15, -8, 3]}, "at": [0, 0, 3], "offset": [15, 0, 0]}},
+    {"use": "patternCopy", "args": {"profile": {"circle": [-15, -8, 3]}, "at": [0, 0, 3], "offset": [30, 0, 0]}},
+    {"el": "card", "screen": [0.03, 0.06], "w": 128, "title": "Rectangular pattern", "rows": [["Columns", "3"], ["Rows", "2"], ["Spacing", "15 × 16 mm"]], "from": 1.2, "to": 3.8},
+    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "cursor", "keys": [[0, {"pos": [-26, -22, 3]}], [0.8, {"pos": [-15, -8, 9], "click": 1}], [1.6, {"pos": [-15, -8, 9]}], [2.6, {"pos": [24, -22, 6]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select what to copy"},
+    {"to": 3.4, "caption": "Set the columns, rows and spacing"},
+    {"to": 5.0, "caption": "Press Enter to place the copies"}
+   ]
+  },
+  {
+   "id": "design.pattern_circ", "duration": 5.2, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -20, 20, 20]}},
+    {"el": "solid", "profile": {"circle": [0, 0, 16], "n": 64}, "holes": [{"circle": [0, 0, 4]}], "height": 4},
+    {"el": "poly", "points": [[0, 0, -2], [0, 0, 18]], "color": "glow", "width": 6.5, "from": 1.2, "to": 1.5, "fade": 0.08},
+    {"el": "poly", "points": [[0, 0, -2], [0, 0, 18]], "dash": true, "color": "fg2", "width": 1.2, "keys": [[1.5, {"color": "sel", "width": 2}], [3.8, {"color": "fg2", "width": 1.2}]]},
+    {"use": "patternCopy", "args": {"profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "rot": 120, "t0": 2.0, "t1": 3.0}},
+    {"use": "patternCopy", "args": {"profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "rot": 180, "t0": 2.0, "t1": 3.0}},
+    {"use": "patternCopy", "args": {"profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "rot": 60, "t0": 2.0, "t1": 3.0}},
+    {"use": "patternCopy", "args": {"profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "rot": 240, "t0": 2.0, "t1": 3.0}},
+    {"el": "solid", "profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.8, {"toneAmount": 0.45}], [3.6, {"toneAmount": 0.45}], [3.8, {"toneAmount": 0}]]},
+    {"use": "patternCopy", "args": {"profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "rot": 300, "t0": 2.0, "t1": 3.0}},
+    {"el": "card", "screen": [0.03, 0.06], "w": 118, "title": "Circular pattern", "rows": [["Count", "6"], ["Angle", "360°"]], "from": 1.7, "to": 3.8},
+    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "cursor", "keys": [[0, {"pos": [20, -20, 4]}], [0.8, {"pos": [11, 0, 10], "click": 1}], [1.5, {"pos": [0, 0, 16], "click": 1}], [2.2, {"pos": [0, 0, 16]}], [3.0, {"pos": [22, -16, 12]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select what to copy"},
+    {"to": 1.7, "caption": "Select the axis"},
+    {"to": 3.4, "caption": "Set the count and the angle"},
+    {"to": 5.2, "caption": "Press Enter to place the copies"}
+   ]
+  },
+  {
+   "id": "design.mirror", "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-24, -16, 24, 16]}},
+    {"el": "solid", "profile": {"points": [[2, -9], [18, -9], [18, -3], [8, -3], [8, 9], [2, 9]]}, "height": 6, "tone": "sel", "pivot": [0, 0, 0], "from": 2.0, "fade": 0,
+     "keys": [[2.0, {"scale": [1, 1, 1], "toneAmount": 0.35, "opacity": 0.4}], [2.9, {"scale": [-1, 1, 1], "opacity": 0.9}], [3.6, {"toneAmount": 0.35, "opacity": 0.9}], [3.8, {"toneAmount": 0, "opacity": 1}]]},
+    {"el": "plane", "center": [0, 0, 6], "size": [26, 12], "plane": "yz", "color": "fg2", "fillOpacity": 0.08, "keys": [[1.6, {"color": "sel", "fillOpacity": 0.16}], [3.6, {"color": "fg2", "fillOpacity": 0.08}]]},
+    {"el": "solid", "profile": {"points": [[2, -9], [18, -9], [18, -3], [8, -3], [8, 9], [2, 9]]}, "height": 6, "tone": "sel", "toneAmount": 0,
+     "keys": [[0.9, {"toneAmount": 0.45}], [3.6, {"toneAmount": 0.45}], [3.8, {"toneAmount": 0}]]},
+    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "cursor", "keys": [[0, {"pos": [24, -18, 0]}], [0.9, {"pos": [13, -6, 6], "click": 1}], [1.6, {"pos": [0, -8, 10], "click": 1}], [2.4, {"pos": [0, -8, 10]}], [3.2, {"pos": [22, -14, 10]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select the bodies to mirror"},
+    {"to": 1.8, "caption": "Select the mirror plane"},
+    {"to": 5.0, "caption": "Press Enter to add the mirrored copy"}
+   ]
+  },
+  {
+   "id": "inspect.section", "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
+    {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "height": 32, "to": 0.9, "fade": 0},
+    {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "capColor": "cap", "hatch": true, "height": 16, "from": 0.9, "fade": 0,
+     "keys": [[1.6, {"height": 16}], [2.8, {"height": 8}]]},
+    {"el": "solid", "plane": "yz", "at": [0, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "height": 16, "from": 0.9, "to": 1.45, "fade": 0,
+     "keys": [[0.9, {"opacity": 0.6}], [1.45, {"opacity": 0}]]},
+    {"el": "plane", "plane": "yz", "center": [0, 0, 7], "size": [26, 18], "color": "sel", "fillOpacity": 0.1, "from": 0.9, "keys": [[1.6, {"center": [0, 0, 7]}], [2.8, {"center": [-8, 0, 7]}]]},
+    {"use": "dragHandle", "args": {"at0": [0, 0, 16], "at1": [-8, 0, 16], "dir": [1, 0, 0], "t0": 1.6, "t1": 2.8, "v0": 0, "v1": -8, "from": 1.0, "to": 3.4, "dx": 16, "dy": -26}},
+    {"el": "key", "caps": ["X"], "press": 0.85, "from": 0.6, "to": 1.3},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -20, 4]}], [1.3, {"pos": [3, 0, 16]}], [1.6, {"pos": [3, 0, 16], "down": true}], [2.8, {"pos": [-5, 0, 16], "down": false}], [3.6, {"pos": [-5, 0, 16]}], [4.4, {"pos": [12, -16, 20]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Press X to cut the view"},
+    {"to": 3.0, "caption": "Drag the handle to move the cut"},
+    {"to": 5.0, "caption": "The cut face is hatched"}
+   ]
+  },
+  {
+   "id": "inspect.distance", "duration": 5.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-26, -16, 24, 18]}},
+    {"el": "camera", "center": [-10, 0], "zoom": 0.8},
+    {"el": "solid", "profile": {"rect": [-14, -2, 12, 14]}, "height": 10},
+    {"el": "solid", "profile": {"rect": [10, 4, 12, 14]}, "height": 14},
+    {"use": "pickFace", "args": {"face": [[-8, -9, 0], [-8, 5, 0], [-8, 5, 10], [-8, -9, 10]], "hover": 0.5, "pick": 0.9}},
+    {"use": "pickFace", "args": {"face": [[16, -3, 0], [16, 11, 0], [16, 11, 14], [16, -3, 14]], "hover": 1.8, "pick": 2.2}},
+    {"el": "poly", "points": [[-8, -2, 5], "cursor"], "color": "hov", "dash": true, "width": 1.3, "from": 1.0, "to": 2.2, "fade": 0},
+    {"el": "dim", "a": [-8, -3, 0], "b": [16, -3, 0], "offset": -24, "value": "24.000 mm", "color": "sel", "from": 2.3},
+    {"el": "card", "screen": [0.03, 0.06], "w": 116, "title": "Distance",
+     "rows": [["Distance", "24.000 mm"], {"value": "ΔX  24.000", "color": "red"}, {"value": "ΔY  0.000", "color": "green"}, {"value": "ΔZ  0.000", "color": "blue"}], "from": 2.5},
+    {"el": "cursor", "badge": "distance", "keys": [[0, {"pos": [-22, -18, 0]}], [0.9, {"pos": [-8, -2, 5], "click": 1}], [1.6, {"pos": [6, -8, 12]}], [2.2, {"pos": [16, 4, 8], "click": 1}],
+                                                   [3.0, {"pos": [16, 4, 8]}], [3.8, {"pos": [22, -10, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a face, edge or point"},
+    {"to": 2.3, "caption": "Select the second one"},
+    {"to": 5.4, "caption": "Read the distance and ΔX ΔY ΔZ"}
+   ]
+  },
+  {
+   "id": "inspect.angle", "duration": 4.8, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "camera", "center": [-9, 0], "zoom": 0.92},
+    {"el": "solid", "plane": "xz", "at": [0, 8, 0], "height": 16, "profile": {"points": [[-14, 0], [14, 0], [14, 5], [-8, 5], [-8, 20], [-14, 20]]}},
+    {"use": "pickFace", "args": {"face": [[-8, -8, 5], [14, -8, 5], [14, 8, 5], [-8, 8, 5]], "hover": 0.5, "pick": 0.9}},
+    {"use": "pickFace", "args": {"face": [[-8, -8, 5], [-8, 8, 5], [-8, 8, 20], [-8, -8, 20]], "hover": 1.5, "pick": 1.9}},
+    {"el": "dim", "kind": "angular", "center": [-8, -8, 5], "r": 7, "plane": "xz", "start": 0, "sweep": 90, "value": "90.00°", "color": "sel", "from": 2.1},
+    {"el": "card", "screen": [0.03, 0.06], "w": 118, "title": "Angle", "rows": [["Angle", "90.00°"], ["Supplement", "90.00°"]], "from": 2.3},
+    {"el": "cursor", "badge": "angle", "keys": [[0, {"pos": [16, -16, 0]}], [0.9, {"pos": [4, -2, 5], "click": 1}], [1.9, {"pos": [-8, 0, 13], "click": 1}], [2.6, {"pos": [-8, 0, 13]}], [3.4, {"pos": [18, -12, 10]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select the first face or edge"},
+    {"to": 2.0, "caption": "Select the second one"},
+    {"to": 4.8, "caption": "Read the angle between them"}
+   ]
+  },
+  {
+   "id": "inspect.radius", "duration": 4.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -18, 18, 18]}},
+    {"el": "camera", "center": [-10, 0], "zoom": 0.9},
+    {"el": "solid", "profile": {"circle": [0, 0, 10], "n": 56}, "height": 14},
+    {"el": "circle", "center": [0, 0, 14], "r": 10, "color": "glow", "width": 6.5, "from": 0.6, "to": 1.1, "fade": 0.08},
+    {"el": "circle", "center": [0, 0, 14], "r": 10, "color": "sel", "width": 2.6, "from": 1.1},
+    {"el": "dim", "kind": "radial", "center": [0, 0, 14], "r": 10, "angle": -60, "value": "R 10.000", "color": "sel", "from": 1.3},
+    {"el": "card", "screen": [0.03, 0.06], "w": 124, "title": "Radius", "rows": [["Radius", "10.000 mm"], ["Diameter", "20.000 mm"]], "from": 1.6},
+    {"el": "cursor", "badge": "radius", "keys": [[0, {"pos": [-18, -18, 0]}], [1.1, {"pos": [-5, -8.66, 14], "click": 1}], [2.0, {"pos": [-5, -8.66, 14]}], [2.8, {"pos": [-18, -14, 12]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Select a circular edge or round face"},
+    {"to": 4.4, "caption": "Read the radius and the diameter"}
+   ]
+  },
+  {
+   "id": "assembly.explode", "duration": 5.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
+    {"el": "camera", "center": [-6, 0]},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 2}, "height": 4},
+    {"el": "poly", "points": [[8, -5, 4], [8, -5, 4]], "dash": true, "color": "hov", "width": 1.4,
+     "keys": [[1.2, {"points": [[8, -5, 4], [8, -5, 4]]}], [2.6, {"points": [[8, -5, 4], [8, -5, 12]]}], [3.4, {"points": [[8, -5, 4], [8, -5, 12]]}], [4.2, {"points": [[8, -5, 4], [8, -5, 8]]}]]},
+    {"el": "solid", "profile": {"rect": [0, 0, 16, 10]}, "at": [0, 0, 4], "height": 8,
+     "keys": [[1.2, {"offset": [0, 0, 0]}], [2.6, {"offset": [0, 0, 8]}], [3.4, {"offset": [0, 0, 8]}], [4.2, {"offset": [0, 0, 4]}]]},
+    {"el": "poly", "points": [[11, -7, 12], [11, -7, 12]], "dash": true, "color": "hov", "width": 1.4,
+     "keys": [[1.2, {"points": [[11, -7, 12], [11, -7, 12]]}], [2.6, {"points": [[11, -7, 12], [11, -7, 30]]}], [3.4, {"points": [[11, -7, 12], [11, -7, 30]]}], [4.2, {"points": [[11, -7, 12], [11, -7, 21]]}]]},
+    {"el": "solid", "profile": {"rect": [0, 0, 22, 14], "round": 1.5}, "holes": [{"circle": [0, 0, 2.5]}], "at": [0, 0, 12], "height": 3,
+     "keys": [[1.2, {"offset": [0, 0, 0]}], [2.6, {"offset": [0, 0, 18]}], [3.4, {"offset": [0, 0, 18]}], [4.2, {"offset": [0, 0, 9]}]]},
+    {"el": "card", "screen": [0.03, 0.55], "w": 150, "title": "Explode", "rows": [{"text": "Distance", "slider": 0}, ["Level", "All levels"]],
+     "keys": [[1.2, {"rows": [{"text": "Distance", "slider": 0}, ["Level", "All levels"]]}], [2.6, {"rows": [{"text": "Distance", "slider": 1}, ["Level", "All levels"]]}],
+              [3.4, {"rows": [{"text": "Distance", "slider": 1}, ["Level", "All levels"]]}], [4.2, {"rows": [{"text": "Distance", "slider": 0.5}, ["Level", "All levels"]]}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.3]}], [1.0, {"screen": [0.2557, 0.775]}], [1.2, {"screen": [0.2557, 0.775], "down": true}], [2.6, {"screen": [0.5196, 0.775]}],
+                              [3.4, {"screen": [0.5196, 0.775]}], [4.2, {"screen": [0.3876, 0.775], "down": false}], [5.0, {"screen": [0.55, 0.45]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Open Explode on an assembly"},
+    {"to": 3.4, "caption": "Drag Distance to pull the parts apart"},
+    {"to": 5.4, "caption": "Trails show where each part belongs"}
+   ]
+  },
+  {
+   "id": "component.activate", "duration": 5.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -16, 30, 16]}},
+    {"el": "camera", "center": [-13, 0]},
+    {"el": "solid", "profile": {"rect": [6, 0, 26, 18], "round": 2}, "holes": [{"rect": [6, 0, 22, 14], "depth": 8}], "height": 10,
+     "keys": [[1.3, {"opacity": 1}], [1.7, {"opacity": 0.22}], [4.3, {"opacity": 0.22}], [4.7, {"opacity": 1}]]},
+    {"el": "solid", "profile": {"rect": [6, 0, 26, 18], "round": 2}, "at": [0, 0, 14], "height": 3},
+    {"el": "solid", "profile": {"circle": [12, 0, 3]}, "at": [0, 0, 17], "tone": "sel", "height": 0.01, "from": 2.4, "fade": 0,
+     "keys": [[2.4, {"height": 0.01, "toneAmount": 0.35}], [3.2, {"height": 5}], [3.5, {"toneAmount": 0.35}], [3.7, {"toneAmount": 0}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 128, "title": "Browser", "hl": -1,
+     "rows": [{"text": "Assembly", "radio": true, "icon": "component"}, {"text": "Housing", "radio": false, "indent": 1, "icon": "component"}, {"text": "Lid", "radio": false, "indent": 1, "icon": "component"}],
+     "keys": [[1.2, {"hl": 2, "rows": [{"text": "Assembly", "radio": false, "icon": "component"}, {"text": "Housing", "radio": false, "indent": 1, "icon": "component", "dim": true}, {"text": "Lid", "radio": true, "indent": 1, "icon": "component"}]}],
+              [4.3, {"hl": -1, "rows": [{"text": "Assembly", "radio": true, "icon": "component"}, {"text": "Housing", "radio": false, "indent": 1, "icon": "component"}, {"text": "Lid", "radio": false, "indent": 1, "icon": "component"}]}]]},
+    {"el": "chip", "screen": [0.6, 0.05], "text": "Lid (active)", "dot": "sel", "close": true, "from": 1.4, "to": 4.3},
+    {"el": "cursor", "keys": [[0, {"screen": [0.5, 0.8]}], [1.2, {"screen": [0.1047, 0.528], "click": 1}], [2.0, {"screen": [0.36, 0.7]}], [3.8, {"screen": [0.36, 0.7]}],
+                              [4.3, {"screen": [0.0699, 0.285], "click": 1}], [5.0, {"screen": [0.3, 0.75]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Click the radio button of a component"},
+    {"to": 3.9, "caption": "New sketches and bodies go into it"},
+    {"to": 5.4, "caption": "Activate the top again to leave"}
+   ]
+  },
+  {
+   "id": "select.smart", "duration": 5.2, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-24, -16, 24, 16]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 40, 26], "round": 2}, "height": 4},
+    {"el": "solid", "profile": {"rect": [5, 0, 14, 10]}, "at": [0, 0, 4], "height": 7, "tone": "amber", "toneAmount": 0,
+     "keys": [[2.1, {"toneAmount": 0, "tone": "amber"}], [2.3, {"toneAmount": 0.45}], [2.8, {"toneAmount": 0.45, "tone": "amber"}], [2.81, {"tone": "sel"}], [2.95, {"toneAmount": 0.55}]]},
+    {"use": "pickFace", "args": {"face": [[-2, -5, 11], [12, -5, 11], [12, 5, 11], [-2, 5, 11]], "hover": 0.5, "pick": 0.9, "until": 2.85}},
+    {"el": "chip", "at": [12, 5, 11], "dx": 40, "dy": -22, "icon": "extrude", "text": "Boss · 5 faces", "hl": false, "from": 1.3, "keys": [[2.1, {"hl": true}], [2.9, {"hl": false}]]},
+    {"el": "key", "caps": ["Ctrl", "↑"], "press": 2.8, "from": 2.45, "to": 3.4},
+    {"el": "cursor", "keys": [[0, {"pos": [-22, -16, 4]}], [0.9, {"pos": [5, 0, 11], "click": 1}], [1.6, {"pos": [5, 0, 11]}], [2.1, {"pos": [12, 5, 11], "dx": 40, "dy": -22}],
+                              [2.8, {"pos": [12, 5, 11], "dx": 40, "dy": -22, "click": 1}], [3.8, {"pos": [22, -14, 4], "dx": 0, "dy": 0}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Click a face"},
+    {"to": 2.6, "caption": "The chip offers the whole feature"},
+    {"to": 5.2, "caption": "Click it or press Ctrl+↑ to select it"}
+   ]
+  },
+  {
+   "id": "vcs.compare", "duration": 5.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-24, -16, 24, 16]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 40, 24], "round": 2}, "height": 4, "keys": [[0.9, {"opacity": 1}], [1.3, {"opacity": 0.35}]]},
+    {"el": "solid", "profile": {"circle": [-11, 4, 4]}, "at": [0, 0, 4], "height": 7, "tone": "red", "toneAmount": 0.6, "from": 0.9, "fade": 0.4, "opacity": 0.6},
+    {"el": "solid", "profile": {"rect": [4, 5, 10, 8]}, "at": [0, 0, 4], "height": 6, "tone": "amber", "toneAmount": 0,
+     "keys": [[0.9, {"toneAmount": 0}], [1.3, {"toneAmount": 0.6}]]},
+    {"el": "solid", "profile": {"circle": [12, -5, 3.5]}, "at": [0, 0, 4], "height": 9, "tone": "green", "toneAmount": 0, "keys": [[0.9, {"toneAmount": 0}], [1.3, {"toneAmount": 0.6}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "value": "A  HEAD · 3f2a1c", "from": 0.9},
+    {"el": "chip", "screen": [0.03, 0.2], "text": "B  Working copy", "from": 0.9},
+    {"el": "chip", "screen": [0.03, 0.82], "dot": "green", "text": "1 added", "from": 1.2},
+    {"el": "chip", "screen": [0.31, 0.82], "dot": "red", "text": "1 removed", "from": 1.2},
+    {"el": "chip", "screen": [0.62, 0.82], "dot": "amber", "text": "1 changed", "from": 1.2},
+    {"el": "chip", "at": [12, -5, 13], "dy": -16, "text": "Added: Boss 2", "hl": true, "from": 2.7, "to": 3.6},
+    {"el": "chip", "at": [9, 5, 5], "dx": 0, "dy": 26, "text": "Extrude 1: 6 → 10 mm", "hl": true, "from": 3.7},
+    {"el": "key", "caps": ["]"], "press": 2.6, "from": 2.35, "to": 3.0},
+    {"el": "key", "caps": ["]"], "press": 3.6, "from": 3.35, "to": 4.0}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Open Compare and pick two versions"},
+    {"to": 2.6, "caption": "Colours mark added, removed and changed"},
+    {"to": 5.4, "caption": "Press ] and [ to step through changes"}
+   ]
+  },
+  {
+   "id": "vcs.commit", "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-16, -12, 16, 12]}},
+    {"el": "camera", "center": [-11, 0], "zoom": 0.85},
+    {"el": "solid", "profile": {"rect": [0, 0, 20, 14], "round": 2}, "holes": [{"circle": [4, 0, 3]}], "height": 6},
+    {"el": "card", "screen": [0.03, 0.05], "w": 160, "title": "Commit", "button": "Commit", "press": 2.9, "from": 0.4, "to": 3.3,
+     "rows": [{"check": true, "label": "bracket.opad", "value": "M"}, {"check": true, "label": "assets/board.step", "value": "A"}, {"text": "Edit Extrude 1; add Fillet 2"}],
+     "hl": -1, "keys": [[1.4, {"hl": 2}], [2.5, {"hl": -1}]]},
+    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 2.9, "from": 2.55, "to": 3.4},
+    {"el": "chip", "screen": [0.3, 0.82], "icon": "git", "dot": "amber", "text": "2 uncommitted changes", "keys": [[3.0, {"dot": "amber", "text": "2 uncommitted changes"}], [3.05, {"dot": "green", "text": "Committed · 3f2a1c"}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Open Commit: your changes are listed"},
+    {"to": 2.5, "caption": "The message is written from the changes"},
+    {"to": 5.0, "caption": "Ctrl+Enter commits; the chip shows it"}
+   ]
+  },
+  {
+   "id": "insert.canvas", "duration": 5.6, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "picture", "corners": [[-16, -8], [12, 9]], "from": 0.1, "fade": 0.4, "keys": [[2.5, {"corners": [[-16, -8], [12, 9]]}], [3.1, {"corners": [[-20.34, -12.08], [20.8, 12.92]]}]]},
+    {"el": "poly", "points": [[-6.76, 0.67], "cursor"], "color": "amber", "dash": true, "width": 1.5, "from": 0.9, "to": 1.7, "fade": 0},
+    {"el": "poly", "color": "amber", "width": 1.5, "dots": true, "from": 1.7, "to": 3.4, "points": [[-6.76, 0.67], [2.76, 0.67]],
+     "keys": [[2.5, {"points": [[-6.76, 0.67], [2.76, 0.67]]}], [3.1, {"points": [[-6.76, 0.67], [7.23, 0.67]]}]]},
+    {"use": "typedValue", "args": {"t": 1.8, "s1": "1", "s2": "14", "press": 2.5, "at": [2.76, 0.67], "dx": 12, "dy": -30, "field": "9.5 mm"}},
+    {"el": "shape", "profile": {"rect": [0.23, 0.67, 26.3, 11.5], "round": 2.7}, "holes": [{"circle": [-6.76, 0.67, 2.4]}, {"circle": [7.23, 0.67, 2.4]}], "color": "sel", "width": 1.8, "from": 3.3, "fade": 0,
+     "keys": [[3.3, {"progress": 0}], [4.6, {"progress": 1, "ease": "linear"}]]},
+    {"use": "sketchDraw", "args": {"badge": "image", "keys": [[0, {"pos": [-24, -11]}], [0.9, {"pos": [-6.76, 0.67], "click": 1}], [1.7, {"pos": [2.76, 0.67], "click": 1}], [2.6, {"pos": [2.76, 0.67]}],
+                                                        [3.3, {"pos": [-12.9, 6.4]}], [4.6, {"pos": [13.4, -5]}], [5.2, {"pos": [20, -11]}]]}}
+   ],
+   "steps": [
+    {"to": 0.8, "caption": "Insert an image on a plane"},
+    {"to": 2.9, "caption": "Click two points and type their distance"},
+    {"to": 5.6, "caption": "The image scales; trace over it"}
+   ]
+  },
+  {
+   "id": "drawing.baseView", "duration": 5.6, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"el": "rect", "corners": [[-29, -14], [29, 14]], "color": "fg3", "width": 1, "fill": "bg2", "fillOpacity": 1},
+    {"el": "rect", "corners": [[-27.5, -12.5], [27.5, 12.5]], "color": "fg2", "width": 1.1},
+    {"el": "rect", "corners": [[13, -12.5], [27.5, -7.5]], "color": "fg2", "width": 1.1},
+    {"el": "poly", "points": [[13, -10], [27.5, -10]], "color": "fg2", "width": 0.8},
+    {"el": "label", "at": [20.25, -8.75], "value": "BRACKET", "size": 8, "color": "fg"},
+    {"el": "label", "at": [20.25, -11.25], "value": "A3   1:2", "size": 7.5, "color": "fg2"},
+    {"el": "shape", "profile": {"points": [[-6, -4.5], [6, -4.5], [6, -1.5], [-2, -1.5], [-2, 4.5], [-6, 4.5]]}, "width": 1.4, "from": 0.3, "fade": 0.2, "offset": [4, -6], "dash": true, "color": "hov",
+     "keys": [[0.3, {"offset": [4, -6]}], [1.2, {"offset": [-14, -2]}], [1.3, {"dash": false, "color": "fg"}]]},
+    {"el": "poly", "points": [[-8, -2], "cursor"], "color": "fg3", "dash": true, "width": 1, "from": 1.4, "to": 2.5, "fade": 0},
+    {"el": "shape", "profile": {"rect": [0, 0, 6, 9]}, "width": 1.4, "dash": true, "color": "hov", "from": 1.5, "fade": 0.15, "offset": [-6, -2],
+     "keys": [[1.5, {"offset": [-6, -2]}], [2.4, {"offset": [2, -2]}], [2.5, {"dash": false, "color": "fg"}]]},
+    {"el": "poly", "points": [[-3, -0.5], [3, -0.5]], "width": 1.2, "dash": true, "color": "hov", "from": 1.5, "fade": 0.15, "offset": [-6, -2],
+     "keys": [[1.5, {"offset": [-6, -2]}], [2.4, {"offset": [2, -2]}], [2.5, {"dash": false, "color": "fg"}]]},
+    {"el": "poly", "points": [[-14, 2.5], "cursor"], "color": "fg3", "dash": true, "width": 1, "from": 2.6, "to": 3.5, "fade": 0},
+    {"el": "shape", "profile": {"rect": [0, 0, 12, 6]}, "width": 1.4, "dash": true, "color": "hov", "from": 2.6, "fade": 0.15, "offset": [-14, 4],
+     "keys": [[2.6, {"offset": [-14, 4]}], [3.4, {"offset": [-14, 8.5]}], [3.5, {"dash": false, "color": "fg"}]]},
+    {"el": "poly", "points": [[-2, -3], [-2, 3]], "width": 1.2, "dash": true, "color": "hov", "from": 2.6, "fade": 0.15, "offset": [-14, 4],
+     "keys": [[2.6, {"offset": [-14, 4]}], [3.4, {"offset": [-14, 8.5]}], [3.5, {"dash": false, "color": "fg"}]]},
+    {"el": "dim", "a": [-20, -6.5], "b": [-8, -6.5], "offset": -10, "value": "60", "from": 4.3},
+    {"el": "key", "caps": ["Enter"], "corner": "tr", "press": 3.95, "from": 3.7, "to": 4.4},
+    {"el": "cursor", "keys": [[0, {"pos": [12, 6]}], [0.3, {"pos": [4, -6]}], [1.2, {"pos": [-14, -2]}], [1.3, {"pos": [-14, -2], "click": 1}], [2.4, {"pos": [2, -2]}], [2.5, {"pos": [2, -2], "click": 1}],
+                              [3.4, {"pos": [-14, 8.5]}], [3.5, {"pos": [-14, 8.5], "click": 1}], [4.4, {"pos": [-4, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Click to place the base view"},
+    {"to": 3.6, "caption": "Move aside, click for projected views"},
+    {"to": 5.6, "caption": "Press Enter, then add dimensions"}
+   ]
+  }
+ ]
+}
