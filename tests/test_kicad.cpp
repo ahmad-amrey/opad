@@ -20,6 +20,7 @@
 #include <STEPControl_Writer.hxx>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -387,6 +388,53 @@ TEST(sketch_projection_follows_a_sync) {
   write(board, text(notched, "40 10", ""));
   design::commit(d, plan_asset_sync(d, import_id));
   CHECK(seen(d).error.find("KiCad part is no longer on the board") != std::string::npos);
+}
+
+// UI-134: a board read again as the viewer reads it (a linked board's sync) translates only the models that changed since:
+// moved footprints none, a new version of one model that one; an editable copy reads them all.
+TEST(models_read_once_per_version) {
+  Files files;
+  configure_kernel_logging(false);
+  const auto dir = files.dir / "memo";
+  // Files written moments ago are never taken as known (their clock may stamp the next write alike): these were written earlier.
+  auto age = [](const std::filesystem::path& p, int seconds) {
+    std::filesystem::last_write_time(p, std::filesystem::file_time_type::clock::now() - std::chrono::seconds(seconds));
+  };
+  step_box(dir / "a.step", 0, 0, 0, 1, 1, 1);
+  step_box(dir / "b.step", 0, 0, 0, 2, 1, 1);
+  age(dir / "a.step", 60);
+  age(dir / "b.step", 60);
+  auto board = [&](const std::string& r2) {
+    write(dir / "board.kicad_pcb", "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\"))\n" +
+                                       footprint("T:A", "R1", "10 10", model("${KIPRJMOD}/a.step")) + footprint("T:A", "R2", r2, model("${KIPRJMOD}/a.step")) +
+                                       footprint("T:B", "J1", "30 20", model("${KIPRJMOD}/b.step")) + ")\n");
+  };
+  ImportOptions viewer;
+  viewer.viewer = true;
+  auto read = [&](const ImportOptions& o, double* width = nullptr) {
+    Document d = Document::create();
+    const ImportResult r = import_kicad_pcb(d, dir / "board.kicad_pcb", o);
+    if (width) {
+      const Scene s = resolve(d);
+      double x0, y0, z0, x1, y1, z1;
+      world_box(d, s, named(s, "J1 B")).Get(x0, y0, z0, x1, y1, z1);
+      *width = x1 - x0;
+    }
+    return r.info["models_read"].get<int>();
+  };
+  board("20 10");
+  CHECK_EQ(read(viewer), 2);
+  board("22 12 90");
+  CHECK_EQ(read(viewer), 0);
+  step_box(dir / "b.step", 0, 0, 0, 3, 1, 1);
+  CHECK_EQ(read(viewer), 1);  // just written: read, not kept
+  CHECK_EQ(read(viewer), 1);
+  age(dir / "b.step", 30);
+  double width = 0;
+  CHECK_EQ(read(viewer, &width), 1);
+  CHECK(about(width, 3, 0.01));
+  CHECK_EQ(read(viewer), 0);
+  CHECK_EQ(read(ImportOptions{}), 2);
 }
 
 TEST(saved_and_viewed) {

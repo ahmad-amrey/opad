@@ -36,6 +36,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -871,6 +872,21 @@ struct Part {
   double opacity = 1.0;
 };
 
+// Models read as the viewer reads them (a linked board) stay in memory for the process, per file, size, time and scale:
+// reading the board again (a sync after footprints moved or one model changed) translates only the models that changed, each
+// footprint's parts are its model's live shapes again (UI-134). The least recently used go past kMemoModels.
+struct ModelMemo {
+  std::vector<Part> parts;
+  std::vector<TopoDS_Shape> shapes;
+  std::vector<json> metas;
+  std::uint64_t used = 0, bytes = 0;  // its file's size: what it holds in memory is about that much
+};
+constexpr size_t kMemoModels = 256;
+constexpr std::uint64_t kMemoBytes = 256ull << 20;
+std::mutex memo_mu;
+std::map<std::string, ModelMemo> memo;
+std::uint64_t memo_clock = 0;
+
 class Builder {
  public:
   Builder(Document& d, const std::filesystem::path& f, const ImportOptions& o) : doc(d), file(f), opt(o), made(o), resolver(f, o.kicad.model_dirs) { made.heal = false; }
@@ -900,7 +916,7 @@ class Builder {
       if (missing.size() > 8) list += ", ...";
       res.warnings.push_back("footprint 3D models not found, shown as boxes: " + list);
     }
-    res.info = {{"footprints", footprints.size()}, {"components", placed}, {"models", models.size()}, {"placeholders", placeholders},
+    res.info = {{"footprints", footprints.size()}, {"components", placed}, {"models", models.size()}, {"models_read", models_read}, {"placeholders", placeholders},
                 {"missing_models", missing}, {"downloadable", downloadable.size()}, {"holes", holes.size()}, {"thickness", thickness},
                 {"outlines", loops.size()}};
     return res;
@@ -980,7 +996,7 @@ class Builder {
   std::set<std::string> downloadable;  // missing models of KiCad's library
   double outline_area = 0;
   std::array<double, 4> outline_box{0, 0, 0, 0};
-  int placed = 0, placeholders = 0;
+  int placed = 0, placeholders = 0, models_read = 0;
 
   void report(double fraction, const std::string& what) {
     if (opt.progress && !opt.progress(fraction, what)) throw Error("import cancelled");
@@ -1304,6 +1320,32 @@ class Builder {
     const std::string id = utf8(path) + "|" + json(scale).dump();
     if (auto it = models.find(id); it != models.end()) return it->second;
     auto& parts = models[id];
+    std::string remembered;  // the memo's key: viewer reads only (their bodies are live shapes)
+    std::uintmax_t size = 0;
+    if (opt.viewer) {
+      std::error_code error;
+      size = std::filesystem::file_size(path, error);
+      const auto time = std::filesystem::last_write_time(path, error);
+      // A file written moments ago may be written again within one tick of the clock that stamps it: never taken as known.
+      const bool settled = !error && std::filesystem::file_time_type::clock::now() - time > std::chrono::seconds(2);
+      if (settled) remembered = id + "|" + std::to_string(size) + "|" + std::to_string(time.time_since_epoch().count()) + (opt.heal ? "|heal" : "");
+    }
+    if (!remembered.empty()) {
+      std::lock_guard<std::mutex> lock(memo_mu);
+      if (auto it = memo.find(remembered); it != memo.end()) {
+        it->second.used = ++memo_clock;
+        for (size_t i = 0; i < it->second.parts.size(); ++i) {
+          const Part& p = it->second.parts[i];
+          if (!doc.has_body(p.key)) {
+            doc.add_live_body(p.key, it->second.metas[i]);
+            ++res.new_entries;
+          }
+          cache_shape(doc, p.key, it->second.shapes[i]);
+        }
+        return parts = it->second.parts;
+      }
+    }
+    ++models_read;
     const std::string phase = "translating 3D models " + std::to_string(done + 1) + "/" + std::to_string(total);
     report(total ? double(done) / double(total) : -1, phase);
     Document part_doc = Document::create();
@@ -1359,6 +1401,25 @@ class Builder {
         cache_shape(doc, p.key, shape);
       }
       parts.push_back(std::move(p));
+    }
+    if (!remembered.empty()) {
+      ModelMemo m;
+      for (const Part& p : parts) {
+        m.parts.push_back(p);
+        m.shapes.push_back(body_shape(doc, p.key));
+        m.metas.push_back(doc.body(p.key) ? doc.body(p.key)->meta : json::object());
+      }
+      std::lock_guard<std::mutex> lock(memo_mu);
+      m.used = ++memo_clock;
+      m.bytes = size;
+      memo[remembered] = std::move(m);
+      auto total = [] {
+        std::uint64_t n = 0;
+        for (const auto& [k, e] : memo) n += e.bytes;
+        return n;
+      };
+      while (memo.size() > 1 && (memo.size() > kMemoModels || total() > kMemoBytes))
+        memo.erase(std::min_element(memo.begin(), memo.end(), [](const auto& a, const auto& b) { return a.second.used < b.second.used; }));
     }
     return parts;
   }
