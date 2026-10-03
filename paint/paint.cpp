@@ -73,6 +73,9 @@ void paint_text(QPainter& p, const Prim& t, const QColor& c, const QTransform& f
   p.setFont(font);
   p.setPen(c);
   p.setBrush(Qt::NoBrush);
+  // Into a picture (PNG, previews) as outlines: the platform's glyphs would come with ClearType's colour fringes there.
+  const int device = p.device() ? p.device()->devType() : 0;
+  const bool outlines = device == QInternal::Image || device == QInternal::Pixmap;
   for (const auto& line : text_lines(t)) {
     if (line.text.find_first_not_of(' ') == std::string::npos) continue;
     const QString s = QString::fromUtf8(line.text.data(), static_cast<qsizetype>(line.text.size()));
@@ -83,7 +86,14 @@ void paint_text(QPainter& p, const Prim& t, const QColor& c, const QTransform& f
     local.rotate(-t.angle * 180 / M_PI);
     local.scale(k, k);
     p.setTransform(local * base);
-    p.drawText(QPointF(t.halign == 1 ? -w / 2 : t.halign == 2 ? -w : 0, 0), s);
+    const QPointF from(t.halign == 1 ? -w / 2 : t.halign == 2 ? -w : 0, 0);
+    if (outlines) {
+      QPainterPath path;
+      path.addText(from, font, s);
+      p.fillPath(path, c);
+    } else {
+      p.drawText(from, s);
+    }
   }
   p.setTransform(base);
 }

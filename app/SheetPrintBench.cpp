@@ -79,11 +79,16 @@ OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
     check(waitFor([&] { return dialog->previewReady(); }, 30000), "its preview is rendered on a worker");
     {
       const QImage& img = dialog->preview();
-      int ink = 0;
+      int ink = 0, coloured = 0;
       for (int y = 0; y < img.height(); y += 2)
-        for (int x = 0; x < img.width(); x += 2) ink += qGray(img.pixel(x, y)) < 100;
-      check(std::abs(static_cast<double>(img.width()) / img.height() - 420.0 / 297) < 0.02 && qGray(img.pixel(img.width() / 2, 3)) > 240 && ink > 200,
-            QString("white paper of the sheet's proportions with black ink (%1 x %2, %3 dark samples)").arg(img.width()).arg(img.height()).arg(ink));
+        for (int x = 0; x < img.width(); x += 2) {
+          const QRgb c = img.pixel(x, y);
+          ink += qGray(c) < 100;
+          coloured += std::max({qRed(c), qGreen(c), qBlue(c)}) - std::min({qRed(c), qGreen(c), qBlue(c)}) > 24;
+        }
+      check(std::abs(static_cast<double>(img.width()) / img.height() - 420.0 / 297) < 0.02 && qGray(img.pixel(img.width() / 2, 3)) > 240 && ink > 200 && coloured == 0,
+            QString("white paper of the sheet's proportions with black ink, its text grey on white (%1 x %2, %3 dark samples, %4 coloured)")
+                .arg(img.width()).arg(img.height()).arg(ink).arg(coloured));
     }
     check(dialog->pageLabel()->text().contains("sheet 1 of 2") && dialog->pageLabel()->text().contains("A3") && dialog->allButton()->isChecked(),
           "on the shown sheet: " + dialog->pageLabel()->text() + "; all sheets chosen");
