@@ -237,7 +237,10 @@ board asks what to build (components, do-not-populate parts, vias, the origin, t
 boards keeps those choices for opening boards too. KiCad's model libraries are
 not part of OPAD: when a board names models of KiCad's library that are not installed, OPAD offers to download them from
 the library (gitlab.com/kicad/libraries/kicad-packages3D, CC-BY-SA 4.0 with KiCad's design exception) into your user
-cache, and shows them (`opad-cli kicad_models board.kicad_pcb [--download true]` lists and fetches them).
+cache, and shows them (`opad-cli kicad_models board.kicad_pcb [--download true]` lists and fetches them). Models
+embedded in the board (KiCad 9) are read from it, and a footprint with only KiCad's VRML model shows that. After the board
+changes in KiCad, `opad-cli kicad_sync_preview doc.opad` lists what reading it again would change, per reference
+designator (moved, turned, flipped, model changed, added, removed) and for the board (thickness, drills, outline).
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth
