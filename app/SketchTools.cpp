@@ -930,7 +930,9 @@ struct Crossings {
   Arc2 self{};                           // a circle's or an arc's
   std::vector<Cut> cuts;
 };
-Crossings crossings(const Sketch& sk, const SkEntity& target) {
+// `samples`: a preview's, a spline's or an ellipse's polyline (nullptr: the kernel's crossings, as a trim asks).
+using Samples = std::function<const std::vector<std::pair<double, double>>*(const SkEntity&)>;
+Crossings crossings(const Sketch& sk, const SkEntity& target, const Samples& samples = {}) {
   auto P = [&](int id) { return sk.point(id); };
   auto round_of = [&](const SkEntity& e) {
     Arc2 k{P(e.p[0])->x, P(e.p[0])->y, e.r, 0, 2 * M_PI};
@@ -985,11 +987,25 @@ Crossings crossings(const Sketch& sk, const SkEntity& target) {
           if (on_round(k, x, y)) hits.push_back({x, y});
         }
       }
-    } else if (o.type == ET::Ellipse || o.type == ET::Spline) {  // the kernel's crossings (UI-28)
-      try {
-        for (const auto& [x, y] : curve_crossings(sk, target, o)) hits.push_back({x, y});
-      } catch (...) {
-      }
+    } else if (o.type == ET::Ellipse || o.type == ET::Spline) {  // the kernel's crossings (UI-28), a preview's on the samples
+      if (const auto* poly = samples ? samples(o) : nullptr) {
+        auto within = [&](double s, size_t i) { return s >= -1e-9 && (s < 1 - 1e-9 || (i + 1 == poly->size() && s <= 1 + 1e-9)); };  // a vertex once, the ends too
+        for (size_t i = 1; i < poly->size(); ++i) {
+          const double cx = (*poly)[i - 1].first, cy = (*poly)[i - 1].second, dx = (*poly)[i].first, dy = (*poly)[i].second;
+          if (isLine) {
+            const double den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+            if (std::fabs(den) < 1e-14) continue;
+            const double t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den, s = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / den;
+            if (within(s, i)) hits.push_back({ax + t * (bx - ax), ay + t * (by - ay)});
+          } else
+            for (double s : line_circle(cx, cy, dx, dy, self.cx, self.cy, self.r))
+              if (within(s, i)) hits.push_back({cx + s * (dx - cx), cy + s * (dy - cy)});
+        }
+      } else
+        try {
+          for (const auto& [x, y] : curve_crossings(sk, target, o)) hits.push_back({x, y});
+        } catch (...) {
+        }
     } else {
       continue;
     }
@@ -1009,16 +1025,48 @@ Crossings crossings(const Sketch& sk, const SkEntity& target) {
 }
 }  // namespace
 
+struct SketchEditor::TrimCrossings {
+  Crossings c;
+};
+
+// Whether the samples of two curves come near each other (UI-28: only those go to the kernel; a spline's box from its points
+// is wide). A crossing lies within the samples' deflection of both polylines; without samples, they may cross.
+bool SketchEditor::mayCross(const SkEntity& a, const SkEntity& b) const {
+  const auto* pa = m_geometry ? m_geometry->samples(m_sk, a) : nullptr;
+  const auto* pb = pa ? m_geometry->samples(m_sk, b) : nullptr;
+  if (!pa || !pb || pa->empty() || pb->empty()) return true;
+  const double gap = 8 * m_geometry->deflection() + 1e-9;
+  using P = std::pair<double, double>;
+  auto toSegment = [](const P& p, const P& a, const P& b) {
+    const double dx = b.first - a.first, dy = b.second - a.second, len2 = dx * dx + dy * dy;
+    const double t = len2 < 1e-30 ? 0 : std::clamp(((p.first - a.first) * dx + (p.second - a.second) * dy) / len2, 0.0, 1.0);
+    return std::hypot(a.first + t * dx - p.first, a.second + t * dy - p.second);
+  };
+  auto side = [](const P& a, const P& b, const P& p) { return (b.first - a.first) * (p.second - a.second) - (b.second - a.second) * (p.first - a.first); };
+  auto close = [&](const P& a0, const P& a1, const P& b0, const P& b1) {
+    if (std::min(a0.first, a1.first) > std::max(b0.first, b1.first) + gap || std::min(b0.first, b1.first) > std::max(a0.first, a1.first) + gap ||
+        std::min(a0.second, a1.second) > std::max(b0.second, b1.second) + gap || std::min(b0.second, b1.second) > std::max(a0.second, a1.second) + gap)
+      return false;
+    if ((side(a0, a1, b0) > 0) != (side(a0, a1, b1) > 0) && (side(b0, b1, a0) > 0) != (side(b0, b1, a1) > 0)) return true;
+    return std::min({toSegment(b0, a0, a1), toSegment(b1, a0, a1), toSegment(a0, b0, b1), toSegment(a1, b0, b1)}) <= gap;
+  };
+  const size_t na = std::max<size_t>(1, pa->size() - 1), nb = std::max<size_t>(1, pb->size() - 1);  // segments (a point: one)
+  for (size_t i = 0; i < na; ++i)
+    for (size_t j = 0; j < nb; ++j)
+      if (close((*pa)[i], (*pa)[std::min(i + 1, pa->size() - 1)], (*pb)[j], (*pb)[std::min(j + 1, pb->size() - 1)])) return true;
+  return false;
+}
+
 // What a trim click at (u, v) on curve `id` removes, as a polyline (empty: nothing it could trim).
 std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double u, double v) const {
   std::vector<std::pair<double, double>> piece;
   const SkEntity* target = m_sk.entity(id);
+  if (m_trimCutsRevision != m_modelRevision) m_trimCuts.clear(), m_trimCrossings.clear(), m_trimCutsRevision = m_modelRevision;
   if (target && (target->type == ET::Spline || target->type == ET::Ellipse)) {  // the kernel's cuts, once per curve and edit
-    if (m_trimCutsRevision != m_modelRevision) m_trimCuts.clear(), m_trimCutsRevision = m_modelRevision;
     auto& cuts = m_trimCuts[id];
     std::vector<TrimPiece> keep, gone;
     try {
-      if (!cuts) cuts = std::make_shared<const CurveCuts>(curve_cuts(m_sk, id));
+      if (!cuts) cuts = std::make_shared<const CurveCuts>(curve_cuts(m_sk, id, [this, target](const SkEntity& o) { return mayCross(*target, o); }));
       if (!trim_pieces(*cuts, u, v, keep, gone)) return piece;
       for (const auto& g : gone)
         for (const auto& p : curveSamples(piece_edge(*cuts, g), std::max(1e-7, m_viewport->pixelSize() * 0.25))) piece.push_back({p.X(), p.Y()});
@@ -1028,7 +1076,9 @@ std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double 
     return piece;
   }
   if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return piece;
-  const Crossings c = crossings(m_sk, *target);
+  auto& cached = m_trimCrossings[id];
+  if (!cached) cached = std::make_shared<const TrimCrossings>(TrimCrossings{crossings(m_sk, *target, [this](const SkEntity& o) { return m_geometry ? m_geometry->samples(m_sk, o) : nullptr; })});
+  const Crossings& c = cached->c;
   if (c.line) {
     const double len2 = (c.bx - c.ax) * (c.bx - c.ax) + (c.by - c.ay) * (c.by - c.ay);
     if (len2 < 1e-18) return piece;

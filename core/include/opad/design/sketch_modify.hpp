@@ -1,6 +1,7 @@
 #pragma once
 #include <Geom_Curve.hxx>
 #include <array>
+#include <functional>
 #include "sketch_geom.hpp"
 namespace opad::design {
 std::vector<int> connected_entities(const Sketch& sketch,const std::vector<int>& seeds);
@@ -41,7 +42,9 @@ struct CurveCuts {
   bool closed=false;
   std::vector<std::pair<double,int>> at;
 };
-CurveCuts curve_cuts(const Sketch& sk,int id);
+// `filter` (optional): false when a curve cannot reach curve `id` (an editor's samples tell), so the kernel skips it.
+using CurveFilter=std::function<bool(const SkEntity&)>;
+CurveCuts curve_cuts(const Sketch& sk,int id,const CurveFilter& filter={});
 // Where two curves cross, by the kernel (nothing for a point, or when boxes from their points are apart): what cuts a line,
 // a circle or an arc that the editor's exact trim does not intersect itself (a spline, an ellipse).
 std::vector<std::array<double,2>> curve_crossings(const Sketch& sk,const SkEntity& a,const SkEntity& b);

@@ -196,6 +196,9 @@ TEST(trim_cuts_splines_and_ellipses_at_any_curve) {
   const CurveCuts cuts=curve_cuts(sk,spline);
   CHECK_EQ(cuts.at.size(),size_t(2));CHECK_EQ(cuts.at[0].second,left);CHECK_EQ(cuts.at[1].second,right);
   CHECK_EQ(curve_crossings(sk,*sk.entity(left),*sk.entity(spline)).size(),size_t(1));  // a spline cuts a line too
+  // A filter (an editor's samples) keeps a curve it rules out from the kernel: the right line only.
+  const CurveCuts filtered=curve_cuts(sk,spline,[&](const SkEntity& o){return o.id!=left;});
+  CHECK_EQ(filtered.at.size(),size_t(1));CHECK_EQ(filtered.at[0].second,right);CHECK_NEAR(filtered.at[0].first,cuts.at[1].first,1e-12);
   // The middle goes: from the old start to the left line, from the right line to the old end; the ends on the lines.
   const auto pieces=trim_curve(sk,spline,20,0.5);
   CHECK_EQ(pieces.size(),size_t(2));CHECK_EQ(pieces[0],spline);

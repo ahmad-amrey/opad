@@ -189,6 +189,17 @@ void SketchEditor::benchEdits() {
                   second->p.back() == fit.p.back() && equal(m_sk.point(first->p.back())->x, 105) && equal(m_sk.point(second->p.front())->x, 115) &&
                   onLine(first->p.back(), left) && onLine(second->p.front(), right) && m_undo.size() == before + 1 && m_solved.converged,
               "a click takes it: two pieces left, their ends on the uprights, one undo step");
+        // An upright the spline now ends on: its hover cuts it there from the spline's samples, worked out once while the
+        // sketch stays as it is (every move ran the kernel against every spline and ellipse near it).
+        const double meetY = second ? m_sk.point(second->p.front())->y : 0;
+        sketchMove(115, 41, Qt::NoModifier, false);
+        const auto* once = m_trimCrossings.count(right) ? m_trimCrossings.at(right).get() : nullptr;
+        const auto below = trimPreview(right, 115, 41);
+        sketchMove(115, 40.5, Qt::NoModifier, false);
+        check(m_hover.kind == Hit::Entity && m_hover.id == right && once && m_trimCrossings.at(right).get() == once && below.size() == 2 &&
+                  std::abs(std::max(below[0].second, below[1].second) - meetY) < 1e-6 && transientSolid(t.red) >= 1,
+              QString("hovering the upright shows the piece below the spline in red, cut where the spline meets it (%1), worked out once [hover %2/%3 right %4, cached %5, piece %6: %7]")
+                  .arg(meetY).arg(int(m_hover.kind)).arg(m_hover.id).arg(right).arg(once != nullptr).arg(below.size()).arg(below.empty() ? 0.0 : std::max(below.front().second, below.back().second)));
         // A spline cuts a line: the post loses its part above the spline's left piece.
         sketchMove(95, 52, Qt::NoModifier, false);
         sketchPress(95, 52, Qt::NoModifier);

@@ -319,9 +319,14 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<std::pair<double, double>> extendPreview(int id, double u, double v);
   std::tuple<int, bool, int> m_extendKey{0, false, -1};
   std::vector<std::pair<double, double>> m_extendShown;
-  // Where the other curves cross a spline or an ellipse the trim hovers (core curve_cuts, the kernel's), for this model revision.
+  // Where the other curves cross a spline or an ellipse the trim hovers (core curve_cuts, the kernel's, on what their samples
+  // bring near it), and a line, a circle or an arc (splines and ellipses by their samples; the click asks the kernel), for
+  // this model revision: a move over the same curve, or a fence over the same curves, looks them up.
+  struct TrimCrossings;
   mutable std::map<int, std::shared_ptr<const opad::design::CurveCuts>> m_trimCuts;
+  mutable std::map<int, std::shared_ptr<const TrimCrossings>> m_trimCrossings;
   mutable int m_trimCutsRevision = -1;
+  bool mayCross(const opad::design::SkEntity& a, const opad::design::SkEntity& b) const;  // their samples come near; unsure: true
   // Dragged points snap and merge on drop (UI-28): the point or curve the dragged point is held to, kept on release (the
   // point merged into it, or the point put on the curve) when the sketch still solves.
   int m_dropPoint = 0, m_dropCurve = 0;

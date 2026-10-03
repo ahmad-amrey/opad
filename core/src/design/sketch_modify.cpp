@@ -389,31 +389,43 @@ Handle(Geom_Curve) curve_of(const TopoDS_Edge& edge,double& first,double& last) 
   BRepAdaptor_Curve c(edge);first=c.FirstParameter();last=c.LastParameter();
   return Handle(Geom_Curve)::DownCast(c.Curve().Curve()->Transformed(c.Trsf()));
 }
+Handle(Geom2d_Curve) flat(const TopoDS_Edge& edge) {
+  double first,last;const auto c=curve_of(edge,first,last);
+  return new Geom2d_TrimmedCurve(GeomAPI::To2d(c,gp_Pln(gp::XOY())),first,last);
+}
+void cross(const Handle(Geom2d_Curve)& a,const Handle(Geom2d_Curve)& b,std::vector<std::array<double,2>>& out) {
+  Geom2dAPI_InterCurveCurve crossing(a,b,1e-8);
+  for(int i=1;i<=crossing.NbPoints();++i)out.push_back({crossing.Point(i).X(),crossing.Point(i).Y()});
+}
 }  // namespace
 
 std::vector<std::array<double,2>> curve_crossings(const Sketch& sk,const SkEntity& a,const SkEntity& b) {
   std::vector<std::array<double,2>> out;
   Bnd_Box ra,rb;if(a.id==b.id || !rough_box(sk,a,ra) || !rough_box(sk,b,rb) || ra.IsOut(rb))return out;
   const TopoDS_Edge ea=entity_edge(sk,a,{}),eb=entity_edge(sk,b,{});if(ea.IsNull() || eb.IsNull())return out;
-  const gp_Pln plane(gp::XOY());double fa,la,fb,lb;const auto ca=curve_of(ea,fa,la),cb=curve_of(eb,fb,lb);
-  Geom2dAPI_InterCurveCurve crossing(new Geom2d_TrimmedCurve(GeomAPI::To2d(ca,plane),fa,la),new Geom2d_TrimmedCurve(GeomAPI::To2d(cb,plane),fb,lb),1e-8);
-  for(int i=1;i<=crossing.NbPoints();++i)out.push_back({crossing.Point(i).X(),crossing.Point(i).Y()});
+  cross(flat(ea),flat(eb),out);
   return out;
 }
 
-CurveCuts curve_cuts(const Sketch& sk,int id) {
+CurveCuts curve_cuts(const Sketch& sk,int id,const CurveFilter& filter) {
   const SkEntity* e=sk.entity(id);if(!e || e->type==SkEntity::Type::Point)throw Error("pick a curve to trim");
   const TopoDS_Edge edge=entity_edge(sk,*e,{});if(edge.IsNull())throw Error("that curve cannot be trimmed");
   CurveCuts out;out.curve=curve_of(edge,out.first,out.last);out.closed=BRepAdaptor_Curve(edge).IsClosed();
   const double span=out.last-out.first;
-  for(const auto& o:sk.entities)
-    for(const auto& [x,y]:curve_crossings(sk,*e,o)) {
+  // The curve once, in its own box (one from its points is wide): only what reaches that box goes to the kernel.
+  const Handle(Geom2d_Curve) mine=flat(edge);Bnd_Box box;BRepBndLib::Add(edge,box);box.Enlarge(1e-6);
+  for(const auto& o:sk.entities) {
+    Bnd_Box rough;if(o.id==id || !rough_box(sk,o,rough) || rough.IsOut(box) || (filter && !filter(o)))continue;
+    const TopoDS_Edge other=entity_edge(sk,o,{});if(other.IsNull())continue;
+    std::vector<std::array<double,2>> hits;cross(mine,flat(other),hits);
+    for(const auto& [x,y]:hits) {
       GeomAPI_ProjectPointOnCurve on(gp_Pnt(x,y,0),out.curve,out.first,out.last);if(!on.NbPoints())continue;
       double t=on.LowerDistanceParameter();
       if(out.closed && out.last-t<1e-9*span)t=out.first;  // the seam
       if(!out.closed && (t-out.first<1e-7*span || out.last-t<1e-7*span))continue;  // touched at an end: nothing cut there
       out.at.push_back({t,o.id});
     }
+  }
   std::sort(out.at.begin(),out.at.end());
   out.at.erase(std::unique(out.at.begin(),out.at.end(),[&](const auto& a,const auto& b){return b.first-a.first<1e-9*span;}),out.at.end());
   return out;
