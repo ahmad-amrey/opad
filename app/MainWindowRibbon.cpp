@@ -210,9 +210,14 @@ void MainWindow::buildRibbon() {
     if (a->actionGroup() != m_workspaceGroup) m_workspaceGroup->addAction(a);
   }
   m_sketchWorkspace = layout.index("sketch");
-  // The last one by id; earlier builds saved Review as 0 and Design as 1. A contextual or missing one (an area that is off): Review.
-  const QString saved = m_settings.value("ui/workspace").toString();
-  const int restored = layout.index(saved == "1" ? QString("design") : saved);
+  // The last one by id (ui/workspaceId). ui/workspace keeps Review as 0 and Design as 1 for earlier builds, which read it as
+  // a number (a build in between wrote the id there), and wins when one of them switched since. A contextual or missing
+  // one (an area that is off): Review.
+  const QString legacy = m_settings.value("ui/workspace").toString();
+  QString saved = m_settings.value("ui/workspaceId", legacy).toString();
+  if (legacy == "1") saved = "design";
+  else if (legacy == "0" && saved == "design") saved = "review";
+  const int restored = layout.index(saved);
   m_ribbon->setWorkspace(restored >= 0 && !layout.spaces[restored].workspace.contextual ? restored : layout.index("review"));
   m_workspaceId = m_workspaceIds.value(m_ribbon->workspace());
   action("workspace." + m_workspaceId)->setChecked(true);
@@ -222,7 +227,8 @@ void MainWindow::buildRibbon() {
     if (std::exchange(m_workspaceId, id) != id) forEachArea([&id](AreaController* area) { area->workspaceChanged(id); });
     updateCommands();
     if (m_ribbon->workspaceAt(i).contextual) return;  // entered and left with the sketch (or an area's mode), never remembered
-    m_settings.setValue("ui/workspace", id);
+    m_settings.setValue("ui/workspace", id == "design" ? 1 : 0);
+    m_settings.setValue("ui/workspaceId", id);
     if (QAction* a = action("workspace." + id)) a->setChecked(true);
     if (id == "design" && m_doc->hasDocument && m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();  // Design works on bodies
     statusBar()->showMessage(tr("%1 workspace · %2 switch workspace").arg(m_ribbon->workspaceAt(i).name, m_workspaceKeys), 4000);

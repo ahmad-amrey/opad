@@ -245,13 +245,14 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
   for (QTabBar* bar : w.m_ribbon->findChildren<QTabBar*>())
     for (int i = 0; i < bar->count(); ++i) tools = tools || bar->tabText(i) == "Probe tools";
   require(w.workspaceId() == "probe" && probe->services().workspace() == "probe" && probe->workspaces.size() == reported + 1 && probe->workspaces.back() == "probe" &&
-              space->isChecked() && !review->isChecked() && w.m_settings.value("ui/workspace").toString() == "probe" && tools &&
+              space->isChecked() && !review->isChecked() && w.m_settings.value("ui/workspaceId").toString() == "probe" &&
+              w.m_settings.value("ui/workspace").toInt() == 0 && tools &&
               w.statusBar()->currentMessage().contains("Ctrl+1 / 2 / Ctrl+Shift+9"),
           "workspace: the command shows its tabs, checks it, saves it by id and tells the areas (" + w.statusBar()->currentMessage() + ")");
   probe->services().setWorkspace("design");
   require(w.workspaceId() == "design" && probe->workspaces.back() == "design" && w.action("workspace.design")->isChecked() && !space->isChecked() &&
-              w.m_settings.value("ui/workspace").toString() == "design",
-          "workspace: an area switches by id");
+              w.m_settings.value("ui/workspaceId").toString() == "design" && w.m_settings.value("ui/workspace").toInt() == 1,
+          "workspace: an area switches by id (and an earlier build reads Design as 1)");
   const qsizetype before = probe->workspaces.size();
   probe->services().setWorkspace("sketch");
   probe->services().setWorkspace("no-such-workspace");

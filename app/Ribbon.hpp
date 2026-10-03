@@ -66,7 +66,7 @@ struct Workspace {
 // "<tab>.<name>" ("design.solid.create"). Null actions are left out, and so is a group left empty. Every workspace that
 // is not contextual is switched to by the command "workspace.<id>": the window makes it (key = its shortcut, in the View
 // menu after the others) unless the area added one of its own, and keeps it checked while the workspace is shown; the
-// last one is remembered by id (setting ui/workspace). A contextual tab (addContextualTab) stays hidden until the app
+// last one is remembered by id (setting ui/workspaceId). A contextual tab (addContextualTab) stays hidden until the app
 // shows it (MainWindow::setContextualTab, AreaServices::setContextualTab): then it comes first in its workspace's tab
 // row, in its accent colour, and is the current tab until it is hidden again.
 //   layout.addGroup("design.solid", "design.solid.create", tr("Create"));
