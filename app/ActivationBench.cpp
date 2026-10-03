@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -23,6 +24,7 @@
 #include "BenchRegistry.hpp"
 #include "DesignController.hpp"
 #include "MainWindow.hpp"
+#include "ToolPanel.hpp"
 #include "opad/geometry.hpp"
 
 namespace {
@@ -94,7 +96,7 @@ struct Ticker {
 // set the ghost's; resting on the ghost names it in the status bar, the right-click menu there and a double click on a
 // ghost activate its component; a guided tool picks the ghost as a reference, and after it the ghost is unpickable again;
 // F frames the Lid; a sketch made through the plane picker (ghosts pickable while choosing) and the sketch editor, a box
-// made through the feature panel and an import all land in the Lid (no reparent op), the sketch listed in the Lid's own
+// made through the feature panel, an import and a drawing converted to a sketch all land in the Lid (no reparent op), the sketch listed in the Lid's own
 // Sketches folder (also while it is made); the context menu offers Activate for a body of another component and Activate
 // root; an undone active component hands activation back to the root; the chip's click activates the root and
 // everything is drawn and picked as before; the Lid activated, saved and opened again is active again. With the Lid
@@ -510,6 +512,28 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     require(enabled && doc->activeComponent() == s->lid, "Activate on a selected body activates its component, the Lid");
                     w.m_browser->selectIds({});
                     v->clearSelection();
+                    QFile svg(s->dir.filePath("outline.svg"));
+                    svg.open(QIODevice::WriteOnly);
+                    svg.write(R"(<svg width="40mm" viewBox="0 0 40 40"><g id="Outline"><rect width="20" height="10"/></g></svg>)");
+                    svg.close();
+                    s->ops = doc->doc.ops.size();
+                    doc->startImport(svg.fileName());
+                  }});
+  // A drawing in the Lid converted to a sketch: the sketch is made in the Lid too (not ghosted at the root).
+  list.push_back({[=] { return !doc->loading && doc->doc.ops.size() > s->ops && idle(); }, [=, &w](bool imported) {
+                    require(imported && doc->doc.ops.back().data.value("parent", "") == s->lid, "a drawing imported into the Lid");
+                    s->sketches = doc->scene.sketches.size();
+                    w.drawingToSketch();
+                    auto* panel = w.findChild<ToolPanel*>("drawingWizard");
+                    QPushButton* create = panel ? panel->findChild<QPushButton*>("primary") : nullptr;
+                    require(create && create->isEnabled(), "Drawing to sketch offers Create sketch");
+                    if (create) create->click();
+                  }});
+  list.push_back({[=] { return doc->scene.sketches.size() > s->sketches && !doc->designBusy; }, [=](bool made) {
+                    const opad::SketchItem* sketch = made ? &doc->scene.sketches.back() : nullptr;
+                    require(sketch && sketch->component == s->lid && doc->doc.ops.back().data.value("component", "") == s->lid && !v->shownLook(sketch->id).ghost,
+                            "the converted sketch is made in the Lid, not ghosted");
+                    doc->undo(2);  // the sketch and the drawing
                   }});
   // The chip: back to the root, everything as before.
   list.push_back({idle, [=, &w](bool) {

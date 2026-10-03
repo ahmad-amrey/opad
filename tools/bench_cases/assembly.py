@@ -68,7 +68,8 @@ CASES = [
     # the root: the Lid activated by its browser radio, Alt+click on rows, the breadcrumb; the Housing ghosted and refused
     # by a click, picked by a guided tool; chip, browser pill, timeline (dimmed, or only the Lid's ops), live_state;
     # visibility off and inactive opacity; a ghost's hover hint, right-click and double click; F; a sketch (in the Lid's
-    # Sketches folder), a box and an import made in the Lid; context menu; undo falls back to the root; the chip's click
+    # Sketches folder), a box and an import made in the Lid, a drawing imported there converted to a sketch in the Lid;
+    # context menu; undo falls back to the root; the chip's click
     # activates the root. <prefix>.ghost.png, .browser.png, .chips.png, .timeline.png, .history.png, .sketches.png.
     ("activate", lambda root, document: document("activate"), {"OPAD_BENCH_ACTIVATE": "{prefix}"}),  # its own: benches save "empty"
     ("activate-rtl", lambda root, document: document("activate-rtl"), {"OPAD_BENCH_ACTIVATE": "{prefix}", "OPAD_LANG": "ar"}),

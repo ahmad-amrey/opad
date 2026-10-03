@@ -142,6 +142,7 @@ void MainWindow::drawingToSketch() {
       };
       if(fromSource(placement))placement={{"frame",frame.to_json()}};
       auto op=opad::design::make_sketch_op(title,placement,geometry->to_json());
+      if(!m_doc->activeComponent().empty()) op["component"]=m_doc->activeComponent();  // made in the active component, as Finish sketch does (UI-33)
       std::vector<opad::json> ops{op};
       if(removeSource->isChecked()) {
         std::set<std::string> sources;for(const auto& layer:chosen)sources.insert(m_doc->scene.node(layer.id)->source_op);
