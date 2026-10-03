@@ -216,6 +216,25 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     check(tip->commandId() == "view.unisolate" && tip->showsRequirement(), "menu: a disabled entry says what it needs");
     w.m_viewMenu->hide();
     check(tip->state() == State::Hidden && !tip->isVisible(), "menu: closing the menu hides the card");
+  });
+  add(300, [=, &w] {  // F1 on the expanded card: the tool guide at its command (a menu closes first)
+    tip->showFor(fit, State::Expanded);
+    const bool f1 = key(fit, Qt::Key_F1, QEvent::ShortcutOverride);
+    key(fit, Qt::Key_F1);
+    auto* reference = w.findChild<CommandReference*>();
+    check(f1 && reference && reference->isVisible() && reference->current() == "view.fit" && tip->state() == State::Hidden,
+          "F1 on the expanded card opens the tool guide at its command (" + (reference ? reference->current() : QString()) + ")");
+    if (reference) reference->hide();
+    w.m_viewMenu->popup(QGuiApplication::primaryScreen()->availableGeometry().center() - QPoint(0, 200));
+    tip->showFor(w.m_viewMenu, State::Expanded, w.action("view.isolate"));
+    const bool expanded = tip->state() == State::Expanded && tip->commandId() == "view.isolate";
+    key(w.m_viewMenu, Qt::Key_F1, QEvent::ShortcutOverride);
+    key(w.m_viewMenu, Qt::Key_F1);
+    reference = w.findChild<CommandReference*>();
+    check(expanded && !w.m_viewMenu->isVisible() && reference && reference->isVisible() && reference->current() == "view.isolate",
+          QString("menu: F1 on the expanded card closes the menu and opens the guide there (card %1, menu %2, guide %3 at %4)")
+              .arg(expanded).arg(w.m_viewMenu->isVisible()).arg(reference && reference->isVisible()).arg(reference ? reference->current() : QString()));
+    if (reference) reference->close();
     trace::log(QString("bench: richtip: %1").arg(run->ok ? "PASS" : "FAIL: " + run->failed.join("; ")));
     QCoreApplication::exit(run->ok && missing.isEmpty() ? 0 : 2);
   });
@@ -551,6 +570,10 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
     check(w.action("help.current")->shortcut() == QKeySequence("F1"), "Help for this tool is F1");
     w.action("help.current")->trigger();
     check(reference && reference->isVisible() && reference->current() == "inspect.distance", "F1 while measuring opens it at Distance (" + (reference ? reference->current() : QString()) + ")");
+    reference->hide();
+    QKeyEvent f1(QEvent::KeyPress, Qt::Key_F1, Qt::NoModifier);  // in the tool's own panel (a window of its own)
+    QApplication::sendEvent(w.m_toolPanel, &f1);
+    check(w.m_toolPanel->isVisible() && reference->isVisible() && reference->current() == "inspect.distance", "F1 in the Distance panel opens it there too");
     reference->hide();
     w.action("help.reference")->trigger();
     check(reference->isVisible() && reference->current() == "inspect.distance", "the Tool guide opens where it was");

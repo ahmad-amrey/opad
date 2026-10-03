@@ -32,6 +32,7 @@
 #include "Commands.hpp"
 #include "EmptyState.hpp"
 #include "Ribbon.hpp"
+#include "RichTip.hpp"
 #include "Theme.hpp"
 #include "TimelineWidget.hpp"
 #include "ToolPanel.hpp"
@@ -409,13 +410,14 @@ class AccessibilityArea : public AreaController {
         if (auto* b = qobject_cast<QAbstractButton*>(o)) name(b);
         break;
       case QEvent::KeyPress: {
-        // The window's F6 does not reach a floating panel or the browser (other windows): their keys are taken here.
+        // The window's F6 and F1 (Help for this tool) do not reach a floating panel or the browser (other windows): their
+        // keys are taken here; F1 over a command's card is the card's (RichTip).
         auto* w = qobject_cast<QWidget*>(o);
         QWidget* top = w ? w->window() : nullptr;
         if (!top || top == services().window() || top->parentWidget() != services().window()) break;
         const QKeySequence pressed(static_cast<QKeyEvent*>(e)->keyCombination());
-        for (const char* id : {"view.nextRegion", "view.previousRegion"})
-          if (QAction* a = services().action(id); a && a->isEnabled() && a->shortcuts().contains(pressed)) {
+        for (const char* id : {"view.nextRegion", "view.previousRegion", "help.current"})
+          if (QAction* a = services().action(id); a && a->isEnabled() && a->shortcuts().contains(pressed) && (QLatin1String(id) != QLatin1String("help.current") || RichTip::instance()->state() == RichTip::State::Hidden)) {
             a->trigger();
             return true;
           }

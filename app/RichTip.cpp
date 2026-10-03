@@ -25,6 +25,7 @@ std::function<QAction*(const QString&)> g_lookup;
 RichTip::ClipFactory g_clips;
 std::function<bool(const QString&)> g_hasClip;
 bool g_menus = false;
+std::function<void(const QString&)> g_guide;
 constexpr int kPad = 12, kMinText = 200, kMaxText = 336, kShowMs = 450, kGraceMs = 300, kGrowMs = 120;
 
 // "Ctrl+Shift+U" -> Ctrl, Shift, U (a "+" key stays one cap); the first chord only.
@@ -96,6 +97,8 @@ void RichTip::setClipFactory(ClipFactory factory, std::function<bool(const QStri
   g_hasClip = std::move(has);
 }
 
+void RichTip::setGuideHook(std::function<void(const QString&)> guide) { g_guide = std::move(guide); }
+
 void RichTip::setMenuCards(bool on) {
   g_menus = on;
   if (on) instance();  // the filter is there before the first menu opens
@@ -152,6 +155,14 @@ void RichTip::dismiss() {
   m_suppressedEntry = m_entry;
   hideTip();
   m_lastShown.invalidate();
+}
+
+void RichTip::openGuide() {
+  const QString id = m_id;
+  QPointer<QWidget> menu = m_entry ? m_target : nullptr;
+  dismiss();
+  for (; menu && qobject_cast<QMenu*>(menu.data()); menu = menu->parentWidget()) menu->close();  // the entry's menu and those it opened from
+  g_guide(id);
 }
 
 // The attached widget, or the menu and its command entry, under the pointer changed (nullptr: none; a menu without an
@@ -215,7 +226,7 @@ void RichTip::relayout(State state) {
   m_details = expanded ? details : QString();
   const bool clip = g_clips && h && (!g_hasClip || g_hasClip(h->clip));
   m_expandable = !details.isEmpty() || clip;
-  m_hint = !expanded && m_expandable ? tr("Shift or F1 for more") : QString();
+  m_hint = !expanded && m_expandable ? tr("Shift or F1 for more") : g_guide ? tr("F1 for the tool guide") : QString();
   if (!expanded) delete m_clip;
   else if (!m_clip && clip && (m_clip = g_clips(h->clip, this)) && m_clip->parentWidget() != this) m_clip->setParent(this);
 
@@ -408,6 +419,10 @@ bool RichTip::eventFilter(QObject* o, QEvent* e) {
       if (!hovering()) return false;
       const int key = static_cast<QKeyEvent*>(e)->key();
       if (key == Qt::Key_Shift || key == Qt::Key_F1) {
+        if (key == Qt::Key_F1 && g_guide && mode() == 2 && (m_state == State::Expanded || (m_state == State::Compact && !m_expandable))) {
+          openGuide();
+          return true;
+        }
         if (m_state != State::Expanded && mode() == 2) present(State::Expanded);
         return key == Qt::Key_F1;
       }

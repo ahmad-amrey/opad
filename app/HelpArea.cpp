@@ -49,6 +49,7 @@ class HelpArea : public AreaController {
     RichTip::setActionLookup([&services](const QString& id) { return services.action(id); });
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);
     RichTip::setMenuCards(true);  // every menu's command entries
+    RichTip::setGuideHook([this](const QString& id) { openReference(id); });  // F1 on an expanded card
     ToolPanel::setHelpHook([this](ToolPanel* panel) { openReference(panelCommand(panel)); });  // the panels are built later
   }
   ~HelpArea() override {
@@ -56,6 +57,7 @@ class HelpArea : public AreaController {
     RichTip::setActionLookup({});
     RichTip::setClipFactory({});
     RichTip::setMenuCards(false);
+    RichTip::setGuideHook({});
     ToolPanel::setHelpHook({});
   }
 
