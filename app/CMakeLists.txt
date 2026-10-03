@@ -101,8 +101,9 @@ if(OPAD_STATIC)
   target_compile_definitions(opad PRIVATE OPAD_SINGLE_FILE=1)  # portable by default: settings and cache beside the exe
   # Static Qt links every plugin of every type it knows by default; OPAD reads PNG (built into QtGui) and writes
   # PNG/JPEG screenshots, so the other image formats (TIFF alone drags in zstd, lzma, jbig, lerc, libdeflate) and
-  # the SVG icon engine stay out. The Windows platform and style plugins come in as usual.
-  qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin EXCLUDE_BY_TYPE iconengines)
+  # the SVG icon engine stay out. The Windows platform and style plugins come in as usual. No TLS or network
+  # information plugins either: OPAD talks only through local sockets, and the OpenSSL backend alone carries OpenSSL.
+  qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin EXCLUDE_BY_TYPE iconengines tls networkinformation)
 endif()
 install(TARGETS opad RUNTIME DESTINATION bin BUNDLE DESTINATION .)
 

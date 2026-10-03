@@ -4,5 +4,8 @@ find_package(Qt6 COMPONENTS Core Network QUIET)
 if(Qt6_FOUND)
   target_link_libraries(opad-cli PRIVATE Qt6::Core Qt6::Network)
   target_compile_definitions(opad-cli PRIVATE OPAD_LIVE_MCP=1)
+  if(OPAD_STATIC)  # local sockets only: no TLS backends (OpenSSL) or network information plugins in the exe
+    qt_import_plugins(opad-cli EXCLUDE_BY_TYPE tls networkinformation)
+  endif()
 endif()
 install(TARGETS opad-cli RUNTIME DESTINATION bin)
