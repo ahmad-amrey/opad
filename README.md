@@ -360,6 +360,12 @@ to a diff. A dimension keeps the value it was made with, as a pinned measurement
 and marks the ones the model has changed. Sheets, views and dimensions carry no `target`, so two people adding views and
 dimensions to one sheet merge without a conflict; part properties merge field by field.
 
+In the app the browser lists them in a Drawings folder: drawing, sheets, their views (named by the standard view they
+show when they have no name of their own) with their dimensions, and the sheet's notes; a record a newer OPAD wrote is
+marked with the reason. F2 renames a drawing, sheet or view; Del or the row's menu deletes in one step (a sheet takes its
+views and items with it, a base view the views projected from it) and Ctrl+Z brings them back; Copy id gives the id the
+commands above take. These operations are not design steps, so the timeline does not show them.
+
 Compatibility: these are new operation types and the format version is unchanged, so a document without drawings is
 exactly what it was and opens everywhere. A document with sheets or part properties opens in builds that keep
 operation types they do not know (the tolerant loader); older builds refuse it with "unknown op type: sheet".

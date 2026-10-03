@@ -439,7 +439,15 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
   if (command == "delete") return tr("delete");
     if (command == "annotate") return args.contains("drawing") ? tr("hand drawing") : tr("note");
     if (command == "delete_annotation") return tr("delete annotation");
-  if (command == "append") return tr("pin measurement");
+  if (command == "append") {  // the browser's drawing rows tombstone or rename several records in one step
+    const opad::json ops = args.value("ops", opad::json::array());
+    const auto all = [&](const char* type) { return !ops.empty() && std::all_of(ops.begin(), ops.end(), [&](const opad::json& o) { return o.value("op", "") == type; }); };
+    return all("delete") ? tr("delete") : all("edit") ? tr("rename") : tr("pin measurement");
+  }
+  if (command == "sheet_edit") {
+    const opad::json set = args.value("set", opad::json::object());
+    return set.size() == 1 && set.contains("name") ? tr("rename") : tr("edit drawing");
+  }
   if (command == "section") return tr("named section");
   if (command == "view") return tr("named view");
   if (command == "import") return tr("import");

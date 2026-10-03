@@ -77,6 +77,7 @@ class MainWindow : public QMainWindow {
   bool benchTodo5();
   bool benchTodo9();
   bool benchDrawingImport();
+  bool benchDrawings();  // OPAD_BENCH_DRAWINGS: the browser's Drawings folder and the timeline without drawing ops
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
   bool benchLargeSketch();
   bool benchShortcuts();

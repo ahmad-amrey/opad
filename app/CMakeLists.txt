@@ -38,6 +38,7 @@ set(OPAD_APP_SOURCES
   SketchImages.cpp
   GeometrySelection.cpp
   Panels.cpp Panels.hpp
+  DrawingsFolder.cpp DrawingsFolder.hpp DrawingsBench.cpp
   ShortcutEditor.cpp ShortcutEditor.hpp ShortcutBench.cpp
   Jobs.cpp Jobs.hpp
   GuidedTool.cpp GuidedTool.hpp

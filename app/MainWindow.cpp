@@ -3,6 +3,7 @@
 #include <QPointer>
 #include "MainWindow.hpp"
 #include "DrawingPlacer.hpp"
+#include "DrawingsFolder.hpp"
 #include "RecoveryManager.hpp"
 #include "AgentBridge.hpp"
 
@@ -2182,6 +2183,7 @@ void MainWindow::restoreOp(const std::string& requestedId) {
 void MainWindow::deleteCurrent() {
   std::string id = m_timeline->currentOp();
   if (!id.empty() && m_timeline->hasFocus()) return deleteOp(id);
+  if (drawings::remove(m_doc, currentNodeIds())) return;  // rows of the Drawings folder: their records, in one step
   std::set<std::string> ops;
   for (const auto& nid : currentNodeIds()) if (const opad::Node* n = m_doc->node(nid)) ops.insert(n->source_op);
   if (ops.empty()) {
@@ -2525,6 +2527,7 @@ void MainWindow::runBench() {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_LEAVE")){const bool ok=m_viewport->benchLeave();QCoreApplication::exit(ok?0:2);return;}
   if(benchShortcuts())return;
   if(benchDrawingImport())return;
+  if(benchDrawings())return;
   if(benchTodo9())return;
   if(benchAnnotateLarge())return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {

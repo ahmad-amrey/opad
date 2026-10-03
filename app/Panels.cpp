@@ -15,6 +15,7 @@
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QKeySequenceEdit>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -32,16 +33,21 @@
 #include <algorithm>
 #include <functional>
 
+#include "DrawingsFolder.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
+#include "opad/drawing/sheet.hpp"
 #include "opad/inspect.hpp"
 
 namespace {
 constexpr int kIdRole = Qt::UserRole + 1;
 constexpr int kNameRole = Qt::UserRole + 2;
 constexpr int kPropKeyRole = Qt::UserRole + 3;  // properties table: the untranslated property name
+constexpr int kFolderRole = Qt::UserRole + 5;   // a folder row's id: "sketches", "drawings"
+constexpr int kIconRole = Qt::UserRole + 6;     // a drawings row's icon
+constexpr int kErrorRole = Qt::UserRole + 7;    // a drawings row that is not drawn
 constexpr int kEyeX = 2, kSwatchX = 24, kTypeX = 42, kNameX = 66;
 
 QString fmtNum(double v) { return QString::number(v, 'g', 7); }
@@ -80,6 +86,7 @@ QString shortId(const std::string& id) { return QString::fromStdString(id.substr
 // tombstones go with them.
 bool timelineShows(const opad::Document& doc, const opad::Op& op) {
   if (op.type == "annotation" || op.type == "measurement") return false;
+  if (opad::drawing::is_drawing_op(op.type)) return false;  // sheets and part properties: the Drawings folder, Properties
   // The design history shows sketches and features; edits and the results they regenerate are how those
   // changed, not steps of their own, and parameters live in their dialog.
   if (op.type == "edit" || op.type == "regen" || op.type == "param") return false;
@@ -505,6 +512,16 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     p->fillRect(full, t.bg3);
   }
   const QString rowKind = index.data(Qt::UserRole).toString();
+  if (rowKind == "drawing") {  // the Drawings folder's rows: icon and name, the icon red and the name grey when not drawn
+    const bool error = index.data(kErrorRole).toBool();
+    p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(index.data(kIconRole).toString(), error ? t.red : t.fg2, 16, p->device()->devicePixelRatioF()));
+    p->setFont(theme::ui(13));
+    p->setPen(error ? t.fg3 : t.fg);
+    const int w = std::max(10, r.width() - kNameX - 6);
+    p->drawText(QRect(r.left() + kNameX, r.top(), w, r.height()), Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(theme::ui(13)).elidedText(index.data(kNameRole).toString(), Qt::ElideRight, w));
+    p->restore();
+    return;
+  }
   if (rowKind == "folder" || rowKind == "sketch") {
     const opad::SketchItem* sk = rowKind == "sketch" ? m_doc->scene.sketch(id) : nullptr;
     const bool editing=index.data(Qt::UserRole+8).toBool();
@@ -687,11 +704,20 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     updateBreadcrumb();
     emit selectionChanged(selectedIds());
   });
-  connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& p) { emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds()); });
+  connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& p) {
+    if (QTreeWidgetItem* it = m_tree->itemAt(p); it && it->data(0, Qt::UserRole).toString() == "drawing") {  // the Drawings folder's own
+      const std::string id = it->data(0, kIdRole).toString().toStdString();
+      QMenu menu(this);
+      drawings::contextMenu(m_doc, id, menu, [this, id] { startRename(id); });
+      menu.exec(m_tree->viewport()->mapToGlobal(p));
+      return;
+    }
+    emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds());
+  });
   connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
     const std::string id = it->data(0, kIdRole).toString().toStdString();
     if (it->data(0, Qt::UserRole).toString() == "sketch") emit sketchActivated(id);
-    else if (!id.empty()) emit fitRequested({id});
+    else if (!id.empty() && it->data(0, Qt::UserRole).toString() != "drawing") emit fitRequested({id});
   });
   connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
     if(!m_editedSketch.empty() && id==m_editedSketch){emit editedSketchVisibilityRequested();return;}
@@ -717,6 +743,10 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     QString newName = it->text(0).trimmed();
     QString oldName = it->data(0, kNameRole).toString();
     if (newName.isEmpty() || newName == oldName) { rebuild(); return; }
+    if (it->data(0, Qt::UserRole).toString() == "drawing") {  // a drawing, sheet or view: its record's name
+      try { drawings::rename(m_doc, id, newName); } catch (const std::exception& e) { emit m_doc->message(QString::fromUtf8(e.what())); rebuild(); }
+      return;
+    }
     m_doc->run("rename", opad::json{{"target", id}, {"name", newName.toStdString()}});
   });
   connect(m_tree, &BrowserTree::reparentRequested, this, [this](const std::vector<std::string>& ids, const std::string& parent, int index) {
@@ -765,10 +795,12 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
 void BrowserPanel::rebuild() {
   trace::Scope scope("BrowserPanel::rebuild");
   m_updating = true;
-  std::set<std::string> expanded;
+  std::set<std::string> expanded, known;  // known: every row there was, so rows that are new open
   std::vector<std::string> selected = selectedIds();
   std::function<void(QTreeWidgetItem*)> collect = [&](QTreeWidgetItem* it) {
-    if (it->isExpanded()) expanded.insert(it->data(0, Qt::UserRole).toString() == "folder" ? std::string("folder:sketches") : it->data(0, kIdRole).toString().toStdString());
+    const std::string key = it->data(0, Qt::UserRole).toString() == "folder" ? "folder:" + it->data(0, kFolderRole).toString().toStdString() : it->data(0, kIdRole).toString().toStdString();
+    known.insert(key);
+    if (it->isExpanded()) expanded.insert(key);
     for (int i = 0; i < it->childCount(); ++i) collect(it->child(i));
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
@@ -788,6 +820,7 @@ void BrowserPanel::rebuild() {
       folder->setData(0, kIdRole, QString());
       folder->setData(0, kNameRole, tr("Sketches"));
       folder->setData(0, Qt::UserRole, "folder");
+      folder->setData(0, kFolderRole, "sketches");
       folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
       for (const auto& s : m_doc->scene.sketches) {
         auto* item = new QTreeWidgetItem(folder);
@@ -808,6 +841,31 @@ void BrowserPanel::rebuild() {
         item->setFlags(item->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
       }
       folder->setExpanded(!m_editedSketch.empty() || expanded.empty() || expanded.count("folder:sketches") > 0);
+    }
+    if (const auto rows = drawings::rows(*m_doc); !rows.empty()) {  // DrawingsFolder.hpp
+      auto* folder = new QTreeWidgetItem(root);
+      folder->setText(0, tr("Drawings"));
+      folder->setData(0, kIdRole, QString());
+      folder->setData(0, kNameRole, tr("Drawings"));
+      folder->setData(0, Qt::UserRole, "folder");
+      folder->setData(0, kFolderRole, "drawings");
+      folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
+      std::function<void(const drawings::Row&, QTreeWidgetItem*)> add = [&](const drawings::Row& row, QTreeWidgetItem* parent) {
+        auto* item = new QTreeWidgetItem(parent);
+        item->setText(0, row.name);
+        item->setData(0, kIdRole, QString::fromStdString(row.id));
+        item->setData(0, kNameRole, row.name);
+        item->setData(0, Qt::UserRole, "drawing");
+        item->setData(0, kIconRole, row.icon);
+        item->setData(0, kErrorRole, row.error);
+        item->setToolTip(0, row.tooltip);
+        item->setFlags((item->flags() | (row.editable ? Qt::ItemIsEditable : Qt::NoItemFlags)) & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
+        m_index[row.id] = item;
+        for (const auto& c : row.children) add(c, item);
+        item->setExpanded(expanded.count(row.id) || !known.count(row.id));
+      };
+      for (const auto& row : rows) add(row, folder);
+      folder->setExpanded(expanded.count("folder:drawings") || !known.count("folder:drawings"));
     }
     for (const auto& r : m_doc->scene.roots) build(r, root, expanded);
     QString category;
@@ -921,6 +979,10 @@ void BrowserPanel::updateBreadcrumb() {
   }
   QStringList parts;
   auto path = m_doc->scene.path_to(ids.front());
+  if (const QTreeWidgetItem* it = path.empty() ? itemFor(ids.front()) : nullptr) {  // a folder's row: its folders above it
+    for (const QTreeWidgetItem* q = it; q->parent(); q = q->parent())
+      parts.prepend(QString("<span style='color:%1'>%2</span>").arg(q == it ? t.fg.name() : t.fg2.name(), q->data(0, kNameRole).toString().toHtmlEscaped()));
+  }
   for (size_t i = 0; i < path.size(); ++i) {
     bool last = i + 1 == path.size();
     const QString name = m_doc->nodeName(path[i]).toHtmlEscaped();
@@ -1535,6 +1597,12 @@ void TimelineWidget::rebuild() {
   updateScrollRange();
   if (atEnd) m_scroll->setValue(m_scroll->maximum());
   update();
+}
+
+std::vector<std::string> TimelineWidget::shownOps() const {
+  std::vector<std::string> ids;
+  for (size_t i : m_shown) ids.push_back(m_doc->doc.ops[i].id);
+  return ids;
 }
 
 bool TimelineWidget::isUnresolved(const std::string& opId) const { return m_unresolved.count(opId) > 0; }
