@@ -315,11 +315,16 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
     }
     // Rolled back with the timeline's marker (UI-99): a change goes at the end, so the model is rolled forward first,
     // and picks on the bodies as they were with it (TimelineArea).
-    if (m_doc->rolledBack() && m_commands.editsDocument(id))
+    if (m_doc->rolledBack() && m_commands.editsDocument(id)) {
+      // Picked faces and edges are the earlier state's and go as it rolls forward: Del on them must not fall through to
+      // their body or to the timeline's marker (UI-04).
+      if (id == "edit.delete" && !m_timeline->hasFocus() && std::any_of(m_selRefs.begin(), m_selRefs.end(), [](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Body; }))
+        return statusBar()->showMessage(tr("Rolled back: these faces and edges are an earlier state's. Roll forward and pick them again to delete what made them."), 8000);
       if (QAction* forward = action("timeline.rollForward")) {
         forward->trigger();
         statusBar()->showMessage(tr("Rolled forward to the end of the timeline: the change is added there."), 6000);
       }
+    }
     if (repeatable(id)) m_lastCommand = id;  // Repeat, first in the context menus (UI-100)
     guarded(fn);
   });

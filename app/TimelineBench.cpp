@@ -461,7 +461,9 @@ OPAD_BENCH(OPAD_BENCH_TIMELINEPERF, timelineperf) {
 // Round, editing Boss takes over the roll-back and Esc gives it back; editing it again to 15 mm high and OK commits the
 // edit and leaves the model rolled back before Round with the taller boss; rolled forward, Round sits on it. While a slow
 // save holds the document (as smart selection's copy does), V and the playhead wait for it and are carried out after.
-// Shots: <prefix>.keys.png (the playhead moved by keys, the model not yet), .edited.png (the timeline after the edit).
+// Rolled back with Boss's marker current, Del on a picked face deletes nothing (not the body, not the marker) and says why;
+// the marker's Delete then rolls forward and asks about Round (cancelled). Shots: <prefix>.keys.png (the playhead moved by
+// keys, the model not yet), .edited.png (the timeline after the edit).
 OPAD_BENCH(OPAD_BENCH_ROLLBACK, rollback) {
   struct State {
     int phase = 0, ticks = 0, wait = 0;
@@ -624,10 +626,44 @@ OPAD_BENCH(OPAD_BENCH_ROLLBACK, rollback) {
         case 9: {
           if (!waitFor(w.m_doc->rolledBack() && w.m_doc->rollback() == state->round, "the model follows the playhead once the save is done")) return;
           pass("the playhead dropped during a slow save rolled the model back before Round once the document was written");
+          w.action("select.faces")->trigger();
+          break;
+        }
+        case 10: {
+          if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face) return;
+          state->ops = w.m_doc->doc.ops.size();
+          t->setCurrentOp(state->boss);  // a marker pointed at, as Roll back to here's right click leaves it
+          w.m_viewport->setFocus();
+          w.m_viewport->selectRefs({opad::Ref::parse(state->body + "/face/0")});
+          w.onViewportSelection();
+          require(w.m_selRefs.size() == 1 && w.m_selRefs.front().kind == opad::Ref::Kind::Face, "a face picked while rolled back");
+          w.action("edit.delete")->trigger();
+          require(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.deleted_ops.empty() && w.m_doc->rolledBack(), "Del on the face deletes nothing and stays rolled back");
+          const QString why = MainWindow::tr("Rolled back: these faces and edges are an earlier state's. Roll forward and pick them again to delete what made them.");
+          require(w.statusBar()->currentMessage() == why, "the status bar says why: " + w.statusBar()->currentMessage().toStdString());
+          pass("Del on a face picked while rolled back deletes neither its body nor Boss's marker, and says why");
+          QMenu marker;
+          w.buildTimelineMenu(marker, state->boss);
+          marker.findChild<QAction*>("timelineDelete")->trigger();
+          break;
+        }
+        case 11: {
+          QMenu* question = area->openMenu();
+          if (!waitFor(question && question->isVisible() && question->objectName() == "smartDeleteQuestion", "the marker's Delete while rolled back asks about Round")) return;
+          QAction* all = question->findChild<QAction*>("deleteWithDependents");
+          require(all && all->text() == SmartSelect::tr("Delete %1 and %2").arg("Boss", "Round"), "the question names Round");
+          require(!w.m_doc->rolledBack() && w.m_doc->doc.ops.size() == state->ops, "rolled forward first, nothing committed yet");
+          pass("Boss's Delete while rolled back rolled forward and asks \"" + all->text() + "\"");
+          question->close();
+          break;
+        }
+        case 12:
+          if (!waitFor(w.m_viewport->previewBodyCount() == 0, "closing the question clears the preview")) return;
+          require(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.feature(state->boss), "cancelled: Boss stays");
+          pass("the question closed without a choice: nothing deleted");
           timer->stop();
           QCoreApplication::exit(0);
           return;
-        }
       }
       ++state->phase;
     } catch (const std::exception& e) {

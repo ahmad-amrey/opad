@@ -163,7 +163,11 @@ void MainWindow::deleteOp(const std::string& requestedId) {
   // A feature or a sketch: what depends on it is asked about first, the result previewed (smart selection, UI-96).
   const opad::Op* op = m_doc->doc.find_op(opId);
   const bool live = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) == m_doc->scene.deleted_ops.end();
-  if (op && live && (op->type == "feature" || op->type == "sketch") && areaCommand("timeline.delete", opId)) return m_timeline->setCurrentOp(opId);
+  if (op && live && (op->type == "feature" || op->type == "sketch")) {
+    if (m_doc->rolledBack())  // as Del on the marker: the question reads the last state, so rolled forward first
+      if (QAction* forward = action("timeline.rollForward")) forward->trigger();
+    if (areaCommand("timeline.delete", opId)) return m_timeline->setCurrentOp(opId);
+  }
   // With a design history a tombstone changes what later features produce: planned on a worker.
   if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty()) {
     m_design->applyOps({opad::json{{"op", "delete"}, {"target", opId}}}, tr("delete"));
@@ -197,18 +201,19 @@ void MainWindow::deleteCurrent() {
   if (std::any_of(m_selRefs.begin(), m_selRefs.end(), [](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Body; }))
     throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
   const auto selected = currentNodeIds();
-  if (selected.empty()) {  // the timeline's marker only when nothing is selected (an area's row is not that marker)
-    if (id.empty() || !m_selRows.empty()) throw opad::Error("Select objects, or a marker on the timeline, to delete.");
+  if (selected.empty()) {  // the timeline's marker only when nothing is selected (an area's row or a pick is not that marker)
+    if (id.empty() || !m_selRows.empty() || !m_selRefs.empty()) throw opad::Error("Select objects, or a marker on the timeline, to delete.");
     return deleteOp(id);
   }
   deleteNodes(selected);
 }
 
 void MainWindow::deleteNodes(const std::vector<std::string>& ids) {
+  // A sketch alone as from its marker: what uses it named first, the result previewed (UI-96).
+  if (ids.size() == 1 && m_doc->scene.sketch(ids.front())) return deleteOp(ids.front());
   const smart::Deletion d = smart::routeDelete(m_doc->scene, ids);
   if (d.empty()) throw opad::Error("Nothing selected can be deleted.");
-  QString what = ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size());
-  if (const opad::SketchItem* s = ids.size() == 1 ? m_doc->scene.sketch(ids.front()) : nullptr) what = QString::fromStdString(s->name);
+  const QString what = ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size());
   const QString text = d.remove.empty() ? tr("Deleted %1").arg(what) : tr("Removed %1: a Remove step on the timeline keeps its history").arg(what);
   m_design->applyOps(smart::deletionOps(d, m_doc->scene), tr("delete"), [this, text](bool ok, const QString& error) {
     if (!ok) return guarded([&] { throw opad::Error(error.toStdString()); });

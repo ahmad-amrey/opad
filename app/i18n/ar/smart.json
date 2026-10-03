@@ -183,5 +183,6 @@
   "fails": "تفشل",
   "That step is deleted already: Shift+Del on its marker restores it.": "هذه الخطوة محذوفة بالفعل: Shift+Del على علامتها يستعيدها.",
   "That step comes after the roll-back marker: roll forward to edit it.": "تأتي هذه الخطوة بعد علامة الرجوع: تقدّم لتحريرها.",
+  "Rolled back: these faces and edges are an earlier state's. Roll forward and pick them again to delete what made them.": "رجوع في الخط الزمني: هذه الأوجه والحواف من حالة سابقة. تقدّم إلى النهاية وحدِّدها من جديد لحذف ما صنعها.",
   "The document could not be read to check the delete; delete again.": "تعذّرت قراءة المستند للتحقق من الحذف؛ احذف مرة أخرى."
 }

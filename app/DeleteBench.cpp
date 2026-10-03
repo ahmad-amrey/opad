@@ -1,7 +1,9 @@
 #include "BenchRegistry.hpp"
 #include "MainWindow.hpp"
 #include "SmartSelect.hpp"
+#include "opad/design/sketch.hpp"
 #include "opad/geometry.hpp"
+#include "opad/util.hpp"
 #include <QElapsedTimer>
 #include <QMenu>
 #include <QToolButton>
@@ -11,7 +13,8 @@
 // instead of a question.
 //   A designed box: one picked face does not tombstone the box, it opens smart selection's menu; all six faces are the
 //   box feature: Del deletes it (nothing uses it), Undo from the toast; the body picked whole goes to a Remove feature,
-//   the box feature stays, Undo from the toast.
+//   the box feature stays, Undo from the toast. A sketch with a peg extruded from it: the sketch picked in the browser and
+//   deleted asks about the peg with the result previewed (UI-96, as from its marker); cancelled, nothing changes.
 //   An import of two bodies, no history: one body goes to a Remove feature (the other stays, the import is not
 //   tombstoned); both are the whole import: it is tombstoned; Undo from the toast each time.
 //   A big model (the Engine, case delete-engine): one body goes to a Remove feature and comes back with Undo, with no
@@ -21,7 +24,7 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
     int phase = 0, ticks = 0, wait = 0;
     size_t ops = 0;
     std::vector<std::string> bodies;
-    std::string source;
+    std::string source, sketch;
     QString name;  // the first body's, read while it is there
     QElapsedTimer clock, tick;
     qint64 gap = 0;
@@ -134,9 +137,47 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
           undoFromToast(QObject::tr("Removed %1: a Remove step on the timeline keeps its history").arg(state->name));
           break;
         }
-        case 7:
+        case 7: {
           if (!waitFor(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.all_bodies() == state->bodies, "Undo brings the body back")) return;
           pass("Del on the body appended a Remove feature (the box feature stays); the toast's Undo brought it back");
+          opad::design::Sketch square;
+          const int a = square.add_point(40, 0), b = square.add_point(46, 0), c = square.add_point(46, 6), d = square.add_point(40, 6);
+          square.add_line(a, b);
+          square.add_line(b, c);
+          square.add_line(c, d);
+          square.add_line(d, a);
+          opad::json sketch = opad::design::make_sketch_op("Profile", {{"base", "xy"}}, square.to_json());
+          sketch["id"] = state->sketch = opad::new_uuid();
+          const opad::json profiles = opad::json::array({{{"sketch", state->sketch}, {"all", true}}});
+          w.m_design->applyOps({sketch, opad::design::make_feature_op("extrude", "Peg", {{"profiles", profiles}, {"distance", "5 mm"}, {"operation", "new"}})}, "bench peg");
+          break;
+        }
+        case 8: {
+          const opad::Feature* peg = nullptr;
+          for (const auto& f : w.m_doc->scene.features)
+            if (f.name == "Peg") peg = &f;
+          if (!waitFor(peg && w.m_doc->scene.sketch(state->sketch), "a sketch and a peg extruded from it")) return;
+          require(peg->error.empty(), "the peg is made");
+          state->ops = w.m_doc->doc.ops.size();
+          pickBodies({state->sketch});
+          w.action("edit.delete")->trigger();
+          break;
+        }
+        case 9: {
+          QMenu* question = area->openMenu();
+          if (!waitFor(question && question->isVisible() && question->objectName() == "smartDeleteQuestion", "Del on the sketch in the browser asks about the peg")) return;
+          QAction* all = question->findChild<QAction*>("deleteWithDependents");
+          require(all && all->text() == SmartSelect::tr("Delete %1 and %2").arg("Profile", "Peg") && question->findChild<QAction*>("deleteOnly"), "the question names the peg");
+          require(w.m_doc->doc.ops.size() == state->ops, "nothing committed while it asks");
+          question->grab().save(prefix + ".sketch.png");
+          pass("Del on the sketch picked in the browser asks \"" + all->text() + "\" as from its marker");
+          question->close();
+          break;
+        }
+        case 10:
+          if (!waitFor(!area->openMenu() || !area->openMenu()->isVisible(), "the question closes")) return;
+          require(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.sketch(state->sketch), "cancelled: the sketch stays");
+          pass("the question closed without a choice: nothing deleted");
           timer->stop();
           QCoreApplication::exit(0);
           return;
