@@ -28,6 +28,10 @@ class TimelineWidget : public QWidget {
   void step(int delta);
   QString describe(const opad::Op& op) const;
   QString label(const opad::Op& op) const;  // the name a marker carries (its feature's, its file's)
+  QString icon(const opad::Op& op) const { return iconFor(op); }
+  // Whether an op gets a marker: every step but view state (visibility, notes, measurements); with `designOnly` only what
+  // makes and places geometry.
+  static bool shows(const opad::Document& doc, const opad::Op& op, bool designOnly);
   // Points at an op's marker (smart selection's hover, Find in timeline): scrolled into view, a candidate-amber ring that
   // pulses for about a second and a half. Empty: stops.
   void pulse(const std::string& id);

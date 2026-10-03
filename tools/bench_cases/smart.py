@@ -58,6 +58,10 @@ CASES = [
     # The roll-back marker by keys (Shift+Left / Right / Home / End on the timeline, the model following once they rest) and
     # an edit of an earlier step while rolled back: Esc and OK both leave the model rolled back where the user put it.
     ("timeline-rollback", boss, {"OPAD_BENCH_ROLLBACK": "{prefix}"}),
+    # The History list in the browser: a row per marker, a row selected points at its step, the marker's menu, the
+    # roll-back row, editing, the design filter, failing and deleted steps, Del on a row.
+    ("timeline-history", boss, {"OPAD_BENCH_HISTORYLIST": "{prefix}"}),
+    ("timeline-history-rtl", boss, {"OPAD_BENCH_HISTORYLIST": "{prefix}", "OPAD_LANG": "ar"}),
     # The same on the Engine (skipped where it is not): the pointer on every marker, rolled back and forward by the
     # playhead, names and the design history toggled, no event-loop gap over 250 ms.
     ("timeline-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TIMELINEPERF": "1"}),

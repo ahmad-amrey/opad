@@ -116,7 +116,7 @@ void MainWindow::buildTimelineMenu(QMenu& menu, const std::string& requestedId) 
     entry("git", tr("Show in git log"), "timelineLog", [this, opId] { showOpGitLog(opId, m_doc->path()); });
     menu.addSeparator();
   }
-  for (const char* id : {"timeline.rollForward", "timeline.names", "timeline.designOnly"})
+  for (const char* id : {"timeline.rollForward", "timeline.names", "timeline.designOnly", "timeline.historyList"})
     if (QAction* a = action(id); a && (std::string(id) != "timeline.rollForward" || m_doc->rolledBack())) menu.addAction(a);
 }
 

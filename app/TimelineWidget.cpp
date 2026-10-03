@@ -52,6 +52,8 @@ bool designStep(const opad::Document& doc, const opad::Op& op) {
   return op.type == "import" || op.type == "sketch" || op.type == "feature" || op.type == "transform" || op.type == "reparent";
 }
 
+bool TimelineWidget::shows(const opad::Document& doc, const opad::Op& op, bool designOnly) { return timelineShows(doc, op) && (!designOnly || designStep(doc, op)); }
+
 QString opTypeIcon(const std::string& type) {
   if (type == "import") return "import";
   if (type == "rename") return "rename";
@@ -95,7 +97,7 @@ void TimelineWidget::rebuild() {
   if (!m_current.empty() && !m_doc->doc.find_op(m_current)) m_current.clear();
   m_shown.clear();
   for (size_t i = 0; i < m_doc->doc.ops.size(); ++i)
-    if (timelineShows(m_doc->doc, m_doc->doc.ops[i]) && (!m_designOnly || designStep(m_doc->doc, m_doc->doc.ops[i]))) m_shown.push_back(i);
+    if (shows(m_doc->doc, m_doc->doc.ops[i], m_designOnly)) m_shown.push_back(i);
   setHover(-1);
   m_dragging = m_keyed = false;
   if (m_keyTimer) m_keyTimer->stop();

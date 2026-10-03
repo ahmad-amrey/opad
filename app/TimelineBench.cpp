@@ -10,11 +10,13 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QToolButton>
+#include <QTreeWidgetItemIterator>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 
 #include "BenchRegistry.hpp"
+#include "BrowserPanel.hpp"
 #include "MainWindow.hpp"
 #include "SmartSelect.hpp"
 #include "Theme.hpp"
@@ -260,7 +262,7 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
           QStringList entries;
           for (QAction* a : menu.actions())
             if (!a->isSeparator()) entries << a->objectName();
-          require(entries == QStringList{"timeline.names", "timeline.designOnly"}, "on no marker the menu offers the view entries: " + entries.join(",").toStdString());
+          require(entries == QStringList({"timeline.names", "timeline.designOnly", "timeline.historyList"}), "on no marker the menu offers the view entries: " + entries.join(",").toStdString());
           menu.grab().save(prefix + ".menu.png");
           pass("the menu on no marker: names and the design history");
           // UI-96 from the timeline: Delete on Boss's marker asks about Round, as Delete on its faces does.
@@ -575,6 +577,190 @@ OPAD_BENCH(OPAD_BENCH_ROLLBACK, rollback) {
     } catch (const std::exception& e) {
       timer->stop();
       trace::log(QString("bench: rollback FAIL: %1").arg(e.what()));
+      QCoreApplication::exit(2);
+    }
+  });
+  timer->start();
+  return true;
+}
+
+// OPAD_BENCH_HISTORYLIST=<prefix> (UI-99; case timeline-history in tools/bench_cases/smart.py) on the 40 mm base with a 10 mm
+// boss joined on top, rounded by the bench (Round), the body renamed. The History list (View > History list in the browser)
+// is off at first: no History folder; on, its rows are the markers top to bottom. Round's row selected: its marker current
+// and pulsing, its four faces in amber. Boss's row menu is the marker's; its Roll back to here puts a "Rolled back here" row
+// between Boss and Round, Round greyed; a double-click on that row rolls forward. A double-click on Boss's row edits Boss.
+// The design history alone drops the rename's row. Deleting Boss alone leaves Round's row badged as failing (undone). Del on
+// Round's row deletes it (no question: nothing uses it), its row then in italics; undone. Off again: no folder. Shots:
+// <prefix>.list.png, .rolledback.png (the browser).
+OPAD_BENCH(OPAD_BENCH_HISTORYLIST, historylist) {
+  struct State {
+    int phase = 0, ticks = 0, wait = 0;
+    std::string body, base, boss, round, rename;
+    size_t ops = 0;
+  };
+  auto state = std::make_shared<State>();
+  TimelineArea* timelineArea = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* t = dynamic_cast<TimelineArea*>(a)) timelineArea = t;
+  if (!timelineArea) {
+    trace::log("bench: historylist FAIL: the timeline area is off");
+    QCoreApplication::exit(2);
+    return true;
+  }
+  auto* timer = new QTimer(&w);
+  timer->setInterval(100);
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, timelineArea, state, timer, prefix = value] {
+    TimelineWidget* t = w.m_timeline;
+    try {
+      if (++state->ticks > 1200) throw opad::Error("timed out in phase " + std::to_string(state->phase));
+      if (w.m_doc->loading || w.m_doc->designBusy || w.m_doc->snapshotBusy() || w.m_jobs->busy()) return;
+      auto require = [](bool ok, const std::string& why) {
+        if (!ok) throw opad::Error(why);
+      };
+      auto pass = [](const QString& what) { trace::log("bench: historylist: " + what + " PASS"); };
+      auto waitFor = [&](bool ok, const std::string& why) {
+        if (ok) {
+          state->wait = 0;
+          return true;
+        }
+        require(++state->wait < 80, why);
+        return false;
+      };
+      BrowserTree* tree = w.m_browser->tree();
+      auto folder = [&]() -> QTreeWidgetItem* {  // the History folder, if shown
+        for (QTreeWidgetItemIterator it(tree); *it; ++it)
+          if ((*it)->data(0, Qt::UserRole).toString() == "folder" && (*it)->data(0, browser::kFolderRole).toString() == "history") return *it;
+        return nullptr;
+      };
+      auto rows = [&] {  // the rows' names, top to bottom
+        QStringList out;
+        if (QTreeWidgetItem* f = folder())
+          for (int i = 0; i < f->childCount(); ++i) out << f->child(i)->text(0);
+        return out;
+      };
+      auto look = [&](const std::string& op) {  // what the decorators say about a step's row
+        QTreeWidgetItem* f = folder();
+        for (int i = 0; f && i < f->childCount(); ++i)
+          if (f->child(i)->data(0, browser::kIdRole).toString().toStdString() == (op.rfind("history:", 0) == 0 ? op : "history:" + op))
+            return static_cast<BrowserDelegate*>(tree->itemDelegate())->decoration(tree->indexFromItem(f->child(i)));
+        throw opad::Error("no row for " + op);
+      };
+      auto browserShot = [&](const char* suffix) {  // on the dock's background (a grab of the panel alone has none)
+        tree->doItemsLayout();
+        QPixmap shot(w.m_browser->size());
+        shot.fill(theme::current().bg2);
+        w.m_browser->render(&shot);
+        shot.save(prefix + suffix);
+      };
+      auto menuOf = [&](const std::string& op) {
+        auto menu = std::make_shared<QMenu>();
+        timelineArea->rowMenu("history:" + op, *menu);
+        QStringList names;
+        for (QAction* a : menu->actions())
+          if (!a->isSeparator()) names << a->objectName();
+        return std::make_pair(menu, names);
+      };
+      switch (state->phase) {
+        case 0: {
+          require(w.m_doc->scene.all_bodies().size() == 1, "one body");
+          state->body = w.m_doc->scene.all_bodies().front();
+          for (const auto& f : w.m_doc->scene.features) {
+            if (f.name == "Base") state->base = f.id;
+            if (f.name == "Boss") state->boss = f.id;
+          }
+          require(!state->base.empty() && !state->boss.empty(), "the fixture's Base and Boss");
+          TopTools_IndexedMapOfShape edges;
+          TopExp::MapShapes(opad::node_world_shape(w.m_doc->doc, w.m_doc->scene, state->body), TopAbs_EDGE, edges);
+          opad::json top = opad::json::array();
+          for (int i = 1; i <= edges.Extent(); ++i) {
+            BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
+            if (std::abs(c.Value(c.FirstParameter()).Z() - 20) < 1e-6 && std::abs(c.Value(c.LastParameter()).Z() - 20) < 1e-6) top.push_back(state->body + "/edge/" + std::to_string(i - 1));
+          }
+          require(top.size() == 4, "four top edges on the boss");
+          w.m_design->applyOps({opad::design::make_feature_op("fillet", "Round", {{"edges", top}, {"radius", "2 mm"}})}, "fillet");
+          break;
+        }
+        case 1: {
+          for (const auto& f : w.m_doc->scene.features)
+            if (f.name == "Round") state->round = f.id;
+          require(!state->round.empty(), "Round applied");
+          state->rename = w.m_doc->run("rename", opad::json{{"target", state->body}, {"name", "Part"}}).value("id", "");
+          w.setWorkspace("design");
+          w.m_viewport->standardView("iso");
+          require(!folder() && !w.action("timeline.historyList")->isChecked(), "the History list is off at first");
+          w.action("timeline.historyList")->trigger();
+          const QStringList want = {"Base", "Boss", "Round", t->label(*w.m_doc->doc.find_op(state->rename))};
+          require(folder() && folder()->isExpanded() && rows() == want, "on: open, a row per marker, top to bottom: " + rows().join(" / ").toStdString());
+          pass("the History list on: " + rows().join(" / "));
+          w.m_browser->selectIds({"history:" + state->round});
+          require(t->currentOp() == state->round && t->pulsing() == state->round, "Round's row makes its marker current and pulses it");
+          break;
+        }
+        case 2: {
+          if (!waitFor(w.m_viewport->candidateRefsShown() == 4, "Round's row shows its four faces in amber (" + std::to_string(w.m_viewport->candidateRefsShown()) + ")")) return;
+          browserShot(".list.png");
+          pass("Round's row selected: its marker current and pulsing, its four faces in amber");
+          w.m_browser->selectIds({});
+          auto [menu, names] = menuOf(state->boss);
+          require(names.contains("timelineEdit") && names.contains("timelineDelete") && names.contains("timelineRollBack"), "Boss's row menu is the marker's: " + names.join(",").toStdString());
+          pass("Boss's row menu is its marker's: " + names.join(", "));
+          menu->findChild<QAction*>("timelineRollBack")->trigger();
+          break;
+        }
+        case 3: {
+          if (!waitFor(w.m_doc->rolledBack() && w.m_doc->rollback() == state->round, "Roll back to here from Boss's row")) return;
+          const QStringList now = rows();
+          require(now.size() == 5 && now[2] == TimelineArea::tr("Rolled back here") && look(TimelineArea::kRollRow).bold, "the roll-back row between Boss and Round: " + now.join(" / ").toStdString());
+          require(look(state->round).dim && !look(state->boss).dim, "Round greyed, Boss not");
+          browserShot(".rolledback.png");
+          pass("rolled back from Boss's row: \"" + now[2] + "\" between Boss and Round, Round greyed");
+          timelineArea->rowActivated(TimelineArea::kRollRow);
+          require(!w.m_doc->rolledBack() && rows().size() == 4, "a double-click on the roll-back row rolls forward");
+          pass("a double-click on the roll-back row rolls forward");
+          timelineArea->rowActivated("history:" + state->boss);
+          require(w.m_design->featureActive() && w.m_design->editingOp() == state->boss, "a double-click on Boss's row edits Boss");
+          pass("a double-click on Boss's row edits Boss");
+          w.m_design->escape();
+          w.action("timeline.designOnly")->trigger();
+          require(rows() == QStringList({"Base", "Boss", "Round"}), "the design history alone drops the rename's row: " + rows().join(" / ").toStdString());
+          w.action("timeline.designOnly")->trigger();
+          pass("the design history alone: Base / Boss / Round");
+          state->ops = w.m_doc->doc.ops.size();
+          w.m_design->applyOps({opad::json{{"op", "delete"}, {"target", state->boss}}}, "delete");
+          break;
+        }
+        case 4: {
+          if (!waitFor(w.m_doc->doc.ops.size() > state->ops, "Boss deleted alone")) return;
+          const auto d = look(state->round);
+          require(!d.badges.isEmpty() && d.badges.front().text == TimelineArea::tr("fails") && !d.badges.front().tooltip.isEmpty(), "Round's row badged as failing");
+          require(look(state->boss).italic && look(state->boss).dim, "Boss's row in italics, greyed");
+          pass("Boss deleted alone: its row in italics, Round's badged \"" + d.badges.front().text + "\" (" + d.badges.front().tooltip + ")");
+          w.m_doc->undo();
+          require(look(state->round).badges.isEmpty() && !look(state->boss).italic, "undone");
+          state->ops = w.m_doc->doc.ops.size();
+          w.m_browser->selectIds({"history:" + state->round});
+          w.action("edit.delete")->trigger();
+          break;
+        }
+        case 5: {
+          if (!waitFor(w.m_doc->doc.ops.size() > state->ops, "Del on Round's row deletes Round")) return;
+          const auto& deleted = w.m_doc->scene.deleted_ops;
+          require(std::count(deleted.begin(), deleted.end(), state->round) && look(state->round).italic, "Round tombstoned, its row in italics");
+          pass("Del on Round's row deletes it, its row in italics");
+          w.m_doc->undo();
+          require(w.m_doc->scene.feature(state->round) && w.m_doc->doc.ops.size() == state->ops, "undone");
+          w.action("timeline.historyList")->trigger();
+          require(!folder(), "off again: no History folder");
+          pass("off again: no History folder");
+          timer->stop();
+          QCoreApplication::exit(0);
+          return;
+        }
+      }
+      ++state->phase;
+    } catch (const std::exception& e) {
+      timer->stop();
+      trace::log(QString("bench: historylist FAIL: %1").arg(e.what()));
       QCoreApplication::exit(2);
     }
   });

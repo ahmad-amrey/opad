@@ -172,5 +172,14 @@
   "Select its tangent chain": "تحديد سلسلتها المماسية",
   "These were made by more than one step of the history: pick fewer to edit what made them.": "صنعت هذه أكثر من خطوة في السجل: اختر أقل لتحرير ما صنعها.",
   "An import made these: it has no feature to edit (Remove faces changes them).": "صنع هذه استيراد: لا ميزة له لتحريرها (إزالة الأوجه تغيّرها).",
-  "These were made by more than one step of the history: pick fewer to find what made them.": "صنعت هذه أكثر من خطوة في السجل: اختر أقل لإيجاد ما صنعها."
+  "These were made by more than one step of the history: pick fewer to find what made them.": "صنعت هذه أكثر من خطوة في السجل: اختر أقل لإيجاد ما صنعها.",
+  "History list in the browser": "قائمة السجل في المستعرض",
+  "feature list": "قائمة الميزات",
+  "history tree": "شجرة السجل",
+  "The browser lists the timeline's steps top to bottom in a History folder, with the roll-back marker among them.": "يعرض المستعرض خطوات الخط الزمني من الأعلى إلى الأسفل في مجلد السجل، وبينها علامة الرجوع.",
+  "Rolled back here": "مُرجَع إلى هنا",
+  "The model is shown as it was before the steps below it; double-click to roll forward": "يُعرض النموذج كما كان قبل الخطوات التي تحته؛ انقر نقرًا مزدوجًا للتقدّم",
+  "After the roll-back marker: not in the model shown": "بعد علامة الرجوع: ليست في النموذج المعروض",
+  "fails": "تفشل",
+  "That step is deleted already: Shift+Del on its marker restores it.": "هذه الخطوة محذوفة بالفعل: Shift+Del على علامتها يستعيدها."
 }
