@@ -37,11 +37,17 @@ AppDocument::AppDocument(QObject* parent) : QObject(parent), m_storage(std::make
 
 AppDocument::~AppDocument() { *m_alive = false; }
 
+opad::KicadOptions AppDocument::kicadOptions() {
+  opad::KicadOptions o;
+  for (const QString& dir : QSettings().value("kicad/modelDirs").toStringList())  // Settings > KiCad 3D model folders
+    if (!dir.trimmed().isEmpty()) o.model_dirs.push_back(fsPath(dir.trimmed()));
+  return o;
+}
+
 opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file) {
   opad::ImportOptions o;
   o.author = QSettings().value("user/name").toString().trimmed().toStdString();
-  for (const QString& dir : QSettings().value("kicad/modelDirs").toStringList())  // Settings > KiCad 3D model folders
-    if (!dir.trimmed().isEmpty()) o.kicad.model_dirs.push_back(fsPath(dir.trimmed()));
+  o.kicad = kicadOptions();
   auto last = std::make_shared<std::pair<std::string, int>>("", -2);
   auto lastEmit = std::make_shared<QElapsedTimer>();
   lastEmit->start();
@@ -95,6 +101,7 @@ void AppDocument::startOpen(const QString& path) {
     auto result = std::make_shared<opad::Document>();
     QString error;
     QStringList warnings;
+    opad::json report;
     bool slowRead = false;  // worth remembering (viewer cache): the next open skips the translation
     try {
       if (external) {
@@ -104,6 +111,7 @@ void AppDocument::startOpen(const QString& path) {
         if (!cacheable || !opad::viewer_cache_load(*result, fsPath(path), o)) {
           const auto imported=opad::import_file(*result, fsPath(path), o);
           for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
+          report = imported.to_json();
           slowRead = cacheable && clock.elapsed() > 1500;
         }
       } else *result = opad::Document::load(fsPath(path));
@@ -116,9 +124,11 @@ void AppDocument::startOpen(const QString& path) {
       error = QString::fromUtf8(e.what());
     }
     if (!*alive || current->load() != token) return;  // dropped: freed here, off the UI thread
-    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o] {
+    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o, report] {
       if (current->load() != token) return;
       loading = false;
+      lastLoad = report;
+      lastLoad["file"] = path.toStdString();
       if (!error.isEmpty()) {
         emit loadFinished(false, error);
         return;
@@ -193,6 +203,8 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
     if (!*alive || current->load() != token) return;  // cancelled: the document never saw it
     QMetaObject::invokeMethod(this, [this, work, error, r, path, opsBefore, dirtyBefore, token, current] {
       if (current->load() != token) return;
+      lastLoad = r;
+      lastLoad["file"] = path.toStdString();
       if (!error.isEmpty() && work->ops.size() > opsBefore) {
         // Cancelled after the op was appended: roll it back and drop the orphaned body entries.
         work->ops.resize(opsBefore);

@@ -368,6 +368,45 @@ TEST(panels_open_outlines_and_errors) {
   CHECK_THROWS(import_file(d, p, {}));
 }
 
+// The models a board names, and KiCad's library models it misses fetched from the library (a local copy reached through
+// file:// here, laid out like the repository: <release>/<library>.3dshapes/<file>): the board's release first, then
+// master; a missing file or one that is not a STEP fails alone; the next read finds the downloads.
+TEST(library_models_download) {
+  Files files;
+  const auto repo = files.dir / "repo";
+  step_box(repo / "8.0.0" / "Fake.3dshapes" / "part.step", -1, -1, 0, 2, 2, 1);
+  step_box(repo / "master" / "Fake.3dshapes" / "newer.step", -1, -1, 0, 2, 2, 2);
+  write(repo / "8.0.0" / "Fake.3dshapes" / "page.step", "<html>not found</html>");
+  const std::string root = repo.generic_string();
+  set_env("OPAD_KICAD_MODELS_URL", path_from_utf8("file://" + std::string(root[0] == '/' ? "" : "/") + root + "/"));
+  const auto board = files.dir / "lib.kicad_pcb";
+  write(board, "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 40 20) (layer \"Edge.Cuts\"))\n" +
+                   footprint("Fake:A", "U1", "5 5", model("${KICAD8_3DMODEL_DIR}/Fake.3dshapes/part.wrl")) +
+                   footprint("Fake:A", "U2", "10 5", model("${KICAD8_3DMODEL_DIR}/Fake.3dshapes/part.wrl")) +
+                   footprint("Fake:B", "U3", "15 5", model("${KICAD8_3DMODEL_DIR}/Fake.3dshapes/newer.step")) +
+                   footprint("Fake:C", "U4", "20 5", model("${KICAD8_3DMODEL_DIR}/Fake.3dshapes/nowhere.step")) +
+                   footprint("Fake:D", "U5", "25 5", model("${KICAD8_3DMODEL_DIR}/Fake.3dshapes/page.step")) +
+                   footprint("Fake:E", "U6", "30 5", model("${OPAD_TEST_NOT_SET}/Mine.3dshapes/mine.step")) +
+                   footprint("Fake:F", "U7", "35 5", model("${KICAD8_3DMODEL_DIR}/../escape.step")) + ")\n");
+  const json before = kicad_models(board);
+  CHECK(before["models"].size() == 6 && before["missing"] == 6 && before["downloadable"] == 4);
+  CHECK(before["models"][0]["refs"] == json::array({"U1", "U2"}) && before["models"][0]["library"] == "Fake.3dshapes/part.step" && before["models"][0]["tag"] == "8.0.0");
+  Document d0 = Document::create();
+  CHECK(import_file(d0, board, {}).info["downloadable"] == 4);
+  std::vector<std::string> phases;
+  const json got = kicad_download_models(board, {}, [&](double, const std::string& what) { return phases.push_back(what), true; });
+  CHECK(got["downloaded"] == json::array({"Fake.3dshapes/part.step", "Fake.3dshapes/newer.step"}) && got["failed"].size() == 2);
+  CHECK(phases.size() == 4 && phases[3] == "downloading 3D models 4/4");
+  CHECK(std::filesystem::exists(kicad_download_dir() / "README.txt") && !std::filesystem::exists(kicad_download_dir() / "Fake.3dshapes" / "page.step"));
+  const json after = kicad_models(board);
+  CHECK(after["found"] == 2 && after["downloadable"] == 2);
+  Document d = Document::create();
+  const ImportResult r = import_file(d, board, {});
+  CHECK(r.info["models"] == 2 && r.info["placeholders"] == 4 && r.info["downloadable"] == 2);
+  CHECK_THROWS(kicad_download_models(board, {}, [](double, const std::string&) { return false; }));  // cancelled
+  set_env("OPAD_KICAD_MODELS_URL", "");
+}
+
 // A through-hole part's pins must go down its own drills, whichever side and turn: a 2x3 header model (pins only, pin 1
 // at its origin, KiCad's 3D frame: +y is up the page) on footprints turned 0/90/180/270 on top, and the same footprints
 // flipped to the bottom as KiCad stores them (pads mirrored in y, orientation negated, B.Cu). Each pin's centre must

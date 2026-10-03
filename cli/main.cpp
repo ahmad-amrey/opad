@@ -305,13 +305,13 @@ int main(int argc, char** argv) {
     }
     // Positional conventions.
     const bool docless = command == "diff" || command == "version" || command == "commands" || command == "cache" ||
-                         command == "selection";
+                         command == "selection" || command == "kicad_models";
     size_t pi = 0;
     if (!docless && pi < positional.size() && !args.contains("doc")) args["doc"] = positional[pi++];
     if (command == "diff") {
       if (pi < positional.size() && !args.contains("a")) args["a"] = positional[pi++];
       if (pi < positional.size() && !args.contains("b")) args["b"] = positional[pi++];
-    } else if (command == "import") {
+    } else if (command == "import" || command == "kicad_models") {
       if (pi < positional.size() && !args.contains("file")) args["file"] = positional[pi++];
     } else if (command == "append") {
       if (pi < positional.size()) {

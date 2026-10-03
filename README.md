@@ -233,7 +233,9 @@ A KiCad board (`.kicad_pcb`) opens as the board itself (its Edge.Cuts outline wi
 colour) and its footprints' 3D models, placed as KiCad places them and found as KiCad finds them (`${KIPRJMOD}`, the
 `KICAD*_3DMODEL_DIR` variables from the environment or KiCad's settings, KiCad's install folders, then Settings > KiCad
 3D model folders); a model that is not found shows as a translucent box over the footprint. KiCad's model libraries are
-not part of OPAD.
+not part of OPAD: when a board names models of KiCad's library that are not installed, OPAD offers to download them from
+the library (gitlab.com/kicad/libraries/kicad-packages3D, CC-BY-SA 4.0 with KiCad's design exception) into your user
+cache, and shows them (`opad-cli kicad_models board.kicad_pcb [--download true]` lists and fetches them).
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth

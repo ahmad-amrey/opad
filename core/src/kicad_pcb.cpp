@@ -37,6 +37,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <set>
@@ -801,8 +802,37 @@ class Builder {
       res.warnings.push_back("footprint 3D models not found, shown as boxes: " + list);
     }
     res.info = {{"footprints", footprints.size()}, {"components", placed}, {"models", models.size()}, {"placeholders", placeholders},
-                {"missing_models", missing}, {"holes", holes.size()}, {"thickness", thickness}, {"outlines", loops.size()}};
+                {"missing_models", missing}, {"downloadable", downloadable.size()}, {"holes", holes.size()}, {"thickness", thickness},
+                {"outlines", loops.size()}};
     return res;
+  }
+
+  // The models the footprints that would be placed show: where each was found, which footprints use it, and for one of
+  // KiCad's library, its place there.
+  json model_list() {
+    read(Parser(read_text_file(file)).board());
+    std::map<std::string, std::vector<std::string>> refs;
+    std::vector<std::string> order;
+    for (const auto& f : footprints)
+      if (opt.kicad.dnp || !f.dnp)
+        for (const auto& m : f.models) {
+          auto& r = refs[m.name];
+          if (r.empty()) order.push_back(m.name);
+          r.push_back(f.ref);
+        }
+    json list = json::array();
+    int present = 0, absent = 0, library = 0;
+    for (const auto& name : order) {
+      const Resolver::Found f = resolver.find(name);
+      json m = {{"name", name}, {"refs", refs[name]}};
+      if (!f.file.empty()) m["file"] = utf8(f.file);
+      if (!f.library.empty()) m["library"] = f.library, m["tag"] = library_tag(f.version);
+      present += !f.file.empty();
+      absent += f.file.empty();
+      library += f.file.empty() && !f.library.empty();
+      list.push_back(m);
+    }
+    return {{"models", list}, {"found", present}, {"missing", absent}, {"downloadable", library}, {"download_dir", utf8(kicad_download_dir())}};
   }
 
  private:
@@ -823,6 +853,7 @@ class Builder {
   std::map<std::string, Resolver::Found> found;        // model name -> its file (empty: not found)
   std::map<std::string, std::string> boxes;            // placeholder size -> body key
   std::vector<std::string> missing;
+  std::set<std::string> downloadable;  // missing models of KiCad's library
   int placed = 0, placeholders = 0;
 
   void report(double fraction, const std::string& what) {
@@ -1159,6 +1190,7 @@ class Builder {
         const auto& path = found[m.name].file;
         if (path.empty()) {
           absent.push_back(m.name);
+          if (!found[m.name].library.empty()) downloadable.insert(found[m.name].library);
           continue;
         }
         const size_t done = std::min(models.size(), files.size());
@@ -1265,6 +1297,76 @@ class Builder {
 };
 
 }  // namespace
+
+json kicad_models(const std::filesystem::path& board, const KicadOptions& opt) {
+  Document scratch = Document::create();
+  ImportOptions o;
+  o.kicad = opt;
+  try {
+    return Builder(scratch, board, o).model_list();
+  } catch (const Standard_Failure& e) {
+    throw Error("cannot read " + utf8(board.filename()) + ": " + e.GetMessageString());
+  }
+}
+
+json kicad_download_models(const std::filesystem::path& board, const KicadOptions& opt, const std::function<bool(double, const std::string&)>& progress) {
+  const json list = kicad_models(board, opt);
+  std::vector<std::pair<std::string, std::string>> wanted;  // library path, tag
+  std::set<std::string> seen;
+  for (const auto& m : list["models"])
+    if (!m.contains("file") && m.contains("library") && seen.insert(m["library"].get<std::string>()).second) wanted.push_back({m["library"], m["tag"]});
+  json out = {{"downloaded", json::array()}, {"failed", json::array()}, {"dir", utf8(kicad_download_dir())}};
+  if (wanted.empty()) return out;
+  std::string base = env("OPAD_KICAD_MODELS_URL");
+  if (base.empty()) base = "https://gitlab.com/kicad/libraries/kicad-packages3D/-/raw";
+  while (!base.empty() && base.back() == '/') base.pop_back();
+  std::filesystem::path curl = "curl";
+#ifdef _WIN32
+  curl = "curl.exe";
+  std::error_code e;
+  if (const auto root = env("SystemRoot"); !root.empty() && std::filesystem::is_regular_file(path_from_utf8(root) / "System32" / "curl.exe", e))
+    curl = path_from_utf8(root) / "System32" / "curl.exe";
+#endif
+  const auto dir = kicad_download_dir();
+  std::error_code e2;
+  std::filesystem::create_directories(dir, e2);
+  if (!std::filesystem::exists(dir / "README.txt", e2))
+    write_text_file(dir / "README.txt",
+                    "3D models from the KiCad library (https://gitlab.com/kicad/libraries/kicad-packages3D), downloaded by OPAD when asked to.\n"
+                    "Licence: CC-BY-SA 4.0 with the KiCad libraries exception (https://www.kicad.org/libraries/license/): free to use in your\n"
+                    "own designs; redistributing the models as a collection is bound by CC-BY-SA. OPAD does not ship them.\n");
+  for (size_t i = 0; i < wanted.size(); ++i) {
+    const auto& [library, tag] = wanted[i];
+    if (progress && !progress(double(i) / double(wanted.size()), "downloading 3D models " + std::to_string(i + 1) + "/" + std::to_string(wanted.size())))
+      throw Error("download cancelled");
+    const auto target = dir / path_from_utf8(library);
+    auto part = target;
+    part += ".part";
+    std::filesystem::create_directories(target.parent_path(), e2);
+    std::string error = "not in the library";
+    for (const std::string& release : {tag, std::string("master")}) {
+      std::filesystem::remove(part, e2);
+      const int status = detail::run_program(curl, {"-sS", "-f", "-L", "--max-time", "100", "-o", part, base + "/" + release + "/" + library});
+      if (status < 0) {
+        error = "curl could not be started";
+        break;
+      }
+      std::string head(64, '\0');
+      std::ifstream(part, std::ios::binary).read(head.data(), 64);
+      if (status == 0 && head.rfind("ISO-10303-21", 0) == 0) {
+        std::filesystem::rename(part, target, e2);
+        error = e2 ? e2.message() : "";
+        break;
+      }
+      if (status != 22) error = "curl failed (" + std::to_string(status) + ")";  // 22: the server said no (404)
+      if (tag == "master") break;
+    }
+    std::filesystem::remove(part, e2);
+    if (error.empty()) out["downloaded"].push_back(library);
+    else out["failed"].push_back({{"model", library}, {"error", error}});
+  }
+  return out;
+}
 
 ImportResult import_kicad_pcb(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
   try {

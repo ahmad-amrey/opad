@@ -49,11 +49,18 @@ def main():
         overhang = document("overhang", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
                             ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,10],"normal":[0,0,1]},"length":"30 mm","width":"10 mm","height":"2 mm","operation":"join"}'))
         # A KiCad board: two footprints (top, and bottom turned 90) share a model that only the settings' model folder
-        # finds, one model is missing, a mounting hole.
+        # finds, one model is missing, one is KiCad's library's (downloaded from a local copy of the library), a mounting hole.
         models = root / "kicad-models"
         models.mkdir()
-        part =document("kicad-part", ("feature", "--kind", "box", "--inputs", '{"length":"4 mm","width":"2 mm","height":"1.5 mm"}'))
+        part = document("kicad-part", ("feature", "--kind", "box", "--inputs", '{"length":"4 mm","width":"2 mm","height":"1.5 mm"}'))
         subprocess.run([str(cli), "export", str(part), "--format", "step", "--out", str(models / "part.step")], check=True, capture_output=True)
+        library = root / "kicad-library" / "9.0.0" / "Bench.3dshapes"
+        library.mkdir(parents=True)
+        (root / "kicad-none").mkdir()
+        shape = document("kicad-library", ("feature", "--kind", "cylinder", "--inputs", '{"diameter":"3 mm","height":"4 mm"}'))
+        subprocess.run([str(cli), "export", str(shape), "--format", "step", "--out", str(library / "library.step")], check=True, capture_output=True)
+        kicad_env = {"OPAD_KICAD_MODELS_URL": (root / "kicad-library").as_uri(), "OPAD_CACHE_DIR": str(root / "kicad-cache"),
+                     "KICAD9_3DMODEL_DIR": str(root / "kicad-none")}
         board = root / "kicad" / "board.kicad_pcb"
         board.parent.mkdir()
 
@@ -64,6 +71,7 @@ def main():
         board.write_text('(kicad_pcb (version 20241229) (general (thickness 1.6))\n(gr_rect (start 100 100) (end 130 120) (layer "Edge.Cuts"))\n'
                          + footprint("U1", "108 106", "F", "part.step") + footprint("U2", "120 106 90", "B", "part.step")
                          + footprint("J1", "114 114", "F", "missing.step")
+                         + footprint("D1", "104 114", "F", "library.step").replace("${OPAD_BENCH_UNSET_DIR}", "${KICAD9_3DMODEL_DIR}")
                          + '(footprint "MountingHole:MountingHole_3.2mm" (layer "F.Cu") (at 126 116) (pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2)))\n)\n',
                          encoding="utf-8")
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
@@ -81,7 +89,7 @@ def main():
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
-            ("kicad", board, {"OPAD_BENCH_KICAD": "{prefix}.png"}),
+            ("kicad", board, {"OPAD_BENCH_KICAD": "{prefix}.png", **kicad_env}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))
@@ -93,7 +101,7 @@ def main():
             cases.append(("viewer", folder / "a-screw.step", {"OPAD_BENCH_VIEWER": str(folder / "a-screw.opad")}))
         # These open a STEP or a drawing and then edit it: as with viewer mode turned off in the settings.
         editing = {"drawing-to-sketch", "picking"}
-        settings = {"kicad": f"[kicad]\nmodelDirs={models.as_posix()}\n"}
+        settings = {"kicad": f"[kicad]\nmodelDirs={models.as_posix()}\ndownload=always\n"}
         failures = []
         for name, doc, switches in cases:
             if args.only and name not in args.only:

@@ -28,6 +28,10 @@ ImportResult import_xcaf(Document& doc, const Handle(TDocStd_Document)& xdoc, co
 // flatter than 30 degrees and kept sharp across steeper ones, so curved parts look round and machined edges stay crisp.
 TopoDS_Face mesh_face(const std::vector<float>& xyz, const std::vector<uint32_t>& triangles, bool weld);
 
+// Runs a program and waits for it (two minutes at most); its exit status, or -1 when it did not start. Arguments go as
+// wide strings on Windows, so a file named in Arabic reaches the program intact; its output is dropped (drawing_io.cpp).
+int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd = {});
+
 // The readers behind import_file (formats.cpp).
 ImportResult import_iges(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 // glTF, GLB, OBJ, VRML; `kicad_vrml`: a KiCad footprint model, in 2.54 mm units and Z up (VRML is otherwise metres, Y up).

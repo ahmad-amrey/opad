@@ -16,6 +16,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/kicad_pcb.hpp"
 
 namespace opad::commands {
 
@@ -163,6 +164,18 @@ json append_per_target(Document& doc, const std::string& command, const json& a,
   j["id"] = ids.front();
   if (a.contains("targets")) j["ids"] = ids;
   return j;
+}
+
+KicadOptions kicad_options(const json& a) {
+  KicadOptions o;
+  for (const auto& dir : str_list(a.value("model_dirs", json()))) o.model_dirs.push_back(path_from_utf8(dir));
+  o.components = a.value("components", true);
+  o.dnp = a.value("dnp", true);
+  o.vias = a.value("vias", false);
+  o.placeholder_height = a.value("placeholder_height", 1.0);
+  o.origin = a.value("origin", "auto");
+  if (o.origin != "auto" && o.origin != "center" && o.origin != "page") throw Error("origin is auto, center or page");
+  return o;
 }
 
 void register_builtins() {
@@ -370,13 +383,7 @@ void register_builtins() {
         o.author = a.value("by", "");
         o.parent = a.value("parent", "");
         o.heal = a.value("heal", true);
-        for (const auto& dir : str_list(a.value("model_dirs", json()))) o.kicad.model_dirs.push_back(path_from_utf8(dir));
-        o.kicad.components = a.value("components", true);
-        o.kicad.dnp = a.value("dnp", true);
-        o.kicad.vias = a.value("vias", false);
-        o.kicad.placeholder_height = a.value("placeholder_height", 1.0);
-        o.kicad.origin = a.value("origin", "auto");
-        if (o.kicad.origin != "auto" && o.kicad.origin != "center" && o.kicad.origin != "page") throw Error("origin is auto, center or page");
+        o.kicad = kicad_options(a);
         if (a.contains("placement")) o.placement = Mat4::from_json(a["placement"]);
         if (a.contains("plane")) {  // resolved now, stored as the placement: replay never needs the plane again
           const Frame f = design::resolve_plane(need(d), resolve(need(d)), a["plane"]);
@@ -387,6 +394,20 @@ void register_builtins() {
         }
         o.center_drawing = a.value("center", false);
         return import_file(need(d), path_from_utf8(a.at("file").get<std::string>()), o).to_json();
+      });
+
+  reg("kicad_models", "The 3D models a KiCad board's footprints show, where each was found, and which missing ones KiCad's library publishes. download fetches those into the user cache (CC-BY-SA 4.0 models from gitlab.com/kicad/libraries/kicad-packages3D: free for your own designs, never shipped with OPAD); the next read of the board shows them",
+      {{"file", "path - .kicad_pcb"}, {"model_dirs", "string|array - more folders to look for 3D models in, after KiCad's own"}, {"dnp", "bool - also footprints marked do-not-populate (default true)"},
+       {"download", "bool - fetch the missing library models (default false)"}},
+      false, [](Document*, const json& a) {
+        const auto board = path_from_utf8(a.at("file").get<std::string>());
+        const KicadOptions o = kicad_options(a);
+        if (!a.value("download", false)) return kicad_models(board, o);
+        const json fetched = kicad_download_models(board, o);
+        json j = kicad_models(board, o);
+        j["downloaded"] = fetched["downloaded"];
+        j["failed"] = fetched["failed"];
+        return j;
       });
 
   reg("import_brep", "Import a shape given as OCCT ASCII BREP text (build123d/CadQuery/OCP bridge)",

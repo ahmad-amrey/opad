@@ -210,6 +210,10 @@ class MainWindow : public QMainWindow {
   class DrawingPlacer* m_drawingPlacer = nullptr;
   // A drawing imported onto the selected planar face, or onto a picked plane and moved there first (TODO 10 A12).
   void importDrawing(const QString& path, const QString& parent);
+  // KiCad boards (KicadBoards.cpp): after a board loads with models of KiCad's library missing, offer to download them
+  // (setting kicad/download: ask, always, never; once per board and session), then read a viewed board again.
+  void offerKicadModels();
+  QStringList m_kicadOffered;
   int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer
   Job* m_measureJob = nullptr;      // the guided tool's measurement; cancelled as soon as the picks move on

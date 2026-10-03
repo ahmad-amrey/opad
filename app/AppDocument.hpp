@@ -33,6 +33,7 @@ class AppDocument : public QObject {
   unsigned long long generation = 0;
   unsigned long long revision = 0;
   bool loading = false;      // a worker thread owns the document content until loadFinished
+  opad::json lastLoad;       // what the reader of the last finished open or import said (ImportResult::to_json + "file")
 
   void newDocument();
   void closeDocument();  // back to the start screen; nothing is saved here (ask first)
@@ -69,6 +70,8 @@ class AppDocument : public QObject {
   void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {});
   void cancelLoad();
   void refresh();
+  // KiCad boards: the reader's options from the settings (kicad/*).
+  static opad::KicadOptions kicadOptions();
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
   bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
   bool snapshotBusy() const { return m_capturing; }

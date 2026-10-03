@@ -91,9 +91,9 @@ struct Conversion {
   Conversion() { std::filesystem::create_directory(directory); }
   ~Conversion() { std::error_code error; std::filesystem::remove_all(directory, error); }
 };
-// Runs a converter and waits for it (two minutes at most); its exit status, or -1 when it did not start. Arguments go as
-// wide strings on Windows, so a drawing named in Arabic reaches the converter intact.
-int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd = {}) {
+}  // namespace
+namespace detail {
+int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd) {
   int status = -1;
 #ifdef _WIN32
   std::wstring command;
@@ -135,6 +135,9 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
 #endif
   return status;
 }
+}  // namespace detail
+namespace {
+using detail::run_program;
 
 std::filesystem::path executable_dir() {
 #ifdef _WIN32

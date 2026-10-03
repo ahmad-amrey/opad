@@ -22,4 +22,18 @@ std::filesystem::path kicad_model_file(const std::string& name, const std::files
 // Where models of KiCad's library are downloaded to (<user cache>/kicad-models, laid out as the library is).
 std::filesystem::path kicad_download_dir();
 
+// The 3D models shown by the footprints the reader would place with `opt`, each with the footprints using it, the file it
+// resolves to and, for a model of KiCad's own library, its place and release there:
+// {"models": [{"name", "refs": [...], "file"?, "library"?: "<lib>.3dshapes/<file>.step", "tag"?}], "found", "missing",
+//  "downloadable" (missing library models), "download_dir"}.
+json kicad_models(const std::filesystem::path& board, const KicadOptions& opt = {});
+
+// Fetches the board's missing library models (kicad_models' "downloadable") with curl from KiCad's library repository
+// (gitlab.com/kicad/libraries/kicad-packages3D, at the release of the KiCad version the board's variable names, else
+// master; OPAD_KICAD_MODELS_URL replaces the address) into kicad_download_dir(), where the reader finds them next time.
+// The models are CC-BY-SA 4.0 with KiCad's design exception: callers ask the user first, and OPAD never ships them.
+// {"downloaded": [library paths], "failed": [{"model", "error"}], "dir"}; `progress` returning false cancels.
+json kicad_download_models(const std::filesystem::path& board, const KicadOptions& opt = {},
+                           const std::function<bool(double, const std::string&)>& progress = {});
+
 }  // namespace opad

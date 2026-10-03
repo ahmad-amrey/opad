@@ -2,5 +2,17 @@
   "KiCad boards (*.kicad_pcb)": "لوحات KiCad (*.kicad_pcb)",
   "KiCad 3D model folders…": "مجلدات نماذج KiCad ثلاثية الأبعاد…",
   "KiCad 3D model folders": "مجلدات نماذج KiCad ثلاثية الأبعاد",
-  "Folders with 3D models (STEP) for KiCad boards, one per line. They are searched after KiCad's own:": "مجلدات فيها نماذج ثلاثية الأبعاد (STEP) للوحات KiCad، مجلد في كل سطر. يُبحث فيها بعد مجلدات KiCad نفسه:"
+  "Folders with 3D models (STEP) for KiCad boards, one per line. They are searched after KiCad's own:": "مجلدات فيها نماذج ثلاثية الأبعاد (STEP) للوحات KiCad، مجلد في كل سطر. يُبحث فيها بعد مجلدات KiCad نفسه:",
+  "KiCad 3D models": "نماذج KiCad ثلاثية الأبعاد",
+  "%1 3D models of this board come from KiCad's library, which is not installed here. Download them from the KiCad library (gitlab.com/kicad/libraries/kicad-packages3D)?": "%1 من النماذج ثلاثية الأبعاد في هذه اللوحة من مكتبة KiCad، وهي غير مثبتة هنا. أتنزيلها من مكتبة KiCad (gitlab.com/kicad/libraries/kicad-packages3D)؟",
+  "They are licensed CC-BY-SA 4.0 with KiCad's design exception: free to use in your own designs. They are saved in OPAD's cache for you alone and are not part of OPAD.": "ترخيصها CC-BY-SA 4.0 مع استثناء KiCad للتصاميم: استعمالها في تصاميمك حر. تُحفظ في ذاكرة OPAD المؤقتة لك وحدك وليست جزءا من OPAD.",
+  "Download": "تنزيل",
+  "Always download": "التنزيل دائما",
+  "Never": "أبدا",
+  "Not now": "ليس الآن",
+  "Downloading KiCad 3D models": "تنزيل نماذج KiCad ثلاثية الأبعاد",
+  "The KiCad 3D models could not be downloaded: %1": "تعذر تنزيل نماذج KiCad ثلاثية الأبعاد: %1",
+  "%1 KiCad 3D models downloaded, %2 not found in the library": "نُزّل %1 من نماذج KiCad ثلاثية الأبعاد، و%2 غير موجود في المكتبة",
+  "%1 KiCad 3D models downloaded": "نُزّل %1 من نماذج KiCad ثلاثية الأبعاد",
+  "%1 KiCad 3D models downloaded: import the board again to show them": "نُزّل %1 من نماذج KiCad ثلاثية الأبعاد: استورد اللوحة مرة أخرى لإظهارها"
 }
