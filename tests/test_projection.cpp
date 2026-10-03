@@ -192,7 +192,8 @@ TEST(projection_splines_keep_their_poles) {
   }
 }
 
-// Two instances of one body: the one behind is hidden by the one in front; moved aside, both show. Curves name their node.
+// Two instances of one body: the one behind is hidden by the one in front, and its lines all lie under the front one's
+// outline, so none is left; moved aside, both show. Curves name their node.
 TEST(projection_instances_and_occlusion) {
   const TopoDS_Shape box = BRepPrimAPI_MakeBox(20, 10, 10).Shape();
   Document doc = doc_of({box, box});
@@ -206,10 +207,11 @@ TEST(projection_instances_and_occlusion) {
     const auto g = project(doc, scene, spec_of("front", q), {}, false);
     CHECK_EQ(g->bodies.size(), 2u);
     const int behind = g->bodies[0].node == bodies[1] ? 0 : 1;
-    int behind_visible = 0, front_visible = 0;
-    for (const auto& c : g->curves) (c.body == behind ? behind_visible : front_visible) += !c.hidden;
-    CHECK_EQ(behind_visible, 0);
+    int behind_any = 0, front_visible = 0;
+    for (const auto& c : g->curves) c.body == behind ? ++behind_any : front_visible += !c.hidden;
+    CHECK_EQ(behind_any, 0);
     CHECK_EQ(front_visible, 4);
+    CHECK_EQ(total(*g, true), 0.0);
   }
   doc.append({{"op", "transform"}, {"target", bodies[1]}, {"matrix", Mat4::translation(30, 30, 0).to_json()}});
   scene = resolve(doc);
@@ -250,6 +252,39 @@ TEST(projection_tangent_edges_and_silhouettes) {
     }
     CHECK_NEAR(lines, 24, 0.01);
     CHECK_NEAR(circle, 2 * M_PI, 1e-3);
+  }
+}
+
+// Coincident pieces: a cylinder seen from the side has its rims edge-on (exact HLR returns each as two coincident
+// segments, its back halves lie under the front ones); an identical cylinder right behind it has the same outline, which
+// the hybrid tier sees as visible. One line is left of each, named after the front body, and the tiers agree.
+TEST(projection_coincident_pieces) {
+  const TopoDS_Shape cyl = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 5, 12).Shape();
+  Document doc = doc_of({cyl, cyl});
+  Scene scene = resolve(doc);
+  const auto bodies = scene.all_bodies();
+  doc.append({{"op", "transform"}, {"target", bodies[1]}, {"matrix", Mat4::translation(0, 40, 0).to_json()}});
+  scene = resolve(doc);
+  for (Quality q : {Quality::Exact, Quality::Hybrid}) {
+    for (bool both : {false, true}) {
+      auto s = spec_of("front", q);
+      if (!both) s.nodes = {bodies[0]};
+      const auto g = project(doc, scene, s, {}, false);
+      const int front = g->bodies[0].node == bodies[0] ? 0 : 1;
+      CHECK_NEAR(total(*g, false), 2 * 12 + 2 * 10, 1e-6);
+      CHECK_EQ(total(*g, true), 0.0);
+      for (const auto& c : g->curves) CHECK(c.body == front && c.type == Curve::Type::Line);
+      CHECK_EQ(g->curves.size(), 4u);
+      check_sources(doc, scene, *g);
+    }
+  }
+  // Partly covered: a wider, lower box behind a box. Its bottom edges run along the front box's bottom edge, so only
+  // their ends are left; its top edges show at the ends and are hidden (once) in the middle.
+  const Document l = doc_of({BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 20, 10, 10).Shape(), BRepPrimAPI_MakeBox(gp_Pnt(-5, 20, 0), 30, 10, 4).Shape()});
+  for (Quality q : {Quality::Exact, Quality::Hybrid}) {
+    const auto g = project(l, resolve(l), spec_of("front", q), {}, false);
+    CHECK_NEAR(total(*g, false), 2 * 20 + 2 * 10 + 2 * 5 + 2 * 5 + 2 * 4, q == Quality::Exact ? 1e-6 : 0.005);  // hybrid: cuts within a tenth of a pixel
+    CHECK_NEAR(total(*g, true), 20, q == Quality::Exact ? 1e-6 : 0.005);
   }
 }
 
@@ -327,7 +362,7 @@ TEST(projection_cache_and_cancel) {
   const ViewGeometry back = ViewGeometry::deserialize(a->serialize());
   CHECK_EQ(back.curves.size(), a->curves.size());
   CHECK_EQ(back.to_json().dump(), a->to_json().dump());
-  CHECK_THROWS(ViewGeometry::deserialize("OPADPRJ1"));
+  CHECK_THROWS(ViewGeometry::deserialize("OPADPRJ2"));
   for (Quality q : {Quality::Exact, Quality::Hybrid, Quality::Draft}) {
     bool threw = false;
     try {

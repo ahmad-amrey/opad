@@ -61,6 +61,7 @@ struct KeyInfo {
   TopTools_IndexedMapOfShape edges, faces;
   std::vector<EdgeInfo> e;
   std::vector<Surface> f;
+  std::vector<uint8_t> straight;  // per face: bounded by lines only, so its mesh's outline is exact
   std::vector<int> range;  // face ordinal -> index into mesh->faces, -1 when unmeshed
   std::vector<std::array<int32_t, 3>> next;  // per mesh triangle: the triangles across its sides (Tri::next), mesh-local
   std::shared_ptr<const Mesh> mesh;
@@ -126,6 +127,8 @@ void classify(const TopoDS_Shape& proto, KeyInfo& k) {
     if (info.kind != Curve::Kind::Sharp && !normal_at(faces[0], edge, mid, info.normal)) info.kind = Curve::Kind::Sharp;
   }
   k.f.resize(static_cast<size_t>(k.faces.Extent()), Surface::Other);
+  k.straight.resize(static_cast<size_t>(k.faces.Extent()), 0);
+  std::vector<int8_t> line(static_cast<size_t>(k.edges.Extent()), -1);
   for (int i = 1; i <= k.faces.Extent(); ++i) {
     switch (BRepAdaptor_Surface(TopoDS::Face(k.faces(i)), Standard_False).GetType()) {
       case GeomAbs_Plane: k.f[static_cast<size_t>(i - 1)] = Surface::Plane; break;
@@ -135,6 +138,14 @@ void classify(const TopoDS_Shape& proto, KeyInfo& k) {
       case GeomAbs_Torus: k.f[static_cast<size_t>(i - 1)] = Surface::Torus; break;
       default: break;
     }
+    bool straight = true;
+    for (TopExp_Explorer x(k.faces(i), TopAbs_EDGE); x.More() && straight; x.Next()) {
+      const TopoDS_Edge& edge = TopoDS::Edge(x.Current());
+      int8_t& is = line[static_cast<size_t>(k.edges.FindIndex(edge) - 1)];
+      if (is < 0) is = BRep_Tool::Degenerated(edge) || BRepAdaptor_Curve(edge).GetType() == GeomAbs_Line;
+      straight = is;
+    }
+    k.straight[static_cast<size_t>(i - 1)] = straight;
   }
 }
 
@@ -155,7 +166,7 @@ struct Depth {
   double u0 = 0, v0 = 0, px = 1, mid = 0;
   std::vector<float> z;
   std::vector<int32_t> tri;       // the nearest triangle at each pixel centre, -1 for none
-  std::vector<float> owner_defl;  // global face id -> the deflection of its mesh (how far its outline may be off)
+  std::vector<float> owner_defl;  // global face id -> how far its mesh's outline may be off (its deflection; 0 when straight)
   std::vector<float> owner_err;   // global face id -> how far its mesh may be off the surface (0 for planes)
   std::vector<float> X, Y, Z;     // the meshes' vertices in pixels and depth
   std::vector<Tri> tris;
@@ -593,7 +604,9 @@ void trace_polyline(const Context& cx, const std::vector<gp_Pnt>& pts, int own1,
   Curve piece = like;
   piece.type = Curve::Type::Polyline;
   int state = -1;
+  double z0 = 0, z1 = 0;  // depth where the piece starts, and of the last sample
   auto flush = [&]() {
+    piece.z = 0.5 * (z0 + z1);
     if (piece.pts.size() >= 2 && (!piece.hidden || cx.spec.hidden)) out.push_back(piece);
     piece.pts.clear();
   };
@@ -604,13 +617,16 @@ void trace_polyline(const Context& cx, const std::vector<gp_Pnt>& pts, int own1,
     for (int k = i == 0 ? 0 : 1; k <= n; ++k) {
       const double f = static_cast<double>(k) / n;
       const Vec2 p{a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f};
-      const int now = D.visible(p[0], p[1], da + (db - da) * f, own1, own2, like.kind == Curve::Kind::Silhouette) ? 1 : 0;
+      const double depth = da + (db - da) * f;
+      const int now = D.visible(p[0], p[1], depth, own1, own2, like.kind == Curve::Kind::Silhouette) ? 1 : 0;
+      z1 = depth;
       if (state >= 0 && now != state) {
         piece.pts.push_back(p);
         flush();
       }
       if (now != state) piece.hidden = !now;
       state = now;
+      if (piece.pts.empty()) z0 = depth;
       if (piece.pts.empty() || k == n || k == 0) piece.pts.push_back(p);
     }
   }
@@ -967,7 +983,8 @@ void hybrid(const Document& doc, const std::vector<Source>& sources, const ViewS
     for (const auto& r : k.mesh->faces) {
       const int owner = cx.face_base[i] + r.face;
       if (owner >= 0 && static_cast<size_t>(owner) < D.owner_defl.size()) {
-        D.owner_defl[static_cast<size_t>(owner)] = static_cast<float>(k.defl);
+        const bool straight = r.face >= 0 && static_cast<size_t>(r.face) < k.straight.size() && k.straight[static_cast<size_t>(r.face)];
+        D.owner_defl[static_cast<size_t>(owner)] = straight ? 0.f : static_cast<float>(k.defl);
         const bool plane = r.face >= 0 && static_cast<size_t>(r.face) < k.f.size() && k.f[static_cast<size_t>(r.face)] == Surface::Plane;
         D.owner_err[static_cast<size_t>(owner)] = plane ? 0.f : static_cast<float>(k.defl);
       }

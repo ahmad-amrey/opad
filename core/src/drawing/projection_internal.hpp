@@ -53,7 +53,7 @@ class Run {
 
 // The projection of the curve between t0 and t1, typed: lines, circles and ellipses stay analytic (an arc, an ellipse,
 // or a segment when seen edge-on), B-splines keep their poles (an orthographic projection is affine), anything else is
-// approximated within tol. Appended to `out` with the class and source of `like`.
+// approximated within tol. Appended to `out` with the class and source of `like` and the depth of its middle (Curve::z).
 void emit(const Adaptor3d_Curve& c, double t0, double t1, const View& v, const Curve& like, double tol, std::vector<Curve>& out);
 
 // Display-like deflection of a body for its meshes (from its box) and the body's mesh, made on a copy of the shared

@@ -5,8 +5,10 @@
 //   draft  - HLRBRep_PolyAlgo on meshed copies; polylines only, for a first paint
 //   hybrid - the exact B-rep curves, their visibility read from a depth buffer of the bodies' meshes (big assemblies:
 //            the Hydrostatic took 94 s exact against about 1 s); analytic silhouettes of quadrics, mesh ones elsewhere
-// Results are a pure function of body keys, world placements, the view and the tier, cached under that fingerprint in
-// memory and in the user cache. Workers only: every tier walks or meshes geometry.
+// Where pieces lie on one another (lines, arcs, ellipses, identical splines) only the nearest visible one is kept, and a
+// hidden one only where no visible one lies. Results are a pure function of body keys, world placements, the view and
+// the tier, cached under that fingerprint in memory and in the user cache. Workers only: every tier walks or meshes
+// geometry.
 #include <array>
 #include <functional>
 #include <map>
@@ -62,6 +64,7 @@ struct Curve {
   int body = -1;  // index into ViewGeometry::bodies
   int edge = -1;  // edge ordinal in that body (also for a silhouette that runs along an edge)
   int face = -1;  // face ordinal: a silhouette inside a face
+  double z = 0;   // depth of its middle towards the viewer: of coincident pieces the nearest one is kept
   std::vector<Vec2> sample(double tol) const;  // a polyline within tol of the curve
   double length() const;
   json to_json() const;

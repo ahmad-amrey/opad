@@ -57,7 +57,7 @@ using detail::View;
 
 namespace {
 
-constexpr const char* kAlgorithm = "proj-2";  // part of every fingerprint: bump when the output of any tier changes
+constexpr const char* kAlgorithm = "proj-3";  // part of every fingerprint: bump when the output of any tier changes
 constexpr double kTwoPi = 2 * M_PI;
 
 Vec2 operator+(Vec2 a, Vec2 b) { return {a[0] + b[0], a[1] + b[1]}; }
@@ -483,6 +483,7 @@ void draft(const Document& doc, const std::vector<Source>& sources, const ViewSp
       (internal ? like.face : like.edge) = w->second;
     }
     const Vec2 a{p.PntP1.X(), p.PntP1.Y()}, b{p.PntP2.X(), p.PntP2.Y()};
+    like.z = 0.5 * (p.PntP1.Z() + p.PntP2.Z());  // the projector's z points towards the viewer
     HLRAlgo_EdgeIterator it;
     double s, e;
     Standard_ShortReal ts, te;
@@ -538,6 +539,233 @@ void draft(const Document& doc, const std::vector<Source>& sources, const ViewSp
       out.curves.push_back(std::move(k));
     }
   }
+}
+
+// ---- coincident pieces: where lines, arcs, ellipses or identical splines lie on one another, the nearest visible piece
+// is kept, and hidden ones only where no visible one lies (a visible line is drawn over a hidden one). Exact HLR returns
+// an edge-on circle as two coincident segments, a box's back edges lie under its front ones, and the hybrid tier sees
+// the outline of an identical part right behind another one as visible.
+
+using Span = std::pair<double, double>;
+
+// [a, b] less the covered spans (sorted, disjoint); pieces under eps are dropped.
+std::vector<Span> uncovered(double a, double b, const std::vector<Span>& covered, double eps) {
+  std::vector<Span> out;
+  for (const auto& [c0, c1] : covered) {
+    if (c1 <= a) continue;
+    if (c0 >= b) break;
+    if (c0 - a > eps) out.push_back({a, c0});
+    a = std::max(a, c1);
+  }
+  if (b - a > eps) out.push_back({a, b});
+  return out;
+}
+
+void cover(std::vector<Span>& covered, const Span& s) {
+  covered.push_back(s);
+  std::sort(covered.begin(), covered.end());
+  std::vector<Span> merged;
+  for (const auto& c : covered)
+    if (!merged.empty() && c.first <= merged.back().second) merged.back().second = std::max(merged.back().second, c.second);
+    else merged.push_back(c);
+  covered.swap(merged);
+}
+
+size_t root(std::vector<size_t>& up, size_t i) {
+  while (up[i] != i) i = up[i] = up[up[i]];
+  return i;
+}
+
+// Joins the items `same` says coincide. Candidates share a bucket of width q on k0 (twice, shifted by half a bucket, so
+// values closer than q/2 always share one) and lie within w of each other on k1, which may depend on the bucket's centre.
+template <class K0, class K1, class Same>
+void join_close(const std::vector<size_t>& items, double q, double w, K0 k0, K1 k1, Same same, std::vector<size_t>& up) {
+  for (double shift : {0.0, 0.5}) {
+    std::vector<std::pair<long long, size_t>> b;
+    b.reserve(items.size());
+    for (size_t i : items) b.push_back({static_cast<long long>(std::floor(k0(i) / q + shift)), i});
+    std::sort(b.begin(), b.end());
+    std::vector<std::pair<double, size_t>> v;
+    for (size_t s = 0, e = 0; s < b.size(); s = e) {
+      for (e = s; e < b.size() && b[e].first == b[s].first; ++e) {
+      }
+      if (e - s < 2) continue;
+      const double centre = (static_cast<double>(b[s].first) - shift + 0.5) * q;
+      v.clear();
+      for (size_t x = s; x < e; ++x) v.push_back({k1(b[x].second, centre), b[x].second});
+      std::sort(v.begin(), v.end());
+      for (size_t x = 0; x < v.size(); ++x)
+        for (size_t y = x + 1; y < v.size() && v[y].first - v[x].first <= w; ++y) {
+          const size_t rx = root(up, v[x].second), ry = root(up, v[y].second);
+          if (rx != ry && same(v[x].second, v[y].second)) up[std::max(rx, ry)] = std::min(rx, ry);
+        }
+    }
+  }
+}
+
+double cross(Vec2 a, Vec2 b) { return a[0] * b[1] - a[1] * b[0]; }
+
+// Returns how many curves were cut back or dropped.
+size_t drop_overlaps(std::vector<Curve>& curves, double eps) {
+  enum Class { kLine, kArc, kEllipse, kSpline };
+  const size_t n = curves.size();
+  std::vector<int> cls(n, -1);
+  std::vector<Vec2> dir(n, Vec2{0, 0});  // lines: unit direction, pointing up (angle in [0, pi))
+  std::vector<double> angle(n, 0);
+  std::vector<size_t> items[4];
+  double size = 0;
+  std::unordered_map<size_t, std::vector<Curve>> replaced;  // curve -> what is left of it
+  for (size_t i = 0; i < n; ++i) {
+    const Curve& k = curves[i];
+    for (const auto& p : k.pts) size = std::max({size, std::fabs(p[0]), std::fabs(p[1])});
+    size = std::max({size, std::fabs(k.c[0]) + k.r1, std::fabs(k.c[1]) + k.r1});
+    double length = -1;  // lines, arcs and polylines shorter than eps are dropped: nothing on paper
+    if (k.type == Curve::Type::Arc) length = k.r1 * (k.a1 - k.a0);
+    if (k.type == Curve::Type::Line || k.type == Curve::Type::Polyline) {
+      length = 0;
+      for (size_t p = 1; p < k.pts.size(); ++p) length += norm(k.pts[p] - k.pts[p - 1]);
+    }
+    if (length >= 0 && length < eps) {
+      replaced[i];
+      continue;
+    }
+    if (k.type == Curve::Type::Line || (k.type == Curve::Type::Polyline && k.pts.size() == 2)) {
+      const Vec2 d = k.pts[1] - k.pts[0];
+      const double l = norm(d);  // at least eps
+      Vec2 u = d * (1 / l);
+      if (u[1] < 0 || (u[1] == 0 && u[0] < 0)) u = u * -1;
+      dir[i] = u;
+      angle[i] = std::atan2(u[1], u[0]);
+      if (angle[i] > M_PI - 1e-3) angle[i] -= M_PI;  // nearly horizontal both ways: one bucket
+      cls[i] = kLine;
+    } else if (k.type == Curve::Type::Arc && k.r1 > eps) {
+      cls[i] = kArc;
+    } else if (k.type == Curve::Type::Ellipse && k.r2 > eps) {
+      cls[i] = kEllipse;
+    } else if (k.type == Curve::Type::Spline && !k.pts.empty()) {
+      cls[i] = kSpline;
+    }
+    if (cls[i] >= 0) items[cls[i]].push_back(i);
+  }
+  std::vector<size_t> up(n);
+  for (size_t i = 0; i < n; ++i) up[i] = i;
+  auto x0 = [&](size_t i) { return curves[i].type == Curve::Type::Spline ? curves[i].pts[0][0] : curves[i].c[0]; };
+  auto y0 = [&](size_t i, double) { return curves[i].type == Curve::Type::Spline ? curves[i].pts[0][1] : curves[i].c[1]; };
+  auto close = [&](double a, double b) { return std::fabs(a - b) <= eps; };
+  // Lines: radians per bucket. Pieces of one edge keep its direction exactly; lines of different parts further apart in
+  // direction are left as they are (1e-4 joined 0.1% more on the Engine and took seconds, 1e-6 1% less).
+  const double q = 1e-5;
+  join_close(items[kLine], q, 2 * size * q + 2 * eps, [&](size_t i) { return angle[i]; },
+             [&](size_t i, double centre) {
+               const Vec2 m = (curves[i].pts[0] + curves[i].pts[1]) * 0.5;
+               return -std::sin(centre) * m[0] + std::cos(centre) * m[1];
+             },
+             [&](size_t i, size_t j) {
+               const Curve &a = curves[i], &b = curves[j];
+               const bool shorter = norm(a.pts[1] - a.pts[0]) < norm(b.pts[1] - b.pts[0]);
+               const Curve& s = shorter ? a : b;
+               const Curve& l = shorter ? b : a;
+               const Vec2 u = dir[shorter ? j : i];
+               return std::fabs(cross(u, s.pts[0] - l.pts[0])) <= eps && std::fabs(cross(u, s.pts[1] - l.pts[0])) <= eps;
+             },
+             up);
+  join_close(items[kArc], 4 * eps, eps, x0, y0,
+             [&](size_t i, size_t j) { return close(curves[i].c[0], curves[j].c[0]) && close(curves[i].c[1], curves[j].c[1]) && close(curves[i].r1, curves[j].r1); },
+             up);
+  join_close(items[kEllipse], 4 * eps, eps, x0, y0,
+             [&](size_t i, size_t j) {
+               const Curve &a = curves[i], &b = curves[j];
+               return close(a.c[0], b.c[0]) && close(a.c[1], b.c[1]) && close(a.r1, b.r1) && close(a.r2, b.r2) &&
+                      std::fabs(std::remainder(a.rot - b.rot, M_PI)) * a.r1 <= eps;
+             },
+             up);
+  join_close(items[kSpline], 4 * eps, eps, x0, y0,
+             [&](size_t i, size_t j) {
+               const Curve &a = curves[i], &b = curves[j];
+               if (a.degree != b.degree || a.pts.size() != b.pts.size() || a.knots.size() != b.knots.size() || a.weights.size() != b.weights.size()) return false;
+               for (size_t p = 0; p < a.pts.size(); ++p)
+                 if (norm(a.pts[p] - b.pts[p]) > eps) return false;
+               for (size_t p = 0; p < a.knots.size(); ++p)
+                 if (std::fabs(a.knots[p] - b.knots[p]) > 1e-9 * (1 + std::fabs(a.knots[p]))) return false;
+               for (size_t p = 0; p < a.weights.size(); ++p)
+                 if (std::fabs(a.weights[p] - b.weights[p]) > 1e-9 * (1 + std::fabs(a.weights[p]))) return false;
+               return true;
+             },
+             up);
+  std::unordered_map<size_t, std::vector<size_t>> groups;
+  for (size_t i = 0; i < n; ++i)
+    if (cls[i] >= 0 && root(up, i) != i) groups[root(up, i)].push_back(i);
+  auto rank = [](Curve::Kind k) { return k == Curve::Kind::Sharp ? 0 : k == Curve::Kind::Silhouette ? 1 : k == Curve::Kind::Tangent ? 2 : 3; };
+  for (auto& [first, rest] : groups) {
+    std::vector<size_t> members{first};
+    members.insert(members.end(), rest.begin(), rest.end());
+    std::sort(members.begin(), members.end(), [&](size_t a, size_t b) {
+      const Curve &x = curves[a], &y = curves[b];
+      if (x.hidden != y.hidden) return !x.hidden;
+      if (x.z != y.z) return x.z > y.z;
+      if (rank(x.kind) != rank(y.kind)) return rank(x.kind) < rank(y.kind);
+      return a < b;
+    });
+    const int c = cls[first];
+    // The members' spans on one parameter: lines along the longest one, circles by angle, ellipses by the first one's
+    // parameter (another one turned by pi runs half a turn on), splines as a whole.
+    size_t longest = members[0];
+    for (size_t m : members)
+      if (c == kLine && norm(curves[m].pts[1] - curves[m].pts[0]) > norm(curves[longest].pts[1] - curves[longest].pts[0])) longest = m;
+    const Vec2 origin = c == kLine ? curves[longest].pts[0] : Vec2{0, 0}, u = dir[longest];
+    const double rot = curves[members[0]].rot;
+    const double peps = c == kLine ? eps : c == kSpline ? 1e-12 : eps / curves[members[0]].r1;
+    std::vector<Span> covered;
+    for (size_t m : members) {
+      const Curve& k = curves[m];
+      double shift = 0, s0 = 0, s1 = 1;
+      if (c == kLine) s0 = dot(u, k.pts[0] - origin), s1 = dot(u, k.pts[1] - origin);
+      if (c == kEllipse) shift = std::round((k.rot - rot) / M_PI) * M_PI;
+      if (c == kArc || c == kEllipse) {
+        s0 = std::fmod(k.a0 + shift, kTwoPi);
+        if (s0 < 0) s0 += kTwoPi;
+        s1 = s0 + std::min(k.a1 - k.a0, kTwoPi);
+      }
+      const double lo = std::min(s0, s1), hi = std::max(s0, s1);
+      std::vector<Span> left;
+      if (hi <= kTwoPi || c == kLine || c == kSpline) {
+        left = uncovered(lo, hi, covered, peps);
+        cover(covered, {lo, hi});
+      } else {  // across 2 pi: two spans, joined again after
+        left = uncovered(lo, kTwoPi, covered, peps);
+        const auto wrap = uncovered(0, hi - kTwoPi, covered, peps);
+        cover(covered, {lo, kTwoPi});
+        cover(covered, {0, hi - kTwoPi});
+        if (!left.empty() && !wrap.empty() && left.back().second >= kTwoPi - 1e-12 && wrap.front().first <= 1e-12) left.back().second = kTwoPi + wrap.front().second, left.insert(left.end(), wrap.begin() + 1, wrap.end());
+        else left.insert(left.end(), wrap.begin(), wrap.end());
+      }
+      if (left.size() == 1 && std::fabs(left[0].first - lo) <= 1e-12 && std::fabs(left[0].second - hi) <= 1e-12) continue;  // untouched
+      auto& out = replaced[m];
+      if (c == kLine && s0 > s1) std::reverse(left.begin(), left.end());
+      for (const auto& [a, b] : left) {
+        Curve piece = k;
+        if (c == kLine) {
+          auto at = [&](double s) { return k.pts[0] + (k.pts[1] - k.pts[0]) * ((s - s0) / (s1 - s0)); };
+          piece.pts = s0 <= s1 ? std::vector<Vec2>{at(a), at(b)} : std::vector<Vec2>{at(b), at(a)};
+        } else if (c != kSpline) {
+          piece.a0 = std::fmod(a - shift, kTwoPi);
+          if (piece.a0 < 0) piece.a0 += kTwoPi;
+          piece.a1 = piece.a0 + (b - a);
+        }
+        out.push_back(std::move(piece));
+      }
+    }
+  }
+  if (replaced.empty()) return 0;
+  std::vector<Curve> out;
+  out.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    auto it = replaced.find(i);
+    if (it == replaced.end()) out.push_back(std::move(curves[i]));
+    else std::move(it->second.begin(), it->second.end(), std::back_inserter(out));
+  }
+  curves.swap(out);
+  return replaced.size();
 }
 
 // ---- caches
@@ -623,7 +851,7 @@ struct Reader {
   }
 };
 
-constexpr char kMagic[] = "OPADPRJ1";
+constexpr char kMagic[] = "OPADPRJ2";
 
 }  // namespace
 
@@ -755,6 +983,7 @@ json Curve::to_json() const {
   if (body >= 0) j["body"] = body;
   if (edge >= 0) j["edge"] = edge;
   if (face >= 0) j["face"] = face;
+  j["z"] = z;
   auto points = [](const std::vector<Vec2>& v) {
     json a = json::array();
     for (const auto& p : v) a.push_back({p[0], p[1]});
@@ -818,7 +1047,7 @@ std::string ViewGeometry::serialize() const {
     std::vector<double> p;
     for (const auto& q : k.pts) p.insert(p.end(), {q[0], q[1]});
     w.doubles(p);
-    w.doubles({k.c[0], k.c[1], k.r1, k.r2, k.rot, k.a0, k.a1, static_cast<double>(k.degree)});
+    w.doubles({k.c[0], k.c[1], k.r1, k.r2, k.rot, k.a0, k.a1, static_cast<double>(k.degree), k.z});
     w.doubles(k.knots);
     w.doubles(k.weights);
   }
@@ -854,10 +1083,11 @@ ViewGeometry ViewGeometry::deserialize(const std::string& blob) {
     const auto p = r.doubles();
     for (size_t i = 0; i + 1 < p.size(); i += 2) k.pts.push_back({p[i], p[i + 1]});
     const auto a = r.doubles();
-    if (a.size() != 8) throw Error("bad projection blob");
+    if (a.size() != 9) throw Error("bad projection blob");
     k.c = {a[0], a[1]};
     k.r1 = a[2], k.r2 = a[3], k.rot = a[4], k.a0 = a[5], k.a1 = a[6];
     k.degree = static_cast<int>(a[7]);
+    k.z = a[8];
     k.knots = r.doubles();
     k.weights = r.doubles();
   }
@@ -874,10 +1104,12 @@ void detail::Run::report(double fraction, const std::string& phase, bool force) 
   if (!m_callback(fraction, phase)) m_stop = true;
 }
 
-void detail::emit(const Adaptor3d_Curve& c, double t0, double t1, const View& v, const Curve& like, double tol, std::vector<Curve>& out) {
+void detail::emit(const Adaptor3d_Curve& c, double t0, double t1, const View& v, const Curve& as, double tol, std::vector<Curve>& out) {
   if (t1 < t0) std::swap(t0, t1);
   if (!(t1 - t0 > 1e-12)) return;
+  Curve like = as;
   try {
+    like.z = v.depth(c.Value(0.5 * (t0 + t1)));
     switch (c.GetType()) {
       case GeomAbs_Line: {
         Curve k = like;
@@ -977,6 +1209,7 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
   }
   run.check();
   const auto finish = std::chrono::steady_clock::now();
+  g->stats["overlaps"] = drop_overlaps(g->curves, 0.1 * spec.tolerance);  // closer than a tenth of the tolerance: one line
   bool any = false;
   std::array<double, 4> box{1e300, 1e300, -1e300, -1e300};
   for (const auto& k : g->curves) {
@@ -987,7 +1220,7 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
     }
   }
   if (any) g->bounds = box;
-  g->stats["bounds_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - finish).count();
+  g->stats["finish_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - finish).count();
   g->stats["bodies"] = sources.size();
   g->stats["ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
   run.report(1, "hidden lines: done", true);
