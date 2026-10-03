@@ -1,7 +1,7 @@
 # The UI contracts (app/Commands, Ribbon, PanelFooter, Toast, Theme) built offscreen with their app sources; without the
 # desktop app (no Qt) the test is not built.
 if(TARGET opad)
-  target_sources(${target} PRIVATE ../app/Commands.cpp ../app/Icons.cpp ../app/ShortcutEditor.cpp ../app/Theme.cpp ../app/Theme.hpp)
+  target_sources(${target} PRIVATE ../app/Commands.cpp ../app/Icons.cpp ../app/PanelFooter.cpp ../app/ShortcutEditor.cpp ../app/Theme.cpp ../app/Theme.hpp)
   set_target_properties(${target} PROPERTIES AUTOMOC ON)
   target_include_directories(${target} PRIVATE ../app)
   target_link_libraries(${target} PRIVATE Qt6::Widgets Qt6::Test)

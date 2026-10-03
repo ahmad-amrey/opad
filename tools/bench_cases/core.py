@@ -10,4 +10,7 @@ CASES = [
     ("areas-rtl", "box", {"OPAD_BENCH_AREAS": "{prefix}", "OPAD_BENCH_AREAS_WORKSPACE": "design", "OPAD_LANG": "ar"}, "[ui]\nworkspace=1\n"),
     # The shared UI contracts (UI-120, app/ContractsBench.cpp). The command registry on a STEP file in viewer mode.
     ("commands", "screw", {"OPAD_BENCH_COMMANDS": "1"}),
+    # The panel footer in the feature panel and the guided tools' panel, left to right and mirrored.
+    ("footer", "box", {"OPAD_BENCH_FOOTER": "1", "OPAD_BENCH_UISHOT": "{prefix}"}),
+    ("footer-rtl", "box", {"OPAD_BENCH_FOOTER": "1", "OPAD_BENCH_UISHOT": "{prefix}", "OPAD_LANG": "ar"}),
 ]

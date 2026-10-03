@@ -152,6 +152,14 @@ QString stylesheet(const Tokens& t) {
                "QPushButton#primary:hover { background: %8; }\n"
                "QPushButton#outline { background: transparent; height: 22px; min-height: 20px; padding: 0 8px; font-size: 12px; }\n"
                "QPushButton:disabled { color: %9; }\n").arg(line, bg2, fg, bg3, bg4, sel, onsel, css(t.sel.lighter(115)), fg3);
+  // Panel footers (PanelFooter): a label and its key in each button, the key in mono and dimmer.
+  s += QString("QPushButton QLabel#footerText { background: transparent; }\n"
+               "QPushButton QLabel[footerRole=\"key\"] { background: transparent; color: %1; font-family: '%2'; font-size: 11px; }\n"
+               "QPushButton#primary QLabel#footerText { color: %3; font-weight: 500; }\n"
+               "QPushButton#primary QLabel[footerRole=\"key\"] { color: %4; }\n"
+               "QPushButton#primary:disabled { background: %5; border-color: %5; }\n"
+               "QPushButton QLabel#footerText:disabled, QPushButton QLabel[footerRole=\"key\"]:disabled { color: %1; }\n")
+           .arg(fg3, monoF, onsel, css(QColor(255, 255, 255, 170)), css(QColor(t.sel.red(), t.sel.green(), t.sel.blue(), 110)));
   s += QString("QTreeWidget, QTreeView, QListWidget { background: transparent; border: none; outline: none; show-decoration-selected: 1; }\n"
                "QTreeWidget::item, QTreeView::item, QListWidget::item { height: 28px; border: none; }\n"
                "QTreeWidget::item:hover, QListWidget::item:hover { background: %2; }\n"

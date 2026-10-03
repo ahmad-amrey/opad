@@ -3,11 +3,13 @@
 // gui_benches cases ribbon, ribbon-rtl, toast and toast-rtl (app/ContractsBench.cpp).
 #include <QAction>
 #include <QApplication>
+#include <QLabel>
 
 #include <algorithm>
 #include <utility>
 
 #include "Commands.hpp"
+#include "PanelFooter.hpp"
 #include "Theme.hpp"
 #include "check.hpp"
 
@@ -102,6 +104,47 @@ TEST(semantic_tokens) {
   CHECK(theme::cues().size() == 10 && marks.size() == 10 && labels.size() == 10 && !theme::cue("hover"));
   const Tokens dark = theme::tokens(true);
   CHECK(dark.*(theme::cue("diffAdded")->colour) == dark.diffAdded && dark.*(theme::cue("assetMissing")->colour) == dark.assetMissing);
+}
+
+TEST(panel_footer) {
+  for (const Qt::LayoutDirection direction : {Qt::LeftToRight, Qt::RightToLeft}) {
+    QWidget panel;
+    panel.setLayoutDirection(direction);
+    auto* footer = new PanelFooter(&panel);
+    CHECK(footer->cancelText() == "Cancel" && PanelFooter::key(footer->cancel()) == "Esc" && footer->primaryText() == "OK" &&
+          PanelFooter::key(footer->primary()) == "Enter" && footer->primary()->objectName() == "primary");
+    footer->setPrimary(PanelFooter::Primary::Stay);
+    CHECK(footer->primaryText() == "Apply" && PanelFooter::key(footer->primary()) == "Enter");
+    QPushButton* copy = footer->addSecondary("Copy");
+    QPushButton* undo = footer->addSecondary("Undo point", "Ctrl+Z");
+    footer->setCancel("Clear");
+    footer->setPrimary("Pin to document", "P");
+    CHECK(footer->cancelText() == "Clear" && PanelFooter::key(footer->cancel()) == "Esc" && PanelFooter::text(undo) == "Undo point" &&
+          PanelFooter::key(undo) == "Ctrl+Z" && PanelFooter::key(copy).isEmpty() && footer->primary()->toolTip() == "Pin to document  (P)");
+    const int width = footer->minimumSizeHint().width() + 40;  // a panel takes at least the footer's minimum (ToolStepsPanel)
+    footer->setGeometry(0, 0, width, 44);
+    panel.resize(width, 44);
+    panel.show();
+    QApplication::processEvents();
+    // Reading order: secondaries on the leading side, then Cancel, then the primary at the trailing end.
+    QList<int> x;
+    for (QPushButton* b : {copy, undo, footer->cancel(), footer->primary()}) x << b->geometry().center().x();
+    const bool ltr = direction == Qt::LeftToRight;
+    CHECK(ltr ? std::is_sorted(x.begin(), x.end()) : std::is_sorted(x.rbegin(), x.rend()));
+    CHECK(ltr ? footer->primary()->geometry().right() > width - 40 : footer->primary()->geometry().left() < 40);
+    for (QPushButton* b : {copy, undo, footer->cancel(), footer->primary()}) CHECK(b->width() >= b->sizeHint().width());  // labels whole
+    int accepted = 0, cancelled = 0;
+    QObject::connect(footer, &PanelFooter::accepted, [&] { ++accepted; });
+    QObject::connect(footer, &PanelFooter::cancelled, [&] { ++cancelled; });
+    footer->primary()->click();
+    footer->cancel()->click();
+    footer->setPrimaryEnabled(false);
+    footer->primary()->click();
+    CHECK(accepted == 1 && cancelled == 1);
+    CHECK(footer->primary()->focusPolicy() != Qt::NoFocus);
+    footer->setKeysStayWithWindow(true);
+    CHECK(footer->primary()->focusPolicy() == Qt::NoFocus && footer->cancel()->focusPolicy() == Qt::NoFocus && copy->focusPolicy() != Qt::NoFocus);
+  }
 }
 
 int main(int argc, char** argv) {
