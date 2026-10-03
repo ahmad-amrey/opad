@@ -106,7 +106,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchShapes();
   void benchCrossLock();
   void benchSnaps();
-  void refreshSnap();  // a snap setting changed (Ortho): the pointer's snap again where it is
+  void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -205,6 +205,7 @@ class SketchEditor : public QObject, public SketchInput {
   int referenceX();                                   // a fixed line along +X to hold an angle from the X axis against
   bool keepSweep(const Snap& s, int arc, int radius, double r);  // a typed sweep as the arc's length, radius dimension times it
   int pointAt(double u, double v) const;              // an existing point exactly there (typed values land on it)
+  const opad::design::SkPoint* pointOf(int id) const;  // through the geometry cache's index (a mouse move never scans, UI-27)
   bool tangentStart(double& u, double& v, double& tu, double& tv) const;  // a tangent arc's line end and the way it leaves it
   std::vector<std::pair<double, double>> filletPreview(int corner) const;  // the fillet's arc at a corner (empty: none fits)
   double unitLength() const;                          // mm in one unit of the document
@@ -345,6 +346,16 @@ class SketchEditor : public QObject, public SketchInput {
   struct Lock { sketchsnap::Guide line; bool horizontal = false, vertical = false, sticky = false; int stop = -1; double su = 0, sv = 0; std::vector<Snap::Hold> holds; };
   std::optional<Lock> m_lock;
   bool m_shiftDown = false, m_shiftUsed = false, m_shiftSpent = false, m_unstick = false, m_inView = false;
+  // The snap and solver settings, read once (UI-27: a mouse move read them a dozen times): when a sketch opens and when one
+  // changes (refreshSnap: the snaps page, F8, F9, F11, F12).
+  struct Settings {
+    bool endpoint = true, midpoint = true, center = true, quadrant = true, intersection = true, apparent = true, perpendicular = true, tangent = true,
+         nearest = true, angle = true, inference = true, extensions = true, tracking = true, ortho = false;
+    double angleStep = 15, tolerance = 1e-8;
+    int iterations = 100;
+  } m_settings;
+  void readSettings();
+  size_t m_settingsReads = 0;  // benches: a mouse move reads nothing
   int m_snapChoice = 0;  // the object snap shown when several are in reach (Shift taps, UI-23), counted from (m_choiceU, m_choiceV)
   double m_choiceU = 0, m_choiceV = 0;
   bool m_cyclePending = false;  // Shift went down over several object snaps: a tap shows the next, a hold locks

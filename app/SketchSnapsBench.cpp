@@ -33,6 +33,7 @@ void SketchEditor::benchSnaps() {
   for (const char* key : {"endpoint", "midpoint", "center", "quadrant", "intersection", "nearest", "angle", "inference"}) QSettings().setValue(QString("sketch/snap/") + key, true);
   QSettings().setValue("view/tracking", true);
   QSettings().setValue("view/extensions", true);
+  refreshSnap();  // read once, not per move (UI-27)
   f9->setChecked(false);
   auto camera = [&](double scale) {
     m_viewport->setCameraJson({{"eye", {0, 0, 100}}, {"target", {0, 0, 0}}, {"up", {0, 1, 0}}, {"scale", scale}, {"projection", "orthographic"}, {"absolute", true}});

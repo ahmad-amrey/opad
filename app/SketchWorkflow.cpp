@@ -1,4 +1,5 @@
 #include "SketchEditor.hpp"
+#include "SketchGeometryCache.hpp"
 #include "DimensionHandle.hpp"
 #include "SketchPanel.hpp"
 #include <QPointer>
@@ -23,8 +24,8 @@ using namespace opad::design;
 
 SolveOptions SketchEditor::solveOptions() const {
   SolveOptions out;
-  out.tolerance=QSettings().value("sketch/tolerance",1e-8).toDouble();
-  out.max_iterations=QSettings().value("sketch/iterations",100).toInt();
+  out.tolerance=m_settings.tolerance;
+  out.max_iterations=m_settings.iterations;
   return out;
 }
 
@@ -307,8 +308,8 @@ void SketchEditor::toggleReference() {
 
 bool SketchEditor::selectable(int id) const {
   if(m_tool!="select" || m_selectionFilter=="all")return true;
-  if(m_sk.point(id))return m_selectionFilter=="point";
-  if(const auto* e=m_sk.entity(id)) {
+  if(m_geometry?m_geometry->point(m_sk,id)!=nullptr:m_sk.point(id)!=nullptr)return m_selectionFilter=="point";
+  if(const auto* e=m_geometry?m_geometry->entity(m_sk,id):m_sk.entity(id)) {
     if(m_selectionFilter=="construction")return e->construction;
     if(m_selectionFilter=="arc")return e->type==SkEntity::Type::Circle || e->type==SkEntity::Type::Arc;
     return m_selectionFilter==SkEntity::type_name(e->type);

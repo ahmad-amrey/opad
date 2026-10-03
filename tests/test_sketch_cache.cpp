@@ -22,4 +22,20 @@ TEST(curves_share_pick_samples_and_refine_only_on_zoom_in) {
   CHECK(cache.matches(sk,1));CHECK(!cache.matches(sk,.01));cache.update(sk,.01);CHECK_EQ(cache.builds,2u);
   CHECK(cache.matches(sk,.01));
 }
+// UI-27: what a mouse move asks comes from the cache, never a scan of the sketch: centres, the curves through a point, ids.
+TEST(centres_curves_at_a_point_and_ids) {
+  Sketch sk;
+  const int c=sk.add_point(0,0),a=sk.add_point(5,0),b=sk.add_point(0,5),e=sk.add_point(9,9);
+  const int circle=sk.add_circle(c,5),arc=sk.add_arc(a,c,b),line=sk.add_line(a,e),other=sk.add_line(e,b);
+  SketchGeometryCache cache;cache.update(sk,.01);
+  CHECK(cache.centre(c) && cache.centre(a) && !cache.centre(b) && !cache.centre(e));
+  CHECK_EQ(cache.curvesAt(a).size(),2u);  // the arc about it and the line from it
+  CHECK(sk.entities[cache.curvesAt(e)[0]].id==line && sk.entities[cache.curvesAt(e)[1]].id==other);
+  CHECK(cache.curvesAt(12345).empty());
+  CHECK(cache.entity(sk,arc)==sk.entity(arc) && cache.entity(sk,circle)->r==5 && cache.point(sk,b)==sk.point(b));
+  sk.remove(line);  // stale until updated: ids are still found (by the sketch), indices are checked
+  CHECK(cache.entity(sk,other)==sk.entity(other) && cache.entity(sk,line)==nullptr);
+  cache.update(sk,.01);
+  CHECK_EQ(cache.curvesAt(a).size(),1u);
+}
 CHECK_MAIN()

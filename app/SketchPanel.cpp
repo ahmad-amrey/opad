@@ -132,7 +132,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
       continue;
     }
     check->setChecked(QSettings().value("sketch/snap/"+key,true).toBool());
-    connect(check,&QCheckBox::toggled,this,[key](bool on){QSettings().setValue("sketch/snap/"+key,on);});
+    connect(check,&QCheckBox::toggled,this,[this,key](bool on){QSettings().setValue("sketch/snap/"+key,on);m_editor->refreshSnap();});
   }
   // A size or an angle typed while drawing holds what it made (UI-17).
   auto* keep=new QCheckBox(tr("Typed values become dimensions"),this);keep->setObjectName("input-addDimensions");settings->addWidget(keep);
@@ -141,11 +141,11 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(keep,&QCheckBox::toggled,this,[](bool on){QSettings().setValue("sketch/input/addDimensions",on);});
   auto* advanced=new QFormLayout;settings->addLayout(advanced);
   auto* angle=new QDoubleSpinBox(this);angle->setRange(1,90);angle->setValue(QSettings().value("sketch/angleStep",15).toDouble());advanced->addRow(tr("Angle step"),angle);
-  connect(angle,&QDoubleSpinBox::valueChanged,this,[](double v){QSettings().setValue("sketch/angleStep",v);});
+  connect(angle,&QDoubleSpinBox::valueChanged,this,[this](double v){QSettings().setValue("sketch/angleStep",v);m_editor->refreshSnap();});
   auto* tolerance=new QLineEdit(QSettings().value("sketch/tolerance","1e-8").toString(),this);advanced->addRow(tr("Solver tolerance"),tolerance);
-  connect(tolerance,&QLineEdit::editingFinished,this,[tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) QSettings().setValue("sketch/tolerance",v);else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
+  connect(tolerance,&QLineEdit::editingFinished,this,[this,tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) {QSettings().setValue("sketch/tolerance",v);m_editor->refreshSnap();}else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
   auto* iterations=new QSpinBox(this);iterations->setRange(1,1000);iterations->setValue(QSettings().value("sketch/iterations",100).toInt());advanced->addRow(tr("Solver iterations"),iterations);
-  connect(iterations,&QSpinBox::valueChanged,this,[](int v){QSettings().setValue("sketch/iterations",v);});settings->addStretch();
+  connect(iterations,&QSpinBox::valueChanged,this,[this](int v){QSettings().setValue("sketch/iterations",v);m_editor->refreshSnap();});settings->addStretch();
   m_status=new QLabel(this);m_status->setWordWrap(true);layout->addWidget(m_status);
   auto* footer=new QHBoxLayout;layout->addLayout(footer);
   // Finish sketch lives in the ribbon, next to Cancel sketch. The footer is Backspace and Esc as buttons (UI-20): Undo

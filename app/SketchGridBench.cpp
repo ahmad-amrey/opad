@@ -35,6 +35,7 @@ void SketchEditor::benchGrid() {
   QSettings().setValue("sketch/snap/angle", true);
   QSettings().setValue("sketch/angleStep", 15);
   QSettings().setValue("view/tracking", true);
+  refreshSnap();  // read once, not per move (UI-27)
 
   f9->setChecked(false);
   check(!m_viewport->gridSnap() && !box->isChecked(), "off: the switch and the panel agree");

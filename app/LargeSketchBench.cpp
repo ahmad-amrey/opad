@@ -35,7 +35,7 @@ bool MainWindow::benchLargeSketch() {
 }
 
 void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
-  struct Run {int step=0;size_t builds=0;opad::json metrics,camera,edited;std::vector<double> hover,pan,frames;opad::json original;QElapsedTimer elapsed,drag;};
+  struct Run {int step=0;size_t builds=0,loads=0;opad::json metrics,camera,edited;std::vector<double> hover,pan,frames,snap,move;opad::json original;QElapsedTimer elapsed,drag;};
   auto run=std::make_shared<Run>();run->metrics=std::move(metrics);run->original=geometry();
   run->elapsed.start();m_viewport->setNavPreset(Viewport::NavPreset::Fusion);
   auto* timer=new QTimer(this);timer->setInterval(30);
@@ -90,11 +90,32 @@ void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
       sketchPress(x0-margin,y0-margin,Qt::NoModifier);sketchMove(x1+margin,y1+margin,Qt::NoModifier,true);sketchRelease(x1+margin,y1+margin,Qt::NoModifier);
       run->metrics["select_all_box_ms"]=time.nsecsElapsed()/1e6;
       if(m_sel.size()<m_sk.entities.size())throw opad::Error("window selection missed sketch entities");
+    } else if(step==39) {  // UI-27: the line tool from a point, so every snap kind is looked for on each move
+      m_sel.clear();setTool("line");
+      const auto& p=m_sk.points[m_sk.points.size()/2];sketchPress(p.x,p.y,Qt::NoModifier);
+      run->loads=m_settingsReads;
+    } else if(step<56) {
+      if(m_chain.empty())throw opad::Error("the line tool did not start on the point clicked");
+      const auto& p=m_sk.points[(size_t(step-40)*m_sk.points.size()/16+7)%m_sk.points.size()];
+      time.restart();
+      sketchMove(p.x+tol()*.3,p.y+tol()*.2,Qt::NoModifier,false);
+      run->move.push_back(time.nsecsElapsed()/1e6);
+      time.restart();
+      snap(p.x+tol()*.3,p.y+tol()*.2);  // the snapping alone (the move also redraws and places the value boxes)
+      run->snap.push_back(time.nsecsElapsed()/1e6);
+      if(m_cursor.kind!=Snap::Kind::Point || m_cursor.point!=p.id)throw opad::Error("the pointer beside a point did not snap to it");
+      if(m_settingsReads!=run->loads)throw opad::Error("the snap settings were read again on a mouse move");
+    } else if(step==56) {
+      setTool("select");
+      trace::log(QString("bench: large sketch: line tool snaps beside %1 points without reading the settings again PASS").arg(m_sk.points.size()));
     } else {
       if(m_fillTimer.isActive()||m_fillJob){--run->step;return;}
       timer->stop();
       auto report=[](std::vector<double> v){std::sort(v.begin(),v.end());double sum=0;for(double x:v)sum+=x;return opad::json{{"mean_ms",sum/v.size()},{"p95_ms",v[size_t((v.size()-1)*.95)]},{"max_ms",v.back()}};};
-      run->metrics["hover"]=report(run->hover);run->metrics["pan_event"]=report(run->pan);
+      run->metrics["hover"]=report(run->hover);run->metrics["pan_event"]=report(run->pan);run->metrics["line_snap"]=report(run->snap);run->metrics["line_move"]=report(run->move);
+      // Snapping with the line tool over a big sketch costs what is near the pointer, not the sketch's size (UI-27: 180 ms
+      // a move over 30,000 segments, the apparent intersections' curves looked their points up by scanning).
+      if(run->metrics["line_snap"]["p95_ms"].get<double>()>8)throw opad::Error("snapping took "+run->metrics["line_snap"].dump()+" per mouse move");
       run->metrics["pan_frame"]=report(run->frames);
       auto restored=geometry(),expected=run->original;restored.erase("id_watermark");expected.erase("id_watermark");
       if(restored!=expected)throw opad::Error("selection changed sketch geometry");

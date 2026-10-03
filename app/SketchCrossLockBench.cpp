@@ -41,6 +41,7 @@ void SketchEditor::benchCrossLock() {
   QSettings().setValue("view/extensions", true);
   QSettings().setValue("sketch/snap/angle", true);
   QSettings().setValue("sketch/angleStep", 15);
+  refreshSnap();  // read once, not per move (UI-27)
   f9->setChecked(false);
   // A view about 105 mm across (as the grid bench): a 10 mm grid.
   auto camera = [&](double scale) {

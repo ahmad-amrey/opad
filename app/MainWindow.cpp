@@ -1035,7 +1035,7 @@ void MainWindow::buildStatusBar() {
       if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
       else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
       else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);
-      else if(m_design && m_design->sketch()) m_design->sketch()->refreshSnap();  // Ortho (UI-23): the sketch reads it, at once
+      if(m_design && m_design->sketch()) m_design->sketch()->refreshSnap();  // the sketch reads them once (UI-27), again now
     };
     connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
     auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);

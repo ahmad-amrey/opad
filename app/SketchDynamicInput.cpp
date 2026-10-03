@@ -135,7 +135,7 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
 bool SketchEditor::inputBase(double& u, double& v) const {
   if (!kPointTools.contains(m_tool)) return false;
   if (m_tool == "line" || m_tool == "spline") {
-    const SkPoint* p = m_chain.empty() ? nullptr : m_sk.point(m_chain.back());
+    const SkPoint* p = m_chain.empty() ? nullptr : pointOf(m_chain.back());
     if (p) u = p->x, v = p->y;
     return p;
   }
@@ -147,7 +147,7 @@ bool SketchEditor::inputBase(double& u, double& v) const {
 
 double SketchEditor::angleReference() const {
   if (!m_angleRelative || m_tool != "line" || m_chain.size() < 2) return 0;
-  const SkPoint *a = m_sk.point(m_chain[m_chain.size() - 2]), *b = m_sk.point(m_chain.back());
+  const SkPoint *a = pointOf(m_chain[m_chain.size() - 2]), *b = pointOf(m_chain.back());
   return a && b && std::hypot(b->x - a->x, b->y - a->y) > 1e-12 ? std::atan2(b->y - a->y, b->x - a->x) : 0;
 }
 
@@ -613,7 +613,7 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
   };
   auto direction = [](double au, double av, double bu, double bv) { return std::atan2(bv - av, bu - au); };
   if (chain) {
-    const SkPoint* p = m_sk.point(m_chain.back());
+    const SkPoint* p = pointOf(m_chain.back());
     if (p && std::hypot(cu - p->x, cv - p->y) > 1e-12) polar("length", p->x, p->y, angleReference());
     return out;
   }
