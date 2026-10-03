@@ -28,6 +28,7 @@ class DimensionHandle : public QWidget {
  signals:
   void valueChanged(const QString& expression);
   void accepted();  // Enter in the value box: apply the operation
+  void dragFinished();  // the arrow let go after a drag
  protected:
   void showEvent(QShowEvent*) override;
   void hideEvent(QHideEvent*) override;

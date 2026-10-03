@@ -210,7 +210,7 @@ void DimensionHandle::mouseMoveEvent(QMouseEvent* e) {
   m_value=std::round(raw/step)*step;  // round values at this zoom, not 12.3456789 mm
   setText(lengthText(m_value,step),false);reposition();emit valueChanged(m_edit->text());e->accept();
 }
-void DimensionHandle::mouseReleaseEvent(QMouseEvent* e) {if(e->button()==Qt::LeftButton){m_dragging=false;restyle();reposition();e->accept();}}
+void DimensionHandle::mouseReleaseEvent(QMouseEvent* e) {if(e->button()==Qt::LeftButton){const bool was=m_dragging;m_dragging=false;restyle();reposition();e->accept();if(was)emit dragFinished();}}
 void DimensionHandle::wheelEvent(QWheelEvent* e) {nudge(e->angleDelta().y()>0?1:-1,e->modifiers());e->accept();}
 void DimensionHandle::nudge(double steps,Qt::KeyboardModifiers modifiers) {
   const double step=units::fromDisplay(units::Kind::Length,modifiers.testFlag(Qt::ShiftModifier)?10:modifiers.testFlag(Qt::ControlModifier)?0.1:1);  // in the shown unit

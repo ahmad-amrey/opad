@@ -635,8 +635,17 @@ std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, 
 
   std::vector<ExplodeUnit> units;
   b.flatten(0, -1, units);
+  explode_stage(units, spec);
+  return units;
+}
+
+void explode_stage(std::vector<ExplodeUnit>& units, const ExplodeSpec& spec) {
   int stages = 0;
-  for (const auto& u : units) stages = std::max(stages, u.level);
+  for (auto& u : units) {
+    stages = std::max(stages, u.level);
+    u.t0 = 0;
+    u.t1 = 1;
+  }
   if (spec.stages == "levels") {
     for (auto& u : units) {
       u.t0 = double(u.level - 1) / stages;
@@ -644,17 +653,21 @@ std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, 
     }
   } else if (spec.stages == "units") {  // one after another: level by level, the farthest first (outer parts leave first)
     std::vector<size_t> order;
-    for (size_t i = 0; i < units.size(); ++i)
+    std::vector<double> travel(units.size(), 0);
+    for (size_t i = 0; i < units.size(); ++i) {
+      Vec3 own = mul(units[i].dir, units[i].distance);
+      if (const auto m = spec.offsets.find(units[i].id); m != spec.offsets.end()) own = add(own, m->second);
+      travel[i] = norm(own);
       if (units[i].distance > 0 || spec.offsets.count(units[i].id)) order.push_back(i);
+    }
     std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) {
-      return units[x].level != units[y].level ? units[x].level < units[y].level : units[x].distance > units[y].distance;
+      return units[x].level != units[y].level ? units[x].level < units[y].level : travel[x] > travel[y];
     });
     for (size_t n = 0; n < order.size(); ++n) {
       units[order[n]].t0 = double(n) / order.size();
       units[order[n]].t1 = double(n + 1) / order.size();
     }
   }
-  return units;
 }
 
 double explode_progress(const ExplodeUnit& u, double t) {

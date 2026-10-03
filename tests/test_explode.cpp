@@ -216,6 +216,18 @@ TEST(staging_and_manual_offsets) {
   for (size_t i = 1; i < seq.size(); ++i) CHECK(seq[i].t0 >= seq[i - 1].t1 - 1e-12);
   CHECK_EQ(seq.front().level, 1);
   CHECK_EQ(seq.back().level, 2);
+  // The bottom shell dragged down takes a turn of its own once staged again (no new layout); together again: all at once.
+  auto staged = explode_units(d.doc, s, spec);
+  CHECK_NEAR(unit_of(staged, d.shell).t1 - unit_of(staged, d.shell).t0, 1, 1e-12);
+  spec.offsets[d.shell] = {0, 0, -10};
+  explode_stage(staged, spec);
+  CHECK_NEAR(unit_of(staged, d.shell).t1 - unit_of(staged, d.shell).t0, 1.0 / 8, 1e-12);
+  CHECK(unit_of(staged, d.shell).t1 <= 0.5 + 1e-12);  // level 1: before every screw
+  std::sort(staged.begin(), staged.end(), [](const ExplodeUnit& a, const ExplodeUnit& b) { return a.t0 < b.t0; });
+  for (size_t i = 1; i < staged.size(); ++i) CHECK(staged[i].t0 >= staged[i - 1].t1 - 1e-12);
+  spec.stages = "together";
+  explode_stage(staged, spec);
+  for (const auto& u : staged) CHECK(u.t0 == 0 && u.t1 == 1);
 }
 
 TEST(axis_and_stack) {

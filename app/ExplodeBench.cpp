@@ -423,12 +423,41 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     const double typed = opad::explode_travel(area->units()[static_cast<size_t>(area->dragUnit())], area->spec(), u.dir);
                     require(box && std::abs(seven - 7) < 1e-6 && std::abs(typed - 22.5) < 1e-6, QString("typed over the view: 7 -> %1 mm, '12.5 mm + 10 mm' -> %2 mm").arg(seven).arg(typed));
                     if (box) box->clearFocus();
+                    // One after another: the order is the units' own, no new layout; the shell (it stays) has no turn.
+                    QComboBox* order = form->findChild<QComboBox*>("explodeStages");
+                    order->setCurrentIndex(order->findData("units"));
+                    emit order->activated(order->currentIndex());
+                    const opad::ExplodeUnit& shell = area->units()[static_cast<size_t>(area->unitOf(s->shell))];
+                    require(area->spec().stages == "units" && !area->layingOut() && shell.t0 == 0 && shell.t1 == 1,
+                            QString("One after another: staged at once (no layout), the shell that stays has no turn (%1 to %2)").arg(shell.t0).arg(shell.t1));
+                    w.m_browser->selectIds({s->shell});
+                  }});
+  // A part dragged out of its place takes a turn of its own, without a new layout; back in place it has none.
+  list.push_back({[=] { return area->dragUnit() >= 0 && area->units()[static_cast<size_t>(area->dragUnit())].bodies == std::vector<std::string>{s->shell} && area->handle()->isVisible(); },
+                  [=, &w](bool shown) {
+                    auto* box = area->handle()->findChild<QLineEdit*>("dimensionValue");
+                    auto type = [box](const QString& text) {
+                      box->setText(text);
+                      emit box->textEdited(text);
+                      emit box->returnPressed();
+                    };
+                    auto turn = [=] { const opad::ExplodeUnit& u = area->units()[static_cast<size_t>(area->unitOf(s->shell))]; return u.t1 - u.t0; };
+                    if (box) type("-10 mm");
+                    const double moved = turn();
+                    if (box) type("0 mm");
+                    const double back = turn();
+                    require(shown && box && moved > 0.05 && moved < 0.5 && back == 1 && !area->layingOut() && !area->spec().offsets.count(s->shell),
+                            QString("the shell typed 10 mm down takes a turn of %1 of the distance, back in place none (%2), no layout").arg(moved).arg(back));
+                    if (box) box->clearFocus();
+                    QComboBox* order = form->findChild<QComboBox*>("explodeStages");
+                    order->setCurrentIndex(order->findData("together"));
+                    emit order->activated(order->currentIndex());
+                    w.m_browser->selectIds({});
+                    v->clearSelection();
                   }});
   // A hand drawing on the moved lid: stored where the lid is in the model, drawn where it is now.
   auto pickedAt = std::make_shared<opad::Vec3>();
-  list.push_back({[=, &w] { return !v->looksPending() && !w.m_jobs->busy(); }, [=, &w](bool) {
-                    w.m_browser->selectIds({});
-                    v->clearSelection();
+  list.push_back({[=, &w] { return !v->looksPending() && !w.m_jobs->busy() && v->selection().empty(); }, [=, &w](bool) {
                     s->ops = doc->doc.ops.size();
                     w.startAnnotation(true);
                     int x = 0, y = 0;

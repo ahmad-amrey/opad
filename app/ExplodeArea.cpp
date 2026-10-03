@@ -258,7 +258,7 @@ void Explode::ready() {
     });
   });
   connect(m_form, &ExplodePanel::spacingChosen, this, [this](double spacing) { edit([&](opad::ExplodeSpec& s) { s.spacing = spacing; }); });
-  connect(m_form, &ExplodePanel::stagesChosen, this, [this](const QString& stages) { edit([&](opad::ExplodeSpec& s) { s.stages = stages.toStdString(); }); });
+  connect(m_form, &ExplodePanel::stagesChosen, this, [this](const QString& stages) { edit([&](opad::ExplodeSpec& s) { s.stages = stages.toStdString(); }, false); });
   connect(m_form, &ExplodePanel::attachSmallToggled, this, [this](bool on) { edit([&](opad::ExplodeSpec& s) { s.attach_small = on; }); });
   connect(m_form, &ExplodePanel::linesToggled, this, [this](bool on) {
     m_lines = on;
@@ -280,8 +280,13 @@ void Explode::ready() {
     if (!travel) return;
     const opad::ExplodeUnit& u = m_units[static_cast<size_t>(m_dragUnit)];
     opad::set_explode_travel(m_spec, u, dragAxis(u), *travel);
+    if (!m_handle->dragging()) opad::explode_stage(m_units, m_spec);  // typed: one after another, its turn now
     apply();
     services().browser()->refreshDecorations();
+  });
+  connect(m_handle, &DimensionHandle::dragFinished, this, [this] {  // dragged: its turn once let go (the part stays put meanwhile)
+    opad::explode_stage(m_units, m_spec);
+    apply();
   });
   m_chip = new QLabel;
   m_chip->setObjectName("chipSel");
@@ -419,7 +424,10 @@ void Explode::edit(const std::function<void(opad::ExplodeSpec&)>& change, bool r
   change(m_spec);
   if (!m_on) setOn(true);
   else if (relayout) layout();
-  else apply();
+  else {
+    opad::explode_stage(m_units, m_spec);  // drags reset: one after another, the order without them
+    apply();
+  }
   refreshPanel();
   services().browser()->refreshDecorations();
   services().updateCommands();

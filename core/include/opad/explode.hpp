@@ -60,6 +60,9 @@ int explode_depth(const Scene& scene, const ExplodeSpec& spec);
 // The units, parents before children. box_of: a body node's world box; by default its tight box (node_tight_bbox from
 // the cached corners), which walks each shape once: workers only.
 std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, const ExplodeSpec& spec, const ExplodeBoxFn& box_of = {});
+// The stretch of t each unit moves over (t0, t1) for spec.stages; explode_units ends with it. Again after manual offsets
+// change: one after another, a unit dragged out of its place takes a turn of its own.
+void explode_stage(std::vector<ExplodeUnit>& units, const ExplodeSpec& spec);
 // How far along its own move a unit is at t: 0 before its stretch [t0, t1], 1 after it, eased in between.
 double explode_progress(const ExplodeUnit& unit, double t);
 // Each unit's move at t: its parent's plus its own dir * distance + offsets[id], eased over [t0, t1].
