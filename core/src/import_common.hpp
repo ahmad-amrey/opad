@@ -41,6 +41,11 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
 // read (`content`) wherever the file now is (a clone, a branch, a renamed folder). Same contract as viewer_cache_load/store.
 bool asset_cache_load(Document& doc, const std::string& content, const ImportOptions& opt);
 void asset_cache_store(const Document& doc, const std::string& content, const std::function<bool()>& cancelled = {});
+// A DWG's conversion (viewer_cache.cpp): the DXF text a converter (`converter` names it) made, kept by the DWG's content,
+// so the drawing opens again without converting. find: the kept DXF, or empty. keep: only when converting took at least
+// half as long as reading the DXF (opening it again is then at least 1.5 times as fast).
+std::filesystem::path dwg_cache_find(const std::filesystem::path& dwg, const std::string& converter);
+bool dwg_cache_keep(const std::filesystem::path& dwg, const std::string& converter, const std::filesystem::path& dxf, double convert_ms, double read_ms);
 
 // The readers behind import_file (formats.cpp).
 ImportResult import_iges(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);

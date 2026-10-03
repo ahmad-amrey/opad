@@ -127,6 +127,15 @@ def main():
             (folder / "a-screw.step").write_bytes(screw.read_bytes())
             (folder / "b-layers.svg").write_bytes(drawing.read_bytes())
             cases.append(("viewer", folder / "a-screw.step", {"OPAD_BENCH_VIEWER": str(folder / "a-screw.opad")}))
+            # The viewer cache: the screw read and stored once shown, its copy elsewhere opened from the cache, a drawing never stored.
+            cached = root / "viewer-cache"
+            (cached / "copy").mkdir(parents=True)
+            (cached / "screw.step").write_bytes(screw.read_bytes())
+            (cached / "copy" / "screw-copy.step").write_bytes(screw.read_bytes())
+            (cached / "copy" / "plan.dxf").write_text("0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n40\n21\n0\n0\nENDSEC\n0\nEOF\n", encoding="utf-8")
+            cases.append(("viewer-cache", cached / "screw.step", {"OPAD_BENCH_CACHE": str(cached / "copy" / "screw-copy.step"),
+                                                                  "OPAD_BENCH_CACHE_DXF": str(cached / "copy" / "plan.dxf"),
+                                                                  "OPAD_CACHE_DIR": str(root / "viewer-cache-dir")}))
         # These open a STEP or a drawing and then edit it: as with viewer mode turned off in the settings.
         editing = {"drawing-to-sketch", "picking"}
         settings = {"kicad": f"[kicad]\nmodelDirs={models.as_posix()}\ndownload=always\n"}

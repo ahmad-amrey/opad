@@ -472,7 +472,7 @@ TEST(viewer_cache_round_trip_and_invalidation) {
   Document miss = Document::create();
   CHECK(!viewer_cache_load(miss, f.dir / "plate.step", viewer));
   Document first = open(f.dir / "plate.step", true);
-  viewer_cache_store(first, f.dir / "plate.step", viewer);
+  CHECK(viewer_cache_store(first, f.dir / "plate.step", viewer, 60000).value("kept", false));  // a minute's read: any entry wins
   Document again = Document::create();
   CHECK(viewer_cache_load(again, f.dir / "plate.step", viewer));
   CHECK(again.has_live_bodies());
@@ -482,12 +482,83 @@ TEST(viewer_cache_round_trip_and_invalidation) {
   const Bnd_Box box = scene_box(again);
   CHECK_NEAR(box.CornerMax().X() - box.CornerMin().X(), 25.0, 0.05);
   CHECK_EQ(make_editable(again).body_keys(), open(f.dir / "plate.step", false).body_keys());  // saves like a fresh read
-  // A changed file is read again, not taken from the cache.
+  // Kept by content (UI-75): a copy elsewhere and the file touched find it; the file changed is read again.
+  std::filesystem::copy_file(f.dir / "plate.step", f.dir / "copy.step");
   std::filesystem::last_write_time(f.dir / "plate.step", std::filesystem::last_write_time(f.dir / "plate.step") + std::chrono::seconds(5));
+  for (const char* name : {"copy.step", "plate.step"}) {
+    Document found = Document::create();
+    CHECK(viewer_cache_load(found, f.dir / name, viewer));
+  }
+  write_text_file(f.dir / "plate.step", read_text_file(f.dir / "plate.step") + "\n");
   Document stale = Document::create();
   CHECK(!viewer_cache_load(stale, f.dir / "plate.step", viewer));
+  // An entry that does not read back twice as fast as the file is not kept, nor tried again until the file changes.
+  Document bar = Document::create();
+  import_brep(bar, brep_from_shape(BRepPrimAPI_MakeBox(40, 4, 4).Shape()), "Bar");
+  export_selection(bar, resolve(bar), f.dir / "bar.step", eo);
+  const Document read = open(f.dir / "bar.step", true);
+  json report = viewer_cache_store(read, f.dir / "bar.step", viewer, 0.001);
+  CHECK(!report.value("kept", true) && report.value("reason", "") == "slower");
+  Document none = Document::create();
+  CHECK(!viewer_cache_load(none, f.dir / "bar.step", viewer));
+  CHECK(!viewer_cache_store(read, f.dir / "bar.step", viewer, 60000).value("kept", true));
+  write_text_file(f.dir / "bar.step", read_text_file(f.dir / "bar.step") + "\n");
+  CHECK(viewer_cache_store(read, f.dir / "bar.step", viewer, 60000).value("kept", false));
+  // Drawings are never kept that way (their entries were bigger than the file and no faster).
+  write_text_file(f.dir / "plate.dxf", "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n40\n21\n0\n0\nENDSEC\n0\nEOF\n");
+  CHECK(!viewer_cache_applies(f.dir / "plate.dxf") && !viewer_cache_applies(f.dir / "a.svg") && !viewer_cache_applies(f.dir / "a.DWG"));
+  CHECK(viewer_cache_applies(f.dir / "a.step") && viewer_cache_applies(f.dir / "a.stl"));
+  report = viewer_cache_store(open(f.dir / "plate.dxf", true), f.dir / "plate.dxf", viewer, 60000);
+  CHECK(!report.value("kept", true) && report.value("reason", "") == "drawing");
+  Document drawing = Document::create();
+  CHECK(!viewer_cache_load(drawing, f.dir / "plate.dxf", viewer));
   std::error_code e;
   std::filesystem::remove_all(kCacheDir, e);
+}
+
+// A DWG keeps the DXF its conversion made, by the DWG's content and the converter (UI-75): the same drawing, here or copied
+// elsewhere, viewed or imported, opens again without converting; another converter converts again.
+TEST(dwg_keeps_its_converted_dxf_by_content) {
+#ifdef OPAD_FAKE_DWG2DXF
+  Files f;
+  auto set = [](const char* name, const std::string& value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    value.empty() ? unsetenv(name) : setenv(name, value.c_str(), 1);
+#endif
+  };
+  const auto log = f.dir / "converted.log";
+  set("OPAD_DWG2DXF", OPAD_FAKE_DWG2DXF);
+  set("OPAD_FAKE_DWG_LOG", log.string());
+  set("OPAD_FAKE_DWG_SLEEP", "400");  // converting takes longer than reading the DXF, as it does for real drawings
+  auto converted = [&] {
+    std::error_code e;
+    if (!std::filesystem::exists(log, e)) return 0;
+    const std::string text = read_text_file(log);
+    return static_cast<int>(std::count(text.begin(), text.end(), '\n'));
+  };
+  write_text_file(f.dir / "plate.dwg", "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n40\n21\n0\n0\nCIRCLE\n8\nHoles\n10\n5\n20\n5\n40\n2\n0\nENDSEC\n0\nEOF\n");
+  auto named = [](const Document& d) {
+    const Scene s = resolve(d);
+    return s.node(s.roots.front())->name + "|" + d.ops.back().data.value("source", "");
+  };
+  const Document first = open(f.dir / "plate.dwg", true);
+  CHECK_EQ(converted(), 1);
+  const Document again = open(f.dir / "plate.dwg", true);
+  CHECK_EQ(converted(), 1);
+  CHECK_EQ(resolve(again).all_bodies().size(), 2u);
+  CHECK_EQ(named(again), "plate|plate.dxf");  // named after the drawing, not the kept file
+  std::filesystem::copy_file(f.dir / "plate.dwg", f.dir / "other.dwg");
+  const Document copy = open(f.dir / "other.dwg", false);
+  CHECK_EQ(converted(), 1);
+  CHECK_EQ(named(copy), "other|other.dxf");
+  CHECK_EQ(copy.body_keys(), make_editable(first).body_keys());
+  set("OPAD_DWG2DXF", (std::filesystem::path(OPAD_FAKE_DWG2DXF).parent_path() / "." / std::filesystem::path(OPAD_FAKE_DWG2DXF).filename()).string());
+  open(f.dir / "plate.dwg", true);
+  CHECK_EQ(converted(), 2);
+  for (const char* name : {"OPAD_DWG2DXF", "OPAD_FAKE_DWG_LOG", "OPAD_FAKE_DWG_SLEEP"}) set(name, "");
+#endif
 }
 
 TEST(unsupported_and_missing_files_fail_cleanly) {

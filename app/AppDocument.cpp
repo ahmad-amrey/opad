@@ -128,7 +128,8 @@ void AppDocument::startOpen(const QString& path) {
   o.viewer = viewer;  // viewer mode: nothing is prepared for saving (no healing, BREP text or hashing)
   const QString suffix = QFileInfo(path).suffix().toLower();
   o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
-  const bool cacheable = viewer && suffix != "kicad_pcb";  // a board's 3D models change without the board: never remembered
+  // A board's 3D models change without the board: never remembered; drawings are not (a DWG keeps its conversion itself).
+  const bool cacheable = viewer && suffix != "kicad_pcb" && opad::viewer_cache_applies(fsPath(path));
   opad::AssetOptions assets = assetOptions();
   assets.progress = [progress = o.progress](double f, const std::string& what) { return progress(f, what == "reading" ? "linked" : what); };
   auto alive = m_alive;
@@ -139,6 +140,7 @@ void AppDocument::startOpen(const QString& path) {
     QStringList warnings;
     opad::json report;
     bool slowRead = false;  // worth remembering (viewer cache): the next open skips the translation
+    double readMs = 0;
     try {
       if (external) {
         *result = opad::Document::create();
@@ -148,7 +150,9 @@ void AppDocument::startOpen(const QString& path) {
           const auto imported=opad::import_file(*result, fsPath(path), o);
           for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
           report = imported.to_json();
-          slowRead = cacheable && clock.elapsed() > 1500;
+          readMs = double(clock.nsecsElapsed()) / 1e6;
+          if (qEnvironmentVariableIsSet("OPAD_BENCH_CACHE")) readMs = 60000;  // the viewer cache bench: remembered whatever it took
+          slowRead = cacheable && readMs > 1500;
         }
       } else {
         *result = opad::Document::load(fsPath(path));
@@ -167,7 +171,7 @@ void AppDocument::startOpen(const QString& path) {
       error = QString::fromUtf8(e.what());
     }
     if (!*alive || current->load() != token) return;  // dropped: freed here, off the UI thread
-    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o, report] {
+    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, readMs, o, report] {
       if (current->load() != token) return;
       loading = false;
       lastLoad = report;
@@ -185,6 +189,7 @@ void AppDocument::startOpen(const QString& path) {
       viewing = viewer ? QFileInfo(path).absoluteFilePath() : QString();
       m_cacheSource = slowRead ? viewing : QString();
       m_cacheCenter = o.center_drawing;
+      m_cacheReadMs = readMs;
       hasDocument = true;
       clearHistory();
       markSaved();  // a viewed file is never "unsaved": closing it asks nothing

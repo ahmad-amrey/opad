@@ -147,4 +147,5 @@ class AppDocument : public QObject {
   bool m_converting = false;
   QString m_cacheSource;  // the viewed file, when its read was slow enough to remember
   bool m_cacheCenter = false;
+  double m_cacheReadMs = 0;  // how long that read took: the viewer cache keeps it only when it reads back twice as fast
 };

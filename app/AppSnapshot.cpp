@@ -204,8 +204,10 @@ void AppDocument::storeViewerCache(JobRunner* jobs) {
   auto copy = std::make_shared<opad::Document>(doc);  // the import op and body entries; the shapes stay shared
   opad::ImportOptions options;
   options.center_drawing = m_cacheCenter;
+  const double readMs = m_cacheReadMs;
   const std::filesystem::path file(source.toStdU16String());
-  jobs->async(tr("Remembering %1 for faster opening").arg(QFileInfo(source).fileName()), [copy, file, options](Progress p) {
-    opad::viewer_cache_store(*copy, file, options, [p] { return p.cancelled(); });
+  jobs->async(tr("Remembering %1 for faster opening").arg(QFileInfo(source).fileName()), [copy, file, options, readMs](Progress p) {
+    const opad::json kept = opad::viewer_cache_store(*copy, file, options, readMs, [p] { return p.cancelled(); });
+    if (trace::enabled()) trace::log(QString("viewer cache: %1").arg(QString::fromStdString(kept.dump())));
   });
 }

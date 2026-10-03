@@ -64,10 +64,17 @@ struct EditableKeys {
 Document make_editable(const Document& viewer, EditableKeys* changed = nullptr, const std::function<bool(double)>& progress = {});
 
 // Viewer mode remembers slow reads (viewer_cache.cpp): the shapes of a viewer document's import, with any display meshes
-// made since, kept under the user cache and keyed by the file's path, size and time and the options that shape the read.
-// load: false when nothing usable is kept (then read the file); store: best effort, never throws for cache trouble.
+// made since, kept under the user cache and keyed by the file's content (a copy, a clone or a checkout of it finds them
+// again) and the options that shape the read. Drawings (DXF, SVG, DWG) are not kept this way: their entries were larger
+// and no faster than the file (a DWG keeps its converted DXF text instead, inside import_file).
+// load: false when nothing usable is kept (then read the file); an entry that read back less than twice as fast as
+// `read_ms` is dropped afterwards. store: `read_ms`, how long reading the file took; the entry is kept only when it reads
+// back at least twice as fast, else the file is marked and not stored again until it changes. Best effort, never throws
+// for cache trouble; reports {"kept", "reason", "bytes", "write_ms", "cached_ms"}.
+bool viewer_cache_applies(const std::filesystem::path& file);
 bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
-void viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, const std::function<bool()>& cancelled = {});
+json viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, double read_ms,
+                        const std::function<bool()>& cancelled = {});
 
 // Imports a shape given as OCCT ASCII BREP text (the bridge for build123d/CadQuery/OCP users): solids in a
 // compound become separate bodies under a component named `name`.

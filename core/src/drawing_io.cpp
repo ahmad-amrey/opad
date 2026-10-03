@@ -40,6 +40,7 @@
 #include <gp_Circ.hxx>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -233,6 +234,17 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
               " beside OPAD or on PATH (or set " + (toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF") +
               " to it), or install the free ODA File Converter. Saving the drawing as DXF works without one.");
 }
+
+// Which converter convert_dwg would read a DWG with: a kept conversion is only good for the same one.
+std::string dwg_converter() {
+  if (const char* override = std::getenv("OPAD_DWG2DXF"); override && *override) return std::string("override:") + override;
+  if (const auto oda = oda_converter(); !oda.empty()) {
+    const auto u8 = oda.u8string();
+    return "oda:" + std::string(u8.begin(), u8.end());
+  }
+  return "libredwg";
+}
+
 std::string extension(const std::filesystem::path& file) {
   std::string e = file.extension().string();
   std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -494,6 +506,10 @@ const std::vector<std::string>& importable_extensions() {
   return list;
 }
 
+namespace {
+ImportResult import_drawing(Document& doc, const std::filesystem::path& file, const std::filesystem::path& shown, const ImportOptions& options);
+}
+
 ImportResult import_file(Document& doc, const std::filesystem::path& file, const ImportOptions& options) {
   const auto ext=extension(file);
   if(!std::filesystem::exists(file)) throw Error("file not found: "+file.filename().string());
@@ -509,10 +525,27 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     if(ext==".png" || ext==".jpg" || ext==".jpeg" || ext==".bmp" || ext==".gif" || ext==".webp") return detail::import_image(doc,file,options);
   } catch(const Standard_Failure& e) { throw Error("cannot read "+file.filename().string()+": "+e.GetMessageString()); }
   if(ext==".dwg") {
-    Conversion work; auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
+    // Converting is what is slow about a DWG: the DXF text it made is kept by the DWG's content (viewer_cache.cpp).
+    auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
+    const std::string converter=dwg_converter();
+    if(const auto kept=detail::dwg_cache_find(file,converter);!kept.empty()) return import_drawing(doc,kept,name,options);
+    Conversion work;
+    const auto start=std::chrono::steady_clock::now();
     convert_dwg(file,work.directory/name,false);
-    return import_file(doc,work.directory/name,options);
+    const auto converted=std::chrono::steady_clock::now();
+    ImportResult result=import_drawing(doc,work.directory/name,name,options);
+    const auto ms=[](auto a,auto b){return std::chrono::duration<double,std::milli>(b-a).count();};
+    detail::dwg_cache_keep(file,converter,work.directory/name,ms(start,converted),ms(converted,std::chrono::steady_clock::now()));
+    return result;
   }
+  if(ext==".dxf" || ext==".svg") return import_drawing(doc,file,file,options);
+  throw Error("unsupported file format: " + ext);
+}
+
+namespace {
+// A DXF or SVG read from `file`, named as `shown` (a converted DWG's DXF: the drawing's own name).
+ImportResult import_drawing(Document& doc, const std::filesystem::path& file, const std::filesystem::path& shown, const ImportOptions& options) {
+  const auto ext=extension(file);
   try {
     Drawing drawing;
     if(ext==".dxf") drawing=detail::read_dxf(file,options);
@@ -525,7 +558,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       if(options.progress && !options.progress(double(children.size())/drawing.layers.size(),"building")) throw Error("cancelled");
       json bodies=json::array();
       for(const auto& [color, shape]:groups) {  // one body per colour the layer's entities are drawn in
-        json meta={{"representation","drawing2d"},{"layer",name},{"source",file.filename().string()}};
+        json meta={{"representation","drawing2d"},{"layer",name},{"source",shown.filename().string()}};
         json body={{"type","body"},{"id",new_uuid()},{"name",name},{"representation","drawing2d"}};
         if(color!=Drawing::kNoColor) meta["color"]=body["color"]={((color>>16)&255)/255.0,((color>>8)&255)/255.0,(color&255)/255.0};
         body["key"]=detail::store_body(staged,shape,meta,options,false);
@@ -535,7 +568,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       }
       children.push_back({{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",bodies}});
     }
-    json root={{"type","component"},{"id",new_uuid()},{"name",file.stem().string()},{"children",children}};
+    json root={{"type","component"},{"id",new_uuid()},{"name",shown.stem().string()},{"children",children}};
     Mat4 placement=options.placement;
     if(options.center_drawing) {
       Bnd_Box box;for(const auto& [name,groups]:drawing.layers)for(const auto& [color,shape]:groups)BRepBndLib::Add(shape,box);
@@ -544,7 +577,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       placement=placement*Mat4::translation(drawing.origin.X(),drawing.origin.Y(),drawing.origin.Z());  // read near (0,0), back in place
     }
     if(!placement.is_identity())root["transform"]=placement.to_json();
-    json op={{"op","import"},{"source",file.filename().string()},{"nodes",json::array({root})}};
+    json op={{"op","import"},{"source",shown.filename().string()},{"nodes",json::array({root})}};
     // The source keeps what the drawing could not show; a viewer never writes it back, so it skips the copy.
     if(ext==".svg" && !drawing.warnings.empty() && !options.viewer) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
     if(!options.parent.empty()) op["parent"]=options.parent;
@@ -552,6 +585,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     result.new_entries=int(staged.body_count()-doc.body_count()); doc=std::move(staged); return result;
   } catch(const Standard_Failure& e) { throw Error(std::string("cannot import geometry: ")+e.GetMessageString()); }
 }
+}  // namespace
 
 ExportResult export_drawing(const Document& doc,const Scene& scene,const std::filesystem::path& file,const ExportOptions& options) {
   if (options.format == "dwg") {

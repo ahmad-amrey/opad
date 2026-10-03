@@ -69,6 +69,9 @@ add_test(NAME drawing COMMAND opad-test-drawing)
 
 add_executable(opad-test-formats test_formats.cpp)
 target_link_libraries(opad-test-formats PRIVATE opad::core ZLIB::ZLIB)
+add_executable(opad-fake-dwg2dxf fake_dwg2dxf.cpp)  # the converter the formats test reads "DWG"s with
+add_dependencies(opad-test-formats opad-fake-dwg2dxf)
+target_compile_definitions(opad-test-formats PRIVATE OPAD_FAKE_DWG2DXF="$<TARGET_FILE:opad-fake-dwg2dxf>")
 add_test(NAME formats COMMAND opad-test-formats)
 
 add_executable(opad-test-kicad test_kicad.cpp)

@@ -1291,7 +1291,8 @@ class Builder {
         detail::import_mesh_scene(part_doc, path, o, true);  // KiCad's own VRML: 0.1 inch units, Z up
       } else if (!remember || !viewer_cache_load(part_doc, path, o)) {
         import_file(part_doc, path, o);
-        if (remember && std::chrono::steady_clock::now() - start > std::chrono::milliseconds(100)) viewer_cache_store(part_doc, path, o);
+        if (const double took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(); remember && took > 100)
+          viewer_cache_store(part_doc, path, o, took);
       }
     } catch (const std::exception& e) {
       if (std::string(e.what()) == "import cancelled") throw;

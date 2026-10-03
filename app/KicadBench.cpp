@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
 #include <QPushButton>
 #include <QTimer>
 #include <filesystem>
@@ -15,8 +16,63 @@
 #include "Jobs.hpp"
 #include "KicadBoards.hpp"
 #include "Viewport.hpp"
+#include "opad/cache.hpp"
 #include "opad/kicad_pcb.hpp"
 #include "opad/mesh.hpp"
+
+// OPAD_BENCH_CACHE=<copy of the STEP>, OPAD_BENCH_CACHE_DXF=<drawing>: a STEP opened as a viewer (every read counts as a
+// minute's, so it is remembered whatever this machine takes) must be read, then stored in the viewer cache by a job after
+// it is shown; its copy elsewhere (another path and time, same content) must then open from the cache (UI-75); a drawing
+// opened next must be read and leave nothing in the cache. OPAD_CACHE_DIR is the bench's own.
+bool MainWindow::benchCache() {
+  const QString copy = qEnvironmentVariable("OPAD_BENCH_CACHE"), drawing = qEnvironmentVariable("OPAD_BENCH_CACHE_DXF");
+  if (copy.isEmpty() || drawing.isEmpty()) return false;
+  static int phase = 0;
+  auto fail = [](const QString& why) {
+    trace::log("bench: cache FAIL: " + why);
+    QCoreApplication::exit(2);
+    return true;
+  };
+  auto entries = [] {
+    std::error_code error;
+    int n = 0;
+    for (const auto& e : std::filesystem::directory_iterator(opad::cache_dir() / "viewer", error)) n += e.is_regular_file(error);
+    return n;
+  };
+  const bool read = m_doc->lastLoad.contains("op");  // a cache hit reports no import
+  trace::log(QString("bench: cache: phase %1: %2 read %3, %4 bodies displayed, %5 cache entries")
+                 .arg(phase).arg(m_doc->viewing).arg(read).arg(m_viewport->displayedCount()).arg(entries()));
+  if (!m_doc->browse || m_viewport->displayedCount() == 0) return fail("not a viewer with bodies");
+  switch (phase++) {
+    case 0: {
+      if (!read) return fail("the first open must read the file");  // then the job stores it (it may have already)
+      auto* timer = new QTimer(this);
+      auto clock = std::make_shared<QElapsedTimer>();
+      clock->start();
+      connect(timer, &QTimer::timeout, this, [this, timer, clock, entries, fail, copy] {
+        if (entries() == 0 && clock->elapsed() < 20000) return;
+        timer->stop();
+        timer->deleteLater();
+        if (entries() != 1) return (void)fail("the read was not stored once");
+        openPath(copy);  // runBench comes back for phase 1
+      });
+      timer->start(100);
+      return true;
+    }
+    case 1:
+      if (read || entries() != 1) return fail("the copy was not opened from the cache");
+      openPath(drawing);  // runBench comes back for phase 2
+      return true;
+    default:
+      if (!read) return fail("the drawing was not read");
+      QTimer::singleShot(1500, this, [entries, fail] {
+        if (entries() != 1) return (void)fail("a drawing was stored in the viewer cache");
+        trace::log("bench: cache viewer read stored after display, its copy opened from the cache by content, drawing not stored PASS");
+        QCoreApplication::exit(0);
+      });
+      return true;
+  }
+}
 
 // OPAD_BENCH_COLORS=<png>: an OBJ cube (tools/gui_benches.py writes it) whose top is in a gold material of its own and the
 // rest in Kd 0.439 grey, opened as a viewer (UI-74). The body must keep the grey as the file shows it (0.439: taken linear

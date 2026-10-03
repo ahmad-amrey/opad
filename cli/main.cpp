@@ -104,7 +104,7 @@ json probe(const std::string& file, bool viewer, bool mesh, bool cache) {
   out["cache"] = cached ? "hit" : "miss";
   if (viewer && cache && !cached) {
     const auto t4 = clock::now();
-    opad::viewer_cache_store(doc, opad::path_from_utf8(file), o);
+    out["cache_store"] = opad::viewer_cache_store(doc, opad::path_from_utf8(file), o, ms(t0, t1));
     out["cache_store_ms"] = ms(t4, clock::now());
   }
   return out;
