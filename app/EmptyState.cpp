@@ -55,14 +55,20 @@ QString typeIcon(const QString& path) {
   return "step";
 }
 
-// opad-cli beside the app (the Explorer thumbnails run the same one); empty when the build has none (single-file exe).
-QString thumbnailer() {
+// What renders the pictures: opad-cli beside the app (the Explorer thumbnails run the same one), else the app itself
+// (opad --thumbnail, main.cpp: the single-file exe has no opad-cli beside it). OPAD_THUMBNAILS=self takes the app always.
+struct Thumbnailer {
+  QString program;
+  QStringList args;  // before <file> --out <picture> --size 256
+};
+Thumbnailer thumbnailer() {
 #ifdef Q_OS_WIN
   const QString cli = QCoreApplication::applicationDirPath() + "/opad-cli.exe";
 #else
   const QString cli = QCoreApplication::applicationDirPath() + "/opad-cli";
 #endif
-  return QFileInfo::exists(cli) ? cli : QString();
+  if (QFileInfo::exists(cli) && qEnvironmentVariable("OPAD_THUMBNAILS") != "self") return {cli, {"--compact", "thumbnail"}};
+  return {QCoreApplication::applicationFilePath(), {"--thumbnail"}};
 }
 
 // The .bgra the CLI writes: "OPADTHMB", width and height (uint32 little endian), premultiplied BGRA rows top-down.
@@ -85,9 +91,9 @@ struct FileState {
   QImage picture;
 };
 
-// On the worker: the file's state, and its picture from the cache or rendered by the CLI (killed when the job is cancelled
-// or after two minutes). A file the CLI cannot picture (an empty document) is remembered as such.
-FileState readFile(const QString& path, const QString& cli, const QString& cache, const Progress& progress) {
+// On the worker: the file's state, and its picture from the cache or rendered by the thumbnailer (killed when the job is
+// cancelled or after two minutes). A file it cannot picture (an empty document) is remembered as such.
+FileState readFile(const QString& path, const Thumbnailer& cli, const QString& cache, const Progress& progress) {
   FileState s;
   const QFileInfo info(path);
   s.exists = info.isFile();
@@ -97,11 +103,11 @@ FileState readFile(const QString& path, const QString& cli, const QString& cache
                                                   QCryptographicHash::Sha1).toHex();
   const QString png = cache + "/" + key + ".png", none = cache + "/" + key + ".none";
   if (QFile::exists(png) && s.picture.load(png)) return s;
-  if (cli.isEmpty() || QFile::exists(none) || info.size() > (qint64(400) << 20)) return s;
+  if (QFile::exists(none) || info.size() > (qint64(400) << 20)) return s;
   QDir().mkpath(cache);
   const QString raw = cache + "/" + key + ".bgra";
   QProcess process;
-  process.start(cli, {"--compact", "thumbnail", info.absoluteFilePath(), "--out", raw, "--size", "256"});
+  process.start(cli.program, cli.args + QStringList{info.absoluteFilePath(), "--out", raw, "--size", "256"});
   if (!process.waitForStarted(10000)) return s;
   QElapsedTimer clock;
   clock.start();
@@ -589,7 +595,7 @@ void EmptyState::refresh() {
   if (m_job) m_job->cancel();
   const int generation = ++m_generation;
   const QStringList paths = m_paths;
-  const QString cli = thumbnailer();
+  const Thumbnailer cli = thumbnailer();
   const auto dir = opad::cache_dir() / "start-page";
   const QString cache = QString::fromStdU16String(dir.u16string());
   QPointer<EmptyState> self(this);

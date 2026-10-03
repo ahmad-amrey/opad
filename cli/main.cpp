@@ -109,71 +109,6 @@ json probe(const std::string& file, bool viewer, bool mesh, bool cache) {
   return out;
 }
 
-// thumbnail: a small picture of a file for Explorer and the Open dialog (shell/thumbnails runs this). Read as the
-// viewer reads it, so the viewer cache serves a big STEP opened before; models from the iso corner, drawings from the
-// top. `.bgra` output: "OPADTHMB", width and height (uint32), then premultiplied BGRA rows top-down with a transparent
-// background, recovered from one render on white and one on black. Any other output: a PNG on white.
-json thumbnail(const std::string& file, const std::string& out, int size) {
-  const auto path = opad::path_from_utf8(file);
-  std::string ext = path.extension().string();
-  for (auto& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
-  opad::Document doc = opad::Document::create();
-  if (ext == ".opad") {
-    doc = opad::Document::load(path);
-  } else {
-    opad::ImportOptions o;
-    o.viewer = true;
-    o.center_drawing = ext == ".dxf" || ext == ".dwg" || ext == ".svg";
-    if (!opad::viewer_cache_load(doc, path, o)) opad::import_file(doc, path, o);
-  }
-  const opad::Scene scene = opad::resolve(doc);
-  bool drawing = true, any = false;
-  Bnd_Box box;
-  for (const auto& id : scene.all_bodies()) {
-    if (!scene.effectively_visible(id) || scene.node(id)->body_missing) continue;
-    any = true;
-    drawing = drawing && scene.node(id)->representation == "drawing2d";
-    box.Add(opad::node_world_bbox(doc, scene, id));
-  }
-  if (!any || box.IsVoid()) throw opad::Error("nothing to show");
-  opad::RenderOptions opt;
-  opt.width = opt.height = std::clamp(size, 16, 1024);
-  opt.camera = opad::Camera::preset(drawing ? "top" : "iso");
-  opt.edges = !drawing;
-  opt.edge_lines = drawing;  // a drawing is its lines
-  opt.smooth = true;
-  opt.tolerance = std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.005, 50.0);  // a few pixels' worth at this size
-  const bool raw = out.size() > 5 && out.compare(out.size() - 5, 5, ".bgra") == 0;
-  opt.background = {1, 1, 1};
-  const opad::Image white = opad::render_scene(doc, scene, opt);
-  if (!raw) {
-    opad::write_png(opad::path_from_utf8(out), white);
-    return {{"out", out}, {"width", white.width}, {"height", white.height}};
-  }
-  // A drawing stays on its white sheet: dark lines on a transparent background vanish in a dark Explorer.
-  opt.background = {0, 0, 0};
-  const opad::Image black = drawing ? white : opad::render_scene(doc, scene, opt);
-  std::string bytes = "OPADTHMB";
-  auto u32 = [&](uint32_t v) { for (int k = 0; k < 4; ++k) bytes += char((v >> (8 * k)) & 0xFF); };
-  u32(uint32_t(white.width));
-  u32(uint32_t(white.height));
-  bytes.reserve(bytes.size() + size_t(white.width) * size_t(white.height) * 4);
-  for (int y = 0; y < white.height; ++y)
-    for (int x = 0; x < white.width; ++x) {
-      const uint8_t* w = white.px(x, y);
-      const uint8_t* b = black.px(x, y);
-      // On white a pixel is c + (1 - a), on black c (premultiplied): a = 1 - (white - black).
-      int spread = 0;
-      for (int k = 0; k < 3; ++k) spread = std::max(spread, int(w[k]) - int(b[k]));
-      const int alpha = std::clamp(255 - spread, 0, 255);
-      for (int k = 2; k >= 0; --k) bytes += char(std::min<int>(b[k], alpha));  // BGR
-      bytes += char(alpha);
-    }
-  std::ofstream f(opad::path_from_utf8(out), std::ios::binary);
-  f.write(bytes.data(), std::streamsize(bytes.size()));
-  if (!f) throw opad::Error("cannot write the thumbnail");
-  return {{"out", out}, {"width", white.width}, {"height", white.height}, {"transparent", true}};
-}
 
 json parse_value(const std::string& s) {
   if (s == "true") return true;
@@ -289,7 +224,7 @@ int main(int argc, char** argv) {
 
     if (command == "thumbnail") {
       if (positional.empty() || !args.contains("out")) throw opad::Error("usage: opad-cli thumbnail <file> --out <png|bgra> [--size 256]");
-      const json out = thumbnail(positional[0], args["out"].get<std::string>(), args.value("size", 256));
+      const json out = opad::write_thumbnail(positional[0], args["out"].get<std::string>(), args.value("size", 256));
       const std::string text = out.dump();
       std::fwrite(text.data(), 1, text.size(), stdout);
       std::fputc('\n', stdout);

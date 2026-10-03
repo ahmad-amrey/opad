@@ -54,6 +54,8 @@ CASES = [
     # file location, copy path, remove), missing files, templates (built in, saved, new from one), Learn, a dropped file.
     ("start-page", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}"}),
     ("start-page-ar", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-113: the same with the app itself rendering the pictures (opad --thumbnail), as the single-file exe does.
+    ("start-page-self", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}", "OPAD_THUMBNAILS": "self"}),
     # UI-124: no button without a name, F6 / Shift+F6 round the regions (also from a panel), focus rings from the keyboard
     # only, reduced motion, 24 px hit targets.
     ("accessibility", guided, {"OPAD_BENCH_A11Y": "{prefix}"}),

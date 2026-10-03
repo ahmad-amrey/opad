@@ -64,5 +64,8 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
 Image render_scene(const Document& doc, const Scene& scene, const RenderOptions& opt, json* receipt = nullptr);
 void write_png(const std::filesystem::path& path, const Image& img);
 std::string encode_png(const Image& img);
+// A picture of a file (UTF-8 paths) as `size` px square: a .png on white, or a .bgra with a transparent background
+// ("OPADTHMB", width, height, premultiplied BGRA rows). opad-cli thumbnail, Explorer's thumbnails and the start page.
+json write_thumbnail(const std::string& file, const std::string& out, int size = 256);
 
 }  // namespace opad

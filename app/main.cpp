@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFile>
@@ -7,12 +8,15 @@
 #include <QTimer>
 #include <QSurfaceFormat>
 
+#include <cstring>
+
 #include "CrashLog.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "opad/core.hpp"
+#include "opad/render.hpp"
 
 namespace {
 // macOS hands the files a user opens from Finder (or drops on the Dock icon) to a running app as events, not arguments.
@@ -33,6 +37,20 @@ class FileOpenEvents : public QObject {
 }  // namespace
 
 int main(int argc, char** argv) {
+  // The start page's pictures where no opad-cli is beside the app (the single-file exe, UI-113): opad --thumbnail <file>
+  // --out <picture.bgra|png> [--size N], in a process of its own, before any window or trace.
+  if (argc > 1 && std::strcmp(argv[1], "--thumbnail") == 0) {
+    QCoreApplication core(argc, argv);  // the arguments as Unicode
+    opad::configure_kernel_logging();
+    const QStringList a = QCoreApplication::arguments();
+    if (a.size() < 5 || a[3] != "--out") return 2;
+    try {
+      opad::write_thumbnail(a[2].toStdString(), a[4].toStdString(), a.size() > 6 && a[5] == "--size" ? a[6].toInt() : 256);
+      return 0;
+    } catch (const std::exception&) {
+      return 1;
+    }
+  }
   trace::log("startup: main");
   installCrashHandler();
   // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive
