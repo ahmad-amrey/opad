@@ -341,5 +341,6 @@
  "Face of %1": "وجه من %1",
  "A face": "وجه",
  "The view's plane": "مستوى العرض",
- "Not an angle": "ليست زاوية"
+ "Not an angle": "ليست زاوية",
+ "Copied, not cut: deleting them would take %1 more objects made with them": "نُسخت ولم تُقص: حذفها كان سيأخذ معها %1 كائنات أخرى صُنعت معها"
 }

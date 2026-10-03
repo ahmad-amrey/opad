@@ -79,7 +79,7 @@ opad::json clipboardJson() {
 // step). Ctrl+Shift+V puts the same part again beside the first paste (the same entry: two instances), selected, one undo
 // step named so; undo takes it away, redo brings it back. A clip from another document (a cube) pastes where it was there, its entry
 // added on a worker, one undo step. <prefix>.move-panel.png: the Move / copy panel Ctrl+V opened; <prefix>.assemble.png: the
-// ribbon's Assemble tab with its Clipboard group.
+// ribbon's Assemble tab with its Clipboard group. Ctrl+X on one of two bodies one op made copies it and deletes nothing.
 OPAD_BENCH(OPAD_BENCH_CLIPBOARD_BODIES, clipboardBodies) {
   auto check = std::make_shared<Checks>();
   auto steps = std::make_shared<Steps>();
@@ -184,7 +184,41 @@ OPAD_BENCH(OPAD_BENCH_CLIPBOARD_BODIES, clipboardBodies) {
       for (int i = 0; i < tabs->count(); ++i)
         if (tabs->tabText(i) == QObject::tr("Assemble")) window->m_ribbon->setCurrentTab(i);
       if (value != "1") window->m_ribbon->grab().save(value + ".assemble.png");
-      finish();
+      next();
+    });
+  });
+  steps->list.push_back([=] {  // Ctrl+X on one of two bodies one op made: copied, not cut (Delete would take both)
+    opad::Document other = opad::Document::create();
+    std::vector<std::string> ids;
+    std::vector<std::string> keys;
+    opad::json nodes = opad::json::array();
+    for (int i = 0; i < 2; ++i) {
+      ids.push_back(opad::new_uuid());
+      keys.push_back(other.add_body(opad::brep_from_shape(BRepPrimAPI_MakeBox(gp_Pnt(100 + 10 * i, 0, 0), 5, 5, 5 + i).Shape()), {{"name", "Pair"}}));
+      nodes.push_back({{"type", "body"}, {"id", ids.back()}, {"name", i ? "Pair B" : "Pair A"}, {"key", keys.back()}});
+    }
+    other.append({{"op", "import"}, {"source", "pair.step"}, {"units", "mm"}, {"nodes", nodes}});
+    auto* mime = new QMimeData;
+    mime->setData(SketchEditor::kClipMime, QByteArray::fromStdString(opad::copy_nodes(other, opad::resolve(other), ids).dump()));
+    QApplication::clipboard()->setMimeData(mime);
+    press(keyboard(), Qt::Key_V, Qt::ControlModifier);
+    waitFor(window, [doc, keys] { return doc->doc.has_body(keys[0]) && doc->doc.has_body(keys[1]) && !doc->designBusy; }, 20000, [=](bool pasted) {
+      std::string a, b;
+      for (const auto& id : doc->scene.all_bodies()) {
+        if (doc->scene.node(id)->name == "Pair A") a = id;
+        if (doc->scene.node(id)->name == "Pair B") b = id;
+      }
+      (*check)(pasted && !a.empty() && !b.empty() && doc->scene.node(a)->source_op == doc->scene.node(b)->source_op, "two bodies pasted by one op");
+      const size_t ops = doc->doc.ops.size();
+      QApplication::clipboard()->clear();
+      window->m_browser->selectIds({a});
+      press(keyboard(), Qt::Key_X, Qt::ControlModifier);
+      waitFor(window, [] { return !clipboardJson().is_null(); }, 10000, [=](bool copied) {
+        const opad::json clip = clipboardJson();
+        (*check)(copied && clip["nodes"].size() == 1 && doc->scene.node(a) && doc->scene.node(b) && doc->doc.ops.size() == ops,
+                 "Ctrl+X on one of them copies it but deletes nothing: Delete would tombstone the op and take the other too");
+        finish();
+      });
     });
   });
   next();

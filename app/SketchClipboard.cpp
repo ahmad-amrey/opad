@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <cmath>
 #include <limits>
+#include <set>
 
 #include "AppDocument.hpp"
 #include "AreaController.hpp"
@@ -289,21 +290,39 @@ class ClipboardArea : public AreaController {
     } catch (const std::exception& e) {
       return services().showMessage(i18n::t(QString::fromUtf8(e.what())));
     }
-    const int count = int(clip->at("nodes").size()), serial = ++m_copies;
+    const int count = int(clip->at("nodes").size()), serial = ++m_copies, more = cut ? takenAlong(ids) : 0;
     auto bytes = std::make_shared<QByteArray>();
     services().jobs()->async(tr("Copying to the clipboard"), [clip, bytes](Progress) {
       *bytes = QByteArray::fromStdString(clip->dump());
       *clip = opad::json();
-    }, [this, bytes, count, serial](bool ok, const QString& error) {
+    }, [this, bytes, count, serial, more](bool ok, const QString& error) {
       if (!ok) return services().showMessage(i18n::t(error));
       if (serial != m_copies) return;
       auto* mime = new QMimeData;
       mime->setData(SketchEditor::kClipMime, *bytes);
       QApplication::clipboard()->setMimeData(mime);
-      services().showMessage(tr("Copied %1 objects: Ctrl+V pastes new bodies, Ctrl+Shift+V linked instances").arg(count));
+      services().showMessage(more ? tr("Copied, not cut: deleting them would take %1 more objects made with them").arg(more)
+                                  : tr("Copied %1 objects: Ctrl+V pastes new bodies, Ctrl+Shift+V linked instances").arg(count));
     });
-    if (cut)
+    if (cut && !more)
       if (QAction* remove = services().action("edit.delete")) remove->trigger();
+  }
+  // Delete tombstones the op each object came from: how many objects besides those copied (and what they hold) it would
+  // take (one body of an import, of a feature's bodies). A cut that would copies only.
+  int takenAlong(const std::vector<std::string>& ids) const {
+    const opad::Scene& scene = services().document()->scene;
+    std::set<std::string> sources;
+    for (const auto& id : ids)
+      if (const opad::Node* n = scene.node(id)) sources.insert(n->source_op);
+    const std::set<std::string> chosen(ids.begin(), ids.end());
+    int more = 0;
+    for (const auto& [id, node] : scene.nodes) {
+      if (!sources.count(node.source_op)) continue;
+      bool covered = false;
+      for (const opad::Node* n = &node; n && !covered; n = n->parent.empty() ? nullptr : scene.node(n->parent)) covered = chosen.count(n->id) > 0;
+      more += !covered;
+    }
+    return more;
   }
 
   // Read and checked on a worker (a clip with BREP text is megabytes), then placed.
