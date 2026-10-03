@@ -20,7 +20,7 @@ bool OpProvenance::ready() const { return !m_built.isEmpty() && m_built == key()
 
 void OpProvenance::ensure() {
   const QString k = key();
-  if (k.isEmpty() || k == m_built || k == m_building) return;
+  if (k.isEmpty() || k == m_built || k == m_building || k == m_failed) return;
   if (m_job) m_job->cancel();
   m_building = k;
   const git::Repo& r = m_git->repo();
@@ -41,6 +41,7 @@ void OpProvenance::ensure() {
       self->m_built = k;
       self->m_error.clear();
     } else {
+      self->m_failed = k;
       self->m_error = error;
     }
     if (trace::enabled())
@@ -57,6 +58,7 @@ void OpProvenance::ensure() {
 void OpProvenance::whenReady(std::function<void()> then) {
   if (ready()) return then();
   m_waiting.push_back(std::move(then));
+  m_failed.clear();  // asked for: try again
   ensure();
 }
 

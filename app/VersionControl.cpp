@@ -181,6 +181,11 @@ VersionControl::VersionControl(AreaServices& services, GitWatch* git, CompareMod
     if (m_panel && m_tool->isVisible()) m_panel->showState();
   });
   git->setMenuExtension([this](QMenu* m) { extendMenu(m); });
+  connect(m_provenance, &OpProvenance::built, this, [this](bool ok) {  // a narrowed history waiting for a read that failed
+    if (ok || m_filterLabel.isEmpty() || m_filterRead) return;
+    say(tr("Who changed what could not be read from git: %1").arg(m_provenance->error()));
+    showHistoryOf({}, {});
+  });
   if (const int minutes = QSettings().value("git/fetchMinutes", 10).toInt(); minutes > 0) {
     connect(&m_fetch, &QTimer::timeout, this, &VersionControl::backgroundFetch);
     m_fetch.start(minutes * 60000);

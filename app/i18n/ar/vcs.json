@@ -638,5 +638,6 @@
  "Resolving the conflicts in %1": "حلّ التعارضات في %1",
  "Could not resolve the conflicts": "تعذّر حلّ التعارضات",
  "Conflicts resolved. Both sides changed the design: regenerate it, then commit the merge.": "حُلّت التعارضات. غيّر الطرفان التصميم: أعد توليده، ثم أودع الدمج.",
- "Conflicts resolved: commit the merge to finish it.": "حُلّت التعارضات: أودع الدمج لإتمامه."
+ "Conflicts resolved: commit the merge to finish it.": "حُلّت التعارضات: أودع الدمج لإتمامه.",
+ "Who changed what could not be read from git: %1": "تعذّرت قراءة من غيّر ماذا من git: %1"
 }

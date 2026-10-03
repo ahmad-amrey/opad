@@ -30,7 +30,8 @@ class OpProvenance : public QObject {
   const ophistory::Index& index() const { return m_index; }
   // The commits that touched any of these ops or nodes, newest first; ready() first.
   std::vector<git::Commit> commitsTouching(const std::vector<std::string>& ids) const;
-  void whenReady(std::function<void()> then);  // now when ready, else once the read ends (dropped when it fails)
+  void whenReady(std::function<void()> then);  // now when ready, else once the read ends (dropped when it fails); retries a failed read
+  QString error() const { return m_error; }    // why the last read failed
  signals:
   void built(bool ok);
  private:
@@ -38,7 +39,7 @@ class OpProvenance : public QObject {
   GitWatch* m_git;
   JobRunner* m_jobs;
   ophistory::Index m_index;
-  QString m_built, m_building, m_error;
+  QString m_built, m_building, m_failed, m_error;  // m_failed: not read again by itself (hovers) until HEAD moves
   QPointer<Job> m_job;
   std::vector<std::function<void()>> m_waiting;
 };
