@@ -57,4 +57,5 @@ CASES = [
     # feature. An import of two bodies: one goes to a Remove feature, both tombstone the import.
     ("delete-design", "box", {"OPAD_BENCH_DELETE": "{prefix}"}),
     ("delete-import", pair, {"OPAD_BENCH_DELETE": "{prefix}"}),
+    ("delete-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_DELETE": "{prefix}"}),
 ]

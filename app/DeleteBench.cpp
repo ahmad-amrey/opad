@@ -2,6 +2,7 @@
 #include "MainWindow.hpp"
 #include "SmartSelect.hpp"
 #include "opad/geometry.hpp"
+#include <QElapsedTimer>
 #include <QMenu>
 #include <QToolButton>
 
@@ -13,6 +14,8 @@
 //   the box feature stays, Undo from the toast.
 //   An import of two bodies, no history: one body goes to a Remove feature (the other stays, the import is not
 //   tombstoned); both are the whole import: it is tombstoned; Undo from the toast each time.
+//   A big model (the Engine, case delete-engine): one body goes to a Remove feature and comes back with Undo, with no
+//   event-loop gap over 250 ms.
 OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
   struct State {
     int phase = 0, ticks = 0, wait = 0;
@@ -20,6 +23,9 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
     std::vector<std::string> bodies;
     std::string source;
     QString name;  // the first body's, read while it is there
+    QElapsedTimer clock, tick;
+    qint64 gap = 0;
+    size_t tombstones = 0;
   };
   auto state = std::make_shared<State>();
   SmartSelect* area = nullptr;
@@ -34,7 +40,8 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
   timer->setInterval(100);
   QObject::connect(timer, &QTimer::timeout, &w, [&w, area, state, timer, prefix = value] {
     try {
-      if (++state->ticks > 1200) throw opad::Error("timed out in phase " + std::to_string(state->phase));
+      if (state->tick.isValid()) state->gap = std::max(state->gap, state->tick.restart());
+      if (++state->ticks > 3000) throw opad::Error("timed out in phase " + std::to_string(state->phase));
       if (w.m_doc->loading || w.m_doc->designBusy || w.m_doc->snapshotBusy() || w.m_jobs->busy() || area->busy()) return;
       auto require = [](bool ok, const std::string& why) {
         if (!ok) throw opad::Error(why);
@@ -66,6 +73,11 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
           state->source = w.m_doc->node(state->bodies.front())->source_op;
           state->name = w.m_doc->nodeName(state->bodies.front());
           state->ops = w.m_doc->doc.ops.size();
+          state->tombstones = w.m_doc->scene.deleted_ops.size();
+          if (state->bodies.size() > 2) {  // a big import (with a sketch or not): one body out and back, timed
+            state->phase = 30;
+            return;
+          }
           if (!designed) {
             require(state->bodies.size() == 2 && w.m_doc->node(state->bodies.back())->source_op == state->source, "two bodies of one import");
             state->phase = 20;
@@ -156,6 +168,30 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
         case 24:
           if (!waitFor(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.all_bodies().size() == 2, "Undo brings the import back")) return;
           pass("Del on every body of the import tombstoned the import; Undo from the toast");
+          timer->stop();
+          QCoreApplication::exit(0);
+          return;
+        // ---- a big import
+        case 30:
+          state->tick.start();
+          state->clock.start();
+          pickBodies({state->bodies.front()});
+          w.action("edit.delete")->trigger();
+          break;
+        case 31: {
+          if (!waitFor(w.m_doc->doc.ops.size() > state->ops, "Del on one body of the big import appends a Remove feature")) return;
+          require(w.m_doc->scene.deleted_ops.size() == state->tombstones && !w.m_doc->scene.features.empty() && w.m_doc->scene.features.back().kind == "remove",
+                  "a Remove feature, no tombstone");
+          require(w.m_doc->scene.all_bodies().size() == state->bodies.size() - 1 && !w.m_doc->node(state->bodies.front()), "that body alone is removed");
+          pass(QString("Del on one of %1 imported bodies: Remove feature committed in %2 ms").arg(state->bodies.size()).arg(state->clock.elapsed()));
+          state->clock.start();
+          undoFromToast(QObject::tr("Removed %1: a Remove step on the timeline keeps its history").arg(state->name));
+          break;
+        }
+        case 32:
+          if (!waitFor(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.all_bodies().size() == state->bodies.size(), "Undo brings the body back")) return;
+          pass(QString("Undo from the toast in %1 ms; longest event-loop gap %2 ms").arg(state->clock.elapsed()).arg(state->gap));
+          require(state->gap <= 250, "the event loop waited " + std::to_string(state->gap) + " ms");
           timer->stop();
           QCoreApplication::exit(0);
           return;
