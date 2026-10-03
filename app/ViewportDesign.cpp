@@ -106,6 +106,8 @@ void Viewport::syncSketches() {
     activateSelection(ais); m_nodeOf[ais.get()]=s.id;
     m_sketchWires[s.id] = SketchWire{ais, prs, stamp,{}};
     if(prepared){m_sketchWires[s.id].backdrops=prepared->backdrops;for(const auto& image:prepared->backdrops)showBackdrop(image);}
+    SketchWire& wire=m_sketchWires[s.id];wire.look.color={m_tokens.sel.redF(),m_tokens.sel.greenF(),m_tokens.sel.blueF()};  // as drawn above
+    if(layered())applySketchLook(wire,sketchLook(s.id));
   }
   std::erase_if(m_preparedSketches,[&](const auto& entry) {return !keep.count(entry.first);});
   for (auto it = m_sketchWires.begin(); it != m_sketchWires.end();) {

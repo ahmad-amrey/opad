@@ -41,8 +41,9 @@ CASES = [
     # precision and fractions, the overhang box in radians, feature and sketch-tool defaults and a sketch dimension in
     # inches, undo back to millimetres. <prefix>.status.png, <prefix>.panel.png, <prefix>.sketch.png.
     ("units", "box", {"OPAD_BENCH_UNITS": "{prefix}"}),
-    # The per-body look compositor (UI-121): ghost + tint on one body, a component's tint, ghosts pickable, an explode
-    # offset picked where drawn, a candidate layer under the X-ray selection, everything cleared. <prefix>.ghost.png.
+    # The per-body look compositor (UI-121): ghost + tint on one body (hovered as inactive), a component's tint, ghosts
+    # pickable, an explode offset picked where drawn with its note following, a candidate layer under the X-ray
+    # selection, everything cleared, then a sketch's look (faded, hidden, cleared). <prefix>.ghost.png.
     ("looks", "overlap", {"OPAD_BENCH_LOOKS": "{prefix}"}),
     # The same on the Engine (beside the repository; skipped where it is not): a ghost layer over every body, ten explode
     # ticks and the clearing, with no event-loop gap over 50 ms.

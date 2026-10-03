@@ -136,14 +136,16 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Per-body looks (ViewportLooks.cpp, UI-121): each source owns one layer of deltas by node id (a component's covers the
   // bodies under it; the nearest entry wins), composed over the document's appearance in LookSource order (BodyLook.hpp)
   // and applied by a sliced job, aspects in place, never Redisplay. looksApplied() once every displayed body shows it.
+  // A sketch (no component) takes the entries under its own id: visible, colour, opacity or ghost (faded lines), pickable.
   void setLookLayer(LookSource source, std::map<std::string, LookDelta> deltas);
   void clearLookLayer(LookSource source) { setLookLayer(source, {}); }
   void setGhostsPickable(bool on);  // feature inputs, sketch Project, measuring: ghosts can be picked as references
   bool ghostsPickable() const { return m_ghostsPickable; }
-  BodyLook bodyLook(const std::string& body) const;  // as composed now (whether displayed yet or not)
-  BodyLook shownLook(const std::string& body) const;  // as applied to the displayed body (the default look if none)
+  BodyLook bodyLook(const std::string& body) const;  // as composed now (whether displayed yet or not); a sketch's too
+  BodyLook shownLook(const std::string& body) const;  // as applied to the displayed body or sketch (the default look if none)
+  QString hoverName(const std::string& node) const;   // the status text of a hovered node: "Lid (inactive)" for a ghost
   bool looksPending() const { return m_lookJob != nullptr || !m_lookQueue.empty(); }
-  opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body
+  opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
 
@@ -430,7 +432,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QStringList m_measureCaptions;
   Graphic3d_WorldViewProjState m_measureCamera;
   QSize m_measureSize;
-  struct NoteMark { gp_Pnt at; std::string style; opad::json drawing; };
+  struct NoteMark { gp_Pnt at; std::string style; opad::json drawing; std::string node; };  // node: what it is pinned to
+  gp_Vec lookOffset(const std::string& node) const;  // how far a look moved it (an exploded part): its notes follow
   std::string m_noteTypeFilter;
   Handle(AIS_InteractiveObject) m_drawingPreview;
   Handle(AIS_InteractiveObject) m_annotationTarget;
@@ -508,8 +511,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::shared_ptr<BodyPrs> prs;
     std::string stamp;  // geometry + frame it was built from
     std::vector<Handle(AIS_InteractiveObject)> backdrops;
+    BodyLook look;  // as applied (ViewportLooks.cpp); colour = the selection blue it is drawn in
   };
   std::map<std::string, SketchWire> m_sketchWires;
+  // A sketch's look: the layers' entries under its own id over the sketch blue; faded lines are blended towards the
+  // background (line aspects ignore alpha). Applied in place like a body's, images included.
+  BodyLook sketchLook(const std::string& id) const;
+  void applySketchLook(SketchWire& wire, const BodyLook& look);
   struct PreparedSketch { std::string stamp; TopoDS_Shape shape; std::shared_ptr<BodyPrs> prs; std::vector<Handle(AIS_InteractiveObject)> backdrops; bool ready=false; };
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it

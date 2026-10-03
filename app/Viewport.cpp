@@ -637,8 +637,10 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
   m_ctx->Load(ais, -1);  // register with the selection manager (picking BVH); Display() with mode -1 does not
   m_ctx->Deactivate(ais);
   if (!m_bodiesPickable) return;  // sketching, or a feature input that only takes sketch regions / planes
-  if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end())  // a ghost, a locked or a hidden body (its look)
+  if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end()) {  // a ghost, a locked or a hidden body (its look)
     if (const auto item = m_items.find(node->second); item != m_items.end() && !item->second.look.shownPickable()) return;
+    if (const auto wire = m_sketchWires.find(node->second); wire != m_sketchWires.end() && !wire->second.look.shownPickable()) return;
+  }
   TopAbs_ShapeEnum t = TopAbs_SHAPE;
   switch (m_filter) {
     case SelFilter::Body: t = TopAbs_SHAPE; break;
@@ -1958,7 +1960,7 @@ void Viewport::paintEvent(QPaintEvent*) {
     Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();
     auto it = m_nodeOf.find(obj.get());
     if (it != m_nodeOf.end()) {
-      hover = m_doc->nodeName(it->second);
+      hover = hoverName(it->second);
       Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
       if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
         const TopoDS_Shape& sub = owner->Shape();

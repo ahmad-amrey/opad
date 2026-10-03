@@ -5,6 +5,8 @@
 #include "Viewport.hpp"
 
 #include <AIS_TexturedShape.hxx>
+#include <Prs3d_LineAspect.hxx>
+#include <Prs3d_PointAspect.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <TColStd_ListOfInteger.hxx>
 #include <TopLoc_Location.hxx>
@@ -49,12 +51,34 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
 
 BodyLook Viewport::bodyLook(const std::string& body) const {
   const opad::Node* n = m_doc->scene.node(body);
-  return n ? composeLook(*n) : BodyLook();
+  return n ? composeLook(*n) : m_doc->scene.sketch(body) ? sketchLook(body) : BodyLook();
 }
 
 BodyLook Viewport::shownLook(const std::string& body) const {
-  const auto it = m_items.find(body);
-  return it == m_items.end() ? BodyLook() : it->second.look;
+  if (const auto it = m_items.find(body); it != m_items.end()) return it->second.look;
+  const auto sketch = m_sketchWires.find(body);
+  return sketch == m_sketchWires.end() ? BodyLook() : sketch->second.look;
+}
+
+BodyLook Viewport::sketchLook(const std::string& id) const {
+  BodyLook base;
+  base.color = {m_tokens.sel.redF(), m_tokens.sel.greenF(), m_tokens.sel.blueF()};
+  std::array<const LookDelta*, kLookSources> found{};
+  for (size_t s = 0; s < kLookSources; ++s)
+    if (const auto it = m_lookLayers[s].find(id); it != m_lookLayers[s].end()) found[s] = &it->second;
+  return looks::compose(base, found, m_ghostsPickable);
+}
+
+QString Viewport::hoverName(const std::string& node) const {
+  const auto it = m_items.find(node);
+  return m_doc->nodeName(node) + (it != m_items.end() && it->second.look.ghost ? tr(" (inactive)") : QString());
+}
+
+gp_Vec Viewport::lookOffset(const std::string& node) const {
+  std::array<double, 3> o{0, 0, 0};
+  if (const auto it = m_items.find(node); it != m_items.end()) o = it->second.look.offset;  // as drawn
+  else if (const opad::Node* n = layered() ? m_doc->scene.node(node) : nullptr) o = composeLook(*n).offset;  // a component
+  return gp_Vec(o[0], o[1], o[2]);
 }
 
 void Viewport::setLookLayer(LookSource source, std::map<std::string, LookDelta> deltas) {
@@ -74,6 +98,8 @@ void Viewport::setGhostsPickable(bool on) {
 void Viewport::scheduleLooks() {
   if (!m_initialised || !m_jobs) return;  // displayBody composes the look of every body it adds
   for (const auto& [id, item] : m_items)
+    if (m_lookQueued.insert(id).second) m_lookQueue.push_back(id);
+  for (const auto& [id, wire] : m_sketchWires)
     if (m_lookQueued.insert(id).second) m_lookQueue.push_back(id);
   if (m_lookJob || m_lookQueue.empty()) return;
   struct Pass {
@@ -95,6 +121,13 @@ void Viewport::scheduleLooks() {
         pass->moved = applyLook(id, it->second, look) || pass->moved;
         if ((++pass->changed & 127) == 0) redrawScene();  // the bodies change as the job goes
       }
+    } else if (const auto wire = m_sketchWires.find(id); wire != m_sketchWires.end()) {
+      const BodyLook look = sketchLook(id);
+      if (!(look == wire->second.look)) {
+        pass->selected = pass->selected || m_ctx->IsSelected(wire->second.ais);
+        applySketchLook(wire->second, look);
+        ++pass->changed;
+      }
     }
     return !m_lookQueue.empty();
   }, [this, pass](bool completed) {
@@ -104,7 +137,15 @@ void Viewport::scheduleLooks() {
       clearCenters();  // circle centres were found where the bodies were
       applySelectionLayers();  // the glows of selected bodies follow them
       if (!m_subHl.IsNull() || m_subJob) refreshSubHighlight();
+      if (!m_notes.empty()) {  // notes and hand drawings follow the parts they are pinned to
+        m_noteCamera.Reset();
+        QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
+      }
     }
+    // Ghosts overlap in any order: blended order-independently while there are any (unordered blending is the default).
+    const bool ghosts = std::any_of(m_items.begin(), m_items.end(), [](const auto& item) { return item.second.look.ghost; });
+    Graphic3d_RenderingParams& params = m_view->ChangeRenderingParams();
+    if ((params.TransparencyMethod == Graphic3d_RTM_BLEND_OIT) != ghosts) params.TransparencyMethod = ghosts ? Graphic3d_RTM_BLEND_OIT : Graphic3d_RTM_BLEND_UNORDERED;
     redrawScene();
     if (trace::enabled()) trace::log(QStringLiteral("looks: %1 bodies changed%2").arg(pass->changed).arg(completed ? "" : " (stopped)"));
     if (completed) emit looksApplied();
@@ -153,15 +194,50 @@ bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look
   return true;
 }
 
+void Viewport::applySketchLook(SketchWire& wire, const BodyLook& look) {
+  const BodyLook was = wire.look;
+  wire.look = look;
+  const Handle(AIS_Shape)& ais = wire.ais;
+  if (look.color != was.color || look.opacity != was.opacity) {
+    const Quantity_Color c = rgb(looks::mix(look.color, {m_tokens.vp.redF(), m_tokens.vp.greenF(), m_tokens.vp.blueF()}, 1 - look.opacity));
+    const Handle(Prs3d_Drawer)& d = ais->Attributes();
+    for (const Handle(Prs3d_LineAspect)& line : {d->WireAspect(), d->LineAspect(), d->FreeBoundaryAspect()})
+      if (!line.IsNull()) line->SetColor(c);
+    if (!d->PointAspect().IsNull()) d->PointAspect()->SetColor(c);
+    ais->SynchronizeAspects();
+  }
+  if (look.visible != was.visible) {
+    if (look.visible) m_ctx->Display(ais, AIS_WireFrame, -1, Standard_False);
+    else m_ctx->Erase(ais, Standard_False);
+    for (const auto& image : wire.backdrops)
+      if (look.visible) m_ctx->Display(image, 3, -1, Standard_False);
+      else m_ctx->Erase(image, Standard_False);
+  }
+  if (look.shownPickable() != was.shownPickable() || look.visible != was.visible) {
+    if (look.shownPickable()) activateSelection(ais);
+    else m_ctx->Deactivate(ais);
+  }
+  if (look.layer != was.layer && !m_ctx->IsSelected(ais)) m_ctx->SetZLayer(ais, look.layer);
+  if (look.offset != was.offset) {
+    gp_Trsf moved;
+    moved.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));
+    const TopLoc_Location at = look.offset == std::array<double, 3>{0, 0, 0} ? TopLoc_Location() : TopLoc_Location(moved);
+    m_ctx->SetLocation(ais, at);
+    for (const auto& image : wire.backdrops) m_ctx->SetLocation(image, at);
+  }
+}
+
 // ---------------------------------------------------------------- benches (OPAD_BENCH_LOOKS)
 opad::json Viewport::benchLookState(const std::string& body) const {
   const auto it = m_items.find(body);
-  if (!m_initialised || it == m_items.end()) return {};
-  const Handle(AIS_Shape)& ais = it->second.ais;
+  const auto wire = m_sketchWires.find(body);
+  if (!m_initialised || (it == m_items.end() && wire == m_sketchWires.end())) return {};
+  const Handle(AIS_Shape)& ais = it != m_items.end() ? it->second.ais : wire->second.ais;
   TColStd_ListOfInteger modes;
   m_ctx->ActivatedModes(ais, modes);
   Quantity_Color c;
-  ais->Color(c);
+  if (it != m_items.end()) ais->Color(c);
+  else c = ais->Attributes()->WireAspect()->Aspect()->Color();  // a sketch: the colour its lines are drawn in
   double r = 0, g = 0, b = 0;
   c.Values(r, g, b, Quantity_TOC_sRGB);
   const gp_XYZ t = ais->LocalTransformation().TranslationPart();

@@ -12,7 +12,11 @@
 #include <memory>
 
 #include "BenchRegistry.hpp"
+#include "DesignController.hpp"
 #include "MainWindow.hpp"
+#include "opad/design/feature.hpp"
+#include "opad/design/sketch.hpp"
+#include "opad/inspect.hpp"
 
 namespace {
 // Polls `done` every 50 ms until it holds or `ms` have passed, then calls `then` with the outcome.
@@ -77,12 +81,61 @@ void timeLayers(QObject* context, AppDocument* doc, Viewport* v, Check require, 
 }
 }  // namespace
 
+// A sketch takes the entries under its own id: a compare tint under an activation ghost draws its lines in the tint faded
+// towards the background (line aspects ignore alpha) and leaves them unpickable, a hidden entry erases it, clearing brings
+// the sketch blue back, drawn and pickable.
+void sketchLooks(QObject* context, AppDocument* doc, DesignController* design, Viewport* v, Check require, std::function<void()> finish) {
+  opad::design::Sketch sk;
+  const int a = sk.add_point(0, 0), b = sk.add_point(10, 0), c = sk.add_point(10, 10);
+  sk.add_line(a, b);
+  sk.add_line(b, c);
+  design->applyOps({opad::design::make_sketch_op("Look sketch", {{"base", "xy"}}, sk.to_json())}, "bench sketch", [=](bool ok, const QString& error) {
+    const std::string id = ok && !doc->scene.sketches.empty() ? doc->scene.sketches.back().id : std::string();
+    pollUntil(context, [v, id] { return !id.empty() && !v->benchLookState(id).empty() && !v->looksPending(); }, 10000, [=](bool shown) {
+      require(shown, "a sketch is drawn " + error);
+      if (!shown) return finish();
+      const BodyLook base = v->shownLook(id);
+      LookDelta ghost, red, hidden;
+      ghost.ghost = true;
+      red.color = std::array<double, 3>{0.9, 0.15, 0.1};
+      hidden.visible = false;
+      v->setLookLayer(LookSource::Compare, {{id, red}});
+      v->setLookLayer(LookSource::Activation, {{id, ghost}});
+      pollUntil(context, [v] { return !v->looksPending(); }, 10000, [=](bool) {
+        const auto state = v->benchLookState(id);
+        const QColor bg = v->tokens().vp;
+        const auto want = looks::mix(*red.color, {bg.redF(), bg.greenF(), bg.blueF()}, 1 - looks::kGhostOpacity);
+        bool faded = state.contains("color");
+        for (int i = 0; i < 3 && faded; ++i) faded = std::abs(state["color"][i].get<double>() - want[i]) < 1e-3;
+        require(faded && state.value("activated", -1) == 0 && state.value("displayed", false) && v->shownLook(id).ghost,
+                "a ghosted, tinted sketch: lines faded towards the background, not pickable: " + QString::fromStdString(state.dump()));
+        v->setLookLayer(LookSource::Lock, {{id, hidden}});
+        pollUntil(context, [v] { return !v->looksPending(); }, 10000, [=](bool) {
+          require(!v->benchLookState(id).value("displayed", true), "a hidden entry erases the sketch");
+          v->clearLookLayer(LookSource::Compare);
+          v->clearLookLayer(LookSource::Activation);
+          v->clearLookLayer(LookSource::Lock);
+          pollUntil(context, [v] { return !v->looksPending(); }, 10000, [=](bool) {
+            const auto back = v->benchLookState(id);
+            const QColor sel = v->tokens().sel;
+            require(back.value("displayed", false) && back.value("activated", 0) > 0 && v->shownLook(id) == base &&
+                        base.color == std::array<double, 3>{sel.redF(), sel.greenF(), sel.blueF()} && std::abs(back["color"][2].get<double>() - sel.blueF()) < 1e-3,
+                    "cleared: the sketch drawn in its blue and pickable again");
+            finish();
+          });
+        });
+      });
+    });
+  });
+}
+
 // OPAD_BENCH_LOOKS=<prefix>. On a small document (the overlap fixture: a box and a cylinder, the cylinder moved into a
 // component here) an activation ghost and a compare tint on the same body give the documented look (the tint at the
-// ghost's opacity, not pickable, drawn so: the pixel changes and comes back), a tint on the component reaches its body,
-// ghosts become pickable on request, an explode offset moves the body where picking finds it and Fit frames it, a
-// candidate's layer gives way to the X-ray Topmost while selected and comes back after, and clearing every layer
-// restores the document's look. On a big document (the Engine) the layers are timed (timeLayers). <prefix>.ghost.png
+// ghost's opacity, not pickable, hovered as inactive, drawn so: the pixel changes and comes back), a tint on the
+// component reaches its body, ghosts become pickable on request, an explode offset moves the body where picking finds it
+// and Fit frames it and takes the note pinned to it along, a
+// candidate's layer gives way to the X-ray Topmost while selected and comes back after, clearing every layer
+// restores the document's look, and a sketch follows the entries under its id (sketchLooks). On a big document (the Engine) the layers are timed (timeLayers). <prefix>.ghost.png
 // is the view with the ghost and the tints.
 OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
   auto all = std::make_shared<bool>(true);
@@ -108,7 +161,8 @@ OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
     const std::string a = bodies[0], b = bodies[1];
     const std::string component = w.m_doc->run("component", {{"name", "Group"}}).value("id", "");
     w.m_doc->run("reparent", {{"target", b}, {"parent", component}});
-    pollUntil(&w, settled, 20000, [&w, v, require, finish, a, b, component](bool ready) {
+    const std::string note = w.m_doc->run("annotate", {{"anchor", b}, {"text", "Follows its part"}}).value("id", "");
+    pollUntil(&w, settled, 20000, [&w, v, require, finish, a, b, component, note](bool ready) {
       int ax = 0, ay = 0;
       const bool found = ready && v->benchBodyPoint(a, ax, ay);
       require(found && w.m_doc->scene.node(b)->parent == component, "the box is picked, the cylinder sits in a component");
@@ -123,7 +177,7 @@ OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
       green.color = std::array<double, 3>{0.1, 0.75, 0.25};
       v->setLookLayer(LookSource::Activation, {{a, ghost}});
       v->setLookLayer(LookSource::Compare, {{a, red}, {component, green}});
-      pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b, component, ax, ay, pixel, apart, before, base, red, green](bool applied) {
+      pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b, component, note, ax, ay, pixel, apart, before, base, red, green](bool applied) {
         const BodyLook la = v->shownLook(a), lb = v->shownLook(b);
         const auto sa = v->benchLookState(a), sb = v->benchLookState(b);
         require(applied && la.color == *red.color && std::abs(la.opacity - looks::kGhostOpacity) < 1e-9 && la.ghost && !la.pickable && la == v->bodyLook(a),
@@ -133,22 +187,35 @@ OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
                 "the box's AIS: " + QString::fromStdString(sa.dump()));
         require(lb.color == *green.color && lb.opacity == 1 && lb.pickable && sb.value("activated", 0) > 0, "the component's tint reaches its cylinder, which stays pickable");
         require(v->benchPickAt(ax, ay) != a, "picking passes through the ghost");
+        require(v->hoverName(a).endsWith("(inactive)") && !v->hoverName(b).endsWith("(inactive)"), "hovered, a ghost says it is inactive: " + v->hoverName(a));
         v->grabImage().save(qEnvironmentVariable("OPAD_BENCH_LOOKS") + ".ghost.png");
         const QColor ghosted = pixel();
         require(apart(ghosted, before) > 40, QString("drawn so: %1 -> %2").arg(before.name(), ghosted.name()));
         v->setGhostsPickable(true);
-        pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b, component, ax, ay, pixel, apart, before, base](bool) {
+        pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b, component, note, ax, ay, pixel, apart, before, base](bool) {
           require(v->shownLook(a).pickable && v->benchLookState(a).value("activated", 0) > 0 && v->benchPickAt(ax, ay) == a, "ghosts pickable on request");
           v->setGhostsPickable(false);
           v->clearLookLayer(LookSource::Activation);
           v->clearLookLayer(LookSource::Compare);
-          pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b, component, ax, ay, pixel, apart, before, base](bool) {
+          pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b, component, note, ax, ay, pixel, apart, before, base](bool) {
             require(v->shownLook(a) == base && v->benchPickAt(ax, ay) == a && apart(pixel(), before) < 8,
                     QString("cleared: the document's look, picked and drawn again (%1)").arg(pixel().name()));
             LookDelta up;
             up.offset = {0, 0, 40};
+            QPoint pinned;
+            const bool anchored = v->noteAnchor(note, pinned);
+            const opad::json info = opad::inspect_ref(w.m_doc->doc, w.m_doc->scene, opad::Ref::parse(b));  // where updateAnnotations pins it
+            const opad::json centre = info.contains("center") ? info["center"] : info.value("bbox", opad::json::object()).value("center", opad::json());
+            auto moved = std::make_shared<int>(0);
+            QObject::connect(v, &Viewport::notesMoved, &w, [moved] { ++*moved; });
             v->setLookLayer(LookSource::Explode, {{component, up}});
-            pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b](bool) {
+            pollUntil(&w, [v, moved] { return !v->looksPending() && *moved > 0; }, 10000, [&w, v, require, finish, a, b, note, pinned, anchored, centre](bool) {
+              // The note pinned to the cylinder follows it: its anchor is drawn 40 mm up, and the cards were told.
+              QPoint drawn;
+              const opad::Vec3 up = centre.is_array() ? opad::Vec3{centre[0].get<double>(), centre[1].get<double>(), centre[2].get<double>() + 40} : opad::Vec3{0, 0, 0};
+              const bool shown = v->noteAnchor(note, drawn);
+              require(anchored && shown && centre.is_array() && (drawn - v->widgetPoint(up)).manhattanLength() <= 2 && (drawn - pinned).manhattanLength() > 10,
+                      QString("the note follows its exploded part: (%1, %2) -> (%3, %4)").arg(pinned.x()).arg(pinned.y()).arg(drawn.x()).arg(drawn.y()));
               const auto sb = v->benchLookState(b);
               v->fitAll();
               int bx = 0, by = 0;
@@ -170,12 +237,12 @@ OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
                     require(v->benchLookState(b).value("layer", 0) == Graphic3d_ZLayerId_Top, "deselected: back in the candidate's layer");
                     v->clearLookLayer(LookSource::Candidate);
                     v->clearLookLayer(LookSource::Explode);
-                    pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [v, require, finish, a, b](bool) {
+                    pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b](bool) {
                       const auto sb = v->benchLookState(b);
                       require(sb.value("layer", 1) == Graphic3d_ZLayerId_Default && std::abs(sb["translation"][2].get<double>()) < 1e-9 && sb.value("activated", 0) > 0 &&
                                   v->shownLook(b) == v->bodyLook(b) && v->shownLook(a) == v->bodyLook(a),
                               "every layer cleared: placed, layered and pickable as the document says");
-                      finish();
+                      sketchLooks(&w, w.m_doc, w.m_design, v, require, finish);
                     });
                   });
                 });
