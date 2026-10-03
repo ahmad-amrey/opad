@@ -67,7 +67,8 @@ struct Display {
   void circle(int layer, Vec2 c, double r, uint32_t rgb = kByLayer);
   void fill(int layer, std::vector<std::vector<Vec2>> loops, uint32_t rgb = kByLayer);
   void text(int layer, const std::string& s, Vec2 at, double height, double angle = 0, int halign = 0, int valign = 0, uint32_t rgb = kByLayer);
-  std::array<double, 4> bounds() const;  // xmin, ymin, xmax, ymax of everything (text by its rough box); zeros when empty
+  // xmin, ymin, xmax, ymax of everything (text by its rough box), or of the primitives [from, to); zeros when empty
+  std::array<double, 4> bounds(size_t from = 0, size_t to = SIZE_MAX) const;
   json counts() const;                   // primitives by DXF entity and by layer
 };
 

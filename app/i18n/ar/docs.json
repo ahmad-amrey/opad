@@ -368,5 +368,7 @@
   "%n dangling": "%n معلّق",
   "Re-attach %1": "إعادة ربط %1",
   "Select the annotation to re-attach first.": "حدد التعليق التوضيحي المراد إعادة ربطه أولًا.",
-  "Place datum symbols on a view first (Datum), then dimension it from them.": "ضع رموز المراجع على مسقط أولًا (مرجع)، ثم ضع أبعاده منها."
+  "Place datum symbols on a view first (Datum), then dimension it from them.": "ضع رموز المراجع على مسقط أولًا (مرجع)، ثم ضع أبعاده منها.",
+  "Centre marks": "علامات المراكز",
+  "Centre marks on the circles seen along their axis and centre lines along the holes and shafts seen from the side": "علامات المراكز على الدوائر المرئية على امتداد محورها وخطوط المحاور على امتداد الثقوب والأعمدة المرئية من الجانب"
 }

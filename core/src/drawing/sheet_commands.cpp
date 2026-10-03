@@ -191,7 +191,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         {"up", "[x,y,z]"}, {"select", "array|csv - nodes (default all)"}, {"hide", "array|csv"}, {"at", "[x,y] - paper mm of its centre"},
         {"scale", "string - sheet (default), 1:5 or auto"}, {"parent", "uuid"},
         {"side", "left|right|top|bottom|top-left|top-right|bottom-left|bottom-right"}, {"gap", "number - mm between frames (20)"},
-        {"hidden", "bool - hidden lines"}, {"by", "string"}},
+        {"hidden", "bool - hidden lines"}, {"centermarks", "bool"}, {"by", "string"}},
        true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
@@ -233,7 +233,8 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           op["side"] = a.value("side", "right");
           if (a.contains("gap")) op["gap"] = a["gap"];
         }
-        if (a.contains("hidden")) op["style"] = {{"hidden", a["hidden"].get<bool>()}};
+        if (a.contains("hidden")) op["style"]["hidden"] = a["hidden"].get<bool>();
+        if (a.value("centermarks", false)) op["style"]["centermarks"] = true;
         check_view(scene, "", op);
         const std::string id = doc.append(op, a.value("by", "")).id;
         const Scene after = resolve(doc);

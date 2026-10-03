@@ -117,6 +117,7 @@ class SheetViewItem : public SheetPartItem {
   QString error;
   std::shared_ptr<const opad::drawing::ViewGeometry> geometry;  // of the display shown: picks trace its curves to the model
   QRectF drawn;  // local (the scene when it was drawn): the frame the display was drawn in
+  QRectF lines;  // local: its projected edges' bounds
   SheetViewItem() {
     setFlag(ItemIsSelectable);
     setZValue(1);
@@ -506,6 +507,7 @@ void SheetCanvas::start() {
             vp.display = out;
             vp.box = hug(fr, *g).box;
             vp.bounds = out->bounds();
+            vp.linework = out->bounds(0, g->curves.size());  // draw_view draws the projection's curves first
             vp.snaps = std::make_shared<const SnapIndex>(*out);
             vp.geometry = g;
             vp.draft = draft;
@@ -582,6 +584,8 @@ void SheetCanvas::apply(Part& part) {
   } else if (SheetViewItem* item = viewItem(part.id)) {
     if (!part.draft || !item->final) {
       item->show(part.display, part.bounds, sceneBox(part.box), part.draft, m_paperW, m_paperH);
+      const auto& l = part.linework;
+      item->lines = l[2] > l[0] ? QRectF(QPointF(l[0], m_paperH - l[3]), QPointF(l[2], m_paperH - l[1])) : QRectF();
       item->snaps = part.snaps;
       item->geometry = part.geometry;
       if (!part.draft) {
@@ -1029,9 +1033,9 @@ void SheetCanvas::placeBase(const std::string& orient, std::function<void(bool)>
   // Drawn from what the sheet's first base view draws, at the sheet's scale.
   opad::json source;
   for (const auto& id : s->views)
-    if (const opad::SheetView* v = m_doc->scene.sheet_view(id); v && v->kind == "base" && v->def.contains("source")) {
-      source = v->def["source"];
-      break;
+    if (const opad::SheetView* v = m_doc->scene.sheet_view(id); v && v->kind == "base") {
+      if (source.is_null() && v->def.contains("source")) source = v->def["source"];
+      if (id == s->views.front()) m_place.marks = v->def.value("style", opad::json::object()).value("centermarks", false);
     }
   const double scale = s->scale;
   auto size = std::make_shared<std::array<double, 2>>(std::array<double, 2>{40, 30});
@@ -1067,6 +1071,7 @@ void SheetCanvas::placeProjected(const std::string& parent, std::function<void(b
   }
   m_place.active = m_place.projected = true;
   m_place.parent = parent;
+  if (const opad::SheetView* v = m_doc->scene.sheet_view(parent)) m_place.marks = v->def.value("style", opad::json::object()).value("centermarks", false);
   m_place.done = std::move(done);
   for (const char* side : {"right", "left", "top", "bottom", "top-right", "top-left", "bottom-right", "bottom-left"}) m_place.sizes[side] = {40, 30};
   // The parent's scale: its frame against its extent (sheet scale unless it has its own).
@@ -1158,6 +1163,7 @@ void SheetCanvas::placeAt(Vec2 paper) {
       if (m_place.source.contains("hide")) args["hide"] = m_place.source["hide"];
     }
   }
+  if (m_place.marks) args["centermarks"] = true;
   auto done = std::move(m_place.done);
   m_place.done = nullptr;
   cancelPlacement();
@@ -1233,7 +1239,7 @@ std::vector<SheetCanvas::ViewState> SheetCanvas::viewStates() const {
   if (!s) return out;
   for (const auto& id : s->views)
     if (SheetViewItem* item = viewItem(id))
-      out.push_back({id, item->frame(), item->displayRect.translated(item->pos()), item->draft, item->final, item->current(),
+      out.push_back({id, item->frame(), item->lines.translated(item->pos()), item->draft, item->final, item->current(),
                      item->display ? static_cast<int>(item->display->prims.size()) : 0, item->error});
   return out;
 }

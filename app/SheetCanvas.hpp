@@ -118,7 +118,7 @@ class SheetCanvas : public QGraphicsView {
   struct ViewState {
     std::string id;
     QRectF frame;      // scene
-    QRectF linework;   // scene: what its display draws
+    QRectF linework;   // scene: the view's projected edges (centre marks and annotations may reach past them)
     bool draft = false, final = false, picture = false;  // picture: drawn from a picture of its current linework
     int prims = 0;
     QString error;
@@ -185,6 +185,7 @@ class SheetCanvas : public QGraphicsView {
     std::shared_ptr<const opad::drawing::Display> display;
     std::array<double, 4> box{0, 0, 0, 0};     // the frame the view was drawn in (paper)
     std::array<double, 4> bounds{0, 0, 0, 0};  // the display's (measured on the worker)
+    std::array<double, 4> linework{0, 0, 0, 0};  // a view's own edges' (not its centre marks or annotations)
     std::shared_ptr<const opad::drawing::SnapIndex> snaps;  // its curves' snaps (built on the worker)
     std::shared_ptr<const opad::drawing::ViewGeometry> geometry;  // a view's projection (its curves come first)
     std::vector<ItemHit> items;  // annotations drawn in it, to pick them
@@ -213,6 +214,7 @@ class SheetCanvas : public QGraphicsView {
     std::map<std::string, std::array<double, 2>> sizes;  // side (or "") -> frame size, paper mm
     QRectF ghost;                                       // scene
     opad::json source;                                  // a base view: what the sheet's first base view draws
+    bool marks = false;                                 // centre marks, as the sheet's first base view (or the parent) has them
     std::function<void(bool)> done;
     QPointer<Job> job;
   };

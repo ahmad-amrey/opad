@@ -178,10 +178,11 @@ std::vector<TextLine> text_lines(const Prim& p) {
   return lines;
 }
 
-std::array<double, 4> Display::bounds() const {
+std::array<double, 4> Display::bounds(size_t from, size_t to) const {
   std::array<double, 4> b{1e300, 1e300, -1e300, -1e300};
   auto take = [&](Vec2 p) { b = {std::min(b[0], p[0]), std::min(b[1], p[1]), std::max(b[2], p[0]), std::max(b[3], p[1])}; };
-  for (const auto& p : prims) {
+  for (size_t i = from; i < std::min(to, prims.size()); ++i) {
+    const Prim& p = prims[i];
     if (p.kind == Prim::Kind::Fill) {
       for (const auto& l : p.loops)
         for (const auto& q : l) take(q);

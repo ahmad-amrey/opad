@@ -159,7 +159,12 @@ NewDrawingDialog::NewDrawingDialog(AppDocument* doc, const std::vector<std::stri
   m_tangent->addItem(tr("Tangent edges as edges"), "show");
   m_tangent->addItem(tr("No tangent edges"), "hide");
   m_tangent->setCurrentIndex(std::max(0, m_tangent->findData(settings.value("drawings/tangent", "thin"))));
+  m_marks = new QCheckBox(tr("Centre marks"), this);
+  m_marks->setObjectName("drawing.centermarks");
+  m_marks->setToolTip(tr("Centre marks on the circles seen along their axis and centre lines along the holes and shafts seen from the side"));
+  m_marks->setChecked(settings.value("drawings/centermarks", true).toBool());
   style->addWidget(m_hidden);
+  style->addWidget(m_marks);
   style->addWidget(m_tangent);
   style->addStretch();
   left->addRow(tr("Style"), style);
@@ -212,6 +217,7 @@ NewDrawingDialog::NewDrawingDialog(AppDocument* doc, const std::vector<std::stri
       if (box->isChecked()) views << id;
     s.setValue("drawings/views", views);
     s.setValue("drawings/hidden", m_hidden->isChecked());
+    s.setValue("drawings/centermarks", m_marks->isChecked());
     s.setValue("drawings/tangent", m_tangent->currentData());
     s.setValue("drawings/owner", m_owner->text().trimmed());
     accept();
@@ -252,6 +258,7 @@ opad::json NewDrawingDialog::args() const {
                   {"projection", m_projection->currentData().toString().toStdString()},
                   {"scale", m_scale->currentData().toString().toStdString()},
                   {"hidden", m_hidden->isChecked()},
+                  {"centermarks", m_marks->isChecked()},
                   {"tangent", m_tangent->currentData().toString().toStdString()}};
   const std::string base = m_base->currentData().toString().toStdString();
   opad::json views = {base};

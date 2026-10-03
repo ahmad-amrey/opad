@@ -118,8 +118,9 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     for (auto* r : dialog->findChildren<QRadioButton*>())
       if (r->text() == QObject::tr("Landscape")) r->setChecked(true);
     const opad::json args = dialog->args();
-    check(args["size"] == "A3" && args["projection"] == "first" && args["views"] == opad::json({"front", "top", "side", "iso"}) && args["scale"] == "auto",
-          "the dialog asks for ISO A3, first angle, front + top + side + iso at an automatic scale: " + QString::fromStdString(args.dump()));
+    check(args["size"] == "A3" && args["projection"] == "first" && args["views"] == opad::json({"front", "top", "side", "iso"}) && args["scale"] == "auto" &&
+              args.value("centermarks", false),
+          "the dialog asks for ISO A3, first angle, front + top + side + iso at an automatic scale, with centre marks: " + QString::fromStdString(args.dump()));
     for (auto* b : dialog->findChildren<QPushButton*>())
       if (b->objectName() == "primary") b->click();
     check(waitFor([&] { return views().size() == 4; }, 20000), "Create drawing adds a sheet with 4 views");
@@ -277,6 +278,17 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
         if (p.source == front && d.layers[size_t(p.layer)].name == "Hidden") ++dashed;
     }
     check(dashed >= 2, QString("the front view draws the hole's two hidden lines (%1)").arg(dashed));
+    {  // centre marks by default: a mark on the hole seen from above, its axis from the front; the views placed since have them too
+      opad::json report;
+      const auto d = opad::drawing::sheet_display(w.m_doc->doc, w.m_doc->scene, *w.m_doc->scene.sheet(sheetId), {}, &report);
+      std::map<std::string, int> marks;
+      for (const auto& p : d.prims)
+        if (d.layers[size_t(p.layer)].name == "Center") ++marks[p.source];
+      bool placed = true;
+      for (size_t i = 4; i < views().size(); ++i) placed = placed && w.m_doc->scene.sheet_view(views()[i])->def.value("style", opad::json::object()).value("centermarks", false);
+      check(marks[top] >= 2 && marks[front] >= 1 && marks[side] >= 1 && placed && views().size() == 6,
+            QString("centre marks on new drawings: top %1, front %2, side %3 primitives; the views placed with the mouse take them").arg(marks[top]).arg(marks[front]).arg(marks[side]));
+    }
 
     // Sheet properties: A2, the title block's own fields; the template follows the paper.
     w.action("drawings.sheetProperties")->trigger();

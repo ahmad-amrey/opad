@@ -35,7 +35,7 @@ class NewDrawingDialog : public QDialog {
   QListWidget* m_templates;
   QRadioButton *m_landscape, *m_portrait, *m_whole, *m_selection;
   QComboBox *m_projection, *m_scale, *m_base, *m_tangent;
-  QCheckBox *m_top, *m_side, *m_iso, *m_hidden;
+  QCheckBox *m_top, *m_side, *m_iso, *m_hidden, *m_marks;
   QLineEdit *m_name, *m_title, *m_number, *m_owner, *m_author, *m_revision;
   bool m_projectionTouched = false;
 };
