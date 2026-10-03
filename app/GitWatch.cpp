@@ -628,7 +628,8 @@ void GitWatch::runClone(const QString& url, const QString& folder) {
     git::RunOptions o = git::RunOptions::network();
     o.cancelled = [p] { return p.cancelled(); };
     o.progress = [p](const QString& phase, int percent) { p.setPhase(phase, percent); };
-    p.setPhase(tr("Connecting to %1").arg(url));
+    static const QRegularExpression userInfo(QStringLiteral("//[^/@\\s]+@"));  // a token in https://user:token@host
+    p.setPhase(tr("Connecting to %1").arg(QString(url).replace(userInfo, QStringLiteral("//"))));
     const bool existed = QFileInfo::exists(folder);
     if (existed && !QDir(folder).isEmpty()) throw std::runtime_error(tr("%1 already exists and is not empty.").arg(QDir::toNativeSeparators(folder)).toStdString());
     const git::Context c = git::contextFor(program, QFileInfo(folder).absolutePath(), app);
