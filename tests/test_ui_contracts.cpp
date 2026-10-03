@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "Commands.hpp"
+#include "KeyTips.hpp"
 #include "PanelFooter.hpp"
 #include "Ribbon.hpp"
 #include "Theme.hpp"
@@ -124,6 +125,23 @@ TEST(text_size_and_high_contrast) {
   CHECK(hc.highContrast && !theme::tokens(true).highContrast && hc.bg == hc.bg2 && hc.bg == hc.vp && hc.line == hc.fg);
   CHECK(theme::contrast(hc.fg, hc.bg) >= 7 && theme::contrast(hc.fg3, hc.bg) >= 4.5 && theme::contrast(hc.onsel, hc.sel) >= 4.5);
   CHECK(theme::stylesheet(hc).contains("item:selected { color: " + hc.onsel.name()) && !theme::stylesheet(theme::tokens(true)).contains("item:selected { color: "));
+}
+
+// UI-117: one key per ribbon label, from its words' first letters, never taken or a prefix of another; past 36 two keys.
+TEST(key_tips) {
+  const QStringList tabs = keytips::assign({"View", "Inspect", "Annotate", "Export", "Insert"}, {"1", "2"});
+  CHECK(tabs == QStringList({"V", "I", "A", "E", "N"}));
+  const QStringList tools = keytips::assign({"&Fit", "Fit all", "Home", "Top view", "تحديد"});
+  CHECK(tools == QStringList({"F", "A", "H", "T", "B"}));  // Fit all: its second word; an Arabic label: the first free letter
+  QStringList many;
+  for (int i = 0; i < 40; ++i) many << QString("Tool %1").arg(i);
+  const QStringList keys = keytips::assign(many);
+  QSet<QString> seen(keys.begin(), keys.end());
+  bool prefixFree = true;
+  for (const QString& a : keys)
+    for (const QString& b : keys)
+      if (a != b && b.startsWith(a)) prefixFree = false;
+  CHECK(seen.size() == 40 && prefixFree && std::count_if(keys.begin(), keys.end(), [](const QString& k) { return k.size() == 2; }) == 5 && !keys.contains("Z"));
 }
 
 TEST(panel_footer) {

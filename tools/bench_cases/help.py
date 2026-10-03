@@ -71,4 +71,8 @@ CASES = [
     # UI-124: states not told by colour alone: free sketch points are rings, the panel counts the degrees of freedom or
     # says fully defined, a suppressed feature's marker is struck through and says so.
     ("cues", guided, {"OPAD_BENCH_CUES": "{prefix}"}),
+    # UI-117 / UI-124: key tips: Alt shows a key on each tab and tab-row button, a tab's key shows its tools' keys, a tool's
+    # key runs it, Esc goes back; the window's one-key shortcuts wait meanwhile.
+    ("keytips", "box", {"OPAD_BENCH_KEYTIPS": "{prefix}"}),
+    ("keytips-ar", "box", {"OPAD_BENCH_KEYTIPS": "{prefix}", "OPAD_LANG": "ar"}),
 ]
