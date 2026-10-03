@@ -89,6 +89,7 @@ struct Frame {
   Vec3 normal() const;
   Vec3 to_world(double u, double v) const;
   void to_local(const Vec3& p, double& u, double& v) const;
+  Frame transformed(const Mat4& m) const;  // moved by m (its rigid part: axes stay unit and square)
   json to_json() const;
   static Frame from_json(const json& j);
 };
@@ -97,8 +98,9 @@ struct SketchItem {
   std::string id, name;
   std::string component;  // the component it was made in (the op's optional "component"); empty = the document root
   Mat4 placed;            // that component's world placement when the sketch was made
+  Mat4 moved;             // how far the component moved since (world now * inverse(placed)); frame includes it
   json plane;     // how the plane was chosen: {"base":"xy"} | {"face":ref} | {"feature":id}
-  Frame frame;
+  Frame frame;    // where it is now; the op keeps it as made (frame.transformed(moved.inverse()))
   json geometry;  // solved: {"points":[..],"entities":[..],"constraints":[..]} (design/sketch.hpp)
   bool visible = true;
   bool consumed = false;  // some feature uses it: hidden unless shown explicitly

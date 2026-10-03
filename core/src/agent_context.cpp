@@ -35,7 +35,7 @@ bool same_signature(const json& a,const json& b) {
   return a==b;
 }
 std::string short_text(const std::string& s){if(s.size()<=512)return s;size_t end=512;while(end>0&&(static_cast<unsigned char>(s[end])&0xc0)==0x80)--end;return s.substr(0,end)+"...";}
-json sketch_summary(const SketchItem& sk){return {{"id",sk.id},{"name",short_text(sk.name)},{"plane",sk.plane},{"frame",sk.frame.to_json()},{"visible",sk.visible},{"consumed",sk.consumed},{"dof",sk.dof},{"entities",sk.geometry.contains("entities")?sk.geometry.at("entities").size():0},{"constraints",sk.geometry.contains("constraints")?sk.geometry.at("constraints").size():0},{"error",short_text(sk.error)}};}
+json sketch_summary(const SketchItem& sk){json j={{"id",sk.id},{"name",short_text(sk.name)},{"plane",sk.plane},{"frame",sk.frame.to_json()},{"visible",sk.visible},{"consumed",sk.consumed},{"dof",sk.dof},{"entities",sk.geometry.contains("entities")?sk.geometry.at("entities").size():0},{"constraints",sk.geometry.contains("constraints")?sk.geometry.at("constraints").size():0},{"error",short_text(sk.error)}};if(!sk.component.empty())j["component"]=sk.component;return j;}
 }
 json context(const Document& doc,const Scene& scene,const json& args) {
   const auto section=args.value("section","summary");json items=json::array();

@@ -205,7 +205,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   0..1 and `parent` (a component id) for the bodies it makes, applied in the same step. A feature that makes no new
   body says so in `warnings`.
 - `feature` and `sketch` take `component`: the component they are made in. New bodies (and a construction plane or
-  axis) go into it and stay there when the feature regenerates; `parent` still moves the bodies afterwards.
+  axis) go into it and stay there when the feature regenerates; `parent` still moves the bodies afterwards. A sketch,
+  plane or axis made in a component moves with it when the component moves later (`transform`, `reparent`), as its
+  bodies do, and features made afterwards read it where it is now.
 - `rename`, `appearance` and `reparent` take `targets` (a list) instead of `target`; `rename` then numbers the names.
 
 ## Batches

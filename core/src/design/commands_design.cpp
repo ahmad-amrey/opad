@@ -245,7 +245,15 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         if (a.contains("geometry")) set["geometry"] = design::expand_sketch_shapes(parse_if_text(a["geometry"]), &id_map);
         if (a.contains("name")) set["name"] = a["name"];
         json frame;
-        if (a.contains("plane")) {auto plane=parse_if_text(a["plane"]);const auto resolved=design::resolve_plane(doc,resolve(doc),plane);plane["frame"]=resolved.to_json();frame=design::frame_result(resolved);set["plane"]=std::move(plane);}
+        if (a.contains("plane")) {
+          auto plane = parse_if_text(a["plane"]);
+          const Scene s = resolve(doc);
+          const auto resolved = design::resolve_plane(doc, s, plane);
+          plane["frame"] = resolved.to_json();
+          frame = design::frame_result(resolved);
+          const SketchItem* sketch = s.sketch(a.at("target").get<std::string>());
+          set["plane"] = sketch ? design::plane_as_made(*sketch, std::move(plane)) : std::move(plane);  // its component moved since (UI-33)
+        }
         if (set.empty()) throw Error("sketch_edit: nothing to change");
         json out = design::apply_ops(doc, {design::make_edit_op(a.at("target").get<std::string>(), set)}, a.value("by", ""));
         out["sketch_id"] = a.at("target");

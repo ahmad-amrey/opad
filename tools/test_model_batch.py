@@ -146,6 +146,19 @@ def main():
         made_in = {f["id"]: f.get("component") for f in client.call("features")["result"]}
         assert made_in[ids["outline"]["sketch_id"]] == lid and made_in[ids["pad"]["feature_id"]] == lid and not made_in[ids["free"]["feature_id"]], made_in
         print("Batch component for feature and sketch steps: PASS", flush=True)
+        # TODO 11 UI-33 phase 2: the lid moved, its sketch and body go along, and the next body made from the sketch
+        # lands on it where it is now.
+        outline, pad = ids["outline"]["sketch_id"], ids["pad"]["body_ids"][0]
+        was = client.call("sketch_details", sketch=outline)["result"]
+        low = lambda body: client.call("inspect", ref=body)["result"]["bbox"]["min"][2]
+        pad_low = low(pad)
+        client.write("transform", target=lid, matrix=[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 25, 0, 0, 0, 1])
+        now = client.call("sketch_details", sketch=outline)["result"]
+        assert now["component"] == lid and abs(now["frame"]["origin"][2] - was["frame"]["origin"][2] - 25) < 1e-9, (was, now)
+        assert abs(low(pad) - pad_low - 25) < 1e-6, low(pad)
+        again = client.write("feature", kind="extrude", component=lid, inputs={"profiles": [{"sketch": outline, "at": [5, 85]}], "distance": 2, "operation": "new"})
+        assert abs(low(again["result"]["body_ids"][0]) - now["frame"]["origin"][2]) < 1e-6, low(again["result"]["body_ids"][0])
+        print("Sketches follow their component: PASS", flush=True)
     finally:
         for connection in (client, observer):
             if connection:

@@ -107,6 +107,20 @@ void Frame::to_local(const Vec3& p, double& u, double& v) const {
   v = d[0] * y[0] + d[1] * y[1] + d[2] * y[2];
 }
 
+Frame Frame::transformed(const Mat4& m) const {
+  auto unit = [](Vec3 v) {
+    const double l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    return l < 1e-300 ? v : Vec3{v[0] / l, v[1] / l, v[2] / l};
+  };
+  Frame f;
+  f.origin = m.apply(origin);
+  f.x = unit(m.apply_dir(x));
+  const Vec3 y1 = m.apply_dir(y);
+  const double along = y1[0] * f.x[0] + y1[1] * f.x[1] + y1[2] * f.x[2];
+  f.y = unit({y1[0] - along * f.x[0], y1[1] - along * f.x[1], y1[2] - along * f.x[2]});
+  return f;
+}
+
 json Frame::to_json() const { return {{"origin", origin}, {"x", x}, {"y", y}}; }
 
 Frame Frame::from_json(const json& j) {
@@ -162,8 +176,46 @@ struct SceneBuilder::Impl {
   const Document& doc;
   Scene scene;
   std::set<std::string> shown_sketches, hidden_sketches;  // explicit appearance ops on sketches
+  // Sketches and construction planes / axes made in a component follow its later moves (TODO 11 UI-33 phase 2). The op
+  // keeps where they were made; the scene has them where the component is now, so later features read them there.
+  struct Follower {
+    bool sketch;
+    size_t index;  // into scene.sketches or scene.features
+    std::string component;
+    Mat4 placed;   // the component's world placement when made
+    json made;     // the frame, or the feature's result, as made
+  };
+  std::vector<Follower> followers;
 
   explicit Impl(const Document& d) : doc(d) {scene.units=d.header.units;}
+
+  void follow() {
+    for (const auto& f : followers) {
+      if (!scene.node(f.component)) continue;  // removed: stays where it was last
+      Mat4 moved;
+      try {
+        moved = scene.world(f.component) * f.placed.inverse();
+      } catch (const Error&) {  // made while the component was squashed flat: nothing to follow
+        continue;
+      }
+      if (f.sketch) {
+        SketchItem& s = scene.sketches[f.index];
+        s.moved = moved;
+        s.frame = Frame::from_json(f.made).transformed(moved);
+        continue;
+      }
+      json& result = scene.features[f.index].result;
+      if (f.made.contains("plane")) result["plane"] = Frame::from_json(f.made["plane"]).transformed(moved).to_json();
+      if (f.made.contains("axis")) {  // as a frame: its origin and x moved the same way
+        Frame axis;
+        axis.origin = vec3_from(f.made["axis"].value("origin", json()), axis.origin);
+        axis.x = vec3_from(f.made["axis"].value("dir", json()), {0, 0, 1});
+        axis.y = std::fabs(axis.x[0]) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+        axis = axis.transformed(moved);
+        result["axis"] = {{"origin", axis.origin}, {"dir", axis.x}};
+      }
+    }
+  }
 
   void unresolved(const std::string& id, const std::string& type, const std::string& reason) { scene.unresolved.push_back({id, type, reason}); }
 
@@ -339,6 +391,12 @@ struct SceneBuilder::Impl {
         attach(nid, parent, -1);
       }
     }
+    if (!f.component.empty() && (f.result.contains("plane") || f.result.contains("axis"))) {
+      json made = json::object();
+      for (const char* k : {"plane", "axis"})
+        if (f.result.contains(k)) made[k] = f.result[k];
+      followers.push_back({false, scene.features.size(), f.component, scene.world(f.component), made});
+    }
     scene.features.push_back(std::move(f));
   }
 
@@ -367,8 +425,10 @@ struct SceneBuilder::Impl {
       std::string nid = n->id;
       detach(nid);
       attach(nid, parent, d.value("index", -1));
+      follow();
     } else if (type == "transform") {
       if (Node* n = target_of(id, type, d)) n->local = Mat4::from_json(d["matrix"]);
+      follow();
     } else if (type == "appearance") {
       if (SketchItem* s = sketch_of(d.value("target", ""))) {  // a sketch only has a visibility
         if (d.contains("visible")) {
@@ -461,6 +521,7 @@ struct SceneBuilder::Impl {
       s.dof = res.value("dof", d.value("dof", -1));
       s.error = res.value("error", "");
       if (!s.error.empty()) unresolved(id, type, s.name + ": " + s.error);
+      if (!s.component.empty()) followers.push_back({true, scene.sketches.size(), s.component, s.placed, s.frame.to_json()});
       scene.sketches.push_back(std::move(s));
     } else if (type == "feature") {
       apply_feature(id, d);

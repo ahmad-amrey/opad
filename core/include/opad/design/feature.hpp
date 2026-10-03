@@ -115,6 +115,9 @@ std::vector<json> rename_param_ops(const Document& doc, const std::string& from,
 std::vector<std::string> param_users(const Document& doc, const std::string& name);
 // Frame of a plane input ({"base":..} | {"face":ref} | {"feature":id}) in the given state.
 Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane);
+// A plane chosen now for a sketch whose component has moved since it was made, as its op keeps it: where it was made
+// (its frame and world points and directions moved back by sketch.moved; TODO 11 UI-33). Unchanged otherwise.
+json plane_as_made(const SketchItem& sketch, json plane);
 // Whether an input is in use for these inputs (its show_if holds).
 bool input_active(const InputSpec& in, const json& inputs);
 // A frame as results report it (TODO 10 B3): origin, x, y and the normal (x cross y).

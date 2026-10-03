@@ -1153,6 +1153,31 @@ Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane) 
   return ctx.plane(plane);
 }
 
+json plane_as_made(const SketchItem& sketch, json plane) {
+  if (sketch.moved.is_identity(1e-12) || !plane.is_object()) return plane;
+  const Mat4 back = sketch.moved.inverse();
+  auto point = [&](json& p) { if (p.is_array() && p.size() == 3) p = back.apply(p.get<Vec3>()); };
+  auto dir = [&](json& d) { if (d.is_array() && d.size() == 3) d = back.apply_dir(d.get<Vec3>()); };
+  std::function<void(json&)> place = [&](json& p) {
+    if (!p.is_object()) return;
+    if (p.contains("frame")) p["frame"] = Frame::from_json(p["frame"]).transformed(back).to_json();
+    if (p.contains("normal")) {
+      dir(p["normal"]);
+      if (p.contains("origin")) point(p["origin"]);
+      if (p.contains("x")) dir(p["x"]);
+    }
+    if (p.contains("origin") && p["origin"].is_object() && p["origin"].contains("world")) point(p["origin"]["world"]);
+    if (!p.contains("support")) return;
+    json& support = p["support"];  // resolved again where the sketch is made: a world plane goes in as the frame picked
+    if (support.is_object() && support.contains("base") && support["base"].is_string())
+      support = {{"frame", base_frame(support["base"].get<std::string>()).transformed(back).to_json()}};
+    else
+      place(support);
+  };
+  place(plane);
+  return plane;
+}
+
 json make_ref(const Document& doc, const Scene& scene, const Ref& ref) {
   json j = ref.to_json();
   if (ref.kind == Ref::Kind::Body || ref.kind == Ref::Kind::Point) return j;

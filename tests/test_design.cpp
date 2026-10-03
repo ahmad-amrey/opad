@@ -1811,6 +1811,116 @@ TEST(features_and_sketches_made_in_a_component) {
   CHECK(s.unresolved.empty());
 }
 
+// TODO 11 UI-33 phase 2: a sketch, construction plane or axis made in a component moves with it when the component
+// moves later, as its bodies do, and features read the sketch where it is now: a body extruded from it after the move
+// lands on it. The op keeps where it was made (replay before the move and older builds see that); a plane chosen again
+// for the sketch goes in as made, so the sketch ends up where it was chosen.
+TEST(sketches_and_planes_follow_their_component) {
+  CHECK(Mat4::translation(1, 2, 3).inverse().to_json() == Mat4::translation(-1, -2, -3).to_json());
+  Mat4 turn;  // a quarter turn about z, then up 5
+  turn.at(0, 0) = 0, turn.at(0, 1) = -1, turn.at(1, 0) = 1, turn.at(1, 1) = 0, turn.at(2, 3) = 5;
+  CHECK((turn * turn.inverse()).is_identity(1e-12) && (turn.inverse() * turn).is_identity(1e-12));
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  const std::string sketch = commands::run("sketch", {{"plane", {{"base", "xy"}}}, {"geometry", rectangle(0, 0, 20, 10).to_json()}, {"component", lid}}, &doc)["sketch_id"];
+  const std::string plane = commands::run("feature", {{"kind", "plane"}, {"inputs", {{"mode", "offset"}, {"plane", {{"base", "xy"}}}, {"distance", "30 mm"}}}, {"component", lid}}, &doc)["feature_id"];
+  const std::string axis = commands::run("feature", {{"kind", "axis"}, {"inputs", {{"mode", "two_points"}, {"points", {{5, 5, 0}, {5, 5, 10}}}}}, {"component", lid}}, &doc)["feature_id"];
+  auto extrude = [&](double distance, const json& component) {
+    json a = {{"kind", "extrude"}, {"inputs", {{"profiles", json::array({{{"sketch", sketch}, {"at", {5, 5}}}})}, {"distance", distance}, {"operation", "new"}}}};
+    if (!component.is_null()) a["component"] = component;
+    return commands::run("feature", a, &doc)["body_ids"][0].get<std::string>();
+  };
+  const std::string first = extrude(5, lid);
+  Scene s = resolve(doc);
+  auto box = [&](const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, s, id), b);
+    return b;
+  };
+  auto origin = [&](const std::string& id) { return s.sketch(id)->frame.origin; };
+  auto plane_at = [&] { return Frame::from_json(s.feature(plane)->result["plane"]).origin; };
+  CHECK(s.sketch(sketch)->moved.is_identity());
+  // The lid goes up 40: its sketch, plane, axis and body with it; the op still has the sketch where it was made.
+  commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 40).to_json()}}, &doc);
+  s = resolve(doc);
+  CHECK_NEAR(origin(sketch)[2], 40, 1e-9);
+  CHECK(s.sketch(sketch)->moved.to_json() == Mat4::translation(0, 0, 40).to_json());
+  CHECK_NEAR(plane_at()[2], 70, 1e-9);
+  CHECK_NEAR(s.feature(axis)->result["axis"]["origin"][2].get<double>(), 40, 1e-9);
+  CHECK_NEAR(s.feature(axis)->result["axis"]["dir"][2].get<double>(), 1, 1e-9);
+  CHECK_NEAR(box(first).CornerMin().Z(), 40, 1e-6);
+  CHECK_NEAR(doc.find_op(sketch)->data["plane"]["frame"]["origin"][2].get<double>(), 0, 1e-9);
+  // Made from it now, in the lid or at the root, and sketched on the plane: where they are now.
+  const std::string second = extrude(3, lid), loose = extrude(2, json());
+  const std::string on_plane = commands::run("sketch", {{"plane", {{"feature", plane}}}, {"geometry", rectangle(0, 0, 4, 4).to_json()}}, &doc)["sketch_id"];
+  s = resolve(doc);
+  CHECK_NEAR(box(second).CornerMin().Z(), 40, 1e-6);
+  CHECK_NEAR(box(second).CornerMax().Z(), 43, 1e-6);
+  CHECK_NEAR(box(loose).CornerMin().Z(), 40, 1e-6);
+  CHECK_NEAR(box(loose).CornerMax().Z(), 42, 1e-6);
+  CHECK_NEAR(origin(on_plane)[2], 70, 1e-9);
+  CHECK(s.unresolved.empty());
+  // Put into a moved assembly (a reparent), the lid takes what is in it along; the root's stay.
+  const std::string frame = commands::run("component", {{"name", "Frame"}}, &doc)["component_id"];
+  commands::run("transform", {{"target", frame}, {"matrix", Mat4::translation(100, 0, 0).to_json()}}, &doc);
+  commands::run("reparent", {{"target", lid}, {"parent", frame}}, &doc);
+  s = resolve(doc);
+  CHECK_NEAR(origin(sketch)[0], 100, 1e-9);
+  CHECK_NEAR(origin(sketch)[2], 40, 1e-9);
+  CHECK_NEAR(plane_at()[0], 100, 1e-9);
+  CHECK_NEAR(box(second).CornerMin().X(), 100, 1e-6);
+  CHECK_NEAR(box(loose).CornerMin().X(), 0, 1e-6);
+  CHECK_NEAR(origin(on_plane)[0], 0, 1e-9);
+  // Recomputing everything reads the same frames the features were made from: no new bodies.
+  CHECK(plan_regenerate(doc, true).bodies.empty());
+  // A plane chosen again for the moved sketch: it is where it was chosen, and the op has it where the lid was then.
+  const json edited = commands::run("sketch_edit", {{"target", sketch}, {"plane", {{"base", "xz"}}}}, &doc);
+  s = resolve(doc);
+  CHECK(s.sketch(sketch)->frame.to_json() == Frame::from_json(edited["frame"]).to_json());
+  CHECK_NEAR(origin(sketch)[0], 0, 1e-9);
+  CHECK_NEAR(origin(sketch)[2], 0, 1e-9);
+  CHECK_NEAR(s.sketch(sketch)->frame.y[2], 1, 1e-9);
+  json stored;
+  for (const auto& op : doc.ops)
+    if (op.type == "edit" && op.data.value("target", "") == sketch) stored = op.data["set"]["plane"]["frame"]["origin"];
+  CHECK_NEAR(stored[0].get<double>(), -100, 1e-9);
+  CHECK_NEAR(stored[2].get<double>(), -40, 1e-9);
+  for (const auto& body : {first, second}) {  // the lid's bodies regenerated on it, there
+    CHECK_NEAR(box(body).CornerMin().X(), 0, 1e-6);
+    CHECK_NEAR(box(body).CornerMin().Z(), 0, 1e-6);
+    CHECK_NEAR(box(body).CornerMax().Z(), 10, 1e-6);
+    CHECK_NEAR(box(body).CornerMax().Y(), 0, 1e-6);
+  }
+  CHECK(s.unresolved.empty());
+  // A plane through a picked point on a world plane, as the app's plane picker gives it: there too.
+  const json picked = commands::run("sketch_edit", {{"target", sketch}, {"plane", {{"support", {{"base", "xy"}}}, {"origin", {{"world", {5, 6, 0}}}}}}}, &doc);
+  s = resolve(doc);
+  CHECK(s.sketch(sketch)->frame.to_json() == Frame::from_json(picked["frame"]).to_json());
+  CHECK_NEAR(origin(sketch)[0], 5, 1e-9);
+  CHECK_NEAR(origin(sketch)[1], 6, 1e-9);
+  CHECK_NEAR(origin(sketch)[2], 0, 1e-9);
+  CHECK_NEAR(box(first).CornerMin().Z(), 0, 1e-6);
+  CHECK_NEAR(box(first).CornerMax().Z(), 5, 1e-6);
+  // The file round-trips; an older build (no component keys) shows them where they were made.
+  const Document back = Document::parse(doc.serialize());
+  CHECK(resolve(back).sketch(sketch)->frame.to_json() == s.sketch(sketch)->frame.to_json());
+  Document older = back;
+  for (auto& op : older.ops) op.data.erase("component");
+  const Scene o = resolve(older);
+  CHECK(o.sketch(sketch)->moved.is_identity());
+  CHECK_NEAR(o.sketch(sketch)->frame.origin[0], -95, 1e-9);
+  CHECK_NEAR(o.sketch(sketch)->frame.origin[2], -40, 1e-9);
+  CHECK_NEAR(Frame::from_json(o.feature(plane)->result["plane"]).origin[2], 30, 1e-9);
+  // Without the lid (tombstoned), the sketch and the bodies made from it are back where they were made, together.
+  commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc);
+  s = resolve(doc);
+  CHECK(s.sketch(sketch)->component.empty() && s.sketch(sketch)->moved.is_identity());
+  CHECK_NEAR(origin(sketch)[0], -95, 1e-9);
+  CHECK_NEAR(box(first).CornerMin().X(), -95, 1e-6);
+  CHECK_NEAR(box(first).CornerMin().Z(), -40, 1e-6);
+  CHECK_NEAR(plane_at()[2], 30, 1e-9);
+}
+
 // TODO 11 UI-37: a locked body, or one under a locked component, is not changed, moved or removed: the change is
 // refused naming it and the document stays as it was. It is still a reference (a sketch on its face) and a source (a
 // copy of it), automatic join / cut targets leave it out, its colour and name still change, a component above it still
