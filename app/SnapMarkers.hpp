@@ -95,8 +95,8 @@ inline std::vector<Seg> glyph(Glyph g, double size = 10) {
     case Glyph::Coincident:  // a dot: rings filling it
       for (const double r : {0.5, 0.33, 0.16}) detail::ring(out, 0, 0, r * h, 12);
       break;
-    case Glyph::OnCurve:
-      poly(out, {{-1, -0.4}, {1, -0.4}}, false, h);
+    case Glyph::OnCurve:  // a dot on a line
+      poly(out, {{-1, 0}, {1, 0}}, false, h);
       for (const double r : {0.4, 0.2}) detail::ring(out, 0, 0, r * h, 12);
       break;
     case Glyph::Midpoint:

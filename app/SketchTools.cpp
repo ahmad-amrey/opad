@@ -243,11 +243,10 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     if(accepted)toolPrompt();
   };
   int sides[2] = {0, 0};  // a rectangle's bottom (top) and side: its typed width and height
-  auto rectangle = [&](double x0, double y0, double x1, double y1, const Snap* first, const Snap* second) {
-    const int a = first ? pointFor(*first) : m_sk.add_point(x0, y0);
-    const int b = m_sk.add_point(x1, y0);
-    const int c = second ? pointFor(*second) : m_sk.add_point(x1, y1);
-    const int d = m_sk.add_point(x0, y1);
+  // Corners (x0, y0), (x1, y0), (x1, y1), (x0, y1); a clicked one is the click's point (with what it snapped to, UI-21).
+  auto rectangle = [&](double x0, double y0, double x1, double y1, std::array<const Snap*, 4> at) {
+    auto corner = [&](size_t i, double x, double y) { return at[i] ? pointFor(*at[i]) : m_sk.add_point(x, y); };
+    const int a = corner(0, x0, y0), b = corner(1, x1, y0), c = corner(2, x1, y1), d = corner(3, x0, y1);
     const int l0 = m_sk.add_line(a, b), l1 = m_sk.add_line(b, c), l2 = m_sk.add_line(c, d), l3 = m_sk.add_line(d, a);
     sides[0] = l0;
     sides[1] = l1;
@@ -271,7 +270,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const Snap &a = m_clicks[0], &c = m_clicks[1];
     if (std::fabs(a.u - c.u) < 1e-6 || std::fabs(a.v - c.v) < 1e-6) { m_clicks.pop_back(); return; }
     begin_change();
-    rectangle(a.u, a.v, c.u, c.v, &a, &c);
+    rectangle(a.u, a.v, c.u, c.v, {&a, nullptr, &c, nullptr});
     const double mu = (a.u + c.u) / 2, mv = (a.v + c.v) / 2, out = 24 * m_viewport->pixelSize();
     // Its width and height typed, or the corner typed as ΔX and ΔY from the first ('@'): its sides.
     const int width = keepTyped(c, "width", CT::Distance, {sides[0]}), height = keepTyped(c, "height", CT::Distance, {sides[1]});
@@ -284,7 +283,9 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const double w = std::fabs(c.u - o.u), h = std::fabs(c.v - o.v);
     if (w < 1e-6 || h < 1e-6) { m_clicks.pop_back(); return; }
     begin_change();
-    const auto corners = rectangle(o.u - w, o.v - h, o.u + w, o.v + h, nullptr, nullptr);
+    std::array<const Snap*, 4> at{};  // the clicked corner: the one on its side of the centre
+    at[c.u > o.u ? (c.v > o.v ? 2 : 1) : (c.v > o.v ? 3 : 0)] = &c;
+    const auto corners = rectangle(o.u - w, o.v - h, o.u + w, o.v + h, at);
     const int centre = pointFor(o);
     const int diagonal = m_sk.add_line(corners[0], corners[2], true);
     m_sk.add_constraint(CT::Midpoint, {centre, diagonal});
@@ -325,6 +326,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const int ps = pointFor(m_clicks[0]), pe = pointFor(m_clicks[1]);
     const int arc = m_sk.add_arc(centre, ccw ? ps : pe, ccw ? pe : ps);
     keepTyped(s, "radius", CT::Radius, {arc});
+    if (s.point && s.point != ps && s.point != pe) m_sk.add_constraint(CT::Coincident, {s.point, arc});  // through a point it snapped to
     keepTyped(m_clicks[1], "length", CT::Distance, {ps, pe});  // the chord
     keepDirection(m_clicks[1], "angle", {ps, pe}, std::atan2(by - ay, bx - ax));
     return done(tr("Arc"));

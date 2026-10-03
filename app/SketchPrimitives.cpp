@@ -46,8 +46,19 @@ bool SketchEditor::primitiveClick(const Snap& s) {
 void SketchEditor::finishPrimitive() {
   if(m_clicks.empty())return;
   try {
-    const auto options=primitiveOptions();
+    auto options=primitiveOptions();
     std::vector<std::pair<double,double>> picks;for(const auto& p:m_clicks)picks.push_back({p.u,p.v});
+    // What each click snapped to stays (UI-21): the point it landed on is the primitive's point there, the curve it lies on
+    // and what else held it (a midpoint, a tracked point's level) are kept as constraints.
+    opad::json snaps=opad::json::array();bool snapped=false;
+    for(const auto& c:m_clicks) {
+      opad::json snap,holds=opad::json::array();
+      if(c.entity)holds.push_back(opad::json::array({"coincident",c.entity}));
+      for(const auto& h:c.holds)holds.push_back(opad::json::array({SkConstraint::type_name(h.type),h.ref}));
+      if(c.point)snap={{"point",c.point}};else if(!holds.empty())snap={{"holds",holds}};
+      snapped|=!snap.is_null();snaps.push_back(snap);
+    }
+    if(snapped)options["snaps"]=snaps;
     const auto sweep=m_clicks.back().typed.find("sweep");
     begin_change();const auto made=create_primitive(m_sk,m_tool.toStdString(),picksOf(m_tool,picks,sweep==m_clicks.back().typed.end()?0:sweep->second.first),options);
     // The typed sizes kept as dimensions (UI-17), on what create_primitive made, in its order.

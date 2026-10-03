@@ -63,6 +63,7 @@ void SketchEditor::benchSnaps() {
   place(0, -30, Qt::AltModifier);
   place(0, -5, Qt::AltModifier);
   finishChain();
+  const int nl = m_sk.entities.back().id;
   setTool("circle");
   place(25, 15, Qt::AltModifier);
   place(35, 15, Qt::AltModifier);
@@ -99,6 +100,71 @@ void SketchEditor::benchSnaps() {
   sketchMove(-45, -20 + 2 * px, Qt::NoModifier, false);
   check(m_cursor.kind == Snap::Kind::Aligned && shows(M::Tracking), "on its horizontal: tracking, the plus");
   shot(".tracking.png");
+
+  // Snaps create constraints (UI-21); the pictograms beside the pointer say which before the click.
+  using G = snapmarkers::Glyph;
+  using CT = SkConstraint::Type;
+  auto has = [&](CT type, std::vector<int> refs) {
+    return std::any_of(m_sk.constraints.begin(), m_sk.constraints.end(), [&](const SkConstraint& k) { return k.type == type && k.refs == refs; });
+  };
+  auto solved = [&] { return m_solved.converged && m_undo.size() > 0; };
+  auto newPoint = [&] { return m_sk.entities.back().p.front(); };  // the point tool's newest point
+  check(m_glyphs == std::vector<G>{G::Horizontal}, "level with the tracked point: the horizontal pictogram");
+  place(-45, -20 + 2 * px);
+  const int level = newPoint();
+  check(has(CT::Horizontal, {level, l0}) && exact(m_sk.point(level)->y, -20), "the click keeps it level with the tracked point (horizontal between the two)");
+  sketchMove(25 + px, 15, Qt::NoModifier, false);
+  rest(450);
+  check((m_tracked == std::vector<int>{l0, centre}), "the circle's centre tracked too");
+  sketchMove(25 + 2 * px, -20 + 2 * px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Cross && (m_glyphs == std::vector<G>{G::Horizontal, G::Vertical}), "where L.start's horizontal crosses the centre's vertical: both pictograms");
+  place(25 + 2 * px, -20 + 2 * px);
+  const int cross = newPoint();
+  check(has(CT::Horizontal, {cross, l0}) && has(CT::Vertical, {cross, centre}) && solved(), "the click keeps both: level with L.start, above the centre");
+  sketchMove(25 + px, 25 - 2 * px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Quadrant && (m_glyphs == std::vector<G>{G::OnCurve, G::Vertical}), "a quadrant: on the circle, above its centre");
+  shot(".glyphs.png");
+  place(25 + px, 25 - 2 * px);
+  const int quadrant = newPoint();
+  check(has(CT::Coincident, {quadrant, c}) && has(CT::Vertical, {quadrant, centre}), "the click keeps it on the circle and above the centre");
+  sketchMove(2 * px, -20 + 2 * px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Intersection && (m_glyphs == std::vector<G>{G::OnCurve}), "an intersection: on the curves");
+  place(2 * px, -20 + 2 * px);
+  const int meet = newPoint();
+  check(has(CT::Coincident, {meet, l}) && has(CT::Coincident, {meet, nl}), "the click keeps it on both lines");
+  sketchMove(-30 + px, -20 + px, Qt::NoModifier, false);
+  check(m_cursor.point == l0 && (m_glyphs == std::vector<G>{G::Coincident}), "onto a point: coincident (the point itself is used)");
+  setTool("line");
+  sketchMove(-10 + 2 * px, -20 - px, Qt::NoModifier, false);
+  check(m_glyphs == std::vector<G>{G::Midpoint}, "a line started at a midpoint: the midpoint pictogram");
+  place(-10 + 2 * px, -20 - px);
+  const int middle = m_chain.back();
+  check(has(CT::Midpoint, {middle, l}) && exact(m_sk.point(middle)->x, -10), "the line's start keeps to L's middle");
+  place(-10, -2, Qt::AltModifier);
+  finishChain();
+  // Variant primitives keep the points their picks snapped to (SketchPrimitives, create_primitive's snaps).
+  setTool("rect3");
+  sketchMove(-30 + px, -20 + px, Qt::NoModifier, false);
+  check(m_cursor.point == l0 && (m_glyphs == std::vector<G>{G::Coincident}), "a 3-point rectangle from L.start: coincident");
+  place(-30 + px, -20 + px);
+  place(-30, -40, Qt::AltModifier);
+  place(-42, -40, Qt::AltModifier);
+  const SkEntity* base = m_sk.entity(m_sk.entities[m_sk.entities.size() - 4].id);
+  check(base && base->type == SkEntity::Type::Line && base->p.front() == l0, "its first corner is L.start itself, not a copy beside it");
+  setTool("circle2");
+  sketchMove(-10 + px, -20 + px, Qt::NoModifier, false);
+  check(m_cursor.point == middle && (m_glyphs == std::vector<G>{G::Coincident}), "a 2-point circle across the midpoint point: coincident");
+  place(-10 + px, -20 + px);
+  place(2 * px, -20 + 2 * px);
+  const int across = m_sk.entities.back().id;
+  check(m_sk.entity(across)->type == SkEntity::Type::Circle && has(CT::Coincident, {middle, across}) && has(CT::Coincident, {meet, across}) && solved(),
+        "the circle passes through both points it snapped to");
+  setTool("crect");
+  place(45, -30, Qt::AltModifier);
+  place(25 + px, 15 + px);
+  bool corner = false;
+  for (size_t i = m_sk.entities.size() - 5; i < m_sk.entities.size(); ++i) corner |= m_sk.entities[i].type == SkEntity::Type::Line && !m_sk.entities[i].construction && std::count(m_sk.entities[i].p.begin(), m_sk.entities[i].p.end(), centre);
+  check(corner && solved(), "a centre rectangle's clicked corner is the circle's centre it snapped to");
   setTool("select");
   shot(".png");
   QCoreApplication::exit(ok ? 0 : 2);

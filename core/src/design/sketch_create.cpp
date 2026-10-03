@@ -19,6 +19,7 @@ V unit(V a){double n=length(a);if(n<1e-9)throw Error("the picked points must be 
 std::vector<int> create_primitive(Sketch& sketch,const std::string& kind,const std::vector<V>& picks,const json& given) {
   const json options=given.is_object()?given:json::object();  // null (no options) reads as none
   Sketch sk=sketch; // the whole creation, including validation, is atomic
+  const int first=sketch.next_id();  // ids from here on are this primitive's
   const bool construction=options.value("construction",false);
   std::vector<int> made;
   auto at=[&](size_t i){if(i>=picks.size())throw Error("more points are needed");const auto p=picks[i];if(!std::isfinite(p.first)||!std::isfinite(p.second))throw Error("invalid point");return p;};
@@ -228,6 +229,38 @@ std::vector<int> create_primitive(Sketch& sketch,const std::string& kind,const s
     const int madeArc=ccw?arc(o,end,last):arc(o,last,end);
     sk.add_constraint(SkConstraint::Type::Tangent,{id,madeArc});
   } else throw Error("unknown sketch primitive: "+kind);
+  // options.snaps[i]: what pick i snapped to (UI-21). {"point": id}: the new point at the pick is that existing point (its
+  // references move to it); {"holds": [[type, ref], ...]}: the new point there gets those constraints with ref. Where no
+  // new point lies at the pick (a circle's rim, a side's middle) an existing point is put on the new curve through it.
+  if(const json snaps=options.value("snaps",json::array());snaps.is_array())for(size_t i=0;i<snaps.size() && i<picks.size();++i) {
+    const json& snap=snaps[i];
+    if(!snap.is_object())continue;
+    const V at=picks[i];const double near=1e-9*(1+std::fabs(at.first)+std::fabs(at.second));
+    int fresh=0;
+    for(const auto& p:sk.points)if(p.id>=first && length(V{p.x,p.y}-at)<near){fresh=p.id;break;}
+    const int existing=snap.value("point",0);
+    if(existing && !sk.point(existing))throw Error("snapped point "+std::to_string(existing)+" does not exist");
+    if(fresh && existing) {
+      for(auto& e:sk.entities)std::replace(e.p.begin(),e.p.end(),fresh,existing);
+      for(auto& c:sk.constraints)std::replace(c.refs.begin(),c.refs.end(),fresh,existing);
+      sk.id_watermark=std::max(sk.id_watermark,sk.next_id()-1);  // never recycled
+      sk.points.erase(std::remove_if(sk.points.begin(),sk.points.end(),[&](const SkPoint& p){return p.id==fresh;}),sk.points.end());
+    } else if(fresh) {
+      for(const auto& hold:snap.value("holds",json::array())) {
+        const int ref=hold.at(1).get<int>();
+        if(!sk.point(ref) && !sk.entity(ref))throw Error("snapped to "+std::to_string(ref)+", which does not exist");
+        constrain(SkConstraint::type_from_name(hold.at(0).get<std::string>()),{fresh,ref});
+      }
+    } else if(existing) {
+      for(const int id:made)if(const auto* e=sk.entity(id);e && std::find(e->p.begin(),e->p.end(),existing)==e->p.end()) {
+        double off=1;
+        if(e->type==SkEntity::Type::Line){const V a=get(e->p[0]),d=get(e->p[1])-a;const double l=length(d);if(l>1e-12)off=std::fabs(cross(d,at-a))/l;}
+        else if(e->type==SkEntity::Type::Circle)off=std::fabs(length(at-get(e->p[0]))-e->r);
+        else if(e->type==SkEntity::Type::Arc)off=std::fabs(length(at-get(e->p[0]))-length(get(e->p[1])-get(e->p[0])));
+        if(off<near*1e3){constrain(SkConstraint::Type::Coincident,{existing,id});break;}
+      }
+    }
+  }
   sk.validate();sketch=std::move(sk);return made;
 }
 }

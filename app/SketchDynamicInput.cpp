@@ -405,9 +405,10 @@ SketchEditor::Snap SketchEditor::typedPoint(const Snap& pointer) const {
     s.v = value("y", at.v);
   }
   s.kind = Snap::Kind::Typed;
-  if (std::hypot(s.u - pointer.u, s.v - pointer.v) < 1e-9) {  // where the pointer was pulled to anyway: its point and curve too
+  if (std::hypot(s.u - pointer.u, s.v - pointer.v) < 1e-9) {  // where the pointer was pulled to anyway: its point, curve and holds too
     s.point = pointer.point;
     s.entity = pointer.entity;
+    s.holds = pointer.holds;
   }
   if (base) {  // still level with (or above) the last point: still horizontal (vertical)
     s.horizontal = pointer.horizontal && std::fabs(s.v - bv) < 1e-9;
@@ -528,6 +529,7 @@ bool SketchEditor::useTyped(const Snap* at) {
     if (const int id = pointAt(s.u, s.v)) {  // typed onto a point (the origin, where the chain started): that point
       s.point = id;
       s.entity = 0;
+      s.holds.clear();
     }
   forgetTyped();
   click(s, Qt::AltModifier);  // exactly there: no grid, no inference beyond what still holds there

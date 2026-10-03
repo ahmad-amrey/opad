@@ -141,9 +141,13 @@ class SketchEditor : public QObject, public SketchInput {
   bool modifyClick(double u,double v);
   bool applyModify();
   struct Snap {
+    // A constraint the click's new point gets with `ref` (UI-21): Midpoint of a line, Coincident on a second curve (an
+    // intersection), Horizontal / Vertical with a tracked point or a circle's centre (a quadrant).
+    struct Hold { opad::design::SkConstraint::Type type; int ref; };
     double u = 0, v = 0;
     int point = 0;     // an existing point to reuse
     int entity = 0;    // a curve the new point will lie on
+    std::vector<Hold> holds;  // what else holds the new point there (with automatic constraints on)
     bool horizontal = false, vertical = false;  // relative to the previous click
     bool grid = false;  // on a grid node, or whole grid steps along the inference
     // What the pointer was pulled to, for the display: that object is highlighted and named beside the cursor.
@@ -215,7 +219,13 @@ class SketchEditor : public QObject, public SketchInput {
   std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
   Hit hitTest(double u, double v) const;
   double tol() const;  // pick distance in sketch units
-  int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint)
+  int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint and the snap's holds)
+  // The constraints a click at `s` adds, for the pictograms beside the pointer (UI-21): the new point's (it reuses a point,
+  // lies on a curve, holds as the snap says) when the click that waits makes a point there, the segment's (the line tool).
+  std::vector<snapmarkers::Glyph> snapGlyphs(const Snap& s) const;
+  bool pointHere() const;    // the click that waits makes a point where it lands (else it sizes or passes a curve through)
+  bool curveHere() const;    // the click that waits passes a curve through where it lands (a circle's rim): a point there lies on it
+  std::vector<snapmarkers::Glyph> m_glyphs;  // the pictograms drawn beside the pointer (benches)
   void begin_change();                   // snapshot for undo
   bool end_change(const QString& what);  // solve; false = refused and rolled back
   void cancel_change();
@@ -319,7 +329,7 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<int> m_tracked;
   int m_dwellPoint = 0;  // the point the pointer rests on
   QTimer m_dwellTimer;
-  struct Lock { sketchsnap::Guide line; bool horizontal = false, vertical = false, sticky = false; int stop = -1; double su = 0, sv = 0; };
+  struct Lock { sketchsnap::Guide line; bool horizontal = false, vertical = false, sticky = false; int stop = -1; double su = 0, sv = 0; std::vector<Snap::Hold> holds; };
   std::optional<Lock> m_lock;
   bool m_shiftDown = false, m_shiftUsed = false, m_shiftSpent = false, m_unstick = false, m_inView = false;
   QElapsedTimer m_shiftClock;

@@ -54,6 +54,56 @@ TEST(tangent_primitives_preserve_tangency) {
   ids=create_primitive(shorter,"tangent_arc",{{20,0},{10,10}},{{"line",l1}});
   e=shorter.entity(ids[0]);CHECK_NEAR(shorter.point(e->p[1])->x,10,1e-8);CHECK_NEAR(shorter.point(e->p[2])->x,20,1e-8);
 }
+// TODO 11 UI-21: what a pick snapped to stays. A point snapped onto becomes the primitive's own point there (no copy beside
+// it), one where the primitive makes no point is put on the curve through it, and holds constrain the new point.
+TEST(primitives_keep_what_their_picks_snapped_to) {
+  using CT = SkConstraint::Type;
+  auto has = [](const Sketch& sk, CT type, std::vector<int> refs) {
+    return std::any_of(sk.constraints.begin(), sk.constraints.end(), [&](const SkConstraint& c) { return c.type == type && c.refs == refs; });
+  };
+  Sketch sk;
+  const int a = sk.add_point(0, 0), b = sk.add_point(20, 0);
+  const size_t points = sk.points.size();
+  const opad::json first = {{"point", a}}, second = {{"point", b}};
+  auto ids = create_primitive(sk, "rect3", {{0, 0}, {20, 0}, {0, 10}}, {{"snaps", opad::json::array({first, second, nullptr})}});
+  CHECK(sk.entity(ids[0])->p == (std::vector<int>{a, b}));  // the base runs between the two existing points
+  CHECK_EQ(sk.points.size(), points + 2);                    // only the far corners are new
+  CHECK(solve(sk).converged);
+  const int next = sk.next_id();
+  // The dropped copies' ids are never handed out again.
+  for (const auto& p : sk.points) CHECK(p.id < next);
+  CHECK(sk.id_watermark >= next - 1);
+
+  // A 2-point circle through two existing points (its picks are not its points): on the circle.
+  Sketch c;
+  const int p = c.add_point(0, 0), q = c.add_point(10, 0);
+  ids = create_primitive(c, "circle2", {{0, 0}, {10, 0}}, {{"snaps", opad::json::array({{{"point", p}}, {{"point", q}}})}});
+  CHECK(has(c, CT::Coincident, {p, ids[0]}) && has(c, CT::Coincident, {q, ids[0]}));
+  CHECK(solve(c).converged);
+
+  // Holds: a control-point spline's middle pole at a line's midpoint, its last on a circle and level with a point.
+  Sketch h;
+  const int line = h.add_line(h.add_point(-10, 20), h.add_point(10, 20)), level = h.add_point(-40, 10), circle = h.add_circle(h.add_point(30, 10), 10);
+  const opad::json midpoint = {{"holds", opad::json::array({opad::json::array({"midpoint", line})})}};
+  const opad::json onCircle = {{"holds", opad::json::array({opad::json::array({"coincident", circle}), opad::json::array({"horizontal", level})})}};
+  ids = create_primitive(h, "control_spline", {{-20, 0}, {0, 20}, {20, 10}}, {{"snaps", opad::json::array({nullptr, midpoint, onCircle})}});
+  const auto& poles = h.entity(ids[0])->p;
+  CHECK(has(h, CT::Midpoint, {poles[1], line}) && has(h, CT::Coincident, {poles[2], circle}) && has(h, CT::Horizontal, {poles[2], level}));
+  CHECK(solve(h).converged);
+
+  // A tangent arc starting at its line's end: that end is the arc's, not constrained onto it again.
+  Sketch t;
+  const int end = t.add_point(20, 0), l = t.add_line(t.add_point(0, 0), end);
+  const size_t before = t.constraints.size();
+  create_primitive(t, "tangent_arc", {{20, 0}, {30, 10}}, {{"line", l}, {"snaps", opad::json::array({{{"point", end}}, nullptr})}});
+  CHECK_EQ(t.constraints.size(), before + 1);  // its tangency only
+
+  // A snapped point that does not exist is an error, and nothing is made.
+  const auto kept = sk.to_json();
+  CHECK_THROWS(create_primitive(sk, "circle2", {{50, 0}, {60, 0}}, {{"snaps", opad::json::array({{{"point", 999}}, nullptr})}}));
+  CHECK(sk.to_json() == kept);
+}
+
 // TODO 10 B4: the basic shapes form exact, solvable profiles.
 TEST(basic_shapes_form_exact_profiles) {
   auto area_of = [](const Sketch& sk) {
