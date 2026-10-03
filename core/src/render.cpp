@@ -109,6 +109,13 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
       for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], w[k]); hi[k] = std::max(hi[k], w[k]); }
       any = true;
     }
+    // Lines count too: a drawing made only of lines has no triangles (a solid's edges lie on its surface anyway).
+    for (const auto& line : it.lines)
+      for (const auto& q : line) {
+        Vec3 w = it.world.apply({q[0], q[1], q[2]});
+        for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], w[k]); hi[k] = std::max(hi[k], w[k]); }
+        any = true;
+      }
   }
   std::vector<float> fb(static_cast<size_t>(W) * H * 3);
   for (size_t i = 0; i < fb.size(); i += 3) { fb[i] = opt.background[0]; fb[i + 1] = opt.background[1]; fb[i + 2] = opt.background[2]; }

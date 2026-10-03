@@ -79,6 +79,13 @@ if(TARGET opad-dwg)
 endif()
 add_test(NAME dxf COMMAND opad-test-dxf)
 
+if(TARGET opad-thumbnails)
+  add_executable(opad-test-thumbnails test_thumbnails.cpp)
+  target_link_libraries(opad-test-thumbnails PRIVATE opad::core ole32 shlwapi uuid)
+  add_dependencies(opad-test-thumbnails opad-thumbnails opad-cli)
+  add_test(NAME thumbnails COMMAND opad-test-thumbnails)
+endif()
+
 add_executable(opad-test-step test_step.cpp)
 target_link_libraries(opad-test-step PRIVATE opad::core)
 
@@ -140,3 +147,4 @@ if(OPAD_BUILD_PYTHON AND Python3_Interpreter_FOUND)
   set_tests_properties(python PROPERTIES FIXTURES_REQUIRED step_fixtures
     ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:opad_python>;OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
 endif()
+

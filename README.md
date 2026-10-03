@@ -222,7 +222,9 @@ to edit) makes the file an OPAD document in place, keeping hidden layers and col
 file while another loads drops that load. A slow read (a big STEP or IGES) is remembered in the user cache with its display
 meshes, so opening the unchanged file again skips the translation (Hydrostatic: 23 s, then 1.8 s). Settings > Open
 other formats read-only turns viewer mode off (they then open as editable, unsaved documents), and Settings > File
-types registers OPAD for these formats with Windows (current user only, removable). Import adds a file to the
+types registers OPAD for these formats with Windows (current user only, removable), with thumbnails of the model or
+drawing in Explorer and the Open dialog (`opad-thumbnails.dll`, which runs `opad-cli thumbnail <file> --out x.png`).
+Viewing a DXF, DWG or SVG turns 2D mode on, whose grid follows the view without end. Import adds a file to the
 current document. Properties show a body's material as the file named it, its source file and whether it is a
 solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the build compiles from the
 `third_party/libredwg` submodule and puts beside OPAD (the free ODA File Converter is used instead when installed); the

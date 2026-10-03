@@ -20,6 +20,10 @@ if(TARGET opad-cli)
   list(APPEND _opad_portable_exes "$<TARGET_FILE:opad-cli>")
   list(APPEND _opad_portable_deps opad-cli)
 endif()
+if(TARGET opad-thumbnails)  # Explorer thumbnails, registered by Settings > File types
+  list(APPEND _opad_portable_exes "$<TARGET_FILE:opad-thumbnails>")
+  list(APPEND _opad_portable_deps opad-thumbnails)
+endif()
 string(REPLACE ";" "|" _opad_portable_exes "${_opad_portable_exes}")  # a list cannot cross -D as is
 # LibreDWG's converters (cmake/libredwg.cmake), shipped as separate programs with their licence.
 set(_opad_portable_dwg "")

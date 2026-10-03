@@ -1626,7 +1626,7 @@
   "SVG drawing": "رسم SVG",
   "Views and edits CAD models, meshes and drawings": "يعرض نماذج CAD والشبكات والرسومات ويحررها",
   "File types": "أنواع الملفات",
-  "Open these file types with OPAD. They are registered for your Windows account only. Types that no other app handles open in OPAD right away; for the rest, choose OPAD in Default apps.": "افتح أنواع الملفات هذه باستخدام OPAD. تُسجَّل لحساب Windows الخاص بك فقط. الأنواع التي لا يتولاها تطبيق آخر تُفتح في OPAD مباشرة؛ أما البقية فاختر OPAD لها في التطبيقات الافتراضية.",
+  "Open these file types with OPAD. They are registered for your Windows account only. Types that no other app handles open in OPAD right away; for the rest, choose OPAD in Default apps. Explorer and the Open dialog show their thumbnails too.": "افتح أنواع الملفات هذه باستخدام OPAD. تُسجَّل لحساب Windows الخاص بك فقط. الأنواع التي لا يتولاها تطبيق آخر تُفتح في OPAD مباشرة؛ أما البقية فاختر OPAD لها في التطبيقات الافتراضية. ويعرض مستكشف الملفات ونافذة الفتح صورها المصغرة أيضاً.",
   "%1 file types open with OPAD.": "تُفتح %1 من أنواع الملفات باستخدام OPAD.",
   "No file types are registered for OPAD yet.": "لم يُسجَّل أي نوع ملف لـ OPAD بعد.",
   "Select all": "تحديد الكل",
