@@ -83,10 +83,14 @@ OPAD_BENCH(OPAD_BENCH_PERF, perf) {
     results << line;
   };
   const std::string one = bodies[bodies.size() / 2];
+  const int full = v->syncCount(), partial = v->partialSyncCount();
   step("hide a body", [&] { doc->run("appearance", {{"target", one}, {"visible", false}}); }, [&] { return v->displayedCount() == shown - 1; });
   step("undo the hide", [&] { doc->undo(); }, [&] { return v->displayedCount() == shown; });
   step("redo the hide", [&] { doc->redo(); }, [&] { return v->displayedCount() == shown - 1; });
   step("undo it again", [&] { doc->undo(); }, [&] { return v->displayedCount() == shown; });
+  // UI-40: each looked at the bodies under the hidden one alone (AppDocument::lastChange), never at every body.
+  require(v->syncCount() == full && v->partialSyncCount() == partial + 4,
+          QString("a hide, its undo and redo sync the hidden body alone (%1 partial syncs, %2 full)").arg(v->partialSyncCount() - partial).arg(v->syncCount() - full));
   w.m_browser->setSelectedIds({one});
   w.onBrowserSelection({one});
   waitUntil(idle, 30000);

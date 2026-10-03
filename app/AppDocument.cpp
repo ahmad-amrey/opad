@@ -342,6 +342,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
   opad::json out = opad::commands::run(command, args, &doc);
   if (m_batch) return out;  // the batch makes the step and refreshes once
   recordStep(labelFor(command, args), before);
+  if (std::vector<std::string> nodes; touches(doc.ops, before, nodes)) m_next = {false, std::move(nodes)};
   refresh();
   return out;
 }
@@ -363,6 +364,7 @@ void AppDocument::batch(const QString& label, const std::function<void()>& fn) {
   m_batch = false;
   if (doc.ops.size() == before) return;
   recordStep(label, before);
+  if (std::vector<std::string> nodes; touches(doc.ops, before, nodes)) m_next = {false, std::move(nodes)};
   refresh();
 }
 
@@ -400,7 +402,11 @@ void AppDocument::disposeOld() {
 }
 
 void AppDocument::refresh() {
-  if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
+  m_change = std::exchange(m_next, Change{});
+  if (!m_rollback.empty() && !doc.find_op(m_rollback)) {  // undone or closed: the whole log again
+    m_rollback.clear();
+    m_change = {};
+  }
   scene = hasDocument ? opad::resolve(doc, m_rollback) : opad::Scene{};
   if (!m_rollback.empty())  // an earlier op edited: values are still shown and typed in the document's unit, the last one
     for (const auto& e : opad::effective_ops(doc))
@@ -412,7 +418,7 @@ void AppDocument::refresh() {
 
 void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
-  emit aboutToReplace();++generation;++revision;m_rollback.clear();disposeOld();
+  emit aboutToReplace();++generation;++revision;m_rollback.clear();m_change={};disposeOld();
   doc=std::move(document);doc.path.clear();doc.dirty=true;scene=std::move(resolved);
   browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
   emit changed();emit pathChanged();
@@ -426,7 +432,7 @@ void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
     throw opad::Error("stale_revision: the document changed while the agent was working");
   const auto before=doc.ops.size();
   document.path=doc.path; // Save As may have changed the path without changing geometry.
-  std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();
+  std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();m_change={};
   recordStep(label,before);updateDirty();++revision;emit changed();emit undoChanged();
 }
 
@@ -441,12 +447,16 @@ void AppDocument::recordStep(const QString& label, size_t opsBefore) {
 void AppDocument::undo(int steps) {
   if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)undo(steps);});return;}
   if (!canUndo()) return;
+  std::vector<std::string> nodes;
+  bool local = true;
   for (; steps > 0 && !m_undo.empty(); --steps) {
     Step s = std::move(m_undo.back());
     m_undo.pop_back();
     s.ops = doc.truncate_ops(doc.ops.size() - std::min(s.count, doc.ops.size()));
+    local = local && touches(s.ops, 0, nodes);
     m_redo.push_back(std::move(s));
   }
+  if (local) m_next = {false, std::move(nodes)};
   refresh();
   emit undoChanged();
 }
@@ -454,14 +464,18 @@ void AppDocument::undo(int steps) {
 void AppDocument::redo(int steps) {
   if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)redo(steps);});return;}
   if (!canRedo()) return;
+  std::vector<std::string> nodes;
+  bool local = true;
   for (; steps > 0 && !m_redo.empty(); --steps) {
     Step s = std::move(m_redo.back());
     m_redo.pop_back();
+    local = local && touches(s.ops, 0, nodes);
     s.count = s.ops.size();
     doc.restore_ops(std::move(s.ops));
     s.ops.clear();
     m_undo.push_back(std::move(s));
   }
+  if (local) m_next = {false, std::move(nodes)};
   refresh();
   emit undoChanged();
 }
@@ -503,6 +517,17 @@ void AppDocument::updateDirty() {
   bool same = doc.ops.size() == m_savedIds.size();
   for (size_t i = 0; same && i < m_savedIds.size(); ++i) same = doc.ops[i].id == m_savedIds[i];
   doc.dirty = !same;
+}
+
+bool AppDocument::touches(const std::vector<opad::Op>& ops, size_t from, std::vector<std::string>& nodes) {
+  for (size_t i = from; i < ops.size(); ++i) {
+    const opad::Op& op = ops[i];
+    if (op.type != "appearance" && op.type != "transform" && op.type != "rename" && op.type != "reparent") return false;
+    const auto target = op.data.find("target");
+    if (target == op.data.end() || !target->is_string()) return false;
+    nodes.push_back(target->get<std::string>());
+  }
+  return true;
 }
 
 QString AppDocument::labelFor(const std::string& command, const opad::json& args) {

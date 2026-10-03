@@ -36,21 +36,21 @@ Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF()
 }  // namespace
 
 // ---------------------------------------------------------------- sketches in the scene
-void Viewport::syncSketches() {
+void Viewport::syncSketches(bool sameGeometry) {
   if (!m_initialised) return;
   std::set<std::string> keep;
   for (const auto& s : m_doc->scene.sketches) {
     if (s.id == m_hiddenSketch || (!m_isolated.empty()?!m_isolated.count(s.id):!s.visible)) continue;
     keep.insert(s.id);
-    const std::string stamp = s.geometry.dump() + s.frame.to_json().dump();
     auto it = m_sketchWires.find(s.id);
-    if (it != m_sketchWires.end() && it->second.stamp == stamp) continue;
+    if (it != m_sketchWires.end() && (sameGeometry || it->second.stamp.matches(s))) continue;
     if (it != m_sketchWires.end()) { for(const auto& image:it->second.backdrops)m_ctx->Remove(image,false);m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False); }
     std::shared_ptr<PreparedSketch> prepared;
-    if(s.geometry.value("entities",opad::json::array()).size()>256 || !s.geometry.value("images",opad::json::array()).empty()) {
+    auto count=[&s](const char* key){const auto found=s.geometry.find(key);return found==s.geometry.end()?size_t(0):found->size();};  // no copies
+    if(count("entities")>256 || count("images")>0) {
       auto found=m_preparedSketches.find(s.id);
-      if(found==m_preparedSketches.end() || found->second->stamp!=stamp) {
-        prepared=std::make_shared<PreparedSketch>();prepared->stamp=stamp;m_preparedSketches[s.id]=prepared;
+      if(found==m_preparedSketches.end() || !found->second->stamp.matches(s)) {
+        prepared=std::make_shared<PreparedSketch>();prepared->stamp={s.geometry,s.frame.to_json()};m_preparedSketches[s.id]=prepared;
         const auto geometry=s.geometry;const auto frame=s.frame;const auto id=s.id;const auto generation=m_doc->generation;
         m_jobs->async(tr("Preparing sketch curves"),[prepared,geometry,frame](Progress progress) {
           TopoDS_Compound shape;BRep_Builder b;b.MakeCompound(shape);
@@ -104,7 +104,7 @@ void Viewport::syncSketches() {
     ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 2.0));
     m_ctx->Display(ais, AIS_WireFrame, -1, Standard_False);
     activateSelection(ais); m_nodeOf[ais.get()]=s.id;
-    m_sketchWires[s.id] = SketchWire{ais, prs, stamp,{}};
+    m_sketchWires[s.id] = SketchWire{ais, prs, prepared ? prepared->stamp : SketchStamp{s.geometry, s.frame.to_json()}, {}};
     if(prepared){m_sketchWires[s.id].backdrops=prepared->backdrops;for(const auto& image:prepared->backdrops)showBackdrop(image);}
     SketchWire& wire=m_sketchWires[s.id];wire.look.color={m_tokens.sel.redF(),m_tokens.sel.greenF(),m_tokens.sel.blueF()};  // as drawn above
     if(layered())applySketchLook(wire,sketchLook(s.id));

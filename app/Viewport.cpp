@@ -133,6 +133,9 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   setMinimumSize(200, 150);
   connect(doc, &AppDocument::changed, this, &Viewport::resetHoverFade);
   connect(doc, &AppDocument::changed, this, &Viewport::sync);
+  const QSettings settings;
+  m_gridSpacing = std::max(0.0, settings.value("view/gridSpacing", 0.0).toDouble());
+  m_gridExtentSetting = std::max(1.0, settings.value("view/gridExtent", 100.0).toDouble());
   connect(units::notifier(), &units::Notifier::changed, this, [this] { refreshMeasurement(true); });  // labels in the shown unit
   m_syncTimer.setSingleShot(true);
   m_syncTimer.setInterval(50);
@@ -547,14 +550,13 @@ void Viewport::setGrid(bool on) {
 
 void Viewport::updateGridExtent() {
   if (!m_initialised) return;
-  m_gridSpacing=QSettings().value("view/gridSpacing",0.0).toDouble();
   if (m_twoDimensional) { updateInfiniteGrid(true); return; }
   // In 3D the grid is a patch under the model, in the grid plane: around the plane's origin while that square would be
   // at most four times the model's own (most parts), else around the model's footprint. A house 600 m out (an OBJ keeping
   // its site coordinates) got a 1.4 km sheet around (0,0,0), which also pulled box-less fits to the origin.
   const gp_Ax3 plane=m_viewer->PrivilegedPlane();
   const Bnd_Box bounds=fitBounds(false);
-  const double minimum=std::max(100.0,QSettings().value("view/gridExtent",100.0).toDouble());
+  const double minimum=std::max(100.0,m_gridExtentSetting);
   double cx=0,cy=0,half=0;
   if (!bounds.IsVoid()) {
     const auto lo=bounds.CornerMin(), hi=bounds.CornerMax();
@@ -571,8 +573,7 @@ void Viewport::updateGridExtent() {
     else half=around;
   }
   double extent=std::max(half,minimum);
-  const double custom=QSettings().value("view/gridSpacing",0.0).toDouble();
-  const double step=custom>0?custom:std::pow(10.0,std::floor(std::log10(extent/10.0)));
+  const double step=m_gridSpacing>0?m_gridSpacing:std::pow(10.0,std::floor(std::log10(extent/10.0)));
   // Every tenth line stays on a world multiple of ten steps (and snapping on multiples of the step).
   const double major=10*step,ox=std::round(cx/major)*major,oy=std::round(cy/major)*major;
   extent+=std::max(std::abs(ox-cx),std::abs(oy-cy));
@@ -1146,7 +1147,7 @@ Bnd_Box Viewport::fitBounds(bool fallback) const {
   for (const auto& preview : m_previewBodies) add(preview);
   for (const auto& overlay : m_overlays) if (!overlay->IsInfinite() && overlay->TransformPersistence().IsNull()) add(overlay);
   if (fallback && bounds.IsVoid()) {  // nothing to frame: the default grid, as Home does
-    const double extent = std::max(1.0, QSettings().value("view/gridExtent", 100.0).toDouble());
+    const double extent = std::max(1.0, m_gridExtentSetting);
     bounds.Add(gp_Pnt(-extent, -extent, 0));
     bounds.Add(gp_Pnt(extent, extent, 0));
   }
@@ -1262,7 +1263,7 @@ void Viewport::home() {
   m_view->Invalidate();requestRedraw();
 }
 void Viewport::configureGrid(double spacing,double extent) {
-  QSettings().setValue("view/gridSpacing",std::max(0.0,spacing));QSettings().setValue("view/gridExtent",std::max(1.0,extent));
+  QSettings().setValue("view/gridSpacing",m_gridSpacing=std::max(0.0,spacing));QSettings().setValue("view/gridExtent",m_gridExtentSetting=std::max(1.0,extent));
   updateGridExtent();redrawScene();
 }
 
@@ -1746,18 +1747,22 @@ void Viewport::requestSync() {
 // Reconciles the context with the scene, on document changes only. Removals and attribute changes are applied at once
 // (cheap); the bodies to display go to the display pump's queue (runPump: computing a body's presentation and selection
 // entities is the expensive part and must not block the UI, see Jobs.hpp), those without a mesh wait for it (m_waiting)
-// and join the queue as the mesh workers finish them (pumpMeshed), with no sync per batch (UI-40).
+// and join the queue as the mesh workers finish them (pumpMeshed), with no sync per batch (UI-40). A change that only
+// re-applied some nodes' appearance, placement, name or parent (AppDocument::lastChange: a hide, its undo and redo) looks
+// at the bodies under them alone; anything else, or a sync for another reason (isolation, picking), at every body.
 void Viewport::sync() {
   if (!m_initialised || m_doc->loading) return;
   trace::Scope scope("Viewport::sync");
   QElapsedTimer clock;
   clock.start();
   const opad::Scene& scene = m_doc->scene;
+  bool fresh = false;
   {
     // Mesh bookkeeping is per shape cache: a new document means new TopoDS_Shapes without triangulation.
     std::lock_guard<std::mutex> lock(m_meshMu);
     const void* cache = m_doc->doc.shape_cache.get();
     if (cache != m_activeCache) {
+      fresh = true;
       m_activeCache = cache;
       m_meshed.clear();
       m_meshSkipped.clear();
@@ -1768,7 +1773,10 @@ void Viewport::sync() {
       m_refined.clear();
     }
   }
-  if (!m_isolated.empty()) {  // the mode ends by itself once every isolated object is gone (deleted)
+  const AppDocument::Change& change = m_doc->lastChange();
+  const bool partial = !fresh && !change.whole && m_doc->revision == m_syncedRevision + 1;
+  m_syncedRevision = m_doc->revision;
+  if (!partial && !m_isolated.empty()) {  // the mode ends by itself once every isolated object is gone (deleted)
     bool any = false;
     for (const auto& id : m_isolated) {
       const opad::Node* n = scene.node(id);
@@ -1779,19 +1787,39 @@ void Viewport::sync() {
       emit isolationChanged();
     }
   }
-  std::set<std::string> keep, replace;
-  std::vector<std::string> pending, toAdd;
-  std::unordered_map<std::string, std::vector<std::string>> waiting;  // body key -> nodes to show once it is meshed
-  size_t waitingNodes = 0;
+  std::vector<std::string> bodies, pending;
+  if (partial) {
+    std::unordered_set<std::string> seen;
+    for (const auto& id : change.nodes)
+      for (auto& body : scene.bodies_under(id))
+        if (seen.insert(body).second) bodies.push_back(std::move(body));
+    // What waited or was queued for these is decided again below.
+    m_displayQueue.erase(std::remove_if(m_displayQueue.begin(), m_displayQueue.end(), [&seen](const std::string& id) { return seen.count(id) > 0; }),
+                         m_displayQueue.end());
+    for (const auto& id : bodies)
+      if (const opad::Node* n = scene.node(id))
+        if (auto w = m_waiting.find(n->body_key); w != m_waiting.end()) {
+          auto& nodes = w->second;
+          const size_t before = nodes.size();
+          nodes.erase(std::remove(nodes.begin(), nodes.end(), id), nodes.end());
+          m_waitingNodes -= before - nodes.size();
+        }
+  } else {
+    bodies = scene.all_bodies();
+    m_waiting.clear();
+    m_waitingNodes = 0;
+    m_displayQueue.clear();
+  }
   bool recoloredSelected = false;
-  for (const auto& id : scene.all_bodies()) {
+  // One body: true when its displayed object stays as it is (attributes applied in place); otherwise it is queued for
+  // display, waits for its mesh or is not shown, and an object it had goes.
+  auto place = [&](const std::string& id) {
     const opad::Node* n = scene.node(id);
-    if (!n || n->body_missing) continue;
+    if (!n || n->body_missing) return false;
     // Isolate mode shows exactly the isolated set and ignores visibility flags; otherwise the flags rule.
-    if (!m_isolated.empty() ? !m_isolated.count(id) : !scene.effectively_visible(id)) continue;
+    if (!m_isolated.empty() ? !m_isolated.count(id) : !scene.effectively_visible(id)) return false;
     auto it = m_items.find(id);
     if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m) {
-      keep.insert(id);
       Item& item = it->second;
       if (item.color != n->color || item.opacity != n->opacity) {
         item.color = n->color;
@@ -1802,7 +1830,7 @@ void Viewport::sync() {
         m_ctx->RecomputePrsOnly(item.ais, Standard_False);
         recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
       }
-      continue;
+      return true;
     }
     bool meshed, skipped;
     {
@@ -1810,40 +1838,44 @@ void Viewport::sync() {
       meshed = m_meshed.count(n->body_key) > 0;
       skipped = m_meshSkipped.count(n->body_key) > 0;
     }
-    if (skipped) continue;  // its meshing (or display) was cancelled: reopening the file shows it
+    if (skipped) return false;  // its meshing (or display) was cancelled: reopening the file shows it
     if (!meshed) {
-      auto& nodes = waiting[n->body_key];
+      auto& nodes = m_waiting[n->body_key];
       if (nodes.empty()) pending.push_back(n->body_key);
       nodes.push_back(id);
-      ++waitingNodes;
-      continue;
+      ++m_waitingNodes;
+      return false;
     }
-    keep.insert(id);
-    if (it != m_items.end()) replace.insert(id);
-    toAdd.push_back(id);
-  }
+    m_displayQueue.push_back(id);
+    return false;
+  };
   bool removed = false;
-  for (auto it = m_items.begin(); it != m_items.end();) {
-    if (keep.count(it->first) && !replace.count(it->first)) { ++it; continue; }
-    if (!removed) clearCenters();  // topology, placement or visibility changed: no stale source circles
+  auto drop = [&](std::map<std::string, Item>::iterator it) {
+    if (!std::exchange(removed, true)) clearCenters();  // topology, placement or visibility changed: no stale source circles
     retire(it->second);
     m_nodeOf.erase(it->second.ais.get());
-    it = m_items.erase(it);
-    removed = true;
+    return m_items.erase(it);
+  };
+  if (partial) {
+    for (const auto& id : bodies)
+      if (!place(id))
+        if (auto it = m_items.find(id); it != m_items.end()) drop(it);
+  } else {
+    std::unordered_set<std::string> kept;
+    for (const auto& id : bodies)
+      if (place(id)) kept.insert(id);
+    for (auto it = m_items.begin(); it != m_items.end();) it = kept.count(it->first) ? std::next(it) : drop(it);
   }
   if (removed) removeRetired();
   if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // the retired bodies' selected sub-shapes went with them
-  m_waiting = std::move(waiting);
-  m_waitingNodes = waitingNodes;
-  m_displayQueue.assign(toAdd.begin(), toAdd.end());
   if (!pending.empty()) startMeshing(pending);
   if (layered()) scheduleLooks();  // the hierarchy under a layer's components may have changed
-  syncSketches();
+  syncSketches(partial);
   applySelectionLayers();
   if (m_notesRevision != m_doc->revision) updateAnnotations();  // a document change, not a batch of meshes
   updateClipPlanes();
-  ++m_syncs;
+  ++(partial ? m_partialSyncs : m_syncs);
   m_syncMs += clock.elapsed();
   if (!m_displayQueue.empty()) emit meshingProgress(remainingBodies());  // first: the window may make a job to report the stream (the pump's parent)
   runPump();

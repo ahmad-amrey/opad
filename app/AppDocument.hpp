@@ -104,6 +104,14 @@ class AppDocument : public QObject {
   void setUndoLimit(int steps);
   int undoLimit() const { return m_undoLimit; }
   const opad::Node* node(const std::string& id) const { return scene.node(id); }
+  // What the last `changed` changed (UI-40): only the appearance, placement, name or parent of these nodes (the ops that
+  // did it added, undone or redone), or anything (`whole`: a load, a feature, a delete, a roll-back, ...). A view can then
+  // look at the bodies under them alone.
+  struct Change {
+    bool whole = true;
+    std::vector<std::string> nodes;
+  };
+  const Change& lastChange() const { return m_change; }
   QString nodeName(const std::string& id) const;
 
  signals:
@@ -135,6 +143,9 @@ class AppDocument : public QObject {
   void markSaved();      // snapshot the state the file holds (or the empty state of a new document)
   void updateDirty();    // dirty = log or body store differs from the snapshot
   static QString labelFor(const std::string& command, const opad::json& args);
+  // Adds the targets of ops[from..] to `nodes`; false when one of them is not an appearance, transform, rename or reparent.
+  static bool touches(const std::vector<opad::Op>& ops, size_t from, std::vector<std::string>& nodes);
+  Change m_change, m_next;  // the last refresh's, and what the next one reports (anything unless the caller says)
   std::string m_rollback;
   bool m_batch = false;
   std::vector<Step> m_undo, m_redo;

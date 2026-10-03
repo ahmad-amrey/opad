@@ -112,8 +112,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // The job that reports bodies streaming in (a load, Displaying bodies): the display pump runs as its child, so its
   // Cancel stops the pump too (UI-40). Null: the pump is a Background job.
   void setStreamJob(Job* job);
-  int syncCount() const { return m_syncs; }  // full syncs so far and their time (benches: one per document change)
-  qint64 syncMs() const { return m_syncMs; }
+  int syncCount() const { return m_syncs; }  // full syncs so far (benches: one per document change, none per batch of meshes)
+  int partialSyncCount() const { return m_partialSyncs; }  // syncs of the bodies under the nodes a change touched (UI-40)
+  qint64 syncMs() const { return m_syncMs; }  // the time of both
   void fitSelection();
   void fitNodes(const std::vector<std::string>& ids);
   void standardView(const QString& name);
@@ -530,7 +531,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter m_filter = SelFilter::Body;
   bool m_gridSnap=false;
   double m_gridStep=10;
-  double m_gridSpacing=0;  // view/gridSpacing (0 = automatic), read when the grid settings change
+  // view/gridSpacing (0 = automatic) and view/gridExtent, read once and when the grid settings change (configureGrid):
+  // every sync's finish lays the 3D grid out again, and read them three times there.
+  double m_gridSpacing=0, m_gridExtentSetting=100;
   double m_gridShownStep=0, m_gridShownExtent=0, m_gridShownX=0, m_gridShownY=0;  // the infinite grid as last laid out
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
   std::vector<std::string> m_fitNodesOnSync;
@@ -572,8 +575,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   int m_pumpRuns = 0;
   QElapsedTimer m_streamFit;   // the last fit while streaming
   QPointer<Job> m_streamJob;
-  int m_syncs = 0;
+  int m_syncs = 0, m_partialSyncs = 0;
   qint64 m_syncMs = 0;
+  unsigned long long m_syncedRevision = 0;  // the document revision the last sync saw: the next one may take its change set
   Job* m_displayJob = nullptr;                    // the display pump's job while it runs
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
@@ -590,11 +594,18 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::shared_ptr<std::atomic<bool>> m_alive;
 
   // design
-  void syncSketches();  // the scene's visible sketches as wire objects
+  // The scene's visible sketches as wire objects. `sameGeometry`: the change could not touch any sketch's geometry or plane
+  // (AppDocument::lastChange), so a sketch drawn already is only checked for being shown.
+  void syncSketches(bool sameGeometry = false);
+  // What a sketch's wire was built from, compared rather than printed: a dump of the Engine's big sketch took 5-8 ms a sync.
+  struct SketchStamp {
+    opad::json geometry, frame;
+    bool matches(const opad::SketchItem& s) const { return frame == s.frame.to_json() && geometry == s.geometry; }
+  };
   struct SketchWire {
     Handle(AIS_Shape) ais;
     std::shared_ptr<BodyPrs> prs;
-    std::string stamp;  // geometry + frame it was built from
+    SketchStamp stamp;  // geometry + frame it was built from
     std::vector<Handle(AIS_InteractiveObject)> backdrops;
     BodyLook look;  // as applied (ViewportLooks.cpp); colour = the selection blue it is drawn in
   };
@@ -603,7 +614,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // background (line aspects ignore alpha). Applied in place like a body's, images included.
   BodyLook sketchLook(const std::string& id) const;
   void applySketchLook(SketchWire& wire, const BodyLook& look);
-  struct PreparedSketch { std::string stamp; TopoDS_Shape shape; std::shared_ptr<BodyPrs> prs; std::vector<Handle(AIS_InteractiveObject)> backdrops; bool ready=false; };
+  struct PreparedSketch { SketchStamp stamp; TopoDS_Shape shape; std::shared_ptr<BodyPrs> prs; std::vector<Handle(AIS_InteractiveObject)> backdrops; bool ready=false; };
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;

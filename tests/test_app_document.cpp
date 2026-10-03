@@ -109,6 +109,33 @@ int main(int argc, char** argv) {
       CHECK(doc.undoLabels().size() == steps && doc.canRedo());  // no step, the redo kept
       QObject::disconnect(counted);
     }
+    // What a change changed (UI-40): the appearance, name, placement or parent of the targets of the ops added, undone or
+    // redone; anything else is the whole document. A view then looks at the bodies under those nodes alone.
+    {
+      const auto all = doc.scene.all_bodies();
+      const std::vector<std::string> both = {all[0], all[1]};
+      auto only = [&doc](const std::vector<std::string>& nodes) { return !doc.lastChange().whole && doc.lastChange().nodes == nodes; };
+      doc.run("appearance", opad::json{{"targets", both}, {"visible", false}});
+      CHECK(only(both));
+      doc.undo();
+      CHECK(only(both) && doc.scene.node(all[0])->visible);
+      doc.redo();
+      CHECK(only(both) && !doc.scene.node(all[1])->visible);
+      doc.batch("moved", [&] {
+        doc.run("rename", opad::json{{"target", all[1]}, {"name", "moved"}});
+        doc.run("transform", opad::json{{"target", all[0]}, {"matrix", opad::Mat4::translation(1, 2, 3).to_json()}});
+      });
+      CHECK(only({all[1], all[0]}));
+      doc.undo(2);
+      CHECK(only({all[1], all[0], all[0], all[1]}) && doc.scene.node(all[0])->visible);
+      doc.run("section", opad::json{{"name", "Cut"}, {"origin", {0, 0, 0}}, {"normal", {0, 0, 1}}});
+      CHECK(doc.lastChange().whole);
+      doc.undo();
+      CHECK(doc.lastChange().whole);
+      doc.redo();
+      CHECK(doc.lastChange().whole);
+      doc.undo();
+    }
     int resets=0;
     QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});
     const auto generation=doc.generation;
