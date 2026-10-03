@@ -97,7 +97,8 @@ void TimelineWidget::rebuild() {
   for (size_t i = 0; i < m_doc->doc.ops.size(); ++i)
     if (timelineShows(m_doc->doc, m_doc->doc.ops[i]) && (!m_designOnly || designStep(m_doc->doc, m_doc->doc.ops[i]))) m_shown.push_back(i);
   setHover(-1);
-  m_dragging = false;
+  m_dragging = m_keyed = false;
+  if (m_keyTimer) m_keyTimer->stop();
   layoutMarkers();
   updateScrollRange();
   if (atEnd) m_scroll->setValue(m_scroll->maximum());
@@ -165,20 +166,54 @@ void TimelineWidget::wheelEvent(QWheelEvent* e) {
   m_scroll->setValue(m_scroll->value() - delta); e->accept();
 }
 
-// Ctrl+C on the timeline is its own (the marker's op id), whatever the window's shortcuts say.
+// Ctrl+C on the timeline is its own (the marker's op id), and so are Shift with the arrows, Home and End (the roll-back
+// marker), whatever the window's shortcuts say (Shift+Left and Shift+Right are views there).
 bool TimelineWidget::event(QEvent* e) {
-  if (e->type() == QEvent::ShortcutOverride && static_cast<QKeyEvent*>(e)->matches(QKeySequence::Copy) && !m_current.empty()) {
-    e->accept();
-    return true;
+  if (e->type() == QEvent::ShortcutOverride) {
+    const auto* k = static_cast<QKeyEvent*>(e);
+    if ((k->matches(QKeySequence::Copy) && !m_current.empty()) || (k->modifiers() == Qt::ShiftModifier && playheadKey(k->key()))) {
+      e->accept();
+      return true;
+    }
   }
   return QWidget::event(e);
+}
+
+bool TimelineWidget::playheadKey(int key) { return key == Qt::Key_Left || key == Qt::Key_Right || key == Qt::Key_Home || key == Qt::Key_End; }
+
+// Shift+Left / Shift+Right move the roll-back marker by one gap, Shift+Home / Shift+End to the start or the end: drawn there
+// at once, the model follows once the keys rest (held down on a big model, a replay per step would queue up).
+void TimelineWidget::nudgePlayhead(int key) {
+  if (m_shown.empty() || !m_editing.empty() || m_dragging) return;
+  const size_t from = m_keyed ? m_dragGap : rollbackGap();
+  m_dragGap = key == Qt::Key_Home ? 0 : key == Qt::Key_End ? m_shown.size() : key == Qt::Key_Left ? (from > 0 ? from - 1 : 0) : std::min(from + 1, m_shown.size());
+  m_keyed = true;
+  if (!m_keyTimer) {
+    m_keyTimer = new QTimer(this);
+    m_keyTimer->setSingleShot(true);
+    m_keyTimer->setInterval(350);
+    connect(m_keyTimer, &QTimer::timeout, this, [this] {
+      if (!std::exchange(m_keyed, false)) return;
+      dropPlayhead(m_dragGap);
+    });
+  }
+  m_keyTimer->start();
+  ensureVisible(std::min(m_dragGap, m_shown.size() - 1));
+  update();
+}
+
+void TimelineWidget::dropPlayhead(size_t gap) {
+  update();
+  if (gap != rollbackGap() || (gap == m_shown.size()) != m_doc->rollback().empty())
+    emit rollbackRequested(gap < m_shown.size() ? rollPoint(m_shown[gap]) : std::string());
 }
 
 void TimelineWidget::keyPressEvent(QKeyEvent* e) {
   if (e->matches(QKeySequence::Copy)) {
     if (m_current.empty()) return QWidget::keyPressEvent(e);
     QGuiApplication::clipboard()->setText(QString::fromStdString(m_current));
-  } else if (e->key() == Qt::Key_Left) step(-1);
+  } else if (e->modifiers() == Qt::ShiftModifier && playheadKey(e->key())) nudgePlayhead(e->key());
+  else if (e->key() == Qt::Key_Left) step(-1);
   else if (e->key() == Qt::Key_Right) step(1);
   else if (e->key() == Qt::Key_Home || e->key() == Qt::Key_End) {
     if (!m_shown.empty()) { setCurrentOp(m_doc->doc.ops[e->key() == Qt::Key_Home ? m_shown.front() : m_shown.back()].id); emit opClicked(m_current); }
@@ -235,7 +270,7 @@ int TimelineWidget::gapX(size_t gap) const {
 
 QRect TimelineWidget::playhead() const {
   if (m_shown.empty()) return {};
-  const int x = gapX(m_dragging ? m_dragGap : rollbackGap());
+  const int x = gapX(m_dragging || m_keyed ? m_dragGap : rollbackGap());
   return QRect(x - 4, 6, 9, 36);
 }
 
@@ -455,8 +490,8 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     }
   }
   if (!m_shown.empty()) {  // the roll-back marker: where the shown state ends
-    const int x = gapX(m_dragging ? m_dragGap : rollbackGap());
-    const QColor c = m_dragging || m_doc->rolledBack() ? t.candidate : t.sel;
+    const int x = gapX(m_dragging || m_keyed ? m_dragGap : rollbackGap());
+    const QColor c = m_dragging || m_keyed || m_doc->rolledBack() ? t.candidate : t.sel;
     p.setPen(Qt::NoPen);
     p.setBrush(c);
     p.drawRect(x - 1, 8, 2, 32);
@@ -497,8 +532,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
   if (i != m_hover) { setHover(i); update(); }
   if (onPlayhead) {
     QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8),
-                       m_doc->rolledBack() ? tr("Rolled back: the steps after this marker are not shown. Drag it to the end to roll forward.")
-                                           : tr("Roll-back marker: drag it to see the model as it was at an earlier step."), this);
+                       m_doc->rolledBack() ? tr("Rolled back: the steps after this marker are not shown. Drag it to the end (or Shift+End) to roll forward.")
+                                           : tr("Roll-back marker: drag it, or Shift+Left and Shift+Right on the timeline, to see the model as it was at an earlier step."), this);
   } else if (i >= 0) {
     const Tokens& t = theme::current();
     const opad::Op& op = m_doc->doc.ops[m_shown[static_cast<size_t>(i)]];
@@ -542,8 +577,9 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
   if (m_nextBtn.contains(e->pos())) return step(+1);
   int i = indexAt(e->pos());
   if (i < 0 && e->button() == Qt::LeftButton && playhead().contains(e->pos()) && m_editing.empty()) {
+    if (m_keyTimer) m_keyTimer->stop();
+    m_dragGap = std::exchange(m_keyed, false) ? m_dragGap : rollbackGap();
     m_dragging = true;
-    m_dragGap = rollbackGap();
     QToolTip::hideText();
     return update();
   }
@@ -562,10 +598,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
 void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
   if (!m_dragging || e->button() != Qt::LeftButton) return QWidget::mouseReleaseEvent(e);
   m_dragging = false;
-  const size_t gap = m_dragGap;
-  update();
-  if (gap != rollbackGap() || (gap == m_shown.size()) != m_doc->rollback().empty())
-    emit rollbackRequested(gap < m_shown.size() ? rollPoint(m_shown[gap]) : std::string());
+  dropPlayhead(m_dragGap);
 }
 
 void TimelineWidget::leaveEvent(QEvent*) {

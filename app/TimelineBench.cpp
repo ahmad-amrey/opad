@@ -1,8 +1,11 @@
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <QApplication>
 #include <QClipboard>
 #include <QElapsedTimer>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -414,6 +417,164 @@ OPAD_BENCH(OPAD_BENCH_TIMELINEPERF, timelineperf) {
     } catch (const std::exception& e) {
       timer->stop();
       trace::log(QString("bench: timelineperf FAIL: %1").arg(e.what()));
+      QCoreApplication::exit(2);
+    }
+  });
+  timer->start();
+  return true;
+}
+
+// OPAD_BENCH_ROLLBACK=<prefix> (UI-99; case timeline-rollback in tools/bench_cases/smart.py) on the 40 mm base with a 10 mm
+// boss joined on top, rounded by the bench (Round). Rolled back before Round, Shift+Left on the timeline (the window's own
+// Shift+Left, a view, does not get it) draws the playhead before Boss at once and rolls back there once the keys rest;
+// Shift+Right twice rolls forward to the end, Shift+Home before everything, Shift+End to the end again. Rolled back before
+// Round, editing Boss takes over the roll-back and Esc gives it back; editing it again to 15 mm high and OK commits the
+// edit and leaves the model rolled back before Round with the taller boss; rolled forward, Round sits on it. Shots:
+// <prefix>.keys.png (the playhead moved by keys, the model not yet), .edited.png (the timeline after the edit).
+OPAD_BENCH(OPAD_BENCH_ROLLBACK, rollback) {
+  struct State {
+    int phase = 0, ticks = 0, wait = 0;
+    std::string body, base, boss, round;
+  };
+  auto state = std::make_shared<State>();
+  TimelineArea* timelineArea = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* t = dynamic_cast<TimelineArea*>(a)) timelineArea = t;
+  if (!timelineArea) {
+    trace::log("bench: rollback FAIL: the timeline area is off");
+    QCoreApplication::exit(2);
+    return true;
+  }
+  auto* timer = new QTimer(&w);
+  timer->setInterval(100);
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, timelineArea, state, timer, prefix = value] {
+    TimelineWidget* t = w.m_timeline;
+    try {
+      if (++state->ticks > 1200) throw opad::Error("timed out in phase " + std::to_string(state->phase));
+      if (w.m_doc->loading || w.m_doc->designBusy || w.m_doc->snapshotBusy() || w.m_jobs->busy()) return;
+      auto require = [](bool ok, const std::string& why) {
+        if (!ok) throw opad::Error(why);
+      };
+      auto pass = [](const QString& what) { trace::log("bench: rollback: " + what + " PASS"); };
+      auto waitFor = [&](bool ok, const std::string& why) {
+        if (ok) {
+          state->wait = 0;
+          return true;
+        }
+        require(++state->wait < 80, why);
+        return false;
+      };
+      auto key = [&](int k) {  // Shift+k on the timeline: claimed before the window's shortcuts, then pressed
+        QKeyEvent override(QEvent::ShortcutOverride, k, Qt::ShiftModifier);
+        QApplication::sendEvent(t, &override);
+        require(override.isAccepted(), "the timeline claims Shift+" + QKeySequence(k).toString().toStdString());
+        QKeyEvent press(QEvent::KeyPress, k, Qt::ShiftModifier);
+        QApplication::sendEvent(t, &press);
+      };
+      auto between = [&](const std::string& left, const std::string& right) {
+        const int x = t->playhead().center().x();
+        return (left.empty() || x > t->markerAt(left).right()) && (right.empty() || x < t->markerAt(right).left());
+      };
+      auto height = [&] {
+        const opad::Feature* f = w.m_doc->scene.feature(state->boss);
+        return f ? QString::fromStdString(f->inputs.value("height", "")) : QString();
+      };
+      switch (state->phase) {
+        case 0: {
+          require(w.m_doc->scene.all_bodies().size() == 1, "one body");
+          state->body = w.m_doc->scene.all_bodies().front();
+          for (const auto& f : w.m_doc->scene.features) {
+            if (f.name == "Base") state->base = f.id;
+            if (f.name == "Boss") state->boss = f.id;
+          }
+          require(!state->base.empty() && !state->boss.empty(), "the fixture's Base and Boss");
+          TopTools_IndexedMapOfShape edges;
+          TopExp::MapShapes(opad::node_world_shape(w.m_doc->doc, w.m_doc->scene, state->body), TopAbs_EDGE, edges);
+          opad::json top = opad::json::array();
+          for (int i = 1; i <= edges.Extent(); ++i) {
+            BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
+            if (std::abs(c.Value(c.FirstParameter()).Z() - 20) < 1e-6 && std::abs(c.Value(c.LastParameter()).Z() - 20) < 1e-6) top.push_back(state->body + "/edge/" + std::to_string(i - 1));
+          }
+          require(top.size() == 4, "four top edges on the boss");
+          w.m_design->applyOps({opad::design::make_feature_op("fillet", "Round", {{"edges", top}, {"radius", "2 mm"}})}, "fillet");
+          break;
+        }
+        case 1: {
+          for (const auto& f : w.m_doc->scene.features)
+            if (f.name == "Round") state->round = f.id;
+          require(!state->round.empty() && t->markerCount() == 3, "Round applied, three markers");
+          w.setWorkspace("design");
+          require(timelineArea->rollTo(state->round) && w.m_doc->rolledBack() && between(state->boss, state->round), "rolled back before Round");
+          t->setFocus();
+          key(Qt::Key_Left);
+          require(t->playheadMoving() && between(state->base, state->boss) && w.m_doc->rollback() == state->round, "Shift+Left draws the playhead before Boss at once, the model waits");
+          t->grab().save(prefix + ".keys.png");
+          pass("Shift+Left on the timeline: the playhead before Boss at once, the model still before Round");
+          break;
+        }
+        case 2: {
+          if (!waitFor(!t->playheadMoving() && w.m_doc->rollback() == state->boss, "the model follows once the keys rest")) return;
+          require(w.m_doc->rolledBack() && !w.m_doc->scene.feature(state->boss) && between(state->base, state->boss), "rolled back before Boss");
+          pass("the keys at rest: the model rolled back before Boss");
+          key(Qt::Key_Right);
+          key(Qt::Key_Right);
+          require(between(state->round, {}), "Shift+Right twice: the playhead at the end");
+          break;
+        }
+        case 3: {
+          if (!waitFor(!t->playheadMoving() && !w.m_doc->rolledBack() && w.m_doc->scene.feature(state->round), "Shift+Right twice rolls forward")) return;
+          pass("Shift+Right twice rolls forward to the end");
+          key(Qt::Key_Home);
+          break;
+        }
+        case 4: {
+          if (!waitFor(!t->playheadMoving() && w.m_doc->rollback() == state->base && w.m_doc->scene.all_bodies().empty(), "Shift+Home rolls back before everything")) return;
+          pass("Shift+Home: before every step, no body");
+          key(Qt::Key_End);
+          break;
+        }
+        case 5: {
+          if (!waitFor(!t->playheadMoving() && !w.m_doc->rolledBack() && w.m_doc->scene.all_bodies().size() == 1, "Shift+End rolls forward")) return;
+          pass("Shift+End rolls forward to the end");
+          require(timelineArea->rollTo(state->round), "rolled back before Round again");
+          w.m_design->editOp(state->boss);
+          require(w.m_design->featureActive() && !w.m_doc->rolledBack() && w.m_doc->rollback() == state->boss, "editing Boss takes the roll-back over");
+          require(!timelineArea->rollTo({}), "the playhead stays while the editor is open");
+          w.m_design->escape();
+          require(!w.m_design->featureActive() && w.m_doc->rolledBack() && w.m_doc->rollback() == state->round && timelineArea->chip()->isVisibleTo(w.m_chips),
+                  "Esc gives the roll-back before Round back");
+          pass("editing Boss while rolled back before Round, then Esc: rolled back before Round again, the chip says so");
+          w.m_design->editOp(state->boss);
+          w.m_design->featurePanel()->setValue("height", "15 mm");
+          emit w.m_design->featurePanel()->accepted();
+          break;
+        }
+        case 6: {
+          if (!waitFor(!w.m_design->featureActive() && height() == "15 mm", "OK commits the edit of Boss")) return;
+          require(w.m_doc->rolledBack() && w.m_doc->rollback() == state->round && !w.m_doc->scene.feature(state->round), "the model stays rolled back before Round");
+          Bnd_Box box;
+          BRepBndLib::Add(opad::node_world_shape(w.m_doc->doc, w.m_doc->scene, state->body), box);
+          require(std::abs(box.CornerMax().Z() - 25) < 0.1, "the boss is 15 mm high there (top at " + std::to_string(box.CornerMax().Z()) + ")");
+          require(timelineArea->chip()->isVisibleTo(w.m_chips) && between(state->boss, state->round), "the chip and the playhead stay");
+          t->grab().save(prefix + ".edited.png");
+          pass("Boss edited to 15 mm: the model stays rolled back before Round, with the taller boss");
+          w.action("timeline.rollForward")->trigger();
+          break;
+        }
+        case 7: {
+          if (!waitFor(!w.m_doc->rolledBack(), "Roll forward")) return;
+          const opad::Feature* round = w.m_doc->scene.feature(state->round);
+          require(round && round->error.empty(), "Round follows the taller boss");
+          pass("rolled forward: Round sits on the taller boss");
+          timer->stop();
+          QCoreApplication::exit(0);
+          return;
+        }
+      }
+      ++state->phase;
+    } catch (const std::exception& e) {
+      timer->stop();
+      trace::log(QString("bench: rollback FAIL: %1").arg(e.what()));
       QCoreApplication::exit(2);
     }
   });
