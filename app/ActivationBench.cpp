@@ -80,7 +80,8 @@ struct Ticker {
 // sketch made through the plane picker (ghosts pickable while choosing) and the sketch editor, a box made through the
 // feature panel and an import all land in the Lid (no reparent op); the context menu offers Activate for a body of
 // another component and Activate root; an undone active component hands activation back to the root; the chip's click
-// activates the root and everything is drawn and picked as before. With the Lid active: <prefix>.ghost.png (the view),
+// activates the root and everything is drawn and picked as before; the Lid activated, saved and opened again is active
+// again. With the Lid active: <prefix>.ghost.png (the view),
 // <prefix>.browser.png, <prefix>.chips.png, <prefix>.timeline.png and <prefix>.ribbon.png (Design > Assemble).
 OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
   auto all = std::make_shared<bool>(true);
@@ -368,6 +369,18 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     require(restored && a.value("transparency", 1.0) == 0.0 && a.value("activated", 0) > 0 && v->benchBodyPoint(s->boxA, x, y) && !v->shownLook(s->sketch).ghost &&
                                 w.m_timeline->dimmedOps().empty() && !w.action("assembly.activateRoot")->isEnabled(),
                             "the root active: no ghosts, the Housing's box picked again, the timeline undimmed");
+                    // Remembered per document: the Lid activated again, saved, opened again.
+                    w.m_browser->selectIds({s->lid});
+                    if (QAction* activate = w.action("assembly.activate"); activate->isEnabled()) activate->trigger();
+                    w.m_browser->selectIds({});
+                    doc->saveAs(s->dir.filePath("again.opad"));
+                    doc->startOpen(s->dir.filePath("again.opad"));
+                  }});
+  list.push_back({[doc] { return !doc->loading && !doc->activeComponent().empty(); }, [=, &w](bool restored) {
+                    QLabel* chip = nullptr;
+                    for (QLabel* label : w.m_chips->findChildren<QLabel*>())
+                      if (label->isVisibleTo(w.m_chips) && label->text().contains("Lid")) chip = label;
+                    require(restored && doc->activeComponent() == s->lid && chip, "opened again, the Lid it was left in is active again");
                   }});
   runSteps(&w, steps, 0, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   return true;

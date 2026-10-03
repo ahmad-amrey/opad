@@ -3,12 +3,14 @@
 // (Viewport::ghostsPickable: guided tools, feature inputs, sketch Project, a sketch plane being chosen); the browser has
 // a radio on the document and component rows and dims what is outside; the chips row names it with the way back to the
 // root; the timeline dims the ops that do not touch it. New sketches, features, bodies, imports and components go into
-// it (DesignController, AppDocument::startImport, design.newcomponent) and F frames it (view.fit).
+// it (DesignController, AppDocument::startImport, design.newcomponent) and F frames it (view.fit). The one activated last
+// in a document is remembered (setting view/active/<uuid>) and active again when the document is opened again.
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QSettings>
 
 #include <algorithm>
 #include <map>
@@ -105,7 +107,16 @@ class Activation : public AreaController {
     if (!active.empty()) menu.addAction(m_root);
   }
 
-  void documentChanged(bool) override { refresh(); }
+  void documentChanged(bool replaced) override {
+    // A document opened again: the component last activated in it comes back (setting view/active/<uuid>).
+    AppDocument* doc = services().document();
+    if (replaced && doc->hasDocument && !doc->browse && doc->activeComponent().empty()) {
+      const std::string id = QSettings().value(rememberKey(*doc)).toString().toStdString();
+      const opad::Node* n = id.empty() ? nullptr : doc->scene.node(id);
+      if (n && n->kind == opad::Node::Kind::Component) return doc->setActiveComponent(id);  // its signal refreshes
+    }
+    refresh();
+  }
 
  protected:
   bool eventFilter(QObject* object, QEvent* event) override {
@@ -126,8 +137,17 @@ class Activation : public AreaController {
     return sketch ? sketch->component : std::string();
   }
 
+  static QString rememberKey(const AppDocument& doc) { return "view/active/" + QString::fromStdString(doc.doc.header.uuid); }
+
   void setActive(const std::string& id) const {
-    services().guarded([&] { services().document()->setActiveComponent(id); });
+    services().guarded([&] {
+      AppDocument* doc = services().document();
+      doc->setActiveComponent(id);
+      if (doc->browse || doc->doc.header.uuid.empty()) return;  // a viewed file is read afresh each time
+      QSettings settings;
+      if (id.empty()) settings.remove(rememberKey(*doc));
+      else settings.setValue(rememberKey(*doc), QString::fromStdString(id));
+    });
   }
 
   void decorate(const browser::Row& row, browser::Decoration& d) const {
