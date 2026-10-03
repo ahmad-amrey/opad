@@ -8,8 +8,9 @@
 //   construction, in this order: buildActions, menus, ribbon, statusWidgets, ready;
 //   then, once ready: contextMenu, selectionChanged, positionOverlays, documentChanged, workspaceChanged, maybeClose.
 // What an area needs of the window comes through services(); its own state stays in the area. Browser rows and the
-// Properties panel take providers (BrowserPanel::addDecorator / addFolder, PropertiesPanel::addSectionProvider),
-// registered in ready(). Hooks run on the UI thread: anything that scales with the model goes through jobs().
+// Properties panel take providers (BrowserPanel::addDecorator / addFolder, PropertiesPanel::addSectionProvider), the
+// chips row takes chips (ViewportChips::addChip), all registered in ready(); a workspace of its own is a RibbonLayout
+// entry in ribbon(). Hooks run on the UI thread: anything that scales with the model goes through jobs().
 #include <QMap>
 #include <QObject>
 #include <QRect>
