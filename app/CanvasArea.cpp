@@ -20,8 +20,11 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-#include <BRepBndLib.hxx>
-#include <Bnd_Box.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <TopoDS.hxx>
+#include <gp_Ax3.hxx>
 
 #include <atomic>
 #include <cmath>
@@ -49,6 +52,7 @@
 #include "Viewport.hpp"
 #include "opad/design/drawing_sketch.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_trace.hpp"
 #include "opad/geometry.hpp"
 
@@ -97,7 +101,12 @@ void CanvasArea::buildActions() {
     };
   };
   command("canvas.insert", tr("Insert canvas…"), "canvas", {"image", "picture", "photo", "underlay", "reference image"}, [](const CommandContext& c) { return !c.sketching; },
-          [this] { insert(); });
+          [this] {  // the file, when a picture was dropped onto the document (the action's "file" property)
+            QAction* self = services().action("canvas.insert");
+            const QString file = self->property("file").toString();
+            self->setProperty("file", QVariant());
+            insert(file);
+          });
   command("canvas.edit", tr("Edit canvas"), "move", {"image", "picture", "move", "scale", "rotate"}, one, onTarget([] {}));
   command("canvas.calibrate", tr("Calibrate canvas…"), "calibrate", {"scale", "real size", "measure picture"}, one, onTarget([this] { calibrate(); }));
   command("canvas.align", tr("Align canvas to model…"), "alignto", {"scale relative", "match", "fit picture"}, one, onTarget([this] { align(); }));
@@ -504,32 +513,41 @@ void CanvasArea::insert(const QString& given) {
   AppDocument* doc = services().document();
   if (!doc->hasDocument) return services().importFile(path, link);  // nothing to place it among: a document of its own
   const auto refs = services().viewport()->selection();
-  if (refs.size() == 1 && refs.front().kind == opad::Ref::Kind::Face) {  // on the selected face: its frame, centred on it
-    const opad::Ref face = refs.front();
-    QPointer<CanvasArea> self(this);
-    const bool started = doc->captureSnapshot(services().jobs(), [self, face, path, link](std::shared_ptr<opad::Document> copy, const QString& error) {
-      if (!self) return;
-      if (!copy) return self->toast(error);
-      auto frame = std::make_shared<opad::Frame>();
-      auto centre = std::make_shared<std::pair<double, double>>(0, 0);
-      self->services().jobs()->async(tr("Reading the face"), [copy, face, frame, centre](Progress) {
-        const opad::Scene scene = opad::resolve(*copy);
-        *frame = opad::design::resolve_plane(*copy, scene, {{"face", face.to_json()}});
-        Bnd_Box box;
-        BRepBndLib::Add(opad::subshape(opad::node_world_shape(*copy, scene, face.body), opad::Ref::Kind::Face, face.index), box);
-        if (box.IsVoid()) return;
-        const gp_Pnt c = (box.CornerMin().XYZ() + box.CornerMax().XYZ()) / 2;
-        frame->to_local({c.X(), c.Y(), c.Z()}, centre->first, centre->second);
-      }, [self, frame, centre, path, link](bool ok, const QString& error) {
-        if (!self) return;
-        if (!ok) return self->toast(error);
-        self->placeOn(path, *frame, centre->first, centre->second, link);
-      });
-    });
-    if (!started) toast(tr("The document is busy; try again in a moment."));
-    return;
-  }
-  services().design()->pickSketchPlane([this, path, link](opad::json, opad::Frame frame) { placeOn(path, frame, 0, 0, link); }, false);
+  auto pickPlane = [this, path, link] { services().design()->pickSketchPlane([this, path, link](opad::json, opad::Frame frame) { placeOn(path, frame, 0, 0, link); }, false); };
+  const opad::Node* body = refs.size() == 1 && refs.front().kind == opad::Ref::Kind::Face ? doc->node(refs.front().body) : nullptr;
+  if (!body || body->body_missing) return pickPlane();
+  // On the selected face: its plane (the normal outward, x along a world axis where one lies in it), centred on it. The
+  // body's shape (cached since the load) and place are taken here; the face is read on a worker.
+  auto shape = std::make_shared<const TopoDS_Shape>(opad::body_shape(doc->doc, body->body_key));
+  auto frame = std::make_shared<opad::Frame>();
+  const opad::Mat4 world = doc->scene.world(body->id);
+  const int index = refs.front().index;
+  QPointer<CanvasArea> self(this);
+  services().jobs()->async(tr("Reading the face"), [shape, world, index, frame](Progress) {
+    TopoDS_Shape face = opad::subshape(*shape, opad::Ref::Kind::Face, index);
+    if (face.IsNull() || !(world.is_identity() || opad::mat_is_rigid(world))) throw opad::Error("the plane must be a planar face");
+    if (!world.is_identity()) face = face.Moved(TopLoc_Location(opad::trsf_from_mat(world)));
+    BRepAdaptor_Surface surface(TopoDS::Face(face));
+    if (surface.GetType() != GeomAbs_Plane) throw opad::Error("that face is not planar");
+    const gp_Ax3 ax = surface.Plane().Position();
+    gp_Dir n = ax.Direction();
+    if (!ax.Direct()) n.Reverse();
+    if (face.Orientation() == TopAbs_REVERSED) n.Reverse();  // outward from the body
+    gp_Dir x = ax.XDirection();
+    for (const gp_Dir& axis : {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)})
+      if (std::fabs(axis.Dot(n)) < 1e-6) {
+        x = axis;
+        break;
+      }
+    GProp_GProps g;
+    BRepGProp::SurfaceProperties(face, g);
+    *frame = opad::design::frame_from_ax3(gp_Ax3(g.CentreOfMass(), n, x));
+  }, [self, frame, path, link, pickPlane](bool ok, const QString& error) {
+    if (!self) return;
+    if (ok) return self->placeOn(path, *frame, 0, 0, link);
+    self->toast(i18n::t(error));
+    pickPlane();
+  });
 }
 
 void CanvasArea::placeOn(const QString& file, const opad::Frame& plane, double u, double v, bool link) {

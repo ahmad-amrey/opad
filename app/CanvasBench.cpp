@@ -4,8 +4,8 @@
 // transform op, the opposite corner fixed, undo and redo); digits typed in the view landing in the panel's X (never the
 // filter shortcut) and applied with Enter; Calibrate by two clicks on the picture and a typed distance; Align to model onto two
 // vertices of the box; lock (no handles, a drag moves nothing); flip (the picture drawn mirrored), show through and
-// selectable; Trace to sketch; Replace (same node, width kept); a sketch's backdrop turned into a canvas; Insert canvas with
-// the box's top face selected (the placer on the face, centred on it). Frames:
+// selectable; Trace to sketch; Replace (same node, width kept); a sketch's backdrop turned into a canvas; a picture dropped
+// onto the window with the box's top face selected (the placer on the face, centred on it). Frames:
 // <prefix>.png (handles), .panel.png, .place.png, .flipped.png.
 #include <QApplication>
 #include <QCheckBox>
@@ -15,6 +15,8 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMimeData>
+#include <QUrl>
 #include <QTreeWidget>
 #include <QMouseEvent>
 #include <QPainter>
@@ -483,8 +485,8 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
       area->fromBackdrop(sketch);
     });
   });
-  // 11. Insert canvas with a face selected: the placer opens on its plane, the picture centred on the face.
-  steps.push_back([=](std::function<void()> next) {
+  // 11. A picture dropped onto the window with a face selected: Insert canvas, the placer on its plane, centred on the face.
+  steps.push_back([=, &w](std::function<void()> next) {
     area->finish();
     opad::Ref top;
     for (const auto& id : doc->scene.all_bodies())
@@ -495,7 +497,7 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
         }
     if (!check(!top.body.empty(), "the box's top face")) return next();
     view->setSelectionFilter(Viewport::SelFilter::Face);
-    QTimer::singleShot(600, area, [=] {
+    QTimer::singleShot(600, area, [=, &w] {
       view->selectRefs({top});
       if (!check(view->selection().size() == 1 && view->selection().front().kind == opad::Ref::Kind::Face, "the top face selected")) return next();
       DrawingPlacer* placer = area->placer();
@@ -507,7 +509,10 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
         view->setSelectionFilter(Viewport::SelFilter::Body);
         next();
       }, Qt::SingleShotConnection);
-      area->insert(photo);
+      QMimeData mime;  // dropped onto the window, as from the file manager
+      mime.setUrls({QUrl::fromLocalFile(photo)});
+      QDropEvent drop(QPointF(w.width() / 2, w.height() / 2), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+      w.dropEvent(&drop);  // a hidden window takes no drop events through the application
     });
   });
   // 12. Selected in the browser: the canvas commands, its context menu and its Properties section.

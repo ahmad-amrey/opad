@@ -293,6 +293,11 @@ void MainWindow::dropEvent(QDropEvent* e) {
   for (const QUrl& u : e->mimeData()->urls()) {
     QString p = u.toLocalFile();
     QString ext = QFileInfo(p).suffix().toLower();
+    if (QAction* canvas = action("canvas.insert"); canvas && m_doc->hasDocument && !m_doc->browse && QStringList{"png", "jpg", "jpeg", "bmp", "gif", "webp"}.contains(ext)) {
+      canvas->setProperty("file", p);  // a picture dropped onto a document: an image canvas in it (UI-70)
+      canvas->trigger();
+      return;
+    }
     if (ext == "opad" || fileFilter(false).split(' ').contains("*." + ext)) { openPath(p); return; }
   }
 }
