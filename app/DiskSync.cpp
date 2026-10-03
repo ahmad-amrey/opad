@@ -159,6 +159,7 @@ void DiskSync::decide() {
     }
     return merge();
   }
+  trace::Scope scope("disk: plan");
   const auto plan = m_doc->planDisk(r);
   if (!plan.error.empty()) return showReplaced(tr("Changes saved before were undone here, so the two cannot be merged."));
   showMerge(plan);
@@ -225,6 +226,7 @@ void DiskSync::merge() {
       m_read.reset();
       return read(true);
     }
+  trace::Scope scope("disk: merge");
   auto taken = std::move(m_read);
   m_decided = false;
   const bool clean = !m_doc->isDirty();
@@ -259,6 +261,7 @@ void DiskSync::reload(bool asked) {
       m_read.reset();
       return read(true);
     }
+  trace::Scope scope("disk: reload");
   auto taken = std::move(m_read);
   m_decided = false;
   try {
@@ -286,7 +289,7 @@ void DiskSync::overwrite() {
 }
 
 // ---------------------------------------------------------------- bench
-// OPAD_BENCH_EXTERNAL_CHANGE=<prefix> (with --bench-select on a saved document with one body; OPAD_BENCH_CLI or the
+// OPAD_BENCH_EXTERNAL_CHANGE=<prefix> (with --bench-select on a saved document with bodies; OPAD_BENCH_CLI or the
 // opad-cli beside the app): opad-cli appends while the document is open and clean (it comes in), then while it has
 // unsaved changes (merge banner; Save refused; Merge), a conflicting change (yours win), a reset (replaced banner,
 // Reload), a reset over unsaved changes (Overwrite asks, Cancel, Overwrite), git conflict markers (unreadable, Save
@@ -305,11 +308,12 @@ bool DiskSync::bench() {
   struct State {
     size_t step = 0;
     int wait = 0, ticks = 0, exit = 0, reads = 0;
+    std::vector<std::string> bodies;
     bool running = false;
     QString file;
     std::string a, b;
     size_t ops = 0;
-    QByteArray bytes;
+    AppDocument::DiskStat stamp;
   };
   auto st = std::make_shared<State>();
   auto require = [](bool ok, const char* why) { if (!ok) throw opad::Error(why); };
@@ -324,7 +328,7 @@ bool DiskSync::bench() {
   };
   auto fileIds = [path] {
     std::vector<std::string> ids;
-    for (const auto& o : opad::Document::load(path()).ops) ids.push_back(o.id);
+    for (const auto& o : opad::Document::load(path(), [](const std::string&) { return true; }).ops) ids.push_back(o.id);  // no bodies: cheap on a big file
     return ids;
   };
   auto sessionIds = [this] {
@@ -332,10 +336,7 @@ bool DiskSync::bench() {
     for (const auto& o : m_doc->doc.ops) ids.push_back(o.id);
     return ids;
   };
-  auto bytes = [st] {
-    QFile f(st->file);
-    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
-  };
+  auto stamp = [st] { return AppDocument::statFile(st->file); };  // a write moves it
   auto reset = [path] {  // as `git reset --hard HEAD~1` would leave it: the last op gone
     opad::Document d = opad::Document::load(path());
     d.truncate_ops(d.ops.size() - 1);
@@ -352,8 +353,10 @@ bool DiskSync::bench() {
   const std::vector<std::function<bool()>> steps = {
       [=, this] {
         st->file = m_doc->diskFile();
-        require(!st->file.isEmpty() && !m_doc->isDirty() && m_doc->scene.all_bodies().size() == 1, "a saved document with one body");
-        st->a = m_doc->scene.all_bodies().front();
+        const auto bodies = m_doc->scene.all_bodies();
+        require(!st->file.isEmpty() && !m_doc->isDirty() && !bodies.empty(), "a saved document with bodies");
+        st->a = bodies.front();
+        st->bodies = bodies;
         st->ops = m_doc->doc.ops.size();
         st->reads = m_reads;
         run({"feature", st->file, "--kind", "cylinder", "--inputs", R"({"x":"40 mm","diameter":"10 mm","height":"30 mm"})"});
@@ -367,8 +370,9 @@ bool DiskSync::bench() {
         require(sessionIds() == fileIds(), "fast-forward: the file's log");
         require(m_reads > st->reads, "fast-forward: read on a worker");
         const auto bodies = m_doc->scene.all_bodies();
-        require(bodies.size() == 2, "fast-forward: the new body");
-        st->b = bodies[0] == st->a ? bodies[1] : bodies[0];
+        require(bodies.size() == st->bodies.size() + 1, "fast-forward: the new body");
+        for (const auto& id : bodies)
+          if (std::find(st->bodies.begin(), st->bodies.end(), id) == st->bodies.end()) st->b = id;
         pass(QStringLiteral("fast-forward (%1 new ops, clean, one undo step)").arg(m_doc->doc.ops.size() - st->ops));
         rename(st->a, "Mine");
         require(m_doc->isDirty(), "an unsaved change");
@@ -382,9 +386,9 @@ bool DiskSync::bench() {
         require(m_doc->doc.ops.size() == st->ops && m_doc->isDirty(), "merge banner: nothing applied by itself");
         require(m_banner->property("conflicts").toInt() == 0, "merge banner: no conflict");
         shot(".merge.png");
-        st->bytes = bytes();
+        st->stamp = stamp();
         trigger("file.save");
-        require(bytes() == st->bytes && m_doc->isDirty() && m_banner->state() == "merge", "save guard: nothing written");
+        require(stamp() == st->stamp && m_doc->isDirty() && m_banner->state() == "merge", "save guard: nothing written");
         pass("save guard");
         click("diskMerge");
         require(m_banner->state().isEmpty(), "merge: banner gone");
@@ -425,12 +429,12 @@ bool DiskSync::bench() {
       },
       [=, this] {
         if (m_banner->state() != "replaced") return false;
-        st->bytes = bytes();
+        st->stamp = stamp();
         click("diskOverwrite");
-        require(m_banner->state() == "confirm" && bytes() == st->bytes, "overwrite asks first");
+        require(m_banner->state() == "confirm" && stamp() == st->stamp, "overwrite asks first");
         shot(".confirm.png");
         click("diskCancel");
-        require(m_banner->state() == "replaced" && bytes() == st->bytes, "cancel keeps both");
+        require(m_banner->state() == "replaced" && stamp() == st->stamp, "cancel keeps both");
         click("diskOverwrite");
         click("diskConfirm");
         require(m_banner->state().isEmpty() && !m_doc->isDirty() && sessionIds() == fileIds() && nameOf(st->a) == "Mine3", "overwritten");
@@ -444,9 +448,9 @@ bool DiskSync::bench() {
       [=, this] {
         if (m_banner->state() != "unreadable") return false;
         shot(".unreadable.png");
-        st->bytes = bytes();
+        st->stamp = stamp();
         trigger("file.save");
-        require(bytes() == st->bytes && m_doc->isDirty(), "unreadable: Save refused");
+        require(stamp() == st->stamp && m_doc->isDirty(), "unreadable: Save refused");
         click("diskOverwrite");
         click("diskConfirm");
         require(!m_doc->isDirty() && sessionIds() == fileIds(), "unreadable: overwritten");
@@ -464,9 +468,9 @@ bool DiskSync::bench() {
         require(touched.open(QIODevice::ReadWrite) && touched.setFileTime(QDateTime::currentDateTime().addSecs(5), QFileDevice::FileModificationTime), "touch");
         touched.close();
         rename(st->a, "Mine5");
-        st->bytes = bytes();
+        st->stamp = stamp();
         trigger("file.save");
-        require(bytes() == st->bytes && m_doc->isDirty(), "touched: Save waits for the file to be read");
+        require(stamp() == st->stamp && m_doc->isDirty(), "touched: Save waits for the file to be read");
         return true;
       },
       [=, this] {
@@ -490,6 +494,7 @@ bool DiskSync::bench() {
   auto* timer = new QTimer(this);
   timer->setInterval(150);
   connect(timer, &QTimer::timeout, this, [this, st, steps, timer] {
+    if (m_doc->designBusy || m_doc->snapshotBusy()) return;  // a recovery snapshot holds Save off for a moment
     try {
       if (st->step >= steps.size()) {
         timer->stop();
@@ -499,7 +504,7 @@ bool DiskSync::bench() {
       if (steps[st->step]()) {
         ++st->step;
         st->wait = 0;
-      } else if (++st->wait > 120) {
+      } else if (++st->wait > 800) {  // two minutes: opad-cli on a big document takes its time
         throw opad::Error("timed out in step " + std::to_string(st->step) + " (banner: " + m_banner->state().toStdString() + ")");
       }
     } catch (const std::exception& e) {
