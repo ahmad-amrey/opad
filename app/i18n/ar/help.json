@@ -599,5 +599,11 @@
  "Step back, or leave the tool": "خطوة إلى الوراء أو مغادرة الأداة",
  "OK, or finish": "موافق أو إنهاء",
  "The full card of the button under the pointer": "البطاقة الكاملة للزر تحت المؤشر",
- "Guide of the tool you are using": "دليل الأداة التي تستخدمها"
+ "Guide of the tool you are using": "دليل الأداة التي تستخدمها",
+ "Start your design": "ابدأ تصميمك",
+ "Hide for this document": "إخفاء لهذا المستند",
+ "Sketch on a plane, draw a closed profile, then extrude it into a solid. Or start from a box, or bring in a file.": "ارسم على مستوى مقطعًا مغلقًا ثم ابثقه إلى مجسم. أو ابدأ من صندوق، أو أحضر ملفًا.",
+ "1  New sketch    2  Line L, Rectangle R, Circle C    3  Extrude E": "1  رسم تخطيطي جديد    2  خط L‏، مستطيل R‏، دائرة C‏    3  بثق E‏",
+ "Import…": "استيراد…",
+ "Don't show again": "لا تعرضها مجددًا"
 }

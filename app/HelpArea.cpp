@@ -2,7 +2,8 @@
 // (RichTip) with the command's animated clip (ClipView). The tool, feature and sketch panels play their own guides
 // (ToolGuide), and the "?" of every tool panel opens the tool guide at its command; the command palette previews the
 // current command. The Help menu: Help for this tool (F1, at the command running now), Tool guide, Shortcuts cheat
-// sheet (Ctrl+/), Getting started, Report a problem, above the window's own entries (licences, About).
+// sheet (Ctrl+/), Getting started, Report a problem, above the window's own entries (licences, About). An empty document
+// shows the coach card: how a design starts, with buttons for the first step.
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -12,7 +13,10 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QSysInfo>
+#include <QTimer>
 #include <QToolButton>
+
+#include <algorithm>
 
 #include <Standard_Version.hxx>
 
@@ -30,6 +34,7 @@
 #include "RichTip.hpp"
 #include "Theme.hpp"
 #include "ToolPanel.hpp"
+#include "Viewport.hpp"
 #include "opad/util.hpp"
 
 OPAD_ICON_TABLE(help, {"help", R"(<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5 a2.6 2.6 0 0 1 5.1 0.4 c0 1.9 -2.6 2.3 -2.6 4.1"/><path d="M12 17.2h.01"/>)"},
@@ -104,10 +109,53 @@ class HelpArea : public AreaController {
     for (auto* b : services().window()->statusBar()->findChildren<QToolButton*>())  // the status bar's toggles (extensions, tracking, grid snapping)
       if (b->defaultAction() && help::find(b->defaultAction()->objectName())) RichTip::attach(b, b->defaultAction()->objectName());
     for (QAction* a : services().commands().actions())  // the palette's recent commands: whatever ran them (button, menu, key, palette)
-      if (a) connect(a, &QAction::triggered, this, [id = a->objectName()] { palette::noteRun(id); });
+      if (a) connect(a, &QAction::triggered, this, [this, id = a->objectName()] {
+        palette::noteRun(id);
+        QTimer::singleShot(0, this, &HelpArea::updateCoach);  // a tool started over an empty document: the card gives way
+      });
+    m_coach = new CoachCard(services().viewport());
+    m_coach->hide();
+    connect(m_coach, &CoachCard::run, this, [this](const QString& id) { run(id); updateCoach(); });
+    connect(m_coach, &CoachCard::dismissed, this, [this] { m_coachDismissed = services().document()->generation; });
+    connect(m_coach, &CoachCard::neverAgain, this, [] { QSettings().setValue("help/coach", false); });
+    m_coachPoll.setInterval(500);  // while an empty document is open: a tool left without a change brings the card back
+    connect(&m_coachPoll, &QTimer::timeout, this, &HelpArea::updateCoach);
+    updateCoach();
   }
 
+  void documentChanged(bool) override { updateCoach(); }
+  void workspaceChanged(const QString&) override { updateCoach(); }
+  void positionOverlays(const QRect&) override { placeCoach(); }
+
  private:
+  // The coach card: an editable document with no body and no sketch, no tool running, not hidden for this document (its
+  // ×) nor for good (help/coach).
+  bool coachWanted() const {
+    const AppDocument* d = services().document();
+    if (!d || !d->hasDocument || d->browse || d->loading || !d->scene.sketches.empty() || d->generation == m_coachDismissed) return false;
+    if (std::any_of(d->scene.nodes.begin(), d->scene.nodes.end(), [](const auto& n) { return n.second.kind == opad::Node::Kind::Body; })) return false;
+    return services().activeCommand().isEmpty() && services().workspace() != "sketch" && QSettings().value("help/coach", true).toBool();
+  }
+
+  void updateCoach() {
+    if (!m_coach) return;
+    const AppDocument* d = services().document();
+    const bool open = d && d->hasDocument && !d->browse && d->scene.sketches.empty();
+    if (open != m_coachPoll.isActive()) open ? m_coachPoll.start() : m_coachPoll.stop();
+    const bool show = coachWanted();
+    if (show == m_coach->isVisible()) return;
+    m_coach->setVisible(show);
+    if (show) placeCoach();
+  }
+
+  void placeCoach() {  // bottom centre of the viewport, above the toasts
+    if (!m_coach || !m_coach->isVisible()) return;
+    const QWidget* view = m_coach->parentWidget();
+    m_coach->adjustSize();
+    m_coach->move(std::max(8, (view->width() - m_coach->width()) / 2), std::max(8, view->height() - m_coach->height() - 72));
+    m_coach->raise();
+  }
+
   // What Report a problem tells about OPAD and this computer: versions, screens, settings that change behaviour, the
   // document's kind and size (never its path or name), the tool running.
   QStringList facts() const {
@@ -197,6 +245,10 @@ class HelpArea : public AreaController {
     report->setAttribute(Qt::WA_DeleteOnClose);
     report->show();
   }
+
+  CoachCard* m_coach = nullptr;
+  QTimer m_coachPoll;
+  unsigned long long m_coachDismissed = 0;  // the document generation whose card was closed
 };
 
 OPAD_AREA(HelpArea)

@@ -33,4 +33,7 @@ CASES = [
     # UI-108: the Help menu: F1, the tool guide, the shortcuts cheat sheet, Getting started, Report a problem.
     ("help-menu", "box", {"OPAD_BENCH_HELPMENU": "{prefix}"}),
     ("help-menu-ar", "box", {"OPAD_BENCH_HELPMENU": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-108: the coach card of an empty document (box.opad beside it: a document with a body has none).
+    ("coach", "empty", {"OPAD_BENCH_COACH": "{prefix}"}),
+    ("coach-ar", "empty", {"OPAD_BENCH_COACH": "{prefix}", "OPAD_LANG": "ar"}),
 ]

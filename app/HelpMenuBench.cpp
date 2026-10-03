@@ -8,6 +8,7 @@
 #include "I18n.hpp"
 #include "opad/util.hpp"
 #include <QApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QMenu>
@@ -119,6 +120,90 @@ OPAD_BENCH(OPAD_BENCH_HELPMENU, helpmenu) {
   });
   add(0, [=] {
     trace::log(QString("bench: help menu: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
+    QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
+  });
+  auto next = std::make_shared<std::function<void(size_t)>>();
+  *next = [&w, steps, next, check](size_t i) {
+    if (i >= steps->size()) return;
+    QTimer::singleShot((*steps)[i].delay, &w, [steps, next, check, i] {
+      try { (*steps)[i].fn(); } catch (const std::exception& e) { check(false, QString::fromUtf8(e.what())); }
+      (*next)(i + 1);
+    });
+  };
+  (*next)(0);
+  return true;
+}
+
+// OPAD_BENCH_COACH=<prefix> (an empty document beside box.opad): the coach card of an empty document (UI-108). It shows
+// at the bottom centre of the view in Review and Design with its clip playing; New sketch switches to Design and asks for
+// a plane, Box opens the box's panel, and the card gives way to either and comes back when they are left; its × hides it
+// for this document only; a document with a body has none; Don't show again is for good. Saved as <prefix>.card.png.
+OPAD_BENCH(OPAD_BENCH_COACH, coach) {
+  static bool started = false;  // opening box.opad below finishes a load, which asks the benches again
+  if (std::exchange(started, true)) return true;
+  const QString prefix = value;
+  QSettings().setValue("ui/tipAnimate", true);
+  auto failed = std::make_shared<QStringList>();
+  auto check = [failed](bool ok, const QString& what) {
+    trace::log(QString("bench: coach: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    if (!ok) *failed << what;
+  };
+  struct Step { int delay; std::function<void()> fn; };
+  auto steps = std::make_shared<std::vector<Step>>();
+  auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
+  auto card = [&w] { return w.m_viewport->findChild<CoachCard*>(); };
+  const QString box = QFileInfo(w.m_doc->path()).dir().filePath("box.opad");
+  add(800, [=, &w] {
+    CoachCard* c = card();
+    check(c && c->isVisible() && w.workspaceId() == "review", "an empty document shows the coach card (in " + w.workspaceId() + ")");
+    if (!c) return;
+    const QRect view = w.m_viewport->rect(), at = c->geometry();
+    check(view.contains(at) && std::abs(at.center().x() - view.center().x()) <= 2 && at.bottom() > view.height() * 2 / 3, "at the bottom centre of the view");
+    check(c->clip()->clip() == "design.extrude" && c->clip()->playing(), "its clip plays");
+    if (i18n::current() != "en") check(c->layoutDirection() == Qt::RightToLeft && c->button("design.sketch")->text() != "New sketch", "in the UI language and direction");
+    w.setWorkspace("design");
+    check(c->isVisible(), "in Design too");
+  });
+  add(300, [=, &w] {
+    CoachCard* c = card();
+    c->grab().save(prefix + ".card.png");
+    w.setWorkspace("review");
+    c->button("design.sketch")->click();
+    check(w.workspaceId() == "design" && w.m_design->pickingPlane() && !c->isVisible(), "New sketch: Design, a plane to pick, the card out of the way");
+    w.m_design->escape();
+  });
+  add(700, [=, &w] {
+    CoachCard* c = card();
+    check(c->isVisible(), "back once the plane pick is left");
+    c->button("design.box")->click();
+    check(w.m_design->featureActive() && !c->isVisible(), "Box: its panel, the card out of the way");
+    w.m_design->escape();
+  });
+  add(700, [=, &w] {
+    CoachCard* c = card();
+    check(c->isVisible(), "back once the box's panel is left");
+    c->closeButton()->click();
+  });
+  add(700, [=, &w] {
+    check(!card()->isVisible(), "the x hides it for this document");
+    w.action("file.new")->trigger();
+  });
+  add(400, [=, &w] {
+    check(card()->isVisible(), "a new document has it again");
+    w.openPath(box);
+  });
+  add(2500, [=, &w] {
+    check(!w.m_doc->scene.all_bodies().empty() && !card()->isVisible(), "a document with a body has none");
+    w.action("file.new")->trigger();
+  });
+  add(400, [=, &w] {
+    check(card()->isVisible(), "a new one again");
+    card()->neverButton()->click();
+    w.action("file.new")->trigger();
+  });
+  add(700, [=, &w] {
+    check(!card()->isVisible() && !QSettings().value("help/coach", true).toBool(), "Don't show again: none in a new document either");
+    trace::log(QString("bench: coach: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });
   auto next = std::make_shared<std::function<void(size_t)>>();

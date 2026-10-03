@@ -2,6 +2,7 @@
 // The Help menu's own windows (UI-108): the shortcuts cheat sheet (Ctrl+/), Getting started and Report a problem. The
 // help area (HelpArea.cpp) opens them; what they show comes from the commands, their help records and the clips.
 #include <QDialog>
+#include <QFrame>
 #include <QList>
 #include <QPointer>
 #include <QString>
@@ -17,6 +18,7 @@ class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
 class QPushButton;
+class QToolButton;
 
 namespace help {
 struct KeyRow {
@@ -96,6 +98,29 @@ class GettingStarted : public QWidget {
   QPushButton *m_try, *m_next;
   QPointer<QAction> m_action;
   QMetaObject::Connection m_changed;
+};
+
+// The coach card of an empty document (UI-108): how a design starts (sketch on a plane, a closed profile, extrude) with
+// the extrude clip and buttons for the first step, a native child over the bottom of the viewport. Its × hides it for
+// this document, Don't show again for good (the help area keeps setting help/coach).
+class CoachCard : public QFrame {
+  Q_OBJECT
+ public:
+  explicit CoachCard(QWidget* viewport);
+  ClipView* clip() const { return m_clip; }
+  QPushButton* button(const QString& command) const;  // the button that runs a command: design.sketch, design.box, file.import, help.start
+  QToolButton* closeButton() const { return m_close; }
+  QPushButton* neverButton() const { return m_never; }
+ signals:
+  void run(const QString& command);
+  void dismissed();   // ×: not for this document
+  void neverAgain();  // Don't show again
+
+ private:
+  void restyle();
+  ClipView* m_clip;
+  QToolButton* m_close;
+  QPushButton* m_never;
 };
 
 // Help > Report a problem: what happened, in the user's words, and the facts OPAD knows (version, system, the document's

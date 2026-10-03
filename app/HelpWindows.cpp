@@ -22,6 +22,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QToolButton>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVBoxLayout>
@@ -342,6 +343,86 @@ void GettingStarted::refresh() {
   };
   if (m_action) m_changed = connect(m_action, &QAction::changed, this, availability);
   availability();
+}
+
+// ---------------------------------------------------------------- CoachCard
+CoachCard::CoachCard(QWidget* viewport) : QFrame(viewport) {
+  setObjectName("coachCard");
+  setAttribute(Qt::WA_NativeWindow);  // over the native 3D window
+  setAttribute(Qt::WA_StyledBackground);
+  setFocusPolicy(Qt::NoFocus);
+  auto* row = new QHBoxLayout(this);
+  row->setContentsMargins(10, 10, 8, 10);
+  row->setSpacing(14);
+  m_clip = new ClipView(clips::has("design.extrude") ? "design.extrude" : QString(), this);
+  m_clip->setFixedSize(256, 144);
+  row->addWidget(m_clip, 0, Qt::AlignTop);
+  auto* v = new QVBoxLayout();
+  v->setSpacing(6);
+  // Title, then the links and the close button: Getting started, Don't show again, x.
+  auto* head = new QHBoxLayout();
+  head->setSpacing(4);
+  auto* title = new QLabel(tr("Start your design"), this);
+  title->setObjectName("panelTitle");
+  head->addWidget(title, 1);
+  auto button = [this](const QString& command, const QString& label, const QString& name) {
+    auto* b = new QPushButton(label, this);
+    b->setProperty("command", command);
+    b->setObjectName(name);
+    b->setFocusPolicy(Qt::NoFocus);
+    b->setCursor(Qt::PointingHandCursor);
+    if (!command.isEmpty()) connect(b, &QPushButton::clicked, this, [this, command] { emit run(command); });
+    return b;
+  };
+  head->addWidget(button("help.start", tr("Getting started"), "coachLink"));
+  m_never = button(QString(), tr("Don't show again"), "coachLink");
+  head->addWidget(m_never);
+  m_close = new QToolButton(this);
+  m_close->setObjectName("toastClose");
+  m_close->setToolTip(tr("Hide for this document"));
+  m_close->setFixedSize(20, 20);
+  m_close->setIconSize(QSize(12, 12));
+  m_close->setFocusPolicy(Qt::NoFocus);
+  head->addWidget(m_close);
+  v->addLayout(head);
+  auto* text = new QLabel(tr("Sketch on a plane, draw a closed profile, then extrude it into a solid. Or start from a box, or bring in a file."), this);
+  text->setObjectName("secondary");
+  text->setWordWrap(true);
+  v->addWidget(text);
+  auto* steps = new QLabel(tr("1  New sketch    2  Line L, Rectangle R, Circle C    3  Extrude E"), this);
+  steps->setObjectName("tertiary");
+  v->addWidget(steps);
+  v->addStretch(1);
+  auto* buttons = new QHBoxLayout();
+  buttons->setSpacing(6);
+  buttons->addWidget(button("design.sketch", tr("New sketch"), "primary"));
+  buttons->addWidget(button("design.box", tr("Box"), QString()));
+  buttons->addWidget(button("file.import", tr("Import…"), QString()));
+  buttons->addStretch(1);
+  v->addLayout(buttons);
+  row->addLayout(v, 1);
+  setFixedWidth(720);
+  connect(m_close, &QToolButton::clicked, this, [this] { hide(); emit dismissed(); });
+  connect(m_never, &QPushButton::clicked, this, [this] { hide(); emit neverAgain(); });
+  restyle();
+  connect(theme::notifier(), &theme::Notifier::changed, this, &CoachCard::restyle);
+  adjustSize();
+}
+
+QPushButton* CoachCard::button(const QString& command) const {
+  for (auto* b : findChildren<QPushButton*>())
+    if (b->property("command").toString() == command) return b;
+  return nullptr;
+}
+
+void CoachCard::restyle() {
+  const Tokens& t = theme::current();
+  setStyleSheet(QString("QFrame#coachCard { background: %1; border: 1px solid %2; border-radius: 6px; }\n"
+                        "QFrame#coachCard QLabel { background: transparent; }\n"
+                        "QPushButton#coachLink { background: transparent; border: none; padding: 2px 4px; color: %3; }\n"
+                        "QPushButton#coachLink:hover { color: %4; }\n")
+                    .arg(theme::css(t.bg2), theme::css(t.line), theme::css(t.dark ? t.sel.lighter(130) : t.sel), theme::css(t.fg)));
+  m_close->setIcon(icons::icon("close", t.fg2));
 }
 
 // ---------------------------------------------------------------- ProblemReport
