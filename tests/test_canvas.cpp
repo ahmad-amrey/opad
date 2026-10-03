@@ -82,6 +82,16 @@ TEST(canvas_inserted_on_a_plane_at_a_width) {
   CHECK(near(canvas_world(p).apply({0, 0, 0}), s.world(id).apply({0, 0, 0})));
   const json op = d.ops.back().data;
   CHECK(op.contains("canvas") && op["nodes"][0].contains("transform") && op["nodes"][0]["raster"]["corners"][1][0].get<double>() > 101);
+  // The same insert planned without the document (the app reads the picture on a worker, a big model is never copied):
+  // the same body, the same place, one op.
+  Document other = Document::create();
+  design::Plan plan = plan_canvas_import(pic, o);
+  CHECK(plan.ops.size() == 1u && plan.bodies.size() == 1u && plan.report["canvas"].is_string());
+  design::commit(other, std::move(plan));
+  const Scene t = resolve(other);
+  const std::string planned = only_canvas(t);
+  CHECK(t.node(planned)->body_key == n.body_key && t.node(planned)->raster["href"] == n.raster["href"] && t.world(planned).m == s.world(id).m);
+  CHECK(other.ops.back().data["canvas"] == op["canvas"]);
 }
 
 TEST(canvas_moved_sized_turned_calibrated_and_aligned) {

@@ -13,6 +13,7 @@
 
 #include "design/feature.hpp"
 #include "scene.hpp"
+#include "step_io.hpp"
 
 namespace opad {
 
@@ -48,6 +49,10 @@ Mat4 canvas_calibrate(const Mat4& world, const Vec3& a, const Vec3& b, double di
 Mat4 canvas_align(const Mat4& world, const Vec3& a, const Vec3& a_to, const Vec3& b, const Vec3& b_to, double* residual = nullptr);
 Mat4 affine_inverse(const Mat4& m);  // throws for a singular matrix
 
+// A picture imported as a canvas (as import_file does, ImportOptions::canvas) without reading the document: its import op and
+// body as a plan to commit, so inserting a canvas into a big model copies nothing (viewer mode and linking go through
+// import_file / link_file).
+design::Plan plan_canvas_import(const std::filesystem::path& file, const ImportOptions& opt);
 // Replace: `file` (a picture) shown by the canvas in its place (its centre, turn and width; the height follows the picture):
 // an edit of its import giving the node (same id, so every op on it still applies) the new picture, then a transform op.
 // Both plans stage their new bodies in `doc`: a copy the caller owns, or the document the plan is committed to.

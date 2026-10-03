@@ -132,6 +132,26 @@ Vec3 unit(const Vec3& v) {
   return l > 1e-15 ? Vec3{v[0] / l, v[1] / l, v[2] / l} : v;
 }
 
+// The import op of a picture's canvas node (w x h mm): placed as the options say (a width scales it uniformly, the body
+// stays the picture's own rectangle; centred on request), with its flags and the plane its place is given in (the
+// placement's, unless the caller chose the plane).
+json canvas_import(json node, const std::string& name, double w, double h, const ImportOptions& opt) {
+  const json given = opt.canvas.is_object() ? opt.canvas : json::object();
+  CanvasFlags flags = CanvasFlags::of(given);
+  if (!flags.plane.is_object()) flags.plane = Frame{opt.placement.apply({0, 0, 0}), unit(opt.placement.apply_dir({1, 0, 0})), unit(opt.placement.apply_dir({0, 1, 0}))}.to_json();
+  Mat4 placement = opt.placement;
+  if (const double width = given.value("width", 0.0); width > 0) {
+    Mat4 scale;
+    scale.at(0, 0) = scale.at(1, 1) = scale.at(2, 2) = width / w;
+    placement = placement * scale;
+  }
+  if (opt.center_drawing || given.value("center", false)) placement = placement * Mat4::translation(-w / 2, -h / 2, 0);
+  if (!placement.is_identity()) node["transform"] = placement.to_json();
+  json op = {{"op", "import"}, {"source", name}, {"units", "mm"}, {"nodes", json::array({node})}, {"canvas", flags.to_json()}};
+  if (!opt.parent.empty()) op["parent"] = opt.parent;
+  return op;
+}
+
 }  // namespace
 
 bool picture_size(const std::string& bytes, long& w, long& h, double& dpi, std::string& mime) {
@@ -169,25 +189,34 @@ ImportResult import_image(Document& doc, const std::filesystem::path& file, cons
   Document staged = doc;
   json body = picture_node(base64(bytes), p, std::string(stem.begin(), stem.end()), w, h);
   body["key"] = store_body(staged, rectangle(w, h), {{"name", body["name"]}, {"units", "mm"}, {"source", name}, {"representation", "image"}}, opt, false, &res);
-  // The canvas: its flags, and the plane its place is given in (the placement's, unless the caller chose the plane).
-  const json given = opt.canvas.is_object() ? opt.canvas : json::object();
-  CanvasFlags flags = CanvasFlags::of(given);
-  if (!flags.plane.is_object()) flags.plane = Frame{opt.placement.apply({0, 0, 0}), unit(opt.placement.apply_dir({1, 0, 0})), unit(opt.placement.apply_dir({0, 1, 0}))}.to_json();
-  Mat4 placement = opt.placement;
-  if (const double width = given.value("width", 0.0); width > 0) {  // a uniform scale: the body stays the picture's own rectangle
-    Mat4 scale;
-    scale.at(0, 0) = scale.at(1, 1) = scale.at(2, 2) = width / w;
-    placement = placement * scale;
-  }
-  if (opt.center_drawing || given.value("center", false)) placement = placement * Mat4::translation(-w / 2, -h / 2, 0);
-  if (!placement.is_identity()) body["transform"] = placement.to_json();
   ++res.bodies;
-  json op = {{"op", "import"}, {"source", name}, {"units", "mm"}, {"nodes", json::array({body})}, {"canvas", flags.to_json()}};
-  if (!opt.parent.empty()) op["parent"] = opt.parent;
-  res.op_id = staged.append(op, opt.author).id;
+  res.op_id = staged.append(canvas_import(body, name, w, h, opt), opt.author).id;
   doc = std::move(staged);
   res.info = {{"px", {p.w, p.h}}, {"dpi", dpi}, {"size_mm", {w, h}}, {"canvas", body["id"]}};
   return res;
 }
 
 }  // namespace opad::detail
+
+namespace opad {
+design::Plan plan_canvas_import(const std::filesystem::path& file, const ImportOptions& opt) {
+  const std::string bytes = read_text_file(file);
+  const auto u8 = file.filename().u8string(), stem = file.stem().u8string();
+  const std::string name(u8.begin(), u8.end());
+  long pw = 0, ph = 0;
+  double dpi = 0;
+  std::string mime;
+  if (!detail::picture_size(bytes, pw, ph, dpi, mime)) throw Error("not a picture OPAD reads, or a damaged one: " + name);
+  if (dpi < 1) dpi = 96;
+  const double w = double(pw) * 25.4 / dpi, h = double(ph) * 25.4 / dpi;
+  detail::CanvasBody made = detail::canvas_body(bytes, std::string(stem.begin(), stem.end()), w, h);
+  made.body.meta["source"] = name;
+  json op = detail::canvas_import(made.node, name, w, h, opt);
+  op["id"] = new_uuid();
+  design::Plan plan;
+  plan.report = {{"op", op["id"]}, {"canvas", made.node["id"]}, {"px", {pw, ph}}, {"size_mm", {w, h}}};
+  plan.ops.push_back(std::move(op));
+  plan.bodies.push_back(std::move(made.body));
+  return plan;
+}
+}  // namespace opad
