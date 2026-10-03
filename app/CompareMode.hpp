@@ -15,6 +15,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,11 @@ class CompareMode : public QObject {
   // Opens it on the open document: A the last commit when git tracks the file, else the file as saved; B this session.
   void open();
   void compare(const CompareVersion& a, const CompareVersion& b);  // opens it too
+  // Two versions of the document at `file`, which is opened first when it is not the open one (as File > Open does:
+  // unsaved changes are asked about), e.g. the Recovery offer's Compare…: the file and a snapshot of it.
+  void compareIn(const QString& file, const CompareVersion& a, const CompareVersion& b);
+  static CompareVersion recoveryVersion(const QString& snapshot, const QString& time);
+  static CompareVersion savedVersion(const QString& file);
   void close();
   void step(int delta);  // the next (1) or previous (-1) change, round the list
   // Side by side: A in a view of its own left of B's, both whole, the cameras together (else B over A's ghosts). The
@@ -95,4 +101,9 @@ class CompareMode : public QObject {
   std::vector<Viewport::CompareArrow> m_arrows;
   QTimer m_rerun, m_restyle;
   QString m_listed;  // the file whose versions were listed
+  struct Pending {
+    QString file;
+    CompareVersion a, b;
+  };
+  std::optional<Pending> m_pending;  // compareIn: compared once `file` has opened
 };

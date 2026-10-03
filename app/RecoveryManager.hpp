@@ -12,6 +12,7 @@
 class AppDocument;
 class DesignController;
 class JobRunner;
+class QDialog;
 class QWidget;
 
 // Crash snapshots are separate from user files. Each running instance owns a
@@ -31,11 +32,17 @@ class RecoveryManager : public QObject {
   static QString recoveryRoot();  // where the session folders are (from the settings)
   static std::vector<Snapshot> snapshotsOf(const QString& root, const std::string& uuid);
   static std::string snapshotText(const QString& file);
+  // The offer of abandoned snapshots, made but not shown (offerRecovery runs it; benches press its buttons), and what its
+  // result does: 1 recover, 2 discard, 3 compare (compareRequested), else later.
+  struct Entry {QString file,title,time,source;};
+  QDialog* offerDialog(const std::vector<Entry>& entries);
+  void answerOffer(int result,const Entry& entry);
  signals:
   void status(const QString& text);
+  // Compare… in the offer: the snapshot (B) against the file it was taken from (A), opened first when it is not open.
+  void compareRequested(const QString& source,const QString& snapshot,const QString& time);
  private:
   struct Session;
-  struct Entry {QString file,title,time,source;};
   void scan(std::function<void(std::vector<Entry>,QString)> done);
   void restore(const Entry&,std::function<void(bool,QString)> done);
   void configureTimer();

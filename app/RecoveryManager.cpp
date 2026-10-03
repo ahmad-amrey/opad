@@ -284,19 +284,37 @@ void RecoveryManager::offerRecovery() {
   scan([this](std::vector<Entry> entries,QString error){
     if(!error.isEmpty()){QMessageBox::warning(m_window,tr("Recovery"),error);return;}
     if(entries.empty()){emit status(tr("No recoverable documents found."));return;}
-    QDialog dialog(m_window);dialog.setWindowTitle(tr("Recover documents"));dialog.resize(540,340);auto* layout=new QVBoxLayout(&dialog);
-    auto* note=new QLabel(tr("These snapshots were left by a previous session. Recover opens an unsaved copy. Later keeps them for another time."));note->setWordWrap(true);layout->addWidget(note);
-    auto* list=new QListWidget;for(const auto& entry:entries)list->addItem(entry.title+" — "+entry.time+"\n"+entry.source);list->setCurrentRow(0);layout->addWidget(list);
-    auto* buttons=new QDialogButtonBox;auto* recover=buttons->addButton(tr("Recover"),QDialogButtonBox::AcceptRole);auto* discard=buttons->addButton(tr("Discard snapshot"),QDialogButtonBox::DestructiveRole);auto* later=buttons->addButton(tr("Later"),QDialogButtonBox::RejectRole);layout->addWidget(buttons);
-    connect(recover,&QPushButton::clicked,&dialog,&QDialog::accept);connect(later,&QPushButton::clicked,&dialog,&QDialog::reject);
-    connect(discard,&QPushButton::clicked,&dialog,[&]{dialog.done(2);});
-    const int result=dialog.exec(),index=list->currentRow();if(index<0)return;
-    if(result==2){const auto file=entries.at(size_t(index)).file;m_jobs->async(tr("Discarding recovery snapshot"),[file](Progress){if(!QFile::remove(file))throw opad::Error("Cannot remove recovery snapshot");});}
-    else if(result==QDialog::Accepted){
-      if(m_doc->isDirty()){QMessageBox::information(m_window,tr("Recovery"),tr("Save or close the current document before recovery."));return;}
-      restore(entries.at(size_t(index)),[this](bool ok,const QString& e){if(!ok)QMessageBox::warning(m_window,tr("Recovery"),e);else emit status(tr("Document recovered. Use Save As to keep it."));});
-    }
+    std::unique_ptr<QDialog> dialog(offerDialog(entries));
+    const int result=dialog->exec(),index=dialog->findChild<QListWidget*>("recoveryList")->currentRow();
+    if(index>=0)answerOffer(result,entries.at(size_t(index)));
   });
+}
+// Recover / Compare… (with the file it came from, when that is on disk: UI-58) / Discard snapshot / Later. Not shown here:
+// offerRecovery runs it, a bench presses its buttons hidden.
+QDialog* RecoveryManager::offerDialog(const std::vector<Entry>& entries) {
+  auto* dialog=new QDialog(m_window);dialog->setWindowTitle(tr("Recover documents"));dialog->resize(540,340);auto* layout=new QVBoxLayout(dialog);
+  auto* note=new QLabel(tr("These snapshots were left by a previous session. Recover opens an unsaved copy. Later keeps them for another time."));note->setWordWrap(true);layout->addWidget(note);
+  auto* list=new QListWidget;list->setObjectName("recoveryList");for(const auto& entry:entries)list->addItem(entry.title+" — "+entry.time+"\n"+entry.source);layout->addWidget(list);
+  auto* buttons=new QDialogButtonBox;auto* recover=buttons->addButton(tr("Recover"),QDialogButtonBox::AcceptRole);auto* compare=buttons->addButton(tr("Compare…"),QDialogButtonBox::ActionRole);
+  auto* discard=buttons->addButton(tr("Discard snapshot"),QDialogButtonBox::DestructiveRole);auto* later=buttons->addButton(tr("Later"),QDialogButtonBox::RejectRole);layout->addWidget(buttons);
+  compare->setObjectName("recoveryCompare");
+  connect(recover,&QPushButton::clicked,dialog,&QDialog::accept);connect(later,&QPushButton::clicked,dialog,&QDialog::reject);
+  connect(discard,&QPushButton::clicked,dialog,[dialog]{dialog->done(2);});connect(compare,&QPushButton::clicked,dialog,[dialog]{dialog->done(3);});
+  connect(list,&QListWidget::currentRowChanged,compare,[compare,entries](int row){
+    const bool on=row>=0 && size_t(row)<entries.size() && !entries[size_t(row)].source.isEmpty() && QFileInfo::exists(entries[size_t(row)].source);
+    compare->setEnabled(on);
+    compare->setToolTip(on?tr("Show what the snapshot has over %1").arg(QFileInfo(entries[size_t(row)].source).fileName()):tr("Its file is not on disk: there is nothing to compare it with."));
+  });
+  list->setCurrentRow(0);
+  return dialog;
+}
+void RecoveryManager::answerOffer(int result,const Entry& entry) {
+  if(result==2){const auto file=entry.file;m_jobs->async(tr("Discarding recovery snapshot"),[file](Progress){if(!QFile::remove(file))throw opad::Error("Cannot remove recovery snapshot");});}
+  else if(result==3)emit compareRequested(entry.source,entry.file,entry.time);
+  else if(result==QDialog::Accepted){
+    if(m_doc->isDirty()){QMessageBox::information(m_window,tr("Recovery"),tr("Save or close the current document before recovery."));return;}
+    restore(entry,[this](bool ok,const QString& e){if(!ok)QMessageBox::warning(m_window,tr("Recovery"),e);else emit status(tr("Document recovered. Use Save As to keep it."));});
+  }
 }
 void RecoveryManager::finishSession(std::function<void()> done) {
   m_closing=true;m_timer.stop();const auto session=m_session;const auto recovered=m_recoveredFiles;

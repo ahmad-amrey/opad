@@ -151,7 +151,11 @@ CompareMode::CompareMode(AreaServices& services, GitWatch* git) : QObject(servic
   m_restyle.setInterval(30);
   connect(&m_restyle, &QTimer::timeout, this, &CompareMode::restyle);
   connect(services.document(), &AppDocument::aboutToReplace, this, &CompareMode::close);
-  connect(services.document(), &AppDocument::loadFinished, this, [](bool ok) { if (!ok) pendingStartup.clear(); });  // nothing to compare with
+  connect(services.document(), &AppDocument::loadFinished, this, [this](bool ok) {  // nothing to compare with
+    if (ok) return;
+    pendingStartup.clear();
+    m_pending.reset();
+  });
   connect(services.document(), &AppDocument::saved, this, [this] {  // the saved file is another version now
     if (!m_active) return;
     showVersions();
@@ -216,6 +220,20 @@ CompareVersion CompareMode::parseVersion(const QString& spec) {
   return {Kind::File, file, QFileInfo(file).fileName(), QDir::toNativeSeparators(file)};
 }
 
+CompareVersion CompareMode::savedVersion(const QString& file) { return {Kind::Saved, file, tr("Saved file"), QDir::toNativeSeparators(file)}; }
+
+CompareVersion CompareMode::recoveryVersion(const QString& snapshot, const QString& time) {
+  return {Kind::Recovery, snapshot, tr("Recovery snapshot · %1").arg(i18n::localTime(time.toStdString())), QDir::toNativeSeparators(snapshot)};
+}
+
+void CompareMode::compareIn(const QString& file, const CompareVersion& a, const CompareVersion& b) {
+  AppDocument* doc = m_services.document();
+  if (doc->hasDocument && !doc->loading && !doc->browse && !doc->doc.path.empty() && QFileInfo(doc->path()) == QFileInfo(file)) return compare(a, b);
+  m_pending = Pending{file, a, b};
+  m_services.open(file);
+  if (!doc->loading) m_pending.reset();  // the open document was kept (its unsaved changes): nothing to compare in
+}
+
 int CompareMode::indexOf(const CompareVersion& v) const {
   for (size_t i = 0; i < m_versions.size(); ++i)
     if (m_versions[i] == v) return int(i);
@@ -277,7 +295,7 @@ void CompareMode::open() {
   using D = git::Repo::Doc;
   const D state = m_git && QFileInfo(m_git->repo().file) == QFileInfo(file) ? m_git->repo().doc() : D::None;
   if (!file.isEmpty() && (state == D::Clean || state == D::Modified || state == D::Conflict)) a = parseVersion("git:HEAD");
-  else if (!file.isEmpty() && QFileInfo::exists(file)) a = {Kind::Saved, file, tr("Saved file"), QDir::toNativeSeparators(file)};
+  else if (!file.isEmpty() && QFileInfo::exists(file)) a = savedVersion(file);
   compare(a, {Kind::Session, QString(), tr("This session"), QString()});
 }
 
@@ -291,7 +309,7 @@ void CompareMode::compare(const CompareVersion& a, const CompareVersion& b) {
     m_versions.clear();
     m_listed = file;
     addVersion({Kind::Session, QString(), tr("This session"), QString()});
-    if (!file.isEmpty() && QFileInfo::exists(file)) addVersion({Kind::Saved, file, tr("Saved file"), QDir::toNativeSeparators(file)});
+    if (!file.isEmpty() && QFileInfo::exists(file)) addVersion(savedVersion(file));
     if (!file.isEmpty() && m_git && m_git->repo().state == git::Repo::State::Ready) addVersion(parseVersion("git:HEAD"));
   }
   addVersion(a);
@@ -335,7 +353,7 @@ void CompareMode::listVersions() {
     }
     if (p.cancelled()) return;
     for (const auto& s : RecoveryManager::snapshotsOf(root, uuid))
-      out->push_back({Kind::Recovery, s.file, CompareMode::tr("Recovery snapshot · %1").arg(i18n::localTime(s.time.toStdString())), QDir::toNativeSeparators(s.file)});
+      out->push_back(recoveryVersion(s.file, s.time));
   }, [this, self = QPointer<CompareMode>(this), out, file](bool ok, const QString&) {
     if (!self || !ok || !m_active || m_listed != file) return;
     for (const auto& v : *out) addVersion(v);
@@ -776,6 +794,10 @@ void CompareMode::documentChanged(bool replaced) {
     const CompareVersion a = parseVersion(std::exchange(pendingStartup, QString()));
     if (!doc->browse) return compare(a, {Kind::Session, QString(), tr("This session"), QString()});
     m_services.showMessage(tr("Compare works on OPAD documents: save the file as one first."));
+  }
+  if (m_pending && doc->hasDocument && !doc->loading) {  // compareIn: its file has opened
+    const Pending p = *std::exchange(m_pending, std::nullopt);
+    if (!doc->browse && !doc->doc.path.empty() && QFileInfo(doc->path()) == QFileInfo(p.file)) return compare(p.a, p.b);
   }
   if (!m_active) return;
   if (replaced || !doc->hasDocument) return close();

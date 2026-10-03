@@ -307,5 +307,8 @@
  "Side by side": "جنبًا إلى جنب",
  "A's view on the left, B's on the right, turning together": "منظر A على اليسار ومنظر B على اليمين، يدوران معًا",
  "A · %1": "A · %1",
- "B · %1": "B · %1"
+ "B · %1": "B · %1",
+ "Compare…": "مقارنة…",
+ "Show what the snapshot has over %1": "إظهار ما تزيد به اللقطة على %1",
+ "Its file is not on disk: there is nothing to compare it with.": "ملفها غير موجود على القرص: لا شيء تُقارن به."
 }

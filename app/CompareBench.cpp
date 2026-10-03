@@ -4,7 +4,8 @@
 // and of A's ghosts, the arrow, the change rows and the details table, ] and [, the emphasis at both ends, an eye, the
 // timeline's marks, side by side (the halves, which view shows what, the cameras together, navigation over A's view, back,
 // Esc, remembered), another A (the saved file, a recovery snapshot, another file), an edit while comparing, Esc; then `opad --compare
-// first.opad model.opad` in a hidden child of its own (the value <prefix>.cli runs that side).
+// first.opad model.opad` in a hidden child of its own (the value <prefix>.cli runs that side), which then presses Compare… in
+// the Recovery offer of a snapshot of model.opad said to come from first.opad: first.opad opens and is compared with it.
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -21,7 +22,10 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QDialog>
 #include <QLabel>
+#include <QListWidget>
+#include <QPushButton>
 #include <QMainWindow>
 #include <QProcess>
 #include <QSlider>
@@ -163,6 +167,35 @@ bool CompareMode::bench(const QString& prefix) {
           require(m_versions[size_t(m_b)].kind == Kind::Session, "B is the session");
           require(counts() == "1 0 1 0 3", "counts " + counts() + " (Sphere1 added, Box1 modified)");
           pass("opad --compare first.opad model.opad: " + counts());
+          // The Recovery offer of a snapshot of model.opad (the parent's) as if it came from first.opad: Compare… opens
+          // first.opad and compares the snapshot with it; a snapshot whose file is gone cannot be compared.
+          auto* recovery = m_services.window()->findChild<RecoveryManager*>();
+          const QString snapshot = qEnvironmentVariable("OPAD_BENCH_COMPARE_SNAPSHOT"), dir = QFileInfo(doc->path()).absolutePath();
+          require(recovery && QFileInfo::exists(snapshot), "a recovery snapshot from the parent: " + snapshot);
+          st->first = dir + "/first.opad";
+          const std::vector<RecoveryManager::Entry> entries = {{snapshot, "model", qEnvironmentVariable("OPAD_BENCH_COMPARE_SNAPSHOT_TIME"), st->first},
+                                                               {snapshot, "gone", QString(), dir + "/gone.opad"}};
+          std::unique_ptr<QDialog> offer(recovery->offerDialog(entries));
+          auto* list = offer->findChild<QListWidget*>("recoveryList");
+          auto* button = offer->findChild<QPushButton*>("recoveryCompare");
+          require(list && button && button->isEnabled(), "Compare… for a snapshot whose file is there");
+          list->setCurrentRow(1);
+          require(!button->isEnabled() && !button->toolTip().isEmpty(), "no Compare… for a snapshot whose file is gone");
+          list->setCurrentRow(0);
+          offer->grab().save(prefix + ".recovery.png");
+          button->click();
+          require(offer->result() == 3, "Compare… ends the offer with its own answer");
+          recovery->answerOffer(offer->result(), entries[0]);
+          return true;
+        },
+        [=, this] {  // first.opad opened, then compared with the snapshot
+          if (doc->loading || !idle() || QFileInfo(doc->path()) != QFileInfo(st->first)) return false;
+          const CompareVersion &a = m_versions[size_t(m_a)], &b = m_versions[size_t(m_b)];
+          require(a.kind == Kind::Saved && QFileInfo(a.ref) == QFileInfo(st->first) && b.kind == Kind::Recovery && b.ref == qEnvironmentVariable("OPAD_BENCH_COMPARE_SNAPSHOT"),
+                  "A the file, B the snapshot: " + a.label + " / " + b.label);
+          require(!relation().empty() && relation() != "unrelated" && (counts() == "1 0 1 0 3" || counts() == "1 1 1 1 1") && !vp->benchCompareState()["parts"].empty(),
+                  QStringLiteral("the snapshot's changes drawn: %1 (%2)").arg(counts(), QString::fromStdString(relation())));
+          pass("the Recovery offer's Compare… opens the file and compares the snapshot with it: " + counts());
           return true;
         },
     };
@@ -431,6 +464,10 @@ bool CompareMode::bench(const QString& prefix) {
           for (const QString& key : env.keys())
             if (key.startsWith("OPAD_BENCH_")) env.remove(key);
           env.insert("OPAD_BENCH_COMPARE", prefix + ".cli");
+          const auto snapshots = RecoveryManager::snapshotsOf(RecoveryManager::recoveryRoot(), doc->doc.header.uuid);
+          require(!snapshots.empty(), "a recovery snapshot for the child's Recovery offer");
+          env.insert("OPAD_BENCH_COMPARE_SNAPSHOT", snapshots.front().file);
+          env.insert("OPAD_BENCH_COMPARE_SNAPSHOT_TIME", snapshots.front().time);
           env.insert("OPAD_BENCH_SETTINGS", prefix + ".cli-settings");
           env.insert("OPAD_TRACE", st->childLog);
           st->process->setProcessEnvironment(env);

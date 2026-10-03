@@ -1,6 +1,7 @@
 // Version control as an area of the window (AreaController.hpp): the open file kept in step with the disk (DiskSync,
 // UI-56) and its repository (GitWatch, UI-61 / UI-136): the status chip beside the path, File > Clone repository…;
-// Compare (CompareMode, UI-58): File > Compare versions…, Inspect > Versions, the git chip's Compare with the last commit.
+// Compare (CompareMode, UI-58): File > Compare versions…, Inspect > Versions, the git chip's Compare with the last commit,
+// the Recovery offer's Compare….
 #include <QAction>
 #include <QMainWindow>
 #include <QMenu>
@@ -12,6 +13,7 @@
 #include "CompareMode.hpp"
 #include "DiskSync.hpp"
 #include "GitWatch.hpp"
+#include "RecoveryManager.hpp"
 #include "Ribbon.hpp"
 #include "Viewport.hpp"
 
@@ -75,6 +77,10 @@ class Vcs : public AreaController {
       m_git->setFile(doc->hasDocument && !doc->browse && !doc->doc.path.empty() ? doc->path() : QString());
     });
     m_compare = new CompareMode(services(), m_git);
+    if (auto* recovery = services().window()->findChild<RecoveryManager*>())  // the Recovery offer's Compare…: the file, then the snapshot
+      connect(recovery, &RecoveryManager::compareRequested, this, [this](const QString& source, const QString& snapshot, const QString& time) {
+        m_compare->compareIn(source, CompareMode::savedVersion(source), CompareMode::recoveryVersion(snapshot, time));
+      });
   }
   void selectionChanged(const SelectionContext& selection) override { m_compare->selectionChanged(selection); }
   void documentChanged(bool replaced) override { m_compare->documentChanged(replaced); }
