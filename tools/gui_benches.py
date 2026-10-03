@@ -59,6 +59,7 @@ def main():
             ("sketch-keys", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_KEYS": "{prefix}"}),
             ("sketch-shapes", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_SHAPES": "{prefix}"}),
             ("sketch-crosslock", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_CROSSLOCK": "{prefix}"}),
+            ("sketch-snaps", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_SNAPS": "{prefix}"}),
             ("leave", box, {"OPAD_BENCH_LEAVE": "1"}),
             ("two-d", box, {"OPAD_BENCH_TWOD": "{prefix}.png"}),
             ("instances", box, {"OPAD_BENCH_INSTANCES": "1"}),

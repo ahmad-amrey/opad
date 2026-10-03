@@ -50,11 +50,12 @@ class SketchPrs : public AIS_InteractiveObject {
   struct Seg { opad::Vec3 a, b; QColor c; };
   struct Pt { opad::Vec3 p; QColor c; };
   struct Txt { opad::Vec3 p; QString s; QColor c; bool left = false; };  // left: starts at p (labels beside the cursor)
-  std::vector<Seg> solid, dashed, thin;
+  std::vector<Seg> solid, dashed, thin, marks;  // marks: snap markers and constraint pictograms (SnapMarkers.hpp), 1.5 px
   std::vector<Pt> points, bigPoints;
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
   QColor fillColor, textBack;
+  float fillAlpha = 0.18f;
   // Line widths, marker sizes and text heights are device pixels: times the display scale they read the same at
   // 100 % and 150 % (at 1.0 they were tiny on a 4K screen).
   double scale = 1.0;
@@ -67,7 +68,7 @@ class SketchPrs : public AIS_InteractiveObject {
       for (const auto& p : fill) tri->AddVertex(gp_Pnt(p[0], p[1], p[2]));
       Handle(Graphic3d_AspectFillArea3d) a = new Graphic3d_AspectFillArea3d();
       a->SetInteriorStyle(Aspect_IS_SOLID);
-      a->SetInteriorColor(Quantity_ColorRGBA(occ(fillColor), 0.18f));
+      a->SetInteriorColor(Quantity_ColorRGBA(occ(fillColor), fillAlpha));
       a->SetAlphaMode(Graphic3d_AlphaMode_Blend);
       a->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
       a->SetSuppressBackFaces(false);
@@ -89,6 +90,7 @@ class SketchPrs : public AIS_InteractiveObject {
     lines(thin, Aspect_TOL_SOLID, 1.0 * scale);
     lines(dashed, Aspect_TOL_DASH, 1.5 * scale);
     lines(solid, Aspect_TOL_SOLID, 2.0 * scale);
+    lines(marks, Aspect_TOL_SOLID, 1.5 * scale);
     auto markers = [&](const std::vector<Pt>& pts, double scale) {
       if (pts.empty()) return;
       Handle(Graphic3d_ArrayOfPoints) arr = new Graphic3d_ArrayOfPoints(static_cast<int>(pts.size()), Standard_True);
@@ -1274,10 +1276,24 @@ const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPre
 void SketchEditor::updateTransient() {
   if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
-  d.solid.clear();d.thin.clear();d.dashed.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();
+  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();d.fill.clear();
   const auto& t=m_viewport->tokens();d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto W=[&](double u,double v){return m_frame.to_world(u,v);};
   const double px=m_viewport->pixelSize();
+  // Snap markers and pictograms face the viewer (SnapMarkers.hpp): one pixel right (rx, ry) and up (ux, uy) on the screen,
+  // in sketch coordinates.
+  double rx=px,ry=0,ux=0,uy=px;
+  {
+    const QPointF c(m_viewport->width()/2.0,m_viewport->height()/2.0);
+    double u0,v0,u1,v1,u2,v2;
+    if(m_viewport->planePoint(c,m_frame,u0,v0) && m_viewport->planePoint(c+QPointF(100,0),m_frame,u1,v1) && m_viewport->planePoint(c+QPointF(0,-100),m_frame,u2,v2))
+      rx=(u1-u0)/100,ry=(v1-v0)/100,ux=(u2-u0)/100,uy=(v2-v0)/100;  // 100 px apart: planePoint takes whole device pixels
+  }
+  auto mark=[&](double x,double y,const std::vector<snapmarkers::Seg>& segs,double ox,double oy,const QColor& c) {  // (ox, oy): px off (x, y)
+    auto at=[&](double sx,double sy){return W(x+(sx+ox)*rx+(sy+oy)*ux,y+(sx+ox)*ry+(sy+oy)*uy);};
+    for(const auto& s:segs)d.marks.push_back({at(s.x0,s.y0),at(s.x1,s.y1),c});
+  };
+  m_marker.reset();
   if(m_hover.kind==Hit::Point) {
     if(const auto* p=m_geometry->point(m_sk,m_hover.id))d.bigPoints.push_back({W(p->x,p->y),t.hov});
     if(m_tool=="fillet") {  // the arc a click there makes, at the radius set (typed before anything is picked too)
@@ -1298,9 +1314,8 @@ void SketchEditor::updateTransient() {
     lines.push_back({W(m_boxU,m_boxV),W(m_dragU,m_boxV),color});
     lines.push_back({W(m_dragU,m_boxV),W(m_dragU,m_dragV),color});
   }
-  // A grid node the pointer or a dragged point snapped to: a small ring, apart from the inference's own marks.
-  auto gridRing=[&](double x,double y){const double r=6*px;for(int i=0;i<16;++i)d.solid.push_back({W(x+r*std::cos(i*M_PI/8),y+r*std::sin(i*M_PI/8)),W(x+r*std::cos((i+1)*M_PI/8),y+r*std::sin((i+1)*M_PI/8)),t.green});};
-  if(m_dragging && m_dragMoved && m_dragGrid)gridRing(m_dragGridU,m_dragGridV);
+  // A grid node a dragged point snapped to: the grid marker.
+  if(m_dragging && m_dragMoved && m_dragGrid)mark(m_dragGridU,m_dragGridV,snapmarkers::marker(snapmarkers::Marker::Grid),0,0,t.green);
   // Rubber band of the running tool (also from typed values alone: drawing by the keyboard, the pointer not in the view).
   if ((m_haveCursor || !m_typedValues.empty()) && m_tool != "select") {
     const QColor rb = t.hov;
@@ -1428,10 +1443,11 @@ void SketchEditor::updateTransient() {
       return;
     }
     const bool snapped = m_cursor.kind != Snap::Kind::None || m_cursor.horizontal || m_cursor.vertical;
-    d.bigPoints.push_back({W(cu, cv), snapped ? t.green : rb});
     // What the pointer is pulled to: that object is drawn in the inference colour and named beside the cursor, so
-    // the user sees which point, curve or alignment will be used (and constrained) before clicking.
+    // the user sees which point, curve or alignment will be used (and constrained) before clicking; an object snap by
+    // its marker's shape (UI-23).
     const QColor snapColor = t.green;
+    using M = snapmarkers::Marker;
     auto curve = [&](int id) {
       if (const auto* e = m_sk.entity(id)) {
         const auto pts = sampled(*e);
@@ -1446,12 +1462,16 @@ void SketchEditor::updateTransient() {
     QString label;
     using K = Snap::Kind;
     switch (m_cursor.kind) {
-      case K::Point: label = isCentre(m_cursor.target) ? tr("Centre") : tr("Point"); break;
-      case K::Midpoint: curve(m_cursor.target); label = tr("Midpoint"); break;
-      case K::Quadrant: curve(m_cursor.target); label = tr("Quadrant"); break;
-      case K::Intersection: curve(m_cursor.target); curve(m_cursor.other); label = tr("Intersection"); break;
-      case K::Curve: curve(m_cursor.target); label = m_cursor.entity ? tr("On curve") : tr("Nearest"); break;
+      case K::Point:
+        m_marker = isCentre(m_cursor.target) ? M::Centre : M::Endpoint;
+        label = isCentre(m_cursor.target) ? tr("Centre") : tr("Point");
+        break;
+      case K::Midpoint: curve(m_cursor.target); label = tr("Midpoint"); m_marker = M::Midpoint; break;
+      case K::Quadrant: curve(m_cursor.target); label = tr("Quadrant"); m_marker = M::Quadrant; break;
+      case K::Intersection: curve(m_cursor.target); curve(m_cursor.other); label = tr("Intersection"); m_marker = M::Intersection; break;
+      case K::Curve: curve(m_cursor.target); label = m_cursor.entity ? tr("On curve") : tr("Nearest"); m_marker = M::Nearest; break;
       case K::Extension:
+        m_marker = M::Extension;
         if (const auto* e = m_sk.entity(m_cursor.target); e && e->p.size() == 2) {
           const auto *a = m_geometry->point(m_sk, e->p[0]), *b = m_geometry->point(m_sk, e->p[1]);
           if (a && b) {
@@ -1464,6 +1484,7 @@ void SketchEditor::updateTransient() {
       case K::Aligned:
         if (const auto* reference = m_geometry->point(m_sk, m_cursor.target)) d.dashed.push_back({W(reference->x, reference->y), W(cu, cv), snapColor});
         label = tr("Tracking");
+        m_marker = M::Tracking;
         break;
       case K::Angle:
         if (const auto* from = m_geometry->point(m_sk, m_cursor.target))
@@ -1474,6 +1495,7 @@ void SketchEditor::updateTransient() {
           if (const auto* reference = m_geometry->point(m_sk, id)) d.dashed.push_back({W(reference->x, reference->y), W(cu, cv), snapColor});
         if (m_cursor.curve) curve(m_cursor.curve);
         label = m_cursor.curve ? tr("Intersection") : tr("Tracking");
+        m_marker = M::Intersection;
         break;
       case K::Locked: {  // the locked line from its anchor past the pointer, and what stops the pointer on it
         const auto& g = m_cursor.line;
@@ -1485,10 +1507,12 @@ void SketchEditor::updateTransient() {
         if (m_cursor.other || m_cursor.curve) {  // on a stop: which of them, when Shift taps go through more
           label = m_cursor.other ? tr("Locked ∩ tracking") : tr("Locked ∩ curve");
           if (sticky && m_cursor.stops > 1 && m_cursor.stop >= 0) label += QStringLiteral(" · %1/%2").arg(m_cursor.stop + 1).arg(m_cursor.stops);
+          m_marker = M::Intersection;
         } else label = !sticky ? tr("Locked") : m_cursor.stops ? tr("Locked · Shift goes to the next stop") : tr("Locked · Shift or Esc lets go");
+        mark(cu, cv, snapmarkers::marker(M::Locked, 9), -14, 12, snapColor);  // the padlock above left: the label is above right
         break;
       }
-      case K::Grid: label = tr("Grid"); break;
+      case K::Grid: label = tr("Grid"); m_marker = M::Grid; break;
       case K::Typed: {  // what the typed values hold the point to, dashed: the X or Y line, the ΔX/ΔY legs, the angle's ray
         double bu = 0, bv = 0;
         const bool base = inputBase(bu, bv);
@@ -1513,7 +1537,9 @@ void SketchEditor::updateTransient() {
       }
       case K::None: break;
     }
-    if (m_cursor.grid) gridRing(cu, cv);
+    if (m_marker) mark(cu, cv, snapmarkers::marker(*m_marker), 0, 0, snapColor);
+    else d.bigPoints.push_back({W(cu, cv), snapped ? t.green : rb});
+    if (m_cursor.grid && m_marker != M::Grid) mark(cu, cv, snapmarkers::marker(M::Grid, 7), -12, -12, snapColor);  // quantised to the grid too
     if ((m_cursor.horizontal || m_cursor.vertical) && m_cursor.kind == K::None) {
       if (!m_chain.empty())
         if (const auto* from = m_geometry->point(m_sk, m_chain.back())) d.dashed.push_back({W(from->x, from->y), W(cu, cv), snapColor});
@@ -1521,11 +1547,7 @@ void SketchEditor::updateTransient() {
     }
     // The acquired points that alignments are measured from: a cross each, while it is not the point under the cursor.
     for (const int id : m_tracked)
-      if (const auto* reference = m_geometry->point(m_sk, id); reference && m_cursor.point != id) {
-        const double r = 6 * px;
-        d.solid.push_back({W(reference->x - r, reference->y), W(reference->x + r, reference->y), snapColor});
-        d.solid.push_back({W(reference->x, reference->y - r), W(reference->x, reference->y + r), snapColor});
-      }
+      if (const auto* reference = m_geometry->point(m_sk, id); reference && m_cursor.point != id) mark(reference->x, reference->y, snapmarkers::marker(M::Tracking, 12), 0, 0, snapColor);
     if (!label.isEmpty()) d.texts.push_back({W(cu + 14 * px, cv + 14 * px), label, snapColor, true});  // above right: the pointer covers below right
   }
   m_transientPrs->SetToUpdate();if(m_visible)m_viewport->updateOverlay(m_transientPrs);

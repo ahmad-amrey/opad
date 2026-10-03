@@ -20,6 +20,7 @@
 #include "InputKeys.hpp"
 #include "SketchKeys.hpp"
 #include "SketchSnap.hpp"
+#include "SnapMarkers.hpp"
 #include "opad/design/sketch.hpp"
 #include <QElapsedTimer>
 
@@ -104,6 +105,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchKeys();
   void benchShapes();
   void benchCrossLock();
+  void benchSnaps();
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -210,6 +212,7 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<Readout> readouts() const;
   bool boxed(const QString& key) const;               // a box of the step takes that readout's value (and sits on it)
   QStringList transientTexts() const;                 // what the rubber band reads out (benches)
+  std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
   Hit hitTest(double u, double v) const;
   double tol() const;  // pick distance in sketch units
   int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint)
