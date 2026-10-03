@@ -1263,6 +1263,77 @@ std::string version_text(const std::string& spec, const std::filesystem::path& o
   return out;
 }
 
+// ---------------------------------------------------------------- recovery (UI-59)
+Document ops_prefix(const Document& d, size_t count) {
+  Document out;
+  out.header = d.header;
+  out.path = d.path;
+  out.ops.assign(d.ops.begin(), d.ops.begin() + static_cast<std::ptrdiff_t>(std::min(count, d.ops.size())));
+  return out;
+}
+
+const char* snapshot_onto_name(SnapshotPlan::Onto o) {
+  switch (o) {
+    case SnapshotPlan::Onto::same: return "same";
+    case SnapshotPlan::Onto::extends: return "extends";
+    case SnapshotPlan::Onto::rewritten: return "rewritten";
+    case SnapshotPlan::Onto::other: return "other";
+    default: return "missing";
+  }
+}
+
+SnapshotPlan plan_snapshot(const Document& snapshot, size_t saved, const Document* onto) {
+  SnapshotPlan p;
+  size_t n = saved;
+  bool continues = n <= snapshot.ops.size();
+  if (!continues) {  // not known: what both have from the start
+    n = 0;
+    if (onto && onto->header.uuid == snapshot.header.uuid)
+      while (n < std::min(snapshot.ops.size(), onto->ops.size()) && same_op(snapshot.ops[n], onto->ops[n])) ++n;
+  }
+  p.base = n;
+  auto base = std::make_shared<Manifest>(Manifest::of(snapshot));
+  base->ops.resize(n);
+  p.manifest = base;
+  if (!onto) return p;
+  switch (relation(*base, *onto)) {
+    case Relation::same: p.onto = SnapshotPlan::Onto::same; break;
+    case Relation::extends: p.onto = SnapshotPlan::Onto::extends; break;
+    case Relation::rewritten: p.onto = SnapshotPlan::Onto::rewritten; break;
+    default: p.onto = SnapshotPlan::Onto::other; break;
+  }
+  if (p.onto == SnapshotPlan::Onto::same || p.onto == SnapshotPlan::Onto::extends) p.merge = plan_merge(*base, snapshot, *onto);
+  return p;
+}
+
+json snapshot_diff(const Document& snapshot, const SnapshotPlan& plan, const Document* onto) {
+  const bool merges = plan.onto == SnapshotPlan::Onto::extends && plan.merge.error.empty();
+  json d;
+  if (!onto) {
+    Document empty;
+    empty.header = snapshot.header;
+    d = semantic_diff(empty, snapshot);
+  } else if (merges) {  // what the file gets: its own ops, then the snapshot's unsaved ones
+    Document merged = ops_prefix(*onto, onto->ops.size());
+    for (size_t i : plan.merge.mine) merged.ops.push_back(snapshot.ops[i]);
+    d = semantic_diff(*onto, merged);
+  } else {
+    d = semantic_diff(*onto, snapshot);
+  }
+  d["onto"] = snapshot_onto_name(plan.onto);
+  d["base"] = plan.base;
+  if (onto && (plan.onto == SnapshotPlan::Onto::same || plan.onto == SnapshotPlan::Onto::extends)) {
+    if (!plan.merge.error.empty()) d["merge_error"] = plan.merge.error;
+    d["incoming"] = plan.merge.incoming;
+    d["unsaved"] = plan.merge.mine.size();
+    json conflicts = json::array();
+    for (const auto& c : plan.merge.conflicts) conflicts.push_back(c.to_json());
+    d["conflicts"] = std::move(conflicts);
+    d["design"] = plan.merge.design;
+  }
+  return d;
+}
+
 Image render_diff(const Document& a, const Document& b, const RenderOptions& opt) {
   Scene sa = resolve(a), sb = resolve(b);
   auto sig_of = [](const Scene& s, const std::string& id) {

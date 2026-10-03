@@ -208,6 +208,81 @@ TEST(relations_between_histories) {
   CHECK_EQ(other["same_document"], false);
 }
 
+TEST(recovery_snapshot_against_its_file) {  // UI-59: the file it was taken from, as it is now
+  Tree t;
+  const std::string base = t.doc.serialize();  // the file: 3 ops
+  Document snap = Document::parse(base);
+  snap.append(json{{"op", "rename"}, {"target", t.a}, {"name", "A2"}});
+  snap.append(json{{"op", "appearance"}, {"target", t.c}, {"visible", false}});
+  const Document prefix = ops_prefix(snap, 3);
+  CHECK_EQ(prefix.ops.size(), 3u);
+  CHECK_EQ(prefix.body_count(), 0u);
+  CHECK_EQ(prefix.header.uuid, snap.header.uuid);
+  CHECK_EQ(semantic_diff(prefix, snap)["summary"], "Rename A to A2; hide C");
+  // Unchanged since: the snapshot's two changes, nothing incoming.
+  const Document file = Document::parse_index(base);
+  SnapshotPlan p = plan_snapshot(snap, 3, &file);
+  CHECK(p.onto == SnapshotPlan::Onto::same && p.base == 3 && p.manifest->ops.size() == 3 && p.merge.error.empty());
+  CHECK_EQ(p.merge.mine.size(), 2u);
+  json d = snapshot_diff(snap, p, &file);
+  CHECK_EQ(d["onto"], "same");
+  CHECK_EQ(d["incoming"].get<int>(), 0);
+  CHECK_EQ(d["unsaved"].get<int>(), 2);
+  CHECK_EQ(d["summary"], "Rename A to A2; hide C");
+  // Not known how far it was saved: what both have from the start.
+  CHECK_EQ(plan_snapshot(snap, std::string::npos, &file).base, 3u);
+  CHECK(plan_snapshot(snap, std::string::npos, &file).onto == SnapshotPlan::Onto::same);
+  // Saved since with a change of its own: that one stays (not shown as undone), the snapshot's come after it.
+  Document newer = Document::parse(base);
+  newer.append(json{{"op", "rename"}, {"target", t.d}, {"name", "D2"}});
+  const Document saved = Document::parse_index(newer.serialize());
+  p = plan_snapshot(snap, 3, &saved);
+  CHECK(p.onto == SnapshotPlan::Onto::extends && p.merge.error.empty() && p.merge.incoming == 1 && p.merge.conflicts.empty());
+  d = snapshot_diff(snap, p, &saved);
+  CHECK_EQ(d["onto"], "extends");
+  CHECK_EQ(d["incoming"].get<int>(), 1);
+  CHECK_EQ(d["relation"], "descendant");
+  CHECK_EQ(d["summary"], "Rename A to A2; hide C");
+  CHECK(find(d, "body", "renamed", "D2").is_null() && find(d, "body", "renamed", "D").is_null());
+  // Both renamed A: a conflict, the snapshot's applied last.
+  Document both = Document::parse(base);
+  both.append(json{{"op", "rename"}, {"target", t.a}, {"name", "A3"}});
+  p = plan_snapshot(snap, 3, &both);
+  d = snapshot_diff(snap, p, &both);
+  CHECK_EQ(d["conflicts"].size(), 1u);
+  CHECK_EQ(d["conflicts"][0]["target"], t.a);
+  CHECK_EQ(find(d, "body", "renamed")["after"], "A2");
+  // Rewritten (a reset): the snapshot against it as it is, no merge.
+  Document reset = Document::parse(base);
+  reset.truncate_ops(2);
+  p = plan_snapshot(snap, 3, &reset);
+  CHECK(p.onto == SnapshotPlan::Onto::rewritten);
+  d = snapshot_diff(snap, p, &reset);
+  CHECK(!d.contains("incoming") && d["onto"] == "rewritten");
+  CHECK(!find(d, "body", "added", "D").is_null());
+  // Another document; no file at all (everything is new).
+  const Document other = Document::create();
+  CHECK(plan_snapshot(snap, 3, &other).onto == SnapshotPlan::Onto::other);
+  CHECK_EQ(plan_snapshot(snap, std::string::npos, &other).base, 0u);
+  p = plan_snapshot(snap, 3, nullptr);
+  CHECK(p.onto == SnapshotPlan::Onto::missing);
+  d = snapshot_diff(snap, p, nullptr);
+  CHECK_EQ(d["onto"], "missing");
+  CHECK_EQ(d["relation"], "descendant");
+  CHECK(!find(d, "component", "added", "Asm").is_null() && !find(d, "body", "added", "D").is_null());
+  // Onto the open session (Merge into current): it may have unsaved changes of its own; they stay first.
+  Document session = Document::parse(base);
+  session.append(json{{"op", "rename"}, {"target", t.b}, {"name", "B2"}});
+  p = plan_snapshot(snap, 3, &session);
+  CHECK(p.onto == SnapshotPlan::Onto::extends && p.merge.mine.size() == 2);
+  std::vector<std::string> keys = session.body_keys();
+  Document into = Document::parse(snap.serialize());
+  apply_merge(into, session, p.merge, keys);
+  CHECK_EQ(into.ops.size(), 6u);
+  CHECK_EQ(resolve(into).node(t.b)->name, "B2");
+  CHECK_EQ(resolve(into).node(t.a)->name, "A2");
+}
+
 TEST(parameters_sketches_and_features) {
   Document d = Document::create();
   const std::string param = d.append(json{{"op", "param"}, {"name", "width"}, {"expr", "30 mm"}}).id;

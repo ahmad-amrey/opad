@@ -2,9 +2,11 @@
 // Versions of a document compared as a person reads them (UI-57). Both sides are usually read in index mode
 // (Document::load_index): only the bodies a caller asks about are ever parsed.
 #include <filesystem>
+#include <memory>
 #include <string>
 
 #include "document.hpp"
+#include "merge.hpp"
 #include "render.hpp"
 
 namespace opad {
@@ -61,6 +63,28 @@ std::string text_outline(const std::string& text, const std::string& error);
 // path, the file `other` names in its own repository; a relative path is the repository's, as git reads it. `file`
 // receives the path the version stands for.
 std::string version_text(const std::string& spec, const std::filesystem::path& other, std::filesystem::path* file = nullptr);
+
+// `d`'s first `count` ops under its header, without bodies: a version to replay and diff, never to take bodies from.
+Document ops_prefix(const Document& d, size_t count);
+// Recovery (UI-59): a snapshot of a session whose first `saved` ops were what its file held when it was taken (its base;
+// npos when that is not known: then the ops it shares with `onto` from the start), against `onto`: that file as it is now
+// (null: not on disk), or the document open now.
+struct SnapshotPlan {
+  enum class Onto { missing, same, extends, rewritten, other };
+  Onto onto = Onto::missing;  // same: still the base; extends: changes saved there since; rewritten: its history no
+                              // longer continues the base (a reset, another branch); other: another document
+  size_t base = 0;            // the base's ops: the snapshot's first ones
+  std::shared_ptr<const Manifest> manifest;  // the base: the snapshot's ops cut there, every body it has
+  MergePlan merge;            // same, extends: `onto`'s ops, then the snapshot's unsaved ones (merge.error: they cannot be)
+};
+SnapshotPlan plan_snapshot(const Document& snapshot, size_t saved, const Document* onto);
+const char* snapshot_onto_name(SnapshotPlan::Onto o);  // "missing", "same", "extends", "rewritten", "other"
+// What restoring the snapshot onto `onto` changes there: semantic_diff of `onto` (an empty document when null) against the
+// snapshot, or against the merge of both when `onto` has newer changes, plus onto (snapshot_onto_name), base, and with a
+// merge: incoming (its changes the snapshot lacks), unsaved (the snapshot's ops that come after them), conflicts (what
+// both change: the snapshot's applied last), design (both change the design: regenerate after), merge_error.
+json snapshot_diff(const Document& snapshot, const SnapshotPlan& plan, const Document* onto);
+
 // Geometric diff image: unchanged grey, only-in-a red, only-in-b green.
 Image render_diff(const Document& a, const Document& b, const RenderOptions& opt);
 }  // namespace opad
