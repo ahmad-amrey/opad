@@ -1,8 +1,8 @@
 // Hybrid hidden lines (TODO 11 UI-77): the exact B-rep curves of every body, their visibility read from a depth buffer
 // of the bodies' meshes. Each edge is sampled every pixel against the nearest surfaces around the sample; run
 // boundaries are refined by bisection and the analytic curve is cut there, so circles stay arcs. Silhouettes are
-// analytic on cylinders, cones, spheres and tori and come from the mesh normals elsewhere. Exact HLR on the Hydrostatic
-// (13,291 faces) took 94 s for a front view; this takes about a second.
+// analytic on cylinders, cones, spheres and tori; elsewhere they are found on the mesh and settled onto the surface.
+// Exact HLR on the Hydrostatic (13,291 faces) took 94 s for a front view; this takes about a second.
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
@@ -10,12 +10,16 @@
 #include <BRepTopAdaptor_FClass2d.hxx>
 #include <BRep_Tool.hxx>
 #include <ElSLib.hxx>
+#include <GeomAPI_Interpolate.hxx>
 #include <Geom2d_Curve.hxx>
 #include <GeomAdaptor_Curve.hxx>
+#include <Geom_BSplineCurve.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_Line.hxx>
 #include <OSD_Parallel.hxx>
+#include <ShapeAnalysis_Surface.hxx>
 #include <Standard_Failure.hxx>
+#include <TColgp_HArray1OfPnt.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
@@ -583,7 +587,7 @@ bool analytic_silhouette(const Context& cx, size_t s, int f, std::vector<Curve>&
     case Surface::Torus: {
       const gp_Torus to = surface.Torus();
       const gp_Ax3& pos = to.Position();
-      if (std::fabs(gp_Vec(pos.Direction()).Dot(d)) < 1 - 1e-9) return false;  // a quartic: the mesh's
+      if (std::fabs(gp_Vec(pos.Direction()).Dot(d)) < 1 - 1e-9) return false;  // a quartic: found on the mesh
       for (double v : {0.0, M_PI}) {
         const double radius = to.MajorRadius() + std::cos(v) * to.MinorRadius();
         if (radius < 1e-9 || on_v_bound(v) || on_v_bound(v + 2 * M_PI) || on_v_bound(v - 2 * M_PI)) continue;
@@ -683,7 +687,93 @@ Vec3 to_local_dir(const Source& src, const gp_Dir& d) {
           ((e * i - f * h) * x + (b * h - a * i) * y + (a * f - b * e) * z) / det};
 }
 
-// Silhouettes of a freeform face from its mesh: where the interpolated normal turns across the view in each triangle.
+// Points of the exact silhouette near a mesh one (body frame): each point moved onto the surface where its normal turns
+// across the view (Newton on (Su x Sv).d, each step the shortest in space). Points that do not settle within `reach` are
+// left out; empty when that is more than a quarter of them (a pole, a degenerate patch).
+std::vector<gp_Pnt> settle_silhouette(const TopoDS_Face& face, gp_Vec d, const std::vector<gp_Pnt>& line, double reach) {
+  const Handle(Geom_Surface) g = BRep_Tool::Surface(face);
+  if (g.IsNull() || d.Magnitude() < 1e-12) return {};
+  d.Normalize();
+  const BRepAdaptor_Surface s(face, Standard_False);
+  std::unique_ptr<ShapeAnalysis_Surface> global;  // parameters of the first point, and where the local search fails
+  auto onto = [&](gp_Pnt2d& uv, const gp_Pnt& from, gp_Pnt& to) {
+    for (int it = 0; it < 16; ++it) {
+      gp_Pnt p;
+      gp_Vec su, sv, suu, svv, suv;
+      s.D2(uv.X(), uv.Y(), p, su, sv, suu, svv, suv);
+      const gp_Vec n = su.Crossed(sv);
+      const double nn = n.Magnitude(), G = n.Dot(d);
+      if (nn < 1e-12) return false;
+      if (std::fabs(G) <= 1e-10 * nn) {
+        to = p;
+        return p.Distance(from) <= reach;
+      }
+      const double gu = (suu.Crossed(sv) + su.Crossed(suv)).Dot(d), gv = (suv.Crossed(sv) + su.Crossed(svv)).Dot(d);
+      const double E = su.Dot(su), F = su.Dot(sv), H = sv.Dot(sv), det = E * H - F * F;
+      if (det < 1e-24) return false;
+      const double mu = (H * gu - F * gv) / det, mv = (E * gv - F * gu) / det, q = gu * mu + gv * mv;  // M^-1 grad, M the metric
+      if (std::fabs(q) < 1e-300) return false;
+      uv.SetCoord(uv.X() - G * mu / q, uv.Y() - G * mv / q);
+    }
+    return false;
+  };
+  // The next point's parameters from the last one's: Gauss-Newton steps on its distance (the contour search follows).
+  auto toward = [&](gp_Pnt2d& uv, const gp_Pnt& p) {
+    for (int it = 0; it < 3; ++it) {
+      gp_Pnt q;
+      gp_Vec su, sv;
+      s.D1(uv.X(), uv.Y(), q, su, sv);
+      const gp_Vec r(q, p);
+      const double E = su.Dot(su), F = su.Dot(sv), H = sv.Dot(sv), det = E * H - F * F;
+      if (det < 1e-24) return;
+      const double a = su.Dot(r), b = sv.Dot(r);
+      uv.SetCoord(uv.X() + (H * a - F * b) / det, uv.Y() + (E * b - F * a) / det);
+    }
+  };
+  // A start for the first point: the nearest of an 8 x 8 grid over the face's parameters (the global search, 0.7 ms a
+  // point, was most of the time on the Engine).
+  std::vector<std::pair<gp_Pnt, gp_Pnt2d>> grid;
+  auto start = [&](const gp_Pnt& p) {
+    if (grid.empty()) {
+      double u0, u1, v0, v1;
+      BRepTools::UVBounds(face, u0, u1, v0, v1);
+      for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 8; ++j) {
+          const gp_Pnt2d uv(u0 + (u1 - u0) * (i + 0.5) / 8, v0 + (v1 - v0) * (j + 0.5) / 8);
+          grid.push_back({s.Value(uv.X(), uv.Y()), uv});
+        }
+    }
+    return std::min_element(grid.begin(), grid.end(), [&](const auto& a, const auto& b) { return a.first.SquareDistance(p) < b.first.SquareDistance(p); })->second;
+  };
+  std::vector<gp_Pnt> out;
+  gp_Pnt2d uv;
+  int failed = 0;
+  for (const gp_Pnt& p : line) {
+    gp_Pnt2d at = out.empty() ? start(p) : uv;
+    gp_Pnt q;
+    toward(at, p);
+    if (out.empty()) toward(at, p);
+    bool ok = onto(at, p, q);
+    if (!ok) {
+      if (!global) global = std::make_unique<ShapeAnalysis_Surface>(g);
+      at = global->ValueOfUV(p, 1e-6);
+      ok = onto(at, p, q);
+    }
+    if (!ok) {
+      ++failed;
+      continue;
+    }
+    uv = at;
+    if (out.empty() || out.back().Distance(q) > 1e-7) out.push_back(q);
+  }
+  const size_t tried = line.size();
+  if (static_cast<size_t>(failed) * 4 > tried || out.size() < 2) return {};
+  return out;
+}
+
+// Silhouettes of a freeform face (and of a torus seen askew): found where the mesh's interpolated normals turn across the
+// view in each triangle, then settled onto the surface and drawn as one B-spline through them within the tolerance; the
+// mesh polyline where they do not settle.
 void mesh_silhouette(const Context& cx, size_t s, int f, std::vector<Curve>& out) {
   const KeyInfo& key = *cx.keys[s];
   if (!key.mesh || f >= static_cast<int>(key.range.size()) || key.range[static_cast<size_t>(f)] < 0) return;
@@ -718,11 +808,53 @@ void mesh_silhouette(const Context& cx, size_t s, int f, std::vector<Curve>& out
   like.face = f;
   like.kind = Curve::Kind::Silhouette;
   const int own = cx.face_base[s] + f;
-  for (auto& line : chain(keys, segments)) {
-    for (auto& p : line) {
+  const TopoDS_Face face = TopoDS::Face(key.faces(f + 1));  // in the body's frame, as the mesh
+  auto world = [&](std::vector<gp_Pnt>& pts) {
+    for (auto& p : pts) {
       const Vec3 w = src.world.apply({p.X(), p.Y(), p.Z()});
       p.SetCoord(w[0], w[1], w[2]);
     }
+  };
+  const double tol = cx.spec.tolerance;
+  for (auto& line : chain(keys, segments)) {
+    std::vector<gp_Pnt> exact = settle_silhouette(face, gp_Vec(d[0], d[1], d[2]), line, 25 * key.defl);
+    world(exact);
+    // Points closer than the tolerance add nothing and swing the interpolation far out: thinned, the last one kept.
+    std::vector<gp_Pnt> pts;
+    for (const auto& p : exact)
+      if (pts.empty() || p.Distance(pts.back()) >= tol) pts.push_back(p);
+      else if (&p == &exact.back() && pts.size() > 1) pts.back() = p;
+    if (pts.size() >= 2) {
+      try {
+        // Interpolated: the points are on the contour, a mesh edge apart (approximating them took 8x longer).
+        const bool closed = pts.size() > 3 && pts.front().Distance(pts.back()) < tol;
+        if (closed) pts.pop_back();
+        Handle(TColgp_HArray1OfPnt) at = new TColgp_HArray1OfPnt(1, static_cast<int>(pts.size()));
+        for (size_t i = 0; i < pts.size(); ++i) at->SetValue(static_cast<int>(i) + 1, pts[i]);
+        if (closed) pts.push_back(pts.front());
+        GeomAPI_Interpolate fit(at, closed, 1e-7);
+        fit.Perform();
+        if (fit.IsDone()) {
+          const Handle(Geom_BSplineCurve) c = fit.Curve();
+          bool tame = true;  // every span stays by its chord (uneven points can swing it far out: not the contour)
+          for (int i = 1; i < c->NbKnots() && tame; ++i) {
+            const double a = c->Knot(i), b = c->Knot(i + 1);
+            const gp_Pnt pa = c->Value(a), pb = c->Value(b), pm = c->Value(0.5 * (a + b));
+            const gp_Vec chord(pa, pb), off(pa, pm);
+            const double l = chord.Magnitude(), t = l > 1e-12 ? std::clamp(off.Dot(chord) / (l * l), 0.0, 1.0) : 0;
+            tame = (off - chord * t).Magnitude() <= 0.5 * l + tol;
+          }
+          if (tame) {
+            trace(cx, GeomAdaptor_Curve(c), c->FirstParameter(), c->LastParameter(), own, own, like, out);
+            continue;
+          }
+        }
+      } catch (const Standard_Failure&) {
+      }
+      trace_polyline(cx, pts, own, own, like, out);  // the contour's points, joined
+      continue;
+    }
+    world(line);
     trace_polyline(cx, line, own, own, like, out);
   }
 }

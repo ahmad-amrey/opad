@@ -60,7 +60,7 @@ using detail::View;
 
 namespace {
 
-constexpr const char* kAlgorithm = "proj-3";  // part of every fingerprint: bump when the output of any tier changes
+constexpr const char* kAlgorithm = "proj-4";  // part of every fingerprint: bump when the output of any tier changes
 constexpr double kTwoPi = 2 * M_PI;
 
 Vec2 operator+(Vec2 a, Vec2 b) { return {a[0] + b[0], a[1] + b[1]}; }
@@ -629,12 +629,10 @@ size_t drop_overlaps(std::vector<Curve>& curves, double eps) {
   std::vector<Vec2> dir(n, Vec2{0, 0});  // lines: unit direction, pointing up (angle in [0, pi))
   std::vector<double> angle(n, 0);
   std::vector<size_t> items[4];
-  double size = 0;
+  double size = 0;  // of the lines: how far their middles may slide across a bucket's direction
   std::unordered_map<size_t, std::vector<Curve>> replaced;  // curve -> what is left of it
   for (size_t i = 0; i < n; ++i) {
     const Curve& k = curves[i];
-    for (const auto& p : k.pts) size = std::max({size, std::fabs(p[0]), std::fabs(p[1])});
-    size = std::max({size, std::fabs(k.c[0]) + k.r1, std::fabs(k.c[1]) + k.r1});
     double length = -1;  // lines, arcs and polylines shorter than eps are dropped: nothing on paper
     if (k.type == Curve::Type::Arc) length = k.r1 * (k.a1 - k.a0);
     if (k.type == Curve::Type::Line || k.type == Curve::Type::Polyline) {
@@ -648,6 +646,7 @@ size_t drop_overlaps(std::vector<Curve>& curves, double eps) {
     if (k.type == Curve::Type::Line || (k.type == Curve::Type::Polyline && k.pts.size() == 2)) {
       const Vec2 d = k.pts[1] - k.pts[0];
       const double l = norm(d);  // at least eps
+      for (const auto& p : k.pts) size = std::max({size, std::fabs(p[0]), std::fabs(p[1])});
       Vec2 u = d * (1 / l);
       if (u[1] < 0 || (u[1] == 0 && u[0] < 0)) u = u * -1;
       dir[i] = u;

@@ -4,7 +4,8 @@
 //   exact  - HLRBRep_Algo on copies of the bodies; up to about 2,000 faces (Auto), monolithic and not interruptible
 //   draft  - HLRBRep_PolyAlgo on meshed copies; polylines only, for a first paint
 //   hybrid - the exact B-rep curves, their visibility read from a depth buffer of the bodies' meshes (big assemblies:
-//            the Hydrostatic took 94 s exact against about 1 s); analytic silhouettes of quadrics, mesh ones elsewhere
+//            the Hydrostatic took 94 s exact against about 1 s); analytic silhouettes of quadrics, elsewhere found on the
+//            mesh and settled onto the surface (splines on the true contour)
 // Where pieces lie on one another (lines, arcs, ellipses, identical splines) only the nearest visible one is kept, and a
 // hidden one only where no visible one lies. Results are a pure function of body keys, world placements, the view and
 // the tier, cached under that fingerprint in memory and in the user cache. Workers only: every tier walks or meshes

@@ -6,11 +6,13 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_NurbsConvert.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <TColStd_Array1OfReal.hxx>
@@ -353,6 +355,47 @@ TEST(projection_coincident_pieces) {
     CHECK_NEAR(total(*g, false), 2 * 20 + 2 * 10 + 2 * 5 + 2 * 5 + 2 * 4, q == Quality::Exact ? 1e-6 : 0.005);  // hybrid: cuts within a tenth of a pixel
     CHECK_NEAR(total(*g, true), 20, q == Quality::Exact ? 1e-6 : 0.005);
   }
+}
+
+// Silhouettes of freeform faces and of a torus seen askew come from the mesh but are settled onto the surface: splines
+// on the true contour (where the normal is across the view) to within the tolerance, which the mesh polyline is not.
+TEST(projection_freeform_silhouettes) {
+  const double R = 20, r = 5;
+  const Document doc = doc_of({BRepPrimAPI_MakeTorus(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), R, r).Shape(),
+                               BRepBuilderAPI_NurbsConvert(BRepPrimAPI_MakeSphere(gp_Pnt(60, 0, 0), 8).Shape()).Shape()});
+  const Scene scene = resolve(doc);
+  const auto g = project(doc, scene, spec_of("iso", Quality::Hybrid), {}, false);
+  const gp_Vec x(g->x[0], g->x[1], g->x[2]), y(g->y[0], g->y[1], g->y[2]), d(g->dir[0], g->dir[1], g->dir[2]);
+  // The torus' contour: for each u the two v where (cos v cos u, cos v sin u, sin v) . d = 0.
+  std::vector<Vec2> contour;
+  for (int i = 0; i < 40000; ++i) {
+    const double u = 2 * M_PI * i / 40000, v0 = std::atan2(-(std::cos(u) * d.X() + std::sin(u) * d.Y()), d.Z());
+    for (double v : {v0, v0 + M_PI}) {
+      const gp_Vec p((R + r * std::cos(v)) * std::cos(u), (R + r * std::cos(v)) * std::sin(u), r * std::sin(v));
+      contour.push_back({p.Dot(x), p.Dot(y)});
+    }
+  }
+  const gp_Vec centre(60, 0, 0);
+  double torus = 0, sphere = 0;
+  for (const auto& c : g->curves) {
+    if (c.kind != Curve::Kind::Silhouette) continue;
+    CHECK(c.type == Curve::Type::Spline && c.face >= 0);
+    const bool round = g->bodies[static_cast<size_t>(c.body)].node == scene.all_bodies()[1];
+    for (const auto& q : c.sample(1e-4)) {
+      if (round) {
+        CHECK(std::fabs(std::hypot(q[0] - centre.Dot(x), q[1] - centre.Dot(y)) - 8) < 0.01);
+        continue;
+      }
+      double best = 1e300;
+      for (const auto& p : contour) best = std::min(best, std::hypot(p[0] - q[0], p[1] - q[1]));
+      CHECK(best < 0.01);
+    }
+    (round ? sphere : torus) += c.length();
+  }
+  CHECK_NEAR(sphere, 2 * M_PI * 8, 0.01);
+  CHECK(torus > 2 * M_PI * (R + r));
+  const auto exact = project(doc, scene, spec_of("iso", Quality::Exact), {}, false);
+  CHECK_NEAR(total(*g, false), total(*exact, false), 0.002 * total(*exact, false));
 }
 
 // The draft tier: polylines from the polygonal algorithm, roughly where the exact lines are. The box's edges are sharp
