@@ -30,9 +30,12 @@
 // plate's outline on Visible (4 lines) and the hole's sides on Hidden (2). Then SVG of the current camera (iso): the
 // hole's rims come out as arcs, no hidden layer. The dialog opens again with those choices. <prefix>.dialog.png is the
 // dialog, <prefix>.front.dxf and <prefix>.iso.svg the files.
+// OPAD_BENCH_EXPORT_OPEN=<prefix>: the loaded file's roots (hidden or not) as a front view with hidden lines, DXF, through
+// the dialog, timed (the Engine: the stall watchdog stays quiet while the worker projects and writes); <prefix>.dxf.
 bool MainWindow::benchExport() {
-  const QString prefix = qEnvironmentVariable("OPAD_BENCH_EXPORT");
-  if (prefix.isEmpty()) return false;
+  QString prefix = qEnvironmentVariable("OPAD_BENCH_EXPORT");
+  const QString open = qEnvironmentVariable("OPAD_BENCH_EXPORT_OPEN");
+  if (prefix.isEmpty() && open.isEmpty()) return false;
   bool ok = true;
   const auto check = [&](bool pass, const QString& what) {
     trace::log(QString("bench: export: %1 %2").arg(what, pass ? "PASS" : "FAIL"));
@@ -45,14 +48,14 @@ bool MainWindow::benchExport() {
     return done();
   };
   // Runs `fn` on the Export dialog from inside its own event loop (it is modal), then answers it.
-  const auto withDialog = [&](const std::function<bool(QDialog*)>& fn) {
+  const auto withDialog = [&](const std::function<bool(QDialog*)>& fn, std::vector<std::string> ids = {}) {
     QTimer::singleShot(100, this, [this, fn] {
       auto* d = findChild<QDialog*>("exportDialog");
       if (!d) return;
       if (fn(d)) d->accept();
       else d->reject();
     });
-    exportDialog({});
+    exportDialog(std::move(ids));
   };
   const auto radio = [](QDialog* d, const char* format) {
     for (auto* r : d->findChildren<QRadioButton*>())
@@ -69,6 +72,32 @@ bool MainWindow::benchExport() {
       for (TopExp_Explorer e(opad::node_world_shape(doc, scene, id), TopAbs_EDGE); e.More(); e.Next()) ++edges[scene.node(id)->name];
     return edges;
   };
+  if (!open.isEmpty()) {  // the loaded file (the Engine): timed, the watchdog's stalls in the trace
+    const QString out = open + ".dxf";
+    QFile::remove(out);
+    qputenv("OPAD_BENCH_EXPORT_OUT", out.toUtf8());
+    m_lastExport = opad::json();
+    QElapsedTimer clock;
+    try {
+      withDialog([&](QDialog* d) {
+        radio(d, "dxf")->click();
+        auto* view = d->findChild<QComboBox*>("export.view");
+        view->setCurrentIndex(view->findData("front"));
+        d->findChild<QCheckBox*>("export.hidden")->setChecked(true);
+        return true;
+      }, m_doc->scene.roots);
+      clock.start();
+      trace::log("bench: export-open: started");
+      settle([&] { return !m_lastExport.is_null(); }, 600000);
+    } catch (const std::exception& e) {
+      m_lastExport = {{"error", e.what()}};
+    }
+    const bool done = m_lastExport.value("total", 0) > 0;
+    check(done, QString("the loaded file's front view with hidden lines in %1 ms: %2").arg(clock.elapsed()).arg(QString::fromStdString(m_lastExport.dump()).left(400)));
+    qunsetenv("OPAD_BENCH_EXPORT_OUT");
+    QCoreApplication::exit(ok ? 0 : 2);
+    return true;
+  }
   try {
     m_doc->newDocument();
     const std::string plate = m_doc->run("feature", {{"kind", "box"}, {"inputs", {{"length", "60 mm"}, {"width", "40 mm"}, {"height", "10 mm"}}}})["body_ids"][0];
