@@ -799,5 +799,6 @@
  "Show or hide the browser's rows, suppress a timeline marker": "إظهار صفوف المستعرض أو إخفاؤها، وكبت علامة في الخط الزمني",
  "Space": "مسافة",
  "The menu of a browser row or a timeline marker": "قائمة صف في المستعرض أو علامة في الخط الزمني",
- "Menu key": "مفتاح القائمة"
+ "Menu key": "مفتاح القائمة",
+ "The design is being recomputed; try again in a moment.": "يُعاد حساب التصميم؛ حاول مرة أخرى بعد لحظات."
 }

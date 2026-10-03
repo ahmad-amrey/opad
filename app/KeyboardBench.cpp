@@ -80,6 +80,15 @@ OPAD_BENCH(OPAD_BENCH_KEYBOARD, keyboard) {
     const bool sketchHidden = !w.m_doc->scene.sketch(sketch)->visible;
     key(tree, Qt::Key_Space);
     check(sketchHidden && w.m_doc->scene.sketch(sketch)->visible, "Space hides the sketch and shows it again");
+    const size_t ops = w.m_doc->doc.ops.size();
+    QKeyEvent held(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, " ", true);
+    QApplication::sendEvent(tree, &held);
+    check(w.m_doc->doc.ops.size() == ops && w.m_doc->scene.sketch(sketch)->visible, "a held Space (its repeats) does nothing more");
+    w.m_doc->designBusy = true;  // a save, a recovery capture or a regeneration holds the document
+    bool thrown = false;
+    try { key(tree, Qt::Key_Space); } catch (const std::exception&) { thrown = true; }
+    w.m_doc->designBusy = false;
+    check(!thrown && w.m_doc->doc.ops.size() == ops && w.m_doc->scene.sketch(sketch)->visible, "Space while the document is busy says so instead of throwing out of the key");
     tree->setCurrentItem(row("body"));
     key(tree, Qt::Key_Return);
     check(*fits == 1, "Enter on the body fits the view to it");
@@ -114,8 +123,13 @@ OPAD_BENCH(OPAD_BENCH_KEYBOARD, keyboard) {
   }, [=] { return idle() && suppressed(); });
   add(100, [=, &w] {
     check(!suppressed(), "Space again brings it back");
-    key(w.m_timeline, Qt::Key_Delete);
+    QKeyEvent held(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, " ", true);
+    QApplication::sendEvent(w.m_timeline, &held);
   }, [=] { return idle() && !suppressed(); });
+  add(400, [=, &w] {
+    check(!suppressed(), "a held Space on the marker does nothing more");
+    key(w.m_timeline, Qt::Key_Delete);
+  }, idle);
   add(100, [=, &w] {
     check(deleted(feature), "Del tombstones the marker's op");
     key(w.m_timeline, Qt::Key_Delete, Qt::ShiftModifier);

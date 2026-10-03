@@ -142,7 +142,7 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
   } else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter || e->key() == Qt::Key_F2) {
     if (op && (op->type == "feature" || op->type == "sketch") && !deleted) emit opActivated(op->id);
   } else if (e->key() == Qt::Key_Space) {
-    if (op && op->type == "feature" && !deleted) emit suppressRequested(op->id);
+    if (op && op->type == "feature" && !deleted && !e->isAutoRepeat()) emit suppressRequested(op->id);
   } else {
     QWidget::keyPressEvent(e);
     return;

@@ -113,7 +113,7 @@ void BrowserTree::keyPressEvent(QKeyEvent* e) {
   if (e->key() == Qt::Key_Menu || (e->key() == Qt::Key_F10 && mods == Qt::ShiftModifier)) return openMenu();
   if (mods) return QTreeWidget::keyPressEvent(e);
   switch (e->key()) {
-    case Qt::Key_Space: return emit visibilityKey();
+    case Qt::Key_Space: if (!e->isAutoRepeat()) emit visibilityKey(); return;  // held: one step, not 30 a second
     case Qt::Key_Return:
     case Qt::Key_Enter: return emit rowActivated(current);
     case Qt::Key_F2: return emit commandRequested("edit.rename");
@@ -267,15 +267,17 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   });
   connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
     if(!m_editedSketch.empty() && id==m_editedSketch){emit editedSketchVisibilityRequested();return;}
-    if (id.empty()) {  // document row: toggle every root
-      bool anyVisible = false;
-      for (const auto& r : m_doc->scene.roots) anyVisible = anyVisible || m_doc->node(r)->visible;
-      for (const auto& r : m_doc->scene.roots) m_doc->run("appearance", opad::json{{"target", r}, {"visible", !anyVisible}});
-      return;
-    }
-    const opad::Node* n = m_doc->node(id);
-    if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
-    else if (const opad::SketchItem* s = m_doc->scene.sketch(id)) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !s->visible}});
+    try {  // the document refuses while it is busy (a save, a recovery capture, a regeneration): said, never thrown out of a click or a key
+      if (id.empty()) {  // document row: toggle every root
+        bool anyVisible = false;
+        for (const auto& r : m_doc->scene.roots) anyVisible = anyVisible || m_doc->node(r)->visible;
+        for (const auto& r : m_doc->scene.roots) m_doc->run("appearance", opad::json{{"target", r}, {"visible", !anyVisible}});
+        return;
+      }
+      const opad::Node* n = m_doc->node(id);
+      if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
+      else if (const opad::SketchItem* s = m_doc->scene.sketch(id)) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !s->visible}});
+    } catch (const std::exception& e) { emit m_doc->message(i18n::t(QString::fromUtf8(e.what()))); }
   });
   connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {  // a view setting in viewer mode too
     const opad::Node* n = m_doc->node(id);
@@ -321,7 +323,8 @@ void BrowserPanel::toggleVisibility(const std::vector<std::string>& ids) {
       nodes.push_back(id);
       anyShown = anyShown || n->visible;
     }
-  if (!nodes.empty()) m_doc->run("appearance", opad::json{{"targets", nodes}, {"visible", !anyShown}});
+  if (nodes.empty()) return;
+  try { m_doc->run("appearance", opad::json{{"targets", nodes}, {"visible", !anyShown}}); } catch (const std::exception& e) { emit m_doc->message(i18n::t(QString::fromUtf8(e.what()))); }
 }
 
 void BrowserPanel::focusFilter() {
