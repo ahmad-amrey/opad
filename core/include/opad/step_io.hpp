@@ -38,6 +38,9 @@ struct ImportOptions {
   // drawing's bounding-box centre to its origin (a drawing opened on its own is centred on the grid).
   Mat4 placement;
   bool center_drawing = false;
+  // Pictures (opad/canvas.hpp): the canvas's flags and "plane" (the frame its place is given in; default: the placement's),
+  // "width" (mm: scaled to it; default: the file's resolution) and "center" (its centre on the placement's origin).
+  json canvas;
   KicadOptions kicad;
 };
 

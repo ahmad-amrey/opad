@@ -19,6 +19,7 @@ struct Node {
   std::vector<std::string> children;
   std::string body_key;  // Body only
   json raster;  // embedded SVG raster reference, independent of shared geometry
+  json canvas;  // a picture's canvas (opad/canvas.hpp): its import's "canvas" object ({} when it has none); null for other bodies
   std::string representation = "solid";  // solid | mesh | drawing2d
   bool body_missing = false;  // Body whose key is not in the store (F8)
   bool linked = false;        // part of a linked asset (assets.hpp): its geometry comes from the file, read-only
