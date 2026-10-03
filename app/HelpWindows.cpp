@@ -42,6 +42,8 @@ QStringList keyCaps(const QString& keys) {
   return out;
 }
 
+QStringList keyAlternates(const QString& keys) { return keys.split(" / ", Qt::SkipEmptyParts); }
+
 QList<KeyRow> mouseRows(const QString& preset) {
   const QString middle = QCoreApplication::translate("help", "Middle drag"), right = QCoreApplication::translate("help", "Right drag");
   QString orbit = "Shift+" + middle, pan = middle;  // Viewport::setNavPreset
@@ -168,10 +170,14 @@ void ShortcutSheet::setGroups(const QList<help::KeyGroup>& groups) {
       auto* label = new QLabel(r.label, row);
       label->setWordWrap(true);
       h->addWidget(label, 1);
-      for (const QString& cap : help::keyCaps(r.keys)) {
-        auto* key = new QLabel(cap, row);
-        key->setObjectName("keycap");
-        h->addWidget(key, 0, Qt::AlignTop);
+      const QStringList alternates = help::keyAlternates(r.keys);
+      for (qsizetype i = 0; i < alternates.size(); ++i) {
+        if (i) h->addWidget(new QLabel("/", row), 0, Qt::AlignTop);  // between the alternates, never a cap
+        for (const QString& cap : help::keyCaps(alternates[i])) {
+          auto* key = new QLabel(cap, row);
+          key->setObjectName("keycap");
+          h->addWidget(key, 0, Qt::AlignTop);
+        }
       }
       bv->addWidget(row);
       m_rows << Row{row, r.label + ' ' + r.keys, int(m_groups.size())};

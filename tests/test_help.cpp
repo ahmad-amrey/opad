@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QListWidget>
 #include <QMenu>
 #include <QMouseEvent>
@@ -264,6 +265,16 @@ TEST(help_menu_contents) {
   CHECK_EQ(help::keyCaps("Ctrl+Shift+U"), QStringList({"Ctrl", "Shift", "U"}));
   CHECK_EQ(help::keyCaps("Ctrl++"), QStringList({"Ctrl", "+"}));
   CHECK_EQ(help::keyCaps("F1"), QStringList({"F1"}));
+  CHECK_EQ(help::keyAlternates("Ctrl+Y / Ctrl+Shift+Z"), QStringList({"Ctrl+Y", "Ctrl+Shift+Z"}));
+  CHECK_EQ(help::keyAlternates("Ctrl+/"), QStringList({"Ctrl+/"}));
+  {  // the cheat sheet draws each alternate's caps, a plain "/" between them
+    ShortcutSheet sheet;
+    sheet.setGroups({help::KeyGroup{"Edit", {help::KeyRow{"Redo", "Ctrl+Y / Ctrl+Shift+Z"}, help::KeyRow{"Menu", "Menu key / Shift+F10"}}}});
+    QStringList caps, plain;
+    for (QLabel* l : sheet.findChildren<QLabel*>()) (l->objectName() == "keycap" ? caps : plain) << l->text();
+    CHECK_EQ(caps, QStringList({"Ctrl", "Y", "Ctrl", "Shift", "Z", "Menu key", "Shift", "F10"}));
+    CHECK(plain.count("/") == 2);
+  }
   auto mouse = [](const QString& preset, int row) { return help::mouseRows(preset).value(row).keys; };
   CHECK_EQ(mouse("fusion", 0), QString("Shift+Middle drag"));
   CHECK_EQ(mouse("fusion", 1), QString("Middle drag"));
