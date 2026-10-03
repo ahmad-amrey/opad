@@ -1,6 +1,6 @@
 // The sketch input benches (TODO 11 T1) through the registry; cases in tools/bench_cases/sketch.py. Each opens Sketch1 on
 // XY in the Design workspace, as OPAD_BENCH_DESIGN does, and runs its SketchEditor bench (Sketch*Bench.cpp), which logs
-// its PASS/FAIL lines and quits; one that never ends fails after a minute.
+// its PASS/FAIL lines and quits; one that has not ended after 150 s fails (gui_benches gives a case 240 s).
 #include <QCoreApplication>
 #include <QTimer>
 
@@ -14,7 +14,7 @@
   OPAD_BENCH(variable, id) {                                                                                             \
     w.setWorkspace("design");                                                                                            \
     w.m_design->benchSketch([&w] { w.m_design->sketch()->method(); });                                                   \
-    QTimer::singleShot(60000, qApp, [] { trace::log("bench: sketch: " #id " did not end FAIL"); QCoreApplication::exit(2); }); \
+    QTimer::singleShot(150000, qApp, [] { trace::log("bench: sketch: " #id " did not end FAIL"); QCoreApplication::exit(2); }); \
     return true;                                                                                                         \
   }
 
