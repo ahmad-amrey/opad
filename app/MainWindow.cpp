@@ -5,6 +5,7 @@
 #include "DrawingPlacer.hpp"
 #include "RecoveryManager.hpp"
 #include "AgentBridge.hpp"
+#include "BenchRegistry.hpp"
 
 #include <QToolButton>
 #include <QToolTip>
@@ -2466,6 +2467,7 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
+  if(bench::run(*this))return;  // the benches registered from their own files (OPAD_BENCH) first
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
   if(benchViewer())return;
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered

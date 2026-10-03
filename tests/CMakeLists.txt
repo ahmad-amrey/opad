@@ -39,12 +39,22 @@ if(TARGET opad)
   endif()
   add_test(NAME associations COMMAND opad-test-associations)
   set_tests_properties(app-document PROPERTIES FIXTURES_REQUIRED step_fixtures TIMEOUT 40)
+  add_executable(opad-test-seams test_seams.cpp ../app/BenchRegistry.cpp ../app/I18n.cpp ../app/Icons.cpp ../app/Theme.cpp ../app/Theme.hpp ${OPAD_I18N_QRC})
+  set_target_properties(opad-test-seams PROPERTIES AUTOMOC ON AUTORCC ON)
+  target_include_directories(opad-test-seams PRIVATE ../app)
+  target_compile_definitions(opad-test-seams PRIVATE OPAD_I18N_SOURCE="${PROJECT_SOURCE_DIR}/app/i18n")
+  target_link_libraries(opad-test-seams PRIVATE opad::core Qt6::Widgets)
+  if(OPAD_STATIC)
+    qt_import_plugins(opad-test-seams INCLUDE Qt6::QOffscreenIntegrationPlugin EXCLUDE_BY_TYPE imageformats iconengines)
+  endif()
+  add_test(NAME seams COMMAND opad-test-seams)
+  set_tests_properties(seams PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 endif()
 
 # Core tests: every test_<name>.cpp not built elsewhere in this file is opad-test-<name> (underscores -> dashes) on the
 # core, run as ctest <name>; CONFIGURE_DEPENDS re-globs at each build, so a new test is a new file. Its extra settings
 # (environment, libraries, timeout) go into an optional test_<name>.cmake beside it, included with `target` and `name`.
-set(opad_special_tests app_document associations body_prs shortcuts sketch_cache step thumbnails)
+set(opad_special_tests app_document associations body_prs seams shortcuts sketch_cache step thumbnails)
 file(GLOB opad_core_tests CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 file(GLOB opad_test_settings CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cmake)
 list(SORT opad_core_tests)

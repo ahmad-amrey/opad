@@ -15,9 +15,10 @@
 
 namespace {
 
-// Inner SVG markup per icon, copied verbatim from opad-icons.js.
-const QHash<QString, QString>& table() {
-  static const QHash<QString, QString> t = {
+// Inner SVG markup per icon, copied verbatim from opad-icons.js; areas add theirs through OPAD_ICON_TABLE (static
+// initialisers in their own files, which reach this table through the function-local static, whatever the order).
+QHash<QString, QString>& table() {
+  static QHash<QString, QString> t = {
       {"open", R"(<path d="M3 6h6l2 2h10v12H3z"/><path d="M3 11h18"/>)"},
       {"import", R"(<path d="M12 3v11M8 10l4 4 4-4M4 17v3h16v-3"/>)"},
       {"save", R"(<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-6h8v6"/>)"},
@@ -356,6 +357,11 @@ void render(QPainter& p, const QString& markup, const QColor& color) {
 
 QHash<QString, QPixmap> g_cache;
 
+QStringList& clashList() {
+  static QStringList names;
+  return names;
+}
+
 // Renders the icon when it is first painted, at that display scale and state only: drawing every icon at four scales
 // and three states up front cost most of a second at startup.
 class LazyIcon : public QIconEngine {
@@ -397,6 +403,16 @@ class LazyIcon : public QIconEngine {
 
 namespace icons {
 
+IconTable::IconTable(std::initializer_list<std::pair<const char*, const char*>> rows) {
+  for (const auto& [name, markup] : rows) {
+    const QString key = QString::fromUtf8(name);
+    if (!table().contains(key)) table().insert(key, QString::fromUtf8(markup));
+    else if (table().value(key) != QString::fromUtf8(markup)) clashList().append(key);
+  }
+}
+
+QStringList clashes() { return clashList(); }
+
 bool has(const QString& name) { return table().contains(name); }
 
 QPixmap pixmap(const QString& name, const QColor& color, int size, qreal dpr) {
@@ -410,7 +426,7 @@ QPixmap pixmap(const QString& name, const QColor& color, int size, qreal dpr) {
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
     p.scale(size / 24.0, size / 24.0);
-    render(p, table()[name], color);
+    render(p, table().value(name), color);
   }
   g_cache.insert(key, pm);
   return pm;

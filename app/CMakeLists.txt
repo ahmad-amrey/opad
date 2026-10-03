@@ -16,7 +16,19 @@ set(CMAKE_AUTORCC ON)
 # or guards its body; anything else to leave out goes into list(REMOVE_ITEM) here.
 file(GLOB_RECURSE OPAD_APP_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.hpp)
 list(SORT OPAD_APP_SOURCES)
-list(APPEND OPAD_APP_SOURCES res.qrc i18n.qrc)
+
+# Translations: app/i18n/<code>.json and the area fragments app/i18n/<code>/*.json that I18n.cpp merges after it. The
+# qrc is generated from a glob (rewritten only when the list changes), so a new language or fragment is a new file only.
+file(GLOB_RECURSE opad_i18n_files CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/i18n/*.json)
+list(SORT opad_i18n_files)
+set(opad_i18n_qrc "<RCC>\n  <qresource prefix=\"/\">\n")
+foreach(file IN LISTS opad_i18n_files)
+  string(APPEND opad_i18n_qrc "    <file alias=\"${file}\">${CMAKE_CURRENT_SOURCE_DIR}/${file}</file>\n")
+endforeach()
+string(APPEND opad_i18n_qrc "  </qresource>\n</RCC>\n")
+set(OPAD_I18N_QRC ${CMAKE_CURRENT_BINARY_DIR}/i18n.qrc CACHE INTERNAL "")  # also in tests/test_seams
+file(CONFIGURE OUTPUT ${OPAD_I18N_QRC} CONTENT "${opad_i18n_qrc}" @ONLY)
+list(APPEND OPAD_APP_SOURCES res.qrc ${OPAD_I18N_QRC})
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)
   find_program(OPAD_SIPS NAMES sips REQUIRED)

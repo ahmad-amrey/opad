@@ -1,14 +1,21 @@
 """Desktop safety net: the in-app benches that drive real Qt events in hidden windows (TODO 10 A13).
 
-usage: python tools/gui_benches.py APP CLI [--only NAME ...] [--output DIR]
+usage: python tools/gui_benches.py APP CLI [--only NAME ...] [--output DIR] [--list]
 
 Each bench runs in its own hidden window with isolated settings and must log PASS and no FAIL. It needs a desktop
 session with OpenGL (Windows here); `ctest --preset windows-gui` runs it, `ctest --preset windows` leaves it out.
 The unit tests only see core and a few app classes; these benches are what notices a view, handle, panel or
 workflow that stopped doing what it did (a drag that no longer previews live, a card that no longer follows its
 object, a pointer that leaves highlights behind).
+
+Besides the cases below, every tools/bench_cases/<area>.py module adds its CASES (a new case is a new file): tuples
+(name, document, switches[, settings]) as here, where document is a fixture name ("empty", "box", "cylinder",
+"drawing", "overlap", "overhang", "screw", "far"), a path (relative to the repository) or a callable (root, document)
+-> path that makes its own file (document(name, *cli commands) runs opad-cli as below); switches are the environment
+("{prefix}" = the output prefix of the case, OPAD_LANG may be overridden); settings is the OPAD.ini text to start with.
 """
 import argparse
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -19,12 +26,23 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def area_cases():
+    """(area, case) for every CASES entry of tools/bench_cases/*.py, by file name."""
+    for path in sorted((ROOT / "tools" / "bench_cases").glob("*.py")):
+        spec = importlib.util.spec_from_file_location(f"bench_cases_{path.stem}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for case in getattr(module, "CASES", []):
+            yield path.stem, case
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     parser.add_argument("cli", type=Path)
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument("--output", type=Path, default=ROOT / "build" / "gui-benches")
+    parser.add_argument("--list", action="store_true", help="print the case names (built-in and tools/bench_cases) and quit")
     args = parser.parse_args()
     app, cli, output = args.app.resolve(), args.cli.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -84,6 +102,30 @@ def main():
         # the grid on; fit-wide's 1 km minimum grid lies around the origin and would pull a box-less FitAll there.
         editing, grid = "[files]\nviewerMode=false\n", "[view]\ngrid=true\n"
         settings = {"drawing-to-sketch": editing, "picking": editing, "fit-far": grid, "fit-near": grid, "fit-wide": grid + "gridExtent=1000000\n"}
+        fixtures = {"empty": empty, "box": box, "cylinder": round_part, "drawing": drawing, "overlap": overlapping,
+                    "overhang": overhang, "screw": screw, "far": far}
+        known = {case[0] for case in cases}
+        for area, (name, doc, switches, *ini) in area_cases():
+            if name in known:
+                sys.exit(f"bench_cases/{area}.py: case {name} exists already")
+            known.add(name)
+            if args.only and name not in args.only or args.list:
+                continue  # its document is not made
+            if callable(doc):
+                doc = doc(root, document)
+            elif isinstance(doc, str) and doc in fixtures:
+                doc = fixtures[doc]
+            else:
+                doc = ROOT / doc
+            if not Path(doc).exists():
+                print(f"{name}: skipped ({doc} does not exist)", flush=True)
+                continue
+            cases.append((name, doc, switches))
+            if ini:
+                settings[name] = ini[0]
+        if args.list:
+            print("\n".join(sorted(known)))
+            return
         failures = []
         for name, doc, switches in cases:
             if args.only and name not in args.only:

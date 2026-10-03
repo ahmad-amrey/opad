@@ -21,9 +21,13 @@
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
 class AgentBridge;
+template <class Tag>
+struct MainWindowBench;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
+  template <class Tag>
+  friend struct MainWindowBench;  // the benches of BenchRegistry.hpp (OPAD_BENCH), each in its own file
  public:
   MainWindow();
   ~MainWindow() override;
