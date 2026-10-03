@@ -66,7 +66,8 @@ Document make_editable(const Document& viewer, EditableKeys* changed = nullptr, 
 // Viewer mode remembers slow reads (viewer_cache.cpp): the shapes of a viewer document's import, with any display meshes
 // made since, kept under the user cache and keyed by the file's content (a copy, a clone or a checkout of it finds them
 // again) and the options that shape the read. Drawings (DXF, SVG, DWG) are not kept this way: their entries were larger
-// and no faster than the file (a DWG keeps its converted DXF text instead, inside import_file).
+// and no faster than the file (a DWG keeps its converted DXF text instead, inside import_file). A big file of a format read
+// about as fast as it can be hashed (a mesh over 16 MB) is found only by the hash its store remembered for its path.
 // load: false when nothing usable is kept (then read the file); an entry that read back less than twice as fast as
 // `read_ms` is dropped afterwards. store: `read_ms`, how long reading the file took; the entry is kept only when it reads
 // back at least twice as fast, else the file is marked and not stored again until it changes. Best effort, never throws

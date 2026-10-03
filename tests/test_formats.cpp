@@ -640,6 +640,29 @@ TEST(viewer_cache_round_trip_and_invalidation) {
   CHECK(!report.value("kept", true) && report.value("reason", "") == "drawing");
   Document drawing = Document::create();
   CHECK(!viewer_cache_load(drawing, f.dir / "plate.dxf", viewer));
+  // A big mesh (over 16 MB, read about as fast as hashed) is not hashed to be looked up: the hash its store remembered for
+  // its path (size and time) finds it, a copy elsewhere is read.
+  std::string stl(80, '\0');
+  const uint32_t count = 340000;
+  stl.append(reinterpret_cast<const char*>(&count), 4);
+  for (uint32_t t = 0; t < count; ++t) {
+    const float x = float(t % 1000), y = float(t / 1000);
+    const float facet[12] = {0, 0, 1, x, y, 0, x + 1, y, 0, x, y + 1, 0};
+    stl.append(reinterpret_cast<const char*>(facet), sizeof facet);
+    stl.append(2, '\0');
+  }
+  write_binary(f.dir / "big.stl", stl);
+  write_binary(f.dir / "copy.stl", stl);
+  const auto past = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);  // not written moments ago
+  std::filesystem::last_write_time(f.dir / "big.stl", past);
+  std::filesystem::last_write_time(f.dir / "copy.stl", past);
+  Document unseen = Document::create();
+  CHECK(!viewer_cache_load(unseen, f.dir / "big.stl", viewer));
+  CHECK(viewer_cache_store(open(f.dir / "big.stl", true), f.dir / "big.stl", viewer, 60000).value("kept", false));
+  Document remembered = Document::create();
+  CHECK(viewer_cache_load(remembered, f.dir / "big.stl", viewer));
+  Document copy = Document::create();
+  CHECK(!viewer_cache_load(copy, f.dir / "copy.stl", viewer));
   std::error_code e;
   std::filesystem::remove_all(kCacheDir, e);
 }

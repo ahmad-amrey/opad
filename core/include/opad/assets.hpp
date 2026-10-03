@@ -73,8 +73,9 @@ std::filesystem::path locate_asset(const Document& doc, const json& asset, const
 // Whether `file` may be read for `doc` without asking: inside the document's folder or the git work tree it is in, inside
 // one of opt.trusted, or opt.trust_all. A document not saved yet holds only what was linked in this session: trusted.
 bool asset_trusted(const Document& doc, const std::filesystem::path& file, const AssetOptions& opt = {});
-// A file's SHA-256, remembered in the user cache per path, size and time (a big STEP is hashed once).
-std::string file_sha256(const std::filesystem::path& file);
+// A file's SHA-256, remembered in the user cache per path, size and time (a big STEP is hashed once). `compute` false: only
+// the remembered one, else empty (nothing is read).
+std::string file_sha256(const std::filesystem::path& file, bool compute = true);
 
 // Every asset of the document: located, trust-checked and hashed; nothing is read.
 std::vector<AssetState> asset_status(const Document& doc, const AssetOptions& opt = {});

@@ -567,7 +567,7 @@ json AssetState::to_json() const {
   return j;
 }
 
-std::string file_sha256(const fs::path& file) {
+std::string file_sha256(const fs::path& file, bool compute) {
   std::error_code ec;
   const auto size = fs::file_size(file, ec);
   if (ec) throw Error("cannot read " + utf8(file));
@@ -578,6 +578,7 @@ std::string file_sha256(const fs::path& file) {
 #endif
   const std::string stat = sha256_hex(where + "|" + std::to_string(size) + "|" + std::to_string(time.time_since_epoch().count()));
   if (const auto known = cache_get("asset-sha", stat); known && known->size() == 64) return *known;
+  if (!compute) return {};
   const std::string sha = sha256_file(file);
   // A file written moments ago can be written again within the clock's step with the same size: remember it once it is
   // older than that (git's "racy" entries).

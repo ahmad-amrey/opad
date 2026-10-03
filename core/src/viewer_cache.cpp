@@ -39,18 +39,31 @@ std::string extension(const std::filesystem::path& file) {
   return e;
 }
 
-// A file's content hash (remembered per path, size and time, so an unchanged file is hashed once), or empty.
-std::string content_hash(const std::filesystem::path& file) {
+// A file's content hash (remembered per path, size and time, so an unchanged file is hashed once), or empty. `compute`
+// false: only a remembered one.
+std::string content_hash(const std::filesystem::path& file, bool compute = true) {
   try {
-    return file_sha256(file);
+    return file_sha256(file, compute);
   } catch (const std::exception&) {
     return {};
   }
 }
 
-std::filesystem::path entry_for(const std::filesystem::path& file, const ImportOptions& opt) {
+// Whether opening `file` hashes it to look for its entry. Hashing reads the whole file (about 250 MB/s), which is little
+// before a B-rep translation (a few MB/s) or for a small file, but before a big mesh, read about as fast, it nearly doubled
+// a first open (100 MB of STL: 0.6 s, 1.2 s with the hash) for an entry seldom there: such a file is looked up only by the
+// hash its store remembered (this path, size and time); a copy elsewhere is read, then stored and found from then on.
+bool hash_to_load(const std::filesystem::path& file) {
+  const std::string ext = extension(file);
+  if (ext == ".step" || ext == ".stp" || ext == ".iges" || ext == ".igs" || ext == ".kicad_pcb") return true;
+  std::error_code error;
+  const auto size = std::filesystem::file_size(file, error);
+  return !error && size < (std::uintmax_t(16) << 20);
+}
+
+std::filesystem::path entry_for(const std::filesystem::path& file, const ImportOptions& opt, bool compute = true) {
   if (!viewer_cache_applies(file)) return {};
-  const std::string sha = content_hash(file);
+  const std::string sha = content_hash(file, compute);
   if (sha.empty()) return {};
   const std::string identity = "viewer|" + sha + "|" + extension(file) + "|" + version_string() + "|" + (opt.center_drawing ? "c" : "") + "|" +
                                opt.placement.to_json().dump();
@@ -251,7 +264,9 @@ bool viewer_cache_applies(const std::filesystem::path& file) {
   const std::string ext = extension(file);
   return ext != ".dxf" && ext != ".svg" && ext != ".dwg";
 }
-bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) { return load_entry(doc, entry_for(file, opt), opt, true); }
+bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
+  return load_entry(doc, entry_for(file, opt, hash_to_load(file)), opt, true);
+}
 json viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, double read_ms, const std::function<bool()>& cancelled) {
   if (!viewer_cache_applies(file)) return {{"kept", false}, {"reason", "drawing"}};
   return store_entry(doc, entry_for(file, opt), cancelled, std::max(read_ms, 0.0));
