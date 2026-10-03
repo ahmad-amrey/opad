@@ -474,7 +474,8 @@ void MainWindow::buildActions() {
   m_darkAction->setChecked(m_settings.value("ui/dark", true).toBool());
   connect(m_darkAction, &QAction::toggled, this, [this](bool on) { applyTheme(on); refreshIcons(); });
   for (const auto& [name, preset] : std::vector<std::pair<QString, Viewport::NavPreset>>{{"Fusion", Viewport::NavPreset::Fusion}, {"SolidWorks", Viewport::NavPreset::SolidWorks}, {"Onshape", Viewport::NavPreset::Onshape}, {"Blender", Viewport::NavPreset::Blender}}) {
-    QAction* a = addAction("nav." + name.toLower(), tr("Navigation: %1").arg(name), "", QKeySequence(), [this, p = preset, n = name] {
+    // Named after the products whose mouse controls they mimic, never as them (trademarks): "SOLIDWORKS-style".
+    QAction* a = addAction("nav." + name.toLower(), tr("Navigation: %1-style").arg(name == "SolidWorks" ? "SOLIDWORKS" : name), "", QKeySequence(), [this, p = preset, n = name] {
       m_viewport->setNavPreset(p);
       m_settings.setValue("ui/nav", n);
       for (QAction* o : m_actions) if (o->objectName().startsWith("nav.")) o->setChecked(o->objectName() == "nav." + n.toLower());

@@ -38,6 +38,10 @@ bool MainWindow::benchIp() {
     oda->trigger();
     report("ODA off again without asking",!oda->isChecked() && !opad::use_oda() && !m_settings.value("files/useOda",false).toBool());
   }
+  // Presets are named after what they mimic, never as the product (trademarks).
+  QStringList presets;bool styled=true;
+  for(const char* id:{"nav.fusion","nav.solidworks","nav.onshape","nav.blender"}){const QString text=action(id)->text();presets<<text;styled=styled&&text.endsWith("-style");}
+  report("navigation presets: "+presets.join(", "),styled && presets[1]=="Navigation: SOLIDWORKS-style");
   QCoreApplication::exit(all?0:2);
   return true;
 }
