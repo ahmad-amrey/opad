@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QImage>
 #include <QMessageBox>
@@ -82,6 +83,20 @@ bool MainWindow::benchAssets() {
       if (o.type == "import" && o.data.value("source", "") == source) return o.id;
     return std::string();
   };
+  // Waits until `count` bodies are displayed (15 s at most): meshing ran past a fixed 1.5 s when the machine was busy.
+  auto displayed = [this](int count, std::function<void(bool)> then) {
+    auto* timer = new QTimer(this);
+    auto clock = std::make_shared<QElapsedTimer>();
+    clock->start();
+    connect(timer, &QTimer::timeout, this, [this, timer, clock, count, then] {
+      const bool ok = m_viewport->displayedCount() == count;
+      if (!ok && clock->elapsed() < 15000) return;
+      timer->stop();
+      timer->deleteLater();
+      QTimer::singleShot(300, this, [then, ok] { then(ok); });  // the display job's last slice settled
+    });
+    timer->start(100);
+  };
   const std::string part = import_of("part.step"), other = import_of("other.step");
   trace::log(QString("bench: assets: phase %1: part.step %2, other.step %3, %4 bodies displayed")
                  .arg(phase).arg(QString::fromStdString(state("part.step")), QString::fromStdString(state("other.step"))).arg(m_viewport->displayedCount()));
@@ -98,8 +113,8 @@ bool MainWindow::benchAssets() {
       bool missing = true;
       linked(other, missing);
       if (!ok || missing || state("other.step") != "ok") return (void)fail("trusted file not read: " + error);
-      QTimer::singleShot(1500, this, [=, this] {
-        if (m_viewport->displayedCount() != 2) return (void)fail(QString("the trusted file's body is not displayed (%1)").arg(m_viewport->displayedCount()));
+      displayed(2, [=, this](bool shown) {
+        if (!shown) return (void)fail(QString("the trusted file's body is not displayed (%1)").arg(m_viewport->displayedCount()));
         m_doc->save();
         const std::string text = opad::read_text_file(m_doc->doc.path);
         if (text.find("#body ") != std::string::npos || m_doc->isDirty()) return (void)fail("linked bodies were saved into the document");
@@ -164,8 +179,8 @@ bool MainWindow::benchAssets() {
   if (third.empty() || linked(third, missing) != 1 || missing || state("third.step") != "ok") return fail("the linked import");
   for (const auto& id : m_doc->scene.all_bodies())
     if (m_doc->node(id)->source_op == third && !m_doc->doc.body(m_doc->node(id)->body_key)->external) return fail("its body is stored");
-  QTimer::singleShot(1500, this, [=, this] {
-    if (m_viewport->displayedCount() != 3) return (void)fail(QString("the linked import is not displayed (%1)").arg(m_viewport->displayedCount()));
+  displayed(3, [=, this](bool shown) {
+    if (!shown) return (void)fail(QString("the linked import is not displayed (%1)").arg(m_viewport->displayedCount()));
     if (m_doc->doc.serialize().find("#body ") != std::string::npos) return (void)fail("the linked import is stored");
     m_viewport->standardView("iso");
     m_viewport->fitAll();
