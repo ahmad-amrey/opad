@@ -759,12 +759,7 @@ QList<QAction*> SmartSelect::actionsFor(int index, QObject* parent) {
       });
     });
   }
-  if (!c.op.empty()) add("locate", tr("Find %1 in the timeline").arg(name), "smartFind", [this, c] {
-    if (TimelineWidget* t = services().timeline()) {
-      t->setCurrentOp(c.op);
-      t->pulse(c.op);
-    }
-  });
+  if (!c.op.empty()) add("locate", tr("Find %1 in the timeline").arg(name), "smartFind", [this, c] { services().findInTimeline(c.op); });
   const bool faces = !c.refs.empty() && c.refs.front().kind == opad::Ref::Kind::Face;
   if (c.group() && faces) {
     add("removeFaces", tr("Remove %1: the faces around it close the gap").arg(name), "smartRemove", [this, c] {
@@ -859,10 +854,7 @@ void SmartSelect::findOwner() {
   }
   const int o = owner();
   if (o < 0) return services().showMessage(tr("These were made by more than one step of the history: pick fewer to find what made them."), 6000);
-  if (TimelineWidget* t = services().timeline()) {
-    t->setCurrentOp(m_found.candidates[size_t(o)].op);
-    t->pulse(m_found.candidates[size_t(o)].op);
-  }
+  services().findInTimeline(m_found.candidates[size_t(o)].op);
 }
 
 void SmartSelect::documentChanged(bool replaced) {

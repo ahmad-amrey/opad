@@ -67,6 +67,7 @@ class AreaServices {
   BrowserPanel* browser() const;        // row decorations and folders
   PropertiesPanel* properties() const;  // property sections
   TimelineWidget* timeline() const;     // the op markers (setCurrentOp, pulse)
+  void findInTimeline(const std::string& op) const;  // its marker current and pulsing, the timeline shown first if hidden
   void timelineMenu(QMenu& menu, const std::string& op) const;  // a marker's menu (empty op: the timeline's own entries)
   ViewportChips* chips() const;         // the chips row over the viewport (addChip)
   // A widget in the ribbon's tab row (a branch chip): in the cluster after search, before settings; from ribbon on.

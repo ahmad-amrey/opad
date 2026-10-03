@@ -32,6 +32,11 @@ DesignController* AreaServices::design() const { return m_window->m_design; }
 BrowserPanel* AreaServices::browser() const { return m_window->m_browser; }
 PropertiesPanel* AreaServices::properties() const { return m_window->m_props; }
 TimelineWidget* AreaServices::timeline() const { return m_window->m_timeline; }
+void AreaServices::findInTimeline(const std::string& op) const {
+  if (!m_window->m_timelineDock->isVisible()) m_window->m_timelineDock->show();
+  m_window->m_timeline->setCurrentOp(op);
+  m_window->m_timeline->pulse(op);
+}
 void AreaServices::timelineMenu(QMenu& menu, const std::string& op) const { m_window->buildTimelineMenu(menu, op); }
 ViewportChips* AreaServices::chips() const { return m_window->m_chips; }
 QAction* AreaServices::action(const QString& id) const { return m_window->action(id); }

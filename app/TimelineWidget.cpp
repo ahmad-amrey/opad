@@ -215,7 +215,11 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     if (m_current.empty()) return QWidget::keyPressEvent(e);
     QGuiApplication::clipboard()->setText(QString::fromStdString(m_current));
   } else if (e->modifiers() == Qt::ShiftModifier && playheadKey(e->key())) nudgePlayhead(e->key());
-  else if (e->key() == Qt::Key_Left) step(-1);
+  else if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && e->modifiers() == Qt::NoModifier && !m_current.empty() && !m_deleted.count(m_current)) {
+    const opad::Op* op = m_doc->doc.find_op(m_current);  // as a double-click: a feature or a sketch is edited (the chip's Edit key)
+    if (!op || (op->type != "feature" && op->type != "sketch")) return QWidget::keyPressEvent(e);
+    emit opActivated(m_current);
+  } else if (e->key() == Qt::Key_Left) step(-1);
   else if (e->key() == Qt::Key_Right) step(1);
   else if (e->key() == Qt::Key_Home || e->key() == Qt::Key_End) {
     if (!m_shown.empty()) { setCurrentOp(m_doc->doc.ops[e->key() == Qt::Key_Home ? m_shown.front() : m_shown.back()].id); emit opClicked(m_current); }

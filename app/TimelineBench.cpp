@@ -37,7 +37,8 @@
 // playhead dragged to the end rolls forward, dragged before Boss rolls back past it; a change made then is appended and
 // rolls forward, so does a command that edits. The menu on no marker offers the view entries. UI-96 from the timeline:
 // Delete on Boss's marker asks about Round with the result previewed and Remove its faces instead, Delete Boss only leaves
-// Round failing as one step undone from the toast; Round's marker, used by nothing, deletes at once. Shots:
+// Round failing as one step undone from the toast; Round's marker, used by nothing, deletes at once. Boss's marker clicked:
+// the chip's Find in the timeline shows the timeline when it is hidden, Enter on the timeline edits Boss. Shots:
 // <prefix>.hover.png, .names.png, .design.png, .rolledback.png, .menu.png, .question.png.
 OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
   struct State {
@@ -313,6 +314,25 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
           if (!waitFor(w.m_doc->doc.ops.size() > state->ops, "Round, used by nothing, is deleted from its marker")) return;
           require(!area->openMenu() && std::count(w.m_doc->scene.deleted_ops.begin(), w.m_doc->scene.deleted_ops.end(), state->round), "no question, Round tombstoned");
           pass("Round, which nothing uses, is deleted from its marker without a question");
+          click(state->boss);
+          break;
+        }
+        case 17: {
+          const auto& f = area->found();
+          if (!waitFor(f.ready && f.active >= 0 && f.candidates[size_t(f.active)].op == state->boss && area->chip()->isVisible(), "a click on Boss's marker selects its faces")) return;
+          // The chip's Find in the timeline shows a hidden timeline first.
+          w.m_timelineDock->hide();
+          t->setCurrentOp({});
+          for (QToolButton* b : area->chip()->actionButtons())
+            if (b->defaultAction()->objectName() == "smartFind") b->click();
+          require(w.m_timelineDock->isVisibleTo(&w) && t->currentOp() == state->boss && t->pulsing() == state->boss, "the chip's Find in the timeline shows the hidden timeline");
+          pass("the chip's Find in the timeline with the timeline hidden shows it, Boss's marker current and pulsing");
+          QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);  // the chip's Edit key; the marker clicked has the keyboard
+          QApplication::sendEvent(t, &enter);
+          require(w.m_design->featureActive() && w.m_design->editingOp() == state->boss, "Enter on the timeline edits Boss, as the chip's Edit says");
+          w.m_design->escape();
+          require(!w.m_design->featureActive(), "Esc leaves the edit");
+          pass("Enter on the timeline after a click on Boss's marker (the chip's Edit key) opened Boss for editing");
           timer->stop();
           QCoreApplication::exit(0);
           return;
