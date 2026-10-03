@@ -174,25 +174,14 @@ class Components : public AreaController {
       opad::json args{{"name", freeName().toStdString()}};
       if (!parent.empty()) args["parent"] = parent;
       id = doc->run("component", args).value("id", "");
-      reparent(ids, id, parent.empty() ? opad::Mat4{} : scene.world(parent));
+      reparent(ids, id);
     });
     settle(id, false);
   }
 
-  // Under `parent`, placed at `into`, where they are: one reparent, and a transform for what would jump otherwise. Reads
-  // the scene as it was before (inside a batch it is not resolved again).
-  void reparent(const std::vector<std::string>& ids, const std::string& parent, const opad::Mat4& into) {
-    AppDocument* doc = services().document();
-    const opad::Scene& scene = doc->scene;
-    const opad::Mat4 back = into.inverse();
-    std::vector<std::pair<std::string, opad::Mat4>> kept;
-    for (const auto& id : ids)
-      if (const opad::Node* n = scene.node(id)) {
-        const opad::Mat4 local = back * scene.world(id);
-        if (!(local * n->local.inverse()).is_identity(1e-9)) kept.emplace_back(id, local);
-      }
-    doc->run("reparent", opad::json{{"targets", ids}, {"parent", parent.empty() ? opad::json(nullptr) : opad::json(parent)}});
-    for (const auto& [id, local] : kept) doc->run("transform", opad::json{{"target", id}, {"matrix", local.to_json()}});
+  // Under `parent` where they are (keep_place: a transform for what would jump otherwise).
+  void reparent(const std::vector<std::string>& ids, const std::string& parent) {
+    services().document()->run("reparent", opad::json{{"targets", ids}, {"parent", parent.empty() ? opad::json(nullptr) : opad::json(parent)}, {"keep_place", true}});
   }
 
   // Where the selection can go: the root and every component that does not move with it, in tree order.
@@ -232,7 +221,7 @@ class Components : public AreaController {
     AppDocument* doc = services().document();
     if (ids.empty() || (!parent.empty() && !doc->scene.node(parent))) return;  // the document changed under the list
     const QString name = parent.empty() ? tr("the document root") : doc->nodeName(parent);
-    doc->batch(AppDocument::tr("move"), [&] { reparent(ids, parent, parent.empty() ? opad::Mat4{} : doc->scene.world(parent)); });
+    reparent(ids, parent);
     services().showMessage(tr("Moved into %1").arg(name));
   }
 

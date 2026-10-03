@@ -2035,3 +2035,41 @@ TEST(locked_bodies_are_left_alone) {
   feature_cmd(doc, "fillet", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}});
   CHECK(resolve(doc).node(plate)->body_key != plate_key);
 }
+
+// TODO 11 UI-34: reparent with keep_place (the browser's drop, Move to component…, Component from selection) leaves what
+// moves where it is in the world: a transform follows each node whose new parent is placed elsewhere, none for a reorder
+// or a cycle (not replayed); without it a node goes with its new parent's placement.
+TEST(reparent_keeps_place) {
+  Document doc = Document::create();
+  auto box = [&](const char* x) { return feature_cmd(doc, "box", {{"x", x}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "4 mm"}})["body_ids"][0].get<std::string>(); };
+  const std::string a = box("10 mm"), b = box("20 mm"), c = box("30 mm");
+  const std::string frame = commands::run("component", {{"name", "Frame"}}, &doc)["component_id"];
+  const std::string inner = commands::run("component", {{"name", "Inner"}, {"parent", frame}}, &doc)["component_id"];
+  Mat4 turned;  // a quarter turn about Z, raised
+  turned.m = {0, -1, 0, 5, 1, 0, 0, 0, 0, 0, 1, 50, 0, 0, 0, 1};
+  commands::run("transform", {{"target", frame}, {"matrix", turned.to_json()}}, &doc);
+  Scene s = resolve(doc);
+  const Mat4 wa = s.world(a), wb = s.world(b), wc = s.world(c);
+  auto same = [](const Mat4& x, const Mat4& y) { return (x * y.inverse()).is_identity(1e-9); };
+  size_t ops = doc.ops.size();
+  const json moved = commands::run("reparent", {{"targets", json::array({a, b})}, {"parent", inner}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 4);
+  CHECK_EQ(moved.value("transformed", 0), 2);
+  CHECK_EQ(moved["ids"].size(), 2u);
+  s = resolve(doc);
+  CHECK(s.node(a)->parent == inner && s.node(b)->parent == inner);
+  CHECK(same(s.world(a), wa) && same(s.world(b), wb) && !same(s.node(a)->local, wa));
+  ops = doc.ops.size();
+  commands::run("reparent", {{"target", b}, {"parent", inner}, {"index", 0}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 1);
+  CHECK_EQ(resolve(doc).node(inner)->children.front(), b);
+  commands::run("reparent", {{"target", a}, {"parent", nullptr}, {"keep_place", true}}, &doc);
+  s = resolve(doc);
+  CHECK(s.node(a)->parent.empty() && same(s.world(a), wa) && same(s.node(a)->local, wa));
+  ops = doc.ops.size();
+  commands::run("reparent", {{"target", frame}, {"parent", inner}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 1);
+  CHECK(resolve(doc).node(frame)->parent.empty());
+  commands::run("reparent", {{"target", c}, {"parent", inner}}, &doc);
+  CHECK(!same(resolve(doc).world(c), wc));
+}

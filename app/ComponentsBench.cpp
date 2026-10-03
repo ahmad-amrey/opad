@@ -98,7 +98,8 @@ bool samePlace(const opad::Mat4& a, const opad::Mat4& b) {
 // were, opens its rename; on a box of the Housing and a root box it adds a transform for the Housing's box only (both stay
 // put); a locked box makes it refuse and take everything back. Move to component… lists the root (current, not chosen)
 // and every component, narrows to the Lid as "lid" is typed, Enter moves the box (one step); into the Housing it keeps
-// the box where it is; a component's own entry is not offered to itself; nothing matching says so; Esc closes. Opacity:
+// the box where it is; a component's own entry is not offered to itself; nothing matching says so; Esc closes. A box
+// dropped on the Housing in the browser, and back to the root, keeps its place too (a transform in the same step). Opacity:
 // the right-click menu's slider dragged to 40 % shows it live (the document unchanged, no op), let go writes one step
 // for the bodies under the Housing; the Opacity command's popup writes once the keys rest, Esc drops what is pending.
 // The Design menu has Component from selection, Design > Assemble drops it down from New component. <prefix>.rename.png
@@ -331,6 +332,17 @@ OPAD_BENCH(OPAD_BENCH_COMPONENTS, components) {
                     const opad::Node* c = doc->scene.node(s->boxC);
                     require(fresh && c->parent == s->housing && oneStep() && samePlace(doc->scene.world(s->boxC), s->worldC) && !samePlace(c->local, opad::Mat4{}),
                             "into the Housing (30 mm up) it stays where it is: its own placement written in the same step");
+                    // The browser's drop (BrowserTree::dropEvent asks for it): onto the Housing, then back to the root's top.
+                    mark();
+                    emit tree->reparentRequested({s->boxB}, s->housing, -1);
+                    const opad::Node* b = doc->scene.node(s->boxB);
+                    require(b->parent == s->housing && oneStep() && doc->doc.ops.size() == s->ops + 2 && doc->doc.ops.back().type == "transform" && samePlace(doc->scene.world(s->boxB), s->worldB),
+                            "a box dropped on the Housing in the browser stays where it is: a reparent and its placement, one step");
+                    mark();
+                    emit tree->reparentRequested({s->boxB}, std::string(), 0);
+                    b = doc->scene.node(s->boxB);
+                    require(b->parent.empty() && doc->scene.roots.front() == s->boxB && oneStep() && doc->doc.ops.size() == s->ops + 2 && samePlace(doc->scene.world(s->boxB), s->worldB) && b->local.is_identity(1e-9),
+                            "dropped back at the top of the root: in place again, its placement the identity");
                     w.m_browser->selectIds({s->housing});
                     w.action("design.reparent")->trigger();
                     bool self = false;
