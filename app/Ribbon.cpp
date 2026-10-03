@@ -12,6 +12,7 @@
 #include <functional>
 
 #include "Icons.hpp"
+#include "RichTip.hpp"
 #include "Theme.hpp"
 
 // ---------------------------------------------------------------- SegmentButton
@@ -23,6 +24,7 @@ SegmentButton::SegmentButton(QAction* action, const QString& hint, bool primary,
   setAutoRaise(true);
   setFocusPolicy(Qt::NoFocus);
   setFont(theme::ui(12));
+  RichTip::attach(this, action->objectName());  // UI-106: the command's hover card
 }
 
 QSize SegmentButton::sizeHint() const {
@@ -321,6 +323,7 @@ int RibbonBar::addTab(int workspace, const QString& title, const QList<QList<QAc
       b->setAutoRaise(true);
       b->setFocusPolicy(Qt::NoFocus);
       b->setFont(theme::ui(11));
+      RichTip::attach(b, a->objectName());  // UI-106: the command's hover card, disabled buttons included
       row->addWidget(b);
     }
   }
@@ -348,6 +351,7 @@ void RibbonBar::setSelectFilters(const QList<QAction*>& filters, const QStringLi
 void RibbonBar::setSearchAction(QAction* a) {
   auto* field = new SearchField(m_strip);
   connect(field, &QAbstractButton::clicked, a, &QAction::trigger);
+  RichTip::attach(field, a->objectName());
   m_right->addWidget(field);
 }
 
@@ -362,6 +366,7 @@ void RibbonBar::setSettingsMenu(QAction* a, QMenu* menu) {
   b->setFocusPolicy(Qt::NoFocus);
   b->setPopupMode(QToolButton::InstantPopup);
   b->setMenu(menu);
+  RichTip::attach(b, a->objectName());
   m_right->addWidget(b);
 }
 
@@ -373,5 +378,6 @@ void RibbonBar::setSettingsAction(QAction* a) {
   b->setAutoRaise(true);
   b->setFixedSize(28, 28);
   b->setFocusPolicy(Qt::NoFocus);
+  RichTip::attach(b, a->objectName());
   m_right->addWidget(b);
 }

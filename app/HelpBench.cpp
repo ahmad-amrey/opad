@@ -48,14 +48,29 @@ bool MainWindow::benchRichTip() {
     for (auto* b : m_ribbon->findChildren<QToolButton*>()) if (b->defaultAction() == action(id) && b->isVisibleTo(m_ribbon)) return b;
     return nullptr;
   };
-  QToolButton *fit = button("view.fit"), *home = button("view.home"), *unisolate = button("view.unisolate"), *ortho = button("view.ortho");
-  if (!fit || !home || !unisolate || !ortho || unisolate->isEnabled()) {
+  QToolButton *fit = button("view.fit"), *home = button("view.home"), *unisolate = button("view.unisolate");
+  if (!fit || !home || !unisolate || unisolate->isEnabled()) {
     trace::log("bench: richtip: ribbon buttons not found FAIL");
     QCoreApplication::exit(2);
     return true;
   }
-  RichTip::setActionLookup([this](const QString& id) { return action(id); });
-  for (auto* b : {fit, home, unisolate}) RichTip::attach(b, b->defaultAction()->objectName());
+  // Attached as the window was built: every ribbon button (menu buttons too), the selection filters, the settings button
+  // and the status bar's toggles, each to its own command, which has help.
+  QStringList unattached;
+  int attached = 0;
+  for (auto* b : m_ribbon->findChildren<QToolButton*>())
+    if (QStringList{"ribbonTool", "segment", "segmentPrimary", "ribbonSettings"}.contains(b->objectName())) {
+      const QString id = RichTip::attachedId(b);
+      if (id.isEmpty() || !help::find(id) || (b->defaultAction() && b->defaultAction()->objectName() != id)) unattached << (id.isEmpty() ? b->text() : id);
+      else ++attached;
+    }
+  for (const char* id : {"view.extensions", "view.tracking", "view.gridSnap"}) {
+    bool found = false;
+    for (auto* b : statusBar()->findChildren<QToolButton*>()) found = found || (b->defaultAction() == action(id) && RichTip::attachedId(b) == id);
+    if (found) ++attached; else unattached << id;
+  }
+  trace::log(QString("bench: richtip: %1 ribbon and status buttons show their command's card, %2 do not %3 %4").arg(attached).arg(unattached.size()).arg(unattached.join(' ')).arg(unattached.isEmpty() && attached > 60 ? "PASS" : "FAIL"));
+  if (!unattached.isEmpty()) missing << unattached;
   RichTip* tip = RichTip::instance();
   auto move = [](QWidget* w) {
     const QPointF at(w->width() / 2.0, w->height() / 2.0);
@@ -120,9 +135,13 @@ bool MainWindow::benchRichTip() {
     QHelpEvent help(QEvent::ToolTip, QPoint(4, 4), fit->mapToGlobal(QPoint(4, 4)));
     QApplication::sendEvent(fit, &help);
     const bool held = !QToolTip::text().contains(fit->defaultAction()->toolTip());
-    QHelpEvent other(QEvent::ToolTip, QPoint(4, 4), ortho->mapToGlobal(QPoint(4, 4)));
-    QApplication::sendEvent(ortho, &other);
-    check(held && QToolTip::text().contains(ortho->defaultAction()->toolTip()), "Qt's tooltip held back on attached buttons only");
+    auto* plain = new QToolButton(m_ribbon);  // a button that is no command keeps Qt's tooltip
+    plain->setToolTip("Not a command");
+    plain->setGeometry(0, 0, 20, 20);
+    QHelpEvent other(QEvent::ToolTip, QPoint(4, 4), plain->mapToGlobal(QPoint(4, 4)));
+    QApplication::sendEvent(plain, &other);
+    check(held && QToolTip::text().contains("Not a command"), "Qt's tooltip held back on attached buttons only");
+    delete plain;
     QToolTip::hideText();
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) { auto* w = new QLabel(clip, parent); w->setAlignment(Qt::AlignCenter); return w; });
     tip->showFor(fit, State::Expanded);

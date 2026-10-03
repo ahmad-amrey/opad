@@ -6,6 +6,7 @@
 #include "RecoveryManager.hpp"
 #include "AgentBridge.hpp"
 #include "HelpClip.hpp"
+#include "CommandHelp.hpp"
 #include "RichTip.hpp"
 
 #include <QToolButton>
@@ -85,6 +86,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildStatusBar();
   buildDesign();
   RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);  // UI-107
+  // UI-106: hover cards on the ribbon (attached as Ribbon builds it) and on the status bar's toggles.
+  RichTip::setActionLookup([this](const QString& id) { return action(id); });
+  for (auto* b : statusBar()->findChildren<QToolButton*>())
+    if (b->defaultAction() && help::find(b->defaultAction()->objectName())) RichTip::attach(b, b->defaultAction()->objectName());
   m_recovery=new RecoveryManager(m_doc,m_design,m_jobs,this);
   m_agent=new AgentBridge(m_doc,m_design,m_viewport,m_jobs,this);
   m_agent->bench();

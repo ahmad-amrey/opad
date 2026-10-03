@@ -26,6 +26,7 @@ class RichTip : public QWidget {
   // Works on disabled widgets too: the filter is application-wide.
   static void attach(QWidget* w, const QString& commandId);
   static void detach(QWidget* w);
+  static QString attachedId(const QWidget* w);  // the command id `w` shows the card of (empty: none)
   static RichTip* instance();
   // The QAction of a command id (MainWindow::action): its icon, live shortcut and enabled state. A QToolButton's
   // default action is used without it.

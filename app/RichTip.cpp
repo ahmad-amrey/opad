@@ -86,6 +86,8 @@ void RichTip::detach(QWidget* w) {
   if (g_tip->m_target == w) g_tip->hideTip();
 }
 
+QString RichTip::attachedId(const QWidget* w) { return g_tip ? g_tip->m_attached.value(const_cast<QWidget*>(w)) : QString(); }
+
 void RichTip::setActionLookup(std::function<QAction*(const QString&)> lookup) { g_lookup = std::move(lookup); }
 void RichTip::setClipFactory(ClipFactory factory, std::function<bool(const QString&)> has) {
   g_clips = std::move(factory);
