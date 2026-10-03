@@ -4,6 +4,8 @@
 #include <QAction>
 #include <QApplication>
 #include <QLabel>
+#include <QTest>
+#include <QToolButton>
 
 #include <algorithm>
 #include <utility>
@@ -11,6 +13,7 @@
 #include "Commands.hpp"
 #include "PanelFooter.hpp"
 #include "Theme.hpp"
+#include "Toast.hpp"
 #include "check.hpp"
 
 TEST(command_registry) {
@@ -144,6 +147,67 @@ TEST(panel_footer) {
     CHECK(footer->primary()->focusPolicy() != Qt::NoFocus);
     footer->setKeysStayWithWindow(true);
     CHECK(footer->primary()->focusPolicy() == Qt::NoFocus && footer->cancel()->focusPolicy() == Qt::NoFocus && copy->focusPolicy() != Qt::NoFocus);
+  }
+}
+
+TEST(toasts) {
+  for (const Qt::LayoutDirection direction : {Qt::LeftToRight, Qt::RightToLeft}) {
+    QWidget host;
+    host.setLayoutDirection(direction);
+    host.resize(900, 600);
+    host.show();
+    QTest::mouseMove(&host, QPoint(2, 2));  // the pointer on a toast would hold its timer
+    ToastStack stack(&host);
+    int undone = 0;
+    Toast* saved = stack.toast("Saved", QString(), {}, 150);
+    Toast* deleted = stack.toast("3 bodies deleted", "Undo", [&undone] { ++undone; }, 0);
+    Toast* warned = stack.toast("A reference was re-picked by its nearest match after its body changed; check the fillet", QString(), {}, 0);
+    QApplication::processEvents();
+    // Native children of the host, not windows; centred at the bottom, the newest lowest, apart.
+    CHECK(stack.toasts() == QList<Toast*>({saved, deleted, warned}));
+    for (Toast* t : stack.toasts()) {
+      CHECK(t->parentWidget() == &host && !t->isWindow() && t->testAttribute(Qt::WA_NativeWindow) && t->focusPolicy() == Qt::NoFocus);
+      CHECK(std::abs(t->geometry().center().x() - host.width() / 2) <= 1 && t->width() <= ToastStack::kMaxWidth && !t->mask().isEmpty());
+    }
+    CHECK(warned->geometry().bottom() == host.height() - ToastStack::kMargin - 1);
+    CHECK(deleted->geometry().bottom() + 1 + ToastStack::kGap == warned->y() && saved->geometry().bottom() + 1 + ToastStack::kGap == deleted->y());
+    CHECK(warned->height() > deleted->height() || warned->width() == ToastStack::kMaxWidth);  // long text wraps at the widest
+    CHECK(!saved->actionButton() && deleted->actionButton() && deleted->actionButton()->text() == "Undo");
+    // Mirrored: the action and the close button on the side the text ends.
+    QLabel* text = deleted->findChild<QLabel*>("toastText");
+    const bool ltr = direction == Qt::LeftToRight;
+    CHECK(ltr ? deleted->actionButton()->x() > text->x() && deleted->closeButton()->x() > deleted->actionButton()->x()
+              : deleted->actionButton()->x() < text->x() && deleted->closeButton()->x() < deleted->actionButton()->x());
+    // Gone by itself after its time; the others close the gap.
+    QTest::qWait(400);
+    CHECK(stack.toasts() == QList<Toast*>({deleted, warned}) && warned->geometry().bottom() == host.height() - ToastStack::kMargin - 1);
+    // The pointer on a toast holds its timer; off it, the toast stays a moment longer to be read again.
+    Toast* held = stack.toast("Held", QString(), {}, 150);
+    QApplication::processEvents();
+    QTest::mouseMove(held, held->rect().center());
+    QTest::qWait(300);
+    CHECK(stack.toasts().contains(held));
+    QTest::mouseMove(&host, QPoint(2, 2));
+    QTest::qWait(300);
+    CHECK(stack.toasts().contains(held));
+    held->dismiss();
+    // The action runs its callback once and takes the toast away.
+    deleted->actionButton()->click();
+    QApplication::processEvents();
+    CHECK(undone == 1 && stack.toasts() == QList<Toast*>{warned});
+    // At most kMax: the oldest goes first.
+    for (int i = 0; i < 4; ++i) stack.toast(QString("Toast %1").arg(i), QString(), {}, 0);
+    QApplication::processEvents();
+    CHECK(stack.toasts().size() == ToastStack::kMax && stack.toasts().front()->text() == "Toast 1" && stack.toasts().back()->text() == "Toast 3");
+    stack.toasts().back()->closeButton()->click();
+    CHECK(stack.toasts().size() == 2);
+    // A host resize keeps them at the bottom centre.
+    host.resize(700, 500);
+    QApplication::processEvents();
+    CHECK(stack.toasts().back()->geometry().bottom() == 500 - ToastStack::kMargin - 1 && std::abs(stack.toasts().back()->geometry().center().x() - 350) <= 1);
+    stack.clear();
+    QApplication::processEvents();
+    CHECK(stack.toasts().isEmpty());
   }
 }
 

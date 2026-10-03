@@ -199,6 +199,12 @@ QString stylesheet(const Tokens& t) {
                "QLabel#chip { background: %3; border: 1px solid %4; border-radius: 3px; padding: 2px 6px; font-size: 11px; color: %5; }\n"
                "QLabel#chipSel { background: %3; border: 1px solid %6; border-radius: 3px; padding: 2px 6px; font-size: 11px; color: %6; }\n"
                "QLabel#badge { background: %7; border-radius: 8px; padding: 1px 5px; font-size: 11px; font-family: '%8'; }\n").arg(fg2, fg3, bg2, line, fg, sel, bg4, monoF);
+  // Toasts (Toast.hpp) over the viewport: bg3 card, the action in the accent.
+  s += QString("QFrame#toast { background: %1; border: 1px solid %2; border-radius: 4px; }\n"
+               "QFrame#toast QLabel#toastText { background: transparent; color: %3; font-size: 12px; }\n"
+               "QToolButton#toastAction { background: transparent; border: none; border-radius: 3px; padding: 2px 8px; color: %4; font-weight: 500; font-size: 12px; }\n"
+               "QToolButton#toastAction:hover, QToolButton#toastClose:hover { background: %5; }\n"
+               "QToolButton#toastClose { background: transparent; border: none; border-radius: 3px; padding: 0; }\n").arg(bg3, line, fg, css(t.dark ? t.sel.lighter(130) : t.sel), bg4);
   s += QString("QToolButton#vpButton { background: %1; border: 1px solid %2; border-radius: 4px; padding: 0; }\n"
                "QToolButton#vpButton:hover { background: %3; }\n").arg(bg2, line, bg3);
   // The button in the viewport's chip row (viewer mode: Save to edit).

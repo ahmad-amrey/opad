@@ -13,4 +13,7 @@ CASES = [
     # The panel footer in the feature panel and the guided tools' panel, left to right and mirrored.
     ("footer", "box", {"OPAD_BENCH_FOOTER": "1", "OPAD_BENCH_UISHOT": "{prefix}"}),
     ("footer-rtl", "box", {"OPAD_BENCH_FOOTER": "1", "OPAD_BENCH_UISHOT": "{prefix}", "OPAD_LANG": "ar"}),
+    # Toasts over the viewport: stacking, an Undo action on a real edit, timing, theme, mirroring.
+    ("toast", "box", {"OPAD_BENCH_TOAST": "{prefix}"}),
+    ("toast-rtl", "box", {"OPAD_BENCH_TOAST": "{prefix}", "OPAD_LANG": "ar"}),
 ]

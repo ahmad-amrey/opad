@@ -158,6 +158,7 @@ void MainWindow::buildCentral() {
   m_prompt = new PromptBar(m_viewport);
   m_prompt->setAttribute(Qt::WA_NativeWindow);
   m_prompt->hide();
+  m_toasts = new ToastStack(m_viewport);
   m_loadShade = new LoadShade(this);
   m_loadShade->hide();
   // Home button with its shortcut hint, floating at the top-left of the view cube (design: navigation cube).
@@ -263,6 +264,7 @@ void MainWindow::positionOverlays() {
     m_prompt->move(std::max(8, (m_viewport->width() - m_prompt->width()) / 2), 44);
     m_prompt->raise();
   }
+  m_toasts->place();
   const QRect vp(m_viewport->mapToGlobal(QPoint(0, 0)), m_viewport->size());
   for (ToolPanel* p : m_panels)
     if (p->isVisible()) p->anchorTo(vp);  // the panels follow the viewport's top-right corner

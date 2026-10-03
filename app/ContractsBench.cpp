@@ -2,6 +2,9 @@
 // collapse, the panel footer and toasts. Cases in tools/bench_cases/core.py; the offscreen side is tests/test_ui_contracts.
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QGuiApplication>
+#include <QLabel>
+#include <QToolButton>
 #include <QMenu>
 #include <QTimer>
 
@@ -157,6 +160,77 @@ OPAD_BENCH(OPAD_BENCH_FOOTER, footer) {
         });
       });
     });
+  });
+  return true;
+}
+
+// OPAD_BENCH_TOAST=<prefix> [OPAD_LANG=ar] on an editable document: toasts are native children of the viewport at its
+// bottom centre, the newest lowest; an Undo action undoes a real edit and takes its toast away; a timed one goes by
+// itself and the rest close the gap; a theme switch restyles the ones showing; mirrored in a right-to-left UI.
+// <prefix>.toast.png and <prefix>.toast-light.png show the stack.
+OPAD_BENCH(OPAD_BENCH_TOAST, toast) {
+  auto require = std::make_shared<Checks>(Checks{"toast"});
+  const std::string body = w.m_doc->scene.all_bodies().empty() ? std::string() : w.m_doc->scene.all_bodies().front();
+  const size_t ops = w.m_doc->doc.ops.size();
+  w.m_doc->run("rename", opad::json{{"target", body}, {"name", "Bench body"}});
+  ToastStack* stack = w.m_toasts;
+  stack->clear();
+  Toast* saved = stack->toast("Saved to box.opad", QString(), {}, 4000);  // outlives the theme switches below
+  Toast* renamed = stack->toast("Renamed the body to Bench body", QObject::tr("Undo"), [&w] { w.m_doc->undo(); }, 0);
+  Toast* warned = stack->toast("A reference was re-picked by its nearest match after its body changed; check the fillet before you go on", QString(), {}, 0);
+  const QRect vp = w.m_viewport->rect();
+  bool native = true, centred = true;
+  for (Toast* t : stack->toasts()) {
+    native = native && t->parentWidget() == w.m_viewport && !t->isWindow() && t->testAttribute(Qt::WA_NativeWindow) && t->isVisible();
+    centred = centred && std::abs(t->geometry().center().x() - vp.center().x()) <= 1 && t->width() <= ToastStack::kMaxWidth;
+  }
+  (*require)(stack->toasts() == QList<Toast*>({saved, renamed, warned}) && native, "three toasts, native children of the viewport");
+  (*require)(centred && warned->geometry().bottom() == vp.bottom() - ToastStack::kMargin && renamed->geometry().bottom() + 1 + ToastStack::kGap == warned->y() &&
+                 saved->geometry().bottom() + 1 + ToastStack::kGap == renamed->y(),
+             "bottom centre of the viewport, the newest lowest, 8 px apart");
+  QLabel* text = renamed->findChild<QLabel*>("toastText");
+  const bool rtl = renamed->layoutDirection() == Qt::RightToLeft;
+  (*require)(rtl == (QGuiApplication::layoutDirection() == Qt::RightToLeft) && (rtl ? renamed->actionButton()->x() < text->x() : renamed->actionButton()->x() > text->x()),
+             QString("the action where the text ends (%1)").arg(rtl ? "rtl" : "ltr"));
+  auto shot = [&w, stack](const QString& file) {
+    QRect area;
+    for (Toast* t : stack->toasts()) area |= t->geometry();
+    area.adjust(-24, -24, 24, 24);
+    return w.grab(QRect(w.m_viewport->mapTo(&w, area.topLeft()), area.size())).save(file);
+  };
+  const QString prefix = value;
+  (*require)(shot(prefix + ".toast.png"), "screenshot " + prefix + ".toast.png");
+  // A theme switch restyles the toasts showing: their background is the new bg3.
+  const bool dark = theme::current().dark;
+  auto background = [](Toast* t) { return t->grab().toImage().pixelColor(t->width() / 2, 3); };
+  auto similar = [](const QColor& a, const QColor& b) { return std::abs(a.red() - b.red()) + std::abs(a.green() - b.green()) + std::abs(a.blue() - b.blue()) <= 9; };
+  const QColor before = background(warned);
+  w.applyTheme(!dark);
+  QCoreApplication::processEvents();
+  const QColor after = background(warned);
+  (*require)(similar(before, theme::tokens(dark).bg3) && similar(after, theme::tokens(!dark).bg3),
+             QString("theme-aware: bg3 %1 -> %2").arg(before.name(), after.name()));
+  shot(prefix + ".toast-light.png");
+  w.applyTheme(dark);
+  renamed->actionButton()->click();  // Undo
+  QCoreApplication::processEvents();
+  (*require)(w.m_doc->doc.ops.size() == ops && w.m_doc->nodeName(body) != "Bench body" && stack->toasts() == QList<Toast*>({saved, warned}) &&
+                 warned->geometry().bottom() == w.m_viewport->rect().bottom() - ToastStack::kMargin,
+             QString("Undo undid the rename (%1 ops, was %2; name %3) and took its toast away (%4 left)").arg(w.m_doc->doc.ops.size()).arg(ops).arg(w.m_doc->nodeName(body)).arg(stack->toasts().size()));
+  waitFor(&w, [stack, saved] { return !stack->toasts().contains(saved); }, 8000, [&w, require, stack, warned](bool gone) {
+    const QRect vp = w.m_viewport->rect();
+    (*require)(gone && stack->toasts() == QList<Toast*>{warned} && warned->geometry().bottom() == vp.bottom() - ToastStack::kMargin,
+               QString("a timed toast goes by itself (%1 left)").arg(stack->toasts().size()));
+    for (int i = 0; i < 4; ++i) stack->toast(QString("Toast %1").arg(i), QString(), {}, 0);
+    (*require)(stack->toasts().size() == ToastStack::kMax && stack->toasts().front()->text() == "Toast 1", "at most three, the oldest goes first");
+    w.resize(w.width() - 120, w.height() - 80);  // the viewport shrinks: they stay at its bottom centre
+    QCoreApplication::processEvents();
+    const QRect now = w.m_viewport->rect();
+    Toast* last = stack->toasts().back();
+    (*require)(now != vp && last->geometry().bottom() == now.bottom() - ToastStack::kMargin && std::abs(last->geometry().center().x() - now.center().x()) <= 1,
+               "a resized viewport keeps them at its bottom centre");
+    stack->clear();
+    QCoreApplication::exit(require->all ? 0 : 2);
   });
   return true;
 }

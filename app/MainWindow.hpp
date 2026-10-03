@@ -19,6 +19,7 @@
 #include "Notes.hpp"
 #include "Panels.hpp"
 #include "Ribbon.hpp"
+#include "Toast.hpp"
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
@@ -184,6 +185,7 @@ class MainWindow : public QMainWindow {
   EmptyState* m_empty = nullptr;
   Viewport* m_viewport = nullptr;
   ViewportChips* m_chips = nullptr;
+  ToastStack* m_toasts = nullptr;  // results and warnings at the bottom centre of the viewport (Toast.hpp)
   QWidget* m_homeBtn = nullptr;  // floating Home button above the view cube
   QToolButton* m_rollLeft = nullptr;   // 90 degree turns about the view axis, either side of the cube
   QToolButton* m_rollRight = nullptr;
