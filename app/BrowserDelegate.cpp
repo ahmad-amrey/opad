@@ -36,6 +36,8 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   QRect r = opt.rect;
   const int fullW = opt.widget ? opt.widget->width() : r.right();
   QRect full(0, r.top(), fullW, r.height());
+  const int dy = (r.height() - 28) / 2;  // the icons stay 16 px, centred in a row the text size made taller
+  const bool onHighlight = t.highContrast && (opt.state & QStyle::State_Selected);  // high contrast: an opaque highlight
   if (opt.state & QStyle::State_Selected) {
     p->fillRect(full, t.selbg);  // design: one translucent tint across the whole row, indent included
   } else if (opt.state & QStyle::State_MouseOver) {
@@ -57,29 +59,30 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     const bool off = editing?!index.data(Qt::UserRole+9).toBool():sk && !sk->visible;
     const bool grey = off || d.dim;
     const qreal ratio = p->device()->devicePixelRatioF();
-    if (sk || editing) p->drawPixmap(r.left() + kEyeX, r.top() + 6, icons::pixmap(off ? "hide" : "eye", grey ? t.fg3 : t.fg2, 16, ratio));
+    const QColor dim = onHighlight ? t.onsel : t.fg3, quiet = onHighlight ? t.onsel : t.fg2;
+    if (sk || editing) p->drawPixmap(r.left() + kEyeX, r.top() + 6 + dy, icons::pixmap(off ? "hide" : "eye", grey ? dim : quiet, 16, ratio));
     paintLead(p, d, r);
     const QString own = index.data(browser::kIconRole).toString();  // a provided folder's or row's
     const QString icon = !d.typeIcon.isEmpty() ? d.typeIcon : sk ? QString("sketch") : !own.isEmpty() ? own : QString("open");
-    p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(icon, sk && !sk->error.empty() ? t.red : grey ? t.fg3 : t.fg2, 16, ratio));
+    p->drawPixmap(r.left() + kTypeX, r.top() + 6 + dy, icons::pixmap(icon, sk && !sk->error.empty() ? t.red : grey ? dim : quiet, 16, ratio));
     p->setFont(theme::ui(13));
-    p->setPen(grey ? t.fg3 : rowKind == "folder" ? t.fg2 : t.fg);
+    p->setPen(onHighlight ? t.onsel : grey ? t.fg3 : rowKind == "folder" ? t.fg2 : t.fg);
     drawName(index.data(kNameRole).toString(), r.right() - 6);
     p->restore();
     return;
   }
   if (!n && !isDoc) { p->restore(); return; }
   bool hidden = n && !n->visible;
-  QColor text = hidden || d.dim ? t.fg3 : t.fg;
-  QColor iconColor = hidden || d.dim ? t.fg3 : t.fg2;
+  QColor text = onHighlight ? t.onsel : hidden || d.dim ? t.fg3 : t.fg;
+  QColor iconColor = onHighlight ? t.onsel : hidden || d.dim ? t.fg3 : t.fg2;
   const qreal dpr = p->device()->devicePixelRatioF();
-  int y = r.top() + 6;
+  int y = r.top() + 6 + dy;
   p->drawPixmap(r.left() + kEyeX, y, icons::pixmap(hidden ? "hide" : "eye", iconColor, 16, dpr));
   const bool isBody = n && n->kind == opad::Node::Kind::Body;
   if (!d.lead.icon.isEmpty()) {
     paintLead(p, d, r);
   } else {
-    QRectF sw(r.left() + kSwatchX, r.top() + 9, 10, 10);
+    QRectF sw(r.left() + kSwatchX, r.top() + 9 + dy, 10, 10);
     p->setPen(QPen(t.line, 1));
     if (isBody) p->setBrush(n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : (hidden ? t.fg3 : t.fg2));
     else p->setBrush(t.bg);  // components and the document: hollow square
@@ -124,7 +127,8 @@ int BrowserDelegate::builtinBadges(QPainter* p, const QRect& r, const opad::Node
       QString badge = QString::fromUtf8("×%1").arg(it->second);
       QFontMetrics mm(theme::mono(11));
       int w = mm.horizontalAdvance(badge) + 10;
-      QRect br(right - w, r.top() + 6, w, 16);
+      const int h = std::max(16, mm.height() + 2);
+      QRect br(right - w, r.center().y() + 1 - h / 2, w, h);
       if (p) {
         p->setPen(Qt::NoPen);
         p->setBrush(t.bg4);
@@ -137,7 +141,7 @@ int BrowserDelegate::builtinBadges(QPainter* p, const QRect& r, const opad::Node
     }
   }
   if (n->locked) {
-    if (p) p->drawPixmap(right - 12, r.top() + 8, icons::pixmap("lock", t.fg2, 12, dpr));
+    if (p) p->drawPixmap(right - 12, r.center().y() - 5, icons::pixmap("lock", t.highContrast && text == t.onsel ? t.onsel : t.fg2, 12, dpr));
     right -= 18;
   }
   if (n->body_missing) {
@@ -149,7 +153,7 @@ int BrowserDelegate::builtinBadges(QPainter* p, const QRect& r, const opad::Node
       p->drawText(QRect(right - w, r.top(), w, r.height()), Qt::AlignVCenter, msg);
     }
     right -= w + 4;
-    if (p) p->drawPixmap(right - 14, r.top() + 7, icons::pixmap("warning", t.red, 14, dpr));
+    if (p) p->drawPixmap(right - 14, r.center().y() - 6, icons::pixmap("warning", t.red, 14, dpr));
     right -= 18;
   }
   return right;
@@ -160,11 +164,12 @@ int BrowserDelegate::builtinBadges(QPainter* p, const QRect& r, const opad::Node
 std::vector<QRect> BrowserDelegate::badgeRects(const browser::Decoration& d, const QRect& r, int right) const {
   std::vector<QRect> out;
   const QFontMetrics fm(theme::ui(11));
+  const int h = std::max(16, fm.height() + 2);
   for (const browser::Badge& b : d.badges) {
     const int text = b.text.isEmpty() ? 0 : fm.horizontalAdvance(b.text);
     const int w = (b.icon.isEmpty() ? 0 : 12) + (!b.icon.isEmpty() && text ? 3 : 0) + text + (b.fill ? 10 : 0);
     if (right - w < r.left() + kNameX + 24) break;
-    out.push_back(QRect(right - w, r.top() + 6, w, 16));
+    out.push_back(QRect(right - w, r.center().y() + 1 - h / 2, w, h));
     right -= w + 6;
   }
   return out;
@@ -184,7 +189,7 @@ void BrowserDelegate::paintBadges(QPainter* p, const browser::Decoration& d, con
     }
     const bool rtl = b.text.isRightToLeft();  // the row is painted left to right: an Arabic label reads from its icon leftwards
     if (!b.icon.isEmpty()) {
-      p->drawPixmap(rtl ? br.right() - 11 : br.left(), br.top() + 2, icons::pixmap(b.icon, t.*b.color, 12, dpr));
+      p->drawPixmap(rtl ? br.right() - 11 : br.left(), br.center().y() - 5, icons::pixmap(b.icon, t.*b.color, 12, dpr));
       if (rtl) br.setRight(br.right() - 15);
       else br.setLeft(br.left() + 15);
     }

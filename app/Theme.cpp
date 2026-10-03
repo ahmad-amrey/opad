@@ -2,18 +2,30 @@
 
 #include "Icons.hpp"
 
+#include <QAccessibilityHints>
 #include <QApplication>
 #include <QFontDatabase>
 #include <QPalette>
+#include <QRegularExpression>
+#include <QSettings>
 #include <QStyleFactory>
+#include <QStyleHints>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace {
 Tokens g_tokens = theme::tokens(true);
 QString g_uiFamily, g_monoFamily;
+double g_scale = 1.0;  // the text size apply() read
 
 QString pick(const QStringList& wanted, const QString& fallback) {
   for (const QString& f : wanted)
@@ -61,23 +73,84 @@ Tokens tokens(bool dark) {
 
 const Tokens& current() { return g_tokens; }
 
+bool systemHighContrast() {
+#ifdef Q_OS_WIN
+  HIGHCONTRASTW hc{};
+  hc.cbSize = sizeof(hc);
+  if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0)) return (hc.dwFlags & HCF_HIGHCONTRASTON) != 0;
+#endif
+  return QGuiApplication::styleHints()->accessibility()->contrastPreference() == Qt::ContrastPreference::HighContrast;
+}
+
+bool highContrast() {
+  const int setting = QSettings().value("ui/contrast", 0).toInt();
+  return setting == 1 || (setting == 0 && systemHighContrast());
+}
+
+Tokens highContrastTokens() {
+  QColor window("#000000"), text("#ffffff"), highlight("#1aebff"), onHighlight("#000000"), grey("#3ff23f"), link("#ffff00");
+#ifdef Q_OS_WIN
+  if (systemHighContrast()) {  // the user's own high-contrast theme (Night sky, Desert, ...)
+    auto sys = [](int index) { const DWORD c = GetSysColor(index); return QColor(GetRValue(c), GetGValue(c), GetBValue(c)); };
+    window = sys(COLOR_WINDOW), text = sys(COLOR_WINDOWTEXT), highlight = sys(COLOR_HIGHLIGHT), onHighlight = sys(COLOR_HIGHLIGHTTEXT);
+    grey = sys(COLOR_GRAYTEXT), link = sys(COLOR_HOTLIGHT);
+  }
+#endif
+  const bool dark = window.lightnessF() < 0.5;
+  Tokens t = tokens(dark);  // the view cube, the ghost and the diff hues as in the plain theme of that lightness
+  t.highContrast = true;
+  auto mix = [](const QColor& a, const QColor& b, double k) {
+    return QColor::fromRgbF(float(a.redF() + (b.redF() - a.redF()) * k), float(a.greenF() + (b.greenF() - a.greenF()) * k), float(a.blueF() + (b.blueF() - a.blueF()) * k));
+  };
+  // One background; hovered and raised parts a step towards the text so they still show; every line in the text colour.
+  t.bg = t.bg2 = t.vp = window;
+  t.bg3 = mix(window, text, 0.16);
+  t.bg4 = mix(window, text, 0.28);
+  t.line = t.fg2 = t.fg = text;
+  t.fg3 = grey;
+  t.sel = t.selected3d = highlight;
+  t.selbg = highlight;  // opaque: what is selected reads in onsel
+  t.onsel = onHighlight;
+  t.hov = link;
+  t.hover = dark ? QColor("#ffffff") : highlight;
+  t.amber = t.candidate = t.warning = dark ? QColor("#ffff00") : QColor("#8a4b00");
+  t.green = dark ? QColor("#3ff23f") : QColor("#006400");
+  t.red = t.error = dark ? QColor("#ff6b6b") : QColor("#b00000");
+  return t;
+}
+
+double systemTextScale() {
+#ifdef Q_OS_WIN
+  const int percent = QSettings(R"(HKEY_CURRENT_USER\SOFTWARE\Microsoft\Accessibility)", QSettings::NativeFormat).value("TextScaleFactor", 100).toInt();
+  return std::clamp(percent, 100, 225) / 100.0;
+#else
+  return 1.0;
+#endif
+}
+
+double textScale() { return g_scale; }
+
+int px(int base) { return int(std::lround(base * g_scale)); }
+
+void refresh() { emit notifier()->refreshRequested(); }
+
 QString css(const QColor& c) {
   if (c.alpha() == 255) return c.name();
   return QString("rgba(%1,%2,%3,%4)").arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.alphaF(), 0, 'f', 2);
 }
 
-QFont ui(int px, int weight) {
+QFont ui(int size, int weight) {
   if (g_uiFamily.isEmpty()) g_uiFamily = pick({"IBM Plex Sans", "Segoe UI", "Inter", "Helvetica Neue", "DejaVu Sans"}, QApplication::font().family());
   QFont f(g_uiFamily);
-  f.setPixelSize(px);
+  f.setPixelSize(px(size));
   f.setWeight(static_cast<QFont::Weight>(weight));
   return f;
 }
 
-QFont mono(int px) {
+QFont mono(int size) {
   if (g_monoFamily.isEmpty()) g_monoFamily = pick({"JetBrains Mono", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Menlo", "Liberation Mono"}, "monospace");
   QFont f(g_monoFamily);
-  f.setPixelSize(px);
+  f.setPixelSize(px(size));
   return f;
 }
 
@@ -266,7 +339,37 @@ QString stylesheet(const Tokens& t) {
                "QLineEdit#paletteInput { height: 40px; min-height: 38px; font-size: 14px; border: none; border-bottom: 1px solid %2; border-radius: 0; background: %1; }\n"
                "QListWidget#paletteList::item { height: 28px; padding-left: 4px; }\n").arg(bg3, line);
   s += QString("QLabel#keycap { background: %1; border: 1px solid %2; border-radius: 3px; padding: 0 4px; font-family: '%3'; font-size: 11px; color: %4; }\n").arg(bg4, line, monoF, fg2);
-  return s;
+  if (t.highContrast)  // what is selected sits on the opaque highlight
+    s += QString("QTreeWidget::item:selected, QListWidget::item:selected, QTreeWidget#browserTree::item:selected { color: %1; }\n").arg(onsel);
+  return scaledSheet(s, textScale());
+}
+
+// The text size: every font size, and the heights of the boxes that hold text (not of check marks, sliders, scroll bars,
+// arrows or lines), times the scale.
+QString scaledSheet(const QString& sheet, double scale) {
+  if (std::abs(scale - 1) < 0.01) return sheet;
+  static const QRegularExpression rule(R"(([^{}]*)\{([^{}]*)\})"), size(R"(\b(font-size|(?:min-|max-)?height):\s*(\d+)px)");
+  static const QStringList fixed{"indicator", "QSlider", "separator", "handle", "branch", "arrow", "-button", "QScrollBar", "drop-down", "ribbonSep"};
+  QString out;
+  qsizetype at = 0;
+  for (auto it = rule.globalMatch(sheet); it.hasNext();) {
+    const QRegularExpressionMatch m = it.next();
+    out += sheet.mid(at, m.capturedStart() - at);
+    at = m.capturedEnd();
+    const QString selector = m.captured(1);
+    const bool boxes = std::none_of(fixed.begin(), fixed.end(), [&](const QString& f) { return selector.contains(f); });
+    QString body = m.captured(2), scaled;
+    qsizetype from = 0;
+    for (auto p = size.globalMatch(body); p.hasNext();) {
+      const QRegularExpressionMatch v = p.next();
+      const int n = v.captured(2).toInt();
+      const bool grow = v.captured(1) == "font-size" || (boxes && n > 2);
+      scaled += body.mid(from, v.capturedStart() - from) + (grow ? QString("%1: %2px").arg(v.captured(1)).arg(std::lround(n * scale)) : v.captured(0));
+      from = v.capturedEnd();
+    }
+    out += selector + "{" + scaled + body.mid(from) + "}";
+  }
+  return out + sheet.mid(at);
 }
 
 const QList<Cue>& cues() {
@@ -314,13 +417,21 @@ QColor simulate(const QColor& c, Vision v) {
   return QColor::fromRgbF(float(out[0]), float(out[1]), float(out[2]), c.alphaF());
 }
 
+double contrast(const QColor& a, const QColor& b) {
+  auto luminance = [](const QColor& c) { return 0.2126 * linear(c.redF()) + 0.7152 * linear(c.greenF()) + 0.0722 * linear(c.blueF()); };
+  const double x = luminance(a), y = luminance(b);
+  return (std::max(x, y) + 0.05) / (std::min(x, y) + 0.05);
+}
+
 double deltaE(const QColor& a, const QColor& b) {
   const auto x = lab(a), y = lab(b);
   return std::hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 }
 
 void apply(bool dark) {
-  g_tokens = tokens(dark);
+  const int percent = QSettings().value("ui/textScale", 0).toInt();
+  g_scale = percent > 0 ? std::clamp(percent, 100, 225) / 100.0 : systemTextScale();
+  g_tokens = highContrast() ? highContrastTokens() : tokens(dark);
   const Tokens& t = g_tokens;
   qApp->setStyle(QStyleFactory::create("Fusion"));
   QPalette p;

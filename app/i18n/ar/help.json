@@ -780,5 +780,13 @@
  "unresolved": "غير محلولة",
  "suppressed": "مكبوتة",
  "failed": "فشلت",
- "a reference was re-picked": "أعيد اختيار مرجع"
+ "a reference was re-picked": "أعيد اختيار مرجع",
+ "Contrast and text size": "التباين وحجم النص",
+ "High contrast": "تباين عالٍ",
+ "As the system (on)": "كما في النظام (مفعّل)",
+ "As the system (off)": "كما في النظام (متوقف)",
+ "On": "تشغيل",
+ "As the system (%1 %)": "كما في النظام (%1 %)",
+ "Text size": "حجم النص",
+ "High contrast takes the system's high-contrast colours. A larger text size makes the window's text, menus, the browser's rows, the timeline and the ribbon's tabs larger.": "التباين العالي يأخذ ألوان التباين العالي من النظام. حجم النص الأكبر يكبّر نص النافذة والقوائم وصفوف المستعرض والخط الزمني وألسنة الشريط."
 }

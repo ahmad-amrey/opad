@@ -14,8 +14,8 @@ class TimelineWidget : public QWidget {
   Q_OBJECT
  public:
   explicit TimelineWidget(AppDocument* doc, QWidget* parent = nullptr);
-  QSize sizeHint() const override { return QSize(400, 48); }
-  QSize minimumSizeHint() const override { return QSize(100, 48); }
+  QSize sizeHint() const override { return QSize(400, height()); }  // 48 px at the usual text size (theme::px)
+  QSize minimumSizeHint() const override { return QSize(100, height()); }
   void setCurrentOp(const std::string& id);
   std::string currentOp() const { return m_current; }
   // The op an open sketch or feature editor changes: marked, and what follows it dimmed, since the edit applies from
@@ -28,6 +28,7 @@ class TimelineWidget : public QWidget {
   int markerCount() const { return int(m_shown.size()); }
   const opad::Op* markerOp(int i) const;
   QRect markerGeometry(int i) const { return markerRect(i); }
+  QRect markerArea() const;  // where markers show (the rest scrolled out)
   QString markerState(int i) const;
   int currentMarker() const;
   void openMenu();  // the current marker's menu below it (the Menu key, Shift+F10)
@@ -55,6 +56,9 @@ class TimelineWidget : public QWidget {
 
  private:
   void announce();  // screen readers: the current marker has the focus
+  int markersLeft() const;
+  int markersRight() const;
+  int markerTop() const;
   void updateScrollRange();
   void ensureCurrentVisible();
   QScrollBar* m_scroll;

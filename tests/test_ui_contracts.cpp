@@ -110,6 +110,22 @@ TEST(semantic_tokens) {
   CHECK(dark.*(theme::cue("diffAdded")->colour) == dark.diffAdded && dark.*(theme::cue("assetMissing")->colour) == dark.assetMissing);
 }
 
+// UI-124: the text size grows the stylesheet's fonts and the boxes that hold text, never check marks or lines; the
+// high-contrast tokens keep text and lines at 7:1 or more against one background, the selection's text at 4.5:1.
+TEST(text_size_and_high_contrast) {
+  const QString sheet = "QLabel { font-size: 13px; height: 28px; min-height: 26px; }\nQCheckBox::indicator { width: 14px; height: 14px; }\n"
+                        "QMenu::separator { height: 1px; margin: 4px 8px; }\nQSlider::handle:horizontal { width: 12px; height: 12px; font-size: 10px; }\n";
+  CHECK(theme::scaledSheet(sheet, 1.0) == sheet && theme::px(28) == 28 && theme::textScale() == 1.0);
+  const QString big = theme::scaledSheet(sheet, 2.0);
+  CHECK(big.contains("QLabel { font-size: 26px; height: 56px; min-height: 52px; }") && big.contains("QCheckBox::indicator { width: 14px; height: 14px; }") &&
+        big.contains("QMenu::separator { height: 1px; margin: 4px 8px; }") && big.contains("width: 12px; height: 12px; font-size: 20px;"));
+  CHECK(std::abs(theme::contrast(Qt::black, Qt::white) - 21) < 0.01 && std::abs(theme::contrast(QColor("#777777"), QColor("#777777")) - 1) < 0.01);
+  const Tokens hc = theme::highContrastTokens();
+  CHECK(hc.highContrast && !theme::tokens(true).highContrast && hc.bg == hc.bg2 && hc.bg == hc.vp && hc.line == hc.fg);
+  CHECK(theme::contrast(hc.fg, hc.bg) >= 7 && theme::contrast(hc.fg3, hc.bg) >= 4.5 && theme::contrast(hc.onsel, hc.sel) >= 4.5);
+  CHECK(theme::stylesheet(hc).contains("item:selected { color: " + hc.onsel.name()) && !theme::stylesheet(theme::tokens(true)).contains("item:selected { color: "));
+}
+
 TEST(panel_footer) {
   for (const Qt::LayoutDirection direction : {Qt::LeftToRight, Qt::RightToLeft}) {
     QWidget panel;

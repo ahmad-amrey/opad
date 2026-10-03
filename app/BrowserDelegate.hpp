@@ -75,7 +75,7 @@ class BrowserDelegate : public QStyledItemDelegate {
  public:
   explicit BrowserDelegate(AppDocument* doc, QObject* parent = nullptr) : QStyledItemDelegate(parent), m_doc(doc) {}
   void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const override;
-  QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(100, 28); }
+  QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(100, theme::px(28)); }  // taller at a larger text size
   QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& opt, const QModelIndex& index) const override;
   void updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& opt, const QModelIndex& index) const override;
   bool helpEvent(QHelpEvent* e, QAbstractItemView* view, const QStyleOptionViewItem& opt, const QModelIndex& index) override;
@@ -84,7 +84,7 @@ class BrowserDelegate : public QStyledItemDelegate {
   // A decorator's badge on the row (visual rect `row`) at `pos`, its rect in `rect`: null if there is none there.
   const browser::Badge* badgeAt(const browser::Decoration& d, const QModelIndex& index, const QRect& row, const QPoint& pos, QRect* rect = nullptr) const;
  private:
-  static QRect leadRect(const QRect& row) { return QRect(row.left() + browser::kSwatchX - 3, row.top() + 6, 16, 16); }
+  static QRect leadRect(const QRect& row) { return QRect(row.left() + browser::kSwatchX - 3, row.center().y() - 7, 16, 16); }
   void paintLead(QPainter* p, const browser::Decoration& d, const QRect& row) const;
   int builtinBadges(QPainter* p, const QRect& r, const opad::Node* n, const QColor& text) const;  // paints them (p set); returns the x left of them
   std::vector<QRect> badgeRects(const browser::Decoration& d, const QRect& r, int right) const;  // right to left from `right`

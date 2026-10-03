@@ -1,6 +1,7 @@
 // The view: view and navigation commands, the central viewport and its overlays, theme, named views.
 #include "MainWindow.hpp"
 
+#include <QAccessibilityHints>
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QDialog>
@@ -13,6 +14,7 @@
 #include <QMoveEvent>
 #include <QResizeEvent>
 #include <QStackedWidget>
+#include <QStyleHints>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -109,6 +111,9 @@ void MainWindow::buildNavigationActions() {
   addAction("panel.reset", tr("Reset layout"), "restore", QKeySequence(), [this] { resetLayout(); });
   m_darkAction->setChecked(m_settings.value("ui/dark", true).toBool());
   connect(m_darkAction, &QAction::toggled, this, [this](bool on) { applyTheme(on); refreshIcons(); });
+  // High contrast and the text size (UI-124): a Preferences row or the system's high-contrast switch applies the theme again.
+  connect(theme::notifier(), &theme::Notifier::refreshRequested, this, [this] { applyTheme(m_settings.value("ui/dark", true).toBool()); refreshIcons(); });
+  connect(QGuiApplication::styleHints()->accessibility(), &QAccessibilityHints::contrastPreferenceChanged, this, [] { theme::refresh(); });
   for (const auto& [name, preset] : std::vector<std::pair<QString, Viewport::NavPreset>>{{"Fusion", Viewport::NavPreset::Fusion}, {"SolidWorks", Viewport::NavPreset::SolidWorks}, {"Onshape", Viewport::NavPreset::Onshape}, {"Blender", Viewport::NavPreset::Blender}}) {
     QAction* a = addAction("nav." + name.toLower(), tr("Navigation: %1").arg(name), "", QKeySequence(), [this, p = preset, n = name] {
       m_viewport->setNavPreset(p);

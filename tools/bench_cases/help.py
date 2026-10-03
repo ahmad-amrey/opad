@@ -62,4 +62,8 @@ CASES = [
     # the timeline's markers and the view cube's faces are items a screen reader finds and presses.
     ("keyboard", guided, {"OPAD_BENCH_KEYBOARD": "{prefix}"}),
     ("keyboard-ar", guided, {"OPAD_BENCH_KEYBOARD": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-124: at 200 % text the window's text and the boxes holding it grow (ribbon tabs, browser rows, timeline, status
+    # bar, menus); high contrast on and off; back at 100 %.
+    ("text-size", guided, {"OPAD_BENCH_TEXTSIZE": "{prefix}"}, "[ui]\ntextScale=200\n"),
+    ("text-size-ar", guided, {"OPAD_BENCH_TEXTSIZE": "{prefix}", "OPAD_LANG": "ar"}, "[ui]\ntextScale=200\n"),
 ]

@@ -188,7 +188,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
     mark->setPixmap(icons::pixmap(resolved ? "check" : "warning", resolved ? t.green : t.red, 14, devicePixelRatioF()));
     row->addWidget(mark);
     auto* l = new QLabel(resolved ? tr("resolved") : tr("unresolved · target %1 no longer exists").arg(QString::fromStdString(note.body.substr(0, 8))), this);
-    l->setStyleSheet(QString("color:%1; font-size:11px;").arg((resolved ? t.green : t.red).name()));
+    l->setStyleSheet(QString("color:%1; font-size:%2px;").arg((resolved ? t.green : t.red).name()).arg(theme::px(11)));
     row->addWidget(l, 1);
     v->addLayout(row);
   }

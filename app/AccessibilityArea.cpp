@@ -160,8 +160,7 @@ class MarkerItem : public PaintedItem {
     const bool current = timeline()->currentMarker() == m_index;
     s.selected = current;
     s.focused = current && timeline()->hasFocus();
-    const QRect r = timeline()->markerGeometry(m_index);
-    s.invisible = s.offscreen = !timeline()->isVisible() || r.right() < 125 || r.left() > timeline()->width() - 72;
+    s.invisible = s.offscreen = !timeline()->isVisible() || !timeline()->markerArea().intersects(timeline()->markerGeometry(m_index));
     return s;
   }
   QStringList actionNames() const override { return {pressAction(), showMenuAction()}; }

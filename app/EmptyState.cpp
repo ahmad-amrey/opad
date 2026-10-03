@@ -447,13 +447,13 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
 
 void EmptyState::restyle() {
   const Tokens& t = theme::current();
-  setStyleSheet(QString("QWidget#startPage { background: %1; }\n"
+  setStyleSheet(theme::scaledSheet(QString("QWidget#startPage { background: %1; }\n"
                         "QPushButton#startLink, QPushButton#startLinkSmall { text-align: left; border: 1px solid transparent; background: transparent; padding: 0 8px; color: %2; }\n"
                         "QPushButton#startLinkSmall { color: %3; font-size: 12px; height: 24px; min-height: 22px; }\n"
                         "QPushButton#startLink:hover, QPushButton#startLinkSmall:hover { background: %4; }\n"
                         "QPushButton#startLink[keyFocus=\"true\"], QPushButton#startLinkSmall[keyFocus=\"true\"] { border-color: %5; }\n"
                         "QPushButton[startButton=\"true\"] { text-align: left; padding: 0 12px; }\n")
-                    .arg(theme::css(t.bg), theme::css(t.fg), theme::css(t.fg2), theme::css(t.bg3), theme::css(t.sel)));
+                    .arg(theme::css(t.bg), theme::css(t.fg), theme::css(t.fg2), theme::css(t.bg3), theme::css(t.sel)), theme::textScale()));
   for (QPushButton* b : findChildren<QPushButton*>())
     if (b->objectName() == "primary") b->setIcon(icons::icon("open", t.onsel));
     else if (!b->property("iconName").toString().isEmpty()) b->setIcon(icons::themed(b->property("iconName").toString(), 16));

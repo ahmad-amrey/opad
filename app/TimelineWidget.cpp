@@ -59,7 +59,7 @@ QString opTypeIcon(const std::string& type) {
 TimelineWidget::TimelineWidget(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
   connect(theme::notifier(), &theme::Notifier::changed, this, qOverload<>(&QWidget::update));
   setMouseTracking(true);
-  setFixedHeight(48);
+  setFixedHeight(theme::px(48));
   setFocusPolicy(Qt::StrongFocus);
   m_scroll = new QScrollBar(Qt::Horizontal, this);
   m_scroll->setLayoutDirection(Qt::LeftToRight);
@@ -68,8 +68,18 @@ TimelineWidget::TimelineWidget(AppDocument* doc, QWidget* parent) : QWidget(pare
   connect(m_scroll, &QScrollBar::valueChanged, this, [this] { m_hover = -1; QToolTip::hideText(); update(); });
   setAttribute(Qt::WA_Hover);
   connect(doc, &AppDocument::changed, this, &TimelineWidget::rebuild);
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] {  // the text size
+    setFixedHeight(theme::px(48));
+    updateScrollRange();
+  });
   rebuild();
 }
+
+// The strip's parts at the text size: the title and count on the left, the markers, the ‹ › buttons on the right.
+int TimelineWidget::markersLeft() const { return theme::px(100) + 28; }
+int TimelineWidget::markersRight() const { return width() - 2 * theme::px(24) - 24; }
+int TimelineWidget::markerTop() const { return (height() - 18) / 2 - 2; }
+QRect TimelineWidget::markerArea() const { return QRect(markersLeft() - 3, 4, std::max(0, markersRight() - markersLeft() + 3), height() - 17); }
 
 void TimelineWidget::rebuild() {
   const bool atEnd = m_scroll->value() == m_scroll->maximum();
@@ -89,8 +99,8 @@ void TimelineWidget::rebuild() {
 bool TimelineWidget::isUnresolved(const std::string& opId) const { return m_unresolved.count(opId) > 0; }
 
 void TimelineWidget::updateScrollRange() {
-  const int available = std::max(0, width() - 200);
-  m_scroll->setGeometry(128, 36, available, 12);
+  const int available = std::max(0, markersRight() - markersLeft());
+  m_scroll->setGeometry(markersLeft(), height() - 12, available, 12);
   m_scroll->setPageStep(available);
   m_scroll->setRange(0, std::max(0, int(m_shown.size()) * 26 + 4 - available));
   m_scroll->setVisible(m_scroll->maximum() > 0);
@@ -188,11 +198,11 @@ void TimelineWidget::announce() {
   QAccessible::updateAccessibility(&focus);
 }
 
-QRect TimelineWidget::markerRect(int i) const { return QRect(128 + i * 26 - m_scroll->value(), 13, 18, 18); }
+QRect TimelineWidget::markerRect(int i) const { return QRect(markersLeft() + i * 26 - m_scroll->value(), markerTop(), 18, 18); }
 
 int TimelineWidget::indexAt(const QPoint& p) const {
-  if (p.x() < 128 || p.x() >= width() - 72 || p.y() < 10 || p.y() >= 34) return -1;
-  const int i = (p.x() - 128 + m_scroll->value() + 3) / 26;
+  if (p.x() < markersLeft() || p.x() >= markersRight() || p.y() < markerTop() - 3 || p.y() >= markerTop() + 21) return -1;
+  const int i = (p.x() - markersLeft() + m_scroll->value() + 3) / 26;
   return i >= 0 && i < int(m_shown.size()) && markerRect(i).adjusted(-3,-3,3,3).contains(p) ? i : -1;
 }
 
@@ -262,27 +272,28 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
   const auto& ops = m_doc->doc.ops;
   p.setFont(theme::ui(13, QFont::Medium));
   p.setPen(t.fg2);
-  p.drawText(QRect(12, 6, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, tr("Timeline"));
+  const int label = theme::px(100), row = theme::px(16), left = markersLeft(), right = markersRight();
+  p.drawText(QRect(12, (height() - 2 * row - 2) / 2, label, row), Qt::AlignVCenter | Qt::AlignLeft, tr("Timeline"));
   p.setFont(theme::mono(11));
   p.setPen(t.fg3);
   size_t tomb = 0;
   for (size_t i : m_shown) tomb += m_deleted.count(ops[i].id);
   QString count = tr("%1 ops").arg(m_shown.size());
   if (tomb > 0) count += tr(" · %1 tomb").arg(tomb);
-  p.drawText(QRect(12, 24, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, count);
+  p.drawText(QRect(12, height() / 2, label, row), Qt::AlignVCenter | Qt::AlignLeft, count);
   p.setPen(QPen(t.line, 1));
-  p.drawLine(112, 8, 112, 40);
-  p.drawLine(width() - 72, 8, width() - 72, 40);
+  p.drawLine(left - 16, 8, left - 16, height() - 8);
+  p.drawLine(right, 8, right, height() - 8);
   if (m_shown.empty() || !m_doc->hasDocument) {
     p.setFont(theme::ui(12));
     p.setPen(t.fg3);
-    p.drawText(QRect(128, 0, width() - 200, height()), Qt::AlignVCenter | Qt::AlignLeft, tr("One marker per operation. Import a file to start the log."));
+    p.drawText(QRect(left, 0, right - left, height()), Qt::AlignVCenter | Qt::AlignLeft, tr("One marker per operation. Import a file to start the log."));
   }
   const qreal dpr = devicePixelRatioF();
   p.save();
-  p.setClipRect(QRect(125, 4, std::max(0, width() - 197), 31));
+  p.setClipRect(markerArea());
   const size_t first = size_t(m_scroll->value() / 26);
-  const size_t end = std::min(m_shown.size(), first + size_t(std::max(0, width() - 200) / 26 + 2));
+  const size_t end = std::min(m_shown.size(), first + size_t(std::max(0, right - left) / 26 + 2));
   for (size_t k = first; k < end; ++k) {
     const size_t i = m_shown[k];
     QRect r = markerRect(static_cast<int>(k));
@@ -337,7 +348,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     int x = markerRect(int(m_shown.size()) - 1).right() + 9;
     p.setPen(Qt::NoPen);
     p.setBrush(t.sel);
-    p.drawRect(x - 1, 8, 2, 32);
+    p.drawRect(x - 1, 8, 2, height() - 16);
     QPainterPath tri;
     tri.moveTo(x - 3, 8);
     tri.lineTo(x + 3, 8);
@@ -346,8 +357,9 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     p.drawPath(tri);
   }
   p.restore();
-  m_prevBtn = QRect(width() - 60, 12, 24, 24);
-  m_nextBtn = QRect(width() - 32, 12, 24, 24);
+  const int button = theme::px(24);
+  m_prevBtn = QRect(width() - 2 * button - 12, (height() - button) / 2, button, button);
+  m_nextBtn = QRect(width() - button - 8, (height() - button) / 2, button, button);
   for (const QRect& b : {m_prevBtn, m_nextBtn}) {
     if (b.contains(mapFromGlobal(QCursor::pos()))) { p.setPen(Qt::NoPen); p.setBrush(t.bg3); p.drawRoundedRect(b, 3, 3); }
   }
@@ -378,6 +390,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             : m_deleted.count(op.id) ? (op.type == "delete" ? tr("undone · right-click to delete it again") : tr("tombstoned · right-click to restore"))
                             : isUnresolved(op.id) ? tr("unresolved · kept, never hidden")
                             : op.type == "delete" ? tr("right-click to restore what it deleted") : tr("Right-click for actions")));
+    html.replace("font-size:11px", QString("font-size:%1px").arg(theme::px(11)));
     QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), html, this);
   } else {
     QToolTip::hideText();

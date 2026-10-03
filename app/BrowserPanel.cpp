@@ -144,7 +144,7 @@ std::function<void()> BrowserTree::badgeClick(const QPoint& pos) const {
 void BrowserTree::drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const {
   if (!model()->hasChildren(index)) return;
   const Tokens& t = theme::current();
-  QRect r(rect.right() - 16, rect.top() + 6, 16, 16);
+  QRect r(rect.right() - 16, rect.center().y() - 7, 16, 16);
   painter->drawPixmap(r.topLeft(), icons::pixmap(isExpanded(index) ? "chevronDown" : "chevronRight", t.fg3, 16, devicePixelRatioF()));
 }
 
@@ -174,7 +174,9 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     m_expandBtn->setIcon(icons::icon("expandAll", theme::current().fg3));
     m_collapseBtn->setIcon(icons::icon("collapseAll", theme::current().fg3));
     updateBreadcrumb();
-    m_tree->viewport()->update();
+    m_breadcrumb->setFont(theme::ui(12));
+    m_breadcrumb->setFixedHeight(theme::px(16));
+    m_tree->doItemsLayout();  // the rows' height follows the text size
   });
   m_filter->setTextMargins(0, 0, 44, 0);
   {
@@ -193,7 +195,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_breadcrumb = new QLabel(head);
   m_breadcrumb->setTextFormat(Qt::RichText);
   m_breadcrumb->setFont(theme::ui(12));
-  m_breadcrumb->setFixedHeight(16);
+  m_breadcrumb->setFixedHeight(theme::px(16));
   m_breadcrumb->setOpenExternalLinks(false);
   m_breadcrumb->setTextInteractionFlags(Qt::LinksAccessibleByMouse);  // each parent is a link that selects it
   connect(m_breadcrumb, &QLabel::linkActivated, this, [this](const QString& href) { selectIds({href.toStdString()}); });

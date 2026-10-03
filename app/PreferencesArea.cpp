@@ -140,6 +140,20 @@ class PreferencesArea : public AreaController {
     form.section(tr("Motion"));  // UI-124
     form.check("ui/reduceMotion", tr("Reduce motion"), !motion::system());
     form.note(tr("The view jumps instead of turning, help clips hold still and panels open at once. By default as the system's animation setting."));
+    form.section(tr("Contrast and text size"));  // UI-124
+    form.choice("ui/contrast", tr("High contrast"), {theme::systemHighContrast() ? tr("As the system (on)") : tr("As the system (off)"), tr("On"), tr("Off")}, 0, [](int) { theme::refresh(); });
+    auto* size = new QComboBox;
+    size->setObjectName("ui/textScale");
+    size->addItem(tr("As the system (%1 %)").arg(std::lround(theme::systemTextScale() * 100)), 0);
+    for (int percent : {100, 125, 150, 175, 200}) size->addItem(QString("%1 %").arg(percent), percent);
+    size->setCurrentIndex(std::max(0, size->findData(QSettings().value("ui/textScale", 0).toInt())));
+    QObject::connect(size, &QComboBox::currentIndexChanged, size, [size] {
+      QSettings().setValue("ui/textScale", size->currentData().toInt());
+      preferences::changed("ui/textScale");
+      theme::refresh();
+    });
+    form.row(tr("Text size"), size);
+    form.note(tr("High contrast takes the system's high-contrast colours. A larger text size makes the window's text, menus, the browser's rows, the timeline and the ribbon's tabs larger."));
     form.finish();
     return page;
   }
