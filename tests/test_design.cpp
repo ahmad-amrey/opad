@@ -1794,10 +1794,21 @@ TEST(features_and_sketches_made_in_a_component) {
   CHECK_EQ(o.node(plate)->parent, lid);
   CHECK(o.sketch(sketch)->component.empty());
   CHECK(o.unresolved.empty());
-  // Without the lid (tombstoned), the sketch and the plane belong to the root, as the lid's bodies do.
-  commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc);
+  // Without the lid (tombstoned), the sketch and the plane belong to the root, as the lid's bodies do: where they were,
+  // not moved by the lid's placement gone. Back (the delete deleted), they are in it again, still where they were.
+  const std::string removal = commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc)["id"];
   s = resolve(doc);
   CHECK(s.sketch(sketch)->component.empty() && s.feature(plane["feature_id"])->component.empty());
+  CHECK(s.node(plate)->parent.empty());
+  CHECK_NEAR(z_range(plate).first, 0, 1e-6);
+  CHECK_NEAR(z_range(plate).second, 8, 1e-6);
+  commands::run("delete", {{"target", removal}}, &doc);
+  s = resolve(doc);
+  CHECK_EQ(s.node(plate)->parent, lid);
+  CHECK_EQ(s.sketch(sketch)->component, lid);
+  CHECK_NEAR(z_range(plate).first, 0, 1e-6);
+  CHECK_NEAR(z_range(plate).second, 8, 1e-6);
+  CHECK(s.unresolved.empty());
 }
 
 // TODO 11 UI-37: a locked body, or one under a locked component, is not changed, moved or removed: the change is

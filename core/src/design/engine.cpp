@@ -627,6 +627,7 @@ struct Walk {
         if (prev) {
           for (const char* k : {"parent", "color"})
             if (prev->contains(k)) entry[k] = (*prev)[k];
+          if (!prev->contains("parent") && b.source.empty() && !component.empty()) entry["parent"] = component;  // back in it
         } else if (const Node* s = b.source.empty() ? nullptr : ctx.scene.node(b.source)) {
           if (!s->parent.empty()) entry["parent"] = s->parent;
           if (s->has_color) entry["color"] = s->color;
@@ -859,7 +860,16 @@ struct Walk {
       } else {
         const std::string kind = data.value("kind", "");
         json inputs = data.value("inputs", json::object());
-        std::string fp = feature_fingerprint(builder.scene(), params, kind, inputs);
+        // Made in a component (UI-33): whether it is there counts too, so a body made from scratch is put back in world
+        // coordinates when the component goes and into it again when it comes back. Others keep their fingerprints.
+        const std::string named = data.contains("component") && data["component"].is_string() ? data["component"].get<std::string>() : "";
+        const Node* in_component = named.empty() ? nullptr : builder.scene().node(named);
+        const std::string component = in_component && in_component->kind == Node::Kind::Component ? named : "";
+        auto fingerprint = [&] {
+          const std::string f = feature_fingerprint(builder.scene(), params, kind, inputs);
+          return named.empty() ? f : sha256_hex(f + "|component:" + (component.empty() ? "gone" : component)).substr(0, 24);
+        };
+        std::string fp = fingerprint();
         if (!force && stored.value("in", "") == fp) {
           result = stored;
           note_fresh(result);
@@ -874,11 +884,9 @@ struct Walk {
                 inputs["targets"] = targets;
                 (*patch)["targets"] = targets;
                 data["inputs"] = inputs;
-                fp = feature_fingerprint(builder.scene(), params, kind, inputs);
+                fp = fingerprint();
               }
             }
-            std::string component = data.contains("component") && data["component"].is_string() ? data["component"].get<std::string>() : "";
-            if (const Node* c = builder.scene().node(component); !c || c->kind != Node::Kind::Component) component.clear();
             result = materialize(ctx, out, stored, id, data.value("name", ""), component);
           } catch (const Standard_Failure& ex) {
             result = {{"error", std::string("the modelling kernel failed: ") + ex.GetMessageString()}};
