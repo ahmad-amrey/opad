@@ -233,9 +233,14 @@ OPAD_BENCH(OPAD_BENCH_MEASURE, measure) {
   until([&w] { return !w.m_lastMeasure.is_null() && !w.m_lastMeasure.contains("mode"); }, 20000);
   w.cancelTool();
   w.m_viewport->benchClickAt(QPointF(4, w.m_viewport->height() - 4));  // on nothing: no click point is left over for the picks below
-  // Length and area: the plate's top, then the pin's rim.
+  // Length and area: the plate's top, then the pin's rim. Distance ended has set the Body filter back: Faces chosen for it.
   w.startTool("length");
   until([&w] { return w.m_tool.id == "length"; }, 2000);
+  filtered = false;
+  once = QObject::connect(w.m_viewport, &Viewport::filterApplied, &w, [&filtered] { filtered = true; });
+  w.action("select.faces")->trigger();
+  until([&filtered] { return filtered; }, 10000);
+  QObject::disconnect(once);
   w.m_viewport->selectRefs({faceRef(plateId, plateTop)});
   w.onViewportSelection();
   until([&w] { return !w.m_lastMeasure.is_null(); }, 20000);
