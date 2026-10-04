@@ -614,8 +614,9 @@ bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
   if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull()) changed = body->setHiddenLine(hidden, occ(backgroundColor()), occ(edge)) || changed;
   if (outline(ais, m_style == Style::ShadedEdges && !m_degraded, occ(edge))) ais->SynchronizeAspects();
-  if (changed) ais->SetToUpdate(AIS_Shaded);
-  m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
+  const int shadedMode = Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? AIS_Shaded : 3;  // an SVG's image: textured
+  if (changed) ais->SetToUpdate(shadedMode);
+  m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : shadedMode, Standard_False);
   return changed;
 }
 
@@ -635,7 +636,7 @@ void Viewport::setStyle(Style s) {
     if (*next >= bodies->size()) return false;
     if (const auto it = m_items.find((*bodies)[(*next)++]); it != m_items.end()) {
       // Not Redisplay: that dropped the body from the selection. The mode shown only, and only when it changed.
-      if (applyStyle(it->second.ais, &it->second.look) && it->second.ais->DisplayMode() == AIS_Shaded)
+      if (applyStyle(it->second.ais, &it->second.look) && it->second.ais->DisplayMode() != AIS_WireFrame)
         m_ctx->RecomputePrsOnly(it->second.ais, Standard_False, Standard_False);
       *selected = *selected || m_ctx->IsSelected(it->second.ais);
     }
