@@ -1,6 +1,7 @@
 #include "opad/drawing_io.hpp"
 #include "opad/drawing/display.hpp"
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/tables.hpp"
 #include <functional>
 #include "opad/kicad_pcb.hpp"
 #include <set>
@@ -818,13 +819,29 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
       if(!sheet) throw Error("sheet "+options.sheet+" does not exist (sheet_info lists the sheets)");
       sheets.push_back(sheet);
     }
+    Scene then;
+    const SheetItem* issue=nullptr;
+    if(!options.issue.empty()) {  // as issued: the sheets as they stood then (the drawing's that it issued), their frozen linework
+      issue=drawing::find_issue(scene,*sheets[0],options.issue);
+      if(!issue) throw Error("revision "+options.issue+" was never issued (sheet_info lists the issues)");
+      then=drawing::issued_scene(doc,*issue);
+      issue=then.sheet_item(issue->id);
+      std::vector<const Sheet*> issued;
+      for(const auto& id:issue->def.value("sheets",json::array()))
+        if(const Sheet* s=then.sheet(id.get<std::string>()); s && (options.sheet.rfind("drawing:",0)==0 || s->id==sheets[0]->id)) issued.push_back(s);
+      if(issued.empty()) throw Error("sheet "+sheets[0]->name+" was not part of revision "+options.issue);
+      sheets=issued;
+      details["issue"]=issue->def.value("rev","");
+    }
     if(sheets.size()>1 && options.format!="pdf") throw Error("several sheets go into one PDF (a page each), or one sheet at a time into "+options.format);
     pages.resize(sheets.size());
     json drawn=json::array(), skipped=json::array();
     for(size_t i=0;i<sheets.size();++i) {
       json report;
       const double n=double(sheets.size());
-      pages[i]=drawing::sheet_display(doc,scene,*sheets[i],[&](double f,const std::string& phase){ return !options.progress || options.progress(f<0?-1:(double(i)+f)/n,phase); },&report);
+      const auto progress=[&](double f,const std::string& phase){ return !options.progress || options.progress(f<0?-1:(double(i)+f)/n,phase); };
+      if(issue) pages[i]=drawing::issued_display(doc,then,*sheets[i],*issue,progress,&report);
+      else pages[i]=drawing::sheet_display(doc,scene,*sheets[i],progress,&report);
       drawn.push_back({{"id",sheets[i]->id},{"name",sheets[i]->name},{"views",report["views"]},{"items",report["items"]}});
       for(const auto& s:report["skipped"]) skipped.push_back(s);
       bodies+=report["bodies"].get<int>();
@@ -833,9 +850,9 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     if(!skipped.empty()) details["skipped"]=skipped;
   }
   const drawing::Display& d=pages[0];
-  if(options.format=="dwg") {  // DXF R2000 through the converter; text of several lines as one TEXT a line
+  if(options.format=="dwg") {  // DXF R2000 through the converter; text of several lines as one TEXT a line, dimensions as their geometry
     Conversion work; const auto intermediate=work.directory/"drawing.dxf", converted=work.directory/"drawing.dwg";
-    write_text_file(intermediate,drawing::dxf_text(d,options.decimals,false));
+    write_text_file(intermediate,drawing::dxf_text(d,options.decimals,false,false));
     convert_dwg(intermediate,converted,true);
     if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
     std::filesystem::copy_file(converted,file,std::filesystem::copy_options::overwrite_existing);
@@ -857,5 +874,30 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
   for(const auto& p:pages) add(counts,p.counts());
   for(const auto& [k,v]:counts.items()) result.details[k]=v;
   return result;
+}
+
+bool dwg_converter(bool toDwg) {
+  std::error_code error;
+  const char* override=std::getenv(toDwg?"OPAD_DXF2DWG":"OPAD_DWG2DXF");
+  if(override && *override) return std::filesystem::is_regular_file(path_from_utf8(override),error);
+  if(use_oda() && !oda_converter().empty()) return true;  // opt-in, as convert_dwg takes it
+#ifdef _WIN32
+  const std::wstring name=toDwg?L"dxf2dwg.exe":L"dwg2dxf.exe";
+  const wchar_t* path=_wgetenv(L"PATH");
+  const wchar_t separator=L';';
+  std::wstring dirs=path?path:L"";
+#else
+  const std::string name=toDwg?"dxf2dwg":"dwg2dxf";
+  const char* path=std::getenv("PATH");
+  const char separator=':';
+  std::string dirs=path?path:"";
+#endif
+  if(!executable_dir().empty() && std::filesystem::is_regular_file(executable_dir()/name,error)) return true;
+  for(size_t at=0;at<=dirs.size();) {  // on PATH
+    const size_t end=std::min(dirs.find(separator,at),dirs.size());
+    if(end>at && std::filesystem::is_regular_file(std::filesystem::path(dirs.substr(at,end-at))/name,error)) return true;
+    at=end+1;
+  }
+  return false;
 }
 }
