@@ -42,6 +42,10 @@ void noteRun(const QString& id) {
 namespace {
 constexpr int kRecentRole = Qt::UserRole + 1;
 
+// 0 when the query's letters are not all in the text in order. The query as typed from the start of a word comes above any
+// scattered match (an Arabic label that keeps a Latin name, "ODA File Converter", must not beat Fit's keyword "fit"
+// with f-i from File and the t of Converter), then runs of letters and word starts score more.
+constexpr int kWordHit = 1000;
 int fuzzyScore(const QString& text, const QString& query, QList<int>* positions) {
   if (query.isEmpty()) return 1;
   int score = 0, qi = 0, last = -2;
@@ -55,7 +59,8 @@ int fuzzyScore(const QString& text, const QString& query, QList<int>* positions)
       ++qi;
     }
   }
-  return qi == lq.size() ? score : 0;
+  if (qi != lq.size()) return 0;
+  return score + (lt.startsWith(lq) || lt.contains(' ' + lq) ? kWordHit : 0);
 }
 
 // Laid out left to right and mirrored for right-to-left languages: icon, name, summary (or what a command not available
@@ -215,7 +220,7 @@ void CommandPalette::refill(const QString& filter) {
   for (QAction* a : m_actions) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
     int s = fuzzyScore(a->text().remove('&'), query, nullptr);
-    for (const QString& keyword : a->property("commandKeywords").toStringList()) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);  // below a label match
+    for (const QString& keyword : a->property("commandKeywords").toStringList()) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);  // below a label match of its kind (a word hit above a scattered one)
     if (const CommandHelp* h = help::find(a->objectName())) {  // its help's keywords (the English name too), then its summary
       for (const QString& keyword : h->keywords) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);
       if (!s && help::matches(*h, query)) s = 1;
