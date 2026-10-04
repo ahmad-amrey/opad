@@ -315,7 +315,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
     bool strong = false;
     std::shared_ptr<BodyPrs> presentation;  // drawn more solid (construction planes among faint origin planes)
   };
-  void showCandidates(const std::vector<Candidate>& candidates);
+  void showCandidates(const std::vector<Candidate>& candidates);  // these and no others (those shown already stay as they are)
+  void addCandidates(const std::vector<Candidate>& more);          // these too (a sliced job's slice)
   void clearCandidates();
   std::string hoveredCandidate() const;
   std::vector<std::string> selectedCandidates() const;  // in pick order
@@ -739,6 +740,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
+  Handle(AIS_Shape) displayCandidate(const Candidate& c);
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_compareParts;  // ViewportCompare.cpp

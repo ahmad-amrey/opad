@@ -831,10 +831,23 @@ void DesignController::refreshRoute() {
         if (serial != m_routeSerial) return;
         m_routeJob = nullptr;
         if (!ok || !m_featureOn || found->empty()) return;
-        for (const auto& c : *found) m_routeIds.insert(c.id);
-        m_routeCandidates.insert(m_routeCandidates.end(), found->begin(), found->end());
-        showAllCandidates();
-        syncSelectionToInput();
+        // Put on screen a few at a time (a drawing turned into a sketch has thousands of lines, each a pickable object), the
+        // view's clicks routed to them as they come; nothing shown before is displayed again.
+        auto next = std::make_shared<size_t>(0);
+        m_routeJob = m_jobs->sliced(tr("Showing the sketch lines"), [this, found, next, serial](Job&) {
+          if (serial != m_routeSerial || !m_featureOn) return false;
+          const size_t end = std::min(found->size(), *next + 8);
+          const std::vector<Viewport::Candidate> slice(found->begin() + long(*next), found->begin() + long(end));
+          for (const auto& c : slice) m_routeIds.insert(c.id);
+          m_routeCandidates.insert(m_routeCandidates.end(), slice.begin(), slice.end());
+          m_viewport->addCandidates(slice);
+          *next = end;
+          return end < found->size();
+        }, [this, serial](bool) {
+          if (serial != m_routeSerial) return;
+          m_routeJob = nullptr;
+          if (m_featureOn) syncSelectionToInput();
+        });
       });
     }
   }

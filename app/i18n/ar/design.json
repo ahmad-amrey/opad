@@ -5,6 +5,7 @@
   "%1: click a plane or a planar face in the view": "%1: انقر مستوى أو وجهًا مستويًا في العرض",
   "%1: pick in the view · %2: click one in the view": "%1: اختر في العرض · %2: انقر واحدًا في العرض",
   "Resolving the plane": "تحديد المستوى",
+  "Showing the sketch lines": "عرض خطوط الرسوم التخطيطية",
   "Click in the view": "انقر في العرض",
   "Click a plane or a planar face to place the %1 · Enter adds it where the panel says": "انقر مستوى أو وجهًا مستويًا لوضع %1 · يضيفه Enter حيث تقول اللوحة",
   "%1: move the pointer and click, or type it (Tab: the next box) · Enter adds the %2": "%1: حرّك المؤشر وانقر، أو اكتبه (Tab: المربع التالي) · يضيف Enter %2",
