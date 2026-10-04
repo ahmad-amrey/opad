@@ -807,8 +807,10 @@ class ClipReplay : public QObject {
     // Enter after a value typed in a sketch panel's field (a card row): where the user's keyboard is then, that field,
     // which must apply as Enter in the view does (it went nowhere, while the replay sent it to the view).
     QWidget* to = (key == Qt::Key_Return || key == Qt::Key_Enter) && m_typedField && !mods ? static_cast<QWidget*>(m_typedField.data()) : keyboard();
+    const QPointer<QWidget> alive = to;
     QKeyEvent press(QEvent::KeyPress, key, mods, text);  // not spontaneous: Qt sends it as a shortcut override first
     QApplication::sendEvent(to, &press);
+    if (!alive) return;  // the press applied and the panel rebuilt its fields (the field's Enter goes up to SketchPanel's)
     QKeyEvent release(QEvent::KeyRelease, key, mods, text);
     QApplication::sendEvent(to, &release);
   }
