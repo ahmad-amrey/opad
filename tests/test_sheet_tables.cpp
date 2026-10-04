@@ -439,3 +439,72 @@ TEST(records_are_checked) {
 }
 
 int main(int argc, char** argv) { return check::run_all(argc, argv); }
+
+// Exploded-view drawings (UI-85): a base view of a saved exploded view draws the parts where the explode puts them, seen
+// from its camera, with thin phantom trail lines from where they sit in the assembly; projected views follow it; a balloon
+// on it points at the part where it is drawn; the view op names the exploded view only (the offsets are worked out where
+// it is drawn), and one whose exploded view is gone cannot be drawn.
+TEST(exploded_view_drawings) {
+  Assembly a;
+  run(a.doc, "explode", {{"mode", "axis"}, {"name", "Exploded"}});
+  const std::string exploded = a.scene().views.back().id;
+  CHECK(a.scene().views.back().explode.is_object());
+  const json made = run(a.doc, "sheet_view", {{"sheet", a.sheet}, {"explode", exploded}, {"at", {300, 200}}});
+  const std::string view = made["id"];
+  const Scene s = a.scene();
+  const SheetView* v = s.sheet_view(view);
+  CHECK(v && v->error.empty());
+  CHECK_EQ(v->def["source"]["explode"]["view"], exploded);
+  CHECK_EQ(v->def["orient"]["view"], exploded);
+  CHECK(!v->def.contains("offsets") && !v->def["source"].contains("offsets"));
+  // Laid out where it is drawn: every pin and the bracket away from the plate, trail lines for those that moved.
+  ViewSpec spec = view_spec(s, *v);
+  CHECK(!spec.explode.is_null() && spec.offsets.empty());
+  resolve_explode(a.doc, s, spec);
+  const std::string pin3 = id_of(s, "Pin 3");
+  CHECK(spec.offsets.count(pin3) && std::fabs(spec.offsets.at(pin3)[2]) > 1);
+  CHECK(!spec.trails.empty());
+  const auto bodies = view_bodies(s, spec);
+  const auto moved = std::find_if(bodies.begin(), bodies.end(), [&](const auto& b) { return b.first == pin3; });
+  CHECK(moved != bodies.end() && std::fabs(moved->second.at(2, 3) - (5 + spec.offsets.at(pin3)[2])) < 1e-9);
+  const auto g = project(a.doc, s, view_spec(s, *v));
+  const auto trails = std::count_if(g->curves.begin(), g->curves.end(), [](const Curve& c) { return c.kind == Curve::Kind::Trail; });
+  CHECK(trails > 0 && trails <= static_cast<long>(spec.trails.size()));
+  CHECK_EQ(project(a.doc, s, view_spec(s, *v))->fingerprint, g->fingerprint);  // cached as it is
+  // Drawn on the sheet: the trail lines on their own thin phantom layer.
+  const Display d = sheet_display(a.doc, s, *s.sheet(a.sheet));
+  const auto layer = std::find_if(d.layers.begin(), d.layers.end(), [](const Layer& l) { return l.name == "Trail"; });
+  CHECK(layer != d.layers.end() && layer->line == LineType::Phantom && layer->width < 0.3);
+  const int trail = static_cast<int>(layer - d.layers.begin());
+  CHECK(std::count_if(d.prims.begin(), d.prims.end(), [&](const Prim& p) { return p.layer == trail && p.source == view; }) == trails);
+  // A projected view of it is exploded too.
+  const json side = run(a.doc, "sheet_view", {{"sheet", a.sheet}, {"parent", view}, {"side", "right"}});
+  const Scene s2 = a.scene();
+  ViewSpec projected = view_spec(s2, *s2.sheet_view(side["id"]));
+  resolve_explode(a.doc, s2, projected);
+  CHECK(projected.offsets == spec.offsets);
+  // A balloon on Pin 3 in the exploded view points at it where it is drawn: against the same balloon in a view from the same
+  // camera that is not exploded, its tip (back in view coordinates) is moved by the pin's offset.
+  const json plain = run(a.doc, "sheet_view", {{"sheet", a.sheet}, {"orient", exploded}, {"at", {120, 200}}});
+  const json ref = {Ref{pin3, Ref::Kind::Edge, 0}.str()};
+  const std::string onExploded = run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"view", view}, {"kind", "balloon"}, {"refs", ref}})["id"];
+  const std::string onPlain = run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"view", plain["id"]}, {"kind", "balloon"}, {"refs", ref}})["id"];
+  const Scene s3 = a.scene();
+  const auto frames = layout(a.doc, s3, *s3.sheet(a.sheet));
+  const auto viewed = [&](const std::string& item, const std::string& id) {  // the tip in the view's coordinates (model mm)
+    const auto f = std::find_if(frames.begin(), frames.end(), [&](const ViewFrame& x) { return x.id == id; });
+    const json tip = measure_item(a.doc, s3, *s3.sheet(a.sheet), *s3.sheet_item(item), &*f)["tip"];
+    return Vec2{tip[0].get<double>() / f->scale + f->centre[0], tip[1].get<double>() / f->scale + f->centre[1]};
+  };
+  const Vec2 drawn = viewed(onExploded, view), still = viewed(onPlain, plain["id"]);
+  const Vec3 o = spec.offsets.at(pin3);
+  Vec3 x, y, z;
+  view_axes(spec, x, y, z);
+  const Vec2 want{o[0] * x[0] + o[1] * x[1] + o[2] * x[2], o[0] * y[0] + o[1] * y[1] + o[2] * y[2]};
+  CHECK(std::hypot(want[0], want[1]) > 5);  // the explode moves it visibly
+  CHECK(std::hypot(drawn[0] - still[0] - want[0], drawn[1] - still[1] - want[1]) < 1e-6);
+  // The exploded view deleted: the drawing view says why it cannot be drawn.
+  run(a.doc, "delete", {{"target", exploded}});
+  const Scene s4 = a.scene();
+  CHECK(!s4.sheet_view(view)->error.empty());
+}

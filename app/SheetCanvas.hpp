@@ -92,10 +92,15 @@ class SheetCanvas : public QGraphicsView {
   // A new view placed with the mouse: a base view of an orientation (front, top, right, iso, ...) or a view projected from
   // `parent` to the side the cursor is on. Its size comes from a worker; done(true) once it was added, done(false) when
   // cancelled.
-  void placeBase(const std::string& orient, std::function<void(bool)> done = {});
+  // explode: a saved exploded view (a view op id, UI-85) whose parts the view draws apart, seen from its camera (orient).
+  void placeBase(const std::string& orient, std::function<void(bool)> done = {}, const std::string& explode = {});
   void placeProjected(const std::string& parent, std::function<void(bool)> done = {});
   void cancelPlacement();
   bool placing() const { return m_place.active; }
+  std::array<double, 2> placementSize() const {  // a base view being placed, once measured: its frame (paper mm)
+    const auto it = m_place.sizes.find("");
+    return m_place.sized && it != m_place.sizes.end() ? it->second : std::array<double, 2>{0, 0};
+  }
 
   // Annotations (UI-79) and view tools (UI-82): each gets the mouse and keys first, in the order they were added.
   void addInteraction(SheetInteraction* interaction) { m_interactions.push_back(interaction); }
@@ -222,7 +227,7 @@ class SheetCanvas : public QGraphicsView {
   };
   struct Placement {
     bool active = false, projected = false, sized = false;
-    std::string orient, parent, side;
+    std::string orient, parent, side, explode;
     std::map<std::string, std::array<double, 2>> sizes;  // side (or "") -> frame size, paper mm
     QRectF ghost;                                       // scene
     opad::json source;                                  // a base view: what the sheet's first base view draws

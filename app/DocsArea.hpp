@@ -63,6 +63,9 @@ class DocsArea : public AreaController {
   void templateFromFile(const QString& file = {});  // read on a worker; the sheet takes its frame, title block and paper
   void templateFields();   // the shown sheet's template fields placed with the mouse (TemplateFields.hpp), one sheet_edit
   void placeView(const std::string& orient);  // a base view placed with the mouse (front, top, ..., iso)
+  // An exploded view (UI-85): a view of a saved exploded view, its parts apart with trail lines, placed with the mouse;
+  // with several saved, a menu at the pointer chooses. Says how to save one when there is none.
+  void placeExploded();
   void placeProjected();                      // a view projected from the selected one, placed with the mouse
   // Section, detail or auxiliary view of the selected view, or crop or break it, with the mouse (SheetViewTool, UI-82).
   void startViewTool(SheetViewTool::Tool tool);

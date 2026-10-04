@@ -49,6 +49,7 @@
 #include <unordered_map>
 
 #include "opad/cache.hpp"
+#include "opad/explode.hpp"
 #include "opad/geometry.hpp"
 #include "projection_internal.hpp"
 
@@ -340,6 +341,8 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
     bodies.push_back({s.node, s.key, m});
   }
   j["bodies"] = bodies;
+  for (const auto& [from, to] : spec.trails)  // an exploded view's trail lines (its offsets are in the bodies' placements)
+    j["trails"].push_back({rounded(from[0]), rounded(from[1]), rounded(from[2]), rounded(to[0]), rounded(to[1]), rounded(to[2])});
   return sha256_hex(j.dump());
 }
 
@@ -954,6 +957,7 @@ json ViewSpec::to_json() const {
   }
   if (parts_whole) j["parts_whole"] = true;
   if (!sectioned.empty()) j["sectioned"] = sectioned;
+  if (!explode.is_null()) j["explode"] = explode;
   for (const auto& b : breakouts) {
     json outline = json::array();
     for (const auto& p : b.outline) outline.push_back({p[0], p[1]});
@@ -980,6 +984,8 @@ ViewSpec ViewSpec::from_json(const json& j) {
   if (j.contains("hide") && j["hide"].is_array()) s.hide = j["hide"].get<std::vector<std::string>>();
   if (j.contains("offsets") && j["offsets"].is_object())
     for (const auto& [node, shift] : j["offsets"].items()) s.offsets[node] = vec_of(shift, {0, 0, 0});
+  if (j.contains("explode") && (j["explode"].is_object() || j["explode"].is_string()))
+    s.explode = j["explode"].is_string() ? json{{"view", j["explode"]}} : j["explode"];
   if (const json c = j.value("cut", json()); c.is_object()) {
     for (const auto& p : c.value("line", json::array()))
       if (p.is_array() && p.size() == 2) s.cut.push_back({p[0].get<double>(), p[1].get<double>()});
@@ -1018,6 +1024,7 @@ const char* Curve::kind_name(Kind k) {
     case Kind::Seam: return "seam";
     case Kind::Silhouette: return "silhouette";
     case Kind::Break: return "break";
+    case Kind::Trail: return "trail";
     default: return "sharp";
   }
 }
@@ -1354,7 +1361,29 @@ std::shared_ptr<const ViewGeometry> cached(const std::string& fp) {
 }
 }  // namespace
 
-std::shared_ptr<const ViewGeometry> cached_projection(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+void resolve_explode(const Document& doc, const Scene& scene, ViewSpec& spec) {
+  if (spec.explode_resolved || spec.explode.is_null()) return;
+  const ExplodeSpec e = spec.explode.is_object() && spec.explode.contains("view") ? view_explode(scene, spec.explode["view"].get<std::string>())
+                                                                                  : ExplodeSpec::from_json(spec.explode);
+  const auto units = explode_units(doc, scene, e);
+  for (const auto& [node, shift] : explode_offsets(units, e, e.t)) spec.offsets[node] = shift;
+  for (const auto& t : explode_trails(units, e, e.t)) spec.trails.push_back({t.from, t.to});
+  spec.explode_resolved = true;
+}
+
+namespace {
+// The spec with its explode laid out: itself when there is none (or it was done), else `copy` filled from it.
+const ViewSpec& exploded(const Document& doc, const Scene& scene, const ViewSpec& spec, ViewSpec& copy) {
+  if (spec.explode_resolved || spec.explode.is_null()) return spec;
+  copy = spec;
+  resolve_explode(doc, scene, copy);
+  return copy;
+}
+}  // namespace
+
+std::shared_ptr<const ViewGeometry> cached_projection(const Document& doc, const Scene& scene, const ViewSpec& in) {
+  ViewSpec copy;
+  const ViewSpec& spec = exploded(doc, scene, in, copy);
   auto sources = gather(scene, spec);
   return cached(fingerprint_of(sources, spec, auto_tier(doc, sources, spec)));
 }
@@ -1365,17 +1394,23 @@ std::vector<std::pair<std::string, Mat4>> view_bodies(const Scene& scene, const 
   return out;
 }
 
-Quality choose_tier(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+Quality choose_tier(const Document& doc, const Scene& scene, const ViewSpec& in) {
+  ViewSpec copy;
+  const ViewSpec& spec = exploded(doc, scene, in, copy);
   auto sources = gather(scene, spec);
   return auto_tier(doc, sources, spec);
 }
 
-std::string projection_fingerprint(const Document& doc, const Scene& scene, const ViewSpec& spec, Quality tier) {
+std::string projection_fingerprint(const Document& doc, const Scene& scene, const ViewSpec& in, Quality tier) {
+  ViewSpec copy;
+  const ViewSpec& spec = exploded(doc, scene, in, copy);
   auto sources = gather(scene, spec);
   return fingerprint_of(sources, spec, tier == Quality::Auto ? auto_tier(doc, sources, spec) : tier);
 }
 
-std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& scene, const ViewSpec& spec, const ProjectionProgress& progress, bool use_cache) {
+std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& scene, const ViewSpec& in, const ProjectionProgress& progress, bool use_cache) {
+  ViewSpec copy;
+  const ViewSpec& spec = exploded(doc, scene, in, copy);
   Run run(progress);
   const auto start = std::chrono::steady_clock::now();
   auto sources = gather(scene, spec);
@@ -1420,6 +1455,13 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
   run.check();
   const auto finish = std::chrono::steady_clock::now();
   g->stats["overlaps"] = drop_overlaps(g->curves, 0.1 * spec.tolerance);  // closer than a tenth of the tolerance: one line
+  for (const auto& [from, to] : spec.trails) {  // an exploded view's trail lines: thin, over whatever they pass (UI-85)
+    Curve k;
+    k.kind = Curve::Kind::Trail;
+    k.pts = {v.at(gp_Pnt(from[0], from[1], from[2])), v.at(gp_Pnt(to[0], to[1], to[2]))};
+    k.z = v.depth(gp_Pnt(to[0], to[1], to[2]));
+    if (norm(k.pts[1] - k.pts[0]) > spec.tolerance) g->curves.push_back(std::move(k));  // seen end on: nothing to draw
+  }
   bool any = false;
   std::array<double, 4> box{1e300, 1e300, -1e300, -1e300};
   for (const auto& k : g->curves) {
@@ -1468,7 +1510,7 @@ Image preview_image(const ViewGeometry& g, int width, int height) {
   };
   for (int pass = 0; pass < 3; ++pass)  // hidden under tangent under visible
     for (const auto& k : g.curves) {
-      const int mine = k.hidden ? 0 : k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam || k.kind == Curve::Kind::Break ? 1 : 2;
+      const int mine = k.hidden ? 0 : k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam || k.kind == Curve::Kind::Break || k.kind == Curve::Kind::Trail ? 1 : 2;
       if (mine != pass) continue;
       const uint8_t shade = pass == 0 ? 185 : pass == 1 ? 140 : 0;
       const auto pts = k.sample(0.25 / scale);

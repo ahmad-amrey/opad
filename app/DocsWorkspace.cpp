@@ -3,6 +3,7 @@
 // the document (the canvas's own worker is stopped for it).
 #include <QAction>
 #include <QActionGroup>
+#include <QCursor>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -101,6 +102,8 @@ void DocsArea::buildDrawingCommands() {
   add("drawings.projectedView", tr("Projected view"), "viewProjected", [this] { placeProjected(); },
       [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedViews().size() == 1; }, {"side view", "top view", "orthographic"});
   add("drawings.isoView", tr("Isometric view"), "viewIso", [this] { placeView("iso"); }, sheetShown, {"pictorial", "3D view"});
+  add("drawings.explodedView", tr("Exploded view"), "explodedView", [this] { placeExploded(); }, sheetShown,
+      {"explode", "assembly drawing", "trail lines", "balloons", "saved view"});
   const auto oneView = [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedViews().size() == 1; };
   using VT = SheetViewTool::Tool;
   add("drawings.sectionView", tr("Section view"), "viewSection", [this] { startViewTool(VT::Section); }, oneView,
@@ -168,7 +171,7 @@ void DocsArea::drawingsRibbon(RibbonLayout& layout) {
   QList<QAction*> bases;
   for (const auto& [orient, label] : baseViews()) bases << services().action(QString::fromStdString("drawings.baseView." + orient));
   add("drawings.views.place", "drawings.baseView", Size::Large, bases);
-  for (const char* id : {"drawings.projectedView", "drawings.isoView"}) add("drawings.views.place", id);
+  for (const char* id : {"drawings.projectedView", "drawings.isoView", "drawings.explodedView"}) add("drawings.views.place", id);
   layout.addGroup("drawings.views", "drawings.views.derived", tr("From a view"));
   add("drawings.views.derived", "drawings.sectionView");
   add("drawings.views.derived", "drawings.detailView");
@@ -450,6 +453,24 @@ void DocsArea::placeView(const std::string& orient) {
   services().setWorkspace("drawings");
   m_page->canvas()->setFocus();
   m_page->canvas()->placeBase(orient);
+}
+
+void DocsArea::placeExploded() {
+  if (!m_page || m_page->sheet().empty()) return newDrawing();
+  std::vector<const opad::ViewBookmark*> saved;
+  for (const auto& v : services().document()->scene.views)
+    if (v.explode.is_object()) saved.push_back(&v);
+  if (saved.empty())
+    throw opad::UserHint("Save an exploded view first: Exploded view in Design > Assemble, then Save exploded view in its Explode tab.", false);
+  const auto place = [this](const std::string& id) {
+    services().setWorkspace("drawings");
+    m_page->canvas()->setFocus();
+    m_page->canvas()->placeBase(id, {}, id);
+  };
+  if (saved.size() == 1) return place(saved.front()->id);
+  QMenu menu;
+  for (const opad::ViewBookmark* v : saved) menu.addAction(icons::themed("explodedView", 16), QString::fromStdString(v->name), this, [place, id = v->id] { place(id); });
+  menu.exec(QCursor::pos());
 }
 
 void DocsArea::placeProjected() {

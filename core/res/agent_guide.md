@@ -315,6 +315,7 @@ list (a live agent saves, and the drawing is made on the file).
   `orientation`, `standard` iso|asme, `projection` first|third angle (default by standard), the views' `scale`
   ("1:2") and title block `values`. Paper coordinates are mm from the sheet's bottom-left corner, y up.
 - `sheet_view` adds a base view (`orient` front, top, right, iso, ... or `dir`/`up`; `select` nodes, default all;
+  `explode` a saved exploded view's op id: its parts drawn apart with trail lines, from its camera unless orient/dir;
   `at` its centre on the paper; `scale` "sheet", "1:5" or "auto") or one projected from `parent` (`side` left, right,
   top, bottom or a corner such as top-right; `gap` mm between the frames, default 20). First angle: the view right of
   the front view shows the left side and the one below it the top; third angle the other way round. Projected views

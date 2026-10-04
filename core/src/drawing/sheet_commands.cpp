@@ -257,7 +257,8 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
        "returns its paper frame",
        {{"doc", "path"}, {"sheet", "uuid"}, {"kind", "base|projected|section|detail|auxiliary"}, {"name", "string"},
         {"orient", "string - front (default), top, right, iso, ... or a view bookmark id"}, {"dir", "[x,y,z] - towards the viewer"},
-        {"up", "[x,y,z]"}, {"select", "array|csv - nodes (default all)"}, {"hide", "array|csv"}, {"at", "[x,y] - paper mm of its centre"},
+        {"up", "[x,y,z]"}, {"select", "array|csv - nodes (default all)"}, {"hide", "array|csv"},
+        {"explode", "uuid - a saved exploded view: parts apart with trail lines (its camera unless orient/dir)"}, {"at", "[x,y] - paper mm of its centre"},
         {"scale", "string - sheet (default), 1:5 or auto"}, {"parent", "uuid"},
         {"side", "left|right|top|bottom|top-left|top-right|bottom-left|bottom-right"}, {"gap", "number - mm between frames (20)"},
         {"hidden", "bool - hidden lines"}, {"centermarks", "bool"}, {"cut", "array - [[u,v],..]"}, {"flip", "bool"}, {"aligned", "bool"},
@@ -284,8 +285,13 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
             Camera::preset(o);  // throws for a name it does not know
             orient["preset"] = o;
           }
-          op["orient"] = orient;
           json source = json::object();
+          if (a.contains("explode")) {  // an exploded view (UI-85), seen as it was saved unless told otherwise
+            const std::string view = a["explode"].get<std::string>();
+            source["explode"] = {{"view", view}};
+            if (!a.contains("orient") && !a.contains("dir")) orient = {{"view", view}};
+          }
+          op["orient"] = orient;
           if (const auto nodes = strings(a.value("select", json())); !nodes.empty()) source["nodes"] = nodes;
           if (const auto hide = strings(a.value("hide", json())); !hide.empty()) source["hide"] = hide;
           if (!source.empty()) op["source"] = source;

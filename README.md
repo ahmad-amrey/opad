@@ -396,7 +396,10 @@ Never cut in section views); detail views enlarge a
 circle of their parent, auxiliary views look square to a slanted edge, and any view can be cropped to a box or broken to
 shorten a long part (dimensions across a break keep their true value; break lines ruled with a zigzag or freehand). A
 broken-out section opens up a view within a smooth closed outline down to a depth picked in a view beside it (`breakouts`
-on the view): its floor hatched, a thin break line where it ends over the part.
+on the view): its floor hatched, a thin break line where it ends over the part. An exploded view (`--explode <view op>`,
+Drawings > Views > Exploded view) draws the parts where a saved exploded view puts them, seen from its camera, with thin
+phantom trail lines from where they sit in the assembly; projected views and balloons follow it, and it follows the
+exploded view when that is updated.
 
 Annotations are `sheet_item` kinds measured from the model and kept with what they showed: dimensions (with precision,
 tolerances and fits), centre marks and lines, hole callouts read from the hole's own faces (depth or THRU, counterbores,

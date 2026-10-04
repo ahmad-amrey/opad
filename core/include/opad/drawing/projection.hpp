@@ -44,6 +44,12 @@ struct ViewSpec {
   int resolution = 4096;           // hybrid: depth-buffer pixels along the long side of the view
   double tolerance = 0.01;         // mm: approximated curves stay this close to the projection
   std::map<std::string, Vec3> offsets;  // node -> world translation added to it and its children (exploded views)
+  // An exploded view (UI-85): {"view": <view op id>} (a saved exploded view) or an explode spec object, drawn at its t.
+  // resolve_explode lays it out into `offsets` and `trails`; until then (scene-only callers: orientation, checks) the
+  // parts are where the model has them.
+  json explode;
+  bool explode_resolved = false;
+  std::vector<std::array<Vec3, 2>> trails;  // world: from where a moved part's centre would be to where it is drawn
   // A section (UI-82): the cutting line in a plane through the model (cut_x, cut_y: its axes, the parent view's; points in
   // model mm), swept along that plane's normal. Whatever lies on the viewer's side of it (towards dir) is taken away from
   // the bodies it crosses, and the faces the cut leaves facing the viewer come back as ViewGeometry::sections. One segment:
@@ -72,7 +78,9 @@ struct ViewSpec {
 
 struct Curve {
   enum class Type : uint8_t { Line, Arc, Ellipse, Spline, Polyline };
-  enum class Kind : uint8_t { Sharp, Tangent, Seam, Silhouette, Break };  // Break: where a broken-out section ends (thin)
+  // Break: where a broken-out section ends (thin); Trail: an exploded view's trail line, from where a part sits in the
+  // assembly to where it is drawn (thin phantom, UI-85), body -1.
+  enum class Kind : uint8_t { Sharp, Tangent, Seam, Silhouette, Break, Trail };
   Type type = Type::Line;
   Kind kind = Kind::Sharp;
   bool hidden = false;
@@ -132,6 +140,11 @@ void view_axes(const ViewSpec& spec, Vec3& x, Vec3& y, Vec3& dir);
 // on the body or on the nearest node above it that sets `section`, unless `sectioned` names the body or a component on
 // the way up first. Walks the body's path only.
 bool left_whole(const Scene& scene, const std::string& body, const std::vector<std::string>& sectioned = {});
+// Lays spec.explode out (the view op's or the spec's explode at its t) into spec.offsets per body and spec.trails; once
+// (explode_resolved), and nothing without one. Workers only: the units come from the bodies' tight boxes. project,
+// cached_projection, choose_tier, projection_fingerprint, view_extent and view_depth do it on a copy themselves; a caller
+// of view_bodies resolves first. Throws Error for a view op that is gone or has no explode.
+void resolve_explode(const Document& doc, const Scene& scene, ViewSpec& spec);
 // The body nodes a view draws, with their world placements (the explode offsets added). Throws for an unknown node.
 std::vector<std::pair<std::string, Mat4>> view_bodies(const Scene& scene, const ViewSpec& spec);
 // The tier Auto takes for this view (counts faces: workers only).

@@ -540,7 +540,7 @@ std::string linework_brep(const ViewGeometry& g) {
   b.MakeCompound(all);
   for (auto& p : parts) b.MakeCompound(p);
   for (const auto& c : g.curves) {
-    const int at = c.hidden ? 2 : c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam || c.kind == Curve::Kind::Break ? 1 : 0;
+    const int at = c.hidden ? 2 : c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam || c.kind == Curve::Kind::Break || c.kind == Curve::Kind::Trail ? 1 : 0;
     try {
       if (c.type == Curve::Type::Polyline) {
         for (size_t i = 1; i < c.pts.size(); ++i)

@@ -9,10 +9,13 @@
 #include <BRep_Tool.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Cylinder.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -82,7 +85,19 @@ struct Resolver {
   std::map<std::string, TopoDS_Shape> fresh;
   json notes = json::object();
   design::Ctx ctx;
-  Resolver(const Document& doc, const Scene& scene) : params(defs_of(scene)), ctx{doc, params, scene, fresh, {}, &notes} {}
+  std::map<std::string, Vec3> shift;  // an exploded view's (UI-85): body -> where it is drawn from where it is
+  // In `view` (a frame's id): its picks where an exploded view draws their parts.
+  Resolver(const Document& doc, const Scene& scene, const std::string& view = {}) : params(defs_of(scene)), ctx{doc, params, scene, fresh, {}, &notes} {
+    if (const SheetView* v = view.empty() ? nullptr : scene.sheet_view(view); v && v->error.empty()) {
+      try {
+        ViewSpec spec = view_spec(scene, *v);
+        if (spec.explode.is_null()) return;
+        resolve_explode(doc, scene, spec);
+        shift = spec.offsets;
+      } catch (const std::exception&) {  // a view that cannot be drawn says so where it is drawn
+      }
+    }
+  }
 };
 
 // What a reference gives an annotation: a point (its aspect), and the line, circle, cylinder or plane it lies on.
@@ -94,7 +109,25 @@ struct Pick {
   TopoDS_Shape sub;
 };
 
+Pick pick_of_model(const Resolver& R, json r);
+
+// A reference's pick, moved with its part in an exploded view.
 Pick pick_of(const Resolver& R, json r) {
+  Pick k = pick_of_model(R, r);
+  if (R.shift.empty() || k.node.empty()) return k;
+  const auto it = R.shift.find(k.node);
+  if (it == R.shift.end()) return k;
+  const Vec3 d = it->second;
+  for (Vec3* p : {&k.p, &k.a, &k.b, &k.centre}) *p = plus3(*p, d);
+  if (!k.sub.IsNull()) {
+    gp_Trsf t;
+    t.SetTranslation(gp_Vec(d[0], d[1], d[2]));
+    k.sub = k.sub.Moved(TopLoc_Location(t));
+  }
+  return k;
+}
+
+Pick pick_of_model(const Resolver& R, json r) {
   Pick k;
   if (r.is_string()) r = Ref::parse(r.get<std::string>()).to_json();
   std::string aspect = r.value("aspect", "");
@@ -342,7 +375,7 @@ void check_tolerance(const json& t) {
 json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& item, const ViewFrame& frame) {
   if (item.kind != "dimension") throw Error("only dimensions have a value");
   if (!frame.error.empty()) throw Error("its view cannot be drawn: " + frame.error);
-  const Resolver R(doc, scene);
+  const Resolver R(doc, scene, frame.id);
   std::vector<Pick> picks;
   for (const auto& r : item.def.value("refs", json::array())) picks.push_back(pick_of(R, r));
   for (auto& k : picks) edge_on(k, frame);
@@ -466,7 +499,7 @@ json pick_reference(const Document& doc, const Scene& scene, const ViewFrame& fr
   const std::string snap = pick.value("snap", "nearest");
   const Vec2 at = sub(vec2(pick.value("at", json())), frame.at);
   json ref = design::make_ref(doc, scene, Ref{node, edge >= 0 ? Ref::Kind::Edge : Ref::Kind::Face, edge >= 0 ? edge : face});
-  const Resolver R(doc, scene);
+  const Resolver R(doc, scene, frame.id);
   const Paper paper{frame};
   Pick k = pick_of(R, ref);
   if (k.plane && !paper.across(k.axis)) throw Error("that face is seen at a slant in this view: pick one of its edges");  // a section's outline
@@ -508,7 +541,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     json m = json::object();
     if (!refs.empty()) {
       if (!frame || !frame->error.empty()) throw Error("its view cannot be drawn");
-      const Resolver R(doc, scene);
+      const Resolver R(doc, scene, frame->id);
       const Pick k = pick_of(R, refs[0]);
       const Paper paper{*frame};
       Vec2 tip = paper(k.p);
@@ -536,7 +569,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
   if (kind == "balloon") {  // its leader on the part, its number from the parts list's row of that part
     if (refs.size() != 1) throw Error("a balloon points at one part");
     if (!frame->error.empty()) throw Error("its view cannot be drawn: " + frame->error);
-    const Resolver R(doc, scene);
+    const Resolver R(doc, scene, frame->id);  // on the part where an exploded view draws it
     const Pick k = pick_of(R, refs[0]);
     if (k.node.empty()) throw Error("a balloon points at a part of the model");
     const Paper paper{*frame};
@@ -558,7 +591,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     return m;
   }
   if (!frame->error.empty()) throw Error("its view cannot be drawn: " + frame->error);
-  const Resolver R(doc, scene);
+  const Resolver R(doc, scene, frame->id);
   const Paper paper{*frame};
   const double units = per_mm(sheet);
   const Vec2 place = vec2(d.value("place", json::object()).value("text", json()));
@@ -1206,7 +1239,7 @@ json datum_dimensions(const Document& doc, const Scene& scene, const json& args)
   if (type != "ordinate" && type != "baseline" && type != "chain") throw Error("type is ordinate, baseline or chain");
   const auto frames = layout(doc, scene, *sheet);
   const ViewFrame& frame = frame_of(frames, viewId);
-  const Resolver R(doc, scene);
+  const Resolver R(doc, scene, frame.id);
   const Paper paper{frame};
   // The view's datums: an upright edge measures across (horizontal values), a level one up and down.
   std::vector<std::string> wanted;
@@ -1271,7 +1304,9 @@ json datum_dimensions(const Document& doc, const Scene& scene, const json& args)
   return {{"ops", ops}};
 }
 
-std::vector<std::array<Vec2, 2>> cylinder_axes(const Document& doc, const Scene& scene, const ViewFrame& f, const ViewSpec& spec) {
+std::vector<std::array<Vec2, 2>> cylinder_axes(const Document& doc, const Scene& scene, const ViewFrame& f, const ViewSpec& in) {
+  ViewSpec spec = in;
+  resolve_explode(doc, scene, spec);  // an exploded view's marks on its parts where they are drawn
   struct Axis {
     Vec3 p, d;
     double r, lo, hi, turn;

@@ -61,6 +61,10 @@ CASES = [
     # redo), Quantity from the bar, the list dragged, a part added later numbered after the highest, renumbering from the
     # list's menu. <prefix>.tables.png.
     ("sheet-tables", "empty", {"OPAD_BENCH_SHEET_TABLES": "{prefix}"}),
+    # Exploded-view drawings (UI-85): Exploded view with none saved says how to save one; with one saved it is placed with the
+    # pointer at the size the exploded parts take, the view op naming it, drawn apart with trail lines on their Trail layer.
+    # <prefix>.exploded.png.
+    ("sheet-exploded", "empty", {"OPAD_BENCH_SHEET_EXPLODED": "{prefix}"}),
     # Revision table and Issue revision (UI-84) in a fresh git repository: the table placed with the pointer, the dialog
     # (next revision, PDF beside the document, git found), the issue planned and its PDF written and hashed on a worker,
     # linework frozen, the document saved, committed and tagged; the sheet bar names the revision and warns once the model
