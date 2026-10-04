@@ -27,6 +27,7 @@
 #include "Units.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include "opad/geometry.hpp"
 
 using opad::json;
 using Stage = PrimitivePlacer::Stage;
@@ -41,6 +42,10 @@ gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 PrimitivePlacer::PrimitivePlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, FeaturePanel* form, ToolValues* values, QObject* parent)
     : QObject(parent), m_doc(doc), m_view(view), m_jobs(jobs), m_form(form), m_values(values) {
   view->installEventFilter(this);
+  // The view's own hover found another surface under a resting pointer (a frame after the last move): the marker goes there.
+  connect(view, &Viewport::hoverChanged, this, [this] {
+    if (m_stage == Stage::Place && !m_down && !m_job && m_view->rect().contains(m_last.toPoint())) hover(m_last, m_lastFree);
+  });
 }
 
 PrimitivePlacer::~PrimitivePlacer() {
@@ -262,7 +267,7 @@ std::vector<opad::Vec3> PrimitivePlacer::faceTargets(const TopoDS_Face& face) co
 
 // What the pointer is over and where a click would put the primitive: an origin or construction plane (its frame known), a
 // planar face (its frame resolved on a worker when clicked), or nothing: the plane the panel holds.
-PrimitivePlacer::Hit PrimitivePlacer::hitAt(const QPointF& pos, bool free) {
+PrimitivePlacer::Hit PrimitivePlacer::hitAt(const QPointF& pos, bool free, bool fresh) {
   Hit h;
   std::string candidate;
   TopoDS_Face face;
@@ -287,7 +292,7 @@ PrimitivePlacer::Hit PrimitivePlacer::hitAt(const QPointF& pos, bool free) {
     h.at = frame.to_world(u, v);
     return true;
   };
-  if (m_view->surfaceAt(pos, candidate, face, at)) {
+  if (m_view->surfaceAt(pos, candidate, face, at, fresh)) {
     if (!candidate.empty()) {
       const json id = json::parse(candidate, nullptr, false);
       if (id.is_object() && id.contains("base")) onFrame(id, opad::design::base_frame(id.value("base", std::string("xy"))));
@@ -301,12 +306,16 @@ PrimitivePlacer::Hit PrimitivePlacer::hitAt(const QPointF& pos, bool free) {
         h.why = tr("A curved face: click a planar face, an origin plane or a construction plane");
         return h;
       }
-      opad::Vec3 snapped;
-      if (snapTo(pos, faceTargets(face), snapped)) at = snapped, h.snapped = true;
       gp_Ax3 ax = surface.Plane().Position();
       gp_Dir n = ax.Direction();
       if (!ax.Direct()) n.Reverse();
       if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+      // Where the pointer meets the face's plane now (the hover's detection is a frame old), else snapped to a vertex.
+      const opad::Frame plane = opad::design::frame_from_ax3(gp_Ax3(ax.Location(), n, ax.XDirection()));
+      double u = 0, v = 0;
+      if (m_view->planePoint(pos, plane, u, v) && std::isfinite(u) && std::isfinite(v)) at = plane.to_world(u, v);
+      opad::Vec3 snapped;
+      if (snapTo(pos, faceTargets(face), snapped)) at = snapped, h.snapped = true;
       h.ok = true;
       h.frame = opad::design::frame_from_ax3(gp_Ax3(pnt(at), n, ax.XDirection()));
       h.at = at;
@@ -438,7 +447,7 @@ void PrimitivePlacer::placeAt(const json& plane, const opad::Frame& frame, doubl
 
 void PrimitivePlacer::click(const QPointF& pos, bool free) {
   if (m_job) return;  // the face clicked before is being resolved
-  const Hit hit = hitAt(pos, free);
+  const Hit hit = hitAt(pos, free, true);
   if (!hit.ok) {
     if (!hit.why.isEmpty()) setStatus(hit.why);
     return;
@@ -448,22 +457,30 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
   if (hit.frameKnown) return placeAt(hit.plane, hit.frame, hit.u, hit.v);
   // A face: its frame as the feature will resolve it (from the face's corner, kernel work) on a worker, then the click's
   // point in it.
-  opad::Ref ref;
-  if (!m_view->hoveredReference(ref) || ref.kind != opad::Ref::Kind::Face) return;
+  // The face is named on the worker too: a reopened document's bodies have stock owners, whose ordinal is a walk of the body.
+  std::string body;
+  TopoDS_Shape whole, sub;
+  int index = -1;
+  if (!m_view->hoveredSubShape(body, whole, sub, index) || sub.ShapeType() != TopAbs_FACE) return;
   const auto copied = copies ? copies() : std::make_pair(std::shared_ptr<const opad::Document>(std::make_shared<opad::Document>(m_doc->doc)),
                                                          std::shared_ptr<const opad::Scene>(std::make_shared<opad::Scene>(m_doc->scene)));
   auto doc = copied.first;
   auto scene = copied.second;
-  auto plane = std::make_shared<json>(json{{"face", ref.to_json()}});
+  auto plane = std::make_shared<json>();
   auto frame = std::make_shared<opad::Frame>();
   const int serial = ++m_serial;
   const opad::Vec3 at = hit.at;
   m_release = {};
   showMarker(hit);
-  m_job = m_jobs->async(tr("Resolving the plane"), [doc, scene, plane, frame](Progress p) {
+  m_job = m_jobs->async(tr("Resolving the plane"), [doc, scene, plane, frame, body, whole, sub, index](Progress p) {
     if (p.cancelled()) return;
+    opad::Ref ref;
+    ref.body = body;
+    ref.kind = opad::Ref::Kind::Face;
+    ref.index = index >= 0 ? index : opad::subshape_index(whole, sub);
+    *plane = json{{"face", ref.to_json()}};
     *frame = opad::design::resolve_plane(*doc, *scene, *plane);
-    (*plane)["face"] = opad::design::make_ref(*doc, *scene, opad::Ref::from_json(plane->at("face")));
+    (*plane)["face"] = opad::design::make_ref(*doc, *scene, ref);
   }, [this, serial, plane, frame, at, free, snapped](bool ok, const QString& error) {
     if (serial != m_serial || m_stage != Stage::Place) return;
     m_job = nullptr;
@@ -481,7 +498,7 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
     }
     placeAt(*plane, *frame, u, v);
     if (m_release.pending) {  // pressed, dragged and let go while the face was resolved: the footprint is that drag
-      sizeFrom(m_release.at, m_release.free);
+      sizeFrom(m_release.at, m_release.free, true);
       fixSize();
       m_release = {};
     } else if (QLineF(m_last, m_placedAt).length() > 3) {
@@ -491,7 +508,7 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
 }
 
 // The sizes where the pointer is (`pos` on the plane): the ones not typed, rounded at this zoom or to the grid.
-void PrimitivePlacer::sizeFrom(const QPointF& pos, bool free) {
+void PrimitivePlacer::sizeFrom(const QPointF& pos, bool free, bool fresh) {
   if (m_stage != Stage::Size && m_stage != Stage::Section) return;
   double u = 0, v = 0;
   if (!m_view->planePoint(pos, m_frame, u, v) || !std::isfinite(u) || !std::isfinite(v)) return;
@@ -500,7 +517,7 @@ void PrimitivePlacer::sizeFrom(const QPointF& pos, bool free) {
   TopoDS_Face face;
   opad::Vec3 at{0, 0, 0}, snapped{0, 0, 0};
   bool exact = false;
-  if (m_view->surfaceAt(pos, candidate, face, at) && !face.IsNull() && snapTo(pos, faceTargets(face), snapped)) {
+  if (m_view->surfaceAt(pos, candidate, face, at, fresh) && !face.IsNull() && snapTo(pos, faceTargets(face), snapped)) {
     m_frame.to_local(snapped, u, v);
     exact = true;
   }
@@ -575,7 +592,7 @@ bool PrimitivePlacer::escape() {
 void PrimitivePlacer::hover(const QPointF& pos, bool free) {
   if (m_stage == Stage::Place) {
     if (m_job) return;
-    const Hit hit = hitAt(pos, free);
+    const Hit hit = hitAt(pos, free, false);
     showMarker(hit);
     setStatus(hit.ok || hit.why.isEmpty() ? prompt() : hit.why);
   } else if (m_stage == Stage::Size || m_stage == Stage::Section) {
@@ -600,6 +617,7 @@ bool PrimitivePlacer::eventFilter(QObject* watched, QEvent* event) {
   const bool free = e->modifiers().testFlag(Qt::AltModifier);
   if (type == QEvent::MouseMove) {
     m_last = pos;
+    m_lastFree = free;
     if (e->buttons() == Qt::NoButton || (m_down && e->buttons() == Qt::LeftButton)) hover(pos, free);
     return false;
   }
@@ -614,7 +632,7 @@ bool PrimitivePlacer::eventFilter(QObject* watched, QEvent* event) {
       click(pos, free);
     } else if (m_stage == Stage::Size || m_stage == Stage::Section) {
       if (!m_sized && QLineF(pos, m_placedAt).length() <= 3) return true;  // a double click on the place: no size yet
-      sizeFrom(pos, free);
+      sizeFrom(pos, free, true);
       fixSize();
     }
     return true;
@@ -625,7 +643,7 @@ bool PrimitivePlacer::eventFilter(QObject* watched, QEvent* event) {
   if (m_pressStage == Stage::Place && QLineF(pos, m_press).length() > 6) {
     if (m_job) m_release = {true, pos, free};
     else if (m_stage == Stage::Size || m_stage == Stage::Section) {
-      sizeFrom(pos, free);
+      sizeFrom(pos, free, true);
       fixSize();
     }
   }

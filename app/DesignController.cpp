@@ -394,7 +394,12 @@ void DesignController::startFeature(const QString& kind) {
     }
   }
   if (m_form->activeInput().isEmpty()) activateInput(QString());  // nothing to pick first: a plane input takes a click
-  if (!spec->footprint.empty()) m_placer->start(*spec);  // a primitive: placed in the view by a click, sized by the pointer
+  if (!spec->footprint.empty()) {  // a primitive: placed in the view by a click, sized by the pointer
+    m_placer->start(*spec);
+    // The copies its face clicks and previews are planned on, made now as a first preview made them (131 ms on the Engine,
+    // which a click on a face then waited for), once the panel is up.
+    QTimer::singleShot(0, this, [this] { if (m_placer->active()) refreshPlanCopies(); });
+  }
   schedulePreview();
   emit stateChanged();
 }

@@ -115,7 +115,13 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
     QApplication::sendEvent(view, &e);
   };
   auto at = [view](const opad::Vec3& p) { return QPointF(view->widgetPoint(p)); };
-  auto moveTo = [mouse, at](const opad::Vec3& p) { mouse(QEvent::MouseMove, at(p)); };
+  // A move as a user's: a frame's hover has detected what is under the point before the placer reads it (the hover reads
+  // the last frame's detection; a hidden window draws no frames, so the bench detects for it).
+  auto hoverAt = [view, mouse](const QPointF& p) {
+    view->benchHover(p);
+    mouse(QEvent::MouseMove, p);
+  };
+  auto moveTo = [hoverAt, at](const opad::Vec3& p) { hoverAt(at(p)); };
   auto clickAt = [mouse, at](const opad::Vec3& p) {
     mouse(QEvent::MouseMove, at(p));
     mouse(QEvent::MouseButtonPress, at(p));
@@ -351,7 +357,7 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the sphere does not wait for a plane")) return false;
         view->grabImage();
         opad::Vec3 marker;
-        mouse(QEvent::MouseMove, at({-25, -10, 10}) + QPointF(-5, -3));  // a few pixels inside the top face's front corner
+        hoverAt(at({-25, -10, 10}) + QPointF(-5, -3));  // a few pixels inside the top face's front corner
         require(placer->markerShown(&marker) && about(marker[0], -25, 1e-6) && about(marker[1], -10, 1e-6) && about(marker[2], 10, 1e-6), "the pointer near the face's corner does not snap to it");
         pass("sphere: over the block's top face the marker snaps to its corner");
         moveTo({-40, 0, 10});
@@ -393,7 +399,7 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the torus does not wait for a plane")) return false;
         view->grabImage();
         opad::Vec3 marker;
-        mouse(QEvent::MouseMove, at({0, 0, 0}) + QPointF(4, -3));  // a few pixels off: the hovered plane's origin takes it
+        hoverAt(at({0, 0, 0}) + QPointF(4, -3));  // a few pixels off: the hovered plane's origin takes it
         require(placer->markerShown(&marker) && marker == opad::Vec3{0, 0, 0}, "the pointer a few pixels off the origin does not snap to it");
         pass("torus: the pointer a few pixels off the origin snaps to it");
         const opad::Vec3 p = front();

@@ -430,11 +430,11 @@ bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {
   moveTo(devicePos(point));
   return hoveredReference(ref);
 }
-bool Viewport::surfaceAt(const QPointF& point, std::string& candidate, TopoDS_Face& face, opad::Vec3& at) {
+bool Viewport::surfaceAt(const QPointF& point, std::string& candidate, TopoDS_Face& face, opad::Vec3& at, bool fresh) {
   candidate.clear();
   face.Nullify();
   if (!m_initialised) return false;
-  moveTo(devicePos(point));
+  if (fresh) moveTo(devicePos(point));
   if (!m_ctx->HasDetected()) return false;
   gp_Pnt hit;
   if (!detectedPoint(hit)) return false;
@@ -703,6 +703,20 @@ bool Viewport::hoveredReference(opad::Ref& ref) const {
   ref.kind=sub.ShapeType()==TopAbs_FACE?opad::Ref::Kind::Face:sub.ShapeType()==TopAbs_EDGE?opad::Ref::Kind::Edge:sub.ShapeType()==TopAbs_VERTEX?opad::Ref::Kind::Vertex:opad::Ref::Kind::Body;
   if(ref.kind==opad::Ref::Kind::Body)return false;
   ref.index=opad::subshape_index(ais->Shape(),sub);return true;
+}
+bool Viewport::hoveredSubShape(std::string& body, TopoDS_Shape& whole, TopoDS_Shape& sub, int& index) const {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  const auto object = m_ctx->DetectedInteractive();
+  const auto found = m_nodeOf.find(object.get());
+  const auto ais = Handle(AIS_Shape)::DownCast(object);
+  const auto owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+  if (found == m_nodeOf.end() || ais.IsNull() || owner.IsNull() || !owner->HasShape()) return false;
+  body = found->second;
+  whole = ais->Shape();
+  sub = owner->Shape();
+  const auto known = Handle(SubShapeOwner)::DownCast(owner);
+  index = known.IsNull() ? -1 : known->index();
+  return true;
 }
 void Viewport::showBackdrop(const Handle(AIS_InteractiveObject)& obj) {
   if(!m_initialised||obj.IsNull())return;obj->SetZLayer(Graphic3d_ZLayerId_Default);m_ctx->Display(obj,3,-1,false);redrawScene();

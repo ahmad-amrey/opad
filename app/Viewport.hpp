@@ -385,9 +385,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool hoveredReference(opad::Ref& ref) const;
   bool referenceAt(const QPointF& point,opad::Ref& ref);
   // What the pointer meets at `point` (widget px) as a click there would (TODO 11 P1, placing a primitive): a candidate's id,
-  // else a body's face (where it is drawn: `face` is moved into the world); `at` where the pointer meets it. False: nothing.
-  // hoveredReference() names the face afterwards.
-  bool surfaceAt(const QPointF& point, std::string& candidate, TopoDS_Face& face, opad::Vec3& at);
+  // else a body's face (where it is drawn: `face` is moved into the world); `at` where the pointer met it. False: nothing.
+  // hoveredReference() names the face afterwards. `fresh`: a pick at `point` now; else what the last frame's hover detected
+  // (one pick a frame, the view's own: a hover need not pay for a second).
+  bool surfaceAt(const QPointF& point, std::string& candidate, TopoDS_Face& face, opad::Vec3& at, bool fresh = true);
+  // The detected sub-shape for a worker to name (hoveredReference without its walk of the body, which a reopened document's
+  // stock owners need): its body's node, the shape the view draws, the sub-shape in it, and its ordinal when the view knows
+  // it (-1: opad::subshape_index(whole, sub) on the worker).
+  bool hoveredSubShape(std::string& body, TopoDS_Shape& whole, TopoDS_Shape& sub, int& index) const;
   bool originReferenceAt(const QPointF& point,opad::Ref& ref);
   // Drawing to sketch's preview (UI-29): segment and point arrays built on the worker, construction ones dashed; showing
   // them hands the arrays to the driver. previewSegments() counts what the preview draws.

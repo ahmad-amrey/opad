@@ -1,6 +1,17 @@
 """gui_benches cases of the Design workspace's tools as the help guides show them (TODO 11 wave 3): primitives placed by the
 pointer (app/PrimitivePlaceBench.cpp); clicks in the view reach the input the guide's animation clicks
 (app/PickRoutingBench.cpp); the value arrows and Move's triad the guides pull (app/HandlesBench.cpp)."""
+from pathlib import Path
+
+
+def engine():
+    """The Engine .opad beside the repository (as tools/bench_cases/assembly.py finds it); else a path that does not exist (the
+    case is skipped)."""
+    name = Path("opad_resources") / "bench_step_files" / "Engine V8-XT Turbo.opad"
+    for folder in Path(__file__).resolve().parents:
+        if (folder / name).exists():
+            return str(folder / name)
+    return str(Path("..") / name)
 
 
 def routing_parts(root, document):
@@ -35,6 +46,9 @@ CASES = [
     # a torus (ring, then section) placed by the pointer, each preview checked while the pointer moves or the arrow is held,
     # the committed inputs against the values shown; a cylinder by Enter alone.
     ("primitive-place", primitive_parts, {"OPAD_BENCH_PRIMITIVES": "{prefix}"}),
+    # P1 on the Engine: every mouse event of placing and sizing a cylinder handled in under 50 ms (picks, the face's frame and
+    # the previews on workers).
+    ("primitive-place-engine", engine(), {"OPAD_BENCH_PRIMITIVES_PERF": "1"}),
     # P3: the region then the Z axis (revolve), the body then the YZ plane (mirror), target then tool (combine), a face then
     # the XY plane and the Neutral plane box not taking that face (draft), axes for a circular pattern, a round face for a
     # construction axis, a face and an origin plane for a construction plane, the XY plane and Enter for a new sketch.

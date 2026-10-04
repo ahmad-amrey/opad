@@ -80,10 +80,10 @@ class PrimitivePlacer : public QObject {
     double u = 0, v = 0;  // in `frame` when frameKnown
     QString why;          // why it cannot be clicked (a curved face)
   };
-  Hit hitAt(const QPointF& pos, bool free);
+  Hit hitAt(const QPointF& pos, bool free, bool fresh);  // fresh: picked now (a click), else the last frame's hover
   void hover(const QPointF& pos, bool free);
   void click(const QPointF& pos, bool free);
-  void sizeFrom(const QPointF& pos, bool free);
+  void sizeFrom(const QPointF& pos, bool free, bool fresh = false);
   void enter(Stage stage);
   void showMarker(const Hit& hit);
   void clearMarker();
@@ -110,6 +110,7 @@ class PrimitivePlacer : public QObject {
   opad::Frame m_frame;            // the plane's frame (Position X/Y are in it)
   double m_cu = 0, m_cv = 0;      // the click in it: the centre (or a box's corner)
   QPointF m_placedAt, m_press, m_last;
+  bool m_lastFree = false;        // Alt held at the last move
   bool m_sized = false;           // the pointer gave this stage's size
   bool m_down = false, m_writing = false;
   Stage m_pressStage = Stage::Off;
