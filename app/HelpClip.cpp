@@ -1549,7 +1549,7 @@ void picture(Ctx& c, const QJsonObject& o, const Xf& x) {
 }
 
 // The timeline at the foot of a panel: one marker per step (an icon), each in a state: "" plain, "dim" (rolled back),
-// "struck" (deleted), "sel" (selected), "flash" (being computed), "error" (failed: a red !); "at" puts the rollback bar after that many markers.
+// "tombstoned" (deleted: dashed and hollow, as the app draws it), "sel" (selected), "flash" (being computed), "error" (failed: a red !); "at" puts the rollback bar after that many markers.
 // Left to right in every language like the app's timeline; the strip itself sits on the mirrored side.
 void timeline(Ctx& c, const QJsonObject& o) {
   QPainter& p = *c.p;
@@ -1568,16 +1568,13 @@ void timeline(Ctx& c, const QJsonObject& o) {
     const QRectF m(box.left() + pad + i * cell + 2 * u, box.top() + 4 * u, cell - 4 * u, h - 8 * u);
     const bool later = i >= bar - 1e-9;
     p.setOpacity(p.opacity() * (state == "dim" || later ? 0.4 : 1));
-    p.setPen(QPen(state == "sel" || state == "flash" ? t.sel : t.line, 1 * u));
-    p.setBrush(state == "flash" ? t.sel : state == "sel" ? t.selbg : t.bg4);
+    const bool tombstoned = state == "tombstoned";
+    p.setPen(QPen(state == "sel" || state == "flash" ? t.sel : tombstoned ? t.fg2 : t.line, (tombstoned ? 1.5 : 1) * u, tombstoned ? Qt::DashLine : Qt::SolidLine));
+    p.setBrush(state == "flash" ? t.sel : state == "sel" ? t.selbg : tombstoned ? QBrush(Qt::NoBrush) : QBrush(t.bg4));
     p.drawRoundedRect(m, 3 * u, 3 * u);
     const int size = int(std::lround(12 * u));
     p.drawPixmap(QRectF(m.center() - QPointF(6, 6) * u, QSizeF(12, 12) * u).toRect(),
                  icons::pixmap(markers[i].toString(), state == "flash" ? t.onsel : state == "sel" ? t.sel : t.fg2, size, p.device()->devicePixelRatioF()));
-    if (state == "struck") {
-      p.setPen(QPen(t.red, 1.6 * u, Qt::SolidLine, Qt::RoundCap));
-      p.drawLine(m.bottomLeft() + QPointF(2, -2) * u, m.topRight() + QPointF(-2, 2) * u);
-    }
     if (state == "error") {  // a step that failed: the timeline's red "!" at the marker's corner
       const QPointF e = m.bottomRight() - QPointF(1, 1) * u;
       p.setPen(QPen(t.bg2, 1 * u));

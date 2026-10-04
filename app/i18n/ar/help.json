@@ -438,7 +438,7 @@
  "Its component is selected": "يُحدد مكوّنه",
  "Select it and press {key:edit.delete}": "حدده واضغط {key:edit.delete}",
  "Select it and choose Delete": "حدده واختر حذف",
- "Click the delete step on the timeline": "انقر خطوة الحذف في الخط الزمني",
+ "Click the Remove step on the timeline": "انقر خطوة الإزالة في الخط الزمني",
  "{press:edit.restore}: the objects come back": "{press:edit.restore}: تعود العناصر",
  "{press:file.import} and choose a file": "{press:file.import} واختر ملفًا",
  "Its parts join this design": "تنضم أجزاؤه إلى هذا التصميم",

@@ -67,7 +67,7 @@ void MainWindow::buildEditActions() {
   addAction("edit.delete", tr("Delete"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
   addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
     std::string id = m_timeline->currentOp();
-    if (id.empty()) throw opad::UserHint("Select a tombstoned marker on the timeline first.", true);
+    if (id.empty()) throw opad::UserHint("Select a delete or Remove step, or a tombstoned marker, on the timeline first.", true);
     restoreOp(id);
   });
   addAction("edit.selecttouched", tr("Select what it touches"), "isolate", QKeySequence("T"), [this] {
@@ -242,7 +242,20 @@ void MainWindow::deleteOp(const std::string& requestedId) {
 
 void MainWindow::restoreOp(const std::string& requestedId) {
   const std::string opId=requestedId;
-  // Restoring = tombstoning the delete op that targets it.
+  // On the step that took things out (TODO 11 help audit P9.2): a live delete step, or the Remove step Del adds in a
+  // design, is tombstoned, which brings back what it removed (one new step, so it can be undone in turn).
+  const opad::Op* step = m_doc->doc.find_op(opId);
+  const bool live = step && !m_doc->doc.is_deleted(opId);
+  const opad::Feature* removal = live && step->type == "feature" ? m_doc->scene.feature(opId) : nullptr;
+  if (live && (step->type == "delete" || (removal && removal->kind == "remove"))) {
+    if (removal || !m_doc->scene.features.empty() || !m_doc->scene.sketches.empty())
+      m_design->applyOps({opad::json{{"op", "delete"}, {"target", opId}}}, tr("restore"));
+    else
+      m_doc->run("delete", opad::json{{"target", opId}});
+    m_timeline->setCurrentOp(opId);
+    return;
+  }
+  // On a tombstoned step: tombstoning the delete op that targets it.
   for (const auto& op : m_doc->doc.ops)
     if (op.type == "delete" && op.data.value("target", "") == opId && !m_doc->doc.is_deleted(op.id)) {
       if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty() || m_doc->doc.find_op(opId)->type == "feature" || m_doc->doc.find_op(opId)->type == "sketch")

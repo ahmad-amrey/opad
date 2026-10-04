@@ -17,6 +17,8 @@
 //   deleted asks about the peg with the result previewed (UI-96, as from its marker); cancelled, nothing changes.
 //   An import of two bodies, no history: one body goes to a Remove feature (the other stays, the import is not
 //   tombstoned); both are the whole import: it is tombstoned; Undo from the toast each time.
+//   Restore (edit.restore) on the step that took things out (TODO 11 help audit P9.2), as its guide shows: on the box's
+//   Remove step and on the import's delete step it brings them back as one new step, and Undo takes that back.
 //   A big model (the Engine, case delete-engine): one body goes to a Remove feature and comes back with Undo, with no
 //   event-loop gap over 250 ms.
 OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
@@ -29,6 +31,7 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
     QElapsedTimer clock, tick;
     qint64 gap = 0;
     size_t tombstones = 0;
+    std::string step;  // the Remove or delete step Restore is tried on
   };
   auto state = std::make_shared<State>();
   SmartSelect* area = nullptr;
@@ -137,9 +140,32 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
           undoFromToast(QObject::tr("Removed %1: a Remove step on the timeline keeps its history").arg(state->name));
           break;
         }
-        case 7: {
+        case 7:
           if (!waitFor(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.all_bodies() == state->bodies, "Undo brings the body back")) return;
           pass("Del on the body appended a Remove feature (the box feature stays); the toast's Undo brought it back");
+          pickBodies(state->bodies);
+          w.action("edit.delete")->trigger();
+          break;
+        case 8:
+          if (!waitFor(w.m_doc->doc.ops.size() > state->ops && w.m_doc->scene.all_bodies().empty(), "Del on the body again")) return;
+          require(w.m_doc->scene.features.back().kind == "remove", "a Remove step again");
+          state->step = w.m_doc->scene.features.back().id;
+          w.m_timeline->setCurrentOp(state->step);
+          w.action("edit.restore")->trigger();
+          break;
+        case 9:
+          if (!waitFor(w.m_doc->doc.is_deleted(state->step) && w.m_doc->scene.all_bodies() == state->bodies, "Restore on the Remove step brings the body back")) return;
+          require(w.m_doc->doc.ops.size() == state->ops + 2, "the restore is one new step");
+          pass("Restore on the Remove step (its marker selected) brought the body back as one new step");
+          w.action("edit.undo")->trigger();
+          break;
+        case 10:
+          if (!waitFor(w.m_doc->doc.ops.size() == state->ops + 1 && w.m_doc->scene.all_bodies().empty(), "Undo takes the restore back")) return;
+          w.action("edit.undo")->trigger();
+          break;
+        case 11: {
+          if (!waitFor(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.all_bodies() == state->bodies, "Undo takes the Remove step back")) return;
+          pass("Undo took the restore back, then the Remove step");
           opad::design::Sketch square;
           const int a = square.add_point(40, 0), b = square.add_point(46, 0), c = square.add_point(46, 6), d = square.add_point(40, 6);
           square.add_line(a, b);
@@ -152,7 +178,7 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
           w.m_design->applyOps({sketch, opad::design::make_feature_op("extrude", "Peg", {{"profiles", profiles}, {"distance", "5 mm"}, {"operation", "new"}})}, "bench peg");
           break;
         }
-        case 8: {
+        case 12: {
           const opad::Feature* peg = nullptr;
           for (const auto& f : w.m_doc->scene.features)
             if (f.name == "Peg") peg = &f;
@@ -163,7 +189,7 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
           w.action("edit.delete")->trigger();
           break;
         }
-        case 9: {
+        case 13: {
           QMenu* question = area->openMenu();
           if (!waitFor(question && question->isVisible() && question->objectName() == "smartDeleteQuestion", "Del on the sketch in the browser asks about the peg")) return;
           QAction* all = question->findChild<QAction*>("deleteWithDependents");
@@ -174,7 +200,7 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
           question->close();
           break;
         }
-        case 10:
+        case 14:
           if (!waitFor(!area->openMenu() || !area->openMenu()->isVisible(), "the question closes")) return;
           require(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.sketch(state->sketch), "cancelled: the sketch stays");
           pass("the question closed without a choice: nothing deleted");
@@ -209,6 +235,22 @@ OPAD_BENCH(OPAD_BENCH_DELETE, deleterouting) {
         case 24:
           if (!waitFor(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.all_bodies().size() == 2, "Undo brings the import back")) return;
           pass("Del on every body of the import tombstoned the import; Undo from the toast");
+          pickBodies(state->bodies);
+          w.action("edit.delete")->trigger();
+          break;
+        case 25: {
+          if (!waitFor(w.m_doc->doc.ops.size() > state->ops && w.m_doc->scene.all_bodies().empty(), "Del on both bodies again")) return;
+          const opad::Op& last = w.m_doc->doc.ops.back();
+          require(last.type == "delete" && last.data.value("target", "") == state->source, "a delete step on the import");
+          state->step = last.id;
+          w.m_timeline->setCurrentOp(state->step);
+          w.action("edit.restore")->trigger();
+          break;
+        }
+        case 26:
+          if (!waitFor(w.m_doc->doc.is_deleted(state->step) && w.m_doc->scene.all_bodies().size() == 2, "Restore on the delete step brings the import back")) return;
+          require(w.m_doc->doc.ops.size() == state->ops + 2 && !w.m_doc->doc.is_deleted(state->source), "the restore is one new step, the import live again");
+          pass("Restore on the delete step (its marker selected) brought the import back as one new step");
           timer->stop();
           QCoreApplication::exit(0);
           return;

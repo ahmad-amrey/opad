@@ -389,7 +389,7 @@
  "Screenshot failed": "تعذّر التقاط الشاشة",
  "Select a body, face, edge or vertex to anchor the note.": "حدد جسمًا أو وجهًا أو حافة أو رأسًا لربط الملاحظة به.",
  "Select a note in the Annotations panel or on the timeline first.": "حدد أولًا ملاحظة في لوحة الملاحظات أو على الخط الزمني.",
- "Select a tombstoned marker on the timeline first.": "حدد أولًا علامة محذوفة على الخط الزمني.",
+ "Select a delete or Remove step, or a tombstoned marker, on the timeline first.": "حدد أولًا خطوة حذف أو إزالة، أو علامة محذوفة، على الخط الزمني.",
  "Select objects, or a marker on the timeline, to tombstone.": "حدد عناصر، أو علامة على الخط الزمني، لحذفها مع إبقاء السجل.",
  "Select something to see its properties.": "حدد شيئًا لعرض خصائصه.",
  "That operation is not tombstoned.": "هذه العملية ليست محذوفة.",

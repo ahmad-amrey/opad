@@ -3094,12 +3094,12 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "opacity": 0, "keys": [[1.6, {"opacity": 0}], [2.1, {"opacity": 1}]]},
-    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder", "delete"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "", "sel"], "ease": "step"}], [1.6, {"markers": ["box", "cylinder", "delete", "restore"], "states": ["", "", "struck", "flash"], "ease": "step"}], [2.3, {"states": ["", "", "struck", ""]}]]},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder", "delete"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "", "sel"], "ease": "step"}], [1.6, {"markers": ["box", "cylinder", "delete", "delete"], "states": ["", "", "tombstoned", "flash"], "ease": "step"}], [2.3, {"states": ["", "", "tombstoned", ""]}]]},
     {"el": "key", "command": "edit.restore", "press": 1.55, "from": 1.2, "to": 2.05},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [0.8, {"screen": [0.22, 0.89]}], [0.9, {"screen": [0.22, 0.89], "click": 1}], [1.8, {"screen": [0.6, 0.6]}]]}
    ],
    "steps": [
-    {"to": 1, "caption": "Click the delete step on the timeline"},
+    {"to": 1, "caption": "Click the Remove step on the timeline"},
     {"to": 4, "caption": "{press:edit.restore}: the objects come back"}
    ]
   },

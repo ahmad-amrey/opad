@@ -158,7 +158,11 @@ void MainWindow::buildDesign() {
   connect(m_timeline, &TimelineWidget::deleteRequested, this, [this](const std::string& id, bool restore) {
     if (m_doc->browse || !requireEditable()) return;
     const bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), id) != m_doc->scene.deleted_ops.end();
-    if (deleted == restore) guarded([&] { restore ? restoreOp(id) : deleteOp(id); });
+    // Shift+Del restores a tombstoned marker, and also what a live delete or Remove step took out (as Restore does).
+    const opad::Op* op = m_doc->doc.find_op(id);
+    const opad::Feature* f = m_doc->scene.feature(id);
+    const bool removes = !deleted && op && (op->type == "delete" || (f && f->kind == "remove"));
+    if (restore ? deleted || removes : !deleted) guarded([&] { restore ? restoreOp(id) : deleteOp(id); });
   });
   connect(m_browser, &BrowserPanel::sketchActivated, this, editOp);
   connect(m_browser,&BrowserPanel::editedSketchVisibilityRequested,this,[this]{auto* sketch=m_design->sketch();sketch->setVisible(!sketch->visible());});

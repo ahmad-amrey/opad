@@ -1103,17 +1103,17 @@
    "id": "edit.delete",
    "title": "Delete",
    "summary": "Removes the selection; the history keeps it restorable.",
-   "details": "In a design the bodies leave through a Remove step at the end of the timeline; a sketch, or a whole import in an imported model, is tombstoned by a delete step. Undo brings them back, and a tombstoned import or sketch also comes back with Restore ({key:edit.restore}) on its struck marker.",
+   "details": "In a design the bodies leave through a Remove step at the end of the timeline; a sketch, or a whole import in an imported model, is tombstoned by a delete step. Undo brings them back, and so does Restore ({key:edit.restore}) on that Remove or delete step.",
    "keywords": ["remove", "erase"],
    "requires": "Select the objects first, in the view or in the browser."
   },
   {
    "id": "edit.restore",
    "title": "Restore",
-   "summary": "Brings back what a tombstone removed.",
-   "details": "Select a delete marker on the timeline first. The restore is a new step, so it can itself be undone.",
+   "summary": "Brings back what a delete or Remove step took out.",
+   "details": "Select the delete or Remove step on the timeline first; on a tombstoned (dashed) marker it brings that step back. The restore is a new step, so it can itself be undone.",
    "keywords": ["undelete", "recover", "bring back"],
-   "requires": "Select a delete marker on the timeline first."
+   "requires": "Select a delete or Remove step on the timeline first."
   },
   {
    "id": "edit.selecttouched",
