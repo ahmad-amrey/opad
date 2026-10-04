@@ -195,8 +195,12 @@ bool TimelineWidget::event(QEvent* e) {
   if (e->type() == QEvent::ShortcutOverride) {  // F2 is the marker's (edit), not the window's Rename
     const auto* k = static_cast<QKeyEvent*>(e);
     const Qt::KeyboardModifiers mods = k->modifiers() & ~Qt::KeypadModifier;
+    // Del and Shift+Del tombstone and restore the current marker's op (keyPressEvent) wherever the keyboard focus is
+    // reported: the window's Delete and Restore did that only while the timeline had the focus, else they acted on the
+    // selection.
     if ((k->matches(QKeySequence::Copy) && !m_current.empty()) || (mods == Qt::ShiftModifier && playheadKey(k->key())) ||
-        (k->key() == Qt::Key_F2 && !mods && currentMarker() >= 0)) {
+        (k->key() == Qt::Key_F2 && !mods && currentMarker() >= 0) ||
+        (k->key() == Qt::Key_Delete && (!mods || mods == Qt::ShiftModifier) && currentMarker() >= 0)) {
       e->accept();
       return true;
     }
