@@ -102,7 +102,7 @@ class ClipView : public QWidget {
 };
 
 class QToolButton;
-// The guide slot of a tool panel (ToolStepsPanel, SketchPanel, FeaturePanel; design notes B §4): the running command's
+// The guide slot of a tool panel (ToolStepsPanel, SketchPanel, FeaturePanel, DrawingPlacer; design notes B §4): the running command's
 // clip, looping the segment of the step the tool waits for. Its header folds it; folded or not is remembered per
 // command (help/guide/<id>), and a command run more than kUses times starts folded (help/uses/<id>). No slot for a
 // command without a clip, nor with ui/toolGuide off.
@@ -111,7 +111,7 @@ class ToolGuide : public QWidget {
  public:
   static constexpr int kUses = 5, kHeight = 150;
   explicit ToolGuide(QWidget* parent = nullptr);
-  void setCommand(const QString& id);    // a new run of the command (counted); empty: no slot
+  void setCommand(const QString& id);    // a new run of the command, or of a panel's own clip (the drawing placer's), counted; empty: no slot
   void setWaiting(int step, int count);  // the tool waits for its step `step` of `count` (count when all are done)
   QString command() const { return m_id; }
   bool shown() const { return !isHidden(); }
