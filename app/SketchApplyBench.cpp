@@ -3,6 +3,7 @@
 #include "Jobs.hpp"
 #include "Units.hpp"
 #include "opad/geometry.hpp"
+#include "opad/design/sketch_edit.hpp"
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
@@ -27,7 +28,8 @@ using namespace opad::design;
 // link: a click picks a linked curve (an unlinked one is refused), a window picks the linked ones, Enter unlinks them.
 // Include: an origin axis as a construction curve on Enter. Insert image: the frame at the width set follows the pointer,
 // stays at the click, Enter places the picture there. Calibrate: the measure follows the pointer, the Known distance box
-// takes the two points' distance, typing the real one and Enter scales the picture. <prefix>.mirror.png,
+// takes the two points' distance, typing the real one and Enter scales the picture. Node weights: the spline's new shape
+// is previewed while the weight changes, Enter keeps it. <prefix>.mirror.png,
 // <prefix>.project.png (and the panel's list, <prefix>.panel.png), <prefix>.image.png, <prefix>.calibrate.png.
 void SketchEditor::benchApply() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_APPLY");
@@ -299,6 +301,33 @@ void SketchEditor::benchApply() {
         m_clicks.push_back({});
         check(appliesOnEnter(), "union: two loops picked, Enter applies");
         m_clicks.clear();
+        // ---- Spline node weights: the curve previews its new shape, Enter keeps it.
+        setTool("select");
+        begin_change();
+        st["spline"] = add_cubic_spline(m_sk, {m_sk.add_point(40, -25), m_sk.add_point(50, -15), m_sk.add_point(60, -25)});
+        end_change(QStringLiteral("Bench"));
+        const SkEntity* spline = m_sk.entity(st["spline"]);
+        st["node"] = spline && spline->p.size() > 3 ? spline->p[3] : 0;
+        const SkPoint* node = m_sk.point(st["node"]);
+        setTool("node");
+        if (node) place(node->x, node->y);
+        check(m_sel == std::vector<int>{st["node"]}, "node: a click picks the spline's middle node");
+        m_options["weight"] = "4";
+        scheduleToolPreview();
+        break;
+      }
+      case 18: {
+        const SkEntity* spline = m_sk.entity(st["spline"]);
+        const SkEntity* shown = m_toolPreview ? m_toolPreview->entity(st["spline"]) : nullptr;
+        check(previewed() && shown && shown->weights.size() > 3 && std::abs(shown->weights[3] - 4) < 1e-9 && spline && (spline->weights.size() <= 3 || std::abs(spline->weights[3] - 4) > 1e-9),
+              "node: the weight set, the curve's new shape is previewed and the sketch unchanged");
+        check(sketchkeys::enter(keyState()) == sketchkeys::Enter::Apply, "node: Enter would keep it");
+        send(Qt::Key_Return);
+        break;
+      }
+      case 19: {
+        const SkEntity* spline = m_sk.entity(st["spline"]);
+        check(spline && spline->weights.size() > 3 && std::abs(spline->weights[3] - 4) < 1e-9, "node: Enter keeps the new weight");
         setTool("select");
         break;
       }

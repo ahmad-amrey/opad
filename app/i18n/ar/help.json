@@ -797,5 +797,6 @@
  "Select the projected curves": "حدد المنحنيات المُسقطة",
  "Press Enter: they become plain curves": "اضغط Enter: تصبح منحنيات عادية",
  "Now they can be edited and dragged": "يمكن الآن تحريرها وسحبها",
- "Press Enter to place it": "اضغط Enter لوضعها"
+ "Press Enter to place it": "اضغط Enter لوضعها",
+ "Press Enter to keep it": "اضغط Enter لاعتماده"
 }

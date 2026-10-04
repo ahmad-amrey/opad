@@ -357,5 +357,7 @@
  "%1 · vertex %2": "%1 · رأس %2",
  "Select linked curves first: they are drawn amber.": "حدد المنحنيات المرتبطة أولًا: تُرسم بلون كهرماني.",
  "Not added: %1": "لم يُضف: %1",
- "Preview ready. Press Enter or Apply to keep it, or change the values.": "المعاينة جاهزة. اضغط Enter أو تطبيق لاعتمادها، أو غيّر القيم."
+ "Preview ready. Press Enter or Apply to keep it, or change the values.": "المعاينة جاهزة. اضغط Enter أو تطبيق لاعتمادها، أو غيّر القيم.",
+ "spline weights must be positive": "يجب أن تكون أوزان المنحنى موجبة",
+ "the spline no longer exists": "المنحنى الانسيابي لم يعد موجودًا"
 }

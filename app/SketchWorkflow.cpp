@@ -136,15 +136,20 @@ void SketchEditor::applyTool() {
     for(const auto& e:m_sk.entities)if(e.degree && !e.fixed) {
       auto it=std::find(e.p.begin(),e.p.end(),m_sel.front());if(it!=e.p.end()){entity=e.id;index=int(it-e.p.begin());break;}
     }
-    if(!entity)return;
-    begin_change();
+    if(!entity){if(!m_previewRequested)emit status(tr("Choose a control node on an editable spline."));return;}
     try {
-      auto* e=m_sk.entity(entity);
-      auto weight=[&](int at,const QString& key){bool ok=false;const double v=option(key,"1").toDouble(&ok);if(!ok || !std::isfinite(v) || v<=0)throw opad::Error("spline weights must be positive");e->weights[size_t(at)]=v;};
-      weight(index,"weight");
-      if(index%3==0 && e->degree==3){if(index>0)weight(index-1,"incoming");if(index+1<int(e->p.size()))weight(index+1,"outgoing");}
-      end_change(tr("Spline node weights"));
-    } catch(const std::exception& e){cancel_change();emit status(QString::fromUtf8(e.what()));}
+      const auto* e=m_sk.entity(entity);
+      auto weight=[&](const QString& key){bool ok=false;const double v=option(key,"1").toDouble(&ok);if(!ok || !std::isfinite(v) || v<=0)throw opad::Error("spline weights must be positive");return v;};
+      std::vector<std::pair<size_t,double>> weights{{size_t(index),weight("weight")}};
+      if(index%3==0 && e->degree==3){if(index>0)weights.push_back({size_t(index-1),weight("incoming")});if(index+1<int(e->p.size()))weights.push_back({size_t(index+1),weight("outgoing")});}
+      // As the other Apply tools (TODO 11 wave 3, P4): the curve previews its new shape while the weights change, Enter or
+      // Apply keeps it.
+      runSketchEdit(tr("Spline node weights"),[entity,weights](Sketch& sk){
+        auto* spline=sk.entity(entity);if(!spline)throw opad::Error("the spline no longer exists");
+        if(spline->weights.size()<spline->p.size())spline->weights.resize(spline->p.size(),1.0);
+        for(const auto& [at,w]:weights)if(at<spline->weights.size())spline->weights[at]=w;
+      });
+    } catch(const std::exception& e){if(!m_previewRequested)emit status(i18n::t(QString::fromUtf8(e.what())));}
     return;
   }
   toolPrompt();
@@ -514,7 +519,7 @@ void SketchEditor::scheduleToolPreview() {
   // wave 3, P4: the guides show each pick's projection before Enter).
   const bool live=m_dimensionHandle->dragging();
   invalidatePreview(live);updateDimensionHandle();updateInput();
-  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect"};
+  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect","node"};
   const bool reference=sketchkeys::referenceTool(m_tool.toStdString());
   if(m_active && ((tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) || (reference && !m_sources.isEmpty()))) {
     if(!live)m_toolPreviewTimer.start(120);

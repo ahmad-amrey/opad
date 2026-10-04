@@ -1139,7 +1139,7 @@
    "id": "sketch.node",
    "title": "Spline node weights",
    "summary": "Edits the weights of a spline node and its handles.",
-   "details": "Select a node of a spline, set the weights and apply. A heavier node pulls the curve closer to it.",
+   "details": "Select a node of a spline (or double-click it) and set the weights: the curve previews its new shape. Press Enter or Apply to keep it. A heavier node pulls the curve closer to it.",
    "keywords": ["spline weight", "nurbs", "handle"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
