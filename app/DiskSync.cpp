@@ -237,7 +237,7 @@ void DiskSync::confirm(const QString& title, const QString& text, const QString&
 
 void DiskSync::merge() {
   if (!m_read) return;
-  if (AppDocument::statFile(m_read->file) != m_read->stat) {  // it moved on again: read that first
+  if (!m_read->doc || AppDocument::statFile(m_read->file) != m_read->stat) {  // a newer read that failed, or it moved on again
     m_decided = false;
     return check();
   }
