@@ -187,7 +187,7 @@
    "title": "Export",
    "summary": "Writes the selection or the whole design to STEP, STL, OBJ, GLB, DXF, SVG, DWG, PDF or PNG.",
    "details": "Choose the format and what to include in the dialog, then where the file goes. Mesh formats are tessellated from the exact shapes; the 2D formats write drawings and sketches, or a 2D view of solids with hidden lines.",
-   "keywords": ["save as step", "stl", "3mf", "dxf", "svg", "write file", "output"],
+   "keywords": ["save as step", "stl", "dxf", "svg", "write file", "output"],
    "requires": "Open or create a document first."
   },
   {
@@ -2230,7 +2230,7 @@
    "id": "sketch.project",
    "title": "Project",
    "summary": "Projects body edges, faces or vertices onto the sketch as reference curves.",
-   "details": "Click straight or circular edges of bodies behind the sketch plane. Linked projections follow the body when it changes; an editable copy does not.",
+   "details": "Pick an edge, or a face, vertex or body with the panel's Pick filter, then Apply: it is flattened onto the sketch plane, wherever it is. Linked projections follow the body when it changes; an editable copy does not.",
    "keywords": ["reference edges", "use edges", "convert entities"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },

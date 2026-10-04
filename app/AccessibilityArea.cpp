@@ -338,7 +338,7 @@ class AccessibilityArea : public AreaController {
     }
     if (services().browser()) {
       services().browser()->tree()->setAccessibleName(tr("Browser"));
-      services().browser()->tree()->setAccessibleDescription(help::expand(tr("{fixed:space} shows or hides the selected objects, {fixed:enter} fits the view to one or edits a sketch, {fixed:f2} renames, {fixed:del} tombstones, the Menu key opens the menu.")));
+      services().browser()->tree()->setAccessibleDescription(help::expand(tr("{fixed:space} shows or hides the selected objects, {fixed:enter} fits the view to one or edits a sketch, {fixed:f2} renames, {fixed:del} deletes, the Menu key opens the menu.")));
     }
     nameButtons(services().window());
   }

@@ -1311,9 +1311,15 @@ void card(Ctx& c, const QJsonObject& o) {
     }
     p.setFont(c.font(10));
     p.setPen(dim ? t.fg3 : t.fg2);
-    if (r.contains("text") || r.contains("label"))
-      p.drawText(c.mirror(QRectF(x, y, row.right() - x - pad, rowH)), Qt::AlignLeft | Qt::AlignVCenter,
-                 r.contains("text") ? said(r.value("text").toString()) : literal(r.value("label").toString()));
+    if (r.contains("text") || r.contains("label")) {
+      // A value on the right keeps its room: a label too long for the rest is cut short, never drawn under it.
+      const bool valued = r.contains("value") && !r.contains("slider") && !r.contains("entry");
+      const QString value = r.value("value").toString();
+      const QFontMetricsF metrics(p.font());
+      const double room = row.right() - x - pad - (valued ? metrics.horizontalAdvance(wordy(value) ? said(value) : literal(value)) + 6 * u : 0);
+      const QString label = r.contains("text") ? said(r.value("text").toString()) : literal(r.value("label").toString());
+      p.drawText(c.mirror(QRectF(x, y, std::max(0.0, room), rowH)), Qt::AlignLeft | Qt::AlignVCenter, metrics.elidedText(label, Qt::ElideRight, std::max(0.0, room)));
+    }
     if (r.contains("slider")) {
       const double sx0 = row.left() + w * 0.42, sx1 = row.right() - pad, f = std::clamp(r.value("slider").toDouble(), 0.0, 1.0), cy = y + rowH / 2;
       const QRectF track = c.mirror(QRectF(sx0, cy - 1.5 * u, sx1 - sx0, 3 * u)), done = c.mirror(QRectF(sx0, cy - 1.5 * u, (sx1 - sx0) * f, 3 * u));
