@@ -188,6 +188,15 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   selected = v->selection();
   require(!listed() && selected.size() == 1 && selected.front().body == ids["Lone"], "a press held on one thing alone opens no list and its release selects it");
   v->clearSelection();
+  // On screen the open list takes the held press's release, so the view never gets it: the pointer moving on hovers again.
+  v->benchHoverAt(overPin);
+  send(QEvent::MouseButtonPress, overPin, Qt::LeftButton);
+  until([&] { return listed() != nullptr; }, hold + 2000);
+  const bool opened = listed() != nullptr;
+  if (QMenu* open = listed()) open->close();
+  until([] { return false; }, 100);
+  v->benchHoverAt(overLone);
+  require(opened && v->hoverText() == "Lone" && v->selection().empty(), "when the list took the release, the pointer moving on hovers again: " + v->hoverText());
 
   // Faces: those behind the pin's top, one of them chosen.
   filter("select.faces", Viewport::SelFilter::Face);

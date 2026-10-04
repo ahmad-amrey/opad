@@ -2519,7 +2519,10 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   m_trackingDirty = true;
   if (m_holdTimer.isActive() && (e->position() - m_holdAt).manhattanLength() >= 4) m_holdTimer.stop();  // a drag, not a hold
   if (m_blocked) return;
-  if (m_holdPress) return;  // the list is open over the held press
+  if (m_holdPress) {  // the list is open over the held press, whose release the list may take instead of the view
+    if (e->buttons() & Qt::LeftButton) return;
+    m_holdPress = false;
+  }
   if (m_zoomDrag) { m_zoomTo = e->position(); showZoomBand(); return; }
   if (m_selectOtherPress) return;  // an Alt+press drags nothing
   if (m_trackpadMode != TrackpadMode::None && e->buttons() == Qt::NoButton) finishTrackpadScroll();
