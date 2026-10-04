@@ -11,6 +11,14 @@ def segments(root, document):
     return path
 
 
+def box_and_post(root, document):
+    """The box fixture (30 x 20 x 10 mm on XY) and a post 12 mm across standing through the XY plane at (20, -30), from
+    z -5 to 5: sketch-apply's Intersect with plane cuts it."""
+    return document("box-post", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'),
+                    ("feature", "--kind", "cylinder", "--inputs",
+                     '{"plane":{"origin":[0,0,-5],"normal":[0,0,1]},"x":"20 mm","y":"-30 mm","diameter":"12 mm","height":"10 mm"}'))
+
+
 EDITING = "[files]\nviewerMode=false\n"  # the drawing is opened to be converted, not viewed
 
 CASES = [
@@ -30,8 +38,9 @@ CASES = [
     ("clipboard-bodies", "box", {"OPAD_BENCH_CLIPBOARD_BODIES": "{prefix}"}),  # bodies: new ones, linked instances, from another document (UI-129)
     ("sketch-edits", "empty", {"OPAD_BENCH_SKETCH_EDITS": "{prefix}"}),  # line-arc fillet, fence trim, one-click extend, drag merge (UI-28)
     # The Apply tools as their guides show them (TODO 11 wave 3, P4): mirror's curves then its line, Enter applies, picks
-    # that preview, project's sources accumulating, break link picking, an image's frame and its calibration.
-    ("sketch-apply", "box", {"OPAD_BENCH_SKETCH_APPLY": "{prefix}"}),
+    # that preview, project's sources accumulating, break link picking, an image's frame and its calibration, intersect
+    # cutting a post that stands through the plane.
+    ("sketch-apply", box_and_post, {"OPAD_BENCH_SKETCH_APPLY": "{prefix}"}),
     # Tool panels hand the keyboard back to the view after a click on a button or the slider; Esc in a panel is its (UI-05).
     ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),
     # Typed values outside the sketch: a fillet's radius, the extrude's distance and taper by the arrow (UI-122).

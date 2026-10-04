@@ -2387,17 +2387,20 @@
    ]
   },
   {
-   "id": "sketch.image_edit", "duration": 4.6, "extent": [-30, -14, 30, 14],
+   "id": "sketch.image_edit", "duration": 5.2, "extent": [-30, -14, 30, 14], "guide": [0, [0, 2]],
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "sketchScene"},
-    {"el": "picture", "corners": [[-4, -6], [16, 6]], "pivot": [6, 0], "keys": [[1, {"offset": [0, 0], "rot": 0, "opacity": 1}], [2, {"offset": [2, 1], "rot": 0}], [2.9, {"rot": 12, "opacity": 1}], [3.6, {"opacity": 0.5}]]},
-    {"el": "card", "screen": [0.03, 0.06], "w": 132, "title": "Transform image", "rows": [["Angle", "0 deg"], ["Opacity", "1.0"]], "keys": [[2, {"rows": [["Angle", "0 deg"], ["Opacity", "1.0"]]}], [2.5, {"rows": [["Angle", "12 deg"], ["Opacity", "1.0"]], "ease": "step"}], [3.3, {"rows": [["Angle", "12 deg"], ["Opacity", "0.5"]], "ease": "step"}]]},
-    {"el": "cursor", "kind": "move", "keys": [[0, {"pos": [18, 10]}], [0.8, {"pos": [6, 0]}], [1, {"pos": [6, 0], "down": true}], [2, {"pos": [8, 1], "down": false}], [3.4, {"pos": [18, -10]}]]}
+    {"el": "picture", "corners": [[-4, -6], [16, 6]], "pivot": [-4, -6], "keys": [[1, {"offset": [0, 0], "rot": 0, "opacity": 1}], [2, {"offset": [2, 1]}], [3.75, {"rot": 0, "opacity": 1}], [4.2, {"rot": 12, "opacity": 0.5}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 132, "title": "Transform image", "rows": [["Rotation", "0 deg"], ["Opacity", "1.0"]], "hl": -1,
+     "keys": [[2.3, {"rows": [["Rotation", "0 deg"], ["Opacity", "1.0"]], "hl": 0}], [2.6, {"rows": [["Rotation", "12 deg"], ["Opacity", "1.0"]], "ease": "step"}], [2.9, {"hl": 1}], [3.2, {"rows": [["Rotation", "12 deg"], ["Opacity", "0.5"]], "ease": "step"}], [3.5, {"hl": -1}]]},
+    {"el": "key", "caps": ["Enter"], "press": 3.7, "from": 3.45, "to": 4.15},
+    {"el": "cursor", "kind": "move", "keys": [[0, {"pos": [18, 10]}], [0.8, {"pos": [6, 0]}], [1, {"pos": [6, 0], "down": true}], [2, {"pos": [8, 1], "down": false}], [2.8, {"pos": [-4, -11]}]]}
    ],
    "steps": [
     {"to": 2, "caption": "Drag the image to place it"},
-    {"to": 4.6, "caption": "Set its angle and opacity"}
+    {"to": 3.5, "caption": "Set its angle and opacity"},
+    {"to": 5.2, "caption": "Press Enter to apply them"}
    ]
   },
   {
