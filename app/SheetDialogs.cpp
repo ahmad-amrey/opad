@@ -3,6 +3,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QHeaderView>
@@ -507,4 +508,77 @@ opad::json SheetPropertiesDialog::change() const {
   }
   if (values != before) set["values"] = values.empty() ? opad::json(nullptr) : values;
   return set.empty() ? opad::json(nullptr) : set;
+}
+
+// ---------------------------------------------------------------- hatching (UI-82)
+HatchDialog::HatchDialog(const opad::json& hatch, QWidget* parent) : QDialog(parent), m_before(hatch.is_object() ? hatch : opad::json::object()) {
+  setObjectName("hatchDialog");
+  setWindowTitle(tr("Hatching"));
+  auto* v = new QVBoxLayout(this);
+  v->setContentsMargins(16, 16, 16, 16);
+  v->setSpacing(10);
+  auto* intro = new QLabel(tr("ISO 128-50 draws every material alike, at 45 degrees to each part's main outlines, parts beside each other turned apart."), this);
+  intro->setObjectName("secondary");
+  intro->setWordWrap(true);
+  v->addWidget(intro);
+  auto* form = new QFormLayout();
+  m_pattern = new QComboBox(this);
+  m_pattern->setObjectName("hatch.pattern");
+  for (const auto& [value, label] : std::initializer_list<std::pair<const char*, QString>>{
+           {"general", tr("General (ISO 128-50)")}, {"material", tr("By each body's material")}, {"steel", tr("Steel")}, {"copper", tr("Copper alloys")},
+           {"aluminium", tr("Light alloys")}, {"plastic", tr("Plastics and rubber")}, {"insulation", tr("Insulation")}, {"glass", tr("Glass")}})
+    m_pattern->addItem(label, QString::fromLatin1(value));
+  m_pattern->setCurrentIndex(std::max(0, m_pattern->findData(QString::fromStdString(m_before.value("pattern", "general")))));
+  form->addRow(tr("Lining"), m_pattern);
+  const auto row = [&](QCheckBox*& automatic, QDoubleSpinBox*& spin, const char* key, const QString& name, double lo, double hi, double fallback, const QString& suffix) {
+    auto* line = new QHBoxLayout();
+    automatic = new QCheckBox(tr("Automatic"), this);
+    automatic->setObjectName(QString("hatch.auto.") + key);
+    spin = new QDoubleSpinBox(this);
+    spin->setObjectName(QString("hatch.") + key);
+    spin->setRange(lo, hi);
+    spin->setDecimals(1);
+    spin->setSuffix(suffix);
+    const bool given = m_before.contains(key) && m_before[key].is_number();
+    spin->setValue(given ? m_before[key].get<double>() : fallback);
+    automatic->setChecked(!given);
+    spin->setEnabled(given);
+    connect(automatic, &QCheckBox::toggled, spin, [spin](bool on) { spin->setEnabled(!on); });
+    line->addWidget(automatic);
+    line->addWidget(spin, 1);
+    form->addRow(name, line);
+  };
+  row(m_autoAngle, m_angle, "angle", tr("Angle"), 0, 180, 45, QString::fromUtf8("°"));
+  row(m_autoSpacing, m_spacing, "spacing", tr("Spacing"), 0.5, 20, 2, tr(" mm"));
+  v->addLayout(form);
+  m_fill = new QCheckBox(tr("Fill narrow faces (under about 1 mm on paper)"), this);
+  m_fill->setObjectName("hatch.fill");
+  m_fill->setChecked(m_before.value("thin", "fill") != "hatch");
+  v->addWidget(m_fill);
+  auto* footer = new QHBoxLayout();
+  footer->addStretch();
+  auto* cancel = new QPushButton(tr("Cancel   Esc"), this);
+  auto* apply = new QPushButton(tr("Apply"), this);
+  apply->setObjectName("primary");
+  apply->setDefault(true);
+  footer->addWidget(cancel);
+  footer->addWidget(apply);
+  v->addLayout(footer);
+  connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+  connect(apply, &QPushButton::clicked, this, &QDialog::accept);
+  resize(440, sizeHint().height());
+}
+
+opad::json HatchDialog::hatch() const {
+  opad::json after = m_before;  // per-body settings (sheet_edit, the CLI) are kept
+  const auto put = [&](const char* key, bool on, const opad::json& value) {
+    if (on) after[key] = value;
+    else after.erase(key);
+  };
+  const std::string pattern = m_pattern->currentData().toString().toStdString();
+  put("pattern", pattern != "general", pattern);
+  put("angle", !m_autoAngle->isChecked(), std::round(m_angle->value() * 10) / 10);
+  put("spacing", !m_autoSpacing->isChecked(), std::round(m_spacing->value() * 10) / 10);
+  put("thin", !m_fill->isChecked(), "hatch");
+  return after == m_before ? opad::json() : after;
 }

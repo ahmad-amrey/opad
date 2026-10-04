@@ -276,10 +276,12 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - Views of a `parent` view (`kind`): `section` takes `cut`, the cutting line as points in the parent's view
   coordinates (model mm, the parent frame's `x`/`y`: `frame.centre` is the view's middle); two points a full section,
   more an offset or half section. It is placed on the line's left (`flip: true`: its right) and seen from the other
-  side in first angle; cut faces are hatched; `whole` lists nodes left uncut. `detail` takes `center` and `radius`
-  (view coordinates) and its own `scale`; `auxiliary` an `angle` (degrees on the sheet from the parent: it looks along
-  that line, e.g. square to a slanted edge). Letters come automatically (A, B, ...; `letter` to choose). Any view takes
-  `crop` [x0, y0, x1, y1] and `breaks` [{axis x|y, from, to, gap}] in its view coordinates (sheet_edit adds them later).
+  side in first angle; cut faces are hatched (ISO 128-50, automatic; `hatch` {pattern general|material|steel|copper|
+  aluminium|plastic|insulation|glass, angle, spacing, thin fill|hatch, bodies {node: {...}}} to choose); `whole` lists
+  nodes left uncut. `detail` takes `center` and `radius` (view coordinates) and its own `scale`; `auxiliary` an
+  `angle` (degrees on the sheet from the parent: it looks along that line, e.g. square to a slanted edge). Letters come
+  automatically (A, B, ...; `letter` to choose). Any view takes `crop` [x0, y0, x1, y1] and `breaks` [{axis x|y, from,
+  to, gap}] in its view coordinates (sheet_edit adds them later).
 - `sheet_item` adds a dimension measured in its `view` (`type` horizontal, vertical, aligned, radius, diameter or
   angle; `refs` two vertices or edges, one edge for its length, or one circle or cylinder; `aspects` start, end, mid
   or center per reference) or a note (`text`, `at`). A circle seen at a slant, or an angle between edges not parallel

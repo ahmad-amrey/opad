@@ -274,4 +274,126 @@ TEST(views_crop_and_breaks) {
   CHECK(texts(d, dim["id"].get<std::string>()).count("200"));
 }
 
+namespace {
+
+// The Hatch lines a view drew: their angles (degrees mod 180) and their offsets across a direction (paper mm).
+struct Lines {
+  std::vector<double> angles;
+  std::vector<std::array<Vec2, 2>> lines;
+  int fills = 0;
+};
+Lines hatch_of(const Display& d, const std::string& source) {
+  Lines out;
+  for (const auto& p : d.prims) {
+    if (d.layers[static_cast<size_t>(p.layer)].name != "Hatch" || p.source != source) continue;
+    if (p.kind == Prim::Kind::Fill) ++out.fills;
+    if (p.kind != Prim::Kind::Curve || p.curve.pts.size() != 2) continue;
+    const Vec2 a = p.curve.pts[0], b = p.curve.pts[1];
+    double t = std::atan2(b[1] - a[1], b[0] - a[0]) * 180 / M_PI;
+    while (t < 0) t += 180;
+    out.angles.push_back(std::fmod(t, 180.0));
+    out.lines.push_back({a, b});
+  }
+  return out;
+}
+bool all_at(const std::vector<double>& angles, double want) {
+  return !angles.empty() && std::all_of(angles.begin(), angles.end(), [&](double a) { return std::min(std::fabs(a - want), 180 - std::fabs(a - want)) < 1e-6; });
+}
+
+}  // namespace
+
+// Section linings (ISO 128-50): 45 degrees to a part's main outlines, a part beside it turned the other way, the view's
+// own angle and spacing, a body's own, the material symbols, narrow faces filled; patterns as drawn.
+TEST(views_hatching) {
+  // The patterns on a square: lines inside it, crossed ones at two angles, dashed ones in pieces.
+  const std::vector<std::vector<Vec2>> square = {{{0, 0}, {20, 0}, {20, 20}, {0, 20}}};
+  for (const auto& name : hatch_patterns()) {
+    const auto lines = hatch_pattern(square, name, M_PI / 4, 2);
+    CHECK(!lines.empty());
+    for (const auto& l : lines)
+      for (const auto& q : l) CHECK(q[0] >= -1e-9 && q[0] <= 20 + 1e-9 && q[1] >= -1e-9 && q[1] <= 20 + 1e-9);
+  }
+  CHECK_EQ(hatch_pattern(square, "general", 0.3, 2).size(), hatch_lines(square, 0.3, 2).size());
+  CHECK_EQ(hatch_pattern(square, "a pattern of a newer OPAD", 0.3, 2).size(), hatch_lines(square, 0.3, 2).size());
+  CHECK(hatch_pattern(square, "glass", 0, 2).size() > 3 * hatch_lines(square, 0, 2).size());  // dashes
+  std::set<long> turns;
+  for (const auto& l : hatch_pattern(square, "insulation", M_PI / 4, 2)) turns.insert(std::lround(std::atan2(l[1][1] - l[0][1], l[1][0] - l[0][0]) * 180 / M_PI + 360) % 180);
+  CHECK_EQ(turns.size(), 2u);
+  CHECK_EQ(material_hatch("stainless"), "steel");
+  CHECK_EQ(material_hatch("brass"), "copper");
+  CHECK_EQ(material_hatch("nylon-12"), "plastic");
+  CHECK_EQ(material_hatch("unobtainium"), "general");
+
+  Plate p;
+  const std::string sec = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "section"}, {"parent", p.front}, {"cut", {{0, -10}, {0, 20}}}})["id"];
+  const auto drawn = [&] {
+    const Scene s = resolve(p.doc);
+    return hatch_of(sheet_display(p.doc, s, *s.sheet(p.sheet)), sec);
+  };
+  CHECK(all_at(drawn().angles, 45));
+  // The view's angle and spacing.
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"angle", 30}, {"spacing", 2}}}}}});
+  Lines l = drawn();
+  CHECK(all_at(l.angles, 30));
+  const Vec2 n{-std::sin(M_PI / 6), std::cos(M_PI / 6)};
+  for (const auto& x : l.lines) {
+    const double o = x[0][0] * n[0] + x[0][1] * n[1];
+    CHECK(std::fabs(o / 2 - std::round(o / 2)) < 1e-6);  // through the origin, 2 mm apart
+  }
+  // A body's own angle beats the view's.
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"angle", 30}, {"bodies", {{p.body, {{"angle", 60}}}}}}}}}});
+  CHECK(all_at(drawn().angles, 60));
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"spacing", -1}}}}}}));
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"pattern", "chequered"}}}}}}));
+  // The material's symbol: steel's lines in pairs.
+  run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"material", "steel"}}}});
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"pattern", "material"}}}}}});
+  l = drawn();
+  CHECK(all_at(l.angles, 45));
+  std::set<long> offsets;
+  for (const auto& x : l.lines) offsets.insert(std::lround((x[0][1] - x[0][0]) * M_SQRT1_2 * 1000));
+  std::set<long> gaps;
+  for (auto it = std::next(offsets.begin()); it != offsets.end(); ++it) gaps.insert(std::lround((*it - *std::prev(it)) / 10.0));
+  CHECK(!gaps.empty() && *gaps.rbegin() > 3 * *gaps.begin() && std::all_of(gaps.begin(), gaps.end(), [&](long g) { return g - *gaps.begin() <= 2 || *gaps.rbegin() - g <= 2; }));  // close pairs, wider between them
+  // A detail of the section takes its lining.
+  const std::string det = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "detail"}, {"parent", sec}, {"center", {-12, 5}}, {"radius", 6}, {"at", {80, 80}}})["id"];
+  {
+    const Scene s = resolve(p.doc);
+    const Lines dl = hatch_of(sheet_display(p.doc, s, *s.sheet(p.sheet)), det);
+    CHECK(all_at(dl.angles, 45) && dl.lines.size() > 4);
+  }
+
+  // Two blocks one on the other: turned apart. A block turned 30 degrees: 45 degrees to its own sides.
+  Document doc = Document::create();
+  const std::string a = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "60 mm"}, {"width", "40 mm"}, {"height", "10 mm"}}}})["body_ids"][0];
+  const std::string b = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "30 mm"}, {"width", "40 mm"}, {"height", "10 mm"}}}})["body_ids"][0];
+  run(doc, "transform", {{"target", b}, {"matrix", {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 10, 0, 0, 0, 1}}});
+  const std::string c = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "20 mm"}, {"width", "20 mm"}, {"height", "20 mm"}}}})["body_ids"][0];
+  const double co = std::cos(M_PI / 6), si = std::sin(M_PI / 6);
+  run(doc, "transform", {{"target", c}, {"matrix", {1, 0, 0, 0, 0, co, -si, 0, 0, si, co, 60, 0, 0, 0, 1}}});
+  const std::string sheet = run(doc, "sheet", {{"size", "A3"}})["id"];
+  const std::string front = run(doc, "sheet_view", {{"sheet", sheet}, {"orient", "front"}, {"at", {250, 150}}})["id"];
+  const std::string cut = run(doc, "sheet_view", {{"sheet", sheet}, {"kind", "section"}, {"parent", front}, {"cut", {{0, -20}, {0, 100}}}})["id"];
+  Scene s = resolve(doc);
+  const auto frames = layout(doc, s, *s.sheet(sheet));
+  const ViewFrame& f = frame(frames, cut);
+  l = hatch_of(sheet_display(doc, s, *s.sheet(sheet)), cut);
+  std::set<long> low, high, tilted;
+  for (size_t i = 0; i < l.lines.size(); ++i) {
+    const double y = (l.lines[i][0][1] + l.lines[i][1][1]) / 2 - f.at[1], v = f.centre[1] + y / f.scale;  // the model's z
+    (v < 10 ? low : v < 20 ? high : tilted).insert(std::lround(l.angles[i]) % 180);
+  }
+  CHECK(low.size() == 1 && high.size() == 1 && *low.begin() != *high.begin());
+  CHECK(tilted.size() == 1 && (*tilted.begin() % 90 == 15 || *tilted.begin() % 90 == 75));  // 45 degrees off its sides (seen from either side)
+  CHECK_EQ(l.fills, 0);
+  // A thin plate: filled, or hatched when asked.
+  const std::string sheet_metal = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "40 mm"}, {"width", "40 mm"}, {"height", "0.5 mm"}}}})["body_ids"][0];
+  run(doc, "transform", {{"target", sheet_metal}, {"matrix", {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -10, 0, 0, 0, 1}}});
+  s = resolve(doc);
+  CHECK_EQ(hatch_of(sheet_display(doc, s, *s.sheet(sheet)), cut).fills, 1);
+  run(doc, "sheet_edit", {{"target", cut}, {"set", {{"hatch", {{"thin", "hatch"}}}}}});
+  s = resolve(doc);
+  CHECK_EQ(hatch_of(sheet_display(doc, s, *s.sheet(sheet)), cut).fills, 0);
+}
+
 CHECK_MAIN()

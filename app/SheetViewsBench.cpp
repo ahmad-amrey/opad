@@ -1,16 +1,21 @@
 #include "MainWindow.hpp"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
 
 #include <cmath>
+#include <set>
 
 #include "BenchRegistry.hpp"
 #include "DocsArea.hpp"
 #include "SheetCanvas.hpp"
+#include "SheetDialogs.hpp"
 #include "SheetPage.hpp"
 #include "SheetViewTool.hpp"
 #include "opad/drawing/sheet.hpp"
@@ -23,8 +28,9 @@ using opad::drawing::Vec2;
 // pointer lined up on the side it goes, a click places it (one step): hatched, labelled A-A, the front view drawing its
 // cutting line; dragged, it moves only away from its parent; Esc steps back a point, then leaves. Detail view: centre,
 // radius, place (5:1, the next standard scale from twice 2:1). Auxiliary view square to an edge of the top view, lined up.
-// Crop by dragging a box on the top view, Break by two clicks on the front view (the top view broken with it), Remove
-// crop from the view's menu, Ctrl+Z. <prefix>.views.png.
+// Hatching… (the dialog, a typed angle and spacing, automatic again). Crop by dragging a box on the top view, Break by two
+// clicks on the front view (the top view broken with it), Remove crop from the view's menu, Ctrl+Z. <prefix>.views.png,
+// <prefix>.hatch.png.
 OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -176,6 +182,59 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
       check(waitFor([&] { return whole().empty() && settled(); }, 15000) && hatched() > 10, "a click again: cut and hatched");
       key(Qt::Key_Escape);
       check(!tool->active(), "Esc ends it");
+    }
+    // Hatching… from the section's menu: the dialog shows automatic, a typed angle and spacing are one edit and drawn so;
+    // automatic again removes them.
+    {
+      const auto openDialog = [&]() -> HatchDialog* {
+        QMenu menu;
+        docs->viewMenu({sec}, menu);
+        QAction* a = menu.findChild<QAction*>("drawings.menu.hatching");
+        if (!a) return nullptr;
+        a->trigger();
+        HatchDialog* dialog = nullptr;
+        waitFor([&] {
+          for (QWidget* t : QApplication::topLevelWidgets())
+            if (auto* d = qobject_cast<HatchDialog*>(t); d && d->isVisible()) dialog = d;
+          return dialog != nullptr;
+        }, 3000);
+        return dialog;
+      };
+      const auto angles = [&] {  // the section's hatch lines' angles (degrees, whole)
+        std::set<long> out;
+        const auto d = opad::drawing::sheet_display(doc->doc, doc->scene, *doc->scene.sheet(sheet));
+        for (const auto& p : d.prims)
+          if (p.source == sec && d.layers[static_cast<size_t>(p.layer)].name == "Hatch" && p.curve.pts.size() == 2)
+            out.insert((std::lround(std::atan2(p.curve.pts[1][1] - p.curve.pts[0][1], p.curve.pts[1][0] - p.curve.pts[0][0]) * 180 / M_PI) + 360) % 180);
+        return out;
+      };
+      check(angles() == std::set<long>{45}, "the plate's cut faces hatched at 45 degrees (ISO 128-50)");
+      HatchDialog* dialog = openDialog();
+      check(dialog && dialog->autoAngle()->isChecked() && dialog->autoSpacing()->isChecked() && dialog->fillThin()->isChecked() &&
+                dialog->pattern()->currentData().toString() == "general",
+            "Hatching… opens its dialog: general lining, angle and spacing automatic, narrow faces filled");
+      if (dialog) {
+        dialog->autoAngle()->setChecked(false);
+        dialog->angle()->setValue(30);
+        dialog->autoSpacing()->setChecked(false);
+        dialog->spacing()->setValue(3);
+        dialog->grab().save(prefix + ".hatch.png");
+        const size_t before = doc->doc.ops.size();
+        dialog->accept();
+        check(waitFor([&] { const opad::SheetView* v = doc->scene.sheet_view(sec); return doc->doc.ops.size() == before + 1 && v && v->def.value("hatch", opad::json()) == opad::json{{"angle", 30.0}, {"spacing", 3.0}} && settled(); }, 15000) &&
+                  angles() == std::set<long>{30},
+              "30 degrees, 3 mm: one edit, drawn at 30 degrees");
+      }
+      dialog = openDialog();
+      check(dialog && !dialog->autoAngle()->isChecked() && std::fabs(dialog->angle()->value() - 30) < 1e-9 && std::fabs(dialog->spacing()->value() - 3) < 1e-9,
+            "opened again: it shows them");
+      if (dialog) {
+        dialog->autoAngle()->setChecked(true);
+        dialog->autoSpacing()->setChecked(true);
+        dialog->accept();
+        check(waitFor([&] { const opad::SheetView* v = doc->scene.sheet_view(sec); return v && !v->def.contains("hatch") && settled(); }, 15000) && angles() == std::set<long>{45},
+              "automatic again: the setting removed, 45 degrees");
+      }
     }
     // Esc with nothing clicked leaves.
     select(front);

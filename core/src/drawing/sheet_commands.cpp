@@ -81,6 +81,17 @@ void check_view(const Scene& scene, const std::string& id, const json& def) {
   std::sort(bands.begin(), bands.end());
   for (size_t i = 1; i < bands.size(); ++i)
     if (bands[i].first == bands[i - 1].first && bands[i].second.first < bands[i - 1].second.second) throw Error("its breaks overlap");
+  if (const json h = def.value("hatch", json()); h.is_object()) {  // what this build draws (the loader keeps a newer one's)
+    const auto& known = drawing::hatch_patterns();
+    const auto pattern = [&](const json& o) {
+      const std::string p = o.value("pattern", "general");
+      if (p != "material" && std::find(known.begin(), known.end(), p) == known.end()) throw Error("hatch pattern '" + p + "' is general, material or a material's lining");
+    };
+    pattern(h);
+    const json bodies = h.value("bodies", json::object());
+    for (const auto& [node, o] : bodies.items()) pattern(o);
+    if (h.contains("thin") && h["thin"] != "fill" && h["thin"] != "hatch") throw Error("hatch thin is fill or hatch");
+  }
   drawing::view_spec(scene, v);
 }
 
@@ -202,7 +213,8 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         {"scale", "string - sheet (default), 1:5 or auto"}, {"parent", "uuid"},
         {"side", "left|right|top|bottom|top-left|top-right|bottom-left|bottom-right"}, {"gap", "number - mm between frames (20)"},
         {"hidden", "bool - hidden lines"}, {"centermarks", "bool"}, {"cut", "array - [[u,v],..]"}, {"flip", "bool"}, {"center", "[u,v]"}, {"radius", "number"},
-        {"angle", "number - deg"}, {"letter", "string"}, {"crop", "[x0,y0,x1,y1]"}, {"breaks", "array - {axis,from,to,gap}"}, {"whole", "array|csv"}, {"by", "string"}},
+        {"angle", "number - deg"}, {"letter", "string"}, {"crop", "[x0,y0,x1,y1]"}, {"breaks", "array - {axis,from,to,gap}"}, {"whole", "array|csv"},
+        {"hatch", "object - pattern general|material|steel|.., angle, spacing, thin, bodies"}, {"by", "string"}},
        true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
@@ -268,6 +280,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         }
         if (a.contains("crop")) op["crop"] = a["crop"];
         if (a.contains("breaks")) op["breaks"] = a["breaks"];
+        if (a.contains("hatch")) op["hatch"] = a["hatch"];
         if (a.contains("hidden")) op["style"]["hidden"] = a["hidden"].get<bool>();
         if (a.value("centermarks", false)) op["style"]["centermarks"] = true;
         check_view(scene, "", op);

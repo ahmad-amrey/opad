@@ -12,7 +12,10 @@
 //               its left), letter, gap, align/at, whole [nodes not cut]; detail: parent, center [u, v], radius (model
 //               mm), letter, scale, at; auxiliary: parent, angle (degrees on the sheet from the parent to it: it looks
 //               along that line), gap, align/at, letter (optional); any view: crop [x0, y0, x1, y1] (view coordinates),
-//               breaks [{axis x|y, from, to, gap (paper mm)}]
+//               breaks [{axis x|y, from, to, gap (paper mm)}]; a section (and its details): hatch {pattern general |
+//               material | a lining (display.hpp hatch_patterns), angle (degrees: the first part's, neighbours turned from
+//               it), spacing (paper mm), thin fill | hatch (faces under about a millimetre filled), bodies {node: {pattern,
+//               angle, spacing}}}, all optional (automatic: ISO 128-50 at 45 degrees to each part's main outlines)
 //   sheet_item  sheet, view, kind dimension|note; dimension: type horizontal|vertical|aligned|radius|diameter|angle,
 //               refs (references with hint and aspect start|end|mid|center), place {text: [x, y]} (paper mm from the
 //               view's centre), precision, tol {sym|dev, plus, minus}, text {prefix, suffix}, result {value, shown}

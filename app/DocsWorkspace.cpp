@@ -463,6 +463,20 @@ void DocsArea::setViewStyle(const std::vector<std::string>& views, const opad::j
   if (!ops.empty()) run("append", {{"ops", ops}});
 }
 
+void DocsArea::editHatching(const std::string& view) {
+  const opad::SheetView* v = services().document()->scene.sheet_view(view);
+  if (!v || v->kind != "section") throw opad::Error("Hatching is a section view's.");
+  auto* dialog = new HatchDialog(v->def.value("hatch", opad::json::object()), services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QDialog::accepted, this, [this, dialog, view] {
+    services().guarded([&] {
+      const opad::json hatch = dialog->hatch();
+      if (!hatch.is_null()) run("sheet_edit", {{"target", view}, {"set", {{"hatch", hatch.empty() ? opad::json() : hatch}}}});
+    });
+  });
+  dialog->open();
+}
+
 void DocsArea::openSheet(const std::string& row) {
   const opad::Scene& s = services().document()->scene;
   std::string sheet, view;
@@ -512,6 +526,8 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
               m_page->viewTool()->start(SheetViewTool::Tool::Uncut, id);
             })->setObjectName("drawings.menu.uncut");
         if (v->def.contains("whole")) menu.addAction(tr("Cut every body"), this, [clear] { clear("whole"); })->setObjectName("drawings.menu.cutAll");
+        menu.addAction(icons::themed("viewSection", 16), tr("Hatching…"), this, [this, id = views[0]] { services().guarded([&] { editHatching(id); }); })
+            ->setObjectName("drawings.menu.hatching");
       }
     }
     menu.addSeparator();

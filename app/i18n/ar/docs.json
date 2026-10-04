@@ -518,5 +518,16 @@
   "Bodies left uncut": "أجسام بلا قطع",
   "Bodies are left uncut in a section view.": "تُترك الأجسام دون قطع في المسقط المقطعي.",
   "Click a body in the section to draw it whole (shafts, fasteners); click it again to cut it": "انقر جسمًا في المقطع لرسمه كاملًا (أعمدة، مثبتات)؛ انقره مجددًا لقطعه",
-  "Click a body in the section.": "انقر جسمًا في المقطع."
+  "Click a body in the section.": "انقر جسمًا في المقطع.",
+  "Hatching…": "التهشير…",
+  "Hatching": "التهشير",
+  "ISO 128-50 draws every material alike, at 45 degrees to each part's main outlines, parts beside each other turned apart.": "يرسم ISO 128-50 كل المواد بالطريقة نفسها، بزاوية 45 درجة على الحواف الرئيسية لكل جزء، مع اختلاف الاتجاه بين الأجزاء المتجاورة.",
+  "General (ISO 128-50)": "عام (ISO 128-50)",
+  "By each body's material": "حسب مادة كل جسم",
+  "Copper alloys": "سبائك النحاس",
+  "Light alloys": "السبائك الخفيفة",
+  "Plastics and rubber": "اللدائن والمطاط",
+  "Insulation": "العوازل",
+  "Lining": "النقش",
+  "Fill narrow faces (under about 1 mm on paper)": "املأ الوجوه الضيقة (أقل من نحو 1 مم على الورق)"
 }

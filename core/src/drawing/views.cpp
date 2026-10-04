@@ -14,9 +14,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 
 #include "opad/drawing/sheet.hpp"
+#include "opad/materials.hpp"
 #include "projection_internal.hpp"
 #include "views_internal.hpp"
 
@@ -352,11 +354,37 @@ std::shared_ptr<const ViewGeometry> shape_linework(const std::shared_ptr<const V
   return out;
 }
 
-std::vector<std::array<Vec2, 2>> hatch_lines(const std::vector<std::vector<Vec2>>& loops, double angle, double pitch) {
-  std::vector<std::array<Vec2, 2>> out;
-  if (!(pitch > 0)) return out;
+namespace {
+
+// A family of parallel lines in a section lining: turned `turn` degrees from the pattern's angle, `offset` + k * `period`
+// pitches from the origin, dashed (paper mm: dash, gap, dash, ...; empty: solid).
+struct Family {
+  double turn, offset, period;
+  std::vector<double> dashes;
+};
+struct Pattern {
+  const char* name;
+  std::vector<Family> families;
+};
+const std::vector<Pattern>& pattern_table() {
+  static const std::vector<Pattern> all = {
+      {"general", {{0, 0, 1, {}}}},
+      {"steel", {{0, 0, 2, {}}, {0, 0.45, 2, {}}}},
+      {"copper", {{0, 0, 2, {}}, {0, 1, 2, {2.5, 1}}}},
+      {"aluminium", {{0, 0, 1, {}}, {90, 0.5, 2, {1, 2}}}},
+      {"plastic", {{0, 0, 3, {}}, {0, 0.4, 3, {}}, {0, 0.8, 3, {}}}},
+      {"insulation", {{0, 0, 1, {}}, {90, 0, 1, {}}}},
+      {"glass", {{0, 0, 1, {2.5, 0.8, 0.4, 0.8}}}},
+  };
+  return all;
+}
+
+// The lines y = (offset + k) * period of the plane turned by `angle` (through the origin, so pieces of one part line up),
+// inside the loops (even-odd), dashed from x = 0 on.
+void scan(const std::vector<std::vector<Vec2>>& loops, double angle, double period, double offset, const std::vector<double>& dashes,
+          std::vector<std::array<Vec2, 2>>& out) {
+  if (!(period > 0)) return;
   const double c = std::cos(angle), s = std::sin(angle);
-  // Turned so the lines run along x: q = R(-angle) p; lines at y = k * pitch (through the origin, so pieces line up).
   std::vector<std::vector<Vec2>> q(loops.size());
   double y0 = 1e300, y1 = -1e300;
   for (size_t i = 0; i < loops.size(); ++i)
@@ -364,10 +392,15 @@ std::vector<std::array<Vec2, 2>> hatch_lines(const std::vector<std::vector<Vec2>
       q[i].push_back({c * p[0] + s * p[1], -s * p[0] + c * p[1]});
       y0 = std::min(y0, q[i].back()[1]), y1 = std::max(y1, q[i].back()[1]);
     }
-  if (y0 > y1 || (y1 - y0) / pitch > 20000) return out;
+  if (y0 > y1 || (y1 - y0) / period > 20000) return;
+  double cycle = 0;
+  for (double l : dashes) cycle += l;
+  const auto put = [&](double x0, double x1, double y) {
+    if (x1 - x0 > 1e-9) out.push_back({Vec2{c * x0 - s * y, s * x0 + c * y}, Vec2{c * x1 - s * y, s * x1 + c * y}});
+  };
   std::vector<double> xs;
-  for (long k = static_cast<long>(std::ceil(y0 / pitch)); k * pitch <= y1; ++k) {
-    const double y = static_cast<double>(k) * pitch;
+  for (long k = static_cast<long>(std::ceil(y0 / period - offset)); (static_cast<double>(k) + offset) * period <= y1; ++k) {
+    const double y = (static_cast<double>(k) + offset) * period;
     xs.clear();
     for (const auto& l : q)
       for (size_t i = 0; i < l.size(); ++i) {
@@ -375,39 +408,231 @@ std::vector<std::array<Vec2, 2>> hatch_lines(const std::vector<std::vector<Vec2>
         if ((a[1] <= y && y < b[1]) || (b[1] <= y && y < a[1])) xs.push_back(a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]));
       }
     std::sort(xs.begin(), xs.end());
-    for (size_t i = 0; i + 1 < xs.size(); i += 2)
-      if (xs[i + 1] - xs[i] > 1e-9) out.push_back({Vec2{c * xs[i] - s * y, s * xs[i] + c * y}, Vec2{c * xs[i + 1] - s * y, s * xs[i + 1] + c * y}});
+    for (size_t i = 0; i + 1 < xs.size(); i += 2) {
+      if (!(cycle > 0)) {
+        put(xs[i], xs[i + 1], y);
+        continue;
+      }
+      for (double m = std::floor(xs[i] / cycle) * cycle; m < xs[i + 1]; m += cycle) {
+        double from = m;
+        for (size_t j = 0; j < dashes.size(); from += dashes[j], ++j)
+          if (j % 2 == 0) put(std::max(xs[i], from), std::min(xs[i + 1], from + dashes[j]), y);
+      }
+    }
   }
+}
+
+}  // namespace
+
+std::vector<std::array<Vec2, 2>> hatch_lines(const std::vector<std::vector<Vec2>>& loops, double angle, double pitch) {
+  std::vector<std::array<Vec2, 2>> out;
+  scan(loops, angle, pitch, 0, {}, out);
+  return out;
+}
+
+const std::vector<std::string>& hatch_patterns() {
+  static const std::vector<std::string> names = [] {
+    std::vector<std::string> out;
+    for (const auto& p : pattern_table()) out.push_back(p.name);
+    return out;
+  }();
+  return names;
+}
+
+std::string material_hatch(const std::string& material) {
+  static const std::map<std::string, std::string> by = {
+      {"steel", "steel"},     {"stainless", "steel"}, {"titanium", "steel"}, {"aluminium-6061", "aluminium"}, {"brass", "copper"},
+      {"copper", "copper"},   {"abs", "plastic"},     {"pla", "plastic"},    {"petg", "plastic"},             {"nylon", "plastic"},
+      {"nylon-12", "plastic"}, {"polycarbonate", "plastic"}, {"pom", "plastic"}, {"fr4", "insulation"},       {"glass", "glass"}};
+  const auto it = by.find(material);
+  return it == by.end() ? "general" : it->second;
+}
+
+std::vector<std::array<Vec2, 2>> hatch_pattern(const std::vector<std::vector<Vec2>>& loops, const std::string& pattern, double angle, double pitch) {
+  std::vector<std::array<Vec2, 2>> out;
+  const auto& all = pattern_table();
+  auto it = std::find_if(all.begin(), all.end(), [&](const Pattern& p) { return pattern == p.name; });
+  if (it == all.end()) it = all.begin();  // a pattern of a newer OPAD: the general one
+  for (const auto& f : it->families) scan(loops, angle + f.turn * M_PI / 180, f.period * pitch, f.offset / f.period, f.dashes, out);
   return out;
 }
 
 namespace detail {
+namespace {
 
-void draw_section_faces(Display& d, const ViewFrame& f, const ViewGeometry& g) {
-  if (g.sections.empty()) return;
-  const int layer = d.layer({"Hatch", kInk, LineType::Continuous, 0.18});
-  // ISO 128-50: one pattern per part; neighbours apart by angle, then by spacing. Spacing grows with the part's cut area.
-  static const double angles[] = {45, 135, 45, 135, 30, 120, 60, 150};
-  static const double pitches[] = {1, 1, 1.6, 1.6, 1.3, 1.3, 1.3, 1.3};
-  std::vector<int> bodies;
-  for (const auto& r : g.sections)
-    if (std::find(bodies.begin(), bodies.end(), r.body) == bodies.end()) bodies.push_back(r.body);
-  for (size_t i = 0; i < bodies.size(); ++i) {
-    std::vector<std::vector<Vec2>> loops;
-    double area = 0;
-    for (const auto& r : g.sections) {
-      if (r.body != bodies[i]) continue;
-      for (const auto& l : r.loops) {
-        std::vector<Vec2> paper;
-        for (const auto& p : l) paper.push_back({f.at[0] + f.scale * (p[0] - f.centre[0]), f.at[1] + f.scale * (p[1] - f.centre[1])});
-        double a = 0;
-        for (size_t k = 0; k < paper.size(); ++k) a += paper[k][0] * paper[(k + 1) % paper.size()][1] - paper[(k + 1) % paper.size()][0] * paper[k][1];
-        area += a / 2;  // holes run the other way round
-        loops.push_back(std::move(paper));
+// One body's cut faces on paper, and what decides its lining.
+struct Part {
+  int body = -1;
+  std::string node;
+  std::vector<std::vector<Vec2>> loops;
+  double area = 0, length = 0;
+  std::array<double, 4> box{1e300, 1e300, -1e300, -1e300};
+  std::vector<std::pair<double, double>> runs;  // outline directions (radians mod pi) and their lengths
+  double principal = 0;                         // its main outlines' direction (radians mod pi/2)
+  std::string pattern;
+  double angle = 0, pitch = 0;
+  bool fixed_angle = false, fixed_pitch = false, solid = false;
+};
+
+double turn_apart(double a, double b, double period) {  // |a - b| modulo period, folded into [0, period / 2]
+  double t = std::fmod(std::fabs(a - b), period);
+  return std::min(t, period - t);
+}
+
+// The share of its outline that runs within 3 degrees of `angle`.
+double parallel_share(const Part& p, double angle) {
+  double along = 0;
+  for (const auto& [a, l] : p.runs)
+    if (turn_apart(a, angle, M_PI) < 3 * M_PI / 180) along += l;
+  return p.length > 0 ? along / p.length : 0;
+}
+
+// Its main outlines' direction: the most common one (by length, folded into a quarter turn) when it holds a quarter of the
+// outline at least, else square to the sheet.
+double principal_of(const Part& p) {
+  std::array<double, 90> bins{};
+  for (const auto& [a, l] : p.runs) bins[static_cast<size_t>(std::fmod(a * 180 / M_PI, 90.0)) % 90] += l;
+  size_t best = 0;
+  double most = -1;
+  for (size_t i = 0; i < 90; ++i) {
+    const double w = bins[(i + 89) % 90] + bins[i] + bins[(i + 1) % 90];
+    if (w > most) most = w, best = i;
+  }
+  if (!(p.length > 0) || most < 0.25 * p.length) return 0;
+  double sx = 0, sy = 0;  // the mean of the directions near the peak, on the quarter-turn circle
+  for (const auto& [a, l] : p.runs) {
+    const double q = std::fmod(a, M_PI / 2);
+    if (turn_apart(q, (static_cast<double>(best) + 0.5) * M_PI / 180, M_PI / 2) < 2 * M_PI / 180) sx += l * std::cos(4 * q), sy += l * std::sin(4 * q);
+  }
+  double r = std::atan2(sy, sx) / 4;
+  if (r < 0) r += M_PI / 2;
+  return turn_apart(r, 0, M_PI / 2) < 0.5 * M_PI / 180 ? 0 : r;
+}
+
+// Whether two parts' cut faces meet: a corner of one within `tol` of the other's outline.
+bool touching(const Part& a, const Part& b, double tol) {
+  if (a.box[0] > b.box[2] + tol || b.box[0] > a.box[2] + tol || a.box[1] > b.box[3] + tol || b.box[1] > a.box[3] + tol) return false;
+  const auto near = [&](const Part& p, const Part& q) {
+    for (const auto& l : p.loops) {
+      const size_t stride = std::max<size_t>(1, l.size() / 400);
+      for (size_t i = 0; i < l.size(); i += stride) {
+        const Vec2 x = l[i];
+        if (x[0] < q.box[0] - tol || x[0] > q.box[2] + tol || x[1] < q.box[1] - tol || x[1] > q.box[3] + tol) continue;
+        for (const auto& m : q.loops)
+          for (size_t j = 0; j < m.size(); ++j) {
+            const Vec2 s = m[j], e = m[(j + 1) % m.size()], d = sub(e, s);
+            const double t = std::clamp(dot(sub(x, s), d) / std::max(dot(d, d), 1e-30), 0.0, 1.0);
+            if (len(sub(x, add(s, mul(d, t)))) <= tol) return true;
+          }
       }
     }
-    const double pitch = std::clamp(std::sqrt(std::fabs(area)) / 8, 1.2, 4.0) * pitches[i % 8];
-    for (const auto& [a, b] : hatch_lines(loops, angles[i % 8] * M_PI / 180, pitch)) d.line(layer, a, b);
+    return false;
+  };
+  return near(a, b) || near(b, a);
+}
+
+// The hatch settings that apply: the view's own, else (a detail view) those of the view it enlarges.
+json hatch_of(const SheetView& v, const Scene* scene) {
+  const SheetView* at = &v;
+  for (int i = 0; at && i < 32; ++i) {
+    if (at->def.contains("hatch") && at->def["hatch"].is_object()) return at->def["hatch"];
+    if (at->kind != "detail" || !scene) break;
+    at = scene->sheet_view(at->parent);
+  }
+  return json::object();
+}
+
+}  // namespace
+
+void draw_section_faces(Display& d, const ViewFrame& f, const SheetView& v, const ViewGeometry& g, const Document* doc, const Scene* scene) {
+  if (g.sections.empty()) return;
+  const int layer = d.layer({"Hatch", kInk, LineType::Continuous, 0.18});
+  const json hatch = hatch_of(v, scene);
+  const json bodies = hatch.value("bodies", json::object());
+  std::vector<Part> parts;
+  for (const auto& r : g.sections) {
+    auto it = std::find_if(parts.begin(), parts.end(), [&](const Part& p) { return p.body == r.body; });
+    if (it == parts.end()) {
+      parts.emplace_back();
+      parts.back().body = r.body;
+      if (r.body >= 0 && static_cast<size_t>(r.body) < g.bodies.size()) parts.back().node = g.bodies[static_cast<size_t>(r.body)].node;
+      it = parts.end() - 1;
+    }
+    Part& p = *it;
+    for (const auto& l : r.loops) {
+      std::vector<Vec2> paper;
+      for (const auto& q : l) paper.push_back({f.at[0] + f.scale * (q[0] - f.centre[0]), f.at[1] + f.scale * (q[1] - f.centre[1])});
+      double a = 0;
+      for (size_t k = 0; k < paper.size(); ++k) {
+        const Vec2 s = paper[k], e = paper[(k + 1) % paper.size()];
+        a += s[0] * e[1] - e[0] * s[1];
+        const double l2 = len(sub(e, s));
+        if (l2 > 1e-9) {
+          double dir = std::atan2(e[1] - s[1], e[0] - s[0]);
+          if (dir < 0) dir += M_PI;
+          p.runs.push_back({std::fmod(dir, M_PI), l2});
+          p.length += l2;
+        }
+        p.box = {std::min(p.box[0], s[0]), std::min(p.box[1], s[1]), std::max(p.box[2], s[0]), std::max(p.box[3], s[1])};
+      }
+      p.area += a / 2;  // holes run the other way round
+      p.loops.push_back(std::move(paper));
+    }
+  }
+  // What each part takes: its own settings (bodies), else the view's; ISO 128-50 lines for every material unless the view
+  // asks for the material symbols; narrow faces filled (ISO 128-50: under about a millimetre on paper, no room for lines).
+  const std::string view_pattern = hatch.value("pattern", "general");
+  for (auto& p : parts) {
+    const json own = bodies.value(p.node, json::object());
+    std::string pattern = own.value("pattern", view_pattern);
+    if (pattern == "material") pattern = doc && scene && scene->node(p.node) ? material_hatch(material_of(*doc, *scene, p.node).id) : "general";
+    p.pattern = pattern;
+    p.principal = principal_of(p);
+    const double auto_pitch = std::clamp(std::sqrt(std::fabs(p.area)) / 8, 1.2, 4.0);
+    p.fixed_pitch = own.contains("spacing") || hatch.contains("spacing");
+    p.pitch = own.contains("spacing") ? own["spacing"].get<double>() : hatch.contains("spacing") ? hatch["spacing"].get<double>() : auto_pitch;
+    p.fixed_angle = own.contains("angle");
+    if (p.fixed_angle) p.angle = own["angle"].get<double>() * M_PI / 180;
+    p.solid = hatch.value("thin", "fill") != "hatch" && p.length > 0 && 2 * std::fabs(p.area) / p.length < 0.9;
+  }
+  // Neighbours apart (ISO 128-50): by angle, then by spacing; the largest part first, at 45 degrees to its main outlines
+  // (or the view's angle), never along much of its own outline.
+  std::vector<size_t> order(parts.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return std::fabs(parts[a].area) > std::fabs(parts[b].area); });
+  std::vector<std::vector<size_t>> next(parts.size());
+  for (size_t i = 0; i < parts.size(); ++i)
+    for (size_t j = i + 1; j < parts.size(); ++j)
+      if (touching(parts[i], parts[j], 0.3)) next[i].push_back(j), next[j].push_back(i);
+  static const double turns[] = {45, 135, 45, 135, 30, 120, 60, 150};
+  static const double steps[] = {1, 1, 1.6, 1.6, 1.3, 1.3, 1.3, 1.3};
+  std::vector<bool> done(parts.size(), false);
+  for (size_t i : order) {
+    Part& p = parts[i];
+    const double base = hatch.contains("angle") ? hatch["angle"].get<double>() * M_PI / 180 - M_PI / 4 : p.principal;
+    const auto clash = [&](double angle, double pitch) {
+      for (size_t j : next[i])
+        if (done[j] && turn_apart(parts[j].angle, angle, M_PI) < 10 * M_PI / 180 && std::fabs(parts[j].pitch - pitch) < 0.15 * std::max(pitch, parts[j].pitch)) return true;
+      return false;
+    };
+    if (!p.fixed_angle) {
+      int pick = -1, fallback = -1;
+      for (int k = 0; k < 8 && pick < 0; ++k) {
+        const double a = base + turns[k] * M_PI / 180, pitch = p.fixed_pitch ? p.pitch : p.pitch * steps[k];
+        if (!hatch.contains("angle") && parallel_share(p, a) > 0.15) continue;
+        if (fallback < 0) fallback = k;
+        if (!clash(a, pitch)) pick = k;
+      }
+      if (pick < 0) pick = std::max(fallback, 0);
+      p.angle = std::fmod(base + turns[pick] * M_PI / 180, M_PI);
+      if (!p.fixed_pitch) p.pitch *= steps[pick];
+    }
+    done[i] = true;
+  }
+  for (const auto& p : parts) {
+    if (p.solid) d.fill(layer, p.loops);
+    else
+      for (const auto& [a, b] : hatch_pattern(p.loops, p.pattern, p.angle, p.pitch)) d.line(layer, a, b);
   }
 }
 

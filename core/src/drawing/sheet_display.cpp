@@ -46,7 +46,7 @@ void draw_view(Display& d, const ViewFrame& f, const SheetView& v, const ViewGeo
     const bool smooth = c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam;
     d.curve(c.hidden ? hidden : smooth && thin ? tangent : visible, placed(c, f));
   }
-  detail::draw_section_faces(d, f, g);
+  detail::draw_section_faces(d, f, v, g, doc, scene);
   if (style.value("centermarks", false)) {
     std::vector<std::array<Vec2, 2>> axes;
     if (doc && scene) axes = cylinder_axes(*doc, *scene, f, view_spec(*scene, v));

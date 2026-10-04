@@ -301,6 +301,16 @@ void validate_record(const json& op) {
   if (op.contains("flip") && !op["flip"].is_boolean()) fail("'flip' must be true or false");
   if (op.contains("whole") && !(op["whole"].is_array() && std::all_of(op["whole"].begin(), op["whole"].end(), [](const json& n) { return n.is_string(); })))
     fail("'whole' must be node ids");
+  if (op.contains("hatch")) {
+    const auto lining = [](const json& o) {
+      return o.is_object() && (!o.contains("pattern") || o["pattern"].is_string()) && (!o.contains("angle") || finite(o["angle"])) &&
+             (!o.contains("spacing") || (finite(o["spacing"]) && o["spacing"].get<double>() > 0));
+    };
+    const json& h = op["hatch"];
+    if (!lining(h) || (h.contains("thin") && !h["thin"].is_string()) ||
+        (h.contains("bodies") && !(h["bodies"].is_object() && std::all_of(h["bodies"].begin(), h["bodies"].end(), lining))))
+      fail("'hatch' is {pattern, angle, spacing (paper mm), thin, bodies: {node: {pattern, angle, spacing}}}");
+  }
   if (op.contains("crop")) {
     const json& c = op["crop"];
     if (!(c.is_array() && c.size() == 4 && std::all_of(c.begin(), c.end(), finite) && c[0].get<double>() < c[2].get<double>() && c[1].get<double>() < c[3].get<double>()))

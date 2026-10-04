@@ -109,6 +109,14 @@ Display view_display(const ViewGeometry& g, const std::string& title = {});
 // Hatch lines (ISO 128-50) over closed outlines (even-odd: holes inside outer ones): parallel lines at `angle` (radians)
 // `pitch` apart, through the origin so neighbouring pieces of one part line up, clipped to the inside.
 std::vector<std::array<Vec2, 2>> hatch_lines(const std::vector<std::vector<Vec2>>& loops, double angle, double pitch);
+// Section linings (UI-82): general (ISO 128-50: the one pattern for every material) or a material's symbol after ASME
+// Y14.2: steel (lines in pairs), copper (copper alloys: a line, then a dashed one), aluminium (light alloys: lines crossed
+// by dashes), plastic (plastics and rubber: lines in threes), insulation (crossed lines), glass (dashed lines).
+const std::vector<std::string>& hatch_patterns();
+std::string material_hatch(const std::string& material_id);  // a library material's lining; general for others
+// A lining's lines at `angle` (radians) `pitch` (its spacing) over the loops as hatch_lines lays them; an unknown pattern
+// (of a newer OPAD) is drawn general.
+std::vector<std::array<Vec2, 2>> hatch_pattern(const std::vector<std::vector<Vec2>>& loops, const std::string& pattern, double angle, double pitch);
 
 // Dimensions drawn as geometry (ISO 129 look: extension lines 1 mm off the feature and 2 mm past the dimension line,
 // filled arrowheads, text above the dimension line and along it, read from below or from the right). Sizes are paper
