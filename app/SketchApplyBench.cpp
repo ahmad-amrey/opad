@@ -328,9 +328,22 @@ void SketchEditor::benchApply() {
       case 19: {
         const SkEntity* spline = m_sk.entity(st["spline"]);
         check(spline && spline->weights.size() > 3 && std::abs(spline->weights[3] - 4) < 1e-9, "node: Enter keeps the new weight");
-        setTool("select");
+        // ---- Silhouette: the box picked, its outline previewed, Enter adds it.
+        setTool("silhouette");
+        st["entities"] = int(m_sk.entities.size());
+        addInPanel(box);
         break;
       }
+      case 20:
+        check(m_sources.size() == 1 && previewed() && int(m_toolPreview->entities.size()) >= st["entities"] + 4 && int(m_sk.entities.size()) == st["entities"],
+              "silhouette: the box's outline previewed before Enter");
+        st["previewed"] = m_toolPreview ? int(m_toolPreview->entities.size()) : -1;
+        send(Qt::Key_Return);
+        break;
+      case 21:
+        check(int(m_sk.entities.size()) == st["previewed"] && m_sources.isEmpty(), "silhouette: Enter adds the outline");
+        setTool("select");
+        break;
       default:
         timer->stop();
         trace::log(QString("bench: sketch apply %1").arg(*ok ? "PASS" : "FAIL"));
