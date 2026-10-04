@@ -128,7 +128,22 @@
     {"el": "cursor", "kind": "move", "keys": [[0, {"screen": [0.62, 0.55]}], [0.3, {"screen": [0.62, 0.55], "down": true}], [1.6, {"screen": [0.82, 0.55], "down": false}],
                                              [1.9, {"screen": [0.62, 0.55], "down": true}], [3.2, {"screen": [0.78, 0.66], "down": false}], [3.4, {"screen": [0.7, 0.5]}],
                                              [3.45, {"kind": "wheel"}], [5.2, {"screen": [0.7, 0.5]}]]}],
-   "steps": [{"to": 1.8, "caption": "Orbit"}, {"to": 3.4, "caption": "Pan"}, {"to": 5.4, "caption": "Zoom"}]}
+   "steps": [{"to": 1.8, "caption": "Orbit"}, {"to": 3.4, "caption": "Pan"}, {"to": 5.4, "caption": "Zoom"}]},
+  "sheet": {"params": {},
+   "items": [
+    {"el": "rect", "corners": [[-29, -14], [29, 14]], "color": "fg3", "width": 1, "fill": "bg2", "fillOpacity": 1},
+    {"el": "rect", "corners": [[-27.5, -12.5], [27.5, 12.5]], "color": "fg2", "width": 1.1},
+    {"el": "rect", "corners": [[13, -12.5], [27.5, -7.5]], "color": "fg2", "width": 1.1},
+    {"el": "poly", "points": [[13, -10], [27.5, -10]], "color": "fg2", "width": 0.8}]},
+  "sheetTitle": {"params": {},
+   "items": [
+    {"el": "label", "at": [20.25, -8.75], "value": "BRACKET", "size": 8, "color": "fg"},
+    {"el": "label", "at": [20.25, -11.25], "value": "A3   1:2", "size": 7.5, "color": "fg2"}]},
+  "plateView": {"params": {},
+   "items": [
+    {"el": "rect", "corners": [[-24, -2], [-6, 8]], "color": "fg", "width": 1.2},
+    {"el": "circle", "center": [-20, 3], "r": 1.6, "color": "fg", "width": 1.2},
+    {"el": "circle", "center": [-10, 3], "r": 1.6, "color": "fg", "width": 1.2}]}
  },
  "clips": [
   {
@@ -791,26 +806,6 @@
     {"to": 1.4, "caption": "Open Commit: your changes are listed"},
     {"to": 2.5, "caption": "The message is written from the changes"},
     {"to": 5.0, "caption": "{fixed:ctrlEnter} commits; the chip shows it"}
-   ]
-  },
-  {
-   "id": "insert.canvas", "duration": 5.6, "extent": [-30, -14, 30, 14],
-   "items": [
-    {"use": "sketchScene"},
-    {"el": "picture", "corners": [[-16, -8], [12, 9]], "from": 0.1, "fade": 0.4, "keys": [[2.5, {"corners": [[-16, -8], [12, 9]]}], [3.1, {"corners": [[-20.34, -12.08], [20.8, 12.92]]}]]},
-    {"el": "poly", "points": [[-6.76, 0.67], "cursor"], "color": "amber", "dash": true, "width": 1.5, "from": 0.9, "to": 1.7, "fade": 0},
-    {"el": "poly", "color": "amber", "width": 1.5, "dots": true, "from": 1.7, "to": 3.4, "points": [[-6.76, 0.67], [2.76, 0.67]],
-     "keys": [[2.5, {"points": [[-6.76, 0.67], [2.76, 0.67]]}], [3.1, {"points": [[-6.76, 0.67], [7.23, 0.67]]}]]},
-    {"use": "typedValue", "args": {"t": 1.8, "s1": "1", "s2": "14", "press": 2.5, "at": [2.76, 0.67], "dx": 12, "dy": -30, "field": "9.5 mm"}},
-    {"el": "shape", "profile": {"rect": [0.23, 0.67, 26.3, 11.5], "round": 2.7}, "holes": [{"circle": [-6.76, 0.67, 2.4]}, {"circle": [7.23, 0.67, 2.4]}], "color": "sel", "width": 1.8, "from": 3.3, "fade": 0,
-     "keys": [[3.3, {"progress": 0}], [4.6, {"progress": 1, "ease": "linear"}]]},
-    {"use": "sketchDraw", "args": {"badge": "image", "keys": [[0, {"pos": [-24, -11]}], [0.9, {"pos": [-6.76, 0.67], "click": 1}], [1.7, {"pos": [2.76, 0.67], "click": 1}], [2.6, {"pos": [2.76, 0.67]}],
-                                                        [3.3, {"pos": [-12.9, 6.4]}], [4.6, {"pos": [13.4, -5]}], [5.2, {"pos": [20, -11]}]]}}
-   ],
-   "steps": [
-    {"to": 0.8, "caption": "Insert an image on a plane"},
-    {"to": 2.9, "caption": "Click two points and type their distance"},
-    {"to": 5.6, "caption": "The image scales; trace over it"}
    ]
   },
   {
@@ -3750,6 +3745,1453 @@
    "steps": [
     {"to": 1.4, "caption": "Open the Section panel and choose an axis"},
     {"to": 4.6, "caption": "Type an exact offset; the cut moves"}
+   ]
+  },
+  {
+   "id": "assets.link", "duration": 5.2, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "chip", "screen": [0.55, 0.05], "text": "Link as asset", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "import", "value": "bracket.step", "from": 0.9, "to": 1.9, "keys": [[1.0, {"dy": 0}], [1.8, {"dy": 50}]]},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0.35, "from": 1.8, "fade": 0.4, "keys": [[2.6, {"toneAmount": 0.35}], [2.9, {"toneAmount": 0}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Browser", "hl": -1, "rows": [{"text": "Base", "icon": "body"}], "keys": [[1.9, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "✓", "color": "green"}], "hl": 1, "ease": "step"}], [2.9, {"hl": -1}], [3.6, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "Sync", "color": "amber"}], "ease": "step"}]], "from": 0.1},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "bracket.step changed since the last sync", "from": 3.7, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.4, {"screen": [0.6, 0.119]}], [0.5, {"screen": [0.6, 0.119], "click": 1}], [1.3, {"screen": [0.66, 0.2]}], [2.4, {"screen": [0.7, 0.62]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Link as asset, then choose the file"},
+    {"to": 3.0, "caption": "Its parts come in, linked to the file"},
+    {"to": 5.2, "caption": "A change to the file is offered for syncing"}
+   ]
+  },
+  {
+   "id": "assets.sync", "duration": 5.4, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.75, {"toneAmount": 0}], [0.8, {"toneAmount": 0.4, "ease": "step"}], [1.9, {"holes": [{"circle": [5, 0, 2]}], "opacity": 1}], [2.1, {"opacity": 0.45}], [2.8, {"holes": [{"circle": [5, 0, 2]}], "opacity": 0.45}], [2.9, {"holes": [{"circle": [-1, 0, 2.6]}], "opacity": 1, "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Browser", "hl": -1, "rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "Sync", "color": "amber"}], "keys": [[0.8, {"hl": 1}], [2.0, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "Syncing…", "color": "fg3"}], "ease": "step"}], [2.9, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "✓", "color": "green"}], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.55, 0.05], "text": "Sync linked file", "keys": [[1.7, {"hl": true}], [2.0, {"hl": false}]], "from": 1.1, "to": 2.3, "icon": "regen"},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Synced bracket.step: 1 parts changed, 0 added, 0 removed", "from": 3.0, "fade": 0.2, "size": 8.5},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -12, 0]}], [0.7, {"pos": [6, -4, 8]}], [0.8, {"pos": [6, -4, 8], "click": 1}], [1.6, {"screen": [0.6, 0.119]}], [1.7, {"screen": [0.6, 0.119], "click": 1}], [2.6, {"screen": [0.72, 0.62]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a part of the changed file"},
+    {"to": 2.9, "caption": "Sync linked file reads it again"},
+    {"to": 5.4, "caption": "Updated; a toast says what changed"}
+   ]
+  },
+  {
+   "id": "assets.syncAll", "duration": 5.2, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[1.7, {"holes": [{"circle": [5, 0, 2]}]}], [1.8, {"holes": [{"circle": [-1, 0, 2.6]}], "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [11, -4, 4, 8], "round": 1}, "at": [0, 0, 2], "height": 3, "keys": [[2.5, {"height": 3}], [2.6, {"height": 5, "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Browser", "hl": -1, "rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "Sync", "color": "amber"}, {"label": "cover", "icon": "link", "value": "Sync", "color": "amber"}], "keys": [[1.8, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "✓", "color": "green"}, {"label": "cover", "icon": "link", "value": "Sync", "color": "amber"}], "ease": "step"}], [2.6, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "✓", "color": "green"}, {"label": "cover", "icon": "link", "value": "✓", "color": "green"}], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.55, 0.05], "text": "Sync all linked files", "keys": [[1.0, {"hl": true}], [1.3, {"hl": false}]], "from": 0.5, "to": 1.6, "icon": "regen"},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "2 linked files synced", "from": 2.8, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.7]}], [0.9, {"screen": [0.6, 0.119]}], [1.0, {"screen": [0.6, 0.119], "click": 1}], [1.8, {"screen": [0.75, 0.7]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Two linked files changed"},
+    {"to": 2.7, "caption": "Sync all linked files reads each again"},
+    {"to": 5.2, "caption": "One after the other, each its own step"}
+   ]
+  },
+  {
+   "id": "assets.autoSync", "duration": 5.4, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[2.9, {"holes": [{"circle": [5, 0, 2]}], "opacity": 1}], [3.0, {"opacity": 0.45}], [3.5, {"holes": [{"circle": [5, 0, 2]}], "opacity": 0.45}], [3.6, {"holes": [{"circle": [-1, 0, 2.6]}], "opacity": 1, "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 180, "title": "Linked files", "hl": -1, "rows": [{"text": "Sync linked file"}, {"text": "Sync all linked files", "dim": true}, {"text": "Sync changed files automatically", "check": false}], "to": 1.9, "fade": 0.2, "keys": [[1.0, {"hl": 2}], [1.3, {"rows": [{"text": "Sync linked file"}, {"text": "Sync all linked files", "dim": true}, {"text": "Sync changed files automatically", "check": true}], "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Browser", "hl": -1, "rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "✓", "color": "green"}], "keys": [[3.0, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "Syncing…", "color": "fg3"}], "ease": "step"}], [3.6, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "✓", "color": "green"}], "ease": "step"}]], "from": 2.0},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Synced bracket.step: 1 parts changed, 0 added, 0 removed", "from": 3.7, "fade": 0.2, "size": 8.5},
+    {"el": "chip", "screen": [0.8, 0.64], "text": "Undo", "from": 3.7, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.7]}], [1.2, {"screen": [0.1, 0.534]}], [1.3, {"screen": [0.1, 0.534], "click": 1}], [2.2, {"screen": [0.74, 0.62]}]]}
+   ],
+   "steps": [
+    {"to": 1.9, "caption": "Tick Sync changed files automatically"},
+    {"to": 3.6, "caption": "A file that changes is synced at once"},
+    {"to": 5.4, "caption": "Still one step: its toast offers Undo"}
+   ]
+  },
+  {
+   "id": "assets.replace", "duration": 5.4, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.75, {"toneAmount": 0}], [0.8, {"toneAmount": 0.4, "ease": "step"}], [3.0, {"holes": [{"circle": [5, 0, 2]}], "profile": {"rect": [2, 0, 14, 10], "round": 1.5}}], [3.1, {"holes": [{"circle": [5, 3, 1.6]}, {"circle": [5, -3, 1.6]}], "profile": {"rect": [2, 0, 14, 12], "round": 3}, "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Replace linked file", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.8, "icon": "import"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Replace bracket.step", "hl": -1, "button": "Open", "press": 2.8, "from": 1.8, "to": 2.95, "fade": 0.15, "rows": [{"label": "bracket.step"}, {"label": "bracket-v2.step"}, {"label": "cover.stl"}], "keys": [[2.3, {"hl": 1}]]},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -12, 0]}], [0.7, {"pos": [6, -4, 8]}], [0.8, {"pos": [6, -4, 8], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [2.2, {"screen": [0.15, 0.411]}], [2.3, {"screen": [0.15, 0.411], "click": 1}], [2.7, {"screen": [0.449, 0.691]}], [2.8, {"screen": [0.449, 0.691], "click": 1}], [3.6, {"screen": [0.75, 0.66]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a part of the linked file"},
+    {"to": 2.9, "caption": "Replace linked file, choose the new file"},
+    {"to": 5.4, "caption": "The parts are read from it"}
+   ]
+  },
+  {
+   "id": "assets.reveal", "duration": 4.6, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.75, {"toneAmount": 0}], [0.8, {"toneAmount": 0.4, "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Show linked file in folder", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.8, "icon": "open"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "File manager", "from": 1.8, "fade": 0.25, "hl": 1, "rows": [{"label": "base-plate.step"}, {"label": "bracket.step"}, {"label": "cover.stl"}]},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -12, 0]}], [0.7, {"pos": [6, -4, 8]}], [0.8, {"pos": [6, -4, 8], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [2.2, {"screen": [0.7, 0.66]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a part of the linked file"},
+    {"to": 1.8, "caption": "Show linked file in folder"},
+    {"to": 4.6, "caption": "Its folder opens with the file selected"}
+   ]
+  },
+  {
+   "id": "assets.copyPath", "duration": 4.4, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.75, {"toneAmount": 0}], [0.8, {"toneAmount": 0.4, "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Copy linked file path", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.8, "icon": "copy"},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Copied C:\\Projects\\rig\\bracket.step", "from": 1.5, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -12, 0]}], [0.7, {"pos": [6, -4, 8]}], [0.8, {"pos": [6, -4, 8], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [2.2, {"screen": [0.7, 0.62]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a part of the linked file"},
+    {"to": 4.4, "caption": "Its full path is on the clipboard"}
+   ]
+  },
+  {
+   "id": "assets.embed", "duration": 5.0, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.75, {"toneAmount": 0}], [0.8, {"toneAmount": 0.4, "ease": "step"}], [1.6, {"opacity": 1}], [1.7, {"opacity": 0.45}], [2.4, {"opacity": 0.45}], [2.6, {"opacity": 1}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Browser", "hl": -1, "rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "link", "value": "✓", "color": "green"}], "keys": [[0.8, {"hl": 1}], [2.5, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "component"}], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.55, 0.05], "text": "Embed as editable", "keys": [[1.5, {"hl": true}], [1.8, {"hl": false}]], "from": 1.1, "to": 2.1},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "bracket.step is embedded: its parts are stored in the document and can be edited", "from": 2.6, "fade": 0.2, "size": 7},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -12, 0]}], [0.7, {"pos": [6, -4, 8]}], [0.8, {"pos": [6, -4, 8], "click": 1}], [1.4, {"screen": [0.6, 0.119]}], [1.5, {"screen": [0.6, 0.119], "click": 1}], [2.4, {"screen": [0.72, 0.62]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a part of the linked file"},
+    {"to": 2.5, "caption": "Embed as editable"},
+    {"to": 5.0, "caption": "No longer linked: its parts can be edited"}
+   ]
+  },
+  {
+   "id": "assets.pack", "duration": 5.0, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.75, {"toneAmount": 0}], [0.8, {"toneAmount": 0.4, "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Linked file", "rows": [["Status", "In sync"], ["Storage", "Linked (read from the file)"]], "hl": -1, "keys": [[2.3, {"rows": [["Status", "In sync"], ["Storage", "Project copy (assets folder)"]], "hl": 1, "ease": "step"}], [3.4, {"hl": -1}]]},
+    {"el": "chip", "screen": [0.6, 0.05], "text": "Pack into project", "keys": [[1.5, {"hl": true}], [1.8, {"hl": false}]], "from": 1.1, "to": 2.1},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "bracket.step is packed into the project: assets\\bracket.step", "from": 2.4, "fade": 0.2, "size": 8.5},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -12, 0]}], [0.7, {"pos": [6, -4, 8]}], [0.8, {"pos": [6, -4, 8], "click": 1}], [1.4, {"screen": [0.65, 0.119]}], [1.5, {"screen": [0.65, 0.119], "click": 1}], [2.4, {"screen": [0.74, 0.6]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a part of the linked file"},
+    {"to": 2.3, "caption": "Pack into project"},
+    {"to": 5.0, "caption": "It now links the copy in the assets folder"}
+   ]
+  },
+  {
+   "id": "assets.settings", "duration": 4.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Linked files", "hl": -1, "button": "OK", "press": 3.0, "rows": [{"text": "Importing STEP, IGES, KiCad boards and files over 20 MB:", "dim": true}, {"text": "Ask each time", "indent": 1}, {"text": "Folders trusted for linked files outside a document's project (read without asking):", "dim": true}, {"label": "D:\\Shared\\parts", "indent": 1}], "to": 3.2, "fade": 0.15, "keys": [[0.9, {"hl": 1}], [1.5, {"rows": [{"text": "Importing STEP, IGES, KiCad boards and files over 20 MB:", "dim": true}, {"text": "Link as asset", "indent": 1}, {"text": "Folders trusted for linked files outside a document's project (read without asking):", "dim": true}, {"label": "D:\\Shared\\parts", "indent": 1}], "ease": "step"}], [1.8, {"hl": -1}], [2.2, {"hl": 3}]]},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "import", "value": "bracket.step", "from": 3.4, "to": 4.3, "keys": [[3.4, {"dy": 0}], [4.2, {"dy": 50}]]},
+    {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "from": 4.2, "fade": 0.3},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.7]}], [0.8, {"screen": [0.2, 0.411]}], [0.9, {"screen": [0.2, 0.411], "click": 1}], [1.4, {"screen": [0.2, 0.411]}], [1.5, {"screen": [0.2, 0.411], "click": 1}], [2.1, {"screen": [0.2, 0.658]}], [2.9, {"screen": [0.644, 0.814]}], [3.0, {"screen": [0.644, 0.814], "click": 1}], [3.8, {"screen": [0.75, 0.7]}]]}
+   ],
+   "steps": [
+    {"to": 1.8, "caption": "How big models come in: ask, link or copy"},
+    {"to": 3.2, "caption": "Folders trusted for linked files; OK"},
+    {"to": 4.8, "caption": "The next STEP comes in linked, without asking"}
+   ]
+  },
+  {
+   "id": "assets.kicadSettings", "duration": 4.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "holes": [{"circle": [-12.5, -7.5, 1.2]}, {"circle": [12.5, -7.5, 1.2]}, {"circle": [12.5, 7.5, 1.2]}, {"circle": [-12.5, 7.5, 1.2]}], "height": 1.6, "tone": "green", "toneAmount": 0.65},
+    {"el": "solid", "profile": {"rect": [-12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "fg3", "toneAmount": 0.3},
+    {"el": "solid", "profile": {"rect": [2, 2, 8, 8]}, "at": [0, 0, 1.6], "height": 1.2, "tone": "black", "toneAmount": 0.6},
+    {"el": "solid", "profile": {"rect": [9, -4, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [9, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [-3, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [-3, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [9, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "KiCad boards", "hl": -1, "button": "Save", "press": 3.1, "rows": [["Read with", "OPAD's board reader"], {"text": "Footprints' 3D models", "check": true}, {"text": "Parts marked do not populate", "check": true}, {"text": "Drill the vias (slower on dense boards)", "check": false}, ["KiCad library models", "Ask before downloading"]], "to": 3.3, "fade": 0.15, "keys": [[1.4, {"hl": 3}], [1.5, {"rows": [["Read with", "OPAD's board reader"], {"text": "Footprints' 3D models", "check": true}, {"text": "Parts marked do not populate", "check": true}, {"text": "Drill the vias (slower on dense boards)", "check": true}, ["KiCad library models", "Ask before downloading"]], "ease": "step"}], [2.0, {"hl": 4}], [2.6, {"hl": -1}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.7]}], [1.3, {"screen": [0.1, 0.658]}], [1.5, {"screen": [0.1, 0.658], "click": 1}], [2.1, {"screen": [0.4, 0.781]}], [3.0, {"screen": [0.622, 0.937]}], [3.1, {"screen": [0.622, 0.937], "click": 1}], [3.9, {"screen": [0.75, 0.7]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "How boards are read"},
+    {"to": 2.9, "caption": "What they include, model folders, downloads"},
+    {"to": 4.8, "caption": "Save keeps it for the next boards"}
+   ]
+  },
+  {
+   "id": "kicad.insert", "duration": 5.6, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "holes": [{"circle": [-12.5, -7.5, 1.2]}, {"circle": [12.5, -7.5, 1.2]}, {"circle": [12.5, 7.5, 1.2]}, {"circle": [-12.5, 7.5, 1.2]}], "height": 1.6, "tone": "green", "toneAmount": 0.65, "from": 2.3, "fade": 0.4},
+    {"el": "solid", "profile": {"rect": [-12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "fg3", "toneAmount": 0.3, "from": 2.3, "fade": 0.4},
+    {"el": "solid", "profile": {"rect": [2, 2, 8, 8]}, "at": [0, 0, 1.6], "height": 1.2, "tone": "black", "toneAmount": 0.6, "from": 2.3, "fade": 0.4},
+    {"el": "solid", "profile": {"rect": [9, -4, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "from": 2.3, "fade": 0.4},
+    {"el": "solid", "profile": {"rect": [9, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "from": 2.3, "fade": 0.4},
+    {"el": "solid", "profile": {"rect": [-3, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "from": 2.3, "fade": 0.4},
+    {"el": "solid", "profile": {"rect": [-3, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "from": 2.3, "fade": 0.4},
+    {"el": "solid", "profile": {"rect": [9, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "from": 2.3, "fade": 0.4},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Insert KiCad PCB", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "import", "value": "sensor.kicad_pcb", "from": 0.9, "to": 1.5, "fade": 0.15},
+    {"el": "card", "screen": [0.03, 0.06], "w": 190, "title": "Import KiCad board", "hl": -1, "button": "Import", "press": 2.2, "rows": [["Read with", "OPAD's board reader"], {"text": "Footprints' 3D models", "check": true}, {"text": "Parts marked do not populate", "check": true}, ["Origin", "The board's centre"]], "from": 1.1, "to": 2.35, "fade": 0.15},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Browser", "hl": -1, "rows": [{"label": "sensor", "icon": "link", "value": "✓", "color": "green"}, {"label": "J1 USB_C", "icon": "component", "indent": 1}, {"label": "U1 ESP32", "icon": "component", "indent": 1}, {"label": "Layers", "icon": "component", "indent": 1}], "from": 2.6},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.6, {"screen": [0.5, 0.5]}], [2.1, {"screen": [0.566, 0.814]}], [2.2, {"screen": [0.566, 0.814], "click": 1}], [3.2, {"screen": [0.75, 0.75]}]]}
+   ],
+   "steps": [
+    {"to": 1.1, "caption": "Insert KiCad PCB, choose the board"},
+    {"to": 2.4, "caption": "Choose how it is read, then Import"},
+    {"to": 5.6, "caption": "A component per footprint, linked to the file"}
+   ]
+  },
+  {
+   "id": "kicad.previewSync", "duration": 5.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "holes": [{"circle": [-12.5, -7.5, 1.2]}, {"circle": [12.5, -7.5, 1.2]}, {"circle": [12.5, 7.5, 1.2]}, {"circle": [-12.5, 7.5, 1.2]}], "height": 1.6, "tone": "green", "toneAmount": 0.65},
+    {"el": "solid", "profile": {"rect": [12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "fg3", "toneAmount": 0.3, "keys": [[3.6, {"offset": [0, 0, 0]}], [4.3, {"offset": [-2, 0, 0]}]]},
+    {"el": "solid", "profile": {"rect": [12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "sel", "toneAmount": 0.7, "from": 1.8, "to": 3.6, "fade": 0.1},
+    {"el": "solid", "profile": {"rect": [2, 2, 8, 8]}, "at": [0, 0, 1.6], "height": 1.2, "tone": "black", "toneAmount": 0.6},
+    {"el": "solid", "profile": {"rect": [9, -4, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [9, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [-3, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [-3, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [9, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Preview KiCad sync", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.7, "icon": "regen"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 170, "title": "Sync preview", "hl": -1, "button": "Sync", "press": 3.4, "rows": [{"text": "Moved"}, {"label": "J1", "value": "-2 mm, 0 mm", "indent": 1}, {"text": "Design affected"}, {"label": "Case sketch", "indent": 1}], "from": 1.7, "to": 3.6, "fade": 0.15},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.6, {"pos": [6, -6, 1.6]}], [0.7, {"pos": [6, -6, 1.6], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [2.2, {"screen": [0.5, 0.5]}], [3.3, {"screen": [0.518, 0.814]}], [3.4, {"screen": [0.518, 0.814], "click": 1}], [4.4, {"pos": [18, -10, 0]}]]},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "height": 1.6, "tone": "sel", "toneAmount": 0.25, "from": 0.7, "to": 1.6, "fade": 0.1}
+   ],
+   "steps": [
+    {"to": 1.7, "caption": "Select the board, Preview KiCad sync"},
+    {"to": 3.3, "caption": "What changes is listed and tinted"},
+    {"to": 5.8, "caption": "Sync applies exactly that"}
+   ]
+  },
+  {
+   "id": "kicad.clearance", "duration": 5.6, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 34.8, 26], "round": 2}, "holes": [{"rect": [0, 0, 30.8, 22], "round": 1, "depth": 4}], "at": [0, 0, -1], "height": 5, "tone": "fg3", "toneAmount": 0.1},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "holes": [{"circle": [-12.5, -7.5, 1.2]}, {"circle": [12.5, -7.5, 1.2]}, {"circle": [12.5, 7.5, 1.2]}, {"circle": [-12.5, 7.5, 1.2]}], "height": 1.6, "tone": "green", "toneAmount": 0.65},
+    {"el": "solid", "profile": {"rect": [12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "fg3", "toneAmount": 0.3},
+    {"el": "solid", "profile": {"rect": [2, 2, 8, 8]}, "at": [0, 0, 1.6], "height": 1.2, "tone": "black", "toneAmount": 0.6},
+    {"el": "solid", "profile": {"rect": [9, -4, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [9, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [-3, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [-3, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [9, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4},
+    {"el": "solid", "profile": {"rect": [12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "sel", "toneAmount": 0.7, "from": 2.9, "fade": 0.1},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Board clearance", "hl": -1, "button": "Check", "from": 1.3, "rows": [["Clearance", "1 mm"], {"text": "Checking…", "dim": true}], "keys": [[1.8, {"rows": [["Clearance", "1 mm"], {"label": "J1 USB_C · Case", "value": "0.4 mm", "color": "amber"}, {"label": "U1 ESP32 · Case", "value": "0.9 mm", "color": "amber"}], "ease": "step"}], [2.9, {"hl": 1}]]},
+    {"el": "poly", "points": [[15, 0, 3], [15.4, 0, 3]], "color": "amber", "width": 2.2, "from": 3.0, "fade": 0.2},
+    {"el": "label", "at": [15.2, 0, 3], "value": "0.4 mm", "color": "amber", "dx": -6, "dy": -16, "from": 3.0, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.7]}], [0.7, {"screen": [0.08, 0.119]}], [0.8, {"screen": [0.08, 0.119], "click": 1}], [2.6, {"screen": [0.15, 0.411]}], [2.9, {"screen": [0.15, 0.411], "click": 1}], [3.8, {"screen": [0.75, 0.75]}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Check clearance to board", "keys": [[0.8, {"hl": true}], [1.1, {"hl": false}]], "from": 0.3, "to": 1.25, "icon": "interference"}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Check clearance to board"},
+    {"to": 2.8, "caption": "Parts closer than Clearance are listed"},
+    {"to": 5.6, "caption": "Click one: the pair is selected, its gap shown"}
+   ]
+  },
+  {
+   "id": "view.hideSmallParts", "duration": 5.0, "view": "iso", "extent": [-24, -11, 24, 16],
+   "items": [
+    {"el": "camera", "dragged": true, "center": [-6, 0], "keys": [[0, {"az": -45, "elev": 35.264}], [1.0, {"az": -45}], [2.3, {"az": -80}]]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "holes": [{"circle": [-12.5, -7.5, 1.2]}, {"circle": [12.5, -7.5, 1.2]}, {"circle": [12.5, 7.5, 1.2]}, {"circle": [-12.5, 7.5, 1.2]}], "height": 1.6, "tone": "green", "toneAmount": 0.65},
+    {"el": "solid", "profile": {"rect": [-12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "fg3", "toneAmount": 0.3},
+    {"el": "solid", "profile": {"rect": [2, 2, 8, 8]}, "at": [0, 0, 1.6], "height": 1.2, "tone": "black", "toneAmount": 0.6},
+    {"el": "solid", "profile": {"rect": [9, -4, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [0.95, {"opacity": 1}], [1.0, {"opacity": 0, "ease": "step"}], [2.55, {"opacity": 0}], [2.6, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [9, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [0.95, {"opacity": 1}], [1.0, {"opacity": 0, "ease": "step"}], [2.55, {"opacity": 0}], [2.6, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [-3, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [0.95, {"opacity": 1}], [1.0, {"opacity": 0, "ease": "step"}], [2.55, {"opacity": 0}], [2.6, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [-3, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [0.95, {"opacity": 1}], [1.0, {"opacity": 0, "ease": "step"}], [2.55, {"opacity": 0}], [2.6, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [9, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [0.95, {"opacity": 1}], [1.0, {"opacity": 0, "ease": "step"}], [2.55, {"opacity": 0}], [2.6, {"opacity": 1, "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Hide small parts while navigating", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.1, "to": 5.0},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.5]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [0.9, {"screen": [0.62, 0.55]}], [1.0, {"screen": [0.62, 0.55], "down": true}], [2.3, {"screen": [0.8, 0.55], "down": false}], [3.4, {"screen": [0.8, 0.55]}], [4.6, {"screen": [0.88, 0.8]}]], "kind": "move"}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Turn on Hide small parts while navigating"},
+    {"to": 2.6, "caption": "Small parts hide while the view moves"},
+    {"to": 5.0, "caption": "Still again: they are back"}
+   ]
+  },
+  {
+   "id": "view.smallPartSize", "duration": 5.2, "view": "iso", "extent": [-24, -11, 24, 16],
+   "items": [
+    {"el": "camera", "dragged": true, "center": [-6, 0], "keys": [[2.8, {"az": -45, "elev": 35.264}], [4.2, {"az": -75}]]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "holes": [{"circle": [-12.5, -7.5, 1.2]}, {"circle": [12.5, -7.5, 1.2]}, {"circle": [12.5, 7.5, 1.2]}, {"circle": [-12.5, 7.5, 1.2]}], "height": 1.6, "tone": "green", "toneAmount": 0.65},
+    {"el": "solid", "profile": {"rect": [2, 2, 8, 8]}, "at": [0, 0, 1.6], "height": 1.2, "tone": "black", "toneAmount": 0.6},
+    {"el": "solid", "profile": {"rect": [-12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "fg3", "toneAmount": 0.3, "keys": [[2.75, {"opacity": 1}], [2.8, {"opacity": 0, "ease": "step"}], [4.2, {"opacity": 0}], [4.25, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [9, -4, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[2.75, {"opacity": 1}], [2.8, {"opacity": 0, "ease": "step"}], [4.2, {"opacity": 0}], [4.25, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [9, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[2.75, {"opacity": 1}], [2.8, {"opacity": 0, "ease": "step"}], [4.2, {"opacity": 0}], [4.25, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [-3, -6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[2.75, {"opacity": 1}], [2.8, {"opacity": 0, "ease": "step"}], [4.2, {"opacity": 0}], [4.25, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [-3, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[2.75, {"opacity": 1}], [2.8, {"opacity": 0, "ease": "step"}], [4.2, {"opacity": 0}], [4.25, {"opacity": 1, "ease": "step"}]]},
+    {"el": "solid", "profile": {"rect": [9, 6, 2, 1]}, "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[2.75, {"opacity": 1}], [2.8, {"opacity": 0, "ease": "step"}], [4.2, {"opacity": 0}], [4.25, {"opacity": 1, "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Small part size", "button": "OK", "press": 2.4, "rows": [{"text": "While the view moves, hide parts smaller than (mm):"}, {"entry": "3"}], "from": 0.2, "to": 2.6, "fade": 0.15, "hl": -1, "keys": [[1.0, {"rows": [{"text": "While the view moves, hide parts smaller than (mm):"}, {"entry": ""}], "ease": "step"}], [1.2, {"rows": [{"text": "While the view moves, hide parts smaller than (mm):"}, {"entry": "8"}], "ease": "step"}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.6]}], [2.3, {"screen": [0.644, 0.567]}], [2.4, {"screen": [0.644, 0.567], "click": 1}], [2.7, {"screen": [0.62, 0.55]}], [2.8, {"screen": [0.62, 0.55], "down": true}], [4.2, {"screen": [0.8, 0.55], "down": false}], [5.0, {"screen": [0.8, 0.55]}]], "kind": "move"}
+   ],
+   "steps": [
+    {"to": 1.6, "caption": "Type the size: parts smaller than it hide"},
+    {"to": 2.6, "caption": "OK turns hiding on"},
+    {"to": 5.2, "caption": "The connector hides too while the view moves"}
+   ]
+  },
+  {
+   "id": "inspect.material", "duration": 5.0, "view": "iso", "extent": [-30, -13, 30, 19],
+   "items": [
+    {"el": "camera", "center": [-10, 0], "zoom": 0.75},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"use": "bracket", "args": {"tone": "sel", "toneAmount": 0}},
+    {"el": "solid", "plane": "xz", "at": [0, 8, 0], "height": 16, "tone": "sel", "toneAmount": 0.4, "from": 0.8, "to": 2.3, "fade": 0, "profile": {"points": [[-12, 0], [12, 0], [12, 4], [-6, 4], [-6, 14], [-12, 14]]}, "holes": [{"circle": [-9, 9.5, 1.8]}]},
+    {"el": "solid", "plane": "xz", "at": [0, 8, 0], "height": 16, "tone": "white", "toneAmount": 0.45, "from": 2.3, "fade": 0.3, "profile": {"points": [[-12, 0], [12, 0], [12, 4], [-6, 4], [-6, 14], [-12, 14]]}, "holes": [{"circle": [-9, 9.5, 1.8]}]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Material", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.6},
+    {"el": "card", "screen": [0.03, 0.06], "w": 180, "title": "Material", "rows": [{"text": "Steel · 7.85 g/cm³"}, {"text": "Stainless steel · 8 g/cm³"}, {"text": "Aluminium 6061 · 2.7 g/cm³"}, {"text": "Colour as the material", "check": true}, {"text": "None (from the component or the file)", "dim": true}], "hl": -1, "from": 1.5, "to": 2.35, "fade": 0.1, "keys": [[2.0, {"hl": 2}]]},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Material: Aluminium 6061", "from": 2.4, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.7, {"pos": [6, -8, 4]}], [0.8, {"pos": [6, -8, 4], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [2.0, {"screen": [0.2, 0.534]}], [2.2, {"screen": [0.2, 0.534], "click": 1}], [3.0, {"pos": [18, -10, 0]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select bodies or components"},
+    {"to": 2.3, "caption": "Choose the material: each with its density"},
+    {"to": 5.0, "caption": "It takes its colour; the mass follows the volume"}
+   ]
+  },
+  {
+   "id": "insert.canvas", "duration": 6.4, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-8, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [19, -6, 6, 5], "round": 1}, "height": 5},
+    {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [26, 20], "color": "fg2", "fillOpacity": 0.08, "from": 1.3, "to": 2.4, "fade": 0.2, "keys": [[1.75, {"color": "fg2", "fillOpacity": 0.08}], [1.85, {"color": "hov", "fillOpacity": 0.25}], [2.0, {"color": "sel", "fillOpacity": 0.2}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Insert canvas", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "image", "value": "plate-photo.jpg", "from": 0.9, "to": 1.5, "fade": 0.15},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Choose sketch plane", "rows": [{"text": "Pick a plane or face"}], "from": 1.4, "to": 2.3, "fade": 0.15},
+    {"el": "picture", "corners": [[-14, -9.8], [14, 9.8]], "from": 2.3, "fade": 0.3, "keys": [[2.8, {"corners": [[-14, -9.8], [14, 9.8]]}], [3.4, {"corners": [[-17, -7.8], [11, 11.8]]}], [3.9, {"corners": [[-17, -7.8], [11, 11.8]]}], [4.0, {"corners": [[-13, -5], [7, 9]], "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Place canvas", "button": "Place", "press": 4.5, "from": 2.3, "to": 4.7, "fade": 0.15, "hl": -1, "rows": [["Offset X", "0 mm"], ["Offset Y", "0 mm"], {"text": "Width", "entry": "28 mm"}], "keys": [[3.4, {"rows": [["Offset X", "-3 mm"], ["Offset Y", "2 mm"], {"text": "Width", "entry": "28 mm"}], "ease": "step"}], [3.6, {"hl": 2, "rows": [["Offset X", "-3 mm"], ["Offset Y", "2 mm"], {"text": "Width", "entry": "2"}], "ease": "step"}], [3.75, {"rows": [["Offset X", "-3 mm"], ["Offset Y", "2 mm"], {"text": "Width", "entry": "20"}], "ease": "step"}], [4.0, {"hl": -1, "rows": [["Offset X", "-3 mm"], ["Offset Y", "2 mm"], {"text": "Width", "entry": "20 mm"}], "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 130, "title": "Canvas", "rows": [{"label": "X", "value": "-3 mm"}, {"label": "Y", "value": "2 mm"}, ["Width", "20 mm"], ["Height", "14 mm"], ["Angle", "0°"]], "from": 4.8, "fade": 0.2},
+    {"el": "rect", "corners": [[-13, -5], [7, 9]], "color": "sel", "width": 1, "dots": true, "from": 4.8, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.6, {"pos": [6, -9, 0]}], [2.0, {"pos": [6, -7, 0], "click": 1}], [2.7, {"pos": [3, 4, 0]}], [2.8, {"pos": [3, 4, 0], "down": true}], [3.4, {"pos": [0, 6, 0], "down": false}], [3.55, {"screen": [0.3, 0.534]}], [3.6, {"screen": [0.3, 0.534], "click": 1}], [4.4, {"screen": [0.438, 0.691]}], [4.5, {"screen": [0.438, 0.691], "click": 1}], [5.3, {"pos": [16, -12, 0]}]]}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "Insert canvas, choose a picture"},
+    {"to": 2.2, "caption": "Pick the plane it goes on"},
+    {"to": 4.6, "caption": "Drag it or type its width, then Place"},
+    {"to": 6.4, "caption": "The Canvas panel opens to edit it"}
+   ]
+  },
+  {
+   "id": "canvas.edit", "duration": 5.6, "extent": [-26, -13, 26, 13],
+   "items": [
+    {"el": "camera", "center": [-9, 0]},
+    {"el": "grid", "spacing": 5},
+    {"el": "picture", "corners": [[-8, -5.6], [8, 5.6]], "pivot": [2, 1.4], "keys": [[2.0, {"corners": [[-8, -5.6], [8, 5.6]]}], [2.8, {"corners": [[-8, -5.6], [12, 8.4]]}], [3.4, {"rot": 0}], [4.3, {"rot": 12}]]},
+    {"el": "poly", "points": [[-8, -5.6], [8, -5.6], [8, 5.6], [-8, 5.6]], "closed": true, "color": "sel", "width": 1, "dots": true, "pivot": [2, 1.4], "from": 1.0, "fade": 0.15, "keys": [[2.0, {"points": [[-8, -5.6], [8, -5.6], [8, 5.6], [-8, 5.6]]}], [2.8, {"points": [[-8, -5.6], [12, -5.6], [12, 8.4], [-8, 8.4]]}], [3.4, {"rot": 0}], [4.3, {"rot": 12}]]},
+    {"el": "poly", "points": [[0, 5.6], [0, 8]], "color": "sel", "width": 1, "pivot": [2, 1.4], "from": 1.0, "fade": 0.15, "keys": [[2.0, {"points": [[0, 5.6], [0, 8]]}], [2.8, {"points": [[2, 8.4], [2, 10.8]]}], [3.4, {"rot": 0}], [4.3, {"rot": 12}]]},
+    {"el": "circle", "center": [0, 8.7], "r": 0.7, "color": "sel", "width": 1.2, "fill": "bg2", "fillOpacity": 1, "pivot": [2, 1.4], "from": 1.0, "fade": 0.15, "keys": [[2.0, {"center": [0, 8.7]}], [2.8, {"center": [2, 11.5]}], [3.4, {"rot": 0}], [4.3, {"rot": 12}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 130, "title": "Canvas", "rows": [{"label": "X", "value": "0 mm"}, {"label": "Y", "value": "0 mm"}, ["Width", "16 mm"], ["Height", "11.2 mm"], ["Angle", "0°"]], "from": 1.0, "fade": 0.2, "keys": [[2.8, {"rows": [{"label": "X", "value": "2 mm"}, {"label": "Y", "value": "1.4 mm"}, ["Width", "20 mm"], ["Height", "14 mm"], ["Angle", "0°"]], "ease": "step"}], [4.3, {"rows": [{"label": "X", "value": "2 mm"}, {"label": "Y", "value": "1.4 mm"}, ["Width", "20 mm"], ["Height", "14 mm"], ["Angle", "12°"]], "ease": "step"}]]},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -9]}], [0.7, {"pos": [2, -2]}], [0.75, {"pos": [2, -2], "click": 1}], [0.9, {"pos": [2, -2], "click": 1}], [1.8, {"pos": [8, 5.6]}], [2.0, {"pos": [8, 5.6], "down": true}], [2.8, {"pos": [12, 8.4], "down": false}], [3.2, {"pos": [2, 11.5]}], [3.4, {"pos": [2, 11.5], "down": true}], [4.3, {"pos": [-0.4, 11.2], "down": false}], [5.0, {"pos": [12, -9]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Double-click the canvas: its handles and panel"},
+    {"to": 2.9, "caption": "Drag a corner to size it"},
+    {"to": 5.6, "caption": "Drag the knob to turn it, or type the values"}
+   ]
+  },
+  {
+   "id": "canvas.calibrate", "duration": 5.8, "extent": [-26, -13, 26, 13],
+   "items": [
+    {"el": "camera", "center": [-9, 0]},
+    {"el": "grid", "spacing": 5},
+    {"el": "picture", "corners": [[-6, -5.6], [10, 5.6]], "keys": [[3.6, {"corners": [[-6, -5.6], [10, 5.6]]}], [4.1, {"corners": [[-8.48, -8.28], [15.04, 8.18]]}]]},
+    {"el": "chip", "screen": [0.6, 0.05], "text": "Calibrate", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Calibrate canvas", "hl": 0, "rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "5.44 mm", "indent": 1}], "from": 0.9, "to": 3.7, "fade": 0.15, "keys": [[1.6, {"hl": 1}], [2.3, {"hl": 2}], [2.75, {"rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "8", "indent": 1}], "ease": "step"}], [3.0, {"rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "8 mm", "indent": 1}], "ease": "step"}]]},
+    {"el": "snap", "kind": "center", "at": [-0.72, 0.11], "color": "sel", "from": 1.6, "to": 3.6, "fade": 0},
+    {"el": "snap", "kind": "center", "at": [4.72, 0.11], "color": "sel", "from": 2.3, "to": 3.6, "fade": 0},
+    {"el": "poly", "points": [[-0.72, 0.11], [4.72, 0.11]], "color": "sel", "width": 1.2, "dash": true, "from": 2.3, "to": 3.6, "fade": 0},
+    {"el": "key", "fixed": "enter", "press": 3.5, "from": 3.25, "to": 3.95},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -9]}], [0.4, {"screen": [0.66, 0.119]}], [0.5, {"screen": [0.66, 0.119], "click": 1}], [1.5, {"pos": [-0.72, 0.11]}], [1.6, {"pos": [-0.72, 0.11], "click": 1}], [2.2, {"pos": [4.72, 0.11]}], [2.3, {"pos": [4.72, 0.11], "click": 1}], [4.6, {"pos": [12, -9]}]]}
+   ],
+   "steps": [
+    {"to": 2.4, "caption": "Calibrate: pick two points on the picture"},
+    {"to": 3.6, "caption": "Type their real distance, {fixed:enter}"},
+    {"to": 5.8, "caption": "The picture scales about the first point"}
+   ]
+  },
+  {
+   "id": "canvas.align", "duration": 6.0, "view": "iso", "extent": [-30, -12, 30, 16],
+   "items": [
+    {"el": "camera", "center": [-2, 0], "zoom": 0.85},
+    {"use": "isoScene", "args": {"area": [-26, -14, 28, 14]}},
+    {"el": "picture", "corners": [[-22, -6], [-6, 5.2]], "keys": [[3.6, {"corners": [[-22, -6], [-6, 5.2]]}], [4.2, {"corners": [[2.24, -6.39], [25.76, 10.07]]}]]},
+    {"el": "solid", "profile": {"rect": [14, 2, 16, 8], "round": 1}, "holes": [{"circle": [10, 2, 1.2]}, {"circle": [18, 2, 1.2]}], "height": 1.5},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Align to model", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 0.9},
+    {"el": "label", "screen": [0.5, 0.06], "align": "center", "box": "bg2", "text": "Pick a point on the picture", "from": 0.9, "to": 1.5, "fade": 0},
+    {"el": "label", "screen": [0.5, 0.06], "align": "center", "box": "bg2", "text": "Pick where it belongs on the model", "from": 1.5, "to": 2.1, "fade": 0},
+    {"el": "label", "screen": [0.5, 0.06], "align": "center", "box": "bg2", "text": "Pick a second point on the picture", "from": 2.1, "to": 2.7, "fade": 0},
+    {"el": "label", "screen": [0.5, 0.06], "align": "center", "box": "bg2", "text": "Pick where that one belongs", "from": 2.7, "to": 3.3, "fade": 0},
+    {"el": "snap", "kind": "center", "at": [-16.72, -0.29, 0], "color": "sel", "from": 1.5, "to": 3.6, "fade": 0},
+    {"el": "snap", "kind": "center", "at": [10, 2, 1.5], "color": "sel", "from": 2.1, "to": 3.6, "fade": 0},
+    {"el": "snap", "kind": "center", "at": [-11.28, -0.29, 0], "color": "sel", "from": 2.7, "to": 3.6, "fade": 0},
+    {"el": "snap", "kind": "center", "at": [18, 2, 1.5], "color": "sel", "from": 3.3, "to": 3.6, "fade": 0},
+    {"el": "poly", "points": [[-16.72, -0.29, 0], [10, 2, 1.5]], "color": "sel", "width": 1, "dash": true, "from": 2.1, "to": 3.6, "fade": 0},
+    {"el": "poly", "points": [[-11.28, -0.29, 0], [18, 2, 1.5]], "color": "sel", "width": 1, "dash": true, "from": 3.3, "to": 3.6, "fade": 0},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Aligned to the model", "from": 4.3, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.75]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.4, {"pos": [-16.72, -0.29, 0]}], [1.5, {"pos": [-16.72, -0.29, 0], "click": 1}], [2.0, {"pos": [10, 2, 1.5]}], [2.1, {"pos": [10, 2, 1.5], "click": 1}], [2.6, {"pos": [-11.28, -0.29, 0]}], [2.7, {"pos": [-11.28, -0.29, 0], "click": 1}], [3.2, {"pos": [18, 2, 1.5]}], [3.3, {"pos": [18, 2, 1.5], "click": 1}], [4.4, {"screen": [0.85, 0.75]}]]}
+   ],
+   "steps": [
+    {"to": 2.2, "caption": "A point on the picture, then its place"},
+    {"to": 3.4, "caption": "Then a second pair"},
+    {"to": 6.0, "caption": "The canvas moves, turns and scales onto them"}
+   ]
+  },
+  {
+   "id": "canvas.trace", "duration": 5.4, "extent": [-26, -13, 26, 13],
+   "items": [
+    {"el": "camera", "center": [-9, 0]},
+    {"el": "grid", "spacing": 5},
+    {"el": "picture", "corners": [[-8, -5.6], [8, 5.6]]},
+    {"el": "rect", "corners": [[-8, -5.6], [8, 5.6]], "color": "sel", "width": 1, "dots": true, "to": 1.6, "fade": 0.2},
+    {"el": "poly", "points": [[0.0, 5.6], [0.0, 8.0]], "color": "sel", "width": 1, "to": 1.6, "fade": 0.2},
+    {"el": "circle", "center": [0.0, 8.7], "r": 0.7, "color": "sel", "width": 1.2, "fill": "bg2", "fillOpacity": 1, "to": 1.6, "fade": 0.2},
+    {"el": "card", "screen": [0.03, 0.06], "w": 130, "title": "Canvas", "rows": [{"label": "X", "value": "0 mm"}, {"label": "Y", "value": "0 mm"}, ["Width", "16 mm"], ["Height", "11.2 mm"], ["Angle", "0°"]], "to": 1.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.6, 0.05], "text": "Trace to sketch", "keys": [[0.9, {"hl": true}], [1.2, {"hl": false}]], "from": 0.4, "to": 1.5},
+    {"el": "shape", "profile": {"rect": [0, 0.11, 10.24, 5.15], "round": 0.8}, "holes": [{"circle": [-2.72, 0.11, 1]}, {"circle": [2.72, 0.11, 1]}], "color": "sel", "width": 1.6, "from": 1.6, "fade": 0, "keys": [[1.6, {"progress": 0}], [2.8, {"progress": 1, "ease": "linear"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Browser", "hl": -1, "rows": [{"label": "plate-photo", "icon": "image"}], "keys": [[3.0, {"rows": [{"label": "plate-photo", "icon": "image"}, {"label": "plate-photo trace", "icon": "sketch"}], "hl": 1, "ease": "step"}]], "from": 2.8},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Traced 3 curves into “plate-photo trace”", "from": 3.0, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -9]}], [0.8, {"screen": [0.66, 0.119]}], [0.9, {"screen": [0.66, 0.119], "click": 1}], [1.8, {"pos": [12, -9]}]]}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Trace to sketch"},
+    {"to": 2.9, "caption": "The picture's dark shapes become curves"},
+    {"to": 5.4, "caption": "In a new sketch on the canvas's plane"}
+   ]
+  },
+  {
+   "id": "canvas.replace", "duration": 5.4, "extent": [-26, -13, 26, 13],
+   "items": [
+    {"el": "camera", "center": [-9, 0]},
+    {"el": "grid", "spacing": 5},
+    {"el": "picture", "corners": [[-8, -5.6], [8, 5.6]], "to": 2.9, "fade": 0.3},
+    {"el": "picture", "corners": [[-8, -4], [8, 4]], "from": 2.9, "fade": 0.3},
+    {"el": "rect", "corners": [[-8, -5.6], [8, 5.6]], "color": "sel", "width": 1, "dots": true, "to": 2.75, "fade": 0.1},
+    {"el": "poly", "points": [[0.0, 5.6], [0.0, 8.0]], "color": "sel", "width": 1, "to": 2.75, "fade": 0.1},
+    {"el": "circle", "center": [0.0, 8.7], "r": 0.7, "color": "sel", "width": 1.2, "fill": "bg2", "fillOpacity": 1, "to": 2.75, "fade": 0.1},
+    {"el": "rect", "corners": [[-8, -4], [8, 4]], "color": "sel", "width": 1, "dots": true, "from": 3.1, "fade": 0.2},
+    {"el": "poly", "points": [[0.0, 4], [0.0, 6.4]], "color": "sel", "width": 1, "from": 3.1, "fade": 0.2},
+    {"el": "circle", "center": [0.0, 7.1], "r": 0.7, "color": "sel", "width": 1.2, "fill": "bg2", "fillOpacity": 1, "from": 3.1, "fade": 0.2},
+    {"el": "chip", "screen": [0.6, 0.05], "text": "Replace picture…", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.2, "icon": "image"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Replace canvas picture", "hl": -1, "button": "Open", "press": 2.4, "from": 1.1, "to": 2.6, "fade": 0.15, "rows": [{"label": "plate-photo.jpg"}, {"label": "plate-top.jpg"}], "keys": [[1.8, {"hl": 1}]]},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "The canvas shows plate-top.jpg", "from": 3.2, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -9]}], [0.5, {"screen": [0.66, 0.119]}], [0.6, {"screen": [0.66, 0.119], "click": 1}], [1.7, {"screen": [0.2, 0.411]}], [1.8, {"screen": [0.2, 0.411], "click": 1}], [2.3, {"screen": [0.449, 0.567]}], [2.4, {"screen": [0.449, 0.567], "click": 1}], [3.3, {"pos": [12, -9]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Replace canvas picture"},
+    {"to": 2.6, "caption": "Choose the new picture"},
+    {"to": 5.4, "caption": "Its centre, angle and width stay"}
+   ]
+  },
+  {
+   "id": "canvas.finish", "duration": 4.2, "extent": [-26, -13, 26, 13],
+   "items": [
+    {"el": "camera", "center": [-9, 0]},
+    {"el": "grid", "spacing": 5},
+    {"el": "picture", "corners": [[-8, -5.6], [8, 5.6]]},
+    {"el": "rect", "corners": [[-8, -5.6], [8, 5.6]], "color": "sel", "width": 1, "dots": true, "to": 1.6, "fade": 0.2},
+    {"el": "poly", "points": [[0.0, 5.6], [0.0, 8.0]], "color": "sel", "width": 1, "to": 1.6, "fade": 0.2},
+    {"el": "circle", "center": [0.0, 8.7], "r": 0.7, "color": "sel", "width": 1.2, "fill": "bg2", "fillOpacity": 1, "to": 1.6, "fade": 0.2},
+    {"el": "card", "screen": [0.03, 0.06], "w": 130, "title": "Canvas", "rows": [{"label": "X", "value": "0 mm"}, {"label": "Y", "value": "0 mm"}, ["Width", "16 mm"], ["Height", "11.2 mm"], ["Angle", "0°"]], "to": 1.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.6, 0.05], "text": "Close canvas", "keys": [[1.3, {"hl": true}], [1.6, {"hl": false}]], "from": 0.1, "to": 1.7, "icon": "finish"},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -9]}], [1.2, {"screen": [0.66, 0.119]}], [1.3, {"screen": [0.66, 0.119], "click": 1}], [2.4, {"pos": [12, -9]}]]}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "While a canvas is edited: Close canvas"},
+    {"to": 4.2, "caption": "Its handles and panel close; the changes stay"}
+   ]
+  },
+  {
+   "id": "canvas.fromBackdrop", "duration": 5.0, "extent": [-26, -13, 26, 13],
+   "items": [
+    {"el": "camera", "center": [-9, 0]},
+    {"el": "grid", "spacing": 5},
+    {"el": "picture", "corners": [[-8, -5.6], [8, 5.6]], "opacity": 0.6},
+    {"el": "rect", "corners": [[-8, -5.6], [8, 5.6]], "color": "fg3", "width": 0.8, "dash": true, "to": 2.0, "fade": 0.2},
+    {"el": "card", "screen": [0.03, 0.22], "w": 150, "title": "Browser", "hl": 0, "rows": [{"label": "Sketch1", "icon": "sketch"}], "keys": [[2.0, {"rows": [{"label": "Sketch1", "icon": "sketch"}, {"label": "plate-photo", "icon": "image"}], "hl": 1, "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Backdrop images to canvases", "keys": [[1.3, {"hl": true}], [1.6, {"hl": false}]], "from": 0.8, "to": 1.9},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "1 canvas(es) made from the sketch's backdrop", "from": 2.2, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -9]}], [0.5, {"screen": [0.15, 0.448]}], [0.6, {"screen": [0.15, 0.448], "click": 1}], [1.2, {"screen": [0.08, 0.119]}], [1.3, {"screen": [0.08, 0.119], "click": 1}], [2.4, {"pos": [12, -9]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a sketch with a backdrop picture"},
+    {"to": 2.1, "caption": "Backdrop images to canvases"},
+    {"to": 5.0, "caption": "The picture is a canvas now, out of the sketch"}
+   ]
+  },
+  {
+   "id": "kicad.project", "duration": 5.6, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"el": "camera", "center": [-12, 0]},
+    {"use": "sketchScene"},
+    {"el": "chip", "screen": [0.6, 0.05], "text": "Project KiCad board", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0, "icon": "project"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 190, "title": "Project KiCad board", "hl": -1, "button": "Project", "press": 2.4, "rows": [{"text": "Board outline", "check": true}, {"text": "Mounting holes, also ones added later", "check": true}, {"label": "J1 USB_C", "check": false}, {"label": "U1 ESP32", "check": false}, {"text": "Linked: follows the board when it is synced", "check": true}], "from": 0.9, "to": 2.6, "fade": 0.15, "keys": [[1.6, {"hl": 2}], [1.7, {"rows": [{"text": "Board outline", "check": true}, {"text": "Mounting holes, also ones added later", "check": true}, {"label": "J1 USB_C", "check": true}, {"label": "U1 ESP32", "check": false}, {"text": "Linked: follows the board when it is synced", "check": true}], "ease": "step"}], [2.0, {"hl": -1}]]},
+    {"el": "shape", "profile": {"rect": [8, 0, 20, 14], "round": 1}, "holes": [{"circle": [0.5, -5.5, 1]}, {"circle": [15.5, -5.5, 1]}, {"circle": [15.5, 5.5, 1]}, {"circle": [0.5, 5.5, 1]}, {"rect": [1, 0, 4, 5]}], "color": "amber", "width": 1.6, "from": 2.6, "fade": 0.5},
+    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.75]}], [0.4, {"screen": [0.66, 0.119]}], [0.5, {"screen": [0.66, 0.119], "click": 1}], [1.5, {"screen": [0.1, 0.534]}], [1.7, {"screen": [0.1, 0.534], "click": 1}], [2.3, {"screen": [0.555, 0.937]}], [2.4, {"screen": [0.555, 0.937], "click": 1}], [3.4, {"screen": [0.85, 0.82]}]], "kind": "cross"}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "In a sketch: Project KiCad board"},
+    {"to": 2.5, "caption": "Tick the outline, holes and parts"},
+    {"to": 5.6, "caption": "They come in linked, and follow the board"}
+   ]
+  },
+  {
+   "id": "drawings.sectionView", "duration": 6.4, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "rect", "corners": [[-25.5, -3.5], [-4.5, 9.5]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.07, "from": 0.6, "to": 100, "fade": 0.1},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Section view", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.7},
+    {"el": "poly", "points": [[-26, 3], "cursor"], "color": "sel", "width": 1.2, "dash": true, "from": 1.9, "to": 2.6, "fade": 0},
+    {"el": "poly", "points": [[-26, 3], [-4, 3]], "color": "sel", "width": 1.2, "dash": true, "from": 2.6, "to": 4.5, "fade": 0},
+    {"el": "key", "fixed": "enter", "press": 3.0, "from": 2.75, "to": 3.45},
+    {"el": "rect", "corners": [[-24, -1.5], [-6, 1.5]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.12, "from": 3.1, "to": 4.5, "fade": 0, "keys": [[3.2, {"offset": [0, -0.5]}], [4.4, {"offset": [0, -8.5]}]]},
+    {"el": "label", "at": [-24, 1.5], "text": "Section view", "align": "left", "box": "sel", "color": "onsel", "size": 7, "dy": -6, "from": 3.1, "to": 4.5, "fade": 0, "keys": [[3.2, {"offset": [0, -0.5]}], [4.4, {"offset": [0, -8.5]}]]},
+    {"el": "poly", "points": [[-26, 3], [-4, 3]], "color": "fg", "width": 0.8, "dash": true, "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-26, 3], [-23.5, 3]], "color": "fg", "width": 2, "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-6.5, 3], [-4, 3]], "color": "fg", "width": 2, "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-26, 3], [-26, 0.2]], "color": "fg", "width": 1, "arrow": "end", "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-4, 3], [-4, 0.2]], "color": "fg", "width": 1, "arrow": "end", "from": 4.5, "fade": 0.1},
+    {"el": "label", "at": [-26.7, 4.6], "value": "A", "size": 7, "color": "fg", "from": 4.5, "fade": 0.15},
+    {"el": "label", "at": [-3.3, 4.6], "value": "A", "size": 7, "color": "fg", "from": 4.5, "fade": 0.15},
+    {"el": "rect", "corners": [[-24, -10], [-6, -7]], "color": "fg", "width": 1.2, "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-24, -10], [-21.6, -10], [-21.6, -7], [-24, -7]], "closed": true, "width": 0, "hatch": "fg2", "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-18.4, -10], [-11.6, -10], [-11.6, -7], [-18.4, -7]], "closed": true, "width": 0, "hatch": "fg2", "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-8.4, -10], [-6, -10], [-6, -7], [-8.4, -7]], "closed": true, "width": 0, "hatch": "fg2", "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-21.6, -10], [-21.6, -7]], "color": "fg", "width": 1.2, "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-18.4, -10], [-18.4, -7]], "color": "fg", "width": 1.2, "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-11.6, -10], [-11.6, -7]], "color": "fg", "width": 1.2, "from": 4.5, "fade": 0.1},
+    {"el": "poly", "points": [[-8.4, -10], [-8.4, -7]], "color": "fg", "width": 1.2, "from": 4.5, "fade": 0.1},
+    {"el": "label", "at": [-15, -5.6], "value": "A-A", "size": 7.5, "color": "fg", "from": 4.5, "fade": 0.15},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"pos": [-15, 8]}], [0.6, {"pos": [-15, 8], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [-26, 3]}], [1.9, {"pos": [-26, 3], "click": 1}], [2.5, {"pos": [-4, 3]}], [2.6, {"pos": [-4, 3], "click": 1}], [3.2, {"pos": [-15, -0.5]}], [4.4, {"pos": [-15, -8.5]}], [4.5, {"pos": [-15, -8.5], "click": 1}], [5.4, {"pos": [6, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.7, "caption": "Select the view, then Section view"},
+    {"to": 3.2, "caption": "Click the cutting line, then {fixed:enter}"},
+    {"to": 6.4, "caption": "Click on its side: the section, hatched"}
+   ]
+  },
+  {
+   "id": "drawings.detailView", "duration": 6.2, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "rect", "corners": [[-25.5, -3.5], [-4.5, 9.5]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.07, "from": 0.6, "to": 4.6, "fade": 0.1},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Detail view", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.7},
+    {"el": "circle", "center": [-22, 6], "r": "cursor", "color": "sel", "width": 1.2, "dash": true, "from": 1.9, "to": 2.7, "fade": 0},
+    {"el": "circle", "center": [-22, 6], "r": 3.5, "color": "sel", "width": 1.2, "from": 2.7, "fade": 0, "keys": [[4.55, {"color": "sel", "width": 1.2}], [4.6, {"color": "fg", "width": 0.8, "ease": "step"}]]},
+    {"el": "rect", "corners": [[-7, -7], [7, 7]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.12, "from": 2.8, "to": 4.6, "fade": 0, "keys": [[2.9, {"offset": [0, 4]}], [4.4, {"offset": [4, 2]}]]},
+    {"el": "label", "at": [-7, 7], "text": "Detail 2:1", "align": "left", "box": "sel", "color": "onsel", "size": 7, "dy": -6, "from": 2.8, "to": 4.6, "fade": 0, "keys": [[2.9, {"offset": [0, 4]}], [4.4, {"offset": [4, 2]}]]},
+    {"el": "label", "at": [-26, 9.6], "value": "B", "size": 7, "color": "fg", "from": 4.6, "fade": 0.15},
+    {"el": "circle", "center": [4, 2], "r": 7, "color": "fg", "width": 0.8, "from": 4.6, "fade": 0.1},
+    {"el": "poly", "points": [[0, -3.74], [0, 6]], "color": "fg", "width": 1.2, "from": 4.6, "fade": 0.1},
+    {"el": "poly", "points": [[0, 6], [9.74, 6]], "color": "fg", "width": 1.2, "from": 4.6, "fade": 0.1},
+    {"el": "arc", "center": [8, -4], "r": 3.2, "start": 50.4, "sweep": 146.6, "color": "fg", "width": 1.2, "from": 4.6, "fade": 0.1},
+    {"el": "label", "at": [4, 10.3], "value": "B (2:1)", "size": 7.5, "color": "fg", "from": 4.6, "fade": 0.15},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"pos": [-15, 8]}], [0.6, {"pos": [-15, 8], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [-22, 6]}], [1.9, {"pos": [-22, 6], "click": 1}], [2.6, {"pos": [-18.5, 6]}], [2.7, {"pos": [-18.5, 6], "click": 1}], [2.9, {"pos": [0, 4]}], [4.4, {"pos": [4, 2]}], [4.6, {"pos": [4, 2], "click": 1}], [5.5, {"pos": [12, 6]}]]}
+   ],
+   "steps": [
+    {"to": 1.7, "caption": "Select the view, then Detail view"},
+    {"to": 2.8, "caption": "Click the centre, then the radius"},
+    {"to": 6.2, "caption": "Click where the enlarged view goes"}
+   ]
+  },
+  {
+   "id": "drawings.auxiliaryView", "duration": 6.0, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"el": "poly", "points": [[-24, -2], [-10, -2], [-6, 4], [-6, 8], [-24, 8]], "closed": true, "color": "fg", "width": 1.2},
+    {"el": "circle", "center": [-17, 3], "r": 1.6, "color": "fg", "width": 1.2},
+    {"el": "rect", "corners": [[-25.5, -3.5], [-4.5, 9.5]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.07, "from": 0.6, "to": 4.4, "fade": 0.1},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Auxiliary view", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.7},
+    {"el": "poly", "points": [[-10, -2], [-6, 4]], "closed": false, "color": "glow", "width": 6, "from": 1.6, "to": 1.9, "fade": 0.08},
+    {"el": "poly", "points": [[-10, -2], [-6, 4]], "closed": false, "color": "sel", "width": 1.8, "from": 1.9, "to": 4.4, "fade": 0.1},
+    {"el": "rect", "corners": [[-3, -3.6], [3, 3.6]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.12, "from": 2.8, "to": 4.4, "fade": 0, "keys": [[2.9, {"offset": [-2.18, -2.89]}], [4.3, {"offset": [4.98, -7.66]}]]},
+    {"el": "label", "at": [-3, 3.6], "text": "Auxiliary view", "align": "left", "box": "sel", "color": "onsel", "size": 7, "dy": -6, "from": 2.8, "to": 4.4, "fade": 0, "keys": [[2.9, {"offset": [-2.18, -2.89]}], [4.3, {"offset": [4.98, -7.66]}]]},
+    {"el": "rect", "corners": [[1.98, -11.26], [7.98, -4.06]], "color": "fg", "width": 1.2, "from": 4.4, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"pos": [-15, 8]}], [0.6, {"pos": [-15, 8], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [-8, 1]}], [1.9, {"pos": [-8, 1], "click": 1}], [2.9, {"pos": [-2.18, -2.89]}], [4.3, {"pos": [4.98, -7.66]}], [4.4, {"pos": [4.98, -7.66], "click": 1}], [5.3, {"pos": [12, 6]}]]}
+   ],
+   "steps": [
+    {"to": 1.7, "caption": "Select the view, then Auxiliary view"},
+    {"to": 2.8, "caption": "Click its slanted edge"},
+    {"to": 6.0, "caption": "Move to its side and click: the face's true shape"}
+   ]
+  },
+  {
+   "id": "drawings.cropView", "duration": 5.2, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"el": "poly", "points": [[-14, 8], [-24, 8], [-24, -2], [-14, -2]], "color": "fg", "width": 1.2},
+    {"el": "circle", "center": [-20, 3], "r": 1.6, "color": "fg", "width": 1.2},
+    {"el": "poly", "points": [[-14, 8], [-6, 8], [-6, -2], [-14, -2]], "color": "fg", "width": 1.2, "to": 2.8},
+    {"el": "circle", "center": [-10, 3], "r": 1.6, "color": "fg", "width": 1.2, "to": 2.8, "fade": 0.25},
+    {"el": "rect", "corners": [[-25.5, -3.5], [-4.5, 9.5]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.07, "from": 0.6, "to": 2.8, "fade": 0.1},
+    {"el": "rect", "corners": [[-25.5, -3.5], [-12.5, 9.5]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.07, "from": 2.8, "to": 100, "fade": 0.1},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Crop view", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.7},
+    {"el": "band", "a": [-25, -3.4], "b": "cursor", "from": 1.9, "to": 2.7, "fade": 0},
+    {"el": "poly", "points": [[-14, -4], [-14, 1.25], [-12.25, 2.125], [-15.75, 3.875], [-14, 4.75], [-14, 10]], "color": "fg", "width": 0.8, "from": 2.8, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"pos": [-15, 8]}], [0.6, {"pos": [-15, 8], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [-25, -3.4]}], [1.9, {"pos": [-25, -3.4], "down": true}], [2.7, {"pos": [-14, 9.4], "down": false}], [3.6, {"pos": [6, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.7, "caption": "Select the view, then Crop view"},
+    {"to": 2.8, "caption": "Drag a box around what to keep"},
+    {"to": 5.2, "caption": "The rest of the view is left out"}
+   ]
+  },
+  {
+   "id": "drawings.breakView", "duration": 5.8, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"el": "poly", "points": [[-14, 6], [-26, 6], [-26, 1], [-14, 1]], "color": "fg", "width": 1.2},
+    {"el": "circle", "center": [-23, 3.5], "r": 1.3, "color": "fg", "width": 1.2},
+    {"el": "poly", "points": [[-14, 6], [-2, 6]], "color": "fg", "width": 1.2, "to": 2.8},
+    {"el": "poly", "points": [[-14, 1], [-2, 1]], "color": "fg", "width": 1.2, "to": 2.8},
+    {"el": "poly", "points": [[-2, 6], [10, 6], [10, 1], [-2, 1]], "color": "fg", "width": 1.2, "keys": [[2.8, {"offset": [0, 0]}], [3.4, {"offset": [-9, 0]}]]},
+    {"el": "circle", "center": [7, 3.5], "r": 1.3, "color": "fg", "width": 1.2, "keys": [[2.8, {"offset": [0, 0]}], [3.4, {"offset": [-9, 0]}]]},
+    {"el": "rect", "corners": [[-27, -0.5], [11.5, 7.5]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.07, "from": 0.6, "to": 2.8, "fade": 0.1},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Break view", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.7},
+    {"el": "poly", "points": [[-14, -0.5], [-14, 7.5]], "color": "sel", "width": 1, "dash": true, "from": 1.9, "to": 2.8, "fade": 0},
+    {"el": "band", "a": [-14, -0.5], "b": "cursor", "from": 1.9, "to": 2.7, "fade": 0},
+    {"el": "poly", "points": [[-14, -2], [-14, 2.125], [-12.625, 2.81], [-15.375, 4.19], [-14, 4.875], [-14, 9]], "color": "fg", "width": 0.8, "from": 3.4, "fade": 0.2},
+    {"el": "poly", "points": [[-11, -2], [-11, 2.125], [-9.625, 2.81], [-12.375, 4.19], [-11, 4.875], [-11, 9]], "color": "fg", "width": 0.8, "from": 3.4, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"pos": [-8, 6]}], [0.6, {"pos": [-8, 6], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [-14, 3.5]}], [1.9, {"pos": [-14, 3.5], "click": 1}], [2.1, {"pos": [-13, 7.5]}], [2.6, {"pos": [-2, 7.5]}], [2.7, {"pos": [-2, 7.5], "click": 1}], [3.6, {"pos": [14, 8]}]]}
+   ],
+   "steps": [
+    {"to": 1.7, "caption": "Select the long view, then Break view"},
+    {"to": 2.8, "caption": "Click where the break starts and ends"},
+    {"to": 5.8, "caption": "The band is taken out; break lines mark it"}
+   ]
+  },
+  {
+   "id": "drawings.breakoutView", "duration": 6.6, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"el": "rect", "corners": [[-24, -3], [-8, 9]], "color": "fg", "width": 1.2},
+    {"el": "rect", "corners": [[0, -3], [10, 9]], "color": "fg", "width": 1.2},
+    {"el": "circle", "center": [5, 3], "r": 1.5, "color": "fg", "width": 1.2},
+    {"el": "rect", "corners": [[-25.5, -4.5], [-6.5, 10.5]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.07, "from": 0.6, "to": 4.3, "fade": 0.1},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Broken-out section", "keys": [[1.2, {"hl": true}], [1.5, {"hl": false}]], "from": 0.9, "to": 1.7},
+    {"el": "poly", "points": [[-22, 0], [-22, 0]], "dots": true, "color": "sel", "width": 0, "from": 1.8, "to": 3.4, "fade": 0},
+    {"el": "poly", "points": [[-14, -1], [-14, -1]], "dots": true, "color": "sel", "width": 0, "from": 2.1, "to": 3.4, "fade": 0},
+    {"el": "poly", "points": [[-12, 4], [-12, 4]], "dots": true, "color": "sel", "width": 0, "from": 2.4, "to": 3.4, "fade": 0},
+    {"el": "poly", "points": [[-15, 8], [-15, 8]], "dots": true, "color": "sel", "width": 0, "from": 2.7, "to": 3.4, "fade": 0},
+    {"el": "poly", "points": [[-21, 7], [-21, 7]], "dots": true, "color": "sel", "width": 0, "from": 3.0, "to": 3.4, "fade": 0},
+    {"el": "poly", "points": [[-22, 0], [-14, -1], [-12, 4], [-15, 8], [-21, 7]], "closed": true, "smooth": true, "color": "sel", "width": 1.2, "dash": true, "from": 3.4, "to": 4.3, "fade": 0},
+    {"el": "key", "fixed": "enter", "press": 3.4, "from": 3.15, "to": 3.85},
+    {"el": "poly", "points": [[-22, 0], [-14, -1], [-12, 4], [-15, 8], [-21, 7]], "closed": true, "smooth": true, "color": "fg", "width": 0.8, "hatch": "fg2", "from": 4.3, "fade": 0.1},
+    {"el": "rect", "corners": [[-22.3, 1.5], [-14, 4.5]], "width": 0, "fill": "bg2", "fillOpacity": 1, "from": 4.3, "fade": 0.1},
+    {"el": "poly", "points": [[-22.3, 1.5], [-14, 1.5], [-14, 4.5], [-22.3, 4.5]], "color": "fg", "width": 1.2, "from": 4.3, "fade": 0.1},
+    {"el": "snap", "kind": "center", "at": [5, 3], "color": "sel", "from": 4.0, "to": 4.4, "fade": 0},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"pos": [-16, 9]}], [0.6, {"pos": [-16, 9], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [1.6500000000000001, {"pos": [-22, 0]}], [1.8, {"pos": [-22, 0], "click": 1}], [1.9500000000000002, {"pos": [-14, -1]}], [2.1, {"pos": [-14, -1], "click": 1}], [2.25, {"pos": [-12, 4]}], [2.4, {"pos": [-12, 4], "click": 1}], [2.5500000000000003, {"pos": [-15, 8]}], [2.7, {"pos": [-15, 8], "click": 1}], [2.85, {"pos": [-21, 7]}], [3.0, {"pos": [-21, 7], "click": 1}], [4.0, {"pos": [5, 3]}], [4.2, {"pos": [5, 3], "click": 1}], [5.2, {"pos": [14, 8]}]]}
+   ],
+   "steps": [
+    {"to": 1.7, "caption": "Select the view, then Broken-out section"},
+    {"to": 3.5, "caption": "Click points round it, then {fixed:enter}"},
+    {"to": 6.6, "caption": "Click the depth in the view beside it"}
+   ]
+  },
+  {
+   "id": "drawings.issue", "duration": 5.8, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "rect", "corners": [[1.5, 10.5], [27.5, 12.5]], "color": "fg", "width": 1},
+    {"el": "poly", "points": [[4.5, 12.5], [4.5, 10.5]], "color": "fg2", "width": 0.7},
+    {"el": "poly", "points": [[14.5, 12.5], [14.5, 10.5]], "color": "fg2", "width": 0.7},
+    {"el": "poly", "points": [[21.5, 12.5], [21.5, 10.5]], "color": "fg2", "width": 0.7},
+    {"el": "label", "at": [3.0, 11.5], "value": "REV", "size": 6, "color": "fg"},
+    {"el": "label", "at": [9.5, 11.5], "value": "DESCRIPTION", "size": 6, "color": "fg"},
+    {"el": "label", "at": [18.0, 11.5], "value": "DATE", "size": 6, "color": "fg"},
+    {"el": "label", "at": [24.5, 11.5], "value": "APPROVED", "size": 6, "color": "fg"},
+    {"use": "sheetTitle"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Issue revision", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Issue revision", "hl": -1, "button": "Issue revision", "press": 2.6, "rows": [["Revision", "A"], ["Description", "First release"], ["Date", "2026-10-04"], {"text": "Keep the views' linework in the document", "check": true}, {"text": "Write the issued PDF", "check": false}], "from": 0.9, "to": 2.8, "fade": 0.15, "keys": [[1.5, {"hl": 1}], [2.0, {"hl": -1}]]},
+    {"el": "rect", "corners": [[1.5, 8.5], [27.5, 10.5]], "color": "fg", "width": 1, "from": 2.9, "fade": 0.2},
+    {"el": "poly", "points": [[4.5, 10.5], [4.5, 8.5]], "color": "fg2", "width": 0.7, "from": 2.9, "fade": 0.2},
+    {"el": "poly", "points": [[14.5, 10.5], [14.5, 8.5]], "color": "fg2", "width": 0.7, "from": 2.9, "fade": 0.2},
+    {"el": "poly", "points": [[21.5, 10.5], [21.5, 8.5]], "color": "fg2", "width": 0.7, "from": 2.9, "fade": 0.2},
+    {"el": "label", "at": [3.0, 9.5], "value": "A", "size": 6, "color": "fg", "from": 2.9, "fade": 0.2},
+    {"el": "label", "at": [9.5, 9.5], "value": "First release", "size": 6, "color": "fg", "from": 2.9, "fade": 0.2},
+    {"el": "label", "at": [18.0, 9.5], "value": "2026-10-04", "size": 6, "color": "fg", "from": 2.9, "fade": 0.2},
+    {"el": "label", "at": [24.5, 9.5], "value": "J. Smith", "size": 6, "color": "fg", "from": 2.9, "fade": 0.2},
+    {"el": "chip", "screen": [0.42, 0.42], "text": "Rev A", "from": 2.9, "fade": 0.2},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Revision A issued", "from": 3.0, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 4]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.4, {"screen": [0.25, 0.411]}], [2.5, {"screen": [0.515, 0.937]}], [2.6, {"screen": [0.515, 0.937], "click": 1}], [3.5, {"pos": [8, -2]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Issue revision"},
+    {"to": 2.8, "caption": "Its revision, description and date, then issue it"},
+    {"to": 5.8, "caption": "The revision table and the sheet's chip show it"}
+   ]
+  },
+  {
+   "id": "drawings.print", "duration": 5.2, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "key", "command": "drawings.print", "press": 0.5, "from": 0.15, "to": 1.0},
+    {"el": "card", "screen": [0.03, 0.06], "w": 190, "title": "Print", "hl": -1, "button": "Print", "press": 2.8, "rows": [["Printer", "HP LaserJet M404"], {"text": "All 2 sheets of the drawing", "radio": true}, {"text": "This sheet", "radio": false}, {"text": "Fit to the printer's paper", "radio": true}, {"text": "Black ink only", "check": false}], "from": 0.9, "to": 3.0, "fade": 0.15, "keys": [[1.9, {"hl": 4}], [2.0, {"rows": [["Printer", "HP LaserJet M404"], {"text": "All 2 sheets of the drawing", "radio": true}, {"text": "This sheet", "radio": false}, {"text": "Fit to the printer's paper", "radio": true}, {"text": "Black ink only", "check": true}], "ease": "step"}], [2.3, {"hl": -1}]]},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "2 sheets sent to HP LaserJet M404", "from": 3.2, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 4]}], [1.8, {"screen": [0.1, 0.781]}], [2.0, {"screen": [0.1, 0.781], "click": 1}], [2.7, {"screen": [0.577, 0.937]}], [2.8, {"screen": [0.577, 0.937], "click": 1}], [3.7, {"pos": [8, -2]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "{press:drawings.print}"},
+    {"to": 3.0, "caption": "The printer, which sheets, the scale and the ink"},
+    {"to": 5.2, "caption": "The sheets go to the printer"}
+   ]
+  },
+  {
+   "id": "drawings.exportDrawing", "duration": 5.0, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.58, 0.05], "value": "Sheet 1", "hl": true},
+    {"el": "chip", "screen": [0.74, 0.05], "value": "Sheet 2"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Export drawing as PDF", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1, "icon": "export"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 160, "title": "Export drawing", "button": "Save", "press": 2.3, "rows": [{"text": "Name", "entry": "BRACKET.pdf"}], "from": 1.0, "to": 2.5, "fade": 0.15},
+    {"el": "rect", "corners": [[17.2, 1.2], [25.2, 7.2]], "color": "fg2", "width": 1, "fill": "bg", "fillOpacity": 1, "from": 2.7, "fade": 0.2},
+    {"el": "rect", "corners": [[17.8, 1.7999999999999998], [24.599999999999998, 6.6000000000000005]], "color": "fg3", "width": 0.6, "from": 2.7, "fade": 0.2},
+    {"el": "rect", "corners": [[21.2, 1.7999999999999998], [24.599999999999998, 3.0]], "color": "fg3", "width": 0.6, "from": 2.7, "fade": 0.2},
+    {"el": "rect", "corners": [[16, 0], [24, 6]], "color": "fg2", "width": 1, "fill": "bg", "fillOpacity": 1, "from": 2.9, "fade": 0.2},
+    {"el": "rect", "corners": [[16.6, 0.6], [23.4, 5.4]], "color": "fg3", "width": 0.6, "from": 2.9, "fade": 0.2},
+    {"el": "rect", "corners": [[20, 0.6], [23.4, 1.8]], "color": "fg3", "width": 0.6, "from": 2.9, "fade": 0.2},
+    {"el": "label", "at": [20, -1.6], "value": "BRACKET.pdf", "size": 7, "color": "fg", "from": 2.9, "fade": 0.15},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 4]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [2.2, {"screen": [0.483, 0.444]}], [2.3, {"screen": [0.483, 0.444], "click": 1}], [3.2, {"pos": [6, -4]}]]}
+   ],
+   "steps": [
+    {"to": 1.1, "caption": "Export drawing as PDF"},
+    {"to": 2.5, "caption": "Choose where the file goes"},
+    {"to": 5.0, "caption": "One PDF, a page per sheet"}
+   ]
+  },
+  {
+   "id": "drawings.templateFields", "duration": 5.6, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"el": "label", "at": [20.25, -11.25], "value": "A3   1:2", "size": 7.5, "color": "fg2"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Title block fields", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "band", "a": [13.6, -7.9], "b": "cursor", "from": 1.2, "to": 1.9, "fade": 0},
+    {"el": "rect", "corners": [[13.6, -9.6], [26.9, -7.9]], "color": "sel", "width": 1, "dash": true, "fill": "sel", "fillOpacity": 0.1, "from": 1.9, "to": 3.5, "fade": 0},
+    {"el": "label", "at": [20.25, -8.75], "text": "Title", "size": 7, "color": "sel", "from": 1.9, "to": 3.5, "fade": 0},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Title block fields", "button": "Apply", "press": 3.3, "rows": [["Field", "Title"], ["Text height", "3.5 mm"], ["Alignment", "Centred"]], "hl": -1, "from": 1.9, "to": 3.5, "fade": 0.15, "keys": [[2.4, {"hl": 0}], [2.9, {"hl": -1}]]},
+    {"el": "label", "at": [20.25, -8.75], "value": "BRACKET", "size": 8, "color": "fg", "from": 3.5, "fade": 0.15},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 4]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.1, {"pos": [13.6, -7.9]}], [1.2, {"pos": [13.6, -7.9], "down": true}], [1.9, {"pos": [26.9, -9.6], "down": false}], [2.4, {"screen": [0.25, 0.288]}], [3.2, {"screen": [0.438, 0.691]}], [3.3, {"screen": [0.438, 0.691], "click": 1}], [4.2, {"pos": [6, -4]}]]}
+   ],
+   "steps": [
+    {"to": 1.9, "caption": "Drag on the paper to add a field"},
+    {"to": 3.4, "caption": "Choose what it shows, then Apply"},
+    {"to": 5.6, "caption": "The sheet fills it in"}
+   ]
+  },
+  {
+   "id": "drawings.dimension", "duration": 6.0, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Dimension", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1, "icon": "dimension"},
+    {"el": "poly", "points": [[-24, 8], [-6, 8]], "closed": false, "color": "glow", "width": 6, "from": 1.0, "to": 1.3, "fade": 0.08},
+    {"el": "poly", "points": [[-24, 8], [-6, 8]], "closed": false, "color": "sel", "width": 1.8, "from": 1.3, "to": 2.4, "fade": 0.1},
+    {"el": "dim", "kind": "linear", "a": [-24, 8], "b": [-6, 8], "value": "18", "from": 1.35, "fade": 0, "keys": [[1.4, {"offset": 4, "color": "sel"}], [2.3, {"offset": 9, "color": "sel"}], [2.4, {"color": "fg", "ease": "step"}]]},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 2.9, "to": 3.2, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 3.2, "to": 4.2, "fade": 0.1},
+    {"el": "dim", "kind": "diameter", "center": [-10, 3], "r": 1.6, "value": "⌀3.2", "from": 3.25, "fade": 0, "keys": [[3.25, {"angle": 25, "color": "sel"}], [4.1, {"angle": 40, "color": "sel"}], [4.2, {"color": "fg", "ease": "step"}]]},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.2, {"pos": [-15, 8]}], [1.3, {"pos": [-15, 8], "click": 1}], [2.3, {"pos": [-13, 9.6]}], [2.4, {"pos": [-13, 9.6], "click": 1}], [3.1, {"pos": [-8.4, 3]}], [3.2, {"pos": [-8.4, 3], "click": 1}], [4.1, {"pos": [-3, 7.5]}], [4.2, {"pos": [-3, 7.5], "click": 1}], [5.2, {"pos": [6, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Dimension: pick an edge, a circle or a point"},
+    {"to": 2.6, "caption": "It follows the pointer; click to place it"},
+    {"to": 6.0, "caption": "A circle gives its diameter"}
+   ]
+  },
+  {
+   "id": "drawings.ordinate", "duration": 6.4, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Ordinate dimensions", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "poly", "points": [[-24, -2], [-24, 8]], "closed": false, "color": "glow", "width": 6, "from": 1.0, "to": 1.2, "fade": 0.08},
+    {"el": "poly", "points": [[-24, -2], [-24, 8]], "closed": false, "color": "sel", "width": 1.8, "from": 1.2, "to": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 1.6, "to": 1.8, "fade": 0.08},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 1.8, "to": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 2.2, "to": 2.4, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 2.4, "to": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-6, -2], [-6, 8]], "closed": false, "color": "glow", "width": 6, "from": 2.8, "to": 3.0, "fade": 0.08},
+    {"el": "poly", "points": [[-6, -2], [-6, 8]], "closed": false, "color": "sel", "width": 1.8, "from": 3.0, "to": 4.4, "fade": 0.1},
+    {"el": "key", "fixed": "enter", "press": 3.5, "from": 3.25, "to": 3.95},
+    {"el": "poly", "points": [[-24, 8.6], [-24, 10.4]], "width": 0.8, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, -1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [-24, 11.3], "value": "0", "size": 7, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, -1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[-20, 5.2], [-20, 10.4]], "width": 0.8, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, -1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [-20, 11.3], "value": "4", "size": 7, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, -1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[-10, 5.2], [-10, 10.4]], "width": 0.8, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, -1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [-10, 11.3], "value": "14", "size": 7, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, -1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[-6, 8.6], [-6, 10.4]], "width": 0.8, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, -1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [-6, 11.3], "value": "18", "size": 7, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, -1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[-24, 8.6], [-24, 10.4]], "width": 0.8, "from": 4.4, "fade": 0.1},
+    {"el": "label", "at": [-24, 11.3], "value": "0", "size": 7, "from": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-20, 5.2], [-20, 10.4]], "width": 0.8, "from": 4.4, "fade": 0.1},
+    {"el": "label", "at": [-20, 11.3], "value": "4", "size": 7, "from": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-10, 5.2], [-10, 10.4]], "width": 0.8, "from": 4.4, "fade": 0.1},
+    {"el": "label", "at": [-10, 11.3], "value": "14", "size": 7, "from": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-6, 8.6], [-6, 10.4]], "width": 0.8, "from": 4.4, "fade": 0.1},
+    {"el": "label", "at": [-6, 11.3], "value": "18", "size": 7, "from": 4.4, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.1, {"pos": [-24, 5]}], [1.2, {"pos": [-24, 5], "click": 1}], [1.7, {"pos": [-18.4, 3]}], [1.8, {"pos": [-18.4, 3], "click": 1}], [2.3, {"pos": [-8.4, 3]}], [2.4, {"pos": [-8.4, 3], "click": 1}], [2.9, {"pos": [-6, 5]}], [3.0, {"pos": [-6, 5], "click": 1}], [3.7, {"pos": [-15, 9]}], [4.3, {"pos": [-15, 11]}], [4.4, {"pos": [-15, 11], "click": 1}], [5.3, {"pos": [6, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "Pick the origin: an edge, a vertex or a centre"},
+    {"to": 3.6, "caption": "Pick the features, then {fixed:enter}"},
+    {"to": 6.4, "caption": "Click where the values go"}
+   ]
+  },
+  {
+   "id": "drawings.baseline", "duration": 6.4, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Baseline dimensions", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "poly", "points": [[-24, -2], [-24, 8]], "closed": false, "color": "glow", "width": 6, "from": 1.0, "to": 1.2, "fade": 0.08},
+    {"el": "poly", "points": [[-24, -2], [-24, 8]], "closed": false, "color": "sel", "width": 1.8, "from": 1.2, "to": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 1.6, "to": 1.8, "fade": 0.08},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 1.8, "to": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 2.2, "to": 2.4, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 2.4, "to": 4.4, "fade": 0.1},
+    {"el": "key", "fixed": "enter", "press": 3.5, "from": 3.25, "to": 3.95},
+    {"el": "dim", "kind": "linear", "a": [-24, -2], "b": [-20, -2], "value": "4", "offset": -14, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, 1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "dim", "kind": "linear", "a": [-24, -2], "b": [-10, -2], "value": "14", "offset": -31, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, 1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "dim", "kind": "linear", "a": [-24, -2], "b": [-20, -2], "value": "4", "offset": -14, "from": 4.4, "fade": 0.1},
+    {"el": "dim", "kind": "linear", "a": [-24, -2], "b": [-10, -2], "value": "14", "offset": -31, "from": 4.4, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.1, {"pos": [-24, 5]}], [1.2, {"pos": [-24, 5], "click": 1}], [1.7, {"pos": [-18.4, 3]}], [1.8, {"pos": [-18.4, 3], "click": 1}], [2.3, {"pos": [-8.4, 3]}], [2.4, {"pos": [-8.4, 3], "click": 1}], [2.9, {"pos": [-12, 1]}], [3.7, {"pos": [-15, -4]}], [4.3, {"pos": [-15, -6]}], [4.4, {"pos": [-15, -6], "click": 1}], [5.3, {"pos": [6, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "Pick the origin: an edge, a vertex or a centre"},
+    {"to": 3.6, "caption": "Pick the features, then {fixed:enter}"},
+    {"to": 6.4, "caption": "Click where the stack goes: all from the origin"}
+   ]
+  },
+  {
+   "id": "drawings.chain", "duration": 6.4, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Chain dimensions", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "poly", "points": [[-24, -2], [-24, 8]], "closed": false, "color": "glow", "width": 6, "from": 1.0, "to": 1.2, "fade": 0.08},
+    {"el": "poly", "points": [[-24, -2], [-24, 8]], "closed": false, "color": "sel", "width": 1.8, "from": 1.2, "to": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 1.6, "to": 1.8, "fade": 0.08},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 1.8, "to": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 2.2, "to": 2.4, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 2.4, "to": 4.4, "fade": 0.1},
+    {"el": "poly", "points": [[-6, -2], [-6, 8]], "closed": false, "color": "glow", "width": 6, "from": 2.8, "to": 3.0, "fade": 0.08},
+    {"el": "poly", "points": [[-6, -2], [-6, 8]], "closed": false, "color": "sel", "width": 1.8, "from": 3.0, "to": 4.4, "fade": 0.1},
+    {"el": "key", "fixed": "enter", "press": 3.5, "from": 3.25, "to": 3.95},
+    {"el": "dim", "kind": "linear", "a": [-24, -2], "b": [-20, -2], "value": "4", "offset": -12, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, 1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "dim", "kind": "linear", "a": [-20, -2], "b": [-10, -2], "value": "10", "offset": -12, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, 1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "dim", "kind": "linear", "a": [-10, -2], "b": [-6, -2], "value": "4", "offset": -12, "color": "sel", "from": 3.6, "to": 4.4, "fade": 0, "keys": [[3.6, {"offset": [0, 1.5]}], [4.3, {"offset": [0, 0]}]]},
+    {"el": "dim", "kind": "linear", "a": [-24, -2], "b": [-20, -2], "value": "4", "offset": -12, "from": 4.4, "fade": 0.1},
+    {"el": "dim", "kind": "linear", "a": [-20, -2], "b": [-10, -2], "value": "10", "offset": -12, "from": 4.4, "fade": 0.1},
+    {"el": "dim", "kind": "linear", "a": [-10, -2], "b": [-6, -2], "value": "4", "offset": -12, "from": 4.4, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.1, {"pos": [-24, 5]}], [1.2, {"pos": [-24, 5], "click": 1}], [1.7, {"pos": [-18.4, 3]}], [1.8, {"pos": [-18.4, 3], "click": 1}], [2.3, {"pos": [-8.4, 3]}], [2.4, {"pos": [-8.4, 3], "click": 1}], [2.9, {"pos": [-6, 5]}], [3.0, {"pos": [-6, 5], "click": 1}], [3.7, {"pos": [-15, -4]}], [4.3, {"pos": [-15, -6]}], [4.4, {"pos": [-15, -6], "click": 1}], [5.3, {"pos": [6, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "Pick the origin: an edge, a vertex or a centre"},
+    {"to": 3.6, "caption": "Pick the features, then {fixed:enter}"},
+    {"to": 6.4, "caption": "Click where the chain goes: end to end"}
+   ]
+  },
+  {
+   "id": "drawings.fromDatums", "duration": 5.6, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "poly", "points": [[-15.8, -2], [-14.2, -2], [-15, -3.3]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1},
+    {"el": "poly", "points": [[-15, -3.3], [-15, -4.6]], "color": "fg", "width": 0.8},
+    {"el": "rect", "corners": [[-16.2, -7], [-13.8, -4.6]], "color": "fg", "width": 0.8},
+    {"el": "label", "at": [-15, -5.8], "value": "A", "size": 7, "color": "fg"},
+    {"el": "poly", "points": [[-6, 4.2], [-6, 5.8], [-4.7, 5]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1},
+    {"el": "poly", "points": [[-4.7, 5], [-3.4, 5]], "color": "fg", "width": 0.8},
+    {"el": "rect", "corners": [[-3.4, 3.8], [-1, 6.2]], "color": "fg", "width": 0.8},
+    {"el": "label", "at": [-2.2, 5], "value": "B", "size": 7, "color": "fg"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Dimension from datums", "keys": [[1.0, {"hl": true}], [1.3, {"hl": false}]], "from": 0.6, "to": 1.5},
+    {"el": "poly", "points": [[-6, 8.6], [-6, 10.4]], "width": 0.8, "from": 1.9, "fade": 0.3},
+    {"el": "label", "at": [-6, 11.3], "value": "0", "size": 7, "from": 1.9, "fade": 0.3},
+    {"el": "poly", "points": [[-10, 5.2], [-10, 10.4]], "width": 0.8, "from": 1.9, "fade": 0.3},
+    {"el": "label", "at": [-10, 11.3], "value": "4", "size": 7, "from": 1.9, "fade": 0.3},
+    {"el": "poly", "points": [[-20, 5.2], [-20, 10.4]], "width": 0.8, "from": 1.9, "fade": 0.3},
+    {"el": "label", "at": [-20, 11.3], "value": "14", "size": 7, "from": 1.9, "fade": 0.3},
+    {"el": "poly", "points": [[-24.6, -2], [-25.6, -2]], "width": 0.8, "from": 1.9, "fade": 0.3},
+    {"el": "label", "at": [-26.5, -2], "value": "0", "size": 7, "from": 1.9, "fade": 0.3},
+    {"el": "poly", "points": [[-21.8, 3], [-25.6, 3]], "width": 0.8, "from": 1.9, "fade": 0.3},
+    {"el": "label", "at": [-26.5, 3], "value": "5", "size": 7, "from": 1.9, "fade": 0.3},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "2 dimension sets from the datums", "from": 2.0, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.9, {"screen": [0.08, 0.119]}], [1.0, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [8, 6]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Datum symbols on two edges of the view"},
+    {"to": 1.9, "caption": "Dimension from datums"},
+    {"to": 5.6, "caption": "The holes, dimensioned from the datums"}
+   ]
+  },
+  {
+   "id": "drawings.fromDatums.baseline", "duration": 5.6, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "poly", "points": [[-15.8, -2], [-14.2, -2], [-15, -3.3]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1},
+    {"el": "poly", "points": [[-15, -3.3], [-15, -4.6]], "color": "fg", "width": 0.8},
+    {"el": "rect", "corners": [[-16.2, -7], [-13.8, -4.6]], "color": "fg", "width": 0.8},
+    {"el": "label", "at": [-15, -5.8], "value": "A", "size": 7, "color": "fg"},
+    {"el": "poly", "points": [[-6, 4.2], [-6, 5.8], [-4.7, 5]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1},
+    {"el": "poly", "points": [[-4.7, 5], [-3.4, 5]], "color": "fg", "width": 0.8},
+    {"el": "rect", "corners": [[-3.4, 3.8], [-1, 6.2]], "color": "fg", "width": 0.8},
+    {"el": "label", "at": [-2.2, 5], "value": "B", "size": 7, "color": "fg"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Baseline dimensions from datums", "keys": [[1.0, {"hl": true}], [1.3, {"hl": false}]], "from": 0.6, "to": 1.5},
+    {"el": "dim", "kind": "linear", "a": [-6, 8], "b": [-10, 8], "value": "4", "offset": -6, "from": 1.9, "fade": 0.3},
+    {"el": "dim", "kind": "linear", "a": [-6, 8], "b": [-20, 8], "value": "14", "offset": -12, "from": 1.9, "fade": 0.3},
+    {"el": "dim", "kind": "linear", "a": [-24, -2], "b": [-24, 3], "value": "5", "offset": 8, "from": 1.9, "fade": 0.3},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "2 dimension sets from the datums", "from": 2.0, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.9, {"screen": [0.08, 0.119]}], [1.0, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [8, 6]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Datum symbols on two edges of the view"},
+    {"to": 1.9, "caption": "Baseline dimensions from datums"},
+    {"to": 5.6, "caption": "The holes, dimensioned from the datums"}
+   ]
+  },
+  {
+   "id": "drawings.fromDatums.chain", "duration": 5.6, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "poly", "points": [[-15.8, -2], [-14.2, -2], [-15, -3.3]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1},
+    {"el": "poly", "points": [[-15, -3.3], [-15, -4.6]], "color": "fg", "width": 0.8},
+    {"el": "rect", "corners": [[-16.2, -7], [-13.8, -4.6]], "color": "fg", "width": 0.8},
+    {"el": "label", "at": [-15, -5.8], "value": "A", "size": 7, "color": "fg"},
+    {"el": "poly", "points": [[-6, 4.2], [-6, 5.8], [-4.7, 5]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1},
+    {"el": "poly", "points": [[-4.7, 5], [-3.4, 5]], "color": "fg", "width": 0.8},
+    {"el": "rect", "corners": [[-3.4, 3.8], [-1, 6.2]], "color": "fg", "width": 0.8},
+    {"el": "label", "at": [-2.2, 5], "value": "B", "size": 7, "color": "fg"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Chain dimensions from datums", "keys": [[1.0, {"hl": true}], [1.3, {"hl": false}]], "from": 0.6, "to": 1.5},
+    {"el": "dim", "kind": "linear", "a": [-6, 8], "b": [-10, 8], "value": "4", "offset": -7, "from": 1.9, "fade": 0.3},
+    {"el": "dim", "kind": "linear", "a": [-10, 8], "b": [-20, 8], "value": "10", "offset": -7, "from": 1.9, "fade": 0.3},
+    {"el": "dim", "kind": "linear", "a": [-24, -2], "b": [-24, 3], "value": "5", "offset": 8, "from": 1.9, "fade": 0.3},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "2 dimension sets from the datums", "from": 2.0, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.9, {"screen": [0.08, 0.119]}], [1.0, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [8, 6]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Datum symbols on two edges of the view"},
+    {"to": 1.9, "caption": "Chain dimensions from datums"},
+    {"to": 5.6, "caption": "The holes, dimensioned from the datums"}
+   ]
+  },
+  {
+   "id": "drawings.holeCallout", "duration": 5.0, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Hole callout", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 1.0, "to": 1.3, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 1.3, "to": 2.5, "fade": 0.1},
+    {"el": "poly", "points": [[-8.87, 4.13], "cursor"], "color": "sel", "width": 1, "arrow": "start", "from": 1.35, "to": 2.5, "fade": 0},
+    {"el": "label", "at": "cursor", "value": "2× ⌀3.2 THRU", "size": 7, "color": "sel", "dx": 30, "dy": -6, "from": 1.35, "to": 2.5, "fade": 0},
+    {"el": "poly", "points": [[-8.87, 4.13], [-3, 9]], "color": "fg", "width": 1, "arrow": "start", "from": 2.5, "fade": 0},
+    {"el": "label", "at": [-3, 9], "value": "2× ⌀3.2 THRU", "size": 7, "color": "fg", "dx": 30, "dy": -6, "from": 2.5, "fade": 0},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.2, {"pos": [-8.4, 3]}], [1.3, {"pos": [-8.4, 3], "click": 1}], [2.4, {"pos": [-3, 9]}], [2.5, {"pos": [-3, 9], "click": 1}], [3.4, {"pos": [6, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Hole callout: pick the hole"},
+    {"to": 2.6, "caption": "It follows on a leader; click to place it"},
+    {"to": 5.0, "caption": "Its size and depth, read from the model"}
+   ]
+  },
+  {
+   "id": "drawings.holeTable", "duration": 5.8, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Hole table", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "label", "at": [-20, 5.6], "value": "A1", "size": 6.5, "color": "fg", "from": 1.4, "fade": 0.15},
+    {"el": "label", "at": [-10, 5.6], "value": "A2", "size": 6.5, "color": "fg", "from": 1.4, "fade": 0.15},
+    {"el": "rect", "corners": [[0, 5.6], [20.0, 11]], "color": "sel", "width": 1, "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[0, 9.2], [20.0, 9.2]], "color": "sel", "width": 0.7, "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[0, 7.4], [20.0, 7.4]], "color": "sel", "width": 0.7, "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[3, 11], [3, 5.6]], "color": "sel", "width": 0.7, "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[6.5, 11], [6.5, 5.6]], "color": "sel", "width": 0.7, "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[10.0, 11], [10.0, 5.6]], "color": "sel", "width": 0.7, "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [1.5, 10.1], "value": "TAG", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [4.75, 10.1], "value": "X", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [8.25, 10.1], "value": "Y", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [15.0, 10.1], "value": "SIZE", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [1.5, 8.3], "value": "A1", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [4.75, 8.3], "value": "4", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [8.25, 8.3], "value": "5", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [15.0, 8.3], "value": "⌀3.2 THRU", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [1.5, 6.5], "value": "A2", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [4.75, 6.5], "value": "14", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [8.25, 6.5], "value": "5", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [15.0, 6.5], "value": "⌀3.2 THRU", "size": 5.5, "color": "sel", "from": 1.4, "to": 2.8, "fade": 0, "keys": [[1.5, {"offset": [-4, -8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "rect", "corners": [[0, 5.6], [20.0, 11]], "color": "fg", "width": 1, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[0, 9.2], [20.0, 9.2]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[0, 7.4], [20.0, 7.4]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[3, 11], [3, 5.6]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[6.5, 11], [6.5, 5.6]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[10.0, 11], [10.0, 5.6]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [1.5, 10.1], "value": "TAG", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [4.75, 10.1], "value": "X", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [8.25, 10.1], "value": "Y", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [15.0, 10.1], "value": "SIZE", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [1.5, 8.3], "value": "A1", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [4.75, 8.3], "value": "4", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [8.25, 8.3], "value": "5", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [15.0, 8.3], "value": "⌀3.2 THRU", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [1.5, 6.5], "value": "A2", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [4.75, 6.5], "value": "14", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [8.25, 6.5], "value": "5", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [15.0, 6.5], "value": "⌀3.2 THRU", "size": 5.5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.2, {"pos": [-15, 0]}], [1.3, {"pos": [-15, 0], "click": 1}], [1.5, {"pos": [-4, 3]}], [2.7, {"pos": [0, 11]}], [2.8, {"pos": [0, 11], "click": 1}], [3.7, {"pos": [8, -4]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Hole table: click the view"},
+    {"to": 2.9, "caption": "Click where its top left corner goes"},
+    {"to": 5.8, "caption": "Each hole gets a tag and a row"}
+   ]
+  },
+  {
+   "id": "drawings.centerMark", "duration": 4.8, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Centre mark", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 1.0, "to": 1.3, "fade": 0.08},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 1.3, "to": 1.45, "fade": 0.1},
+    {"el": "poly", "points": [[-22.5, 3], [-17.5, 3]], "color": "fg", "width": 0.7, "from": 1.45, "fade": 0.1},
+    {"el": "poly", "points": [[-20, 0.5], [-20, 5.5]], "color": "fg", "width": 0.7, "from": 1.45, "fade": 0.1},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 2.3, "to": 2.6, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 2.6, "to": 2.75, "fade": 0.1},
+    {"el": "poly", "points": [[-12.5, 3], [-7.5, 3]], "color": "fg", "width": 0.7, "from": 2.75, "fade": 0.1},
+    {"el": "poly", "points": [[-10, 0.5], [-10, 5.5]], "color": "fg", "width": 0.7, "from": 2.75, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.2, {"pos": [-18.4, 3]}], [1.3, {"pos": [-18.4, 3], "click": 1}], [2.5, {"pos": [-8.4, 3]}], [2.6, {"pos": [-8.4, 3], "click": 1}], [3.5, {"pos": [6, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.6, "caption": "Centre mark: pick a circle; the mark is added"},
+    {"to": 4.8, "caption": "The tool stays on for the next circle"}
+   ]
+  },
+  {
+   "id": "drawings.centerLine", "duration": 5.0, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Centre line", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 1.0, "to": 1.3, "fade": 0.08},
+    {"el": "poly", "points": [[-18.4, 3.0], [-18.455, 3.414], [-18.614, 3.8], [-18.869, 4.131], [-19.2, 4.386], [-19.586, 4.545], [-20.0, 4.6], [-20.414, 4.545], [-20.8, 4.386], [-21.131, 4.131], [-21.386, 3.8], [-21.545, 3.414], [-21.6, 3.0], [-21.545, 2.586], [-21.386, 2.2], [-21.131, 1.869], [-20.8, 1.614], [-20.414, 1.455], [-20.0, 1.4], [-19.586, 1.455], [-19.2, 1.614], [-18.869, 1.869], [-18.614, 2.2], [-18.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 1.3, "to": 2.6, "fade": 0.1},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 2.1, "to": 2.4, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 2.4, "to": 2.6, "fade": 0.1},
+    {"el": "poly", "points": [[-22.6, 3], [-7.4, 3]], "color": "fg", "width": 0.8, "dash": true, "from": 2.6, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.2, {"pos": [-18.4, 3]}], [1.3, {"pos": [-18.4, 3], "click": 1}], [2.3, {"pos": [-8.4, 3]}], [2.4, {"pos": [-8.4, 3], "click": 1}], [3.3, {"pos": [6, 2]}]]}
+   ],
+   "steps": [
+    {"to": 2.5, "caption": "Pick two circles or a cylinder's side"},
+    {"to": 5.0, "caption": "The centre line runs through them"}
+   ]
+  },
+  {
+   "id": "drawings.centerMarks", "duration": 4.8, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "poly", "points": [[0, -2], [3, -2], [3, 8], [0, 8], [0, -2]], "color": "fg", "width": 1.2},
+    {"el": "poly", "points": [[0, 1.4], [3, 1.4]], "color": "fg", "width": 0.7, "dash": true},
+    {"el": "poly", "points": [[0, 4.6], [3, 4.6]], "color": "fg", "width": 0.7, "dash": true},
+    {"el": "poly", "points": [[0, 1.4000000000000004], [0, 1.4]], "color": "fg", "width": 0.7, "dash": true},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Centre marks on views", "keys": [[1.0, {"hl": true}], [1.3, {"hl": false}]], "from": 0.5, "to": 4.8},
+    {"el": "poly", "points": [[-22.5, 3], [-17.5, 3]], "color": "fg", "width": 0.7, "from": 1.3, "fade": 0.2, "to": 3.4},
+    {"el": "poly", "points": [[-20, 0.5], [-20, 5.5]], "color": "fg", "width": 0.7, "from": 1.3, "fade": 0.2, "to": 3.4},
+    {"el": "poly", "points": [[-12.5, 3], [-7.5, 3]], "color": "fg", "width": 0.7, "from": 1.3, "fade": 0.2, "to": 3.4},
+    {"el": "poly", "points": [[-10, 0.5], [-10, 5.5]], "color": "fg", "width": 0.7, "from": 1.3, "fade": 0.2, "to": 3.4},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Centre marks on views", "keys": [[3.2, {"hl": true}], [3.5, {"hl": false}]], "from": 3.0, "to": 4.8, "fade": 0},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.9, {"screen": [0.08, 0.119]}], [1.0, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [8, 6]}], [3.1, {"screen": [0.08, 0.119]}], [3.2, {"screen": [0.08, 0.119], "click": 1}], [4.2, {"pos": [8, 6]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Centre marks on views"},
+    {"to": 3.1, "caption": "Every circle seen along its axis gets its mark"},
+    {"to": 4.8, "caption": "Again: they are taken off"}
+   ]
+  },
+  {
+   "id": "drawings.note", "duration": 5.4, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Note", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "card", "screen": [0.4, 0.55], "w": 160, "title": "Options", "rows": [{"text": "Text"}, {"entry": "", "indent": 1}], "hl": -1, "from": 0.6, "fade": 0.15, "keys": [[0.9, {"rows": [{"text": "Text"}, {"entry": "BREAK", "indent": 1}], "ease": "step"}], [1.2, {"rows": [{"text": "Text"}, {"entry": "BREAK SHARP", "indent": 1}], "ease": "step"}], [1.5, {"rows": [{"text": "Text"}, {"entry": "BREAK SHARP EDGES", "indent": 1}], "ease": "step"}]]},
+    {"el": "poly", "points": [[-24, 8], [-6, 8]], "closed": false, "color": "glow", "width": 6, "from": 1.9, "to": 2.2, "fade": 0.08},
+    {"el": "poly", "points": [[-24, 8], [-6, 8]], "closed": false, "color": "sel", "width": 1.8, "from": 2.2, "to": 2.4, "fade": 0.1},
+    {"el": "poly", "points": [[-15, 8], "cursor"], "color": "sel", "width": 1, "arrow": "start", "from": 2.25, "to": 3.2, "fade": 0},
+    {"el": "label", "at": "cursor", "value": "BREAK SHARP EDGES", "size": 7, "color": "sel", "align": "left", "dx": 4, "from": 2.25, "to": 3.2, "fade": 0},
+    {"el": "poly", "points": [[-15, 8], [-3, 10.5]], "color": "fg", "width": 1, "arrow": "start", "from": 3.2, "fade": 0},
+    {"el": "label", "at": [-3, 10.5], "value": "BREAK SHARP EDGES", "size": 7, "color": "fg", "align": "left", "dx": 4, "from": 3.2, "fade": 0},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.6, {"pos": [6, 4]}], [2.1, {"pos": [-15, 8]}], [2.2, {"pos": [-15, 8], "click": 1}], [3.1, {"pos": [-3, 10.5]}], [3.2, {"pos": [-3, 10.5], "click": 1}], [4.1, {"pos": [8, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.8, "caption": "Note: type its text in the bar under the sheet"},
+    {"to": 3.3, "caption": "Pick what it points at, click where it goes"},
+    {"to": 5.4, "caption": "The note with its leader"}
+   ]
+  },
+  {
+   "id": "drawings.datum", "duration": 4.8, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Datum", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "card", "screen": [0.4, 0.55], "w": 160, "title": "Options", "rows": [["Letter", "A"]], "hl": -1, "from": 0.6, "fade": 0.15},
+    {"el": "poly", "points": [[-24, -2], [-6, -2]], "closed": false, "color": "glow", "width": 6, "from": 1.0, "to": 1.3, "fade": 0.08},
+    {"el": "poly", "points": [[-24, -2], [-6, -2]], "closed": false, "color": "sel", "width": 1.8, "from": 1.3, "to": 2.4, "fade": 0.1},
+    {"el": "poly", "points": [[-15.8, -2], [-14.2, -2], [-15, -3.3]], "closed": true, "color": "sel", "width": 0.8, "fill": "fg", "fillOpacity": 1, "from": 1.35, "to": 2.5, "fade": 0, "keys": [[1.5, {"offset": [0, 0]}], [2.4, {"offset": [0, -2]}]]},
+    {"el": "poly", "points": [[-15, -3.3], [-15, -4.6]], "color": "sel", "width": 0.8, "from": 1.35, "to": 2.5, "fade": 0, "keys": [[1.5, {"offset": [0, 0]}], [2.4, {"offset": [0, -2]}]]},
+    {"el": "rect", "corners": [[-16.2, -7], [-13.8, -4.6]], "color": "sel", "width": 0.8, "from": 1.35, "to": 2.5, "fade": 0, "keys": [[1.5, {"offset": [0, 0]}], [2.4, {"offset": [0, -2]}]]},
+    {"el": "label", "at": [-15, -5.8], "value": "A", "size": 7, "color": "sel", "from": 1.35, "to": 2.5, "fade": 0, "keys": [[1.5, {"offset": [0, 0]}], [2.4, {"offset": [0, -2]}]]},
+    {"el": "poly", "points": [[-15.8, -2], [-14.2, -2], [-15, -3.3]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1, "from": 2.5, "fade": 0, "offset": [0, -2]},
+    {"el": "poly", "points": [[-15, -3.3], [-15, -4.6]], "color": "fg", "width": 0.8, "from": 2.5, "fade": 0, "offset": [0, -2]},
+    {"el": "rect", "corners": [[-16.2, -7], [-13.8, -4.6]], "color": "fg", "width": 0.8, "from": 2.5, "fade": 0, "offset": [0, -2]},
+    {"el": "label", "at": [-15, -5.8], "value": "A", "size": 7, "color": "fg", "from": 2.5, "fade": 0, "offset": [0, -2]},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.2, {"pos": [-15, -2]}], [1.3, {"pos": [-15, -2], "click": 1}], [1.5, {"pos": [-15, -5]}], [2.4, {"pos": [-15, -7]}], [2.5, {"pos": [-15, -7], "click": 1}], [3.4, {"pos": [8, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Datum: pick the edge it stands on"},
+    {"to": 2.6, "caption": "Click where its frame goes"},
+    {"to": 4.8, "caption": "It takes the next free letter"}
+   ]
+  },
+  {
+   "id": "drawings.fcf", "duration": 5.6, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "poly", "points": [[-15.8, -2], [-14.2, -2], [-15, -3.3]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1},
+    {"el": "poly", "points": [[-15, -3.3], [-15, -4.6]], "color": "fg", "width": 0.8},
+    {"el": "rect", "corners": [[-16.2, -7], [-13.8, -4.6]], "color": "fg", "width": 0.8},
+    {"el": "label", "at": [-15, -5.8], "value": "A", "size": 7, "color": "fg"},
+    {"el": "poly", "points": [[-6, 4.2], [-6, 5.8], [-4.7, 5]], "closed": true, "color": "fg", "width": 0.8, "fill": "fg", "fillOpacity": 1},
+    {"el": "poly", "points": [[-4.7, 5], [-3.4, 5]], "color": "fg", "width": 0.8},
+    {"el": "rect", "corners": [[-3.4, 3.8], [-1, 6.2]], "color": "fg", "width": 0.8},
+    {"el": "label", "at": [-2.2, 5], "value": "B", "size": 7, "color": "fg"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Feature control frame", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "card", "screen": [0.4, 0.55], "w": 160, "title": "Options", "rows": [["Value", "0.1"], ["Datums", "A B"]], "hl": -1, "from": 0.6, "fade": 0.15},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 1.5, "to": 1.8, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 1.8, "to": 3.0, "fade": 0.1},
+    {"el": "poly", "points": [[-8.87, 4.13], "cursor"], "color": "sel", "width": 1, "arrow": "start", "from": 1.85, "to": 3.0, "fade": 0},
+    {"el": "poly", "points": [[-8.87, 4.13], [0, 9.9]], "color": "fg", "width": 1, "arrow": "start", "from": 3.0, "fade": 0},
+    {"el": "rect", "corners": [[0, 8.8], [10.600000000000001, 11]], "color": "fg", "width": 1, "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[2.2, 11], [2.2, 8.8]], "color": "fg2", "width": 0.7, "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[6.6000000000000005, 11], [6.6000000000000005, 8.8]], "color": "fg2", "width": 0.7, "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[8.600000000000001, 11], [8.600000000000001, 8.8]], "color": "fg2", "width": 0.7, "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [1.1, 9.9], "value": "", "size": 6.5, "color": "fg", "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [4.4, 9.9], "value": "⌀0.1", "size": 6.5, "color": "fg", "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [7.6, 9.9], "value": "A", "size": 6.5, "color": "fg", "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [9.6, 9.9], "value": "B", "size": 6.5, "color": "fg", "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "circle", "center": [1.1, 9.9], "r": 0.55, "color": "fg", "width": 0.8, "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[0.2500000000000001, 9.9], [1.9500000000000002, 9.9]], "color": "fg", "width": 0.8, "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[1.1, 9.05], [1.1, 10.75]], "color": "fg", "width": 0.8, "from": 1.85, "to": 3.0, "fade": 0, "keys": [[1.9, {"offset": [-4, -3]}], [2.9, {"offset": [0, 0]}]]},
+    {"el": "rect", "corners": [[0, 8.8], [10.600000000000001, 11]], "color": "fg", "width": 1, "from": 3.0, "fade": 0},
+    {"el": "poly", "points": [[2.2, 11], [2.2, 8.8]], "color": "fg2", "width": 0.7, "from": 3.0, "fade": 0},
+    {"el": "poly", "points": [[6.6000000000000005, 11], [6.6000000000000005, 8.8]], "color": "fg2", "width": 0.7, "from": 3.0, "fade": 0},
+    {"el": "poly", "points": [[8.600000000000001, 11], [8.600000000000001, 8.8]], "color": "fg2", "width": 0.7, "from": 3.0, "fade": 0},
+    {"el": "label", "at": [1.1, 9.9], "value": "", "size": 6.5, "color": "fg", "from": 3.0, "fade": 0},
+    {"el": "label", "at": [4.4, 9.9], "value": "⌀0.1", "size": 6.5, "color": "fg", "from": 3.0, "fade": 0},
+    {"el": "label", "at": [7.6, 9.9], "value": "A", "size": 6.5, "color": "fg", "from": 3.0, "fade": 0},
+    {"el": "label", "at": [9.6, 9.9], "value": "B", "size": 6.5, "color": "fg", "from": 3.0, "fade": 0},
+    {"el": "circle", "center": [1.1, 9.9], "r": 0.55, "color": "fg", "width": 0.8, "from": 3.0, "fade": 0},
+    {"el": "poly", "points": [[0.2500000000000001, 9.9], [1.9500000000000002, 9.9]], "color": "fg", "width": 0.8, "from": 3.0, "fade": 0},
+    {"el": "poly", "points": [[1.1, 9.05], [1.1, 10.75]], "color": "fg", "width": 0.8, "from": 3.0, "fade": 0},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.7, {"pos": [-8.4, 3]}], [1.8, {"pos": [-8.4, 3], "click": 1}], [1.9, {"pos": [-4, 8]}], [2.9, {"pos": [0, 11]}], [3.0, {"pos": [0, 11], "click": 1}], [3.9, {"pos": [8, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Its value and datums in the bar"},
+    {"to": 3.1, "caption": "Pick the feature, click where the frame goes"},
+    {"to": 5.6, "caption": "The frame with its leader"}
+   ]
+  },
+  {
+   "id": "drawings.surface", "duration": 4.8, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Surface texture", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "card", "screen": [0.4, 0.55], "w": 160, "title": "Options", "rows": [{"text": "Material removal required"}, ["Value", "Ra 1.6"]], "hl": -1, "from": 0.6, "fade": 0.15},
+    {"el": "poly", "points": [[-24, 8], [-6, 8]], "closed": false, "color": "glow", "width": 6, "from": 1.0, "to": 1.3, "fade": 0.08},
+    {"el": "poly", "points": [[-24, 8], [-6, 8]], "closed": false, "color": "sel", "width": 1.8, "from": 1.3, "to": 2.5, "fade": 0.1},
+    {"el": "poly", "points": [[-15, 9.6], [-14, 8], [-12, 11.6], [-8.5, 11.6]], "color": "sel", "width": 0.9, "from": 1.35, "to": 2.5, "fade": 0, "keys": [[1.5, {"offset": [3, 0]}], [2.4, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[-15, 9.6], [-13.1, 9.6]], "color": "sel", "width": 0.9, "from": 1.35, "to": 2.5, "fade": 0, "keys": [[1.5, {"offset": [3, 0]}], [2.4, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [-10.2, 12.6], "value": "Ra 1.6", "size": 6.5, "color": "sel", "from": 1.35, "to": 2.5, "fade": 0, "keys": [[1.5, {"offset": [3, 0]}], [2.4, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[-15, 9.6], [-14, 8], [-12, 11.6], [-8.5, 11.6]], "color": "fg", "width": 0.9, "from": 2.5, "fade": 0},
+    {"el": "poly", "points": [[-15, 9.6], [-13.1, 9.6]], "color": "fg", "width": 0.9, "from": 2.5, "fade": 0},
+    {"el": "label", "at": [-10.2, 12.6], "value": "Ra 1.6", "size": 6.5, "color": "fg", "from": 2.5, "fade": 0},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.2, {"pos": [-18, 8]}], [1.3, {"pos": [-18, 8], "click": 1}], [1.5, {"pos": [-11, 9.5]}], [2.4, {"pos": [-14, 9.5]}], [2.5, {"pos": [-14, 9.5], "click": 1}], [3.4, {"pos": [8, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Surface texture: pick the edge of the surface"},
+    {"to": 2.6, "caption": "Click on the side the symbol stands"},
+    {"to": 4.8, "caption": "With the process and value from the bar"}
+   ]
+  },
+  {
+   "id": "drawings.partsList", "duration": 5.6, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "rect", "corners": [[-21, 8], [-19, 11.5]], "color": "fg", "width": 1.2},
+    {"el": "rect", "corners": [[-11, 8], [-9, 11.5]], "color": "fg", "width": 1.2},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Parts list", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "card", "screen": [0.4, 0.12], "w": 160, "title": "Options", "rows": [["Lists", "Top level"], {"text": "Mass", "check": false}], "hl": -1, "from": 0.9, "fade": 0.15},
+    {"el": "rect", "corners": [[4.3, -7.5], [27.5, -2.1]], "color": "sel", "width": 1, "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[4.3, -3.9000000000000004], [27.5, -3.9000000000000004]], "color": "sel", "width": 0.7, "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[4.3, -5.7], [27.5, -5.7]], "color": "sel", "width": 0.7, "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[6.9, -2.1], [6.9, -7.5]], "color": "sel", "width": 0.7, "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[9.5, -2.1], [9.5, -7.5]], "color": "sel", "width": 0.7, "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[14.5, -2.1], [14.5, -7.5]], "color": "sel", "width": 0.7, "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[22.0, -2.1], [22.0, -7.5]], "color": "sel", "width": 0.7, "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [5.6, -3.0], "value": "ITEM", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [8.2, -3.0], "value": "QTY", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [12.0, -3.0], "value": "NAME", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [18.25, -3.0], "value": "PART NUMBER", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [24.75, -3.0], "value": "MATERIAL", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [5.6, -4.8], "value": "1", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [8.2, -4.8], "value": "1", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [12.0, -4.8], "value": "Plate", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [18.25, -4.8], "value": "PL-100", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [24.75, -4.8], "value": "Steel", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [5.6, -6.6], "value": "2", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [8.2, -6.6], "value": "2", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [12.0, -6.6], "value": "Pin", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [18.25, -6.6], "value": "PN-06", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [24.75, -6.6], "value": "Steel", "size": 5, "color": "sel", "from": 1.3, "to": 2.8, "fade": 0, "keys": [[1.4, {"offset": [-12, 8]}], [2.7, {"offset": [0, 0]}]]},
+    {"el": "rect", "corners": [[4.3, -7.5], [27.5, -2.1]], "color": "fg", "width": 1, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[4.3, -3.9000000000000004], [27.5, -3.9000000000000004]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[4.3, -5.7], [27.5, -5.7]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[6.9, -2.1], [6.9, -7.5]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[9.5, -2.1], [9.5, -7.5]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[14.5, -2.1], [14.5, -7.5]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "poly", "points": [[22.0, -2.1], [22.0, -7.5]], "color": "fg2", "width": 0.7, "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [5.6, -3.0], "value": "ITEM", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [8.2, -3.0], "value": "QTY", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [12.0, -3.0], "value": "NAME", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [18.25, -3.0], "value": "PART NUMBER", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [24.75, -3.0], "value": "MATERIAL", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [5.6, -4.8], "value": "1", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [8.2, -4.8], "value": "1", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [12.0, -4.8], "value": "Plate", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [18.25, -4.8], "value": "PL-100", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [24.75, -4.8], "value": "Steel", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [5.6, -6.6], "value": "2", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [8.2, -6.6], "value": "2", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [12.0, -6.6], "value": "Pin", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [18.25, -6.6], "value": "PN-06", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "label", "at": [24.75, -6.6], "value": "Steel", "size": 5, "color": "fg", "from": 2.8, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.4, {"pos": [15.5, 5.7]}], [2.7, {"pos": [27.5, -7.5]}], [2.8, {"pos": [27.5, -7.5], "click": 1}], [3.7, {"pos": [6, 8]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Parts list: the table follows the pointer"},
+    {"to": 2.9, "caption": "Click where its bottom right corner goes"},
+    {"to": 5.6, "caption": "Its items, quantities and parts"}
+   ]
+  },
+  {
+   "id": "drawings.balloon", "duration": 5.0, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "rect", "corners": [[-21, 8], [-19, 11.5]], "color": "fg", "width": 1.2},
+    {"el": "rect", "corners": [[-11, 8], [-9, 11.5]], "color": "fg", "width": 1.2},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Balloon", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
+    {"el": "poly", "points": [[-9, 8], [-9, 11.5]], "closed": false, "color": "glow", "width": 6, "from": 1.0, "to": 1.3, "fade": 0.08},
+    {"el": "poly", "points": [[-9, 8], [-9, 11.5]], "closed": false, "color": "sel", "width": 1.8, "from": 1.3, "to": 2.4, "fade": 0.1},
+    {"el": "poly", "points": [[-9, 10], "cursor"], "color": "sel", "width": 0.9, "from": 1.35, "to": 2.4, "fade": 0},
+    {"el": "circle", "center": "cursor", "r": 1.4, "color": "sel", "width": 1, "fill": "bg2", "fillOpacity": 1, "from": 1.35, "to": 2.4, "fade": 0},
+    {"el": "label", "at": "cursor", "value": "2", "size": 7, "color": "sel", "from": 1.35, "to": 2.4, "fade": 0},
+    {"el": "poly", "points": [[-9, 10], [-9, 10]], "dots": true, "color": "fg", "width": 0, "from": 2.4, "to": 100, "fade": 0},
+    {"el": "poly", "points": [[-9, 10], [-2, 10.5]], "color": "fg", "width": 0.9, "from": 2.4, "to": 100, "fade": 0},
+    {"el": "circle", "center": [-2, 10.5], "r": 1.4, "color": "fg", "width": 1, "fill": "bg2", "fillOpacity": 1, "from": 2.4, "to": 100, "fade": 0},
+    {"el": "label", "at": [-2, 10.5], "value": "2", "size": 7, "color": "fg", "from": 2.4, "to": 100, "fade": 0},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.4, {"screen": [0.08, 0.119]}], [0.5, {"screen": [0.08, 0.119], "click": 1}], [1.2, {"pos": [-9, 10]}], [1.3, {"pos": [-9, 10], "click": 1}], [2.3, {"pos": [-2, 10.5]}], [2.4, {"pos": [-2, 10.5], "click": 1}], [3.3, {"pos": [8, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Balloon: pick an edge of the part"},
+    {"to": 2.5, "caption": "Click where the balloon goes"},
+    {"to": 5.0, "caption": "Its number comes from the parts list"}
+   ]
+  },
+  {
+   "id": "drawings.autoBalloon", "duration": 5.4, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "rect", "corners": [[-21, 8], [-19, 11.5]], "color": "fg", "width": 1.2},
+    {"el": "rect", "corners": [[-11, 8], [-9, 11.5]], "color": "fg", "width": 1.2},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Auto-balloon", "keys": [[0.8, {"hl": true}], [1.1, {"hl": false}]], "from": 0.4, "to": 1.3},
+    {"el": "poly", "points": [[-6, 1], [-6, 1]], "dots": true, "color": "fg", "width": 0, "from": 1.7, "to": 100, "fade": 0},
+    {"el": "poly", "points": [[-6, 1], [-2, 2]], "color": "fg", "width": 0.9, "from": 1.7, "to": 100, "fade": 0},
+    {"el": "circle", "center": [-2, 2], "r": 1.4, "color": "fg", "width": 1, "fill": "bg2", "fillOpacity": 1, "from": 1.7, "to": 100, "fade": 0},
+    {"el": "label", "at": [-2, 2], "value": "1", "size": 7, "color": "fg", "from": 1.7, "to": 100, "fade": 0},
+    {"el": "poly", "points": [[-9, 10], [-9, 10]], "dots": true, "color": "fg", "width": 0, "from": 1.7, "to": 100, "fade": 0},
+    {"el": "poly", "points": [[-9, 10], [-2, 10.5]], "color": "fg", "width": 0.9, "from": 1.7, "to": 100, "fade": 0},
+    {"el": "circle", "center": [-2, 10.5], "r": 1.4, "color": "fg", "width": 1, "fill": "bg2", "fillOpacity": 1, "from": 1.7, "to": 100, "fade": 0},
+    {"el": "label", "at": [-2, 10.5], "value": "2", "size": 7, "color": "fg", "from": 1.7, "to": 100, "fade": 0},
+    {"el": "rect", "corners": [[4.3, -7.5], [27.5, -2.1]], "color": "fg", "width": 1, "from": 1.7, "fade": 0.3},
+    {"el": "poly", "points": [[4.3, -3.9000000000000004], [27.5, -3.9000000000000004]], "color": "fg2", "width": 0.7, "from": 1.7, "fade": 0.3},
+    {"el": "poly", "points": [[4.3, -5.7], [27.5, -5.7]], "color": "fg2", "width": 0.7, "from": 1.7, "fade": 0.3},
+    {"el": "poly", "points": [[6.9, -2.1], [6.9, -7.5]], "color": "fg2", "width": 0.7, "from": 1.7, "fade": 0.3},
+    {"el": "poly", "points": [[9.5, -2.1], [9.5, -7.5]], "color": "fg2", "width": 0.7, "from": 1.7, "fade": 0.3},
+    {"el": "poly", "points": [[14.5, -2.1], [14.5, -7.5]], "color": "fg2", "width": 0.7, "from": 1.7, "fade": 0.3},
+    {"el": "poly", "points": [[22.0, -2.1], [22.0, -7.5]], "color": "fg2", "width": 0.7, "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [5.6, -3.0], "value": "ITEM", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [8.2, -3.0], "value": "QTY", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [12.0, -3.0], "value": "NAME", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [18.25, -3.0], "value": "PART NUMBER", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [24.75, -3.0], "value": "MATERIAL", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [5.6, -4.8], "value": "1", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [8.2, -4.8], "value": "1", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [12.0, -4.8], "value": "Plate", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [18.25, -4.8], "value": "PL-100", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [24.75, -4.8], "value": "Steel", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [5.6, -6.6], "value": "2", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [8.2, -6.6], "value": "2", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [12.0, -6.6], "value": "Pin", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [18.25, -6.6], "value": "PN-06", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [24.75, -6.6], "value": "Steel", "size": 5, "color": "fg", "from": 1.7, "fade": 0.3},
+    {"el": "label", "screen": [0.32, 0.9], "align": "center", "box": "bg2", "text": "2 balloons and a parts list", "from": 1.9, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.7, {"screen": [0.08, 0.119]}], [0.8, {"screen": [0.08, 0.119], "click": 1}], [1.6, {"pos": [8, 6]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Auto-balloon"},
+    {"to": 5.4, "caption": "Each part gets its balloon, and a parts list comes"}
+   ]
+  },
+  {
+   "id": "drawings.revisionTable", "duration": 5.0, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Revision table", "keys": [[0.6, {"hl": true}], [0.8999999999999999, {"hl": false}]], "from": 0.2, "to": 1.1},
+    {"el": "rect", "corners": [[1.5, 8.5], [27.5, 12.5]], "color": "sel", "width": 1, "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[1.5, 10.5], [27.5, 10.5]], "color": "sel", "width": 0.7, "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[4.5, 12.5], [4.5, 8.5]], "color": "sel", "width": 0.7, "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[14.5, 12.5], [14.5, 8.5]], "color": "sel", "width": 0.7, "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "poly", "points": [[21.5, 12.5], [21.5, 8.5]], "color": "sel", "width": 0.7, "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [3.0, 11.5], "value": "REV", "size": 6, "color": "sel", "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [9.5, 11.5], "value": "DESCRIPTION", "size": 6, "color": "sel", "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [18.0, 11.5], "value": "DATE", "size": 6, "color": "sel", "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [24.5, 11.5], "value": "APPROVED", "size": 6, "color": "sel", "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [3.0, 9.5], "value": "A", "size": 6, "color": "sel", "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [9.5, 9.5], "value": "First release", "size": 6, "color": "sel", "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [18.0, 9.5], "value": "2026-10-04", "size": 6, "color": "sel", "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "label", "at": [24.5, 9.5], "value": "J. Smith", "size": 6, "color": "sel", "from": 1.2, "to": 2.6, "fade": 0, "keys": [[1.3, {"offset": [-10, -6]}], [2.5, {"offset": [0, 0]}]]},
+    {"el": "rect", "corners": [[1.5, 8.5], [27.5, 12.5]], "color": "fg", "width": 1, "from": 2.6, "fade": 0.1},
+    {"el": "poly", "points": [[1.5, 10.5], [27.5, 10.5]], "color": "fg2", "width": 0.7, "from": 2.6, "fade": 0.1},
+    {"el": "poly", "points": [[4.5, 12.5], [4.5, 8.5]], "color": "fg2", "width": 0.7, "from": 2.6, "fade": 0.1},
+    {"el": "poly", "points": [[14.5, 12.5], [14.5, 8.5]], "color": "fg2", "width": 0.7, "from": 2.6, "fade": 0.1},
+    {"el": "poly", "points": [[21.5, 12.5], [21.5, 8.5]], "color": "fg2", "width": 0.7, "from": 2.6, "fade": 0.1},
+    {"el": "label", "at": [3.0, 11.5], "value": "REV", "size": 6, "color": "fg", "from": 2.6, "fade": 0.1},
+    {"el": "label", "at": [9.5, 11.5], "value": "DESCRIPTION", "size": 6, "color": "fg", "from": 2.6, "fade": 0.1},
+    {"el": "label", "at": [18.0, 11.5], "value": "DATE", "size": 6, "color": "fg", "from": 2.6, "fade": 0.1},
+    {"el": "label", "at": [24.5, 11.5], "value": "APPROVED", "size": 6, "color": "fg", "from": 2.6, "fade": 0.1},
+    {"el": "label", "at": [3.0, 9.5], "value": "A", "size": 6, "color": "fg", "from": 2.6, "fade": 0.1},
+    {"el": "label", "at": [9.5, 9.5], "value": "First release", "size": 6, "color": "fg", "from": 2.6, "fade": 0.1},
+    {"el": "label", "at": [18.0, 9.5], "value": "2026-10-04", "size": 6, "color": "fg", "from": 2.6, "fade": 0.1},
+    {"el": "label", "at": [24.5, 9.5], "value": "J. Smith", "size": 6, "color": "fg", "from": 2.6, "fade": 0.1},
+    {"use": "sheetTitle"},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"screen": [0.08, 0.119]}], [0.6, {"screen": [0.08, 0.119], "click": 1}], [1.3, {"pos": [17.5, 6.5]}], [2.5, {"pos": [27.5, 12.5]}], [2.6, {"pos": [27.5, 12.5], "click": 1}], [3.5, {"pos": [6, -4]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Revision table: it follows the pointer"},
+    {"to": 2.7, "caption": "Click where its top right corner goes"},
+    {"to": 5.0, "caption": "Each issued revision is a row"}
+   ]
+  },
+  {
+   "id": "drawings.reattach", "duration": 5.8, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "warning", "text": "1 dangling", "to": 2.75, "fade": 0.1, "keys": [[0.8, {"hl": true}], [1.1, {"hl": false}]]},
+    {"el": "card", "screen": [0.58, 0.14], "w": 110, "title": "1 dangling", "rows": [{"text": "Re-attach ⌀3.2"}], "hl": -1, "from": 0.9, "to": 1.5, "fade": 0.1, "keys": [[1.3, {"hl": 0}]]},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Pick reference 1 of 1 for the annotation", "from": 1.5, "to": 2.75, "fade": 0.1},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 2.2, "to": 2.6, "fade": 0.08},
+    {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 2.6, "to": 2.8, "fade": 0.1},
+    {"el": "dim", "kind": "diameter", "center": [-10, 3], "r": 1.6, "value": "⌀3.2", "angle": 40, "from": 2.8, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.7, {"screen": [0.68, 0.119]}], [0.8, {"screen": [0.68, 0.119], "click": 1}], [1.3, {"screen": [0.66, 0.368]}], [1.4, {"screen": [0.66, 0.368], "click": 1}], [2.5, {"pos": [-8.4, 3]}], [2.6, {"pos": [-8.4, 3], "click": 1}], [3.5, {"pos": [6, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "The dangling chip lists what lost its reference"},
+    {"to": 2.7, "caption": "Re-attach it: pick what it measures"},
+    {"to": 5.8, "caption": "It measures again"}
    ]
   }
  ]

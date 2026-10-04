@@ -143,6 +143,24 @@ TEST(every_registered_command_has_help) {
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
+  // The commands of the tracks merged after the first wave 3 help pass (linked files, canvases, KiCad, the drawings' views,
+  // output and annotations, materials, small parts) got their records with a clip each: their own, or one the record
+  // adopts by its "clip" field.
+  QStringList clipless;
+  clips::load();
+  for (const char* id : {"assets.autoSync", "assets.copyPath", "assets.embed", "assets.kicadSettings", "assets.link", "assets.pack", "assets.replace", "assets.reveal",
+                         "assets.settings", "assets.sync", "assets.syncAll", "canvas.align", "canvas.calibrate", "canvas.edit", "canvas.finish", "canvas.fromBackdrop",
+                         "canvas.insert", "canvas.replace", "canvas.trace", "drawings.autoBalloon", "drawings.auxiliaryView", "drawings.balloon", "drawings.baseline",
+                         "drawings.breakView", "drawings.breakoutView", "drawings.centerLine", "drawings.centerMark", "drawings.centerMarks", "drawings.chain",
+                         "drawings.cropView", "drawings.datum", "drawings.detailView", "drawings.dimension", "drawings.exportDrawing", "drawings.fcf",
+                         "drawings.fromDatums", "drawings.fromDatums.baseline", "drawings.fromDatums.chain", "drawings.holeCallout", "drawings.holeTable",
+                         "drawings.issue", "drawings.note", "drawings.ordinate", "drawings.partsList", "drawings.print", "drawings.reattach",
+                         "drawings.revisionTable", "drawings.sectionView", "drawings.surface", "drawings.templateFields", "inspect.material", "kicad.clearance",
+                         "kicad.insert", "kicad.previewSync", "kicad.project", "view.hideSmallParts", "view.smallPartSize"}) {
+    const CommandHelp* h = help::find(id);
+    if (!h || !clips::has(h->clip)) clipless << id;
+  }
+  if (!clipless.isEmpty()) throw check::Failure("no clip for " + clipless.join(", ").toStdString());
 }
 
 // The other way round: a record is for a command the app has. The licence, ODA and view cube commands come with the IP
@@ -831,13 +849,13 @@ TEST(clips_load_cleanly) {
     CHECK(clips::stepAt(id, 0) == 0 && clips::stepAt(id, clips::duration(id)) == steps.size() - 1);
     CHECK(clips::stillTime(id) > 0 && clips::stillTime(id) <= clips::duration(id));
   }
-  // Every clip is shown somewhere: a command's own (its help record), one a record adopts by its "clip" field, or a panel's
-  // own guide (the drawing placer's); insert.canvas waits for the canvas commands (future commands name theirs here first).
+  // Every clip is shown somewhere: a command's own (its help record), one a record adopts by its "clip" field (Insert canvas:
+  // insert.canvas), or a panel's own guide (the drawing placer's).
   help::load("en");
   QSet<QString> adopted;
   for (const CommandHelp& h : help::all()) adopted.insert(h.clip);
   for (const QString& id : clips::ids())
-    if (!help::find(id) && !adopted.contains(id) && !QStringList{"drawing.place", "insert.canvas"}.contains(id))
+    if (!help::find(id) && !adopted.contains(id) && id != "drawing.place")
       throw check::Failure(id.toStdString() + ": a clip for no command");
 }
 

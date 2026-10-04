@@ -320,6 +320,7 @@ void CanvasArea::buildPanel() {
   footerForFlow();
   m_panel = new ToolPanel("canvas", "canvas", &Tokens::sel, tr("Canvas"), body, 520, services().window());
   m_panel->setObjectName("canvasPanel");
+  m_panel->setHelpId("canvas.edit");  // its "?": the canvas editor's card and clip
   m_panel->setEscapeHandler([this] {
     if (m_flow != Flow::None) flowBack();
     else finish();

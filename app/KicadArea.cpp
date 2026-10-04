@@ -251,6 +251,7 @@ void KicadArea::buildPanel() {
   layout->addWidget(m_footer);
   m_panel = new ToolPanel("kicadSync", "regen", &Tokens::sel, tr("Sync preview"), body, 420, services().window());
   m_panel->setObjectName("kicadSyncPanel");
+  m_panel->setHelpId("kicad.previewSync");
   m_panel->setEscapeHandler([this] { closePreview(); });
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this](bool on) {
     if (!on) services().viewport()->clearLookLayer(LookSource::Compare);
@@ -593,6 +594,7 @@ void KicadArea::buildClearancePanel() {
   m_checks->setObjectName("kicadClearanceChecks");
   m_clearancePanel = new ToolPanel("kicadClearance", "interference", &Tokens::sel, tr("Board clearance"), m_checks, 220, services().window());
   m_clearancePanel->setObjectName("kicadClearancePanel");
+  m_clearancePanel->setHelpId("kicad.clearance");
   m_clearancePanel->setContentSizeHint([this](int width) { return m_checks->preferredSize(width); });
   connect(m_checks, &CheckPanel::contentResized, m_clearancePanel, &ToolPanel::requestContentFit);
   connect(m_checks, &CheckPanel::runRequested, this, [this] { runClearance(); });

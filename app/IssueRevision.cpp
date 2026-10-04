@@ -144,7 +144,7 @@ IssueDialog::IssueDialog(AppDocument* doc, const std::string& sheet, QWidget* pa
   auto* footer = new QHBoxLayout();
   footer->addStretch();
   auto* cancel = new QPushButton(tr("Cancel   Esc"), this);
-  auto* issue = new QPushButton(tr("Issue"), this);
+  auto* issue = new QPushButton(tr("Issue revision"), this);
   issue->setObjectName("primary");
   issue->setDefault(true);
   footer->addWidget(cancel);
