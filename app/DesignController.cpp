@@ -1,6 +1,7 @@
 #include "DesignController.hpp"
 #include "opad/inspect.hpp"
 #include "DimensionHandle.hpp"
+#include "PrimitivePlacer.hpp"
 #include "ToolValues.hpp"
 #include "TranslateTriad.hpp"
 #include "CurveSamples.hpp"
@@ -143,13 +144,45 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   m_distanceHandle->setCapturesKeys(false);
   m_values->fields = [this] {
     if (!m_featureOn || m_pickPlane || m_sketch->active()) return QList<DynamicInput::Field>{};
+    // A primitive being sized by the pointer (TODO 11 P1): its sizes, the pointer's values grey until typed.
+    if (m_placer->active())
+      if (auto sizes = m_placer->fields(); !sizes.isEmpty()) return sizes;
     // The arrow's boxes take over once it shows, unless these are being typed into (keys typed before the preview came).
     const DynamicInput* typing = m_values->input();
     return m_distanceHandle->isVisible() && !typing->typed() && !typing->editing() ? QList<DynamicInput::Field>{} : valueFields();
   };
-  m_values->edited = [this](const QString& key, const QString& value) { typeValue(key, value); };
+  m_values->edited = [this](const QString& key, const QString& value) {
+    typeValue(key, value);
+    if (m_placer->active()) m_placer->typed(key);  // a typed size holds while the pointer sets the others
+  };
   m_values->commit = [this] { if (m_featureOn) runPreview(true); };
   m_values->escape = [this] { escape(); };
+  m_placer = new PrimitivePlacer(doc, viewport, jobs, m_form, m_values, this);
+  m_placer->planes = [this] {
+    // As the plane input shows them, but XZ and YZ standing on XY, the floor the grid draws: pointing at the grid just past
+    // the XY square used to land on their halves under it (a box on XZ where the grid was clicked).
+    std::vector<Viewport::Candidate> planes = quickCandidates("plane");
+    const double size = std::max(10.0, m_viewport->pixelSize() * 70);
+    for (auto& c : planes)
+      if (const opad::json id = opad::json::parse(c.id, nullptr, false); id.is_object() && (id.value("base", "") == "xz" || id.value("base", "") == "yz"))
+        c.shape = BRepBuilderAPI_MakeFace(frame_plane(base_frame(id.value("base", ""))), -size, size, 0, size).Face();
+    return planes;
+  };
+  m_placer->copies = [this] {
+    refreshPlanCopies();
+    return std::make_pair(m_planDoc, m_planScene);
+  };
+  connect(m_placer, &PrimitivePlacer::status, this, &DesignController::status);
+  connect(m_placer, &PrimitivePlacer::stageChanged, this, [this] {
+    if (!m_featureOn) return;
+    if (!m_placer->arrowShown() && !m_distanceHandle->dragging()) m_distanceHandle->hide();
+    if (!m_placer->previewShown()) {
+      m_readyPlan.reset();
+      m_viewport->clearPreviewBodies();
+    }
+    m_values->refresh();
+    schedulePreview();
+  });
   m_sketch = new SketchEditor(doc, viewport, jobs, this);
   m_planePicker=new PlanePicker(doc,viewport,jobs,window);
   m_planePicker->accepted=[this](const opad::json& plane,const opad::Frame& frame){
@@ -176,6 +209,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   m_previewTimer.setSingleShot(true);
   m_previewTimer.setInterval(280);
   connect(&m_previewTimer, &QTimer::timeout, this, [this] { runPreview(false); });
+  connect(m_form, &FeaturePanel::inputsChanged, this, [this] { m_placer->inputsChanged(); });  // a size typed in the panel holds
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::schedulePreview);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::refreshValues);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::inputsSettled);
@@ -184,6 +218,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
   connect(m_form, &FeaturePanel::accepted, this, [this] { runPreview(true); });
   connect(m_form, &FeaturePanel::cancelled, this, &DesignController::endFeature);
+  connect(m_form, &FeaturePanel::escapePressed, this, [this] { escape(); });  // one step back, as in the view
   connect(m_sketch, &SketchEditor::status, this, &DesignController::status);
   connect(m_sketch, &SketchEditor::changed, this, &DesignController::stateChanged);
   connect(m_sketch, &SketchEditor::toolChanged, this, &DesignController::stateChanged);
@@ -359,6 +394,7 @@ void DesignController::startFeature(const QString& kind) {
     }
   }
   if (m_form->activeInput().isEmpty()) activateInput(QString());  // nothing to pick first: a plane input takes a click
+  if (!spec->footprint.empty()) m_placer->start(*spec);  // a primitive: placed in the view by a click, sized by the pointer
   schedulePreview();
   emit stateChanged();
 }
@@ -366,6 +402,7 @@ void DesignController::startFeature(const QString& kind) {
 void DesignController::startFeature(const QString& kind, const std::vector<std::pair<QString, opad::json>>& given) {
   startFeature(kind);
   if (!m_featureOn || !m_form->spec() || m_form->spec()->kind != kind.toStdString()) return;
+  m_placer->stop();  // what is given places it
   for (const auto& [name, value] : given)
     if (m_form->input(name)) value.is_array() ? m_form->setPicks(name, value) : m_form->setValue(name, value);
   activateInput(m_form->activeInput());  // the view shows the given picks
@@ -421,6 +458,7 @@ void DesignController::editOp(const std::string& opId) {
 }
 
 void DesignController::endFeature() {
+  m_placer->stop();
   m_distanceHandle->hide();
   m_values->reset();
   m_moveAxis = {};
@@ -679,10 +717,12 @@ void DesignController::offerRules(const QString& input, QWidget* anchor) {
 void DesignController::activateInput(const QString& name) {
   if (!m_featureOn) return;
   const InputSpec* in = m_form->input(name);
+  if (in && in->type == "plane" && m_placer->active()) m_placer->stop();  // the Plane box clicked: the plane picker, then the panel
   if (!in) {
     if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
     m_activeCandidates.clear();
     refreshRoute();  // nothing routed without an active input
+    if (m_placer->stage() == PrimitivePlacer::Stage::Place) return m_placer->showPlanes();  // a pick box let go: the planes again
     // A construction plane's From plane (or any plane input) takes a click on a planar face, an origin plane or a
     // construction plane while nothing else is being picked (TODO 11 P3): the guide's face click.
     m_idlePlane = idlePlaneInput();
@@ -981,8 +1021,18 @@ void DesignController::showHandle(const opad::json& handle) {
   m_distanceHandle->setScale(handle.value("scale", 1.0));
   m_distanceHandle->setAnchorSegments({});
   m_distanceHandle->setLabel(i18n::t(QString::fromStdString(in->label)));
-  m_distanceHandle->setExtraFields(valueFields(input));
+  m_distanceHandle->setExtraFields(handleExtras(input));
   m_distanceHandle->configure(handle.at("origin").get<opad::Vec3>(), handle.at("axis").get<opad::Vec3>(), handle.at("value").get<double>(), m_form->valueText(input));
+}
+
+// Tab from the arrow's box goes round the panel's other values; a primitive being placed: its other sizes (a cone's top
+// diameter first, as its guide's card has it).
+QList<DynamicInput::Field> DesignController::handleExtras(const QString& input) const {
+  if (!m_placer->active()) return valueFields(input);
+  QList<DynamicInput::Field> out;
+  for (const QString& name : m_placer->arrowExtras())
+    if (const InputSpec* in = m_form->input(name); in && name != input) out << ToolValues::box(name, i18n::t(QString::fromStdString(in->label)), m_form->valueText(name));
+  return out;
 }
 
 // The panel's values that show, in its order (UI-122): one box each, grey with what the panel holds until typed into.
@@ -1012,7 +1062,7 @@ void DesignController::typeValue(const QString& key, QString value) {
 void DesignController::refreshValues() {
   if (!m_featureOn) return;
   m_values->refresh();
-  if (m_distanceHandle->isVisible()) m_distanceHandle->setExtraFields(valueFields(m_handleInput));
+  if (m_distanceHandle->isVisible()) m_distanceHandle->setExtraFields(handleExtras(m_handleInput));
 }
 
 void DesignController::schedulePreview() {
@@ -1046,6 +1096,15 @@ void DesignController::stretchPreview(double value) {
 void DesignController::runPreview(bool commit) {
   if (!m_featureOn) return;
   m_previewTimer.stop();
+  // A primitive whose plane is being picked (or whose size the pointer has not given yet) has nothing to show: the
+  // defaults at the origin are what Enter adds, not what the click will place.
+  if (!commit && !m_placer->previewShown()) {
+    m_readyPlan.reset();
+    if (!m_distanceHandle->interacting()) m_distanceHandle->hide();
+    m_viewport->clearPreviewBodies();
+    m_form->setStatus(QString(), false);
+    return;
+  }
   QString missing;
   if (!m_form->complete(&missing)) {
     if(!m_distanceHandle->interacting())m_distanceHandle->hide();
@@ -1188,7 +1247,7 @@ void DesignController::runPreview(bool commit) {
       if (!h.value("ring", false)) { arrow = h; break; }
     if (!ok) {
       // A value that does not work (a radius too big for the edge) keeps its arrow, to be pulled back.
-      if (arrow.is_object() && error != "cancelled") showHandle(arrow);
+      if (arrow.is_object() && error != "cancelled" && m_placer->arrowShown()) showHandle(arrow);
       else if(!m_distanceHandle->interacting())m_distanceHandle->hide();
       m_readyPlan.reset();
       m_viewport->clearPreviewBodies();
@@ -1242,7 +1301,7 @@ void DesignController::runPreview(bool commit) {
         m_distanceHandle->configure(origin,axis,value,QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
       }
     }
-    if(!hasHandle && arrow.is_object()){hasHandle=true;showHandle(arrow);}
+    if(!hasHandle && arrow.is_object() && m_placer->arrowShown()){hasHandle=true;showHandle(arrow);}  // a primitive's height once its base is set
     if(!hasHandle)m_distanceHandle->hide();
     m_values->refresh();  // the boxes beside the pointer give way to the handle's
     std::vector<Viewport::PreviewPart> parts;
@@ -1270,7 +1329,7 @@ void DesignController::restoreRecovery(const opad::json& state) {
   if(state.value("type","")=="sketch")m_sketch->restoreRecovery(state);
   else if(state.value("type","")=="feature") {
     const auto id=state.value("id",std::string());
-    if(id.empty())startFeature(QString::fromStdString(state.at("kind").get<std::string>()));else editOp(id);
+    if(id.empty()){startFeature(QString::fromStdString(state.at("kind").get<std::string>()));m_placer->stop();}else editOp(id);  // restored values place it
     if(featureActive())for(const auto& [key,value]:state.at("inputs").items()){
       if(value.is_array() || value.is_object())m_form->setPicks(QString::fromStdString(key),value);
       else m_form->setValue(QString::fromStdString(key),value);
@@ -1376,6 +1435,7 @@ bool DesignController::escape() {
     return true;
   }
   if (m_featureOn) {
+    if (m_placer->escape()) return true;  // a primitive being placed: one stage back
     endFeature();
     return true;
   }

@@ -47,6 +47,7 @@ class PickBox : public QPushButton {
  public:
   explicit PickBox(QWidget* parent = nullptr);
   void set(int count, const QString& what, bool active, bool satisfied);
+  void setNote(const QString& note);  // what the box says instead, as if waiting (a primitive's plane: "Click in the view")
  signals:
   void cleared();
  protected:
@@ -54,7 +55,7 @@ class PickBox : public QPushButton {
   void mousePressEvent(QMouseEvent* e) override;
  private:
   int m_count = 0;
-  QString m_what;
+  QString m_what, m_note;
   bool m_active = false, m_satisfied = true;
 };
 
@@ -76,6 +77,11 @@ class FeaturePanel : public QWidget {
   QString statusText() const;
   void setEditHidden(bool hidden);
   void setValue(const QString& input, const opad::json& value);  // expression, choice or flag, as the user would type it
+  void setValues(const std::vector<std::pair<QString, opad::json>>& values);  // several at once: one inputsChanged
+  // TODO 11 P1, a primitive placed in the view: what a pick box says instead of its picks (empty: its picks), and the step
+  // the guide waits at (count 0: the picks say).
+  void setPickNote(const QString& input, const QString& note);
+  void setGuideStep(int step, int count);
   // The values shown (lengths, angles, numbers, counts), in the form's order: what the keyboard types into (UI-122).
   QStringList valueInputs() const;
   QString valueText(const QString& input) const;  // as its field shows it
@@ -100,7 +106,8 @@ class FeaturePanel : public QWidget {
   // "By rule…" on a face or edge input holding one picked entity (TODO 10 B7): the controller offers rules.
   void ruleRequested(const QString& input, QWidget* anchor);
   void accepted();
-  void cancelled();
+  void cancelled();       // Cancel
+  void escapePressed();   // Esc in the panel: one step back, as in the view
   void contentResized();  // rows were added, shown or hidden: the panel fits itself again
  protected:
   void keyPressEvent(QKeyEvent* e) override;
@@ -142,6 +149,8 @@ class FeaturePanel : public QWidget {
   std::map<QString, Row> m_widgets;
   opad::json m_values = opad::json::object();  // picks and the values of hidden inputs
   QString m_active;
+  std::map<QString, QString> m_notes;  // setPickNote
+  int m_guideStep = 0, m_guideCount = 0;  // setGuideStep
 };
 
 // Modeless "Change parameters" dialog: name, expression, value, comment; rows are edited in place.

@@ -3,8 +3,10 @@
 #include "DimensionHandle.hpp"
 #include "MainWindow.hpp"
 #include "ToolValues.hpp"
+#include "PrimitivePlacer.hpp"
 #include "TranslateTriad.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
 #include "opad/util.hpp"
 
@@ -534,7 +536,10 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
           design->escape();
           return true;
         },
-        [=] { return waitFor(!design->featureActive(), std::string("Esc did not leave ") + kind); },
+        [=] {
+          if (design->featureActive() && design->placer()->active()) design->escape();  // a primitive steps back a stage per Esc
+          return waitFor(!design->featureActive(), std::string("Esc did not leave ") + kind);
+        },
     };
   };
   auto append = [&steps](std::vector<std::function<bool()>> more) { steps.insert(steps.end(), more.begin(), more.end()); };
@@ -600,9 +605,15 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         return std::string("the plane's preview plans no plane");
       },
       "construction plane from a face"));
-  // Box: its height arrow; the preview is 20 x 20 x the pulled height.
+  // Box: its height arrow once it is placed (TODO 11 P1: on XY at the origin and its base fixed as the panel has it, what
+  // the two clicks do, primitive-place drives those); the preview is 20 x 20 x the pulled height.
   append(pullArrow(
-      "box", [] {}, "height", 6,
+      "box",
+      [=] {
+        design->placer()->placeAt({{"base", "xy"}}, opad::design::base_frame("xy"), 0, 0);
+        design->placer()->fixSize();
+      },
+      "height", 6,
       [=] { return std::abs(previewVolume() - 400 * evaluated("height")) < 1e-3 * previewVolume() ? std::string() : "the box preview during the pull is not 20 x 20 x " + form->valueText("height").toStdString(); },
       "box"));
   auto* timer = new QTimer(&w);

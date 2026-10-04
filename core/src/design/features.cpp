@@ -128,7 +128,8 @@ std::vector<FeatureSpec> build_specs() {
   add("sphere", "Sphere", "sphere", "create", "A sphere centred on a plane.", placed({in("diameter", "Diameter", "length", "20 mm")}), "new");
   add("cone", "Cone", "cone", "create", "A cone or a truncated cone standing on a plane at the position; its axis is the plane's normal.",
       placed({in("diameter", "Base diameter", "length", "20 mm"), in("top_diameter", "Top diameter", "length", "0 mm"), in("height", "Height", "length", "20 mm")}), "new");
-  add("torus", "Torus", "torus", "create", "A ring lying on a plane.", placed({in("diameter", "Ring diameter", "length", "40 mm"), in("section", "Section diameter", "length", "10 mm")}), "new");
+  add("torus", "Torus", "torus", "create", "A ring centred on a plane: the ring diameter runs through the middle of the tube.",
+      placed({in("diameter", "Ring diameter", "length", "40 mm"), in("section", "Section diameter", "length", "10 mm")}), "new");
   add("extrude", "Extrude", "extrude", "create", "Pull sketch profiles or planar faces along their normal. Symmetric splits the distance in half on each side; a start offset moves the start along the sketch normal.",
       {pick("profiles", "Profiles", "profiles", 1, 0),choice("start", "Start from", {"profile", "offset", "face"}),
        in("start_offset", "Start offset", "length", "0 mm", "start=offset"),pick("start_face", "Start face", "faces", 1, 1, "start=face"),
@@ -196,6 +197,12 @@ std::vector<FeatureSpec> build_specs() {
   add("interference", "Interference check", "interference", "construct",
       "Bodies that overlap, or come closer than the clearance, stored with the design and checked again whenever they change. With Fail on, a finding is an error.",
       {pick("bodies", "Bodies (all solids if none)", "bodies", 0, 0), in("clearance", "Clearance", "length", "0 mm"), choice("fail_on", "Fail on", {"nothing", "interference", "clearance"})});
+  // TODO 11 P1: the primitives are placed in the view by a click and sized by the pointer, as their guides show.
+  for (auto& s : v) {
+    if (s.kind == "box") s.footprint = "rect";
+    if (s.kind == "cylinder" || s.kind == "cone" || s.kind == "sphere" || s.kind == "coil") s.footprint = "round";
+    if (s.kind == "torus") s.footprint = "ring";
+  }
   return v;
 }
 

@@ -46,6 +46,11 @@ struct FeatureSpec {
   std::string kind, label, icon, group;  // group: create | modify | combine | pattern | construct | body
   std::vector<InputSpec> inputs;
   std::string hint;  // one line for the panel
+  // A primitive placed in the view (TODO 11 P1): a click on a plane writes its "plane", "x" and "y"; then the pointer draws
+  // the footprint: "rect" (its "length" and "width" about the click, or from it as a corner with "centered" off), "round"
+  // (its "diameter" from the click), "ring" ("diameter" to the tube's middle, then the tube's "section"). A "height" input
+  // is pulled by the arrow after. Empty: not placed so.
+  std::string footprint;
 };
 
 const std::vector<FeatureSpec>& feature_specs();

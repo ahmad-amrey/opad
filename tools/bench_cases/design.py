@@ -1,6 +1,6 @@
-"""gui_benches cases of the Design workspace's tools as the help guides show them (TODO 11 wave 3): clicks in the view reach the
-input the guide's animation clicks (app/PickRoutingBench.cpp); the value arrows and Move's triad the guides pull
-(app/HandlesBench.cpp)."""
+"""gui_benches cases of the Design workspace's tools as the help guides show them (TODO 11 wave 3): primitives placed by the
+pointer (app/PrimitivePlaceBench.cpp); clicks in the view reach the input the guide's animation clicks
+(app/PickRoutingBench.cpp); the value arrows and Move's triad the guides pull (app/HandlesBench.cpp)."""
 
 
 def routing_parts(root, document):
@@ -22,7 +22,19 @@ def handle_parts(root, document):
     return document("handle-parts", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
 
 
+def primitive_parts(root, document):
+    """A 30 x 20 x 10 block at x -55..-25: a face to place a sphere on, and the origin clear for the primitives on XY."""
+    path = root / "primitive-parts.opad"
+    if path.exists():
+        return path
+    return document("primitive-parts", ("feature", "--kind", "box", "--inputs", '{"x":"-40 mm","length":"30 mm","width":"20 mm","height":"10 mm"}'))
+
+
 CASES = [
+    # P1: a cone, a box (grid snapping, Esc back from the footprint and the height), a sphere (pressed on a face and dragged),
+    # a torus (ring, then section) placed by the pointer, each preview checked while the pointer moves or the arrow is held,
+    # the committed inputs against the values shown; a cylinder by Enter alone.
+    ("primitive-place", primitive_parts, {"OPAD_BENCH_PRIMITIVES": "{prefix}"}),
     # P3: the region then the Z axis (revolve), the body then the YZ plane (mirror), target then tool (combine), a face then
     # the XY plane and the Neutral plane box not taking that face (draft), axes for a circular pattern, a round face for a
     # construction axis, a face and an origin plane for a construction plane, the XY plane and Enter for a new sketch.

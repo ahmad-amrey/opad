@@ -11,6 +11,7 @@
 #include <cmath>
 
 #include "DesignController.hpp"
+#include "PrimitivePlacer.hpp"
 #include "DimensionHandle.hpp"
 #include "Theme.hpp"
 #include "ToolValues.hpp"
@@ -42,7 +43,7 @@ QColor axisColour(int k, const Tokens& t) {
 }
 }  // namespace
 
-bool DesignController::pulling() const { return (m_distanceHandle && m_distanceHandle->dragging()) || m_pull.part >= 0; }
+bool DesignController::pulling() const { return (m_distanceHandle && m_distanceHandle->dragging()) || m_pull.part >= 0 || (m_placer && m_placer->tracking()); }
 
 double DesignController::inputValue(const QString& name, Dim dim, double fallback) const {
   try {

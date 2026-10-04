@@ -430,6 +430,28 @@ bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {
   moveTo(devicePos(point));
   return hoveredReference(ref);
 }
+bool Viewport::surfaceAt(const QPointF& point, std::string& candidate, TopoDS_Face& face, opad::Vec3& at) {
+  candidate.clear();
+  face.Nullify();
+  if (!m_initialised) return false;
+  moveTo(devicePos(point));
+  if (!m_ctx->HasDetected()) return false;
+  gp_Pnt hit;
+  if (!detectedPoint(hit)) return false;
+  at = {hit.X(), hit.Y(), hit.Z()};
+  const Handle(AIS_InteractiveObject) object = m_ctx->DetectedInteractive();
+  for (const auto& c : m_candidates)
+    if (c.second == object) {
+      candidate = c.first;
+      return true;
+    }
+  const Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+  if (owner.IsNull() || !owner->HasShape() || owner->Shape().ShapeType() != TopAbs_FACE || !m_nodeOf.count(object.get())) return false;
+  face = TopoDS::Face(owner->Shape());
+  if (!object.IsNull() && object->HasTransformation()) face = TopoDS::Face(face.Moved(TopLoc_Location(object->LocalTransformation())));
+  return true;
+}
+
 bool Viewport::originReferenceAt(const QPointF& point,opad::Ref& ref) {
   if(!m_initialised)return false;
   // Center candidates already share the vertex selector; enable their cheap

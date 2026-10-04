@@ -875,7 +875,7 @@
    "id": "design.box",
    "title": "Box",
    "summary": "A box on a plane at a position, sized by length, width and height.",
-   "details": "Length runs along the plane's X, width along its Y and height along its normal; a negative height grows the other way. It is centred on the position in X and Y unless you turn that off. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face where it goes, move the pointer to draw the base and click, then drag the arrow or type the height; Enter adds it and Esc steps back. Length runs along the plane's X, width along its Y and height along its normal (a negative height grows the other way); the base is centred on the click unless you turn that off, then the click is a corner. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["cube", "block", "primitive", "rectangular prism"],
    "requires": "Open or create a document first."
   },
@@ -883,7 +883,7 @@
    "id": "design.cylinder",
    "title": "Cylinder",
    "summary": "A cylinder standing on a plane at a position.",
-   "details": "Its axis is the plane's normal; set the diameter and the height. A negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click, then drag the arrow or type the height; Enter adds it and Esc steps back. Its axis is the plane's normal; a negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["rod", "shaft", "primitive", "round"],
    "requires": "Open or create a document first."
   },
@@ -891,7 +891,7 @@
    "id": "design.sphere",
    "title": "Sphere",
    "summary": "A sphere centred on a plane at a position.",
-   "details": "Set the diameter; the centre is the position on the plane. Combine it with other bodies to round off shapes. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click; Enter adds it and Esc steps back. The plane runs through its middle. Combine it with other bodies to round off shapes. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["ball", "primitive", "round"],
    "requires": "Open or create a document first."
   },
@@ -899,15 +899,15 @@
    "id": "design.cone",
    "title": "Cone",
    "summary": "A cone or a truncated cone standing on a plane at a position.",
-   "details": "Set the base and top diameters and the height; a top diameter above zero cuts the tip off. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for the centre of its base, move the pointer to set the base diameter and click, then drag the arrow or type the height; Tab from the height's box reaches the top diameter, which cuts the tip off above zero. Enter adds it and Esc steps back. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["taper", "frustum", "primitive"],
    "requires": "Open or create a document first."
   },
   {
    "id": "design.torus",
    "title": "Torus",
-   "summary": "A ring lying on a plane at a position.",
-   "details": "Set the ring diameter, through the middle of the tube, and the section diameter of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "summary": "A ring centred on a plane at a position.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the ring diameter (through the middle of the tube) and click, then the tube's section diameter and click; Enter adds it and Esc steps back. The plane runs through the middle of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["ring", "donut", "o-ring", "primitive"],
    "requires": "Open or create a document first."
   },
@@ -955,7 +955,7 @@
    "id": "design.coil",
    "title": "Coil",
    "summary": "A round or square section wound about an axis: springs and threads.",
-   "details": "Set the coil diameter, the pitch between turns and the number of turns. Left-handed winds it the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its axis, move the pointer to set the coil diameter (through the middle of the section) and click, then set the pitch between turns and the number of turns in the panel; Enter adds it and Esc steps back. Left-handed winds it the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["spring", "helix", "thread", "spiral"],
    "requires": "Open or create a document first."
   },

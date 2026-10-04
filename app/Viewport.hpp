@@ -30,6 +30,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 
 #include "AppDocument.hpp"
@@ -383,6 +384,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool hoveredEdge(TopoDS_Shape& edge) const;
   bool hoveredReference(opad::Ref& ref) const;
   bool referenceAt(const QPointF& point,opad::Ref& ref);
+  // What the pointer meets at `point` (widget px) as a click there would (TODO 11 P1, placing a primitive): a candidate's id,
+  // else a body's face (where it is drawn: `face` is moved into the world); `at` where the pointer meets it. False: nothing.
+  // hoveredReference() names the face afterwards.
+  bool surfaceAt(const QPointF& point, std::string& candidate, TopoDS_Face& face, opad::Vec3& at);
   bool originReferenceAt(const QPointF& point,opad::Ref& ref);
   // Drawing to sketch's preview (UI-29): segment and point arrays built on the worker, construction ones dashed; showing
   // them hands the arrays to the driver. previewSegments() counts what the preview draws.

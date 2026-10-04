@@ -20,6 +20,7 @@
 #include "Viewport.hpp"
 #include "PlanePicker.hpp"
 
+class PrimitivePlacer;
 class ToolValues;
 class TranslateTriad;
 
@@ -49,6 +50,8 @@ class DesignController : public QObject {
   void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin=false);
   ToolPanel* planePanel() const { return m_planePicker->panel(); }
   PlanePicker* planePicker() const { return m_planePicker; }
+  // A new box, cylinder, cone, sphere, torus or coil placed in the view (TODO 11 P1): null-safe, always made.
+  PrimitivePlacer* placer() const { return m_placer; }
   void startSketch();                    // asks for the plane first
   void finishSketch(std::function<void()> then = {});
   void cancelSketch();
@@ -150,6 +153,8 @@ class DesignController : public QObject {
   QPointer<DimensionHandle> m_distanceHandle;  // the feature's value arrow (TODO 11 P2): extrude's distance, a fillet's radius, ...
   QString m_handleInput = "distance";          // the input it pulls
   void showHandle(const opad::json& handle);   // a feature_handles entry: the arrow there, bound to its input
+  QList<DynamicInput::Field> handleExtras(const QString& input) const;  // the boxes after the arrow's: Tab goes round them
+  PrimitivePlacer* m_placer = nullptr;
   // Move / copy's triad (TODO 11 P2, DesignTriad.cpp): X, Y and Z arrows and a square on the picked bodies, and with Rotate
   // on a ring round the move's axis; a pull sets the distances (rounded at this zoom) or the angle (5 degree steps) and the
   // preview follows as during the extrude's drag; the boxes by the pointer show the values, the pulled part's taking what is
