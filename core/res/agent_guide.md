@@ -370,7 +370,10 @@ list (a live agent saves, and the drawing is made on the file).
   revision… commits and tags in git, the command does not. `sheet_info` lists each issue with what changed since.
 - In the app, Print… (Ctrl+Alt+P) prints the drawing's sheets at actual size or fitted, in black ink or colour.
 - `sheet_edit` changes a sheet, view or item (`set`; null removes a field); moving a base view moves the views
-  projected from it. `delete` removes one; a deleted sheet takes its views and items with it.
+  projected from it. A base view's `explode` (a saved exploded view's op id; null draws it assembled) keeps its side
+  and draws the parts apart with trail lines; the views taken from it follow, and an update of that exploded view
+  (`explode --view <id> --update`) moves the drawn parts with it. `delete` removes one; a deleted sheet takes its views
+  and items with it.
 - `part_properties` sets part properties on bodies or components (`part_number`, `description`, `material`, `density`
   g/cm3, `mass` g, `vendor`, `notes`, `bom` include|exclude|purchased, any other field); `properties` reports them as
   `part`, plus the `material` in force (the nearest one set upwards, else the file's), `density` and `mass` (g).

@@ -20,6 +20,7 @@
 #include "opad/drawing/tables.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+#include "opad/util.hpp"
 
 using namespace opad;
 using namespace opad::drawing;
@@ -579,4 +580,93 @@ TEST(exploded_view_holes) {
     }
   }
   CHECK(wall >= 0);
+}
+
+// A base view's state (UI-85): sheet_edit's explode turns a view drawn assembled into one of a saved exploded view, from
+// the same side, and back; the views projected from it follow and other views cannot take one. The view keeps only the
+// exploded view's id, so an update of that exploded view moves the drawing's parts and trail lines with it. Balloons placed
+// on it by sheet_balloons point at their parts where they are drawn, numbered as the parts list numbers them, and the
+// sheet's DXF carries the trail lines on their phantom layer.
+TEST(exploded_view_state_follows_its_exploded_view) {
+  Assembly a;
+  run(a.doc, "explode", {{"mode", "axis"}, {"name", "Exploded"}});
+  const std::string exploded = a.scene().views.back().id;
+  const std::string pin3 = id_of(a.scene(), "Pin 3");
+  const auto spec_of_front = [&](Scene& s) {
+    s = a.scene();
+    ViewSpec spec = view_spec(s, *s.sheet_view(a.front));
+    resolve_explode(a.doc, s, spec);
+    return spec;
+  };
+  Scene s;
+  const ViewSpec assembled = spec_of_front(s);
+  const auto plain = view_extent(a.doc, s, assembled);
+  CHECK(assembled.offsets.empty() && assembled.trails.empty());
+  const json side = run(a.doc, "sheet_view", {{"sheet", a.sheet}, {"parent", a.front}, {"side", "right"}});
+  // Exploded: the same front view, the parts apart.
+  run(a.doc, "sheet_edit", {{"target", a.front}, {"set", {{"explode", exploded}}}});
+  ViewSpec spec = spec_of_front(s);
+  const SheetView* v = s.sheet_view(a.front);
+  CHECK(v->error.empty() && v->def["source"]["explode"]["view"] == exploded && v->def["orient"]["preset"] == "front");
+  CHECK(spec.offsets.count(pin3) && !spec.trails.empty());
+  Vec3 x, y, z;
+  view_axes(spec, x, y, z);
+  CHECK(std::fabs(z[1] + 1) < 1e-9);  // still seen from the front
+  const auto apart = view_extent(a.doc, s, spec);
+  CHECK(apart[3] - apart[1] > plain[3] - plain[1] + 10);  // taller: the pins lifted off the plate
+  ViewSpec projected = view_spec(s, *s.sheet_view(side["id"]));
+  resolve_explode(a.doc, s, projected);
+  CHECK(projected.offsets == spec.offsets);
+  CHECK_THROWS(run(a.doc, "sheet_edit", {{"target", side["id"]}, {"set", {{"explode", exploded}}}}));  // a projected view follows its parent
+  CHECK_THROWS(run(a.doc, "sheet_edit", {{"target", a.front}, {"set", {{"explode", a.front}}}}));     // not an exploded view
+  // The exploded view updated (twice the spacing): the drawing follows, its fingerprint with it.
+  const std::string before = projection_fingerprint(a.doc, s, view_spec(s, *v), Quality::Auto);
+  run(a.doc, "explode", {{"view", exploded}, {"spacing", 2.5}, {"update", true}});
+  const ViewSpec wider = spec_of_front(s);
+  CHECK(std::fabs(wider.offsets.at(pin3)[2]) > std::fabs(spec.offsets.at(pin3)[2]) + 5);
+  CHECK(projection_fingerprint(a.doc, s, view_spec(s, *s.sheet_view(a.front)), Quality::Auto) != before);
+  CHECK(view_extent(a.doc, s, wider)[3] > apart[3] + 5);
+  // Auto-balloons on it: on each part where it is drawn, numbered from the parts list it made.
+  const json balloons = run(a.doc, "sheet_balloons", {{"sheet", a.sheet}, {"view", a.front}});
+  CHECK(balloons["created"] == true && balloons["ids"].size() >= 3);
+  s = a.scene();
+  const auto frames = layout(a.doc, s, *s.sheet(a.sheet));
+  const ViewFrame& f = *std::find_if(frames.begin(), frames.end(), [&](const ViewFrame& fr) { return fr.id == a.front; });
+  const auto g = project(a.doc, s, view_spec(s, *s.sheet_view(a.front)));
+  CHECK(std::any_of(g->curves.begin(), g->curves.end(), [](const Curve& c) { return c.kind == Curve::Kind::Trail; }));
+  const json rows = parts_rows(a.doc, s, *s.sheet(a.sheet), s.sheet_item(balloons["list"])->def)["rows"];
+  for (const auto& id : balloons["ids"]) {
+    const SheetItem& b = *s.sheet_item(id.get<std::string>());
+    const json m = measure_item(a.doc, s, *s.sheet(a.sheet), b, &f);
+    const Vec2 tip{m["tip"][0].get<double>() / f.scale + f.centre[0], m["tip"][1].get<double>() / f.scale + f.centre[1]};
+    double nearest = 1e9;
+    for (const Curve& c : g->curves) {
+      if (c.body < 0 || g->bodies[size_t(c.body)].node != b.refs[0].body) continue;
+      const auto pts = c.sample(0.01);
+      for (size_t k = 1; k < pts.size(); ++k) {
+        const Vec2 d{pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]};
+        const double l2 = d[0] * d[0] + d[1] * d[1];
+        const double t = l2 > 0 ? std::clamp(((tip[0] - pts[k - 1][0]) * d[0] + (tip[1] - pts[k - 1][1]) * d[1]) / l2, 0.0, 1.0) : 0;
+        nearest = std::min(nearest, std::hypot(pts[k - 1][0] + t * d[0] - tip[0], pts[k - 1][1] + t * d[1] - tip[1]));
+      }
+    }
+    CHECK(nearest < 0.05);  // on its part's linework as drawn apart
+    const json* row = row_of(s, rows, b.refs[0].body);
+    CHECK(row && m["number"] == std::to_string(row->value("number", 0)));
+  }
+  // The sheet as DXF: the trail lines on the Trail layer, drawn PHANTOM.
+  const auto dxf = std::filesystem::temp_directory_path() / (new_uuid() + ".dxf");
+  run(a.doc, "export", {{"format", "dxf"}, {"sheet", a.sheet}, {"out", dxf.string()}});
+  const std::string text = read_text_file(dxf);
+  std::filesystem::remove(dxf);
+  const size_t layer = text.find("  2\nTrail\n");
+  CHECK(layer != std::string::npos && text.find("  6\nPHANTOM\n", layer) < text.find("  0\n", layer + 1));
+  size_t on = 0;
+  for (size_t at = text.find("  8\nTrail\n"); at != std::string::npos; at = text.find("  8\nTrail\n", at + 1)) ++on;
+  CHECK(on > 0);
+  // Back to assembled: no explode left in the view, no trail lines.
+  run(a.doc, "sheet_edit", {{"target", a.front}, {"set", {{"explode", nullptr}}}});
+  const ViewSpec back = spec_of_front(s);
+  CHECK(!s.sheet_view(a.front)->def.value("source", json::object()).contains("explode"));
+  CHECK(back.offsets.empty() && back.trails.empty());
 }

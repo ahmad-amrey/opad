@@ -502,7 +502,8 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         return json{{"holes", list}};
       });
 
-  add({"sheet_edit", "Change a sheet, view or item: set fields as sheet_info shows them (null removes); a dimension is measured again; sheets also take template, template_file",
+  add({"sheet_edit", "Change a sheet, view or item: set fields as sheet_info shows them (null removes); a dimension is measured again; sheets also take template, "
+       "template_file; a base view takes explode (a saved exploded view's op id, null: assembled)",
        {{"doc", "path"}, {"target", "uuid"}, {"set", "object"}, {"planned", "bool - an item's set measured beforehand"}, {"by", "string"}}, true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
@@ -521,6 +522,18 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         if (set.contains("size") && set["size"].is_string())
           set["size"] = drawing::paper_size(set["size"].get<std::string>(), set.value("orientation", def["size"].value("w", 0.0) >= def["size"].value("h", 0.0) ? "landscape" : "portrait") == "landscape");
         set.erase("orientation");
+        if (target->type == "sheet_view" && set.contains("explode")) {  // a base view's state (UI-85): exploded as a saved view puts it, or assembled
+          if (def.value("kind", "") != "base") throw Error("sheet_edit: explode is a base view's; the views taken from it follow it");
+          json source = set.contains("source") ? set["source"] : def.value("source", json::object());
+          if (!source.is_object()) source = json::object();
+          const json& e = set["explode"];
+          if (e.is_null()) source.erase("explode");
+          else if (e.is_string()) source["explode"] = {{"view", e}};
+          else if (e.is_object() && e.contains("view")) source["explode"] = e;
+          else throw Error("sheet_edit: explode is a saved exploded view's op id, or null for the assembled model");
+          set.erase("explode");
+          set["source"] = source.empty() ? json(nullptr) : source;
+        }
         if (target->type == "sheet") {  // a built-in template is drawn for its paper: made again for a new one
           if (set.contains("template_file")) {
             json t = drawing::template_from_file(doc, path_from_utf8(set["template_file"].get<std::string>()));
