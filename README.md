@@ -210,7 +210,7 @@ wheel continues to zoom.
 Orbiting over geometry uses the surface under the pointer. Over empty space, OPAD pivots on the
 visible geometry nearest the pointer (a surface, or a drawing's or sketch's curve), never on empty
 air. Navigation-cube dragging and orientation clicks use the visible surface nearest the viewport
-center. Hidden and clipped geometry is excluded; an empty view retains its current camera focus. Settings > View cube
+center. Hidden and clipped geometry is excluded; an empty view retains its current camera focus. Preferences > Keyboard and mouse > View cube
 edges and corners turn the view (on by default) can make only the cube's six faces views.
 
 ## Desktop viewing and review
@@ -229,13 +229,13 @@ Viewing a DXF, DWG or SVG turns 2D mode on, whose grid follows the view without 
 current document. Properties show a body's material as the file named it, its source file and whether it is a
 solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the build compiles from the
 `third_party/libredwg` submodule and puts beside OPAD (an installed ODA File Converter is used instead only when
-Settings > Use the ODA File Converter for DWG is on, or `OPAD_USE_ODA=1`: ODA allows non-members non-commercial use only); the
+Preferences > Files > Use the ODA File Converter for DWG is on, or `OPAD_USE_ODA=1`: ODA allows non-members non-commercial use only); the
 DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)); text is shaped with HarfBuzz, so Arabic joins and right-to-left lines read in order, and AutoCAD shape fonts (`.shx`: txt, romans, isocp ...) are drawn in their own strokes when DWG TrueView's or AutoCAD's are installed or the font lies beside the drawing (else in a plain sans-serif). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
 A KiCad board (`.kicad_pcb`) opens as the board itself (its Edge.Cuts outline with the drills, thickness and solder-mask
 colour) and its footprints' 3D models, placed as KiCad places them and found as KiCad finds them (`${KIPRJMOD}`, the
 `KICAD*_3DMODEL_DIR` variables from the project, the environment or KiCad's settings, KiCad's install folders, then the
-folders in Settings > KiCad boards); a model that is not found shows as a translucent box over the footprint. Importing a
-board asks what to build (components, do-not-populate parts, vias, the origin, the boxes' height); Settings > KiCad
+folders in Preferences > Files > KiCad boards); a model that is not found shows as a translucent box over the footprint. Importing a
+board asks what to build (components, do-not-populate parts, vias, the origin, the boxes' height); Preferences > Files > KiCad
 boards keeps those choices for opening boards too. KiCad's model libraries are
 not part of OPAD: when a board names models of KiCad's library that are not installed, OPAD offers to download them from
 the library (gitlab.com/kicad/libraries/kicad-packages3D, CC-BY-SA 4.0 with KiCad's design exception) into your user

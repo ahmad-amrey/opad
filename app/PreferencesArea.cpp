@@ -31,6 +31,7 @@
 #include "DesignController.hpp"
 #include "FileAssociations.hpp"
 #include "I18n.hpp"
+#include "KicadBoards.hpp"
 #include "Motion.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
@@ -292,6 +293,9 @@ class PreferencesArea : public AreaController {
     form.check("files/viewerMode", tr("Open other formats read-only (viewer mode)"), true, [this](bool on) { services().document()->viewerOpens = on; });
     form.note(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
     if (associations::supported()) form.button(tr("File types…"), [this] { FileTypesDialog(services().window()).exec(); }, "files/types");
+    if (QAction* oda = action("files.useOda")) form.option(oda, QString(oda->text()).remove('&'));  // asks for ODA's terms first
+    // What a KiCad board builds, where its footprints' 3D models are looked for, downloads (read at the next open).
+    form.button(tr("KiCad boards…"), [this] { KicadDialog(services().window(), false).exec(); }, "files/kicad");
     form.section(tr("Tessellation cache"), tr("Meshes of files opened before, so they open faster next time. Clearing it is safe."));
     QLabel* where = form.note(tr("Measuring…"));
     where->setObjectName("files/cacheInfo");
@@ -359,6 +363,7 @@ class PreferencesArea : public AreaController {
       QObject::connect(radio, &QRadioButton::toggled, a, [a](bool on) { if (on && !a->isChecked()) a->trigger(); });
       QObject::connect(a, &QAction::toggled, radio, [radio](bool on) { if (on) radio->setChecked(true); });
     }
+    if (QAction* cube = action("view.cubeEdgesCorners")) form.option(cube, QString(cube->text()).remove('&'));
     form.section(tr("Selection"));
     form.option(action("select.through"), tr("Select through objects"));
     form.section(tr("Keyboard"));

@@ -62,7 +62,7 @@ AppDocument::~AppDocument() { *m_alive = false; }
 
 opad::KicadOptions AppDocument::kicadOptions() {
   opad::KicadOptions o;
-  QSettings s;  // Settings > KiCad boards (KicadDialog)
+  QSettings s;  // Preferences > Files > KiCad boards (KicadDialog)
   for (const QString& dir : s.value("kicad/modelDirs").toStringList())
     if (!dir.trimmed().isEmpty()) o.model_dirs.push_back(fsPath(dir.trimmed()));
   o.components = s.value("kicad/components", true).toBool();

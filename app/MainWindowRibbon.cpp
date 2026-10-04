@@ -18,7 +18,6 @@
 #include "I18n.hpp"
 #include "Preferences.hpp"
 #include "Icons.hpp"
-#include "KicadBoards.hpp"
 #include "opad/design/feature.hpp"
 
 void MainWindow::buildToolsActions() {
@@ -253,7 +252,6 @@ void MainWindow::buildRibbon() {
   settings->addAction(action("tools.shortcuts"));
   settings->addSeparator();
   settings->addAction(action("view.dark"));
-  settings->addAction(action("view.cubeEdgesCorners"));
   QMenu* navMenu = settings->addMenu(tr("Navigation preset"));
   for (QAction* a : m_actions) if (a->objectName().startsWith("nav.")) navMenu->addAction(a);
   QMenu* panels = settings->addMenu(tr("Panels"));
@@ -271,10 +269,9 @@ void MainWindow::buildRibbon() {
   odaInfo.keywords = {"DWG", "ODA", "converter", "LibreDWG"};
   auto* oda = addCommand(odaInfo, [] {});
   oda->setChecked(m_settings.value("files/useOda", false).toBool());
-  settings->addAction(oda);
   connect(oda, &QAction::toggled, this, [this, oda](bool on) { legal::setUseOda(this, oda, on); });
-  // KiCad boards: what is built, where footprints' 3D models are looked for, downloads (read at the next open).
-  settings->addAction(tr("KiCad boards…"), this, [this] { KicadDialog(this, false).exec(); });
+  // The ODA switch, KiCad boards and the view cube's edges and corners are set once: Preferences (Files; Keyboard and mouse),
+  // so the gear menu keeps its few everyday entries (UI-110).
   m_ribbon->setSettingsMenu(settingsAction, settings);
   auto* host = new QToolBar(tr("Ribbon"), this);
   host->setObjectName("ribbonHost");
