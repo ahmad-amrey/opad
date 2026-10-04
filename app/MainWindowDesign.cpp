@@ -113,6 +113,8 @@ void MainWindow::buildDesign() {
     connect(form, &FeaturePanel::contentResized, m_featurePanel, &ToolPanel::requestContentFit);
   }
   m_design->setPanel(m_featurePanel, [this](ToolPanel* p) { openPanel(p); });
+  // Esc over the panel is Esc in the view: a primitive being placed steps back a stage (TODO 11 P1), else the feature closes.
+  m_featurePanel->setEscapeHandler([this] { if (!m_design->escape()) m_featurePanel->hide(); });
   m_design->setCurrentComponent([this] {
     if (!m_doc->activeComponent().empty()) return m_doc->activeComponent();  // UI-33
     const auto ids = m_browser->selectedIds();
