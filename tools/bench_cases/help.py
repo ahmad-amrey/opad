@@ -20,6 +20,11 @@ def coach(root, document):
     return document("coach")
 
 
+# A remapped keyboard (TODO 11 wave 3, help audit §6.3 test 6): the help must show these keys, never the defaults. Clear
+# measurement's saved key is dropped (Esc is fixed).
+REMAPPED = ("[shortcuts]\nview.fit=Ctrl+Alt+F\ninspect.pin=Ctrl+Alt+P\nhelp.current=Ctrl+F1\nhelp.shortcuts=Ctrl+Shift+K\n"
+            "tools.commands=Ctrl+Space\nselect.faces=Ctrl+Alt+2\nview.home=\nview.unisolate=\ninspect.clear=Q\n")
+
 CASES = [
     # UI-106: help for every command, the rich hover card on ribbon buttons (English, then Arabic right to left).
     ("richtip", "box", {"OPAD_BENCH_RICHTIP": "{prefix}"}),
@@ -75,4 +80,9 @@ CASES = [
     # key runs it, Esc goes back; the window's one-key shortcuts wait meanwhile.
     ("keytips", "box", {"OPAD_BENCH_KEYTIPS": "{prefix}"}),
     ("keytips-ar", "box", {"OPAD_BENCH_KEYTIPS": "{prefix}", "OPAD_LANG": "ar"}),
+    # TODO 11 wave 3: every help surface shows the user's keys (card, palette, Tool guide, cheat sheet, lessons, coach
+    # card, clip keys and captions), Help for this tool's key expands the card, and a change in the shortcut editor
+    # shows at once; right to left the caps keep their order.
+    ("keyhelp", "box", {"OPAD_BENCH_KEYHELP": "{prefix}"}, REMAPPED),
+    ("keyhelp-ar", "box", {"OPAD_BENCH_KEYHELP": "{prefix}", "OPAD_LANG": "ar"}, REMAPPED),
 ]
