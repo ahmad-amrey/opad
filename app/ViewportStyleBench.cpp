@@ -4,7 +4,7 @@
 // and asks for no zoom refinement; in Hidden line the faces take the background's colour and a curved body is outlined where
 // it turns away (no edge lies there: the silhouette), where Shaded + edges fills it with its colour. Hidden edges visible
 // draws every edge Hidden line draws, solid (a polyline drawn as every other segment came out dashed), outlines the part as
-// Hidden line does and adds only dim dashes.
+// Hidden line does and adds only dim dashes; Shaded + edges outlines the part in the edges' colour where Shaded ends.
 // <prefix>.<style>.png.
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -136,6 +136,31 @@ bool Viewport::benchStyles(const QString& prefix, const std::function<void(const
     trigger("view.edges");
     waitUntil(settle, 60000);
     require(!edgeOverlayShown(), "leaving the style removes its edges");
+    // Silhouettes in Shaded + edges, seen from the front on a white background: the side where no edge lies is outlined in
+    // the edges' colour (dark) beyond where Shaded ends, the pixels across it darker than in Shaded.
+    const int scene = m_sceneBackground;
+    setSceneBackground(2);
+    m_view->SetProj(V3d_Yneg);
+    m_view->FitAll(fitBounds(), 0.1, Standard_False);
+    trigger("view.shaded");
+    waitUntil(settle, 60000);
+    int plainSide = -1, outlinedSide = -1;
+    const QImage plain = shot("shaded-white");
+    judge(plain, plainSide);
+    trigger("view.edges");
+    waitUntil(settle, 60000);
+    const QImage outlined = shot("edges-white");
+    judge(outlined, outlinedSide);
+    auto darkness = [plainSide](const QImage& image) {
+      int sum = 0;
+      for (int x = std::max(0, plainSide - 3); x <= plainSide + 1; ++x) sum += distance(image.pixel(x, image.height() / 2), qRgb(255, 255, 255));
+      return sum;
+    };
+    const int plainDark = darkness(plain), outlinedDark = darkness(outlined);
+    require(outlinedBodies() == 1 && plainSide > 0 && outlinedSide >= 0 && outlinedSide < plainSide && outlinedDark > plainDark + 200,
+            QString("Shaded + edges outlines the part where it turns away (from x = %1 where Shaded starts at %2, %3 darker across it)")
+                .arg(outlinedSide).arg(plainSide).arg(outlinedDark - plainDark));
+    setSceneBackground(scene);
   }
   return all;
 }

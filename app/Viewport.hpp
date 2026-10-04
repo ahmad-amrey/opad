@@ -434,6 +434,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void degradeWhileNavigating();  // from every redraw: the camera moved
   void restoreQuality();
   void applyQuality();  // the rendering parameters of m_renderQuality, lowered while m_degraded
+  void outlineBodies();  // silhouettes in Shaded + edges, none while m_degraded (only the flag: nothing recomputed)
   void updateDepthBias();
   bool m_twoDimensional = false;
   Handle(Graphic3d_Camera) m_threeDimensionalCamera;
@@ -576,6 +577,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void clearEdgeOverlay();
  public:
   bool edgeOverlayShown() const { return !m_edgesSeen.IsNull(); }  // benches
+  int outlinedBodies() const;  // benches: bodies drawn with their silhouettes
  private:
   void activateSelection(const Handle(AIS_Shape)& ais);
   bool drawingLayer(const Handle(AIS_InteractiveObject)& ais) const;  // a displayed drawing2d body (picked whole in the Face filter)

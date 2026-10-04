@@ -1,8 +1,9 @@
 // OPAD_BENCH_ORBITFPS=<prefix> (UI-45): adaptive quality while navigating, in Studio quality. One light casts shadows (the
 // headlight's fell out of sight and cost a pass). An orbit drag through the view's mouse handlers (the preset's orbit
 // gesture): on a model whose full frame takes kSmoothFrameMs or more the frames while it moves are drawn at 1.0x resolution
-// without shadows, faster than the still frame; once the camera has been still the quality is full again. A light model is
-// never lowered; with the setting off nothing is. Logs the frames per second still and moving.
+// without shadows and without the silhouettes of Shaded + edges, faster than the still frame; once the camera has been still
+// the quality is full again. A light model is never lowered; with the setting off nothing is. Logs the frames per second
+// still and moving.
 // <prefix>.moving.png, <prefix>.still.png.
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -63,11 +64,25 @@ bool Viewport::benchOrbitFps(const QString& prefix) {
     m_view->ToPixMap(image, options);
     return t.elapsed();
   };
+  const int outlined = outlinedBodies();  // Shaded + edges, the default style: every body
+  require(m_style != Style::ShadedEdges || outlined == int(m_items.size()), QString("Shaded + edges outlines every body (%1 of %2)").arg(outlined).arg(m_items.size()));
   for (int i = 0; i < 3; ++i) frame();  // shaders, shadow maps
   std::vector<qint64> still;
   for (int i = 0; i < 5; ++i) still.push_back(frame());
   std::sort(still.begin(), still.end());
   const qint64 stillMs = still[still.size() / 2];
+  if (m_style == Style::ShadedEdges) {  // what the silhouettes cost a still frame: each closed body's back faces drawn again
+    m_style = Style::Shaded;
+    outlineBodies();
+    m_view->Invalidate();
+    std::vector<qint64> bare;
+    for (int i = 0; i < 5; ++i) bare.push_back(frame());
+    std::sort(bare.begin(), bare.end());
+    m_style = Style::ShadedEdges;
+    outlineBodies();
+    m_view->Invalidate();
+    trace::log(QString("bench: orbit fps: a still frame takes %1 ms with silhouettes, %2 ms without").arg(stillMs).arg(bare[bare.size() / 2]));
+  }
   m_fullFrameMs = stillMs;
   const bool heavy = stillMs >= kSmoothFrameMs;
   // An orbit drag: the preset's orbit gesture (Fusion: Shift and the middle button), 30 moves of 6 px, a frame after each.
@@ -79,40 +94,42 @@ bool Viewport::benchOrbitFps(const QString& prefix) {
     };
     send(QEvent::MouseButtonPress, at, Qt::MiddleButton, Qt::MiddleButton);
     std::vector<qint64> moving;
-    int lowered = 0;
+    int lowered = 0, outlines = 0;
     float scale = 0;
     bool shadows = true;
     for (int i = 1; i <= 30; ++i) {
       send(QEvent::MouseMove, at + QPointF(6 * i, 2 * i), Qt::NoButton, Qt::MiddleButton);
+      if (!degraded()) m_fullFrameMs = stillMs;  // the hidden window's own redraw times nothing that is drawn
       paintEvent(nullptr);  // the controller moves the camera, the view lowers its quality (or not)
       moving.push_back(frame());
       lowered += degraded();
       if (i == 15) {
         scale = m_view->RenderingParams().RenderResolutionScale;
         shadows = m_view->RenderingParams().IsShadowEnabled;
+        outlines = outlinedBodies();
         if (shoot) grabImage().save(prefix + ".moving.png");
       }
     }
     send(QEvent::MouseButtonRelease, at + QPointF(180, 60), Qt::MiddleButton, Qt::NoButton);
     std::sort(moving.begin() + 1, moving.end());  // the first move's frame is the one that finds the model heavy
-    return std::make_tuple(moving[1 + (moving.size() - 1) / 2], lowered, scale, shadows);
+    return std::make_tuple(moving[1 + (moving.size() - 1) / 2], lowered, scale, shadows, outlines);
   };
-  const auto [movingMs, lowered, scale, shadows] = drag(true);
+  const auto [movingMs, lowered, scale, shadows, outlines] = drag(true);
   trace::log(QString("bench: orbit fps: still %1 ms a frame (%2 fps), moving %3 ms (%4 fps); a full frame took %5 ms")
                  .arg(stillMs).arg(stillMs > 0 ? 1000.0 / stillMs : 1000.0, 0, 'f', 1).arg(movingMs).arg(movingMs > 0 ? 1000.0 / movingMs : 1000.0, 0, 'f', 1)
                  .arg(fullFrameMs()));
   if (heavy) {
-    require(lowered >= 25 && scale == 1.0f && !shadows,
-            QString("the moving frames are drawn lower (%1 of 30; resolution %2x, shadows %3)").arg(lowered).arg(scale).arg(shadows ? "on" : "off"));
+    require(lowered >= 25 && scale == 1.0f && !shadows && outlines == 0,
+            QString("the moving frames are drawn lower (%1 of 30; resolution %2x, shadows %3, %4 bodies outlined)").arg(lowered).arg(scale).arg(shadows ? "on" : "off").arg(outlines));
     require(movingMs < stillMs || movingMs <= kSmoothFrameMs,
             QString("they are faster than the still frame or smooth (%1 ms against %2 ms)").arg(movingMs).arg(stillMs));
   } else {
-    require(lowered == 0, QString("a light model is never drawn lower (%1 of 30 moving frames were)").arg(lowered));
+    require(lowered == 0 && outlines == outlined, QString("a light model is never drawn lower (%1 of 30 moving frames were, %2 of %3 bodies outlined)").arg(lowered).arg(outlines).arg(outlined));
   }
   const bool restored = waitUntil([this] { return !degraded(); }, 2000);
-  require(restored && m_view->RenderingParams().RenderResolutionScale == 1.25f && m_view->RenderingParams().IsShadowEnabled,
-          QString("still, it is drawn at full quality again (resolution %1x, shadows %2)").arg(m_view->RenderingParams().RenderResolutionScale)
-              .arg(m_view->RenderingParams().IsShadowEnabled ? "on" : "off"));
+  require(restored && m_view->RenderingParams().RenderResolutionScale == 1.25f && m_view->RenderingParams().IsShadowEnabled && outlinedBodies() == outlined,
+          QString("still, it is drawn at full quality again (resolution %1x, shadows %2, %3 bodies outlined)").arg(m_view->RenderingParams().RenderResolutionScale)
+              .arg(m_view->RenderingParams().IsShadowEnabled ? "on" : "off").arg(outlinedBodies()));
   const QImage image = grabImage().convertToFormat(QImage::Format_RGB32);
   image.save(prefix + ".still.png");
   // The model is drawn: with only the overhead light casting shadows after a headlight that casts none, OCCT drew no face.
@@ -126,8 +143,9 @@ bool Viewport::benchOrbitFps(const QString& prefix) {
   const double share = 100.0 * drawn / std::max(1, (image.width() / 4) * (image.height() / 4));
   require(share > 3, QString("the model is drawn in Studio (%1% of the frame off the background)").arg(share, 0, 'f', 1));
   setAdaptiveQuality(false);
-  const auto [offMs, offLowered, offScale, offShadows] = drag(false);
-  require(offLowered == 0 && offScale == 1.25f && offShadows, QString("with the setting off nothing is lowered (%1 frames, %2 ms a frame)").arg(offLowered).arg(offMs));
+  const auto [offMs, offLowered, offScale, offShadows, offOutlines] = drag(false);
+  require(offLowered == 0 && offScale == 1.25f && offShadows && offOutlines == outlined,
+          QString("with the setting off nothing is lowered (%1 frames, %2 ms a frame, %3 bodies outlined)").arg(offLowered).arg(offMs).arg(offOutlines));
   setAdaptiveQuality(true);
   myUI.Reset();
   return all;

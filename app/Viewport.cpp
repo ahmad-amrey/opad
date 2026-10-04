@@ -561,6 +561,37 @@ void Viewport::twoDimensionalHint(const QPoint& global) {
 }
 
 // ---------------------------------------------------------------- display styles (F19)
+namespace {
+// Silhouettes (UI-48): a closed body outlined in its edges' colour where it turns away from the eye, where no edge lies
+// (OCCT's outline pass: its back faces drawn again a pixel further out). The flag is read as each frame is drawn, so turning
+// it on or off recomputes nothing. Translucent and clipped bodies are drawn without culling, so never outlined.
+bool outline(const Handle(AIS_Shape)& ais, bool on, const Quantity_Color* edge) {
+  const Handle(Prs3d_Drawer)& d = ais->Attributes();
+  if (!d->HasOwnShadingAspect()) return false;  // the context's default, shared by every body that has none
+  const Handle(Graphic3d_AspectFillArea3d)& aspect = d->ShadingAspect()->Aspect();
+  const bool changed = bool(aspect->ToDrawSilhouette()) != on || (edge && !aspect->EdgeColor().IsEqual(*edge));
+  aspect->SetDrawSilhouette(on);
+  if (edge) {
+    aspect->SetEdgeColor(*edge);
+    aspect->SetEdgeWidth(d->FaceBoundaryAspect()->Aspect()->Width());  // as wide as the edges
+  }
+  return changed;
+}
+bool outline(const Handle(AIS_Shape)& ais, bool on, const Quantity_Color& edge) { return outline(ais, on, &edge); }
+}  // namespace
+
+void Viewport::outlineBodies() {
+  const bool on = m_style == Style::ShadedEdges && !m_degraded;
+  for (const auto& [id, item] : m_items) outline(item.ais, on, nullptr);
+}
+
+int Viewport::outlinedBodies() const {
+  return int(std::count_if(m_items.begin(), m_items.end(), [](const auto& item) {
+    const Handle(Prs3d_Drawer)& d = item.second.ais->Attributes();
+    return d->HasOwnShadingAspect() && d->ShadingAspect()->Aspect()->ToDrawSilhouette();
+  }));
+}
+
 bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   Handle(Prs3d_Drawer) d = ais->Attributes();
   // A drawing has nothing behind its lines. In Hidden edges visible the edges are the overlay's (ViewportEdges.cpp), save a
@@ -582,6 +613,7 @@ bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
   else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
   if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull()) changed = body->setHiddenLine(hidden, occ(backgroundColor()), occ(edge)) || changed;
+  if (outline(ais, m_style == Style::ShadedEdges && !m_degraded, occ(edge))) ais->SynchronizeAspects();
   if (changed) ais->SetToUpdate(AIS_Shaded);
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
   return changed;

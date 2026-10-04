@@ -103,6 +103,7 @@ void Viewport::setRenderQuality(int level) {
   p.NbMsaaSamples = rayTracing ? 0 : std::min(4, m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa));
   if (m_renderQuality == 2 && !rayTracing) emit hoverChanged(tr("Ray tracing unavailable on this driver; using Studio rendering"));
   applyQuality();
+  outlineBodies();  // put back if it was lowered
   p.ShadingModel = m_renderQuality == 0 ? Graphic3d_TypeOfShadingModel_Unlit : Graphic3d_TypeOfShadingModel_Phong;
   p.IsReflectionEnabled = false;
   p.IsAntialiasingEnabled = rayTracing;
@@ -140,9 +141,11 @@ void Viewport::degradeWhileNavigating() {
   if (m_degraded) return m_qualityTimer.start();
   const bool navigating = PressedMouseButtons() != Aspect_VKeyMouse_NONE || (!myViewAnimation.IsNull() && !myViewAnimation->IsStopped()) ||
                           m_trackpadMode != TrackpadMode::None || (m_wheelClock.isValid() && m_wheelClock.elapsed() < 300);
-  if (!m_adaptive || m_renderQuality == 0 || m_fullFrameMs < kSmoothFrameMs || !navigating) return;
+  // Draft has nothing to lower but the silhouettes of Shaded + edges.
+  if (!m_adaptive || (m_renderQuality == 0 && m_style != Style::ShadedEdges) || m_fullFrameMs < kSmoothFrameMs || !navigating) return;
   m_degraded = true;
   applyQuality();
+  outlineBodies();
   m_qualityTimer.start();
   if (trace::enabled()) trace::log(QStringLiteral("quality: lowered while navigating (a full frame took %1 ms)").arg(m_fullFrameMs));
 }
@@ -152,6 +155,7 @@ void Viewport::restoreQuality() {
   if (!m_degraded || !m_initialised) return;
   m_degraded = false;
   applyQuality();
+  outlineBodies();
   m_view->Invalidate();
   requestRedraw();
   if (trace::enabled()) trace::log(QStringLiteral("quality: full again"));
