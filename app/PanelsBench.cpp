@@ -1,8 +1,9 @@
-// OPAD_BENCH_PANELS=<prefix> (TODO 11 wave 3, help audit P9): the Annotations panel does what its guide says. On a box
-// with four notes (pinned to the body, a face, an edge and a point): a click on a card lights up exactly what its note is
-// pinned to (the face's outline lies inside the body's, an edge, a point ringed), rings the card as the current one and
-// leaves the selection as it was; another selection, a click in the view, Esc closing the panel and a note being written
-// put it out; a note on a hidden body says so. <prefix>.face.png: the view with the face lit and the panel.
+// OPAD_BENCH_PANELS=<prefix> (TODO 11 wave 3, help audit P9): the Annotations panel and Reset layout do what their guides
+// say. On a box with four notes (pinned to the body, a face, an edge and a point): a click on a card lights up exactly what
+// its note is pinned to (the face's outline lies inside the body's, an edge, a point ringed), rings the card as the current
+// one and leaves the selection as it was; another selection, a click in the view, Esc closing the panel and a note being
+// written put it out; a note on a hidden body says so. Reset layout brings the browser and the timeline back with their
+// commands ticked. <prefix>.face.png: the view with the face lit and the panel.
 #include <QApplication>
 #include <QDockWidget>
 #include <QImage>
@@ -16,6 +17,7 @@
 
 #include "AnnotationEditor.hpp"
 #include "BenchRegistry.hpp"
+#include "BrowserOverlay.hpp"
 #include "BrowserPanel.hpp"
 #include "Drawing2DBench.hpp"
 #include "Jobs.hpp"
@@ -147,9 +149,18 @@ OPAD_BENCH(OPAD_BENCH_PANELS, panels) {
     require(true, "a note being written takes its place (it asks for its own target)");
     press(st->onFace);
   }, [=, &w] { return !w.m_cardTarget && lit().isNull(); });
-  script->add("done", [=, &w] {
+  script->add("Reset layout", [=, &w] {
     require(true, "a card clicked while a note is written leaves the note's target to it");
     w.m_annotationEditor->cancel();
+    w.action("panel.browser")->trigger();
+    w.action("panel.timeline")->trigger();
+    require(!w.action("panel.browser")->isChecked() && !w.m_browserOverlay->isVisible() && !w.action("panel.timeline")->isChecked() && !w.m_timelineDock->isVisible(),
+            "Browser and Timeline hidden by their commands");
+    w.action("panel.reset")->trigger();
+  }, [&w] { return w.m_timelineDock->isVisible(); });
+  script->add("done", [=, &w] {
+    require(w.action("panel.browser")->isChecked() && w.m_browserOverlay->isVisible() == w.isVisible() && w.action("panel.timeline")->isChecked(),
+            "Reset layout brings the browser and the timeline back with their commands ticked");
   });
   bench2d::Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   return true;

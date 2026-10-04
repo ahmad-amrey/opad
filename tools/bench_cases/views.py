@@ -52,7 +52,7 @@ CASES = [
     # <prefix>.view.png, <prefix>.finding.png, <prefix>.moved.png.
     ("print-check-thin", thin_fin, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
     # P9 on a box with four notes: a card in Annotations lights up exactly what its note is pinned to (body, face, edge,
-    # point) and selects nothing; a selection, a click in the view, Esc and a note being written put it out.
-    # <prefix>.face.png.
+    # point) and selects nothing; a selection, a click in the view, Esc and a note being written put it out; Reset layout
+    # brings the browser and the timeline back with their commands ticked. <prefix>.face.png.
     ("panels", "box", {"OPAD_BENCH_PANELS": "{prefix}"}),
 ]

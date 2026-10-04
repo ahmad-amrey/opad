@@ -134,7 +134,10 @@ void MainWindow::resetLayout() {
     d->setFloating(false);
     d->show();
   }
-  m_browserOverlay->show();
+  // The browser comes back with its command ticked again (Browser stayed unticked, so a document opened next hid it once
+  // more); without a document it shows when one opens, as at the start.
+  action("panel.browser")->setChecked(true);
+  m_browserOverlay->setVisible(m_doc->hasDocument);
   m_browserOverlay->place();
   addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
   setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
