@@ -207,10 +207,14 @@ class HelpArea : public AreaController {
 
   // The clip a panel's own guide plays (ToolGuide), when it has one: what the user does in it now, which may be another
   // part of the command than its card's clip shows (Import's card: a file joining the design; its drawing placer: the
-  // drawing placed on a plane, TODO 11 help audit WP10).
+  // drawing placed on a plane, TODO 11 help audit WP10). Only a guide on the page the panel shows: the "tool" panel keeps
+  // the last measure's steps (and their guide) on a hidden page while it shows the interference or print check.
   static QString guideClip(const ToolPanel* panel) {
-    const auto* guide = panel->findChild<ToolGuide*>();
-    return guide && clips::has(guide->command()) ? guide->command() : QString();
+    for (const ToolGuide* guide : panel->findChildren<ToolGuide*>()) {
+      const QWidget* holder = guide->parentWidget();  // the guide itself hides when switched off: its holder tells the page
+      if (clips::has(guide->command()) && holder && (holder == panel || holder->isVisibleTo(panel))) return guide->command();
+    }
+    return {};
   }
   // Help for this tool: the clip the running command's open panel plays.
   QString runningClip(const QString& id) const {

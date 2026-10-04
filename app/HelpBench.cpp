@@ -800,6 +800,9 @@ OPAD_BENCH(OPAD_BENCH_PANELHELP, panelhelp) {
     w.startCheck(true);
     QString at = ask(w.m_toolPanel);
     check(at == "inspect.printcheck", "the same panel in the print check: its guide (" + at + ")");
+    auto* reference = w.findChild<CommandReference*>();
+    const QString clip = reference ? reference->preview()->clip()->clip() : QString();
+    check(clip == "inspect.printcheck", "with the print check's clip, not the last measure's (" + clip + ")");
     w.endCheck();
     w.m_toolPanel->hide();
     w.m_design->startFeature("extrude");
