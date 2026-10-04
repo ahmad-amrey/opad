@@ -171,7 +171,7 @@ void Viewport::setSceneBackground(int style) {
   if (m_sceneBackground == 1)
     m_view->SetBgGradientColors(occ(QColor("#c7c8c9")), occ(QColor("#66696b")), Aspect_GradientFillMethod_Vertical, false);
   else m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
-  if (m_style == Style::HiddenLine) setStyle(m_style);  // its faces are drawn in the background's colour
+  if (m_style == Style::HiddenLine || m_style == Style::HiddenEdges) setStyle(m_style);  // faces in the background's colour
   redrawScene();
 }
 

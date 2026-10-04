@@ -133,6 +133,17 @@ bool Viewport::benchStyles(const QString& prefix, const std::function<void(const
             QString("hidden edges visible: every edge in sight is drawn solid as in Hidden line (%1 of %2 pixels)").arg(kept).arg(seen));
     require(edgeOverlayShown() && added > 50 && brighter < added / 10,
             QString("hidden edges visible: the edges behind show, dim (%1 pixels more than in Hidden line, %2 of them bright)").arg(added).arg(brighter));
+    // Another background under it: the faces take that one (they kept the old: dark patches on white).
+    m_view->SetProj(V3d_Yneg);
+    m_view->FitAll(fitBounds(), 0.1, Standard_False);
+    const int before = m_sceneBackground;
+    setSceneBackground(before == 2 ? 3 : 2);
+    waitUntil(settle, 60000);
+    int side = -1;
+    const int onOther = judge(shot("hidden-edges-background"), side);
+    require(onOther < 30 && side > 0, QString("hidden edges visible on another background: the faces take its colour (%1 off it)").arg(onOther));
+    setSceneBackground(before);
+    waitUntil(settle, 60000);
     trigger("view.edges");
     waitUntil(settle, 60000);
     require(!edgeOverlayShown(), "leaving the style removes its edges");
