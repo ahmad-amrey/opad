@@ -41,6 +41,8 @@ const json* row_of(const Scene& scene, const json& rows, const std::string& node
 // A new parts list's record (sheet_item, without its id): the sheet's default BoM, standing on the title block (or in the
 // frame's bottom right corner), as wide as the block; numbers settled. args: sheet, bom, columns, at, grow. Workers.
 json plan_parts_list(const Document& doc, const Scene& scene, const json& args);
+// The columns a parts list without its own shows: item, qty, name, part_number, material.
+const json& parts_list_columns();
 // A new revision table's record: in the frame's top right corner, growing down. args: sheet, at, grow, width.
 json plan_revision_table(const Scene& scene, const json& args);
 

@@ -258,6 +258,8 @@ TopoDS_Edge edge_of(const Curve& c) {
 
 }  // namespace
 
+const json& parts_list_columns() { return default_columns(); }
+
 // ---------------------------------------------------------------- parts lists
 const SheetItem* parts_list_of(const Scene& scene, const Sheet& sheet, const std::string& list) {
   if (!list.empty())

@@ -505,5 +505,12 @@
   "A cutting line needs two points at least.": "يحتاج خط القطع إلى نقطتين على الأقل.",
   "Select the view to work on first.": "اختر أولًا المسقط المراد العمل عليه.",
   "its breaks overlap": "كسوره متداخلة",
-  "its crop box holds nothing of it": "مستطيل القص لا يحوي شيئًا منه"
+  "its crop box holds nothing of it": "مستطيل القص لا يحوي شيئًا منه",
+  "None: no mass without one": "لا شيء: لا كتلة بدونها",
+  "Material…": "المادة…",
+  "Select bodies or components first": "اختر أجسامًا أو مكونات أولًا",
+  "Other material…": "مادة أخرى…",
+  "Material: %1": "المادة: %1",
+  "Material cleared": "أُزيلت المادة",
+  "A column with each part's mass, from its material's density and its volume": "عمود بكتلة كل قطعة، من كثافة مادتها وحجمها"
 }

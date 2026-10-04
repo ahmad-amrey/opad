@@ -78,6 +78,7 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   QComboBox* axisBox() const { return m_axis; }
   QComboBox* listModeBox() const { return m_listMode; }
   QCheckBox* qtyBox() const { return m_qty; }
+  QCheckBox* massBox() const { return m_massColumn; }  // a parts list's Mass column (UI-140)
   QWidget* card() const;                              // the value card (shown while it has fields)
   std::vector<std::string> inputKeys() const;         // its fields now: offset, decimals, plus, minus, spacing, value
   QString inputText(const std::string& key) const;    // typed, else what the pointer or the bar gives
@@ -148,7 +149,7 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   QComboBox *m_typeBox = nullptr, *m_precision = nullptr, *m_tolBox = nullptr, *m_characteristic = nullptr, *m_material = nullptr, *m_process = nullptr,
             *m_axis = nullptr, *m_listMode = nullptr;
   QLineEdit *m_plus = nullptr, *m_minus = nullptr, *m_fit = nullptr, *m_text = nullptr, *m_letter = nullptr, *m_value = nullptr, *m_datums[3] = {nullptr, nullptr, nullptr};
-  QCheckBox *m_zone = nullptr, *m_qty = nullptr;
+  QCheckBox *m_zone = nullptr, *m_qty = nullptr, *m_massColumn = nullptr;
   QPushButton* m_done = nullptr;
   std::vector<std::pair<QWidget*, std::vector<Tool>>> m_fields;  // a field and the tools it belongs to
   std::vector<std::pair<QWidget*, std::vector<std::string>>> m_itemFields;  // a field and the annotation kinds it edits

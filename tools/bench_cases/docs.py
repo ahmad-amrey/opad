@@ -8,6 +8,10 @@ CASES = [
     ("drawings-browser", "empty", {"OPAD_BENCH_DRAWINGS": "{prefix}"}),
     # The area's commands and their places; the PART section and its dialog; File > Export bill of materials (UI-83, UI-140).
     ("bom", "empty", {"OPAD_BENCH_BOM": "{prefix}"}),
+    # Material (UI-140): the menu of library materials for the selection (context menu, Inspect, ribbons), one step that
+    # colours as the material (or not, remembered), Properties' material and mass, Undo, None; a parts list's Mass column
+    # ticked in its bar (preview, placed) and unticked on the selected list. <prefix>.properties.png.
+    ("materials", "empty", {"OPAD_BENCH_MATERIALS": "{prefix}"}),
     # A STEP's bill of materials in viewer mode; Part properties asks to save it as OPAD first.
     ("bom-viewer", "screw", {"OPAD_BENCH_BOM_OPEN": "{prefix}.png", "OPAD_BENCH_BOM_VIEWER": "1"}),
     # 2D views of solids from the Export dialog (DXF, SVG, PDF, PNG; UI-87), a sheet and a drawing from their rows (UI-86).

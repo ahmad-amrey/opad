@@ -37,6 +37,11 @@ class DocsArea : public AreaController {
 
   // From the PART section's link, the context menu or Inspect > Part properties: the bodies and components of `ids`.
   void editPartProperties(std::vector<std::string> ids);
+  // Material (UI-140): the library's materials for the selected bodies and components (the one they share checked), colour
+  // as the material (remembered, on by default), None, Other… (the dialog); a choice is one part_properties step. The
+  // command's menu, also a submenu of the selection's context menu and a menu button on the ribbons.
+  void materialMenu(const std::vector<std::string>& nodes, QMenu& menu);
+  void setMaterial(std::vector<std::string> nodes, const std::string& id);  // "" clears it
   void exportBom(std::vector<std::string> ids = {});  // File > Export bill of materials: the dialog, then where to
   // File > Document properties… (and the Drawing tab): the document's own title block fields, one part_properties step.
   void documentProperties();

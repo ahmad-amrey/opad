@@ -21,6 +21,7 @@
 #include "opad/drawing/annotate.hpp"
 #include "opad/drawing/paint.hpp"
 #include "opad/drawing/symbols.hpp"
+#include "opad/drawing/tables.hpp"
 
 using opad::json;
 using opad::drawing::Display;
@@ -347,6 +348,10 @@ void SheetAnnotator::buildBar() {
   m_listMode->setObjectName("annotate.listMode");
   m_listMode->setToolTip(tr("The assembly's own items, or every part once with its quantity in the whole product"));
   field(m_listMode, tr("Lists"), {Tool::PartsList}, {"parts_list"});
+  m_massColumn = new QCheckBox(tr("Mass"), m_bar);
+  m_massColumn->setObjectName("annotate.massColumn");
+  m_massColumn->setToolTip(tr("A column with each part's mass, from its material's density and its volume"));
+  field(m_massColumn, QString(), {Tool::PartsList}, {"parts_list"});
   m_qty = new QCheckBox(tr("Quantity"), m_bar);
   m_qty->setObjectName("annotate.qty");
   m_qty->setToolTip(tr("Writes how many of the part there are beside the balloon (4×)"));
@@ -373,6 +378,7 @@ void SheetAnnotator::buildBar() {
   connect(m_axis, &QComboBox::currentIndexChanged, this, [this] { fieldChanged("axis"); });
   connect(m_listMode, &QComboBox::currentIndexChanged, this, [this] { fieldChanged("listMode"); });
   connect(m_qty, &QCheckBox::toggled, this, [this] { fieldChanged("qty"); });
+  connect(m_massColumn, &QCheckBox::toggled, this, [this] { fieldChanged("massColumn"); });
   connect(m_zone, &QCheckBox::toggled, this, [this] { fieldChanged("zone"); });
   for (auto [e, key] : std::initializer_list<std::pair<QLineEdit*, const char*>>{
            {m_plus, "tol"}, {m_minus, "tol"}, {m_fit, "tol"}, {m_text, "text"}, {m_letter, "letter"}, {m_value, "value"}, {m_datums[0], "datums"}, {m_datums[1], "datums"}, {m_datums[2], "datums"}})
@@ -416,6 +422,8 @@ void SheetAnnotator::showFields() {
     const json bom = d.value("bom", json::object());
     m_listMode->setCurrentIndex(std::max(0, m_listMode->findData(QString::fromStdString(bom.is_object() ? bom.value("mode", "top") : "top"))));
     m_qty->setChecked(d.value("qty", false));
+    const json columns = d.value("columns", json());
+    m_massColumn->setChecked(columns.is_array() && std::find(columns.begin(), columns.end(), json("mass")) != columns.end());
   } else {
     m_title->setText(toolName(m_tool));
   }
@@ -487,6 +495,15 @@ void SheetAnnotator::fieldChanged(const char* key) {
   else if (k == "axis") set["axis"] = m_axis->currentData().toString() == "auto" ? "horizontal" : m_axis->currentData().toString().toStdString();
   else if (k == "zone") set["zone"] = m_zone->isChecked() ? json("diameter") : json(nullptr);
   else if (k == "qty") set["qty"] = m_qty->isChecked() ? json(true) : json(nullptr);
+  else if (k == "massColumn") {  // the list's columns with or without Mass, the others as they are
+    json columns = item->def.value("columns", json());
+    if (!columns.is_array() || columns.empty()) columns = opad::drawing::parts_list_columns();
+    json kept = json::array();
+    for (const auto& c : columns)
+      if (c != "mass") kept.push_back(c);
+    if (m_massColumn->isChecked()) kept.push_back("mass");
+    set["columns"] = kept;
+  }
   else if (k == "listMode") {
     json bom = item->def.value("bom", json::object());
     if (!bom.is_object()) bom = json::object();
@@ -659,7 +676,13 @@ json SheetAnnotator::args() const {
       break;
     case Tool::HoleCallout:
     case Tool::HoleTable: a["precision"] = precision; break;
-    case Tool::PartsList: a["bom"] = {{"mode", m_listMode->currentData().toString().toStdString()}}; break;
+    case Tool::PartsList:
+      a["bom"] = {{"mode", m_listMode->currentData().toString().toStdString()}};
+      if (m_massColumn->isChecked()) {
+        a["columns"] = opad::drawing::parts_list_columns();
+        a["columns"].push_back("mass");
+      }
+      break;
     case Tool::Balloon:
       if (m_qty->isChecked()) a["qty"] = true;
       break;
