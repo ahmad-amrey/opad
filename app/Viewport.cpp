@@ -357,6 +357,7 @@ void Viewport::initViewer() {
   setGrid(m_grid);
   setTwoDimensional(m_twoDimensional);
   sync();
+  if (std::exchange(m_originGuide, false)) setOriginGuide(true);  // asked for before the viewer existed
 }
 
 // ---------------------------------------------------------------- tokens
@@ -575,9 +576,13 @@ void Viewport::setStyle(Style s) {
 
 void Viewport::setGrid(bool on) {
   m_grid = on;
+  applyGrid();
+}
+
+void Viewport::applyGrid() {
   if (!m_initialised) return;
   updateGridExtent();
-  if (on) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
+  if (gridShown()) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
   else m_viewer->DeactivateGrid();
   redrawScene();
 }
@@ -640,7 +645,7 @@ Bnd_Box Viewport::benchGridBox() const {
 // gives at most 400 lines); its lines stay on world multiples of the spacing. Called from every redraw, so the test
 // whether anything changed comes first and is cheap.
 void Viewport::updateInfiniteGrid(bool force) {
-  if (!m_initialised || !m_grid) return;
+  if (!m_initialised || !gridShown()) return;
   const auto camera = m_view->Camera();
   const gp_XYZ size = camera->ViewDimensions();
   const double span = std::max(size.X(), size.Y());

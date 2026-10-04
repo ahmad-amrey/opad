@@ -62,6 +62,13 @@ struct BodyPrs {
   void buildEdgeGroups(const TopTools_IndexedMapOfShape& edges, const Bnd_Box& box);  // worker: edgeGroups and edgeShapes
   bool closed = false;                           // closed solid: back faces can be culled
   std::vector<gp_Pnt> drawingSegments; // sampled pairs for drawing-only orbit fallback
+  // The segments in runs lying near each other (by the Morton order of their middles), 256 a run, each run's box: the orbit
+  // pivot looks for the curve nearest the pointer run by run, nearest box first, instead of projecting every segment of a
+  // big drawing on every press (UI-51). segmentOrder holds segment numbers (pair i is drawingSegments[2i], [2i+1]).
+  struct SegmentRun { Bnd_Box box; size_t first = 0, count = 0; };
+  std::vector<uint32_t> segmentOrder;
+  std::vector<SegmentRun> segmentRuns;
+  void buildSegmentRuns();  // worker
   Bnd_Box box;                                   // of the prototype; spares Display() a pass over every vertex
   double deflection = 0;                         // chordal deflection the triangles were meshed with (mm)
   // Worker thread; needs triangulation. `drawingOnly` skips what only picking uses (circles, navigation BVH, curves):

@@ -182,4 +182,12 @@ CASES = [
     # click takes it; over an edge only edges are listed (no occluder faces); in the Distance tool a row is the pick.
     # <prefix>.menu.png, <prefix>.preview.png.
     ("select-other", fresh("select-other-empty"), {"OPAD_BENCH_SELECTOTHER": "{prefix}"}),
+    # The empty design document (UI-51): the Design workspace shows the origin's axes, its three planes (picked where they
+    # are) and the grid with its setting off, Review none of it; the XY plane picked first is where New sketch draws, the
+    # origin goes while the sketch is open and comes back when it closes empty, a body ends it. On that box Properties on a
+    # face and the section's Pick face measure on a worker. <prefix>.origin.png.
+    ("design-origin", fresh("design-origin-empty"), {"OPAD_BENCH_DESIGNORIGIN": "{prefix}"}),
+    # The orbit pivot of a press away from a drawing of 100,000 lines is found run by run in milliseconds and is the point a
+    # scan of every segment finds (UI-51). <prefix>.png.
+    ("orbit-pivot", lines_100k, {"OPAD_BENCH_ORBITPIVOT": "{prefix}"}),
 ]

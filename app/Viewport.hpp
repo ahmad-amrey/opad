@@ -158,6 +158,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_BIGDRAWING (ViewportDrawingBench.cpp): a drawing layer of 100,000 lines is picked in groups (UI-42): hover,
   // click, Ctrl+click, crossing and window boxes and selectRefs reach the right edges
   bool benchBigDrawing(const QString& prefix);
+  // OPAD_BENCH_ORBITPIVOT (ViewportOrbitBench.cpp): the pivot of a press away from a big drawing is found run by run, fast,
+  // and is the point a scan of every segment finds (UI-51)
+  bool benchOrbitPivot(const QString& prefix);
   // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
   // displayed last, in the rasterised qualities (UI-39)
   bool benchTransparency(const QString& prefix);
@@ -262,7 +265,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::shared_ptr<BodyPrs> presentation;  // drawn more solid (construction planes among faint origin planes)
   };
   void showCandidates(const std::vector<Candidate>& candidates);
-  void clearCandidates();
+  void clearCandidates();  // with the origin guide on, its planes come back
+  // The origin guide (UI-51, an empty design document): the origin's axes (X red, Y green, Z blue, labelled, never
+  // picked), its XY, XZ and YZ planes as candidates ({"base":"xy"}, ...) whenever nothing else shows
+  // candidates, and the grid whatever its setting says.
+  void setOriginGuide(bool on);
+  bool originGuide() const { return m_originGuide; }
   std::string hoveredCandidate() const;
   std::vector<std::string> selectedCandidates() const;  // in pick order
   // Makes the context selection exactly these (bodies, faces/edges/vertices by ordinal, candidates).
@@ -391,6 +399,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void applyGrid();  // shown when the setting or the origin guide asks for it
+  bool gridShown() const { return m_grid || m_originGuide; }
+  void showOriginPlanes();
+  bool m_originGuide = false, m_originPlanes = false;  // m_originPlanes: the candidates shown are the origin's
+  std::vector<Handle(AIS_InteractiveObject)> m_originAxes;
   void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
   // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images and a feature preview
   // (never the grid, gizmos, overlays or annotations); the default grid square when there is nothing (void if !fallback).

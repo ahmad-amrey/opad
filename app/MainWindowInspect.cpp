@@ -66,9 +66,23 @@ void MainWindow::buildInspectActions() {
 }
 
 // ---------------------------------------------------------------- inspect (F23)
+// The face is inspected on a worker (UI-51: inspect_ref walks the body); the plane is set when it answers.
 void MainWindow::sectionFromFace(const opad::Ref& face) {
-  try {
-    opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, face);
+  if (Job* old = std::exchange(m_sectionJob, nullptr)) old->cancel();
+  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  auto result = std::make_shared<opad::json>();
+  const auto generation = m_doc->generation;
+  m_sectionJob = m_jobs->async(tr("Section from the picked face"), [document, scene, face, result](Progress) {
+    *result = opad::inspect_ref(*document, *scene, face);
+  }, [this, result, generation](bool ok, const QString& error) {
+    m_sectionJob = nullptr;
+    if (generation != m_doc->generation || error == "cancelled") return;
+    if (!ok) {
+      if (trace::enabled()) trace::log(QStringLiteral("section from face failed: %1").arg(error));
+      return statusBar()->showMessage(i18n::t(error), 5000);
+    }
+    const opad::json& info = *result;
     if (!info.contains("normal") || !info.contains("center")) {
       if (trace::enabled()) trace::log(QStringLiteral("section from face: not planar (%1)").arg(QString::fromStdString(info.value("surface", "?"))));
       statusBar()->showMessage(tr("Section: that face is %1; pick a planar face").arg(QString::fromStdString(info.value("surface", "not planar"))), 5000);
@@ -80,10 +94,7 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
     m_section->setFromFace(o, n);
     m_section->setEnabled(true);
     statusBar()->showMessage(tr("Section plane set from the picked face (Shift+X flips it)"), 5000);
-  } catch (const std::exception& e) {
-    if (trace::enabled()) trace::log(QStringLiteral("section from face failed: %1").arg(QString::fromUtf8(e.what())));
-    statusBar()->showMessage(QString::fromUtf8(e.what()), 5000);
-  }
+  });
 }
 
 // ---------------------------------------------------------------- guided tools

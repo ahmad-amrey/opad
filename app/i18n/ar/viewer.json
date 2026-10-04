@@ -96,5 +96,9 @@
  "Select other": "تحديد عنصر آخر",
  "Under the pointer, nearest first": "تحت المؤشر، الأقرب أولًا",
  "Nearest under the pointer": "الأقرب تحت المؤشر",
- "Behind the one above": "خلف الذي فوقه"
+ "Behind the one above": "خلف الذي فوقه",
+ "%1 plane selected: New sketch draws on it": "تم تحديد المستوى %1: سيرسم الرسم الجديد عليه",
+ "Inspecting %1": "فحص %1",
+ "Section from the picked face": "مقطع من الوجه المختار",
+ "Snapping": "الالتقاط"
 }

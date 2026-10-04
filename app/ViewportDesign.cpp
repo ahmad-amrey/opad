@@ -5,6 +5,9 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 
 #include <AIS_AnimationCamera.hxx>
+#include <AIS_TextLabel.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepBndLib.hxx>
@@ -123,6 +126,7 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
   if (!m_initialised) return;
   for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
   m_candidates.clear();
+  m_originPlanes = false;
   markPickedPoints();
   for (const auto& c : candidates) {
     if (c.shape.IsNull()) continue;
@@ -173,11 +177,63 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
 }
 
 void Viewport::clearCandidates() {
-  if (!m_initialised || m_candidates.empty()) return;
-  for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
-  m_candidates.clear();
-  markPickedPoints();
-  redrawScene();
+  if (!m_initialised) return;
+  if (!m_candidates.empty()) {
+    for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
+    m_candidates.clear();
+    m_originPlanes = false;
+    markPickedPoints();
+    redrawScene();
+  }
+  if (m_originGuide) showOriginPlanes();  // nobody else shows candidates: the origin's planes again
+}
+
+// The origin's planes, a third of the grid's minimum square each way (the square an empty view frames).
+void Viewport::showOriginPlanes() {
+  const double size = 0.3 * std::max(100.0, m_gridExtentSetting);
+  std::vector<Candidate> planes;
+  for (const char* base : {"xy", "xz", "yz"})
+    planes.push_back({opad::json{{"base", base}}.dump(), BRepBuilderAPI_MakeFace(opad::design::frame_plane(opad::design::base_frame(base)), -size, size, -size, size).Face(), false});
+  showCandidates(planes);
+  m_originPlanes = true;
+}
+
+void Viewport::setOriginGuide(bool on) {
+  if (!m_initialised) m_originGuide = on;  // shown by initViewer
+  if (!m_initialised || on == m_originGuide) return;
+  m_originGuide = on;
+  for (const auto& o : m_originAxes) m_ctx->Remove(o, Standard_False);
+  m_originAxes.clear();
+  if (on) {
+    // The axes a quarter past the planes' edges, labelled at their tips (world sizes: they zoom with the planes).
+    const QColor colours[] = {m_tokens.red, m_tokens.green, m_tokens.dark ? QColor("#76b5ff") : QColor("#2067be")};
+    const double reach = 0.3 * std::max(100.0, m_gridExtentSetting) * 1.25;
+    for (int i = 0; i < 3; ++i) {
+      const gp_Dir axis(i == 0, i == 1, i == 2);
+      Handle(AIS_Shape) line = new AIS_Shape(BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 0).Translated(gp_Vec(axis) * reach)).Edge());
+      line->SetColor(occ(colours[i]));
+      line->SetWidth(2.5);
+      Handle(AIS_TextLabel) label = new AIS_TextLabel();
+      label->SetText(TCollection_ExtendedString(QString("XYZ"[i]).toUtf8().constData(), Standard_True));
+      label->SetPosition(gp_Pnt(0, 0, 0).Translated(gp_Vec(axis) * reach * 1.08));
+      label->SetColor(occ(colours[i]));
+      label->SetHeight(13 * displayScale());
+      for (const Handle(AIS_InteractiveObject)& o : {Handle(AIS_InteractiveObject)(line), Handle(AIS_InteractiveObject)(label)}) {
+        o->SetInfiniteState(Standard_True);  // Fit never frames it
+        o->SetZLayer(Graphic3d_ZLayerId_Top);
+        m_ctx->Display(o, 0, -1, Standard_False);  // never picked: no selection mode
+        m_originAxes.push_back(o);
+      }
+    }
+    if (m_candidates.empty()) showOriginPlanes();
+  } else if (m_originPlanes) {
+    for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
+    m_candidates.clear();
+    m_originPlanes = false;
+    markPickedPoints();
+  }
+  applyGrid();
+  if (trace::enabled()) trace::log(QStringLiteral("origin guide %1").arg(on ? "on" : "off"));
 }
 
 // Highlighting only recolours a marker, so in the candidates' own blue a picked point's ring looked like the others:

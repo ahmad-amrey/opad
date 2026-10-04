@@ -25,6 +25,7 @@
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <set>
@@ -335,6 +336,39 @@ TEST(big_drawing_layer_picks_its_lines_in_groups) {
                                         : std::set<int>{ordinal(20, 25), ordinal(20, 26)};
     CHECK(taken == want);
   }
+}
+
+// UI-51: a curve body's segments in runs of nearby ones (the orbit pivot's search): every segment in exactly one run, each
+// run's box holding its segments, the runs far smaller than the drawing.
+TEST(curve_segments_in_runs_of_nearby_ones) {
+  BRep_Builder builder;
+  TopoDS_Compound layer;
+  builder.MakeCompound(layer);
+  constexpr int columns = 60, rows = 40;  // 2,400 lines 1 mm long, 2 mm apart, added column by column
+  for (int i = 0; i < columns; ++i)
+    for (int j = 0; j < rows; ++j) builder.Add(layer, BRepBuilderAPI_MakeEdge(gp_Pnt(i * 2, j * 2, 0), gp_Pnt(i * 2 + 1, j * 2, 0)).Edge());
+  Bnd_Box bounds;
+  BRepBndLib::Add(layer, bounds);
+  const auto prs = BodyPrs::build(layer, bounds);
+  const size_t segments = prs->drawingSegments.size() / 2;
+  CHECK(segments >= size_t(columns * rows));
+  CHECK_EQ(prs->segmentOrder.size(), segments);
+  CHECK_EQ(prs->segmentRuns.size(), (segments + 255) / 256);
+  std::vector<int> seen(segments, 0);
+  double extents = 0;
+  for (const auto& run : prs->segmentRuns) {
+    for (size_t k = run.first; k < run.first + run.count; ++k) {
+      const size_t i = prs->segmentOrder[k];
+      ++seen[i];
+      for (const gp_Pnt& p : {prs->drawingSegments[2 * i], prs->drawingSegments[2 * i + 1]}) CHECK(!run.box.IsOut(p));
+    }
+    extents += std::sqrt(run.box.SquareExtent());
+  }
+  CHECK(std::all_of(seen.begin(), seen.end(), [](int n) { return n == 1; }));
+  // A run is a patch of the drawing (Morton order), not a stripe across it in the order the lines were added.
+  const double mean = extents / prs->segmentRuns.size();
+  std::printf("runs: %zu, mean diagonal %.1f of the drawing's %.1f\n", prs->segmentRuns.size(), mean, std::sqrt(bounds.SquareExtent()));
+  CHECK(mean < 0.5 * std::sqrt(bounds.SquareExtent()));
 }
 
 CHECK_MAIN()

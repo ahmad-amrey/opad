@@ -112,6 +112,9 @@ class MainWindow : public QMainWindow {
   void scheduleSelectionSync();
   // Volume, area and the tight box (TODO 10 B10) of a body or component, measured on a worker, then shown.
   void showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid);
+  // A face's, edge's or vertex's details (inspect_ref: area, the adjacent faces, the walk over the body), measured on a
+  // worker after the panel showed what is known at once (UI-51).
+  void showRefGeometry(const opad::Ref& ref, const QString& subtitle, const QString& nid);
   void runBench();
   bool benchTodo5();
   bool benchTodo9();
@@ -281,6 +284,7 @@ class MainWindow : public QMainWindow {
   bool m_selPublishing = false;     // agent access is on: the selection is published (UI-06)
   Job* m_measureJob = nullptr;      // the guided tool's measurement; cancelled as soon as the picks move on
   Job* m_propsJob = nullptr;        // geometry for the properties panel
+  Job* m_sectionJob = nullptr;      // the section plane from a picked face (UI-51: inspected on a worker)
   bool m_loadDocDone = false;
   int m_meshTotal = 0, m_meshRemaining = 0;
   std::function<void()> m_afterLoad;

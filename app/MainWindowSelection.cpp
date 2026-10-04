@@ -114,7 +114,11 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     const bool component = node && node->kind == opad::Node::Kind::Component;
     // What walks the geometry (volume, area, the tight box; for a component every body under it) is measured on a
     // worker and filled in afterwards.
-    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, false) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
+    // A sub-shape's details walk its body (inspect_ref): the kind and the body now, the rest from a worker (UI-51).
+    const bool subShape = r.kind != opad::Ref::Kind::Body && r.kind != opad::Ref::Kind::Point;
+    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, false)
+                 : subShape ? opad::json{{"ref", r.str()}, {"type", opad::Ref::kind_name(r.kind)}, {"body", r.body}, {"body_name", m_doc->nodeName(r.body).toStdString()}, {"index", r.index}}
+                            : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
     QString title, subtitle, id;
     if (r.kind == opad::Ref::Kind::Point) {
       title = tr("Point");
@@ -143,6 +147,7 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     m_propsPanel->setContext(r.kind == opad::Ref::Kind::Body || r.kind == opad::Ref::Kind::Point ? title : subtitle);
     m_props->showEntity(title, subtitle, id, j);
     if (r.kind == opad::Ref::Kind::Body && node && !node->body_missing) showNodeGeometry(r.body, title, subtitle, id);
+    if (subShape) showRefGeometry(r, subtitle, id);
   } catch (const std::exception& e) {
     m_props->showEntity(tr("Error"), QString::fromUtf8(e.what()), QString(), opad::json::object());
   }
@@ -306,6 +311,24 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
     m_propsJob = nullptr;
     if (!ok || generation != m_doc->generation) return;
     m_props->showEntity(title, subtitle, nid, *result);
+  });
+}
+
+void MainWindow::showRefGeometry(const opad::Ref& ref, const QString& subtitle, const QString& nid) {
+  if (m_propsJob) m_propsJob->cancel();
+  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  auto result = std::make_shared<opad::json>();
+  const auto generation = m_doc->generation;
+  m_propsJob = m_jobs->async(tr("Inspecting %1").arg(subtitle), [document, scene, ref, result](Progress) {
+    *result = opad::inspect_ref(*document, *scene, ref);
+  }, [this, ref, result, subtitle, nid, generation](bool ok, const QString& error) {
+    m_propsJob = nullptr;
+    if (generation != m_doc->generation || error == "cancelled") return;
+    if (!ok) return m_props->showEntity(tr("Error"), error, QString(), opad::json::object());
+    const QString kind = i18n::t(opad::Ref::kind_name(ref.kind));
+    const QString geo = QString::fromStdString(result->value("surface", result->value("curve", std::string())));
+    m_props->showEntity(QString::fromUtf8("%1%2%3").arg(kind.left(1).toUpper() + kind.mid(1), geo.isEmpty() ? QString() : QString::fromUtf8(" · "), geo), subtitle, nid, *result);
   });
 }
 

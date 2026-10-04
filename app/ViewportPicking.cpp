@@ -385,7 +385,9 @@ gp_Pnt Viewport::drawingPlanePoint(const QPointF& cursor,bool& found) {
   return best;
 }
 
-// The point of a drawing's or sketch's curves nearest `cursor` on screen (squared distance in widget pixels).
+// The point of a drawing's or sketch's curves nearest `cursor` on screen (squared distance in widget pixels). Run by run
+// (BodyPrs::segmentRuns), nearest box on screen first, until a box is farther than the best point found: a press over a
+// big drawing projected its every segment (UI-51).
 gp_Pnt Viewport::nearestCurvePoint(const QPointF& cursor,bool& found,double& distance) {
   found=false;distance=1e100;
   gp_Pnt best=m_view->Camera()->Center();
@@ -396,16 +398,43 @@ gp_Pnt Viewport::nearestCurvePoint(const QPointF& cursor,bool& found,double& dis
     const auto delta=pa+d*t-cursor; const double sq=QPointF::dotProduct(delta,delta);
     if (sq<distance) { found=true;distance=sq; best=a.Translated(gp_Vec(a,b)*t); }
   };
+  struct Run { double bound; const BodyPrs* prs; gp_Trsf trsf; size_t first, count; bool ordered; };
+  std::vector<Run> runs;
+  const auto camera=m_view->Camera();
+  // The squared distance from the cursor to a box's outline on screen: 0 inside it, or when a corner is behind the eye.
+  auto bound=[&](const Bnd_Box& box,const gp_Trsf& trsf) {
+    if(box.IsVoid()) return 0.0;
+    const gp_Pnt lo=box.CornerMin(),hi=box.CornerMax();
+    double x0=1e300,y0=1e300,x1=-1e300,y1=-1e300;
+    for(int c=0;c<8;++c) {
+      const gp_Pnt p=gp_Pnt(c&1?hi.X():lo.X(),c&2?hi.Y():lo.Y(),c&4?hi.Z():lo.Z()).Transformed(trsf);
+      if(!camera->IsOrthographic() && gp_Vec(camera->Eye(),p).Dot(gp_Vec(camera->Direction()))<=0) return 0.0;
+      const QPointF s=widgetPoint({p.X(),p.Y(),p.Z()});
+      x0=std::min(x0,s.x());y0=std::min(y0,s.y());x1=std::max(x1,s.x());y1=std::max(y1,s.y());
+    }
+    const double dx=cursor.x()<x0?x0-cursor.x():cursor.x()>x1?cursor.x()-x1:0, dy=cursor.y()<y0?y0-cursor.y():cursor.y()>y1?cursor.y()-y1:0;
+    return dx*dx+dy*dy;
+  };
+  auto add=[&](const BodyPrs* prs,const gp_Trsf& trsf) {
+    if(prs->drawingSegments.size()<2) return;
+    if(prs->segmentRuns.empty()) { runs.push_back({0.0,prs,trsf,0,prs->drawingSegments.size()/2,false}); return; }
+    for(const auto& run:prs->segmentRuns) runs.push_back({bound(run.box,trsf),prs,trsf,run.first,run.count,true});
+  };
   for (const auto& [id,item]:m_items) {
     if(!m_ctx->IsDisplayed(item.ais)) continue;
     auto p=m_prs.find(item.key); if(p==m_prs.end()) continue;
-    const auto& points=p->second->drawingSegments;
-    for(size_t i=0;i+1<points.size();i+=2) segment(points[i].Transformed(item.ais->Transformation()),points[i+1].Transformed(item.ais->Transformation()));
+    add(p->second.get(),item.ais->Transformation());
   }
-  for(const auto& [id,wire]:m_sketchWires) {
-    if(!m_ctx->IsDisplayed(wire.ais) || !wire.prs) continue;
-    const auto& points=wire.prs->drawingSegments;
-    for(size_t i=0;i+1<points.size();i+=2) segment(points[i],points[i+1]);
+  for(const auto& [id,wire]:m_sketchWires)
+    if(m_ctx->IsDisplayed(wire.ais) && wire.prs) add(wire.prs.get(),gp_Trsf());
+  std::sort(runs.begin(),runs.end(),[](const Run& a,const Run& b){return a.bound<b.bound;});
+  for(const auto& run:runs) {
+    if(run.bound>=distance) break;
+    const auto& points=run.prs->drawingSegments;
+    for(size_t k=run.first;k<run.first+run.count;++k) {
+      const size_t i=run.ordered?run.prs->segmentOrder[k]:k;
+      segment(points[2*i].Transformed(run.trsf),points[2*i+1].Transformed(run.trsf));
+    }
   }
   return best;
 }

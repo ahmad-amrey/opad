@@ -300,6 +300,43 @@ class NavigationTriangles : public Select3D_SensitivePrimitiveArray {
 };
 }
 
+void BodyPrs::buildSegmentRuns() {
+  const size_t n = drawingSegments.size() / 2;
+  segmentOrder.clear();
+  segmentRuns.clear();
+  if (n == 0) return;
+  Bnd_Box all;
+  for (const gp_Pnt& p : drawingSegments) all.Add(p);
+  const gp_Pnt lo = all.CornerMin(), hi = all.CornerMax();
+  auto spread = [](uint32_t v) {  // 10 bits to every third bit
+    v &= 0x3ff;
+    v = (v | (v << 16)) & 0x030000ff;
+    v = (v | (v << 8)) & 0x0300f00f;
+    v = (v | (v << 4)) & 0x030c30c3;
+    return (v | (v << 2)) & 0x09249249;
+  };
+  auto cell = [](double v, double a, double b) { return b - a > 1e-12 ? static_cast<uint32_t>(std::clamp((v - a) / (b - a), 0.0, 1.0) * 1023) : 0u; };
+  std::vector<std::pair<uint32_t, uint32_t>> keys(n);
+  for (size_t i = 0; i < n; ++i) {
+    const gp_Pnt m((drawingSegments[2 * i].XYZ() + drawingSegments[2 * i + 1].XYZ()) / 2);
+    keys[i] = {spread(cell(m.X(), lo.X(), hi.X())) | spread(cell(m.Y(), lo.Y(), hi.Y())) << 1 | spread(cell(m.Z(), lo.Z(), hi.Z())) << 2, static_cast<uint32_t>(i)};
+  }
+  std::sort(keys.begin(), keys.end());
+  segmentOrder.reserve(n);
+  for (const auto& k : keys) segmentOrder.push_back(k.second);
+  constexpr size_t kRun = 256;
+  for (size_t first = 0; first < n; first += kRun) {
+    SegmentRun run;
+    run.first = first;
+    run.count = std::min(kRun, n - first);
+    for (size_t k = first; k < first + run.count; ++k) {
+      run.box.Add(drawingSegments[2 * segmentOrder[k]]);
+      run.box.Add(drawingSegments[2 * segmentOrder[k] + 1]);
+    }
+    segmentRuns.push_back(run);
+  }
+}
+
 opad::MeshingReport BodyPrs::meshForDisplay(const TopoDS_Shape& shape, double deflection) {
   const auto report = opad::mesh_shape(shape, deflection);
   opad::straighten_ruled_faces(shape);  // extruded walls stay upright seen along the extrusion (TODO 10 A1)
@@ -470,6 +507,7 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
   if(p->triangles.IsNull() && !p->drawingSegments.empty()) {
     p->boundaries=new Graphic3d_ArrayOfSegments(int(p->drawingSegments.size()));
     for(const auto& point:p->drawingSegments) p->boundaries->AddVertex(point);
+    p->buildSegmentRuns();
   }
   std::vector<gp_Pnt> loose;
   for(TopExp_Explorer vertex(meshedProto,TopAbs_VERTEX,TopAbs_EDGE);vertex.More();vertex.Next())
