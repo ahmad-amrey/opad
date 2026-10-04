@@ -19,7 +19,6 @@
 #include "import_common.hpp"
 #include "opad/assets.hpp"
 #include "opad/cache.hpp"
-#include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/step_io.hpp"
 
@@ -72,7 +71,6 @@ std::filesystem::path entry_for(const std::filesystem::path& file, const ImportO
   if (sha.empty()) return {};
   std::string identity = "viewer|" + sha + "|" + extension(file) + "|" + version_string() + "|" + kReaders + "|" +
                          (opt.center_drawing ? "c" : "") + "|" + opt.placement.to_json().dump();
-  if (extension(file) == ".dwg") identity += "|" + dwg_reader();  // LibreDWG and ODA read a drawing differently
   return folder() / (sha256_hex(identity).substr(0, 40) + ".bin");
 }
 
