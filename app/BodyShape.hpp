@@ -37,6 +37,7 @@ struct HoverLines {
 struct BodyPrs {
   Handle(Graphic3d_ArrayOfTriangles) triangles;
   Handle(Graphic3d_ArrayOfSegments) boundaries;  // face boundaries, for the shaded-with-edges style
+  Handle(Graphic3d_ArrayOfSegments) freeEdges;   // edges of no face (meshed bodies): with the boundaries, the wireframe (UI-48)
   Handle(Graphic3d_ArrayOfPoints) loosePoints;
   struct Circle {
     TopoDS_Shape edge;
@@ -126,6 +127,11 @@ class BodyShape : public AIS_Shape {
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
   const std::shared_ptr<const BodyPrs>& prs() const { return m_prs; }
   bool curveOnly() const { return m_prs && m_prs->triangles.IsNull() && !m_prs->boundaries.IsNull(); }  // a wire or drawing layer
+  // Hidden line (UI-48): the faces in `face` (the background), unlit, outlined in `edge` where they turn away from the eye
+  // (OCCT's silhouette), under the edges. True when that changes the shaded presentation (the caller has it computed again).
+  bool setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge);
+  bool hiddenLine() const { return m_hiddenLine; }
+  static int stockWireframes();  // wireframes OCCT computed from the shape on the UI thread so far (benches: none for meshed bodies)
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
   // Sub-shape modes: the stock owners are swapped for SubShapeOwner. The Edge and Vertex modes also hold the body's
@@ -136,6 +142,8 @@ class BodyShape : public AIS_Shape {
   void computeSubShapes(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode);
   std::shared_ptr<const BodyPrs> m_prs, m_display;
   double m_rayBias=0;
+  bool m_hiddenLine=false;
+  Quantity_Color m_hiddenFace, m_hiddenEdge;
   Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
   std::vector<Handle(SubShapeOwner)> m_edgeOwners, m_vertexOwners;  // by ordinal, as picked (grouped edges, vertices only)
 };

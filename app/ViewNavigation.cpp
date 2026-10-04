@@ -21,7 +21,8 @@ OPAD_ICON_TABLE(viewnav,
                 {"zoomWindow", R"(<rect x="3" y="3" width="11" height="8"/><circle cx="15.5" cy="15.5" r="3.5"/><path d="M18 18l3 3"/>)"},
                 {"viewBack", R"(<path d="M9 6l-6 6 6 6"/><path d="M3 12h11a6 6 0 0 1 6 6"/>)"},
                 {"viewForward", R"(<path d="M15 6l6 6-6 6"/><path d="M21 12H10a6 6 0 0 0-6 6"/>)"},
-                {"twist", R"(<path d="M12 8l4 4-4 4-4-4z"/><path d="M4.5 12a7.5 7.5 0 0 1 13.3-4.7"/><path d="M19 3v5h-5"/>)"});
+                {"twist", R"(<path d="M12 8l4 4-4 4-4-4z"/><path d="M4.5 12a7.5 7.5 0 0 1 13.3-4.7"/><path d="M19 3v5h-5"/>)"},
+                {"hiddenLine", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>)"});
 
 namespace {
 // The presets by their setting value (ui/nav): the named ones MainWindow makes, and the generic CAD 2D one.

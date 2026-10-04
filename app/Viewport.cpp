@@ -558,12 +558,15 @@ void Viewport::twoDimensionalHint(const QPoint& global) {
 }
 
 // ---------------------------------------------------------------- display styles (F19)
-void Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
+bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   Handle(Prs3d_Drawer) d = ais->Attributes();
-  d->SetFaceBoundaryDraw(m_style == Style::ShadedEdges);
+  const bool hidden = m_style == Style::HiddenLine && !drawingLayer(ais);  // a drawing has nothing behind its lines
+  const bool edges = m_style == Style::ShadedEdges || m_style == Style::HiddenLine;
+  bool changed = bool(d->FaceBoundaryDraw()) != edges;
+  d->SetFaceBoundaryDraw(edges);
   // Line aspects ignore alpha here: a ghost's edges are blended towards the background instead. The body's own aspect
   // is changed in place, so the drawn groups (which share it) follow SynchronizeAspects as well as a recompute.
-  QColor edge = m_tokens.medge;
+  QColor edge = hidden ? m_tokens.fg : m_tokens.medge;
   if (look && look->ghost) {
     const double t = 1 - look->opacity;
     edge = QColor::fromRgbF(edge.redF() + (m_tokens.vp.redF() - edge.redF()) * t, edge.greenF() + (m_tokens.vp.greenF() - edge.greenF()) * t,
@@ -571,20 +574,44 @@ void Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   }
   if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
   else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
+  if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull()) changed = body->setHiddenLine(hidden, occ(backgroundColor()), occ(edge)) || changed;
+  if (changed) ais->SetToUpdate(AIS_Shaded);
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
+  return changed;
+}
+
+QColor Viewport::backgroundColor() const {
+  return m_sceneBackground == 2 ? QColor("#ffffff") : m_sceneBackground == 3 ? QColor("#171c24") : m_tokens.vp;
 }
 
 void Viewport::setStyle(Style s) {
   m_style = s;
   if (!m_initialised) return;
-  bool selected = false;
-  for (auto& [id, it] : m_items) {
-    applyStyle(it.ais, &it.look);
-    m_ctx->RecomputePrsOnly(it.ais, Standard_False, Standard_True);  // not Redisplay: that dropped the body from the selection
-    selected = selected || m_ctx->IsSelected(it.ais);
+  if (m_styleJob) m_styleJob->cancel();
+  auto bodies = std::make_shared<std::vector<std::string>>();
+  for (const auto& [id, it] : m_items) bodies->push_back(id);
+  auto next = std::make_shared<size_t>(0);
+  auto selected = std::make_shared<bool>(false);
+  auto step = [this, bodies, next, selected] {
+    if (*next >= bodies->size()) return false;
+    if (const auto it = m_items.find((*bodies)[(*next)++]); it != m_items.end()) {
+      // Not Redisplay: that dropped the body from the selection. The mode shown only, and only when it changed.
+      if (applyStyle(it->second.ais, &it->second.look) && it->second.ais->DisplayMode() == AIS_Shaded)
+        m_ctx->RecomputePrsOnly(it->second.ais, Standard_False, Standard_False);
+      *selected = *selected || m_ctx->IsSelected(it->second.ais);
+    }
+    return *next < bodies->size();
+  };
+  auto done = [this, selected](bool) {
+    m_styleJob = nullptr;
+    if (*selected) m_ctx->HilightSelected(Standard_False);
+    redrawScene();
+  };
+  if (!m_jobs || bodies->size() <= 16) {
+    while (step()) {}
+    return done(true);
   }
-  if (selected) m_ctx->HilightSelected(Standard_False);
-  redrawScene();
+  m_styleJob = m_jobs->sliced(tr("Changing the display style"), [step](Job&) { return step(); }, done, JobKind::Background);
 }
 
 void Viewport::setGrid(bool on) {
@@ -2116,6 +2143,7 @@ void Viewport::displayBody(const std::string& id) {
   ais->SetColor(qcolor(look.color));
   if (look.opacity < 1.0) ais->SetTransparency(1.0 - look.opacity);
   if (look.layer != Graphic3d_ZLayerId_Default) ais->SetZLayer(look.layer);
+  m_nodeOf[ais.get()] = id;  // applyStyle asks whether it is a drawing's
   applyStyle(ais, &look);
   if(n->representation=="drawing2d" && n->raster.is_null()) {
     Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));

@@ -210,6 +210,11 @@ CASES = [
     ("orbit-fps", boxes, {"OPAD_BENCH_ORBITFPS": "{prefix}"}),
     ("orbit-fps-light", "box", {"OPAD_BENCH_ORBITFPS": "{prefix}"}),
     ("orbit-fps-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_ORBITFPS": "{prefix}"}),
+    # Display styles (UI-48): every switch a sliced job with no step over 150 ms of CPU, the wireframe from the mesh worker's
+    # arrays with no zoom refinement, Hidden line drawing the faces in the background's colour and outlining a cylinder
+    # where it turns away (no edge there), where Shaded + edges fills it. On the cylinder and the Engine. <prefix>.<style>.png.
+    ("styles", "cylinder", {"OPAD_BENCH_STYLES": "{prefix}"}),
+    ("styles-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_STYLES": "{prefix}"}),
     ("box-scan-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_BOXSCAN": "{prefix}"}),
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,
     # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.

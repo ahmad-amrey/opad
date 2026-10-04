@@ -64,7 +64,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
  public:
   // Cad2D (UI-47): pan on the middle button, zoom on the wheel, no orbit (drafting, named after no product).
   enum class NavPreset { Fusion, SolidWorks, Onshape, Blender, Cad2D };
-  enum class Style { Shaded, ShadedEdges, Wireframe };
+  // HiddenLine (UI-48): the faces in the background's colour with their edges and outlines, so what is behind is hidden.
+  enum class Style { Shaded, ShadedEdges, Wireframe, HiddenLine };
   enum class SelFilter { Body, Face, Edge, Vertex };
 
   explicit Viewport(AppDocument* doc, QWidget* parent = nullptr);
@@ -73,8 +74,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setTokens(const Tokens& t);
   void setNavPreset(NavPreset p);
   NavPreset navPreset() const { return m_preset; }
+  // A sliced job (UI-48), a body a step: recomputing every body at once froze the Engine for 0.5 s, its wireframes for longer.
   void setStyle(Style s);
   Style style() const { return m_style; }
+  bool stylePending() const { return m_styleJob != nullptr; }
+  // OPAD_BENCH_STYLES (ViewportStyleBench.cpp): each style applied in steps within the budget, the wireframe from the
+  // worker's arrays, no refinement in it, hidden line hiding what is behind with outlines (UI-48)
+  bool benchStyles(const QString& prefix, const std::function<void(const QString&)>& trigger);
   void setGrid(bool on);
   void configureGrid(double spacing,double extent);
   void setSelectThrough(bool on) {m_selectThrough=on;}
@@ -553,7 +559,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void focusCube();
   void updateCubeSide();  // the side the view looks straight at, drawn as selected (UI-38)
   void syncWindowSize();
-  void applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);  // look: a ghost's edges fade with it
+  // look: a ghost's edges fade with it. True when its shaded presentation must be computed again (edges, hidden line): it
+  // is flagged, and drawn again once shown in that mode; the other mode's is kept (no second upload switching back).
+  bool applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);
+  Job* m_styleJob = nullptr;
+  QColor backgroundColor() const;  // the scene's (hidden line draws its faces in it)
   void activateSelection(const Handle(AIS_Shape)& ais);
   bool drawingLayer(const Handle(AIS_InteractiveObject)& ais) const;  // a displayed drawing2d body (picked whole in the Face filter)
   void startMeshing(std::vector<std::string> keys);

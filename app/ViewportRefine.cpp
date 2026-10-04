@@ -28,7 +28,8 @@ void Viewport::scheduleRefinement() {
 }
 
 void Viewport::refineVisible() {
-  if (!m_initialised || m_refineJob || m_items.empty() || m_doc->loading) return;
+  // Not in the wireframe (UI-48): the refinement meshes faces finer, and a wireframe draws no face.
+  if (!m_initialised || m_refineJob || m_items.empty() || m_doc->loading || m_style == Style::Wireframe) return;
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
   if (w <= 0 || h <= 0) return;

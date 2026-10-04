@@ -13,6 +13,7 @@
 #include <TopoDS_Compound.hxx>
 #include <cmath>
 #include <algorithm>
+#include <atomic>
 #include <tuple>
 #include <BRepAdaptor_Curve.hxx>
 #include <Select3D_SensitiveCurve.hxx>
@@ -274,6 +275,23 @@ std::vector<std::pair<uint64_t, int>> mortonOrder(const std::vector<std::pair<gp
   std::sort(order.begin(), order.end());
   return order;
 }
+}
+
+namespace {
+std::atomic<int>& stockWireframeCount() {
+  static std::atomic<int> count{0};
+  return count;
+}
+}  // namespace
+
+int BodyShape::stockWireframes() { return stockWireframeCount(); }
+
+bool BodyShape::setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge) {
+  if (on == m_hiddenLine && (!on || (face.IsEqual(m_hiddenFace) && edge.IsEqual(m_hiddenEdge)))) return false;
+  m_hiddenLine = on;
+  m_hiddenFace = face;
+  m_hiddenEdge = edge;
+  return true;
 }
 
 HoverLines& HoverLines::current() {
@@ -604,6 +622,23 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     if (!BRep_Tool::IsClosed(e.Current())) { p->closed = false; break; }
   }
   if (meshedProto.ShapeType() > TopAbs_SHELL) p->closed = false;  // a bare face or lower
+  if(!p->triangles.IsNull()) {  // the wireframe's edges of no face, sampled as the picking's are
+    TopTools_IndexedDataMapOfShapeListOfShape faces;
+    TopExp::MapShapesAndAncestors(meshedProto, TopAbs_EDGE, TopAbs_FACE, faces);
+    const double span = box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent());
+    std::vector<gp_Pnt> free;
+    for (int i = 1; i <= edges.Extent(); ++i) {
+      const TopoDS_Edge& edge = TopoDS::Edge(edges(i));
+      if (BRep_Tool::Degenerated(edge) || (faces.Contains(edge) && !faces.FindFromKey(edge).IsEmpty())) continue;
+      const auto found = p->curves.find(i - 1);
+      const auto samples = found != p->curves.end() ? *found->second : curveSamples(edge, std::max(1e-6, span * 1e-5));
+      for (size_t j = 1; j < samples.size(); ++j) { free.push_back(samples[j - 1]); free.push_back(samples[j]); }
+    }
+    if (!free.empty()) {
+      p->freeEdges = new Graphic3d_ArrayOfSegments(int(free.size()));
+      for (const gp_Pnt& point : free) p->freeEdges->AddVertex(point);
+    }
+  }
   if(p->triangles.IsNull() && !p->drawingSegments.empty()) {
     p->boundaries=new Graphic3d_ArrayOfSegments(int(p->drawingSegments.size()));
     for(const auto& point:p->drawingSegments) p->boundaries->AddVertex(point);
@@ -627,8 +662,15 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     if(!m_prs->loosePoints.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect());g->AddPrimitiveArray(m_prs->loosePoints);}
     return;
   }
+  if (mode == AIS_WireFrame && shown && !shown->triangles.IsNull()) {  // the worker's edges (UI-48): StdPrs_WFShape took 0.2 s a body
+    for (const auto& lines : {shown->boundaries, m_prs ? m_prs->freeEdges : Handle(Graphic3d_ArrayOfSegments)()})
+      if (!lines.IsNull()) { auto g = prs->NewGroup(); g->SetGroupPrimitivesAspect(myDrawer->WireAspect()->Aspect()); g->AddPrimitiveArray(lines); }
+    if (m_prs && !m_prs->loosePoints.IsNull()) { auto g = prs->NewGroup(); g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect()); g->AddPrimitiveArray(m_prs->loosePoints); }
+    return;
+  }
   if (mode != AIS_Shaded || !shown || shown->triangles.IsNull()) {
-    AIS_Shape::Compute(mgr, prs, mode);  // wireframe/HLR, or nothing precomputed: the stock path
+    if (mode == AIS_WireFrame) ++stockWireframeCount();
+    AIS_Shape::Compute(mgr, prs, mode);  // HLR, or nothing precomputed: the stock path
     return;
   }
   // Min/max are supplied from the worker's box; evaluating them here walks every vertex on the UI thread.
@@ -637,7 +679,21 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
   if (haveBox) shown->box.Get(x0, y0, z0, x1, y1, z1);
   Handle(Graphic3d_Group) g = prs->NewGroup();
   g->SetClosed(shown->closed);
-  g->SetGroupPrimitivesAspect(myDrawer->ShadingAspect()->Aspect());
+  if (m_hiddenLine) {  // a copy: the looks recolour the body's own aspect in place, which must not show here
+    Handle(Graphic3d_AspectFillArea3d) face = new Graphic3d_AspectFillArea3d(*myDrawer->ShadingAspect()->Aspect());
+    Graphic3d_MaterialAspect material = face->FrontMaterial();
+    material.SetColor(m_hiddenFace);
+    material.SetTransparency(0);
+    face->SetFrontMaterial(material);
+    face->SetBackMaterial(material);
+    face->SetInteriorColor(m_hiddenFace);
+    face->SetAlphaMode(Graphic3d_AlphaMode_Opaque);
+    face->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    face->SetDrawSilhouette(true);
+    face->SetEdgeColor(m_hiddenEdge);
+    face->SetEdgeWidth(myDrawer->FaceBoundaryAspect()->Aspect()->Width());
+    g->SetGroupPrimitivesAspect(face);
+  } else g->SetGroupPrimitivesAspect(myDrawer->ShadingAspect()->Aspect());
   // Ray intersections do not use raster depth offsets. Separate only the render
   // skin along its normals; the analytic shape, selection and exports stay exact.
   if (m_rayBias!=0 && m_rayTriangles.IsNull()) {
