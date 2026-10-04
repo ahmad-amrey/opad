@@ -361,6 +361,7 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
       rows << qMakePair(row->text(0), value);
     }
     setResult(rows);
+    if (!m_historyRows.isEmpty()) setHistory(QList<ToolHistoryRow>(m_historyRows), m_historyPin);
   };
   restyle();
   connect(theme::notifier(), &theme::Notifier::changed, this, restyle);
@@ -522,6 +523,8 @@ void ToolStepsPanel::setFrameOptions(const QStringList& labels, int current) {
 
 void ToolStepsPanel::setHistory(const QList<ToolHistoryRow>& rows, bool canPin) {
   const Tokens& t = theme::current();
+  m_historyRows = rows;
+  m_historyPin = canPin;
   m_history->clear();
   int titleWidth = 48;
   for (int i = 0; i < rows.size(); ++i) {

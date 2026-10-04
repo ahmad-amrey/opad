@@ -278,6 +278,13 @@ OPAD_BENCH(OPAD_BENCH_MEASURE, measure) {
   require(w.m_doc->doc.ops.size() == ops + 1 && last.type == "measurement" && last.data.value("result", opad::json()).value("mode", "") == "center",
           "Pin on a row pins that result as a measurement op");
   require(rowButton(centre, "historyPin") && !rowButton(centre, "historyPin")->isEnabled(), "and the row says it is pinned");
+  // Another theme: the earlier results are made again in its colours (they kept the old theme's titles and icons).
+  const bool dark = theme::current().dark;
+  theme::apply(!dark);
+  const QColor title = history && history->topLevelItemCount() ? history->topLevelItem(0)->foreground(0).color() : QColor();
+  const bool themed = title == theme::current().fg2 && history->topLevelItemCount() == titles.size() && rowButton(centre, "historyPin") && !rowButton(centre, "historyPin")->isEnabled();
+  theme::apply(dark);
+  require(themed, "a theme change makes the earlier results again in its colours, the pinned row still pinned");
   settle(200);
   w.m_toolPanel->grab().save(prefix + ".history.png");
   w.cancelTool();

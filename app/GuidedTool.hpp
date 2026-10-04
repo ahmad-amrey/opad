@@ -99,6 +99,8 @@ class ToolStepsPanel : public QWidget {
   QComboBox* m_frames;
   QWidget* m_historyBox;
   QTreeWidget* m_history;
+  QList<ToolHistoryRow> m_historyRows;  // as last set: made again in the new theme's colours and icons
+  bool m_historyPin = false;
   QPushButton* m_copy;
   QScrollArea* m_scroll;
   QWidget* m_body;
