@@ -707,6 +707,9 @@ TEST(feature_handles_sit_where_the_guides_draw_them) {
   h = feature_handles(doc, s, "plane", {{"mode", "offset"}, {"plane", {{"base", "xy"}}}, {"distance", "10 mm"}});
   CHECK(h.size() == 1 && close(h[0]["origin"], 0, 0, 0) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == 10.0);
   CHECK(feature_handles(doc, s, "plane", {{"mode", "angle"}, {"plane", {{"base", "xy"}}}}).empty());
+  // From the top face: off its middle (the guide's arrow), not off the corner its frame starts at.
+  h = feature_handles(doc, s, "plane", {{"mode", "offset"}, {"plane", {{"face", faceRef}}}, {"distance", "8 mm"}});
+  CHECK(h.size() == 1 && close(h[0]["origin"], 20, 15, 20) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == 8.0);
   h = feature_handles(doc, s, "box", {{"plane", {{"base", "xy"}}}, {"x", "5 mm"}, {"y", "0 mm"}, {"length", "10 mm"}, {"width", "6 mm"}, {"height", "-8 mm"}, {"centered", false}});
   CHECK(h.size() == 1 && h[0]["input"] == "height" && close(h[0]["origin"], 10, 3, 0) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == -8.0);
   // A move that turns: the ring's axis (the edge's line here) and the angle; none without Rotate.

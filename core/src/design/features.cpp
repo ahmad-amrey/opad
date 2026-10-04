@@ -1474,8 +1474,17 @@ json feature_handles(const Document& doc, const Scene& scene, const std::string&
       ring["ring"] = true;
       handles.push_back(ring);
     } else if (kind == "plane" && in.value("mode", "offset") == "offset") {
-      const Frame f = ctx.plane(in.value("plane", json()));
-      handles.push_back(handle_json("distance", pnt(f.origin), vec(f.normal()), ctx.length(in, "distance")));
+      // Off the plane's origin; off a face's middle when it is a face (its frame starts at a corner, for sketches).
+      const json from = in.value("plane", json());
+      const Frame f = ctx.plane(from);
+      gp_Pnt at = pnt(f.origin);
+      if (from.is_object() && from.contains("face")) {
+        const ResolvedRef r = ctx.resolve(from["face"]);
+        GProp_GProps g;
+        BRepGProp::SurfaceProperties(r.sub, g);
+        at = g.CentreOfMass();
+      }
+      handles.push_back(handle_json("distance", at, vec(f.normal()), ctx.length(in, "distance")));
     } else if (kind == "box" || kind == "cylinder" || kind == "cone") {
       // At the middle of the footprint, along the plane's normal: the height (negative grows the other way).
       const Frame f = ctx.plane(in.value("plane", json{{"base", "xy"}}));

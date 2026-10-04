@@ -40,9 +40,10 @@
 //   goes on in 5 degree steps and the triad and the preview travel along it while held; 4 and 5 typed go into Angle; Enter
 //   turns the box 45 degrees.
 //   Move with grid snapping on: the X arrow pulled 1.3 grid steps sets X to one step; with Alt held the pull is off the grid.
-//   Chamfer (a bottom edge), Thicken (the top face), Construction plane (offset from XY) and Box: the arrow on Distance,
-//   Thickness, Distance and Height is where the core's feature_handles puts it; pulled out, the value grows and, the button
-//   still held, the preview cuts more, is thicker, plans the plane at the distance, is 20 x 20 x the height; Esc leaves.
+//   Chamfer (a bottom edge), Thicken (the top face), Construction plane (offset from XY, then from the top face) and Box: the
+//   arrow on Distance, Thickness, Distance and Height is where the core's feature_handles puts it (from a face: on its middle);
+//   pulled out, the value grows and, the button still held, the preview cuts more, is thicker, plans the plane at the
+//   distance, is 20 x 20 x the height; Esc leaves.
 // Shots: <prefix>.<step>.png (the view: arrows and triad are drawn in it) and <prefix>.<step>.box.png (the value box).
 OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
   struct State {
@@ -159,7 +160,7 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
     view->fitAll();
     design->startFeature(kind);
   };
-  auto shot = [view, handle, prefix](const char* name, bool box) {
+  auto shot = [view, handle, prefix](const QString& name, bool box) {
     view->grabImage().save(prefix + "." + name + ".png");
     if (box) handle->grab().save(prefix + "." + name + ".box.png");
   };
@@ -179,8 +180,10 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         return true;
       },
       [=] {
-        if (!waitFor(view->selectionFilter() == Viewport::SelFilter::Face, "press pull's Faces switch the view to faces")) return false;
-        click(find(entity(opad::Ref::Kind::Face, {topFace()})), "the box's top face");
+        const bool faces = view->selectionFilter() == Viewport::SelFilter::Face;
+        const auto at = faces ? find(entity(opad::Ref::Kind::Face, {topFace()})) : std::nullopt;
+        if (!waitFor(at.has_value(), faces ? "the box's top face is not found in the view" : "press pull's Faces switch the view to faces")) return false;
+        click(at, "the box's top face");
         return true;
       },
       [=] {
@@ -223,17 +226,22 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         start("fillet");
         return true;
       },
+      // (Found in the view on a later tick too: on a loaded machine the view's picker may not find an edge at once.)
       [=] {
-        if (!waitFor(view->selectionFilter() == Viewport::SelFilter::Edge, "fillet's Edges switch the view to edges")) return false;
-        click(find(entity(opad::Ref::Kind::Edge, topEdges()), false), "a top edge");
+        const bool edges = view->selectionFilter() == Viewport::SelFilter::Edge;
+        const auto at = edges ? find(entity(opad::Ref::Kind::Edge, topEdges()), false) : std::nullopt;
+        if (!waitFor(at.has_value(), edges ? "a top edge is not found in the view" : "fillet's Edges switch the view to edges")) return false;
+        click(at, "a top edge");
         return true;
       },
       [=] {
         const opad::json picks = form->picks("edges");
-        if (!waitFor(picks.is_array() && picks.size() == 1, "the edge click did not pick it")) return false;
+        const bool one = picks.is_array() && picks.size() == 1;
         std::set<int> others = topEdges();
-        others.erase(picks[0].value("index", -1));
-        click(find(entity(opad::Ref::Kind::Edge, others), false), "another top edge");
+        if (one) others.erase(picks[0].value("index", -1));
+        const auto at = one ? find(entity(opad::Ref::Kind::Edge, others), false) : std::nullopt;
+        if (!waitFor(at.has_value(), one ? "another top edge is not found in the view" : "the edge click did not pick it")) return false;
+        click(at, "another top edge");
         return true;
       },
       [=] {
@@ -520,7 +528,7 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
           require(handle->dragging(), std::string("the ") + kind + " arrow let go before the release");
           const std::string wrong = held();
           require(wrong.empty(), wrong);
-          shot(kind, true);
+          shot(QString(what).replace(" ", "-"), true);
           pass(what + ": the arrow is where the core puts it; pulled out while held, " + QString(input) + " is " + form->valueText(input) + " and the preview follows");
           mouse(QEvent::MouseButtonRelease, st->last);
           design->escape();
@@ -570,6 +578,28 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         return std::string("the plane's preview plans no plane");
       },
       "construction plane"));
+  // Construction plane from the top face: the arrow stands on the face's middle (the guide's), not on the corner the face's
+  // frame starts at; the planned plane is the pulled distance above the face.
+  append(pullArrow(
+      "plane", [=] { form->setPicks("plane", {{"face", {{"body", st->box}, {"kind", "face"}, {"index", topFace()}}}}); }, "distance", 4,
+      [=] {
+        TopTools_IndexedMapOfShape faces;
+        TopExp::MapShapes(shape(), TopAbs_FACE, faces);
+        GProp_GProps g;
+        BRepGProp::SurfaceProperties(faces(topFace() + 1), g);
+        const gp_Pnt c = g.CentreOfMass();
+        const double d = evaluated("distance");
+        if (!closeTo(handle->arrowLine().p1(), view->widgetPoint({c.X(), c.Y(), c.Z() + d}), 4)) return "the arrow is not on the top face's middle, " + std::to_string(d) + " up";
+        const auto plan = design->readyPreview();
+        if (!plan) return std::string("the plane has no preview");
+        for (auto op = plan->ops.rbegin(); op != plan->ops.rend(); ++op)
+          if (op->contains("result") && (*op)["result"].contains("plane")) {
+            const double z = (*op)["result"]["plane"]["origin"][2].get<double>();
+            return std::abs(z - st->top - d) < 1e-6 ? std::string() : "the planned plane is at " + std::to_string(z) + ", not the pulled distance above the face";
+          }
+        return std::string("the plane's preview plans no plane");
+      },
+      "construction plane from a face"));
   // Box: its height arrow; the preview is 20 x 20 x the pulled height.
   append(pullArrow(
       "box", [] {}, "height", 6,
