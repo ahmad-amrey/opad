@@ -41,6 +41,11 @@ CASES = [
     # that preview, project's sources accumulating, break link picking, an image's frame and its calibration, intersect
     # cutting a post that stands through the plane.
     ("sketch-apply", box_and_post, {"OPAD_BENCH_SKETCH_APPLY": "{prefix}"}),
+    # The pointer drives the preview and results are what the names say (TODO 11 wave 3, P5 and P6): the tangent circle on
+    # the pointer's side, the arc slot the way the pointer went round, the circumscribed polygon about its circle, Smooth
+    # and Curvature from a line or an arc, the Constraints page (by the panel's page switch) lighting a row's geometry, an
+    # open end dragged shut, a backdrop picture dragged.
+    ("sketch-pointer", "empty", {"OPAD_BENCH_SKETCH_POINTER": "{prefix}"}),
     # Tool panels hand the keyboard back to the view after a click on a button or the slider; Esc in a panel is its (UI-05).
     ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),
     # Typed values outside the sketch: a fillet's radius, the extrude's distance and taper by the arrow (UI-122).

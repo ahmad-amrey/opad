@@ -1754,6 +1754,13 @@ size_t SketchEditor::transientDashed(const QColor& c) const {
   return n;
 }
 
+size_t SketchEditor::sketchSolid(const QColor& c) const {
+  size_t n = 0;
+  if (!m_prs.IsNull())
+    for (const auto& s : static_cast<const SketchPrs*>(m_prs.get())->solid) n += s.c == c;
+  return n;
+}
+
 size_t SketchEditor::transientLocked() const { return m_transientPrs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_transientPrs.get())->locked.size(); }
 size_t SketchEditor::transientCursor() const { return m_transientPrs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_transientPrs.get())->cursor.size(); }
 

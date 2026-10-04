@@ -142,6 +142,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchClipboard();
   void benchEdits();
   void benchApply();
+  void benchPointer();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   size_t settingsReads() const { return m_settingsReads; }  // benches: once per change, never per mouse move
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
@@ -291,6 +292,7 @@ class SketchEditor : public QObject, public SketchInput {
   size_t coincidenceDots() const;                     // the dots drawn for coincidences, explicit and where curves meet (benches)
   size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
   size_t transientDashed(const QColor& c) const;      // dashed ones (a frame, a measure being taken)
+  size_t sketchSolid(const QColor& c) const;          // the sketch's own curves' segments drawn in that colour (benches)
   bool drawsCursor() const;  // grid snapping: the editor draws the drawing cursor at the snapped point, the pointer is hidden
   std::optional<std::pair<double, double>> m_drawnCursor;  // where it was last drawn (none: not drawn), sketch coordinates
   bool m_inTransient = false;  // updateTransient is telling the viewport whether it draws the cursor
