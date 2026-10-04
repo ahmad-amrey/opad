@@ -114,6 +114,32 @@ def asset_sync(root, document):
     return design, env
 
 
+def asset_git(root, document):
+    """A document in a real git work tree linking parts/part.step, committed, then the file deleted (as a checkout of a branch
+    without it would). OPAD_BENCH_ASSET_GIT_LFS=1 when git-lfs is installed (Track with Git LFS is checked then)."""
+    project = root / "asset-git"
+    parts = project / "parts"
+    parts.mkdir(parents=True)
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(project), "-c", "commit.gpgsign=false", *args], capture_output=True)
+    env = {"OPAD_CACHE_DIR": str(root / "asset-git-cache")}
+    if git("--version").returncode != 0:
+        return document("asset-git/design"), {**env, "OPAD_BENCH_ASSET_GIT_NONE": "1"}
+    for args in (("init", "-q"), ("config", "core.autocrlf", "false"), ("config", "user.name", "OPAD bench"), ("config", "user.email", "bench@opad.invalid")):
+        git(*args)
+    assembly_step(document, "git-part", parts / "part.step", '{"length":"10 mm","width":"10 mm","height":"10 mm"}')
+    design = document("asset-git/design")
+    subprocess.run([str(document.cli), "import", str(design), str(parts / "part.step"), "--link", "true"], check=True, capture_output=True,
+                   env={**os.environ, "OPAD_CACHE_DIR": str(root / "asset-git-cli-cache")})
+    git("add", "-A")
+    git("commit", "-q", "-m", "linked part")
+    (parts / "part.step").unlink()
+    if git("lfs", "version").returncode == 0:
+        env["OPAD_BENCH_ASSET_GIT_LFS"] = "1"
+    return design, env
+
+
 def asset_look(root, document):
     """A document linking parts/part.step (a component holding a box), which changed since its sync; the CLI linked it with a
     cache of its own, so the app's never saw the version synced and reads the file as it is (its part stale)."""
@@ -230,6 +256,9 @@ CASES = [
     # A linked board's missing models of KiCad's library: counted, offered, shown in Properties, downloaded, synced in
     # (<prefix>.properties.png); Settings > KiCad boards… and Linked files… (the import choice, a trusted folder removed).
     ("asset-kicad", asset_kicad, {"OPAD_BENCH_ASSET_KICAD": "{prefix}"}),
+    # Assets in git (UI-69): a linked file deleted from its work tree, offered and recovered from git, its parts back; packed
+    # into the project, Track with Git LFS offered and done (.gitattributes, the LFS mark).
+    ("asset-git", asset_git, {"OPAD_BENCH_ASSET_GIT": "{prefix}"}),
     # What the core says of linked files (states, failed syncs) shown in Arabic: whole, a sentence and its path, counted.
     ("asset-reasons", "empty", {"OPAD_BENCH_ASSET_REASONS": "1", "OPAD_LANG": "ar"}),
     # Pictures (UI-71): a JPEG canvas decoded on a worker; a picture inserted into a sketch kept as the file has it and a

@@ -766,6 +766,45 @@ TEST(paths_follow_save_as) {
   CHECK_THROWS(d.append({{"op", "edit"}, {"target", last_import(d).id}, {"set", {{"nodes", {{{"type", "body"}, {"id", "x"}}}}}}}));
 }
 
+// Assets in git (UI-69): a linked file deleted from its work tree comes back from the last commit that has it, as it was synced;
+// Track with Git LFS writes its pattern into .gitattributes. Skipped without git (and the LFS part without git-lfs).
+TEST(recover_from_git_and_lfs) {
+  Files f;
+  auto git = [&](std::vector<fs::path> args) {
+    args.insert(args.begin(), {"-C", f.dir, "-c", "commit.gpgsign=false"});
+    return detail::run_program("git", args, f.dir);
+  };
+  if (git({"--version"}) != 0) return (void)std::printf("  (no git: skipped)\n");
+  CHECK(git({"init", "-q"}) == 0 && git({"config", "core.autocrlf", "false"}) == 0 && git({"config", "user.name", "OPAD test"}) == 0 &&
+        git({"config", "user.email", "test@opad.invalid"}) == 0);
+  const fs::path step = f.dir / "parts" / "model.step";
+  two_boxes(step, 5);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, step);
+  d.save();
+  const std::string import_id = last_import(d).id;
+  CHECK(fs::equivalent(asset_work_tree(d, asset_of(d, import_id)), f.dir));
+  CHECK_THROWS(recover_asset(d, import_id));  // there
+  CHECK(git({"add", "parts/model.step", "design.opad"}) == 0 && git({"commit", "-q", "-m", "linked"}) == 0);
+  fs::remove(step);
+  CHECK_EQ(asset_status(d)[0].state, "missing");
+  CHECK(fs::equivalent(recover_asset(d, import_id), step));
+  CHECK_EQ(asset_status(d)[0].state, "ok");  // the version synced
+  CHECK(git({"lfs", "version"}) != 0 || [&] {
+    const json tracked = track_asset_lfs(d, import_id);
+    return tracked["pattern"] == "parts/model.step" && read_text_file(f.dir / ".gitattributes").find("parts/model.step filter=lfs") != std::string::npos;
+  }());
+  Files plain;  // outside a work tree: nothing to recover from
+  two_boxes(plain.dir / "m.step", 5);
+  Document p = Document::create();
+  p.save_as(plain.dir / "p.opad");
+  link_file(p, plain.dir / "m.step");
+  fs::remove(plain.dir / "m.step");
+  CHECK(asset_work_tree(p, asset_of(p, last_import(p).id)).empty());
+  CHECK_THROWS(recover_asset(p, last_import(p).id));
+}
+
 TEST(kicad_board_linked_and_synced) {
   Files f;
   auto fp = [](const std::string& id, const std::string& ref, const std::string& at) {

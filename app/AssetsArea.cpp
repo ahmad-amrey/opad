@@ -349,7 +349,7 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
     badge.text = tr("missing");
     badge.color = &Tokens::assetMissing;
     badge.fill = &Tokens::bg4;
-    badge.tooltip = tr("Not found: %1. Click to locate it.").arg(file);
+    badge.tooltip = recoverable(import) ? tr("Not found: %1. Click to locate it, or recover it from git (context menu).").arg(file) : tr("Not found: %1. Click to locate it.").arg(file);
     badge.clicked = later([this, import] { locate(import); });
   } else if (state == "untrusted") {
     badge.icon = "warning";
@@ -439,6 +439,7 @@ void AssetsArea::section(const PropertySubject& subject, const opad::json&, QLis
     };
     if (state == "changed") act(tr("Sync"), [](AssetsArea* a, const std::string& i) { a->sync({i}); });
     if (state == "missing") act(tr("Locate…"), &AssetsArea::locate);
+    if (recoverable(import)) act(tr("Recover from git"), &AssetsArea::recover);
     if (state == "untrusted") act(tr("Read it…"), &AssetsArea::trust);
     if (found) {
       act(tr("Show in folder"), &AssetsArea::reveal);
@@ -466,6 +467,7 @@ void AssetsArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
     return;
   }
   if (state == "missing") menu.addAction(icons::themed("locate", 16), tr("Locate linked file…"), this, [this, import] { locate(import); });
+  if (recoverable(import)) menu.addAction(icons::themed("regen", 16), tr("Recover from git"), this, [this, import] { recover(import); });
   else if (state == "untrusted") menu.addAction(icons::themed("warning", 16), tr("Read linked file…"), this, [this, import] { trust(import); });
   else menu.addAction(icons::themed("regen", 16), tr("Sync linked file"), this, [this, import] { sync({import}); });
   if (state == "changed" && m_previewer && a && a->asset.value("kind", "") != "kicad_pcb")  // a board's is KicadArea's
@@ -699,14 +701,63 @@ void AssetsArea::pack(const std::string& import) {
             opad::design::Plan plan;
             plan.report = opad::pack_asset(doc, import, author);  // copies the files; its edit goes on this copy first
             plan.ops.push_back(opad::design::make_edit_op(import, doc.ops.back().data["set"]));
+            // In a git work tree and not stored by Git LFS: tracking it is offered (UI-69).
+            const opad::json packed = opad::asset_of(doc, import);
+            if (!opad::asset_work_tree(doc, packed).empty() && !AssetMonitor::lfsStored(fs::absolute(doc.path).parent_path() / opad::path_from_utf8(packed.value("path", ""))))
+              plan.report["offer_lfs"] = true;
             return plan;
           },
           [this, import, title, copy](bool ok, const QString& error, const opad::json& report) {
             const QString path = native(QString::fromStdString(report.value("path", std::string())));
             if (ok) notify(copy ? tr("%1 now links the project's copy: %2").arg(title, path) : tr("%1 is packed into the project: %2").arg(title, path), true, 8000);
             else notify(tr("%1 could not be packed: %2").arg(title, reasonText(error.toStdString())), false, 10000);
+            if (ok && report.value("offer_lfs", false))
+              services().toast(tr("%1 is in a git work tree but not stored by Git LFS").arg(title), tr("Track with Git LFS"), [this, import] { trackLfs(import); }, 12000);
             emit done("pack", import, ok, error, report);
           });
+}
+
+bool AssetsArea::recoverable(const std::string& import) const {
+  const opad::json* s = m_monitor ? m_monitor->state(import) : nullptr;
+  return s && s->value("state", "") == "missing" && s->contains("work_tree");
+}
+
+void AssetsArea::recover(const std::string& import) {
+  const AssetMonitor::Asset* a = m_monitor->asset(import);
+  if (!a || services().document()->doc.path.empty()) return;
+  const QString title = name(import);
+  const opad::json asset = a->asset;
+  const fs::path document = services().document()->doc.path;
+  auto file = std::make_shared<fs::path>();
+  QPointer<AssetsArea> self(this);
+  services().jobs()->async(tr("Recovering %1 from git").arg(title), [asset, document, file](Progress p) {
+    *file = opad::recover_asset(document, asset, [p] { return p.cancelled(); });
+  }, [self, title, file, import](bool ok, const QString& error) {
+    if (!self) return;
+    if (!ok) return self->notify(tr("%1 could not be recovered from git: %2").arg(title, reasonText(error.toStdString())), false, 10000);
+    self->notify(tr("%1 recovered from git: %2").arg(title, native(QString::fromStdU16String(file->u16string()))));
+    self->m_monitor->check(0);  // found again: its parts are read
+    emit self->done("recover", import, true, {}, {});
+  });
+}
+
+void AssetsArea::trackLfs(const std::string& import) {
+  const AssetMonitor::Asset* a = m_monitor->asset(import);
+  if (!a || services().document()->doc.path.empty()) return;
+  const QString title = name(import);
+  const opad::json asset = a->asset;
+  const fs::path document = services().document()->doc.path;
+  auto report = std::make_shared<opad::json>();
+  QPointer<AssetsArea> self(this);
+  services().jobs()->async(tr("Tracking %1 with Git LFS").arg(title), [asset, document, report](Progress p) {
+    *report = opad::track_asset_lfs(document, asset, [p] { return p.cancelled(); });
+  }, [self, title, report, import](bool ok, const QString& error) {
+    if (!self) return;
+    if (!ok) return self->notify(tr("%1 could not be tracked with Git LFS: %2").arg(title, reasonText(error.toStdString())), false, 10000);
+    self->notify(tr("%1 is tracked with Git LFS from its next commit (.gitattributes)").arg(title));
+    self->m_monitor->check(0);  // its LFS mark
+    emit self->done("lfs", import, true, {}, *report);
+  });
 }
 
 void AssetsArea::reveal(const std::string& import) {

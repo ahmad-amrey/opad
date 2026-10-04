@@ -369,5 +369,21 @@
   "%1 parts differ from the version synced": "%1 من الأجزاء تختلف عن النسخة المُزامَنة",
   "%1 parts are no longer in the file": "%1 من الأجزاء لم تعد في الملف",
   "%1 parts are no longer in the file, %2 differ": "%1 من الأجزاء لم تعد في الملف، و%2 تختلف",
-  "Linked file paths": "مسارات الملفات المرتبطة"
+  "Linked file paths": "مسارات الملفات المرتبطة",
+  "Not found: %1. Click to locate it, or recover it from git (context menu).": "غير موجود: %1. انقر لتحديد موقعه، أو استعده من git (القائمة السياقية).",
+  "Recover from git": "استعادة من git",
+  "%1 is in a git work tree but not stored by Git LFS": "%1 في شجرة عمل git لكنه غير مخزّن في Git LFS",
+  "Track with Git LFS": "تتبّع باستخدام Git LFS",
+  "Recovering %1 from git": "جارٍ استعادة %1 من git",
+  "%1 could not be recovered from git: %2": "تعذّرت استعادة %1 من git: %2",
+  "%1 recovered from git: %2": "استُعيد %1 من git: %2",
+  "Tracking %1 with Git LFS": "جارٍ تتبّع %1 باستخدام Git LFS",
+  "%1 could not be tracked with Git LFS: %2": "تعذّر تتبّع %1 باستخدام Git LFS: %2",
+  "%1 is tracked with Git LFS from its next commit (.gitattributes)": "يُتتبَّع %1 باستخدام Git LFS بدءًا من الإيداع التالي (.gitattributes)",
+  "the linked file is not in a git work tree": "الملف المرتبط ليس في شجرة عمل git",
+  "the linked file is there: nothing to recover": "الملف المرتبط موجود: لا شيء لاستعادته",
+  "git has no version of the linked file": "لا يملك git أي نسخة من الملف المرتبط",
+  "git could not restore the linked file": "تعذّر على git استعادة الملف المرتبط",
+  "git did not run": "لم يعمل git",
+  "Git LFS did not track the linked file": "لم يتتبّع Git LFS الملف المرتبط"
 }

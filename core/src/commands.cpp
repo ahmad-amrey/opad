@@ -423,8 +423,8 @@ void register_builtins() {
         return (a.value("link", false) ? link_file(need(d), file, o) : import_file(need(d), file, o)).to_json();
       });
 
-  reg("asset", "Linked files (import link=true): status, or sync (read the changed file), embed (editable copy) or pack (copy into assets/)",
-      {{"doc", "path"}, {"action", "status|sync|embed|pack"}, {"import", "uuid - its import (default: the only one)"}, {"file", "path - sync: the moved file"},
+  reg("asset", "Linked files (import link=true): status, or sync (read the changed file), embed (editable copy), pack (copy into assets/), git recover or lfs track",
+      {{"doc", "path"}, {"action", "status|sync|embed|pack|recover|lfs"}, {"import", "uuid - its import (default: the only one)"}, {"file", "path - sync: the moved file"},
        {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -436,9 +436,14 @@ void register_builtins() {
           return json{{"assets", out}};
         }
         if (action == "pack") return pack_asset(doc, import_arg(a), a.value("by", ""));
+        if (action == "recover") {
+          const auto file = recover_asset(doc, import_arg(a)).generic_u8string();
+          return json{{"file", std::string(file.begin(), file.end())}};
+        }
+        if (action == "lfs") return track_asset_lfs(doc, import_arg(a));
         design::Plan plan = action == "sync" ? plan_asset_sync(doc, import_arg(a), o, a.contains("file") ? path_from_utf8(a["file"].get<std::string>()) : std::filesystem::path())
                           : action == "embed" ? plan_asset_embed(doc, import_arg(a))
-                                              : throw Error("action is status, sync, embed or pack");
+                                              : throw Error("action is status, sync, embed, pack, recover or lfs");
         json report = plan.report;
         design::commit(doc, std::move(plan), a.value("by", ""));
         return report;

@@ -22,6 +22,7 @@
 #include <cwctype>
 #include <map>
 #include <set>
+#include <sstream>
 
 #include "import_common.hpp"
 #include "opad/cache.hpp"
@@ -1161,6 +1162,108 @@ json pack_asset(Document& doc, const std::string& import_id, const std::string& 
   const std::string id = e.op->id;  // appending may move the log's ops
   doc.append(design::make_edit_op(id, {{"asset", asset}}), author);
   return {{"import", id}, {"path", asset["path"]}, {"copied", copied}};
+}
+
+namespace {
+// Where a document (its path) expects an asset: beside it as recorded, else its absolute path.
+fs::path expected_place(const fs::path& document, const json& asset) {
+  const std::string rel = asset.value("path", ""), abs = asset.value("abs", "");
+  if (!document.empty() && !rel.empty()) return (fs::absolute(document).parent_path() / path_from_utf8(rel)).lexically_normal();
+  return abs.empty() ? fs::path() : path_from_utf8(abs).lexically_normal();
+}
+
+fs::path work_tree_of(const fs::path& file) {
+  if (file.empty() || network(file)) return {};
+  std::error_code ec;
+  for (fs::path p = fs::absolute(file, ec).parent_path(); !p.empty(); p = p.parent_path()) {
+    if (fs::exists(p / ".git", ec)) return p;
+    if (p == p.parent_path()) break;
+  }
+  return {};
+}
+
+// git in `root`: its exit status (-1: it did not run), what it wrote in `out`.
+int git(const fs::path& root, std::vector<fs::path> args, std::string& out, const std::function<bool()>& cancelled) {
+  const fs::path log = fs::temp_directory_path() / ("opad-git-" + new_uuid() + ".txt");
+  args.insert(args.begin(), {"-C", root});
+  detail::RunOptions run;
+  run.output = log;
+  run.timeout_ms = 600000;  // an LFS download
+  run.cancelled = cancelled;
+  const int status = detail::run_program("git", args, root, run);
+  try {
+    out = read_text_file(log);
+  } catch (const std::exception&) {
+    out.clear();
+  }
+  std::error_code ec;
+  fs::remove(log, ec);
+  return status;
+}
+
+std::string first_line(const std::string& text) {
+  const size_t start = text.find_first_not_of(" \r\n\t");
+  if (start == std::string::npos) return "no output";
+  return text.substr(start, text.find_first_of("\r\n", start) - start);
+}
+
+// The linked file of an import in its work tree: the asset, the file and its path from the root (git's spelling).
+struct InTree {
+  json asset;
+  fs::path file, root;
+  std::string rel;
+};
+InTree in_tree(const fs::path& document, const json& asset) {
+  InTree t;
+  t.asset = asset;
+  if (!asset.is_object() || t.asset.value("storage", "linked") == "embedded") throw Error("the asset is embedded: it is no longer read from a file");
+  t.file = expected_place(document, t.asset);
+  t.root = work_tree_of(t.file);
+  if (t.root.empty()) throw Error("the linked file is not in a git work tree");
+  t.rel = relative_to(fs::absolute(t.file), t.root);
+  if (t.rel.empty() || t.rel.rfind("..", 0) == 0) throw Error("the linked file is not in a git work tree");
+  return t;
+}
+}  // namespace
+
+fs::path asset_work_tree(const Document& doc, const json& asset) {
+  return asset.is_object() && asset.value("storage", "linked") != "embedded" ? work_tree_of(expected_place(doc.path, asset)) : fs::path();
+}
+
+fs::path recover_asset(const Document& doc, const std::string& import_id, const std::function<bool()>& cancelled) {
+  return recover_asset(doc.path, find_asset(doc, import_id).data()["asset"], cancelled);
+}
+
+json track_asset_lfs(const Document& doc, const std::string& import_id, const std::function<bool()>& cancelled) {
+  return track_asset_lfs(doc.path, find_asset(doc, import_id).data()["asset"], cancelled);
+}
+
+fs::path recover_asset(const fs::path& document, const json& asset, const std::function<bool()>& cancelled) {
+  const InTree t = in_tree(document, asset);
+  std::error_code ec;
+  if (fs::is_regular_file(t.file, ec)) throw Error("the linked file is there: nothing to recover");
+  std::string out;
+  if (git(t.root, {"log", "--all", "-n", "1", "--format=%H", "--diff-filter=AMRC", "--", path_from_utf8(t.rel)}, out, cancelled) != 0)
+    throw Error("git did not run: " + first_line(out));
+  std::string hash;  // the line that is a commit (a warning may come first: stderr goes to the same file)
+  std::istringstream lines(out);
+  for (std::string line; hash.empty() && std::getline(lines, line);) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    if (line.size() == 40 && std::all_of(line.begin(), line.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); })) hash = line;
+  }
+  if (hash.empty()) throw Error("git has no version of the linked file");
+  if (git(t.root, {"restore", "--source=" + hash, "--worktree", "--", path_from_utf8(t.rel)}, out, cancelled) != 0 &&
+      git(t.root, {"checkout", hash, "--", path_from_utf8(t.rel)}, out, cancelled) != 0)  // a git older than restore
+    throw Error("git could not restore the linked file: " + first_line(out));
+  if (!fs::is_regular_file(t.file, ec)) throw Error("git could not restore the linked file");
+  return t.file;
+}
+
+json track_asset_lfs(const fs::path& document, const json& asset, const std::function<bool()>& cancelled) {
+  const InTree t = in_tree(document, asset);
+  std::string out;
+  if (git(t.root, {"lfs", "track", path_from_utf8(t.rel)}, out, cancelled) != 0) throw Error("Git LFS did not track the linked file: " + first_line(out));
+  return {{"pattern", t.rel}, {"attributes", utf8(t.root / ".gitattributes")}};
 }
 
 std::vector<json> asset_path_edits(const Document& doc, const fs::path& dir) {

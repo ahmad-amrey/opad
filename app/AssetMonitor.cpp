@@ -75,6 +75,7 @@ AssetMonitor::AssetMonitor(AppDocument* doc, JobRunner* jobs, QObject* parent) :
       for (const auto& s : opad::asset_status(*probe, options)) {
         if (p.cancelled()) return;
         opad::json j = s.to_json();
+        if (const fs::path tree = opad::asset_work_tree(*probe, opad::asset_of(*probe, s.import_id)); !tree.empty()) j["work_tree"] = qpath(tree).toStdString();
         if (!s.file.empty()) {
           const QFileInfo info(qpath(s.file));
           j["bytes"] = info.size();

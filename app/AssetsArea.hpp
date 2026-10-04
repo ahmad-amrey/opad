@@ -91,6 +91,11 @@ class AssetsArea : public AreaController {
   void reveal(const std::string& import);
   void copyPath(const std::string& import);
   void trust(const std::string& import);
+  // Assets in git (UI-69, the local git command): a file gone from its work tree written back from the last commit that has
+  // it, then looked at again; Track with Git LFS (git lfs track), offered once a file is packed into a work tree outside LFS.
+  void recover(const std::string& import);
+  void trackLfs(const std::string& import);
+  bool recoverable(const std::string& import) const;  // missing where a git work tree holds it
   // A linked KiCad board's missing models of KiCad's library (AssetMonitor's models_downloadable): downloaded on a worker
   // into OPAD's cache once the user agrees, then the board is looked at again and its sync offered (the models changed).
   // `requested`: from the user's click (asked even when the setting says never).

@@ -693,6 +693,91 @@ OPAD_BENCH(OPAD_BENCH_ASSET_KICAD, asset_kicad) {
   return true;
 }
 
+// OPAD_BENCH_ASSET_GIT=<prefix> on a document in a git work tree whose linked parts/part.step was committed and then deleted:
+// missing, Recover from git offered in Properties and the context menu (the badge says so); recovered on a worker, its parts
+// read again; packed into the project's assets/, a toast offers Track with Git LFS (OPAD_BENCH_ASSET_GIT_LFS), which writes
+// the pattern into .gitattributes and the file gets the LFS mark. Frame: <prefix>.properties.png.
+OPAD_BENCH(OPAD_BENCH_ASSET_GIT, asset_git) {
+  static bool started = false;
+  if (std::exchange(started, true)) return true;
+  auto require = std::make_shared<Checks>();
+  require->name = "asset-git";
+  if (qEnvironmentVariableIsSet("OPAD_BENCH_ASSET_GIT_NONE")) {
+    (*require)(true, "no git here: skipped");
+    QCoreApplication::exit(0);
+    return true;
+  }
+  const QString prefix = value;
+  AssetsArea* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* found = qobject_cast<AssetsArea*>(a)) area = found;
+  AssetMonitor* monitor = area ? area->monitor() : nullptr;
+  AppDocument* doc = w.m_doc;
+  const std::string import = monitor && !monitor->assets().empty() ? monitor->assets().begin()->first : std::string();
+  (*require)(!import.empty(), "a linked file");
+  if (import.empty()) return QCoreApplication::exit(2), true;
+  auto state = [monitor, import] {
+    const opad::json* s = monitor->state(import);
+    return s ? *s : opad::json::object();
+  };
+  auto missingParts = [doc, import] {
+    int n = 0;
+    for (const auto& id : doc->scene.all_bodies())
+      if (const opad::Node* node = doc->node(id); node->source_op == import && node->body_missing) ++n;
+    return n;
+  };
+  waitFor(&w, [=] { return state().value("state", "") == "missing" && !monitor->checking(); }, 15000, [=, &w](bool missing) {
+    const opad::json s = state();
+    (*require)(missing && s.contains("work_tree") && missingParts() == 1 && area->recoverable(import), "opened: missing, in a git work tree: " + QString::fromStdString(s.dump()));
+    std::string root = monitor->asset(import) ? monitor->asset(import)->root : std::string();
+    w.m_browser->selectIds({root});
+    w.action("inspect.properties")->trigger();
+    QTreeWidget* table = w.m_props->table();
+    bool offered = false;
+    for (int i = 0; i < table->topLevelItemCount(); ++i) offered = offered || table->topLevelItem(i)->text(1) == "Recover from git";
+    w.m_propsPanel->grab().save(prefix + ".properties.png");
+    w.m_propsPanel->hide();
+    QMenu menu;
+    SelectionContext selection;
+    selection.ids = {root};
+    area->contextMenu(selection, menu);
+    bool entry = false;
+    for (QAction* a : menu.actions()) entry = entry || a->text() == "Recover from git";
+    browser::Decoration d;
+    area->decorate({root, "component", {}, doc->node(root)}, d);
+    const bool badge = !d.badges.isEmpty() && d.badges[0].tooltip.contains("recover it from git");
+    (*require)(offered && entry && badge, "Recover from git in Properties and the context menu, the missing badge says so");
+    area->recover(import);
+    waitFor(&w, [=] { return state().value("state", "") == "ok" && !monitor->checking() && missingParts() == 0 && !doc->loading; }, 30000, [=, &w](bool back) {
+      (*require)(back, "recovered from git: in sync again, its part read: " + QString::fromStdString(state().dump()));
+      if (!qEnvironmentVariableIsSet("OPAD_BENCH_ASSET_GIT_LFS")) return QCoreApplication::exit(require->all ? 0 : 2);
+      auto packed = std::make_shared<bool>(false);
+      QObject::connect(area, &AssetsArea::done, &w, [packed](const QString& what, const std::string&, bool ok, const QString&, const opad::json&) {
+        if (what == "pack") *packed = ok;
+      });
+      area->pack(import);
+      auto offer = [&w]() -> Toast* {
+        for (Toast* t : w.m_toasts->toasts())
+          if (t->text().contains("not stored by Git LFS") && t->actionButton() && t->actionButton()->text() == "Track with Git LFS") return t;
+        return nullptr;
+      };
+      waitFor(&w, [=] { return *packed && offer(); }, 30000, [=, &w](bool asked) {
+        (*require)(asked, "packed into assets/: Track with Git LFS offered");
+        if (!asked) return QCoreApplication::exit(2);
+        offer()->actionButton()->click();
+        const QString attributes = QFileInfo(doc->path()).absolutePath() + "/.gitattributes";
+        waitFor(&w, [=] { return state().value("lfs", false) && !monitor->checking(); }, 30000, [=](bool lfs) {
+          QFile file(attributes);
+          const QString text = file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+          (*require)(lfs && text.contains("assets/part.step filter=lfs"), "tracked with Git LFS: .gitattributes names it, its LFS mark: " + text.trimmed());
+          QCoreApplication::exit(require->all ? 0 : 2);
+        });
+      });
+    });
+  });
+  return true;
+}
+
 // OPAD_BENCH_ASSET_REASONS=1 with OPAD_LANG=ar: what the core says of a linked file (its state, a failed sync, embed or pack)
 // reaches the UI in Arabic, whole, as a sentence followed by its path, or counted; something unknown stays as written.
 OPAD_BENCH(OPAD_BENCH_ASSET_REASONS, asset_reasons) {

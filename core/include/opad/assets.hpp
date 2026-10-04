@@ -117,6 +117,20 @@ design::Plan plan_asset_embed(const Document& doc, const std::string& import_id,
 // {"import","path","copied"}.
 json pack_asset(Document& doc, const std::string& import_id, const std::string& author = {});
 
+// Assets in git (UI-69; the local git command, nothing remote). The work tree the linked file belongs to where the document
+// expects it (beside it as recorded, else its absolute path), or empty; a network path is never looked at.
+std::filesystem::path asset_work_tree(const Document& doc, const json& asset);
+// Recover from git: the linked file gone from its work tree (a checkout, a delete) written back where the document expects it
+// from the last commit of any branch that has it (git restore: Git LFS gives the file, not its pointer). Its path; throws
+// when it is there already, outside a work tree, or git or a version of it is missing.
+std::filesystem::path recover_asset(const Document& doc, const std::string& import_id, const std::function<bool()>& cancelled = {});
+// Track with Git LFS: `git lfs track` of the linked file's path in its work tree (.gitattributes), so it is committed to LFS
+// from then on. {"pattern","attributes"}; throws without git-lfs.
+json track_asset_lfs(const Document& doc, const std::string& import_id, const std::function<bool()>& cancelled = {});
+// The same from an asset object and the document's path alone (a worker in the app holds no copy of the document).
+std::filesystem::path recover_asset(const std::filesystem::path& document, const json& asset, const std::function<bool()>& cancelled = {});
+json track_asset_lfs(const std::filesystem::path& document, const json& asset, const std::function<bool()>& cancelled = {});
+
 // Linked imports and their edits not saved yet get their path relative to `dir`, where the document is being saved.
 void rebase_asset_paths(Document& doc, const std::filesystem::path& dir);
 // The linked files whose path as saved would name another place from `dir` (Save As to another folder), as edits of their
