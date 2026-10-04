@@ -26,6 +26,9 @@ class CoordinateReadout : public QLabel {
   using DrawingPoint = std::function<bool(const QPointF& pos, const opad::Vec3* snapped, opad::Vec3& point, QString& name)>;
   void setDrawingPoint(DrawingPoint drawing) { m_drawing = std::move(drawing); }
   void updateAt(const QPointF& pos);  // the readout for the mouse at this point of the view
+  // Its usual width kept (false), or given up to what the bar has left (true: while the progress strip shows, so the path
+  // keeps its least width at 1280 px with every chip; the numbers come back whole after).
+  void giveWay(bool on);
   Source source() const { return m_source; }
   // World (Model, Plane, View); the sketch's u, v, 0 (Sketch); the drawing's own x, y, 0 (Drawing).
   const opad::Vec3& point() const { return m_point; }

@@ -14,7 +14,7 @@ CoordinateReadout::CoordinateReadout(Viewport* view, std::function<bool(opad::Fr
   setObjectName("coordinateReadout");
   setFont(theme::mono(11));
   setLayoutDirection(Qt::LeftToRight);
-  setMinimumWidth(fontMetrics().horizontalAdvance("3D  X -0000.000  Y -0000.000  Z -0000.000"));  // the usual widest; longer values grow it
+  giveWay(false);
   setAccessibleName(tr("Cursor coordinates"));
   m_timer.setSingleShot(true);
   m_timer.setInterval(30);  // after the frame that ran the detection under the mouse
@@ -32,6 +32,11 @@ bool CoordinateReadout::eventFilter(QObject* o, QEvent* e) {
     show(Source::None, {0, 0, 0}, QString());
   }
   return QLabel::eventFilter(o, e);
+}
+
+void CoordinateReadout::giveWay(bool on) {
+  // The usual widest (longer values grow it); giving way, a few characters (an explicit least width: a label's own is its text).
+  setMinimumWidth(on ? fontMetrics().horizontalAdvance("3D  X -0") : fontMetrics().horizontalAdvance("3D  X -0000.000  Y -0000.000  Z -0000.000"));
 }
 
 void CoordinateReadout::updateAt(const QPointF& pos) {

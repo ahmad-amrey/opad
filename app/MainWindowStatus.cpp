@@ -120,6 +120,7 @@ void MainWindow::buildStatusBar() {
     return true;
   }, this);
   statusBar()->addPermanentWidget(m_readout);
+  connect(m_jobs, &JobRunner::stripShown, m_readout, &CoordinateReadout::giveWay);
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
