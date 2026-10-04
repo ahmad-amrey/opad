@@ -50,6 +50,17 @@ OPAD_BENCH(OPAD_BENCH_STATUSROW, status_row) {
                    .arg(wrong.isEmpty() ? "PASS" : "FAIL (" + wrong.join(", ") + ")"));
     return wrong.isEmpty();
   };
+  // The message's room beside a long hover text (UI-109: both stay, sharing what the row and the chips leave). The bar fits
+  // the window as asked (else the window would come out wider and the message could be squeezed), the message keeps the
+  // prompt's floor of 140 px (about 20 characters, StatusText's minimum) and the hover text takes no more than its share.
+  auto messageRoom = [&w](int asked) {
+    const int prompt = w.m_statusPrompt->width(), hover = w.m_statusHover->width();
+    trace::log(QStringLiteral("bench: status row: window %1 px, message %2 px, hover %3 px").arg(w.width()).arg(prompt).arg(hover));
+    if (w.width() != asked) return QStringLiteral("the window %1 px wide, not %2: the status bar does not fit").arg(w.width()).arg(asked);
+    if (prompt < 140) return QStringLiteral("the message has %1 px at %2").arg(prompt).arg(asked);
+    if (hover > prompt + 1) return QStringLiteral("the hover text (%1 px) has more room than the message (%2 px) at %3").arg(hover).arg(prompt).arg(asked);
+    return QString();
+  };
   auto shot = [&w, prefix](const QString& step) {
     if (!prefix.isEmpty()) w.statusBar()->grab().save(prefix + "." + step + ".png");
   };
@@ -86,14 +97,14 @@ OPAD_BENCH(OPAD_BENCH_STATUSROW, status_row) {
         if (!w.m_statusPrompt->isVisible() || !w.m_statusPrompt->text().startsWith("A message") || !w.m_statusHover->isVisible())
           return fail(QStringLiteral("the message not in the prompt (shown %1, hover shown %2)").arg(w.m_statusPrompt->isVisible()).arg(w.m_statusHover->isVisible()));
         if (!check("a message")) return finish(2);
-        if (w.m_statusPrompt->width() < 120) return fail(QStringLiteral("the message has %1 px").arg(w.m_statusPrompt->width()));
+        if (const QString wrong = messageRoom(1600); !wrong.isEmpty()) return fail(wrong);
         shot("message");
         w.resize(1280, 800);
         st->step = 4;
         return;
       case 4:
         if (!check("1280 px with a message")) return finish(2);
-        if (w.m_statusPrompt->width() < 120) return fail(QStringLiteral("the message has %1 px at 1280").arg(w.m_statusPrompt->width()));
+        if (const QString wrong = messageRoom(1280); !wrong.isEmpty()) return fail(wrong);
         shot("1280");
         w.m_jobs->async(QStringLiteral("Bench job"), [](Progress p) {
           for (int i = 0; i < 30 && !p.cancelled(); ++i) QThread::msleep(50);
