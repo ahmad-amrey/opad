@@ -173,6 +173,15 @@ void ComponentPicker::choose() {
 }
 
 bool ComponentPicker::eventFilter(QObject* object, QEvent* event) {
+  // Its foot line's keys are its own: Esc went to Clear measurement (a window command on Esc) and left the list open.
+  if (object == m_filter && event->type() == QEvent::ShortcutOverride) {
+    const int key = static_cast<QKeyEvent*>(event)->key();
+    if (key == Qt::Key_Escape || key == Qt::Key_Down || key == Qt::Key_Up || key == Qt::Key_PageDown || key == Qt::Key_PageUp || key == Qt::Key_Return ||
+        key == Qt::Key_Enter) {
+      event->accept();
+      return true;
+    }
+  }
   if (object == m_filter && event->type() == QEvent::KeyPress) {
     const int key = static_cast<QKeyEvent*>(event)->key();
     if (key == Qt::Key_Escape) {
@@ -260,6 +269,21 @@ void OpacityPopup::popup(const QPoint& global) {
   placeAt(this, global);
   show();
   m_slider->slider()->setFocus();
+}
+
+// Esc went to Clear measurement (a window command on Esc) and never reached the popup: the pending value was written once
+// it rested and the popup stayed open. An accepted override sends these keys here (or to the slider) as presses.
+bool OpacityPopup::event(QEvent* event) {
+  if (event->type() == QEvent::ShortcutOverride) {
+    const auto* key = static_cast<QKeyEvent*>(event);
+    static const QList<int> own{Qt::Key_Escape, Qt::Key_Return, Qt::Key_Enter, Qt::Key_Left, Qt::Key_Right, Qt::Key_Up, Qt::Key_Down,
+                                Qt::Key_PageUp, Qt::Key_PageDown, Qt::Key_Home, Qt::Key_End};
+    if ((key->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier && own.contains(key->key())) {
+      event->accept();
+      return true;
+    }
+  }
+  return QFrame::event(event);
 }
 
 void OpacityPopup::keyPressEvent(QKeyEvent* event) {
