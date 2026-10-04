@@ -58,7 +58,7 @@ class PlaneTiles : public QWidget {
  private:Viewport* m_view;int m_hover=-1;
 };
 
-PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget* window):QObject(window),m_doc(doc),m_view(view),m_jobs(jobs) {
+PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget* window):QObject(window),m_doc(doc),m_view(view),m_jobs(jobs),m_snap(view) {
   auto* body=new QWidget;auto* layout=new QVBoxLayout(body);
   m_steps=new ToolStepsPanel(body);m_steps->setSummary({},{},{});m_steps->setFixedHeight(125);layout->addWidget(m_steps);
   auto* hint=new QLabel(tr("Click an origin plane (in the view or the corner tiles), a planar face or a sketch."),body);hint->setObjectName("planeHint");hint->setWordWrap(true);layout->addWidget(hint);
@@ -130,6 +130,7 @@ void PlanePicker::choose(const opad::json& support) {
     if(!m_positionOrigin){const auto value=*plane;const auto f=*frame;stop(false);emit accepted(value,f);return;}
     m_view->lookAt(*frame,true,false);m_originStage=true;m_origin={{"world",{0,0,0}}};double u,v;frame->to_local({0,0,0},u,v);m_frame.origin=frame->to_world(u,v);
     ++m_candidateSerial;m_view->clearCandidates();m_tiles->hide();m_view->clearSelection();m_view->setSelectionFilter(Viewport::SelFilter::Vertex);refresh();
+    if(m_view->objectSnap())m_view->snapIndexesReady();  // the sketches' and drawings' snaps for the origin, indexed on a worker
   });
 }
 // What a plane candidate is called: the base planes and construction planes by name, a sketch by its own.
@@ -222,22 +223,26 @@ bool PlanePicker::eventFilter(QObject* object,QEvent* event){
   }
   if(event->type()==QEvent::MouseButtonPress){auto* e=static_cast<QMouseEvent*>(event);if(e->button()!=Qt::LeftButton||QRect(m_view->width()-205,0,205,185).contains(e->position().toPoint()))return false;
     m_mouseDown=true;setProperty("originHoverRef",QString());const auto marker=m_view->widgetPoint(m_frame.origin);m_drag=(marker-e->position().toPoint()).manhattanLength()<18;
-    placeOrigin(e->position());m_drag=true;return true;
+    placeOrigin(e->position(),e->modifiers().testFlag(Qt::AltModifier));m_drag=true;return true;
   }
   if(event->type()==QEvent::MouseMove&&m_drag){auto* e=static_cast<QMouseEvent*>(event);
-    placeOrigin(e->position());return true;}
-  if(event->type()==QEvent::MouseButtonRelease&&m_mouseDown){auto* e=static_cast<QMouseEvent*>(event);if(e->button()==Qt::LeftButton){m_mouseDown=false;m_drag=false;placeOrigin(e->position());return true;}}
+    placeOrigin(e->position(),e->modifiers().testFlag(Qt::AltModifier));return true;}
+  if(event->type()==QEvent::MouseButtonRelease&&m_mouseDown){auto* e=static_cast<QMouseEvent*>(event);if(e->button()==Qt::LeftButton){m_mouseDown=false;m_drag=false;placeOrigin(e->position(),e->modifiers().testFlag(Qt::AltModifier));return true;}}
   return false;
 }
-void PlanePicker::placeOrigin(const QPointF& point) {
+// A vertex or a round edge's centre under the pointer is the origin as a reference (it follows the model); else the point the
+// pointer snaps to on the plane (PlaneSnap: the sketches' and drawings' object snaps, the plane's own origin, a grid node),
+// projected onto it. Alt held: where the pointer meets the plane.
+void PlanePicker::placeOrigin(const QPointF& point,bool free) {
   opad::Ref ref;
-  if(m_view->originReferenceAt(point,ref)) {
+  if(!free && m_view->originReferenceAt(point,ref)) {
     const auto key=QString::fromStdString(ref.str());
     if(property("originHoverRef").toString()!=key){setProperty("originHoverRef",key);pickOrigin(ref);}
     return;
   }
-  setProperty("originHoverRef",QString());double u,v;
-  if(!m_view->planePoint(point,m_supportFrame,u,v))return;
-  if(m_view->gridSnap()){const double step=m_view->gridStep();u=std::round(u/step)*step;v=std::round(v/step)*step;}
-  setOrigin(u,v);
+  setProperty("originHoverRef",QString());
+  const PlaneSnap::Result snap=m_snap.at(point,m_supportFrame,TopoDS_Face(),{free,true,true});
+  if(!snap.ok)return;
+  setOrigin(snap.u,snap.v);
+  if(snap.exact())m_status->setText(tr("Origin on: %1").arg(Viewport::snapWord(snap.kind)));
 }

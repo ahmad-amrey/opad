@@ -11,5 +11,6 @@
   "Length and width": "الطول والعرض",
   "Drag the arrow or type the height · Enter adds the %1": "اسحب السهم أو اكتب الارتفاع · يضيف Enter %1",
   "The panel has every value to change · Enter adds the %1": "في اللوحة كل القيم لتغييرها · يضيف Enter %1",
-  "A curved face: click a planar face, an origin plane or a construction plane": "وجه منحنٍ: انقر وجهًا مستويًا أو مستوى أصل أو مستوى إنشاء"
+  "A curved face: click a planar face, an origin plane or a construction plane": "وجه منحنٍ: انقر وجهًا مستويًا أو مستوى أصل أو مستوى إنشاء",
+  "Origin on: %1": "الأصل على: %1"
 }

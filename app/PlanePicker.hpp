@@ -2,6 +2,7 @@
 #include "Viewport.hpp"
 #include "Panels.hpp"
 #include "Jobs.hpp"
+#include "PlaneSnap.hpp"
 #include <QPointer>
 class QLineEdit;
 class QComboBox;
@@ -42,7 +43,7 @@ class PlanePicker : public QObject {
   bool eventFilter(QObject*,QEvent*) override;
  private:
   void stop(bool restoreCamera = true);
-  void placeOrigin(const QPointF& point);
+  void placeOrigin(const QPointF& point,bool free);  // free: Alt held, nothing snaps
   void refresh();
   void constructionPlanes();
   void preview(const opad::Frame* frame);
@@ -62,4 +63,5 @@ class PlanePicker : public QObject {
   Viewport::SelFilter m_oldFilter;
   Handle(AIS_Shape) m_preview;
   Handle(AIS_TextLabel) m_xLabel,m_yLabel;
+  PlaneSnap m_snap;  // the origin snaps as a placed primitive's position does
 };

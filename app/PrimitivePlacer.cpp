@@ -34,13 +34,11 @@ using Stage = PrimitivePlacer::Stage;
 
 namespace {
 Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
-constexpr double kSnapPixels = 10;   // a vertex, a round edge's centre or the plane's origin this close to the pointer takes it
-constexpr size_t kTargets = 4000;    // of one hovered face: enough for any face a primitive is put on
 gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 }  // namespace
 
 PrimitivePlacer::PrimitivePlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, FeaturePanel* form, ToolValues* values, QObject* parent)
-    : QObject(parent), m_doc(doc), m_view(view), m_jobs(jobs), m_form(form), m_values(values) {
+    : QObject(parent), m_doc(doc), m_view(view), m_jobs(jobs), m_form(form), m_values(values), m_snap(view) {
   view->installEventFilter(this);
   // The view's own hover found another surface under a resting pointer (a frame after the last move): the marker goes there.
   connect(view, &Viewport::hoverChanged, this, [this] {
@@ -70,6 +68,8 @@ void PrimitivePlacer::start(const opad::design::FeatureSpec& spec) {
   m_written.clear();
   for (const char* key : {"x", "y", "length", "width", "diameter", "section"})
     if (m_form->input(key)) m_written[key] = m_form->valueText(key);
+  m_view->setSnapFrom(std::nullopt);  // no tool's last pick: no perpendicular or tangent snaps from it
+  if (m_view->objectSnap()) m_view->snapIndexesReady();  // the sketches' and drawings' snaps indexed on a worker meanwhile
   enter(Stage::Place);
 }
 
@@ -106,6 +106,8 @@ void PrimitivePlacer::enter(Stage stage) {
   m_stage = stage;
   m_sized = stage == Stage::Height || stage == Stage::Done || (was != Stage::Place && was != Stage::Off);  // back from a later stage: sized already
   clearMarker();
+  m_snap.forget();
+  if (stage == Stage::Size) m_sectionText = m_form->input("section") ? m_form->valueText("section") : QString();
   if (stage == Stage::Place) {
     m_sized = false;
     showPlanes();
@@ -225,44 +227,29 @@ void PrimitivePlacer::write(const std::vector<std::pair<QString, json>>& values)
   m_writing = false;
 }
 
-double PrimitivePlacer::value(const QString& key, double fallback) const {
+double PrimitivePlacer::value(const QString& key, double fallback) const { return parsed(m_form->valueText(key), fallback); }
+
+double PrimitivePlacer::parsed(const QString& text, double fallback) const {
   try {
     std::vector<opad::design::ParamDef> defs;
     for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
-    return opad::design::ParamTable(defs, m_doc->scene.units).length(m_form->valueText(key).trimmed().toStdString());
+    return opad::design::ParamTable(defs, m_doc->scene.units).length(text.trimmed().toStdString());
   } catch (const std::exception&) {
     return fallback;
   }
 }
 
-QString PrimitivePlacer::lengthText(double mm, double step) const { return DimensionHandle::pulledText(mm, step); }
+// A length as the pointer writes it: a point of the model's exactly, else to the decimals this zoom tells apart (as a pull of
+// the arrows is).
+QString PrimitivePlacer::sizeText(double mm, bool exact) const {
+  return exact ? units::editable(units::Kind::Length, mm) : DimensionHandle::pulledText(mm, DimensionHandle::pullStep(m_view->pixelSize()));
+}
 
 double PrimitivePlacer::gridOr(double fallback, bool free) const { return m_view->gridSnap() && !free && m_view->gridStep() > 0 ? m_view->gridStep() : fallback; }
 
-bool PrimitivePlacer::snapTo(const QPointF& pos, const std::vector<opad::Vec3>& targets, opad::Vec3& out) const {
-  double best = kSnapPixels * kSnapPixels;
-  bool found = false;
-  for (const auto& t : targets) {
-    const QPointF d = QPointF(m_view->widgetPoint(t)) - pos;
-    const double dd = QPointF::dotProduct(d, d);
-    if (dd <= best) best = dd, out = t, found = true;
-  }
-  return found;
-}
-
-std::vector<opad::Vec3> PrimitivePlacer::faceTargets(const TopoDS_Face& face) const {
-  std::vector<opad::Vec3> out;
-  for (TopExp_Explorer v(face, TopAbs_VERTEX); v.More() && out.size() < kTargets; v.Next()) {
-    const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
-    out.push_back({p.X(), p.Y(), p.Z()});
-  }
-  for (TopExp_Explorer e(face, TopAbs_EDGE); e.More() && out.size() < 2 * kTargets; e.Next()) {
-    const BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
-    if (c.GetType() != GeomAbs_Circle) continue;
-    const gp_Pnt p = c.Circle().Location();
-    out.push_back({p.X(), p.Y(), p.Z()});
-  }
-  return out;
+QString PrimitivePlacer::withSnap(const QString& text, const QString& kind) const {
+  if (kind.isEmpty() || kind == "grid") return text;
+  return Viewport::snapWord(kind) + QStringLiteral(" · ") + text;
 }
 
 // What the pointer is over and where a click would put the primitive: an origin or construction plane (its frame known), a
@@ -273,23 +260,23 @@ PrimitivePlacer::Hit PrimitivePlacer::hitAt(const QPointF& pos, bool free, bool 
   TopoDS_Face face;
   opad::Vec3 at{0, 0, 0};
   const double step = DimensionHandle::pullStep(m_view->pixelSize());
-  // A known frame: the point where the pointer meets it, snapped to the plane's origin, else the grid (or a round step).
+  // A known frame: the point where the pointer meets it, snapped (PlaneSnap), else rounded at this zoom.
   auto onFrame = [&](const json& plane, const opad::Frame& frame) {
-    double u = 0, v = 0;
-    if (!m_view->planePoint(pos, frame, u, v) || !std::isfinite(u) || !std::isfinite(v) || std::fabs(u) > 1e6 || std::fabs(v) > 1e6) return false;
-    opad::Vec3 snapped;
-    if (snapTo(pos, {frame.origin}, snapped)) u = v = 0;
-    else {
-      const double s = gridOr(step, free);
-      u = std::round(u / s) * s;
-      v = std::round(v / s) * s;
-    }
+    const PlaneSnap::Result snap = m_snap.at(pos, frame, face, {free, true, true});
+    if (!snap.ok) return false;
     h.ok = h.frameKnown = true;
     h.plane = plane;
     h.frame = frame;
-    h.u = u;
-    h.v = v;
-    h.at = frame.to_world(u, v);
+    h.u = snap.u;
+    h.v = snap.v;
+    h.snapped = snap.exact();
+    h.kind = snap.kind;
+    if (snap.kind.isEmpty()) {
+      h.u = std::round(h.u / step) * step;
+      h.v = std::round(h.v / step) * step;
+    }
+    h.at = frame.to_world(h.u, h.v);
+    h.seen = h.snapped ? snap.seen : h.at;
     return true;
   };
   if (m_view->surfaceAt(pos, candidate, face, at, fresh)) {
@@ -303,6 +290,7 @@ PrimitivePlacer::Hit PrimitivePlacer::hitAt(const QPointF& pos, bool free, bool 
     if (!face.IsNull()) {
       const BRepAdaptor_Surface surface(face);
       if (surface.GetType() != GeomAbs_Plane) {
+        m_snap.at(pos, opad::Frame(), face, {true, false, false});  // its corners stay in reach as the pointer leaves it
         h.why = tr("A curved face: click a planar face, an origin plane or a construction plane");
         return h;
       }
@@ -310,18 +298,21 @@ PrimitivePlacer::Hit PrimitivePlacer::hitAt(const QPointF& pos, bool free, bool 
       gp_Dir n = ax.Direction();
       if (!ax.Direct()) n.Reverse();
       if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
-      // Where the pointer meets the face's plane now (the hover's detection is a frame old), else snapped to a vertex.
+      // Where the pointer meets the face's plane now (the hover's detection is a frame old), else where it snapped; the
+      // frame the feature resolves (from the face's corner) is worked out on a worker when it is clicked.
       const opad::Frame plane = opad::design::frame_from_ax3(gp_Ax3(ax.Location(), n, ax.XDirection()));
-      double u = 0, v = 0;
-      if (m_view->planePoint(pos, plane, u, v) && std::isfinite(u) && std::isfinite(v)) at = plane.to_world(u, v);
-      opad::Vec3 snapped;
-      if (snapTo(pos, faceTargets(face), snapped)) at = snapped, h.snapped = true;
+      const PlaneSnap::Result snap = m_snap.at(pos, plane, face, {free, false, false});
+      if (snap.ok) at = snap.at;
       h.ok = true;
+      h.snapped = snap.exact();
+      h.kind = snap.kind;
       h.frame = opad::design::frame_from_ax3(gp_Ax3(pnt(at), n, ax.XDirection()));
       h.at = at;
+      h.seen = h.snapped ? snap.seen : at;
       return h;
     }
   }
+  face.Nullify();
   // Nothing under the pointer: the plane the panel holds, or the origin plane that faces the view most when that one is seen
   // edge-on (XY from the front).
   const json held = m_form->picks("plane");
@@ -349,9 +340,12 @@ void PrimitivePlacer::clearMarker() {
   if (!m_marker.IsNull()) m_view->removeOverlay(m_marker);
   m_marker.Nullify();
   m_markerShown = false;
+  m_markerKind.clear();
 }
 
-// A cross in a ring on the plane where a click would put the primitive (amber, as the plane picker's origin).
+// Where a click would put the primitive: a cross in a ring on the plane (amber, as the plane picker's origin); snapped, the
+// snap's own marker round the point snapped to (as the object snap draws it) and, when that is off the plane, a cross where
+// it lands on the plane.
 void PrimitivePlacer::showMarker(const Hit& hit) {
   clearMarker();
   if (!hit.ok) return;
@@ -363,11 +357,20 @@ void PrimitivePlacer::showMarker(const Hit& hit) {
   TopoDS_Compound shape;
   BRep_Builder b;
   b.MakeCompound(shape);
-  b.Add(shape, BRepBuilderAPI_MakeEdge(p(-s, 0), p(s, 0)).Edge());
-  b.Add(shape, BRepBuilderAPI_MakeEdge(p(0, -s), p(0, s)).Edge());
-  const opad::Vec3 n = f.normal();
-  gp_Ax2 axes(pnt(hit.at), gp_Dir(n[0], n[1], n[2]), gp_Dir(f.x[0], f.x[1], f.x[2]));
-  b.Add(shape, BRepBuilderAPI_MakeEdge(gp_Circ(axes, s * 0.6)).Edge());
+  const bool glyph = hit.snapped && hit.kind != "origin";
+  const bool apart = QLineF(QPointF(m_view->widgetPoint(hit.seen)), QPointF(m_view->widgetPoint(hit.at))).length() > 3;
+  if (!glyph || apart) {
+    const double c = glyph ? s * 0.5 : s;
+    b.Add(shape, BRepBuilderAPI_MakeEdge(p(-c, 0), p(c, 0)).Edge());
+    b.Add(shape, BRepBuilderAPI_MakeEdge(p(0, -c), p(0, c)).Edge());
+  }
+  if (glyph) {
+    b.Add(shape, m_view->snapGlyph(hit.kind, hit.seen));
+  } else {
+    const opad::Vec3 n = f.normal();
+    gp_Ax2 axes(pnt(hit.at), gp_Dir(n[0], n[1], n[2]), gp_Dir(f.x[0], f.x[1], f.x[2]));
+    b.Add(shape, BRepBuilderAPI_MakeEdge(gp_Circ(axes, s * 0.6)).Edge());
+  }
   Handle(AIS_Shape) ais = new AIS_Shape(shape);
   ais->SetInfiniteState(true);
   ais->SetColor(occ(theme::current().amber));
@@ -376,6 +379,21 @@ void PrimitivePlacer::showMarker(const Hit& hit) {
   m_view->showOverlay(m_marker);
   m_markerShown = true;
   m_markerAt = hit.at;
+  m_markerKind = hit.kind;
+}
+
+void PrimitivePlacer::showSnap(const PlaneSnap::Result& snap) {
+  if (!snap.exact()) {
+    if (m_markerShown) clearMarker();
+    return;
+  }
+  Hit hit;
+  hit.ok = hit.snapped = true;
+  hit.frame = m_frame;
+  hit.at = snap.at;
+  hit.seen = snap.seen;
+  hit.kind = snap.kind;
+  showMarker(hit);
 }
 
 void PrimitivePlacer::clearOutline() {
@@ -431,17 +449,16 @@ void PrimitivePlacer::drawOutline() {
 }
 
 // The plane clicked: Plane and Position X/Y written as the panel writes them; the pointer sizes the footprint next.
-void PrimitivePlacer::placeAt(const json& plane, const opad::Frame& frame, double u, double v) {
+void PrimitivePlacer::placeAt(const json& plane, const opad::Frame& frame, double u, double v, bool exact) {
   if (m_stage != Stage::Place) return;
   m_frame = frame;
   m_cu = u;
   m_cv = v;
-  // Written to the decimals this zoom tells apart (a vertex's place too, as a pull of the arrows is).
-  const double step = DimensionHandle::pullStep(m_view->pixelSize());
+  m_placeExact = exact;
   m_locked.erase("x");  // the click is the position, whatever was typed before
   m_locked.erase("y");
   m_form->setPicks("plane", plane);
-  write({{"x", lengthText(u, step).toStdString()}, {"y", lengthText(v, step).toStdString()}});
+  write({{"x", sizeText(u, exact).toStdString()}, {"y", sizeText(v, exact).toStdString()}});
   enter(Stage::Size);
 }
 
@@ -454,7 +471,7 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
   }
   m_placedAt = pos;
   const bool snapped = hit.snapped;
-  if (hit.frameKnown) return placeAt(hit.plane, hit.frame, hit.u, hit.v);
+  if (hit.frameKnown) return placeAt(hit.plane, hit.frame, hit.u, hit.v, snapped);
   // A face: its frame as the feature will resolve it (from the face's corner, kernel work) on a worker, then the click's
   // point in it.
   // The face is named on the worker too: a reopened document's bodies have stock owners, whose ordinal is a walk of the body.
@@ -490,13 +507,14 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
     }
     double u = 0, v = 0;
     frame->to_local(at, u, v);
-    // A vertex or a centre it snapped to stays where it is; anything else is rounded as on an origin plane.
+    // A point of the model it snapped to stays where it is; anything else is rounded as on an origin plane (to the grid's
+    // nodes in the face's own frame while grid snapping is on).
     if (!snapped) {
       const double s = gridOr(DimensionHandle::pullStep(m_view->pixelSize()), free);
       u = std::round(u / s) * s;
       v = std::round(v / s) * s;
     }
-    placeAt(*plane, *frame, u, v);
+    placeAt(*plane, *frame, u, v, snapped);
     if (m_release.pending) {  // pressed, dragged and let go while the face was resolved: the footprint is that drag
       sizeFrom(m_release.at, m_release.free, true);
       fixSize();
@@ -507,50 +525,62 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
   });
 }
 
-// The sizes where the pointer is (`pos` on the plane): the ones not typed, rounded at this zoom or to the grid.
+// The sizes where the pointer is (`pos` on the plane, snapped as when placing): the ones not typed, exact when it snapped to a
+// point of the model, else rounded at this zoom or to the grid; never a size the kernel refuses.
 void PrimitivePlacer::sizeFrom(const QPointF& pos, bool free, bool fresh) {
   if (m_stage != Stage::Size && m_stage != Stage::Section) return;
-  double u = 0, v = 0;
-  if (!m_view->planePoint(pos, m_frame, u, v) || !std::isfinite(u) || !std::isfinite(v)) return;
-  // On a body's face: its vertices and round edges' centres take the pointer (seen where they are, put on the plane).
   std::string candidate;
   TopoDS_Face face;
-  opad::Vec3 at{0, 0, 0}, snapped{0, 0, 0};
-  bool exact = false;
-  if (m_view->surfaceAt(pos, candidate, face, at, fresh) && !face.IsNull() && snapTo(pos, faceTargets(face), snapped)) {
-    m_frame.to_local(snapped, u, v);
-    exact = true;
-  }
-  const double pull = DimensionHandle::pullStep(m_view->pixelSize()), step = gridOr(pull, free);
-  if (!exact && step != pull) {  // the grid: the pointer goes to its nodes
-    u = std::round(u / step) * step;
-    v = std::round(v / step) * step;
-  }
-  auto size = [&](double mm) { return std::max(pull, std::round(mm / pull) * pull); };  // grid nodes give whole steps already
-  const double du = u - m_cu, dv = v - m_cv;
+  opad::Vec3 at{0, 0, 0};
+  m_view->surfaceAt(pos, candidate, face, at, fresh);  // the face under the pointer: its corners, centres and midpoints
+  const opad::Vec3 centre = m_frame.to_world(m_cu, m_cv);
+  const PlaneSnap::Result snap = m_snap.at(pos, m_frame, face, {free, true, true, &centre});
+  if (!snap.ok) return;
+  showSnap(snap);
+  const bool exact = snap.exact();
+  const double pull = DimensionHandle::pullStep(m_view->pixelSize());
+  auto size = [&](double mm) { return std::max(pull, exact ? mm : std::round(mm / pull) * pull); };  // grid nodes give whole steps already
+  const double du = snap.u - m_cu, dv = snap.v - m_cv;
   std::vector<std::pair<QString, json>> out;
-  auto put = [&](const char* key, double mm) {
-    if (!m_locked.count(key)) out.push_back({key, lengthText(mm, pull).toStdString()});
+  auto put = [&](const char* key, double mm, bool sharp) {
+    if (!m_locked.count(key)) out.push_back({key, sizeText(mm, sharp).toStdString()});
   };
   if (m_spec->footprint == "rect") {
     const bool centred = m_form->inputs().value("centered", true);
-    const double l = m_locked.count("length") ? value("length", 0) : size(centred ? 2 * std::fabs(du) : std::fabs(du));
-    const double w = m_locked.count("width") ? value("width", 0) : size(centred ? 2 * std::fabs(dv) : std::fabs(dv));
-    put("length", l);
-    put("width", w);
+    const bool typedL = m_locked.count("length"), typedW = m_locked.count("width");
+    const double l = typedL ? value("length", 0) : size(centred ? 2 * std::fabs(du) : std::fabs(du));
+    const double w = typedW ? value("width", 0) : size(centred ? 2 * std::fabs(dv) : std::fabs(dv));
+    put("length", l, exact);
+    put("width", w, exact);
     // Centred on the click, or (Centred off) from it as a corner towards the pointer: written each time, so turning Centred
     // on or off while sizing moves the position with it.
-    if (!m_locked.count("x")) out.push_back({"x", lengthText(centred || du >= 0 ? m_cu : m_cu - l, pull).toStdString()});
-    if (!m_locked.count("y")) out.push_back({"y", lengthText(centred || dv >= 0 ? m_cv : m_cv - w, pull).toStdString()});
+    if (!m_locked.count("x")) out.push_back({"x", sizeText(centred || du >= 0 ? m_cu : m_cu - l, exact || m_placeExact || typedL).toStdString()});
+    if (!m_locked.count("y")) out.push_back({"y", sizeText(centred || dv >= 0 ? m_cv : m_cv - w, exact || m_placeExact || typedW).toStdString()});
   } else if (m_stage == Stage::Section) {
-    const double r = value("diameter", 0) / 2, s = size(2 * std::fabs(std::hypot(du, dv) - r));
-    put("section", std::min(s, std::max(pull, 2 * r - pull)));  // thinner than the ring
+    const double r = value("diameter", 0) / 2, most = std::max(pull, std::floor((2 * r - pull) / pull + 1e-9) * pull);  // thinner than the ring
+    const double s = size(2 * std::fabs(std::hypot(du, dv) - r));
+    put("section", std::min(s, most), exact && s <= most);
   } else {
-    put("diameter", size(2 * std::hypot(du, dv)));
+    double d = size(2 * std::hypot(du, dv));
+    bool sharp = exact;
+    // The smallest the kernel takes: a ring wider than a typed section (else the section gives way, below), a coil wider than
+    // twice its section, a cone's base not its top.
+    double smallest = 0;
+    if (ring()) smallest = m_locked.count("section") ? value("section", 0) + pull : 2 * pull;
+    else if (m_form->input("size")) smallest = 2 * value("size", 0) + pull;
+    if (d < smallest) d = std::ceil(smallest / pull - 1e-9) * pull, sharp = false;
+    if (m_form->input("top_diameter") && std::fabs(d - value("top_diameter", -1)) < pull / 2) d += pull, sharp = false;
+    put("diameter", d, sharp);
+    // A ring's section, not set yet, as it was while the ring has room for it, else half the ring's diameter.
+    if (ring() && m_stage == Stage::Size && !m_locked.count("section") && !m_sectionText.isEmpty()) {
+      const QString section = parsed(m_sectionText, 0) < d ? m_sectionText : sizeText(std::max(pull, std::floor(d / 2 / pull) * pull), false);
+      if (section != m_form->valueText("section")) out.push_back({"section", section.toStdString()});
+    }
   }
   m_sized = true;
   write(out);
   drawOutline();
+  setStatus(withSnap(prompt(), snap.kind));
 }
 
 void PrimitivePlacer::fixSize() {
@@ -594,7 +624,7 @@ void PrimitivePlacer::hover(const QPointF& pos, bool free) {
     if (m_job) return;
     const Hit hit = hitAt(pos, free, false);
     showMarker(hit);
-    setStatus(hit.ok || hit.why.isEmpty() ? prompt() : hit.why);
+    setStatus(hit.ok || hit.why.isEmpty() ? withSnap(prompt(), hit.kind) : hit.why);
   } else if (m_stage == Stage::Size || m_stage == Stage::Section) {
     if (QLineF(pos, m_placedAt).length() <= 3 && !m_sized) return;  // still on the click: no size yet
     sizeFrom(pos, free);

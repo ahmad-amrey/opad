@@ -111,6 +111,7 @@ QString Viewport::snapWord(const QString& kind) {
   if (kind == "nearest") return tr("Nearest");
   if (kind == "perpendicular") return tr("Perpendicular");
   if (kind == "tangent") return tr("Tangent");
+  if (kind == "origin") return tr("Origin");
   return kind;
 }
 
@@ -255,6 +256,34 @@ bool Viewport::shownSnap(opad::Vec3& world, QString* kind) const {
   return true;
 }
 
+// The kind's shape around the point, facing the camera, 7 points across: AutoCAD's square end, triangle midpoint, circle
+// centre, diamond quadrant, cross intersection, right angle perpendicular, circle under a line tangent, hourglass nearest.
+TopoDS_Shape Viewport::snapGlyph(const QString& kind, const opad::Vec3& at) const {
+  const double r = 6 * pixelSize();
+  const gp_Pnt c(at[0], at[1], at[2]);
+  const gp_Dir n(-vec(viewDirection()));
+  const gp_Ax2 axes(c, n);
+  const gp_Vec ux(axes.XDirection()), uy(axes.YDirection());
+  auto p = [&](double x, double y) { return c.Translated(ux * (x * r) + uy * (y * r)); };
+  BRep_Builder builder;
+  TopoDS_Compound shape;
+  builder.MakeCompound(shape);
+  auto loop = [&](std::initializer_list<std::pair<double, double>> pts, bool closed = true) {
+    std::vector<gp_Pnt> v;
+    for (const auto& [x, y] : pts) v.push_back(p(x, y));
+    for (size_t i = 0; i + 1 < v.size() + (closed ? 1 : 0); ++i) builder.Add(shape, BRepBuilderAPI_MakeEdge(v[i], v[(i + 1) % v.size()]).Edge());
+  };
+  if (kind == "endpoint") loop({{-1, -1}, {1, -1}, {1, 1}, {-1, 1}});
+  else if (kind == "midpoint") loop({{-1, -0.8}, {1, -0.8}, {0, 1}});
+  else if (kind == "center") builder.Add(shape, BRepBuilderAPI_MakeEdge(gp_Circ(axes, r)).Edge());
+  else if (kind == "quadrant") loop({{0, -1.2}, {1.2, 0}, {0, 1.2}, {-1.2, 0}});
+  else if (kind == "intersection") loop({{-1, -1}, {1, 1}}, false), loop({{-1, 1}, {1, -1}}, false);
+  else if (kind == "perpendicular") loop({{-1, 1}, {-1, -1}, {1, -1}}, false), loop({{-1, 0}, {0, 0}, {0, -1}}, false);
+  else if (kind == "tangent") builder.Add(shape, BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(p(0, -0.15), n), 0.8 * r)).Edge()), loop({{-1, 0.65}, {1, 0.65}}, false);
+  else loop({{-1, 1}, {1, 1}, {-1, -1}, {1, -1}});  // nearest
+  return shape;
+}
+
 // After a frame's detection (paintEvent): the snap under the cursor, its marker and its name in the status bar.
 void Viewport::updateObjectSnap() {
   if (!m_initialised || (!m_osnap && !objectSnapActive())) return;
@@ -285,32 +314,7 @@ void Viewport::updateObjectSnap() {
   }
   s.point = at;
   s.kind = kind;
-  // The kind's shape around the point, in the drawing's plane, 7 points across: AutoCAD's square end, triangle midpoint,
-  // circle centre, diamond quadrant, cross intersection, right angle perpendicular, circle under a line tangent,
-  // hourglass nearest.
-  const double r = 6 * pixelSize();
-  const gp_Pnt c(at[0], at[1], at[2]);
-  const gp_Dir n(-vec(viewDirection()));
-  const gp_Ax2 axes(c, n);
-  const gp_Vec ux(axes.XDirection()), uy(axes.YDirection());
-  auto p = [&](double x, double y) { return c.Translated(ux * (x * r) + uy * (y * r)); };
-  BRep_Builder builder;
-  TopoDS_Compound shape;
-  builder.MakeCompound(shape);
-  auto loop = [&](std::initializer_list<std::pair<double, double>> pts, bool closed = true) {
-    std::vector<gp_Pnt> v;
-    for (const auto& [x, y] : pts) v.push_back(p(x, y));
-    for (size_t i = 0; i + 1 < v.size() + (closed ? 1 : 0); ++i) builder.Add(shape, BRepBuilderAPI_MakeEdge(v[i], v[(i + 1) % v.size()]).Edge());
-  };
-  if (kind == "endpoint") loop({{-1, -1}, {1, -1}, {1, 1}, {-1, 1}});
-  else if (kind == "midpoint") loop({{-1, -0.8}, {1, -0.8}, {0, 1}});
-  else if (kind == "center") builder.Add(shape, BRepBuilderAPI_MakeEdge(gp_Circ(axes, r)).Edge());
-  else if (kind == "quadrant") loop({{0, -1.2}, {1.2, 0}, {0, 1.2}, {-1.2, 0}});
-  else if (kind == "intersection") loop({{-1, -1}, {1, 1}}, false), loop({{-1, 1}, {1, -1}}, false);
-  else if (kind == "perpendicular") loop({{-1, 1}, {-1, -1}, {1, -1}}, false), loop({{-1, 0}, {0, 0}, {0, -1}}, false);
-  else if (kind == "tangent") builder.Add(shape, BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(p(0, -0.15), n), 0.8 * r)).Edge()), loop({{-1, 0.65}, {1, 0.65}}, false);
-  else loop({{-1, 1}, {1, 1}, {-1, -1}, {1, -1}});  // nearest
-  s.glyph = new AIS_Shape(shape);
+  s.glyph = new AIS_Shape(snapGlyph(kind, at));
   const QColor colour = m_tokens.candidate;
   s.glyph->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_Color(colour.redF(), colour.greenF(), colour.blueF(), Quantity_TOC_sRGB), Aspect_TOL_SOLID, lineWidth(2)));
   s.glyph->SetZLayer(Graphic3d_ZLayerId_Topmost);

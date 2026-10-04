@@ -301,6 +301,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool snapIndexesReady();  // asks for the missing indexes; true once every displayed drawing has one (or its indexing was cancelled)
   int snapIndexCount() const;  // the indexes kept (benches)
   static QString snapWord(const QString& kind);  // "endpoint" -> "Endpoint", translated
+  TopoDS_Shape snapGlyph(const QString& kind, const opad::Vec3& at) const;  // the kind's marker about `at`, facing the camera
   bool benchSnap(const QPointF& widgetPos);  // the snap a mouse move here shows (hidden windows never paint)
   bool pointUnder(const QPointF& widgetPos, opad::Vec3& world);  // the frontmost displayed surface there (one BVH ray), false: none
 

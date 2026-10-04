@@ -34,17 +34,21 @@ def handle_parts(root, document):
 
 
 def primitive_parts(root, document):
-    """A 30 x 20 x 10 block at x -55..-25: a face to place a sphere on, and the origin clear for the primitives on XY."""
+    """A 30 x 20 x 10 block at x -55..-25: a face to place a sphere on, and the origin clear for the primitives on XY; a sketch
+    "Marks" on XY with a circle of 5 mm about (25, 18), to snap to."""
     path = root / "primitive-parts.opad"
     if path.exists():
         return path
-    return document("primitive-parts", ("feature", "--kind", "box", "--inputs", '{"x":"-40 mm","length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    return document("primitive-parts", ("feature", "--kind", "box", "--inputs", '{"x":"-40 mm","length":"30 mm","width":"20 mm","height":"10 mm"}'),
+                    ("sketch", "--name", "Marks", "--plane", '{"base":"xy"}', "--geometry", '{"shapes":[{"kind":"circle","picks":[[25,18],[30,18]]}]}'))
 
 
 CASES = [
     # P1: a cone, a box (grid snapping, Esc back from the footprint and the height), a sphere (pressed on a face and dragged),
     # a torus (ring, then section) placed by the pointer, each preview checked while the pointer moves or the arrow is held,
-    # the committed inputs against the values shown; a cylinder by Enter alone.
+    # the committed inputs against the values shown; a cylinder by Enter alone; snapping as a sketch's points (a sketch
+    # circle's centre and quadrant, the block's corner and an edge's midpoint, Alt free), small rings and coils never refused,
+    # the sketch origin snapped the same way.
     ("primitive-place", primitive_parts, {"OPAD_BENCH_PRIMITIVES": "{prefix}"}),
     # P1 on the Engine: every mouse event of placing and sizing a cylinder handled in under 100 ms (picks, the face's frame and
     # the previews on workers).

@@ -4,6 +4,7 @@
 #include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "MainWindow.hpp"
+#include "PlanePicker.hpp"
 #include "PrimitivePlacer.hpp"
 #include "ToolValues.hpp"
 #include "opad/design/expr.hpp"
@@ -38,6 +39,17 @@
 //   Torus: the click snaps to the plane's origin; the ring diameter (through the tube's middle) from the pointer, a click;
 //   the section from the pointer's distance to the ring, a click; centred on the plane; Enter commits.
 //   Coil: placed by a click; 1 and 8 typed while sizing hold as the pointer moves on; the click fixes them; Enter commits.
+//   Snapping as a sketch's points (PlaneSnap), with the sketch "Marks" on XY (a circle of 5 mm about (25, 18)): the pointer a
+//   few pixels off the circle's centre shows the centre's marker, named in the status bar; Alt held it does not snap; the
+//   click is the centre exactly; the pointer by the circle's right quadrant makes the diameter the circle's (10 mm, exact) and
+//   the preview follows; Enter commits a cylinder standing on the circle. A box's far corner: over the block's top face,
+//   then just outside its left front corner (nothing under the pointer), it snaps to that corner (the face left a moment ago),
+//   put on XY; over the top face's front edge, to its midpoint.
+//   Sizes the kernel would refuse are never written: a ring 5 mm across takes a 2.5 mm section (the default 10 mm does not
+//   fit) and the preview shows; 24 mm across it goes back to 10 mm; a coil pointed 1 mm from its centre stays wider than
+//   twice its 2 mm section.
+//   The sketch plane's origin snaps the same way: on XY, pressed a few pixels off the circle's centre, the origin is the
+//   centre; with Alt, where the pointer is.
 //   Box with Centred off: the click is a corner and the box runs towards the pointer; Esc twice leaves.
 //   Cylinder: Enter before any click adds the panel's defaults at the XY origin (the keyboard's way).
 // Along the way the panel's guide loops the clip's step for the stage (placing, sizing, then the arrow and Enter).
@@ -109,10 +121,10 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
     return box;
   };
   // The pointer through the viewport's event filters (the placer's, the arrow's), in widget coordinates.
-  auto mouse = [view](QEvent::Type type, const QPointF& at, Qt::MouseButtons held = Qt::NoButton) {
+  auto mouse = [view](QEvent::Type type, const QPointF& at, Qt::MouseButtons held = Qt::NoButton, Qt::KeyboardModifiers keys = Qt::NoModifier) {
     const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
     const Qt::MouseButtons buttons = type == QEvent::MouseMove ? held : type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
-    QMouseEvent e(type, at, view->mapToGlobal(at), button, buttons, Qt::NoModifier);
+    QMouseEvent e(type, at, view->mapToGlobal(at), button, buttons, keys);
     QApplication::sendEvent(view, &e);
   };
   auto at = [view](const opad::Vec3& p) { return QPointF(view->widgetPoint(p)); };
@@ -476,6 +488,163 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         undo();
         return true;
       },
+      // ---- Snapping as a sketch's points: a cylinder on the sketch's circle (its centre, then its quadrant), exact.
+      [=] {
+        start("cylinder");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving() && view->snapIndexesReady(), "the cylinder does not wait for a plane, or the sketch's snaps are not indexed")) return false;
+        view->grabImage();
+        const QPointF off = at({25, 18, 0}) + QPointF(4, -3);  // a few pixels off the circle's centre
+        view->benchHover(off);
+        mouse(QEvent::MouseMove, off, Qt::NoButton, Qt::AltModifier);
+        opad::Vec3 marker;
+        require(placer->markerShown(&marker) && placer->snapKind().isEmpty() && !(marker == opad::Vec3{25, 18, 0}), "with Alt held the pointer still snapped to the circle's centre");
+        hoverAt(off);
+        require(placer->markerShown(&marker) && placer->snapKind() == "center" && about(marker[0], 25, 1e-9) && about(marker[1], 18, 1e-9) && std::abs(marker[2]) < 1e-9,
+                "the pointer a few pixels off the sketch circle's centre does not snap to it: " + placer->snapKind().toStdString() + " " + str(marker[0]) + ", " + str(marker[1]));
+        require(win->m_promptText.startsWith(Viewport::snapWord("center")), "the status bar does not name the snap: " + win->m_promptText.toStdString());
+        shot("snap-centre");
+        pass("snapping: a few pixels off the sketch circle's centre the marker is its centre, named in the status bar; with Alt held it is not");
+        mouse(QEvent::MouseButtonPress, off);
+        mouse(QEvent::MouseButtonRelease, off);
+        require(placer->stage() == Stage::Size && mm("x") == 25 && mm("y") == 18, "the click on the snapped centre did not place the cylinder there: " + form->valueText("x").toStdString() + ", " + form->valueText("y").toStdString());
+        st->centre = {25, 18, 0};
+        hoverAt(at({30, 18, 0}) + QPointF(3, 2));  // by the circle's right quadrant
+        require(placer->snapKind() == "quadrant" && about(mm("diameter"), 10, 1e-9), "the pointer by the circle's quadrant did not make the diameter the circle's: " + placer->snapKind().toStdString() + " " + form->valueText("diameter").toStdString());
+        return true;
+      },
+      [=] {
+        if (!waitFor(previewFor({"diameter", "x", "y"}), "the cylinder preview did not follow the snapped diameter")) return false;
+        require(about(extent(previewBox(), 0), 10, 0.05) && about(low(previewBox(), 0), 20, 0.05), "the preview is not the 10 mm cylinder on the circle");
+        shot("snap-quadrant");
+        pass("snapping: by the circle's quadrant the diameter is the circle's, 10 mm exactly, and the preview follows");
+        clickAt({30, 18, 0});
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Height && previewFor({"diameter", "height"}), "the quadrant's click shows no height arrow")) return false;
+        key(Qt::Key_Return, {});
+        return true;
+      },
+      [=] {
+        if (!waitFor(committed("cylinder"), "Enter did not commit the cylinder on the circle")) return false;
+        require(stored("x") == 25 && stored("y") == 18 && about(stored("diameter"), 10, 1e-9), "the committed cylinder is not on the circle: " + win->m_doc->scene.features.back().inputs.dump());
+        pass("snapping: Enter commits the cylinder standing on the sketch's circle");
+        undo();
+        return true;
+      },
+      // ---- A box's far corner snaps to the block's corner (the face left a moment ago) and to an edge's midpoint.
+      [=] {
+        start("box");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the box does not wait for a plane")) return false;
+        view->grabImage();
+        clickAt(front());
+        require(placer->stage() == Stage::Size, "the click did not place the box");
+        st->centre = {mm("x"), mm("y"), 0};
+        moveTo({-45, 3, 10});  // over the block's top face
+        const QPointF corner = at({-55, -10, 10}), middle = at({-40, 0, 5});
+        const QPointF out = corner + (corner - middle) / std::max(1e-9, QLineF(corner, middle).length()) * 5;  // 5 px outside it
+        std::string candidate;
+        TopoDS_Face face;
+        opad::Vec3 hit;
+        require(!view->surfaceAt(out, candidate, face, hit) || face.IsNull(), "the point outside the block's corner is over a face");
+        hoverAt(out);
+        require(placer->snapKind() == "endpoint" && about(mm("length"), 2 * std::abs(-55 - st->centre[0]), 1e-3) && about(mm("width"), 2 * std::abs(-10 - st->centre[1]), 1e-3),
+                "just outside the block's corner the box's far corner does not snap to it: " + placer->snapKind().toStdString() + " " + form->valueText("length").toStdString() + " x " + form->valueText("width").toStdString());
+        require(win->m_promptText.startsWith(Viewport::snapWord("endpoint")), "the status bar does not name the corner's snap");
+        shot("snap-corner");
+        pass("snapping: just outside the block's corner the footprint's far corner is the corner put on XY (" + form->valueText("length") + " x " + form->valueText("width") + ")");
+        hoverAt(at({-40, -10, 10}) + QPointF(2, -4));  // by the top face's front edge's middle
+        require(placer->snapKind() == "midpoint" && about(mm("length"), 2 * std::abs(-40 - st->centre[0]), 1e-3) && about(mm("width"), 2 * std::abs(-10 - st->centre[1]), 1e-3),
+                "by the top face's front edge the far corner does not snap to its midpoint: " + placer->snapKind().toStdString() + " " + form->valueText("length").toStdString());
+        pass("snapping: by the top face's front edge the far corner is its midpoint");
+        design->escape();
+        design->escape();
+        return true;
+      },
+      [=] { return waitFor(!design->featureActive(), "Esc twice did not leave the box"); },
+      // ---- Sizes the kernel would refuse are never written: a small torus, a small coil.
+      [=] {
+        start("torus");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the torus does not wait for a plane")) return false;
+        view->grabImage();
+        clickAt(front());
+        st->centre = {mm("x"), mm("y"), 0};
+        moveTo({st->centre[0] + 2.5, st->centre[1], 0});
+        require(about(mm("diameter"), 5, 2 * pullStep()) && mm("section") < mm("diameter") && mm("section") > 0, "a 5 mm ring did not take a thinner section: " + form->valueText("diameter").toStdString() + " / " + form->valueText("section").toStdString());
+        return true;
+      },
+      [=] {
+        if (!waitFor(previewFor({"diameter", "section"}), "the small ring's preview did not come (refused?): " + form->statusText().toStdString())) return false;
+        st->size1 = mm("section");
+        moveTo({st->centre[0] + 12, st->centre[1], 0});
+        require(about(mm("section"), 10, 1e-9), "with room again the section did not go back to 10 mm: " + form->valueText("section").toStdString());
+        return true;
+      },
+      [=] {
+        if (!waitFor(previewFor({"diameter", "section"}), "the torus preview did not follow the larger ring")) return false;
+        pass("refusals: a ring " + QString::number(2 * 2.5) + " mm across takes a " + QString::number(st->size1) + " mm section and previews; 24 mm across it is 10 mm again");
+        design->escape();
+        design->escape();
+        return true;
+      },
+      [=] { return waitFor(!design->featureActive(), "Esc twice did not leave the torus"); },
+      [=] {
+        start("coil");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the coil does not wait for a plane")) return false;
+        view->grabImage();
+        clickAt(front());
+        st->centre = {mm("x"), mm("y"), 0};
+        moveTo({st->centre[0] + 1, st->centre[1], 0});
+        require(mm("diameter") > 2 * mm("size") && mm("diameter") < 2 * mm("size") + 3 * pullStep(), "a coil pointed 1 mm from its centre is not just wider than twice its section: " + form->valueText("diameter").toStdString());
+        return true;
+      },
+      [=] {
+        if (!waitFor(previewFor({"diameter"}), "the small coil's preview did not come (refused?): " + form->statusText().toStdString())) return false;
+        pass("refusals: a coil pointed 1 mm from its centre is " + form->valueText("diameter") + " across, wider than twice its section, and previews");
+        design->escape();
+        design->escape();
+        return true;
+      },
+      [=] { return waitFor(!design->featureActive(), "Esc twice did not leave the coil"); },
+      // ---- The sketch plane's origin snaps the same way.
+      [=] {
+        design->pickSketchPlane([](opad::json, opad::Frame) {}, true);
+        return true;
+      },
+      [=] {
+        PlanePicker* picker = design->planePicker();
+        if (!waitFor(picker->active(), "the sketch plane picker did not open")) return false;
+        picker->choose({{"base", "xy"}});
+        return true;
+      },
+      [=] {
+        PlanePicker* picker = design->planePicker();
+        if (!waitFor(picker->positioning() && !view->cameraMoving() && view->snapIndexesReady(), "choosing XY did not go on to the origin")) return false;
+        view->grabImage();
+        const QPointF off = at({25, 18, 0}) + QPointF(4, -3);
+        mouse(QEvent::MouseButtonPress, off);
+        mouse(QEvent::MouseButtonRelease, off);
+        require(about(picker->frame().origin[0], 25, 1e-9) && about(picker->frame().origin[1], 18, 1e-9), "pressed a few pixels off the circle's centre the sketch origin is not there: " + str(picker->frame().origin[0]) + ", " + str(picker->frame().origin[1]));
+        mouse(QEvent::MouseButtonPress, off, Qt::NoButton, Qt::AltModifier);
+        mouse(QEvent::MouseButtonRelease, off, Qt::NoButton, Qt::AltModifier);
+        require(!about(picker->frame().origin[0], 25, 1e-6), "with Alt held the sketch origin still snapped to the circle's centre");
+        pass("sketch origin: pressed a few pixels off the circle's centre it is the centre; with Alt held where the pointer is");
+        picker->cancel();
+        return true;
+      },
+      [=] { return waitFor(!design->planePicker()->active() && !view->cameraMoving(), "the sketch plane picker did not close"); },
       // ---- Box with Centred off: the click is a corner, the box runs towards the pointer (here back and left of it).
       [=] {
         start("box");

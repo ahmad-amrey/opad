@@ -324,7 +324,7 @@
    "id": "view.gridSnap",
    "title": "Grid snapping",
    "summary": "Makes placed points jump to grid intersections.",
-   "details": "Applies to points you click in sketches (hold Alt to place one off the grid), when placing a drawing or a sketch's origin, and to the distances Move / copy's triad is dragged. Set a fixed spacing in Grid settings for predictable steps.",
+   "details": "Applies to points you click in sketches (hold Alt to place one off the grid), when placing a drawing or a sketch's origin, to the point and the base of a box, cylinder or other primitive, and to the distances Move / copy's triad is dragged. Set a fixed spacing in Grid settings for predictable steps.",
    "keywords": ["snap to grid", "step", "increment"]
   },
   {
