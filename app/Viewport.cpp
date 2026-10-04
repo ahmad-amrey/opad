@@ -999,7 +999,8 @@ void Viewport::applySelectionFilter(SelFilter f) {
   auto i = std::make_shared<size_t>(0);
   m_filterJob = m_jobs->sliced(tr("Switching selection mode"), [this, items, i](Job&) {
     if (*i >= items->size()) return false;
-    activateSelection((*items)[(*i)++]);
+    // One removed meanwhile (a sync, another document) stays out: Load would put it back in the context, pickable unseen.
+    if (const Handle(AIS_Shape)& ais = (*items)[(*i)++]; m_ctx->DisplayStatus(ais) != PrsMgr_DisplayStatus_None) activateSelection(ais);
     return *i < items->size();
   }, [this](bool completed) {
     m_filterJob = nullptr;

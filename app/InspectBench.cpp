@@ -1,11 +1,16 @@
 // OPAD_BENCH_INSPECT (TODO 11 wave 3, help audit P8): the measuring tools do what their guides show, on two boxes apart.
 // Distance started from the Body filter with nothing selected picks faces (its guide clicks two faces): the filter turns
-// to Faces, the steps ask for faces and two clicks on the boxes measure face to face; with a body selected first the
-// Body filter stays and the body is the first pick. Bounding box takes picks one by one: its step says each click adds,
-// a second box clicked grows the box around both, Back (Esc) takes the last pick back and the box shrinks to the first.
+// to Faces, the steps ask for faces and two clicks on the boxes measure face to face; the tool ended, the Body filter is
+// back; with a body selected first the Body filter stays and the body is the first pick. Bounding box takes picks one by
+// one: its step says each click adds bodies (the filter's), a second box clicked grows the box around both, Back (Esc)
+// takes the last pick back and the box shrinks to the first. Distance then Angle straight after it: the Body filter is back
+// when Angle ends.
 #include <QCoreApplication>
+#include <QHideEvent>
 
 #include <cmath>
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -56,11 +61,13 @@ OPAD_BENCH(OPAD_BENCH_INSPECT, inspect) {
     click((*bodies)[0]);
     click((*bodies)[1]);
   }, [&w] { return w.m_lastMeasure.is_object() && w.m_toolPicks.size() == 2; });
-  script->add("bodies selected first", [&w, v, require, bodies] {
+  script->add("Distance ended", [&w, require] {
     require(w.m_toolPicks[0].kind == opad::Ref::Kind::Face && w.m_toolPicks[1].kind == opad::Ref::Kind::Face && w.m_lastMeasure.value("value", -1.0) > 0,
             QString("two clicks on the boxes measure face to face: %1 mm").arg(w.m_lastMeasure.value("value", -1.0)));
     w.cancelTool();
-    w.action("select.bodies")->trigger();
+  }, [&w, v, idle] { return v->selectionFilter() == Viewport::SelFilter::Body && w.action("select.bodies")->isChecked() && idle(); });
+  script->add("bodies selected first", [&w, v, require, bodies] {
+    require(!w.action("select.faces")->isChecked(), "the tool ended, the Body filter it switched from is back");
     v->selectNodes({(*bodies)[0]});
   }, [v, idle] { return v->selection().size() == 1 && v->selectionFilter() == Viewport::SelFilter::Body && idle(); });
   script->add("Distance with a body selected first", [&w] { w.startTool("distance"); }, [&w, idle] { return w.m_toolPicks.size() == 1 && idle(); });
@@ -79,8 +86,8 @@ OPAD_BENCH(OPAD_BENCH_INSPECT, inspect) {
   auto sizes = [&w] { return QString::fromStdString(w.m_lastMeasure.value("size", opad::json()).dump()); };
   script->add("the cube clicked", [&w, require, click, bodies] {
     const QList<ToolStep> steps = w.toolSteps();
-    require(steps.size() == 1 && steps[0].label == MainWindow::tr("Select bodies, faces or edges · each click adds"),
-            "Bounding box asks for picks one after another: " + (steps.isEmpty() ? QString() : steps[0].label));
+    require(steps.size() == 1 && steps[0].label == MainWindow::tr("Select bodies · each click adds"),
+            "Bounding box asks for picks one after another, what the filter picks: " + (steps.isEmpty() ? QString() : steps[0].label));
     click((*bodies)[0]);
   }, [&w] { return w.m_lastMeasure.is_object() && w.m_toolPicks.size() == 1; });
   script->add("the block clicked", [require, click, bodies, size, sizes] {
@@ -92,10 +99,17 @@ OPAD_BENCH(OPAD_BENCH_INSPECT, inspect) {
     require(w.m_toolSteps->footer()->cancelText() == MainWindow::tr("Back"), "its panel's Esc button is Back: " + w.m_toolSteps->footer()->cancelText());
     w.toolEscape();
   }, [&w] { return w.m_lastMeasure.is_object() && w.m_toolPicks.size() == 1; });
-  script->add("done", [&w, require, size, sizes] {
+  script->add("Bounding box ended", [&w, require, size, sizes] {
     require(size(10, 10, 10), "Back (Esc) takes the last pick back: the cube's box again " + sizes());
     w.cancelTool();
-  });
+  }, [v, idle] { return v->selection().empty() && idle(); });
+  script->add("Distance then Angle", [&w] { w.startTool("distance"); },
+              [&w, v, idle] { return w.m_tool.id == "distance" && v->selectionFilter() == Viewport::SelFilter::Face && idle(); });
+  script->add("Angle ended", [&w] {
+    w.startTool("angle");  // straight from Distance, in the Faces filter it set
+    w.cancelTool();
+  }, [&w, v, idle] { return w.m_tool.id.isEmpty() && v->selectionFilter() == Viewport::SelFilter::Body && w.action("select.bodies")->isChecked() && idle(); });
+  script->add("done", [require] { require(true, "a tool started straight from another: the Body filter is back when the second ends"); });
   bench2d::Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   return true;
 }

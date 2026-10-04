@@ -463,7 +463,7 @@
    "id": "inspect.distance",
    "title": "Distance",
    "summary": "Measures the distance between two picks: the shortest, centre to centre or the largest.",
-   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance, its X, Y and Z parts and the measured points. Minimum, Centre to centre and Maximum in the panel choose which distance. A dashed preview line follows the cursor after the first pick, and P pins the result to the document.",
+   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance, its X, Y and Z parts and the measured points. Started from the Bodies filter it picks faces until it ends: select bodies first, or choose Bodies while it runs, to measure whole bodies. Minimum, Centre to centre and Maximum in the panel choose which distance. A dashed preview line follows the cursor after the first pick, and Pin keeps the result in the document.",
    "keywords": ["measure", "length", "gap", "clearance", "dimension"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -487,7 +487,7 @@
    "id": "inspect.bbox",
    "title": "Bounding box",
    "summary": "Draws the world-aligned box around the picks and reports its size.",
-   "details": "Each click adds a body, face or edge and the box grows to hold them all; Esc takes the last one back. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
+   "details": "Each click adds what the selection filter picks, a body, face, edge or vertex, and the box grows to hold them all; Esc takes the last one back. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
    "keywords": ["size", "extents", "dimensions", "overall size"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },

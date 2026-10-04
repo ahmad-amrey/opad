@@ -133,16 +133,21 @@ QString MainWindow::refLabel(const opad::Ref& r) const {
 
 QList<ToolStep> MainWindow::toolSteps() const {
   const Viewport::SelFilter f = m_viewport->selectionFilter();
+  const bool words2d = m_viewport->drawingWords() && drawing2d::hasDrawings(m_doc->scene);  // as the filters are named then (UI-118)
   if (!m_tool.steps) {  // an open tool (Area, Bounding box): one step, the picks so far as what it got
     ToolStep s;
-    s.label = m_tool.id == "bbox" ? tr("Select bodies, faces or edges · each click adds")
-              : f == Viewport::SelFilter::Vertex ? tr("Select points around the area") : f == Viewport::SelFilter::Face ? tr("Select fills or faces")
-                                                                                          : tr("Select a closed object or the objects around an area");
+    if (m_tool.id == "bbox")  // what a click adds: what the filter picks, in the words the filters have (a drawing's in 2D)
+      s.label = f == Viewport::SelFilter::Vertex ? (words2d ? tr("Select points · each click adds") : tr("Select vertices or points · each click adds"))
+                : f == Viewport::SelFilter::Edge ? (words2d ? tr("Select objects · each click adds") : tr("Select edges · each click adds"))
+                : f == Viewport::SelFilter::Face ? (words2d ? tr("Select fills · each click adds") : tr("Select faces · each click adds"))
+                                                 : (words2d ? tr("Select groups · each click adds") : tr("Select bodies · each click adds"));
+    else
+      s.label = f == Viewport::SelFilter::Vertex ? tr("Select points around the area") : f == Viewport::SelFilter::Face ? tr("Select fills or faces")
+                                                                                         : tr("Select a closed object or the objects around an area");
     if (m_toolPicks.size() == 1) s.picked = refLabel(m_toolPicks.front());
     else if (!m_toolPicks.empty()) s.picked = tr("%1 picked").arg(m_toolPicks.size());
     return {s};
   }
-  const bool words2d = m_viewport->drawingWords() && drawing2d::hasDrawings(m_doc->scene);  // as the filters are named then (UI-118)
   const QString kind = f == Viewport::SelFilter::Vertex && m_tool.id != "sectionface"
       ? (m_tool.id == "radius" ? tr("circle center") : words2d ? tr("point or center") : tr("vertex or center"))
       : i18n::t(m_tool.id == "sectionface" ? "face" : f == Viewport::SelFilter::Face ? (words2d ? "fill" : "face") : f == Viewport::SelFilter::Edge ? (words2d ? "object" : "edge") : (words2d ? "group" : "body"));
@@ -166,7 +171,7 @@ void MainWindow::startTool(const QString& id) {
   if (!m_doc->hasDocument || m_design->sketchActive()) return;
   if (m_annotationEditor) m_annotationEditor->cancel();  // one guide at a time
   m_design->escape();  // a feature panel or a plane pick gives way
-  if (!m_tool.id.isEmpty()) cancelTool();
+  if (!m_tool.id.isEmpty()) cancelTool(false);  // the filter the first one switched from is set back when this one ends
   if (m_toolStack->currentWidget() == m_checks) endCheck();
   m_toolStack->setCurrentWidget(m_toolSteps);
   static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
@@ -174,7 +179,7 @@ void MainWindow::startTool(const QString& id) {
       {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 0}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}, {"area", {QT_TR_NOOP("Area"), "area", 0}},
       {"length", {QT_TR_NOOP("Length and area"), "length", 1}}};
   const auto it = kTools.find(id);
-  if (it == kTools.end()) return;
+  if (it == kTools.end()) return m_toolFilter.reset();
   m_tool = Tool{id, tr(std::get<0>(it->second)), std::get<1>(it->second), std::get<2>(it->second)};
   m_toolPicks.clear();
   m_toolPoints.clear();
@@ -183,7 +188,8 @@ void MainWindow::startTool(const QString& id) {
   ++m_toolRun;
   // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face. Distance measures faces
   // from the Body filter too (help audit P8: its guide clicks two faces; bodies are one filter key away), unless bodies were
-  // selected first (selected first, tool second: those are measured) or a drawing has no faces (2D words).
+  // selected first (selected first, tool second: those are measured) or a drawing has no faces (2D words). A filter a tool
+  // switches to is its own: the one it switched from comes back when it ends (m_toolFilter).
   const Viewport::SelFilter f = m_viewport->selectionFilter();
   const bool distanceFaces = id == "distance" && f == Viewport::SelFilter::Body && m_viewport->selection().empty() && action("select.faces")->isVisible();
   const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face
@@ -205,10 +211,11 @@ void MainWindow::startTool(const QString& id) {
     m_toolSteps->setGuide("inspect." + id);  // UI-107
     openPanel(m_toolPanel);
   }
-  if (wantEdges) {
-    action("select.edges")->trigger();
-  } else if (wantFaces || (id == "area" && f == Viewport::SelFilter::Body)) {
-    action("select.faces")->trigger();  // clears the picks and refreshes the prompt (see the select actions)
+  if (wantEdges || wantFaces || (id == "area" && f == Viewport::SelFilter::Body)) {
+    const Viewport::SelFilter set = wantEdges ? Viewport::SelFilter::Edge : Viewport::SelFilter::Face;
+    if (!m_toolFilter) m_toolFilter = ToolFilter{f, set, m_autoEdges};
+    else m_toolFilter->set = set;
+    action(wantEdges ? "select.edges" : "select.faces")->trigger();  // clears the picks and refreshes the prompt (see the select actions)
   } else {
     const auto before = m_viewport->selection();  // selected first, tool second still works
     if (!before.empty() && (!m_tool.steps || static_cast<int>(before.size()) <= m_tool.steps)) toolPicksChanged(before, false);
@@ -217,7 +224,7 @@ void MainWindow::startTool(const QString& id) {
   if (!m_tool.id.isEmpty()) refreshToolUi();
 }
 
-void MainWindow::cancelTool() {
+void MainWindow::cancelTool(bool restoreFilter) {
   if (m_tool.id.isEmpty()) return;
   m_tool = Tool();  // first: hiding the panel below reports back here
   m_toolError.clear();
@@ -233,6 +240,15 @@ void MainWindow::cancelTool() {
   m_prompt->hide();
   m_toolPanel->hide();
   clearMeasurement();
+  // The filter the tool switched to goes with it, unless another one was chosen while it ran (that one stays).
+  if (const auto filter = std::exchange(m_toolFilter, std::nullopt); filter && m_viewport->selectionFilter() == filter->set) {
+    if (!restoreFilter) {
+      m_toolFilter = filter;  // the next tool starts at once: it sets this one back
+    } else if (filter->before != filter->set) {
+      m_viewport->setSelectionFilter(filter->before);  // the chips follow (filterApplied)
+      m_autoEdges = filter->autoEdges;
+    }
+  }
 }
 
 void MainWindow::toolEscape() {

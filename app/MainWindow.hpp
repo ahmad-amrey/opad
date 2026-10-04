@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QPointer>
 #include <functional>
+#include <optional>
 
 #include "AnnotationEditor.hpp"
 #include "AreaController.hpp"
@@ -173,7 +174,7 @@ class MainWindow : public QMainWindow {
   // Guided tools: the tool is started first and asks for its picks one step at a time (see GuidedTool.hpp).
   void toggleTool(const QString& id);  // distance, angle, radius, bbox, note, sectionface
   void startTool(const QString& id);
-  void cancelTool();
+  void cancelTool(bool restoreFilter = true);  // false: another tool starts at once (it keeps the filter to set back)
   void toolEscape();  // Esc: result -> measure again; otherwise one step back; with no pick left, leave the tool
   void toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromClick);
   void runToolMeasure();
@@ -285,6 +286,14 @@ class MainWindow : public QMainWindow {
     int steps = 0;  // 0: open (Area): measured after every pick, as many as the user makes
   };
   Tool m_tool;  // id empty: no tool is running
+  // The filter a tool switched to for its picks (faces for Distance, Angle and Radius from the Bodies filter, for the
+  // section's pick; edges where there are no faces) and the one it switched from: set back when the tool ends, unless
+  // another filter was chosen meanwhile. A tool started straight from another keeps the first one's.
+  struct ToolFilter {
+    Viewport::SelFilter before, set;
+    bool autoEdges = false;  // m_autoEdges as it was (the select actions clear it)
+  };
+  std::optional<ToolFilter> m_toolFilter;
   std::vector<opad::Ref> m_toolPicks;
   std::vector<std::pair<bool, opad::Vec3>> m_toolPoints;  // where each pick was clicked (false: picked some other way)
   int m_toolRun = 0;  // bumps whenever the picks change: a measure result for an older run is dropped
