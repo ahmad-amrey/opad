@@ -631,5 +631,6 @@
   "Never cut": "لا تُقطع أبدًا",
   "View state": "حالة المسقط",
   "Assembled": "مجمَّع",
-  "No exploded view saved: Save exploded view in the Explode tab": "لا عرض مفكَّك محفوظ: «حفظ العرض المفكَّك» في تبويب التفكيك"
+  "No exploded view saved: Save exploded view in the Explode tab": "لا عرض مفكَّك محفوظ: «حفظ العرض المفكَّك» في تبويب التفكيك",
+  "Its parts where the exploded view %1 puts them, with trail lines": "أجزاؤه حيث يضعها العرض المفكَّك %1، مع خطوط الأثر"
 }

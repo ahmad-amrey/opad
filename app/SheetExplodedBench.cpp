@@ -11,6 +11,7 @@
 
 #include "BenchRegistry.hpp"
 #include "DocsArea.hpp"
+#include "DrawingsFolder.hpp"
 #include "SheetCanvas.hpp"
 #include "SheetPage.hpp"
 #include "Toast.hpp"
@@ -130,6 +131,19 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
           if (const opad::SheetItem* t = doc->scene.sheet_item(id); t && t->kind == kind && (view.empty() || t->view == view)) ++n;
       return n;
     };
+    {  // the browser's Drawings folder tells it apart: named after the exploded view, its icon
+      std::function<const drawings::Row*(const std::vector<drawings::Row>&)> find = [&](const std::vector<drawings::Row>& rows) -> const drawings::Row* {
+        for (const auto& r : rows) {
+          if (r.id == drawn) return &r;
+          if (const drawings::Row* in = find(r.children)) return in;
+        }
+        return nullptr;
+      };
+      const auto rows = drawings::rows(*doc);
+      const drawings::Row* row = find(rows);
+      check(row && row->name.contains("Exploded 1") && row->icon == "explodedView" && row->tooltip.contains("Exploded 1"),
+            "the Drawings folder names the view after Exploded 1, with the exploded view's icon: " + (row ? row->name : QString()));
+    }
     // Auto-balloon with no view selected: the exploded view's parts (an assembly drawing's balloons), a parts list with them.
     canvas->selectViews({});
     w.action("drawings.autoBalloon")->trigger();
