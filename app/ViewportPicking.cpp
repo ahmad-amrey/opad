@@ -29,7 +29,7 @@ Handle(AIS_Shape) Viewport::centerMarker(const opad::Ref& ref, const gp_Pnt& poi
   m_ctx->Display(marker, 0, -1, false);
   m_ctx->Load(marker, -1);
   m_ctx->Activate(marker, 0);
-  m_ctx->SetSelectionSensitivity(marker, 0, 8);
+  m_ctx->SetSelectionSensitivity(marker, 0, static_cast<int>(std::lround(12 * displayScale())));  // a 24 px target (UI-124)
   marker->GlobalSelOwner()->SetPriority(10);
   m_centers.emplace(key, CenterMarker{ref, point, marker});
   m_centerObjects[marker.get()] = key;

@@ -25,6 +25,8 @@
 #include <QStatusBar>
 #include <QToolButton>
 #include <QToolTip>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 // OPAD_BENCH_RICHTIP=<prefix>: every command has its help record (translated in a translated run); the rich card on
 // real ribbon buttons through synthesised events: nothing before 450 ms, compact after, expanded after +1200 ms,
@@ -160,6 +162,15 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     QApplication::sendEvent(plain, &other);
     check(held && QToolTip::text().contains("Not a command"), "Qt's tooltip held back on attached buttons only");
     delete plain;
+    QSettings().setValue("ui/tips", 1);  // Plain tooltips: Qt's, with the command's summary
+    QApplication::sendEvent(fit, &help);
+    check(QToolTip::text().contains(help::find("view.fit")->summary.toHtmlEscaped()) && QToolTip::text().contains(help::find("view.fit")->title.toHtmlEscaped()),
+          "Plain tooltips: the command's name and summary in Qt's tooltip");
+    QToolTip::showText(fit->mapToGlobal(QPoint(4, 4)), "before");
+    QSettings().setValue("ui/tips", 0);
+    QApplication::sendEvent(fit, &help);
+    check(QToolTip::text() == "before", "Off: no hover help at all");
+    QSettings().setValue("ui/tips", 2);
     QToolTip::hideText();
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) { auto* w = new QLabel(clip, parent); w->setAlignment(Qt::AlignCenter); return w; });
     tip->showFor(fit, State::Expanded);
@@ -216,6 +227,25 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     check(tip->commandId() == "view.unisolate" && tip->showsRequirement(), "menu: a disabled entry says what it needs");
     w.m_viewMenu->hide();
     check(tip->state() == State::Hidden && !tip->isVisible(), "menu: closing the menu hides the card");
+  });
+  add(300, [=, &w] {  // F1 on the expanded card: the tool guide at its command (a menu closes first)
+    tip->showFor(fit, State::Expanded);
+    const bool f1 = key(fit, Qt::Key_F1, QEvent::ShortcutOverride);
+    key(fit, Qt::Key_F1);
+    auto* reference = w.findChild<CommandReference*>();
+    check(f1 && reference && reference->isVisible() && reference->current() == "view.fit" && tip->state() == State::Hidden,
+          "F1 on the expanded card opens the tool guide at its command (" + (reference ? reference->current() : QString()) + ")");
+    if (reference) reference->hide();
+    w.m_viewMenu->popup(QGuiApplication::primaryScreen()->availableGeometry().center() - QPoint(0, 200));
+    tip->showFor(w.m_viewMenu, State::Expanded, w.action("view.isolate"));
+    const bool expanded = tip->state() == State::Expanded && tip->commandId() == "view.isolate";
+    key(w.m_viewMenu, Qt::Key_F1, QEvent::ShortcutOverride);
+    key(w.m_viewMenu, Qt::Key_F1);
+    reference = w.findChild<CommandReference*>();
+    check(expanded && !w.m_viewMenu->isVisible() && reference && reference->isVisible() && reference->current() == "view.isolate",
+          QString("menu: F1 on the expanded card closes the menu and opens the guide there (card %1, menu %2, guide %3 at %4)")
+              .arg(expanded).arg(w.m_viewMenu->isVisible()).arg(reference && reference->isVisible()).arg(reference ? reference->current() : QString()));
+    if (reference) reference->close();
     trace::log(QString("bench: richtip: %1").arg(run->ok ? "PASS" : "FAIL: " + run->failed.join("; ")));
     QCoreApplication::exit(run->ok && missing.isEmpty() ? 0 : 2);
   });
@@ -424,6 +454,7 @@ OPAD_BENCH(OPAD_BENCH_CLIPS, clips) {
 OPAD_BENCH(OPAD_BENCH_GUIDE, guide) {
   const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
     trace::log(QString("bench: guide: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
@@ -522,6 +553,7 @@ OPAD_BENCH(OPAD_BENCH_GUIDE, guide) {
 OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
   const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
     trace::log(QString("bench: reference: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
@@ -549,6 +581,10 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
     check(w.action("help.current")->shortcut() == QKeySequence("F1"), "Help for this tool is F1");
     w.action("help.current")->trigger();
     check(reference && reference->isVisible() && reference->current() == "inspect.distance", "F1 while measuring opens it at Distance (" + (reference ? reference->current() : QString()) + ")");
+    reference->hide();
+    QKeyEvent f1(QEvent::KeyPress, Qt::Key_F1, Qt::NoModifier);  // in the tool's own panel (a window of its own)
+    QApplication::sendEvent(w.m_toolPanel, &f1);
+    check(w.m_toolPanel->isVisible() && reference->isVisible() && reference->current() == "inspect.distance", "F1 in the Distance panel opens it there too");
     reference->hide();
     w.action("help.reference")->trigger();
     check(reference->isVisible() && reference->current() == "inspect.distance", "the Tool guide opens where it was");
@@ -590,12 +626,37 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
     check(ids.contains("design.offset_face"), "the palette finds commands by keyword (" + ids.join(' ') + ")");
     edit->setText("fit");
   });
+  // Left open, its rows follow the commands (availability, keys); Esc closes it.
+  auto keyWas = std::make_shared<QKeySequence>();
+  auto row = [&w](const QString& id) -> QTreeWidgetItem* {
+    auto* list = w.findChild<CommandReference*>()->findChild<QTreeWidget*>("referenceList");
+    for (QTreeWidgetItemIterator it(list); *it; ++it)
+      if ((*it)->data(0, Qt::UserRole).toString() == id) return *it;
+    return nullptr;
+  };
   add(400, [=, &w] {
     auto* palette = w.findChild<CommandPalette*>();
     if (palette) {
       palette->grab().save(prefix + ".palette.png");
       palette->close();
     }
+    w.action("help.reference")->trigger();
+    QTreeWidgetItem* item = row("view.unisolate");
+    check(item && item->foreground(0).color() == theme::current().fg3, "Exit isolate is greyed in the guide (nothing is isolated)");
+    *keyWas = w.action("view.unisolate")->shortcut();
+    w.action("view.unisolate")->setEnabled(true);
+    w.action("view.unisolate")->setShortcut(QKeySequence("Ctrl+Alt+F11"));
+  });
+  add(300, [=, &w] {
+    QTreeWidgetItem* item = row("view.unisolate");
+    check(item && item->foreground(0).color() != theme::current().fg3 && item->text(1) == QKeySequence("Ctrl+Alt+F11").toString(QKeySequence::NativeText),
+          "left open, its row follows the command's availability and key (" + (item ? item->text(1) : QString()) + ")");
+    w.action("view.unisolate")->setEnabled(false);
+    w.action("view.unisolate")->setShortcut(*keyWas);
+    auto* reference = w.findChild<CommandReference*>();
+    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(reference->findChild<QLineEdit*>("paletteInput"), &esc);
+    check(!reference->isVisible(), "Esc in its search field closes it");
     trace::log(QString("bench: reference: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });

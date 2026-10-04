@@ -64,7 +64,7 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   v->addLayout(grid);
   header(tr("OBJECTS"));
   auto* scopeRow = new QHBoxLayout();
-  auto* scopeSel = new QRadioButton(QString::fromUtf8("Selection · %1 %2").arg(selBodies).arg(selBodies == 1 ? tr("object") : tr("objects")), &dlg);
+  auto* scopeSel = new QRadioButton(selBodies == 1 ? tr("Selection · 1 object") : tr("Selection · %1 objects").arg(selBodies), &dlg);
   auto* scopeAll = new QRadioButton(tr("Whole document · %1 objects").arg(allBodies), &dlg);
   auto* scopeGroup=new QButtonGroup(&dlg);scopeGroup->addButton(scopeSel);scopeGroup->addButton(scopeAll);
   scopeSel->setEnabled(selBodies > 0);

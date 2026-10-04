@@ -31,6 +31,7 @@
 #include "DesignController.hpp"
 #include "FileAssociations.hpp"
 #include "I18n.hpp"
+#include "Motion.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Preferences.hpp"
@@ -136,6 +137,23 @@ class PreferencesArea : public AreaController {
     form.check("ui/browserAutoHide", tr("Auto-hide scene browser"), true, [this](bool on) {
       if (auto* overlay = static_cast<BrowserOverlay*>(services().window()->findChild<QFrame*>("browserOverlay"))) overlay->setAutoHide(on);
     });
+    form.section(tr("Motion"));  // UI-124
+    form.check("ui/reduceMotion", tr("Reduce motion"), !motion::system());
+    form.note(tr("The view jumps instead of turning, help clips hold still and panels open at once. By default as the system's animation setting."));
+    form.section(tr("Contrast and text size"));  // UI-124
+    form.choice("ui/contrast", tr("High contrast"), {theme::systemHighContrast() ? tr("As the system (on)") : tr("As the system (off)"), tr("On"), tr("Off")}, 0, [](int) { theme::refresh(); });
+    auto* size = new QComboBox;
+    size->setObjectName("ui/textScale");
+    size->addItem(tr("As the system (%1 %)").arg(std::lround(theme::systemTextScale() * 100)), 0);
+    for (int percent : {100, 125, 150, 175, 200}) size->addItem(QString("%1 %").arg(percent), percent);
+    size->setCurrentIndex(std::max(0, size->findData(QSettings().value("ui/textScale", 0).toInt())));
+    QObject::connect(size, &QComboBox::currentIndexChanged, size, [size] {
+      QSettings().setValue("ui/textScale", size->currentData().toInt());
+      preferences::changed("ui/textScale");
+      theme::refresh();
+    });
+    form.row(tr("Text size"), size);
+    form.note(tr("High contrast takes the system's high-contrast colours. A larger text size makes the window's text, menus, the browser's rows, the timeline and the ribbon's tabs larger."));
     form.finish();
     return page;
   }
@@ -194,8 +212,9 @@ class PreferencesArea : public AreaController {
     form.section(tr("Snaps"), tr("Where a point placed in a sketch may jump to. Alt while placing turns them off for that point."));
     for (const auto& [key, label] : QList<QPair<QString, QString>>{{"endpoint", tr("Endpoints")}, {"midpoint", tr("Midpoints")}, {"center", tr("Centres")},
                                                                    {"quadrant", tr("Quadrants")}, {"intersection", tr("Intersections")}, {"nearest", tr("Nearest on curve")},
-                                                                   {"grid", tr("Grid snapping")}, {"inference", tr("Automatic constraints")}})
+                                                                   {"inference", tr("Automatic constraints")}})
       form.check("sketch/snap/" + key, label, true);
+    if (QAction* grid = action("view.gridSnap")) form.option(grid, tr("Grid snapping"));  // F9 itself, as on the Grid page: one switch
     form.section(tr("Directions"));
     if (QAction* polar = action("view.polarSnap")) form.option(polar, tr("Angle increments (Polar)"));
     form.number("sketch/angleStep", tr("Angle step"), 15, 1, 90, 1, QString::fromUtf8("°"));
@@ -250,6 +269,9 @@ class PreferencesArea : public AreaController {
     };
     shown();
     QObject::connect(units::notifier(), &units::Notifier::changed, page, shown);
+    QObject::connect(preferences::notifier(), &preferences::Notifier::changed, page, [shown](const QString& key) {  // Grid snapping's menu
+      if (key.isEmpty() || key.startsWith("view/grid")) shown();
+    });
     auto apply = [view, spacing, extent, automatic] {
       view->configureGrid(automatic->isChecked() ? 0 : units::fromDisplay(units::Kind::Length, spacing->value()), units::fromDisplay(units::Kind::Length, extent->value()));
     };
@@ -309,8 +331,6 @@ class PreferencesArea : public AreaController {
   QWidget* versionControl() {
     auto* page = new QWidget;
     preferences::Form form(page);
-    form.section(tr("Status bar"));
-    form.integer("git/refreshSeconds", tr("Check the branch and file state every"), 5, 2, 600, tr(" s"));
     form.section(tr("Merging"), tr("OPAD files merge line by line with OPAD's record-aware merge driver. Add this line to the repository's .gitattributes:"));
     const QString attribute = "*.opad text eol=lf merge=opad";
     QLabel* line = form.note(attribute);

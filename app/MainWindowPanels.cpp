@@ -64,7 +64,8 @@ void MainWindow::buildDocks() {
   bottom->setTitleBarWidget(new QWidget(bottom));  // the strip is its own header
   bottom->setFeatures(QDockWidget::NoDockWidgetFeatures);
   bottom->setWidget(m_timeline);
-  bottom->setFixedHeight(48);
+  bottom->setFixedHeight(m_timeline->height());  // 48 px, more at a larger text size
+  connect(theme::notifier(), &theme::Notifier::changed, bottom, [this, bottom] { bottom->setFixedHeight(m_timeline->height()); });
   addDockWidget(Qt::BottomDockWidgetArea, bottom);
 
 

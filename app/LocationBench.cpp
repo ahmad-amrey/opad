@@ -14,7 +14,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLayout>
-#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QStatusBar>
@@ -159,15 +158,14 @@ OPAD_BENCH(OPAD_BENCH_PATHS, paths) {
           // Recent files: the context menu on the start page's list and on File > Recent (a right click never opens).
           w.addRecent(stl + ".moved");
           w.addRecent(doc);
-          QListWidget* list = w.m_empty->recentList();
-          require(list->count() >= 2, "the start page lists no recent files");
-          w.m_empty->setGeometry(w.m_stack->geometry());  // a page the stack does not show has no geometry of its own
-          if (QLayout* l = w.m_empty->layout()) l->activate();
-          list->doItemsLayout();
-          withPopup([&] { emit list->customContextMenuRequested(list->visualItemRect(list->item(0)).center()); }, [&](QMenu* m) {
+          const QList<RecentCard*> cards = w.m_empty->cards();
+          require(cards.size() >= 2 && cards.front()->path() == doc, "the start page lists no recent files");
+          {
+            QMenu* m = w.m_empty->cardMenu(cards.front());  // what a right click on the card shows
             seen = names(m);
             if (!prefix.isEmpty()) m->grab().save(prefix + ".start-menu.png");
-          });
+            delete m;
+          }
           require(seen == QStringList({"recent.open", "location.reveal", "location.copy", "location.copyRelative", "recent.remove"}), "start page menu: " + seen.join(' '));
           QMenu* recent = w.m_recentMenu;
           QAction* entry = recent->actions().value(1);
@@ -191,7 +189,7 @@ OPAD_BENCH(OPAD_BENCH_PATHS, paths) {
           QCoreApplication::processEvents();
           require(!opened && seen.contains("location.copy") && !w.recent().contains(stl + ".moved") && !recent->isVisible(),
                   QStringLiteral("File > Recent right click: opened %1, menu %2, still listed %3").arg(opened).arg(seen.join(' ')).arg(w.recent().contains(stl + ".moved")));
-          require(list->count() == w.recent().size(), "the start page follows Remove from list");
+          require(w.m_empty->cards().size() == w.recent().size(), "the start page follows Remove from list");
           pass("recent files: the start page's and File > Recent's menus (a right click never opens the entry), Remove from list");
           QFile::rename(stl + ".moved", stl);
           trace::log("bench: paths: Open file location and Copy path everywhere PASS");

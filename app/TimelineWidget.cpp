@@ -1,8 +1,11 @@
 #include "TimelineWidget.hpp"
 
 #include <QClipboard>
+#include <QAccessible>
+#include <QContextMenuEvent>
 #include <QCursor>
 #include <QGuiApplication>
+#include <QDateTime>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -23,7 +26,6 @@
 
 namespace {
 QString shortId(const std::string& id) { return QString::fromStdString(id.substr(0, 8)); }
-constexpr int kStrip = 128;  // where the markers start
 constexpr int kGap = 8;      // between markers
 }  // namespace
 
@@ -79,7 +81,7 @@ TimelineWidget::TimelineWidget(AppDocument* doc, QWidget* parent) : QWidget(pare
     update();
   });
   setMouseTracking(true);
-  setFixedHeight(48);
+  setFixedHeight(theme::px(48));
   setFocusPolicy(Qt::StrongFocus);
   m_scroll = new QScrollBar(Qt::Horizontal, this);
   m_scroll->setLayoutDirection(Qt::LeftToRight);
@@ -88,8 +90,18 @@ TimelineWidget::TimelineWidget(AppDocument* doc, QWidget* parent) : QWidget(pare
   connect(m_scroll, &QScrollBar::valueChanged, this, [this] { setHover(-1); QToolTip::hideText(); update(); });
   setAttribute(Qt::WA_Hover);
   connect(doc, &AppDocument::changed, this, &TimelineWidget::rebuild);
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] {  // the text size
+    setFixedHeight(theme::px(48));
+    updateScrollRange();
+  });
   rebuild();
 }
+
+// The strip's parts at the text size: the title and count on the left, the markers, the ‹ › buttons on the right.
+int TimelineWidget::markersLeft() const { return theme::px(100) + 28; }
+int TimelineWidget::markersRight() const { return width() - 2 * theme::px(24) - 24; }
+int TimelineWidget::markerTop() const { return (height() - 18) / 2 - 2; }
+QRect TimelineWidget::markerArea() const { return QRect(markersLeft() - 3, 4, std::max(0, markersRight() - markersLeft() + 3), height() - 17); }
 
 void TimelineWidget::rebuild() {
   const bool atEnd = m_scroll->value() == m_scroll->maximum();
@@ -151,8 +163,8 @@ void TimelineWidget::setDesignOnly(bool on) {
 bool TimelineWidget::isUnresolved(const std::string& opId) const { return m_unresolved.count(opId) > 0; }
 
 void TimelineWidget::updateScrollRange() {
-  const int available = std::max(0, width() - 200);
-  m_scroll->setGeometry(kStrip, 36, available, 12);
+  const int available = std::max(0, markersRight() - markersLeft());
+  m_scroll->setGeometry(markersLeft(), height() - 12, available, 12);
   m_scroll->setPageStep(available);
   m_scroll->setRange(0, std::max(0, m_extent + 4 - available));
   m_scroll->setVisible(m_scroll->maximum() > 0);
@@ -180,9 +192,11 @@ void TimelineWidget::wheelEvent(QWheelEvent* e) {
 // Ctrl+C on the timeline is its own (the marker's op id), and so are Shift with the arrows, Home and End (the roll-back
 // marker), whatever the window's shortcuts say (Shift+Left and Shift+Right are views there).
 bool TimelineWidget::event(QEvent* e) {
-  if (e->type() == QEvent::ShortcutOverride) {
+  if (e->type() == QEvent::ShortcutOverride) {  // F2 is the marker's (edit), not the window's Rename
     const auto* k = static_cast<QKeyEvent*>(e);
-    if ((k->matches(QKeySequence::Copy) && !m_current.empty()) || (k->modifiers() == Qt::ShiftModifier && playheadKey(k->key()))) {
+    const Qt::KeyboardModifiers mods = k->modifiers() & ~Qt::KeypadModifier;
+    if ((k->matches(QKeySequence::Copy) && !m_current.empty()) || (mods == Qt::ShiftModifier && playheadKey(k->key())) ||
+        (k->key() == Qt::Key_F2 && !mods && currentMarker() >= 0)) {
       e->accept();
       return true;
     }
@@ -219,26 +233,90 @@ void TimelineWidget::dropPlayhead(size_t gap) {
     emit rollbackRequested(gap < m_shown.size() ? rollPoint(m_shown[gap]) : std::string());
 }
 
+// The keyboard (UI-124): Left, Right, Home and End move along the markers (and select what each touches), Enter or F2 edits
+// a feature or a sketch, Space suppresses or brings back a feature, Del tombstones, Shift+Del restores, the Menu key or
+// Shift+F10 opens the marker's menu.
 void TimelineWidget::keyPressEvent(QKeyEvent* e) {
+  const Qt::KeyboardModifiers mods = e->modifiers() & ~Qt::KeypadModifier;
+  const opad::Op* op = markerOp(currentMarker());
+  const bool deleted = op && m_deleted.count(op->id);
   if (e->matches(QKeySequence::Copy)) {
     if (m_current.empty()) return QWidget::keyPressEvent(e);
     QGuiApplication::clipboard()->setText(QString::fromStdString(m_current));
-  } else if (e->modifiers() == Qt::ShiftModifier && playheadKey(e->key())) nudgePlayhead(e->key());
-  else if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && e->modifiers() == Qt::NoModifier && !m_current.empty() && !m_deleted.count(m_current)) {
-    const opad::Op* op = m_doc->doc.find_op(m_current);  // as a double-click: a feature or a sketch is edited (the chip's Edit key)
-    if (!op || (op->type != "feature" && op->type != "sketch")) return QWidget::keyPressEvent(e);
-    emit opActivated(m_current);
-  } else if (e->key() == Qt::Key_Left) step(-1);
+  } else if (mods == Qt::ShiftModifier && playheadKey(e->key())) nudgePlayhead(e->key());
+  else if (e->key() == Qt::Key_Left) step(-1);
   else if (e->key() == Qt::Key_Right) step(1);
   else if (e->key() == Qt::Key_Home || e->key() == Qt::Key_End) {
     if (!m_shown.empty()) { setCurrentOp(m_doc->doc.ops[e->key() == Qt::Key_Home ? m_shown.front() : m_shown.back()].id); emit opClicked(m_current); }
-  } else { QWidget::keyPressEvent(e); return; }
+  } else if (e->key() == Qt::Key_Menu || (e->key() == Qt::Key_F10 && mods == Qt::ShiftModifier)) {
+    openMenu();
+  } else if (e->key() == Qt::Key_Delete && (mods == Qt::NoModifier || mods == Qt::ShiftModifier)) {
+    if (op) emit deleteRequested(op->id, mods == Qt::ShiftModifier);
+  } else if (mods) {
+    QWidget::keyPressEvent(e);
+    return;
+  } else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter || e->key() == Qt::Key_F2) {
+    if (op && (op->type == "feature" || op->type == "sketch") && !deleted) emit opActivated(op->id);
+  } else if (e->key() == Qt::Key_Space) {
+    if (op && op->type == "feature" && !deleted && !e->isAutoRepeat()) emit suppressRequested(op->id);
+  } else {
+    QWidget::keyPressEvent(e);
+    return;
+  }
   e->accept();
+}
+
+void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
+  if (e->reason() != QContextMenuEvent::Keyboard) return e->ignore();  // the right button's press opened it already
+  openMenu();
+}
+
+void TimelineWidget::openMenu() {
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  const int at = currentMarker();
+  if (at < 0 || now - m_menuAt < 400) return;
+  m_menuAt = now;
+  ensureCurrentVisible();
+  emit contextRequested(m_current, mapToGlobal(markerRect(at).bottomLeft() + QPoint(0, 4)));
+}
+
+const opad::Op* TimelineWidget::markerOp(int i) const {
+  return i >= 0 && i < int(m_shown.size()) && m_shown[size_t(i)] < m_doc->doc.ops.size() ? &m_doc->doc.ops[m_shown[size_t(i)]] : nullptr;
+}
+
+int TimelineWidget::currentMarker() const {
+  for (size_t k = 0; k < m_shown.size() && !m_current.empty(); ++k)
+    if (m_doc->doc.ops[m_shown[k]].id == m_current) return int(k);
+  return -1;
+}
+
+QString TimelineWidget::markerState(int i) const {
+  const opad::Op* op = markerOp(i);
+  if (!op) return {};
+  QStringList state;
+  if (op->id == m_editing) state << tr("being edited");
+  if (m_deleted.count(op->id)) state << (op->type == "delete" ? tr("undone") : tr("tombstoned"));
+  else if (isUnresolved(op->id)) state << tr("unresolved");
+  if (const opad::Feature* f = op->type == "feature" ? m_doc->scene.feature(op->id) : nullptr) {
+    if (f->suppressed) state << tr("suppressed");
+    if (!f->error.empty()) state << tr("failed");
+    if (!f->result.value("rehinted", opad::json::array()).empty()) state << tr("a reference was re-picked");
+  }
+  return state.join(", ");
+}
+
+void TimelineWidget::announce() {
+  if (!QAccessible::isActive() || !hasFocus()) return;
+  const int at = currentMarker();
+  if (at < 0) return;
+  QAccessibleEvent focus(this, QAccessible::Focus);
+  focus.setChild(at);
+  QAccessible::updateAccessibility(&focus);
 }
 
 QRect TimelineWidget::markerRect(int i) const {
   if (i < 0 || i >= int(m_left.size())) return {};
-  return QRect(kStrip + m_left[size_t(i)] - m_scroll->value(), 13, m_width[size_t(i)], 18);
+  return QRect(markersLeft() + m_left[size_t(i)] - m_scroll->value(), markerTop(), m_width[size_t(i)], 18);
 }
 
 QRect TimelineWidget::markerAt(const std::string& id) const {
@@ -248,8 +326,8 @@ QRect TimelineWidget::markerAt(const std::string& id) const {
 }
 
 int TimelineWidget::indexAt(const QPoint& p) const {
-  if (p.x() < kStrip || p.x() >= width() - 72 || p.y() < 10 || p.y() >= 34 || m_left.empty()) return -1;
-  const int x = p.x() - kStrip + m_scroll->value() + 3;
+  if (p.x() < markersLeft() || p.x() >= markersRight() || p.y() < markerTop() - 3 || p.y() >= markerTop() + 21 || m_left.empty()) return -1;
+  const int x = p.x() - markersLeft() + m_scroll->value() + 3;
   const int i = int(std::upper_bound(m_left.begin(), m_left.end(), x) - m_left.begin()) - 1;
   return i >= 0 && markerRect(i).adjusted(-3, -3, 3, 3).contains(p) ? i : -1;
 }
@@ -279,14 +357,14 @@ size_t TimelineWidget::rollbackGap() const {
 }
 
 int TimelineWidget::gapX(size_t gap) const {
-  if (m_shown.empty()) return kStrip;
+  if (m_shown.empty()) return markersLeft();
   return gap < m_shown.size() ? markerRect(int(gap)).left() - kGap / 2 : markerRect(int(m_shown.size()) - 1).right() + 9;
 }
 
 QRect TimelineWidget::playhead() const {
   if (m_shown.empty()) return {};
   const int x = gapX(m_dragging || m_keyed ? m_dragGap : rollbackGap());
-  return QRect(x - 4, 6, 9, 36);
+  return QRect(x - 4, 6, 9, height() - 12);
 }
 
 std::string TimelineWidget::rollPointAfter(const std::string& id) const {
@@ -304,6 +382,7 @@ void TimelineWidget::setCurrentOp(const std::string& id) {
   m_current = id;
   ensureCurrentVisible();
   update();
+  announce();
 }
 
 void TimelineWidget::pulse(const std::string& id) {
@@ -380,12 +459,12 @@ QString TimelineWidget::describe(const opad::Op& op) const {
   if (op.type == "annotation") {
     try { return tr("Note on %1").arg(m_doc->nodeName(opad::Ref::from_json(d["anchor"]).body)); } catch (...) { return tr("Note"); }
   }
-  if (op.type == "measurement") return tr("%1 measurement").arg(QString::fromStdString(d.value("kind", "")));
+  if (op.type == "measurement") return tr("%1 measurement").arg(i18n::t(QString::fromStdString(d.value("kind", ""))));
   if (op.type == "section") return tr("Section %1").arg(QString::fromStdString(d.value("name", "")));
   if (op.type == "view") return tr("View %1").arg(QString::fromStdString(d.value("name", "")));
   if (op.type == "delete") {
     const opad::Op* t = m_doc->doc.find_op(d.value("target", ""));
-    return tr("Delete %1").arg(t ? QString::fromStdString(t->type) : shortId(d.value("target", "")));
+    return tr("Delete %1").arg(t ? i18n::t(QString::fromStdString(t->type)) : shortId(d.value("target", "")));
   }
   if (op.type == "sketch" || op.type == "feature") {
     // The name an edit may have changed; the scene has it unless the timeline is rolled back past this op.
@@ -399,7 +478,7 @@ QString TimelineWidget::describe(const opad::Op& op) const {
   if (op.type == "appearance") return tr("Appearance %1").arg(target);
   if (op.type == "transform") return tr("Transform %1").arg(target);
   if (op.type == "reparent") return tr("Reparent %1").arg(target);
-  return QString::fromStdString(op.type);
+  return i18n::t(QString::fromStdString(op.type));  // a newer build's op type stays as written
 }
 
 QString TimelineWidget::label(const opad::Op& op) const {
@@ -438,33 +517,34 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
   const auto& ops = m_doc->doc.ops;
   p.setFont(theme::ui(13, QFont::Medium));
   p.setPen(t.fg2);
-  p.drawText(QRect(12, 6, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, tr("Timeline"));
+  const int label = theme::px(100), row = theme::px(16), left = markersLeft(), right = markersRight();
+  p.drawText(QRect(12, (height() - 2 * row - 2) / 2, label, row), Qt::AlignVCenter | Qt::AlignLeft, tr("Timeline"));
   p.setFont(theme::mono(11));
   p.setPen(m_doc->rolledBack() ? t.candidate : t.fg3);
   size_t tomb = 0;
   for (size_t i : m_shown) tomb += m_deleted.count(ops[i].id);
   QString count = m_doc->rolledBack() ? tr("rolled back") : tr("%1 ops").arg(m_shown.size());
   if (tomb > 0 && !m_doc->rolledBack()) count += tr(" · %1 tomb").arg(tomb);
-  p.drawText(QRect(12, 24, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, count);
+  p.drawText(QRect(12, height() / 2, label, row), Qt::AlignVCenter | Qt::AlignLeft, count);
   p.setPen(QPen(t.line, 1));
-  p.drawLine(112, 8, 112, 40);
-  p.drawLine(width() - 72, 8, width() - 72, 40);
+  p.drawLine(left - 16, 8, left - 16, height() - 8);
+  p.drawLine(right, 8, right, height() - 8);
   if (m_shown.empty() || !m_doc->hasDocument) {
     p.setFont(theme::ui(12));
     p.setPen(t.fg3);
-    p.drawText(QRect(kStrip, 0, width() - 200, height()), Qt::AlignVCenter | Qt::AlignLeft,
+    p.drawText(QRect(left, 0, right - left, height()), Qt::AlignVCenter | Qt::AlignLeft,
                m_designOnly && !ops.empty() ? tr("No design steps yet. Show every step from the timeline's menu.") : tr("One marker per operation. Import a file to start the log."));
   }
   const qreal dpr = devicePixelRatioF();
   p.save();
-  p.setClipRect(QRect(kStrip - 3, 4, std::max(0, width() - 197), 31));
+  p.setClipRect(markerArea());
   // Rolled back or being edited (a feature or sketch): what comes after is not part of the shown state, or will be
   // regenerated from the edit.
   const std::string& from = !m_editing.empty() ? m_editing : m_doc->rollback();
   size_t fromIndex = ops.size();
   for (size_t q = 0; !from.empty() && q < ops.size(); ++q)
     if (ops[q].id == from) fromIndex = q;
-  const int available = std::max(0, width() - 200);
+  const int available = std::max(0, right - left);
   const size_t first = size_t(std::max<ptrdiff_t>(0, std::upper_bound(m_left.begin(), m_left.end(), m_scroll->value()) - m_left.begin() - 1));
   const size_t end = size_t(std::upper_bound(m_left.begin(), m_left.end(), m_scroll->value() + available + 4) - m_left.begin());
   if (m_names) p.setFont(theme::ui(11));
@@ -520,6 +600,22 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
       const QRect text = r.adjusted(20, 0, -6, 0);
       p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(label(ops[i]), Qt::ElideRight, text.width()));
     }
+    // Not by colour alone (UI-124): a suppressed feature's icon is struck through, a failed feature or an unresolved op
+    // carries "!" (on the icon's square, a named marker's text beside it).
+    const QRect square(r.left(), r.top(), std::min(r.width(), 18), r.height());
+    if (feat && feat->suppressed && !deleted) {
+      p.setPen(QPen(t.fg2, 1.5));
+      p.drawLine(QPointF(square.left() + 2, square.bottom() - 2), QPointF(square.right() - 2, square.top() + 2));
+    }
+    if (!deleted && (unresolved || (feat && !feat->error.empty()))) {
+      const QPointF c(square.right() - 1, square.bottom() - 1);
+      p.setPen(QPen(t.bg2, 1));
+      p.setBrush(t.error);
+      p.drawEllipse(c, 4.5, 4.5);
+      p.setPen(QPen(QColor("#ffffff"), 1.4, Qt::SolidLine, Qt::RoundCap));
+      p.drawLine(QPointF(c.x(), c.y() - 2.5), QPointF(c.x(), c.y() + 0.5));
+      p.drawPoint(QPointF(c.x(), c.y() + 2.4));
+    }
     // A reference was taken by its nearest match after the body changed (TODO 10 B7): worth a look.
     if (feat && !deleted && !feat->result.value("rehinted", opad::json::array()).empty()) {
       p.setPen(QPen(t.bg2, 1));
@@ -533,7 +629,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     const QColor c = m_dragging || m_keyed || m_doc->rolledBack() ? t.candidate : t.sel;
     p.setPen(Qt::NoPen);
     p.setBrush(c);
-    p.drawRect(x - 1, 8, 2, 32);
+    p.drawRect(x - 1, 8, 2, height() - 16);
     QPainterPath tri;
     tri.moveTo(x - 4, 7);
     tri.lineTo(x + 4, 7);
@@ -542,8 +638,9 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     p.drawPath(tri);
   }
   p.restore();
-  m_prevBtn = QRect(width() - 60, 12, 24, 24);
-  m_nextBtn = QRect(width() - 32, 12, 24, 24);
+  const int button = theme::px(24);
+  m_prevBtn = QRect(width() - 2 * button - 12, (height() - button) / 2, button, button);
+  m_nextBtn = QRect(width() - button - 8, (height() - button) / 2, button, button);
   for (const QRect& b : {m_prevBtn, m_nextBtn}) {
     if (b.contains(mapFromGlobal(QCursor::pos()))) { p.setPen(Qt::NoPen); p.setBrush(t.bg3); p.drawRoundedRect(b, 3, 3); }
   }
@@ -594,7 +691,7 @@ QString TimelineWidget::tooltip(const std::string& opId) const {
                            "<div style='color:%6'>%7 · %8</div>%9<div style='color:%3;font-size:11px'>%10</div></div>")
                        .arg(sw.name(), describe(op).toHtmlEscaped(), t.fg3.name(), theme::mono().family(), shortId(op.id), t.fg2.name(),
                             QString::fromStdString(op.data.value("by", "")).toHtmlEscaped(), i18n::localTime(op.data.value("ts", "")),
-                            target.isEmpty() ? QString() : QString("<div>target %1</div>").arg(target.toHtmlEscaped()),
+                            target.isEmpty() ? QString() : "<div>" + tr("Target: %1").arg(target.toHtmlEscaped()) + "</div>",
                             [&] {
                               const opad::Feature* f = op.type == "feature" ? m_doc->scene.feature(op.id) : nullptr;
                               return f && !f->result.value("rehinted", opad::json::array()).empty() ? QString("<div style='color:%1'>%2</div>").arg(t.amber.name(), tr("a reference was re-picked by its nearest match after its body changed; check it")) : QString();
@@ -613,7 +710,9 @@ QString TimelineWidget::tooltip(const std::string& opId) const {
                             }());
     QString more;
     for (const TipProvider& tip : m_tips) more += tip(op);
-    return more.isEmpty() ? html : html.insert(html.size() - 6, more);  // inside the outer div
+    if (!more.isEmpty()) html.insert(html.size() - 6, more);  // inside the outer div
+    html.replace("font-size:11px", QString("font-size:%1px").arg(theme::px(11)));  // at the text size (UI-124)
+    return html;
   }
 }
 
@@ -642,7 +741,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     return update();
   }
   if (i < 0) {
-    if (e->button() == Qt::RightButton && e->pos().x() >= kStrip && e->pos().x() < width() - 72) emit contextRequested(std::string(), e->globalPosition().toPoint());
+    if (e->button() == Qt::RightButton && e->pos().x() >= markersLeft() && e->pos().x() < markersRight()) emit contextRequested(std::string(), e->globalPosition().toPoint());
     return;
   }
   const std::string id = m_doc->doc.ops[m_shown[static_cast<size_t>(i)]].id;

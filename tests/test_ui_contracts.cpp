@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "Commands.hpp"
+#include "KeyTips.hpp"
 #include "PanelFooter.hpp"
 #include "Ribbon.hpp"
 #include "Theme.hpp"
@@ -108,6 +109,39 @@ TEST(semantic_tokens) {
   CHECK(theme::cues().size() == 10 && marks.size() == 10 && labels.size() == 10 && !theme::cue("hover"));
   const Tokens dark = theme::tokens(true);
   CHECK(dark.*(theme::cue("diffAdded")->colour) == dark.diffAdded && dark.*(theme::cue("assetMissing")->colour) == dark.assetMissing);
+}
+
+// UI-124: the text size grows the stylesheet's fonts and the boxes that hold text, never check marks or lines; the
+// high-contrast tokens keep text and lines at 7:1 or more against one background, the selection's text at 4.5:1.
+TEST(text_size_and_high_contrast) {
+  const QString sheet = "QLabel { font-size: 13px; height: 28px; min-height: 26px; }\nQCheckBox::indicator { width: 14px; height: 14px; }\n"
+                        "QMenu::separator { height: 1px; margin: 4px 8px; }\nQSlider::handle:horizontal { width: 12px; height: 12px; font-size: 10px; }\n";
+  CHECK(theme::scaledSheet(sheet, 1.0) == sheet && theme::px(28) == 28 && theme::textScale() == 1.0);
+  const QString big = theme::scaledSheet(sheet, 2.0);
+  CHECK(big.contains("QLabel { font-size: 26px; height: 56px; min-height: 52px; }") && big.contains("QCheckBox::indicator { width: 14px; height: 14px; }") &&
+        big.contains("QMenu::separator { height: 1px; margin: 4px 8px; }") && big.contains("width: 12px; height: 12px; font-size: 20px;"));
+  CHECK(std::abs(theme::contrast(Qt::black, Qt::white) - 21) < 0.01 && std::abs(theme::contrast(QColor("#777777"), QColor("#777777")) - 1) < 0.01);
+  const Tokens hc = theme::highContrastTokens();
+  CHECK(hc.highContrast && !theme::tokens(true).highContrast && hc.bg == hc.bg2 && hc.bg == hc.vp && hc.line == hc.fg);
+  CHECK(theme::contrast(hc.fg, hc.bg) >= 7 && theme::contrast(hc.fg3, hc.bg) >= 4.5 && theme::contrast(hc.onsel, hc.sel) >= 4.5);
+  CHECK(theme::stylesheet(hc).contains("item:selected { color: " + hc.onsel.name()) && !theme::stylesheet(theme::tokens(true)).contains("item:selected { color: "));
+}
+
+// UI-117: one key per ribbon label, from its words' first letters, never taken or a prefix of another; past 36 two keys.
+TEST(key_tips) {
+  const QStringList tabs = keytips::assign({"View", "Inspect", "Annotate", "Export", "Insert"}, {"1", "2"});
+  CHECK(tabs == QStringList({"V", "I", "A", "E", "N"}));
+  const QStringList tools = keytips::assign({"&Fit", "Fit all", "Home", "Top view", "تحديد"});
+  CHECK(tools == QStringList({"F", "A", "H", "T", "B"}));  // Fit all: its second word; an Arabic label: the first free letter
+  QStringList many;
+  for (int i = 0; i < 40; ++i) many << QString("Tool %1").arg(i);
+  const QStringList keys = keytips::assign(many);
+  QSet<QString> seen(keys.begin(), keys.end());
+  bool prefixFree = true;
+  for (const QString& a : keys)
+    for (const QString& b : keys)
+      if (a != b && b.startsWith(a)) prefixFree = false;
+  CHECK(seen.size() == 40 && prefixFree && std::count_if(keys.begin(), keys.end(), [](const QString& k) { return k.size() == 2; }) == 5 && !keys.contains("Z"));
 }
 
 TEST(panel_footer) {

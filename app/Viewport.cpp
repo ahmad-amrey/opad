@@ -4,6 +4,8 @@
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
 #include "Drawing2D.hpp"
+#include "I18n.hpp"
+#include "Motion.hpp"
 #include "Units.hpp"
 #include "opad/mesh.hpp"
 #include <V3d_DirectionalLight.hxx>
@@ -366,7 +368,7 @@ void Viewport::initViewer() {
   m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
       Graphic3d_Vec2i(qRound(kCubeOffsetX * m_cubeScale), qRound(kCubeOffsetY * m_cubeScale))));
   SetViewAnimation(new OrbitCameraAnimation(m_view));
-  myViewAnimation->SetOwnDuration(0.5);
+  myViewAnimation->SetOwnDuration(motion::seconds(0.5));
   m_cube->SetViewAnimation(myViewAnimation);
   m_cube->SetFixedAnimationLoop(Standard_False);
   m_cube->SetAutoStartAnimation(Standard_True);
@@ -1452,6 +1454,13 @@ void Viewport::rollView(double degrees) {
   gp_Dir up = cam->Up();
   up.Rotate(gp_Ax1(gp::Origin(), cam->Direction()), degrees * M_PI / 180.0);  // about the axis into the screen
   end->SetUp(up);
+  if (motion::reduced()) {  // UI-124: the camera jumps
+    myViewAnimation->Stop();
+    m_view->SetCamera(end);
+    m_view->Invalidate();
+    requestRedraw();
+    return;
+  }
   myViewAnimation->SetView(m_view);
   myViewAnimation->SetCameraStart(start);
   myViewAnimation->SetCameraEnd(end);
@@ -2284,7 +2293,7 @@ void Viewport::updateHover() {
         const TopoDS_Shape& sub = owner->Shape();
         const char* kind = sub.ShapeType() == TopAbs_FACE ? "face" : sub.ShapeType() == TopAbs_EDGE ? "edge" : "vertex";
         Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
-        hover += QString::fromUtf8(" › %1 %2").arg(kind).arg(mine.IsNull() ? opad::subshape_index(Handle(AIS_Shape)::DownCast(obj)->Shape(), sub) : mine->index());
+        hover += QString::fromUtf8(" › %1 %2").arg(i18n::t(kind)).arg(mine.IsNull() ? opad::subshape_index(Handle(AIS_Shape)::DownCast(obj)->Shape(), sub) : mine->index());
         if(!mine.IsNull()) {
           opad::Ref ref; ref.body=it->second; ref.kind=Handle(CircleOwner)::DownCast(mine).IsNull()?opad::Ref::Kind::Edge:opad::Ref::Kind::Center; ref.index=mine->index();
           if(sub.ShapeType()==TopAbs_EDGE || ref.kind==opad::Ref::Kind::Center) {
@@ -2340,6 +2349,11 @@ bool Viewport::cubeAt(const QPointF& point) {
   return m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube;
 }
 
+QRect Viewport::cubeRect() const {
+  if (!m_initialised || m_twoDimensional) return {};
+  return QRect(width() - kCubeOffsetX - 48, kCubeOffsetY - 48, 96, 96);
+}
+
 void Viewport::mousePressEvent(QMouseEvent* e) {
   if (m_blocked) return;
   finishTrackpadScroll();
@@ -2391,6 +2405,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     focusCube();
     m_cubeGesture = true;
     m_cubeClick = true;
+    myViewAnimation->SetOwnDuration(motion::seconds(0.5));  // the turn to the clicked side (roll and align set their own)
     m_needFit = false;
     // Only the Replace scheme hands a click to the cube (HandleMouseClick); a guided tool's XOR would toggle it as a pick.
     ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, AIS_SelectionScheme_Replace);

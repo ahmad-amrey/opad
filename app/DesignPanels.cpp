@@ -6,9 +6,13 @@
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QResizeEvent>
+#include <QScrollArea>
 #include <QPainter>
 #include <QSettings>
 #include <QStringListModel>
+
+#include <algorithm>
+#include <cmath>
 
 #include "HelpClip.hpp"
 #include "I18n.hpp"
@@ -45,6 +49,7 @@ ExprEdit::ExprEdit(AppDocument* doc, opad::design::Dim dim, QWidget* parent) : Q
   m_value = new QLabel(this);
   m_value->setObjectName("tertiary");
   m_value->setFont(theme::mono(11));
+  m_value->setFixedHeight(14);  // a row of its own under the box, never on its border
   v->addWidget(m_edit);
   v->addWidget(m_value);
   QStringList names;
@@ -80,7 +85,19 @@ void ExprEdit::evaluate() {
     const QString shown = m_dim == opad::design::Dim::Length  ? units::format(units::Kind::Length, v)
                           : m_dim == opad::design::Dim::Angle ? units::format(units::Kind::Angle, v * 180 / M_PI)
                                                               : QString::fromStdString(opad::design::format_quantity(q));
-    m_value->setText(QString::fromUtf8("= ") + shown);
+    // A number as the box would start it ("10 mm", or a bare 10 in the shown unit) says nothing the echo would add: the
+    // echo stays empty, its row kept so the panel does not jump while typing.
+    const QString typed = m_edit->text().trimmed();
+    bool bare = false;
+    const double number = typed.toDouble(&bare);
+    const double expected = m_dim == opad::design::Dim::Length  ? units::toDisplay(units::Kind::Length, v)
+                            : m_dim == opad::design::Dim::Angle ? units::toDisplay(units::Kind::Angle, v * 180 / M_PI)
+                                                                : v;
+    const auto squeezed = [](QString s) { return s.remove(' '); };
+    const bool same = (bare && std::fabs(number - expected) <= 1e-9 * std::max(1.0, std::fabs(expected))) || squeezed(typed) == squeezed(shown) ||
+                      (m_dim == opad::design::Dim::Length && squeezed(typed) == squeezed(units::editable(units::Kind::Length, v))) ||
+                      (m_dim == opad::design::Dim::Angle && squeezed(typed) == squeezed(units::editable(units::Kind::Angle, v * 180 / M_PI)));
+    m_value->setText(same ? QString() : QString::fromUtf8("= ") + shown);
     m_value->setStyleSheet(QString("color: %1;").arg(theme::css(t.fg3)));
     m_valid = true;
   } catch (const std::exception& e) {
@@ -132,8 +149,18 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
   outer->setSpacing(0);
-  auto* form = new QWidget(this);
-  outer->addWidget(form, 1);
+  // The form scrolls when the panel is shorter than it (a small view, the guide open): squeezed, its rows overlapped
+  // (the value echo sat on its box's border, UI-116).
+  m_scroll = new QScrollArea(this);
+  m_scroll->setFrameShape(QFrame::NoFrame);
+  m_scroll->setWidgetResizable(true);
+  m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_scroll->setMinimumSize(0, 0);
+  auto* form = m_form = new QWidget(m_scroll);
+  form->setAutoFillBackground(false);
+  m_scroll->setWidget(form);
+  m_scroll->viewport()->setAutoFillBackground(false);
+  outer->addWidget(m_scroll, 1);
   auto* v = new QVBoxLayout(form);
   v->setContentsMargins(12, 10, 12, 8);
   v->setSpacing(6);
@@ -146,7 +173,7 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_guide = new ToolGuide(this);
   v->addWidget(m_guide);
   connect(m_guide, &ToolGuide::resized, this, &FeaturePanel::contentResized);
-  m_hiddenWarning=new QLabel(tr("The object being edited is hidden. Show it in the browser to see the result."),this);m_hiddenWarning->setWordWrap(true);m_hiddenWarning->setStyleSheet("color: #b07820");m_hiddenWarning->hide();v->addWidget(m_hiddenWarning);
+  m_hiddenWarning=new QLabel(tr("The object being edited is hidden. Show it in the browser to see the result."),this);m_hiddenWarning->setWordWrap(true);m_hiddenWarning->hide();v->addWidget(m_hiddenWarning);
   auto* body = new QWidget(this);
   m_rows = new QVBoxLayout(body);
   m_rows->setContentsMargins(0, 4, 0, 0);
@@ -209,7 +236,10 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   connect(m_footer, &PanelFooter::accepted, this, &FeaturePanel::accepted);
 }
 
-void FeaturePanel::setEditHidden(bool hidden){m_hiddenWarning->setVisible(hidden);}
+void FeaturePanel::setEditHidden(bool hidden){
+  m_hiddenWarning->setStyleSheet(QString("color: %1;").arg(theme::css(theme::current().warning)));  // the theme's warning, as it is now
+  m_hiddenWarning->setVisible(hidden);
+}
 
 bool FeaturePanel::isPick(const std::string& type) {
   return type == "bodies" || type == "faces" || type == "edges" || type == "profiles" || type == "points" || type == "plane" || type == "axis" || type == "path";
@@ -555,7 +585,10 @@ void FeaturePanel::activateNextPick() {
 
 QSize FeaturePanel::preferredSize(int width) const {
   const int w = width > 0 ? width : 372;
-  return QSize(372, layout()->hasHeightForWidth() ? layout()->heightForWidth(w) : layout()->sizeHint().height());
+  QLayout* form = m_form->layout();
+  form->activate();
+  const int height = std::max(form->totalMinimumSize().height(), form->hasHeightForWidth() ? form->totalHeightForWidth(w) : form->totalSizeHint().height());
+  return QSize(372, height + m_footer->sizeHint().height());
 }
 
 void FeaturePanel::keyPressEvent(QKeyEvent* e) {

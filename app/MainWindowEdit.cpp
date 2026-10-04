@@ -21,6 +21,7 @@ void MainWindow::buildEditActions() {
   addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] {
     if (m_annotationEditor) return m_annotationEditor->undo();  // its strokes; the document waits for Save
     if (m_design->sketchActive()) return m_design->sketch()->undo();  // a sketch has its own history until it is finished
+    if (m_design->featureActive()) return (void)m_design->undoPick();  // a feature's panel: its last pick (UI-116)
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->undo();
   });
@@ -41,9 +42,7 @@ void MainWindow::buildEditActions() {
     if (ids.empty() && m_selRows.size() == 1) return m_browser->startRename(m_selRows.front());  // an area's row, when its folder renames
     if (ids.empty()) return;
     // Several at once: one name, numbered in selection order (TODO 10 B15).
-    QString base = m_doc->nodeName(ids.front());
-    static const QRegularExpression number(" \d+$");
-    base.remove(number);
+    const QString base = renameBase(m_doc->nodeName(ids.front()));
     bool ok = false;
     const QString name = QInputDialog::getText(this, tr("Rename %1 objects").arg(ids.size()), tr("Name ({n} is replaced by 1, 2, 3, ...):"), QLineEdit::Normal, base + " {n}", &ok).trimmed();
     if (!ok || name.isEmpty()) return;
@@ -81,6 +80,12 @@ void MainWindow::buildEditActions() {
   });
   repeat->setProperty("shortcutHint", tr("Starts the last feature, sketch tool, measurement or note again."));
   repeat->setEnabled(false);
+}
+
+// The name a numbered rename starts from: "Bolt 3" -> "Bolt" (the number was lost to an unknown escape, \d, until UI-116).
+QString MainWindow::renameBase(QString name) {
+  static const QRegularExpression number(R"( \d+$)");
+  return name.remove(number);
 }
 
 std::vector<std::string> MainWindow::shownBodies() const {
@@ -176,6 +181,11 @@ void MainWindow::updateUndoActions() {
     const auto* sketch=m_design->sketch();
     u->setEnabled(sketch->canUndo());r->setEnabled(sketch->canRedo());
     u->setText(tr("&Undo"));r->setText(tr("&Redo"));
+  } else if (m_design && m_design->featureActive()) {  // a feature's panel: Undo takes back its last pick (UI-116)
+    u->setEnabled(true);
+    r->setEnabled(false);
+    u->setText(tr("&Undo last pick"));
+    r->setText(tr("&Redo"));
   } else {
     u->setEnabled(m_doc->hasDocument && m_doc->canUndo());
     r->setEnabled(m_doc->hasDocument && m_doc->canRedo());
@@ -208,6 +218,8 @@ QMenu* MainWindow::historyMenu(bool undo) {
 void MainWindow::deleteOp(const std::string& requestedId) {
   const std::string opId=requestedId; // Rebuilding cards can destroy the signal sender during this operation.
   if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, opId] { guarded([&] { deleteOp(opId); }); });  // a copy being taken
+  // Once is enough: a second tombstone (Repeat, Del again on the same marker) would need two restores.
+  if (m_doc->doc.is_deleted(opId)) throw opad::UserHint("That operation is already tombstoned.");
   // A feature or a sketch: what depends on it is asked about first, the result previewed (smart selection, UI-96).
   const opad::Op* op = m_doc->doc.find_op(opId);
   const bool live = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) == m_doc->scene.deleted_ops.end();

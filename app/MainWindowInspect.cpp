@@ -17,6 +17,8 @@
 #include <Bnd_Box.hxx>
 
 #include "Drawing2D.hpp"
+#include "CommandHelp.hpp"
+#include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "Units.hpp"
 #include "opad/checks.hpp"
@@ -297,27 +299,32 @@ void MainWindow::refreshToolUi() {
   const QString kinds = action(f == Viewport::SelFilter::Face ? "select.faces" : f == Viewport::SelFilter::Edge ? "select.edges" : f == Viewport::SelFilter::Vertex ? "select.vertices" : "select.bodies")->text().remove('&');
   m_toolPanel->setContext(m_tool.steps ? tr("%1 · %2 of %3").arg(kinds.toLower()).arg(picked).arg(m_tool.steps) : tr("%1 · %2 picked").arg(kinds.toLower()).arg(picked));
   m_toolSteps->setSteps(steps, m_toolHover);
-  const QString waiting = picked < steps.size() ? steps[picked].label : tr("Measuring…");
-  QString explanation = waiting;
-  if (!m_tool.steps && picked && m_lastMeasure.is_null()) explanation = tr("Measuring…");
+  // While picks are asked for, the steps above (and the guide's clip) say what to do: the summary under them is the
+  // tool's one sentence when no guide plays, never the header and the waiting step again (UI-116). Done: the result; an
+  // area not closed yet says why (UI-90).
+  QString explanation;
   if (open) {
     const int ends = m_lastMeasure.value("open_ends", 0);
     explanation = m_lastMeasure.value("points", 0) ? tr("Pick at least three points: the area closes back to the first.")
                   : ends ? tr("Not closed yet: loose ends %1. Pick the objects that close it.").arg(ends)
                          : tr("These objects enclose nothing. Pick a closed object, or every object around the area.");
-  } else if (done && m_tool.id == "area") {
+  } else if (!done) {
+    const QString command = "inspect." + m_tool.id;
+    const CommandHelp* h = help::find(command);
+    explanation = (ToolGuide::enabled() && clips::has(command)) || !h ? QString() : h->summary;
+  } else if (m_tool.id == "area") {
     explanation = m_lastMeasure.value("grown", false) ? tr("The smaller area beside the clicked part of the object, closed by the objects it meets or crosses. Pick more to give the boundary yourself.")
                   : m_lastMeasure.value("points", 0)  ? tr("The polygon through the picked points, closed back to the first.")
                   : m_lastMeasure.value("trimmed", false) ? tr("The area inside the picked objects, trimmed where they cross; areas inside it are holes.")
                                                           : tr("The area inside the picked boundary; areas inside it are holes.");
-  } else if (done) {
+  } else {
     if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
     else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
     else if (m_tool.id == "angle") explanation = tr("Directions compared at a common origin. Planar faces use their normals; curved faces use their axes.");
     else if (m_tool.id == "radius") explanation = tr("Radius from the center or cylinder axis to the surface.");
     else explanation = tr("Bounding box aligned with the world X, Y and Z axes.");
   }
-  m_toolSteps->setSummary(m_tool.title, explanation, open ? tr("open") : done && !m_doc->browse ? tr("unpinned") : QString());
+  m_toolSteps->setSummary(done || open ? m_tool.title : QString(), explanation, open ? tr("open") : done && !m_doc->browse ? tr("unpinned") : QString());
   QStringList anchorLabels;
   int anchorIndex = 0;
   if (done && m_lastMeasure.contains("anchors")) {

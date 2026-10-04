@@ -46,6 +46,8 @@ class AppDocument : public QObject {
   opad::json assetStates = opad::json::array();
 
   void newDocument();
+  // The document becomes an untitled copy with an identity of its own (New from template): Save asks where to put it.
+  void detachCopy();
   void closeDocument();  // back to the start screen; nothing is saved here (ask first)
   void open(const QString& path);  // .opad -> load; .step/.stp -> import into a new document
   void importStep(const QString& path, const QString& parent = {});
@@ -107,7 +109,8 @@ class AppDocument : public QObject {
   // KiCad boards: the reader's options from the settings (kicad/*).
   static opad::KicadOptions kicadOptions();
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
-  bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
+  // `background`: nobody waits for it (recovery, the agent bridge): no busy cursor, no completion toast.
+  bool captureSnapshot(JobRunner* jobs, SnapshotCallback done, bool background = false);
   bool snapshotBusy() const { return m_capturing; }
   // A worker that only reads the document (a bill of materials) without copying it: nothing changes the document
   // meanwhile (designBusy), until the worker has really stopped, also after a cancel; then `done(ok, error)` runs on the

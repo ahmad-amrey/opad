@@ -1,17 +1,20 @@
 // Files: open, import, save, viewer mode (save to edit), recent files, load progress, drag and drop.
 #include "MainWindow.hpp"
 
+#include <QDesktopServices>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTimer>
+#include <QUrl>
 
 #include <memory>
 
@@ -64,6 +67,13 @@ void MainWindow::buildFileActions() {
     m_doc->saveAs(p);
     addRecent(p);
   });
+  CommandInfo saveTemplate;  // UI-113: a copy of this document among the start page's templates
+  saveTemplate.id = "file.savetemplate";
+  saveTemplate.label = tr("Save as template…");
+  saveTemplate.icon = "template";
+  saveTemplate.keywords = {"template", "starting point", "default document"};
+  saveTemplate.enabledWhen = [](const CommandContext& c) { return c.document && !c.viewer; };
+  addCommand(saveTemplate, [this] { saveAsTemplate(); });
   addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
   addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
   addAction("file.close", tr("&Close document"), "close", QKeySequence("Ctrl+W"), [this] {
@@ -256,6 +266,66 @@ void MainWindow::rebuildRecentMenu() {
     connect(a, &QAction::triggered, this, [this, p] { openPath(p); });
   }
   if (m_recentMenu->isEmpty()) m_recentMenu->addAction(tr("No recent files"))->setEnabled(false);
+}
+
+// ---------------------------------------------------------------- templates (UI-113)
+// A built-in template is a new document set up a little; a template file opens on the worker like any .opad and then
+// becomes an untitled copy with an identity of its own (the template is never written to, nor listed as recent).
+void MainWindow::newFromTemplate(const QString& id) {
+  if (m_doc->loading || !maybeSave([this, id] { newFromTemplate(id); })) return;
+  if (id.startsWith("builtin:")) {
+    m_doc->newDocument();
+    if (id == "builtin:in") setDocumentUnit("in");
+    if (id == "builtin:sketch") {
+      setWorkspace("design");
+      action("design.sketch")->trigger();  // asks for the plane
+    }
+    return;
+  }
+  const QString name = QFileInfo(id).completeBaseName();
+  beginLoad([this] { m_doc->detachCopy(); m_viewport->fitWhenReady(); }, tr("New from %1").arg(name), tr("New from %1 · %2 bodies").arg(name));
+  m_doc->startOpen(id);
+}
+
+void MainWindow::saveAsTemplate() {
+  bool ok = false;
+  const QString suggested = m_doc->path().isEmpty() ? tr("My template") : QFileInfo(m_doc->path()).completeBaseName();
+  QString name = QInputDialog::getText(this, tr("Save as template"), tr("Template name:"), QLineEdit::Normal, suggested, &ok).trimmed();
+  for (const QChar c : QString("<>:\"/\\|?*")) name.replace(c, '_');
+  if (!ok || name.isEmpty()) return;
+  const QString path = templates::folder() + "/" + name + ".opad";
+  if (QFileInfo::exists(path) && QMessageBox::question(this, tr("Save as template"), tr("Replace the template “%1”?").arg(name)) != QMessageBox::Yes) return;
+  saveTemplate(path);
+}
+
+// A copy of the document (taken on a worker) written with an identity of its own, so documents made from it are not this one.
+void MainWindow::saveTemplate(const QString& path) {
+  const QString name = QFileInfo(path).completeBaseName(), folder = QFileInfo(path).absolutePath();
+  const bool started = m_doc->captureSnapshot(m_jobs, [this, path, name, folder](std::shared_ptr<opad::Document> copy, const QString& error) {
+    if (!copy) return failedToast(error.isEmpty() ? tr("The template was not saved.") : i18n::t(error));
+    m_jobs->async(tr("Saving the template %1").arg(name), [copy, path, folder](Progress) {
+      QDir().mkpath(folder);
+      copy->header.uuid = opad::new_uuid();
+      copy->header.created = opad::now_iso8601();
+      copy->save_as(std::filesystem::path(path.toStdU16String()));
+    }, [this, name, folder](bool ok, const QString& error) {
+      if (!ok) return failedToast(i18n::t(error));
+      resultToast(tr("Saved as the template %1; New from template offers it").arg(name), folder);
+    });
+  });
+  if (!started) hint(tr("The document is busy; try again in a moment."), false);
+}
+
+void MainWindow::rebuildTemplateMenu() {
+  m_templateMenu->clear();
+  for (const templates::Entry& e : templates::list())
+    m_templateMenu->addAction(icons::themed(e.icon, 16), e.title, this, [this, id = e.id] { guarded([&] { newFromTemplate(id); }); });
+  m_templateMenu->addSeparator();
+  m_templateMenu->addAction(icons::themed("folder", 16), tr("Open templates folder"), this, [] {
+    const QString dir = templates::folder();
+    QDir().mkpath(dir);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+  });
 }
 
 // ---------------------------------------------------------------- lifecycle

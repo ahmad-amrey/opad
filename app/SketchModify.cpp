@@ -9,6 +9,7 @@
 #include "opad/design/sketch_modify.hpp"
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include "I18n.hpp"
 #include <cmath>
 #include <set>
 
@@ -137,7 +138,7 @@ bool SketchEditor::applyModify() {
       if(copies<1 || copies>1000)throw opad::Error("the count of copies must be 1 to 1000");
       runSketchEdit(tr("Transform geometry"),[ids,transform,copy,copies](Sketch& sk){for(int i=1;i<=copies;++i){auto step=transform;step.x*=i;step.y*=i;transform_entities(sk,ids,step,copy);}});
     }
-  }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
+  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
   return true;
 }
 

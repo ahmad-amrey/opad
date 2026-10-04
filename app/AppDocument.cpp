@@ -342,6 +342,14 @@ void AppDocument::newDocument() {
   emit newDocumentCreated();
 }
 
+void AppDocument::detachCopy() {
+  if (!hasDocument || browse) return;
+  doc.path.clear();
+  doc.header.uuid = opad::new_uuid();
+  doc.header.created = opad::now_iso8601();
+  emit pathChanged();
+}
+
 void AppDocument::closeDocument() {
   if (loading || designBusy) return;
   emit aboutToReplace();
@@ -731,10 +739,19 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
   if (command == "delete") return tr("delete");
     if (command == "annotate") return args.contains("drawing") ? tr("hand drawing") : tr("note");
     if (command == "delete_annotation") return tr("delete annotation");
-  if (command == "append") {  // the browser's drawing rows tombstone or rename several records in one step
+  if (command == "append") {
+    // Several records in one step (the browser's drawing rows tombstone or rename them), or one: a pinned measurement, a
+    // comment, or an edit of a note's text or tag.
     const opad::json ops = args.value("ops", opad::json::array());
-    const auto all = [&](const char* type) { return !ops.empty() && std::all_of(ops.begin(), ops.end(), [&](const opad::json& o) { return o.value("op", "") == type; }); };
-    return all("delete") ? tr("delete") : all("edit") ? tr("rename") : tr("pin measurement");
+    if (!ops.empty()) {
+      const auto all = [&](const char* type) { return std::all_of(ops.begin(), ops.end(), [&](const opad::json& o) { return o.value("op", "") == type; }); };
+      return all("delete") ? tr("delete") : all("edit") ? tr("rename") : tr("pin measurement");
+    }
+    const std::string type = args.contains("op") && args["op"].is_object() ? args["op"].value("op", "") : "";
+    if (type == "measurement") return tr("pin measurement");
+    if (type == "annotation") return args["op"].contains("reply_to") ? tr("comment") : tr("note");
+    if (type == "edit") return tr("edit note");
+    return tr("change");
   }
   if (command == "sheet_edit") {
     const opad::json set = args.value("set", opad::json::object());

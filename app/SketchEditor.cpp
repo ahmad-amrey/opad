@@ -33,6 +33,7 @@
 #include <cmath>
 
 #include "I18n.hpp"
+#include "Preferences.hpp"
 #include "Units.hpp"
 #include "Jobs.hpp"
 #include "opad/design/expr.hpp"
@@ -55,7 +56,7 @@ struct SketchDrawing {
   std::vector<Seg> solid, dashed, thin, marks;  // marks: snap markers and constraint pictograms (SnapMarkers.hpp), 1.5 px
   std::vector<Seg> locked;                      // the line a Shift lock holds the pointer to: thick dashed, 3 px
   std::vector<Seg> cursor, cursorHalo;          // the drawing cursor (grid snapping): 1 px on a 3 px halo, over everything
-  std::vector<Pt> points, bigPoints;
+  std::vector<Pt> points, bigPoints, rings;  // rings: points that can still move (a shape besides the colour, UI-124)
   std::vector<Pt> dots;  // coincidences (UI-24): a filled dot on the point, over its ring
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
@@ -125,6 +126,7 @@ class SketchPrs : public AIS_InteractiveObject, public SketchDrawing {
       g->AddPrimitiveArray(arr);
     };
     markers(points, new Graphic3d_AspectMarker3d(Aspect_TOM_O_POINT, Quantity_NOC_WHITE, 2.0 * scale));
+    markers(rings, new Graphic3d_AspectMarker3d(Aspect_TOM_O, Quantity_NOC_WHITE, 2.0 * scale));
     markers(bigPoints, new Graphic3d_AspectMarker3d(Aspect_TOM_O_POINT, Quantity_NOC_WHITE, 3.0 * scale));
     if (!dots.empty()) {  // a filled disc inside the point's ring, in each vertex's colour (the stock POINT marker is a pixel)
       const int d = std::max(3, int(std::lround(5 * scale))), row = (d + 7) / 8;
@@ -160,6 +162,18 @@ class SketchPrs : public AIS_InteractiveObject, public SketchDrawing {
   void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
 };
 
+QMap<QString, QStringList> SketchEditor::drawn() const {
+  const SketchPrs& d = *static_cast<const SketchPrs*>(m_prs.get());
+  auto names = [](const std::vector<SketchPrs::Pt>& pts) {
+    QStringList out;
+    for (const auto& p : pts) out << p.c.name();
+    return out;
+  };
+  QStringList texts;
+  for (const auto& t : d.texts) texts << t.s;
+  return {{"points", names(d.points)}, {"rings", names(d.rings)}, {"bigPoints", names(d.bigPoints)}, {"texts", texts}};
+}
+
 // ---------------------------------------------------------------- life cycle
 SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QObject* parent) : QObject(parent), m_doc(doc), m_viewport(viewport), m_jobs(jobs) {
   m_dimensionHandle=new DimensionHandle(viewport,jobs);qApp->installEventFilter(this);
@@ -193,6 +207,9 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   });
   m_input->setKeyHook([this](int box,QChar c){return m_active && entryKey(box,c);});
   connect(units::notifier(),&units::Notifier::changed,this,[this]{if(m_active)rebuild();});  // dimension labels in the shown unit
+  // A snap or solver setting changed from any of its faces (Preferences, the panel, the status bar's toggles, UI-110): read
+  // again, as the editor reads them once (UI-27).
+  connect(preferences::notifier(),&preferences::Notifier::changed,this,[this](const QString& key){if(key.isEmpty()||key.startsWith("sketch/")||key.startsWith("view/"))refreshSnap();});
   // Grid snapping on or off (F9, the panel's checkbox): the pointer's snap again, the drawing cursor or the pointer.
   connect(m_viewport,&Viewport::gridSnapChanged,this,[this]{if(m_active)resnap();});
   // The system pointer blank (the cursor drawn) or back: drawn or gone at once. Blank again after a camera gesture or a
@@ -228,6 +245,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     auto sk = std::make_shared<Sketch>(m_sk);
     auto out = std::make_shared<std::vector<opad::Vec3>>();
     const opad::Frame frame = m_frame;
+    m_jobs->backgroundNext();  // after every change, while drawing: never the busy cursor over the crosshair
     m_fillJob = m_jobs->async(tr("Finding profiles"), [sk, out, frame](Progress progress) {
       for (const auto& region : sketch_regions(*sk, frame)) {
         if(progress.cancelled())return;
@@ -484,10 +502,10 @@ double SketchEditor::distanceTo(const SkEntity& e, double u, double v) const {
 
 SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   if(!m_geometry || m_geometryJob)return {};
-  const double t = tol();
-  const auto localCandidates=m_geometry->query(u-t*1.1,v-t*1.1,u+t*1.1,v+t*1.1);
+  const double t = tol(), grip = kHandlePixels * m_viewport->pixelSize();
+  const auto localCandidates=m_geometry->query(u-grip*1.1,v-grip*1.1,u+grip*1.1,v+grip*1.1);
   Hit hit;
-  double best = t;
+  double best = grip;
   for (size_t index : localCandidates.points) {
     const auto& p=m_sk.points[index];
     if (!selectable(p.id)) continue;
@@ -502,7 +520,7 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
     if (std::fabs(lu - u) < 3.5 * t && std::fabs(lv - v) < 1.4 * t) return {Hit::Dimension, c.id};
   }
   best = t;
-  for(const auto& [id,x,y]:m_glyphHits)if(selectable(id) && std::fabs(x-u)<t && std::fabs(y-v)<t)return {Hit::Dimension,id};
+  for(const auto& [id,x,y]:m_glyphHits)if(selectable(id) && std::fabs(x-u)<grip && std::fabs(y-v)<grip)return {Hit::Dimension,id};
   for (size_t index : localCandidates.entities) {
     const auto& e=m_sk.entities[index];
     if (!selectable(e.id)) continue;
@@ -1392,6 +1410,7 @@ bool SketchEditor::prepareGeometry() {
   }
   auto snapshot=std::make_shared<Sketch>(m_sk);const auto previous=m_geometry;
   auto result=std::make_shared<std::shared_ptr<SketchGeometryCache>>();QPointer<SketchEditor> guard(this);
+  m_jobs->backgroundNext();
   m_geometryJob=m_jobs->async(tr("Preparing sketch curves"),[snapshot,previous,result,deflection](Progress p){
     if(p.cancelled())return;
     *result=previous?std::make_shared<SketchGeometryCache>(*previous):std::make_shared<SketchGeometryCache>();
@@ -1418,6 +1437,7 @@ void SketchEditor::rebuild() {
   d.points.clear();
   d.bigPoints.clear();
   d.dots.clear();
+  d.rings.clear();
   d.texts.clear();
   d.fill = m_fill;
   d.fillColor = t.sel;
@@ -1464,7 +1484,7 @@ void SketchEditor::rebuild() {
   for (const auto& p : m_sk.points) {
     const bool hot = selected.count(p.id) || picked.count(p.id);
     const QColor c = hot ? t.hov : p.fixed ? t.green : freePts.count(p.id) ? t.sel : t.fg;
-    (hot ? d.bigPoints : d.points).push_back({W(p.x, p.y), c});
+    (hot ? d.bigPoints : !p.fixed && freePts.count(p.id) ? d.rings : d.points).push_back({W(p.x, p.y), c});  // free: a ring without its dot
     if(m_dangling.count(p.id)) d.bigPoints.push_back({W(p.x,p.y),t.red});
   }
 
@@ -1503,7 +1523,7 @@ void SketchEditor::rebuild() {
       default: return std::nullopt;  // coincident: a dot on its point; dimensions draw themselves
     }
   };
-  struct Badge { int id; G glyph; snapmarkers::Place at; QColor color; };
+  struct Badge { int id; G glyph; snapmarkers::Place at; QColor color; bool conflict; };  // conflict: red and marked "!" (not by colour alone, UI-124)
   std::vector<Badge> badges;
   std::set<std::pair<int, int>> shownGlyphs;
   m_coincidentDots.clear();
@@ -1536,7 +1556,7 @@ void SketchEditor::rebuild() {
         continue;
       }
       if (!shownGlyphs.insert({ref, int(*glyph)}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
-      badges.push_back({c.id, *glyph, {(gu * uy - ux * gv) / det, (rx * gv - gu * ry) / det}, colourOf(c)});  // in pixels
+      badges.push_back({c.id, *glyph, {(gu * uy - ux * gv) / det, (rx * gv - gu * ry) / det}, colourOf(c), m_conflicts.count(c.id) > 0});  // in pixels
       if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one badge is enough
     }
   }
@@ -1566,6 +1586,7 @@ void SketchEditor::rebuild() {
       for (int k = 0; k < 3; ++k) d.badges.push_back(at(corner[size_t(2 * k)], corner[size_t(2 * k + 1)], 1));
     for (const auto& s : snapmarkers::badge(16, 16, 4)) d.marks.push_back({at(s.x0, s.y0, 2), at(s.x1, s.y1, 2), badges[i].color == t.green ? t.line : badges[i].color});
     for (const auto& s : snapmarkers::glyph(badges[i].glyph, 11)) d.marks.push_back({at(s.x0, s.y0, 2), at(s.x1, s.y1, 2), badges[i].color});
+    if (badges[i].conflict) d.texts.push_back({at(10, 10, 2), QStringLiteral("!"), badges[i].color, true});
     m_glyphHits.push_back({badges[i].id, cu, cv});
   }
   d.badgeColor = t.bg2;
@@ -1812,7 +1833,7 @@ void SketchEditor::updateTransient() {
     if(m_visible)m_viewport->updateOverlay(m_transientPrs);
   };
   if(!m_geometry || m_geometryJob)return show();  // a large sketch's curves being prepared: only the cursor moves on meanwhile
-  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.locked.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();d.fill.clear();
+  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.locked.clear();d.points.clear();d.bigPoints.clear();d.rings.clear();d.texts.clear();d.fill.clear();
   d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto mark=[&](double x,double y,const std::vector<snapmarkers::Seg>& segs,double ox,double oy,const QColor& c) {  // (ox, oy): px off (x, y)
     auto at=[&](double sx,double sy){return W(x+(sx+ox)*rx+(sy+oy)*ux,y+(sx+ox)*ry+(sy+oy)*uy);};

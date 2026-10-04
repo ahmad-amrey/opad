@@ -1,5 +1,6 @@
 #include "ShortcutEditor.hpp"
 #include <QDialogButtonBox>
+#include <QGridLayout>
 #include <QHash>
 #include <QHeaderView>
 #include <QKeySequenceEdit>
@@ -38,19 +39,21 @@ bool typesValue(const QKeySequence& key) {
   const int code=key[0].key();
   return (code>=Qt::Key_0 && code<=Qt::Key_9) || code==Qt::Key_Period || code==Qt::Key_Comma || code==Qt::Key_Minus || code==Qt::Key_Plus;
 }
+// The key and the alternate (UI-111) are held together, so the alternate comes back too.
 void suspendOutsideSketch(const QList<QAction*>& actions,bool sketching) {
   for(auto* a:actions) {
     if(scope(a->objectName())!=OutsideSketch)continue;
     const QVariant held=a->property("heldShortcut");
-    if(sketching && !held.isValid()){a->setProperty("heldShortcut",QVariant::fromValue(a->shortcut()));a->setShortcut({});}
-    else if(!sketching && held.isValid()){a->setProperty("heldShortcut",QVariant());a->setShortcut(held.value<QKeySequence>());}
+    if(sketching && !held.isValid()){a->setProperty("heldShortcut",QVariant::fromValue(a->shortcuts()));a->setShortcuts({});}
+    else if(!sketching && held.isValid()){a->setProperty("heldShortcut",QVariant());a->setShortcuts(held.value<QList<QKeySequence>>());}
   }
 }
-QKeySequence binding(const QAction* a) {
-  const QVariant held=a->property("heldShortcut");return held.isValid()?held.value<QKeySequence>():a->shortcut();
+QList<QKeySequence> bindings(const QAction* a) {
+  const QVariant held=a->property("heldShortcut");return held.isValid()?held.value<QList<QKeySequence>>():a->shortcuts();
 }
-void bind(QAction* a,const QKeySequence& key) {
-  if(a->property("heldShortcut").isValid())a->setProperty("heldShortcut",QVariant::fromValue(key));else a->setShortcut(key);
+QKeySequence binding(const QAction* a) {return bindings(a).value(0);}
+void bind(QAction* a,const QList<QKeySequence>& keys) {
+  if(a->property("heldShortcut").isValid())a->setProperty("heldShortcut",QVariant::fromValue(keys));else a->setShortcuts(keys);
   updateTooltip(a);
 }
 void migrate(QSettings& settings) {
@@ -103,9 +106,13 @@ QList<QKeySequence> alternates(const QString& id) {
 }
 void initialize(QAction* a,const QKeySequence& key,QSettings& settings) {
   a->setProperty("defaultShortcut",key.toString(QKeySequence::PortableText));
-  const QString path="shortcuts/"+a->objectName();
-  if(settings.contains(path))a->setShortcut(QKeySequence(settings.value(path).toString(),QKeySequence::PortableText));
-  else a->setShortcuts(QList<QKeySequence>{key}+alternates(a->objectName()));
+  const QString id=a->objectName(),path="shortcuts/"+id,second="shortcutAlternates/"+id;
+  const QKeySequence first=settings.contains(path)?QKeySequence(settings.value(path).toString(),QKeySequence::PortableText):key;
+  QList<QKeySequence> keys{first};
+  if(settings.contains(second))keys<<QKeySequence(settings.value(second).toString(),QKeySequence::PortableText);
+  else if(first==key)keys<<alternates(id);
+  keys.removeAll(QKeySequence());
+  a->setShortcuts(keys);
   updateTooltip(a);
 }
 void settleAlternates(const QList<QAction*>& actions) {
@@ -188,8 +195,8 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
   m_lookup=new ShortcutCapture(this);m_lookup->setObjectName("shortcutLookup");m_lookup->setClearButtonEnabled(true);m_lookup->setLayoutDirection(Qt::LeftToRight);m_lookup->findChild<QLineEdit*>()->setPlaceholderText(tr("Press shortcut"));lookupRow->addWidget(m_lookup,1);
   auto* clearSearch=new QPushButton(tr("Clear filters"),this);lookupRow->addWidget(clearSearch);layout->addLayout(lookupRow);
   auto* hint=new QLabel(tr("Type a command name or press a shortcut above to find its assignments. Select a command below to change it."),this);hint->setWordWrap(true);layout->addWidget(hint);
-  m_tree=new QTreeWidget(this);m_tree->setObjectName("shortcutTree");m_tree->setColumnCount(3);m_tree->setHeaderLabels({tr("Command"),tr("Shortcut"),tr("Context")});
-  m_tree->header()->setSectionResizeMode(0,QHeaderView::Stretch);m_tree->header()->setSectionResizeMode(1,QHeaderView::ResizeToContents);m_tree->header()->setSectionResizeMode(2,QHeaderView::ResizeToContents);
+  m_tree=new QTreeWidget(this);m_tree->setObjectName("shortcutTree");m_tree->setColumnCount(4);m_tree->setHeaderLabels({tr("Command"),tr("Shortcut"),tr("Alternate"),tr("Context")});
+  m_tree->header()->setSectionResizeMode(0,QHeaderView::Stretch);for(int c=1;c<4;++c)m_tree->header()->setSectionResizeMode(c,QHeaderView::ResizeToContents);
   layout->addWidget(m_tree,1);
   QMap<QString,QTreeWidgetItem*> folders;
   for(auto* action:actions) {
@@ -204,7 +211,8 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
       parentItem=folders[path];
     }
     auto* item=new QTreeWidgetItem(parentItem);item->setText(0,QString(action->text()).remove('&'));item->setToolTip(0,action->objectName());item->setData(0,Qt::UserRole,m_entries.size());
-    item->setText(2,scopeName(action->objectName()));m_entries.push_back({action,item,shortcuts::binding(action),shortcuts::binding(action)});
+    const QList<QKeySequence> keys=shortcuts::bindings(action);const QKeySequence key=keys.value(0),alternate=keys.value(1);  // also while a sketch holds them
+    item->setText(3,scopeName(action->objectName()));m_entries.push_back({action,item,key,key,alternate,alternate});
   }
   auto* reservedGroup=new QTreeWidgetItem(m_tree);reservedGroup->setText(0,tr("Editing controls (reserved)"));reservedGroup->setData(0,Qt::UserRole,-1);
   // The value keys belong to every tool that takes values (UI-122): a sketch tool, a feature panel, the section, a drawing
@@ -212,21 +220,32 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
   for(const auto& [text,keys,where]:QList<std::tuple<QString,QString,QString>>{{tr("End the current step, then close the tool"),"Esc",tr("In sketch")},{tr("Complete current input"),"Return",tr("In sketch")},
                                                                              {tr("Delete sketch selection"),"Del",tr("In sketch")},{tr("Undo the last sketch point"),"Backspace",tr("In sketch")},
                                                                              {tr("Type a value into the tool's boxes"),"0-9 . , - +",tr("In tools that take values")},{tr("Next or previous value box"),"Tab, Shift+Tab",tr("In tools that take values")}}) {
-    auto* item=new QTreeWidgetItem(reservedGroup);item->setText(0,text);item->setText(1,keys);item->setText(2,where);item->setData(0,Qt::UserRole,-1);
+    auto* item=new QTreeWidgetItem(reservedGroup);item->setText(0,text);item->setText(1,keys);item->setText(3,where);item->setData(0,Qt::UserRole,-1);
   }
   m_tree->sortItems(0,Qt::AscendingOrder);m_tree->expandAll();
   m_details=new QLabel(this);m_details->setObjectName("shortcutDetails");m_details->setWordWrap(true);layout->addWidget(m_details);
-  auto* bindingRow=new QHBoxLayout;
-  bindingRow->addWidget(new QLabel(tr("Assign shortcut:"),this));
-  m_binding=new ShortcutCapture(this);m_binding->setObjectName("shortcutBinding");m_binding->setClearButtonEnabled(true);m_binding->setLayoutDirection(Qt::LeftToRight);m_binding->findChild<QLineEdit*>()->setPlaceholderText(tr("Press shortcut"));bindingRow->addWidget(m_binding,1);
-  auto* change=new QPushButton(tr("Assign"),this);change->setObjectName("shortcutAssign");bindingRow->addWidget(change);
-  auto* reset=new QPushButton(tr("Restore default"),this);reset->setObjectName("shortcutReset");bindingRow->addWidget(reset);layout->addLayout(bindingRow);
+  auto* bindings=new QGridLayout;bindings->setColumnStretch(1,1);layout->addLayout(bindings);
+  bindings->addWidget(new QLabel(tr("Assign shortcut:"),this),0,0);
+  m_binding=new ShortcutCapture(this);m_binding->setObjectName("shortcutBinding");bindings->addWidget(m_binding,0,1);
+  auto* change=new QPushButton(tr("Assign"),this);change->setObjectName("shortcutAssign");bindings->addWidget(change,0,2);
+  auto* reset=new QPushButton(tr("Restore default"),this);reset->setObjectName("shortcutReset");bindings->addWidget(reset,0,3);
+  // A second key the command answers to as well (UI-111): Redo's Ctrl+Shift+Z beside Ctrl+Y.
+  bindings->addWidget(new QLabel(tr("Alternate shortcut:"),this),1,0);
+  m_alternate=new ShortcutCapture(this);m_alternate->setObjectName("shortcutAlternate");bindings->addWidget(m_alternate,1,1);
+  auto* changeAlternate=new QPushButton(tr("Assign alternate"),this);changeAlternate->setObjectName("shortcutAssignAlternate");bindings->addWidget(changeAlternate,1,2);
+  for(auto* capture:{m_binding,m_alternate}) {
+    capture->setClearButtonEnabled(true);capture->setLayoutDirection(Qt::LeftToRight);capture->findChild<QLineEdit*>()->setPlaceholderText(tr("Press shortcut"));
+  }
   auto* footer=new QDialogButtonBox(QDialogButtonBox::Apply|QDialogButtonBox::Cancel,this);layout->addWidget(footer);
   connect(m_search,&QLineEdit::textChanged,this,[this]{filter();});connect(m_lookup,&QKeySequenceEdit::keySequenceChanged,this,[this]{filter();});
   connect(clearSearch,&QPushButton::clicked,this,[this]{m_search->clear();m_lookup->clear();});
   connect(m_tree,&QTreeWidget::currentItemChanged,this,[this]{selectCurrent();});connect(m_binding,&QKeySequenceEdit::keySequenceChanged,this,[this]{describe();});
   connect(change,&QPushButton::clicked,this,[this]{const int i=current();if(i>=0)assign(i,m_binding->keySequence());});
-  connect(reset,&QPushButton::clicked,this,[this]{const int i=current();if(i>=0)assign(i,QKeySequence(m_entries[i].action->property("defaultShortcut").toString()));});
+  connect(changeAlternate,&QPushButton::clicked,this,[this]{const int i=current();if(i>=0)assign(i,m_alternate->keySequence(),1);});
+  connect(reset,&QPushButton::clicked,this,[this]{
+    const int i=current();
+    if(i>=0&&assign(i,QKeySequence(m_entries[i].action->property("defaultShortcut").toString())))assign(i,shortcuts::alternates(m_entries[i].action->objectName()).value(0),1);
+  });
   connect(footer->button(QDialogButtonBox::Apply),&QPushButton::clicked,this,&ShortcutEditor::accept);
   connect(footer,&QDialogButtonBox::rejected,this,&QDialog::reject);
   for(auto* button:findChildren<QPushButton*>())button->setAutoDefault(false);
@@ -236,9 +255,13 @@ int ShortcutEditor::current() const {
   const auto* item=m_tree->currentItem();return item?item->data(0,Qt::UserRole).toInt():-1;
 }
 QString ShortcutEditor::name(int i)const {return groups(m_entries[i].action).join(" / ")+" / "+m_entries[i].item->text(0);}
-QVector<int> ShortcutEditor::collisions(int i,const QKeySequence& key)const {
-  QVector<int> result;
-  for(int n=0;n<m_entries.size();++n)if(n!=i&&shortcuts::overlaps(m_entries[i].action->objectName(),m_entries[n].action->objectName())&&shortcuts::conflicts(key,m_entries[n].key))result.push_back(n);
+QString ShortcutEditor::name(const Hit& h)const {return h.slot?tr("%1 (alternate)").arg(name(h.entry)):name(h.entry);}
+// Every key or alternate (the command's own other one too) that `key` would clash with in slot `slot` of command i.
+QVector<ShortcutEditor::Hit> ShortcutEditor::collisions(int i,const QKeySequence& key,int slot)const {
+  QVector<Hit> result;
+  for(int n=0;n<m_entries.size();++n)
+    for(int s=0;s<2;++s)
+      if((n!=i||s!=slot)&&shortcuts::overlaps(m_entries[i].action->objectName(),m_entries[n].action->objectName())&&shortcuts::conflicts(key,m_entries[n].slot(s)))result.push_back({n,s});
   return result;
 }
 void ShortcutEditor::filter() {
@@ -249,9 +272,9 @@ void ShortcutEditor::filter() {
     else {
       const int index=item->data(0,Qt::UserRole).toInt();
       const auto assigned=index>=0?m_entries[index].key:QKeySequence(item->text(1));
-      const QString text=path+" "+item->text(1)+" "+item->text(2)+" "+(index>=0?m_entries[index].action->objectName():QString());
+      const QString text=path+" "+item->text(1)+" "+item->text(2)+" "+item->text(3)+" "+(index>=0?m_entries[index].action->objectName():QString());
       visible=true;for(const auto& word:words)visible&=text.contains(word,Qt::CaseInsensitive);
-      visible&=key.isEmpty()||shortcuts::conflicts(key,assigned);
+      visible&=key.isEmpty()||shortcuts::conflicts(key,assigned)||(index>=0&&shortcuts::conflicts(key,m_entries[index].alternate));
     }
     item->setHidden(!visible);if(visible&&(!words.isEmpty()||!key.isEmpty()))item->setExpanded(true);return visible;
   };
@@ -261,68 +284,87 @@ void ShortcutEditor::selectCurrent() {
   const int i=current();
   findChild<QPushButton*>("shortcutAssign")->setEnabled(i>=0);
   findChild<QPushButton*>("shortcutReset")->setEnabled(i>=0);
+  findChild<QPushButton*>("shortcutAssignAlternate")->setEnabled(i>=0);
   m_binding->setEnabled(i>=0);m_binding->setKeySequence(i>=0?m_entries[i].key:QKeySequence());
+  m_alternate->setEnabled(i>=0);m_alternate->setKeySequence(i>=0?m_entries[i].alternate:QKeySequence());
   describe();
 }
 void ShortcutEditor::describe() {
   const int i=current();
   if(i<0){m_details->setText(tr("Select a command to edit its shortcut."));return;}
-  const QString fallback=m_entries[i].action->property("defaultShortcut").toString();
-  QString text=name(i)+"\n"+tr("Default: %1").arg(fallback.isEmpty()?tr("Unassigned"):QKeySequence(fallback).toString(QKeySequence::NativeText));
+  QString standard=m_entries[i].action->property("defaultShortcut").toString().isEmpty()?tr("Unassigned"):QKeySequence(m_entries[i].action->property("defaultShortcut").toString()).toString(QKeySequence::NativeText);
+  for(const auto& alternate:shortcuts::alternates(m_entries[i].action->objectName()))standard+=" / "+alternate.toString(QKeySequence::NativeText);
+  QString text=name(i)+"
+"+tr("Default: %1").arg(standard);
   // A value key outside the sketch (the filters' 1-4 and the styles' 5-7 by default) acts while no tool takes values; a
   // running one types it into its boxes (UI-122). The defaults stay as they were (nothing for migrate()): said here.
   if(shortcuts::scope(m_entries[i].action->objectName())!=shortcuts::SketchOnly && shortcuts::typesValue(m_binding->keySequence()))
-    text+="\n"+tr("While a tool that takes values runs (a sketch tool, a feature, the section, a drawing being placed), this key types into its boxes instead.");
+    text+="
+"+tr("While a tool that takes values runs (a sketch tool, a feature, the section, a drawing being placed), this key types into its boxes instead.");
   m_details->setText(text);
 }
 void ShortcutEditor::refresh() {
   for(int i=0;i<m_entries.size();++i) {
     auto& e=m_entries[i];e.item->setText(1,e.key.isEmpty()?tr("Unassigned"):e.key.toString(QKeySequence::NativeText));
-    const auto hits=collisions(i,e.key);QStringList labels;for(int n:hits)labels<<name(n);
-    e.item->setToolTip(1,hits.isEmpty()?QString():tr("Conflicts with: %1").arg(labels.join(", ")));
-    e.item->setIcon(1,hits.isEmpty()?QIcon():style()->standardIcon(QStyle::SP_MessageBoxWarning));
+    e.item->setText(2,e.alternate.toString(QKeySequence::NativeText));
+    for(int s=0;s<2;++s) {
+      const auto hits=collisions(i,e.slot(s),s);QStringList labels;for(const Hit& h:hits)labels<<name(h);
+      e.item->setToolTip(1+s,hits.isEmpty()?QString():tr("Conflicts with: %1").arg(labels.join(", ")));
+      e.item->setIcon(1+s,hits.isEmpty()?QIcon():style()->standardIcon(QStyle::SP_MessageBoxWarning));
+    }
   }
   filter();
 }
-bool ShortcutEditor::assign(int i,const QKeySequence& key) {
+bool ShortcutEditor::assign(int i,const QKeySequence& key,int slot) {
   auto& e=m_entries[i];
-  if(reserved(key)&&key!=e.initial&&key!=QKeySequence(e.action->property("defaultShortcut").toString())) {
+  const QKeySequence standard=slot?shortcuts::alternates(e.action->objectName()).value(0):QKeySequence(e.action->property("defaultShortcut").toString());
+  if(reserved(key)&&key!=(slot?e.initialAlternate:e.initial)&&key!=standard) {
     QMessageBox::warning(this,tr("Reserved shortcut"),tr("Esc, Enter, Delete and Backspace are reserved for editing controls. Choose another shortcut."));return false;
   }
-  if(shortcuts::scope(e.action->objectName())==shortcuts::SketchOnly && shortcuts::typesValue(key) && key!=e.initial) {
+  if(shortcuts::scope(e.action->objectName())==shortcuts::SketchOnly && shortcuts::typesValue(key) && key!=(slot?e.initialAlternate:e.initial)) {
     QMessageBox::warning(this,tr("Reserved shortcut"),tr("Digits, the decimal point, the comma and the signs type values into a running sketch tool. Choose another shortcut for a sketch command."));return false;
   }
-  const auto hits=collisions(i,key);
+  const auto hits=collisions(i,key,slot);
   if(!hits.isEmpty()) {
-    QStringList labels;for(int n:hits)labels<<name(n)+" ("+scopeName(m_entries[n].action->objectName())+")";
-    QMessageBox dialog(QMessageBox::Warning,tr("Shortcut conflict"),tr("%1 overlaps an existing shortcut or multi-key sequence:\n%2\n\nReassign it to %3 and clear the conflicting assignments?").arg(key.toString(QKeySequence::NativeText),labels.join("\n"),name(i)),QMessageBox::Cancel,this);
+    QStringList labels;for(const Hit& h:hits)labels<<name(h)+" ("+scopeName(m_entries[h.entry].action->objectName())+")";
+    QMessageBox dialog(QMessageBox::Warning,tr("Shortcut conflict"),tr("%1 overlaps an existing shortcut or multi-key sequence:\n%2\n\nReassign it to %3 and clear the conflicting assignments?").arg(key.toString(QKeySequence::NativeText),labels.join("\n"),name(Hit{i,slot})),QMessageBox::Cancel,this);
     dialog.setObjectName("shortcutConflict");auto* replace=dialog.addButton(tr("Reassign"),QMessageBox::AcceptRole);replace->setObjectName("shortcutReassign");
     QPushButton* swap=nullptr;
-    if(hits.size()==1&&!e.key.isEmpty()&&key==m_entries[hits[0]].key&&!reserved(e.key)) {
-      auto remaining=collisions(hits[0],e.key);remaining.removeAll(i);
+    const QKeySequence mine=e.slot(slot);
+    const Hit other=hits.front();
+    if(hits.size()==1&&!mine.isEmpty()&&key==m_entries[other.entry].slot(other.slot)&&!reserved(mine)) {
+      auto remaining=collisions(other.entry,mine,other.slot);
+      remaining.erase(std::remove_if(remaining.begin(),remaining.end(),[&](const Hit& h){return h.entry==i&&h.slot==slot;}),remaining.end());
       if(remaining.isEmpty()){swap=dialog.addButton(tr("Swap"),QMessageBox::ActionRole);swap->setObjectName("shortcutSwap");}
     }
     dialog.setDefaultButton(QMessageBox::Cancel);dialog.exec();
-    if(swap&&dialog.clickedButton()==swap)m_entries[hits[0]].key=e.key;
-    else if(dialog.clickedButton()==replace)for(int n:hits)m_entries[n].key=QKeySequence();
+    if(swap&&dialog.clickedButton()==swap)m_entries[other.entry].slot(other.slot)=mine;
+    else if(dialog.clickedButton()==replace)for(const Hit& h:hits)m_entries[h.entry].slot(h.slot)=QKeySequence();
     else return false;
   }
-  e.key=key;refresh();selectCurrent();return true;
+  e.slot(slot)=key;refresh();selectCurrent();return true;
 }
 void ShortcutEditor::accept() {
-  const int i=current();if(i>=0&&m_binding->keySequence()!=m_entries[i].key&&!assign(i,m_binding->keySequence()))return;
+  const int i=current();
+  if(i>=0&&m_binding->keySequence()!=m_entries[i].key&&!assign(i,m_binding->keySequence()))return;
+  if(i>=0&&m_alternate->keySequence()!=m_entries[i].alternate&&!assign(i,m_alternate->keySequence(),1))return;
   // Resolve pre-existing conflicts too; no settings are written until the whole draft is valid.
-  for(int n=0;n<m_entries.size();++n)if(!collisions(n,m_entries[n].key).isEmpty()&&!assign(n,m_entries[n].key))return;
+  for(int n=0;n<m_entries.size();++n)
+    for(int s=0;s<2;++s)if(!collisions(n,m_entries[n].slot(s),s).isEmpty()&&!assign(n,m_entries[n].slot(s),s))return;
   QSettings settings;
   QList<QAction*> actions;
-  for(const auto& e:m_entries) {
+  for(auto& e:m_entries) {
+    if(e.key.isEmpty())std::swap(e.key,e.alternate);  // an alternate alone is the key
+    const QString id=e.action->objectName();
     const bool standard=e.key==QKeySequence(e.action->property("defaultShortcut").toString());
-    if(e.action->property("heldShortcut").isValid())shortcuts::bind(e.action,e.key);  // let go while a sketch is open: taken back when it closes
-    else e.action->setShortcuts(standard?QList<QKeySequence>{e.key}+shortcuts::alternates(e.action->objectName()):QList<QKeySequence>{e.key});
+    shortcuts::bind(e.action,e.alternate.isEmpty()?QList<QKeySequence>{e.key}:QList<QKeySequence>{e.key,e.alternate});  // held while a sketch is open: taken back when it closes
     shortcuts::updateTooltip(e.action);actions<<e.action;
-    const QString path="shortcuts/"+e.action->objectName();
+    const QString path="shortcuts/"+id;
     if(standard)settings.remove(path);
     else settings.setValue(path,e.key.toString(QKeySequence::PortableText));
+    // Saved only where it differs from what the key implies: the default alternate with the default key, else none.
+    if(e.alternate==(standard?shortcuts::alternates(id).value(0):QKeySequence()))settings.remove("shortcutAlternates/"+id);
+    else settings.setValue("shortcutAlternates/"+id,e.alternate.toString(QKeySequence::PortableText));
   }
   shortcuts::settleAlternates(actions);
   QDialog::accept();

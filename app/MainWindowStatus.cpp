@@ -36,7 +36,7 @@ class StatusText : public QLabel {
     QPainter p(this);
     const QRect r = contentsRect();
     const QString shown = fontMetrics().elidedText(text(), m_mode, r.width());
-    if (m_tip) setToolTip(shown == text() ? QString() : text());
+    if (const QString tip = shown == text() ? QString() : text(); m_tip && toolTip() != tip) setToolTip(tip);
     style()->drawItemText(&p, r, int(QStyle::visualAlignment(layoutDirection(), alignment())) | Qt::TextSingleLine, palette(), isEnabled(), shown, foregroundRole());
   }
  private:
@@ -58,7 +58,7 @@ void MainWindow::buildStatusBar() {
   m_statusPrompt->setObjectName("statusPrompt");
   m_statusPrompt->setAlignment(Qt::AlignLeading | Qt::AlignVCenter);
   m_statusPrompt->setContentsMargins(8, 0, 4, 0);
-  m_statusHover = new StatusText(Qt::ElideRight, 100, true, this);
+  m_statusHover = new StatusText(Qt::ElideRight, 60, true, this);
   m_statusHover->setAlignment(Qt::AlignCenter);
   m_statusHover->setObjectName("tertiary");
   m_statusSel = new QLabel(this);
@@ -92,8 +92,12 @@ void MainWindow::buildStatusBar() {
       else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
       else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);
       if(m_design && m_design->sketch()) m_design->sketch()->refreshSnap();  // the sketch reads them once (UI-27), again now
+      preferences::changed(spec.setting);  // its other faces: Preferences, the sketch panel's snaps
     };
     connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
+    connect(preferences::notifier(),&preferences::Notifier::changed,a,[a,spec](const QString& key) {  // set from one of them
+      if(key.isEmpty() || key==spec.setting) a->setChecked(QSettings().value(spec.setting,spec.defaultOn).toBool());
+    });
     auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setAccessibleName(tr(spec.label)); button->setIconSize({18,18}); button->setFixedSize(30,26);
     auto paint=[button,a,spec] {
@@ -140,6 +144,7 @@ void MainWindow::toggleMenu(QToolButton* button, const QString& id) {
       a->setChecked(std::abs(spacing - mm) < 1e-9);
       connect(a, &QAction::triggered, this, [this, mm] {
         m_viewport->configureGrid(mm, m_settings.value("view/gridExtent", 100).toDouble());
+        preferences::changed("view/gridSpacing");
         if (!action("view.grid")->isChecked()) action("view.grid")->setChecked(true);
       });
     }
@@ -152,6 +157,7 @@ void MainWindow::toggleMenu(QToolButton* button, const QString& id) {
       a->setChecked(std::abs(step - deg) < 1e-9);
       connect(a, &QAction::triggered, this, [this, deg] {
         m_settings.setValue("sketch/angleStep", deg);
+        preferences::changed("sketch/angleStep");
         if (!action("view.polarSnap")->isChecked()) action("view.polarSnap")->setChecked(true);
       });
     }

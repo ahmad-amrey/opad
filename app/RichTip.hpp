@@ -2,12 +2,13 @@
 // Rich hover card for commands (UI-106, design notes B §3). Hover an attached widget for 450 ms: a compact card (icon,
 // title, key caps, summary, and in amber what a disabled command needs). Keep hovering for ui/tipExpandMs (1200) more:
 // it grows (120 ms) to show the details and the animated clip slot (UI-107 plugs the player in with setClipFactory).
-// Shift or F1 while hovering shows the expanded card at once. Moving to another attached widget while a card is up
+// Shift or F1 while hovering shows the expanded card at once; F1 on the expanded card opens the tool guide there (setGuideHook). Moving to another attached widget while a card is up
 // swaps it at once ("browse mode", 300 ms grace); a press, a key, a wheel, a drag, leaving or deactivating hides it.
 // The pointer may rest on the card to read it. One top-level ToolTip window, never focused; painted from the theme
 // tokens on every paint and mirrored for right-to-left languages. Qt's own tooltip is held back on attached widgets.
 // Menus (setMenuCards): the entries of any menu that are commands with help show their card beside the entry, the same
-// way. Setting ui/tips: 0 off (Qt tooltip), 1 basic (Qt tooltip), 2 rich (default).
+// way. Setting ui/tips on attached widgets: 0 off (no hover help), 1 plain (Qt's tooltip with the command's name, key
+// and summary: help::tooltip), 2 rich (default).
 #include <QElapsedTimer>
 #include <QHash>
 #include <QPointer>
@@ -41,6 +42,8 @@ class RichTip : public QWidget {
   // action is a command with a help record (its objectName) shows that card beside the entry, on the side away from
   // the menu's parent (left in right-to-left), flipped when the screen has no room.
   static void setMenuCards(bool on);
+  // F1 on an expanded card (or one with nothing more to show): the tool guide at its command; a menu closes first.
+  static void setGuideHook(std::function<void(const QString& commandId)> guide);
   static QAction* commandEntry(const QMenu* menu, const QPoint& pos);  // the command entry at pos, null: none or no help
   static constexpr int kMargin = 6;    // translucent rim for the shadow, as ToolPanel
   static constexpr QSize kClip{288, 162};
@@ -64,6 +67,7 @@ class RichTip : public QWidget {
   QWidget* attachedAt(QObject* o) const;
   void hover(QWidget* target, QAction* entry = nullptr);
   void dismiss();
+  void openGuide();
   bool suppressed() const { return m_target && m_suppressed == m_target && m_suppressedEntry == m_entry; }
   bool hovering() const { return m_state != State::Hidden || (m_target && !suppressed()); }  // Shift and F1 count
   void present(State state);

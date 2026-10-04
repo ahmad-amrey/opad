@@ -58,11 +58,15 @@ void MainWindow::buildMenus() {
     }
   };
   QMenu* file = menuBar()->addMenu(tr("&File"));
-  add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
+  add(file, {"file.new"});
+  m_templateMenu = file->addMenu(icons::themed("template", 16), tr("New from template"));
+  m_templateMenu->setObjectName("templates");
+  connect(m_templateMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTemplateMenu);
+  add(file, {"file.open", "file.import", "file.importdoc"});
   m_recentMenu = file->addMenu(tr("Recent"));
   m_recentMenu->setObjectName("recent");
   location::addContextMenus(m_recentMenu, [this](const QString& path, QWidget* parent) { return recentMenu(path, parent); });
-  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
+  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "file.savetemplate", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "edit.repeat", "-", "edit.selectall", "edit.invert", "edit.selectparent", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));

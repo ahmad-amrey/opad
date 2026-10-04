@@ -141,7 +141,7 @@ void MainWindow::buildDesign() {
 
   connect(m_design, &DesignController::status, this, &MainWindow::setPrompt);
   connect(m_design, &DesignController::notice, this, [this](const QString& text) { resultToast(text); });
-  connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
+  connect(m_design, &DesignController::failed, this, [this](const QString& error) { if (error != "cancelled") failedToast(i18n::t(error)); });  // cancelled by the user
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
   connect(m_design->sketch(), &SketchEditor::hintsChanged, this, [this] { if (m_design->sketchActive() && !m_design->pickingPlane()) updateSketchPrompt(); });
   auto editOp = [this](const std::string& id) {  // a read-only document asks for a copy first
@@ -149,6 +149,15 @@ void MainWindow::buildDesign() {
     if (requireEditable(edit)) edit();
   };
   connect(m_timeline, &TimelineWidget::opActivated, this, editOp);
+  connect(m_timeline, &TimelineWidget::suppressRequested, this, [this](const std::string& id) {
+    if (m_doc->browse || m_design->busy() || !requireEditable()) return;  // read-only: a copy first
+    if (const opad::Feature* f = m_doc->scene.feature(id)) guarded([&] { m_design->setSuppressed(id, !f->suppressed); });
+  });
+  connect(m_timeline, &TimelineWidget::deleteRequested, this, [this](const std::string& id, bool restore) {
+    if (m_doc->browse || !requireEditable()) return;
+    const bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), id) != m_doc->scene.deleted_ops.end();
+    if (deleted == restore) guarded([&] { restore ? restoreOp(id) : deleteOp(id); });
+  });
   connect(m_browser, &BrowserPanel::sketchActivated, this, editOp);
   connect(m_browser,&BrowserPanel::editedSketchVisibilityRequested,this,[this]{auto* sketch=m_design->sketch();sketch->setVisible(!sketch->visible());});
   updateDesignState();

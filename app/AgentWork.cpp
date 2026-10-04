@@ -204,13 +204,14 @@ void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)
   if(!m_doc->captureSnapshot(m_jobs,[self,revision,generation,done](std::shared_ptr<opad::Document> copy,const QString& error){
     if(!self)return;if(!copy){done({},error);return;}
     auto value=std::make_shared<Snapshot>();value->doc=std::move(copy);value->revision=revision;
+    self->m_jobs->backgroundNext();  // agent traffic: no busy cursor, no completion toast
     self->m_jobs->async(tr("Preparing agent context"),[value](Progress p){value->scene=opad::resolve(*value->doc);if(p.cancelled())throw opad::Error("cancelled");},
       [self,value,done,generation](bool ok,const QString& error){
         if(!self)return;if(!ok){done({},error);return;}
         if(generation!=self->m_doc->generation || value->revision!=self->m_doc->revision){done({},tr("Document changed while preparing context. Retry."));return;}
         self->m_cache=value;done(value,{});
       });
-  }))done({},tr("Document is busy. Retry after the current operation."));
+  },true))done({},tr("Document is busy. Retry after the current operation."));
 }
 void AgentBridge::save(const std::shared_ptr<Session>& session,const json& args,const std::string& receipt){
   if(m_prepared){fail(session,"prepared_active",tr("Commit or cancel the current transaction first."),receipt);return;}
@@ -255,6 +256,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     }
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
     const auto baseline=!transaction.empty() && m_cache?m_cache:source;
+    m_jobs->backgroundNext();
     auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,known,steps,delay=m_benchDelay](Progress p)mutable{
       p.setPhase(tr("Inspecting inputs"));
       if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args,known.get());

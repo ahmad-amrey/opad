@@ -1,6 +1,7 @@
 // The view: view and navigation commands, the central viewport and its overlays, theme, named views.
 #include "MainWindow.hpp"
 
+#include <QAccessibilityHints>
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QDialog>
@@ -8,10 +9,12 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMoveEvent>
 #include <QResizeEvent>
 #include <QStackedWidget>
+#include <QStyleHints>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -21,7 +24,9 @@
 #include <vector>
 
 #include "Drawing2D.hpp"
+#include "DrawingPlacer.hpp"
 #include "I18n.hpp"
+#include "PlanePicker.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
@@ -42,8 +47,10 @@ void MainWindow::buildViewActions() {
   });
   addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence("Alt+Left"), [this] { m_viewport->rollView(90); });
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence("Alt+Right"), [this] { m_viewport->rollView(-90); });
-  for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Shift+Up"}, {"front", "Shift+PgUp"}, {"right", "Shift+Right"}, {"iso", "Shift+H"}, {"bottom", "Shift+Down"}, {"back", "Shift+PgDown"}, {"left", "Shift+Left"}})
-    addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
+  for (const auto& [name, key, label] : std::vector<std::tuple<QString, QString, QString>>{
+           {"top", "Shift+Up", tr("Top view")}, {"front", "Shift+PgUp", tr("Front view")}, {"right", "Shift+Right", tr("Right view")}, {"iso", "Shift+H", tr("Isometric view")},
+           {"bottom", "Shift+Down", tr("Bottom view")}, {"back", "Shift+PgDown", tr("Back view")}, {"left", "Shift+Left", tr("Left view")}})
+    addAction("view." + name, label, "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
   auto* flat = addAction("view.2d",tr("2D mode"),"drawing",QKeySequence("Shift+2"),[this]{},true);
   flat->setObjectName("view.2d");
   flat->setCheckable(true);
@@ -116,6 +123,9 @@ void MainWindow::buildNavigationActions() {
   addAction("panel.reset", tr("Reset layout"), "restore", QKeySequence(), [this] { resetLayout(); });
   m_darkAction->setChecked(m_settings.value("ui/dark", true).toBool());
   connect(m_darkAction, &QAction::toggled, this, [this](bool on) { applyTheme(on); refreshIcons(); });
+  // High contrast and the text size (UI-124): a Preferences row or the system's high-contrast switch applies the theme again.
+  connect(theme::notifier(), &theme::Notifier::refreshRequested, this, [this] { applyTheme(m_settings.value("ui/dark", true).toBool()); refreshIcons(); });
+  connect(QGuiApplication::styleHints()->accessibility(), &QAccessibilityHints::contrastPreferenceChanged, this, [] { theme::refresh(); });
   for (const auto& [name, preset] : std::vector<std::pair<QString, Viewport::NavPreset>>{{"Fusion", Viewport::NavPreset::Fusion}, {"SolidWorks", Viewport::NavPreset::SolidWorks}, {"Onshape", Viewport::NavPreset::Onshape}, {"Blender", Viewport::NavPreset::Blender}}) {
     // Named after the products whose mouse controls they mimic, never as them (trademarks): "SOLIDWORKS-style".
     QAction* a = addAction("nav." + name.toLower(), tr("Navigation: %1-style").arg(name == "SolidWorks" ? "SOLIDWORKS" : name), "", QKeySequence(), [this, p = preset, n = name] {
@@ -250,7 +260,7 @@ void MainWindow::updateChips() {
     opad::Vec3 o = m_section->origin(), n = m_section->normal();
     int axis = std::fabs(n[0]) > 0.9 ? 0 : std::fabs(n[1]) > 0.9 ? 1 : 2;
     const char axes[] = {'X', 'Y', 'Z'};
-    section = QString("Section %1 = %2").arg(axes[axis]).arg(units::format(units::Kind::Length, o[axis]));
+    section = tr("Section %1 = %2").arg(axes[axis]).arg(units::format(units::Kind::Length, o[axis]));
   }
   m_chips->set(mode, proj, section, m_viewport->isIsolated() ? tr("Isolated · %1 bodies").arg(m_viewport->isolatedCount()) : QString(),
                action("view.2d")->isChecked());
@@ -317,7 +327,25 @@ void MainWindow::showCentral() {
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
   if (o == m_viewport && (e->type() == QEvent::Resize || e->type() == QEvent::Show)) positionOverlays();
+  if (o == m_viewport && e->type() == QEvent::KeyPress && repeatOnEnter(static_cast<QKeyEvent*>(e))) return true;
   return QMainWindow::eventFilter(o, e);
+}
+
+// Enter in the view while nothing runs repeats the last command, as in SOLIDWORKS and AutoCAD (UI-111). While a tool, a
+// feature, a sketch, a note or a plane pick runs, Enter is theirs (OK, finish, the typed value); a held key does nothing.
+// Delete, Restore, Hide and Show all repeat only from Repeat itself (Shift+Enter, the menu): a stray Enter must not act on
+// whatever is selected now.
+bool MainWindow::repeatOnEnter(const QKeyEvent* key) {
+  static const QStringList asked{"edit.delete", "edit.restore", "edit.hide", "edit.showall"};
+  if ((key->key() != Qt::Key_Return && key->key() != Qt::Key_Enter) || (key->modifiers() & ~Qt::KeypadModifier) || key->isAutoRepeat() || asked.contains(m_lastCommand))
+    return false;
+  if (!m_doc->hasDocument || !m_tool.id.isEmpty() || m_annotationEditor || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane() ||
+      m_design->planePicker()->active() || m_drawingPlacer->active() || m_toolPanel->isVisible())
+    return false;
+  QAction* repeat = action("edit.repeat");
+  if (!repeat || !repeat->isEnabled()) return false;
+  repeat->trigger();
+  return true;
 }
 
 // ---------------------------------------------------------------- named views (view op)

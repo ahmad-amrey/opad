@@ -9,6 +9,7 @@
 #include "opad/inspect.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
+#include "I18n.hpp"
 #include <TopoDS_Edge.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -318,7 +319,7 @@ bool DrawingPlacer::eventFilter(QObject* object, QEvent* event) {
           if (!m_marker.IsNull()) m_view->removeOverlay(m_marker);
           m_marker.Nullify();
         } catch (const std::exception& error) {
-          m_status->setText(QString::fromUtf8(error.what()));
+          m_status->setText(i18n::t(QString::fromUtf8(error.what())));
         }
       } else m_status->setText(tr("Snap: click a vertex of a body, a drawing or a sketch"));
       return true;

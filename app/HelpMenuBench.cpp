@@ -27,6 +27,7 @@
 OPAD_BENCH(OPAD_BENCH_HELPMENU, helpmenu) {
   const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
     trace::log(QString("bench: help menu: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
@@ -145,6 +146,7 @@ OPAD_BENCH(OPAD_BENCH_COACH, coach) {
   if (std::exchange(started, true)) return true;
   const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
     trace::log(QString("bench: coach: %1 %2").arg(what, ok ? "PASS" : "FAIL"));

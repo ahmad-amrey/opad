@@ -214,12 +214,14 @@ ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* ti
   m_pin = new QToolButton(header);
   m_pin->setCheckable(true);
   m_pin->setToolTip(tr("Keep open"));
+  m_pin->setAccessibleName(tr("Keep open"));
   m_close = new QToolButton(header);
   m_close->setToolTip(tr("Close  (Esc)"));
+  m_close->setAccessibleName(tr("Close"));
   for (QToolButton* b : {m_help, m_pin, m_close}) {
     b->setObjectName("dockButton");
     b->setIconSize(QSize(16, 16));
-    b->setFixedSize(20, 20);
+    b->setFixedSize(24, 24);  // a 24 px target (UI-124)
     b->setFocusPolicy(Qt::NoFocus);
   }
   h->addWidget(m_icon);

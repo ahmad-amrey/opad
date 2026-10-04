@@ -4,6 +4,7 @@
 #include "Units.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include "I18n.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRep_Builder.hxx>
@@ -69,7 +70,7 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
   auto* reset=new QPushButton(tr("Reset origin"),body);form->addRow(reset);layout->addWidget(m_originControls);
   connect(reset,&QPushButton::clicked,this,[this]{++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_origin={{"world",{0,0,0}}};m_frame=m_supportFrame;double u,v;m_supportFrame.to_local({0,0,0},u,v);m_frame.origin=m_supportFrame.to_world(u,v);refresh();});
   // A box left as shown keeps its value: its text is rounded to the shown unit.
-  auto numeric=[this]{if(m_refreshing||(!m_u->isModified()&&!m_v->isModified()))return;try{std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});ParamTable params(defs,units::current().length);double u,v;m_supportFrame.to_local(m_frame.origin,u,v);if(m_u->isModified())u=params.length(m_u->text().toStdString());if(m_v->isModified())v=params.length(m_v->text().toStdString());m_u->setModified(false);m_v->setModified(false);setOrigin(u,v);}catch(const std::exception& e){m_status->setText(QString::fromUtf8(e.what()));m_apply->setEnabled(false);}};
+  auto numeric=[this]{if(m_refreshing||(!m_u->isModified()&&!m_v->isModified()))return;try{std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});ParamTable params(defs,units::current().length);double u,v;m_supportFrame.to_local(m_frame.origin,u,v);if(m_u->isModified())u=params.length(m_u->text().toStdString());if(m_v->isModified())v=params.length(m_v->text().toStdString());m_u->setModified(false);m_v->setModified(false);setOrigin(u,v);}catch(const std::exception& e){m_status->setText(i18n::t(QString::fromUtf8(e.what())));m_apply->setEnabled(false);}};
   connect(m_u,&QLineEdit::editingFinished,this,numeric);connect(m_v,&QLineEdit::editingFinished,this,numeric);
   m_status=new QLabel(body);m_status->setWordWrap(true);layout->addWidget(m_status);layout->addStretch();auto* footer=new QHBoxLayout;layout->addLayout(footer);
   m_back=new QPushButton(tr("Back"),body);m_apply=new QPushButton(tr("OK"),body);m_apply->setObjectName("primary");auto* cancelButton=new QPushButton(tr("Cancel"),body);m_back->setToolTip(tr("Return to plane selection"));m_apply->setToolTip(tr("Use this plane and close"));cancelButton->setToolTip(tr("Cancel without applying changes"));footer->addWidget(m_back);footer->addWidget(m_apply);footer->addWidget(cancelButton);
@@ -121,7 +122,7 @@ void PlanePicker::choose(const opad::json& support) {
   auto doc=std::make_shared<opad::Document>(m_doc->doc);auto scene=std::make_shared<opad::Scene>(m_doc->scene);auto plane=std::make_shared<opad::json>(support);auto frame=std::make_shared<opad::Frame>();QPointer<PlanePicker> guard(this);
   m_status->setText(tr("Resolving sketch plane"));m_apply->setEnabled(false);
   m_job=m_jobs->async(tr("Resolving sketch plane"),[doc,scene,plane,frame](Progress p){if(p.cancelled())return;*frame=resolve_plane(*doc,*scene,*plane);if(plane->contains("face"))(*plane)["face"]=make_ref(*doc,*scene,opad::Ref::from_json(plane->at("face")));},[this,guard,serial,plane,frame](bool ok,const QString& error){
-    if(!guard||!m_active||serial!=m_serial)return;m_job=nullptr;if(!ok){m_status->setText(error);return;}m_status->clear();m_support=*plane;m_supportFrame=*frame;m_frame=*frame;
+    if(!guard||!m_active||serial!=m_serial)return;m_job=nullptr;if(!ok){m_status->setText(i18n::t(error));return;}m_status->clear();m_support=*plane;m_supportFrame=*frame;m_frame=*frame;
     if(!m_positionOrigin){const auto value=*plane;const auto f=*frame;stop(false);emit accepted(value,f);return;}
     m_view->lookAt(*frame,true,false);m_originStage=true;m_origin={{"world",{0,0,0}}};double u,v;frame->to_local({0,0,0},u,v);m_frame.origin=frame->to_world(u,v);
     ++m_candidateSerial;m_view->clearCandidates();m_tiles->hide();m_view->clearSelection();m_view->setSelectionFilter(Viewport::SelFilter::Vertex);refresh();

@@ -45,7 +45,8 @@ class SearchField : public QAbstractButton {
   explicit SearchField(QWidget* parent = nullptr);
   void setCompact(bool on);  // the icon alone: the tab row is short of room
   bool compact() const { return m_compact; }
-  QSize sizeHint() const override { return QSize(m_compact ? kCompact : kFull, kHeight); }
+  QSize sizeHint() const override;
+  int fullWidth() const;  // with its words
   static constexpr int kFull = 200, kCompact = 28, kHeight = 24;
 
  protected:
@@ -132,12 +133,18 @@ class RibbonGroup : public QWidget {
   int nextLevel(int level);  // the next level that is narrower (one tool small can be wider than large); -1: none
   int level() const { return m_level; }
   void setLevel(int level);  // places the tools for that level and resizes the group
+  void remeasure() { m_widths.fill(-1); }  // the text size changed
   QString title() const { return m_title; }
   QMenu* menu() const { return m_menu; }  // every tool of the group: the title's ▾ and the collapsed button drop it
   QList<QToolButton*> buttons() const;    // the tools', one per item, in order (hidden while collapsed)
   QToolButton* titleButton() const { return m_titleButton; }
   QToolButton* collapsedButton() const { return m_collapsed; }
-  static constexpr int kTop = 4, kTools = 56, kTitle = 16, kRow = 18, kHeight = kTop + kTools + kTitle + 4;
+  static constexpr int kTop = 4, kTools = 56, kTitle = 16, kRow = 18, kHeight = kTop + kTools + kTitle + 4;  // at 100 % text
+  // At the text size (theme::textScale, UI-124): a small tool's row, the tools' box (three rows at least), the title's.
+  static int toolRow();
+  static int toolsBox();
+  static int titleBox();
+  static int stripHeight();
  signals:
   void widthsChanged();
  private:

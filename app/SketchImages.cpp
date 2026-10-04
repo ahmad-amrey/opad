@@ -8,6 +8,7 @@
 #include "opad/design/drawing_sketch.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
+#include "I18n.hpp"
 #include <AIS_TexturedShape.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -99,7 +100,7 @@ bool SketchEditor::applyImageTool() {
         opad::Document doc=opad::Document::create();doc.append(make_sketch_op("Sketch",{{"base","xy"},{"frame",opad::Frame{}.to_json()}},sketch->to_json()));opad::ExportOptions options;options.format=path.endsWith(".dxf",Qt::CaseInsensitive)?"dxf":"svg";opad::export_drawing(doc,opad::resolve(doc),std::filesystem::path(path.toStdWString()),options);
       },[this,session=m_session](bool ok,const QString& error){if(!m_active||session!=m_session)return;m_editJob=nullptr;emit status(ok?tr("Sketch exported."):error);});
     }
-  }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
+  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
   return true;
 }
 

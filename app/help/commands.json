@@ -48,6 +48,14 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "file.savetemplate",
+   "title": "Save as template",
+   "summary": "Keeps a copy of the document among the templates that New from template offers.",
+   "details": "The copy goes into the templates folder under the name you give, with an identity of its own. A document made from it starts as an untitled copy, so the template itself never changes.",
+   "keywords": ["template", "starting point", "default document"],
+   "requires": "Open or create a document first (a file in viewer mode cannot be a template until it is saved as OPAD)."
+  },
+  {
    "id": "file.export",
    "title": "Export",
    "summary": "Writes the selection or the whole design to STEP, STL, 3MF, OBJ, DXF, SVG and other formats.",
@@ -188,6 +196,20 @@
    "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
    "keywords": ["standard view", "left", "orientation", "camera"],
    "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.nextRegion",
+   "title": "Next region",
+   "summary": "Moves the keyboard to the next part of the window: ribbon, browser, view, timeline, then each open panel.",
+   "details": "The part reached is ringed, and its controls take the keys: arrows in the ribbon's tabs, the browser and the timeline, Tab in a panel. After the last panel it starts again at the ribbon; a click anywhere takes the ring away.",
+   "keywords": ["F6", "keyboard", "focus", "accessibility", "panes"]
+  },
+  {
+   "id": "view.previousRegion",
+   "title": "Previous region",
+   "summary": "Moves the keyboard back to the part of the window before this one.",
+   "details": "The same round as Next region, the other way: from a panel back to the timeline, the view, the browser and the ribbon. It works from a floating panel too.",
+   "keywords": ["Shift+F6", "keyboard", "focus", "accessibility", "panes"]
   },
   {
    "id": "view.2d",
@@ -584,7 +606,7 @@
    "id": "edit.repeat",
    "title": "Repeat",
    "summary": "Runs the last tool, feature, check or edit again.",
-   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. View changes, file commands and selection commands are never repeated.",
+   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. Enter in the view repeats it too while nothing runs, except Delete, Restore, Hide and Show all, which repeat only from here. View changes, file commands and selection commands are never repeated.",
    "keywords": ["again", "redo command", "last command", "repeat last"]
   },
   {

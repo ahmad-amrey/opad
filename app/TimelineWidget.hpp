@@ -21,8 +21,8 @@ class TimelineWidget : public QWidget {
   Q_OBJECT
  public:
   explicit TimelineWidget(AppDocument* doc, QWidget* parent = nullptr);
-  QSize sizeHint() const override { return QSize(400, 48); }
-  QSize minimumSizeHint() const override { return QSize(100, 48); }
+  QSize sizeHint() const override { return QSize(400, height()); }  // 48 px at the usual text size (theme::px)
+  QSize minimumSizeHint() const override { return QSize(100, height()); }
   void setCurrentOp(const std::string& id);
   std::string currentOp() const { return m_current; }
   // The op an open sketch or feature editor changes: marked, and what follows it dimmed, since the edit applies from
@@ -52,7 +52,6 @@ class TimelineWidget : public QWidget {
   bool showNames() const { return m_names; }
   void setDesignOnly(bool on);  // the design history only: imports, sketches, features, moves, reparents and their deletes
   bool designOnly() const { return m_designOnly; }
-  size_t markerCount() const { return m_shown.size(); }
   QRect markerAt(const std::string& id) const;  // where an op's marker is drawn (empty when it is not shown)
   QRect playhead() const;                       // the roll-back marker's grip (where it is drawn while dragged or moved by keys)
   bool playheadMoving() const { return m_dragging || m_keyed; }
@@ -63,13 +62,24 @@ class TimelineWidget : public QWidget {
   using TipProvider = std::function<QString(const opad::Op& op)>;
   void addTipProvider(TipProvider provider) { m_tips.push_back(std::move(provider)); }
   QString tooltip(const std::string& opId) const;
+  // The markers one by one, for screen readers (UI-124): how many, each one's op, place in the widget and state in words
+  // (tombstoned, suppressed, failed, ...; empty when none), and the current one (-1: none).
+  int markerCount() const { return int(m_shown.size()); }
+  const opad::Op* markerOp(int i) const;
+  QRect markerGeometry(int i) const { return markerRect(i); }
+  QRect markerArea() const;  // where markers show (the rest scrolled out)
+  QString markerState(int i) const;
+  int currentMarker() const;
+  void openMenu();  // the current marker's menu below it (the Menu key, Shift+F10)
 
  signals:
   void opClicked(const std::string& opId);
-  void opActivated(const std::string& opId);  // double-click: edit a feature or a sketch
+  void opActivated(const std::string& opId);  // double-click, Enter or F2: edit a feature or a sketch
   void contextRequested(const std::string& opId, const QPoint& globalPos);  // empty op: on no marker
   void markerHovered(const std::string& opId);      // the pointer came onto a marker; empty: off every marker
   void rollbackRequested(const std::string& opId);  // the playhead was dropped before this op; empty: at the end
+  void suppressRequested(const std::string& opId);  // Space on a feature
+  void deleteRequested(const std::string& opId, bool restore);  // Del (tombstone), Shift+Del (restore)
 
  public slots:
   void rebuild();
@@ -84,10 +94,16 @@ class TimelineWidget : public QWidget {
   void leaveEvent(QEvent*) override;
   void resizeEvent(QResizeEvent*) override;
   void wheelEvent(QWheelEvent*) override;
+  bool event(QEvent* e) override;  // F2 is the marker's (edit), not the window's Rename
   void keyPressEvent(QKeyEvent*) override;
+  void contextMenuEvent(QContextMenuEvent*) override;
 
  private:
   void layoutMarkers();
+  void announce();  // screen readers: the current marker has the focus
+  int markersLeft() const;
+  int markersRight() const;
+  int markerTop() const;
   void updateScrollRange();
   void ensureVisible(size_t index);
   void ensureCurrentVisible();
@@ -123,6 +139,7 @@ class TimelineWidget : public QWidget {
   class QTimer* m_keyTimer = nullptr;
   size_t m_dragGap = 0;
   std::vector<TipProvider> m_tips;
+  qint64 m_menuAt = 0;  // when the keyboard last opened the menu: the Menu key comes as a key and as a context menu event
 };
 
 QString opTypeIcon(const std::string& type);

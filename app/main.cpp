@@ -9,6 +9,7 @@
 #endif
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFile>
@@ -18,6 +19,8 @@
 #include <QSurfaceFormat>
 
 #include "CompareMode.hpp"
+#include <cstring>
+
 #include "CrashLog.hpp"
 #include "GitWatch.hpp"
 #include "I18n.hpp"
@@ -26,6 +29,7 @@
 #include "MainWindow.hpp"
 #include "opad/core.hpp"
 #include "opad/drawing/paint.hpp"
+#include "opad/render.hpp"
 
 namespace {
 // macOS hands the files a user opens from Finder (or drops on the Dock icon) to a running app as events, not arguments.
@@ -91,6 +95,20 @@ int textconv(int argc, char** argv) {
 int main(int argc, char** argv) {
   if (argc >= 2 && std::string_view(argv[1]) == "--merge-driver") return mergeDriver(argc, argv);
   if (argc >= 2 && std::string_view(argv[1]) == "--textconv") return textconv(argc, argv);
+  // The start page's pictures where no opad-cli is beside the app (the single-file exe, UI-113): opad --thumbnail <file>
+  // --out <picture.bgra|png> [--size N], in a process of its own, before any window or trace.
+  if (argc > 1 && std::strcmp(argv[1], "--thumbnail") == 0) {
+    QCoreApplication core(argc, argv);  // the arguments as Unicode
+    opad::configure_kernel_logging();
+    const QStringList a = QCoreApplication::arguments();
+    if (a.size() < 5 || a[3] != "--out") return 2;
+    try {
+      opad::write_thumbnail(a[2].toStdString(), a[4].toStdString(), a.size() > 6 && a[5] == "--size" ? a[6].toInt() : 256);
+      return 0;
+    } catch (const std::exception&) {
+      return 1;
+    }
+  }
   const bool askpass = GitWatch::isAskpass(argc, argv);  // git's GIT_ASKPASS: one dialog, no window, no file
   trace::log("startup: main");
   installCrashHandler();

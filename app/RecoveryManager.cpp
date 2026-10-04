@@ -334,7 +334,7 @@ void RecoveryManager::saveNow(std::function<void(bool,const QString&)> done) {
         emit self->status(saved?tr("Recovery snapshot saved"):tr("Recovery snapshot failed: %1").arg(reason));
         if(done)done(saved,saved?QString():reason);
       });
-    });
+    },true);
     if(!started){m_running=false;fail(tr("Document is busy; recovery will retry."));}
   };
   if(m_design->sketchActive())m_design->sketch()->captureRecovery(captured);

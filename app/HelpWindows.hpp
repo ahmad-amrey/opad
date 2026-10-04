@@ -22,7 +22,7 @@ class QToolButton;
 
 namespace help {
 struct KeyRow {
-  QString label, keys;  // keys: "Ctrl+Shift+U" ('+' between the caps)
+  QString label, keys;  // keys: "Ctrl+Shift+U" ('+' between the caps), alternates " / " between ("Ctrl+Y / Ctrl+Shift+Z")
 };
 struct KeyGroup {
   QString title;
@@ -33,7 +33,8 @@ struct KeyGroup {
 // every tool knows.
 QList<KeyGroup> keyGroups(const QList<QAction*>& actions, bool sketching, const QString& preset);
 QList<KeyRow> mouseRows(const QString& preset);  // orbit, pan, zoom, select, select in a window
-QStringList keyCaps(const QString& keys);        // "Ctrl+/" -> Ctrl, /; "Shift++" -> Shift, +
+QStringList keyCaps(const QString& keys);        // one chord: "Ctrl+/" -> Ctrl, /; "Shift++" -> Shift, +
+QStringList keyAlternates(const QString& keys);  // "Ctrl+Y / Ctrl+Shift+Z" -> Ctrl+Y, Ctrl+Shift+Z; "Ctrl+/" stays one
 // Report a problem: what the user wrote and the facts about the program and the computer, as one text.
 QString problemReport(const QString& description, const QStringList& facts);
 }  // namespace help

@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
@@ -16,13 +17,17 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStatusBar>
+#include <QToolButton>
 
 // OPAD_BENCH_PREFERENCES=<prefix> (a document with a box): Ctrl+, opens Preferences, not modal, with its pages in order;
 // the Edit menu ends in it and the gear menu is short and starts with it. The search keeps the pages with a match and
 // marks the matching rows; nothing found says so. Rows change what they stand for at once: Show the grid is the Grid
 // command (both ways), a fixed spacing reaches the grid, undo steps the document, decimals the units service, the
 // angle step and recovery minutes their settings, viewer mode the document, the navigation radio the preset, and the
-// cache size arrives from a worker. The old commands lead to their row (Undo history: General, focused). Saved as
+// cache size arrives from a worker. The sketch panel's snaps, Polar and its status-bar menu follow the rows and back while
+// both are open; a setting written without a word shows once the window is activated. The old commands lead to their
+// row (Undo history: General, focused). Saved as
 // <prefix>.general.png, <prefix>.search.png, <prefix>.sketch.png.
 OPAD_BENCH(OPAD_BENCH_PREFERENCES, preferences) {
   const QString prefix = value;
@@ -87,6 +92,17 @@ OPAD_BENCH(OPAD_BENCH_PREFERENCES, preferences) {
       undo->setValue(20);
       check(w.m_doc->undoLimit() == 20, "undo steps: the document keeps 20");
       undo->setValue(50);
+      // Typed: nothing applies before Enter (the "2" of 200 would have dropped all but two undo steps for good).
+      undo->selectAll();
+      for (const QChar c : QString("200")) {
+        QKeyEvent digit(QEvent::KeyPress, Qt::Key_0 + c.digitValue(), Qt::NoModifier, QString(c));
+        QApplication::sendEvent(undo, &digit);
+      }
+      check(w.m_doc->undoLimit() == 50 && QSettings().value("edit/undoDepth").toInt() == 50, "typing 200 in Undo steps applies nothing at each keystroke");
+      QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+      QApplication::sendEvent(undo, &enter);
+      check(w.m_doc->undoLimit() == 200, "and 200 on Enter");
+      undo->setValue(50);
       // Units.
       dialog->setPage("units");
       auto* decimals = dialog->pageWidget("units")->findChild<QSpinBox*>("units/decimals");
@@ -102,6 +118,51 @@ OPAD_BENCH(OPAD_BENCH_PREFERENCES, preferences) {
       check(QSettings().value("sketch/angleStep").toDouble() == 30, "the angle step");
       dialog->grab().save(prefix + ".sketch.png");
       step->setValue(15);
+      // The sketch panel's snaps and the status bar are faces of the same settings: each follows the others while open.
+      QWidget* snaps = dialog->pageWidget("sketch");
+      auto* gridRow = snaps->findChild<QCheckBox*>("view.gridSnap");
+      const bool gridSnap = w.action("view.gridSnap")->isChecked();
+      w.action("view.gridSnap")->trigger();
+      check(gridRow && !snaps->findChild<QCheckBox*>("sketch/snap/grid") && gridRow->isChecked() != gridSnap &&
+                dialog->pageWidget("grid")->findChild<QCheckBox*>("view.gridSnap")->isChecked() == gridRow->isChecked(),
+            "the sketch page's Grid snapping is F9, as the Grid page's: one switch");
+      w.action("view.gridSnap")->trigger();
+      auto* endpoint = snaps->findChild<QCheckBox*>("sketch/snap/endpoint");
+      auto* panelEndpoint = w.findChild<QCheckBox*>("snap-endpoint");
+      auto* panelAngle = w.findChild<QCheckBox*>("snap-angle");
+      auto* panelStep = w.findChild<QDoubleSpinBox*>("sketch-angleStep");
+      auto* polarRow = snaps->findChild<QCheckBox*>("view.polarSnap");
+      check(endpoint && panelEndpoint && panelAngle && panelStep && polarRow, "the sketch panel's snaps and the rows are there");
+      if (endpoint && panelEndpoint && panelAngle && panelStep && polarRow) {
+        const bool was = endpoint->isChecked();
+        panelEndpoint->click();
+        check(endpoint->isChecked() != was && QSettings().value("sketch/snap/endpoint").toBool() != was, "the sketch panel's Endpoints: the row follows");
+        endpoint->click();
+        check(panelEndpoint->isChecked() == was, "the row: the panel's check box follows");
+        const bool polar = w.action("view.polarSnap")->isChecked();
+        panelAngle->click();
+        check(w.action("view.polarSnap")->isChecked() != polar && polarRow->isChecked() != polar, "the panel's Angle increments is Polar: the status bar and its row follow");
+        w.action("view.polarSnap")->trigger();
+        check(panelAngle->isChecked() == polar && polarRow->isChecked() == polar, "Polar (F10): the panel's check box follows");
+        step->setValue(45);
+        check(panelStep->value() == 45, "the angle step row: the panel's box follows");
+        w.toggleMenu(w.statusBar()->findChild<QToolButton*>("toggle.view.polarSnap"), "view.polarSnap");
+        QMenu* menu = nullptr;
+        for (QWidget* top : QApplication::topLevelWidgets())
+          if (auto* m = qobject_cast<QMenu*>(top); m && m->isVisible() && m->objectName() == "toggleMenu") menu = m;
+        const QString half = units::compact(units::Kind::Angle, 22.5);
+        for (QAction* a : menu ? menu->actions() : QList<QAction*>())
+          if (QString(a->text()).remove('&') == half) a->trigger();
+        if (menu) menu->close();
+        check(step->value() == 22.5 && panelStep->value() == 22.5, "Polar's menu in the status bar (" + half + "): the row and the panel follow");
+        step->setValue(15);
+        QSettings().setValue("sketch/snap/midpoint", false);  // written by someone who says nothing
+        QEvent activate(QEvent::WindowActivate);
+        QCoreApplication::sendEvent(dialog, &activate);
+        auto* midpoint = snaps->findChild<QCheckBox*>("sketch/snap/midpoint");
+        check(midpoint && !midpoint->isChecked() && !w.findChild<QCheckBox*>("snap-midpoint")->isChecked(), "a setting written without a word shows once the window is activated");
+        if (midpoint) midpoint->click();
+      }
       // Recovery, files, keyboard.
       dialog->setPage("recovery");
       dialog->pageWidget("recovery")->findChild<QSpinBox*>("recovery/minutes")->setValue(7);

@@ -1,4 +1,5 @@
-"""gui_benches cases of the help area (UI-106/107); the benches are in app/HelpBench.cpp, the area in app/HelpArea.cpp."""
+"""gui_benches cases of the help area (UI-106/107/108, UI-113, UI-116, UI-124); the benches are in app/HelpBench.cpp,
+HelpMenuBench.cpp, StartPageBench.cpp, PolishBench.cpp and AccessibilityArea.cpp, the area in app/HelpArea.cpp."""
 
 
 def guided(root, document):
@@ -45,4 +46,33 @@ CASES = [
     # UI-108: the coach card of an empty document (coach-box.opad beside it: a document with a body has none).
     ("coach", coach, {"OPAD_BENCH_COACH": "{prefix}"}),
     ("coach-ar", coach, {"OPAD_BENCH_COACH": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-116: view names, hover kinds, the section chip and the timeline's target in the UI's language; undo labels; no
+    # repeated summary in the tool panel; Ctrl+Z takes a feature's picks back; the value echo's own row.
+    ("polish", guided, {"OPAD_BENCH_POLISH": "{prefix}"}),
+    ("polish-ar", guided, {"OPAD_BENCH_POLISH": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-113: the start page: recent files as cards with pictures (opad-cli on a worker, then the cache), their menu (open,
+    # file location, copy path, remove), missing files, templates (built in, saved, new from one), Learn, a dropped file.
+    ("start-page", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}"}),
+    ("start-page-ar", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-113: the same with the app itself rendering the pictures (opad --thumbnail), as the single-file exe does.
+    ("start-page-self", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}", "OPAD_THUMBNAILS": "self"}),
+    # UI-124: no button without a name, F6 / Shift+F6 round the regions (also from a panel), focus rings from the keyboard
+    # only, reduced motion, 24 px hit targets.
+    ("accessibility", guided, {"OPAD_BENCH_A11Y": "{prefix}"}),
+    ("accessibility-ar", guided, {"OPAD_BENCH_A11Y": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-124: the browser and the timeline from the keyboard (Space, Enter, F2, Del, Shift+Del, the Menu key, Shift+F10);
+    # the timeline's markers and the view cube's faces are items a screen reader finds and presses.
+    ("keyboard", guided, {"OPAD_BENCH_KEYBOARD": "{prefix}"}),
+    ("keyboard-ar", guided, {"OPAD_BENCH_KEYBOARD": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-124: at 200 % text the window's text and the boxes holding it grow (ribbon tabs, browser rows, timeline, status
+    # bar, menus); high contrast on and off; back at 100 %.
+    ("text-size", guided, {"OPAD_BENCH_TEXTSIZE": "{prefix}"}, "[ui]\ntextScale=200\n"),
+    ("text-size-ar", guided, {"OPAD_BENCH_TEXTSIZE": "{prefix}", "OPAD_LANG": "ar"}, "[ui]\ntextScale=200\n"),
+    # UI-124: states not told by colour alone: free sketch points are rings, the panel counts the degrees of freedom or
+    # says fully defined, a suppressed feature's marker is struck through and says so.
+    ("cues", guided, {"OPAD_BENCH_CUES": "{prefix}"}),
+    # UI-117 / UI-124: key tips: Alt shows a key on each tab and tab-row button, a tab's key shows its tools' keys, a tool's
+    # key runs it, Esc goes back; the window's one-key shortcuts wait meanwhile.
+    ("keytips", "box", {"OPAD_BENCH_KEYTIPS": "{prefix}"}),
+    ("keytips-ar", "box", {"OPAD_BENCH_KEYTIPS": "{prefix}", "OPAD_LANG": "ar"}),
 ]

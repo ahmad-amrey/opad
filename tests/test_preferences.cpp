@@ -6,6 +6,8 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QLineEdit>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -66,6 +68,42 @@ TEST(rows_save_their_setting) {
   CHECK(!option->isChecked());
   delete page;
   delete again;
+}
+
+// A setting with several faces (two pages, a panel's check box): a change on one shows on the others, one written without
+// a word reaches them with changed({}), and a box being typed in is not set back to what it said.
+TEST(faces_of_a_setting_follow_each_other) {
+  QSettings().clear();
+  QWidget* first = sample("face");
+  QWidget* second = sample("face");
+  QCheckBox panel("Snap to face (panel)");
+  preferences::bind(&panel, "test/face/on", true);
+  auto* on = first->findChild<QCheckBox*>("test/face/on");
+  CHECK(on->isChecked() && panel.isChecked());
+  on->setChecked(false);
+  CHECK(!second->findChild<QCheckBox*>("test/face/on")->isChecked() && !panel.isChecked());
+  panel.setChecked(true);
+  CHECK(on->isChecked() && second->findChild<QCheckBox*>("test/face/on")->isChecked() && QSettings().value("test/face/on").toBool());
+  QSettings().setValue("test/face/count", 9);  // written by someone who says nothing
+  CHECK(first->findChild<QSpinBox*>("test/face/count")->value() == 3);
+  preferences::changed({});
+  CHECK(first->findChild<QSpinBox*>("test/face/count")->value() == 9 && second->findChild<QComboBox*>("test/face/mode")->currentIndex() == 0);
+  QDoubleSpinBox typed;
+  typed.setDecimals(2);
+  typed.setRange(0, 100);
+  preferences::bind(&typed, "test/face/step", 15.0);
+  QDoubleSpinBox other;
+  other.setDecimals(2);
+  other.setRange(0, 100);
+  preferences::bind(&other, "test/face/step", 15.0);
+  typed.findChild<QLineEdit*>()->setText("2.5");  // as typed, on the way to 2.55: not set back to "2.50"
+  CHECK(typed.findChild<QLineEdit*>()->text() == "2.5" && other.value() == 2.5 && QSettings().value("test/face/step").toDouble() == 2.5);
+  int signals_ = 0;  // following another face is quiet: no row applies a change it did not make
+  QObject::connect(second->findChild<QSpinBox*>("test/face/count"), &QSpinBox::valueChanged, [&signals_] { ++signals_; });
+  first->findChild<QSpinBox*>("test/face/count")->setValue(4);
+  CHECK(second->findChild<QSpinBox*>("test/face/count")->value() == 4 && signals_ == 0);
+  delete first;
+  delete second;
 }
 
 TEST(search_filters_pages_and_marks_rows) {

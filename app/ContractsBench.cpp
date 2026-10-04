@@ -7,6 +7,7 @@
 #include <QToolButton>
 #include <QMenu>
 #include <QPainter>
+#include <QStatusBar>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -424,6 +425,7 @@ OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
   auto* branch = new QLabel("Bench branch: main");
   w.m_areaServices.addTabRowWidget(branch);
   w.setWorkspace("design");
+  w.statusBar()->clearMessage();  // the switch's message sits in the status bar's prompt, whose least width it would set
   const QSize least = w.minimumSize();
   w.setMinimumSize(0, 0);
   int compactAt = 0, reached = 0;

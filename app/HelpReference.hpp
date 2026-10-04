@@ -4,6 +4,7 @@
 // summary, the animated clip with its steps (a click on a step loops it), details, and in amber what it needs when it
 // is not available now. CommandPreview is that card alone; the command palette shows it, compact, beside its list.
 #include <QPointer>
+#include <QTimer>
 #include <QWidget>
 #include <functional>
 
@@ -55,11 +56,15 @@ class CommandReference : public QWidget {
 
  protected:
   bool eventFilter(QObject* o, QEvent* e) override;  // Up and Down in the search field walk the list
+  void keyPressEvent(QKeyEvent* e) override;         // Esc closes it
+  void showEvent(QShowEvent* e) override;
 
  private:
   void refill();
+  void updateItems();  // availability (greyed) and keys, as the commands have them now
   std::function<QAction*(const QString&)> m_lookup;
   QLineEdit* m_search;
   QTreeWidget* m_list;
   CommandPreview* m_preview;
+  QTimer m_stale;  // a listed command changed (selection, keys): its row follows while the window is open
 };

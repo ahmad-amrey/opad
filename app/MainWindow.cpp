@@ -15,6 +15,7 @@
 #include <QScopedValueRollback>
 #include <QStatusBar>
 #include <QTimer>
+#include <QStyle>
 #include <QToolButton>
 #include <QUrl>
 
@@ -160,6 +161,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
   connect(m_browser, &BrowserPanel::documentMenuRequested, this, [this](const QPoint& p) { showContextMenu(p, {}, true); });
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
+  connect(m_browser, &BrowserPanel::commandRequested, this, [this](const QString& id) { if (QAction* a = action(id); a && a->isEnabled()) a->trigger(); });
   connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { startAnnotation(false); });
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);
@@ -262,10 +264,17 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_viewport->showPreview(a, p, QString::fromUtf8("≈ %1").arg(units::format(units::Kind::Length, d)));
   });
   connect(m_empty, &EmptyState::openRequested, action("file.open"), &QAction::trigger);
-  connect(m_empty, &EmptyState::importRequested, action("file.new"), &QAction::trigger);
+  connect(m_empty, &EmptyState::newRequested, action("file.new"), &QAction::trigger);
   connect(m_empty, &EmptyState::recentChosen, this, [this](const QString& path) { openPath(path); });
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
-  m_empty->setMenuBuilder([this](const QString& path, QWidget* parent) { return recentMenu(path, parent); });
+  connect(m_empty, &EmptyState::recentChanged, this, [this](const QStringList& paths) {  // removed or located on the start page
+    m_settings.setValue("ui/recent", paths);
+    rebuildRecentMenu();
+  });
+  connect(m_empty, &EmptyState::templateChosen, this, [this](const QString& id) { guarded([&] { newFromTemplate(id); }); });
+  m_empty->setCommands([this](const QString& id) { return action(id); });
+  m_empty->setJobs(m_jobs);
+  m_empty->setMenuBuilder([this](const QString& path, QWidget* parent) { return recentMenu(path, parent); });  // File > Recent's
 
   restoreGeometry(m_settings.value("ui/geometry").toByteArray());
   if (m_settings.value("ui/layoutVersion").toInt() == 3) restoreState(m_settings.value("ui/state").toByteArray());
@@ -417,6 +426,16 @@ void MainWindow::resumePendingPick() {
   QTimer::singleShot(0, this, [this, id] { if (QAction* a = action(id); a && a->isEnabled()) a->trigger(); });  // after the selection has settled
 }
 
+// A change that failed and left the document as it was (UI-109): a toast with a red edge for 10 s instead of a message box
+// that stopped the work. Without a view to show it over, the box.
+void MainWindow::failedToast(const QString& text) {
+  if (!m_toasts || !m_viewport->isVisible()) return (void)QMessageBox::warning(this, tr("OPAD"), text);
+  Toast* toast = m_toasts->toast(text, QString(), {}, 10000);
+  toast->setProperty("kind", "error");
+  toast->style()->unpolish(toast);
+  toast->style()->polish(toast);
+}
+
 void MainWindow::resultToast(const QString& text, const QString& folder) {
   if (!m_toasts || !m_viewport->isVisible()) return statusBar()->showMessage(text, 6000);
   if (folder.isEmpty()) m_toasts->toast(text);
@@ -481,7 +500,7 @@ bool MainWindow::maybeSave(std::function<void()> resume) {
       if (m_doc->doc.path.empty()) action("file.saveas")->trigger();
       else m_doc->save();
     } catch (const std::exception& e) {
-      QMessageBox::warning(this, tr("OPAD"), QString::fromUtf8(e.what()));
+      QMessageBox::warning(this, tr("OPAD"), i18n::t(QString::fromUtf8(e.what())));
       return false;
     }
     return !m_doc->isDirty();

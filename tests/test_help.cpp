@@ -8,6 +8,7 @@
 #include "HelpReference.hpp"
 #include "HelpWindows.hpp"
 #include "I18n.hpp"
+#include "Motion.hpp"
 #include "RichTip.hpp"
 #include "Theme.hpp"
 #include "check.hpp"
@@ -18,6 +19,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QListWidget>
 #include <QMenu>
 #include <QMouseEvent>
@@ -263,6 +265,16 @@ TEST(help_menu_contents) {
   CHECK_EQ(help::keyCaps("Ctrl+Shift+U"), QStringList({"Ctrl", "Shift", "U"}));
   CHECK_EQ(help::keyCaps("Ctrl++"), QStringList({"Ctrl", "+"}));
   CHECK_EQ(help::keyCaps("F1"), QStringList({"F1"}));
+  CHECK_EQ(help::keyAlternates("Ctrl+Y / Ctrl+Shift+Z"), QStringList({"Ctrl+Y", "Ctrl+Shift+Z"}));
+  CHECK_EQ(help::keyAlternates("Ctrl+/"), QStringList({"Ctrl+/"}));
+  {  // the cheat sheet draws each alternate's caps, a plain "/" between them
+    ShortcutSheet sheet;
+    sheet.setGroups({help::KeyGroup{"Edit", {help::KeyRow{"Redo", "Ctrl+Y / Ctrl+Shift+Z"}, help::KeyRow{"Menu", "Menu key / Shift+F10"}}}});
+    QStringList caps, plain;
+    for (QLabel* l : sheet.findChildren<QLabel*>()) (l->objectName() == "keycap" ? caps : plain) << l->text();
+    CHECK_EQ(caps, QStringList({"Ctrl", "Y", "Ctrl", "Shift", "Z", "Menu key", "Shift", "F10"}));
+    CHECK(plain.count("/") == 2);
+  }
   auto mouse = [](const QString& preset, int row) { return help::mouseRows(preset).value(row).keys; };
   CHECK_EQ(mouse("fusion", 0), QString("Shift+Middle drag"));
   CHECK_EQ(mouse("fusion", 1), QString("Middle drag"));
@@ -284,9 +296,9 @@ TEST(help_menu_contents) {
     return out;
   };
   const auto groups = help::keyGroups({&fit, &line, &box}, false, "fusion");
-  CHECK_EQ(titles(groups), QStringList({"View", "Sketch", "Mouse", "In every tool"}));
+  CHECK_EQ(titles(groups), QStringList({"View", "Sketch", "Mouse", "Without the mouse", "In every tool"}));
   CHECK(groups[0].rows.size() == 1 && groups[0].rows[0].label == help::find("view.fit")->title && groups[0].rows[0].keys == "F");
-  CHECK_EQ(titles(help::keyGroups({&fit, &line, &box}, true, "fusion")), QStringList({"Sketch", "View", "Mouse", "In every tool"}));
+  CHECK_EQ(titles(help::keyGroups({&fit, &line, &box}, true, "fusion")), QStringList({"Sketch", "View", "Mouse", "Without the mouse", "In every tool"}));
   CHECK_EQ(help::problemReport("  It broke \n", {"OPAD 1", "Qt 6"}), QString("What happened:\nIt broke\n\nOPAD and this computer:\n- OPAD 1\n- Qt 6\n"));
   CHECK(help::problemReport("", {}).contains("(not described)"));
   for (const char* preset : {"fusion", "solidworks", "onshape", "blender"}) {
@@ -327,11 +339,11 @@ TEST(rich_tip_menu_entries) {
   RichTip::setMenuCards(true);
   moveTo(plain);
   moveTo(extrude);
-  QTest::qWait(600);
+  QTest::qWaitFor([tip] { return tip->state() == RichTip::State::Compact; }, 5000);  // its timer, late on a busy machine
   CHECK(tip->state() == RichTip::State::Compact && tip->entry() == extrude && tip->target() == &menu && tip->commandId() == "design.extrude");
   CHECK(tip->geometry().left() + RichTip::kMargin > menu.geometry().right());
   moveTo(plain);
-  QTest::qWait(450);
+  QTest::qWaitFor([tip] { return tip->state() == RichTip::State::Hidden; }, 5000);
   CHECK(tip->state() == RichTip::State::Hidden);
   moveTo(extrude);
   tip->showFor(&menu, RichTip::State::Expanded, extrude);
@@ -443,10 +455,56 @@ TEST(clip_loader_checks_and_templates) {
   clips::load();
 }
 
+// A camera turn that follows a drag in screen places ("dragged": the navigation presets' orbit) turns the other way right to
+// left, where the drag is mirrored; the model itself is never mirrored.
+TEST(clip_dragged_turn_follows_the_mirrored_drag) {
+  QTemporaryDir dir;
+  QFile f(dir.filePath("clips.json"));
+  CHECK(f.open(QIODevice::WriteOnly));
+  f.write(R"({"clips": [
+    {"id": "drag", "duration": 1, "view": "iso", "extent": [-12, -12, 12, 12], "steps": [{"to": 1, "caption": "One"}],
+     "items": [{"el": "camera", "dragged": true, "keys": [[0, {"az": -45}], [1, {"az": -95}]]}, {"el": "poly", "points": [[0, 0, 0], [10, 0, 0], [10, 4, 0]]}]},
+    {"id": "turn", "duration": 1, "view": "iso", "extent": [-12, -12, 12, 12], "steps": [{"to": 1, "caption": "One"}],
+     "items": [{"el": "camera", "keys": [[0, {"az": -45}], [1, {"az": -95}]]}, {"el": "poly", "points": [[0, 0, 0], [10, 0, 0], [10, 4, 0]]}]},
+    {"id": "back", "duration": 1, "view": "iso", "extent": [-12, -12, 12, 12], "steps": [{"to": 1, "caption": "One"}],
+     "items": [{"el": "camera", "keys": [[0, {"az": 5}]]}, {"el": "poly", "points": [[0, 0, 0], [10, 0, 0], [10, 4, 0]]}]}]})");
+  f.close();
+  clips::load(f.fileName());
+  CHECK(clips::problems().isEmpty());
+  clips::Options ltr, rtl;
+  ltr.caption = rtl.caption = false;
+  rtl.rtl = true;
+  const QSize size(288, 162);
+  CHECK(clips::frame("turn", 1, size, 1, rtl) == clips::frame("turn", 1, size, 1, ltr));  // a turn of its own: as written
+  CHECK(clips::frame("drag", 1, size, 1, ltr) == clips::frame("turn", 1, size, 1, ltr));
+  CHECK(clips::frame("drag", 1, size, 1, rtl) == clips::frame("back", 1, size, 1, ltr));  // -45 - 50 mirrored: -45 + 50
+  CHECK(clips::frame("drag", 0, size, 1, rtl) == clips::frame("drag", 0, size, 1, ltr));
+  clips::load();
+}
+
+// UI-124: reduced motion (ui/reduceMotion, by default the system's) holds the clips still whatever their own switch says,
+// and makes the camera's turns a moment (never zero: an OCCT animation of no length stays where it started).
+TEST(reduced_motion_holds_clips_still) {
+  clips::load();
+  QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", true);
+  CHECK(motion::reduced() && !clips::animations() && motion::seconds(0.5) > 0 && motion::seconds(0.5) < 0.01 && motion::milliseconds(180) == 0);
+  ClipView view("design.extrude");
+  view.resize(288, 162);
+  view.show();
+  CHECK(!view.playing() && view.still());
+  view.hide();
+  QSettings().setValue("ui/reduceMotion", false);
+  CHECK(!motion::reduced() && clips::animations() && motion::seconds(0.5) == 0.5 && motion::milliseconds(180) == 180);
+  QSettings().remove("ui/reduceMotion");
+  CHECK(motion::reduced() == !motion::system());
+}
+
 // The player runs a timer only while visible and not reduced to its still frame; a step loops inside its segment.
 TEST(clip_view_plays_only_when_visible) {
   clips::load();
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   ClipView view("design.extrude");
   CHECK(!view.playing() && view.sizeHint() == QSize(288, 162));
   view.resize(288, 162);
@@ -496,6 +554,7 @@ TEST(clip_guide_ranges) {
 TEST(clip_view_loops_a_range) {
   clips::load();
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   ClipView view("design.extrude");
   view.resize(288, 162);
   view.show();

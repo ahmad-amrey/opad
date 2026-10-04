@@ -28,6 +28,7 @@
 #include <QSettings>
 
 #include "Jobs.hpp"
+#include "Motion.hpp"
 #include "opad/geometry.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
@@ -55,6 +56,7 @@ void Viewport::syncSketches() {
       if(found==m_preparedSketches.end() || found->second->stamp!=stamp) {
         prepared=std::make_shared<PreparedSketch>();prepared->stamp=stamp;m_preparedSketches[s.id]=prepared;
         const auto geometry=s.geometry;const auto frame=s.frame;const auto id=s.id;const auto generation=m_doc->generation;
+        m_jobs->backgroundNext();
         m_jobs->async(tr("Preparing sketch curves"),[prepared,geometry,frame](Progress progress) {
           TopoDS_Compound shape;BRep_Builder b;b.MakeCompound(shape);
           auto sk=opad::design::Sketch::from_json(geometry);
@@ -169,8 +171,9 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
     m_ctx->Display(ais, surface ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
     m_ctx->Load(ais, -1);
     m_ctx->Activate(ais, 0);
-    // A sketch line or point is a hair to aim at: the context's 4 px missed a path clicked a few pixels off.
-    if (!surface) m_ctx->SetSelectionSensitivity(ais, 0, static_cast<int>(std::lround(7 * displayScale())));
+    // A sketch line or point is a hair to aim at: the context's 4 px missed a path clicked a few pixels off. 12 px each
+    // side is the 24 px target of UI-124.
+    if (!surface) m_ctx->SetSelectionSensitivity(ais, 0, static_cast<int>(std::lround(12 * displayScale())));
     m_candidates.push_back({c.id, ais});
   }
   redrawScene();
@@ -507,7 +510,7 @@ void Viewport::lookAt(const opad::Frame& frame, bool fit, bool animate) {
       end->SetScale(120.0);  // an empty design: a sheet of paper's worth of plane, not whatever the view was left at
     }
   }
-  if(!animate) {
+  if(!animate || motion::reduced()) {  // reduced motion (UI-124): the camera jumps
     myViewAnimation->Stop();m_view->SetCamera(end);m_view->Invalidate();requestRedraw();return;
   }
   myViewAnimation->SetView(m_view);

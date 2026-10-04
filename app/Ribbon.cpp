@@ -182,6 +182,7 @@ SearchField::SearchField(QWidget* parent) : QAbstractButton(parent) {
   setCursor(Qt::PointingHandCursor);
   setFocusPolicy(Qt::NoFocus);
   setToolTip(tr("Search commands (S)"));
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] { setFixedSize(sizeHint()); });  // the text size
 }
 
 void SearchField::setCompact(bool on) {
@@ -190,6 +191,10 @@ void SearchField::setCompact(bool on) {
   setFixedSize(sizeHint());
   update();
 }
+
+// As wide as its words at the text size (200 px at least), as high as a line of them (24 px at least).
+QSize SearchField::sizeHint() const { return QSize(m_compact ? kCompact : fullWidth(), std::max(kHeight, QFontMetrics(theme::ui(12)).height() + 6)); }
+int SearchField::fullWidth() const { return std::max(kFull, 30 + QFontMetrics(theme::ui(12)).horizontalAdvance(tr("Search commands")) + 34 + QFontMetrics(theme::mono(11)).horizontalAdvance("S")); }
 
 void SearchField::paintEvent(QPaintEvent*) {
   const Tokens& t = theme::current();
@@ -206,8 +211,10 @@ void SearchField::paintEvent(QPaintEvent*) {
   p.drawPixmap(rtl ? width() - 24 : 8, y, icons::pixmap("search", t.fg3, 16, devicePixelRatioF()));
   p.setFont(theme::ui(12));
   p.setPen(t.fg3);
-  p.drawText(QRect(rtl ? width() - 160 : 30, 0, 130, height()), Qt::AlignVCenter | (rtl ? Qt::AlignRight : Qt::AlignLeft), tr("Search commands"));
-  QRect key(rtl ? 6 : width() - 24, y, 18, 16);
+  p.drawText(QRect(rtl ? 34 : 30, 0, width() - 64, height()), Qt::AlignVCenter | (rtl ? Qt::AlignRight : Qt::AlignLeft), tr("Search commands"));
+  const QFontMetrics mm(theme::mono(11));
+  const QSize keySize(std::max(18, mm.horizontalAdvance("S") + 8), std::max(16, mm.height()));
+  QRect key(QPoint(rtl ? 6 : width() - keySize.width() - 6, (height() - keySize.height()) / 2), keySize);
   p.setPen(QPen(t.line, 1));
   p.setBrush(t.bg4);
   p.drawRoundedRect(key, 3, 3);
@@ -218,7 +225,8 @@ void SearchField::paintEvent(QPaintEvent*) {
 
 // ---------------------------------------------------------------- WorkspaceChip
 WorkspaceChip::WorkspaceChip(QWidget* parent) : QAbstractButton(parent) {
-  setFixedHeight(26);
+  setFixedHeight(sizeHint().height());
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] { setFixedHeight(sizeHint().height()); });
   setCursor(Qt::PointingHandCursor);
   setFocusPolicy(Qt::NoFocus);
 }
@@ -231,7 +239,7 @@ void WorkspaceChip::setWorkspace(const Workspace& w) {
 
 QSize WorkspaceChip::sizeHint() const {
   QFontMetrics fm(theme::ui(13, QFont::Medium)), mm(theme::mono(11));
-  return QSize(8 + 16 + 8 + fm.horizontalAdvance(m_ws.name) + 8 + mm.horizontalAdvance(m_ws.key) + 8 + 12 + 10, 26);
+  return QSize(8 + 16 + 8 + fm.horizontalAdvance(m_ws.name) + 8 + mm.horizontalAdvance(m_ws.key) + 8 + 12 + 10, std::max(26, fm.height() + 4));
 }
 
 void WorkspaceChip::paintEvent(QPaintEvent*) {
@@ -252,14 +260,14 @@ void WorkspaceChip::paintEvent(QPaintEvent*) {
     x += w + 8;
     return at;
   };
-  p.drawPixmap(place(16), 5, icons::pixmap(m_ws.icon, isEnabled() ? t.sel : t.fg3, 16, devicePixelRatioF()));
+  p.drawPixmap(place(16), (height() - 16) / 2, icons::pixmap(m_ws.icon, isEnabled() ? t.sel : t.fg3, 16, devicePixelRatioF()));
   p.setFont(nameFont);
   p.setPen(isEnabled() ? t.fg : t.fg3);
   p.drawText(place(fm.horizontalAdvance(m_ws.name)), baseline, m_ws.name);
   p.setFont(theme::mono(11));
   p.setPen(t.fg3);
   p.drawText(place(mm.horizontalAdvance(m_ws.key)), baseline, m_ws.key);
-  p.drawPixmap(place(12), 7, icons::pixmap("chevronDown", t.fg3, 12, devicePixelRatioF()));
+  p.drawPixmap(place(12), (height() - 12) / 2, icons::pixmap("chevronDown", t.fg3, 12, devicePixelRatioF()));
 }
 
 // ---------------------------------------------------------------- workspace list (dropdown under the chip)
@@ -297,7 +305,7 @@ class WorkspaceRow : public QFrame {
       auto* l = new QLabel(text, this);
       l->setWordWrap(true);
       l->setFont(theme::ui(px));
-      l->setStyleSheet(QString("color: %1; font-size: %2px;").arg(sub).arg(px));
+      l->setStyleSheet(QString("color: %1; font-size: %2px;").arg(sub).arg(theme::px(px)));
       const int width = 372 - 10 - 16 - 16 - 10 - 10 - 12;  // popup minus padding, row padding, icon, gaps, check
       l->setFixedWidth(width);
       l->setFixedHeight(QFontMetrics(theme::ui(px)).boundingRect(QRect(0, 0, width, 1000), Qt::TextWordWrap, text).height() + 2);
@@ -411,6 +419,11 @@ RibbonGroup::RibbonGroup(const RibbonLayout::Group& group, QWidget* parent) : QW
   if (!m_slots.isEmpty()) m_collapsed->setIcon(m_slots.first().action->icon());  // measured as it will show
 }
 
+int RibbonGroup::toolRow() { return theme::px(kRow); }
+int RibbonGroup::toolsBox() { return std::max(kTools, 3 * toolRow() + 2); }
+int RibbonGroup::titleBox() { return theme::px(kTitle); }
+int RibbonGroup::stripHeight() { return kTop + toolsBox() + titleBox() + 4; }
+
 QList<QToolButton*> RibbonGroup::buttons() const {
   QList<QToolButton*> out;
   for (const Slot& s : m_slots) out << s.button;
@@ -485,7 +498,7 @@ int RibbonGroup::widthAt(int level) {
 void RibbonGroup::setLevel(int level) {
   m_level = level;
   const int width = widthAt(level);
-  resize(width, kHeight);
+  resize(width, stripHeight());
   const bool rtl = layoutDirection() == Qt::RightToLeft;
   auto place = [&](QWidget* w, const QRect& r) { w->setGeometry(rtl ? QRect(width - r.right() - 1, r.y(), r.width(), r.height()) : r); };
   const bool collapsed = level == Collapsed;
@@ -498,7 +511,7 @@ void RibbonGroup::setLevel(int level) {
         m_collapsed->setIcon(s.action->icon());
         break;
       }
-    place(m_collapsed, QRect(kInner, kTop, width - 2 * kInner, kTools + kTitle));
+    place(m_collapsed, QRect(kInner, kTop, width - 2 * kInner, toolsBox() + titleBox()));
     return;
   }
   // Large tools one per column, small ones three to a column (as wide as the widest of them), centred in the group.
@@ -506,7 +519,7 @@ void RibbonGroup::setLevel(int level) {
   QList<QToolButton*> stack;
   int x = 0, column = 0;
   auto flush = [&] {
-    for (int r = 0; r < stack.size(); ++r) boxes << qMakePair(static_cast<QWidget*>(stack[r]), QRect(x, kTop + 1 + r * kRow, column, kRow));
+    for (int r = 0; r < stack.size(); ++r) boxes << qMakePair(static_cast<QWidget*>(stack[r]), QRect(x, kTop + 1 + r * toolRow(), column, toolRow()));
     if (!stack.isEmpty()) x += column + kGap;
     stack.clear();
     column = 0;
@@ -519,7 +532,7 @@ void RibbonGroup::setLevel(int level) {
     const int w = s.button->sizeHint().width();
     if (mode == Large) {
       flush();
-      boxes << qMakePair(static_cast<QWidget*>(s.button), QRect(x, kTop, w, kTools));
+      boxes << qMakePair(static_cast<QWidget*>(s.button), QRect(x, kTop, w, toolsBox()));
       x += w + kGap;
     } else {
       stack << s.button;
@@ -530,7 +543,7 @@ void RibbonGroup::setLevel(int level) {
   flush();
   const int offset = kInner + std::max(0, (width - 2 * kInner - std::max(0, x - kGap)) / 2);
   for (const auto& [w, r] : boxes) place(w, r.translated(offset, 0));
-  if (!m_title.isEmpty()) place(m_titleButton, QRect(kInner, kTop + kTools, width - 2 * kInner, kTitle));
+  if (!m_title.isEmpty()) place(m_titleButton, QRect(kInner, kTop + toolsBox(), width - 2 * kInner, titleBox()));
 }
 
 void RibbonGroup::actionChanged() {
@@ -547,7 +560,12 @@ RibbonPage::RibbonPage(const RibbonLayout::Tab& tab, QWidget* parent) : QWidget(
     connect(group, &RibbonGroup::widthsChanged, this, &RibbonPage::fit);
     m_groups << group;
   }
-  setFixedHeight(RibbonGroup::kHeight);
+  setFixedHeight(RibbonGroup::stripHeight());
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] {  // the text size
+    setFixedHeight(RibbonGroup::stripHeight());
+    for (RibbonGroup* g : m_groups) g->remeasure();
+    fit();
+  });
 }
 
 QList<int> RibbonPage::levels() const {
@@ -563,7 +581,7 @@ int RibbonPage::widthAt(const QList<int>& levels) {
 }
 
 QSize RibbonPage::minimumSizeHint() const {
-  return QSize(const_cast<RibbonPage*>(this)->widthAt(QList<int>(m_groups.size(), RibbonGroup::Collapsed)), RibbonGroup::kHeight);
+  return QSize(const_cast<RibbonPage*>(this)->widthAt(QList<int>(m_groups.size(), RibbonGroup::Collapsed)), RibbonGroup::stripHeight());
 }
 
 void RibbonPage::fit() {
@@ -598,7 +616,7 @@ void RibbonPage::paintEvent(QPaintEvent*) {
   for (int i = 0; i + 1 < m_groups.size(); ++i) {
     const QRect g = m_groups[i]->geometry();
     const int x = rtl ? g.left() - kSeparator / 2 - 1 : g.right() + 1 + kSeparator / 2;
-    p.drawLine(x, RibbonGroup::kTop + 8, x, RibbonGroup::kTop + RibbonGroup::kTools + RibbonGroup::kTitle - 6);
+    p.drawLine(x, RibbonGroup::kTop + 8, x, RibbonGroup::kTop + RibbonGroup::toolsBox() + RibbonGroup::titleBox() - 6);
   }
 }
 
@@ -612,7 +630,7 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
   m_tabs->setDrawBase(false);
   m_tabs->setExpanding(false);
   m_tabs->setElideMode(Qt::ElideNone);
-  m_tabs->setFixedHeight(28);
+  m_tabs->setFixedHeight(theme::px(28));  // taller at a larger text size (UI-124)
   m_tabs->setFocusPolicy(Qt::NoFocus);
   m_tabs->setIconSize(QSize(8, 8));
   m_tabRow = new QWidget(this);
@@ -644,7 +662,7 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
 
   m_strip = new QWidget(this);
   m_strip->setObjectName("ribbonStrip");
-  m_strip->setFixedHeight(RibbonGroup::kHeight);
+  m_strip->setFixedHeight(RibbonGroup::stripHeight());
   m_stripLayout = new QHBoxLayout(m_strip);
   m_stripLayout->setContentsMargins(4, 0, 8, 0);
   m_stripLayout->setSpacing(4);
@@ -662,7 +680,11 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     set.current = e.id;
     m_stack->setCurrentWidget(e.page);
   });
-  connect(theme::notifier(), &theme::Notifier::changed, this, &RibbonBar::refillTabs);  // the contextual tabs' accent
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] {
+    m_tabs->setFixedHeight(theme::px(28));
+    m_strip->setFixedHeight(RibbonGroup::stripHeight());
+    refillTabs();  // the contextual tabs' accent
+  });
 }
 
 void RibbonBar::resizeEvent(QResizeEvent* e) {
@@ -674,7 +696,7 @@ void RibbonBar::resizeEvent(QResizeEvent* e) {
 void RibbonBar::fitTabRow() {
   if (!m_search) return;
   const int tabs = 2 * kRowMargin + (m_chip->isVisibleTo(this) ? m_chip->sizeHint().width() + kChipGap : 0) + m_tabs->sizeHint().width() + kClusterGap;
-  const int cluster = m_cluster->sizeHint().width() - m_search->sizeHint().width() + SearchField::kFull;
+  const int cluster = m_cluster->sizeHint().width() - m_search->sizeHint().width() + m_search->fullWidth();
   if (m_search->compact() == tabs + cluster > width()) return;
   m_search->setCompact(!m_search->compact());
   m_cluster->layout()->activate();  // now, not a frame later with the tabs under the cluster

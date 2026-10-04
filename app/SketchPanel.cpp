@@ -2,6 +2,7 @@
 #include "SketchEditor.hpp"
 #include "HelpClip.hpp"
 #include "I18n.hpp"
+#include "Preferences.hpp"
 #include "Units.hpp"
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -138,8 +139,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
       connect(view,&Viewport::gridSnapChanged,check,[check](bool on){QSignalBlocker block(check);check->setChecked(on);});
       continue;
     }
-    check->setChecked(QSettings().value("sketch/snap/"+key,true).toBool());
-    connect(check,&QCheckBox::toggled,this,[this,key](bool on){QSettings().setValue("sketch/snap/"+key,on);m_editor->refreshSnap();});
+    preferences::bind(check,"sketch/snap/"+key,true);  // one more face of the setting: Preferences and Polar (angle) follow, the editor reads it again
   }
   // A size or an angle typed while drawing holds what it made (UI-17).
   auto* keep=new QCheckBox(tr("Typed values become dimensions"),this);keep->setObjectName("input-addDimensions");settings->addWidget(keep);
@@ -147,12 +147,12 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   keep->setChecked(QSettings().value("sketch/input/addDimensions",true).toBool());
   connect(keep,&QCheckBox::toggled,this,[](bool on){QSettings().setValue("sketch/input/addDimensions",on);});
   auto* advanced=new QFormLayout;settings->addLayout(advanced);
-  auto* angle=new QDoubleSpinBox(this);angle->setRange(1,90);angle->setValue(QSettings().value("sketch/angleStep",15).toDouble());advanced->addRow(tr("Angle step"),angle);
-  connect(angle,&QDoubleSpinBox::valueChanged,this,[this](double v){QSettings().setValue("sketch/angleStep",v);m_editor->refreshSnap();});
+  auto* angle=new QDoubleSpinBox(this);angle->setObjectName("sketch-angleStep");angle->setRange(1,90);advanced->addRow(tr("Angle step"),angle);
+  preferences::bind(angle,"sketch/angleStep",15.0);
   auto* tolerance=new QLineEdit(QSettings().value("sketch/tolerance","1e-8").toString(),this);advanced->addRow(tr("Solver tolerance"),tolerance);
-  connect(tolerance,&QLineEdit::editingFinished,this,[this,tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) {QSettings().setValue("sketch/tolerance",v);m_editor->refreshSnap();}else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
-  auto* iterations=new QSpinBox(this);iterations->setRange(1,1000);iterations->setValue(QSettings().value("sketch/iterations",100).toInt());advanced->addRow(tr("Solver iterations"),iterations);
-  connect(iterations,&QSpinBox::valueChanged,this,[this](int v){QSettings().setValue("sketch/iterations",v);m_editor->refreshSnap();});settings->addStretch();
+  connect(tolerance,&QLineEdit::editingFinished,this,[tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) {QSettings().setValue("sketch/tolerance",v);preferences::changed("sketch/tolerance");}else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
+  auto* iterations=new QSpinBox(this);iterations->setRange(1,1000);advanced->addRow(tr("Solver iterations"),iterations);
+  preferences::bind(iterations,"sketch/iterations",100);settings->addStretch();
   m_status=new QLabel(this);m_status->setWordWrap(true);layout->addWidget(m_status);
   auto* footer=new QHBoxLayout;layout->addLayout(footer);
   // Finish sketch lives in the ribbon, next to Cancel sketch. The footer is Backspace and Esc as buttons (UI-20): Undo
@@ -318,7 +318,7 @@ void SketchPanel::refresh() {
   m_guide->setWaiting(int(std::find_if(now.begin(),now.end(),[](const ToolStep& s){return s.picked.isEmpty();})-now.begin()),int(now.size()));
   fitSteps();
   {QSignalBlocker block(m_showConstraints);m_showConstraints->setChecked(m_editor->showConstraints());}
-  m_state->setText((m_editor->visible()?QString():tr("This sketch is hidden. Show it in the browser to see your edits.")+"\n")+(m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+tr(" · %1 degrees of freedom").arg(m_editor->dof()));
+  m_state->setText((m_editor->visible()?QString():tr("This sketch is hidden. Show it in the browser to see your edits.")+"\n")+(m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+(m_editor->dof()==0?tr(" · fully defined"):tr(" · %1 degrees of freedom").arg(m_editor->dof())));
   const int selected=m_constraints->currentItem()?m_constraints->currentItem()->data(0,Qt::UserRole).toInt():0;
   m_constraints->clear();
   for(const auto& c:m_editor->m_sk.constraints) {
@@ -331,7 +331,10 @@ void SketchPanel::refresh() {
     }
     if(c.is_dimension())row->setText(2,m_editor->dimensionText(c));
     row->setHidden(!row->text(1).contains(m_editor->m_constraintFilter,Qt::CaseInsensitive));
-    if(m_editor->m_conflicts.count(c.id))row->setForeground(1,Qt::red);
+    if(m_editor->m_conflicts.count(c.id)){  // the colour and a mark and words (UI-124)
+      row->setText(1,"! "+row->text(1));row->setForeground(1,theme::current().error);
+      row->setToolTip(1,tr("In conflict with the others: the last change was refused"));
+    }
     if(c.id==selected)m_constraints->setCurrentItem(row);
   }
   m_refreshing=false;

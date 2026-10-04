@@ -1,6 +1,7 @@
 #include "SketchEditor.hpp"
 #include "Jobs.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include "I18n.hpp"
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -17,7 +18,7 @@ void SketchEditor::insertSplineNode(double u,double v) {
   if(!e || e->type!=opad::design::SkEntity::Type::Spline) return emit status(tr("Alt-click inside a spline to insert a node."));
   begin_change();
   try {const int point=opad::design::insert_spline_node(m_sk,e->id,u,v);m_sel={point};end_change(tr("Insert spline node"));}
-  catch(const std::exception& error) {cancel_change();emit status(QString::fromUtf8(error.what()));}
+  catch(const std::exception& error) {cancel_change();emit status(i18n::t(QString::fromUtf8(error.what())));}
 }
 
 void SketchEditor::editSplineNode() {

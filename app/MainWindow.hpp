@@ -27,6 +27,7 @@ class RecoveryManager;
 class StatusRow;
 class AgentBridge;
 class QMessageBox;
+class QKeyEvent;
 class QToolButton;
 template <class Tag>
 struct MainWindowBench;
@@ -78,7 +79,9 @@ class MainWindow : public QMainWindow {
   void buildMenus();
   std::vector<std::string> shownBodies() const;  // visible bodies (and their components), inside the isolation
   void selectShown(bool invert);                 // Select all / Invert selection (UI-111)
+  static QString renameBase(QString name);  // "Bolt 3" -> "Bolt": what renaming several objects numbers
   void noteCommand(const QString& id);  // a command ran: Repeat runs it again
+  bool repeatOnEnter(const QKeyEvent* key);  // Enter in the view with nothing running: Repeat
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
@@ -114,6 +117,7 @@ class MainWindow : public QMainWindow {
   void resumePendingPick();
   void cancelPendingPick();
   void resultToast(const QString& text, const QString& folder = QString());  // a result; folder: an Open folder action
+  void failedToast(const QString& text);  // a change that failed, the document unchanged (DesignController::failed)
   QString m_runningCommand, m_pendingPick;  // the command whose function runs now; the one waiting for a selection
   QPointer<Toast> m_pendingToast;
   // Before the document goes: unfinished work, then unsaved changes. resume: what asked, run again once a sketch the
@@ -203,6 +207,13 @@ class MainWindow : public QMainWindow {
   void tell(const QString& text);  // a result: a toast over the view, the status bar while no document shows
   QStringList recent() const;
   void rebuildRecentMenu();
+  // New from a template (UI-113, EmptyState.hpp templates): a built-in one ("builtin:in") or an .opad of the templates folder,
+  // opened as an untitled copy; saveAsTemplate puts a copy of this document there.
+  void newFromTemplate(const QString& id);
+  void saveAsTemplate();                    // asks for a name, then saveTemplate
+  void saveTemplate(const QString& path);  // on workers; a toast says when it is there
+  void rebuildTemplateMenu();              // File › New from template, as the menu opens
+  QMenu* m_templateMenu = nullptr;
   std::vector<std::string> currentNodeIds() const;
   QColor nodeColour(const std::string& id) const;  // its own colour, or the default body grey
   // Viewer mode (a file other than .opad shown read-only): edits ask to save it as an OPAD document first.

@@ -2,6 +2,8 @@
 
 #include <QAction>
 #include <QColorDialog>
+#include <QContextMenuEvent>
+#include <QDateTime>
 #include <QDropEvent>
 #include <QHBoxLayout>
 #include <QItemSelection>
@@ -20,6 +22,7 @@
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
+#include "I18n.hpp"
 
 using browser::kIdRole;
 using browser::kNameRole;
@@ -111,6 +114,40 @@ void BrowserTree::mouseDoubleClickEvent(QMouseEvent* e) {
   QTreeWidget::mouseDoubleClickEvent(e);
 }
 
+bool BrowserTree::event(QEvent* e) {
+  if (e->type() == QEvent::ContextMenu && static_cast<QContextMenuEvent*>(e)->reason() == QContextMenuEvent::Keyboard) {
+    openMenu();
+    return true;
+  }
+  return QTreeWidget::event(e);
+}
+
+void BrowserTree::keyPressEvent(QKeyEvent* e) {
+  const Qt::KeyboardModifiers mods = e->modifiers() & ~Qt::KeypadModifier;
+  QTreeWidgetItem* current = currentItem();
+  if (state() == EditingState || !current) return QTreeWidget::keyPressEvent(e);
+  if (e->key() == Qt::Key_Menu || (e->key() == Qt::Key_F10 && mods == Qt::ShiftModifier)) return openMenu();
+  if (mods) return QTreeWidget::keyPressEvent(e);
+  switch (e->key()) {
+    case Qt::Key_Space: if (!e->isAutoRepeat()) emit visibilityKey(); return;  // held: one step, not 30 a second
+    case Qt::Key_Return:
+    case Qt::Key_Enter: return emit rowActivated(current);
+    case Qt::Key_F2: return emit commandRequested("edit.rename");
+    case Qt::Key_Delete: return emit commandRequested("edit.delete");
+    default: QTreeWidget::keyPressEvent(e);
+  }
+}
+
+void BrowserTree::openMenu() {
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  QTreeWidgetItem* current = currentItem();
+  if (!current || now - m_menuAt < 400) return;
+  m_menuAt = now;
+  if (!current->isSelected() && (current->flags() & Qt::ItemIsSelectable)) setCurrentItem(current);  // the menu is the selection's
+  scrollToItem(current);
+  emit customContextMenuRequested(visualRect(currentIndex()).center());
+}
+
 std::function<void()> BrowserTree::badgeClick(const QPoint& pos) const {
   const QModelIndex idx = indexAt(pos);
   auto* delegate = qobject_cast<BrowserDelegate*>(itemDelegate());
@@ -123,7 +160,7 @@ std::function<void()> BrowserTree::badgeClick(const QPoint& pos) const {
 void BrowserTree::drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const {
   if (!model()->hasChildren(index)) return;
   const Tokens& t = theme::current();
-  QRect r(rect.right() - 16, rect.top() + 6, 16, 16);
+  QRect r(rect.right() - 16, rect.center().y() - 7, 16, 16);
   painter->drawPixmap(r.topLeft(), icons::pixmap(isExpanded(index) ? "chevronDown" : "chevronRight", t.fg3, 16, devicePixelRatioF()));
 }
 
@@ -153,7 +190,9 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     m_expandBtn->setIcon(icons::icon("expandAll", theme::current().fg3));
     m_collapseBtn->setIcon(icons::icon("collapseAll", theme::current().fg3));
     updateBreadcrumb();
-    m_tree->viewport()->update();
+    m_breadcrumb->setFont(theme::ui(12));
+    m_breadcrumb->setFixedHeight(theme::px(16));
+    m_tree->doItemsLayout();  // the rows' height follows the text size
   });
   m_filter->setTextMargins(0, 0, 44, 0);
   {
@@ -172,7 +211,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_breadcrumb = new QLabel(head);
   m_breadcrumb->setTextFormat(Qt::RichText);
   m_breadcrumb->setFont(theme::ui(12));
-  m_breadcrumb->setFixedHeight(16);
+  m_breadcrumb->setFixedHeight(theme::px(16));
   m_breadcrumb->setOpenExternalLinks(false);
   m_breadcrumb->setTextInteractionFlags(Qt::LinksAccessibleByMouse);  // each parent is a link that selects it
   connect(m_breadcrumb, &QLabel::linkActivated, this, [this](const QString& href) { selectIds({href.toStdString()}); });
@@ -231,27 +270,32 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     if (it && it->data(0, Qt::UserRole).toString() == "document") return emit documentMenuRequested(m_tree->viewport()->mapToGlobal(p));
     emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds());
   });
-  connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
-    const std::string id = it->data(0, kIdRole).toString().toStdString();
-    if (const browser::Folder* folder = providedFolder(it)) {
-      if (folder->activated && !id.empty()) folder->activated(id);
-      return;
-    }
-    if (it->data(0, Qt::UserRole).toString() == "sketch") emit sketchActivated(id);
-    else if (!id.empty()) emit fitRequested({id});
+  connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) { activate(it); });
+  connect(m_tree, &BrowserTree::rowActivated, this, &BrowserPanel::activate);
+  connect(m_tree, &BrowserTree::commandRequested, this, &BrowserPanel::commandRequested);
+  connect(m_tree, &BrowserTree::visibilityKey, this, [this] {
+    std::vector<std::string> ids;
+    for (const auto& id : selectedIds())
+      if (!isProvided(id)) ids.push_back(id);
+    QTreeWidgetItem* current = m_tree->currentItem();
+    const QString kind = current ? current->data(0, Qt::UserRole).toString() : QString();
+    if (ids.empty() && (kind == "document" || kind == "body" || kind == "component" || kind == "sketch")) ids.push_back(current->data(0, kIdRole).toString().toStdString());
+    if (!ids.empty()) toggleVisibility(ids);
   });
   connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
     if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, id] { emit m_tree->eyeClicked(id); });  // a copy being taken: shortly
     if(!m_editedSketch.empty() && id==m_editedSketch){emit editedSketchVisibilityRequested();return;}
-    if (id.empty()) {  // document row: toggle every root
-      bool anyVisible = false;
-      for (const auto& r : m_doc->scene.roots) anyVisible = anyVisible || m_doc->node(r)->visible;
-      for (const auto& r : m_doc->scene.roots) m_doc->run("appearance", opad::json{{"target", r}, {"visible", !anyVisible}});
-      return;
-    }
-    const opad::Node* n = m_doc->node(id);
-    if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
-    else if (const opad::SketchItem* s = m_doc->scene.sketch(id)) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !s->visible}});
+    try {  // the document refuses while it is busy (a save, a recovery capture, a regeneration): said, never thrown out of a click or a key
+      if (id.empty()) {  // document row: toggle every root
+        bool anyVisible = false;
+        for (const auto& r : m_doc->scene.roots) anyVisible = anyVisible || m_doc->node(r)->visible;
+        for (const auto& r : m_doc->scene.roots) m_doc->run("appearance", opad::json{{"target", r}, {"visible", !anyVisible}});
+        return;
+      }
+      const opad::Node* n = m_doc->node(id);
+      if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
+      else if (const opad::SketchItem* s = m_doc->scene.sketch(id)) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !s->visible}});
+    } catch (const std::exception& e) { emit m_doc->message(i18n::t(QString::fromUtf8(e.what()))); }
   });
   connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {  // a view setting in viewer mode too
     const opad::Node* n = m_doc->node(id);
@@ -288,6 +332,29 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   rebuild();
 }
 
+void BrowserPanel::activate(QTreeWidgetItem* it) {
+  const std::string id = it->data(0, kIdRole).toString().toStdString();
+  if (const browser::Folder* folder = providedFolder(it)) {
+    if (folder->activated && !id.empty()) folder->activated(id);
+    return;
+  }
+  if (it->data(0, Qt::UserRole).toString() == "sketch") emit sketchActivated(id);
+  else if (!id.empty()) emit fitRequested({id});
+}
+
+void BrowserPanel::toggleVisibility(const std::vector<std::string>& ids) {
+  if (ids.size() == 1) return emit m_tree->eyeClicked(ids.front());
+  std::vector<std::string> nodes;
+  bool anyShown = false;
+  for (const auto& id : ids)
+    if (const opad::Node* n = m_doc->node(id)) {
+      nodes.push_back(id);
+      anyShown = anyShown || n->visible;
+    }
+  if (nodes.empty()) return;
+  try { m_doc->run("appearance", opad::json{{"targets", nodes}, {"visible", !anyShown}}); } catch (const std::exception& e) { emit m_doc->message(i18n::t(QString::fromUtf8(e.what()))); }
+}
+
 void BrowserPanel::focusFilter() {
   m_filter->setFocus();
   m_filter->selectAll();
@@ -309,6 +376,10 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
   item->setData(0, Qt::UserRole, n->kind == opad::Node::Kind::Body ? "body" : "component");
   item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | (n->kind == opad::Node::Kind::Component ? Qt::ItemIsDropEnabled : Qt::NoItemFlags));
   item->setToolTip(0, QString("%1\n%2").arg(name, QString::fromStdString(id)));
+  // What the eye, the lock and the swatch show, for screen readers (UI-124): the row is painted, its state is not text.
+  QStringList state{n->kind == opad::Node::Kind::Body ? tr("Body") : tr("Component"), n->visible ? tr("shown") : tr("hidden")};
+  if (n->locked) state << tr("locked");
+  item->setData(0, Qt::AccessibleDescriptionRole, state.join(", "));
   for (const auto& c : n->children) build(c, item, expanded);
   QString category=QString::fromStdString(n->representation);
   if(n->kind!=opad::Node::Kind::Body) {
@@ -332,6 +403,10 @@ void BrowserPanel::rebuild() {
     for (int i = 0; i < it->childCount(); ++i) collect(it->child(i));
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
+  // The keyboard's row stays where it was (Space or F2 rebuild the rows): by its id, else the folder or document row.
+  const QTreeWidgetItem* was = m_tree->currentItem();
+  const QString wasKind = was ? was->data(0, Qt::UserRole).toString() : QString(), wasFolder = was ? was->data(0, browser::kFolderRole).toString() : QString();
+  const std::string wasId = was ? was->data(0, kIdRole).toString().toStdString() : std::string();
   m_tree->clear();
   m_index.clear();
   if (m_doc->hasDocument) {
@@ -436,6 +511,15 @@ void BrowserPanel::rebuild() {
   m_empty->setVisible(empty);
   applyFilter();
   setSelectedIds(selected);
+  QTreeWidgetItem* now = wasId.empty() ? nullptr : itemFor(wasId);
+  if (!now && (wasKind == "document" || wasKind == "folder") && m_tree->topLevelItemCount()) {
+    QTreeWidgetItem* root = now = m_tree->topLevelItem(0);
+    for (int i = 0; wasKind == "folder" && i < root->childCount(); ++i)
+      if (root->child(i)->data(0, Qt::UserRole).toString() == "folder" && root->child(i)->data(0, browser::kFolderRole).toString() == wasFolder) now = root->child(i);
+  }
+  for (QTreeWidgetItem* p = now ? now->parent() : nullptr; p; p = p->parent())
+    if (!p->isExpanded()) now = p;  // in a closed folder: the folder (going to the row would open it)
+  if (now) m_tree->selectionModel()->setCurrentIndex(m_tree->indexFromItem(now), QItemSelectionModel::NoUpdate);
   m_updating = false;
   updateBreadcrumb();
 }
