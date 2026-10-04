@@ -35,6 +35,9 @@
 //   into the arrow's box; Enter commits a 3 mm fillet.
 //   Move: the box clicked; the triad stands on its middle; the X arrow pulled: X grows, the triad and the preview follow
 //   while the button is held, the boxes by the pointer show the values; 1 and 4 typed go into X; Enter moves the box 14 mm.
+//   Move with Rotate: a ring round Z through the box's middle, the triad on it 90 degrees round; pulled round, the angle
+//   goes on in 5 degree steps and the triad and the preview travel along it while held; 4 and 5 typed go into Angle; Enter
+//   turns the box 45 degrees.
 //   Chamfer, Thicken, Construction plane and Box show their arrow on Distance, Thickness, Distance and Height.
 // Shots: <prefix>.<step>.png (the view: arrows and triad are drawn in it) and <prefix>.<step>.box.png (the value box).
 OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
