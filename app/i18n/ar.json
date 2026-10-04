@@ -1249,6 +1249,7 @@
  "Editing controls (reserved)": "مفاتيح التحرير (محجوزة)",
  "Cancel or step back": "إلغاء أو رجوع خطوة",
  "Complete current input": "إكمال الإدخال الحالي",
+ "Step back, close the tool or panel, clear the measurement": "خطوة إلى الوراء، أو إغلاق الأداة أو اللوحة، أو مسح القياس",
  "Delete sketch selection": "حذف المحدد في الرسم",
  "Assign shortcut:": "تعيين اختصار:",
  "Assign": "تعيين",

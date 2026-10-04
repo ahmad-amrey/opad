@@ -37,7 +37,12 @@ void MainWindow::buildInspectActions() {
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
   m_pinAction->setShortcutContext(Qt::ApplicationShortcut);
   m_pinAction->setEnabled(false);
-  addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
+  CommandInfo clear;  // Esc is fixed: the key every footer, prompt and tool panel names for stepping back (TODO 11 wave 3)
+  clear.id = "inspect.clear";
+  clear.label = tr("Clear measurement");
+  clear.key = QKeySequence("Esc");
+  clear.fixedKey = true;
+  addCommand(clear, [this] {
     if (m_annotationEditor) return m_annotationEditor->cancel();
     if (m_design->sketchActive()) {  // the viewport did not have the focus: same as Esc in the sketch
       QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);

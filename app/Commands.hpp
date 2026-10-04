@@ -45,6 +45,7 @@ struct CommandInfo {
   QString helpId;          // its help record (UI-106); empty: the id
   QStringList workspaces;  // the ribbon workspaces it belongs to; the ones it is placed in are added as the ribbon is built
   bool checkable = false;
+  bool fixedKey = false;  // its key is not the user's to change (Esc): the shortcut editor lists it as reserved
   bool editsDocument = false;  // changes the document: in viewer mode it asks to save as OPAD first, then runs (requireEditable)
   std::function<bool(const CommandContext&)> enabledWhen;  // null: the window enables it (most built-in commands)
 };

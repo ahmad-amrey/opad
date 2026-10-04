@@ -18,6 +18,9 @@ bool overlaps(const QString& first,const QString& second);
 bool conflicts(const QKeySequence& first,const QKeySequence& second);
 void migrate(QSettings&);
 void initialize(QAction*,const QKeySequence&,QSettings&);
+// A command whose key no setting changes (its action's "fixedShortcut", CommandInfo::fixedKey): Esc, which every tool,
+// panel and prompt names. The editor lists it with the reserved keys; initialize() ignores a saved one.
+bool fixedKey(const QAction*);
 void updateTooltip(QAction*);
 // A key that types a value into a running sketch tool (UI-16): a digit, the decimal point, a comma or a sign, unmodified
 // (the keypad's too). A sketch command cannot have one.

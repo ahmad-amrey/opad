@@ -326,6 +326,7 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
   a->setObjectName(id);
   a->setData(info.icon);
   if (!info.icon.isEmpty()) a->setIcon(icons::themed(info.icon));
+  a->setProperty("fixedShortcut", info.fixedKey);
   shortcuts::initialize(a,info.key,m_settings);
   a->setCheckable(info.checkable);
   a->setShortcutContext(Qt::WindowShortcut);
