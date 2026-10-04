@@ -819,9 +819,13 @@ TEST(clips_load_cleanly) {
     CHECK(clips::stepAt(id, 0) == 0 && clips::stepAt(id, clips::duration(id)) == steps.size() - 1);
     CHECK(clips::stillTime(id) > 0 && clips::stillTime(id) <= clips::duration(id));
   }
-  // Every command id with a clip of its own has a help record (future commands name theirs here first).
+  // Every clip is shown somewhere: a command's own (its help record), one a record adopts by its "clip" field, or a panel's
+  // own guide (the drawing placer's); insert.canvas waits for the canvas commands (future commands name theirs here first).
+  help::load("en");
+  QSet<QString> adopted;
+  for (const CommandHelp& h : help::all()) adopted.insert(h.clip);
   for (const QString& id : clips::ids())
-    if (!help::find(id) && !QStringList{"assembly.explode", "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView"}.contains(id))
+    if (!help::find(id) && !adopted.contains(id) && !QStringList{"drawing.place", "insert.canvas"}.contains(id))
       throw check::Failure(id.toStdString() + ": a clip for no command");
 }
 
@@ -992,6 +996,8 @@ TEST(clip_guide_ranges) {
   CHECK(clips::problems().join("\n").contains("wrong: guide entries are clip steps"));
   clips::load();
   CHECK(clips::guideRange("sketch.line", 0, 3) == R(0, 0) && clips::guideRange("design.extrude", 1, 2) == R(1, 2));
+  // The drawing placer's panel (DrawingPlacer: plane, move, snap, Place): moving loops move, snap and Place; snapping its step.
+  CHECK(clips::guideRange("drawing.place", 1, 4) == R(1, 3) && clips::guideRange("drawing.place", 2, 4) == R(2, 2) && clips::guideRange("drawing.place", 4, 4) == R(3, 3));
 }
 
 // The player loops a range of steps as one segment; reduced motion shows the range's last frame.
@@ -1136,6 +1142,14 @@ TEST(command_reference_lists_searches_and_opens) {
   CHECK(!card->showsRequirement());
   reference.open("file.quit");
   CHECK(card->command() == "file.quit" && card->clip()->isHidden() && card->steps()->isHidden());
+  // A panel's "?" and Help for this tool open a command with the clip of what is being done in it (Import's drawing
+  // placer); opened again without one, its own clip is back.
+  reference.open("file.import", "drawing.place");
+  CHECK(card->command() == "file.import" && card->clip()->clip() == "drawing.place" && card->steps()->count() == clips::steps("drawing.place").size() + 1);
+  reference.open("file.import");
+  CHECK(card->command() == "file.import" && card->clip()->clip() == "file.import" && card->steps()->count() == clips::steps("file.import").size() + 1);
+  reference.open("design.extrude", "no.such.clip");
+  CHECK(card->clip()->clip() == "design.extrude");
   reference.close();
 }
 

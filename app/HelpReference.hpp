@@ -23,8 +23,9 @@ class CommandPreview : public QWidget {
  public:
   enum class Size { Compact, Full };  // the palette's pane (288 px clip, no steps or details) or the reference's
   explicit CommandPreview(Size size, QWidget* parent = nullptr);
-  // The command's card; `action` (may be null) gives the icon, the live shortcut and whether it is available now.
-  void setCommand(const QString& id, QAction* action);
+  // The command's card; `action` (may be null) gives the icon, the live shortcut and whether it is available now; `clip`
+  // plays instead of the record's (the part of the command running now, HelpArea's runningClip).
+  void setCommand(const QString& id, QAction* action, const QString& clip = QString());
   QString command() const { return m_id; }
   ClipView* clip() const { return m_clip; }  // hidden for a command without a clip
   QListWidget* steps() const { return m_steps; }  // Full: "All steps" then the clip's steps; a click loops one
@@ -51,8 +52,9 @@ class CommandReference : public QWidget {
   // `lookup`: the QAction of a command id (MainWindow::action), or null; a record whose command this build does not
   // have (one of another build or of a branch not merged yet) is not listed. Without a lookup every record is.
   explicit CommandReference(std::function<QAction*(const QString&)> lookup, QWidget* parent = nullptr);
-  // Shows the window at that command (the filter is cleared when it hides it); empty keeps the one shown.
-  void open(const QString& id = QString());
+  // Shows the window at that command (the filter is cleared when it hides it); empty keeps the one shown. `clip`: played
+  // instead of the command's own until another command is chosen.
+  void open(const QString& id = QString(), const QString& clip = QString());
   QString current() const;
   void setFilter(const QString& text);
   QStringList shown() const;  // the command ids listed now, in order

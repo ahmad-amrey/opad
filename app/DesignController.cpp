@@ -996,17 +996,19 @@ void DesignController::restoreRecovery(const opad::json& state) {
   }
   emit stateChanged();
 }
-void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin) {
+void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin,const QString& command) {
   m_positionOrigin=positionOrigin;
   if(!m_doc->hasDocument || m_sketch->active()) return;
   if(m_pickPlane) escape();
   m_planePicked=std::move(done);
+  m_planeCommand=command;
   beginPlanePick();
 }
 
 void DesignController::startSketch() {
   m_positionOrigin=true;
   m_planePicked={};
+  m_planeCommand="design.sketch";
   if (!m_doc->hasDocument || m_doc->browse) return;
   if (m_sketch->active()) return;
   beginPlanePick();
@@ -1042,7 +1044,9 @@ void DesignController::beginPlanePick() {
   if(m_featureOn)endFeature();
   m_pickPlane=true;m_activating=false;
   emit stateChanged();
-  m_planePicker->panel()->setHeader("plane",tr("Choose sketch plane"));
+  // Named for what the plane is for: Align view to plane and Import's drawing pick one too.
+  const QString command=planeCommand();
+  m_planePicker->panel()->setHeader("plane",command=="view.alignPlane"?tr("Choose plane to look at"):command=="file.import"?tr("Choose drawing plane"):tr("Choose sketch plane"));
   m_planePicker->start(m_positionOrigin,m_openPanel);
 }
 

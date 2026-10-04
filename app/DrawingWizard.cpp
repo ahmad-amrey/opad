@@ -24,6 +24,8 @@
 #include <QElapsedTimer>
 #include "DrawingPlacer.hpp"
 #include "SketchGeometryCache.hpp"
+#include "HelpClip.hpp"
+#include "HelpReference.hpp"
 #include <atomic>
 
 namespace {
@@ -85,7 +87,7 @@ void MainWindow::importDrawing(const QString& path, const QString& parent) {
     };
     m_drawingPlacer->back = [this, path, parent] { QTimer::singleShot(0, this, [this, path, parent] { importDrawing(path, parent); }); };
     m_drawingPlacer->start(path, frame, [this](ToolPanel* panel) { openPanel(panel); });
-  }, false);
+  }, false, "file.import");
 }
 
 void MainWindow::drawingToSketch() {
@@ -351,13 +353,42 @@ bool MainWindow::benchDrawingImport() {
         importDrawing(file, {});
         ++*phase;
         break;
-      case 4:  // no face: the plane is picked first
+      case 4: {  // no face: the plane is picked first, in a picker named for the drawing whose help is Import's
         if (!m_design->pickingPlane()) return;
+        const auto labels = m_design->planePanel()->findChildren<QLabel*>();
+        if (std::none_of(labels.begin(), labels.end(), [this](const QLabel* l) { return l->text() == tr("Choose drawing plane"); }))
+          return fail("the plane picker is not titled Choose drawing plane");
+        if (m_areaServices.activeCommand() != "file.import") return fail("the running command while its plane is picked is " + m_areaServices.activeCommand());
+        trace::log("bench: drawing import's plane picker is Choose drawing plane, its help Import's PASS");
         m_design->planePicker()->choose({{"base", "xz"}});
         ++*phase;
         break;
+      }
       case 5: {  // then moved on it: an offset, then one of its vertices snapped onto a point, then Place
         if (!m_drawingPlacer->active() || !m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->isEnabled()) return;
+        {  // TODO 11 help audit WP10: the panel plays the placing's guide at the step it waits for, its "?" and Help for
+           // this tool open Import's help with that clip
+          ToolGuide* guide = m_drawingPlacer->guide();
+          if (!guide->shown() || guide->command() != DrawingPlacer::kGuideClip || guide->view()->range() != QPair<int, int>(1, 3))
+            return fail(QString("the placing guide is not shown at move, snap, Place (%1, steps %2-%3)").arg(guide->command()).arg(guide->view()->range().first).arg(guide->view()->range().second));
+          auto* snapButton = m_drawingPlacer->panel()->findChild<QPushButton*>("placeSnap");
+          snapButton->click();
+          const QPair<int, int> snapping = guide->view()->range();
+          snapButton->click();
+          if (snapping != QPair<int, int>(2, 2) || guide->view()->range() != QPair<int, int>(1, 3)) return fail("the placing guide does not loop the snap step while snapping");
+          if (m_areaServices.activeCommand() != "file.import") return fail("the running command while placing is " + m_areaServices.activeCommand());
+          for (int way = 0; way < 2; ++way) {
+            if (way == 0) m_drawingPlacer->panel()->helpButton()->click();
+            else action("help.current")->trigger();
+            auto* reference = findChild<CommandReference*>();
+            const QString shown = reference && reference->preview()->clip() ? reference->preview()->clip()->clip() : QString();
+            if (!reference || reference->current() != "file.import" || shown != DrawingPlacer::kGuideClip)
+              return fail(QString("%1 shows %2 with the clip %3").arg(way ? "Help for this tool" : "the panel's ?", reference ? reference->current() : "nothing", shown));
+            reference->close();
+          }
+          trace::log("bench: the placer's guide loops move, snap and Place, the snap step while snapping, and its ? and Help for this tool play it PASS");
+          if (const QString shot = qEnvironmentVariable("OPAD_BENCH_PLACESHOT"); !shot.isEmpty()) m_drawingPlacer->panel()->grab().save(shot);  // the panel with its guide
+        }
         auto* offsetX = m_drawingPlacer->panel()->findChild<QLineEdit*>("placeOffsetX");
         offsetX->setText("1 in");  // typed with a unit, read back in the shown one (UI-123)
         offsetX->setModified(true);

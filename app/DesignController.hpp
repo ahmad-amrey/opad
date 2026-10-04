@@ -41,7 +41,8 @@ class DesignController : public QObject {
   // A new feature with inputs given (picks as their JSON array, values and flags as typed): Paste's Move / copy (UI-129).
   void startFeature(const QString& kind, const std::vector<std::pair<QString, opad::json>>& given);
   void editOp(const std::string& opId);  // a feature or a sketch, rolled back to when it was made
-  void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin=false);
+  // `command`: what the plane is chosen for (its help, the picker's title): New sketch, Align view to plane, Import's drawing.
+  void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin=false,const QString& command="design.sketch");
   ToolPanel* planePanel() const { return m_planePicker->panel(); }
   PlanePicker* planePicker() const { return m_planePicker; }
   void startSketch();                    // asks for the plane first
@@ -60,6 +61,7 @@ class DesignController : public QObject {
 
   bool featureActive() const { return m_form->spec() != nullptr && m_featureOn; }
   bool pickingPlane() const { return m_pickPlane; }
+  QString planeCommand() const { return m_replaning ? QString("sketch.replane") : m_planeCommand; }  // the command a plane pick serves
   bool sketchActive() const { return m_sketch->active(); }
   bool busy() const { return m_doc->designBusy; }
   bool ownsSelection() const { return featureActive() || m_pickPlane; }  // the viewport's picks belong to a design input
@@ -120,7 +122,8 @@ class DesignController : public QObject {
   std::string m_newId;          // id the new feature's op will get (so previews can be matched to it)
   std::function<void(opad::json,opad::Frame)> m_planePicked;
   bool m_pickPlane = false;
-  bool m_activating = false;    // the selection is being re-applied for the newly active input: not a pick
+  QString m_planeCommand = "design.sketch";
+  bool m_activating = false;   // the selection is being re-applied for the newly active input: not a pick
   Viewport::SelFilter m_filterBefore = Viewport::SelFilter::Body;
   QTimer m_previewTimer;
   QPointer<DimensionHandle> m_distanceHandle;

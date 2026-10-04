@@ -53,7 +53,7 @@ class HelpArea : public AreaController {
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);
     RichTip::setMenuCards(true);  // every menu's command entries
     RichTip::setGuideHook([this](const QString& id) { openReference(id); });  // Help for this tool's key on an expanded card
-    ToolPanel::setHelpHook([this](ToolPanel* panel) { openReference(panelCommand(panel)); });  // the panels are built later
+    ToolPanel::setHelpHook([this](ToolPanel* panel) { openReference(panelCommand(panel), guideClip(panel)); });  // the panels are built later
   }
   ~HelpArea() override {
     RibbonBar::setCommandButtonHook({});
@@ -72,7 +72,10 @@ class HelpArea : public AreaController {
     current.icon = "help";
     current.key = QKeySequence("F1");
     current.keywords = {"how to", "current tool"};  // its key is found as the key it has now (help::matches)
-    services().addCommand(current, [this] { openReference(currentCommand()); });
+    services().addCommand(current, [this] {
+      const QString id = currentCommand();
+      openReference(id, runningClip(id));
+    });
     CommandInfo guide;
     guide.id = "help.reference";
     guide.label = tr("Tool guide");
@@ -190,15 +193,31 @@ class HelpArea : public AreaController {
     return id;
   }
 
-  // What a panel's "?" opens: its own help id, else the tool running in it, else the panel's command.
+  // What a panel's "?" opens: its own help id, else the tool running in it, else the panel's command. The plane picker
+  // serves New sketch, Redefine sketch plane, Align view to plane, Import's drawing and a feature's plane input.
   QString panelCommand(const ToolPanel* panel) const {
     if (help::find(panel->helpId())) return panel->helpId();
     static const QHash<QString, QString> commands{{"properties", "inspect.properties"}, {"annotations", "panel.annotations"}, {"section", "panel.section"},
                                                   {"parameters", "design.parameters"}, {"sketch", "sketch.panel"}, {"drawing", "design.convertDrawing"},
                                                   {"drawing-place", "file.import"}, {"sketch-plane", "design.sketch"}};
     const QString active = services().activeCommand();
-    if (!active.isEmpty() && QStringList({"tool", "feature", "annotation", "sketch"}).contains(panel->id())) return active;
+    if (!active.isEmpty() && QStringList({"tool", "feature", "annotation", "sketch", "sketch-plane", "drawing-place"}).contains(panel->id())) return active;
     return commands.value(panel->id(), active);
+  }
+
+  // The clip a panel's own guide plays (ToolGuide), when it has one: what the user does in it now, which may be another
+  // part of the command than its card's clip shows (Import's card: a file joining the design; its drawing placer: the
+  // drawing placed on a plane, TODO 11 help audit WP10).
+  static QString guideClip(const ToolPanel* panel) {
+    const auto* guide = panel->findChild<ToolGuide*>();
+    return guide && clips::has(guide->command()) ? guide->command() : QString();
+  }
+  // Help for this tool: the clip the running command's open panel plays.
+  QString runningClip(const QString& id) const {
+    if (id.isEmpty() || id != services().activeCommand()) return {};
+    for (const ToolPanel* panel : services().window()->findChildren<ToolPanel*>())
+      if (panel->isVisible() && panelCommand(panel) == id) return guideClip(panel);
+    return {};
   }
 
   QString preset() const {  // the navigation preset's id: its command is the checked nav.* one
@@ -207,12 +226,12 @@ class HelpArea : public AreaController {
     return "fusion";
   }
 
-  // The tool guide at `id` (empty: where it was).
-  void openReference(const QString& id) {
+  // The tool guide at `id` (empty: where it was), playing `clip` instead of the command's own when given.
+  void openReference(const QString& id, const QString& clip = QString()) {
     QWidget* window = services().window();
     auto* reference = window->findChild<CommandReference*>();
     if (!reference) reference = new CommandReference([this](const QString& command) { return services().action(command); }, window);
-    reference->open(id);
+    reference->open(id, clip);
   }
 
   void openSheet() {

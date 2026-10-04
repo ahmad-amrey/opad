@@ -96,14 +96,14 @@ QStringList CommandPreview::keyCaps() const {
 
 bool CommandPreview::showsRequirement() const { return !m_requirement->isHidden() && !m_requirement->text().isEmpty(); }
 
-void CommandPreview::setCommand(const QString& id, QAction* action) {
+void CommandPreview::setCommand(const QString& id, QAction* action, const QString& shown) {
   disconnect(m_changed);
   m_action = action;
   if (action) m_changed = connect(action, &QAction::changed, this, &CommandPreview::refresh);  // shortcut, availability
-  if (id == m_id) return refresh();
-  m_id = id;
   const CommandHelp* h = help::find(id);
-  const QString clip = h && clips::has(h->clip) ? h->clip : QString();
+  const QString clip = clips::has(shown) ? shown : h && clips::has(h->clip) ? h->clip : QString();
+  if (id == m_id && clip == m_clip->clip()) return refresh();
+  m_id = id;
   m_clip->setClip(clip);
   m_clip->setVisible(!clip.isEmpty());
   if (m_steps) {
@@ -300,7 +300,7 @@ QStringList CommandReference::shown() const {
 
 void CommandReference::setFilter(const QString& text) { m_search->setText(text); }
 
-void CommandReference::open(const QString& id) {
+void CommandReference::open(const QString& id, const QString& clip) {
   if (!id.isEmpty() && help::find(id)) {
     if (!shown().contains(id)) m_search->clear();
     for (QTreeWidgetItemIterator it(m_list); *it; ++it)
@@ -309,6 +309,7 @@ void CommandReference::open(const QString& id) {
         m_list->scrollToItem(*it, QAbstractItemView::PositionAtCenter);
         break;
       }
+    if (current() == id) m_preview->setCommand(id, m_lookup ? m_lookup(id) : nullptr, clip);  // the record's own clip when empty
   }
   show();
   raise();

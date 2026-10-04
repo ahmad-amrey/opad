@@ -1,6 +1,7 @@
 // Feature areas (AreaController.hpp): what they reach of the window, and their creation.
 #include "MainWindow.hpp"
 #include "CheckPanel.hpp"
+#include "DrawingPlacer.hpp"
 
 #include <QStatusBar>
 
@@ -102,9 +103,12 @@ QString AreaServices::activeCommand() const {
   if (w.m_toolPanel && w.m_toolPanel->isVisible() && w.m_toolStack->currentWidget() == w.m_checks)
     return w.m_checks->mode() == CheckPanel::Mode::Print ? "inspect.printcheck" : "inspect.interference";
   if (w.m_annotationEditor) return w.m_annotationEditor->drawingMode() ? "annotate.draw" : "annotate.add";
+  // A plane picked for a sketch, Align view to plane, Import's drawing or Redefine sketch plane (a feature's own plane
+  // input is the feature's), and the drawing being placed: Import's.
+  if (w.m_design && w.m_design->pickingPlane() && !w.m_design->featureActive()) return w.m_design->planeCommand();
+  if (w.m_drawingPlacer && w.m_drawingPlacer->active()) return "file.import";
   if (w.m_design && w.m_design->sketchActive()) return "sketch." + w.m_design->sketch()->tool().replace(':', '.');
   if (w.m_design && w.m_design->featureActive()) return "design." + QString::fromStdString(w.m_design->featurePanel()->spec()->kind);
-  if (w.m_design && w.m_design->pickingPlane()) return "design.sketch";
   return {};
 }
 void AreaServices::positionOverlays() { m_window->positionOverlays(); }

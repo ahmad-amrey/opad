@@ -1468,6 +1468,8 @@
   "Import the drawing here": "استيراد الرسم هنا",
   "Place drawing": "وضع الرسم",
   "Reading drawing": "قراءة الرسم",
+  "Choose drawing plane": "اختر مستوى وضع الرسم",
+  "Choose plane to look at": "اختر المستوى المراد النظر إليه",
   "Snap: click a vertex of the drawing": "ربط: انقر رأسًا في الرسم",
   "Snap: click the vertex it should land on (Esc cancels)": "ربط: انقر الرأس الذي يجب أن يستقر عليه (Esc للإلغاء)",
   "Drag the drawing, or type the offset. Place imports it here.": "اسحب الرسم، أو اكتب الإزاحة. «وضع» يستورده هنا.",
