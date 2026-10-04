@@ -15,6 +15,7 @@
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <gp_Trsf.hxx>
 
 #include <QInputDialog>
 #include <QKeyEvent>
@@ -72,6 +73,11 @@ void SketchEditor::setTool(const QString& tool) {
   m_picked.clear();
   m_sources.clear();
   m_placingDim = false;
+  m_slotSweep.reset();
+  if (m_imageDrag) {  // a picture dragged when the tool changed: back where it was
+    if (m_imageDrag->index < m_imagePrs.size() && !m_imagePrs[m_imageDrag->index].IsNull()) m_imagePrs[m_imageDrag->index]->SetLocalTransformation(gp_Trsf());
+    m_imageDrag.reset();
+  }
   // A constraint button with a fitting selection acts at once, the way Fusion's constraint palette does.
   if (tool.startsWith("c:") && !m_sel.empty()) {
     const CT type = SkConstraint::type_from_name(tool.mid(2).toStdString());

@@ -178,6 +178,13 @@ class SketchEditor : public QObject, public SketchInput {
   struct Snap;
   bool primitiveClick(const Snap& s);
   void finishPrimitive();
+  // An arc slot's sweep as the pointer went round its centre from the start (TODO 11 wave 3, P5): signed, counter-clockwise
+  // positive, past half a turn too, so the slot runs the way the pointer went (it always ran counter-clockwise); without
+  // a pointer that went round, the shorter way to (u, v). trackSlotSweep keeps it as the pointer moves.
+  double slotSweep(double u, double v) const;
+  void trackSlotSweep();
+  struct SlotSweep { double sweep = 0, last = 0, ou = 0, ov = 0, su = 0, sv = 0; };  // the sweep so far, the pointer's last angle, for these clicks
+  std::optional<SlotSweep> m_slotSweep;
   opad::design::Sketch primitivePreview() const;
   opad::json primitiveOptions() const;
   void createText(double u,double v);
@@ -368,6 +375,16 @@ class SketchEditor : public QObject, public SketchInput {
   bool applyReference();
   bool applyImageTool();
   bool imageClick(double u,double v);
+  // Transform image (TODO 11 wave 3, P5, as its guide shows): a press on a backdrop picture and a drag move it, the picture
+  // following the pointer; the release keeps its new place (one undo step) and the panel's X and Y show it, the other
+  // values wait for Enter or Apply as before. A press off the pictures does nothing.
+  struct ImageDrag { int id = 0; size_t index = 0; double u = 0, v = 0, x = 0, y = 0, du = 0, dv = 0; bool moved = false; };
+  std::optional<ImageDrag> m_imageDrag;
+  int imageAt(double u, double v) const;  // the backdrop whose picture is under (u, v), the one the panel shows first; 0: none
+  bool imagePress(double u, double v);
+  void imageDragTo(double u, double v);
+  void imageRelease();
+  void imageFrame(int id, double du, double dv, std::vector<std::pair<double, double>>& corners) const;  // its corners, moved by (du, dv)
   // Insert image: the picture's size in pixels as shown (its file's header only, read once per file); invalid: unknown.
   QSizeF insertPicture();
   QString m_insertFile;

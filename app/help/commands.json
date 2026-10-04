@@ -1707,7 +1707,7 @@
    "id": "sketch.image_edit",
    "title": "Transform image",
    "summary": "Moves, scales, rotates or fades a backdrop image.",
-   "details": "Choose the image, type its position, width, rotation and opacity, then press Enter or Apply. The image is a view aid and is never part of a profile.",
+   "details": "Drag the image in the view to move it, or choose it and type its position, width, rotation and opacity, then press Enter or Apply. The image is a view aid and is never part of a profile.",
    "keywords": ["move image", "rotate image", "opacity"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },

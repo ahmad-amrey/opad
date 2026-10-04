@@ -963,6 +963,10 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
     emit changed();
     return;
   }
+  if (m_tool == "image_edit") {  // a press on a picture takes it to drag (P5); elsewhere nothing
+    imagePress(u, v);
+    return;
+  }
   const Snap s = snap(u, v, !mods.testFlag(Qt::AltModifier));
   m_shiftUsed = true;  // Shift with a click is no tap
   if (m_lock) m_shiftSpent = mods.testFlag(Qt::ShiftModifier) || m_shiftDown;  // the lock was this click's: Shift again for the next
@@ -1022,6 +1026,7 @@ bool SketchEditor::dragSnap(double u, double v, Qt::KeyboardModifiers mods, doub
 void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) {
   if (!m_active) return;
   if(m_boxSelecting && dragging) {m_boxU=u;m_boxV=v;updateTransient();return;}
+  if(m_imageDrag && dragging) {imageDragTo(u,v);return;}
   if(m_fencing && dragging) {
     m_fenceToU=u;m_fenceToV=v;
     m_fenceMoved=m_fenceMoved || std::hypot(u-m_fenceU,v-m_fenceV)>tol();
@@ -1098,6 +1103,7 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   m_pointer = s;
   m_cursor = typedPoint(s);  // typed values hold it
   m_haveCursor = true;
+  trackSlotSweep();  // an arc slot's end: which way round the pointer went
   if(m_tool=="offset" && !dragging && !m_geometryJob)updateDimensionHandle();
   if (redraw) {if(m_placingDim||dimensionHover)rebuild();else updateTransient();}
   updateInput();  // the pointer's values, beside it
@@ -1235,6 +1241,7 @@ void SketchEditor::resnap() {
 }
 
 void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
+  if(m_active && m_imageDrag) {imageDragTo(u,v);imageRelease();return;}
   if(m_active && m_fencing) {
     m_fencing=false;
     if(m_fenceMoved)fenceTrim(m_fenceU,m_fenceV,u,v);
@@ -2023,6 +2030,13 @@ void SketchEditor::updateTransient() {
         d.dashed.push_back({W(x + width, y + h), W(x, y + h), rb});
         d.dashed.push_back({W(x, y + h), W(x, y), rb});
       }
+    }
+    if (m_tool == "image_edit") {  // the picture a press takes (under the pointer), or the one dragged where it goes (P5)
+      std::vector<std::pair<double, double>> corners;
+      if (m_imageDrag) imageFrame(m_imageDrag->id, m_imageDrag->du, m_imageDrag->dv, corners);
+      else if (const int id = imageAt(m_pointer.u, m_pointer.v)) imageFrame(id, 0, 0, corners);
+      for (size_t i = 0; i < corners.size(); ++i)
+        d.dashed.push_back({W(corners[i].first, corners[i].second), W(corners[(i + 1) % corners.size()].first, corners[(i + 1) % corners.size()].second), rb});
     }
     if (m_tool == "paste" && m_clip)  // the copied curves by their base point at the pointer, as the click places them
       for (const auto& line : m_clip->outline)

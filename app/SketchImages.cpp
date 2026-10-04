@@ -11,6 +11,8 @@
 #include "I18n.hpp"
 #include "Units.hpp"
 #include <AIS_TexturedShape.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -58,6 +60,70 @@ bool SketchEditor::imageClick(double u,double v) {
   }
   toolPrompt();rebuild();emit changed();return true;
 }
+void SketchEditor::imageFrame(int id,double du,double dv,std::vector<std::pair<double,double>>& corners) const {
+  corners.clear();
+  for(const auto& image:m_sk.images)if(image.at("id").get<int>()==id) {
+    const double w=image.at("width").get<double>(),h=image.at("height").get<double>();
+    for(const auto& [x,y]:std::vector<std::pair<double,double>>{{0,0},{w,0},{w,h},{0,h}}){const auto at=imagePoint(image,x,y);corners.push_back({at.first+du,at.second+dv});}
+  }
+}
+
+int SketchEditor::imageAt(double u,double v) const {
+  if(m_sk.images.empty())return 0;
+  auto inside=[&](const opad::json& image) {
+    const double a=image.value("angle",0.0),dx=u-image.at("position")[0].get<double>(),dy=v-image.at("position")[1].get<double>();
+    const double x=dx*std::cos(a)+dy*std::sin(a),y=-dx*std::sin(a)+dy*std::cos(a);
+    return x>=0 && y>=0 && x<=image.at("width").get<double>() && y<=image.at("height").get<double>();
+  };
+  const int shown=option("imageId",QString::number(m_sk.images.back().at("id").get<int>())).toInt();
+  for(const auto& image:m_sk.images)if(image.at("id").get<int>()==shown && inside(image))return shown;
+  for(auto it=m_sk.images.rbegin();it!=m_sk.images.rend();++it)if(inside(*it))return it->at("id").get<int>();  // the one drawn last
+  return 0;
+}
+
+bool SketchEditor::imagePress(double u,double v) {
+  const int id=imageAt(u,v);
+  if(!id)return false;
+  size_t index=0;while(index<m_sk.images.size() && m_sk.images[index].at("id").get<int>()!=id)++index;
+  const auto& image=m_sk.images[index];
+  if(option("imageId").toInt()!=id){m_options["imageId"]=QString::number(id);m_panelFieldsDirty=true;emit workflowChanged();}  // the panel shows the one taken
+  m_imageDrag=ImageDrag{id,index,u,v,image.at("position")[0].get<double>(),image.at("position")[1].get<double>()};
+  return true;
+}
+
+void SketchEditor::imageDragTo(double u,double v) {
+  if(!m_imageDrag)return;
+  ImageDrag& d=*m_imageDrag;
+  d.du=u-d.u;d.dv=v-d.v;
+  d.moved=d.moved || std::hypot(d.du,d.dv)>0.5*tol();
+  if(!d.moved)return;
+  // The picture itself follows (its prepared texture moved, nothing built again), when the prepared ones are the images.
+  if(m_imagePrs.size()==m_sk.images.size() && d.index<m_imagePrs.size() && !m_imagePrs[d.index].IsNull()) {
+    const opad::Vec3 a=m_frame.to_world(0,0),b=m_frame.to_world(d.du,d.dv);
+    gp_Trsf move;move.SetTranslation(gp_Vec(b[0]-a[0],b[1]-a[1],b[2]-a[2]));
+    m_imagePrs[d.index]->SetLocalTransformation(move);
+  }
+  updateTransient();  // its frame at the new place, which redraws the view
+}
+
+void SketchEditor::imageRelease() {
+  if(!m_imageDrag)return;
+  const ImageDrag d=*m_imageDrag;
+  m_imageDrag.reset();
+  if(!d.moved){updateTransient();return;}
+  const double x=d.x+d.du,y=d.y+d.dv;
+  const int id=d.id;
+  if(!m_editJob) {
+    m_options["imageX"]=units::editable(units::Kind::Length,x);m_options["imageY"]=units::editable(units::Kind::Length,y);
+    runSketchEdit(tr("Transform image"),[id,x,y](Sketch& sk){backdrop(sk,id)["position"]={x,y};});  // its picture prepared again there
+  } else if(d.index<m_imagePrs.size() && !m_imagePrs[d.index].IsNull()) {  // the sketch is busy: the picture goes back
+    m_imagePrs[d.index]->SetLocalTransformation(gp_Trsf());
+    emit status(tr("The sketch is busy; try again"));
+  }
+  updateTransient();
+  emit changed();
+}
+
 QSizeF SketchEditor::insertPicture() {
   const QString file=option("imageFile");
   if(file==m_insertFile)return m_insertPicture;

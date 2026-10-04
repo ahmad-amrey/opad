@@ -104,7 +104,7 @@ inline const std::vector<Tool>& tools() {
       {"break_link", tr("Break projection link"), {tr("Select projected curves"), tr("Apply to make them editable")}},
       // Images and files
       {"image_insert", tr("Insert image"), {tr("Choose an image file"), tr("Click where it goes"), tr("Set its size and apply")}},
-      {"image_edit", tr("Transform image"), {tr("Choose the backdrop image"), tr("Set its place, size and opacity, then apply")}},
+      {"image_edit", tr("Transform image"), {tr("Choose the backdrop image"), tr("Set its place, size and opacity, then apply")}, tr("drag the picture in the view to move it")},
       {"image_calibrate", tr("Calibrate image"), {tr("Click the first known point"), tr("Click the second known point"), tr("Set the known distance and apply")}},
       {"image_trace", tr("Trace image"), {tr("Choose the backdrop image"), tr("Set the tracing values"), tr("Apply to create editable curves")}},
       {"image_remove", tr("Remove image"), {tr("Choose the backdrop image"), tr("Apply to remove it")}},
