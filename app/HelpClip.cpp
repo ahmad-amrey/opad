@@ -1249,7 +1249,7 @@ void card(Ctx& c, const QJsonObject& o) {
   double y = ltr.top() + titleH + 2 * u;
   for (qsizetype i = 0; i < rows.size(); ++i, y += rowH) {
     // [label, value], or {"text" (translated) | "label" (as written), "value", "entry" (a text field, as written), "radio", "check",
-    // "indent", "icon", "slider", "dim", "color"}
+    // "check2" (a box in a second column), "swatches" (colour tokens, "pick" ringed), "indent", "icon", "slider", "dim", "color"}
     const QJsonObject r = rows[i].isArray() ? QJsonObject{{"text", rows[i].toArray().at(0)}, {"value", rows[i].toArray().at(1)}} : rows[i].toObject();
     const QRectF row(ltr.left() + 2 * u, y, w - 4 * u, rowH);
     if (i == hl) {
@@ -1259,12 +1259,11 @@ void card(Ctx& c, const QJsonObject& o) {
     }
     double x = row.left() + pad - 2 * u + r.value("indent").toDouble() * 10 * u;
     const bool dim = r.value("dim").toBool();
-    if (r.contains("radio") || r.contains("check")) {
-      const bool on = r.value(r.contains("radio") ? "radio" : "check").toBool();
-      const QRectF mark = c.mirror(QRectF(x, y + rowH / 2 - 4.5 * u, 9 * u, 9 * u));
+    auto tick = [&](double left, bool on, bool radio) {
+      const QRectF mark = c.mirror(QRectF(left, y + rowH / 2 - 4.5 * u, 9 * u, 9 * u));
       p.setPen(QPen(on ? t.sel : t.fg3, 1.2 * u));
       p.setBrush(Qt::NoBrush);
-      if (r.contains("radio")) {
+      if (radio) {
         p.drawEllipse(mark);
         if (on) { p.setPen(Qt::NoPen); p.setBrush(t.sel); p.drawEllipse(mark.center(), 2.4 * u, 2.4 * u); }
       } else {
@@ -1276,7 +1275,21 @@ void card(Ctx& c, const QJsonObject& o) {
           p.drawPolyline(QPolygonF{m0 + QPointF(-2.4, 0) * u, m0 + QPointF(-0.6, 1.8) * u, m0 + QPointF(2.6, -1.8) * u});
         }
       }
+    };
+    if (r.contains("radio") || r.contains("check")) {
+      tick(x, r.value(r.contains("radio") ? "radio" : "check").toBool(), r.contains("radio"));
       x += 14 * u;
+    }
+    if (r.contains("check2")) tick(row.right() - pad - 9 * u, r.value("check2").toBool(), false);  // a second column's box
+    if (r.contains("swatches")) {  // a colour dialog's swatches, "pick" ringed
+      const QJsonArray swatches = r.value("swatches").toArray();
+      const int pick = r.value("pick").toInt(-1);
+      for (qsizetype k = 0; k < swatches.size(); ++k) {
+        const QRectF s = c.mirror(QRectF(x + k * 15 * u, y + 2.5 * u, 12 * u, rowH - 5 * u));
+        p.setPen(QPen(k == pick ? t.fg : t.line, (k == pick ? 1.6 : 1) * u));
+        p.setBrush(c.col(swatches[k], "fg"));
+        p.drawRoundedRect(s, 2 * u, 2 * u);
+      }
     }
     if (const QString icon = r.value("icon").toString(); icons::has(icon)) {
       const QRectF ir = c.mirror(QRectF(x, y + rowH / 2 - 6 * u, 12 * u, 12 * u));
@@ -1523,7 +1536,7 @@ void picture(Ctx& c, const QJsonObject& o, const Xf& x) {
 }
 
 // The timeline at the foot of a panel: one marker per step (an icon), each in a state: "" plain, "dim" (rolled back),
-// "struck" (deleted), "sel" (selected), "flash" (being computed); "at" puts the rollback bar after that many markers.
+// "struck" (deleted), "sel" (selected), "flash" (being computed), "error" (failed: a red !); "at" puts the rollback bar after that many markers.
 // Left to right in every language like the app's timeline; the strip itself sits on the mirrored side.
 void timeline(Ctx& c, const QJsonObject& o) {
   QPainter& p = *c.p;
@@ -1551,6 +1564,15 @@ void timeline(Ctx& c, const QJsonObject& o) {
     if (state == "struck") {
       p.setPen(QPen(t.red, 1.6 * u, Qt::SolidLine, Qt::RoundCap));
       p.drawLine(m.bottomLeft() + QPointF(2, -2) * u, m.topRight() + QPointF(-2, 2) * u);
+    }
+    if (state == "error") {  // a step that failed: the timeline's red "!" at the marker's corner
+      const QPointF e = m.bottomRight() - QPointF(1, 1) * u;
+      p.setPen(QPen(t.bg2, 1 * u));
+      p.setBrush(t.red);
+      p.drawEllipse(e, 4.5 * u, 4.5 * u);
+      p.setPen(QPen(Qt::white, 1.4 * u, Qt::SolidLine, Qt::RoundCap));
+      p.drawLine(e + QPointF(0, -2.5) * u, e + QPointF(0, 0.5) * u);
+      p.drawPoint(e + QPointF(0, 2.4) * u);
     }
     p.setOpacity(p.opacity() / (state == "dim" || later ? 0.4 : 1));
   }

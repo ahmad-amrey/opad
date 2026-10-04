@@ -795,7 +795,7 @@
    "id": "design.sketch",
    "title": "New sketch",
    "summary": "Starts a sketch on an origin plane, a planar face or a construction plane.",
-   "details": "Hover a plane and click it: the camera turns square to it and the ribbon switches to the Sketch tools. Finish sketch keeps the result as one step on the timeline.",
+   "details": "Pick an origin plane, a planar face, a construction plane or a sketch: the camera turns square to it. Place the origin or keep it and press OK; the ribbon switches to the Sketch tools. Finish sketch keeps the result as one step on the timeline.",
    "keywords": ["draw", "2d", "profile", "start sketch"],
    "requires": "Open or create a document first."
   },
@@ -803,7 +803,7 @@
    "id": "design.convertDrawing",
    "title": "Drawing to sketch",
    "summary": "Turns an imported 2D drawing into an editable sketch in the drawing's own plane.",
-   "details": "Choose the layers to bring in; lines, arcs and circles become sketch curves you can constrain and extrude. The drawing itself stays as it was.",
+   "details": "Choose the layers to bring in; lines, arcs and circles become sketch curves you can constrain and extrude. The drawing itself stays as it was. Tick Construction only for helper layers such as centre lines. The curves come in unconstrained.",
    "keywords": ["dxf", "dwg", "svg", "convert", "layers"],
    "requires": "Open or create a document with an imported drawing (DXF, DWG or SVG) first."
   },
@@ -834,18 +834,18 @@
   {
    "id": "design.newcomponent",
    "title": "New component",
-   "summary": "Adds a component to group bodies, under the selected component.",
-   "details": "Components are the assembly's folders: each has its own name and placement. Drag bodies onto it in the browser, or use Reparent.",
+   "summary": "Adds a component, named Component N, in the active component or the selected one.",
+   "details": "It becomes the active component, so what you make next goes into it (the Activate box under its name, or Activate new components, changes that), and its name is ready to type in the browser. Drag bodies onto it in the browser, or use Move to component.",
    "keywords": ["group", "assembly", "folder", "subassembly"],
    "requires": "Open or create a document first."
   },
   {
    "id": "design.reparent",
-   "title": "Reparent",
-   "summary": "Moves the selection under another component.",
-   "details": "Choose the target component, or the document root, from the list. The objects keep their position in the world.",
+   "title": "Move to component",
+   "summary": "Moves the selection under another component, keeping it where it is.",
+   "details": "A list opens at the pointer with the document root and every component the selection can go to; type to narrow it, then click one or press Enter. What moves keeps its place in the world, as one step.",
    "keywords": ["move to component", "regroup", "assembly"],
-   "requires": "Select the objects first, in the view or in the browser."
+   "requires": "Open or create a document first."
   },
   {
    "id": "design.colour",
@@ -859,7 +859,7 @@
    "id": "design.opacity",
    "title": "Opacity",
    "summary": "Makes the selection see-through, from 10 to 100 percent.",
-   "details": "Lower opacity lets you see parts inside a housing. Picking still works on see-through bodies.",
+   "details": "A slider opens at the pointer (and in the right-click menu): the view follows it, and letting go keeps it as one step. Lower opacity lets you see parts inside a housing; picking still works on see-through bodies.",
    "keywords": ["transparency", "translucent", "see through", "alpha"],
    "requires": "Select the objects first, in the view or in the browser."
   },
@@ -906,7 +906,7 @@
   {
    "id": "design.torus",
    "title": "Torus",
-   "summary": "A ring lying on a plane at a position.",
+   "summary": "A ring centred on a plane at a position.",
    "details": "Set the ring diameter, through the middle of the tube, and the section diameter of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["ring", "donut", "o-ring", "primitive"],
    "requires": "Open or create a document first."
@@ -979,7 +979,7 @@
    "id": "design.fillet",
    "title": "Fillet",
    "summary": "Rounds edges.",
-   "details": "Pick the edges and set the radius; edges that meet tangentially are rounded together. Select by geometry helps pick every similar edge at once.",
+   "details": "Pick the edges and set the radius; edges that meet tangentially are rounded together. By rule… in the panel, or Select similar, picks every similar edge at once.",
    "keywords": ["round", "radius", "blend edge"],
    "requires": "Open or create a document first."
   },
@@ -995,7 +995,7 @@
    "id": "design.shell",
    "title": "Shell",
    "summary": "Hollows a body; the picked faces are removed and become openings.",
-   "details": "Pick the faces to open and set the wall thickness. Pick a body instead to hollow it closed, with no opening.",
+   "details": "Pick the faces to open and set the wall thickness. To hollow it closed, click Bodies to hollow in the panel and pick the body.",
    "keywords": ["hollow", "wall", "enclosure", "box"],
    "requires": "Open or create a document first."
   },
@@ -1011,7 +1011,7 @@
    "id": "design.offset_face",
    "title": "Press pull",
    "summary": "Pushes planar faces in or pulls them out.",
-   "details": "Pick one or more faces and drag the arrow or type the distance; a negative value pushes into the material. Neighbouring faces stretch to follow.",
+   "details": "Pick one or more faces and drag the arrow or type the distance; a negative value pushes into the material. The face moves straight along its normal: sides square to it extend, slanted sides do not (use Draft for those).",
    "keywords": ["push pull", "offset face", "move face", "direct edit"],
    "requires": "Open or create a document first."
   },
@@ -1019,7 +1019,7 @@
    "id": "design.scale",
    "title": "Scale",
    "summary": "Resizes bodies uniformly.",
-   "details": "Set the factor: 2 doubles, 0.5 halves. Scale about the origin or about each body's centre.",
+   "details": "Set the factor: 2 doubles, 0.5 halves. Scale about the origin or about each body's centre of mass.",
    "keywords": ["resize", "enlarge", "shrink", "factor"],
    "requires": "Open or create a document first."
   },
@@ -1035,7 +1035,7 @@
    "id": "design.split",
    "title": "Split body",
    "summary": "Cuts bodies in two along a plane.",
-   "details": "Pick the bodies and the splitting plane. Both halves become separate bodies you can move, hide or delete.",
+   "details": "Pick the bodies and the splitting plane. Each body becomes two bodies in place, which you can then move, hide or delete.",
    "keywords": ["cut in half", "divide", "separate", "slice"],
    "requires": "Open or create a document first."
   },
