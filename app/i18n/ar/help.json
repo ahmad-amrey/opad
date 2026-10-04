@@ -795,5 +795,11 @@
  "Ctrl+Shift+I selects everything else": "Ctrl+Shift+I يحدّد كل ما سواه",
  "Run a command, such as Hide (V)": "شغّل أمرًا، مثل الإخفاء (V)",
  "Select something else": "حدّد شيئًا آخر",
- "Shift+Enter runs it again": "Shift+Enter يشغّله مرة أخرى"
+ "Shift+Enter runs it again": "Shift+Enter يشغّله مرة أخرى",
+ "Click Exploded view and pick a saved one": "انقر «عرض مفكَّك» واختر عرضًا محفوظًا",
+ "A frame follows the pointer: click to place it": "يتبع إطارٌ المؤشر: انقر لوضعه",
+ "Trail lines show where the parts came from": "خطوط الأثر تُظهر من أين جاءت الأجزاء",
+ "Auto-balloon numbers the parts as drawn": "«ترقيم تلقائي بالبالونات» يرقّم الأجزاء كما تُرسم",
+ "Exploded 1": "مفكَّك 1",
+ "Exploded 2": "مفكَّك 2"
 }

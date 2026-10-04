@@ -380,7 +380,7 @@ TEST(clips_load_cleanly) {
   for (const char* id : {"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.slot", "sketch.polygon", "sketch.offset", "sketch.trim", "sketch.fillet",
                          "sketch.dimension", "sketch.c.horizontal", "sketch.c.coincident", "design.extrude", "design.revolve", "design.fillet", "design.chamfer", "design.shell",
                          "design.hole", "design.pattern_rect", "design.mirror", "inspect.section", "inspect.distance", "inspect.angle", "inspect.radius", "assembly.explode",
-                         "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView"})
+                         "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView", "drawings.explodedView"})
     if (!clips::has(id)) throw check::Failure(std::string("no clip ") + id);
   for (const QString& id : clips::ids()) {
     const auto steps = clips::steps(id);

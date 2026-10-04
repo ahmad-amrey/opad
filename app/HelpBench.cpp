@@ -284,7 +284,8 @@ OPAD_BENCH(OPAD_BENCH_CLIPS, clips) {
                              "sketch.trim", "sketch.fillet", "sketch.dimension", "sketch.c.horizontal", "sketch.c.coincident", "sketch.c.perpendicular",
                              "design.extrude", "design.revolve", "design.fillet", "design.chamfer", "design.shell", "design.hole", "design.pattern_rect",
                              "design.pattern_circ", "design.mirror", "inspect.section", "inspect.distance", "inspect.angle", "inspect.radius",
-                             "assembly.explode", "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView"};
+                             "assembly.explode", "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView",
+                             "drawings.explodedView"};
   QStringList missing;
   for (const QString& id : required) if (!clips::has(id)) missing << id;
   check(missing.isEmpty(), QString("%1 required clips present %2").arg(required.size()).arg(missing.join(' ')));

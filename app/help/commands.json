@@ -1310,7 +1310,7 @@
    "id": "drawings.explodedView",
    "title": "Exploded view",
    "summary": "Places a view of a saved exploded view on the sheet, with the parts where that view puts them.",
-   "details": "Save an exploded view first: Exploded view, then Save exploded view in its Explode tab; with several saved, a menu lists them. A frame follows the pointer and a click places it. Thin phantom trail lines show where the parts came from, and balloons point at the parts where they are drawn.",
+   "details": "Save an exploded view first: Exploded view, then Save exploded view in its Explode tab; with several saved, a menu lists them. A frame follows the pointer and a click places it, seen from that view's camera. Thin phantom trail lines show where the parts came from and balloons point at the parts where they are drawn; when the exploded view is updated (Update view in the Explode panel), the drawing follows. A base view already placed switches between Assembled and a saved exploded view under View state in its context menu.",
    "keywords": ["explode", "assembly drawing", "trail lines", "balloons", "saved view"],
    "requires": "Only while a sheet is shown in the Drawings workspace."
   },
