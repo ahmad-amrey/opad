@@ -660,6 +660,69 @@ TEST(extrude_start_offset_face_and_invalid_axis) {
   CHECK_NEAR(total_volume(doc),1600,1e-5);
   const auto count=doc.ops.size();CHECK_THROWS(feature_cmd(doc,"extrude",{{"profiles",profiles},{"distance","3 mm"},{"start","face"},{"start_face",json::array({side})}}));CHECK_EQ(doc.ops.size(),count);
 }
+// TODO 11 P2: the arrows a feature's panel shows, where the help guides draw them.
+TEST(feature_handles_sit_where_the_guides_draw_them) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "r"}, {"expr", "3 mm"}}, &doc);
+  feature_cmd(doc, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "20 mm"}, {"centered", false}});
+  const Scene s = resolve(doc);
+  const std::string body = s.all_bodies().front();
+  const TopoDS_Shape shape = node_world_shape(doc, s, body);
+  // The top edge along X at y = 0, z = 20, and the top face.
+  int edge = -1, top = -1;
+  TopTools_IndexedMapOfShape edges, faces;
+  TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+  TopExp::MapShapes(shape, TopAbs_FACE, faces);
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
+    const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+    if (std::abs(a.Y()) < 1e-9 && std::abs(b.Y()) < 1e-9 && std::abs(a.Z() - 20) < 1e-9 && std::abs(b.Z() - 20) < 1e-9) edge = i - 1;
+  }
+  for (int i = 1; i <= faces.Extent(); ++i) {
+    BRepAdaptor_Surface f(TopoDS::Face(faces(i)));
+    if (f.GetType() == GeomAbs_Plane && std::abs(f.Plane().Location().Z() - 20) < 1e-9 && std::abs(f.Plane().Axis().Direction().Z()) > 0.99) top = i - 1;
+  }
+  CHECK(edge >= 0);
+  CHECK(top >= 0);
+  const json edgeRef = {{"body", body}, {"kind", "edge"}, {"index", edge}}, faceRef = {{"body", body}, {"kind", "face"}, {"index", top}};
+  auto close = [](const json& v, double x, double y, double z) {
+    return std::abs(v[0].get<double>() - x) < 1e-6 && std::abs(v[1].get<double>() - y) < 1e-6 && std::abs(v[2].get<double>() - z) < 1e-6;
+  };
+  // Fillet: half way along the edge, out between the top and the front face, the radius as its expression evaluates.
+  json h = feature_handles(doc, s, "fillet", {{"edges", json::array({edgeRef})}, {"radius", "r"}});
+  CHECK_EQ(h.size(), size_t(1));
+  CHECK_EQ(h[0]["input"].get<std::string>(), std::string("radius"));
+  CHECK(close(h[0]["origin"], 20, 0, 20));
+  CHECK(close(h[0]["axis"], 0, -std::sqrt(0.5), std::sqrt(0.5)));
+  CHECK_NEAR(h[0]["value"].get<double>(), 3, 1e-9);
+  h = feature_handles(doc, s, "chamfer", {{"edges", json::array({edgeRef})}, {"type", "equal"}, {"distance", "2 mm"}});
+  CHECK(h.size() == 1 && h[0]["input"] == "distance" && close(h[0]["axis"], 0, -std::sqrt(0.5), std::sqrt(0.5)));
+  // Press pull: the top face's centre, up; thicken: up, down with Other side.
+  h = feature_handles(doc, s, "offset_face", {{"faces", json::array({faceRef})}, {"distance", "-4 mm"}});
+  CHECK(h.size() == 1 && close(h[0]["origin"], 20, 15, 20) && close(h[0]["axis"], 0, 0, 1));
+  CHECK_NEAR(h[0]["value"].get<double>(), -4, 1e-9);
+  h = feature_handles(doc, s, "thicken", {{"faces", json::array({faceRef})}, {"thickness", "2 mm"}, {"flip", true}});
+  CHECK(h.size() == 1 && h[0]["input"] == "thickness" && close(h[0]["origin"], 20, 15, 20) && close(h[0]["axis"], 0, 0, -1));
+  // An offset plane from XY; a cone's height on XZ at x 5; a box made corner to corner.
+  h = feature_handles(doc, s, "plane", {{"mode", "offset"}, {"plane", {{"base", "xy"}}}, {"distance", "10 mm"}});
+  CHECK(h.size() == 1 && close(h[0]["origin"], 0, 0, 0) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == 10.0);
+  CHECK(feature_handles(doc, s, "plane", {{"mode", "angle"}, {"plane", {{"base", "xy"}}}}).empty());
+  // From the top face: off its middle (the guide's arrow), not off the corner its frame starts at.
+  h = feature_handles(doc, s, "plane", {{"mode", "offset"}, {"plane", {{"face", faceRef}}}, {"distance", "8 mm"}});
+  CHECK(h.size() == 1 && close(h[0]["origin"], 20, 15, 20) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == 8.0);
+  h = feature_handles(doc, s, "box", {{"plane", {{"base", "xy"}}}, {"x", "5 mm"}, {"y", "0 mm"}, {"length", "10 mm"}, {"width", "6 mm"}, {"height", "-8 mm"}, {"centered", false}});
+  CHECK(h.size() == 1 && h[0]["input"] == "height" && close(h[0]["origin"], 10, 3, 0) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == -8.0);
+  // A move that turns: the ring's axis (the edge's line here) and the angle; none without Rotate.
+  h = feature_handles(doc, s, "move", {{"bodies", json::array({{{"body", body}, {"kind", "body"}}})}, {"rotate", true}, {"axis", {{"edge", edgeRef}}}, {"angle", "30 deg"}});
+  CHECK(h.size() == 1 && h[0]["input"] == "angle" && h[0].value("ring", false) && std::abs(std::abs(h[0]["axis"][0].get<double>()) - 1) < 1e-9);
+  CHECK(std::abs(h[0]["origin"][1].get<double>()) < 1e-9 && std::abs(h[0]["origin"][2].get<double>() - 20) < 1e-9);
+  CHECK_NEAR(h[0]["value"].get<double>(), M_PI / 6, 1e-9);
+  CHECK(feature_handles(doc, s, "move", {{"bodies", json::array({{{"body", body}, {"kind", "body"}}})}, {"rotate", false}, {"axis", {{"base", "z"}}}}).empty());
+  // Nothing to show: no pick yet, a stale pick, a kind without a handle.
+  CHECK(feature_handles(doc, s, "fillet", {{"edges", json::array()}, {"radius", "2 mm"}}).empty());
+  CHECK(feature_handles(doc, s, "fillet", {{"edges", json::array({{{"body", "nobody"}, {"kind", "edge"}, {"index", 0}}})}, {"radius", "2 mm"}}).empty());
+  CHECK(feature_handles(doc, s, "shell", {{"faces", json::array({faceRef})}, {"thickness", "1 mm"}}).empty());
+}
 TEST(sketch_origin_support_regenerates_and_roundtrips) {
   Document doc=Document::create();
   const auto support=run_id(feature_cmd(doc,"plane",{{"mode","offset"},{"plane",{{"base","xy"}}},{"distance","30 mm"}}));

@@ -4,8 +4,11 @@
 // thread), committed on the UI thread as one undo step.
 #include <QObject>
 #include <QTimer>
+#include <gp_Ax1.hxx>
 #include <array>
 #include <functional>
+#include <memory>
+#include <set>
 #include <tuple>
 
 #include "AppDocument.hpp"
@@ -17,12 +20,15 @@
 #include "Viewport.hpp"
 #include "PlanePicker.hpp"
 
+class PrimitivePlacer;
 class ToolValues;
+class TranslateTriad;
 
 class DesignController : public QObject {
   Q_OBJECT
  public:
   DesignController(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QWidget* window);
+  ~DesignController() override;
   FeaturePanel* featurePanel() const { return m_form; }
   SketchEditor* sketch() const { return m_sketch; }
   // The feature's values typed from the keyboard (UI-122): its boxes beside the pointer, and the extrude's by the arrow.
@@ -45,6 +51,8 @@ class DesignController : public QObject {
   void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin=false,const QString& command="design.sketch");
   ToolPanel* planePanel() const { return m_planePicker->panel(); }
   PlanePicker* planePicker() const { return m_planePicker; }
+  // A new box, cylinder, cone, sphere, torus or coil placed in the view (TODO 11 P1): null-safe, always made.
+  PrimitivePlacer* placer() const { return m_placer; }
   void startSketch();                    // asks for the plane first
   void finishSketch(std::function<void()> then = {});
   void cancelSketch();
@@ -89,6 +97,25 @@ class DesignController : public QObject {
   void endFeature();
   void activateInput(const QString& name);
   void showCandidatesFor(const QString& type);
+  std::vector<Viewport::Candidate> quickCandidates(const std::string& type) const;  // origin and construction axes or planes
+  // Sketch regions, points, lines or paths of the scene's sketches, on a worker, added to `found`; then `done(ok)`.
+  Job* sketchCandidates(const std::string& type, std::shared_ptr<std::vector<Viewport::Candidate>> found, std::function<void(bool)> done);
+  void showAllCandidates();  // the active input's candidates and the routed ones
+  // Pick routing (TODO 11 P3): while a selection input with a pick is active, the axes or planes of the next axis or plane
+  // input that is still empty, on its default or filled this way show beside its own candidates, and a click on one goes
+  // there (Revolve: the profile, then the Z axis; Mirror: the body, then the YZ plane). With no input active, the feature's
+  // plane input takes a click on a planar face, an origin plane or a construction plane (a construction plane's face).
+  QString routeTarget() const;
+  void refreshRoute();
+  bool routeClick();  // a click on a routed candidate: into its input (true), else false
+  bool placedPlane(const opad::design::InputSpec& in) const;  // a primitive's plane: placed with its position, not by a click here
+  QString idlePlaneInput() const;
+  void idlePlaneClick();
+  void pickIdlePlane(const QString& input, opad::json support);  // a face resolved on a worker first
+  void inputsSettled();  // an input changed: routing and the idle plane input follow
+  void resetRouting();   // a feature begins or ends: nothing routed, no idle plane input
+  void pickStatus();     // the prompt: what the active input waits for, and the routed input's click
+  void refreshPlanCopies();  // m_planDoc / m_planScene for the document as it is now
   double modelReach() const;
   void syncSelectionToInput();
   void schedulePreview();
@@ -128,14 +155,57 @@ class DesignController : public QObject {
   bool m_activating = false;   // the selection is being re-applied for the newly active input: not a pick
   Viewport::SelFilter m_filterBefore = Viewport::SelFilter::Body;
   QTimer m_previewTimer;
-  QPointer<DimensionHandle> m_distanceHandle;
+  QPointer<DimensionHandle> m_distanceHandle;  // the feature's value arrow (TODO 11 P2): extrude's distance, a fillet's radius, ...
+  QString m_handleInput = "distance";          // the input it pulls
+  void showHandle(const opad::json& handle);   // a feature_handles entry: the arrow there, bound to its input
+  QList<DynamicInput::Field> handleExtras(const QString& input) const;  // the boxes after the arrow's: Tab goes round them
+  PrimitivePlacer* m_placer = nullptr;
+  // Move / copy's triad (TODO 11 P2, DesignTriad.cpp): X, Y and Z arrows and a square on the picked bodies, and with Rotate
+  // on a ring round the move's axis; a pull sets the distances (rounded at this zoom) or the angle (5 degree steps) and the
+  // preview follows as during the extrude's drag; the boxes by the pointer show the values, the pulled part's taking what is
+  // typed next.
+  std::unique_ptr<TranslateTriad> m_triad;
+  struct TriadPull {
+    int part = -1;                   // -1 none, 0 the square, 1-3 X, Y, Z, TranslateTriad::kRing the ring
+    opad::Vec3 start{0, 0, 0};       // dx, dy, dz at the press
+    double angle = 0;                // the angle at the press (radians)
+  } m_pull;
+  struct MoveAxis {
+    bool valid = false;
+    opad::json input;                // the axis input it was resolved for
+    opad::Vec3 origin{0, 0, 0}, dir{0, 0, 1};
+  } m_moveAxis;                      // a move's axis other than X, Y or Z, from the preview's worker
+  void placeMoveTriad();
+  bool triadEvent(QEvent* event);  // the viewport's mouse events; true: the triad took it
+  bool pulling() const;            // a handle or the triad is being pulled: previews as fast as plans come
+  double inputValue(const QString& name, opad::design::Dim dim, double fallback) const;  // a value input now (fallback: it does not evaluate)
+  bool moveAxis(gp_Ax1& axis) const;  // the axis the move turns about, when known
+  void moveAxisResolved(const opad::json& handles, const opad::json& inputs);
+ public:
+  // Benches (TODO 11 P2): Move's triad, the input the value arrow pulls while it shows (empty: none), the preview plan on
+  // screen and the inputs it was made for.
+  TranslateTriad* moveTriad() const { return m_triad.get(); }
+  QString handleInput() const;
+  std::shared_ptr<const opad::design::Plan> readyPreview() const { return m_readyPlan; }
+  opad::json readyPreviewInputs() const { return m_readyPlan ? m_readyValues : opad::json(); }
+ private:
   ToolValues* m_values = nullptr;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
+  std::vector<Viewport::Candidate> m_activeCandidates, m_routeCandidates;  // shown together (showAllCandidates)
+  QString m_routeInput;            // the input a click on a routed candidate fills (empty: none shown)
+  std::set<std::string> m_routeIds;  // the routed candidates' ids
+  std::set<QString> m_routed;      // inputs filled by a routed click: they stay the target, to be changed by another click
+  Job* m_routeJob = nullptr;
+  int m_routeSerial = 0;
+  QString m_idlePlane;             // the plane input a click fills while no input is active
+  Job* m_idleJob = nullptr;
+  int m_idleSerial = 0;
   QString m_nothingToPick;      // the active input has no candidates at all: says so instead of "Pick: …"
   int m_planSerial = 0;
   std::shared_ptr<opad::design::Plan> m_readyPlan;  // computed for m_readyInputs on m_readyOps ops
   std::string m_readyInputs;
+  opad::json m_readyValues;  // its inputs (benches)
   size_t m_readyOps = 0;
   // What preview plans read: copies of the document and the (rolled back) scene, made once per document state
   // instead of once per plan (on the Engine each copy cost the UI thread tens of ms per drag step).

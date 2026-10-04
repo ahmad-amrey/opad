@@ -37,6 +37,7 @@
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeTorus.hxx>
 #include <BRepTools.hxx>
+#include <BRepTopAdaptor_FClass2d.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
@@ -92,6 +93,13 @@ InputSpec pick(const char* name, const char* label, const char* type, int min_co
   return s;
 }
 
+// A selection whose first pick hands over to the next input, as Fusion's Combine goes from the target to the tools (TODO 11
+// P3); more can still be picked after clicking its box again.
+InputSpec advancing(InputSpec s) {
+  s.advance = true;
+  return s;
+}
+
 void with_operation(std::vector<InputSpec>& v, const char* first = "new") {
   std::vector<std::string> ops = {"new", "join", "cut", "intersect"};
   std::rotate(ops.begin(), std::find(ops.begin(), ops.end(), first), ops.end());
@@ -120,7 +128,8 @@ std::vector<FeatureSpec> build_specs() {
   add("sphere", "Sphere", "sphere", "create", "A sphere centred on a plane.", placed({in("diameter", "Diameter", "length", "20 mm")}), "new");
   add("cone", "Cone", "cone", "create", "A cone or a truncated cone standing on a plane at the position; its axis is the plane's normal.",
       placed({in("diameter", "Base diameter", "length", "20 mm"), in("top_diameter", "Top diameter", "length", "0 mm"), in("height", "Height", "length", "20 mm")}), "new");
-  add("torus", "Torus", "torus", "create", "A ring lying on a plane.", placed({in("diameter", "Ring diameter", "length", "40 mm"), in("section", "Section diameter", "length", "10 mm")}), "new");
+  add("torus", "Torus", "torus", "create", "A ring centred on a plane: the ring diameter runs through the middle of the tube.",
+      placed({in("diameter", "Ring diameter", "length", "40 mm"), in("section", "Section diameter", "length", "10 mm")}), "new");
   add("extrude", "Extrude", "extrude", "create", "Pull sketch profiles or planar faces along their normal. Symmetric splits the distance in half on each side; a start offset moves the start along the sketch normal.",
       {pick("profiles", "Profiles", "profiles", 1, 0),choice("start", "Start from", {"profile", "offset", "face"}),
        in("start_offset", "Start offset", "length", "0 mm", "start=offset"),pick("start_face", "Start face", "faces", 1, 1, "start=face"),
@@ -162,7 +171,7 @@ std::vector<FeatureSpec> build_specs() {
       "Delete faces and close the gap by extending the faces around them (holes, fillets, chamfers, bosses, imported details).", {pick("faces", "Faces", "faces", 1, 0)});
   add("scale", "Scale", "scale", "modify", "Resize bodies uniformly.", {pick("bodies", "Bodies", "bodies", 1, 0), in("factor", "Factor", "number", "2"), choice("about", "About", {"origin", "centre"})});
   add("combine", "Combine", "combine", "combine", "Join, cut or intersect bodies.",
-      {pick("target", "Target bodies", "bodies", 1, 0), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
+      {advancing(pick("target", "Target bodies", "bodies", 1, 0)), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
   add("split", "Split body", "split", "combine", "Cut bodies in two along a plane.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Splitting plane", "plane")});
   add("mirror", "Mirror", "mirror", "pattern", "Mirrored copies of bodies.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Mirror plane", "plane")}, "new");
   add("pattern_rect", "Rectangular pattern", "patternRect", "pattern", "Copies of bodies in rows and columns.",
@@ -188,6 +197,12 @@ std::vector<FeatureSpec> build_specs() {
   add("interference", "Interference check", "interference", "construct",
       "Bodies that overlap, or come closer than the clearance, stored with the design and checked again whenever they change. With Fail on, a finding is an error.",
       {pick("bodies", "Bodies (all solids if none)", "bodies", 0, 0), in("clearance", "Clearance", "length", "0 mm"), choice("fail_on", "Fail on", {"nothing", "interference", "clearance"})});
+  // TODO 11 P1: the primitives are placed in the view by a click and sized by the pointer, as their guides show.
+  for (auto& s : v) {
+    if (s.kind == "box") s.footprint = "rect";
+    if (s.kind == "cylinder" || s.kind == "cone" || s.kind == "sphere" || s.kind == "coil") s.footprint = "round";
+    if (s.kind == "torus") s.footprint = "ring";
+  }
   return v;
 }
 
@@ -1353,6 +1368,143 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     return out;
   }
   throw Error("feature kind \"" + kind + "\" is not implemented");
+}
+
+// ---------------------------------------------------------------- drag handles (TODO 11 P2)
+namespace {
+
+// The normal of `face` pointing out of its body, where `edge` runs along it at curve parameter t.
+std::optional<gp_Vec> normal_along(const TopoDS_Face& face, const TopoDS_Edge& edge, double t) {
+  double f = 0, l = 0;
+  const Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(edge, face, f, l);
+  if (pcurve.IsNull()) return std::nullopt;
+  const gp_Pnt2d uv = pcurve->Value(t);
+  BRepAdaptor_Surface surface(face);
+  gp_Pnt p;
+  gp_Vec du, dv;
+  surface.D1(uv.X(), uv.Y(), p, du, dv);
+  gp_Vec n = du.Crossed(dv);
+  if (n.Magnitude() < 1e-12) return std::nullopt;
+  n.Normalize();
+  if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+  return n;
+}
+
+// A point inside `face` and its outward normal there: the middle of its parameter box, or when that falls in a hole or
+// outside a trimmed face, the middle of its first boundary edge.
+std::optional<std::pair<gp_Pnt, gp_Vec>> face_point(const TopoDS_Face& face) {
+  double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+  BRepTools::UVBounds(face, u0, u1, v0, v1);
+  gp_Pnt2d uv((u0 + u1) / 2, (v0 + v1) / 2);
+  if (BRepTopAdaptor_FClass2d(face, 1e-7).Perform(uv) == TopAbs_OUT) {
+    TopExp_Explorer edges(face, TopAbs_EDGE);
+    if (!edges.More()) return std::nullopt;
+    double f = 0, l = 0;
+    const Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(TopoDS::Edge(edges.Current()), face, f, l);
+    if (pcurve.IsNull()) return std::nullopt;
+    uv = pcurve->Value((f + l) / 2);
+  }
+  BRepAdaptor_Surface surface(face);
+  gp_Pnt p;
+  gp_Vec du, dv;
+  surface.D1(uv.X(), uv.Y(), p, du, dv);
+  gp_Vec n = du.Crossed(dv);
+  if (n.Magnitude() < 1e-12) return std::nullopt;
+  n.Normalize();
+  if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+  return std::make_pair(p, n);
+}
+
+json handle_json(const std::string& input, const gp_Pnt& origin, const gp_Vec& axis, double value, double scale = 1) {
+  const gp_Vec a = axis.Normalized();
+  return {{"input", input}, {"origin", {origin.X(), origin.Y(), origin.Z()}}, {"axis", {a.X(), a.Y(), a.Z()}}, {"value", value}, {"scale", scale}};
+}
+
+}  // namespace
+
+json feature_handles(const Document& doc, const Scene& scene, const std::string& kind, const json& in) {
+  json handles = json::array();
+  try {
+    std::vector<ParamDef> defs;
+    for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+    const ParamTable params(defs);  // as plan_ops evaluates them
+    const std::map<std::string, TopoDS_Shape> fresh;
+    const Ctx ctx{doc, params, scene, fresh, {}};
+    auto first = [&](const char* input) {
+      const auto all = ctx.resolve_all(in.value(input, json()));
+      if (all.empty()) throw Error("nothing picked");
+      return all.front();
+    };
+    if (kind == "fillet" || kind == "chamfer") {
+      // On the first edge, half way along it, pointing out between its two faces: the way a bigger radius or distance eats
+      // into them (the guide's arrow).
+      const ResolvedRef r = first("edges");
+      if (r.sub.ShapeType() != TopAbs_EDGE) return handles;
+      const TopoDS_Shape body = ctx.node_shape(r.node);
+      const TopoDS_Edge edge = TopoDS::Edge(same_in(body, r.sub));
+      TopTools_IndexedDataMapOfShapeListOfShape faces;
+      TopExp::MapShapesAndAncestors(body, TopAbs_EDGE, TopAbs_FACE, faces);
+      if (!faces.Contains(edge)) return handles;
+      double f = 0, l = 0;
+      BRep_Tool::Range(edge, f, l);
+      const double t = (f + l) / 2;
+      const gp_Pnt mid = BRepAdaptor_Curve(edge).Value(t);
+      gp_Vec sum(0, 0, 0);
+      int found = 0;
+      for (TopTools_ListIteratorOfListOfShape it(faces.FindFromKey(edge)); it.More() && found < 2; it.Next())
+        if (const auto n = normal_along(TopoDS::Face(it.Value()), edge, t)) sum += *n, ++found;
+      if (found == 0 || sum.Magnitude() < 1e-9) return handles;
+      handles.push_back(handle_json(kind == "fillet" ? "radius" : "distance", mid, sum, ctx.length(in, kind == "fillet" ? "radius" : "distance")));
+    } else if (kind == "thicken" || kind == "offset_face") {
+      // Off the first face along its outward normal: the skin's outer side (the inner one with Other side), the moved face.
+      const ResolvedRef r = first("faces");
+      if (r.sub.ShapeType() != TopAbs_FACE) return handles;
+      const TopoDS_Face face = TopoDS::Face(same_in(ctx.node_shape(r.node), r.sub));
+      if (kind == "thicken") {
+        const auto at = face_point(face);
+        if (!at) return handles;
+        handles.push_back(handle_json("thickness", at->first, in.value("flip", false) ? at->second.Reversed() : at->second, ctx.length(in, "thickness")));
+      } else {
+        BRepAdaptor_Surface surface(face);
+        if (surface.GetType() != GeomAbs_Plane) return handles;
+        gp_Dir n = surface.Plane().Axis().Direction();
+        if (!surface.Plane().Position().Direct()) n.Reverse();
+        if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+        GProp_GProps g;
+        BRepGProp::SurfaceProperties(face, g);
+        handles.push_back(handle_json("distance", g.CentreOfMass(), gp_Vec(n), ctx.length(in, "distance")));
+      }
+    } else if (kind == "move" && in.value("rotate", false)) {
+      // The axis it turns about (an edge, a face or a construction axis resolved here): the app's ring goes round it.
+      const gp_Ax1 a = ctx.axis(in.value("axis", json()));
+      json ring = handle_json("angle", a.Location(), gp_Vec(a.Direction()), ctx.angle(in, "angle"));
+      ring["ring"] = true;
+      handles.push_back(ring);
+    } else if (kind == "plane" && in.value("mode", "offset") == "offset") {
+      // Off the plane's origin; off a face's middle when it is a face (its frame starts at a corner, for sketches).
+      const json from = in.value("plane", json());
+      const Frame f = ctx.plane(from);
+      gp_Pnt at = pnt(f.origin);
+      if (from.is_object() && from.contains("face")) {
+        const ResolvedRef r = ctx.resolve(from["face"]);
+        GProp_GProps g;
+        BRepGProp::SurfaceProperties(r.sub, g);
+        at = g.CentreOfMass();
+      }
+      handles.push_back(handle_json("distance", at, vec(f.normal()), ctx.length(in, "distance")));
+    } else if (kind == "box" || kind == "cylinder" || kind == "cone") {
+      // At the middle of the footprint, along the plane's normal: the height (negative grows the other way).
+      const Frame f = ctx.plane(in.value("plane", json{{"base", "xy"}}));
+      double x = in.contains("x") ? ctx.length(in, "x") : 0.0, y = in.contains("y") ? ctx.length(in, "y") : 0.0;
+      if (kind == "box" && !in.value("centered", true)) x += ctx.length(in, "length") / 2, y += ctx.length(in, "width") / 2;
+      handles.push_back(handle_json("height", pnt(f.to_world(x, y)), vec(f.normal()), ctx.length(in, "height")));
+    }
+  } catch (const Standard_Failure&) {
+    return json::array();
+  } catch (const std::exception&) {  // a pick that does not resolve, a value that does not evaluate: no handle
+    return json::array();
+  }
+  return handles;
 }
 
 }  // namespace opad::design

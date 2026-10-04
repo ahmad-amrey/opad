@@ -27,6 +27,7 @@
 #include "Commands.hpp"
 #include "DesignController.hpp"
 #include "DimensionHandle.hpp"
+#include "TranslateTriad.hpp"
 #include "ExplodePanel.hpp"
 #include "GuidedTool.hpp"
 #include "Icons.hpp"
@@ -284,7 +285,7 @@ void Explode::ready() {
   m_handle->drawOnTop();  // the part it moves is selected: drawn in Topmost, it would hide the arrow's foot
   m_view = view;
   qApp->installEventFilter(this);  // after the handle's: the triad and a press on the part come first (dragEvent), the chip
-  connect(view, &Viewport::notesMoved, this, [this] { if (m_triadShown) placeHandle(); });  // every camera move
+  connect(view, &Viewport::notesMoved, this, [this] { if (triadShown()) placeHandle(); });  // every camera move
   connect(m_handle, &DimensionHandle::valueChanged, this, [this](const QString& text) {
     if (m_dragUnit < 0 || m_dragUnit >= static_cast<int>(m_units.size())) return;
     const std::optional<double> travel = units::parse(units::Kind::Length, text);

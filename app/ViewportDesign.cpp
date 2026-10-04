@@ -35,6 +35,7 @@
 #include "opad/geometry.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include <unordered_map>
 
 namespace {
 Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
@@ -128,57 +129,89 @@ void Viewport::syncSketches(bool sameGeometry) {
 // ---------------------------------------------------------------- candidates
 void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
   if (!m_initialised) return;
-  for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
-  m_candidates.clear();
-  m_originPlanes = false;
-  markPickedPoints();
-  for (const auto& c : candidates) {
+  m_originPlanes = false;  // the origin guide's planes are replaced (setOriginGuide)
+  // What is shown already (the same id and the same shape) stays as it is: shown again with a few more (the routed axes after
+  // a pick, the plane picker's planes after its origin planes), only those are displayed, not every sketch region again.
+  std::unordered_multimap<std::string, size_t> shown;
+  for (size_t i = 0; i < m_candidates.size(); ++i) shown.emplace(m_candidates[i].first, i);
+  std::vector<bool> kept(m_candidates.size(), false);
+  std::vector<std::pair<std::string, Handle(AIS_Shape)>> next;
+  std::vector<size_t> fresh;  // of `candidates`: not shown yet
+  for (size_t k = 0; k < candidates.size(); ++k) {
+    const Candidate& c = candidates[k];
     if (c.shape.IsNull()) continue;
-    // Small planar regions and a few curves: meshing them here is cheaper than a job round trip. (The
-    // context's drawers never triangulate by themselves, see initViewer.)
-    if (!c.presentation && c.shape.ShapeType() <= TopAbs_FACE) BRepMesh_IncrementalMesh(c.shape, 0.05, Standard_False, 0.3, Standard_False);
-    Handle(AIS_Shape) ais = c.presentation?new BodyShape(c.shape,c.presentation):new AIS_Shape(c.shape);
-    const bool surface = c.presentation?!c.presentation->triangles.IsNull():c.shape.ShapeType() <= TopAbs_FACE;
-    // A plain material: the default physical one ignores colours, so profiles were drawn as opaque grey sheets and
-    // the hover and pick tints below never showed on them.
-    ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
-    ais->SetColor(occ(m_tokens.sel));
-    if (surface) {
-      ais->SetTransparency(c.strong ? 0.6 : 0.82);
-      ais->Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // a flat tint
-      ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
-      ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
-    } else {
-      ais->SetWidth(3.0);
-      ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 4.0 * displayScale()));
-    }
-    // Over coplanar body faces. A sketch point lies *on* its face, which hid half of its marker in Top (that layer
-    // shares the depth buffer), leaving a speck to aim at: points go to Topmost.
-    const bool point = !surface && c.shape.ShapeType() == TopAbs_VERTEX;
-    const Graphic3d_ZLayerId layer = point ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
-    ais->SetZLayer(layer);
-    // The bodies' roles (UI-38: white hover, hued selection) as quieter tints and without the X-ray: on a large sketch
-    // region the bodies' own flooded the view, and the X-ray layer showed the picked profile through the preview.
-    auto style = [&](Prs3d_TypeOfHighlight kind, const QColor& colour, float transparency) {
-      Handle(Prs3d_Drawer) d = new Prs3d_Drawer();
-      d->SetLink(m_ctx->HighlightStyle(kind));
-      d->SetDisplayMode(surface ? AIS_Shaded : AIS_WireFrame);
-      d->SetColor(occ(colour));
-      d->SetTransparency(surface ? transparency : 0.0f);
-      d->SetZLayer(layer);
-      return d;
-    };
-    ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hover, 0.65f));
-    ais->SetHilightAttributes(style(Prs3d_TypeOfHighlight_Selected, m_tokens.selected3d, 0.55f));
-    m_ctx->Display(ais, surface ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
-    m_ctx->Load(ais, -1);
-    m_ctx->Activate(ais, 0);
-    // A sketch line or point is a hair to aim at: the context's 4 px missed a path clicked a few pixels off. 12 px each
-    // side is the 24 px target of UI-124.
-    if (!surface) m_ctx->SetSelectionSensitivity(ais, 0, static_cast<int>(std::lround(12 * displayScale())));
-    m_candidates.push_back({c.id, ais});
+    Handle(AIS_Shape) same;
+    for (auto [it, last] = shown.equal_range(c.id); it != last && same.IsNull(); ++it)
+      if (!kept[it->second] && m_candidates[it->second].second->Shape().IsEqual(c.shape)) {
+        kept[it->second] = true;
+        same = m_candidates[it->second].second;
+      }
+    if (same.IsNull()) fresh.push_back(k);
+    next.push_back({c.id, same});
   }
+  for (size_t i = 0; i < m_candidates.size(); ++i)
+    if (!kept[i]) m_ctx->Remove(m_candidates[i].second, Standard_False);
+  size_t f = 0;
+  for (auto& entry : next)
+    if (entry.second.IsNull()) entry.second = displayCandidate(candidates[fresh[f++]]);
+  m_candidates = std::move(next);
+  markPickedPoints();
   redrawScene();
+}
+
+void Viewport::addCandidates(const std::vector<Candidate>& more) {
+  if (!m_initialised || more.empty()) return;
+  m_originPlanes = false;  // no longer the origin guide's planes alone
+  for (const auto& c : more)
+    if (!c.shape.IsNull()) m_candidates.push_back({c.id, displayCandidate(c)});
+  redrawScene();
+}
+
+// One candidate on screen: a quiet tint, its hover and pick styles, pickable.
+Handle(AIS_Shape) Viewport::displayCandidate(const Candidate& c) {
+  // Small planar regions and a few curves: meshing them here is cheaper than a job round trip. (The
+  // context's drawers never triangulate by themselves, see initViewer.)
+  if (!c.presentation && c.shape.ShapeType() <= TopAbs_FACE) BRepMesh_IncrementalMesh(c.shape, 0.05, Standard_False, 0.3, Standard_False);
+  Handle(AIS_Shape) ais = c.presentation?new BodyShape(c.shape,c.presentation):new AIS_Shape(c.shape);
+  const bool surface = c.presentation?!c.presentation->triangles.IsNull():c.shape.ShapeType() <= TopAbs_FACE;
+  // A plain material: the default physical one ignores colours, so profiles were drawn as opaque grey sheets and
+  // the hover and pick tints below never showed on them.
+  ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
+  ais->SetColor(occ(m_tokens.sel));
+  if (surface) {
+    ais->SetTransparency(c.strong ? 0.6 : 0.82);
+    ais->Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // a flat tint
+    ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
+    ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
+  } else {
+    ais->SetWidth(3.0);
+    ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 4.0 * displayScale()));
+  }
+  // Over coplanar body faces. A sketch point lies *on* its face, which hid half of its marker in Top (that layer
+  // shares the depth buffer), leaving a speck to aim at: points go to Topmost.
+  const bool point = !surface && c.shape.ShapeType() == TopAbs_VERTEX;
+  const Graphic3d_ZLayerId layer = point ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
+  ais->SetZLayer(layer);
+  // The bodies' roles (UI-38: white hover, hued selection) as quieter tints and without the X-ray: on a large sketch
+  // region the bodies' own flooded the view, and the X-ray layer showed the picked profile through the preview.
+  auto style = [&](Prs3d_TypeOfHighlight kind, const QColor& colour, float transparency) {
+    Handle(Prs3d_Drawer) d = new Prs3d_Drawer();
+    d->SetLink(m_ctx->HighlightStyle(kind));
+    d->SetDisplayMode(surface ? AIS_Shaded : AIS_WireFrame);
+    d->SetColor(occ(colour));
+    d->SetTransparency(surface ? transparency : 0.0f);
+    d->SetZLayer(layer);
+    return d;
+  };
+  ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hover, 0.65f));
+  ais->SetHilightAttributes(style(Prs3d_TypeOfHighlight_Selected, m_tokens.selected3d, 0.55f));
+  m_ctx->Display(ais, surface ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
+  m_ctx->Load(ais, -1);
+  m_ctx->Activate(ais, 0);
+  // A sketch line or point is a hair to aim at: the context's 4 px missed a path clicked a few pixels off. 12 px each
+  // side is the 24 px target of UI-124.
+  if (!surface) m_ctx->SetSelectionSensitivity(ais, 0, static_cast<int>(std::lround(12 * displayScale())));
+  return ais;
 }
 
 void Viewport::clearCandidates() {
@@ -270,6 +303,48 @@ std::vector<std::string> Viewport::selectedCandidates() const {
       if (c.second == obj) out.push_back(c.first);
   }
   return out;
+}
+
+bool Viewport::benchPickPoint(const std::function<bool(const std::string&, const opad::Ref&)>& want, int& x, int& y, bool inside) {
+  if (!m_initialised) return false;
+  m_view->Redraw();  // the picker clips to the z range of the last frame
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  auto detects = [&](int px, int py) {
+    m_ctx->MoveTo(px, py, m_view, Standard_False);
+    dropOccluded();  // as the pointer does
+    bool ok = false;
+    if (m_ctx->HasDetected()) {
+      const auto detected = m_ctx->DetectedInteractive();
+      std::string candidate;
+      opad::Ref entity;
+      for (const auto& c : m_candidates)
+        if (c.second == detected) candidate = c.first;
+      if (const auto node = m_nodeOf.find(detected.get()); node != m_nodeOf.end()) entity.body = node->second;
+      if (const auto sub = Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner()); !sub.IsNull() && !entity.body.empty()) entity.kind = sub->kind(), entity.index = sub->index();
+      ok = (!candidate.empty() || !entity.body.empty()) && want(candidate, entity);
+    }
+    m_ctx->ClearDetected(Standard_False);
+    return ok;
+  };
+  constexpr int n = 64;
+  std::vector<char> hit(n * n, 0);
+  double cx = 0, cy = 0;
+  int count = 0;
+  for (int j = 1; j < n; ++j)
+    for (int i = 1; i < n; ++i)
+      if (detects(w * i / n, h * j / n)) hit[j * n + i] = 1, cx += i, cy += j, ++count;
+  if (!count) return false;
+  cx /= count, cy /= count;
+  double best = 1e9;
+  for (int j = 2; j < n - 1; ++j)
+    for (int i = 2; i < n - 1; ++i) {
+      bool in = hit[j * n + i];
+      for (int dj = -1; dj <= 1 && in && inside; ++dj)
+        for (int di = -1; di <= 1 && in; ++di) in = hit[(j + dj) * n + i + di];
+      if (in && std::hypot(i - cx, j - cy) < best) best = std::hypot(i - cx, j - cy), x = w * i / n, y = h * j / n;
+    }
+  return best < 1e9;
 }
 
 void Viewport::selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates) {
@@ -447,6 +522,28 @@ bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {
   moveTo(devicePos(point));
   return hoveredReference(ref);
 }
+bool Viewport::surfaceAt(const QPointF& point, std::string& candidate, TopoDS_Face& face, opad::Vec3& at, bool fresh) {
+  candidate.clear();
+  face.Nullify();
+  if (!m_initialised) return false;
+  if (fresh) moveTo(devicePos(point));
+  if (!m_ctx->HasDetected()) return false;
+  gp_Pnt hit;
+  if (!detectedPoint(hit)) return false;
+  at = {hit.X(), hit.Y(), hit.Z()};
+  const Handle(AIS_InteractiveObject) object = m_ctx->DetectedInteractive();
+  for (const auto& c : m_candidates)
+    if (c.second == object) {
+      candidate = c.first;
+      return true;
+    }
+  const Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+  if (owner.IsNull() || !owner->HasShape() || owner->Shape().ShapeType() != TopAbs_FACE || !m_nodeOf.count(object.get())) return false;
+  face = TopoDS::Face(owner->Shape());
+  if (!object.IsNull() && object->HasTransformation()) face = TopoDS::Face(face.Moved(TopLoc_Location(object->LocalTransformation())));
+  return true;
+}
+
 bool Viewport::originReferenceAt(const QPointF& point,opad::Ref& ref) {
   if(!m_initialised)return false;
   // Center candidates already share the vertex selector; enable their cheap
@@ -701,6 +798,20 @@ bool Viewport::hoveredReference(opad::Ref& ref) const {
   ref.kind=sub.ShapeType()==TopAbs_FACE?opad::Ref::Kind::Face:sub.ShapeType()==TopAbs_EDGE?opad::Ref::Kind::Edge:sub.ShapeType()==TopAbs_VERTEX?opad::Ref::Kind::Vertex:opad::Ref::Kind::Body;
   if(ref.kind==opad::Ref::Kind::Body)return false;
   ref.index=opad::subshape_index(ais->Shape(),sub);return true;
+}
+bool Viewport::hoveredSubShape(std::string& body, TopoDS_Shape& whole, TopoDS_Shape& sub, int& index) const {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  const auto object = m_ctx->DetectedInteractive();
+  const auto found = m_nodeOf.find(object.get());
+  const auto ais = Handle(AIS_Shape)::DownCast(object);
+  const auto owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+  if (found == m_nodeOf.end() || ais.IsNull() || owner.IsNull() || !owner->HasShape()) return false;
+  body = found->second;
+  whole = ais->Shape();
+  sub = owner->Shape();
+  const auto known = Handle(SubShapeOwner)::DownCast(owner);
+  index = known.IsNull() ? -1 : known->index();
+  return true;
 }
 void Viewport::showBackdrop(const Handle(AIS_InteractiveObject)& obj) {
   if(!m_initialised||obj.IsNull())return;obj->SetZLayer(Graphic3d_ZLayerId_Default);m_ctx->Display(obj,3,-1,false);redrawScene();

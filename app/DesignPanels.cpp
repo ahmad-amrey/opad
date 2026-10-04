@@ -122,6 +122,12 @@ void PickBox::set(int count, const QString& what, bool active, bool satisfied) {
   update();
 }
 
+void PickBox::setNote(const QString& note) {
+  if (m_note == note) return;
+  m_note = note;
+  update();
+}
+
 void PickBox::paintEvent(QPaintEvent*) {
   const Tokens& t = theme::current();
   QPainter p(this);
@@ -133,14 +139,19 @@ void PickBox::paintEvent(QPaintEvent*) {
   p.drawPixmap(8, 6, icons::pixmap("cursor", m_active ? t.sel : t.fg2, 16, devicePixelRatioF()));
   p.setFont(theme::ui(12));
   p.setPen(m_count > 0 ? t.fg : m_satisfied ? t.fg3 : (m_active ? t.sel : t.fg2));
-  const QString text = m_count > 0 ? (m_what.isEmpty() ? tr("%1 selected").arg(m_count) : m_what) : m_active ? tr("Pick in the view…") : m_satisfied ? tr("Optional") : tr("Select");
-  const int room = width() - 30 - (m_count > 0 ? 26 : 8);  // the clear button's place only when there is something to clear
+  QString text = m_count > 0 ? (m_what.isEmpty() ? tr("%1 selected").arg(m_count) : m_what) : m_active ? tr("Pick in the view…") : m_satisfied ? tr("Optional") : tr("Select");
+  if (!m_note.isEmpty()) {
+    text = m_note;
+    p.setPen(t.sel);
+  }
+  const bool clears = m_count > 0 && m_note.isEmpty();
+  const int room = width() - 30 - (clears ? 26 : 8);  // the clear button's place only when there is something to clear
   p.drawText(QRect(30, 0, room, height()), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(text, Qt::ElideRight, room));
-  if (m_count > 0) p.drawPixmap(width() - 22, 6, icons::pixmap("close", t.fg2, 16, devicePixelRatioF()));
+  if (clears) p.drawPixmap(width() - 22, 6, icons::pixmap("close", t.fg2, 16, devicePixelRatioF()));
 }
 
 void PickBox::mousePressEvent(QMouseEvent* e) {
-  if (m_count > 0 && e->pos().x() > width() - 26) return emit cleared();
+  if (m_count > 0 && m_note.isEmpty() && e->pos().x() > width() - 26) return emit cleared();
   QPushButton::mousePressEvent(e);
 }
 
@@ -257,6 +268,8 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
   m_values = inputs.is_object() ? inputs : opad::json::object();
   m_active.clear();
   m_widgets.clear();
+  m_notes.clear();
+  m_guideStep = m_guideCount = 0;
   while (QLayoutItem* it = m_rows->takeAt(0)) {
     delete it->widget();
     delete it;
@@ -391,9 +404,11 @@ void FeaturePanel::refreshVisibility() {
         if (one.contains("base")) what = (in.type == "plane" ? tr("%1 plane") : tr("%1 axis")).arg(QString::fromStdString(one["base"].get<std::string>()).toUpper());
         else if (one.contains("sketch")) what = tr("Sketch");
         else if (one.contains("feature")) what = tr("Construction");
-        else what = in.type == "plane" ? tr("Face") : tr("Edge");
+        else what = in.type == "plane" || one.contains("face") ? tr("Face") : tr("Edge");  // an axis through a round face
       }
       it->second.pick->set(n, what, m_active == it->first, in.optional || n >= std::max(1, in.min_count) || in.min_count == 0);
+      const auto note = m_notes.find(it->first);
+      it->second.pick->setNote(note == m_notes.end() ? QString() : note->second);
     }
   }
   // The guide's steps: the shown picks the feature needs, in order, then its values; it waits at the first one missing.
@@ -405,7 +420,8 @@ void FeaturePanel::refreshVisibility() {
     if (waiting < 0 && (p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1) < std::max(1, in.min_count)) waiting = needed;
     ++needed;
   }
-  m_guide->setWaiting(waiting < 0 ? needed : waiting, needed + 1);
+  if (m_guideCount > 0) m_guide->setWaiting(m_guideStep, m_guideCount);  // a primitive being placed: its stage
+  else m_guide->setWaiting(waiting < 0 ? needed : waiting, needed + 1);
   refreshNewBody();
 }
 
@@ -530,6 +546,41 @@ void FeaturePanel::setValue(const QString& name, const opad::json& value) {
   emit inputsChanged();
 }
 
+void FeaturePanel::setValues(const std::vector<std::pair<QString, opad::json>>& values) {
+  bool any = false, shown = false;  // shown: a choice or a flag changed, which can show or hide rows
+  for (const auto& [name, value] : values) {
+    auto it = m_widgets.find(name);
+    if (it == m_widgets.end()) continue;
+    const QSignalBlocker quiet(this);  // the one inputsChanged below
+    if (it->second.expr && value.is_string()) {
+      if (it->second.expr->lineEdit()->text() == QString::fromStdString(value.get<std::string>())) continue;
+      it->second.expr->setText(QString::fromStdString(value.get<std::string>()));
+    } else if (it->second.combo && value.is_string()) {
+      it->second.combo->setCurrentIndex(std::max(0, it->second.combo->findData(QString::fromStdString(value.get<std::string>()))));
+      shown = true;
+    } else if (it->second.check && value.is_boolean()) {
+      it->second.check->setChecked(value.get<bool>());
+      shown = true;
+    }
+    any = true;
+  }
+  if (!any) return;
+  if (shown) refreshVisibility();  // values alone (a primitive sized by the pointer, every move) change no row
+  emit inputsChanged();
+}
+
+void FeaturePanel::setPickNote(const QString& input, const QString& note) {
+  if (note.isEmpty()) m_notes.erase(input);
+  else m_notes[input] = note;
+  refreshVisibility();
+}
+
+void FeaturePanel::setGuideStep(int step, int count) {
+  m_guideStep = step;
+  m_guideCount = count;
+  refreshVisibility();
+}
+
 QStringList FeaturePanel::valueInputs() const {
   QStringList out;
   if (!m_spec) return out;
@@ -592,7 +643,7 @@ QSize FeaturePanel::preferredSize(int width) const {
 }
 
 void FeaturePanel::keyPressEvent(QKeyEvent* e) {
-  if (e->key() == Qt::Key_Escape) return emit cancelled();
+  if (e->key() == Qt::Key_Escape) return emit escapePressed();
   if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) return emit accepted();
   QWidget::keyPressEvent(e);
 }

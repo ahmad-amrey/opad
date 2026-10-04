@@ -39,12 +39,18 @@ struct InputSpec {
   bool optional = false;
   int min_count = 1;                 // selections: how many picks at least (0 with optional)
   int max_count = 0;                 // 0 = any number
+  bool advance = false;              // selections: the first pick moves on to the next input (more: its box again)
 };
 
 struct FeatureSpec {
   std::string kind, label, icon, group;  // group: create | modify | combine | pattern | construct | body
   std::vector<InputSpec> inputs;
   std::string hint;  // one line for the panel
+  // A primitive placed in the view (TODO 11 P1): a click on a plane writes its "plane", "x" and "y"; then the pointer draws
+  // the footprint: "rect" (its "length" and "width" about the click, or from it as a corner with "centered" off), "round"
+  // (its "diameter" from the click), "ring" ("diameter" to the tube's middle, then the tube's "section"). A "height" input
+  // is pulled by the arrow after. Empty: not placed so.
+  std::string footprint;
 };
 
 const std::vector<FeatureSpec>& feature_specs();
@@ -136,5 +142,14 @@ json make_ref(const Document& doc, const Scene& scene, const Ref& ref);
 // Feature inputs with a hint added to every face/edge/vertex reference that has none (the app picks plain
 // references in its click handler and leaves this geometry walk to the worker).
 json hint_refs(const Document& doc, const Scene& scene, json inputs);
+// Drag handles for a feature's values (TODO 11 P2), for the app's preview: worked out on a worker in the state before the
+// feature and never stored. Each is {input, origin, axis, value, scale}: the arrow sits at origin + axis * value * scale
+// and a pull of d along the axis changes the input by d / scale. Fillet and chamfer: the radius or distance, half way
+// along the first picked edge, pointing out between its two faces; thicken: the thickness off the first face (inwards with
+// Other side); press pull: the distance off the first face's centre along its outward normal; an offset construction
+// plane: the distance from its plane's origin; box, cylinder and cone: the height at the middle of the footprint; a move
+// that turns: the angle about its axis (origin a point on the axis, axis its direction, "ring": true). The extrusion keeps
+// the distance_handle its result stores. Empty when the kind has none or what it needs does not resolve.
+json feature_handles(const Document& doc, const Scene& scene, const std::string& kind, const json& inputs);
 
 }  // namespace opad::design

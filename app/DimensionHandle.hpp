@@ -44,6 +44,10 @@ class DimensionHandle : public QWidget {
   void setExtraFields(const QList<DynamicInput::Field>& fields);
   void setProblem(const QString& key, const QString& problem) {m_input->setProblem(key,problem);}  // "value": the arrow's
   DynamicInput* input() const {return m_input;}
+  // A round step for pulling at this zoom (about two pixels: 1, 2 or 5 times a power of ten in the shown unit), and a length
+  // as the feature stores what a pull made ("12.5 mm", to the step's decimals): the Move triad's arrows round the same way.
+  static double pullStep(double pixelSize);
+  static QString pulledText(double value, double step);
  signals:
   void valueChanged(const QString& expression);
   void extraEdited(const QString& key, const QString& value);

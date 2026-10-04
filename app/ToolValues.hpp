@@ -30,6 +30,9 @@ class ToolValues : public QObject {
   bool takes(const QKeyEvent* key) const;  // a key that types into the tool now
   void refresh();                          // the fields again (which show, their values)
   void reset();                            // the tool ended: typed values forgotten, the boxes hidden
+  // The boxes shown beside `at` (view coordinates) while a handle is pulled, as the guides draw its value, and the next
+  // value key typed going into `key`'s box (Move's X arrow pulled: a typed 14 is X).
+  void showNear(const QPoint& at, const QString& key);
  protected:
   bool eventFilter(QObject* target, QEvent* event) override;
  private:
@@ -39,4 +42,5 @@ class ToolValues : public QObject {
   QPointer<QWidget> m_view;
   QPointer<DynamicInput> m_input;
   QPointer<DimensionHandle> m_handle;
+  QString m_prefer;  // showNear's box: the next value key goes there
 };

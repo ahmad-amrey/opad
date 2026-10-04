@@ -101,6 +101,9 @@ bool plainNumber(const QString& text) {
 }
 }
 
+double DimensionHandle::pullStep(double pixelSize) {return shownStep(std::max(1e-6,pixelSize));}
+QString DimensionHandle::pulledText(double value,double step) {return lengthText(value,step);}
+
 DimensionHandle::DimensionHandle(Viewport* view,JobRunner* jobs):QWidget(view),m_jobs(jobs),m_view(view) {
   setObjectName("dimensionHandle");setAttribute(Qt::WA_NativeWindow);setAttribute(Qt::WA_StyledBackground);setMouseTracking(true);
   // Native child windows above OCCT must paint every pixel; transparent holes become black on Windows (the rounded

@@ -404,6 +404,9 @@ Frame Ctx::plane(const json& in) const {
   if (in.contains("face")) {
     const ResolvedRef r = resolve(in["face"]);
     if (r.sub.IsNull() || r.sub.ShapeType() != TopAbs_FACE) throw Error("the plane must be a planar face");
+    // New face sketches and placed primitives start at the lower-left real vertex in the plane axes (face_frame: what the
+    // primitive placer's grid steps from while the pointer is over the face). Existing sketches retain their persisted frame.
+    if (!in.contains("frame")) return face_frame(TopoDS::Face(r.sub));
     BRepAdaptor_Surface surf(TopoDS::Face(r.sub));
     if (surf.GetType() != GeomAbs_Plane) throw Error("that face is not planar");
     gp_Ax3 ax = surf.Plane().Position();
@@ -418,17 +421,7 @@ Frame Ctx::plane(const json& in) const {
     for (const gp_Dir& cand : {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)})
       if (std::fabs(cand.Dot(n)) < 1e-6) { xd = cand; break; }
     Frame f = frame_from_ax3(gp_Ax3(g.CentreOfMass(), n, xd));
-    // New face sketches start at the lower-left real vertex in the plane axes.
-    // Existing sketches retain their persisted frame below during regeneration.
-    if(!in.contains("frame")) {
-      bool have=false;double bestU=0,bestV=0;Vec3 corner=f.origin;
-      for(TopExp_Explorer vertices(r.sub,TopAbs_VERTEX);vertices.More();vertices.Next()) {
-        const auto p=BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current()));double u,v;f.to_local({p.X(),p.Y(),p.Z()},u,v);
-        if(!have || v<bestV-1e-7 || (std::abs(v-bestV)<=1e-7 && u<bestU)){have=true;bestU=u;bestV=v;corner={p.X(),p.Y(),p.Z()};}
-      }
-      if(have)f.origin=corner;
-    }
-    if (in.contains("frame")) {  // keep the sketch where it was on the face: project the old origin and x
+    {  // keep the sketch where it was on the face: project the old origin and x
       const Frame old = Frame::from_json(in["frame"]);
       const gp_Pln pl(g.CentreOfMass(), n);
       const gp_Pnt o(old.origin[0], old.origin[1], old.origin[2]);

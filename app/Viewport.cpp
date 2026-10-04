@@ -44,6 +44,7 @@
 #include <Aspect_ScrollDelta.hxx>
 #include <Aspect_VKeyFlags.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box2d.hxx>
 #include <gp_Pnt2d.hxx>
@@ -357,6 +358,14 @@ void Viewport::initViewer() {
   m_ctx->SetPixelTolerance(4);
   m_ctx->AddFilter(new OwnerFilter([this](const Handle(SelectMgr_EntityOwner)& owner) {
     if(!Handle(CircleOwner)::DownCast(owner).IsNull()) return m_ctrlCenterPick;
+    // An axis input picks round faces beside the edges (setSelectionFilter(Edge, true)): a face with an axis, never a flat
+    // one (its "axis" is wherever its plane happens to start) nor a mesh's.
+    if(m_roundFaces && m_filter==SelFilter::Edge)
+      if(const auto sub=Handle(SubShapeOwner)::DownCast(owner);!sub.IsNull() && sub->kind()==opad::Ref::Kind::Face) {
+        if(!sub->HasShape() || sub->Shape().ShapeType()!=TopAbs_FACE) return false;
+        const auto type=BRepAdaptor_Surface(TopoDS::Face(sub->Shape()),Standard_False).GetType();
+        return type==GeomAbs_Cylinder || type==GeomAbs_Cone || type==GeomAbs_Torus;
+      }
     if(!Handle(OccluderOwner)::DownCast(owner).IsNull()) {  // selecting through objects, or a ghost's faces: what is behind is reached
       if(m_selectThrough) return false;
       const auto node=m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
@@ -967,6 +976,10 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
   // built a sensitive per glyph and hatch face on the UI thread there (a DWG's text layer: 0.1-0.2 s, 2.3-2.7 s in all).
   if (t == TopAbs_FACE && drawingLayer(ais)) t = TopAbs_SHAPE;
   m_ctx->Activate(ais, AIS_Shape::SelectionMode(t));
+  // An axis input's round faces: the bodies' faces too (the owner filter keeps the round ones). An edge on such a face is
+  // nearer the pointer and of a higher priority, so a rim still picks the rim.
+  if (m_roundFaces && m_filter == SelFilter::Edge)
+    if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end() && m_items.count(node->second)) m_ctx->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE));
 }
 
 bool Viewport::drawingLayer(const Handle(AIS_InteractiveObject)& ais) const {
@@ -975,13 +988,15 @@ bool Viewport::drawingLayer(const Handle(AIS_InteractiveObject)& ais) const {
   return n && n->representation == "drawing2d";
 }
 
-void Viewport::setSelectionFilter(SelFilter f) {
+void Viewport::setSelectionFilter(SelFilter f, bool roundFaces) {
+  roundFaces = roundFaces && f == SelFilter::Edge;
   // The same filter again changes nothing: every body was activated in it as it was displayed (re-activating a big
   // drawing layer's thousands of edges costs OCCT a few hundred ms per layer). Who waits for filterApplied still gets it.
-  if (f == m_filter && !m_filterJob && m_initialised) {
+  if (f == m_filter && roundFaces == m_roundFaces && !m_filterJob && m_initialised) {
     QTimer::singleShot(0, this, [this] { emit filterApplied(); });
     return;
   }
+  m_roundFaces = roundFaces;
   applySelectionFilter(f);
 }
 

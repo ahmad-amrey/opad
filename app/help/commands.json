@@ -522,7 +522,7 @@
    "id": "view.gridSnap",
    "title": "Grid snapping",
    "summary": "Makes placed points jump to grid intersections.",
-   "details": "Applies to points you click in sketches, and when placing a drawing or a sketch's origin. Hold Alt to place a point off the grid. Set a fixed spacing in Grid settings for predictable steps.",
+   "details": "Applies to points you click in sketches (hold Alt to place one off the grid), when placing a drawing or a sketch's origin, to the point and the base of a box, cylinder or other primitive (on a face, in steps from its corner, as a sketch on that face counts them), and to the distances Move / copy's triad is dragged. Set a fixed spacing in Grid settings for predictable steps.",
    "keywords": ["snap to grid", "step", "increment"]
   },
   {
@@ -1232,7 +1232,7 @@
    "id": "design.sketch",
    "title": "New sketch",
    "summary": "Starts a sketch on an origin plane, a planar face or a construction plane.",
-   "details": "Pick an origin plane, a planar face, a construction plane or a sketch: the camera turns square to it. Place the origin or keep it and press OK; the ribbon switches to the Sketch tools. Finish sketch keeps the result as one step on the timeline.",
+   "details": "Click an origin plane (in the view or the corner tiles), a planar face, a construction plane or a sketch: the camera turns square to it. Place the origin or keep it and press OK; the ribbon switches to the Sketch tools. Finish sketch keeps the result as one step on the timeline.",
    "keywords": ["draw", "2d", "profile", "start sketch"],
    "requires": "Open or create a document first."
   },
@@ -1422,7 +1422,7 @@
    "id": "design.box",
    "title": "Box",
    "summary": "A box on a plane at a position, sized by length, width and height.",
-   "details": "Length runs along the plane's X, width along its Y and height along its normal; a negative height grows the other way. It is centred on the position in X and Y unless you turn that off. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face where it goes, move the pointer to draw the base and click, then drag the arrow or type the height; Enter adds it and Esc steps back. Length runs along the plane's X, width along its Y and height along its normal (a negative height grows the other way); the base is centred on the click unless you turn that off, then the click is a corner. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["cube", "block", "primitive", "rectangular prism"],
    "requires": "Open or create a document first."
   },
@@ -1430,7 +1430,7 @@
    "id": "design.cylinder",
    "title": "Cylinder",
    "summary": "A cylinder standing on a plane at a position.",
-   "details": "Its axis is the plane's normal; set the diameter and the height. A negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click, then drag the arrow or type the height; Enter adds it and Esc steps back. Its axis is the plane's normal; a negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["rod", "shaft", "primitive", "round"],
    "requires": "Open or create a document first."
   },
@@ -1438,7 +1438,7 @@
    "id": "design.sphere",
    "title": "Sphere",
    "summary": "A sphere centred on a plane at a position.",
-   "details": "Set the diameter; the centre is the position on the plane. Combine it with other bodies to round off shapes. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click; Enter adds it and Esc steps back. The plane runs through its middle. Combine it with other bodies to round off shapes. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["ball", "primitive", "round"],
    "requires": "Open or create a document first."
   },
@@ -1446,7 +1446,7 @@
    "id": "design.cone",
    "title": "Cone",
    "summary": "A cone or a truncated cone standing on a plane at a position.",
-   "details": "Set the base and top diameters and the height; a top diameter above zero cuts the tip off. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for the centre of its base, move the pointer to set the base diameter and click, then drag the arrow or type the height; Tab from the height's box reaches the top diameter, which cuts the tip off above zero. Enter adds it and Esc steps back. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["taper", "frustum", "primitive"],
    "requires": "Open or create a document first."
   },
@@ -1454,7 +1454,7 @@
    "id": "design.torus",
    "title": "Torus",
    "summary": "A ring centred on a plane at a position.",
-   "details": "Set the ring diameter, through the middle of the tube, and the section diameter of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the ring diameter (through the middle of the tube) and click, then the tube's section diameter and click; Enter adds it and Esc steps back. The plane runs through the middle of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["ring", "donut", "o-ring", "primitive"],
    "requires": "Open or create a document first."
   },
@@ -1470,7 +1470,7 @@
    "id": "design.revolve",
    "title": "Revolve",
    "summary": "Turns sketch profiles about an axis into a solid.",
-   "details": "Pick the profiles, then the axis: a sketch line, an edge or an origin axis. A full turn is 360 degrees; Symmetric splits the angle on both sides. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Pick the profiles, then click the axis in the view: a sketch line, an origin axis or a construction axis (an edge or a round face through the Axis box). The preview turns them a full 360 degrees at once; type another angle to change it, and Symmetric splits it on both sides. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["lathe", "turn", "rotate profile", "axisymmetric"],
    "requires": "Open or create a document first."
   },
@@ -1502,7 +1502,7 @@
    "id": "design.coil",
    "title": "Coil",
    "summary": "A round or square section wound about an axis: springs and threads.",
-   "details": "Set the coil diameter, the pitch between turns and the number of turns. Left-handed winds it the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its axis, move the pointer to set the coil diameter (through the middle of the section) and click, then set the pitch between turns and the number of turns in the panel; Enter adds it and Esc steps back. Left-handed winds it the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["spring", "helix", "thread", "spiral"],
    "requires": "Open or create a document first."
   },
@@ -1510,7 +1510,7 @@
    "id": "design.thicken",
    "title": "Thicken",
    "summary": "Gives faces a thickness: a solid skin over the picked faces.",
-   "details": "Pick the faces and set the thickness; Other side grows it inward. Useful to turn a surface into a part. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Pick the faces, then drag the arrow or type the thickness; Other side grows it inward. Useful to turn a surface into a part. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["skin", "offset surface", "solidify"],
    "requires": "Open or create a document first."
   },
@@ -1526,7 +1526,7 @@
    "id": "design.fillet",
    "title": "Fillet",
    "summary": "Rounds edges.",
-   "details": "Pick the edges and set the radius; edges that meet tangentially are rounded together. By rule… in the panel, or Select similar, picks every similar edge at once.",
+   "details": "Pick the edges, then drag the arrow on the first edge or type the radius; edges that meet tangentially are rounded together. By rule… in the panel, or Select similar, picks every similar edge at once.",
    "keywords": ["round", "radius", "blend edge"],
    "requires": "Open or create a document first."
   },
@@ -1534,7 +1534,7 @@
    "id": "design.chamfer",
    "title": "Chamfer",
    "summary": "Bevels edges.",
-   "details": "Pick the edges and set one distance, or two distances for an unequal bevel. Chamfers break sharp edges and ease assembly.",
+   "details": "Pick the edges, then drag the arrow on the first edge or type the distance, or two distances (Type) for an unequal bevel. Chamfers break sharp edges and ease assembly.",
    "keywords": ["bevel", "edge break", "angle edge"],
    "requires": "Open or create a document first."
   },
@@ -1582,7 +1582,7 @@
    "id": "design.combine",
    "title": "Combine",
    "summary": "Joins, cuts or intersects bodies.",
-   "details": "Pick the target bodies, then the tool bodies, and choose the operation. Keep tools leaves the tool bodies in place after the cut.",
+   "details": "Pick the target body (more through the Target bodies box), then the tool bodies, and choose the operation. Keep tools leaves the tool bodies in place after the cut.",
    "keywords": ["boolean", "union", "subtract", "intersect", "merge"],
    "requires": "Open or create a document first."
   },
@@ -1590,7 +1590,7 @@
    "id": "design.split",
    "title": "Split body",
    "summary": "Cuts bodies in two along a plane.",
-   "details": "Pick the bodies and the splitting plane. Each body becomes two bodies in place, which you can then move, hide or delete.",
+   "details": "Pick the bodies, then click the splitting plane in the view: an origin or a construction plane (a planar face through the Splitting plane box). Each body becomes two bodies in place, which you can then move, hide or delete.",
    "keywords": ["cut in half", "divide", "separate", "slice"],
    "requires": "Open or create a document first."
   },
@@ -1614,7 +1614,7 @@
    "id": "design.pattern_circ",
    "title": "Circular pattern",
    "summary": "Copies bodies about an axis.",
-   "details": "Pick the bodies, the axis, the count and the total angle. 360 degrees spreads the copies evenly around a full turn. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Pick the bodies: the copies go round the Z axis at once; click another axis (an origin or construction axis, a sketch line) to turn them about it. Set the count and the total angle: 360 degrees spreads the copies evenly around a full turn. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["polar array", "radial", "around", "repeat"],
    "requires": "Open or create a document first."
   },
@@ -1622,7 +1622,7 @@
    "id": "design.move",
    "title": "Move / copy",
    "summary": "Moves or copies bodies by distances and an optional turn.",
-   "details": "Pick the bodies and type X, Y and Z; turn on Rotate for an axis and an angle. Make a copy leaves the original in place, and every value can be an expression.",
+   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z; with Grid snapping on, a drag goes in grid steps (hold Alt to drag freely). Turn on Rotate for an axis and an angle: a ring round that axis through the bodies turns them in 5° steps, or type the angle. Make a copy leaves the original in place, and every value can be an expression.",
    "keywords": ["translate", "position", "transform", "copy"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -1638,7 +1638,7 @@
    "id": "design.plane",
    "title": "Construction plane",
    "summary": "A plane to sketch on, or to mirror, split and draft about.",
-   "details": "Make it offset from a plane, at an angle about an axis, midway between two planes, through three points or through a point normal to an axis. It follows its references when they change.",
+   "details": "Make it offset from a plane (drag its arrow or type the distance), at an angle about an axis, midway between two planes, through three points or through a point normal to an axis. It follows its references when they change.",
    "keywords": ["work plane", "datum plane", "reference plane", "offset plane"],
    "requires": "Open or create a document first."
   },

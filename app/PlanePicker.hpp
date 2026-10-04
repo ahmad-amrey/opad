@@ -2,6 +2,7 @@
 #include "Viewport.hpp"
 #include "Panels.hpp"
 #include "Jobs.hpp"
+#include "PlaneSnap.hpp"
 #include <QPointer>
 class QLineEdit;
 class QComboBox;
@@ -19,7 +20,11 @@ class PlanePicker : public QObject {
  public:
   PlanePicker(AppDocument*,Viewport*,JobRunner*,QWidget*);
   ToolPanel* panel() const { return m_panel; }
-  void start(bool positionOrigin,std::function<void(ToolPanel*)> open);
+  // adoptSelection: a single selected face is the plane at once (New sketch, "Sketch on this face"); never for a feature's
+  // plane input, whose selection is its other picks.
+  void start(bool positionOrigin,std::function<void(ToolPanel*)> open,bool adoptSelection=true);
+  // The origin planes XY, XZ and YZ as view candidates ({"base":"xy"}...): squares of this half size about the origin.
+  static std::vector<Viewport::Candidate> originPlanes(double halfSize);
   void cancel();
   void choose(const opad::json& support);
   void selectionChanged();
@@ -38,12 +43,13 @@ class PlanePicker : public QObject {
   bool eventFilter(QObject*,QEvent*) override;
  private:
   void stop(bool restoreCamera = true);
-  void placeOrigin(const QPointF& point);
+  void placeOrigin(const QPointF& point,bool free);  // free: Alt held, nothing snaps
   void refresh();
   void constructionPlanes();
   void preview(const opad::Frame* frame);
   void pickOrigin(const opad::Ref&);
   QString supportName() const;
+  QString candidateName(const opad::json& support) const;
   AppDocument* m_doc;Viewport* m_view;JobRunner* m_jobs;
   ToolPanel* m_panel;PlaneTiles* m_tiles;ToolStepsPanel* m_steps;
   QWidget* m_originControls;QLineEdit *m_u,*m_v;QCheckBox* m_construction;QLabel* m_status;
@@ -57,4 +63,5 @@ class PlanePicker : public QObject {
   Viewport::SelFilter m_oldFilter;
   Handle(AIS_Shape) m_preview;
   Handle(AIS_TextLabel) m_xLabel,m_yLabel;
+  PlaneSnap m_snap;  // the origin snaps as a placed primitive's position does
 };

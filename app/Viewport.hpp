@@ -31,6 +31,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Trsf.hxx>
 
@@ -147,8 +148,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setExtensionTracking(bool on);
   void setOrthographic(bool ortho);
   bool isOrthographic() const;
-  void setSelectionFilter(SelFilter f);
+  // roundFaces (with Edge, for an axis input, TODO 11 P3): cylindrical, conical and toroidal faces are picked too, beside the
+  // edges, for the axis through them; other faces are not.
+  void setSelectionFilter(SelFilter f, bool roundFaces = false);
   SelFilter selectionFilter() const { return m_filter; }
+  bool roundFacesPickable() const { return m_roundFaces; }
 
   // Fit, Home and the standard views move the camera at once, or (animate, the commands) in a short animation on screen.
   void fitAll(bool animate = false);
@@ -311,6 +315,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
   void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
+  // A point of the view (device pixels) where the pointer detects what `want` accepts: a candidate's id, else a body's
+  // entity (its node, the detected sub-shape's kind and ordinal). `inside`: one whose eight neighbours detect it too (a
+  // face), else any (a line).
+  bool benchPickPoint(const std::function<bool(const std::string& candidate, const opad::Ref& entity)>& want, int& x, int& y, bool inside = true);
 
   // Compare (ViewportCompare.cpp, UI-58): another version drawn with the model. Parts are bodies the model does not draw
   // as they are: ghosts of the other version (a removed body, a moved one's old place, a modified one's old geometry) and
@@ -414,6 +422,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool snapIndexesReady();  // asks for the missing indexes; true once every displayed drawing has one (or its indexing was cancelled)
   int snapIndexCount() const;  // the indexes kept (benches)
   static QString snapWord(const QString& kind);  // "endpoint" -> "Endpoint", translated
+  TopoDS_Shape snapGlyph(const QString& kind, const opad::Vec3& at) const;  // the kind's marker about `at`, facing the camera
   bool benchSnap(const QPointF& widgetPos);  // the snap a mouse move here shows (hidden windows never paint)
   bool pointUnder(const QPointF& widgetPos, opad::Vec3& world);  // the frontmost displayed surface there (one BVH ray), false: none
 
@@ -427,7 +436,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
     bool strong = false;
     std::shared_ptr<BodyPrs> presentation;  // drawn more solid (construction planes among faint origin planes)
   };
-  void showCandidates(const std::vector<Candidate>& candidates);
+  void showCandidates(const std::vector<Candidate>& candidates);  // these and no others (those shown already stay as they are)
+  void addCandidates(const std::vector<Candidate>& more);          // these too (a sliced job's slice)
   void clearCandidates();  // with the origin guide on, its planes come back
   // The origin guide (UI-51, an empty design document): the origin's axes (X red, Y green, Z blue, labelled, never
   // picked), its XY, XZ and YZ planes as candidates ({"base":"xy"}, ...) whenever nothing else shows
@@ -507,6 +517,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool hoveredEdge(TopoDS_Shape& edge) const;
   bool hoveredReference(opad::Ref& ref) const;
   bool referenceAt(const QPointF& point,opad::Ref& ref);
+  // What the pointer meets at `point` (widget px) as a click there would (TODO 11 P1, placing a primitive): a candidate's id,
+  // else a body's face (where it is drawn: `face` is moved into the world); `at` where the pointer met it. False: nothing.
+  // hoveredReference() names the face afterwards. `fresh`: a pick at `point` now; else what the last frame's hover detected
+  // (one pick a frame, the view's own: a hover need not pay for a second).
+  bool surfaceAt(const QPointF& point, std::string& candidate, TopoDS_Face& face, opad::Vec3& at, bool fresh = true);
+  // The detected sub-shape for a worker to name (hoveredReference without its walk of the body, which a reopened document's
+  // stock owners need): its body's node, the shape the view draws, the sub-shape in it, and its ordinal when the view knows
+  // it (-1: opad::subshape_index(whole, sub) on the worker).
+  bool hoveredSubShape(std::string& body, TopoDS_Shape& whole, TopoDS_Shape& sub, int& index) const;
   bool originReferenceAt(const QPointF& point,opad::Ref& ref);
   // Drawing to sketch's preview (UI-29): segment and point arrays built on the worker, construction ones dashed; showing
   // them hands the arrays to the driver. previewSegments() counts what the preview draws.
@@ -871,6 +890,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   NavPreset m_preset = NavPreset::Fusion;
   Style m_style = Style::ShadedEdges;
   SelFilter m_filter = SelFilter::Body;
+  bool m_roundFaces = false;  // setSelectionFilter(Edge, true): round faces picked beside the edges
   bool m_gridSnap=false;
   double m_gridStep=10;
   // view/gridSpacing (0 = automatic) and view/gridExtent, read once and when the grid settings change (configureGrid):
@@ -982,6 +1002,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
+  Handle(AIS_Shape) displayCandidate(const Candidate& c);
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_compareParts;  // ViewportCompare.cpp

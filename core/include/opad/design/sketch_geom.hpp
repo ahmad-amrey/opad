@@ -20,6 +20,10 @@ gp_Ax3 frame_ax3(const Frame& f);
 gp_Pln frame_plane(const Frame& f);
 Frame frame_from_ax3(const gp_Ax3& a);
 Frame base_frame(const std::string& base);  // "xy" | "xz" | "yz"
+// The frame a planar face gives what is put on it (a sketch, a primitive, a plane input): its outward normal, a world axis
+// lying in it for x when one does (else the surface's own), the origin at its lowest, then leftmost vertex in those axes
+// (no vertex: its centre). Throws for a face that is not planar.
+Frame face_frame(const TopoDS_Face& face);
 
 // The closed C2 cubic spline through the points, knots at chord lengths: the same curve whichever point comes first
 // or which way they run (null for coincident neighbours). Closed fit splines and equation curves use it.
