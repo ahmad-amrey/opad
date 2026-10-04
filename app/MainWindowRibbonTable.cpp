@@ -168,7 +168,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
 }
 
 // Drafting (UI-104, Appendix A "Draft 2D", phase 1 with the tools there are): after the areas' workspaces in the switcher.
-// A drawing file viewed (DXF, DWG, SVG) comes here by itself (MainWindow::enterDrafting).
+// A drawing file viewed (DXF, DWG, SVG) comes here by itself (MainWindow::followDrawing).
 void MainWindow::draftingTable(RibbonLayout& layout) {
   const auto find = [this](const QString& id) { return action(id); };
   auto group = [&](const QString& tab, const char* name, const QString& title, const std::vector<RibbonTool>& tools) { addGroup(layout, find, tab, name, title, tools); };

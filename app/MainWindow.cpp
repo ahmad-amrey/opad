@@ -47,6 +47,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   createAreas();
   buildMenus();
   buildCentral();
+  buildSnapCommands();
   buildRibbon();
   buildDocks();
   buildStatusBar();

@@ -84,6 +84,12 @@ class MainWindow : public QMainWindow {
   static QString renameBase(QString name);  // "Bolt 3" -> "Bolt": what renaming several objects numbers
   void noteCommand(const QString& id);  // a command ran: Repeat runs it again
   bool repeatOnEnter(const QKeyEvent* key);  // Enter in the view with nothing running: Repeat
+  struct SnapToggle {  // a drafting switch of the status bar: its command, label (tr), icon, key and setting
+    const char *id, *label, *icon, *key, *setting;
+    bool defaultOn;
+  };
+  static const std::vector<SnapToggle>& snapToggles();
+  void buildSnapCommands();  // their commands, before the ribbon (buildStatusBar adds their buttons)
   void buildRibbon();
   void ribbonTable(RibbonLayout& layout);    // Review, Design and the Sketch tab: every command's slot (MainWindowRibbonTable.cpp)
   void draftingTable(RibbonLayout& layout);  // Drafting, after the areas' workspaces
