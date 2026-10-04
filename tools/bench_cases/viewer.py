@@ -180,7 +180,9 @@ CASES = [
     # pin are listed nearest first, Alt+click opens the list, a hovered row is hovered in the view and choosing it selects
     # it; faces behind the pin's top are listed and chosen; Tab / Shift+Tab hover the next and previous face in place and a
     # click takes it; over an edge only edges are listed (no occluder faces); in the Distance tool a row is the pick; a
-    # right click's context menu offers Select other... with the same list.
+    # right click's context menu offers Select other... with the same list; a plain press held still opens it too and its
+    # release selects nothing, while a press that moves on, a quick click and a held press on nothing or on one thing alone
+    # (a lone box beside them) open none.
     # <prefix>.menu.png, <prefix>.preview.png.
     ("select-other", fresh("select-other-empty"), {"OPAD_BENCH_SELECTOTHER": "{prefix}"}),
     # The empty design document (UI-51): the Design workspace shows the origin's axes, its three planes (picked where they

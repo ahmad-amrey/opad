@@ -2,7 +2,9 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QGuiApplication>
 #include <QKeyEvent>
+#include <QStyleHints>
 #include <QMouseEvent>
 #include <QMenu>
 #include <QTimer>
@@ -53,12 +55,12 @@ QList<QAction*> rows(QMenu* menu) {  // the candidates' rows, without the sectio
 }  // namespace
 
 // OPAD_BENCH_SELECTOTHER=<prefix> on an empty document: a 20 mm box, a twin box in the same place and a pin standing through
-// them, seen from the top. Over the pin, in the Body filter, the list holds the pin first and both boxes; Alt+click opens it
+// them, a lone box beside them, seen from the top. Over the pin, in the Body filter, the list holds the pin first and both boxes; Alt+click opens it
 // as a menu, hovering the second row hovers that box in the view, choosing it selects it though the pin is in front. In the
 // Face filter the faces behind the pin's top are listed and one is chosen; Tab and Shift+Tab hover the next and previous face
 // under the resting pointer and a click takes the hovered one. In the Edge filter over a box's edge only edges are listed
-// (never the faces that stand in front of edges). In the Distance tool a row is the tool's pick. <prefix>.menu.png /
-// .preview.png.
+// (never the faces that stand in front of edges). In the Distance tool a row is the tool's pick. A plain press held still
+// for the press-and-hold time opens the list without a modifier. <prefix>.menu.png / .preview.png.
 OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   bool all = true;
   auto require = [&all](bool ok, const QString& what) {
@@ -70,8 +72,9 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   w.m_doc->run("import_brep", {{"brep", brep(BRepPrimAPI_MakeBox(20, 20, 10).Shape())}, {"name", "Box"}});
   w.m_doc->run("import_brep", {{"brep", brep(BRepPrimAPI_MakeBox(20, 20, 10).Shape())}, {"name", "Twin"}});
   w.m_doc->run("import_brep", {{"brep", brep(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(10, 10, 0), gp_Dir(0, 0, 1)), 3, 20).Shape())}, {"name", "Pin"}});
-  if (!until([v] { return v->displayedCount() >= 3 && v->remainingBodies() == 0; }, 30000)) {
-    require(false, "the three bodies are displayed");
+  w.m_doc->run("import_brep", {{"brep", brep(BRepPrimAPI_MakeBox(gp_Pnt(40, 0, 0), 10, 10, 10).Shape())}, {"name", "Lone"}});
+  if (!until([v] { return v->displayedCount() >= 4 && v->remainingBodies() == 0; }, 30000)) {
+    require(false, "the four bodies are displayed");
     return QCoreApplication::exit(2), true;
   }
   std::map<QString, std::string> ids;
@@ -131,6 +134,60 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   }
   until([&offered] { return !offered.isEmpty(); }, 3000);
   require(offered == names, "a right click offers Select other..., which lists the same: " + offered.join(", "));
+
+  // A plain press held still opens the same list; its release is no click. A press that moves on is a drag and a quick
+  // click a click, a held press on nothing stays a click (it clears the selection).
+  const int hold = QGuiApplication::styleHints()->mousePressAndHoldInterval();
+  auto send = [v](QEvent::Type type, const QPointF& at, Qt::MouseButtons buttons) {
+    QMouseEvent e(type, at, v->mapToGlobal(at), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+    QCoreApplication::sendEvent(v, &e);
+  };
+  auto listed = [v] { return v->findChild<QMenu*>("selectOther"); };
+  v->benchHoverAt(overPin);
+  QElapsedTimer held;
+  held.start();
+  send(QEvent::MouseButtonPress, overPin, Qt::LeftButton);
+  const bool notAtOnce = !listed();
+  until([&] { return listed() != nullptr; }, hold + 2000);
+  menu = listed();
+  require(notAtOnce && menu && held.elapsed() >= hold - 50 && rows(menu).size() == 3 && rows(menu).value(0)->text() == "Pin",
+          QString("a press held still opens the list after %1 ms (the hold is %2 ms)").arg(held.elapsed()).arg(hold));
+  send(QEvent::MouseButtonRelease, overPin, Qt::NoButton);
+  v->benchHoverAt(overPin);
+  require(menu && listed() == menu && v->selection().empty(), "its release leaves the list open and selects nothing");
+  if (menu) {
+    const QString last = rows(menu).value(2)->text();
+    rows(menu).value(2)->trigger();
+    menu->close();
+    selected = v->selection();
+    require(selected.size() == 1 && selected.front().body == ids[last], "the held list's last row selects " + last);
+  }
+  v->clearSelection();
+  send(QEvent::MouseButtonPress, overPin, Qt::LeftButton);
+  send(QEvent::MouseMove, overPin + QPointF(12, 0), Qt::LeftButton);
+  until([] { return false; }, hold + 300);
+  require(!listed(), "a press that moves on opens no list");
+  send(QEvent::MouseButtonRelease, overPin + QPointF(12, 0), Qt::NoButton);
+  v->clearSelection();
+  v->benchClickAt(overPin);
+  until([] { return false; }, hold + 300);
+  selected = v->selection();
+  require(!listed() && selected.size() == 1 && selected.front().body == ids["Pin"], "a quick click selects the pin and opens no list");
+  v->benchHoverAt(QPointF(4, 4));
+  send(QEvent::MouseButtonPress, QPointF(4, 4), Qt::LeftButton);
+  until([] { return false; }, hold + 300);
+  send(QEvent::MouseButtonRelease, QPointF(4, 4), Qt::NoButton);
+  v->benchHoverAt(QPointF(4, 4));
+  require(!listed() && v->selection().empty(), "a press held on nothing opens no list and its release clears the selection");
+  const QPointF overLone = v->widgetPoint({45, 5, 10});
+  v->benchHoverAt(overLone);
+  send(QEvent::MouseButtonPress, overLone, Qt::LeftButton);
+  until([] { return false; }, hold + 300);
+  send(QEvent::MouseButtonRelease, overLone, Qt::NoButton);
+  v->benchHoverAt(overLone);
+  selected = v->selection();
+  require(!listed() && selected.size() == 1 && selected.front().body == ids["Lone"], "a press held on one thing alone opens no list and its release selects it");
+  v->clearSelection();
 
   // Faces: those behind the pin's top, one of them chosen.
   filter("select.faces", Viewport::SelFilter::Face);

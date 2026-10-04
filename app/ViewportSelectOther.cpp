@@ -129,11 +129,11 @@ bool Viewport::choosePickCandidate(int index) {
   return true;
 }
 
-QMenu* Viewport::selectOtherMenu(const QPointF& at) {
+QMenu* Viewport::selectOtherMenu(const QPointF& at, size_t fewest) {
   if (auto* old = findChild<QMenu*>("selectOther")) old->close();
   const auto candidates = pickCandidates(at);
-  if (candidates.empty()) {
-    QToolTip::showText(mapToGlobal(at.toPoint()) + QPoint(14, 18), tr("Nothing to select here"), this, QRect(), 1500);
+  if (candidates.size() < std::max<size_t>(fewest, 1)) {
+    if (fewest <= 1) QToolTip::showText(mapToGlobal(at.toPoint()) + QPoint(14, 18), tr("Nothing to select here"), this, QRect(), 1500);
     return nullptr;
   }
   auto* menu = new QMenu(this);
@@ -160,6 +160,20 @@ QMenu* Viewport::selectOtherMenu(const QPointF& at) {
   });
   if (trace::enabled()) trace::log(QStringLiteral("select other: %1 under the pointer").arg(candidates.size()));
   return menu;
+}
+
+// A plain left press held still: the list as Alt+click opens it, when more than one thing is under the pointer (a slow click
+// on one thing stays a click). The controller forgets the press, so its release neither clicks nor ends a rubber band.
+void Viewport::pressHeld() {
+  if (!m_initialised || m_blocked || m_sketchInput || m_selectOtherPress || m_measureAnchorPress || m_zoomDrag) return;
+  QMenu* menu = selectOtherMenu(m_holdAt, 2);
+  if (!menu) return;
+  ResetViewInput();
+  myUI.Selection.Points.Clear();  // a band begun within the click tolerance comes down with the next frame
+  m_holdPress = true;
+  if (trace::enabled()) trace::log(QStringLiteral("select other: press held"));
+  menu->popup(mapToGlobal(m_holdAt.toPoint()));
+  requestRedraw();
 }
 
 // Tab / Shift+Tab with the pointer resting on the view: the next or previous thing under it is hovered in place.

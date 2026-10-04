@@ -234,10 +234,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // nearest first (bodies, faces, edges, vertices, feature candidates), never a face that only stands in front of edges and
   // vertices (UI-31's occluders) or an arc's centre finder. Alt+click lists them (selectOtherMenu): hovering a row hovers it
   // in the view, choosing one selects it as a click would (a guided tool takes it as its next pick). Tab and Shift+Tab hover
-  // the next or previous one under the resting pointer in place, and a click there takes it.
+  // the next or previous one under the resting pointer in place, and a click there takes it. A plain press held still opens
+  // the list as Alt+click does (pressHeld).
   struct PickCandidate { opad::Ref ref; std::string candidate; QString label; double depth = 0; };
   std::vector<PickCandidate> pickCandidates(const QPointF& at);  // widget coordinates; also what preview/choose index
-  QMenu* selectOtherMenu(const QPointF& at);  // nullptr: nothing there; owned by the view, deleted once closed
+  // nullptr: fewer than `fewest` things there (said in a tip when there is nothing); owned by the view, deleted once closed
+  QMenu* selectOtherMenu(const QPointF& at, size_t fewest = 1);
   void previewPickCandidate(int index);  // -1: nothing hovered
   bool choosePickCandidate(int index);
   bool cycleHover(bool forward);
@@ -440,6 +442,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Graphic3d_Vec2i m_pickAt, m_cycledAt;
   bool m_hoverCycled = false;  // the hover was chosen (Tab, a list row): kept until the pointer moves, occluded or not
   bool m_selectOtherPress = false;  // an Alt+press: its release opens the list
+  // A plain left press held still for the platform's press-and-hold time opens the list too, when more than one thing is
+  // under it: the controller forgets the press (no click, no rubber band) and its release is the view's.
+  QTimer m_holdTimer;
+  QPointF m_holdAt;
+  bool m_holdPress = false;
+  void pressHeld();
   QPointF m_contextAt;
   bool m_inContextMenu = false;
   void moveTo(const Graphic3d_Vec2i& at);  // the context's MoveTo, then dropOccluded

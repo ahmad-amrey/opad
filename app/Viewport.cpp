@@ -19,6 +19,7 @@
 
 #include <QElapsedTimer>
 #include <QScopedValueRollback>
+#include <QStyleHints>
 #include <QThread>
 #include <QTimer>
 #include <QWindow>
@@ -163,6 +164,8 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   connect(&m_trackpadEndTimer, &QTimer::timeout, this, &Viewport::finishTrackpadScroll);
   m_dwellTimer.setSingleShot(true);  // the pointer rests: no event would run the tracker again
   connect(&m_dwellTimer, &QTimer::timeout, this, [this] { m_trackingDirty = true; requestRedraw(); });
+  m_holdTimer.setSingleShot(true);
+  connect(&m_holdTimer, &QTimer::timeout, this, &Viewport::pressHeld);
 #if !defined(__APPLE__)
   grabGesture(Qt::PinchGesture);  // fallback for touch devices without native pinch events
 #endif
@@ -2315,6 +2318,8 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   m_pressPos = (e->position()+m_dragOffset).toPoint();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
+  m_holdTimer.stop();
+  m_holdPress = false;
   // The zoom window takes the left drag (UI-47); a right click leaves it.
   if (m_zoomWindow && e->button() == Qt::LeftButton) { m_zoomDrag = true; m_zoomFrom = m_zoomTo = e->position(); return; }
   if (m_zoomWindow && e->button() == Qt::RightButton) { m_rightPress = false; cancelZoomWindow(); return; }
@@ -2390,11 +2395,20 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
       if(std::abs(direction.Z())>1-1e-8){const auto up=camera->Up();camera->SetDirection(gp_Dir(direction.X()+up.X()*1e-4,direction.Y()+up.Y()*1e-4,direction.Z()));}
     }
   }
+  if (m_initialised && e->button() == Qt::LeftButton && e->buttons() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && !m_cubeGesture) {
+    m_holdAt = e->position();
+    m_holdTimer.start(QGuiApplication::styleHints()->mousePressAndHoldInterval());
+  }
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()+m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
+  m_holdTimer.stop();
   if (m_blocked) return;
+  if (std::exchange(m_holdPress, false) && e->button() == Qt::LeftButton) {  // the held press opened the list
+    e->accept();
+    return;
+  }
   if (m_zoomDrag && e->button() == Qt::LeftButton) {
     m_zoomDrag = false;
     m_zoomTo = e->position();
@@ -2500,7 +2514,9 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (m_hoverCycled && devicePos(e->position() + m_dragOffset) != m_cycledAt) m_hoverCycled = false;  // the pointer moved on: it picks again
   m_trackingCursor = e->position();
   m_trackingDirty = true;
+  if (m_holdTimer.isActive() && (e->position() - m_holdAt).manhattanLength() >= 4) m_holdTimer.stop();  // a drag, not a hold
   if (m_blocked) return;
+  if (m_holdPress) return;  // the list is open over the held press
   if (m_zoomDrag) { m_zoomTo = e->position(); showZoomBand(); return; }
   if (m_selectOtherPress) return;  // an Alt+press drags nothing
   if (m_trackpadMode != TrackpadMode::None && e->buttons() == Qt::NoButton) finishTrackpadScroll();
