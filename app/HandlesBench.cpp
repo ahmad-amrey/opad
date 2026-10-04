@@ -349,6 +349,83 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         pass("move: Enter moves the box 14 mm along X; the triad goes");
         return true;
       },
+      // ---- Move with Rotate: the ring round Z through the box's middle (14 mm out), pulled round, then 45 typed.
+      [=] {
+        start("move");
+        return true;
+      },
+      [=] {
+        if (!waitFor(view->selectionFilter() == Viewport::SelFilter::Body, "Move's Bodies switch the view to bodies")) return false;
+        int x = 0, y = 0;
+        require(view->benchBodyPoint(st->box, x, y), "the box is not in the view");
+        view->benchClickAt(x, y);
+        return true;
+      },
+      [=] {
+        TranslateTriad* triad = design->moveTriad();
+        if (!waitFor(triad && triad->shown(), "Move shows no triad on the picked box")) return false;
+        require(!triad->ringShown(), "a ring shows with Rotate off");
+        form->setValue("rotate", true);
+        return true;
+      },
+      [=] {
+        TranslateTriad* triad = design->moveTriad();
+        if (!waitFor(triad->ringShown() && previewFor("angle"), "Rotate on shows no ring")) return false;
+        // Turned 90 degrees (the default) about Z: the triad on the ring at (0, 14), the box's middle turned.
+        require(closeTo(triad->partPoint(0), view->widgetPoint({-st->centre[1], st->centre[0] + 14, st->centre[2]}), 3), "the triad is not where the 90 degree turn takes the box's middle");
+        shot("move-ring", false);
+        pass("move: Rotate on shows a ring round Z through the box's middle, the triad turned on it");
+        // A point on the ring a quarter turn back (the box's own place), pulled 0.6 rad further round.
+        st->press = triad->ringPoint(M_PI / 2);
+        require(triad->partAt(st->press) == TranslateTriad::kRing, "the ring is not where the triad says");
+        mouse(QEvent::MouseButtonPress, st->press);
+        require(triad->dragging() == TranslateTriad::kRing, "a press on the ring did not grip it");
+        st->last = triad->ringPoint(M_PI / 2 + 0.6);
+        mouse(QEvent::MouseMove, triad->ringPoint(M_PI / 2 + 0.3));
+        mouse(QEvent::MouseMove, st->last);
+        const double degrees = opad::design::ParamTable().angle(form->inputs().value("angle", std::string())) * 180 / M_PI;
+        require(std::abs(degrees - 125) < 5.1 && std::abs(std::fmod(degrees, 5.0)) < 1e-6, "pulling round the ring did not turn the angle on in 5 degree steps: " + form->valueText("angle").toStdString());
+        return true;
+      },
+      [=] {
+        if (!waitFor(previewFor("angle"), "the turn preview did not follow the pull round the ring")) return false;
+        TranslateTriad* triad = design->moveTriad();
+        require(triad->dragging() == TranslateTriad::kRing, "the ring let go before the release");
+        const double angle = opad::design::ParamTable().angle(form->inputs().value("angle", std::string()));
+        const opad::Vec3 turned{st->centre[0] + 14, st->centre[1], st->centre[2]};  // the box's middle now
+        const opad::Vec3 to{turned[0] * std::cos(angle) - turned[1] * std::sin(angle), turned[0] * std::sin(angle) + turned[1] * std::cos(angle), turned[2]};
+        require(closeTo(triad->partPoint(0), view->widgetPoint(to), 3), "the triad did not travel along the ring");
+        Bnd_Box moved;
+        for (const auto& c : design->readyPreview()->changed)
+          if (c.shape && !c.shape->IsNull()) BRepBndLib::Add(*c.shape, moved);
+        double x0, y0, z0, x1, y1, z1;
+        moved.Get(x0, y0, z0, x1, y1, z1);
+        require(std::hypot((x0 + x1) / 2 - to[0], (y0 + y1) / 2 - to[1]) < 1, "the preview during the pull is not the box turned by the angle");
+        shot("move-turn", false);
+        pass("move: pulled round the ring while held, the angle is " + form->valueText("angle") + "; the triad and the preview travel along it");
+        mouse(QEvent::MouseButtonRelease, st->last);
+        view->setFocus();
+        key(Qt::Key_4, "4");
+        key(Qt::Key_5, "5");
+        return true;
+      },
+      [=] {
+        const double degrees = opad::design::ParamTable().angle(form->inputs().value("angle", std::string())) * 180 / M_PI;
+        if (!waitFor(std::abs(degrees - 45) < 1e-6, "4 and 5 typed after pulling the ring did not go into Angle: " + form->valueText("angle").toStdString())) return false;
+        pass("move: 4 and 5 typed after pulling the ring go into the Angle box");
+        key(Qt::Key_Return, {});
+        return true;
+      },
+      [=] {
+        if (!waitFor(!design->featureActive() && win->m_doc->scene.features.back().kind == "move" && win->m_doc->scene.features.back().inputs.value("rotate", false), "Enter did not commit the turn")) return false;
+        const Bnd_Box box = opad::node_world_bbox(win->m_doc->doc, win->m_doc->scene, st->box);
+        double x0, y0, z0, x1, y1, z1;
+        box.Get(x0, y0, z0, x1, y1, z1);
+        const double r = st->centre[0] + 14;
+        require(std::hypot((x0 + x1) / 2 - r * std::sqrt(0.5), (y0 + y1) / 2 - r * std::sqrt(0.5)) < 0.5, "the box did not turn 45 degrees about Z");
+        pass("move: Enter turns the box 45 degrees about Z");
+        return true;
+      },
       // ---- The other arrows: where they are and what they pull.
       [=] {
         start("chamfer");

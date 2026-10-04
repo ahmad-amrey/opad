@@ -142,8 +142,9 @@ json hint_refs(const Document& doc, const Scene& scene, json inputs);
 // and a pull of d along the axis changes the input by d / scale. Fillet and chamfer: the radius or distance, half way
 // along the first picked edge, pointing out between its two faces; thicken: the thickness off the first face (inwards with
 // Other side); press pull: the distance off the first face's centre along its outward normal; an offset construction
-// plane: the distance from its plane's origin; box, cylinder and cone: the height at the middle of the footprint. The
-// extrusion keeps the distance_handle its result stores. Empty when the kind has none or what it needs does not resolve.
+// plane: the distance from its plane's origin; box, cylinder and cone: the height at the middle of the footprint; a move
+// that turns: the angle about its axis (origin a point on the axis, axis its direction, "ring": true). The extrusion keeps
+// the distance_handle its result stores. Empty when the kind has none or what it needs does not resolve.
 json feature_handles(const Document& doc, const Scene& scene, const std::string& kind, const json& inputs);
 
 }  // namespace opad::design

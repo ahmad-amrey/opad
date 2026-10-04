@@ -37,8 +37,9 @@ class TriadObject : public AIS_InteractiveObject {
   gp_Pnt origin;
   gp_Dir view{0, 0, -1};
   std::vector<std::pair<gp_Dir, QColor>> axes;
+  std::vector<gp_Pnt> ring;  // closed, empty: none
   double pixel = 1;
-  int lit = -1;  // 0 the square, k arrow k
+  int lit = -1;  // 0 the square, k arrow k, TranslateTriad::kRing the ring
   QColor fill, rim, active;
 
  protected:
@@ -66,6 +67,46 @@ class TriadObject : public AIS_InteractiveObject {
       }
       lines->AddPrimitiveArray(rims);
     };
+    if (ring.size() > 2) {  // under the arrows: a band as wide on screen from any angle (wide GL lines are not), outlined
+      const bool on = lit == T::kRing;
+      const double half = (on ? 3.0 : 2.0) * pixel;
+      std::vector<gp_Pnt> inner, outer;
+      for (size_t i = 0; i + 1 < ring.size(); ++i) {  // the last sample closes the ring: it is the first
+        const gp_Pnt& before = ring[i == 0 ? ring.size() - 2 : i - 1];
+        const gp_Pnt& after = ring[i + 1];
+        gp_Vec across = d.Crossed(gp_Vec(before, after));
+        if (across.Magnitude() < 1e-12) across = gp_Vec(up);
+        across.Normalize();
+        inner.push_back(ring[i].Translated(across * -half));
+        outer.push_back(ring[i].Translated(across * half));
+      }
+      inner.push_back(inner.front());
+      outer.push_back(outer.front());
+      std::vector<gp_Pnt> triangles;
+      for (size_t i = 1; i < inner.size(); ++i) {
+        for (const gp_Pnt& p : {inner[i - 1], outer[i - 1], outer[i], inner[i - 1], outer[i], inner[i]}) triangles.push_back(p);
+      }
+      Handle(Graphic3d_AspectFillArea3d) style = new Graphic3d_AspectFillArea3d;
+      style->SetInteriorStyle(Aspect_IS_SOLID);
+      style->SetInteriorColor(occ(on ? active.lighter(135) : active));
+      style->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+      style->SetSuppressBackFaces(false);
+      const Handle(Graphic3d_Group) fills = prs->NewGroup();
+      fills->SetGroupPrimitivesAspect(style);
+      Handle(Graphic3d_ArrayOfTriangles) band = new Graphic3d_ArrayOfTriangles(static_cast<int>(triangles.size()));
+      for (const auto& p : triangles) band->AddVertex(p);
+      fills->AddPrimitiveArray(band);
+      const Handle(Graphic3d_Group) lines = prs->NewGroup();
+      lines->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(occ(rim), Aspect_TOL_SOLID, 1.0));
+      Handle(Graphic3d_ArrayOfSegments) rims = new Graphic3d_ArrayOfSegments(static_cast<int>(4 * inner.size()));
+      for (size_t i = 1; i < inner.size(); ++i) {
+        rims->AddVertex(inner[i - 1]);
+        rims->AddVertex(inner[i]);
+        rims->AddVertex(outer[i - 1]);
+        rims->AddVertex(outer[i]);
+      }
+      lines->AddPrimitiveArray(rims);
+    }
     for (size_t k = 0; k < axes.size(); ++k) {
       gp_Vec along = gp_Vec(axes[k].first) - d * gp_Vec(axes[k].first).Dot(d);
       if (along.Magnitude() < 0.25) continue;  // seen end on: no arrow to pull
@@ -106,6 +147,19 @@ void TranslateTriad::hide() {
   m_hover = -1;
 }
 
+void TranslateTriad::setRing(bool on, const opad::Vec3& centre, const opad::Vec3& axis, double radius) {
+  if (m_drag == kRing) return;  // the ring being pulled stays where it was pressed
+  m_ring = {on && radius > 0, centre, axis, radius};
+}
+
+QPointF TranslateTriad::ringPoint(double angle) const {
+  if (m_ringScreen.size() < 2) return m_centre;
+  const double turns = std::fmod(std::fmod(angle / (2 * M_PI), 1.0) + 1.0, 1.0) * double(m_ringScreen.size() - 1);
+  const size_t i = std::min(m_ringScreen.size() - 2, size_t(turns));
+  const double f = turns - double(i);
+  return m_ringScreen[i] * (1 - f) + m_ringScreen[i + 1] * f;
+}
+
 void TranslateTriad::setHover(int part) {
   if (part == m_hover) return;
   m_hover = part;
@@ -127,6 +181,25 @@ void TranslateTriad::draw() {
   for (const Arrow& a : m_arrows) triad->axes.push_back({gp_Dir(a.dir[0], a.dir[1], a.dir[2]), a.colour});
   triad->pixel = pixel;
   triad->lit = m_drag >= 0 ? m_drag : m_hover;
+  // The ring, unless seen (nearly) edge on: samples in 3D and on screen.
+  triad->ring.clear();
+  m_ringScreen.clear();
+  if (m_ring.on && std::abs(dot(m_ring.axis, d)) > 0.15) {
+    const opad::Vec3& n = m_ring.axis;
+    opad::Vec3 u = std::abs(n[2]) < 0.9 ? opad::Vec3{-n[1], n[0], 0} : opad::Vec3{0, -n[2], n[1]};  // square to the axis
+    u = scaled(u, 1 / std::sqrt(dot(u, u)));
+    const opad::Vec3 v{n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]};  // n x u
+    m_ringFrame.origin = m_ring.centre;
+    m_ringFrame.x = u;
+    m_ringFrame.y = v;
+    constexpr int samples = 96;
+    for (int i = 0; i <= samples; ++i) {
+      const double a = 2 * M_PI * i / samples;
+      const opad::Vec3 p = plus(m_ring.centre, plus(scaled(u, m_ring.radius * std::cos(a)), scaled(v, m_ring.radius * std::sin(a))));
+      triad->ring.push_back(gp_Pnt(p[0], p[1], p[2]));
+      m_ringScreen.push_back(m_view->widgetPoint(p));
+    }
+  }
   triad->fill = t.fg2;
   triad->rim = t.dark ? QColor("#0b0d10") : QColor("#ffffff");
   triad->active = t.sel;
@@ -163,7 +236,10 @@ int TranslateTriad::partAt(const QPointF& at) const {
     const double d = distance2(at, m_screen[k].first, m_screen[k].second);
     if (d <= nearest) nearest = d, best = static_cast<int>(k) + 1;
   }
-  return best;
+  if (best >= 0) return best;
+  for (size_t i = 1; i < m_ringScreen.size(); ++i)  // within 7 px of the ring
+    if (distance2(at, m_ringScreen[i - 1], m_ringScreen[i]) <= 49) return kRing;
+  return -1;
 }
 
 QPointF TranslateTriad::partPoint(int part) const {
@@ -184,15 +260,31 @@ void TranslateTriad::begin(int part, const QPointF& from) {
     m_axis = m_arrows[static_cast<size_t>(part - 1)].dir;
     const double step = std::max(1e-9, m_view->pixelSize()) * 50;
     m_screenAxis = (QPointF(m_view->widgetPoint(plus(m_at, scaled(m_axis, step)))) - QPointF(m_view->widgetPoint(m_at))) / step;
+  } else if (part == kRing) {  // round the ring, measured in its plane
+    double u = 0, v = 0;
+    m_turned = 0;
+    m_lastPhi = m_view->planePoint(from, m_ringFrame, u, v) ? std::atan2(v, u) : 0;
   } else {  // in the view's plane through the triad
     m_plane = m_view->annotationCameraPlane(m_at);
   }
   if (m_shown) draw();
 }
 
+double TranslateTriad::turn(const QPointF& to) {
+  double u = 0, v = 0;
+  if (m_drag != kRing || !m_view->planePoint(to, m_ringFrame, u, v)) return m_turned;
+  const double phi = std::atan2(v, u);
+  double step = phi - m_lastPhi;
+  while (step > M_PI) step -= 2 * M_PI;
+  while (step <= -M_PI) step += 2 * M_PI;
+  m_turned += step;
+  m_lastPhi = phi;
+  return m_turned;
+}
+
 double TranslateTriad::along(const QPointF& to) const {
   const double size = QPointF::dotProduct(m_screenAxis, m_screenAxis);
-  if (m_drag <= 0 || size < 1e-12) return 0;
+  if (m_drag <= 0 || m_drag == kRing || size < 1e-12) return 0;
   return QPointF::dotProduct(to - m_from, m_screenAxis) / size;
 }
 

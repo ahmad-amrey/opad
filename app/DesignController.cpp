@@ -423,6 +423,7 @@ void DesignController::editOp(const std::string& opId) {
 void DesignController::endFeature() {
   m_distanceHandle->hide();
   m_values->reset();
+  m_moveAxis = {};
   if (m_triad) {
     m_pull = {};
     m_triad->end();
@@ -1180,9 +1181,14 @@ void DesignController::runPreview(bool commit) {
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
     if (std::exchange(m_previewPending, false) && !commit) QTimer::singleShot(0, this, [this] { if (m_featureOn && !m_planJob) runPreview(false); });
+    moveAxisResolved(*handles, inputs);  // Move's ring round an edge's or a construction axis's line
+    // The value arrow, not Move's ring (the triad draws that).
+    opad::json arrow;
+    for (const auto& h : *handles)
+      if (!h.value("ring", false)) { arrow = h; break; }
     if (!ok) {
       // A value that does not work (a radius too big for the edge) keeps its arrow, to be pulled back.
-      if (!handles->empty() && error != "cancelled") showHandle(handles->front());
+      if (arrow.is_object() && error != "cancelled") showHandle(arrow);
       else if(!m_distanceHandle->interacting())m_distanceHandle->hide();
       m_readyPlan.reset();
       m_viewport->clearPreviewBodies();
@@ -1236,7 +1242,7 @@ void DesignController::runPreview(bool commit) {
         m_distanceHandle->configure(origin,axis,value,QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
       }
     }
-    if(!hasHandle && !handles->empty()){hasHandle=true;showHandle(handles->front());}
+    if(!hasHandle && arrow.is_object()){hasHandle=true;showHandle(arrow);}
     if(!hasHandle)m_distanceHandle->hide();
     m_values->refresh();  // the boxes beside the pointer give way to the handle's
     std::vector<Viewport::PreviewPart> parts;

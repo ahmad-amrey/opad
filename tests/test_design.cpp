@@ -709,6 +709,12 @@ TEST(feature_handles_sit_where_the_guides_draw_them) {
   CHECK(feature_handles(doc, s, "plane", {{"mode", "angle"}, {"plane", {{"base", "xy"}}}}).empty());
   h = feature_handles(doc, s, "box", {{"plane", {{"base", "xy"}}}, {"x", "5 mm"}, {"y", "0 mm"}, {"length", "10 mm"}, {"width", "6 mm"}, {"height", "-8 mm"}, {"centered", false}});
   CHECK(h.size() == 1 && h[0]["input"] == "height" && close(h[0]["origin"], 10, 3, 0) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == -8.0);
+  // A move that turns: the ring's axis (the edge's line here) and the angle; none without Rotate.
+  h = feature_handles(doc, s, "move", {{"bodies", json::array({{{"body", body}, {"kind", "body"}}})}, {"rotate", true}, {"axis", {{"edge", edgeRef}}}, {"angle", "30 deg"}});
+  CHECK(h.size() == 1 && h[0]["input"] == "angle" && h[0].value("ring", false) && std::abs(std::abs(h[0]["axis"][0].get<double>()) - 1) < 1e-9);
+  CHECK(std::abs(h[0]["origin"][1].get<double>()) < 1e-9 && std::abs(h[0]["origin"][2].get<double>() - 20) < 1e-9);
+  CHECK_NEAR(h[0]["value"].get<double>(), M_PI / 6, 1e-9);
+  CHECK(feature_handles(doc, s, "move", {{"bodies", json::array({{{"body", body}, {"kind", "body"}}})}, {"rotate", false}, {"axis", {{"base", "z"}}}}).empty());
   // Nothing to show: no pick yet, a stale pick, a kind without a handle.
   CHECK(feature_handles(doc, s, "fillet", {{"edges", json::array()}, {"radius", "2 mm"}}).empty());
   CHECK(feature_handles(doc, s, "fillet", {{"edges", json::array({{{"body", "nobody"}, {"kind", "edge"}, {"index", 0}}})}, {"radius", "2 mm"}}).empty());

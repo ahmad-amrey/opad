@@ -1467,6 +1467,12 @@ json feature_handles(const Document& doc, const Scene& scene, const std::string&
         BRepGProp::SurfaceProperties(face, g);
         handles.push_back(handle_json("distance", g.CentreOfMass(), gp_Vec(n), ctx.length(in, "distance")));
       }
+    } else if (kind == "move" && in.value("rotate", false)) {
+      // The axis it turns about (an edge, a face or a construction axis resolved here): the app's ring goes round it.
+      const gp_Ax1 a = ctx.axis(in.value("axis", json()));
+      json ring = handle_json("angle", a.Location(), gp_Vec(a.Direction()), ctx.angle(in, "angle"));
+      ring["ring"] = true;
+      handles.push_back(ring);
     } else if (kind == "plane" && in.value("mode", "offset") == "offset") {
       const Frame f = ctx.plane(in.value("plane", json()));
       handles.push_back(handle_json("distance", pnt(f.origin), vec(f.normal()), ctx.length(in, "distance")));

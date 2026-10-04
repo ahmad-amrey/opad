@@ -4,6 +4,7 @@
 // thread), committed on the UI thread as one undo step.
 #include <QObject>
 #include <QTimer>
+#include <gp_Ax1.hxx>
 #include <array>
 #include <functional>
 #include <memory>
@@ -149,18 +150,27 @@ class DesignController : public QObject {
   QPointer<DimensionHandle> m_distanceHandle;  // the feature's value arrow (TODO 11 P2): extrude's distance, a fillet's radius, ...
   QString m_handleInput = "distance";          // the input it pulls
   void showHandle(const opad::json& handle);   // a feature_handles entry: the arrow there, bound to its input
-  // Move / copy's triad (TODO 11 P2, DesignTriad.cpp): X, Y and Z arrows and a square on the picked bodies; a pull sets the
-  // distances (rounded at this zoom) and the preview follows as during the extrude's drag; the boxes by the pointer show
-  // the values, the pulled arrow's taking what is typed next.
+  // Move / copy's triad (TODO 11 P2, DesignTriad.cpp): X, Y and Z arrows and a square on the picked bodies, and with Rotate
+  // on a ring round the move's axis; a pull sets the distances (rounded at this zoom) or the angle (5 degree steps) and the
+  // preview follows as during the extrude's drag; the boxes by the pointer show the values, the pulled part's taking what is
+  // typed next.
   std::unique_ptr<TranslateTriad> m_triad;
   struct TriadPull {
-    int part = -1;                   // -1 none, 0 the square, 1-3 X, Y, Z
+    int part = -1;                   // -1 none, 0 the square, 1-3 X, Y, Z, TranslateTriad::kRing the ring
     opad::Vec3 start{0, 0, 0};       // dx, dy, dz at the press
+    double angle = 0;                // the angle at the press (radians)
   } m_pull;
+  struct MoveAxis {
+    bool valid = false;
+    opad::json input;                // the axis input it was resolved for
+    opad::Vec3 origin{0, 0, 0}, dir{0, 0, 1};
+  } m_moveAxis;                      // a move's axis other than X, Y or Z, from the preview's worker
   void placeMoveTriad();
   bool triadEvent(QEvent* event);  // the viewport's mouse events; true: the triad took it
   bool pulling() const;            // a handle or the triad is being pulled: previews as fast as plans come
-  double lengthInput(const QString& name, double fallback) const;  // a length input's value now (fallback: it does not evaluate)
+  double inputValue(const QString& name, opad::design::Dim dim, double fallback) const;  // a value input now (fallback: it does not evaluate)
+  bool moveAxis(gp_Ax1& axis) const;  // the axis the move turns about, when known
+  void moveAxisResolved(const opad::json& handles, const opad::json& inputs);
  public:
   // Benches (TODO 11 P2): Move's triad, the input the value arrow pulls while it shows (empty: none), the preview plan on
   // screen and the inputs it was made for.
