@@ -21,6 +21,7 @@
 #include "DesignController.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Ribbon.hpp"
 #include "SketchCommands.hpp"
 #include "SketchEditor.hpp"
@@ -66,7 +67,13 @@ CommandLine::CommandLine(QWidget* view) : QFrame(view), m_view(view) {
   m_match->setObjectName("commandMatch");
   m_close = new QToolButton(this);
   m_close->setObjectName("commandClose");
-  m_close->setToolTip(tr("Hide the command line (Space shows it again)"));
+  // Its key as the user has it (Space by default), or the ribbon's button when it has none.
+  auto closeTip = [this] {
+    const QString key = keys::text(QStringLiteral("sketch.commandLine"));
+    m_close->setToolTip(key.isEmpty() ? tr("Hide the command line (Command line on the ribbon shows it again)") : tr("Hide the command line (%1 shows it again)").arg(key));
+  };
+  closeTip();
+  connect(keys::notifier(), &keys::Notifier::changed, this, closeTip);
   m_close->setFixedSize(20, 20);
   m_close->setIconSize(QSize(12, 12));
   m_close->setFocusPolicy(Qt::NoFocus);

@@ -148,10 +148,7 @@ void MainWindow::buildTimelineMenu(QMenu& menu, const std::string& requestedId) 
     connect(a, &QAction::triggered, this, [this, generation, fn] { if (generation == m_doc->generation) guarded(fn); });
     return a;
   };
-  auto keyed = [](const QString& text, const QString& id) {  // the menu's key column: the command's key now, if it has one
-    const QString key = keys::plain(keys::binding(id));
-    return key.isEmpty() ? text : text + '\t' + key;
-  };
+  const auto keyed = keys::menuText;  // the menu's key column: the command's key now, if it has one
   if (const opad::Op* menuOp = m_doc->doc.find_op(opId)) {
     const bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
     // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered

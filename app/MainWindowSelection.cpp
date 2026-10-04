@@ -17,6 +17,7 @@
 #include "Drawing2D.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "SmartRules.hpp"
 #include "Theme.hpp"
 #include "opad/design/feature.hpp"
@@ -324,14 +325,13 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
   };
   // Picked faces and edges as Del does (UI-04), through smart selection; objects by what the selection covers.
   auto remove = [&](bool picks) {
-    const QString key = "\t" + action("edit.delete")->shortcut().toString(QKeySequence::NativeText);
-    QString text = tr("Delete") + key;
+    QString text = tr("Delete");
     if (!picks) {
       const smart::Deletion d = smart::routeDelete(scene, ids);
       const QString what = sketches && ids.size() == 1 ? QString::fromStdString(scene.sketch(ids.front())->name) : !one.isEmpty() ? one : tr("%1 objects").arg(ids.size());
-      text = (d.remove.empty() ? tr("Delete %1") : tr("Remove %1")).arg(what) + key;
+      text = (d.remove.empty() ? tr("Delete %1") : tr("Remove %1")).arg(what);
     }
-    QAction* del = entry("delete", text, "contextDelete", [this, ids, picks] {
+    QAction* del = entry("delete", keys::menuText(text, QStringLiteral("edit.delete")), "contextDelete", [this, ids, picks] {
       if (!requireEditable()) return;
       if (picks) {
         if (!areaCommand("edit.delete")) throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Select parent ({key:edit.selectparent}), or use Remove faces.");

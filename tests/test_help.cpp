@@ -87,13 +87,18 @@ class Arabic : public QTranslator {
   QHash<QString, QString> m_table;
 };
 
-// A key spelled in a help text instead of a token: Ctrl+X, F9, "Press D", "(S)" (English and Arabic). Fixed keys (Enter,
-// Esc, Tab, Del, Backspace, Shift+Tab, a modifier held with a click or a drag) are allowed.
+// A key spelled in a help text instead of a token: Ctrl+X, F9, "Press D", "press Del", "(S)", and a letter that acts
+// ("G again hides it", "· P pins"; not an axis or a size: "X offset") (English and Arabic). Fixed keys (Enter, Esc, Tab,
+// Del in a sketch, Backspace, Shift+Tab, a modifier held with a click or a drag) are allowed, and so are the note
+// editor's own pen keys (B, E: AnnotationEditor) and Compare's versions A and B.
 QStringList literalKeys(QString text) {
-  static const QRegularExpression token(R"(\{(key|press|fixed):[^}]*\})"), allowed(R"((Ctrl|Shift|Alt)\+(Tab\b|((left|middle|right) )?(click|drag)))", QRegularExpression::CaseInsensitiveOption);
-  static const QList<QRegularExpression> patterns{QRegularExpression(R"(\b(Ctrl|Shift|Alt|Meta|Cmd)\+)"), QRegularExpression(R"(\bF\d{1,2}\b)"),
-                                                  QRegularExpression(R"([Pp]ress [A-Z0-9]\b)"), QRegularExpression(R"(\([A-Z0-9]\))"),
-                                                  QRegularExpression(QString::fromUtf8(R"(اضغط\s+[A-Z0-9]\b)"))};
+  static const QRegularExpression token(R"(\{(key|press|fixed):[^}]*\})"),
+      allowed(R"((Ctrl|Shift|Alt)\+(Tab\b|((left|middle|right) )?(click|drag))|\b(B pen|E eraser)\b|\bB (alone|continues|is|in)\b)", QRegularExpression::CaseInsensitiveOption);
+  static const QList<QRegularExpression> patterns{
+      QRegularExpression(R"(\b(Ctrl|Shift|Alt|Meta|Cmd)\+)"), QRegularExpression(R"(\bF\d{1,2}\b)"), QRegularExpression(R"([Pp]ress [A-Z0-9]\b)"),
+      QRegularExpression(R"([Pp]ress (Del|Delete|Home|End|PgUp|PgDn|Space)\b)"), QRegularExpression(R"(\([A-Z0-9]\))"),
+      QRegularExpression(R"((?:^|[·;:,(]\s*)[B-HJ-Z]\s+(?!(?:offsets?|axis|position|and|or|spacing|size|direction|coordinates?|values?|scale|parts?|sizes?)\b)[a-z]+)"),
+      QRegularExpression(QString::fromUtf8(R"(اضغط\s+[A-Z0-9]\b)"))};
   text.remove(token).remove(allowed);
   QStringList out;
   for (const QRegularExpression& re : patterns)
@@ -712,6 +717,11 @@ TEST(help_texts_have_no_literal_keys) {
       keysFound << literalKeys(o.value(field).toString()) << literalKeys(ar.value(field).toString());
       checkTokens(id + "." + field, o.value(field).toString(), ar.value(field).toString());
     }
+    // Keywords are words, not keys: search matches the key the command has now (help::matches).
+    static const QRegularExpression keyword(R"(^(ctrl|shift|alt|cmd|meta)[ +]\S|\+|^f\d{1,2}$|^(del|esc|ctrl|alt)$|^[a-z0-9]$)", QRegularExpression::CaseInsensitiveOption);
+    for (const QJsonObject& r : {o, ar})
+      for (const QJsonValue& k : r.value("keywords").toArray())
+        if (keyword.match(k.toString()).hasMatch()) keysFound << "keyword " + k.toString();
     if (!keysFound.isEmpty()) found << "record " + id + ": " + keysFound.join(", ");
   }
   // Clip texts (captions, keyless captions, labels, chips, cards) and their Arabic.
@@ -739,7 +749,11 @@ TEST(help_texts_have_no_literal_keys) {
   if (!found.isEmpty()) throw check::Failure("literal keys (use {key:id}, {press:id} or {fixed:name}): " + found.join(" | ").toStdString());
   // The checker itself.
   CHECK_EQ(literalKeys("Press D, then Ctrl+Z or F9 (S)"), QStringList({"Ctrl+", "F9", "Press D", "(S)"}));
+  CHECK_EQ(literalKeys("Select it and press Del"), QStringList({"press Del"}));
+  CHECK_EQ(literalKeys("G again hides it"), QStringList({"G again"}));
+  CHECK_EQ(literalKeys("%1: pick more, P pins, Esc clears"), QStringList({", P pins"}));
   CHECK(literalKeys("Press Enter or Esc; Shift+Tab goes back; Ctrl+click adds, Shift+drag pans; {press:view.fit} ({key:inspect.pin})").isEmpty());
+  CHECK(literalKeys("X offset · Y axis · Orbit · B pen · E eraser · B is an earlier A · {press:view.grid} again hides it").isEmpty());
   CHECK_EQ(literalKeys(QString::fromUtf8("اضغط F لملاءمة العرض")), QStringList({QString::fromUtf8("اضغط F")}));
 }
 

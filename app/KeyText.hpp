@@ -55,6 +55,8 @@ QStringList fixedCaps(const QString& name, Style style = Style::Native);
 QString fixedText(const QString& name, Style style = Style::Native);  // isolated
 // "<key> <verb>" for a hint list ("P pin"), "" when the command has no key (the list leaves the entry out).
 QString hint(const QString& id, const QString& verb);
+// A menu entry with the command's key in the menu's key column ("Delete view\tDel"), the text alone without a key.
+QString menuText(const QString& text, const QString& id);
 // Several commands' keys as one entry of a hint ("1–4 filter"): "1–4" when they are single consecutive characters, else
 // the bound ones joined by "/" ("1/Ctrl+Alt+2/3/4"); isolated; "" when none has a key.
 QString span(const QStringList& ids);

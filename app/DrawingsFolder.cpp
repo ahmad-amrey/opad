@@ -12,6 +12,7 @@
 #include "AppDocument.hpp"
 #include "CommandHelp.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "opad/drawing/sheet.hpp"
 
 namespace drawings {
@@ -210,7 +211,7 @@ void contextMenu(AppDocument* doc, const std::string& id, QMenu& menu, const std
     menu.addAction(icons::themed("export", 16), isDrawing(id) ? tr("Export drawing…") : tr("Export sheet…"), exportSheet)->setObjectName("drawings.export");
   menu.addSeparator();
   const QString what = isDrawing(id) ? tr("Delete drawing") : s.sheet(id) ? tr("Delete sheet") : s.sheet_view(id) ? tr("Delete view") : tr("Delete");
-  menu.addAction(icons::themed("delete", 16), what + "\tDel", [doc, id] {
+  menu.addAction(icons::themed("delete", 16), keys::menuText(what, QStringLiteral("edit.delete")), [doc, id] {  // Del is edit.delete's
         try {
           remove(doc, {id});
         } catch (const std::exception& e) {

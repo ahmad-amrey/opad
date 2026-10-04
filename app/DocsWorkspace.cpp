@@ -21,6 +21,7 @@
 #include "DocsArea.hpp"
 #include "DrawingsFolder.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Jobs.hpp"
 #include "Ribbon.hpp"
 #include "SheetCanvas.hpp"
@@ -448,7 +449,7 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
   menu.addSeparator();
   if (views.size() == 1)
     menu.addAction(icons::themed("rename", 16), tr("Rename"), this, [this, id = views[0]] { services().browser()->startRename(id); });
-  QAction* del = menu.addAction(icons::themed("delete", 16), views.size() == 1 ? tr("Delete view") + "\tDel" : tr("Delete %1 views").arg(views.size()) + "\tDel", this, [this, views] {
+  QAction* del = menu.addAction(icons::themed("delete", 16), keys::menuText(views.size() == 1 ? tr("Delete view") : tr("Delete %1 views").arg(views.size()), QStringLiteral("edit.delete")), this, [this, views] {  // Del is edit.delete's
     whenFree([this, views] { services().guarded([&] { drawings::remove(services().document(), views); }); });
   });
   del->setObjectName("drawings.menu.delete");

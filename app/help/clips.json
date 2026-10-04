@@ -1154,7 +1154,7 @@
    "steps": [
     {"to": 1.0, "caption": "{press:view.grid}"},
     {"to": 2.9, "caption": "The ground grid shows under the model"},
-    {"to": 4.2, "caption": "G again hides it"}
+    {"to": 4.2, "caption": "{press:view.grid} again to hide it"}
    ]
   },
   {
@@ -3038,7 +3038,7 @@
     {"el": "key", "command": "edit.delete", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
-    {"to": 1, "caption": "Select it and press Del"},
+    {"to": 1, "caption": "Select it and press {key:edit.delete}", "captionNoKey": "Select it and choose Delete"},
     {"to": 3.8, "caption": "It goes; a delete step keeps it restorable"}
    ]
   },
@@ -3069,7 +3069,7 @@
    ],
    "steps": [
     {"to": 1, "caption": "Click a step on the timeline"},
-    {"to": 3.8, "caption": "T selects what it changed"}
+    {"to": 3.8, "caption": "{press:edit.selecttouched}: what it changed is selected"}
    ]
   },
   {

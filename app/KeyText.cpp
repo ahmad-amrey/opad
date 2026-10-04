@@ -163,6 +163,11 @@ QString hint(const QString& id, const QString& verb) {
   return key.isEmpty() ? QString() : key + ' ' + verb;
 }
 
+QString menuText(const QString& text, const QString& id) {
+  const QString key = plain(binding(id));
+  return key.isEmpty() ? text : text + QLatin1Char('\t') + key;
+}
+
 QString span(const QStringList& ids) {
   QStringList bound;
   bool consecutive = true;
