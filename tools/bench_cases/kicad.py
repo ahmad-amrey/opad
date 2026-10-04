@@ -82,8 +82,9 @@ CASES = [
     # sync preview (moved, model changed, added, holes; tinted), Sync from its footer re-meshing only the changed shapes and
     # relocating the moved part (<prefix>.png, .preview.png, .tinted.png).
     ("kicad-area", kicad_area, {"OPAD_BENCH_KICAD_AREA": "{prefix}"}),
-    # UI-134: the board's outline, its mounting holes and J1 projected into a sketch from the dialog, kept by a sync that
-    # notches the outline, moves a hole and turns J1 (<prefix>.png, .dialog.png).
+    # UI-134: the board's outline, its mounting holes and J1 projected into a sketch from the dialog and the outline extruded;
+    # the sync preview lists the design the change affects (the sketch, the extrude), Sync commits what it previewed, and the
+    # sketch follows the notched outline, the moved hole and the turned J1 (<prefix>.png, .dialog.png, .preview.png, .synced.png).
     ("kicad-project", kicad_project, {"OPAD_BENCH_KICAD_PROJECT": "{prefix}"}),
     # Small parts hidden while the view moves, the selected one kept, all back once still (<prefix>.moving.png, .still.png).
     ("small-parts", small_parts, {"OPAD_BENCH_SMALL_PARTS": "{prefix}"}),

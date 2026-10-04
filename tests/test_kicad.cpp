@@ -390,6 +390,73 @@ TEST(sketch_projection_follows_a_sync) {
   CHECK(seen(d).error.find("KiCad part is no longer on the board") != std::string::npos);
 }
 
+// UI-134: what a sync would do to the design on a board, read from its plan before it is committed: the sketch's outline is
+// projected again (a dimension on its old side goes), H1 moves (the distance to it follows), J1 turns (a reference dimension
+// on its side measures 2 instead of 4), and the extrude of the outline is recomputed with another body; a sync that takes a
+// projected part away says so as a new error.
+TEST(sync_affects_the_design) {
+  Files files;
+  configure_kernel_logging(false);
+  const auto dir = files.dir / "hw";
+  const auto board = dir / "board.kicad_pcb";
+  step_box(dir / "conn.step", -2, -1, 0, 4, 2, 3);
+  auto text = [](const std::string& outline, const std::string& h1, const std::string& j1) {
+    std::string t = "(kicad_pcb (version 20241229) (general (thickness 1.6))\n" + outline +
+                    "  (footprint \"MountingHole:MountingHole_3.2mm\" (layer \"F.Cu\") (uuid \"bbbbbbbb-0000-0000-0000-000000000001\") (at " + h1 +
+                    ")\n    (property \"Reference\" \"H1\")\n    (pad \"\" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2)))\n";
+    if (!j1.empty())
+      t += "  (footprint \"Conn:USB\" (layer \"F.Cu\") (uuid \"bbbbbbbb-0000-0000-0000-000000000002\") (at " + j1 +
+           ")\n    (property \"Reference\" \"J1\")\n    (model \"${KIPRJMOD}/conn.step\"))\n";
+    return t + ")\n";
+  };
+  const std::string rect = "  (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\"))\n";
+  const std::string notched = "  (gr_poly (pts (xy 0 0) (xy 50 0) (xy 50 30) (xy 30 30) (xy 30 25) (xy 20 25) (xy 20 30) (xy 0 30)) (layer \"Edge.Cuts\"))\n";
+  write(board, text(rect, "45 5", "10 15"));
+  Document d = Document::create();
+  d.save_as(dir / "enclosure.opad");
+  link_file(d, board);
+  std::string import_id;
+  for (const auto& o : d.ops)
+    if (o.type == "import") import_id = o.id;
+  Scene s = resolve(d);
+  design::Sketch sk;
+  std::map<std::string, std::vector<int>> by;  // what -> its curves
+  for (const auto& [what, node] : std::vector<std::pair<std::string, std::string>>{{"outline", named(s, "Outline")->id}, {"hole", named(s, "H1")->id}, {"part", named(s, "J1 USB")->id}}) {
+    const json source = {{"asset", import_id}, {"kicad", what}, {"node", node}};
+    const size_t from = sk.entities.size();
+    design::append_reference(sk, design::derive_sketch(d, s, Frame{}, source), source, "project", true);
+    for (size_t i = from; i < sk.entities.size(); ++i) by[what].push_back(sk.entities[i].id);
+  }
+  const int centre = sk.entity(by["hole"][0])->p[0], mine = sk.add_point(0, 0);
+  const int side = sk.add_constraint(design::SkConstraint::Type::Distance, {by["outline"][0]}, 50);
+  const int to_hole = sk.add_constraint(design::SkConstraint::Type::Distance, {centre, mine}, std::hypot(20, 10));
+  const int j1_side = sk.add_constraint(design::SkConstraint::Type::Distance, {by["part"][0]}, 4);
+  for (auto& c : sk.constraints) c.reference = c.id == side || c.id == j1_side;
+  const std::string sketch = design::apply_ops(d, {design::make_sketch_op("Enclosure", {{"base", "xy"}}, sk.to_json())})["ids"][0].get<std::string>();
+  const std::string extrude = design::apply_ops(d, {design::make_feature_op("extrude", "Lid", {{"profiles", json::array({{{"sketch", sketch}, {"at", {0, 5}}}})},
+                                                                                                {"distance", "2 mm"}, {"operation", "new"}})})["ids"][0].get<std::string>();
+  write(board, text(notched, "40 10", "12 15 90"));
+  const design::Plan plan = plan_asset_sync(d, import_id);
+  const json a = asset_sync_affects(d, import_id, plan);
+  CHECK(a["sketches"].size() == 1 && a["features"].size() == 1 && a["errors"] == 0);
+  const json& e = a["sketches"][0];
+  CHECK(e["op"] == sketch && e["name"] == "Enclosure" && !e.contains("error"));
+  std::map<std::string, std::string> changes;
+  for (const auto& r : e["references"]) changes[r.value("kicad", "") + " " + r.value("ref", "")] = r.value("change", "");
+  CHECK(changes == (std::map<std::string, std::string>{{"outline ", "projected_again"}, {"hole H1", "moved"}, {"part ", "moved"}}));
+  CHECK(e["dimensions_removed"].size() == 1 && e["dimensions_removed"][0]["name"] == "d" + std::to_string(side));
+  CHECK(e["dimensions_moved"].size() == 1 && e["dimensions_moved"][0]["name"] == "d" + std::to_string(to_hole));
+  CHECK(e["dimensions_changed"].size() == 1 && e["dimensions_changed"][0]["name"] == "d" + std::to_string(j1_side) && about(e["dimensions_changed"][0]["before"], 4) &&
+        about(e["dimensions_changed"][0]["after"], 2));
+  const json& f = a["features"][0];
+  CHECK(f["op"] == extrude && f["name"] == "Lid" && f["kind"] == "extrude" && f["bodies_changed"] == 1 && !f.contains("error"));
+  design::commit(d, design::Plan(plan));
+  write(board, text(notched, "40 10", ""));
+  const json gone = asset_sync_affects(d, import_id, plan_asset_sync(d, import_id));
+  CHECK(gone["errors"] == 1 && gone["sketches"][0].value("error", "").find("KiCad part is no longer on the board") != std::string::npos);
+  CHECK(asset_sync_affects(d, import_id, design::Plan{})["sketches"].empty());
+}
+
 // UI-134: a board read again as the viewer reads it (a linked board's sync) translates only the models that changed since:
 // moved footprints none, a new version of one model that one; an editable copy reads them all.
 TEST(models_read_once_per_version) {

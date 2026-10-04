@@ -25,6 +25,7 @@
 
 #include "import_common.hpp"
 #include "opad/cache.hpp"
+#include "opad/design/sketch.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/kicad_pcb.hpp"
@@ -918,6 +919,94 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   plan.report["changed"] = changed;
   plan.report["kept"] = kept;
   return plan;
+}
+
+json asset_sync_affects(const Document& doc, const std::string& import_id, const design::Plan& plan) {
+  json regen = json::object(), fresh_nodes = json::array();
+  for (const auto& op : plan.ops)
+    if (op.value("op", "") == "regen") regen = op.value("results", json::object());
+    else if (op.value("op", "") == "edit" && op.value("target", "") == import_id) fresh_nodes = op.value("set", json::object()).value("nodes", json::array());
+  std::map<std::string, std::string> names;  // node id -> name, as the file has them now, else as synced
+  for (const auto& e : effective_ops(doc))
+    if (e.op->id == import_id) each_node(nodes_of(e.data()), [&](const json& n) { names[n.value("id", "")] = n.value("name", ""); });
+  each_node(fresh_nodes, [&](const json& n) { names[n.value("id", "")] = n.value("name", ""); });
+  json sketches = json::array(), features = json::array();
+  size_t errors = 0;
+  for (const auto& e : effective_ops(doc)) {
+    const std::string id = e.op->id;
+    if (!regen.contains(id) || (e.op->type != "sketch" && e.op->type != "feature")) continue;
+    const json& data = e.data();
+    const json& was = data.value("result", json::object()), &now = regen[id];
+    json entry = {{"op", id}, {"name", data.value("name", "")}};
+    if (const std::string error = now.value("error", ""); !error.empty() && error != was.value("error", "")) entry["error"] = error, ++errors;
+    if (e.op->type == "feature") {
+      std::map<std::string, std::string> keys;
+      for (const auto& b : was.value("bodies", json::array())) keys[b.value("id", "")] = b.value("key", "");
+      int changed = 0;
+      for (const auto& b : now.value("bodies", json::array())) changed += keys[b.value("id", "")] != b.value("key", "");
+      entry["kind"] = data.value("kind", "");
+      entry["bodies_changed"] = changed;
+      features.push_back(entry);
+      continue;
+    }
+    if (now.contains("error") && !now.contains("geometry")) {  // not projected again: the error says why
+      sketches.push_back(entry);
+      continue;
+    }
+    json after = data;
+    after["result"] = now;
+    design::Sketch b, a;
+    try {
+      b = design::Sketch::from_json(design::solved_geometry(data));
+      a = design::Sketch::from_json(design::solved_geometry(after));
+    } catch (const std::exception&) {
+      sketches.push_back(entry);
+      continue;
+    }
+    // The references to this asset: moved (same curves elsewhere) or projected again (other curves: the dimensions on the old go).
+    std::map<std::string, json> refs;
+    std::set<int> moving;  // entities and points of references that move or go
+    for (const auto& c : b.entities) {
+      const json ref = c.source.is_object() ? c.source.value("ref", json()) : json();
+      if (!ref.is_object() || ref.value("asset", "") != import_id) continue;
+      const design::SkEntity* n = a.entity(c.id);
+      std::string change = !n || n->source.is_null() ? "projected_again" : "";
+      if (change.empty()) {
+        bool same = n->p.size() == c.p.size() && std::abs(n->r - c.r) < 1e-9;
+        for (size_t i = 0; same && i < c.p.size(); ++i) {
+          const design::SkPoint *p = b.point(c.p[i]), *q = a.point(n->p[i]);
+          same = p && q && std::abs(p->x - q->x) < 1e-9 && std::abs(p->y - q->y) < 1e-9;
+        }
+        if (!same) change = "moved";
+      }
+      if (change.empty()) continue;
+      moving.insert(c.id);
+      moving.insert(c.p.begin(), c.p.end());
+      json& r = refs[ref.dump()];
+      if (r.is_null() || change == "projected_again") {
+        const std::string node = ref.value("node", "");
+        r = {{"kicad", ref.value("kicad", "")}, {"node", node}, {"change", change}};
+        if (ref.contains("ref")) r["ref"] = ref["ref"];
+        else if (names.count(node) && ref.value("kicad", "") == "hole") r["ref"] = names[node];
+      }
+    }
+    json list = json::array(), removed = json::array(), changed = json::array(), moved = json::array();
+    for (auto& [k, r] : refs) list.push_back(r);
+    for (const auto& c : b.constraints) {
+      if (!c.is_dimension()) continue;
+      const json named = {{"name", "d" + std::to_string(c.id)}, {"type", design::SkConstraint::type_name(c.type)}, {"value", c.value}};
+      const auto n = std::find_if(a.constraints.begin(), a.constraints.end(), [&](const design::SkConstraint& x) { return x.id == c.id; });
+      if (n == a.constraints.end()) removed.push_back(named);
+      else if (std::abs(n->value - c.value) > 1e-9) changed.push_back({{"name", named["name"]}, {"type", named["type"]}, {"before", c.value}, {"after", n->value}});
+      else if (std::any_of(c.refs.begin(), c.refs.end(), [&](int r) { return moving.count(r) > 0; })) moved.push_back(named);
+    }
+    entry["references"] = list;
+    entry["dimensions_removed"] = removed;
+    entry["dimensions_changed"] = changed;
+    entry["dimensions_moved"] = moved;
+    sketches.push_back(entry);
+  }
+  return {{"sketches", sketches}, {"features", features}, {"errors", errors}};
 }
 
 design::Plan plan_asset_embed(const Document& doc, const std::string& import_id, const std::function<bool()>& cancel) {

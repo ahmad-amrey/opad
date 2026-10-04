@@ -588,35 +588,59 @@ void AssetsArea::nextSync() {
             options.progress = [p](double, const std::string&) { return !p.cancelled(); };
             return opad::plan_asset_sync(doc, import, options, from);
           },
-          [this, import, title](bool ok, const QString& error, const opad::json& report) {
-            if (ok) {
-              ++m_synced;
-              m_monitor->synced(import, report.value("sha256", ""));
-            } else {
-              ++m_syncFailed;
-            }
-            emit done("sync", import, ok, error, report);
-            if (!m_queue.empty()) return nextSync();
-            if (!ok) {
-              notify(tr("%1 could not be synced: %2").arg(title, i18n::t(error)), false, 10000);
-            } else if (m_synced + m_syncFailed > 1) {
-              notify(m_syncFailed ? tr("%1 linked files synced, %2 could not be").arg(m_synced).arg(m_syncFailed) : tr("%1 linked files synced").arg(m_synced));
-            } else if (report.value("up_to_date", false)) {
-              notify(tr("%1 is in sync with its file").arg(title));
-            } else {
-              QString text = tr("Synced %1: %2 parts changed, %3 added, %4 removed")
-                                 .arg(title)
-                                 .arg(report.value("changed", opad::json::array()).size())
-                                 .arg(report.value("added", opad::json::array()).size())
-                                 .arg(report.value("removed", opad::json::array()).size());
-              if (const size_t errors = report.value("errors", opad::json::array()).size()) text += "; " + tr("%1 later features could not be recomputed").arg(errors);
-              notify(text, true, 8000);
-            }
-            // The parts a file left missing (it was not found before): read now that it is.
-            bool missing = false;
-            for (const auto& [id, a] : m_monitor->assets()) missing = missing || (a.missing > 0 && a.asset.value("storage", "linked") != "embedded");
-            if (missing && !services().document()->designBusy) services().document()->loadAssets(services().jobs(), false);
-          });
+          [this, import](bool ok, const QString& error, const opad::json& report) { syncDone(import, ok, error, report); });
+}
+
+void AssetsArea::syncPlanned(const std::string& import, opad::design::Plan&& plan, unsigned long long revision) {
+  AppDocument* doc = services().document();
+  const opad::json* state = m_monitor ? m_monitor->state(import) : nullptr;
+  opad::json set;  // the planned edit of the import: the file and models it read
+  for (const auto& op : plan.ops)
+    if (op.value("op", "") == "edit" && op.value("target", "") == import) set = op.value("set", opad::json::object());
+  const opad::json asset = set.value("asset", opad::json::object());
+  const bool current = state && !m_busy && m_queue.empty() && !doc->designBusy && !doc->loading && doc->revision == revision && !plan.ops.empty() &&
+                       state->value("sha256", "") == plan.report.value("sha256", "") && (!state->contains("models") || state->value("models", "") == asset.value("models_sha256", ""));
+  if (!current) return sync({import});
+  m_synced = m_syncFailed = 0;
+  opad::json report;
+  QString error;
+  try {
+    report = doc->commitPlan(std::move(plan), tr("sync %1").arg(name(import)));
+  } catch (const std::exception& e) {
+    error = QString::fromUtf8(e.what());
+  }
+  syncDone(import, error.isEmpty(), error, report);
+}
+
+void AssetsArea::syncDone(const std::string& import, bool ok, const QString& error, const opad::json& report) {
+  const QString title = name(import);
+  if (ok) {
+    ++m_synced;
+    m_monitor->synced(import, report.value("sha256", ""));
+  } else {
+    ++m_syncFailed;
+  }
+  emit done("sync", import, ok, error, report);
+  if (!m_queue.empty()) return nextSync();
+  if (!ok) {
+    notify(tr("%1 could not be synced: %2").arg(title, i18n::t(error)), false, 10000);
+  } else if (m_synced + m_syncFailed > 1) {
+    notify(m_syncFailed ? tr("%1 linked files synced, %2 could not be").arg(m_synced).arg(m_syncFailed) : tr("%1 linked files synced").arg(m_synced));
+  } else if (report.value("up_to_date", false)) {
+    notify(tr("%1 is in sync with its file").arg(title));
+  } else {
+    QString text = tr("Synced %1: %2 parts changed, %3 added, %4 removed")
+                       .arg(title)
+                       .arg(report.value("changed", opad::json::array()).size())
+                       .arg(report.value("added", opad::json::array()).size())
+                       .arg(report.value("removed", opad::json::array()).size());
+    if (const size_t errors = report.value("errors", opad::json::array()).size()) text += "; " + tr("%1 later features could not be recomputed").arg(errors);
+    notify(text, true, 8000);
+  }
+  // The parts a file left missing (it was not found before): read now that it is.
+  bool missing = false;
+  for (const auto& [id, a] : m_monitor->assets()) missing = missing || (a.missing > 0 && a.asset.value("storage", "linked") != "embedded");
+  if (missing && !services().document()->designBusy) services().document()->loadAssets(services().jobs(), false);
 }
 
 void AssetsArea::locate(const std::string& import) {

@@ -2,12 +2,15 @@
 // KiCad boards in the window (UI-72 UI, UI-134): Insert KiCad PCB… links a board (its options asked first, monitored with
 // its 3D models by AssetMonitor); the sync preview reads a changed board on a worker and lists what syncing would do to it,
 // per reference designator (moved, turned, flipped, model or footprint changed, added, removed, the mounting holes and the
-// board itself), the parts it names tinted in the view, Sync in its footer; Project KiCad board puts the board's outline,
+// board itself) and the design built on it (opad::asset_sync_affects of the sync's plan: sketches with the references that
+// move or are projected again and their dimensions, features recomputed, new errors), the parts it names tinted in the view,
+// Sync in its footer committing that plan; Project KiCad board puts the board's outline,
 // its mounting holes and chosen parts into the open sketch as references by node, which every sync keeps (opad
 // design::derive_sketch, "asset" sources); a board's Properties say it explodes as one; Hide small parts while navigating
 // (the viewport's small-part filter, its size a setting) keeps orbiting a dense board fluid.
 #include <QPointer>
 #include <QString>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +25,9 @@ class PanelFooter;
 class QDialog;
 class QTreeWidget;
 class ToolPanel;
+namespace opad::design {
+struct Plan;
+}
 
 class KicadArea : public AreaController {
   Q_OBJECT
@@ -46,9 +52,11 @@ class KicadArea : public AreaController {
   Board board(const std::string& import) const;
   std::string boardOf(const SelectionContext& selection) const;  // the KiCad import the selection is part of
 
-  void insert(const QString& file = {});    // Insert KiCad PCB…: a file dialog unless given, the board's options, linked
-  void preview(const std::string& import);  // reads the linked board on a worker, then the panel
-  void sync();                              // Sync from the preview's footer
+  void insert(const QString& file = {});  // Insert KiCad PCB…: a file dialog unless given, the board's options, linked
+  // Reads the linked board and plans its sync on a worker (a copy of the document; `waited`: tries while it is busy), then the
+  // panel: the board's changes and the design they affect.
+  void preview(const std::string& import, int waited = 0);
+  void sync();  // Sync from the preview's footer: the plan previewed while the document is as it was, else planned again
   void closePreview();
   QDialog* project();  // Project KiCad board…: the dialog (window-modal, not blocking); null when no sketch is open
   // Board outline, mounting holes (all, as one reference: holes added later come with a sync) and parts (node ids) of
@@ -62,6 +70,7 @@ class KicadArea : public AreaController {
   PanelFooter* previewFooter() const { return m_footer; }
   const opad::json& previewReport() const { return m_report; }
   const std::string& previewImport() const { return m_import; }
+  bool previewPlanned() const { return m_plan != nullptr; }  // Sync commits what was previewed
 
  signals:
   void previewReady(bool ok, const QString& error);
@@ -69,6 +78,7 @@ class KicadArea : public AreaController {
  private:
   void buildPanel();
   void fill();
+  void fillAffected();
   void section(const PropertySubject& subject, QList<PropertySection>& out);
   AssetsArea* assets() const;
   std::vector<std::string> m_boards;
@@ -77,5 +87,8 @@ class KicadArea : public AreaController {
   PanelFooter* m_footer = nullptr;
   std::string m_import;  // the board previewed
   opad::json m_report;
+  std::shared_ptr<opad::design::Plan> m_plan;  // its sync, planned on the document at m_planRevision
+  unsigned long long m_planRevision = 0;
   QPointer<Job> m_job;
+  bool m_reading = false;  // a preview is copying the document, reading or waiting to
 };

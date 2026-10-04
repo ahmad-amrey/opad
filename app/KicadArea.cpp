@@ -42,6 +42,7 @@
 #include "ToolPanel.hpp"
 #include "Units.hpp"
 #include "Viewport.hpp"
+#include "opad/assets.hpp"
 #include "opad/kicad_pcb.hpp"
 #include "opad/scene.hpp"
 
@@ -52,6 +53,7 @@ OPAD_ICON_TABLE(kicad,
 namespace {
 std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
 constexpr double kSmallPartSize = 3.0;  // mm: chip resistors and capacitors, small diodes
+constexpr double kDegrees = 180 / 3.14159265358979323846;
 QString refOf(const QString& name) { return name.section(' ', 0, 0); }  // "J1 USB_C" -> "J1"
 
 // The node ids of an import's KiCad records, by reference designator (the parts, and the mounting holes apart).
@@ -136,7 +138,15 @@ void KicadArea::ribbon(RibbonLayout& layout) {
 
 void KicadArea::ready() {
   buildPanel();
-  if (AssetsArea* a = assets()) a->setPreviewer([this](const std::string& import) { preview(import); });
+  if (AssetsArea* a = assets()) {
+    a->setPreviewer([this](const std::string& import) { preview(import); });
+    if (a->monitor())  // the previewed board changed again: read again what is shown
+      connect(a->monitor(), &AssetMonitor::filesChanged, this, [this](const std::vector<std::string>& imports) {
+        if (std::find(imports.begin(), imports.end(), m_import) == imports.end()) return;
+        m_plan.reset();
+        if (m_panel->isVisible()) preview(m_import);
+      });
+  }
   services().properties()->addSectionProvider([this](const PropertySubject& s, const opad::json&, QList<PropertySection>& out) { section(s, out); });
   setSmallParts(QSettings().value("view/hideSmallParts", false).toBool());
   documentChanged(true);
@@ -149,6 +159,7 @@ void KicadArea::documentChanged(bool replaced) {
   for (const auto& o : doc->doc.ops)
     if (o.type == "import" && o.data.contains("kicad") && !deleted.count(o.id)) m_boards.push_back(o.id);
   if (m_panel && m_panel->isVisible() && (replaced || std::find(m_boards.begin(), m_boards.end(), m_import) == m_boards.end())) closePreview();
+  if (m_plan && doc->revision != m_planRevision) m_plan.reset();  // planned on what the document no longer is: Sync plans again
 }
 
 KicadArea::Board KicadArea::board(const std::string& import) const {
@@ -209,9 +220,17 @@ void KicadArea::buildPanel() {
   m_list->setColumnCount(2);
   m_list->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   m_list->header()->setStretchLastSection(true);
-  connect(m_list, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item) {
+  m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  connect(m_list, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item) {  // a part, a sketch, a feature's bodies
     const std::string id = item->data(0, Qt::UserRole).toString().toStdString();
-    if (!id.empty() && services().document()->node(id)) services().browser()->selectIds({id});
+    const AppDocument* doc = services().document();
+    if (id.empty()) return;
+    if (doc->node(id) || doc->scene.sketch(id)) return services().browser()->selectIds({id});
+    std::vector<std::string> bodies;
+    if (const opad::Feature* f = doc->scene.feature(id))
+      for (const auto& b : f->result.value("bodies", opad::json::array()))
+        if (doc->node(b.value("id", ""))) bodies.push_back(b.value("id", ""));
+    if (!bodies.empty()) services().browser()->selectIds(bodies);
   });
   layout->addWidget(m_list, 1);
   m_footer = new PanelFooter(body);
@@ -219,7 +238,7 @@ void KicadArea::buildPanel() {
   connect(m_footer, &PanelFooter::accepted, this, &KicadArea::sync);
   connect(m_footer, &PanelFooter::cancelled, this, &KicadArea::closePreview);
   layout->addWidget(m_footer);
-  m_panel = new ToolPanel("kicadSync", "regen", &Tokens::sel, tr("Sync preview"), body, 360, services().window());
+  m_panel = new ToolPanel("kicadSync", "regen", &Tokens::sel, tr("Sync preview"), body, 420, services().window());
   m_panel->setObjectName("kicadSyncPanel");
   m_panel->setEscapeHandler([this] { closePreview(); });
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this](bool on) {
@@ -228,7 +247,10 @@ void KicadArea::buildPanel() {
   services().addPanel(m_panel);
 }
 
-void KicadArea::preview(const std::string& import) {
+// The board is read and its sync planned, as Sync plans it, on a worker from a copy of the document (taken on a worker): what
+// changes on the board, and what that does to the sketches and features built on it. Sync then commits that very plan while
+// the document stays as it was.
+void KicadArea::preview(const std::string& import, int waited) {
   AssetsArea* a = assets();
   AssetMonitor* monitor = a ? a->monitor() : nullptr;
   const AssetMonitor::Asset* asset = monitor ? monitor->asset(import) : nullptr;
@@ -236,26 +258,58 @@ void KicadArea::preview(const std::string& import) {
     services().toast(tr("Only a linked board is synced with its file"));
     return;
   }
-  if (m_job) return;
-  opad::json data;  // the import as its syncs left it (a copy: the worker reads the board, not the document)
-  for (const auto& e : opad::effective_ops(services().document()->doc))
-    if (e.op->id == import) data = e.data();
+  if (m_job || (m_reading && !waited)) return;
+  AppDocument* doc = services().document();
   const QString file = monitor->file(import), title = QString::fromStdString(asset->name);
-  auto report = std::make_shared<opad::json>();
-  m_job = services().jobs()->async(tr("Reading %1").arg(title), [data, import, file, report](Progress) { *report = opad::kicad_sync_preview(data, import, fsPath(file)); },
-                                   [this, import, report, title](bool ok, const QString& error) {
-                                     m_job = nullptr;
-                                     if (!ok) {
-                                       services().toast(tr("%1 could not be read: %2").arg(title, i18n::t(error)), {}, {}, 8000);
-                                       return emit previewReady(false, error);
-                                     }
-                                     m_import = import;
-                                     m_report = *report;
-                                     fill();
-                                     m_panel->setContext(title);
-                                     services().openPanel(m_panel);
-                                     emit previewReady(true, {});
-                                   });
+  const opad::AssetOptions options = AssetMonitor::options(doc);
+  const unsigned long long revision = doc->revision;
+  QPointer<KicadArea> self(this);
+  auto failed = [self, title](const QString& error) {
+    if (!self) return;
+    self->m_reading = false;
+    self->services().toast(tr("%1 could not be read: %2").arg(title, i18n::t(error)), {}, {}, 8000);
+    emit self->previewReady(false, error);
+  };
+  m_reading = true;
+  const bool started = !doc->loading && !doc->converting() && !a->busy() &&
+                       doc->captureSnapshot(services().jobs(), [self, import, file, title, options, revision, failed](std::shared_ptr<opad::Document> copy, const QString& error) {
+    if (!self) return;
+    if (!copy) return failed(error);
+    struct Out {
+      opad::json report;
+      opad::design::Plan plan;
+    };
+    auto out = std::make_shared<Out>();
+    self->m_job = self->services().jobs()->async(tr("Reading %1").arg(title), [copy, import, file, options, out](Progress p) {
+      out->report = opad::kicad_sync_preview(*copy, import, fsPath(file));
+      opad::AssetOptions o = options;
+      o.progress = [p](double, const std::string&) { return !p.cancelled(); };
+      try {
+        out->plan = opad::plan_asset_sync(*copy, import, o);
+        out->report["affects"] = opad::asset_sync_affects(*copy, import, out->plan);
+      } catch (const std::exception& e) {
+        if (p.cancelled()) throw;
+        out->plan = {};
+        out->report["affects_error"] = e.what();
+      }
+    }, [self, import, title, out, revision, failed](bool ok, const QString& error) {
+      if (!self) return;
+      self->m_job = nullptr;
+      if (!ok) return failed(error);
+      self->m_reading = false;
+      self->m_import = import;
+      self->m_report = std::move(out->report);
+      self->m_plan = out->plan.ops.empty() ? nullptr : std::make_shared<opad::design::Plan>(std::move(out->plan));
+      self->m_planRevision = revision;
+      self->fill();
+      self->m_panel->setContext(title);
+      self->services().openPanel(self->m_panel);
+      emit self->previewReady(true, {});
+    });
+  });
+  if (started) return;
+  if (waited >= 300) return failed(tr("The document is busy; try again in a moment."));
+  QTimer::singleShot(100, this, [this, import, waited] { preview(import, waited + 1); });
 }
 
 // The changes grouped (moved, flipped, models, footprints, added, removed, the board), each part's row selecting it; the parts
@@ -287,6 +341,7 @@ void KicadArea::fill() {
       const std::string id = hole ? (holes.count(ref) ? holes[ref] : std::string()) : (parts.count(ref) ? parts[ref] : std::string());
       auto* row = new QTreeWidgetItem(top, {ref.empty() ? tr("(no reference)") : QString::fromStdString(ref), detail(c)});
       row->setData(0, Qt::UserRole, QString::fromStdString(id));
+      row->setToolTip(1, row->text(1));
       if (hole) row->setToolTip(0, tr("Mounting hole"));
       if (std::string(key) != "added") tint(id, color);
       ++count;
@@ -309,35 +364,100 @@ void KicadArea::fill() {
         [](const opad::json& c) { return QString::fromStdString(c.value("before", "")) + " → " + QString::fromStdString(c.value("after", "")); });
   group(tr("Added"), "added", t.diffAdded, [](const opad::json& c) { return (c.value("hole", false) ? tr("mounting hole") + " " : QString()) + QString::fromStdString(c.value("footprint", "")); });
   group(tr("Removed"), "removed", t.diffRemoved, [](const opad::json& c) { return (c.value("hole", false) ? tr("mounting hole") + " " : QString()) + QString::fromStdString(c.value("footprint", "")); });
-  QStringList board;  // the board itself
+  QList<QStringList> board;  // the board itself: what, before → after
+  auto change = [](const QString& before, const QString& after) { return before + " → " + after; };
   if (m_report.contains("thickness"))
-    board << tr("Thickness %1 → %2").arg(length(m_report["thickness"].value("before", 0.0)), length(m_report["thickness"].value("after", 0.0)));
-  if (m_report.contains("holes")) board << tr("Drills %1 → %2").arg(m_report["holes"].value("before", 0)).arg(m_report["holes"].value("after", 0));
+    board << QStringList{tr("Thickness"), change(length(m_report["thickness"].value("before", 0.0)), length(m_report["thickness"].value("after", 0.0)))};
+  if (m_report.contains("holes"))
+    board << QStringList{tr("Drills"), change(QString::number(m_report["holes"].value("before", 0)), QString::number(m_report["holes"].value("after", 0)))};
   if (m_report.contains("outline")) {
     const opad::json& o = m_report["outline"];
-    board << tr("Outline area %1 → %2").arg(units::format(units::Kind::Area, o["before"].value("area", 0.0)), units::format(units::Kind::Area, o["after"].value("area", 0.0)));
+    board << QStringList{tr("Outline area"), change(units::format(units::Kind::Area, o["before"].value("area", 0.0)), units::format(units::Kind::Area, o["after"].value("area", 0.0)))};
   }
   if (!board.isEmpty()) {
     auto* top = new QTreeWidgetItem(m_list, {tr("Board")});
     top->setForeground(0, t.diffModified);
     top->setFirstColumnSpanned(true);
-    for (const QString& line : board) new QTreeWidgetItem(top, {line});
+    for (const QStringList& line : board) new QTreeWidgetItem(top, line);
     top->setExpanded(true);
   }
+  fillAffected();
   const bool changed = m_report.value("changed", false);
   m_footer->setHint(changed ? tr("%1 changes · %2 unchanged").arg(count + int(board.size())).arg(m_report.value("unchanged", 0))
-                            : tr("The board is as last synced"));
-  m_footer->setPrimaryEnabled(changed);
+                            : m_plan ? tr("No part moved; the file is newer") : tr("The board is as last synced"));
+  m_footer->setPrimaryEnabled(changed || m_plan);
   services().viewport()->setLookLayer(LookSource::Compare, std::move(tints));
+}
+
+// What the sync does to the design built on the board (UI-134): per sketch the references that move or are projected again and
+// the dimensions they take along, lose or measure anew; per feature recomputed whether its bodies change; new errors in red.
+void KicadArea::fillAffected() {
+  const opad::json affects = m_report.value("affects", opad::json::object());
+  const opad::json sketches = affects.value("sketches", opad::json::array()), features = affects.value("features", opad::json::array());
+  const Tokens& t = theme::current();
+  if (m_report.contains("affects_error")) {
+    auto* top = new QTreeWidgetItem(m_list, {tr("Design affected"), i18n::t(QString::fromStdString(m_report.value("affects_error", "")))});
+    top->setForeground(1, t.diffRemoved);
+    return;
+  }
+  if (sketches.empty() && features.empty()) return;
+  auto* top = new QTreeWidgetItem(m_list, {tr("Design affected (%1)").arg(sketches.size() + features.size())});
+  top->setForeground(0, t.diffModified);
+  top->setFirstColumnSpanned(true);
+  auto phrase = [](const opad::json& r) {
+    const bool moved = r.value("change", "") == "moved";
+    const std::string kind = r.value("kicad", ""), ref = r.value("ref", "");
+    if (kind == "outline") return moved ? tr("The board outline moves") : tr("The board outline is projected again");
+    if (kind == "holes") return moved ? tr("The mounting holes move") : tr("The mounting holes are projected again");
+    const QString name = !ref.empty() ? QString::fromStdString(ref) : kind == "hole" ? tr("A mounting hole") : tr("A part");
+    return (moved ? tr("%1 moves") : tr("%1 is projected again")).arg(name);
+  };
+  auto names = [](const opad::json& list) {
+    QStringList out;
+    for (const auto& d : list) out << QString::fromStdString(d.value("name", ""));
+    return out.join(", ");
+  };
+  auto value = [](const opad::json& d, const char* key) {
+    const double v = d.value(key, 0.0);
+    return d.value("type", "") == "angle" ? units::compact(units::Kind::Angle, v * kDegrees) : units::compact(units::Kind::Length, v);
+  };
+  auto row = [&](const opad::json& e, QStringList parts) {  // the op's name on the first of its lines (rows are one line high)
+    if (e.contains("error")) parts = QStringList{i18n::t(QString::fromStdString(e.value("error", "")))};
+    for (int i = 0; i < parts.size(); ++i) {
+      auto* item = new QTreeWidgetItem(top, {i ? QString() : QString::fromStdString(e.value("name", "")), parts[i]});
+      item->setData(0, Qt::UserRole, QString::fromStdString(e.value("op", "")));
+      item->setToolTip(1, parts[i]);
+      if (e.contains("error")) item->setForeground(1, t.diffRemoved);
+    }
+  };
+  for (const auto& s : sketches) {
+    QStringList parts;
+    for (const auto& r : s.value("references", opad::json::array())) parts << phrase(r);
+    if (const opad::json& d = s.value("dimensions_moved", opad::json::array()); !d.empty()) parts << tr("Follow the board: %1").arg(names(d));
+    for (const auto& d : s.value("dimensions_changed", opad::json::array()))
+      parts << tr("%1 measures %2 → %3").arg(QString::fromStdString(d.value("name", "")), value(d, "before"), value(d, "after"));
+    if (const opad::json& d = s.value("dimensions_removed", opad::json::array()); !d.empty()) parts << tr("Removed: %1").arg(names(d));
+    row(s, parts.isEmpty() ? QStringList{tr("Recomputed")} : parts);
+  }
+  for (const auto& f : features) {
+    const int bodies = f.value("bodies_changed", 0);
+    row(f, {bodies == 1 ? tr("Recomputed: its body changes") : bodies ? tr("Recomputed: %1 bodies change").arg(bodies) : tr("Recomputed")});
+  }
+  top->setExpanded(true);
 }
 
 void KicadArea::sync() {
   const std::string import = m_import;
+  std::shared_ptr<opad::design::Plan> plan = std::exchange(m_plan, nullptr);
   closePreview();
-  if (AssetsArea* a = assets(); a && !import.empty()) a->sync({import});
+  AssetsArea* a = assets();
+  if (!a || import.empty()) return;
+  if (plan) a->syncPlanned(import, std::move(*plan), m_planRevision);
+  else a->sync({import});
 }
 
 void KicadArea::closePreview() {
+  m_plan.reset();
   if (m_panel) m_panel->hide();
   services().viewport()->clearLookLayer(LookSource::Compare);
 }

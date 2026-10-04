@@ -63,6 +63,9 @@ class AssetsArea : public AreaController {
   // Each on one linked import; the commands, badges, context menu and Properties run these. Sync reads the file again
   // (from `file` when given: Locate, Replace), one undo step per file; several are synced one after the other.
   void sync(std::vector<std::string> imports, const QString& file = {});
+  // A sync planned already (KicadArea's preview, on a copy of the document at `revision`): committed as that one step while the
+  // document is still at that revision and the file and its models are still the ones read, else planned again (sync).
+  void syncPlanned(const std::string& import, opad::design::Plan&& plan, unsigned long long revision);
   void syncAll();  // every file that changed since its last sync; also as the monitor finds them while assets.autoSync is on
   void locate(const std::string& import);   // a file dialog, then sync from the file chosen
   void replace(const std::string& import);
@@ -94,6 +97,7 @@ class AssetsArea : public AreaController {
                std::function<opad::design::Plan(opad::Document&, const Progress&)> plan,
                std::function<void(bool, const QString&, const opad::json&)> then, int waited = 0);
   void nextSync();
+  void syncDone(const std::string& import, bool ok, const QString& error, const opad::json& report);  // its toast, the next one
   void filesChanged(const std::vector<std::string>& imports);
   void notify(const QString& text, bool undo = false, int ms = 6000);  // a toast (with Undo), replacing the last one
   void updateLooks();

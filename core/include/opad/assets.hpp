@@ -96,6 +96,12 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt = {})
 // {"import","sha256","up_to_date","added","removed","changed","kept","regenerated","errors"}.
 design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, const AssetOptions& opt = {},
                              const std::filesystem::path& file = {});
+// What such a plan does to the design built on the asset (UI-134, a sync preview), in log order: each sketch it recomputes
+// with its references to the asset that move or are projected again (kicad, node, ref or the node's name, change: "moved" |
+// "projected_again"), the dimensions that go with them ("dimensions_removed"), measure another value ("dimensions_changed":
+// before/after) or hold geometry to a moving reference ("dimensions_moved"), and a new error; each feature it recomputes
+// (kind, bodies_changed, a new error). {"sketches": [...], "features": [...], "errors": N}.
+json asset_sync_affects(const Document& doc, const std::string& import_id, const design::Plan& plan);
 // Embed: the asset's bodies become ordinary body-store entries (healed like a full import, content keys), editable; the
 // asset object stays with storage "embedded" (where it came from) and the file is no longer read.
 design::Plan plan_asset_embed(const Document& doc, const std::string& import_id, const std::function<bool()>& cancel = {});

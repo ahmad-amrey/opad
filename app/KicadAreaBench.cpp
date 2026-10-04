@@ -31,6 +31,7 @@
 #include "Toast.hpp"
 #include "ToolPanel.hpp"
 #include "Viewport.hpp"
+#include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
 
 namespace {
@@ -209,9 +210,11 @@ OPAD_BENCH(OPAD_BENCH_KICAD_AREA, kicad_area) {
 
 // OPAD_BENCH_KICAD_PROJECT=<prefix> on a document linking board.kicad_pcb (J1, H1, H2) beside next.kicad_pcb (outline notched,
 // H1 moved, J1 turned). A sketch on XY: Project KiCad board (Sketch > Reference) offers the outline, the mounting holes and the
-// parts (filtered by typing); outline, holes and J1 projected as linked references (10 curves) and the sketch finished. The
-// board changed and synced: the sketch follows it without an error (12 lines, H1's circle where it went, J1's outline
-// turned). Frames: <prefix>.dialog.png, <prefix>.png, .synced.png.
+// parts (filtered by typing); outline, holes and J1 projected as linked references (10 curves), the sketch finished and its
+// outline extruded (Lid). The board changed: its sync preview lists the design it affects (the sketch: the outline projected
+// again, the holes and J1 moving; Lid recomputed with another body), a row selects its sketch, and Sync commits the plan
+// previewed at once. The sketch follows the board without an error (12 lines, H1's circle where it went, J1's outline turned),
+// Lid with it. Frames: <prefix>.dialog.png, <prefix>.png, .preview.png, .synced.png.
 OPAD_BENCH(OPAD_BENCH_KICAD_PROJECT, kicad_project) {
   static bool ran = false;  // each load that ends comes back here (the insert's too)
   if (std::exchange(ran, true)) return true;
@@ -236,6 +239,91 @@ OPAD_BENCH(OPAD_BENCH_KICAD_PROJECT, kicad_project) {
     const opad::json* s = monitor->state(import);
     return s && s->value("state", "") == "ok" && !monitor->checking();
   };
+  auto curves = [import](const opad::json& geometry, int& lines, int& circles, bool& linked) {
+    lines = circles = 0;
+    linked = true;
+    for (const auto& e : opad::design::Sketch::from_json(geometry).entities) {
+      lines += e.type == opad::design::SkEntity::Type::Line;
+      circles += e.type == opad::design::SkEntity::Type::Circle;
+      linked = linked && !e.source.is_null() && e.source.value("ref", opad::json()).value("asset", "") == import;
+    }
+  };
+  auto done = std::make_shared<bool>(false);
+  QObject::connect(assets, &AssetsArea::done, &w, [done](const QString& what, const std::string&, bool okay, const QString&, const opad::json&) {
+    if (what == "sync") *done = okay;
+  });
+
+  // 4. Synced: the sketch follows the board, Lid with it.
+  auto synced = [=, &w](bool okay) {
+    const opad::SketchItem& item = doc->scene.sketches.front();
+    int lines = 0, circles = 0;
+    bool linked = false;
+    curves(item.geometry, lines, circles, linked);
+    const opad::design::Sketch g = opad::design::Sketch::from_json(item.geometry);
+    bool h1 = false;  // H1 from page (104, 104) to (108, 106): board (-22, 14)
+    double x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const auto& e : g.entities) {
+      if (e.type == opad::design::SkEntity::Type::Circle) h1 = h1 || (std::abs(g.point(e.p[0])->x + 22) < 1e-6 && std::abs(g.point(e.p[0])->y - 14) < 1e-6);
+      if (e.source.value("ref", opad::json()).value("kicad", "") == "part")
+        for (int p : e.p) x0 = std::min(x0, g.point(p)->x), x1 = std::max(x1, g.point(p)->x), y0 = std::min(y0, g.point(p)->y), y1 = std::max(y1, g.point(p)->y);
+    }
+    (*require)(okay && item.error.empty() && lines == 12 && circles == 2 && linked && h1 && std::abs(x1 - x0 - 7) < 1e-6 && std::abs(y1 - y0 - 9) < 1e-6,
+               QString("after the sync the sketch follows the board: %1 lines (the notch), H1 moved %2, J1 turned (%3 x %4)%5")
+                   .arg(lines).arg(h1 ? "yes" : "no").arg(x1 - x0).arg(y1 - y0).arg(item.error.empty() ? QString() : ": " + QString::fromStdString(item.error)));
+    const opad::Feature* lid = doc->scene.features.empty() ? nullptr : &doc->scene.features.front();
+    (*require)(lid && lid->error.empty(), "Lid recomputed without an error");
+    v->isolate({item.id});
+    QTimer::singleShot(600, &w, [=] {
+      (*require)(v->grabImage().save(prefix + ".synced.png"), "frame after the sync");
+      v->isolate({});
+      require->finish();
+    });
+  };
+
+  // 3. The preview: the design the sync affects, a row selecting its sketch, Sync committing what was previewed.
+  auto previewed = [=, &w](bool shown) {
+    const std::string sketchId = doc->scene.sketches.front().id;
+    const QString sketchName = QString::fromStdString(doc->scene.sketches.front().name);
+    QTreeWidget* list = kicad->previewList();
+    QTreeWidgetItem* affected = nullptr;
+    for (int i = 0; i < list->topLevelItemCount(); ++i)
+      if (list->topLevelItem(i)->text(0).startsWith("Design affected")) affected = list->topLevelItem(i);
+    QStringList rows;  // "name: line; line" per sketch or feature (its first row named, one row per line)
+    for (int k = 0; affected && k < affected->childCount(); ++k)
+      if (!affected->child(k)->text(0).isEmpty()) rows << affected->child(k)->text(0) + ": " + affected->child(k)->text(1);
+      else if (!rows.isEmpty()) rows.back() += "; " + affected->child(k)->text(1);
+    const bool two = rows.size() == 2;
+    const QString sketchRow = two ? rows[0] : QString(), featureRow = two ? rows[1] : QString();
+    (*require)(shown && two && affected->text(0) == "Design affected (2)" && sketchRow.startsWith(sketchName + ": ") && sketchRow.contains("The board outline is projected again") &&
+                   sketchRow.contains("The mounting holes move") && sketchRow.contains("J1 moves") && featureRow == "Lid: Recomputed: its body changes" && kicad->previewPlanned(),
+               "the preview lists the design the sync affects: " + sketchRow + " | " + featureRow);
+    (*require)(kicad->previewPanel()->grab().save(prefix + ".preview.png"), "preview frame");
+    if (two) emit list->itemClicked(affected->child(0), 0);
+    (*require)(w.m_browser->selectedIds() == std::vector<std::string>{sketchId}, "a click on the sketch's row selects the sketch");
+    const size_t ops = doc->doc.ops.size();
+    kicad->previewFooter()->primary()->click();  // Sync
+    (*require)(doc->doc.ops.size() > ops && *done && !kicad->previewPanel()->isVisible(), "Sync commits the plan previewed at once (the board is not read again)");
+    waitFor(&w, [=] { return *done && !doc->designBusy && settled(); }, 30000, synced);
+  };
+
+  // 2. Lid extruded from the projected outline, the board written anew, its preview.
+  auto changed = [=, &w] {
+    auto extruded = std::make_shared<int>(0);
+    const opad::json profile = {{"sketch", doc->scene.sketches.front().id}, {"at", {10, 5}}};
+    design->applyOps({opad::design::make_feature_op("extrude", "Lid", {{"profiles", opad::json::array({profile})}, {"distance", "2 mm"}, {"operation", "new"}})}, "extrude",
+                     [extruded](bool okay, const QString&) { *extruded = okay ? 1 : -1; });
+    waitFor(&w, [=] { return *extruded && !doc->designBusy && settled(); }, 20000, [=, &w](bool) {
+      (*require)(*extruded == 1 && doc->scene.features.size() == 1, "the projected outline extruded (Lid)");
+      (*require)(copyOver(dir + "/next.kicad_pcb", dir + "/board.kicad_pcb"), "the board written anew");
+      waitFor(&w, [=] { return monitor->state(import) && monitor->state(import)->value("state", "") == "changed" && !monitor->checking(); }, 15000, [=, &w](bool found) {
+        (*require)(found, "the board changed");
+        kicad->preview(import);
+        waitFor(&w, [=] { return kicad->previewPanel()->isVisible() && kicad->previewImport() == import && !v->looksPending(); }, 20000, previewed);
+      });
+    });
+  };
+
+  // 1. A sketch on XY, the board projected into it from the dialog, finished.
   waitFor(&w, [=, &w] { return settled() && ok(); }, 20000, [=, &w](bool shown) {
     (*require)(shown, "the board shown");
     design->startSketch();
@@ -264,15 +352,6 @@ OPAD_BENCH(OPAD_BENCH_KICAD_PROJECT, kicad_project) {
           (*require)(dialog->grab().save(prefix + ".dialog.png"), "dialog frame");
           dialog->findChild<QPushButton*>("kicadProjectOk")->click();
           SketchEditor* sketch = design->sketch();
-          auto curves = [import](const opad::json& geometry, int& lines, int& circles, bool& linked) {
-            lines = circles = 0;
-            linked = true;
-            for (const auto& e : opad::design::Sketch::from_json(geometry).entities) {
-              lines += e.type == opad::design::SkEntity::Type::Line;
-              circles += e.type == opad::design::SkEntity::Type::Circle;
-              linked = linked && !e.source.is_null() && e.source.value("ref", opad::json()).value("asset", "") == import;
-            }
-          };
           waitFor(&w, [=] { return !sketch->busy() && !doc->designBusy && opad::design::Sketch::from_json(sketch->geometry()).entities.size() >= 10; }, 15000, [=, &w](bool projected) {
             int lines = 0, circles = 0;
             bool linked = false;
@@ -285,41 +364,10 @@ OPAD_BENCH(OPAD_BENCH_KICAD_PROJECT, kicad_project) {
               v->isolate({doc->scene.sketches.front().id});  // the sketch alone: on the board's bottom face the board hides it
               v->standardView("top");
               v->fitAll();
-              QTimer::singleShot(600, &w, [=, &w] {
+              QTimer::singleShot(600, &w, [=] {
                 (*require)(v->grabImage().save(prefix + ".png"), "frame");
                 v->isolate({});
-                (*require)(copyOver(dir + "/next.kicad_pcb", dir + "/board.kicad_pcb"), "the board written anew");
-                auto done = std::make_shared<bool>(false);
-                QObject::connect(assets, &AssetsArea::done, &w, [done](const QString& what, const std::string&, bool okay, const QString&, const opad::json&) {
-                  if (what == "sync") *done = okay;
-                });
-                waitFor(&w, [=] { return monitor->state(import) && monitor->state(import)->value("state", "") == "changed" && !monitor->checking(); }, 15000, [=, &w](bool changed) {
-                  (*require)(changed, "the board changed");
-                  assets->sync({import});
-                  waitFor(&w, [=, &w] { return *done && !doc->designBusy && settled(); }, 30000, [=, &w](bool synced) {
-                    const opad::SketchItem& item = doc->scene.sketches.front();
-                    int lines = 0, circles = 0;
-                    bool linked = false;
-                    curves(item.geometry, lines, circles, linked);
-                    const opad::design::Sketch g = opad::design::Sketch::from_json(item.geometry);
-                    bool h1 = false;  // H1 from page (104, 104) to (108, 106): board (-22, 14)
-                    double x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
-                    for (const auto& e : g.entities) {
-                      if (e.type == opad::design::SkEntity::Type::Circle) h1 = h1 || (std::abs(g.point(e.p[0])->x + 22) < 1e-6 && std::abs(g.point(e.p[0])->y - 14) < 1e-6);
-                      if (e.source.value("ref", opad::json()).value("kicad", "") == "part")
-                        for (int p : e.p) x0 = std::min(x0, g.point(p)->x), x1 = std::max(x1, g.point(p)->x), y0 = std::min(y0, g.point(p)->y), y1 = std::max(y1, g.point(p)->y);
-                    }
-                    (*require)(synced && item.error.empty() && lines == 12 && circles == 2 && linked && h1 && std::abs(x1 - x0 - 7) < 1e-6 && std::abs(y1 - y0 - 9) < 1e-6,
-                               QString("after the sync the sketch follows the board: %1 lines (the notch), H1 moved %2, J1 turned (%3 x %4)%5")
-                                   .arg(lines).arg(h1 ? "yes" : "no").arg(x1 - x0).arg(y1 - y0).arg(item.error.empty() ? QString() : ": " + QString::fromStdString(item.error)));
-                    v->isolate({item.id});
-                    QTimer::singleShot(600, &w, [=] {
-                      (*require)(v->grabImage().save(prefix + ".synced.png"), "frame after the sync");
-                      v->isolate({});
-                      require->finish();
-                    });
-                  });
-                });
+                changed();
               });
             });
           });
