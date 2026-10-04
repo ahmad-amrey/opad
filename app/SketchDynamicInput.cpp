@@ -143,9 +143,9 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
     }
     return {field("radius", tr("Radius"), number(r))};
   }
-  // The centre arc's sweep from its start (signed, counter-clockwise positive); an arc slot's the way the pointer went round
+  // The centre arc's or arc slot's sweep from its start (signed, counter-clockwise positive), the way the pointer went round
   // (P5), past half a turn too.
-  const double sweep = m_tool == "arcslot" ? slotSweep(u, v) : std::remainder(std::atan2(dv, du) - std::atan2(bv, bu), 2 * M_PI);
+  const double sweep = m_tool == "arcslot" || m_tool == "arcc" ? slotSweep(u, v) : std::remainder(std::atan2(dv, du) - std::atan2(bv, bu), 2 * M_PI);
   QList<Field> out{field("sweep", tr("Sweep angle"), angleText(sweep, 1))};
   if (m_tool == "arcslot") out << Field{"width", tr("Width"), option("width", "2 mm"), true};
   return out;
@@ -784,9 +784,9 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
     const double ux = ((a.u * a.u + a.v * a.v) * (b.v - cv) + (b.u * b.u + b.v * b.v) * (cv - a.v) + (cu * cu + cv * cv) * (a.v - b.v)) / d;
     const double uy = ((a.u * a.u + a.v * a.v) * (cu - b.u) + (b.u * b.u + b.v * b.v) * (a.u - cu) + (cu * cu + cv * cv) * (b.u - a.u)) / d;
     along("radius", ux, uy, cu, cv, QStringLiteral("R "), 1, true);
-  } else if (m_tool == "arcc" || m_tool == "arcslot") {  // the sweep from the start (a typed one, an arc slot's, may go past half a turn)
+  } else if (m_tool == "arcc" || m_tool == "arcslot") {  // the sweep from the start, the way the pointer went (or typed): past half a turn too
     const auto it = m_typedValues.find("sweep");
-    const double sweep = m_tool == "arcslot" ? slotSweep(cu, cv) : std::remainder(direction(a.u, a.v, cu, cv) - direction(a.u, a.v, b.u, b.v), 2 * M_PI);
+    const double sweep = slotSweep(cu, cv);
     angle("sweep", a.u, a.v, direction(a.u, a.v, b.u, b.v), it != m_typedValues.end() ? it->second : sweep);
   }
   return out;

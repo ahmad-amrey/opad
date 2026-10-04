@@ -179,9 +179,10 @@ class SketchEditor : public QObject, public SketchInput {
   struct Snap;
   bool primitiveClick(const Snap& s);
   void finishPrimitive();
-  // An arc slot's sweep as the pointer went round its centre from the start (TODO 11 wave 3, P5): signed, counter-clockwise
-  // positive, past half a turn too, so the slot runs the way the pointer went (it always ran counter-clockwise); without
-  // a pointer that went round, the shorter way to (u, v). trackSlotSweep keeps it as the pointer moves.
+  // An arc slot's or a centre arc's sweep as the pointer went round its centre from the start (TODO 11 wave 3, P5): signed,
+  // counter-clockwise positive, past half a turn too, so the slot or arc runs the way the pointer went (the slot always ran
+  // counter-clockwise, the arc the shorter way); without a pointer that went round, the shorter way to (u, v).
+  // trackSlotSweep keeps it as the pointer moves.
   double slotSweep(double u, double v) const;
   void trackSlotSweep();
   struct SlotSweep { double sweep = 0, last = 0, ou = 0, ov = 0, su = 0, sv = 0; };  // the sweep so far, the pointer's last angle, for these clicks

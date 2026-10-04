@@ -153,7 +153,7 @@ double SketchEditor::slotSweep(double u,double v) const {
 }
 
 void SketchEditor::trackSlotSweep() {
-  if(m_tool!="arcslot" || m_clicks.size()!=2){m_slotSweep.reset();return;}
+  if((m_tool!="arcslot" && m_tool!="arcc") || m_clicks.size()!=2){m_slotSweep.reset();return;}
   const Snap &o=m_clicks[0],&s=m_clicks[1];
   m_slotSweep=SlotSweep{slotSweep(m_cursor.u,m_cursor.v),std::atan2(m_cursor.v-o.v,m_cursor.u-o.u),o.u,o.v,s.u,s.v};
 }

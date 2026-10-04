@@ -344,10 +344,8 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     begin_change();
     const int centre = pointFor(c), ps = pointFor(a);
     const int pe = s.point ? s.point : m_sk.add_point(c.u + (s.u - c.u) * r / de, c.v + (s.v - c.v) * r / de);
-    double sweep = std::atan2(s.v - c.v, s.u - c.u) - std::atan2(a.v - c.v, a.u - c.u);
-    while (sweep > M_PI) sweep -= 2 * M_PI;
-    while (sweep <= -M_PI) sweep += 2 * M_PI;
-    if (const auto typed = s.typed.find("sweep"); typed != s.typed.end()) sweep = typed->second.first;  // past half a turn too
+    double sweep = slotSweep(s.u, s.v);  // the way the pointer went round its centre, past half a turn too (P5)
+    if (const auto typed = s.typed.find("sweep"); typed != s.typed.end()) sweep = typed->second.first;
     const int arc = m_sk.add_arc(centre, sweep > 0 ? ps : pe, sweep > 0 ? pe : ps);
     const int radius = keepTyped(a, "radius", CT::Radius, {arc});
     keepDirection(a, "angle", {centre, ps}, std::atan2(a.v - c.v, a.u - c.u));  // the start along an axis

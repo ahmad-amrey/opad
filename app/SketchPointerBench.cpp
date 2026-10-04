@@ -42,9 +42,10 @@ End bezierStart(const Sketch& sk, const SkEntity& e) {
 // preview, and results that are what their names say. Tangent circle: with both lines picked the circle is previewed on the
 // pointer's side and moves to the other side with it, the click makes that one. Arc slot: the slot runs the way the pointer
 // went round its centre, clockwise over the top (the guide's -120 degrees, read out signed) or counter-clockwise past half a
-// turn. Circumscribed polygon: its circle is inside, touching every side, as big as the pointer's distance. Smooth (G2) joins a
-// line to a spline and Curvature an arc to a spline, picked as the guides pick them: the line held by Fix stays, as the guide
-// shows it, and a spline drawn through its points is not picked (the status says why). The Constraints page, opened with the
+// turn; a centre arc too (clockwise -130 as its guide, counter-clockwise 240). Circumscribed polygon: its circle is inside,
+// touching every side, as big as the pointer's distance. Smooth (G2) joins a line to a spline and Curvature an arc to a
+// spline, picked as the guides pick them: the line held by Fix stays, as the guide shows it, and a spline drawn through its
+// points is not picked (the status says why). The Constraints page, opened with the
 // panel's page switch, lights a picked row's geometry. Open ends: an end dragged onto the other is merged, the profile closes.
 // Transform image: a press on the picture and a drag move it, the picture following; the release keeps the place.
 // <prefix>.tangent.png, .arcslot.png, .polygon.png, .constraints.png (the panel), .image.png.
@@ -205,6 +206,32 @@ void SketchEditor::benchPointer() {
         place(e2.first, e2.second);
         const auto made2 = m_sk.entities.size() > slot2 ? arcSpan(m_sk, m_sk.entities[slot2]) : std::make_pair(0.0, 0.0);
         check(m_sk.entities.size() == slot2 + 4 && off(made2.first, 240) < 1e-6 && off(made2.second, 270) < 1e-6, "arc slot: made under the centre, 240 degrees");
+        // ---- Centre arc: it runs the way the pointer went round too, clockwise as its guide sweeps (read out signed) or
+        // counter-clockwise past half a turn (it took the shorter way).
+        setTool("arcc");
+        auto centreArc = [&](double cx, double cy, const std::vector<double>& path, double sweep, double mid, const QString& what) {
+          place(cx, cy);
+          const auto from = at(cx, cy, path.front());
+          place(from.first, from.second);
+          for (size_t i = 1; i < path.size(); ++i) {
+            const auto p = at(cx, cy, path[i]);
+            sketchMove(p.first, p.second, Qt::AltModifier, false);
+          }
+          const QString shown = field("sweep");
+          check(off(slotSweep(m_cursor.u, m_cursor.v), sweep) < 1e-6 && shown.startsWith(QString::number(sweep)),
+                "centre arc: " + what + ", the sweep reads " + shown);
+          const size_t count = m_sk.entities.size();
+          const auto to = at(cx, cy, path.back());
+          place(to.first, to.second);
+          const SkEntity* made = nullptr;
+          for (size_t i = count; i < m_sk.entities.size(); ++i)
+            if (m_sk.entities[i].type == SkEntity::Type::Arc) made = &m_sk.entities[i];
+          const auto span = made ? arcSpan(m_sk, *made) : std::make_pair(0.0, 0.0);
+          check(made && off(span.first, std::abs(sweep)) < 1e-6 && off(span.second, mid) < 1e-6 && m_solved.converged,
+                QString("centre arc: the click makes it %1 degrees about %2").arg(std::abs(sweep)).arg(mid));
+        };
+        centreArc(125, -60, {160, 140, 120, 100, 80, 60, 40, 30}, -130, 95, "clockwise from 160 down to 30, as the guide sweeps it");
+        centreArc(165, -60, {150, 170, 190, 210, 230, 250, 270, 290, 310, 330, 350, 370, 390}, 240, 270, "counter-clockwise from 150 round under the centre to 30");
         // ---- Circumscribed polygon: the circle inside, touching the sides.
         setTool("polygon_outer");
         m_options["sides"] = "6";

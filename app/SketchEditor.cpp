@@ -1993,10 +1993,8 @@ void SketchEditor::updateTransient() {
           }
         } else if (m_tool == "arcc") {
           const double r = std::hypot(b.u - a.u, b.v - a.v), from = std::atan2(b.v - a.v, b.u - a.u);
-          double sweep = std::atan2(cv - a.v, cu - a.u) - from;
-          while (sweep > M_PI) sweep -= 2 * M_PI;
-          while (sweep <= -M_PI) sweep += 2 * M_PI;
-          if (const auto typed = m_typedValues.find("sweep"); typed != m_typedValues.end()) sweep = typed->second;  // past half a turn too
+          double sweep = slotSweep(cu, cv);  // the way the pointer went round, past half a turn too (P5)
+          if (const auto typed = m_typedValues.find("sweep"); typed != m_typedValues.end()) sweep = typed->second;
           arc(a.u, a.v, r, from, sweep);
           d.dashed.push_back({W(a.u, a.v), W(b.u, b.v), rb});
         } else if (m_tool == "slot") {

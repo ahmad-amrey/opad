@@ -1243,7 +1243,7 @@
    "id": "sketch.arcc",
    "title": "Centre arc",
    "summary": "Draws an arc from its centre, a start and an end.",
-   "details": "Click the centre, then the start, which sets the radius, then sweep to the end and click. A radius dimension fixes its size afterwards.",
+   "details": "Click the centre, then the start, which sets the radius, then sweep to the end and click. The arc runs the way the pointer went round, past half a turn too. A radius dimension fixes its size afterwards.",
    "keywords": ["center arc", "radius arc", "sweep"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
