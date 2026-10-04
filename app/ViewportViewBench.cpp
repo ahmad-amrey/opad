@@ -93,7 +93,7 @@ int across(const QImage& frame, const QWidget* view, const QPointF& at, double r
 
 // Two boxes, red and blue at half opacity, overlap in a top view; each quality draws them in one display order and then
 // in the other. Unordered blending (the control) gives the overlap the colour of the last one drawn; OIT the same both
-// ways, with both colours in it. <prefix>.oit.png: the Studio frame.
+// ways, with both colours in it. A looks pass that finds no ghost leaves OIT on. <prefix>.oit.png: the Studio frame.
 bool Viewport::benchTransparency(const QString& prefix) {
   bool all = true;
   auto require = [&](bool ok, const QString& what) {
@@ -151,6 +151,15 @@ bool Viewport::benchTransparency(const QString& prefix) {
             QString("quality %1: OIT overlap %2 either way (%3 swapped), both colours in it").arg(level).arg(name(o1), name(o2)));
     if (level == 1 && !prefix.isEmpty()) frame.save(prefix + ".oit.png");
   }
+  // A looks pass that finds no ghost (a component left, an explode layer cleared) leaves it order-independent.
+  bool applied = false;
+  const auto once = connect(this, &Viewport::looksApplied, this, [&applied] { applied = true; });
+  scheduleLooks();
+  QElapsedTimer clock;
+  clock.start();
+  while (!applied && clock.elapsed() < 10000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  disconnect(once);
+  require(applied && m_view->RenderingParams().TransparencyMethod == Graphic3d_RTM_BLEND_OIT, "a looks pass with no ghosts keeps OIT");
   m_ctx->Remove(red, Standard_False);
   m_ctx->Remove(blue, Standard_False);
   for (const auto& shape : hidden) m_ctx->Display(shape, Standard_False);

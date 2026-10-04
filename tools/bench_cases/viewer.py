@@ -220,7 +220,8 @@ CASES = [
     # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.
     ("selection-publish", boxes, {"OPAD_BENCH_SELPUBLISH": "{prefix}"}),
     # Order-independent transparency (UI-39): two translucent boxes overlap in the same colour whichever is displayed last,
-    # in the Draft and Studio qualities, while unordered blending (the control) depends on the order. <prefix>.oit.png.
+    # in the Draft and Studio qualities, while unordered blending (the control) depends on the order; a looks pass that
+    # finds no ghost (a component left) leaves OIT on. <prefix>.oit.png.
     ("transparency", "box", {"OPAD_BENCH_TRANSPARENCY": "{prefix}"}),
     # Hover and selection roles (UI-38), in both themes: a hovered body glows white, a selected one is hued (pixels), a
     # body in the selection's own colour is outlined, a selected edge is thicker than its hover in a halo, a face and a
