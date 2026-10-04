@@ -795,7 +795,7 @@
    "id": "design.sketch",
    "title": "New sketch",
    "summary": "Starts a sketch on an origin plane, a planar face or a construction plane.",
-   "details": "Hover a plane and click it: the camera turns square to it and the ribbon switches to the Sketch tools. Finish sketch keeps the result as one step on the timeline.",
+   "details": "Click an origin plane (in the view or the corner tiles), a planar face or a sketch: the camera turns square to it. Place the origin or keep it and press OK; the ribbon switches to the Sketch tools. Finish sketch keeps the result as one step on the timeline.",
    "keywords": ["draw", "2d", "profile", "start sketch"],
    "requires": "Open or create a document first."
   },

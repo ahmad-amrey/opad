@@ -61,7 +61,7 @@ class PlaneTiles : public QWidget {
 PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget* window):QObject(window),m_doc(doc),m_view(view),m_jobs(jobs) {
   auto* body=new QWidget;auto* layout=new QVBoxLayout(body);
   m_steps=new ToolStepsPanel(body);m_steps->setSummary({},{},{});m_steps->setFixedHeight(125);layout->addWidget(m_steps);
-  auto* hint=new QLabel(tr("Choose a plane in the corner widget, a planar model face, or an existing sketch."),body);hint->setObjectName("planeHint");hint->setWordWrap(true);layout->addWidget(hint);
+  auto* hint=new QLabel(tr("Click an origin plane (in the view or the corner tiles), a planar face or a sketch."),body);hint->setObjectName("planeHint");hint->setWordWrap(true);layout->addWidget(hint);
   m_construction=new QCheckBox(tr("Show construction planes"),body);m_construction->setObjectName("constructionPlanes");layout->addWidget(m_construction);
   connect(m_construction,&QCheckBox::toggled,this,[this]{constructionPlanes();});
   m_originControls=new QWidget(body);auto* form=new QFormLayout(m_originControls);form->setContentsMargins(0,0,0,0);
@@ -98,8 +98,10 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
   view->installEventFilter(this);
 }
 
-void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open) {
-  const auto selected=m_view->selection();
+void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open,bool adoptSelection) {
+  // A feature's plane input never takes the selection: that is the feature's own picks (one draft face became its neutral
+  // plane, TODO 11 P3).
+  const auto selected=adoptSelection?m_view->selection():std::vector<opad::Ref>{};
   stop();m_cameraBefore=m_view->cameraJson();m_active=true;m_positionOrigin=positionOrigin;m_originStage=false;m_oldFilter=m_view->selectionFilter();m_tiles->selected=-1;m_status->clear();
   // Construction planes are offered when there are any: they are made to be sketched on, and hidden behind an unticked
   // box the one just made could not be found.
@@ -128,6 +130,13 @@ void PlanePicker::choose(const opad::json& support) {
     ++m_candidateSerial;m_view->clearCandidates();m_tiles->hide();m_view->clearSelection();m_view->setSelectionFilter(Viewport::SelFilter::Vertex);refresh();
   });
 }
+// What a plane candidate is called: the base planes and construction planes by name, a sketch by its own.
+QString PlanePicker::candidateName(const opad::json& support) const {
+  if(support.contains("base")){const std::string b=support.value("base",std::string());return b=="xz"?tr("XZ plane"):b=="yz"?tr("YZ plane"):tr("XY plane");}
+  if(support.contains("sketch"))if(const auto* s=m_doc->scene.sketch(support.value("sketch",std::string())))return QString::fromStdString(s->name);
+  if(support.contains("feature"))if(const auto* f=m_doc->scene.feature(support.value("feature",std::string())))return QString::fromStdString(f->name);
+  return {};
+}
 void PlanePicker::selectionChanged() {
   if(!m_active||m_originStage)return;const auto candidates=m_view->selectedCandidates();const auto refs=m_view->selection();
   if(!candidates.empty())choose(opad::json::parse(candidates.back()));else if(!refs.empty()&&refs.back().kind==opad::Ref::Kind::Face)choose({{"face",refs.back().to_json()}});
@@ -137,7 +146,7 @@ void PlanePicker::setOrigin(double u,double v){if(!m_originStage||!std::isfinite
 void PlanePicker::apply(){if(!m_active||!m_originStage||m_job)return;const opad::json plane={{"support",m_support},{"origin",m_origin},{"frame",m_frame.to_json()}};const auto frame=m_frame;stop(false);emit accepted(plane,frame);}
 // What the plane step took (UI-25: never "Ready"): a base plane, a body's face, a sketch's or a construction plane's name.
 QString PlanePicker::supportName() const {
-  if(m_support.contains("base")){const std::string b=m_support.value("base",std::string());return b=="xz"?tr("XZ plane"):b=="yz"?tr("YZ plane"):tr("XY plane");}
+  if(m_support.contains("base"))return candidateName(m_support);
   if(m_support.contains("face")) {
     std::string body;try{body=opad::Ref::from_json(m_support.at("face")).body;}catch(...){}
     const opad::Node* n=m_doc->scene.node(body);return n?tr("Face of %1").arg(QString::fromStdString(n->name)):tr("A face");
@@ -158,11 +167,15 @@ void PlanePicker::refresh(){
   if(m_originStage){double u,v;m_supportFrame.to_local(m_frame.origin,u,v);m_u->setText(units::editable(units::Kind::Length,u));m_v->setText(units::editable(units::Kind::Length,v));preview(&m_frame);}m_refreshing=false;
 }
 void PlanePicker::constructionPlanes(){
-  const int serial=++m_candidateSerial;if(!m_active||m_originStage)return;m_view->clearCandidates();
+  const int serial=++m_candidateSerial;if(!m_active||m_originStage)return;
+  // TODO 11 P3: the origin planes are in the view too, not only in the corner tiles: faint squares about the origin, shown at
+  // once (three faces); construction planes (drawn more solid) and sketches follow from a worker.
+  const double size=std::max(10.0,m_view->pixelSize()*70);
+  auto candidates=std::make_shared<std::vector<Viewport::Candidate>>(originPlanes(size));m_view->showCandidates(*candidates);
   auto frames=std::make_shared<std::vector<std::pair<std::string,opad::Frame>>>();if(m_construction->isChecked())for(const auto& f:m_doc->scene.features)if(f.result.contains("plane"))frames->push_back({f.id,opad::Frame::from_json(f.result.at("plane"))});
   auto sketches=std::make_shared<std::vector<opad::SketchItem>>(m_doc->scene.sketches);
-  auto candidates=std::make_shared<std::vector<Viewport::Candidate>>();const double size=std::max(10.0,m_view->pixelSize()*70);QPointer<PlanePicker> guard(this);
-  m_jobs->async(tr("Preparing construction planes"),[frames,sketches,candidates,size](Progress p){for(const auto& [id,frame]:*frames){if(p.cancelled())return;candidates->push_back({(id.starts_with("sketch:")?opad::json{{"sketch",id.substr(7)}}:opad::json{{"feature",id}}).dump(),BRepBuilderAPI_MakeFace(frame_plane(frame),-size,size,-size,size).Face(),false});}
+  QPointer<PlanePicker> guard(this);
+  m_jobs->async(tr("Preparing construction planes"),[frames,sketches,candidates,size](Progress p){for(const auto& [id,frame]:*frames){if(p.cancelled())return;candidates->push_back({(id.starts_with("sketch:")?opad::json{{"sketch",id.substr(7)}}:opad::json{{"feature",id}}).dump(),BRepBuilderAPI_MakeFace(frame_plane(frame),-size,size,-size,size).Face(),true});}
     for(const auto& sketch:*sketches)if(sketch.visible){
       if(p.cancelled())return;BRep_Builder builder;TopoDS_Compound shape;builder.MakeCompound(shape);
       const auto geometry=Sketch::from_json(sketch.geometry);
@@ -170,6 +183,11 @@ void PlanePicker::constructionPlanes(){
       Bnd_Box box;BRepBndLib::Add(shape,box);candidates->push_back({opad::json{{"sketch",sketch.id}}.dump(),shape,false,BodyPrs::build(shape,box)});
     }
   },[this,guard,candidates,serial](bool ok,const QString&){if(guard&&ok&&m_active&&!m_originStage&&serial==m_candidateSerial)m_view->showCandidates(*candidates);});
+}
+std::vector<Viewport::Candidate> PlanePicker::originPlanes(double halfSize){
+  halfSize=std::max(10.0,halfSize);std::vector<Viewport::Candidate> out;
+  for(const char* base:{"xy","xz","yz"})out.push_back({opad::json{{"base",base}}.dump(),BRepBuilderAPI_MakeFace(frame_plane(base_frame(base)),-halfSize,halfSize,-halfSize,halfSize).Face(),false});
+  return out;
 }
 void PlanePicker::preview(const opad::Frame* frame){
   if(!m_preview.IsNull()){m_view->removeOverlay(m_preview);m_preview.Nullify();}for(auto* label:{&m_xLabel,&m_yLabel})if(!label->IsNull()){m_view->removeOverlay(*label);label->Nullify();}if(!frame)return;
@@ -186,12 +204,17 @@ void PlanePicker::pickOrigin(const opad::Ref& ref){
 }
 bool PlanePicker::eventFilter(QObject* object,QEvent* event){
   if(object!=m_view||!m_active)return false;
-  if(event->type()==QEvent::KeyPress){auto* key=static_cast<QKeyEvent*>(event);if(key->key()==Qt::Key_Escape){cancel();return true;}}
+  if(event->type()==QEvent::KeyPress){auto* key=static_cast<QKeyEvent*>(event);if(key->key()==Qt::Key_Escape){cancel();return true;}
+    // Enter is OK in the origin stage (the panel's OK, the guide's Enter), as in the other tool panels.
+    if(m_originStage && (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && !(key->modifiers()&~Qt::KeypadModifier)){apply();return true;}}
   if(!m_originStage){
     if(event->type()==QEvent::MouseMove)QTimer::singleShot(0,this,[this]{
       if(!m_active || m_originStage)return;const auto id=m_view->hoveredCandidate();const auto previous=property("hoveredSketchPlane").toString();
       if(previous==QString::fromStdString(id))return;setProperty("hoveredSketchPlane",QString::fromStdString(id));
-      if(!id.empty()){const auto ref=opad::json::parse(id);if(ref.contains("sketch"))if(const auto* sketch=m_doc->scene.sketch(ref.at("sketch").get<std::string>())){preview(&sketch->frame);m_status->setText(tr("Sketch plane: %1 - click to use").arg(QString::fromStdString(sketch->name)));return;}}
+      if(!id.empty()){const auto ref=opad::json::parse(id);if(ref.contains("sketch"))if(const auto* sketch=m_doc->scene.sketch(ref.at("sketch").get<std::string>())){preview(&sketch->frame);m_status->setText(tr("Sketch plane: %1 - click to use").arg(QString::fromStdString(sketch->name)));return;}
+        // An origin or a construction plane in the view: outlined and named as the tiles' hover does.
+        const auto* feature=ref.contains("feature")?m_doc->scene.feature(ref.value("feature",std::string())):nullptr;
+        if(ref.contains("base") || (feature && feature->result.contains("plane"))){const auto frame=feature?opad::Frame::from_json(feature->result.at("plane")):base_frame(ref.value("base",std::string()));preview(&frame);m_status->setText(tr("%1 - click to use").arg(candidateName(ref)));return;}}
       if(!previous.isEmpty()){preview(nullptr);m_status->clear();}
     });return false;
   }

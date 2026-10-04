@@ -124,6 +124,7 @@
  "Press Enter, then add dimensions": "اضغط Enter ثم أضف الأبعاد",
  "Pick an origin plane or a planar face": "اختر مستوى أصل أو وجهًا مستويًا",
  "The view turns to look straight at it": "يدور العرض لينظر إليه مباشرة",
+ "Place the origin (or keep it), then OK": "ضع نقطة الأصل (أو أبقها) ثم موافق",
  "Draw on it, then Finish sketch": "ارسم عليه ثم أنهِ الرسم التخطيطي",
  "Press Ctrl+Enter or click Finish sketch": "اضغط Ctrl+Enter أو انقر إنهاء الرسم التخطيطي",
  "The profile is kept, ready to extrude": "يبقى المقطع جاهزًا للبثق",
