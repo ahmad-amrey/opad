@@ -1093,6 +1093,25 @@ TEST(palette_ranks_whole_words_first) {
   QStringList order;
   for (int i = 0; i < list->count(); ++i) order << static_cast<QAction*>(list->item(i)->data(Qt::UserRole).value<void*>())->objectName();
   CHECK_EQ(order, QStringList({"x.fit", "x.sheet", "x.fitting", "x.oda"}));
+  // A key typed: first with a modifier or a name ("ctrl+l", "f2"), but one plain letter is the start of a name search.
+  QAction line("Line"), copy("Copy"), rename("Rename");
+  line.setObjectName("x.line");
+  copy.setObjectName("x.copy");
+  rename.setObjectName("x.rename");
+  line.setShortcut(QKeySequence("C"));
+  copy.setShortcut(QKeySequence("Ctrl+L"));
+  rename.setShortcut(QKeySequence("F2"));
+  CommandPalette keyed({&line, &copy, &rename});
+  auto first = [&keyed](const QString& query) {
+    keyed.findChild<QLineEdit*>("paletteInput")->setText(query);
+    QStringList ids;
+    auto* rows = keyed.findChild<QListWidget*>("paletteList");
+    for (int i = 0; i < rows->count(); ++i) ids << static_cast<QAction*>(rows->item(i)->data(Qt::UserRole).value<void*>())->objectName();
+    return ids;
+  };
+  CHECK_EQ(first("c"), QStringList({"x.copy", "x.line"}));  // Copy's name, then Line's key
+  CHECK_EQ(first("ctrl+l").value(0), QString("x.copy"));
+  CHECK_EQ(first("f2").value(0), QString("x.rename"));
 }
 
 // Commands are listed by area (the palette's group column, the reference's headings), every area named once.

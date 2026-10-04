@@ -226,16 +226,18 @@ void CommandPalette::refill(const QString& filter) {
   auto rank = [&recent](const QAction* a) { const qsizetype i = recent.indexOf(a->objectName()); return i < 0 ? recent.size() : i; };
   QList<QPair<int, QAction*>> scored;
   // A key typed as shown or as Qt writes it ("ctrl+alt+f"): the command that has it now comes first; with a '+' the
-  // commands whose key starts so follow ("ctrl+alt" lists them).
+  // commands whose key starts so follow ("ctrl+alt" lists them). One plain character is how a name search starts: the
+  // command bound to it ranks with the names that word starts, after them ('c': Combine, Copy, then Circle's key C).
   auto squeeze = [](QString s) { return s.remove(' ').toLower(); };
   const QString typedKey = squeeze(query);
+  const int keyHit = typedKey.size() == 1 ? kWordHit : 3 * kWordHit;
   for (QAction* a : m_actions) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
     int s = fuzzyScore(a->text().remove('&'), query, nullptr);
     for (const QKeySequence& key : keys::bindings(a)) {
       if (typedKey.isEmpty()) break;
       for (const QString& written : {squeeze(keys::plain(key)), squeeze(key.toString(QKeySequence::PortableText))}) {
-        if (written == typedKey) s = std::max(s, 3 * kWordHit);
+        if (written == typedKey) s = std::max(s, keyHit);
         else if (typedKey.contains('+') && written.startsWith(typedKey)) s = std::max(s, 2 * kWordHit);
       }
     }
