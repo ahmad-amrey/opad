@@ -72,9 +72,12 @@ design::Plan issue_commit_plan(const Scene& scene, json op, const json& edits, s
 // The scene as it will be once `op` (an issue planned above) is appended: title blocks and revision tables show it, so the
 // PDF written before the op is what the drawing then shows.
 Scene with_issue(const Scene& scene, const json& op);
-// A view's linework as a 2D BREP compound in view coordinates (model mm): visible, tangent and hidden edges, each a compound.
+// A view's linework as a 2D BREP compound in view coordinates (model mm): visible, thin and hidden edges, each a compound,
+// then a section's cut faces if it has any. The thin compound holds the tangent and seam edges themselves, followed by
+// two compounds of its own: an exploded view's trail lines, then the visible break lines (a build that reads every edge
+// of it as tangent still draws them all).
 std::string linework_brep(const ViewGeometry& g);
-// That linework back as the view's curves (sharp, tangent, hidden; a polyline comes back as its segments).
+// That linework back as the view's curves (sharp, tangent, trail, break, hidden; a polyline comes back as its segments).
 ViewGeometry frozen_geometry(const TopoDS_Shape& lines);
 // What issuing the sheet's drawing with frozen linework adds to the body store, in bytes: the linework of every view that
 // the store does not hold yet (a view unchanged since the last issue adds nothing). Projects every view (cached): workers.

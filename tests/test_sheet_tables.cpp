@@ -512,6 +512,43 @@ TEST(exploded_view_drawings) {
   CHECK(layer != d.layers.end() && layer->line == LineType::Phantom && layer->width < 0.3);
   const int trail = static_cast<int>(layer - d.layers.begin());
   CHECK(std::count_if(d.prims.begin(), d.prims.end(), [&](const Prim& p) { return p.layer == trail && p.source == view; }) == trails);
+  // Frozen as linework (an issue): the trail lines come back as trail lines, the thin edges stay thin, and the drawing
+  // as issued puts them on the Trail layer as the sheet did (they were frozen with the tangent edges and drawn solid).
+  {
+    const ViewGeometry frozen = frozen_geometry(shape_from_brep(linework_brep(*g)));
+    auto length = [](const ViewGeometry& v, Curve::Kind kind, bool hidden) {
+      double sum = 0;
+      for (const auto& c : v.curves)
+        if (c.kind == kind && c.hidden == hidden) sum += c.length();
+      return sum;
+    };
+    CHECK(length(*g, Curve::Kind::Trail, false) > 1);
+    CHECK_NEAR(length(frozen, Curve::Kind::Trail, false), length(*g, Curve::Kind::Trail, false), 1e-6);
+    CHECK_NEAR(length(frozen, Curve::Kind::Tangent, false), length(*g, Curve::Kind::Tangent, false) + length(*g, Curve::Kind::Seam, false), 1e-3);
+    // Break lines too (a broken-out section's), after the trails; the thin edges stay tangent.
+    ViewGeometry kinds;
+    for (const auto& [kind, x] : std::vector<std::pair<Curve::Kind, double>>{{Curve::Kind::Tangent, 0}, {Curve::Kind::Break, 10}, {Curve::Kind::Trail, 20}}) {
+      Curve c;
+      c.kind = kind;
+      c.pts = {{x, 0}, {x, 5}};
+      kinds.curves.push_back(c);
+    }
+    const ViewGeometry back = frozen_geometry(shape_from_brep(linework_brep(kinds)));
+    CHECK_EQ(back.curves.size(), 3u);
+    for (const auto& c : back.curves) {
+      const Curve::Kind want = c.pts[0][0] < 5 ? Curve::Kind::Tangent : c.pts[0][0] < 15 ? Curve::Kind::Break : Curve::Kind::Trail;
+      CHECK(c.kind == want && !c.hidden);
+    }
+    run(a.doc, "sheet_issue", {{"sheet", a.sheet}, {"description", "Exploded"}});
+    const Scene now = a.scene();
+    const SheetItem* issue = find_issue(now, *now.sheet(a.sheet), "A");
+    CHECK(issue && issue->def.value("frozen", json::object()).contains(view));
+    const Display issued = issued_display(a.doc, issued_scene(a.doc, *issue), *now.sheet(a.sheet), *issue);
+    const auto at = std::find_if(issued.layers.begin(), issued.layers.end(), [](const Layer& l) { return l.name == "Trail"; });
+    CHECK(at != issued.layers.end() && at->line == LineType::Phantom);
+    const int issuedTrail = static_cast<int>(at - issued.layers.begin());
+    CHECK(std::count_if(issued.prims.begin(), issued.prims.end(), [&](const Prim& p) { return p.layer == issuedTrail && p.source == view; }) >= trails);
+  }
   // A projected view of it is exploded too.
   const json side = run(a.doc, "sheet_view", {{"sheet", a.sheet}, {"parent", view}, {"side", "right"}});
   const Scene s2 = a.scene();

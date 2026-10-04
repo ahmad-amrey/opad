@@ -713,11 +713,14 @@ std::string next_revision(const Scene& scene, const Sheet& sheet) {
 
 std::string linework_brep(const ViewGeometry& g) {
   BRep_Builder b;
-  TopoDS_Compound all, parts[3];
+  TopoDS_Compound all, parts[5];  // visible, thin, hidden; trails and breaks go inside the thin one (header)
   b.MakeCompound(all);
   for (auto& p : parts) b.MakeCompound(p);
+  bool kinds = false;  // any trail or visible break line
   for (const auto& c : g.curves) {
-    const int at = c.hidden ? 2 : c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam || c.kind == Curve::Kind::Break || c.kind == Curve::Kind::Trail ? 1 : 0;
+    // A trail line draws as one whether a part hides it or not (draw_view), a hidden break line as hidden.
+    const int at = c.kind == Curve::Kind::Trail ? 3 : c.hidden ? 2 : c.kind == Curve::Kind::Break ? 4 : c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam ? 1 : 0;
+    kinds = kinds || at >= 3;
     try {
       if (c.type == Curve::Type::Polyline) {
         for (size_t i = 1; i < c.pts.size(); ++i)
@@ -730,7 +733,11 @@ std::string linework_brep(const ViewGeometry& g) {
     } catch (const Standard_Failure&) {  // a degenerate piece: left out
     }
   }
-  for (auto& p : parts) b.Add(all, p);
+  if (kinds) {  // both, in that order, after the thin edges themselves
+    b.Add(parts[1], parts[3]);
+    b.Add(parts[1], parts[4]);
+  }
+  for (int i = 0; i < 3; ++i) b.Add(all, parts[i]);
   if (!g.sections.empty()) {  // a section's cut faces (UI-82): a compound of closed outlines per body, after the lines
     TopoDS_Compound faces;
     b.MakeCompound(faces);
@@ -920,16 +927,29 @@ Scene issued_scene(const Document& doc, const SheetItem& issue) {
 ViewGeometry frozen_geometry(const TopoDS_Shape& lines) {
   ViewGeometry g;
   const detail::View top{gp::DX(), gp::DY(), gp::DZ()};
+  auto add = [&](const TopoDS_Shape& part, const Curve& like) {
+    for (TopExp_Explorer e(part, TopAbs_EDGE); e.More(); e.Next()) {
+      const TopoDS_Edge& edge = TopoDS::Edge(e.Current());
+      if (BRep_Tool::Degenerated(edge)) continue;
+      const BRepAdaptor_Curve c(edge);
+      detail::emit(c, c.FirstParameter(), c.LastParameter(), top, like, 1e-3, g.curves);
+    }
+  };
   int k = 0;
   for (TopoDS_Iterator it(lines); it.More() && k < 3; it.Next(), ++k) {
     Curve like;
     like.kind = k == 1 ? Curve::Kind::Tangent : Curve::Kind::Sharp;
     like.hidden = k == 2;
-    for (TopExp_Explorer e(it.Value(), TopAbs_EDGE); e.More(); e.Next()) {
-      const TopoDS_Edge& edge = TopoDS::Edge(e.Current());
-      if (BRep_Tool::Degenerated(edge)) continue;
-      const BRepAdaptor_Curve c(edge);
-      detail::emit(c, c.FirstParameter(), c.LastParameter(), top, like, 1e-3, g.curves);
+    if (k != 1) {
+      add(it.Value(), like);
+      continue;
+    }
+    // The thin edges, then (linework_brep) the trail lines' compound and the break lines'; earlier issues have edges only.
+    int nested = 0;
+    for (TopoDS_Iterator t(it.Value()); t.More(); t.Next()) {
+      Curve kind = like;
+      if (t.Value().ShapeType() == TopAbs_COMPOUND) kind.kind = nested++ == 0 ? Curve::Kind::Trail : Curve::Kind::Break;
+      add(t.Value(), kind);
     }
   }
   for (auto& c : g.curves) c.z = 0;
