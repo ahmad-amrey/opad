@@ -42,8 +42,12 @@ void CoordinateReadout::updateAt(const QPointF& pos) {
     if (m_view->planePoint(pos, frame, u, v)) return show(Source::Sketch, {u, v, 0}, "xy");
     return show(Source::None, {0, 0, 0}, QString());
   }
-  opad::Vec3 hit;
-  if (!m_view->twoDimensional() && m_view->detectedPoint(hit)) return show(Source::Model, hit, "xyz");
+  opad::Vec3 snap, hit;
+  const bool snapped = m_view->shownSnap(snap);  // exact: the point an object snap shows (UI-90)
+  QString name;
+  if (m_drawing && m_drawing(pos, snapped ? &snap : nullptr, hit, name)) return show(Source::Drawing, hit, "xy", snapped, name);
+  if (snapped) return show(Source::Model, snap, "xyz", true);
+  if (!m_view->twoDimensional() && (m_view->detectedPoint(hit) || m_view->pointUnder(pos, hit))) return show(Source::Model, hit, "xyz");
   if (m_view->twoDimensional()) {  // the view plane through the origin: the two axes in it when it is a standard one
     const opad::Vec3 d = m_view->viewDirection();
     const opad::Vec3 up = std::abs(d[2]) > 0.9 ? opad::Vec3{0, 1, 0} : opad::Vec3{0, 0, 1};
@@ -60,9 +64,10 @@ void CoordinateReadout::updateAt(const QPointF& pos) {
   show(Source::None, {0, 0, 0}, QString());
 }
 
-void CoordinateReadout::show(Source source, const opad::Vec3& p, const QString& axes) {
+void CoordinateReadout::show(Source source, const opad::Vec3& p, const QString& axes, bool snapped, const QString& name) {
   m_source = source;
   m_point = p;
+  m_snapped = snapped;
   if (source == Source::None) {
     clear();
     setToolTip(QString());
@@ -71,10 +76,17 @@ void CoordinateReadout::show(Source source, const opad::Vec3& p, const QString& 
   QStringList parts;
   for (int i = 0; i < 3; ++i)
     if (axes.contains(QChar('x' + i))) parts << QString("%1 %2").arg(QChar('X' + i)).arg(units::number(units::Kind::Length, p[i]));
-  const QString tag = source == Source::Model ? QString("3D") : source == Source::Plane ? QString("XY") : source == Source::Sketch ? tr("Sketch") : QString("2D");
+  const QString tag = source == Source::Model    ? QString("3D")
+                      : source == Source::Plane  ? QString("XY")
+                      : source == Source::Sketch ? tr("Sketch")
+                      : source == Source::Drawing ? tr("Drawing")
+                                                  : QString("2D");
   setText(QChar(0x202A) + tag + "  " + parts.join("  ") + QChar(0x202C));  // left to right inside a right-to-left UI
-  setToolTip(source == Source::Model    ? tr("The cursor on the model, in model coordinates")
-             : source == Source::Plane  ? tr("Nothing under the cursor: where it meets the XY plane")
-             : source == Source::Sketch ? tr("The cursor in the sketch's own X and Y")
-                                        : tr("The cursor on the view plane"));
+  QString tip = source == Source::Model     ? tr("The cursor on the model, in model coordinates")
+                : source == Source::Plane   ? tr("Nothing under the cursor: where it meets the XY plane")
+                : source == Source::Sketch  ? tr("The cursor in the sketch's own X and Y")
+                : source == Source::Drawing ? tr("Cursor position in the coordinates of %1, as its file has them").arg(name)
+                                            : tr("The cursor on the view plane");
+  if (snapped) tip += "\n" + tr("At the snapped point");
+  setToolTip(tip);
 }

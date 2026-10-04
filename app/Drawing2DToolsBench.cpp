@@ -21,6 +21,7 @@
 #include <cmath>
 
 #include "BenchRegistry.hpp"
+#include "CoordinateReadout.hpp"
 #include "Drawing2D.hpp"
 #include "Drawing2DBench.hpp"
 #include "GuidedTool.hpp"
@@ -393,7 +394,7 @@ OPAD_BENCH(OPAD_BENCH_OSNAP_SKETCH, osnapSketch) {
 // OPAD_BENCH_READOUT=<prefix>. On a drawing far from (0, 0) (opened centred): the status bar's readout gives the cursor's
 // X and Y as the file has them (1 000 060, 2 000 045 within a pixel), at a snapped point exactly that point (the Distance
 // tool's Points filter, near a line's end), and nothing once the mouse leaves the view. On a model (the box): X, Y and Z
-// of the surface under the cursor (the top face from above: Z 10), nothing over empty space. <prefix>.status.png.
+// of the surface under the cursor (the top face from above: Z 10), over empty space where it meets the XY plane. <prefix>.status.png.
 OPAD_BENCH(OPAD_BENCH_READOUT, readout) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -410,13 +411,14 @@ OPAD_BENCH(OPAD_BENCH_READOUT, readout) {
     return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() + v->skippedCount() >= expected && expected > 0 && !v->looksPending();
   };
   pollUntil(&w, settled, 220000, [&w, v, doc, require, all, value](bool shown) {
-    auto* readout = w.findChild<QLabel*>("cursorReadout");
+    auto* readout = w.findChild<CoordinateReadout*>("coordinateReadout");  // the status bar's one readout (UI-112, UI-90)
     require(shown && readout && readout->text().isEmpty(), "the readout is in the status bar, empty while the mouse is elsewhere");
     if (!shown || !readout) return QCoreApplication::exit(2);
     auto numbers = [readout] {  // X, Y (and Z) as shown
       QList<double> out;
       static const QRegularExpression number("-?[0-9]+(\.[0-9]+)?");
-      for (auto it = number.globalMatch(readout->text()); it.hasNext();) out << it.next().captured(0).toDouble();
+      const QString text = readout->text();
+      for (auto it = number.globalMatch(text.mid(std::max<qsizetype>(0, text.indexOf("X ")))); it.hasNext();) out << it.next().captured(0).toDouble();  // after the tag
       return out;
     };
     auto move = [v](const QPointF& at) {
@@ -474,8 +476,10 @@ OPAD_BENCH(OPAD_BENCH_READOUT, readout) {
         require(worst < 50, QString("60 readouts across the view on %1 bodies, the slowest %2 ms").arg(doc->scene.all_bodies().size()).arg(worst));
         w.statusBar()->grab().save(value + ".status.png");
         move(QPointF(3, v->height() - 3));
-      }, [readout] { return readout->text().isEmpty(); });
-      script->add("empty space", [require] { require(true, "over empty space the readout is empty"); });
+      }, [readout] { return readout->source() != CoordinateReadout::Source::Model; });
+      script->add("empty space", [readout, require] {
+        require(readout->source() == CoordinateReadout::Source::Plane, "over empty space the readout is where the cursor meets the XY plane: " + readout->text());
+      });
     }
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
