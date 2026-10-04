@@ -142,7 +142,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setAnimateViews(bool on);   // setting view/animate (default on)
   bool animateViews() const { return m_animateViews; }
 
-  void warmUp();  // create the OpenGL viewer now rather than on first paint
+  // Startup (StartUp.hpp, UI-44): the OpenGL viewer is made by warmUp(), which the window calls once its shell has been
+  // painted, and its first frame (the shaders) drawn by firstFrame() on a later turn; a show or paint of the view before
+  // warmUp() makes nothing.
+  void warmUp();
+  void firstFrame();
   void setBlocked(bool on);  // while a file loads: mouse input is ignored (the shade window covers the view)
   bool blocked() const { return m_blocked; }
   const Job* pumpJob() const { return m_displayJob; }  // the display pump's job while it runs (benches)
@@ -640,7 +644,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // every sync's finish lays the 3D grid out again, and read them three times there.
   double m_gridSpacing=0, m_gridExtentSetting=100;
   double m_gridShownStep=0, m_gridShownExtent=0, m_gridShownX=0, m_gridShownY=0;  // the infinite grid as last laid out
-  bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
+  bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false, m_warmed = false;
   std::vector<std::string> m_fitNodesOnSync;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;
   opad::Vec3 m_sectionOrigin{0, 0, 0}, m_sectionNormal{0, 0, 1};

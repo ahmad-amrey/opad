@@ -200,6 +200,9 @@ CASES = [
     # the Engine (shown in isolation) the three boxes settle within 15 s (bodies: 19-21 s before, faces: over a minute).
     # <prefix>.crossing.png.
     ("box-scan", "tests/corpus/stepcode-as1-oc-214.stp", {"OPAD_BENCH_BOXSCAN": "{prefix}"}),
+    # Startup order (UI-44): the viewer is made after the window is shown and exposed (here: started hidden, after the wait
+    # for an expose), its first frame on a later turn, the file opened after that; each step's time logged.
+    ("startup", "box", {"OPAD_BENCH_STARTUP": "1"}),
     ("box-scan-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_BOXSCAN": "{prefix}"}),
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,
     # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.

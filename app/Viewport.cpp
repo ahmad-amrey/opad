@@ -1804,15 +1804,19 @@ void Viewport::streamSettled() {
 
 void Viewport::setStreamJob(Job* job) { m_streamJob = job; }
 
-// Creates the OpenGL viewer ahead of the first document (about 0.7 s) so that opening a file does not pay
-// for it. The native child window exists while hidden, which is all OCCT needs.
+// Creates the OpenGL viewer ahead of the first document (0.2-0.8 s) so that opening a file does not pay for it. The native
+// child window exists while hidden, which is all OCCT needs.
 void Viewport::warmUp() {
+  m_warmed = true;
   if (m_initialised) return;
   try {
     initViewer();
-    m_view->Redraw();  // first frame compiles the shaders (~0.3 s); better here than when the document appears
   } catch (const Standard_Failure&) {  // no context yet: paintEvent will try again once visible
   }
+}
+
+void Viewport::firstFrame() {
+  if (m_initialised) m_view->Redraw();  // compiles the shaders (0.2-0.4 s); better here than when the document appears
 }
 
 void Viewport::renameBodyKeys(const std::map<std::string, std::string>& keys) {
@@ -2187,7 +2191,7 @@ void Viewport::showEvent(QShowEvent* e) {
   QWidget::showEvent(e);
   if (!m_initialised) {
     m_needFit = true;
-    initViewer();
+    if (m_warmed) initViewer();  // else the startup makes it once the window has been painted (warmUp)
   }
   // The stacked layout may resize us after the native window was created; re-check once shown.
   QTimer::singleShot(0, this, [this] { syncWindowSize(); requestRedraw(); });
@@ -2236,7 +2240,10 @@ void Viewport::paintEvent(QPaintEvent*) {
     m_repaintAfterFlush = true;
     return;
   }
-  if (!m_initialised) initViewer();
+  if (!m_initialised) {
+    if (!m_warmed) return;  // the startup has not made the viewer yet (warmUp)
+    initViewer();
+  }
   syncWindowSize();
   QElapsedTimer frame;
   frame.start();

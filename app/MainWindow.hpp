@@ -38,7 +38,8 @@ class MainWindow : public QMainWindow {
   MainWindow();
   ~MainWindow() override;
   void openPath(const QString& path);
-  void warmUpViewport() { m_viewport->warmUp(); }
+  void warmUpViewport() { m_viewport->warmUp(); }  // startup (StartUp.hpp): the viewer, then its first frame
+  void drawFirstViewportFrame() { m_viewport->firstFrame(); }
   void setBenchSelect(bool on);  // --bench-select: select every root after loading, log, quit; nothing else shows on screen
 
  protected:

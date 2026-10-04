@@ -12,6 +12,7 @@
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
+#include "StartUp.hpp"
 #include "opad/core.hpp"
 
 namespace {
@@ -33,6 +34,7 @@ class FileOpenEvents : public QObject {
 }  // namespace
 
 int main(int argc, char** argv) {
+  startup::begin();
   trace::log("startup: main");
   installCrashHandler();
   // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive
@@ -47,6 +49,7 @@ int main(int argc, char** argv) {
 #endif
   QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
   QApplication app(argc, argv);
+  startup::prepare();
   QApplication::setApplicationName("OPAD");
   QApplication::setOrganizationName("opad");
   QApplication::setApplicationVersion(QString::fromStdString(opad::version_string()));
@@ -86,8 +89,7 @@ int main(int argc, char** argv) {
   win.setBenchSelect(parser.isSet(bench));
   win.show();
   trace::log("startup: window shown");
-  QTimer::singleShot(0, &win, [&win] { win.warmUpViewport(); });  // GL init off the first-open path
   const QStringList args = parser.positionalArguments();
-  if (!args.isEmpty()) win.openPath(args.first());
+  startup::run(&win, args.isEmpty() ? QString() : args.first());  // the shell painted first, then the viewer, then the file
   return app.exec();
 }
