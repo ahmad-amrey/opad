@@ -7,6 +7,7 @@
 
 #include <QApplication>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 
@@ -277,6 +278,41 @@ OPAD_BENCH(OPAD_BENCH_PICKROUTING, pickrouting) {
       [=] {
         if (!waitFor(design->sketchActive(), "Enter in the origin stage did not open the sketch")) return false;
         pass("new sketch: the XY plane clicked in the view, then Enter: the sketch is open");
+        design->cancelSketch();
+        return true;
+      },
+      // ---- The same with a value typed into Plane X: Enter there is OK with that origin.
+      [=] {
+        if (!waitFor(!design->sketchActive(), "the sketch did not close")) return false;
+        design->startSketch();
+        return true;
+      },
+      [=] {
+        const auto at = find(candidate(xy));
+        if (!waitFor(at.has_value(), "the XY origin plane is not in the view the second time")) return false;
+        click(at, "the XY origin plane");
+        return true;
+      },
+      [=] {
+        if (!waitFor(design->planePicker()->positioning(), "the XY plane click did not reach the origin stage")) return false;
+        const auto boxes = design->planePanel()->findChildren<QLineEdit*>();
+        require(boxes.size() >= 2, "Plane X and Plane Y boxes");
+        QLineEdit* x = boxes.front();
+        x->setFocus();
+        x->selectAll();
+        for (const QString& key : {QString("5")}) {
+          QKeyEvent press(QEvent::KeyPress, Qt::Key_5, Qt::NoModifier, key);
+          QApplication::sendEvent(x, &press);
+        }
+        QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(x, &enter);
+        return true;
+      },
+      [=] {
+        if (!waitFor(design->sketchActive(), "Enter in Plane X did not open the sketch")) return false;
+        const auto origin = design->sketch()->frame().origin;
+        require(std::abs(origin[0] - 5) < 1e-9 && std::abs(origin[1]) < 1e-9, "the sketch origin is not the typed X 5 mm: " + std::to_string(origin[0]) + ", " + std::to_string(origin[1]));
+        pass("new sketch: 5 typed into Plane X, then Enter there: the sketch is open with its origin at X 5 mm");
         design->cancelSketch();
         return true;
       },
