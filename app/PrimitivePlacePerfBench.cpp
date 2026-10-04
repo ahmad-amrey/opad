@@ -16,12 +16,15 @@
 // are on screen (unhidden in memory, never saved), a cylinder is placed through the view's mouse events and each event's
 // handling is timed: the pointer swept over the model while the plane is picked (a pick under it and the hovered face's
 // snap points), a click on a planar face of the model (its frame is resolved on a worker), the base sized by ten moves
-// (each a preview planned on a worker), the click that fixes it; then Esc three times. PASS when no event took 100 ms and
-// starting the cylinder took no more than 30 ms beyond starting a pipe (a panel and a guide of its own, nothing placed).
+// (each a preview planned on a worker), the click that fixes it; then Esc three times. PASS when no event took 100 ms, nor
+// did the events each sizing move left for the event loop (a panel refit, a preview arriving), starting the cylinder took no
+// more than 30 ms beyond starting a pipe (a panel and a guide of its own, nothing placed), and what its start left for the
+// event loop (the document and scene copies its face clicks and previews are planned on, made once the panel is up; any
+// feature's first preview makes them) stayed under the watchdog's 250 ms stall.
 OPAD_BENCH(OPAD_BENCH_PRIMITIVES_PERF, primitives_perf) {
   struct State {
     int phase = 0, ticks = 0, settled = 0, remaining = -1, moves = 0;
-    qint64 worst = 0;
+    qint64 worst = 0, copies = 0;
     QString worstWhat;
     QPointF face;
     bool found = false;
@@ -87,7 +90,10 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES_PERF, primitives_perf) {
       design->startFeature("cylinder");
       const qint64 started = t.restart();
       if (started > pipe + 30) st->worst = std::max(st->worst, started - pipe), st->worstWhat = "starting the cylinder, beyond a pipe's start";
-      trace::log(QStringLiteral("bench: primitives perf: a frame of the Engine took %1 ms (the bench's); starting a pipe %2 ms, the cylinder %3 ms").arg(frame).arg(pipe).arg(started));
+      QCoreApplication::processEvents();  // the plan copies (a timer of 0 ms after the start), on the UI thread
+      st->copies = t.restart();
+      trace::log(QStringLiteral("bench: primitives perf: a frame of the Engine took %1 ms (the bench's); starting a pipe %2 ms, the cylinder %3 ms, the events after it "
+                                "(the plan copies) %4 ms").arg(frame).arg(pipe).arg(started).arg(st->copies));
       st->phase = 2;
       return;
     }
@@ -129,11 +135,13 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES_PERF, primitives_perf) {
         view->surfaceAt(at, candidate, face, hit);  // the frame's hover, as above (not the placer's cost)
         const qint64 picked = pick.elapsed();
         const qint64 ms = timed("a move while sizing", QEvent::MouseMove, at);
-        QElapsedTimer after;  // what the move left for the event loop (the panel's refit, a preview arriving): logged
+        QElapsedTimer after;  // what the move left for the event loop (the panel's refit, a preview arriving): held to the same limit
         after.start();
         QCoreApplication::processEvents();
+        const qint64 left = after.elapsed();
+        if (left > st->worst) st->worst = left, st->worstWhat = "the events after a sizing move";
         trace::log(QStringLiteral("bench: primitives perf: sizing move %1: %2 ms, the events after it %5 ms (the frame's pick there %4 ms), diameter %3")
-                       .arg(st->moves).arg(ms).arg(design->featurePanel()->valueText("diameter")).arg(picked).arg(after.elapsed()));
+                       .arg(st->moves).arg(ms).arg(design->featurePanel()->valueText("diameter")).arg(picked).arg(left));
         return;
       }
       const QPointF at = st->face + QPointF(60, 30);
@@ -152,7 +160,8 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES_PERF, primitives_perf) {
     if (design->featureActive()) return;
     // Under 100 ms: a third of what the watchdog calls a stall, with room for a machine running other benches (alone the Engine
     // gives about 30 ms at most, the pick under the pointer most of it).
-    finish(st->worst < 100, QStringLiteral("the slowest event (%1) took %2 ms").arg(st->worstWhat).arg(st->worst));
+    finish(st->worst < 100 && st->copies < 250, QStringLiteral("the slowest event (%1) took %2 ms; the plan copies after the start %3 ms (under 250)")
+                                                   .arg(st->worstWhat).arg(st->worst).arg(st->copies));
   });
   timer->start();
   return true;
