@@ -309,7 +309,10 @@ void CommandReference::open(const QString& id, const QString& clip) {
         m_list->scrollToItem(*it, QAbstractItemView::PositionAtCenter);
         break;
       }
-    if (current() == id) m_preview->setCommand(id, m_lookup ? m_lookup(id) : nullptr, clip);  // the record's own clip when empty
+    // The clip asked for, else the record's own (one asked for before goes); the card is left as it is when it plays it.
+    const CommandHelp* h = help::find(id);
+    const QString shown = clips::has(clip) ? clip : clips::has(h->clip) ? h->clip : QString();
+    if (current() == id && m_preview->clip()->clip() != shown) m_preview->setCommand(id, m_lookup ? m_lookup(id) : nullptr, clip);
   }
   show();
   raise();
