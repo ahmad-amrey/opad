@@ -114,18 +114,19 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   auto selected = v->selection();
   require(selected.size() == 1 && selected.front().body == ids[behind] && selected.front().kind == opad::Ref::Kind::Body, "choosing it selects " + behind + " though the pin is in front");
   v->clearSelection();
-  // Alt+double-click is smart selection's gesture (UI-95: an edge's tangent chain): no list, its second click a click.
-  v->benchClickAt(overPin);
-  const auto clicked = v->selection();
-  v->clearSelection();
+  // Alt+double-click is smart selection's gesture (UI-95): no list; on a body it picks the face under the pointer (the
+  // Faces filter) and goes on to that face's tangent chain.
   v->benchDoubleClickAt(overPin, Qt::AltModifier);
   until([] { return false; }, QGuiApplication::styleHints()->mouseDoubleClickInterval() + 200);
+  const bool doubleListed = v->findChild<QMenu*>("selectOther") != nullptr;
+  until([v] { const auto s = v->selection(); return !s.empty() && s.front().kind == opad::Ref::Kind::Face; }, 5000);
   selected = v->selection();
   auto named = [&w](const std::vector<opad::Ref>& refs) { return refs.empty() ? QString("nothing") : w.m_doc->nodeName(refs.front().body); };
-  require(!v->findChild<QMenu*>("selectOther") && selected.size() == 1 && clicked.size() == 1 && selected.front().str() == clicked.front().str(),
-          QString("Alt+double-click opens no list (%1); its second click selects what a click does: %2 (a click: %3)")
-              .arg(v->findChild<QMenu*>("selectOther") ? "a list" : "none", named(selected), named(clicked)));
+  require(!doubleListed && !selected.empty() && selected.front().kind == opad::Ref::Kind::Face && selected.front().body == ids["Pin"],
+          QString("Alt+double-click opens no list (%1); smart selection takes it: the face under the pointer, on %2")
+              .arg(doubleListed ? "a list" : "none", named(selected)));
   v->clearSelection();
+  filter("select.bodies", Viewport::SelFilter::Body);  // smart selection switched to faces
 
   // The same list from the view's context menu (a right click, no modifier).
   QStringList offered;
@@ -148,6 +149,7 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   }
   until([&offered] { return !offered.isEmpty(); }, 3000);
   require(offered == names, "a right click offers Select other..., which lists the same: " + offered.join(", "));
+  v->clearSelection();  // the right click selected what is under it, as one on an unselected object does
 
   // A plain press held still opens the same list; its release is no click. A press that moves on is a drag and a quick
   // click a click, a held press on nothing stays a click (it clears the selection).
