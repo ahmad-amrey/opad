@@ -5,8 +5,8 @@
 // version synced tinted the stale colour, a file being synced faded), described in Properties (Linked file section, a KiCad
 // board's 3D models) and handled from the context menu and the commands: Link as asset (drawings placed first), Sync, Sync
 // all, Sync changed files automatically, Locate, Replace, Reveal, Copy path, Embed as editable, Pack into project (Use
-// project copy when the file is read from it), Download KiCad models. AssetMonitor watches the files; a change shows a toast
-// that offers to sync. A sync, an embed and a pack are planned on a worker against a copy of the document (nothing changes
+// project copy when the file is read from it), Download KiCad models, Preview sync of a changed file (the previewer, KicadArea's
+// panel). AssetMonitor watches the files; a change shows a toast that offers to sync (a board: to show its changes). A sync, an embed and a pack are planned on a worker against a copy of the document (nothing changes
 // it meanwhile: designBusy) and committed as one undo step.
 #include <QPointer>
 #include <QString>

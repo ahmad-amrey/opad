@@ -92,6 +92,19 @@ def kicad_clearance(root, document):
     return design, env
 
 
+def asset_preview(root, document):
+    """A document linking part.step (a 10 mm cube) beside next.step (the part 12 mm long), with a box Cover beside it."""
+    folder = root / "asset-preview"
+    folder.mkdir()
+    for name, length in (("part", 10), ("next", 12)):
+        document(f"{folder.name}-{name}", ("feature", "--kind", "box", "--inputs", f'{{"length":"{length} mm","width":"10 mm","height":"10 mm"}}'),
+                 ("export", "--format", "step", "--out", str(folder / f"{name}.step")))
+    design = document("asset-preview/design", ("feature", "--kind", "box", "--name", "Cover", "--inputs", '{"x":"20 mm","length":"10 mm","width":"10 mm","height":"10 mm"}'))
+    env = {"OPAD_CACHE_DIR": str(root / "asset-preview-cache")}
+    subprocess.run([str(document.cli), "import", str(design), str(folder / "part.step"), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
 CASES = [
     # Insert KiCad PCB (the board's dialog answered, linked), repeated models meshed once, the changed board's toast opening the
     # sync preview (moved, model changed, added, holes; tinted), Sync from its footer re-meshing only the changed shapes and
@@ -106,4 +119,7 @@ CASES = [
     # UI-134: the board's clearance to its enclosure (the lid over J1, not J1 on the board nor the wall on the lid), a row
     # measuring the gap, a smaller gap clear and remembered (<prefix>.png, .panel.png).
     ("kicad-clearance", kicad_clearance, {"OPAD_BENCH_KICAD_CLEARANCE": "{prefix}"}),
+    # UI-134 for any linked file: a changed STEP's Preview sync lists its changed part and the design it affects, Sync commits
+    # that plan (<prefix>.preview.png).
+    ("asset-preview", asset_preview, {"OPAD_BENCH_ASSET_PREVIEW": "{prefix}"}),
 ]

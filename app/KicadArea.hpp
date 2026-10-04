@@ -2,12 +2,13 @@
 // KiCad boards in the window (UI-72 UI, UI-134): Insert KiCad PCB… links a board (its options asked first, monitored with
 // its 3D models by AssetMonitor); the sync preview reads a changed board on a worker and lists what syncing would do to it,
 // per reference designator (moved, turned, flipped, model or footprint changed, added, removed, the mounting holes and the
-// board itself) and the design built on it (opad::asset_sync_affects of the sync's plan: sketches with the references that
-// move or are projected again and their dimensions, features recomputed, new errors), the parts it names tinted in the view,
-// Sync in its footer committing that plan; Project KiCad board puts the board's outline,
-// its mounting holes and chosen parts into the open sketch as references by node, which every sync keeps (opad
-// design::derive_sketch, "asset" sources); a board's Properties say it explodes as one; Hide small parts while navigating
-// (the viewport's small-part filter, its size a setting) keeps orbiting a dense board fluid.
+// board itself; any other linked file per body, opad::asset_sync_parts) and the design built on it (opad::asset_sync_affects
+// of the sync's plan: sketches with the references that move or are projected again and their dimensions, features
+// recomputed, new errors), the parts it names tinted in the view, Sync in its footer committing that plan; Project KiCad
+// board puts the board's outline, its mounting holes and chosen parts into the open sketch as references by node, which every
+// sync keeps (opad design::derive_sketch, "asset" sources); Check clearance to board lists the board's parts too close to its
+// enclosure; a board's Properties say it explodes as one; Hide small parts while navigating (the viewport's small-part
+// filter, its size a setting) keeps orbiting a dense board fluid.
 #include <QPointer>
 #include <QString>
 #include <memory>

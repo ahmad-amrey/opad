@@ -277,6 +277,10 @@ TEST(sync_keeps_ids_and_regenerates_what_depends) {
   CHECK_EQ(plan.report["changed"].size(), 1u);
   CHECK(plan.report["added"].empty() && plan.report["removed"].empty());
   CHECK_EQ(plan.report["regenerated"].size(), 1u);  // the pocket
+  // What a sync preview says of it (UI-134): A changed by node, B kept; the pocket recomputed with another block.
+  const json parts = asset_sync_parts(d, import_id, plan), affects = asset_sync_affects(d, import_id, plan);
+  CHECK(parts["changed"].size() == 1 && parts["changed"][0]["node"] == a && parts["added"].empty() && parts["removed"].empty() && parts["kept"] == 1);
+  CHECK(affects["sketches"].empty() && affects["features"].size() == 1 && affects["features"][0]["name"] == "Pocket" && affects["features"][0]["bodies_changed"] == 1);
   design::commit(d, std::move(plan));
   CHECK_EQ(d.ops.size(), ops + 2);  // one edit of the import, one regen
   CHECK_EQ(d.ops[ops].type, "edit");

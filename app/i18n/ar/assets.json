@@ -279,7 +279,6 @@
   "Small part size…": "حجم القطع الصغيرة…",
   "Insert KiCad PCB": "إدراج لوحة KiCad",
   "Sync preview": "معاينة المزامنة",
-  "Only a linked board is synced with its file": "لا تُزامَن مع ملفها إلا اللوحة المرتبطة",
   "%1 could not be read: %2": "تعذّرت قراءة %1: %2",
   "(no reference)": "(بلا مرجع)",
   "Mounting hole": "ثقب تثبيت",
@@ -339,5 +338,8 @@
   "Check clearance to board…": "فحص الخلوص حول اللوحة…",
   "Board clearance": "خلوص اللوحة",
   "The board is no longer in the document.": "لم تعد اللوحة في المستند.",
-  "Check clearance…": "فحص الخلوص…"
+  "Check clearance…": "فحص الخلوص…",
+  "Only a linked file is synced with its file": "لا يُزامَن مع ملفه إلا الملف المرتبط",
+  "Changed": "تغيّر",
+  "The file is as last synced": "الملف كما كان عند آخر مزامنة"
 }

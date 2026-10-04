@@ -102,6 +102,9 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
 // before/after) or hold geometry to a moving reference ("dimensions_moved"), and a new error; each feature it recomputes
 // (kind, bodies_changed, a new error). {"sketches": [...], "features": [...], "errors": N}.
 json asset_sync_affects(const Document& doc, const std::string& import_id, const design::Plan& plan);
+// The asset's own bodies such a plan changes, adds and removes, by node: {"changed": [{"node", "name"}], "added", "removed",
+// "kept": N} (a sync preview of any linked file; a KiCad board's says more per footprint: kicad_sync_preview).
+json asset_sync_parts(const Document& doc, const std::string& import_id, const design::Plan& plan);
 // Embed: the asset's bodies become ordinary body-store entries (healed like a full import, content keys), editable; the
 // asset object stays with storage "embedded" (where it came from) and the file is no longer read.
 design::Plan plan_asset_embed(const Document& doc, const std::string& import_id, const std::function<bool()>& cancel = {});

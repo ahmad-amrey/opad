@@ -1009,6 +1009,29 @@ json asset_sync_affects(const Document& doc, const std::string& import_id, const
   return {{"sketches", sketches}, {"features", features}, {"errors", errors}};
 }
 
+json asset_sync_parts(const Document& doc, const std::string& import_id, const design::Plan& plan) {
+  json changed = json::array(), added = json::array(), removed = json::array();
+  int kept = 0;
+  const json* fresh = nullptr;
+  for (const auto& op : plan.ops)
+    if (op.value("op", "") == "edit" && op.value("target", "") == import_id && op.contains("set") && op["set"].contains("nodes")) fresh = &op["set"]["nodes"];
+  if (!fresh) return {{"changed", changed}, {"added", added}, {"removed", removed}, {"kept", kept}};
+  std::map<std::string, std::pair<std::string, std::string>> was;  // node -> key, name
+  for (const auto& e : effective_ops(doc))
+    if (e.op->id == import_id) each_body(nodes_of(e.data()), [&](const json& n) { was[n.value("id", "")] = {n.value("key", ""), n.value("name", "")}; });
+  each_body(*fresh, [&](const json& n) {
+    const std::string id = n.value("id", "");
+    const json entry = {{"node", id}, {"name", n.value("name", "")}};
+    const auto it = was.find(id);
+    if (it == was.end()) added.push_back(entry);
+    else if (it->second.first != n.value("key", "")) changed.push_back(entry);
+    else ++kept;
+    if (it != was.end()) was.erase(it);
+  });
+  for (const auto& [id, w] : was) removed.push_back({{"node", id}, {"name", w.second}});
+  return {{"changed", changed}, {"added", added}, {"removed", removed}, {"kept", kept}};
+}
+
 design::Plan plan_asset_embed(const Document& doc, const std::string& import_id, const std::function<bool()>& cancel) {
   const EffectiveOp e = find_asset(doc, import_id);
   const json& data = e.data();

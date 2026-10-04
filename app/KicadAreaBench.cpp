@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QPushButton>
 #include <QTimer>
 #include <QToolButton>
@@ -524,6 +525,93 @@ OPAD_BENCH(OPAD_BENCH_KICAD_CLEARANCE, kicad_clearance) {
           });
         });
       });
+      });
+    });
+  });
+  return true;
+}
+
+// OPAD_BENCH_ASSET_PREVIEW=<prefix> on a document linking part.step (a 10 mm cube) beside next.step (12 mm long), with a box
+// Cover beside it. An interference check of the part and the cover stored as a feature (Fit); the file written anew: the
+// part's context menu offers Preview sync, which lists the part changed and Fit under Design affected, the part tinted the
+// changed colour; Sync commits that plan at once and the part takes its new shape. Frame: <prefix>.preview.png.
+OPAD_BENCH(OPAD_BENCH_ASSET_PREVIEW, asset_preview) {
+  static bool ran = false;  // each load that ends comes back here
+  if (std::exchange(ran, true)) return true;
+  auto require = std::make_shared<Checks>("asset-preview");
+  auto settled = [&w] {  // displayed and settled: no load, display or look job, every visible body shown
+    int visible = 0;
+    for (const auto& id : w.m_doc->scene.all_bodies()) visible += w.m_doc->scene.effectively_visible(id) && !w.m_doc->node(id)->body_missing;
+    return !w.m_doc->loading && !w.m_loadJob && !w.m_displayJob && w.m_meshRemaining == 0 && !w.m_viewport->looksPending() && w.m_viewport->displayedCount() == visible;
+  };
+  const QString prefix = value;
+  KicadArea* kicad = areaOf<KicadArea>(w);
+  AssetsArea* assets = areaOf<AssetsArea>(w);
+  AppDocument* doc = w.m_doc;
+  Viewport* v = w.m_viewport;
+  DesignController* design = w.m_design;
+  const QString dir = QFileInfo(doc->path()).absolutePath();
+  std::string import;
+  for (const auto& o : doc->doc.ops)
+    if (o.type == "import" && o.data.contains("asset")) import = o.id;
+  (*require)(kicad && assets && !import.empty(), "a document linking a STEP file");
+  if (!kicad || !assets || import.empty()) return require->finish(), true;
+  AssetMonitor* monitor = assets->monitor();
+  auto state = [monitor, import] { return monitor->state(import) && !monitor->checking() ? monitor->state(import)->value("state", "") : std::string(); };
+  auto done = std::make_shared<bool>(false);
+  QObject::connect(assets, &AssetsArea::done, &w, [done](const QString& what, const std::string&, bool okay, const QString&, const opad::json&) {
+    if (what == "sync") *done = okay;
+  });
+  auto fit = [doc]() -> const opad::Feature* {
+    for (const auto& f : doc->scene.features)
+      if (f.name == "Fit") return &f;
+    return nullptr;
+  };
+  waitFor(&w, [=] { return settled() && state() == "ok"; }, 20000, [=, &w](bool shown) {
+    std::string part, cover;
+    for (const auto& [id, n] : doc->scene.nodes)
+      if (n.kind == opad::Node::Kind::Body && n.source_op == import) part = id;
+      else if (n.kind == opad::Node::Kind::Body && n.name == "Cover") cover = id;
+    (*require)(shown && !part.empty() && !cover.empty(), "the part and the cover shown");
+    const std::string key = doc->node(part)->body_key;
+    auto fitted = std::make_shared<int>(0);
+    design->applyOps({opad::design::make_feature_op("interference", "Fit", {{"bodies", {part, cover}}, {"clearance", "1 mm"}})}, "interference",
+                     [fitted](bool okay, const QString&) { *fitted = okay ? 1 : -1; });
+    waitFor(&w, [=] { return *fitted && !doc->designBusy && settled(); }, 20000, [=, &w](bool) {
+      (*require)(*fitted == 1 && fit() && fit()->error.empty(), "an interference check of the part and the cover stored (Fit)");
+      (*require)(copyOver(dir + "/next.step", dir + "/part.step"), "the file written anew");
+      waitFor(&w, [=] { return state() == "changed"; }, 15000, [=, &w](bool changed) {
+        SelectionContext selection;
+        selection.ids = {part};
+        QMenu menu;
+        assets->contextMenu(selection, menu);
+        QAction* show = nullptr;
+        for (QAction* a : menu.actions())
+          if (a->text() == "Preview sync…") show = a;
+        (*require)(changed && show, "the changed file's context menu offers Preview sync");
+        if (!show) return require->finish();
+        show->trigger();
+        waitFor(&w, [=] { return kicad->previewPanel()->isVisible() && kicad->previewImport() == import && !v->looksPending(); }, 20000, [=, &w](bool open) {
+          QTreeWidget* list = kicad->previewList();
+          QStringList groups, rows;
+          for (int i = 0; i < list->topLevelItemCount(); ++i) {
+            groups << list->topLevelItem(i)->text(0);
+            for (int k = 0; k < list->topLevelItem(i)->childCount(); ++k) rows << list->topLevelItem(i)->child(k)->text(0) + ": " + list->topLevelItem(i)->child(k)->text(1);
+          }
+          const bool partRow = list->topLevelItemCount() > 0 && list->topLevelItem(0)->childCount() == 1 && list->topLevelItem(0)->child(0)->data(0, Qt::UserRole).toString().toStdString() == part;
+          (*require)(open && groups == QStringList({"Changed (1)", "Design affected (1)"}) && partRow && rows.contains("Fit: Recomputed") && kicad->previewPlanned() &&
+                         kicad->previewFooter()->primary()->isEnabled(),
+                     "the preview lists the part changed and the check it affects: " + groups.join(", ") + " | " + rows.join(", "));
+          (*require)(sameColor(v->bodyLook(part).color, theme::current().diffModified), "the part tinted the changed colour");
+          (*require)(kicad->previewPanel()->grab().save(prefix + ".preview.png"), "preview frame");
+          const size_t ops = doc->doc.ops.size();
+          kicad->previewFooter()->primary()->click();  // Sync
+          (*require)(doc->doc.ops.size() > ops && *done, "Sync commits the plan previewed at once");
+          waitFor(&w, [=] { return !doc->designBusy && settled() && state() == "ok"; }, 20000, [=](bool synced) {
+            (*require)(synced && doc->node(part) && doc->node(part)->body_key != key && fit() && fit()->error.empty(), "synced: the part has its new shape, Fit recomputed");
+            require->finish();
+          });
+        });
       });
     });
   });

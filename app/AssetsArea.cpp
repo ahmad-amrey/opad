@@ -458,6 +458,8 @@ void AssetsArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
   if (state == "missing") menu.addAction(icons::themed("locate", 16), tr("Locate linked file…"), this, [this, import] { locate(import); });
   else if (state == "untrusted") menu.addAction(icons::themed("warning", 16), tr("Read linked file…"), this, [this, import] { trust(import); });
   else menu.addAction(icons::themed("regen", 16), tr("Sync linked file"), this, [this, import] { sync({import}); });
+  if (state == "changed" && m_previewer && a && a->asset.value("kind", "") != "kicad_pcb")  // a board's is KicadArea's
+    menu.addAction(icons::themed("regen", 16), tr("Preview sync…"), this, [this, import] { m_previewer(import); });
   const bool found = s && s->contains("file");
   menu.addAction(icons::themed("open", 16), tr("Show in folder"), this, [this, import] { reveal(import); })->setEnabled(found);
   menu.addAction(icons::themed("copy", 16), tr("Copy path"), this, [this, import] { copyPath(import); });
