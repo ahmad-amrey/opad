@@ -98,6 +98,10 @@ json op_effect(const json& op, const std::string& target, const std::string& fie
         if ((key == "geometry_delta" || key == "geometry" || key == "result" || key == "inputs" || key == "plane" ? "geometry" : key) == field) values[key] = value;
     return json::array({kind, values});
   }
+  if (type == "properties" && field.rfind("property:", 0) == 0) {  // the value it sets for that property
+    const std::string key = field.substr(9);
+    return json::array({kind, op.contains("set") && op["set"].is_object() ? op["set"].value(key, json()) : json()});
+  }
   return json::array({kind, op.contains(field) ? op[field] : json()});
 }
 

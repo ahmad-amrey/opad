@@ -110,6 +110,8 @@ def effect(op, target, field):
     if kind == "edit":
         return [kind, {key: value for key, value in (op.get("set") or {}).items()
                        if ("geometry" if key in ("geometry_delta", "geometry", "result", "inputs", "plane") else key) == field}]
+    if kind == "properties" and field.startswith("property:"):  # the value it sets for that property
+        return [kind, (op.get("set") or {}).get(field[len("property:"):])]
     return [kind, op.get(field)]
 
 
