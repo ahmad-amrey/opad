@@ -335,6 +335,7 @@ void RichTip::paintEvent(QPaintEvent*) {
   p.drawText(at(m_titleRect), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, m_title);
   p.setFont(theme::mono(11));
   const QList<QRect> caps = keyRects();
+  p.setLayoutDirection(Qt::LeftToRight);  // a key's name reads left to right: "]" alone came out mirrored in Arabic
   for (int i = 0; i < caps.size(); ++i) {
     const QRect r = caps[i];
     if (m_keys[i] != keys::kThen) {
@@ -345,6 +346,7 @@ void RichTip::paintEvent(QPaintEvent*) {
     p.setPen(t.fg2);
     p.drawText(r, Qt::AlignCenter, m_keys[i]);
   }
+  p.setLayoutDirection(layoutDirection());
   p.setFont(bodyFont());
   p.setPen(t.fg2);
   p.drawText(at(m_summaryRect), text, m_summary);

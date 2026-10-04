@@ -1200,6 +1200,9 @@ void keycaps(Ctx& c, const QJsonObject& o) {
     return;
   }
   p.setFont(f);
+  // A key's name is left to right in every language: in a right-to-left frame "]" alone came out mirrored as "[".
+  const Qt::LayoutDirection frame = p.layoutDirection();
+  p.setLayoutDirection(Qt::LeftToRight);
   for (const QString& k : keys) {
     const double w = width(k);
     const QRectF cap(x, y + (pressed ? 1.5 * c.u : 0), w, h);
@@ -1212,6 +1215,7 @@ void keycaps(Ctx& c, const QJsonObject& o) {
     }
     x += w + gap;
   }
+  p.setLayoutDirection(frame);
 }
 
 // A panel stub: title, rows (label and value, radio, check box, slider, indent, icon), a highlighted row, a button.

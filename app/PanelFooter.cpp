@@ -56,6 +56,7 @@ QPushButton* PanelFooter::button(const QString& text, const QString& key) {
   label->setObjectName("footerText");
   auto* hint = new QLabel(b);
   hint->setProperty("footerRole", "key");
+  hint->setLayoutDirection(Qt::LeftToRight);  // a key reads left to right: "]" alone came out as "[" in Arabic
   for (QLabel* l : {label, hint}) {
     l->setAttribute(Qt::WA_TransparentForMouseEvents);
     row->addWidget(l);

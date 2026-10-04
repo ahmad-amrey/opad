@@ -199,6 +199,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   {
     QLabel* hint = filterKey;
     hint->setObjectName("tertiary");
+    hint->setLayoutDirection(Qt::LeftToRight);  // a key reads left to right
     hint->setFont(theme::mono(11));
     auto* fl = new QHBoxLayout(m_filter);
     fl->setContentsMargins(0, 0, 8, 0);
