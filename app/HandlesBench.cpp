@@ -39,6 +39,7 @@
 //   Move with Rotate: a ring round Z through the box's middle, the triad on it 90 degrees round; pulled round, the angle
 //   goes on in 5 degree steps and the triad and the preview travel along it while held; 4 and 5 typed go into Angle; Enter
 //   turns the box 45 degrees.
+//   Move with grid snapping on: the X arrow pulled 1.3 grid steps sets X to one step; with Alt held the pull is off the grid.
 //   Chamfer (a bottom edge), Thicken (the top face), Construction plane (offset from XY) and Box: the arrow on Distance,
 //   Thickness, Distance and Height is where the core's feature_handles puts it; pulled out, the value grows and, the button
 //   still held, the preview cuts more, is thicker, plans the plane at the distance, is 20 x 20 x the height; Esc leaves.
@@ -48,7 +49,7 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
     size_t step = 0;
     int ticks = 0, wait = 0;
     std::string box;
-    double volume = 0, previewBefore = 0, pxPerMm = 0, top = 10, before = 0;
+    double volume = 0, previewBefore = 0, pxPerMm = 0, top = 10, grid = 0, before = 0;
     QPointF press, dir, last;
     opad::Vec3 centre{0, 0, 0};
   };
@@ -354,6 +355,53 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         require(std::abs((x0 + x1) / 2 - st->centre[0] - 14) < 0.5, "the box did not move 14 mm along X");
         require(!design->moveTriad()->shown(), "the triad stayed after the commit");
         pass("move: Enter moves the box 14 mm along X; the triad goes");
+        return true;
+      },
+      // ---- Move with grid snapping on: the X arrow pulled 1.3 grid steps lands on one step, with Alt held off the grid.
+      [=] {
+        start("move");
+        return true;
+      },
+      [=] {
+        if (!waitFor(view->selectionFilter() == Viewport::SelFilter::Body, "Move's Bodies switch the view to bodies")) return false;
+        int x = 0, y = 0;
+        require(view->benchBodyPoint(st->box, x, y), "the box is not in the view");
+        view->benchClickAt(x, y);
+        return true;
+      },
+      [=] {
+        TranslateTriad* triad = design->moveTriad();
+        if (!waitFor(triad && triad->shown(), "Move shows no triad on the picked box")) return false;
+        view->setGridSnap(true);
+        st->grid = view->gridStep();
+        require(st->grid > 0, "the view has no grid step");
+        const opad::Vec3 at{st->centre[0] + 14, st->centre[1], st->centre[2]};
+        st->pxPerMm = pixelsPerMm(at, {1, 0, 0});
+        st->press = triad->partPoint(1);
+        st->dir = (triad->arrowTip(1) - triad->partPoint(0));
+        st->dir /= std::max(1e-9, std::hypot(st->dir.x(), st->dir.y()));
+        mouse(QEvent::MouseButtonPress, st->press);
+        require(triad->dragging() == 1, "a press on the X arrow did not grip it");
+        mouse(QEvent::MouseMove, st->press + st->dir * (0.6 * st->grid * st->pxPerMm));
+        st->last = st->press + st->dir * (1.3 * st->grid * st->pxPerMm);
+        mouse(QEvent::MouseMove, st->last);
+        require(std::abs(evaluated("dx") - st->grid) < 1e-9, "with grid snapping on, 1.3 grid steps along X did not give one step (" + std::to_string(st->grid) + " mm): " + form->valueText("dx").toStdString());
+        pass("move: with grid snapping on, the X arrow pulled 1.3 grid steps sets X to one step, " + form->valueText("dx"));
+        mouse(QEvent::MouseMove, st->last + st->dir * 0.5, Qt::AltModifier);
+        const double free = evaluated("dx") / st->grid;
+        require(std::abs(free - std::round(free)) > 0.1, "with Alt held the pull still went in grid steps: " + form->valueText("dx").toStdString());
+        pass("move: with Alt held the same pull is off the grid, " + form->valueText("dx"));
+        return true;
+      },
+      [=] {
+        if (!waitFor(previewFor("dx"), "the move preview did not follow the pull with grid snapping on")) return false;
+        mouse(QEvent::MouseButtonRelease, st->last);
+        view->setGridSnap(false);
+        design->escape();
+        return true;
+      },
+      [=] {
+        if (!waitFor(!design->featureActive(), "Esc did not leave the move")) return false;
         return true;
       },
       // ---- Move with Rotate: the ring round Z through the box's middle (14 mm out), pulled round, then 45 typed.

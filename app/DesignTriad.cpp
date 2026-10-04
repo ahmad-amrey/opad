@@ -1,6 +1,7 @@
 // Move / copy's triad (TODO 11 P2): what its guide shows. Red, green and blue arrows along X, Y and Z and a square in the
 // middle sit on the picked bodies (the middle of their cached view boxes, moved as the panel's values move them); pulling an
-// arrow sets that distance, the square moves in the view's plane, each value rounded to a step that suits the zoom. With
+// arrow sets that distance, the square moves in the view's plane, each value rounded to a step that suits the zoom (to the
+// grid's step while grid snapping is on, unless Alt is held). With
 // Rotate on, a ring goes round the move's own axis through the bodies' middle (the path they take as the angle changes);
 // pulling round it sets the angle in 5 degree steps. The preview follows a pull at the pace plans come back (as the extrude's
 // arrow), and the value boxes show beside the pointer during it, the pulled part's box taking the next value typed. Nothing
@@ -14,6 +15,7 @@
 #include "Theme.hpp"
 #include "ToolValues.hpp"
 #include "TranslateTriad.hpp"
+#include "Units.hpp"
 #include "opad/geometry.hpp"
 
 using namespace opad::design;
@@ -22,6 +24,15 @@ namespace {
 const char* const kAxes[3] = {"dx", "dy", "dz"};
 constexpr double kRingStep = 5;  // degrees a pull round the ring snaps to
 constexpr double kRingMin = 56;  // widget pixels: the ring's radius when the axis runs through the bodies
+
+// A step whose decimals write every multiple of `step` exactly in the shown unit (pulledText writes a step's own decimals,
+// which for 1, 2 or 5 times a power of ten is enough; a grid set to 2.5 mm needs one more).
+double textStep(double step) {
+  const double shown = units::toDisplay(units::Kind::Length, step);
+  int decimals = 0;
+  while (decimals < 6 && std::abs(shown * std::pow(10.0, decimals) - std::round(shown * std::pow(10.0, decimals))) > 1e-6) ++decimals;
+  return units::fromDisplay(units::Kind::Length, std::pow(10.0, -decimals));
+}
 
 // The axis colours (the origin's X, Y and Z): red, green, blue.
 QColor axisColour(int k, const Tokens& t) {
@@ -135,14 +146,17 @@ bool DesignController::triadEvent(QEvent* event) {
         const QString text = QString::number(degrees == 0 ? 0.0 : degrees, 'g', 12) + " deg";
         if (text != m_form->valueText("angle")) m_form->setValue("angle", text.toStdString());  // the preview follows
       } else {
-        const double step = DimensionHandle::pullStep(m_viewport->pixelSize());
+        // Grid snapping on (F9): the distances go in grid steps, as a placed drawing's offset does; Alt held pulls freely.
+        const bool grid = m_viewport->gridSnap() && !mouse->modifiers().testFlag(Qt::AltModifier) && m_viewport->gridStep() > 0;
+        const double step = grid ? m_viewport->gridStep() : DimensionHandle::pullStep(m_viewport->pixelSize());
+        const double digits = grid ? textStep(step) : step;  // a 2.5 mm grid writes "2.5 mm", not "3 mm"
         opad::Vec3 move{0, 0, 0};
         if (m_pull.part > 0) move[m_pull.part - 1] = m_triad->along(at);
         else move = m_triad->inPlane(at);
         for (int k = 0; k < 3; ++k) {
           if (m_pull.part > 0 && k != m_pull.part - 1) continue;
           const double value = std::round((m_pull.start[k] + move[k]) / step) * step;
-          const QString text = DimensionHandle::pulledText(value, step);
+          const QString text = DimensionHandle::pulledText(value, digits);
           if (text != m_form->valueText(kAxes[k])) m_form->setValue(kAxes[k], text.toStdString());  // the preview follows (schedulePreview)
         }
       }

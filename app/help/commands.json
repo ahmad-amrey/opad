@@ -324,7 +324,7 @@
    "id": "view.gridSnap",
    "title": "Grid snapping",
    "summary": "Makes placed points jump to grid intersections.",
-   "details": "Applies to points you click in sketches and 2D mode. Set a fixed spacing in Grid settings for predictable steps.",
+   "details": "Applies to points you click in sketches (hold Alt to place one off the grid), when placing a drawing or a sketch's origin, and to the distances Move / copy's triad is dragged. Set a fixed spacing in Grid settings for predictable steps.",
    "keywords": ["snap to grid", "step", "increment"]
   },
   {
@@ -1067,7 +1067,7 @@
    "id": "design.move",
    "title": "Move / copy",
    "summary": "Moves or copies bodies by distances and an optional turn.",
-   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z. Turn on Rotate for an axis and an angle: a ring round that axis through the bodies turns them in 5° steps, or type the angle. Make a copy leaves the original in place, and every value can be an expression.",
+   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z; with Grid snapping on, a drag goes in grid steps (hold Alt to drag freely). Turn on Rotate for an axis and an angle: a ring round that axis through the bodies turns them in 5° steps, or type the angle. Make a copy leaves the original in place, and every value can be an expression.",
    "keywords": ["translate", "position", "transform", "copy"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
