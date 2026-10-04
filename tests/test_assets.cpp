@@ -627,6 +627,34 @@ TEST(pictures_import_and_link) {
   CHECK(s.node(canvas)->raster["href"] == resolve(reopened).node(canvas)->raster["href"] && !s.node(canvas)->body_missing);
 }
 
+// A picture linked at a width and centred (Insert canvas on a big picture) comes in at that size and place, and every read
+// keeps them; a sync keeps the canvas's flags as the user set them (it took the reader's defaults).
+TEST(linked_picture_keeps_its_width_and_flags) {
+  Files f;
+  const fs::path pic = f.dir / "plan.png";
+  png(pic, 400, 200, 3937, "first");  // 101.6 x 50.8 mm at its resolution
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  ImportOptions o;
+  o.canvas = {{"width", 200}, {"center", true}};
+  link_file(d, pic, o);
+  const std::string import_id = last_import(d).id;
+  Scene s = resolve(d);
+  const std::string canvas = linked(s, 0);
+  auto info = [&](Document& doc) { return commands::run("canvas", {{"action", "info"}, {"target", canvas}}, &doc); };
+  json i = info(d);
+  CHECK(about(i["width"], 200) && about(i["height"], 100) && about(i["x"], 0) && about(i["y"], 0));
+  commands::run("canvas", {{"action", "flags"}, {"target", canvas}, {"set", {{"display_through", true}, {"flip", {true, false}}, {"selectable", false}}}}, &d);
+  d.save();
+  Document reopened = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(reopened)[0].state, "ok");
+  png(pic, 400, 200, 3937, "second");
+  design::commit(reopened, plan_asset_sync(reopened, import_id));
+  i = info(reopened);
+  CHECK(about(i["width"], 200) && about(i["height"], 100) && about(i["x"], 0) && about(i["y"], 0));
+  CHECK(i["display_through"] == true && i["flip"] == json({true, false}) && i["selectable"] == false);
+}
+
 // A drawing linked where it was placed (UI-68): the placement goes with the asset, so a sync of the changed drawing keeps it,
 // node and id; Replace with another kind of file reads it as that kind.
 TEST(drawing_linked_with_its_placement) {

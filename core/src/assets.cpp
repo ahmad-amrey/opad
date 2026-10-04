@@ -359,6 +359,7 @@ json builder_options(const std::string& kind, const ImportOptions& opt) {
   if (kind == "kicad_pcb")
     o = {{"components", opt.kicad.components}, {"dnp", opt.kicad.dnp}, {"vias", opt.kicad.vias},
          {"placeholder_height", opt.kicad.placeholder_height}, {"origin", opt.kicad.origin}};
+  if (kind == "image" && opt.canvas.is_object() && !opt.canvas.empty()) o["canvas"] = opt.canvas;  // its width, centring and plane
   if (opt.center_drawing) o["center"] = true;
   if (!opt.placement.is_identity()) o["placement"] = opt.placement.to_json();
   return o;
@@ -380,6 +381,7 @@ ImportOptions read_options(const json& asset, const AssetOptions& opt) {
     o.kicad.origin_at = {b["origin_at"][0].get<double>(), b["origin_at"][1].get<double>()};
   o.center_drawing = b.value("center", false);
   if (b.contains("placement")) o.placement = Mat4::from_json(b["placement"]);
+  if (b.contains("canvas") && b["canvas"].is_object()) o.canvas = b["canvas"];
   return o;
 }
 
@@ -905,6 +907,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   asset["synced"] = now_iso8601();
   place(asset);
   fresh["asset"] = asset;
+  if (fresh.contains("canvas") && data.contains("canvas")) fresh["canvas"] = data["canvas"];  // the user's flags and plane stay
   for (const auto& [k, v] : data.items())  // what the reader no longer says (warnings) goes
     if (!fresh.contains(k) && k != "op" && k != "id" && k != "ts" && k != "by" && k != "parent") fresh[k] = nullptr;
   Document staged = doc;  // the plan's walk reads the new bodies from it

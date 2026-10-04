@@ -40,6 +40,7 @@
 #include "Ribbon.hpp"
 #include "ToolPanel.hpp"
 #include "Viewport.hpp"
+#include "opad/assets.hpp"
 #include "opad/canvas.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
@@ -648,6 +649,30 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
       w.m_propsPanel->hide();
       next();
     });
+  });
+  // 13. A picture linked through the placer (Link as asset on a big picture): the width typed and the centring reach the asset,
+  // which keeps them for every read.
+  steps.push_back([=](std::function<void()> next) {
+    area->finish();
+    DrawingPlacer* placer = area->placer();
+    QObject::connect(placer, &DrawingPlacer::ready, area, [=] {
+      placer->setImageWidth(120);
+      const size_t ops = doc->doc.ops.size();
+      placer->panel()->findChild<QPushButton*>("primary")->click();  // Place
+      waitFor(area, [=] { return !doc->loading && doc->doc.ops.size() > ops; }, 20000, [=](bool ok) {
+        std::string linked;
+        for (const auto& id : doc->scene.all_bodies())
+          if (const opad::Node* n = doc->node(id); n && n->linked && opad::is_canvas(*n)) linked = id;
+        if (!check(ok && !linked.empty(), "Place links the picture")) return next();
+        const opad::CanvasPlace p = opad::canvas_place(doc->scene, linked);
+        const opad::json builder = opad::asset_of(doc->doc, doc->node(linked)->source_op).value("builder", opad::json::object()).value("options", opad::json::object());
+        check(std::fabs(p.width - 120) < 1e-6 && std::fabs(p.height - 120) < 1e-6 && std::fabs(p.x) < 1e-9 && std::fabs(p.y) < 1e-9 && builder.contains("canvas") &&
+                  builder["canvas"].value("width", 0.0) == 120,
+              QString("the linked canvas: %1 x %2 mm centred at (%3, %4), its width kept by the asset").arg(p.width).arg(p.height).arg(p.x).arg(p.y));
+        next();
+      });
+    }, Qt::SingleShotConnection);
+    area->placeOn(square, xz, 0, 0, true);
   });
   auto runner = std::make_shared<std::function<void(size_t)>>();
   *runner = [steps, runner, st, area](size_t i) {
