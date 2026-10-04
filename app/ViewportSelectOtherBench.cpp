@@ -3,6 +3,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QMenu>
 #include <QTimer>
 
@@ -108,6 +109,28 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   auto selected = v->selection();
   require(selected.size() == 1 && selected.front().body == ids[behind] && selected.front().kind == opad::Ref::Kind::Body, "choosing it selects " + behind + " though the pin is in front");
   v->clearSelection();
+
+  // The same list from the view's context menu (a right click, no modifier).
+  QStringList offered;
+  QTimer::singleShot(300, v, [&w, &offered] {  // while the context menu runs its own loop
+    for (QMenu* m : w.findChildren<QMenu*>())
+      if (m->isVisible())
+        for (QAction* a : m->actions())
+          if (a->objectName() == "select.other") {
+            m->close();
+            a->trigger();
+          }
+    if (QMenu* list = w.m_viewport->findChild<QMenu*>("selectOther")) {
+      for (QAction* a : rows(list)) offered << a->text();
+      list->close();
+    }
+  });
+  for (const auto type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+    QMouseEvent e(type, overPin, v->mapToGlobal(overPin), Qt::RightButton, type == QEvent::MouseButtonPress ? Qt::RightButton : Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(v, &e);
+  }
+  until([&offered] { return !offered.isEmpty(); }, 3000);
+  require(offered == names, "a right click offers Select other..., which lists the same: " + offered.join(", "));
 
   // Faces: those behind the pin's top, one of them chosen.
   filter("select.faces", Viewport::SelFilter::Face);

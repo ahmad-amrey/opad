@@ -2450,7 +2450,12 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_rightPress && e->button() == Qt::RightButton && (e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;
     if (std::exchange(m_cubeMenu, false)) emit cubeMenuRequested(e->globalPosition().toPoint());
-    else emit contextMenuRequested(e->globalPosition().toPoint());
+    else {
+      m_contextAt = e->position();  // while the menu is open: where it was asked for (Select other, UI-128)
+      m_inContextMenu = true;
+      emit contextMenuRequested(e->globalPosition().toPoint());
+      m_inContextMenu = false;
+    }
   }
   if (e->buttons() == Qt::NoButton) { m_dragOffset = {}; m_warpGate.pending=false; }
 }

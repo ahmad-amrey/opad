@@ -241,6 +241,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void previewPickCandidate(int index);  // -1: nothing hovered
   bool choosePickCandidate(int index);
   bool cycleHover(bool forward);
+  // While the context menu of a right click in the view is open: where it was clicked (widget coordinates).
+  bool contextMenuPoint(QPointF& at) const { at = m_contextAt; return m_inContextMenu; }
 
   // Guided tools (distance, angle, ...: the tool asks for one pick per step). While accumulating, a plain click
   // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
@@ -438,6 +440,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Graphic3d_Vec2i m_pickAt, m_cycledAt;
   bool m_hoverCycled = false;  // the hover was chosen (Tab, a list row): kept until the pointer moves, occluded or not
   bool m_selectOtherPress = false;  // an Alt+press: its release opens the list
+  QPointF m_contextAt;
+  bool m_inContextMenu = false;
   void moveTo(const Graphic3d_Vec2i& at);  // the context's MoveTo, then dropOccluded
   static constexpr int kTrackingDwellMs = 350;
   bool m_trackingEnabled = true, m_extensionEnabled = true;

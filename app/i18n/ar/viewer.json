@@ -100,5 +100,7 @@
  "%1 plane selected: New sketch draws on it": "تم تحديد المستوى %1: سيرسم الرسم الجديد عليه",
  "Inspecting %1": "فحص %1",
  "Section from the picked face": "مقطع من الوجه المختار",
- "Snapping": "الالتقاط"
+ "Snapping": "الالتقاط",
+ "Select other…": "تحديد عنصر آخر…",
+ "Everything under the pointer, nearest first (Alt+click; Tab hovers the next)": "كل ما تحت المؤشر، الأقرب أولًا (Alt+نقرة؛ Tab يمرّر إلى التالي)"
 }
