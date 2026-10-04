@@ -19,6 +19,7 @@
 #include <climits>
 #include <cmath>
 
+#include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
@@ -668,8 +669,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
   if (i != m_hover) { setHover(i); update(); }
   if (onPlayhead) {
     QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8),
-                       m_doc->rolledBack() ? tr("Rolled back: the steps after this marker are not shown. Drag it to the end (or Shift+End) to roll forward.")
-                                           : tr("Roll-back marker: drag it, or Shift+Left and Shift+Right on the timeline, to see the model as it was at an earlier step."), this);
+                       help::expand(m_doc->rolledBack() ? tr("Rolled back: the steps after this marker are not shown. Drag it to the end (or {fixed:shiftEnd}) to roll forward.")
+                                                        : tr("Roll-back marker: drag it, or {fixed:shiftLeft} and {fixed:shiftRight} on the timeline, to see the model as it was at an earlier step.")), this);
   } else if (i >= 0) {
     QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), tooltip(m_doc->doc.ops[m_shown[static_cast<size_t>(i)]].id), this);
   } else {

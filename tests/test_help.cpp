@@ -87,30 +87,6 @@ class Arabic : public QTranslator {
   QHash<QString, QString> m_table;
 };
 
-// TODO 11 wave 3: what still names a key by its default instead of the user's (help audit §4.2). The convert-every-
-// static-key-place package (WP1) names the commands (key elements, {key}/{press} tokens) and empties these lists; a new
-// clip, record or text must not join them.
-const QStringList kLiteralKeyClips{"annotate.add", "annotate.resolve", "design.parameters", "edit.filter", "edit.hide",
-                                   "edit.invert", "edit.redo", "edit.rename", "edit.repeat", "edit.restore",
-                                   "edit.selectall", "edit.selectparent", "edit.showall", "edit.undo", "file.export",
-                                   "file.import", "file.new", "file.open", "file.save", "file.saveas",
-                                   "file.screenshot", "inspect.flip", "inspect.pin", "inspect.properties",
-                                   "inspect.section", "nav.blender", "nav.fusion", "nav.onshape", "nav.solidworks",
-                                   "panel.annotations", "panel.browser", "panel.timeline", "select.bodies",
-                                   "select.edges", "select.faces", "select.smart", "select.through", "select.vertices",
-                                   "sketch.construction", "sketch.finish", "sketch.openEnds", "sketch.panel",
-                                   "tools.commands", "vcs.commit", "view.2d", "view.alignPlane", "view.back",
-                                   "view.bottom", "view.edges", "view.extensions", "view.fit", "view.fitall",
-                                   "view.front", "view.grid", "view.gridSettings", "view.gridSnap", "view.home",
-                                   "view.iso", "view.isolate", "view.left", "view.ortho", "view.orthoSnap",
-                                   "view.polarSnap", "view.right", "view.rollleft", "view.rollright", "view.shaded",
-                                   "view.top", "view.tracking", "view.unisolate", "view.wire", "workspace.design",
-                                   "workspace.review"};
-const QStringList kLiteralKeyRecords{"annotate.add", "edit.hide", "edit.selecttouched", "panel.browser",
-                                    "sketch.moreConstrain", "sketch.moreCreate", "sketch.moreFiles",
-                                    "sketch.moreModify", "sketch.moreReference", "view.isolate"};
-const QStringList kLiteralKeyTexts{};
-
 // A key spelled in a help text instead of a token: Ctrl+X, F9, "Press D", "(S)" (English and Arabic). Fixed keys (Enter,
 // Esc, Tab, Del, Backspace, Shift+Tab, a modifier held with a click or a drag) are allowed.
 QStringList literalKeys(QString text) {
@@ -706,7 +682,13 @@ TEST(clip_keys_resolve) {
 // Arabic, and the help area's Arabic. Every token names a registered command (or a fixed key), and English and Arabic
 // carry the same tokens.
 TEST(help_texts_have_no_literal_keys) {
-  const auto ids = registeredIds();
+  // A token may name any command the app makes, help or none yet: the help's own list, and every CommandInfo id or
+  // add("...") of the other sources (area commands such as drawing2d.objectSnap, the clipboard's edit.paste).
+  auto ids = registeredIds();
+  for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*.cpp"}, QDir::Files)) {
+    static const QRegularExpression made(R"re((?:\.id\s*=\s*|\bCommandInfo\s+\w+\s*\{\s*|\badd\()"([a-z][a-z0-9]*\.[A-Za-z0-9_.]+)")re");
+    for (const auto& m : made.globalMatch(source("app/" + file))) ids.insert(m.captured(1));
+  }
   QStringList found, tokens;
   auto checkTokens = [&](const QString& where, const QString& english, const QString& arabic) {
     for (const QString& t : help::tokens(english)) {
@@ -730,8 +712,7 @@ TEST(help_texts_have_no_literal_keys) {
       keysFound << literalKeys(o.value(field).toString()) << literalKeys(ar.value(field).toString());
       checkTokens(id + "." + field, o.value(field).toString(), ar.value(field).toString());
     }
-    if (!keysFound.isEmpty() && !kLiteralKeyRecords.contains(id)) found << "record " + id + ": " + keysFound.join(", ");
-    if (keysFound.isEmpty() && kLiteralKeyRecords.contains(id)) found << "record " + id + " converted: drop it from kLiteralKeyRecords";
+    if (!keysFound.isEmpty()) found << "record " + id + ": " + keysFound.join(", ");
   }
   // Clip texts (captions, keyless captions, labels, chips, cards) and their Arabic.
   const QHash<QString, QString> arabic = i18n::table("ar", {QStringLiteral(OPAD_SOURCE_DIR) + "/app/i18n"});
@@ -744,24 +725,16 @@ TEST(help_texts_have_no_literal_keys) {
       keysFound << literalKeys(text) << literalKeys(arabic.value(text));
       checkTokens(id + ": " + text, text, arabic.value(text));
     }
-    if (!keysFound.isEmpty() && !kLiteralKeyClips.contains(id)) found << "clip " + id + ": " + keysFound.join(", ");
-    const auto refs = clips::keyRefs(id);
-    const bool literalCaps = std::any_of(refs.begin(), refs.end(), [](const clips::KeyRef& k) { return k.command.isEmpty() && k.fixed.isEmpty(); });
-    if (keysFound.isEmpty() && !literalCaps && kLiteralKeyClips.contains(id)) found << "clip " + id + " converted: drop it from kLiteralKeyClips";
+    if (!keysFound.isEmpty()) found << "clip " + id + ": " + keysFound.join(", ");
   }
-  // The help area's own Arabic (app/i18n/ar/help.json): its tr() texts, lessons, coach card.
-  const QJsonObject fragment = QJsonDocument::fromJson(source("app/i18n/ar/help.json").toUtf8()).object();
-  QSet<QString> pendingTexts;
-  for (auto it = fragment.begin(); it != fragment.end(); ++it) {
+  // Every other text the app shows in Arabic (app/i18n/ar.json and its fragments: the tr() texts of every area, the help
+  // area's lessons and coach card, toasts and error messages), the English and its translation.
+  for (auto it = arabic.constBegin(); it != arabic.constEnd(); ++it) {
     if (it.key().startsWith('@') || clipTexts.contains(it.key())) continue;
-    const QStringList keysFound = literalKeys(it.key()) + literalKeys(it.value().toString());
-    checkTokens("ar/help.json: " + it.key(), it.key(), it.value().toString());
-    if (keysFound.isEmpty()) continue;
-    if (kLiteralKeyTexts.contains(it.key())) pendingTexts.insert(it.key());
-    else found << "text \"" + it.key() + "\": " + keysFound.join(", ");
+    const QStringList keysFound = literalKeys(it.key()) + literalKeys(it.value());
+    checkTokens("ar: " + it.key(), it.key(), it.value());
+    if (!keysFound.isEmpty()) found << "text \"" + it.key() + "\": " + keysFound.join(", ");
   }
-  for (const QString& t : kLiteralKeyTexts)
-    if (!pendingTexts.contains(t)) found << "text \"" + t + "\" converted: drop it from kLiteralKeyTexts";
   if (!tokens.isEmpty()) throw check::Failure("tokens: " + tokens.join(" | ").toStdString());
   if (!found.isEmpty()) throw check::Failure("literal keys (use {key:id}, {press:id} or {fixed:name}): " + found.join(" | ").toStdString());
   // The checker itself.

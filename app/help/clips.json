@@ -569,7 +569,7 @@
     {"el": "cursor", "keys": [[0, {"pos": [12, -20, 4]}], [1.3, {"pos": [3, 0, 16]}], [1.6, {"pos": [3, 0, 16], "down": true}], [2.8, {"pos": [-5, 0, 16], "down": false}], [3.6, {"pos": [-5, 0, 16]}], [4.4, {"pos": [12, -16, 20]}]]}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press X to cut the view"},
+    {"to": 1.0, "caption": "{press:inspect.section} to cut the view"},
     {"to": 3.0, "caption": "Drag the handle to move the cut"},
     {"to": 5.0, "caption": "The cut face is hatched"}
    ]
@@ -697,7 +697,7 @@
    "steps": [
     {"to": 1.2, "caption": "Click a face"},
     {"to": 2.6, "caption": "The chip offers the whole feature"},
-    {"to": 5.2, "caption": "Click it or press Ctrl+↑ to select it"}
+    {"to": 5.2, "caption": "Click it or press {key:edit.selectparent} to select it", "captionNoKey": "Click it to select it"}
    ]
   },
   {
@@ -722,7 +722,7 @@
    "steps": [
     {"to": 0.9, "caption": "Open Compare and pick two versions"},
     {"to": 2.6, "caption": "Colours mark added, removed and changed"},
-    {"to": 5.4, "caption": "Press ] and [ to step through changes"}
+    {"to": 5.4, "caption": "Press {key:vcs.nextChange} and {key:vcs.previousChange} to step through changes", "captionNoKey": "Next change and Previous change step through the changes"}
    ]
   },
   {
@@ -740,7 +740,7 @@
    "steps": [
     {"to": 1.4, "caption": "Open Commit: your changes are listed"},
     {"to": 2.5, "caption": "The message is written from the changes"},
-    {"to": 5.0, "caption": "Ctrl+Enter commits; the chip shows it"}
+    {"to": 5.0, "caption": "{fixed:ctrlEnter} commits; the chip shows it"}
    ]
   },
   {
@@ -827,7 +827,7 @@
     {"el": "label", "at": [0, -6, 0], "dy": 22, "text": "Profile", "box": "bg2", "from": 2.5}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press Ctrl+Enter or click Finish sketch"},
+    {"to": 1.0, "caption": "Press {key:sketch.finish} or click Finish sketch", "captionNoKey": "Click Finish sketch"},
     {"to": 4.2, "caption": "The profile is kept, ready to extrude"}
    ]
   },
@@ -840,7 +840,7 @@
     {"el": "key", "command": "view.fit", "press": 1.0, "from": 0.6, "to": 1.5}
    ],
    "steps": [
-    {"to": 1.05, "caption": "Press F"},
+    {"to": 1.05, "caption": "{press:view.fit}"},
     {"to": 3.8, "caption": "The view frames the selection, or all"}
    ]
   },
@@ -855,7 +855,7 @@
     {"el": "cursor", "kind": "arrow", "keys": [[0, {"pos": [16, -12, 0]}], [2.2, {"kind": "arrow"}], [2.25, {"kind": "move"}], [2.4, {"pos": [6, -4, 3]}], [2.6, {"pos": [6, -4, 3], "down": true}], [3.6, {"pos": [6, -4, 3], "down": false}], [4.4, {"pos": [6, -4, 3]}]]}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press Shift+2"},
+    {"to": 1.0, "caption": "{press:view.2d}"},
     {"to": 2.4, "caption": "The view locks square to the plane"},
     {"to": 4.6, "caption": "Drag to pan, scroll to zoom"}
    ]
@@ -874,30 +874,30 @@
    ],
    "steps": [
     {"to": 1.0, "caption": "Select what to keep in view"},
-    {"to": 3.0, "caption": "Press I: the rest hides"},
-    {"to": 4.2, "caption": "Shift+I brings everything back"}
+    {"to": 3.0, "caption": "{press:view.isolate}: the rest hides"},
+    {"to": 4.2, "caption": "{press:view.unisolate}: everything comes back"}
    ]
   },
-  {"id": "select.bodies", "template": "filterScene", "args": {"command": "select.bodies", "caption1": "Press 1 to pick whole bodies"},
+  {"id": "select.bodies", "template": "filterScene", "args": {"command": "select.bodies", "caption1": "{press:select.bodies} to pick whole bodies"},
    "items": [
     {"el": "solid", "profile": {"rect": [0, 0, 24, 16]}, "height": 10, "tone": "hov", "toneAmount": 0,
      "keys": [[0.75, {"toneAmount": 0, "tone": "hov"}], [0.9, {"toneAmount": 0.3}], [3.3, {"toneAmount": 0.3, "tone": "hov"}], [3.31, {"tone": "sel"}], [3.4, {"toneAmount": 0.45}]]},
     {"use": "filterCursor", "args": {"p1": [2, 2, 10], "p2": [-4, -8, 4], "p3": [12, 2, 5]}}]},
-  {"id": "select.faces", "template": "filterScene", "args": {"command": "select.faces", "caption1": "Press 2 to pick faces"},
+  {"id": "select.faces", "template": "filterScene", "args": {"command": "select.faces", "caption1": "{press:select.faces} to pick faces"},
    "items": [
     {"el": "solid", "profile": {"rect": [0, 0, 24, 16]}, "height": 10},
     {"el": "poly", "closed": true, "color": "glow", "width": 2.2, "fill": "glow", "fillOpacity": 0.55, "points": [[-12, -8, 10], [12, -8, 10], [12, 8, 10], [-12, 8, 10]], "from": 0.8, "to": 1.5, "fade": 0.08},
     {"el": "poly", "closed": true, "color": "glow", "width": 2.2, "fill": "glow", "fillOpacity": 0.55, "points": [[-12, -8, 0], [12, -8, 0], [12, -8, 10], [-12, -8, 10]], "from": 1.6, "to": 2.4, "fade": 0.08},
     {"use": "pickFace", "args": {"face": [[12, -8, 0], [12, 8, 0], [12, 8, 10], [12, -8, 10]], "hover": 2.5, "pick": 3.3}},
     {"use": "filterCursor", "args": {"p1": [2, 2, 10], "p2": [-4, -8, 4], "p3": [12, 2, 5]}}]},
-  {"id": "select.edges", "template": "filterScene", "args": {"command": "select.edges", "caption1": "Press 3 to pick edges"},
+  {"id": "select.edges", "template": "filterScene", "args": {"command": "select.edges", "caption1": "{press:select.edges} to pick edges"},
    "items": [
     {"el": "solid", "profile": {"rect": [0, 0, 24, 16]}, "height": 10},
     {"el": "poly", "points": [[-12, -8, 10], [12, -8, 10]], "color": "glow", "width": 6.5, "from": 0.8, "to": 1.5, "fade": 0.08},
     {"el": "poly", "points": [[12, -8, 0], [12, -8, 10]], "color": "glow", "width": 6.5, "from": 1.6, "to": 2.4, "fade": 0.08},
     {"use": "pickEdge", "args": {"edge": [[12, -8, 10], [12, 8, 10]], "hover": 2.5, "pick": 3.3}},
     {"use": "filterCursor", "args": {"p1": [2, -8, 10], "p2": [12, -8, 5], "p3": [12, 2, 10]}}]},
-  {"id": "select.vertices", "template": "filterScene", "args": {"command": "select.vertices", "caption1": "Press 4 to pick vertices"},
+  {"id": "select.vertices", "template": "filterScene", "args": {"command": "select.vertices", "caption1": "{press:select.vertices} to pick vertices"},
    "items": [
     {"el": "solid", "profile": {"rect": [0, 0, 24, 16]}, "height": 10},
     {"el": "snap", "kind": "endpoint", "at": [-12, -8, 10], "color": "hov", "from": 0.8, "to": 1.5, "fade": 0.08},
@@ -1071,7 +1071,7 @@
    ],
    "steps": [
     {"to": 1.2, "caption": "Select curves"},
-    {"to": 3.6, "caption": "Press X: they become construction"}
+    {"to": 3.6, "caption": "{press:sketch.construction}: they become construction"}
    ]
   },
   {
@@ -1104,7 +1104,7 @@
     {"el": "key", "command": "view.fitall", "press": 1.0, "from": 0.6, "to": 1.5}
    ],
    "steps": [
-    {"to": 1.05, "caption": "Press Shift+F"},
+    {"to": 1.05, "caption": "{press:view.fitall}"},
     {"to": 4.0, "caption": "The whole model fits the view"}
    ]
   },
@@ -1117,7 +1117,7 @@
     {"el": "key", "command": "view.home", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press H"},
+    {"to": 1.0, "caption": "{press:view.home}"},
     {"to": 4.0, "caption": "Back to the home view: corner on, all in"}
    ]
   },
@@ -1132,16 +1132,16 @@
     {"el": "chip", "screen": [0.03, 0.05], "text": "Orthographic", "dot": "sel", "from": 1.2, "fade": 0}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press Shift+3"},
+    {"to": 1.0, "caption": "{press:view.ortho}"},
     {"to": 4.0, "caption": "Parallel edges: sizes compare true"}
    ]
   },
   {"id": "view.shaded", "template": "viewStyle",
-   "args": {"command": "view.shaded", "name": "Shaded", "from": "shaded", "to": "plain", "caption1": "Press 5", "caption2": "Faces only, no edge lines"}},
+   "args": {"command": "view.shaded", "name": "Shaded", "from": "shaded", "to": "plain", "caption1": "{press:view.shaded}", "caption2": "Faces only, no edge lines"}},
   {"id": "view.edges", "template": "viewStyle",
-   "args": {"command": "view.edges", "name": "Shaded with edges", "from": "plain", "to": "shaded", "caption1": "Press 6", "caption2": "Faces with their edges drawn"}},
+   "args": {"command": "view.edges", "name": "Shaded with edges", "from": "plain", "to": "shaded", "caption1": "{press:view.edges}", "caption2": "Faces with their edges drawn"}},
   {"id": "view.wire", "template": "viewStyle",
-   "args": {"command": "view.wire", "name": "Wireframe", "from": "shaded", "to": "wire", "caption1": "Press 7", "caption2": "Edges only; hidden ones show through"}},
+   "args": {"command": "view.wire", "name": "Wireframe", "from": "shaded", "to": "wire", "caption1": "{press:view.wire}", "caption2": "Edges only; hidden ones show through"}},
   {
    "id": "view.grid", "duration": 4.2, "view": "iso", "extent": [-20, -14, 20, 14],
    "items": [
@@ -1152,7 +1152,7 @@
     {"el": "key", "command": "view.grid", "press": 3.1, "from": 2.7, "to": 3.6}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press G"},
+    {"to": 1.0, "caption": "{press:view.grid}"},
     {"to": 2.9, "caption": "The ground grid shows under the model"},
     {"to": 4.2, "caption": "G again hides it"}
    ]
@@ -1172,7 +1172,7 @@
                               [2.7, {"screen": [0.085, 0.31]}], [2.8, {"screen": [0.085, 0.31], "click": 1}], [3.6, {"screen": [0.62, 0.62]}]]}
    ],
    "steps": [
-    {"to": 1.2, "caption": "Open Grid settings (Shift+G)"},
+    {"to": 1.2, "caption": "Open Grid settings ({key:view.gridSettings})"},
     {"to": 2.6, "caption": "Type a spacing: the grid follows"},
     {"to": 5.0, "caption": "Automatic: it adapts as you zoom"}
    ]
@@ -1192,7 +1192,7 @@
    ],
    "steps": [
     {"to": 2.0, "caption": "A window selects what you can see"},
-    {"to": 2.8, "caption": "Press Alt+X to select through"},
+    {"to": 2.8, "caption": "{press:select.through} to select through"},
     {"to": 5.4, "caption": "The same window now gets both"}
    ]
   },
@@ -1207,7 +1207,7 @@
     {"el": "key", "command": "view.unisolate", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
-    {"to": 1.0, "caption": "While isolated, press Shift+I"},
+    {"to": 1.0, "caption": "While isolated, press {key:view.unisolate}", "captionNoKey": "While isolated, choose Exit isolate"},
     {"to": 3.6, "caption": "Everything hidden comes back"}
    ]
   },
@@ -1223,16 +1223,16 @@
    ],
    "steps": [
     {"to": 1.3, "caption": "Select a planar face"},
-    {"to": 4.4, "caption": "Shift+A turns the view square to it"}
+    {"to": 4.4, "caption": "{press:view.alignPlane}: the view turns square to it"}
    ]
   },
-  {"id": "view.top", "template": "standardView", "args": {"command": "view.top", "az": -90, "elev": 89.5, "name": "Top", "caption1": "Press Shift+↑"}},
-  {"id": "view.front", "template": "standardView", "args": {"command": "view.front", "az": -90, "elev": 0, "name": "Front", "caption1": "Press Shift+PgUp"}},
-  {"id": "view.right", "template": "standardView", "args": {"command": "view.right", "az": 0, "elev": 0, "name": "Right", "caption1": "Press Shift+→"}},
-  {"id": "view.iso", "template": "standardView", "args": {"command": "view.iso", "az": -45, "elev": 35.264, "name": "Isometric", "caption1": "Press Shift+H", "az0": -90, "elev0": 0}},
-  {"id": "view.bottom", "template": "standardView", "args": {"command": "view.bottom", "az": -90, "elev": -89.5, "name": "Bottom", "caption1": "Press Shift+↓"}},
-  {"id": "view.back", "template": "standardView", "args": {"command": "view.back", "az": 90, "elev": 0, "name": "Back", "caption1": "Press Shift+PgDn"}},
-  {"id": "view.left", "template": "standardView", "args": {"command": "view.left", "az": 180, "elev": 0, "name": "Left", "caption1": "Press Shift+←"}},
+  {"id": "view.top", "template": "standardView", "args": {"command": "view.top", "az": -90, "elev": 89.5, "name": "Top", "caption1": "{press:view.top}"}},
+  {"id": "view.front", "template": "standardView", "args": {"command": "view.front", "az": -90, "elev": 0, "name": "Front", "caption1": "{press:view.front}"}},
+  {"id": "view.right", "template": "standardView", "args": {"command": "view.right", "az": 0, "elev": 0, "name": "Right", "caption1": "{press:view.right}"}},
+  {"id": "view.iso", "template": "standardView", "args": {"command": "view.iso", "az": -45, "elev": 35.264, "name": "Isometric", "caption1": "{press:view.iso}", "az0": -90, "elev0": 0}},
+  {"id": "view.bottom", "template": "standardView", "args": {"command": "view.bottom", "az": -90, "elev": -89.5, "name": "Bottom", "caption1": "{press:view.bottom}"}},
+  {"id": "view.back", "template": "standardView", "args": {"command": "view.back", "az": 90, "elev": 0, "name": "Back", "caption1": "{press:view.back}"}},
+  {"id": "view.left", "template": "standardView", "args": {"command": "view.left", "az": 180, "elev": 0, "name": "Left", "caption1": "{press:view.left}"}},
   {
    "id": "view.rollleft", "duration": 3.6, "extent": [-24, -15, 24, 15],
    "items": [
@@ -1243,7 +1243,7 @@
     {"el": "key", "command": "view.rollleft", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press Alt+←"},
+    {"to": 1.0, "caption": "{press:view.rollleft}"},
     {"to": 3.6, "caption": "The view turns a quarter to the left"}
    ]
   },
@@ -1257,7 +1257,7 @@
     {"el": "key", "command": "view.rollright", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press Alt+→"},
+    {"to": 1.0, "caption": "{press:view.rollright}"},
     {"to": 3.6, "caption": "The view turns a quarter to the right"}
    ]
   },
@@ -1292,7 +1292,7 @@
     {"el": "snap", "kind": "endpoint", "at": [-6, -6], "from": 0.6, "to": 1.3},
     {"el": "snap", "kind": "endpoint", "at": [8, 2], "from": 2.2, "to": 2.65},
     {"el": "snap", "kind": "intersection", "at": [8, -6], "from": 2.65, "to": 4.6},
-    {"el": "chip", "screen": [0.03, 0.05], "icon": "extensions", "text": "Extensions F11", "dot": "sel"},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "extensions", "text": "Extensions ({key:view.extensions})", "dot": "sel"},
     {"use": "sketchDraw", "args": {"badge": "line", "keys": [[0, {"pos": [-16, 6]}], [0.6, {"pos": [-6.5, -5.5]}], [1.2, {"pos": [-6, -7]}], [1.8, {"pos": [2, -6]}], [2.2, {"pos": [8.5, 2.5]}],
                                                       [2.5, {"pos": [8, -2]}], [2.65, {"pos": [8, -6]}], [3.6, {"pos": [8, -6], "click": 1}], [4.6, {"pos": [16, 6]}]]}}
    ],
@@ -1314,7 +1314,7 @@
      "keys": [[3.4, {"width": 1.2}], [3.5, {"width": 2.4}]]},
     {"el": "glyph", "kind": "fix", "at": "cursor", "dx": 14, "dy": 12, "from": 3.5, "to": 4.8},
     {"el": "key", "fixed": "shift", "press": 3.45, "from": 3.2, "to": 4.6},
-    {"el": "chip", "screen": [0.03, 0.05], "icon": "tracking", "text": "Tracking F12", "dot": "sel"},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "tracking", "text": "Tracking ({key:view.tracking})", "dot": "sel"},
     {"use": "sketchDraw", "args": {"badge": "line", "keys": [[0, {"pos": [-2, -8]}], [0.9, {"pos": [-8, 6]}], [1.4, {"pos": [-8, 6]}], [2.1, {"pos": [4, 6.4]}], [2.9, {"pos": [12, 6]}],
                                                       [3.5, {"pos": [12, 6]}], [4.3, {"pos": [20, 6]}], [4.8, {"pos": [20, 6], "click": 1}]]}}
    ],
@@ -1328,7 +1328,7 @@
    "id": "view.gridSnap", "duration": 5.0, "extent": [-30, -14, 30, 14],
    "items": [
     {"use": "sketchScene"},
-    {"el": "chip", "screen": [0.03, 0.05], "icon": "grid", "text": "Grid snapping F9", "keys": [[2.0, {"dot": "fg3"}], [2.05, {"dot": "sel"}]], "dot": "fg3"},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "grid", "text": "Grid snapping ({key:view.gridSnap})", "keys": [[2.0, {"dot": "fg3"}], [2.05, {"dot": "sel"}]], "dot": "fg3"},
     {"el": "key", "command": "view.gridSnap", "press": 2.0, "from": 1.7, "to": 2.5},
     {"el": "circle", "center": "cursor", "r": 1.2, "color": "green", "width": 1.3, "from": 2.6},
     {"use": "sketchDraw", "args": {"badge": "", "keys": [[0, {"pos": [-22, -9.3]}], [1.7, {"pos": [-7.4, 3.1], "ease": "linear"}], [2.4, {"pos": [-5, 5], "ease": "step"}],
@@ -1337,14 +1337,14 @@
    ],
    "steps": [
     {"to": 1.8, "caption": "Off, the cursor moves freely"},
-    {"to": 5.0, "caption": "F9: points jump to grid crossings"}
+    {"to": 5.0, "caption": "Grid snapping ({key:view.gridSnap}): points jump to grid crossings"}
    ]
   },
   {
    "id": "view.orthoSnap", "duration": 5.6, "extent": [-30, -14, 30, 14],
    "items": [
     {"use": "sketchScene"},
-    {"el": "chip", "screen": [0.03, 0.05], "text": "Ortho F8", "keys": [[1.0, {"dot": "fg3"}], [1.05, {"dot": "sel"}]], "dot": "fg3"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Ortho ({key:view.orthoSnap})", "keys": [[1.0, {"dot": "fg3"}], [1.05, {"dot": "sel"}]], "dot": "fg3"},
     {"el": "key", "command": "view.orthoSnap", "press": 1.0, "from": 0.7, "to": 1.5},
     {"el": "poly", "color": "hov", "from": 1.6, "to": 3.6, "fade": 0, "points": [[-18, -7], [-18, -7]],
      "keys": [[1.6, {"points": [[-18, -7], [-18, -7]]}], [2.4, {"points": [[-18, -7], [-4, -7]]}], [3.0, {"points": [[-18, -7], [6, -7]]}], [3.5, {"points": [[-18, -7], [8, -7]]}]]},
@@ -1358,7 +1358,7 @@
                                                       [3.5, {"pos": [8, -5.5], "click": 1}], [4.3, {"pos": [10.5, 3]}], [4.9, {"pos": [6.5, 7], "click": 1}], [5.6, {"pos": [14, 10]}]]}}
    ],
    "steps": [
-    {"to": 1.5, "caption": "F8 turns Ortho on"},
+    {"to": 1.5, "caption": "Ortho ({key:view.orthoSnap}) turns on"},
     {"to": 5.6, "caption": "Each new line runs level or plumb"}
    ]
   },
@@ -1366,7 +1366,7 @@
    "id": "view.polarSnap", "duration": 5.0, "extent": [-30, -14, 30, 14],
    "items": [
     {"use": "sketchScene"},
-    {"el": "chip", "screen": [0.03, 0.05], "text": "Polar F10", "keys": [[1.0, {"dot": "fg3"}], [1.05, {"dot": "sel"}]], "dot": "fg3"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Polar ({key:view.polarSnap})", "keys": [[1.0, {"dot": "fg3"}], [1.05, {"dot": "sel"}]], "dot": "fg3"},
     {"el": "key", "command": "view.polarSnap", "press": 1.0, "from": 0.7, "to": 1.5},
     {"el": "poly", "points": [[-16, -8], [14, 9.32]], "color": "green", "dash": true, "width": 1.2, "from": 2.0, "to": 3.6, "fade": 0.15},
     {"el": "poly", "points": [[-16, -8], [-4, -8]], "color": "fg3", "dash": true, "width": 1, "from": 2.0, "to": 3.6, "fade": 0.15},
@@ -1378,7 +1378,7 @@
                                                       [3.5, {"pos": [6.2, 5.8], "click": 1}], [5.0, {"pos": [14, 0]}]]}}
    ],
    "steps": [
-    {"to": 1.5, "caption": "F10 turns Polar on"},
+    {"to": 1.5, "caption": "Polar ({key:view.polarSnap}) turns on"},
     {"to": 5.0, "caption": "A line's direction snaps to the angle step"}
    ]
   },
@@ -1393,7 +1393,7 @@
     {"el": "key", "command": "edit.selectall", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+A"},
+    {"to": 1, "caption": "{press:edit.selectall}"},
     {"to": 3.8, "caption": "Every body on screen is selected"}
    ]
   },
@@ -1411,7 +1411,7 @@
    ],
    "steps": [
     {"to": 1.2, "caption": "Select what to leave out"},
-    {"to": 4.0, "caption": "Ctrl+Shift+I selects everything else"}
+    {"to": 4.0, "caption": "{press:edit.invert}: everything else is selected"}
    ]
   },
   {
@@ -1429,9 +1429,9 @@
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.5, {"pos": [8, 0, 10], "click": 1}], [1.5, {"pos": [14, -8, 4]}], [2.0, {"pos": [-6, 10, 7], "click": 1}], [3.0, {"pos": [14, 8, 0]}]]}
    ],
    "steps": [
-    {"to": 1.5, "caption": "Run a command, such as Hide (V)"},
+    {"to": 1.5, "caption": "Run a command, such as Hide ({key:edit.hide})"},
     {"to": 2.3, "caption": "Select something else"},
-    {"to": 4.4, "caption": "Shift+Enter runs it again"}
+    {"to": 4.4, "caption": "{press:edit.repeat}: it runs again"}
    ]
   },
   {
@@ -1472,7 +1472,7 @@
    ],
    "steps": [
     {"to": 1.0, "caption": "Measure something"},
-    {"to": 2.4, "caption": "Press P to pin it"},
+    {"to": 2.4, "caption": "{press:inspect.pin} to pin it"},
     {"to": 4.6, "caption": "It stays in the document's timeline"}
    ]
   },
@@ -1494,7 +1494,7 @@
    ],
    "steps": [
     {"to": 1.3, "caption": "Select a body and right-click"},
-    {"to": 2.3, "caption": "Choose Properties (Alt+Enter)"},
+    {"to": 2.3, "caption": "Choose Properties ({key:inspect.properties})"},
     {"to": 5.2, "caption": "Volume and area fill in"}
    ]
   },
@@ -1550,7 +1550,7 @@
     {"el": "key", "command": "inspect.flip", "press": 1.0, "from": 0.6, "to": 1.5}
    ],
    "steps": [
-    {"to": 1.1, "caption": "With a section on, press Shift+X"},
+    {"to": 1.1, "caption": "With a section on, press {key:inspect.flip}", "captionNoKey": "With a section on, choose Flip section"},
     {"to": 4.4, "caption": "The other side is kept"}
    ]
   },
@@ -2153,7 +2153,7 @@
     {"el": "key", "command": "sketch.openEnds", "press": 0.8, "from": 0.45, "to": 1.3}
    ],
    "steps": [
-    {"to": 0.9, "caption": "Press Alt+E"},
+    {"to": 0.9, "caption": "{press:sketch.openEnds}"},
     {"to": 3.8, "caption": "Ends that meet nothing are ringed"}
    ]
   },
@@ -2522,7 +2522,7 @@
     {"el": "key", "command": "sketch.panel", "press": 0.8, "from": 0.45, "to": 1.3}
    ],
    "steps": [
-    {"to": 0.9, "caption": "Press Ctrl+Alt+S"},
+    {"to": 0.9, "caption": "{press:sketch.panel}"},
     {"to": 3.6, "caption": "The sketch panel opens: fields and lists"}
    ]
   },
@@ -2711,7 +2711,7 @@
     {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.85]}], [0.9, {"screen": [0.36, 0.28]}], [1, {"screen": [0.36, 0.28], "click": 1}], [1.1, {"screen": [0.36, 0.28], "click": 1}], [1.6, {"screen": [0.45, 0.4]}], [2.6, {"screen": [0.75, 0.88]}]]}
    ],
    "steps": [
-    {"to": 1.2, "caption": "Open Parameters (Ctrl+Shift+U)"},
+    {"to": 1.2, "caption": "Open Parameters ({key:design.parameters})"},
     {"to": 2.5, "caption": "Change a value"},
     {"to": 5.2, "caption": "Every dimension using it follows"}
    ]
@@ -2867,7 +2867,7 @@
    "steps": [
     {"to": 1, "caption": "Click a face, edge or point"},
     {"to": 3.3, "caption": "Type the note"},
-    {"to": 5, "caption": "Ctrl+Enter pins it to the model"}
+    {"to": 5, "caption": "{fixed:ctrlEnter} pins it to the model"}
    ]
   },
   {
@@ -2901,7 +2901,7 @@
    ],
    "steps": [
     {"to": 1, "caption": "Select the note"},
-    {"to": 4.2, "caption": "Ctrl+Enter resolves it; it stays in history"}
+    {"to": 4.2, "caption": "{press:annotate.resolve}: it is resolved and stays in history"}
    ]
   },
   {
@@ -2930,7 +2930,7 @@
     {"el": "key", "command": "edit.undo", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+Z"},
+    {"to": 1, "caption": "{press:edit.undo}"},
     {"to": 3.8, "caption": "The last step is taken back"}
    ]
   },
@@ -2943,7 +2943,7 @@
     {"el": "key", "command": "edit.redo", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+Y"},
+    {"to": 1, "caption": "{press:edit.redo}"},
     {"to": 3.8, "caption": "The undone step comes back"}
    ]
   },
@@ -2958,7 +2958,7 @@
     {"el": "key", "fixed": "enter", "press": 2.1, "from": 1.8, "to": 2.6}
    ],
    "steps": [
-    {"to": 1, "caption": "Select it and press F2"},
+    {"to": 1, "caption": "Select it and press {key:edit.rename}", "captionNoKey": "Select it and choose Rename"},
     {"to": 2.2, "caption": "Type the name, Enter"},
     {"to": 4.4, "caption": "Several at once: Leg {n} numbers them"}
    ]
@@ -2974,7 +2974,7 @@
     {"el": "key", "command": "edit.hide", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
-    {"to": 1, "caption": "Select bodies and press V"},
+    {"to": 1, "caption": "Select bodies and press {key:edit.hide}", "captionNoKey": "Select bodies and choose Hide"},
     {"to": 3.8, "caption": "They hide; the browser eye closes"}
    ]
   },
@@ -2990,7 +2990,7 @@
     {"el": "key", "command": "edit.showall", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Shift+V"},
+    {"to": 1, "caption": "{press:edit.showall}"},
     {"to": 3.8, "caption": "Everything hidden shows again"}
    ]
   },
@@ -3008,7 +3008,7 @@
     {"el": "key", "command": "edit.filter", "press": 0.8, "from": 0.45, "to": 1.3}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+F"},
+    {"to": 1, "caption": "{press:edit.filter}"},
     {"to": 2, "caption": "Type part of a name"},
     {"to": 4.2, "caption": "The browser narrows to matches"}
    ]
@@ -3024,7 +3024,7 @@
     {"el": "key", "command": "edit.selectparent", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
-    {"to": 1, "caption": "With a body selected, press Ctrl+↑"},
+    {"to": 1, "caption": "With a body selected, press {key:edit.selectparent}", "captionNoKey": "With a body selected, choose Select parent"},
     {"to": 3.8, "caption": "Its component is selected"}
    ]
   },
@@ -3054,7 +3054,7 @@
    ],
    "steps": [
     {"to": 1, "caption": "Click the delete step on the timeline"},
-    {"to": 4, "caption": "Shift+Del brings the objects back"}
+    {"to": 4, "caption": "{press:edit.restore}: the objects come back"}
    ]
   },
   {
@@ -3084,7 +3084,7 @@
     {"el": "key", "command": "file.import", "press": 0.5, "from": 0.15, "to": 1}
    ],
    "steps": [
-    {"to": 0.9, "caption": "Press Ctrl+I and choose a file"},
+    {"to": 0.9, "caption": "{press:file.import} and choose a file"},
     {"to": 4.2, "caption": "Its parts join this design"}
    ]
   },
@@ -3113,7 +3113,7 @@
     {"el": "key", "command": "file.save", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+S"},
+    {"to": 1, "caption": "{press:file.save}"},
     {"to": 3.4, "caption": "Saved: the asterisk clears"}
    ]
   },
@@ -3130,7 +3130,7 @@
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [2, {"screen": [0.47, 0.44]}], [2.2, {"screen": [0.47, 0.44], "click": 1}], [3, {"screen": [0.7, 0.8]}]]}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+Shift+S"},
+    {"to": 1, "caption": "{press:file.saveas}"},
     {"to": 2.4, "caption": "Type the new name"},
     {"to": 4.2, "caption": "You go on in the new file"}
    ]
@@ -3147,7 +3147,7 @@
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.5, {"screen": [0.1, 0.4]}], [1.6, {"screen": [0.1, 0.4], "click": 1}], [2.2, {"screen": [0.4, 0.8]}], [2.4, {"screen": [0.4, 0.8], "click": 1}], [3.2, {"screen": [0.7, 0.85]}]]}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+E"},
+    {"to": 1, "caption": "{press:file.export}"},
     {"to": 2.5, "caption": "Choose the format"},
     {"to": 4.6, "caption": "The file is written"}
    ]
@@ -3162,7 +3162,7 @@
     {"el": "key", "command": "file.screenshot", "press": 0.9, "from": 0.55, "to": 1.4}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+Shift+P"},
+    {"to": 1, "caption": "{press:file.screenshot}"},
     {"to": 3.6, "caption": "The view is saved as an image"}
    ]
   },
@@ -3178,7 +3178,7 @@
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.1, {"screen": [0.4, 0.28]}], [1.2, {"screen": [0.4, 0.28], "click": 1}], [2.8, {"screen": [0.2, 0.52]}], [2.9, {"screen": [0.2, 0.52], "click": 1}], [3.8, {"screen": [0.7, 0.85]}]]}
    ],
    "steps": [
-    {"to": 1.3, "caption": "Open Annotations (Alt+2); filter"},
+    {"to": 1.3, "caption": "Open Annotations ({key:panel.annotations}); filter"},
     {"to": 2.9, "caption": "The list narrows"},
     {"to": 4.6, "caption": "Click a card: its target lights up"}
    ]
@@ -3199,7 +3199,7 @@
     {"el": "key", "fixed": "enter", "press": 2.5, "from": 2.2, "to": 3}
    ],
    "steps": [
-    {"to": 0.9, "caption": "Press S"},
+    {"to": 0.9, "caption": "{press:tools.commands}"},
     {"to": 2.6, "caption": "Type part of a name; Enter runs it"},
     {"to": 4.6, "caption": "The command starts"}
    ]
@@ -3216,7 +3216,7 @@
     {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.85]}], [1.3, {"screen": [0.25, 0.4]}], [1.4, {"screen": [0.25, 0.4], "click": 1}], [1.5, {"screen": [0.25, 0.4], "click": 1}], [2.4, {"screen": [0.7, 0.85]}]]}
    ],
    "steps": [
-    {"to": 1.5, "caption": "Press Ctrl+O and pick a file"},
+    {"to": 1.5, "caption": "{press:file.open} and pick a file"},
     {"to": 4.4, "caption": "A model or drawing opens to view, fast"}
    ]
   },
@@ -3230,7 +3230,7 @@
     {"el": "key", "command": "file.new", "press": 0.9, "from": 0.6, "to": 1.4}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+N"},
+    {"to": 1, "caption": "{press:file.new}"},
     {"to": 3.4, "caption": "An empty design starts"}
    ]
   },
@@ -3248,7 +3248,7 @@
     {"el": "key", "command": "workspace.design", "press": 0.9, "from": 0.6, "to": 1.4}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+2"},
+    {"to": 1, "caption": "{press:workspace.design}"},
     {"to": 3.6, "caption": "The ribbon shows the modelling tabs"}
    ]
   },
@@ -3266,7 +3266,7 @@
     {"el": "key", "command": "workspace.review", "press": 0.9, "from": 0.6, "to": 1.4}
    ],
    "steps": [
-    {"to": 1, "caption": "Press Ctrl+1"},
+    {"to": 1, "caption": "{press:workspace.review}"},
     {"to": 3.6, "caption": "Look, measure and annotate tabs"}
    ]
   },
@@ -3282,7 +3282,7 @@
     {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.85]}], [2.1, {"screen": [0.15, 0.36]}], [2.2, {"screen": [0.15, 0.36], "click": 1}], [3, {"screen": [0.7, 0.85]}]]}
    ],
    "steps": [
-    {"to": 0.9, "caption": "Press Alt+1"},
+    {"to": 0.9, "caption": "{press:panel.browser}"},
     {"to": 3.8, "caption": "Every component, body and sketch is listed"}
    ]
   },
@@ -3297,7 +3297,7 @@
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [2.1, {"screen": [0.22, 0.89]}], [3, {"screen": [0.22, 0.89]}]]}
    ],
    "steps": [
-    {"to": 0.9, "caption": "Press Alt+3"},
+    {"to": 0.9, "caption": "{press:panel.timeline}"},
     {"to": 3.8, "caption": "Each step; hover for who and when"}
    ]
   },

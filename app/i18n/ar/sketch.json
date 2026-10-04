@@ -271,7 +271,6 @@
  "Copied the op id %1": "نُسخ معرّف العملية %1",
  "Cut works on sketch curves: open a sketch and select them": "القص يعمل على منحنيات الرسم: افتح رسمًا واختر منحنياته",
  "Nothing to copy: select sketch curves, or a marker on the timeline": "لا شيء للنسخ: اختر منحنيات رسم، أو علامة على الخط الزمني",
- "Paste works in a sketch: open one, then Ctrl+V": "اللصق يعمل داخل رسم تخطيطي: افتح رسمًا، ثم Ctrl+V",
  "Click the base point": "انقر نقطة الأساس",
  "then Paste ({key:edit.paste}) places them by it": "ثم يضعها اللصق ({key:edit.paste}) بالنسبة إليها",
  "Click where the base point goes": "انقر حيث توضع نقطة الأساس",

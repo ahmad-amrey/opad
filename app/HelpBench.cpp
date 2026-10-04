@@ -292,7 +292,11 @@ OPAD_BENCH(OPAD_BENCH_CLIPS, clips) {
   QStringList untranslated;
   if (rtl)
     for (const QString& id : clips::ids())
-      for (const QString& text : clips::texts(id)) if (i18n::t(text) == text) untranslated << id + ": " + text;
+      for (const QString& text : clips::texts(id)) {
+        QString words = text;  // a token alone ("{press:view.fit}") has its words from help::expand ("Press %1")
+        for (const QString& token : help::tokens(text)) words.remove('{' + token + '}');
+        if (i18n::t(text) == text && !words.trimmed().isEmpty()) untranslated << id + ": " + text;
+      }
   if (rtl) check(untranslated.isEmpty(), "every caption and label translated " + untranslated.join(" | "));
 
   // OPAD_BENCH_CLIPS_ONLY=<prefix,...>: sheets of those clips only (authoring).

@@ -129,7 +129,7 @@ QString isolate(const QString& text) { return text.isEmpty() ? text : QChar(0x20
 QString text(const QKeySequence& key, Style style) { return isolate(plain(key, style)); }
 QString text(const QString& id, Style style) { return text(binding(id), style); }
 
-QStringList fixedNames() { return {"esc", "enter", "ctrlEnter", "tab", "shiftTab", "shift", "alt", "ctrl", "del", "shiftDel", "backspace", "space", "f2", "undo", "redo", "copy"}; }
+QStringList fixedNames() { return {"esc", "enter", "ctrlEnter", "tab", "shiftTab", "shift", "alt", "ctrl", "del", "shiftDel", "backspace", "space", "f2", "shiftLeft", "shiftRight", "shiftEnd", "undo", "redo", "copy"}; }
 
 QStringList fixedCaps(const QString& name, Style style) {
   static const QHash<QString, QKeyCombination> table{
@@ -144,6 +144,9 @@ QStringList fixedCaps(const QString& name, Style style) {
       {"del", QKeyCombination(Qt::Key_Delete)},
       {"shiftDel", QKeyCombination(Qt::ShiftModifier, Qt::Key_Delete)},  // the browser's and the timeline's own keys
       {"f2", QKeyCombination(Qt::Key_F2)},
+      {"shiftLeft", QKeyCombination(Qt::ShiftModifier, Qt::Key_Left)},  // the timeline's roll-back marker
+      {"shiftRight", QKeyCombination(Qt::ShiftModifier, Qt::Key_Right)},
+      {"shiftEnd", QKeyCombination(Qt::ShiftModifier, Qt::Key_End)},
       {"backspace", QKeyCombination(Qt::Key_Backspace)},
       {"space", QKeyCombination(Qt::Key_Space)}};
   if (const auto it = table.constFind(name); it != table.constEnd()) return chordCaps(*it, resolved(style));
