@@ -2160,9 +2160,11 @@ void Viewport::handOver(const std::string& key) {
   QMetaObject::invokeMethod(this, [this] { pumpMeshed(); }, Qt::QueuedConnection);
 }
 
-// The keys the workers finished (or skipped, cancelled): the bodies that waited for them join the display queue.
+// The keys the workers finished (or skipped, cancelled): the bodies that waited for them join the display queue. A
+// picture's body (an image canvas, an SVG's image) whose picture is not decoded yet waits for that instead, as in sync:
+// displayed now it would stay a bare frame, since the sync after the decode keeps an item already showing its raster.
 void Viewport::pumpMeshed() {
-  std::vector<std::string> keys;
+  std::vector<std::string> keys, pictures;
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
     keys.swap(m_newlyMeshed);
@@ -2173,12 +2175,18 @@ void Viewport::pumpMeshed() {
       if (it == m_waiting.end()) continue;
       m_waitingNodes -= it->second.size();
       if (m_meshed.count(key))
-        for (auto& id : it->second) m_displayQueue.push_back(std::move(id));
+        for (auto& id : it->second) {
+          const opad::Node* n = m_doc->scene.node(id);
+          if (const std::string raster = n ? rasterKey(*n) : std::string(); !raster.empty() && !m_rasters.count(raster)) pictures.push_back(std::move(id));
+          else m_displayQueue.push_back(std::move(id));
+        }
       m_waiting.erase(it);
       moved = true;
     }
     if (!moved) return;
   }
+  for (const auto& id : pictures)  // the decode's sync displays it (decodeRaster: one job per picture)
+    if (const opad::Node* n = m_doc->scene.node(id)) decodeRaster(*n, rasterKey(*n));
   if (!m_displayQueue.empty()) emit meshingProgress(remainingBodies());
   runPump();
 }
