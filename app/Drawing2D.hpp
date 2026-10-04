@@ -43,6 +43,8 @@ struct Layer {
   double lineweight = -1;  // mm; < 0 = the default
 };
 bool isLayer(const opad::Scene& scene, const std::string& id);
+// A layer's (or a saved state's) true/false field, `fallback` when it is missing or not a boolean (a file edited by hand).
+bool flag(const opad::json& fields, const char* key, bool fallback);
 std::vector<Layer> layers(const opad::Scene& scene);  // in tree order
 const Layer* find(const std::vector<Layer>& all, const std::string& id);
 std::string layerOf(const opad::Scene& scene, const std::string& node);  // the layer a node (a drawing body) lies on, "" none
@@ -79,6 +81,17 @@ LinePattern linePattern(const std::vector<double>& dashes, double pixelsPerMm);
 constexpr double kPatternPixelsPerMm = 1.25;  // logical pixels per pattern millimetre: DASHED repeats every 24 px
 // A lineweight as wide as on paper at 96 dpi, in screen points, at least one: 0.25 mm and less are hairlines.
 double linePoints(double lineweight);
+
+// How a drawing body's lines are drawn (UI-92): its own linetype and lineweight (DXF entities that set them, Node::line)
+// over its layer's (the parent's Node::layer, as the Layers panel leaves it), its dashes in its own scale.
+struct LineStyle {
+  std::string linetype;  // "" continuous
+  std::vector<double> pattern;  // the file's dashes for it; empty: by its name
+  double lineweight = -1;  // mm; < 0 the default
+  double scale = 1;  // its dashes times this (DXF CELTSCALE), whichever linetype it takes
+  bool ownType = false, ownWeight = false;  // the body's own, not its layer's
+};
+LineStyle lineStyle(const opad::Scene& scene, const opad::Node& body);
 
 // Layer states (LAYERSTATE): every layer's on, frozen, locked, plot, colour, linetype and lineweight, saved as
 // `display.layers` of a view op; restoring writes the appearance changes that bring the layers back to it (by layer id,

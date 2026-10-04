@@ -59,6 +59,10 @@ void shown(json& op, bool on, bool frozen) {
 }
 }  // namespace
 
+bool flag(const json& fields, const char* key, bool fallback) {
+  return fields.is_object() && fields.contains(key) && fields[key].is_boolean() ? fields[key].get<bool>() : fallback;
+}
+
 bool isLayer(const opad::Scene& scene, const std::string& id) {
   const opad::Node* n = scene.node(id);
   if (!n || n->kind != opad::Node::Kind::Component) return false;
@@ -75,11 +79,10 @@ Layer make(const opad::Scene& scene, const opad::Node& n, const std::string& dra
   l.id = n.id;
   l.name = n.name;
   l.drawing = drawing;
-  const bool frozenField = f.value("frozen", false);
-  l.frozen = !n.visible && frozenField;
-  l.on = n.visible || (l.frozen && !f.value("off", false));
+  l.frozen = !n.visible && flag(f, "frozen", false);
+  l.on = n.visible || (l.frozen && !flag(f, "off", false));
   l.locked = n.locked;
-  l.plot = f.value("plot", true);
+  l.plot = flag(f, "plot", true);
   if (f.contains("linetype") && f["linetype"].is_string()) l.linetype = f["linetype"].get<std::string>();
   l.pattern = patternOf(f);
   if (f.contains("lineweight") && f["lineweight"].is_number()) l.lineweight = f["lineweight"].get<double>();
@@ -134,6 +137,27 @@ std::optional<Layer> layerAt(const opad::Scene& scene, const std::string& node) 
   const opad::Node* root = n;
   while (!root->parent.empty() && scene.node(root->parent)) root = scene.node(root->parent);
   return make(scene, *n, root->name);
+}
+
+LineStyle lineStyle(const opad::Scene& scene, const opad::Node& body) {
+  LineStyle s;
+  const opad::Node* layer = body.parent.empty() ? nullptr : scene.node(body.parent);
+  for (const json* f : {layer ? &fields(*layer) : nullptr, body.line.is_object() ? &body.line : nullptr}) {
+    if (!f) continue;
+    const bool own = f == &body.line;
+    if (f->contains("linetype") && ((*f)["linetype"].is_string() || own)) {
+      s.linetype = (*f)["linetype"].is_string() ? (*f)["linetype"].get<std::string>() : "";
+      s.pattern = patternOf(*f);
+      s.ownType = own;
+    }
+    if (f->contains("lineweight") && (*f)["lineweight"].is_number()) {
+      s.lineweight = (*f)["lineweight"].get<double>();
+      s.ownWeight = own;
+    }
+    if (own && f->contains("scale") && (*f)["scale"].is_number() && (*f)["scale"].get<double>() > 0) s.scale = (*f)["scale"].get<double>();
+  }
+  if (upper(s.linetype) == "CONTINUOUS") s.linetype.clear(), s.pattern.clear();
+  return s;
 }
 
 json setOn(const Layer& layer, bool on) {
@@ -400,10 +424,20 @@ std::vector<DrawingFrame> drawingFrames(const opad::Document& doc, const opad::S
     if (const opad::Node* n = scene.node(root))
       if (const opad::Op* op = doc.find_op(n->source_op); op && op->data.contains("nodes") && op->data["nodes"].is_array())
         for (const auto& node : op->data["nodes"])
-          if (node.value("id", "") == root && node.contains("drawing_origin") && node["drawing_origin"].is_array() && node["drawing_origin"].size() == 3)
+          if (node.is_object() && node.contains("id") && node["id"] == root && node.contains("drawing_origin") && node["drawing_origin"].is_array() &&
+              node["drawing_origin"].size() == 3 && std::all_of(node["drawing_origin"].begin(), node["drawing_origin"].end(), [](const json& c) { return c.is_number(); }))
             f.origin = node["drawing_origin"].get<opad::Vec3>();
     for (const auto& body : scene.bodies_under(root)) {
-      const Bnd_Box box = opad::node_world_bbox(doc, scene, body);
+      const opad::Node* n = scene.node(body);
+      if (!n || n->body_missing) continue;  // its entry is gone (gc, a merge): unresolved, not measured
+      Bnd_Box box;
+      try {
+        box = opad::node_world_bbox(doc, scene, body);
+      } catch (const opad::Error&) {
+        continue;
+      } catch (const Standard_Failure&) {
+        continue;
+      }
       if (box.IsVoid()) continue;
       double x0, y0, z0, x1, y1, z1;
       box.Get(x0, y0, z0, x1, y1, z1);
@@ -448,10 +482,10 @@ std::vector<json> restoreState(const opad::Scene& scene, const json& display) {
     const json* s = saved.contains(l.id) ? &saved[l.id] : nullptr;
     if (!s)  // re-imported or another file: by name
       for (const auto& [id, state] : saved.items())
-        if (state.is_object() && state.value("name", "") == l.name) { s = &state; break; }
+        if (state.is_object() && state.contains("name") && state["name"] == l.name) { s = &state; break; }
     if (!s || !s->is_object()) continue;
-    const bool on = s->value("on", true), frozen = s->value("frozen", false), locked = s->value("locked", false), plot = s->value("plot", true);
-    const std::string linetype = s->value("linetype", "");
+    const bool on = flag(*s, "on", true), frozen = flag(*s, "frozen", false), locked = flag(*s, "locked", false), plot = flag(*s, "plot", true);
+    const std::string linetype = s->contains("linetype") && (*s)["linetype"].is_string() ? (*s)["linetype"].get<std::string>() : std::string();
     const double lineweight = s->contains("lineweight") && (*s)["lineweight"].is_number() ? (*s)["lineweight"].get<double>() : -1;
     json op = {{"target", l.id}}, patch = json::object();
     if (on != l.on || frozen != l.frozen) shown(op, on, frozen);
@@ -468,7 +502,8 @@ std::vector<json> restoreState(const opad::Scene& scene, const json& display) {
       if (!op.contains("visible")) op["visible"] = l.on && !l.frozen;
     }
     if (op.size() > 1) out.push_back(std::move(op));
-    const bool colored = s->contains("color") && (*s)["color"].is_array() && (*s)["color"].size() == 3;
+    const bool colored = s->contains("color") && (*s)["color"].is_array() && (*s)["color"].size() == 3 &&
+                         std::all_of((*s)["color"].begin(), (*s)["color"].end(), [](const json& c) { return c.is_number(); });
     if (colored) {
       const Rgb c{(*s)["color"][0].get<double>(), (*s)["color"][1].get<double>(), (*s)["color"][2].get<double>()};
       if (!l.colored || l.mixed || c != l.color) out.push_back(setColor(l, c));

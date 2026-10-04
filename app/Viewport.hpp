@@ -274,15 +274,24 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showPickMarkers(const std::vector<opad::Vec3>& points);  // numbered end markers, 1-based
   void showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label);  // dashed hov line to the hovered candidate
   void clearPreview();
-  // Object snap (UI-90, ViewportSnap.cpp): while a tool picks points (Vertex filter, a drawing's Points), the drawings' ends,
-  // midpoints, centres, quadrants, intersections and nearest points under the mouse, as the sketch offers them (its snap
-  // set, settings sketch/snap/<kind>): a marker of the kind's shape, its name in the status bar, and a click picks the
-  // point (a Point ref). F3 switches it (view/objectSnap). Each body's index is built on a worker when first needed.
+  // Object snap (UI-90, ViewportSnap.cpp): while a tool picks points (Vertex filter, a drawing's Points), the drawings' and
+  // sketches' ends, midpoints, centres, quadrants, intersections and nearest points under the mouse, perpendicular and
+  // tangent points from the point picked before, as the sketch offers them (its snap set, settings sketch/snap/<kind>): a
+  // marker of the kind's shape, its name in the status bar, and a click picks the point (a Point ref). F3 switches it
+  // (view/objectSnap). Each body's (sketch's) index is built on a worker when first needed.
   void setObjectSnap(bool on);
+  // Who takes snapped points (the snap shows only then): a guided tool that picks free points (Distance, Bounding box,
+  // Area) while in the Points filter, or a pick of its own in any filter (the plot window's corners: it reads snapAt
+  // itself). None: what needs the entity it picks (Radius a circle's centre, the section's face, feature inputs).
+  enum class SnapPicks { None, Points, Always };
+  void setSnapPicks(SnapPicks picks);
+  SnapPicks snapPicks() const { return m_snapPicks; }
+  void setSnapFrom(const std::optional<opad::Vec3>& from);  // the point picked before (a tool's last pick), none
   bool objectSnap() const { return m_objectSnap; }
   bool snapAt(const QPointF& widgetPos, opad::Vec3& world, QString* kind = nullptr);  // any point consumer: false until indexed
   bool shownSnap(opad::Vec3& world, QString* kind = nullptr) const;                // the one the cursor shows now
-  bool snapIndexesReady();  // asks for the missing indexes; true once every displayed drawing has one
+  bool snapIndexesReady();  // asks for the missing indexes; true once every displayed drawing has one (or its indexing was cancelled)
+  int snapIndexCount() const;  // the indexes kept (benches)
   static QString snapWord(const QString& kind);  // "endpoint" -> "Endpoint", translated
   bool benchSnap(const QPointF& widgetPos);  // the snap a mouse move here shows (hidden windows never paint)
   bool pointUnder(const QPointF& widgetPos, opad::Vec3& world);  // the frontmost displayed surface there (one BVH ray), false: none
@@ -755,9 +764,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_cubeGesture = false;  // this left press started on the view cube: dragging orbits instead of rubber-banding
   // object snap (ViewportSnap.cpp)
   bool m_objectSnap = true;
+  SnapPicks m_snapPicks = SnapPicks::None;
   std::shared_ptr<ObjectSnapState> m_osnap;
   ObjectSnapState& snapState();
+  std::string sketchSnapKey(const std::string& id);  // a displayed sketch's index key, new with each version of it
   bool objectSnapActive() const;
   void updateObjectSnap();                 // after the hover, every frame
+  void pruneSnapIndexes();                 // in sync: drops the indexes of what the scene no longer has
   bool objectSnapPress(QMouseEvent* e);  // true: the press picks the shown snap
 };

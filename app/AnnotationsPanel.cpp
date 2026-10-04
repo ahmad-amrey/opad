@@ -101,7 +101,9 @@ void AnnotationsPanel::rebuild() {
       n.measurement=true;
       const auto result=op.data.value("result",opad::json::object());
       n.value=tr("%1 measurement").arg(i18n::t(QString::fromStdString(op.data.value("kind",""))));
-      if(result.contains("value") && result["value"].is_number()) n.value+=" - "+units::format(result.value("unit","mm")=="deg"?units::Kind::Angle:units::Kind::Length,result["value"].get<double>());
+      const std::string unit=result.contains("unit") && result["unit"].is_string()?result["unit"].get<std::string>():"mm";  // mm, deg or mm2 (an area)
+      if(result.contains("value") && result["value"].is_number()) n.value+=" - "+units::format(unit=="deg"?units::Kind::Angle:unit=="mm2"?units::Kind::Area:units::Kind::Length,result["value"].get<double>());
+      if(unit=="mm2" && result.contains("perimeter") && result["perimeter"].is_number()) n.value+=" · "+tr("perimeter %1").arg(units::format(units::Kind::Length,result["perimeter"].get<double>()));
       else if(result.contains("size") && result["size"].is_array() && result["size"].size()==3) n.value+=" - "+units::vector(units::Kind::Length,result["size"].get<std::array<double,3>>());
       for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;}
     }

@@ -2,6 +2,7 @@
 #include <Bnd_Box.hxx>
 #include <TopoDS_Shape.hxx>
 #include <functional>
+#include <optional>
 #include "document.hpp"
 #include "scene.hpp"
 
@@ -31,11 +32,14 @@ json measure_bbox(const Document& doc, const Scene& scene, const std::vector<Ref
 // The area a pick encloses and its perimeter (UI-90, measure_area.cpp). Faces (a drawing's fills, a solid's faces): their
 // exact area and every boundary's length. Edges: the closed loops they form (a loop inside another is a hole); one edge
 // that does not close alone grows into the smallest loop it lies on among its drawing body's edges (ends meeting within
-// tolerance, dangling edges left out). Points (vertices, centres, free points): the polygon through them, closed back to
+// tolerance, dangling edges left out; every edge cut where another crosses it or ends on it, the part of the picked edge
+// nearest `clicked`, else at its middle; cells narrower than a few tolerances are noise). Picked edges that run past each other are trimmed where they meet
+// when that closes them (trimmed). Points (vertices, centres, free points): the polygon through them, closed back to
 // the first. {kind "area", value (mm²), perimeter (mm), loops, holes, closed, grown, boundary [[world point..]..] (at most
 // ~2000 points), center (inside the area, for its label), normal, refs}; while the picks do not close: closed false,
 // value 0, open_ends (and ends, their points). Throws Error for a body or a mix of fills, objects and points.
-json measure_area(const Document& doc, const Scene& scene, const std::vector<Ref>& refs, const std::function<bool()>& cancelled = {});
+json measure_area(const Document& doc, const Scene& scene, const std::vector<Ref>& refs, const std::function<bool()>& cancelled = {},
+                  const std::optional<Vec3>& clicked = std::nullopt);
 // {min, max, size, center, diagonal} of a box ({} for an empty one), as every result reports boxes.
 json bbox_to_json(const Bnd_Box& box);
 // What the entity filters look at for one face, edge or vertex (world coordinates): type, curve or surface, radius,

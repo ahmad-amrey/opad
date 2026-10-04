@@ -73,7 +73,7 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
   auto button = [this, tools](const QString& icon, const QString& text, const QString& tip) {
     auto* b = new QToolButton(this);
     b->setObjectName("segment");
-    b->setIcon(icons::themed(icon, 16));
+    m_icons.push_back({b, icon});
     b->setText(text);
     b->setToolButtonStyle(Qt::ToolButtonIconOnly);  // the filter keeps the room; the tooltip says what it does
     b->setAccessibleName(text);
@@ -100,7 +100,7 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
   for (const auto& [icon, tip, step] : {std::tuple{"chevronUp", tr("Previous layer"), -1}, {"chevronDown", tr("Next layer"), 1}}) {
     auto* b = new QToolButton(m_walkBar);
     b->setObjectName("segment");
-    b->setIcon(icons::themed(icon, 16));
+    m_icons.push_back({b, icon});
     b->setToolTip(tip);
     b->setFocusPolicy(Qt::NoFocus);
     connect(b, &QToolButton::clicked, this, [this, step] { walk(step); });
@@ -129,13 +129,8 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
   const QStringList tips{tr("Layer"), tr("On: shown or turned off"), tr("Freeze: frozen layers are hidden and stay so while turned on"),
                          tr("Lock: a locked layer cannot be changed or picked"), tr("Colour"), tr("Linetype"), tr("Lineweight"),
                          tr("Plot: printed and exported, or left out")};
-  const char* headerIcons[] = {nullptr, "eye", "freeze", "lock", nullptr, nullptr, nullptr, "plot"};
-  for (int c = 0; c < Columns; ++c) {
-    m_tree->headerItem()->setToolTip(c, tips[c]);
-    if (headerIcons[c]) m_tree->headerItem()->setIcon(c, icons::themed(headerIcons[c], 16));
-  }
+  for (int c = 0; c < Columns; ++c) m_tree->headerItem()->setToolTip(c, tips[c]);
   m_tree->headerItem()->setText(Colour, QString());
-  m_tree->headerItem()->setIcon(Colour, icons::themed("palette", 16));
   QHeaderView* header = m_tree->header();
   header->setStretchLastSection(false);
   header->setSectionResizeMode(Name, QHeaderView::Stretch);
@@ -192,6 +187,14 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
   m_footer->setCancelVisible(false);
   m_footer->setPrimary(tr("Done"), QString());
   layout->addWidget(m_footer);
+  retheme();
+  connect(theme::notifier(), &theme::Notifier::changed, this, &LayersPanel::retheme);
+}
+
+void LayersPanel::retheme() {
+  for (const auto& [b, icon] : m_icons) b->setIcon(icons::themed(icon, 16));
+  const std::pair<int, const char*> header[] = {{On, "eye"}, {Freeze, "freeze"}, {Lock, "lock"}, {Colour, "palette"}, {Plot, "plot"}};
+  for (const auto& [column, icon] : header) m_tree->headerItem()->setIcon(column, icons::themed(icon, 16));
 }
 
 QString LayersPanel::weightText(double mm) { return mm < 0 ? tr("Default") : tr("%1 mm").arg(mm, 0, 'f', 2); }

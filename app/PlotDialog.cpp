@@ -7,6 +7,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -17,6 +18,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLocale>
 #include <QMouseEvent>
 #include <QPageLayout>
 #include <QPageSize>
@@ -64,6 +66,30 @@ std::shared_ptr<const PlotPicture> PlotPicture::build(plot::Sheet sheet) {
       if (item.fill) path.closeSubpath();
     }
   }
+  // Images: decoded from their data and fitted to their frames as the view does (preserveAspectRatio: meet or slice,
+  // centred), placed by their corners.
+  for (const plot::Image& image : sheet.images) {
+    const auto comma = image.href.find(',');
+    if (image.href.rfind("data:image/", 0) != 0 || comma == std::string::npos || image.href.substr(0, comma).find(";base64") == std::string::npos) continue;
+    QImage pixels = QImage::fromData(QByteArray::fromBase64(QByteArray::fromStdString(image.href.substr(comma + 1))));
+    if (pixels.isNull()) continue;
+    const QPointF o(image.origin[0], image.origin[1]), right = QPointF(image.right[0], image.right[1]) - o, down = QPointF(image.down[0], image.down[1]) - o;
+    const double across = std::hypot(right.x(), right.y()), tall = std::hypot(down.x(), down.y());
+    if (across <= 0 || tall <= 0) continue;
+    if (image.aspect != "none") {
+      const double ratio = across / tall;
+      const int h = int(std::clamp(std::max(double(pixels.height()), pixels.width() / ratio), 1.0, 4096.0)), w = int(std::clamp(h * ratio, 1.0, 8192.0));
+      QImage canvas(w, h, QImage::Format_ARGB32_Premultiplied);
+      canvas.fill(Qt::transparent);
+      const QImage scaled = pixels.scaled(w, h, image.aspect.find("slice") != std::string::npos ? Qt::KeepAspectRatioByExpanding : Qt::KeepAspectRatio, Qt::SmoothTransformation);
+      QPainter painter(&canvas);
+      painter.drawImage((w - scaled.width()) / 2, (h - scaled.height()) / 2, scaled);
+      painter.end();
+      pixels = canvas;
+    }
+    const double w = pixels.width(), h = pixels.height();
+    picture->images.push_back({pixels, QTransform(right.x() / w, right.y() / w, down.x() / h, down.y() / h, o.x(), o.y())});
+  }
   picture->sheet = std::move(sheet);
   return picture;
 }
@@ -92,12 +118,23 @@ void paintPlot(QPainter& p, const PlotPicture& picture, const plot::Settings& s,
   p.setRenderHint(QPainter::Antialiasing);
   p.scale(unitsPerMm, unitsPerMm);  // paper millimetres from here
   const QRectF printable(s.margin, s.margin, s.paperWidth - 2 * s.margin, s.paperHeight - 2 * s.margin);
-  p.setClipRect(printable.intersected(QRectF(placed.x, placed.y, placed.area.width() * placed.scale, placed.area.height() * placed.scale)));
+  // The plot area, wide enough for the lines on its edge (the extents' outermost lines were cut down the middle).
+  double reach = 0;
+  for (const auto& style : picture.sheet.styles) reach = std::max(reach, plot::paperWeight(style, s));
+  const QRectF area(placed.x, placed.y, placed.area.width() * placed.scale, placed.area.height() * placed.scale);
+  p.setClipRect(printable.intersected(area.adjusted(-reach, -reach, reach, reach)));
   QTransform t;
   t.translate(placed.x, placed.y);
   t.scale(placed.scale, -placed.scale);  // the plot plane's y up, the paper's down
   t.translate(-placed.area.x0, -placed.area.y1);
   p.setTransform(t, true);
+  p.setRenderHint(QPainter::SmoothPixmapTransform);
+  for (const auto& image : picture.images) {  // under the lines; grey in monochrome
+    p.save();
+    p.setTransform(image.place, true);
+    p.drawImage(QPointF(0, 0), s.monochrome ? image.image.convertToFormat(QImage::Format_Grayscale8) : image.image);
+    p.restore();
+  }
   const auto& styles = picture.sheet.styles;
   auto colour = [&](size_t i) {
     const drawing2d::Rgb c = plot::paperColor(styles[i], s);
@@ -119,6 +156,15 @@ void paintPlot(QPainter& p, const PlotPicture& picture, const plot::Settings& s,
     for (const QPointF& dot : picture.dots[i]) p.drawEllipse(dot, weight / placed.scale, weight / placed.scale);
   }
   p.restore();
+  if (!s.stamp.empty()) {  // 2 mm text along the bottom margin, from the left margin
+    p.save();
+    QFont font = p.font();
+    font.setPixelSize(std::max(1, int(std::lround(2 * unitsPerMm))));
+    p.setFont(font);
+    p.setPen(QColor(64, 64, 64));
+    p.drawText(QPointF(std::max(s.margin, 3.0) * unitsPerMm, (s.paperHeight - std::clamp(s.margin * 0.35, 1.5, 4.0)) * unitsPerMm), QString::fromStdString(s.stamp));
+    p.restore();
+  }
 }
 
 // ---------------------------------------------------------------- preview
@@ -225,6 +271,7 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
   m_pick = new QPushButton(tr("Pick…"), this);
   m_pick->setObjectName("plotPick");
   m_pick->setToolTip(tr("Pick two corners in the view (object snap applies)"));
+  m_pick->setAutoDefault(false);  // Enter plots (the footer's primary), never starts a pick
   auto* windowRow = new QHBoxLayout();
   windowRow->addWidget(m_windowRegion);
   windowRow->addWidget(m_pick);
@@ -260,8 +307,12 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
   m_lineweights->setObjectName("plotLineweights");
   m_lineweights->setChecked(true);
   m_lineweights->setToolTip(tr("Each layer's lineweight on paper (0.25 mm when it has none); off: every line 0.13 mm"));
+  m_stampBox = new QCheckBox(tr("Plot stamp"), this);
+  m_stampBox->setObjectName("plotStamp");
+  m_stampBox->setToolTip(tr("The file, the date and time, the paper and the scale along the bottom margin"));
   options->addWidget(m_monochrome);
   options->addWidget(m_lineweights);
+  options->addWidget(m_stampBox);
 
   options->addWidget(header(tr("OUTPUT"), this));
   auto* outputs = new QButtonGroup(this);
@@ -300,6 +351,7 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
 
   m_footer = new PanelFooter(this);
   m_footer->setPrimary(tr("Plot…"));
+  m_footer->primary()->setDefault(true);  // Enter plots
   outer->addWidget(m_footer);
   connect(m_footer, &PanelFooter::cancelled, this, &QDialog::reject);
   connect(m_footer, &PanelFooter::accepted, this, [this] { plot(); });
@@ -312,6 +364,7 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
   m_scale->setValue(settings.value("plot/scale", 1.0).toDouble());
   m_monochrome->setChecked(settings.value("plot/monochrome", false).toBool());
   m_lineweights->setChecked(settings.value("plot/lineweights", true).toBool());
+  m_stampBox->setChecked(settings.value("plot/stamp", false).toBool());
   (settings.value("plot/output", "pdf").toString() == "printer" && m_printer->isEnabled() ? m_printer : m_pdf)->setChecked(true);
   if (settings.contains("plot/orientation")) m_orientation->setCurrentIndex(settings.value("plot/orientation").toInt());
   m_scale->setEnabled(!m_fit->isChecked());
@@ -321,7 +374,7 @@ PlotDialog::PlotDialog(AreaServices& services, QWidget* parent) : QDialog(parent
   connect(&m_refreshTimer, &QTimer::timeout, this, [this] { render(); });
   for (QComboBox* c : {m_paper, m_orientation}) connect(c, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] { refresh(); });
   for (QDoubleSpinBox* b : {m_margin, m_scale}) connect(b, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this] { refresh(); });
-  for (QCheckBox* c : {m_fit, m_monochrome, m_lineweights}) connect(c, &QCheckBox::toggled, this, [this] { refresh(); });
+  for (QCheckBox* c : {m_fit, m_monochrome, m_lineweights, m_stampBox}) connect(c, &QCheckBox::toggled, this, [this] { refresh(); });
   for (QRadioButton* r : {m_extents, m_display, m_windowRegion}) connect(r, &QRadioButton::toggled, this, [this] { refresh(); });
   connect(m_windowRegion, &QRadioButton::clicked, this, [this] {
     if (!m_hasWindow) pickWindow();
@@ -338,6 +391,12 @@ PlotDialog::~PlotDialog() {
 }
 
 void PlotDialog::start() {
+  if (const auto generation = m_services.document()->generation; generation != m_generation) {  // another document: its window is not this one's
+    m_generation = generation;
+    m_hasWindow = false;
+    m_window = {};
+    if (m_windowRegion->isChecked()) m_extents->setChecked(true);
+  }
   m_picture.reset();
   m_preview->setImage({});
   ++m_stamp;
@@ -351,10 +410,12 @@ void PlotDialog::collect() {
   auto document = std::make_shared<opad::Document>(doc->doc);
   auto scene = std::make_shared<opad::Scene>(doc->scene);
   const opad::Frame plane = plot::plane(*document, *scene, m_services.viewport()->cameraPlane());
+  const std::vector<std::string> shown = m_services.viewport()->isolatedNodes();  // what the view shows of an isolated drawing
+  const std::set<std::string> isolated(shown.begin(), shown.end());
   auto result = std::make_shared<std::shared_ptr<const PlotPicture>>();
   m_info->setText(tr("Gathering the drawing…"));
-  m_collectJob = m_services.jobs()->async(tr("Preparing the plot"), [document, scene, plane, result](Progress p) {
-    *result = PlotPicture::build(plot::collect(*document, *scene, plane, [p] { return p.cancelled(); }));
+  m_collectJob = m_services.jobs()->async(tr("Preparing the plot"), [document, scene, plane, isolated, result](Progress p) {
+    *result = PlotPicture::build(plot::collect(*document, *scene, plane, [p] { return p.cancelled(); }, isolated));
   }, [this, result](bool ok, const QString& error) {
     m_collectJob = nullptr;
     if (!ok) return m_info->setText(error == "cancelled" ? QString() : i18n::t(error));
@@ -395,6 +456,16 @@ plot::Settings PlotDialog::settings() const {
   s.scale = 1 / m_scale->value();
   s.monochrome = m_monochrome->isChecked();
   s.lineweights = m_lineweights->isChecked();
+  if (m_stampBox->isChecked()) {  // what was plotted, when, on what and at what scale
+    const AppDocument* doc = m_services.document();
+    QString name = QFileInfo(doc->browse ? doc->viewing : doc->path()).fileName();
+    if (name.isEmpty()) name = doc->nodeName(doc->scene.roots.empty() ? std::string() : doc->scene.roots.front());
+    const plot::Placement p = m_picture ? plot::place(m_picture->sheet, s) : plot::Placement{};
+    s.stamp = QString("%1  ·  %2  ·  %3 %4  ·  %5")
+                  .arg(name, QLocale().toString(QDateTime::currentDateTime(), QLocale::ShortFormat), m_paper->currentText(), m_orientation->currentText(),
+                       QString::fromStdString(plot::scaleText(p.scale)))
+                  .toStdString();
+  }
   return s;
 }
 
@@ -461,6 +532,7 @@ void PlotDialog::saveSettings() const {
   settings.setValue("plot/scale", m_scale->value());
   settings.setValue("plot/monochrome", m_monochrome->isChecked());
   settings.setValue("plot/lineweights", m_lineweights->isChecked());
+  settings.setValue("plot/stamp", m_stampBox->isChecked());
   settings.setValue("plot/output", m_printer->isChecked() ? "printer" : "pdf");
 }
 
@@ -575,6 +647,8 @@ void PlotDialog::pickWindow() {
   m_prompt->set("plot", tr("Plot window"), {{tr("Pick the first corner"), {}}, {tr("Pick the opposite corner"), {}}}, tr("Esc back to Plot"));
   m_prompt->move(std::max(8, (v->width() - m_prompt->width()) / 2), 44);
   m_prompt->show();
+  m_snapBefore = int(v->snapPicks());
+  v->setSnapPicks(Viewport::SnapPicks::Always);  // the snap's marker shows where a corner would land
   qApp->installEventFilter(this);
 }
 
@@ -582,6 +656,7 @@ void PlotDialog::endPick(bool done) {
   if (!m_picking) return;
   m_picking = false;
   qApp->removeEventFilter(this);
+  m_services.viewport()->setSnapPicks(Viewport::SnapPicks(m_snapBefore));
   if (!m_rubber.IsNull()) {
     m_services.viewport()->removeOverlay(m_rubber);
     m_rubber.Nullify();
@@ -597,12 +672,17 @@ void PlotDialog::endPick(bool done) {
   refresh();
 }
 
-void PlotDialog::pickCorner(const QPointF& widgetPos) {
-  Viewport* v = m_services.viewport();
-  double u, w;
+bool PlotDialog::cornerAt(const QPointF& widgetPos, double& u, double& v) {
+  Viewport* view = m_services.viewport();
   opad::Vec3 snapped;
-  if (v->objectSnap() && v->snapAt(widgetPos, snapped)) m_picture->sheet.plane.to_local(snapped, u, w);
-  else if (!planeAt(widgetPos, u, w)) return;
+  if (!view->objectSnap() || !view->snapAt(widgetPos, snapped)) return planeAt(widgetPos, u, v);
+  m_picture->sheet.plane.to_local(snapped, u, v);
+  return true;
+}
+
+void PlotDialog::pickCorner(const QPointF& widgetPos) {
+  double u, w;
+  if (!cornerAt(widgetPos, u, w)) return;
   if (m_corners++ == 0) {
     m_cornerU = u, m_cornerV = w;
     m_prompt->set("plot", tr("Plot window"), {{tr("Pick the first corner"), tr("First corner")}, {tr("Pick the opposite corner"), {}}}, tr("Esc back to Plot"));
@@ -618,13 +698,14 @@ void PlotDialog::pickCorner(const QPointF& widgetPos) {
 
 void PlotDialog::showRubber(const QPointF& widgetPos) {
   double u, w;
-  if (m_corners != 1 || !planeAt(widgetPos, u, w)) return;
+  if (m_corners != 1 || !cornerAt(widgetPos, u, w)) return;  // from the snapped point, where the click will put it
   const opad::Frame& f = m_picture->sheet.plane;
   auto at = [&f](double x, double y) {
     const opad::Vec3 p = f.to_world(x, y);
     return gp_Pnt(p[0], p[1], p[2]);
   };
   if (std::abs(u - m_cornerU) < 1e-12 || std::abs(w - m_cornerV) < 1e-12) return;
+  m_rubberCorner = {u, w};
   BRepBuilderAPI_MakePolygon outline(at(m_cornerU, m_cornerV), at(u, m_cornerV), at(u, w), at(m_cornerU, w), true);
   Viewport* v = m_services.viewport();
   if (m_rubber.IsNull()) {

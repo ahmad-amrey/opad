@@ -1,10 +1,11 @@
 #pragma once
 // Plotting 2D drawings (UI-88), without Qt so tests/test_drawing2d covers it: what a plot draws (the visible bodies of
-// drawings on plotted layers, in their colours, lineweights and linetypes), in which plane, and where it lands on paper
-// (the plot area, fit or 1:N, centred, within the margins). PlotDialog paints it with QPainter for the preview, a PDF and
+// drawings on plotted layers, in their colours, lineweights and linetypes, and their raster images), in which plane, and
+// where it lands on paper (the plot area, fit or 1:N, centred, within the margins). PlotDialog paints it with QPainter for the preview, a PDF and
 // a printer, so all three are the same picture.
 #include <array>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -28,19 +29,28 @@ struct Item {
   bool dot = false;                   // a point of its own
   std::vector<std::vector<Pt>> rings;
 };
+// A raster image of a drawing (an SVG's embedded picture): its data and where its corners land in the plot plane.
+struct Image {
+  std::string href;    // data:image/...;base64,...
+  std::string aspect;  // the SVG's preserveAspectRatio ("none": stretched to its frame)
+  Pt origin, right, down;  // its top left, top right and bottom left corners
+};
 struct Sheet {
   opad::Frame plane;  // where the plot looks at the drawings from
   std::vector<Style> styles;
   std::vector<Item> items;
+  std::vector<Image> images;  // painted under the lines
   double x0 = 0, y0 = 0, x1 = -1, y1 = -1;  // the extents (x0 > x1: nothing to plot)
   int bodies = 0;
-  bool empty() const { return items.empty(); }
+  bool empty() const { return items.empty() && images.empty(); }
 };
 
 // The drawings' own plane when they all lie in one (the first drawing's), else `fallback` (the view's).
 opad::Frame plane(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& fallback);
-// Every visible drawing body on a plotted layer, its curves sampled finely enough for paper (worker thread).
-Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& plane, const std::function<bool()>& cancelled = {});
+// Every visible drawing body on a plotted layer, its curves sampled finely enough for paper (worker thread). `isolated`: the
+// view's isolation (Isolate layer, a layer walk): only those bodies, shown or not, as the view draws them.
+Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& plane, const std::function<bool()>& cancelled = {},
+              const std::set<std::string>& isolated = {});
 
 struct Area {
   double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
@@ -57,6 +67,7 @@ struct Settings {
   double scale = 1;
   bool monochrome = false;   // every colour black
   bool lineweights = true;   // the layers' lineweights; off: every line kThinnest
+  std::string stamp;         // the plot stamp (file, date, paper, scale) along the bottom margin; empty: none
 };
 constexpr double kDefaultWeight = 0.25, kThinnest = 0.13;  // paper mm
 // How dashes come out on paper: as on screen (Drawing2D's kPatternPixelsPerMm at 96 dpi), mm on paper per pattern mm.

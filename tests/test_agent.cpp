@@ -101,6 +101,7 @@ int main(){try {
   CHECK_THROWS(agent::validate_input(agent::live_schema("explode"),{{"t",2}}));
   agent::validate_input(agent::live_schema("measure"),{{"kind","bbox"},{"refs",{"a"}}});
   agent::validate_input(agent::live_schema("measure"),{{"queries",{{{"kind","distance"},{"refs",{"a","b"}}}}}});
+  agent::validate_input(agent::live_schema("measure"),{{"kind","area"},{"refs",{"a"}},{"at",{1.0,2.0,0.0}}});  // UI-90: the Area tool's measure, where the object was clicked
   agent::validate_input(agent::live_schema("save"),{{"expected_revision",3},{"request_id","save-1"}});
   agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"},{"overwrite",true},{"expected_revision",3},{"request_id","save-2"}});
   CHECK_THROWS(agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"}}));

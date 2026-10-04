@@ -1,23 +1,24 @@
 #pragma once
 // Object snaps in a plane (UI-90): the sketch editor's snap set (endpoint, midpoint, centre, quadrant, intersection,
-// nearest; its settings sketch/snap/<kind_name>) over plain 2D curves, so the Review picks on drawings and the plot window
-// share one engine and one order: a point (an end, a centre) within the aperture wins, then the nearest midpoint, quadrant
-// or intersection, then the nearest point on a curve. Qt-free; an Index is built once per shape (on a worker) and asked
-// on every mouse move: a grid of short pieces, so a query looks at the curves near the point only.
+// perpendicular and tangent from the last point, nearest; its settings sketch/snap/<kind_name>) over plain 2D curves, so
+// the Review picks on drawings and sketches and the plot window share one engine and one order: a point (an end, a centre)
+// within the aperture wins, then the nearest midpoint, quadrant, intersection, perpendicular or tangent point, then the
+// nearest point on a curve. Qt-free; an Index is built once per shape (on a worker) and asked on every mouse move: a grid
+// of short pieces, so a query looks at the curves near the point only.
 #include <memory>
 #include <vector>
 
 class TopoDS_Shape;
 
 namespace opad::snap2d {
-enum class Kind { None, Endpoint, Midpoint, Center, Quadrant, Intersection, Nearest };
-const char* kind_name(Kind kind);  // "endpoint", "midpoint", "center", "quadrant", "intersection", "nearest"
+enum class Kind { None, Endpoint, Midpoint, Center, Quadrant, Intersection, Nearest, Perpendicular, Tangent };
+const char* kind_name(Kind kind);  // "endpoint", "midpoint", "center", "quadrant", "intersection", "nearest", "perpendicular", "tangent"
 
 struct P {
   double x = 0, y = 0;
 };
 struct Kinds {
-  bool endpoint = true, midpoint = true, center = true, quadrant = true, intersection = true, nearest = true;
+  bool endpoint = true, midpoint = true, center = true, quadrant = true, intersection = true, nearest = true, perpendicular = true, tangent = true;
   bool on(Kind kind) const;
 };
 struct Snap {
@@ -43,6 +44,7 @@ class Index {
     bool round = false, line = false;
     P center;
     double radius = 0, from = 0, sweep = 0;
+    P a, b;  // a line's ends
   };
   int add_line(P a, P b);
   // An arc of a circle: angles in radians from +x, sweep signed; |sweep| >= 2 pi is the whole circle (no ends, no midpoint).
@@ -59,6 +61,7 @@ class Index {
   void around(P at, double r, std::vector<Point>& points, std::vector<Piece>& pieces) const;
   // The nearest point to `q` on a round curve (an arc or circle), or false for any other curve or outside the arc.
   bool onRound(int curve, P q, P& out) const;
+  bool spans(int curve, P q) const;  // whether a round curve's arc spans the direction of `q` from its centre
   const Round* round(int curve) const;  // null for a loose point
 
  private:
@@ -80,6 +83,7 @@ struct Placed {
   double a = 1, b = 0, c = 0, d = 0, e = 1, f = 0;
 };
 // The snap nearest `at` (common coordinates) within `aperture` over all the sources, in the order above; intersections
-// between curves of different sources too.
-Snap snap(const std::vector<Placed>& sources, P at, double aperture, const Kinds& kinds = {});
+// between curves of different sources too. With `from` (the point picked before), the foot of the perpendicular from it
+// on a line or a circle and where a line from it touches a circle, on the curves near `at`.
+Snap snap(const std::vector<Placed>& sources, P at, double aperture, const Kinds& kinds = {}, const P* from = nullptr);
 }  // namespace opad::snap2d

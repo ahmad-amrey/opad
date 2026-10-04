@@ -57,31 +57,43 @@ void sample(const TopoDS_Edge& e, const opad::Frame& plane, double tolerance, st
 }
 }  // namespace
 
-Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& plane, const std::function<bool()>& cancelled) {
+Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& plane, const std::function<bool()>& cancelled,
+              const std::set<std::string>& isolated) {
   Sheet sheet;
   sheet.plane = plane;
   std::vector<std::pair<TopoDS_Shape, int>> shapes;
   Bnd_Box box;
   for (const auto& id : scene.all_bodies()) {
     const opad::Node* node = scene.node(id);
-    if (!node || node->representation != "drawing2d" || !node->raster.is_null() || node->body_missing || !scene.effectively_visible(id)) continue;
+    if (!node || node->representation != "drawing2d" || node->body_missing || (isolated.empty() ? !scene.effectively_visible(id) : !isolated.count(id))) continue;
     const auto layer = drawing2d::layerAt(scene, id);
     if (layer && !layer->plot) continue;
+    if (!node->raster.is_null()) {  // an image: its corners where the body is placed
+      try {
+        const opad::Mat4 world = scene.world(id);
+        std::array<Pt, 3> at;
+        for (int i = 0; i < 3; ++i) plane.to_local(world.apply(node->raster.at("corners").at(i).get<opad::Vec3>()), at[i][0], at[i][1]);
+        sheet.images.push_back({node->raster.value("href", ""), node->raster.value("preserveAspectRatio", ""), at[0], at[1], at[2]});
+        ++sheet.bodies;
+      } catch (const std::exception&) {
+      }
+      continue;
+    }
     Style style;
     style.ink = !node->has_color;
     style.color = node->color;
-    if (layer) {
-      style.weight = layer->lineweight;
-      style.dashes = drawing2d::dashes(layer->linetype, layer->pattern);
-    }
+    const drawing2d::LineStyle line = drawing2d::lineStyle(scene, *node);  // its layer's, or its own (UI-92)
+    style.weight = line.lineweight;
+    style.dashes = drawing2d::dashes(line.linetype, line.pattern);
+    for (double& d : style.dashes) d *= line.scale;
     auto found = std::find(sheet.styles.begin(), sheet.styles.end(), style);
     if (found == sheet.styles.end()) found = sheet.styles.insert(sheet.styles.end(), style);
     shapes.push_back({opad::node_world_shape(doc, scene, id), int(found - sheet.styles.begin())});
     BRepBndLib::Add(shapes.back().first, box);
     ++sheet.bodies;
   }
-  if (box.IsVoid()) return sheet;
-  const double tolerance = std::max(std::sqrt(box.SquareExtent()) * 2e-5, 1e-4);
+  if (box.IsVoid() && sheet.images.empty()) return sheet;
+  const double tolerance = box.IsVoid() ? 1e-4 : std::max(std::sqrt(box.SquareExtent()) * 2e-5, 1e-4);
   for (const auto& [shape, style] : shapes) {
     if (cancelled && cancelled()) throw opad::Error("cancelled");
     for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
@@ -107,12 +119,15 @@ Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::F
       sheet.items.push_back({style, false, true, {{{u, w}}}});
     }
   }
+  auto grow = [&](const Pt& p) {
+    if (sheet.x0 > sheet.x1) sheet.x0 = sheet.x1 = p[0], sheet.y0 = sheet.y1 = p[1];
+    sheet.x0 = std::min(sheet.x0, p[0]), sheet.x1 = std::max(sheet.x1, p[0]), sheet.y0 = std::min(sheet.y0, p[1]), sheet.y1 = std::max(sheet.y1, p[1]);
+  };
   for (const Item& item : sheet.items)
     for (const auto& ring : item.rings)
-      for (const Pt& p : ring) {
-        if (sheet.x0 > sheet.x1) sheet.x0 = sheet.x1 = p[0], sheet.y0 = sheet.y1 = p[1];
-        sheet.x0 = std::min(sheet.x0, p[0]), sheet.x1 = std::max(sheet.x1, p[0]), sheet.y0 = std::min(sheet.y0, p[1]), sheet.y1 = std::max(sheet.y1, p[1]);
-      }
+      for (const Pt& p : ring) grow(p);
+  for (const Image& image : sheet.images)
+    for (const Pt& p : {image.origin, image.right, image.down, Pt{image.right[0] + image.down[0] - image.origin[0], image.right[1] + image.down[1] - image.origin[1]}}) grow(p);
   return sheet;
 }
 

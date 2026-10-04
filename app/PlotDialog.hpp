@@ -8,6 +8,7 @@
 #include <QPainterPath>
 #include <QPointer>
 #include <QTimer>
+#include <QTransform>
 
 #include <AIS_Shape.hxx>
 
@@ -37,10 +38,15 @@ struct PlotPicture {
   std::vector<QPainterPath> strokes;               // per style: every line of it
   std::vector<std::vector<QPainterPath>> fills;    // per style: each fill (its rings even-odd)
   std::vector<std::vector<QPointF>> dots;          // per style
+  struct Raster {
+    QImage image;      // decoded, fitted to its frame as the view shows it
+    QTransform place;  // its pixels to the plot plane
+  };
+  std::vector<Raster> images;
   static std::shared_ptr<const PlotPicture> build(plot::Sheet sheet);
 };
-// Paints the plot on paper of `unitsPerMm` device units per millimetre, the paper's top left at the painter's origin. Any
-// thread: the preview's image, a PDF and a printer get the same picture.
+// Paints the plot on paper of `unitsPerMm` device units per millimetre, the paper's top left at the painter's origin, and
+// the stamp along the bottom margin. Any thread: the preview's image, a PDF and a printer get the same picture.
 void paintPlot(QPainter& painter, const PlotPicture& picture, const plot::Settings& settings, const plot::Placement& placement, double unitsPerMm);
 
 // The page with the plot on it, as the worker rendered it.
@@ -70,6 +76,7 @@ class PlotDialog : public QDialog {
   bool previewReady() const { return m_previewStamp == m_stamp && m_picture; }
   QImage previewImage() const;
   bool picking() const { return m_picking; }
+  QPointF rubberCorner() const { return m_rubberCorner; }  // the window pick's moving corner as last drawn (plane u, v)
   // Output without the file or print dialog: a PDF at `path`, or the printer as set up. plotted() reports the outcome.
   void plotToPdf(const QString& path);
   void plotToPrinter(std::shared_ptr<QPrinter> printer);
@@ -92,6 +99,7 @@ class PlotDialog : public QDialog {
   void pickCorner(const QPointF& widgetPos);
   void showRubber(const QPointF& widgetPos);
   bool planeAt(const QPointF& widgetPos, double& u, double& v);
+  bool cornerAt(const QPointF& widgetPos, double& u, double& v);  // the object snap there (its marker shows), else planeAt
   plot::Area displayArea();
   void saveSettings() const;
 
@@ -102,18 +110,21 @@ class PlotDialog : public QDialog {
   QTimer m_refreshTimer;
   plot::Area m_window;
   bool m_hasWindow = false;
+  unsigned long long m_generation = ~0ull;  // the document the window was picked in
   // the window pick
   bool m_picking = false;
   int m_corners = 0;
   double m_cornerU = 0, m_cornerV = 0;
   QPointer<PromptBar> m_prompt;
   Handle(AIS_Shape) m_rubber;
+  QPointF m_rubberCorner;
+  int m_snapBefore = 0;  // the view's Viewport::SnapPicks before the pick
   // widgets
   QComboBox *m_paper, *m_orientation;
   QDoubleSpinBox *m_margin, *m_scale;
   QRadioButton *m_extents, *m_display, *m_windowRegion, *m_pdf, *m_printer;
   QPushButton* m_pick;
-  QCheckBox *m_fit, *m_monochrome, *m_lineweights;
+  QCheckBox *m_fit, *m_monochrome, *m_lineweights, *m_stampBox;
   QLabel *m_info, *m_warning, *m_scaleShown;
   PlotPreview* m_preview;
   PanelFooter* m_footer;

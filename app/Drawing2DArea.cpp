@@ -7,6 +7,7 @@
 #include <QCursor>
 #include <QGuiApplication>
 #include <QLabel>
+#include <QLocale>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
@@ -16,6 +17,8 @@
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolButton>
+
+#include <Standard_Failure.hxx>
 
 #include <set>
 #include <tuple>
@@ -27,6 +30,7 @@
 #include "Drawing2D.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "Jobs.hpp"
 #include "LayersPanel.hpp"
 #include "PanelFooter.hpp"
 #include "PlotDialog.hpp"
@@ -79,10 +83,12 @@ class Drawing2DArea : public AreaController {
     auto has = [this](const CommandContext& c) { return c.document && m_hasLayers; };
     CommandInfo layers{"drawing2d.layers", tr("Layers"), "layers"};
     layers.checkable = true;
+    layers.group = tr("View");  // where the View menu has them (else the area's id names the palette group)
     layers.keywords = {"layer manager", "layer properties", "freeze", "thaw", "lock", "linetype", "lineweight", "plot", "layer state"};
     layers.enabledWhen = has;
     m_layersAction = services().addCommand(layers, [this] { showLayers(m_layersAction->isChecked()); });
     CommandInfo walk{"drawing2d.layerWalk", tr("Layer walk"), "layerWalk"};
+    walk.group = tr("View");
     walk.keywords = {"laywalk", "step through layers", "one layer at a time"};
     walk.enabledWhen = has;
     m_walkAction = services().addCommand(walk, [this] {
@@ -90,6 +96,7 @@ class Drawing2DArea : public AreaController {
       m_layers->walking() ? m_layers->stopWalk() : m_layers->startWalk();
     });
     CommandInfo isolate{"drawing2d.isolateLayer", tr("Isolate layer"), "isolate"};
+    isolate.group = tr("View");
     isolate.keywords = {"layiso", "show only this layer"};
     isolate.enabledWhen = [this](const CommandContext& c) { return c.document && m_hasLayers && !selectedLayers(c.selection).empty(); };
     m_isolateAction = services().addCommand(isolate, [this] { m_layers->isolate(selectedLayers(services().selection())); });
@@ -132,7 +139,8 @@ class Drawing2DArea : public AreaController {
       button->setStyleSheet(QString("QToolButton { border: 1px solid %1; border-radius: 3px; background: %2; } QToolButton:checked { background: %3; border: 2px solid %3; } "
                                     "QToolButton:hover { border-color: %3; }").arg(t.line.name(), t.bg2.name(), t.sel.name()));
     };
-    connect(theme::notifier(), &theme::Notifier::changed, button, paint);
+    // Queued: the window gives every command its plain themed icon after the theme changes (MainWindow::refreshIcons).
+    connect(theme::notifier(), &theme::Notifier::changed, button, paint, Qt::QueuedConnection);
     connect(m_snapAction, &QAction::toggled, button, paint);
     paint();
     bar->addPermanentWidget(button);
@@ -222,7 +230,7 @@ class Drawing2DArea : public AreaController {
       const opad::json& fields = row.node->layer;
       if (!fields.is_object()) return;
       const std::string id = row.id;
-      if (!row.node->visible && fields.value("frozen", false)) {
+      if (!row.node->visible && drawing2d::flag(fields, "frozen", false)) {
         browser::Badge frozen;
         frozen.icon = "freeze";
         frozen.color = &Tokens::sel;
@@ -234,7 +242,7 @@ class Drawing2DArea : public AreaController {
         };
         d.badges << frozen;
       }
-      if (!fields.value("plot", true)) {
+      if (!drawing2d::flag(fields, "plot", true)) {
         browser::Badge unplotted;
         unplotted.icon = "noPlot";
         unplotted.fill = nullptr;
@@ -291,10 +299,15 @@ class Drawing2DArea : public AreaController {
     QMenu* sub = menu.addMenu(icons::themed("layers", 16), tr("Layer %1").arg(QString::fromStdString(l->name)));
     sub->addAction(m_isolateAction);
     const std::string id = l->id;
-    sub->addAction(icons::themed("freeze", 16), tr("Freeze layer"), this, [this, id] {
+    // On and Freeze both ways: a layer turned off or frozen is found by its browser row and brought back from here.
+    sub->addAction(icons::themed(l->on ? "hide" : "eye", 16), l->on ? tr("Turn layer off") : tr("Turn layer on"), this, [this, id] {
+      m_layers->rebuild();
+      m_layers->toggle(id, LayersPanel::On);
+    });
+    sub->addAction(icons::themed(l->frozen ? "thaw" : "freeze", 16), l->frozen ? tr("Thaw layer") : tr("Freeze layer"), this, [this, id] {
       m_layers->rebuild();
       m_layers->toggle(id, LayersPanel::Freeze);
-    })->setEnabled(!l->frozen);
+    });
     sub->addAction(icons::themed(l->locked ? "unlock" : "lock", 16), l->locked ? tr("Unlock layer") : tr("Lock layer"), this, [this, id] {
       m_layers->rebuild();
       m_layers->toggle(id, LayersPanel::Lock);
@@ -321,7 +334,14 @@ class Drawing2DArea : public AreaController {
   }
 
   void documentChanged(bool replaced) override {
-    m_frames = services().document()->hasDocument ? drawing2d::drawingFrames(services().document()->doc, services().document()->scene) : std::vector<drawing2d::DrawingFrame>();
+    try {  // never out of the document's signal: a drawing that cannot be measured has no readout
+      m_frames = services().document()->hasDocument ? drawing2d::drawingFrames(services().document()->doc, services().document()->scene) : std::vector<drawing2d::DrawingFrame>();
+    } catch (const std::exception& e) {
+      m_frames.clear();
+      trace::log(QString("drawing2d: no drawing frames: %1").arg(QString::fromUtf8(e.what())));
+    } catch (const Standard_Failure&) {
+      m_frames.clear();
+    }
     if (replaced) m_over = false;
     updateReadout();
     if (replaced && m_layers) m_layers->stopWalk();
@@ -428,9 +448,12 @@ class Drawing2DArea : public AreaController {
     rows += row(tr("Layer"), (layer ? QString::fromStdString(layer->name) : services().document()->nodeName(body->parent)).toHtmlEscaped());
     const QColor colour = body->has_color ? QColor::fromRgbF(body->color[0], body->color[1], body->color[2]) : QColor();
     rows += row(tr("Colour"), colour.isValid() ? QString("<span style=\"color:%1\">&#9632;</span> %1").arg(colour.name()) : tr("Drawing colour").toHtmlEscaped());
-    if (layer) {
-      rows += row(tr("Linetype"), (layer->linetype.empty() ? tr("Continuous") : QString::fromStdString(layer->linetype)).toHtmlEscaped());
-      rows += row(tr("Lineweight"), LayersPanel::weightText(layer->lineweight));
+    if (layer) {  // the object's: its layer's, or its own
+      const drawing2d::LineStyle line = drawing2d::lineStyle(scene, *body);
+      const QString own = " " + tr("(its own)");
+      const QString scaled = line.scale != 1 && !line.linetype.empty() ? QString(" %1%2").arg(QChar(0x00D7)).arg(QLocale().toString(line.scale, 'g', 4)) : QString();
+      rows += row(tr("Linetype"), (line.linetype.empty() ? tr("Continuous") : QString::fromStdString(line.linetype)).toHtmlEscaped() + scaled + (line.ownType ? own : QString()));
+      rows += row(tr("Lineweight"), LayersPanel::weightText(line.lineweight) + (line.ownWeight ? own : QString()));
     }
     if (m_hovered.contains("radius")) rows += row(tr("Radius"), units::format(units::Kind::Length, m_hovered["radius"].get<double>()));
     if (m_hovered.contains("length")) rows += row(tr("Length"), units::format(units::Kind::Length, m_hovered["length"].get<double>()));

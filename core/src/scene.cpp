@@ -191,6 +191,7 @@ json Scene::tree_json(int max_depth) const {
     if (!n->properties.empty()) j["properties"] = n->properties;
     if (n->layer.is_object()) j["layer"] = n->layer;
     if (n->by_layer) j["by_layer"] = true;
+    if (n->line.is_object()) j["line"] = n->line;
     j["source_op"] = n->source_op;
     if (n->kind == Node::Kind::Component) {
       if (max_depth < 0 || depth < max_depth) {
@@ -318,6 +319,7 @@ struct SceneBuilder::Impl {
       n.locked = jn.contains("locked") && jn["locked"].is_boolean() && jn["locked"].get<bool>();  // a drawing's locked layer
       if (jn.contains("layer") && jn["layer"].is_object()) n.layer = jn["layer"];
       n.by_layer = jn.contains("by_layer") && jn["by_layer"].is_boolean() && jn["by_layer"].get<bool>();
+      if (jn.contains("line") && jn["line"].is_object()) n.line = jn["line"];
       n.source_op = op_id;
       n.linked = !asset_file.empty();
       const std::string nid = n.id;

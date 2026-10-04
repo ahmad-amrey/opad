@@ -78,6 +78,33 @@ TEST(kinds_switched_off) {
   CHECK(!at(i, {49, 1}, 3, none));
 }
 
+TEST(perpendicular_and_tangent_from_the_point_before) {
+  const Index i = room();
+  const P from{30, 40};
+  Snap s = snap({Placed{&i}}, {29, 1}, 3, {}, &from);  // square onto the line below: (30, 0), before the nearest point
+  CHECK(s.kind == Kind::Perpendicular && same(s.at, {30, 0}));
+  CHECK(snap({Placed{&i}}, {29, 1}, 3).kind == Kind::Nearest);  // no point before: the nearest point
+  const P slant{230, 40};  // square onto the circle: on the line through the centre, either side
+  s = snap({Placed{&i}}, {212.5, 15}, 2, {}, &slant);
+  CHECK(s.kind == Kind::Perpendicular && same(s.at, {212, 16}));
+  s = snap({Placed{&i}}, {187.5, -15}, 2, {}, &slant);
+  CHECK(s.kind == Kind::Perpendicular && same(s.at, {188, -16}));
+  const P away{200, 60};
+  // Touching the circle from (200, 60): 20 from the centre's 60, at acos(1/3) either side of the way to the point.
+  const double turn = std::acos(20.0 / 60), base = M_PI / 2;
+  const P touch{200 + 20 * std::cos(base - turn), 20 * std::sin(base - turn)};
+  s = snap({Placed{&i}}, {touch.x + 0.4, touch.y + 0.3}, 1.5, {}, &away);
+  CHECK(s.kind == Kind::Tangent && same(s.at, touch));
+  CHECK_NEAR((s.at.x - 200) * (away.x - s.at.x) + s.at.y * (away.y - s.at.y), 0, 1e-9);  // the radius square to the line from the point
+  Kinds k;
+  k.tangent = false;
+  CHECK(snap({Placed{&i}}, {touch.x + 0.4, touch.y + 0.3}, 1.5, k, &away).kind == Kind::Nearest);
+  // The quarter (300, 0) r 10, 0 to 90 degrees: square from (300, -30) lands on (300, -10), off the arc: nothing there.
+  const P below{300, -30};
+  CHECK(snap({Placed{&i}}, {300.5, -9.5}, 1.5, {}, &below).kind != Kind::Perpendicular);
+  CHECK(std::string(kind_name(Kind::Tangent)) == "tangent");
+}
+
 TEST(sources_in_a_common_plane) {
   Index a, b;
   a.add_line({0, 0}, {100, 0});

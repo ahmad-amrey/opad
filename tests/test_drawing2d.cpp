@@ -255,6 +255,50 @@ TEST(linetypes_draw_as_their_dashes) {
   CHECK(linePattern(many, px).bits != 0xFFFF);
 }
 
+// UI-92: a body's own linetype and lineweight (DXF entities that set them) win over its layer's, also after the layer
+// changes; the rest follow the layer; a plot draws each in its own. A linetype scale of its own (CELTSCALE) sizes the
+// dashes of whichever linetype it takes.
+TEST(own_linetypes_and_lineweights_win_over_the_layers) {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-2d-" + opad::new_uuid());
+  std::filesystem::create_directory(dir);
+  std::ostringstream out;
+  auto g = [&](int code, const std::string& value) { out << code << '\n' << value << '\n'; };
+  g(0, "SECTION"), g(2, "TABLES"), g(0, "TABLE"), g(2, "LAYER"), g(0, "LAYER"), g(2, "Walls"), g(62, "1"), g(70, "0"), g(6, "DASHED"), g(370, "50");
+  g(0, "ENDTAB"), g(0, "ENDSEC"), g(0, "SECTION"), g(2, "ENTITIES");
+  g(0, "LINE"), g(8, "Walls"), g(10, "0"), g(20, "0"), g(11, "10"), g(21, "0");
+  g(0, "LINE"), g(8, "Walls"), g(6, "CENTER"), g(10, "0"), g(20, "1"), g(11, "10"), g(21, "1");
+  g(0, "LINE"), g(8, "Walls"), g(370, "100"), g(10, "0"), g(20, "2"), g(11, "10"), g(21, "2");
+  g(0, "LINE"), g(8, "Walls"), g(48, "0.5"), g(10, "0"), g(20, "3"), g(11, "10"), g(21, "3");
+  g(0, "ENDSEC"), g(0, "EOF");
+  opad::write_text_file(dir / "own.dxf", out.str());
+  opad::Document doc = opad::Document::create();
+  opad::import_file(doc, dir / "own.dxf");
+  auto styles = [&doc] {
+    const opad::Scene scene = opad::resolve(doc);
+    std::multiset<std::tuple<std::string, double, bool, bool, double>> out;
+    for (const auto& id : scene.all_bodies()) {
+      const LineStyle s = lineStyle(scene, *scene.node(id));
+      out.insert({s.linetype, s.lineweight, s.ownType, s.ownWeight, s.scale});
+    }
+    return out;
+  };
+  using Styles = std::multiset<std::tuple<std::string, double, bool, bool, double>>;
+  CHECK(styles() == (Styles{{"DASHED", 0.5, false, false, 1}, {"CENTER", 0.5, true, false, 1}, {"DASHED", 1.0, false, true, 1}, {"DASHED", 0.5, false, false, 0.5}}));
+  const opad::Scene scene = opad::resolve(doc);
+  opad::commands::run("appearance", setLinetype(byName(scene)["Walls"], "HIDDEN"), &doc);
+  opad::commands::run("appearance", setLineweight(byName(opad::resolve(doc))["Walls"], 0.35), &doc);
+  CHECK(styles() == (Styles{{"HIDDEN", 0.35, false, false, 1}, {"CENTER", 0.35, true, false, 1}, {"HIDDEN", 1.0, false, true, 1}, {"HIDDEN", 0.35, false, false, 0.5}}));
+  const opad::Scene now = opad::resolve(doc);
+  const plot::Sheet sheet = plot::collect(doc, now, plot::plane(doc, now, opad::Frame{}));
+  std::set<std::pair<std::vector<double>, double>> drawn;
+  for (const auto& s : sheet.styles) drawn.insert({s.dashes, s.weight});
+  std::vector<double> half = dashes("HIDDEN");
+  for (double& d : half) d *= 0.5;
+  CHECK(drawn == (std::set<std::pair<std::vector<double>, double>>{{dashes("HIDDEN"), 0.35}, {dashes("CENTER"), 0.35}, {dashes("HIDDEN"), 1.0}, {half, 0.35}}));
+  std::error_code error;
+  std::filesystem::remove_all(dir, error);
+}
+
 // An import that does not say which bodies are in their layer's colour (an earlier build's, an SVG): a layer colour is
 // given to all of its bodies, and a layer state keeps a colour only when they share one.
 TEST(a_layer_colour_without_by_layer_marks_colours_every_body) {
@@ -357,6 +401,18 @@ TEST(a_plot_draws_the_visible_plotted_layers) {
   opad::commands::run("appearance", setPlot(byName(scene)["Notes"], true), &doc);
   scene = opad::resolve(doc);
   CHECK_EQ(plot::collect(doc, scene, plane).bodies, 4);
+  // The view isolated (Isolate layer, a layer walk): only what it shows, a frozen layer too, never one left out of plots.
+  auto isolated = [&](std::initializer_list<const char*> names) {
+    std::set<std::string> out;
+    for (const char* name : names)
+      for (const auto& b : byName(scene)[name].bodies) out.insert(b);
+    return out;
+  };
+  CHECK_EQ(plot::collect(doc, scene, plane, {}, isolated({"Walls"})).bodies, 1);
+  CHECK_EQ(plot::collect(doc, scene, plane, {}, isolated({"Old"})).bodies, 1);
+  opad::commands::run("appearance", setPlot(byName(scene)["Notes"], false), &doc);
+  scene = opad::resolve(doc);
+  CHECK_EQ(plot::collect(doc, scene, plane, {}, isolated({"Notes", "Walls"})).bodies, 1);
   // Paper: black for the ink and in monochrome, the layer's lineweight (0.25 mm by default), the thinnest without lineweights.
   plot::Settings settings;
   const plot::Style& walls = *std::find_if(sheet.styles.begin(), sheet.styles.end(), [](const plot::Style& s) { return !s.dashes.empty(); });
@@ -404,6 +460,38 @@ TEST(a_plot_fits_or_takes_its_scale) {
   CHECK(plot::scaleText(0.02) == "1:50" && plot::scaleText(2) == "2:1" && plot::scaleText(1 / 37.4249) == "1:37.42" && plot::scaleText(1) == "1:1");
 }
 
+// A drawing's raster image is plotted (UI-88): its data and corners where it is placed, inside the extents, left out with
+// its layer.
+TEST(a_plot_takes_a_drawings_images) {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-2d-" + opad::new_uuid());
+  std::filesystem::create_directory(dir);
+  const std::string png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  opad::write_text_file(dir / "picture.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200mm\" height=\"100mm\" viewBox=\"0 0 200 100\">"
+                                             "<path d=\"M 0 0 L 200 0 L 200 100 L 0 100 Z\" fill=\"none\" stroke=\"black\"/>"
+                                             "<image x=\"20\" y=\"10\" width=\"60\" height=\"40\" href=\"" + png + "\"/></svg>");
+  auto doc = opad::Document::create();
+  opad::import_file(doc, dir / "picture.svg");
+  auto scene = opad::resolve(doc);
+  const plot::Sheet sheet = plot::collect(doc, scene, plot::plane(doc, scene, opad::Frame{}));
+  CHECK_EQ(sheet.images.size(), 1u);
+  CHECK_EQ(sheet.bodies, 2);
+  if (!sheet.images.empty()) {
+    const plot::Image& image = sheet.images[0];
+    CHECK(image.href == png);
+    CHECK_NEAR(std::hypot(image.right[0] - image.origin[0], image.right[1] - image.origin[1]), 60, 1e-6);  // its frame, 60 x 40 mm
+    CHECK_NEAR(std::hypot(image.down[0] - image.origin[0], image.down[1] - image.origin[1]), 40, 1e-6);
+    CHECK_NEAR(image.origin[1] - image.down[1], 40, 1e-6);  // the picture's top above its bottom, as the drawing's y goes up
+    for (const auto& p : {image.origin, image.right, image.down})
+      CHECK(p[0] >= sheet.x0 - 1e-9 && p[0] <= sheet.x1 + 1e-9 && p[1] >= sheet.y0 - 1e-9 && p[1] <= sheet.y1 + 1e-9);
+  }
+  for (const Layer& layer : layers(scene))  // the image's layer left out of plots: no image
+    if (std::any_of(layer.bodies.begin(), layer.bodies.end(), [&](const std::string& id) { return !scene.node(id)->raster.is_null(); }))
+      opad::commands::run("appearance", setPlot(layer, false), &doc);
+  scene = opad::resolve(doc);
+  CHECK(plot::collect(doc, scene, plot::plane(doc, scene, opad::Frame{})).images.empty());
+  std::filesystem::remove_all(dir);
+}
+
 // The cursor readout's drawing coordinates (UI-90): a drawing read far from (0,0) keeps the offset on its root, so a world
 // point reads as the file has it whether the drawing was opened centred or placed where it is, and after a reload.
 TEST(drawing_coordinates_of_a_far_drawing) {
@@ -437,6 +525,70 @@ TEST(drawing_coordinates_of_a_far_drawing) {
     CHECK_NEAR(plane.x[0], 1, 1e-12);
   }
   std::filesystem::remove_all(dir);
+}
+
+// Layer fields of another type (a file edited by hand, a newer build's value) read as their defaults, a saved state's too,
+// and never throw; the appearance and view commands (CLI, MCP, the app) refuse them.
+TEST(layer_fields_of_another_type_read_as_their_defaults) {
+  using opad::json;
+  opad::Document doc = opad::Document::create();
+  opad::import_file(doc, layersDxf());
+  const std::string walls = byName(opad::resolve(doc))["Walls"].id;
+  const json camera = {{"eye", {0, 0, 1}}, {"target", {0, 0, 0}}, {"up", {0, 1, 0}}};
+  CHECK_THROWS(opad::commands::run("appearance", {{"target", walls}, {"layer", {{"plot", "no"}}}}, &doc));
+  CHECK_THROWS(opad::commands::run("appearance", {{"target", walls}, {"layer", {{"lineweight", "0.5"}}}}, &doc));
+  CHECK_THROWS(opad::commands::run("appearance", {{"target", walls}, {"layer", {{"pattern", {1, "x"}}}}}, &doc));
+  CHECK_THROWS(opad::commands::run("view", {{"name", "S"}, {"camera", camera}, {"display", {{"layers", {{walls, {{"on", 1}}}}}}}}, &doc));
+  CHECK_THROWS(opad::commands::run("view", {{"name", "S"}, {"camera", camera}, {"display", {{"layers", 3}}}}, &doc));
+  opad::commands::run("appearance", {{"target", walls}, {"layer", {{"plot", nullptr}, {"future", "kept"}}}}, &doc);  // null removes; a newer key passes
+  doc.append({{"op", "appearance"}, {"target", walls}, {"visible", false},
+              {"layer", {{"plot", "no"}, {"off", 1}, {"frozen", "yes"}, {"linetype", 5}, {"pattern", "x"}, {"lineweight", "1"}}}});
+  const opad::Scene scene = opad::resolve(doc);
+  const Layer l = byName(scene)["Walls"];
+  CHECK(l.plot && !l.on && !l.frozen && l.linetype.empty() && l.pattern.empty() && l.lineweight < 0);
+  const json state = {{"layers", {{walls, {{"name", 3}, {"on", "x"}, {"plot", 0}, {"color", {"r", 0, 0}}, {"linetype", 7}, {"pattern", {1, "x"}}, {"lineweight", "2"}}},
+                                  {"elsewhere", {{"name", "Plain"}, {"frozen", "no"}, {"color", {1, 0}}}}}}};
+  const auto restored = restoreState(scene, state);  // read as on, thawed, plotted, continuous: Walls comes back on
+  CHECK(std::any_of(restored.begin(), restored.end(), [&](const json& op) { return op.value("target", "") == walls && op.value("visible", false); }));
+  CHECK(!captureState(scene)["layers"].empty());
+}
+
+// A drawing whose file lost a body entry (gc, a merge) still opens: the frames, the plot's plane and the plot leave the
+// unresolved body out instead of throwing out of the document's signal.
+TEST(a_missing_body_entry_is_left_out) {
+  opad::Document full = opad::Document::create();
+  opad::import_file(full, layersDxf());
+  std::istringstream in(full.serialize());
+  std::string text, line;
+  bool dropped = false;
+  while (std::getline(in, line)) {
+    if (!dropped && line.rfind("#body ", 0) == 0) {  // "#body <key> <lines> <meta>": it and its lines go
+      std::istringstream header(line.substr(6));
+      std::string key;
+      size_t count = 0;
+      header >> key >> count;
+      for (size_t i = 0; i < count && std::getline(in, line); ++i) {}
+      dropped = true;
+      continue;
+    }
+    text += line + "\n";
+  }
+  CHECK(dropped);
+  const opad::Document doc = opad::Document::parse(text);
+  const opad::Scene scene = opad::resolve(doc);
+  CHECK(!scene.unresolved.empty());  // the four layers' first lines share one entry (the same line): all four are missing
+  const auto frames = drawingFrames(doc, scene);
+  CHECK_EQ(frames.size(), 1u);
+  CHECK(frames[0].x0 <= frames[0].x1);  // the bodies that are there still give its extents
+  const opad::Frame plane = plot::plane(doc, scene, opad::Frame{});
+  int plotted = 0;  // the visible bodies on plotted layers that are still there
+  for (const auto& id : scene.all_bodies()) {
+    const auto l = layerAt(scene, id);
+    plotted += !scene.node(id)->body_missing && scene.effectively_visible(id) && (!l || l->plot);
+  }
+  CHECK(plotted >= 1);
+  CHECK_EQ(plot::collect(doc, scene, plane).bodies, plotted);
+  CHECK(!layers(scene).empty());
 }
 
 CHECK_MAIN()

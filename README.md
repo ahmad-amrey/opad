@@ -230,7 +230,7 @@ current document. Properties show a body's material as the file named it, its so
 solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the build compiles from the
 `third_party/libredwg` submodule and puts beside OPAD (an installed ODA File Converter is used instead only when
 Settings > Use the ODA File Converter for DWG is on, or `OPAD_USE_ODA=1`: ODA allows non-members non-commercial use only); the
-DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
+DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)); text is shaped with HarfBuzz, so Arabic joins and right-to-left lines read in order, and AutoCAD shape fonts (`.shx`: txt, romans, isocp ...) are drawn in their own strokes when DWG TrueView's or AutoCAD's are installed or the font lies beside the drawing (else in a plain sans-serif). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
 A KiCad board (`.kicad_pcb`) opens as the board itself (its Edge.Cuts outline with the drills, thickness and solder-mask
 colour) and its footprints' 3D models, placed as KiCad places them and found as KiCad finds them (`${KIPRJMOD}`, the
 `KICAD*_3DMODEL_DIR` variables from the project, the environment or KiCad's settings, KiCad's install folders, then the

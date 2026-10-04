@@ -89,7 +89,9 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
 QString MainWindow::refLabel(const opad::Ref& r) const {
   if (r.kind == opad::Ref::Kind::Point) return tr("Point %1").arg(units::vector(units::Kind::Length, r.point));  // a snapped or tracked point
   QString t = m_doc->nodeName(r.body);
-  if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(r.kind))).arg(r.index);
+  const opad::Node* n = m_doc->node(r.body);
+  const bool drawing = m_viewport->drawingWords() && n && n->representation == "drawing2d";  // "Lines › object 3" (UI-118)
+  if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(i18n::t(drawing ? drawing2d::kindWord(r.kind) : opad::Ref::kind_name(r.kind))).arg(r.index);
   return t;
 }
 
@@ -103,13 +105,15 @@ QList<ToolStep> MainWindow::toolSteps() const {
     else if (!m_toolPicks.empty()) s.picked = tr("%1 picked").arg(m_toolPicks.size());
     return {s};
   }
+  const bool words2d = m_viewport->drawingWords() && drawing2d::hasDrawings(m_doc->scene);  // as the filters are named then (UI-118)
   const QString kind = f == Viewport::SelFilter::Vertex && m_tool.id != "sectionface"
-      ? (m_tool.id == "radius" ? tr("circle center") : tr("vertex or center"))
-      : i18n::t(m_tool.id == "sectionface" || f == Viewport::SelFilter::Face ? "face" : f == Viewport::SelFilter::Edge ? "edge" : "body");
+      ? (m_tool.id == "radius" ? tr("circle center") : words2d ? tr("point or center") : tr("vertex or center"))
+      : i18n::t(m_tool.id == "sectionface" ? "face" : f == Viewport::SelFilter::Face ? (words2d ? "fill" : "face") : f == Viewport::SelFilter::Edge ? (words2d ? "object" : "edge") : (words2d ? "group" : "body"));
+  const QString one = words2d && f == Viewport::SelFilter::Edge ? tr("Select an object") : tr("Select a %1").arg(kind);
   QList<ToolStep> steps;
   for (int i = 0; i < m_tool.steps; ++i) {
     ToolStep s;
-    s.label = m_tool.id == "sectionface" ? tr("Select a planar face") : m_tool.steps == 1 ? tr("Select a %1").arg(kind) : i == 0 ? tr("Select first %1").arg(kind) : tr("Select second %1").arg(kind);
+    s.label = m_tool.id == "sectionface" ? tr("Select a planar face") : m_tool.steps == 1 ? one : i == 0 ? tr("Select first %1").arg(kind) : tr("Select second %1").arg(kind);
     if (i < static_cast<int>(m_toolPicks.size())) s.picked = refLabel(m_toolPicks[i]);
     steps << s;
   }
@@ -141,9 +145,14 @@ void MainWindow::startTool(const QString& id) {
   // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face.
   const Viewport::SelFilter f = m_viewport->selectionFilter();
   const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex);
-  // Area takes fills or faces, objects or points, never bodies: a drawing's objects, a solid's faces.
-  const bool wantEdges = id == "area" && f == Viewport::SelFilter::Body && drawing2d::drawingOnly(m_doc->scene);
+  // Area takes fills or faces, objects or points, never bodies: a drawing's objects, a solid's faces. In 2D words the Faces
+  // filter is gone (the drawing2d area hides it): a drawing's objects instead (a hidden action still triggers).
+  const bool noFaces = !action("select.faces")->isVisible() && id != "sectionface";
+  const bool wantEdges = (id == "area" && f == Viewport::SelFilter::Body && drawing2d::drawingOnly(m_doc->scene)) ||
+                         (noFaces && (wantFaces || (id == "area" && f == Viewport::SelFilter::Body)));
   m_viewport->setPickAccumulate(true, id == "distance");
+  // Object snap where a free point is a pick; Radius takes a circle's centre (its marker), the section a face.
+  m_viewport->setSnapPicks(id == "distance" || id == "bbox" || id == "area" ? Viewport::SnapPicks::Points : Viewport::SnapPicks::None);
   for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area"})
     action(a)->setChecked(id == QString(a).section('.', 1));
   if (toolMeasures()) {
@@ -170,6 +179,8 @@ void MainWindow::cancelTool() {
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
   m_toolPicks.clear();
   m_toolPoints.clear();
+  m_viewport->setSnapFrom(std::nullopt);
+  m_viewport->setSnapPicks(Viewport::SnapPicks::None);
   for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area"}) action(a)->setChecked(false);
   m_viewport->setPickAccumulate(false);
   m_prompt->hide();
@@ -204,6 +215,9 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
     m_toolPoints.resize(picks.size());
   }
   m_toolPicks = picks;
+  // Perpendicular and tangent snaps go from the point picked last (UI-90).
+  m_viewport->setSnapFrom(picks.empty() ? std::nullopt : picks.back().kind == opad::Ref::Kind::Point ? std::optional(picks.back().point)
+                          : m_toolPoints.back().first ? std::optional(m_toolPoints.back().second) : std::nullopt);
   ++m_toolRun;
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();  // a superseded measure must stop computing, not just be ignored
   m_lastMeasure = opad::json();
@@ -247,7 +261,8 @@ void MainWindow::runToolMeasure() {
     else if (kind == "distance") *result = opad::measure_distance(*document, *scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
     else if (kind == "angle") *result = opad::measure_angle(*document, *scene, refs.at(0), refs.at(1));
     else if (kind == "radius") *result = opad::measure_radius(*document, *scene, refs.at(0));
-    else if (kind == "area") *result = opad::measure_area(*document, *scene, refs, [progress] { return progress.cancelled(); });
+    else if (kind == "area") *result = opad::measure_area(*document, *scene, refs, [progress] { return progress.cancelled(); },
+                                                          pickedPoints.size() == 1 && pickedPoints[0].first ? std::optional(pickedPoints[0].second) : std::nullopt);
     else *result = opad::measure_bbox(*document, *scene, refs);
     if (!moved.empty()) (*result)["exploded"] = true;  // not pinned: a pinned measurement is the assembled model's
   }, [this, run, result](bool ok, const QString& error) {
@@ -291,9 +306,10 @@ void MainWindow::refreshToolUi() {
                   : ends ? tr("Not closed yet: loose ends %1. Pick the objects that close it.").arg(ends)
                          : tr("These objects enclose nothing. Pick a closed object, or every object around the area.");
   } else if (done && m_tool.id == "area") {
-    explanation = m_lastMeasure.value("grown", false) ? tr("The smallest area the picked object closes with the objects it meets. Pick more to add them.")
-                  : m_lastMeasure.value("points", 0) ? tr("The polygon through the picked points, closed back to the first.")
-                                                     : tr("The area inside the picked boundary; areas inside it are holes.");
+    explanation = m_lastMeasure.value("grown", false) ? tr("The smaller area beside the clicked part of the object, closed by the objects it meets or crosses. Pick more to give the boundary yourself.")
+                  : m_lastMeasure.value("points", 0)  ? tr("The polygon through the picked points, closed back to the first.")
+                  : m_lastMeasure.value("trimmed", false) ? tr("The area inside the picked objects, trimmed where they cross; areas inside it are holes.")
+                                                          : tr("The area inside the picked boundary; areas inside it are holes.");
   } else if (done) {
     if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
     else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");

@@ -105,7 +105,8 @@
  "Pick at least three points: the area closes back to the first.": "اختر ثلاث نقاط على الأقل: تُغلق المساحة بالعودة إلى الأولى.",
  "Not closed yet: loose ends %1. Pick the objects that close it.": "غير مغلقة بعد: أطراف سائبة %1. اختر العناصر التي تغلقها.",
  "These objects enclose nothing. Pick a closed object, or every object around the area.": "هذه العناصر لا تحيط بشيء. اختر عنصرًا مغلقًا، أو كل العناصر المحيطة بالمساحة.",
- "The smallest area the picked object closes with the objects it meets. Pick more to add them.": "أصغر مساحة يغلقها العنصر المختار مع العناصر التي يلتقي بها. اختر المزيد لإضافتها.",
+ "The smaller area beside the clicked part of the object, closed by the objects it meets or crosses. Pick more to give the boundary yourself.": "المساحة الأصغر بجانب الجزء المنقور من العنصر، تغلقها العناصر التي يلتقي بها أو يقطعها. اختر المزيد لتحدد الحد بنفسك.",
+ "The area inside the picked objects, trimmed where they cross; areas inside it are holes.": "المساحة داخل العناصر المختارة بعد قصها حيث تتقاطع؛ المساحات داخلها ثقوب.",
  "The polygon through the picked points, closed back to the first.": "المضلع المار بالنقاط المختارة، مغلقًا بالعودة إلى الأولى.",
  "The area inside the picked boundary; areas inside it are holes.": "المساحة داخل الحد المختار؛ والمساحات داخله ثقوب.",
  "open": "مفتوحة",
@@ -169,5 +170,14 @@
  "Pick the first corner": "اختر الزاوية الأولى",
  "Pick the opposite corner": "اختر الزاوية المقابلة",
  "Esc back to Plot": "Esc للعودة إلى الطباعة",
- "First corner": "الزاوية الأولى"
+ "First corner": "الزاوية الأولى",
+ "Plot stamp": "ختم الطباعة",
+ "The file, the date and time, the paper and the scale along the bottom margin": "الملف والتاريخ والوقت والورق والمقياس على طول الهامش السفلي",
+ "(its own)": "(خاص به)",
+ "Select an object": "حدد عنصرًا",
+ "point or center": "نقطة أو مركز",
+ "perimeter %1": "المحيط %1",
+ "Turn layer off": "إطفاء الطبقة",
+ "Turn layer on": "تشغيل الطبقة",
+ "Thaw layer": "إلغاء تجميد الطبقة"
 }

@@ -57,7 +57,7 @@ struct Body {
   bool has_color = false;
   std::array<double, 3> color{};
   Bnd_Box box;
-  int faces = 0, edges = 0;
+  int faces = 0, edges = 0, lines = 0;  // lines: edges of no face
   double area = 0;
 };
 std::vector<Body> bodies(const Document& d) {
@@ -73,6 +73,7 @@ std::vector<Body> bodies(const Document& d) {
     BRepBndLib::Add(shape, b.box);
     for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) ++b.faces;
     for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) ++b.edges;
+    for (TopExp_Explorer e(shape, TopAbs_EDGE, TopAbs_FACE); e.More(); e.Next()) ++b.lines;
     GProp_GProps props;
     BRepGProp::SurfaceProperties(shape, props);
     b.area = props.Mass();
@@ -286,6 +287,167 @@ TEST(text_sits_on_its_baseline_and_mtext_hangs_from_its_top) {
   CHECK(find(all, "D") != nullptr);
 }
 
+// TODO 11 UI-92: text is shaped (an Arabic word right-aligned on its point, the letters joined), fitted and aligned
+// between its two points, and MTEXT's bottom and middle attachments hold its last baseline and its middle.
+TEST(arabic_text_aligns_and_text_fits_between_its_points) {
+  Files f;
+  const std::string word = "\xD8\xBA\xD8\xB1\xD9\x81\xD8\xA9";  // "غرفة"
+  write_text_file(f.dir / "text2.dxf",
+                  section("HEADER", {{9, "$ACADVER"}, {1, "AC1027"}}) +
+                      section("ENTITIES", {
+                          {0, "TEXT"}, {8, "R"}, {10, "0"}, {20, "0"}, {40, "10"}, {1, word}, {72, "2"}, {11, "100"}, {21, "0"},
+                          {0, "TEXT"}, {8, "F"}, {10, "0"}, {20, "-50"}, {40, "10"}, {1, "HELL"}, {72, "5"}, {11, "100"}, {21, "-50"},
+                          {0, "TEXT"}, {8, "A"}, {10, "0"}, {20, "-100"}, {40, "10"}, {1, "HELL"}, {72, "3"}, {11, "100"}, {21, "-100"},
+                          {0, "MTEXT"}, {8, "B"}, {10, "200"}, {20, "0"}, {40, "6"}, {71, "7"}, {1, "HE\\PEH"},
+                          {0, "MTEXT"}, {8, "M"}, {10, "300"}, {20, "0"}, {40, "6"}, {71, "5"}, {1, "HE\\PEH"},
+                      }) + kEof);
+  ImportResult result;
+  const auto all = bodies(import(f.dir / "text2.dxf", true, false, &result));
+  const auto* r = find(all, "R");
+  if (!r) return;  // no font on this machine: the warning says so
+  const auto right = extent(r->box);
+  CHECK(right[2] <= 100.01 && right[2] > 98.5 && right[0] > 50 && right[0] < 90);
+  const auto fit = extent(find(all, "F")->box), aligned = extent(find(all, "A")->box);
+  CHECK(fit[0] < 5 && fit[2] > 95 && fit[2] <= 100.01 && std::abs(fit[3] + 40) < 0.05);  // as long as its points, as high
+  CHECK(aligned[0] < 5 && aligned[2] > 95 && aligned[3] + 100 > 15);                     // and larger with them
+  const auto bottom = extent(find(all, "B")->box), middle = extent(find(all, "M")->box);
+  CHECK(std::abs(bottom[1]) < 0.05 && std::abs(bottom[3] - (10 + 6)) < 0.05);  // last baseline on the point, lines 10 apart
+  CHECK(std::abs((middle[1] + middle[3]) / 2) < 0.05);
+}
+
+// TODO 11 UI-92: a style's shape font (.shx) found beside the drawing (or in DWG TrueView's and AutoCAD's Fonts folders)
+// draws its text in strokes; text with a character it lacks, and a shape font that is nowhere, in the outline font.
+TEST(shape_font_text_is_drawn_in_its_strokes) {
+  Files f;
+  // shapes 1.0: the font's line (above 10, below 2) and 'I', a stroke 10 up, then 6 on.
+  const std::string font = std::string("AutoCAD-86 shapes 1.0\r\n\x1a") + std::string("\x00\x00\x49\x00\x02\x00\x00\x00\x06\x00\x49\x00\x07\x00", 14) +
+                           std::string("T\x00\x0a\x02\x00\x00", 6) + std::string("\x00\x01\xa4\x02\xac\x60\x00", 7);
+  write_text_file(f.dir / "mini.shx", font);
+  write_text_file(f.dir / "shx.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "STYLE"}, {0, "STYLE"}, {2, "MINI"}, {70, "0"}, {40, "0"}, {41, "1"}, {3, "mini.shx"},
+                                     {0, "STYLE"}, {2, "GONE"}, {70, "0"}, {40, "0"}, {41, "1"}, {3, "nowhere.shx"}, {0, "ENDTAB"}}) +
+                      section("ENTITIES", {{0, "TEXT"}, {8, "S"}, {7, "MINI"}, {10, "0"}, {20, "0"}, {40, "20"}, {1, "II"},
+                                           {0, "TEXT"}, {8, "Lacks"}, {7, "MINI"}, {10, "0"}, {20, "-50"}, {40, "20"}, {1, "IJ"},
+                                           {0, "TEXT"}, {8, "Gone"}, {7, "GONE"}, {10, "0"}, {20, "-100"}, {40, "20"}, {1, "II"}}) +
+                      kEof);
+  const auto all = bodies(import(f.dir / "shx.dxf"));
+  const auto* strokes = find(all, "S");
+  CHECK(strokes && strokes->faces == 0 && strokes->edges == 2 && near_box(strokes->box, 0, 0, 12, 20));  // two strokes 12 apart, 20 high
+  if (const auto* lacks = find(all, "Lacks")) CHECK(lacks->faces > 0);
+  if (const auto* gone = find(all, "Gone")) CHECK(gone->faces > 0);
+}
+
+// TODO 11 UI-92: MTEXT's leading formatting holds for all of it: a height (absolute, or times the entity's), a width
+// factor, a colour, a family in bold.
+TEST(mtext_leading_formatting_holds_for_all_of_it) {
+  Files f;
+  auto mtext = [](const char* layer, double y, const char* s) {
+    return Groups{{0, "MTEXT"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {40, "5"}, {71, "7"}, {1, s}};
+  };
+  Groups entities;
+  for (const auto& g : {mtext("Plain", 0, "HELL"), mtext("Twice", 50, "\\H2x;HELL"), mtext("Tall", 100, "{\\H8;HELL}"), mtext("Wide", 150, "\\W2;HELL"),
+                        mtext("Red", 200, "{\\C1;HELL}"), mtext("Bold", 250, "{\\fArial|b1|i0|c0|p34;HELL}")})
+    entities.insert(entities.end(), g.begin(), g.end());
+  write_text_file(f.dir / "format.dxf", section("ENTITIES", entities) + kEof);
+  const auto all = bodies(import(f.dir / "format.dxf"));
+  const auto* plain = find(all, "Plain");
+  if (!plain) return;  // no font on this machine
+  const auto p = extent(plain->box), twice = extent(find(all, "Twice")->box), tall = extent(find(all, "Tall")->box);
+  const auto wide = extent(find(all, "Wide")->box), bold = extent(find(all, "Bold")->box);
+  CHECK(std::abs(p[3] - p[1] - 5) < 0.05 && std::abs(twice[3] - twice[1] - 10) < 0.05 && std::abs(tall[3] - tall[1] - 8) < 0.05);
+  CHECK(std::abs((wide[2] - wide[0]) / (p[2] - p[0]) - 2) < 0.1);
+  CHECK(find(all, "Red")->has_color && find(all, "Red")->color[0] == 1 && find(all, "Red")->color[1] == 0);
+  CHECK(bold[2] - bold[0] > (p[2] - p[0]) * 1.02);  // Arial Bold is wider
+  // A style's XDATA flags: arial.ttf in the family's bold face.
+  write_text_file(f.dir / "styles.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "STYLE"}, {0, "STYLE"}, {2, "B"}, {70, "0"}, {40, "0"}, {41, "1"}, {3, "arial.ttf"},
+                                     {1001, "ACAD"}, {1000, "Arial"}, {1071, "33554466"}, {0, "ENDTAB"}}) +
+                      section("ENTITIES", {{0, "TEXT"}, {8, "Bold"}, {7, "B"}, {10, "0"}, {20, "0"}, {40, "5"}, {1, "HELL"},
+                                           {0, "TEXT"}, {8, "Plain"}, {10, "0"}, {20, "20"}, {40, "5"}, {1, "HELL"}}) +
+                      kEof);
+  const auto styled = bodies(import(f.dir / "styles.dxf"));
+  const auto styledBold = extent(find(styled, "Bold")->box), styledPlain = extent(find(styled, "Plain")->box);
+  CHECK(styledBold[2] - styledBold[0] > (styledPlain[2] - styledPlain[0]) * 1.02);
+}
+
+// TODO 11 UI-92: MTEXT formatted part by part: a part in a larger height, parts in a colour index and a true colour (bodies
+// of their colours), a line under a part, a stacked fraction over its bar and a tolerance without one, a paragraph centred
+// on its own; TEXT's %%u underline and obliquing (its own, and its style's).
+TEST(mtext_parts_keep_their_own_formats) {
+  Files f;
+  auto mtext = [](const char* layer, double y, const char* s) {
+    return Groups{{0, "MTEXT"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {40, "5"}, {71, "7"}, {1, s}};
+  };
+  auto text = [](const char* layer, double y, const char* s, Groups extra = {}) {
+    Groups g{{0, "TEXT"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {40, "10"}, {1, s}};
+    g.insert(g.end(), extra.begin(), extra.end());
+    return g;
+  };
+  Groups entities;
+  for (const auto& g : {mtext("Plain", 0, "HELL"), mtext("Big", 50, "HE{\\H2x;LL}"), mtext("Red", 100, "HE{\\C1;LL}O"), mtext("Blue", 150, "H\\c16711680;E"),
+                        mtext("Under", 200, "H\\LELL\\lO"), mtext("Fraction", 250, "1\\S1/2;"), mtext("Tolerance", 300, "12\\S+0.1^-0.2;"),
+                        mtext("Centre", 350, "HHHHHHHH\\P\\pxqc;{\\C1;HH}"), mtext("List", 650, "\\pxi-3,l3,t3;1.^I{\\C1;HE}\\P2.^I{\\C1;EH}"),
+                        text("TextPlain", 400, "IIII"), text("TextUnder", 450, "%%uIIII%%u"),
+                        text("Leaning", 500, "IIII", {{51, "15"}}), text("Styled", 550, "IIII", {{7, "SLANT"}})})
+    entities.insert(entities.end(), g.begin(), g.end());
+  write_text_file(f.dir / "parts.dxf", section("TABLES", {{0, "TABLE"}, {2, "STYLE"}, {0, "STYLE"}, {2, "SLANT"}, {70, "0"}, {40, "0"}, {41, "1"},
+                                                          {50, "15"}, {3, "arial.ttf"}, {0, "ENDTAB"}}) +
+                                           section("ENTITIES", entities) + kEof);
+  const auto all = bodies(import(f.dir / "parts.dxf"));
+  const auto* plain = find(all, "Plain");
+  if (!plain) return;  // no font on this machine
+  const auto p = extent(plain->box), big = extent(find(all, "Big")->box);
+  CHECK(std::abs(p[3] - p[1] - 5) < 0.05 && std::abs(big[3] - 60) < 0.05 && std::abs(big[1] - 50) < 0.05);  // LL 10 high on the baseline
+  const auto* red = find(all, "Red", 1, 0, 0);
+  const Body* rest = nullptr;
+  for (const auto& b : all)
+    if (b.layer == "Red" && !b.has_color) rest = &b;
+  CHECK(red && rest && red->faces == 2 && rest->faces == 3);  // LL red, HE and O as the layer draws them
+  CHECK(find(all, "Blue", 0, 0, 1) && find(all, "Blue", 0, 0, 1)->faces == 1);  // \c is 0xBBGGRR
+  CHECK(find(all, "Under")->lines == 1 && find(all, "Plain")->lines == 0);
+  const auto* fraction = find(all, "Fraction");
+  CHECK(fraction->lines == 1 && fraction->faces == 3 && extent(fraction->box)[1] < 249);  // the bar; 2 below the baseline
+  CHECK(find(all, "Tolerance")->lines == 0 && find(all, "Tolerance")->faces == 10);
+  // The centred paragraph's middle is the block's, the block being as wide as its first line.
+  const auto centred = extent(find(all, "Centre", 1, 0, 0)->box);
+  const Body* first = nullptr;
+  for (const auto& b : all)
+    if (b.layer == "Centre" && !b.has_color) first = &b;
+  const auto block = extent(first->box);
+  CHECK(std::abs((centred[0] + centred[2]) / 2 - (block[0] + block[2]) / 2) < 0.3 && centred[0] > block[0] + 5);
+  // A numbered list (hanging indent 3 text heights, a tab stop there): the items start 15 from the numbers' left end.
+  const auto items = extent(find(all, "List", 1, 0, 0)->box);
+  CHECK(items[0] >= 15 && items[0] < 15.8 && items[3] - items[1] > 10);  // H and E a side bearing in; both lines
+  CHECK(find(all, "TextUnder")->lines == 1 && find(all, "TextPlain")->lines == 0);
+  const double upright = extent(find(all, "TextPlain")->box)[2];
+  CHECK(extent(find(all, "Leaning")->box)[2] - upright > 2.4 && extent(find(all, "Styled")->box)[2] - upright > 2.4);  // 10 tan 15 = 2.7
+}
+
+// Bodies share no sub-shapes (the view meshes them on several threads at once): the same text, or a block with a fill,
+// on two layers gives each layer's body its own edges, in a viewer (shapes kept as read) and in a document.
+TEST(bodies_share_no_edges) {
+  Files f;
+  write_text_file(f.dir / "shared.dxf",
+                  section("BLOCKS", {{0, "BLOCK"}, {2, "K"}, {70, "0"}, {10, "0"}, {20, "0"}, {0, "SOLID"}, {8, "0"}, {10, "0"}, {20, "0"},
+                                     {11, "1"}, {21, "0"}, {12, "0"}, {22, "1"}, {13, "1"}, {23, "1"}, {0, "ENDBLK"}}) +
+                      section("ENTITIES", {{0, "TEXT"}, {8, "A"}, {10, "0"}, {20, "0"}, {40, "10"}, {1, "HELLO"},
+                                           {0, "TEXT"}, {8, "B"}, {10, "0"}, {20, "20"}, {40, "10"}, {1, "HELLO"},
+                                           {0, "INSERT"}, {8, "A"}, {2, "K"}, {10, "50"}, {20, "0"},
+                                           {0, "INSERT"}, {8, "B"}, {2, "K"}, {10, "50"}, {20, "20"}}) +
+                      kEof);
+  for (bool viewer : {true, false}) {
+    const Document d = import(f.dir / "shared.dxf", viewer);
+    std::map<const TopoDS_TShape*, std::string> owner;
+    bool shared = false;
+    for (const auto& key : d.body_keys())
+      for (TopExp_Explorer e(body_shape(d, key), TopAbs_EDGE); e.More(); e.Next()) {
+        const auto [it, added] = owner.emplace(e.Current().TShape().get(), key);
+        shared = shared || (!added && it->second != key);
+      }
+    CHECK(d.body_keys().size() == 2 && !owner.empty() && !shared);
+  }
+}
+
 TEST(survey_coordinates_and_metres) {
   Files f;
   write_text_file(f.dir / "site.dxf",
@@ -387,6 +549,73 @@ TEST(linetype_patterns_reach_the_layers) {
   CHECK(layers["Hidden"] == json({{"name", "Hidden"}, {"linetype", "HIDDEN"}, {"pattern", {6.35, -3.175}}}));
   CHECK(layers["Fence"] == json({{"name", "Fence"}, {"linetype", "FENCE"}, {"pattern", {7.62, -2.54, 0.0, -2.54}}}));
   CHECK(layers["Plain"] == json({{"name", "Plain"}}));
+}
+
+// TODO 11 UI-92: an entity's own linetype and lineweight put it into a body of its own that carries them (line, over its
+// layer's), with the file's dashes; by block they are the insert's (or its layer's), in model space continuous; one
+// that only repeats its layer's (or Continuous on a continuous layer) stays with the layer's body.
+TEST(entity_linetypes_and_lineweights_reach_their_bodies) {
+  Files f;
+  auto line = [](const char* layer, double y, Groups extra) {
+    Groups g{{0, "LINE"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {11, "10"}, {21, std::to_string(y)}};
+    g.insert(g.end(), extra.begin(), extra.end());
+    return g;
+  };
+  Groups entities;
+  for (const auto& g : {line("Walls", 0, {}), line("Walls", 1, {{6, "CENTER"}}), line("Walls", 2, {{6, "DASHED"}, {370, "50"}}), line("Plain", 3, {{370, "70"}}),
+                        line("Plain", 4, {{6, "CONTINUOUS"}}), line("Plain", 5, {{6, "BYBLOCK"}}),
+                        Groups{{0, "INSERT"}, {8, "Plain"}, {6, "HIDDEN"}, {370, "35"}, {2, "K"}, {10, "0"}, {20, "10"}},
+                        Groups{{0, "INSERT"}, {8, "Walls"}, {2, "K"}, {10, "0"}, {20, "20"}}})
+    entities.insert(entities.end(), g.begin(), g.end());
+  write_text_file(f.dir / "pens.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LTYPE"},
+                                     {0, "LTYPE"}, {2, "DASHED"}, {73, "2"}, {40, "19.05"}, {49, "12.7"}, {49, "-6.35"},
+                                     {0, "LTYPE"}, {2, "CENTER"}, {73, "4"}, {40, "50.8"}, {49, "31.75"}, {49, "-6.35"}, {49, "6.35"}, {49, "-6.35"},
+                                     {0, "ENDTAB"}, {0, "TABLE"}, {2, "LAYER"},
+                                     {0, "LAYER"}, {2, "Walls"}, {62, "1"}, {70, "0"}, {6, "DASHED"}, {370, "50"},
+                                     {0, "LAYER"}, {2, "Plain"}, {62, "5"}, {70, "0"}, {0, "ENDTAB"}}) +
+                      section("BLOCKS", {{0, "BLOCK"}, {2, "K"}, {70, "0"}, {10, "0"}, {20, "0"}, {0, "LINE"}, {8, "0"}, {6, "BYBLOCK"}, {370, "-2"},
+                                         {10, "0"}, {20, "0"}, {11, "1"}, {21, "0"}, {0, "ENDBLK"}}) +
+                      section("ENTITIES", entities) + kEof);
+  for (bool viewer : {true, false}) {
+    const Scene s = resolve(import(f.dir / "pens.dxf", viewer));
+    std::map<std::string, std::vector<json>> lines;
+    for (const auto& id : s.all_bodies()) lines[s.node(id)->name].push_back(s.node(id)->line);
+    for (auto& [name, list] : lines) std::sort(list.begin(), list.end());
+    CHECK(lines["Walls"] == (std::vector<json>{json(), json({{"linetype", "CENTER"}, {"pattern", {31.75, -6.35, 6.35, -6.35}}})}));
+    CHECK(lines["Plain"] == (std::vector<json>{json(), json({{"linetype", "HIDDEN"}, {"lineweight", 0.35}}), json({{"lineweight", 0.7}})}));
+    CHECK(s.tree_json(-1).dump().find("\"line\":{") != std::string::npos);
+  }
+}
+
+// TODO 11 UI-92: an entity's linetype scale (48, CELTSCALE) puts it in a body of its own that carries it (line.scale), on
+// its layer's linetype or its own; by block it is the block entity's times the insert's; on a continuous line it is moot.
+TEST(entity_linetype_scales_reach_their_bodies) {
+  Files f;
+  auto line = [](const char* layer, double y, Groups extra) {
+    Groups g{{0, "LINE"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {11, "10"}, {21, std::to_string(y)}};
+    g.insert(g.end(), extra.begin(), extra.end());
+    return g;
+  };
+  Groups entities;
+  for (const auto& g : {line("Walls", 0, {}), line("Walls", 1, {{48, "0.5"}}), line("Walls", 2, {{6, "CENTER"}, {48, "0.5"}}), line("Plain", 3, {{48, "0.5"}}),
+                        Groups{{0, "INSERT"}, {8, "Plain"}, {6, "HIDDEN"}, {48, "2"}, {2, "K"}, {10, "0"}, {20, "10"}}})
+    entities.insert(entities.end(), g.begin(), g.end());
+  write_text_file(f.dir / "scales.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LAYER"}, {0, "LAYER"}, {2, "Walls"}, {62, "1"}, {70, "0"}, {6, "DASHED"},
+                                     {0, "LAYER"}, {2, "Plain"}, {62, "5"}, {70, "0"}, {0, "ENDTAB"}}) +
+                      section("BLOCKS", {{0, "BLOCK"}, {2, "K"}, {70, "0"}, {10, "0"}, {20, "0"}, {0, "LINE"}, {8, "0"}, {6, "BYBLOCK"}, {48, "0.25"},
+                                         {10, "0"}, {20, "0"}, {11, "1"}, {21, "0"}, {0, "ENDBLK"}}) +
+                      section("ENTITIES", entities) + kEof);
+  for (bool viewer : {true, false}) {
+    const Scene s = resolve(import(f.dir / "scales.dxf", viewer));
+    std::map<std::string, std::vector<json>> lines;
+    for (const auto& id : s.all_bodies()) lines[s.node(id)->name].push_back(s.node(id)->line);
+    for (auto& [name, list] : lines) std::sort(list.begin(), list.end());
+    auto sorted = [](std::vector<json> v) { std::sort(v.begin(), v.end()); return v; };
+    CHECK(lines["Walls"] == sorted({json(), json({{"scale", 0.5}}), json({{"linetype", "CENTER"}, {"scale", 0.5}})}));
+    CHECK(lines["Plain"] == sorted({json(), json({{"linetype", "HIDDEN"}, {"scale", 0.5}})}));
+  }
 }
 
 // TODO 11 UI-89: the body of a layer's BYLAYER entities says so (by_layer), so a colour given to the layer reaches it and

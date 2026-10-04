@@ -10,13 +10,10 @@
 #include "opad/geometry.hpp"
 #include "import_common.hpp"
 #include "drawing_common.hpp"
+#include "drawing_text.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <gp_Pln.hxx>
-#ifdef OPAD_HAVE_FONT
-#include <StdPrs_BRepTextBuilder.hxx>
-#include <StdPrs_BRepFont.hxx>
-#endif
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBndLib.hxx>
@@ -39,6 +36,10 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS.hxx>
 #include <TopExp_Explorer.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <TopoDS_Iterator.hxx>
+#include <functional>
+#include <unordered_map>
 #include <Standard_Failure.hxx>
 #include <gp_Circ.hxx>
 #include <algorithm>
@@ -68,9 +69,9 @@ extern char** environ;
 
 namespace opad {
 namespace detail {
-void Drawing::add(const std::string& layer, const TopoDS_Shape& s, uint32_t color) {
+void Drawing::add(const std::string& layer, const TopoDS_Shape& s, const Pen& pen) {
   if (layers.size() >= 10000 && !layers.count(layer)) throw Error("drawing exceeds 10000 layers");
-  auto& c = layers[layer][color]; if (c.IsNull()) builder.MakeCompound(c);
+  auto& c = layers[layer][pen]; if (c.IsNull()) builder.MakeCompound(c);
   if(transform.is_identity()) builder.Add(c,s);
   else if(mat_is_rigid(transform)) builder.Add(c,BRepBuilderAPI_Transform(s,trsf_from_mat(transform),true).Shape());
   else {
@@ -391,6 +392,7 @@ Drawing read_svg(const std::filesystem::path& file) {
   auto local=[](std::string tag) { const auto colon=tag.find(':'); return colon==std::string::npos?tag:tag.substr(colon+1); };
   if(local(root.getTagName().GetString())!="svg") throw Error("expected SVG root");
   Drawing out;
+  detail::TextOutliner outliner({file.parent_path()});  // shaped text (UI-92): font-family's fonts, else a sans-serif
   std::map<std::string,LDOM_Element> ids;
   std::function<void(const LDOM_Element&,int)> index;
   index=[&](const LDOM_Element& e,int depth) {
@@ -491,19 +493,12 @@ Drawing read_svg(const std::filesystem::path& file) {
       };
       content(e);
       if(!value.empty()) {
-#ifdef OPAD_HAVE_FONT
-        StdPrs_BRepFont font;
-        const double size=length(property("font-size","16"));
-        const auto family=property("font-family","sans-serif");
-        if(size>0&&font.FindAndInit(family.c_str(),Font_FA_Regular,size)) {
-          const auto align=property("text-anchor","");
-          const auto h=align=="middle"?Graphic3d_HTA_CENTER:align=="end"?Graphic3d_HTA_RIGHT:Graphic3d_HTA_LEFT;
-          const auto shape=StdPrs_BRepTextBuilder().Perform(font,NCollection_String(value.c_str()),gp_Ax3(gp_Pnt(num("x"),-num("y"),0),gp::DZ()),h,Graphic3d_VTA_BOTTOM);
-          out.add(layer,shape);
-        } else out.warnings.push_back("SVG text font unavailable; text retained in source");
-#else
-        out.warnings.push_back("SVG text outlines need OCCT font support; text retained in source");
-#endif
+        detail::TextRequest request; request.text=value; request.font=property("font-family","sans-serif"); request.size=length(property("font-size","16"));
+        const auto align=property("text-anchor","");
+        request.h=align=="middle"?detail::TextRequest::Center:align=="end"?detail::TextRequest::Right:detail::TextRequest::Left;
+        const auto shape=request.size>0?outliner.outline(request,gp_Ax3(gp_Pnt(num("x"),-num("y"),0),gp::DZ())):TopoDS_Shape();
+        if(!shape.IsNull()) { if(shape.NbChildren()>0) out.add(layer,shape); }
+        else out.warnings.push_back("SVG text font unavailable; text retained in source");
       }
     } else if(tag!="svg"&&tag!="g"&&tag!="symbol"&&tag!="a"&&tag!="switch") {
       out.warnings.push_back("SVG element retained in source: "+full);
@@ -586,6 +581,50 @@ namespace {
 ImportResult import_drawing(Document& doc, const std::filesystem::path& file, const std::filesystem::path& shown, const ImportOptions& options);
 }
 
+namespace {
+// Bodies share no sub-shapes: the view meshes them side by side on several threads, and a viewer keeps the reader's
+// shapes as they are. What a group holds that an earlier group holds too (a glyph, or a block placed on two layers) is
+// copied for it, once per group whatever its number of placements; sharing within one body stays.
+void unshare(Drawing& drawing) {
+  std::unordered_map<const TopoDS_TShape*, int> owner;  // the first group holding it
+  std::function<void(const TopoDS_Shape&, int)> mark = [&](const TopoDS_Shape& s, int group) {
+    if (!owner.emplace(s.TShape().get(), group).second) return;  // its children are marked
+    for (TopoDS_Iterator i(s, false, false); i.More(); i.Next()) mark(i.Value(), group);
+  };
+  std::vector<TopoDS_Compound*> groups;
+  for (auto& [name, byPen] : drawing.layers)
+    for (auto& [pen, shape] : byPen) mark(shape, int(groups.size())), groups.push_back(&shape);
+  BRep_Builder builder;
+  for (int group = 1; group < int(groups.size()); ++group) {
+    std::unordered_map<const TopoDS_TShape*, TopoDS_Shape> done;  // its own one of each, unlocated
+    std::function<TopoDS_Shape(const TopoDS_Shape&)> own = [&](const TopoDS_Shape& s) {
+      const TopoDS_TShape* t = s.TShape().get();
+      auto found = done.find(t);
+      if (found == done.end()) {
+        const TopoDS_Shape base = s.Located(TopLoc_Location()).Oriented(TopAbs_FORWARD);
+        TopoDS_Shape result = base;
+        if (owner[t] != group) {
+          result = BRepBuilderAPI_Copy(base, false, false).Shape();
+        } else if (base.ShapeType() == TopAbs_COMPOUND) {
+          TopoDS_Compound rebuilt;
+          builder.MakeCompound(rebuilt);
+          bool changed = false;
+          for (TopoDS_Iterator i(base, false, false); i.More(); i.Next()) {
+            const TopoDS_Shape child = own(i.Value());
+            changed = changed || child.TShape() != i.Value().TShape();
+            builder.Add(rebuilt, child);
+          }
+          if (changed) result = rebuilt;
+        }
+        found = done.emplace(t, result).first;
+      }
+      return found->second.Located(s.Location()).Oriented(s.Orientation());
+    };
+    *groups[size_t(group)] = TopoDS::Compound(own(*groups[size_t(group)]));
+  }
+}
+}  // namespace
+
 ImportResult import_file(Document& doc, const std::filesystem::path& file, const ImportOptions& options) {
   const auto ext=extension(file);
   if(!std::filesystem::exists(file)) throw Error("file not found: "+file.filename().string());
@@ -630,15 +669,25 @@ ImportResult import_drawing(Document& doc, const std::filesystem::path& file, co
     else throw Error("unsupported file format: " + ext);
     ImportResult result; result.warnings=drawing.warnings; json children=json::array();
     // Parse fully before touching the document. Stage stores and op so cancellation is atomic.
+    unshare(drawing);
     Document staged=doc;
     for(const auto& [name, groups]:drawing.layers) {
       if(options.progress && !options.progress(double(children.size())/drawing.layers.size(),"building")) throw Error("cancelled");
       json bodies=json::array();
-      for(const auto& [color, shape]:groups) {  // one body per colour the layer's entities are drawn in
+      for(const auto& [pen, shape]:groups) {  // one body per colour (and own linetype or lineweight) the layer's entities are drawn in
+        const uint32_t color=pen.color;
         json meta={{"representation","drawing2d"},{"layer",name},{"source",shown.filename().string()}};
         json body={{"type","body"},{"id",new_uuid()},{"name",name},{"representation","drawing2d"}};
         if(color!=Drawing::kNoColor) meta["color"]=body["color"]={((color>>16)&255)/255.0,((color>>8)&255)/255.0,(color&255)/255.0};
         if(const auto by=drawing.by_layer.find(name);by!=drawing.by_layer.end() && by->second==color) body["by_layer"]=true;  // older builds ignore it
+        json line=json::object();  // its own linetype, lineweight and dash scale over its layer's (UI-92; older builds ignore it)
+        if(!pen.linetype.empty()) {
+          line["linetype"]=pen.linetype;
+          if(const auto p=drawing.patterns.find(pen.linetype);p!=drawing.patterns.end() && !p->second.empty()) line["pattern"]=p->second;
+        }
+        if(pen.lineweight!=-1) line["lineweight"]=pen.lineweight>=0?pen.lineweight/100.0:-1.0;
+        if(pen.scale!=1) line["scale"]=pen.scale;
+        if(!line.empty()) body["line"]=line;
         body["key"]=detail::store_body(staged,shape,meta,options,false);
         if(bodies.empty() && drawing.images.count(name)) body["raster"]=drawing.images.at(name);
         bodies.push_back(std::move(body));

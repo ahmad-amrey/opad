@@ -7,6 +7,7 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QStatusBar>
@@ -21,6 +22,7 @@
 #include <memory>
 #include <optional>
 
+#include "AreaController.hpp"
 #include "BenchRegistry.hpp"
 #include "BrowserDelegate.hpp"
 #include "BrowserPanel.hpp"
@@ -158,6 +160,9 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
     QAction* open = w.action("drawing2d.layers");
     require(shown && panel && open && open->isEnabled(), "the drawing is shown and the Layers command is there");
     if (!shown || !panel || !open) return QCoreApplication::exit(2);
+    bool grouped = true;  // the palette's and the shortcut editor's group: View, as in the menu
+    for (const char* id : {"drawing2d.layers", "drawing2d.layerWalk", "drawing2d.isolateLayer"}) grouped = grouped && w.m_commands.find(id)->group == QObject::tr("View");
+    require(grouped, "Layers, Layer walk and Isolate layer are in the View group of the palette and the shortcut editor");
     auto layer = [panel](const std::string& name) {
       for (const auto& l : panel->layers())
         if (l.name == name) return l;
@@ -178,6 +183,31 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
     auto camera = std::make_shared<opad::json>();
     auto steps = std::make_shared<int>(0);
     script->add("open", [open] { open->trigger(); }, [panel] { return panel->isVisible() && panel->layers().size() == 4; });
+    // A theme switch (View > Dark theme) re-colours the panel's header and buttons and the object snap switch (checked).
+    auto ink = [](const QIcon& icon) {  // an icon's most opaque pixel
+      const QImage image = icon.pixmap(QSize(18, 18)).toImage();
+      QColor best(0, 0, 0, 0);
+      for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+          if (const QColor c = image.pixelColor(x, y); c.alpha() > best.alpha()) best = c;
+      return best;
+    };
+    auto alike = [](const QColor& a, const QColor& b) { return std::abs(a.red() - b.red()) + std::abs(a.green() - b.green()) + std::abs(a.blue() - b.blue()) < 40; };
+    auto themed = [&w, panel, ink, alike] {
+      const Tokens& t = theme::current();
+      QAction* snap = w.action("drawing2d.objectSnap");
+      return alike(ink(panel->tree()->headerItem()->icon(LayersPanel::On)), t.fg) && snap->isChecked() && alike(ink(snap->icon()), t.onsel);
+    };
+    auto dark = std::make_shared<bool>(false);
+    script->add("theme", [&w, dark, require, themed] {
+      require(themed(), "the header and the object snap switch are in the theme's colours");
+      *dark = w.m_darkAction->isChecked();
+      w.m_darkAction->toggle();
+    }, [&w, dark, themed] { return w.m_darkAction->isChecked() != *dark && themed(); });
+    script->add("theme back", [&w, require] {
+      require(true, "after a theme switch the header icons and the checked object snap switch take the new theme's colours");
+      w.m_darkAction->toggle();
+    }, [&w, dark, themed] { return w.m_darkAction->isChecked() == *dark && themed(); });
     script->add("as the file has them", [v, panel, layer, drawn, require, value, stippled, fileDashed] {
       const auto walls = layer("Walls"), notes = layer("Notes"), old = layer("Old"), plain = layer("Plain");
       require(walls.locked && walls.on && walls.linetype == "DASHED" && std::abs(walls.lineweight - 0.5) < 1e-9 && !notes.on && !notes.plot && old.frozen && old.on &&
@@ -212,8 +242,24 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
     });
     script->add("thaw Plain", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Plain").id), LayersPanel::Freeze); },
                 [layer, drawn, settled] { return !layer("Plain").frozen && layer("Plain").on && settled() && drawn(layer("Plain")); });
-    script->add("thaw Old", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Old").id), LayersPanel::Freeze); },
-                [layer, drawn, settled] { return !layer("Old").frozen && settled() && drawn(layer("Old")); });
+    // A frozen layer is thawed from its context menu (its browser row), which offers Thaw and Turn off, not a greyed Freeze.
+    script->add("thaw Old from its context menu", [&w, layer, require] {
+      SelectionContext context;
+      context.ids = {layer("Old").id};
+      QMenu menu;
+      w.forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
+      QAction* thaw = nullptr;
+      bool off = false, freeze = false;
+      for (QAction* entry : menu.actions())
+        if (entry->menu())
+          for (QAction* a : entry->menu()->actions()) {
+            if (a->text() == QObject::tr("Thaw layer")) thaw = a;
+            off = off || a->text() == QObject::tr("Turn layer off");
+            freeze = freeze || a->text() == QObject::tr("Freeze layer");
+          }
+      require(thaw && thaw->isEnabled() && off && !freeze, "a frozen layer's context menu offers Thaw layer and Turn layer off");
+      if (thaw) thaw->trigger();
+    }, [layer, drawn, settled] { return !layer("Old").frozen && settled() && drawn(layer("Old")); });
     script->add("unlock Walls, plot Notes", [panel, layer] {
       clickCell(panel->tree(), panel->item(layer("Walls").id), LayersPanel::Lock);
       clickCell(panel->tree(), panel->item(layer("Notes").id), LayersPanel::Plot);
@@ -478,7 +524,30 @@ OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
         require(w.m_statusSel->text() == MainWindow::tr("%1 selected · %2").arg(1).arg(i18n::t("group")) && title() == "Lines" && keys.contains("fills") &&
                     keys.contains("points") && !keys.contains("faces") && !keys.contains("edges") && !keys.contains("solid") && !keys.contains("volume"),
                 QString("a picked group counts as one, its Properties count objects, fills and points: %1 / %2").arg(w.m_statusSel->text(), keys.join(",")));
-      });
+        w.action("inspect.radius")->trigger();
+      }, [&w, v] { return w.m_tool.id == "radius" && v->selectionFilter() != Viewport::SelFilter::Body; });
+      // Radius from the Groups filter goes to Objects (Faces is gone in 2D), its steps and picks in the drawing's words.
+      script->add("radius", [&w, v, faces, require] {
+        require(v->selectionFilter() == Viewport::SelFilter::Edge && w.action("select.edges")->isChecked() && !faces->isChecked() &&
+                    w.toolSteps().value(0).label == MainWindow::tr("Select an object"),
+                "Radius from Groups picks objects, not the hidden Faces filter: " + w.toolSteps().value(0).label);
+        w.action("inspect.radius")->trigger();
+        w.action("inspect.distance")->trigger();
+      }, [&w, v] { return w.m_tool.id == "distance" && v->selectionFilter() == Viewport::SelFilter::Edge; });
+      auto line = std::make_shared<opad::Ref>();
+      script->add("a picked object", [&w, v, doc, line] {
+        line->body = doc->scene.bodies_under(layerNamed(doc->scene, "Lines")).at(0);
+        line->kind = opad::Ref::Kind::Edge;
+        line->index = 0;
+        v->selectRefs({*line});
+        w.onViewportSelection();
+      }, [&w] { return w.m_toolPicks.size() == 1; });
+      script->add("its step", [&w, require, line] {
+        const QString picked = w.toolSteps().value(0).picked, expected = QString::fromUtf8("%1 › %2 %3").arg(w.m_doc->nodeName(line->body), i18n::t("object")).arg(line->index);
+        require(picked == expected && w.toolSteps().value(1).label == MainWindow::tr("Select second %1").arg(i18n::t("object")),
+                "the tool names its picks as a drawing's: " + picked + " / " + w.toolSteps().value(1).label);
+        w.action("inspect.distance")->trigger();
+      }, [&w] { return w.m_tool.id.isEmpty(); });
     }
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
