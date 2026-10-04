@@ -123,8 +123,8 @@ class AppDocument : public QObject {
     std::shared_ptr<opad::Document> doc;
     std::vector<std::string> bodies;                 // every body key the file lists, in its order
     std::shared_ptr<const opad::Manifest> manifest;  // the file's
-    opad::Relation relation = opad::Relation::same;
-    QString error;                                   // unreadable (git conflict markers, not an OPAD document)
+    opad::Relation relation = opad::Relation::same;  // rewritten without a base (nothing to compare with)
+    QString error;                                // unreadable (git conflict markers, not an OPAD document)
   };
   static DiskStat statFile(const QString& file);
   // `cache`: the session's shapes, filled with the bodies read (keys are content hashes). `skipKnown` false reads every

@@ -578,7 +578,7 @@ AppDocument::DiskRead AppDocument::readDisk(const QString& file, std::shared_ptr
     }));
     auto manifest = std::make_shared<opad::Manifest>(opad::Manifest::of(*doc));
     manifest->bodies.insert(r.bodies.begin(), r.bodies.end());
-    if (base) r.relation = opad::relation(*base, *doc);
+    r.relation = base ? opad::relation(*base, *doc) : opad::Relation::rewritten;  // nothing to compare with: never "same"
     if (cache) {  // the bodies read, parsed here rather than on the UI thread when they are displayed
       doc->shape_cache = std::move(cache);
       opad::warm_shape_cache(*doc);

@@ -640,5 +640,6 @@
  "Could not resolve the conflicts": "تعذّر حلّ التعارضات",
  "Conflicts resolved. Both sides changed the design: regenerate it, then commit the merge.": "حُلّت التعارضات. غيّر الطرفان التصميم: أعد توليده، ثم أودع الدمج.",
  "Conflicts resolved: commit the merge to finish it.": "حُلّت التعارضات: أودع الدمج لإتمامه.",
- "Who changed what could not be read from git: %1": "تعذّرت قراءة من غيّر ماذا من git: %1"
+ "Who changed what could not be read from git: %1": "تعذّرت قراءة من غيّر ماذا من git: %1",
+ "It was missing when your version was restored into it, and is back now.": "كان مفقودًا حين استُعيدت نسختك إليه، وقد عاد الآن."
 }

@@ -167,6 +167,7 @@ void DiskSync::decide() {
     }
     return reload(true);
   }
+  if (!r.base) return showReplaced(tr("It was missing when your version was restored into it, and is back now."));
   if (r.relation == opad::Relation::other) return showReplaced(tr("It is another document now."));
   if (r.relation == opad::Relation::rewritten)
     return showReplaced(tr("Its history no longer continues yours: another branch was checked out, or it was reset or rebased."));

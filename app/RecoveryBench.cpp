@@ -6,7 +6,8 @@
 // without a refusal. Then a snapshot renames Box3, the session undoes that and saves another change: the offer reads it
 // as one newer change on disk, Merge into current adds the rename as one undo step, and Restore into file puts the rename
 // after the file's change. Show unsaved changes is Review changes… in the unsaved-changes question, and Discard deletes a
-// snapshot with its .meta. Last, a file that became another document is restored into but never written over unasked.
+// snapshot with its .meta. Last, a file that became another document is restored into but never written over unasked, nor
+// one restored into while missing that comes back.
 // perf:<prefix> times a snapshot, the offer's preview and Restore into file on any saved document.
 #include <QAction>
 #include <QCoreApplication>
@@ -354,6 +355,43 @@ OPAD_BENCH(OPAD_BENCH_RECOVERY_DIFF, recovery_diff) {
           require(!doc->save(), "Save refused while the file is another document");
           require(opad::Document::load_index(std::filesystem::path(st->file.toStdU16String())).header.uuid != doc->doc.header.uuid, "the other document left as it is");
           pass("a file that became another document is not written over unasked: " + st->answer);
+          require(doc->save(true), "overwritten");  // then it goes missing: restored into it, and the file coming back is not taken for the same
+          doc->run("rename", {{"target", st->body["Box1"]}, {"name", "Gone"}});
+          snap();
+          return true;
+        },
+        [=] {
+          if (!st->snapped || !idle()) return false;
+          st->second = newest();
+          doc->undo();
+          require(!doc->isDirty(), "back at the saved state");
+          QFile::remove(st->file);
+          open({st->second});
+          return true;
+        },
+        [=] {
+          if (!read()) return false;
+          require(base()->property("state") == "missing", "missing: " + base()->text());
+          require(press(RecoveryManager::RestoreFile, st->second) == RecoveryManager::RestoreFile, "Restore into file");
+          return true;
+        },
+        [=] {
+          if (!st->answered || !idle()) return false;
+          require(st->ok && QFileInfo(doc->path()) == QFileInfo(st->file) && name(st->body["Box1"]) == "Gone" && doc->isDirty() && !QFileInfo::exists(st->file),
+                  "restored into the missing file: " + st->answer);
+          opad::Document back = doc->doc;  // the file comes back (a checkout, a move) without the session's last change
+          back.truncate_ops(back.ops.size() - 1);
+          back.save_as(std::filesystem::path(st->file.toStdU16String()));
+          return true;
+        },
+        [=] {
+          bool replaced = false;
+          for (auto* b : win->m_viewport->findChildren<Banner*>()) replaced = replaced || b->state() == "replaced";
+          if (!replaced || !idle()) return false;
+          const std::string before = opad::read_text_file(std::filesystem::path(st->file.toStdU16String()));
+          require(!doc->save(), "Save refused while the file that came back is unread");
+          require(opad::read_text_file(std::filesystem::path(st->file.toStdU16String())) == before && name(st->body["Box1"]) == "Gone", "the file left as it came back");
+          pass("a file back after a restore into it while missing is not written over unasked");
           return true;
         },
     };
