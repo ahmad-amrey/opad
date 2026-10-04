@@ -218,7 +218,7 @@ OPAD_BENCH(OPAD_BENCH_TOAST, toast) {
   w.m_doc->run("rename", opad::json{{"target", body}, {"name", "Bench body"}});
   ToastStack* stack = w.m_toasts;
   stack->clear();
-  Toast* saved = stack->toast("Saved to box.opad", QString(), {}, 4000);  // outlives the theme switches below
+  Toast* saved = stack->toast("Saved to box.opad", QString(), {}, 7000);  // outlives the two theme switches below (1.5-2 s each, more on a busy machine)
   Toast* renamed = stack->toast("Renamed the body to Bench body", QObject::tr("Undo"), [&w] { w.m_doc->undo(); }, 0);
   Toast* warned = stack->toast("A reference was re-picked by its nearest match after its body changed; check the fillet before you go on", QString(), {}, 0);
   const QRect vp = w.m_viewport->rect();
