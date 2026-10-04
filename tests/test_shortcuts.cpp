@@ -45,6 +45,7 @@ TEST(prefix_and_context_conflicts) {
   CHECK(!shortcuts::overlaps("sketch.dimension","inspect.distance"));
   CHECK(!shortcuts::overlaps("sketch.trim","edit.selecttouched"));
   CHECK(shortcuts::overlaps("sketch.line","view.home"));
+  CHECK(shortcuts::scope("view.hidden")==shortcuts::OutsideSketch);CHECK(shortcuts::scope("view.hiddenEdges")==shortcuts::OutsideSketch);
 }
 TEST(migration_and_explicit_empty_bindings) {
   QSettings s;s.clear();s.setValue("shortcuts/view.ortho","O");s.setValue("shortcuts/view.top","Alt+Q");s.setValue("shortcuts/view.grid","");
