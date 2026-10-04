@@ -25,6 +25,7 @@ if(MSVC)
 else()
   add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
+include(cmake/toolchain_speed.cmake)  # ccache launcher and MinGW LLD when installed (OPAD_CCACHE, OPAD_LLD)
 
 # Put every runtime artefact side by side so DLL lookup works out of the box on Windows.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
