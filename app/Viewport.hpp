@@ -192,6 +192,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double twistAngle() const;       // how far it is turned now, degrees
   void setAnimateViews(bool on);   // setting view/animate (default on)
   bool animateViews() const { return m_animateViews; }
+  void benchAnimate(bool on) { m_forceAnimate = on; }  // benches: camera moves animate in a hidden window as on screen
 
   // Startup (StartUp.hpp, UI-44): the OpenGL viewer is made by warmUp(), which the window calls once its shell has been
   // painted, and its first frame (the shaders) drawn by firstFrame() on a later turn; a show or paint of the view before
