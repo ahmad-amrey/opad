@@ -139,13 +139,13 @@ TEST(every_registered_command_has_help) {
   CHECK(ids.size() > 300 && ids.count("help.reference") && ids.count("drawings.baseView.top") && ids.count("vcs.push") && ids.count("edit.copy") &&
         ids.count("drawing2d.layers") && ids.count("file.reveal") && ids.count("workspace.drawings") && ids.count("sketch.commandLine") &&
         ids.count("assets.link") && ids.count("canvas.insert") && ids.count("kicad.insert") && ids.count("drawings.dimension"));
-  // Commands of the tracks merged after the wave 3 help pass (assets, measure, hidden-line views, the drawings' views and
-  // sheets, Reset Home): their records and clips are still to be written. A listed command that has help is stale here.
+  // Commands of the tracks merged after the wave 3 help pass (assets, measure, the drawings' views and sheets): their
+  // records and clips are still to be written. A listed command that has help is stale here.
   // The second list: the commands of the linked files, the canvas, the drawings' annotations and KiCad, which the scan
   // found only once it learned their areas' helpers (the richtip bench listed them as without help).
   const QStringList pending = QStringList{"assets.autoSync", "drawings.auxiliaryView", "drawings.breakView", "drawings.breakoutView", "drawings.cropView",
                                           "drawings.detailView", "drawings.exportDrawing", "drawings.issue", "drawings.print", "drawings.sectionView",
-                                          "drawings.templateFields", "inspect.material", "view.resetHome"} +
+                                          "drawings.templateFields", "inspect.material"} +
                               QStringList{"assets.copyPath", "assets.embed", "assets.kicadSettings", "assets.link", "assets.pack", "assets.replace", "assets.reveal",
                                           "assets.settings", "assets.sync", "assets.syncAll", "canvas.align", "canvas.calibrate", "canvas.edit", "canvas.finish",
                                           "canvas.fromBackdrop", "canvas.insert", "canvas.replace", "canvas.trace", "drawings.autoBalloon", "drawings.balloon",

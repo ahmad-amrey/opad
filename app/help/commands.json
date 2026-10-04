@@ -352,7 +352,7 @@
    "id": "view.untwist",
    "title": "Untwist view",
    "summary": "Stands the view upright again, without any twist.",
-   "details": "Up on screen is the model's Z again (Y when looking from above or below), or the sketch's own y while a sketch is open. Only the camera turns.",
+   "details": "Up on screen is the model's Z again (its Y when looking from above or below), or the sketch's own y while a sketch is open. Only the camera turns.",
    "keywords": ["upright", "reset roll", "level", "twist"],
    "requires": "Open or create a document first."
   },
