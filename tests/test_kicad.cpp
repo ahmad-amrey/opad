@@ -1045,6 +1045,12 @@ TEST(kicad_export_named_after_the_footprints) {
         for (int i = 0; i < 6; ++i) CHECK(about(a[i], b[i], 0.01));
         CHECK(about(s.world(c->id).at(0, 3), mine.world(theirs->id).at(0, 3)) && about(s.world(c->id).at(1, 0), mine.world(theirs->id).at(1, 0)));
       }
+      // OPAD's own 2D layers come with it, so sketches project its outline and mounting holes (UI-134).
+      const Node* outline = named(s, "Outline");
+      const Node* hole = named(s, "H1");
+      Bnd_Box box;
+      if (outline) BRepBndLib::Add(node_world_shape(d, s, outline->id), box);
+      CHECK(outline && hole && s.node(hole->parent)->name == "Mounting holes" && s.node(s.node(outline->parent)->parent)->id == s.roots[0] && box_is(box, 0, -30, 0, 50, 0, 0));
       // The sync preview reads it as it reads the reader's.
       CHECK(!kicad_sync_preview(d, {}, f.board)["changed"].get<bool>());
     }
@@ -1115,6 +1121,8 @@ TEST(kicad_export_linked) {
   const Node* r1 = component_for(s, "R1");
   CHECK(r1 && node_json(d, r1->id)["kicad"]["ref"] == "R1");
   const std::string r1_id = r1 ? r1->id : std::string();
+  const std::string holes_id = named(s, "Mounting holes") ? named(s, "Mounting holes")->id : std::string();
+  CHECK(!holes_id.empty() && named(s, "Outline"));
   d.save();
   AssetOptions with;
   with.derive = derive_asset;
@@ -1142,6 +1150,7 @@ TEST(kicad_export_linked) {
   design::commit(clone, std::move(plan));
   s = resolve(clone);
   CHECK(s.node(r1_id) && about(s.world(r1_id).at(0, 3), 12) && asset_status(clone, with)[0].state == "ok");
+  CHECK(s.node(holes_id) && !s.node(s.node(holes_id)->children.at(0))->body_missing);  // the layers keep their ids through a sync
   set_env("OPAD_FAKE_KICAD_LOG", "");
 }
 

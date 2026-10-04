@@ -965,6 +965,13 @@ class Builder {
     return {{"components", parts}, {"mounting", holes_at}, {"thickness", thickness}, {"holes", holes.size()}, {"outline", outline()}};
   }
 
+  // The hidden 2D layers alone, in the frame `opt` chooses (a board read through KiCad's own export gets its outline and
+  // mounting holes from here, so sketches project them as they do from OPAD's reader: UI-134).
+  json layers(const std::string& op_id) {
+    read(parse());
+    return layers2d(op_id);
+  }
+
   // The page point the board's frame starts at, as reading it chooses it (a Builder reads its board once).
   P2 frame() {
     read(parse());
@@ -2002,7 +2009,7 @@ std::filesystem::path kicad_cli_export(const std::filesystem::path& board, const
   return out;
 }
 
-json kicad_label_export(json& data, const Document& shapes, const std::filesystem::path& board, const json& options) {
+json kicad_label_export(json& data, Document& shapes, const std::filesystem::path& board, const json& options) {
   KicadOptions ko;
   ko.components = options.value("components", true);
   ko.dnp = options.value("dnp", true);
@@ -2148,6 +2155,12 @@ json kicad_label_export(json& data, const Document& shapes, const std::filesyste
   for (size_t i = 0; i < fps.size(); ++i)
     if (!claims.count(i) && unplaced.size() < 64) unplaced.push_back(fps[i].value("ref", ""));
   const json report = {{"by_name", by_name}, {"by_place", claims.size() - by_name}, {"unplaced", unplaced}};
+  {  // OPAD's own hidden 2D layers (outline, mounting holes, courtyards), stored as the export's parts are (live in a viewer read)
+    ImportOptions o;
+    o.kicad = ko;
+    o.viewer = shapes.has_live_bodies();
+    if (json layers = Builder(shapes, board, o).layers(data.value("id", new_uuid())); !layers.is_null()) root["children"].push_back(std::move(layers));
+  }
   data["source"] = utf8(board.filename());
   data["kicad"] = {{"origin", b["origin"]}, {"thickness", b["thickness"]}, {"holes", b["holes"]}, {"outline", b["outline"]},
                    {"options", {{"components", ko.components}, {"dnp", ko.dnp}, {"vias", false}}}, {"reader", "kicad-cli"}, {"refdes", report}};

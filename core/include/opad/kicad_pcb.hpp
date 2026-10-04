@@ -87,8 +87,10 @@ std::filesystem::path kicad_cli_export(const std::filesystem::path& board, const
 // "<board>_copper", ...) stay the board's; any other near a footprint without one on its side is that one's by place; each
 // footprint becomes a component "R1 R_0603" carrying kicad {ref, uuid, footprint, side, models}
 // at the footprint's place, as OPAD's own reader makes it (sync previews and stable ids by footprint uuid). The op gets the
-// board's name and its "kicad" record; returns {"by_name", "by_place", "unplaced" (references without a part)}.
-json kicad_label_export(json& data, const Document& shapes, const std::filesystem::path& board, const json& options);
+// board's name and its "kicad" record, and OPAD's hidden 2D layers of the board (outline, mounting holes, courtyards: their bodies
+// added to `shapes`, live when its parts are) so sketches project them as from OPAD's reader (UI-134); returns {"by_name",
+// "by_place", "unplaced" (references without a part)}.
+json kicad_label_export(json& data, Document& shapes, const std::filesystem::path& board, const json& options);
 
 // A board read through KiCad's export (ImportOptions::kicad.kicad_cli): exported, read as a STEP, its parts named after their
 // footprints. link_file links it instead, the board the source and the STEP derived from it (assets.hpp).

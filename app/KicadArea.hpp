@@ -42,7 +42,8 @@ class KicadArea : public AreaController {
   void documentChanged(bool replaced) override;
 
   // A KiCad board of the document as the scene has it: its top node, its Outline layer and Mounting holes component (empty
-  // when the import has none: an older one, or KiCad's own export), the holes and the parts (footprints' components).
+  // when the import has none: an older one, or KiCad's own export read before it had them), the holes and the parts (footprints'
+  // components).
   struct Board {
     std::string import, root, outline, holes;
     QString name;
