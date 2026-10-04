@@ -67,9 +67,10 @@ CASES = [
     # changed; exported as issued without a note added since; a second revision without PDF or git. <prefix>.dialog.png,
     # <prefix>.issue.png.
     ("sheet-issue", "empty", {"OPAD_BENCH_SHEET_ISSUE": "{prefix}"}),
-    # Print… (UI-86): the drawing's sheets drawn on a worker, the dialog's previews rendered on a worker page by page, both
-    # sheets printed at actual size and one fitted, through the printer path into PDFs whose pages are checked; Export sheet
-    # offers DWG only with a converter. <prefix>.print.png, .actual.pdf, .fit.pdf.
+    # Print… (UI-86): the drawing's sheets drawn on a worker, the dialog's previews rendered on a worker page by page (whole in
+    # the label, again when it grows), both sheets printed at actual size and the previewed one fitted, through the printer
+    # path into PDFs whose pages are checked, a print cancelled after a page leaves nothing; Export sheet offers DWG only with
+    # a converter. <prefix>.print.png, .actual.pdf, .fit.pdf.
     ("sheet-print", "empty", {"OPAD_BENCH_SHEET_PRINT": "{prefix}"}),
     # Section, detail and auxiliary views, crops and breaks (UI-82) with mouse and key events: the cutting line clicked
     # (kept upright, previewed, Esc takes a point back), Enter, the section measured on a worker and placed lined up on

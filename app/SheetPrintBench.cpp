@@ -14,15 +14,17 @@
 #include "AppDocument.hpp"
 #include "BenchRegistry.hpp"
 #include "DocsArea.hpp"
+#include "Jobs.hpp"
 #include "SheetCanvas.hpp"
 #include "SheetPage.hpp"
 #include "SheetPrint.hpp"
 
 // OPAD_BENCH_SHEET_PRINT=<prefix> (UI-86): a two-sheet drawing of a plate. Print… (Ctrl+Alt+P) draws the drawing's sheets on
 // a worker and opens the print dialog on the shown sheet: its preview rendered on a worker (white paper, black ink, the
-// sheet's proportions), "sheet 1 of 2 · A3", the next sheet's preview; printed at actual size to a PDF through the printer
-// path on a worker: two A3 landscape pages; this sheet alone fitted to the printer's paper: one landscape page. Export sheet…
-// offers DWG only while a converter is found. <prefix>.print.png, <prefix>.actual.pdf, <prefix>.fit.pdf.
+// sheet's proportions, shown whole in its label; a bigger dialog renders it again, bigger), "sheet 1 of 2 · A3", the next
+// sheet's preview; printed at actual size to a PDF through the printer path on a worker: two A3 landscape pages; This sheet is
+// the sheet previewed, alone fitted to the printer's paper: one landscape page; a print cancelled after its first page leaves
+// no PDF. Export sheet… offers DWG only while a converter is found. <prefix>.print.png, <prefix>.actual.pdf, <prefix>.fit.pdf.
 OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -92,7 +94,20 @@ OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
     }
     check(dialog->pageLabel()->text().contains("sheet 1 of 2") && dialog->pageLabel()->text().contains("A3") && dialog->allButton()->isChecked(),
           "on the shown sheet: " + dialog->pageLabel()->text() + "; all sheets chosen");
+    const auto shown = [&] {  // the preview as the label shows it: whole (never cropped), filling most of it
+      const QSizeF pm = dialog->previewLabel()->pixmap().deviceIndependentSize();
+      const QSize room = dialog->previewLabel()->size();
+      return std::pair<bool, QString>{pm.width() <= room.width() + 1 && pm.height() <= room.height() + 1 &&
+                                          std::max(pm.width() / room.width(), pm.height() / room.height()) > 0.8,
+                                      QString("%1 x %2 in %3 x %4").arg(pm.width()).arg(pm.height()).arg(room.width()).arg(room.height())};
+    };
+    check(shown().first, "the preview shown whole in its label, for its size: " + shown().second);
     dialog->grab().save(prefix + ".print.png");
+    const int narrow = dialog->preview().width();
+    dialog->resize(dialog->width() + 300, dialog->height() + 200);
+    const bool again = waitFor([&] { return !dialog->previewReady(); }, 2000) && waitFor([&] { return dialog->previewReady(); }, 30000);  // before the message
+    check(again && dialog->preview().width() > narrow && shown().first,
+          QString("a bigger dialog renders it again, bigger (%1 -> %2 px): ").arg(narrow).arg(dialog->preview().width()) + shown().second);
     dialog->showPage(1);
     check(waitFor([&] { return dialog->previewReady(); }, 30000) && dialog->pageLabel()->text().contains("sheet 2 of 2"), "the next sheet's preview");
     // Actual size, both sheets, into a PDF through the printer.
@@ -115,7 +130,11 @@ OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
     if (!dialog) throw opad::Error("no dialog");
     const QString fit = prefix + ".fit.pdf";
     QFile::remove(fit);
-    dialog->findChild<QRadioButton*>("print.this")->setChecked(true);
+    dialog->thisButton()->setChecked(true);
+    dialog->showPage(1);
+    check(waitFor([&] { return dialog->previewReady(); }, 30000) && dialog->settings().pages == std::vector<int>{1} &&
+              dialog->thisButton()->text().contains(dialog->pageLabel()->text().section(QString::fromUtf8(" · "), 0, 0)),
+          "This sheet is the sheet previewed: " + dialog->thisButton()->text());
     dialog->fitButton()->setChecked(true);
     dialog->setOutputFile(fit);
     docs->lastPrint = nullptr;
@@ -125,6 +144,24 @@ OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
     size = {};
     const int one = pdfPages(fit, &size);
     check(one == 1 && size.width() > size.height(), QString("fitted: one landscape page of %1 x %2 pt").arg(size.width()).arg(size.height()));
+    // Cancelled after its first page: nothing goes out (here the PDF is removed; a printer's job is aborted).
+    dialog = nullptr;
+    docs->printSheets([&](SheetPrintDialog* d) { dialog = d; });
+    check(waitFor([&] { return dialog != nullptr && dialog->previewReady(); }, 30000), "Print… a third time");
+    if (!dialog) throw opad::Error("no dialog");
+    const QString dropped = prefix + ".cancelled.pdf";
+    QFile::remove(dropped);
+    dialog->allButton()->setChecked(true);
+    dialog->setOutputFile(dropped, 1500);
+    docs->lastPrint = nullptr;
+    emit dialog->printRequested();
+    dialog->accept();
+    Job* job = docs->services().jobs()->current();
+    const bool begun = job && job->title().startsWith("Printing") && waitFor([&] { return QFile::exists(dropped); }, 20000);
+    if (job && begun) job->cancel();
+    check(begun && waitFor([&] { return docs->lastPrint.is_object(); }, 5000) && docs->lastPrint.value("error", "") == "cancelled" &&
+              waitFor([&] { return !QFile::exists(dropped); }, 10000),
+          "cancelled after its first page: the print reports it and its PDF is gone");
     // Export sheet… offers DWG only while a converter is found (here: OPAD_DXF2DWG naming a file, then none); a drawing only PDF.
     const auto has = [](const std::vector<std::pair<QString, QString>>& types, const char* f) {
       return std::any_of(types.begin(), types.end(), [&](const auto& t) { return t.first == f; });

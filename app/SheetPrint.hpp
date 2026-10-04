@@ -19,6 +19,7 @@ class QComboBox;
 class QLabel;
 class QRadioButton;
 class QSpinBox;
+class QTimer;
 class QToolButton;
 
 namespace printing {
@@ -30,8 +31,10 @@ struct Settings {
   int copies = 1;
   std::vector<int> pages;  // which; empty: all
   QString title;
+  int pauseMs = 0;  // benches: a wait after each page, so that a cancel lands between pages
 };
-// The pages on a printer or into a PDF file, on a worker; done(ok, error) on the UI thread. Cancel stops between pages.
+// The pages on a printer or into a PDF file, on a worker; done(ok, error) on the UI thread. Cancel stops between pages and
+// sends nothing: the printer's job is aborted, a PDF removed.
 void print(JobRunner* jobs, Pages pages, Settings settings, std::function<void(bool ok, const QString& error)> done);
 opad::drawing::Display inked(const opad::drawing::Display& d);  // everything in black ink (images as they are)
 }  // namespace printing
@@ -42,11 +45,14 @@ class SheetPrintDialog : public QDialog {
   SheetPrintDialog(JobRunner* jobs, printing::Pages pages, const QStringList& names, int current, QWidget* parent);
   ~SheetPrintDialog() override { *m_alive = false; }
   printing::Settings settings() const;
-  void setOutputFile(const QString& pdf) { m_outputFile = pdf; }  // benches: print into this PDF instead of a printer
+  // Benches: print into this PDF instead of a printer, waiting pauseMs after each page.
+  void setOutputFile(const QString& pdf, int pauseMs = 0) { m_outputFile = pdf, m_pause = pauseMs; }
   // For benches.
   int page() const { return m_page; }
   void showPage(int index);
-  bool previewReady() const { return !m_rendering && !m_preview.isNull(); }
+  bool previewReady() const;  // rendered for the size and screen it is shown on
+  QLabel* previewLabel() const { return m_view; }
+  QRadioButton* thisButton() const { return m_this; }
   const QImage& preview() const { return m_preview; }
   QComboBox* printerBox() const { return m_printer; }
   QRadioButton* fitButton() const { return m_fit; }
@@ -59,7 +65,9 @@ class SheetPrintDialog : public QDialog {
   void printRequested();
 
  private:
-  void render();  // the shown page's preview on a worker
+  void render();  // the shown page's preview on a worker, for the label's size and the screen's pixel ratio
+  void resizeEvent(QResizeEvent* e) override;  // rendered again (debounced), also on another screen
+  bool event(QEvent* e) override;
   JobRunner* m_jobs;
   printing::Pages m_pages;
   QStringList m_names;
@@ -67,11 +75,13 @@ class SheetPrintDialog : public QDialog {
   bool m_rendering = false, m_again = false;
   QImage m_preview;
   QString m_outputFile;
+  int m_pause = 0;
   QLabel *m_view, *m_pageLabel;
   QToolButton *m_prev, *m_next;
   QComboBox* m_printer;
   QRadioButton *m_all, *m_this, *m_fit, *m_actual;
   QCheckBox* m_black;
   QSpinBox* m_copies;
+  QTimer* m_resized;
   std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };

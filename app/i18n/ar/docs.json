@@ -546,5 +546,6 @@
   "a broken-out section's outline needs three points apart": "يحتاج محيط المقطع الموضعي إلى ثلاث نقاط متباعدة",
   "that face is seen at a slant in this view: pick one of its edges": "هذا الوجه مائل في هذا المسقط: اختر إحدى حوافه",
   "issue revision": "إصدار مراجعة",
-  "the sheet is gone": "لم تعد الورقة موجودة"
+  "the sheet is gone": "لم تعد اللوحة موجودة",
+  "This sheet: %1": "هذه اللوحة: %1"
 }

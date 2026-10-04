@@ -3,6 +3,8 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QEvent>
+#include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -17,6 +19,8 @@
 #include <QRadioButton>
 #include <QSettings>
 #include <QSpinBox>
+#include <QThread>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -99,9 +103,17 @@ void print(JobRunner* jobs, Pages pages, Settings s, std::function<void(bool, co
             target = QRectF(full.center() - QPointF(size.width() / 2, size.height() / 2), size);
           }
           dr::paint(painter, d, page.window, target);
+          if (s.pauseMs > 0) QThread::msleep(static_cast<unsigned long>(s.pauseMs));
+        }
+        if (p.cancelled()) {  // the pages painted so far go nowhere: the printer's job aborted (ended unsent), a PDF removed
+          if (painter.isActive()) {
+            printer.abort();
+            painter.end();
+          }
+          if (!s.pdf.isEmpty()) QFile::remove(s.pdf);
+          throw opad::Error("cancelled");
         }
         if (painter.isActive()) painter.end();
-        if (p.cancelled()) throw opad::Error("cancelled");
       },
       std::move(done));
 }
@@ -201,6 +213,10 @@ SheetPrintDialog::SheetPrintDialog(JobRunner* jobs, printing::Pages pages, const
   footer->addWidget(print);
   right->addLayout(footer);
   h->addLayout(right);
+  m_resized = new QTimer(this);
+  m_resized->setSingleShot(true);
+  m_resized->setInterval(150);
+  connect(m_resized, &QTimer::timeout, this, [this] { render(); });
   connect(m_prev, &QToolButton::clicked, this, [this] { showPage(m_page - 1); });
   connect(m_next, &QToolButton::clicked, this, [this] { showPage(m_page + 1); });
   connect(m_black, &QCheckBox::toggled, this, [this] { render(); });
@@ -224,9 +240,22 @@ printing::Settings SheetPrintDialog::settings() const {
   s.fit = m_fit->isChecked();
   s.black = m_black->isChecked();
   s.copies = m_copies->value();
-  if (m_this->isChecked()) s.pages = {m_current};
-  s.title = m_names.value(m_current);
+  s.pauseMs = m_pause;
+  if (m_this->isChecked()) s.pages = {m_page};  // the sheet previewed
+  s.title = m_names.value(m_this->isChecked() ? m_page : m_current);
   return s;
+}
+
+bool SheetPrintDialog::previewReady() const { return !m_rendering && !m_again && !m_preview.isNull() && !m_resized->isActive(); }
+
+void SheetPrintDialog::resizeEvent(QResizeEvent* e) {
+  QDialog::resizeEvent(e);
+  m_resized->start();
+}
+
+bool SheetPrintDialog::event(QEvent* e) {
+  if (e->type() == QEvent::DevicePixelRatioChange) m_resized->start();  // moved to a screen of another scale
+  return QDialog::event(e);
 }
 
 void SheetPrintDialog::showPage(int index) {
@@ -237,6 +266,8 @@ void SheetPrintDialog::showPage(int index) {
   const dr::Page page = dr::page_for((*m_pages)[static_cast<size_t>(m_page)]);
   m_pageLabel->setText(tr("%1 · sheet %2 of %3 · %4").arg(m_names.value(m_page)).arg(m_page + 1).arg(n).arg(
       page.paper.empty() ? QString("%1 × %2 mm").arg(page.w).arg(page.h) : QString::fromStdString(page.paper)));
+  m_this->setText(n > 1 ? tr("This sheet: %1").arg(m_names.value(m_page)) : tr("This sheet"));
+  m_actual->setText(page.paper.empty() ? tr("Actual size (1:1)") : tr("Actual size (1:1 on %1)").arg(QString::fromStdString(page.paper)));
   render();
 }
 
@@ -270,8 +301,11 @@ void SheetPrintDialog::render() {
         }
         if (!ok) return m_view->setText(error);
         m_preview = *image;
+        const double dpr = devicePixelRatioF();
         QPixmap pm = QPixmap::fromImage(m_preview);
-        pm.setDevicePixelRatio(devicePixelRatioF());
+        const QSize room = m_view->size() * dpr;  // the label shrank meanwhile: never cropped (a new one is on its way)
+        if (pm.width() > room.width() || pm.height() > room.height()) pm = pm.scaled(room, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        pm.setDevicePixelRatio(dpr);
         m_view->setPixmap(pm);
       });
 }
