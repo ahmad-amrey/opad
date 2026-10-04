@@ -163,6 +163,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_DRAWINGFILTERS (ViewportDrawingBench.cpp): in the Face filter every drawing layer is picked whole, in the
   // Vertex filter a big layer's ends in groups (UI-42): hover, click, a box and selectRefs reach the right ones
   bool benchDrawingFilter(const QString& prefix);
+  // OPAD_BENCH_BOXSCAN (ViewportBoxBench.cpp): crossing and window boxes settle within 3 s and take exactly what is seen in
+  // them (UI-43)
+  bool benchBoxScan(const QString& prefix);
   // OPAD_BENCH_ORBITPIVOT (ViewportOrbitBench.cpp): the pivot of a press away from a big drawing is found run by run, fast,
   // and is the point a scan of every segment finds (UI-51)
   bool benchOrbitPivot(const QString& prefix);
@@ -408,6 +411,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_selectThrough=false, m_boxCrossing=false;
   Graphic3d_Vec2i m_boxStart,m_boxEnd;
   Job* m_boxJob=nullptr;
+  // The view as drawn, for the box's visibility test (ViewportSelection.cpp, UI-43): the projection and the frame's depth.
+  struct DepthImage;
+  std::shared_ptr<const DepthImage> captureDepth();
   CursorWarpGate m_warpGate;
   void updateGridExtent();
   void applyGrid();  // shown when the setting or the origin guide asks for it

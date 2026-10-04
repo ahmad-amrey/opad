@@ -170,7 +170,7 @@ bool Viewport::benchPicking() {
       Handle(AIS_Shape) nearAis = new AIS_Shape(box), farAis = new AIS_Shape(box);
       nearAis->SetLocalTransformation(nearShape->Transformation());
       farAis->SetLocalTransformation(farShape->Transformation());
-      m_ctx->Display(nearAis, false); m_ctx->Display(farAis, false);
+      m_ctx->Display(nearAis, AIS_Shaded, -1, false); m_ctx->Display(farAis, AIS_Shaded, -1, false);  // shaded: a box takes what is drawn in front (UI-43)
       m_items["near"].ais = nearAis; m_items["far"].ais = farAis;
       m_navNodes[nearShape.get()] = "near"; m_navNodes[farShape.get()] = "far";
       m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);

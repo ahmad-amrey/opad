@@ -194,6 +194,13 @@ CASES = [
     # On a synthetic DXF and on the architectural DWG where it is. <prefix>.vertices.png.
     ("drawing-filters", drawing_layers, {"OPAD_BENCH_DRAWINGFILTERS": "{prefix}"}),
     ("drawing-filters-dwg", architectural_dwg, {"OPAD_BENCH_DRAWINGFILTERS": "{prefix}"}),
+    # Box selection's visibility test (UI-43): a crossing and a window box over as1 in the Body filter and a crossing box in
+    # the Face filter settle within 3 s (a crossing box kept a 23.5 s job: every pixel of the box was picked once only hidden
+    # parts were left) and take exactly what is drawn in the box (each candidate's frame against the frame without it); on
+    # the Engine (shown in isolation) the three boxes settle within 15 s (bodies: 19-21 s before, faces: over a minute).
+    # <prefix>.crossing.png.
+    ("box-scan", "tests/corpus/stepcode-as1-oc-214.stp", {"OPAD_BENCH_BOXSCAN": "{prefix}"}),
+    ("box-scan-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_BOXSCAN": "{prefix}"}),
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,
     # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.
     ("selection-publish", boxes, {"OPAD_BENCH_SELPUBLISH": "{prefix}"}),
