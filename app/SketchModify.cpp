@@ -65,13 +65,31 @@ double chamferAt(const Sketch& sk,int point,double first,double angle) {
 }
 const QStringList tools={"move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","split","extend","break","chamfer","union","subtract","intersect","heal","explode"};
 }
+bool SketchEditor::chainOnClick() const { return option("chain:"+m_tool,m_tool=="offset"?"1":"0")=="1"; }
+void SketchEditor::pickCurve(int id) {
+  const bool picked=std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end();
+  std::vector<int> ids{id};
+  if(chainOnClick())for(int e:connected_entities(m_sk,{id}))if(e!=id && m_sk.entity(e))ids.push_back(e);
+  if(picked) {  // a picked curve again drops it (its chain with it: re-adding the chain kept it selected for good)
+    const std::set<int> drop(ids.begin(),ids.end());
+    m_sel.erase(std::remove_if(m_sel.begin(),m_sel.end(),[&](int s){return drop.count(s)>0;}),m_sel.end());
+  } else for(int e:ids)if(std::find(m_sel.begin(),m_sel.end(),e)==m_sel.end())m_sel.push_back(e);
+}
 bool SketchEditor::modifyClick(double u,double v) {
+  if(m_tool=="break_link") {  // a click picks a linked curve, a window several (TODO 11 wave 3, P4); Enter or Apply unlinks them
+    const auto hit=hitTest(u,v);
+    const auto* e=hit.kind==Hit::Entity?m_sk.entity(hit.id):nullptr;
+    if(!e || e->source.is_null())emit status(tr("Pick a linked curve: they are drawn amber."));
+    else pickCurve(e->id);
+    rebuild();toolPrompt();emit changed();return true;
+  }
   if(!tools.contains(m_tool))return false;
   const auto hit=hitTest(u,v);
   if(m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")=="axis") {
+    // The line, then its mirror image as a preview (TODO 11 wave 3, P4): Enter or Apply keeps it.
     if(const auto* e=m_sk.entity(hit.id);e && e->type==SkEntity::Type::Line)m_picked={e->id};
     else emit status(tr("Pick mirror line"));
-    rebuild();toolPrompt();emit changed();return true;
+    rebuild();toolPrompt();emit changed();scheduleToolPreview();return true;
   }
   if(m_tool=="split") {
     if(hit.kind!=Hit::Entity){emit status(tr("Pick inside a curve to split it."));return true;}
@@ -84,7 +102,7 @@ bool SketchEditor::modifyClick(double u,double v) {
     m_clicks.push_back({u,v});if(m_clicks.size()>2)m_clicks.erase(m_clicks.begin());
   } else if(hit.kind!=Hit::None) {
     if(m_tool=="chamfer" && hit.kind==Hit::Point)m_sel={hit.id};
-    else if(hit.kind==Hit::Entity){auto at=std::find(m_sel.begin(),m_sel.end(),hit.id);if(at==m_sel.end())m_sel.push_back(hit.id);else m_sel.erase(at);if(option("chain","0")=="1")selectConnected();}
+    else if(hit.kind==Hit::Entity)pickCurve(hit.id);
   }
   rebuild();toolPrompt();emit changed();scheduleToolPreview();return true;
 }
@@ -97,10 +115,12 @@ bool SketchEditor::applyModify() {
     auto length=[&](const char* key,const char* fallback){return table.length(option(key,fallback).toStdString());};
     std::vector<int> ids;for(int id:m_sel)if(m_sk.entity(id))ids.push_back(id);
     if(m_tool=="mirror") {
-      if(ids.empty())throw opad::Error("select curves to mirror first");
+      if(ids.empty()){if(m_previewRequested)return true;throw opad::Error("select curves to mirror first");}
       if(option("mirrorAxis","picked")!="picked")mirrorSelection(0);
       else if(!m_picked.empty())mirrorSelection(m_picked.front());
-      else {m_options["mirrorStage"]="axis";toolPrompt();}
+      // Apply with the curves chosen and no line yet: now the line. Never from the preview, which runs 120 ms after each
+      // curve picked: that moved the tool on to the line after the first curve, and the next click became the line.
+      else if(!m_previewRequested){m_options["mirrorStage"]="axis";toolPrompt();}
     } else if(m_tool=="heal") {
       const double tolerance=length("healTolerance","0.05 mm");
       runSketchEdit(tr("Heal endpoints"),[tolerance](Sketch& sk){heal_endpoints(sk,tolerance);heal_to_curves(sk,tolerance);});

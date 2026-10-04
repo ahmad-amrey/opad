@@ -9,6 +9,7 @@
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "I18n.hpp"
+#include "Units.hpp"
 #include <AIS_TexturedShape.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -48,7 +49,24 @@ std::pair<double,double> imagePoint(const opad::json& image,double x,double y) {
 }
 bool SketchEditor::imageClick(double u,double v) {
   if(m_tool!="image_insert"&&m_tool!="image_calibrate")return false;
-  const size_t count=m_tool=="image_insert"?1:2;if(m_clicks.size()>=count)m_clicks.clear();m_clicks.push_back({u,v});toolPrompt();rebuild();return true;
+  const size_t count=m_tool=="image_insert"?1:2;if(m_clicks.size()>=count)m_clicks.clear();m_clicks.push_back({u,v});
+  // Calibrate: the two points' distance now, in the Known distance box, to type the real one over (TODO 11 wave 3, P4: as
+  // the guide shows, and as Fusion's calibrate does); one typed before the clicks stays.
+  if(m_tool=="image_calibrate" && m_clicks.size()==2) {
+    const QString measured=units::editable(units::Kind::Length,std::hypot(m_clicks[1].u-m_clicks[0].u,m_clicks[1].v-m_clicks[0].v));
+    if(!m_options.contains("knownDistance") || m_options.value("knownDistance")==m_calibrateShown){m_options["knownDistance"]=measured;m_calibrateShown=measured;}
+  }
+  toolPrompt();rebuild();emit changed();return true;
+}
+QSizeF SketchEditor::insertPicture() {
+  const QString file=option("imageFile");
+  if(file==m_insertFile)return m_insertPicture;
+  m_insertFile=file;m_insertPicture={};
+  if(file.isEmpty())return m_insertPicture;
+  QImageReader reader(file);QSize size=reader.size();  // the header only
+  if(!size.isValid()||size.isEmpty())return m_insertPicture;
+  if(reader.transformation()&QImageIOHandler::TransformationRotate90)size.transpose();  // as it is placed (keptPicture, decodePicture)
+  return m_insertPicture=QSizeF(size);
 }
 bool SketchEditor::applyImageTool() {
   if(!m_tool.startsWith("image_")&&m_tool!="vector_import"&&m_tool!="vector_export"&&m_tool!="simplify")return false;
@@ -71,6 +89,7 @@ bool SketchEditor::applyImageTool() {
     } else if(m_tool=="image_calibrate") {
       if(m_clicks.size()!=2)throw opad::Error("pick two calibration points");const auto a=m_clicks[0],b=m_clicks[1];const double known=length("knownDistance","10 mm"),distance=std::hypot(b.u-a.u,b.v-a.v);
       if(known<=0||distance<1e-9)throw opad::Error("calibration distances must be positive");const double factor=known/distance;
+      if(std::fabs(factor-1)<1e-9){emit status(tr("Type the real distance between the two points, then apply."));return true;}  // the measured one: nothing to scale
       runSketchEdit(tr("Calibrate image"),[id,a,factor](Sketch& sk){auto& image=backdrop(sk,id);image["width"]=image.at("width").get<double>()*factor;image["height"]=image.at("height").get<double>()*factor;image["position"]={a.u+(image.at("position")[0].get<double>()-a.u)*factor,a.v+(image.at("position")[1].get<double>()-a.v)*factor};});
     } else if(m_tool=="image_edit") {
       const double x=length("imageX","0 mm"),y=length("imageY","0 mm"),width=length("imageWidth","100 mm"),angle=params.angle(option("imageAngle","0 deg").toStdString()),opacity=params.number(option("imageOpacity","0.5").toStdString());

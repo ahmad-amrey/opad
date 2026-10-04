@@ -29,6 +29,9 @@ CASES = [
     ("sketch-clipboard", "empty", {"OPAD_BENCH_SKETCH_CLIPBOARD": "{prefix}"}),  # copy, cut, paste; the timeline's op id (UI-129)
     ("clipboard-bodies", "box", {"OPAD_BENCH_CLIPBOARD_BODIES": "{prefix}"}),  # bodies: new ones, linked instances, from another document (UI-129)
     ("sketch-edits", "empty", {"OPAD_BENCH_SKETCH_EDITS": "{prefix}"}),  # line-arc fillet, fence trim, one-click extend, drag merge (UI-28)
+    # The Apply tools as their guides show them (TODO 11 wave 3, P4): mirror's curves then its line, Enter applies, picks
+    # that preview, project's sources accumulating, break link picking, an image's frame and its calibration.
+    ("sketch-apply", "box", {"OPAD_BENCH_SKETCH_APPLY": "{prefix}"}),
     # Tool panels hand the keyboard back to the view after a click on a button or the slider; Esc in a panel is its (UI-05).
     ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),
     # Typed values outside the sketch: a fillet's radius, the extrude's distance and taper by the arrow (UI-122).

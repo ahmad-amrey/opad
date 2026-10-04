@@ -307,6 +307,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
   m_clicks.clear();
   m_chain.clear();
   m_picked.clear();
+  m_sources.clear();
   m_fill.clear();
   m_placingDim = false;
   m_modified = false;
@@ -428,7 +429,7 @@ void SketchEditor::undo() {
     if(!m_undoPending){m_undoPending=true;connect(m_editJob,&Job::finished,this,[this]{m_undoPending=false;if(m_active)undo();},Qt::QueuedConnection);}
     return;
   }
-  m_toolPreviewTimer.stop();m_clicks.clear();m_chain.clear();m_picked.clear();cancel_change();
+  m_toolPreviewTimer.stop();m_clicks.clear();m_chain.clear();m_picked.clear();m_sources.clear();cancel_change();
   m_tool="select";m_placingDim=false;m_dragging=false;m_boxSelecting=false;m_dimensionHandle->hide();emit toolChanged(m_tool);
   if(m_undo.empty()){rebuild();emit changed();return;}
   ++m_modelRevision;
@@ -909,7 +910,10 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   invalidatePreview();
   dropPreviewJob();
   if (!m_active || m_editJob || m_geometryJob) return;
-  const bool edgeSelection=QStringList{"offset","move","rotate","scale","copy","rect_pattern","polar_pattern","break","explode","mirror"}.contains(m_tool);
+  // A press on nothing starts a selection window with the tools that act on selected curves (break link too: TODO 11
+  // wave 3, P4). Not while mirror waits for its line: a miss there kept the window and dropped the curves to mirror.
+  const bool mirrorLine=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")=="axis";
+  const bool edgeSelection=!mirrorLine && QStringList{"offset","move","rotate","scale","copy","rect_pattern","polar_pattern","break","explode","mirror","break_link"}.contains(m_tool);
   if(edgeSelection && hitTest(u,v).kind==Hit::None){
     if(!(mods & (Qt::ShiftModifier|Qt::ControlModifier)))m_sel.clear();
     m_boxSelecting=true;m_dragU=m_boxU=u;m_dragV=m_boxV=v;rebuild();emit changed();return;
@@ -1256,8 +1260,9 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
       if(m_tool=="select")for(size_t index:candidates.points){if(index>=m_sk.points.size())continue;const auto& p=m_sk.points[index];if(selectable(p.id)&&inside(p.x,p.y)&&selected.insert(p.id).second)m_sel.push_back(p.id);}
       if(m_tool=="select")for(const auto& c:m_sk.constraints)if(selectable(c.id)) {double x,y;labelPosition(c,x,y);if(inside(x,y))m_sel.push_back(c.id);}
     }
-    if(m_tool=="offset" && option("chain","1")=="1")selectConnected();
-    rebuild();emit changed();if(m_tool!="select")scheduleToolPreview();return;
+    if(m_tool=="offset" && chainOnClick())selectConnected();
+    if(m_tool=="break_link")m_sel.erase(std::remove_if(m_sel.begin(),m_sel.end(),[this](int id){const auto* e=m_sk.entity(id);return !e || e->source.is_null();}),m_sel.end());  // linked curves only
+    rebuild();emit changed();if(m_tool!="select"){toolPrompt();scheduleToolPreview();}return;
   }
   if (!m_active || !m_dragging) return;
   if(m_editJob){m_dragReleased=true;return;}
@@ -1726,6 +1731,13 @@ size_t SketchEditor::transientSolid(const QColor& c) const {
   return n;
 }
 
+size_t SketchEditor::transientDashed(const QColor& c) const {
+  size_t n = 0;
+  if (!m_transientPrs.IsNull())
+    for (const auto& s : static_cast<const SketchPrs*>(m_transientPrs.get())->dashed) n += s.c == c;
+  return n;
+}
+
 size_t SketchEditor::transientLocked() const { return m_transientPrs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_transientPrs.get())->locked.size(); }
 size_t SketchEditor::transientCursor() const { return m_transientPrs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_transientPrs.get())->cursor.size(); }
 
@@ -1986,7 +1998,28 @@ void SketchEditor::updateTransient() {
           }
         }
       } else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") seg(a.u, a.v, cu, cv);
-      for (const auto& k : m_clicks) d.points.push_back({W(k.u, k.v), rb});  // where the clicks so far went (a centre, the first end)
+      else if (m_tool == "image_calibrate") {  // the distance being measured: to the pointer, then between the two clicks
+        if (m_clicks.size() == 1) d.dashed.push_back({W(a.u, a.v), W(cu, cv), t.amber});
+        else d.solid.push_back({W(a.u, a.v), W(m_clicks[1].u, m_clicks[1].v), t.amber});
+      }
+      for (const auto& k : m_clicks) d.points.push_back({W(k.u, k.v), m_tool == "image_calibrate" ? t.amber : rb});  // where the clicks so far went (a centre, the first end)
+    }
+    if (m_tool == "image_insert") {  // the picture's frame at the width set, its lower-left corner at the click, else at the pointer
+      const QSizeF picture = insertPicture();
+      double width = 0;
+      try {
+        std::vector<ParamDef> defs;
+        for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+        width = ParamTable(defs, m_doc->scene.units).length(option("imageWidth", "100 mm").toStdString());
+      } catch (const std::exception&) {
+      }
+      if (picture.isValid() && !picture.isEmpty() && width > 0) {
+        const double x = m_clicks.empty() ? cu : m_clicks.front().u, y = m_clicks.empty() ? cv : m_clicks.front().v, h = width * picture.height() / picture.width();
+        d.dashed.push_back({W(x, y), W(x + width, y), rb});
+        d.dashed.push_back({W(x + width, y), W(x + width, y + h), rb});
+        d.dashed.push_back({W(x + width, y + h), W(x, y + h), rb});
+        d.dashed.push_back({W(x, y + h), W(x, y), rb});
+      }
     }
     if (m_tool == "paste" && m_clip)  // the copied curves by their base point at the pointer, as the click places them
       for (const auto& line : m_clip->outline)

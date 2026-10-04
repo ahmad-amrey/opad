@@ -7,7 +7,8 @@
 //   Esc, a ladder: ends the step in progress (a chain as Enter does, a shape not made yet is dropped), then closes the
 //     tool, then clears the selection. The same from the view, the tool panel and the main window.
 //   Values typed into the tool's boxes (UI-16) come first: Enter uses them, Esc drops them. With nothing typed, Enter
-//     applies a tool whose curves are picked (an offset, a move, a pattern), as its Apply button does.
+//     applies a tool whose picks are complete (an offset, a move, a pattern, a mirror with its line, a projection with
+//     its sources, an image with its place: entersApply), as its Apply button does.
 //   A lock that a Shift tap left on (UI-19) is the next Esc's: it lets go of the line, the step goes on. Shift taps on it
 //     go through the stops along its line (where other guides or curves cross it); with none, a tap lets go too. With
 //     nothing locked and the pointer on a guide or the angle ray, Shift locks onto it: the prompt says so. With nothing
@@ -22,13 +23,13 @@ struct State {
   std::string tool = "select";
   std::size_t chain = 0;   // points of the polyline or spline being drawn
   std::size_t clicks = 0;  // clicks of a shape made by its last click (a control-point spline: its points)
-  std::size_t picks = 0;   // curves picked by a constraint, dimension, tangent, extend or mirror tool
+  std::size_t picks = 0;   // curves picked by a constraint, dimension, tangent, extend or mirror tool; a reference tool's sources
   bool boxSelecting = false;
   bool mirrorSeeds = false;  // mirror about a picked line, its curves being chosen: Enter goes on to the line
   bool mirrorAxis = false;   // mirror, the line being picked
   bool selection = false;
   bool typed = false;    // values typed into the tool's boxes and not used yet
-  bool applies = false;  // the tool's Apply would act now: an offset, move, rotate, scale or pattern with its curves picked
+  bool applies = false;  // the tool's Apply would act now (entersApply): an offset or a move with its curves picked, a source...
   bool locked = false;   // the pointer is locked onto a guide by a Shift tap (until a click or Esc)
   std::size_t stops = 0;  // locked: the stops along the line in reach besides the one the pointer is on
   bool guide = false;     // nothing locked, the pointer on a guide or the angle ray of a tool that places points
@@ -41,6 +42,22 @@ enum class Shift { None, Lock, NextStop, Release, NextSnap };  // what Shift doe
 
 // Tools that draw a chain until Enter: Enter is their Done button.
 inline bool chainTool(const std::string& tool) { return tool == "line" || tool == "spline" || tool == "control_spline"; }
+// Tools with an Apply button that Enter presses once what they apply to is picked (TODO 11 wave 3, P4; the editor's
+// appliesOnEnter says when that is): the option tools (an offset, a move, a pattern, a chamfer, a node's weights), mirror
+// (its line picked or an axis chosen), break, the region tools (two loops), explode, heal, the reference tools (a source
+// picked), break link (linked curves selected), the image and file tools. The clips may show an Enter cap only for these,
+// the chain tools and typed values (tests/test_help.cpp).
+inline bool entersApply(const std::string& tool) {
+  static const char* const tools[] = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern", "node", "mirror",
+                                      "break", "union", "subtract", "intersect", "explode", "heal", "simplify", "project", "intersect_body",
+                                      "silhouette", "include3d", "break_link", "image_insert", "image_calibrate", "image_edit", "image_trace",
+                                      "image_remove", "vector_import", "vector_export"};
+  for (const char* t : tools)
+    if (tool == t) return true;
+  return false;
+}
+// The reference tools: their picks are sources in the model (edges, faces, bodies, other sketches), several at once.
+inline bool referenceTool(const std::string& tool) { return tool == "project" || tool == "intersect_body" || tool == "silhouette" || tool == "include3d"; }
 // Clicks that pick curves or loops rather than place points.
 inline bool picksByClick(const std::string& tool) { return tool == "extend" || tool == "union" || tool == "subtract" || tool == "intersect"; }
 inline bool inChain(const State& s) { return s.chain || (s.tool == "control_spline" && s.clicks); }

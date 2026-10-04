@@ -141,6 +141,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchCommandLine();
   void benchClipboard();
   void benchEdits();
+  void benchApply();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   size_t settingsReads() const { return m_settingsReads; }  // benches: once per change, never per mouse move
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
@@ -282,6 +283,7 @@ class SketchEditor : public QObject, public SketchInput {
   size_t badgeTriangles() const;                      // the constraint badges' backs, two triangles each (benches)
   size_t coincidenceDots() const;                     // the dots drawn for coincidences, explicit and where curves meet (benches)
   size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
+  size_t transientDashed(const QColor& c) const;      // dashed ones (a frame, a measure being taken)
   bool drawsCursor() const;  // grid snapping: the editor draws the drawing cursor at the snapped point, the pointer is hidden
   std::optional<std::pair<double, double>> m_drawnCursor;  // where it was last drawn (none: not drawn), sketch coordinates
   bool m_inTransient = false;  // updateTransient is telling the viewport whether it draws the cursor
@@ -355,9 +357,24 @@ class SketchEditor : public QObject, public SketchInput {
   void projectHovered();
   void referenceHover();
   void pickReference();
+  // The reference tools' sources (TODO 11 wave 3, P4): picked in the view or chosen in the panel, each a JSON reference;
+  // a pick toggles one (a picked one again drops it), the preview shows them all and Enter or Apply adds them together.
+  void toggleSource(const QString& source);
+  QString sourceLabel(const QString& source) const;
+  QStringList m_sources;
   bool applyReference();
   bool applyImageTool();
   bool imageClick(double u,double v);
+  // Insert image: the picture's size in pixels as shown (its file's header only, read once per file); invalid: unknown.
+  QSizeF insertPicture();
+  QString m_insertFile;
+  QSizeF m_insertPicture;
+  QString m_calibrateShown;  // the Known distance calibrate's two clicks put there (a typed one is not replaced)
+  // A click with a modify tool on a curve (TODO 11 wave 3): it toggles the curve, or with the tool's "Select connected
+  // chain on click" on (offset by default) the whole connected chain. Per tool: setting it for one left the others alone.
+  bool chainOnClick() const;
+  void pickCurve(int id);
+  void applied();  // after an Apply that changed the sketch: the tool asks for its next curves, sources or line
   void refreshImages();
   std::vector<std::pair<double, double>> sampled(const opad::design::SkEntity& e) const;  // polyline of a curve, sketch coordinates
   double distanceTo(const opad::design::SkEntity& e, double u, double v) const;

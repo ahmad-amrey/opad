@@ -1387,7 +1387,7 @@
    "id": "sketch.mirror",
    "title": "Mirror",
    "summary": "Mirrors curves about a line.",
-   "details": "Click the curves to mirror, press Enter, then click the mirror line. The copies get symmetric constraints, so they follow the originals.",
+   "details": "Select the curves to mirror (click or drag a window), press Enter, click the mirror line and press Enter again. The copies get symmetric constraints, so they follow the originals.",
    "keywords": ["symmetry", "reflect", "flip"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1650,8 +1650,8 @@
   {
    "id": "sketch.project",
    "title": "Project",
-   "summary": "Projects body edges onto the sketch as reference curves.",
-   "details": "Click straight or circular edges of bodies behind the sketch plane. Linked projections follow the body when it changes; an editable copy does not.",
+   "summary": "Projects body edges, faces or vertices onto the sketch as reference curves.",
+   "details": "Pick edges, or faces, vertices and bodies with the panel's Pick filter, then press Enter or Apply: they are flattened onto the sketch plane. Linked projections follow the body when it changes; an editable copy does not.",
    "keywords": ["reference edges", "use edges", "convert entities"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1659,7 +1659,7 @@
    "id": "sketch.intersect_body",
    "title": "Body-plane intersection",
    "summary": "Adds the curves where bodies cut the sketch plane.",
-   "details": "Pick the bodies, or choose them in the panel, and apply. Useful to sketch on the section of an existing part.",
+   "details": "Pick the bodies, or choose them in the panel, then press Enter or Apply. Useful to sketch on the section of an existing part.",
    "keywords": ["section curve", "slice", "cut outline"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1667,7 +1667,7 @@
    "id": "sketch.silhouette",
    "title": "Silhouette",
    "summary": "Adds the outline of bodies as seen along the sketch normal.",
-   "details": "Pick the bodies and apply. Handy for covers, gaskets and cut-outs that follow a part's shape.",
+   "details": "Pick the bodies, then press Enter or Apply. Handy for covers, gaskets and cut-outs that follow a part's shape.",
    "keywords": ["outline", "shadow", "profile of body"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1675,7 +1675,7 @@
    "id": "sketch.include3d",
    "title": "Include reference curves",
    "summary": "Brings other sketches' curves and construction axes into this sketch as references.",
-   "details": "Choose the source in the panel or pick it in the view. Linked references follow their source when it changes.",
+   "details": "Choose the source in the panel or pick it in the view, then press Enter or Apply: its curves come in as construction geometry flattened onto the sketch plane. Linked references follow their source when it changes.",
    "keywords": ["reference", "other sketch", "axis"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1683,7 +1683,7 @@
    "id": "sketch.break_link",
    "title": "Break projection link",
    "summary": "Makes a linked projection editable.",
-   "details": "Select the projected curves and apply: they stop following the body and become normal sketch curves. The link cannot be restored afterwards.",
+   "details": "Select the projected curves and press Enter or Apply: they stop following the body and become normal sketch curves. The link cannot be restored afterwards.",
    "keywords": ["unlink", "make editable"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1699,7 +1699,7 @@
    "id": "sketch.image_insert",
    "title": "Insert image",
    "summary": "Places an image on the sketch plane as a backdrop to trace over.",
-   "details": "Choose the file, click the insertion point and set the width. Calibrate image then scales it to a known distance.",
+   "details": "Choose the file and set the width, click the insertion point (the image's lower-left corner), then press Enter or Apply. Calibrate image then scales it to a known distance.",
    "keywords": ["picture", "backdrop", "canvas", "reference image"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1715,7 +1715,7 @@
    "id": "sketch.image_calibrate",
    "title": "Calibrate image",
    "summary": "Scales a backdrop image by a distance you know.",
-   "details": "Click two points on the image, then enter their real distance and apply. Trace and dimension after calibrating so the sizes are right.",
+   "details": "Click two points on the image, type their real distance over the measured one, then press Enter or Apply. Trace and dimension after calibrating so the sizes are right.",
    "keywords": ["scale image", "known distance", "calibration"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },

@@ -70,6 +70,7 @@ void SketchEditor::setTool(const QString& tool) {
   m_clicks.clear();
   m_chain.clear();
   m_picked.clear();
+  m_sources.clear();
   m_placingDim = false;
   // A constraint button with a fitting selection acts at once, the way Fusion's constraint palette does.
   if (tool.startsWith("c:") && !m_sel.empty()) {
@@ -168,9 +169,10 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   if (m_tool == "offset" || m_tool == "node") {
     const Hit h=hitTest(s.u,s.v);
     if(h.kind!=Hit::None) {
-      auto it=std::find(m_sel.begin(),m_sel.end(),h.id);
-      if(it==m_sel.end())m_sel.push_back(h.id);else m_sel.erase(it);
-      if(m_tool=="offset" && option("chain","1")=="1")selectConnected();
+      if(h.kind==Hit::Entity)pickCurve(h.id);  // the offset: its connected chain (the tool's option, on by default)
+      else if(auto it=std::find(m_sel.begin(),m_sel.end(),h.id);it==m_sel.end())m_sel.push_back(h.id);
+      else m_sel.erase(it);
+      invalidatePreview();
       rebuild();emit changed();toolPrompt();
       scheduleToolPreview();
     }

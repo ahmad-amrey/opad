@@ -8,7 +8,7 @@
 using namespace opad::design;
 
 void SketchEditor::referenceHover() {
-  const bool on=m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d";
+  const bool on=sketchkeys::referenceTool(m_tool.toStdString());
   m_viewport->setEdgeHover(on);
   if(on) {
     const auto filter=option("projectionPick","edge");
@@ -20,28 +20,65 @@ void SketchEditor::pickReference() {
   // What the pointer rests on, else what is under the press: a click that came before any hover pass picked nothing.
   if(!m_viewport->hoveredReference(ref) && !m_viewport->referenceAt(m_viewport->mapFromGlobal(QCursor::pos()),ref))
     return emit status(tr("Pick source geometry in the view, or choose it in the panel."));
-  m_options["projectionSource"]=QString::fromStdString(ref.to_json().dump());
-  emit status(tr("Source picked. Choose linked or editable copy, then Apply."));emit workflowChanged();
+  toggleSource(QString::fromStdString(ref.to_json().dump()));
+}
+// Sources accumulate, as Fusion's Project does (TODO 11 wave 3, P4): a click on one more adds it, on a picked one drops it;
+// each change previews them all (a worker job, as Apply computes them), Enter or Apply adds them, Backspace takes the last
+// one back and Esc drops them all.
+void SketchEditor::toggleSource(const QString& source) {
+  if(source.isEmpty() || !sketchkeys::referenceTool(m_tool.toStdString()))return;
+  invalidatePreview();
+  if(!m_sources.removeOne(source))m_sources<<source;
+  emit status(m_sources.isEmpty()?tr("Pick source geometry in the view, or choose it in the panel.")
+                                  :tr("%1: click more to add them, or press Enter or Apply").arg(m_sources.size()==1?tr("1 source"):tr("%1 sources").arg(m_sources.size())));
+  rebuild();emit changed();emit workflowChanged();scheduleToolPreview();
+}
+QString SketchEditor::sourceLabel(const QString& source) const {
+  opad::json j;
+  try{j=opad::json::parse(source.toStdString());}catch(const std::exception&){return source;}
+  if(j.contains("sketch")) {
+    for(const auto& sk:m_doc->scene.sketches)if(sk.id==j.value("sketch",""))return QString::fromStdString(sk.name);
+    return tr("Sketch");
+  }
+  if(j.contains("feature"))for(const auto& f:m_doc->scene.features)if(f.id==j.value("feature",""))return QString::fromStdString(f.name);
+  if(j.contains("base"))return tr("Origin axis %1").arg(QString::fromStdString(j.value("base","")));
+  if(!j.contains("body"))return source;
+  const QString body=m_doc->nodeName(j.value("body",""));
+  const std::string kind=j.value("kind","body");
+  const int index=j.value("index",-1);
+  if(kind=="face")return tr("%1 · face %2").arg(body).arg(index);
+  if(kind=="edge")return tr("%1 · edge %2").arg(body).arg(index);
+  if(kind=="vertex")return tr("%1 · vertex %2").arg(body).arg(index);
+  return body;
 }
 bool SketchEditor::applyReference() {
   if(m_tool=="break_link") {
-    const auto ids=m_sel;runSketchEdit(tr("Break projection link"),[ids](Sketch& sk){break_reference(sk,ids);});return true;
+    std::vector<int> ids;for(int id:m_sel)if(const auto* e=m_sk.entity(id);e && !e->source.is_null())ids.push_back(id);
+    if(m_previewRequested)return true;  // nothing to show before: the curves stay where they are
+    if(ids.empty()){emit status(tr("Select linked curves first: they are drawn amber."));return true;}
+    runSketchEdit(tr("Break projection link"),[ids](Sketch& sk){break_reference(sk,ids);});return true;
   }
-  if(m_tool!="project"&&m_tool!="intersect_body"&&m_tool!="silhouette"&&m_tool!="include3d")return false;
+  if(!sketchkeys::referenceTool(m_tool.toStdString()))return false;
   // Apply before a source is picked: say what is missing (it showed a JSON parse error).
-  if(option("projectionSource").isEmpty()){if(!m_previewRequested)emit status(tr("Pick source geometry in the view, or choose it in the panel."));return true;}
+  if(m_sources.isEmpty()){if(!m_previewRequested)emit status(tr("Pick source geometry in the view, or choose it in the panel."));return true;}
   try {
-    auto source=opad::json::parse(option("projectionSource").toStdString());
-    if(source.value("sketch","")==m_id && !m_id.empty())throw opad::Error("a sketch cannot project itself");
+    std::vector<opad::json> sources;
+    for(const auto& text:m_sources) {
+      auto source=opad::json::parse(text.toStdString());
+      if(source.value("sketch","")==m_id && !m_id.empty())throw opad::Error("a sketch cannot project itself");
+      sources.push_back(std::move(source));
+    }
     auto doc=std::make_shared<opad::Document>(m_doc->doc);auto scene=std::make_shared<opad::Scene>(m_doc->scene);
     const auto frame=m_frame;const bool linked=option("projectionLinked","1")=="1";
     const std::string mode=m_tool=="intersect_body"?"intersect":m_tool=="include3d"?"include":m_tool.toStdString();
-    runSketchEdit(tr("Projecting geometry"),[doc,scene,frame,source,linked,mode](Sketch& sk)mutable{
-      if(source.contains("body"))source=make_ref(*doc,*scene,opad::Ref::from_json(source));
-      const auto generated=derive_sketch(*doc,*scene,frame,source,mode);append_reference(sk,generated,source,mode,linked);
+    runSketchEdit(tr("Projecting geometry"),[doc,scene,frame,sources,linked,mode](Sketch& sk)mutable{
+      for(auto& source:sources) {
+        if(source.contains("body"))source=make_ref(*doc,*scene,opad::Ref::from_json(source));
+        const auto generated=derive_sketch(*doc,*scene,frame,source,mode);append_reference(sk,generated,source,mode,linked);
+      }
     });
-    // Done with that source: the tool asks for the next one (it stayed "ready", and Apply again projected it twice).
-    if(!m_previewRequested){m_options.remove("projectionSource");emit workflowChanged();}
+    // Done with those sources: the tool asks for the next ones (they stayed "ready", and Apply again projected them twice).
+    if(!m_previewRequested){m_sources.clear();emit workflowChanged();}
   }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
   return true;
 }

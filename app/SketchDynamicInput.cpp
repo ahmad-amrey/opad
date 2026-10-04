@@ -15,6 +15,7 @@
 #include "Theme.hpp"
 #include "Units.hpp"
 #include "opad/design/expr.hpp"
+#include "opad/design/sketch_pattern.hpp"
 #include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QSettings>
@@ -60,7 +61,7 @@ const QStringList kPointTools = {"point", "line", "spline", "rect", "crect", "ci
                                  "slot", "cslot", "arcslot", "ellipse", "conic", "rect3", "control_spline", "tangent_arc", "text", "paste", "copybase"};
 // Option tools Enter applies, once there is something picked to apply them to; and those Enter after typing applies as they
 // are (a gap, an image, a trace, a tolerance).
-const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern", "node"};
+const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern", "node", "image_insert", "image_calibrate"};
 const QStringList kAppliedNow = {"heal", "image_edit", "image_trace", "simplify", "vector_import"};
 // Steps that take the shape's own sizes (UI-17): after the first click, after the second.
 const QStringList kSized1 = {"rect", "crect", "circle", "circle2", "rect3", "arc3", "circle3", "slot", "cslot", "arcc", "arcslot", "ellipse", "polygon", "polygon_outer",
@@ -232,8 +233,26 @@ QList<DynamicInput::Field> SketchEditor::inputStage() const {
   return out;
 }
 
+// Every tool with an Apply button takes Enter once its picks are complete (TODO 11 wave 3, P4: the guides press Enter):
+// what each one's Apply needs, so Enter never applies a tool that would only say what is missing.
 bool SketchEditor::appliesOnEnter() const {
-  return kApplied.contains(m_tool) && !m_sel.empty() && (m_tool != "chamfer" || m_sk.point(m_sel.front())) && (m_tool != "node" || m_sel.size() == 1);
+  const QString& t = m_tool;
+  if (!sketchkeys::entersApply(t.toStdString())) return false;
+  auto curves = [this] { return std::count_if(m_sel.begin(), m_sel.end(), [this](int id) { return m_sk.entity(id) != nullptr; }); };
+  if (t == "chamfer") return m_sel.size() == 1 && m_sk.point(m_sel.front());
+  if (t == "node") return m_sel.size() == 1;
+  if (t == "mirror") return curves() > 0 && (option("mirrorAxis", "picked") != "picked" || (option("mirrorStage", "seed") == "axis" && !m_picked.empty()));
+  if (t == "break") return curves() >= 2;
+  if (t == "union" || t == "subtract" || t == "intersect") return m_clicks.size() == 2;
+  if (t == "explode") return std::any_of(m_sel.begin(), m_sel.end(), [this](int id) { return pattern_of(m_sk, id, true) != 0; });
+  if (t == "heal" || t == "simplify") return true;
+  if (sketchkeys::referenceTool(t.toStdString())) return !m_sources.isEmpty();
+  if (t == "break_link") return std::any_of(m_sel.begin(), m_sel.end(), [this](int id) { const auto* e = m_sk.entity(id); return e && !e->source.is_null(); });
+  if (t == "image_insert") return !option("imageFile").isEmpty() && m_clicks.size() == 1;
+  if (t == "image_calibrate") return !m_sk.images.empty() && m_clicks.size() == 2;
+  if (t == "image_edit" || t == "image_trace" || t == "image_remove") return !m_sk.images.empty();
+  if (t == "vector_import" || t == "vector_export") return !option("vectorFile").isEmpty();
+  return curves() > 0;  // offset, move, copy, rotate, scale and the patterns: their curves
 }
 
 // A key that types into the boxes: a value key while a tool runs (a tool without boxes drops it: it is never a window
