@@ -85,6 +85,7 @@ class CompareMode : public QObject {
   void failed(const QString& error);
   opad::json changes() const;   // the diff's, as listed
   std::string relation() const;  // how the histories relate ("" before a result)
+  std::string summary() const;   // the core's English summary line (benches)
   void otherFile(int side);
   AreaServices& m_services;
   GitWatch* m_git;

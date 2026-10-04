@@ -73,12 +73,31 @@ void dispose(std::shared_ptr<void> value) {
 
 // What both sides of a merge changed, as words: the thing's name in `doc` (a body, a feature, a sketch, a parameter).
 QString VersionControl::conflictText(const opad::MergeConflict& c, const opad::Scene& s) {
-  QString what = QString::fromStdString(c.target.substr(0, 8));
-  if (c.target.rfind("parameter:", 0) == 0) what = QString::fromStdString(c.target.substr(10));
-  else if (const opad::Node* n = s.node(c.target)) what = QString::fromStdString(n->name);
-  else if (const opad::Feature* f = s.feature(c.target)) what = QString::fromStdString(f->name);
-  else if (const opad::SketchItem* k = s.sketch(c.target)) what = QString::fromStdString(k->name);
-  return VersionControl::tr("%1: %2").arg(what, c.field == "*" ? VersionControl::tr("everything") : QString::fromStdString(c.field));
+  return VersionControl::tr("%1: %2").arg(conflictWhat(c, s), fieldText(c.field));
+}
+
+QString VersionControl::conflictWhat(const opad::MergeConflict& c, const opad::Scene& s) {
+  if (c.target.rfind("parameter:", 0) == 0) return QString::fromStdString(c.target.substr(10));
+  if (const opad::Node* n = s.node(c.target)) return QString::fromStdString(n->name);
+  if (const opad::Feature* f = s.feature(c.target)) return QString::fromStdString(f->name);
+  if (const opad::SketchItem* k = s.sketch(c.target)) return QString::fromStdString(k->name);
+  return QString::fromStdString(c.target.substr(0, 8));
+}
+
+QString VersionControl::fieldText(const std::string& field) { return field == "*" ? tr("everything") : i18n::t(field.c_str()); }
+
+QString VersionControl::mergeReason(const std::string& error) {
+  auto starts = [&error](const char* s) { return error.rfind(s, 0) == 0; };
+  if (starts("concurrent changes")) return tr("both sides changed the same things");
+  if (starts("conflicting operation ID")) return tr("one operation has two contents");
+  if (starts("history was rewritten")) return tr("a side rewrote the history");
+  if (starts("document header changed")) return tr("the document's header changed");
+  if (starts("body store was pruned")) return tr("a side removed bodies the other needs");
+  if (starts("operation history was reordered") || starts("branch operation order")) return tr("a side reordered the history");
+  if (starts("body hash mismatch")) return tr("a body does not match its hash");
+  if (starts("unsupported OPAD header") || starts("missing body store") || starts("not UTF-8") || starts("unexpected") || starts("operation requires"))
+    return tr("a version is not a readable OPAD document");
+  return i18n::t(QString::fromStdString(error));
 }
 
 namespace {
@@ -126,7 +145,7 @@ void readIncoming(const git::Context& c, const QString& rel, VersionControl::Inc
     phase(VersionControl::tr("Merging %1").arg(QFileInfo(rel).fileName()));
     const opad::FileMerge m = opad::merge_files(std::move(baseText), std::move(oursText), std::move(theirsText));
     if (!m.error.empty()) {
-      in.error = QString::fromStdString(m.error);
+      in.error = VersionControl::mergeReason(m.error);
       const opad::Scene scene = opad::resolve(ours);
       for (const auto& conflict : m.conflicts) in.conflicts << VersionControl::conflictText(conflict, scene);
     } else {
@@ -136,7 +155,7 @@ void readIncoming(const git::Context& c, const QString& rel, VersionControl::Inc
   phase(VersionControl::tr("Comparing"));
   if (merged.empty()) {  // the driver would stop: what they changed, then
     const opad::json diff = opad::semantic_diff(baseDoc, theirs);
-    in.summary = QString::fromStdString(diff.value("summary", ""));
+    in.summary = ComparePanel::summaryOf(diff.value("changes", opad::json::array()), diff.value("relation", ""));
     in.changes = diff.value("changes", opad::json::array());
     return;
   }
@@ -148,7 +167,7 @@ void readIncoming(const git::Context& c, const QString& rel, VersionControl::Inc
   in.merged = file;
   const opad::Document after = opad::Document::parse_index(std::move(merged), origin);
   const opad::json diff = opad::semantic_diff(ours, after);
-  in.summary = QString::fromStdString(diff.value("summary", ""));
+  in.summary = ComparePanel::summaryOf(diff.value("changes", opad::json::array()), diff.value("relation", ""));
   in.changes = diff.value("changes", opad::json::array());
 }
 }  // namespace

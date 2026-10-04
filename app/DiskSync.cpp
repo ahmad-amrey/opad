@@ -18,6 +18,7 @@
 #include "Banner.hpp"
 #include "I18n.hpp"
 #include "Jobs.hpp"
+#include "VersionControl.hpp"
 
 DiskSync::DiskSync(AppDocument* doc, JobRunner* jobs, QWidget* viewport, QWidget* window)
     : QObject(window), m_doc(doc), m_jobs(jobs), m_window(window), m_banner(new Banner(viewport)) {
@@ -202,11 +203,7 @@ void DiskSync::showMerge(const opad::MergePlan& plan) {
     const bool gone = theirs && theirs->type == "delete" && (!ours || ours->type != "delete");
     if (gone) deleted.insert(c.target);
     else ++clashes;
-    const opad::Node* n = m_doc->node(c.target);
-    const opad::Op* op = n ? nullptr : m_doc->doc.find_op(c.target);
-    const QString what = n ? QString::fromStdString(n->name) : op && op->data.contains("name") ? QString::fromStdString(op->data.value("name", ""))
-                         : QString::fromStdString(c.target.rfind("parameter:", 0) == 0 ? c.target.substr(10) : c.target.substr(0, 8));
-    details << (gone ? tr("%1: deleted in the file (stays deleted)").arg(what) : tr("%1: %2").arg(what, c.field == "*" ? tr("everything") : QString::fromStdString(c.field)));
+    details << (gone ? tr("%1: deleted in the file (stays deleted)").arg(VersionControl::conflictWhat(c, m_doc->scene)) : VersionControl::conflictText(c, m_doc->scene));
   }
   details.removeDuplicates();
   if (clashes) text += ' ' + tr("Conflicting changes: %1 (yours win).").arg(clashes);

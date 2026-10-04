@@ -55,7 +55,7 @@ QString effectText(const opad::Op* op, const opad::MergeConflict& c) {
     const opad::json e = opad::op_effect(d, c.target, c.field)[1];
     if (e.is_object()) {
       QStringList parts;
-      for (const auto& [key, v] : e.items()) parts << (e.size() == 1 ? value(v) : QString::fromStdString(key) + ": " + value(v));
+      for (const auto& [key, v] : e.items()) parts << (e.size() == 1 ? value(v) : VersionControl::tr("%1: %2").arg(VersionControl::fieldText(key), value(v)));
       text = parts.join(", ");
     } else {
       text = value(e);
@@ -94,7 +94,7 @@ void VersionControl::resolveConflicts() {
     c->design = opad::changes_design(b, ours) && opad::changes_design(b, theirs);
     opad::FileMerge m = opad::merge_files(std::move(base), c->ours, c->theirs, true);
     if (!m.error.empty()) {
-      c->error = QString::fromStdString(m.error);
+      c->error = mergeReason(m.error);
       return;
     }
     c->merged = m.text();

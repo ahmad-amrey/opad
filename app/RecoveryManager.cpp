@@ -311,7 +311,8 @@ void RecoveryManager::saveNow(std::function<void(bool,const QString&)> done) {
             const auto base=opad::ops_prefix(*document,saved==std::string::npos?0:saved);
             d=opad::semantic_diff(base,opad::resolve(base),*document,*scene);
           }
-          meta={{"summary",d["summary"]},{"counts",d["counts"]},{"changes",d["changes"].size()}};
+          const auto changes=d.value("changes",opad::json::array());  // "text": the summary in the UI's language
+          meta={{"summary",d["summary"]},{"text",ComparePanel::summaryOf(changes,d.value("relation","")).toStdString()},{"counts",d["counts"]},{"changes",changes.size()}};
         }catch(const std::exception& e){trace::log(QString("recovery: no summary: %1").arg(e.what()));}
         if(draft.is_object() && draft.contains("type"))meta["editing"]={{"type",draft["type"]},{"name",draft.value("name",draft.value("kind",""))}};
         opad::json record={{"format",2},{"title",title.toStdString()},{"source",source.toStdString()},{"time",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString()},
@@ -349,7 +350,7 @@ void RecoveryManager::scan(std::function<void(std::vector<Entry>,QString)> done)
         try {
           const auto meta=readMetadata(path);
           entries->push_back({path,QString::fromStdString(meta.value("title","Untitled")),QString::fromStdString(meta.value("time","")),QString::fromStdString(meta.value("source","")),
-                              QString::fromStdString(meta.value("summary","")),meta.value("changes",-1)});
+                              QString::fromStdString(meta.value("text",meta.value("summary",""))),meta.value("changes",-1)});
         }
         catch(const std::exception& e){trace::log(QString("recovery: skipped %1: %2").arg(path,e.what()));}
       }
@@ -565,7 +566,7 @@ QDialog* RecoveryManager::offerDialog(const std::vector<Entry>& entries) {
       state->changes=d.value("changes",opad::json::array());
       ComparePanel::listChanges(changes,state->changes,state->rows,state->order);
       QString line=state->changes.empty()?tr("Nothing to restore: the file has every change of this snapshot."):
-                   tr("Changes: %n. %1.",nullptr,int(state->changes.size())).arg(QString::fromStdString(d.value("summary","")));
+                   tr("Changes: %n. %1.",nullptr,int(state->changes.size())).arg(ComparePanel::summaryOf(state->changes,d.value("relation","")));
       if(!out->editing.isEmpty())line+=' '+out->editing;
       summary->setText(line);
     });

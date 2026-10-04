@@ -276,6 +276,12 @@ bool CompareMode::bench(const QString& prefix) {
           require(t2->isVisibleTo(m_panel) && t2->rowCount() >= 1 && t2->item(0, 0)->text() == i18n::t("Length") && t2->item(0, 1)->text() == "30 mm" && t2->item(0, 2)->text() == "40 mm",
                   "details: Length 30 mm -> 40 mm");
           pass("rows and details (Length 30 mm -> 40 mm)");
+          // The summary line in the UI's language: the core's English one in English, words of the translation otherwise.
+          const QString line = m_panel->summaryLabel()->text(), english = QString::fromStdString(summary());
+          const bool translated = qEnvironmentVariable("OPAD_LANG") == "ar";
+          require(!english.isEmpty() && line.contains("Box1") && line.contains(english) != translated && (!translated || line.contains(ComparePanel::tr("add %1").arg("Sphere1"))),
+                  "the summary: " + line + " / " + english);
+          pass("the summary in the UI's language: " + line);
           return true;
         },
         [=, this] {  // the clicked row selected Box1 and the timeline shows the feature

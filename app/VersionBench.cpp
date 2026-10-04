@@ -563,7 +563,7 @@ bool VersionControl::bench(const QString& prefix) {
         QDialog* d = dialog("vcsIncoming");
         require(d, "the incoming dialog");
         auto* stop = d->findChild<QLabel*>("incomingConflicts");
-        require(stop && stop->text().contains("Ours: name"), "the conflict named: " + (stop ? stop->text() : QString()));
+        require(stop && stop->text().contains(tr("%1: %2").arg("Ours", fieldText("name"))), "the conflict named: " + (stop ? stop->text() : QString()));
         shot(d, ".conflict.png");
         pass("merge preview: the conflict said before merging");
         require(press(d, "vcsIncomingMerge"), "Merge anyway");

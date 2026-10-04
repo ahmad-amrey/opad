@@ -72,6 +72,9 @@ class VersionControl : public QObject {
   void abortMerge();
   void resolveConflicts();  // the document's index stages read and merged on a worker, then the Resolve conflicts dialog
   static QString conflictText(const opad::MergeConflict& c, const opad::Scene& s);  // "Bracket: name"
+  static QString conflictWhat(const opad::MergeConflict& c, const opad::Scene& s);  // "Bracket"
+  static QString fieldText(const std::string& field);  // a conflict key's field in the UI's language ("*": everything)
+  static QString mergeReason(const std::string& error);  // why opad::merge_files refused, as a reader takes it (any thread)
   void pack();
   void compareWith(const git::Commit& commit);      // the commit (A) with this session (B)
   void comparePrevious(const git::Commit& commit);  // the commit before (A) with it (B)

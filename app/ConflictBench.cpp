@@ -135,8 +135,10 @@ OPAD_BENCH(OPAD_BENCH_CONFLICT, conflict) {
           require(list && list->topLevelItemCount() == 2, QStringLiteral("two conflicts listed (%1)").arg(list ? list->topLevelItemCount() : -1));
           QTreeWidgetItem* name = list->topLevelItem(0);
           QTreeWidgetItem* colour = list->topLevelItem(1);
-          if (!name->text(0).endsWith(": name")) std::swap(name, colour);
-          require(name->text(0).endsWith(": name") && colour->text(0).endsWith(": color"), "what: " + name->text(0) + " / " + colour->text(0));
+          const QString nameField = VersionControl::tr("%1: %2").arg(QString(), VersionControl::fieldText("name"));  // translated field keys
+          const QString colourField = VersionControl::tr("%1: %2").arg(QString(), VersionControl::fieldText("color"));
+          if (!name->text(0).endsWith(nameField)) std::swap(name, colour);
+          require(name->text(0).endsWith(nameField) && colour->text(0).endsWith(colourField), "what: " + name->text(0) + " / " + colour->text(0));
           require(name->text(1).startsWith("Ours") && name->text(2).startsWith("Theirs"), "the names: " + name->text(1) + " / " + name->text(2));
           require(colour->text(1).startsWith("[0,0,1]") && colour->text(2).startsWith("[1,0,0]"), "the colours: " + colour->text(1) + " / " + colour->text(2));
           static_cast<QComboBox*>(list->itemWidget(name, 3))->setCurrentIndex(1);    // theirs
