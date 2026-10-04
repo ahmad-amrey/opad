@@ -389,7 +389,7 @@
    "id": "workspace.review",
    "title": "Review workspace",
    "summary": "Switches the ribbon to Review: look, measure, mark up, compare and share.",
-   "details": "Nothing in Review changes geometry or structure: a Design command started here, such as Extrude, switches to Design first. The document and its timeline stay the same; only the ribbon's tabs change.",
+   "details": "Its View, Inspect and Markup tabs never change geometry: measurements, notes and saved views sit beside the model. Compare's version commands do bring changes in (Pull, History's Restore as new changes, Recover documents), and Delete and Rename still work on the selection here. A Design command started here, such as Extrude, switches to Design first. The document and its timeline stay the same; only the ribbon's tabs change.",
    "keywords": ["viewer", "inspect", "measure"]
   },
   {
@@ -495,7 +495,7 @@
    "id": "inspect.interference",
    "title": "Interference",
    "summary": "Finds bodies that overlap or nearly touch and lists each pair.",
-   "details": "Checks the selected bodies, or all solids when nothing is selected. Click a row to highlight that overlap in the view.",
+   "details": "Checks the selected bodies, or all solids when nothing is selected. Click a row to highlight that overlap in the view. After a check, Keep as check opens it in Design as an Interference check feature with the same bodies and clearance; OK adds it to the history, where it runs again whenever those bodies change.",
    "keywords": ["collision", "clash", "overlap", "clearance"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -1099,7 +1099,7 @@
    "id": "design.interference",
    "title": "Interference check",
    "summary": "Records an interference check in the history that runs again whenever its bodies change.",
-   "details": "Pick the bodies, or none for all solids, and an optional clearance. With Fail on set, a finding marks the step as an error on the timeline.",
+   "details": "It opens from Inspect > Interference: after a check, Keep as check fills it with that check's bodies and clearance. Pick the bodies, or none for all solids, and an optional clearance. With Fail on set, a finding marks the step as an error on the timeline.",
    "keywords": ["clash", "collision", "clearance", "check"],
    "requires": "Open or create a document first."
   },
@@ -1210,7 +1210,7 @@
    "id": "design.drawOnDrawing",
    "title": "Draw on drawing",
    "summary": "Opens a sketch on the drawing's own plane and origin, to draw new curves over it with the sketch tools.",
-   "details": "The Sketch tab comes first in Drafting while it is open, and Finish sketch keeps the curves as a sketch in the document; the drawing's own lines stay as they are. A file open in viewer mode is saved as an OPAD document, or copied, first. With drawings in several planes, select a layer of the one to draw on.",
+   "details": "Started in Drafting, its Sketch tab comes first there while it is open; started anywhere else, it opens in Design. Finish sketch keeps the curves as a sketch in the document; the drawing's own lines stay as they are. A file open in viewer mode is saved as an OPAD document, or copied, first. With drawings in several planes, select a layer of the one to draw on.",
    "keywords": ["sketch on drawing", "draw lines", "DXF", "DWG", "drafting", "2D"],
    "requires": "Open a 2D drawing (DXF, DWG or SVG) first; not while a sketch is open."
   },

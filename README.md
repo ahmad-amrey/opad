@@ -128,7 +128,8 @@ file (the header carries the document's last change and the file's name, assembl
 An `interference` feature keeps an interference and clearance check in the timeline: its report (pairs, overlap
 volumes, distances) is stored with the design and computed again whenever its bodies change, and with `fail_on` a
 clash is the feature's error, so the edit that causes it says so. In the desktop program it is Inspect > Interference's
-Keep as check: the bodies and clearance just checked, stored as this feature (one Interference command).
+Keep as check: the feature's panel in Design with the bodies and clearance just checked, stored when OK is pressed (one
+Interference command).
 
 A feature can be suppressed by an expression over the parameters (`suppress_if: "joints < 3"`): the design walk
 evaluates it, keeps the answer in the feature's result for replay, and regenerates when a parameter flips it; the

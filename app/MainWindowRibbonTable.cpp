@@ -46,7 +46,9 @@ void addGroup(RibbonLayout& layout, const std::function<QAction*(const QString&)
 void MainWindow::ribbonTable(RibbonLayout& layout) {
   const auto find = [this](const QString& id) { return action(id); };
   auto group = [&](const QString& tab, const char* name, const QString& title, const std::vector<RibbonTool>& tools) { addGroup(layout, find, tab, name, title, tools); };
-  layout.addWorkspace("review", {tr("Review"), "eye", "Ctrl+1", tr("Look, measure, mark up, compare and share. Nothing here changes geometry or structure."),
+  layout.addWorkspace("review", {tr("Review"), "eye", "Ctrl+1",
+                                 tr("Look, measure, mark up, compare and share. View, Inspect and Markup never change geometry; Compare's version "
+                                    "commands can bring changes in."),
                                  tr("ops: annotation · measurement · section · view")});
   layout.addWorkspace("design", {tr("Design"), "component", "Ctrl+2", tr("Model parts: sketches, features, parameters; arrange the assembly."),
                                  tr("ops: param · sketch · feature · edit · regen · import · reparent · appearance")});

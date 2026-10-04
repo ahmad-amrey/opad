@@ -654,10 +654,10 @@ TEST(command_areas) {
   CHECK(help::group("sketch.c.horizontal") == "Sketch constraints" && help::group("sketch.dimension") == "Sketch constraints");
   CHECK(help::group("view.fit") == "View" && help::group("nav.fusion") == "View" && help::group("help.about") == "Tools and help");
   CHECK(help::group("files.useOda") == "File" && help::group("help.licenses") == "Tools and help");
-  CHECK(help::group("vcs.commit") == "File" && help::group("timeline.names") == "View" && help::group("drawing2d.layers") == "View" &&
+  CHECK(help::group("vcs.commit") == "Version" && help::group("timeline.names") == "View" && help::group("drawing2d.layers") == "View" &&
         help::group("assembly.explode") == "Design" && help::group("drawings.baseView.top") == "Drawings");
   QStringList areas = help::areas();
-  CHECK(areas.size() == 12 && areas.removeDuplicates() == 0);
+  CHECK(areas.size() == 13 && areas.removeDuplicates() == 0);
   for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");
 }
 

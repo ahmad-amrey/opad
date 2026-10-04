@@ -68,7 +68,7 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   m_run->setObjectName("primary");
   m_keep = new QPushButton(tr("Keep as check"), this);
   m_keep->setObjectName("keepCheck");
-  m_keep->setToolTip(tr("Adds this check to the design's history: it runs again whenever these bodies change, and the timeline shows what it finds"));
+  m_keep->setToolTip(tr("Opens this check in Design as an Interference check feature with the same bodies and clearance: OK adds it to the design's history, where it runs again whenever these bodies change"));
   m_keep->hide();
   row->addWidget(m_status, 1);
   row->addWidget(m_keep);

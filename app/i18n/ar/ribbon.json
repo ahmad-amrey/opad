@@ -1,7 +1,7 @@
 {
  "@about": "The ribbon and workspace reorganisation (TODO 11 UI-102/103/104): tab and group titles, the Drafting workspace and its Draw on drawing, Keep as check, the Explode and Sketch tabs, the View tabs' dropdowns, the Insert and Version menus, the History group's commands; hints the commands raise (i18n::t).",
  "Keep as check": "الاحتفاظ كفحص",
- "Adds this check to the design's history: it runs again whenever these bodies change, and the timeline shows what it finds": "يضيف هذا الفحص إلى سجل التصميم: يُعاد تشغيله كلما تغيرت هذه الأجسام، ويُظهر الخط الزمني ما يجده",
+ "Opens this check in Design as an Interference check feature with the same bodies and clearance: OK adds it to the design's history, where it runs again whenever these bodies change": "يفتح هذا الفحص في التصميم ميزةَ «فحص التداخل» بالأجسام والخلوص نفسها: ويضيفه «موافق» إلى سجل التصميم حيث يُعاد تشغيله كلما تغيرت هذه الأجسام",
  "Tables": "الجداول",
  "Other tables": "جداول أخرى",
  "From a view": "من مسقط",
@@ -17,7 +17,7 @@
  "More reference tools": "أدوات مراجع إضافية",
  "&Sketch": "رسم تخطيطي",
  "Finish or cancel the sketch first": "أنهِ الرسم التخطيطي أو ألغِه أولًا",
- "Look, measure, mark up, compare and share. Nothing here changes geometry or structure.": "عاين وقِس ودوّن الملاحظات وقارن وشارك. لا شيء هنا يغيّر الهندسة أو البنية.",
+ "Look, measure, mark up, compare and share. View, Inspect and Markup never change geometry; Compare's version commands can bring changes in.": "عاين وقِس ودوّن الملاحظات وقارن وشارك. لا تغيّر «عرض» و«فحص» و«التعليقات» الهندسة أبدًا، وقد تُدخل أوامر النسخ في «مقارنة» تغييرات.",
  "Visibility": "الظهور",
  "Saved views": "المناظر المحفوظة",
  "Remote": "المستودع البعيد",

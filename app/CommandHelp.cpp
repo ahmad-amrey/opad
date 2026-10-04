@@ -141,9 +141,10 @@ QString group(const QString& id) {
   if (area == "file" || area == "files") return QCoreApplication::translate("help", "File");
   if (area == "edit") return QCoreApplication::translate("help", "Edit");
   if (area == "select") return QCoreApplication::translate("help", "Select");
-  // The areas' commands go where their menus have them: version control in File, the timeline's and the 2D drawings'
-  // switches in View, components and exploded views in Design; the Drawings workspace's commands have a group of their own.
-  if (area == "vcs") return QCoreApplication::translate("help", "File");
+  // The areas' commands go where their menus have them: version control in Version (the menu's own title, its mnemonic
+  // dropped), the timeline's and the 2D drawings' switches in View, components and exploded views in Design; the Drawings
+  // workspace's commands have a group of their own.
+  if (area == "vcs") return QCoreApplication::translate("MainWindow", "Ve&rsion").remove('&');
   if (area == "view" || area == "nav" || area == "panel" || area == "workspace" || area == "timeline" || area == "drawing2d")
     return QCoreApplication::translate("help", "View");
   if (area == "inspect") return QCoreApplication::translate("help", "Inspect");
@@ -159,7 +160,7 @@ QString group(const QString& id) {
 
 QStringList areas() {
   QStringList out;
-  for (const char* id : {"file.", "edit.", "select.", "view.", "inspect.", "annotate.", "design.", "drawings.", "sketch.", "sketch.c.", "tools.", "x."}) out << group(id);
+  for (const char* id : {"file.", "edit.", "select.", "view.", "inspect.", "annotate.", "design.", "drawings.", "sketch.", "sketch.c.", "vcs.", "tools.", "x."}) out << group(id);
   return out;
 }
 
