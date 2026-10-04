@@ -534,6 +534,16 @@ TEST(exploded_view_holes) {
   ViewSpec spec = view_spec(s, *s.sheet_view(view));
   resolve_explode(doc, s, spec);
   CHECK(spec.offsets.count(node) && std::fabs(spec.offsets.at(node)[0]) > 5);  // the washer moves along X
+  // Its trail line runs from where it was to where it is drawn, seen from the top: the stretches inside the washer (at its
+  // old place and at its new one) are hidden, the gap between them is drawn.
+  {
+    double full = 0, drawn = 0;
+    for (const auto& [from, to] : spec.trails) full += std::hypot(to[0] - from[0], to[1] - from[1]);
+    const auto g = project(doc, s, view_spec(s, *s.sheet_view(view)));
+    for (const Curve& c : g->curves)
+      if (c.kind == Curve::Kind::Trail) drawn += std::hypot(c.pts[1][0] - c.pts[0][0], c.pts[1][1] - c.pts[0][1]);
+    CHECK(full > 5 && drawn > 1 && drawn < full - 5);
+  }
   const auto frames = layout(doc, s, *s.sheet(sheet));
   const auto frame = [&](const std::string& id) { return &*std::find_if(frames.begin(), frames.end(), [&](const ViewFrame& f) { return f.id == id; }); };
   const auto toView = [&](const json& local, const ViewFrame* f) {  // paper mm from the frame's place -> view coordinates

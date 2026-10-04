@@ -3,6 +3,7 @@
 #include "opad/drawing/projection.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRep_Tool.hxx>
@@ -25,6 +26,7 @@
 #include <HLRBRep_FaceIterator.hxx>
 #include <HLRBRep_PolyAlgo.hxx>
 #include <HLRBRep_ShapeBounds.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <NCollection_DataMap.hxx>
 #include <OSD_Parallel.hxx>
 #include <Standard_Failure.hxx>
@@ -39,12 +41,14 @@
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
 #include <gp_GTrsf.hxx>
+#include <gp_Lin.hxx>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <deque>
 #include <list>
+#include <memory>
 #include <set>
 #include <unordered_map>
 
@@ -343,6 +347,7 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
   j["bodies"] = bodies;
   for (const auto& [from, to] : spec.trails)  // an exploded view's trail lines (its offsets are in the bodies' placements)
     j["trails"].push_back({rounded(from[0]), rounded(from[1]), rounded(from[2]), rounded(to[0]), rounded(to[1]), rounded(to[2])});
+  if (!spec.trails.empty()) j["trails_version"] = 2;  // 2: the parts of them behind bodies left out
   return sha256_hex(j.dump());
 }
 
@@ -1372,6 +1377,74 @@ void resolve_explode(const Document& doc, const Scene& scene, ViewSpec& spec) {
 }
 
 namespace {
+// The parts of an exploded view's trail lines (UI-85) that no body hides: a point of a trail is hidden when a ray from it
+// towards the viewer meets a face of a body (one it lies in, or one in front). Each trail is sampled about every
+// millimetre, at most 64 times, and every change between two samples found by halving to a hundredth of a step. Only the
+// bodies whose box the ray passes are asked, each loaded once; meshes hide nothing (no faces to meet). A worker's.
+class TrailHiders {
+ public:
+  TrailHiders(const std::vector<Source>& sources, const View& v) : m_dir(v.z) {
+    for (const auto& s : sources) {
+      if (s.mesh || s.placed.IsNull()) continue;
+      Bnd_Box box;
+      BRepBndLib::Add(s.placed, box);
+      if (box.IsVoid()) continue;
+      box.Enlarge(1e-6);
+      m_bodies.push_back({&s.placed, box, nullptr});
+    }
+  }
+  bool hidden(const gp_Pnt& p) {
+    const gp_Lin ray(p, m_dir);
+    for (auto& b : m_bodies) {
+      if (b.box.IsOut(ray)) continue;
+      if (!b.rays) {
+        b.rays = std::make_unique<IntCurvesFace_ShapeIntersector>();
+        b.rays->Load(*b.shape, 1e-7);
+      }
+      b.rays->Perform(ray, 1e-6, 1e100);
+      if (b.rays->IsDone() && b.rays->NbPnt() > 0) return true;
+    }
+    return false;
+  }
+  // The visible stretches of a -> b, as pairs of points along it.
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> visible(const gp_Pnt& a, const gp_Pnt& b) {
+    std::vector<std::pair<gp_Pnt, gp_Pnt>> out;
+    const double length = a.Distance(b);
+    const int n = std::clamp(static_cast<int>(std::ceil(length)), 8, 64);
+    auto at = [&](double t) { return gp_Pnt(a.XYZ() + (b.XYZ() - a.XYZ()) * t); };
+    auto edge = [&](double lo, double hi, bool loHidden) {  // where hidden turns to shown (or back) between two samples
+      for (int i = 0; i < 7; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        (hidden(at(mid)) == loHidden ? lo : hi) = mid;
+      }
+      return 0.5 * (lo + hi);
+    };
+    bool was = hidden(a);
+    double start = 0;
+    for (int i = 1; i <= n; ++i) {
+      const double t = static_cast<double>(i) / n;
+      const bool now = hidden(at(t));
+      if (now != was) {
+        const double cut = edge(static_cast<double>(i - 1) / n, t, was);
+        if (!was && cut > start) out.push_back({at(start), at(cut)});
+        start = cut;
+        was = now;
+      }
+    }
+    if (!was && start < 1) out.push_back({at(start), b});
+    return out;
+  }
+
+ private:
+  struct Body {
+    const TopoDS_Shape* shape;
+    Bnd_Box box;
+    std::unique_ptr<IntCurvesFace_ShapeIntersector> rays;
+  };
+  gp_Dir m_dir;
+  std::vector<Body> m_bodies;
+};
+
 // The spec with its explode laid out: itself when there is none (or it was done), else `copy` filled from it.
 const ViewSpec& exploded(const Document& doc, const Scene& scene, const ViewSpec& spec, ViewSpec& copy) {
   if (spec.explode_resolved || spec.explode.is_null()) return spec;
@@ -1455,12 +1528,20 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
   run.check();
   const auto finish = std::chrono::steady_clock::now();
   g->stats["overlaps"] = drop_overlaps(g->curves, 0.1 * spec.tolerance);  // closer than a tenth of the tolerance: one line
-  for (const auto& [from, to] : spec.trails) {  // an exploded view's trail lines: thin, over whatever they pass (UI-85)
-    Curve k;
-    k.kind = Curve::Kind::Trail;
-    k.pts = {v.at(gp_Pnt(from[0], from[1], from[2])), v.at(gp_Pnt(to[0], to[1], to[2]))};
-    k.z = v.depth(gp_Pnt(to[0], to[1], to[2]));
-    if (norm(k.pts[1] - k.pts[0]) > spec.tolerance) g->curves.push_back(std::move(k));  // seen end on: nothing to draw
+  if (!spec.trails.empty()) {  // an exploded view's trail lines: thin, where no body hides them (UI-85)
+    TrailHiders hiders(sources, v);
+    for (const auto& [from, to] : spec.trails) {
+      const gp_Pnt a(from[0], from[1], from[2]), b(to[0], to[1], to[2]);
+      if (norm(v.at(b) - v.at(a)) <= spec.tolerance) continue;  // seen end on: nothing to draw
+      for (const auto& [p, q] : hiders.visible(a, b)) {
+        Curve k;
+        k.kind = Curve::Kind::Trail;
+        k.pts = {v.at(p), v.at(q)};
+        k.z = std::max(v.depth(p), v.depth(q));
+        if (norm(k.pts[1] - k.pts[0]) > spec.tolerance) g->curves.push_back(std::move(k));
+      }
+      run.check();
+    }
   }
   bool any = false;
   std::array<double, 4> box{1e300, 1e300, -1e300, -1e300};

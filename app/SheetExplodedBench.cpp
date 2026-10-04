@@ -62,6 +62,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
     const opad::Sheet* sh = doc->scene.sheet(sheet);
     if (!sh || sh->views.size() != 1) throw opad::Error("no sheet");
     const std::string front = sh->views[0];
+    const double sheetWidth = sh->width, sheetHeight = sh->height;  // the scene is made again by every change: sh goes
     // None saved: a hint, nothing to place.
     const size_t ops0 = doc->doc.ops.size();
     w.action("drawings.explodedView")->trigger();
@@ -78,7 +79,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
     const bool sized = waitFor([&] { return canvas->placing() && canvas->placementSize()[1] > 30; }, 20000);
     check(sized, QString("Exploded view follows the pointer at the size its parts take apart (%1 mm high)").arg(canvas->placementSize()[1]));
     const size_t ops1 = doc->doc.ops.size();
-    const Vec2 target{sh->width * 0.62, sh->height * 0.55};
+    const Vec2 target{sheetWidth * 0.62, sheetHeight * 0.55};
     canvas->placeAt(target);  // where a click on the sheet places it (SheetBench's way: no window under a hidden one's events)
     check(waitFor([&] { return doc->doc.ops.size() > ops1 && !doc->designBusy; }, 15000) && waitFor(settled, 60000) && doc->doc.ops.size() == ops1 + 1,
           "a click places it: one step, drawn");
@@ -97,7 +98,8 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
       const auto inView = [&](const std::string& id, int layer) {
         return std::count_if(d.prims.begin(), d.prims.end(), [&](const opad::drawing::Prim& p) { return p.source == id && p.layer == layer; });
       };
-      check(trail >= 0 && d.layers[size_t(trail)].line == opad::drawing::LineType::Phantom && inView(v->id, trail) >= 2 && inView(front, trail) == 0,
+      // A trail line inside a part is hidden by it: the post's runs inside the post, the lid's shows between them.
+      check(trail >= 0 && d.layers[size_t(trail)].line == opad::drawing::LineType::Phantom && inView(v->id, trail) >= 1 && inView(front, trail) == 0,
             QString("drawn apart with its trail lines on the Trail layer (%1), the front view without").arg(trail >= 0 ? inView(v->id, trail) : 0));
       opad::drawing::ViewSpec spec = opad::drawing::view_spec(doc->scene, *v);
       opad::drawing::resolve_explode(doc->doc, doc->scene, spec);
