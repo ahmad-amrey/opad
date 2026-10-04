@@ -1134,6 +1134,32 @@ std::string text_outline(const std::string& text, const std::string& error) {
 
 // ---------------------------------------------------------------- versions from git
 namespace {
+#ifdef _WIN32
+// A bare program name looked up on PATH's absolute folders only: CreateProcess would try this program's folder and the
+// current directory first, where a repository being diffed may hold a git.exe of its own. Empty when it is not there.
+std::wstring program_on_path(const std::wstring& name) {
+  if (name.find_first_of(L"\\/:") != std::wstring::npos) return name;  // a path: as given
+  std::wstring path(GetEnvironmentVariableW(L"PATH", nullptr, 0), L'\0');
+  path.resize(GetEnvironmentVariableW(L"PATH", path.data(), DWORD(path.size())));
+  const bool typed = name.find(L'.') != std::wstring::npos;
+  for (size_t at = 0; at <= path.size();) {
+    size_t end = path.find(L';', at);
+    if (end == std::wstring::npos) end = path.size();
+    std::wstring dir = path.substr(at, end - at);
+    at = end + 1;
+    if (dir.size() >= 2 && dir.front() == L'"' && dir.back() == L'"') dir = dir.substr(1, dir.size() - 2);
+    if (dir.empty() || !std::filesystem::path(dir).is_absolute()) continue;
+    for (const wchar_t* ext : {L"", L".exe", L".com"}) {
+      if (typed != !*ext) continue;
+      const std::wstring candidate = dir + L"\\" + name + ext;
+      const DWORD attributes = GetFileAttributesW(candidate.c_str());
+      if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return candidate;
+    }
+  }
+  return {};
+}
+#endif
+
 // Runs a program and returns its exit status (-1 when it did not start), with its standard output in `out` and its
 // errors in `err` (through a scratch file, so nothing has to read two pipes at once).
 int run_capture(const std::vector<std::string>& args, std::string& out, std::string& err) {
@@ -1143,6 +1169,8 @@ int run_capture(const std::vector<std::string>& args, std::string& out, std::str
     if (!w.empty()) MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), int(w.size()));
     return w;
   };
+  const std::wstring given = wide(args.at(0)), program = program_on_path(given);
+  if (program.empty()) return -1;
   std::wstring command;
   for (const auto& a : args) {
     command += L"\"";
@@ -1171,7 +1199,7 @@ int run_capture(const std::vector<std::string>& args, std::string& out, std::str
   startup.hStdOutput = write;
   startup.hStdError = errors;
   PROCESS_INFORMATION process{};
-  const BOOL started = CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+  const BOOL started = CreateProcessW(program == given ? nullptr : program.c_str(), command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
   CloseHandle(write);
   if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
   int status = -1;

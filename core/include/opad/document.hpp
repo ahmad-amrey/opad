@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -50,11 +51,12 @@ struct BodyEntry {
   struct Check {  // 0 not hashed yet, 1 matches the key, 2 does not
     mutable std::atomic<unsigned char> state{0};
     Check() = default;
-    Check(const Check& o) : state(o.state.load()) {}
-    Check& operator=(const Check& o) { state = o.state.load(); return *this; }
+    Check(const Check& o) noexcept : state(o.state.load()) {}  // noexcept: vector growth moves entries, never copies their BREP
+    Check& operator=(const Check& o) noexcept { state = o.state.load(); return *this; }
   } check;
   bool external = false;  // a linked asset's body (assets.hpp): its shape comes from the file, never from the store
 };
+static_assert(std::is_nothrow_move_constructible_v<BodyEntry> && std::is_nothrow_move_assignable_v<BodyEntry>);
 
 struct ShapeCache;  // opaque; defined in geometry.cpp
 std::shared_ptr<ShapeCache> make_shape_cache();

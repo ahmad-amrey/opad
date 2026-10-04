@@ -1,9 +1,7 @@
-// The status bar (path, git, hover, selection, snapping toggles, progress) and git: branch state, an op's git log.
+// The status bar (the path and its chips, messages, hover, selection, snapping toggles, units, progress).
 #include "MainWindow.hpp"
 
-#include <QDialog>
 #include <QDir>
-#include <QFileInfo>
 #include <QLabel>
 #include <QMenu>
 #include <QPainter>
@@ -14,10 +12,10 @@
 #include <QStyleOption>
 #include <QTimer>
 #include <QToolButton>
-#include <QVBoxLayout>
 
 #include "CoordinateReadout.hpp"
 #include "I18n.hpp"
+#include "StatusRow.hpp"
 #include "Icons.hpp"
 #include "Preferences.hpp"
 #include "Theme.hpp"
@@ -46,46 +44,16 @@ class StatusText : public QLabel {
   int m_minimum;
   bool m_tip;
 };
-
-// QStatusBar hides its normal widgets (the path, the git chip) while a message shows and paints the message where they
-// were (UI-109). This one keeps them and paints no message: MainWindow::setPrompt shows it in the prompt instead, and
-// currentMessage() still says what it is.
-class StatusBar : public QStatusBar {
- public:
-  explicit StatusBar(QWidget* parent) : QStatusBar(parent) {
-    connect(this, &QStatusBar::messageChanged, this, [this](const QString& text) {
-      if (text.isEmpty()) return;
-      for (QWidget* w : findChildren<QWidget*>(Qt::FindDirectChildrenOnly))  // hidden for the message, not by their owner
-        if (!w->isWindow() && w->isHidden() && !w->testAttribute(Qt::WA_WState_ExplicitShowHide)) w->show();
-    });
-  }
- protected:
-  void paintEvent(QPaintEvent*) override {  // QStatusBar's, without the message
-    QPainter p(this);
-    QStyleOption panel;
-    panel.initFrom(this);
-    style()->drawPrimitive(QStyle::PE_PanelStatusBar, &panel, &p, this);
-    for (QWidget* w : findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-      if (w->isWindow() || !w->isVisible()) continue;
-      QStyleOption item(0);
-      item.rect = w->geometry().adjusted(-2, -1, 2, 1);
-      item.palette = palette();
-      item.state = QStyle::State_None;
-      style()->drawPrimitive(QStyle::PE_FrameStatusBarItem, &item, &p, w);
-    }
-  }
-};
 }  // namespace
 
 // Left to right: the path and the git chip, then the prompt (what the running tool waits for, or a message for its
 // seconds), the hover readout (what is under the mouse), the progress strip, the drafting toggles, the cursor's
 // coordinates, the selection, the units chip. The prompt and the hover keep their room while a job runs (UI-109).
 void MainWindow::buildStatusBar() {
-  setStatusBar(new StatusBar(this));
+  setStatusBar(new StatusBar(this));  // made before anything asks for statusBar(): it paints no message (the prompt shows it)
   const Tokens& t = theme::current();
-  m_statusPath = new StatusText(Qt::ElideMiddle, 120, false, this);  // the folder gives way first, the file name stays
-  m_statusPath->setFont(theme::mono(12));
-  m_statusPath->setContentsMargins(12, 2, 4, 2);
+  m_statusRow = new StatusRow(this);  // the path (cut in the middle: the file name stays) and its chips (UI-08)
+  m_statusPath = m_statusRow->path();
   m_statusPrompt = new StatusText(Qt::ElideRight, 140, true, this);
   m_statusPrompt->setObjectName("statusPrompt");
   m_statusPrompt->setAlignment(Qt::AlignLeading | Qt::AlignVCenter);
@@ -98,8 +66,10 @@ void MainWindow::buildStatusBar() {
   m_progress = new ProgressStrip(this);
   m_jobs = new JobRunner(m_progress, this);
   m_viewport->setJobs(m_jobs);
-  statusBar()->addWidget(m_statusPath);  // the git chip follows it (VcsArea.cpp)
-  // Permanent, so that an area's widgets (the git chip) come before them.
+  // All permanent: QStatusBar hides normal widgets while a temporary message shows (the path and the git chip went with
+  // every message). The row comes first, at its size (the git chip follows the path: AreaServices::addStatusChip); the
+  // prompt (which shows a message while it lasts, setPrompt) and the hover text share what is left.
+  statusBar()->addPermanentWidget(m_statusRow);
   statusBar()->addPermanentWidget(m_statusPrompt, 1);
   statusBar()->addPermanentWidget(m_statusHover, 1);
   connect(statusBar(), &QStatusBar::messageChanged, this, [this] { setPrompt(m_promptText); });
@@ -218,7 +188,7 @@ void MainWindow::buildUnitsButton() {
     qDeleteAll(menu->findChildren<QMenu*>(Qt::FindDirectChildrenOnly));  // clear() keeps submenus: they own their action
     menu->clear();
     const auto& d = units::current();
-    menu->addSection(m_doc->browse ? tr("Show lengths in") : tr("Document unit"));
+    menu->addSection(m_doc->viewOnly() ? tr("Show lengths in") : tr("Document unit"));
     for (const QString& unit : units::lengthUnits()) {
       const std::string u = unit.toStdString();
       QAction* a = menu->addAction(QString("%1 (%2)").arg(units::unitName(u), units::symbol(units::Kind::Length, units::Display{u})));
@@ -251,7 +221,7 @@ void MainWindow::buildUnitsButton() {
   connect(m_doc, &AppDocument::aboutToReplace, this, [] { units::setSessionUnit({}); });
   connect(m_doc, &AppDocument::changed, this, [this] {
     units::setDocumentUnit(m_doc->hasDocument ? m_doc->scene.units : m_doc->doc.header.units);
-    if (!m_doc->browse) units::setSessionUnit({});  // viewer mode left (Edit unsaved copy, an import): the file's unit
+    if (!m_doc->viewOnly()) units::setSessionUnit({});  // viewer mode or read-only left (Edit unsaved copy, an import): the file's unit
   });
   connect(units::notifier(), &units::Notifier::changed, this, [this, shown] {
     shown();
@@ -266,9 +236,11 @@ void MainWindow::buildUnitsButton() {
 // through the design so that values typed without a unit are read in the new one (and regenerate).
 void MainWindow::setDocumentUnit(const std::string& unit) {
   if (!m_doc->hasDocument) return;
-  if (m_doc->browse) {
+  if (m_doc->viewOnly()) {
     units::setSessionUnit(unit == units::documentUnit() ? std::string() : unit);
-    resultToast(tr("Lengths are shown in %1; the file is not changed (viewer mode).").arg(units::unitName(unit).toLower()));
+    resultToast((m_doc->readOnly ? tr("Lengths are shown in %1; the file is not changed (read-only).")
+                                 : tr("Lengths are shown in %1; the file is not changed (viewer mode)."))
+                    .arg(units::unitName(unit).toLower()));
     return;
   }
   if (unit == m_doc->scene.units) return;
@@ -277,9 +249,12 @@ void MainWindow::setDocumentUnit(const std::string& unit) {
 
 void MainWindow::updateTitle() {
   setWindowTitle(m_doc->title());
-  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("Viewer (read-only): %1").arg(QDir::toNativeSeparators(m_doc->viewing)) : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
+  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("Viewer (read-only): %1").arg(QDir::toNativeSeparators(m_doc->viewing))
+                                       : m_doc->readOnly ? tr("Read-only: %1").arg(QDir::toNativeSeparators(m_doc->path()))
+                                       : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
   if (!m_doc->scene.unresolved.empty()) path += tr("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
   m_statusPath->setText(path);
+  m_statusPath->setFile(!m_doc->hasDocument ? QString() : m_doc->browse ? m_doc->viewing : m_doc->path());
   // What is unresolved and why: a newer build's records in one sentence, the others by op type and reason.
   QStringList tip;
   if (const QString newer = newerRecords(); !newer.isEmpty()) tip << newer;
@@ -311,31 +286,4 @@ QString MainWindow::newerRecords() const {
       if (!types.contains(QString::fromStdString(op.type))) types << QString::fromStdString(op.type);
     }
   return count ? tr("This file has %1 records from a newer OPAD (%2); they are kept and saved back unchanged.").arg(count).arg(types.join(", ")) : QString();
-}
-
-void MainWindow::showOpGitLog(const std::string& opId,const QString& path) {
-  auto* dialog=new QDialog(this); dialog->setObjectName("opGitLog"); dialog->setAttribute(Qt::WA_DeleteOnClose);
-  dialog->setWindowTitle(tr("git log for op %1").arg(QString::fromStdString(opId.substr(0,8)))); dialog->resize(700,400);
-  auto* layout=new QVBoxLayout(dialog); auto* output=new QPlainTextEdit(dialog); output->setReadOnly(true); layout->addWidget(output);
-  dialog->show();
-  if(path.isEmpty()) { output->setPlainText(tr("Save the document in a git repository first.")); dialog->setProperty("finished",true); return; }
-  output->setPlainText(tr("Reading Git history..."));
-  auto* git=new QProcess(this); const QFileInfo file(path); git->setWorkingDirectory(file.absolutePath());
-  auto* timeout=new QTimer(git); timeout->setSingleShot(true);
-  connect(timeout,&QTimer::timeout,git,[git] {git->setProperty("timedOut",true);git->kill();});
-  connect(dialog,&QObject::destroyed,git,[git] { if(git->state()!=QProcess::NotRunning) git->kill(); });
-  connect(git,&QProcess::errorOccurred,dialog,[=](QProcess::ProcessError error) {
-    if(error==QProcess::FailedToStart) { output->setPlainText(git->errorString()); dialog->setProperty("finished",true); git->deleteLater(); }
-  });
-  connect(git,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),dialog,[=](int code,QProcess::ExitStatus status) {
-    timeout->stop();
-    QString text=QString::fromUtf8(git->readAllStandardOutput()).trimmed();
-    if(git->property("timedOut").toBool()) text=tr("Git history timed out.");
-    else if(code!=0 || status!=QProcess::NormalExit) text=QString::fromUtf8(git->readAllStandardError()).trimmed();
-    else if(text.isEmpty()) text=tr("Not committed yet.");
-    output->setPlainText(text); dialog->setProperty("finished",true);
-  });
-  connect(git,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),git,&QObject::deleteLater);
-  git->start("git",{"log","--format=%h %ad %an  %s","--date=short","-S",QString::fromStdString(opId),"--",file.fileName()});
-  timeout->start(10000);
 }

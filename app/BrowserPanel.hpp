@@ -61,6 +61,7 @@ class BrowserPanel : public QWidget {
  signals:
   void selectionChanged(const std::vector<std::string>& ids);
   void contextMenuRequested(const QPoint& globalPos, const std::vector<std::string>& ids);
+  void documentMenuRequested(const QPoint& globalPos);  // the document row: the menu is about the document (SelectionContext::document)
   void fitRequested(const std::vector<std::string>& ids);
   void autoHideChanged(bool on);
   void sketchActivated(const std::string& sketchId);  // double-click on a sketch row: edit it

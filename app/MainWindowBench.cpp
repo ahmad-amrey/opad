@@ -228,19 +228,8 @@ void MainWindow::runBench() {
     if(!removed) {QCoreApplication::exit(2);return;}
     if(!m_doc->scene.measurements.empty()) {QCoreApplication::exit(2);return;}
     restoreOp(id); if(m_doc->scene.measurements.size()!=1) {QCoreApplication::exit(2);return;}
-    showOpGitLog(id,{});
-    auto* unsaved=findChild<QDialog*>("opGitLog");
-    if(!unsaved || !unsaved->property("finished").toBool()) {QCoreApplication::exit(2);return;}
-    unsaved->setObjectName("closedGitLog");unsaved->close();
-    showOpGitLog(id,qEnvironmentVariable("OPAD_BENCH_REVIEW"));
-    QPointer<QDialog> log=findChild<QDialog*>("opGitLog");
-    auto* poll=new QTimer(this);poll->setInterval(50);
-    connect(poll,&QTimer::timeout,this,[=] {
-      if(!log || !log->property("finished").toBool()) return;
-      const auto text=log->findChild<QPlainTextEdit*>()->toPlainText();
-      trace::log("bench: review measurement remove/restore and Git log PASS: "+text);
-      QCoreApplication::exit(text.isEmpty()?2:0);
-    });poll->start();return;
+    trace::log("bench: review measurement remove/restore PASS");  // who added an op in git: OPAD_BENCH_PROVENANCE
+    QCoreApplication::exit(0);return;
   }
 
   m_benchSelect = false;

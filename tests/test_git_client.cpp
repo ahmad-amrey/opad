@@ -3,9 +3,14 @@
 // driver merging and diffing for real through opad-cli and through opad.exe alone, timeouts and Cancel ending git with
 // everything it started, clone progress, a new clone set up for OPAD and its documents found. UI-136: errors as
 // sentences, safe.directory, the environment (BatchMode ssh, no inherited GIT_DIR), opad.exe answering git's sign-in
-// prompts as GIT_ASKPASS, the author, Locate git, warnings before a push. Temporary repositories only; git's global
-// and system config are left out.
+// prompts as GIT_ASKPASS, the author, Locate git, warnings before a push. UI-62 against a host: Git LFS files going up
+// to a remote's LFS store and down into a new clone; push, clone, fetch and pull over smart HTTP behind a sign-in (a
+// host on this machine), OPAD answering git's prompts, a refused sign-in as a sentence. UI-64: who brought which op in
+// which commit, read once per version (OpHistory.cpp). Temporary repositories only;
+// git's global and system config are left out.
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -13,11 +18,16 @@
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QSettings>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUrl>
 
+#include <atomic>
+
 #include "Git.hpp"
+#include "OpHistory.hpp"
 #include "check.hpp"
 #include "opad/core.hpp"
 
@@ -71,6 +81,134 @@ git::Install fromBuild(bool cli) {
   i.app = bin("opad");
   return i;
 }
+
+QByteArray noise(int size) {
+  QByteArray bytes(size, '\0');
+  for (char& b : bytes) b = char(QRandomGenerator::global()->generate());
+  return bytes;
+}
+
+// A git host on this machine: smart HTTP through git http-backend behind a Basic sign-in (`account`: "user:password"),
+// served on a thread of its own, one request per connection. As a hosting service, minus TLS: the first request of a git
+// command is refused (401), git asks its credential helper or askpass, and asks again signed in.
+class Host {
+ public:
+  Host(const QString& root, const QByteArray& account) : m_root(root), m_account("Basic " + account.toBase64()) {
+    m_thread = QThread::create([this] { serve(); });
+    m_thread->start();
+    while (m_port == 0) QThread::msleep(5);
+  }
+  ~Host() {
+    m_stop = true;
+    m_thread->wait();
+    delete m_thread;
+  }
+  QString url(const QString& repository) const { return QStringLiteral("http://127.0.0.1:%1/%2").arg(m_port.load()).arg(repository); }
+  bool listening() const { return m_port > 0; }
+  std::atomic<int> refused{0}, served{0};
+
+ private:
+  void serve() {
+    QTcpServer server;
+    if (!server.listen(QHostAddress::LocalHost, 0)) {
+      m_port = -1;
+      return;
+    }
+    m_port = server.serverPort();
+    while (!m_stop)
+      if (server.waitForNewConnection(50))
+        while (QTcpSocket* s = server.nextPendingConnection()) {
+          answer(s);
+          delete s;
+        }
+  }
+  void answer(QTcpSocket* s) {
+    QByteArray in;
+    auto more = [&] {
+      if (!s->bytesAvailable() && !s->waitForReadyRead(10000)) return false;
+      in += s->readAll();
+      return true;
+    };
+    qsizetype end;
+    while ((end = in.indexOf("\r\n\r\n")) < 0)
+      if (!more()) return;
+    const QList<QByteArray> lines = in.left(end).split('\n');
+    in.remove(0, end + 4);
+    const QList<QByteArray> request = lines[0].trimmed().split(' ');
+    if (request.size() < 2) return;
+    QHash<QByteArray, QByteArray> h;
+    for (qsizetype i = 1; i < lines.size(); ++i)
+      if (const qsizetype colon = lines[i].indexOf(':'); colon > 0) h[lines[i].left(colon).trimmed().toLower()] = lines[i].mid(colon + 1).trimmed();
+    if (h.value("expect").toLower() == "100-continue") {
+      s->write("HTTP/1.1 100 Continue\r\n\r\n");
+      s->flush();
+    }
+    QByteArray body;
+    if (h.value("transfer-encoding").toLower() == "chunked")
+      for (;;) {
+        qsizetype eol;
+        while ((eol = in.indexOf("\r\n")) < 0)
+          if (!more()) return;
+        const qsizetype size = in.left(eol).split(';')[0].trimmed().toLongLong(nullptr, 16);
+        while (in.size() < eol + 2 + size + 2)
+          if (!more()) return;
+        body += in.mid(eol + 2, size);
+        in.remove(0, eol + 2 + size + 2);
+        if (size == 0) break;
+      }
+    else {
+      const qsizetype size = h.value("content-length").toLongLong();
+      while (in.size() < size)
+        if (!more()) return;
+      body = in.left(size);
+    }
+    QByteArray reply;
+    if (h.value("authorization") != m_account) {
+      ++refused;
+      reply = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"host\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    } else {
+      ++served;
+      const QByteArray target = request[1];
+      const qsizetype q = target.indexOf('?');
+      QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
+      e.insert("GIT_PROJECT_ROOT", m_root);
+      e.insert("GIT_HTTP_EXPORT_ALL", "1");
+      e.insert("REMOTE_USER", "s3cret");
+      e.insert("REMOTE_ADDR", "127.0.0.1");
+      e.insert("REQUEST_METHOD", QString::fromLatin1(request[0]));
+      e.insert("PATH_INFO", QString::fromUtf8(QByteArray::fromPercentEncoding(q < 0 ? target : target.left(q))));
+      e.insert("QUERY_STRING", q < 0 ? QString() : QString::fromLatin1(target.mid(q + 1)));
+      e.insert("CONTENT_TYPE", QString::fromLatin1(h.value("content-type")));
+      e.insert("CONTENT_LENGTH", QString::number(body.size()));
+      if (h.contains("content-encoding")) e.insert("HTTP_CONTENT_ENCODING", QString::fromLatin1(h.value("content-encoding")));
+      if (h.contains("git-protocol")) e.insert("GIT_PROTOCOL", QString::fromLatin1(h.value("git-protocol")));
+      QProcess cgi;
+      cgi.setProcessEnvironment(e);
+      cgi.start(git::findProgram(), {"http-backend"});
+      cgi.write(body);
+      cgi.closeWriteChannel();
+      cgi.waitForFinished(60000);
+      const QByteArray out = cgi.readAllStandardOutput();
+      const qsizetype split = out.indexOf("\r\n\r\n");
+      QByteArray status = "200 OK", headers;
+      for (const QByteArray& line : out.left(std::max<qsizetype>(split, 0)).split('\n'))
+        if (line.trimmed().isEmpty()) continue;
+        else if (line.startsWith("Status:")) status = line.mid(7).trimmed();
+        else headers += line.trimmed() + "\r\n";
+      const QByteArray content = split < 0 ? QByteArray() : out.mid(split + 4);
+      reply = "HTTP/1.1 " + status + "\r\n" + headers + "Content-Length: " + QByteArray::number(content.size()) + "\r\nConnection: close\r\n\r\n" + content;
+    }
+    s->write(reply);
+    while (s->bytesToWrite() && s->waitForBytesWritten(10000)) {}
+    s->disconnectFromHost();
+    if (s->state() != QAbstractSocket::UnconnectedState) s->waitForDisconnected(2000);
+  }
+  QString m_root;
+  QByteArray m_account;
+  QThread* m_thread = nullptr;
+  std::atomic<int> m_port{0};
+  std::atomic<bool> m_stop{false};
+};
 
 // A document in a fresh repository set up by OPAD (no LFS: the hooks would want git-lfs on every push of the tests).
 QString setUpRepository(const QString& dir, const git::Install& install) {
@@ -174,6 +312,9 @@ TEST(fresh_repository_set_up) {
   CHECK(r.wantsDriver && r.managed && !r.needsDriver() && !r.driverStale());
   CHECK_EQ(r.driver, install.mergeDriver());
   CHECK_EQ(r.textconv, install.textconv());
+  CHECK_EQ(r.difftool, install.difftool());  // git difftool -t opad: Compare
+  CHECK(r.difftool.startsWith('"' + QDir::fromNativeSeparators(install.app) + "\" --compare \"$LOCAL\" \"$REMOTE\""));
+  CHECK_EQ(QString::fromUtf8(git_(dir, {"config", "--get", "diff.opad.cachetextconv"})).trimmed(), QStringLiteral("true"));
   CHECK(r.driver.startsWith('"' + QDir::fromNativeSeparators(install.cli) + "\" merge-driver"));
   const QString attributes = read(dir + "/.gitattributes");
   CHECK(attributes.contains("*.opad text eol=lf merge=opad diff=opad"));
@@ -496,8 +637,250 @@ TEST(push_warnings) {
   CHECK(git::pushWarnings(in(dir)).isEmpty());  // the real limits: nothing big here
   git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", tmp.path() + "/remote.git"});
   git_(dir, {"remote", "add", "origin", tmp.path() + "/remote.git"});
-  git_(dir, {"push", "-q", "--no-verify", "-u", "origin", "main"});  // no LFS server here: the pre-push hook would want one
+  git_(dir, {"push", "-q", "--no-verify", "-u", "origin", "main"});  // the LFS upload itself: lfs_push_and_clone
   CHECK(git::pushWarnings(in(dir), 4096, 1024).isEmpty());
+}
+
+// UI-62: the history of a document, branches with their upstreams, a file at a revision, the object store, branch names.
+TEST(history_and_branches) {
+  const auto commits = git::parseLog(QByteArrayLiteral("aaaa\x1f" "aa\x1f" "Ann\x1f" "ann@x.org\x1f" "2026-10-01T10:00:00+02:00\x1f" "p1 p2\x1f"
+                                                       "HEAD -> main, origin/main, tag: v1\x1f" "Merge \x1f odd\0\n"
+                                                       "bbbb\x1f" "bb\x1f" "Bob\x1f" "b@x.org\x1f" "2026-09-30T10:00:00Z\x1f\x1f\x1f" "first\0"));
+  CHECK_EQ(commits.size(), size_t(2));
+  CHECK(commits[0].hash == "aaaa" && commits[0].shortHash == "aa" && commits[0].author == "Ann" && commits[0].parents.size() == 2);
+  CHECK(commits[0].refs == (QStringList{"HEAD -> main", "origin/main", "tag: v1"}) && commits[0].subject == "Merge \x1f odd");
+  CHECK(commits[1].parents.isEmpty() && commits[1].refs.isEmpty() && commits[1].subject == "first");
+  const auto parsed = git::parseBranches(QByteArrayLiteral(
+      "refs/remotes/origin/HEAD\x1forigin\x1f" "cccc\x1f\x1f\x1f" "2026\x1f \x1fx\n"
+      "refs/remotes/origin/main\x1forigin/main\x1f" "cccc\x1f\x1f\x1f" "2026\x1f \x1fsubject\n"
+      "refs/heads/zeta\x1fzeta\x1f" "dddd\x1forigin/zeta\x1fgone\x1f" "2026\x1f \x1fz\n"
+      "refs/heads/main\x1fmain\x1f" "cccc\x1forigin/main\x1f" "ahead 2, behind 3\x1f" "2026\x1f*\x1fsubject\n"));
+  CHECK_EQ(parsed.size(), size_t(3));
+  CHECK(parsed[0].name == "main" && parsed[0].head && parsed[0].ahead == 2 && parsed[0].behind == 3 && parsed[0].upstream == "origin/main");
+  CHECK(parsed[1].name == "zeta" && parsed[1].gone && !parsed[1].head);
+  CHECK(parsed[2].name == "origin/main" && parsed[2].remote);
+  for (const char* good : {"main", "feature/x", "fix-1.2", "José"}) CHECK(git::validBranchName(QString::fromUtf8(good)));
+  for (const char* bad : {"", "-x", "a b", "a..b", "x.lock", "a/.b", "x/", "a~1", "a:b", "@", "HEAD", "a@{1}", "q?"}) CHECK(!git::validBranchName(QString::fromUtf8(bad)));
+  CHECK_EQ(git::explain("error: Your local changes to the following files would be overwritten by checkout:"),
+           git::explain("error: Your local changes to the following files would be overwritten by merge:"));
+  CHECK(git::explain("error: the branch 'x' is not fully merged.").contains("loses"));
+
+  QTemporaryDir tmp;
+  const QString dir = tmp.path() + "/project";
+  QDir().mkpath(dir);
+  const QString doc = setUpRepository(dir, fromBuild(true));
+  CHECK(git::log(in(dir), {}, "model.opad", 10).empty());  // no commit yet
+  CHECK(git::revParse(in(dir), "HEAD").isEmpty());
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "-m", "first"});
+  box(doc, 0);
+  git_(dir, {"commit", "-q", "-am", "a box"});
+  QFile other(dir + "/notes.txt");
+  CHECK(other.open(QIODevice::WriteOnly) && other.write("n\n") > 0);
+  other.close();
+  git_(dir, {"add", "notes.txt"});
+  git_(dir, {"commit", "-q", "-m", "notes, not the document"});
+  const auto history = git::log(in(dir), {}, "model.opad", 10);
+  CHECK_EQ(history.size(), size_t(2));
+  CHECK(history[0].subject == "a box" && history[1].subject == "first" && history[0].parents == QStringList{history[1].hash});
+  CHECK(history[0].author == "OPAD Test" && QDateTime::fromString(history[0].date, Qt::ISODate).isValid());
+  CHECK_EQ(git::log(in(dir), {}, {}, 10).size(), size_t(3));
+  CHECK(git::log(in(dir), {}, {}, 1, 2)[0].subject == "first");  // paged
+  CHECK(git::log(in(dir), {}, {}, 10)[0].refs.contains("HEAD -> main"));
+  CHECK_EQ(git::revParse(in(dir), "HEAD~1"), history[0].hash);
+  // The document as each commit has it.
+  const QByteArray first = git::show(in(dir), history[1].hash, "model.opad"), now = git::show(in(dir), "HEAD", "model.opad");
+  CHECK(opad::Document::parse(first.toStdString()).ops.size() + 1 == opad::Document::parse(now.toStdString()).ops.size());
+  CHECK_THROWS(git::show(in(dir), history[1].hash, "notes.txt"));
+  // Branches, an upstream ahead and behind, a remote's branch.
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", tmp.path() + "/remote.git"});
+  git_(dir, {"remote", "add", "origin", tmp.path() + "/remote.git"});
+  CHECK(git::remotes(in(dir)) == QStringList{"origin"});
+  git_(dir, {"push", "-q", "--no-verify", "-u", "origin", "main"});
+  git_(dir, {"branch", "feature/x"});
+  box(doc, 10);
+  git_(dir, {"commit", "-q", "-am", "ahead"});
+  auto list = git::branches(in(dir));
+  CHECK_EQ(list.size(), size_t(3));
+  CHECK(list[0].name == "feature/x" && !list[0].head && list[0].upstream.isEmpty());
+  CHECK(list[1].name == "main" && list[1].head && list[1].upstream == "origin/main" && list[1].ahead == 1 && list[1].behind == 0 && list[1].subject == "ahead");
+  CHECK(list[2].name == "origin/main" && list[2].remote && list[2].oid == git::revParse(in(dir), "HEAD~1"));
+  const git::Objects objects = git::countObjects(in(dir));
+  CHECK(objects.loose > 0 && objects.looseKiB >= 0);
+  git_(dir, {"gc", "-q"});
+  const git::Objects packed = git::countObjects(in(dir));
+  CHECK(packed.loose < objects.loose && packed.packs >= 1);
+}
+
+// UI-64: the op records of a version up to #bodies (fed in pieces, multiline records), and the index of who brought which
+// op in which commit: four commits by three authors, an edit counted per commit, a node touched by the ops that name it,
+// a big version read only to its #bodies, everything from the cache the second time, an empty index before any commit.
+TEST(op_history_index) {
+  const std::string a = "11111111-1111-4111-8111-111111111111", b = "22222222-2222-4222-8222-222222222222", key(64, 'a');
+  const std::string text = "#opad 2\n{\"uuid\":\"" + a + "\"}\n#ops\n{\"op\":\"sketch\",\"id\":\"" + a + "\",\"ts\":\"t\",\"by\":\"x\",\"geometry\":[\n" +
+                           " {\"ref\":\"" + b + "\"},\n]}\n{\"op\":\"edit\",\"id\":\"" + b + "\",\"ts\":\"t\",\"by\":\"y\",\"target\":\"" + a +
+                           "\",\"set\":{\"key\":\"" + key + "\"}}\n#bodies\n{\"op\":\"edit\",\"id\":\"" + a + "\"}\n";
+  ophistory::Reader reader;
+  for (size_t i = 0; i < text.size(); i += 7) reader.feed(std::string_view(text).substr(i, 7));
+  CHECK(reader.done());
+  const auto records = reader.finish();
+  CHECK_EQ(records.size(), size_t(2));
+  CHECK(records[0].type == "sketch" && records[0].id == a && records[0].mentions == std::vector<std::string>{b});
+  CHECK(records[1].type == "edit" && records[1].target == a && records[1].mentions.empty());  // a body key is no UUID
+
+  QTemporaryDir tmp;
+  const QString dir = tmp.path() + "/project", cache = tmp.path() + "/cache";
+  QDir().mkpath(dir);
+  git_(dir, {"init", "-q", "-b", "main"});
+  CHECK(ophistory::build(in(dir), dir, "model.opad", cache).commits.empty());  // nothing committed yet
+  const QString path = dir + "/model.opad";
+  opad::Document d = opad::Document::create();
+  const std::string brep = "DBRep_DrawableShape\n\nCASCADE Topology V1, (c) Matra-Datavision\nLocations 0\n";
+  const std::string body = opad::new_uuid(), part = d.add_body(brep, opad::json::object());
+  const std::string import = d.append({{"op", "import"}, {"source", "x.step"}, {"nodes", {{{"type", "body"}, {"id", body}, {"name", "Part"}, {"key", part}}}}}).id;
+  auto commit = [&](const char* author, const char* message) {
+    d.save_as(path.toStdU16String());
+    git_(dir, {"add", "model.opad"});
+    git_(dir, {"commit", "-q", "--author", QString::fromLatin1(author), "-m", QString::fromLatin1(message)});
+  };
+  commit("Alice <alice@x.org>", "a part");
+  const std::string rename = d.append({{"op", "rename"}, {"target", body}, {"name", "Bracket"}}).id;
+  commit("Bob <bob@x.org>", "renamed");
+  const std::string note = d.append({{"op", "annotation"}, {"anchor", body}, {"text", "deburr"}}).id;
+  d.append({{"op", "edit"}, {"target", note}, {"set", {{"text", "deburr all"}}}});
+  d.add_body(brep + std::string(1500000, ' ') + "\n", opad::json::object());  // over 1 MB: read on its own, to #bodies only
+  commit("Carol <carol@x.org>", "a note");
+  d.append({{"op", "edit"}, {"target", note}, {"set", {{"text", "deburr every edge"}}}});
+  d.append({{"op", "edit"}, {"target", note}, {"set", {{"style", "issue"}}}});
+  commit("Alice <alice@x.org>", "the note again");
+
+  const ophistory::Index ix = ophistory::build(in(dir), dir, "model.opad", cache);
+  CHECK_EQ(ix.commits.size(), size_t(4));
+  CHECK(ix.commits[0].author == "Alice" && ix.commits[1].author == "Bob" && ix.commits[2].author == "Carol" && ix.commits[3].subject == "the note again");
+  CHECK(ix.head == git::revParse(in(dir), "HEAD") && ix.blobs == 4 && ix.blobsRead == 4);
+  CHECK(ix.bytesRead < qint64(4) * 1500000);  // the two big versions were not read to their end
+  CHECK(ix.find(import)->added == 0 && ix.find(rename)->added == 1 && ix.find(note)->added == 2);
+  CHECK(ix.find(note)->edits == 2 && ix.find(note)->lastEdit == 3 && ix.find(import)->edits == 0);
+  CHECK(ix.touching({body}) == (std::vector<int>{0, 1, 2}));  // created, renamed, noted
+  CHECK(ix.touching({note}) == (std::vector<int>{2, 3}) && ix.touching({rename, note}) == (std::vector<int>{1, 2, 3}));
+  CHECK(!ix.find(opad::new_uuid()));
+  const ophistory::Index again = ophistory::build(in(dir), dir, "model.opad", cache);
+  CHECK(again.blobsRead == 0 && again.bytesRead == 0 && again.find(note)->lastEdit == 3);  // every version from the cache
+  CHECK_EQ(QDir(cache).entryList(QDir::Files).size(), 4);
+  bool stopped = false;
+  QDir(cache).removeRecursively();
+  CHECK(ophistory::build(in(dir), dir, "model.opad", cache, [&stopped] { return stopped = true; }).ops.empty() && stopped);  // cancelled
+
+  // Moved with an edit, then renamed alone: the commits under the older names still count (git log --follow loses them
+  // with --reverse), each version read once, the renames kept per commit.
+  CHECK(ophistory::build(in(dir), dir, "model.opad", cache).blobsRead == 4);
+  QDir().mkpath(dir + "/parts");
+  git_(dir, {"mv", "model.opad", "parts/bracket.opad"});
+  const std::string moved = d.append({{"op", "rename"}, {"target", body}, {"name", "Moved bracket"}}).id;
+  d.save_as((dir + "/parts/bracket.opad").toStdU16String());
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "--author", "Dave <dave@x.org>", "-m", "moved"});
+  const QString last = QString::fromUtf8("parts/bracket v2,\xc3\xbc.opad");
+  git_(dir, {"mv", "parts/bracket.opad", last});
+  git_(dir, {"commit", "-q", "--author", "Erin <erin@x.org>", "-m", "renamed the file"});
+  const ophistory::Index ren = ophistory::build(in(dir), dir, last, cache);
+  CHECK_EQ(ren.commits.size(), size_t(6));
+  CHECK(ren.paths == std::vector<QString>({"model.opad", "model.opad", "model.opad", "model.opad", "parts/bracket.opad", last}));
+  CHECK(ren.commits[0].author == "Alice" && ren.commits[4].author == "Dave" && ren.commits[5].author == "Erin");
+  CHECK(ren.find(import)->added == 0 && ren.find(rename)->added == 1 && ren.find(note)->lastEdit == 3 && ren.find(moved)->added == 4);
+  CHECK(ren.blobs == 5 && ren.blobsRead == 1);  // Erin's version is Dave's; the four before from the cache
+  CHECK(ren.touching({body}) == (std::vector<int>{0, 1, 2, 4}));
+  CHECK(QFileInfo::exists(cache + "/renames-" + ren.commits[5].hash) && QFileInfo::exists(cache + "/renames-" + ren.commits[4].hash));
+  CHECK(!QFileInfo::exists(cache + "/renames-" + ren.commits[0].hash));  // a root commit: nothing asked
+  const ophistory::Index cached = ophistory::build(in(dir), dir, last, cache);
+  CHECK(cached.commits.size() == 6 && cached.blobsRead == 0 && cached.paths == ren.paths);
+}
+
+// UI-62 Push and UI-61 Clone with Git LFS: files under assets/ go up through git-lfs's pre-push hook into the remote's LFS
+// store (a remote on this disk takes them as a host does), the progress names the upload, nothing is left to warn about
+// once pushed, and a new clone gets them back through afterClone (pointers until then: no LFS in git's global config).
+TEST(lfs_push_and_clone) {
+  QTemporaryDir tmp;
+  const QString dir = tmp.path() + "/work", remote = tmp.path() + "/remote.git";
+  QDir().mkpath(dir + "/assets");
+  cli({"new", dir + "/model.opad"});
+  const git::Install install = fromBuild(true);
+  git::setUp(in(dir), dir, install, git::SetupOptions{});
+  if (git::probe(in(dir), dir + "/model.opad").lfsVersion.isEmpty()) {
+    std::printf("git-lfs not found: lfs_push_and_clone skipped\n");
+    return;
+  }
+  const QByteArray bytes = noise(300000);
+  QFile asset(dir + "/assets/board.step");
+  CHECK(asset.open(QIODevice::WriteOnly) && asset.write(bytes) == bytes.size());
+  asset.close();
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "-m", "a board"});
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", remote});
+  git_(dir, {"remote", "add", "origin", remote});
+  CHECK(git::pushWarnings(in(dir), 4096, 1024).join('\n').contains("in 1 Git LFS files go up"));
+  QStringList phases;
+  git::RunOptions o = git::RunOptions::network();
+  o.progress = [&phases](const QString& phase, int) { phases << phase; };
+  const git::Result pushed = git::run(in(dir), {"push", "--progress", "-u", "origin", "main"}, o);  // as VersionControl::runPush
+  CHECK(pushed.ok());
+  CHECK(phases.contains("Uploading LFS objects") && phases.contains("Writing objects"));
+  const QString oid = QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+  CHECK(QFileInfo::exists(remote + "/lfs/objects/" + oid.left(2) + "/" + oid.mid(2, 2) + "/" + oid));
+  CHECK(git::pushWarnings(in(dir), 4096, 1024).isEmpty());
+  const QString copy = tmp.path() + "/copy";
+  CHECK(git::clone(in(tmp.path()), QDir::toNativeSeparators(remote), copy, git::RunOptions::network()).ok());
+  QFile pointer(copy + "/assets/board.step");
+  CHECK(pointer.open(QIODevice::ReadOnly) && pointer.readAll().startsWith("version https://git-lfs.github.com/spec/v1"));
+  pointer.close();
+  CHECK(git::afterClone(in(copy), copy, install).contains("Git LFS is set up for this clone."));
+  QFile cloned(copy + "/assets/board.step");
+  CHECK(cloned.open(QIODevice::ReadOnly) && cloned.readAll() == bytes);
+}
+
+// UI-62 against a host, UI-136 sign-in: a remote behind an HTTP sign-in. Without a credential helper or askpass git
+// cannot ask and says so in a sentence; with OPAD as the askpass (offscreen, answered by OPAD_BENCH_ASKPASS) push -u,
+// clone, another clone's push, fetch and a fast-forward pull go through; a wrong password is refused in a sentence.
+TEST(http_host_sign_in) {
+  QTemporaryDir tmp;
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", tmp.path() + "/robot.git"});
+  Host host(tmp.path(), "s3cret:s3cret");
+  CHECK(host.listening());
+  const QString dir = tmp.path() + "/work";
+  QDir().mkpath(dir);
+  const git::Install install = fromBuild(true);
+  const QString doc = setUpRepository(dir, install);
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "-m", "first"});
+  git_(dir, {"remote", "add", "origin", host.url("robot.git")});
+  const QStringList push{"push", "--progress", "-u", "origin", "main"};
+  git::Result r = git::run(in(dir), push, git::RunOptions::network());
+  CHECK(!r.ok() && r.error().contains("credential helper") && host.refused > 0 && host.served == 0);
+  qputenv("QT_QPA_PLATFORM", "offscreen");
+  qputenv("OPAD_BENCH_ASKPASS", "s3cret");
+  auto signedIn = [](const QString& folder) {
+    git::Context c = in(folder);
+    c.askpass = bin("opad");
+    return c;
+  };
+  r = git::run(signedIn(dir), push, git::RunOptions::network());
+  CHECK(r.ok());
+  CHECK(host.served >= 2 && git::revParse(in(dir), "origin/main") == git::revParse(in(dir), "HEAD"));
+  const QString copy = tmp.path() + "/copy";
+  CHECK(git::clone(signedIn(tmp.path()), host.url("robot.git"), copy, git::RunOptions::network()).ok());
+  git::afterClone(in(copy), copy, install);
+  box(copy + "/model.opad", 20);
+  git_(copy, {"commit", "-q", "-am", "a box from the other clone"});
+  CHECK(git::run(signedIn(copy), {"push", "--progress"}, git::RunOptions::network()).ok());
+  CHECK(git::run(signedIn(dir), {"fetch", "--progress"}, git::RunOptions::network()).ok());
+  git::Repo repo = git::probe(in(dir), doc);
+  CHECK(repo.sync() == git::Repo::Sync::Behind && repo.status.behind == 1);
+  CHECK(git::run(signedIn(dir), {"pull", "--progress", "--no-rebase"}, git::RunOptions::network()).ok());
+  CHECK_EQ(features(doc), size_t(1));
+  qputenv("OPAD_BENCH_ASKPASS", "wrong");
+  r = git::run(signedIn(dir), {"fetch"}, git::RunOptions::network());
+  CHECK(!r.ok() && r.error().contains("refused the sign-in"));
+  for (const char* k : {"QT_QPA_PLATFORM", "OPAD_BENCH_ASKPASS"}) qunsetenv(k);
 }
 
 int main(int argc, char** argv) {

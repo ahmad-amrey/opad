@@ -5,6 +5,8 @@
 #include <QStatusBar>
 
 #include <algorithm>
+#include "StatusRow.hpp"
+
 #include <set>
 
 void MainWindow::createAreas() {
@@ -110,3 +112,5 @@ void AreaServices::setCentralPage(QWidget* page) {
   m_window->showCentral();
 }
 QWidget* AreaServices::centralPage() const { return m_window->m_centralPage; }
+void AreaServices::addStatusChip(QWidget* chip) { m_window->m_statusRow->addChip(chip); }
+PathChip* AreaServices::pathChip() const { return m_window->m_statusPath; }

@@ -97,6 +97,22 @@ def effects(op):
     return set()
 
 
+def effect(op, target, field):
+    """What an op makes of one conflict key: two new ops that make it alike (both renamed a part the same, both deleted one
+    note, both set a parameter to 3 mm) are no conflict."""
+    kind = op.get("op")
+    if kind == "delete":
+        return [kind, None]
+    if kind == "param":
+        return [kind, {key: value for key, value in op.items() if key not in ("id", "ts", "by")}]
+    if kind == "regen":
+        return [kind, (op.get("results") or {}).get(target)]
+    if kind == "edit":
+        return [kind, {key: value for key, value in (op.get("set") or {}).items()
+                       if ("geometry" if key in ("geometry_delta", "geometry", "result", "inputs", "plane") else key) == field}]
+    return [kind, op.get(field)]
+
+
 def merge(base_path, ours_path, theirs_path):
     base, ours, theirs = [read(path) for path in (base_path, ours_path, theirs_path)]
     if base[1] != ours[1] or base[1] != theirs[1]:
@@ -115,11 +131,12 @@ def merge(base_path, ours_path, theirs_path):
     for key in left.keys() & right.keys():
         if left[key][0] != right[key][0]:
             raise ValueError(f"conflicting operation ID {key}")
-    left_effects = set().union(*(effects(value[0]) for key, value in left.items() if key not in right))
-    right_effects = set().union(*(effects(value[0]) for key, value in right.items() if key not in left))
-    for target, field in left_effects:
-        for other, other_field in right_effects:
-            if target == other and (field == other_field or "*" in (field, other_field)):
+    left_effects = [(target, field, value[0]) for key, value in left.items() if key not in right for target, field in effects(value[0])]
+    right_effects = [(target, field, value[0]) for key, value in right.items() if key not in left for target, field in effects(value[0])]
+    for target, field, op in left_effects:
+        for other, other_field, other_op in right_effects:
+            if target == other and (field == other_field or "*" in (field, other_field)) and not (
+                    field == other_field and effect(op, target, field) == effect(other_op, other, other_field)):
                 raise ValueError(f"concurrent changes to {target}/{field}; manual review required")
     ops = dict(ours[2])
     for key, value in theirs[2].items():

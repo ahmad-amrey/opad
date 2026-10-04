@@ -490,8 +490,9 @@ The desktop program does all of this for you: the git chip in the status bar (br
 conflict, ahead and behind its upstream, "not in git", "git not found") has **Set up repository…**, which runs
 `git init -b main` when needed, writes the `.gitattributes` line above (plus `assets/**` in Git LFS when git-lfs is
 installed, with `.opad` files kept out of LFS), a `.gitignore` for temporary saves, portable data, caches and recovery
-snapshots, runs `git lfs install --local`, and points this clone's `merge.opad.driver` and `diff.opad.textconv` at the
-running installation (`opad.managed=true`; OPAD rewrites them when that installation has moved). A clone whose
+snapshots, runs `git lfs install --local`, and points this clone's `merge.opad.driver`, `diff.opad.textconv` (with
+`diff.opad.cachetextconv`) and `difftool.opad.cmd` at the running installation (`opad.managed=true`; OPAD rewrites them
+when that installation has moved), so `git difftool -t opad` opens two versions in OPAD's Compare. A clone whose
 `.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip and a banner
 over the view with **Set up merging**. **File > Clone repository…** (also on the chip) clones an address or a folder,
 sets the copy up the same way (driver config, `git lfs install --local` and `git lfs pull` when it uses LFS) and opens
@@ -531,6 +532,45 @@ links.
 A record of a type this build does not know (written by a newer OPAD, such as a drawing sheet) is kept as it is: the
 file opens, the record is listed as needing a newer OPAD, is never applied or edited, and is saved back byte for byte.
 Builds older than this tolerant loader refuse such files with "unknown op type"; open them with a current build.
+
+### Version control in the desktop program
+
+- **Version control panel** (Alt+4, File > Version control, the ribbon's Versions and History groups, the git chip's
+  menu): the branch against its remote, the document's state, a merge in progress (Abort, Commit the merge), and
+  History / Branches pages. **Commit…** saves first, suggests the message from what changed, asks for your name once,
+  offers to amend while the last commit is not pushed and to push after, and offers **Pack** when loose objects pile
+  up. **Push** sets the upstream (adding a remote when there is none) and warns about big files outside Git LFS.
+  **Pull** fetches, then shows the incoming commits and what the merge does to the document (conflicts, design changed
+  on both sides, **Preview in Compare**) before it merges, and offers **Regenerate** afterwards. **Fetch in the
+  background** (on by default, every 10 minutes, never asking for a sign-in) keeps the chip's ↓ count current; turn it
+  off in File > Version control or the chip's menu. Branches are switched (unsaved and uncommitted changes are asked
+  about first), created here or from a commit, merged with the same preview and deleted (unmerged ones are asked about
+  twice). A commit of the history can be compared with this session or with the commit before it, opened read-only in
+  another window, restored as new changes (one undo step) or branched from.
+- **Resolve conflicts…** (the toast after a merge that stopped, the panel's merge bar, File > Version control, the
+  chip, and the bar over the view when git wrote conflict markers into the file): lists what both sides changed, with
+  mine or theirs to pick for each, all mine, all theirs, or a whole side; the result is written, added to git and opened,
+  then Commit… finishes the merge.
+- **Compare versions…** (File, Inspect > Versions, the chip; `opad --compare a.opad b.opad`, `git difftool -t opad`): A
+  and B picked from this session, the saved file, HEAD and the file's commits, recovery snapshots or another file;
+  B's bodies tinted added / modified / moved over A's ghosts, overlay or side by side, ] and [ step through the
+  changes.
+- **The file on disk** is watched while it is open (a pull or checkout in a terminal, another OPAD, `opad-cli`). New
+  changes there come in by themselves when nothing is unsaved; otherwise a bar over the view offers **Merge** (the
+  file's changes, then yours), **Reload…**, **Save as…** or **Overwrite…** (asked first). A rewritten history, another
+  document, conflict markers or a deleted file get their own bar, and Save never writes over a file that changed on disk.
+  The bar's buttons are reachable with Tab; Enter presses one, Esc cancels or closes it.
+- **Recovery** lists what each snapshot holds and compares it with its file as it is now: **Restore into file** (the
+  changes come back unsaved, after the file's newer ones), **Merge into current** (one undo step), **Restore as copy**,
+  **Compare** and **Discard**. **Show unsaved changes** (also **Review changes…** in the unsaved-changes question)
+  compares the session with its saved file.
+- **Read-only**: `opad --read-only model.opad`, or a write-protected file, opens without letting anything change it;
+  **Save a copy** makes an editable copy.
+- **Where files are**: File > **Open file location** (Shift+Alt+R) and **Copy path** (Shift+Alt+C), the status path's
+  menu (also **Copy relative path**), and an import's timeline marker for the file it came from.
+- **Who changed what**: in a repository the timeline's tooltips say who added each operation in which commit and who
+  edited it since; **Show in version history** on a marker or an object narrows the History page to the commits that
+  touched it.
 
 ## Python
 

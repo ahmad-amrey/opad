@@ -14,6 +14,7 @@
 #include <QToolBar>
 
 #include "GuidedTool.hpp"
+#include "FileLocation.hpp"
 #include "I18n.hpp"
 #include "Preferences.hpp"
 #include "Icons.hpp"
@@ -60,6 +61,7 @@ void MainWindow::buildMenus() {
   add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
   m_recentMenu = file->addMenu(tr("Recent"));
   m_recentMenu->setObjectName("recent");
+  location::addContextMenus(m_recentMenu, [this](const QString& path, QWidget* parent) { return recentMenu(path, parent); });
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "edit.repeat", "-", "edit.selectall", "edit.invert", "edit.selectparent", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});

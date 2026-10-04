@@ -215,6 +215,8 @@ int main(int argc, char** argv) {
     CHECK(liveIds() == fileIds() && opad::resolve(opad::Document::load(fs)).node(body)->name == "Mine again");
     std::filesystem::remove(fs);  // deleted: nothing to lose, Save writes it again
     CHECK(!live.diskChanged() && live.save() && std::filesystem::exists(fs));
+    // Read with nothing to compare it with (restored into a file that was missing, now back): never taken as the same.
+    CHECK(AppDocument::readDisk(file, nullptr, {}).relation == opad::Relation::rewritten);
     return 0;
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());

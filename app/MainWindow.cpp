@@ -97,8 +97,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
   connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
-  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { saveViewerAs(); }); });
-  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); });
+  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { m_doc->readOnly ? saveReadOnlyCopy() : saveViewerAs(); }); });
+  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); updateViewerCard(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_doc, &AppDocument::saved, this, [this] {
     const QFileInfo file(m_doc->path());
@@ -158,6 +158,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   trace::installUiWatchdog(this);  // logs any UI-thread stall over 250 ms (OPAD_TRACE)
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
+  connect(m_browser, &BrowserPanel::documentMenuRequested, this, [this](const QPoint& p) { showContextMenu(p, {}, true); });
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
   connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { startAnnotation(false); });
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
@@ -262,8 +263,9 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   connect(m_empty, &EmptyState::openRequested, action("file.open"), &QAction::trigger);
   connect(m_empty, &EmptyState::importRequested, action("file.new"), &QAction::trigger);
-  connect(m_empty, &EmptyState::recentChosen, this, &MainWindow::openPath);
+  connect(m_empty, &EmptyState::recentChosen, this, [this](const QString& path) { openPath(path); });
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
+  m_empty->setMenuBuilder([this](const QString& path, QWidget* parent) { return recentMenu(path, parent); });
 
   restoreGeometry(m_settings.value("ui/geometry").toByteArray());
   if (m_settings.value("ui/layoutVersion").toInt() == 3) restoreState(m_settings.value("ui/state").toByteArray());
@@ -328,7 +330,7 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
     // Another command drops one waiting for its selection; looking around (view, filters, panels, help) does not.
     static const QStringList looking{"view.", "select.", "nav.", "panel.", "help.", "workspace.", "edit.selectparent", "edit.filter", "edit.selectall", "edit.invert", "tools.commands"};
     if (!m_pendingPick.isEmpty() && std::none_of(looking.begin(), looking.end(), [&id](const QString& p) { return id.startsWith(p); })) cancelPendingPick();
-    if (m_doc->browse && m_commands.editsDocument(id)) {  // viewer mode: offered, and asks to save first
+    if (m_doc->viewOnly() && m_commands.editsDocument(id)) {  // viewer mode, read-only: offered, and asks to save first
       if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
       requireEditable([a] { a->trigger(); });
       return;
@@ -436,7 +438,7 @@ void MainWindow::showDocument(bool has) {
   }
   if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null() && !measuredExploded());
   if (m_design) updateDesignState();
-  m_browser->setViewerMode(m_doc->browse);
+  m_browser->setViewerMode(m_doc->viewOnly());
   updateUndoActions();
   action("panel.annotations")->setEnabled(has && !m_doc->browse);
   action("panel.section")->setEnabled(has);

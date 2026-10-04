@@ -27,6 +27,13 @@ class DiskSync : public QObject {
  public:
   DiskSync(AppDocument* doc, JobRunner* jobs, QWidget* viewport, QWidget* window);
   void check();  // one stat; reads the file on a worker when it is not what this session last read or wrote
+  // A command of the window changed the file (a branch switch, a merge, a pull: UI-62): what it is now comes in without a
+  // question while nothing is unsaved here, new ops merged and another history reloaded. Asked again when unsaved.
+  void adopt();
+  // Whether git holds the document in a stopped merge (UI-63): its conflict markers are then resolved (vcs.resolve), not
+  // overwritten. gitChanged: git's view moved on (the banner follows).
+  void setConflicted(std::function<bool()> conflicted) { m_conflicted = std::move(conflicted); }
+  void gitChanged();
   bool bench();  // OPAD_BENCH_EXTERNAL_CHANGE=<prefix>
  private:
   void watch();
@@ -54,8 +61,10 @@ class DiskSync : public QObject {
   QPointer<Job> m_job;
   std::shared_ptr<AppDocument::DiskRead> m_read;  // the file as last read, until acted on
   bool m_decided = false;    // the banner (or nothing) for m_read is up
-  bool m_saveAfter = false;  // Save was refused: it runs once the file turns out unchanged
+  bool m_saveAfter = false;  // the window's Save was refused: it runs once the file turns out unchanged (until the path changes)
   bool m_reloadAfter = false;
+  bool m_adopt = false;      // the next change is the window's own (adopt)
+  std::function<bool()> m_conflicted;
   std::optional<AppDocument::DiskStat> m_dismissed;  // the banner was closed for this state of the file
   int m_reads = 0;
 };

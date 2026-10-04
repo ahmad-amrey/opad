@@ -75,12 +75,16 @@ class ComparePanel : public QWidget {
   static QTreeWidget* makeList(QWidget* parent);
   static QTableWidget* makeDetails(QWidget* parent);
   static void listChanges(QTreeWidget* list, const opad::json& changes, std::vector<QTreeWidgetItem*>& rows, std::vector<int>& order);
+  // The changes in one line in the UI's language ("Edit Box1 length; add Sphere1"), as the core's English summary (kept for
+  // commit messages) says them: a clause per verb in order of first use, three names at most, more by count. Any thread.
+  static QString summaryOf(const opad::json& changes, const std::string& relation = {});
   static void fillDetails(QTableWidget* table, const opad::json& change);
   // benches
   LegendChip* chip(Category c) const { return m_chips[c]; }
   QSlider* slider() const { return m_slider; }
   QTreeWidget* list() const { return m_list; }
   QTableWidget* details() const { return m_details; }
+  QLabel* summaryLabel() const { return m_summary; }
   PanelFooter* footer() const { return m_footer; }
   QComboBox* picker(int side) const { return side == 0 ? m_pickA : m_pickB; }
   QToolButton* layoutButton(bool sideBySide) const { return sideBySide ? m_sideBySide : m_overlay; }

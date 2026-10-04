@@ -95,7 +95,7 @@ struct Repo {
   QString program, version, lfsVersion;  // lfsVersion empty: no git-lfs
   QString file, top, gitDir, commonDir, rel;  // rel: the file relative to top
   QString helper, sshCommand, userName, userEmail;  // effective config
-  QString driver, textconv;  // merge.opad.driver, diff.opad.textconv
+  QString driver, textconv, difftool;  // merge.opad.driver, diff.opad.textconv, difftool.opad.cmd
   bool managed = false;      // opad.managed: OPAD wrote the driver config and keeps it working
   bool wantsDriver = false;  // the attributes say merge=opad for the file
   bool lfsHooks = false;     // the clone has git-lfs's hooks (git lfs install --local or global)
@@ -104,18 +104,20 @@ struct Repo {
   Doc doc() const;
   Sync sync() const;
   bool needsDriver() const { return state == State::Ready && wantsDriver && driver.isEmpty(); }
-  bool driverStale() const;  // managed, and the program it names is gone (OPAD moved or was updated elsewhere)
+  bool driverStale() const;  // managed, and a program it names is gone (OPAD moved or was updated elsewhere) or a key missing
 };
 Repo probe(const Context& c, const QString& file);  // c.dir is ignored: the file's folder
 void forgetTools();  // probe asks git and git-lfs for their versions again (they are kept per program)
 void readStatus(const Context& c, Repo& r);         // the status alone: one process
 
-// This installation's driver commands: opad-cli beside the app, else the app (--merge-driver, --textconv).
+// This installation's driver commands: opad-cli beside the app, else the app (--merge-driver, --textconv); git difftool -t
+// opad opens Compare in the app (--compare $LOCAL $REMOTE).
 struct Install {
   QString cli, app;
   static Install here();
   QString mergeDriver() const;
   QString textconv() const;
+  QString difftool() const;  // empty without the app
 };
 QString attributesText(const QString& existing, bool lfs);  // .gitattributes with OPAD's lines (idempotent)
 QString ignoreText(const QString& existing);                // .gitignore with OPAD's entries (idempotent)
@@ -127,7 +129,9 @@ struct SetupOptions {
 // Init (-b main) when the folder is not in a repository, .gitattributes, .gitignore, git lfs install --local, the
 // managed driver config. Returns what it did, as sentences; throws std::runtime_error.
 QStringList setUp(const Context& c, const QString& folder, const Install& in, const SetupOptions& o, const RunOptions& ro = {});
-void configureDriver(const Context& c, const Install& in);  // merge.opad.*, diff.opad.textconv, opad.managed (local)
+// merge.opad.*, diff.opad.textconv and cachetextconv (git log -p converts each version once), difftool.opad.cmd,
+// opad.managed (local)
+void configureDriver(const Context& c, const Install& in);
 
 // git clone --progress (idle timeout 2 min, no overall limit).
 Result clone(const Context& c, const QString& url, const QString& folder, const RunOptions& o = {});
@@ -147,6 +151,39 @@ QString explain(const QString& gitStderr);          // what git said, as a sente
 QString unsafeDirectory(const QString& gitStderr);  // the folder a "dubious ownership" refusal names
 void trust(const Context& c, const QString& folder);  // git config --global --add safe.directory
 void setIdentity(const Context& c, const QString& name, const QString& email, bool global);
+
+// History and branches (UI-62).
+struct Commit {
+  QString hash, shortHash, author, email, date, subject;  // date: the author date, ISO 8601
+  QStringList parents;
+  QStringList refs;  // what points at it: "HEAD -> main", "origin/main", "tag: v1"
+};
+extern const char* const kLogFormat;  // git log -z --format=<this>: what parseLog reads
+std::vector<Commit> parseLog(const QByteArray& z);
+// The commits of `range` ("": HEAD; "HEAD..@{u}") that changed `path` (relative to c.dir; "": any), newest first,
+// `count` from `skip`. None before the first commit.
+std::vector<Commit> log(const Context& c, const QString& range, const QString& path, int count, int skip = 0);
+struct Branch {
+  QString name;  // "main", "origin/main"
+  QString ref;   // "refs/heads/main"
+  QString oid, upstream, subject, date;
+  int ahead = 0, behind = 0;
+  bool head = false, remote = false, gone = false;  // gone: its upstream was deleted
+};
+extern const char* const kBranchFormat;  // git for-each-ref --format=<this>: what parseBranches reads
+std::vector<Branch> parseBranches(const QByteArray& out);
+std::vector<Branch> branches(const Context& c);  // local ones, then remote-tracking ones (no remote HEAD), each by name
+QStringList remotes(const Context& c);
+// A file at a revision (git cat-file blob <rev>:<path>, `path` relative to the repository's top). Throws when it has none.
+QByteArray show(const Context& c, const QString& rev, const QString& path);
+QString revParse(const Context& c, const QString& rev);  // the commit's hash; empty when there is none
+// Loose objects and packs (git count-objects -v), in KiB.
+struct Objects {
+  qint64 loose = 0, looseKiB = 0, packs = 0, packKiB = 0;
+};
+Objects countObjects(const Context& c);
+// Whether git takes `name` for a new branch (the rules of check-ref-format --branch, checked here without git).
+bool validBranchName(const QString& name);
 
 // Before a push: what goes up that is big. Files over `fileLimit` stored in the history itself (hosting services refuse
 // 100 MB), and the Git LFS files going up when they come to more than `lfsLimit` (they count against the remote's

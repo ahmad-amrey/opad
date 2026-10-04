@@ -823,3 +823,5 @@ void CompareMode::documentChanged(bool replaced) {
 bool CompareMode::settled() const { return m_active && m_run && !m_running && !m_meshing && !m_rerun.isActive() && !m_restyle.isActive(); }
 opad::json CompareMode::changes() const { return m_run ? m_run->diff["changes"] : opad::json::array(); }
 std::string CompareMode::relation() const { return m_run ? m_run->diff.value("relation", "") : std::string(); }
+
+std::string CompareMode::summary() const { return m_run ? m_run->diff.value("summary", "") : std::string(); }

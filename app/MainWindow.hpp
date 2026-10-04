@@ -22,7 +22,9 @@
 #include "Toast.hpp"
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
+class PathChip;
 class RecoveryManager;
+class StatusRow;
 class AgentBridge;
 class QMessageBox;
 class QToolButton;
@@ -37,7 +39,7 @@ class MainWindow : public QMainWindow {
  public:
   MainWindow();
   ~MainWindow() override;
-  void openPath(const QString& path);
+  void openPath(const QString& path, bool readOnly = false);  // readOnly: a .opad opens read-only (opad --read-only)
   void warmUpViewport() { m_viewport->warmUp(); }
   void setBenchSelect(bool on);  // --bench-select: select every root after loading, log, quit; nothing else shows on screen
 
@@ -103,7 +105,6 @@ class MainWindow : public QMainWindow {
   void updateTitle();
   QString newerRecords() const;  // what of the file only a newer build reads (UI-65): one sentence, empty when nothing
   void updateChips();
-  void showOpGitLog(const std::string& opId,const QString& path);
   void saveLastView();
   QString m_viewPath;
   void guarded(const std::function<void()>& fn);
@@ -147,10 +148,10 @@ class MainWindow : public QMainWindow {
   void openPanel(ToolPanel* panel);  // places it over the viewport; replaces the other unpinned panels
   bool closeTopPanel();              // Esc: hides one unpinned panel
   void bindPanel(QAction* a, ToolPanel* panel);
-  void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids);
+  void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids, bool documentRow = false);
   // The context menu by what it is about (UI-100): picked faces, edges or vertices, bodies, components, sketches, nothing;
   // the areas add theirs (smart selection the history of the picks after the title, "contextTitle"). Benches fill one.
-  void buildContextMenu(QMenu& menu, const std::vector<std::string>& ids);
+  void buildContextMenu(QMenu& menu, const std::vector<std::string>& ids, bool documentRow = false);  // documentRow: the browser's document row
   QAction* repeatAction();  // edit.repeat worded for the last tool started ("Repeat Fillet"); null when there is none to offer
   bool repeatable(const QString& id) const;  // a tool worth repeating: a feature, a sketch tool, a measurement, a note
   QString m_lastCommand;
@@ -197,6 +198,9 @@ class MainWindow : public QMainWindow {
   void positionOverlays();
   void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends
   void addRecent(const QString& path);
+  void removeRecent(const QString& path);
+  QMenu* recentMenu(const QString& path, QWidget* parent);  // a recent file's context menu (File > Recent, the start page)
+  void tell(const QString& text);  // a result: a toast over the view, the status bar while no document shows
   QStringList recent() const;
   void rebuildRecentMenu();
   std::vector<std::string> currentNodeIds() const;
@@ -207,6 +211,8 @@ class MainWindow : public QMainWindow {
   bool requireEditable(std::function<void()> resume = {});  // true when the document can be edited
   void saveViewerAs(std::function<void()> then = {});       // Save as OPAD: made editable in place, then written
   void makeEditable(const QString& savePath, std::function<void()> then = {});
+  void saveReadOnlyCopy(std::function<void()> then = {});  // read-only .opad: Save a copy… (the file dialog), then saveCopy
+  void saveCopy(const QString& path, std::function<void()> then = {});  // written on a worker; the copy is edited from then on
   void updateViewerCard();
 
   AppDocument* m_doc = nullptr;
@@ -278,7 +284,8 @@ class MainWindow : public QMainWindow {
   TimelineWidget* m_timeline = nullptr;
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;
-  QLabel* m_statusPath = nullptr;
+  StatusRow* m_statusRow = nullptr;  // the path and its chips at the leading end, never collapsed (UI-08)
+  PathChip* m_statusPath = nullptr;
   QLabel* m_statusPrompt = nullptr;  // the prompt and status-bar messages (setPrompt)
   QLabel* m_statusHover = nullptr;   // what is under the mouse (Viewport::hoverChanged)
   QLabel* m_statusSel = nullptr;

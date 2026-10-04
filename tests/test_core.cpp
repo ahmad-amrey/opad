@@ -343,4 +343,28 @@ TEST(pinned_measurement_comments_remove_restore_roundtrip) {
   CHECK_EQ(scene.measurements.size(),1u); CHECK_EQ(scene.measurements[0].comments.size(),1u);
 }
 
+// UI-12: the whole file at its size, byte for byte (CR and NUL kept), also under a name outside the ANSI code page; a
+// missing file throws with its name in UTF-8.
+TEST(read_text_file_reads_exactly) {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-read-" + new_uuid());
+  std::filesystem::create_directories(dir);
+  std::string text;
+  for (int i = 0; i < 300000; ++i) text += "line " + std::to_string(i) + (i % 7 ? "\n" : "\r\n");
+  text += std::string("\0tail", 5);
+  const auto file = dir / path_from_utf8("\xd9\x86\xd9\x85\xd9\x88\xd8\xb0\xd8\xac.opad");  // نموذج
+  write_text_file(file, text);
+  CHECK_EQ(read_text_file(file).size(), text.size());
+  CHECK(read_text_file(file) == text);
+  write_text_file(dir / "empty.txt", "");
+  CHECK(read_text_file(dir / "empty.txt").empty());
+  try {
+    read_text_file(dir / path_from_utf8("\xd9\x84\xd8\xa7.opad"));  // لا
+    CHECK(false);
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()).find("\xd9\x84\xd8\xa7.opad") != std::string::npos);
+  }
+  CHECK_EQ(path_to_utf8(path_from_utf8("a/\xd9\x86.opad")), "a/\xd9\x86.opad");
+  std::filesystem::remove_all(dir);
+}
+
 CHECK_MAIN()

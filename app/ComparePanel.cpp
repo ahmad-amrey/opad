@@ -13,6 +13,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <map>
 
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -388,7 +389,7 @@ void ComparePanel::setResult(const opad::json& diff, const std::array<int, Categ
   else if (relation == "ancestor") how = tr("B is an earlier A: %n op(s) fewer.", nullptr, na - nb);
   else if (relation == "diverged") how = tr("Diverged after %n common op(s).", nullptr, common);
   else if (relation == "unrelated") how = tr("Another document.");
-  if (diff.contains("summary")) m_summary->setText(how + (m_changes.empty() ? " " + tr("No changes.") : " " + text(diff, "summary") + "."));
+  if (diff.contains("summary")) m_summary->setText(how + (m_changes.empty() ? " " + tr("No changes.") : " " + summaryOf(m_changes, relation) + "."));
   m_status->hide();
   m_details->hide();
   emit contentResized();
@@ -453,6 +454,90 @@ void ComparePanel::listChanges(QTreeWidget* list, const opad::json& changes, std
       order.push_back(i);
     }
   }
+}
+
+QString ComparePanel::summaryOf(const opad::json& changes, const std::string& relation) {
+  if (relation == "unrelated") return tr("Another document");
+  bool design = false;
+  for (const auto& c : changes) {
+    const std::string kind = c.value("kind", "");
+    design = design || kind == "feature" || kind == "sketch" || kind == "param";
+  }
+  enum Verb { Add, Remove, Rename, Move, Change, Suppress, Unsuppress, Show, Hide, Lock, Unlock, Restyle, Set, Edit, Note, Reopen, Resolve, Reply, EditNote, Units, Sync };
+  auto clause = [](Verb v, const QString& objects) {
+    switch (v) {
+      case Add: return tr("add %1").arg(objects);
+      case Remove: return tr("remove %1").arg(objects);
+      case Rename: return tr("rename %1").arg(objects);
+      case Move: return tr("move %1").arg(objects);
+      case Change: return tr("change %1").arg(objects);
+      case Suppress: return tr("suppress %1").arg(objects);
+      case Unsuppress: return tr("unsuppress %1").arg(objects);
+      case Show: return tr("show %1").arg(objects);
+      case Hide: return tr("hide %1").arg(objects);
+      case Lock: return tr("lock %1").arg(objects);
+      case Unlock: return tr("unlock %1").arg(objects);
+      case Restyle: return tr("restyle %1").arg(objects);
+      case Set: return tr("set %1").arg(objects);
+      case Edit: return tr("edit %1").arg(objects);
+      case Note: return tr("note %1").arg(objects);
+      case Reopen: return tr("reopen %1").arg(objects);
+      case Resolve: return tr("resolve %1").arg(objects);
+      case Reply: return tr("reply to %1").arg(objects);
+      case EditNote: return tr("edit note %1").arg(objects);
+      case Units: return tr("set units to %1").arg(objects);
+      default: return tr("sync %1").arg(objects);
+    }
+  };
+  std::vector<Verb> verbs;  // in order of first use
+  std::map<Verb, QStringList> objects;
+  auto say = [&](Verb v, const QString& object) {
+    QStringList& list = objects[v];
+    if (list.isEmpty()) verbs.push_back(v);
+    if (!list.contains(object)) list << object;
+  };
+  for (const auto& c : changes) {
+    const std::string kind = c.value("kind", ""), change = c.value("change", "");
+    const QString name = text(c, "name"), quotedNote = tr("“%1”").arg(text(c, "text").left(40));
+    if (kind == "annotation") {
+      say(change == "added" ? Note : change == "reopened" ? Reopen : change == "resolved" ? Resolve : change == "removed" ? Remove : change == "commented" ? Reply : EditNote, quotedNote);
+      continue;
+    }
+    if (kind == "units") { say(Units, text(c, "after")); continue; }
+    if (kind == "asset") { say(Sync, name); continue; }
+    const QString named = kind == "param" ? tr("parameter %1").arg(name) : name;
+    if (change == "added") say(Add, named);
+    else if (change == "removed") say(Remove, named);
+    else if (change == "renamed") say(Rename, tr("%1 to %2").arg(text(c, "before"), text(c, "after")));
+    else if (change == "moved") say(Move, name);
+    else if (change == "reparented") say(Move, tr("%1 into %2").arg(name, text(c, "after").isEmpty() ? tr("the root") : text(c, "after")));
+    else if (change == "geometry" && !design) say(Change, name);
+    else if (change == "suppressed" || change == "unsuppressed") say(change == "suppressed" ? Suppress : Unsuppress, name);
+    else if (change == "appearance") {
+      const opad::json f = c.value("fields", opad::json::object());
+      if (f.contains("visible") && f["visible"].value("after", opad::json()).is_boolean()) say(f["visible"]["after"].get<bool>() ? Show : Hide, name);
+      else if (f.contains("locked") && f["locked"].value("after", opad::json()).is_boolean()) say(f["locked"]["after"].get<bool>() ? Lock : Unlock, name);
+      else say(Restyle, name);
+    } else if (change == "edited" && kind == "param") say(Set, tr("%1 = %2").arg(name, text(c, "after")));
+    else if (change == "edited" && kind == "feature") {
+      QStringList labels;
+      for (const auto& d : c.value("details", opad::json::array())) labels << i18n::t(text(d, "label")).toLower();
+      say(Edit, labels.isEmpty() ? name : tr("%1 %2").arg(name, labels.join(tr(", "))));
+    } else if (change == "edited") say(Edit, name);
+  }
+  if (verbs.empty()) return changes.empty() ? tr("No changes") : tr("Regenerate");
+  QString line;
+  for (size_t i = 0; i < verbs.size(); ++i) {
+    if (i == 5) {
+      line = tr("%1; and %n more", nullptr, int(verbs.size() - 5)).arg(line);
+      break;
+    }
+    const QStringList& list = objects[verbs[i]];
+    const QString part = clause(verbs[i], list.size() <= 3 ? list.join(tr(", ")) : tr("%n items", nullptr, int(list.size())));
+    line = i ? tr("%1; %2").arg(line, part) : part;
+  }
+  if (!line.isEmpty()) line[0] = line[0].toUpper();
+  return line;
 }
 
 void ComparePanel::setCurrent(int change) {

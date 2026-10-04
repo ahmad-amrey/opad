@@ -22,6 +22,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "MainWindow.hpp"
+#include "StatusRow.hpp"
 #include "TimelineWidget.hpp"
 #include "Units.hpp"
 #include "opad/design/feature.hpp"

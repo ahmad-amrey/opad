@@ -548,6 +548,40 @@ const std::vector<std::string>& importable_extensions() {
   return list;
 }
 
+std::filesystem::path repo_top(const std::filesystem::path& path) {
+  std::error_code ec;
+  std::filesystem::path dir = std::filesystem::absolute(path, ec).lexically_normal();
+  if (ec) return {};
+  if (!std::filesystem::is_directory(dir, ec)) dir = dir.parent_path();
+  for (; !dir.empty(); dir = dir.parent_path()) {
+    if (std::filesystem::exists(dir / ".git", ec)) return dir;
+    if (dir == dir.parent_path()) break;
+  }
+  return {};
+}
+
+std::filesystem::path import_source(const json& op, const std::filesystem::path& document, bool* exists) {
+  std::error_code ec;
+  auto there = [&](const std::filesystem::path& p) { return !p.empty() && std::filesystem::is_regular_file(p, ec); };
+  auto found = [&](const std::filesystem::path& p) {
+    if (exists) *exists = true;
+    return p.lexically_normal().make_preferred();
+  };
+  const std::string repo = op.value("source_repo", ""), full = op.value("source_path", ""), name = op.value("source", "");
+  if (!document.empty() && !repo.empty())
+    if (const auto top = repo_top(document); !top.empty())
+      if (const auto p = top / path_from_utf8(repo); there(p)) return found(p);
+  std::filesystem::path guess = full.empty() ? std::filesystem::path() : path_from_utf8(full);
+  if (there(guess)) return found(guess);
+  if (!document.empty() && !name.empty() && name.find_first_of("/\\") == std::string::npos) {
+    const auto p = document.parent_path() / path_from_utf8(name);
+    if (there(p)) return found(p);
+    if (guess.empty()) guess = p;
+  }
+  if (exists) *exists = false;
+  return guess.empty() ? guess : guess.lexically_normal().make_preferred();
+}
+
 namespace {
 ImportResult import_drawing(Document& doc, const std::filesystem::path& file, const std::filesystem::path& shown, const ImportOptions& options);
 }
@@ -570,12 +604,13 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     // Converting is what is slow about a DWG: the DXF text it made is kept by the DWG's content (viewer_cache.cpp).
     auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
     const std::string converter=dwg_converter();
-    if(const auto kept=detail::dwg_cache_find(file,converter);!kept.empty()) return import_drawing(doc,kept,name,options);
+    ImportOptions o=options; if(o.source_file.empty()) o.source_file=file;  // the op names the DWG, not the DXF read
+    if(const auto kept=detail::dwg_cache_find(file,converter);!kept.empty()) return import_drawing(doc,kept,name,o);
     Conversion work;
     const auto start=std::chrono::steady_clock::now();
     convert_dwg(file,work.directory/name,false);
     const auto converted=std::chrono::steady_clock::now();
-    ImportResult result=import_drawing(doc,work.directory/name,name,options);
+    ImportResult result=import_drawing(doc,work.directory/name,name,o);
     const auto ms=[](auto a,auto b){return std::chrono::duration<double,std::milli>(b-a).count();};
     detail::dwg_cache_keep(file,converter,work.directory/name,ms(start,converted),ms(converted,std::chrono::steady_clock::now()));
     return result;
@@ -629,6 +664,7 @@ ImportResult import_drawing(Document& doc, const std::filesystem::path& file, co
     // builds ignore it).
     if(drawing.origin.Modulus()>0) root["drawing_origin"]={drawing.origin.X(),drawing.origin.Y(),drawing.origin.Z()};
     json op={{"op","import"},{"source",shown.filename().string()},{"nodes",json::array({root})}};
+    detail::stamp_source(op,file,options);  // a converted DWG: options.source_file, the DWG
     // The source keeps what the drawing could not show; a viewer never writes it back, so it skips the copy.
     if(ext==".svg" && !drawing.warnings.empty() && !options.viewer) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
     if(!options.parent.empty()) op["parent"]=options.parent;

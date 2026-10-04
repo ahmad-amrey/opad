@@ -34,6 +34,7 @@
 #include <unordered_map>
 
 #include "import_common.hpp"
+#include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
 
@@ -108,6 +109,7 @@ bool next_number(const char*& p, const char* end, double& out) {
 ImportResult append_import(Document& doc, const std::filesystem::path& file, const ImportOptions& opt, json children, ImportResult result) {
   json root = {{"type", "component"}, {"id", new_uuid()}, {"name", file.stem().string()}, {"children", std::move(children)}};
   json op = {{"op", "import"}, {"source", file.filename().string()}, {"units", "mm"}, {"nodes", json::array({root})}};
+  stamp_source(op, file, opt);
   if (!opt.parent.empty()) op["parent"] = opt.parent;
   result.op_id = doc.append(op, opt.author).id;
   ++result.components;
@@ -1076,7 +1078,20 @@ ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file,
 
 ImportResult import_brep_file(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
   report(opt, -1, "reading");
-  return import_brep(doc, read_text_file(file), file.stem().string(), opt);
+  ImportOptions o = opt;
+  if (o.source_file.empty()) o.source_file = file;  // import_brep reads text: it records this file
+  return import_brep(doc, read_text_file(file), file.stem().string(), o);
+}
+
+void stamp_source(json& op, const std::filesystem::path& file, const ImportOptions& opt) {
+  std::error_code ec;
+  const std::filesystem::path chosen = opt.source_file.empty() ? file : opt.source_file;
+  if (chosen.empty()) return;
+  const std::filesystem::path full = std::filesystem::absolute(chosen, ec).lexically_normal();
+  if (ec) return;
+  auto utf8 = [](const std::u8string& s) { return std::string(reinterpret_cast<const char*>(s.data()), s.size()); };
+  op["source_path"] = utf8(full.generic_u8string());
+  if (const auto top = repo_top(full); !top.empty()) op["source_repo"] = utf8(full.lexically_relative(top).generic_u8string());
 }
 
 }  // namespace opad::detail

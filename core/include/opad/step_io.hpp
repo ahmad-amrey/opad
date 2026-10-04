@@ -39,6 +39,9 @@ struct ImportOptions {
   Mat4 placement;
   bool center_drawing = false;
   KicadOptions kicad;
+  // The file the user chose, recorded on the import op (source_path, source_repo: UI-07) when it is not the one read (a
+  // DWG behind the DXF it was converted to, BREP text read from a file); empty: the file read.
+  std::filesystem::path source_file;
 };
 
 struct ImportResult {

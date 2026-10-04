@@ -9,8 +9,9 @@ class ViewportChips : public QWidget {
  public:
   explicit ViewportChips(QWidget* parent = nullptr);
   void set(const QString& mode, const QString& projection, const QString& section, const QString& isolate, bool twoDimensional = false);
-  // Viewer mode: "Viewer · read-only" first in the row, then Save to edit. An empty file hides them.
-  void setViewer(const QString& file);
+  // Viewer mode: "Viewer · read-only" first in the row, then Save to edit; a read-only OPAD `document`: "Read-only", then
+  // Save a copy to edit. An empty file hides them.
+  void setViewer(const QString& file, bool document = false);
   // The display style and projection chips, 3D settings that a drawing in 2D mode has no use for (UI-118).
   void setDisplayChips(bool shown);
   // A feature area's chip after the built-in ones (a QLabel named "chip", or "chipSel" for a mode the view is in; a

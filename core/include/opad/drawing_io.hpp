@@ -7,6 +7,13 @@ namespace opad {
 ImportResult import_file(Document& doc, const std::filesystem::path& file, const ImportOptions& options = {});
 // The extensions import_file reads, lower case with the dot.
 const std::vector<std::string>& importable_extensions();
+// The git work tree a path lies in: the nearest folder up holding a .git entry (folder or file); empty when none. No git.
+std::filesystem::path repo_top(const std::filesystem::path& path);
+// Where an import op's source file is now (UI-07). The op records it as "source_path" (absolute) and "source_repo"
+// (relative to the work tree it was in, which survives a clone or a move of the repository): first that path in the
+// document's work tree, then source_path, then "source" (the file name) beside the document. `exists` says whether the
+// file is there; the path is the best guess either way (empty: the op names no file). A few stats, no reading.
+std::filesystem::path import_source(const json& op, const std::filesystem::path& document, bool* exists = nullptr);
 ExportResult export_drawing(const Document& doc, const Scene& scene, const std::filesystem::path& file, const ExportOptions& options);
 // DWG goes through LibreDWG's converters unless the ODA File Converter is switched on: third-party software whose terms
 // allow non-members non-commercial use only, so it is opt-in (the desktop's files/useOda, or OPAD_USE_ODA=1), never

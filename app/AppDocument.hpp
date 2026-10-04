@@ -33,6 +33,10 @@ class AppDocument : public QObject {
   bool browse = false;
   QString viewing;           // viewer mode: the file shown
   bool viewerOpens = true;   // setting files/viewerMode: false opens other formats as editable, unsaved documents
+  // A .opad shown read-only (opad --read-only, a write-protected file, a version from the history): measured, sectioned
+  // and changed in looks (hide, colour; never unsaved) as in viewer mode. Edits and Save need a copy: saveAs, detach().
+  bool readOnly = false;
+  bool viewOnly() const { return browse || readOnly; }
   bool hasDocument = false;
   unsigned long long generation = 0;
   unsigned long long revision = 0;
@@ -49,9 +53,10 @@ class AppDocument : public QObject {
   // `overwriteDisk` (asked first): changes made outside are merged or reported, never overwritten silently (UI-56).
   bool save(bool overwriteDisk = false);
   bool saveAs(const QString& path);
-  // Atomic background save; holds the document write guard until the worker really exits.
+  // Atomic background save; holds the document write guard until the worker really exits. `overwriteDisk`: past the save
+  // guard (DiskSync's Overwrite, asked first).
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
-                 std::function<void(bool,const QString&)> done, int testDelayMs=0);
+                 std::function<void(bool,const QString&)> done, int testDelayMs=0, bool overwriteDisk=false);
   opad::json run(const std::string& command, opad::json args, const QString& label = {});  // label: the undo step's, else by command; a lock refusal comes back as lockedMessage
   // A change refused by a lock (UI-37) in the shown language: the node, what holds its lock and the change refused.
   static QString lockedMessage(const opad::LockedError& e);
@@ -79,7 +84,8 @@ class AppDocument : public QObject {
 
   // Long loads run off the UI thread; progress and the result come back through the signals below. A file other than
   // .opad opens in viewer mode. Opening while a load runs drops that load (it finishes in the background, unseen).
-  void startOpen(const QString& path);
+  void startOpen(const QString& path, bool readOnly = false);  // readOnly: a writable .opad opens read-only too
+  void detach();  // read-only -> an unsaved copy of the same content (no file behind it), which can be edited
   // Viewer mode -> an editable, unsaved document with the same content and view changes, prepared on a worker
   // (opad::make_editable). `done(ok, error)` runs on the UI thread.
   void startEditable(JobRunner* jobs, std::function<void(bool, const QString&)> done);
@@ -114,7 +120,7 @@ class AppDocument : public QObject {
 
   QString title() const;
   QString path() const;
-  bool isDirty() const { return hasDocument && !browse && doc.dirty; }
+  bool isDirty() const { return hasDocument && !viewOnly() && doc.dirty; }
 
   // Undo/redo over the op log. Each command's appended ops form one step; undo pops them off the log (their
   // persisted text is kept, so redo then save writes them back byte-identically) and redo pushes them back.
@@ -157,8 +163,8 @@ class AppDocument : public QObject {
     std::shared_ptr<opad::Document> doc;
     std::vector<std::string> bodies;                 // every body key the file lists, in its order
     std::shared_ptr<const opad::Manifest> manifest;  // the file's
-    opad::Relation relation = opad::Relation::same;
-    QString error;                                   // unreadable (git conflict markers, not an OPAD document)
+    opad::Relation relation = opad::Relation::same;  // rewritten without a base (nothing to compare with)
+    QString error;                                // unreadable (git conflict markers, not an OPAD document)
   };
   static DiskStat statFile(const QString& file);
   // `cache`: the session's shapes, filled with the bodies read (keys are content hashes). `skipKnown` false reads every
@@ -196,7 +202,9 @@ class AppDocument : public QObject {
   void changed();
   void pathChanged();
   void saved();  // successful explicit Save / Save As, not an open or title change
-  void saveBlocked();  // Save found the file changed on disk and wrote nothing
+  // Save found the file changed on disk and wrote nothing. `retry`: the window's Save (or Save as), run again once the file
+  // turns out unchanged; a save of another caller (saveAsync: an agent, Commit) failed for good.
+  void saveBlocked(bool retry);
   void message(const QString& text);
   void loadProgress(const QString& phase, int percent);  // percent < 0: unknown
   void loadFinished(bool ok, const QString& error);

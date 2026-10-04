@@ -297,6 +297,14 @@ def semantic_diff_and_textconv():
     p = subprocess.run([CLI, "--compact", "diff", "git:HEAD~1:model.opad", "git:HEAD:model.opad"], capture_output=True, text=True, cwd=repo)
     assert p.returncode == 0, p.stderr
     assert json.loads(p.stdout)["summary"] == d["summary"], p.stdout
+    if os.name == "nt":  # a git.exe in the repository is never what runs: git is looked up on PATH only
+        planted = os.path.join(repo, "git.exe")
+        shutil.copy(CLI, planted)
+        try:
+            p = subprocess.run([CLI, "--compact", "diff", "git:HEAD~1:model.opad", "git:HEAD:model.opad"], capture_output=True, text=True, cwd=repo)
+            assert p.returncode == 0 and json.loads(p.stdout)["summary"] == d["summary"], p.stderr
+        finally:
+            os.remove(planted)
     err = run("diff", "--a", "git:nope", doc, expect_ok=False)
     assert "git cat-file blob nope:./model.opad" in err["error"], err
 

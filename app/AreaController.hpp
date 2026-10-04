@@ -28,6 +28,7 @@ class BrowserPanel;
 class DesignController;
 class JobRunner;
 class MainWindow;
+class PathChip;
 class PropertiesPanel;
 class QAction;
 class QKeySequence;
@@ -50,6 +51,7 @@ struct SelectionContext {
   std::vector<opad::Ref> refs;   // as picked in the view (faces, edges, ...); from the browser one body ref per id
   bool sketching = false;        // a sketch is open: the context menu is the sketch's
   std::string op;                // a timeline command's marker (command "timeline.select", "timeline.delete")
+  bool document = false;         // the browser's document row was right-clicked: the menu is about the document itself
   bool empty() const { return ids.empty() && refs.empty(); }
 };
 
@@ -71,6 +73,10 @@ class AreaServices {
   TimelineWidget* timeline() const;     // the history strip (setCurrentOp, pulse, dimmed and marked ops); from statusWidgets on
   // A widget in the ribbon's tab row (a branch chip): in the cluster after search, before settings; from ribbon on.
   void addTabRowWidget(QWidget* widget);
+  // A chip in the status bar's row beside the document's path (the git chip): kept while messages show and never squeezed
+  // below its size hint (UI-08, StatusRow.hpp). From statusWidgets on.
+  void addStatusChip(QWidget* chip);
+  PathChip* pathChip() const;  // the path in the status bar: its menu takes entries (PathChip::menuRequested); from statusWidgets on
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none
   // A command like the built-in ones: its shortcut from the user's settings, locked while a file loads, errors shown as
   // a message box; in viewer mode it asks to save as OPAD first when its record says it edits the document. addCommand
@@ -134,6 +140,7 @@ class AreaController : public QObject {
 
   // From ready() on.
   virtual void contextMenu(const SelectionContext& selection, QMenu& menu) {}  // right-click in the view or browser: add at the end
+  virtual void timelineMenu(const std::string& opId, QMenu& menu) {}  // right-click on a timeline marker: add at the end
   virtual void selectionChanged(const SelectionContext& selection) {}  // the picks of a feature input are no selection
   virtual void positionOverlays(const QRect& viewport) {}  // the viewport (global) moved or resized: place what floats over it
   // After every change of the document (edit, undo, load, close); replaced: it is another document, or none.

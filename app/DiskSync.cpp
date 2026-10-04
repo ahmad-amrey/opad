@@ -6,14 +6,19 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QKeyEvent>
+#include <QLabel>
 #include <QMainWindow>
 #include <QProcess>
 #include <QPushButton>
 #include <QStatusBar>
 #include <algorithm>
+#include <set>
 
 #include "Banner.hpp"
+#include "I18n.hpp"
 #include "Jobs.hpp"
+#include "VersionControl.hpp"
 
 DiskSync::DiskSync(AppDocument* doc, JobRunner* jobs, QWidget* viewport, QWidget* window)
     : QObject(window), m_doc(doc), m_jobs(jobs), m_window(window), m_banner(new Banner(viewport)) {
@@ -28,13 +33,14 @@ DiskSync::DiskSync(AppDocument* doc, JobRunner* jobs, QWidget* viewport, QWidget
   // Loads, saves and reloads: a new state of the file to compare with.
   connect(doc, &AppDocument::pathChanged, this, [this] {
     m_dismissed.reset();
+    m_saveAfter = false;  // the Save it waited for is done, or the document is another file now
     m_read.reset();
     m_decided = false;
     check();
   });
-  connect(doc, &AppDocument::aboutToReplace, this, [this] { m_read.reset(); m_decided = false; m_banner->dismiss(); });
-  connect(doc, &AppDocument::saveBlocked, this, [this] {
-    m_saveAfter = true;
+  connect(doc, &AppDocument::aboutToReplace, this, [this] { m_read.reset(); m_decided = false; m_saveAfter = false; m_banner->dismiss(); });
+  connect(doc, &AppDocument::saveBlocked, this, [this](bool retry) {
+    m_saveAfter = m_saveAfter || retry;
     m_dismissed.reset();
     m_decided = false;
     if (!m_banner->state().isEmpty()) m_banner->flash();
@@ -100,6 +106,7 @@ void DiskSync::check() {
   if (m_dismissed && now == *m_dismissed && !m_saveAfter) return;
   if (!now.exists) {
     m_read.reset();
+    m_adopt = false;
     if (m_banner->state() != "deleted") showDeleted();
     return;
   }
@@ -108,6 +115,14 @@ void DiskSync::check() {
     return;
   }
   read();
+}
+
+void DiskSync::adopt() {
+  m_adopt = true;
+  m_decided = false;
+  m_dismissed.reset();
+  check();
+  if (!m_job && !m_read) m_adopt = false;  // the file is as it was: nothing to take in
 }
 
 void DiskSync::read(bool everyBody) {
@@ -138,6 +153,7 @@ void DiskSync::read(bool everyBody) {
 void DiskSync::decide() {
   const auto& r = *m_read;
   if (std::exchange(m_reloadAfter, false) && r.doc) return reload(true);
+  const bool adopt = std::exchange(m_adopt, false) && !m_doc->isDirty();
   m_decided = true;
   if (!r.doc) return showUnreadable();
   if (r.relation == opad::Relation::same) {  // touched, or written back alike
@@ -148,6 +164,16 @@ void DiskSync::decide() {
     if (std::exchange(m_saveAfter, false)) trigger("file.save");
     return;
   }
+  if (adopt && r.relation != opad::Relation::extends) {  // another branch's version: the window asked for it
+    if (!idle()) {
+      m_decided = false;
+      m_adopt = true;
+      schedule(500);
+      return;
+    }
+    return reload(true);
+  }
+  if (!r.base) return showReplaced(tr("It was missing when your version was restored into it, and is back now."));
   if (r.relation == opad::Relation::other) return showReplaced(tr("It is another document now."));
   if (r.relation == opad::Relation::rewritten)
     return showReplaced(tr("Its history no longer continues yours: another branch was checked out, or it was reset or rebased."));
@@ -167,15 +193,24 @@ void DiskSync::decide() {
 
 void DiskSync::showMerge(const opad::MergePlan& plan) {
   QString text = tr("Changes there: %1, unsaved here: %2. Merge keeps both, the file's first, then yours.").arg(plan.incoming).arg(plan.mine.size());
-  if (!plan.conflicts.empty()) text += ' ' + tr("Conflicting changes: %1 (yours win).").arg(plan.conflicts.size());
+  // Yours come last and win, except over a delete in the file: an op it tombstoned stays deleted, whatever came after it.
+  size_t clashes = 0;
+  std::set<std::string> deleted;  // targets (an edit and its regen meet one delete twice)
   QStringList details;
   for (const auto& c : plan.conflicts) {
-    const opad::Node* n = m_doc->node(c.target);
-    const QString what = n ? QString::fromStdString(n->name) : QString::fromStdString(c.target.rfind("parameter:", 0) == 0 ? c.target.substr(10) : c.target.substr(0, 8));
-    details << tr("%1: %2").arg(what, c.field == "*" ? tr("everything") : QString::fromStdString(c.field));
+    const opad::Op* theirs = m_read && m_read->doc ? m_read->doc->find_op(c.theirs) : nullptr;
+    const opad::Op* ours = m_doc->doc.find_op(c.ours);
+    const bool gone = theirs && theirs->type == "delete" && (!ours || ours->type != "delete");
+    if (gone) deleted.insert(c.target);
+    else ++clashes;
+    details << (gone ? tr("%1: deleted in the file (stays deleted)").arg(VersionControl::conflictWhat(c, m_doc->scene)) : VersionControl::conflictText(c, m_doc->scene));
   }
+  details.removeDuplicates();
+  if (clashes) text += ' ' + tr("Conflicting changes: %1 (yours win).").arg(clashes);
+  if (!deleted.empty()) text += ' ' + tr("Changes of yours to what the file deleted: %1 (it stays deleted).").arg(deleted.size());
   m_banner->present("merge", Banner::Tone::Warning, tr("%1 changed on disk").arg(name()), text, details.join('\n'));
   m_banner->setProperty("conflicts", static_cast<int>(plan.conflicts.size()));
+  m_banner->setProperty("deleted", static_cast<int>(deleted.size()));
   m_banner->addButton("diskMerge", tr("Merge"), [this] { merge(); }, true);
   m_banner->addButton("diskReload", tr("Reload…"), [this] { reload(); });
   m_banner->addButton("diskSaveAs", tr("Save as…"), [this] { trigger("file.saveas"); });
@@ -191,11 +226,21 @@ void DiskSync::showReplaced(const QString& text) {
 
 void DiskSync::showUnreadable() {
   const QString error = m_read ? m_read->error : QString();
-  const QString text = error.contains("conflict marker") ? tr("It holds git conflict markers: the OPAD merge driver is not set up for this repository. Keep your version over it or under another name.")
-                                                          : error;
-  m_banner->present("unreadable", Banner::Tone::Danger, tr("%1 on disk cannot be read").arg(name()), text, error);
+  const bool markers = error.contains("conflict marker"), stopped = markers && m_conflicted && m_conflicted();
+  const QString text = stopped ? tr("Git stopped a merge on it and wrote conflict markers into it. Resolve the conflicts to keep both sides' changes; overwriting it keeps only yours.")
+                       : markers ? tr("It holds git conflict markers: the OPAD merge driver is not set up for this repository. Keep your version over it or under another name.")
+                                 : i18n::t(error);
+  m_banner->present("unreadable", stopped ? Banner::Tone::Warning : Banner::Tone::Danger,
+                    stopped ? tr("%1 is in a merge conflict").arg(name()) : tr("%1 on disk cannot be read").arg(name()), text, error);
+  if (stopped) m_banner->addButton("diskResolve", tr("Resolve conflicts…"), [this] { trigger("vcs.resolve"); }, true);
   m_banner->addButton("diskSaveAs", tr("Save as…"), [this] { trigger("file.saveas"); });
-  m_banner->addButton("diskOverwrite", tr("Overwrite…"), [this] { overwrite(); }, true);
+  m_banner->addButton("diskOverwrite", tr("Overwrite…"), [this] { overwrite(); }, !stopped);
+}
+
+void DiskSync::gitChanged() {
+  if (m_banner->state() != "unreadable" || !m_read || m_read->doc) return;
+  const bool stopped = m_read->error.contains("conflict marker") && m_conflicted && m_conflicted();
+  if (stopped != (m_banner->button("diskResolve") != nullptr)) showUnreadable();
 }
 
 void DiskSync::showDeleted() {
@@ -207,16 +252,16 @@ void DiskSync::showDeleted() {
 void DiskSync::confirm(const QString& title, const QString& text, const QString& action, std::function<void()> fn) {
   m_banner->present("confirm", Banner::Tone::Danger, title, text);
   m_banner->addButton("diskConfirm", action, std::move(fn), true);
-  m_banner->addButton("diskCancel", tr("Cancel"), [this] {  // back to the choices
+  m_banner->setEscape(m_banner->addButton("diskCancel", tr("Cancel"), [this] {  // back to the choices (also Esc)
     m_decided = false;
     m_banner->dismiss();
     check();
-  });
+  }));
 }
 
 void DiskSync::merge() {
   if (!m_read) return;
-  if (AppDocument::statFile(m_read->file) != m_read->stat) {  // it moved on again: read that first
+  if (!m_read->doc || AppDocument::statFile(m_read->file) != m_read->stat) {  // a newer read that failed, or it moved on again
     m_decided = false;
     return check();
   }
@@ -276,14 +321,20 @@ void DiskSync::reload(bool asked) {
 void DiskSync::overwrite() {
   confirm(tr("Overwrite %1 with your version?").arg(name()),
           tr("What was changed on disk since you opened or saved it is lost from the file (git still has it if it was committed)."), tr("Overwrite"), [this] {
-            try {
-              if (!m_doc->save(true)) return;
-              m_read.reset();
-              m_decided = false;
-              m_saveAfter = false;
+            try {  // on a worker, past the save guard; the banner comes back if it fails
+              m_doc->saveAsync(m_jobs, {}, true, [this](bool saved, const QString& why) {
+                m_decided = false;
+                if (!saved) {
+                  status(tr("Could not overwrite %1: %2").arg(name(), i18n::t(why)));
+                  return check();
+                }
+                m_read.reset();
+                m_saveAfter = false;
+              }, 0, true);
+              m_decided = true;
               m_banner->dismiss();
             } catch (const std::exception& e) {
-              status(QString::fromUtf8(e.what()));
+              status(i18n::t(QString::fromUtf8(e.what())));
             }
           });
 }
@@ -291,10 +342,11 @@ void DiskSync::overwrite() {
 // ---------------------------------------------------------------- bench
 // OPAD_BENCH_EXTERNAL_CHANGE=<prefix> (with --bench-select on a saved document with bodies; OPAD_BENCH_CLI or the
 // opad-cli beside the app): opad-cli appends while the document is open and clean (it comes in), then while it has
-// unsaved changes (merge banner; Save refused; Merge), a conflicting change (yours win), a reset (replaced banner,
-// Reload), a reset over unsaved changes (Overwrite asks, Cancel, Overwrite), git conflict markers (unreadable, Save
-// refused, Overwrite), a deleted file (Save writes it again), a touched file (Save waits for the read, then goes ahead)
-// and the app's own saves (never read back).
+// unsaved changes (merge banner; an agent's save refused for good, Save until the file is read; Merge), a conflicting
+// change (yours win), a delete of what is edited here (said apart: it stays deleted), a reset (replaced banner, Reload),
+// a reset over unsaved changes (Overwrite asks, Cancel, the same by keys, Overwrite on a worker), git conflict markers
+// (unreadable, Save refused, Overwrite), a deleted file (Save writes it again), a touched file (Save waits for the read,
+// then goes ahead) and the app's own saves (never read back).
 // Banner pictures at <prefix>.<state>.png.
 bool DiskSync::bench() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_EXTERNAL_CHANGE");
@@ -307,12 +359,12 @@ bool DiskSync::bench() {
 #endif
   struct State {
     size_t step = 0;
-    int wait = 0, ticks = 0, exit = 0, reads = 0;
+    int wait = 0, ticks = 0, exit = 0, reads = 0, saved = 0;
     std::vector<std::string> bodies;
     bool running = false;
     QString file;
-    std::string a, b;
-    size_t ops = 0;
+    std::string a, b, feature;
+    size_t ops = 0, kept = 0;
     AppDocument::DiskStat stamp;
   };
   auto st = std::make_shared<State>();
@@ -337,9 +389,9 @@ bool DiskSync::bench() {
     return ids;
   };
   auto stamp = [st] { return AppDocument::statFile(st->file); };  // a write moves it
-  auto reset = [path] {  // as `git reset --hard HEAD~1` would leave it: the last op gone
+  auto reset = [path](size_t keep = SIZE_MAX) {  // as `git reset --hard HEAD~1` would leave it: the last op (or those after `keep`) gone
     opad::Document d = opad::Document::load(path());
-    d.truncate_ops(d.ops.size() - 1);
+    d.truncate_ops(std::min(keep, d.ops.size() - 1));
     opad::write_text_file(path(), d.serialize());
   };
   auto click = [this](const char* action) {
@@ -387,8 +439,14 @@ bool DiskSync::bench() {
         require(m_banner->property("conflicts").toInt() == 0, "merge banner: no conflict");
         shot(".merge.png");
         st->stamp = stamp();
+        m_doc->saveAsync(m_jobs, {}, false, [st](bool saved, const QString&) { st->saved = saved ? 1 : 2; });  // an agent's save
+        return true;
+      },
+      [=, this] {
+        if (!st->saved) return false;
+        require(st->saved == 2 && stamp() == st->stamp && !m_saveAfter && m_banner->state() == "merge", "save guard: an agent's save refused, never run later");
         trigger("file.save");
-        require(stamp() == st->stamp && m_doc->isDirty() && m_banner->state() == "merge", "save guard: nothing written");
+        require(stamp() == st->stamp && m_doc->isDirty() && m_banner->state() == "merge" && m_saveAfter, "save guard: nothing written, Save waits");
         pass("save guard");
         click("diskMerge");
         require(m_banner->state().isEmpty(), "merge: banner gone");
@@ -411,8 +469,26 @@ bool DiskSync::bench() {
         trigger("file.save");
         require(!m_doc->isDirty(), "conflict: saved");
         pass("conflict");
+        st->kept = m_doc->doc.ops.size();
+        for (const auto& o : m_doc->doc.ops)  // the file deletes the cylinder while it is edited here
+          if (o.type == "feature") st->feature = o.id;
+        m_doc->run("feature_edit", opad::json{{"target", st->feature}, {"inputs", {{"height", "40 mm"}}}});
+        run({"delete", st->file, "--target", QString::fromStdString(st->feature)});
+        return true;
+      },
+      [=, this] {
+        if (st->running || m_banner->state() != "merge") return false;
+        require(st->exit == 0, "opad-cli delete");
+        require(m_banner->property("conflicts").toInt() >= 1 && m_banner->property("deleted").toInt() == 1 && m_banner->toolTip().contains(tr("(stays deleted)")) &&
+                    !m_banner->findChild<QLabel*>("secondary")->text().contains(tr("Conflicting changes: %1 (yours win).").section(':', 0, 0)),
+                "deleted there, edited here: said as such, not as yours winning");
+        click("diskMerge");
+        require(m_doc->doc.is_deleted(st->feature) && m_doc->isDirty(), "the cylinder stays deleted, as the banner said");
+        trigger("file.save");
+        require(!m_doc->isDirty(), "deleted: saved");
+        pass("a change to what the file deleted: said, it stays deleted");
         st->ops = m_doc->doc.ops.size();
-        reset();
+        reset(st->kept - 1);  // back before the conflict's rename
         return true;
       },
       [=, this] {
@@ -435,10 +511,32 @@ bool DiskSync::bench() {
         shot(".confirm.png");
         click("diskCancel");
         require(m_banner->state() == "replaced" && stamp() == st->stamp, "cancel keeps both");
+        {  // the keyboard: Tab reaches the choices, Enter presses one, the confirmation takes the focus to Cancel and Esc is Cancel
+          QPushButton* over = m_banner->button("diskOverwrite");
+          require(over->focusPolicy() == Qt::TabFocus, "keyboard: Tab reaches the banner's buttons");
+          over->setFocus(Qt::TabFocusReason);
+          QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+          QCoreApplication::sendEvent(over, &enter);
+          QPushButton* cancel = m_banner->button("diskCancel");
+          require(m_banner->state() == "confirm" && cancel && m_window->focusWidget() == cancel, "keyboard: Enter asks, the focus on Cancel");
+          QKeyEvent shortcut(QEvent::ShortcutOverride, Qt::Key_Escape, Qt::NoModifier);
+          shortcut.setAccepted(false);
+          QCoreApplication::sendEvent(cancel, &shortcut);
+          require(shortcut.isAccepted(), "keyboard: Esc is the banner's, not the window's shortcut");
+          QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+          QCoreApplication::sendEvent(cancel, &esc);
+          require(m_banner->state() == "replaced" && stamp() == st->stamp, "keyboard: Esc keeps both");
+          pass("the banner from the keyboard");
+        }
         click("diskOverwrite");
         click("diskConfirm");
-        require(m_banner->state().isEmpty() && !m_doc->isDirty() && sessionIds() == fileIds() && nameOf(st->a) == "Mine3", "overwritten");
-        pass("overwrite with confirmation");
+        require(m_doc->snapshotBusy() && m_banner->state().isEmpty(), "overwrite: written on a worker");
+        return true;
+      },
+      [=, this] {
+        if (m_doc->isDirty()) return false;
+        require(m_banner->state().isEmpty() && sessionIds() == fileIds() && nameOf(st->a) == "Mine3", "overwritten");
+        pass("overwrite with confirmation, written on a worker");
         std::string text = opad::read_text_file(path());  // what a text merge without the OPAD driver leaves
         text.insert(text.find("#bodies"), "<<<<<<< HEAD\n=======\n>>>>>>> other\n");
         opad::write_text_file(path(), text);
@@ -453,7 +551,11 @@ bool DiskSync::bench() {
         require(stamp() == st->stamp && m_doc->isDirty(), "unreadable: Save refused");
         click("diskOverwrite");
         click("diskConfirm");
-        require(!m_doc->isDirty() && sessionIds() == fileIds(), "unreadable: overwritten");
+        return true;
+      },
+      [=, this] {
+        if (m_doc->isDirty()) return false;
+        require(sessionIds() == fileIds() && m_banner->state().isEmpty(), "unreadable: overwritten");
         pass("conflict markers");
         QFile::remove(st->file);
         return true;

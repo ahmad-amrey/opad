@@ -61,6 +61,10 @@ void asset_cache_store(const Document& doc, const std::string& content, const st
 std::filesystem::path dwg_cache_find(const std::filesystem::path& dwg, const std::string& converter);
 bool dwg_cache_keep(const std::filesystem::path& dwg, const std::string& converter, const std::filesystem::path& dxf, double convert_ms, double read_ms);
 
+// Where the source file is, on its import op (UI-07): "source_path" (absolute) and "source_repo" (relative to the git
+// work tree it lies in; none outside one), both UTF-8 with '/'; of opt.source_file when set, else of `file`.
+void stamp_source(json& op, const std::filesystem::path& file, const ImportOptions& opt);
+
 // The readers behind import_file (formats.cpp).
 ImportResult import_iges(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 // glTF, GLB, OBJ, VRML; `kicad_vrml`: a KiCad footprint model, in 2.54 mm units and Z up (VRML is otherwise metres, Y up).

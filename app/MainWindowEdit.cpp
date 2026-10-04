@@ -146,12 +146,12 @@ void MainWindow::buildTimelineMenu(QMenu& menu, const std::string& requestedId) 
     // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered
     // as what it does; once undone, the delete can be applied again.
     const bool deleteMarker = menuOp->type == "delete";
-    entry(deleteMarker ? "restore" : "delete", deleteMarker ? tr("Restore what it deleted\tDel") : tr("Delete (tombstone)\tDel"), "timelineDelete", [this, opId] { deleteOp(opId); })->setEnabled(!deleted);
-    entry(deleteMarker ? "delete" : "restore", deleteMarker ? tr("Delete it again\tShift+Del") : tr("Restore\tShift+Del"), "timelineRestore", [this, opId] { restoreOp(opId); })->setEnabled(deleted);
+    entry(deleteMarker ? "restore" : "delete", deleteMarker ? tr("Restore what it deleted\tDel") : tr("Delete (tombstone)\tDel"), "timelineDelete", [this, opId] { if (requireEditable()) deleteOp(opId); })->setEnabled(!deleted);
+    entry(deleteMarker ? "delete" : "restore", deleteMarker ? tr("Delete it again\tShift+Del") : tr("Restore\tShift+Del"), "timelineRestore", [this, opId] { if (requireEditable()) restoreOp(opId); })->setEnabled(deleted);
     const bool designOp = (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
     const opad::Feature* feat = m_doc->scene.feature(opId);
-    if (designOp) entry("rename", menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature"), "timelineEdit", [this, opId] { m_design->editOp(opId); });
-    if (designOp && feat) entry(feat->suppressed ? "eye" : "hide", feat->suppressed ? tr("Unsuppress") : tr("Suppress"), "timelineSuppress", [this, opId, on = !feat->suppressed] { m_design->setSuppressed(opId, on); });
+    if (designOp) entry("rename", menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature"), "timelineEdit", [this, opId] { if (requireEditable()) m_design->editOp(opId); });
+    if (designOp && feat) entry(feat->suppressed ? "eye" : "hide", feat->suppressed ? tr("Unsuppress") : tr("Suppress"), "timelineSuppress", [this, opId, on = !feat->suppressed] { if (requireEditable()) m_design->setSuppressed(opId, on); });
     if (designOp && menuOp->type == "sketch") entry("export", tr("Export sketch"), "timelineExport", [this, opId] { exportDialog({opId}); });
     if (designOp) menu.addSeparator();
     entry("isolate", tr("Select what it touches\tT"), "timelineTouched", [this, opId] { selectOpTargets(opId); });
@@ -161,7 +161,7 @@ void MainWindow::buildTimelineMenu(QMenu& menu, const std::string& requestedId) 
           ->setEnabled(!m_timeline->rollPointAfter(opId).empty() || m_doc->rolledBack());
     menu.addSeparator();
     entry("commit", tr("Copy op id\tCtrl+C"), "timelineCopy", [opId] { QApplication::clipboard()->setText(QString::fromStdString(opId)); });
-    entry("git", tr("Show in git log"), "timelineLog", [this, opId] { showOpGitLog(opId, m_doc->path()); });
+    forEachArea([&](AreaController* area) { area->timelineMenu(opId, menu); });  // a read-only document asks for a copy first above
     menu.addSeparator();
   }
   for (const char* id : {"timeline.rollForward", "timeline.names", "timeline.designOnly"})

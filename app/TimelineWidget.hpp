@@ -1,6 +1,7 @@
 #pragma once
 #include <QRect>
 #include <QWidget>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -52,6 +53,11 @@ class TimelineWidget : public QWidget {
   QRect playhead() const;                       // the roll-back marker's grip
   // The op the scene stops before for a playhead dropped after this op's marker (Roll back to here); empty: the end.
   std::string rollPointAfter(const std::string& id) const;
+  // More lines for a marker's tooltip, from feature areas (an import's source file, who committed it): HTML, appended in
+  // the order added; asked on every hover move, so O(1) from what the area knows. tooltip() is the whole of it (benches).
+  using TipProvider = std::function<QString(const opad::Op& op)>;
+  void addTipProvider(TipProvider provider) { m_tips.push_back(std::move(provider)); }
+  QString tooltip(const std::string& opId) const;
 
  signals:
   void opClicked(const std::string& opId);
@@ -106,6 +112,7 @@ class TimelineWidget : public QWidget {
   bool m_names = false, m_designOnly = false;
   bool m_dragging = false;  // the playhead
   size_t m_dragGap = 0;
+  std::vector<TipProvider> m_tips;
 };
 
 QString opTypeIcon(const std::string& type);

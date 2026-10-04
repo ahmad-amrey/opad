@@ -219,18 +219,19 @@ void MainWindow::writeSelectionFile() {
   });
 }
 
-void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
+void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids, bool documentRow) {
   if(auto* instances=findChild<ToolPanel*>("instanceBrowser"))instances->hide();
   QMenu menu(this);
-  buildContextMenu(menu, ids);
+  buildContextMenu(menu, ids, documentRow);
   menu.exec(globalPos);
 }
 
 // What the menu is about (UI-100): faces, edges or vertices picked in the view, else the objects (bodies, components,
 // sketches), else nothing. Each kind gets its own entries; Repeat of the last tool comes first in every one.
-void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& ids) {
+void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& ids, bool documentRow) {
   SelectionContext context = selectionContext();  // for the areas' entries: the objects the menu is about
   context.ids = ids;
+  context.document = documentRow;
   auto add = [&](const char* id) { if (QAction* a = action(id)) menu.addAction(a); };  // viewer mode: editing entries ask to save first
   auto entry = [&](const QString& icon, const QString& text, const char* name, std::function<void()> fn) {
     QAction* a = icon.isEmpty() ? menu.addAction(text) : menu.addAction(icons::themed(icon, 16), text);

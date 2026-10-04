@@ -60,6 +60,11 @@ MergePlan plan_merge(const Manifest& base, const Document& ours, const Document&
 void apply_merge(Document& ours, Document& theirs, const MergePlan& plan, const std::vector<std::string>& theirs_bodies);
 // The keys an op changes (target, field), as the git driver computes them: "*" is the whole target.
 std::vector<std::pair<std::string, std::string>> op_effects(const json& op);
+// What an op makes of one of its keys (UI-63): its kind and the value it sets ([kind, value]). Two new ops of either side
+// that change the same key alike (both renamed a part the same, both deleted one note, both set a parameter to 3 mm)
+// are no conflict: same_effect.
+json op_effect(const json& op, const std::string& target, const std::string& field);
+bool same_effect(const json& a, const std::string& fieldA, const json& b, const std::string& fieldB, const std::string& target);
 
 // Whether `version` changes the design after `base` (UI-62): an op base does not have that is a param, sketch, feature or
 // regen, or an edit or delete of one. Two branches that both do were computed without each other's changes: regenerate
@@ -99,7 +104,16 @@ struct FileMerge {
   std::vector<std::string_view> pieces;
   std::vector<std::shared_ptr<const std::string>> texts;
 };
-FileMerge merge_files(std::string base, std::string ours, std::string theirs);
+// keep_conflicts (UI-63, a merge git stopped on): concurrent changes do not stop it; the merge is made anyway (ours as
+// written, then theirs' new ops: theirs win each of them, applied later) with every conflict listed, `error` empty unless
+// something else refuses it.
+FileMerge merge_files(std::string base, std::string ours, std::string theirs, bool keep_conflicts = false);
+// That merge, decided (UI-63): `merged` is merge_files(..., true)'s text, theirs winning every conflict. A conflict decided
+// for ours (mine[i]) appends a copy of ours' op (applied last, it wins), or, when theirs' op is a delete, a delete of that
+// delete (the target lives again, with ours' change); one decided for theirs against a delete of ours appends a delete of
+// ours' delete. Each op once, by `author`. Returns the decided file.
+std::string resolve_merge(std::string merged, const std::vector<MergeConflict>& conflicts, const std::vector<bool>& mine,
+                          const std::string& author = {});
 // git's merge.<driver>.driver with `<base> <ours> <theirs> [<name>]` (%O %A %B %P): writes the merge over <ours> and
 // returns 0, or leaves <ours> as it was, says why on stderr and returns 1. `opad-cli merge-driver` and
 // `opad.exe --merge-driver` (no Qt, no window: portable and single-file installs need neither Python nor the CLI).

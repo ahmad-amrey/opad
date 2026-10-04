@@ -746,6 +746,42 @@ TEST(dwg_keeps_its_converted_dxf_by_content) {
   CHECK(!detail::dwg_cache_find(g.dir / "rule.dwg", "rule").empty());
 }
 
+// UI-07: an import op records its source absolute and inside its git work tree, found again after a clone of the
+// repository (the absolute path gone), beside the document for an op that names only the file, never invented.
+TEST(import_records_and_finds_its_source) {
+  Files f;
+  namespace fs = std::filesystem;
+  fs::create_directories(f.dir / "repo" / ".git");
+  fs::create_directories(f.dir / "repo" / "parts");
+  fs::create_directories(f.dir / "repo" / "doc");
+  const fs::path part = f.dir / "repo" / "parts" / path_from_utf8("\xd9\x82\xd8\xb7\xd8\xb9\xd8\xa9.stl");  // قطعة.stl
+  write_text_file(part, kTetra);
+  Document d = open(part, false);
+  const json& op = d.ops.back().data;
+  const auto generic = fs::absolute(part).lexically_normal().generic_u8string();
+  CHECK_EQ(op.value("source_path", ""), std::string(reinterpret_cast<const char*>(generic.data()), generic.size()));
+  CHECK_EQ(op.value("source_repo", ""), "parts/\xd9\x82\xd8\xb7\xd8\xb9\xd8\xa9.stl");
+  CHECK(repo_top(part) == f.dir / "repo");
+  bool exists = false;
+  CHECK(import_source(op, f.dir / "repo" / "doc" / "model.opad", &exists) == part.lexically_normal().make_preferred() && exists);
+  fs::copy(f.dir / "repo", f.dir / "clone", fs::copy_options::recursive);
+  fs::remove(part);
+  const fs::path cloned = f.dir / "clone" / "parts" / part.filename();
+  CHECK(import_source(op, f.dir / "clone" / "doc" / "model.opad", &exists) == cloned.lexically_normal().make_preferred() && exists);
+  fs::remove(cloned);
+  CHECK(import_source(op, f.dir / "clone" / "doc" / "model.opad", &exists) == part.lexically_normal().make_preferred() && !exists);
+  // An op of an older build names the file only: beside the document.
+  write_text_file(f.dir / "clone" / "doc" / "old.stl", kTetra);
+  CHECK(import_source(json{{"source", "old.stl"}}, f.dir / "clone" / "doc" / "model.opad", &exists) == (f.dir / "clone" / "doc" / "old.stl").lexically_normal().make_preferred() && exists);
+  CHECK(import_source(json{{"source", ""}}, f.dir / "clone" / "doc" / "model.opad", &exists).empty() && !exists);
+  // Outside a work tree: the absolute path only; saved and read back, the op keeps both.
+  write_text_file(f.dir / "loose.stl", kTetra);
+  Document loose = open(f.dir / "loose.stl", false);
+  CHECK(loose.ops.back().data.contains("source_path") && !loose.ops.back().data.contains("source_repo"));
+  d.save_as(f.dir / "model.opad");
+  CHECK_EQ(Document::load(f.dir / "model.opad").ops.back().data.value("source_repo", ""), op.value("source_repo", ""));
+}
+
 TEST(unsupported_and_missing_files_fail_cleanly) {
   Files f;
   write_text_file(f.dir / "notes.txt", "hello");
