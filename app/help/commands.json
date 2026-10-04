@@ -397,10 +397,10 @@
   {
    "id": "drawing2d.isolateLayer",
    "title": "Isolate layer",
-   "summary": "Shows only the selected layers.",
-   "details": "Select the layers in the Layers manager first. Exit isolate ({key:view.unisolate}) brings the others back.",
+   "summary": "Shows only the layers of the selected drawing objects.",
+   "details": "Select objects on the layers you want, in the view or the browser, and run it. Exit isolate ({key:view.unisolate}) brings the other layers back.",
    "keywords": ["layiso", "show only this layer"],
-   "requires": "Select one or more layers first."
+   "requires": "Select drawing objects on the layers first."
   },
   {
    "id": "drawing2d.objectSnap",
@@ -652,8 +652,8 @@
   {
    "id": "drawings.sheetProperties",
    "title": "Sheet properties",
-   "summary": "Edits the sheet shown: its name, paper, projection, scale and the title block values it sets itself.",
-   "details": "The change is one step. Values it leaves empty come from Document properties.",
+   "summary": "Edits the sheet shown: its name, paper, template, projection, scale, dimension units and its own title block values.",
+   "details": "The change is one step. Title block fields left empty are filled in from the sheet, the part and Document properties.",
    "keywords": ["title block", "paper", "size", "scale", "first angle", "third angle"],
    "requires": "Only while a sheet is shown in the Drawings workspace."
   },
