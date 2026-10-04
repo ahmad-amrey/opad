@@ -1015,12 +1015,17 @@ std::shared_ptr<opad::Document> AppDocument::shapesOf(const std::vector<std::str
   out->header = doc.header;
   for (const auto& id : nodes)
     for (const auto& body : scene.node(id) ? scene.bodies_under(id) : std::vector<std::string>{})
-      if (const opad::Node* n = scene.node(body); n && !n->body_missing && !out->has_body(n->body_key)) try {
-        opad::body_shape(doc, n->body_key);
+      if (const opad::Node* n = scene.node(body); n && !n->body_missing && !out->has_body(n->body_key)) {
         const opad::BodyEntry* e = doc.body(n->body_key);
-        out->add_live_body(n->body_key, e ? e->meta : opad::json::object());
-      } catch (const std::exception&) {
-      } catch (const Standard_Failure&) {
+        try {
+          opad::body_shape(doc, n->body_key);
+          out->add_live_body(n->body_key, e ? e->meta : opad::json::object());
+        } catch (const std::exception&) {
+          // A linked file not loaded: the worker reads it as the document does and says so by the body's name ("the linked
+          // file of body 'X' is not loaded"), not "body entry not found: <key>".
+          if (e && e->external) out->add_external_body(n->body_key, e->meta);
+        } catch (const Standard_Failure&) {
+        }
       }
   return out;
 }
