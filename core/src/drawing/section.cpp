@@ -7,7 +7,6 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
-#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -25,6 +24,7 @@
 #include <GeomAPI.hxx>
 #include <NCollection_DataMap.hxx>
 #include <OSD_Parallel.hxx>
+#include <OSD_ThreadPool.hxx>
 #include <Standard_Failure.hxx>
 #include <TColgp_HArray1OfPnt2d.hxx>
 #include <TopExp.hxx>
@@ -375,6 +375,10 @@ void take_cut(Source& s, const CutBody& cut, const std::string& id) {
   s.lies_on = cut.lies_on;
 }
 
+// Booleans side by side contend for the heap: past about four threads they get slower, not faster (the Engine's front
+// section, 104 bodies cut: 23-27 s on 16 threads, 11.5 s on 4).
+int cut_threads() { return std::max(1, std::min(4, OSD_ThreadPool::DefaultPool()->NbDefaultThreadsToLaunch())); }
+
 std::string cache_id(const std::string& cut, const Source& s) {
   std::string id = cut + "|" + s.key;
   char buf[32];
@@ -475,7 +479,8 @@ void breakout_sources(const Document& doc, const ViewSpec& spec, const View& vie
   std::atomic<size_t> done{0};
   std::mutex failed_mu;
   std::string failed;
-  OSD_Parallel::For(0, static_cast<int>(crossed.size()), [&](int k) {
+  OSD_ThreadPool::Launcher launcher(*OSD_ThreadPool::DefaultPool(), cut_threads());
+  launcher.Perform(0, static_cast<int>(crossed.size()), [&](int, int k) {
     if (run.cancelled()) return;
     const size_t i = crossed[static_cast<size_t>(k)];
     const Source& s = sources[i];
@@ -483,14 +488,15 @@ void breakout_sources(const Document& doc, const ViewSpec& spec, const View& vie
     auto hit = remembered(ids[i]);
     if (!hit) {
       try {
-        const TopoDS_Shape copy = BRepBuilderAPI_Copy(s.proto, Standard_True, Standard_False).Shape();
-        const TopoDS_Shape placed = s.rigid ? copy.Moved(TopLoc_Location(s.trsf)) : BRepBuilderAPI_Copy(s.placed, Standard_True, Standard_False).Shape();
+        // The body store's shapes are read by other threads: the boolean leaves its arguments as they are.
+        const TopoDS_Shape placed = s.rigid ? s.proto.Moved(TopLoc_Location(s.trsf)) : s.placed;
         TopTools_ListOfShape arguments, tools;
         arguments.Append(placed);
-        for (size_t p : reached[i]) tools.Append(BRepBuilderAPI_Copy(pockets[p].solid, Standard_True, Standard_False).Shape());
+        for (size_t p : reached[i]) tools.Append(pockets[p].solid);
         BRepAlgoAPI_Cut cut;
         cut.SetArguments(arguments);
         cut.SetTools(tools);
+        cut.SetNonDestructive(Standard_True);
         cut.Build();
         if (!cut.IsDone() || cut.HasErrors()) throw Error("the boolean failed");
         auto body = std::make_shared<CutBody>();
@@ -660,12 +666,24 @@ void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, st
       crossed.push_back(i);
     }
   }
+  // The biggest first, so the last to finish is a small one.
+  {
+    std::vector<std::pair<int, size_t>> sized;
+    for (size_t i : crossed) {
+      TopTools_IndexedMapOfShape faces;
+      TopExp::MapShapes(sources[i].proto, TopAbs_FACE, faces);
+      sized.push_back({faces.Extent(), i});
+    }
+    std::stable_sort(sized.begin(), sized.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (size_t k = 0; k < sized.size(); ++k) crossed[k] = sized[k].second;
+  }
   std::vector<std::shared_ptr<const CutBody>> cuts(sources.size());
   std::vector<std::string> ids(sources.size());
   std::atomic<size_t> done{0};
   std::mutex failed_mu;
   std::string failed;
-  OSD_Parallel::For(0, static_cast<int>(crossed.size()), [&](int k) {
+  OSD_ThreadPool::Launcher launcher(*OSD_ThreadPool::DefaultPool(), cut_threads());
+  launcher.Perform(0, static_cast<int>(crossed.size()), [&](int, int k) {
     if (run.cancelled()) return;
     const size_t i = crossed[static_cast<size_t>(k)];
     const Source& s = sources[i];
@@ -677,11 +695,16 @@ void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, st
         auto body = std::make_shared<CutBody>();
         std::vector<std::pair<TopoDS_Shape, std::shared_ptr<const std::vector<int>>>> edge_parts, face_parts;
         for (size_t piece : reached[i]) {
-          // Copies: a boolean writes into its arguments, and the body store's shapes are read by other threads.
-          const TopoDS_Shape copy = BRepBuilderAPI_Copy(s.proto, Standard_True, Standard_False).Shape();
-          TopoDS_Shape placed = copy.Moved(TopLoc_Location(s.trsf));
-          if (!s.rigid) placed = BRepBuilderAPI_Copy(s.placed, Standard_True, Standard_False).Shape();  // a scaled body: its transformed copy
-          BRepAlgoAPI_Common common(placed, BRepBuilderAPI_Copy(tools[piece], Standard_True, Standard_False).Shape());
+          // The body store's shapes are read by other threads: the boolean leaves its arguments as they are.
+          const TopoDS_Shape placed = s.rigid ? s.proto.Moved(TopLoc_Location(s.trsf)) : s.placed;
+          BRepAlgoAPI_Common common;
+          TopTools_ListOfShape arguments, tool;
+          arguments.Append(placed);
+          tool.Append(tools[piece]);
+          common.SetArguments(arguments);
+          common.SetTools(tool);
+          common.SetNonDestructive(Standard_True);
+          common.Build();
           if (!common.IsDone() || common.HasErrors()) throw Error("the boolean failed");
           TopoDS_Shape part = common.Shape();
           auto edges = trace(common, placed, part, TopAbs_EDGE), faces = trace(common, placed, part, TopAbs_FACE);
