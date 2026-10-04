@@ -88,8 +88,8 @@ int main(){try {
   // commands, linked assets, the image canvas (UI-70) and sketch_tool's project on t4 (1.2 KB at the wave-3 merge, +1.5 KB at its
   // final merge), +1.5 KB related on t6. Merged, what the tracks added within their own budgets adds up
   // as well: measured at the wave-3 merge, live 112671 bytes (2.6 KB past the raises) and headless 66678 (3.6 KB past); after
-  // t4's and t5a's final merges, live 113122 and headless 74716. t2a's final merge: measure's mode and length kind (UI-144) and
-  // view's home (UI-47), +0.9 KB live. A merge that grows a list past the limits raises them by what it measured and says so in
+  // t4's and t5a's final merges, live 113122 and headless 74716; with t2a's final merge (measure's mode and length kind UI-144,
+  // view's home UI-47) live 113583. A merge that grows a list past the limits raises them by what it measured and says so in
   // the commit.
   CHECK(live<114300);  // the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
