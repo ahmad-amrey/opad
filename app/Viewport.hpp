@@ -450,9 +450,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showCandidateRefs(const std::vector<opad::Ref>& refs);
   size_t candidateRefsShown() const { return m_candidateShown; }  // faces and edges drawn now (benches)
   // The design checks' findings on the model (ViewportChecks.cpp, help audit P8), until replaced or cleared: the print check's
-  // faces tinted in the warning amber (overhangs) and the error red (thin walls), one object per colour in the Topmost layer
-  // copied from the meshes the bodies are drawn with (a sliced job, a body a step); the volume an interfering pair shares in
-  // the error red over everything (the pair is selected: Topmost). Never pickable, never framed by Fit.
+  // faces tinted in the warning amber (overhangs) and the error red (thin walls), one object per colour copied from the
+  // meshes the bodies are drawn with (a sliced job, a body a step), over everything like the selection's X-ray (TopOSD: also
+  // over a body selected whole, which is in Topmost); the volume an interfering pair shares in the error red, over the pair.
+  // Tints are made again when the bodies shown change (isolation, a body still being displayed when they were asked for).
+  // Never pickable, never framed by Fit.
   struct CheckTint {
     std::string body;
     std::vector<int> faces;  // face ordinals, or a mesh body's triangle ordinals (triangles: as the print check numbers them)
@@ -966,7 +968,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_candidateJob = nullptr;
   Handle(SubHighlight) m_checkTints[2];           // showCheckTints: overhangs, thin walls
   std::array<size_t, 2> m_tintTriangles{0, 0};
+  Bnd_Box m_tintBoxes[2];                         // where they are (benches)
   Job* m_tintJob = nullptr;
+  std::vector<CheckTint> m_tintWanted;            // what showCheckTints was last asked for
+  bool m_tintAgain = false;                       // a body they colour was not shown yet, or the bodies shown changed: at finishSync
+  void buildCheckTints();
   Handle(AIS_Shape) m_overlap;                    // showOverlap
   size_t m_candidateShown = 0;
   std::vector<opad::Ref> m_candidateRefs;

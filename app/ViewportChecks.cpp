@@ -1,7 +1,9 @@
 // The design checks' findings on the model (TODO 11 wave 3, help audit P8). Print check: the faces of each finding tinted,
-// overhangs in the theme's warning amber and thin walls in its error red, one SubHighlight per colour in the Topmost layer,
-// copied from the meshes the bodies are drawn with (a sliced job, a body a step), never pickable. Interference: the volume
-// two bodies share, in the error red over everything (TopOSD: the pair it lies inside is selected and drawn in Topmost).
+// overhangs in the theme's warning amber and thin walls in its error red, one SubHighlight per colour copied from the meshes
+// the bodies are drawn with (a sliced job, a body a step), never pickable. They show through the model as a selection does,
+// and over a body selected whole too: TopOSD, which draws after Topmost with no depth test (in Topmost a tint shared the
+// selected body's depth and z-fought with it). Interference: the volume two bodies share, in the error red over everything
+// (TopOSD: the pair it lies inside is selected and drawn in Topmost).
 #include "Viewport.hpp"
 
 #include <BRep_Tool.hxx>
@@ -47,14 +49,21 @@ void addFace(const TopoDS_Face& face, const gp_Trsf& body, Mesh& out) {
 }  // namespace
 
 void Viewport::showCheckTints(const std::vector<CheckTint>& tints) {
+  m_tintWanted = tints;
+  buildCheckTints();
+}
+
+void Viewport::buildCheckTints() {
+  m_tintAgain = false;
   if (Job* job = std::exchange(m_tintJob, nullptr)) job->cancel();
   for (Handle(SubHighlight)& hl : m_checkTints) {
     if (m_initialised && !hl.IsNull()) m_ctx->Remove(hl, Standard_False);
     hl.Nullify();
   }
   m_tintTriangles = {0, 0};
+  for (Bnd_Box& box : m_tintBoxes) box.SetVoid();
   if (m_initialised) redrawScene();
-  if (!m_initialised || tints.empty()) return;
+  if (!m_initialised || m_tintWanted.empty()) return;
   struct Wanted {
     Handle(AIS_Shape) ais;
     bool triangles = false;           // a mesh: the ordinals are its triangles, counted face after face
@@ -62,9 +71,18 @@ void Viewport::showCheckTints(const std::vector<CheckTint>& tints) {
   };
   auto wanted = std::make_shared<std::vector<Wanted>>();
   std::map<std::string, size_t> at;
-  for (const CheckTint& t : tints) {
+  for (const CheckTint& t : m_tintWanted) {
+    if (t.faces.empty()) continue;
+    // Only on a body drawn as it is now: one hidden (isolation) has none; one still on its way to the view (its mesh, the
+    // display pump) gets them once the view has settled (finishSync).
+    const opad::Node* n = m_doc->scene.node(t.body);
+    if (!n || n->body_missing) continue;
     const auto item = m_items.find(t.body);
-    if (item == m_items.end() || t.faces.empty()) continue;
+    const bool shown = !m_isolated.empty() ? m_isolated.count(t.body) > 0 : m_doc->scene.effectively_visible(t.body);
+    if (item == m_items.end() || item->second.key != n->body_key || !m_ctx->IsDisplayed(item->second.ais)) {
+      m_tintAgain = m_tintAgain || shown;
+      continue;
+    }
     auto [it, added] = at.try_emplace(t.body, wanted->size());
     if (added) wanted->push_back({item->second.ais, t.triangles, {}});
     auto& list = (*wanted)[it->second].faces[t.error ? 1 : 0];
@@ -130,11 +148,12 @@ void Viewport::showCheckTints(const std::vector<CheckTint>& tints) {
       for (const gp_Pnt& p : m.nodes) a->AddVertex(p);
       for (const int k : m.indices) a->AddEdge(k);
       hl->m_triangles.push_back(a);
-      hl->SetZLayer(Graphic3d_ZLayerId_Topmost);
+      hl->SetZLayer(Graphic3d_ZLayerId_TopOSD);
       hl->SetInfiniteState(Standard_True);  // never part of Fit All
       m_ctx->Display(hl, 0, -1, Standard_False);  // selection mode -1: never pickable
       m_checkTints[c] = hl;
       m_tintTriangles[c] = m.triangles();
+      for (const gp_Pnt& p : m.nodes) m_tintBoxes[c].Add(p);
     }
     redrawScene();
   };
@@ -178,6 +197,9 @@ opad::json Viewport::benchCheckOverlays() const {
       m_checkTints[c]->style().fill.Values(r, g, b, Quantity_TOC_sRGB);
       j[c ? "thin_colour" : "overhang_colour"] = {r, g, b};
       j[c ? "thin_layer" : "overhang_layer"] = int(m_checkTints[c]->ZLayer());
+      const Bnd_Box& box = m_tintBoxes[c];
+      if (!box.IsVoid()) j[c ? "thin_box" : "overhang_box"] = {box.CornerMin().X(), box.CornerMin().Y(), box.CornerMin().Z(),
+                                                               box.CornerMax().X(), box.CornerMax().Y(), box.CornerMax().Z()};
     }
   if (!m_overlap.IsNull()) {
     Quantity_Color q;

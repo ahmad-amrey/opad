@@ -2438,6 +2438,9 @@ void Viewport::sync() {
   if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // the retired bodies' selected sub-shapes went with them
   if (!pending.empty()) startMeshing(pending);
+  // The print check's colours lie on the bodies drawn: made again once the view settles when those change (isolation); a
+  // document change runs the check again instead (MainWindow::recheck).
+  if (!m_tintWanted.empty() && (removed || moved || !pending.empty() || !m_displayQueue.empty())) m_tintAgain = true;
   if (layered()) scheduleLooks();  // the hierarchy under a layer's components may have changed
   syncSketches(partial);
   applySelectionLayers();
@@ -2690,6 +2693,7 @@ void Viewport::finishSync(int pendingCount, bool added) {
   if(!m_needFit)m_fitNodesOnSync.clear();
   if (pendingCount == 0) m_needFit = false;
   if (m_sectionEnabled) updateSectionGizmo();  // the model's extent may have changed
+  if (m_tintAgain && pendingCount == 0) buildCheckTints();
   m_view->Invalidate();
   requestRedraw();
 }

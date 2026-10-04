@@ -77,7 +77,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     clearMeasurement();
     m_measureHistory.clear();  // results of the document that goes
     m_viewport->clearPreviewBodies();
-    m_viewport->clearCheckOverlays();  // a check's findings belong to the document that goes
+    m_viewport->clearCheckOverlays();  // a check's findings belong to the document that goes, and so does its panel
+    if (m_toolStack->currentWidget() == m_checks && m_toolPanel->isVisible()) m_toolPanel->hide();
     m_viewport->clearCandidates();
     m_viewport->isolate({});
     if (action("inspect.section")->isChecked()) action("inspect.section")->setChecked(false);

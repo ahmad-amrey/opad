@@ -304,6 +304,7 @@ class MainWindow : public QMainWindow {
   std::vector<std::string> m_checkSelect;  // what the check looks at: the selection when it started, else everything
   void startCheck(bool print);
   void runCheck();
+  void recheck();  // the document changed while the check's panel is open: its findings and colours follow (help audit P8)
   void showFinding(const opad::json& finding);
   void showPrintTints(const opad::json& except);  // the print check's findings coloured on the model, but `except` (the one shown)
   void endCheck();

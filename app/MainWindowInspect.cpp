@@ -631,14 +631,24 @@ void MainWindow::startCheck(bool print) {
 void MainWindow::runCheck() {
   if (Job* old = std::exchange(m_checkJob, nullptr)) old->cancel();
   opad::json args = m_checks->options();
-  if (!m_checkSelect.empty()) args["select"] = m_checkSelect;
+  // What the selection the check started with still names (a node deleted or undone since is left out); none of it left:
+  // nothing to check, rather than the whole model nobody asked about.
+  std::vector<std::string> select;
+  for (const auto& id : m_checkSelect) if (m_doc->scene.node(id)) select.push_back(id);
+  if (!select.empty()) args["select"] = select;
   args["limit"] = 200;
   const bool print = m_checks->mode() == CheckPanel::Mode::Print;
-  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  m_viewport->clearCheckOverlays();  // the last run's colours go with its findings
+  if (!m_checkSelect.empty() && select.empty()) return m_checks->setResult({{"items", opad::json::array()}, {"bodies", 0}});
+  // The shapes of the bodies it reads, not a copy of the whole document (every BREP text, here on the UI thread): it runs
+  // again on every change while its panel is open.
+  std::vector<std::string> nodes = select;
+  if (nodes.empty())
+    for (const auto& body : m_doc->scene.all_bodies()) if (m_doc->scene.effectively_visible(body)) nodes.push_back(body);
+  auto document = m_doc->shapesOf(nodes);
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   auto result = std::make_shared<opad::json>();
   m_checks->setRunning(tr("Checking…"));
-  m_viewport->clearCheckOverlays();  // the last run's colours go with its findings
   m_checkJob = m_jobs->async(print ? tr("Print check") : tr("Interference"), [document, scene, args, print, result](Progress p) {
     const auto cancelled = [p] { return p.cancelled(); };
     *result = print ? opad::check_print(*document, *scene, args, cancelled) : opad::check_interference(*document, *scene, args, cancelled);
@@ -648,6 +658,15 @@ void MainWindow::runCheck() {
     m_checks->setResult(*result);
     if (print) showPrintTints(opad::json());  // the findings on the model, as the guide shows them
   });
+}
+
+// The findings follow the model (help audit P8): a change while the check's panel is open (an edit, an undo, a body moved or
+// hidden) takes the colours and the overlap off at once and runs the check again. A document replaced closes the panel
+// (the aboutToReplace handler).
+void MainWindow::recheck() {
+  if (!m_toolPanel->isVisible() || m_toolStack->currentWidget() != m_checks || !m_doc->hasDocument || m_doc->loading) return;
+  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
+  runCheck();
 }
 
 // Overhangs amber and thin walls red on the model (help audit P8), until the panel closes or the check runs again.
@@ -677,7 +696,7 @@ void MainWindow::showFinding(const opad::json& f) {
     }
     // The overlap itself, in red over the pair (help audit P8): computed again on a worker (the check keeps its volume and box).
     if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
-    auto document = std::make_shared<opad::Document>(m_doc->doc);
+    auto document = m_doc->shapesOf({a, b});
     auto scene = std::make_shared<opad::Scene>(m_doc->scene);
     auto shape = std::make_shared<TopoDS_Shape>();
     auto prs = std::make_shared<std::shared_ptr<const BodyPrs>>();
