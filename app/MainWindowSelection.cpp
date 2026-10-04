@@ -4,6 +4,7 @@
 
 #include <QColorDialog>
 #include <QCoreApplication>
+#include <QFile>
 #include <QMenu>
 
 #include <algorithm>
@@ -18,6 +19,11 @@
 #include "Icons.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+
+namespace {
+std::mutex g_selectionWriting;  // one selection.json write at a time, and only the newest selection's
+std::atomic<unsigned> g_newestSelection{0};
+}  // namespace
 
 // ---------------------------------------------------------------- selection plumbing (F22/F25)
 std::vector<std::string> MainWindow::currentNodeIds() const {
@@ -191,9 +197,7 @@ void MainWindow::writeSelectionFile() {
   }
   opad::json head{{"pid", static_cast<long long>(QCoreApplication::applicationPid())}, {"document", m_doc->path().toStdString()},
                   {"browse", m_doc->browse}, {"total", total}, {"truncated", total > kPublishedRefs}};
-  static std::mutex writing;  // one write at a time, and only the newest selection's
-  static std::atomic<unsigned> newest{0};
-  const unsigned mine = ++newest;
+  const unsigned mine = ++g_newestSelection;
   m_selFileJob = m_jobs->async(tr("Publishing selection"), [entries, head, mine](Progress p) {
     opad::json j = head;
     j["ts"] = opad::now_iso8601();
@@ -216,9 +220,18 @@ void MainWindow::writeSelectionFile() {
       sel.push_back(std::move(out));
     }
     const std::string text = j.dump(2);
-    std::lock_guard<std::mutex> lock(writing);
-    if (mine == newest) opad::write_text_file(opad::cache_dir() / "selection.json", text);
+    std::lock_guard<std::mutex> lock(g_selectionWriting);
+    if (mine == g_newestSelection) opad::write_text_file(opad::cache_dir() / "selection.json", text);
   }, [this](bool, const QString&) { m_selFileJob = nullptr; }, JobKind::Background);
+}
+
+// Agent access went off (UI-06): the file goes, and a write under way (past its last look at the cancel) is no longer the
+// newest, so it cannot put the file back.
+void MainWindow::unpublishSelection() {
+  if (m_selFileJob) m_selFileJob->cancel();
+  std::lock_guard<std::mutex> lock(g_selectionWriting);
+  ++g_newestSelection;
+  QFile::remove(QString::fromStdU16String((opad::cache_dir() / "selection.json").u16string()));
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {

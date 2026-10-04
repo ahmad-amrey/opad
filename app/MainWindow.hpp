@@ -173,6 +173,7 @@ class MainWindow : public QMainWindow {
   void restoreOp(const std::string& opId);
   void deleteCurrent();
   void writeSelectionFile();
+  void unpublishSelection();
   void positionOverlays();
   void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends
   void addRecent(const QString& path);

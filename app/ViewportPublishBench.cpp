@@ -87,6 +87,14 @@ OPAD_BENCH(OPAD_BENCH_SELPUBLISH, selpublish) {
   w.m_agent->setAccess(false, false);
   waitUntil([&] { return !QFile::exists(file); }, 5000);
   require(!QFile::exists(file), "agent access off again: the published selection goes");
+  // Off while a write of the 2,000 faces is under way: that write does not put the file back.
+  w.m_agent->setAccess(true, false);
+  waitUntil([&] { return QFile::exists(file) && settled(); }, 60000);
+  w.writeSelectionFile();
+  w.m_agent->setAccess(false, false);
+  waitUntil([&] { return !w.m_selFileJob && settled(); }, 10000);
+  waitUntil([] { return false; }, 300);
+  require(!QFile::exists(file), "off while a write is under way: the file stays gone");
   w.action("select.bodies")->trigger();
   waitUntil(settled, 60000);
   w.m_browser->setSelectedIds(roots);

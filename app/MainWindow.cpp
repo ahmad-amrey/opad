@@ -52,7 +52,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_agent,&AgentBridge::statusChanged,this,[this]{
     if(std::exchange(m_selPublishing,m_agent->publishesSelection())==m_selPublishing)return;
     if(m_selPublishing)scheduleSelectionSync();
-    else{if(m_selFileJob)m_selFileJob->cancel();QFile::remove(QString::fromStdU16String((opad::cache_dir()/"selection.json").u16string()));}
+    else unpublishSelection();
   });
   m_selPublishing=m_agent->publishesSelection();
   connect(agentStatus,&QToolButton::clicked,m_agent,&AgentBridge::settings);
