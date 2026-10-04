@@ -62,10 +62,10 @@ struct Workspace {
   bool contextual = false;   // entered by the app (sketch mode), never offered in the switcher's list
 };
 
-// The ribbon as data, before it is built (MainWindow::buildRibbon): the built-in workspaces and tabs, then what the
-// feature areas add (AreaController::ribbon), then RibbonBar is made from it in this order. Workspaces have ids ("review",
-// "design", "sketch"), tabs "<workspace>.<name>" ("review.view", "design.assemble", "sketch.constrain"), titled groups
-// "<tab>.<name>" ("design.solid.create"). Null actions are left out, and so is a group left empty. Every workspace that
+// The ribbon as data, before it is built (MainWindow::buildRibbon): the built-in workspaces and tabs (the ribbon table,
+// MainWindowRibbonTable.cpp), then what the feature areas add (AreaController::ribbon), then RibbonBar is made from it in
+// this order. Workspaces have ids ("review", "design", "drafting"), tabs "<workspace>.<name>" ("review.view",
+// "design.assemble", the contextual "design.sketch"), titled groups "<tab>.<name>" ("design.solid.create"). Null actions are left out, and so is a group left empty. Every workspace that
 // is not contextual is switched to by the command "workspace.<id>": the window makes it (key = its shortcut, in the View
 // menu after the others) unless the area added one of its own, and keeps it checked while the workspace is shown; the
 // last one is remembered by id (setting ui/workspaceId). A contextual tab (addContextualTab) stays hidden until the app
@@ -75,11 +75,14 @@ struct Workspace {
 //   layout.addAction("design.solid.create", action("design.extrude"));
 //   layout.addAction("design.solid.create", action("design.hole"), RibbonLayout::Size::Small, {action("design.thread")});  // split
 struct RibbonLayout {
-  enum class Size { Large, Small };  // Large: icon above the label; Small: icon beside it, three to a column
+  // Large: icon above the label; Small: icon beside it, three to a column; Icon: the icon alone at every level, three to a
+  // column (the label in the tooltip and its accessible name): glyphs that read at a glance, the sketch's constraints.
+  enum class Size { Large, Small, Icon };
   struct Item {
     QAction* action = nullptr;
     Size size = Size::Large;
     QList<QAction*> variants;  // a split button: a click runs the action, its arrow drops these down
+    bool primary = false;      // the tab's main verb (Finish sketch): filled in the accent colour, its size at every level
   };
   struct Group {
     QString id, title;  // untitled (an area's plain group, addGroup(tab, actions)): no title row, collapses to "More ▾"
@@ -103,7 +106,7 @@ struct RibbonLayout {
   Tab* addContextualTab(const QString& workspace, const QString& id, const QString& title, QColor Tokens::* accent = &Tokens::amber);
   bool addGroup(const QString& tab, const QList<QAction*>& actions);  // an untitled group after the tab's groups; false: no such tab
   Group* addGroup(const QString& tab, const QString& id, const QString& title);  // a titled one; null: no such tab; an id there: that one
-  bool addAction(const QString& group, QAction* action, Size size = Size::Large, const QList<QAction*>& variants = {});  // false: no such group
+  bool addAction(const QString& group, QAction* action, Size size = Size::Large, const QList<QAction*>& variants = {}, bool primary = false);  // false: no such group
   Space* workspace(const QString& id);
   Tab* tab(const QString& id);
   Group* group(const QString& id);
@@ -152,7 +155,9 @@ class RibbonGroup : public QWidget {
     QAction* action;
     RibbonLayout::Size size;
     QToolButton* button;
+    bool pinned = false;  // keeps its size whatever the level (the primary verb); its group never collapses
   };
+  int modeAt(const Slot& s, int level) const;  // how a tool shows at a level: Large, Small or Icons
   void style(QToolButton* b, int mode) const;  // mode: Large, Small or Icons
   QSize measure(const Slot& s, int mode);
   void actionChanged();
@@ -176,8 +181,8 @@ class RibbonPage : public QWidget {
   QList<RibbonGroup*> groups() const { return m_groups; }
   QList<int> levels() const;
   int widthAt(const QList<int>& levels);  // the row with these levels, padding and separators included
-  // Steps groups down until the row fits: the rightmost of those least stepped down goes first, to its next narrower
-  // level; a group with nothing narrower left stays as it is.
+  // Steps groups down until the row fits: the rightmost of those that took the fewest steps goes first, to its next
+  // narrower level (a group of small tools skips the small level: one step); a group with nothing narrower left stays.
   void fit();
   QSize sizeHint() const override { return minimumSizeHint(); }
   QSize minimumSizeHint() const override;  // every group collapsed
@@ -203,6 +208,7 @@ class RibbonBar : public QWidget {
   // current before comes back). False: no such contextual tab.
   bool setContextualTab(const QString& id, bool shown);
   bool contextualTabShown(const QString& id) const;
+  QStringList contextualTabs(int workspace) const;  // the ids of a workspace's contextual tabs, shown or not
   // The tab row's cluster, in this order whichever order they come in: quick access, search, the areas' widgets,
   // settings. It is never squeezed: when the row cannot show every tab whole beside it, search shows as its icon alone.
   QToolButton* addQuickAction(QAction* a, QMenu* steps = nullptr);  // an icon; with steps a split button (Undo ▾)

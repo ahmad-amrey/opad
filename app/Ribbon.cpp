@@ -68,9 +68,9 @@ RibbonLayout::Group* RibbonLayout::addGroup(const QString& tabId, const QString&
   return &t->groups.last();
 }
 
-bool RibbonLayout::addAction(const QString& id, QAction* action, Size size, const QList<QAction*>& variants) {
+bool RibbonLayout::addAction(const QString& id, QAction* action, Size size, const QList<QAction*>& variants, bool primary) {
   Group* g = group(id);
-  if (g) g->items << Item{action, size, variants};
+  if (g) g->items << Item{action, size, variants, primary};
   return g;
 }
 
@@ -375,7 +375,7 @@ RibbonGroup::RibbonGroup(const RibbonLayout::Group& group, QWidget* parent) : QW
       // A menu button drops the action's menu down itself. As the button's default action it showed Qt's fallback:
       // a menu with one entry, the action, whose submenu then held the tools.
       auto sync = [a, b] {
-        b->setText(a->text() + kDrop);
+        b->setText(a->iconText() + kDrop);  // as a tool button shows its action: the short name (its menu entry keeps the long one)
         b->setIcon(a->icon());
         b->setToolTip(a->toolTip());
         b->setEnabled(a->isEnabled());
@@ -393,13 +393,24 @@ RibbonGroup::RibbonGroup(const RibbonLayout::Group& group, QWidget* parent) : QW
         b->setMenu(drop);
         b->setPopupMode(QToolButton::MenuButtonPopup);
       }
+      if (item.primary) {  // the tab's main verb: filled in the accent colour, its icon drawn in the text colour on it
+        b->setProperty("ribbonPrimary", true);
+        auto paint = [a, b] {
+          const Tokens& t = theme::current();
+          b->setIcon(icons::icon(a->data().toString(), t.onsel, QColor(t.onsel.red(), t.onsel.green(), t.onsel.blue(), 140)));
+        };
+        connect(a, &QAction::changed, b, paint);  // after the button took the action's own icon again
+        connect(theme::notifier(), &theme::Notifier::changed, b, paint, Qt::QueuedConnection);  // after the window's icons
+        paint();
+      }
     }
     RibbonBar::commandButton(b, a->objectName());  // disabled buttons and menu buttons included
     m_menu->addAction(a);
     for (QAction* v : item.variants)
       if (v) m_menu->addAction(v);
     connect(a, &QAction::changed, this, &RibbonGroup::actionChanged);
-    m_slots << Slot{a, item.size, b};
+    if (item.size == RibbonLayout::Size::Icon) b->setAccessibleName(a->iconText());
+    m_slots << Slot{a, item.size, b, item.primary};
   }
   m_titleButton = new QToolButton(this);
   m_titleButton->setObjectName("ribbonGroupTitle");
@@ -453,9 +464,16 @@ QSize RibbonGroup::measure(const Slot& s, int mode) {
 }
 
 int RibbonGroup::nextLevel(int level) {
-  for (int next = level + 1; next <= Collapsed; ++next)
+  const bool pinned = std::any_of(m_slots.begin(), m_slots.end(), [](const Slot& s) { return s.pinned; });
+  for (int next = level + 1; next <= (pinned ? Icons : Collapsed); ++next)
     if (widthAt(next) < widthAt(level)) return next;
   return -1;
+}
+
+int RibbonGroup::modeAt(const Slot& s, int level) const {
+  if (s.size == RibbonLayout::Size::Icon) return Icons;
+  if (s.pinned) return s.size == RibbonLayout::Size::Large ? Large : Small;
+  return level == Icons ? Icons : level == Large && s.size == RibbonLayout::Size::Large ? Large : Small;
 }
 
 int RibbonGroup::widthAt(int level) {
@@ -473,7 +491,7 @@ int RibbonGroup::widthAt(int level) {
     int stacked = 0, column = 0;
     for (const Slot& s : m_slots) {
       if (!s.action->isVisible()) continue;
-      const int mode = level == Icons ? Icons : level == Large && s.size == RibbonLayout::Size::Large ? Large : Small;
+      const int mode = modeAt(s, level);
       const int w = measure(s, mode).width();
       if (mode == Large) {
         if (stacked) width += column + kGap;
@@ -527,7 +545,7 @@ void RibbonGroup::setLevel(int level) {
   for (const Slot& s : m_slots) {
     s.button->setVisible(s.action->isVisible());
     if (!s.action->isVisible()) continue;
-    const int mode = level == Icons ? Icons : level == Large && s.size == RibbonLayout::Size::Large ? Large : Small;
+    const int mode = modeAt(s, level);
     style(s.button, mode);
     const int w = s.button->sizeHint().width();
     if (mode == Large) {
@@ -585,13 +603,14 @@ QSize RibbonPage::minimumSizeHint() const {
 }
 
 void RibbonPage::fit() {
-  QList<int> levels(m_groups.size(), RibbonGroup::Large);
+  QList<int> levels(m_groups.size(), RibbonGroup::Large), steps(m_groups.size(), 0);
   while (widthAt(levels) > width()) {
-    int step = -1;  // the rightmost of the groups that are least stepped down and can still save room
+    int step = -1;  // the rightmost of the groups that took the fewest steps and can still save room
     for (int i = static_cast<int>(m_groups.size()) - 1; i >= 0; --i)
-      if (m_groups[i]->nextLevel(levels[i]) >= 0 && (step < 0 || levels[i] < levels[step])) step = i;
+      if (m_groups[i]->nextLevel(levels[i]) >= 0 && (step < 0 || steps[i] < steps[step])) step = i;
     if (step < 0) break;
     levels[step] = m_groups[step]->nextLevel(levels[step]);
+    ++steps[step];
   }
   const bool rtl = layoutDirection() == Qt::RightToLeft;
   int x = kPad;
@@ -790,6 +809,14 @@ bool RibbonBar::setContextualTab(const QString& id, bool shown) {
     }
   }
   return false;
+}
+
+QStringList RibbonBar::contextualTabs(int workspace) const {
+  QStringList out;
+  if (workspace >= 0 && workspace < m_tabSets.size())
+    for (const Entry& e : m_tabSets[workspace].entries)
+      if (e.contextual) out << e.id;
+  return out;
 }
 
 bool RibbonBar::contextualTabShown(const QString& id) const {
