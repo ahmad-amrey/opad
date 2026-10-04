@@ -1360,6 +1360,16 @@ std::vector<std::array<double, 3>> Viewport::drawnColors(const std::string& node
   return out;
 }
 
+std::vector<double> Viewport::drawnTransparencies(const std::string& nodeId) const {
+  std::vector<double> out;
+  if (const auto it = m_items.find(nodeId); it != m_items.end())
+    for (const auto& p : it->second.ais->Presentations())
+      if (p->Mode() == AIS_Shaded)
+        for (const auto& g : p->Groups())
+          if (const auto fill = Handle(Graphic3d_AspectFillArea3d)::DownCast(g->Aspects()); !fill.IsNull()) out.push_back(fill->FrontMaterial().Transparency());
+  return out;
+}
+
 // ---------------------------------------------------------------- section (F20)
 void Viewport::setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal, bool caps) {
   m_sectionEnabled = enabled;

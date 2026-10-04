@@ -167,6 +167,7 @@ bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look
     ais->SetColor(rgb(look.color));
     ais->SetTransparency(1.0 - look.opacity);
     applyStyle(ais, &look);  // a ghost's edges fade with it
+    if (const Handle(BodyShape) body = Handle(BodyShape)::DownCast(ais)) body->syncPainted(look.ghost);  // face colours fade too
     ais->SynchronizeAspects();
   }
   if (look.visible != was.visible) {

@@ -149,6 +149,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // The colours a displayed body's shaded presentation fills its groups with (sRGB): one, or the body's own and each face
   // colour (UI-74). Benches check what is drawn with it.
   std::vector<std::array<double, 3>> drawnColors(const std::string& nodeId) const;
+  std::vector<double> drawnTransparencies(const std::string& nodeId) const;  // the same groups' (front material)
   // Pictures on bodies (SVG images, canvases) decoded on workers so far (UI-71), and whether a displayed body shows one.
   int rastersDecoded() const { return m_rastersDecoded; }
   bool showsPicture(const std::string& nodeId) const;

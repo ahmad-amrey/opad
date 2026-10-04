@@ -9,6 +9,7 @@
 #include <Graphic3d_ArrayOfSegments.hxx>
 #include <Graphic3d_ArrayOfTriangles.hxx>
 #include <Graphic3d_ArrayOfPoints.hxx>
+#include <Graphic3d_AspectFillArea3d.hxx>
 #include <Quantity_Color.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <Select3D_SensitiveEntity.hxx>
@@ -71,6 +72,9 @@ class BodyShape : public AIS_Shape {
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
   // The face colours of a body drawn without worker arrays (placed through a non-rigid transform: OCCT's own shaded path).
   void setFaceColors(std::shared_ptr<const opad::FaceColors> colors) { m_faceColors = std::move(colors); SetToUpdate(); }
+  // Face colours are drawn through copies of the fill aspect, which SetTransparency and SynchronizeAspects never reach: they
+  // take the body's look again here (its opacity; a ghost's colour too, `uniform`), before SynchronizeAspects (applyLook).
+  void syncPainted(bool uniform);
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
   // Sub-shape modes: the stock owners are swapped for SubShapeOwner.
@@ -79,6 +83,9 @@ class BodyShape : public AIS_Shape {
  private:
   std::shared_ptr<const BodyPrs> m_prs, m_display;
   std::shared_ptr<const opad::FaceColors> m_faceColors;
+  std::vector<std::pair<Handle(Graphic3d_AspectFillArea3d), Quantity_Color>> m_painted;  // each face colour's aspect as drawn
+  bool m_uniform = false;
+  Handle(Graphic3d_AspectFillArea3d) paintedAspect(const Quantity_Color& color);
   double m_rayBias=0;
   std::map<const Graphic3d_ArrayOfTriangles*, Handle(Graphic3d_ArrayOfTriangles)> m_rayTriangles;  // drawn array -> its biased copy
 };

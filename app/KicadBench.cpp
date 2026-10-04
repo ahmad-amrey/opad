@@ -177,7 +177,37 @@ OPAD_BENCH(OPAD_BENCH_COLORS, colors) {
       if (!drawn(red) || !drawn(gold) || drawn(grey)) return (void)fail("the groups did not follow the body's new colour");
       if (redAfter < 500 || goldAfter < goldBefore / 2) return (void)fail("the red body or its gold top does not show");
       trace::log("bench: colors OBJ material kept as shown, own face colour drawn as its own group, body recoloured keeps it PASS");
-      QCoreApplication::exit(0);
+      // Looks reach the face colour's group too: a fade (a syncing asset, an explode) and a ghost (an active component).
+      Viewport* view = w.m_viewport;
+      const std::string id = w.m_doc->scene.all_bodies().front();
+      auto alphas = [view, id](double transparency) {
+        const auto t = view->drawnTransparencies(id);
+        return t.size() == 2 && std::all_of(t.begin(), t.end(), [&](double v) { return std::abs(v - transparency) < 0.01; });
+      };
+      LookDelta fade;
+      fade.fade = 0.45;
+      QObject::connect(view, &Viewport::looksApplied, view, [view, id, fail, alphas, drawn, gold, red] {
+        const bool faded = alphas(0.55) && drawn(gold) && drawn(red);
+        trace::log(QString("bench: colors: faded, the gold group follows the fade %1").arg(faded ? "PASS" : "FAIL"));
+        LookDelta ghost;
+        ghost.ghost = true;
+        QObject::connect(view, &Viewport::looksApplied, view, [view, id, fail, alphas, drawn, gold, red, faded] {
+          const auto colors = view->drawnColors(id);
+          const auto t = view->drawnTransparencies(id);
+          const bool ghosted = colors.size() == 2 && !drawn(gold) && t.size() == 2 && t[0] > 0.5 && alphas(t[0]);
+          trace::log(QString("bench: colors: ghosted, the gold group drawn as the ghost (transparency %1) %2").arg(t.empty() ? -1 : t[0]).arg(ghosted ? "PASS" : "FAIL"));
+          QObject::connect(view, &Viewport::looksApplied, view, [fail, alphas, drawn, gold, red, faded, ghosted] {
+            const bool back = alphas(0) && drawn(gold) && drawn(red);
+            trace::log(QString("bench: colors: looks cleared, gold and red opaque again %1").arg(back ? "PASS" : "FAIL"));
+            if (!faded || !ghosted || !back) return (void)fail("a face colour's group did not follow the body's look");
+            QCoreApplication::exit(0);
+          }, Qt::SingleShotConnection);
+          view->clearLookLayer(LookSource::Activation);
+          view->clearLookLayer(LookSource::Explode);
+        }, Qt::SingleShotConnection);
+        view->setLookLayer(LookSource::Activation, {{id, ghost}});
+      }, Qt::SingleShotConnection);
+      view->setLookLayer(LookSource::Explode, {{id, fade}});
     });
   });
   return true;

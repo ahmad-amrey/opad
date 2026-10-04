@@ -365,6 +365,31 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
   return p;
 }
 
+namespace {
+// Aspects of presentations computed again since are held there alone: forgotten.
+void forgetDropped(std::vector<std::pair<Handle(Graphic3d_AspectFillArea3d), Quantity_Color>>& painted) {
+  painted.erase(std::remove_if(painted.begin(), painted.end(), [](const auto& p) { return p.first->GetRefCount() <= 1; }), painted.end());
+}
+}  // namespace
+
+Handle(Graphic3d_AspectFillArea3d) BodyShape::paintedAspect(const Quantity_Color& color) {
+  forgetDropped(m_painted);
+  Handle(Graphic3d_AspectFillArea3d) aspect = new Graphic3d_AspectFillArea3d(*myDrawer->ShadingAspect()->Aspect());
+  if (!m_uniform) Handle(Prs3d_ShadingAspect)(new Prs3d_ShadingAspect(aspect))->SetColor(color);
+  m_painted.push_back({aspect, color});
+  return aspect;
+}
+
+void BodyShape::syncPainted(bool uniform) {
+  m_uniform = uniform;
+  forgetDropped(m_painted);
+  const Handle(Graphic3d_AspectFillArea3d)& base = myDrawer->ShadingAspect()->Aspect();
+  for (auto& [aspect, color] : m_painted) {
+    *aspect = *base;
+    if (!uniform) Handle(Prs3d_ShadingAspect)(new Prs3d_ShadingAspect(aspect))->SetColor(color);
+  }
+}
+
 void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) {
   // The zoom refinement's arrays when there are some; everything else below only reads `shown`.
   const auto& shown = m_display && !m_display->triangles.IsNull() ? m_display : m_prs;
@@ -389,10 +414,8 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
       if (colour >= 0) {
         look = new Prs3d_Drawer();
         look->SetLink(myDrawer);
-        Handle(Prs3d_ShadingAspect) shading = new Prs3d_ShadingAspect(new Graphic3d_AspectFillArea3d(*myDrawer->ShadingAspect()->Aspect()));
         const auto& c = m_faceColors->colors[size_t(colour)];
-        shading->SetColor(Quantity_Color(c[0], c[1], c[2], Quantity_TOC_sRGB));
-        look->SetShadingAspect(shading);
+        look->SetShadingAspect(new Prs3d_ShadingAspect(paintedAspect(Quantity_Color(c[0], c[1], c[2], Quantity_TOC_sRGB))));
       }
       StdPrs_ShadedShape::Add(prs, group, look);
     }
@@ -432,11 +455,7 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
   else {
     // The body's colour where the file gave a face none of its own, each face colour in its own group with the same look.
     if (!shown->own.IsNull()) fill(shown->own, myDrawer->ShadingAspect()->Aspect());
-    for (const auto& part : shown->painted) {
-      Handle(Prs3d_ShadingAspect) look = new Prs3d_ShadingAspect(new Graphic3d_AspectFillArea3d(*myDrawer->ShadingAspect()->Aspect()));
-      look->SetColor(part.color);
-      fill(part.triangles, look->Aspect());
-    }
+    for (const auto& part : shown->painted) fill(part.triangles, paintedAspect(part.color));
   }
   if (myDrawer->FaceBoundaryDraw() && !shown->boundaries.IsNull()) {
     Handle(Graphic3d_Group) e = prs->NewGroup();

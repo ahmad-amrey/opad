@@ -236,10 +236,12 @@ CASES = [
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),
     # The image canvas (UI-70): inserted on XZ through the placer at a width, a corner dragged (live, one op), Shift on a
     # corner stretching it, digits into X,
-    # Calibrate, Align to the box, lock, flip/through/selectable, Trace, Replace, a backdrop turned into a canvas
+    # Calibrate, Align to the box, lock, flip/through/selectable, Trace, Replace, a backdrop turned into a canvas, a picture
+    # linked through the placer at a width (centred, the width kept by the asset)
     # (<prefix>.png, .panel.png, .place.png, .flipped.png).
     ("canvas", canvas_document, {"OPAD_BENCH_CANVAS": "{prefix}"}),
-    # Import colours (UI-74): an OBJ material per face, recoloured (<prefix>.png, .red.png); a painted 3MF, also stretched.
+    # Import colours (UI-74): an OBJ material per face, recoloured, then faded and ghosted (the face colour's group follows)
+    # (<prefix>.png, .red.png); a painted 3MF, also stretched.
     ("colors", colors_obj, {"OPAD_BENCH_COLORS": "{prefix}.png"}),
     ("colors-3mf", colors_3mf, {"OPAD_BENCH_COLORS": "{prefix}.png", "OPAD_BENCH_COLORS_PAINTED": "1"}),
     # The viewer cache (UI-75): stored after display, found by content, no drawing stored.
