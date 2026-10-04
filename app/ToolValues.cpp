@@ -6,6 +6,7 @@
 
 #include "DimensionHandle.hpp"
 #include "InputKeys.hpp"
+#include "ToolPanel.hpp"
 
 ToolValues::ToolValues(QWidget* view, QObject* parent) : QObject(parent), m_view(view), m_input(new DynamicInput(view)) {
   qApp->installEventFilter(this);
@@ -48,6 +49,9 @@ bool ToolValues::eventFilter(QObject* target, QEvent* event) {
   if (event->type() != QEvent::ShortcutOverride && event->type() != QEvent::KeyPress) return false;
   auto* key = static_cast<QKeyEvent*>(event);
   if (!m_input || !takes(key) || !DynamicInput::takesKeysFrom(m_view, target)) return false;
+  // A panel's Tab moves through its widgets (as the sketch leaves it to them), a list keeps its keys: from the view only.
+  const bool tab = key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab;
+  if (target != m_view && (tab || ToolPanel::keepsKeyboard(static_cast<QWidget*>(target)))) return false;
   key->accept();
   if (event->type() == QEvent::KeyPress) type(key);
   return true;
@@ -84,7 +88,7 @@ void ToolValues::refresh() {
 }
 
 void ToolValues::reset() {
-  if (!m_input) return;
+  if (!m_input) return;  // the window closing (a panel hidden after the view went)
   m_input->used();
   m_input->setFields({});
   m_input->hide();

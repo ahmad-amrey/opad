@@ -25,8 +25,9 @@ using namespace opad::design;
 // values. Typed values hold the rubber band before Enter: X alone, X and Y (Tab locks X), a value that does not evaluate
 // (red, the pointer meanwhile), a length alone, an angle alone, the angle from the last line (the box's switch), '#'
 // absolute, "30<180" (and "10<3.14159265" while angles show in radians, UI-123), '@' relative in a rectangle, Esc going
-// back to X/Y. Move: X, Tab, Y, Enter at once. Tab never takes the keyboard off the view, and 5, 6 and 7 never switch the
-// display style in a sketch (their keys are let go there).
+// back to X/Y. Move: X, Tab, Y, Enter at once. Simplify and the spline node tool take a tolerance and a weight typed over
+// the view. Tab never takes the keyboard off the view, and 5, 6 and 7 never switch the display style in a sketch (their
+// keys are let go there).
 void SketchEditor::benchKeys() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_KEYS");
   QWidget* window = m_viewport->window();
@@ -378,6 +379,17 @@ void SketchEditor::benchKeys() {
         for (const auto& e : m_sk.entities)
           if (e.type == SkEntity::Type::Line && e.p.size() == 2 && at(e.p[0], 205, 202) && at(e.p[1], 225, 202)) line = &e;
         check(line && !m_input->typed() && m_tool == "move", "Enter right after typing moves the line by (5, 2)");
+        // Tools whose values live in the panel take typed digits too (a tolerance, an image's place, a node's weights).
+        setTool("simplify");
+        m_viewport->setFocus();
+        type("0.05");
+        check(m_input->isVisible() && m_input->count() == 1 && m_input->key(0) == "curveTolerance" && option("curveTolerance") == "0.05" && sameStyle(),
+              "Simplify: 0.05 typed over the view is its curve tolerance (no display style)");
+        setTool("node");
+        m_viewport->setFocus();
+        type("2");
+        check(m_input->count() == 3 && m_input->key(0) == "weight" && option("weight") == "2" && sameStyle(), "Spline node: 2 typed is the node's weight");
+        setTool("select");
         end();
         QCoreApplication::processEvents();
         check(wire->shortcut() == QKeySequence("7") && !wire->property("heldShortcut").isValid(), "the display styles have their keys again once the sketch is closed");

@@ -38,6 +38,8 @@ class DesignController : public QObject {
   void redefineSketchPlane();
 
   void startFeature(const QString& kind);
+  // A new feature with inputs given (picks as their JSON array, values and flags as typed): Paste's Move / copy (UI-129).
+  void startFeature(const QString& kind, const std::vector<std::pair<QString, opad::json>>& given);
   void editOp(const std::string& opId);  // a feature or a sketch, rolled back to when it was made
   void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin=false);
   ToolPanel* planePanel() const { return m_planePicker->panel(); }

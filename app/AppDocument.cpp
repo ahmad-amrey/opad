@@ -432,7 +432,7 @@ bool AppDocument::saveAs(const QString& path) {
   return true;
 }
 
-opad::json AppDocument::run(const std::string& command, opad::json args) {
+opad::json AppDocument::run(const std::string& command, opad::json args, const QString& label) {
   if (m_converting) throw opad::Error("The document is being prepared for editing; try again in a moment.");
   if (designBusy) throw opad::Error("The design is being recomputed; try again in a moment.");
   // Viewer mode changes how things look (shown, colour, opacity), never the model.
@@ -440,7 +440,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
   const size_t before = doc.ops.size();
   if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out = opad::commands::run(command, args, &doc);
-  recordStep(labelFor(command, args), before);
+  recordStep(label.isEmpty() ? labelFor(command, args) : label, before);
   refresh();
   return out;
 }

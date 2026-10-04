@@ -12,6 +12,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 
 #include "AppDocument.hpp"
 #include "DynamicInput.hpp"
@@ -27,6 +28,9 @@
 class JobRunner;
 class Job;
 class SketchGeometryCache;
+namespace opad::design {
+struct CurveCuts;
+}
 class DimensionHandle;
 
 class SketchEditor : public QObject, public SketchInput {
@@ -78,6 +82,21 @@ class SketchEditor : public QObject, public SketchInput {
   bool escape();
   void closeTool();
   QString keyHints() const;  // what Backspace, Enter, Esc and Shift do now, for the prompt
+  QString prompt(bool note = false) const;  // "<tool>: <the step that waits>" (the prompt bar's step), then the tool's note
+  // The command line (UI-133, SketchCommands.hpp): a point or the tool's values typed into the step's boxes key by key as
+  // over the view, then Enter; the reason when that did not work (nothing typed stays behind then), else empty.
+  QString enter(const QString& text);
+  bool closeChain();  // the polyline back to its first point
+  // The clipboard (UI-129, SketchClipboard.cpp): the selected curves with their points and the constraints among them, about
+  // a base point (the lower left of their extent; the copybase tool asks for one), as kClipMime, so another OPAD window
+  // pastes them too; Cut deletes them after (one undo step). Paste reads the clipboard on a worker, then the paste tool
+  // carries the curves by their base point (snaps apply; typed: X,Y, or @dx,dy from where they were copied) until a click
+  // places them, one undo step, selected after.
+  static constexpr const char* kClipMime = "application/x-opad+json";
+  bool copySelection(bool cut);  // false: nothing to copy (the status says why)
+  void copyWithBase();           // the copybase tool: the selection is copied about the point clicked next
+  void paste();
+  bool pasting() const { return m_tool == "paste" && m_clip != nullptr; }
   void toggleReference();
   void selectConnected();
   void selectType();
@@ -113,6 +132,9 @@ class SketchEditor : public QObject, public SketchInput {
   void benchSnaps();
   void benchSteps();
   void benchGridCursor();
+  void benchCommandLine();
+  void benchClipboard();
+  void benchEdits();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
   // or selected show.
@@ -153,6 +175,16 @@ class SketchEditor : public QObject, public SketchInput {
   void createText(double u,double v);
   bool modifyClick(double u,double v);
   bool applyModify();
+  struct Clip {  // what the paste tool places: the clip, its base point, its curves as polylines about the base (a box when many)
+    opad::json data;
+    double bu = 0, bv = 0;
+    size_t curves = 0;
+    std::vector<std::vector<std::pair<double, double>>> outline;
+  };
+  std::shared_ptr<const Clip> m_clip;
+  int m_clipRevision = 0, m_copies = 0;  // the paste read last, the copy made last
+  bool copyFrom(const std::vector<int>& ids, double bu, double bv, bool cut);
+  bool clipClick(const Snap& s);  // the paste and copybase tools' click
   struct Snap {
     // A constraint the click's new point gets with `ref` (UI-21): Midpoint of a line, Coincident on a second curve (an
     // intersection), Horizontal / Vertical with a tracked point or a circle's centre (a quadrant).
@@ -283,7 +315,33 @@ class SketchEditor : public QObject, public SketchInput {
   void commitDimensionEdit();
   void filletAt(const Hit& h, double u, double v);
   void trimAt(const Hit& h, double u, double v);
+  bool trimPiece(int id, double u, double v, QString& why);  // inside a change; false: nothing changed, why
   std::vector<std::pair<double, double>> trimPreview(int id, double u, double v) const;  // the piece trimAt would remove
+  // Fence trim (UI-28): a drag with the trim tool; every piece the fence crosses goes, in one undo step.
+  std::vector<std::tuple<int, double, double>> fenceHits(double au, double av, double bu, double bv) const;  // curve, where, in order
+  int curveThrough(double u, double v) const;
+  void fenceTrim(double au, double av, double bu, double bv);
+  bool m_fencing = false, m_fenceMoved = false;
+  double m_fenceU = 0, m_fenceV = 0, m_fenceToU = 0, m_fenceToV = 0;
+  Qt::KeyboardModifiers m_fenceMods;
+  // One-click extend (UI-28): where the end nearer (u, v) of the hovered line or arc would run to, as a polyline (empty:
+  // nowhere); cached for the hovered curve and end while the sketch stays as it is.
+  std::vector<std::pair<double, double>> extendPreview(int id, double u, double v);
+  std::tuple<int, bool, int> m_extendKey{0, false, -1};
+  std::vector<std::pair<double, double>> m_extendShown;
+  // Where the other curves cross a spline or an ellipse the trim hovers (core curve_cuts, the kernel's, on what their samples
+  // bring near it), and a line, a circle or an arc (splines and ellipses by their samples; the click asks the kernel), for
+  // this model revision: a move over the same curve, or a fence over the same curves, looks them up.
+  struct TrimCrossings;
+  mutable std::map<int, std::shared_ptr<const opad::design::CurveCuts>> m_trimCuts;
+  mutable std::map<int, std::shared_ptr<const TrimCrossings>> m_trimCrossings;
+  mutable int m_trimCutsRevision = -1;
+  bool mayCross(const opad::design::SkEntity& a, const opad::design::SkEntity& b) const;  // their samples come near; unsure: true
+  // Dragged points snap and merge on drop (UI-28): the point or curve the dragged point is held to, kept on release (the
+  // point merged into it, or the point put on the curve) when the sketch still solves.
+  int m_dropPoint = 0, m_dropCurve = 0;
+  double m_dropU = 0, m_dropV = 0;
+  bool dropTarget(int dragged, double u, double v, double& x, double& y);  // sets m_dropPoint / m_dropCurve
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();

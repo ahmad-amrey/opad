@@ -2,7 +2,9 @@
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/design/sketch_modify.hpp"
 // SketchEditor, the tools: what a click means for each of them, constraints, dimensions, fillet, trim, mirror.
+#include "CurveSamples.hpp"
 #include "SketchEditor.hpp"
+#include "SketchGeometryCache.hpp"
 #include "SketchPanel.hpp"
 #include "DimensionHandle.hpp"
 #include "ShapeInput.hpp"
@@ -84,7 +86,8 @@ void SketchEditor::setTool(const QString& tool) {
   m_panelFieldsDirty = true;
   m_tool = tool;referenceHover();
   if(tool=="mirror")m_options["mirrorStage"]=m_sel.empty()?"seed":"axis";
-  const QStringList preserve={"mirror","offset","node","move","rotate","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break","break_link"};
+  const QStringList preserve={"mirror","offset","node","move","rotate","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break","break_link","copybase"};
+  if(tool!="paste")m_clip.reset();
   if(!preserve.contains(tool))m_sel.clear();
   if((tool=="rect_pattern"||tool=="polar_pattern")&&!m_sel.empty()) {
     const int id=pattern_of(m_sk,m_sel.front(),true);
@@ -99,17 +102,33 @@ void SketchEditor::setTool(const QString& tool) {
 
 // The step that waits, as the prompt bar and the tool panel list it (SketchSteps.hpp, UI-25), and the tool's note.
 void SketchEditor::toolPrompt() {
-  QString t;
-  if (const auto* entry = sketchsteps::find(m_tool.toStdString())) {
-    const QList<ToolStep> steps = toolSteps();
-    int waiting = 0;
-    while (waiting + 1 < steps.size() && !steps[waiting].picked.isEmpty()) ++waiting;
-    t = tr("%1: %2").arg(i18n::t(entry->name), steps[waiting].label);
-    if (*entry->note) t += QStringLiteral(" · ") + i18n::t(entry->note);
-  }
-  emit status(t);
+  emit status(prompt(true));
   emit workflowChanged();
   updateInput();  // the boxes of the step that waits now
+}
+
+QString SketchEditor::prompt(bool note) const {
+  const auto* entry = sketchsteps::find(m_tool.toStdString());
+  if (!entry) return {};
+  const QList<ToolStep> steps = toolSteps();
+  int waiting = 0;
+  while (waiting + 1 < steps.size() && !steps[waiting].picked.isEmpty()) ++waiting;
+  QString t = tr("%1: %2").arg(i18n::t(entry->name), steps[waiting].label);
+  if (note && *entry->note) t += QStringLiteral(" · ") + i18n::t(entry->note);
+  return t;
+}
+
+// "close" on the command line: the polyline's last segment back to its first point, which ends it.
+bool SketchEditor::closeChain() {
+  if (!m_active || m_editJob || m_tool != "line" || m_chain.size() < 3) return false;
+  const SkPoint* first = m_sk.point(m_chain.front());
+  if (!first) return false;
+  Snap s;
+  s.u = first->x;
+  s.v = first->y;
+  s.point = first->id;
+  click(s, Qt::AltModifier);
+  return true;
 }
 
 // ---------------------------------------------------------------- clicks
@@ -137,6 +156,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   invalidatePreview();
   unlock();  // a lock lasts until the point it placed
   m_snapChoice = 0;  // the next point starts from the nearest snap
+  if(clipClick(s))return;
   if(imageClick(s.u,s.v))return;
   if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")return pickReference();
   if(modifyClick(s.u,s.v))return;
@@ -840,108 +860,45 @@ void SketchEditor::commitDimensionEdit() {
 }
 
 // ---------------------------------------------------------------- sketch fillet
+// A corner where two lines or arcs end (UI-28, core fillet_corner): the nearest arc of the radius set that fits, tangent to
+// both; the curves end where it touches them.
 void SketchEditor::filletAt(const Hit& h, double, double) {
-  if (h.kind != Hit::Point) return emit status(tr("Sketch fillet: click the corner point where two lines meet"));
-  std::vector<SkEntity*> lines;
-  for (auto& e : m_sk.entities)
-    if (e.type == ET::Line && (e.p[0] == h.id || e.p[1] == h.id)) lines.push_back(&e);
-  if (lines.size() != 2) return emit status(tr("Sketch fillet: exactly two lines must meet at that point"));
+  if (h.kind != Hit::Point) return emit status(tr("Sketch fillet: click the corner point where two lines or arcs meet"));
   const QString text = option("radius", "2 mm");
   double r = 0;
   try {
-    r = paramTable(m_doc->scene).length(text.toStdString());
+    r = sketch_parameters(m_sk, paramTable(m_doc->scene)).length(text.toStdString());
   } catch (const std::exception& e) {
     return emit status(i18n::t(QString::fromUtf8(e.what())));
   }
-  const SkPoint corner = *m_sk.point(h.id);
-  auto other = [&](const SkEntity* l) { return m_sk.point(l->p[0] == h.id ? l->p[1] : l->p[0]); };
-  const SkPoint *A = other(lines[0]), *B = other(lines[1]);
-  const double l1 = std::hypot(A->x - corner.x, A->y - corner.y), l2 = std::hypot(B->x - corner.x, B->y - corner.y);
-  if (l1 < 1e-9 || l2 < 1e-9) return;
-  const double d1x = (A->x - corner.x) / l1, d1y = (A->y - corner.y) / l1, d2x = (B->x - corner.x) / l2, d2y = (B->y - corner.y) / l2;
-  const double theta = std::acos(std::clamp(d1x * d2x + d1y * d2y, -1.0, 1.0));
-  if (theta < 1e-6 || theta > M_PI - 1e-6) return emit status(tr("Sketch fillet: the lines are parallel"));
-  const double t = r / std::tan(theta / 2);
-  if (r <= 0 || t >= l1 || t >= l2) return emit status(tr("Sketch fillet: that radius does not fit these lines"));
-  double bx = d1x + d2x, by = d1y + d2y;
-  const double bl = std::hypot(bx, by);
-  bx /= bl;
-  by /= bl;
-  const double cd = r / std::sin(theta / 2);
-  const int line1 = lines[0]->id, line2 = lines[1]->id;
+  FilletCorner corner;
+  if (!fillet_geometry(m_sk, h.id, r, corner)) return emit status(tr("Sketch fillet: no fillet of that radius fits there; pick a corner where two lines or arcs end, with room for it"));
   begin_change();
-  const int t1 = m_sk.add_point(corner.x + d1x * t, corner.y + d1y * t), t2 = m_sk.add_point(corner.x + d2x * t, corner.y + d2y * t);
-  const int centre = m_sk.add_point(corner.x + bx * cd, corner.y + by * cd);
-  for (const auto& [line, tp] : {std::pair{line1, t1}, std::pair{line2, t2}}) {
-    SkEntity* l = m_sk.entity(line);
-    (l->p[0] == h.id ? l->p[0] : l->p[1]) = tp;
-  }
-  const double a1 = std::atan2(m_sk.point(t1)->y - m_sk.point(centre)->y, m_sk.point(t1)->x - m_sk.point(centre)->x);
-  const double a2 = std::atan2(m_sk.point(t2)->y - m_sk.point(centre)->y, m_sk.point(t2)->x - m_sk.point(centre)->x);
-  const bool ccw = norm_angle(a2 - a1) < M_PI;
-  const int arc = m_sk.add_arc(centre, ccw ? t1 : t2, ccw ? t2 : t1);
-  m_sk.add_constraint(CT::Tangent, {line1, arc});
-  m_sk.add_constraint(CT::Tangent, {line2, arc});
-  const bool plain = plainValue(text);
-  m_sk.add_constraint(CT::Radius, {arc}, r, plain ? std::string() : text.toStdString());
-  // The two sides are shorter now. What measured a whole side (a polygon's "equal"s, a length, a midpoint) moves to a
-  // construction line along the old side, from its far end to the old corner: held on the trimmed side it pulled the
-  // whole shape out of place.
-  bool referenced = false;
-  for (const int line : {line1, line2}) {
-    auto measures = [line](const SkConstraint& c) {
-      return std::find(c.refs.begin(), c.refs.end(), line) != c.refs.end() && (c.type == CT::Equal || c.type == CT::Midpoint || (c.type == CT::Distance && c.refs.size() == 1));
-    };
-    if (std::none_of(m_sk.constraints.begin(), m_sk.constraints.end(), measures)) continue;
-    const SkEntity* side = m_sk.entity(line);
-    const int outer = side->p[0] == t1 || side->p[0] == t2 ? side->p[1] : side->p[0];
-    const int whole = m_sk.add_line(outer, h.id, true);
-    for (auto& c : m_sk.constraints)
-      if (measures(c)) std::replace(c.refs.begin(), c.refs.end(), line, whole);
-    referenced = true;
-  }
-  // The old corner stays as a virtual sharp on both lines when something still refers to it (those lines, a dimension,
-  // a point on a polygon's guide circle), so that keeps holding; otherwise it goes.
-  for (const auto& c : m_sk.constraints)
-    if (std::find(c.refs.begin(), c.refs.end(), h.id) != c.refs.end()) referenced = true;
-  for (const auto& e : m_sk.entities)
-    if (std::find(e.p.begin(), e.p.end(), h.id) != e.p.end()) referenced = true;
-  if (referenced) {
-    m_sk.add_constraint(CT::Coincident, {h.id, line1});
-    m_sk.add_constraint(CT::Coincident, {h.id, line2});
-  } else {
-    m_sk.remove(h.id);
+  try {
+    fillet_corner(m_sk, h.id, r, plainValue(text) ? std::string() : text.toStdString());
+  } catch (const std::exception& e) {
+    cancel_change();
+    return emit status(i18n::t(QString::fromUtf8(e.what())));
   }
   end_change(tr("Sketch fillet"));
 }
 
-// The arc a click on that corner rounds it with, at the radius set (UI-17: shown while the corner is hovered); empty where
-// two lines do not meet or it does not fit, as filletAt refuses.
+// The arc a click on that corner rounds it with, at the radius set (shown while the corner is hovered, from the tool's
+// start); empty where none fits, as filletAt refuses.
 std::vector<std::pair<double, double>> SketchEditor::filletPreview(int id) const {
   std::vector<std::pair<double, double>> arc;
-  std::vector<const SkEntity*> lines;
-  for (const auto& e : m_sk.entities)
-    if (e.type == ET::Line && (e.p[0] == id || e.p[1] == id)) lines.push_back(&e);
-  const SkPoint* corner = m_sk.point(id);
-  if (lines.size() != 2 || !corner) return arc;
   double r = 0;
   try {
     r = paramTable(m_doc->scene).length(option("radius", "2 mm").toStdString());
   } catch (const std::exception&) {
     return arc;
   }
-  auto other = [&](const SkEntity* l) { return m_sk.point(l->p[0] == id ? l->p[1] : l->p[0]); };
-  const SkPoint *A = other(lines[0]), *B = other(lines[1]);
-  const double l1 = std::hypot(A->x - corner->x, A->y - corner->y), l2 = std::hypot(B->x - corner->x, B->y - corner->y);
-  if (l1 < 1e-9 || l2 < 1e-9 || r <= 0) return arc;
-  const double d1x = (A->x - corner->x) / l1, d1y = (A->y - corner->y) / l1, d2x = (B->x - corner->x) / l2, d2y = (B->y - corner->y) / l2;
-  const double theta = std::acos(std::clamp(d1x * d2x + d1y * d2y, -1.0, 1.0)), t = r / std::tan(theta / 2);
-  if (theta < 1e-6 || theta > M_PI - 1e-6 || t >= l1 || t >= l2) return arc;
-  const double bl = std::hypot(d1x + d2x, d1y + d2y), cd = r / std::sin(theta / 2);
-  const double cx = corner->x + (d1x + d2x) / bl * cd, cy = corner->y + (d1y + d2y) / bl * cd;
-  const double a1 = std::atan2(corner->y + d1y * t - cy, corner->x + d1x * t - cx), a2 = std::atan2(corner->y + d2y * t - cy, corner->x + d2x * t - cx);
-  const double sweep = std::remainder(a2 - a1, 2 * M_PI);
-  for (int i = 0; i <= 24; ++i) arc.push_back({cx + r * std::cos(a1 + sweep * i / 24), cy + r * std::sin(a1 + sweep * i / 24)});
+  FilletCorner f;
+  if (!fillet_geometry(m_sk, id, r, f)) return arc;
+  const double a1 = std::atan2(f.ay - f.cy, f.ax - f.cx), a2 = std::atan2(f.by - f.cy, f.bx - f.cx);
+  const double sweep = f.ccw ? norm_angle(a2 - a1) : -norm_angle(a1 - a2);
+  const int n = std::max(8, int(std::ceil(std::fabs(sweep) / (2 * M_PI) * 96)));
+  for (int i = 0; i <= n; ++i) arc.push_back({f.cx + r * std::cos(a1 + sweep * i / n), f.cy + r * std::sin(a1 + sweep * i / n)});
   return arc;
 }
 
@@ -974,7 +931,9 @@ struct Crossings {
   Arc2 self{};                           // a circle's or an arc's
   std::vector<Cut> cuts;
 };
-Crossings crossings(const Sketch& sk, const SkEntity& target) {
+// `samples`: a preview's, a spline's or an ellipse's polyline (nullptr: the kernel's crossings, as a trim asks).
+using Samples = std::function<const std::vector<std::pair<double, double>>*(const SkEntity&)>;
+Crossings crossings(const Sketch& sk, const SkEntity& target, const Samples& samples = {}) {
   auto P = [&](int id) { return sk.point(id); };
   auto round_of = [&](const SkEntity& e) {
     Arc2 k{P(e.p[0])->x, P(e.p[0])->y, e.r, 0, 2 * M_PI};
@@ -1029,6 +988,25 @@ Crossings crossings(const Sketch& sk, const SkEntity& target) {
           if (on_round(k, x, y)) hits.push_back({x, y});
         }
       }
+    } else if (o.type == ET::Ellipse || o.type == ET::Spline) {  // the kernel's crossings (UI-28), a preview's on the samples
+      if (const auto* poly = samples ? samples(o) : nullptr) {
+        auto within = [&](double s, size_t i) { return s >= -1e-9 && (s < 1 - 1e-9 || (i + 1 == poly->size() && s <= 1 + 1e-9)); };  // a vertex once, the ends too
+        for (size_t i = 1; i < poly->size(); ++i) {
+          const double cx = (*poly)[i - 1].first, cy = (*poly)[i - 1].second, dx = (*poly)[i].first, dy = (*poly)[i].second;
+          if (isLine) {
+            const double den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+            if (std::fabs(den) < 1e-14) continue;
+            const double t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den, s = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / den;
+            if (within(s, i)) hits.push_back({ax + t * (bx - ax), ay + t * (by - ay)});
+          } else
+            for (double s : line_circle(cx, cy, dx, dy, self.cx, self.cy, self.r))
+              if (within(s, i)) hits.push_back({cx + s * (dx - cx), cy + s * (dy - cy)});
+        }
+      } else
+        try {
+          for (const auto& [x, y] : curve_crossings(sk, target, o)) hits.push_back({x, y});
+        } catch (...) {
+        }
     } else {
       continue;
     }
@@ -1048,12 +1026,60 @@ Crossings crossings(const Sketch& sk, const SkEntity& target) {
 }
 }  // namespace
 
+struct SketchEditor::TrimCrossings {
+  Crossings c;
+};
+
+// Whether the samples of two curves come near each other (UI-28: only those go to the kernel; a spline's box from its points
+// is wide). A crossing lies within the samples' deflection of both polylines; without samples, they may cross.
+bool SketchEditor::mayCross(const SkEntity& a, const SkEntity& b) const {
+  const auto* pa = m_geometry ? m_geometry->samples(m_sk, a) : nullptr;
+  const auto* pb = pa ? m_geometry->samples(m_sk, b) : nullptr;
+  if (!pa || !pb || pa->empty() || pb->empty()) return true;
+  const double gap = 8 * m_geometry->deflection() + 1e-9;
+  using P = std::pair<double, double>;
+  auto toSegment = [](const P& p, const P& a, const P& b) {
+    const double dx = b.first - a.first, dy = b.second - a.second, len2 = dx * dx + dy * dy;
+    const double t = len2 < 1e-30 ? 0 : std::clamp(((p.first - a.first) * dx + (p.second - a.second) * dy) / len2, 0.0, 1.0);
+    return std::hypot(a.first + t * dx - p.first, a.second + t * dy - p.second);
+  };
+  auto side = [](const P& a, const P& b, const P& p) { return (b.first - a.first) * (p.second - a.second) - (b.second - a.second) * (p.first - a.first); };
+  auto close = [&](const P& a0, const P& a1, const P& b0, const P& b1) {
+    if (std::min(a0.first, a1.first) > std::max(b0.first, b1.first) + gap || std::min(b0.first, b1.first) > std::max(a0.first, a1.first) + gap ||
+        std::min(a0.second, a1.second) > std::max(b0.second, b1.second) + gap || std::min(b0.second, b1.second) > std::max(a0.second, a1.second) + gap)
+      return false;
+    if ((side(a0, a1, b0) > 0) != (side(a0, a1, b1) > 0) && (side(b0, b1, a0) > 0) != (side(b0, b1, a1) > 0)) return true;
+    return std::min({toSegment(b0, a0, a1), toSegment(b1, a0, a1), toSegment(a0, b0, b1), toSegment(a1, b0, b1)}) <= gap;
+  };
+  const size_t na = std::max<size_t>(1, pa->size() - 1), nb = std::max<size_t>(1, pb->size() - 1);  // segments (a point: one)
+  for (size_t i = 0; i < na; ++i)
+    for (size_t j = 0; j < nb; ++j)
+      if (close((*pa)[i], (*pa)[std::min(i + 1, pa->size() - 1)], (*pb)[j], (*pb)[std::min(j + 1, pb->size() - 1)])) return true;
+  return false;
+}
+
 // What a trim click at (u, v) on curve `id` removes, as a polyline (empty: nothing it could trim).
 std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double u, double v) const {
   std::vector<std::pair<double, double>> piece;
   const SkEntity* target = m_sk.entity(id);
+  if (m_trimCutsRevision != m_modelRevision) m_trimCuts.clear(), m_trimCrossings.clear(), m_trimCutsRevision = m_modelRevision;
+  if (target && (target->type == ET::Spline || target->type == ET::Ellipse)) {  // the kernel's cuts, once per curve and edit
+    auto& cuts = m_trimCuts[id];
+    std::vector<TrimPiece> keep, gone;
+    try {
+      if (!cuts) cuts = std::make_shared<const CurveCuts>(curve_cuts(m_sk, id, [this, target](const SkEntity& o) { return mayCross(*target, o); }));
+      if (!trim_pieces(*cuts, u, v, keep, gone)) return piece;
+      for (const auto& g : gone)
+        for (const auto& p : curveSamples(piece_edge(*cuts, g), std::max(1e-7, m_viewport->pixelSize() * 0.25))) piece.push_back({p.X(), p.Y()});
+    } catch (...) {
+      piece.clear();
+    }
+    return piece;
+  }
   if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return piece;
-  const Crossings c = crossings(m_sk, *target);
+  auto& cached = m_trimCrossings[id];
+  if (!cached) cached = std::make_shared<const TrimCrossings>(TrimCrossings{crossings(m_sk, *target, [this](const SkEntity& o) { return m_geometry ? m_geometry->samples(m_sk, o) : nullptr; })});
+  const Crossings& c = cached->c;
   if (c.line) {
     const double len2 = (c.bx - c.ax) * (c.bx - c.ax) + (c.by - c.ay) * (c.by - c.ay);
     if (len2 < 1e-18) return piece;
@@ -1092,30 +1118,56 @@ std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double 
 }
 
 void SketchEditor::trimAt(const Hit& h, double u, double v) {
-  SkEntity* target = h.kind == Hit::Entity ? m_sk.entity(h.id) : nullptr;
-  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return emit status(tr("Trim: click a line, a circle or an arc"));
+  QString why;
+  begin_change();
+  if (!trimPiece(h.kind == Hit::Entity ? h.id : 0, u, v, why)) {
+    cancel_change();
+    return emit status(why);
+  }
+  end_change(tr("Trim"));
+}
+
+// The piece of curve `id` about (u, v) between the curves that cross it goes (all of it when none does), inside a change;
+// false and why: nothing trimmed, nothing changed.
+bool SketchEditor::trimPiece(int id, double u, double v, QString& why) {
+  SkEntity* target = m_sk.entity(id);
+  if (target && (target->type == ET::Spline || target->type == ET::Ellipse)) {  // the kernel's trim (core trim_curve), as it was when it fails
+    try {
+      trim_curve(m_sk, id, u, v);
+      return true;
+    } catch (const std::exception& e) {
+      why = tr("Trim: %1").arg(i18n::t(QString::fromUtf8(e.what())));
+    } catch (const Standard_Failure& e) {
+      why = tr("Trim: %1").arg(QString::fromUtf8(e.GetMessageString()));
+    }
+    return false;
+  }
+  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) {
+    why = tr("Trim: click a curve");
+    return false;
+  }
   const Crossings found = crossings(m_sk, *target);
   const bool isLine = found.line;
   const Arc2 self = found.self;
   const double ax = found.ax, ay = found.ay, bx = found.bx, by = found.by;
   const std::vector<Cut>& cuts = found.cuts;
-
-  begin_change();
-  const int id = target->id;
+  if (target->type == ET::Circle && cuts.size() == 1) {
+    why = tr("Trim: the circle is crossed only once; nothing to cut between");
+    return false;
+  }
   // A length dimension on the trimmed curve would now mean something else.
   std::vector<int> stale;
   for (const auto& c : m_sk.constraints)
     if (c.is_dimension() && c.type == CT::Distance && c.refs.size() == 1 && c.refs[0] == id) stale.push_back(c.id);
   for (int c : stale) m_sk.remove(c);
-  auto cut_point = [&](double x, double y, int other) {
+  auto cut_point = [&](double x, double y, int other) {  // on the cutting curve (a point can be held on a line, a circle or an arc)
     const int p = m_sk.add_point(x, y);
-    m_sk.add_constraint(CT::Coincident, {p, other});
+    if (const SkEntity* by = m_sk.entity(other); by && (by->type == ET::Line || by->type == ET::Circle || by->type == ET::Arc)) m_sk.add_constraint(CT::Coincident, {p, other});
     return p;
   };
   if (cuts.empty()) {
     m_sk.remove(id);
-    end_change(tr("Trim"));
-    return;
+    return true;
   }
   if (isLine) {
     const double len2 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
@@ -1139,55 +1191,285 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
       m_sk.entity(id)->p[0] = cut_point(ax + hi->t * (bx - ax), ay + hi->t * (by - ay), hi->other);
       m_sk.remove(oldStart);
     }
+    return true;
+  }
+  const double tc = norm_angle(std::atan2(v - self.cy, u - self.cx) - self.a0);
+  auto at = [&](double t, double& x, double& y) { x = self.cx + self.r * std::cos(self.a0 + t); y = self.cy + self.r * std::sin(self.a0 + t); };
+  if (target->type == ET::Circle) {
+    // The clicked span lies between two neighbouring cuts; what is left runs the other way round.
+    size_t hi = 0;
+    while (hi < cuts.size() && cuts[hi].t < tc) ++hi;
+    const Cut& end = cuts[(hi + cuts.size() - 1) % cuts.size()];  // the span starts here ...
+    const Cut& start = cuts[hi % cuts.size()];                    // ... and ends here: the arc kept starts here
+    double x, y;
+    at(start.t, x, y);
+    const int ps = cut_point(x, y, start.other);
+    at(end.t, x, y);
+    const int pe = cut_point(x, y, end.other);
+    SkEntity* e = m_sk.entity(id);
+    e->type = ET::Arc;
+    e->p = {e->p[0], ps, pe};
+    e->r = 0;
+    return true;
+  }
+  const Cut *lo = nullptr, *hi = nullptr;
+  for (const auto& c : cuts) {
+    if (c.t < tc) lo = &c;
+    else if (!hi) hi = &c;
+  }
+  const int centre = target->p[0], oldStart = target->p[1], oldEnd = target->p[2];
+  const bool construction = target->construction;
+  double x, y;
+  if (lo && hi) {
+    at(lo->t, x, y);
+    const int p1 = cut_point(x, y, lo->other);
+    at(hi->t, x, y);
+    const int p2 = cut_point(x, y, hi->other);
+    m_sk.entity(id)->p[2] = p1;
+    const int rest = m_sk.add_arc(centre, p2, oldEnd, construction);
+    m_sk.add_constraint(CT::Equal, {id, rest});
+  } else if (lo) {
+    at(lo->t, x, y);
+    m_sk.entity(id)->p[2] = cut_point(x, y, lo->other);
+    m_sk.remove(oldEnd);
   } else {
-    const double tc = norm_angle(std::atan2(v - self.cy, u - self.cx) - self.a0);
-    auto at = [&](double t, double& x, double& y) { x = self.cx + self.r * std::cos(self.a0 + t); y = self.cy + self.r * std::sin(self.a0 + t); };
-    const bool full = target->type == ET::Circle;
-    if (full) {
-      if (cuts.size() < 2) { cancel_change(); return emit status(tr("Trim: the circle is crossed only once; nothing to cut between")); }
-      // The clicked span lies between two neighbouring cuts; what is left runs the other way round.
-      size_t hi = 0;
-      while (hi < cuts.size() && cuts[hi].t < tc) ++hi;
-      const Cut& end = cuts[(hi + cuts.size() - 1) % cuts.size()];  // the span starts here ...
-      const Cut& start = cuts[hi % cuts.size()];                    // ... and ends here: the arc kept starts here
-      double x, y;
-      at(start.t, x, y);
-      const int ps = cut_point(x, y, start.other);
-      at(end.t, x, y);
-      const int pe = cut_point(x, y, end.other);
-      SkEntity* e = m_sk.entity(id);
-      e->type = ET::Arc;
-      e->p = {e->p[0], ps, pe};
-      e->r = 0;
-    } else {
-      const Cut *lo = nullptr, *hi = nullptr;
-      for (const auto& c : cuts) {
-        if (c.t < tc) lo = &c;
-        else if (!hi) hi = &c;
+    at(hi->t, x, y);
+    m_sk.entity(id)->p[1] = cut_point(x, y, hi->other);
+    m_sk.remove(oldStart);
+  }
+  return true;
+}
+
+// Where the fence from (au, av) to (bu, bv) crosses the curves near it (UI-28), in order along it.
+std::vector<std::tuple<int, double, double>> SketchEditor::fenceHits(double au, double av, double bu, double bv) const {
+  std::vector<std::tuple<double, int, double, double>> along;
+  if (!m_geometry || m_geometryJob) return {};
+  const double dx = bu - au, dy = bv - av, len2 = dx * dx + dy * dy;
+  if (len2 < 1e-18) return {};
+  for (size_t index : m_geometry->query(std::min(au, bu), std::min(av, bv), std::max(au, bu), std::max(av, bv)).entities) {
+    if (index >= m_sk.entities.size()) continue;
+    const SkEntity& e = m_sk.entities[index];
+    if (e.type == ET::Line) {
+      const SkPoint *c = m_sk.point(e.p[0]), *d = m_sk.point(e.p[1]);
+      const double ex = d->x - c->x, ey = d->y - c->y, den = dx * ey - dy * ex;
+      if (std::fabs(den) < 1e-15) continue;
+      const double t = ((c->x - au) * ey - (c->y - av) * ex) / den, s = ((c->x - au) * dy - (c->y - av) * dx) / den;
+      if (t >= 0 && t <= 1 && s > 1e-9 && s < 1 - 1e-9) along.push_back({t, e.id, au + t * dx, av + t * dy});
+    } else if (e.type == ET::Circle || e.type == ET::Arc) {
+      const SkPoint* c = m_sk.point(e.p[0]);
+      Arc2 k{c->x, c->y, e.r, 0, 2 * M_PI};
+      if (e.type == ET::Arc) {
+        const SkPoint *s0 = m_sk.point(e.p[1]), *s1 = m_sk.point(e.p[2]);
+        k.r = std::hypot(s0->x - c->x, s0->y - c->y);
+        k.a0 = std::atan2(s0->y - c->y, s0->x - c->x);
+        k.sweep = norm_angle(std::atan2(s1->y - c->y, s1->x - c->x) - k.a0);
       }
-      const int centre = target->p[0], oldStart = target->p[1], oldEnd = target->p[2];
-      const bool construction = target->construction;
-      double x, y;
-      if (lo && hi) {
-        at(lo->t, x, y);
-        const int p1 = cut_point(x, y, lo->other);
-        at(hi->t, x, y);
-        const int p2 = cut_point(x, y, hi->other);
-        m_sk.entity(id)->p[2] = p1;
-        const int rest = m_sk.add_arc(centre, p2, oldEnd, construction);
-        m_sk.add_constraint(CT::Equal, {id, rest});
-      } else if (lo) {
-        at(lo->t, x, y);
-        m_sk.entity(id)->p[2] = cut_point(x, y, lo->other);
-        m_sk.remove(oldEnd);
-      } else {
-        at(hi->t, x, y);
-        m_sk.entity(id)->p[1] = cut_point(x, y, hi->other);
-        m_sk.remove(oldStart);
+      for (double t : line_circle(au, av, bu, bv, k.cx, k.cy, k.r))
+        if (t >= 0 && t <= 1 && on_round(k, au + t * dx, av + t * dy)) along.push_back({t, e.id, au + t * dx, av + t * dy});
+    } else if (e.type == ET::Ellipse || e.type == ET::Spline) {  // on its samples: the trim finds the curve there
+      const auto poly = sampled(e);
+      for (size_t i = 1; i < poly.size(); ++i) {
+        const double cx = poly[i - 1].first, cy = poly[i - 1].second, ex = poly[i].first - cx, ey = poly[i].second - cy, den = dx * ey - dy * ex;
+        if (std::fabs(den) < 1e-15) continue;
+        const double t = ((cx - au) * ey - (cy - av) * ex) / den, s = ((cx - au) * dy - (cy - av) * dx) / den;
+        if (t >= 0 && t <= 1 && s >= 0 && s < 1) along.push_back({t, e.id, au + t * dx, av + t * dy});
       }
     }
   }
-  end_change(tr("Trim"));
+  std::sort(along.begin(), along.end());
+  std::vector<std::tuple<int, double, double>> out;
+  for (const auto& [t, id, x, y] : along) out.push_back({id, x, y});
+  return out;
+}
+
+// The curve through (u, v) as the sketch is now (a trim may have split or taken the one there), 0: none.
+int SketchEditor::curveThrough(double u, double v) const {
+  const double eps = 1e-7 * (1 + std::fabs(u) + std::fabs(v));
+  for (const auto& e : m_sk.entities) {
+    if (e.type == ET::Line) {
+      const SkPoint *a = m_sk.point(e.p[0]), *b = m_sk.point(e.p[1]);
+      const double dx = b->x - a->x, dy = b->y - a->y, len2 = dx * dx + dy * dy;
+      const double t = len2 < 1e-18 ? 0 : std::clamp(((u - a->x) * dx + (v - a->y) * dy) / len2, 0.0, 1.0);
+      if (std::hypot(a->x + t * dx - u, a->y + t * dy - v) < eps) return e.id;
+    } else if (e.type == ET::Circle || e.type == ET::Arc) {
+      const SkPoint* c = m_sk.point(e.p[0]);
+      Arc2 k{c->x, c->y, e.r, 0, 2 * M_PI};
+      if (e.type == ET::Arc) {
+        const SkPoint *s0 = m_sk.point(e.p[1]), *s1 = m_sk.point(e.p[2]);
+        k.r = std::hypot(s0->x - c->x, s0->y - c->y);
+        k.a0 = std::atan2(s0->y - c->y, s0->x - c->x);
+        k.sweep = norm_angle(std::atan2(s1->y - c->y, s1->x - c->x) - k.a0);
+      }
+      if (std::fabs(std::hypot(u - k.cx, v - k.cy) - k.r) < eps && on_round(k, u, v)) return e.id;
+    } else if (e.type == ET::Ellipse || e.type == ET::Spline) {  // near its samples (a fence's hit is on them)
+      const auto poly = sampled(e);
+      const double reach = std::max(eps, 2 * m_viewport->pixelSize());
+      for (size_t i = 1; i < poly.size(); ++i) {
+        const double ax = poly[i - 1].first, ay = poly[i - 1].second, dx = poly[i].first - ax, dy = poly[i].second - ay, len2 = dx * dx + dy * dy;
+        const double t = len2 < 1e-18 ? 0 : std::clamp(((u - ax) * dx + (v - ay) * dy) / len2, 0.0, 1.0);
+        if (std::hypot(ax + t * dx - u, ay + t * dy - v) < reach) return e.id;
+      }
+    }
+  }
+  return 0;
+}
+
+// A fence dragged with the trim tool (UI-28): every piece it crosses goes, as a click where it crosses would take it, in
+// one undo step.
+void SketchEditor::fenceTrim(double au, double av, double bu, double bv) {
+  const auto hits = fenceHits(au, av, bu, bv);
+  if (hits.empty()) return emit status(tr("Trim: the fence crosses no curve"));
+  begin_change();
+  int trimmed = 0;
+  QString why;
+  for (const auto& [id, x, y] : hits)
+    if (const int now = curveThrough(x, y); now && trimPiece(now, x, y, why)) ++trimmed;
+  if (!trimmed) {
+    cancel_change();
+    return emit status(why.isEmpty() ? tr("Trim: nothing to trim along the fence") : why);
+  }
+  if (end_change(tr("Trim"))) emit status(tr("Trimmed %1 pieces").arg(trimmed));
+}
+
+// A circle's or an arc's centre, radius, start angle and sweep.
+static Arc2 roundOf(const Sketch& sk, const SkEntity& f) {
+  const SkPoint* c = sk.point(f.p[0]);
+  Arc2 k{c->x, c->y, f.r, 0, 2 * M_PI};
+  if (f.type == ET::Arc) {
+    const SkPoint *s0 = sk.point(f.p[1]), *s1 = sk.point(f.p[2]);
+    k.r = std::hypot(s0->x - c->x, s0->y - c->y);
+    k.a0 = std::atan2(s0->y - c->y, s0->x - c->x);
+    k.sweep = norm_angle(std::atan2(s1->y - c->y, s1->x - c->x) - k.a0);
+    if (k.sweep < 1e-12) k.sweep = 2 * M_PI;
+  }
+  return k;
+}
+
+// One-click extend's preview (UI-28): the end of the line or arc nearer (u, v) run on to the first curve it meets (a spline
+// or an ellipse by its samples; the click asks the kernel: core extend_entity), as a polyline from the end; empty: none.
+std::vector<std::pair<double, double>> SketchEditor::extendPreview(int id, double u, double v) {
+  const SkEntity* e = m_sk.entity(id);
+  if (!e || e->fixed || (e->type != ET::Line && e->type != ET::Arc)) return {};
+  const bool line = e->type == ET::Line;
+  const SkPoint *p = m_sk.point(e->p[line ? 0 : 1]), *q = m_sk.point(e->p[line ? 1 : 2]);
+  const bool fromStart = std::hypot(u - p->x, v - p->y) < std::hypot(u - q->x, v - q->y);
+  const std::tuple<int, bool, int> key{id, fromStart, m_modelRevision};
+  if (key == m_extendKey) return m_extendShown;
+  m_extendKey = key;
+  m_extendShown.clear();
+  const SkPoint* end = fromStart ? p : q;
+  double best = 1e300;
+  if (line) {  // along the line past its end: the nearest crossing
+    const double length = std::hypot(q->x - p->x, q->y - p->y);
+    if (length < 1e-12) return {};
+    const double dx = (fromStart ? p->x - q->x : q->x - p->x) / length, dy = (fromStart ? p->y - q->y : q->y - p->y) / length;
+    for (const auto& f : m_sk.entities) {
+      if (f.id == id) continue;
+      if (f.type == ET::Line) {
+        const SkPoint *c = m_sk.point(f.p[0]), *d = m_sk.point(f.p[1]);
+        const double ex = d->x - c->x, ey = d->y - c->y, den = dx * ey - dy * ex;
+        if (std::fabs(den) < 1e-15) continue;
+        const double t = ((c->x - end->x) * ey - (c->y - end->y) * ex) / den, s = ((c->x - end->x) * dy - (c->y - end->y) * dx) / den;
+        if (t > 1e-9 && s >= -1e-9 && s <= 1 + 1e-9) best = std::min(best, t);
+      } else if (f.type == ET::Circle || f.type == ET::Arc) {
+        const Arc2 k = roundOf(m_sk, f);
+        for (double t : line_circle(end->x, end->y, end->x + dx, end->y + dy, k.cx, k.cy, k.r))
+          if (t > 1e-9 && on_round(k, end->x + t * dx, end->y + t * dy)) best = std::min(best, t);
+      } else if (f.type == ET::Ellipse || f.type == ET::Spline) {  // on its samples (the click asks the kernel)
+        const auto poly = sampled(f);
+        for (size_t i = 1; i < poly.size(); ++i) {
+          const double cx = poly[i - 1].first, cy = poly[i - 1].second, ex = poly[i].first - cx, ey = poly[i].second - cy, den = dx * ey - dy * ex;
+          if (std::fabs(den) < 1e-15) continue;
+          const double t = ((cx - end->x) * ey - (cy - end->y) * ex) / den, s = ((cx - end->x) * dy - (cy - end->y) * dx) / den;
+          if (t > 1e-9 && s >= 0 && s <= 1) best = std::min(best, t);
+        }
+      }
+    }
+    if (best < 1e300) m_extendShown = {{end->x, end->y}, {end->x + best * dx, end->y + best * dy}};
+    return m_extendShown;
+  }
+  // An arc: on round its circle past its end (counter-clockwise past its last point, clockwise past its first).
+  const Arc2 self = roundOf(m_sk, *e);
+  const double from = std::atan2(end->y - self.cy, end->x - self.cx), way = fromStart ? -1 : 1;
+  auto consider = [&](double x, double y) {
+    const double turn = norm_angle(way * (std::atan2(y - self.cy, x - self.cx) - from));
+    if (turn > 1e-9 && turn + self.sweep < 2 * M_PI - 1e-8) best = std::min(best, turn);
+  };
+  for (const auto& f : m_sk.entities) {
+    if (f.id == id) continue;
+    if (f.type == ET::Line) {
+      const SkPoint *c = m_sk.point(f.p[0]), *d = m_sk.point(f.p[1]);
+      for (double s : line_circle(c->x, c->y, d->x, d->y, self.cx, self.cy, self.r))
+        if (s >= -1e-9 && s <= 1 + 1e-9) consider(c->x + s * (d->x - c->x), c->y + s * (d->y - c->y));
+    } else if (f.type == ET::Circle || f.type == ET::Arc) {
+      const Arc2 k = roundOf(m_sk, f);
+      const double dist = std::hypot(k.cx - self.cx, k.cy - self.cy);
+      if (dist < 1e-12 || dist > self.r + k.r || dist < std::fabs(self.r - k.r)) continue;
+      const double a = (self.r * self.r - k.r * k.r + dist * dist) / (2 * dist), h = std::sqrt(std::max(0.0, self.r * self.r - a * a));
+      const double mx = self.cx + a * (k.cx - self.cx) / dist, my = self.cy + a * (k.cy - self.cy) / dist;
+      for (double sgn : {1.0, -1.0}) {
+        const double x = mx + sgn * h * (k.cy - self.cy) / dist, y = my - sgn * h * (k.cx - self.cx) / dist;
+        if (on_round(k, x, y)) consider(x, y);
+      }
+    } else if (f.type == ET::Ellipse || f.type == ET::Spline) {
+      const auto poly = sampled(f);
+      for (size_t i = 1; i < poly.size(); ++i)
+        for (double s : line_circle(poly[i - 1].first, poly[i - 1].second, poly[i].first, poly[i].second, self.cx, self.cy, self.r))
+          if (s >= 0 && s <= 1) consider(poly[i - 1].first + s * (poly[i].first - poly[i - 1].first), poly[i - 1].second + s * (poly[i].second - poly[i - 1].second));
+    }
+  }
+  if (best < 1e300)
+    for (int i = 0, n = std::max(8, int(std::ceil(best / (2 * M_PI) * 96))); i <= n; ++i)
+      m_extendShown.push_back({self.cx + self.r * std::cos(from + way * best * i / n), self.cy + self.r * std::sin(from + way * best * i / n)});
+  return m_extendShown;
+}
+
+// What a dragged point is held to (UI-28): another point in reach (not one a curve of the dragged point ends on: that would
+// collapse it), else the line, circle or arc in reach that the dragged point is not on; (x, y) where it lands.
+bool SketchEditor::dropTarget(int dragged, double u, double v, double& x, double& y) {
+  m_dropPoint = m_dropCurve = 0;
+  // The index as it is (a large sketch's is rebuilt on a worker while the drag moves its curves): it finds what is near,
+  // the distances below are the sketch's own.
+  if (!m_geometry) return false;
+  const double t = tol();
+  std::set<int> joined{dragged};
+  for (size_t index : m_geometry->curvesAt(dragged))
+    if (index < m_sk.entities.size()) joined.insert(m_sk.entities[index].p.begin(), m_sk.entities[index].p.end());
+  const auto around = m_geometry->query(u - t, v - t, u + t, v + t);
+  double best = t;
+  for (size_t index : around.points) {
+    if (index >= m_sk.points.size()) continue;
+    const SkPoint& p = m_sk.points[index];
+    if (joined.count(p.id) || std::hypot(p.x - u, p.y - v) >= best) continue;
+    best = std::hypot(p.x - u, p.y - v);
+    m_dropPoint = p.id, x = p.x, y = p.y;
+  }
+  if (m_dropPoint) return true;
+  best = t;
+  for (size_t index : around.entities) {
+    if (index >= m_sk.entities.size()) continue;
+    const SkEntity& e = m_sk.entities[index];
+    if (std::count(e.p.begin(), e.p.end(), dragged)) continue;
+    double fx = u, fy = v;
+    if (e.type == ET::Line) {
+      const SkPoint *a = m_sk.point(e.p[0]), *b = m_sk.point(e.p[1]);
+      const double dx = b->x - a->x, dy = b->y - a->y, len2 = dx * dx + dy * dy;
+      const double k = len2 < 1e-18 ? 0 : std::clamp(((u - a->x) * dx + (v - a->y) * dy) / len2, 0.0, 1.0);
+      fx = a->x + k * dx, fy = a->y + k * dy;
+    } else if (e.type == ET::Circle || e.type == ET::Arc) {
+      const Arc2 k = roundOf(m_sk, e);
+      const double d = std::hypot(u - k.cx, v - k.cy);
+      if (d < 1e-12) continue;
+      fx = k.cx + (u - k.cx) * k.r / d, fy = k.cy + (v - k.cy) * k.r / d;
+      if (!on_round(k, fx, fy)) continue;  // past the arc's ends
+    } else {
+      continue;
+    }
+    if (std::hypot(fx - u, fy - v) >= best) continue;
+    best = std::hypot(fx - u, fy - v);
+    m_dropCurve = e.id, x = fx, y = fy;
+  }
+  return m_dropCurve != 0;
 }
 
 // ---------------------------------------------------------------- mirror

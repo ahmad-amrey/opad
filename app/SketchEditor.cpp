@@ -1,5 +1,6 @@
 #include "CurveSamples.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include "opad/design/sketch_modify.hpp"
 #include "SketchEditor.hpp"
 #include "SketchGeometryCache.hpp"
 #include "SketchSnap.hpp"
@@ -270,6 +271,7 @@ void SketchEditor::setVisible(bool visible) {
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
   ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   ++m_session;m_toolPreview.reset();m_previewRequested=false;
+  ++m_modelRevision;  // what previews cached by curve id (trim cuts, an extend's run) was the last sketch's: ids start again
   m_showConstraints=QSettings().value("sketch/showConstraints",true).toBool();
   m_tracked.clear();m_dwellPoint=0;m_lock.reset();m_shiftDown=m_shiftSpent=m_inView=false;m_typedValues.clear();m_entry.reset();m_pointer=m_cursor={};m_angleRelative=QSettings().value("sketch/input/angleRelative",false).toBool();m_circleRadius=QSettings().value("sketch/input/circleRadius",false).toBool();m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
   readSettings();
@@ -363,7 +365,7 @@ bool SketchEditor::end_change(const QString& what) {
     const auto oldPlane=m_beforePlane;const auto oldFrame=m_beforeFrame;const auto options=solveOptions();const int session=m_session;
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});QPointer<SketchEditor> guard(this);
     m_editJob=m_jobs->async(what,[after,result,options,defs](Progress p){if(p.cancelled())return;evaluate_dimensions(*after,ParamTable(defs));*result=solve(*after,options);if(!result->converged)throw opad::Error("the edit conflicts with existing constraints");},[this,guard,after,before,result,session,oldPlane,oldFrame](bool ok,const QString& error){
-      if(!guard||!m_active||session!=m_session)return;m_editJob=nullptr;
+      if(!guard||!m_active||session!=m_session)return;m_editJob=nullptr;++m_modelRevision;  // what previews cached is stale either way
       if(ok){m_sk=*after;m_solved=*result;m_undo.push_back({*before,oldPlane,oldFrame});m_redo.clear();m_modified=true;}
       else {const bool planeChanged=m_plane!=oldPlane;m_sk=*before;m_plane=oldPlane;m_frame=oldFrame;if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);fitSketch();}m_chain.clear();m_clicks.clear();m_picked.clear();m_placingDim=false;m_dimEditing=0;m_conflicts={result->failed.begin(),result->failed.end()};emit status(error);}
       m_panelFieldsDirty=true;rebuild();scheduleFill();emit changed();
@@ -822,7 +824,7 @@ bool SketchEditor::fromPoint(double& x, double& y, int& id) const {
   static const QStringList directed = {"rect3", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer", "slot", "cslot", "arcslot", "ellipse", "conic", "control_spline"};
   const size_t n = m_clicks.size();
   if (!n || !directed.contains(m_tool)) return false;
-  if (n == 2 && (m_tool == "arc3" || m_tool == "slot" || m_tool == "cslot" || m_tool == "ellipse")) return false;  // a size or a side: no direction
+  if (n == 2 && (m_tool == "arc3" || m_tool == "slot" || m_tool == "cslot" || m_tool == "ellipse" || m_tool == "rect3")) return false;  // a size or a side: no direction
   const Snap& c = n == 2 && (m_tool == "arcc" || m_tool == "arcslot") ? m_clicks[0] : m_clicks.back();  // an arc's end: about its centre
   x = c.u, y = c.v, id = c.point ? c.point : -1;
   return true;
@@ -877,8 +879,8 @@ bool SketchEditor::alignsHere() const {
   const size_t n = m_clicks.size();
   const QString& k = m_tool;
   if (k == "line") return !m_chain.empty();
-  if (k == "arcc" || k == "arcslot" || k == "rect3") return n == 1 || n == 2;
-  return n == 1 && (k == "arc3" || k == "polygon" || k == "polygon_outer" || k == "slot" || k == "cslot" || k == "ellipse");
+  if (k == "arcc" || k == "arcslot") return n == 1 || n == 2;
+  return n == 1 && (k == "arc3" || k == "rect3" || k == "polygon" || k == "polygon_outer" || k == "slot" || k == "cslot" || k == "ellipse");
 }
 
 // ---------------------------------------------------------------- input
@@ -893,6 +895,14 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   }
   if ((m_tool=="select" || (m_tool=="spline" && m_chain.empty())) && mods.testFlag(Qt::AltModifier)) return insertSplineNode(u,v);
   if (m_dimEdit && m_dimEdit->isVisible()) commitDimensionEdit();
+  if (m_tool == "trim") {  // a click trims at its release; a drag first is a fence (UI-28)
+    m_fencing = true;
+    m_fenceMoved = false;
+    m_fenceU = m_fenceToU = u;
+    m_fenceV = m_fenceToV = v;
+    m_fenceMods = mods;
+    return;
+  }
   if (m_tool == "select") {
     const Hit h = hitTest(u, v);
     const bool add = mods & (Qt::ShiftModifier | Qt::ControlModifier);
@@ -940,6 +950,7 @@ bool SketchEditor::dragSnap(double u, double v, Qt::KeyboardModifiers mods, doub
   su = du;
   sv = dv;
   r = 0;
+  m_dropPoint = m_dropCurve = 0;
   // Grid snapping: the grabbed point (a curve's first one) lands on a grid node and the rest moves with it; a rim drag takes
   // whole steps of radius. Alt drags freely.
   const double step = m_viewport->gridSnap() && !mods.testFlag(Qt::AltModifier) ? m_viewport->gridStep() : 0;
@@ -958,6 +969,15 @@ bool SketchEditor::dragSnap(double u, double v, Qt::KeyboardModifiers mods, doub
     }
     return m_dragGrid;
   }
+  // A dragged point is held to the point or curve it comes near (UI-28), before the grid: merged or put on it on drop.
+  if (m_dragHit.kind == Hit::Point && !m_dragStart.empty() && !mods.testFlag(Qt::AltModifier) &&
+      dropTarget(m_dragHit.id, u, v, m_dropU, m_dropV)) {
+    const auto& at = m_dragStart.front().second;
+    su = m_dropU - at.first;
+    sv = m_dropV - at.second;
+    m_dragGrid = false;
+    return true;
+  }
   if (step > 0 && !m_dragStart.empty()) {
     const auto& at = m_dragStart.front().second;
     m_dragGridU = sketchsnap::onGrid(at.first + du, step);
@@ -975,6 +995,11 @@ bool SketchEditor::dragSnap(double u, double v, Qt::KeyboardModifiers mods, doub
 void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) {
   if (!m_active) return;
   if(m_boxSelecting && dragging) {m_boxU=u;m_boxV=v;updateTransient();return;}
+  if(m_fencing && dragging) {
+    m_fenceToU=u;m_fenceToV=v;
+    m_fenceMoved=m_fenceMoved || std::hypot(u-m_fenceU,v-m_fenceV)>tol();
+    updateTransient();return;
+  }
   if (m_tool == "select" && dragging && m_dragging) {
     if(m_editJob) {  // the last solve still runs (a large sketch): the drawing cursor follows the hand meanwhile
       m_dragPending=true;m_dragNextU=u;m_dragNextV=v;m_dragNextMods=mods;
@@ -1072,7 +1097,7 @@ void SketchEditor::sketchLeave() {
 bool SketchEditor::placing() const {
   // Snapping only means something to tools that place points; trim, offset, constraints and the like pick curves.
   static const QStringList tools = {"line", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer", "slot", "cslot", "arcslot",
-                                    "ellipse", "spline", "control_spline", "point", "text", "conic", "rect3", "image_insert", "image_calibrate"};
+                                    "ellipse", "spline", "control_spline", "point", "text", "conic", "rect3", "image_insert", "image_calibrate", "paste", "copybase"};
   return tools.contains(m_tool);
 }
 
@@ -1183,6 +1208,12 @@ void SketchEditor::resnap() {
 }
 
 void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
+  if(m_active && m_fencing) {
+    m_fencing=false;
+    if(m_fenceMoved)fenceTrim(m_fenceU,m_fenceV,u,v);
+    else {const Snap s=snap(m_fenceU,m_fenceV,!m_fenceMods.testFlag(Qt::AltModifier));click(s,m_fenceMods);}
+    updateTransient();emit changed();return;
+  }
   if(m_active && m_boxSelecting) {
     m_boxSelecting=false;
     if(m_geometry && !m_geometryJob && std::hypot(u-m_dragU,v-m_dragV)>tol()) {
@@ -1213,6 +1244,59 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
   m_dragging = false;
   if (!m_dragMoved) return;
   m_dragMoved = false;
+  // Dropped on a point: merged into it; on a curve: kept on it (UI-28), when the sketch still solves so (else it stays
+  // where the drag left it). A large sketch is solved so on a worker (as end_change does), in the drag's undo step.
+  if ((m_dropPoint || m_dropCurve) && m_sk.points.size() > 300) {
+    const auto attempt = std::make_shared<Sketch>(m_sk);
+    const auto result = std::make_shared<SolveResult>();
+    const int dragged = m_dragHit.id, point = m_dropPoint, curve = m_dropCurve, session = m_session;
+    const auto options = solveOptions();
+    std::vector<ParamDef> defs;
+    for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+    QPointer<SketchEditor> guard(this);
+    m_editJob = m_jobs->async(point ? tr("Merging points") : tr("Putting the point on the curve"), [attempt, result, dragged, point, curve, options, defs](Progress progress) {
+      if (progress.cancelled()) return;
+      if (point) merge_points(*attempt, dragged, point);
+      else attempt->add_constraint(SkConstraint::Type::Coincident, {dragged, curve});
+      evaluate_dimensions(*attempt, ParamTable(defs));
+      *result = solve(*attempt, options);
+      if (!result->converged) throw opad::Error("the sketch would not solve so");
+    }, [this, guard, attempt, result, point, curve, session](bool ok, const QString& error) {
+      if (!guard || !m_active || session != m_session) return;
+      m_editJob = nullptr;
+      ++m_modelRevision;
+      if (ok) {
+        m_sk = std::move(*attempt);
+        m_solved = *result;
+        m_sel.clear();
+        emit status(point ? tr("Merged with point %1").arg(point) : tr("Put on curve %1").arg(curve));
+      } else if (!error.isEmpty()) {
+        emit status(tr("Not joined: %1").arg(i18n::t(error)));
+      }
+      scheduleFill();
+      rebuild();
+      emit changed();
+    });
+    m_dropPoint = m_dropCurve = 0;
+  } else if (m_dropPoint || m_dropCurve) {
+    Sketch attempt = m_sk;
+    try {
+      if (m_dropPoint) merge_points(attempt, m_dragHit.id, m_dropPoint);
+      else attempt.add_constraint(SkConstraint::Type::Coincident, {m_dragHit.id, m_dropCurve});
+      std::vector<ParamDef> defs;
+      for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+      evaluate_dimensions(attempt, ParamTable(defs));
+      const SolveResult r = solve(attempt, solveOptions());
+      if (!r.converged) throw opad::Error("the sketch would not solve so");
+      m_sk = std::move(attempt);
+      m_solved = r;
+      m_sel.clear();
+      emit status(m_dropPoint ? tr("Merged with point %1").arg(m_dropPoint) : tr("Put on curve %1").arg(m_dropCurve));
+    } catch (const std::exception& e) {
+      emit status(tr("Not joined: %1").arg(i18n::t(QString::fromUtf8(e.what()))));
+    }
+    m_dropPoint = m_dropCurve = 0;
+  }
   // The drag already solved every step; record it as one undo step.
   m_inChange = false;
   m_undo.push_back({m_before,m_beforePlane,m_beforeFrame});
@@ -1762,6 +1846,10 @@ void SketchEditor::updateTransient() {
     const auto piece=m_tool=="trim"&&m_haveCursor?trimPreview(m_hover.id,m_cursor.u,m_cursor.v):std::vector<std::pair<double,double>>{};
     if(!piece.empty())for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
     else if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov.lighter(115)});}
+    if(m_tool=="extend" && m_haveCursor) {  // where a click there runs the end to (UI-28)
+      const auto run=extendPreview(m_hover.id,m_pointer.u,m_pointer.v);
+      for(size_t i=1;i<run.size();++i)d.dashed.push_back({W(run[i-1].first,run[i-1].second),W(run[i].first,run[i].second),t.green});
+    }
   }
   if(m_boxSelecting) {
     const QColor color=m_boxU<m_dragU?t.green:t.sel;
@@ -1773,6 +1861,21 @@ void SketchEditor::updateTransient() {
   }
   // A grid node a dragged point snapped to: the grid marker.
   if(m_dragging && m_dragMoved && m_dragGrid)mark(m_dragGridU,m_dragGridV,snapmarkers::marker(snapmarkers::Marker::Grid),0,0,t.green);
+  // The point or curve a dragged point is held to (UI-28): its marker and what the drop does.
+  if(m_dragging && m_dragMoved && (m_dropPoint || m_dropCurve)) {
+    mark(m_dropU,m_dropV,snapmarkers::marker(m_dropPoint?snapmarkers::Marker::Endpoint:snapmarkers::Marker::Nearest),0,0,t.green);
+    d.texts.push_back({W(m_dropU+14*px,m_dropV+14*px),m_dropPoint?tr("Merge"):tr("On curve"),t.green,true});
+  }
+  // A trim fence (UI-28): its line, and in red what it takes.
+  if(m_fencing && m_fenceMoved) {
+    d.dashed.push_back({W(m_fenceU,m_fenceV),W(m_fenceToU,m_fenceToV),t.red});
+    int shown=0;
+    for(const auto& [id,x,y]:fenceHits(m_fenceU,m_fenceV,m_fenceToU,m_fenceToV)) {
+      if(++shown>64)break;
+      const auto piece=trimPreview(id,x,y);
+      for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
+    }
+  }
   // Rubber band of the running tool (also from typed values alone: drawing by the keyboard, the pointer not in the view).
   if ((m_haveCursor || !m_typedValues.empty()) && m_tool != "select") {
     const QColor rb = t.hov;
@@ -1861,6 +1964,9 @@ void SketchEditor::updateTransient() {
       } else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") seg(a.u, a.v, cu, cv);
       for (const auto& k : m_clicks) d.points.push_back({W(k.u, k.v), rb});  // where the clicks so far went (a centre, the first end)
     }
+    if (m_tool == "paste" && m_clip)  // the copied curves by their base point at the pointer, as the click places them
+      for (const auto& line : m_clip->outline)
+        for (size_t i = 1; i < line.size(); ++i) seg(cu + line[i - 1].first, cv + line[i - 1].second, cu + line[i].first, cv + line[i].second);
     if (m_tool == "text")  // the letters on their baseline from the pointer, as the click places them (there was only a dot)
       for (const auto& line : textPreview())
         for (size_t i = 1; i < line.size(); ++i) seg(cu + line[i - 1].first, cv + line[i - 1].second, cu + line[i].first, cv + line[i].second);

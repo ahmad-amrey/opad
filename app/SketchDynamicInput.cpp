@@ -11,6 +11,7 @@
 #include "I18n.hpp"
 #include "InputKeys.hpp"
 #include "ShapeInput.hpp"
+#include "SketchCommands.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
 #include "opad/design/expr.hpp"
@@ -56,9 +57,11 @@ std::string angleExpression(QString text) {
 }
 // Tools that place points: the next one can be typed (X and Y; a polyline goes on by length and angle).
 const QStringList kPointTools = {"point", "line", "spline", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer",
-                                 "slot", "cslot", "arcslot", "ellipse", "conic", "rect3", "control_spline", "tangent_arc", "text"};
-// Option tools Enter applies, once there is something picked to apply them to.
-const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern"};
+                                 "slot", "cslot", "arcslot", "ellipse", "conic", "rect3", "control_spline", "tangent_arc", "text", "paste", "copybase"};
+// Option tools Enter applies, once there is something picked to apply them to; and those Enter after typing applies as they
+// are (a gap, an image, a trace, a tolerance).
+const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern", "node"};
+const QStringList kAppliedNow = {"heal", "image_edit", "image_trace", "simplify", "vector_import"};
 // Steps that take the shape's own sizes (UI-17): after the first click, after the second.
 const QStringList kSized1 = {"rect", "crect", "circle", "circle2", "rect3", "arc3", "circle3", "slot", "cslot", "arcc", "arcslot", "ellipse", "polygon", "polygon_outer",
                              "tangent_arc"};
@@ -149,6 +152,10 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
 
 bool SketchEditor::inputBase(double& u, double& v) const {
   if (!kPointTools.contains(m_tool)) return false;
+  if (m_tool == "paste") {  // @dx,dy: from where the curves were copied
+    if (m_clip) u = m_clip->bu, v = m_clip->bv;
+    return m_clip != nullptr;
+  }
   if (m_tool == "line" || m_tool == "spline") {
     const SkPoint* p = m_chain.empty() ? nullptr : pointOf(m_chain.back());
     if (p) u = p->x, v = p->y;
@@ -191,6 +198,15 @@ QList<DynamicInput::Field> SketchEditor::inputStage() const {
   if (m_tool == "heal") return {value("healTolerance", tr("Gap"), "0.05 mm")};
   if (m_tool == "image_insert") return {value("imageWidth", tr("Image width"), "100 mm")};
   if (m_tool == "image_calibrate") return {value("knownDistance", tr("Known distance"), "10 mm")};
+  // The values the panel holds for these (a backdrop's place and look, a trace's settings, a tolerance, a node's weights).
+  if (m_tool == "image_edit")
+    return {value("imageX", tr("X position"), "0 mm"), value("imageY", tr("Y position"), "0 mm"), value("imageWidth", tr("Image width"), "100 mm"),
+            value("imageAngle", tr("Rotation"), "0 deg"), value("imageOpacity", tr("Opacity (0 to 1)"), "0.5")};
+  if (m_tool == "image_trace")
+    return {value("threshold", tr("Threshold (0 to 255)"), "128"), value("smoothing", tr("Smoothing (0 to 10 pixels)"), "1"), value("noise", tr("Minimum area in pixels"), "8"),
+            value("traceTolerance", tr("Trace tolerance in pixels"), "0.75"), value("cornerAngle", tr("Preserve corners above (degrees)"), "60")};
+  if (m_tool == "simplify" || m_tool == "vector_import") return {value("curveTolerance", tr("Curve tolerance"), "0.01 mm")};
+  if (m_tool == "node") return {value("weight", tr("Node weight"), "1"), value("incoming", tr("Incoming handle weight"), "1"), value("outgoing", tr("Outgoing handle weight"), "1")};
   if (!kPointTools.contains(m_tool)) return {};
   // The text tool's words first (every printable key typed goes there), its height, then where it goes.
   QList<Field> out;
@@ -216,7 +232,9 @@ QList<DynamicInput::Field> SketchEditor::inputStage() const {
   return out;
 }
 
-bool SketchEditor::appliesOnEnter() const { return kApplied.contains(m_tool) && !m_sel.empty() && (m_tool != "chamfer" || m_sk.point(m_sel.front())); }
+bool SketchEditor::appliesOnEnter() const {
+  return kApplied.contains(m_tool) && !m_sel.empty() && (m_tool != "chamfer" || m_sk.point(m_sel.front())) && (m_tool != "node" || m_sel.size() == 1);
+}
 
 // A key that types into the boxes: a value key while a tool runs (a tool without boxes drops it: it is never a window
 // shortcut then), Tab and Shift+Tab (the view keeps the keyboard in a sketch), and a point's '@', '#' and '<'.
@@ -525,8 +543,7 @@ bool SketchEditor::useTyped(const Snap* at) {
     // Set as they were typed. Enter applies the tool when something is picked, else the value waits for the pick (the
     // fillet's and the tangent circle's picks apply it themselves).
     forgetTyped();
-    if (m_tool == "heal") applyTool();
-    else if (appliesOnEnter()) applyTool();
+    if (kAppliedNow.contains(m_tool) || appliesOnEnter()) applyTool();
     else if (kApplied.contains(m_tool)) emit status(tr("The value waits: pick what it applies to."));
     else if (m_tool == "text") emit status(tr("Click where the text goes, or Tab to its X and Y and Enter."));
     updateInput();
@@ -561,6 +578,61 @@ bool SketchEditor::useTyped(const Snap* at) {
   rebuild();
   emit changed();
   return true;
+}
+
+// The command line's entry (UI-133): the keys SketchCommands.hpp makes of it typed into the step's boxes one by one, as keys
+// over the view are (the boxes, the entry hook and InputKeys.hpp read them), then Enter. A point step takes x,y (absolute),
+// @dx,dy, @len<ang and len<ang, and a bare value in its first box unless that is X; a tool's values go into its boxes in
+// order. A value that does not evaluate is said and dropped, so the step waits as it did.
+QString SketchEditor::enter(const QString& text) {
+  namespace sc = sketchcommands;
+  const QString line = text.trimmed();
+  if (!m_active || line.isEmpty()) return {};
+  dropPreviewJob();
+  if (m_editJob) return tr("The sketch is busy; try again");
+  if (m_tool == "select") return tr("Choose a tool first: type its name (L, C, REC, ...)");
+  if (m_dimensionHandle->isVisible()) {  // the offset's curves are picked: its distance, then it applies
+    m_options["distance"] = line;
+    m_panelFieldsDirty = true;
+    scheduleToolPreview();
+    emit workflowChanged();
+    applyTool();
+    return {};
+  }
+  forgetTyped();
+  updateInput();
+  const auto fields = inputStage();
+  const auto boxes = std::find_if(fields.begin(), fields.end(), [](const DynamicInput::Field& f) { return !f.option; });
+  const bool point = kPointTools.contains(m_tool) && boxes != fields.end();
+  if (fields.isEmpty() || !m_input->count()) return tr("This tool takes no values: pick in the view");
+  std::string keys = sc::keys(line.toStdString(), point);
+  double bu = 0, bv = 0;
+  if (point && !inputBase(bu, bv)) {
+    std::string length, angle;
+    if (sc::polar(line.toStdString(), length, angle)) try {  // from the origin: no last point to measure from
+        std::vector<ParamDef> defs;
+        for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+        const auto table = sketch_parameters(m_sk, ParamTable(defs, m_doc->scene.units));
+        const double r = table.length(length), a = table.angle(angleExpression(QString::fromStdString(angle)));
+        keys = QStringLiteral("#%1 mm,%2 mm").arg(r * std::cos(a), 0, 'g', 15).arg(r * std::sin(a), 0, 'g', 15).toStdString();
+      } catch (const std::exception& e) {
+        return i18n::t(QString::fromUtf8(e.what()));
+      }
+  }
+  if (point && sc::bare(line.toStdString()) && boxes->key == "x") return tr("A point needs X and Y: type x,y (or @dx,dy, @length<angle)");
+  m_input->select(point ? int(boxes - fields.begin()) : 0);  // past the text tool's words to its X
+  for (const QChar c : QString::fromStdString(keys)) m_input->type(QString(c));
+  if (point) retype();
+  for (const auto& field : inputStage())
+    if (const QString problem = m_input->problem(field.key); !problem.isEmpty()) {
+      m_input->dropTyped();
+      forgetTyped();
+      updateInput();
+      return problem;
+    }
+  if (!m_input->typed()) return tr("Nothing to type there");
+  done();
+  return {};
 }
 
 bool SketchEditor::boxed(const QString& key) const {

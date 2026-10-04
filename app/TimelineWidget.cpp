@@ -329,6 +329,11 @@ void TimelineWidget::step(int delta) {
 QString TimelineWidget::describe(const opad::Op& op) const {
   const opad::json& d = op.data;
   QString target = d.contains("target") && d["target"].is_string() ? m_doc->nodeName(d["target"].get<std::string>()) : QString();
+  if (op.type == "import" && d.value("source", "") == "clipboard") {  // a paste (UI-129): what was pasted
+    QStringList names;
+    for (const auto& n : d.value("nodes", opad::json::array())) names << QString::fromStdString(n.value("name", ""));
+    return tr("Paste %1").arg(names.size() > 2 ? tr("%1 and %2 more").arg(names.mid(0, 2).join(", ")).arg(names.size() - 2) : names.join(", "));
+  }
   if (op.type == "import") return tr("Import %1").arg(QString::fromStdString(d.value("source", "")));
   if (op.type == "rename") return tr("Rename → %1").arg(QString::fromStdString(d.value("name", "")));
   if (op.type == "annotation") {

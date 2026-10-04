@@ -9,7 +9,9 @@ class QCheckBox;
 class QLabel;
 class QPushButton;
 class ToolStepsPanel;
+class ToolValues;
 class PlaneTiles;
+struct ToolStep;
 
 // One transient picker shared by camera, sketch and feature workflows.
 class PlanePicker : public QObject {
@@ -26,6 +28,9 @@ class PlanePicker : public QObject {
   void apply();
   void back();
   void setOrigin(double u,double v);
+  opad::Frame frame() const { return m_frame; }
+  QList<ToolStep> steps() const;  // the plane chosen (named), then the origin
+  ToolValues* values() const { return m_values; }  // the origin's X and Y typed over the view (UI-122)
   std::function<void(const opad::json&,const opad::Frame&)> accepted;
  signals:
   void cancelled();
@@ -38,10 +43,12 @@ class PlanePicker : public QObject {
   void constructionPlanes();
   void preview(const opad::Frame* frame);
   void pickOrigin(const opad::Ref&);
+  QString supportName() const;
   AppDocument* m_doc;Viewport* m_view;JobRunner* m_jobs;
   ToolPanel* m_panel;PlaneTiles* m_tiles;ToolStepsPanel* m_steps;
   QWidget* m_originControls;QLineEdit *m_u,*m_v;QCheckBox* m_construction;QLabel* m_status;
   QPushButton *m_apply,*m_back;
+  ToolValues* m_values;
   bool m_active=false,m_positionOrigin=false,m_originStage=false,m_drag=false,m_mouseDown=false,m_refreshing=false;
   int m_serial=0,m_candidateSerial=0;
   QPointer<Job> m_job;

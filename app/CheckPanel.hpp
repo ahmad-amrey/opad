@@ -2,6 +2,7 @@
 // The results of a design check (TODO 10 B13 print check, B17 interference) in the "tool" panel: its options, a Check
 // button and one row per finding. The window runs the check on a worker and highlights what a clicked row names.
 #include <QWidget>
+#include <functional>
 
 #include "opad/json.hpp"
 
@@ -10,6 +11,7 @@ class QDoubleSpinBox;
 class QLabel;
 class QListWidget;
 class QPushButton;
+class ToolValues;
 
 class CheckPanel : public QWidget {
   Q_OBJECT
@@ -25,12 +27,17 @@ class CheckPanel : public QWidget {
   QSize preferredSize(int width) const;
   int findingCount() const { return static_cast<int>(m_findings.size()); }
   void activate(int row);  // benches: as if the row were clicked
+  // Its clearance, overhang and wall typed over `view` or the panel while `active` (UI-122: never the filters' or the
+  // styles' digits); Enter checks again.
+  void takeValues(QWidget* view, std::function<bool()> active);
+  ToolValues* values() const { return m_values; }
  signals:
   void runRequested();
   void findingActivated(const opad::json& finding);  // interference: a pair; print: {body, faces, kind}
   void contentResized();  // the findings list came or went: the panel fits again
  private:
   void showFindings();   // the list only when it has rows
+  void hideEvent(QHideEvent* e) override;
   Mode m_mode = Mode::Interference;
   QWidget* m_interference = nullptr;
   QDoubleSpinBox* m_clearance = nullptr;
@@ -43,4 +50,5 @@ class CheckPanel : public QWidget {
   QListWidget* m_list = nullptr;
   std::vector<opad::json> m_findings;
   opad::json m_result;  // shown again when the unit changes
+  ToolValues* m_values = nullptr;
 };

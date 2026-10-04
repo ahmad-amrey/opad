@@ -52,7 +52,7 @@ class AppDocument : public QObject {
   // Atomic background save; holds the document write guard until the worker really exits.
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0);
-  opad::json run(const std::string& command, opad::json args);
+  opad::json run(const std::string& command, opad::json args, const QString& label = {});  // label: the undo step's, else by command
   // Several commands as one step to undo, under one label and one refresh (a drawing's layer state restored); all or none.
   opad::json runAll(const std::vector<std::pair<std::string, opad::json>>& commands, const QString& label);
 

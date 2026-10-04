@@ -11,6 +11,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+#include "ToolValues.hpp"
 #include "Units.hpp"
 
 namespace {
@@ -78,6 +79,34 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   });
   begin(Mode::Interference);
   connect(units::notifier(), &units::Notifier::changed, this, [this] { if (!m_result.is_null()) setResult(m_result); });
+}
+
+void CheckPanel::takeValues(QWidget* view, std::function<bool()> active) {
+  m_values = new ToolValues(view, this);
+  auto spin = [this](const QString& key) { return key == "clearance" ? m_clearance : key == "overhang" ? m_overhang : m_minWall; };
+  auto kind = [](const QString& key) { return key == "overhang" ? units::Kind::Angle : units::Kind::Length; };
+  m_values->fields = [this, active, spin, kind] {
+    QList<DynamicInput::Field> out;
+    if (!isVisible() || !active()) return out;
+    auto box = [&](const char* key, const QString& label) { return ToolValues::box(key, label, units::editable(kind(key), spin(key)->property("stored").toDouble())); };
+    if (m_mode == Mode::Interference) out << box("clearance", tr("Clearance"));
+    else out << box("overhang", tr("Overhang")) << box("min_wall", tr("Minimum wall"));
+    return out;
+  };
+  m_values->edited = [this, spin, kind](const QString& key, const QString& value) {  // or the value before, put back by Esc
+    const auto v = units::parse(kind(key), value);
+    const bool fits = v && *v >= 0 && units::toDisplay(kind(key), *v) <= spin(key)->maximum();
+    m_values->input()->setProblem(key, fits ? QString() : kind(key) == units::Kind::Angle ? tr("Not an angle") : tr("Not a length"));
+    if (fits) spin(key)->setValue(units::toDisplay(kind(key), *v));
+  };
+  m_values->commit = [this] {
+    if (m_run->isEnabled()) emit runRequested();
+  };
+}
+
+void CheckPanel::hideEvent(QHideEvent* e) {
+  QWidget::hideEvent(e);
+  if (m_values) m_values->reset();
 }
 
 void CheckPanel::begin(Mode mode) {

@@ -1,4 +1,5 @@
 #include "opad/design/sketch_modify.hpp"
+#include "opad/design/sketch_pattern.hpp"
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
 #include <BRep_Tool.hxx>
@@ -170,22 +171,339 @@ void break_intersections(Sketch& sk,const std::vector<int>& ids) {
   }}
 }
 
+namespace {
+// How far the end of `e` nearer (x, y) goes on to meet `f` (a share of a line's length, an arc's angle), and where; false:
+// it never does.
+bool reach(const Sketch& sk,const SkEntity& e,const SkEntity& f,double x,double y,double& best,gp_Pnt2d& target) {
+  const auto ea=entity_edge(sk,e,{}),fb=entity_edge(sk,f,{});
+  if(ea.IsNull()||fb.IsNull())return false;
+  BRepAdaptor_Curve a(ea),b(fb);
+  auto curve=[](const BRepAdaptor_Curve& c){return GeomAPI::To2d(Handle(Geom_Curve)::DownCast(c.Curve().Curve()->Transformed(c.Trsf())),gp_Pln(gp::XOY()));};
+  Geom2dAPI_InterCurveCurve crossing(curve(a),new Geom2d_TrimmedCurve(curve(b),b.FirstParameter(),b.LastParameter()),1e-8);
+  const int start=e.p[e.type==SkEntity::Type::Arc?1:0],end=e.p[e.type==SkEntity::Type::Arc?2:1];
+  const auto p=*sk.point(start),q=*sk.point(end);const bool fromStart=std::hypot(x-p.x,y-p.y)<std::hypot(x-q.x,y-q.y);
+  bool found=false;
+  for(int i=1;i<=crossing.NbPoints();++i){const auto at=crossing.Point(i);double amount=0;
+    if(e.type==SkEntity::Type::Line){const double dx=q.x-p.x,dy=q.y-p.y,t=((at.X()-p.x)*dx+(at.Y()-p.y)*dy)/(dx*dx+dy*dy);if(fromStart?t>=0:t<=1)continue;amount=fromStart?-t:t-1;}
+    else{const auto o=*sk.point(e.p[0]);auto angle=[&](double px,double py){return std::atan2(py-o.y,px-o.x);};auto positive=[](double t){t=std::fmod(t,2*M_PI);return t<0?t+2*M_PI:t;};double sweep=positive(angle(q.x,q.y)-angle(p.x,p.y));amount=fromStart?positive(angle(p.x,p.y)-angle(at.X(),at.Y())):positive(angle(at.X(),at.Y())-angle(q.x,q.y));if(amount<1e-9 || amount+sweep>=2*M_PI-1e-8)continue;}
+    if(amount<best){best=amount;target=at;found=true;}
+  }
+  return found;
+}
+void move_end(Sketch& sk,SkEntity& e,double x,double y,const gp_Pnt2d& target) {
+  const int start=e.p[e.type==SkEntity::Type::Arc?1:0],end=e.p[e.type==SkEntity::Type::Arc?2:1];
+  const auto p=*sk.point(start),q=*sk.point(end);const bool fromStart=std::hypot(x-p.x,y-p.y)<std::hypot(x-q.x,y-q.y);
+  auto* point=sk.point(fromStart?start:end);if(point->fixed)throw Error("the endpoint is fixed");point->x=target.X();point->y=target.Y();
+}
+}  // namespace
+
 void extend_entity(Sketch& sk,int id,int boundary,double x,double y) {
   auto* e=sk.entity(id);const auto* f=sk.entity(boundary);
   if(!e||!f||(e->type!=SkEntity::Type::Line&&e->type!=SkEntity::Type::Arc)||e->fixed)throw Error("extend needs an editable line or arc and a boundary curve");
-  BRepAdaptor_Curve a(entity_edge(sk,*e,{})),b(entity_edge(sk,*f,{}));
-  auto curve=[](const BRepAdaptor_Curve& c){return GeomAPI::To2d(Handle(Geom_Curve)::DownCast(c.Curve().Curve()->Transformed(c.Trsf())),gp_Pln(gp::XOY()));};
-  Geom2dAPI_InterCurveCurve crossing(curve(a),new Geom2d_TrimmedCurve(curve(b),b.FirstParameter(),b.LastParameter()),1e-8);
-  const int start=e->p[e->type==SkEntity::Type::Arc?1:0],end=e->p[e->type==SkEntity::Type::Arc?2:1];
-  const auto p=*sk.point(start),q=*sk.point(end);const bool fromStart=std::hypot(x-p.x,y-p.y)<std::hypot(x-q.x,y-q.y);
   double best=INFINITY;gp_Pnt2d target;
-  for(int i=1;i<=crossing.NbPoints();++i){const auto at=crossing.Point(i);double amount=0;
-    if(e->type==SkEntity::Type::Line){const double dx=q.x-p.x,dy=q.y-p.y,t=((at.X()-p.x)*dx+(at.Y()-p.y)*dy)/(dx*dx+dy*dy);if(fromStart?t>=0:t<=1)continue;amount=fromStart?-t:t-1;}
-    else{const auto o=*sk.point(e->p[0]);auto angle=[&](double px,double py){return std::atan2(py-o.y,px-o.x);};auto positive=[](double t){t=std::fmod(t,2*M_PI);return t<0?t+2*M_PI:t;};double sweep=positive(angle(q.x,q.y)-angle(p.x,p.y));amount=fromStart?positive(angle(p.x,p.y)-angle(at.X(),at.Y())):positive(angle(at.X(),at.Y())-angle(q.x,q.y));if(amount<1e-9 || amount+sweep>=2*M_PI-1e-8)continue;}
-    if(amount<best){best=amount;target=at;}
+  if(!reach(sk,*e,*f,x,y,best,target))throw Error("no intersection extends the chosen end; pick nearer the other end or use trim");
+  move_end(sk,*e,x,y,target);
+}
+
+int extend_entity(Sketch& sk,int id,double x,double y) {
+  auto* e=sk.entity(id);
+  if(!e||(e->type!=SkEntity::Type::Line&&e->type!=SkEntity::Type::Arc)||e->fixed)throw Error("pick an editable line or arc to extend");
+  double best=INFINITY;gp_Pnt2d target;int boundary=0;
+  for(const auto& f:sk.entities)if(f.id!=id && f.type!=SkEntity::Type::Point && reach(sk,*e,f,x,y,best,target))boundary=f.id;
+  if(!boundary)throw Error("nothing to extend to on that side; pick nearer the other end");
+  move_end(sk,*e,x,y,target);
+  return boundary;
+}
+
+namespace {
+double positive_angle(double t){t=std::fmod(t,2*M_PI);return t<0?t+2*M_PI:t;}
+// One side of a corner: a line or an arc that ends at the corner point.
+struct Side {
+  int id=0;bool line=true;
+  double px=0,py=0;                              // the corner
+  double dx=0,dy=0,length=0;                     // a line: the way from the corner, its length
+  double cx=0,cy=0,R=0,sweep=0;bool start=true;  // an arc: centre, radius, sweep, the corner its start
+  // How far along the curve from the corner lies its point nearest (x, y) (a length), and that point; false: off the curve.
+  bool along(double x,double y,double& t,double& fx,double& fy) const {
+    if(line){t=(x-px)*dx+(y-py)*dy;fx=px+t*dx;fy=py+t*dy;return t>1e-9 && t<length-1e-9;}
+    const double a=std::atan2(y-cy,x-cx),corner=std::atan2(py-cy,px-cx),turn=start?positive_angle(a-corner):positive_angle(corner-a);
+    t=turn*R;fx=cx+R*std::cos(a);fy=cy+R*std::sin(a);
+    return turn>1e-9 && turn<sweep-1e-9;
   }
-  if(!std::isfinite(best))throw Error("no intersection extends the chosen end; pick nearer the other end or use trim");
-  auto* point=sk.point(fromStart?start:end);if(point->fixed)throw Error("the endpoint is fixed");point->x=target.X();point->y=target.Y();
+};
+bool corner_sides(const Sketch& sk,int point,Side out[2]) {
+  const SkPoint* p=sk.point(point);
+  if(!p)return false;
+  int n=0;
+  for(const auto& e:sk.entities) {
+    if(e.type==SkEntity::Type::Spline && !e.p.empty() && (e.p.front()==point || e.p.back()==point))return false;
+    const bool line=e.type==SkEntity::Type::Line;
+    if(!line && e.type!=SkEntity::Type::Arc)continue;
+    const int a=line?e.p[0]:e.p[1],b=line?e.p[1]:e.p[2];
+    if(a!=point && b!=point)continue;
+    if(n==2)return false;
+    Side& s=out[n++];
+    s.id=e.id;s.line=line;s.px=p->x;s.py=p->y;
+    if(line) {
+      const SkPoint* q=sk.point(a==point?b:a);
+      s.dx=q->x-p->x;s.dy=q->y-p->y;s.length=std::hypot(s.dx,s.dy);
+      if(s.length<1e-12)return false;
+      s.dx/=s.length;s.dy/=s.length;
+    } else {
+      const SkPoint *c=sk.point(e.p[0]),*from=sk.point(e.p[1]),*to=sk.point(e.p[2]);
+      s.cx=c->x;s.cy=c->y;s.R=std::hypot(from->x-c->x,from->y-c->y);s.start=a==point;
+      s.sweep=positive_angle(std::atan2(to->y-c->y,to->x-c->x)-std::atan2(from->y-c->y,from->x-c->x));
+      if(s.R<1e-12 || s.sweep<1e-12)return false;
+    }
+  }
+  return n==2;
+}
+// Centres r off both curves: a line moved r to one side (k = +1 or -1, along its left normal), an arc's circle r larger
+// or smaller.
+int centres(const Side& a,int sa,const Side& b,int sb,double r,double x[2],double y[2]) {
+  struct L{double x,y,dx,dy;};
+  struct C{double x,y,r;};
+  auto line=[&](const Side& s,int k){return L{s.px-s.dy*k*r,s.py+s.dx*k*r,s.dx,s.dy};};
+  auto circle=[&](const Side& s,int k){return C{s.cx,s.cy,s.R+k*r};};
+  if(a.line && b.line) {
+    const L p=line(a,sa),q=line(b,sb);const double den=p.dx*q.dy-p.dy*q.dx;
+    if(std::fabs(den)<1e-12)return 0;
+    const double t=((q.x-p.x)*q.dy-(q.y-p.y)*q.dx)/den;
+    x[0]=p.x+t*p.dx;y[0]=p.y+t*p.dy;return 1;
+  }
+  if(a.line!=b.line) {
+    const L p=line(a.line?a:b,a.line?sa:sb);const C c=circle(a.line?b:a,a.line?sb:sa);
+    if(c.r<1e-12)return 0;
+    const double fx=p.x-c.x,fy=p.y-c.y,B=fx*p.dx+fy*p.dy,D=B*B-(fx*fx+fy*fy-c.r*c.r);
+    if(D<0)return 0;
+    int n=0;
+    for(const double t:{-B-std::sqrt(D),-B+std::sqrt(D)}){x[n]=p.x+t*p.dx;y[n]=p.y+t*p.dy;++n;}
+    return n;
+  }
+  const C p=circle(a,sa),q=circle(b,sb);
+  const double d=std::hypot(q.x-p.x,q.y-p.y);
+  if(p.r<1e-12 || q.r<1e-12 || d<1e-12 || d>p.r+q.r || d<std::fabs(p.r-q.r))return 0;
+  const double m=(p.r*p.r-q.r*q.r+d*d)/(2*d),h=std::sqrt(std::max(0.0,p.r*p.r-m*m)),mx=p.x+m*(q.x-p.x)/d,my=p.y+m*(q.y-p.y)/d;
+  x[0]=mx+h*(q.y-p.y)/d;y[0]=my-h*(q.x-p.x)/d;x[1]=mx-h*(q.y-p.y)/d;y[1]=my+h*(q.x-p.x)/d;
+  return 2;
+}
+}  // namespace
+
+bool fillet_geometry(const Sketch& sk,int point,double r,FilletCorner& out) {
+  Side side[2];
+  if(!(r>0) || !std::isfinite(r) || !corner_sides(sk,point,side))return false;
+  double best=INFINITY;
+  for(const int sa:{1,-1})for(const int sb:{1,-1}) {
+    double x[2],y[2];
+    for(int k=0,n=centres(side[0],sa,side[1],sb,r,x,y);k<n;++k) {
+      double ta,tb,ax,ay,bx,by;
+      if(!side[0].along(x[k],y[k],ta,ax,ay) || !side[1].along(x[k],y[k],tb,bx,by) || ta+tb>=best)continue;
+      best=ta+tb;
+      out.cx=x[k];out.cy=y[k];out.ax=ax;out.ay=ay;out.bx=bx;out.by=by;out.r=r;out.first=side[0].id;out.second=side[1].id;
+      // The arc runs round the side that faces the corner.
+      const double from=std::atan2(ay-y[k],ax-x[k]),to=std::atan2(by-y[k],bx-x[k]),corner=std::atan2(side[0].py-y[k],side[0].px-x[k]);
+      out.ccw=positive_angle(corner-from)<positive_angle(to-from);
+    }
+  }
+  return std::isfinite(best);
+}
+
+int fillet_corner(Sketch& sk,int point,double r,const std::string& expr) {
+  FilletCorner f;
+  if(!fillet_geometry(sk,point,r,f))throw Error("no fillet of that radius fits there: pick a corner where two lines or arcs end, with room for it");
+  using T=SkConstraint::Type;
+  const int ta=sk.add_point(f.ax,f.ay),tb=sk.add_point(f.bx,f.by),centre=sk.add_point(f.cx,f.cy);
+  for(const auto& [id,to]:{std::pair{f.first,ta},std::pair{f.second,tb}}) {
+    SkEntity* e=sk.entity(id);
+    for(size_t i=e->type==SkEntity::Type::Arc?1:0;i<e->p.size();++i)if(e->p[i]==point){e->p[i]=to;break;}
+  }
+  const int arc=sk.add_arc(centre,f.ccw?ta:tb,f.ccw?tb:ta);
+  sk.add_constraint(T::Tangent,{f.first,arc});
+  sk.add_constraint(T::Tangent,{f.second,arc});
+  sk.add_constraint(T::Radius,{arc},r,expr);
+  // The sides are shorter now. What measured a whole line (a polygon's "equal"s, a length, a midpoint) moves to a
+  // construction line along the old side, from its far end to the old corner: held on the trimmed side it pulled the whole
+  // shape out of place. An arc's length means another arc now.
+  bool referenced=false;
+  for(const int id:{f.first,f.second}) {
+    auto on=[id](const SkConstraint& c){return std::find(c.refs.begin(),c.refs.end(),id)!=c.refs.end();};
+    if(sk.entity(id)->type==SkEntity::Type::Arc){std::erase_if(sk.constraints,[&](const SkConstraint& c){return c.type==T::ArcLength && on(c);});continue;}
+    auto measures=[&](const SkConstraint& c){return on(c) && (c.type==T::Equal || c.type==T::Midpoint || (c.type==T::Distance && c.refs.size()==1));};
+    if(std::none_of(sk.constraints.begin(),sk.constraints.end(),measures))continue;
+    const SkEntity* e=sk.entity(id);
+    const int whole=sk.add_line(e->p[0]==ta || e->p[0]==tb?e->p[1]:e->p[0],point,true);
+    for(auto& c:sk.constraints)if(measures(c))std::replace(c.refs.begin(),c.refs.end(),id,whole);
+    referenced=true;
+  }
+  // The old corner stays as a virtual sharp on both curves when something still refers to it; otherwise it goes.
+  for(const auto& c:sk.constraints)referenced=referenced || std::find(c.refs.begin(),c.refs.end(),point)!=c.refs.end();
+  for(const auto& e:sk.entities)referenced=referenced || std::find(e.p.begin(),e.p.end(),point)!=e.p.end();
+  if(referenced) {
+    sk.add_constraint(T::Coincident,{point,f.first});
+    sk.add_constraint(T::Coincident,{point,f.second});
+  } else {
+    sk.remove(point);
+  }
+  return arc;
+}
+
+void merge_points(Sketch& sk,int from,int into) {
+  if(from==into || !sk.point(from) || !sk.point(into))throw Error("pick two different points to merge");
+  auto holds=[](const std::vector<int>& ids,int id){return std::find(ids.begin(),ids.end(),id)!=ids.end();};
+  for(const auto& e:sk.entities)if(holds(e.p,from) && holds(e.p,into))throw Error("merging those points would collapse a curve");
+  for(const auto& c:sk.constraints)if(c.is_dimension() && holds(c.refs,from) && holds(c.refs,into))throw Error("a dimension keeps those points apart");
+  for(const auto& p:sk.patterns)for(const auto& instance:p.value("instances",json::array()))for(const auto& pair:instance.value("map",json::array()))
+    for(const auto& id:pair)if(id==from)throw Error("break the pattern before merging its points");
+  for(auto& e:sk.entities)std::replace(e.p.begin(),e.p.end(),from,into);
+  for(auto& c:sk.constraints){std::replace(c.refs.begin(),c.refs.end(),from,into);std::replace(c.anchors.begin(),c.anchors.end(),from,into);}
+  // On one point twice, a coincidence, a horizontal or a vertical holds nothing any more.
+  using T=SkConstraint::Type;
+  std::erase_if(sk.constraints,[&](const SkConstraint& c){return (c.type==T::Coincident || c.type==T::Horizontal || c.type==T::Vertical) && std::count(c.refs.begin(),c.refs.end(),into)>1;});
+  if(sk.point(from)->fixed)sk.point(into)->fixed=true;
+  sk.remove(from);
+}
+
+namespace {
+// A box sure to hold a curve, from its points alone (no kernel): a spline's fit points or poles with a margin, a round's or an
+// ellipse's centre and radius. False: a point.
+bool rough_box(const Sketch& sk,const SkEntity& e,Bnd_Box& box) {
+  auto at=[&](int id)->const SkPoint*{return sk.point(id);};
+  switch(e.type) {
+    case SkEntity::Type::Point:return false;
+    case SkEntity::Type::Line:for(int id:e.p)if(const auto* p=at(id))box.Add(gp_Pnt(p->x,p->y,0));return !box.IsVoid();
+    case SkEntity::Type::Circle:case SkEntity::Type::Arc:case SkEntity::Type::Ellipse: {
+      const SkPoint* c=e.p.empty()?nullptr:at(e.p[0]);if(!c)return false;double r=e.r;
+      if(e.type!=SkEntity::Type::Circle && e.p.size()>1)if(const auto* q=at(e.p[1]))r=std::max(r,std::hypot(q->x-c->x,q->y-c->y));
+      box.Update(c->x-r,c->y-r,0,c->x+r,c->y+r,0);return true;
+    }
+    case SkEntity::Type::Spline: {
+      for(int id:e.p)
+        if(const auto* p=at(id))box.Add(gp_Pnt(p->x,p->y,0));
+      if(box.IsVoid())return false;
+      double x0,y0,z0,x1,y1,z1;box.Get(x0,y0,z0,x1,y1,z1);box.Enlarge(0.5*std::max(x1-x0,y1-y0)+1e-6);return true;  // an interpolation swings past its points
+    }
+  }
+  return false;
+}
+Handle(Geom_Curve) curve_of(const TopoDS_Edge& edge,double& first,double& last) {
+  BRepAdaptor_Curve c(edge);first=c.FirstParameter();last=c.LastParameter();
+  return Handle(Geom_Curve)::DownCast(c.Curve().Curve()->Transformed(c.Trsf()));
+}
+Handle(Geom2d_Curve) flat(const TopoDS_Edge& edge) {
+  double first,last;const auto c=curve_of(edge,first,last);
+  return new Geom2d_TrimmedCurve(GeomAPI::To2d(c,gp_Pln(gp::XOY())),first,last);
+}
+void cross(const Handle(Geom2d_Curve)& a,const Handle(Geom2d_Curve)& b,std::vector<std::array<double,2>>& out) {
+  Geom2dAPI_InterCurveCurve crossing(a,b,1e-8);
+  for(int i=1;i<=crossing.NbPoints();++i)out.push_back({crossing.Point(i).X(),crossing.Point(i).Y()});
+}
+}  // namespace
+
+std::vector<std::array<double,2>> curve_crossings(const Sketch& sk,const SkEntity& a,const SkEntity& b) {
+  std::vector<std::array<double,2>> out;
+  Bnd_Box ra,rb;if(a.id==b.id || !rough_box(sk,a,ra) || !rough_box(sk,b,rb) || ra.IsOut(rb))return out;
+  const TopoDS_Edge ea=entity_edge(sk,a,{}),eb=entity_edge(sk,b,{});if(ea.IsNull() || eb.IsNull())return out;
+  cross(flat(ea),flat(eb),out);
+  return out;
+}
+
+CurveCuts curve_cuts(const Sketch& sk,int id,const CurveFilter& filter) {
+  const SkEntity* e=sk.entity(id);if(!e || e->type==SkEntity::Type::Point)throw Error("pick a curve to trim");
+  const TopoDS_Edge edge=entity_edge(sk,*e,{});if(edge.IsNull())throw Error("that curve cannot be trimmed");
+  CurveCuts out;out.curve=curve_of(edge,out.first,out.last);out.closed=BRepAdaptor_Curve(edge).IsClosed();
+  const double span=out.last-out.first;
+  // The curve once, in its own box (one from its points is wide): only what reaches that box goes to the kernel.
+  const Handle(Geom2d_Curve) mine=flat(edge);Bnd_Box box;BRepBndLib::Add(edge,box);box.Enlarge(1e-6);
+  for(const auto& o:sk.entities) {
+    Bnd_Box rough;if(o.id==id || !rough_box(sk,o,rough) || rough.IsOut(box) || (filter && !filter(o)))continue;
+    const TopoDS_Edge other=entity_edge(sk,o,{});if(other.IsNull())continue;
+    std::vector<std::array<double,2>> hits;cross(mine,flat(other),hits);
+    for(const auto& [x,y]:hits) {
+      GeomAPI_ProjectPointOnCurve on(gp_Pnt(x,y,0),out.curve,out.first,out.last);if(!on.NbPoints())continue;
+      double t=on.LowerDistanceParameter();
+      if(out.closed && out.last-t<1e-9*span)t=out.first;  // the seam
+      if(!out.closed && (t-out.first<1e-7*span || out.last-t<1e-7*span))continue;  // touched at an end: nothing cut there
+      out.at.push_back({t,o.id});
+    }
+  }
+  std::sort(out.at.begin(),out.at.end());
+  out.at.erase(std::unique(out.at.begin(),out.at.end(),[&](const auto& a,const auto& b){return b.first-a.first<1e-9*span;}),out.at.end());
+  return out;
+}
+
+TopoDS_Edge piece_edge(const CurveCuts& cuts,const TrimPiece& piece) {
+  return BRepBuilderAPI_MakeEdge(new Geom_TrimmedCurve(cuts.curve,piece.from,piece.to)).Edge();
+}
+
+bool trim_pieces(const CurveCuts& c,double x,double y,std::vector<TrimPiece>& keep,std::vector<TrimPiece>& gone) {
+  keep.clear();gone.clear();
+  GeomAPI_ProjectPointOnCurve on(gp_Pnt(x,y,0),c.curve,c.first,c.last);if(!on.NbPoints())return false;
+  const double tc=on.LowerDistanceParameter(),period=c.last-c.first;const auto& at=c.at;const size_t n=at.size();
+  if(at.empty()){gone.push_back({c.first,c.last,0,0});return true;}
+  if(!c.closed) {
+    const std::pair<double,int>*lo=nullptr,*hi=nullptr;
+    for(const auto& a:at){if(a.first<tc)lo=&a;else if(!hi)hi=&a;}
+    if(lo)keep.push_back({c.first,lo->first,0,lo->second});
+    if(hi)keep.push_back({hi->first,c.last,hi->second,0});
+    gone.push_back({lo?lo->first:c.first,hi?hi->first:c.last,lo?lo->second:0,hi?hi->second:0});
+    return true;
+  }
+  if(n==1)return false;
+  // The span clicked lies between two neighbouring cuts (across the seam before the first one or after the last); the rest
+  // runs from its end round to its start.
+  size_t hi=0;while(hi<n && at[hi].first<tc)++hi;
+  const auto &start=at[hi%n],&end=at[(hi+n-1)%n];
+  const bool periodic=c.curve->IsPeriodic();
+  auto add=[&](std::vector<TrimPiece>& to,const std::pair<double,int>& a,const std::pair<double,int>& b) {
+    if(b.first>a.first)to.push_back({a.first,b.first,a.second,b.second});
+    else if(periodic)to.push_back({a.first,b.first+period,a.second,b.second});
+    else{to.push_back({a.first,c.last,a.second,0});to.push_back({c.first,b.first,0,b.second});}
+  };
+  add(keep,start,end);add(gone,end,start);
+  return true;
+}
+
+std::vector<int> trim_curve(Sketch& sk,int id,double x,double y) {
+  const SkEntity* found=sk.entity(id);
+  if(!found || found->fixed || (found->type!=SkEntity::Type::Spline && found->type!=SkEntity::Type::Ellipse))throw Error("trim: pick an editable spline or ellipse");
+  if(pattern_of(sk,id,true))throw Error("break the pattern before trimming its curves");
+  const SkEntity source=*found;
+  const CurveCuts cuts=curve_cuts(sk,id);std::vector<TrimPiece> keep,gone;
+  if(!trim_pieces(cuts,x,y,keep,gone))throw Error("the curve is crossed only once; nothing to cut between");
+  // Where a piece ends at an old end (or a closed curve's seam) it takes that point, so what joined it stays joined.
+  const int startPoint=source.type==SkEntity::Type::Spline && !source.p.empty()?source.p.front():0,endPoint=cuts.closed?startPoint:source.type==SkEntity::Type::Spline && !source.p.empty()?source.p.back():0;
+  const Sketch before=sk;
+  try {
+    std::vector<int> made;int seam=0;
+    for(const auto& piece:keep) {
+      const auto ids=append_sketch_shape(sk,piece_edge(cuts,piece),{},source.construction);
+      if(ids.size()!=1)throw Error("the trimmed piece could not be made");
+      made.push_back(ids[0]);
+      for(const bool start:{true,false}) {
+        SkEntity& e=*sk.entity(ids[0]);int& slot=start?e.p.front():e.p.back();
+        const int by=start?piece.from_by:piece.to_by,fresh=slot;
+        const bool atStart=std::fabs((start?piece.from:piece.to)-cuts.first)<1e-12;
+        if(by) {
+          const SkEntity* cutter=sk.entity(by);
+          if(cutter && (cutter->type==SkEntity::Type::Line || cutter->type==SkEntity::Type::Circle || cutter->type==SkEntity::Type::Arc))sk.add_constraint(SkConstraint::Type::Coincident,{fresh,by});
+          continue;
+        }
+        const int old=atStart?startPoint:endPoint,join=old && sk.point(old)?old:seam;  // else the two pieces meet at the seam
+        if(join){slot=join;sk.remove(fresh);}
+        else seam=fresh;
+      }
+    }
+    sk.remove(id);
+    if(!made.empty()) {
+      sk.entity(made.front())->id=id;
+      made.front()=id;
+    }
+    sk.validate();
+    return made;
+  } catch(...) {
+    sk=before;
+    throw;
+  }
 }
 
 void chamfer_corner(Sketch& sk,int point,double first,double second) {

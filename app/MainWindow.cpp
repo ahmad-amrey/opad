@@ -194,6 +194,11 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     return m_sectionPanel->isVisible() && m_section->enabled() && !m_design->featureActive() && !m_design->sketchActive() && !m_design->pickingPlane() &&
            m_tool.id.isEmpty() && !m_drawingPlacer->active() && !m_annotationEditor;
   });
+  // The check's clearance, overhang and wall, likewise while its panel is open.
+  m_checks->takeValues(m_viewport, [this] {
+    return m_toolPanel->isVisible() && m_toolStack->currentWidget() == m_checks && m_tool.id.isEmpty() && !m_design->featureActive() && !m_design->sketchActive() &&
+           !m_design->pickingPlane() && !m_drawingPlacer->active() && !m_annotationEditor;
+  });
   connect(m_section, &SectionPanel::saveRequested, this, [this](const QString& name, const opad::Vec3& o, const opad::Vec3& n) {
     if (!requireEditable()) return;
     bool ok = false;

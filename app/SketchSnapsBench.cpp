@@ -16,7 +16,8 @@ using namespace opad::design;
 // snapped to as constraints (a midpoint, both curves, a quadrant above its centre, level with a tracked point), shown
 // before as pictograms beside the pointer, variant primitives too; perpendicular, tangent and apparent-intersection snaps;
 // Shift taps go through the snaps in reach; an extension's marker turned along its line, a lock's line thick dashed; slots,
-// polygons and ellipses infer horizontal, vertical and angles; Ortho F8.
+// polygons and ellipses infer horizontal, vertical and angles; Ortho F8, which leaves a slanted 3-point rectangle as drawn
+// and keeps upright the side of a circumscribed square that faces its click.
 void SketchEditor::benchSnaps() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_SNAPS");
   bool ok = true;
@@ -319,6 +320,36 @@ void SketchEditor::benchSnaps() {
   sketchMove(-35, y0 + 3, Qt::NoModifier, false);
   check(!m_cursor.ortho && m_cursor.kind != Snap::Kind::Locked && !exact(m_cursor.u, -37), QString("F8 again: free of it (the angle ray may hold the pointer)") + where());
   finishChain();
+  if (f8) f8->setChecked(true);
+  // Ortho again: a 3-point rectangle's third click is a height square to its base (no direction from the base's end, no
+  // horizontal or vertical kept), so a slanted one stays as drawn.
+  setTool("rect3");
+  place(60, y0 - 30, Qt::AltModifier);
+  place(70, y0 - 20, Qt::AltModifier);
+  sketchMove(65, y0 - 15, Qt::NoModifier, false);
+  check(!m_cursor.ortho && !m_cursor.horizontal && !m_cursor.vertical && m_glyphs.empty(), QString("a slanted 3-point rectangle's height: Ortho holds nothing, no pictogram") + where());
+  const size_t constraints = m_sk.constraints.size();
+  place(65, y0 - 15);
+  int third = 0;
+  for (const auto& p : m_sk.points)
+    if (std::abs(p.x - 65) < 1e-6 && std::abs(p.y - y0 + 15) < 1e-6) third = p.id;
+  bool upright = false;
+  for (size_t i = constraints; i < m_sk.constraints.size(); ++i) upright |= m_sk.constraints[i].type == CT::Horizontal || m_sk.constraints[i].type == CT::Vertical;
+  check(third && !upright && solved() && m_clicks.empty(), "it is made slanted, 14.1 by 7.1, its corner where clicked, no side held horizontal or vertical");
+  // A circumscribed square whose side point is level with its centre: the side facing the click is the one kept upright.
+  setTool("polygon_outer");
+  m_options["sides"] = "4";
+  place(90, y0 - 25, Qt::AltModifier);
+  sketchMove(97, y0 - 25 + 2 * px, Qt::NoModifier, false);
+  check(m_cursor.horizontal && exact(m_cursor.v, y0 - 25), QString("the side's middle level with the centre: horizontal") + where());
+  const size_t before = m_sk.entities.size();
+  place(97, y0 - 25 + 2 * px);
+  int facing = 0;
+  for (size_t i = before; i < m_sk.entities.size(); ++i)
+    if (const SkEntity& e = m_sk.entities[i]; e.type == SkEntity::Type::Line && std::abs(m_sk.point(e.p[0])->x - 97) < 1e-6 && std::abs(m_sk.point(e.p[1])->x - 97) < 1e-6) facing = e.id;
+  check(m_sk.entities.size() == before + 5 && facing && has(CT::Vertical, {facing}) && solved(), "the square is made, its side facing the click (x = 97) kept vertical");
+  m_options.remove("sides");
+  if (f8) f8->setChecked(false);
   setTool("select");
   shot(".png");
   QCoreApplication::exit(ok ? 0 : 2);

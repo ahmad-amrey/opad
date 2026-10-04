@@ -74,7 +74,7 @@ bool MainWindow::isEditAction(const QString& id) {
   if (id.startsWith("sketch.")) return true;
   // Design tools change the model; how it looks (colour, opacity, lock) is a view setting while viewing.
   if (id.startsWith("design.")) return id != "design.colour" && id != "design.opacity" && id != "design.lock";
-  static const QStringList edits = {"edit.rename", "edit.delete", "edit.restore", "annotate.add", "annotate.draw", "annotate.resolve",
+  static const QStringList edits = {"edit.rename", "edit.delete", "edit.restore", "edit.cut", "edit.paste", "edit.pastelinked", "annotate.add", "annotate.draw", "annotate.resolve",
                                     "inspect.pin", "view.saveview", "file.import"};
   return edits.contains(id);
 }

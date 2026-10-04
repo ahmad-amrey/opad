@@ -6,6 +6,8 @@
 #include <QElapsedTimer>
 #include <QMouseEvent>
 #include <QApplication>
+#include <QClipboard>
+#include <QMimeData>
 #include <QPaintEvent>
 #include <algorithm>
 
@@ -37,7 +39,7 @@ OPAD_BENCH(OPAD_BENCH_LARGE, largeSketch) {
 }
 
 void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
-  struct Run {int step=0;size_t builds=0,loads=0;opad::json metrics,camera,edited;std::vector<double> hover,pan,frames,snap,move,gridSnap,gridMove;opad::json original;QElapsedTimer elapsed,drag;};
+  struct Run {int step=0;size_t builds=0,loads=0;opad::json metrics,camera,edited;std::vector<double> hover,pan,frames,snap,move,gridSnap,gridMove;opad::json original;QElapsedTimer elapsed,drag;int from=0,to=0,line=0;};
   auto run=std::make_shared<Run>();run->metrics=std::move(metrics);run->original=geometry();
   run->elapsed.start();m_viewport->setNavPreset(Viewport::NavPreset::Fusion);
   auto* timer=new QTimer(this);timer->setInterval(30);
@@ -94,7 +96,18 @@ void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
       if(m_sel.size()<m_sk.entities.size())throw opad::Error("window selection missed sketch entities");
       // The prompt and the panel count what the box selected (UI-25): by index, not a scan per item (it took 5.7 s).
       if(run->metrics["select_all_box_ms"].get<double>()>2000)throw opad::Error("selecting everything took "+run->metrics["select_all_box_ms"].dump()+" ms");
+      // Ctrl+C on it (UI-129): every point's id looked the curves up by scanning (seconds in the handler); the clip is made
+      // on a worker.
+      QApplication::clipboard()->clear();time.restart();
+      if(!copySelection(false))throw opad::Error("copying the box selection failed");
+      run->metrics["copy_all_ms"]=time.nsecsElapsed()/1e6;
+      if(run->metrics["copy_all_ms"].get<double>()>200)throw opad::Error("Ctrl+C on everything held the window "+run->metrics["copy_all_ms"].dump()+" ms");
     } else if(step==39) {  // UI-27: the line tool from a point, so every snap kind is looked for on each move
+      const QMimeData* mime=QApplication::clipboard()->mimeData();
+      if(!mime || !mime->hasFormat(kClipMime)){--run->step;return;}  // the copy's worker
+      const auto clip=opad::json::parse(mime->data(kClipMime).toStdString());
+      if(clip.at("sketch").at("entities").size()!=m_sk.entities.size())throw opad::Error("the clipboard did not get every curve selected");
+      trace::log(QString("bench: large sketch: Ctrl+C on a box selection of %1 curves holds the window %2 ms, the clip made on a worker PASS").arg(m_sk.entities.size()).arg(run->metrics["copy_all_ms"].get<double>()));
       m_sel.clear();setTool("line");
       const auto& p=m_sk.points[m_sk.points.size()/2];sketchPress(p.x,p.y,Qt::NoModifier);
       run->loads=m_settingsReads;
@@ -125,6 +138,21 @@ void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
       m_viewport->setGridSnap(false);
       setTool("select");
       trace::log(QString("bench: large sketch: line tool snaps beside %1 points without reading the settings again, with and without the grid PASS").arg(m_sk.points.size()));
+    } else if(step==73) {  // UI-28: a point dragged onto the point beside it is held to it, and merged into it on a worker
+      const opad::design::SkEntity& e=m_sk.entities.front();const opad::design::SkPoint q=*m_sk.point(e.p.back());double best=1e300;
+      for(const auto& p:m_sk.points)if(std::find(e.p.begin(),e.p.end(),p.id)==e.p.end() && std::hypot(p.x-q.x,p.y-q.y)<best){best=std::hypot(p.x-q.x,p.y-q.y);run->to=p.id;}
+      run->from=q.id;run->line=e.id;const opad::design::SkPoint t=*m_sk.point(run->to);run->drag.restart();
+      sketchPress(q.x,q.y,Qt::NoModifier);sketchMove(t.x+tol()*.05,t.y,Qt::NoModifier,true);
+      if(m_dropPoint!=run->to)throw opad::Error("a point dragged beside another was not held to it");
+      sketchRelease(t.x+tol()*.05,t.y,Qt::NoModifier);
+    } else if(step==74) {
+      run->metrics["drop_merge_ms"]=run->drag.elapsed();
+      if(m_sk.point(run->from) || !m_sk.entity(run->line) || m_sk.entity(run->line)->p.back()!=run->to)throw opad::Error("the point dropped on another was not merged into it");
+      undo();
+    } else if(step==75) {
+      auto restored=geometry(),expected=run->original;restored.erase("id_watermark");expected.erase("id_watermark");
+      if(restored!=expected)throw opad::Error("undoing the merge did not bring the sketch back");
+      trace::log(QString("bench: large sketch: a point dropped on another over %1 points merges into it on a worker, one undo step PASS").arg(m_sk.points.size()));
     } else {
       if(m_fillTimer.isActive()||m_fillJob){--run->step;return;}
       timer->stop();

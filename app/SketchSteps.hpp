@@ -58,8 +58,8 @@ inline const std::vector<Tool>& tools() {
       {"point", tr("Point"), {tr("Click to place a point")}, tr("holes are drilled at sketch points")},
       {"text", tr("Text outlines"), {tr("Set the text, font and height"), tr("Click the insertion point")}},
       // Modify
-      {"trim", tr("Trim"), {tr("Pick the piece of a curve to remove")}, tr("it lights red before you click")},
-      {"fillet", tr("Sketch fillet"), {tr("Set the radius"), tr("Pick a corner where two curves meet")}},
+      {"trim", tr("Trim"), {tr("Pick the piece of a curve to remove")}, tr("it lights red before you click · drag a fence across pieces to remove them all")},
+      {"fillet", tr("Sketch fillet"), {tr("Set the radius"), tr("Pick a corner where two curves meet")}, tr("lines and arcs · the arc shows on the hovered corner")},
       {"chamfer", tr("Chamfer"), {tr("Pick a corner"), tr("Set the distances and apply")}},
       {"mirror", tr("Mirror"), {tr("Select the curves to mirror"), tr("Pick the mirror line"), tr("Apply to make the mirror image")}},
       {"offset", tr("Offset"), {tr("Select a connected chain"), tr("Set the distance and apply")}, tr("drag the arrow or type the distance")},
@@ -70,7 +70,7 @@ inline const std::vector<Tool>& tools() {
       {"rect_pattern", tr("Rectangular pattern"), {tr("Select the curves to repeat"), tr("Set counts and spacing, then apply")}},
       {"polar_pattern", tr("Polar pattern"), {tr("Select the curves to repeat"), tr("Set the count, angle and centre, then apply")}},
       {"split", tr("Split curve"), {tr("Pick inside a curve where it splits")}},
-      {"extend", tr("Extend curve"), {tr("Pick a curve near the end to extend"), tr("Pick the boundary curve")}},
+      {"extend", tr("Extend curve"), {tr("Pick a line or an arc near the end to extend")}, tr("it runs on to the nearest curve it meets, shown dashed before you click")},
       {"break", tr("Break at intersections"), {tr("Select the curves to break"), tr("Apply to split them where they cross")}},
       {"union", tr("Region union"), {tr("Click inside the first loop"), tr("Click inside the second loop"), tr("Apply to combine the loops")}},
       {"subtract", tr("Region subtract"), {tr("Click inside the loop to keep"), tr("Click inside the loop to take away"), tr("Apply to combine the loops")}},
@@ -78,6 +78,8 @@ inline const std::vector<Tool>& tools() {
       {"heal", tr("Heal endpoints"), {tr("Set the gap tolerance"), tr("Apply to merge nearby endpoints")}},
       {"explode", tr("Explode pattern"), {tr("Select a pattern instance"), tr("Apply to make its copies editable")}},
       {"node", tr("Spline node weights"), {tr("Pick a spline node"), tr("Set the weights and apply")}},
+      {"copybase", tr("Copy with base point"), {tr("Select the curves to copy"), tr("Click the base point")}, tr("then Ctrl+V pastes them by it")},
+      {"paste", tr("Paste"), {tr("Click where the base point goes")}, tr("typed: X and Y, or @ΔX,ΔY from where they were copied")},
       // Constrain
       {"dimension", tr("Dimension"), {tr("Pick a line, a circle, an arc or two points"), tr("Click where the value sits"), tr("Set the value and apply")}},
       {"c:horizontal", tr("Horizontal"), {tr("Pick a line or a point"), tr("Pick a second point")}},

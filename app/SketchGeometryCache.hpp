@@ -19,6 +19,7 @@ class SketchGeometryCache {
   bool centre(int point) const {return m_centres.count(point)>0;}
   const std::vector<size_t>& curvesAt(int point) const;
   Query query(double x0,double y0,double x1,double y1) const;
+  double deflection() const {return m_deflection;}  // the samples' (the finest asked for)
   size_t builds=0;
  private:
   struct Box {double x0=1e300,y0=1e300,x1=-1e300,y1=-1e300;void add(double,double);void add(const Box&);bool intersects(const Box&)const;};

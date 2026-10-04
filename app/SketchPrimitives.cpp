@@ -70,14 +70,14 @@ void SketchEditor::finishPrimitive() {
       const double mu=(a->x+c->x)/2,mv=(a->y+c->y)/2;
       labelOff(keepTyped(second,"length",SkConstraint::Type::Distance,{made[0]}),made[0],mu,mv,24*px);keepDirection(second,"angle",{made[0]},direction(base->p[0],base->p[1]));
       labelOff(keepTyped(last,"height",SkConstraint::Type::Distance,{made[1]}),made[1],mu,mv,24*px);
-      keepAligned(second,{made[0]});keepAligned(last,{made[1]});  // its base, its side along an axis (UI-23)
+      keepAligned(second,{made[0]});  // its base along an axis (UI-23); the third click is a height, square to it
     } else if(m_tool=="circle2" && !made.empty())keepTyped(second,"diameter",SkConstraint::Type::Diameter,{made[0]});
     else if(m_tool=="tangent_arc" && !made.empty())keepTyped(last,"radius",SkConstraint::Type::Radius,{made[0]});
     else if(m_tool=="polygon_outer" && made.size()>=4) {  // across flats: two opposite sides, or (an odd count) the centre to a side
       const size_t sides=made.size()-1;const auto* guide=m_sk.entity(made.back());
       if(sides%2==0)keepTyped(second,"diameter",SkConstraint::Type::Distance,{made[0],made[sides/2]});
       else keepTyped(second,"diameter",SkConstraint::Type::Distance,{guide->p[0],made[0]},0.5);
-      Snap across=second;std::swap(across.horizontal,across.vertical);keepAligned(across,{made[0]});  // the side square to the way to its middle
+      Snap across=second;std::swap(across.horizontal,across.vertical);keepAligned(across,{made[sides-1]});  // the side facing the click, square to the way to its middle
     } else if(m_tool=="arcslot" && made.size()>=4) {  // its centre line's radius, its start (and end) along an axis
       const bool swapped=sweep!=m_clicks.back().typed.end() && sweep->second.first<0;
       const int centre=m_sk.entity(made[0])->p[0],start=m_sk.entity(made[swapped?2:3])->p[0],end=m_sk.entity(made[swapped?3:2])->p[0];

@@ -8,7 +8,10 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <regex>
 #include <set>
+#include <unordered_map>
 
 namespace opad::design {
 int add_cubic_spline(Sketch& sk,const std::vector<int>& nodes,bool construction) {
@@ -75,5 +78,63 @@ std::vector<int> dangling_vertices(const Sketch& sk,double tolerance) {
     if(!joined) result.insert(id);
   }
   return {result.begin(),result.end()};
+}
+json copy_entities(const Sketch& sk,const std::vector<int>& ids,double bx,double by) {
+  // The curve each id names (itself, or a point's point curves), gathered once: a box selection names every point too, and
+  // a point's id missed the curves' binary search and scanned them per point (30,000 segments: seconds).
+  std::set<int> curves,kept;std::unordered_multimap<int,int> names;
+  for(const auto& e:sk.entities){names.emplace(e.id,e.id);if(e.type==SkEntity::Type::Point && !e.p.empty())names.emplace(e.p[0],e.id);}
+  for(int id:ids)for(auto [it,end]=names.equal_range(id);it!=end;++it)curves.insert(it->second);
+  if(curves.empty())throw Error("select curves to copy");
+  Sketch out;
+  for(const auto& e:sk.entities)if(curves.count(e.id)) {
+    SkEntity c=e;c.fixed=false;c.source=json();c.equation=json();out.entities.push_back(c);kept.insert(e.id);
+    for(int id:e.p)if(kept.insert(id).second){SkPoint p=*sk.point(id);p.fixed=false;out.points.push_back(p);}
+  }
+  auto inside=[&](const std::vector<int>& refs){return std::all_of(refs.begin(),refs.end(),[&](int id){return kept.count(id)>0;});};
+  using T=SkConstraint::Type;
+  for(const auto& c:sk.constraints) {
+    const bool coordinate=(c.type==T::HDistance || c.type==T::VDistance) && c.refs.size()==1;
+    if(c.type!=T::Fix && !coordinate && inside(c.refs) && inside(c.anchors))out.constraints.push_back(c);
+  }
+  out.validate();
+  return {{"format","opad.sketch.clipboard"},{"version",1},{"base",{bx,by}},{"sketch",out.to_json()}};
+}
+
+std::vector<int> paste_entities(Sketch& sk,const json& clip,double x,double y,const ParamTable& params) {
+  if(!clip.is_object() || clip.value("format",std::string())!="opad.sketch.clipboard" || !clip.contains("sketch") || !clip.contains("base"))throw Error("the clipboard holds no sketch curves");
+  const Sketch from=Sketch::from_json(clip.at("sketch"));
+  const double dx=x-clip.at("base").at(0).get<double>(),dy=y-clip.at("base").at(1).get<double>();
+  if(!std::isfinite(dx) || !std::isfinite(dy))throw Error("the clipboard holds no sketch curves");
+  std::map<int,int> ids;std::vector<int> made;
+  for(const auto& p:from.points)ids[p.id]=sk.add_point(p.x+dx,p.y+dy);
+  for(auto e:from.entities){const int old=e.id;e.id=sk.next_id();for(int& p:e.p)p=ids.at(p);ids[old]=e.id;made.push_back(e.id);sk.entities.push_back(std::move(e));}
+  std::vector<int> dimensions;
+  for(auto c:from.constraints) {
+    const int old=c.id;c.id=sk.next_id();
+    for(int& r:c.refs)r=ids.at(r);
+    for(int& r:c.anchors)r=ids.at(r);
+    if(c.pos[0]!=0 || c.pos[1]!=0){c.pos[0]+=dx;c.pos[1]+=dy;}  // a placed label moves with it (0, 0: never placed)
+    ids[old]=c.id;
+    if(c.is_dimension() && !c.expr.empty())dimensions.push_back(c.id);
+    sk.constraints.push_back(std::move(c));
+  }
+  // d<old id> in an expression is the copied dimension now; one naming what stayed behind may not evaluate here.
+  static const std::regex name(R"(\bd(\d+)\b)");
+  for(int id:dimensions) {
+    SkConstraint* c=sk.constraint(id);std::string renamed;size_t last=0;
+    for(auto it=std::sregex_iterator(c->expr.begin(),c->expr.end(),name);it!=std::sregex_iterator();++it) {
+      const auto found=from.constraints.end()!=std::find_if(from.constraints.begin(),from.constraints.end(),[&](const SkConstraint& k){return k.id==std::stoi((*it)[1].str());});
+      renamed+=c->expr.substr(last,size_t(it->position())-last)+(found?"d"+std::to_string(ids.at(std::stoi((*it)[1].str()))):it->str());
+      last=size_t(it->position()+it->length());
+    }
+    c->expr=renamed+c->expr.substr(last);
+  }
+  const auto table=sketch_parameters(sk,params);
+  for(int id:dimensions) {
+    SkConstraint* c=sk.constraint(id);
+    try{table.as(c->type==SkConstraint::Type::Angle?Dim::Angle:Dim::Length,c->expr);}catch(const std::exception&){c->expr.clear();}
+  }
+  return made;
 }
 }
