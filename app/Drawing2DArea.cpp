@@ -266,7 +266,7 @@ class Drawing2DArea : public AreaController {
       s.rows << qMakePair(tr("Colour"), l->mixed ? tr("Several colours") : l->colored ? QColor::fromRgbF(l->color[0], l->color[1], l->color[2]).name() : tr("Drawing colour"));
       s.rows << qMakePair(tr("Linetype"), l->linetype.empty() ? tr("Continuous") : QString::fromStdString(l->linetype));
       s.rows << qMakePair(tr("Lineweight"), LayersPanel::weightText(l->lineweight));
-      QString state = !l->on ? tr("Off") : l->frozen ? tr("Frozen") : tr("On");
+      QString state = !l->on ? tr("Turned off") : l->frozen ? tr("Frozen") : tr("Turned on");  // states, not the switch's On / Off
       if (l->locked) state += " · " + tr("Locked");
       s.rows << qMakePair(tr("State"), state);
       s.rows << qMakePair(tr("Plot"), l->plot ? tr("Plotted") : tr("Not plotted"));
