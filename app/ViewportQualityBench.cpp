@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QMouseEvent>
+#include <QImage>
 #include <QTimer>
 
 #include <algorithm>
@@ -112,7 +113,18 @@ bool Viewport::benchOrbitFps(const QString& prefix) {
   require(restored && m_view->RenderingParams().RenderResolutionScale == 1.25f && m_view->RenderingParams().IsShadowEnabled,
           QString("still, it is drawn at full quality again (resolution %1x, shadows %2)").arg(m_view->RenderingParams().RenderResolutionScale)
               .arg(m_view->RenderingParams().IsShadowEnabled ? "on" : "off"));
-  grabImage().save(prefix + ".still.png");
+  const QImage image = grabImage().convertToFormat(QImage::Format_RGB32);
+  image.save(prefix + ".still.png");
+  // The model is drawn: with only the overhead light casting shadows after a headlight that casts none, OCCT drew no face.
+  const QRgb background = image.pixel(10, image.height() - 10);
+  int drawn = 0;
+  for (int y = 0; y < image.height(); y += 4)
+    for (int x = 0; x < image.width(); x += 4) {
+      const QRgb c = image.pixel(x, y);
+      drawn += std::abs(qRed(c) - qRed(background)) + std::abs(qGreen(c) - qGreen(background)) + std::abs(qBlue(c) - qBlue(background)) > 48;
+    }
+  const double share = 100.0 * drawn / std::max(1, (image.width() / 4) * (image.height() / 4));
+  require(share > 3, QString("the model is drawn in Studio (%1% of the frame off the background)").arg(share, 0, 'f', 1));
   setAdaptiveQuality(false);
   const auto [offMs, offLowered, offScale, offShadows] = drag(false);
   require(offLowered == 0 && offScale == 1.25f && offShadows, QString("with the setting off nothing is lowered (%1 frames, %2 ms a frame)").arg(offLowered).arg(offMs));

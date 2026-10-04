@@ -8,6 +8,7 @@
 #include "opad/mesh.hpp"
 #include <V3d.hxx>
 #include <V3d_DirectionalLight.hxx>
+#include <V3d_AmbientLight.hxx>
 #include "DepthBias.hpp"
 #include "CurveSamples.hpp"
 #include "CursorWrap.hpp"
@@ -265,10 +266,14 @@ void Viewport::initViewer() {
   driver->ChangeOptions().buffersNoSwap = Standard_False;
   driver->ChangeOptions().ffpEnable = Standard_False;
   m_viewer = new V3d_Viewer(driver);
-  m_viewer->SetDefaultLights();
-  m_viewer->SetLightOn();
+  // The overhead light first (UI-45): it alone casts shadows, and OCCT's shaders draw nothing in Studio when a light that
+  // casts none comes before the one that does. Then the defaults (a headlight, the ambient light).
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
-  overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
+  overhead->SetIntensity(0.75f);
+  Handle(V3d_DirectionalLight) headlight=new V3d_DirectionalLight(V3d_Zneg,Quantity_NOC_WHITE,true);
+  headlight->SetName("headlight");
+  Handle(V3d_AmbientLight) ambient=new V3d_AmbientLight(Quantity_NOC_WHITE);
+  for(const Handle(V3d_Light)& light:{Handle(V3d_Light)(overhead),Handle(V3d_Light)(headlight),Handle(V3d_Light)(ambient)}) {m_viewer->AddLight(light);m_viewer->SetLightOn(light);}
   m_ctx = new AIS_InteractiveContext(m_viewer);
   m_viewer->SetGridEcho(Standard_False);  // OCCT's star on the grid node nearest the pointer: no click takes that node
   {  // TopOSD (notes, the drawing being made, measurement labels) has no depth test, but it kept the depth, so what is
