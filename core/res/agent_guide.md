@@ -53,6 +53,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - `{"points": [...], "entities": [...], "constraints": [...]}`. Every id is unique across the whole sketch: points,
   entities and constraints share one id space, so point 1 and entity 1 collide. Number them apart, for example points
   1-99, entities 100-199, constraints 200 and up.
+- Stored geometry keeps the joins older builds cannot read (Smooth, Curvature or Tangent between a spline and a line,
+  circle or arc) in `more_constraints`. `sketch_details` lists both in its constraints section; send new constraints in
+  `constraints`.
 - Point: `{"id": 1, "x": 0, "y": 0}` in sketch mm.
 - Entities, `p` lists point ids:
   - line `[start, end]`;

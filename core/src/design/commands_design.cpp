@@ -180,7 +180,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const SketchItem* k = s.sketch(e.op->id);
         json j = {{"id", e.op->id}, {"type", "sketch"}, {"name", k->name}, {"plane", k->plane}, {"dof", k->dof}, {"visible", k->visible}};
         j["entities"] = k->geometry.value("entities", json::array()).size();
-        j["constraints"] = k->geometry.value("constraints", json::array()).size();
+        j["constraints"] = k->geometry.value("constraints", json::array()).size() + k->geometry.value("more_constraints", json::array()).size();
         if (!k->component.empty()) j["component"] = k->component;
         if (!k->error.empty()) j["error"] = k->error;
         out.push_back(j);

@@ -958,6 +958,85 @@ TEST(sketch_spline_joins_a_line_or_an_arc_smoothly) {
   CHECK_THROWS(sk.add_constraint(CT::Curvature, {a, sk.add_circle(sk.add_point(30, 0), 4)}));
 }
 
+namespace {
+int cubic(Sketch& sk, std::vector<int> poles) {  // a clamped cubic Bezier through its first and last pole
+  SkEntity e;
+  e.type = SkEntity::Type::Spline;
+  e.degree = 3;
+  e.knots = {0, 1};
+  e.multiplicities = {4, 4};
+  e.p = std::move(poles);
+  e.weights.assign(e.p.size(), 1);
+  e.id = sk.next_id();
+  sk.entities.push_back(e);
+  return e.id;
+}
+std::vector<int> ids_of(const opad::json& list) {
+  std::vector<int> out;
+  for (const auto& c : list) out.push_back(c.at("id").get<int>());
+  return out;
+}
+}  // namespace
+
+// The joins of a spline with a line, circle or arc are new (TODO 11 wave 3): a build from before refuses them in its
+// refs_fit, and as its replay parses every sketch edit, one such record failed the whole document there. to_json keeps
+// them in "more_constraints", which those builds skip, and raises the watermark past them so that what such a build adds
+// to the sketch takes other ids; a join whose curves it deleted is left out when this build reads the sketch again.
+TEST(spline_joins_older_builds_cannot_read_are_kept_apart) {
+  Sketch sk;
+  const int line = sk.add_line(sk.add_point(-20, 0, true), sk.add_point(0, 0, true));
+  const int s1 = cubic(sk, {sk.add_point(0.4, 0.6), sk.add_point(5, 3), sk.add_point(10, 2), sk.add_point(15, 6)});
+  const int s3 = cubic(sk, {sk.add_point(15.3, 6.2), sk.add_point(20, 10), sk.add_point(25, 8), sk.add_point(30, 12)});
+  const int arc = sk.add_arc(sk.add_point(0, 30, true), sk.add_point(0, 20, true), sk.add_point(10, 30, true));
+  const int s2 = cubic(sk, {sk.add_point(-0.4, 20.3), sk.add_point(-5, 21), sk.add_point(-10, 23), sk.add_point(-15, 22)});
+  const int touch_line = sk.add_constraint(CT::Tangent, {line, s1});  // every build reads these two
+  const int splines = sk.add_constraint(CT::Smooth, {s1, s3});
+  const int smooth = sk.add_constraint(CT::Smooth, {line, s1});
+  const int bend = sk.add_constraint(CT::Curvature, {arc, s2});
+  const int touch_arc = sk.add_constraint(CT::Tangent, {s2, arc});
+  const opad::json saved = sk.to_json();
+  CHECK(ids_of(saved.at("constraints")) == std::vector<int>({touch_line, splines}));
+  CHECK(ids_of(saved.at("more_constraints")) == std::vector<int>({smooth, bend, touch_arc}));
+  CHECK(saved.at("id_watermark").get<int>() >= touch_arc);
+  CHECK(ids_of(constraint_records(saved)) == std::vector<int>({touch_line, splines, smooth, bend, touch_arc}));
+  const Sketch back = Sketch::from_json(saved);
+  CHECK_EQ(back.constraints.size(), size_t(5));
+  CHECK(back.to_json() == saved);
+  // What a build from before reads: "constraints" only, each record of a kind it took (Smooth and Curvature between two
+  // splines, Tangent between a spline and a line or a spline).
+  opad::json older = saved;
+  older.erase("more_constraints");
+  for (const auto& c : older.at("constraints")) {
+    const std::string type = c.at("type").get<std::string>();
+    std::vector<SkEntity::Type> kinds;
+    for (int ref : c.at("refs").get<std::vector<int>>()) kinds.push_back(back.entity(ref)->type);
+    const bool spline_pair = kinds == std::vector<SkEntity::Type>{SkEntity::Type::Spline, SkEntity::Type::Spline};
+    if (type == "smooth" || type == "curvature") CHECK(spline_pair);
+    const bool line_spline = kinds == std::vector<SkEntity::Type>({SkEntity::Type::Line, SkEntity::Type::Spline});
+    if (type == "tangent") CHECK(spline_pair || line_spline);
+  }
+  // Such a build edits the sketch: it adds a point, above every id kept apart, and deletes the spline by the arc. Its edit
+  // leaves "more_constraints" as it was; read here again, the arc's joins are gone, the line's Smooth stays.
+  Sketch edited = Sketch::from_json(older);
+  CHECK(edited.add_point(50, 50) > touch_arc);
+  edited.remove(s2);
+  opad::json after = edited.to_json();
+  CHECK(!after.contains("more_constraints"));
+  after["more_constraints"] = saved.at("more_constraints");
+  Sketch reread = Sketch::from_json(after);
+  CHECK(reread.constraint(smooth) != nullptr);
+  CHECK(reread.constraint(bend) == nullptr);
+  CHECK(reread.constraint(touch_arc) == nullptr);
+  // An edit in this build stores the joins as one whole list (a key older builds keep as it is), never in "constraints".
+  Sketch plain = Sketch::from_json(saved);
+  for (const int id : {smooth, bend, touch_arc}) plain.remove(id);
+  const opad::json before = plain.to_json();
+  CHECK(!before.contains("more_constraints"));
+  const opad::json delta = sketch_delta(before, saved);
+  CHECK(delta.contains("more_constraints") && !delta.contains("constraints"));
+  CHECK(apply_sketch_delta(before, delta) == saved);
+}
+
 TEST(reference_dimensions_cannot_indirectly_drive_geometry) {
   Sketch sk;int a=sk.add_point(0,0),b=sk.add_point(10,0),c=sk.add_point(0,20);
   int r=sk.add_constraint(CT::Distance,{a,b},10),d=sk.add_constraint(CT::Distance,{a,c},20,"indirect");sk.constraint(r)->reference=true;

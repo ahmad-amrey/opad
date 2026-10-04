@@ -98,6 +98,9 @@ json solved_geometry(const json& data) {
   if (!data.contains("result") || !data["result"].contains("geometry")) return given;
   json solved = data["result"]["geometry"];
   if (!solved.contains("images") && given.contains("images")) solved["images"] = given["images"];
+  // A regeneration never changes the constraints, and this build's results repeat "more_constraints" (Sketch::to_json): a
+  // result without them is an older build's, which could not read them. They still hold (from_json drops what does not).
+  if (!solved.contains("more_constraints") && given.contains("more_constraints")) solved["more_constraints"] = given["more_constraints"];
   return solved;
 }
 

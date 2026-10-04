@@ -120,8 +120,12 @@ struct Sketch {
   // left without any entity go with it.
   void remove(int id);
 
-  json to_json() const;                   // {"points":[..],"entities":[..],"constraints":[..]}
-  static Sketch from_json(const json& j); // throws Error on dangling references or unknown types
+  // {"points":[..],"entities":[..],"constraints":[..]}, plus "more_constraints":[..] for the constraints a build from before
+  // TODO 11 wave 3 refuses (Smooth or Curvature with a line, circle or arc; Tangent between a circle or arc and a spline),
+  // so that it still opens the sketch, without them.
+  json to_json() const;
+  // Throws Error on dangling references or unknown types; reads "more_constraints" too, leaving out what no longer fits.
+  static Sketch from_json(const json& j);
   void validate() const;
 };
 
@@ -130,6 +134,8 @@ struct Sketch {
 // a backdrop never stores its picture again (an older build keeps that key as a sketch field and shows the image unmoved).
 json sketch_delta(const json& before, const json& after);
 json apply_sketch_delta(const json& before, const json& delta);
+// Every constraint record of a sketch's geometry JSON, "constraints" and "more_constraints" (Sketch::to_json), by id.
+json constraint_records(const json& geometry);
 // A sketch op's geometry as last solved: the regeneration's result, else what was given. A result never repeats the
 // images (the solver leaves them alone): they come from the given geometry.
 json solved_geometry(const json& sketch_op_data);
