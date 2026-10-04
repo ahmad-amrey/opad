@@ -75,8 +75,8 @@ intended one.
 
 `validate` also checks interference (overlapping pairs with their volume and box, or pairs closer than a clearance;
 bounding boxes first, exact Booleans only on candidates) and 3D printing (overhangs against a build direction,
-thin walls, thin features, build-plate contact). The desktop's Review workspace has both as Interference and Print
-check, listing findings in the tool panel; clicking one highlights the bodies and their overlap, or the faces.
+thin walls, thin features, build-plate contact). The desktop's Inspect tab (Review and Design) has both as Interference
+and Print check, listing findings in the tool panel; clicking one highlights the bodies and their overlap, or the faces.
 
 Live write tools take `verbosity: "compact"` for replies that list only what that command changed.
 
@@ -127,8 +127,8 @@ file (the header carries the document's last change and the file's name, assembl
 
 An `interference` feature keeps an interference and clearance check in the timeline: its report (pairs, overlap
 volumes, distances) is stored with the design and computed again whenever its bodies change, and with `fail_on` a
-clash is the feature's error, so the edit that causes it says so. It sits in Design > Construct, next to the planes
-and axes.
+clash is the feature's error, so the edit that causes it says so. In the desktop program it is Inspect > Interference's
+Keep as check: the bodies and clearance just checked, stored as this feature (one Interference command).
 
 A feature can be suppressed by an expression over the parameters (`suppress_if: "joints < 3"`): the design walk
 evaluates it, keeps the answer in the feature's result for replay, and regenerates when a parameter flips it; the
@@ -272,13 +272,17 @@ The timeline keeps operation markers at a readable size for long histories. Scro
 mouse wheel, trackpad or horizontal scrollbar; Left/Right steps through operations and
 Home/End jumps to the first/last marker. Selecting an operation scrolls it into view.
 
-Workspace shortcuts are Ctrl+1/2 (Command+1/2 on macOS); standard views use Ctrl+Alt+1 through 7.
+Workspace shortcuts are Ctrl+1 Review, Ctrl+2 Design, Ctrl+3 Drawings and Ctrl+4 Drafting (Command on macOS); standard
+views use Ctrl+Alt+1 through 7. Review looks, measures, marks up, compares and shares (View, Inspect, Markup, Compare,
+Share); Design models (Solid, Assemble, Construct, Inspect, Insert, View), and a sketch adds its Sketch tab in front of
+them until it is finished; a viewed DXF, DWG or SVG file comes into Drafting (layers, measuring, plot, Drawing to sketch).
+A Design command started from Review (E for Extrude) switches to Design.
 Annotations are created and edited inline, with type selection and comment threads. Set your display
 name in Settings to identify new annotations, comments and design operations.
 Drag a note's title to move its card without changing the document; the card stays attached to its
 object at that offset while you orbit and pan. The Annotations panel filters by
 type across both the panel and viewport; Delete removes a note and remains undoable.
-Review > Annotate > **Note** (N) and **Hand drawing** (Shift+N) work like the guided measuring tools: the
+Review > Markup > **Note** (N) and **Hand drawing** (Shift+N) work like the guided measuring tools: the
 prompt bar asks for a body, face, edge or vertex (1-4 changes the selection filter; a single selected
 object is taken as it is), the target is tinted in the selection blue inside a dashed outline under a
 badge, and a floating panel holds the type, the pen and the text. Hand drawing: each stroke lies on the
@@ -566,7 +570,7 @@ Builds older than this tolerant loader refuse such files with "unknown op type";
 
 ### Version control in the desktop program
 
-- **Version control panel** (Alt+4, File > Version control, the ribbon's Versions and History groups, the git chip's
+- **Version control panel** (Alt+4, File > Version control, Review > Compare > Versions, the git chip's
   menu): the branch against its remote, the document's state, a merge in progress (Abort, Commit the merge), and
   History / Branches pages. **Commit…** saves first, suggests the message from what changed, asks for your name once,
   offers to amend while the last commit is not pushed and to push after, and offers **Pack** when loose objects pile
@@ -582,7 +586,7 @@ Builds older than this tolerant loader refuse such files with "unknown op type";
   chip, and the bar over the view when git wrote conflict markers into the file): lists what both sides changed, with
   mine or theirs to pick for each, all mine, all theirs, or a whole side; the result is written, added to git and opened,
   then Commit… finishes the merge.
-- **Compare versions…** (File, Inspect > Versions, the chip; `opad --compare a.opad b.opad`, `git difftool -t opad`): A
+- **Compare versions…** (File, Review > Compare, the chip; `opad --compare a.opad b.opad`, `git difftool -t opad`): A
   and B picked from this session, the saved file, HEAD and the file's commits, recovery snapshots or another file;
   B's bodies tinted added / modified / moved over A's ghosts, overlay or side by side, ] and [ step through the
   changes.
