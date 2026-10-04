@@ -255,7 +255,7 @@
    "id": "view.grid",
    "title": "Grid",
    "summary": "Shows or hides the ground grid.",
-   "details": "The grid lies on the XY plane, or in the viewed plane in 2D mode. Its spacing follows the zoom unless you fix it in Grid settings.",
+   "details": "In 3D the grid is a patch under the model, spaced to the model's size; in 2D mode and in sketches it follows the view and its spacing follows the zoom. A fixed spacing set in Grid settings is used everywhere.",
    "keywords": ["floor", "ground", "lines"],
    "requires": "Open or create a document first."
   },
