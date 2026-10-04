@@ -210,9 +210,13 @@ int main(int argc, char** argv) {
       doc.setRollback({});
       CHECK(!doc.rolledBack() && doc.rollback().empty());
     }
-    // Several commands as one step and one refresh (UI-02); a failing one takes the batch back off the log.
+    // Several commands as one step and one refresh (UI-02); a failing one takes the batch back off the log. On the box file
+    // again, imported twice (the sections above end in an empty document).
+    doc.open(step);
+    doc.importStep(step);
     {
       const auto all = doc.scene.all_bodies();
+      CHECK(all.size() >= 2);
       const size_t ops = doc.doc.ops.size(), steps = doc.undoLabels().size();
       int changes = 0;
       auto counted = QObject::connect(&doc, &AppDocument::changed, &doc, [&changes] { ++changes; });
