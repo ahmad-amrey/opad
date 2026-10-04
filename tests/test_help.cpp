@@ -93,8 +93,9 @@ TEST(every_registered_command_has_help) {
   const QStringList pending{"assets.autoSync", "assembly.activate", "assembly.activateNew", "assembly.activateRoot", "assembly.activeHistory", "assembly.activeVisibility",
                             "assembly.explode", "assembly.explodeGroup", "assembly.explodeKeep", "assembly.explodeOff", "assembly.explodePlay",
                             "assembly.explodeSave", "assembly.explodeSplit", "assembly.explodeUngroup", "design.componentFromSelection", "design.remove_faces",
-                            "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.material", "inspect.partProperties", "timeline.designOnly",
-                            "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.unsavedChanges"};
+                            "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.length", "inspect.material", "inspect.partProperties", "timeline.designOnly",
+                            "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.unsavedChanges",
+                            "view.hidden", "view.hiddenEdges", "view.hideothers"};
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
