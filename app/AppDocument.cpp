@@ -545,7 +545,7 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
     if (command == "delete_annotation") return tr("delete annotation");
   if (command == "append") return tr("pin measurement");
   if (command == "section") return tr("named section");
-  if (command == "view") return tr("named view");
+  if (command == "view") return args.value("home", false) ? tr("set Home") : tr("named view");
   if (command == "import") return tr("import");
   if (command == "transform") return tr("transform");
   if (command == "component") return tr("new component");

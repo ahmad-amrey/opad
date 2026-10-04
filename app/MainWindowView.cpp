@@ -318,7 +318,8 @@ bool MainWindow::eventFilter(QObject* o, QEvent* e) {
 // ---------------------------------------------------------------- named views (view op)
 void MainWindow::saveNamedView() {
   bool ok = false;
-  QString name = QInputDialog::getText(this, tr("Save view"), tr("Name:"), QLineEdit::Normal, tr("View %1").arg(m_doc->scene.views.size() + 1), &ok);
+  const auto named = std::count_if(m_doc->scene.views.begin(), m_doc->scene.views.end(), [](const opad::ViewBookmark& v) { return !v.home; });
+  QString name = QInputDialog::getText(this, tr("Save view"), tr("Name:"), QLineEdit::Normal, tr("View %1").arg(named + 1), &ok);
   if (!ok || name.isEmpty()) return;
   m_doc->run("view", opad::json{{"name", name.toStdString()}, {"camera", m_viewport->cameraJson()}});
 }
@@ -332,6 +333,7 @@ void MainWindow::rebuildViewsMenu() {
   if (!m_viewsMenu) return;
   m_viewsMenu->clear();
   for (const auto& v : m_doc->scene.views) {
+    if (v.home) continue;  // the document's Home (H), not a bookmark
     QAction* a = m_viewsMenu->addAction(icons::themed("home", 16), QString::fromStdString(v.name));
     connect(a, &QAction::triggered, this, [this, id = v.id] { restoreNamedView(id); });
   }

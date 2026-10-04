@@ -280,7 +280,10 @@ void register_builtins() {
         }
         for (const auto& p : s.sections)
           sec.push_back({{"id", p.id}, {"name", p.name}, {"origin", {p.origin[0], p.origin[1], p.origin[2]}}, {"normal", {p.normal[0], p.normal[1], p.normal[2]}}, {"enabled", p.enabled}});
-        for (const auto& v : s.views) views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
+        for (const auto& v : s.views) {
+          views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
+          if (v.home) views.back()["home"] = true;
+        }
         json j;
         j["annotations"] = ann;
         j["total"]=total;
@@ -567,11 +570,13 @@ void register_builtins() {
         return j;
       });
 
-  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}}, true, [](Document* d, const json& a) {
+  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}, {"home", "bool - optional: the document's Home view (H)"}}, true, [](Document* d, const json& a) {
     json op;
     op["op"] = "view";
-    op["name"] = a.at("name");
+    const bool home = a.value("home", false);
+    op["name"] = home ? json(a.value("name", "Home")) : a.at("name");
     op["camera"] = a.contains("camera") ? a["camera"] : Camera::preset(a.value("preset", "iso")).to_json();
+    if (home) op["home"] = true;  // an optional key: an older build reads it as a view named Home
     json j;
     j["id"] = need(d).append(op, a.value("by", "")).id;
     return j;

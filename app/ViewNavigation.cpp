@@ -1,5 +1,5 @@
-// Navigation staples as commands (UI-47): zoom window (Z), previous and next view (F5, Shift+F5), Home set to the current
-// view and back, the view twist, the CAD 2D mouse preset, a middle double click fitting everything, the view cube's menu.
+// Navigation staples as commands (UI-47): zoom window (Z), previous and next view (F5, Shift+F5), the document's Home set
+// to the current view and back, the view twist, the CAD 2D mouse preset, a middle double click fitting everything, the view cube's menu.
 // The view side is Viewport (ViewportNavigation.cpp); this area places the commands in the View menus and ribbon tabs.
 #include <QActionGroup>
 #include <QInputDialog>
@@ -8,8 +8,10 @@
 #include <QMenuBar>
 #include <QSettings>
 
+#include "AppDocument.hpp"
 #include "AreaController.hpp"
 #include "Commands.hpp"
+#include "DesignController.hpp"
 #include "Icons.hpp"
 #include "Ribbon.hpp"
 #include "Units.hpp"
@@ -37,9 +39,11 @@ class ViewNavigation : public AreaController {
   using AreaController::AreaController;
 
   void buildActions() override {
-    auto add = [this](const QString& id, const QString& label, const QString& icon, const QKeySequence& key, std::function<void()> fn, bool checkable = false) {
+    auto add = [this](const QString& id, const QString& label, const QString& icon, const QKeySequence& key, std::function<void()> fn, bool checkable = false,
+                      bool edits = false) {
       CommandInfo info{id, label, icon, key};
       info.checkable = checkable;
+      info.editsDocument = edits;  // Home is the document's (a view op): in viewer mode it asks to save as OPAD first
       return services().addCommand(info, std::move(fn));
     };
     m_zoom = add("view.zoomWindow", tr("Zoom window"), "zoomWindow", QKeySequence("Z"), [this] {
@@ -49,8 +53,11 @@ class ViewNavigation : public AreaController {
     }, true);
     add("view.previous", tr("Previous view"), "viewBack", QKeySequence("F5"), [this] { services().viewport()->previousView(); });
     add("view.next", tr("Next view"), "viewForward", QKeySequence("Shift+F5"), [this] { services().viewport()->nextView(); });
-    add("view.setHome", tr("Set current view as Home"), "home", QKeySequence(), [this] { services().viewport()->setHomeView(); });
-    add("view.resetHome", tr("Reset Home to the iso view"), "home", QKeySequence(), [this] { services().viewport()->resetHomeView(); });
+    add("view.setHome", tr("Set current view as Home"), "home", QKeySequence(), [this] { setHome(); }, false, true);
+    CommandInfo reset{"view.resetHome", tr("Reset Home to the iso view"), "home", QKeySequence()};
+    reset.editsDocument = true;
+    reset.enabledWhen = [this](const CommandContext& c) { return c.document && !c.viewer && services().viewport()->customHome(); };
+    services().addCommand(reset, [this] { resetHome(); });
     add("view.twist", tr("Twist view…"), "twist", QKeySequence(), [this] { twist(); });
     add("view.untwist", tr("Untwist view"), "twist", QKeySequence(), [this] { services().viewport()->twistView(0); });
     m_cad2d = add("nav.cad2d", tr("Navigation: CAD 2D"), "", QKeySequence(), [this] { choosePreset("CAD2D"); }, true);
@@ -113,6 +120,26 @@ class ViewNavigation : public AreaController {
     m_cad2d->setChecked(name == "CAD2D");
   }
 
+  // Home is the document's: a view op marked home (an older build lists it as a view named Home), undone like any edit.
+  void setHome() {
+    services().guarded([this] {
+      services().document()->run("view", opad::json{{"home", true}, {"camera", services().viewport()->cameraJson()}});
+      services().showMessage(tr("Home (H) is this view now, saved with the document"));
+    });
+  }
+
+  // Every Home the document has set goes (tombstones, one step); Home is the iso view again. With a design history a
+  // tombstone is planned on a worker, as the timeline's Delete is.
+  void resetHome() {
+    AppDocument* doc = services().document();
+    std::vector<opad::json> ops;
+    for (const auto& v : doc->scene.views)
+      if (v.home) ops.push_back(opad::json{{"op", "delete"}, {"target", v.id}});
+    if (ops.empty()) return;
+    if (!doc->scene.features.empty() || !doc->scene.sketches.empty()) return services().design()->applyOps(std::move(ops), tr("reset Home"));
+    services().guarded([&] { doc->batch(tr("reset Home"), [&] { for (const auto& op : ops) doc->run("delete", opad::json{{"target", op["target"]}}); }); });
+  }
+
   // The twist typed as an angle in the shown unit, counter-clockwise; 0 untwists.
   void twist() {
     Viewport* v = services().viewport();
@@ -135,12 +162,9 @@ class ViewNavigation : public AreaController {
         if (id == "-") menu->addSeparator();
         else if (QAction* a = services().action(id)) menu->addAction(a);
     };
+    services().updateCommands();  // Reset Home: off while Home is the default
     put({"view.home", "view.setHome", "view.resetHome", "-", "view.fitall", "view.zoomWindow", "view.previous", "view.next", "-", "view.top", "view.front",
          "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.rollleft", "view.rollright"});
-    if (QAction* reset = services().action("view.resetHome")) reset->setEnabled(services().viewport()->customHome());
-    connect(menu, &QMenu::aboutToHide, this, [this] {
-      if (QAction* reset = services().action("view.resetHome")) reset->setEnabled(true);
-    });
     menu->popup(at);
   }
 };

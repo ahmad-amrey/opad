@@ -64,6 +64,7 @@ struct SectionPlane {
 struct ViewBookmark {
   std::string id, name;
   json camera;
+  bool home = false;  // the document's Home (optional "home": true on the view op; the last live one wins)
 };
 
 struct Unresolved {

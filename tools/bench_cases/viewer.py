@@ -156,8 +156,10 @@ CASES = [
     ("highlight", colour_boxes, {"OPAD_BENCH_HIGHLIGHT": "{prefix}"}),
     # Navigation staples (UI-47): the zoom window (a dragged rectangle comes to the centre at its width's zoom, a click
     # zooms in twice, Esc and a right click leave it), animated standard views, Home and Fit all ending where the instant
-    # moves go, previous and next view, the CAD 2D preset (no orbit on any button, against Fusion's Shift+middle), Home set
-    # to a view and reset, the cube's menu, the 2D twist; then through the window: Z and Esc, a middle double click fitting
-    # everything, CAD 2D chosen from the menu and saved, the turn buttons twisting in 2D. <prefix>.zoom-band.png.
+    # moves go, previous and next view, the CAD 2D preset (no orbit on any button, against Fusion's Shift+middle), the cube's
+    # menu, the 2D twist; then through the window: Z and Esc, a middle double click fitting everything, CAD 2D chosen from
+    # the menu and saved, the document's Home (a view op marked home: gone to exactly, undo and redo, the last one wins,
+    # saved, kept off the named views, in 2D only along its plane, reset in one step), the turn buttons twisting in 2D.
+    # <prefix>.zoom-band.png.
     ("navigate", colour_boxes, {"OPAD_BENCH_NAVIGATE": "{prefix}"}),
 ]

@@ -425,9 +425,9 @@ OPAD_BENCH(OPAD_BENCH_HIGHLIGHT, highlight) {
 // click zooms in twice there, Esc and a right click leave it untouched. (2) Fit, Home, a standard view and the previous
 // view animate from where the camera is to exactly where the instant move goes. (3) Previous and next view walk the views
 // the camera rested at; a new view drops what was ahead. (4) CAD 2D: the middle button pans, Shift+middle too (it orbits
-// in the Fusion preset: the control), nothing orbits. (5) Home set to a front view looks that way, reset it is iso again.
-// (6) A right click on the cube asks for its menu, elsewhere for the context menu. (7) In 2D mode the view twists: a turn,
-// a typed angle, untwisted. <prefix>.zoom-band.png: the rectangle being dragged.
+// in the Fusion preset: the control), nothing orbits. (5) A right click on the cube asks for its menu, elsewhere for the
+// context menu. (6) In 2D mode the view twists: a turn, a typed angle, untwisted. <prefix>.zoom-band.png: the rectangle
+// being dragged. The document's Home is the window part's (its commands write view ops).
 bool Viewport::benchNavigation(const QString& prefix) {
   bool all = true;
   auto require = [&](bool ok, const QString& what) {
@@ -555,18 +555,7 @@ bool Viewport::benchNavigation(const QString& prefix) {
   require(direction().IsParallel(d0, 1e-9) && c0.Distance(c1) > pixelSize() * 20, "CAD 2D: a middle drag pans, Shift+middle does not orbit");
   setNavPreset(preset);
 
-  // (5) Home: set to a front view, then reset.
-  standardView("front");
-  const gp_Dir frontDirection = direction();
-  setHomeView();
-  standardView("top");
-  home();
-  require(customHome() && direction().IsEqual(frontDirection, 1e-9), "Home set to the front view looks that way");
-  resetHomeView();
-  home();
-  require(!customHome() && direction().IsEqual(gp_Dir(-1, 1, -1), 1e-9), "reset, Home is the iso view again");
-
-  // (6) The cube's menu: which menu a right click asks for (signals held: the window's context menu is modal).
+  // (5) The cube's menu: which menu a right click asks for (signals held: the window's context menu is modal).
   {
     const QSignalBlocker held(this);
     m_view->Redraw();
@@ -580,7 +569,7 @@ bool Viewport::benchNavigation(const QString& prefix) {
   }
   disconnect(counted);
 
-  // (7) The 2D twist.
+  // (6) The 2D twist.
   setTwoDimensional(true);
   const gp_Dir flat = direction();
   require(std::abs(twistAngle()) < 1e-6, "2D mode starts untwisted");
@@ -649,6 +638,82 @@ OPAD_BENCH(OPAD_BENCH_NAVIGATE, navigate) {
                 ids.contains("view.previous") && ids.contains("view.ortho") && !w.action("view.resetHome")->isEnabled(),
             QString("the cube's menu: %1 (Reset Home off: Home is the default)").arg(ids.join(' ')));
     if (menu) menu->close();
+    // The document's Home: a view op marked home, gone to exactly, undone and redone, set again (the last wins), reset in
+    // one step (planned on a worker: the boxes have a design history) and undone, in 2D only along its own plane.
+    {
+      AppDocument* doc = w.m_doc;
+      auto same = [](const opad::json& a, const opad::json& b) {
+        const double tolerance = 1e-6 * std::max(1.0, a.value("scale", 1.0));
+        for (const char* key : {"eye", "target", "up"})
+          for (int i = 0; i < 3; ++i)
+            if (std::abs(a[key][i].get<double>() - b[key][i].get<double>()) > (key[0] == 'u' ? 1e-9 : tolerance)) return false;
+        return std::abs(a["scale"].get<double>() / b["scale"].get<double>() - 1) < 1e-9;
+      };
+      auto looking = [v] {
+        const opad::Vec3 d = v->viewDirection();
+        return gp_Dir(d[0], d[1], d[2]);
+      };
+      auto homes = [doc] { return std::count_if(doc->scene.views.begin(), doc->scene.views.end(), [](const opad::ViewBookmark& b) { return b.home; }); };
+      auto zoomed = [v](const QString& view, double factor) {
+        v->standardView(view);
+        opad::json camera = v->cameraJson();
+        camera["scale"] = camera["scale"].get<double>() / factor;
+        v->setCameraJson(camera);
+        return v->cameraJson();
+      };
+      require(w.m_commands.editsDocument("view.setHome") && w.m_commands.editsDocument("view.resetHome"),
+              "Set and Reset Home edit the document (in viewer mode they ask to save as OPAD first)");
+      const opad::json front = zoomed("front", 2);
+      const size_t before = doc->doc.ops.size();
+      w.action("view.setHome")->trigger();
+      const opad::Op& set = doc->doc.ops.back();
+      w.updateCommands();
+      require(doc->doc.ops.size() == before + 1 && set.type == "view" && set.data.value("home", false) && set.data.value("name", "") == "Home" && homes() == 1 &&
+                  v->customHome() && doc->isDirty() && w.action("view.resetHome")->isEnabled(),
+              "Set current view as Home appends one view op marked home, the document is changed, Reset Home is on");
+      QStringList named;
+      if (w.m_viewsMenu)
+        for (QAction* a : w.m_viewsMenu->actions()) named << a->text();
+      require(!named.contains("Home"), QString("the Home is not a named view: %1").arg(named.join(", ")));
+      v->standardView("top");
+      w.action("view.home")->trigger();
+      require(same(v->cameraJson(), front), "Home (H) goes back to it exactly: the direction, the target and the zoom");
+      doc->undo();
+      w.action("view.home")->trigger();
+      require(!v->customHome() && looking().IsEqual(gp_Dir(-1, 1, -1), 1e-9), "undone, Home is the iso view again");
+      doc->redo();
+      v->standardView("top");
+      w.action("view.home")->trigger();
+      require(v->customHome() && same(v->cameraJson(), front), "redone, Home is the front view again");
+      const opad::json right = zoomed("right", 3);
+      w.action("view.setHome")->trigger();
+      v->standardView("top");
+      w.action("view.home")->trigger();
+      require(homes() == 2 && same(v->cameraJson(), right), "set again, the last one is Home");
+      const opad::Scene saved = opad::resolve(opad::Document::parse(doc->doc.serialize()));
+      require(saved.views.size() == 2 && saved.views[0].home && saved.views[1].home && same(saved.views[1].camera, right), "both are in the saved text, marked home");
+      // In 2D mode a Home along another direction keeps the plane (and fits); one along the plane is gone to.
+      v->standardView("top");
+      v->setTwoDimensional(true);
+      const gp_Dir plan = looking();
+      w.action("view.home")->trigger();
+      require(looking().IsEqual(plan, 1e-9), "in 2D a Home looking from the right keeps the plan");
+      v->setTwoDimensional(false);
+      const size_t steps = doc->doc.ops.size();
+      w.action("view.resetHome")->trigger();
+      QElapsedTimer clock;
+      clock.start();
+      while ((doc->designBusy || homes() > 0) && clock.elapsed() < 10000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+      w.updateCommands();
+      w.action("view.home")->trigger();
+      require(homes() == 0 && doc->doc.ops.size() == steps + 2 && !v->customHome() && !w.action("view.resetHome")->isEnabled() &&
+                  looking().IsEqual(gp_Dir(-1, 1, -1), 1e-9),
+              "Reset Home tombstones both in one step, Home is the iso view, Reset Home is off");
+      doc->undo();
+      require(homes() == 2 && same(v->homeCamera(), right), "one undo brings both back");
+      doc->undo(2);
+      require(homes() == 0, "undone to the start, no Home");
+    }
     // The turn buttons twist the 2D view.
     w.action("view.2d")->setChecked(true);
     require(!w.m_rollLeft->isHidden() && !w.m_rollRight->isHidden(), "the turn buttons stay in 2D mode");

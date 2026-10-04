@@ -30,7 +30,9 @@
  "Zoom window: drag around what to see, or click to zoom in there · Esc cancels": "تكبير نافذة: اسحب حول ما تريد رؤيته، أو انقر للتكبير هناك · Esc للإلغاء",
  "No earlier view": "لا يوجد منظر سابق",
  "No later view": "لا يوجد منظر لاحق",
- "Home looks this way now": "المنظر الرئيسي يتجه هكذا الآن",
- "Home is the iso view again": "المنظر الرئيسي هو المنظر المتساوي القياس من جديد",
+ "Home (H) is this view now, saved with the document": "المنظر الرئيسي (H) هو هذا المنظر الآن، ويُحفظ مع المستند",
+ "reset Home": "إعادة تعيين المنظر الرئيسي",
+ "set Home": "تعيين المنظر الرئيسي",
+ "Home view": "المنظر الرئيسي",
  "Animate view changes": "تحريك تغييرات المنظر"
 }

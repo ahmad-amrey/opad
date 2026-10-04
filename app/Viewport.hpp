@@ -130,9 +130,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool zoomWindowActive() const { return m_zoomWindow; }
   bool previousView();  // the view the camera rested at before this one (ViewNav.hpp); false: none
   bool nextView();
-  void setHomeView();    // Home looks the way the view looks now (direction and up; it still fits), in every document
-  void resetHomeView();  // Home is the iso view again
-  bool customHome() const;
+  // The document's Home: the camera of its last live view op with "home" (ViewNavigation's Set current view as Home),
+  // null when it has none (Home is then the iso view, fitted).
+  opad::json homeCamera() const;
+  bool customHome() const { return !homeCamera().is_null(); }
   void twistView(double degrees);  // the view turned this far about its axis from untwisted (2D view twist), animated
   double twistAngle() const;       // how far it is turned now, degrees
   void setAnimateViews(bool on);   // setting view/animate (default on)
@@ -708,5 +709,6 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void animateCamera(const Handle(Graphic3d_Camera)& end, double seconds);
   void finishAnimation();  // a running camera animation jumps to its end
   gp_Dir naturalUp() const;
+  bool applyHomeCamera();  // the camera to the document's Home (homeCamera); false: none to go to
   bool zoomWindowKey(QObject* object, QEvent* e);  // Esc leaves the zoom window before anything else sees it
 };

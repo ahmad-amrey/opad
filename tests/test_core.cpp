@@ -3,6 +3,7 @@
 #include <set>
 
 #include "check.hpp"
+#include "opad/commands.hpp"
 #include "opad/document.hpp"
 #include "opad/scene.hpp"
 #include "opad/util.hpp"
@@ -339,6 +340,34 @@ TEST(tombstones_and_gc) {
   CHECK_EQ(d.gc().size(), 1u);
   CHECK_EQ(d.body_count(), 0u);
   CHECK_EQ(d.ops.size(), 5u);  // history untouched
+}
+
+// The document's Home (UI-47) is a view op with an optional "home": true; an older build reads it as a view named Home.
+TEST(home_view_is_a_view_op_with_an_optional_key) {
+  Document d = Document::create();
+  const json camera{{"eye", {100, -100, 100}}, {"target", {0, 0, 0}}, {"up", {0, 0, 1}}, {"projection", "orthographic"}, {"scale", 80}, {"absolute", true}};
+  commands::run("view", {{"name", "Front"}, {"camera", camera}}, &d);
+  const std::string first = commands::run("view", {{"home", true}, {"camera", camera}}, &d)["id"];
+  json later = camera;
+  later["scale"] = 40;
+  const std::string second = commands::run("view", {{"home", true}, {"camera", later}}, &d)["id"];
+  const json op = d.find_op(first)->data;
+  CHECK(op["name"] == "Home" && op["home"] == true && !d.find_op(d.ops.front().id)->data.contains("home"));
+  Scene s = resolve(d);
+  CHECK_EQ(s.views.size(), 3u);
+  CHECK(!s.views[0].home && s.views[1].home && s.views[2].home && s.views[2].camera["scale"] == 40);
+  const std::string text = d.serialize();
+  CHECK_EQ(Document::parse(text).serialize(), text);
+  CHECK(resolve(Document::parse(text)).views[1].home);
+  // Reset: tombstones; the named view stays.
+  d.append(json{{"op", "delete"}, {"target", first}});
+  d.append(json{{"op", "delete"}, {"target", second}});
+  s = resolve(d);
+  CHECK(s.views.size() == 1u && !s.views[0].home && s.views[0].name == "Front");
+  // A view op without the key (every file before it) is a plain bookmark; a non-boolean value is not a Home.
+  json odd{{"op", "view"}, {"name", "Odd"}, {"camera", camera}, {"home", "yes"}};
+  d.append(odd);
+  CHECK(!resolve(d).views.back().home);
 }
 
 TEST(missing_body_entry_is_flagged_not_dropped) {

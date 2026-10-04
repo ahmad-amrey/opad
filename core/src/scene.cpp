@@ -437,6 +437,7 @@ struct SceneBuilder::Impl {
       v.id = id;
       v.name = d["name"].get<std::string>();
       v.camera = d["camera"];
+      v.home = d.contains("home") && d["home"].is_boolean() && d["home"].get<bool>();
       scene.views.push_back(v);
     } else if (type == "param") {
       Param p;

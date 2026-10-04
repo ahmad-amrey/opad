@@ -1324,15 +1324,8 @@ void Viewport::home(bool animate) {
   if(!m_initialised) return;
   myViewAnimation->Stop();m_needFit=false;
   moveCamera(animate,0.4,[this] {
-    // The orientation Home was set to (setHomeView, UI-47), else the iso view; 2D mode keeps its plane.
-    if(!m_twoDimensional) {
-      const QStringList eye=QSettings().value("view/homeEye").toString().split(','),up=QSettings().value("view/homeUp").toString().split(',');
-      gp_Vec e,u;bool custom=eye.size()==3 && up.size()==3;
-      if(custom) {e=gp_Vec(eye[0].toDouble(),eye[1].toDouble(),eye[2].toDouble());u=gp_Vec(up[0].toDouble(),up[1].toDouble(),up[2].toDouble());}
-      custom=custom && e.Magnitude()>1e-9 && u.Magnitude()>1e-9 && e.CrossMagnitude(u)>1e-6*e.Magnitude()*u.Magnitude();
-      if(custom) {m_view->SetProj(e.X(),e.Y(),e.Z());m_view->SetUp(u.X(),u.Y(),u.Z());}
-      else m_view->SetProj(V3d_XposYnegZpos);
-    }
+    if(applyHomeCamera()) return;  // the document's own Home (UI-47), as it was set
+    if(!m_twoDimensional) m_view->SetProj(V3d_XposYnegZpos);  // else the iso view, fitted; 2D mode keeps its plane
     const Bnd_Box bounds=fitBounds();
     const gp_Pnt center((bounds.CornerMin().XYZ()+bounds.CornerMax().XYZ())*.5);
     const auto camera=m_view->Camera();const gp_Vec shift(camera->Center(),center);

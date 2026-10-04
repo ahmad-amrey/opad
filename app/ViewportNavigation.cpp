@@ -1,4 +1,4 @@
-// Navigation staples (UI-47): the zoom window, previous and next view, a Home of the user's own, the view twist and the
+// Navigation staples (UI-47): the zoom window, previous and next view, the document's own Home, the view twist and the
 // animated camera moves the commands use. The CAD 2D preset is in setNavPreset, the middle double click in
 // mouseDoubleClickEvent, the cube's menu in the mouse handlers (Viewport.cpp).
 #include <QGuiApplication>
@@ -12,10 +12,10 @@
 #include <algorithm>
 
 #include "Viewport.hpp"
+#include "opad/render.hpp"
 
 namespace {
 Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
-QString triple(const gp_XYZ& v) { return QString("%1,%2,%3").arg(v.X(), 0, 'g', 17).arg(v.Y(), 0, 'g', 17).arg(v.Z(), 0, 'g', 17); }
 }  // namespace
 
 // ---------------------------------------------------------------- animated moves
@@ -174,23 +174,32 @@ bool Viewport::nextView() {
 }
 
 // ---------------------------------------------------------------- Home
-void Viewport::setHomeView() {
-  if (!m_initialised) return;
-  const Handle(Graphic3d_Camera)& c = m_view->Camera();
-  QSettings settings;
-  settings.setValue("view/homeEye", triple(c->Direction().Reversed().XYZ()));
-  settings.setValue("view/homeUp", triple(c->Up().XYZ()));
-  emit hoverChanged(tr("Home looks this way now"));
+opad::json Viewport::homeCamera() const {
+  if (!m_doc) return nullptr;
+  const auto& views = m_doc->scene.views;
+  const auto home = std::find_if(views.rbegin(), views.rend(), [](const opad::ViewBookmark& v) { return v.home && v.camera.is_object(); });
+  return home == views.rend() ? opad::json() : home->camera;
 }
 
-void Viewport::resetHomeView() {
-  QSettings settings;
-  settings.remove("view/homeEye");
-  settings.remove("view/homeUp");
-  emit hoverChanged(tr("Home is the iso view again"));
+// The document's Home camera: where it looked from, at and how far zoomed (the projection stays as it is). False: none,
+// or one that cannot be a camera.
+bool Viewport::applyHomeCamera() {
+  const opad::json j = homeCamera();
+  if (j.is_null()) return false;
+  try {
+    const opad::Camera cam = opad::Camera::from_json(j);
+    const gp_Vec eye(cam.eye[0], cam.eye[1], cam.eye[2]), target(cam.target[0], cam.target[1], cam.target[2]), up(cam.up[0], cam.up[1], cam.up[2]);
+    if (!cam.absolute || (eye - target).Magnitude() < 1e-9 || up.Magnitude() < 1e-9 || (eye - target).CrossMagnitude(up) < 1e-9 * (eye - target).Magnitude() * up.Magnitude()) return false;
+    const Handle(Graphic3d_Camera)& c = m_view->Camera();
+    if (m_twoDimensional && !c->Direction().IsParallel(gp_Dir(target - eye), 1e-6)) return false;  // 2D keeps its plane
+    c->SetEyeAndCenter(gp_Pnt(eye.XYZ()), gp_Pnt(target.XYZ()));
+    c->SetUp(gp_Dir(up));
+    if (cam.scale > 0 && c->IsOrthographic()) c->SetScale(cam.scale);
+    return true;
+  } catch (const std::exception&) {
+    return false;
+  }
 }
-
-bool Viewport::customHome() const { return QSettings().contains("view/homeEye"); }
 
 // ---------------------------------------------------------------- twist
 gp_Dir Viewport::naturalUp() const {
