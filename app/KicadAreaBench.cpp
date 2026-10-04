@@ -338,8 +338,11 @@ OPAD_BENCH(OPAD_BENCH_KICAD_PROJECT, kicad_project) {
         if (positioning) design->planePicker()->apply();
         waitFor(&w, [=] { return design->sketchActive(); }, 10000, [=, &w](bool sketching) {
           w.updateCommands();
-          (*require)(sketching && w.action("kicad.project")->isEnabled() && w.m_commands.inWorkspace("sketch").contains("kicad.project"),
-                     "a sketch on XY: Project KiCad board offered on its Reference tab");
+          bool onTab = false;  // the Sketch tab, first in Design while sketching: its Reference group
+          if (RibbonPage* page = w.m_ribbon->page("design.sketch"))
+            for (QToolButton* b : page->findChildren<QToolButton*>()) onTab = onTab || b->defaultAction() == w.action("kicad.project");
+          (*require)(sketching && w.action("kicad.project")->isEnabled() && onTab && w.m_ribbon->tabIds().value(0) == "design.sketch",
+                     "a sketch on XY: Project KiCad board offered in the Sketch tab's Reference group");
           QDialog* dialog = kicad->project();
           auto* outline = dialog ? dialog->findChild<QCheckBox*>("kicadOutline") : nullptr;
           auto* holes = dialog ? dialog->findChild<QCheckBox*>("kicadHoles") : nullptr;

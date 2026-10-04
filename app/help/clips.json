@@ -3241,10 +3241,10 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
     {"el": "chip", "screen": [0.03, 0.05], "text": "View", "from": -1, "to": 1, "fade": 0.15},
     {"el": "chip", "screen": [0.2, 0.05], "text": "Inspect", "from": -1, "to": 1, "fade": 0.15},
-    {"el": "chip", "screen": [0.43, 0.05], "text": "Annotate", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Markup", "from": -1, "to": 1, "fade": 0.15},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Solid", "from": 1, "to": 9, "fade": 0.15},
-    {"el": "chip", "screen": [0.22, 0.05], "text": "Modify", "from": 1, "to": 9, "fade": 0.15},
-    {"el": "chip", "screen": [0.43, 0.05], "text": "Assemble", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.22, 0.05], "text": "Assemble", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Construct", "from": 1, "to": 9, "fade": 0.15},
     {"el": "key", "caps": ["Ctrl", "2"], "press": 0.9, "from": 0.6, "to": 1.4}
    ],
    "steps": [
@@ -3258,11 +3258,11 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Solid", "from": -1, "to": 1, "fade": 0.15},
-    {"el": "chip", "screen": [0.22, 0.05], "text": "Modify", "from": -1, "to": 1, "fade": 0.15},
-    {"el": "chip", "screen": [0.43, 0.05], "text": "Assemble", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.22, 0.05], "text": "Assemble", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Construct", "from": -1, "to": 1, "fade": 0.15},
     {"el": "chip", "screen": [0.03, 0.05], "text": "View", "from": 1, "to": 9, "fade": 0.15},
     {"el": "chip", "screen": [0.2, 0.05], "text": "Inspect", "from": 1, "to": 9, "fade": 0.15},
-    {"el": "chip", "screen": [0.43, 0.05], "text": "Annotate", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Markup", "from": 1, "to": 9, "fade": 0.15},
     {"el": "key", "caps": ["Ctrl", "1"], "press": 0.9, "from": 0.6, "to": 1.4}
    ],
    "steps": [

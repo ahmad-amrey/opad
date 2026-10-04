@@ -66,7 +66,12 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   m_status->setWordWrap(true);
   m_run = new QPushButton(tr("Check"), this);
   m_run->setObjectName("primary");
+  m_keep = new QPushButton(tr("Keep as check"), this);
+  m_keep->setObjectName("keepCheck");
+  m_keep->setToolTip(tr("Adds this check to the design's history: it runs again whenever these bodies change, and the timeline shows what it finds"));
+  m_keep->hide();
   row->addWidget(m_status, 1);
+  row->addWidget(m_keep);
   row->addWidget(m_run);
   v->addLayout(row);
   m_list = new QListWidget(this);
@@ -74,6 +79,7 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   v->addWidget(m_list);
   v->addStretch(1);  // a panel taller than its content keeps the room at the bottom, not between the options and Check
   connect(m_run, &QPushButton::clicked, this, &CheckPanel::runRequested);
+  connect(m_keep, &QPushButton::clicked, this, &CheckPanel::keepRequested);
   connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
     if (row >= 0 && static_cast<size_t>(row) < m_findings.size()) emit findingActivated(m_findings[static_cast<size_t>(row)]);
   });
@@ -109,6 +115,13 @@ void CheckPanel::hideEvent(QHideEvent* e) {
   if (m_values) m_values->reset();
 }
 
+void CheckPanel::setKeepable(bool on) {
+  m_keepable = on;
+  showKeep();
+}
+
+void CheckPanel::showKeep() { m_keep->setVisible(m_keepable && m_mode == Mode::Interference && !m_result.is_null()); }
+
 void CheckPanel::begin(Mode mode) {
   m_mode = mode;
   m_interference->setVisible(mode == Mode::Interference);
@@ -117,6 +130,7 @@ void CheckPanel::begin(Mode mode) {
   m_list->clear();
   m_status->clear();
   m_result = opad::json();
+  showKeep();
   showFindings();
 }
 
@@ -171,6 +185,7 @@ void CheckPanel::setResult(const opad::json& r) {
                                                  : tr("Overlapping pairs: %1, too close: %2. Bodies checked: %3.").arg(overlaps).arg(close).arg(r.value("bodies", 0));
     if (r.contains("truncated")) status += tr(" Not every pair was checked: select fewer bodies.");
     m_status->setText(status);
+    showKeep();
     showFindings();
     return;
   }

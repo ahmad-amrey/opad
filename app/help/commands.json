@@ -388,8 +388,8 @@
   {
    "id": "workspace.review",
    "title": "Review workspace",
-   "summary": "Switches the ribbon to Review: look, measure, annotate.",
-   "details": "Nothing in Review changes geometry or structure. The document and its timeline stay the same; only the ribbon's tabs change.",
+   "summary": "Switches the ribbon to Review: look, measure, mark up, compare and share.",
+   "details": "Nothing in Review changes geometry or structure: a Design command started here, such as Extrude, switches to Design first. The document and its timeline stay the same; only the ribbon's tabs change.",
    "keywords": ["viewer", "inspect", "measure"]
   },
   {
@@ -1346,7 +1346,7 @@
   {
    "id": "sketch.moreCreate",
    "title": "More create tools",
-   "summary": "Lists every Create tool, including the ones not on the ribbon.",
+   "summary": "Lists every Create tool in the Sketch menu, the ones under the ribbon's arrows too.",
    "details": "Rotated rectangles, tangent arcs, slots, conics, text and more. Search commands (S) finds any of them by name too.",
    "keywords": ["more", "all tools", "create"],
    "requires": "Only while a sketch is open: start one with New sketch."
@@ -1634,7 +1634,7 @@
   {
    "id": "sketch.moreConstrain",
    "title": "More constraints",
-   "summary": "Lists every constraint tool, including the ones not on the ribbon.",
+   "summary": "Lists every constraint tool in the Sketch menu, the ones under the ribbon's arrows too.",
    "details": "Equal, concentric, midpoint, symmetric, collinear and the spline continuity constraints are here. Search commands (S) finds any of them by name too.",
    "keywords": ["more", "all constraints"],
    "requires": "Only while a sketch is open: start one with New sketch."
@@ -1642,7 +1642,7 @@
   {
    "id": "sketch.moreModify",
    "title": "More modify tools",
-   "summary": "Lists every Modify tool, including the ones not on the ribbon.",
+   "summary": "Lists every Modify tool in the Sketch menu, the ones under the ribbon's arrows too.",
    "details": "Move, rotate, scale, patterns, split, extend, region booleans and healing are here. Search commands (S) finds any of them by name too.",
    "keywords": ["more", "all tools", "modify"],
    "requires": "Only while a sketch is open: start one with New sketch."

@@ -83,13 +83,6 @@ void SmartArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   if (QMenu* edit = menus.value("edit")) insertAfter(*edit, services().action("edit.selecttouched"), {m_similarAction});
 }
 
-void SmartArea::ribbon(RibbonLayout& layout) {
-  layout.addAction("review.inspect.results", m_similarAction);
-  // Remove faces under Offset face's arrow (both change faces in place): the Modify row stays large at 1600 px.
-  if (RibbonLayout::Group* modify = layout.group("design.modify.modify"))
-    for (RibbonLayout::Item& item : modify->items)
-      if (item.action && item.action == services().action("design.offset_face")) item.variants << services().action("design.remove_faces");
-}
 
 // Picked faces or edges: the ones like them, and taking the faces away; one body: its edges and faces by rule. After
 // Properties.

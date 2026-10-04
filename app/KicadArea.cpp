@@ -132,19 +132,6 @@ void KicadArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   }
 }
 
-void KicadArea::ribbon(RibbonLayout& layout) {
-  if (RibbonLayout::Group* g = layout.group("design.assemble.components")) {  // after Link as asset, else after Import
-    int at = 0;
-    for (int i = 0; i < g->items.size(); ++i)
-      if (g->items[i].action == services().action("assets.link") || g->items[i].action == services().action("file.import")) at = i + 1;
-    RibbonLayout::Item item;
-    item.action = services().action("kicad.insert");
-    g->items.insert(std::min(at, int(g->items.size())), item);
-  }
-  layout.addAction("sketch.reference.reference", services().action("kicad.project"));
-  layout.addAction("review.inspect.check", services().action("kicad.clearance"));
-  for (const char* group : {"review.view.display", "design.view.display"}) layout.addAction(group, services().action("view.hideSmallParts"), RibbonLayout::Size::Small);
-}
 
 void KicadArea::ready() {
   buildPanel();

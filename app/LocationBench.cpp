@@ -75,8 +75,8 @@ OPAD_BENCH(OPAD_BENCH_PATHS, paths) {
       const QList<QAction*> items = file ? file->actions() : QList<QAction*>();
       require(items.indexOf(reveal) == items.indexOf(w.action("file.screenshot")) + 1 && items.indexOf(copy) == items.indexOf(reveal) + 1,
               "File: Open file location and Copy path after Save screenshot…");
-      // The ribbon: each workspace's Export tab, its File group, and so both workspaces in the commands' records.
-      for (const QString& tab : {QStringLiteral("review.export"), QStringLiteral("design.export")}) {
+      // The ribbon: Review > Share and Drafting > Output, their File group, and so both workspaces in the commands' records.
+      for (const QString& tab : {QStringLiteral("review.share"), QStringLiteral("drafting.output")}) {
         RibbonPage* page = w.m_ribbon->page(tab);
         QList<QAction*> tools;
         for (RibbonGroup* g : page ? page->groups() : QList<RibbonGroup*>())
@@ -84,16 +84,16 @@ OPAD_BENCH(OPAD_BENCH_PATHS, paths) {
             for (QToolButton* b : g->buttons()) tools << b->defaultAction();
         require(tools.contains(reveal) && tools.contains(copy) && tools.indexOf(copy) == tools.indexOf(reveal) + 1, tab + ": no Open file location / Copy path in its File group");
       }
-      require(info->workspaces.contains("review") && info->workspaces.contains("design") && w.m_commands.find("file.copyPath")->workspaces.contains("design"),
+      require(info->workspaces.contains("review") && info->workspaces.contains("drafting") && w.m_commands.find("file.copyPath")->workspaces.contains("drafting"),
               "the records' workspaces: " + info->workspaces.join(' '));
-      if (const int at = w.m_ribbon->tabIds().indexOf("review.export"); at >= 0 && !prefix.isEmpty()) {
+      if (const int at = w.m_ribbon->tabIds().indexOf("review.share"); at >= 0 && !prefix.isEmpty()) {
         const int was = w.m_ribbon->currentTab();
         w.m_ribbon->setCurrentTab(at);
         QCoreApplication::processEvents();
         w.m_ribbon->grab().save(prefix + ".ribbon.png");
         w.m_ribbon->setCurrentTab(was);
       }
-      pass("the ribbon: Open file location and Copy path in the File group of Review's and Design's Export tabs");
+      pass("the ribbon: Open file location and Copy path in the File group of Review > Share and Drafting > Output");
       reveal->trigger();
       require(!launched->empty() && launched->back().selects && launched->back().arguments.contains(native) &&
                   QFileInfo(launched->back().program).fileName().compare("explorer.exe", Qt::CaseInsensitive) == 0,

@@ -77,10 +77,10 @@ OPAD_BENCH(OPAD_BENCH_COMMANDS, commands) {
               extrude->workspaces == QStringList{"design"} && opGroup(w.action("design.extrude")) == extrude->group,
           "design.extrude: group " + (extrude ? extrude->group + ", menu " + extrude->menuPath + ", workspaces " + extrude->workspaces.join(' ') : QString("none")));
   const CommandInfo* fit = registry.find("view.fit");
-  require(fit && fit->workspaces == QStringList({"review", "design"}) && fit->menuPath == "view" && registry.find("nav.fusion")->menuPath == "view/navigation" &&
-              registry.find("sketch.line")->workspaces == QStringList{"sketch"} && registry.inWorkspace("review").contains("inspect.distance") &&
-              !registry.inWorkspace("review").contains("design.extrude"),
-          "workspaces from the ribbon, menu paths from the menu bar");
+  require(fit && fit->workspaces == QStringList({"review", "design", "drafting"}) && fit->menuPath == "view" && registry.find("nav.fusion")->menuPath == "view/navigation" &&
+              registry.find("sketch.line")->workspaces == QStringList{"design"} && registry.find("sketch.line")->menuPath == "sketch/create" &&
+              registry.inWorkspace("review").contains("inspect.distance") && !registry.inWorkspace("review").contains("design.extrude"),
+          "workspaces from the ribbon (the Sketch tab is Design's), menu paths from the menu bar");
   // The filters are one choice among four; Select through objects is a setting of its own that they leave as it is.
   QAction* through = w.action("select.through");
   const bool wasThrough = through->isChecked();
@@ -351,9 +351,8 @@ OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
       QCoreApplication::processEvents();
       if (const QString wrong = tabRow(nullptr); !wrong.isEmpty() || search->compact()) row << w.m_workspaceIds[ws] + ": " + (wrong.isEmpty() ? QString("search compact") : wrong);
       QList<QImage> strips;
-      for (int t = 0; t < ribbon->tabBar()->count(); ++t) {
-        ribbon->setCurrentTab(t);
-        QCoreApplication::processEvents();
+      // Each tab of the workspace, then each contextual tab shown in turn (Sketch, Explode, Canvas: first in the row).
+      auto visit = [&](bool contextual) {
         RibbonPage* page = ribbon->currentPage();
         ++tabs;
         const QList<int> levels = page->levels();
@@ -393,9 +392,24 @@ OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
         const QRect tools = page->parentWidget()->geometry(), control = select->geometry() | segments->geometry();
         if (tools.intersects(control) || (rtl ? segments->x() >= select->x() || control.right() >= tools.x() : segments->x() <= select->x() || control.x() <= tools.right()))
           outside << page->id() + " (Select control)";
-        if (width >= 1600 && (w.m_workspaceIds[ws] == "review" || w.m_workspaceIds[ws] == "design") && std::any_of(levels.begin(), levels.end(), [](int l) { return l > 0; }))
+        if (width >= 1600 && !contextual && (w.m_workspaceIds[ws] == "review" || w.m_workspaceIds[ws] == "design") &&
+            std::any_of(levels.begin(), levels.end(), [](int l) { return l > 0; }))
           small << page->id() + " " + levelText;
         strips << ribbon->grab().toImage();
+      };
+      for (int t = 0; t < ribbon->tabBar()->count(); ++t) {
+        ribbon->setCurrentTab(t);
+        QCoreApplication::processEvents();
+        visit(false);
+      }
+      for (const QString& id : ribbon->contextualTabs(ws)) {
+        ribbon->setContextualTab(id, true);
+        QCoreApplication::processEvents();
+        if (ribbon->tabIds().value(0) != id || ribbon->currentPage() != ribbon->page(id)) row << id + ": not first and current";
+        if (const QString wrong = tabRow(nullptr); !wrong.isEmpty()) row << id + ": " + wrong;  // search may give up its field here
+        visit(true);
+        ribbon->setContextualTab(id, false);
+        QCoreApplication::processEvents();
       }
       if (!shot.isEmpty() && !strips.isEmpty()) {
         QImage sheet(strips.first().width(), strips.first().height() * static_cast<int>(strips.size()), QImage::Format_ARGB32);

@@ -147,30 +147,44 @@ void DocsArea::buildDrawingCommands() {
   buildAnnotateCommands();
 }
 
+// Sheet · Views · Annotate · Tables · Output (UI-104, Appendix A "Document"): the sheet and its template, the views
+// placed on it, what annotates them (DocsAnnotate.cpp), the tables that list the parts, and what leaves the drawing.
 void DocsArea::drawingsRibbon(RibbonLayout& layout) {
   layout.addWorkspace("drawings", {tr("Drawings"), "drawingSheet", "Ctrl+3", tr("Technical drawings of the model: sheets with a frame and a title block, standard views, PDF, DXF and DWG."),
                                    tr("ops: sheet · sheet_view · sheet_item · properties")});
-  layout.addTab("drawings", "drawings.drawing", tr("Drawing"));
-  const auto group = [&](const char* name, const QString& title, std::initializer_list<const char*> ids) {
-    const QString id = QString("drawings.drawing.") + name;
-    layout.addGroup("drawings.drawing", id, title);
-    for (const char* a : ids) layout.addAction(id, services().action(a));
+  using Size = RibbonLayout::Size;
+  const auto add = [&](const QString& group, const char* id, Size size = Size::Large, const QList<QAction*>& variants = {}) {
+    if (QAction* a = services().action(id)) layout.addAction(group, a, size, variants);
   };
-  group("sheet", tr("Sheet"), {"drawings.new", "drawings.newSheet", "drawings.sheetProperties", "file.documentProperties", "drawings.templateFile", "drawings.templateFields"});
-  layout.addGroup("drawings.drawing", "drawings.drawing.views", tr("Views"));
+  layout.addTab("drawings", "drawings.sheet", tr("Sheet"));
+  layout.addGroup("drawings.sheet", "drawings.sheet.sheet", tr("Sheet"));
+  add("drawings.sheet.sheet", "drawings.new");
+  add("drawings.sheet.sheet", "drawings.newSheet");
+  for (const char* id : {"drawings.sheetProperties", "file.documentProperties", "drawings.templateFile", "drawings.templateFields"}) add("drawings.sheet.sheet", id, Size::Small);
+  layout.addGroup("drawings.sheet", "drawings.sheet.show", tr("Show"));
+  add("drawings.sheet.show", "drawings.fit");
+  layout.addTab("drawings", "drawings.views", tr("Views"));
+  layout.addGroup("drawings.views", "drawings.views.place", tr("Place"));
   QList<QAction*> bases;
   for (const auto& [orient, label] : baseViews()) bases << services().action(QString::fromStdString("drawings.baseView." + orient));
-  layout.addAction("drawings.drawing.views", services().action("drawings.baseView"), RibbonLayout::Size::Large, bases);
-  layout.addAction("drawings.drawing.views", services().action("drawings.projectedView"));
-  layout.addAction("drawings.drawing.views", services().action("drawings.isoView"));
-  for (const char* id : {"drawings.sectionView", "drawings.detailView", "drawings.auxiliaryView", "drawings.breakoutView", "drawings.cropView", "drawings.breakView"})
-    layout.addAction("drawings.drawing.views", services().action(id));
-  group("style", tr("Style"), {"drawings.hiddenLines", "drawings.tangentEdges", "drawings.update"});
-  layout.addGroup("drawings.drawing", "drawings.drawing.output", tr("Output"));
-  layout.addAction("drawings.drawing.output", services().action("drawings.print"));
-  layout.addAction("drawings.drawing.output", services().action("drawings.exportSheet"), RibbonLayout::Size::Large, {services().action("drawings.exportDrawing")});
-  for (const char* id : {"drawings.issue", "file.export", "file.exportBom", "drawings.fit"}) layout.addAction("drawings.drawing.output", services().action(id));
+  add("drawings.views.place", "drawings.baseView", Size::Large, bases);
+  for (const char* id : {"drawings.projectedView", "drawings.isoView"}) add("drawings.views.place", id);
+  layout.addGroup("drawings.views", "drawings.views.derived", tr("From a view"));
+  add("drawings.views.derived", "drawings.sectionView");
+  add("drawings.views.derived", "drawings.detailView");
+  for (const char* id : {"drawings.auxiliaryView", "drawings.breakoutView", "drawings.cropView", "drawings.breakView"}) add("drawings.views.derived", id, Size::Small);
+  layout.addGroup("drawings.views", "drawings.views.style", tr("Style"));
+  add("drawings.views.style", "drawings.update");
+  add("drawings.views.style", "drawings.hiddenLines", Size::Small);
+  add("drawings.views.style", "drawings.tangentEdges", Size::Small);
   annotateRibbon(layout);
+  layout.addTab("drawings", "drawings.output", tr("Output"));
+  layout.addGroup("drawings.output", "drawings.output.output", tr("Output"));
+  add("drawings.output.output", "drawings.print");
+  add("drawings.output.output", "drawings.exportSheet", Size::Large, {services().action("drawings.exportDrawing")});
+  add("drawings.output.output", "file.export");
+  layout.addGroup("drawings.output", "drawings.output.release", tr("Release"));
+  add("drawings.output.release", "drawings.issue");
 }
 
 // ---------------------------------------------------------------- the page

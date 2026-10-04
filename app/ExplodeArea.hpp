@@ -181,5 +181,6 @@ class Explode : public AreaController {
   QAction* m_split = nullptr;
   QAction* m_group = nullptr;
   QAction* m_ungroup = nullptr;
+  QAction* m_finish = nullptr;  // closes the panel and its ribbon tab; the parts stay where they are
   int m_chipPercent = -1;
 };

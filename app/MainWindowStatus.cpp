@@ -130,6 +130,11 @@ void MainWindow::buildStatusBar() {
     button->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(button,&QToolButton::customContextMenuRequested,this,[this,button,id=QString(spec.id)]{toggleMenu(button,id);});
   }
+  if (m_snappingMenu)  // View > Snapping: the same switches, after Object snap (F3)
+    for (const char* id : {"view.gridSnap", "view.orthoSnap", "view.polarSnap", "view.extensions", "view.tracking"}) {
+      m_snappingMenu->addAction(action(id));
+      m_commands.setMenuPath(id, "view/snapping");
+    }
   // One grid snapping switch: the sketch panel's checkbox turns the viewport's, and F9 follows (and saves it).
   connect(m_viewport,&Viewport::gridSnapChanged,this,[this](bool on){action("view.gridSnap")->setChecked(on);});
   connect(m_viewport,&Viewport::gridShownChanged,action("view.grid"),&QAction::setChecked);  // G shows the sketch's own grid state in a sketch

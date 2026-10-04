@@ -3,7 +3,7 @@
 // (AreaController.hpp): File > Export bill of materials and Inspect > Part properties with their menu, ribbon and context
 // menu places, the browser's Drawings folder (DrawingsFolder.hpp: rename in place, Del, the rows' menu with Export
 // sheet… / Export drawing…), the Properties panel's PART section with its link, and the dialogs and jobs they start.
-// The Drawings workspace (Ctrl+3, DocsWorkspace.cpp, UI-78): its ribbon tab (temporary until the ribbon is reorganised),
+// The Drawings workspace (Ctrl+3, DocsWorkspace.cpp, UI-78): its ribbon tabs (Sheet, Views, Annotate, Tables, Output),
 // the sheet page in the viewport's place (SheetPage, SheetCanvas), New drawing from a template, new sheets, sheet
 // properties, a template from a DXF or DWG file, base, projected and isometric views placed with the mouse, view styles.
 // Its Annotate tab (DocsAnnotate.cpp, UI-79 to UI-81): dimensions, hole callouts and tables, centre marks and lines, notes,

@@ -193,6 +193,17 @@ void Explode::buildActions() {
   m_ungroup = services().addCommand(info, [this] {
     for (const auto& id : services().selection().ids) ungroup(id);
   });
+  info.id = "assembly.explodeFinish";
+  info.label = tr("Finish explode");
+  info.icon = "finish";
+  info.keywords = {"explode", "done", "close", "exploded view"};
+  info.enabledWhen = [](const CommandContext& c) { return c.document; };
+  m_finish = services().addCommand(info, [this] {
+    if (playing()) pause();
+    if (m_panel) m_panel->hide();
+  });
+  m_finish->setProperty("shortcutHint", tr("Closes the Explode tab and panel; the parts stay where they are until Collapse."));
+  shortcuts::updateTooltip(m_finish);
   m_chipMenu = new QMenu(services().window());
   m_chipMenu->setObjectName("explodeChipMenu");
   m_chipMenu->addActions({m_explode, m_play, m_off, m_save});
@@ -213,15 +224,22 @@ void Explode::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
     });
 }
 
-// Design > Assemble: under Activate's small tools (the tab has no room for a group more at 1600 px); Review > View: beside
-// Isolate; Design > View: a group with Play and Collapse. Save is in the panel, the chip's menu and the palette.
+// The Explode tab (UI-104): while the panel is open it comes first in Review and Design, with Play, Collapse, what moves
+// together, Save, and Finish at the end. Exploded view itself is on Review > View and Design > Assemble (the ribbon table).
 void Explode::ribbon(RibbonLayout& layout) {
-  layout.addAction("design.assemble.components", m_explode, RibbonLayout::Size::Small);
-  layout.addAction("review.view.isolate", m_explode);
-  layout.addGroup("design.view", "design.view.explode", tr("Explode"));
-  layout.addAction("design.view.explode", m_explode);
-  layout.addAction("design.view.explode", m_play, RibbonLayout::Size::Small);
-  layout.addAction("design.view.explode", m_off, RibbonLayout::Size::Small);
+  for (const char* workspace : {"review", "design"}) {
+    const QString tab = QString::fromLatin1(workspace) + ".explode";
+    if (!layout.addContextualTab(workspace, tab, tr("Explode"))) continue;
+    layout.addGroup(tab, tab + ".motion", tr("Explode"));
+    layout.addAction(tab + ".motion", m_play);
+    layout.addAction(tab + ".motion", m_off);
+    layout.addGroup(tab, tab + ".together", tr("Move together"));
+    for (QAction* a : {m_keep, m_split, m_group, m_ungroup}) layout.addAction(tab + ".together", a, RibbonLayout::Size::Small);
+    layout.addGroup(tab, tab + ".views", tr("Exploded views"));
+    layout.addAction(tab + ".views", m_save);
+    layout.addGroup(tab, tab + ".finish", tr("Finish"));
+    layout.addAction(tab + ".finish", m_finish, RibbonLayout::Size::Large, {}, true);
+  }
 }
 
 void Explode::ready() {
@@ -237,6 +255,7 @@ void Explode::ready() {
   m_panel->setEscapeHandler(escape);
   services().addPanel(m_panel);
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this] {
+    for (const char* tab : {"review.explode", "design.explode"}) services().setContextualTab(tab, m_panel->isVisible());
     if (!m_panel->isVisible()) hideHint(false);
     placeHandle();
     services().browser()->refreshDecorations();

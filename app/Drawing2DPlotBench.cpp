@@ -150,7 +150,7 @@ OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
     auto child = [dialog](const char* name) { return dialog()->findChild<QWidget*>(name); };
     auto script = std::make_shared<Script>();
     script->add("open", [&w, plotAction, require] {
-      require(w.m_commands.find("drawing2d.plot")->menuPath == "file" && w.m_commands.inWorkspace("review").contains("drawing2d.plot"), "Plot is in the File menu and on the Export ribbon");
+      require(w.m_commands.find("drawing2d.plot")->menuPath == "file" && w.m_commands.inWorkspace("review").contains("drawing2d.plot"), "Plot is in the File menu and on Review > Share");
       w.m_viewport->fitAll();
       plotAction->trigger();
     }, ready);

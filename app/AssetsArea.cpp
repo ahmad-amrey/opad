@@ -256,18 +256,6 @@ void AssetsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   }
 }
 
-void AssetsArea::ribbon(RibbonLayout& layout) {
-  QAction* link = services().action("assets.link");
-  for (const char* id : {"design.assemble.components", "design.export.file", "review.export.file"})  // beside Import
-    if (RibbonLayout::Group* g = layout.group(id)) {
-      int at = 0;
-      while (at < g->items.size() && g->items[at].action != services().action("file.import")) ++at;
-      RibbonLayout::Item item;
-      item.action = link;
-      g->items.insert(std::min(at + 1, int(g->items.size())), item);
-    }
-  // Sync and the rest are where the files are: their badges, the context menu, Properties, Design > Linked files, the toast.
-}
 
 void AssetsArea::ready() {
   m_monitor = new AssetMonitor(services().document(), services().jobs(), this);

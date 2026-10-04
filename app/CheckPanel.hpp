@@ -31,9 +31,14 @@ class CheckPanel : public QWidget {
   // Its clearance, overhang and wall typed over `view` or the panel while `active` (UI-122: never the filters' or the
   // styles' digits); Enter checks again.
   void takeValues(QWidget* view, std::function<bool()> active);
+  // Interference only: after a result, Keep as check offers to store it as an Interference check feature (the one
+  // Interference command, UI-104: the stored check is this one kept, design.interference). Off for other checks.
+  void setKeepable(bool on);
+  QPushButton* keepButton() const { return m_keep; }
   ToolValues* values() const { return m_values; }
  signals:
   void runRequested();
+  void keepRequested();  // Keep as check: the same bodies and clearance as an Interference check in the history
   void findingActivated(const opad::json& finding);  // interference: a pair; print: {body, faces, kind}
   void contentResized();  // the findings list came or went: the panel fits again
  private:
@@ -47,6 +52,9 @@ class CheckPanel : public QWidget {
   QDoubleSpinBox* m_overhang = nullptr;
   QDoubleSpinBox* m_minWall = nullptr;
   QPushButton* m_run = nullptr;
+  QPushButton* m_keep = nullptr;
+  bool m_keepable = false;
+  void showKeep();
   QLabel* m_status = nullptr;
   QListWidget* m_list = nullptr;
   std::vector<opad::json> m_findings;

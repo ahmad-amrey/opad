@@ -98,6 +98,7 @@ class Vcs : public AreaController {
       CommandInfo step;
       step.id = id;
       step.label = label;
+      step.icon = delta > 0 ? "chevronDown" : "chevronUp";  // Review > Compare shows them small
       step.key = QKeySequence(QString::fromLatin1(key));
       step.scope = shortcuts::OutsideSketch;
       step.group = group;
@@ -122,15 +123,6 @@ class Vcs : public AreaController {
       if (QString::fromLatin1(id) == "-") version->addSeparator();
       else version->addAction(services().action(QString::fromLatin1(id)));
     file->insertMenu(before, version);
-  }
-  void ribbon(RibbonLayout& layout) override {
-    layout.addGroup("review.inspect", "review.inspect.versions", tr("Versions"));
-    layout.addAction("review.inspect.versions", services().action("vcs.compare"));
-    layout.addAction("design.construct.history", services().action("vcs.compare"));
-    for (const char* group : {"review.inspect.versions", "design.construct.history"}) {
-      layout.addAction(QString::fromLatin1(group), services().action("vcs.panel"));
-      layout.addAction(QString::fromLatin1(group), services().action("vcs.commit"));
-    }
   }
   void statusWidgets(QStatusBar*) override {  // the chip beside the document's path, in the row that never collapses (UI-08)
     m_git = new GitWatch(services().jobs(), services().window(), services().viewport());

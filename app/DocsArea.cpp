@@ -117,24 +117,9 @@ void DocsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   }
 }
 
-void DocsArea::ribbon(RibbonLayout& layout) {
-  const auto after = [&](const QString& group, const char* anchor, const char* id) {
-    RibbonLayout::Group* g = layout.group(group);
-    if (!g) return;
-    qsizetype at = g->items.size();
-    for (qsizetype i = 0; i < g->items.size(); ++i)
-      if (g->items[i].action == services().action(anchor)) at = i + 1;
-    RibbonLayout::Item item;
-    item.action = services().action(id);
-    g->items.insert(at, item);
-  };
-  after("review.inspect.results", "inspect.properties", "inspect.partProperties");
-  after("review.inspect.results", "inspect.partProperties", "inspect.material");
-  after("design.assemble.appearance", "design.colour", "inspect.material");  // what it is made of, beside how it looks
-  after("review.export.export", "file.export", "file.exportBom");
-  after("design.export.export", "file.export", "file.exportBom");
-  drawingsRibbon(layout);
-}
+// Part properties, materials and the bill of materials have their places in the window's ribbon table; the Drawings
+// workspace is this area's own.
+void DocsArea::ribbon(RibbonLayout& layout) { drawingsRibbon(layout); }
 
 void DocsArea::ready() {
   AppDocument* doc = services().document();

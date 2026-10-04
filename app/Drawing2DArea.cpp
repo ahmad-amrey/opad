@@ -175,16 +175,6 @@ class Drawing2DArea : public AreaController {
     view->insertActions(before, {m_layersAction, m_walkAction, m_isolateAction});
   }
 
-  void ribbon(RibbonLayout& layout) override {
-    if (QAction* area = services().action("inspect.area")) layout.addAction("review.inspect.measure", area);  // UI-90
-    for (const QString group : {"review.export.export", "design.export.export"}) layout.addAction(group, m_plotAction);  // UI-88
-    for (const QString tab : {"review.view", "design.view"})
-      if (layout.addGroup(tab, tab + ".drawing", tr("Drawing"))) {
-        layout.addAction(tab + ".drawing", m_layersAction);
-        layout.addAction(tab + ".drawing", m_walkAction, RibbonLayout::Size::Small);
-        layout.addAction(tab + ".drawing", m_isolateAction, RibbonLayout::Size::Small);
-      }
-  }
 
   void ready() override {
     services().viewport()->setObjectSnap(m_snapAction->isChecked());

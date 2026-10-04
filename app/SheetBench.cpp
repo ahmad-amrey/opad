@@ -89,7 +89,9 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     w.action("workspace.drawings")->trigger();
     QCoreApplication::processEvents();
     check(w.workspaceId() == "drawings" && w.m_stack->currentWidget() == page && page->empty(), "Ctrl+3 shows the Drawings workspace's page with its start card");
-    check(w.m_ribbon->tabIds().contains("drawings.drawing") && w.action("workspace.drawings")->shortcut() == QKeySequence("Ctrl+3"), "its ribbon tab and Ctrl+3");
+    check(w.m_ribbon->tabIds() == QStringList({"drawings.sheet", "drawings.views", "drawings.annotate", "drawings.tables", "drawings.output"}) &&
+              w.action("workspace.drawings")->shortcut() == QKeySequence("Ctrl+3"),
+          "its ribbon tabs (Sheet, Views, Annotate, Tables, Output) and Ctrl+3: " + w.m_ribbon->tabIds().join(' '));
     page->grab().save(prefix + ".empty.png");
     {  // toasts show over the page in the viewport's place (the window's notices, the areas' results)
       QPointer<Toast> t = w.m_toasts->toast("Bench toast");

@@ -85,15 +85,20 @@ class MainWindow : public QMainWindow {
   void noteCommand(const QString& id);  // a command ran: Repeat runs it again
   bool repeatOnEnter(const QKeyEvent* key);  // Enter in the view with nothing running: Repeat
   void buildRibbon();
+  void ribbonTable(RibbonLayout& layout);    // Review, Design and the Sketch tab: every command's slot (MainWindowRibbonTable.cpp)
+  void draftingTable(RibbonLayout& layout);  // Drafting, after the areas' workspaces
+  // A command of Design started from a workspace that does not show it (E in Review, the palette) switches to Design first.
+  bool switchesToDesign(const QString& id) const;
+  void followDrawing(bool drawing);  // a viewed drawing file goes into Drafting, and the next other document back out of it
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
-  void updateDesignState();   // sketch mode <-> ribbon tab set, action enabling
+  void updateDesignState();   // sketch mode <-> the Sketch tab first in Design, action enabling
   void updateSketchPrompt();  // the sketch's prompt: its steps and what the keys do now
-  // "review", "design" or an area's (RibbonLayout ids): swaps the ribbon tab set (same document, same timeline); an id
-  // that is not there changes nothing. The sketch's contextual workspace is entered and left by updateDesignState.
+  // "review", "design", "drafting" or an area's (RibbonLayout ids): swaps the ribbon tab set (same document, same
+  // timeline); an id that is not there changes nothing. While a sketch is open Design stays (updateDesignState).
   void setWorkspace(const QString& id);
   bool setContextualTab(const QString& id, bool shown);  // a contextual tab (RibbonLayout::addContextualTab) shown or hidden
-  QString workspaceId() const { return m_workspaceId; }  // the one shown, "sketch" included
+  QString workspaceId() const { return m_workspaceId; }  // the one shown
   void buildCentral();
   void buildDocks();
   void bindPanel(QAction* a, QDockWidget* dock);
@@ -259,11 +264,14 @@ class MainWindow : public QMainWindow {
   bool m_closePending = false, m_recoveryClosed = false;
   DesignController* m_design = nullptr;
   ToolPanel* m_featurePanel = nullptr;
-  int m_sketchWorkspace = -1, m_workspaceBeforeSketch = 0;
+  QString m_workspaceBeforeSketch;    // where a sketch was started from: Finish goes back there
+  QString m_workspaceBeforeDrafting;  // where a viewed drawing came from into Drafting (followDrawing)
   QStringList m_workspaceIds;            // by RibbonBar index
   QString m_workspaceId, m_workspaceKeys;  // the one shown (as the areas were told); "Ctrl+1 / 2" for the status bar
   class QActionGroup* m_workspaceGroup = nullptr;  // the workspace.* commands: one checked
   QMenu* m_viewMenu = nullptr;
+  QMenu* m_sketchMenu = nullptr;     // the menu bar's Sketch menu: shown while a sketch is open
+  QMenu* m_snappingMenu = nullptr;   // View > Snapping: the status bar's snapping switches (filled with them)
   QStackedWidget* m_stack = nullptr;
   QWidget* m_centralPage = nullptr;  // an area's page in the viewport's place (AreaServices::setCentralPage)
   bool m_loadShown = false;
@@ -306,6 +314,7 @@ class MainWindow : public QMainWindow {
   void runCheck();
   void showFinding(const opad::json& finding);
   void endCheck();
+  void keepCheck();  // Keep as check: the checked bodies and clearance as an Interference check feature, in Design
   LoadShade* m_loadShade = nullptr;
   KeyGuard* m_keyGuard = nullptr;
   bool m_timelineHiddenByViewer = false;

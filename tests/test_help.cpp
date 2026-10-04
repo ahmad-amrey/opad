@@ -95,7 +95,8 @@ TEST(every_registered_command_has_help) {
                             "assembly.explodeSave", "assembly.explodeSplit", "assembly.explodeUngroup", "design.componentFromSelection", "design.remove_faces",
                             "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.length", "inspect.material", "inspect.partProperties", "timeline.designOnly",
                             "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.unsavedChanges",
-                            "view.hidden", "view.hiddenEdges", "view.hideothers"};
+                            "view.hidden", "view.hiddenEdges", "view.hideothers",
+                            "assembly.explodeFinish"};  // the Explode tab's Finish (w3-ribbon): its record comes with the help pass
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());

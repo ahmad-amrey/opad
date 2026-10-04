@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <map>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "I18n.hpp"
@@ -91,9 +92,12 @@ void MainWindow::buildDesignActions() {
     auto* a=addAction(id,tool.label,icon,QKeySequence(keys.value(tool.id)),[this,id=tool.id]{m_design->sketch()->setTool(id);},true);
     a->setProperty("sketchTool",tool.id);tools->addAction(a);
   }
-  for(const auto& group:QList<QPair<QString,QString>>{{"Create",tr("Create")},{"Modify",tr("Modify")},{"Constrain",tr("Constrain")},{"Reference",tr("Reference")},{"Files",tr("Images and files")}}) {
-    auto* a=addAction("sketch.more"+group.first,group.first=="Files"?group.second:tr("More tools"),group.first=="Files"?"image":"more",{},[]{});
-    auto* menu=new QMenu(this);for(const auto& tool:registry)if(tool.group==group.second)menu->addAction(action("sketch."+QString(tool.id).replace(':','.')));
+  // Every tool of a group, in the menu bar's Sketch menu (the ribbon's Sketch tab has them in its groups' menus).
+  for(const auto& [id,group,label]:std::vector<std::tuple<QString,QString,QString>>{{"Create",tr("Create"),tr("More create tools")},{"Modify",tr("Modify"),tr("More modify tools")},
+        {"Constrain",tr("Constrain"),tr("More constraints")},{"Reference",tr("Reference"),tr("More reference tools")},{"Files",tr("Images and files"),tr("Images and files")}}) {
+    auto* a=addAction("sketch.more"+id,label,id=="Files"?"image":"more",{},[]{});
+    auto* menu=new QMenu(this);menu->setObjectName(id.toLower());
+    for(const auto& tool:registry)if(tool.group==group)menu->addAction(action("sketch."+QString(tool.id).replace(':','.')));
     a->setMenu(menu);
   }
   int page=1;
@@ -163,17 +167,21 @@ void MainWindow::buildDesign() {
   updateDesignState();
 }
 
-// Sketch mode swaps the ribbon to its own tab set and back; tool buttons follow the editor's tool.
+// Sketch mode puts its Sketch tab first in Design (UI-104: the Design tabs stay beside it) and takes it away again, back in
+// the workspace the sketch was started from; tool buttons follow the editor's tool.
 void MainWindow::updateDesignState() {
   const bool sketching = m_design->sketchActive();
   const bool has = m_doc->hasDocument;  // viewer mode too: the tools say that the file has to be saved first
   m_timeline->setEditingOp(m_design->editingOp());
-  if (sketching && m_ribbon->workspace() != m_sketchWorkspace) {
-    m_workspaceBeforeSketch = m_ribbon->workspace();
-    m_ribbon->setWorkspace(m_sketchWorkspace);
-  } else if (!sketching && m_ribbon->workspace() == m_sketchWorkspace) {
-    m_ribbon->setWorkspace(m_workspaceBeforeSketch);
+  if (sketching && !m_ribbon->contextualTabShown("design.sketch")) {
+    m_workspaceBeforeSketch = m_workspaceId;
+    setWorkspace("design");
+    m_ribbon->setContextualTab("design.sketch", true);
+  } else if (!sketching && m_ribbon->contextualTabShown("design.sketch")) {
+    m_ribbon->setContextualTab("design.sketch", false);
+    if (!m_workspaceBeforeSketch.isEmpty() && m_workspaceBeforeSketch != m_workspaceId) setWorkspace(std::exchange(m_workspaceBeforeSketch, QString()));
   }
+  if (m_sketchMenu) m_sketchMenu->menuAction()->setVisible(sketching);
   const QString tool = sketching ? m_design->sketch()->tool() : QString();
   shortcuts::suspendOutsideSketch(m_actions, sketching);  // 5/6/7 and the filters' digits never act in a sketch (UI-16)
   for (QAction* a : m_actions) {

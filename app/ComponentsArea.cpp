@@ -87,11 +87,6 @@ class Components : public AreaController {
   }
 
   // Design > Assemble has no room for one more tool at 1600 px: Component from selection drops down from New component.
-  void ribbon(RibbonLayout& layout) override {
-    if (RibbonLayout::Group* components = layout.group("design.assemble.components"))
-      for (RibbonLayout::Item& item : components->items)
-        if (item.action == m_new) item.variants = {m_new, m_group};
-  }
 
   // After the window's Lock: the opacity slider, Move to component… and Component from selection.
   void contextMenu(const SelectionContext& selection, QMenu& menu) override {

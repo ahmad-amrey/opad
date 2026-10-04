@@ -36,6 +36,14 @@ CASES = [
     # contextual tab with a split button. <prefix>.<width>.<workspace>.png, <prefix>.narrow.png.
     ("ribbon", "box", {"OPAD_BENCH_RIBBON": "1280,1600", "OPAD_BENCH_UISHOT": "{prefix}"}),
     ("ribbon-rtl", "box", {"OPAD_BENCH_RIBBON": "1280,1600", "OPAD_BENCH_UISHOT": "{prefix}", "OPAD_LANG": "ar"}),
+    # Every command of the window and the areas has a place: a ribbon tab of a workspace or a menu of the menu bar
+    # (UI-102/104, app/PlacesBench.cpp). <prefix>.json lists them: id, label, group, menu path, workspaces, help id;
+    # <prefix>.<workspace>.png shows the window in each workspace.
+    ("places", "box", {"OPAD_BENCH_PLACES": "{prefix}.json", "OPAD_BENCH_UISHOT": "{prefix}"}),
+    # The workspaces' promises (UI-104, app/WorkspacesBench.cpp): Extrude and New sketch from Review switch to Design; the
+    # Sketch tab first with Finish sketch primary, Design kept while sketching, back where it started; Interference's Keep
+    # as check opens the stored check in Design; a viewed drawing comes into Drafting and the next document goes back.
+    ("workspaces", "box", {"OPAD_BENCH_WORKSPACES": "{root}/layers.svg"}),
     # A file of a newer build (unknown op types) opens, hides those records from the timeline and saves them back (UI-65).
     ("tolerant", newer_file, {"OPAD_BENCH_TOLERANT": "{prefix}.opad"}),
     # The units service (UI-123): the document switched to inches from the status bar, a Distance result in inches, live
