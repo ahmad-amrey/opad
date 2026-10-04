@@ -17,7 +17,8 @@ OPAD_BENCH(OPAD_BENCH_STARTUP, startup) {
     all = all && ok;
   };
   require(m.shown >= 0 && m.viewer >= 0 && m.frame >= 0 && m.opened >= 0, "every step ran");
-  require(m.viewer >= m.shown + (m.byExpose ? 0 : startup::kExposeWaitMs) && (!m.byExpose || m.viewer >= m.exposed),
+  // The marks are whole milliseconds and the wait a timer of its own started just after `shown`: 1 ms early is in time.
+  require(m.viewer >= m.shown + (m.byExpose ? 0 : startup::kExposeWaitMs - 2) && (!m.byExpose || m.viewer >= m.exposed),
           QString("the viewer is made after the window is shown (%1 ms) %2 (at %3 ms)")
               .arg(m.shown).arg(m.byExpose ? QString("and exposed (%1 ms)").arg(m.exposed) : QString("and the wait for an expose")).arg(m.viewer));
   require(m.frame >= m.viewerDone && m.opened >= m.frameDone,
