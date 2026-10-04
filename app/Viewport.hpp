@@ -83,6 +83,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool gridSnap() const { return m_gridSnap; }
   double gridStep() const { return m_gridStep; }
   Bnd_Box benchGridBox() const;  // where the grid is drawn (OCCT's structure, world box), for benches
+  bool benchGridEchoes() const;  // OCCT's star on the grid node under the pointer is on (it must not be)
   Bnd_Box benchFitBox() const { return fitBounds(false); }  // what Fit frames, for benches
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);

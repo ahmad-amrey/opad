@@ -266,6 +266,7 @@ void Viewport::initViewer() {
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
   overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
   m_ctx = new AIS_InteractiveContext(m_viewer);
+  m_viewer->SetGridEcho(Standard_False);  // OCCT's star on the grid node nearest the pointer: no click takes that node
   {  // TopOSD (notes, the drawing being made, measurement labels) has no depth test, but it kept the depth, so what is
      // translucent in Topmost (a note target's tint) was drawn after it, over it: red strokes came out pink. Clearing
      // the depth draws what is pending first.
@@ -632,6 +633,8 @@ void Viewport::placeGrid(double u, double v, double step, double extent) {
   m_viewer->SetRectangularGridValues(-u,-v,step,step,0);
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
 }
+
+bool Viewport::benchGridEchoes() const { return m_initialised && m_viewer->GridEcho(); }
 
 Bnd_Box Viewport::benchGridBox() const {
   Bnd_Box box;

@@ -58,6 +58,7 @@ OPAD_BENCH(OPAD_BENCH_DESIGNORIGIN, designorigin) {
   v->fitAll();
   v->benchHoverAt(QPointF(4, 4));
   require(!gridSetting && v->originGuide() && !v->benchGridBox().IsVoid(), "the empty Design document shows the origin and the grid (its setting off)");
+  require(!v->benchGridEchoes(), "with no star on the grid node under the pointer (OCCT's grid echo is off)");
   // Points of each plane that no other plane hides in the iso view (the nearest candidate is the one picked).
   const QString xy = candidateAt(v, {25, 25, 0}), xz = candidateAt(v, {25, 0, 25}), yz = candidateAt(v, {0, 25, 25});
   require(xy == "XY plane" && xz == "XZ plane" && yz == "YZ plane", QString("its planes are picked where they are: %1, %2, %3").arg(xy, xz, yz));
