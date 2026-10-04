@@ -176,14 +176,15 @@ void Viewport::updateAnnotations() {
       }
     }, [this, measure, found, generation](bool ok, const QString&) {
       --m_anchorJobs;
-      if (generation != m_doc->generation) return;
+      const bool replaced = generation != m_doc->generation;  // another document (the same file again: the same notes)
       bool placed = false;
       for (size_t i = 0; i < measure.size(); ++i) {
         auto it = m_noteAnchors.find(measure[i].id);
         if (it == m_noteAnchors.end() || it->second.signature != measure[i].signature) continue;  // moved on meanwhile
         NoteAnchor& anchor = it->second;
         anchor.queued = false;
-        if (!ok) continue;  // cancelled: measured again after the next change
+        placed = placed || replaced;  // measured again, in the document there is now
+        if (!ok || replaced) continue;  // cancelled: measured again after the next change
         const auto& [hit, at] = (*found)[i];
         anchor.ready = true;
         anchor.found = hit;
