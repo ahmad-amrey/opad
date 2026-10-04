@@ -1,6 +1,7 @@
 #include "BenchRegistry.hpp"
 #include "DesignController.hpp"
 #include "DimensionHandle.hpp"
+#include "HelpClip.hpp"
 #include "MainWindow.hpp"
 #include "PrimitivePlacer.hpp"
 #include "ToolValues.hpp"
@@ -35,7 +36,10 @@
 //   face (half of it below); Enter commits.
 //   Torus: the click snaps to the plane's origin; the ring diameter (through the tube's middle) from the pointer, a click;
 //   the section from the pointer's distance to the ring, a click; centred on the plane; Enter commits.
+//   Coil: placed by a click; 1 and 8 typed while sizing hold as the pointer moves on; the click fixes them; Enter commits.
+//   Box with Centred off: the click is a corner and the box runs towards the pointer; Esc twice leaves.
 //   Cylinder: Enter before any click adds the panel's defaults at the XY origin (the keyboard's way).
+// Along the way the panel's guide loops the clip's step for the stage (placing, sizing, then the arrow and Enter).
 // Shots: <prefix>.<step>.png (the view: marker, outline, preview and arrow are drawn in it), <prefix>.panel.png.
 OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
   struct State {
@@ -145,6 +149,10 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
     return !design->featureActive() && win->m_doc->scene.features.size() == st->features + 1 && win->m_doc->scene.features.back().kind == kind && !win->m_doc->designBusy;
   };
   auto pullStep = [view] { return DimensionHandle::pullStep(view->pixelSize()); };
+  // The panel's guide loops the clip's steps for the stage the tool waits in (clips::guideRange of the stage, of 3 or 4).
+  auto guideAt = [form, placer](const char* clip) {
+    return form->guide()->view()->range() == clips::guideRange(clip, placer->guideStep(), placer->guideCount());
+  };
   // A point of XY in front of the origin (x > 0, y < 0 seen from the iso corner): the pointer meets the XY square there and
   // no other origin plane on its way (the XZ and YZ squares stand behind it).
   auto front = [view] {
@@ -169,6 +177,7 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         require(placer->markerShown(&marker), "the pointer over XY shows no marker");
         require(about(marker[0], p[0], pullStep()) && about(marker[1], p[1], pullStep()) && std::abs(marker[2]) < 1e-9, "the marker is not where the pointer meets XY: " + str(marker[0]) + ", " + str(marker[1]));
         require(view->hoveredCandidate() == opad::json{{"base", "xy"}}.dump(), "XY is not the hovered plane: " + view->hoveredCandidate());
+        require(placer->guideStep() == 0 && guideAt("design.cone") && form->guide()->view()->range() == qMakePair(0, 0), "the guide does not loop the clip's placing step");
         shot("cone-place");
         win->m_featurePanel->grab().save(prefix + ".panel.png");
         pass("cone: nothing previewed before the click; the pointer over XY shows the marker where it meets the plane");
@@ -180,7 +189,8 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         require(form->picks("plane") == opad::json{{"base", "xy"}}, "the cone's plane is not XY: " + form->picks("plane").dump());
         require(about(mm("x"), front()[0], pullStep()) && about(mm("y"), front()[1], pullStep()), "Position X/Y are not the click: " + form->valueText("x").toStdString() + ", " + form->valueText("y").toStdString());
         st->centre = {mm("x"), mm("y"), 0};
-        pass("cone: the click writes Plane XY and Position " + form->valueText("x") + ", " + form->valueText("y"));
+        require(guideAt("design.cone") && form->guide()->view()->range() == qMakePair(1, 1), "the guide does not loop the clip's sizing step");
+        pass("cone: the click writes Plane XY and Position " + form->valueText("x") + ", " + form->valueText("y") + "; the guide goes on to the sizing step");
         moveTo({st->centre[0] + 8, st->centre[1], 0});
         require(about(mm("diameter"), 16, 2 * pullStep()), "the pointer 8 mm off did not make the base 16 mm: " + form->valueText("diameter").toStdString());
         return true;
@@ -211,6 +221,7 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         const double h = mm("height");
         require(about(QLineF(handle->arrowLine().p1(), at({st->centre[0], st->centre[1], h})).length(), 0, 4), "the height arrow is not on the base's middle at the height");
         require(!design->values()->input()->isVisible(), "the boxes beside the pointer stayed after the click");
+        require(guideAt("design.cone") && form->guide()->view()->range() == qMakePair(2, 3), "the guide does not loop the clip's arrow and Enter steps");
         // Pulled up 6 mm along itself, the button held.
         const QLineF line = handle->arrowLine();
         st->dir = (line.p2() - line.p1()) / std::max(1e-9, line.length());
@@ -416,6 +427,65 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         undo();
         return true;
       },
+      // ---- Coil: placed, 1 and 8 typed while sizing: the diameter holds whatever the pointer does; a click, Enter.
+      [=] {
+        start("coil");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the coil does not wait for a plane")) return false;
+        view->grabImage();
+        clickAt(front());
+        require(placer->stage() == Stage::Size, "the click did not place the coil");
+        st->centre = {mm("x"), mm("y"), 0};
+        moveTo({st->centre[0] + 5, st->centre[1], 0});
+        require(about(mm("diameter"), 10, 2 * pullStep()), "the coil diameter is not twice the pointer's distance: " + form->valueText("diameter").toStdString());
+        view->setFocus();
+        key(Qt::Key_1, "1");
+        key(Qt::Key_8, "8");
+        return true;
+      },
+      [=] {
+        if (!waitFor(about(mm("diameter"), 18, 1e-9), "1 and 8 typed while sizing did not go into the coil diameter: " + form->valueText("diameter").toStdString())) return false;
+        moveTo({st->centre[0] + 3, st->centre[1], 0});
+        require(about(mm("diameter"), 18, 1e-9), "the pointer moved the typed coil diameter: " + form->valueText("diameter").toStdString());
+        clickAt({st->centre[0] + 3, st->centre[1], 0});
+        require(placer->stage() == Stage::Done && about(mm("diameter"), 18, 1e-9), "the click did not fix the typed diameter");
+        pass("coil: placed by a click; 18 typed while sizing holds as the pointer moves and the click fixes it");
+        return true;
+      },
+      [=] {
+        if (!waitFor(previewFor({"diameter"}), "the coil shows no preview")) return false;
+        key(Qt::Key_Return, {});
+        return true;
+      },
+      [=] {
+        if (!waitFor(committed("coil"), "Enter did not commit the coil")) return false;
+        require(about(stored("diameter"), 18, 1e-9), "the committed coil is not 18 mm across");
+        pass("coil: Enter commits it");
+        undo();
+        return true;
+      },
+      // ---- Box with Centred off: the click is a corner, the box runs towards the pointer (here back and left of it).
+      [=] {
+        start("box");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the box does not wait for a plane")) return false;
+        view->grabImage();
+        form->setValue("centered", false);
+        clickAt(front());
+        st->centre = {mm("x"), mm("y"), 0};
+        moveTo({st->centre[0] - 10, st->centre[1] + 6, 0});
+        require(about(mm("length"), 10, 2 * pullStep()) && about(mm("width"), 6, 2 * pullStep()), "with Centred off the sizes are not the pointer's offset");
+        require(about(mm("x"), st->centre[0] - mm("length"), 1e-6) && about(mm("y"), st->centre[1], 1e-6), "with Centred off the box does not run from the corner towards the pointer");
+        pass("box: with Centred off the click is a corner and the box runs towards the pointer");
+        design->escape();
+        design->escape();
+        return true;
+      },
+      [=] { return waitFor(!design->featureActive(), "Esc twice did not leave the box"); },
       // ---- Cylinder: Enter before any click (the keyboard's way): the panel's defaults at the origin.
       [=] {
         start("cylinder");
