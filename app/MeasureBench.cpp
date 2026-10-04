@@ -333,7 +333,8 @@ OPAD_BENCH(OPAD_BENCH_MEASURE, measure) {
   QStringList cards;
   for (const auto* card : w.m_annotations->findChildren<NoteCard*>())
     if (card->note().measurement) cards << card->note().value;
-  require(cards.contains(QString::fromUtf8("area measurement - 100.000 mm²")), "a pinned area's card reads in mm²: " + cards.join(" | "));
+  // In mm², and with its perimeter as an area card has had since the Area tool (UI-90).
+  require(cards.contains(QString::fromUtf8("area measurement - 100.000 mm² · perimeter 40.000 mm")), "a pinned area's card reads in mm²: " + cards.join(" | "));
   w.cancelTool();
   w.startTool("distance");
   if (auto* centres = modeButton(1)) centres->click();

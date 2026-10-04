@@ -327,14 +327,17 @@ void MainWindow::runToolMeasure() {
       return refreshToolUi();
     }
     m_lastMeasure = *result;
+    // An area the picks do not close yet (UI-90) is neither kept among the earlier results nor pinned; a length's "closed"
+    // says whether its edge is a loop.
+    const bool unclosed = m_tool.id == "area" && !m_lastMeasure.value("closed", false);
     // Earlier results (UI-144): an open tool's (Area, after every pick) replaces its own until the picks start over.
-    if (m_lastMeasure.value("closed", true)) {
+    if (!unclosed) {
       const bool same = !m_tool.steps && m_toolPicks.size() > 1 && !m_measureHistory.empty() && m_measureHistory.front().result.value("kind", "") == m_lastMeasure.value("kind", "");
       if (same) m_measureHistory.front() = MeasureRecord{*result};
       else m_measureHistory.insert(m_measureHistory.begin(), MeasureRecord{*result});
       if (m_measureHistory.size() > 12) m_measureHistory.pop_back();
     }
-    m_pinAction->setEnabled(!m_doc->browse && !measuredExploded() && m_lastMeasure.value("closed", true));
+    m_pinAction->setEnabled(!m_doc->browse && !measuredExploded() && !unclosed);
     m_viewport->showMeasurement(m_lastMeasure);
     refreshToolUi();
   });
