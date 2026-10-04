@@ -49,7 +49,6 @@ OPAD_ICON_TABLE(drawing2d,
                 {"layerWalk", R"(<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 4-2.2"/><path d="M14 19h7M18 16l3 3-3 3"/>)"},
                 {"freeze", R"(<path d="M12 2v20M3.5 7l17 10M3.5 17l17-10"/><path d="M9 3.5l3 2 3-2M9 20.5l3-2 3 2"/>)"},
                 {"thaw", R"(<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>)"},
-                {"unlock", R"(<rect x="5" y="11" width="14" height="10"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>)"},
                 {"plot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/>)"},
                 {"palette", R"(<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1-1.8-.6-1-.1-2.2 1.1-2.2H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z"/><circle cx="7.5" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="11" r="1"/>)"},
                 {"noPlot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/><path d="M2 2l20 20"/>)"},
@@ -152,11 +151,12 @@ class Drawing2DArea : public AreaController {
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
-    if (QMenu* file = menus.value("file")) {  // Plot after Export
+    if (QMenu* file = menus.value("file")) {  // Plot after Export (and the bill of materials' export that follows it)
       const QList<QAction*> entries = file->actions();
       QAction* before = nullptr;
       for (int i = 0; i + 1 < entries.size(); ++i)
-        if (entries[i]->objectName() == "file.export") before = entries[i + 1];
+        if (entries[i]->objectName() == "file.export" || (entries[i]->objectName() == "file.exportBom" && i > 0 && entries[i - 1]->objectName() == "file.export"))
+          before = entries[i + 1];
       file->insertAction(before, m_plotAction);
     }
     if (QMenu* inspect = menus.value("inspect"); inspect && services().action("inspect.area")) {  // Area after the other measuring tools

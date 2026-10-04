@@ -23,7 +23,7 @@
 
 OPAD_ICON_TABLE(timeline,
   {"historyFilter", R"(<path d="M4 5h16l-6 7.5V18l-4 2v-7.5z"/>)"},
-  {"history", R"(<path d="M4 6h9M4 12h6M4 18h6"/><circle cx="17" cy="15" r="4"/><path d="M17 13v2l1.5 1"/>)"},
+  {"historyList", R"(<path d="M4 6h9M4 12h6M4 18h6"/><circle cx="17" cy="15" r="4"/><path d="M17 13v2l1.5 1"/>)"},
   {"rollBack", R"(<path d="M20 12H9M13 8l-4 4 4 4"/><path d="M5 4v16"/>)"},
   {"rollForward", R"(<path d="M4 12h11M11 8l4 4-4 4"/><path d="M19 4v16"/>)"});
 
@@ -64,7 +64,7 @@ void TimelineArea::buildActions() {
   CommandInfo list;
   list.id = "timeline.historyList";
   list.label = tr("History list in the browser");
-  list.icon = "history";
+  list.icon = "historyList";
   list.checkable = true;
   list.keywords = {tr("timeline"), tr("feature list"), tr("history tree")};
   m_list = services().addCommand(list, [this] {
@@ -104,7 +104,7 @@ void TimelineArea::ready() {
   browser::Folder history;
   history.id = "history";
   history.title = tr("History");
-  history.icon = "history";
+  history.icon = "historyList";
   history.items = [this] { return historyRows(); };
   history.contextMenu = [this](const std::string& id, QMenu& menu) { rowMenu(id, menu); };
   history.activated = [this](const std::string& id) { rowActivated(id); };
