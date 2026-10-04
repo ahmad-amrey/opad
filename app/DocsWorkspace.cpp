@@ -497,6 +497,22 @@ void DocsArea::placeExploded() {
   menu.exec(QCursor::pos());
 }
 
+void DocsArea::setExplodeState(const std::vector<std::string>& views, const std::string& exploded) {
+  const opad::Scene& s = services().document()->scene;
+  opad::json ops = opad::json::array();
+  for (const auto& id : views) {
+    const opad::SheetView* v = s.sheet_view(id);
+    if (!v || v->kind != "base") continue;  // the views taken from one follow it
+    opad::json source = v->def.value("source", opad::json::object());
+    if (!source.is_object()) source = opad::json::object();
+    if (exploded.empty()) source.erase("explode");
+    else source["explode"] = {{"view", exploded}};
+    if (source == v->def.value("source", opad::json::object())) continue;
+    ops.push_back({{"op", "edit"}, {"target", id}, {"set", {{"source", source.empty() ? opad::json(nullptr) : source}}}});
+  }
+  if (!ops.empty()) run("append", {{"ops", ops}});
+}
+
 void DocsArea::placeProjected() {
   const std::vector<std::string> views = m_page ? m_page->canvas()->selectedViews() : std::vector<std::string>{};
   if (views.size() != 1) throw opad::Error("Select the view to project from first.");
@@ -662,6 +678,35 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
     a->setCheckable(true);
     a->setChecked(tangent == value);
     group->addAction(a);
+  }
+  if (base) {  // UI-85: drawn assembled, or with the parts where a saved exploded view puts them, from the same side
+    std::string now;  // the views' exploded view: "" assembled, "*" not the same for all
+    for (size_t i = 0; i < views.size(); ++i)
+      if (const opad::SheetView* v = s.sheet_view(views[i])) {
+        const opad::json src = v->def.value("source", opad::json::object());
+        const opad::json e = src.is_object() ? src.value("explode", opad::json()) : opad::json();
+        const std::string id = e.is_object() && e.contains("view") && e["view"].is_string() ? e["view"].get<std::string>() : std::string();
+        now = i == 0 || now == id ? id : std::string("*");
+      }
+    QMenu* state = menu.addMenu(icons::themed("explodedView", 16), tr("View state"));
+    state->setObjectName("drawings.menu.state");
+    auto* group = new QActionGroup(state);
+    const auto choice = [&](const QIcon& icon, const QString& label, const std::string& value) {
+      QAction* a = state->addAction(icon, label, this, [this, views, value] { services().guarded([&] { setExplodeState(views, value); }); });
+      a->setCheckable(true);
+      a->setChecked(now == value);
+      a->setObjectName(QString::fromStdString("drawings.menu.state." + (value.empty() ? std::string("assembled") : value)));
+      group->addAction(a);
+    };
+    choice({}, tr("Assembled"), "");
+    state->addSeparator();
+    bool saved = false;
+    for (const auto& b : s.views)
+      if (b.explode.is_object()) {
+        choice(icons::themed("explodedView", 16), QString::fromStdString(b.name), b.id);
+        saved = true;
+      }
+    if (!saved) state->addAction(tr("No exploded view saved: Save exploded view in the Explode tab"))->setEnabled(false);
   }
   if (base || detail) {  // a base view's scale (the views projected from it follow), a detail view's own
     QMenu* scale = menu.addMenu(tr("View scale"));

@@ -408,7 +408,9 @@ broken-out section opens up a view within a smooth closed outline down to a dept
 on the view): its floor hatched, a thin break line where it ends over the part. An exploded view (`--explode <view op>`,
 Drawings > Views > Exploded view) draws the parts where a saved exploded view puts them, seen from its camera, with thin
 phantom trail lines from where they sit in the assembly (left out where a part hides them); projected views, balloons,
-dimensions, hole callouts and hole tables follow it, and it follows the exploded view when that is updated.
+dimensions, hole callouts and hole tables follow it, and it follows the exploded view when that is updated. A base view
+already placed switches between assembled and a saved exploded view from its own side (its context menu's View state,
+`sheet_edit` `explode`), and Auto-balloon prefers an exploded view when none is selected.
 
 Annotations are `sheet_item` kinds measured from the model and kept with what they showed: dimensions (with precision,
 tolerances and fits), centre marks and lines, hole callouts read from the hole's own faces (depth or THRU, counterbores,

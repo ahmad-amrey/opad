@@ -193,10 +193,14 @@ void DocsArea::autoBalloon() {
   if (!sheet) return;
   std::string view;
   if (const auto selected = m_page->canvas()->selectedViews(); selected.size() == 1) view = selected[0];
-  for (const char* want : {"iso", "iso-back", ""})  // a pictorial view shows every part, else the first base view
+  const auto exploded = [](const opad::SheetView& v) {  // UI-85: an assembly drawing balloons its parts where they are apart
+    const opad::json src = v.def.value("source", opad::json::object());
+    return src.is_object() && src.value("explode", opad::json()).is_object();
+  };
+  for (const char* want : {"exploded", "iso", "iso-back", ""})  // an exploded or pictorial view shows every part, else the first base view
     for (const auto& id : sheet->views)
       if (const opad::SheetView* v = s.sheet_view(id); view.empty() && v && v->error.empty() && v->kind == "base" &&
-                                                       (!*want || opad::drawing::view_orientation(s, *v) == want))
+                                                       (std::string(want) == "exploded" ? exploded(*v) : !*want || opad::drawing::view_orientation(s, *v) == want))
         view = id;
   if (view.empty()) throw opad::Error("Place a view first, then balloon its parts.");
   const opad::json args = {{"sheet", sheet->id}, {"view", view}};

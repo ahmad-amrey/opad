@@ -3,6 +3,7 @@
 
 #include <QElapsedTimer>
 #include <QFile>
+#include <QMenu>
 #include <QStatusBar>
 
 #include <algorithm>
@@ -18,9 +19,12 @@
 // OPAD_BENCH_SHEET_EXPLODED=<prefix>: a plate, a post and a lid stacked, drawn front on an A3 sheet. Exploded view with
 // none saved says how to save one and places nothing; with "Exploded 1" saved (explode along Z), it follows the pointer
 // at the size the exploded parts take and a click places a view of it: one step, the view op naming the exploded view and
-// seen from its camera, drawn apart with its trail lines on the Trail layer, the front view as it was. Then Publish PDF
+// seen from its camera, drawn apart with its trail lines on the Trail layer, the front view as it was. Auto-balloon with
+// no view selected balloons the exploded view and adds the parts list; Exploded 1 updated with twice the spacing (the
+// Explode panel's Update view), the drawing view draws its parts further apart, the balloons still measured. The front
+// view's View state: Exploded 1 (one step, still from the front, with trail lines), then Assembled again. Then Publish PDF
 // from Review (UI-104, Review > Share and the File menu): the drawing's sheet written as a PDF, the workspace kept.
-// <prefix>.exploded.png, <prefix>.publish.pdf.
+// <prefix>.exploded.png (both views apart), <prefix>.publish.pdf.
 OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
   using opad::drawing::Vec2;
   const QString& prefix = value;
@@ -79,7 +83,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
     const bool sized = waitFor([&] { return canvas->placing() && canvas->placementSize()[1] > 30; }, 20000);
     check(sized, QString("Exploded view follows the pointer at the size its parts take apart (%1 mm high)").arg(canvas->placementSize()[1]));
     const size_t ops1 = doc->doc.ops.size();
-    const Vec2 target{sheetWidth * 0.62, sheetHeight * 0.55};
+    const Vec2 target{sheetWidth * 0.74, sheetHeight * 0.55};  // clear of the front view, also once that is drawn apart
     canvas->placeAt(target);  // where a click on the sheet places it (SheetBench's way: no window under a hidden one's events)
     check(waitFor([&] { return doc->doc.ops.size() > ops1 && !doc->designBusy; }, 15000) && waitFor(settled, 60000) && doc->doc.ops.size() == ops1 + 1,
           "a click places it: one step, drawn");
@@ -105,7 +109,71 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
       opad::drawing::resolve_explode(doc->doc, doc->scene, spec);
       check(spec.offsets.size() >= 2, QString("the lid and the post drawn moved (%1 parts)").arg(spec.offsets.size()));
     }
+    const std::string drawn = v ? v->id : std::string();  // the scene is made again by every change: v goes
+    const auto stateOf = [&](const std::string& id) {
+      for (const auto& s : canvas->viewStates())
+        if (s.id == id) return s;
+      return SheetCanvas::ViewState{};
+    };
+    const auto trails = [&](const std::string& id) {  // the view's prims on the Trail layer, as the sheet is drawn and exported
+      const opad::Sheet* s = doc->scene.sheet(sheet);
+      if (!s) return 0L;
+      const opad::drawing::Display d = opad::drawing::sheet_display(doc->doc, doc->scene, *s);
+      long n = 0;
+      for (const auto& p : d.prims) n += p.source == id && p.layer >= 0 && size_t(p.layer) < d.layers.size() && d.layers[size_t(p.layer)].name == "Trail";
+      return n;
+    };
+    const auto count = [&](const char* kind, const std::string& view) {
+      int n = 0;
+      if (const opad::Sheet* s = doc->scene.sheet(sheet))
+        for (const auto& id : s->items)
+          if (const opad::SheetItem* t = doc->scene.sheet_item(id); t && t->kind == kind && (view.empty() || t->view == view)) ++n;
+      return n;
+    };
+    // Auto-balloon with no view selected: the exploded view's parts (an assembly drawing's balloons), a parts list with them.
+    canvas->selectViews({});
+    w.action("drawings.autoBalloon")->trigger();
+    const bool ballooned = waitFor([&] { return count("balloon", drawn) >= 3 && !doc->designBusy; }, 30000) && waitFor(settled, 60000);
+    check(ballooned && count("balloon", front) == 0 && count("parts_list", "") == 1 && canvas->dangling().empty(),
+          QString("Auto-balloon with no view selected balloons the exploded view (%1 balloons) and adds the parts list").arg(count("balloon", drawn)));
+    // The exploded view updated (Explode panel's Update view: one edit of its explode): the drawing view follows.
+    const QRectF wasDrawn = stateOf(drawn).linework;
+    doc->run("explode", {{"view", exploded}, {"spacing", 2}, {"update", true}});
+    const bool followed = waitFor([&] { return settled() && stateOf(drawn).final && stateOf(drawn).linework.height() > wasDrawn.height() + 5; }, 60000);
+    check(followed && canvas->dangling().empty(),
+          QString("the exploded view updated with twice the spacing: the drawing view draws its parts further apart (%1 -> %2 mm high), its balloons still on them")
+              .arg(wasDrawn.height(), 0, 'f', 1).arg(stateOf(drawn).linework.height(), 0, 'f', 1));
+    // View state on the front view: Exploded 1 draws its parts apart from the front, one step.
+    {
+      QMenu menu;
+      docs->viewMenu({front}, menu);
+      QAction* assembled = menu.findChild<QAction*>("drawings.menu.state.assembled");
+      QAction* apart = menu.findChild<QAction*>(QString::fromStdString("drawings.menu.state." + exploded));
+      check(assembled && apart && assembled->isChecked() && !apart->isChecked(), "the front view's menu: View state with Assembled ticked and Exploded 1");
+      const size_t before = doc->doc.ops.size();
+      const QRectF was = stateOf(front).linework;
+      if (apart) apart->trigger();
+      const bool stepped = waitFor([&] { return doc->doc.ops.size() == before + 1 && !doc->designBusy; }, 15000) && waitFor(settled, 60000);
+      check(stepped, "Exploded 1 chosen: one step, drawn");
+      const opad::SheetView* f = doc->scene.sheet_view(front);
+      check(f && f->def["source"]["explode"]["view"] == exploded && f->def["orient"].value("preset", "") == "front" && trails(front) >= 1 &&
+                stateOf(front).linework.height() > was.height() + 5,
+            QString("the front view draws the parts apart, still from the front, with trail lines (%1 -> %2 mm high)")
+                .arg(was.height(), 0, 'f', 1).arg(stateOf(front).linework.height(), 0, 'f', 1));
+    }
     page->grab().save(prefix + ".exploded.png");
+    {
+      QMenu menu;
+      docs->viewMenu({front}, menu);
+      QAction* assembled = menu.findChild<QAction*>("drawings.menu.state.assembled");
+      QAction* apart = menu.findChild<QAction*>(QString::fromStdString("drawings.menu.state." + exploded));
+      check(assembled && apart && apart->isChecked() && !assembled->isChecked(), "its menu ticks Exploded 1 now");
+      const size_t before = doc->doc.ops.size();
+      if (assembled) assembled->trigger();
+      check(waitFor([&] { return doc->doc.ops.size() == before + 1 && !doc->designBusy; }, 15000) && waitFor(settled, 60000), "Assembled chosen: one step");
+      const opad::SheetView* f = doc->scene.sheet_view(front);
+      check(f && !f->def.value("source", opad::json::object()).contains("explode") && trails(front) == 0, "the front view is drawn assembled again, without trail lines");
+    }
     // Publish PDF from Review: the drawing written as a PDF without going to Drawings (no file dialog in a bench).
     w.setWorkspace("review");
     const QString pdf = prefix + ".publish.pdf";

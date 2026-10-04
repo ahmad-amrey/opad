@@ -68,6 +68,9 @@ class DocsArea : public AreaController {
   // An exploded view (UI-85): a view of a saved exploded view, its parts apart with trail lines, placed with the mouse;
   // with several saved, a menu at the pointer chooses. Says how to save one when there is none.
   void placeExploded();
+  // A base view's state (UI-85): drawn assembled ("") or with its parts where a saved exploded view puts them, from the same
+  // side; the views taken from it follow. One step for every base view given.
+  void setExplodeState(const std::vector<std::string>& views, const std::string& exploded);
   void placeProjected();                      // a view projected from the selected one, placed with the mouse
   // Section, detail or auxiliary view of the selected view, or crop or break it, with the mouse (SheetViewTool, UI-82).
   void startViewTool(SheetViewTool::Tool tool);
@@ -81,8 +84,8 @@ class DocsArea : public AreaController {
   void reattachSelected();                          // the selected annotation's references picked again
   void dimensionFromDatums(const std::string& type);  // ordinate | baseline | chain sets from the view's datums, planned on a worker
   void itemMenu(const std::vector<std::string>& items, QMenu& menu);  // right-click on annotations
-  // A balloon on every parts-list row the selected view (else the sheet's pictorial view, else its first) shows, planned on
-  // a worker; one step (a parts list comes with it when the drawing has none).
+  // A balloon on every parts-list row the selected view (else the sheet's exploded view, else its pictorial view, else its
+  // first) shows, planned on a worker; one step (a parts list comes with it when the drawing has none).
   void autoBalloon();
   void renumberList(const std::string& list);  // 1, 2, ... again in the BoM's order, worked out on a worker; one sheet_edit
   // Issue revision (IssueRevision.cpp): the dialog; then the plan, the PDF (as the drawing will show the revision) and its
