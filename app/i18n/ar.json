@@ -272,7 +272,7 @@
  "Cap faces": "تغطية الأوجه",
  "NAMED SECTIONS": "المقاطع المسمّاة",
  "Save as named section": "حفظ كمقطع مسمّى",
- "Section off · turn it on with Inspect › Section ({key:inspect.section})": "المقطع متوقف · فعّله من فحص ‹ مقطع ({key:inspect.section})",
+ "Section off · choose an axis, or turn it on with Inspect › Section ({key:inspect.section})": "المقطع متوقف · اختر محورًا، أو فعّله من فحص ‹ مقطع ({key:inspect.section})",
  "Drag to move the section plane along its axis": "اسحب لتحريك مستوى المقطع على امتداد محوره",
  "Pick face · click a planar face in the 3D view": "اختيار وجه · انقر وجهًا مستويًا في العرض ثلاثي الأبعاد",
  "Pick face": "اختيار وجه",

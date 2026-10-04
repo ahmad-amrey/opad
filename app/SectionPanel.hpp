@@ -47,6 +47,11 @@ class SectionPanel : public QWidget {
   void hideEvent(QHideEvent* e) override;  // typed values are forgotten with the panel
  private:
   void emitChange();
+  // A change made in the panel itself (an axis, the slider, a typed offset, Flip, Cap faces) shows: the section turns on
+  // first, as a named section does (TODO 11 help audit P9.5). The panel opened, or a command, changes nothing.
+  void turnOn() {
+    if (!m_enabled) setEnabled(true);
+  }
   void describe();  // the value and state text, in the shown unit
   void setAlong(double along);  // the plane there exactly, the slider as near as it goes
   bool range(double& lo, double& hi) const;  // the model's extent along the axis (or the picked normal)

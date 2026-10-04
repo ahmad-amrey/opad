@@ -391,13 +391,18 @@ void ToolPanel::mouseReleaseEvent(QMouseEvent*) {
 
 void ToolPanel::mouseDoubleClickEvent(QMouseEvent* e) {
   if (e->position().y() > kMargin + 33) return;
+  restoreDefaultPlace();
+}
+
+void ToolPanel::restoreDefaultPlace() {
   m_dragging = false;
   m_userPlaced = false;
   m_offset = QPoint(8, 186);
   QSettings settings;
   settings.remove("panels/" + m_id + "/offset");
   settings.remove("panels/" + m_id + "/size");
-  anchorTo(m_anchor);
+  if (!m_anchor.isEmpty()) anchorTo(m_anchor);
+  else resize(m_defaultSize);  // never anchored yet: placed when it is first shown
 }
 
 void ToolPanel::keyPressEvent(QKeyEvent* e) {

@@ -60,7 +60,10 @@ void MainWindow::buildFileActions() {
   addAction("file.saveas", tr("Save &As…"), "save", QKeySequence("Ctrl+Shift+S"), [this] {
     if (m_doc->browse) { saveViewerAs(); return; }
     if (m_doc->readOnly) { saveReadOnlyCopy(); return; }
-    QString p = QFileDialog::getSaveFileName(this, tr("Save document"), m_settings.value("ui/lastDir").toString(), tr("OPAD document (*.opad)"));
+    // Starts from the current name (TODO 11 help audit P9.3): the file's own, else Untitled in the last folder.
+    const QString lastDir = m_settings.value("ui/lastDir").toString(), untitled = AppDocument::tr("Untitled") + ".opad";
+    const QString start = !m_doc->path().isEmpty() ? m_doc->path() : lastDir.isEmpty() ? untitled : QDir(lastDir).filePath(untitled);
+    QString p = QFileDialog::getSaveFileName(this, tr("Save document"), start, tr("OPAD document (*.opad)"));
     if (p.isEmpty()) return;
     if (!p.endsWith(".opad", Qt::CaseInsensitive)) p += ".opad";
     m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());

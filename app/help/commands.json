@@ -565,7 +565,7 @@
    "id": "panel.section",
    "title": "Section panel",
    "summary": "Opens the section panel: axis, offset, caps and named sections.",
-   "details": "Here you choose the cutting axis or a face, type an exact offset and save sections by name. Dragging the plane's edge in the view does the same.",
+   "details": "Here you choose the cutting axis or a face, type an exact offset and save sections by name; a change made here turns the section on. Dragging the plane's edge in the view does the same.",
    "keywords": ["cut", "clipping", "cross section"],
    "requires": "Open or create a document first."
   },

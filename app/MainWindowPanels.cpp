@@ -137,5 +137,7 @@ void MainWindow::resetLayout() {
   setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
   setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
   setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
-
+  // Every floating tool panel too (TODO 11 help audit P9.6): the window's own, the editors' and the areas'.
+  for (ToolPanel* panel : findChildren<ToolPanel*>()) panel->restoreDefaultPlace();
+  positionOverlays();
 }
