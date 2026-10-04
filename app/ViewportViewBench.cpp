@@ -292,6 +292,45 @@ bool Viewport::benchHighlight(const QString& prefix) {
   return all;
 }
 
+// A sketch's wire in 3D (its line in the sketch blue, close to the selection colour): hovered it is picked; selected, it is
+// drawn like a picked edge, thick in the selection colour over a halo, not outlined (on a line an outline would be white,
+// the hover's colour).
+bool Viewport::benchWireHighlight(const std::string& sketch, const QString& prefix) {
+  const QString theme = m_tokens.dark ? "dark" : "light";
+  bool all = true;
+  auto require = [&](bool ok, const QString& what) {
+    trace::log(QString("bench: highlight %1: sketch wire: %2 %3").arg(theme, what, ok ? "PASS" : "FAIL"));
+    all = all && ok;
+    return ok;
+  };
+  QElapsedTimer clock;  // leaving the sketch made everything pickable again: a sliced job
+  clock.start();
+  while ((m_filterJob || m_lookJob) && clock.elapsed() < 10000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+  const auto wire = m_sketchWires.find(sketch);
+  if (!require(wire != m_sketchWires.end(), "the finished sketch is drawn as a wire")) return false;
+  standardView("top");
+  m_view->Redraw();
+  const QPointF mid(widgetPoint({25, -40, 0}));
+  moveTo(devicePos(mid));
+  require(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == wire->second.ais, "hovered, it is picked");
+  m_ctx->SelectDetected(AIS_SelectionScheme_Replace);
+  OnSelectionChanged(m_ctx, m_view);
+  m_ctx->ClearDetected(Standard_False);
+  const auto glow = m_bodyGlows.find(wire->second.ais.get());
+  require(glow != m_bodyGlows.end() && glow->second->style().edge.IsEqual(occ(m_tokens.selected3d)) &&
+              glow->second->style().haloWidth > glow->second->style().edgeWidth && glow->second->style().edgeWidth >= highlight::kHoverEdgeWidth,
+          "selected, it glows in the selection colour over a halo, as thick as a picked edge, not outlined");
+  m_view->Redraw();
+  const QImage frame = grabImage();
+  frame.save(prefix + "." + theme + ".wire.png");
+  const int thick = across(frame, this, mid, 12, hued);
+  require(thick >= 3 * displayScale(), QString("%1 px of it across the line").arg(thick));
+  m_ctx->ClearSelected(Standard_False);
+  applySelectionLayers();
+  redrawScene();
+  return all;
+}
+
 namespace {
 // A line in a sketch on XY in front of the boxes: selected, it is drawn in the selection colour over a halo; hovered
 // (nothing selected), it glows white. <prefix>.<theme>.sketch.png.
@@ -367,6 +406,14 @@ OPAD_BENCH(OPAD_BENCH_HIGHLIGHT, highlight) {
     for (const bool dark : {true, false}) {
       w.applyTheme(dark);
       ok = sketchRoles(v, sketch, value) && ok;
+    }
+    w.m_design->finishSketch();
+    until([&w] { return !w.m_design->sketchActive() && !w.m_doc->scene.sketches.empty(); });
+    const std::string wire = w.m_doc->scene.sketches.empty() ? std::string() : w.m_doc->scene.sketches.back().id;
+    until([v, &wire] { return !v->looksPending(); });
+    for (const bool dark : {true, false}) {
+      w.applyTheme(dark);
+      ok = v->benchWireHighlight(wire, value) && ok;
     }
     w.applyTheme(true);
     return ok;

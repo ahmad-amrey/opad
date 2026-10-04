@@ -167,6 +167,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // colour outlined, the view cube's side in a standard view and its hover
   bool benchHighlight(const QString& prefix);
   QPointF cubeCentre() const;  // the view cube's centre, widget coordinates
+  bool benchWireHighlight(const std::string& sketch, const QString& prefix);  // OPAD_BENCH_HIGHLIGHT: a sketch's wire in 3D
   // The longest displayBody so far, in wall and UI-thread CPU time (benches: no display step over 50 ms, UI-42).
   qint64 longestDisplay() const { return m_longestDisplay; }
   qint64 longestDisplayCpu() const { return m_longestDisplayCpu; }

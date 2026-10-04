@@ -1018,7 +1018,10 @@ void Viewport::applySelectionLayers() {
       // on curved faces (dark blotches all over a selected loft).
       std::shared_ptr<const BodyPrs> shown=prs;
       if(const auto body=Handle(BodyShape)::DownCast(ais);!body.IsNull() && body->displayPrs() && !body->displayPrs()->triangles.IsNull()) shown=body->displayPrs();
-      glow=new SubHighlight(glowStyle(shownColor(m_nodeOf.count(ais.get())?m_nodeOf.at(ais.get()):std::string()),true));
+      // Faces: a tint and thin boundaries, outlined when the body is the selection's colour. Only curves (a sketch, a drawing
+      // layer): drawn as picked edges, thick in a halo; outlined they would read white, the hover's colour.
+      const bool faces=!shown->triangles.IsNull();
+      glow=new SubHighlight(glowStyle(faces?shownColor(m_nodeOf.count(ais.get())?m_nodeOf.at(ais.get()):std::string()):QColor(),faces));
       if(!shown->triangles.IsNull()) glow->m_triangles.push_back(shown->triangles);
       if(!shown->boundaries.IsNull()) glow->m_segments.push_back(shown->boundaries);
       if(!shown->loosePoints.IsNull()) glow->m_points.push_back(shown->loosePoints);
