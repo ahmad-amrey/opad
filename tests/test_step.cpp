@@ -517,6 +517,51 @@ TEST(import_into_component_and_gc) {
   CHECK_EQ(d.body_count(), 4u);
 }
 
+// UI-40: OCCT's STEP reader has no progress source; its scan is reported by the bytes it has taken, rising to 1, then
+// "parsing" (no per cent) once, before the translation starts; a cancel during the scan stops the import there.
+TEST(step_read_reports_progress_by_bytes) {
+  std::string text = read_file(fixture("assembly.step"));
+  const auto data = text.find("DATA;");
+  CHECK(data != std::string::npos);
+  std::string comments;  // a few megabytes to read, several chunks (as short comments: the scanner takes no huge token)
+  for (int i = 0; i < 40000; ++i) comments += "/* " + std::string(72, 'x') + " */\n";
+  text.insert(data + 5, "\n" + comments);
+  const fs::path padded = tmp("padded.step");
+  std::ofstream(padded, std::ios::binary) << text;
+  std::vector<double> reading;
+  bool translating = false, readLate = false;
+  int parsing = 0;
+  ImportOptions o;
+  o.progress = [&](double f, const std::string& what) {
+    if (what == "reading" && f >= 0) {
+      reading.push_back(f);
+      readLate = readLate || translating || parsing;
+    }
+    if (what == "parsing") parsing += f < 0 && !translating ? 1 : 100;
+    translating = translating || what.rfind("translating", 0) == 0;
+    return true;
+  };
+  Document d = Document::create();
+  CHECK_EQ(import_step(d, padded, o).bodies, 10);
+  CHECK(reading.size() >= 4);
+  CHECK(std::is_sorted(reading.begin(), reading.end()));
+  CHECK_NEAR(reading.back(), 1.0, 1e-12);
+  CHECK(translating && !readLate);
+  CHECK_EQ(parsing, 1);
+  int chunks = 0;
+  o.progress = [&](double f, const std::string& what) { return !(what == "reading" && f > 0 && ++chunks >= 2); };
+  Document e = Document::create();
+  std::string error;
+  try {
+    import_step(e, padded, o);
+  } catch (const Error& x) {
+    error = x.what();
+  }
+  CHECK(error.find("cancelled") != std::string::npos);
+  CHECK_EQ(chunks, 2);
+  CHECK_EQ(e.body_count(), 0u);
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr, "usage: opad-test-step <fixtures-dir> [filter]\n");

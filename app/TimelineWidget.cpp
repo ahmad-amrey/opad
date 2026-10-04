@@ -461,7 +461,7 @@ QString TimelineWidget::describe(const opad::Op& op) const {
   }
   if (op.type == "measurement") return tr("%1 measurement").arg(i18n::t(QString::fromStdString(d.value("kind", ""))));
   if (op.type == "section") return tr("Section %1").arg(QString::fromStdString(d.value("name", "")));
-  if (op.type == "view") return tr("View %1").arg(QString::fromStdString(d.value("name", "")));
+  if (op.type == "view") return d.value("home", opad::json(false)) == true ? tr("Home view") : tr("View %1").arg(QString::fromStdString(d.value("name", "")));
   if (op.type == "delete") {
     const opad::Op* t = m_doc->doc.find_op(d.value("target", ""));
     return tr("Delete %1").arg(t ? i18n::t(QString::fromStdString(t->type)) : shortId(d.value("target", "")));

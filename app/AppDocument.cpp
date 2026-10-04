@@ -24,13 +24,6 @@ bool isExternalPath(const QString& path) {
 // A file name as the core's std::filesystem wants it: from UTF-16, since a narrow string is read in the ANSI code page on
 // Windows and a file named in Arabic or Chinese did not open.
 std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
-// A replaced document (its body text, its shapes) is let go on a thread of its own: freeing it scales with the model. Reset
-// there: QThread::create's callable is destroyed with the thread object, on the UI thread.
-void dispose(std::shared_ptr<opad::Document> old) {
-  auto* thread = QThread::create([old = std::move(old)]() mutable { old.reset(); });
-  QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-  thread->start(QThread::LowPriority);
-}
 // A load's worker: a QThread, never a std::thread (Qt adopts a foreign thread that posts to it, and on MinGW/Qt 6.10 its
 // TLS cleanup can fault at exit). Not parented: a load still running when the window goes is left to finish. Its callable
 // is destroyed with the thread object, on the UI thread: anything big is freed inside the work.
@@ -42,6 +35,8 @@ void start(F work) {
 }
 QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
+  if (what == "opening") return AppDocument::tr("Opening %1").arg(file);
+  if (what == "parsing") return AppDocument::tr("Parsing %1").arg(file);
   if (what == "building") return AppDocument::tr("Building document");
   if (what == "preparing") return AppDocument::tr("Preparing bodies");
   if (what == "linked") return AppDocument::tr("Reading linked files");
@@ -68,6 +63,19 @@ void refuseLinkedParts(const opad::Scene& scene, const std::string& command, con
     if (part(id)) throw opad::Error("Parts of a linked file are read-only: embed the file to edit them.");
   if (command == "reparent" && args.contains("parent") && args["parent"].is_string())
     if (const opad::Node* p = scene.node(args["parent"].get<std::string>()); p && p->linked) throw opad::Error("A linked file holds only its own parts.");
+}
+// Where a phase lies in the whole load (UI-40): its start and span in per cent. The bodies' display after the document is
+// built takes the rest, from displayStart(). Measured: the Engine .opad reads and parses in 2 s, prepares its bodies in 3 s
+// and displays them in 7 s; a large STEP file is mostly translation (21 of 23 s: scanned by bytes in 0.4 s, parsed in 2.2
+// s), meshes and drawings mostly reading. `what` whole: "reading drawing" (DXF, DWG) is a drawing's long read, not the scan.
+std::pair<int, int> phaseSpan(const std::string& what, bool opad) {
+  if (opad && what == "linked") return {20, 0};  // its linked files, read between the two: no further meanwhile
+  if (opad) return what == "preparing" ? std::pair{20, 25} : std::pair{0, 20};  // opening: read and parsed by bytes
+  if (what == "reading") return {0, 2};  // STEP's byte scan, a mesh file read in
+  if (what == "parsing") return {2, 8};
+  if (what == "building") return {70, 10};
+  if (what == "preparing") return {80, 5};
+  return {10, 60};  // translating, reading a drawing
 }
 }  // namespace
 
@@ -121,7 +129,8 @@ QString AppDocument::assetSummary(const opad::json& states) {
   return parts.isEmpty() ? QString() : tr("Linked files: %1").arg(parts.join(tr(", ")));
 }
 
-opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file) {
+opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file, bool opad) {
+  m_displayStart = opad ? 45 : 85;
   opad::ImportOptions o;
   o.author = QSettings().value("user/name").toString().trimmed().toStdString();
   o.kicad = kicadOptions();
@@ -129,8 +138,10 @@ opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<b
   auto lastEmit = std::make_shared<QElapsedTimer>();
   lastEmit->start();
   auto alive = m_alive;
-  o.progress = [this, cancel, alive, last, lastEmit, file](double frac, const std::string& what) {
-    const int pct = (what != "reading" && frac >= 0) ? static_cast<int>(frac * 100.0) : -1;  // reading has no progress source
+  o.progress = [this, cancel, alive, last, lastEmit, file, opad](double frac, const std::string& what) {
+    const int pct = frac >= 0 ? static_cast<int>(frac * 100.0) : -1;  // a STEP file's reading has no progress source
+    const auto [start, span] = phaseSpan(what, opad);
+    const int overall = start + span * std::max(pct, 0) / 100;
     if (trace::enabled()) trace::log(QStringLiteral("import progress: %1 %2").arg(QString::fromStdString(what)).arg(frac));
     // The STEP reader reports thousands of sub-steps per second; the strip only needs ~20 updates/s, so
     // intermediate ones are dropped unless the phase itself changes.
@@ -139,7 +150,7 @@ opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<b
       *last = {what, pct};
       lastEmit->restart();
       const QString label = phaseLabel(what, file);
-      if (*alive) QMetaObject::invokeMethod(this, [this, label, pct] { emit loadProgress(label, pct); }, Qt::QueuedConnection);
+      if (*alive) QMetaObject::invokeMethod(this, [this, label, pct, overall] { emit loadProgress(label, pct, overall); }, Qt::QueuedConnection);
     }
     return !*cancel;
   };
@@ -167,7 +178,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
   const bool external = isExternalPath(path);
   const bool viewer = external && viewerOpens;
   const QString file = QFileInfo(path).fileName() + QStringLiteral(" (%1 MB)").arg(QFileInfo(path).size() / (1024.0 * 1024.0), 0, 'f', 0);
-  opad::ImportOptions o = loadOptions(cancel, file);
+  opad::ImportOptions o = loadOptions(cancel, file, !external);
   o.viewer = viewer;  // viewer mode: nothing is prepared for saving (no healing, BREP text or hashing)
   const QString suffix = QFileInfo(path).suffix().toLower();
   o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
@@ -176,7 +187,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
   opad::AssetOptions assets = assetOptions();
   assets.progress = [progress = o.progress](double f, const std::string& what) { return progress(f, what == "reading" ? "linked" : what); };
   auto alive = m_alive;
-  emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
+  emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1, 0);
   start([this, alive, cancel, path, external, viewer, cacheable, o, assets, token, current, asked]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
@@ -201,7 +212,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
           slowRead = cacheable && readMs > 1500;
         }
       } else {
-        *result = opad::Document::load(fsPath(path));
+        *result = opad::Document::load(fsPath(path), {}, [&](double f) { return o.progress(f, "opening"); });  // by bytes
         manifest = std::make_shared<opad::Manifest>(opad::Manifest::of(*result));
         // Linked files are read where they are now; one that is missing or untrusted leaves only its own bodies out.
         if (opad::has_assets(*result)) {
@@ -231,6 +242,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
       emit aboutToReplace();
       ++generation;
       dropRollback();
+      disposeOld();
       doc = std::move(*result);
       browse = viewer;
       readOnly = locked;
@@ -274,7 +286,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   auto cancel = std::make_shared<std::atomic<bool>>(false);
   m_cancel = cancel;
   const QString file = QFileInfo(path).fileName();
-  opad::ImportOptions o = loadOptions(cancel, file);
+  opad::ImportOptions o = loadOptions(cancel, file, false);
   o.parent = parent.isEmpty() ? m_active : parent.toStdString();  // into the active component unless told otherwise (UI-33)
   o.placement = placement;
   // A drawing placed in world coordinates (on a face, a picked plane) keeps its place under a moved component: its
@@ -288,7 +300,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   auto alive = m_alive;
   const unsigned token = ++*m_loadToken;
   auto current = m_loadToken;
-  emit loadProgress(tr("Reading %1").arg(file), -1);
+  emit loadProgress(tr("Reading %1").arg(file), -1, 0);
   start([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, link, token, current, into]() mutable {
     QString error;
     opad::json r;
@@ -348,6 +360,7 @@ void AppDocument::newDocument() {
   emit aboutToReplace();
   ++generation;
   dropRollback();
+  disposeOld();
   doc = opad::Document::create();
   assetStates = opad::json::array();
   browse = readOnly = false;
@@ -373,6 +386,7 @@ void AppDocument::closeDocument() {
   emit aboutToReplace();
   ++generation;
   dropRollback();
+  disposeOld();
   doc = opad::Document();
   assetStates = opad::json::array();
   browse = readOnly = false;
@@ -403,6 +417,7 @@ void AppDocument::open(const QString& path) {
   emit aboutToReplace();
   ++generation;
   dropRollback();
+  disposeOld();
   doc = std::move(next);
   browse = readOnly = false;
   hasDocument = true;
@@ -501,8 +516,9 @@ opad::json AppDocument::run(const std::string& command, opad::json args, const Q
   } catch (const opad::LockedError& e) {
     throw opad::Error(lockedMessage(e).toStdString());
   }
-  if (m_batching) return out;
+  if (m_batching) return out;  // the batch makes the step and refreshes once
   recordStep(label.isEmpty() ? labelFor(command, args) : label, before);
+  if (std::vector<std::string> nodes; touches(doc.ops, before, nodes)) m_next = {false, std::move(nodes)};
   refresh();
   return out;
 }
@@ -565,7 +581,9 @@ void AppDocument::batch(const QString& label, const std::function<void()>& comma
     throw;
   }
   m_batching = false;
+  if (doc.ops.size() == before) return;
   recordStep(label, before);
+  if (std::vector<std::string> nodes; touches(doc.ops, before, nodes)) m_next = {false, std::move(nodes)};
   refresh();
 }
 
@@ -605,9 +623,20 @@ void AppDocument::rollBackTo(const std::string& opId) {
   if (moved) refresh();
 }
 
+// The document being replaced and its scene are freed on a worker (UI-41): the Engine's are op JSON trees, 322 MB of BREP
+// text and the parsed shapes, many small deallocations. What the view still draws keeps its shapes alive meanwhile.
+void AppDocument::disposeOld() {
+  auto old = std::make_shared<std::pair<opad::Document, opad::Scene>>(std::move(doc), std::move(scene));
+  QThread* t = QThread::create([old = std::move(old)]() mutable { old.reset(); });
+  connect(t, &QThread::finished, t, &QObject::deleteLater);
+  t->start(QThread::LowPriority);
+}
+
 void AppDocument::refresh() {
+  m_change = std::exchange(m_next, Change{});
   if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
   if (!m_resume.empty() && !doc.find_op(m_resume)) m_resume.clear();
+  if (m_rollback != std::exchange(m_resolvedRollback, m_rollback)) m_change = {};  // rolled back or forward: the whole log
   scene = hasDocument ? opad::resolve(doc, m_rollback) : opad::Scene{};
   if (!m_rollback.empty())  // an earlier op edited: values are still shown and typed in the document's unit, the last one
     for (const auto& e : opad::effective_ops(doc))
@@ -622,8 +651,7 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {rec
 
 void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved,const Recovered& into) {
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
-  emit aboutToReplace();++generation;++revision;m_rollback.clear();m_userRollback=false;m_resume.clear();
-  dispose(std::make_shared<opad::Document>(std::move(doc)));
+  emit aboutToReplace();++generation;++revision;dropRollback();m_change={};disposeOld();
   doc=std::move(document);scene=std::move(resolved);
   browse=readOnly=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
   if(into.file.isEmpty()){doc.path.clear();doc.dirty=true;setDisk({},{},{});}
@@ -645,7 +673,7 @@ void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
     throw opad::Error("stale_revision: the document changed while the agent was working");
   const auto before=doc.ops.size();
   document.path=doc.path; // Save As may have changed the path without changing geometry.
-  std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();m_userRollback=false;m_resume.clear();
+  std::swap(doc,document);std::swap(scene,resolved);dropRollback();m_change={};
   recordStep(label,before);updateDirty();++revision;checkActive();emit changed();emit undoChanged();
 }
 
@@ -698,12 +726,16 @@ void AppDocument::recordStep(const QString& label, size_t opsBefore) {
 void AppDocument::undo(int steps) {
   if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)undo(steps);});return;}
   if (!canUndo()) return;
+  std::vector<std::string> nodes;
+  bool local = true;
   for (; steps > 0 && !m_undo.empty(); --steps) {
     Step s = std::move(m_undo.back());
     m_undo.pop_back();
     s.ops = doc.truncate_ops(doc.ops.size() - std::min(s.count, doc.ops.size()));
+    local = local && touches(s.ops, 0, nodes);
     m_redo.push_back(std::move(s));
   }
+  if (local) m_next = {false, std::move(nodes)};
   refresh();
   emit undoChanged();
 }
@@ -711,14 +743,18 @@ void AppDocument::undo(int steps) {
 void AppDocument::redo(int steps) {
   if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)redo(steps);});return;}
   if (!canRedo()) return;
+  std::vector<std::string> nodes;
+  bool local = true;
   for (; steps > 0 && !m_redo.empty(); --steps) {
     Step s = std::move(m_redo.back());
     m_redo.pop_back();
+    local = local && touches(s.ops, 0, nodes);
     s.count = s.ops.size();
     doc.restore_ops(std::move(s.ops));
     s.ops.clear();
     m_undo.push_back(std::move(s));
   }
+  if (local) m_next = {false, std::move(nodes)};
   refresh();
   emit undoChanged();
 }
@@ -762,11 +798,23 @@ void AppDocument::updateDirty() {
   doc.dirty = !same;
 }
 
+bool AppDocument::touches(const std::vector<opad::Op>& ops, size_t from, std::vector<std::string>& nodes) {
+  for (size_t i = from; i < ops.size(); ++i) {
+    const opad::Op& op = ops[i];
+    if (op.type != "appearance" && op.type != "transform" && op.type != "rename" && op.type != "reparent") return false;
+    const auto target = op.data.find("target");
+    if (target == op.data.end() || !target->is_string()) return false;
+    nodes.push_back(target->get<std::string>());
+  }
+  return true;
+}
+
 QString AppDocument::labelFor(const std::string& command, const opad::json& args) {
   if (command == "appearance") {
     if (args.contains("visible")) return args["visible"].get<bool>() ? tr("show") : tr("hide");
     if (args.contains("color")) return tr("colour");
     if (args.contains("locked")) return args["locked"].get<bool>() ? tr("lock") : tr("unlock");
+    if (args.contains("opacity")) return tr("opacity");
     return tr("appearance");
   }
   if (command == "rename") return tr("rename");
@@ -794,7 +842,7 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
   }
   if (command == "part_properties") return args.value("document", false) ? tr("document properties") : tr("part properties");
   if (command == "section") return tr("named section");
-  if (command == "view") return tr("named view");
+  if (command == "view") return args.value("home", false) ? tr("set Home") : tr("named view");
   if (command == "import") return tr("import");
   if (command == "transform") return tr("transform");
   if (command == "canvas") {  // the image canvas (opad/canvas.hpp)
@@ -959,4 +1007,20 @@ void AppDocument::checkActive() {
   if (n && n->kind == opad::Node::Kind::Component) return;
   m_active.clear();
   emit activeComponentChanged();
+}
+
+std::shared_ptr<opad::Document> AppDocument::shapesOf(const std::vector<std::string>& nodes) const {
+  auto out = std::make_shared<opad::Document>();
+  out->shape_cache = doc.shape_cache;
+  out->header = doc.header;
+  for (const auto& id : nodes)
+    for (const auto& body : scene.node(id) ? scene.bodies_under(id) : std::vector<std::string>{})
+      if (const opad::Node* n = scene.node(body); n && !n->body_missing && !out->has_body(n->body_key)) try {
+        opad::body_shape(doc, n->body_key);
+        const opad::BodyEntry* e = doc.body(n->body_key);
+        out->add_live_body(n->body_key, e ? e->meta : opad::json::object());
+      } catch (const std::exception&) {
+      } catch (const Standard_Failure&) {
+      }
+  return out;
 }

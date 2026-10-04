@@ -5,19 +5,28 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QMetaObject>
+#include <QStringList>
 #include <QThread>
 #include <QtGlobal>
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <thread>
 #include <utility>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 
 #include "ProgressStrip.hpp"
 
 namespace {
 constexpr int kStripDelayMs = 500;  // how long an operation may run before progress UI appears
 constexpr int kSliceMs = 10;        // budget per UI-thread slice; leaves room for input and painting at 60 Hz
-constexpr int kStallMs = 250;       // watchdog threshold
+constexpr int kWarnMs = 250;        // the watchdog without OPAD_TRACE: stderr only, over this
+constexpr int kTickMs = 16;         // the watchdog's tick while tracing (a stall reads at most this much long)
 constexpr int kBusyMs = 150;        // a job the user waits for this long turns the busy cursor on
 }  // namespace
 
@@ -85,6 +94,8 @@ JobRunner::JobRunner(ProgressStrip* strip, QObject* parent) : QObject(parent), m
   m_showTimer.setSingleShot(true);
   m_showTimer.setInterval(kStripDelayMs);
   connect(&m_showTimer, &QTimer::timeout, this, &JobRunner::refreshStrip);
+  m_activityTimer.setSingleShot(true);
+  connect(&m_activityTimer, &QTimer::timeout, this, &JobRunner::refreshActivity);
   connect(m_strip, &ProgressStrip::cancelRequested, this, [this] { if (Job* c = current()) c->cancel(); });
   m_busyTimer.setSingleShot(true);
   connect(&m_busyTimer, &QTimer::timeout, this, &JobRunner::updateBusy);
@@ -116,9 +127,28 @@ void JobRunner::updateBusy() {
   else m_busyTimer.start(oldest >= kBusyMs ? 50 : static_cast<int>(kBusyMs - oldest));
 }
 
-Job* JobRunner::begin(const QString& title, bool twoBars) {
+Job* JobRunner::current() const {
+  for (Job* j : m_jobs)
+    if (j->m_kind == JobKind::Foreground) return j;
+  return nullptr;
+}
+
+QStringList JobRunner::background() const {
+  QStringList out;
+  for (Job* j : m_jobs)
+    if (j->m_kind == JobKind::Background || (j->m_kind == JobKind::Child && !j->m_parent)) out << j->title();
+  return out;
+}
+
+Job* JobRunner::begin(const QString& title, bool twoBars, JobKind kind, Job* parent) {
   Job* j = new Job(title, twoBars, this);
+  ++m_begun;
   j->m_background = std::exchange(m_backgroundNext, false);
+  j->m_kind = kind == JobKind::Child && !parent ? JobKind::Background : kind;
+  if (j->m_kind == JobKind::Child) {
+    j->m_parent = parent;
+    connect(parent, &Job::cancelRequested, j, &Job::cancel);  // the strip's Cancel reaches the children
+  }
   m_jobs.push_back(j);
   connect(j, &Job::phaseChanged, this, [this, j](const QString& text, int pct) {
     j->m_lastPhase = text;
@@ -130,14 +160,20 @@ Job* JobRunner::begin(const QString& title, bool twoBars) {
     if (j == m_shown) m_strip->setOverall(pct);
   });
   connect(j, &Job::finished, this, [this, j](bool ok, const QString& error) { onFinished(j, ok, error); });
-  if (!m_shown && !m_showTimer.isActive()) m_showTimer.start();
-  else if (m_shown) refreshStrip();  // a newer job takes over the strip
+  if (j->m_kind != JobKind::Foreground) {
+    if (!m_activityTimer.isActive()) m_activityTimer.start(kStripDelayMs);
+  } else if (!m_shown && !m_showTimer.isActive()) {
+    m_showTimer.start();  // the oldest Foreground job keeps the strip once it shows
+  } else if (m_shown) {
+    refreshStrip();  // counted among the others beside it
+  }
   if (!m_busyCursor && !m_busyTimer.isActive()) m_busyTimer.start(kBusyMs);  // marked background by then, or it counts
   return j;
 }
 
-Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, std::function<void(bool, const QString&)> done) {
-  Job* j = begin(title, false);
+Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, std::function<void(bool, const QString&)> done, JobKind kind,
+                      Job* parent) {
+  Job* j = begin(title, false, kind, parent);
   launch(j, std::move(work), std::move(done));
   return j;
 }
@@ -178,14 +214,19 @@ void JobRunner::launch(Job* j, std::function<void(Progress)> work, std::function
   worker->start();
 }
 
-Job* JobRunner::sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool)> done) {
-  Job* j = begin(title, false);
+Job* JobRunner::sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool)> done, JobKind kind, Job* parent) {
+  Job* j = begin(title, false, kind, parent);
   j->m_step = std::move(step);
   j->m_stepDone = std::move(done);
   // The first slice runs on the next event-loop turn, never inside this call: a job that completed
   // synchronously would run done() before the caller had even stored the returned Job*.
   QTimer::singleShot(0, j, [this, j] { slice(j); });
   return j;
+}
+
+void JobRunner::resume(Job* j) {
+  if (!j || !j->active() || !std::exchange(j->m_paused, false)) return;
+  QTimer::singleShot(0, j, [this, j] { slice(j); });
 }
 
 // One time-boxed slice of a sliced job, then yield to the event loop and reschedule.
@@ -195,7 +236,7 @@ void JobRunner::slice(Job* j) {
   t.start();
   bool more = true;
   const bool tracing = trace::enabled();
-  while (more && !j->cancelled() && t.elapsed() < kSliceMs) {
+  while (more && !j->m_paused && !j->cancelled() && t.elapsed() < kSliceMs) {
     const qint64 before = t.elapsed();
     more = j->m_step(*j);
     const qint64 took = t.elapsed() - before;
@@ -203,7 +244,7 @@ void JobRunner::slice(Job* j) {
   }
   if (!j->active()) return;  // cancelled from inside step (or via the strip) - finish already ran
   if (more && !j->cancelled()) {
-    QTimer::singleShot(0, j, [this, j] { slice(j); });
+    if (!j->m_paused) QTimer::singleShot(0, j, [this, j] { slice(j); });  // paused: resume() slices again
     return;
   }
   const bool completed = !j->cancelled();
@@ -215,7 +256,8 @@ void JobRunner::onFinished(Job* j, bool ok, const QString& error) {
   emit done(j, ok, error);
   j->deleteLater();
   updateBusy();
-  if (m_jobs.empty()) {
+  refreshActivity();
+  if (!current()) {
     m_showTimer.stop();
     if (m_shown) {
       m_shown = nullptr;
@@ -227,13 +269,32 @@ void JobRunner::onFinished(Job* j, bool ok, const QString& error) {
   refreshStrip();
 }
 
-// Shows the most recent job in the strip (only after the 0.5 s grace period has elapsed once), and how many others run.
+// The Background jobs (and children whose parent has gone) that have run for the grace period, for the activity dot.
+void JobRunner::refreshActivity() {
+  QStringList titles;
+  qint64 wait = -1;
+  for (Job* j : m_jobs) {
+    if (j->m_kind == JobKind::Foreground || (j->m_kind == JobKind::Child && j->m_parent)) continue;
+    const qint64 left = kStripDelayMs - j->elapsedMs();
+    if (left <= 0) titles << j->title();
+    else wait = wait < 0 ? left : std::min(wait, left);
+  }
+  titles.removeDuplicates();
+  if (wait >= 0) m_activityTimer.start(static_cast<int>(wait) + 1);
+  if (titles == m_activity) return;
+  m_activity = titles;
+  emit activityChanged(titles);
+}
+
+// Shows the oldest Foreground job in the strip (only after the 0.5 s grace period has elapsed once), and how many other
+// Foreground jobs run beside it (Background ones are the activity dot's).
 void JobRunner::refreshStrip() {
   Job* c = current();
   if (!c) return;
   if (!m_shown && m_showTimer.isActive()) return;
-  QStringList others = titles();
-  others.removeLast();
+  QStringList others;
+  for (Job* j : m_jobs)
+    if (j != c && j->m_kind == JobKind::Foreground) others << j->title();
   m_strip->setOthers(others);
   if (c == m_shown) return;
   const bool wasShown = m_shown != nullptr;
@@ -288,19 +349,89 @@ Scope::~Scope() {
   if (enabled()) log(QStringLiteral("%1: %2 ms").arg(m_name).arg(m_t.elapsed()));
 }
 
+namespace {
+struct StallLog {
+  Stalls since, all;
+  std::array<int, 6> buckets{};  // up to 100, 150, 250, 500, 1000 ms, longer
+};
+StallLog& stallLog() {
+  static StallLog s;
+  return s;
+}
+constexpr std::array<qint64, 5> kEdges{100, 150, 250, 500, 1000};
+}  // namespace
+
+int stallThreshold() {
+  static const int ms = [] {
+    bool ok = false;
+    const int v = qEnvironmentVariableIntValue("OPAD_TRACE_STALL_MS", &ok);
+    return ok && v > 0 ? v : 50;
+  }();
+  return enabled() ? ms : kWarnMs;
+}
+
+qint64 threadCpuMs() {
+#if defined(_WIN32)
+  // Cycles the thread ran (the invariant TSC) at the nominal clock: exact, where GetThreadTimes moves in 15.6 ms ticks.
+  static const double perMs = [] {
+    DWORD mhz = 0, size = sizeof(mhz);
+    RegGetValueW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", L"~MHz", RRF_RT_REG_DWORD, nullptr, &mhz, &size);
+    return mhz * 1000.0;
+  }();
+  ULONG64 cycles = 0;
+  if (perMs > 0 && QueryThreadCycleTime(GetCurrentThread(), &cycles)) return static_cast<qint64>(static_cast<double>(cycles) / perMs);
+  FILETIME created, exited, kernel, user;
+  if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) return 0;
+  auto ticks = [](const FILETIME& f) { return (static_cast<qint64>(f.dwHighDateTime) << 32 | f.dwLowDateTime); };  // 100 ns
+  return (ticks(kernel) + ticks(user)) / 10000;
+#else
+  timespec t{};
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+  return static_cast<qint64>(t.tv_sec) * 1000 + t.tv_nsec / 1000000;
+#endif
+}
+
+Stalls stalls() { return stallLog().since; }
+void resetStalls() { stallLog().since = {}; }
+
+QString stallHistogram() {
+  const StallLog& s = stallLog();
+  QStringList parts;
+  qint64 from = stallThreshold();
+  for (size_t i = 0; i < s.buckets.size(); ++i) {
+    parts << (i < kEdges.size() ? QStringLiteral("%1-%2 ms: %3").arg(from).arg(kEdges[i]).arg(s.buckets[i]) : QStringLiteral("%1+ ms: %2").arg(from).arg(s.buckets[i]));
+    if (i < kEdges.size()) from = std::max(from, kEdges[i]);
+  }
+  return QStringLiteral("stall histogram (over %1 ms): %2; %3 stalls, longest %4 ms, %5 ms in all")
+      .arg(stallThreshold()).arg(parts.join(", ")).arg(s.all.count).arg(s.all.longest).arg(s.all.total);
+}
+
 void installUiWatchdog(QObject* parent) {
   auto* timer = new QTimer(parent);
   auto last = std::make_shared<QElapsedTimer>();
+  auto lastCpu = std::make_shared<qint64>(threadCpuMs());
   last->start();
-  timer->setInterval(100);
-  QObject::connect(timer, &QTimer::timeout, parent, [last] {
-    const qint64 lag = last->restart() - 100;
-    if (lag > kStallMs) {
-      const QString msg = QStringLiteral("UI thread stalled for %1 ms").arg(lag + 100);
-      qWarning("%s", msg.toUtf8().constData());
-      log(msg);
+  timer->setTimerType(Qt::PreciseTimer);
+  timer->setInterval(enabled() ? kTickMs : 100);
+  // The time between two ticks is how long the event loop could not run, give or take one tick; the thread's CPU time in
+  // it tells work from waiting for a core on a busy machine.
+  QObject::connect(timer, &QTimer::timeout, parent, [last, lastCpu] {
+    const qint64 gap = last->restart();
+    const qint64 cpu = threadCpuMs(), work = cpu - std::exchange(*lastCpu, cpu);
+    if (gap <= stallThreshold()) return;
+    StallLog& s = stallLog();
+    for (Stalls* st : {&s.since, &s.all}) {
+      ++st->count;
+      st->longest = std::max(st->longest, gap);
+      st->longestCpu = std::max(st->longestCpu, work);
+      st->total += gap;
     }
+    ++s.buckets[static_cast<size_t>(std::upper_bound(kEdges.begin(), kEdges.end(), gap) - kEdges.begin())];
+    const QString msg = QStringLiteral("UI thread stalled for %1 ms (%2 ms of CPU)").arg(gap).arg(work);
+    if (gap > kWarnMs) qWarning("%s", msg.toUtf8().constData());
+    log(msg);
   });
+  if (enabled()) QObject::connect(qApp, &QCoreApplication::aboutToQuit, parent, [] { log(stallHistogram()); });
   timer->start();
 }
 }  // namespace trace

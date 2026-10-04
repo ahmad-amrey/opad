@@ -100,6 +100,8 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
 
 void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open) {
   const auto selected=m_view->selection();
+  const auto candidates=m_view->selectedCandidates();  // an origin plane picked first (UI-51)
+  const opad::json preset=candidates.size()==1?opad::json::parse(candidates.front(),nullptr,false):opad::json();
   stop();m_cameraBefore=m_view->cameraJson();m_active=true;m_positionOrigin=positionOrigin;m_originStage=false;m_oldFilter=m_view->selectionFilter();m_tiles->selected=-1;m_status->clear();
   // Construction planes are offered when there are any: they are made to be sketched on, and hidden behind an unticked
   // box the one just made could not be found.
@@ -107,6 +109,8 @@ void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open
   m_view->clearSelection();m_view->clearCandidates();m_view->setSelectionFilter(Viewport::SelFilter::Face);m_tiles->move(std::max(8,m_view->width()-450),42);m_tiles->show();constructionPlanes();refresh();open(m_panel);
   if(selected.size()==1 && selected.front().kind==opad::Ref::Kind::Face) {
     m_positionOrigin=false;choose({{"face",selected.front().to_json()}});
+  } else if(preset.is_object() && preset.contains("base") && selected.empty()) {
+    m_positionOrigin=false;choose({{"base",preset["base"]}});
   } else if(m_view->twoDimensional()) {
     const auto frame=m_view->cameraPlane();choose({{"frame",frame.to_json()}});
   }
@@ -160,9 +164,10 @@ void PlanePicker::refresh(){
 void PlanePicker::constructionPlanes(){
   const int serial=++m_candidateSerial;if(!m_active||m_originStage)return;m_view->clearCandidates();
   auto frames=std::make_shared<std::vector<std::pair<std::string,opad::Frame>>>();if(m_construction->isChecked())for(const auto& f:m_doc->scene.features)if(f.result.contains("plane"))frames->push_back({f.id,opad::Frame::from_json(f.result.at("plane"))});
+  if(m_view->originGuide())for(const char* base:{"xy","xz","yz"})frames->push_back({std::string("base:")+base,base_frame(base)});  // an empty document: the origin's planes in the view too (UI-51)
   auto sketches=std::make_shared<std::vector<opad::SketchItem>>(m_doc->scene.sketches);
   auto candidates=std::make_shared<std::vector<Viewport::Candidate>>();const double size=std::max(10.0,m_view->pixelSize()*70);QPointer<PlanePicker> guard(this);
-  m_jobs->async(tr("Preparing construction planes"),[frames,sketches,candidates,size](Progress p){for(const auto& [id,frame]:*frames){if(p.cancelled())return;candidates->push_back({(id.starts_with("sketch:")?opad::json{{"sketch",id.substr(7)}}:opad::json{{"feature",id}}).dump(),BRepBuilderAPI_MakeFace(frame_plane(frame),-size,size,-size,size).Face(),false});}
+  m_jobs->async(tr("Preparing construction planes"),[frames,sketches,candidates,size](Progress p){for(const auto& [id,frame]:*frames){if(p.cancelled())return;candidates->push_back({(id.starts_with("sketch:")?opad::json{{"sketch",id.substr(7)}}:id.starts_with("base:")?opad::json{{"base",id.substr(5)}}:opad::json{{"feature",id}}).dump(),BRepBuilderAPI_MakeFace(frame_plane(frame),-size,size,-size,size).Face(),false});}
     for(const auto& sketch:*sketches)if(sketch.visible){
       if(p.cancelled())return;BRep_Builder builder;TopoDS_Compound shape;builder.MakeCompound(shape);
       const auto geometry=Sketch::from_json(sketch.geometry);

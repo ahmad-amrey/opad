@@ -28,6 +28,7 @@ class StatusRow;
 class AgentBridge;
 class QMessageBox;
 class QKeyEvent;
+class KeyGuard;
 class QToolButton;
 template <class Tag>
 struct MainWindowBench;
@@ -41,7 +42,8 @@ class MainWindow : public QMainWindow {
   MainWindow();
   ~MainWindow() override;
   void openPath(const QString& path, bool readOnly = false);  // readOnly: a .opad opens read-only (opad --read-only)
-  void warmUpViewport() { m_viewport->warmUp(); }
+  void warmUpViewport() { m_viewport->warmUp(); }  // startup (StartUp.hpp): the viewer, then its first frame
+  void drawFirstViewportFrame() { m_viewport->firstFrame(); }
   void setBenchSelect(bool on);  // --bench-select: select every root after loading, log, quit; nothing else shows on screen
 
  protected:
@@ -131,12 +133,19 @@ class MainWindow : public QMainWindow {
   void showCentral();  // the start page, the viewport (also while loading) or an area's page; the browser floats over it
   // title: the job's and the shade's ("Opening box.step"); done: the completion toast, %1 = the bodies loaded.
   void beginLoad(std::function<void()> after, const QString& title = QString(), const QString& done = QString());
-  void setLoadPhase(const QString& phase, int pct);
+  void setLoadPhase(const QString& phase, int pct, int overall = -1);  // overall < 0: from pct, in the display part
   QString meshPhase() const;
-  int overallPercent(const QString& phase, int pct) const;
+  void restoreLastView();  // the camera this file was last seen with (not in benches)
+  // An edit asked for while the bodies of a load still stream in (UI-40): it runs once they are all shown.
+  void deferEdit(QAction* a);
+  QPointer<QAction> m_afterStream;
+  QLabel* m_activityDot = nullptr;  // Background jobs (Jobs.hpp): shown while any has run 0.5 s, its tooltip names them
   void scheduleSelectionSync();
   // Volume, area and the tight box (TODO 10 B10) of a body or component, measured on a worker, then shown.
   void showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid);
+  // A face's, edge's or vertex's details (inspect_ref: area, the adjacent faces, the walk over the body), measured on a
+  // worker after the panel showed what is known at once (UI-51).
+  void showRefGeometry(const opad::Ref& ref, const QString& subtitle, const QString& nid);
   void runBench();
   bool benchTodo5();
   bool benchTodo9();
@@ -171,11 +180,18 @@ class MainWindow : public QMainWindow {
   void refreshToolUi();
   QList<ToolStep> toolSteps() const;
   QString refLabel(const opad::Ref& r) const;
-  bool toolMeasures() const { return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox" || m_tool.id == "area"; }
+  bool toolMeasures() const {
+    return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox" || m_tool.id == "area" || m_tool.id == "length";
+  }
+  // A result's name ("Distance", "Centre to centre", "Area") and its rows as the tool panel lists them, in the shown units:
+  // the value, components, what was recognised, perimeters, the measured points' XYZ (UI-144).
+  QString measureTitle(const opad::json& result) const;
+  QList<QPair<QString, QString>> measureRows(const opad::json& result) const;
+  void copyMeasurement(const opad::json& result);
   void updateUndoActions();
   QMenu* historyMenu(bool undo);  // the steps under the quick-access Undo ▾ / Redo ▾
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
-  void pinMeasurement();
+  void pinMeasurement(opad::json result = {});  // the current result when none is given
   bool measuredExploded() const;  // the last measurement was taken in an exploded view: it is not pinned
   void clearMeasurement();
   void startAnnotation(bool drawing);  // Note (false) or Hand drawing (true); the same command again closes it
@@ -192,6 +208,8 @@ class MainWindow : public QMainWindow {
   void rebuildViewsMenu();
   void selectOpTargets(const std::string& opId);
   void deleteOp(const std::string& opId);
+  void deleteOps(const std::vector<std::string>& opIds);  // several tombstones as one step (UI-02)
+  void hideOthers(const std::vector<std::string>& keep);  // one step hiding the fewest nodes (Scene::others_to_hide)
   void restoreOp(const std::string& opId);
   void deleteCurrent();
   // Del on objects (UI-04): what the selection covers and nothing more (smart::routeDelete), one undo step, a toast with
@@ -199,6 +217,7 @@ class MainWindow : public QMainWindow {
   void deleteNodes(const std::vector<std::string>& ids);
   void undoToast(const QString& text);  // a result toast whose Undo takes back that step (not one made after it)
   void writeSelectionFile();
+  void unpublishSelection();
   void positionOverlays();
   void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends
   void addRecent(const QString& path);
@@ -265,6 +284,15 @@ class MainWindow : public QMainWindow {
   std::vector<std::pair<bool, opad::Vec3>> m_toolPoints;  // where each pick was clicked (false: picked some other way)
   int m_toolRun = 0;  // bumps whenever the picks change: a measure result for an older run is dropped
   QString m_toolHover;
+  QString m_toolError;  // why the last pick could not be measured, shown in the tool panel until the next pick (UI-50)
+  int m_distanceMode = 0;  // Distance: 0 minimum, 1 centre to centre, 2 maximum (setting measure/distanceMode, UI-144)
+  // Measured points and Δ in 0 world axes, 1 the axes of the component the first pick lies in (setting measure/frame).
+  int m_measureFrame = 0;
+  std::string measureComponent(const std::string& body) const;  // the component a pick lies in, empty at the root
+  bool measureFrame(const std::string& body, gp_Trsf& toWorld) const;  // false: world axes
+  struct MeasureRecord { opad::json result; bool pinned = false; };
+  std::vector<MeasureRecord> m_measureHistory;  // this document's results, newest first (UI-144)
+  void refreshMeasureHistory();
   PromptBar* m_prompt = nullptr;
   ToolStepsPanel* m_toolSteps = nullptr;
   ToolPanel* m_toolPanel = nullptr;
@@ -279,8 +307,12 @@ class MainWindow : public QMainWindow {
   void showFinding(const opad::json& finding);
   void endCheck();
   LoadShade* m_loadShade = nullptr;
+  KeyGuard* m_keyGuard = nullptr;
   bool m_timelineHiddenByViewer = false;
-  bool m_autoTwoD = false, m_settingTwoD = false;  // 2D mode turned on for a viewed drawing (and turned off after it)
+  bool m_autoTwoD = false, m_settingTwoD = false;  // 2D mode turned on for a viewed drawing (any 2D mode ends with its document)
+  bool m_autoEdges = false;      // the Edge filter set for a drawing (and set back to Bodies after it)
+  bool viewingDrawing() const;   // a drawing (DXF, DWG, SVG) in viewer mode: every body is 2D
+  void setAutoTwoD(bool on);     // 2D mode on or off for that, not by hand
   RibbonBar* m_ribbon = nullptr;
   BrowserPanel* m_browser = nullptr;
   PropertiesPanel* m_props = nullptr;
@@ -327,8 +359,10 @@ class MainWindow : public QMainWindow {
   QStringList m_kicadOffered;
   int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer
+  bool m_selPublishing = false;     // agent access is on: the selection is published (UI-06)
   Job* m_measureJob = nullptr;      // the guided tool's measurement; cancelled as soon as the picks move on
   Job* m_propsJob = nullptr;        // geometry for the properties panel
+  Job* m_sectionJob = nullptr;      // the section plane from a picked face (UI-51: inspected on a worker)
   bool m_loadDocDone = false;
   int m_meshTotal = 0, m_meshRemaining = 0;
   std::function<void()> m_afterLoad;

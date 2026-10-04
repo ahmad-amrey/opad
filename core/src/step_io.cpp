@@ -51,11 +51,13 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
 #include <set>
 #include <unordered_map>
+#include <utility>
 
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
@@ -115,6 +117,46 @@ class CallbackProgress : public Message_ProgressIndicator {
     if (!cb(std::min(frac, 1.0), what)) cancelled = true;
   }
   Standard_Boolean UserBreak() override { return cancelled; }
+};
+
+// The file as OCCT's STEP reader takes it, a megabyte at a time (UI-40): the reader has no progress of its own, so its
+// scan is reported by the bytes taken, and a cancel ends the stream there (the parse then stops with an error). Once
+// every byte is in, `report(-1)`: the records are then made into entities, with nothing to measure (a 45 MB file: 0.4 s
+// scanning, 2.2 s after).
+class CountingBuffer : public std::streambuf {
+ public:
+  CountingBuffer(const std::filesystem::path& path, std::function<bool(double)> report) : m_report(std::move(report)), m_chunk(1 << 20) {
+    m_file.open(path, std::ios::in | std::ios::binary);
+    std::error_code ec;
+    m_size = std::filesystem::file_size(path, ec);
+  }
+  bool is_open() const { return m_file.is_open(); }
+  bool cancelled() const { return m_cancelled; }
+  size_t taken() const { return m_taken; }
+
+ protected:
+  int_type underflow() override {
+    if (m_cancelled) return traits_type::eof();
+    const std::streamsize n = m_file.sgetn(m_chunk.data(), static_cast<std::streamsize>(m_chunk.size()));
+    if (n <= 0) {
+      if (!std::exchange(m_ended, true) && m_report && !m_report(-1)) m_cancelled = true;
+      return traits_type::eof();
+    }
+    m_taken += static_cast<size_t>(n);
+    if (m_report && m_size && !m_report(std::min(1.0, static_cast<double>(m_taken) / static_cast<double>(m_size)))) {
+      m_cancelled = true;
+      return traits_type::eof();
+    }
+    setg(m_chunk.data(), m_chunk.data(), m_chunk.data() + n);
+    return traits_type::to_int_type(m_chunk.front());
+  }
+
+ private:
+  std::filebuf m_file;
+  std::function<bool(double)> m_report;
+  std::vector<char> m_chunk;
+  size_t m_size = 0, m_taken = 0;
+  bool m_cancelled = false, m_ended = false;
 };
 
 std::string label_name(const TDF_Label& l) {
@@ -444,12 +486,17 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
 
   if (opt.progress && !opt.progress(-1, "reading")) throw Error("import cancelled");
   IFSelect_ReturnStatus status;
+  CountingBuffer file(step, opt.progress ? std::function<bool(double)>([&opt](double f) { return opt.progress(f, f < 0 ? "parsing" : "reading"); }) : nullptr);
+  if (!file.is_open()) throw Error("STEP file could not be opened: " + step.string());
   try {
-    const auto utf8 = step.u8string();  // OCCT widens UTF-8 on Windows; the ANSI form failed for non-Latin file names
-    status = reader.ReadFile(std::string(utf8.begin(), utf8.end()).c_str());
+    std::istream in(&file);
+    const auto utf8 = step.filename().u8string();  // a name for OCCT's messages; the stream is the file
+    status = reader.ReadStream(std::string(utf8.begin(), utf8.end()).c_str(), in);
   } catch (const Standard_Failure& e) {
+    if (file.cancelled()) throw Error("import cancelled");
     throw Error(std::string("STEP read failed: ") + e.GetMessageString());
   }
+  if (file.cancelled()) throw Error("import cancelled");
   if (status != IFSelect_RetDone) throw Error("STEP read failed (not a STEP file or unsupported schema): " + step.string());
 
   Handle(TDocStd_Document) xdoc;

@@ -1,4 +1,5 @@
 #include "Viewport.hpp"
+#include "Jobs.hpp"
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_RenderingParams.hxx>
 #include <Graphic3d_GraphicDriver.hxx>
@@ -98,18 +99,23 @@ void Viewport::setRenderQuality(int level) {
   m_renderQuality = std::clamp(level, 0, 2);
   QSettings().setValue("view/qualityV2", m_renderQuality);
   if (!m_initialised) return;
+  m_degraded = false;
+  m_qualityTimer.stop();
   auto& p = m_view->ChangeRenderingParams();
   const bool rayTracing = m_renderQuality == 2 && m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_HasRayTracing);
   p.Method = rayTracing ? Graphic3d_RM_RAYTRACING : Graphic3d_RM_RASTERIZATION;
   p.NbMsaaSamples = rayTracing ? 0 : std::min(4, m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa));
   if (m_renderQuality == 2 && !rayTracing) emit hoverChanged(tr("Ray tracing unavailable on this driver; using Studio rendering"));
-  p.RenderResolutionScale = m_renderQuality == 1 ? 1.25f : 1.0f;  // a drawing's lines are drawn that much wider (lineWidth)
+  applyQuality();  // Studio renders at 1.25: a drawing's lines are drawn that much wider (lineWidth)
+  outlineBodies();  // put back if it was lowered
   p.ShadingModel = m_renderQuality == 0 ? Graphic3d_TypeOfShadingModel_Unlit : Graphic3d_TypeOfShadingModel_Phong;
-  p.IsShadowEnabled = m_renderQuality >= 1;
   p.IsReflectionEnabled = false;
   p.IsAntialiasingEnabled = rayTracing;
   p.IsGlobalIlluminationEnabled = false;  // bounded interactive cost; no progressive path-tracing stall
   p.RaytracingDepth = 2;
+  // Translucent things (a body's opacity, ghosts, the selection's tints) blend order-independently when rasterised
+  // (UI-39): unordered blending gave where two overlap the colour of whichever was displayed last.
+  p.TransparencyMethod = Graphic3d_RTM_BLEND_OIT;
   setShadows(m_renderQuality >= 1);
   updateDepthBias();
   scheduleLooks();  // drawings' hairlines follow the render scale
@@ -117,7 +123,9 @@ void Viewport::setRenderQuality(int level) {
   redrawScene();
 }
 
-double Viewport::renderScale() const { return m_initialised ? m_view->RenderingParams().RenderResolutionScale : 1.0; }
+// The render's size over the view's at full quality (Studio: 1.25). Lowered while navigating (UI-45) it is less for a moment;
+// the lines keep the width they were given for the full one.
+double Viewport::renderScale() const { return m_initialised && m_renderQuality == 1 ? 1.25 : 1.0; }
 
 double Viewport::lineWidth(double points) const {
   return std::max(1.0, std::ceil(points * displayScale() * renderScale() - 0.01));  // whole pixels: 1.25 drew as 1, under a screen pixel
@@ -128,6 +136,49 @@ const QColor kGradientTop("#c7c8c9"), kGradientBottom("#66696b");
 Quantity_Color occ(const QColor& v) { return Quantity_Color(v.redF(), v.greenF(), v.blueF(), Quantity_TOC_sRGB); }
 }  // namespace
 
+void Viewport::applyQuality() {
+  auto& p = m_view->ChangeRenderingParams();
+  const bool rayTracing = p.Method == Graphic3d_RM_RAYTRACING;
+  p.RenderResolutionScale = m_degraded ? (rayTracing ? 0.5f : 1.0f) : m_renderQuality == 1 ? 1.25f : 1.0f;
+  p.IsShadowEnabled = m_renderQuality >= 1 && !m_degraded;
+}
+
+void Viewport::setAdaptiveQuality(bool on) {
+  m_adaptive = on;
+  QSettings().setValue("view/adaptive", on);
+  if (!on) restoreQuality();
+}
+
+// Moving under a gesture, the wheel, a trackpad or an animation; a camera set at once (Fit, a typed view) is a single frame.
+// Only the resolution scale and the shadows change: MSAA would reallocate the frame buffers, and the shader variants are
+// kept after the first change.
+void Viewport::degradeWhileNavigating() {
+  const auto camera = m_view->Camera()->WorldViewProjState();
+  if (camera == m_qualityCamera) return;
+  m_qualityCamera = camera;
+  if (m_degraded) return m_qualityTimer.start();
+  const bool navigating = PressedMouseButtons() != Aspect_VKeyMouse_NONE || (!myViewAnimation.IsNull() && !myViewAnimation->IsStopped()) ||
+                          m_trackpadMode != TrackpadMode::None || (m_wheelClock.isValid() && m_wheelClock.elapsed() < 300);
+  // Draft has nothing to lower but the silhouettes of Shaded + edges.
+  if (!m_adaptive || (m_renderQuality == 0 && m_style != Style::ShadedEdges) || m_fullFrameMs < kSmoothFrameMs || !navigating) return;
+  m_degraded = true;
+  applyQuality();
+  outlineBodies();
+  m_qualityTimer.start();
+  if (trace::enabled()) trace::log(QStringLiteral("quality: lowered while navigating (a full frame took %1 ms)").arg(m_fullFrameMs));
+}
+
+void Viewport::restoreQuality() {
+  m_qualityTimer.stop();
+  if (!m_degraded || !m_initialised) return;
+  m_degraded = false;
+  applyQuality();
+  outlineBodies();
+  m_view->Invalidate();
+  requestRedraw();
+  if (trace::enabled()) trace::log(QStringLiteral("quality: full again"));
+}
+
 void Viewport::setSceneBackground(int style) {
   m_sceneBackground = std::clamp(style, 0, 3);
   QSettings().setValue("view/background", m_sceneBackground);
@@ -137,6 +188,7 @@ void Viewport::setSceneBackground(int style) {
   else m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
   updateDrawingHighlights();
   scheduleLooks();  // drawings without a colour take the ink of the new background (UI-10)
+  if (m_style == Style::HiddenLine || m_style == Style::HiddenEdges) setStyle(m_style);  // faces in the background's colour
   redrawScene();
 }
 

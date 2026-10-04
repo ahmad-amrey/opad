@@ -27,6 +27,8 @@ class AgentBridge : public QObject {
   void setAccess(bool enabled,bool edit);
   QString discoveryPath() const {return m_directory;}
   bool busy() const {return m_busy;}
+  // Agent access is on, or a session is bound (UI-06): only then is the GUI selection published (selection.json).
+  bool publishesSelection() const;
   QString statusSummary() const {return stateText();}
   opad::json descriptor() const;
   opad::json liveState() const;  // what live_state answers (benches read it too)

@@ -8,6 +8,7 @@
 #include <QHBoxLayout>
 #include <QItemSelection>
 #include <QItemSelectionModel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -296,7 +297,9 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
       if (id.empty()) {  // document row: toggle every root
         bool anyVisible = false;
         for (const auto& r : m_doc->scene.roots) anyVisible = anyVisible || m_doc->node(r)->visible;
-        for (const auto& r : m_doc->scene.roots) m_doc->run("appearance", opad::json{{"target", r}, {"visible", !anyVisible}});
+        std::vector<std::string> roots;  // the ones that change, in one step (UI-02)
+        for (const auto& r : m_doc->scene.roots) if (m_doc->node(r)->visible == anyVisible) roots.push_back(r);
+        if (!roots.empty()) m_doc->run("appearance", opad::json{{"targets", roots}, {"visible", !anyVisible}});
         return;
       }
       const opad::Node* n = m_doc->node(id);
@@ -655,7 +658,21 @@ void BrowserPanel::collapseAll() {
 }
 
 void BrowserPanel::startRename(const std::string& id) {
-  if (auto* it = itemFor(id)) m_tree->editItem(it, 0);
+  auto* it = itemFor(id);
+  if (!it) return;
+  m_tree->scrollToItem(it);
+  m_tree->editItem(it, 0);
+  if (QWidget* editor = renameEditor()) {  // the panel floats in a window of its own: typed keys must come here (UI-09)
+    editor->window()->activateWindow();
+    editor->setFocus(Qt::OtherFocusReason);
+  }
+}
+
+QWidget* BrowserTree::renameEditor() const {
+  if (state() != EditingState) return nullptr;
+  for (auto* editor : viewport()->findChildren<QLineEdit*>())
+    if (!editor->isHidden()) return editor;  // a closed one is hidden until it is deleted
+  return nullptr;
 }
 
 void BrowserPanel::updateBreadcrumb() {

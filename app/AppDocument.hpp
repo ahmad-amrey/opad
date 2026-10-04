@@ -109,6 +109,9 @@ class AppDocument : public QObject {
   static opad::AssetOptions assetOptions();
   static QString assetSummary(const opad::json& states);  // "Linked files: 1 changed since the last sync, ..." or empty
   void cancelLoad();
+  // Where the display of the bodies starts in the load's overall progress, in per cent (the document's own part comes
+  // before: an .opad file is mostly display work, a translated one mostly translation).
+  int displayStart() const { return m_displayStart; }
   void refresh();
   // KiCad boards: the reader's options from the settings (kicad/*).
   static opad::KicadOptions kicadOptions();
@@ -148,7 +151,19 @@ class AppDocument : public QObject {
   void setUndoLimit(int steps);
   int undoLimit() const { return m_undoLimit; }
   const opad::Node* node(const std::string& id) const { return scene.node(id); }
+  // What the last `changed` changed (UI-40): only the appearance, placement, name or parent of these nodes (the ops that
+  // did it added, undone or redone), or anything (`whole`: a load, a feature, a delete, a roll-back, ...). A view can then
+  // look at the bodies under them alone.
+  struct Change {
+    bool whole = true;
+    std::vector<std::string> nodes;
+  };
+  const Change& lastChange() const { return m_change; }
   QString nodeName(const std::string& id) const;
+  // For a worker that reads the shapes of these nodes (the bodies under them) and nothing else of the document: an empty
+  // document sharing the shape cache, their shapes put there first (a hit for any body loaded or displayed), their entries
+  // without the BREP text. A copy of `doc` copies every BREP text on the UI thread (80-150 ms a click on the Engine).
+  std::shared_ptr<opad::Document> shapesOf(const std::vector<std::string>& nodes) const;
 
   // The active component (UI-33): session state, never written. New sketches, features, bodies, imports and components
   // go into it, and the view ghosts everything else. Empty = the document root. Back to the root when it goes (deleted,
@@ -217,24 +232,30 @@ class AppDocument : public QObject {
   // turns out unchanged; a save of another caller (saveAsync: an agent, Commit) failed for good.
   void saveBlocked(bool retry);
   void message(const QString& text);
-  void loadProgress(const QString& phase, int percent);  // percent < 0: unknown
+  void loadProgress(const QString& phase, int percent, int overall);  // percent < 0: unknown; overall: of the whole load
   void loadFinished(bool ok, const QString& error);
   void undoChanged();  // stacks or labels changed
 
  private:
-  opad::ImportOptions loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file);
+  opad::ImportOptions loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file, bool opad);
+  int m_displayStart = 45;
   struct Step {
     QString label;
     size_t count = 0;            // ops on the log while the step sits on the undo stack
     std::vector<opad::Op> ops;   // the ops themselves while it sits on the redo stack
   };
+  void disposeOld();  // the document and scene being replaced, to a worker (moved out: both are empty afterwards)
   void recordStep(const QString& label, size_t opsBefore);
   void clearHistory();
   void markSaved();      // snapshot the state the file holds (or the empty state of a new document)
   void updateDirty();    // dirty = log or body store differs from the snapshot
   static QString labelFor(const std::string& command, const opad::json& args);
   void checkActive();  // the active component still a component of the (whole) scene, else the root
+  // Adds the targets of ops[from..] to `nodes`; false when one of them is not an appearance, transform, rename or reparent.
+  static bool touches(const std::vector<opad::Op>& ops, size_t from, std::vector<std::string>& nodes);
+  Change m_change, m_next;  // the last refresh's, and what the next one reports (anything unless the caller says)
   std::string m_rollback, m_active;
+  std::string m_resolvedRollback;  // what the scene was resolved up to: another point is a change of everything
   bool m_userRollback = false;  // m_rollback is the user's (rollBackTo), not an editor's
   std::string m_resume;         // the user's roll-back an editor took over (setRollback): back to it when the editor ends
   bool changesBefore(const std::string& point, size_t from) const;

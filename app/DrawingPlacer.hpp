@@ -62,7 +62,7 @@ class DrawingPlacer : public QObject {
   int m_snapStage = 0;  // 1: pick a vertex of the drawing, 2: pick where it goes
   opad::Vec3 m_snapFrom{};
   int m_serial = 0;
-  QPointer<Job> m_job;
+  QPointer<Job> m_job, m_snapJob;
   QString m_file;
   opad::Frame m_plane;
   double m_du = 0, m_dv = 0, m_pressU = 0, m_pressV = 0, m_startU = 0, m_startV = 0;
