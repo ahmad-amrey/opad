@@ -1,8 +1,10 @@
 // Bench of Preferences (UI-110); the window is Preferences.cpp, its command and pages PreferencesArea.cpp.
 #include "MainWindow.hpp"
 #include "BenchRegistry.hpp"
+#include "DesignController.hpp"
 #include "I18n.hpp"
 #include "Preferences.hpp"
+#include "SketchEditor.hpp"
 #include "Units.hpp"
 
 #include <QApplication>
@@ -133,6 +135,12 @@ OPAD_BENCH(OPAD_BENCH_PREFERENCES, preferences) {
       auto* panelStep = w.findChild<QDoubleSpinBox*>("sketch-angleStep");
       auto* polarRow = snaps->findChild<QCheckBox*>("view.polarSnap");
       check(endpoint && panelEndpoint && panelAngle && panelStep && polarRow, "the sketch panel's snaps and the rows are there");
+      QStringList missing;  // every setting has a home in Preferences (UI-110); Grid and Angle are F9 and Polar, rows of their own
+      for (auto* box : w.findChildren<QCheckBox*>()) {
+        const QString key = box->objectName().startsWith("snap-") ? box->objectName().mid(5) : QString();
+        if (!key.isEmpty() && key != "grid" && key != "angle" && !snaps->findChild<QCheckBox*>("sketch/snap/" + key)) missing << key;
+      }
+      check(missing.isEmpty(), "every snap of the sketch panel has its row on the Sketch page (" + missing.join(' ') + ")");
       if (endpoint && panelEndpoint && panelAngle && panelStep && polarRow) {
         const bool was = endpoint->isChecked();
         panelEndpoint->click();
@@ -144,6 +152,22 @@ OPAD_BENCH(OPAD_BENCH_PREFERENCES, preferences) {
         check(w.action("view.polarSnap")->isChecked() != polar && polarRow->isChecked() != polar, "the panel's Angle increments is Polar: the status bar and its row follow");
         w.action("view.polarSnap")->trigger();
         check(panelAngle->isChecked() == polar && polarRow->isChecked() == polar, "Polar (F10): the panel's check box follows");
+        // One change, one read of the sketch's snap settings: F8, and the panel's Angle increments (Polar follows it without
+        // saying so again).
+        const SketchEditor* editor = w.m_design ? w.m_design->sketch() : nullptr;
+        size_t f8 = 0, panel = 0;
+        if (editor) {
+          size_t reads = editor->settingsReads();
+          w.action("view.orthoSnap")->trigger();
+          f8 = editor->settingsReads() - reads;
+          w.action("view.orthoSnap")->trigger();
+          reads = editor->settingsReads();
+          panelAngle->click();
+          panel = editor->settingsReads() - reads;
+          panelAngle->click();
+        }
+        check(editor && f8 == 1 && panel == 1 && w.action("view.polarSnap")->isChecked() == polar,
+              QString("one change reads the sketch's snap settings once (F8 %1, the panel's Angle increments %2)").arg(f8).arg(panel));
         step->setValue(45);
         check(panelStep->value() == 45, "the angle step row: the panel's box follows");
         w.toggleMenu(w.statusBar()->findChild<QToolButton*>("toggle.view.polarSnap"), "view.polarSnap");

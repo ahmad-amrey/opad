@@ -142,6 +142,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchClipboard();
   void benchEdits();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
+  size_t settingsReads() const { return m_settingsReads; }  // benches: once per change, never per mouse move
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
   // or selected show.
   bool showConstraints() const { return m_showConstraints; }

@@ -212,7 +212,9 @@ class PreferencesArea : public AreaController {
     preferences::Form form(page);
     form.section(tr("Snaps"), tr("Where a point placed in a sketch may jump to. Alt while placing turns them off for that point."));
     for (const auto& [key, label] : QList<QPair<QString, QString>>{{"endpoint", tr("Endpoints")}, {"midpoint", tr("Midpoints")}, {"center", tr("Centres")},
-                                                                   {"quadrant", tr("Quadrants")}, {"intersection", tr("Intersections")}, {"nearest", tr("Nearest on curve")},
+                                                                   {"quadrant", tr("Quadrants")}, {"intersection", tr("Intersections")},
+                                                                   {"apparent", tr("Apparent intersections")}, {"perpendicular", tr("Perpendicular")},
+                                                                   {"tangent", tr("Tangent")}, {"nearest", tr("Nearest on curve")},
                                                                    {"inference", tr("Automatic constraints")}})
       form.check("sketch/snap/" + key, label, true);
     if (QAction* grid = action("view.gridSnap")) form.option(grid, tr("Grid snapping"));  // F9 itself, as on the Grid page: one switch

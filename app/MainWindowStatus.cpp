@@ -12,6 +12,7 @@
 #include <QStyleOption>
 #include <QTimer>
 #include <QToolButton>
+#include <memory>
 
 #include "CoordinateReadout.hpp"
 #include "I18n.hpp"
@@ -86,17 +87,21 @@ void MainWindow::buildStatusBar() {
     if(info.id=="view.orthoSnap")info.keywords={tr("orthogonal"),tr("horizontal vertical lock")};
     auto* a=addCommand(info,[] {});
     a->setChecked(m_settings.value(spec.setting,spec.defaultOn).toBool());
-    auto apply=[this,spec](bool on) {
+    auto following=std::make_shared<bool>(false);  // set from another face, which has said so already
+    auto apply=[this,spec,following](bool on) {
       m_settings.setValue(spec.setting,on);
       if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
       else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
       else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);
-      if(m_design && m_design->sketch()) m_design->sketch()->refreshSnap();  // the sketch reads them once (UI-27), again now
-      preferences::changed(spec.setting);  // its other faces: Preferences, the sketch panel's snaps
+      // Its other faces (Preferences, the sketch panel's snaps) and the open sketch, which reads them again on it (UI-27).
+      if(!*following) preferences::changed(spec.setting);
     };
     connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
-    connect(preferences::notifier(),&preferences::Notifier::changed,a,[a,spec](const QString& key) {  // set from one of them
-      if(key.isEmpty() || key==spec.setting) a->setChecked(QSettings().value(spec.setting,spec.defaultOn).toBool());
+    connect(preferences::notifier(),&preferences::Notifier::changed,a,[a,spec,following](const QString& key) {  // set from one of them
+      if(!(key.isEmpty() || key==spec.setting)) return;
+      *following=true;
+      a->setChecked(QSettings().value(spec.setting,spec.defaultOn).toBool());
+      *following=false;
     });
     auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setAccessibleName(tr(spec.label)); button->setIconSize({18,18}); button->setFixedSize(30,26);
