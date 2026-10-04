@@ -364,7 +364,10 @@ circle of their parent, auxiliary views look square to a slanted edge, and any v
 shorten a long part (dimensions across a break keep their true value; break lines ruled with a zigzag or freehand). A
 broken-out section opens up a view within a smooth closed outline down to a depth picked in a view beside it (`breakouts`
 on the view): its floor hatched, a thin break line where it ends over the part. In the Drawings workspace these are
-drawn with the mouse on the selected view (Views group, or the view's menu).
+drawn with the mouse on the selected view (Views group, or the view's menu); while a tool runs its value card beside the
+pointer takes the numbers by keyboard (a section's or auxiliary view's gap, a detail's radius and scale, a crop's width
+and height, a break's length, a broken-out section's depth below the part's front), Tab to the next, Enter to take them.
+A view's menu also sets a detail's own scale and a section's, detail's or auxiliary view's letter.
 
 The hidden-line linework of a view is never stored: it is a pure function of the bodies' content keys, their
 placements and the view's definition, so it is projected when a sheet is shown or exported and cached under that

@@ -78,7 +78,9 @@ CASES = [
     # standard scale; an auxiliary view square to an edge; a crop box dragged, a break clicked (the view lined up breaks
     # with it), Remove crop from the menu, Ctrl+Z; Hatching… (angle and spacing typed, automatic again); an aligned section
     # (an inclined segment revolved, both sides hatched); a broken-out section (outline, depth picked in the top view;
-    # removed, Ctrl+Z); freehand break lines from the menu; a dimension on the section's outline (two cut lines: 40).
+    # removed, Ctrl+Z); freehand break lines from the menu; a dimension on the section's outline (two cut lines: 40); a
+    # detail's scale and letter from its menu; typed values on each tool's card (a detail's radius and scale, an auxiliary
+    # view's gap, a crop's width and height, a break's length, a broken-out section's depth; Tab, Esc, Enter).
     # <prefix>.views.png,
     # <prefix>.hatch.png.
     ("sheet-views", "empty", {"OPAD_BENCH_SHEET_VIEWS": "{prefix}"}),

@@ -12,6 +12,11 @@
 // it again cuts it, one sheet_edit each, until Esc. Breakout, on a base, projected or auxiliary view: points round what
 // to open up (a smooth closed curve through them), Enter, then the depth: a click in a view square to it (the cut goes
 // through that point) or Enter (the part's middle): one sheet_edit. Nothing is measured on the UI thread.
+// The keyboard (UI-122): a value card beside the pointer takes what the stage measures, digits typed into the focused field
+// and Tab to the next (bare digits never reach the window's shortcuts while a tool runs): a section's or auxiliary view's
+// gap, a detail's radius and scale (5, 5:1 or 1:2), a crop's width and height from its first corner, a break's length from
+// its first point, a broken-out section's depth below the part's front. Typed values win over the pointer's; Enter takes
+// them, Esc clears them first.
 #include <QObject>
 #include <QPointer>
 #include <QPointF>
@@ -46,6 +51,9 @@ class SheetViewTool : public QObject, public SheetInteraction {
   bool askingDepth() const { return m_stage == Stage::Depth; }  // breakout: the outline closed, the depth next
   bool measuring() const { return m_measuring; }
   QRectF ghost() const { return m_ghost; }  // scene: the new view's frame while it follows the pointer
+  std::vector<std::string> inputs() const;   // the value card's fields now (benches)
+  QString inputText(const std::string& key) const;  // a field's text: typed, else what the pointer gives
+  bool cardShown() const;
   static QString title(Tool tool);
 
   bool mousePress(QMouseEvent* e, const QPointF& scene) override;
@@ -67,6 +75,10 @@ class SheetViewTool : public QObject, public SheetInteraction {
 
  private:
   enum class Stage { Pick, Size, Place, Depth };
+  struct Input {
+    std::string key;  // gap | radius | scale | width | height | length | depth
+    QString label, typed;
+  };
   struct Extent {
     double w = 0, h = 0;                // model mm
     opad::drawing::Vec2 centre{0, 0};   // its middle in its own view coordinates
@@ -87,6 +99,13 @@ class SheetViewTool : public QObject, public SheetInteraction {
   void measureDepth();                                         // breakout: the bodies' depths on a worker (Enter: their middle)
   std::vector<opad::drawing::Vec2> outline() const;            // breakout: the curve through the points (and the pointer)
   QString scaleLabel() const;
+  double scaleNow() const;                           // detail: the typed scale, else detailScale()
+  std::optional<double> typed(const std::string& key) const;  // a typed value (model mm; a scale's ratio)
+  std::vector<std::string> inputKeys() const;        // what the stage takes by keyboard
+  opad::drawing::Vec2 sized(const QPointF& scene) const;  // crop, break: the second point, typed sizes winning
+  void syncInputs();                                 // the card's fields for the stage, beside the pointer
+  bool inputKey(QKeyEvent* e);                       // a typed character, Backspace, Tab, Esc: true when taken
+  void clearInputs();
 
   AppDocument* m_doc;
   QPointer<SheetCanvas> m_canvas;
@@ -107,5 +126,8 @@ class SheetViewTool : public QObject, public SheetInteraction {
   QPointF m_mouse, m_press;
   QRectF m_ghost;
   QString m_prompt;
+  std::vector<Input> m_inputs;
+  size_t m_focus = 0;
+  class SheetValueCard* m_card = nullptr;
   std::shared_ptr<int> m_generation = std::make_shared<int>(0);  // a worker's answer for an earlier stage is dropped
 };

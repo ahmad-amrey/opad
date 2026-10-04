@@ -35,8 +35,10 @@ using opad::drawing::Vec2;
 // the last segment at 30 degrees: both sides hatched). A broken-out section on the front view (outline previewed, Esc
 // back from the depth, the depth clicked on the hole's centre in the top view; floor hatched, break lines; removed from
 // the menu, Ctrl+Z). Crop by dragging a box on the top view, Break by two clicks on the front view (the top view broken
-// with it), freehand break lines from the menu, Remove crop from the view's menu, Ctrl+Z. <prefix>.views.png,
-// <prefix>.hatch.png.
+// with it), freehand break lines from the menu, Remove crop from the view's menu, Ctrl+Z. A detail's scale (4:1) and letter
+// from its menu. Typed values (UI-122) on each tool's card: a detail's radius and scale, an auxiliary view's gap, a crop's
+// width and height (Esc clears them first), a break's length, a broken-out section's depth; digits never the window's
+// shortcuts. <prefix>.views.png, <prefix>.hatch.png.
 OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -461,6 +463,107 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
     waitFor(settled, 10000);
     QCoreApplication::processEvents();
     page->grab().save(prefix + ".views.png");
+
+    // Typed values (UI-122): each tool's value card takes the stage's numbers, Tab to the next, Enter; digits never the window's.
+    const auto shortcutTaken = [&](int k) {
+      QKeyEvent so(QEvent::ShortcutOverride, k, Qt::NoModifier, QString(QChar(k)));
+      so.ignore();
+      QApplication::sendEvent(canvas, &so);
+      return so.isAccepted();
+    };
+    const auto type = [&](const QString& text) {
+      for (const QChar c : text) {
+        const int k = c == ':' ? Qt::Key_Colon : c == '.' ? Qt::Key_Period : Qt::Key_0 + (c.unicode() - '0');
+        QKeyEvent e(QEvent::KeyPress, k, Qt::NoModifier, QString(c));
+        QApplication::sendEvent(canvas, &e);
+      }
+    };
+    const auto shows = [&](const std::string& key, const QString& text) { return tool->cardShown() && tool->inputText(key) == text; };
+    canvas->setFocus();
+    // A detail: its centre clicked, radius 6 and scale 4 typed, Enter, placed where clicked.
+    select(top);
+    w.action("drawings.detailView")->trigger();
+    check(shortcutTaken(Qt::Key_5) && shortcutTaken(Qt::Key_Period), "with a view tool, digits are the canvas's, never the window's shortcuts");
+    click(at(top, {-20, 0}));
+    mouse(QEvent::MouseMove, at(top, {-17, 0}));
+    check(tool->inputs() == std::vector<std::string>{"radius", "scale"} && shows("scale", "5:1"), "the detail asks for its radius and scale (5:1 from the pointer)");
+    type("6");
+    key(Qt::Key_Tab);
+    type("4");
+    check(shows("radius", "6") && shows("scale", "4"), "6 typed for the radius, Tab, 4 for the scale");
+    key(Qt::Key_Return);
+    check(tool->placing() && tool->inputs() == std::vector<std::string>{"scale"} && shows("scale", "4"), "Enter takes the radius: placing at the typed scale");
+    const size_t details = views("detail").size();
+    click(canvas->toScene({paperW - 60, 60}));
+    check(waitFor([&] { return views("detail").size() == details + 1 && settled(); }, 15000), "a click places it");
+    if (views("detail").size() == details + 1) {
+      const opad::SheetView* d = doc->scene.sheet_view(views("detail").back());
+      check(std::fabs(d->def.value("radius", 0.0) - 6) < 1e-9 && d->def.value("scale", "") == "4:1", "the detail has the typed radius (6) and scale (4:1)");
+    }
+    // An auxiliary view 15 mm from its parent.
+    select(top);
+    w.action("drawings.auxiliaryView")->trigger();
+    click(at(top, {-10, 20}));
+    check(waitFor([&] { return tool->placing(); }, 15000), "an edge picked: the auxiliary view follows the pointer");
+    mouse(QEvent::MouseMove, canvas->toScene({frameOf(top).at[0] + 10, frameOf(top).box[3] + 40}));
+    check(tool->inputs() == std::vector<std::string>{"gap"}, "it asks for its gap");
+    const size_t auxs = views("auxiliary").size();
+    type("15");
+    key(Qt::Key_Return);
+    check(waitFor([&] { return views("auxiliary").size() == auxs + 1 && settled(); }, 15000) &&
+              std::fabs(doc->scene.sheet_view(views("auxiliary").back())->def.value("gap", 0.0) - 15) < 1e-9,
+          "15 typed and Enter: placed 15 mm from its parent");
+    // A crop of 20 x 12 from its first corner, and a break of 8 along the front view.
+    {  // the top view's crop removed: cropped again by typed sizes
+      QMenu m;
+      docs->viewMenu({top}, m);
+      if (QAction* a = m.findChild<QAction*>("drawings.menu.uncrop")) a->trigger();
+      waitFor([&] { return !doc->scene.sheet_view(top)->def.contains("crop") && settled(); }, 15000);
+    }
+    select(top);
+    w.action("drawings.cropView")->trigger();
+    click(at(top, {-25, -15}));
+    mouse(QEvent::MouseMove, at(top, {-5, 5}));
+    check(tool->inputs() == std::vector<std::string>{"width", "height"} && tool->cardShown() && !tool->inputText("width").isEmpty(),
+          "the crop asks for its width and height (" + tool->inputText("width") + " from the pointer)");
+    type("20");
+    key(Qt::Key_Tab);
+    type("12");
+    key(Qt::Key_Escape);
+    check(tool->active() && tool->inputText("width") != "20" && tool->inputText("height") != "12", "Esc clears what was typed first, the tool stays");
+    type("12");
+    key(Qt::Key_Tab);
+    type("15");
+    key(Qt::Key_Return);
+    const auto crop = [&] { return doc->scene.sheet_view(top)->def.value("crop", opad::json()); };
+    check(waitFor([&] { return crop().is_array() && settled(); }, 15000) && std::fabs(crop()[2].get<double>() - crop()[0].get<double>() - 12) < 1e-6 &&
+              std::fabs(crop()[3].get<double>() - crop()[1].get<double>() - 15) < 1e-6,
+          "12 Tab 15 Enter: a 12 x 15 crop box from its first corner (" + QString::fromStdString(crop().dump()) + ")");
+    select(front);
+    w.action("drawings.breakView")->trigger();
+    click(at(front, {15, 5}));
+    mouse(QEvent::MouseMove, at(front, {20, 5}));
+    check(tool->inputs() == std::vector<std::string>{"length"}, "the break asks for its length");
+    type("8");
+    key(Qt::Key_Return);
+    const auto lastBreak = [&] {
+      const opad::json b = doc->scene.sheet_view(front)->def.value("breaks", opad::json::array());
+      return b.empty() ? 0.0 : b.back()["to"].get<double>() - b.back()["from"].get<double>();
+    };
+    check(waitFor([&] { return doc->scene.sheet_view(front)->def.value("breaks", opad::json::array()).size() == 2 && settled(); }, 15000) && std::fabs(lastBreak() - 8) < 1e-6,
+          QString("8 and Enter: an 8 mm band taken out (%1)").arg(lastBreak()));
+    // A broken-out section 4 mm deep into the top view's plate.
+    select(top);
+    w.action("drawings.breakoutView")->trigger();
+    for (const Vec2 p : {Vec2{-23, -13}, Vec2{-15, -13}, Vec2{-15, -3}, Vec2{-23, -3}}) click(at(top, p));
+    key(Qt::Key_Return);
+    const bool asks = tool->askingDepth() && waitFor([&] { return tool->inputs() == std::vector<std::string>{"depth"} && !tool->inputText("depth").isEmpty(); }, 15000);
+    check(asks, "the outline closed: it asks for the depth below the part's front (" + tool->inputText("depth") + ")");
+    type("4");
+    key(Qt::Key_Return);
+    const auto breakout = [&] { return doc->scene.sheet_view(top)->def.value("breakouts", opad::json::array()); };
+    check(waitFor([&] { return breakout().size() == 1 && settled(); }, 15000) && std::fabs(breakout()[0].value("depth", 0.0) - 6) < 1e-6,
+          "4 and Enter: cut 4 mm below the plate's front (depth 6 of 10): " + QString::fromStdString(breakout().dump()).left(80));
   } catch (const std::exception& e) {
     check(false, QString("bench: %1").arg(QString::fromUtf8(e.what())));
   }

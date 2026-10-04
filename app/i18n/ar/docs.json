@@ -554,5 +554,7 @@
   "The letter of the section (A-A) and of its cutting line": "حرف المقطع (A-A) وحرف خط القطع الخاص به",
   "The letter of the detail and of its circle on the parent view": "حرف التفصيل وحرف دائرته على المسقط الأصل",
   "The letter of the auxiliary view (VIEW A in ASME; empty: none)": "حرف المسقط المساعد (VIEW A في ASME؛ فارغ: بلا حرف)",
-  "A section or detail view keeps its letter.": "يحتفظ المسقط المقطعي أو التفصيلي بحرفه."
+  "A section or detail view keeps its letter.": "يحتفظ المسقط المقطعي أو التفصيلي بحرفه.",
+  "Gap": "المسافة",
+  "or type the values, Tab to the next, Enter": "أو اكتب القيم، Tab للتالية، Enter"
 }

@@ -2,10 +2,12 @@
 
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QRegularExpression>
 
 #include <cmath>
 
 #include "AppDocument.hpp"
+#include "SheetValueCard.hpp"
 #include "Theme.hpp"
 
 using opad::drawing::Display;
@@ -28,6 +30,7 @@ opad::json js(Vec2 v) { return opad::json::array({r4(v[0]), r4(v[1])}); }
 
 SheetViewTool::SheetViewTool(AppDocument* doc, SheetCanvas* canvas, QObject* parent) : QObject(parent), m_doc(doc), m_canvas(canvas) {
   canvas->addInteraction(this);
+  m_card = new SheetValueCard(canvas->viewport());
 }
 
 SheetViewTool::~SheetViewTool() {
@@ -88,6 +91,7 @@ void SheetViewTool::cancel() {
   m_extents.clear();
   m_measuring = m_pressed = m_haveDepths = false;
   m_ghost = QRectF();
+  clearInputs();
   if (m_canvas && was) {
     m_canvas->setPreview(nullptr);
     m_canvas->setGhost(QRectF());
@@ -160,7 +164,9 @@ void SheetViewTool::promptForStage() {
     default: break;
   }
   if (m_measuring) text = tr("Measuring the view…");
+  else if (!inputKeys().empty()) text += QString::fromUtf8(" · ") + tr("or type the values, Tab to the next, Enter");
   setPrompt(text.isEmpty() ? text : text + QString::fromUtf8(" · ") + esc);
+  syncInputs();
 }
 
 opad::json SheetViewTool::probe(int side) const {
@@ -223,7 +229,7 @@ void SheetViewTool::place(const QPointF& scene) {
   if (!f || !m_canvas || m_stage != Stage::Place) return;
   const Vec2 m = m_canvas->toPaper(scene);
   if (m_tool == Tool::Detail) {
-    const double size = 2 * m_radius * detailScale();
+    const double size = 2 * m_radius * scaleNow();
     const Vec2 c{std::round(m[0]), std::round(m[1])};
     m_ghost = QRectF(m_canvas->toScene(c) - QPointF(size / 2, size / 2), QSizeF(size, size));
     m_canvas->setGhost(m_ghost, tr("Detail %1").arg(scaleLabel()));
@@ -247,16 +253,162 @@ void SheetViewTool::place(const QPointF& scene) {
   double reach = 0;
   for (int k = 0; k < 4; ++k) reach = std::max(reach, dot({(k & 1 ? f->box[2] : f->box[0]) - f->at[0], (k & 2 ? f->box[3] : f->box[1]) - f->at[1]}, d));
   const double back = (std::fabs(d[0]) * w + std::fabs(d[1]) * h) / 2, from = dot(f->at, d) + reach + back;
-  const double t = std::max(dot(m, d), from + 2);
+  const auto gap = typed("gap");  // typed: that far from the parent, on the pointer's side
+  const double t = gap ? from + *gap : std::max(dot(m, d), from + 2);
   const double s = dot(f->at, a) + f->scale * dot(sub(e.centre, f->centre), a);
   const Vec2 c = add(mul(a, s), mul(d, t));
-  m_gap = std::round((t - from) * 10) / 10;
+  m_gap = gap ? *gap : std::round((t - from) * 10) / 10;
   m_ghost = QRectF(m_canvas->toScene(c) - QPointF(w / 2, h / 2), QSizeF(w, h));
   m_canvas->setGhost(m_ghost, title(m_tool));
   updatePreview();
 }
 
-QString SheetViewTool::scaleLabel() const { return QString::fromStdString(opad::drawing::scale_text(detailScale())); }
+QString SheetViewTool::scaleLabel() const { return QString::fromStdString(opad::drawing::scale_text(scaleNow())); }
+
+// ---------------------------------------------------------------- the value card
+double SheetViewTool::scaleNow() const { return typed("scale").value_or(detailScale()); }
+
+std::optional<double> SheetViewTool::typed(const std::string& key) const {
+  for (const auto& in : m_inputs) {
+    if (in.key != key || in.typed.isEmpty()) continue;
+    if (key == "scale") {  // 5 or 5:1 (or 1:2, 0.5)
+      try {
+        const double s = in.typed.contains(':') ? opad::drawing::parse_scale(in.typed.toStdString()) : in.typed.toDouble();
+        if (s > 0) return s;
+      } catch (const std::exception&) {
+      }
+      return std::nullopt;
+    }
+    bool ok = false;
+    const double v = in.typed.toDouble(&ok);
+    if (ok && (v > 0 || ((key == "gap" || key == "depth") && v >= 0))) return v;
+  }
+  return std::nullopt;
+}
+
+std::vector<std::string> SheetViewTool::inputKeys() const {
+  using Keys = std::vector<std::string>;
+  switch (m_tool) {
+    case Tool::Section:
+    case Tool::Auxiliary: return m_stage == Stage::Place ? Keys{"gap"} : Keys{};
+    case Tool::Detail: return m_stage == Stage::Size ? Keys{"radius", "scale"} : m_stage == Stage::Place ? Keys{"scale"} : Keys{};
+    case Tool::Crop: return m_stage == Stage::Size ? Keys{"width", "height"} : Keys{};
+    case Tool::Break: return m_stage == Stage::Size ? Keys{"length"} : Keys{};
+    case Tool::Breakout: return m_stage == Stage::Depth ? Keys{"depth"} : Keys{};
+    default: return {};
+  }
+}
+
+std::vector<std::string> SheetViewTool::inputs() const {
+  std::vector<std::string> out;
+  for (const auto& in : m_inputs) out.push_back(in.key);
+  return out;
+}
+
+bool SheetViewTool::cardShown() const { return m_card && m_card->isVisibleTo(m_card->parentWidget()); }
+
+QString SheetViewTool::inputText(const std::string& key) const {
+  for (const auto& in : m_inputs)
+    if (in.key == key && !in.typed.isEmpty()) return in.typed;
+  const auto mm = [](double v) { return QString::number(std::round(v * 10) / 10, 'f', 1); };
+  if (key == "gap") return mm(m_gap);
+  if (key == "scale") return QString::fromStdString(opad::drawing::scale_text(scaleNow()));
+  if (key == "radius") return mm(m_stage == Stage::Size && !m_points.empty() ? len(sub(toView(m_mouse), m_points[0])) : m_radius);
+  if (key == "depth") {
+    if (!m_haveDepths) return {};
+    const auto at = depthAt(m_mouse);
+    return mm(m_depths[1] - (at ? *at : (m_depths[0] + m_depths[1]) / 2));
+  }
+  if (m_points.empty()) return {};
+  const Vec2 d = sub(sized(m_mouse), m_points[0]);
+  if (key == "width") return mm(std::fabs(d[0]));
+  if (key == "height") return mm(std::fabs(d[1]));
+  if (key == "length") return mm(std::max(std::fabs(d[0]), std::fabs(d[1])));
+  return {};
+}
+
+Vec2 SheetViewTool::sized(const QPointF& scene) const {
+  if (m_points.empty()) return toView(scene);
+  const Vec2 a = m_points[0], p = toView(snapped(scene)), d = sub(p, a);
+  const auto sign = [](double v) { return v < 0 ? -1.0 : 1.0; };
+  if (m_tool == Tool::Crop) {
+    const auto w = typed("width"), h = typed("height");
+    return {w ? a[0] + sign(d[0]) * *w : p[0], h ? a[1] + sign(d[1]) * *h : p[1]};
+  }
+  if (m_tool == Tool::Break) {  // along the longer way: the length typed or the pointer's
+    const size_t axis = std::fabs(d[0]) >= std::fabs(d[1]) ? 0 : 1;
+    Vec2 b = a;
+    b[axis] += sign(d[axis]) * typed("length").value_or(std::fabs(d[axis]));
+    return b;
+  }
+  return p;
+}
+
+void SheetViewTool::syncInputs() {
+  const auto keys = inputKeys();
+  bool same = keys.size() == m_inputs.size();
+  for (size_t i = 0; same && i < keys.size(); ++i) same = keys[i] == m_inputs[i].key;
+  if (!same) {  // a stage with other fields: what was typed for the same field stays (a detail's scale)
+    std::vector<Input> next;
+    for (const auto& k : keys) {
+      Input in{k, {}, {}};
+      for (const auto& old : m_inputs)
+        if (old.key == k) in = old;
+      in.label = k == "gap" ? tr("Gap") : k == "radius" ? tr("Radius") : k == "scale" ? tr("View scale") : k == "width" ? tr("Width") : k == "height" ? tr("Height")
+                 : k == "length" ? tr("Length") : tr("Depth");
+      next.push_back(in);
+    }
+    m_inputs = std::move(next);
+    m_focus = 0;
+  }
+  if (!m_card || !m_canvas) return;
+  if (m_inputs.empty() || m_tool == Tool::None || m_measuring) return m_card->hide();
+  std::vector<SheetValueCard::Cell> cells;
+  for (size_t i = 0; i < m_inputs.size(); ++i) cells.push_back({m_inputs[i].label, inputText(m_inputs[i].key), !m_inputs[i].typed.isEmpty(), i == m_focus});
+  m_card->set(std::move(cells));
+  const QRect area = m_canvas->viewport()->rect();
+  QPoint at = m_canvas->mapFromScene(m_mouse) + QPoint(18, 22);
+  at.setX(std::clamp(at.x(), 4, std::max(4, area.width() - m_card->width() - 4)));
+  at.setY(std::clamp(at.y(), 4, std::max(4, area.height() - m_card->height() - 4)));
+  m_card->move(at);
+  m_card->show();
+  m_card->raise();
+}
+
+void SheetViewTool::clearInputs() {
+  m_inputs.clear();
+  m_focus = 0;
+  if (m_card) m_card->hide();
+}
+
+bool SheetViewTool::inputKey(QKeyEvent* e) {
+  if (e->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) return false;
+  const int key = e->key();  // the keypad's digits come with KeypadModifier, the same keys
+  const bool digit = key >= Qt::Key_0 && key <= Qt::Key_9;
+  if (digit || key == Qt::Key_Period || key == Qt::Key_Comma || key == Qt::Key_Colon || key == Qt::Key_Minus || key == Qt::Key_Plus) {
+    if (m_inputs.empty() || key == Qt::Key_Minus || key == Qt::Key_Plus) return true;  // nothing takes it (sizes have no sign): still not a shortcut
+    Input& in = m_inputs[m_focus];
+    const QString next = in.typed + (digit ? QChar('0' + (key - Qt::Key_0)) : key == Qt::Key_Colon ? QChar(':') : QChar('.'));
+    static const QRegularExpression size("^\\d*\\.?\\d*$"), ratio("^\\d*\\.?\\d*(:\\d*\\.?\\d*)?$");
+    if (!(in.key == "scale" ? ratio : size).match(next).hasMatch()) return true;
+    in.typed = next;
+  } else if (key == Qt::Key_Backspace) {
+    if (m_inputs.empty() || m_inputs[m_focus].typed.isEmpty()) return false;  // nothing typed there: steps back
+    m_inputs[m_focus].typed.chop(1);
+  } else if (key == Qt::Key_Tab || key == Qt::Key_Backtab) {
+    if (m_inputs.empty()) return true;
+    const bool back = key == Qt::Key_Backtab || (e->modifiers() & Qt::ShiftModifier);
+    m_focus = (m_focus + (back ? m_inputs.size() - 1 : 1)) % m_inputs.size();
+  } else if (key == Qt::Key_Escape && std::any_of(m_inputs.begin(), m_inputs.end(), [](const Input& in) { return !in.typed.isEmpty(); })) {
+    for (auto& in : m_inputs) in.typed.clear();  // typed values first (from the first field again), then the stage
+    m_focus = 0;
+  } else {
+    return false;
+  }
+  if (m_stage == Stage::Place) place(m_mouse);
+  else updatePreview();
+  return true;
+}
 
 // ---------------------------------------------------------------- broken-out sections
 std::vector<Vec2> SheetViewTool::outline() const {
@@ -317,7 +469,7 @@ void SheetViewTool::commit() {
     args["gap"] = m_gap;
   } else if (m_tool == Tool::Detail) {
     const Vec2 at = m_canvas->toPaper(m_ghost.center());
-    args.update({{"kind", "detail"}, {"parent", m_view}, {"center", js(m_points[0])}, {"radius", r4(m_radius)}, {"scale", opad::drawing::scale_text(detailScale())},
+    args.update({{"kind", "detail"}, {"parent", m_view}, {"center", js(m_points[0])}, {"radius", r4(m_radius)}, {"scale", opad::drawing::scale_text(scaleNow())},
                  {"at", js(at)}});
   } else if (m_tool == Tool::Breakout) {
     const opad::SheetView* v = m_doc->scene.sheet_view(m_view);
@@ -376,7 +528,7 @@ void SheetViewTool::clickAt(const QPointF& scene) {
         m_points = {toView(snapped(scene))};
         m_stage = Stage::Size;
       } else if (m_stage == Stage::Size) {
-        const double r = len(sub(toView(scene), m_points[0]));
+        const double r = typed("radius").value_or(len(sub(toView(scene), m_points[0])));
         if (r * frame()->scale < 1) return;
         m_radius = r;
         m_stage = Stage::Place;
@@ -421,6 +573,10 @@ void SheetViewTool::clickAt(const QPointF& scene) {
     }
     case Tool::Breakout:
       if (m_stage == Stage::Depth) {
+        if (const auto below = typed("depth"); below && m_haveDepths) {  // typed: that far below the part's front
+          m_depth = m_depths[1] - *below;
+          return commit();
+        }
         const auto depth = depthAt(scene);
         if (!depth) {
           emit message(tr("Click a point in a view beside this one (square to it): the cut goes through it."));
@@ -440,7 +596,7 @@ void SheetViewTool::clickAt(const QPointF& scene) {
         m_points = {toView(snapped(scene))};
         m_stage = Stage::Size;
       } else {
-        const Vec2 b = toView(snapped(scene)), a = m_points[0];
+        const Vec2 b = sized(scene), a = m_points[0];
         if (len(sub(b, a)) * frame()->scale < 1 || (m_tool == Tool::Crop && (std::fabs(b[0] - a[0]) * frame()->scale < 1 || std::fabs(b[1] - a[1]) * frame()->scale < 1))) return;
         m_points.push_back(b);
         return commit();
@@ -472,12 +628,14 @@ void SheetViewTool::finish() {
       measureDepth();
       promptForStage();
       updatePreview();
-    } else if (m_haveDepths) {  // through the part's middle
-      m_depth = (m_depths[0] + m_depths[1]) / 2;
+    } else if (m_haveDepths) {  // the depth typed below the part's front, else through its middle
+      const auto below = typed("depth");
+      m_depth = below ? m_depths[1] - *below : (m_depths[0] + m_depths[1]) / 2;
       commit();
     }
     return;
   }
+  if (m_stage == Stage::Size && (m_tool == Tool::Detail || m_tool == Tool::Crop || m_tool == Tool::Break)) return clickAt(m_mouse);  // typed sizes
   if (m_tool == Tool::Section && m_stage == Stage::Pick && !m_measuring) {
     if (m_points.size() < 2) {
       emit message(tr("A cutting line needs two points at least."));
@@ -540,7 +698,8 @@ void SheetViewTool::updatePreview() {
     for (const auto& p : pts) d->circle(thin, p, 0.8);
   } else if (m_tool == Tool::Detail && !m_points.empty()) {
     const Vec2 c = paper(m_points[0]);
-    d->circle(thin, c, m_stage == Stage::Size ? len(sub(mouse, c)) : m_radius * f->scale);
+    const auto r = typed("radius");
+    d->circle(thin, c, m_stage == Stage::Size ? (r ? *r * f->scale : len(sub(mouse, c))) : m_radius * f->scale);
   } else if (m_tool == Tool::Auxiliary || m_tool == Tool::Uncut) {
     if (m_stage == Stage::Pick) {
       if (const auto pick = m_canvas->pickAt(m_mouse); pick && pick->line && pick->view == m_view)
@@ -561,7 +720,7 @@ void SheetViewTool::updatePreview() {
     if (m_stage == Stage::Depth)  // where the cut would go through, on the view under the pointer
       if (const auto depth = depthAt(m_mouse); depth) d->circle(d->layer({"Depth", ink, LineType::Continuous, 0.5}), m_canvas->toPaper(snapped(m_mouse)), 1.2);
   } else if ((m_tool == Tool::Crop || m_tool == Tool::Break) && !m_points.empty()) {
-    const Vec2 a = paper(m_points[0]), b = mouse;
+    const Vec2 a = paper(m_points[0]), b = paper(sized(m_mouse));
     if (m_tool == Tool::Crop) {
       d->polyline(thin, {a, {b[0], a[1]}, b, {a[0], b[1]}}, true);
     } else {  // the band's two edges across the view
@@ -572,6 +731,7 @@ void SheetViewTool::updatePreview() {
     }
   }
   m_canvas->setPreview(d->prims.empty() ? nullptr : d);
+  syncInputs();
 }
 
 bool SheetViewTool::mousePress(QMouseEvent* e, const QPointF& scene) {
@@ -607,12 +767,16 @@ bool SheetViewTool::mouseRelease(QMouseEvent* e, const QPointF& scene) {
 bool SheetViewTool::wantsKey(QKeyEvent* e) {
   if (m_tool == Tool::None) return false;
   const int k = e->key();
-  return k == Qt::Key_Escape || k == Qt::Key_Return || k == Qt::Key_Enter || k == Qt::Key_Backspace;
+  const bool plain = !(e->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+  return k == Qt::Key_Escape || k == Qt::Key_Return || k == Qt::Key_Enter || k == Qt::Key_Backspace ||  // bare digits are a value's, never a shortcut
+         (plain && (k == Qt::Key_Tab || k == Qt::Key_Backtab || (k >= Qt::Key_0 && k <= Qt::Key_9) || k == Qt::Key_Period || k == Qt::Key_Comma || k == Qt::Key_Colon ||
+                    k == Qt::Key_Minus || k == Qt::Key_Plus));
 }
 
 bool SheetViewTool::keyPress(QKeyEvent* e) {
   if (!wantsKey(e)) return false;
+  if (inputKey(e)) return true;
   if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finish();
-  else back();
+  else if (e->key() == Qt::Key_Escape || e->key() == Qt::Key_Backspace) back();
   return true;
 }
