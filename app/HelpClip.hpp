@@ -46,6 +46,7 @@ QStringList texts(const QString& id);  // the translatable English texts (captio
 // own steps, which need not match the clip's): the clip's "guide" entry for that step when it has one, else the clip's
 // steps shared out evenly; once every step is done (step >= count) the last one. {-1, -1}: no such clip.
 QPair<int, int> guideRange(const QString& id, int step, int count);
+int guideSteps(const QString& id);  // the tool steps the clip's "guide" entry maps (0: none, the steps shared out)
 // The frame at t seconds into r (clipped to its rounded corners).
 void paint(QPainter& p, const QRectF& r, const QString& id, double t, const Options& o = {});
 QImage frame(const QString& id, double t, QSize size, qreal dpr = 1, const Options& o = {});

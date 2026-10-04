@@ -2006,6 +2006,11 @@ QStringList texts(const QString& id) {
   return lib().clips.value(id).texts;
 }
 
+int guideSteps(const QString& id) {
+  ensureLoaded();
+  return int(lib().clips.value(id).guide.size());
+}
+
 QPair<int, int> guideRange(const QString& id, int step, int count) {
   ensureLoaded();
   const auto it = lib().clips.constFind(id);
