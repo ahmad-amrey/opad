@@ -124,8 +124,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setExtensionTracking(bool on);
   void setOrthographic(bool ortho);
   bool isOrthographic() const;
-  void setSelectionFilter(SelFilter f);
+  // roundFaces (with Edge, for an axis input, TODO 11 P3): cylindrical, conical and toroidal faces are picked too, beside the
+  // edges, for the axis through them; other faces are not.
+  void setSelectionFilter(SelFilter f, bool roundFaces = false);
   SelFilter selectionFilter() const { return m_filter; }
+  bool roundFacesPickable() const { return m_roundFaces; }
 
   void fitAll();
   void animateFitAll(double seconds = 0.35);  // the camera glides to what fitAll frames, also in a view that draws no frames
@@ -208,6 +211,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
   void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
+  // A point of the view (device pixels) where the pointer detects what `want` accepts: a candidate's id, else a body's
+  // entity (its node, the detected sub-shape's kind and ordinal). `inside`: one whose eight neighbours detect it too (a
+  // face), else any (a line).
+  bool benchPickPoint(const std::function<bool(const std::string& candidate, const opad::Ref& entity)>& want, int& x, int& y, bool inside = true);
 
   // Compare (ViewportCompare.cpp, UI-58): another version drawn with the model. Parts are bodies the model does not draw
   // as they are: ghosts of the other version (a removed body, a moved one's old place, a modified one's old geometry) and
@@ -647,6 +654,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   NavPreset m_preset = NavPreset::Fusion;
   Style m_style = Style::ShadedEdges;
   SelFilter m_filter = SelFilter::Body;
+  bool m_roundFaces = false;  // setSelectionFilter(Edge, true): round faces picked beside the edges
   bool m_gridSnap=false;
   double m_gridStep=10;
   double m_gridSpacing=0;  // view/gridSpacing (0 = automatic), read when the grid settings change

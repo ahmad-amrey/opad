@@ -39,6 +39,7 @@ struct InputSpec {
   bool optional = false;
   int min_count = 1;                 // selections: how many picks at least (0 with optional)
   int max_count = 0;                 // 0 = any number
+  bool advance = false;              // selections: the first pick moves on to the next input (more: its box again)
 };
 
 struct FeatureSpec {

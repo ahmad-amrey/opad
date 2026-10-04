@@ -218,6 +218,48 @@ std::vector<std::string> Viewport::selectedCandidates() const {
   return out;
 }
 
+bool Viewport::benchPickPoint(const std::function<bool(const std::string&, const opad::Ref&)>& want, int& x, int& y, bool inside) {
+  if (!m_initialised) return false;
+  m_view->Redraw();  // the picker clips to the z range of the last frame
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  auto detects = [&](int px, int py) {
+    m_ctx->MoveTo(px, py, m_view, Standard_False);
+    dropOccluded();  // as the pointer does
+    bool ok = false;
+    if (m_ctx->HasDetected()) {
+      const auto detected = m_ctx->DetectedInteractive();
+      std::string candidate;
+      opad::Ref entity;
+      for (const auto& c : m_candidates)
+        if (c.second == detected) candidate = c.first;
+      if (const auto node = m_nodeOf.find(detected.get()); node != m_nodeOf.end()) entity.body = node->second;
+      if (const auto sub = Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner()); !sub.IsNull() && !entity.body.empty()) entity.kind = sub->kind(), entity.index = sub->index();
+      ok = (!candidate.empty() || !entity.body.empty()) && want(candidate, entity);
+    }
+    m_ctx->ClearDetected(Standard_False);
+    return ok;
+  };
+  constexpr int n = 64;
+  std::vector<char> hit(n * n, 0);
+  double cx = 0, cy = 0;
+  int count = 0;
+  for (int j = 1; j < n; ++j)
+    for (int i = 1; i < n; ++i)
+      if (detects(w * i / n, h * j / n)) hit[j * n + i] = 1, cx += i, cy += j, ++count;
+  if (!count) return false;
+  cx /= count, cy /= count;
+  double best = 1e9;
+  for (int j = 2; j < n - 1; ++j)
+    for (int i = 2; i < n - 1; ++i) {
+      bool in = hit[j * n + i];
+      for (int dj = -1; dj <= 1 && in && inside; ++dj)
+        for (int di = -1; di <= 1 && in; ++di) in = hit[(j + dj) * n + i + di];
+      if (in && std::hypot(i - cx, j - cy) < best) best = std::hypot(i - cx, j - cy), x = w * i / n, y = h * j / n;
+    }
+  return best < 1e9;
+}
+
 void Viewport::selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates) {
   resetHoverFade();
   if (!m_initialised) return;

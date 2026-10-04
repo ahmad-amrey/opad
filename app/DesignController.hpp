@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <array>
 #include <functional>
+#include <set>
 #include <tuple>
 
 #include "AppDocument.hpp"
@@ -85,6 +86,25 @@ class DesignController : public QObject {
   void endFeature();
   void activateInput(const QString& name);
   void showCandidatesFor(const QString& type);
+  std::vector<Viewport::Candidate> quickCandidates(const std::string& type) const;  // origin and construction axes or planes
+  // Sketch regions, points, lines or paths of the scene's sketches, on a worker, added to `found`; then `done(ok)`.
+  Job* sketchCandidates(const std::string& type, std::shared_ptr<std::vector<Viewport::Candidate>> found, std::function<void(bool)> done);
+  void showAllCandidates();  // the active input's candidates and the routed ones
+  // Pick routing (TODO 11 P3): while a selection input with a pick is active, the axes or planes of the next axis or plane
+  // input that is still empty, on its default or filled this way show beside its own candidates, and a click on one goes
+  // there (Revolve: the profile, then the Z axis; Mirror: the body, then the YZ plane). With no input active, the feature's
+  // plane input takes a click on a planar face, an origin plane or a construction plane (a construction plane's face).
+  QString routeTarget() const;
+  void refreshRoute();
+  bool routeClick();  // a click on a routed candidate: into its input (true), else false
+  bool placedPlane(const opad::design::InputSpec& in) const;  // a primitive's plane: placed with its position, not by a click here
+  QString idlePlaneInput() const;
+  void idlePlaneClick();
+  void pickIdlePlane(const QString& input, opad::json support);  // a face resolved on a worker first
+  void inputsSettled();  // an input changed: routing and the idle plane input follow
+  void resetRouting();   // a feature begins or ends: nothing routed, no idle plane input
+  void pickStatus();     // the prompt: what the active input waits for, and the routed input's click
+  void refreshPlanCopies();  // m_planDoc / m_planScene for the document as it is now
   double modelReach() const;
   void syncSelectionToInput();
   void schedulePreview();
@@ -127,6 +147,15 @@ class DesignController : public QObject {
   ToolValues* m_values = nullptr;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
+  std::vector<Viewport::Candidate> m_activeCandidates, m_routeCandidates;  // shown together (showAllCandidates)
+  QString m_routeInput;            // the input a click on a routed candidate fills (empty: none shown)
+  std::set<std::string> m_routeIds;  // the routed candidates' ids
+  std::set<QString> m_routed;      // inputs filled by a routed click: they stay the target, to be changed by another click
+  Job* m_routeJob = nullptr;
+  int m_routeSerial = 0;
+  QString m_idlePlane;             // the plane input a click fills while no input is active
+  Job* m_idleJob = nullptr;
+  int m_idleSerial = 0;
   QString m_nothingToPick;      // the active input has no candidates at all: says so instead of "Pick: …"
   int m_planSerial = 0;
   std::shared_ptr<opad::design::Plan> m_readyPlan;  // computed for m_readyInputs on m_readyOps ops

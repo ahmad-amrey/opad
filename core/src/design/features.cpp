@@ -92,6 +92,13 @@ InputSpec pick(const char* name, const char* label, const char* type, int min_co
   return s;
 }
 
+// A selection whose first pick hands over to the next input, as Fusion's Combine goes from the target to the tools (TODO 11
+// P3); more can still be picked after clicking its box again.
+InputSpec advancing(InputSpec s) {
+  s.advance = true;
+  return s;
+}
+
 void with_operation(std::vector<InputSpec>& v, const char* first = "new") {
   std::vector<std::string> ops = {"new", "join", "cut", "intersect"};
   std::rotate(ops.begin(), std::find(ops.begin(), ops.end(), first), ops.end());
@@ -162,7 +169,7 @@ std::vector<FeatureSpec> build_specs() {
       "Delete faces and close the gap by extending the faces around them (holes, fillets, chamfers, bosses, imported details).", {pick("faces", "Faces", "faces", 1, 0)});
   add("scale", "Scale", "scale", "modify", "Resize bodies uniformly.", {pick("bodies", "Bodies", "bodies", 1, 0), in("factor", "Factor", "number", "2"), choice("about", "About", {"origin", "centre"})});
   add("combine", "Combine", "combine", "combine", "Join, cut or intersect bodies.",
-      {pick("target", "Target bodies", "bodies", 1, 0), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
+      {advancing(pick("target", "Target bodies", "bodies", 1, 0)), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
   add("split", "Split body", "split", "combine", "Cut bodies in two along a plane.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Splitting plane", "plane")});
   add("mirror", "Mirror", "mirror", "pattern", "Mirrored copies of bodies.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Mirror plane", "plane")}, "new");
   add("pattern_rect", "Rectangular pattern", "patternRect", "pattern", "Copies of bodies in rows and columns.",
