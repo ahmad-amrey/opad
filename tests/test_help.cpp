@@ -61,6 +61,9 @@ std::set<QString> registeredIds() {
     ids.insert("sketch." + m.captured(1).replace(':', '.'));
   for (const char* v : {"top", "front", "right", "iso", "bottom", "back", "left"}) ids.insert(QString("view.") + v);
   for (const char* v : {"fusion", "solidworks", "onshape", "blender"}) ids.insert(QString("nav.") + v);
+  // The view navigation staples (ViewNavigation.cpp, UI-47): its add("...") helper and one CommandInfo of its own.
+  for (const auto& m : QRegularExpression(R"re(\b(?:add\(|CommandInfo\s+\w+\s*\{)"([a-z0-9]+\.[A-Za-z0-9_.]+)")re").globalMatch(source("app/ViewNavigation.cpp")))
+    ids.insert(m.captured(1));
   for (const char* v : {"bodies", "faces", "edges", "vertices"}) ids.insert(QString("select.") + v);
   for (const char* v : {"view.extensions", "view.tracking", "view.gridSnap", "view.orthoSnap", "view.polarSnap", "sketch.selectionOptions", "sketch.constraints", "sketch.snaps"}) ids.insert(v);
   for (const char* v : {"Create", "Modify", "Constrain", "Reference", "Files"}) ids.insert(QString("sketch.more") + v);
@@ -93,9 +96,8 @@ TEST(every_registered_command_has_help) {
   const QStringList pending{"assets.autoSync", "assembly.activate", "assembly.activateNew", "assembly.activateRoot", "assembly.activeHistory", "assembly.activeVisibility",
                             "assembly.explode", "assembly.explodeGroup", "assembly.explodeKeep", "assembly.explodeOff", "assembly.explodePlay",
                             "assembly.explodeSave", "assembly.explodeSplit", "assembly.explodeUngroup", "design.componentFromSelection", "design.remove_faces",
-                            "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.length", "inspect.material", "inspect.partProperties", "timeline.designOnly",
-                            "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.unsavedChanges",
-                            "view.hidden", "view.hiddenEdges", "view.hideothers"};
+                            "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.material", "inspect.partProperties", "timeline.designOnly",
+                            "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.unsavedChanges"};
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
