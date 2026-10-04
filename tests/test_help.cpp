@@ -139,24 +139,9 @@ TEST(every_registered_command_has_help) {
   CHECK(ids.size() > 300 && ids.count("help.reference") && ids.count("drawings.baseView.top") && ids.count("vcs.push") && ids.count("edit.copy") &&
         ids.count("drawing2d.layers") && ids.count("file.reveal") && ids.count("workspace.drawings") && ids.count("sketch.commandLine") &&
         ids.count("assets.link") && ids.count("canvas.insert") && ids.count("kicad.insert") && ids.count("drawings.dimension"));
-  // Commands of the tracks merged after the wave 3 help pass (assets, measure, the drawings' views and sheets): their
-  // records and clips are still to be written. A listed command that has help is stale here.
-  // The second list: the commands of the linked files, the canvas, the drawings' annotations and KiCad, which the scan
-  // found only once it learned their areas' helpers (the richtip bench listed them as without help).
-  const QStringList pending = QStringList{"assets.autoSync", "drawings.auxiliaryView", "drawings.breakView", "drawings.breakoutView", "drawings.cropView",
-                                          "drawings.detailView", "drawings.exportDrawing", "drawings.issue", "drawings.print", "drawings.sectionView",
-                                          "drawings.templateFields", "inspect.material"} +
-                              QStringList{"assets.copyPath", "assets.embed", "assets.kicadSettings", "assets.link", "assets.pack", "assets.replace", "assets.reveal",
-                                          "assets.settings", "assets.sync", "assets.syncAll", "canvas.align", "canvas.calibrate", "canvas.edit", "canvas.finish",
-                                          "canvas.fromBackdrop", "canvas.insert", "canvas.replace", "canvas.trace", "drawings.autoBalloon", "drawings.balloon",
-                                          "drawings.baseline", "drawings.centerLine", "drawings.centerMark", "drawings.centerMarks", "drawings.chain", "drawings.datum",
-                                          "drawings.dimension", "drawings.fcf", "drawings.fromDatums", "drawings.fromDatums.baseline", "drawings.fromDatums.chain",
-                                          "drawings.holeCallout", "drawings.holeTable", "drawings.note", "drawings.ordinate", "drawings.partsList", "drawings.reattach",
-                                          "drawings.revisionTable", "drawings.surface", "kicad.clearance", "kicad.insert", "kicad.previewSync", "kicad.project",
-                                          "view.hideSmallParts", "view.smallPartSize"};
+  // No command waits for its help: a command a track adds comes with its record (and its clip) or this fails.
   QStringList missing;
-  for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
-  for (const QString& id : pending) if (help::find(id)) missing << id + " (has help: drop it from pending)";
+  for (const QString& id : ids) if (!help::find(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
 }
 
@@ -1362,6 +1347,8 @@ TEST(command_areas) {
   CHECK(help::group("files.useOda") == "File" && help::group("help.licenses") == "Tools and help");
   CHECK(help::group("vcs.commit") == "File" && help::group("timeline.names") == "View" && help::group("drawing2d.layers") == "View" &&
         help::group("assembly.explode") == "Design" && help::group("drawings.baseView.top") == "Drawings");
+  CHECK(help::group("assets.link") == "Design" && help::group("canvas.insert") == "Design" && help::group("kicad.insert") == "Design" &&
+        help::group("inspect.material") == "Inspect" && help::group("view.hideSmallParts") == "View" && help::group("drawings.dimension") == "Drawings");
   QStringList areas = help::areas();
   CHECK(areas.size() == 12 && areas.removeDuplicates() == 0);
   for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");

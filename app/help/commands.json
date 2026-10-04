@@ -159,6 +159,187 @@
    "requires": "Only for a file open in viewer mode (STEP, STL, DXF and the other formats)."
   },
   {
+   "id": "assets.link",
+   "title": "Link as asset",
+   "summary": "Brings a CAD model, mesh, picture or drawing into the design as a link: the document keeps a reference and reads the file whenever it opens.",
+   "details": "Choose the file; its parts come in read-only and the document stays small. OPAD watches the file, badges its state in the browser and offers its changes for syncing. A drawing is placed first, on the selected face or on a plane you pick, and a KiCad board first asks how to read it.",
+   "keywords": ["insert", "reference", "external", "xref", "linked file", "asset"]
+  },
+  {
+   "id": "assets.sync",
+   "title": "Sync linked file",
+   "summary": "Reads the selected linked files again and updates their parts in the design.",
+   "details": "Parts that changed in the file are updated, new ones are added and removed ones taken out, and the features built on them are recomputed. Each file is one step to undo, and a toast says how many parts changed. A click on the Sync badge of a changed file in the browser does the same.",
+   "keywords": ["reload", "update", "refresh", "linked file"],
+   "requires": "Select a part of a linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.syncAll",
+   "title": "Sync all linked files",
+   "summary": "Syncs every linked file that changed since its last sync.",
+   "details": "The files are read again one after the other, each as its own step to undo, and a toast says how many were synced. When a watched file changes, a toast offers the same.",
+   "keywords": ["reload", "update", "refresh", "all files"],
+   "requires": "Only when a linked file changed since its last sync."
+  },
+  {
+   "id": "assets.autoSync",
+   "title": "Sync changed files automatically",
+   "summary": "Syncs linked files as soon as OPAD sees that they changed, without asking.",
+   "details": "Each sync is still one step, and its toast offers Undo. Off, a changed file shows its Sync badge and a toast offers to sync it. A document open read-only still asks, and the choice is kept for the next session.",
+   "keywords": ["auto", "reload", "watch", "linked file"]
+  },
+  {
+   "id": "assets.replace",
+   "title": "Replace linked file",
+   "summary": "Points the selected linked file's link at another file and reads its parts from there.",
+   "details": "Choose the new file: the import is synced from it, its parts updated and the features built on them recomputed. It is one step to undo, and later changes of the new file are watched.",
+   "keywords": ["relink", "swap", "linked file"],
+   "requires": "Select a part of one linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.reveal",
+   "title": "Show linked file in folder",
+   "summary": "Opens the folder of the selected linked file in the system's file manager.",
+   "details": "On Windows the file is selected there. If the file is not found, a toast names the path that was looked for.",
+   "keywords": ["reveal", "explorer", "finder", "folder", "linked file"],
+   "requires": "Select a part of one linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.copyPath",
+   "title": "Copy linked file path",
+   "summary": "Copies the full path of the selected linked file to the clipboard.",
+   "details": "A toast shows the path that was copied. Paste it into a file dialog, a message or a terminal.",
+   "keywords": ["clipboard", "path", "linked file"],
+   "requires": "Select a part of one linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.embed",
+   "title": "Embed as editable",
+   "summary": "Stores the selected linked file's parts in the document, so they can be edited.",
+   "details": "The link ends: later changes to the file no longer reach the design, and the parts lose their read-only mark and their badge. It is one step to undo.",
+   "keywords": ["bind", "unlink", "break link", "editable"],
+   "requires": "Select a part of one linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.pack",
+   "title": "Pack into project",
+   "summary": "Copies the selected linked file into the assets folder beside the document and links that copy.",
+   "details": "The project then carries the file with it, for a colleague or a git repository. In a git work tree the copy is offered to be tracked with Git LFS. The new link is one step to undo; the copied file stays.",
+   "keywords": ["copy", "collect", "lfs", "assets folder"],
+   "requires": "Select a part of one linked file, in a document saved as an OPAD file."
+  },
+  {
+   "id": "assets.settings",
+   "title": "Linked files",
+   "summary": "Sets how STEP, IGES, KiCad boards and big files come in, and which folders are trusted for linked files.",
+   "details": "Importing those files can ask each time, link them as assets or import an editable copy. Linked files outside a document's project folder are read only once you say so, unless their folder is trusted; the list of trusted folders is edited here. OK keeps the choices.",
+   "keywords": ["trust", "trusted folders", "ask", "link or copy", "preferences"]
+  },
+  {
+   "id": "assets.kicadSettings",
+   "title": "KiCad boards",
+   "summary": "Sets how KiCad boards are read: the reader, what they include, their origin and where their 3D models are found.",
+   "details": "Read them with OPAD's board reader, or with KiCad's own STEP export when KiCad is installed, which can add copper, pads and silkscreen. Choose the footprints' 3D models, parts marked do not populate and drilled vias, the boxes shown for missing models, the model folders and whether models of KiCad's library are downloaded. Save keeps it for the next boards and checks the linked ones again.",
+   "keywords": ["kicad", "3d models", "model folders", "preferences", "pcb"]
+  },
+  {
+   "id": "kicad.insert",
+   "title": "Insert KiCad PCB",
+   "summary": "Brings a KiCad board (.kicad_pcb) into the design, linked to its file.",
+   "details": "The Import KiCad board dialog sets how it is read, what it includes and its origin. The board comes in with a component per footprint and its 3D model, plus its outline and mounting holes; the file is watched and its changes are offered for syncing. Models of KiCad's library that are not installed can be downloaded.",
+   "keywords": ["kicad", "pcb", "board", "electronics", "link", "import"],
+   "requires": "Open or create a document first; not while a sketch is open."
+  },
+  {
+   "id": "kicad.previewSync",
+   "title": "Preview KiCad sync",
+   "summary": "Lists what changed in the selected board's file since its last sync, before you sync it.",
+   "details": "The Sync preview panel lists the parts moved, flipped, changed, added and removed, the board's own changes and the sketches and features they affect. The parts that change are tinted in the view, and a row selects its part. Sync applies exactly that as one step; Cancel closes it with nothing changed.",
+   "keywords": ["kicad", "changes", "compare", "update", "pcb"],
+   "requires": "Select a part of a linked KiCad board first."
+  },
+  {
+   "id": "kicad.project",
+   "title": "Project KiCad board",
+   "summary": "Brings a board's outline, mounting holes and chosen parts' outlines into the open sketch.",
+   "details": "Tick what to project: the board outline, the mounting holes (also ones added later) and parts, found with the filter by reference or footprint. Linked, they follow the board when it is synced, so an enclosure drawn on them keeps up with the board.",
+   "keywords": ["kicad", "outline", "mounting holes", "connector", "enclosure", "pcb"],
+   "requires": "Only while a sketch is open, in a document with a KiCad board."
+  },
+  {
+   "id": "kicad.clearance",
+   "title": "Check clearance to board",
+   "summary": "Checks the gap between a KiCad board's parts and the enclosure around it.",
+   "details": "The enclosure is the selection outside the board, else every other visible solid. The Board clearance panel lists overlaps and pairs closer than the Clearance you set (1 mm at first); a click on a row selects the pair and shows its gap. The check runs on a worker, and Check runs it again.",
+   "keywords": ["kicad", "clearance", "gap", "enclosure", "interference", "fit", "pcb"],
+   "requires": "Only in a document with a KiCad board; not while a sketch is open."
+  },
+  {
+   "id": "canvas.insert",
+   "title": "Insert canvas",
+   "summary": "Places a picture on a plane in the model, as a reference to trace or compare.",
+   "details": "Choose the picture, then the plane; a planar face selected first is taken at once. The picture sits on it centred: drag it, type an offset and a width, or snap a corner onto a vertex, then Place. The Canvas panel then opens to move, size and calibrate it.",
+   "keywords": ["image", "picture", "photo", "underlay", "reference image"],
+   "requires": "Not while a sketch is open.",
+   "clip": "insert.canvas"
+  },
+  {
+   "id": "canvas.edit",
+   "title": "Edit canvas",
+   "summary": "Shows the selected canvas's handles and the Canvas panel, to move, size, turn and set it.",
+   "details": "Drag the picture to move it, a corner dot to size it (Shift frees its proportions) and the knob above it to turn it; or type X, Y, width, height and angle in the panel. The panel also sets its opacity, flips, whether it shows through the model or takes clicks, and its lock. A double-click on a canvas does the same, and each change is one step.",
+   "keywords": ["image", "picture", "move", "scale", "rotate"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.calibrate",
+   "title": "Calibrate canvas",
+   "summary": "Scales the canvas so that two points on the picture lie a distance you know apart.",
+   "details": "Pick two points on the picture, such as the ends of an edge whose length you know, then type their real distance and press {fixed:enter} or Apply. The picture scales about the first point; Esc takes back the last point.",
+   "keywords": ["scale", "real size", "measure picture"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.align",
+   "title": "Align canvas to model",
+   "summary": "Moves, turns and scales the canvas so that two points on the picture land on two points of the model.",
+   "details": "Pick a point on the picture, then the vertex or circle centre of the model where it belongs, then a second pair. The canvas stays in its plane: model points off it are taken square onto it, and a toast says how far off they were. Esc takes back the last pick.",
+   "keywords": ["scale relative", "match", "fit picture"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.trace",
+   "title": "Trace canvas to sketch",
+   "summary": "Makes a new sketch on the canvas's plane with the picture's dark shapes as curves.",
+   "details": "The picture is traced on a worker at the size the canvas has in the model, so calibrate it first. The sketch is named after the canvas, and a toast says how many curves it got.",
+   "keywords": ["vectorize", "bitmap", "outline"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.replace",
+   "title": "Replace canvas picture",
+   "summary": "Shows another picture in the selected canvas's place.",
+   "details": "Choose the picture: it keeps the canvas's centre, angle and width, and its height follows the new picture's proportions. It is one step to undo; a linked picture is replaced through its link.",
+   "keywords": ["swap", "relink", "picture"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.finish",
+   "title": "Close canvas",
+   "summary": "Ends editing the canvas: its handles and the Canvas panel close.",
+   "details": "What was changed stays; each change was its own step. OK in the panel and Esc do the same.",
+   "keywords": ["done", "finish", "leave"],
+   "requires": "Only while a canvas is being edited."
+  },
+  {
+   "id": "canvas.fromBackdrop",
+   "title": "Backdrop images to canvases",
+   "summary": "Turns the backdrop pictures of the selected sketch into canvases where they lie.",
+   "details": "Each picture becomes a canvas in the model with its place and opacity, and leaves the sketch. Canvases can then be moved, calibrated and traced without opening the sketch; it is one step to undo.",
+   "keywords": ["sketch image", "convert", "picture"],
+   "requires": "Select a sketch that has backdrop pictures; not while a sketch is open."
+  },
+  {
    "id": "file.save",
    "title": "Save",
    "summary": "Saves the document; a file in viewer mode becomes an editable OPAD document.",
@@ -627,6 +808,20 @@
    "keywords": ["view cube", "navigation cube", "corner", "edge", "faces only"]
   },
   {
+   "id": "view.hideSmallParts",
+   "title": "Hide small parts while navigating",
+   "summary": "Hides small parts while the view turns, pans or zooms, so that big boards and assemblies move smoothly.",
+   "details": "Bodies whose longest side is under the small part size (3 mm at first) go out as the camera moves and come back once it has been still for a moment; selected bodies stay. Nothing changes in the model, and the choice is kept for the next session.",
+   "keywords": ["performance", "fast", "orbit", "pcb", "level of detail"]
+  },
+  {
+   "id": "view.smallPartSize",
+   "title": "Small part size",
+   "summary": "Sets how small a part must be to hide while the view moves, and turns hiding on.",
+   "details": "Type the size in the length unit you use: bodies whose longest side is under it hide while you orbit, pan and zoom. Hide small parts while navigating turns it off again.",
+   "keywords": ["performance", "hide", "navigating", "threshold"]
+  },
+  {
    "id": "panel.browser",
    "title": "Browser",
    "summary": "Shows or hides the browser: the document's components, bodies, sketches and drawings.",
@@ -746,6 +941,14 @@
    "requires": "Only while a sheet is shown in the Drawings workspace."
   },
   {
+   "id": "drawings.templateFields",
+   "title": "Title block fields",
+   "summary": "Places the fields a sheet's template fills in, such as its title, number, scale and who drew it.",
+   "details": "Drag on the paper to add a field, drag a field to move it and its corner to size it, then choose what it shows, its text height and its alignment; {fixed:del} removes the chosen one. Apply changes the sheet as one step. A sheet without a template asks for one in Sheet properties first.",
+   "keywords": ["template", "attributes", "placeholders", "title block"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
    "id": "drawings.baseView",
    "title": "Base view",
    "summary": "Places a front view of the model on the sheet: a frame follows the pointer and a click places it.",
@@ -811,6 +1014,54 @@
    "requires": "Only while a sheet is shown in the Drawings workspace."
   },
   {
+   "id": "drawings.sectionView",
+   "title": "Section view",
+   "summary": "Cuts the selected view along a line you draw and places the cut as a new, hatched view.",
+   "details": "Click the cutting line's points on the view: two for a full section, more for an offset, half or aligned section; then press {fixed:enter}. The new view follows the pointer on the side it goes, lined up with its parent, and a click places it; type its gap to set it exactly. Esc takes back the last point, then leaves.",
+   "keywords": ["cut", "cross section", "hatch", "cutting plane", "offset section", "half section"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.detailView",
+   "title": "Detail view",
+   "summary": "Places an enlarged view of a round area of the selected view.",
+   "details": "Click the centre of the detail, then its radius, then where the detail view goes; it is drawn at the next standard scale up from twice the parent's. Type the radius, or a scale such as 5:1, to set them exactly. Esc takes back the last step.",
+   "keywords": ["enlarged", "zoom", "magnified", "circle"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.auxiliaryView",
+   "title": "Auxiliary view",
+   "summary": "Places a view that looks square to a slanted edge of the selected view, so an inclined face shows at its true shape.",
+   "details": "Click a straight edge of the view, then move to the side the new view goes and click to place it, lined up along that edge. Type its gap to set it exactly; Esc steps back.",
+   "keywords": ["inclined face", "true shape", "slanted", "square to an edge"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.breakoutView",
+   "title": "Broken-out section",
+   "summary": "Cuts away part of the selected view, inside an outline you draw, to show what is inside.",
+   "details": "Click points round what to open up (a smooth closed curve goes through them) and press {fixed:enter}. Then click a point in a view beside it to set how deep the cut goes, or press {fixed:enter} again for the part's middle. It works on base, projected and auxiliary views.",
+   "keywords": ["local section", "partial section", "break out", "cut away", "freehand"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.cropView",
+   "title": "Crop view",
+   "summary": "Keeps only the part of the selected view inside a box.",
+   "details": "Drag a box around the part to keep, or click its two corners; type its width and height to set them exactly. The rest of the view is left out, and the change is one step.",
+   "keywords": ["partial view", "trim", "clip"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.breakView",
+   "title": "Break view",
+   "summary": "Shortens a long view by taking out the band between two points.",
+   "details": "Click where the break starts and where it ends: the band between them is taken out along the view's longer way, and zigzag break lines mark where the halves meet. Type its length to set it exactly; the change is one step.",
+   "keywords": ["broken view", "shorten", "long part", "interrupted"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
    "id": "drawings.hiddenLines",
    "title": "Hidden lines",
    "summary": "Shows or hides dashed hidden lines in the selected views, or in every view of the sheet.",
@@ -849,6 +1100,198 @@
    "details": "Choose the file and its type; it is written on a worker. A drawing with several sheets goes into one PDF from its row in the browser's Drawings folder.",
    "keywords": ["PDF", "DXF", "DWG", "SVG", "PNG", "print"],
    "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.exportDrawing",
+   "title": "Export drawing as PDF",
+   "summary": "Writes every sheet of the drawing shown into one PDF, a page per sheet.",
+   "details": "Choose where the file goes; it is written on a worker. Export sheet writes the sheet shown alone, also as SVG, DXF, DWG or PNG.",
+   "keywords": ["PDF", "pages", "all sheets"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.print",
+   "title": "Print",
+   "summary": "Prints the drawing's sheets, with a preview of each page.",
+   "details": "Choose the printer, all sheets of the drawing or this one, fit to the printer's paper or actual size, black ink only and the copies. The sheets are drawn on a worker, and a toast says when they have gone to the printer.",
+   "keywords": ["printer", "plot", "paper", "preview"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.issue",
+   "title": "Issue revision",
+   "summary": "Releases the drawing as a revision: its values and views as they are now are kept, and the revision table and title block show it.",
+   "details": "Set the revision, its description and date and who issued and approved it; you can also keep the views' linework in the document, write the issued PDF and commit and tag it in git. Afterwards the chip over the sheet says when the drawing has changed since that revision.",
+   "keywords": ["release", "revision", "freeze", "git tag", "approve"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.dimension",
+   "title": "Dimension",
+   "summary": "Adds a dimension to a view: pick what to measure and click where it goes.",
+   "details": "Pick an edge, a circle or a point, and a second one for a distance or an angle; where the pointer is chooses horizontal, vertical, aligned, angle, radius or diameter. Click to place it, or type its offset, decimals or tolerance in the boxes beside the pointer and press {fixed:enter}. The bar under the sheet sets its type, precision, tolerance and text; Esc takes back a pick, then leaves.",
+   "keywords": ["smart dimension", "length", "distance", "angle", "radius", "diameter", "tolerance", "precision"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.ordinate",
+   "title": "Ordinate dimensions",
+   "summary": "Measures several features of a view from one origin, as a row of values on extension lines.",
+   "details": "Pick the origin (a datum edge, a vertex or a centre), then the features to measure from it, then press {fixed:enter} or Done and click where the dimensions go. The side of the view the pointer is on chooses horizontal or vertical values, unless Direction in the bar says otherwise; the set is one step.",
+   "keywords": ["datum", "running dimensions", "coordinates"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.baseline",
+   "title": "Baseline dimensions",
+   "summary": "Measures several features of a view from one origin, as a stack of dimensions that all start there.",
+   "details": "Pick the origin (a datum edge, a vertex or a centre), then the features to measure from it, then press {fixed:enter} or Done and click where the dimensions go. The side of the view the pointer is on chooses horizontal or vertical values, unless Direction in the bar says otherwise; the set is one step.",
+   "keywords": ["datum", "parallel dimensions", "stacked"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.chain",
+   "title": "Chain dimensions",
+   "summary": "Measures several features of a view one after the other, each dimension starting where the last one ends.",
+   "details": "Pick the origin (a datum edge, a vertex or a centre), then the features to measure from it, then press {fixed:enter} or Done and click where the dimensions go. The side of the view the pointer is on chooses horizontal or vertical values, unless Direction in the bar says otherwise; the set is one step.",
+   "keywords": ["continuous dimensions", "chained"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fromDatums",
+   "title": "Dimension from datums",
+   "summary": "Dimensions the holes of a view from its datum symbols in one go, as ordinate dimensions.",
+   "details": "Place two datum symbols on straight edges of the view first, one upright and one level. The selected view, or the first one with datum symbols, then gets a set of ordinate dimensions per direction, measured on a worker and added as one step. The button's menu has baseline and chain dimensions instead.",
+   "keywords": ["datum A B C", "hole positions", "ordinate", "distances from edges"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fromDatums.baseline",
+   "title": "Baseline dimensions from datums",
+   "summary": "Dimensions the holes of a view from its datum symbols in one go, as baseline dimensions.",
+   "details": "Place two datum symbols on straight edges of the view first, one upright and one level. The selected view, or the first one with datum symbols, then gets a set of baseline dimensions per direction, measured on a worker and added as one step.",
+   "keywords": ["datum", "hole positions", "baseline", "stacked"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fromDatums.chain",
+   "title": "Chain dimensions from datums",
+   "summary": "Dimensions the holes of a view from its datum symbols in one go, as chain dimensions.",
+   "details": "Place two datum symbols on straight edges of the view first, one upright and one level. The selected view, or the first one with datum symbols, then gets a set of chain dimensions per direction, measured on a worker and added as one step.",
+   "keywords": ["datum", "hole positions", "chain", "continuous"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.holeCallout",
+   "title": "Hole callout",
+   "summary": "Labels a hole with its size and depth, read from the model.",
+   "details": "Pick the hole by its circle or its wall; the callout follows the pointer on a leader, and a click places it. It writes the diameter and depth (or THRU), a counterbore or countersink, and how many holes of that size the part has (2×).",
+   "keywords": ["thread", "counterbore", "countersink", "depth", "hole note"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.holeTable",
+   "title": "Hole table",
+   "summary": "Lists the holes of a view in a table: a tag for each, its X and Y position and its size.",
+   "details": "Click the view whose holes go in, then where the table's top left corner goes. Each hole gets its tag on the view, lettered by size (A1, A2, B1), and its row in the table.",
+   "keywords": ["hole chart", "tags", "positions"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.centerMark",
+   "title": "Centre mark",
+   "summary": "Marks the centre of a circle on a view with a cross.",
+   "details": "Pick a circle seen along its axis: the mark is added at once, each one a step. The tool stays on for the next circle; Esc leaves.",
+   "keywords": ["center mark", "cross", "circle centre"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.centerLine",
+   "title": "Centre line",
+   "summary": "Draws a centre line along a cylinder seen from the side, between two circles or between two parallel edges.",
+   "details": "Pick a cylinder seen from the side and the line is added at once; or pick two circles or two parallel edges, and it is added after the second. The tool stays on for the next one; Esc leaves.",
+   "keywords": ["center line", "axis", "symmetry"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.centerMarks",
+   "title": "Centre marks on views",
+   "summary": "Draws centre marks on every circle of the selected views, or of every view of the sheet, or takes them off.",
+   "details": "The views draw the marks themselves, so they follow the model. The change to the views' style is one step.",
+   "keywords": ["center marks", "automatic", "axes"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.note",
+   "title": "Note",
+   "summary": "Adds a text note to the sheet, with a leader to what it points at when you pick that first.",
+   "details": "Type the text in the bar under the sheet, then click where the note goes; for a leader, pick an edge, a circle or a point first. A note placed inside a view belongs to that view and moves with it.",
+   "keywords": ["text", "leader", "label"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.datum",
+   "title": "Datum",
+   "summary": "Places a datum symbol, a lettered frame on a triangle, on an edge of a view.",
+   "details": "Pick the edge the datum stands on; the frame follows the pointer and a click places it. It takes the next free letter, which the bar under the sheet can change; the datums then serve Dimension from datums and feature control frames.",
+   "keywords": ["datum feature", "GD&T", "A B C"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fcf",
+   "title": "Feature control frame",
+   "summary": "Adds a geometric tolerance frame: the characteristic, the tolerance and its datums.",
+   "details": "Set the characteristic (position, flatness, perpendicularity and the others), the value, a diameter zone, the material modifier and the datum letters in the bar under the sheet. Pick the feature it controls and click where the frame goes, or click a view without picking for a frame without a leader.",
+   "keywords": ["GD&T", "geometric tolerance", "position", "flatness", "perpendicularity"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.surface",
+   "title": "Surface texture",
+   "summary": "Places a surface texture symbol on an edge, with its roughness value.",
+   "details": "Pick the edge of the surface, then click on the side the symbol stands, along the edge. The bar under the sheet sets the process (material removal required, any process, or no material removal) and the value, such as Ra 1.6.",
+   "keywords": ["roughness", "Ra", "finish"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.partsList",
+   "title": "Parts list",
+   "summary": "Places the drawing's parts list on the sheet: item, quantity, name, part number and material.",
+   "details": "The table follows the pointer by its bottom right corner and a click places it. The bar under the sheet lists the top level or every part once with its quantity, and can add a Mass column; balloons take their numbers from it.",
+   "keywords": ["bill of materials", "BoM table", "item list"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.balloon",
+   "title": "Balloon",
+   "summary": "Labels a part on a view with its item number from the parts list.",
+   "details": "Pick an edge of the part, then click where the balloon goes; its number comes from the parts list. Quantity in the bar under the sheet also writes how many there are (4×).",
+   "keywords": ["item number", "callout", "part number"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.autoBalloon",
+   "title": "Auto-balloon",
+   "summary": "Balloons every part a view shows that has no balloon yet, spread around the view.",
+   "details": "It takes the selected view, else an isometric view, else the first base view. The balloons are placed in columns and rows so that none overlap, and a parts list is added when the drawing has none; all of it is one step.",
+   "keywords": ["balloons", "item numbers", "parts list"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.revisionTable",
+   "title": "Revision table",
+   "summary": "Places the drawing's revision table: each issued revision with its description, date and approval.",
+   "details": "The table follows the pointer by its top right corner and a click places it. Its rows come from Issue revision, so it grows as revisions are issued.",
+   "keywords": ["revisions", "change history", "issue"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.reattach",
+   "title": "Re-attach",
+   "summary": "Gives an annotation that lost what it measures new references, picked on its view.",
+   "details": "Select the annotation, or open the sheet's dangling chip, which lists the ones that lost theirs, and choose it there. Then pick as many edges, circles or points as it had, on its own view: it measures again, and the change is one step.",
+   "keywords": ["dangling", "lost reference", "repair"],
+   "requires": "Select one annotation on the sheet first."
   },
   {
    "id": "nav.fusion",
@@ -1025,6 +1468,14 @@
    "details": "The fields feed the bill of materials and the drawings' title blocks, and a material from the library gives the mass from the volume. Several objects are edited at once, as one step, and Properties shows the result in its Part section.",
    "keywords": ["part number", "material", "vendor", "density", "mass"],
    "requires": "Select bodies or components first."
+  },
+  {
+   "id": "inspect.material",
+   "title": "Material",
+   "summary": "Gives the selected bodies or components a material from the library.",
+   "details": "Choose it from the menu, which lists each material with its density: the mass then follows from the volume, and with Colour as the material on they take its colour too. It is one step to undo; None clears it, and Other material… opens Part properties.",
+   "keywords": ["physical material", "steel", "aluminium", "plastic", "density", "mass", "weight"],
+   "requires": "Select bodies or components first; not while a sketch is open."
   },
   {
    "id": "select.similar",

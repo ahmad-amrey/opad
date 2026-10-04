@@ -217,7 +217,8 @@ QString group(const QString& id) {
     return QCoreApplication::translate("help", "View");
   if (area == "inspect") return QCoreApplication::translate("help", "Inspect");
   if (area == "annotate") return QCoreApplication::translate("help", "Annotate");
-  if (area == "design" || area == "assembly") return QCoreApplication::translate("help", "Design");
+  // Linked files, canvases and KiCad boards are on the Design menu (and their ribbon buttons beside Import).
+  if (area == "design" || area == "assembly" || area == "assets" || area == "canvas" || area == "kicad") return QCoreApplication::translate("help", "Design");
   if (area == "drawings") return QCoreApplication::translate("help", "Drawings");
   if (id.startsWith("sketch.c.") || id == "sketch.dimension" || id == "sketch.constraints" || id == "sketch.moreConstrain")
     return QCoreApplication::translate("help", "Sketch constraints");
