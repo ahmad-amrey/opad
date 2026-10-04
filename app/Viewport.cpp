@@ -581,7 +581,7 @@ bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   }
   if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
   else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
-  if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull()) changed = body->setHiddenLine(hidden, occ(backgroundColor()), occ(edge), m_style == Style::HiddenLine) || changed;
+  if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull()) changed = body->setHiddenLine(hidden, occ(backgroundColor()), occ(edge)) || changed;
   if (changed) ais->SetToUpdate(AIS_Shaded);
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
   return changed;

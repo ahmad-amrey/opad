@@ -566,9 +566,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_styleJob = nullptr;
   QColor backgroundColor() const;  // the scene's (hidden line draws its faces in it)
   // Hidden edges visible (ViewportEdges.cpp): every body's edges in world coordinates, built on a worker, drawn by two
-  // objects: dashed and dim with no depth test (m_hiddenLayer, after the faces), solid against the faces' depth (Top).
+  // objects: dashed and dim with no depth test (m_hiddenLayer, after the faces), solid against the faces' depth (m_seenLayer).
   Handle(AIS_InteractiveObject) m_edgesBehind, m_edgesSeen;
-  Graphic3d_ZLayerId m_hiddenLayer = Graphic3d_ZLayerId_UNKNOWN;
+  Graphic3d_ZLayerId m_hiddenLayer = Graphic3d_ZLayerId_UNKNOWN, m_seenLayer = Graphic3d_ZLayerId_UNKNOWN;
   QTimer m_edgeTimer;
   unsigned m_edgeSerial = 0;
   void scheduleEdgeOverlay();  // after a change of the scene, a look or the style: built again shortly, or removed

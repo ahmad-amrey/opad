@@ -113,8 +113,9 @@ void Viewport::refineVisible() {
     applying.start();
     size_t triangles = 0;
     // A selected body's glow is made from the arrays it is drawn with: when those change it is made again.
-    bool glowsStale = false;
-    auto dropGlow = [this, &glowsStale](const Handle(AIS_InteractiveObject)& ais) {
+    bool glowsStale = false, swapped = false;
+    auto dropGlow = [this, &glowsStale, &swapped](const Handle(AIS_InteractiveObject)& ais) {
+      swapped = true;
       if (auto glow = m_bodyGlows.find(ais.get()); glow != m_bodyGlows.end()) {
         m_ctx->Remove(glow->second, Standard_False);
         m_bodyGlows.erase(glow);
@@ -143,6 +144,7 @@ void Viewport::refineVisible() {
       m_refined.erase(oldest);
     }
     if (glowsStale) applySelectionLayers();
+    if (swapped && m_style == Style::HiddenEdges) scheduleEdgeOverlay();  // its rims are the arrays drawn
     redrawScene();
     if (trace::enabled())
       trace::log(QStringLiteral("refine: done in %1 ms (%2 triangles, applied in %3 ms, %4 bodies kept)").arg(started.elapsed()).arg(triangles).arg(applying.elapsed()).arg(m_refined.size()));

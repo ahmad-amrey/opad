@@ -286,10 +286,9 @@ std::atomic<int>& stockWireframeCount() {
 
 int BodyShape::stockWireframes() { return stockWireframeCount(); }
 
-bool BodyShape::setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge, bool outlined) {
-  if (on == m_hiddenLine && (!on || (face.IsEqual(m_hiddenFace) && edge.IsEqual(m_hiddenEdge) && outlined == m_outlined))) return false;
+bool BodyShape::setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge) {
+  if (on == m_hiddenLine && (!on || (face.IsEqual(m_hiddenFace) && edge.IsEqual(m_hiddenEdge)))) return false;
   m_hiddenLine = on;
-  m_outlined = outlined;
   m_hiddenFace = face;
   m_hiddenEdge = edge;
   return true;
@@ -690,7 +689,7 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     face->SetInteriorColor(m_hiddenFace);
     face->SetAlphaMode(Graphic3d_AlphaMode_Opaque);
     face->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
-    face->SetDrawSilhouette(m_outlined);
+    face->SetDrawSilhouette(Standard_True);
     face->SetEdgeColor(m_hiddenEdge);
     face->SetEdgeWidth(myDrawer->FaceBoundaryAspect()->Aspect()->Width());
     // Further back than shaded: every edge is drawn over these faces, also in a later layer (hidden edges visible), where

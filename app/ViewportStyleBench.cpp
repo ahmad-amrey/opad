@@ -2,7 +2,9 @@
 // step within 150 ms of UI-thread CPU (the Engine's wireframe froze it for 0.5 s and more: OCCT walked every edge of every
 // body on the UI thread); the wireframe is drawn from the mesh worker's arrays (OCCT computes no wireframe of a meshed body)
 // and asks for no zoom refinement; in Hidden line the faces take the background's colour and a curved body is outlined where
-// it turns away (no edge lies there: the silhouette), where Shaded + edges fills it with its colour.
+// it turns away (no edge lies there: the silhouette), where Shaded + edges fills it with its colour. Hidden edges visible
+// draws every edge Hidden line draws, solid (a polyline drawn as every other segment came out dashed), outlines the part as
+// Hidden line does and adds only dim dashes.
 // <prefix>.<style>.png.
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -59,6 +61,7 @@ bool Viewport::benchStyles(const QString& prefix, const std::function<void(const
     const int filled = judge(shot("start"), outline);
     require(filled > 60 && outline > 0, QString("Shaded + edges fills the part (its middle %1 off the background, its side at x = %2)").arg(filled).arg(outline));
   }
+  int hiddenOutline = -1;
   struct Step { QString command, name; Style style; };
   auto settle = [this] { return !stylePending() && !m_jobs->busy() && (m_style != Style::HiddenEdges || edgeOverlayShown()); };
   for (const Step& s : {Step{"view.wire", "wireframe", Style::Wireframe}, Step{"view.hidden", "hidden", Style::HiddenLine},
@@ -85,10 +88,15 @@ bool Viewport::benchStyles(const QString& prefix, const std::function<void(const
       require(!m_refineJob, "no zoom refinement in the wireframe");
     }
     if (s.style == Style::HiddenLine && one) {
+      const int middle = judge(image, hiddenOutline);
+      require(middle < 30 && hiddenOutline > 0,
+              QString("hidden line: the face takes the background's colour (%1 off it) and the part is outlined where it turns away (x = %2)").arg(middle).arg(hiddenOutline));
+    }
+    if (s.style == Style::HiddenEdges && one) {
       int outline = -1;
       const int middle = judge(image, outline);
-      require(middle < 30 && outline > 0,
-              QString("hidden line: the face takes the background's colour (%1 off it) and the part is outlined where it turns away (x = %2)").arg(middle).arg(outline));
+      require(middle < 30 && outline > 0 && std::abs(outline - hiddenOutline) <= 2,
+              QString("hidden edges visible: outlined as in Hidden line (x = %1 against %2)").arg(outline).arg(hiddenOutline));
     }
   }
   // Hidden edges visible against Hidden line, seen from an iso view: the edges behind the faces show, dashed and dim (the
@@ -102,14 +110,27 @@ bool Viewport::benchStyles(const QString& prefix, const std::function<void(const
     trigger("view.hiddenEdges");
     waitUntil(settle, 60000);
     const QImage dashed = shot("hidden-edges-iso");
-    int added = 0, brighter = 0;
+    int added = 0, brighter = 0, seen = 0, kept = 0;
     const QRgb background = hidden.pixel(10, hidden.height() - 10);
+    auto bright = [background](const QImage& image, int x, int y) {  // as bright as a seen edge: not a dim dash
+      for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx)
+          if (image.rect().contains(x + dx, y + dy) && distance(image.pixel(x + dx, y + dy), background) > 300) return true;
+      return false;
+    };
     for (int y = 0; y < hidden.height(); ++y)
-      for (int x = 0; x < hidden.width(); ++x)
+      for (int x = 0; x < hidden.width(); ++x) {
+        if (distance(hidden.pixel(x, y), background) > 300) {
+          ++seen;
+          kept += bright(dashed, x, y);
+        }
         if (distance(hidden.pixel(x, y), dashed.pixel(x, y)) > 30) {
           ++added;
-          brighter += distance(dashed.pixel(x, y), background) > 400;  // as bright as a seen edge: not a dim dash
+          brighter += distance(dashed.pixel(x, y), background) > 300 && !bright(hidden, x, y);
         }
+      }
+    require(seen > 500 && kept >= seen * 97 / 100,
+            QString("hidden edges visible: every edge in sight is drawn solid as in Hidden line (%1 of %2 pixels)").arg(kept).arg(seen));
     require(edgeOverlayShown() && added > 50 && brighter < added / 10,
             QString("hidden edges visible: the edges behind show, dim (%1 pixels more than in Hidden line, %2 of them bright)").arg(added).arg(brighter));
     trigger("view.edges");
