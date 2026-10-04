@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QKeyEvent>
 #include <QMainWindow>
 #include <QProcess>
 #include <QPushButton>
@@ -229,11 +230,11 @@ void DiskSync::showDeleted() {
 void DiskSync::confirm(const QString& title, const QString& text, const QString& action, std::function<void()> fn) {
   m_banner->present("confirm", Banner::Tone::Danger, title, text);
   m_banner->addButton("diskConfirm", action, std::move(fn), true);
-  m_banner->addButton("diskCancel", tr("Cancel"), [this] {  // back to the choices
+  m_banner->setEscape(m_banner->addButton("diskCancel", tr("Cancel"), [this] {  // back to the choices (also Esc)
     m_decided = false;
     m_banner->dismiss();
     check();
-  });
+  }));
 }
 
 void DiskSync::merge() {
@@ -469,6 +470,23 @@ bool DiskSync::bench() {
         shot(".confirm.png");
         click("diskCancel");
         require(m_banner->state() == "replaced" && stamp() == st->stamp, "cancel keeps both");
+        {  // the keyboard: Tab reaches the choices, Enter presses one, the confirmation takes the focus to Cancel and Esc is Cancel
+          QPushButton* over = m_banner->button("diskOverwrite");
+          require(over->focusPolicy() == Qt::TabFocus && over->autoDefault(), "keyboard: Tab reaches the banner's buttons, Enter presses them");
+          over->setFocus(Qt::TabFocusReason);
+          QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+          QCoreApplication::sendEvent(over, &enter);
+          QPushButton* cancel = m_banner->button("diskCancel");
+          require(m_banner->state() == "confirm" && cancel && m_window->focusWidget() == cancel, "keyboard: Enter asks, the focus on Cancel");
+          QKeyEvent shortcut(QEvent::ShortcutOverride, Qt::Key_Escape, Qt::NoModifier);
+          shortcut.setAccepted(false);
+          QCoreApplication::sendEvent(cancel, &shortcut);
+          require(shortcut.isAccepted(), "keyboard: Esc is the banner's, not the window's shortcut");
+          QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+          QCoreApplication::sendEvent(cancel, &esc);
+          require(m_banner->state() == "replaced" && stamp() == st->stamp, "keyboard: Esc keeps both");
+          pass("the banner from the keyboard");
+        }
         click("diskOverwrite");
         click("diskConfirm");
         require(m_doc->snapshotBusy() && m_banner->state().isEmpty(), "overwrite: written on a worker");

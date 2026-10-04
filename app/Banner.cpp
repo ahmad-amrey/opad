@@ -2,6 +2,7 @@
 
 #include <QEvent>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QPushButton>
 #include <QTimer>
@@ -40,8 +41,8 @@ Banner::Banner(QWidget* viewport) : QFrame(viewport), m_viewport(viewport) {
   m_close->setObjectName("bannerClose");
   m_close->setAutoRaise(true);
   m_close->setFixedSize(24, 24);
-  m_close->setFocusPolicy(Qt::NoFocus);
   m_close->setToolTip(tr("Later"));
+  watchKeys(m_close);
   connect(m_close, &QToolButton::clicked, this, [this] { dismiss(); emit closed(); });
   row->addWidget(m_close, 0, Qt::AlignTop);
   connect(theme::notifier(), &theme::Notifier::changed, this, &Banner::restyle);
@@ -51,6 +52,8 @@ Banner::Banner(QWidget* viewport) : QFrame(viewport), m_viewport(viewport) {
 }
 
 void Banner::present(const QString& state, Tone tone, const QString& title, const QString& text, const QString& details) {
+  const QWidget* focus = window()->focusWidget();
+  m_hadFocus = focus && isAncestorOf(focus) && !isHidden();
   m_state = state;
   m_tone = tone;
   setProperty("state", state);
@@ -75,13 +78,31 @@ QPushButton* Banner::addButton(const QString& action, const QString& text, std::
   auto* b = new QPushButton(text, this);
   if (primary) b->setObjectName("primary");
   b->setProperty("action", action);
-  b->setFocusPolicy(Qt::NoFocus);
   b->setCursor(Qt::PointingHandCursor);
+  b->setAutoDefault(true);  // Enter presses the focused one
+  watchKeys(b);
   connect(b, &QPushButton::clicked, this, [fn = std::move(fn)] { fn(); });
   m_buttons->addWidget(b);
   b->show();  // at once (a layout shows a new child on the next event-loop turn)
   place();
+  if (primary && m_hadFocus && m_tone != Tone::Danger) b->setFocus(Qt::TabFocusReason);
   return b;
+}
+
+void Banner::setEscape(QPushButton* button) {
+  button->setProperty("escape", true);
+  if (m_hadFocus && m_tone == Tone::Danger) button->setFocus(Qt::TabFocusReason);
+}
+
+void Banner::watchKeys(QWidget* w) {
+  w->setFocusPolicy(Qt::TabFocus);  // Tab, never a click: the viewport keeps its keys
+  w->installEventFilter(this);
+}
+
+void Banner::escape() {
+  for (auto* b : findChildren<QPushButton*>())
+    if (b->property("escape").toBool() && b->isVisibleTo(this)) return b->click();
+  m_close->click();
 }
 
 QPushButton* Banner::button(const QString& action) const {
@@ -91,6 +112,7 @@ QPushButton* Banner::button(const QString& action) const {
 }
 
 void Banner::dismiss() {
+  if (const QWidget* focus = window()->focusWidget(); focus && isAncestorOf(focus)) m_viewport->setFocus(Qt::OtherFocusReason);
   m_state.clear();
   setProperty("state", QString());
   hide();
@@ -105,6 +127,18 @@ void Banner::flash() {
 
 bool Banner::eventFilter(QObject* watched, QEvent* event) {
   if (watched == m_viewport && event->type() == QEvent::Resize) place();
+  if (watched != m_viewport && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
+    const int key = static_cast<QKeyEvent*>(event)->key();
+    const bool ours = key == Qt::Key_Escape || key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Space;
+    if (event->type() == QEvent::ShortcutOverride && ours) {  // a focused button's, not the window's shortcut (Esc clears a measurement)
+      event->accept();
+      return true;
+    }
+    if (event->type() == QEvent::KeyPress && key == Qt::Key_Escape) {
+      escape();
+      return true;
+    }
+  }
   return QFrame::eventFilter(watched, event);
 }
 
