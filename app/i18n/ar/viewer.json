@@ -90,5 +90,11 @@
  "curve centroid": "مركز ثقل المنحنى",
  "face centroid": "مركز ثقل الوجه",
  "volume centroid": "مركز ثقل الحجم",
- "area centroid": "مركز ثقل المساحة"
+ "area centroid": "مركز ثقل المساحة",
+ "Construction geometry": "هندسة إنشائية",
+ "Nothing to select here": "لا شيء للتحديد هنا",
+ "Select other": "تحديد عنصر آخر",
+ "Under the pointer, nearest first": "تحت المؤشر، الأقرب أولًا",
+ "Nearest under the pointer": "الأقرب تحت المؤشر",
+ "Behind the one above": "خلف الذي فوقه"
 }

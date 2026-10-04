@@ -41,6 +41,7 @@
 
 class JobRunner;
 class Job;
+class QMenu;
 class QKeyEvent;
 class QNativeGestureEvent;
 
@@ -176,6 +177,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Benches: a left click at a widget point as the mouse handlers deliver it (move, press, release and the frames that
   // handle them), with these modifiers held; then a plain move there.
   void benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+  void benchHoverAt(const QPointF& at);  // a plain move there and the frame that handles it (the hover text follows)
   // The document changed: what the status said is under the pointer may be gone or renamed. Cleared; the next frame
   // says it again for whatever is still there.
   void clearHover();
@@ -224,6 +226,18 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void clearDimension();
   void setMeasurementSelectionLocked(bool locked) { m_measureSelectionLocked = locked; }
   QStringList measurementCaptions() const { return m_measureCaptions; }  // the labels as drawn (benches)
+
+  // Select other (UI-128, ViewportSelectOther.cpp): everything picking finds under a point of the view in the current filter,
+  // nearest first (bodies, faces, edges, vertices, feature candidates), never a face that only stands in front of edges and
+  // vertices (UI-31's occluders) or an arc's centre finder. Alt+click lists them (selectOtherMenu): hovering a row hovers it
+  // in the view, choosing one selects it as a click would (a guided tool takes it as its next pick). Tab and Shift+Tab hover
+  // the next or previous one under the resting pointer in place, and a click there takes it.
+  struct PickCandidate { opad::Ref ref; std::string candidate; QString label; double depth = 0; };
+  std::vector<PickCandidate> pickCandidates(const QPointF& at);  // widget coordinates; also what preview/choose index
+  QMenu* selectOtherMenu(const QPointF& at);  // nullptr: nothing there; owned by the view, deleted once closed
+  void previewPickCandidate(int index);  // -1: nothing hovered
+  bool choosePickCandidate(int index);
+  bool cycleHover(bool forward);
 
   // Guided tools (distance, angle, ...: the tool asks for one pick per step). While accumulating, a plain click
   // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
@@ -403,6 +417,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool detectedPoint(gp_Pnt& p) const;  // where the pointer met the detected owner
   // A detected occluder, or a detected edge or vertex whose point is behind a face (Edge and Vertex modes): cleared.
   bool dropOccluded();
+  // select other (ViewportSelectOther.cpp)
+  bool selectOtherOwner(const Handle(SelectMgr_EntityOwner)& owner, opad::Ref& ref, std::string& candidate) const;
+  bool detectOwner(const Handle(SelectMgr_EntityOwner)& owner);
+  bool cycleKey(QEvent* e);  // Tab / Shift+Tab: cycleHover
+  std::vector<Handle(SelectMgr_EntityOwner)> m_pickOwners;  // pickCandidates' owners, same order
+  Graphic3d_Vec2i m_pickAt, m_cycledAt;
+  bool m_hoverCycled = false;  // the hover was chosen (Tab, a list row): kept until the pointer moves, occluded or not
+  bool m_selectOtherPress = false;  // an Alt+press: its release opens the list
   void moveTo(const Graphic3d_Vec2i& at);  // the context's MoveTo, then dropOccluded
   static constexpr int kTrackingDwellMs = 350;
   bool m_trackingEnabled = true, m_extensionEnabled = true;

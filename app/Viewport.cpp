@@ -13,6 +13,7 @@
 #include "CursorWrap.hpp"
 #include <QScreen>
 #include <QApplication>
+#include <QMenu>
 
 #include <functional>
 
@@ -2314,6 +2315,12 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   if (m_zoomWindow && e->button() == Qt::RightButton) { m_rightPress = false; cancelZoomWindow(); return; }
   m_cubeMenu = m_rightPress && cubeAt(e->position());  // a right click on the cube opens its menu
   if (sectionMousePress(e)) return;  // a press on the section plane's handle strip starts a drag, never a selection
+  // Alt+click lists everything under the pointer (UI-128): the press and its release are not the controller's.
+  if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::AltModifier && !m_sketchInput && !cubeAt(e->position())) {
+    m_selectOtherPress = true;
+    e->accept();
+    return;
+  }
   // A press can arrive without a preceding hover. Refresh only near the cube (or when the old hover was
   // the cube) so the gesture below uses this press's owner without an extra scene pick on every model click.
   const QPointF cubeCenter(width() - kCubeOffsetX, kCubeOffsetY);
@@ -2390,6 +2397,13 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
     return;
   }
   if (sectionMouseRelease(e)) return;
+  if (m_selectOtherPress && e->button() == Qt::LeftButton) {
+    m_selectOtherPress = false;
+    if ((e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4)
+      if (QMenu* menu = selectOtherMenu(e->position())) menu->popup(e->globalPosition().toPoint());
+    e->accept();
+    return;
+  }
   if (!m_snapClick.empty() && e->button()==Qt::LeftButton) {
     const auto key=m_snapClick;
     auto marker=m_centers.find(key);
@@ -2442,6 +2456,7 @@ void Viewport::leaveEvent(QEvent* e) {
   QWidget::leaveEvent(e);
   if (!m_initialised) return;
   if (m_sketchInput) m_sketchInput->sketchLeave();
+  m_hoverCycled = false;
   ResetPreviousMoveTo();
   m_hoverFadeTimer.stop();
   if (m_ctx->HasDetected()) {
@@ -2472,10 +2487,12 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;
   if(awaitingWarp && !m_warpGate.pending && e->buttons()!=Qt::NoButton) m_dragOffset=m_warpPosition-e->position();
   if(m_initialised && e->buttons()==Qt::NoButton) setCenterPicking(e->modifiers().testFlag(Qt::ControlModifier),e->position());
+  if (m_hoverCycled && devicePos(e->position() + m_dragOffset) != m_cycledAt) m_hoverCycled = false;  // the pointer moved on: it picks again
   m_trackingCursor = e->position();
   m_trackingDirty = true;
   if (m_blocked) return;
   if (m_zoomDrag) { m_zoomTo = e->position(); showZoomBand(); return; }
+  if (m_selectOtherPress) return;  // an Alt+press drags nothing
   if (m_trackpadMode != TrackpadMode::None && e->buttons() == Qt::NoButton) finishTrackpadScroll();
   if (m_measureAnchorPress) return;
   if (sectionMouseMove(e)) return;  // dragging the section plane

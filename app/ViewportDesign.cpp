@@ -532,6 +532,7 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
 
 bool Viewport::event(QEvent* e) {
   if (e->type() == QEvent::NativeGesture && handleNativeGesture(static_cast<QNativeGestureEvent*>(e))) return true;
+  if (cycleKey(e)) return true;  // Tab hovers the next thing under the pointer (UI-128) instead of moving the focus
   if (e->type() == QEvent::Gesture) {
     auto* gestures = static_cast<QGestureEvent*>(e);
     if (auto* pinch = static_cast<QPinchGesture*>(gestures->gesture(Qt::PinchGesture))) {

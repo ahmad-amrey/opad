@@ -98,7 +98,7 @@ bool Viewport::detectedPoint(gp_Pnt& p) const {
 // silhouette edge seen edge-on, nearer than that edge or vertex though both are in sight. So the pointer takes the first
 // owner in pick order that is not an occluder and whose point is in sight, else nothing.
 bool Viewport::dropOccluded() {
-  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  if (!m_initialised || !m_ctx->HasDetected() || m_hoverCycled) return false;
   const bool subShapes = m_filter == SelFilter::Edge || m_filter == SelFilter::Vertex;
   const auto& selector = m_ctx->MainSelector();
   auto hidden = [&](const Handle(SelectMgr_EntityOwner)& owner) {
@@ -128,6 +128,12 @@ void Viewport::moveTo(const Graphic3d_Vec2i& at) {
 }
 
 void Viewport::contextLazyMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const Graphic3d_Vec2i& point) {
+  // The hover chosen there (select other, UI-128) stays what the pointer is on, also for the click (the controller picks
+  // again for a click when its last pick point was reset by the press).
+  if (m_hoverCycled && point == m_cycledAt) {
+    myPrevMoveTo = point;
+    return;
+  }
   AIS_ViewController::contextLazyMoveTo(ctx, view, point);
   dropOccluded();
 }
