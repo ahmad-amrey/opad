@@ -20,6 +20,7 @@
 #include "opad/util.hpp"
 
 class AssetsArea;
+class CheckPanel;
 class Job;
 class PanelFooter;
 class QDialog;
@@ -62,6 +63,11 @@ class KicadArea : public AreaController {
   // Board outline, mounting holes (all, as one reference: holes added later come with a sync) and parts (node ids) of
   // `import` into the open sketch; false when the sketch is busy.
   bool projectInto(const std::string& import, bool outline, bool holes, const std::vector<std::string>& parts, bool linked);
+  // Check clearance to board…: the board's solids against the selection outside it (else every other visible solid), pairs
+  // overlapping or closer than the gap (setting kicad/clearance, 1 mm) listed in the "kicadClearance" panel, a row selecting
+  // the pair and measuring its gap; run again from the panel's Check.
+  void clearance(const std::string& import);
+  void runClearance(int waited = 0);
   void setSmallParts(bool on);    // the filter on or off (setting view/hideSmallParts)
   void askSmallPartSize();        // its size (setting view/smallPartSize, mm)
 
@@ -71,14 +77,19 @@ class KicadArea : public AreaController {
   const opad::json& previewReport() const { return m_report; }
   const std::string& previewImport() const { return m_import; }
   bool previewPlanned() const { return m_plan != nullptr; }  // Sync commits what was previewed
+  ToolPanel* clearancePanel() const { return m_clearancePanel; }
+  CheckPanel* clearanceChecks() const { return m_checks; }
+  const opad::json& lastClearance() const { return m_lastClearance; }  // check_interference's result
 
  signals:
   void previewReady(bool ok, const QString& error);
+  void clearanceReady(bool ok);
 
  private:
   void buildPanel();
   void fill();
   void fillAffected();
+  void buildClearancePanel();
   void section(const PropertySubject& subject, QList<PropertySection>& out);
   AssetsArea* assets() const;
   std::vector<std::string> m_boards;
@@ -91,4 +102,11 @@ class KicadArea : public AreaController {
   unsigned long long m_planRevision = 0;
   QPointer<Job> m_job;
   bool m_reading = false;  // a preview is copying the document, reading or waiting to
+  ToolPanel* m_clearancePanel = nullptr;
+  CheckPanel* m_checks = nullptr;
+  std::string m_clearanceImport;
+  std::vector<std::string> m_enclosure;  // what the board is checked against; empty: every other visible solid
+  opad::json m_lastClearance;
+  QPointer<Job> m_checkJob;
+  bool m_measured = false;  // a finding's gap is shown in the view
 };

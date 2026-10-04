@@ -30,6 +30,7 @@
 #include "AssetMonitor.hpp"
 #include "AssetsArea.hpp"
 #include "BrowserPanel.hpp"
+#include "CheckPanel.hpp"
 #include "Commands.hpp"
 #include "DesignController.hpp"
 #include "I18n.hpp"
@@ -43,6 +44,7 @@
 #include "Units.hpp"
 #include "Viewport.hpp"
 #include "opad/assets.hpp"
+#include "opad/checks.hpp"
 #include "opad/kicad_pcb.hpp"
 #include "opad/scene.hpp"
 
@@ -54,6 +56,7 @@ namespace {
 std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
 constexpr double kSmallPartSize = 3.0;  // mm: chip resistors and capacitors, small diodes
 constexpr double kDegrees = 180 / 3.14159265358979323846;
+constexpr double kClearance = 1.0;  // mm: a board's gap to its enclosure, until one is typed (setting kicad/clearance)
 QString refOf(const QString& name) { return name.section(' ', 0, 0); }  // "J1 USB_C" -> "J1"
 
 // The node ids of an import's KiCad records, by reference designator (the parts, and the mounting holes apart).
@@ -97,6 +100,11 @@ void KicadArea::buildActions() {
       [this] { preview(boardOf(services().selection())); });
   add("kicad.project", tr("Project KiCad board…"), "project", kicad, {"kicad", "outline", "mounting holes", "connector", "enclosure", "pcb"},
       [this](const CommandContext& c) { return c.sketching && !m_boards.empty(); }, [this] { project(); });
+  add("kicad.clearance", tr("Check clearance to board…"), "interference", kicad, {"kicad", "clearance", "gap", "enclosure", "interference", "fit", "pcb"},
+      [this](const CommandContext& c) { return c.document && !c.sketching && !m_boards.empty(); }, [this] {
+        const std::string b = boardOf(services().selection());
+        clearance(b.empty() ? m_boards.front() : b);
+      });
   QAction* small = add("view.hideSmallParts", tr("Hide small parts while navigating"), "smallparts", QString(), {"performance", "fast", "orbit", "pcb", "level of detail"},
                        {}, [this] { setSmallParts(services().action("view.hideSmallParts")->isChecked()); }, false, true);
   small->setChecked(QSettings().value("view/hideSmallParts", false).toBool());
@@ -114,7 +122,7 @@ void KicadArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   if (QMenu* design = menus.value("design")) {
     QMenu* sub = design->addMenu(icons::themed("kicadboard", 16), tr("KiCad"));
     sub->setObjectName("kicad");
-    for (const char* id : {"kicad.insert", "kicad.previewSync", "kicad.project"}) sub->addAction(services().action(id));
+    for (const char* id : {"kicad.insert", "kicad.previewSync", "kicad.project", "kicad.clearance"}) sub->addAction(services().action(id));
   }
   if (QMenu* view = menus.value("view")) {
     view->addSeparator();
@@ -133,11 +141,13 @@ void KicadArea::ribbon(RibbonLayout& layout) {
     g->items.insert(std::min(at, int(g->items.size())), item);
   }
   layout.addAction("sketch.reference.reference", services().action("kicad.project"));
+  layout.addAction("review.inspect.check", services().action("kicad.clearance"));
   for (const char* group : {"review.view.display", "design.view.display"}) layout.addAction(group, services().action("view.hideSmallParts"), RibbonLayout::Size::Small);
 }
 
 void KicadArea::ready() {
   buildPanel();
+  buildClearancePanel();
   if (AssetsArea* a = assets()) {
     a->setPreviewer([this](const std::string& import) { preview(import); });
     if (a->monitor())  // the previewed board changed again: read again what is shown
@@ -554,6 +564,85 @@ bool KicadArea::projectInto(const std::string& import, bool outline, bool holes,
   return !sources.empty() && sketch->projectSources(sources, linked);
 }
 
+// ---------------------------------------------------------------- clearance to the enclosure (UI-134)
+void KicadArea::buildClearancePanel() {
+  m_checks = new CheckPanel;
+  m_checks->setObjectName("kicadClearanceChecks");
+  m_clearancePanel = new ToolPanel("kicadClearance", "interference", &Tokens::sel, tr("Board clearance"), m_checks, 220, services().window());
+  m_clearancePanel->setObjectName("kicadClearancePanel");
+  m_clearancePanel->setContentSizeHint([this](int width) { return m_checks->preferredSize(width); });
+  connect(m_checks, &CheckPanel::contentResized, m_clearancePanel, &ToolPanel::requestContentFit);
+  connect(m_checks, &CheckPanel::runRequested, this, [this] { runClearance(); });
+  connect(m_checks, &CheckPanel::findingActivated, this, [this](const opad::json& f) {  // the pair selected, the gap measured
+    services().viewport()->selectNodes({f.value("a", ""), f.value("b", "")});
+    if (f.value("kind", "") != "clearance" || !f.contains("point_a")) return;
+    services().viewport()->showMeasurement({{"kind", "distance"}, {"value", f.value("distance_mm", 0.0)}, {"unit", "mm"}, {"point_a", f["point_a"]}, {"point_b", f["point_b"]}});
+    m_measured = true;
+  });
+  connect(m_clearancePanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
+    if (on) return;
+    if (Job* job = std::exchange(m_checkJob, nullptr)) job->cancel();
+    if (std::exchange(m_measured, false)) services().viewport()->clearDimension();
+  });
+  services().addPanel(m_clearancePanel);
+}
+
+void KicadArea::clearance(const std::string& import) {
+  if (import.empty() || !services().document()->hasDocument) return;
+  m_clearanceImport = import;
+  m_enclosure.clear();  // the selection outside the board, else every other visible solid
+  for (const auto& id : services().selection().ids)
+    if (const opad::Node* n = services().document()->node(id); n && n->source_op != import) m_enclosure.push_back(id);
+  m_checks->begin(CheckPanel::Mode::Interference);
+  m_checks->setClearance(QSettings().value("kicad/clearance", kClearance).toDouble());
+  m_clearancePanel->setContext(board(import).name);
+  services().openPanel(m_clearancePanel);
+  runClearance();
+}
+
+// The board's solids against the enclosure's (opad::check_interference "against"), on a worker from a copy of the document.
+void KicadArea::runClearance(int waited) {
+  if (Job* job = std::exchange(m_checkJob, nullptr)) job->cancel();
+  AppDocument* doc = services().document();
+  const Board b = board(m_clearanceImport);
+  if (b.root.empty()) return m_checks->setFailed(tr("The board is no longer in the document."));
+  opad::json args = m_checks->options();
+  QSettings().setValue("kicad/clearance", args.value("clearance_mm", kClearance));
+  args["against"] = {b.root};
+  if (!m_enclosure.empty()) args["select"] = m_enclosure;
+  args["limit"] = 200;
+  m_checks->setRunning(tr("Checking…"));
+  QPointer<KicadArea> self(this);
+  auto failed = [self](const QString& error) {
+    if (!self) return;
+    self->m_checks->setFailed(error);
+    emit self->clearanceReady(false);
+  };
+  const bool started = !doc->loading && !doc->converting() && doc->captureSnapshot(services().jobs(), [self, args, failed](std::shared_ptr<opad::Document> copy, const QString& error) {
+    if (!self) return;
+    if (!copy) return failed(i18n::t(error));
+    auto result = std::make_shared<opad::json>();
+    self->m_checkJob = self->services().jobs()->async(tr("Board clearance"), [copy, args, result](Progress p) {
+      const opad::Scene scene = opad::resolve(*copy);
+      *result = opad::check_interference(*copy, scene, args, [p] { return p.cancelled(); });
+    }, [self, result, failed](bool ok, const QString& error) {
+      if (!self) return;
+      self->m_checkJob = nullptr;
+      if (!ok) return failed(error == "cancelled" ? tr("Cancelled.") : i18n::t(error));
+      const AppDocument* doc = self->services().document();
+      for (auto& item : (*result)["items"])  // a board part by its footprint ("J1 USB_C"), not its model's body
+        if (const opad::Node* n = doc->node(item.value("b", "")); n && !n->parent.empty())
+          if (const opad::Node* p = doc->node(n->parent); p && p->source_op == n->source_op && !p->parent.empty()) item["b_name"] = p->name;
+      self->m_lastClearance = *result;
+      self->m_checks->setResult(*result);
+      emit self->clearanceReady(true);
+    });
+  });
+  if (started) return;
+  if (waited >= 300) return failed(tr("The document is busy; try again in a moment."));
+  QTimer::singleShot(100, this, [this, waited] { runClearance(waited + 1); });
+}
+
 // ---------------------------------------------------------------- Properties, context menu
 void KicadArea::section(const PropertySubject& subject, QList<PropertySection>& out) {
   if (subject.refs.empty() || m_boards.empty()) return;
@@ -567,12 +656,15 @@ void KicadArea::section(const PropertySubject& subject, QList<PropertySection>& 
   sec.rows << qMakePair(tr("Footprints placed"), QString::number(b.parts.size())) << qMakePair(tr("Mounting holes"), QString::number(b.holeNodes.size()))
            << qMakePair(tr("Exploded views"), tr("Kept together"));
   if (b.linked) sec.actions << qMakePair(tr("Preview sync…"), std::function<void()>([this, import] { QTimer::singleShot(0, this, [this, import] { preview(import); }); }));
+  sec.actions << qMakePair(tr("Check clearance…"), std::function<void()>([this, import] { QTimer::singleShot(0, this, [this, import] { clearance(import); }); }));
   out << sec;
 }
 
 void KicadArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
   const std::string import = selection.sketching ? std::string() : boardOf(selection);
-  if (import.empty() || services().document()->browse) return;
+  if (import.empty()) return;
+  menu.addAction(icons::themed("interference", 16), tr("Check clearance to board…"), this, [this, import] { clearance(import); });
+  if (services().document()->browse) return;
   if (const AssetsArea* a = assets(); a && a->monitor() && a->monitor()->asset(import))
     menu.addAction(icons::themed("regen", 16), tr("Preview KiCad sync…"), this, [this, import] { preview(import); });
 }

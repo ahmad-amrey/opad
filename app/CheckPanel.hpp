@@ -19,6 +19,7 @@ class CheckPanel : public QWidget {
   void begin(Mode mode);  // the mode's options, an empty list
   Mode mode() const { return m_mode; }
   opad::json options() const;  // interference: clearance_mm; print: build_direction, overhang_deg, min_wall_mm
+  void setClearance(double mm);  // interference: the gap it starts from (a board against its enclosure: the last one used)
   void setRunning(const QString& status);
   void setResult(const opad::json& result);  // check_interference / check_print output
   void setFailed(const QString& error);

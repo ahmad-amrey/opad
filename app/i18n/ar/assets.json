@@ -335,5 +335,9 @@
   "Removed: %1": "حُذفت: %1",
   "Recomputed": "أُعيد حسابه",
   "Recomputed: its body changes": "أُعيد حسابه: يتغير جسمه",
-  "Recomputed: %1 bodies change": "أُعيد حسابه: تتغير %1 أجسام"
+  "Recomputed: %1 bodies change": "أُعيد حسابه: تتغير %1 أجسام",
+  "Check clearance to board…": "فحص الخلوص حول اللوحة…",
+  "Board clearance": "خلوص اللوحة",
+  "The board is no longer in the document.": "لم تعد اللوحة في المستند.",
+  "Check clearance…": "فحص الخلوص…"
 }

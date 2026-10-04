@@ -30,6 +30,7 @@
 
 #include "check.hpp"
 #include "opad/assets.hpp"
+#include "opad/checks.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_reference.hpp"
@@ -455,6 +456,39 @@ TEST(sync_affects_the_design) {
   const json gone = asset_sync_affects(d, import_id, plan_asset_sync(d, import_id));
   CHECK(gone["errors"] == 1 && gone["sketches"][0].value("error", "").find("KiCad part is no longer on the board") != std::string::npos);
   CHECK(asset_sync_affects(d, import_id, design::Plan{})["sketches"].empty());
+}
+
+// UI-134: a board's clearance to its enclosure counts only pairs of a board part and an enclosure part (the connector sits on
+// the board and the lid touches the wall: neither is reported), the board's part second; a smaller gap is clear.
+TEST(clearance_to_an_enclosure) {
+  Files files;
+  configure_kernel_logging(false);
+  const auto dir = files.dir / "gap";
+  const auto board = dir / "board.kicad_pcb";
+  step_box(dir / "conn.step", -2, -1, 0, 4, 2, 3);
+  write(board, "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\"))\n" +
+                   footprint("Conn:USB", "J1", "10 15", model("${KIPRJMOD}/conn.step")) + ")\n");
+  Document d = Document::create();
+  d.save_as(dir / "enclosure.opad");
+  link_file(d, board);
+  Scene s = resolve(d);
+  const std::string root = s.roots.at(0), j1 = named(s, "J1 USB")->children.at(0);
+  double x0, y0, z0, x1, y1, top;
+  world_box(d, s, named(s, "J1 USB")).Get(x0, y0, z0, x1, y1, top);
+  top -= world_box(d, s, named(s, "J1 USB")).GetGap();
+  auto box = [&](const char* name, double x, double z, double length) {
+    design::apply_ops(d, {design::make_feature_op("box", name, {{"plane", {{"origin", {x, 0.0, z}}, {"normal", {0, 0, 1}}}}, {"length", std::to_string(length) + " mm"},
+                                                                {"width", "40 mm"}, {"height", "2 mm"}})});
+  };
+  box("Lid", 0, top + 0.5, 60);  // 0.5 mm over J1, x -30..30
+  box("Wall", 31, top + 0.5, 2);  // against the lid's side
+  s = resolve(d);
+  CHECK(check_interference(d, s, {{"clearance_mm", 1}})["too_close"].get<int>() >= 3);  // J1 on the board, the wall on the lid, J1 under it
+  const json gap = check_interference(d, s, {{"clearance_mm", 1}, {"against", {root}}});
+  CHECK(gap["too_close"] == 1 && gap["interferences"] == 0 && gap["against"].get<int>() >= 2);
+  CHECK(gap["items"][0]["a_name"] == "Lid" && gap["items"][0]["b"] == j1 && about(gap["items"][0]["distance_mm"], 0.5, 1e-4));
+  CHECK(check_interference(d, s, {{"clearance_mm", 0.4}, {"against", {root}}})["status"] == "clear");
+  CHECK_THROWS(check_interference(d, s, {{"against", "J1"}}));
 }
 
 // UI-134: a board read again as the viewer reads it (a linked board's sync) translates only the models that changed since:

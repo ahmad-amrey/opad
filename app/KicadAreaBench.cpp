@@ -5,9 +5,11 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
@@ -22,6 +24,7 @@
 #include "AssetMonitor.hpp"
 #include "AssetsArea.hpp"
 #include "BenchRegistry.hpp"
+#include "CheckPanel.hpp"
 #include "DesignController.hpp"
 #include "KicadArea.hpp"
 #include "MainWindow.hpp"
@@ -30,6 +33,7 @@
 #include "Theme.hpp"
 #include "Toast.hpp"
 #include "ToolPanel.hpp"
+#include "Units.hpp"
 #include "Viewport.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
@@ -429,6 +433,97 @@ OPAD_BENCH(OPAD_BENCH_SMALL_PARTS, small_parts) {
           (*require)(!hide->isChecked() && v->smallPartFilter() == 0 && !v->smallPartsHidden(), "off: a move hides nothing");
           require->finish();
         });
+      });
+    });
+  });
+  return true;
+}
+
+// OPAD_BENCH_KICAD_CLEARANCE=<prefix> on a document linking a board (J1, a 3.5 mm tall connector) under a lid 0.5 mm over J1 and
+// a wall against the lid's side. Check clearance to board (Review > Inspect, Design > KiCad, the board's context menu) with the
+// lid selected: at 1 mm one pair, the lid and J1 0.5 mm apart (J1 on the board and the wall on the lid are no pairs), its row
+// selecting both and measuring the gap; at 0.4 mm (remembered) nothing; closing the panel clears the measurement; with nothing
+// selected every other visible solid counts, still that one pair. Frames: <prefix>.png, .panel.png.
+OPAD_BENCH(OPAD_BENCH_KICAD_CLEARANCE, kicad_clearance) {
+  static bool ran = false;  // each load that ends comes back here
+  if (std::exchange(ran, true)) return true;
+  auto require = std::make_shared<Checks>("kicad-clearance");
+  auto settled = [&w] {  // displayed and settled: no load, display or look job, every visible body shown
+    int visible = 0;
+    for (const auto& id : w.m_doc->scene.all_bodies()) visible += w.m_doc->scene.effectively_visible(id) && !w.m_doc->node(id)->body_missing;
+    return !w.m_doc->loading && !w.m_loadJob && !w.m_displayJob && w.m_meshRemaining == 0 && !w.m_viewport->looksPending() && w.m_viewport->displayedCount() == visible;
+  };
+  const QString prefix = value;
+  KicadArea* kicad = areaOf<KicadArea>(w);
+  AssetsArea* assets = areaOf<AssetsArea>(w);
+  AppDocument* doc = w.m_doc;
+  Viewport* v = w.m_viewport;
+  QAction* check = w.action("kicad.clearance");
+  const std::string import = kicadImport(doc);
+  (*require)(kicad && assets && check && !import.empty() && w.m_commands.inWorkspace("review").contains("kicad.clearance"),
+             "a board linked; Check clearance to board on Review > Inspect");
+  if (!kicad || !assets || !check || import.empty()) return require->finish(), true;
+  AssetMonitor* monitor = assets->monitor();
+  auto body = [doc](const std::string& name) {
+    for (const auto& [id, n] : doc->scene.nodes)
+      if (n.kind == opad::Node::Kind::Body && n.name == name) return id;
+    return std::string();
+  };
+  auto ready = std::make_shared<int>(0);  // the last check: 1 done, -1 failed
+  QObject::connect(kicad, &KicadArea::clearanceReady, &w, [ready](bool okay) { *ready = okay ? 1 : -1; });
+  CheckPanel* checks = kicad->clearanceChecks();
+  auto status = [checks] { return checks->findChild<QLabel*>("secondary")->text(); };
+  waitFor(&w, [=] { return settled() && monitor->state(import) && monitor->state(import)->value("state", "") == "ok" && !monitor->checking(); }, 20000, [=, &w](bool shown) {
+    const std::string lid = body("Lid"), wall = body("Wall"), j1 = bodyOf(doc, part(doc, "J1"));
+    (*require)(shown && !lid.empty() && !wall.empty() && !j1.empty(), "the board, the lid and the wall shown");
+    w.m_browser->selectIds({lid});
+    w.updateCommands();
+    (*require)(check->isEnabled(), "the lid selected: Check clearance to board enabled");
+    check->trigger();
+    (*require)(kicad->clearancePanel()->isVisible() && status() == "Checking…" && checks->findingCount() == 0, "the panel opens and checks on a worker: " + status());
+    waitFor(&w, [=] { return *ready != 0; }, 20000, [=, &w](bool) {
+      const opad::json r = kicad->lastClearance();
+      const opad::json first = r.value("items", opad::json::array()).empty() ? opad::json::object() : r["items"][0];
+      (*require)(*ready == 1 && checks->findingCount() == 1 && r.value("too_close", 0) == 1 && r.value("interferences", 1) == 0 && first.value("a", "") == lid &&
+                     first.value("b", "") == j1 && std::abs(first.value("distance_mm", 0.0) - 0.5) < 1e-3 && std::abs(r.value("clearance_mm", 0.0) - 1) < 1e-9 &&
+                     checks->findChild<QListWidget*>()->item(0)->text() == "Lid and J1 conn: 0.500 mm apart",
+                 "at 1 mm one pair, the lid and J1 0.5 mm apart (J1 on the board, the wall on the lid not counted): " + status() + " " +
+                     (checks->findingCount() ? checks->findChild<QListWidget*>()->item(0)->text() : QString()));
+      checks->activate(0);
+      auto picked = [v] {  // selecting is sliced: one object per step
+        std::set<std::string> out;
+        for (const auto& ref : v->selection()) out.insert(ref.body);
+        return out;
+      };
+      waitFor(&w, [=] { return picked() == std::set<std::string>{lid, j1}; }, 5000, [=, &w](bool both) {
+      (*require)(both && !v->measurementCaptions().isEmpty(), "its row selects the lid and J1 and measures the gap: " + v->measurementCaptions().join(", "));
+      v->standardView("front");
+      v->fitAll();
+      QTimer::singleShot(600, &w, [=, &w] {
+        (*require)(v->grabImage().save(prefix + ".png") && kicad->clearancePanel()->grab().save(prefix + ".panel.png"), "frames");
+        checks->findChild<QDoubleSpinBox*>()->setValue(units::toDisplay(units::Kind::Length, 0.4));
+        *ready = 0;
+        checks->findChild<QPushButton*>("primary")->click();  // Check
+        waitFor(&w, [=] { return *ready != 0; }, 20000, [=, &w](bool) {
+          (*require)(*ready == 1 && checks->findingCount() == 0 && kicad->lastClearance().value("status", "") == "clear" &&
+                         std::abs(w.m_settings.value("kicad/clearance").toDouble() - 0.4) < 1e-9,
+                     "at 0.4 mm nothing, the gap remembered: " + status());
+          kicad->clearancePanel()->hide();
+          (*require)(v->measurementCaptions().isEmpty(), "closing the panel clears the measurement");
+          w.m_settings.setValue("kicad/clearance", 1.0);
+          v->clearSelection();
+          w.m_browser->selectIds({});
+          *ready = 0;
+          check->trigger();
+          waitFor(&w, [=] { return *ready != 0; }, 20000, [=](bool) {
+            const opad::json r = kicad->lastClearance();
+            (*require)(*ready == 1 && r.value("too_close", 0) == 1 && r.value("bodies", 0) >= 4 && checks->findingCount() == 1,
+                       QString("nothing selected: %1 solids checked, still one pair").arg(r.value("bodies", 0)));
+            kicad->clearancePanel()->hide();
+            require->finish();
+          });
+        });
+      });
       });
     });
   });

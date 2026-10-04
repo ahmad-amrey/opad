@@ -1,5 +1,5 @@
 """gui_benches cases of the KiCad area (KicadArea: UI-72 UI, UI-134): Insert KiCad PCB, the sync preview and an incremental
-sync, projecting a board into a sketch that follows a sync, small parts hidden while navigating. The benches are in
+sync, projecting a board into a sketch that follows a sync, small parts hidden while navigating, the board's clearance to its enclosure. The benches are in
 app/KicadAreaBench.cpp. Each case writes its own synthetic board (never a user's board) and STEP models through opad-cli,
 with its own cache (OPAD_CACHE_DIR) in the run's folder."""
 import os
@@ -77,6 +77,21 @@ def small_parts(root, document):
     return design, env
 
 
+def kicad_clearance(root, document):
+    """A document linking a board (J1, the 3.5 mm tall connector on its top at 1.6 mm) under a 2 mm lid 0.5 mm over J1, and a
+    wall against the lid's side."""
+    folder = root / "kicad-clearance"
+    folder.mkdir()
+    models(document, folder)
+    (folder / "board.kicad_pcb").write_text(board_text(RECT, [], [("J1", "130 125", "conn.step", "F")]), encoding="utf-8")
+    design = document("kicad-clearance/design",
+                      ("feature", "--kind", "box", "--name", "Lid", "--inputs", '{"plane":{"origin":[0,0,5.6],"normal":[0,0,1]},"length":"70 mm","width":"50 mm","height":"2 mm"}'),
+                      ("feature", "--kind", "box", "--name", "Wall", "--inputs", '{"plane":{"origin":[36,0,5.6],"normal":[0,0,1]},"length":"2 mm","width":"50 mm","height":"2 mm"}'))
+    env = {"OPAD_CACHE_DIR": str(root / "kicad-clearance-cache")}
+    subprocess.run([str(document.cli), "import", str(design), str(folder / "board.kicad_pcb"), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
 CASES = [
     # Insert KiCad PCB (the board's dialog answered, linked), repeated models meshed once, the changed board's toast opening the
     # sync preview (moved, model changed, added, holes; tinted), Sync from its footer re-meshing only the changed shapes and
@@ -88,4 +103,7 @@ CASES = [
     ("kicad-project", kicad_project, {"OPAD_BENCH_KICAD_PROJECT": "{prefix}"}),
     # Small parts hidden while the view moves, the selected one kept, all back once still (<prefix>.moving.png, .still.png).
     ("small-parts", small_parts, {"OPAD_BENCH_SMALL_PARTS": "{prefix}"}),
+    # UI-134: the board's clearance to its enclosure (the lid over J1, not J1 on the board nor the wall on the lid), a row
+    # measuring the gap, a smaller gap clear and remembered (<prefix>.png, .panel.png).
+    ("kicad-clearance", kicad_clearance, {"OPAD_BENCH_KICAD_CLEARANCE": "{prefix}"}),
 ]

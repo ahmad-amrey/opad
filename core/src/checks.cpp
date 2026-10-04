@@ -275,7 +275,11 @@ json print_mesh(const TopoDS_Shape& shape, const gp_Vec& up, double steep, doubl
 }  // namespace
 
 json check_interference(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled) {
-  return interference_of(scene, solid_bodies(scene, args), args, [&](const std::string& id) { return node_world_shape(doc, scene, id); },
+  std::vector<std::string> bodies = solid_bodies(scene, args);
+  if (args.contains("against") && args["against"].is_array() && !args["against"].empty())  // hidden ones too: they are named
+    for (const auto& b : solid_bodies(scene, {{"select", args["against"]}}))
+      if (std::find(bodies.begin(), bodies.end(), b) == bodies.end()) bodies.push_back(b);
+  return interference_of(scene, bodies, args, [&](const std::string& id) { return node_world_shape(doc, scene, id); },
                          [&](const std::string& id) { return node_world_bbox(doc, scene, id); }, cancelled);
 }
 
@@ -290,6 +294,15 @@ json interference_of(const Scene& scene, const std::vector<std::string>& bodies,
     if (!pair.is_array() || pair.size() != 2) throw Error("ignore takes pairs: [[a, b], ...]");
     for (const auto& a : scene.bodies_under(pair[0].get<std::string>()))
       for (const auto& b : scene.bodies_under(pair[1].get<std::string>())) ignored.insert(std::minmax(a, b));
+  }
+  // Only pairs across: one body of `against` (a board, components standing for their bodies) and one of the rest (its enclosure).
+  std::set<std::string> against;
+  if (args.contains("against")) {
+    if (!args["against"].is_array()) throw Error("against takes node ids: [a, ...]");
+    for (const auto& id : args["against"]) {
+      if (!id.is_string() || !scene.node(id.get<std::string>())) throw Error("unknown node " + id.dump());
+      for (const auto& b : scene.bodies_under(id.get<std::string>())) against.insert(b);
+    }
   }
   // Candidates: boxes (the fast view boxes, never smaller than the bodies) that meet, grown by the clearance.
   struct Box { std::string id; double lo[3], hi[3]; };
@@ -309,6 +322,7 @@ json interference_of(const Scene& scene, const std::vector<std::string>& bodies,
   for (size_t i = 0; i < boxes.size() && !truncated; ++i)
     for (size_t j = i + 1; j < boxes.size() && boxes[j].lo[0] <= boxes[i].hi[0]; ++j) {
       if (boxes[j].lo[1] > boxes[i].hi[1] || boxes[i].lo[1] > boxes[j].hi[1] || boxes[j].lo[2] > boxes[i].hi[2] || boxes[i].lo[2] > boxes[j].hi[2]) continue;
+      if (args.contains("against") && against.count(boxes[i].id) == against.count(boxes[j].id)) continue;
       const auto pair = std::minmax(boxes[i].id, boxes[j].id);
       if (ignored.count(pair)) {
         ++skipped;
@@ -318,7 +332,7 @@ json interference_of(const Scene& scene, const std::vector<std::string>& bodies,
         truncated = true;
         break;
       }
-      candidates.push_back(pair);
+      candidates.push_back(against.count(pair.first) ? std::make_pair(pair.second, pair.first) : std::make_pair(pair.first, pair.second));  // against's body second
     }
   // Exact work only on the candidates: the common solid, else (with a clearance) the closest distance.
   json findings = json::array();
@@ -371,6 +385,7 @@ json interference_of(const Scene& scene, const std::vector<std::string>& bodies,
   json out = {{"check", "interference"}, {"bodies", bodies.size()}, {"candidate_pairs", candidates.size()}, {"ignored_pairs", skipped},
               {"interferences", overlaps}, {"clearance_mm", clearance}, {"too_close", close}, {"total", findings.size()},
               {"offset", offset}, {"items", page}, {"status", overlaps ? "interference" : close ? "too_close" : "clear"}};
+  if (args.contains("against")) out["against"] = against.size();
   if (truncated) out["truncated"] = "more candidate pairs than max_pairs; check a smaller selection";
   if (offset + page.size() < findings.size()) out["next_offset"] = offset + page.size();
   return out;
