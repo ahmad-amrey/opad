@@ -85,7 +85,7 @@ class TimelineWidget : public QWidget {
   void rebuild();
 
  protected:
-  bool event(QEvent* e) override;
+  bool event(QEvent* e) override;  // Ctrl+C, Shift with the arrows and F2 are the timeline's, not the window's
   void paintEvent(QPaintEvent*) override;
   void mouseMoveEvent(QMouseEvent*) override;
   void mousePressEvent(QMouseEvent*) override;
@@ -94,7 +94,6 @@ class TimelineWidget : public QWidget {
   void leaveEvent(QEvent*) override;
   void resizeEvent(QResizeEvent*) override;
   void wheelEvent(QWheelEvent*) override;
-  bool event(QEvent* e) override;  // F2 is the marker's (edit), not the window's Rename
   void keyPressEvent(QKeyEvent*) override;
   void contextMenuEvent(QContextMenuEvent*) override;
 

@@ -478,8 +478,10 @@ opad::json AppDocument::run(const std::string& command, opad::json args, const Q
 opad::json AppDocument::runAll(const std::vector<std::pair<std::string, opad::json>>& commands, const QString& label) {
   if (m_converting) throw opad::Error("The document is being prepared for editing; try again in a moment.");
   if (designBusy) throw opad::Error("The design is being recomputed; try again in a moment.");
-  for (const auto& [command, args] : commands)
+  for (const auto& [command, args] : commands) {
     if (browse && command != "appearance") throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
+    if (readOnly && command != "appearance") throw opad::Error("This document is open read-only: save a copy to edit it.");
+  }
   const size_t before = doc.ops.size();
   const std::string by = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out = opad::json::array();

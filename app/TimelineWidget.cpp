@@ -517,15 +517,15 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
   const auto& ops = m_doc->doc.ops;
   p.setFont(theme::ui(13, QFont::Medium));
   p.setPen(t.fg2);
-  const int label = theme::px(100), row = theme::px(16), left = markersLeft(), right = markersRight();
-  p.drawText(QRect(12, (height() - 2 * row - 2) / 2, label, row), Qt::AlignVCenter | Qt::AlignLeft, tr("Timeline"));
+  const int labelWidth = theme::px(100), row = theme::px(16), left = markersLeft(), right = markersRight();
+  p.drawText(QRect(12, (height() - 2 * row - 2) / 2, labelWidth, row), Qt::AlignVCenter | Qt::AlignLeft, tr("Timeline"));
   p.setFont(theme::mono(11));
   p.setPen(m_doc->rolledBack() ? t.candidate : t.fg3);
   size_t tomb = 0;
   for (size_t i : m_shown) tomb += m_deleted.count(ops[i].id);
   QString count = m_doc->rolledBack() ? tr("rolled back") : tr("%1 ops").arg(m_shown.size());
   if (tomb > 0 && !m_doc->rolledBack()) count += tr(" · %1 tomb").arg(tomb);
-  p.drawText(QRect(12, height() / 2, label, row), Qt::AlignVCenter | Qt::AlignLeft, count);
+  p.drawText(QRect(12, height() / 2, labelWidth, row), Qt::AlignVCenter | Qt::AlignLeft, count);
   p.setPen(QPen(t.line, 1));
   p.drawLine(left - 16, 8, left - 16, height() - 8);
   p.drawLine(right, 8, right, height() - 8);

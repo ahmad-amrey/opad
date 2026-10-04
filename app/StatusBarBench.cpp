@@ -6,6 +6,7 @@
 #include "CoordinateReadout.hpp"
 #include "Preferences.hpp"
 #include "ProgressStrip.hpp"
+#include "StatusRow.hpp"
 #include "Units.hpp"
 
 #include <QApplication>

@@ -29,6 +29,7 @@ void suspendOutsideSketch(const QList<QAction*>&,bool sketching);
 QKeySequence binding(const QAction*);
 QList<QKeySequence> bindings(const QAction*);
 void bind(QAction*,const QList<QKeySequence>&);
+inline void bind(QAction* a,const QKeySequence& key) {bind(a,QList<QKeySequence>{key});}  // the key alone
 // A second key a command answers to (UI-111): Redo on Ctrl+Shift+Z beside Ctrl+Y by default, while it keeps its default
 // key. The editor shows and changes one beside the key, saved under shortcutAlternates/<id> (an older build ignores it;
 // empty: none); the key and it are the action's shortcuts() in that order.

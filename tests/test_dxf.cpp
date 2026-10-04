@@ -724,7 +724,7 @@ TEST(oda_converter_only_when_switched_on) {
   viewer.viewer = true;
   Document read = Document::create();
   import_file(read, f.dir / "plan.dwg", viewer);
-  viewer_cache_store(read, f.dir / "plan.dwg", viewer);
+  CHECK(viewer_cache_store(read, f.dir / "plan.dwg", viewer, 60000).value("kept", false));  // a minute's read: kept
   Document again = Document::create();
   CHECK(viewer_cache_load(again, f.dir / "plan.dwg", viewer) && bodies(again).size() == 1 && bodies(again)[0].layer == "ODA");
   set_use_oda(false);

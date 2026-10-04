@@ -294,13 +294,11 @@ void ShortcutEditor::describe() {
   if(i<0){m_details->setText(tr("Select a command to edit its shortcut."));return;}
   QString standard=m_entries[i].action->property("defaultShortcut").toString().isEmpty()?tr("Unassigned"):QKeySequence(m_entries[i].action->property("defaultShortcut").toString()).toString(QKeySequence::NativeText);
   for(const auto& alternate:shortcuts::alternates(m_entries[i].action->objectName()))standard+=" / "+alternate.toString(QKeySequence::NativeText);
-  QString text=name(i)+"
-"+tr("Default: %1").arg(standard);
+  QString text=name(i)+"\n"+tr("Default: %1").arg(standard);
   // A value key outside the sketch (the filters' 1-4 and the styles' 5-7 by default) acts while no tool takes values; a
   // running one types it into its boxes (UI-122). The defaults stay as they were (nothing for migrate()): said here.
   if(shortcuts::scope(m_entries[i].action->objectName())!=shortcuts::SketchOnly && shortcuts::typesValue(m_binding->keySequence()))
-    text+="
-"+tr("While a tool that takes values runs (a sketch tool, a feature, the section, a drawing being placed), this key types into its boxes instead.");
+    text+="\n"+tr("While a tool that takes values runs (a sketch tool, a feature, the section, a drawing being placed), this key types into its boxes instead.");
   m_details->setText(text);
 }
 void ShortcutEditor::refresh() {
