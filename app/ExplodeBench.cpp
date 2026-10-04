@@ -454,7 +454,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     QKeyEvent key(QEvent::KeyPress, Qt::Key_7, Qt::NoModifier, "7");
                     QCoreApplication::sendEvent(v, &key);
                     const double seven = opad::explode_travel(area->units()[static_cast<size_t>(area->dragUnit())], area->spec(), u.dir);
-                    auto* box = area->handle()->findChild<QLineEdit*>("dimensionValue");
+                    auto* box = area->handle()->findChild<QLineEdit*>("dynamicInput-value");
                     if (box) {
                       box->setText("12.5 mm + 10 mm");
                       emit box->textEdited(box->text());
@@ -475,7 +475,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
   // A part dragged out of its place takes a turn of its own, without a new layout; back in place it has none.
   list.push_back({[=] { return area->dragUnit() >= 0 && area->units()[static_cast<size_t>(area->dragUnit())].bodies == std::vector<std::string>{s->shell} && area->handle()->isVisible(); },
                   [=, &w](bool shown) {
-                    auto* box = area->handle()->findChild<QLineEdit*>("dimensionValue");
+                    auto* box = area->handle()->findChild<QLineEdit*>("dynamicInput-value");
                     auto type = [box](const QString& text) {
                       box->setText(text);
                       emit box->textEdited(text);

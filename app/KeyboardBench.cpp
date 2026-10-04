@@ -97,13 +97,18 @@ OPAD_BENCH(OPAD_BENCH_KEYBOARD, keyboard) {
     if (editor) key(editor, Qt::Key_Escape);
     check(commands->contains("edit.rename") && editor && !tree->indexWidget(tree->currentIndex()) && w.m_doc->node(id)->name == name,
           "F2 renames the row (Rename), Esc leaves the name");
-    key(tree, Qt::Key_Delete);  // asks first: the bench's guard answers Cancel
-    check(commands->contains("edit.delete") && w.m_doc->node(id) && !deleted(w.m_doc->node(id)->source_op), "Del runs Delete on the row (its question cancelled)");
+    key(tree, Qt::Key_Delete);  // no question: the delete goes through on a worker, with an Undo toast (UI-100, UI-109)
+    check(commands->contains("edit.delete"), "Del runs Delete on the row");
+  }, idle);
+  add(100, [=, &w] { w.m_doc->undo(); }, [=] { return idle() && !row("body"); });  // gone: one undo brings it back
+  add(100, [=] {
+    check(row("body") != nullptr, "the deleted body comes back with one undo");
     auto seen = std::make_shared<QStringList>();
     menuAfter(seen);
+    tree->setCurrentItem(row("body"));
     key(tree, Qt::Key_Menu);
     check(!seen->isEmpty(), "the Menu key opens the row's menu (" + seen->join(", ") + ")");
-  }, idle);
+  }, [=] { return idle() && row("body"); });
   add(500, [=] {  // past the guard against the Menu key's second event
     auto seen = std::make_shared<QStringList>();
     menuAfter(seen);
@@ -130,6 +135,21 @@ OPAD_BENCH(OPAD_BENCH_KEYBOARD, keyboard) {
     check(!suppressed(), "a held Space on the marker does nothing more");
     key(w.m_timeline, Qt::Key_Delete);
   }, idle);
+  // A feature another one uses is asked about first (smart delete, UI-96): Delete it only, the one op Del stands for.
+  auto question = [] {
+    for (QWidget* top : QApplication::topLevelWidgets())
+      if (auto* m = qobject_cast<QMenu*>(top); m && m->objectName() == "smartDeleteQuestion" && m->isVisible()) return m;
+    return static_cast<QMenu*>(nullptr);
+  };
+  add(100, [=] {
+    if (QMenu* m = question())
+      for (QAction* a : m->actions())
+        if (a->objectName() == "deleteOnly") {
+          a->trigger();
+          m->close();
+          break;
+        }
+  }, [=] { return deleted(feature) || question(); });
   add(100, [=, &w] {
     check(deleted(feature), "Del tombstones the marker's op");
     const size_t ops = w.m_doc->doc.ops.size();

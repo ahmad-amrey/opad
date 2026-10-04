@@ -81,7 +81,10 @@ OPAD_BENCH(OPAD_BENCH_SMART, smart) {
           require(offset && offset->popupMode()==QToolButton::MenuButtonPopup && offset->menu() && offset->menu()->actions()==QList<QAction*>{w.action("design.remove_faces")},
                   "Remove faces is under Offset face's arrow");
           if(RibbonPage* page=w.m_ribbon->page("review.inspect"))
-            for(RibbonGroup* g:page->groups())results=results || (g->menu()->actions().contains(similar) && g->menu()->actions().indexOf(similar)==g->menu()->actions().indexOf(w.action("inspect.properties"))+1);
+            for(RibbonGroup* g:page->groups()) {  // after Properties (Part properties, another area's, may come between)
+              const auto a=g->menu()->actions();const int at=a.indexOf(w.action("inspect.properties"));
+              results=results || (at>=0 && a.indexOf(similar)>at);
+            }
           require(results,"Select similar follows Properties in Inspect > Results");
           for(QMenu* m:w.menuBar()->findChildren<QMenu*>()){const auto a=m->actions();const int at=a.indexOf(w.action("edit.selecttouched"));edit=edit || (at>=0 && a.value(at+1)==similar);}
           require(edit,"Select similar follows Select touched in the Edit menu");
