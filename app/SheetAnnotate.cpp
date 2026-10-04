@@ -306,7 +306,7 @@ void SheetAnnotator::buildBar() {
       {"parallelism", tr("Parallelism")},   {"angularity", tr("Angularity")},       {"line_profile", tr("Profile of a line")},
       {"surface_profile", tr("Profile of a surface")}, {"concentricity", tr("Concentricity")}, {"symmetry", tr("Symmetry")},
       {"circular_runout", tr("Circular runout")}, {"total_runout", tr("Total runout")}};
-  for (const auto& [id, label] : names) m_characteristic->addItem(glyphIcon(opad::drawing::characteristic_glyph(id)), label, QString::fromStdString(id));
+  for (const auto& [id, label] : names) m_characteristic->addItem(label, QString::fromStdString(id));  // glyphs: with the theme below
   field(m_characteristic, QString(), {Tool::Frame}, {"fcf"});
   m_zone = new QCheckBox(QString::fromUtf8("⌀"), m_bar);
   m_zone->setObjectName("annotate.zone");
@@ -366,6 +366,8 @@ void SheetAnnotator::buildBar() {
     QPalette pal = m_bar->palette();
     pal.setColor(QPalette::Window, theme::current().bg2);
     m_bar->setPalette(pal);
+    for (int i = 0; i < m_characteristic->count(); ++i)  // the glyphs in the theme's text colour
+      m_characteristic->setItemIcon(i, glyphIcon(opad::drawing::characteristic_glyph(m_characteristic->itemData(i).toString().toStdString())));
   };
   paint();
   connect(theme::notifier(), &theme::Notifier::changed, m_bar, paint);

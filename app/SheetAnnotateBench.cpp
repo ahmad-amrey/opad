@@ -18,6 +18,7 @@
 #include "SheetAnnotate.hpp"
 #include "SheetCanvas.hpp"
 #include "SheetPage.hpp"
+#include "Theme.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/drawing/annotate.hpp"
 #include "opad/drawing/sheet.hpp"
@@ -240,6 +241,21 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
     check(added("datum", 2) && items("datum")[1]->def["letter"] == "B", "datum B on the bottom edge");
     key(Qt::Key_Escape);
     w.action("drawings.fcf")->trigger();
+    {  // the characteristics' glyphs follow the theme (dark ink on light, light on dark)
+      const auto ink = [&] {
+        const QImage img = tools->characteristicBox()->itemIcon(0).pixmap(40, 32).toImage();
+        for (int y = 0; y < img.height(); ++y)
+          for (int x = 0; x < img.width(); ++x)
+            if (qAlpha(img.pixel(x, y)) == 255) return QColor(img.pixel(x, y));
+        return QColor();
+      };
+      const bool dark = theme::current().dark;
+      theme::apply(!dark);
+      const QColor other = ink();
+      const bool followed = other.isValid() && other == theme::current().fg;
+      theme::apply(dark);
+      check(followed && ink() == theme::current().fg, "the frame's characteristic glyphs are drawn in the theme's text colour, also after a switch");
+    }
     tools->characteristicBox()->setCurrentIndex(tools->characteristicBox()->findData("position"));
     tools->valueEdit()->setText("0.1");
     for (QWidget* field : tools->bar()->findChildren<QWidget*>()) {
