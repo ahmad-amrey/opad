@@ -22,6 +22,7 @@
 # changed).
 
 cmake_policy(SET CMP0057 NEW)  # if(IN_LIST) in script mode, where an older CMake starts with the old policies
+set(_opad_notices_fonts "${CMAKE_CURRENT_LIST_DIR}/../third_party/fonts")  # the drawing fonts compiled into the programs
 
 function(_opad_notices)
   string(REPLACE "|" ";" files "${NOTICES_FILES}")
@@ -409,6 +410,18 @@ function(_opad_notices)
       "  Source:  ${occt_url}\n  Files:   ${names}\n\n")
     set(occt_texts "${occt_src}/LICENSE_LGPL_21.txt" "${occt_src}/OCCT_LGPL_EXCEPTION.txt")
     _opad_notice_texts(opencascade occt_texts)
+  endif()
+  # The drawing fonts are compiled into opad and opad-cli (paint/CMakeLists.txt), not linked: every list that covers the
+  # programs names them with their copyright and licence (SIL OFL 1.1 asks both to go with each copy); the Python
+  # module paints nothing.
+  if(NOT NOTICES_TARGETS STREQUAL "python" AND EXISTS "${_opad_notices_fonts}/LiberationSans-LICENSE.txt")
+    string(APPEND text "* Drawing fonts: Liberation Sans 2.1.5 (Copyright (c) 2010 Google Corporation, with Reserved Font Arimo, Tinos "
+      "and Cousine; Copyright (c) 2012 Red Hat, Inc., with Reserved Font Name Liberation) and Noto Sans Arabic (Copyright 2022 "
+      "The Noto Project Authors), compiled into opad and opad-cli unmodified to letter technical drawings\n"
+      "  Licence: OFL-1.1\n  Home:    https://github.com/liberationfonts/liberation-fonts https://github.com/notofonts/arabic\n"
+      "  Files:   LiberationSans-Regular.ttf NotoSansArabic-Regular.ttf\n\n")
+    set(font_texts "${_opad_notices_fonts}/LiberationSans-LICENSE.txt" "${_opad_notices_fonts}/NotoSansArabic-OFL.txt")
+    _opad_notice_texts(fonts font_texts)
   endif()
   foreach(pkg IN LISTS packages)
     set(short "${pkg}")

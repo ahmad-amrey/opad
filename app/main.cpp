@@ -126,7 +126,9 @@ int main(int argc, char** argv) {
   QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
   QApplication app(argc, argv);
   // Workers (the jobs' threads, OCCT's pool on every logical processor) run at normal priority: above them the event loop
-  // is not starved while they keep every core busy (gaps of 300-700 ms on the Engine's drawing otherwise).
+  // is not starved while they keep every core busy (gaps of 300-700 ms on the Engine's drawing otherwise). Measured on the
+  // Engine after the t4/t5a merges, with and without it: tracking-engine's box picks held the loop 127 / 52 ms (332 / 293 ms
+  // without: FAIL) in the same total time (198 s / 203 s); looks-engine and components-engine unchanged.
   QThread::currentThread()->setPriority(QThread::HighPriority);
   QApplication::setApplicationName("OPAD");
   QApplication::setOrganizationName("opad");

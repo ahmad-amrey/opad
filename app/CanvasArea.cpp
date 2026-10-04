@@ -89,6 +89,7 @@ void CanvasArea::buildActions() {
     info.group = tr("Canvas");
     info.keywords = keywords;
     info.enabledWhen = std::move(when);
+    info.editsDocument = std::string_view(id) != "canvas.finish";  // a viewed or read-only file is saved first (requireEditable)
     services().addCommand(info, std::move(fn));
   };
   auto one = [this](const CommandContext& c) { return c.document && !c.viewer && !c.sketching && (!canvasOf(c.selection).empty() || (m_editor && m_editor->active())); };
@@ -589,6 +590,12 @@ void CanvasArea::placeOn(const QString& file, const opad::Frame& plane, double u
     // A copy: read on a worker without the document (a big model is never copied for it), committed as one undo step.
     opad::ImportOptions o;
     o.placement = placement;
+    // Into the active component (UI-33), placed relative to it, as the linked read and every import go (startImport).
+    const AppDocument* doc = services().document();
+    if (const opad::Node* in = doc->scene.node(doc->activeComponent()); in && in->kind == opad::Node::Kind::Component) {
+      o.parent = in->id;
+      o.placement = doc->scene.world(in->id).inverse() * placement;
+    }
     o.canvas = options;
     o.author = QSettings().value("user/name").toString().trimmed().toStdString();
     auto plan = std::make_shared<opad::design::Plan>();
@@ -850,6 +857,7 @@ void CanvasArea::replace(const QString& given) {
 }
 
 void CanvasArea::fromBackdrop(const std::string& sketch) {
+  if (!services().requireEditable([this, sketch] { fromBackdrop(sketch); })) return;
   if (services().design()->sketchActive()) return toast(tr("Finish the sketch first"));
   planned(tr("Backdrop images to canvases"), tr("backdrop to canvas"), [sketch](opad::Document& doc) { return opad::plan_canvas_from_backdrop(doc, sketch); },
           [this](bool ok, const QString& error, const opad::json& report) {

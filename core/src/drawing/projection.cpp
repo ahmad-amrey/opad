@@ -244,7 +244,8 @@ std::vector<Source> gather(const Scene& scene, const ViewSpec& spec) {
   std::vector<Source> out;
   for (const auto& id : ids) {
     const Node* n = scene.node(id);
-    if (!n || n->kind != Node::Kind::Body || n->body_missing || n->representation == "drawing2d" || hidden.count(id)) continue;
+    // Drawings and pictures (image canvases: a reference's rectangle, no part) are not model geometry.
+    if (!n || n->kind != Node::Kind::Body || n->body_missing || n->representation == "drawing2d" || n->representation == "image" || hidden.count(id)) continue;
     if (spec.visible_only && !scene.effectively_visible(id)) continue;
     Source s;
     s.node = id;

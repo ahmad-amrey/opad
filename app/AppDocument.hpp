@@ -60,8 +60,8 @@ class AppDocument : public QObject {
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0, bool overwriteDisk=false);
   // Before saving at `destination`: linked files' saved paths follow it as one undo step (opad::asset_path_edits), unsaved
-  // ones are rewritten (opad::rebase_asset_paths).
-  void followAssetPaths(const QString& destination);
+  // ones are rewritten (opad::rebase_asset_paths). True when it appended that step.
+  bool followAssetPaths(const QString& destination);
   opad::json run(const std::string& command, opad::json args, const QString& label = {});  // label: the undo step's, else by command; a lock refusal comes back as lockedMessage
   // A change refused by a lock (UI-37) in the shown language: the node, what holds its lock and the change refused.
   static QString lockedMessage(const opad::LockedError& e);
@@ -229,6 +229,7 @@ class AppDocument : public QObject {
     std::vector<opad::Op> ops;   // the ops themselves while it sits on the redo stack
   };
   void recordStep(const QString& label, size_t opsBefore);
+  void dropFollowedPaths();  // followAssetPaths' step taken back after a read-only document's copy failed to save
   void clearHistory();
   void markSaved();      // snapshot the state the file holds (or the empty state of a new document)
   void updateDirty();    // dirty = log or body store differs from the snapshot

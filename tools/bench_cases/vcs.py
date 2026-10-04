@@ -67,10 +67,15 @@ def versioned_with_remote(root, document, name="version"):
 
 
 def read_only(root, document, name="read-only"):
-    """A version opened read-only (UI-62): <name>/model.opad (one box) write-protected, as the history writes a version's
-    copy, and <name>/writable.opad, the same left writable, which the bench opens with --read-only."""
+    """A version opened read-only (UI-62): <name>/model.opad (one box, and <name>/part.step linked beside it, so a copy saved
+    elsewhere moves its path) write-protected, as the history writes a version's copy, and <name>/writable.opad, the same
+    left writable, which the bench opens with --read-only."""
     (root / name).mkdir(exist_ok=True)
-    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    part = root / name / "part.step"
+    document(f"{name}/part", ("feature", "--kind", "box", "--inputs", '{"x":"40 mm","length":"10 mm","width":"10 mm","height":"10 mm"}'),
+             ("export", "--format", "step", "--out", str(part)))
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'),
+                   ("import", str(part), "--link", "true"))
     shutil.copy(doc, root / name / "writable.opad")
     os.chmod(doc, stat.S_IREAD)
     return doc

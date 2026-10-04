@@ -198,8 +198,9 @@ design::Plan plan_canvas_replace(Document& doc, const std::string& id, const std
   return plan;
 }
 
-CanvasImports canvas_imports(Document& doc, const json& images, const Frame& f) {
+CanvasImports canvas_imports(Document& doc, const json& images, const Frame& f, const std::string& parent, const Mat4& parent_world) {
   CanvasImports out;
+  const Mat4 into = parent.empty() ? Mat4() : affine_inverse(parent_world);  // world -> the component's frame
   for (const auto& image : images) {
     const std::string encoded = image.at("data").get<std::string>();
     const std::filesystem::path source = path_from_utf8(image.value("name", std::string("backdrop")));
@@ -208,12 +209,13 @@ CanvasImports canvas_imports(Document& doc, const json& images, const Frame& f) 
     // Where the editor draws it: its lower left corner at `position`, turned by `angle` in the sketch's plane.
     const double a = image.value("angle", 0.0), u = image.at("position")[0].get<double>(), v = image.at("position")[1].get<double>();
     const Vec3 x = add(mul(f.x, std::cos(a)), mul(f.y, std::sin(a))), y = add(mul(f.x, -std::sin(a)), mul(f.y, std::cos(a)));
-    made.node["transform"] = columns(x, y, f.normal(), f.to_world(u, v)).to_json();
+    made.node["transform"] = (into * columns(x, y, f.normal(), f.to_world(u, v))).to_json();
     if (const double opacity = image.value("opacity", 0.5); opacity < 1) made.node["opacity"] = opacity;
     CanvasFlags flags;
     flags.plane = f.to_json();
     out.canvases.push_back(made.node["id"]);
     out.ops.push_back({{"op", "import"}, {"id", new_uuid()}, {"source", utf8(source.filename().u8string())}, {"units", "mm"}, {"nodes", json::array({made.node})}, {"canvas", flags.to_json()}});
+    if (!parent.empty()) out.ops.back()["parent"] = parent;
     doc.add_body(made.body.key, std::string(made.body.brep), made.body.meta);
     cache_shape(doc, made.body.key, *made.body.shape);
     out.bodies.push_back(std::move(made.body));
@@ -233,7 +235,9 @@ design::Plan plan_canvas_from_backdrop(Document& doc, const std::string& sketch,
   for (const auto& image : before.images)
     (images.empty() || std::find(images.begin(), images.end(), image.at("id").get<int>()) != images.end() ? moved : after.images).push_back(image);
   if (moved.empty()) throw Error("the sketch has no backdrop image to turn into a canvas");
-  CanvasImports made = canvas_imports(doc, moved, item->frame);
+  const Node* in = scene.node(item->component);  // into the sketch's component while it exists (UI-33)
+  const bool component = in && in->kind == Node::Kind::Component;
+  CanvasImports made = component ? canvas_imports(doc, moved, item->frame, in->id, scene.world(in->id)) : canvas_imports(doc, moved, item->frame);
   design::Plan plan = design::plan_ops(doc, {design::make_edit_op(sketch, {{"geometry_delta", design::sketch_delta(before.to_json(), after.to_json())}})}, false);
   plan.ops.insert(plan.ops.begin(), made.ops.begin(), made.ops.end());
   plan.bodies.insert(plan.bodies.begin(), made.bodies.begin(), made.bodies.end());

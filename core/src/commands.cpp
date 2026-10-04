@@ -786,7 +786,7 @@ void register_builtins() {
           j["id"] = doc.append(design::make_edit_op(n.source_op, {{"canvas", f.to_json()}}), by).id;
           return j.update(describe(resolve(doc), id)), j;
         }
-        if (n.locked) throw Error("the canvas " + n.name + " is locked: unlock it to move it");
+        if (const Node* holder = scene.lock_holder(id)) throw LockedError(n.name, holder->name, "moving");  // or under a locked component (UI-37)
         Mat4 world;
         double residual = 0;
         if (action == "place") {

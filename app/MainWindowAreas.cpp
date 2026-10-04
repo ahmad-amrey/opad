@@ -80,7 +80,7 @@ void AreaServices::open(const QString& path) { m_window->openPath(path); }
 Toast* AreaServices::toast(const QString& text, const QString& actionText, std::function<void()> callback, int ms) {
   return m_window->m_toasts->toast(text, actionText, std::move(callback), ms);
 }
-void AreaServices::undoToast(const QString& text) { m_window->undoToast(text); }
+Toast* AreaServices::undoToast(const QString& text, int ms) { return m_window->undoToast(text, ms); }
 SelectionContext AreaServices::selection() const { return m_window->selectionContext(); }
 
 void AreaServices::select(const std::vector<opad::Ref>& refs) {

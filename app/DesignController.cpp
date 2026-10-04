@@ -1153,13 +1153,20 @@ void DesignController::finishSketch(std::function<void()> then) {
     ops.push_back(make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", sketch_delta(m_sketch->initialGeometry(), geometry)}, {"plane", plane}}));
   }
   std::function<void(opad::Document&, Plan&)> canvases;
-  if (!pictures.empty())
-    canvases = [pictures, frame = m_sketch->frame()](opad::Document& doc, Plan& plan) {
-      opad::CanvasImports made = opad::canvas_imports(doc, pictures, frame);
+  if (!pictures.empty()) {
+    // Into the component the sketch is made in (UI-33): the active one for a new sketch, the sketch's own when edited.
+    std::string into = m_doc->activeComponent();
+    if (const opad::SketchItem* s = m_doc->scene.sketch(m_sketch->sketchId())) into = s->component;
+    const opad::Node* in = m_doc->scene.node(into);
+    if (!in || in->kind != opad::Node::Kind::Component) into.clear();
+    const opad::Mat4 world = into.empty() ? opad::Mat4() : m_doc->scene.world(into);
+    canvases = [pictures, frame = m_sketch->frame(), into, world](opad::Document& doc, Plan& plan) {
+      opad::CanvasImports made = opad::canvas_imports(doc, pictures, frame, into, world);
       plan.ops.insert(plan.ops.end(), made.ops.begin(), made.ops.end());
       plan.bodies.insert(plan.bodies.end(), made.bodies.begin(), made.bodies.end());
       plan.report["canvases"] = made.canvases;
     };
+  }
   const int placed = int(pictures.size());
   applyOps(ops, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave, placed](bool ok, const QString& error) {
     if (!ok) return emit failed(error);  // stay in the sketch so nothing drawn is lost

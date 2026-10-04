@@ -199,6 +199,9 @@ void AssetsArea::buildActions() {
     info.group = tr("Linked files");
     info.keywords = keywords;
     info.enabledWhen = std::move(when);
+    // The ones that change the document ask a viewed or read-only file to be saved first, before any reading (UI-63).
+    static const QStringList edits{"assets.link", "assets.sync", "assets.syncAll", "assets.replace", "assets.embed", "assets.pack"};
+    info.editsDocument = edits.contains(QString::fromLatin1(id));
     services().addCommand(info, std::move(fn));
   };
   auto one = [this](const CommandContext& c) { return c.document && !c.viewer && imports(c.selection).size() == 1; };
@@ -231,7 +234,7 @@ void AssetsArea::buildActions() {
     QAction* action = services().addCommand(info, [this] {
       const bool on = services().action("assets.autoSync")->isChecked();
       QSettings().setValue("assets/autoSync", on);
-      if (on) syncAll();
+      if (on && !services().document()->viewOnly()) syncAll();
     });
     action->setChecked(QSettings().value("assets/autoSync", false).toBool());
   }
@@ -424,7 +427,7 @@ void AssetsArea::section(const PropertySubject& subject, const opad::json&, QLis
   if (s && s->value("lfs", false)) store += " · Git LFS";
   sec.rows << qMakePair(tr("Kind"), kindText(asset.value("kind", ""))) << qMakePair(tr("Storage"), store);
   const qint64 bytes = s && s->contains("bytes") ? (*s)["bytes"].get<qint64>() : asset.value("size", qint64(-1));
-  if (bytes >= 0) sec.rows << qMakePair(tr("Size"), QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat));
+  if (bytes >= 0) sec.rows << qMakePair(tr("File size"), QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat));
   if (const QString modified = s ? isoText(s->value("modified", "")) : QString(); !modified.isEmpty()) sec.rows << qMakePair(tr("Modified"), modified);
   if (const QString synced = isoText(asset.value("synced", "")); !synced.isEmpty()) sec.rows << qMakePair(tr("Last synced"), synced);
   sec.rows << qMakePair(tr("Read by"), builderText(asset));
@@ -508,13 +511,13 @@ void AssetsArea::updateLooks() {
 // ---------------------------------------------------------------- what the commands do
 void AssetsArea::notify(const QString& text, bool undo, int ms) {
   if (m_toast) m_toast->dismiss();
-  AppDocument* doc = services().document();
-  m_toast = undo ? services().toast(text, tr("Undo"), [doc] { doc->undo(); }, ms) : services().toast(text, {}, {}, ms);
+  m_toast = undo ? services().undoToast(text, ms) : services().toast(text, {}, {}, ms);  // Undo only while that step is the last
 }
 
 void AssetsArea::filesChanged(const std::vector<std::string>&) {
   const std::vector<std::string> all = m_monitor->changed();
-  if (!all.empty() && QSettings().value("assets/autoSync", false).toBool()) return syncAll();  // queued behind a sync running
+  // Synced unasked only where it can be committed (a read-only document gets the toast: its Sync asks for a copy first).
+  if (!all.empty() && QSettings().value("assets/autoSync", false).toBool() && !services().document()->viewOnly()) return syncAll();  // queued behind a sync running
   if (all.empty() || m_busy) return;
   if (m_toast) m_toast->dismiss();
   if (const AssetMonitor::Asset* a = m_monitor->asset(all.front()); all.size() == 1 && m_previewer && a && a->asset.value("kind", "") == "kicad_pcb") {
@@ -584,6 +587,7 @@ void AssetsArea::planned(const QString& title, const QString& label, const std::
 }
 
 void AssetsArea::sync(std::vector<std::string> imports, const QString& file) {
+  if (!services().requireEditable([this, imports, file] { sync(imports, file); })) return;  // badges, menus, toasts: before reading anything
   for (const auto& import : imports)
     if (std::none_of(m_queue.begin(), m_queue.end(), [&](const auto& q) { return q.first == import; })) m_queue.push_back({import, imports.size() == 1 ? file : QString()});
   if (m_busy) return;
@@ -663,6 +667,7 @@ void AssetsArea::syncDone(const std::string& import, bool ok, const QString& err
 }
 
 void AssetsArea::locate(const std::string& import) {
+  if (!services().requireEditable([this, import] { locate(import); })) return;
   const QString title = name(import);
   const QString start = QFileInfo(m_monitor->file(import)).absolutePath();
   const QString path = QFileDialog::getOpenFileName(services().window(), tr("Locate %1").arg(title), QFileInfo(start).isDir() ? start : QString(),
@@ -671,6 +676,7 @@ void AssetsArea::locate(const std::string& import) {
 }
 
 void AssetsArea::replace(const std::string& import) {
+  if (!services().requireEditable([this, import] { replace(import); })) return;
   QStringList patterns;
   for (const auto& ext : opad::importable_extensions()) patterns << "*" + QString::fromStdString(ext);
   const QString path = QFileDialog::getOpenFileName(services().window(), tr("Replace %1").arg(name(import)), QFileInfo(m_monitor->file(import)).absolutePath(),
@@ -679,6 +685,7 @@ void AssetsArea::replace(const std::string& import) {
 }
 
 void AssetsArea::embed(const std::string& import) {
+  if (!services().requireEditable([this, import] { embed(import); })) return;
   const QString title = name(import);
   planned(tr("Embedding %1").arg(title), tr("embed %1").arg(title), import,
           [import](opad::Document& doc, const Progress& p) { return opad::plan_asset_embed(doc, import, [p] { return p.cancelled(); }); },
@@ -698,6 +705,7 @@ bool AssetsArea::fromProjectCopy(const std::string& import) const {
 }
 
 void AssetsArea::pack(const std::string& import) {
+  if (!services().requireEditable([this, import] { pack(import); })) return;
   const QString title = name(import);
   const bool copy = fromProjectCopy(import);
   const std::string author = QSettings().value("user/name").toString().trimmed().toStdString();

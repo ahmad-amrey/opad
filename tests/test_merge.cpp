@@ -363,6 +363,51 @@ TEST(stopped_merge_resolved_per_conflict) {
   CHECK(plan_merge(v.base, left, read_skipping(right.serialize(), v.base, keys)).conflicts.empty());
 }
 
+// UI-84 with UI-63: a parts list's numbers settled on both sides merge number by number; numbers that do not merge (one
+// item changed on both sides, one part under two numbers) stop the driver, and the merge kept for review lists the two
+// edits as an ordinary numbers conflict instead of failing as a whole.
+TEST(parts_list_numbers_merge_or_stay_a_conflict) {
+  Versions v = make_base();
+  Document d = Document::parse(v.base_text);
+  const json a = {{"n", 1}, {"identity", "a"}};
+  const std::string list = d.append(json{{"op", "sheet_item"}, {"sheet", new_uuid()}, {"kind", "parts_list"}, {"numbers", json::array({a})}}).id;
+  const std::string base = d.serialize();
+  auto numbered = [&](json numbers, std::string* id = nullptr) {
+    Document s = Document::parse(base);
+    const std::string op = s.append(json{{"op", "edit"}, {"target", list}, {"set", {{"numbers", std::move(numbers)}}}}).id;
+    if (id) *id = op;
+    return s.serialize();
+  };
+  // Number 2 given to a different new part on each side: ours keeps it, the merge writes the settled list last.
+  const std::string o = numbered(json::array({a, json{{"n", 2}, {"identity", "left"}}}));
+  const std::string t = numbered(json::array({a, json{{"n", 2}, {"identity", "right"}}}));
+  for (const bool keep : {false, true}) {
+    const FileMerge m = merge_files(base, o, t, keep);
+    CHECK(m.error.empty() && m.conflicts.empty());
+    const Document merged = Document::parse(m.text());
+    CHECK(merged.ops.back().data["by"] == "merge" && merged.ops.back().data["set"]["numbers"].size() == 2);
+  }
+  // Item 1 changed on both sides, and one part numbered 1 and 2: refused by the driver, a conflict in the kept merge.
+  std::string ours, theirs;
+  const std::string left = numbered(json::array({json{{"n", 1}, {"identity", "left"}}}), &ours);
+  const std::string right = numbered(json::array({json{{"n", 1}, {"identity", "right"}}}), &theirs);
+  std::string twiceOurs, twiceTheirs;
+  const std::string both = numbered(json::array({a, json{{"n", 2}, {"identity", "b"}}}), &twiceOurs);
+  const std::string moved = numbered(json::array({json{{"n", 1}, {"identity", "b"}}}), &twiceTheirs);
+  CHECK(merge_files(base, left, right).error.find("item 1 of parts list " + list + " changed on both sides") == 0);
+  CHECK(merge_files(base, both, moved).error.find("part b numbered 1 and 2 in parts list " + list) == 0);
+  for (const auto& [o2, t2, idO, idT] : {std::tuple(left, right, ours, theirs), std::tuple(both, moved, twiceOurs, twiceTheirs)}) {
+    const FileMerge kept = merge_files(base, o2, t2, true);
+    CHECK(kept.error.empty() && !kept.text().empty());
+    CHECK_EQ(kept.conflicts.size(), 1u);
+    CHECK(kept.conflicts[0].target == list && kept.conflicts[0].field == "numbers" && kept.conflicts[0].ours == idO && kept.conflicts[0].theirs == idT);
+    CHECK(Document::parse(kept.text()).ops.back().id == idT);  // no merge record: theirs' edit stands until decided
+  }
+  const FileMerge kept = merge_files(base, left, right, true);
+  const Document mine = Document::parse(resolve_merge(kept.text(), kept.conflicts, {true}, "me"));
+  CHECK(mine.ops.back().type == "edit" && mine.ops.back().data["set"]["numbers"][0]["identity"] == "left" && mine.ops.back().data["by"] == "me");
+}
+
 TEST(merge_driver_writes_ours_only_when_merged) {
   Versions v = make_base();
   Document ours = Document::parse(v.base_text), theirs = Document::parse(v.base_text);

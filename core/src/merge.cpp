@@ -675,6 +675,18 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs, bo
           settled.insert(target);
       }
     }
+    // Kept for review (the in-app resolver): a list whose numbers do not merge (one number changed on both sides, one part
+    // under two numbers) is not settled, so its edits are listed as an ordinary conflict to take as mine or theirs.
+    std::map<std::string, std::string> records;
+    if (keep_conflicts)
+      for (auto it = settled.begin(); it != settled.end();) {
+        try {
+          records[*it] = numbers_record(vb, vo, vt, *it);
+          ++it;
+        } catch (const std::exception&) {
+          it = settled.erase(it);
+        }
+      }
     std::string concurrent;
     std::set<std::tuple<std::string, std::string, std::string, std::string>> seen;
     for (const auto& r : vo.ops) {
@@ -694,7 +706,7 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs, bo
     if (!concurrent.empty() && !keep_conflicts) throw Error(concurrent);
     std::vector<std::shared_ptr<const std::string>> synthesized;  // their records, after the merged log
     for (const auto& target : settled)
-      if (std::string record = numbers_record(vb, vo, vt, target); !record.empty())
+      if (std::string record = keep_conflicts ? std::move(records[target]) : numbers_record(vb, vo, vt, target); !record.empty())
         synthesized.push_back(std::make_shared<const std::string>(std::move(record)));
     std::vector<const Record*> merged;
     merged.reserve(vo.ops.size() + vt.ops.size());

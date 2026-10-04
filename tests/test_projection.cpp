@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 
 #include "check.hpp"
 #include "opad/drawing/projection.hpp"
@@ -137,6 +138,31 @@ TEST(projection_top_view_circle_stays_an_arc) {
         span += c.a1 - c.a0;
       }
     CHECK_NEAR(span, 2 * M_PI, 1e-6);
+  }
+}
+
+// A picture (an image canvas, UI-70) is a reference, not a part: views of the block with one lying on its top face, larger
+// than it, are the block's views.
+TEST(projection_leaves_image_canvases_out) {
+  const Document plain = doc_of({block_with_hole()});
+  Document doc = plain;
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-projection-" + new_uuid());
+  std::filesystem::create_directories(dir);
+  const auto be32 = [](uint32_t v) { return std::string{char(v >> 24), char(v >> 16), char(v >> 8), char(v)}; };
+  const auto chunk = [&](const std::string& type, const std::string& data) { return be32(uint32_t(data.size())) + type + data + be32(0); };
+  const auto pic = dir / "underlay.png";
+  std::ofstream(pic, std::ios::binary) << std::string("\x89PNG\r\n\x1a\n", 8) + chunk("IHDR", be32(400) + be32(200) + std::string("\x08\x06\0\0\0", 5)) +
+                                              chunk("IDAT", "x") + chunk("IEND", "");
+  ImportOptions o;
+  o.placement = Mat4::translation(-10, -10, 20);
+  import_file(doc, pic, o);
+  std::filesystem::remove_all(dir);
+  CHECK_EQ(resolve(doc).all_bodies().size(), 2u);
+  for (const char* view : {"front", "top"}) {
+    const auto with = project(doc, resolve(doc), spec_of(view, Quality::Exact), {}, false);
+    const auto without = project(plain, resolve(plain), spec_of(view, Quality::Exact), {}, false);
+    CHECK_EQ(with->curves.size(), without->curves.size());
+    for (size_t i = 0; i < 4; ++i) CHECK_NEAR(with->bounds[i], without->bounds[i], 1e-9);
   }
 }
 

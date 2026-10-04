@@ -106,7 +106,7 @@ class AreaServices {
   // whose callback runs when it is clicked; ms 0 keeps it until it is closed. From ribbon on. Returns it (to dismiss it early).
   Toast* toast(const QString& text, const QString& actionText = QString(), std::function<void()> callback = {}, int ms = 4000);
   // The toast of a change just made: its Undo takes back the document's last step, unless another came after it.
-  void undoToast(const QString& text);
+  Toast* undoToast(const QString& text, int ms = 8000);
   SelectionContext selection() const;                       // the current one
   // Makes these the selection as if they were picked and tells the window and the areas (selectionChanged): faces, edges
   // and vertices in the view (its filter must be picking them), bodies and components as from the browser.

@@ -260,8 +260,7 @@ void DocsArea::setMaterial(std::vector<std::string> nodes, const std::string& id
   const opad::Material* m = id.empty() ? nullptr : opad::material(id);
   run("part_properties", args, [this, m](const opad::json& out) {
     if (out.is_null()) return;
-    services().toast(m ? tr("Material: %1").arg(i18n::t(QString::fromStdString(m->name))) : tr("Material cleared"), tr("Undo"),
-                     [this] { services().action("edit.undo")->trigger(); });
+    services().undoToast(m ? tr("Material: %1").arg(i18n::t(QString::fromStdString(m->name))) : tr("Material cleared"), 4000);
     if (services().properties()->isVisible()) services().action("inspect.properties")->trigger();  // its mass now
   });
 }

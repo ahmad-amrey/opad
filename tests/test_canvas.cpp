@@ -146,6 +146,23 @@ TEST(canvas_moved_sized_turned_calibrated_and_aligned) {
   run(d, "appearance", {{"target", id}, {"locked", true}});
   CHECK_THROWS(run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"x", 0.0}}}}));
   CHECK_THROWS(run(d, "canvas", {{"action", "place"}, {"target", component}, {"set", {{"x", 0.0}}}}));  // not a canvas
+  // Under a locked component (UI-37): not moved either, as `transform` refuses it, naming the component.
+  run(d, "appearance", {{"target", id}, {"locked", false}});
+  run(d, "appearance", {{"target", component}, {"locked", true}});
+  const size_t ops = d.ops.size();
+  for (const json& action : {json{{"action", "place"}, {"set", {{"x", 1.0}}}}, json{{"action", "calibrate"}, {"points", {c, e}}, {"distance", 10.0}},
+                             json{{"action", "align"}, {"points", {c, Vec3{0, 0, 0}, e, Vec3{0, 50, 0}}}}}) {
+    json args = action;
+    args["target"] = id;
+    std::string holder;
+    try {
+      run(d, "canvas", args);
+    } catch (const LockedError& x) {
+      holder = x.holder;
+    }
+    CHECK_EQ(holder, std::string("Board"));
+  }
+  CHECK_EQ(d.ops.size(), ops);
 }
 
 // Free aspect: width and height set together stretch it (x and y scaled apart, the body still the picture's rectangle);
@@ -266,6 +283,23 @@ TEST(canvas_from_a_sketch_backdrop) {
   // The sketch's lines stay; a second conversion has nothing to convert.
   CHECK(s.sketch(sketch)->geometry["entities"].size() == 1u);
   CHECK_THROWS(run(d, "canvas", {{"action", "from_backdrop"}, {"sketch", sketch}}));
+  // Made in a moved component (UI-33): the canvas goes into it, where the sketch shows it, and moves with it.
+  Document c = Document::create();
+  const std::string board = run(c, "component", {{"name", "Board"}})["id"];
+  run(c, "transform", {{"target", board}, {"matrix", Mat4::translation(0, 0, 50).to_json()}});
+  json made = op;
+  made["component"] = board;
+  design::apply_ops(c, {made});
+  const std::string drawn = resolve(c).sketches.back().id;
+  run(c, "canvas", {{"action", "from_backdrop"}, {"sketch", drawn}});
+  Scene sc = resolve(c);
+  const std::string inside = only_canvas(sc);
+  CHECK(sc.node(inside)->parent == board && sc.sketch(drawn)->component == board);
+  CHECK(near(canvas_points(sc.world(inside), p.body_w, p.body_h)[0], sc.sketch(drawn)->frame.to_world(5, 7)));
+  run(c, "transform", {{"target", board}, {"matrix", Mat4::translation(10, 0, 50).to_json()}});
+  sc = resolve(c);
+  CHECK(!near(sc.sketch(drawn)->frame.origin, frame.origin));
+  CHECK(near(canvas_points(sc.world(inside), p.body_w, p.body_h)[0], sc.sketch(drawn)->frame.to_world(5, 7)));
 }
 
 // Headless pictures (render, thumbnails, agents' images): the canvas shows its picture, upright, mirrored as flipped.

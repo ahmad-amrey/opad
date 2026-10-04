@@ -19,7 +19,7 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   if(!QDir::isAbsolutePath(destination) || QFileInfo(destination).suffix().compare("opad",Qt::CaseInsensitive)!=0)
     throw opad::Error("Save requires an absolute path ending in .opad.");
   if(readOnly && QFileInfo(destination)==QFileInfo(path()))throw opad::Error("This document is open read-only: save a copy to edit it.");
-  followAssetPaths(destination);
+  const bool followed=followAssetPaths(destination) && readOnly;  // a read-only document's copy: taken back if not written
   struct Save {
     std::atomic<bool> finished{false};bool written=false,blocked=false;QString error;
     std::vector<std::string> ids;size_t bodies=0;
@@ -71,9 +71,10 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   // Cancel finishes a Job before its worker exits. Keep the write guard and report
   // the actual disk outcome, even if cancellation arrives just after atomic publish.
   auto* timer=new QTimer(this);timer->setInterval(10);
-  connect(timer,&QTimer::timeout,this,[this,timer,result,done,destination,identity,savedRevision]{
+  connect(timer,&QTimer::timeout,this,[this,timer,result,done,destination,identity,savedRevision,followed]{
     if(!result->finished.load(std::memory_order_acquire))return;
     timer->stop();timer->deleteLater();m_capturing=false;designBusy=false;
+    if(!result->written && followed && generation==identity && revision==savedRevision)dropFollowedPaths();
     // The file holds what was written; it is this document's file when the path moved there or was already it.
     if(result->written && generation==identity && (revision==savedRevision || QFileInfo(destination)==QFileInfo(m_diskFile)))
       setDisk(QFileInfo(destination).absoluteFilePath(),result->stat,result->manifest);

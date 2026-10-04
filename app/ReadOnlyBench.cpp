@@ -3,7 +3,8 @@
 // (title, chip and its Save a copy card, status path, browser without renames), takes view changes without becoming
 // unsaved, asks for a copy before any edit (a command, a design tool, the timeline) and refuses edits and saving over the
 // file underneath, shows lengths in another unit without changing the file. Save a copy writes on a worker and the copy is
-// edited from then on, the file opened unchanged. Another OPAD started as the history starts it (VersionControl::
+// edited from then on, the file opened unchanged; a copy that cannot be written leaves the document as its file is (the step
+// that moved the linked part's path for it taken back, not unsaved). Another OPAD started as the history starts it (VersionControl::
 // readOnlyArguments, hidden, OPAD_BENCH_READONLY=child:<prefix>) opens the writable read-only/writable.opad read-only, and
 // Edit unsaved copy makes it an unsaved document that can be edited. <prefix>.chips.png, .opened.png (read-only), .window.png.
 #include <QAbstractButton>
@@ -11,6 +12,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
@@ -96,6 +98,11 @@ OPAD_BENCH(OPAD_BENCH_READONLY, read_only) {
            w.m_statusPath->text().startsWith(MainWindow::tr("Read-only: %1").arg(QDir::toNativeSeparators(file))) &&
            w.m_browser->tree()->editTriggers() == QAbstractItemView::NoEditTriggers;
   };
+  auto ownBody = [doc] {  // the box: the linked part's bodies take no renames
+    for (const auto& id : doc->scene.all_bodies())
+      if (!doc->node(id)->linked) return id;
+    return std::string();
+  };
   auto renames = [doc](const std::string& body) {
     try {
       doc->run("rename", {{"target", body}, {"name", "Renamed"}});
@@ -121,12 +128,12 @@ OPAD_BENCH(OPAD_BENCH_READONLY, read_only) {
   require(!opened.isWritable() && shownReadOnly(), "a write-protected document opens read-only: title, chip with Save a copy, status path, no renames");
   w.m_chips->grab().save(value + ".chips.png");
   w.grab().save(value + ".opened.png");
-  if (doc->scene.all_bodies().empty() || doc->scene.features.empty()) {
+  if (ownBody().empty() || doc->scene.features.empty()) {
     require(false, "the case's document has a box feature");
     finish();
     return true;
   }
-  const std::string body = doc->scene.all_bodies().front(), feature = doc->scene.features.front().id;
+  const std::string body = ownBody(), feature = doc->scene.features.front().id;
   bool hid = true;
   try {
     doc->run("appearance", {{"target", body}, {"visible", false}});
@@ -160,6 +167,23 @@ OPAD_BENCH(OPAD_BENCH_READONLY, read_only) {
   w.setDocumentUnit("in");
   require(units::sessionUnit() == "in" && doc->doc.ops.size() == ops, "lengths in inches for the session, the file not changed");
 
+  // ---- a copy that cannot be written (its folder is missing): the linked part's path step taken for it goes again
+  {
+    const QStringList steps = doc->undoLabels();
+    int written = 0;  // 1 written, 2 not
+    QEventLoop wait;
+    QTimer::singleShot(30000, &wait, &QEventLoop::quit);
+    try {
+      doc->saveAsync(w.m_jobs, value + ".missing/copy.opad", false, [&written, &wait](bool ok, const QString&) {
+        written = ok ? 1 : 2;
+        wait.quit();
+      });
+      wait.exec();
+    } catch (const std::exception&) {}
+    require(written == 2 && doc->readOnly && doc->doc.ops.size() == ops && doc->undoLabels() == steps && !doc->isDirty() && !w.windowTitle().contains('*'),
+            "a copy that is not written leaves the document as its file: read-only, no linked-paths step, not unsaved");
+  }
+
   // ---- Save a copy: on a worker, then the copy is the document
   const QString copy = value + ".copy.opad";
   QFile::remove(copy);
@@ -172,8 +196,10 @@ OPAD_BENCH(OPAD_BENCH_READONLY, read_only) {
       copied = opad::Document::load(std::filesystem::path(copy.toStdU16String())).ops.size();
     } catch (const std::exception&) {}
     require(saved && !chip() && w.windowTitle() == QFileInfo(copy).fileName() + " - OPAD" && units::sessionUnit().empty() &&
-                copied == doc->doc.ops.size() && after.size() == size && after.lastModified() == mtime && !after.isWritable(),
-            "Save a copy: written on a worker with the view change, the copy edited from then on in its own unit, the file opened unchanged");
+                copied == doc->doc.ops.size() && after.size() == size && after.lastModified() == mtime && !after.isWritable() &&
+                doc->undoLabel() == AppDocument::tr("Linked file paths"),
+            "Save a copy: written on a worker with the view change and the linked part's path moved (one step), the copy edited from then on "
+            "in its own unit, the file opened unchanged");
     require(renames(body) && doc->isDirty() && w.windowTitle().contains('*') && w.m_browser->tree()->editTriggers() != QAbstractItemView::NoEditTriggers,
             "the copy takes edits");
     try {
@@ -209,7 +235,7 @@ OPAD_BENCH(OPAD_BENCH_READONLY, read_only) {
       w.openPath(writable, true);
       pollUntil(&w, [doc, writable] { return !doc->loading && QFileInfo(doc->path()) == QFileInfo(writable); }, 30000, [=, &w](bool loaded) {
         require(loaded && shownReadOnly() && QFileInfo(writable).isWritable(), "a writable document opened read-only here too");
-        const std::string other = doc->scene.all_bodies().empty() ? std::string() : doc->scene.all_bodies().front();
+        const std::string other = ownBody();
         answers->press = MainWindow::tr("Edit unsaved copy");
         bool resumed = false;
         const bool editable = w.requireEditable([&resumed] { resumed = true; });

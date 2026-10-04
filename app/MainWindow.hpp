@@ -29,6 +29,7 @@ class AgentBridge;
 class QMessageBox;
 class QKeyEvent;
 class QToolButton;
+class Toast;
 template <class Tag>
 struct MainWindowBench;
 
@@ -197,7 +198,7 @@ class MainWindow : public QMainWindow {
   // Del on objects (UI-04): what the selection covers and nothing more (smart::routeDelete), one undo step, a toast with
   // Undo instead of a question. Faces and edges never come here: they go to smart selection (SmartSelect).
   void deleteNodes(const std::vector<std::string>& ids);
-  void undoToast(const QString& text);  // a result toast whose Undo takes back that step (not one made after it)
+  Toast* undoToast(const QString& text, int ms = 8000);  // a result toast whose Undo takes back that step (not one made after it)
   void writeSelectionFile();
   void positionOverlays();
   void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends

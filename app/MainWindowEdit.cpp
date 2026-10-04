@@ -282,14 +282,14 @@ void MainWindow::deleteNodes(const std::vector<std::string>& ids) {
   });
 }
 
-void MainWindow::undoToast(const QString& text) {
+Toast* MainWindow::undoToast(const QString& text, int ms) {
   const auto depth = m_doc->undoLabels().size();
   const QString step = m_doc->undoLabel();
   const auto generation = m_doc->generation;
-  m_toasts->toast(text, tr("Undo"), [this, depth, step, generation] {
+  return m_toasts->toast(text, tr("Undo"), [this, depth, step, generation] {
     if (m_doc->generation == generation && m_doc->canUndo() && m_doc->undoLabels().size() == depth && m_doc->undoLabel() == step) return m_doc->undo();
     statusBar()->showMessage(tr("Other changes came after it: undo those first (Ctrl+Z)."), 6000);
-  }, 8000);
+  }, ms);
 }
 
 void MainWindow::selectOpTargets(const std::string& opId) {

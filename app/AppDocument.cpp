@@ -454,16 +454,30 @@ bool AppDocument::save(bool overwriteDisk) {
   return true;
 }
 
-void AppDocument::followAssetPaths(const QString& destination) {
+bool AppDocument::followAssetPaths(const QString& destination) {
   const std::filesystem::path folder(QFileInfo(destination).absolutePath().toStdU16String());
+  bool stepped=false;
   if(auto edits=opad::asset_path_edits(doc,folder);!edits.empty()) {  // saved elsewhere: the linked files' saved paths follow, one undo step
     opad::design::Plan moved;moved.ops=std::move(edits);
     const bool locked=readOnly;  // a read-only document's copy: the copy's paths follow too (it is this session's file once saved)
     readOnly=false;
     try { commitPlan(std::move(moved),tr("Linked file paths")); } catch (...) { readOnly=locked; throw; }
     readOnly=locked;
+    stepped=true;
   }
   opad::rebase_asset_paths(doc,folder);  // linked files not saved yet
+  return stepped;
+}
+
+// The copy of a read-only document was not written: the step followAssetPaths appended for it goes again (not to redo),
+// so the document stays as its file is, not dirty. A read-only document has no unsaved ops for rebase_asset_paths.
+void AppDocument::dropFollowedPaths() {
+  if(m_undo.empty())return;
+  const size_t count=m_undo.back().count;
+  m_undo.pop_back();
+  doc.truncate_ops(doc.ops.size()-std::min(count,doc.ops.size()));
+  refresh();
+  emit undoChanged();
 }
 
 bool AppDocument::saveAs(const QString& path) {
@@ -475,8 +489,13 @@ bool AppDocument::saveAs(const QString& path) {
     emit saveBlocked(true);
     return false;
   }
-  followAssetPaths(path);
-  doc.save_as(fsPath(path));
+  const bool followed = followAssetPaths(path) && readOnly;
+  try {
+    doc.save_as(fsPath(path));
+  } catch (...) {
+    if (followed) dropFollowedPaths();
+    throw;
+  }
   readOnly = false;  // the copy is this session's file now
   markSaved();
   wroteDisk();

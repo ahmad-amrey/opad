@@ -110,9 +110,8 @@ void CanvasEditor::stop() {
   m_canvas.clear();
 }
 
-bool CanvasEditor::locked() const {
-  const opad::Node* n = m_doc->scene.node(m_canvas);
-  return n && n->locked;
+bool CanvasEditor::locked() const {  // its own lock or a locked component above it (UI-37)
+  return m_doc->scene.effectively_locked(m_canvas);
 }
 
 void CanvasEditor::refresh() {
