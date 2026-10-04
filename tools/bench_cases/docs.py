@@ -64,8 +64,8 @@ CASES = [
     # Revision table and Issue revision (UI-84) in a fresh git repository: the table placed with the pointer, the dialog
     # (next revision, PDF beside the document, git found), the issue planned and its PDF written and hashed on a worker,
     # linework frozen, the document saved, committed and tagged; the sheet bar names the revision and warns once the model
-    # changed; exported as issued without a note added since; a second revision without PDF or git. <prefix>.dialog.png,
-    # <prefix>.issue.png.
+    # changed; exported as issued without a note added since; a second revision without PDF or git; a third into a
+    # repository that ignores PDFs (committed and tagged, the PDF left out). <prefix>.dialog.png, <prefix>.issue.png.
     ("sheet-issue", "empty", {"OPAD_BENCH_SHEET_ISSUE": "{prefix}"}),
     # Print… (UI-86): the drawing's sheets drawn on a worker, the dialog's previews rendered on a worker page by page (whole in
     # the label, again when it grows), both sheets printed at actual size and the previewed one fitted, through the printer

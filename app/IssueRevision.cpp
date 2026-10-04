@@ -362,11 +362,16 @@ void DocsArea::commitAndTag(const QString& rev, const QString& tag, const QStrin
         if (!ok) return finish(error.isEmpty() ? QString("not saved") : error);
         const QFileInfo info(path);
         const QDir dir = info.absoluteDir();
-        QStringList files{info.fileName()};
-        if (!pdf.isEmpty() && !dir.relativeFilePath(pdf).startsWith("..")) files << dir.relativeFilePath(pdf);
-        const QString message = QString("%1 rev %2").arg(drawing, rev);
-        git::run(dir.absolutePath(), {QStringList{"add", "--"} + files, QStringList{"commit", "-m", message, "--"} + files, {"tag", "-a", tag, "-m", message}}, self,
-                 [finish](bool ok, const QString& text) { finish(ok ? QString() : text); });
+        const QString message = QString("%1 rev %2").arg(drawing, rev), beside = pdf.isEmpty() ? QString() : dir.relativeFilePath(pdf);
+        const auto commit = [self, dir, info, message, tag, finish](const QString& with) {
+          QStringList files{info.fileName()};
+          if (!with.isEmpty()) files << with;
+          git::run(dir.absolutePath(), {QStringList{"add", "--"} + files, QStringList{"commit", "-m", message, "--"} + files, {"tag", "-a", tag, "-m", message}}, self,
+                   [finish](bool ok, const QString& text) { finish(ok ? QString() : text); });
+        };
+        if (beside.isEmpty() || beside.startsWith("..")) return commit({});
+        // A PDF the repository ignores (*.pdf in .gitignore) is left out: adding it would stop the commit and the tag.
+        git::run(dir.absolutePath(), {{"check-ignore", "-q", "--", beside}}, self, [commit, beside](bool ignored, const QString&) { commit(ignored ? QString() : beside); });
       });
     });
   });

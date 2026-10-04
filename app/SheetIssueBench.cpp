@@ -30,7 +30,7 @@
 // SHA-256 in the record, the document saved, committed (with the PDF) and tagged. The revision table lists A, the title block
 // says A, the sheet bar names it; the pin moved, the bar warns that the sheet changed since A; a note added, the bar's menu exports
 // A as it was issued (the sheet as it stood then: frozen linework, no note); revision B issued without a PDF or git, the bar names
-// B again. <prefix>.dialog.png,
+// B again; revision C into a repository that ignores PDFs: committed and tagged, the PDF left out. <prefix>.dialog.png,
 // <prefix>.issue.png.
 OPAD_BENCH(OPAD_BENCH_SHEET_ISSUE, sheetIssue) {
   using opad::drawing::Vec2;
@@ -212,6 +212,19 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ISSUE, sheetIssue) {
     check(waitFor([&] { return docs->lastIssue.is_object(); }, 60000) && docs->lastIssue.value("rev", "") == "B" && !docs->lastIssue.contains("pdf_sha256"),
           "revision B issued without a PDF");
     check(waitFor(settled, 30000) && waitFor([&] { return page->issueButton()->text() == "Rev B"; }, 10000), "the bar names B: " + page->issueButton()->text());
+    // Revision C into a repository that ignores PDFs: the PDF is written but left out, the document committed and tagged.
+    {
+      QFile ignore(QDir(repo.path()).filePath(".gitignore"));
+      if (ignore.open(QIODevice::WriteOnly)) ignore.write("*.pdf\n");
+    }
+    const QString pdfC = QDir(repo.path()).filePath("Drawing 1 rev C.pdf");
+    docs->lastIssue = nullptr;
+    docs->issue({{"sheet", sheet}, {"description", "Ignored PDF"}, {"tag", "Drawing-1-rev-C"}}, pdfC, true);
+    const bool answered = waitFor([&] { return docs->lastIssue.is_object() && (docs->lastIssue.contains("git") || docs->lastIssue.contains("error")); }, 60000);
+    const QString said = answered ? QString::fromStdString(docs->lastIssue.dump()).left(200) : QString("no answer");
+    check(answered && docs->lastIssue.value("git", "") == "tagged Drawing-1-rev-C" && QFileInfo::exists(pdfC) &&
+              gitSays({"tag", "-l"}).split('\n').contains("Drawing-1-rev-C") && !gitSays({"ls-files"}).contains("rev C.pdf"),
+          "a PDF the repository ignores is left out: revision C committed and tagged (" + said + ")");
   } catch (const std::exception& e) {
     check(false, QString("bench: %1").arg(QString::fromUtf8(e.what())));
   }
