@@ -625,5 +625,9 @@
   "sheet_edit: it is not on a sheet any more": "لم يعد على لوحة",
   "sheet_edit: its view is not on its sheet": "مسقطه ليس على لوحته",
   "sheet_edit: its sheet is gone": "لم تعد لوحته موجودة",
-  "sheet_edit: renumber is a parts list's": "إعادة الترقيم خاصة بقائمة القطع"
+  "sheet_edit: renumber is a parts list's": "إعادة الترقيم خاصة بقائمة القطع",
+  "Never cut in section views (shafts, pins, keys, fasteners)": "لا تُقطع أبدًا في المساقط المقطعية (أعمدة، مسامير، خوابير، أدوات تثبيت)",
+  "ISO 128-50: drawn whole wherever a section or a broken-out section passes through it; a view can still cut it": "ISO 128-50: تُرسم كاملة أينما مرّ بها مقطع أو مقطع موضعي؛ ويمكن لمسقط ما أن يقطعها مع ذلك",
+  "Section views": "المساقط المقطعية",
+  "Never cut": "لا تُقطع أبدًا"
 }

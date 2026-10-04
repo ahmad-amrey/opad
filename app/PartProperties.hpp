@@ -47,7 +47,7 @@ class PartPropertiesDialog : public QDialog {
   QString m_materialShown;  // the material text the combo started with: unchanged, the stored value is kept
   QLineEdit *m_number, *m_description, *m_density, *m_mass, *m_vendor, *m_notes;
   QComboBox *m_material, *m_bom;
-  QCheckBox* m_appearance;
+  QCheckBox *m_appearance, *m_section;
   QLabel *m_materialHint, *m_error;
   QPushButton* m_apply;
 };

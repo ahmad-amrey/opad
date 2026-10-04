@@ -10,7 +10,8 @@
 //               section (UI-82): parent, cut [[u, v], ...] (the cutting line in the parent's view coordinates, model mm:
 //               two points a full section, more an offset or half section; aligned true: each segment revolved onto the
 //               first one's line), flip (placed on the cut's right instead of its left), letter, gap, align/at, whole
-//               [nodes not cut]; detail: parent, center [u, v], radius (model
+//               [nodes not cut], sectioned [nodes cut although their part property says section false]; detail: parent,
+//               center [u, v], radius (model
 //               mm), letter, scale, at; auxiliary: parent, angle (degrees on the sheet from the parent to it: it looks
 //               along that line), gap, align/at, letter (optional); any view: crop [x0, y0, x1, y1] (view coordinates),
 //               breaks [{axis x|y, from, to, gap (paper mm)}], style.break zigzag | freehand (the lines where a crop or a
@@ -128,6 +129,10 @@ std::array<double, 2> view_depth(const Document& doc, const Scene& scene, const 
 // A broken-out section's outline as drawn and cut (UI-82): the smooth closed curve through its points (view coordinates),
 // within tol, its last point not repeated. Throws Error for fewer than three points apart.
 std::vector<Vec2> breakout_outline(const std::vector<Vec2>& points, double tol = 0.01);
+// The bodies sections leave whole by their part property (ISO 128-50: shafts, pins, keys, fasteners): `section: false` on
+// the body or on the nearest node above it that sets `section`, unless `sectioned` (a view's list) names the body or a
+// component on the way up. Sorted. Section views and views with breakouts add them to their `whole` nodes.
+std::vector<std::string> unsectioned(const Scene& scene, const json& sectioned = json());
 
 // A dimension's value from its references now (hint-aware, as features resolve theirs): {"value", "shown", "anchor",
 // "geometry"} in the sheet's units, angles in degrees; anchor is where it measures, paper mm from the view's centre, and

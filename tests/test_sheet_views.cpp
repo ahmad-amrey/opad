@@ -211,6 +211,26 @@ TEST(views_offset_section_and_whole) {
   g = project(p.doc, s, view_spec(s, *s.sheet_view(sec)), {}, false);
   CHECK(g->sections.empty());
   CHECK(!g->curves.empty());
+  // Left whole by its part property (section false: shafts, fasteners) in every section, unless a view cuts it (sectioned).
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"whole", nullptr}}}});
+  s = resolve(p.doc);
+  const std::string cutPrint = projection_fingerprint(p.doc, s, view_spec(s, *s.sheet_view(sec)), Quality::Auto);
+  run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"section", false}}}});
+  CHECK_THROWS(run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"section", "no"}}}}));
+  s = resolve(p.doc);
+  CHECK(unsectioned(s) == std::vector<std::string>{p.body});
+  CHECK(left_whole(s, p.body) && !left_whole(s, p.body, {p.body}));
+  CHECK(projection_fingerprint(p.doc, s, view_spec(s, *s.sheet_view(sec)), Quality::Auto) != cutPrint);  // drawn again, not from the cache
+  CHECK(project(p.doc, s, view_spec(s, *s.sheet_view(sec)))->sections.empty());
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"sectioned", {p.body}}}}});
+  s = resolve(p.doc);
+  CHECK(unsectioned(s, s.sheet_view(sec)->def["sectioned"]).empty());
+  CHECK_EQ(project(p.doc, s, view_spec(s, *s.sheet_view(sec)), {}, false)->sections.size(), 1u);
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"sectioned", nullptr}}}});
+  run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"section", true}}}});  // explicitly cut again
+  s = resolve(p.doc);
+  CHECK(unsectioned(s).empty());
+  CHECK_EQ(project(p.doc, s, view_spec(s, *s.sheet_view(sec)), {}, false)->sections.size(), 1u);
 }
 
 // A detail view: the parent's projection within its circle at its own scale, the circle and letter on the parent.

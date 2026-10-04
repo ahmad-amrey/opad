@@ -359,7 +359,9 @@ Section views take a cutting line drawn on their parent (two points a full secti
 an aligned one when a segment is inclined: each segment revolved onto the first one's line, as through a flange's holes):
 the bodies it crosses are cut where it is swept through the model and the cut faces are hatched (ISO 128-50: at 45
 degrees to each part's main outlines, parts beside each other turned apart, narrow faces filled; `hatch` or the view's
-Hatching… sets the angle, the spacing and the bodies' material symbols, after ASME Y14.2); detail views enlarge a
+Hatching… sets the angle, the spacing and the bodies' material symbols, after ASME Y14.2; shafts, pins and fasteners
+stay whole, by the view's `whole` list or in every section by the part property `section: false`, Part properties'
+Never cut in section views); detail views enlarge a
 circle of their parent, auxiliary views look square to a slanted edge, and any view can be cropped to a box or broken to
 shorten a long part (dimensions across a break keep their true value; break lines ruled with a zigzag or freehand). A
 broken-out section opens up a view within a smooth closed outline down to a depth picked in a view beside it (`breakouts`

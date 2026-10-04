@@ -220,6 +220,17 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
       check(waitFor([&] { return whole().size() == 1 && settled(); }, 15000) && hatched() == 0 && tool->active(), "a click on the plate: drawn whole, not hatched; the tool stays");
       click(at(sec, {-20, 5}));  // its outline, drawn whole now
       check(waitFor([&] { return whole().empty() && settled(); }, 15000) && hatched() > 10, "a click again: cut and hatched");
+      // Never cut by its part property (section false): whole in the section; the tool cuts it in this view after all
+      // (sectioned), a click again leaves it to its property.
+      const auto sectioned = [&] { const opad::SheetView* v = doc->scene.sheet_view(sec); return v ? v->def.value("sectioned", opad::json::array()) : opad::json::array(); };
+      doc->run("part_properties", {{"target", body}, {"set", {{"section", false}}}});
+      check(waitFor([&] { return settled() && hatched() == 0; }, 15000) && whole().empty(), "the plate never cut by its part property: drawn whole, the view's list empty");
+      click(at(sec, {-20, 5}));
+      check(waitFor([&] { return sectioned().size() == 1 && settled(); }, 15000) && hatched() > 10 && whole().empty(), "a click cuts it in this view after all (sectioned)");
+      click(at(sec, {-12, 5}));
+      check(waitFor([&] { return sectioned().empty() && settled(); }, 15000) && hatched() == 0, "a click again: whole by its part property again");
+      doc->run("part_properties", {{"target", body}, {"set", {{"section", nullptr}}}});
+      check(waitFor([&] { return settled() && hatched() > 10; }, 15000), "the property removed: cut and hatched");
       key(Qt::Key_Escape);
       check(!tool->active(), "Esc ends it");
     }

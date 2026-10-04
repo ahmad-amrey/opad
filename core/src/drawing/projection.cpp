@@ -259,7 +259,7 @@ std::vector<Source> gather(const Scene& scene, const ViewSpec& spec) {
     }
     s.rigid = mat_is_rigid(s.world);
     s.mesh = n->representation == "mesh";
-    s.whole = whole.count(id) > 0;
+    s.whole = whole.count(id) > 0 || (spec.parts_whole && left_whole(scene, id, spec.sectioned));
     if (s.rigid) s.trsf = trsf_from_mat(s.world);
     out.push_back(std::move(s));
   }
@@ -918,6 +918,17 @@ Quality quality_from_name(const std::string& name) {
   throw Error("unknown projection quality '" + name + "' (auto, exact, draft, hybrid)");
 }
 
+bool left_whole(const Scene& scene, const std::string& body, const std::vector<std::string>& sectioned) {
+  for (std::string at = body; !at.empty();) {  // the body first, then up
+    if (std::find(sectioned.begin(), sectioned.end(), at) != sectioned.end()) return false;
+    const Node* n = scene.node(at);
+    if (!n) return false;
+    if (const auto s = n->properties.find("section"); s != n->properties.end() && s->is_boolean()) return !s->get<bool>();
+    at = n->parent;
+  }
+  return false;
+}
+
 ViewSpec ViewSpec::preset(const std::string& view) {
   const Camera c = Camera::preset(view);
   ViewSpec s;
@@ -941,6 +952,8 @@ json ViewSpec::to_json() const {
     j["cut"] = {{"line", line}, {"x", vec_json(cut_x)}, {"y", vec_json(cut_y)}, {"whole", whole}};
     if (aligned) j["cut"]["aligned"] = true;
   }
+  if (parts_whole) j["parts_whole"] = true;
+  if (!sectioned.empty()) j["sectioned"] = sectioned;
   for (const auto& b : breakouts) {
     json outline = json::array();
     for (const auto& p : b.outline) outline.push_back({p[0], p[1]});
@@ -976,6 +989,8 @@ ViewSpec ViewSpec::from_json(const json& j) {
     s.aligned = c.value("aligned", false);
   }
   if (j.contains("whole") && j["whole"].is_array()) s.whole = j["whole"].get<std::vector<std::string>>();
+  s.parts_whole = j.value("parts_whole", false);
+  if (j.contains("sectioned") && j["sectioned"].is_array()) s.sectioned = j["sectioned"].get<std::vector<std::string>>();
   for (const auto& b : j.value("breakouts", json::array())) {
     if (!b.is_object()) continue;
     Breakout cut;

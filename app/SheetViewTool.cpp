@@ -559,15 +559,28 @@ void SheetViewTool::clickAt(const QPointF& scene) {
         emit message(tr("Click a body in the section."));
         return;
       }
-      opad::json whole = opad::json::array();
-      bool was = false;
-      for (const auto& n : v->def.value("whole", opad::json::array()))
-        if (n == node) was = true;
-        else whole.push_back(n);
-      if (!was) whole.push_back(node);
+      // Whole by the view's own list: cut; whole by its part property (section false): cut in this view (sectioned); cut in
+      // this view against its part property: whole again; else: whole.
+      const auto toggled = [&](const char* key, bool& was) {
+        opad::json list = opad::json::array();
+        was = false;
+        for (const auto& n : v->def.value(key, opad::json::array()))
+          if (n == node) was = true;
+          else list.push_back(n);
+        return list;
+      };
+      bool listed = false, again = false;
+      opad::json whole = toggled("whole", listed), sectioned = toggled("sectioned", again);
+      opad::json set;
+      std::vector<std::string> cut;
+      for (const auto& n : sectioned) cut.push_back(n.get<std::string>());
+      if (listed) set["whole"] = whole.empty() ? opad::json() : whole;
+      else if (again) set["sectioned"] = sectioned.empty() ? opad::json() : sectioned;
+      else if (opad::drawing::left_whole(m_doc->scene, node, cut)) sectioned.push_back(node), set["sectioned"] = sectioned;
+      else whole.push_back(node), set["whole"] = whole;
       const std::string view = m_view;
       QPointer<SheetViewTool> self(this);
-      m_runner("sheet_edit", {{"target", view}, {"set", {{"whole", whole.empty() ? opad::json() : whole}}}}, [self, view](const opad::json& out) {
+      m_runner("sheet_edit", {{"target", view}, {"set", set}}, [self, view](const opad::json& out) {
         if (self && !out.is_null()) emit self->added(view);
       });
       return;  // the tool stays for the next body

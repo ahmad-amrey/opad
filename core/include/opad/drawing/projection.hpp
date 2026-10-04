@@ -53,6 +53,10 @@ struct ViewSpec {
   Vec3 cut_x{1, 0, 0}, cut_y{0, 0, 1};
   std::vector<std::string> whole;
   bool aligned = false;
+  // Sections and breakouts: bodies their part property leaves whole (left_whole: section false) are not cut either, unless
+  // `sectioned` names them or a component above them.
+  bool parts_whole = false;
+  std::vector<std::string> sectioned;
   // Broken-out (local) sections (UI-82): within each outline (view coordinates; a smooth closed curve through its points)
   // whatever lies nearer the viewer than `depth` (along dir, model mm) is taken away from the bodies it reaches; the faces
   // left at the depth come back as sections, and where the cut ends over a body it is drawn as a thin break line.
@@ -124,6 +128,10 @@ using ProjectionProgress = std::function<bool(double, const std::string&)>;
 
 // The view's axes in world coordinates (x right, y up, dir towards the viewer), as every tier projects with them.
 void view_axes(const ViewSpec& spec, Vec3& x, Vec3& y, Vec3& dir);
+// Whether a section leaves a body whole by its part property (ISO 128-50: shafts, pins, keys, fasteners): `section: false`
+// on the body or on the nearest node above it that sets `section`, unless `sectioned` names the body or a component on
+// the way up first. Walks the body's path only.
+bool left_whole(const Scene& scene, const std::string& body, const std::vector<std::string>& sectioned = {});
 // The body nodes a view draws, with their world placements (the explode offsets added). Throws for an unknown node.
 std::vector<std::pair<std::string, Mat4>> view_bodies(const Scene& scene, const ViewSpec& spec);
 // The tier Auto takes for this view (counts faces: workers only).

@@ -659,6 +659,8 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         }
         for (const char* k : {"part_number", "description", "material", "vendor", "notes"})
           if (set.contains(k) && !set[k].is_null() && !set[k].is_string()) throw Error(std::string("part_properties: ") + k + " is text");
+        if (set.contains("section") && !set["section"].is_null() && !set["section"].is_boolean())
+          throw Error("part_properties: section is true or false (false: never cut in section views, as shafts and fasteners)");
         for (const char* k : {"density", "mass"})
           if (set.contains(k) && !set[k].is_null() && !(set[k].is_number() && property_number(set[k]) > 0))
             throw Error(std::string("part_properties: ") + k + (std::string(k) == "density" ? " is a positive number, g/cm3" : " is a positive number, g"));

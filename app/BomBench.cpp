@@ -196,16 +196,19 @@ OPAD_BENCH(OPAD_BENCH_BOM, bom) {
     field(d, "part_number")->setText("ISO 8734 6x20");
     auto* listed = d->findChild<QComboBox*>("part.bom");
     listed->setCurrentIndex(listed->findData("purchased"));
+    auto* never = d->findChild<QCheckBox*>("part.section");
+    check(never && !never->isChecked() && !never->isTristate(), "Part properties offers Never cut in section views, unticked");
+    if (never) never->setChecked(true);
     apply(d)->click();
     check(w.m_doc->doc.ops.size() == ops + 4 && w.m_doc->undoLabel() == "part properties" && props(pin1).value("part_number", "") == "ISO 8734 6x20" &&
-              props(pin2).value("bom", "") == "purchased",
-          "two pins get a part number and purchased in one step");
+              props(pin2).value("bom", "") == "purchased" && props(pin1).value("section", opad::json()) == false && props(pin2).value("section", opad::json()) == false,
+          "two pins get a part number, purchased and never cut in sections (section false) in one step");
 
     docs->editPartProperties({plate, pin1});
     d = dialog();
     check(d && field(d, "part_number")->text().isEmpty() && field(d, "part_number")->placeholderText() == "Several values" && field(d, "vendor")->text().isEmpty() &&
-              !apply(d)->isEnabled(),
-          "the plate and a pin: what they differ in shows as several values, nothing to apply");
+              !apply(d)->isEnabled() && d->findChild<QCheckBox*>("part.section")->checkState() == Qt::PartiallyChecked,
+          "the plate and a pin: what they differ in shows as several values (Never cut half ticked), nothing to apply");
     field(d, "notes")->setText("Deburr");
     check(d->command()["set"] == opad::json({{"notes", "Deburr"}}) && apply(d)->isEnabled(), "typing one field changes only that field");
     apply(d)->click();

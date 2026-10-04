@@ -126,6 +126,14 @@ void turn_to_side(ViewSpec& s, int sx, int sy, bool third) {
   }
 }
 
+std::vector<std::string> node_ids(const json& j) {
+  std::vector<std::string> out;
+  if (j.is_array())
+    for (const auto& n : j)
+      if (n.is_string()) out.push_back(n.get<std::string>());
+  return out;
+}
+
 void apply_source(const Scene& scene, ViewSpec& s, const json& src) {
   if (!src.is_object()) return;
   s.nodes.clear();
@@ -139,6 +147,18 @@ void apply_source(const Scene& scene, ViewSpec& s, const json& src) {
   s.visible_only = src.value("visible_only", false);
 }
 
+}  // namespace
+
+std::vector<std::string> unsectioned(const Scene& scene, const json& sectioned) {
+  std::vector<std::string> out;
+  const auto ids = node_ids(sectioned);
+  for (const auto& [id, n] : scene.nodes)
+    if (n.kind == Node::Kind::Body && left_whole(scene, id, ids)) out.push_back(id);
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+namespace {
 ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
   if (depth > 32) throw Error("its parent views form a loop");
   const json& d = v.def;
@@ -152,7 +172,7 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     if (!side_step(side, sx, sy)) throw Error("side is left, right, top, bottom or a corner such as top-right, not '" + side + "'");
     const Sheet* sheet = scene.sheet(v.sheet);
     turn_to_side(s, sx, sy, sheet && sheet->projection == "third");
-    s.cut.clear(), s.whole.clear(), s.aligned = false, s.breakouts.clear();  // the model, also when projected from a section
+    s.cut.clear(), s.whole.clear(), s.aligned = false, s.breakouts.clear(), s.parts_whole = false, s.sectioned.clear();  // the model, also when projected from a section
   } else if (v.kind == "section" || v.kind == "auxiliary") {
     const SheetView* parent = scene.sheet_view(v.parent);
     if (!parent) throw Error("its parent view " + v.parent + " does not exist");
@@ -164,13 +184,15 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     view_axes(s, px, py, pz);
     const Sheet* sheet = scene.sheet(v.sheet);
     fold_to(s, toward, sheet && sheet->projection == "third");
-    s.cut.clear(), s.whole.clear(), s.aligned = false, s.breakouts.clear();
+    s.cut.clear(), s.whole.clear(), s.aligned = false, s.breakouts.clear(), s.parts_whole = false, s.sectioned.clear();
     if (v.kind == "section") {
       s.cut = points(d["cut"]);
       s.cut_x = px, s.cut_y = py;
       s.aligned = d.value("aligned", false) && s.cut.size() >= 3;
       for (const auto& n : d.value("whole", json::array()))
         if (n.is_string()) s.whole.push_back(n.get<std::string>());
+      s.parts_whole = true;
+      s.sectioned = node_ids(d.value("sectioned", json()));
       s.hidden = false;  // section views draw hidden lines only when asked
     }
   } else if (v.kind == "detail") {
@@ -208,9 +230,12 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
       cut.depth = b.value("depth", 0.0);
       if (cut.outline.size() >= 3) s.breakouts.push_back(std::move(cut));
     }
-    if (!s.breakouts.empty())
+    if (!s.breakouts.empty()) {
       for (const auto& n : d.value("whole", json::array()))
         if (n.is_string()) s.whole.push_back(n.get<std::string>());
+      s.parts_whole = true;
+      s.sectioned = node_ids(d.value("sectioned", json()));
+    }
   }
   if (d.contains("source")) apply_source(scene, s, d["source"]);
   apply_style(s, d.value("style", json()));
@@ -314,8 +339,9 @@ void validate_record(const json& op) {
   if (op.contains("radius") && !(finite(op["radius"]) && op["radius"].get<double>() > 0)) fail("'radius' must be a positive number");
   if (op.contains("flip") && !op["flip"].is_boolean()) fail("'flip' must be true or false");
   if (op.contains("aligned") && !op["aligned"].is_boolean()) fail("'aligned' must be true or false");
-  if (op.contains("whole") && !(op["whole"].is_array() && std::all_of(op["whole"].begin(), op["whole"].end(), [](const json& n) { return n.is_string(); })))
-    fail("'whole' must be node ids");
+  for (const char* k : {"whole", "sectioned"})
+    if (op.contains(k) && !(op[k].is_array() && std::all_of(op[k].begin(), op[k].end(), [](const json& n) { return n.is_string(); })))
+      fail(std::string("'") + k + "' must be node ids");
   if (op.contains("breakouts") && !(op["breakouts"].is_array() && std::all_of(op["breakouts"].begin(), op["breakouts"].end(), [](const json& b) {
                                       const json o = b.is_object() ? b.value("outline", json()) : json();
                                       return o.is_array() && o.size() >= 3 && std::all_of(o.begin(), o.end(), point2) && finite(b.value("depth", json()));

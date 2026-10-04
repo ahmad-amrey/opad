@@ -282,7 +282,9 @@ list (a live agent saves, and the drawing is made on the file).
   each segment revolved onto the first one's line). It is placed on the line's left (`flip: true`: its right) and seen
   from the other side in first angle; cut faces are hatched (ISO 128-50, automatic; `hatch` {pattern general|material|steel|copper|
   aluminium|plastic|insulation|glass, angle, spacing, thin fill|hatch, bodies {node: {...}}} to choose); `whole` lists
-  nodes left uncut. `detail` takes `center` and `radius` (view coordinates) and its own `scale`; `auxiliary` an
+  nodes left uncut. The part property `section: false` (part_properties) leaves a body, or everything under a component,
+  uncut in every section and broken-out section (shafts, pins, keys, fasteners); a view's `sectioned` lists nodes it
+  cuts anyway. `detail` takes `center` and `radius` (view coordinates) and its own `scale`; `auxiliary` an
   `angle` (degrees on the sheet from the parent: it looks along that line, e.g. square to a slanted edge). Letters come
   automatically (A, B, ...; `letter` to choose). Any view takes `crop` [x0, y0, x1, y1] and `breaks` [{axis x|y, from,
   to, gap}] in its view coordinates (sheet_edit adds them later; `style` {break: freehand} draws their break lines as
