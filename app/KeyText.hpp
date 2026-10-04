@@ -47,11 +47,19 @@ QString plain(const QKeySequence& key, Style style = Style::Native);   // joined
 QString isolate(const QString& text);                                 // LRI text PDI; empty stays empty
 QString text(const QKeySequence& key, Style style = Style::Native);   // isolate(plain(key))
 QString text(const QString& id, Style style = Style::Native);         // the command's key now; "" when unassigned
-// The keys every tool knows, by name: esc, enter, ctrlEnter, tab, shiftTab, shift, alt, ctrl, del, backspace, space,
-// undo, redo, copy (the last three: the platform's standard key). Empty for an unknown name.
+// The keys every tool knows, by name: esc, enter, ctrlEnter, tab, shiftTab, shift, alt, ctrl, del, shiftDel, backspace,
+// space, f2 (the browser's and the timeline's own rename key), undo, redo, copy (the last three: the platform's standard
+// key). Empty for an unknown name.
 QStringList fixedNames();
 QStringList fixedCaps(const QString& name, Style style = Style::Native);
 QString fixedText(const QString& name, Style style = Style::Native);  // isolated
 // "<key> <verb>" for a hint list ("P pin"), "" when the command has no key (the list leaves the entry out).
 QString hint(const QString& id, const QString& verb);
+// Several commands' keys as one entry of a hint ("1–4 filter"): "1–4" when they are single consecutive characters, else
+// the bound ones joined by "/" ("1/Ctrl+Alt+2/3/4"); isolated; "" when none has a key.
+QString span(const QStringList& ids);
+// A key given as text, a fixed key's name ("esc", fixedNames) or a command id ("inspect.pin"): what it reads now, without
+// isolates (a label of its own: PanelFooter). A command without a key: "".
+QString spec(const QString& keyOrId);
+bool isCommandId(const QString& text);  // "inspect.pin", not "Alt+Left" or "Esc"
 }  // namespace keys

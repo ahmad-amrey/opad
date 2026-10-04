@@ -109,9 +109,7 @@ const QStringList kLiteralKeyClips{"annotate.add", "annotate.resolve", "design.p
 const QStringList kLiteralKeyRecords{"annotate.add", "edit.hide", "edit.selecttouched", "panel.browser",
                                     "sketch.moreConstrain", "sketch.moreCreate", "sketch.moreFiles",
                                     "sketch.moreModify", "sketch.moreReference", "view.isolate"};
-const QStringList kLiteralKeyTexts{"Space shows or hides the selected objects, Enter fits the view to one or edits a sketch, F2 renames, Del tombstones, the Menu key opens the menu.",
-                                  "The document's history. Left and Right step through it, Home and End go to its ends, Enter or F2 edits a feature or a sketch, Space suppresses a feature, Del tombstones, Shift+Del restores, the Menu key opens the marker's menu.",
-                                  "Took back the last pick of %1 · Ctrl+Z again for the one before"};
+const QStringList kLiteralKeyTexts{};
 
 // A key spelled in a help text instead of a token: Ctrl+X, F9, "Press D", "(S)" (English and Arabic). Fixed keys (Enter,
 // Esc, Tab, Del, Backspace, Shift+Tab, a modifier held with a click or a drag) are allowed.
@@ -527,6 +525,28 @@ TEST(keys_caps_and_text) {
   home.setShortcut(QKeySequence());
   CHECK_EQ(keys::hint("view.fit", "fit"), keys::text("view.fit") + " fit");
   CHECK(keys::hint("view.home", "home").isEmpty());
+  // A hint's span of keys ("1–4 filter"), and a key given as a fixed name, a command or text (PanelFooter, SegmentButton).
+  {
+    QAction one("Bodies"), two("Faces"), three("Edges"), four("Vertices");
+    QList<QAction*> filters{&one, &two, &three, &four};
+    const QStringList ids{"select.bodies", "select.faces", "select.edges", "select.vertices"};
+    for (int i = 0; i < 4; ++i) {
+      filters[i]->setObjectName(ids[i]);
+      filters[i]->setShortcut(QKeySequence(QString::number(i + 1)));
+    }
+    keys::setLookup([&](const QString& id) { const qsizetype i = ids.indexOf(id); return i >= 0 ? filters[i] : id == "view.fit" ? &fit : nullptr; });
+    CHECK_EQ(keys::span(ids), keys::isolate(QString::fromUtf8("1–4")));
+    two.setShortcut(QKeySequence("Ctrl+Alt+2"));
+    CHECK_EQ(keys::span(ids), keys::isolate("1/Ctrl+Alt+2/3/4"));
+    two.setShortcut(QKeySequence());
+    CHECK_EQ(keys::span(ids), keys::isolate("1/3/4"));
+    for (QAction* a : filters) a->setShortcut(QKeySequence());
+    CHECK(keys::span(ids).isEmpty());
+    CHECK(keys::isCommandId("inspect.pin") && keys::isCommandId("sketch.c.horizontal") && !keys::isCommandId("Alt+Left") && !keys::isCommandId("Esc") && !keys::isCommandId("P"));
+    CHECK(keys::spec("esc") == "Esc" && keys::spec("view.fit") == "Ctrl+Alt+F" && keys::spec("select.faces").isEmpty() && keys::spec("Alt+Left") == "Alt+Left");
+    CHECK(keys::fixedCaps("shiftDel", Style::Pc) == L({"Shift", "Del"}) && keys::fixedCaps("f2", Style::Pc) == L({"F2"}));
+    keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "select.faces" ? &faces : id == "view.home" ? &home : nullptr; });
+  }
   // The shortcut editor says when it applied, once; a fixed key (Esc) is not the user's to change and is listed as reserved.
   int announced = 0;
   const auto counting = QObject::connect(keys::notifier(), &keys::Notifier::changed, [&] { ++announced; });

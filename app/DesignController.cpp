@@ -28,6 +28,7 @@
 #include <QMouseEvent>
 #include <atomic>
 
+#include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "SketchSteps.hpp"
 #include "Units.hpp"
@@ -1081,7 +1082,7 @@ bool DesignController::undoPick() {
   m_ruleMatches.erase(name);
   syncSelectionToInput();
   schedulePreview();
-  emit status(tr("Took back the last pick of %1 · Ctrl+Z again for the one before").arg(i18n::t(QString::fromStdString(in->label))));
+  emit status(help::expand(tr("Took back the last pick of %1 · Undo ({key:edit.undo}) again takes the one before").arg(i18n::t(QString::fromStdString(in->label)))));
   return true;
 }
 

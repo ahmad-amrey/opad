@@ -4,6 +4,7 @@
 
 #include <QAction>
 #include <QHash>
+#include <QRegularExpression>
 
 namespace {
 std::function<QAction*(const QString&)>& lookup() {
@@ -128,7 +129,7 @@ QString isolate(const QString& text) { return text.isEmpty() ? text : QChar(0x20
 QString text(const QKeySequence& key, Style style) { return isolate(plain(key, style)); }
 QString text(const QString& id, Style style) { return text(binding(id), style); }
 
-QStringList fixedNames() { return {"esc", "enter", "ctrlEnter", "tab", "shiftTab", "shift", "alt", "ctrl", "del", "backspace", "space", "undo", "redo", "copy"}; }
+QStringList fixedNames() { return {"esc", "enter", "ctrlEnter", "tab", "shiftTab", "shift", "alt", "ctrl", "del", "shiftDel", "backspace", "space", "f2", "undo", "redo", "copy"}; }
 
 QStringList fixedCaps(const QString& name, Style style) {
   static const QHash<QString, QKeyCombination> table{
@@ -141,6 +142,8 @@ QStringList fixedCaps(const QString& name, Style style) {
       {"alt", QKeyCombination(Qt::Key_Alt)},
       {"ctrl", QKeyCombination(Qt::Key_Control)},
       {"del", QKeyCombination(Qt::Key_Delete)},
+      {"shiftDel", QKeyCombination(Qt::ShiftModifier, Qt::Key_Delete)},  // the browser's and the timeline's own keys
+      {"f2", QKeyCombination(Qt::Key_F2)},
       {"backspace", QKeyCombination(Qt::Key_Backspace)},
       {"space", QKeyCombination(Qt::Key_Space)}};
   if (const auto it = table.constFind(name); it != table.constEnd()) return chordCaps(*it, resolved(style));
@@ -155,6 +158,34 @@ QString fixedText(const QString& name, Style style) { return isolate(joined(fixe
 QString hint(const QString& id, const QString& verb) {
   const QString key = text(id);
   return key.isEmpty() ? QString() : key + ' ' + verb;
+}
+
+QString span(const QStringList& ids) {
+  QStringList bound;
+  bool consecutive = true;
+  for (const QString& id : ids) {
+    const QString key = plain(binding(id));
+    if (key.isEmpty()) {
+      consecutive = false;
+      continue;
+    }
+    if (key.size() != 1 || (!bound.isEmpty() && (bound.last().size() != 1 || key[0].unicode() != bound.last()[0].unicode() + 1))) consecutive = false;
+    bound << key;
+  }
+  if (bound.isEmpty()) return QString();
+  if (consecutive && bound.size() > 2) return isolate(bound.first() + QChar(0x2013) + bound.last());
+  return isolate(bound.join('/'));
+}
+
+bool isCommandId(const QString& text) {
+  static const QRegularExpression id(QStringLiteral(R"(^[a-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$)"));
+  return id.match(text).hasMatch();
+}
+
+QString spec(const QString& keyOrId) {
+  if (fixedNames().contains(keyOrId)) return joined(fixedCaps(keyOrId));
+  if (isCommandId(keyOrId)) return plain(binding(keyOrId));
+  return keyOrId;
 }
 
 }  // namespace keys

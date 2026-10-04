@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "AppDocument.hpp"
+#include "CommandHelp.hpp"
 #include "Icons.hpp"
 #include "opad/drawing/sheet.hpp"
 
@@ -195,7 +196,7 @@ int remove(AppDocument* doc, const std::vector<std::string>& ids) {
   }
   if (ops.empty()) return 0;
   doc->run("append", {{"ops", ops}});
-  emit doc->message(tr("Deleted %1 · Ctrl+Z brings it back").arg(names.join(", ")));
+  emit doc->message(help::expand(tr("Deleted %1 · Undo ({key:edit.undo}) brings it back").arg(names.join(", "))));
   return int(ops.size());
 }
 

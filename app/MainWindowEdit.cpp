@@ -13,8 +13,10 @@
 #include <functional>
 #include <set>
 
+#include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "SmartRules.hpp"
 
 void MainWindow::buildEditActions() {
@@ -146,26 +148,30 @@ void MainWindow::buildTimelineMenu(QMenu& menu, const std::string& requestedId) 
     connect(a, &QAction::triggered, this, [this, generation, fn] { if (generation == m_doc->generation) guarded(fn); });
     return a;
   };
+  auto keyed = [](const QString& text, const QString& id) {  // the menu's key column: the command's key now, if it has one
+    const QString key = keys::plain(keys::binding(id));
+    return key.isEmpty() ? text : text + '\t' + key;
+  };
   if (const opad::Op* menuOp = m_doc->doc.find_op(opId)) {
     const bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
     // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered
     // as what it does; once undone, the delete can be applied again.
     const bool deleteMarker = menuOp->type == "delete";
-    entry(deleteMarker ? "restore" : "delete", deleteMarker ? tr("Restore what it deleted\tDel") : tr("Delete (tombstone)\tDel"), "timelineDelete", [this, opId] { if (requireEditable()) deleteOp(opId); })->setEnabled(!deleted);
-    entry(deleteMarker ? "delete" : "restore", deleteMarker ? tr("Delete it again\tShift+Del") : tr("Restore\tShift+Del"), "timelineRestore", [this, opId] { if (requireEditable()) restoreOp(opId); })->setEnabled(deleted);
+    entry(deleteMarker ? "restore" : "delete", keyed(deleteMarker ? tr("Restore what it deleted") : tr("Delete (tombstone)"), "edit.delete"), "timelineDelete", [this, opId] { if (requireEditable()) deleteOp(opId); })->setEnabled(!deleted);
+    entry(deleteMarker ? "delete" : "restore", keyed(deleteMarker ? tr("Delete it again") : tr("Restore"), "edit.restore"), "timelineRestore", [this, opId] { if (requireEditable()) restoreOp(opId); })->setEnabled(deleted);
     const bool designOp = (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
     const opad::Feature* feat = m_doc->scene.feature(opId);
     if (designOp) entry("rename", menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature"), "timelineEdit", [this, opId] { if (requireEditable()) m_design->editOp(opId); });
     if (designOp && feat) entry(feat->suppressed ? "eye" : "hide", feat->suppressed ? tr("Unsuppress") : tr("Suppress"), "timelineSuppress", [this, opId, on = !feat->suppressed] { if (requireEditable()) m_design->setSuppressed(opId, on); });
     if (designOp && menuOp->type == "sketch") entry("export", tr("Export sketch"), "timelineExport", [this, opId] { exportDialog({opId}); });
     if (designOp) menu.addSeparator();
-    entry("isolate", tr("Select what it touches\tT"), "timelineTouched", [this, opId] { selectOpTargets(opId); });
+    entry("isolate", keyed(tr("Select what it touches"), "edit.selecttouched"), "timelineTouched", [this, opId] { selectOpTargets(opId); });
     // The model as it was right after this step (UI-99): the playhead goes after its marker.
     if (!deleted && !m_doc->browse)
       entry("rollBack", tr("Roll back to here"), "timelineRollBack", [this, opId] { emit m_timeline->rollbackRequested(m_timeline->rollPointAfter(opId)); })
           ->setEnabled(!m_timeline->rollPointAfter(opId).empty() || m_doc->rolledBack());
     menu.addSeparator();
-    entry("commit", tr("Copy op id\tCtrl+C"), "timelineCopy", [opId] { QApplication::clipboard()->setText(QString::fromStdString(opId)); });
+    entry("commit", keyed(tr("Copy op id"), "edit.copy"), "timelineCopy", [opId] { QApplication::clipboard()->setText(QString::fromStdString(opId)); });
     forEachArea([&](AreaController* area) { area->timelineMenu(opId, menu); });  // a read-only document asks for a copy first above
     menu.addSeparator();
   }
@@ -260,7 +266,7 @@ void MainWindow::deleteCurrent() {
   // rest (UI-04). Never the body's source op.
   if (areaCommand("edit.delete")) return;
   if (std::any_of(m_selRefs.begin(), m_selRefs.end(), [](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Body; }))
-    throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
+    throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Select parent ({key:edit.selectparent}), or use Remove faces.");
   const auto selected = currentNodeIds();
   if (selected.empty()) {  // the timeline's marker only when nothing is selected (an area's row or a pick is not that marker)
     if (id.empty() || !m_selRows.empty() || !m_selRefs.empty()) throw opad::UserHint("Select objects, or a marker on the timeline, to delete.");
@@ -288,7 +294,7 @@ void MainWindow::undoToast(const QString& text) {
   const auto generation = m_doc->generation;
   m_toasts->toast(text, tr("Undo"), [this, depth, step, generation] {
     if (m_doc->generation == generation && m_doc->canUndo() && m_doc->undoLabels().size() == depth && m_doc->undoLabel() == step) return m_doc->undo();
-    statusBar()->showMessage(tr("Other changes came after it: undo those first (Ctrl+Z)."), 6000);
+    statusBar()->showMessage(help::expand(tr("Other changes came after it: undo those first ({key:edit.undo}).")), 6000);
   }, 8000);
 }
 

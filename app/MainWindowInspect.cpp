@@ -20,6 +20,7 @@
 #include "CommandHelp.hpp"
 #include "HelpClip.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "Units.hpp"
 #include "opad/checks.hpp"
 #include "opad/explode.hpp"
@@ -65,6 +66,7 @@ void MainWindow::buildInspectActions() {
     else m_sectionPanel->hide();
   });
   addAction("inspect.flip", tr("Flip section"), "flip", QKeySequence("Shift+X"), [this] { m_section->flip(); });
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { refreshToolUi(); });  // the prompt names keys
 }
 
 // ---------------------------------------------------------------- inspect (F23)
@@ -82,7 +84,7 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
     if (trace::enabled()) trace::log(QStringLiteral("section from face: origin %1 %2 %3 normal %4 %5 %6").arg(o[0]).arg(o[1]).arg(o[2]).arg(n[0]).arg(n[1]).arg(n[2]));
     m_section->setFromFace(o, n);
     m_section->setEnabled(true);
-    m_toasts->toast(tr("Section plane set from the picked face (Shift+X flips it)"), tr("Flip"), [this] { m_section->flip(); });
+    m_toasts->toast(help::expand(tr("Section plane set from the picked face; Flip section ({key:inspect.flip}) turns it over")), tr("Flip"), [this] { m_section->flip(); });
   } catch (const std::exception& e) {
     if (trace::enabled()) trace::log(QStringLiteral("section from face failed: %1").arg(QString::fromUtf8(e.what())));
     hint(QString::fromUtf8(e.what()), false);
@@ -292,8 +294,18 @@ void MainWindow::refreshToolUi() {
   const int picked = static_cast<int>(m_toolPicks.size());
   const bool open = m_tool.id == "area" && !m_lastMeasure.is_null() && !m_lastMeasure.value("closed", false);  // picked so far encloses nothing
   const bool done = !m_lastMeasure.is_null() && !open;
-  const QString hints = m_tool.id == "area" ? (done ? (m_doc->browse ? tr("Click to add · Esc back · 1–4 filter") : tr("Click to add · P pin · Esc back")) : picked ? tr("Click to add · Esc back · 1–4 filter") : tr("Esc cancel · 1–4 change filter"))
-      : m_viewport->selectionFilter() == Viewport::SelFilter::Vertex && !done ? tr("Ctrl-click arc to select center · Esc back") : done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter");
+  // The keys as bound now (keys::notifier refreshes this); an entry whose command has no key is left out.
+  const QString esc = keys::fixedText("esc"), filters = keys::span({"select.bodies", "select.faces", "select.edges", "select.vertices"}), pinKey = keys::text("inspect.pin");
+  const QString click = tr("Click to add"), back = tr("%1 back").arg(esc), cancel = tr("%1 cancel").arg(esc), clear = tr("%1 clear").arg(esc);
+  const QString filter = filters.isEmpty() ? QString() : tr("%1 filter").arg(filters), change = filters.isEmpty() ? QString() : tr("%1 change filter").arg(filters);
+  const QString pin = m_doc->browse || pinKey.isEmpty() ? QString() : tr("%1 pin").arg(pinKey);
+  auto list = [](QStringList entries) {
+    entries.removeAll(QString());
+    return entries.join(QStringLiteral(" · "));
+  };
+  const QString hints = m_tool.id == "area" ? (done ? (m_doc->browse ? list({click, back, filter}) : list({click, pin, back})) : picked ? list({click, back, filter}) : list({cancel, change}))
+      : m_viewport->selectionFilter() == Viewport::SelFilter::Vertex && !done ? list({tr("%1-click arc to select center").arg(keys::fixedText("ctrl")), back})
+      : done ? list({pin, clear, filter}) : picked ? list({back, change}) : list({cancel, change});
   m_prompt->set(m_tool.icon, m_tool.title, steps, hints);
   m_prompt->show();
   positionOverlays();
@@ -410,7 +422,7 @@ void MainWindow::pinMeasurement() {
   op["result"] = m_lastMeasure;
   opad::json r = m_doc->run("append", opad::json{{"op", op}});
   if (r.contains("appended") && !r["appended"].empty()) m_timeline->setCurrentOp(r["appended"][0].get<std::string>());
-  m_toasts->toast(tr("Measurement pinned. Manage it in Annotations (Alt+2)."), tr("Show"), [this] { if (!action("panel.annotations")->isChecked()) action("panel.annotations")->trigger(); });
+  m_toasts->toast(help::expand(tr("Measurement pinned. Manage it in Annotations ({key:panel.annotations}).")), tr("Show"), [this] { if (!action("panel.annotations")->isChecked()) action("panel.annotations")->trigger(); });
   if (!m_tool.id.isEmpty()) m_viewport->clearSelection();  // the tool stays on for the next measurement
 }
 

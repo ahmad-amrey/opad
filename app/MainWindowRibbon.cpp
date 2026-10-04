@@ -1,5 +1,6 @@
 // Menus, the ribbon (workspaces, tabs, its settings menu) and the Tools and Help commands.
 #include "MainWindow.hpp"
+#include "KeyText.hpp"
 #include "AgentBridge.hpp"
 #include "FileAssociations.hpp"
 #include "Legal.hpp"
@@ -109,6 +110,24 @@ void MainWindow::buildMenus() {
 
 bool MainWindow::setContextualTab(const QString& id, bool shown) { return m_ribbon->setContextualTab(id, shown); }
 
+// The keys that switch workspace now, for the status bar: "Ctrl+1 / 2" (the modifiers of the first said once), the
+// workspaces without a key left out; "" when none has one.
+QString MainWindow::workspaceKeys() const {
+  QString out, modifiers;
+  for (const QString& id : m_workspaceIds) {
+    const QString key = keys::plain(keys::binding(action("workspace." + id)));
+    if (key.isEmpty()) continue;
+    if (out.isEmpty()) {
+      out = key;
+      modifiers = key.left(key.lastIndexOf('+') + 1);
+    } else {
+      const bool same = !modifiers.isEmpty() && key.startsWith(modifiers) && key.lastIndexOf('+') + 1 == modifiers.size();
+      out += " / " + (same ? key.mid(modifiers.size()) : key);
+    }
+  }
+  return keys::isolate(out);
+}
+
 void MainWindow::setWorkspace(const QString& id) {
   if (const int i = m_workspaceIds.indexOf(id); i != m_sketchWorkspace) m_ribbon->setWorkspace(i);  // the sketch's: updateDesignState
 }
@@ -180,9 +199,10 @@ void MainWindow::buildRibbon() {
   group("sketch.reference", "sketch", tr("Sketch"), {"sketch.finish", "sketch.moreReference", "sketch.moreFiles", "sketch.snaps", "sketch.selectionOptions"});
   group("sketch.reference", "reference", tr("Reference"), {"sketch.project", "sketch.replane", "design.parameters", "view.grid", "view.gridSettings"});
   for (AreaController* area : m_areas) area->ribbon(layout);  // their workspaces, tabs and groups
-  QString modifiers;  // of the first key: "Ctrl+1 / 2 / Ctrl+Alt+D"
   for (const RibbonLayout::Space& space : layout.spaces) {
-    const int index = m_ribbon->addWorkspace(space.workspace);
+    Workspace shown = space.workspace;
+    if (!shown.contextual) shown.command = "workspace." + space.id;  // the chip and its list show that command's key now
+    const int index = m_ribbon->addWorkspace(shown);
     m_workspaceIds << space.id;
     for (const RibbonLayout::Tab& tab : space.tabs) {
       for (const RibbonLayout::Group& group : tab.groups)
@@ -193,13 +213,6 @@ void MainWindow::buildRibbon() {
     }
     if (space.workspace.contextual) continue;
     const QString key = space.workspace.key;
-    if (m_workspaceKeys.isEmpty()) {
-      m_workspaceKeys = key;
-      modifiers = key.left(key.lastIndexOf('+') + 1);
-    } else if (!key.isEmpty()) {
-      const bool same = !modifiers.isEmpty() && key.startsWith(modifiers) && key.lastIndexOf('+') + 1 == modifiers.size();
-      m_workspaceKeys += " / " + (same ? key.mid(modifiers.size()) : key);
-    }
     QAction* a = action("workspace." + space.id);
     if (!a) {  // an area's workspace: its command beside the others in the View menu
       a = addAction("workspace." + space.id, tr("%1 workspace").arg(space.workspace.name), space.workspace.icon, QKeySequence(key), [this, id = space.id] { setWorkspace(id); }, true);
@@ -234,12 +247,15 @@ void MainWindow::buildRibbon() {
     m_settings.setValue("ui/workspaceId", id);
     if (QAction* a = action("workspace." + id)) a->setChecked(true);
     if (id == "design" && m_doc->hasDocument && m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();  // Design works on bodies
-    statusBar()->showMessage(tr("%1 workspace · %2 switch workspace").arg(m_ribbon->workspaceAt(i).name, m_workspaceKeys), 4000);
+    const QString keys = workspaceKeys();
+    statusBar()->showMessage(keys.isEmpty() ? tr("%1 workspace").arg(m_ribbon->workspaceAt(i).name)
+                                            : tr("%1 workspace · %2 switch workspace").arg(m_ribbon->workspaceAt(i).name, keys), 4000);
   });
   // The compact Select control: the filters as icons with their keys, the rest of selecting under "Select ▾".
   auto* selectMore = new QMenu(this);
   selectMore->addActions(acts({"edit.selectall", "edit.invert", "select.through", "select.similar", "edit.selectparent"}));
-  m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"}, selectMore);
+  // Each filter's key as bound now (keys::spec of its command id), following a change in the shortcut editor.
+  m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"select.bodies", "select.faces", "select.edges", "select.vertices"}, selectMore);
   // The tab row's cluster: quick access (Save, Undo ▾, Redo ▾), search, the areas' widgets, settings.
   m_ribbon->addQuickAction(action("file.save"));
   m_ribbon->addQuickAction(action("edit.undo"), historyMenu(true));

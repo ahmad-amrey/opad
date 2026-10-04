@@ -14,6 +14,7 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "opad/design/feature.hpp"
 
 // ---------------------------------------------------------------- design workspace
@@ -144,6 +145,7 @@ void MainWindow::buildDesign() {
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { if (error != "cancelled") failedToast(i18n::t(error)); });  // cancelled by the user
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
   connect(m_design->sketch(), &SketchEditor::hintsChanged, this, [this] { if (m_design->sketchActive() && !m_design->pickingPlane()) updateSketchPrompt(); });
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { if (m_design->sketchActive() && !m_design->pickingPlane()) updateSketchPrompt(); });  // Finish sketch's key
   auto editOp = [this](const std::string& id) {  // a read-only document asks for a copy first
     auto edit = [this, id] { guarded([&] { m_design->editOp(id); }); };
     if (requireEditable(edit)) edit();
@@ -206,7 +208,7 @@ void MainWindow::updateDesignState() {
 // close: how to finish the sketch.
 void MainWindow::updateSketchPrompt() {
   QString hints=m_design->sketch()->keyHints();
-  if(hints.isEmpty())hints=tr("%1 finish sketch").arg(action("sketch.finish")->shortcut().toString(QKeySequence::NativeText));
+  if(hints.isEmpty())if(const QString key=keys::text("sketch.finish");!key.isEmpty())hints=tr("%1 finish sketch").arg(key);  // its key now, none without one
   m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),m_design->sketch()->visible()?hints:tr("This sketch is hidden. Show it in the browser to see your edits."));
   m_prompt->show();positionOverlays();
 }

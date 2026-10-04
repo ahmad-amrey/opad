@@ -23,7 +23,9 @@
 
 #include "AppDocument.hpp"
 #include "AreaController.hpp"
+#include "CommandHelp.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "PanelFooter.hpp"
 #include "Theme.hpp"
 #include "Viewport.hpp"
@@ -83,8 +85,8 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
     tools->addWidget(b);
     return b;
   };
-  connect(button("isolate", tr("Isolate"), tr("Show only the selected layers, the camera kept (Shift+I shows everything again)")), &QToolButton::clicked, this,
-          [this] { isolate(selectedLayers()); });
+  QToolButton* isolating = button("isolate", tr("Isolate"), QString());
+  connect(isolating, &QToolButton::clicked, this, [this] { isolate(selectedLayers()); });
   connect(button("layerWalk", tr("Walk"), tr("Layer walk: show one layer at a time and step through them (Up and Down, or the arrows)")), &QToolButton::clicked,
           this, [this] { walking() ? stopWalk() : startWalk(); });
   connect(button("eye", tr("All on"), tr("Turn every layer on and thaw it")), &QToolButton::clicked, this, [this] { allOn(); });
@@ -183,10 +185,16 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
   layout->addLayout(statesRow);
 
   m_footer = new PanelFooter(this);
-  m_footer->setHint(tr("Changes apply at once · Ctrl+Z undoes"));
+  // The keys as bound now (keys::notifier): Exit isolate's and Undo's, each named without its key when it has none.
+  auto keyTexts = [this, isolating] {
+    isolating->setToolTip(tr("Isolate") + " · " + help::expand(tr("Show only the selected layers, the camera kept; Exit isolate ({key:view.unisolate}) shows everything again")));
+    m_footer->setHint(help::expand(tr("Changes apply at once · Undo ({key:edit.undo}) takes them back")));
+  };
   m_footer->setCancelVisible(false);
   m_footer->setPrimary(tr("Done"), QString());
   layout->addWidget(m_footer);
+  keyTexts();
+  connect(keys::notifier(), &keys::Notifier::changed, this, keyTexts);
   retheme();
   connect(theme::notifier(), &theme::Notifier::changed, this, &LayersPanel::retheme);
 }

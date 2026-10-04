@@ -5,6 +5,7 @@
 #include "SketchGeometryCache.hpp"
 #include "SketchSnap.hpp"
 #include "DimensionHandle.hpp"
+#include "CommandHelp.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -1390,7 +1391,7 @@ void SketchEditor::toggleConstruction() {
     }
   if (!any) {
     cancel_change();
-    emit status(tr("Select curves first, then X turns them into construction geometry (and back)."));
+    emit status(help::expand(tr("Select curves first, then Construction ({key:sketch.construction}) turns them into construction geometry (and back).")));
     return;
   }
   end_change(tr("Construction"));

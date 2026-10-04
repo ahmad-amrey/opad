@@ -37,10 +37,12 @@
 
 #include "AppDocument.hpp"
 #include "Commands.hpp"
+#include "CommandHelp.hpp"
 #include "DesignController.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
+#include "KeyText.hpp"
 #include "ShortcutEditor.hpp"
 #include "Theme.hpp"
 #include "TimelineWidget.hpp"
@@ -124,7 +126,9 @@ SmartChip::SmartChip(QWidget* viewport) : QFrame(viewport) {
   m_more->setObjectName("smartChipMore");
   m_more->setAutoRaise(true);
   m_more->setFocusPolicy(Qt::NoFocus);
-  m_more->setToolTip(tr("Related selections and what to do with them (Shift+Space)"));
+  auto tip = [this] { m_more->setToolTip(help::expand(tr("Related selections and what to do with them ({key:select.related})"))); };  // its key now
+  tip();
+  connect(keys::notifier(), &keys::Notifier::changed, m_more, tip);
   connect(m_more, &QToolButton::clicked, this, &SmartChip::menuRequested);
   row->addWidget(m_icon);
   row->addWidget(m_text);
@@ -214,7 +218,6 @@ void SmartSelect::buildActions() {
   shrink.key = QKeySequence("Ctrl+Down");
   shrink.keywords = {tr("smart selection"), tr("shrink the selection"), tr("back")};
   m_shrink = services().addCommand(shrink, [this] { this->shrink(); });
-  m_shrink->setProperty("shortcutHint", tr("Back down the steps Ctrl+Up climbed: from a feature's faces to the faces picked first, from a component to its body."));
   CommandInfo related;
   related.id = "select.related";
   related.label = tr("Related selections…");
@@ -234,12 +237,19 @@ void SmartSelect::buildActions() {
     if (idle() && subPicks(m_current)) request(true);
   });
   m_suggest->setChecked(QSettings().value("selection/suggest", true).toBool());
-  m_suggest->setProperty("shortcutHint", tr("After faces or edges are picked, a chip beside them names what they belong to. Off: it comes on Ctrl+Up, Shift+Space or Del only."));
-  for (QAction* a : {m_shrink, m_related, m_suggest}) shortcuts::updateTooltip(a);
-  if (QAction* parent = services().action("edit.selectparent")) {  // Ctrl+Up: this area grows picked faces (command)
-    parent->setProperty("shortcutHint", tr("Grow the selection: picked faces or edges to the feature or detail they belong to, then the body, its component, the parent. Ctrl+Down goes back."));
-    shortcuts::updateTooltip(parent);
-  }
+  // The hints that name other commands' keys, as bound now (keys::notifier), each command named without its key when it
+  // has none; then the tooltips that carry them.
+  auto hints = [this] {
+    m_shrink->setProperty("shortcutHint", help::expand(tr("Back down the steps Select parent ({key:edit.selectparent}) climbed: from a feature's faces to the faces picked first, from a component to its body.")));
+    m_suggest->setProperty("shortcutHint", help::expand(tr("After faces or edges are picked, a chip beside them names what they belong to. Off: it comes only with Select parent ({key:edit.selectparent}), Related selections ({key:select.related}) or Delete ({key:edit.delete}).")));
+    for (QAction* a : {m_shrink, m_related, m_suggest}) shortcuts::updateTooltip(a);
+    if (QAction* parent = services().action("edit.selectparent")) {  // this area grows picked faces (command)
+      parent->setProperty("shortcutHint", help::expand(tr("Grow the selection: picked faces or edges to the feature or detail they belong to, then the body, its component, the parent. Select less ({key:select.shrink}) goes back.")));
+      shortcuts::updateTooltip(parent);
+    }
+  };
+  hints();
+  connect(keys::notifier(), &keys::Notifier::changed, m_shrink, hints);
 }
 
 void SmartSelect::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
@@ -624,7 +634,7 @@ void SmartSelect::grow() {
 
 void SmartSelect::shrink() {
   if (!idle()) return;
-  if (m_stack.empty()) return services().showMessage(tr("Nothing to go back to: Ctrl+Up grows the selection first."), 4000);
+  if (m_stack.empty()) return services().showMessage(help::expand(tr("Nothing to go back to: Select parent ({key:edit.selectparent}) grows the selection first.")), 4000);
   auto refs = std::move(m_stack.back());
   m_stack.pop_back();
   hover(-1);

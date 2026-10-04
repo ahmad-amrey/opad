@@ -14,6 +14,7 @@
 #include <functional>
 
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 
 // ---------------------------------------------------------------- RibbonLayout
@@ -116,7 +117,13 @@ void RibbonBar::commandButton(QWidget* button, const QString& commandId) {
 }
 
 // ---------------------------------------------------------------- SegmentButton
-SegmentButton::SegmentButton(QAction* action, const QString& hint, bool primary, QWidget* parent) : QToolButton(parent), m_hint(hint) {
+SegmentButton::SegmentButton(QAction* action, const QString& hint, bool primary, QWidget* parent) : QToolButton(parent), m_spec(hint) {
+  m_hint = keys::spec(m_spec);
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] {  // a command's key: the one bound now
+    if (std::exchange(m_hint, keys::spec(m_spec)) == m_hint) return;
+    updateGeometry();
+    update();
+  });
   setObjectName(primary ? "segmentPrimary" : "segment");
   setDefaultAction(action);
   setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -181,8 +188,17 @@ SearchField::SearchField(QWidget* parent) : QAbstractButton(parent) {
   setFixedSize(sizeHint());
   setCursor(Qt::PointingHandCursor);
   setFocusPolicy(Qt::NoFocus);
-  setToolTip(tr("Search commands (S)"));
+  setCommand(QString());
   connect(theme::notifier(), &theme::Notifier::changed, this, [this] { setFixedSize(sizeHint()); });  // the text size
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { setCommand(m_command); });  // its key changed
+}
+
+void SearchField::setCommand(const QString& id) {
+  m_command = id;
+  m_key = keys::plain(keys::binding(id));
+  setToolTip(m_key.isEmpty() ? tr("Search commands") : tr("Search commands (%1)").arg(keys::isolate(m_key)));
+  setFixedSize(sizeHint());
+  update();
 }
 
 void SearchField::setCompact(bool on) {
@@ -194,7 +210,9 @@ void SearchField::setCompact(bool on) {
 
 // As wide as its words at the text size (200 px at least), as high as a line of them (24 px at least).
 QSize SearchField::sizeHint() const { return QSize(m_compact ? kCompact : fullWidth(), std::max(kHeight, QFontMetrics(theme::ui(12)).height() + 6)); }
-int SearchField::fullWidth() const { return std::max(kFull, 30 + QFontMetrics(theme::ui(12)).horizontalAdvance(tr("Search commands")) + 34 + QFontMetrics(theme::mono(11)).horizontalAdvance("S")); }
+int SearchField::fullWidth() const {
+  return std::max(kFull, 30 + QFontMetrics(theme::ui(12)).horizontalAdvance(tr("Search commands")) + 34 + QFontMetrics(theme::mono(11)).horizontalAdvance(m_key));
+}
 
 void SearchField::paintEvent(QPaintEvent*) {
   const Tokens& t = theme::current();
@@ -212,21 +230,31 @@ void SearchField::paintEvent(QPaintEvent*) {
   p.setFont(theme::ui(12));
   p.setPen(t.fg3);
   p.drawText(QRect(rtl ? 34 : 30, 0, width() - 64, height()), Qt::AlignVCenter | (rtl ? Qt::AlignRight : Qt::AlignLeft), tr("Search commands"));
+  if (m_key.isEmpty()) return;  // the command has no key: no badge
   const QFontMetrics mm(theme::mono(11));
-  const QSize keySize(std::max(18, mm.horizontalAdvance("S") + 8), std::max(16, mm.height()));
+  const QSize keySize(std::max(18, mm.horizontalAdvance(m_key) + 8), std::max(16, mm.height()));
   QRect key(QPoint(rtl ? 6 : width() - keySize.width() - 6, (height() - keySize.height()) / 2), keySize);
   p.setPen(QPen(t.line, 1));
   p.setBrush(t.bg4);
   p.drawRoundedRect(key, 3, 3);
   p.setFont(theme::mono(11));
   p.setPen(t.fg2);
-  p.drawText(key, Qt::AlignCenter, "S");
+  p.drawText(key, Qt::AlignCenter, m_key);
 }
 
 // ---------------------------------------------------------------- WorkspaceChip
+namespace {
+// The key a workspace is switched with: its command's now, else the key it was declared with.
+QString shownKey(const Workspace& w) { return w.command.isEmpty() ? w.key : keys::plain(keys::binding(w.command)); }
+}  // namespace
+
 WorkspaceChip::WorkspaceChip(QWidget* parent) : QAbstractButton(parent) {
   setFixedHeight(sizeHint().height());
   connect(theme::notifier(), &theme::Notifier::changed, this, [this] { setFixedHeight(sizeHint().height()); });
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] {
+    updateGeometry();
+    update();
+  });
   setCursor(Qt::PointingHandCursor);
   setFocusPolicy(Qt::NoFocus);
 }
@@ -239,7 +267,8 @@ void WorkspaceChip::setWorkspace(const Workspace& w) {
 
 QSize WorkspaceChip::sizeHint() const {
   QFontMetrics fm(theme::ui(13, QFont::Medium)), mm(theme::mono(11));
-  return QSize(8 + 16 + 8 + fm.horizontalAdvance(m_ws.name) + 8 + mm.horizontalAdvance(m_ws.key) + 8 + 12 + 10, std::max(26, fm.height() + 4));
+  const QString key = shownKey(m_ws);
+  return QSize(8 + 16 + 8 + fm.horizontalAdvance(m_ws.name) + 8 + (key.isEmpty() ? -8 : mm.horizontalAdvance(key)) + 8 + 12 + 10, std::max(26, fm.height() + 4));
 }
 
 void WorkspaceChip::paintEvent(QPaintEvent*) {
@@ -266,7 +295,7 @@ void WorkspaceChip::paintEvent(QPaintEvent*) {
   p.drawText(place(fm.horizontalAdvance(m_ws.name)), baseline, m_ws.name);
   p.setFont(theme::mono(11));
   p.setPen(t.fg3);
-  p.drawText(place(mm.horizontalAdvance(m_ws.key)), baseline, m_ws.key);
+  if (const QString key = shownKey(m_ws); !key.isEmpty()) p.drawText(place(mm.horizontalAdvance(key)), baseline, key);
   p.drawPixmap(place(12), (height() - 12) / 2, icons::pixmap("chevronDown", t.fg3, 12, devicePixelRatioF()));
 }
 
@@ -294,7 +323,7 @@ class WorkspaceRow : public QFrame {
     auto* head = new QHBoxLayout();
     auto* name = new QLabel(w.name, this);
     name->setStyleSheet(QString("color: %1; font-weight: 500;").arg(fg));
-    auto* k = new QLabel(w.key, this);
+    auto* k = new QLabel(shownKey(w), this);
     k->setFont(theme::mono(11));
     k->setStyleSheet(QString("color: %1;").arg(key));
     head->addWidget(name, 1);
@@ -867,6 +896,8 @@ void RibbonBar::addTabRowWidget(QWidget* w) {
 
 void RibbonBar::setSearchAction(QAction* a) {
   m_search = new SearchField(m_cluster);
+  m_search->setCommand(a->objectName());
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { fitTabRow(); });  // the badge's width (the field went first)
   connect(m_search, &QAbstractButton::clicked, a, &QAction::trigger);
   commandButton(m_search, a->objectName());
   m_searchSlot->addWidget(m_search);

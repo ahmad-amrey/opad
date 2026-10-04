@@ -334,7 +334,7 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
     QAction* del = entry("delete", text, "contextDelete", [this, ids, picks] {
       if (!requireEditable()) return;
       if (picks) {
-        if (!areaCommand("edit.delete")) throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
+        if (!areaCommand("edit.delete")) throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Select parent ({key:edit.selectparent}), or use Remove faces.");
         return;
       }
       deleteNodes(ids);

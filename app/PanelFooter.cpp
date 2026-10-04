@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QPainter>
 
+#include "KeyText.hpp"
 #include "Theme.hpp"
 
 namespace {
@@ -24,8 +25,8 @@ PanelFooter::PanelFooter(QWidget* parent) : QWidget(parent) {
   m_row->setContentsMargins(12, 1, 12, 0);
   m_row->setSpacing(8);
   m_row->addStretch(1);
-  m_cancel = button(tr("Cancel"), QStringLiteral("Esc"));
-  m_primary = button(tr("OK"), QStringLiteral("Enter"));
+  m_cancel = button(tr("Cancel"), QStringLiteral("esc"));
+  m_primary = button(tr("OK"), QStringLiteral("enter"));
   m_primary->setObjectName("primary");  // the accent (QPushButton#primary)
   m_row->addWidget(m_cancel);
   m_row->addWidget(m_primary);
@@ -42,6 +43,7 @@ PanelFooter::PanelFooter(QWidget* parent) : QWidget(parent) {
   connect(m_cancel, &QPushButton::clicked, this, &PanelFooter::cancelled);
   connect(m_primary, &QPushButton::clicked, this, &PanelFooter::accepted);
   connect(m_back, &QPushButton::clicked, this, &PanelFooter::backRequested);
+  connect(keys::notifier(), &keys::Notifier::changed, this, &PanelFooter::rekey);
 }
 
 QPushButton* PanelFooter::button(const QString& text, const QString& key) {
@@ -64,14 +66,21 @@ QPushButton* PanelFooter::button(const QString& text, const QString& key) {
 
 void PanelFooter::relabel(QPushButton* b, const QString& text, const QString& key) {
   b->findChild<QLabel*>("footerText")->setText(text);
+  b->setProperty("footerKey", key);  // as given: a fixed key, a command or text, resolved again on a change
+  const QString shown = keys::spec(key);
   for (QLabel* l : b->findChildren<QLabel*>())
     if (l->property("footerRole").toString() == "key") {
-      l->setText(key);
-      l->setVisible(!key.isEmpty());
+      l->setText(shown);
+      l->setVisible(!shown.isEmpty());
     }
   b->setAccessibleName(text);
-  b->setToolTip(key.isEmpty() ? text : text + "  (" + key + ")");
+  b->setToolTip(shown.isEmpty() ? text : text + "  (" + shown + ")");
   b->updateGeometry();
+}
+
+void PanelFooter::rekey() {
+  for (QPushButton* b : findChildren<QPushButton*>(Qt::FindDirectChildrenOnly))
+    if (keys::isCommandId(b->property("footerKey").toString())) relabel(b, text(b), b->property("footerKey").toString());
 }
 
 QPushButton* PanelFooter::addSecondary(const QString& text, const QString& key) {

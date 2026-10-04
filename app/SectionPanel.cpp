@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "CommandHelp.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 #include "ToolValues.hpp"
 #include "Units.hpp"
@@ -74,7 +76,15 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   auto* toggles = new QHBoxLayout();
   m_flipButton = new QToolButton(this);
   m_flipButton->setObjectName("segment");
-  m_flipButton->setText(tr("Flip   Shift+X"));
+  auto label = [this] {  // Flip and Flip section's key now
+    const QString key = keys::text("inspect.flip");
+    m_flipButton->setText(key.isEmpty() ? tr("Flip") : tr("Flip") + QStringLiteral("   ") + key);
+  };
+  label();
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this, label] {
+    label();
+    describe();
+  });
   m_flipButton->setCheckable(true);
   m_flipButton->setFixedHeight(28);
   m_capButton = new QToolButton(this);
@@ -200,9 +210,10 @@ void SectionPanel::describe() {
   const opad::Vec3 o = origin();
   const double along = this->along();
   m_value->setText(units::format(units::Kind::Length, along));
-  m_state->setText(!m_enabled ? tr("Section off · press X or use Inspect › Section to enable")
-                   : m_pick ? tr("Section along the picked face = %1 · drag the slider or the plane's edge, Shift+X flips").arg(units::format(units::Kind::Length, along))
-                            : tr("Section %1 = %2 · drag the slider or the plane's edge, Shift+X flips").arg(axes[m_axis]).arg(units::format(units::Kind::Length, o[m_axis])));
+  // The keys as bound now (a command without one: its name alone, help::expand).
+  m_state->setText(help::expand(!m_enabled ? tr("Section off · turn it on with Inspect › Section ({key:inspect.section})")
+                   : m_pick ? tr("Section along the picked face = %1 · drag the slider or the plane's edge; Flip section ({key:inspect.flip}) turns it over").arg(units::format(units::Kind::Length, along))
+                            : tr("Section %1 = %2 · drag the slider or the plane's edge; Flip section ({key:inspect.flip}) turns it over").arg(axes[m_axis]).arg(units::format(units::Kind::Length, o[m_axis]))));
 }
 
 void SectionPanel::setEnabled(bool on) {

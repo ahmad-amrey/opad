@@ -26,8 +26,10 @@
 class SegmentButton : public QToolButton {
   Q_OBJECT
  public:
+  // hint: the key shown after the label, as text, a fixed key's name or a command id (its key now: keys::spec).
   SegmentButton(QAction* action, const QString& hint, bool primary, QWidget* parent = nullptr);
   void setIconOnly(bool on);  // the action's icon (its name in QAction::data) and the key, the label in the tooltip
+  QString hint() const { return m_hint; }  // the key as shown now
   bool iconOnly() const { return m_iconOnly; }
   QSize sizeHint() const override;
 
@@ -35,7 +37,7 @@ class SegmentButton : public QToolButton {
   void paintEvent(QPaintEvent*) override;
 
  private:
-  QString m_hint;
+  QString m_spec, m_hint;
   bool m_iconOnly = false;
 };
 
@@ -44,6 +46,8 @@ class SearchField : public QAbstractButton {
  public:
   explicit SearchField(QWidget* parent = nullptr);
   void setCompact(bool on);  // the icon alone: the tab row is short of room
+  void setCommand(const QString& id);  // the command it opens: its key now in the badge and tooltip (none: no badge)
+  QString key() const { return m_key; }
   bool compact() const { return m_compact; }
   QSize sizeHint() const override;
   int fullWidth() const;  // with its words
@@ -54,10 +58,12 @@ class SearchField : public QAbstractButton {
 
  private:
   bool m_compact = false;
+  QString m_command, m_key;
 };
 
 struct Workspace {
-  QString name, icon, key;   // key: the shortcut as shown, e.g. "Ctrl+1"
+  QString name, icon, key;   // key: its default shortcut, e.g. "Ctrl+1" (the command's when made by the window)
+  QString command;           // its command ("workspace.design"): the key shown is the one bound now; empty: key
   QString description, ops;  // dropdown copy: what it is for, and the op types it writes
   bool contextual = false;   // entered by the app (sketch mode), never offered in the switcher's list
 };

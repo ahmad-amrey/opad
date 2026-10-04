@@ -8,7 +8,11 @@
 #include "HelpReference.hpp"
 #include "HelpWindows.hpp"
 #include "I18n.hpp"
+#include "GuidedTool.hpp"
 #include "KeyText.hpp"
+#include "PanelFooter.hpp"
+#include "Panels.hpp"
+#include "Ribbon.hpp"
 #include "RichTip.hpp"
 #include "ShortcutEditor.hpp"
 #include <QApplication>
@@ -54,6 +58,13 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
   auto steps = std::make_shared<std::vector<Step>>();
   auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
   const bool rtl = QApplication::isRightToLeft();
+  auto filterHints = [](MainWindow& w) {  // the ribbon's Bodies, Faces, Edges, Vertices segments: their keys as shown
+    QStringList out;
+    for (const char* id : {"select.bodies", "select.faces", "select.edges", "select.vertices"})
+      for (SegmentButton* b : w.m_ribbon->findChildren<SegmentButton*>())
+        if (b->defaultAction() == w.action(id)) out << b->hint();
+    return out;
+  };
   w.m_ribbon->setWorkspace(0);
   w.m_ribbon->setCurrentTab(0);  // Review > View: Fit and Home
   auto button = [&w](const char* id) -> QToolButton* {
@@ -132,6 +143,23 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
           "its captions: \"" + plain(clips::caption(clipSteps[0])) + "\", the keyless one for Home, Pin's Ctrl+Alt+P");
     frames("clip");
     clips::load();  // the library again (the Tool guide plays its clips)
+  });
+  add(300, [=, &w] {
+    // The ribbon: the search badge and tooltip, the filters' keys.
+    SearchField* search = w.m_ribbon->searchField();
+    check(search && search->key() == "Ctrl+Space" && plain(search->toolTip()).contains("(Ctrl+Space)"), "the ribbon's search badge and tooltip: Ctrl+Space (" + (search ? search->key() : QString()) + ")");
+    check(filterHints(w) == QStringList({"1", "Ctrl+Alt+2", "3", "4"}), "the ribbon's filters: 1, Ctrl+Alt+2, 3, 4 (" + filterHints(w).join(' ') + ")");
+    w.m_ribbon->grab().save(prefix + ".ribbon.png");
+    // Distance: Pin's key in the footer, the filters' keys in the prompt.
+    w.action("inspect.distance")->trigger();
+  });
+  add(400, [=, &w] {
+    PanelFooter* footer = w.m_toolSteps ? w.m_toolSteps->footer() : nullptr;
+    check(footer && PanelFooter::key(footer->primary()) == "Ctrl+Alt+P", "Distance's footer: Pin to document Ctrl+Alt+P (" + (footer ? PanelFooter::key(footer->primary()) : QString()) + ")");
+    const QString hints = plain(w.m_prompt->hints());
+    check(hints.contains("1/Ctrl+Alt+2/3/4") && !hints.contains(QString::fromUtf8("1–4")), "its prompt names the filters' keys (" + hints + ")");
+    if (w.m_toolPanel) w.m_toolPanel->grab().save(prefix + ".distance.png");
+    w.m_prompt->grab().save(prefix + ".prompt.png");
   });
   add(300, [=, &w] {
     // The palette: Fit's key, and a key typed finds its command.
@@ -225,11 +253,15 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
       editor.findChild<QPushButton*>("shortcutAssign")->click();
     };
     bool free = true;  // the editor would ask about a clash (a modal dialog): only keys nothing has
-    for (QAction* a : w.m_actions) free = free && a->shortcut() != QKeySequence("F") && a->shortcut() != QKeySequence("Ctrl+/");
-    check(free, "F and Ctrl+/ are free to give");
+    for (QAction* a : w.m_actions)
+      for (const char* key : {"F", "Ctrl+/", "Ctrl+Alt+Q", "2", "Ctrl+Shift+Space"}) free = free && a->shortcut() != QKeySequence(key);
+    check(free, "F, Ctrl+/, Ctrl+Alt+Q, 2 and Ctrl+Shift+Space are free to give");
     if (!free) return;
     assign("view.fit", QKeySequence("F"));
     assign("help.shortcuts", QKeySequence("Ctrl+/"));
+    assign("inspect.pin", QKeySequence("Ctrl+Alt+Q"));
+    assign("select.faces", QKeySequence("2"));
+    assign("tools.commands", QKeySequence("Ctrl+Shift+Space"));
     QElapsedTimer applied;
     applied.start();
     editor.accept();  // the keys change, the open help surfaces follow (one announcement)
@@ -252,6 +284,14 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
           "the open Tool guide follows: F in its column and card, still at Fit");
     check(sheet && sheet->isVisible() && sheet->shown().contains(fit + " F") && sheet->closeKey() == QKeySequence("Ctrl+/"), "the open cheat sheet follows: Fit F, closing on Ctrl+/");
     check(start && plain(start->findChild<QLabel*>("secondary")->text()).contains("(F)"), "the open lesson follows: Fit (F)");
+    // The window's own surfaces: Distance's footer and prompt (the tool still runs), the ribbon's filters and search badge.
+    PanelFooter* footer = w.m_toolSteps ? w.m_toolSteps->footer() : nullptr;
+    check(footer && PanelFooter::key(footer->primary()) == "Ctrl+Alt+Q", "Distance's open footer follows: Ctrl+Alt+Q");
+    check(plain(w.m_prompt->hints()).contains(QString::fromUtf8("1–4")), "its prompt follows: 1–4 (" + plain(w.m_prompt->hints()) + ")");
+    check(filterHints(w) == QStringList({"1", "2", "3", "4"}) && w.m_ribbon->searchField()->key() == "Ctrl+Shift+Space", "the ribbon follows: filters 1 2 3 4, search Ctrl+Shift+Space");
+    w.m_ribbon->grab().save(prefix + ".after-ribbon.png");
+    if (w.m_toolPanel) w.m_toolPanel->grab().save(prefix + ".after-distance.png");
+    w.cancelTool();
     clips::load(clipFile);
     check(clips::resolvedKeys("keys", 0.6) == QList<QStringList>({{"F"}}), "the clip's key element follows: F");
     tip->grab().save(prefix + ".after-card.png");
@@ -270,6 +310,12 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
     sheet->close();
     start->close();
     reference->close();
+  });
+  add(200, [=] {  // what a change costs the window's own surfaces (footers, ribbon, prompts, tooltips), the help closed
+    QElapsedTimer applied;
+    applied.start();
+    keys::announce();
+    trace::log(QString("bench: keyhelp: with the help windows closed the window follows a change in %1 ms").arg(applied.elapsed()));
   });
   add(0, [=] {
     trace::log(QString("bench: keyhelp: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));

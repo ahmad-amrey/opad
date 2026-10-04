@@ -56,7 +56,7 @@
  "Moves as one with %1 (explode group) · click to ungroup": "يتحرك جزءًا واحدًا مع %1 (مجموعة تفكيك) · انقر لفك التجميع",
  "Reset its drag": "إلغاء سحبه",
  "Exploded": "مفكَّك",
- "Off: the parts go back together and the view lets go of them (Shift+E opens this panel again)": "عند الإيقاف: تعود الأجزاء متجمعة ويتركها العرض (Shift+E يفتح هذه اللوحة من جديد)",
+ "Off: the parts go back together and the view lets go of them; Exploded view ({key:assembly.explode}) opens this panel again": "عند الإيقاف: تعود الأجزاء متجمعة ويتركها العرض؛ العرض المفكَّك ({key:assembly.explode}) يفتح هذه اللوحة من جديد",
  "LEVEL": "المستوى",
  "How deep components split: 1 moves the top-level parts as wholes, All moves every part": "عمق تفكيك المكوّنات: 1 يحرّك أجزاء المستوى الأعلى كاملة، والكل يحرّك كل جزء",
  "DISTANCE": "المسافة",

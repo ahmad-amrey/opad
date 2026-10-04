@@ -29,7 +29,9 @@
 
 #include "AreaController.hpp"
 #include "BrowserPanel.hpp"
+#include "CommandHelp.hpp"
 #include "Commands.hpp"
+#include "KeyText.hpp"
 #include "EmptyState.hpp"
 #include "Ribbon.hpp"
 #include "RichTip.hpp"
@@ -307,13 +309,13 @@ class AccessibilityArea : public AreaController {
     next.id = "view.nextRegion";
     next.label = tr("Next region");
     next.key = QKeySequence("F6");
-    next.keywords = {"F6", "keyboard", "focus", "accessibility", "panes"};
+    next.keywords = {"keyboard", "focus", "accessibility", "panes"};  // its key is found as the key it has now
     services().addCommand(next, [this] { cycle(1); });
     CommandInfo previous;
     previous.id = "view.previousRegion";
     previous.label = tr("Previous region");
     previous.key = QKeySequence("Shift+F6");
-    previous.keywords = {"Shift+F6", "keyboard", "focus", "accessibility", "panes"};
+    previous.keywords = {"keyboard", "focus", "accessibility", "panes"};
     services().addCommand(previous, [this] { cycle(-1); });
   }
 
@@ -325,14 +327,18 @@ class AccessibilityArea : public AreaController {
     });
     Viewport* view = services().viewport();
     view->setAccessibleName(tr("Model view"));
-    view->setAccessibleDescription(tr("The view cube at the top right turns the view: click a face, an edge or a corner. H goes home, F fits."));
+    auto describe = [view] {  // Home's and Fit's keys now (keys::notifier)
+      view->setAccessibleDescription(help::expand(tr("The view cube at the top right turns the view: click a face, an edge or a corner. Home ({key:view.home}) goes home, Fit ({key:view.fit}) fits.")));
+    };
+    describe();
+    connect(keys::notifier(), &keys::Notifier::changed, view, describe);
     if (auto* timeline = services().window()->findChild<TimelineWidget*>()) {
       timeline->setAccessibleName(tr("Timeline"));
-      timeline->setAccessibleDescription(tr("The document's history. Left and Right step through it, Home and End go to its ends, Enter or F2 edits a feature or a sketch, Space suppresses a feature, Del tombstones, Shift+Del restores, the Menu key opens the marker's menu."));
+      timeline->setAccessibleDescription(help::expand(tr("The document's history. Left and Right step through it, Home and End go to its ends, {fixed:enter} or {fixed:f2} edits a feature or a sketch, {fixed:space} suppresses a feature, {fixed:del} tombstones, {fixed:shiftDel} restores, the Menu key opens the marker's menu.")));
     }
     if (services().browser()) {
       services().browser()->tree()->setAccessibleName(tr("Browser"));
-      services().browser()->tree()->setAccessibleDescription(tr("Space shows or hides the selected objects, Enter fits the view to one or edits a sketch, F2 renames, Del tombstones, the Menu key opens the menu."));
+      services().browser()->tree()->setAccessibleDescription(help::expand(tr("{fixed:space} shows or hides the selected objects, {fixed:enter} fits the view to one or edits a sketch, {fixed:f2} renames, {fixed:del} tombstones, the Menu key opens the menu.")));
     }
     nameButtons(services().window());
   }

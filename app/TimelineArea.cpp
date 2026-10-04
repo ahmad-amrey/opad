@@ -202,7 +202,7 @@ bool TimelineArea::command(const QString& id, const SelectionContext& selection)
   QAction* del = nullptr;
   for (QAction* a : menu.actions())
     if (a->objectName() == "timelineDelete") del = a;
-  if (!del || !del->isEnabled()) throw opad::Error("That step is deleted already: Shift+Del on its marker restores it.");
+  if (!del || !del->isEnabled()) throw opad::Error("That step is deleted already: Restore ({key:edit.restore}) on its marker brings it back.");
   del->trigger();
   return true;
 }

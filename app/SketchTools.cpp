@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
@@ -114,7 +115,7 @@ QString SketchEditor::prompt(bool note) const {
   int waiting = 0;
   while (waiting + 1 < steps.size() && !steps[waiting].picked.isEmpty()) ++waiting;
   QString t = tr("%1: %2").arg(i18n::t(entry->name), steps[waiting].label);
-  if (note && *entry->note) t += QStringLiteral(" · ") + i18n::t(entry->note);
+  if (note && *entry->note) t += QStringLiteral(" · ") + help::expand(i18n::t(entry->note));  // keys named by token: the user's now
   return t;
 }
 

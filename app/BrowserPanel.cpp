@@ -18,8 +18,10 @@
 #include <functional>
 #include <map>
 
+#include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
 #include "I18n.hpp"
@@ -181,7 +183,6 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_filter->setPlaceholderText(tr("Filter objects"));
   m_filter->setClearButtonEnabled(true);
   QAction* searchIcon = m_filter->addAction(icons::icon("search", theme::current().fg3), QLineEdit::LeadingPosition);
-  m_filter->setToolTip(tr("Filter objects (Ctrl+F)"));
   connect(theme::notifier(), &theme::Notifier::changed, this, [this, head, searchIcon] {
     head->setStyleSheet(QString("QWidget#browserHead { border-bottom: 1px solid %1; }").arg(theme::css(theme::current().line)));
     searchIcon->setIcon(icons::icon("search", theme::current().fg3));
@@ -194,9 +195,9 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     m_breadcrumb->setFixedHeight(theme::px(16));
     m_tree->doItemsLayout();  // the rows' height follows the text size
   });
-  m_filter->setTextMargins(0, 0, 44, 0);
+  auto* filterKey = new QLabel(m_filter);  // Filter objects' key now, inside the box
   {
-    auto* hint = new QLabel("Ctrl+F", m_filter);
+    QLabel* hint = filterKey;
     hint->setObjectName("tertiary");
     hint->setFont(theme::mono(11));
     auto* fl = new QHBoxLayout(m_filter);
@@ -227,7 +228,18 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     crumbRow->addWidget(b);
     return b;
   };
-  m_parentBtn = button("chevronUp", tr("Select parent (Ctrl+Up)"));
+  m_parentBtn = button("chevronUp", QString());
+  // The keys as bound now (keys::notifier): tooltips, the hint in the filter box (none, and no room kept, without a key).
+  auto keyTexts = [this, filterKey] {
+    m_filter->setToolTip(help::expand(tr("Filter objects ({key:edit.filter})")));
+    m_parentBtn->setToolTip(help::expand(tr("Select parent ({key:edit.selectparent})")));
+    const QString key = keys::plain(keys::binding("edit.filter"));
+    filterKey->setText(key);
+    filterKey->setVisible(!key.isEmpty());
+    m_filter->setTextMargins(0, 0, key.isEmpty() ? 0 : QFontMetrics(theme::mono(11)).horizontalAdvance(key) + 16, 0);
+  };
+  keyTexts();
+  connect(keys::notifier(), &keys::Notifier::changed, this, keyTexts);
   auto* pin=button("pin",tr("Keep browser expanded"));pin->setCheckable(true);
   pin->setChecked(!QSettings().value("ui/browserAutoHide",true).toBool());
   pin->setStyleSheet("QToolButton:checked { background: #865bce; border: 1px solid #cab0ff; border-radius: 3px; }");
