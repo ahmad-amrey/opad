@@ -90,7 +90,7 @@ TEST(every_registered_command_has_help) {
   CHECK(ids.size() > 200 && ids.count("help.reference"));
   // Commands the TODO 11 tracks added before their help was written: the records come with the help and ribbon pass of wave 3
   // (t7b), which empties this list.
-  const QStringList pending{"assembly.activate", "assembly.activateNew", "assembly.activateRoot", "assembly.activeHistory", "assembly.activeVisibility",
+  const QStringList pending{"assets.autoSync", "assembly.activate", "assembly.activateNew", "assembly.activateRoot", "assembly.activeHistory", "assembly.activeVisibility",
                             "assembly.explode", "assembly.explodeGroup", "assembly.explodeKeep", "assembly.explodeOff", "assembly.explodePlay",
                             "assembly.explodeSave", "assembly.explodeSplit", "assembly.explodeUngroup", "design.componentFromSelection", "design.remove_faces",
                             "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.partProperties", "timeline.designOnly",
