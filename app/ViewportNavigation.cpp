@@ -1,6 +1,7 @@
 // Navigation staples (UI-47): the zoom window, previous and next view, the document's own Home, the view twist and the
 // animated camera moves the commands use. The CAD 2D preset is in setNavPreset, the middle double click in
 // mouseDoubleClickEvent, the cube's menu in the mouse handlers (Viewport.cpp).
+#include <QApplication>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QSettings>
@@ -73,6 +74,9 @@ void Viewport::startZoomWindow() {
   m_zoomWindow = true;
   m_zoomDrag = false;
   setCursor(Qt::CrossCursor);
+  m_ctx->ClearDetected(Standard_False);  // nothing is hovered while it waits (mouseMoveEvent): the prompt stays in the status
+  m_hoverOwner = nullptr;
+  redrawScene();
   emit hoverChanged(tr("Zoom window: drag around what to see, or click to zoom in there · Esc cancels"));
   emit zoomWindowChanged(true);
 }
@@ -112,13 +116,15 @@ void Viewport::finishZoomWindow() {
   moveCamera(true, 0.35, [this, r] { m_view->WindowFit(r[0], r[1], r[2], r[3]); });
 }
 
-// Esc leaves the zoom window at the shortcut stage, wherever the focus is in the window, so the tool's or window's Esc
-// does not run too.
+// Esc leaves the zoom window at the shortcut stage, wherever the focus is in the window or in a panel it owns (the tool
+// panels are windows of their own), so the tool's or window's Esc does not run too. A modal dialog keeps its Esc.
 bool Viewport::zoomWindowKey(QObject* object, QEvent* e) {
   if (!m_zoomWindow || (e->type() != QEvent::ShortcutOverride && e->type() != QEvent::KeyPress)) return false;
-  if (static_cast<QKeyEvent*>(e)->key() != Qt::Key_Escape) return false;
+  if (static_cast<QKeyEvent*>(e)->key() != Qt::Key_Escape || QApplication::activeModalWidget()) return false;
   const auto* widget = qobject_cast<QWidget*>(object);
-  if (!widget || (widget != window() && !window()->isAncestorOf(widget))) return false;
+  const QWidget* top = widget ? widget->window() : nullptr;
+  while (top && top != window() && top->parentWidget()) top = top->parentWidget()->window();
+  if (top != window()) return false;
   cancelZoomWindow();
   e->accept();
   return true;

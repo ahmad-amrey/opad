@@ -2651,6 +2651,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
     m_holdPress = false;
   }
   if (m_zoomDrag) { m_zoomTo = e->position(); showZoomBand(); return; }
+  if (m_zoomWindow && e->buttons() == Qt::NoButton) return;  // nothing hovered or glowing: the prompt stays in the status
   if (m_selectOtherPress) return;  // an Alt+press drags nothing
   if (m_trackpadMode != TrackpadMode::None && e->buttons() == Qt::NoButton) finishTrackpadScroll();
   if (m_measureAnchorPress) return;

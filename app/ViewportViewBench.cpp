@@ -518,8 +518,15 @@ bool Viewport::benchNavigation(const QString& prefix) {
 
   // (1) Zoom window.
   const ViewState start = viewState();
+  QString status;
+  const auto said = connect(this, &Viewport::hoverChanged, this, [&status](const QString& text) { status = text; });
   startZoomWindow();
-  require(m_zoomWindow && cursor().shape() == Qt::CrossCursor, "the zoom window waits for a rectangle, cross cursor");
+  const QString prompt = status;
+  mouse(QEvent::MouseMove, centre, Qt::NoButton, Qt::NoButton);  // across the boxes
+  mouse(QEvent::MouseMove, centre + QPointF(6, 4), Qt::NoButton, Qt::NoButton);
+  disconnect(said);
+  require(m_zoomWindow && cursor().shape() == Qt::CrossCursor && !prompt.isEmpty() && status == prompt && !m_ctx->HasDetected(),
+          "the zoom window waits for a rectangle, cross cursor; its prompt stays while the pointer crosses a body, nothing hovered: " + status);
   const QPointF a(width() * 0.40, height() * 0.38), b(width() * 0.60, height() * 0.52), middle = (a + b) / 2;
   Standard_Real px = 0, py = 0, pz = 0;
   m_view->Convert(devicePos(middle).x(), devicePos(middle).y(), px, py, pz);  // the point under the rectangle's centre
@@ -667,6 +674,16 @@ OPAD_BENCH(OPAD_BENCH_NAVIGATE, navigate) {
     QKeyEvent escape(QEvent::ShortcutOverride, Qt::Key_Escape, Qt::NoModifier);
     QCoreApplication::sendEvent(w.m_viewport, &escape);
     require(started && !v->zoomWindowActive() && !zoom->isChecked(), "Zoom window (Z) starts the mode, its button pressed until Esc");
+    zoom->trigger();
+    QKeyEvent inPanel(QEvent::ShortcutOverride, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(w.m_toolPanel, &inPanel);  // a window of its own, owned by the main window
+    require(!v->zoomWindowActive() && inPanel.isAccepted(), "Esc typed in a tool panel leaves it too");
+    // The animation and adaptive quality switches are not presets: in the View menu, not among them.
+    QMenu* presets = w.m_viewMenu ? w.m_viewMenu->findChild<QMenu*>("navigation") : nullptr;
+    const QList<QAction*> viewItems = w.m_viewMenu ? w.m_viewMenu->actions() : QList<QAction*>();
+    require(presets && viewItems.contains(w.action("view.animate")) && viewItems.contains(w.action("view.adaptive")) &&
+                !presets->actions().contains(w.action("view.animate")) && !presets->actions().contains(w.action("view.adaptive")),
+            "Animate view changes and Lower quality while navigating sit in the View menu, not among the navigation presets");
     // A middle double click: Fit all.
     v->fitAll();
     const opad::json fitted = v->cameraJson();

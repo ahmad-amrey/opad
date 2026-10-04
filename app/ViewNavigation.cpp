@@ -84,9 +84,12 @@ class ViewNavigation : public AreaController {
     after("view.rollright", {"view.twist", "view.untwist"});
     if (auto* nav = view->findChild<QMenu*>("navigation")) {
       nav->addAction(m_cad2d);
-      nav->addSeparator();
-      nav->addAction(m_animate);
-      nav->addAction(m_adaptive);
+      // Not presets: the two switches follow the presets' submenu in the View menu itself.
+      const QList<QAction*> actions = view->actions();
+      const qsizetype at = actions.indexOf(nav->menuAction());
+      QAction* before = at >= 0 && at + 1 < actions.size() ? actions[at + 1] : nullptr;
+      view->insertAction(before, m_animate);
+      view->insertAction(before, m_adaptive);
     }
   }
 
