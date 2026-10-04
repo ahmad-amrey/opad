@@ -1219,7 +1219,9 @@ json datum_dimensions(const Document& doc, const Scene& scene, const json& args)
     if (!t || t->kind != "datum" || t->view != viewId || !t->error.empty()) continue;
     const std::string letter = t->def.value("letter", "");
     if (!wanted.empty() && std::find(wanted.begin(), wanted.end(), letter) == wanted.end()) continue;
-    const json ref = t->def["refs"][0];
+    const json refs = t->def.value("refs", json::array());  // a datum without one (another build's, by hand) is left out
+    if (!refs.is_array() || refs.empty()) continue;
+    const json ref = refs[0];
     Pick k;
     try {
       k = pick_of(R, ref);

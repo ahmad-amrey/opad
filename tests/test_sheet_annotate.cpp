@@ -370,6 +370,10 @@ TEST(datums_frames_surfaces_and_sets) {
   // Re-attached: the baseline set measures from the bottom edge instead, upright; its values follow.
   const json moved = run(p.doc, "sheet_edit", {{"target", base["id"]}, {"set", {{"refs", {bottom, c20, c0}}, {"axis", "vertical"}}}});
   CHECK_EQ(moved["result"]["values"], json({20, 20}));
+  // A datum without references (another build's, written by hand) is drawn dangling and left out of datum dimensions.
+  p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", p.top}, {"kind", "datum"}, {"letter", "C"}});
+  p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", p.top}, {"kind", "datum"}, {"letter", "D"}, {"refs", json::array()}});
+  CHECK_EQ(datum_dimensions(p.doc, resolve(p.doc), {{"sheet", p.sheet}, {"view", p.top}})["ops"].size(), 2u);
 }
 
 // The smart dimension's readings: a line gives horizontal, vertical and aligned; a circle its diameter; two lines that
