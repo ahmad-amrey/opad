@@ -31,6 +31,7 @@
 #include "check.hpp"
 #include "opad/assets.hpp"
 #include "opad/checks.hpp"
+#include "opad/commands.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_reference.hpp"
@@ -456,6 +457,52 @@ TEST(sync_affects_the_design) {
   const json gone = asset_sync_affects(d, import_id, plan_asset_sync(d, import_id));
   CHECK(gone["errors"] == 1 && gone["sketches"][0].value("error", "").find("KiCad part is no longer on the board") != std::string::npos);
   CHECK(asset_sync_affects(d, import_id, design::Plan{})["sketches"].empty());
+}
+
+// UI-134 for agents and the CLI: sketch_tool's project puts a linked board's outline and mounting holes into a sketch by node,
+// following a sync (the hole moves with it), or a part as plain curves when linked is false.
+TEST(agents_project_a_board) {
+  Files files;
+  configure_kernel_logging(false);
+  const auto dir = files.dir / "agent";
+  const auto board = dir / "board.kicad_pcb";
+  step_box(dir / "conn.step", -2, -1, 0, 4, 2, 3);
+  auto text = [](const std::string& h1) {
+    return "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\"))\n" +
+           footprint("MountingHole:MountingHole_3.2mm", "H1", h1, "    (pad \"\" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2))\n") +
+           footprint("Conn:USB", "J1", "10 15", model("${KIPRJMOD}/conn.step")) + ")\n";
+  };
+  write(board, text("45 5"));
+  Document d = Document::create();
+  d.save_as(dir / "enclosure.opad");
+  link_file(d, board);
+  std::string import_id;
+  for (const auto& o : d.ops)
+    if (o.type == "import") import_id = o.id;
+  const std::string sketch = design::apply_ops(d, {design::make_sketch_op("Case", {{"base", "xy"}}, design::Sketch{}.to_json())})["ids"][0].get<std::string>();
+  Scene s = resolve(d);
+  for (const auto& [what, node] : std::vector<std::pair<std::string, std::string>>{{"outline", named(s, "Outline")->id}, {"holes", named(s, "Mounting holes")->id}})
+    commands::run("sketch_tool", {{"target", sketch}, {"tool", "project"}, {"inputs", {{"source", {{"asset", import_id}, {"kicad", what}, {"node", node}}}}}}, &d);
+  commands::run("sketch_tool", {{"target", sketch}, {"tool", "project"}, {"inputs", {{"source", {{"asset", import_id}, {"kicad", "part"}, {"node", named(s, "J1 USB")->id}}}, {"linked", false}}}}, &d);
+  auto circle = [&](int& linked, int& plain) {
+    const Scene sc = resolve(d);
+    const design::Sketch g = design::Sketch::from_json(sc.sketch(sketch)->geometry);
+    linked = plain = 0;
+    std::array<double, 2> at{};
+    for (const auto& e : g.entities) {
+      (e.source.is_null() ? plain : linked) += 1;
+      if (e.type == design::SkEntity::Type::Circle) at = {g.point(e.p[0])->x, g.point(e.p[0])->y};
+    }
+    return at;
+  };
+  int linked = 0, plain = 0;
+  std::array<double, 2> h1 = circle(linked, plain);
+  CHECK(linked == 5 && plain == 4 && about(h1[0], 20) && about(h1[1], 10));
+  write(board, text("40 10"));
+  design::commit(d, plan_asset_sync(d, import_id));
+  h1 = circle(linked, plain);
+  CHECK(linked == 5 && plain == 4 && about(h1[0], 15) && about(h1[1], 5) && resolve(d).sketch(sketch)->error.empty());
+  CHECK_THROWS(commands::run("sketch_tool", {{"target", sketch}, {"tool", "project"}, {"inputs", json::object()}}, &d));
 }
 
 // UI-134: a board's clearance to its enclosure counts only pairs of a board part and an enclosure part (the connector sits on

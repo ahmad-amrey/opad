@@ -80,8 +80,8 @@ int main(){try {
   const size_t live=agent::live_tools().dump().size();
   size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
-  CHECK(live<105000);
-  CHECK(headless<52500);  // 50000 until the KiCad commands (kicad_models, kicad_sync_preview), 50500 until linked assets (the asset command, kept out of the live list too, and import's link), 51200 until the image canvas (the canvas command, kept out of the live list too)
+  CHECK(live<105100);  // 105000 until sketch_tool's project (geometry into a sketch, a KiCad board's by node: UI-134)
+  CHECK(headless<52700);  // 50000 until the KiCad commands (kicad_models, kicad_sync_preview), 50500 until linked assets (the asset command, kept out of the live list too, and import's link), 51200 until the image canvas (the canvas command, kept out of the live list too), 52500 until sketch_tool's project
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

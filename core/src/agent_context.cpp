@@ -6,6 +6,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
+#include "opad/design/sketch_reference.hpp"
 #include <BRepCheck_Analyzer.hxx>
 #include <TopExp_Explorer.hxx>
 #include <algorithm>
@@ -234,8 +235,9 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   editInputs["properties"]["round"]={{"type","boolean"},{"default",true}};
   editInputs["properties"]["boundary"]={{"type","integer"},{"minimum",1}};
   editInputs["properties"]["at"]={{"type","array"},{"items",{{"type","number"}}},{"minItems",2},{"maxItems",2}};
-  add({"sketch_tool","Modify sketch geometry using the same offset, transform, repair and chain algorithms as the desktop. Coordinates are local mm; angle inputs accept degree expressions.",
-    {{"doc",{{"type","string"}}},{"target",{{"type","string"}}},{"tool",{{"type","string"},{"enum",{"offset","move","copy","rotate","scale","mirror","split","extend","heal","break_intersections","chamfer","delete"}}}},
+  editInputs["properties"]["source"]={{"type","object"}};editInputs["properties"]["linked"]={{"type","boolean"},{"default",true}};
+  add({"sketch_tool","Modify sketch geometry using the same offset, transform, repair and chain algorithms as the desktop. Coordinates are local mm; angle inputs accept degree expressions. project: inputs.source ({asset,kicad,node} of a KiCad board, a reference, {sketch}) as linked curves.",
+    {{"doc",{{"type","string"}}},{"target",{{"type","string"}}},{"tool",{{"type","string"},{"enum",{"offset","move","copy","rotate","scale","mirror","split","extend","heal","break_intersections","chamfer","delete","project"}}}},
      {"entities",{{"type","array"},{"items",{{"type","integer"},{"minimum",1}}},{"maxItems",10000}}},{"chain",{{"type","boolean"},{"default",false}}},{"inputs",editInputs},{"by",{{"type","string"}}}},true},
     [](Document* doc,const json& a){
       if(!doc)throw Error("Pass a document or bind a live session");
@@ -257,6 +259,10 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
       else if(tool=="break_intersections")design::break_intersections(sk,ids);
       else if(tool=="chamfer")design::chamfer_corner(sk,single(),length("first",1),length("second",1));
       else if(tool=="delete")for(int id:ids)sk.remove(id);
+      else if(tool=="project"){  // UI-134: a board's outline, holes or parts by node, kept by a sync, as the desktop projects them
+        const auto source=inputs.value("source",json());if(!source.is_object())throw Error("project: inputs.source names the geometry to project");
+        design::append_reference(sk,design::derive_sketch(*doc,scene,item->frame,source,"project"),source,"project",inputs.value("linked",true));
+      }
       else throw Error("Unsupported sketch tool: "+tool);
       sk.validate();return design::apply_ops(*doc,{design::make_edit_op(target,{{"geometry_delta",design::sketch_delta(item->geometry,sk.to_json())}})},a.value("by",""));
     });
