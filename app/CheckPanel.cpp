@@ -179,7 +179,7 @@ void CheckPanel::setResult(const opad::json& r) {
     const QString who = name(body, "name");
     auto add = [&](const QString& text, const opad::json& faces, const char* kind) {
       m_list->addItem(text);
-      m_findings.push_back({{"body", body.value("id", "")}, {"faces", faces}, {"kind", kind}});
+      m_findings.push_back({{"body", body.value("id", "")}, {"faces", faces}, {"kind", kind}, {"mesh", body.value("mesh", false)}});
       ++total;
     };
     // A mesh (STL...) has no faces to name: its findings are regions of triangles.

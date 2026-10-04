@@ -356,29 +356,6 @@ void MainWindow::runBench() {
     });
     return;
   }
-  // OPAD_BENCH_CHECK=interference|print (TODO 10 B13, B17): run the check through its panel, click the first finding,
-  // grab the panel (OPAD_BENCH_UISHOT: <shot>.check.png), log PASS when there are findings and the click showed them.
-  if (const QString kind = qEnvironmentVariable("OPAD_BENCH_CHECK"); !kind.isEmpty()) {
-    startCheck(kind == "print");
-    auto ticks = std::make_shared<int>(0);
-    auto* timer = new QTimer(this);
-    timer->setInterval(100);
-    connect(timer, &QTimer::timeout, this, [this, kind, ticks, timer] {
-      if (++*ticks > 300) { timer->stop(); trace::log("bench: check timed out FAIL"); QCoreApplication::exit(2); return; }
-      if (m_checkJob) return;
-      timer->stop();
-      const int findings = m_checks->findingCount();
-      if (findings > 0) m_checks->activate(0);
-      QTimer::singleShot(2500, this, [this, kind, findings] {
-        if (const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !shot.isEmpty()) m_toolPanel->grab().save(shot + ".check.png");
-        const bool shown = !m_viewport->selection().empty();
-        trace::log(QStringLiteral("bench: %1 check, %2 findings, finding shown %3 %4").arg(kind).arg(findings).arg(shown).arg(findings > 0 && shown ? "PASS" : "FAIL"));
-        QCoreApplication::exit(findings > 0 && shown ? 0 : 2);
-      });
-    });
-    timer->start();
-    return;
-  }
   // OPAD_BENCH_DESIGN=<png>: sketch + extrude through the design controller, dump the frame, quit.
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_DESIGN"); !shot.isEmpty()) {
     setWorkspace("design");

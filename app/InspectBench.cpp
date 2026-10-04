@@ -11,12 +11,15 @@
 #include <vector>
 
 #include "BenchRegistry.hpp"
+#include "CheckPanel.hpp"
 #include "Drawing2DBench.hpp"
 #include "GuidedTool.hpp"
 #include "I18n.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "PanelFooter.hpp"
+#include "Theme.hpp"
+#include "ToolPanel.hpp"
 #include "Viewport.hpp"
 
 OPAD_BENCH(OPAD_BENCH_INSPECT, inspect) {
@@ -93,5 +96,69 @@ OPAD_BENCH(OPAD_BENCH_INSPECT, inspect) {
     w.cancelTool();
   });
   bench2d::Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
+  return true;
+}
+
+// OPAD_BENCH_CHECK=interference|print (TODO 10 B13, B17; help audit P8): the check runs through its panel as it opens. Print:
+// the findings are coloured on the model at once (overhangs in the warning amber, thin walls in the error red, in the Topmost
+// layer), a clicked finding is selected in the selection's blue and taken out of the colours. Interference: nothing is
+// drawn until a row is clicked, then the pair is selected and their overlap shown in the error red over them (TopOSD).
+// Closing the panel takes it all away. OPAD_BENCH_UISHOT: <shot>.check.png (the panel), <shot>.view.png (after the check),
+// <shot>.finding.png (after the click).
+OPAD_BENCH(OPAD_BENCH_CHECK, check) {
+  const bool print = value == "print";
+  auto all = std::make_shared<bool>(true);
+  auto require = [all, value](bool ok, const QString& what) {
+    trace::log(QStringLiteral("bench: %1 check: %2 %3").arg(value, what, ok ? "PASS" : "FAIL"));
+    *all = *all && ok;
+  };
+  const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT");
+  Viewport* v = w.m_viewport;
+  // A colour as the overlays report it (sRGB) against a theme token.
+  auto sameColour = [](const opad::json& c, const QColor& q) {
+    return c.is_array() && c.size() == 3 && std::abs(c[0].get<double>() - q.redF()) < 0.02 && std::abs(c[1].get<double>() - q.greenF()) < 0.02 &&
+           std::abs(c[2].get<double>() - q.blueF()) < 0.02;
+  };
+  auto overlays = [v] { return v->benchCheckOverlays(); };
+  w.startCheck(print);
+  auto before = std::make_shared<opad::json>();
+  bench2d::pollUntil(&w, [&w, overlays] { return !w.m_checkJob && !overlays().value("tinting", false); }, 30000, [=, &w](bool checked) {
+    const int findings = w.m_checks->findingCount();
+    require(checked && findings > 0, QString("the check ran as its panel opened: %1 findings").arg(findings));
+    *before = overlays();
+    const int overhangs = before->value("overhang_triangles", 0), thin = before->value("thin_triangles", 0);
+    if (print)
+      require(overhangs + thin > 0 && !before->value("overlap", true) &&
+                  (!overhangs || (sameColour(before->value("overhang_colour", opad::json()), theme::current().warning) && before->value("overhang_layer", 0) == int(Graphic3d_ZLayerId_Topmost))) &&
+                  (!thin || (sameColour(before->value("thin_colour", opad::json()), theme::current().error) && before->value("thin_layer", 0) == int(Graphic3d_ZLayerId_Topmost))),
+              "the findings are coloured on the model at once, overhangs in the warning amber and thin walls in the error red, on top: " + QString::fromStdString(before->dump()));
+    else
+      require(!before->value("overlap", true) && before->value("overhang_triangles", 1) == 0, "nothing is drawn before a pair is clicked");
+    if (!shot.isEmpty()) v->grabImage().save(shot + ".view.png");
+    if (findings > 0) w.m_checks->activate(0);
+    bench2d::pollUntil(&w, [=, &w] {
+      const opad::json now = overlays();
+      return !v->selection().empty() && !w.m_jobs->busy() && !now.value("tinting", false) && (print || now.value("overlap", false));
+    }, 20000, [=, &w](bool shown) {
+      const opad::json now = overlays();
+      if (print)
+        require(shown && now.value("overhang_triangles", 0) + now.value("thin_triangles", 0) < overhangs + thin,
+                QString("a clicked finding is selected (%1 picks) and leaves the colours to the others: %2 of %3 triangles coloured")
+                    .arg(v->selection().size()).arg(now.value("overhang_triangles", 0) + now.value("thin_triangles", 0)).arg(overhangs + thin));
+      else
+        require(shown && v->selection().size() == 2 && sameColour(now.value("overlap_colour", opad::json()), theme::current().error) &&
+                    now.value("overlap_layer", 0) == int(Graphic3d_ZLayerId_TopOSD),
+                "a clicked pair is selected and their overlap shown in the error red over them: " + QString::fromStdString(now.dump()));
+      if (!shot.isEmpty()) {
+        v->grabImage().save(shot + ".finding.png");
+        w.m_toolPanel->grab().save(shot + ".check.png");
+      }
+      w.m_toolPanel->hide();
+      const opad::json after = overlays();
+      require(after.value("overhang_triangles", 1) == 0 && after.value("thin_triangles", 1) == 0 && !after.value("overlap", true),
+              "closing the panel takes the colours and the overlap away");
+      QCoreApplication::exit(*all ? 0 : 2);
+    });
+  });
   return true;
 }

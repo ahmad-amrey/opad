@@ -448,6 +448,20 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // there are many), whole bodies take the look compositor's candidate layer. Empty: nothing shown.
   void showCandidateRefs(const std::vector<opad::Ref>& refs);
   size_t candidateRefsShown() const { return m_candidateShown; }  // faces and edges drawn now (benches)
+  // The design checks' findings on the model (ViewportChecks.cpp, help audit P8), until replaced or cleared: the print check's
+  // faces tinted in the warning amber (overhangs) and the error red (thin walls), one object per colour in the Topmost layer
+  // copied from the meshes the bodies are drawn with (a sliced job, a body a step); the volume an interfering pair shares in
+  // the error red over everything (the pair is selected: Topmost). Never pickable, never framed by Fit.
+  struct CheckTint {
+    std::string body;
+    std::vector<int> faces;  // face ordinals, or a mesh body's triangle ordinals (triangles: as the print check numbers them)
+    bool error = false;      // a thin wall or a narrow face (red), else an overhang (amber)
+    bool triangles = false;
+  };
+  void showCheckTints(const std::vector<CheckTint>& tints);
+  void showOverlap(const TopoDS_Shape& shape, std::shared_ptr<const BodyPrs> prs);  // a null shape: none
+  void clearCheckOverlays();
+  opad::json benchCheckOverlays() const;  // the triangles of each tint, their colours and layers, the overlap's
   // Feature preview: these shapes (world coordinates, already meshed by the worker) are drawn in place of the
   // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
   void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
@@ -949,6 +963,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer
   Handle(SubHighlight) m_candidateHl;             // showCandidateRefs' faces and edges
   Job* m_candidateJob = nullptr;
+  Handle(SubHighlight) m_checkTints[2];           // showCheckTints: overhangs, thin walls
+  std::array<size_t, 2> m_tintTriangles{0, 0};
+  Job* m_tintJob = nullptr;
+  Handle(AIS_Shape) m_overlap;                    // showOverlap
   size_t m_candidateShown = 0;
   std::vector<opad::Ref> m_candidateRefs;
   std::map<const AIS_InteractiveObject*,Handle(SubHighlight)> m_bodyGlows;

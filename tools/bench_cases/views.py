@@ -26,7 +26,14 @@ def two_blocks(root, document):
                     ("feature", "--kind", "box", "--inputs", '{"x":"40 mm","y":"30 mm","length":"10 mm","width":"10 mm","height":"20 mm"}'))
 
 
-GRID = "[view]\ngrid=true\n"
+def thin_fin(root, document):
+    """A 20 x 20 x 5 mm base with a 0.5 mm fin standing on it, 10 mm tall: a wall thinner than the print check's 0.8 mm."""
+    return document("thin-fin", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"5 mm"}'),
+                    ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,5],"normal":[0,0,1]},"length":"20 mm","width":"0.5 mm",'
+                     '"height":"10 mm","operation":"join"}'))
+
+
+GRID ="[view]\ngrid=true\n"
 
 CASES = [
     # P7: the seven standard views animate to their axes; in 2D mode Isometric is off and a standard view takes the grid to
@@ -38,4 +45,7 @@ CASES = [
     # P8 on two blocks apart: Distance from the Body filter picks faces (bodies selected first are measured); Bounding box
     # grows with each click and Back (Esc) takes the last pick back.
     ("inspect", two_blocks, {"OPAD_BENCH_INSPECT": "{prefix}"}),
+    # P8: the print check's thin walls in the error red on the model (the built-in print-check case: overhangs in amber,
+    # interference: the overlap in red). <prefix>.view.png, <prefix>.finding.png.
+    ("print-check-thin", thin_fin, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
 ]

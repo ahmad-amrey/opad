@@ -620,6 +620,7 @@ void MainWindow::startCheck(bool print) {
   m_design->escape();
   if (!m_tool.id.isEmpty()) cancelTool();
   m_checkSelect = currentNodeIds();  // the selection when the check starts; clicking findings changes it later
+  m_viewport->clearCheckOverlays();
   m_checks->begin(print ? CheckPanel::Mode::Print : CheckPanel::Mode::Interference);
   m_toolStack->setCurrentWidget(m_checks);
   m_toolPanel->setHeader(print ? "printcheck" : "interference", print ? tr("Print check") : tr("Interference"));
@@ -637,18 +638,36 @@ void MainWindow::runCheck() {
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   auto result = std::make_shared<opad::json>();
   m_checks->setRunning(tr("Checking…"));
+  m_viewport->clearCheckOverlays();  // the last run's colours go with its findings
   m_checkJob = m_jobs->async(print ? tr("Print check") : tr("Interference"), [document, scene, args, print, result](Progress p) {
     const auto cancelled = [p] { return p.cancelled(); };
     *result = print ? opad::check_print(*document, *scene, args, cancelled) : opad::check_interference(*document, *scene, args, cancelled);
-  }, [this, result](bool ok, const QString& error) {
+  }, [this, result, print](bool ok, const QString& error) {
     m_checkJob = nullptr;
     if (!ok) return m_checks->setFailed(error == "cancelled" ? tr("Cancelled.") : i18n::t(error));
     m_checks->setResult(*result);
+    if (print) showPrintTints(opad::json());  // the findings on the model, as the guide shows them
   });
 }
 
+// Overhangs amber and thin walls red on the model (help audit P8), until the panel closes or the check runs again.
+void MainWindow::showPrintTints(const opad::json& except) {
+  std::vector<Viewport::CheckTint> tints;
+  for (const opad::json& f : m_checks->findings()) {
+    const std::string kind = f.value("kind", "");
+    if (f == except || (kind != "overhang" && kind != "thin_wall" && kind != "thin_feature")) continue;
+    Viewport::CheckTint t;
+    t.body = f.value("body", "");
+    for (const auto& i : f.value("faces", opad::json::array())) t.faces.push_back(i.get<int>());
+    t.error = kind != "overhang";
+    t.triangles = f.value("mesh", false);
+    tints.push_back(std::move(t));
+  }
+  m_viewport->showCheckTints(tints);
+}
+
 void MainWindow::showFinding(const opad::json& f) {
-  m_viewport->clearPreviewBodies();
+  m_viewport->showOverlap(TopoDS_Shape(), nullptr);
   if (f.contains("a")) {  // a pair of bodies
     const std::string a = f.value("a", ""), b = f.value("b", "");
     m_viewport->selectNodes({a, b});
@@ -656,7 +675,7 @@ void MainWindow::showFinding(const opad::json& f) {
       m_viewport->showMeasurement({{"kind", "distance"}, {"value", f.value("distance_mm", 0.0)}, {"unit", "mm"}, {"point_a", f["point_a"]}, {"point_b", f["point_b"]}});
       return;
     }
-    // The overlap itself, shown as a preview body: computed again on a worker (the check keeps its volume and box).
+    // The overlap itself, in red over the pair (help audit P8): computed again on a worker (the check keeps its volume and box).
     if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
     auto document = std::make_shared<opad::Document>(m_doc->doc);
     auto scene = std::make_shared<opad::Scene>(m_doc->scene);
@@ -672,11 +691,12 @@ void MainWindow::showFinding(const opad::json& f) {
       *prs = BodyPrs::build(*shape, box, true);
     }, [this, shape, prs](bool ok, const QString&) {
       m_overlapJob = nullptr;
-      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks) m_viewport->setPreviewBodies(std::vector<Viewport::PreviewPart>{{std::string(), *shape, *prs}}, {});
+      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks && m_toolPanel->isVisible()) m_viewport->showOverlap(*shape, *prs);
     });
     return;
   }
-  // A print finding: the body's faces, highlighted as a face selection.
+  // A print finding: the body's faces, highlighted as a face selection (in the selection's blue: the others keep their colour).
+  showPrintTints(f);
   const std::string body = f.value("body", "");
   std::vector<opad::Ref> refs;
   for (const auto& i : f.value("faces", opad::json::array())) {
@@ -695,5 +715,5 @@ void MainWindow::showFinding(const opad::json& f) {
 void MainWindow::endCheck() {
   if (Job* old = std::exchange(m_checkJob, nullptr)) old->cancel();
   if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
-  m_viewport->clearPreviewBodies();
+  m_viewport->clearCheckOverlays();
 }

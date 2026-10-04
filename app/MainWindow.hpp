@@ -305,6 +305,7 @@ class MainWindow : public QMainWindow {
   void startCheck(bool print);
   void runCheck();
   void showFinding(const opad::json& finding);
+  void showPrintTints(const opad::json& except);  // the print check's findings coloured on the model, but `except` (the one shown)
   void endCheck();
   LoadShade* m_loadShade = nullptr;
   KeyGuard* m_keyGuard = nullptr;

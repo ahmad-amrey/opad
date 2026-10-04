@@ -495,7 +495,7 @@
    "id": "inspect.interference",
    "title": "Interference",
    "summary": "Finds bodies that overlap or nearly touch and lists each pair.",
-   "details": "Checks the selected bodies, or all solids when nothing is selected. Click a row to highlight that overlap in the view.",
+   "details": "It runs as the panel opens, on the selected bodies or on all solids when nothing is selected; a Clearance above 0 also lists pairs closer than it. Click a row: the pair is selected and their overlap shown in red over them.",
    "keywords": ["collision", "clash", "overlap", "clearance"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -503,7 +503,7 @@
    "id": "inspect.printcheck",
    "title": "Print check",
    "summary": "Checks a part for 3D printing: overhangs, build-plate contact and thin walls.",
-   "details": "Works on solids and on meshes such as STL and 3MF. Each finding is a region; click it to highlight it on the part.",
+   "details": "Works on solids and on meshes such as STL and 3MF. It runs as the panel opens and lists each finding; on the part overhangs turn amber and thin walls red until the panel closes, and a clicked finding is selected.",
    "keywords": ["3d print", "overhang", "support", "wall thickness", "stl"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
