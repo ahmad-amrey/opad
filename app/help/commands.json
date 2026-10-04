@@ -1234,7 +1234,7 @@
    "id": "design.showOrigin",
    "title": "Origin planes and axes",
    "summary": "Shows the origin's XY, XZ and YZ planes and its axes in Design, also once there is a model.",
-   "details": "An empty document shows them anyway, with the grid. A plane picked in the view is where New sketch draws, and the choice to show them is kept for the next start.",
+   "details": "An empty document shows them anyway, with the grid, and there a plane picked in the view is where New sketch draws. With a model they are only shown, so clicks reach the faces; New sketch offers them to pick. The choice to show them is kept for the next start.",
    "keywords": ["origin", "XY plane", "datum planes", "show construction", "axes"],
    "requires": "Open an OPAD document first."
   },

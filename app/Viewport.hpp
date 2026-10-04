@@ -432,7 +432,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // The origin guide (UI-51, an empty design document): the origin's axes (X red, Y green, Z blue, labelled, never
   // picked), its XY, XZ and YZ planes as candidates ({"base":"xy"}, ...) whenever nothing else shows
   // candidates, and the grid whatever its setting says.
-  // grid: the grid too, whatever its setting (an empty document's ground); without, the axes and planes alone.
+  // grid: the grid too, whatever its setting (an empty document's ground); without (a model, Origin planes and axes), the
+  // axes and planes alone, the planes shown but never picked: a face behind or on one would lose its clicks to it (New
+  // sketch's plane step offers them as its own candidates).
   void setOriginGuide(bool on, bool grid = true);
   bool originGuide() const { return m_originGuide; }
   std::string hoveredCandidate() const;

@@ -201,13 +201,18 @@ void Viewport::showOriginPlanes() {
     planes.push_back({opad::json{{"base", base}}.dump(), BRepBuilderAPI_MakeFace(opad::design::frame_plane(opad::design::base_frame(base)), -size, size, -size, size).Face(), false});
   showCandidates(planes);
   m_originPlanes = true;
+  if (!m_originGrid)  // over a model: shown only (setOriginGuide)
+    for (const auto& c : m_candidates) m_ctx->Deactivate(c.second);
 }
 
 void Viewport::setOriginGuide(bool on, bool grid) {
   if (!m_initialised) m_originGuide = on, m_originGrid = grid;  // shown by initViewer
   if (!m_initialised) return;
   if (on == m_originGuide) {  // the same guide, with the grid or without (a body came or went while it is asked for)
-    if (on && std::exchange(m_originGrid, grid) != grid) showGrid();
+    if (on && std::exchange(m_originGrid, grid) != grid) {
+      showGrid();
+      if (m_originPlanes) showOriginPlanes();  // pickable in an empty document only
+    }
     return;
   }
   m_originGuide = on;

@@ -1,5 +1,6 @@
 // The origin of an empty design document and the click handlers that measure on a worker (UI-51); cases in
 // tools/bench_cases/viewer.py.
+#include <QAction>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -41,7 +42,8 @@ QString candidateAt(Viewport* v, const opad::Vec3& world) {
 
 // OPAD_BENCH_DESIGNORIGIN=<prefix> on an empty document, grid setting off. The Design workspace shows the origin's axes, its
 // three planes (picked where they are) and the grid; Review shows none. The XY plane picked first and New sketch: the sketch
-// is on XY at once, the origin goes while it is open and comes back when it closes empty; a body ends it. Then on that box:
+// is on XY at once, the origin goes while it is open and comes back when it closes empty; a body ends it, and Origin planes
+// and axes brings the planes back over it shown only, never picked. Then on that box:
 // Properties on a face opens at once and fills its area from a worker; Pick face for the section is inspected on a worker
 // too. <prefix>.origin.png.
 OPAD_BENCH(OPAD_BENCH_DESIGNORIGIN, designorigin) {
@@ -87,6 +89,15 @@ OPAD_BENCH(OPAD_BENCH_DESIGNORIGIN, designorigin) {
   w.m_doc->run("import_brep", {{"brep", text.str()}, {"name", "Block"}});
   until([v] { return v->displayedCount() == 1 && v->remainingBodies() == 0; }, 20000);
   require(!v->originGuide() && v->benchGridBox().IsVoid() && candidateAt(v, {25, 25, 0}).isEmpty(), "a body ends it");
+  // Origin planes and axes keeps them with the model, shown only: a click there reaches what lies behind (a face on XY).
+  QAction* show = w.action("design.showOrigin");
+  show->trigger();
+  until([v] { return v->originGuide(); }, 5000);
+  const QString over = candidateAt(v, {25, 25, 0});  // (the grid box would count the axes: infinite structures too)
+  require(show->isChecked() && v->originGuide() && over.isEmpty(),
+          "Origin planes and axes with a model: the planes shown and never picked: " + (over.isEmpty() ? QString("nothing there") : over));
+  show->trigger();  // the setting as it was
+  until([v] { return !v->originGuide(); }, 5000);
 
   // Click handlers that walk the body run on a worker: Properties on a face, the section's Pick face.
   const std::string body = w.m_doc->scene.all_bodies().front();

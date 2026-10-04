@@ -2,7 +2,8 @@
 // its XY, XZ and YZ planes (pickable: a plane picked first is where New sketch draws) and the grid; they go once there is a
 // body or a sketch, while a sketch or a feature is edited, and in the other workspaces. Design > Construct > Origin planes
 // and axes (design.showOrigin, setting design/showOrigin) keeps the axes and planes in Design with a model too, without the
-// grid (View > Grid shows that).
+// grid (View > Grid shows that) and with the planes shown only, never picked over the model's faces (New sketch's plane
+// step offers them).
 #include <QAction>
 #include <QKeySequence>
 #include <QSettings>
