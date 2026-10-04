@@ -140,7 +140,7 @@ void MainWindow::buildRibbon() {
     return out;
   };
   RibbonLayout layout;
-  layout.addWorkspace("review", {tr("Review"), "eye", "Ctrl+1", tr("Look, measure, annotate. Nothing here changes geometry or structure."), tr("ops: annotation · measurement · section · view")});
+  layout.addWorkspace("review", {tr("Review"), "eye", "Ctrl+1", tr("Look, measure, annotate. Apart from Import, nothing here changes geometry or structure."), tr("ops: annotation · measurement · section · view")});
   layout.addWorkspace("design", {tr("Design"), "component", "Ctrl+2", tr("Model parts: sketches, features, parameters; arrange the assembly."), tr("ops: param · sketch · feature · edit · regen · import · reparent · appearance")});
   Workspace sketchWs{tr("Sketch"), "sketch", "", tr("Drawing a sketch. Finish sketch returns to Design."), tr("ops: sketch · edit")};
   sketchWs.contextual = true;

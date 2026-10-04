@@ -96,7 +96,7 @@
   {
    "id": "view.fit",
    "title": "Fit",
-   "summary": "Zooms to the selection, or to everything when nothing is selected.",
+   "summary": "Zooms to the selection; with nothing selected, to the active component or to everything.",
    "details": "The camera keeps its direction and only moves and zooms. While a sketch is open it fits the sketch.",
    "keywords": ["zoom", "frame", "zoom to selection", "zoom extents"],
    "requires": "Open or create a document first."
@@ -215,7 +215,7 @@
    "id": "view.2d",
    "title": "2D mode",
    "summary": "Locks the view to a plane for drawings: pan and zoom only.",
-   "details": "Orbiting is off and the grid lies in the viewed plane, following the view so it never ends. Opening a DXF, DWG or SVG turns it on by itself; the 2D mode chip or this command turns it off.",
+   "details": "Orbiting is off and the grid lies in the viewed plane, following the view so it never ends. Opening a DXF, DWG or SVG for viewing turns it on by itself; the 2D mode chip or this command turns it off.",
    "keywords": ["flat", "plan", "drawing", "2d view", "lock rotation"],
    "requires": "Open or create a document first."
   },
@@ -255,7 +255,7 @@
    "id": "view.grid",
    "title": "Grid",
    "summary": "Shows or hides the ground grid.",
-   "details": "The grid lies on the XY plane, or in the viewed plane in 2D mode. Its spacing follows the zoom unless you fix it in Grid settings.",
+   "details": "In 3D the grid is a patch under the model, spaced to the model's size; in 2D mode and in sketches it follows the view and its spacing follows the zoom. A fixed spacing set in Grid settings is used everywhere.",
    "keywords": ["floor", "ground", "lines"],
    "requires": "Open or create a document first."
   },
@@ -263,15 +263,15 @@
    "id": "view.gridSettings",
    "title": "Grid settings",
    "summary": "Sets the grid spacing, automatic or fixed, and its minimum extent.",
-   "details": "Automatic spacing adapts to the zoom; a fixed spacing is what grid snapping jumps to. The grid is turned on while you change it.",
+   "details": "Automatic spacing follows the zoom in sketches and 2D mode and the model's size in 3D; a fixed spacing is what grid snapping jumps to. The grid is turned on while you change it.",
    "keywords": ["spacing", "grid size", "step"],
    "requires": "Open or create a document first."
   },
   {
    "id": "select.through",
    "title": "Select through objects",
-   "summary": "Lets a click or a selection window also pick bodies hidden behind others.",
-   "details": "Off, only what you can see is picked. On, a window drag selects every body inside it, front or back.",
+   "summary": "Lets a selection window also pick what is completely hidden behind other bodies, and a click in the Edges or Vertices filter reach edges and points behind faces.",
+   "details": "Off, a window picks whatever shows inside it, even partly. On, a window drag selects every body inside it, front or back.",
    "keywords": ["x-ray", "behind", "hidden", "window select"],
    "requires": "Open or create a document first."
   },
@@ -295,7 +295,7 @@
    "id": "view.saveview",
    "title": "Save view",
    "summary": "Saves the current camera as a named view.",
-   "details": "Named views are stored in the document and listed under View > Named views. Pick one to return to that camera.",
+   "details": "Named views are stored in the document and listed under View > Named views. Pick one to return to that camera. A file open in viewer mode asks to become an OPAD document first.",
    "keywords": ["camera", "bookmark", "named view"],
    "requires": "Open or create a document first."
   },
@@ -310,21 +310,21 @@
    "id": "view.extensions",
    "title": "Extensions",
    "summary": "Draws dashed extensions of hovered edges; the cursor snaps onto them and to where two cross.",
-   "details": "Hover the end of an edge, then move along its direction to follow the dashed line. Works in sketches, in 2D drawings and while measuring.",
+   "details": "Rest on the end of a line, then move along its direction to follow the dashed line. Works in sketches and while measuring or picking points, drawings included.",
    "keywords": ["extension lines", "inference", "snap"]
   },
   {
    "id": "view.tracking",
    "title": "Tracking",
    "summary": "Shows alignment lines through points you hover, along X, Y and Z.",
-   "details": "Rest on a point to acquire it, then move away: a dashed line appears when the cursor lines up with it. Tap Shift to cycle the direction and hold it to lock.",
+   "details": "Rest on a point to acquire it, then move away: a dashed line appears when the cursor lines up with it. Hold Shift to lock onto the line; a tap keeps it locked until Esc. With several guides or snaps in reach, a tap shows the next.",
    "keywords": ["alignment", "object snap tracking", "guides"]
   },
   {
    "id": "view.gridSnap",
    "title": "Grid snapping",
    "summary": "Makes placed points jump to grid intersections.",
-   "details": "Applies to points you click in sketches and 2D mode. Set a fixed spacing in Grid settings for predictable steps.",
+   "details": "Applies to points you click in sketches, and when placing a drawing or a sketch's origin. Hold Alt to place a point off the grid. Set a fixed spacing in Grid settings for predictable steps.",
    "keywords": ["snap to grid", "step", "increment"]
   },
   {
@@ -389,7 +389,7 @@
    "id": "workspace.review",
    "title": "Review workspace",
    "summary": "Switches the ribbon to Review: look, measure, annotate.",
-   "details": "Nothing in Review changes geometry or structure. The document and its timeline stay the same; only the ribbon's tabs change.",
+   "details": "Review's tools look, measure and annotate; apart from Import they leave geometry and structure alone. The document and its timeline stay the same; only the ribbon's tabs change. Finish an open sketch first.",
    "keywords": ["viewer", "inspect", "measure"]
   },
   {
@@ -534,7 +534,7 @@
    "id": "select.similar",
    "title": "Select similar",
    "summary": "Selects every face or edge like the picked one: the same hole, fillet radius or direction; for a body picked whole, a rule.",
-   "details": "Pick a face or an edge of a solid, then Select similar: the matches are found on a worker and selected. For a body picked whole choose a rule: top or bottom perimeter, edges parallel to X, Y or Z, circular edges, upward planar faces. Useful to pick every hole edge at once for a fillet.",
+   "details": "Pick a face or an edge of a solid, then Select similar: the matches are found on a worker and selected at once; run it again for the next rule. On a body picked whole it starts with the top perimeter, then the bottom perimeter, edges along X, Y or Z, circular edges, upward faces, holes, fillets and chamfers. Useful to pick every hole at once for a fillet.",
    "keywords": ["similar", "select by geometry", "same radius", "all holes", "smart select"],
    "requires": "Pick a face or an edge of a solid, or a body, first; not available while a sketch is open."
   },

@@ -311,7 +311,7 @@
  "Design workspace": "مساحة عمل التصميم",
  "Review": "مراجعة",
  "Design": "تصميم",
- "Look, measure, annotate. Nothing here changes geometry or structure.": "عاين وقِس ودوّن الملاحظات. لا شيء هنا يغيّر الهندسة أو البنية.",
+ "Look, measure, annotate. Apart from Import, nothing here changes geometry or structure.": "عاين وقِس ودوّن الملاحظات. لا شيء هنا يغيّر الهندسة أو البنية باستثناء الاستيراد.",
  "ops: annotation · measurement · section · view": "العمليات: ملاحظة · قياس · مقطع · منظر",
  "Arrange the assembly: import, reparent, move, colour, rename.": "رتّب التجميع: استيراد، تغيير الأصل، نقل، تلوين، إعادة تسمية.",
  "ops: import · reparent · transform · appearance · rename · delete": "العمليات: استيراد · تغيير الأصل · تحويل · مظهر · إعادة تسمية · حذف",

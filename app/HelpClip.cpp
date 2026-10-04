@@ -121,7 +121,7 @@ const QStringList kColorProps{"color", "fill", "glow", "hatch", "tone", "edges",
 const QStringList kTokens{"bg", "bg2", "bg3", "bg4", "line", "fg", "fg2", "fg3", "vp", "sel", "selbg", "hov", "amber", "green", "red",
                           "mtop", "mleft", "mright", "medge", "cap", "onsel", "glow", "blue", "white", "black"};
 const QHash<QString, QStringList> kKinds{
-    {"cursor", {"arrow", "cross", "move"}},
+    {"cursor", {"arrow", "cross", "move", "wheel"}},
     {"glyph", {"horizontal", "vertical", "parallel", "perpendicular", "coincident", "tangent", "equal", "concentric", "fix", "midpoint", "symmetric", "collinear", "smooth"}},
     {"snap", {"endpoint", "midpoint", "center", "quadrant", "intersection", "tangent", "nearest", "perpendicular"}},
     {"dim", {"linear", "radial", "diameter", "angular"}},
@@ -1079,6 +1079,19 @@ void cursorGlyph(Ctx& c, const QString& kind, const QPointF& o) {
   p.setPen(QPen(Qt::black, 1.0 * u, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
   p.setBrush(Qt::white);
   p.drawPolygon(arrow);
+  if (kind == "wheel") {  // the pointer with a mouse whose wheel turns: zoom by scrolling, no button held
+    const QPointF m = o + QPointF(19, 6) * u;
+    const QColor fg = token(*c.tk, "fg"), sel = token(*c.tk, "sel");
+    p.setPen(QPen(fg, 1.2 * u));
+    p.setBrush(alpha(token(*c.tk, "vp"), 0.9));
+    p.drawRoundedRect(QRectF(m, QSizeF(10, 15) * u), 5 * u, 5 * u);
+    p.setPen(QPen(sel, 2 * u, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(m + QPointF(5, 3) * u, m + QPointF(5, 6.5) * u);
+    p.setPen(Qt::NoPen);
+    p.setBrush(sel);
+    arrowHead(p, m + QPointF(5, -3) * u, QPointF(0, -1), 3.2 * u, 2.4 * u);
+    arrowHead(p, m + QPointF(5, 18) * u, QPointF(0, 1), 3.2 * u, 2.4 * u);
+  }
 }
 
 // Value boxes beside the cursor: numbers formatted, {len} {dia} {ang} {w} {h} measured from `origin` to the cursor, the focused
