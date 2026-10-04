@@ -62,10 +62,11 @@ class SearchField : public QAbstractButton {
 };
 
 struct Workspace {
+  // Initialised positionally ({name, icon, key, description, ops}): new members go at the end.
   QString name, icon, key;   // key: its default shortcut, e.g. "Ctrl+1" (the command's when made by the window)
-  QString command;           // its command ("workspace.design"): the key shown is the one bound now; empty: key
   QString description, ops;  // dropdown copy: what it is for, and the op types it writes
   bool contextual = false;   // entered by the app (sketch mode), never offered in the switcher's list
+  QString command;           // its command ("workspace.design"): the key shown is the one bound now; empty: key
 };
 
 // The ribbon as data, before it is built (MainWindow::buildRibbon): the built-in workspaces and tabs, then what the
