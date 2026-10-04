@@ -110,6 +110,7 @@ void DocsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
     insertAfter(file, services().action("file.export"), services().action("file.exportBom"));
     insertAfter(file, services().action("file.exportBom"), services().action("file.documentProperties"));
     insertAfter(file, services().action("file.exportBom"), services().action("drawings.print"));  // a drawing's sheets (UI-86)
+    insertAfter(file, services().action("drawings.print"), services().action("drawings.publish"));  // and as one PDF (UI-104)
   }
   if (QMenu* inspect = menus.value("inspect")) {
     insertAfter(inspect, services().action("inspect.properties"), services().action("inspect.partProperties"));
@@ -287,7 +288,7 @@ void DocsArea::exportBom(std::vector<std::string> ids) {
   dialog->open();
 }
 
-void DocsArea::exportSheet(const std::string& id, const std::string& issue) {
+void DocsArea::exportSheet(const std::string& id, const std::string& issue, bool pdfOnly) {
   AppDocument* doc = services().document();
   QString stem;
   int sheets = 0;
@@ -302,7 +303,7 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue) {
   if (!issue.empty()) stem += tr(" rev %1 as issued").arg(QString::fromStdString(issue));
   for (const QChar c : QString("<>:\"/\\|?*")) stem.replace(c, '_');
   QSettings settings;
-  const auto types = sheetExportTypes(sheets > 1);
+  const auto types = sheetExportTypes(sheets > 1 || pdfOnly);
   QString last = settings.value("export/sheetFormat", "pdf").toString();
   if (std::none_of(types.begin(), types.end(), [&](const auto& t) { return t.first == last; })) last = "pdf";
   QString out = qEnvironmentVariable("OPAD_BENCH_EXPORT_OUT");  // benches: no file dialog

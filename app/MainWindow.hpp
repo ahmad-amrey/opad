@@ -91,7 +91,11 @@ class MainWindow : public QMainWindow {
   static const std::vector<SnapToggle>& snapToggles();
   void buildSnapCommands();  // their commands, before the ribbon (buildStatusBar adds their buttons)
   void buildRibbon();
-  void ribbonTable(RibbonLayout& layout);    // Review, Design and the Sketch tab: every command's slot (MainWindowRibbonTable.cpp)
+  // The View tabs' dropdowns: Named views ▾, Rendering ▾ and Panels ▾ as commands whose menu the ribbon drops down (from the
+  // palette or a key: at the pointer).
+  void buildRibbonMenus();
+  QAction* menuCommand(const CommandInfo& info, QMenu* menu);
+  void ribbonTable(RibbonLayout& layout);    // Review, Design and the Sketch tabs: every command's slot (MainWindowRibbonTable.cpp)
   void draftingTable(RibbonLayout& layout);  // Drafting, after the areas' workspaces
   // A command of Design started from a workspace that does not show it (E in Review, the palette) switches to Design first.
   bool switchesToDesign(const QString& id) const;

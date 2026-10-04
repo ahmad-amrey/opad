@@ -49,8 +49,12 @@ std::set<QString> registeredIds() {
   for (const auto& m : QRegularExpression(R"(\b(?:addAction|help)\("([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(main)) ids.insert(m.captured(1));
   const QRegularExpression info(R"(\.id\s*=\s*"([a-z]+\.[A-Za-z0-9_.]+)\")");
   for (const auto& m : info.globalMatch(main)) ids.insert(m.captured(1));
-  // An area's records: info.id = "..." or CommandInfo name{"...", ...}.
+  // An area's records: info.id = "..." or CommandInfo name{"...", ...} (the window's own too: Draw on drawing, the View
+  // tabs' dropdowns); the origin's switch (DesignOrigin.cpp) and the workspaces the window adds (Drafting).
   const QRegularExpression braced(R"(\bCommandInfo\s+\w+\s*\{\s*"([a-z]+\.[A-Za-z0-9_.]+)\")");
+  for (const auto& m : braced.globalMatch(main)) ids.insert(m.captured(1));
+  for (const auto& m : info.globalMatch(source("app/DesignOrigin.cpp"))) ids.insert(m.captured(1));
+  for (const auto& m : QRegularExpression(R"re(\baddWorkspace\("([a-z]+)")re").globalMatch(main)) ids.insert("workspace." + m.captured(1));
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*Area.cpp"}, QDir::Files, QDir::Name)) {
     const QString text = source("app/" + file);
     for (const auto& m : info.globalMatch(text)) ids.insert(m.captured(1));
@@ -96,7 +100,7 @@ TEST(every_registered_command_has_help) {
                             "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.length", "inspect.material", "inspect.partProperties", "timeline.designOnly",
                             "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.unsavedChanges",
                             "view.hidden", "view.hiddenEdges", "view.hideothers",
-                            "assembly.explodeFinish"};  // the Explode tab's Finish (w3-ribbon): its record comes with the help pass
+                            "sketch.showConstraints"};  // a CommandInfo record of the window, found since w3-ribbon
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
@@ -107,7 +111,8 @@ TEST(every_registered_command_has_help) {
 TEST(every_record_has_a_command) {
   help::load("en");
   const auto ids = registeredIds();
-  const QStringList ahead{"help.licenses", "help.aboutqt", "files.useOda", "view.cubeEdgesCorners"};
+  const QStringList ahead{"help.licenses", "help.aboutqt", "files.useOda", "view.cubeEdgesCorners",
+                          "drawings.explodedView", "drawings.publish"};  // the Drawings workspace's (DocsWorkspace.cpp): not looked for here
   QStringList stale;
   for (const CommandHelp& h : help::all()) if (!ids.count(h.id) && !ahead.contains(h.id)) stale << h.id;
   if (!stale.isEmpty()) throw check::Failure("help for no command: " + stale.join(", ").toStdString());
@@ -649,8 +654,10 @@ TEST(command_areas) {
   CHECK(help::group("sketch.c.horizontal") == "Sketch constraints" && help::group("sketch.dimension") == "Sketch constraints");
   CHECK(help::group("view.fit") == "View" && help::group("nav.fusion") == "View" && help::group("help.about") == "Tools and help");
   CHECK(help::group("files.useOda") == "File" && help::group("help.licenses") == "Tools and help");
+  CHECK(help::group("vcs.commit") == "File" && help::group("timeline.names") == "View" && help::group("drawing2d.layers") == "View" &&
+        help::group("assembly.explode") == "Design" && help::group("drawings.baseView.top") == "Drawings");
   QStringList areas = help::areas();
-  CHECK(areas.size() == 11 && areas.removeDuplicates() == 0);
+  CHECK(areas.size() == 12 && areas.removeDuplicates() == 0);
   for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");
 }
 

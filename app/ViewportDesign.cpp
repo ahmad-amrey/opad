@@ -203,10 +203,15 @@ void Viewport::showOriginPlanes() {
   m_originPlanes = true;
 }
 
-void Viewport::setOriginGuide(bool on) {
-  if (!m_initialised) m_originGuide = on;  // shown by initViewer
-  if (!m_initialised || on == m_originGuide) return;
+void Viewport::setOriginGuide(bool on, bool grid) {
+  if (!m_initialised) m_originGuide = on, m_originGrid = grid;  // shown by initViewer
+  if (!m_initialised) return;
+  if (on == m_originGuide) {  // the same guide, with the grid or without (a body came or went while it is asked for)
+    if (on && std::exchange(m_originGrid, grid) != grid) showGrid();
+    return;
+  }
   m_originGuide = on;
+  m_originGrid = grid;
   for (const auto& o : m_originAxes) m_ctx->Remove(o, Standard_False);
   m_originAxes.clear();
   if (on) {

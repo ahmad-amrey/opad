@@ -2,6 +2,7 @@
 #include "MainWindow.hpp"
 
 #include <QElapsedTimer>
+#include <QFile>
 #include <QStatusBar>
 
 #include <algorithm>
@@ -17,8 +18,9 @@
 // OPAD_BENCH_SHEET_EXPLODED=<prefix>: a plate, a post and a lid stacked, drawn front on an A3 sheet. Exploded view with
 // none saved says how to save one and places nothing; with "Exploded 1" saved (explode along Z), it follows the pointer
 // at the size the exploded parts take and a click places a view of it: one step, the view op naming the exploded view and
-// seen from its camera, drawn apart with its trail lines on the Trail layer, the front view as it was.
-// <prefix>.exploded.png.
+// seen from its camera, drawn apart with its trail lines on the Trail layer, the front view as it was. Then Publish PDF
+// from Review (UI-104, Review > Share and the File menu): the drawing's sheet written as a PDF, the workspace kept.
+// <prefix>.exploded.png, <prefix>.publish.pdf.
 OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
   using opad::drawing::Vec2;
   const QString& prefix = value;
@@ -102,6 +104,22 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
       check(spec.offsets.size() >= 2, QString("the lid and the post drawn moved (%1 parts)").arg(spec.offsets.size()));
     }
     page->grab().save(prefix + ".exploded.png");
+    // Publish PDF from Review: the drawing written as a PDF without going to Drawings (no file dialog in a bench).
+    w.setWorkspace("review");
+    const QString pdf = prefix + ".publish.pdf";
+    QFile::remove(pdf);
+    qputenv("OPAD_BENCH_EXPORT_OUT", pdf.toUtf8());
+    const CommandInfo* publish = w.m_commands.find("drawings.publish");
+    w.updateCommands();
+    check(publish && publish->menuPath == "file" && publish->workspaces.contains("review") && w.action("drawings.publish")->isEnabled(),
+          "Publish PDF in the File menu and on Review > Share, enabled with a drawing in the document");
+    w.action("drawings.publish")->trigger();
+    const auto written = [&] {
+      QFile f(pdf);
+      return f.open(QIODevice::ReadOnly) && f.read(5) == "%PDF-";
+    };
+    check(waitFor(written, 60000) && w.workspaceId() == "review", "Publish PDF from Review writes the drawing as a PDF and stays in Review");
+    qunsetenv("OPAD_BENCH_EXPORT_OUT");
   } catch (const std::exception& e) {
     check(false, QString("bench stopped: %1").arg(e.what()));
   }

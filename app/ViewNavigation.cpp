@@ -93,8 +93,8 @@ class ViewNavigation : public AreaController {
     }
   }
 
-  // Under Fit's arrow in both View tabs, and Hidden edges visible under Hidden line's (UI-48): the tabs keep their width
-  // (every group of Review and Design large at 1600 px).
+  // Zoom window, Previous and Next view are under Fit's arrow, Set current view as Home and Reset Home under Home's, Hidden
+  // edges visible under Hidden line's (UI-48), in the View tabs (MainWindowRibbonTable.cpp): the tabs keep their width.
 
   void ready() override {
     Viewport* v = services().viewport();

@@ -48,7 +48,9 @@ class DocsArea : public AreaController {
   // A sheet as PDF, SVG, DXF, DWG or PNG, a drawing ("drawing:<name>") as the PDF pages of its sheets (UI-86): the file's
   // type is the format, the views projected on a worker (ExportJob.hpp); OPAD_BENCH_EXPORT_OUT skips the file dialog.
   // issue: a revision of it as it was issued (its frozen linework, drawing::issued_display).
-  void exportSheet(const std::string& id, const std::string& issue = {});
+  // pdfOnly: a PDF whatever the last format was (Publish PDF); a drawing of several sheets is always one PDF.
+  void exportSheet(const std::string& id, const std::string& issue = {}, bool pdfOnly = false);
+  void publishPdf();  // drawings.publish: a drawing's sheets as one PDF, from any workspace (a menu when there are several)
   // Its file types, (format, filter): several sheets only PDF, DWG only while a converter is found (opad::dwg_converter).
   static std::vector<std::pair<QString, QString>> sheetExportTypes(bool several);
   void rowMenu(const std::string& id, QMenu& menu);  // the Drawings folder's menu of a row

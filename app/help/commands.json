@@ -113,7 +113,7 @@
    "id": "view.home",
    "title": "Home",
    "summary": "Returns to the document's Home view, or to an isometric view with everything in sight while none is set.",
-   "details": "Set current view as Home, under Fit's arrow and in the View menu, keeps the camera in the document. Use it when you lose your way after orbiting. The view cube's house button does the same.",
+   "details": "Set current view as Home, under the Home button's arrow and in the View menu, keeps the camera in the document. Use it when you lose your way after orbiting. The view cube's house button does the same.",
    "keywords": ["reset view", "isometric", "default view"],
    "requires": "Open or create a document first."
   },
@@ -1200,6 +1200,61 @@
    "requires": "Only while a sketch is open: start one with New sketch."
   },
   {
+   "id": "workspace.drafting",
+   "title": "Drafting workspace",
+   "summary": "Switches the ribbon to Drafting: 2D drawings (DXF, DWG, SVG) to draw on, measure, plot and turn into sketches.",
+   "details": "Viewing a drawing file comes here by itself, and the next other document goes back to where you were. Draw on drawing opens a sketch on the drawing's own plane with its Sketch tab first in Drafting. The document and its timeline stay the same; only the ribbon's tabs change.",
+   "keywords": ["2D", "DXF", "DWG", "drafting", "layers", "plot"]
+  },
+  {
+   "id": "design.suppress",
+   "title": "Suppress",
+   "summary": "Suppresses the feature selected on the timeline, or brings back one that is suppressed.",
+   "details": "A suppressed feature stays in the history but adds nothing to the model, and the steps after it are computed without it; its marker is struck through. With no marker selected the feature that made the selected body is taken, else the command waits for a click on a marker.",
+   "keywords": ["suppress feature", "disable", "unsuppress", "history", "timeline"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "timeline.rollBack",
+   "title": "Roll back to here",
+   "summary": "Shows the model as it was right after the step selected on the timeline.",
+   "details": "The playhead moves after that marker and a chip over the view says the model is rolled back; Roll forward to the end, or a click on the chip, shows every step again. A change made meanwhile is added at the end of the history. With no marker selected the command waits for a click on one.",
+   "keywords": ["timeline", "history marker", "before this step", "rollback"],
+   "requires": "Open an OPAD document; not while a sketch is open."
+  },
+  {
+   "id": "design.showOrigin",
+   "title": "Origin planes and axes",
+   "summary": "Shows the origin's XY, XZ and YZ planes and its axes in Design, also once there is a model.",
+   "details": "An empty document shows them anyway, with the grid. A plane picked in the view is where New sketch draws, and the choice to show them is kept for the next start.",
+   "keywords": ["origin", "XY plane", "datum planes", "show construction", "axes"],
+   "requires": "Open an OPAD document first."
+  },
+  {
+   "id": "view.namedViews",
+   "title": "Named views",
+   "summary": "Lists the document's named views; choosing one returns to its camera.",
+   "details": "An exploded view kept with Save exploded view explodes again when chosen. Save view at the end of the list adds the current camera.",
+   "keywords": ["saved views", "camera", "bookmarks", "views"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.rendering",
+   "title": "Rendering",
+   "summary": "How the view draws: small parts and quality while it moves, view animations and the theme.",
+   "details": "Its entries are Hide small parts while navigating, Small part size, Lower quality while navigating, Animate view changes and Dark theme. Preferences has the other display settings on its Display page.",
+   "keywords": ["display", "quality", "performance", "theme", "animation"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.panels",
+   "title": "Panels",
+   "summary": "Shows or hides the window's panels: the browser, annotations, the timeline, version control and the section.",
+   "details": "Each entry is the panel's own command with its key. Reset layout puts every panel back where it started.",
+   "keywords": ["browser", "timeline", "windows", "layout", "docks"],
+   "requires": "Open or create a document first."
+  },
+  {
    "id": "vcs.compareFile",
    "title": "Compare with a file",
    "summary": "Compares another OPAD document, such as a copy or a variant, with this session.",
@@ -1234,6 +1289,30 @@
    "summary": "Chooses which file types Windows opens with OPAD.",
    "details": "Tick the formats and press Open with OPAD; they are registered for your Windows account only, and Default apps lets you make OPAD the app for a type. Elsewhere the system declares them, and the command opens the Files page of Preferences instead.",
    "keywords": ["associations", "open with", "default app", "Explorer", "extensions"]
+  },
+  {
+   "id": "assembly.explodeFinish",
+   "title": "Finish explode",
+   "summary": "Closes the Explode tab and its panel; the parts stay where they are.",
+   "details": "The exploded parts stay in place until Collapse exploded view brings them back. Exploded view opens the panel and the tab again.",
+   "keywords": ["done", "close explode", "exploded view"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "drawings.explodedView",
+   "title": "Exploded view",
+   "summary": "Places a view of a saved exploded view on the sheet, with the parts where that view puts them.",
+   "details": "Save an exploded view first: Exploded view, then Save exploded view in its Explode tab; with several saved, a menu lists them. A frame follows the pointer and a click places it. Thin phantom trail lines show where the parts came from, and balloons point at the parts where they are drawn.",
+   "keywords": ["explode", "assembly drawing", "trail lines", "balloons", "saved view"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.publish",
+   "title": "Publish PDF",
+   "summary": "Writes the sheets of a drawing as the pages of one PDF, from any workspace.",
+   "details": "With several drawings in the document a menu asks which one, then the file dialog asks where the PDF goes. Export sheet in Drawings > Output writes one sheet in the other formats.",
+   "keywords": ["PDF", "drawing", "sheets", "pages", "share"],
+   "requires": "Make a drawing first: New drawing in the Drawings workspace."
   },
   {
    "id": "sketch.circle",

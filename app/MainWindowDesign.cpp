@@ -40,6 +40,21 @@ void MainWindow::buildDesignActions() {
     if (!op || (op->type != "feature" && op->type != "sketch")) throw opad::UserHint("Select a feature or a sketch on the timeline first (or double-click it).", true);
     m_design->editOp(id);
   });
+  // Solid > History (UI-104): the marker menu's Suppress as a command, for the feature selected on the timeline, else the
+  // one that made the selected body; a suppressed one is brought back.
+  addAction("design.suppress", tr("Suppress"), "hide", QKeySequence(), [this] {
+    std::string id = m_timeline->currentOp();
+    if (!m_doc->scene.feature(id)) {
+      const auto ids = currentNodeIds();
+      const opad::Node* n = ids.size() == 1 ? m_doc->node(ids.front()) : nullptr;
+      id = n && n->kind == opad::Node::Kind::Body ? n->source_op : std::string();
+    }
+    const opad::Feature* f = m_doc->scene.feature(id);
+    if (!f || std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), id) != m_doc->scene.deleted_ops.end())
+      throw opad::UserHint("Select a feature on the timeline first, or a body it made.", true);
+    if (m_design->busy()) return;
+    m_design->setSuppressed(id, !f->suppressed);
+  });
   addAction("design.colour", tr("Colour"), "shaded", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
     if (ids.empty()) throw opad::UserHint("Select the objects to colour first.", true);

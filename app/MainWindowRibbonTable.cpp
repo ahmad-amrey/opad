@@ -56,14 +56,14 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
            {"view.home", L, {"view.setHome", "view.resetHome"}},
            {"view.iso", S, {"view.top", "view.front", "view.right", "view.bottom", "view.back", "view.left"}},
            {"view.rollleft", S, {"view.rollright", "view.twist", "view.untwist"}},
-           {"view.alignPlane", S}});
+           {"view.alignPlane", S},
+           {"view.namedViews", S}});
     group(tab, "display", tr("Display"),
           {{"view.shaded", S}, {"view.edges", S}, {"view.wire", S}, {"view.hidden", S, {"view.hiddenEdges"}}, {"view.ortho", S}, {"view.2d", S},
-           {"view.grid", S, {"view.gridSettings"}}});
+           {"view.grid", S, {"view.gridSettings"}}, {"view.rendering", S}, {"view.panels", S}});
     group(tab, "visibility", tr("Visibility"),
-          {{"view.isolate"}, {"view.unisolate", S}, {"view.hideothers", S}, {"edit.hide", S}, {"edit.showall", S}, {"view.hideSmallParts", S, {"view.smallPartSize"}},
-           {"assembly.explode"}});
-    group(tab, "layers", tr("Layers"), {{"drawing2d.layers"}, {"drawing2d.layerWalk", S}, {"drawing2d.isolateLayer", S}});
+          {{"view.isolate"}, {"view.unisolate", S}, {"view.hideothers", S}, {"edit.hide", S}, {"edit.showall", S}, {"assembly.explode"}});
+    group(tab, "layers", tr("Layers"), {{"drawing2d.layers", L, {"drawing2d.layerWalk", "drawing2d.isolateLayer"}}});  // Drafting > Home has them whole
   };
   auto inspectTab = [&](const QString& tab) {
     group(tab, "measure", tr("Measure"),
@@ -88,7 +88,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
         {{"vcs.panel"}, {"vcs.history", S}, {"vcs.commit", S}, {"vcs.branches", S}, {"vcs.newBranch", S}, {"file.recover", S}});
   group("review.compare", "remote", tr("Remote"), {{"vcs.pull", S}, {"vcs.push", S}, {"vcs.fetch", S}});
   layout.addTab("review", "review.share", tr("Share"));
-  group("review.share", "export", tr("Export"), {{"file.export"}, {"file.exportBom", S}, {"file.screenshot"}, {"drawing2d.plot"}});
+  group("review.share", "export", tr("Export"), {{"file.export"}, {"file.exportBom", S}, {"drawings.publish"}, {"file.screenshot"}, {"drawing2d.plot"}});
   group("review.share", "file", tr("File"), {{"file.importdoc"}, {"file.reveal", S}, {"file.copyPath", S}, {"file.documentProperties", S}});
 
   // ---------------------------------------------------------------- Design
@@ -102,18 +102,22 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
          {"design.move", S}});
   group("design.solid", "combine", tr("Combine"), {{"design.combine", S}, {"design.split", S}, {"design.remove", S}});
   group("design.solid", "pattern", tr("Pattern"), {{"design.mirror", S}, {"design.pattern_rect", S}, {"design.pattern_circ", S}});
-  group("design.solid", "history", tr("History"), {{"design.parameters", S}, {"design.edit", S}, {"design.regenerate", S}});
+  // What the marker selected on the timeline can do: edit it, or from Edit feature's arrow suppress it or roll back to it
+  // (one column: the tab keeps every group large at 1600 px).
+  group("design.solid", "history", tr("History"),
+        {{"design.edit", S, {"design.suppress", "timeline.rollBack"}}, {"design.parameters", S}, {"design.regenerate", S}});
   layout.addTab("design", "design.assemble", tr("Assemble"));
   group("design.assemble", "components", tr("Components"),
         {{"design.newcomponent", L, {"design.componentFromSelection"}}, {"assembly.activate"}, {"assembly.activateRoot", S}, {"assembly.activeVisibility", S},
          {"design.reparent", S}});
   group("design.assemble", "explode", tr("Explode"), {{"assembly.explode"}, {"assembly.explodePlay", S}, {"assembly.explodeOff", S}});
+  group("design.assemble", "position", tr("Position"), {{"design.move"}});  // Move / copy, as on Solid > Modify
   group("design.assemble", "appearance", tr("Appearance"),
-        {{"design.colour"}, {"inspect.material", S}, {"design.opacity", S}, {"design.lock", S}, {"edit.hide", S}, {"view.isolate", S}});
+        {{"design.colour"}, {"inspect.material", S}, {"design.opacity", S}, {"edit.hide", S}, {"view.isolate", S}, {"design.lock", S}});
   group("design.assemble", "organise", tr("Organise"),
         {{"edit.rename", S}, {"edit.delete", S}, {"edit.restore", S}, {"edit.copy", S}, {"edit.paste", S}, {"edit.pastelinked", S}});
   layout.addTab("design", "design.construct", tr("Construct"));
-  group("design.construct", "planes", tr("Planes and axes"), {{"design.plane"}, {"design.axis"}});
+  group("design.construct", "planes", tr("Planes and axes"), {{"design.plane"}, {"design.axis"}, {"design.showOrigin", S}});
   layout.addTab("design", "design.inspect", tr("Inspect"));
   inspectTab("design.inspect");
   layout.addTab("design", "design.insert", tr("Insert"));

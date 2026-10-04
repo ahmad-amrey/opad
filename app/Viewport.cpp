@@ -439,7 +439,7 @@ void Viewport::initViewer() {
   showGrid();
   setTwoDimensional(m_twoDimensional);
   sync();
-  if (std::exchange(m_originGuide, false)) setOriginGuide(true);  // asked for before the viewer existed
+  if (std::exchange(m_originGuide, false)) setOriginGuide(true, m_originGrid);  // asked for before the viewer existed
 }
 
 // ---------------------------------------------------------------- tokens

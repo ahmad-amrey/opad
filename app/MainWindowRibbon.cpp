@@ -6,6 +6,7 @@
 #include "RecoveryManager.hpp"
 
 #include <QActionGroup>
+#include <QCursor>
 #include <QDir>
 #include <QMenu>
 #include <QMenuBar>
@@ -110,8 +111,9 @@ void MainWindow::buildMenus() {
     sub->setObjectName(group);
     for (const auto& spec : opad::design::feature_specs())  // the stored interference check: Inspect > Interference's Keep as check
       if (spec.group == group && spec.kind != "interference") sub->addAction(action("design." + QString::fromStdString(spec.kind)));
+    if (QString(group) == "construct") add(sub, {"-", "design.showOrigin"});
   }
-  add(designMenu, {"-", "design.edit", "design.regenerate", "-", "design.newcomponent", "design.reparent", "design.colour", "design.opacity", "design.lock"});
+  add(designMenu, {"-", "design.edit", "design.suppress", "timeline.rollBack", "design.regenerate", "-", "design.newcomponent", "design.reparent", "design.colour", "design.opacity", "design.lock"});
   // Sketch: while a sketch is open (updateDesignState), every tool by its group and the sketch's own commands.
   m_sketchMenu = menuBar()->addMenu(tr("&Sketch"));
   m_sketchMenu->setObjectName("sketchMenu");
@@ -166,7 +168,45 @@ void MainWindow::followDrawing(bool drawing) {
   }
 }
 
+QAction* MainWindow::menuCommand(const CommandInfo& info, QMenu* menu) {
+  QAction* a = addCommand(info, [menu] { menu->popup(QCursor::pos()); });
+  a->setMenu(menu);
+  return a;
+}
+
+void MainWindow::buildRibbonMenus() {
+  // Named views ▾: the View menu's list (the same entries: an exploded view explodes again, ExplodeArea), then Save view….
+  auto* views = new QMenu(this);
+  views->setObjectName("ribbonNamedViews");
+  connect(views, &QMenu::aboutToShow, this, [this, views] {
+    views->clear();
+    views->addActions(m_viewsMenu->actions());
+    views->addSeparator();
+    views->addAction(action("view.saveview"));
+  });
+  connect(views, &QMenu::triggered, m_viewsMenu, &QMenu::triggered);
+  const CommandInfo named{"view.namedViews", tr("Named views"), "recent"};
+  menuCommand(named, views);
+  // Rendering ▾: how the view draws while it moves and in which theme; Preferences > Display has the rest.
+  auto* rendering = new QMenu(this);
+  rendering->setObjectName("ribbonRendering");
+  for (const char* id : {"view.hideSmallParts", "view.smallPartSize", "view.adaptive", "view.animate", "-", "view.dark"})
+    if (QString(id) == "-") rendering->addSeparator();
+    else if (QAction* a = action(id)) rendering->addAction(a);
+  const CommandInfo look{"view.rendering", tr("Rendering"), "shaded"};
+  menuCommand(look, rendering);
+  // Panels ▾: the window's panels by their keys, and the layout as it came.
+  auto* panels = new QMenu(this);
+  panels->setObjectName("ribbonPanels");
+  for (const char* id : {"panel.browser", "panel.annotations", "panel.timeline", "vcs.panel", "panel.section", "-", "panel.reset"})
+    if (QString(id) == "-") panels->addSeparator();
+    else if (QAction* a = action(id)) panels->addAction(a);
+  const CommandInfo shown{"view.panels", tr("Panels"), "list"};
+  menuCommand(shown, panels);
+}
+
 void MainWindow::buildRibbon() {
+  buildRibbonMenus();
   m_ribbon = new RibbonBar(this);
   auto acts = [&](std::initializer_list<const char*> ids) {
     QList<QAction*> out;
@@ -190,8 +230,8 @@ void MainWindow::buildRibbon() {
     for (const RibbonLayout::Tab& tab : space.tabs) {
       for (const RibbonLayout::Group& group : tab.groups)
         for (const RibbonLayout::Item& item : group.items)
-          for (QAction* a : QList<QAction*>{item.action} + item.variants)
-            if (a) m_commands.addWorkspace(a->objectName(), space.id);
+          for (QAction* a : QList<QAction*>{item.action} + item.variants + (item.action && item.action->menu() ? item.action->menu()->actions() : QList<QAction*>()))
+            if (a && !a->isSeparator() && !a->objectName().isEmpty()) m_commands.addWorkspace(a->objectName(), space.id);  // a dropdown's entries too
       m_ribbon->addTab(index, tab);
     }
     if (space.workspace.contextual) continue;

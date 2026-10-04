@@ -147,7 +147,31 @@ void DocsArea::buildDrawingCommands() {
         const opad::Sheet* s = services().document()->scene.sheet(m_page->sheet());
         exportSheet(s && !s->drawing.empty() ? "drawing:" + s->drawing : m_page->sheet());
       }, sheetShown, {"PDF", "pages", "all sheets"});
+  {  // Publish PDF (UI-104, Review > Share and the File menu): a drawing's sheets as the pages of one PDF, from any workspace.
+    CommandInfo publish;
+    publish.id = "drawings.publish";
+    publish.label = tr("Publish PDF…");
+    publish.icon = "export";
+    publish.group = tr("Drawings");
+    publish.keywords = {"PDF", "drawing", "sheets", "pages", "share", "send"};
+    publish.enabledWhen = [self](const CommandContext& c) { return c.document && !c.viewer && self && !self->services().document()->scene.sheets.empty(); };
+    services().addCommand(publish, [self] {
+      if (self) self->services().guarded([&] { self->publishPdf(); });
+    });
+  }
   buildAnnotateCommands();
+}
+
+void DocsArea::publishPdf() {
+  std::vector<std::string> drawings;
+  for (const auto& s : services().document()->scene.sheets)
+    if (std::find(drawings.begin(), drawings.end(), s.drawing) == drawings.end()) drawings.push_back(s.drawing);
+  if (drawings.empty()) throw opad::UserHint("Make a drawing first: New drawing in the Drawings workspace.");
+  const auto publish = [this](const std::string& drawing) { services().guarded([&] { exportSheet("drawing:" + drawing, {}, true); }); };
+  if (drawings.size() == 1) return publish(drawings.front());
+  QMenu menu;
+  for (const std::string& d : drawings) menu.addAction(icons::themed("drawingSheet", 16), QString::fromStdString(d), this, [publish, d] { publish(d); });
+  menu.exec(QCursor::pos());
 }
 
 // Sheet · Views · Annotate · Tables · Output (UI-104, Appendix A "Document"): the sheet and its template, the views

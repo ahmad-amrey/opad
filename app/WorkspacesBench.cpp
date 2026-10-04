@@ -11,6 +11,7 @@
 
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "BenchRegistry.hpp"
@@ -19,6 +20,9 @@
 #include "DesignPanels.hpp"
 #include "MainWindow.hpp"
 #include "PlanePicker.hpp"
+#include "SketchEditor.hpp"
+#include "TimelineWidget.hpp"
+#include "opad/design/drawing_sketch.hpp"
 
 namespace {
 struct Step {
@@ -47,6 +51,8 @@ void runSteps(QObject* context, std::shared_ptr<std::vector<Step>> steps, size_t
 
 // OPAD_BENCH_WORKSPACES=<drawing file> on an editable document with a body.
 OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
+  static bool started = false;  // runBench comes back after every load (the drawing, the box again): the steps run once
+  if (std::exchange(started, true)) return true;
   auto all = std::make_shared<bool>(true);
   auto require = [all](bool ok, const QString& what) {
     trace::log(QString("bench: workspaces: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
@@ -61,7 +67,22 @@ OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
     design->planePicker()->choose({{"base", "xy"}});
     QTimer::singleShot(300, design, [design] { if (design->planePicker()->positioning()) design->planePicker()->apply(); });
   };
+  // Solid > History's Suppress: the marker selected on the timeline (here the box), from Review into Design; again: back.
+  auto boxOp = std::make_shared<std::string>();
+  for (const auto& op : w.m_doc->doc.ops)
+    if (op.type == "feature" && boxOp->empty()) *boxOp = op.id;
+  auto suppressed = [&w, boxOp] { const opad::Feature* f = w.m_doc->scene.feature(*boxOp); return f && f->suppressed; };
   add({}, [=, &w](bool) {
+    w.setWorkspace("review");
+    w.m_timeline->setCurrentOp(*boxOp);
+    w.action("design.suppress")->trigger();
+  });
+  add([=] { return !design->busy() && suppressed(); }, [=, &w](bool done) {
+    require(done && w.workspaceId() == "design", "Suppress from Review: the timeline's selected feature suppressed, in Design");
+    w.action("design.suppress")->trigger();
+  });
+  add([=] { return !design->busy() && !suppressed(); }, [=, &w](bool back) {
+    require(back, "Suppress again: the feature is back");
     w.setWorkspace("review");
     require(w.workspaceId() == "review" && !w.m_doc->browse && !w.m_doc->scene.all_bodies().empty(), "an editable document with a body, in Review");
     w.action("design.extrude")->trigger();  // E

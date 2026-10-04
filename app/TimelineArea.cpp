@@ -61,6 +61,16 @@ void TimelineArea::buildActions() {
   m_forward = services().addCommand(forward, [this] { rollTo({}); });
   m_forward->setProperty("shortcutHint", tr("The model with every step again, after the timeline's marker was dragged back."));
   m_forward->setEnabled(false);
+  // Solid > History and the Design menu (UI-104): the marker menu's Roll back to here, for the marker selected on the
+  // timeline (a click on one); with none it waits for that click.
+  CommandInfo back;
+  back.id = "timeline.rollBack";
+  back.label = tr("Roll back to here");
+  back.icon = "rollBack";
+  back.keywords = {tr("timeline"), tr("history marker"), tr("before this step"), tr("earlier state")};
+  back.enabledWhen = [](const CommandContext& c) { return c.document && !c.viewer && !c.sketching; };
+  m_back = services().addCommand(back, [this] { rollBackHere(); });
+  m_back->setProperty("shortcutHint", tr("The model as it was right after the step selected on the timeline; a change made then is added at the end."));
   CommandInfo list;
   list.id = "timeline.historyList";
   list.label = tr("History list in the browser");
@@ -77,7 +87,7 @@ void TimelineArea::buildActions() {
   });
   m_list->setChecked(QSettings().value("timeline/historyList", false).toBool());
   m_list->setProperty("shortcutHint", tr("The browser lists the timeline's steps top to bottom in a History folder, with the roll-back marker among them."));
-  for (QAction* a : {m_names, m_designOnly, m_forward, m_list}) shortcuts::updateTooltip(a);
+  for (QAction* a : {m_names, m_designOnly, m_forward, m_back, m_list}) shortcuts::updateTooltip(a);
 }
 
 void TimelineArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
@@ -230,6 +240,17 @@ bool TimelineArea::rollTo(const std::string& op) {
   trace::log(QString("timeline: rolled %1").arg(op.empty() ? QString("forward") : "back before " + QString::fromStdString(op)));
   doc->rollBackTo(op);
   return true;
+}
+
+void TimelineArea::rollBackHere() {
+  const AppDocument* doc = services().document();
+  TimelineWidget* t = services().timeline();
+  const std::string id = t ? t->currentOp() : std::string();
+  const bool deleted = std::find(doc->scene.deleted_ops.begin(), doc->scene.deleted_ops.end(), id) != doc->scene.deleted_ops.end();
+  if (id.empty() || !doc->doc.find_op(id) || deleted) throw opad::UserHint("Click the step on the timeline to roll back to.", true);
+  const std::string point = t->rollPointAfter(id);
+  if (point.empty() && !doc->rolledBack()) return services().showMessage(tr("That is the last step: the model already shows it."), 6000);
+  rollTo(point);
 }
 
 void TimelineArea::refresh() {
