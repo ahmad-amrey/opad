@@ -2795,10 +2795,14 @@ void Viewport::updateHover() {
       Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
       Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
       const QString layer = m_doc->nodeName(node->parent.empty() ? node->id : node->parent);
-      drawingInfo = owner.IsNull() || !owner->HasShape() || m_filter == SelFilter::Body ? opad::json{{"type", "group"}} : drawing2d::entityInfo(owner->Shape());
+      // The whole layer under its own owner (the Bodies filter, and the Face filter, which picks a drawing layer whole: UI-42)
+      // is a group; an object of it is named by its kind.
+      const bool whole = owner.IsNull() || !owner->HasShape() || !owner->ComesFromDecomposition() || m_filter == SelFilter::Body;
+      drawingInfo = whole ? opad::json{{"type", "group"}} : drawing2d::entityInfo(owner->Shape());
+      if (!drawingInfo.contains("type") || !drawingInfo["type"].is_string()) drawingInfo["type"] = "group";
       drawingInfo["body"] = node->id;
       if (!mine.IsNull()) drawingInfo["index"] = mine->index();
-      hover = drawingInfo["type"] == "group" ? tr("Group on %1").arg(layer) : tr("%1 on %2").arg(drawingWord(drawingInfo.value("type", "")), layer);
+      hover = drawingInfo["type"] == "group" ? tr("Group on %1").arg(layer) : tr("%1 on %2").arg(drawingWord(drawingInfo["type"].get<std::string>()), layer);
       if (drawingInfo.contains("radius")) hover += QStringLiteral(" · R ") + units::format(units::Kind::Length, drawingInfo["radius"].get<double>());
       else if (drawingInfo.contains("length")) hover += QStringLiteral(" · ") + units::format(units::Kind::Length, drawingInfo["length"].get<double>());
       else if (drawingInfo.contains("area")) hover += QStringLiteral(" · ") + units::format(units::Kind::Area, drawingInfo["area"].get<double>());
