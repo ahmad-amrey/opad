@@ -203,6 +203,13 @@ CASES = [
     # Startup order (UI-44): the viewer is made after the window is shown and exposed (here: started hidden, after the wait
     # for an expose), its first frame on a later turn, the file opened after that; each step's time logged.
     ("startup", "box", {"OPAD_BENCH_STARTUP": "1"}),
+    # Adaptive quality while navigating (UI-45), in Studio: one light casts shadows; an orbit drag through the view's mouse
+    # handlers draws a heavy model (a full frame of 20 ms or more, timed off screen) at 1.0x resolution without shadows, faster
+    # than still, and at full quality again once still; a light one (a box) is never lowered, nor anything with the setting
+    # off. On the 1,000 boxes and the Engine. <prefix>.moving.png, <prefix>.still.png.
+    ("orbit-fps", boxes, {"OPAD_BENCH_ORBITFPS": "{prefix}"}),
+    ("orbit-fps-light", "box", {"OPAD_BENCH_ORBITFPS": "{prefix}"}),
+    ("orbit-fps-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_ORBITFPS": "{prefix}"}),
     ("box-scan-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_BOXSCAN": "{prefix}"}),
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,
     # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.

@@ -17,6 +17,7 @@
  "Still loading: “%1” runs once every body is shown": "ما زال التحميل جارياً: يُنفَّذ “%1” بعد عرض كل الأجسام",
  "Parsing %1": "تحليل %1",
  "Zoom window": "تكبير نافذة",
+ "Lower quality while navigating": "خفض الجودة أثناء التنقل",
  "Previous view": "المنظر السابق",
  "Next view": "المنظر التالي",
  "Set current view as Home": "تعيين المنظر الحالي كمنظر رئيسي",

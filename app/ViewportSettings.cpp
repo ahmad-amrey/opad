@@ -1,4 +1,5 @@
 #include "Viewport.hpp"
+#include "Jobs.hpp"
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_RenderingParams.hxx>
 #include <Graphic3d_GraphicDriver.hxx>
@@ -94,14 +95,15 @@ void Viewport::setRenderQuality(int level) {
   m_renderQuality = std::clamp(level, 0, 2);
   QSettings().setValue("view/qualityV2", m_renderQuality);
   if (!m_initialised) return;
+  m_degraded = false;
+  m_qualityTimer.stop();
   auto& p = m_view->ChangeRenderingParams();
   const bool rayTracing = m_renderQuality == 2 && m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_HasRayTracing);
   p.Method = rayTracing ? Graphic3d_RM_RAYTRACING : Graphic3d_RM_RASTERIZATION;
   p.NbMsaaSamples = rayTracing ? 0 : std::min(4, m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa));
   if (m_renderQuality == 2 && !rayTracing) emit hoverChanged(tr("Ray tracing unavailable on this driver; using Studio rendering"));
-  p.RenderResolutionScale = m_renderQuality == 1 ? 1.25f : 1.0f;
+  applyQuality();
   p.ShadingModel = m_renderQuality == 0 ? Graphic3d_TypeOfShadingModel_Unlit : Graphic3d_TypeOfShadingModel_Phong;
-  p.IsShadowEnabled = m_renderQuality >= 1;
   p.IsReflectionEnabled = false;
   p.IsAntialiasingEnabled = rayTracing;
   p.IsGlobalIlluminationEnabled = false;  // bounded interactive cost; no progressive path-tracing stall
@@ -113,6 +115,46 @@ void Viewport::setRenderQuality(int level) {
   updateDepthBias();
   m_view->Invalidate();
   redrawScene();
+}
+
+void Viewport::applyQuality() {
+  auto& p = m_view->ChangeRenderingParams();
+  const bool rayTracing = p.Method == Graphic3d_RM_RAYTRACING;
+  p.RenderResolutionScale = m_degraded ? (rayTracing ? 0.5f : 1.0f) : m_renderQuality == 1 ? 1.25f : 1.0f;
+  p.IsShadowEnabled = m_renderQuality >= 1 && !m_degraded;
+}
+
+void Viewport::setAdaptiveQuality(bool on) {
+  m_adaptive = on;
+  QSettings().setValue("view/adaptive", on);
+  if (!on) restoreQuality();
+}
+
+// Moving under a gesture, the wheel, a trackpad or an animation; a camera set at once (Fit, a typed view) is a single frame.
+// Only the resolution scale and the shadows change: MSAA would reallocate the frame buffers, and the shader variants are
+// kept after the first change.
+void Viewport::degradeWhileNavigating() {
+  const auto camera = m_view->Camera()->WorldViewProjState();
+  if (camera == m_qualityCamera) return;
+  m_qualityCamera = camera;
+  if (m_degraded) return m_qualityTimer.start();
+  const bool navigating = PressedMouseButtons() != Aspect_VKeyMouse_NONE || (!myViewAnimation.IsNull() && !myViewAnimation->IsStopped()) ||
+                          m_trackpadMode != TrackpadMode::None || (m_wheelClock.isValid() && m_wheelClock.elapsed() < 300);
+  if (!m_adaptive || m_renderQuality == 0 || m_fullFrameMs < kSmoothFrameMs || !navigating) return;
+  m_degraded = true;
+  applyQuality();
+  m_qualityTimer.start();
+  if (trace::enabled()) trace::log(QStringLiteral("quality: lowered while navigating (a full frame took %1 ms)").arg(m_fullFrameMs));
+}
+
+void Viewport::restoreQuality() {
+  m_qualityTimer.stop();
+  if (!m_degraded || !m_initialised) return;
+  m_degraded = false;
+  applyQuality();
+  m_view->Invalidate();
+  requestRedraw();
+  if (trace::enabled()) trace::log(QStringLiteral("quality: full again"));
 }
 
 void Viewport::setSceneBackground(int style) {

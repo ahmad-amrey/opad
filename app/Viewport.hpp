@@ -88,6 +88,17 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
   void setRenderQuality(int level);
+  // Adaptive quality (UI-45, ViewportSettings.cpp): while the camera moves under a gesture, the wheel or an animation and a
+  // frame at full quality takes longer than kSmoothFrameMs, Studio draws at 1.0x resolution without shadows and ray
+  // tracing at half resolution; still for 350 ms, the view is drawn at full quality again. Setting view/adaptive.
+  static constexpr qint64 kSmoothFrameMs = 20;
+  void setAdaptiveQuality(bool on);
+  bool adaptiveQuality() const { return m_adaptive; }
+  bool degraded() const { return m_degraded; }
+  qint64 fullFrameMs() const { return m_fullFrameMs; }  // the last frame drawn at full quality, ms
+  // OPAD_BENCH_ORBITFPS (ViewportQualityBench.cpp): an orbit drag on a heavy model draws faster while it moves, at full
+  // quality once still; one light casts shadows (UI-45)
+  bool benchOrbitFps(const QString& prefix);
   static int savedRenderQuality();
   static int savedSceneBackground();
   void setSceneBackground(int style);
@@ -408,6 +419,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
 
  private:
   int m_renderQuality = 1, m_sceneBackground = 0;
+  bool m_adaptive = true, m_degraded = false;
+  qint64 m_fullFrameMs = 0;
+  QElapsedTimer m_wheelClock;  // the last wheel turn: zooming is navigating
+  QTimer m_qualityTimer;       // still for this long: full quality again
+  Graphic3d_WorldViewProjState m_qualityCamera;
+  void degradeWhileNavigating();  // from every redraw: the camera moved
+  void restoreQuality();
+  void applyQuality();  // the rendering parameters of m_renderQuality, lowered while m_degraded
   void updateDepthBias();
   bool m_twoDimensional = false;
   Handle(Graphic3d_Camera) m_threeDimensionalCamera;

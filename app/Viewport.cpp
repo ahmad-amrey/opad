@@ -152,6 +152,10 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   m_refineTimer.setSingleShot(true);
   m_refineTimer.setInterval(350);
   connect(&m_refineTimer, &QTimer::timeout, this, &Viewport::refineVisible);
+  m_adaptive = settings.value("view/adaptive", true).toBool();
+  m_qualityTimer.setSingleShot(true);
+  m_qualityTimer.setInterval(350);
+  connect(&m_qualityTimer, &QTimer::timeout, this, &Viewport::restoreQuality);
   m_timer.setInterval(16);
   connect(&m_timer, &QTimer::timeout, this, [this] {
     if (!m_initialised) return;
@@ -673,8 +677,9 @@ void Viewport::updateInfiniteGrid(bool force) {
 
 void Viewport::setShadows(bool on) {
   if (!m_initialised) return;
+  // The overhead light only (UI-45): the headlight's shadows fall behind what casts them, out of sight, and cost a pass.
   for (V3d_ListOfLightIterator it = m_viewer->ActiveLightIterator(); it.More(); it.Next())
-    if (it.Value()->Type() == Graphic3d_TypeOfLightSource_Directional) it.Value()->SetCastShadows(on);
+    if (it.Value()->Type() == Graphic3d_TypeOfLightSource_Directional) it.Value()->SetCastShadows(on && !it.Value()->IsHeadlight());
   m_view->ChangeRenderingParams().ShadowMapResolution = on ? 2048 : 1024;
   redrawScene();
 }
@@ -1143,7 +1148,11 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
     m_settleCamera = camera;
     m_settleTimer.start();
   }
+  degradeWhileNavigating();
+  QElapsedTimer draw;
+  draw.start();
   AIS_ViewController::handleViewRedraw(ctx, view);
+  if (!m_degraded && draw.elapsed() >= 2) m_fullFrameMs = draw.elapsed();  // a hover alone redraws in under 2 ms
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }
 
@@ -2607,6 +2616,7 @@ void Viewport::wheelEvent(QWheelEvent* e) {
   }
   finishTrackpadScroll();
   m_needFit = false;
+  m_wheelClock.start();
   const double delta = e->angleDelta().y() / 8.0;
   if (UpdateZoom(Aspect_ScrollDelta(devicePos(e->position()), delta))) requestRedraw();
 }

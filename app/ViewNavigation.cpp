@@ -64,6 +64,9 @@ class ViewNavigation : public AreaController {
     m_cad2d->setChecked(QSettings().value("ui/nav").toString() == "CAD2D");
     m_animate = add("view.animate", tr("Animate view changes"), "", QKeySequence(), [this] { services().viewport()->setAnimateViews(m_animate->isChecked()); }, true);
     m_animate->setChecked(QSettings().value("view/animate", true).toBool());
+    // UI-45: a heavy model is drawn at a lower resolution, without shadows, while the view moves.
+    m_adaptive = add("view.adaptive", tr("Lower quality while navigating"), "", QKeySequence(), [this] { services().viewport()->setAdaptiveQuality(m_adaptive->isChecked()); }, true);
+    m_adaptive->setChecked(QSettings().value("view/adaptive", true).toBool());
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
@@ -81,6 +84,7 @@ class ViewNavigation : public AreaController {
       nav->addAction(m_cad2d);
       nav->addSeparator();
       nav->addAction(m_animate);
+      nav->addAction(m_adaptive);
     }
   }
 
@@ -111,6 +115,7 @@ class ViewNavigation : public AreaController {
   QAction* m_zoom = nullptr;
   QAction* m_cad2d = nullptr;
   QAction* m_animate = nullptr;
+  QAction* m_adaptive = nullptr;
 
   void choosePreset(const QString& name) {
     services().viewport()->setNavPreset(presetOf(name));
