@@ -460,8 +460,9 @@ json Sketch::to_json() const {
   auto ordered = [](json& a) { std::sort(a.begin(), a.end(), [](const json& x, const json& y) { return x.at("id").get<int>() < y.at("id").get<int>(); }); };
   ordered(jp); ordered(je); ordered(jc);
   json out{{"points", std::move(jp)}, {"entities", std::move(je)}, {"constraints", std::move(jc)}};
-  // An older build that edits the sketch keeps "more_constraints" as it is: the watermark stops it from handing their ids
-  // to what it adds (which would make both lists claim one id here).
+  // An older build that edits the sketch leaves "more_constraints" to this build (its panel's delta never names the key,
+  // its agent's says null, which apply_sketch_delta ignores; a whole geometry it writes, as its crash recovery's restore,
+  // drops them): the watermark stops it from handing their ids to what it adds (both lists would claim one id here).
   const int watermark = std::max(id_watermark, more_top);
   if (watermark) out["id_watermark"] = watermark;
   if (!more.empty()) { ordered(more); out["more_constraints"] = std::move(more); }

@@ -1015,18 +1015,29 @@ TEST(spline_joins_older_builds_cannot_read_are_kept_apart) {
     const bool line_spline = kinds == std::vector<SkEntity::Type>({SkEntity::Type::Line, SkEntity::Type::Spline});
     if (type == "tangent") CHECK(spline_pair || line_spline);
   }
-  // Such a build edits the sketch: it adds a point, above every id kept apart, and deletes the spline by the arc. Its edit
-  // leaves "more_constraints" as it was; read here again, the arc's joins are gone, the line's Smooth stays.
+  // Such a build edits the sketch: it adds a point, above every id kept apart, and deletes the spline by the arc. Its
+  // sketch panel diffs its own to_json before and after, neither with "more_constraints": the delta leaves them alone. Its
+  // agent's sketch_edit diffs the stored geometry (this build's, with them) against its to_json, so its sketch_delta says
+  // null for them; this build's apply_sketch_delta keeps them then (the older build drops them from what it replays, which
+  // it never reads). Its crash recovery's restore writes a whole geometry, which loses them. Read here again, the arc's
+  // joins are gone, the line's Smooth stays.
   Sketch edited = Sketch::from_json(older);
   CHECK(edited.add_point(50, 50) > touch_arc);
   edited.remove(s2);
-  opad::json after = edited.to_json();
-  CHECK(!after.contains("more_constraints"));
-  after["more_constraints"] = saved.at("more_constraints");
-  Sketch reread = Sketch::from_json(after);
-  CHECK(reread.constraint(smooth) != nullptr);
-  CHECK(reread.constraint(bend) == nullptr);
-  CHECK(reread.constraint(touch_arc) == nullptr);
+  const opad::json older_after = edited.to_json();
+  CHECK(!older_after.contains("more_constraints"));
+  const opad::json panel_delta = sketch_delta(older, older_after);
+  CHECK(!panel_delta.contains("more_constraints"));
+  opad::json agent_delta = sketch_delta(saved, older_after);
+  agent_delta["more_constraints"] = nullptr;  // what the older sketch_delta writes for the key its to_json lacks
+  for (const opad::json& delta : {panel_delta, agent_delta}) {
+    const opad::json after = apply_sketch_delta(saved, delta);
+    CHECK(after.at("more_constraints") == saved.at("more_constraints"));
+    Sketch reread = Sketch::from_json(after);
+    CHECK(reread.constraint(smooth) != nullptr);
+    CHECK(reread.constraint(bend) == nullptr);
+    CHECK(reread.constraint(touch_arc) == nullptr);
+  }
   // An edit in this build stores the joins as one whole list (a key older builds keep as it is), never in "constraints".
   Sketch plain = Sketch::from_json(saved);
   for (const int id : {smooth, bend, touch_arc}) plain.remove(id);
@@ -1035,6 +1046,10 @@ TEST(spline_joins_older_builds_cannot_read_are_kept_apart) {
   const opad::json delta = sketch_delta(before, saved);
   CHECK(delta.contains("more_constraints") && !delta.contains("constraints"));
   CHECK(apply_sketch_delta(before, delta) == saved);
+  // And an edit here that removes every join says so with an empty list, which takes the key away (null is an older build's).
+  const opad::json removed = sketch_delta(saved, before);
+  CHECK(removed.at("more_constraints") == opad::json::array());
+  CHECK(apply_sketch_delta(saved, removed) == before);
 }
 
 // The Smooth and Curvature guides (clips.json sketch.c.smooth and sketch.c.curvature) join a fixed line to a control-point
