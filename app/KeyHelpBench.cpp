@@ -143,6 +143,21 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
           "its captions: \"" + plain(clips::caption(clipSteps[0])) + "\", the keyless one for Home, Pin's Ctrl+Alt+P");
     frames("clip");
     clips::load();  // the library again (the Tool guide plays its clips)
+    // The library's clips name their commands: Fit's clip shows Ctrl Alt F and says so, Home's (no key) shows Home by
+    // its name and says "Choose Home"; Isolate's details drop "(key)" with Exit isolate unassigned.
+    const auto fitSteps = clips::steps("view.fit"), homeSteps = clips::steps("view.home");
+    const QString pressFit = plain(QCoreApplication::translate("help", "Press %1").arg(keys::text("view.fit")));
+    const QString chooseHome = QCoreApplication::translate("help", "Choose %1").arg(help::title("view.home"));
+    check(clips::resolvedKeys("view.fit", 1.0) == QList<QStringList>({{"Ctrl", "Alt", "F"}}) && !fitSteps.isEmpty() && plain(clips::caption(fitSteps[0])) == pressFit,
+          "the library's Fit clip: Ctrl Alt F, \"" + (fitSteps.isEmpty() ? QString() : plain(clips::caption(fitSteps[0]))) + "\"");
+    check(clips::resolvedKeys("view.home", 0.9) == QList<QStringList>({{help::title("view.home")}}) && !homeSteps.isEmpty() && clips::caption(homeSteps[0]) == chooseHome,
+          "the library's Home clip: Home by its name, \"" + (homeSteps.isEmpty() ? QString() : clips::caption(homeSteps[0])) + "\"");
+    const QString isolate = help::expand(help::find("view.isolate")->details);
+    check(!isolate.contains("()") && !isolate.contains(" (") && isolate.contains(help::title("view.unisolate")), "Isolate's details without Exit isolate's key: \"" + isolate + "\"");
+    clips::Options o;
+    o.rtl = rtl;
+    clips::frame("view.fit", 1.0, {576, 324}, 1, o).save(prefix + ".library-fit.png");
+    clips::frame("view.home", 0.9, {576, 324}, 1, o).save(prefix + ".library-home.png");
   });
   add(300, [=, &w] {
     // The ribbon: the search badge and tooltip, the filters' keys.
@@ -297,6 +312,9 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
     tip->grab().save(prefix + ".after-card.png");
     frames("after-clip");
     clips::load();  // the library again
+    const auto fitSteps = clips::steps("view.fit");
+    check(clips::resolvedKeys("view.fit", 1.0) == QList<QStringList>({{"F"}}) && plain(clips::caption(fitSteps[0])) == plain(QCoreApplication::translate("help", "Press %1").arg("F")),
+          "the library's Fit clip follows: F, \"" + plain(clips::caption(fitSteps[0])) + "\"");
     QFile::remove(clipFile);
   });
   add(400, [=, &w] {
