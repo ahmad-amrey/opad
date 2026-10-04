@@ -288,7 +288,7 @@
  "Click control points: the curve follows": "انقر نقاط التحكم: يتبعها المنحنى",
  "Click the start": "انقر البداية",
  "Click where the end tangents meet": "انقر حيث يلتقي مماسا الطرفين",
- "Click the end; rho shapes it": "انقر النهاية؛ يحدد rho الشكل",
+ "Set rho, then click the end": "اضبط rho ثم انقر النهاية",
  "Type the text; pick font and height": "اكتب النص؛ واختر الخط والارتفاع",
  "Click where it starts": "انقر حيث يبدأ",
  "The letters become sketch curves": "تصبح الحروف منحنيات رسم",
