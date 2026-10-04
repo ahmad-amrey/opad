@@ -18,6 +18,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <tuple>
 #include <utility>
@@ -32,34 +33,34 @@
 #include "Units.hpp"
 
 void MainWindow::buildViewActions() {
-  // The selection, else the active component (UI-33), else everything.
+  // The selection, else the active component (UI-33), else everything; animated on screen (UI-47).
   addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] {
     if (m_design && m_design->sketchActive()) m_design->sketch()->fitSketch();
-    else if (!m_doc->activeComponent().empty() && m_viewport->selection().empty()) m_viewport->fitNodes({m_doc->activeComponent()});
-    else m_viewport->fitSelection();
+    else if (!m_doc->activeComponent().empty() && m_viewport->selection().empty()) m_viewport->fitNodes({m_doc->activeComponent()}, true);
+    else m_viewport->fitSelection(true);
   });
-  addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(); });
-  addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
+  addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(true); });
+  addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(true); });
   addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Shift+A"),[this] {
-    if(m_design->sketchActive()) {m_viewport->lookAt(m_design->sketch()->frame(),false,false);return;}
+    if(m_design->sketchActive()) {m_viewport->lookAt(m_design->sketch()->frame(),false,true);return;}
     cancelTool();
-    m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame,true,false); });
+    m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame,true,true); });
   });
   addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence("Alt+Left"), [this] { m_viewport->rollView(90); });
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence("Alt+Right"), [this] { m_viewport->rollView(-90); });
   for (const auto& [name, key, label] : std::vector<std::tuple<QString, QString, QString>>{
            {"top", "Shift+Up", tr("Top view")}, {"front", "Shift+PgUp", tr("Front view")}, {"right", "Shift+Right", tr("Right view")}, {"iso", "Shift+H", tr("Isometric view")},
            {"bottom", "Shift+Down", tr("Bottom view")}, {"back", "Shift+PgDown", tr("Back view")}, {"left", "Shift+Left", tr("Left view")}})
-    addAction("view." + name, label, "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
+    addAction("view." + name, label, "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n, true); });
   auto* flat = addAction("view.2d",tr("2D mode"),"drawing",QKeySequence("Shift+2"),[this]{},true);
   flat->setObjectName("view.2d");
   flat->setCheckable(true);
   connect(flat, &QAction::toggled, this, [this](bool on) {
-    if (!m_settingTwoD) m_autoTwoD = false;  // set by hand: stays as the user left it
+    if (!m_settingTwoD) m_autoTwoD = false;  // set by hand: stays as the user left it until the document is replaced
     m_viewport->setTwoDimensional(on);
 
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
-    m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on); m_alignPlane->setVisible(!on);
+    m_homeBtn->setVisible(!on); m_alignPlane->setVisible(!on);  // the turn buttons stay: in 2D they twist the view (UI-47)
     updateChips();
   });
   QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("Shift+3"), [this] {}, true);
@@ -68,12 +69,15 @@ void MainWindow::buildViewActions() {
   QAction* shaded = addAction("view.shaded", tr("Shaded"), "shaded", QKeySequence("5"), [this] {}, true);
   QAction* edges = addAction("view.edges", tr("Shaded + edges"), "shadedEdges", QKeySequence("6"), [this] {}, true);
   QAction* wire = addAction("view.wire", tr("Wireframe"), "wireframe", QKeySequence("7"), [this] {}, true);
+  QAction* hidden = addAction("view.hidden", tr("Hidden line"), "hiddenLine", QKeySequence("8"), [this] {}, true);  // UI-48
+  QAction* dashed = addAction("view.hiddenEdges", tr("Hidden edges visible"), "hiddenEdges", QKeySequence("9"), [this] {}, true);
   auto* styleGroup = new QActionGroup(this);
-  for (QAction* a : {shaded, edges, wire}) styleGroup->addAction(a);
+  for (QAction* a : {shaded, edges, wire, hidden, dashed}) styleGroup->addAction(a);
   edges->setChecked(true);
-  connect(styleGroup, &QActionGroup::triggered, this, [this, shaded, wire](QAction* a) {
+  connect(styleGroup, &QActionGroup::triggered, this, [this, shaded, wire, hidden, dashed](QAction* a) {
     m_settings.setValue("view/style",a->objectName());
-    m_viewport->setStyle(a == shaded ? Viewport::Style::Shaded : a == wire ? Viewport::Style::Wireframe : Viewport::Style::ShadedEdges);
+    m_viewport->setStyle(a == shaded ? Viewport::Style::Shaded : a == wire ? Viewport::Style::Wireframe : a == hidden ? Viewport::Style::HiddenLine
+                         : a == dashed ? Viewport::Style::HiddenEdges : Viewport::Style::ShadedEdges);
     updateChips();
   });
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
@@ -101,6 +105,7 @@ void MainWindow::buildViewActions() {
   cubeParts->setChecked(m_settings.value("view/cubeEdgesCorners",true).toBool());
   connect(cubeParts,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/cubeEdgesCorners",on);m_viewport->setCubeEdgesCorners(on);});
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
+  addAction("view.hideothers", tr("Hide others"), "hide", QKeySequence(), [this] { hideOthers(currentNodeIds()); });  // one step (UI-02)
   // macOS treats any action starting with "Exit" as Quit unless its menu role is explicit.
   addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); })->setMenuRole(QAction::NoRole);
   addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });
@@ -137,6 +142,7 @@ void MainWindow::buildNavigationActions() {
   }
   for (const auto& [name, f, key, icon] : std::vector<std::tuple<QString, Viewport::SelFilter, QString, QString>>{{"Bodies", Viewport::SelFilter::Body, "1", "filterBodies"}, {"Faces", Viewport::SelFilter::Face, "2", "filterFaces"}, {"Edges", Viewport::SelFilter::Edge, "3", "filterEdges"}, {"Vertices", Viewport::SelFilter::Vertex, "4", "filterVertices"}}) {
     QAction* a = addAction("select." + name.toLower(), i18n::t(name), icon, QKeySequence(key), [this, ff = f, n = name] {
+      m_autoEdges = false;  // chosen by hand: stays
       m_viewport->setSelectionFilter(ff);
       if (!m_tool.id.isEmpty()) {  // mid-tool: the steps are reworded for the new filter and start over
         m_viewport->clearSelection();
@@ -251,9 +257,24 @@ void MainWindow::applyTheme(bool dark) {
   if (m_darkAction && m_darkAction->isChecked() != dark) m_darkAction->setChecked(dark);
 }
 
+bool MainWindow::viewingDrawing() const {
+  if (!m_doc->browse) return false;
+  const auto bodies = m_doc->scene.all_bodies();
+  return !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
+}
+
+void MainWindow::setAutoTwoD(bool on) {
+  m_settingTwoD = true;
+  action("view.2d")->setChecked(on);
+  m_settingTwoD = false;
+  m_autoTwoD = on;
+}
+
 void MainWindow::updateChips() {
   if (!m_chips) return;
-  QString mode = m_viewport->style() == Viewport::Style::Shaded ? tr("Shaded") : m_viewport->style() == Viewport::Style::Wireframe ? tr("Wireframe") : tr("Shaded + edges");
+  const Viewport::Style style = m_viewport->style();
+  QString mode = style == Viewport::Style::Shaded ? tr("Shaded") : style == Viewport::Style::Wireframe ? tr("Wireframe") : style == Viewport::Style::HiddenLine ? tr("Hidden line")
+                 : style == Viewport::Style::HiddenEdges ? tr("Hidden edges visible") : tr("Shaded + edges");
   QString proj = m_viewport->isOrthographic() ? tr("Orthographic") : tr("Perspective");
   QString section;
   if (m_section && m_section->enabled()) {
@@ -352,7 +373,8 @@ bool MainWindow::repeatOnEnter(const QKeyEvent* key) {
 // ---------------------------------------------------------------- named views (view op)
 void MainWindow::saveNamedView() {
   bool ok = false;
-  QString name = QInputDialog::getText(this, tr("Save view"), tr("Name:"), QLineEdit::Normal, tr("View %1").arg(m_doc->scene.views.size() + 1), &ok);
+  const auto named = std::count_if(m_doc->scene.views.begin(), m_doc->scene.views.end(), [](const opad::ViewBookmark& v) { return !v.home; });
+  QString name = QInputDialog::getText(this, tr("Save view"), tr("Name:"), QLineEdit::Normal, tr("View %1").arg(named + 1), &ok);
   if (!ok || name.isEmpty()) return;
   m_doc->run("view", opad::json{{"name", name.toStdString()}, {"camera", m_viewport->cameraJson()}});
 }
@@ -372,6 +394,7 @@ void MainWindow::rebuildViewsMenu() {
   if (!m_viewsMenu) return;
   m_viewsMenu->clear();
   for (const auto& v : m_doc->scene.views) {
+    if (v.home) continue;  // the document's Home (H), not a bookmark
     QAction* a = m_viewsMenu->addAction(icons::themed(v.explode.is_object() ? "explodedView" : "home", 16), QString::fromStdString(v.name));
     a->setData(QString::fromStdString(v.id));  // areas show more of a view (an exploded one: Explode, ExplodeArea.cpp)
     connect(a, &QAction::triggered, this, [this, id = v.id] { restoreNamedView(id); });

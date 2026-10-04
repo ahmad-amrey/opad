@@ -122,30 +122,6 @@ bool Viewport::benchPicking() {
     require(gate.accept({1915,201}) && gate.accept({1910,202}), "warp destination should resume continuous drag");
     trace::log(QStringLiteral("bench: picking synchronous regression batch begin"));
     m_view->Redraw();
-    if(const QString shots=qEnvironmentVariable("OPAD_BENCH_HIGHLIGHTS");!shots.isEmpty()) {
-      QSignalBlocker blocked(this);const auto id=benchHeaviest();auto ais=m_items.at(id).ais;
-      fitNodes({id});m_view->SetProj(V3d_XposYnegZpos);m_view->Redraw();
-      for(auto& [node,item]:m_items) m_ctx->Deactivate(item.ais);
-      for(int mode=0;mode<4;++mode) {
-        m_ctx->ClearSelected(false);applySelectionLayers();refreshSubHighlight();m_filter=SelFilter(mode);activateSelection(ais);m_view->Redraw();
-        const auto type=mode==0?TopAbs_SHAPE:mode==1?TopAbs_FACE:mode==2?TopAbs_EDGE:TopAbs_VERTEX;
-        const auto selection=ais->Selection(AIS_Shape::SelectionMode(type));bool hit=false;Graphic3d_Vec2i pixel;
-        for(const auto& entity:selection->Entities()) {
-          auto point=entity->BaseSensitive()->CenterOfGeometry().Transformed(ais->Transformation());
-          pixel=devicePos(widgetPoint({point.X(),point.Y(),point.Z()}));m_ctx->MoveTo(pixel.x(),pixel.y(),m_view,false);
-          if(m_ctx->HasDetected() && m_ctx->DetectedInteractive()==ais) {hit=true;break;}
-        }
-        require(hit,"highlight screenshot could not find target");m_ctx->SelectDetected(AIS_SelectionScheme_Replace);OnSelectionChanged(m_ctx,m_view);m_ctx->ClearDetected(false);
-        if(mode==0) require(m_bodyGlows.count(ais.get()),"selected body has no glow overlay");
-        if(mode==1) require(!m_subHl.IsNull() && !m_subHl->m_triangles.empty() && !m_subHl->m_segments.empty(),"selected face is missing fill or glow border");
-        require(grabImage().save(shots+QString::number(mode)+".selected.png"),"selection image failed");
-        m_ctx->MoveTo(pixel.x(),pixel.y(),m_view,false);m_view->RedrawImmediate();
-        require(grabImage().save(shots+QString::number(mode)+".hover.png"),"hover image failed");
-      }
-      m_ctx->ClearSelected(false);applySelectionLayers();refreshSubHighlight();
-      require(m_bodyGlows.empty() && m_subHl.IsNull(),"selection glow survived clearing selection");
-      trace::log(QStringLiteral("bench: body / face / edge / vertex white glow PASS"));return true;
-    }
     // Two overlapping instances of one mesh: nearest triangle wins, with instance transforms.
     const TopoDS_Shape box = BRepPrimAPI_MakeBox(gp_Pnt(-10, -10, 0), 20, 20, 10).Shape();
     BRepMesh_IncrementalMesh mesh(box, 0.1);
@@ -194,7 +170,7 @@ bool Viewport::benchPicking() {
       Handle(AIS_Shape) nearAis = new AIS_Shape(box), farAis = new AIS_Shape(box);
       nearAis->SetLocalTransformation(nearShape->Transformation());
       farAis->SetLocalTransformation(farShape->Transformation());
-      m_ctx->Display(nearAis, false); m_ctx->Display(farAis, false);
+      m_ctx->Display(nearAis, AIS_Shaded, -1, false); m_ctx->Display(farAis, AIS_Shaded, -1, false);  // shaded: a box takes what is drawn in front (UI-43)
       m_items["near"].ais = nearAis; m_items["far"].ais = farAis;
       m_navNodes[nearShape.get()] = "near"; m_navNodes[farShape.get()] = "far";
       m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);

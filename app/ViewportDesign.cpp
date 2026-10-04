@@ -5,6 +5,9 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 
 #include <AIS_AnimationCamera.hxx>
+#include <AIS_TextLabel.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepBndLib.hxx>
@@ -38,23 +41,21 @@ Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF()
 }  // namespace
 
 // ---------------------------------------------------------------- sketches in the scene
-void Viewport::syncSketches() {
+void Viewport::syncSketches(bool sameGeometry) {
   if (!m_initialised) return;
   std::set<std::string> keep;
   for (const auto& s : m_doc->scene.sketches) {
     if (s.id == m_hiddenSketch || (!m_isolated.empty()?!m_isolated.count(s.id):!s.visible)) continue;
     keep.insert(s.id);
-    // Pictures by their samples (UI-71: dumping a photo backdrop's megabytes on every sync).
-    const std::string stamp = opad::design::geometry_stamp(s.geometry) + s.frame.to_json().dump();
     auto it = m_sketchWires.find(s.id);
-    if (it != m_sketchWires.end() && it->second.stamp == stamp) continue;
+    if (it != m_sketchWires.end() && (sameGeometry || it->second.stamp.matches(s))) continue;
     if (it != m_sketchWires.end()) { for(const auto& image:it->second.backdrops)m_ctx->Remove(image,false);m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False); }
     std::shared_ptr<PreparedSketch> prepared;
-    auto count=[&](const char* key) { const auto f=s.geometry.find(key); return f!=s.geometry.end() && f->is_array() ? f->size() : size_t(0); };
+    auto count=[&s](const char* key){const auto found=s.geometry.find(key);return found!=s.geometry.end() && found->is_array()?found->size():size_t(0);};  // no copies
     if(count("entities")>256 || count("images")>0) {
       auto found=m_preparedSketches.find(s.id);
-      if(found==m_preparedSketches.end() || found->second->stamp!=stamp) {
-        prepared=std::make_shared<PreparedSketch>();prepared->stamp=stamp;m_preparedSketches[s.id]=prepared;
+      if(found==m_preparedSketches.end() || !found->second->stamp.matches(s)) {
+        prepared=std::make_shared<PreparedSketch>();prepared->stamp={s.geometry,s.frame.to_json()};m_preparedSketches[s.id]=prepared;
         const auto geometry=s.geometry;const auto frame=s.frame;const auto id=s.id;const auto generation=m_doc->generation;
         m_jobs->backgroundNext();
         m_jobs->async(tr("Preparing sketch curves"),[prepared,geometry,frame](Progress progress) {
@@ -73,8 +74,8 @@ void Viewport::syncSketches() {
           Bnd_Box box;BRepBndLib::Add(shape,box);prepared->shape=shape;prepared->prs=BodyPrs::build(shape,box);
         },[this,prepared,id,generation](bool ok,const QString&) {
           if(generation!=m_doc->generation || !m_preparedSketches.count(id) || m_preparedSketches[id]!=prepared) return;
-          prepared->ready=ok; if(ok) requestSync();
-        });
+          prepared->ready=ok; if(ok){syncSketches();redrawScene();}  // the sketches only: a full sync walks every body (UI-40)
+        },JobKind::Background);
         continue;
       }
       prepared=found->second;if(!prepared->ready) continue;
@@ -109,7 +110,7 @@ void Viewport::syncSketches() {
     ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 2.0));
     m_ctx->Display(ais, AIS_WireFrame, -1, Standard_False);
     activateSelection(ais); m_nodeOf[ais.get()]=s.id;
-    m_sketchWires[s.id] = SketchWire{ais, prs, stamp,{}};
+    m_sketchWires[s.id] = SketchWire{ais, prs, prepared ? prepared->stamp : SketchStamp{s.geometry, s.frame.to_json()}, {}};
     if(prepared){m_sketchWires[s.id].backdrops=prepared->backdrops;for(const auto& image:prepared->backdrops)showBackdrop(image);}
     SketchWire& wire=m_sketchWires[s.id];wire.look.color={m_tokens.sel.redF(),m_tokens.sel.greenF(),m_tokens.sel.blueF()};  // as drawn above
     if(layered())applySketchLook(wire,sketchLook(s.id));
@@ -129,6 +130,7 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
   if (!m_initialised) return;
   for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
   m_candidates.clear();
+  m_originPlanes = false;
   markPickedPoints();
   for (const auto& c : candidates) {
     if (c.shape.IsNull()) continue;
@@ -155,8 +157,8 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
     const bool point = !surface && c.shape.ShapeType() == TopAbs_VERTEX;
     const Graphic3d_ZLayerId layer = point ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
     ais->SetZLayer(layer);
-    // A quiet tint for hovering and picking these, not the bodies' white hover and grey X-ray selection: on a large
-    // sketch region those flooded the view, and the X-ray layer showed the picked profile through the preview.
+    // The bodies' roles (UI-38: white hover, hued selection) as quieter tints and without the X-ray: on a large sketch
+    // region the bodies' own flooded the view, and the X-ray layer showed the picked profile through the preview.
     auto style = [&](Prs3d_TypeOfHighlight kind, const QColor& colour, float transparency) {
       Handle(Prs3d_Drawer) d = new Prs3d_Drawer();
       d->SetLink(m_ctx->HighlightStyle(kind));
@@ -166,8 +168,8 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
       d->SetZLayer(layer);
       return d;
     };
-    ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hov, 0.72f));
-    ais->SetHilightAttributes(style(Prs3d_TypeOfHighlight_Selected, m_tokens.sel, 0.55f));
+    ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hover, 0.65f));
+    ais->SetHilightAttributes(style(Prs3d_TypeOfHighlight_Selected, m_tokens.selected3d, 0.55f));
     m_ctx->Display(ais, surface ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
     m_ctx->Load(ais, -1);
     m_ctx->Activate(ais, 0);
@@ -180,11 +182,63 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
 }
 
 void Viewport::clearCandidates() {
-  if (!m_initialised || m_candidates.empty()) return;
-  for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
-  m_candidates.clear();
-  markPickedPoints();
-  redrawScene();
+  if (!m_initialised) return;
+  if (!m_candidates.empty()) {
+    for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
+    m_candidates.clear();
+    m_originPlanes = false;
+    markPickedPoints();
+    redrawScene();
+  }
+  if (m_originGuide) showOriginPlanes();  // nobody else shows candidates: the origin's planes again
+}
+
+// The origin's planes, a third of the grid's minimum square each way (the square an empty view frames).
+void Viewport::showOriginPlanes() {
+  const double size = 0.3 * std::max(100.0, m_gridExtentSetting);
+  std::vector<Candidate> planes;
+  for (const char* base : {"xy", "xz", "yz"})
+    planes.push_back({opad::json{{"base", base}}.dump(), BRepBuilderAPI_MakeFace(opad::design::frame_plane(opad::design::base_frame(base)), -size, size, -size, size).Face(), false});
+  showCandidates(planes);
+  m_originPlanes = true;
+}
+
+void Viewport::setOriginGuide(bool on) {
+  if (!m_initialised) m_originGuide = on;  // shown by initViewer
+  if (!m_initialised || on == m_originGuide) return;
+  m_originGuide = on;
+  for (const auto& o : m_originAxes) m_ctx->Remove(o, Standard_False);
+  m_originAxes.clear();
+  if (on) {
+    // The axes a quarter past the planes' edges, labelled at their tips (world sizes: they zoom with the planes).
+    const QColor colours[] = {m_tokens.red, m_tokens.green, m_tokens.dark ? QColor("#76b5ff") : QColor("#2067be")};
+    const double reach = 0.3 * std::max(100.0, m_gridExtentSetting) * 1.25;
+    for (int i = 0; i < 3; ++i) {
+      const gp_Dir axis(i == 0, i == 1, i == 2);
+      Handle(AIS_Shape) line = new AIS_Shape(BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 0).Translated(gp_Vec(axis) * reach)).Edge());
+      line->SetColor(occ(colours[i]));
+      line->SetWidth(2.5);
+      Handle(AIS_TextLabel) label = new AIS_TextLabel();
+      label->SetText(TCollection_ExtendedString(QString("XYZ"[i]).toUtf8().constData(), Standard_True));
+      label->SetPosition(gp_Pnt(0, 0, 0).Translated(gp_Vec(axis) * reach * 1.08));
+      label->SetColor(occ(colours[i]));
+      label->SetHeight(13 * displayScale());
+      for (const Handle(AIS_InteractiveObject)& o : {Handle(AIS_InteractiveObject)(line), Handle(AIS_InteractiveObject)(label)}) {
+        o->SetInfiniteState(Standard_True);  // Fit never frames it
+        o->SetZLayer(Graphic3d_ZLayerId_Top);
+        m_ctx->Display(o, 0, -1, Standard_False);  // never picked: no selection mode
+        m_originAxes.push_back(o);
+      }
+    }
+    if (m_candidates.empty()) showOriginPlanes();
+  } else if (m_originPlanes) {
+    for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
+    m_candidates.clear();
+    m_originPlanes = false;
+    markPickedPoints();
+  }
+  showGrid();
+  if (trace::enabled()) trace::log(QStringLiteral("origin guide %1").arg(on ? "on" : "off"));
 }
 
 // Highlighting only recolours a marker, so in the candidates' own blue a picked point's ring looked like the others:
@@ -196,7 +250,7 @@ void Viewport::markPickedPoints() {
   for (const auto& [id, ais] : m_candidates) {
     if (ais->Shape().IsNull() || ais->Shape().ShapeType() != TopAbs_VERTEX || !m_ctx->IsSelected(ais)) continue;
     Handle(AIS_Shape) mark = new AIS_Shape(ais->Shape());
-    mark->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL, occ(m_tokens.sel), 3.0 * displayScale()));
+    mark->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL, occ(m_tokens.selected3d), 3.0 * displayScale()));
     mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
     m_ctx->Display(mark, AIS_WireFrame, -1, Standard_False);  // -1: never picked
     m_pointMarks.push_back(mark);
@@ -247,6 +301,11 @@ void Viewport::selectRefs(const std::vector<opad::Ref>& refs, const std::vector<
       continue;
     }
     const TopAbs_ShapeEnum t = r.kind == opad::Ref::Kind::Face ? TopAbs_FACE : r.kind == opad::Ref::Kind::Edge ? TopAbs_EDGE : TopAbs_VERTEX;
+    if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull() && ((t == TopAbs_EDGE && body->groupedEdges()) || (t == TopAbs_VERTEX && body->groupedVertices()))) {
+      // owners made as picked (UI-42)
+      if (const auto owner = body->groupOwner(t, r.index); !owner.IsNull() && !m_ctx->IsSelected(owner)) m_ctx->AddOrRemoveSelected(owner, Standard_False);
+      continue;
+    }
     const Handle(SelectMgr_Selection)& sel = ais->Selection(AIS_Shape::SelectionMode(t));
     if (sel.IsNull()) continue;
     for (NCollection_Vector<Handle(SelectMgr_SensitiveEntity)>::Iterator e(sel->Entities()); e.More(); e.Next()) {
@@ -456,10 +515,9 @@ void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, co
   m_sketchFrame = frame;
   const auto normal=frame.normal();
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp_Pnt(frame.origin[0],frame.origin[1],frame.origin[2]),gp_Dir(normal[0],normal[1],normal[2]),gp_Dir(frame.x[0],frame.x[1],frame.x[2])));
-  // No grid echo while sketching: AIS_ViewController drew OCCT's grey star on the grid node nearest the pointer after
-  // every move, a node the sketch's snapping had not chosen (an object snap won), so the click went elsewhere. The
-  // editor marks the node it uses itself. Outside a sketch the echo is OCCT's as before.
-  m_viewer->SetGridEcho(Standard_False);
+  // No grid echo (off since initViewer, UI-51): AIS_ViewController drew OCCT's grey star on the grid node nearest the
+  // pointer after every move, a node the sketch's snapping had not chosen (an object snap won), so the click went
+  // elsewhere. The editor marks the node it uses itself.
   m_sketchGrid = QSettings().value("sketch/grid", true).toBool();
   showGrid();  // on the sketch plane, following the zoom
   m_sketchDrag = false;
@@ -476,7 +534,6 @@ void Viewport::endSketchInput() {
   m_sketchInput = nullptr;
   m_ownCursorWanted = m_ownCursorAside = false;
   applyOwnCursor();
-  m_viewer->SetGridEcho(Standard_True);
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(),gp::DZ(),gp::DX()));
   showGrid();
   m_hiddenSketch.clear();
@@ -500,8 +557,9 @@ opad::Frame Viewport::cameraPlane() const {
 void Viewport::lookAt(const opad::Frame& frame, bool fit, bool animate) {
   if (!m_initialised) return;
   m_needFit = false;
+  finishAnimation();  // from where a running move was going
   Handle(Graphic3d_Camera) cam = m_view->Camera();
-  Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*cam), end = new Graphic3d_Camera(*cam);
+  Handle(Graphic3d_Camera) end = new Graphic3d_Camera(*cam);
   const opad::Vec3 n = frame.normal();
   const double dist = std::max(cam->Distance(), 1.0);
   const gp_Pnt centre(frame.origin[0], frame.origin[1], frame.origin[2]);
@@ -520,12 +578,7 @@ void Viewport::lookAt(const opad::Frame& frame, bool fit, bool animate) {
   if(!animate || motion::reduced()) {  // reduced motion (UI-124): the camera jumps
     myViewAnimation->Stop();m_view->SetCamera(end);m_view->Invalidate();requestRedraw();return;
   }
-  myViewAnimation->SetView(m_view);
-  myViewAnimation->SetCameraStart(start);
-  myViewAnimation->SetCameraEnd(end);
-  myViewAnimation->SetOwnDuration(0.35);
-  myViewAnimation->StartTimer(0.0, 1.0, Standard_True);
-  requestRedraw();
+  animateCamera(end, 0.35);  // on screen and with Animate view changes on, like the standard views (UI-47); else at once
 }
 
 bool Viewport::planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const {
@@ -572,6 +625,7 @@ std::function<QPointF(const opad::Vec3&)> Viewport::projector() const {
 
 void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (e->button() == Qt::MiddleButton && !m_zoomWindow) { emit fitRequested(); return; }  // a middle double click fits (UI-47)
   double u, v;
   if (m_sketchInput && e->button() == Qt::LeftButton && planePoint(e->position(), m_sketchFrame, u, v)) return m_sketchInput->sketchDoubleClick(u, v);
   mousePressEvent(e);
@@ -583,6 +637,7 @@ bool Viewport::event(QEvent* e) {
   if (e->type() == QEvent::ChildPolished && m_ownCursorShown)
     if (auto* child = qobject_cast<QWidget*>(static_cast<QChildEvent*>(e)->child()); child && !child->isWindow() && !child->testAttribute(Qt::WA_SetCursor))
       child->setCursor(Qt::ArrowCursor);
+  if (cycleKey(e)) return true;  // Tab hovers the next thing under the pointer (UI-128) instead of moving the focus
   if (e->type() == QEvent::Gesture) {
     auto* gestures = static_cast<QGestureEvent*>(e);
     if (auto* pinch = static_cast<QPinchGesture*>(gestures->gesture(Qt::PinchGesture))) {

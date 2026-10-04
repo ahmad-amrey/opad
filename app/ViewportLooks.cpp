@@ -206,14 +206,11 @@ void Viewport::scheduleLooks() {
         QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
       }
     }
-    // Ghosts overlap in any order: blended order-independently while there are any (unordered blending is the default).
-    const bool ghosts = std::any_of(m_items.begin(), m_items.end(), [](const auto& item) { return item.second.look.ghost; });
-    Graphic3d_RenderingParams& params = m_view->ChangeRenderingParams();
-    if ((params.TransparencyMethod == Graphic3d_RTM_BLEND_OIT) != ghosts) params.TransparencyMethod = ghosts ? Graphic3d_RTM_BLEND_OIT : Graphic3d_RTM_BLEND_UNORDERED;
-    redrawScene();
+    redrawScene();  // ghosts or not, translucency stays order-independent (setRenderQuality, UI-39)
     if (trace::enabled()) trace::log(QStringLiteral("looks: %1 bodies changed%2").arg(pass->changed).arg(completed ? "" : " (stopped)"));
+    if (m_style == Style::HiddenEdges && pass->changed) scheduleEdgeOverlay();  // shown, hidden or moved: the edges follow
     if (completed) emit looksApplied();
-  });
+  }, JobKind::Background);
 }
 
 bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look) {

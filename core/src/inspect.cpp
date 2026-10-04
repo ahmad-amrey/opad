@@ -19,6 +19,8 @@
 #include <Poly_Triangulation.hxx>
 #include <Standard_Version.hxx>
 #include <BRepGProp.hxx>
+#include <BRepTools.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
@@ -29,7 +31,14 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
+#include <ShapeAnalysis_CanonicalRecognition.hxx>
+#include <Standard_Failure.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Cylinder.hxx>
+#include <gp_Lin.hxx>
+#include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Sphere.hxx>
 
 #include <algorithm>
 #include <atomic>
@@ -100,6 +109,48 @@ const char* curve_type(GeomAbs_CurveType t) {
   }
 }
 
+// A free-form face or edge (B-spline, Bezier, an offset or swept surface) that is a cylinder, sphere or circle within
+// tolerance (UI-50): STEP exporters write rods and holes that way, and the radius tool said they had none. The tolerance
+// grows with the entity (a thousandth of its box, at least 0.1 um); gap is how far the geometry is from the analytic form.
+struct Recognised {
+  enum class Kind { None, Cylinder, Sphere, Plane, Circle, Line } kind = Kind::None;
+  gp_Cylinder cylinder;
+  gp_Sphere sphere;
+  gp_Pln plane;
+  gp_Circ circle;
+  gp_Lin line;
+  double gap = 0;
+  const char* name() const { return kind == Kind::Cylinder ? "cylinder" : kind == Kind::Sphere ? "sphere" : kind == Kind::Plane ? "plane" : kind == Kind::Circle ? "circle" : kind == Kind::Line ? "line" : ""; }
+};
+bool freeForm(GeomAbs_SurfaceType t) { return t != GeomAbs_Plane && t != GeomAbs_Cylinder && t != GeomAbs_Cone && t != GeomAbs_Sphere && t != GeomAbs_Torus; }
+bool freeForm(GeomAbs_CurveType t) { return t != GeomAbs_Line && t != GeomAbs_Circle && t != GeomAbs_Ellipse && t != GeomAbs_Hyperbola && t != GeomAbs_Parabola; }
+Recognised recognise(const TopoDS_Shape& s) {
+  Recognised r;
+  if (s.IsNull() || (s.ShapeType() != TopAbs_FACE && s.ShapeType() != TopAbs_EDGE)) return r;
+  if (s.ShapeType() == TopAbs_FACE ? !freeForm(BRepAdaptor_Surface(TopoDS::Face(s)).GetType()) : !freeForm(BRepAdaptor_Curve(TopoDS::Edge(s)).GetType())) return r;
+  const Bnd_Box box = tight_bbox(s);
+  const double tol = box.IsVoid() ? 1e-4 : std::max(1e-4, 1e-3 * std::sqrt(box.SquareExtent()));
+  try {
+    ShapeAnalysis_CanonicalRecognition analysis(s);
+    auto attempt = [&](Recognised::Kind kind, auto test) {
+      if (r.kind != Recognised::Kind::None) return;
+      analysis.ClearStatus();
+      if (test()) { r.kind = kind; r.gap = analysis.GetGap(); }
+    };
+    if (s.ShapeType() == TopAbs_FACE) {
+      attempt(Recognised::Kind::Plane, [&] { return analysis.IsPlane(tol, r.plane); });
+      attempt(Recognised::Kind::Cylinder, [&] { return analysis.IsCylinder(tol, r.cylinder); });
+      attempt(Recognised::Kind::Sphere, [&] { return analysis.IsSphere(tol, r.sphere); });
+    } else {
+      attempt(Recognised::Kind::Line, [&] { return analysis.IsLine(tol, r.line); });
+      attempt(Recognised::Kind::Circle, [&] { return analysis.IsCircle(tol, r.circle); });
+    }
+  } catch (const Standard_Failure&) {
+    r.kind = Recognised::Kind::None;
+  }
+  return r;
+}
+
 // World-space shape for a reference.
 TopoDS_Shape ref_shape(const Document& doc, const Scene& scene, const Ref& ref) {
   if (ref.kind == Ref::Kind::Point) return BRepBuilderAPI_MakeVertex(gp_Pnt(ref.point[0], ref.point[1], ref.point[2]));
@@ -139,7 +190,14 @@ bool ref_direction(const Document& doc, const Scene& scene, const Ref& ref, gp_D
       case GeomAbs_Cylinder: return axis(surf.Cylinder().Axis());
       case GeomAbs_Cone: return axis(surf.Cone().Axis());
       case GeomAbs_Torus: return axis(surf.Torus().Axis());
-      default: return false;
+      default: {
+        const Recognised r = recognise(s);
+        if (r.kind == Recognised::Kind::Cylinder) return axis(r.cylinder.Axis());
+        if (r.kind != Recognised::Kind::Plane) return false;
+        gp_Dir n = r.plane.Axis().Direction();
+        if (s.Orientation() == TopAbs_REVERSED) n.Reverse();
+        out = n; what = "normal"; at = mid; return true;
+      }
     }
   }
   if (ref.kind == Ref::Kind::Edge) {
@@ -149,6 +207,9 @@ bool ref_direction(const Document& doc, const Scene& scene, const Ref& ref, gp_D
       case GeomAbs_Circle: out = c.Circle().Axis().Direction(); what = "axis"; at = c.Circle().Location(); return true;
       case GeomAbs_Ellipse: out = c.Ellipse().Axis().Direction(); what = "axis"; at = c.Ellipse().Location(); return true;
       default: {
+        const Recognised r = recognise(s);
+        if (r.kind == Recognised::Kind::Circle) { out = r.circle.Axis().Direction(); what = "axis"; at = r.circle.Location(); return true; }
+        if (r.kind == Recognised::Kind::Line) { out = r.line.Direction(); what = "direction"; at = c.Value((c.FirstParameter() + c.LastParameter()) * 0.5); return true; }
         gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
         if (a.Distance(b) < 1e-9) return false;
         out = gp_Dir(gp_Vec(a, b)); what = "chord"; at = gp_Pnt((a.XYZ() + b.XYZ()) * 0.5); return true;
@@ -539,8 +600,28 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
         j["major_radius"] = surf.Torus().MajorRadius();
         j["minor_radius"] = surf.Torus().MinorRadius();
         break;
-      default:
+      default: {
+        const Recognised r = recognise(face);
+        if (r.kind == Recognised::Kind::None) break;
+        j["recognized"] = r.name();
+        j["deviation"] = r.gap;
+        if (r.kind == Recognised::Kind::Cylinder) {
+          j["axis"] = dir(r.cylinder.Axis().Direction());
+          j["axis_origin"] = pnt(r.cylinder.Location());
+          j["radius"] = r.cylinder.Radius();
+          j["diameter"] = 2 * r.cylinder.Radius();
+        } else if (r.kind == Recognised::Kind::Sphere) {
+          j["center"] = pnt(r.sphere.Location());
+          j["radius"] = r.sphere.Radius();
+          j["diameter"] = 2 * r.sphere.Radius();
+        } else {
+          gp_Dir nrm = r.plane.Axis().Direction();
+          if (reversed) nrm.Reverse();
+          j["normal"] = dir(nrm);
+          j["origin"] = pnt(r.plane.Location());
+        }
         break;
+      }
     }
     // Adjacent faces and bounding edges, by ordinal in the prototype.
     TopoDS_Shape proto_face = subshape(proto, Ref::Kind::Face, ref.index);
@@ -585,7 +666,20 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
         j["major_radius"] = c.Ellipse().MajorRadius();
         j["minor_radius"] = c.Ellipse().MinorRadius();
         break;
-      default: break;
+      default: {
+        const Recognised r = recognise(edge);
+        if (r.kind == Recognised::Kind::None) break;
+        j["recognized"] = r.name();
+        j["deviation"] = r.gap;
+        if (r.kind == Recognised::Kind::Line) j["direction"] = dir(r.line.Direction());
+        else {
+          j["center"] = pnt(r.circle.Location());
+          j["axis"] = dir(r.circle.Axis().Direction());
+          j["radius"] = r.circle.Radius();
+          j["diameter"] = 2 * r.circle.Radius();
+        }
+        break;
+      }
     }
     TopoDS_Shape proto_edge = subshape(proto, Ref::Kind::Edge, ref.index);
     TopTools_IndexedDataMapOfShapeListOfShape edge_faces;
@@ -611,6 +705,32 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
   j["type"] = "vertex";
   j["point"] = pnt(BRep_Tool::Pnt(TopoDS::Vertex(sub)));
   return j;
+}
+
+Vec3 annotation_anchor(const Document& doc, const Scene& scene, const Ref& ref) {
+  if (ref.kind == Ref::Kind::Point) return ref.point;
+  auto centre = [](const Bnd_Box& box) {
+    if (box.IsVoid()) throw Error("nothing to pin a note to");
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    return Vec3{(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2};
+  };
+  if (ref.kind == Ref::Kind::Body) {
+    if (scene.sketch(ref.body)) return centre(tight_bbox(node_world_shape(doc, scene, ref.body)));
+    const Node* n = scene.node(ref.body);
+    if (!n) throw Error("unknown node: " + ref.body);
+    if (n->kind == Node::Kind::Body) {
+      if (n->body_missing) throw Error("not an available body: " + ref.body);
+      return centre(node_tight_bbox(doc, scene, ref.body));
+    }
+    const auto bodies = scene.bodies_under(ref.body);  // an empty list would mean every visible body
+    Vec3 lo, hi;
+    if (bodies.empty() || !scene_tight_bbox(doc, scene, bodies, lo, hi)) throw Error("an empty component: " + ref.body);
+    return {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2};
+  }
+  json info = inspect_ref(doc, scene, ref);
+  const json& c = info.contains("center") ? info["center"] : info.contains("point") ? info["point"] : info.contains("start") ? info["start"] : info.at("bbox").at("center");
+  return {c[0].get<double>(), c[1].get<double>(), c[2].get<double>()};
 }
 
 // ---------------------------------------------------------------- distance
@@ -1133,7 +1253,10 @@ json measure_radius(const Document& doc, const Scene& scene, const Ref& a) {
     return result;
   }
   json info = inspect_ref(doc, scene, a);
-  if (!info.contains("radius")) throw Error("reference has no radius (need a cylindrical/spherical face or circular edge): " + a.str());
+  if (!info.contains("radius")) {
+    const std::string what = info.value("surface", info.value("curve", std::string()));
+    throw Error("reference has no radius (need a cylindrical/spherical face or circular edge" + (what.empty() ? std::string() : ", not a " + what + " " + info.value("type", std::string("entity"))) + "): " + a.str());
+  }
   json j;
   j["kind"] = "radius";
   j["refs"] = {a.str()};
@@ -1142,25 +1265,286 @@ json measure_radius(const Document& doc, const Scene& scene, const Ref& a) {
   j["unit"] = "mm";
   if (info.contains("center")) j["center"] = info["center"];
   if (info.contains("axis")) j["axis"] = info["axis"];
-  // Radius endpoints on the analytic geometry, including a cylinder's axis rather than
+  for (const char* key : {"recognized", "deviation"})
+    if (info.contains(key)) j[key] = info[key];
+  // Radius endpoints on the analytic geometry (recognised for a free-form one), including a cylinder's axis rather than
   // the surface's centre of mass (which is off-axis for a trimmed cylindrical face).
   const TopoDS_Shape shape = ref_shape(doc, scene, a);
   gp_Pnt center, rim;
   if (a.kind == Ref::Kind::Edge) {
     BRepAdaptor_Curve curve(TopoDS::Edge(shape));
-    center = curve.Circle().Location();
+    center = json_pnt(info["center"]);
     rim = curve.Value((curve.FirstParameter() + curve.LastParameter()) * 0.5);
   } else {
     BRepAdaptor_Surface surface(TopoDS::Face(shape));
     rim = surface.Value((surface.FirstUParameter() + surface.LastUParameter()) * 0.5,
                         (surface.FirstVParameter() + surface.LastVParameter()) * 0.5);
-    if (surface.GetType() == GeomAbs_Cylinder) {
-      const gp_Ax1 axis = surface.Cylinder().Axis();
+    if (info.contains("axis_origin")) {
+      const gp_Ax1 axis(json_pnt(info["axis_origin"]), gp_Dir(info["axis"][0].get<double>(), info["axis"][1].get<double>(), info["axis"][2].get<double>()));
       center = axis.Location().Translated(gp_Vec(axis.Direction()) * gp_Vec(axis.Location(), rim).Dot(gp_Vec(axis.Direction())));
-    } else center = surface.Sphere().Location();
+    } else center = json_pnt(info["center"]);
   }
   j["point_a"] = pnt(center);
   j["point_b"] = pnt(rim);
+  return j;
+}
+
+namespace {
+// The point a centre-to-centre distance takes for a reference, and what it is (UI-144).
+gp_Pnt ref_centre(const Document& doc, const Scene& scene, const Ref& ref, std::string& what) {
+  if (ref.kind == Ref::Kind::Point) { what = "point"; return gp_Pnt(ref.point[0], ref.point[1], ref.point[2]); }
+  if (ref.kind == Ref::Kind::Center) { what = "circle centre"; return json_pnt(inspect_ref(doc, scene, ref)["center"]); }
+  const TopoDS_Shape s = ref_shape(doc, scene, ref);
+  if (ref.kind == Ref::Kind::Vertex) { what = "vertex"; return BRep_Tool::Pnt(TopoDS::Vertex(s)); }
+  if (ref.kind == Ref::Kind::Edge) {
+    BRepAdaptor_Curve c(TopoDS::Edge(s));
+    if (c.GetType() == GeomAbs_Circle) { what = "circle centre"; return c.Circle().Location(); }
+    if (c.GetType() == GeomAbs_Ellipse) { what = "ellipse centre"; return c.Ellipse().Location(); }
+    if (const Recognised r = recognise(s); r.kind == Recognised::Kind::Circle) { what = "circle centre"; return r.circle.Location(); }
+    GProp_GProps props;
+    BRepGProp::LinearProperties(s, props);
+    what = c.GetType() == GeomAbs_Line ? "edge middle" : "curve centroid";
+    return props.CentreOfMass();
+  }
+  if (ref.kind == Ref::Kind::Face) {
+    const TopoDS_Face& face = TopoDS::Face(s);
+    BRepAdaptor_Surface surf(face);
+    const gp_Pnt centroid = area_properties(face).centre;
+    auto onAxis = [&](const gp_Ax1& axis) {
+      what = "axis";
+      return axis.Location().Translated(gp_Vec(axis.Direction()) * gp_Vec(axis.Location(), centroid).Dot(gp_Vec(axis.Direction())));
+    };
+    switch (surf.GetType()) {
+      case GeomAbs_Cylinder: return onAxis(surf.Cylinder().Axis());
+      case GeomAbs_Cone: return onAxis(surf.Cone().Axis());
+      case GeomAbs_Sphere: what = "sphere centre"; return surf.Sphere().Location();
+      case GeomAbs_Torus: what = "torus centre"; return surf.Torus().Location();
+      default: break;
+    }
+    const Recognised r = recognise(face);
+    if (r.kind == Recognised::Kind::Cylinder) return onAxis(r.cylinder.Axis());
+    if (r.kind == Recognised::Kind::Sphere) { what = "sphere centre"; return r.sphere.Location(); }
+    what = "face centroid";
+    return centroid;
+  }
+  if (TopExp_Explorer(s, TopAbs_SOLID).More()) { what = "volume centroid"; return volume_properties(s).centre; }
+  what = "area centroid";
+  return area_properties(s).centre;
+}
+
+// Where the farthest distance is looked for (UI-144): every vertex, every curved edge sampled within `deflection`, and the
+// mesh nodes of every curved face (a copy is meshed when the shape has none). curved: a sample is not a vertex.
+void farPoints(const TopoDS_Shape& s, double deflection, std::vector<gp_Pnt>& out, bool& curved, const std::function<bool()>& cancelled) {
+  TopTools_IndexedMapOfShape vertices, edges, faces;
+  TopExp::MapShapes(s, TopAbs_VERTEX, vertices);
+  TopExp::MapShapes(s, TopAbs_EDGE, edges);
+  TopExp::MapShapes(s, TopAbs_FACE, faces);
+  for (int i = 1; i <= vertices.Extent(); ++i) out.push_back(BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))));
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    if (cancelled && cancelled()) throw Error("cancelled");
+    const TopoDS_Edge& edge = TopoDS::Edge(edges(i));
+    if (BRep_Tool::Degenerated(edge)) continue;
+    BRepAdaptor_Curve c(edge);
+    if (c.GetType() == GeomAbs_Line) continue;
+    curved = true;
+    try {
+      GCPnts_TangentialDeflection sample(c, 0.05, deflection);
+      for (int k = 1; k <= sample.NbPoints(); ++k) out.push_back(sample.Value(k));
+    } catch (const Standard_Failure&) {
+    }
+  }
+  bool meshed = true;
+  std::vector<TopoDS_Face> curvedFaces;
+  for (int i = 1; i <= faces.Extent(); ++i) {
+    const TopoDS_Face& face = TopoDS::Face(faces(i));
+    if (BRepAdaptor_Surface(face, Standard_False).GetType() == GeomAbs_Plane) continue;  // its farthest point is on its boundary
+    curved = true;
+    TopLoc_Location loc;
+    if (BRep_Tool::Triangulation(face, loc).IsNull()) meshed = false;
+    curvedFaces.push_back(face);
+  }
+  if (curvedFaces.empty()) return;
+  TopoDS_Shape mesh = s;
+  if (!meshed) {
+    mesh = BRepBuilderAPI_Copy(s, Standard_True, Standard_False).Shape();
+    BRepMesh_IncrementalMesh(mesh, deflection, Standard_False, 0.3, Standard_True);
+    curvedFaces.clear();
+    for (TopExp_Explorer e(mesh, TopAbs_FACE); e.More(); e.Next())
+      if (BRepAdaptor_Surface(TopoDS::Face(e.Current()), Standard_False).GetType() != GeomAbs_Plane) curvedFaces.push_back(TopoDS::Face(e.Current()));
+  }
+  for (const TopoDS_Face& face : curvedFaces) {
+    if (cancelled && cancelled()) throw Error("cancelled");
+    TopLoc_Location loc;
+    const Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+    if (tri.IsNull()) continue;
+    for (int k = 1; k <= tri->NbNodes(); ++k) out.push_back(tri->Node(k).Transformed(loc.Transformation()));
+  }
+}
+
+double wirePerimeter(const TopoDS_Wire& wire, const TopoDS_Face& face, int& count) {
+  TopTools_IndexedMapOfShape seen;
+  double length = 0;
+  for (TopExp_Explorer e(wire, TopAbs_EDGE); e.More(); e.Next()) {
+    const TopoDS_Edge& edge = TopoDS::Edge(e.Current());
+    if (seen.Contains(edge) || BRep_Tool::Degenerated(edge) || (!face.IsNull() && BRep_Tool::IsClosed(edge, face))) continue;  // a seam is no boundary
+    seen.Add(edge);
+    BRepAdaptor_Curve c(edge);
+    length += GCPnts_AbscissaPoint::Length(c);
+  }
+  count = seen.Extent();
+  return length;
+}
+}  // namespace
+
+json measure_center_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b) {
+  std::string wa, wb;
+  const gp_Pnt pa = ref_centre(doc, scene, a, wa), pb = ref_centre(doc, scene, b, wb);
+  json j;
+  j["kind"] = "distance";
+  j["mode"] = "center";
+  j["refs"] = {a.str(), b.str()};
+  j["value"] = pa.Distance(pb);
+  j["unit"] = "mm";
+  j["point_a"] = pnt(pa);
+  j["point_b"] = pnt(pb);
+  j["delta"] = {pb.X() - pa.X(), pb.Y() - pa.Y(), pb.Z() - pa.Z()};
+  j["centre_a"] = wa;
+  j["centre_b"] = wb;
+  return j;
+}
+
+json measure_max_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b, const std::function<bool()>& cancelled) {
+  const TopoDS_Shape s1 = ref_shape(doc, scene, a), s2 = ref_shape(doc, scene, b);
+  Bnd_Box box = tight_bbox(s1);
+  box.Add(tight_bbox(s2));
+  const double deflection = box.IsVoid() ? 1e-3 : std::max(1e-4, 1e-3 * std::sqrt(box.SquareExtent()));
+  std::vector<gp_Pnt> A, B;
+  bool curved = false;
+  farPoints(s1, deflection, A, curved, cancelled);
+  farPoints(s2, deflection, B, curved, cancelled);
+  if (A.empty() || B.empty()) throw Error("distance computation failed");
+  // Seeds: each set's extreme points along 152 directions (the farthest pair are each other's extremes along the line
+  // between them), the best pair among them, then each end moved to the point of its set farthest from the other end
+  // until neither moves.
+  std::vector<gp_Vec> directions;
+  for (int x = -1; x <= 1; ++x)
+    for (int y = -1; y <= 1; ++y)
+      for (int z = -1; z <= 1; ++z)
+        if (x || y || z) directions.emplace_back(x, y, z);
+  const int spiral = 126;
+  for (int k = 0; k < spiral; ++k) {
+    const double h = 1 - 2 * (k + 0.5) / spiral, r = std::sqrt(1 - h * h), phi = k * 2.399963229728653;
+    directions.emplace_back(r * std::cos(phi), r * std::sin(phi), h);
+  }
+  auto extremes = [&](const std::vector<gp_Pnt>& points) {
+    std::set<size_t> picked;
+    for (const gp_Vec& d : directions) {
+      size_t best = 0;
+      double top = -std::numeric_limits<double>::max();
+      for (size_t i = 0; i < points.size(); ++i)
+        if (const double v = d.Dot(gp_Vec(points[i].XYZ())); v > top) top = v, best = i;
+      picked.insert(best);
+    }
+    if (cancelled && cancelled()) throw Error("cancelled");
+    return std::vector<size_t>(picked.begin(), picked.end());
+  };
+  const auto ea = extremes(A), eb = extremes(B);
+  size_t ia = ea.front(), ib = eb.front();
+  for (size_t i : ea)
+    for (size_t k : eb)
+      if (A[i].SquareDistance(B[k]) > A[ia].SquareDistance(B[ib])) ia = i, ib = k;
+  auto farthest = [](const std::vector<gp_Pnt>& points, const gp_Pnt& from, size_t current) {
+    for (size_t i = 0; i < points.size(); ++i)
+      if (points[i].SquareDistance(from) > points[current].SquareDistance(from)) current = i;
+    return current;
+  };
+  for (int round = 0; round < 32; ++round) {
+    if (cancelled && cancelled()) throw Error("cancelled");
+    const size_t na = farthest(A, B[ib], ia), nb = farthest(B, A[na], ib);
+    if (na == ia && nb == ib) break;
+    ia = na, ib = nb;
+  }
+  const gp_Pnt pa = A[ia], pb = B[ib];
+  json j;
+  j["kind"] = "distance";
+  j["mode"] = "max";
+  j["refs"] = {a.str(), b.str()};
+  j["value"] = pa.Distance(pb);
+  j["unit"] = "mm";
+  j["point_a"] = pnt(pa);
+  j["point_b"] = pnt(pb);
+  j["delta"] = {pb.X() - pa.X(), pb.Y() - pa.Y(), pb.Z() - pa.Z()};
+  if (curved) {
+    j["approximate"] = true;
+    j["tolerance_mm"] = deflection;
+  }
+  return j;
+}
+
+json measure_length(const Document& doc, const Scene& scene, const Ref& a) {
+  if (a.kind != Ref::Kind::Edge && a.kind != Ref::Kind::Face && a.kind != Ref::Kind::Body)
+    throw Error("length and area need an edge, a face or a body: " + a.str());
+  // The edge and the faces around it from one world shape: each call places the body anew (a new location, a new
+  // GTransform), and an edge of one is not the same edge of another.
+  Ref whole = a;
+  whole.kind = Ref::Kind::Body;
+  const TopoDS_Shape body = ref_shape(doc, scene, whole);
+  const TopoDS_Shape s = a.kind == Ref::Kind::Body ? body : subshape(body, a.kind, a.index);
+  json j;
+  j["refs"] = {a.str()};
+  if (a.kind == Ref::Kind::Edge) {
+    const TopoDS_Edge& edge = TopoDS::Edge(s);
+    BRepAdaptor_Curve c(edge);
+    j["kind"] = "length";
+    j["value"] = GCPnts_AbscissaPoint::Length(c);
+    j["unit"] = "mm";
+    j["curve"] = curve_type(c.GetType());
+    j["start"] = pnt(c.Value(c.FirstParameter()));
+    j["end"] = pnt(c.Value(c.LastParameter()));
+    j["point"] = pnt(c.Value((c.FirstParameter() + c.LastParameter()) / 2));
+    j["closed"] = BRep_Tool::IsClosed(edge);
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(body, TopAbs_FACE, faces);
+    TopTools_IndexedDataMapOfShapeListOfShape owners;
+    TopExp::MapShapesAndAncestors(body, TopAbs_EDGE, TopAbs_FACE, owners);
+    json loops = json::array();
+    if (const TopTools_ListOfShape* around = owners.Seek(edge)) {
+      TopTools_IndexedMapOfShape done;
+      for (const auto& f : *around) {
+        if (done.Contains(f)) continue;
+        done.Add(f);
+        const TopoDS_Face& face = TopoDS::Face(f);
+        const TopoDS_Wire outer = BRepTools::OuterWire(face);
+        for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
+          bool holds = false;
+          for (TopExp_Explorer e(w.Current(), TopAbs_EDGE); e.More() && !holds; e.Next()) holds = e.Current().IsSame(edge);
+          if (!holds) continue;
+          int count = 0;
+          const double perimeter = wirePerimeter(TopoDS::Wire(w.Current()), face, count);
+          loops.push_back({{"face", faces.FindIndex(face) - 1}, {"perimeter", perimeter}, {"edges", count}, {"outer", w.Current().IsSame(outer)}});
+        }
+      }
+    }
+    j["loops"] = loops;
+    return j;
+  }
+  j["kind"] = "area";
+  j["unit"] = "mm2";
+  const MassProperties area = area_properties(s);
+  j["value"] = area.mass;
+  j["point"] = pnt(area.centre);
+  if (a.kind == Ref::Kind::Face) {
+    const TopoDS_Face& face = TopoDS::Face(s);
+    j["surface"] = surface_type(BRepAdaptor_Surface(face).GetType());
+    double perimeter = 0;
+    int loops = 0, count = 0;
+    for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next(), ++loops) perimeter += wirePerimeter(TopoDS::Wire(w.Current()), face, count);
+    j["perimeter"] = perimeter;
+    j["outer_perimeter"] = wirePerimeter(BRepTools::OuterWire(face), face, count);
+    j["loops"] = loops;
+    return j;
+  }
+  if (TopExp_Explorer(s, TopAbs_SOLID).More()) j["volume"] = volume_properties(s).mass;
   return j;
 }
 

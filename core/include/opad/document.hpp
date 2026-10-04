@@ -68,8 +68,11 @@ class Document {
   // `skip_body(key)` true leaves that body entry out, unread and unverified (a version compared with one already
   // in memory needs only the bodies it does not have).
   using BodyFilter = std::function<bool(const std::string& key)>;
-  static Document load(const std::filesystem::path& path, const BodyFilter& skip_body = {});
-  static Document parse(const std::string& text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
+  // `progress` (optional) gets the fraction read and parsed, by bytes, and returns false to cancel (Error "cancelled").
+  using Progress = std::function<bool(double)>;
+  static Document load(const std::filesystem::path& path, const BodyFilter& skip_body = {}, const Progress& progress = {});
+  static Document parse(const std::string& text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {},
+                        const Progress& progress = {});
   // Index mode, for reading a version rather than editing it (diff, compare, textconv, history): body entries are
   // listed with their meta but their BREP is neither copied nor hashed (git or the session that wrote it verified it).
   // The document keeps the text; a body's BREP is read from there when it is asked for and hashed the first time it is
@@ -133,7 +136,8 @@ class Document {
   static bool known_type(const std::string& type);
 
  private:
-  static Document parse_text(std::string_view text, const std::filesystem::path& origin, const BodyFilter& skip_body, bool index);
+  static Document parse_text(std::string_view text, const std::filesystem::path& origin, const BodyFilter& skip_body, bool index,
+                             const Progress& progress = {});
   std::vector<BodyEntry> bodies_;
   std::unordered_map<std::string, size_t> bodies_index_;
   size_t persisted_ops_ = 0;

@@ -21,6 +21,12 @@ struct ToolStep {
   QString picked;  // the picked target, empty while the step is open
 };
 
+// An earlier result of the session, listed under the current one with Copy and Pin (UI-144).
+struct ToolHistoryRow {
+  QString title, value;  // "Distance", "25.000 mm"
+  bool pinned = false;
+};
+
 // 16 px numbered ring: pending fg3, waiting sel, done filled sel with a check.
 enum class StepState { Pending, Waiting, Done };
 QPixmap stepRing(StepState state, int number, qreal dpr);
@@ -58,6 +64,7 @@ class ToolStepsPanel : public QWidget {
   void setSteps(const QList<ToolStep>& steps, const QString& hover);  // hover: candidate under the mouse, shown in the waiting row
   void setSummary(const QString& title, const QString& subtitle, const QString& state);
   QStringList summary() const;  // title, subtitle and state as shown (empty while the summary is hidden)
+  void setError(const QString& text);  // why the last pick could not be measured (UI-50); empty: none
   void setResult(const QList<QPair<QString, QString>>& rows);  // empty: nothing to show yet
   void setFooter(bool visible, bool canPin);
   void setComponentsState(bool visible, bool checked);
@@ -65,6 +72,11 @@ class ToolStepsPanel : public QWidget {
   // UI-107: the command's animated guide above the steps, looping the waiting step (made on first use).
   void setGuide(const QString& command);
   ToolGuide* guide() const { return m_guide; }
+  // Segmented choice above the result (Distance: minimum, centre to centre, maximum); empty labels hide it (UI-144).
+  void setModeOptions(const QStringList& labels, int current);
+  // What measured points are given in: World or the pick's component (UI-144); fewer than two labels hide it.
+  void setFrameOptions(const QStringList& labels, int current);
+  void setHistory(const QList<ToolHistoryRow>& rows, bool canPin);
   QSize preferredSize(int width);
   int stepsHeight(int width) const;  // what the scrolled part needs at that width, new step rows counted at once
   PanelFooter* footer() const { return m_footer; }
@@ -73,6 +85,10 @@ class ToolStepsPanel : public QWidget {
   void pinRequested();
   void componentsChanged(bool on);
   void anchorChanged(int index);
+  void modeChanged(int index);
+  void frameChanged(int index);
+  void historyCopyRequested(int index);  // by row of the last setHistory
+  void historyPinRequested(int index);
   void contentSizeChanged();
  protected:
   void resizeEvent(QResizeEvent* event) override;
@@ -80,12 +96,21 @@ class ToolStepsPanel : public QWidget {
  private:
   void sizeResults(int width);
   QVBoxLayout* m_stepRows;
-  QLabel *m_title, *m_subtitle, *m_state;
+  QLabel *m_title, *m_subtitle, *m_state, *m_error;
   QTreeWidget* m_grid = nullptr;
   PanelFooter* m_footer;
   QCheckBox* m_components;
   QWidget* m_anchorRow;
   QComboBox* m_anchors;
+  QWidget* m_modeRow;
+  class QButtonGroup* m_modes;
+  QStringList m_modeLabels;
+  QWidget* m_frameRow;
+  QComboBox* m_frames;
+  QWidget* m_historyBox;
+  QTreeWidget* m_history;
+  QList<ToolHistoryRow> m_historyRows;  // as last set: made again in the new theme's colours and icons
+  bool m_historyPin = false;
   QPushButton* m_copy;
   QScrollArea* m_scroll;
   QWidget* m_body;

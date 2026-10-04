@@ -173,6 +173,11 @@ void ComponentPicker::choose() {
 }
 
 bool ComponentPicker::eventFilter(QObject* object, QEvent* event) {
+  // Esc is the list's, not the main window's (Clear measurement), which Qt offers it to first, as for OpacityPopup.
+  if (object == m_filter && event->type() == QEvent::ShortcutOverride && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+    event->accept();
+    return true;
+  }
   if (object == m_filter && event->type() == QEvent::KeyPress) {
     const int key = static_cast<QKeyEvent*>(event)->key();
     if (key == Qt::Key_Escape) {
@@ -260,6 +265,18 @@ void OpacityPopup::popup(const QPoint& global) {
   placeAt(this, global);
   show();
   m_slider->slider()->setFocus();
+}
+
+// Esc, Return and Enter are the popup's own (keyPressEvent). Qt offers a key to the main window's shortcuts first, also from
+// a window it owns: its Esc (Clear measurement) took the key, the popup stayed open and the value it dropped was written once
+// it rested.
+bool OpacityPopup::event(QEvent* event) {
+  if (event->type() == QEvent::ShortcutOverride)
+    if (const int key = static_cast<QKeyEvent*>(event)->key(); key == Qt::Key_Escape || key == Qt::Key_Return || key == Qt::Key_Enter) {
+      event->accept();
+      return true;
+    }
+  return QFrame::event(event);
 }
 
 void OpacityPopup::keyPressEvent(QKeyEvent* event) {

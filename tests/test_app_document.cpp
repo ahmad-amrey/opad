@@ -1,6 +1,7 @@
 #include "AppDocument.hpp"
 #include "check.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/geometry.hpp"
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QFileInfo>
@@ -208,6 +209,91 @@ int main(int argc, char** argv) {
       CHECK(!doc.rolledBack() && doc.rollback().empty());
       doc.setRollback({});
       CHECK(!doc.rolledBack() && doc.rollback().empty());
+    }
+    // Several commands as one step and one refresh (UI-02); a failing one takes the batch back off the log. On the box file
+    // again, imported twice (the sections above end in an empty document).
+    doc.open(step);
+    doc.importStep(step);
+    {
+      const auto all = doc.scene.all_bodies();
+      CHECK(all.size() >= 2);
+      const size_t ops = doc.doc.ops.size(), steps = doc.undoLabels().size();
+      int changes = 0;
+      auto counted = QObject::connect(&doc, &AppDocument::changed, &doc, [&changes] { ++changes; });
+      doc.batch(AppDocument::tr("hide others"), [&] {
+        doc.run("appearance", opad::json{{"targets", {all[0], all[1]}}, {"visible", false}});
+        doc.batch("inner", [&] { doc.run("appearance", opad::json{{"target", all[0]}, {"opacity", 0.5}}); });  // part of the outer one
+        doc.run("rename", opad::json{{"target", all[1]}, {"name", "kept"}});
+      });
+      CHECK(changes == 1 && doc.doc.ops.size() == ops + 4 && doc.undoLabels().size() == steps + 1 && doc.undoLabel() == AppDocument::tr("hide others"));
+      CHECK(!doc.scene.node(all[0])->visible && doc.scene.node(all[0])->opacity == 0.5 && doc.nodeName(all[1]) == "kept");
+      doc.undo();
+      CHECK(changes == 2 && doc.doc.ops.size() == ops && doc.scene.node(all[0])->visible && doc.scene.node(all[1])->visible);
+      doc.redo();
+      CHECK(doc.doc.ops.size() == ops + 4 && !doc.scene.node(all[1])->visible);
+      doc.undo();
+      CHECK_THROWS(doc.batch("broken", [&] {
+        doc.run("appearance", opad::json{{"target", all[0]}, {"visible", false}});
+        doc.run("rename", opad::json{{"target", all[0]}});  // no name: throws
+      }));
+      CHECK(doc.doc.ops.size() == ops && doc.scene.node(all[0])->visible && doc.undoLabels().size() == steps && doc.canRedo());
+      doc.batch("nothing", [] {});
+      CHECK(doc.undoLabels().size() == steps && doc.canRedo());  // no step, the redo kept
+      QObject::disconnect(counted);
+    }
+    // What a change changed (UI-40): the appearance, name, placement or parent of the targets of the ops added, undone or
+    // redone; anything else is the whole document. A view then looks at the bodies under those nodes alone.
+    {
+      const auto all = doc.scene.all_bodies();
+      const std::vector<std::string> both = {all[0], all[1]};
+      auto only = [&doc](const std::vector<std::string>& nodes) { return !doc.lastChange().whole && doc.lastChange().nodes == nodes; };
+      doc.run("appearance", opad::json{{"targets", both}, {"visible", false}});
+      CHECK(only(both));
+      doc.undo();
+      CHECK(only(both) && doc.scene.node(all[0])->visible);
+      doc.redo();
+      CHECK(only(both) && !doc.scene.node(all[1])->visible);
+      doc.batch("moved", [&] {
+        doc.run("rename", opad::json{{"target", all[1]}, {"name", "moved"}});
+        doc.run("transform", opad::json{{"target", all[0]}, {"matrix", opad::Mat4::translation(1, 2, 3).to_json()}});
+      });
+      CHECK(only({all[1], all[0]}));
+      doc.undo(2);
+      CHECK(only({all[1], all[0], all[0], all[1]}) && doc.scene.node(all[0])->visible);
+      doc.run("section", opad::json{{"name", "Cut"}, {"origin", {0, 0, 0}}, {"normal", {0, 0, 1}}});
+      CHECK(doc.lastChange().whole);
+      doc.undo();
+      CHECK(doc.lastChange().whole);
+      doc.redo();
+      CHECK(doc.lastChange().whole);
+      doc.undo();
+    }
+    // A worker's document for the nodes a click inspects (UI-51): the shared shape cache, their entries without BREP text.
+    {
+      const auto all = doc.scene.all_bodies();
+      const std::string key = doc.scene.node(all[0])->body_key;
+      const auto shapes = doc.shapesOf({all[0]});
+      CHECK(shapes->shape_cache == doc.doc.shape_cache && shapes->body_count() == 1 && shapes->bodies()[0].brep.empty() && !doc.doc.body(key)->brep.empty());
+      CHECK(!opad::body_shape(*shapes, key).IsNull());
+    }
+    // Load progress (UI-40): a drawing's read is placed after the scan (it sat at 0-2 % and then jumped to 70).
+    {
+      const QString dxf = tmp.path() + "/lines.dxf";
+      std::string text = "0\nSECTION\n2\nENTITIES\n";
+      for (int i = 0; i < 10000; ++i) {
+        const std::string x = std::to_string(i % 100 * 5), y = std::to_string(i / 100 * 5), x2 = std::to_string(i % 100 * 5 + 3);
+        text += "0\nLINE\n8\nGrid\n10\n" + x + "\n20\n" + y + "\n30\n0\n11\n" + x2 + "\n21\n" + y + "\n31\n0\n";
+      }
+      opad::write_text_file(dxf.toStdString(), text + "0\nENDSEC\n0\nEOF\n");
+      int read = 0, early = 0;
+      auto watched = QObject::connect(&doc, &AppDocument::loadProgress, &doc, [&](const QString& phase, int, int overall) {
+        if (phase == "reading drawing") ++read, early += overall < 10;
+      });
+      doc.viewerOpens = true;
+      doc.startOpen(dxf);
+      loop.exec();
+      QObject::disconnect(watched);
+      CHECK(success && read > 0 && early == 0);
     }
     int resets=0;
     QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});

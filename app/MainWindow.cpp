@@ -2,11 +2,14 @@
 #include "AgentBridge.hpp"
 #include "CheckPanel.hpp"
 #include "DrawingPlacer.hpp"
+#include "KeyGuard.hpp"
 #include "RecoveryManager.hpp"
 
+#include <QApplication>
 #include <QCloseEvent>
 #include <QDesktopServices>
 #include <QFileInfo>
+#include <QFile>
 #include <QInputDialog>
 #include <QLocale>
 #include <QMessageBox>
@@ -55,15 +58,24 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   statusBar()->addPermanentWidget(agentStatus);
   auto updateAgentStatus=[this,agentStatus]{agentStatus->setText(tr("AI: %1").arg(m_agent->statusSummary()));agentStatus->setToolTip(m_doc->title());};
   connect(m_agent,&AgentBridge::statusChanged,agentStatus,updateAgentStatus);updateAgentStatus();
+  // The selection is published only while agent access is on (UI-06): at once when it comes on, and the file goes with it.
+  connect(m_agent,&AgentBridge::statusChanged,this,[this]{
+    if(std::exchange(m_selPublishing,m_agent->publishesSelection())==m_selPublishing)return;
+    if(m_selPublishing)scheduleSelectionSync();
+    else unpublishSelection();
+  });
+  m_selPublishing=m_agent->publishesSelection();
   connect(agentStatus,&QToolButton::clicked,m_agent,&AgentBridge::settings);
   connect(m_recovery,&RecoveryManager::status,this,[this](const QString& text){statusBar()->showMessage(text,8000);});
 
   connect(m_doc, &AppDocument::aboutToReplace, this, [this] {
+    if (m_loadJob && m_loadDocDone) m_loadJob->cancel();  // the document whose bodies stream in goes: so does its stream
     saveLastView();
     m_viewPath.clear();
     cancelPendingPick();
     cancelTool();
     clearMeasurement();
+    m_measureHistory.clear();  // results of the document that goes
     m_viewport->clearPreviewBodies();
     m_viewport->clearCandidates();
     m_viewport->isolate({});
@@ -71,11 +83,21 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   connect(m_doc, &AppDocument::changed, this, [this] {
     trace::Scope scope("MainWindow: document changed");
+    const bool replaced = std::exchange(m_areaGeneration, m_doc->generation) != m_doc->generation;
+    // Nothing of the last document stays (UI-09): the viewer card, 2D mode (a viewed drawing's or one set by hand: a
+    // view of that document; a drawing viewed next keeps it, loadFinished turns it on for one), what the status said was
+    // under the pointer (the next frame says it again).
+    if (replaced && action("view.2d")->isChecked() && !viewingDrawing()) setAutoTwoD(false);
+    if (replaced && m_autoEdges && !m_loadJob) {  // Ctrl+N or a close (a file opened sets its own in openPath)
+      m_autoEdges = false;
+      m_viewport->setSelectionFilter(Viewport::SelFilter::Body);
+    }
+    m_viewport->clearHover();
     updateTitle();
     rebuildViewsMenu();
+    updateViewerCard();
     updateChips();
     showDocument(m_doc->hasDocument);
-    const bool replaced = std::exchange(m_areaGeneration, m_doc->generation) != m_doc->generation;
     forEachArea([replaced](AreaController* area) { area->documentChanged(replaced); });
   });
   connect(m_doc, &AppDocument::loadFinished, this, [this](bool ok, const QString&) {
@@ -83,22 +105,23 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (const QString newer = newerRecords(); !newer.isEmpty()) m_toasts->toast(newer, QString(), {}, 10000);  // UI-65
     const auto bodies = m_doc->scene.all_bodies();
     const bool drawing = !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
-    // Drawing files get a useful initial view. Viewing one (DXF, DWG, SVG) also turns 2D mode on; the next file that
-    // is not a drawing turns it off again, unless the toggle was changed by hand meanwhile.
-    if (drawing) { m_viewport->standardView("top"); m_viewport->setSelectionFilter(Viewport::SelFilter::Edge); }
-    QAction* flat = action("view.2d");
-    const bool viewingDrawing = drawing && m_doc->browse;
-    if (viewingDrawing != flat->isChecked() && (viewingDrawing || m_autoTwoD)) {
-      m_settingTwoD = true;
-      flat->setChecked(viewingDrawing);
-      m_settingTwoD = false;
-      m_autoTwoD = viewingDrawing;
+    // Drawing files get a useful initial view. Viewing one (DXF, DWG, SVG) also turns 2D mode on; any other document
+    // starts without it (the changed handler above).
+    if (drawing) {
+      m_viewport->standardView("top");
+      if (m_viewport->selectionFilter() != Viewport::SelFilter::Edge) m_autoEdges = true;
+      m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);
     }
+    const bool viewing = drawing && m_doc->browse;
+    if (viewing && !action("view.2d")->isChecked()) setAutoTwoD(true);
   });
-  connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
+  connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, [this] { m_viewport->home(); });
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
   connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
-  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { m_doc->readOnly ? saveReadOnlyCopy() : saveViewerAs(); }); });
+  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] {  // a card left from a viewed file: gone, no silent no-op
+    if (m_doc->browse || m_doc->readOnly) guarded([this] { m_doc->readOnly ? saveReadOnlyCopy() : saveViewerAs(); });
+    else updateViewerCard();
+  });
   connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); updateViewerCard(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_doc, &AppDocument::saved, this, [this] {
@@ -115,9 +138,9 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_viewport, &Viewport::meshingProgress, this, [this](int remaining) {
     m_meshRemaining = remaining;
     if (remaining > m_meshTotal) m_meshTotal = remaining;
-    if (m_loadJob && m_loadDocDone) {
+    if (m_loadJob && m_loadDocDone && !m_loadJob->cancelled()) {
       if (remaining == 0) m_loadJob->finish();
-      else setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : -1);
+      else setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : 0);
     }
     if (m_loadJob) return;
     // Bodies shown after the load (showing a hidden assembly, leaving isolation) stream in the same way: the same
@@ -126,6 +149,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
       if (!m_displayJob) {
         m_displayJob = m_jobs->begin(tr("Displaying bodies"));
         m_displayTotal = 0;
+        m_viewport->setStreamJob(m_displayJob);
         connect(m_displayJob, &Job::cancelRequested, m_viewport, &Viewport::cancelMeshing);
         connect(m_displayJob, &Job::finished, this, [this](bool, const QString&) { m_displayJob = nullptr; });
       }
@@ -136,7 +160,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
       m_displayJob->finish();
     }
   });
-  // selection.json is written on a short debounce and off the hot selection path (it inspects geometry).
+  // selection.json is written on a short debounce, only while agent access is on, and by a worker (UI-06).
   m_selFileTimer.setSingleShot(true);
   m_selFileTimer.setInterval(250);
   connect(&m_selFileTimer, &QTimer::timeout, this, &MainWindow::writeSelectionFile);
@@ -150,17 +174,25 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
       m_loadJob->finish(false, err);
       return;
     }
+    // Built (UI-40): the workspace is free at once, the bodies stream in under the load's progress and Cancel, and edits
+    // wait for them (addCommand). The camera the file was last seen with comes now, not over a view being worked in.
+    setLoading(false);
     if (m_afterLoad) m_afterLoad();
     m_afterLoad = nullptr;
     if (!m_loadDone.isEmpty()) m_loadJob->setDoneText(m_loadDone.arg(QLocale().toString(static_cast<qulonglong>(m_doc->scene.all_bodies().size()))));
-    if (m_meshRemaining > 0) setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : -1);
+    restoreLastView();
+    if (m_meshRemaining > 0) setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : 0);
     else m_loadJob->finish();
   });
-  trace::installUiWatchdog(this);  // logs any UI-thread stall over 250 ms (OPAD_TRACE)
+  trace::installUiWatchdog(this);  // logs any UI-thread stall over OPAD_TRACE_STALL_MS (OPAD_TRACE, UI-11)
+  // A name typed into the browser is not taken as one-key commands (UI-09), nor one typed right after a dialog closed.
+  m_keyGuard = new KeyGuard([browser = QPointer<BrowserPanel>(m_browser)] { return browser ? browser->renameEditor() : nullptr; }, this);
+  qApp->installEventFilter(m_keyGuard);
+  m_browserOverlay->setHold([browser = QPointer<BrowserPanel>(m_browser)] { return browser && browser->renameEditor(); });
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
   connect(m_browser, &BrowserPanel::documentMenuRequested, this, [this](const QPoint& p) { showContextMenu(p, {}, true); });
-  connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
+  connect(m_browser, &BrowserPanel::fitRequested, m_viewport, [this](const std::vector<std::string>& ids) { m_viewport->fitNodes(ids, true); });
   connect(m_browser, &BrowserPanel::commandRequested, this, [this](const QString& id) { if (QAction* a = action(id); a && a->isEnabled()) a->trigger(); });
   connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { startAnnotation(false); });
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
@@ -217,6 +249,26 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_toolSteps, &ToolStepsPanel::pinRequested, this, [this] { guarded([this] { pinMeasurement(); }); });
   connect(m_toolSteps, &ToolStepsPanel::clearRequested, this, &MainWindow::toolEscape);
   connect(m_toolSteps, &ToolStepsPanel::componentsChanged, m_viewport, &Viewport::setMeasurementComponents);
+  connect(m_toolSteps, &ToolStepsPanel::modeChanged, this, [this](int mode) {  // Distance: minimum, centre to centre, maximum (UI-144)
+    if (mode == m_distanceMode) return;
+    m_distanceMode = mode;
+    m_settings.setValue("measure/distanceMode", mode);
+    if (m_tool.id == "distance") toolPicksChanged(m_viewport->selection(), false);  // measured again in the new mode
+  });
+  connect(m_toolSteps, &ToolStepsPanel::frameChanged, this, [this](int frame) {  // world or the first pick's component axes (UI-144)
+    if (frame < 0 || frame == m_measureFrame) return;
+    m_measureFrame = frame;
+    m_settings.setValue("measure/frame", frame);
+    refreshToolUi();
+  });
+  connect(m_toolSteps, &ToolStepsPanel::historyCopyRequested, this, [this](int row) {
+    const size_t i = row + (m_lastMeasure.is_null() ? 0 : 1);
+    if (i < m_measureHistory.size()) copyMeasurement(m_measureHistory[i].result);
+  });
+  connect(m_toolSteps, &ToolStepsPanel::historyPinRequested, this, [this](int row) {
+    const size_t i = row + (m_lastMeasure.is_null() ? 0 : 1);
+    if (i < m_measureHistory.size()) guarded([this, i] { pinMeasurement(m_measureHistory[i].result); });
+  });
   connect(m_toolSteps, &ToolStepsPanel::anchorChanged, this, [this](int index) {
     if (!m_lastMeasure.contains("anchors") || index < 0 || index >= static_cast<int>(m_lastMeasure["anchors"].size())) return;
     const opad::json& anchor = m_lastMeasure["anchors"][index];
@@ -286,7 +338,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   action("view.grid")->setChecked(m_settings.value("view/grid",false).toBool());
   action("view.ortho")->setChecked(m_settings.value("view/orthographic",true).toBool());
   const auto style=m_settings.value("view/style","view.edges").toString();
-  if(style=="view.shaded" || style=="view.edges" || style=="view.wire") action(style)->trigger();
+  if(style=="view.shaded" || style=="view.edges" || style=="view.wire" || style=="view.hidden" || style=="view.hiddenEdges") action(style)->trigger();
   m_empty->setRecent(recent());
   showDocument(false);
   updateTitle();
@@ -334,7 +386,10 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
   if (!a->shortcut().isEmpty()) tip += "  (" + a->shortcut().toString(QKeySequence::NativeText) + ")";
   a->setToolTip(tip);
   connect(a, &QAction::triggered, this, [this, fn, id, a] {
-    if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
+    if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") {
+      if (!m_loadDocDone) return;  // reading and building: the workspace is locked
+      if (m_commands.editsDocument(id)) return deferEdit(a);  // its bodies still stream in
+    }
     m_viewport->resetHoverFade();
     // Another command drops one waiting for its selection; looking around (view, filters, panels, help) does not.
     static const QStringList looking{"view.", "select.", "nav.", "panel.", "help.", "workspace.", "edit.selectparent", "edit.filter", "edit.selectall", "edit.invert", "tools.commands"};

@@ -1,15 +1,19 @@
 // Selection: viewport <-> browser, the Properties panel, selection.json for agents, the context menu.
 #include "MainWindow.hpp"
+#include "AgentBridge.hpp"
 
 #include <QColorDialog>
 #include <QCoreApplication>
 #include <QLabel>
+#include <QFile>
 #include <QMenu>
 #include <QWidgetAction>
 
 #include <algorithm>
 #include <functional>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <set>
 
 #include <Bnd_Box.hxx>
@@ -25,6 +29,10 @@
 
 OPAD_ICON_TABLE(contextmenu,
   {"repeat", R"(<path d="M17 3l3 3-3 3"/><path d="M4 12v-2a4 4 0 0 1 4-4h12"/><path d="M7 21l-3-3 3-3"/><path d="M20 12v2a4 4 0 0 1-4 4H4"/>)"});
+namespace {
+std::mutex g_selectionWriting;  // one selection.json write at a time, and only the newest selection's
+std::atomic<unsigned> g_newestSelection{0};
+}  // namespace
 
 // ---------------------------------------------------------------- selection plumbing (F22/F25)
 std::vector<std::string> MainWindow::currentNodeIds() const {
@@ -123,13 +131,19 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     const bool component = node && node->kind == opad::Node::Kind::Component;
     // What walks the geometry (volume, area, the tight box; for a component every body under it) is measured on a
     // worker and filled in afterwards.
-    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, false) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
     const opad::Node* subject = m_doc->node(r.body);
     const bool drawing = m_viewport->drawingWords() && subject && subject->representation == "drawing2d";  // 2D words (UI-118)
+    // A sub-shape's details walk its body (inspect_ref): the kind and the body now, the rest from a worker (UI-51).
+    const bool subShape = r.kind != opad::Ref::Kind::Body && r.kind != opad::Ref::Kind::Point;
+    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, false)
+                 : subShape ? opad::json{{"ref", r.str()}, {"type", opad::Ref::kind_name(r.kind)}, {"body", r.body}, {"body_name", m_doc->nodeName(r.body).toStdString()}, {"index", r.index}}
+                            : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
     if (drawing) j = drawing2d::properties(std::move(j));
     QString title, subtitle, id;
-    if (drawing && r.kind != opad::Ref::Kind::Body && !drawing2d::entityType(j).empty()) {  // "Line", "Walls › object 3"
-      title = Viewport::drawingWord(drawing2d::entityType(j));
+    if (drawing && r.kind != opad::Ref::Kind::Body && (subShape || !drawing2d::entityType(j).empty())) {  // "Line", "Walls › object 3"
+      const std::string type = drawing2d::entityType(j);  // a sub-shape's comes with its details (showRefGeometry)
+      const QString word = i18n::t(drawing2d::kindWord(r.kind));
+      title = type.empty() ? word.left(1).toUpper() + word.mid(1) : Viewport::drawingWord(type);
       subtitle = QString::fromUtf8("%1 › %2 %3").arg(m_doc->nodeName(subject->parent.empty() ? r.body : subject->parent), i18n::t(drawing2d::kindWord(r.kind))).arg(r.index);
       id = QString::fromStdString(r.body.substr(0, 8));
     } else if (r.kind == opad::Ref::Kind::Point) {
@@ -159,67 +173,85 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     m_propsPanel->setContext(r.kind == opad::Ref::Kind::Body || r.kind == opad::Ref::Kind::Point ? title : subtitle);
     m_props->showEntity(title, subtitle, id, j);
     if (r.kind == opad::Ref::Kind::Body && node && !node->body_missing) showNodeGeometry(r.body, title, subtitle, id);
+    if (subShape) showRefGeometry(r, subtitle, id);
   } catch (const std::exception& e) {
     m_props->showEntity(tr("Error"), i18n::t(QString::fromUtf8(e.what())), QString(), opad::json::object());
   }
 }
 
-// The live selection is published for agents (F25): opad-cli selection / opad.run("selection").
+// The live selection is published for agents (F25: opad-cli selection, opad.run("selection")) only while agent access is
+// on (UI-06): with none, a rubber band over 71,818 faces spent seconds of the UI thread inspecting them for nobody. At most
+// kPublishedRefs refs, each with what is known at once (ref, node, type, body key, the cached world box of a body); an
+// agent inspects what it needs. The JSON is built and written on a worker; a newer selection's write wins.
 void MainWindow::writeSelectionFile() {
   if (m_selFileJob) m_selFileJob->cancel();
-  if (m_doc->browse) return;  // viewer mode: no agent channel
-  struct State {
-    std::vector<opad::Ref> refs;
-    opad::json sel = opad::json::array();
-    size_t i = 0;
+  if (m_doc->browse || !m_agent || !m_agent->publishesSelection()) return;
+  constexpr size_t kPublishedRefs = 2000;
+  struct Entry {
+    std::string ref, node, type, key;
+    opad::Mat4 world;
+    Bnd_Box box;  // body-local, cached by the load worker
   };
-  auto st = std::make_shared<State>();
-  st->refs = m_viewport->selection();
-  const size_t kDetailCap = 200;  // inspect geometry for at most this many; the rest are listed by ref only
-  m_jobs->backgroundNext();
-  m_selFileJob = m_jobs->sliced(tr("Publishing selection"), [this, st, kDetailCap](Job&) {
-    if (st->i >= st->refs.size()) return false;
-    const opad::Ref& r = st->refs[st->i];
-    opad::json e;
-    e["ref"] = r.str();
-    e["node"] = m_doc->nodeName(r.body).toStdString();
-    if (st->i < kDetailCap) {
-      try {
-        opad::json info;
-        if (r.kind == opad::Ref::Kind::Body) {
-          // Bodies get O(1) descriptors: volume/area need exact integration (seconds for a heavy body),
-          // so agents ask `inspect` for those on demand. Faces/edges are cheap to inspect fully.
-          info = opad::node_properties(m_doc->doc, m_doc->scene, r.body, false);
-          Bnd_Box b = opad::node_world_bbox(m_doc->doc, m_doc->scene, r.body);
-          if (!b.IsVoid()) {
-            double x0, y0, z0, x1, y1, z1;
-            b.Get(x0, y0, z0, x1, y1, z1);
-            info["bbox"] = {{"min", {x0, y0, z0}}, {"max", {x1, y1, z1}}, {"size", {x1 - x0, y1 - y0, z1 - z0}}, {"center", {(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2}}};
-          }
-        } else {
-          info = opad::inspect_ref(m_doc->doc, m_doc->scene, r);
+  auto entries = std::make_shared<std::vector<Entry>>();
+  const size_t total = m_selRefs.size();
+  for (size_t i = 0; i < std::min(total, kPublishedRefs); ++i) {
+    const opad::Ref& r = m_selRefs[i];
+    Entry e;
+    e.ref = r.str();
+    e.node = m_doc->nodeName(r.body).toStdString();
+    e.type = opad::Ref::kind_name(r.kind);
+    if (const opad::Node* n = m_doc->node(r.body); n && r.kind == opad::Ref::Kind::Body) {
+      e.type = n->kind == opad::Node::Kind::Body ? "body" : "component";
+      if (n->kind == opad::Node::Kind::Body && !n->body_missing) {
+        e.key = n->body_key;
+        e.world = m_doc->scene.world(r.body);
+        try {
+          e.box = opad::body_bbox(m_doc->doc, n->body_key);
+        } catch (const std::exception&) {
         }
-        for (const char* k : {"type", "surface", "curve", "bbox", "normal", "axis", "radius", "center", "area", "volume", "length", "key"})
-          if (info.contains(k)) e[k] = info[k];
-      } catch (const std::exception&) {
       }
+    } else if (r.kind == opad::Ref::Kind::Body && m_doc->scene.sketch(r.body)) {
+      e.type = "sketch";
     }
-    st->sel.push_back(std::move(e));
-    return ++st->i < st->refs.size();
-  }, [this, st](bool completed) {
-    m_selFileJob = nullptr;
-    if (!completed) return;  // a newer selection superseded this one
-    try {
-      opad::json j;
-      j["pid"] = static_cast<long long>(QCoreApplication::applicationPid());
-      j["document"] = m_doc->path().toStdString();
-      j["browse"] = m_doc->browse;
-      j["ts"] = opad::now_iso8601();
-      j["selection"] = std::move(st->sel);
-      opad::write_text_file(opad::cache_dir() / "selection.json", j.dump(2));
-    } catch (const std::exception&) {
+    entries->push_back(std::move(e));
+  }
+  opad::json head{{"pid", static_cast<long long>(QCoreApplication::applicationPid())}, {"document", m_doc->path().toStdString()},
+                  {"browse", m_doc->browse}, {"total", total}, {"truncated", total > kPublishedRefs}};
+  const unsigned mine = ++g_newestSelection;
+  m_selFileJob = m_jobs->async(tr("Publishing selection"), [entries, head, mine](Progress p) {
+    opad::json j = head;
+    j["ts"] = opad::now_iso8601();
+    opad::json& sel = j["selection"] = opad::json::array();
+    for (const Entry& e : *entries) {
+      if (p.cancelled()) return;
+      opad::json out{{"ref", e.ref}, {"node", e.node}, {"type", e.type}};
+      if (!e.key.empty()) out["key"] = e.key;
+      if (!e.box.IsVoid()) {
+        double x0, y0, z0, x1, y1, z1;
+        e.box.Get(x0, y0, z0, x1, y1, z1);
+        opad::Vec3 lo{1e300, 1e300, 1e300}, hi{-1e300, -1e300, -1e300};
+        for (int c = 0; c < 8; ++c) {
+          const opad::Vec3 q = e.world.apply({(c & 1) ? x1 : x0, (c & 2) ? y1 : y0, (c & 4) ? z1 : z0});
+          for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], q[k]), hi[k] = std::max(hi[k], q[k]);
+        }
+        out["bbox"] = {{"min", lo}, {"max", hi}, {"size", {hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}},
+                       {"center", {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2}}};
+      }
+      sel.push_back(std::move(out));
     }
-  });
+    const std::string text = j.dump(2);
+    std::lock_guard<std::mutex> lock(g_selectionWriting);
+    if (mine == g_newestSelection) opad::write_text_file(opad::cache_dir() / "selection.json", text);
+  }, [this](bool, const QString&) { m_selFileJob = nullptr; }, JobKind::Background);
+}
+
+// Agent access went off (UI-06): the file goes, and a write under way (past its last look at the cancel) is no longer the
+// newest, so it cannot put the file back.
+void MainWindow::unpublishSelection() {
+  if (m_selFileJob) m_selFileJob->cancel();
+  std::lock_guard<std::mutex> lock(g_selectionWriting);
+  ++g_newestSelection;
+  QFile::remove(QString::fromStdU16String((opad::cache_dir() / "selection.json").u16string()));
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids, bool documentRow) {
@@ -303,15 +335,8 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
       m_timeline->pulse(source);
     });
   };
-  auto hideOthers = [&] {
-    entry("hide", tr("Hide others"), "contextHideOthers", [this, ids] {
-      std::set<std::string> keep;
-      for (const auto& id : ids) for (const auto& b : m_doc->scene.bodies_under(id)) keep.insert(b);
-      std::vector<std::string> hide;
-      for (const auto& b : m_doc->scene.all_bodies())
-        if (!keep.count(b) && m_doc->node(b)->visible) hide.push_back(b);
-      if (!hide.empty()) m_doc->run("appearance", opad::json{{"targets", hide}, {"visible", false}});  // one step for all of them
-    });
+  auto others = [&] {  // one step hiding the fewest nodes (UI-02, MainWindow::hideOthers)
+    entry("hide", tr("Hide others"), "contextHideOthers", [this, ids] { hideOthers(ids); });
   };
   auto looks = [&] {
     entry("dot", tr("Colour…"), "contextColour", [this, ids] {  // a view setting in viewer mode too
@@ -392,9 +417,9 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
     remove(false);
   } else if (!ids.empty()) {
     title(!one.isEmpty() ? one : components ? tr("%1 components").arg(ids.size()) : tr("%1 objects").arg(ids.size()));
-    entry("fit", tr("Fit to"), "contextFit", [this, ids] { m_viewport->fitNodes(ids); });
+    entry("fit", tr("Fit to"), "contextFit", [this, ids] { m_viewport->fitNodes(ids, true); });
     add("view.isolate");
-    hideOthers();
+    others();
     add("edit.hide");
     menu.addSeparator();
     history();
@@ -458,7 +483,7 @@ bool MainWindow::repeatable(const QString& id) const {
 // The bbox of a component walks every body under it; it is added to the panel by a sliced job.
 void MainWindow::showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid) {
   if (m_propsJob) m_propsJob->cancel();
-  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto document = m_doc->shapesOf({id});
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   auto result = std::make_shared<opad::json>();
   const auto generation = m_doc->generation;
@@ -471,6 +496,30 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
     m_propsJob = nullptr;
     if (!ok || generation != m_doc->generation) return;
     m_props->showEntity(title, subtitle, nid, *result);
+  });
+}
+
+void MainWindow::showRefGeometry(const opad::Ref& ref, const QString& subtitle, const QString& nid) {
+  if (m_propsJob) m_propsJob->cancel();
+  auto document = m_doc->shapesOf({ref.body});
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  auto result = std::make_shared<opad::json>();
+  const auto generation = m_doc->generation;
+  m_propsJob = m_jobs->async(tr("Inspecting %1").arg(subtitle), [document, scene, ref, result](Progress) {
+    *result = opad::inspect_ref(*document, *scene, ref);
+  }, [this, ref, result, subtitle, nid, generation](bool ok, const QString& error) {
+    m_propsJob = nullptr;
+    if (generation != m_doc->generation || error == "cancelled") return;
+    if (!ok) return m_props->showEntity(tr("Error"), i18n::t(error), QString(), opad::json::object());
+    const opad::Node* subject = m_doc->node(ref.body);
+    if (m_viewport->drawingWords() && subject && subject->representation == "drawing2d") {  // 2D words (UI-118), as showProperties
+      *result = drawing2d::properties(std::move(*result));
+      if (const std::string type = drawing2d::entityType(*result); !type.empty())
+        return m_props->showEntity(Viewport::drawingWord(type), subtitle, nid, *result);
+    }
+    const QString kind = i18n::t(opad::Ref::kind_name(ref.kind));
+    const QString geo = QString::fromStdString(result->value("surface", result->value("curve", std::string())));
+    m_props->showEntity(QString::fromUtf8("%1%2%3").arg(kind.left(1).toUpper() + kind.mid(1), geo.isEmpty() ? QString() : QString::fromUtf8(" · "), geo), subtitle, nid, *result);
   });
 }
 

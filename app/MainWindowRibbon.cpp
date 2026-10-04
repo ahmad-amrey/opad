@@ -69,7 +69,7 @@ void MainWindow::buildMenus() {
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "edit.repeat", "-", "edit.selectall", "edit.invert", "edit.selectparent", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
-  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
+  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.hidden", "view.hiddenEdges", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "view.hideothers", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   m_viewsMenu->setObjectName("views");
   view->addSeparator();
@@ -78,7 +78,7 @@ void MainWindow::buildMenus() {
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.length", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -133,10 +133,10 @@ void MainWindow::buildRibbon() {
   };
   layout.addTab("review", "review.view", tr("View"));
   group("review.view", "navigate", tr("Navigate"), {"view.fit", "view.home", "view.ortho", "view.2d"});
-  group("review.view", "display", tr("Display"), {"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"});
-  group("review.view", "isolate", tr("Isolate"), {"view.isolate", "view.unisolate"});
+  group("review.view", "display", tr("Display"), {"view.shaded", "view.edges", "view.wire", "view.hidden", "view.grid", "view.gridSettings", "select.through"});
+  group("review.view", "isolate", tr("Isolate"), {"view.isolate", "view.unisolate", "view.hideothers"});
   layout.addTab("review", "review.inspect", tr("Inspect"));
-  group("review.inspect", "measure", tr("Measure"), {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"});
+  group("review.inspect", "measure", tr("Measure"), {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.length"});
   group("review.inspect", "results", tr("Results"), {"inspect.pin", "inspect.properties"});
   group("review.inspect", "check", tr("Check"), {"inspect.interference", "inspect.printcheck"});
   group("review.inspect", "section", tr("Section"), {"inspect.section", "inspect.flip"});
@@ -163,7 +163,7 @@ void MainWindow::buildRibbon() {
   group("design.assemble", "appearance", tr("Appearance"), {"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"});
   layout.addTab("design", "design.view", tr("View"));
   group("design.view", "navigate", tr("Navigate"), {"view.fit", "view.home", "view.2d", "view.ortho"});
-  group("design.view", "display", tr("Display"), {"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"});
+  group("design.view", "display", tr("Display"), {"view.shaded", "view.edges", "view.wire", "view.hidden", "view.grid", "view.gridSettings", "select.through"});
   layout.addTab("design", "design.export", tr("Export"));
   group("design.export", "export", tr("Export"), {"file.export", "file.screenshot"});
   group("design.export", "file", tr("File"), {"file.import", "file.save"});

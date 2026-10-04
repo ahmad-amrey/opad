@@ -377,7 +377,8 @@ OPAD_BENCH(OPAD_BENCH_COMPONENTS, components) {
                     type(p->filter(), "zzz");
                     const bool none = p->shown() == 0 && p->list()->count() == 1;
                     key(p->filter(), Qt::Key_Escape);
-                    require(!self && none && !p->isVisible(), "the Housing is not offered to itself; nothing matching says so; Esc closes the list");
+                    require(!self && none && !p->isVisible(), QString("the Housing is not offered to itself; nothing matching says so; Esc closes the list (offered %1, none %2, open %3)")
+                                                                   .arg(self).arg(none).arg(p->isVisible()));
                   }});
   // Opacity: the right-click menu's slider, then the command's popup.
   list.push_back({idle, [=, &w](bool) {
@@ -432,13 +433,18 @@ OPAD_BENCH(OPAD_BENCH_COMPONENTS, components) {
                     if (!popup) return;
                     mark();
                     key(popup->slider()->slider(), Qt::Key_PageDown);  // 80 %, not written yet
+                    const QPointer<OpacityPopup> before(popup);
                     key(popup, Qt::Key_Escape);
+                    trace::log(QString("bench: components: after Esc the popup is %1").arg(!before ? "deleted" : before->isVisible() ? "shown" : "hidden"));
                   }});
   list.push_back({[=, &w] { return !w.findChild<OpacityPopup*>() && !v->looksPending(); }, [=, &w](bool closed) {
                     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
                     require(closed && doc->doc.ops.size() == s->ops && std::abs(doc->scene.node(s->boxB)->opacity - 0.9) < 1e-9 &&
                                 std::abs(v->benchLookState(s->boxB).value("transparency", 0.0) - 0.1) < 1e-6,
-                            "Esc drops what was pending: nothing written, drawn at 90 % again");
+                            QString("Esc drops what was pending: nothing written, drawn at 90 % again (closed %1, ops +%2, opacity %3, drawn transparency %4, popup %5, looks pending %6)")
+                                .arg(closed).arg(int(doc->doc.ops.size()) - int(s->ops)).arg(doc->scene.node(s->boxB)->opacity)
+                                .arg(v->benchLookState(s->boxB).value("transparency", 0.0))
+                                .arg(w.findChild<OpacityPopup*>() ? (w.findChild<OpacityPopup*>()->isVisible() ? "shown" : "hidden") : "gone").arg(v->looksPending()));
                     // The Design menu (after New component) and Design > Assemble.
                     QMenu* design = nullptr;
                     for (QAction* a : w.menuBar()->actions())

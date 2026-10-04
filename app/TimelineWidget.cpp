@@ -195,8 +195,12 @@ bool TimelineWidget::event(QEvent* e) {
   if (e->type() == QEvent::ShortcutOverride) {  // F2 is the marker's (edit), not the window's Rename
     const auto* k = static_cast<QKeyEvent*>(e);
     const Qt::KeyboardModifiers mods = k->modifiers() & ~Qt::KeypadModifier;
+    // Del and Shift+Del tombstone and restore the current marker's op (keyPressEvent) wherever the keyboard focus is
+    // reported: the window's Delete and Restore did that only while the timeline had the focus, else they acted on the
+    // selection.
     if ((k->matches(QKeySequence::Copy) && !m_current.empty()) || (mods == Qt::ShiftModifier && playheadKey(k->key())) ||
-        (k->key() == Qt::Key_F2 && !mods && currentMarker() >= 0)) {
+        (k->key() == Qt::Key_F2 && !mods && currentMarker() >= 0) ||
+        (k->key() == Qt::Key_Delete && (!mods || mods == Qt::ShiftModifier) && currentMarker() >= 0)) {
       e->accept();
       return true;
     }
@@ -461,7 +465,7 @@ QString TimelineWidget::describe(const opad::Op& op) const {
   }
   if (op.type == "measurement") return tr("%1 measurement").arg(i18n::t(QString::fromStdString(d.value("kind", ""))));
   if (op.type == "section") return tr("Section %1").arg(QString::fromStdString(d.value("name", "")));
-  if (op.type == "view") return tr("View %1").arg(QString::fromStdString(d.value("name", "")));
+  if (op.type == "view") return d.value("home", opad::json(false)) == true ? tr("Home view") : tr("View %1").arg(QString::fromStdString(d.value("name", "")));
   if (op.type == "delete") {
     const opad::Op* t = m_doc->doc.find_op(d.value("target", ""));
     return tr("Delete %1").arg(t ? i18n::t(QString::fromStdString(t->type)) : shortId(d.value("target", "")));

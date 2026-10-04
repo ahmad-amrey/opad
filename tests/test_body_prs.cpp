@@ -2,7 +2,11 @@
 #include "DepthBias.hpp"
 #include "check.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <BRep_Builder.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <gp_Circ.hxx>
@@ -23,6 +27,7 @@
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <set>
@@ -223,6 +228,223 @@ TEST(wire_display_and_selection_share_smooth_samples) {
     CHECK(100-midpoint.Distance(gp::Origin())<.003);
     CHECK(prs->boundaries->Vertice(int(i)*2).Distance(points[i])<1e-4);
   }
+}
+
+// UI-40: a meshed body picks as a whole (the Body filter, activated on every display) through the worker's triangles and
+// free edges under one body owner, never OCCT's per-face sensitives built on the UI thread; without the worker's arrays,
+// or with a vertex of its own, the stock entities.
+TEST(body_mode_picks_through_the_worker_set) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  const TopoDS_Shape box=BRepPrimAPI_MakeBox(10,10,10).Shape();
+  BRepMesh_IncrementalMesh(box,0.1);
+  BRep_Builder builder;
+  TopoDS_Compound wired, dotted;
+  builder.MakeCompound(wired); builder.Add(wired,box); builder.Add(wired,BRepBuilderAPI_MakeEdge(gp_Pnt(20,0,0),gp_Pnt(30,0,0)).Edge());
+  builder.MakeCompound(dotted); builder.Add(dotted,box); builder.Add(dotted,BRepBuilderAPI_MakeVertex(gp_Pnt(20,0,0)).Vertex());
+  auto build=[](const TopoDS_Shape& shape) { Bnd_Box bounds; BRepBndLib::Add(shape,bounds); return BodyPrs::build(shape,bounds); };
+  auto select=[](const Handle(TestBody)& body) {
+    Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(0);
+    body->ComputeSelection(selection,0);
+    return selection;
+  };
+  Handle(Graphic3d_Camera) camera=new Graphic3d_Camera();
+  camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  camera->SetEyeAndCenter(gp_Pnt(5,5,100),gp_Pnt(5,5,0)); camera->SetUp(gp::DY()); camera->SetScale(40);
+  for(const auto& [shape,count]:{std::pair{box,1},std::pair{TopoDS_Shape(wired),2}}) {
+    Handle(TestBody) body=new TestBody(shape,build(shape));
+    const auto selection=select(body);
+    CHECK_EQ(selection->Entities().Size(),count);
+    CHECK_EQ(selection->Entities().First()->BaseSensitive()->NbSubElements(),12);  // the navigation triangles, shared
+    if(count==2) CHECK_EQ(selection->Entities().Last()->BaseSensitive()->NbSubElements(),1);  // the free edge's segment
+    for(const auto& entity:selection->Entities()) {
+      const auto owner=Handle(StdSelect_BRepOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+      CHECK(!owner.IsNull()); CHECK(Handle(SubShapeOwner)::DownCast(owner).IsNull()); CHECK(owner->Selectable()==body);
+      CHECK(owner->Shape().IsSame(shape));
+    }
+    SelectMgr_SelectingVolumeManager point;
+    point.InitPointSelectingVolume(gp_Pnt2d(500,500));
+    point.SetCamera(camera); point.SetWindowSize(1000,1000); point.BuildSelectingVolume();
+    SelectBasics_PickResult result;
+    CHECK(selection->Entities().First()->BaseSensitive()->Matches(point,result));
+  }
+  Handle(TestBody) bare=new TestBody(box,nullptr);
+  CHECK(select(bare)->Entities().Size()>=6);  // OCCT's: a sensitive per face
+  CHECK(build(dotted)->whole.empty());
+  CHECK(!build(box)->whole.empty());
+}
+
+// UI-42: a big drawing layer's Edge filter is a few sensitives over groups of nearby lines, not one per line; a point pick
+// takes on the owner of the line nearest the pointer (the same owner every time), a box keeps every line it takes.
+TEST(big_drawing_layer_picks_its_lines_in_groups) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  BRep_Builder builder;
+  TopoDS_Compound layer;
+  builder.MakeCompound(layer);
+  constexpr int columns = 70, rows = 50;  // 3,500 lines 1 mm long, 2 mm apart
+  for (int i = 0; i < columns; ++i)
+    for (int j = 0; j < rows; ++j) builder.Add(layer, BRepBuilderAPI_MakeEdge(gp_Pnt(i * 2, j * 2, 0), gp_Pnt(i * 2 + 1, j * 2, 0)).Edge());
+  Bnd_Box bounds;
+  BRepBndLib::Add(layer, bounds);
+  const auto plain = BodyPrs::build(layer, bounds);
+  CHECK(plain->edgeGroups.empty() && plain->edgeSensitives.size() == size_t(columns * rows));
+  const auto prs = BodyPrs::build(layer, bounds, false, true);
+  CHECK(prs->edgeSensitives.empty() && prs->edgeShapes.size() == size_t(columns * rows));
+  CHECK_EQ(prs->edgeGroups.size(), size_t((columns * rows + 255) / 256));
+  Handle(TestBody) body = new TestBody(layer, prs);
+  CHECK(body->groupedEdges());
+  Handle(SelectMgr_Selection) selection = new SelectMgr_Selection(AIS_Shape::SelectionMode(TopAbs_EDGE));
+  body->ComputeSelection(selection, AIS_Shape::SelectionMode(TopAbs_EDGE));
+  CHECK_EQ(selection->Entities().Size(), int(prs->edgeGroups.size()));
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(layer, TopAbs_EDGE, edges);
+  auto ordinal = [](int i, int j) { return i * rows + j; };  // as added
+  Handle(Graphic3d_Camera) camera = new Graphic3d_Camera();
+  camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  camera->SetEyeAndCenter(gp_Pnt(40.5, 50, 100), gp_Pnt(40.5, 50, 0));
+  camera->SetUp(gp::DY());
+  camera->SetScale(20);  // 50 px a millimetre
+  auto pickAt = [&](double x, double y) {
+    SelectMgr_SelectingVolumeManager point;
+    point.InitPointSelectingVolume(gp_Pnt2d(500 + (x - 40.5) * 50, 500 - (y - 50) * 50));
+    point.SetCamera(camera); point.SetWindowSize(1000, 1000); point.SetPixelTolerance(4); point.BuildSelectingVolume();
+    Handle(SubShapeOwner) found;
+    for (const auto& entity : selection->Entities()) {
+      SelectBasics_PickResult result;
+      if (entity->BaseSensitive()->Matches(point, result)) found = Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+    }
+    return found;
+  };
+  const auto first = pickAt(40.5, 50);  // the middle of line (20, 25)
+  CHECK(!first.IsNull() && first->index() == ordinal(20, 25) && first->Shape().IsSame(edges(ordinal(20, 25) + 1)) && first->curve);
+  CHECK(pickAt(40.5, 50) == first);       // the same owner again: a second click takes it out
+  CHECK(pickAt(40.9, 50.06)->index() == ordinal(20, 25));  // a little off it, still it (the next line is 1 mm away)
+  CHECK(pickAt(42.5, 50)->index() == ordinal(21, 25));
+  CHECK(pickAt(41.5, 51).IsNull());  // in the gaps: none
+  CHECK(body->edgeOwner(ordinal(20, 25)) == first);
+  // A crossing box from (39.6, 49.6) to (42.2, 52.4) takes lines (20|21, 25|26); a window box only (20, 25|26).
+  for (const bool crossing : {true, false}) {
+    SelectMgr_SelectingVolumeManager box;
+    box.InitBoxSelectingVolume(gp_Pnt2d(500 + (39.6 - 40.5) * 50, 500 - (52.4 - 50) * 50), gp_Pnt2d(500 + (42.2 - 40.5) * 50, 500 - (49.6 - 50) * 50));
+    box.SetCamera(camera); box.SetWindowSize(1000, 1000); box.AllowOverlapDetection(crossing); box.BuildSelectingVolume();
+    std::set<int> taken;
+    for (const auto& entity : selection->Entities()) {
+      SelectBasics_PickResult result;
+      if (!entity->BaseSensitive()->Matches(box, result)) continue;
+      const auto group = Handle(GroupSensitive)::DownCast(entity->BaseSensitive());
+      CHECK(!group.IsNull() && !group->hits().empty());
+      taken.insert(group->hits().begin(), group->hits().end());
+    }
+    const std::set<int> want = crossing ? std::set<int>{ordinal(20, 25), ordinal(20, 26), ordinal(21, 25), ordinal(21, 26)}
+                                        : std::set<int>{ordinal(20, 25), ordinal(20, 26)};
+    CHECK(taken == want);
+  }
+}
+
+// UI-42: the same layer's Vertex filter is a few sensitives over groups of nearby line ends (and its circles' centres), not
+// one per vertex; a point pick takes on the owner of the end nearest the pointer, a box keeps every end in it.
+TEST(big_drawing_layer_picks_its_vertices_in_groups) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  BRep_Builder builder;
+  TopoDS_Compound layer;
+  builder.MakeCompound(layer);
+  constexpr int columns = 70, rows = 50;  // 3,500 lines 1 mm long, 2 mm apart: 7,000 ends
+  for (int i = 0; i < columns; ++i)
+    for (int j = 0; j < rows; ++j) builder.Add(layer, BRepBuilderAPI_MakeEdge(gp_Pnt(i * 2, j * 2, 0), gp_Pnt(i * 2 + 1, j * 2, 0)).Edge());
+  builder.Add(layer, BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(-20, -20, 0), gp::DZ()), 5)).Edge());
+  Bnd_Box bounds;
+  BRepBndLib::Add(layer, bounds);
+  const auto prs = BodyPrs::build(layer, bounds, false, true);
+  TopTools_IndexedMapOfShape vertices;
+  TopExp::MapShapes(layer, TopAbs_VERTEX, vertices);
+  CHECK_EQ(prs->vertexShapes.size(), size_t(vertices.Extent()));
+  CHECK_EQ(prs->vertexGroups.size(), size_t((vertices.Extent() + 255) / 256));
+  CHECK(BodyPrs::build(layer, bounds)->vertexGroups.empty());  // not a drawing: OCCT's
+  Handle(TestBody) body = new TestBody(layer, prs);
+  CHECK(body->groupedVertices());
+  const int mode = AIS_Shape::SelectionMode(TopAbs_VERTEX);
+  Handle(SelectMgr_Selection) selection = new SelectMgr_Selection(mode);
+  body->ComputeSelection(selection, mode);
+  int circles = 0, groups = 0;
+  for (const auto& entity : selection->Entities()) {
+    circles += !Handle(CircleOwner)::DownCast(entity->BaseSensitive()->OwnerId()).IsNull();
+    groups += !Handle(GroupSensitive)::DownCast(entity->BaseSensitive()).IsNull();
+  }
+  CHECK_EQ(groups, int(prs->vertexGroups.size()));
+  CHECK_EQ(circles, 1);  // the circle's centre finder (taken with Ctrl)
+  auto ordinalAt = [&](double x, double y) {
+    for (int i = 1; i <= vertices.Extent(); ++i)
+      if (BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))).Distance(gp_Pnt(x, y, 0)) < 1e-9) return i - 1;
+    return -1;
+  };
+  Handle(Graphic3d_Camera) camera = new Graphic3d_Camera();
+  camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  camera->SetEyeAndCenter(gp_Pnt(40.5, 50, 100), gp_Pnt(40.5, 50, 0));
+  camera->SetUp(gp::DY());
+  camera->SetScale(20);  // 50 px a millimetre
+  auto pickAt = [&](double x, double y) {
+    SelectMgr_SelectingVolumeManager point;
+    point.InitPointSelectingVolume(gp_Pnt2d(500 + (x - 40.5) * 50, 500 - (y - 50) * 50));
+    point.SetCamera(camera); point.SetWindowSize(1000, 1000); point.SetPixelTolerance(4); point.BuildSelectingVolume();
+    Handle(SubShapeOwner) found;
+    for (const auto& entity : selection->Entities()) {
+      SelectBasics_PickResult result;
+      if (!Handle(GroupSensitive)::DownCast(entity->BaseSensitive()).IsNull() && entity->BaseSensitive()->Matches(point, result))
+        found = Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+    }
+    return found;
+  };
+  const auto first = pickAt(40.02, 50.03);  // beside the start of line (20, 25)
+  CHECK(!first.IsNull() && first->index() == ordinalAt(40, 50) && first->kind() == opad::Ref::Kind::Vertex);
+  CHECK(first->Shape().IsSame(vertices(ordinalAt(40, 50) + 1)));
+  CHECK(pickAt(40, 50) == first && body->vertexOwner(first->index()) == first);  // the same owner again
+  CHECK(pickAt(40.97, 50)->index() == ordinalAt(41, 50));  // the line's other end
+  CHECK(pickAt(40.5, 50).IsNull());                        // the middle of the line: no end in reach
+  // A box from (39.6, 49.6) to (41.2, 52.4) takes the ends (40|41, 50|52).
+  SelectMgr_SelectingVolumeManager box;
+  box.InitBoxSelectingVolume(gp_Pnt2d(500 + (39.6 - 40.5) * 50, 500 - (52.4 - 50) * 50), gp_Pnt2d(500 + (41.2 - 40.5) * 50, 500 - (49.6 - 50) * 50));
+  box.SetCamera(camera); box.SetWindowSize(1000, 1000); box.BuildSelectingVolume();
+  std::set<int> taken;
+  for (const auto& entity : selection->Entities()) {
+    SelectBasics_PickResult result;
+    const auto group = Handle(GroupSensitive)::DownCast(entity->BaseSensitive());
+    if (group.IsNull() || !group->Matches(box, result)) continue;
+    CHECK(group->type() == TopAbs_VERTEX && !group->hits().empty());
+    taken.insert(group->hits().begin(), group->hits().end());
+  }
+  CHECK(taken == (std::set<int>{ordinalAt(40, 50), ordinalAt(41, 50), ordinalAt(40, 52), ordinalAt(41, 52)}));
+}
+
+// UI-51: a curve body's segments in runs of nearby ones (the orbit pivot's search): every segment in exactly one run, each
+// run's box holding its segments, the runs far smaller than the drawing.
+TEST(curve_segments_in_runs_of_nearby_ones) {
+  BRep_Builder builder;
+  TopoDS_Compound layer;
+  builder.MakeCompound(layer);
+  constexpr int columns = 60, rows = 40;  // 2,400 lines 1 mm long, 2 mm apart, added column by column
+  for (int i = 0; i < columns; ++i)
+    for (int j = 0; j < rows; ++j) builder.Add(layer, BRepBuilderAPI_MakeEdge(gp_Pnt(i * 2, j * 2, 0), gp_Pnt(i * 2 + 1, j * 2, 0)).Edge());
+  Bnd_Box bounds;
+  BRepBndLib::Add(layer, bounds);
+  const auto prs = BodyPrs::build(layer, bounds);
+  const size_t segments = prs->drawingSegments.size() / 2;
+  CHECK(segments >= size_t(columns * rows));
+  CHECK_EQ(prs->segmentOrder.size(), segments);
+  CHECK_EQ(prs->segmentRuns.size(), (segments + 255) / 256);
+  std::vector<int> seen(segments, 0);
+  double extents = 0;
+  for (const auto& run : prs->segmentRuns) {
+    for (size_t k = run.first; k < run.first + run.count; ++k) {
+      const size_t i = prs->segmentOrder[k];
+      ++seen[i];
+      for (const gp_Pnt& p : {prs->drawingSegments[2 * i], prs->drawingSegments[2 * i + 1]}) CHECK(!run.box.IsOut(p));
+    }
+    extents += std::sqrt(run.box.SquareExtent());
+  }
+  CHECK(std::all_of(seen.begin(), seen.end(), [](int n) { return n == 1; }));
+  // A run is a patch of the drawing (Morton order), not a stripe across it in the order the lines were added.
+  const double mean = extents / prs->segmentRuns.size();
+  std::printf("runs: %zu, mean diagonal %.1f of the drawing's %.1f\n", prs->segmentRuns.size(), mean, std::sqrt(bounds.SquareExtent()));
+  CHECK(mean < 0.5 * std::sqrt(bounds.SquareExtent()));
 }
 
 CHECK_MAIN()

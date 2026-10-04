@@ -74,6 +74,7 @@ class OpacityPopup : public QFrame {
   OpacitySlider* slider() const { return m_slider; }
   void popup(const QPoint& global);
  protected:
+  bool event(QEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
   void hideEvent(QHideEvent* event) override;
  private:

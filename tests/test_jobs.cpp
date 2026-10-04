@@ -1,6 +1,7 @@
 // The job runner's feedback (UI-109), offscreen: the busy cursor after 150 ms for jobs someone waits for (never for a
-// background one, never flickering on during a drag), "+N" beside the newest job in the strip, the done signal with what
-// a completion toast needs (background flag, done text, run time, whether the strip showed it).
+// background one, never flickering on during a drag), "+N" beside the job in the strip (the oldest Foreground one,
+// UI-40), the done signal with what a completion toast needs (background flag, done text, run time, whether the strip
+// showed it).
 #include "Jobs.hpp"
 #include "ProgressStrip.hpp"
 #include "check.hpp"
@@ -66,26 +67,30 @@ TEST(no_busy_cursor_starts_while_a_button_is_down) {
   CHECK(!duringDrag && !jobs.busyCursor() && !QGuiApplication::overrideCursor());
 }
 
-TEST(others_beside_the_newest_job) {
+TEST(others_beside_the_oldest_job) {
+  // The oldest Foreground job keeps the strip (UI-40: a load's Cancel stays where it is while others begin); a Background
+  // job is the activity dot's, never counted beside it.
   ProgressStrip strip;
   JobRunner jobs(&strip);
   Job* a = jobs.begin("First");
   Job* b = jobs.begin("Second");
   Job* c = jobs.begin("Third");
+  Job* tidy = jobs.begin("Tidy", false, JobKind::Background);
   CHECK(strip.othersText().isEmpty());  // nothing shows before 0.5 s
   QTest::qWait(600);
   CHECK_EQ(strip.othersText(), QString("+2"));
   const QString tip = strip.findChild<QLabel*>("progressOthers")->toolTip();
-  CHECK(tip.contains("First") && tip.contains("Second") && !tip.contains("Third"));
-  CHECK(c->wasShown() && !a->wasShown());
-  c->finish();
-  QTest::qWait(10);
-  CHECK_EQ(strip.othersText(), QString("+1"));  // Second shows now, First beside it
-  CHECK(b->wasShown());
+  CHECK(!tip.contains("First") && tip.contains("Second") && tip.contains("Third") && !tip.contains("Tidy"));
+  CHECK(a->wasShown() && !c->wasShown() && !tidy->wasShown());
   a->finish();
+  QTest::qWait(10);
+  CHECK_EQ(strip.othersText(), QString("+1"));  // Second shows now, Third beside it
+  CHECK(b->wasShown());
+  c->finish();
   QTest::qWait(10);
   CHECK(strip.othersText().isEmpty());
   b->finish();
+  tidy->finish();
   QTest::qWait(10);
   CHECK(!jobs.busy() && strip.isHidden() && strip.othersText().isEmpty());
 }

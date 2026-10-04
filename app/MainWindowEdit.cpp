@@ -25,12 +25,15 @@ void MainWindow::buildEditActions() {
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->undo();
   });
-  addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] {
+  QAction* redo = addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] {
     if (m_annotationEditor) return m_annotationEditor->redo();
     if (m_design->sketchActive()) return m_design->sketch()->redo();
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->redo();
   });
+  // Ctrl+Shift+Z as well (UI-09), as most apps take it, while the binding is the default one (Ctrl+Y here).
+  if (const QKeySequence other("Ctrl+Shift+Z"); redo->shortcut() == QKeySequence(QKeySequence::Redo) && redo->shortcut() != other)
+    redo->setShortcuts({redo->shortcut(), other});
   connect(m_doc, &AppDocument::undoChanged, this, &MainWindow::updateUndoActions);
   // Select all and Invert (UI-111): the sketch's curves while sketching, else the bodies on screen (visible, inside the
   // isolation); a tool or a feature input owns the picks meanwhile.
@@ -38,8 +41,15 @@ void MainWindow::buildEditActions() {
   addAction("edit.invert", tr("Invert selection"), "", QKeySequence("Ctrl+Shift+I"), [this] { selectShown(true); });
   addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
-    if (ids.size() == 1) return m_browser->startRename(ids.front());
-    if (ids.empty() && m_selRows.size() == 1) return m_browser->startRename(m_selRows.front());  // an area's row, when its folder renames
+    // In the browser's row, expanded at once (the tree is hidden while it opens) and with the keyboard.
+    if (ids.size() == 1) {
+      m_browserOverlay->reveal(true);
+      return m_browser->startRename(ids.front());
+    }
+    if (ids.empty() && m_selRows.size() == 1) {  // an area's row, when its folder renames
+      m_browserOverlay->reveal(true);
+      return m_browser->startRename(m_selRows.front());
+    }
     if (ids.empty()) return;
     // Several at once: one name, numbered in selection order (TODO 10 B15).
     const QString base = renameBase(m_doc->nodeName(ids.front()));
@@ -290,6 +300,27 @@ Toast* MainWindow::undoToast(const QString& text, int ms) {
     if (m_doc->generation == generation && m_doc->canUndo() && m_doc->undoLabels().size() == depth && m_doc->undoLabel() == step) return m_doc->undo();
     statusBar()->showMessage(tr("Other changes came after it: undo those first (Ctrl+Z)."), 6000);
   }, ms);
+}
+
+// Several tombstones as one step (UI-02): one plan on a worker with a design history, else one batch.
+void MainWindow::deleteOps(const std::vector<std::string>& opIds) {
+  if (opIds.size() == 1) return deleteOp(opIds.front());
+  if (opIds.empty()) return;
+  if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty()) {  // one plan on a worker, one step
+    std::vector<opad::json> ops;
+    for (const auto& id : opIds) ops.push_back(opad::json{{"op", "delete"}, {"target", id}});
+    return m_design->applyOps(std::move(ops), tr("delete"));
+  }
+  m_doc->batch(tr("delete"), [&] { for (const auto& id : opIds) m_doc->run("delete", opad::json{{"target", id}}); });
+}
+
+// Hide others (UI-02): one step, and the fewest nodes (a subtree with nothing kept is hidden as a whole), where it used to
+// be one command and one undo step per body (1,294 on the Engine, about 100 s).
+void MainWindow::hideOthers(const std::vector<std::string>& keep) {
+  if (keep.empty()) throw opad::UserHint("Select the objects to keep shown first.", true);
+  const auto hide = m_doc->scene.others_to_hide(keep);
+  if (hide.empty()) return;
+  m_doc->batch(tr("hide others"), [&] { m_doc->run("appearance", opad::json{{"targets", hide}, {"visible", false}}); });
 }
 
 void MainWindow::selectOpTargets(const std::string& opId) {

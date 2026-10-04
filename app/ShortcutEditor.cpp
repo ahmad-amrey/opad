@@ -25,7 +25,8 @@ Scope scope(const QString& id) {
   if(id.startsWith("sketch."))return SketchOnly;
   if(id.startsWith("select.") || id.startsWith("annotate.") ||
       (id.startsWith("inspect.") && id!="inspect.clear") ||
-      id=="edit.selecttouched" || id=="design.move" || id=="view.shaded" || id=="view.edges" || id=="view.wire")return OutsideSketch;
+      id=="edit.selecttouched" || id=="design.move" || id=="view.shaded" || id=="view.edges" || id=="view.wire" || id=="view.hidden" ||
+      id=="view.hiddenEdges")return OutsideSketch;  // 5-9: digits a sketch types
   return Everywhere;
 }
 bool overlaps(const QString& a,const QString& b) {

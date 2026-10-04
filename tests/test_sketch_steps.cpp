@@ -11,7 +11,7 @@
 
 namespace {
 std::string source(const char* name) {
-  const auto path = std::filesystem::path(__FILE__).parent_path().parent_path() / "app" / name;
+  const auto path = std::filesystem::path(OPAD_SOURCE_DIR) / "app" / name;
   std::ifstream in(path, std::ios::binary);
   std::stringstream text;
   text << in.rdbuf();

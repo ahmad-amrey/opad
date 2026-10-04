@@ -5,6 +5,9 @@ if(TARGET opad AND TARGET opad-cli)
   target_include_directories(${target} PRIVATE ../app)
   find_package(Qt6 REQUIRED COMPONENTS Network)  # the test's HTTP git host
   target_link_libraries(${target} PRIVATE Qt6::Core Qt6::Network)
+  if(OPAD_STATIC)  # static Qt imports its TLS backends, which want OpenSSL's archives; the test's host is plain HTTP (as the app's list)
+    qt_import_plugins(${target} EXCLUDE_BY_TYPE tls networkinformation)
+  endif()
   add_dependencies(${target} opad opad-cli)
   set_tests_properties(${name} PROPERTIES TIMEOUT 600)  # 1-2 min alone, several times that on a loaded machine
 else()
