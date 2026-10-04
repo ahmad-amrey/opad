@@ -10,6 +10,7 @@
 
 #include "AppDocument.hpp"
 #include "AreaController.hpp"
+#include "CommandHelp.hpp"
 #include "Commands.hpp"
 #include "DesignController.hpp"
 #include "Icons.hpp"
@@ -139,7 +140,7 @@ class ViewNavigation : public AreaController {
   void setHome() {
     services().guarded([this] {
       services().document()->run("view", opad::json{{"home", true}, {"camera", services().viewport()->cameraJson()}});
-      services().showMessage(tr("Home (H) is this view now, saved with the document"));
+      services().showMessage(help::expand(tr("Home ({key:view.home}) is this view now, saved with the document")));  // the user's key
     });
   }
 

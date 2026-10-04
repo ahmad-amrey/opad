@@ -128,9 +128,12 @@ TEST(every_registered_command_has_help) {
   const auto ids = registeredIds();
   CHECK(ids.size() > 300 && ids.count("help.reference") && ids.count("drawings.baseView.top") && ids.count("vcs.push") && ids.count("edit.copy") &&
         ids.count("drawing2d.layers") && ids.count("file.reveal") && ids.count("workspace.drawings") && ids.count("sketch.commandLine"));
-  // Commands of the tracks merged after the wave 3 help pass (assets, measure, hidden-line views): their records and clips
-  // are still to be written. A listed command that has help is stale here.
-  const QStringList pending{"assets.autoSync", "inspect.length", "inspect.material", "view.hidden", "view.hiddenEdges", "view.hideothers"};
+  // Commands of the tracks merged after the wave 3 help pass (assets, measure, hidden-line views, the drawings' views and
+  // sheets, Reset Home): their records and clips are still to be written. A listed command that has help is stale here.
+  const QStringList pending{"assets.autoSync", "drawings.auxiliaryView", "drawings.breakView", "drawings.breakoutView", "drawings.cropView",
+                            "drawings.detailView", "drawings.exportDrawing", "drawings.issue", "drawings.print", "drawings.sectionView",
+                            "drawings.templateFields", "inspect.length", "inspect.material", "view.hidden", "view.hiddenEdges", "view.hideothers",
+                            "view.resetHome"};
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
   for (const QString& id : pending) if (help::find(id)) missing << id + " (has help: drop it from pending)";

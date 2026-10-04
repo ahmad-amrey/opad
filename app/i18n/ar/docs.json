@@ -327,7 +327,7 @@
   "Least material": "أدنى مادة",
   "Regardless of size": "بصرف النظر عن المقاس",
   "Datums": "المراجع",
-  "A datum letter, with (M) or (L) for a modifier": "حرف مرجع، مع (M) أو (L) للمعدِّل",
+  "A datum letter; M or L in brackets after it adds a modifier (Ⓜ, Ⓛ)": "حرف مرجع؛ ويضيف M أو L بين قوسين بعده معدِّلًا (Ⓜ، Ⓛ)",
   "Material removal required": "إزالة المادة مطلوبة",
   "Any process": "أي عملية",
   "No material removal": "دون إزالة مادة",

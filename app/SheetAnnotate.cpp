@@ -277,7 +277,7 @@ void SheetAnnotator::buildBar() {
       m_datums[i]->setPlaceholderText(QString(QChar('A' + i)));
       m_datums[i]->setFixedWidth(46);
       m_datums[i]->setObjectName(QString("annotate.datum%1").arg(i + 1));
-      m_datums[i]->setToolTip(tr("A datum letter, with (M) or (L) for a modifier"));
+      m_datums[i]->setToolTip(tr("A datum letter; M or L in brackets after it adds a modifier (Ⓜ, Ⓛ)"));
       l->addWidget(m_datums[i]);
     }
     h->addWidget(box);
