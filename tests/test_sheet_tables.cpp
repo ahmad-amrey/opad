@@ -3,8 +3,10 @@
 // hand settles a new row's number; auto-balloon places one per row around the view), the drawing's issues in a revision
 // table and the title block, what an issue keeps (values, fingerprints, frozen linework in the body store) and reports as
 // changed afterwards, and the records' checks.
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <gp_Ax2.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -507,4 +509,64 @@ TEST(exploded_view_drawings) {
   run(a.doc, "delete", {{"target", exploded}});
   const Scene s4 = a.scene();
   CHECK(!s4.sheet_view(view)->error.empty());
+}
+
+// Holes on an exploded view (UI-85): the hole table and a hole callout find a hole where the view draws its part, as balloons
+// and dimensions do. A washer with a 5 mm hole on a base, exploded along X, seen from the top beside the same view not
+// exploded: the hole's place in each, back in view coordinates, differs by the washer's offset.
+TEST(exploded_view_holes) {
+  Document doc = Document::create();
+  const std::string base = doc.add_body(brep_from_shape(BRepPrimAPI_MakeBox(60, 40, 5).Shape()), {{"name", "Base"}, {"units", "mm"}});
+  const TopoDS_Shape holed = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(20, 20, 3).Shape(), BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(10, 10, -1), gp::DZ()), 2.5, 5).Shape()).Shape();
+  const std::string washer = doc.add_body(brep_from_shape(holed), {{"name", "Washer"}, {"units", "mm"}});
+  doc.append({{"op", "import"},
+              {"source", "design"},
+              {"nodes", {{{"type", "component"}, {"id", new_uuid()}, {"name", "Stack"}, {"children", {body("Base", base), body("Washer", washer, 20, 10, 5)}}}}}});
+  run(doc, "explode", {{"mode", "axis"}, {"axis", {1, 0, 0}}, {"name", "Apart"}});
+  const std::string exploded = resolve(doc).views.back().id;
+  const json made = run(doc, "sheet", {{"size", "A3"}, {"views", {"top"}}});
+  const std::string sheet = made["id"], plain = made["views"][0]["id"];
+  const std::string view = run(doc, "sheet_view", {{"sheet", sheet}, {"explode", exploded}, {"orient", "top"}, {"at", {300, 200}}})["id"];
+  const std::string tableOnExploded = run(doc, "sheet_item", {{"sheet", sheet}, {"view", view}, {"kind", "hole_table"}})["id"];
+  const std::string tableOnPlain = run(doc, "sheet_item", {{"sheet", sheet}, {"view", plain}, {"kind", "hole_table"}})["id"];
+  const Scene s = resolve(doc);
+  const std::string node = id_of(s, "Washer");
+  ViewSpec spec = view_spec(s, *s.sheet_view(view));
+  resolve_explode(doc, s, spec);
+  CHECK(spec.offsets.count(node) && std::fabs(spec.offsets.at(node)[0]) > 5);  // the washer moves along X
+  const auto frames = layout(doc, s, *s.sheet(sheet));
+  const auto frame = [&](const std::string& id) { return &*std::find_if(frames.begin(), frames.end(), [&](const ViewFrame& f) { return f.id == id; }); };
+  const auto toView = [&](const json& local, const ViewFrame* f) {  // paper mm from the frame's place -> view coordinates
+    return Vec2{local[0].get<double>() / f->scale + f->centre[0], local[1].get<double>() / f->scale + f->centre[1]};
+  };
+  const auto rows = [&](const std::string& item, const std::string& id) { return measure_item(doc, s, *s.sheet(sheet), *s.sheet_item(item), frame(id))["rows"]; };
+  const json drawnRows = rows(tableOnExploded, view), stillRows = rows(tableOnPlain, plain);
+  CHECK_EQ(drawnRows.size(), size_t(1));
+  CHECK_EQ(stillRows.size(), size_t(1));
+  Vec3 x, y, z;
+  view_axes(spec, x, y, z);
+  const Vec3 o = spec.offsets.at(node);
+  const Vec2 want{o[0] * x[0] + o[1] * x[1] + o[2] * x[2], o[0] * y[0] + o[1] * y[1] + o[2] * y[2]};
+  CHECK(std::hypot(want[0], want[1]) > 5);
+  const Vec2 drawn = toView(drawnRows[0]["centre"], frame(view)), still = toView(stillRows[0]["centre"], frame(plain));
+  CHECK(std::hypot(drawn[0] - still[0] - want[0], drawn[1] - still[1] - want[1]) < 1e-6);
+  // A hole callout on its wall: the same (the washer is placed by a transform: the callout finds its hole too).
+  int wall = -1;
+  for (int i = 0; i < 12 && wall < 0; ++i) {
+    const json ref = {Ref{node, Ref::Kind::Face, i}.str()};
+    try {
+      const std::string a = run(doc, "sheet_item", {{"sheet", sheet}, {"view", view}, {"kind", "hole_callout"}, {"refs", ref}})["id"];
+      const std::string b = run(doc, "sheet_item", {{"sheet", sheet}, {"view", plain}, {"kind", "hole_callout"}, {"refs", ref}})["id"];
+      const Scene t = resolve(doc);
+      const auto framesNow = layout(doc, t, *t.sheet(sheet));
+      auto frameNow = [&](const std::string& id) { return &*std::find_if(framesNow.begin(), framesNow.end(), [&](const ViewFrame& f) { return f.id == id; }); };
+      const json ma = measure_item(doc, t, *t.sheet(sheet), *t.sheet_item(a), frameNow(view));
+      const json mb = measure_item(doc, t, *t.sheet(sheet), *t.sheet_item(b), frameNow(plain));
+      const Vec2 ca = toView(ma["centre"], frameNow(view)), cb = toView(mb["centre"], frameNow(plain));
+      CHECK(std::hypot(ca[0] - cb[0] - want[0], ca[1] - cb[1] - want[1]) < 1e-6);
+      wall = i;
+    } catch (const Error&) {  // not the hole's wall
+    }
+  }
+  CHECK(wall >= 0);
 }

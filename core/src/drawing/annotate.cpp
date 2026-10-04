@@ -8,7 +8,9 @@
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <Standard_Failure.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <gp_Circ.hxx>
@@ -110,6 +112,12 @@ struct Pick {
 };
 
 Pick pick_of_model(const Resolver& R, json r);
+
+// Where an exploded view draws a point of a part (UI-85): moved by the part's offset there; elsewhere where it is.
+Vec3 drawn_at(const Resolver& R, const std::string& node, const Vec3& p) {
+  const auto it = R.shift.find(node);
+  return it == R.shift.end() ? p : plus3(p, it->second);
+}
 
 // A reference's pick, moved with its part in an exploded view.
 Pick pick_of(const Resolver& R, json r) {
@@ -640,8 +648,16 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     need(1, 1, "one hole");
     const design::ResolvedRef rr = R.ctx.resolve(refs[0].is_string() ? Ref::parse(refs[0].get<std::string>()).to_json() : refs[0]);
     const TopoDS_Shape body = R.ctx.node_shape(rr.node);
+    // The pick as a sub-shape of this copy of the body: a part placed by a transform is moved afresh on every call, and a
+    // sub-shape of another copy is not the same shape to this one (a callout on a placed part found no hole).
+    TopoDS_Shape picked = rr.sub;
+    if (rr.index >= 0 && !picked.IsNull()) {
+      TopTools_IndexedMapOfShape map;
+      TopExp::MapShapes(body, picked.ShapeType(), map);
+      if (rr.index < map.Extent()) picked = map(rr.index + 1);
+    }
     const auto holes = find_holes(body);
-    const int i = hole_of(holes, body, rr.sub);
+    const int i = hole_of(holes, body, picked);
     if (i < 0) throw Error("that is not a hole: pick its wall or one of its circles");
     Hole h = holes[static_cast<size_t>(i)];
     int count = 0;
@@ -649,7 +665,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     feature_values(R, rr.node, h);
     const int precision = d.value("precision", 2);
     const std::string shown = hole_callout(h, count, sheet.standard, units, [&](double v) { return format_number(v, precision, &sheet); });
-    const Vec2 c = paper(h.entry);
+    const Vec2 c = paper(drawn_at(R, rr.node, h.entry));  // on the part where an exploded view draws it
     json m = {{"shown", shown}, {"hole", h.to_json()}, {"count", count}, {"centre", js(c)}, {"r", 0}};
     if (paper.along(h.dir)) {
       m["r"] = h.outer() / 2 * frame->scale;
@@ -683,7 +699,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
       for (auto& h : find_holes(body)) {
         if (!paper.along(h.dir)) continue;
         feature_values(R, node, h);
-        found.push_back({h, frame->view(h.entry)});
+        found.push_back({h, frame->view(drawn_at(R, node, h.entry))});  // an exploded view: where its part is drawn
       }
     }
     // A letter per size (smallest first), a number per hole (top to bottom, left to right).
