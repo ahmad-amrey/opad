@@ -277,11 +277,16 @@ class Ink {
       const auto pts = c.sample(tol);
       const size_t first = segs_.size();
       for (size_t k = 1; k < pts.size(); ++k) {
-        const Seg s{paper(pts[k - 1]), paper(pts[k]), static_cast<int>(i)};
-        const auto [x0, y0, x1, y1] = cells(s.a, s.b);
-        for (int y = y0; y <= y1; ++y)
-          for (int x = x0; x <= x1; ++x) grid_[static_cast<size_t>(y * nx_ + x)].push_back(static_cast<int>(segs_.size()));
-        segs_.push_back(s);
+        const Vec2 a = paper(pts[k - 1]), b = paper(pts[k]);
+        const int parts = std::max(1, static_cast<int>(std::ceil(std::hypot(b[0] - a[0], b[1] - a[1]) / cell_)));  // a cell long at most
+        for (int p = 0; p < parts; ++p) {
+          const double t0 = static_cast<double>(p) / parts, t1 = static_cast<double>(p + 1) / parts;
+          const Seg s{{a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0}, {a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1}, static_cast<int>(i)};
+          const auto [x0, y0, x1, y1] = cells(s.a, s.b);
+          for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) grid_[static_cast<size_t>(y * nx_ + x)].push_back(static_cast<int>(segs_.size()));
+          segs_.push_back(s);
+        }
       }
       if (c.body >= 0 && c.edge >= 0) edges_[{c.body, c.edge}].push_back({first, segs_.size()});
     }
@@ -342,7 +347,9 @@ class Ink {
       const double t0 = ((s.a[0] - p[0]) * u[0] + (s.a[1] - p[1]) * u[1]) / lu, t1 = ((s.b[0] - p[0]) * u[0] + (s.b[1] - p[1]) * u[1]) / lu;
       return std::min(std::max(t0, t1), lu - spare) - std::max(std::min(t0, t1), 0.0) > 0.5;
     }
-    if (!cross(p, q, s.a, s.b)) return false;
+    // Across it, also through one of its ends (where the next piece of the curve starts: counted once per curve).
+    const double d1 = side(s.a, s.b, p), d2 = side(s.a, s.b, q), d3 = side(p, q, s.a), d4 = side(p, q, s.b);
+    if (!((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) || !((d3 >= 0 && d4 <= 0) || (d3 <= 0 && d4 >= 0))) return false;
     const double t = ((s.a[0] - p[0]) * v[1] - (s.a[1] - p[1]) * v[0]) / den;  // along p-q
     return (1 - t) * lu > spare;
   }
@@ -566,10 +573,10 @@ json plan_balloons(const Document& doc, const Scene& scene, const json& args) {
     if (e.pieces > 0) edges[row_n[static_cast<size_t>(e.body)]].push_back(&e);
   std::vector<json> refs;
   std::vector<const Seen*> asked;
-  for (auto& [n, list] : edges) {
-    std::stable_sort(list.begin(), list.end(), [](const Seen* a, const Seen* b) { return a->score() > b->score(); });
-    if (list.size() > 8) list.resize(8);
-    for (const Seen* e : list) {
+  for (auto& [n, options] : edges) {
+    std::stable_sort(options.begin(), options.end(), [](const Seen* a, const Seen* b) { return a->score() > b->score(); });
+    if (options.size() > 8) options.resize(8);
+    for (const Seen* e : options) {
       refs.push_back(Ref{g->bodies[static_cast<size_t>(e->body)].node, Ref::Kind::Edge, e->edge}.str());
       asked.push_back(e);
     }
@@ -632,10 +639,10 @@ json plan_balloons(const Document& doc, const Scene& scene, const json& args) {
   };
   std::vector<Placed> placed;
   std::vector<std::array<Vec2, 2>> leaders;
-  for (const auto& [n, list] : edges) {
+  for (const auto& [n, options] : edges) {
     double best = 1e300;
     Placed choice{n, "", -1, {0, 0}, {0, 0}, 0};
-    for (const Seen* e : list) {
+    for (const Seen* e : options) {
       const auto a = anchor.find(e);
       if (a == anchor.end()) continue;
       for (int side = 0; side < 4; ++side) {  // right, left, top, bottom

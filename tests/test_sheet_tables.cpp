@@ -705,10 +705,11 @@ TEST(exploded_view_state_follows_its_exploded_view) {
 
 namespace {
 
+// Whether a-b crosses c-d, also through an end of c-d (where the next piece of a sampled curve starts).
 bool segments_cross(Vec2 a, Vec2 b, Vec2 c, Vec2 d) {
   const auto side = [](Vec2 o, Vec2 p, Vec2 q) { return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]); };
   const double d1 = side(c, d, a), d2 = side(c, d, b), d3 = side(a, b, c), d4 = side(a, b, d);
-  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && (d3 != 0 || d4 != 0) && ((d3 >= 0 && d4 <= 0) || (d3 <= 0 && d4 >= 0));
 }
 
 // Each balloon of a view as drawn: where its circle is, where its leader ends, the part it points at (sheet paper mm).
