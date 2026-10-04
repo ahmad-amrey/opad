@@ -17,6 +17,7 @@
 #include "drawing_sample.hpp"
 #include "opad/commands.hpp"
 #include "opad/drawing/paint.hpp"
+#include "opad/drawing/sheet.hpp"
 #include "opad/drawing/symbols.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
@@ -291,6 +292,52 @@ TEST(a_sheet_prints_on_its_own_paper) {
   CHECK(parts.find("/MediaBox [0 0 1191") != std::string::npos && parts.find("/MediaBox [0 0 56") != std::string::npos);  // A2; 200 x 100 mm
   CHECK_THROWS(commands::run("export", {{"format", "svg"}, {"sheet", "drawing:Parts"}, {"out", (f.dir / "parts.svg").string()}}, &doc));
   CHECK_THROWS(commands::run("export", {{"format", "pdf"}, {"sheet", "drawing:None"}, {"out", (f.dir / "none.pdf").string()}}, &doc));
+}
+
+// An exploded view on a sheet (UI-85) prints as the sheet draws it: in the PNG its trail lines are thin phantom lines
+// (long dashes and dots) where the sheet puts them; the PDF and the report count them on their Trail layer.
+TEST(an_exploded_views_trail_lines_print_as_phantom_lines) {
+  install_painter();
+  Files f;
+  auto doc = Document::create();
+  commands::run("feature", {{"kind", "box"}, {"inputs", {{"length", "60 mm"}, {"width", "40 mm"}, {"height", "8 mm"}}}}, &doc);
+  commands::run("feature", {{"kind", "cylinder"}, {"inputs", {{"plane", {{"origin", {0, 0, 8}}, {"normal", {0, 0, 1}}}}, {"diameter", 16}, {"height", 24}, {"operation", "new"}}}}, &doc);
+  commands::run("feature", {{"kind", "box"}, {"inputs", {{"plane", {{"origin", {0, 0, 32}}, {"normal", {0, 0, 1}}}}, {"length", "60 mm"}, {"width", "40 mm"}, {"height", "4 mm"}, {"operation", "new"}}}}, &doc);
+  const std::string apart = commands::run("explode", {{"mode", "axis"}, {"spacing", 2}, {"name", "Apart"}}, &doc)["id"];
+  const std::string sheet = commands::run("sheet", {{"width", 200}, {"height", 200}, {"scale", "1:1"}}, &doc)["id"];
+  const std::string view = commands::run("sheet_view", {{"sheet", sheet}, {"explode", apart}, {"orient", "front"}, {"at", {100, 100}}}, &doc)["id"];
+  json r = commands::run("export", {{"format", "png"}, {"sheet", sheet}, {"dpi", 254}, {"out", (f.dir / "apart.png").string()}}, &doc);
+  CHECK(r["layers"].value("Trail", 0) > 0);
+  const QImage img(QString::fromStdU16String((f.dir / "apart.png").u16string()));
+  CHECK(img.width() == 2000 && img.height() == 2000);  // the paper at 10 pixels a millimetre
+  const Scene s = resolve(doc);
+  const Display d = sheet_display(doc, s, *s.sheet(sheet));
+  std::vector<std::array<Vec2, 2>> pieces;
+  for (const Prim& p : d.prims)
+    if (p.kind == Prim::Kind::Curve && p.source == view && d.layers[size_t(p.layer)].name == "Trail") pieces.push_back({p.curve.pts.front(), p.curve.pts.back()});
+  // The post's and the lid's trails run on one axis: one line where they overlap, not two out of step.
+  for (size_t i = 0; i < pieces.size(); ++i)
+    for (size_t j = i + 1; j < pieces.size(); ++j) {
+      const Vec2 a = pieces[i][0], b = pieces[i][1], c = pieces[j][0], e = pieces[j][1];
+      const double l = std::hypot(b[0] - a[0], b[1] - a[1]);
+      const Vec2 u{(b[0] - a[0]) / l, (b[1] - a[1]) / l};
+      const auto off = [&](Vec2 q) { return std::fabs((q[0] - a[0]) * u[1] - (q[1] - a[1]) * u[0]); };
+      const auto along = [&](Vec2 q) { return (q[0] - a[0]) * u[0] + (q[1] - a[1]) * u[1]; };
+      CHECK(!(off(c) < 0.01 && off(e) < 0.01 && std::max(along(c), along(e)) > 0.01 && std::min(along(c), along(e)) < l - 0.01));
+    }
+  int samples = 0, inked = 0;
+  for (const auto& [a, b] : pieces) {
+    const double l = std::hypot(b[0] - a[0], b[1] - a[1]);
+    for (double t = 1; t < l - 1; t += 0.1) {  // its middle: from a millimetre past each end
+      const double x = a[0] + (b[0] - a[0]) * t / l, y = a[1] + (b[1] - a[1]) * t / l;
+      ++samples;
+      inked += qGray(img.pixel(int(x * 10), int((200 - y) * 10))) < 110;
+    }
+  }
+  CHECK(samples > 200);  // over 20 mm of trail line
+  CHECK(inked > samples / 3 && inked < samples * 9 / 10);  // drawn, and broken: dashes and dots
+  r = commands::run("export", {{"format", "pdf"}, {"sheet", sheet}, {"out", (f.dir / "apart.pdf").string()}}, &doc);
+  CHECK(read_text_file(f.dir / "apart.pdf").rfind("%PDF-", 0) == 0 && r["layers"].value("Trail", 0) > 0);
 }
 
 int main(int argc, char** argv) { return check::run_all(argc, argv); }

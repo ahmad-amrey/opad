@@ -347,7 +347,7 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
   j["bodies"] = bodies;
   for (const auto& [from, to] : spec.trails)  // an exploded view's trail lines (its offsets are in the bodies' placements)
     j["trails"].push_back({rounded(from[0]), rounded(from[1]), rounded(from[2]), rounded(to[0]), rounded(to[1]), rounded(to[2])});
-  if (!spec.trails.empty()) j["trails_version"] = 2;  // 2: the parts of them behind bodies left out
+  if (!spec.trails.empty()) j["trails_version"] = 3;  // 2: the parts of them behind bodies left out; 3: pieces on one line merged
   return sha256_hex(j.dump());
 }
 
@@ -1445,6 +1445,46 @@ class TrailHiders {
   std::vector<Body> m_bodies;
 };
 
+// Trail pieces that lie on one line in the view (parts stacked on one axis: a bolt, its washers and nut) drawn as one
+// line over the stretches any of them covers: overlapping pieces would each start their own dashes and dots, and two
+// phantom lines out of step print as one solid line. Within `tol` of a common line; each merged piece keeps the
+// nearest depth.
+std::vector<Curve> merge_trails(std::vector<Curve> pieces, double tol) {
+  struct Line {
+    Vec2 o, d;
+    std::vector<std::array<double, 3>> spans;  // along d from o: from, to, depth
+  };
+  std::vector<Line> lines;
+  for (const Curve& k : pieces) {
+    Vec2 d = k.pts[1] - k.pts[0];
+    const double l = norm(d);
+    if (l <= tol) continue;
+    d = d * (1 / l);
+    if (d[0] < -1e-12 || (std::fabs(d[0]) <= 1e-12 && d[1] < 0)) d = d * -1.0;  // one sense per direction
+    auto on = std::find_if(lines.begin(), lines.end(), [&](const Line& L) {
+      const auto off = [&](Vec2 p) { const Vec2 r = p - L.o; return std::fabs(r[0] * L.d[1] - r[1] * L.d[0]); };
+      return std::fabs(d[0] * L.d[1] - d[1] * L.d[0]) * l <= tol && off(k.pts[0]) <= tol && off(k.pts[1]) <= tol;
+    });
+    if (on == lines.end()) on = lines.insert(lines.end(), Line{k.pts[0], d, {}});
+    const double a = dot(k.pts[0] - on->o, on->d), b = dot(k.pts[1] - on->o, on->d);
+    on->spans.push_back({std::min(a, b), std::max(a, b), k.z});
+  }
+  std::vector<Curve> out;
+  for (auto& L : lines) {
+    std::sort(L.spans.begin(), L.spans.end());
+    for (size_t i = 0; i < L.spans.size();) {
+      std::array<double, 3> s = L.spans[i];
+      for (++i; i < L.spans.size() && L.spans[i][0] <= s[1] + tol; ++i) s = {s[0], std::max(s[1], L.spans[i][1]), std::max(s[2], L.spans[i][2])};
+      Curve k;
+      k.kind = Curve::Kind::Trail;
+      k.pts = {L.o + L.d * s[0], L.o + L.d * s[1]};
+      k.z = s[2];
+      out.push_back(std::move(k));
+    }
+  }
+  return out;
+}
+
 // The spec with its explode laid out: itself when there is none (or it was done), else `copy` filled from it.
 const ViewSpec& exploded(const Document& doc, const Scene& scene, const ViewSpec& spec, ViewSpec& copy) {
   if (spec.explode_resolved || spec.explode.is_null()) return spec;
@@ -1530,6 +1570,7 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
   g->stats["overlaps"] = drop_overlaps(g->curves, 0.1 * spec.tolerance);  // closer than a tenth of the tolerance: one line
   if (!spec.trails.empty()) {  // an exploded view's trail lines: thin, where no body hides them (UI-85)
     TrailHiders hiders(sources, v);
+    std::vector<Curve> pieces;
     for (const auto& [from, to] : spec.trails) {
       const gp_Pnt a(from[0], from[1], from[2]), b(to[0], to[1], to[2]);
       if (norm(v.at(b) - v.at(a)) <= spec.tolerance) continue;  // seen end on: nothing to draw
@@ -1538,10 +1579,11 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
         k.kind = Curve::Kind::Trail;
         k.pts = {v.at(p), v.at(q)};
         k.z = std::max(v.depth(p), v.depth(q));
-        if (norm(k.pts[1] - k.pts[0]) > spec.tolerance) g->curves.push_back(std::move(k));
+        if (norm(k.pts[1] - k.pts[0]) > spec.tolerance) pieces.push_back(std::move(k));
       }
       run.check();
     }
+    for (Curve& k : merge_trails(std::move(pieces), spec.tolerance)) g->curves.push_back(std::move(k));
   }
   bool any = false;
   std::array<double, 4> box{1e300, 1e300, -1e300, -1e300};
