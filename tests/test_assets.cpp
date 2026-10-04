@@ -309,6 +309,53 @@ TEST(sync_keeps_ids_and_regenerates_what_depends) {
   CHECK_EQ(asset_of(third, import_id)["path"], "moved/model.step");
 }
 
+// A feature recomputed because something upstream changed, while a linked part it needs is not loaded (the file gone): what it
+// last made stays and no error is saved; once the file is back the next change computes it again. Editing that feature itself
+// still says why it cannot be computed.
+TEST(features_wait_for_a_missing_file) {
+  Files f;
+  const fs::path step = f.dir / "parts" / "model.step";
+  two_boxes(step, 5);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, step);
+  Scene s = resolve(d);
+  const std::string a = linked(s, 0);
+  design::apply_ops(d, {design::make_param_op("L", "40 mm")});
+  design::apply_ops(d, {design::make_feature_op("box", "Block", {{"length", "L"}, {"width", 40}, {"height", 40}})});
+  s = resolve(d);
+  const std::string block = s.features.back().result["bodies"][0]["id"];
+  const std::string pocket = design::apply_ops(d, {design::make_feature_op("combine", "Pocket", {{"target", {block}}, {"tools", {a}}, {"operation", "cut"}, {"keep_tools", true}})})["ids"][0];
+  d.save();
+  fs::rename(step, f.dir / "parts" / "away.step");
+  Document away = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(away)[0].state, "missing");
+  std::string param;
+  for (const auto& o : away.ops)
+    if (o.type == "param") param = o.id;
+  auto pocket_result = [&](const Document& doc) {
+    for (const auto& e : effective_ops(doc))
+      if (e.op->id == pocket) return e.data().value("result", json::object());
+    return json();
+  };
+  const json before = pocket_result(away);
+  design::apply_ops(away, {design::make_edit_op(param, {{"expr", "50 mm"}})});
+  s = resolve(away);
+  CHECK(pocket_result(away) == before && !before.contains("error"));
+  for (const auto& feature : s.features) CHECK(!feature.result.contains("error"));
+  CHECK_THROWS(design::apply_ops(away, {design::make_edit_op(pocket, {{"inputs", {{"target", {block}}, {"tools", {a}}, {"operation", "cut"}, {"keep_tools", false}}}})}));
+  away.save();
+  fs::rename(f.dir / "parts" / "away.step", step);
+  Document back = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(back)[0].state, "ok");
+  for (const auto& o : back.ops)
+    if (o.type == "param") param = o.id;
+  design::apply_ops(back, {design::make_edit_op(param, {{"expr", "45 mm"}})});
+  s = resolve(back);
+  CHECK(pocket_result(back) != before && !pocket_result(back).contains("error"));
+  CHECK(about(volume(back, s, block), 45 * 40 * 40 - 1000));
+}
+
 // The same parts written the other way round (roots are known by position): each is found again by its geometry, so ids,
 // keys and what was made from them stay as they were.
 TEST(reordered_parts_found_by_geometry) {

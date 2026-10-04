@@ -507,19 +507,9 @@ struct Walk {
     return id + ":" + n->body_key + ":" + scene.world(id).to_json().dump() + ";";
   }
 
-  std::string feature_fingerprint(const Scene& scene, const ParamTable& params, const std::string& kind, const json& inputs) const {
-    std::string s = "feature|" + kind + "|" + inputs.dump() + "|";
-    if (const FeatureSpec* spec = feature_spec(kind))
-      for (const auto& in : spec->inputs) {
-        if (!inputs.contains(in.name) || !input_shown(in, inputs)) continue;
-        if (in.type != "length" && in.type != "angle" && in.type != "number" && in.type != "count") continue;
-        try {
-          s += in.name + "=" + json(eval_input(params, inputs[in.name], dim_of(in.type))).dump() + ";";
-        } catch (const std::exception& e) {
-          s += in.name + "!" + e.what() + ";";
-        }
-      }
-    std::set<std::string> nodes, sketches, features;
+  // The nodes, sketches and features a feature's inputs depend on.
+  void feature_refs(const Scene& scene, const std::string& kind, const json& inputs, std::set<std::string>& nodes, std::set<std::string>& sketches,
+                    std::set<std::string>& features) const {
     collect_refs(inputs, nodes, sketches, features);
     // Plain-string references count too (agents and the CLI write "uuid" and "uuid/edge/3"): without them a fillet
     // or a pattern did not regenerate when its body changed. A component stands for the bodies under it, as
@@ -542,6 +532,33 @@ struct Walk {
     const bool every = kind == "interference" && (!inputs.contains("bodies") || inputs["bodies"].empty());
     if (automatic || every)
       for (const auto& b : scene.all_bodies()) nodes.insert(b);
+  }
+
+  // Whether a feature depends on a linked file's part that is not loaded (missing, not trusted yet).
+  bool unloaded_inputs(const Scene& scene, const std::string& kind, const json& inputs) const {
+    std::set<std::string> nodes, sketches, features;
+    feature_refs(scene, kind, inputs, nodes, sketches, features);
+    return std::any_of(nodes.begin(), nodes.end(), [&](const std::string& id) { const Node* n = scene.node(id); return n && n->linked && n->body_missing; });
+  }
+
+  bool edited(const std::string& id) const {  // a new op of the plan edits it (the user's change of it)
+    return std::any_of(new_ops.begin(), new_ops.end(), [&](const json& op) { return op.value("op", "") == "edit" && op.value("target", "") == id; });
+  }
+
+  std::string feature_fingerprint(const Scene& scene, const ParamTable& params, const std::string& kind, const json& inputs) const {
+    std::string s = "feature|" + kind + "|" + inputs.dump() + "|";
+    if (const FeatureSpec* spec = feature_spec(kind))
+      for (const auto& in : spec->inputs) {
+        if (!inputs.contains(in.name) || !input_shown(in, inputs)) continue;
+        if (in.type != "length" && in.type != "angle" && in.type != "number" && in.type != "count") continue;
+        try {
+          s += in.name + "=" + json(eval_input(params, inputs[in.name], dim_of(in.type))).dump() + ";";
+        } catch (const std::exception& e) {
+          s += in.name + "!" + e.what() + ";";
+        }
+      }
+    std::set<std::string> nodes, sketches, features;
+    feature_refs(scene, kind, inputs, nodes, sketches, features);
     for (const auto& n : nodes) s += node_state(scene, n);
     for (const auto& id : sketches)
       if (const SketchItem* sk = scene.sketch(id)) s += id + ":" + sk->geometry.dump() + sk->frame.to_json().dump() + ";";
@@ -928,7 +945,10 @@ struct Walk {
             if (std::string(ex.what()) == "cancelled") throw;
             result = {{"error", ex.what()}};
           }
-          result["in"] = fp;
+          // Recomputed only because something upstream changed, but it needs a linked file that is not loaded: what it last
+          // made stays, under its old fingerprint, so it is computed again once the file is back (no error saved meanwhile).
+          if (result.contains("error") && stored.contains("in") && !is_new(id) && !edited(id) && unloaded_inputs(builder.scene(), kind, inputs)) result = stored;
+          else result["in"] = fp;
         }
         if (conditional) result["suppressed"] = false;
       }
