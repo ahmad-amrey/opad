@@ -30,3 +30,5 @@ OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_CONSTRAINTS, sketchConstraints, benchConstra
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_COMMANDLINE, sketchCommandLine, benchCommandLine)  // UI-133
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_CLIPBOARD, sketchClipboard, benchClipboard)        // UI-129
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_EDITS, sketchEdits, benchEdits)                    // UI-28
+OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_APPLY, sketchApply, benchApply)                    // TODO 11 wave 3, P4
+OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_POINTER, sketchPointer, benchPointer)              // TODO 11 wave 3, P5 and P6

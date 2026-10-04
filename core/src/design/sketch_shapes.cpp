@@ -84,7 +84,7 @@ json expand_sketch_shapes(const json& geometry_in, json* id_map) {
   geometry.erase("shapes");
   // Ids the caller left out take the next free ones, points first.
   int top = geometry.value("id_watermark", 0);
-  for (const char* list : {"points", "entities", "constraints", "images", "patterns"})
+  for (const char* list : {"points", "entities", "constraints", "more_constraints", "images", "patterns"})
     for (const auto& item : geometry.value(list, json::array()))
       if (item.contains("id") && item["id"].is_number_integer()) top = std::max(top, item["id"].get<int>());
   for (const char* list : {"points", "entities", "constraints"})

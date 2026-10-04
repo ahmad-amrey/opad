@@ -15,6 +15,7 @@
 #include "Theme.hpp"
 #include "Units.hpp"
 #include "opad/design/expr.hpp"
+#include "opad/design/sketch_pattern.hpp"
 #include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QSettings>
@@ -60,7 +61,7 @@ const QStringList kPointTools = {"point", "line", "spline", "rect", "crect", "ci
                                  "slot", "cslot", "arcslot", "ellipse", "conic", "rect3", "control_spline", "tangent_arc", "text", "paste", "copybase"};
 // Option tools Enter applies, once there is something picked to apply them to; and those Enter after typing applies as they
 // are (a gap, an image, a trace, a tolerance).
-const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern", "node"};
+const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern", "node", "image_insert", "image_calibrate"};
 const QStringList kAppliedNow = {"heal", "image_edit", "image_trace", "simplify", "vector_import"};
 // Steps that take the shape's own sizes (UI-17): after the first click, after the second.
 const QStringList kSized1 = {"rect", "crect", "circle", "circle2", "rect3", "arc3", "circle3", "slot", "cslot", "arcc", "arcslot", "ellipse", "polygon", "polygon_outer",
@@ -142,9 +143,9 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
     }
     return {field("radius", tr("Radius"), number(r))};
   }
-  // The centre arc's sweep from its start (signed, counter-clockwise positive); an arc slot always runs counter-clockwise.
-  double sweep = std::remainder(std::atan2(dv, du) - std::atan2(bv, bu), 2 * M_PI);
-  if (m_tool == "arcslot" && sweep <= 0) sweep += 2 * M_PI;
+  // The centre arc's or arc slot's sweep from its start (signed, counter-clockwise positive), the way the pointer went round
+  // (P5), past half a turn too.
+  const double sweep = m_tool == "arcslot" || m_tool == "arcc" ? slotSweep(u, v) : std::remainder(std::atan2(dv, du) - std::atan2(bv, bu), 2 * M_PI);
   QList<Field> out{field("sweep", tr("Sweep angle"), angleText(sweep, 1))};
   if (m_tool == "arcslot") out << Field{"width", tr("Width"), option("width", "2 mm"), true};
   return out;
@@ -232,8 +233,26 @@ QList<DynamicInput::Field> SketchEditor::inputStage() const {
   return out;
 }
 
+// Every tool with an Apply button takes Enter once its picks are complete (TODO 11 wave 3, P4: the guides press Enter):
+// what each one's Apply needs, so Enter never applies a tool that would only say what is missing.
 bool SketchEditor::appliesOnEnter() const {
-  return kApplied.contains(m_tool) && !m_sel.empty() && (m_tool != "chamfer" || m_sk.point(m_sel.front())) && (m_tool != "node" || m_sel.size() == 1);
+  const QString& t = m_tool;
+  if (!sketchkeys::entersApply(t.toStdString())) return false;
+  auto curves = [this] { return std::count_if(m_sel.begin(), m_sel.end(), [this](int id) { return m_sk.entity(id) != nullptr; }); };
+  if (t == "chamfer") return m_sel.size() == 1 && m_sk.point(m_sel.front());
+  if (t == "node") return m_sel.size() == 1;
+  if (t == "mirror") return curves() > 0 && (option("mirrorAxis", "picked") != "picked" || (option("mirrorStage", "seed") == "axis" && !m_picked.empty()));
+  if (t == "break") return curves() >= 2;
+  if (t == "union" || t == "subtract" || t == "intersect") return m_clicks.size() == 2;
+  if (t == "explode") return std::any_of(m_sel.begin(), m_sel.end(), [this](int id) { return pattern_of(m_sk, id, true) != 0; });
+  if (t == "heal" || t == "simplify") return true;
+  if (sketchkeys::referenceTool(t.toStdString())) return !m_sources.isEmpty();
+  if (t == "break_link") return std::any_of(m_sel.begin(), m_sel.end(), [this](int id) { const auto* e = m_sk.entity(id); return e && !e->source.is_null(); });
+  if (t == "image_insert") return !option("imageFile").isEmpty() && m_clicks.size() == 1;
+  if (t == "image_calibrate") return !m_sk.images.empty() && m_clicks.size() == 2;
+  if (t == "image_edit" || t == "image_trace" || t == "image_remove") return !m_sk.images.empty();
+  if (t == "vector_import" || t == "vector_export") return !option("vectorFile").isEmpty();
+  return curves() > 0;  // offset, move, copy, rotate, scale and the patterns: their curves
 }
 
 // A key that types into the boxes: a value key while a tool runs (a tool without boxes drops it: it is never a window
@@ -765,10 +784,9 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
     const double ux = ((a.u * a.u + a.v * a.v) * (b.v - cv) + (b.u * b.u + b.v * b.v) * (cv - a.v) + (cu * cu + cv * cv) * (a.v - b.v)) / d;
     const double uy = ((a.u * a.u + a.v * a.v) * (cu - b.u) + (b.u * b.u + b.v * b.v) * (a.u - cu) + (cu * cu + cv * cv) * (b.u - a.u)) / d;
     along("radius", ux, uy, cu, cv, QStringLiteral("R "), 1, true);
-  } else if (m_tool == "arcc" || m_tool == "arcslot") {  // the sweep from the start (a typed one may go past half a turn)
+  } else if (m_tool == "arcc" || m_tool == "arcslot") {  // the sweep from the start, the way the pointer went (or typed): past half a turn too
     const auto it = m_typedValues.find("sweep");
-    double sweep = std::remainder(direction(a.u, a.v, cu, cv) - direction(a.u, a.v, b.u, b.v), 2 * M_PI);
-    if (m_tool == "arcslot" && sweep <= 0) sweep += 2 * M_PI;
+    const double sweep = slotSweep(cu, cv);
     angle("sweep", a.u, a.v, direction(a.u, a.v, b.u, b.v), it != m_typedValues.end() ? it->second : sweep);
   }
   return out;

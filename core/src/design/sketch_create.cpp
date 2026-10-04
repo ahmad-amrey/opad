@@ -176,13 +176,22 @@ std::vector<int> create_primitive(Sketch& sketch,const std::string& kind,const s
     V a=at(0),b=at(1);double radius=length(b-a)/2;if(radius<1e-9)throw Error("circle needs two different points");
     made.push_back(sk.add_circle(point((a+b)*0.5),radius,construction));
   } else if(kind=="polygon_outer") {
+    // Circumscribed about its construction circle (TODO 11 wave 3, P6): the circle is inside, every side tangent to it, so
+    // its diameter is the size across the flats; the second pick is the middle of a side, where the side touches it. Made:
+    // the sides (the last one through the second pick), the circle, then the apothem, a construction line from the centre
+    // to that side's middle, square to it: with the sides equal and tangent that keeps an even polygon regular (alone,
+    // its touch points could slide along alternate sides, a rhombus for a square), and it carries the polygon's turn.
     const int count=options.value("sides",6);if(count<3||count>256)throw Error("polygon needs 3 to 256 sides");
-    V o=at(0),p=at(1);const double r=length(p-o)/std::cos(M_PI/count),start=std::atan2(p.second-o.second,p.first-o.first)+M_PI/count;
+    V o=at(0),p=at(1);const double apothem=length(p-o),r=apothem/std::cos(M_PI/count),start=std::atan2(p.second-o.second,p.first-o.first)+M_PI/count;
+    if(apothem<1e-9)throw Error("the picked points must be different");
     std::vector<int> ids;for(int i=0;i<count;++i){double a=start+2*M_PI*i/count;ids.push_back(point(o+V{std::cos(a),std::sin(a)}*r));}
     std::vector<int> lines;for(int i=0;i<count;++i)lines.push_back(line(ids[i],ids[(i+1)%count]));
-    const int circle=sk.add_circle(point(o),r,true);made.push_back(circle);
-    for(int p:ids)sk.add_constraint(SkConstraint::Type::Coincident,{p,circle});
+    const int centre=point(o),circle=sk.add_circle(centre,apothem,true);made.push_back(circle);
+    for(int side:lines)sk.add_constraint(SkConstraint::Type::Tangent,{side,circle});
     for(int i=1;i<count;++i)sk.add_constraint(SkConstraint::Type::Equal,{lines[0],lines[i]});
+    const int middle=point(p),radial=sk.add_line(centre,middle,true);made.push_back(radial);
+    sk.add_constraint(SkConstraint::Type::Midpoint,{middle,lines.back()});
+    sk.add_constraint(SkConstraint::Type::Perpendicular,{radial,lines.back()});
   } else if(kind=="cslot") {
     V o=at(0),end=at(1),start=o*2-end,n=normal(unit(end-start));double r=std::fabs(dot(at(2)-end,n));if(r<1e-9)throw Error("slot width must be positive");
     int c1=point(start),c2=point(end),a=point(start+n*r),b=point(end+n*r),c=point(end-n*r),d=point(start-n*r);

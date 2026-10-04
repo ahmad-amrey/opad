@@ -12,10 +12,13 @@
 // the clicks numbered when motion is reduced (ui/tipAnimate, by default the system's animation setting).
 #include <QElapsedTimer>
 #include <QImage>
+#include <QJsonObject>
 #include <QList>
+#include <QPointF>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QVector3D>
 #include <QWidget>
 
 class QPainter;
@@ -63,6 +66,38 @@ QList<QStringList> resolvedKeys(const QString& id, double t = -1);
 // own steps, which need not match the clip's): the clip's "guide" entry for that step when it has one, else the clip's
 // steps shared out evenly; once every step is done (step >= count) the last one. {-1, -1}: no such clip.
 QPair<int, int> guideRange(const QString& id, int step, int count);
+int guideSteps(const QString& id);  // the tool steps the clip's "guide" entry maps (0: none, the steps shared out)
+// The clip replay (TODO 11 wave 3, audit 6.3 test 8): what a clip's pointer, keys and panel stubs do, in time order, for a
+// bench to feed into the tool the clip shows (OPAD_BENCH_CLIPREPLAY, ClipReplayBench.cpp), and the clip's "setup" (what
+// the scene holds first) and "expect" (what the tool must have made of it) blocks, as clips.json's "@replay" describes them.
+struct Input {
+  enum class Kind {
+    Move,         // the pointer over the scene, `down` while its button is held (a drag)
+    Press,        // the button goes down at `at` (a drag starts)
+    Release,      // and up
+    Click,        // a press and release in one place; on the chrome (a card, a chip) `screen` says where (fractions)
+    DoubleClick,  // a second click in the same place at once
+    Key,          // a key cap pressed: `caps` as drawn (or `value` a command's key, `text` a fixed key by name)
+    Type,         // `text` typed into the value box being typed into
+    Row,          // a card's value row set: `text` its label, `value` what it reads now
+    Pick,         // a card's list row picked (highlighted): `index`, `value` its value
+    Page,         // a card's page switch turned to `index`, `text` the page
+    Button,       // a card's button or a chip pressed: `text` (a chip's: `value` "chip")
+  };
+  Kind kind = Kind::Move;
+  double t = 0;
+  QVector3D at;  // model coordinates (a plane clip's z is 0)
+  bool down = false;
+  QPointF screen{-1, -1};
+  QStringList caps;
+  QString text, value;
+  int index = -1;
+};
+QList<Input> input(const QString& id);
+QJsonObject setup(const QString& id);
+QJsonObject expect(const QString& id);
+bool iso(const QString& id);
+QRectF extent(const QString& id);  // what the clip frames, view units (an iso clip's: of its projection)
 // The frame at t seconds into r (clipped to its rounded corners).
 void paint(QPainter& p, const QRectF& r, const QString& id, double t, const Options& o = {});
 QImage frame(const QString& id, double t, QSize size, qreal dpr = 1, const Options& o = {});

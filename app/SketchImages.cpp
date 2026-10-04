@@ -10,7 +10,10 @@
 #include "opad/canvas.hpp"
 #include "opad/geometry.hpp"
 #include "I18n.hpp"
+#include "Units.hpp"
 #include <AIS_TexturedShape.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -56,7 +59,88 @@ std::pair<double,double> imagePoint(const opad::json& image,double x,double y) {
 }
 bool SketchEditor::imageClick(double u,double v) {
   if(m_tool!="image_insert"&&m_tool!="image_calibrate")return false;
-  const size_t count=m_tool=="image_insert"?1:2;if(m_clicks.size()>=count)m_clicks.clear();m_clicks.push_back({u,v});toolPrompt();rebuild();return true;
+  const size_t count=m_tool=="image_insert"?1:2;if(m_clicks.size()>=count)m_clicks.clear();m_clicks.push_back({u,v});
+  // Calibrate: the two points' distance now, in the Known distance box, to type the real one over (TODO 11 wave 3, P4: as
+  // the guide shows, and as Fusion's calibrate does); one typed before the clicks stays.
+  if(m_tool=="image_calibrate" && m_clicks.size()==2) {
+    const QString measured=units::editable(units::Kind::Length,std::hypot(m_clicks[1].u-m_clicks[0].u,m_clicks[1].v-m_clicks[0].v));
+    if(!m_options.contains("knownDistance") || m_options.value("knownDistance")==m_calibrateShown){m_options["knownDistance"]=measured;m_calibrateShown=measured;}
+  }
+  toolPrompt();rebuild();emit changed();return true;
+}
+void SketchEditor::imageFrame(int id,double du,double dv,std::vector<std::pair<double,double>>& corners) const {
+  corners.clear();
+  for(const auto& image:m_sk.images)if(image.at("id").get<int>()==id) {
+    const double w=image.at("width").get<double>(),h=image.at("height").get<double>();
+    for(const auto& [x,y]:std::vector<std::pair<double,double>>{{0,0},{w,0},{w,h},{0,h}}){const auto at=imagePoint(image,x,y);corners.push_back({at.first+du,at.second+dv});}
+  }
+}
+
+int SketchEditor::imageAt(double u,double v) const {
+  if(m_sk.images.empty())return 0;
+  auto inside=[&](const opad::json& image) {
+    const double a=image.value("angle",0.0),dx=u-image.at("position")[0].get<double>(),dy=v-image.at("position")[1].get<double>();
+    const double x=dx*std::cos(a)+dy*std::sin(a),y=-dx*std::sin(a)+dy*std::cos(a);
+    return x>=0 && y>=0 && x<=image.at("width").get<double>() && y<=image.at("height").get<double>();
+  };
+  const int shown=option("imageId",QString::number(m_sk.images.back().at("id").get<int>())).toInt();
+  for(const auto& image:m_sk.images)if(image.at("id").get<int>()==shown && inside(image))return shown;
+  for(auto it=m_sk.images.rbegin();it!=m_sk.images.rend();++it)if(inside(*it))return it->at("id").get<int>();  // the one drawn last
+  return 0;
+}
+
+bool SketchEditor::imagePress(double u,double v) {
+  const int id=imageAt(u,v);
+  if(!id)return false;
+  size_t index=0;while(index<m_sk.images.size() && m_sk.images[index].at("id").get<int>()!=id)++index;
+  const auto& image=m_sk.images[index];
+  if(option("imageId").toInt()!=id){m_options["imageId"]=QString::number(id);m_panelFieldsDirty=true;emit workflowChanged();}  // the panel shows the one taken
+  m_imageDrag=ImageDrag{id,index,u,v,image.at("position")[0].get<double>(),image.at("position")[1].get<double>()};
+  return true;
+}
+
+void SketchEditor::imageDragTo(double u,double v) {
+  if(!m_imageDrag)return;
+  ImageDrag& d=*m_imageDrag;
+  d.du=u-d.u;d.dv=v-d.v;
+  d.moved=d.moved || std::hypot(d.du,d.dv)>0.5*tol();
+  if(!d.moved)return;
+  // The picture itself follows (its prepared texture moved, nothing built again), when the prepared ones are the images.
+  if(m_imagePrs.size()==m_sk.images.size() && d.index<m_imagePrs.size() && !m_imagePrs[d.index].IsNull()) {
+    const opad::Vec3 a=m_frame.to_world(0,0),b=m_frame.to_world(d.du,d.dv);
+    gp_Trsf move;move.SetTranslation(gp_Vec(b[0]-a[0],b[1]-a[1],b[2]-a[2]));
+    m_imagePrs[d.index]->SetLocalTransformation(move);
+  }
+  updateTransient();  // its frame at the new place, which redraws the view
+}
+
+void SketchEditor::imageRelease() {
+  if(!m_imageDrag)return;
+  const ImageDrag d=*m_imageDrag;
+  m_imageDrag.reset();
+  if(!d.moved){updateTransient();return;}
+  const double x=d.x+d.du,y=d.y+d.dv;
+  const int id=d.id;
+  if(!m_editJob) {
+    m_options["imageX"]=units::editable(units::Kind::Length,x);m_options["imageY"]=units::editable(units::Kind::Length,y);
+    runSketchEdit(tr("Transform image"),[id,x,y](Sketch& sk){backdrop(sk,id)["position"]={x,y};});  // its picture prepared again there
+  } else if(d.index<m_imagePrs.size() && !m_imagePrs[d.index].IsNull()) {  // the sketch is busy: the picture goes back
+    m_imagePrs[d.index]->SetLocalTransformation(gp_Trsf());
+    emit status(tr("The sketch is busy; try again"));
+  }
+  updateTransient();
+  emit changed();
+}
+
+QSizeF SketchEditor::insertPicture() {
+  const QString file=option("imageFile");
+  if(file==m_insertFile)return m_insertPicture;
+  m_insertFile=file;m_insertPicture={};
+  if(file.isEmpty())return m_insertPicture;
+  QImageReader reader(file);QSize size=reader.size();  // the header only
+  if(!size.isValid()||size.isEmpty())return m_insertPicture;
+  if(reader.transformation()&QImageIOHandler::TransformationRotate90)size.transpose();  // as it is placed (keptPicture, decodePicture)
+  return m_insertPicture=QSizeF(size);
 }
 bool SketchEditor::applyImageTool() {
   if(!m_tool.startsWith("image_")&&m_tool!="vector_import"&&m_tool!="vector_export"&&m_tool!="simplify")return false;
@@ -79,6 +163,8 @@ bool SketchEditor::applyImageTool() {
     } else if(m_tool=="image_calibrate") {
       if(m_clicks.size()!=2)throw opad::Error("pick two calibration points");const auto a=m_clicks[0],b=m_clicks[1];const double known=length("knownDistance","10 mm"),distance=std::hypot(b.u-a.u,b.v-a.v);
       if(known<=0||distance<1e-9)throw opad::Error("calibration distances must be positive");const double factor=known/distance;
+      // The measured distance as the clicks put it in the box (rounded there, so its factor is never quite 1): nothing to scale.
+      if(option("knownDistance")==m_calibrateShown || std::fabs(factor-1)<1e-9){emit status(tr("Type the real distance between the two points, then apply."));return true;}
       runSketchEdit(tr("Calibrate image"),[id,a,factor](Sketch& sk){auto& image=backdrop(sk,id);image["width"]=image.at("width").get<double>()*factor;image["height"]=image.at("height").get<double>()*factor;image["position"]={a.u+(image.at("position")[0].get<double>()-a.u)*factor,a.v+(image.at("position")[1].get<double>()-a.v)*factor};});
     } else if(m_tool=="image_edit") {
       const double x=length("imageX","0 mm"),y=length("imageY","0 mm"),width=length("imageWidth","100 mm"),angle=params.angle(option("imageAngle","0 deg").toStdString()),opacity=params.number(option("imageOpacity","0.5").toStdString());
@@ -111,7 +197,8 @@ bool SketchEditor::applyImageTool() {
         simplify_sketch(traced,std::max(1e-6,options.tolerance*std::min(sx,sy)));append_reference(sk,traced,{},"project",false);
       });
     } else if(m_tool=="simplify") {
-      const double tolerance=length("curveTolerance","0.05 mm");runSketchEdit(tr("Simplifying sketch"),[tolerance](Sketch& sk){simplify_sketch(sk,tolerance);});
+      const double tolerance=length("curveTolerance","0.01 mm");  // the panel's and the box's default
+      runSketchEdit(tr("Simplifying sketch"),[tolerance](Sketch& sk){simplify_sketch(sk,tolerance);});
     } else if(m_tool=="vector_import") {
       const auto path=option("vectorFile");if(path.isEmpty())throw opad::Error("choose an SVG or DXF file");const double tolerance=length("curveTolerance","0.01 mm");
       runSketchEdit(tr("Importing sketch vectors"),[path,tolerance](Sketch& sk){opad::Document doc=opad::Document::create();opad::import_file(doc,std::filesystem::path(path.toStdWString()));const auto scene=opad::resolve(doc);std::vector<DrawingLayer> layers;for(const auto& id:scene.all_bodies())if(const auto* n=scene.node(id);n&&n->raster.is_null())layers.push_back({id,false});append_reference(sk,drawing_sketch(doc,scene,layers,{},tolerance),{},"project",false);});
@@ -160,7 +247,9 @@ std::vector<Handle(AIS_InteractiveObject)> prepareSketchBackdrops(const opad::js
       for(int i=0;i<3;++i){placed.x[i]=frame.x[i]*std::cos(angle)+frame.y[i]*std::sin(angle);placed.y[i]=-frame.x[i]*std::sin(angle)+frame.y[i]*std::cos(angle);}
       auto shape=BRepBuilderAPI_MakeFace(frame_plane(placed),0,width,0,height).Face();BRepMesh_IncrementalMesh mesh(shape,.1);
       Handle(Image_PixMap) pixels=new Image_PixMap();pixels->InitTrash(Image_Format_RGBA,image.width(),image.height());pixels->SetTopDown(false);
-      for(int row=0;row<image.height();++row){auto* target=pixels->ChangeRow(row);std::memcpy(target,image.constScanLine(image.height()-1-row),image.width()*4);for(int x=0;x<image.width();++x)target[x*4+3]=static_cast<unsigned char>(target[x*4+3]*data.value("opacity",.5));}
+      // ChangeRow counts from the top whichever way the rows lie in memory (SetTopDown), as QImage's scan lines do: the picture's
+      // rows go straight across (they were flipped, which drew every backdrop upside down: the clip replay's trace showed it).
+      for(int row=0;row<image.height();++row){auto* target=pixels->ChangeRow(row);std::memcpy(target,image.constScanLine(row),image.width()*4);for(int x=0;x<image.width();++x)target[x*4+3]=static_cast<unsigned char>(target[x*4+3]*data.value("opacity",.5));}
       Handle(AIS_TexturedShape) prs=new AIS_TexturedShape(shape);prs->SetTexturePixMap(pixels);prs->SetTextureMapOn();prs->DisableTextureModulate();prs->SetTextureRepeat(false);prs->SetTransparency(float(1-data.value("opacity",.5)));prs->Attributes()->SetAutoTriangulation(false);made.push_back(prs);
     }
   return made;

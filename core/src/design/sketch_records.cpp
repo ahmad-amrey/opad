@@ -46,8 +46,11 @@ json sketch_delta(const json& before, const json& after) {
   if (!fields.empty()) delta["image_fields"] = fields;
   for (const auto& [key, value] : after.items())
     if (!record_list(key) && key != "image_fields" && (!before.contains(key) || before.at(key) != value)) delta[key] = value;
+  // The joins kept apart for older builds (Sketch::to_json) all gone: an empty list, never null. An older build's edit of
+  // a sketch this build regenerated says null for them (its to_json does not write the key it skips), which must not drop
+  // them (apply_sketch_delta).
   for (const auto& [key, value] : before.items())
-    if (!record_list(key) && key != "image_fields" && !after.contains(key)) delta[key] = nullptr;
+    if (!record_list(key) && key != "image_fields" && !after.contains(key)) delta[key] = key == "more_constraints" ? json::array() : json(nullptr);
   return delta;
 }
 
@@ -58,7 +61,8 @@ json apply_sketch_delta(const json& before, const json& delta) {
   for (const auto& [key, changes] : delta.items()) {
     if (key == "image_fields") continue;
     if (!record_list(key)) {
-      if (changes.is_null()) out.erase(key); else out[key] = changes;
+      if (key == "more_constraints" && changes.is_null()) continue;  // an older build's edit: it never saw them (sketch_delta)
+      if (changes.is_null() || (key == "more_constraints" && changes.is_array() && changes.empty())) out.erase(key); else out[key] = changes;
       continue;
     }
     if (!changes.is_array()) throw Error("sketch edit: records must be an array");
@@ -98,6 +102,9 @@ json solved_geometry(const json& data) {
   if (!data.contains("result") || !data["result"].contains("geometry")) return given;
   json solved = data["result"]["geometry"];
   if (!solved.contains("images") && given.contains("images")) solved["images"] = given["images"];
+  // A regeneration never changes the constraints, and this build's results repeat "more_constraints" (Sketch::to_json): a
+  // result without them is an older build's, which could not read them. They still hold (from_json drops what does not).
+  if (!solved.contains("more_constraints") && given.contains("more_constraints")) solved["more_constraints"] = given["more_constraints"];
   return solved;
 }
 

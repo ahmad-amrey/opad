@@ -1004,6 +1004,13 @@ void DesignController::viewportSelectionChanged() {
   // The viewport selection is the pick list: bodies and sub-shapes by reference, everything else by candidate.
   opad::json picks = opad::json::array();
   for (const auto& r : m_viewport->selection()) {
+    // A sketch's own curves, drawn and picked like a body's edges (a click on the path a sweep or a pipe follows): the
+    // sketch for a path, as its candidate gives it; for another input not a body reference (it said "a referenced body no
+    // longer exists"), its candidates give what it takes there.
+    if (m_doc->scene.sketch(r.body)) {
+      if (in->type == "path") picks.push_back(opad::json{{"sketch", r.body}});
+      continue;
+    }
     if (in->type == "plane") picks.push_back(opad::json{{"face", pickToJson(r)}});
     else if (in->type == "axis") picks.push_back(opad::json{{r.kind == opad::Ref::Kind::Face ? "face" : "edge", pickToJson(r)}});  // faces: after 2 (Faces)
     else picks.push_back(pickToJson(r));

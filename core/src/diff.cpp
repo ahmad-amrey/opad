@@ -28,6 +28,7 @@ extern char** environ;
 #include <unordered_set>
 
 #include "opad/design/feature.hpp"
+#include "opad/design/sketch.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mass.hpp"
 #include "opad/merge.hpp"
@@ -291,13 +292,17 @@ void diff_params(const Sides& d, json& out) {
     }
 }
 
-// Records of one sketch list matched by id: how many were added, removed or changed (`both`: the changed pairs).
-json record_counts(const json& before, const json& after, const char* key, std::vector<std::pair<const json*, const json*>>* both = nullptr) {
+// One list of a sketch's geometry ("points", ...), or an empty one.
+const json& sketch_list(const json& g, const char* key) {
   static const json none = json::array();
-  auto records = [&](const json& g) -> const json& { return g.is_object() && g.contains(key) && g[key].is_array() ? g[key] : none; };
+  return g.is_object() && g.contains(key) && g[key].is_array() ? g[key] : none;
+}
+
+// Records of one sketch list matched by id: how many were added, removed or changed (`both`: the changed pairs).
+json record_counts(const json& before, const json& after, std::vector<std::pair<const json*, const json*>>* both = nullptr) {
   std::map<int, const json*> x, y;
-  for (const auto& r : records(before)) x[r.value("id", 0)] = &r;
-  for (const auto& r : records(after)) y[r.value("id", 0)] = &r;
+  for (const auto& r : before) x[r.value("id", 0)] = &r;
+  for (const auto& r : after) y[r.value("id", 0)] = &r;
   int added = 0, removed = 0, changed = 0;
   for (const auto& [id, r] : y) {
     const auto it = x.find(id);
@@ -326,13 +331,13 @@ void diff_sketches(const Sides& d, json& out) {
   std::unordered_map<std::string, const SketchItem*> in_a, in_b;
   for (const auto& s : d.sa.sketches) in_a[s.id] = &s;
   for (const auto& s : d.sb.sketches) in_b[s.id] = &s;
-  auto size = [](const json& g, const char* key) { return g.value(key, json::array()).size(); };
+  auto size = [](const json& g, const char* key) { return sketch_list(g, key).size(); };
   for (const auto& y : d.sb.sketches) {
     const auto it = in_a.find(y.id);
     if (it == in_a.end()) {
       json c = entry("sketch", "added", y.id, y.name);
       c["entities"] = size(y.geometry, "entities");
-      c["constraints"] = size(y.geometry, "constraints");
+      c["constraints"] = size(y.geometry, "constraints") + size(y.geometry, "more_constraints");
       out.push_back(std::move(c));
       continue;
     }
@@ -345,8 +350,10 @@ void diff_sketches(const Sides& d, json& out) {
     }
     json c = entry("sketch", "edited", y.id, y.name);
     std::vector<std::pair<const json*, const json*>> constraints;
+    const json cx = design::constraint_records(x.geometry), cy = design::constraint_records(y.geometry);  // with "more_constraints"
     for (const char* key : {"points", "entities", "constraints", "images", "patterns"}) {
-      json n = record_counts(x.geometry, y.geometry, key, std::string(key) == "constraints" ? &constraints : nullptr);
+      const bool held = std::string(key) == "constraints";
+      json n = held ? record_counts(cx, cy, &constraints) : record_counts(sketch_list(x.geometry, key), sketch_list(y.geometry, key));
       if (!n.empty()) c[key] = std::move(n);
     }
     json dims = json::array();
@@ -1024,10 +1031,11 @@ std::string document_outline(const Document& doc) {
       for (const auto& e : k.geometry.value("entities", json::array())) ++types[str(e, "type")];
       std::vector<std::string> parts{std::to_string(k.geometry.value("points", json::array()).size()) + " points"};
       for (const auto& [t, n] : types) parts.push_back(std::to_string(n) + " " + t + (n > 1 ? "s" : ""));
-      parts.push_back(std::to_string(k.geometry.value("constraints", json::array()).size()) + " constraints");
+      const json held = design::constraint_records(k.geometry);  // with "more_constraints"
+      parts.push_back(std::to_string(held.size()) + " constraints");
       if (k.dof >= 0) parts.push_back("dof " + std::to_string(k.dof));
       out += k.name + "  on " + ref_text(k.plane, s) + ": " + join(parts, ", ") + (k.visible ? "" : "  hidden") + (k.error.empty() ? "" : "  error: " + clip(k.error, 100)) + "\n";
-      for (const auto& c : k.geometry.value("constraints", json::array()))
+      for (const auto& c : held)
         if (c.contains("value")) out += "    " + str(c, "type") + " " + std::to_string(c.value("id", 0)) + " = " + dim_text(c) + (c.value("reference", false) ? " (reference)" : "") + "\n";
     }
   }

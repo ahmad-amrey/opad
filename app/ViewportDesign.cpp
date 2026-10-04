@@ -492,8 +492,14 @@ void Viewport::setEdgeHover(bool on) {
   m_edgeHover = on;
   referencesChanged(references);  // Project takes edges of other components too (UI-33)
   if (on) {
-    m_bodiesPickable = true;
-    setSelectionFilter(SelFilter::Edge);
+    // Bodies a tool before made unpickable (setBodiesPickable(false) deactivated them) are activated again, also when the
+    // filter is Edges already, which setSelectionFilter takes as nothing to do: Project after Line picked nothing.
+    if (!m_bodiesPickable) {
+      m_bodiesPickable = true;
+      applySelectionFilter(SelFilter::Edge);
+    } else {
+      setSelectionFilter(SelFilter::Edge);
+    }
   } else {
     m_bodiesPickable = true;  // so the call below is not a no-op
     setBodiesPickable(false);

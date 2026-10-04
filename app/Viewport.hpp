@@ -448,6 +448,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::string> selectedCandidates() const;  // in pick order
   // Makes the context selection exactly these (bodies, faces/edges/vertices by ordinal, candidates).
   void selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates = {});
+  // Off: the selection is drawn in the Top layer (hidden by what is in front of it, under the overlays) instead of the X-ray
+  // Topmost one, so the sketch drawn in Topmost stays over a reference tool's picked body or face. Takes effect at the next
+  // selection change (selectRefs).
+  void setSelectionXray(bool on) { m_selectionXray = on; }
+  bool selectionXray() const { return m_selectionXray; }
   void setBodiesPickable(bool on);  // off: only candidates can be picked (choosing a sketch plane, a profile)
   // Smart selection's candidate (UI-95, ViewportCandidates.cpp): what a click on its chip would select, in the candidate
   // amber, on top like the selection. Faces and edges are one object copied from the bodies' meshes (a sliced job when
@@ -962,6 +967,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
   Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer
+  bool m_selectionXray = true;                    // the selection in Topmost (else Top: setSelectionXray)
   Handle(SubHighlight) m_candidateHl;             // showCandidateRefs' faces and edges
   Job* m_candidateJob = nullptr;
   size_t m_candidateShown = 0;

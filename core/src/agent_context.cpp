@@ -38,7 +38,7 @@ bool same_signature(const json& a,const json& b) {
   return a==b;
 }
 std::string short_text(const std::string& s){if(s.size()<=512)return s;size_t end=512;while(end>0&&(static_cast<unsigned char>(s[end])&0xc0)==0x80)--end;return s.substr(0,end)+"...";}
-json sketch_summary(const SketchItem& sk){json j={{"id",sk.id},{"name",short_text(sk.name)},{"plane",sk.plane},{"frame",sk.frame.to_json()},{"visible",sk.visible},{"consumed",sk.consumed},{"dof",sk.dof},{"entities",sk.geometry.contains("entities")?sk.geometry.at("entities").size():0},{"constraints",sk.geometry.contains("constraints")?sk.geometry.at("constraints").size():0},{"error",short_text(sk.error)}};if(!sk.component.empty())j["component"]=sk.component;return j;}
+json sketch_summary(const SketchItem& sk){json j={{"id",sk.id},{"name",short_text(sk.name)},{"plane",sk.plane},{"frame",sk.frame.to_json()},{"visible",sk.visible},{"consumed",sk.consumed},{"dof",sk.dof},{"entities",sk.geometry.contains("entities")?sk.geometry.at("entities").size():0},{"constraints",(sk.geometry.contains("constraints")?sk.geometry.at("constraints").size():0)+(sk.geometry.contains("more_constraints")?sk.geometry.at("more_constraints").size():0)},{"error",short_text(sk.error)}};if(!sk.component.empty())j["component"]=sk.component;return j;}
 }
 json context(const Document& doc,const Scene& scene,const json& args) {
   const auto section=args.value("section","summary");json items=json::array();
@@ -69,6 +69,7 @@ json context(const Document& doc,const Scene& scene,const json& args) {
 json sketch_details(const Document&,const Scene& scene,const json& args) {
   const auto* sk=scene.sketch(args.at("sketch").get<std::string>());if(!sk)throw Error("Sketch no longer exists. Request context section sketches.");
   const auto section=args.value("section","summary");if(section=="summary")return sketch_summary(*sk);
+  if(section=="constraints" && sk->geometry.contains("more_constraints"))return slice(design::constraint_records(sk->geometry),args);  // both lists (Sketch::to_json)
   if(section=="points" || section=="entities" || section=="constraints")return sk->geometry.contains(section)?slice(sk->geometry.at(section),args):slice(json::array(),args);
   if(section=="profiles") {
     const auto geometry=design::Sketch::from_json(sk->geometry);auto regions=design::sketch_regions(geometry,sk->frame);design::identify_regions(geometry,regions,sk->frame);

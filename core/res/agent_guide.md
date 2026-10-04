@@ -53,6 +53,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - `{"points": [...], "entities": [...], "constraints": [...]}`. Every id is unique across the whole sketch: points,
   entities and constraints share one id space, so point 1 and entity 1 collide. Number them apart, for example points
   1-99, entities 100-199, constraints 200 and up.
+- Stored geometry keeps the joins older builds cannot read (Smooth, Curvature or Tangent between a spline and a line,
+  circle or arc) in `more_constraints`. `sketch_details` lists both in its constraints section; send new constraints in
+  `constraints`.
 - Point: `{"id": 1, "x": 0, "y": 0}` in sketch mm.
 - Entities, `p` lists point ids:
   - line `[start, end]`;
@@ -79,6 +82,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - Constraints, `refs` lists ids: `coincident horizontal vertical parallel perpendicular collinear tangent equal
   concentric midpoint symmetric fix smooth curvature`; dimensions `distance hdistance vdistance radius diameter angle
   arc_length` take `value` (mm, or radians for angles) and optionally `expr` (`"width / 2"`), which then drives it.
+- `smooth` (G2) and `curvature` join a spline's end to another spline, a line, a circle or an arc: smooth puts the end on
+  it, along it and bending as it does, curvature only bends it so (straight by a line); `tangent` takes a spline too.
+  These take open control-point splines of degree 2 or more (`degree` given), not fit splines. Both curves move as
+  little as they can: fix the one that must stay.
 - `hdistance`/`vdistance` between two points drive the size of the difference and keep the side it is on; with
   `signed: true` they drive `q - p` itself, so a negative value or expression puts q before p. On one point they are
   its coordinate from the sketch origin, signed: two of them fix a point at (expression, expression).
@@ -109,7 +116,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     "stroke" (single lines), `weight` (stroke width / height, default 0.14), `align` left, center or right. The
     built-in font has Latin capitals (lower case is drawn in capitals), digits and `- _ + / . , : ( ) ! ?`; it is
     the same on every machine;
-  - also `polygon_outer` [centre, edge midpoint] with `sides`, `circle2` [a, b], `conic`, `control_spline`,
+  - also `polygon_outer` [centre, edge midpoint] with `sides` (every side touches its construction circle, whose diameter
+    is the size across the flats), `circle2` [a, b], `conic`, `control_spline`,
     `tangent_arc` [line end, end] with `line`, `tangent_circle` [near point] with `lines` and `radius`.
 - A boat hull section with straight sides, rounded stern corners and a pointed bow of two arcs tangent to the sides:
   `{"kind": "path", "picks": [[0,-12], [40,-12], [60,0], [40,12], [0,12]], "options": {"segments": ["line",

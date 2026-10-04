@@ -110,6 +110,26 @@ TEST(the_ladder_ends_the_step_then_closes_the_tool) {
   CHECK(escape(s) == Esc::None);
 }
 
+TEST(every_apply_tool_takes_enter_once_its_picks_are_complete) {
+  // TODO 11 wave 3, P4: the guides press Enter on these; the editor's appliesOnEnter says when their picks are complete.
+  for (const char* name : {"mirror", "project", "intersect_body", "silhouette", "include3d", "break_link", "image_insert", "image_calibrate", "image_edit",
+                           "break", "union", "subtract", "intersect", "explode", "heal", "node", "chamfer", "offset", "move", "rotate", "polar_pattern"})
+    CHECK(entersApply(name));
+  for (const char* name : {"select", "line", "rect", "trim", "fillet", "split", "extend", "dimension", "c:horizontal", "paste", "copybase"}) CHECK(!entersApply(name));
+  CHECK(referenceTool("project") && referenceTool("intersect_body") && referenceTool("silhouette") && referenceTool("include3d") && !referenceTool("break_link"));
+  State m = tool("mirror");  // the curves chosen and the line picked: Enter keeps the mirror image
+  m.mirrorAxis = true;
+  m.selection = true;
+  m.picks = 1;
+  m.applies = true;
+  CHECK(enter(m) == Enter::Apply);
+  State p = tool("project");  // two sources picked: Backspace takes the last back, Esc drops them, Enter adds them
+  p.picks = 2;
+  CHECK(backspace(p) == Back::UndoPick && escape(p) == Esc::CancelStep && enter(p) == Enter::None);
+  p.applies = true;
+  CHECK(enter(p) == Enter::Apply);
+}
+
 TEST(typed_values_come_first) {
   // UI-16: values typed into the tool's boxes are used by Enter (not the end of the chain) and dropped by the first Esc,
   // before the chain ends; Backspace still takes points back (in a box it edits the text, which the box does itself).

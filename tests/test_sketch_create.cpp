@@ -24,6 +24,52 @@ TEST(advanced_primitives_form_exact_profiles) {
   }
 }
 
+// TODO 11 wave 3, P6: a circumscribed polygon is drawn about its circle. The circle is inside, its diameter the size across
+// the flats, every side touches it, the second pick is the middle of a side; for every count of sides it stays regular when a
+// corner is dragged (sides equal and tangent alone let an even one slide into a rhombus-like shape), and only its place, size
+// and turn are free.
+TEST(circumscribed_polygon_touches_its_circle) {
+  using CT = SkConstraint::Type;
+  for (int n = 3; n <= 8; ++n) {
+    Sketch sk;
+    const auto made = create_primitive(sk, "polygon_outer", {{5, 2}, {5, 12}}, {{"sides", n}});
+    CHECK_EQ(made.size(), size_t(n + 2));  // the sides, the circle, the apothem
+    const SkEntity* circle = sk.entity(made[size_t(n)]);
+    const SkEntity* apothem = sk.entity(made[size_t(n) + 1]);
+    CHECK(circle && circle->type == SkEntity::Type::Circle && circle->construction);
+    CHECK(apothem && apothem->type == SkEntity::Type::Line && apothem->construction);
+    CHECK_NEAR(circle->r, 10, 1e-9);
+    const SolveResult solved = solve(sk);
+    CHECK(solved.converged);
+    CHECK_EQ(solved.dof, 4);  // where, how big, how turned
+    auto regular = [&](const Sketch& s, double r) {
+      const SkPoint* o = s.point(s.entity(made[size_t(n)])->p[0]);
+      for (int i = 0; i < n; ++i) {
+        const SkEntity* side = s.entity(made[size_t(i)]);
+        const SkPoint *a = s.point(side->p[0]), *b = s.point(side->p[1]);
+        const double len = std::hypot(b->x - a->x, b->y - a->y);
+        CHECK_NEAR(std::fabs((b->x - a->x) * (o->y - a->y) - (b->y - a->y) * (o->x - a->x)) / len, r, 1e-6);  // tangent
+        CHECK_NEAR(std::hypot((a->x + b->x) / 2 - o->x, (a->y + b->y) / 2 - o->y), r, 1e-6);           // there, at its middle
+        CHECK_NEAR(len, 2 * r * std::tan(M_PI / n), 1e-6);
+      }
+    };
+    regular(sk, 10);
+    // The middle of the last side is the second pick.
+    const SkPoint* middle = sk.point(apothem->p[1]);
+    CHECK_NEAR(middle->x, 5, 1e-9);
+    CHECK_NEAR(middle->y, 12, 1e-9);
+    // Dragged by a corner it stays regular; held across the flats it only turns.
+    SolveOptions drag;
+    const int corner = sk.entity(made[0])->p[0];
+    drag.drags.push_back({corner, sk.point(corner)->x + 3, sk.point(corner)->y - 2});
+    CHECK(solve(sk, drag).converged);
+    regular(sk, sk.entity(made[size_t(n)])->r);
+    sk.add_constraint(CT::Diameter, {made[size_t(n)]}, 30);
+    CHECK(solve(sk, drag).converged);
+    regular(sk, 15);
+  }
+}
+
 TEST(control_spline_and_rational_conic_are_native_curves) {
   Sketch sk;
   auto ids=create_primitive(sk,"control_spline",{{0,0},{5,10},{15,10},{20,0}});

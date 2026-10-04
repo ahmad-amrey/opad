@@ -1670,7 +1670,7 @@
    "id": "sketch.cancel",
    "title": "Cancel sketch",
    "summary": "Leaves the sketch and discards the changes made since it opened.",
-   "details": "A new sketch is not created at all; an edited sketch goes back to how it was. Use Finish sketch to keep your work. If you changed the sketch, you confirm discarding first.",
+   "details": "A new sketch is not created at all; an edited sketch goes back to how it was. If you changed the sketch, you confirm discarding first. Use Finish sketch to keep your work.",
    "keywords": ["discard", "abort", "throw away"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1702,7 +1702,7 @@
    "id": "sketch.node",
    "title": "Spline node weights",
    "summary": "Edits the weights of a spline node and its handles.",
-   "details": "Select a node of a spline (or double-click it), set the weights and press Enter or Apply. A heavier node pulls the curve closer to it.",
+   "details": "Select a node of a spline (or double-click it) and set the weights: the curve previews its new shape. Press Enter or Apply to keep it. A heavier node pulls the curve closer to it.",
    "keywords": ["spline weight", "nurbs", "handle"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1822,7 +1822,7 @@
    "id": "sketch.arcc",
    "title": "Centre arc",
    "summary": "Draws an arc from its centre, a start and an end.",
-   "details": "Click the centre, then the start, which sets the radius, then sweep to the end and click. A radius dimension fixes its size afterwards.",
+   "details": "Click the centre, then the start, which sets the radius, then sweep to the end and click. The arc runs the way the pointer went round, past half a turn too. A radius dimension fixes its size afterwards.",
    "keywords": ["center arc", "radius arc", "sweep"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1966,7 +1966,7 @@
    "id": "sketch.mirror",
    "title": "Mirror",
    "summary": "Mirrors curves about a line.",
-   "details": "Click the curves to mirror, press Enter, then click the mirror line. The copies get symmetric constraints, so they follow the originals.",
+   "details": "Select the curves to mirror (click or drag a window), press Enter, click the mirror line and press Enter again. The copies get symmetric constraints, so they follow the originals.",
    "keywords": ["symmetry", "reflect", "flip"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2157,16 +2157,16 @@
   {
    "id": "sketch.c.smooth",
    "title": "Smooth spline join (G2)",
-   "summary": "Joins two curves with matching curvature (G2).",
-   "details": "Pick the two curves at their shared end. Stronger than Tangent: the curvature also flows on, which reflects light without a visible seam.",
+   "summary": "Joins a spline to a line, an arc or another spline with matching curvature (G2).",
+   "details": "Pick the line, circle, arc or spline, then the control-point spline that joins it, near their shared end. Stronger than Tangent: the curvature also flows on, which reflects light without a visible seam. Both curves move as little as they can; one held by other constraints, such as Fix, stays put.",
    "keywords": ["g2", "curvature continuous", "blend", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
   {
    "id": "sketch.c.curvature",
    "title": "Equal endpoint curvature",
-   "summary": "Gives two curves the same curvature where they meet.",
-   "details": "Pick the two curves at their shared end. Use it with Tangent for smooth spline transitions.",
+   "summary": "Gives a spline's end the curvature of the line, arc or spline it meets.",
+   "details": "Pick the line, circle, arc or spline, then the control-point spline. By a line the spline's end runs straight; by an arc it bends as the arc does. A curve held by other constraints, such as Fix, stays put. Use it with Tangent for smooth spline transitions.",
    "keywords": ["curvature", "spline", "continuity", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2230,7 +2230,7 @@
    "id": "sketch.project",
    "title": "Project",
    "summary": "Projects body edges, faces or vertices onto the sketch as reference curves.",
-   "details": "Pick an edge, or a face, vertex or body with the panel's Pick filter, then Apply: it is flattened onto the sketch plane, wherever it is. Linked projections follow the body when it changes; an editable copy does not.",
+   "details": "Pick edges, or faces, vertices and bodies with the panel's Pick filter, then press Enter or Apply: they are flattened onto the sketch plane. Linked projections follow the body when it changes; an editable copy does not.",
    "keywords": ["reference edges", "use edges", "convert entities"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2238,7 +2238,7 @@
    "id": "sketch.intersect_body",
    "title": "Body-plane intersection",
    "summary": "Adds the curves where bodies cut the sketch plane.",
-   "details": "Pick the bodies, or choose them in the panel, and apply. Useful to sketch on the section of an existing part.",
+   "details": "Pick the bodies, or choose them in the panel, then press Enter or Apply. Useful to sketch on the section of an existing part.",
    "keywords": ["section curve", "slice", "cut outline"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2246,7 +2246,7 @@
    "id": "sketch.silhouette",
    "title": "Silhouette",
    "summary": "Adds the outline of bodies as seen along the sketch normal.",
-   "details": "Pick the bodies and apply. Handy for covers, gaskets and cut-outs that follow a part's shape.",
+   "details": "Pick the bodies, then press Enter or Apply. Handy for covers, gaskets and cut-outs that follow a part's shape.",
    "keywords": ["outline", "shadow", "profile of body"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2254,7 +2254,7 @@
    "id": "sketch.include3d",
    "title": "Include reference curves",
    "summary": "Brings other sketches' curves and construction axes into this sketch as references.",
-   "details": "Choose the source in the panel or pick it in the view. Linked references follow their source when it changes.",
+   "details": "Choose the source in the panel or pick it in the view, then press Enter or Apply: its curves come in as construction geometry flattened onto the sketch plane. Linked references follow their source when it changes.",
    "keywords": ["reference", "other sketch", "axis"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2262,7 +2262,7 @@
    "id": "sketch.break_link",
    "title": "Break projection link",
    "summary": "Makes a linked projection editable.",
-   "details": "Select the projected curves and apply: they stop following the body and become normal sketch curves. The link cannot be restored afterwards.",
+   "details": "Select the projected curves and press Enter or Apply: they stop following the body and become normal sketch curves. The link cannot be restored afterwards.",
    "keywords": ["unlink", "make editable"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2278,7 +2278,7 @@
    "id": "sketch.image_insert",
    "title": "Insert image",
    "summary": "Places an image on the sketch plane as a backdrop to trace over.",
-   "details": "Choose the file, click the insertion point and set the width. Calibrate image then scales it to a known distance.",
+   "details": "Choose the file and set the width, click the insertion point (the image's lower-left corner), then press Enter or Apply. Calibrate image then scales it to a known distance.",
    "keywords": ["picture", "backdrop", "canvas", "reference image"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2286,7 +2286,7 @@
    "id": "sketch.image_edit",
    "title": "Transform image",
    "summary": "Moves, scales, rotates or fades a backdrop image.",
-   "details": "Choose the image, then type its position, width, rotation and opacity. The image is a view aid and is never part of a profile.",
+   "details": "Drag the image in the view to move it, or choose it and type its position, width, rotation and opacity, then press Enter or Apply. The image is a view aid and is never part of a profile.",
    "keywords": ["move image", "rotate image", "opacity"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2294,7 +2294,7 @@
    "id": "sketch.image_calibrate",
    "title": "Calibrate image",
    "summary": "Scales a backdrop image by a distance you know.",
-   "details": "Click two points on the image, then enter their real distance and apply. Trace and dimension after calibrating so the sizes are right.",
+   "details": "Click two points on the image, type their real distance over the measured one, then press Enter or Apply. Trace and dimension after calibrating so the sizes are right.",
    "keywords": ["scale image", "known distance", "calibration"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },

@@ -15,6 +15,7 @@
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <gp_Trsf.hxx>
 
 #include <QInputDialog>
 #include <QKeyEvent>
@@ -71,7 +72,13 @@ void SketchEditor::setTool(const QString& tool) {
   m_clicks.clear();
   m_chain.clear();
   m_picked.clear();
+  m_sources.clear();
   m_placingDim = false;
+  m_slotSweep.reset();
+  if (m_imageDrag) {  // a picture dragged when the tool changed: back where it was
+    if (m_imageDrag->index < m_imagePrs.size() && !m_imagePrs[m_imageDrag->index].IsNull()) m_imagePrs[m_imageDrag->index]->SetLocalTransformation(gp_Trsf());
+    m_imageDrag.reset();
+  }
   // A constraint button with a fitting selection acts at once, the way Fusion's constraint palette does.
   if (tool.startsWith("c:") && !m_sel.empty()) {
     const CT type = SkConstraint::type_from_name(tool.mid(2).toStdString());
@@ -165,13 +172,16 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   const Hit hit = hitTest(s.u, s.v);
   if (m_tool.startsWith("c:")) return constraintClick(hit);
   if (m_tool == "dimension") return dimensionClick(hit, s.u, s.v);
-  if (m_tool == "project") return projectHovered();
   if (m_tool == "offset" || m_tool == "node") {
     const Hit h=hitTest(s.u,s.v);
     if(h.kind!=Hit::None) {
-      auto it=std::find(m_sel.begin(),m_sel.end(),h.id);
-      if(it==m_sel.end())m_sel.push_back(h.id);else m_sel.erase(it);
-      if(m_tool=="offset" && option("chain","1")=="1")selectConnected();
+      if(h.kind==Hit::Entity)pickCurve(h.id);  // the offset: its connected chain (the tool's option, on by default)
+      else if(auto it=std::find(m_sel.begin(),m_sel.end(),h.id);it==m_sel.end())m_sel.push_back(h.id);
+      else m_sel.erase(it);
+      // A node picked in the tool: its own weights in the boxes, as Alt+W loads them (the previous node's, or 1, were
+      // previewed and applied).
+      if(m_tool=="node" && m_sel.size()==1)loadNodeWeights(m_sel.front());
+      invalidatePreview();
       rebuild();emit changed();toolPrompt();
       scheduleToolPreview();
     }
@@ -338,10 +348,8 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     begin_change();
     const int centre = pointFor(c), ps = pointFor(a);
     const int pe = s.point ? s.point : m_sk.add_point(c.u + (s.u - c.u) * r / de, c.v + (s.v - c.v) * r / de);
-    double sweep = std::atan2(s.v - c.v, s.u - c.u) - std::atan2(a.v - c.v, a.u - c.u);
-    while (sweep > M_PI) sweep -= 2 * M_PI;
-    while (sweep <= -M_PI) sweep += 2 * M_PI;
-    if (const auto typed = s.typed.find("sweep"); typed != s.typed.end()) sweep = typed->second.first;  // past half a turn too
+    double sweep = slotSweep(s.u, s.v);  // the way the pointer went round its centre, past half a turn too (P5)
+    if (const auto typed = s.typed.find("sweep"); typed != s.typed.end()) sweep = typed->second.first;
     const int arc = m_sk.add_arc(centre, sweep > 0 ? ps : pe, sweep > 0 ? pe : ps);
     const int radius = keepTyped(a, "radius", CT::Radius, {arc});
     keepDirection(a, "angle", {centre, ps}, std::atan2(a.v - c.v, a.u - c.u));  // the start along an axis
@@ -573,18 +581,23 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
         for (size_t i = 1; i < rounds.size(); ++i) sets.push_back({rounds[0], rounds[i]});
       break;
     case CT::Smooth:
-    case CT::Curvature:
+    case CT::Curvature:  // a spline with a spline, a line or an arc (TODO 11 wave 3, P6: the guides join a line and a spline)
       if(splines.size()==2)sets.push_back(splines);
+      else if(splines.size()==1 && lines.size()+rounds.size()==1)sets.push_back({lines.empty()?rounds[0]:lines[0],splines[0]});
       break;
     case CT::Tangent:
       if(splines.size()==2)sets.push_back(splines);
-      else if(splines.size()==1 && lines.size()==1)sets.push_back({lines[0],splines[0]});
+      else if(splines.size()==1 && lines.size()+rounds.size()==1)sets.push_back({lines.empty()?rounds[0]:lines[0],splines[0]});
       if (lines.size() == 1 && rounds.size() == 1) sets.push_back({lines[0], rounds[0]});
       else if (lines.empty() && rounds.size() == 2) sets.push_back(rounds);
       break;
-    case CT::Concentric:
-      if (rounds.size() == 2 && lines.empty()) sets.push_back(rounds);
+    case CT::Concentric: {  // circles, arcs and ellipses (its step says so; the core takes them), in pick order
+      std::vector<int> centred;
+      for (int id : ids)
+        if (const SkEntity* e = m_sk.entity(id); e && (e->type == ET::Circle || e->type == ET::Arc || e->type == ET::Ellipse)) centred.push_back(id);
+      if (centred.size() == 2 && lines.empty()) sets.push_back(centred);
       break;
+    }
     case CT::Midpoint:
       if (points.size() == 1 && lines.size() == 1) sets.push_back({points[0], lines[0]});
       break;
@@ -616,8 +629,16 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
 void SketchEditor::constraintClick(const Hit& h) {
   if (h.kind == Hit::None || h.kind == Hit::Dimension) return;
   if (std::find(m_picked.begin(), m_picked.end(), h.id) != m_picked.end()) return;
-  m_picked.push_back(h.id);
   const CT type = SkConstraint::type_from_name(m_tool.mid(2).toStdString());
+  // Smooth, Curvature and Tangent hold a spline by its poles: one drawn through its points (or closed, or of degree 1)
+  // cannot take them. It is not picked, and the status line says why (the core's message named a constraint id).
+  if (type == CT::Smooth || type == CT::Curvature || type == CT::Tangent)
+    if (const SkEntity* e = m_sk.entity(h.id); e && e->type == ET::Spline &&
+        (e->degree < 2 || e->periodic || e->multiplicities.empty() || e->multiplicities.front() != e->degree + 1 || e->multiplicities.back() != e->degree + 1)) {
+      emit status(tr("This constraint takes control-point splines of degree 2 or more, not splines drawn through points"));
+      return;
+    }
+  m_picked.push_back(h.id);
   const std::vector<int> ids = m_picked;
   // Try after every pick: a line is enough for Horizontal, Symmetric needs three picks.
   const bool lineOnly = (type == CT::Horizontal || type == CT::Vertical) && m_sk.point(h.id) != nullptr && ids.size() < 2;
@@ -1503,47 +1524,6 @@ void SketchEditor::offsetSelection() {
     const bool round=option("corners","round")=="round";
     runSketchEdit(tr("Offset"),[ids,distance,round](Sketch& sk){offset_entities(sk,ids,distance,round);});
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
-}
-
-// Body edges as fixed reference curves in the sketch (not associative: project again after the body changes).
-void SketchEditor::projectHovered() {
-  TopoDS_Shape shape;
-  if (!m_viewport->hoveredEdge(shape)) return emit status(tr("Project: point at an edge of a body and click"));
-  BRepAdaptor_Curve c(TopoDS::Edge(shape));
-  auto local = [&](const gp_Pnt& p, double& u, double& v) { m_frame.to_local({p.X(), p.Y(), p.Z()}, u, v); };
-  const opad::Vec3 n = m_frame.normal();
-  double au, av, bu, bv;
-  local(c.Value(c.FirstParameter()), au, av);
-  local(c.Value(c.LastParameter()), bu, bv);
-  begin_change();
-  if (c.GetType() == GeomAbs_Line) {
-    if (std::hypot(bu - au, bv - av) < 1e-7) {
-      cancel_change();
-      return emit status(tr("Project: that edge is perpendicular to the sketch plane"));
-    }
-    const int line = m_sk.add_line(m_sk.add_point(au, av, true), m_sk.add_point(bu, bv, true));
-    m_sk.entity(line)->fixed = true;
-  } else if (c.GetType() == GeomAbs_Circle && std::fabs(std::fabs(c.Circle().Axis().Direction().Dot(gp_Dir(n[0], n[1], n[2]))) - 1.0) < 1e-9) {
-    double cu, cv;
-    local(c.Circle().Location(), cu, cv);
-    const int centre = m_sk.add_point(cu, cv, true);
-    int made = 0;
-    if (std::hypot(bu - au, bv - av) < 1e-7) {
-      made = m_sk.add_circle(centre, c.Circle().Radius());
-    } else {
-      double mu, mv;  // which way round: the arc's mid point tells
-      local(c.Value((c.FirstParameter() + c.LastParameter()) / 2), mu, mv);
-      const double a0 = std::atan2(av - cv, au - cu), a1 = std::atan2(bv - cv, bu - cu), am = std::atan2(mv - cv, mu - cu);
-      const bool ccw = norm_angle(am - a0) < norm_angle(a1 - a0);
-      const int ps = m_sk.add_point(au, av, true), pe = m_sk.add_point(bu, bv, true);
-      made = m_sk.add_arc(centre, ccw ? ps : pe, ccw ? pe : ps);
-    }
-    m_sk.entity(made)->fixed = true;
-  } else {
-    cancel_change();
-    return emit status(tr("Project: only straight edges, and circles parallel to the sketch plane, can be projected"));
-  }
-  end_change(tr("Project"));
 }
 
 bool SketchEditor::eventFilter(QObject* o, QEvent* e) {

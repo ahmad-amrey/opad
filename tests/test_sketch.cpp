@@ -874,6 +874,210 @@ TEST(sketch_line_spline_tangent_preserves_endpoint_on_line) {
   CHECK_NEAR(sk.point(e.p[0])->y,0,1e-7);CHECK_NEAR(sk.point(e.p[1])->y,0,1e-7);
 }
 
+// TODO 11 wave 3, P6: Smooth (G2) and Curvature join a spline to a line, a circle or an arc too, as their guides show (a line
+// clicked, then the spline). Smooth: the spline's end on the curve, along it and bending as it does (straight by a line, its
+// centre of curvature the arc's centre); Curvature: the bend only; Tangent takes an arc and a spline as well.
+TEST(sketch_spline_joins_a_line_or_an_arc_smoothly) {
+  auto bezier = [](Sketch& sk, std::initializer_list<std::pair<double, double>> poles) {
+    SkEntity e;
+    e.type = SkEntity::Type::Spline;
+    e.degree = 3;
+    e.knots = {0, 1};
+    e.multiplicities = {4, 4};
+    for (auto [x, y] : poles) {
+      e.p.push_back(sk.add_point(x, y));
+      e.weights.push_back(1);
+    }
+    e.id = sk.next_id();
+    sk.entities.push_back(e);
+    return e.id;
+  };
+  struct End { double x, y, fx, fy, k; };
+  auto start = [](const Sketch& sk, int id) {  // the cubic's first end: where, which way and how much it bends
+    const auto& e = *sk.entity(id);
+    const auto p = *sk.point(e.p[0]), q = *sk.point(e.p[1]), r = *sk.point(e.p[2]);
+    const double fx = 3 * (q.x - p.x), fy = 3 * (q.y - p.y), sx = 6 * (r.x - 2 * q.x + p.x), sy = 6 * (r.y - 2 * q.y + p.y);
+    return End{p.x, p.y, fx, fy, (fx * sy - fy * sx) / std::pow(std::hypot(fx, fy), 3)};
+  };
+  // A line along X ending at the origin, a spline starting near it: Smooth makes the join G2 (its first three poles on the line).
+  {
+    Sketch sk;
+    const int line = sk.add_line(sk.add_point(-20, 0, true), sk.add_point(0, 0, true));
+    const int spline = bezier(sk, {{0.4, 0.6}, {5, 3}, {10, 2}, {15, 6}});
+    const int join = sk.add_constraint(CT::Smooth, {line, spline});
+    CHECK_EQ(sk.constraint(join)->anchors, std::vector<int>{sk.entity(spline)->p.front()});
+    CHECK(solve(sk).converged);
+    const End e = start(sk, spline);
+    CHECK_NEAR(e.y, 0, 1e-7);
+    CHECK_NEAR(e.fy, 0, 1e-6);
+    CHECK_NEAR(e.k, 0, 1e-7);
+    const auto saved = sk.to_json();
+    CHECK(Sketch::from_json(saved).to_json() == saved);
+  }
+  // Curvature alone with a line: the end goes straight on, it stays where it was.
+  {
+    Sketch sk;
+    const int line = sk.add_line(sk.add_point(-20, 0, true), sk.add_point(0, 0, true));
+    const int spline = bezier(sk, {{0, 5}, {5, 8}, {10, 6}, {15, 9}});
+    sk.add_constraint(CT::Curvature, {line, spline});
+    CHECK(solve(sk).converged);
+    const End e = start(sk, spline);
+    CHECK_NEAR(e.k, 0, 1e-7);
+    CHECK(e.y > 4);
+  }
+  // A quarter arc about (0, 10) from (0, 0) round to (10, 10), held; a spline leaving near its start: Smooth, Curvature and
+  // Tangent, the spline picked first or second.
+  for (const CT type : {CT::Smooth, CT::Curvature, CT::Tangent})
+    for (const bool splineFirst : {false, true}) {
+      Sketch sk;
+      const int arc = sk.add_arc(sk.add_point(0, 10, true), sk.add_point(0, 0, true), sk.add_point(10, 10, true));
+      const int spline = bezier(sk, {{-0.4, 0.3}, {-5, 1}, {-10, 3}, {-15, 2}});
+      sk.add_constraint(type, splineFirst ? std::vector<int>{spline, arc} : std::vector<int>{arc, spline});
+      CHECK(solve(sk).converged);
+      const End e = start(sk, spline);
+      const double ox = 0, oy = 10, r = 10, along = std::hypot(e.fx, e.fy);
+      if (type != CT::Curvature) {
+        CHECK_NEAR(std::hypot(e.x - ox, e.y - oy), r, 1e-7);              // on the circle
+        CHECK_NEAR((e.fx * (e.x - ox) + e.fy * (e.y - oy)) / along, 0, 1e-6);  // along it
+      }
+      if (type != CT::Tangent) {
+        // Bending as the arc does: towards its centre (on its right as it leaves westwards), by 1/r (with Smooth its centre
+        // of curvature is the arc's).
+        CHECK(e.fx * (oy - e.y) - e.fy * (ox - e.x) < 0);
+        CHECK_NEAR(e.k, -1 / r, 1e-7);
+        if (type == CT::Smooth) {
+          CHECK_NEAR(e.x - e.fy / along / e.k, ox, 1e-5);
+          CHECK_NEAR(e.y + e.fx / along / e.k, oy, 1e-5);
+        }
+      }
+    }
+  // Two lines still do not take it, nor a line with a circle.
+  Sketch sk;
+  const int a = sk.add_line(sk.add_point(0, 0), sk.add_point(10, 0)), b = sk.add_line(sk.add_point(10, 0), sk.add_point(20, 5));
+  CHECK_THROWS(sk.add_constraint(CT::Smooth, {a, b}));
+  CHECK_THROWS(sk.add_constraint(CT::Curvature, {a, sk.add_circle(sk.add_point(30, 0), 4)}));
+}
+
+namespace {
+int cubic(Sketch& sk, std::vector<int> poles) {  // a clamped cubic Bezier through its first and last pole
+  SkEntity e;
+  e.type = SkEntity::Type::Spline;
+  e.degree = 3;
+  e.knots = {0, 1};
+  e.multiplicities = {4, 4};
+  e.p = std::move(poles);
+  e.weights.assign(e.p.size(), 1);
+  e.id = sk.next_id();
+  sk.entities.push_back(e);
+  return e.id;
+}
+std::vector<int> ids_of(const opad::json& list) {
+  std::vector<int> out;
+  for (const auto& c : list) out.push_back(c.at("id").get<int>());
+  return out;
+}
+}  // namespace
+
+// The joins of a spline with a line, circle or arc are new (TODO 11 wave 3): a build from before refuses them in its
+// refs_fit, and as its replay parses every sketch edit, one such record failed the whole document there. to_json keeps
+// them in "more_constraints", which those builds skip, and raises the watermark past them so that what such a build adds
+// to the sketch takes other ids; a join whose curves it deleted is left out when this build reads the sketch again.
+TEST(spline_joins_older_builds_cannot_read_are_kept_apart) {
+  Sketch sk;
+  const int line = sk.add_line(sk.add_point(-20, 0, true), sk.add_point(0, 0, true));
+  const int s1 = cubic(sk, {sk.add_point(0.4, 0.6), sk.add_point(5, 3), sk.add_point(10, 2), sk.add_point(15, 6)});
+  const int s3 = cubic(sk, {sk.add_point(15.3, 6.2), sk.add_point(20, 10), sk.add_point(25, 8), sk.add_point(30, 12)});
+  const int arc = sk.add_arc(sk.add_point(0, 30, true), sk.add_point(0, 20, true), sk.add_point(10, 30, true));
+  const int s2 = cubic(sk, {sk.add_point(-0.4, 20.3), sk.add_point(-5, 21), sk.add_point(-10, 23), sk.add_point(-15, 22)});
+  const int touch_line = sk.add_constraint(CT::Tangent, {line, s1});  // every build reads these two
+  const int splines = sk.add_constraint(CT::Smooth, {s1, s3});
+  const int smooth = sk.add_constraint(CT::Smooth, {line, s1});
+  const int bend = sk.add_constraint(CT::Curvature, {arc, s2});
+  const int touch_arc = sk.add_constraint(CT::Tangent, {s2, arc});
+  const opad::json saved = sk.to_json();
+  CHECK(ids_of(saved.at("constraints")) == std::vector<int>({touch_line, splines}));
+  CHECK(ids_of(saved.at("more_constraints")) == std::vector<int>({smooth, bend, touch_arc}));
+  CHECK(saved.at("id_watermark").get<int>() >= touch_arc);
+  CHECK(ids_of(constraint_records(saved)) == std::vector<int>({touch_line, splines, smooth, bend, touch_arc}));
+  const Sketch back = Sketch::from_json(saved);
+  CHECK_EQ(back.constraints.size(), size_t(5));
+  CHECK(back.to_json() == saved);
+  // What a build from before reads: "constraints" only, each record of a kind it took (Smooth and Curvature between two
+  // splines, Tangent between a spline and a line or a spline).
+  opad::json older = saved;
+  older.erase("more_constraints");
+  for (const auto& c : older.at("constraints")) {
+    const std::string type = c.at("type").get<std::string>();
+    std::vector<SkEntity::Type> kinds;
+    for (int ref : c.at("refs").get<std::vector<int>>()) kinds.push_back(back.entity(ref)->type);
+    const bool spline_pair = kinds == std::vector<SkEntity::Type>{SkEntity::Type::Spline, SkEntity::Type::Spline};
+    if (type == "smooth" || type == "curvature") CHECK(spline_pair);
+    const bool line_spline = kinds == std::vector<SkEntity::Type>({SkEntity::Type::Line, SkEntity::Type::Spline});
+    if (type == "tangent") CHECK(spline_pair || line_spline);
+  }
+  // Such a build edits the sketch: it adds a point, above every id kept apart, and deletes the spline by the arc. Its
+  // sketch panel diffs its own to_json before and after, neither with "more_constraints": the delta leaves them alone. Its
+  // agent's sketch_edit diffs the stored geometry (this build's, with them) against its to_json, so its sketch_delta says
+  // null for them; this build's apply_sketch_delta keeps them then (the older build drops them from what it replays, which
+  // it never reads). Its crash recovery's restore writes a whole geometry, which loses them. Read here again, the arc's
+  // joins are gone, the line's Smooth stays.
+  Sketch edited = Sketch::from_json(older);
+  CHECK(edited.add_point(50, 50) > touch_arc);
+  edited.remove(s2);
+  const opad::json older_after = edited.to_json();
+  CHECK(!older_after.contains("more_constraints"));
+  const opad::json panel_delta = sketch_delta(older, older_after);
+  CHECK(!panel_delta.contains("more_constraints"));
+  opad::json agent_delta = sketch_delta(saved, older_after);
+  agent_delta["more_constraints"] = nullptr;  // what the older sketch_delta writes for the key its to_json lacks
+  for (const opad::json& delta : {panel_delta, agent_delta}) {
+    const opad::json after = apply_sketch_delta(saved, delta);
+    CHECK(after.at("more_constraints") == saved.at("more_constraints"));
+    Sketch reread = Sketch::from_json(after);
+    CHECK(reread.constraint(smooth) != nullptr);
+    CHECK(reread.constraint(bend) == nullptr);
+    CHECK(reread.constraint(touch_arc) == nullptr);
+  }
+  // An edit in this build stores the joins as one whole list (a key older builds keep as it is), never in "constraints".
+  Sketch plain = Sketch::from_json(saved);
+  for (const int id : {smooth, bend, touch_arc}) plain.remove(id);
+  const opad::json before = plain.to_json();
+  CHECK(!before.contains("more_constraints"));
+  const opad::json delta = sketch_delta(before, saved);
+  CHECK(delta.contains("more_constraints") && !delta.contains("constraints"));
+  CHECK(apply_sketch_delta(before, delta) == saved);
+  // And an edit here that removes every join says so with an empty list, which takes the key away (null is an older build's).
+  const opad::json removed = sketch_delta(saved, before);
+  CHECK(removed.at("more_constraints") == opad::json::array());
+  CHECK(apply_sketch_delta(saved, removed) == before);
+}
+
+// The Smooth and Curvature guides (clips.json sketch.c.smooth and sketch.c.curvature) join a fixed line to a control-point
+// cubic whose first pole is the line's end. The line stays and the poles move to where the guides draw them (to 0.01).
+TEST(smooth_and_curvature_guides_show_the_solver) {
+  struct Case { CT type; double x1, y1, x2, y2, ex1, ey1, ex2, ey2; };
+  for (const Case& k : {Case{CT::Smooth, 5, -3, 11, 0, 5.92, -6, 14.48, -6}, Case{CT::Curvature, 2, 1, 10, 7, 4.92, 1.55, 8.77, 7.47}}) {
+    Sketch sk;
+    const int a = sk.add_point(-20, -6), b = sk.add_point(0, -6);
+    const int line = sk.add_line(a, b);
+    sk.add_constraint(CT::Fix, {line});
+    const int p1 = sk.add_point(k.x1, k.y1), p2 = sk.add_point(k.x2, k.y2), p3 = sk.add_point(20, 8);
+    const int spline = cubic(sk, {b, p1, p2, p3});
+    sk.add_constraint(k.type, {line, spline});
+    CHECK(solve(sk).converged);
+    CHECK_NEAR(sk.point(a)->x, -20, 1e-9);
+    CHECK_NEAR(sk.point(a)->y, -6, 1e-9);
+    CHECK_NEAR(sk.point(b)->x, 0, 1e-9);
+    CHECK_NEAR(sk.point(b)->y, -6, 1e-9);
+    CHECK_NEAR(sk.point(p3)->x, 20, 1e-9);
+    CHECK_NEAR(sk.point(p3)->y, 8, 1e-9);
+    CHECK_NEAR(sk.point(p1)->x, k.ex1, 0.006);
+    CHECK_NEAR(sk.point(p1)->y, k.ey1, 0.006);
+    CHECK_NEAR(sk.point(p2)->x, k.ex2, 0.006);
+    CHECK_NEAR(sk.point(p2)->y, k.ey2, 0.006);
+  }
+}
+
 TEST(reference_dimensions_cannot_indirectly_drive_geometry) {
   Sketch sk;int a=sk.add_point(0,0),b=sk.add_point(10,0),c=sk.add_point(0,20);
   int r=sk.add_constraint(CT::Distance,{a,b},10),d=sk.add_constraint(CT::Distance,{a,c},20,"indirect");sk.constraint(r)->reference=true;

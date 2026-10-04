@@ -98,8 +98,8 @@ QList<ToolStep> SketchEditor::toolSteps() const {
     if (m_chain.size() >= 2) done(1, m_chain.size() == 2 ? tr("1 more point") : tr("%1 more points").arg(m_chain.size() - 1));
   } else if (t == "control_spline") {
     if (m_clicks.size() >= 2) done(0, tr("%1 points").arg(m_clicks.size()));
-  } else if (t == "project" || t == "intersect_body" || t == "silhouette" || t == "include3d") {
-    if (!option("projectionSource").isEmpty()) done(0, tr("chosen"));
+  } else if (sketchkeys::referenceTool(t.toStdString())) {
+    if (!m_sources.isEmpty()) done(0, m_sources.size() == 1 ? tr("1 source") : tr("%1 sources").arg(m_sources.size()));
   } else if (t == "image_edit" || t == "image_trace" || t == "image_remove") {
     if (!m_sk.images.empty()) done(0, tr("Image %1").arg(option("imageId", QString::number(m_sk.images.back().at("id").get<int>()))));
   } else if (t == "vector_import" || t == "vector_export") done(0, file("vectorFile"));
@@ -120,8 +120,7 @@ void SketchEditor::applyTool() {
     ++m_modelRevision;
     m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
     m_undo.push_back({m_sk,m_plane,m_frame});m_redo.clear();m_sk=*m_toolPreview;m_solved=m_previewSolved;m_toolPreview.reset();m_modified=true;m_panelFieldsDirty=true;
-    m_clicks.clear();m_picked.clear();m_sel.clear();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();
-    if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d"){m_options.remove("projectionSource");emit workflowChanged();}  // next source
+    m_clicks.clear();m_picked.clear();m_sel.clear();applied();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();
     emit changed();return;
   }
   if(applyReference()||applyImageTool())return;
@@ -138,15 +137,20 @@ void SketchEditor::applyTool() {
     for(const auto& e:m_sk.entities)if(e.degree && !e.fixed) {
       auto it=std::find(e.p.begin(),e.p.end(),m_sel.front());if(it!=e.p.end()){entity=e.id;index=int(it-e.p.begin());break;}
     }
-    if(!entity)return;
-    begin_change();
+    if(!entity){if(!m_previewRequested)emit status(tr("Choose a control node on an editable spline."));return;}
     try {
-      auto* e=m_sk.entity(entity);
-      auto weight=[&](int at,const QString& key){bool ok=false;const double v=option(key,"1").toDouble(&ok);if(!ok || !std::isfinite(v) || v<=0)throw opad::Error("spline weights must be positive");e->weights[size_t(at)]=v;};
-      weight(index,"weight");
-      if(index%3==0 && e->degree==3){if(index>0)weight(index-1,"incoming");if(index+1<int(e->p.size()))weight(index+1,"outgoing");}
-      end_change(tr("Spline node weights"));
-    } catch(const std::exception& e){cancel_change();emit status(QString::fromUtf8(e.what()));}
+      const auto* e=m_sk.entity(entity);
+      auto weight=[&](const QString& key){bool ok=false;const double v=option(key,"1").toDouble(&ok);if(!ok || !std::isfinite(v) || v<=0)throw opad::Error("spline weights must be positive");return v;};
+      std::vector<std::pair<size_t,double>> weights{{size_t(index),weight("weight")}};
+      if(index%3==0 && e->degree==3){if(index>0)weights.push_back({size_t(index-1),weight("incoming")});if(index+1<int(e->p.size()))weights.push_back({size_t(index+1),weight("outgoing")});}
+      // As the other Apply tools (TODO 11 wave 3, P4): the curve previews its new shape while the weights change, Enter or
+      // Apply keeps it.
+      runSketchEdit(tr("Spline node weights"),[entity,weights](Sketch& sk){
+        auto* spline=sk.entity(entity);if(!spline)throw opad::Error("the spline no longer exists");
+        if(spline->weights.size()<spline->p.size())spline->weights.resize(spline->p.size(),1.0);
+        for(const auto& [at,w]:weights)if(at<spline->weights.size())spline->weights[at]=w;
+      });
+    } catch(const std::exception& e){if(!m_previewRequested)emit status(i18n::t(QString::fromUtf8(e.what())));}
     return;
   }
   toolPrompt();
@@ -186,16 +190,33 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     // never kept for Apply. Otherwise the newer run replaces it.
     const bool stale=preview && previewRevision!=m_previewRevision;
     if(stale && !m_dimensionHandle->dragging())return;
-    if(!ok){if(!stale){if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}emit status(i18n::t(error));}return;}
+    if(!ok){
+      if(stale)return;
+      if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}
+      // A source that gives nothing here (an edge square to the plane, a body the plane misses): that pick is not kept, the
+      // others stay and preview again. The worker named the ones that failed (applyReference); a failure of them all
+      // together (the solver's) drops the one the last pick added, else only says why.
+      if(preview && sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()) {
+        QStringList drop;
+        if(m_sourcesFailed)for(const auto& source:*m_sourcesFailed)if(m_sources.contains(source))drop<<source;
+        if(drop.isEmpty() && !m_sourceAdded.isEmpty() && m_sources.contains(m_sourceAdded))drop<<m_sourceAdded;
+        m_sourcesFailed.reset();
+        if(drop.isEmpty()){emit status(i18n::t(error));return;}
+        for(const auto& source:drop)m_sources.removeOne(source);
+        if(drop.contains(m_sourceAdded))m_sourceAdded.clear();
+        emit status(tr("Not added: %1").arg(i18n::t(error)));rebuild();emit changed();emit workflowChanged();scheduleToolPreview();return;
+      }
+      emit status(i18n::t(error));return;
+    }
     if(m_modelRevision!=modelRevision)return;
     if(preview){
       if(!stale){m_toolPreview=after;m_previewSolved=*solved;}
       m_viewport->removeOverlay(m_toolPreviewOverlay);
-      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());m_toolPreviewOverlay=overlay;if(m_visible)m_viewport->showOverlay(m_toolPreviewOverlay);
-      if(!stale)emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
+      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());overlay->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);  // dashed: what Enter would add, apart from the amber references (as the guides draw it)
+      m_toolPreviewOverlay=overlay;if(m_visible)showToolPreview();
+      if(!stale)emit status(tr("Preview ready. Press Enter or Apply to keep it, or change the values."));return;}
     ++m_modelRevision;m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
-    m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
-    if(m_tool=="mirror")m_options["mirrorStage"]="seed";
+    m_clicks.clear();m_picked.clear();m_sel.clear();applied();rebuild();scheduleFill();toolPrompt();emit changed();
   });
 }
 
@@ -220,7 +241,7 @@ bool SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
 // promised that Esc steps back: three meanings. Now one model (SketchKeys.hpp) for the keys, the panel and the prompt.
 sketchkeys::State SketchEditor::keyState() const {
   sketchkeys::State s;
-  s.tool=m_tool.toStdString();s.chain=m_chain.size();s.clicks=m_clicks.size();s.picks=m_picked.size();
+  s.tool=m_tool.toStdString();s.chain=m_chain.size();s.clicks=m_clicks.size();s.picks=m_picked.size()+(sketchkeys::referenceTool(s.tool)?size_t(m_sources.size()):0);
   s.boxSelecting=m_boxSelecting || m_fencing;s.selection=!m_sel.empty();
   s.mirrorAxis=m_tool=="mirror" && option("mirrorStage","seed")=="axis";
   s.mirrorSeeds=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && !s.mirrorAxis;
@@ -250,6 +271,8 @@ bool SketchEditor::undoPoint() {
   } else if(!m_clicks.empty()) {
     m_clicks.pop_back();
     if(m_clicks.empty() && (m_tool=="tangent_arc" || m_tool=="extend"))m_picked.clear();  // picked with that click
+  } else if(sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()) {
+    m_sources.removeLast();emit workflowChanged();  // the last source picked
   } else {
     m_picked.pop_back();m_placingDim=false;
     if(m_tool=="dimension" && !m_picked.empty()) {  // what the pick left measures alone (a line) waits to be placed again
@@ -286,7 +309,7 @@ bool SketchEditor::escape() {
       if(m_tool=="control_spline"){finishPrimitive();m_clicks.clear();toolPrompt();}else finishChain();
       m_tracked.clear();
       break;
-    case Esc::CancelStep:cancel_change();m_clicks.clear();m_picked.clear();m_placingDim=false;m_tracked.clear();scheduleToolPreview();toolPrompt();break;
+    case Esc::CancelStep:cancel_change();m_clicks.clear();m_picked.clear();m_sources.clear();m_placingDim=false;m_tracked.clear();scheduleToolPreview();toolPrompt();break;
     case Esc::CloseTool:setTool("select");break;
     case Esc::ClearSelection:m_sel.clear();break;
   }
@@ -390,7 +413,7 @@ void SketchEditor::benchWorkflow() {
         case 0:setTool("image_insert");m_options["imageFile"]=prefix+".source.png";m_options["imageWidth"]="32 mm";placePrecise("0","0",0);applyTool();break;
         case 1:require(m_sk.images.size()==1 && m_imagePrs.size()==1,"embedded backdrop");setTool("image_calibrate");m_options["knownDistance"]="16 mm";placePrecise("0","0",0);placePrecise("32","0",0);applyTool();break;
         case 2:require(std::fabs(m_sk.images[0]["width"].get<double>()-16)<1e-8,"image calibration");setTool("image_trace");m_options["smoothing"]="0";m_options["noise"]="2";m_options["cornerAngle"]="180";previewTool();break;
-        case 3:if(m_toolPreview){require(m_sk.entities.empty() && m_undo.size()==2,"preview does not modify the sketch");fitSketch();m_viewport->grabImage().save(prefix+".preview.png");applyTool();--*phase;break;}require(m_sk.entities.size()==8,"editable trace with hole");setTool("project");m_options["projectionSource"]="{\"base\":\"x\"}";applyTool();break;
+        case 3:if(m_toolPreview){require(m_sk.entities.empty() && m_undo.size()==2,"preview does not modify the sketch");fitSketch();m_viewport->grabImage().save(prefix+".preview.png");applyTool();--*phase;break;}require(m_sk.entities.size()==8,"editable trace with hole");setTool("project");toggleSource("{\"base\":\"x\"}");applyTool();break;
         case 4:require(m_sk.entities.size()==9 && !m_sk.entities.back().source.is_null(),"linked work geometry");m_sel={m_sk.entities.back().id};setTool("break_link");applyTool();break;
         case 5:require(m_sk.entities.back().source.is_null()&&!m_sk.entities.back().fixed,"break reference link");setTool("vector_export");m_options["vectorFile"]=prefix+".svg";applyTool();break;
         case 6:require(QFileInfo(prefix+".svg").size()>0,"SVG export");setTool("vector_import");applyTool();break;
@@ -495,14 +518,26 @@ void SketchEditor::invalidatePreview(bool keepOverlay) {
   if(!keepOverlay){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}
   if(!m_toolPreview)return;m_toolPreview.reset();rebuild();
 }
+void SketchEditor::applied() {
+  if(m_tool=="mirror")m_options["mirrorStage"]="seed";  // the next curves to mirror, then their line
+  if(m_tool=="image_calibrate"){m_options.remove("knownDistance");m_calibrateShown.clear();}  // the next two clicks show their own distance
+  if(sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()){m_sources.clear();emit workflowChanged();}  // the next sources
+}
+void SketchEditor::showToolPreview() {
+  if(m_toolPreviewOverlay.IsNull())return;
+  m_viewport->showOverlay(m_toolPreviewOverlay);
+  m_toolPreviewOverlay->SetZLayer(Graphic3d_ZLayerId_TopOSD);  // no depth test there (as the offset's arrow over its body)
+}
 void SketchEditor::scheduleToolPreview() {
   // While the offset arrow is dragged the preview follows as fast as it is computed (throttled, the shown one stays
   // until the next replaces it); otherwise it waits for the value to rest. Restarting the timer on every move meant
-  // no preview until the button was let go.
+  // no preview until the button was let go. The reference tools preview their sources as they are picked (TODO 11
+  // wave 3, P4: the guides show each pick's projection before Enter).
   const bool live=m_dimensionHandle->dragging();
   invalidatePreview(live);updateDimensionHandle();updateInput();
-  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect"};
-  if(m_active && tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) {
+  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect","node"};
+  const bool reference=sketchkeys::referenceTool(m_tool.toStdString());
+  if(m_active && ((tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) || (reference && !m_sources.isEmpty()))) {
     if(!live)m_toolPreviewTimer.start(120);
     else if(!m_toolPreviewTimer.isActive())m_toolPreviewTimer.start(16);
   }

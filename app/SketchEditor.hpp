@@ -117,6 +117,9 @@ class SketchEditor : public QObject, public SketchInput {
   void redefinePlane(const opad::json& plane, const opad::Frame& frame);
   QString tool() const { return m_tool; }
   void editSplineNode();
+  // The node tool's weight boxes take this control node's weights (its own, and its handles' on a cubic's knot); false when
+  // it is no node of an editable spline.
+  bool loadNodeWeights(int point);
   void findOpenVertices();
   void insertSplineNode(double u,double v);
   void toggleConstruction();
@@ -148,6 +151,8 @@ class SketchEditor : public QObject, public SketchInput {
   void benchCommandLine();
   void benchClipboard();
   void benchEdits();
+  void benchApply();
+  void benchPointer();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   size_t settingsReads() const { return m_settingsReads; }  // benches: once per change, never per mouse move
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
@@ -178,12 +183,21 @@ class SketchEditor : public QObject, public SketchInput {
 
  private:
   friend class SketchPanel;
+  friend class ClipReplay;  // the help clips replayed into the tools (ClipReplayBench.cpp)
   opad::design::SolveOptions solveOptions() const;
   bool selectable(int id) const;
   void runSketchEdit(const QString& label,std::function<void(opad::design::Sketch&)> work);
   struct Snap;
   bool primitiveClick(const Snap& s);
   void finishPrimitive();
+  // An arc slot's or a centre arc's sweep as the pointer went round its centre from the start (TODO 11 wave 3, P5): signed,
+  // counter-clockwise positive, past half a turn too, so the slot or arc runs the way the pointer went (the slot always ran
+  // counter-clockwise, the arc the shorter way); without a pointer that went round, the shorter way to (u, v).
+  // trackSlotSweep keeps it as the pointer moves.
+  double slotSweep(double u, double v) const;
+  void trackSlotSweep();
+  struct SlotSweep { double sweep = 0, last = 0, ou = 0, ov = 0, su = 0, sv = 0; };  // the sweep so far, the pointer's last angle, for these clicks
+  std::optional<SlotSweep> m_slotSweep;
   opad::design::Sketch primitivePreview() const;
   opad::json primitiveOptions() const;
   void createText(double u,double v);
@@ -284,11 +298,19 @@ class SketchEditor : public QObject, public SketchInput {
   QStringList transientTexts() const;                 // what the rubber band reads out (benches)
   size_t transientLocked() const;                     // segments drawn thick dashed: a Shift lock's line (benches)
   size_t transientCursor() const;                     // segments of the drawing cursor drawn (benches)
+  // What the rubber band draws now, by kind (benches; the clip replay compares it with what its clip shows): the curves a
+  // click makes ("line", "arc", "circle", "ellipse", "spline", "construction <kind>" for those it makes as construction, a
+  // dashed guide among them), "line" for a straight band to the pointer, "outline" for each of a text's or a paste's
+  // outlines, "trim" the piece a click removes, "extension" where an end runs to, "frame" a picture's, "measure" a distance.
+  const std::map<QString, int>& rubberKinds() const { return m_rubberKinds; }
+  std::map<QString, int> m_rubberKinds;
   bool cursorCrisp() const;                           // its arms lie on whole device pixels (benches)
   QStringList overlayTexts() const;                   // the texts the sketch's overlay draws (benches)
   size_t badgeTriangles() const;                      // the constraint badges' backs, two triangles each (benches)
   size_t coincidenceDots() const;                     // the dots drawn for coincidences, explicit and where curves meet (benches)
   size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
+  size_t transientDashed(const QColor& c) const;      // dashed ones (a frame, a measure being taken)
+  size_t sketchSolid(const QColor& c) const;          // the sketch's own curves' segments drawn in that colour (benches)
   bool drawsCursor() const;  // grid snapping: the editor draws the drawing cursor at the snapped point, the pointer is hidden
   std::optional<std::pair<double, double>> m_drawnCursor;  // where it was last drawn (none: not drawn), sketch coordinates
   bool m_inTransient = false;  // updateTransient is telling the viewport whether it draws the cursor
@@ -359,12 +381,47 @@ class SketchEditor : public QObject, public SketchInput {
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();
-  void projectHovered();
   void referenceHover();
   void pickReference();
+  // The reference a replayed press is on (ClipReplayBench.cpp: a clip's click on a body, found where the clip shows it), which
+  // pickReference takes before the view's hover; none otherwise.
+  std::optional<opad::Ref> m_replayReference;
+  // The reference tools' sources (TODO 11 wave 3, P4): picked in the view or chosen in the panel, each a JSON reference;
+  // a pick toggles one (a picked one again drops it), the preview shows them all and Enter or Apply adds them together.
+  void toggleSource(const QString& source);
+  QString sourceLabel(const QString& source) const;
+  QStringList m_sources;
+  // A preview that fails drops the sources that gave nothing, which its worker lists (each one tried); when the solver
+  // refused them together, the one the last pick added (m_sourceAdded; empty after a pick that dropped one).
+  QString m_sourceAdded;
+  std::shared_ptr<QStringList> m_sourcesFailed;
+  // The picked sources in the model (edges, faces, vertices, bodies) shown as the view's selection while the tool runs, as
+  // a feature's picks are; called by rebuild(), so every change of m_sources reaches the view.
+  void showSources();
+  QStringList m_sourcesShown;
   bool applyReference();
   bool applyImageTool();
   bool imageClick(double u,double v);
+  // Transform image (TODO 11 wave 3, P5, as its guide shows): a press on a backdrop picture and a drag move it, the picture
+  // following the pointer; the release keeps its new place (one undo step) and the panel's X and Y show it, the other
+  // values wait for Enter or Apply as before. A press off the pictures does nothing.
+  struct ImageDrag { int id = 0; size_t index = 0; double u = 0, v = 0, x = 0, y = 0, du = 0, dv = 0; bool moved = false; };
+  std::optional<ImageDrag> m_imageDrag;
+  int imageAt(double u, double v) const;  // the backdrop whose picture is under (u, v), the one the panel shows first; 0: none
+  bool imagePress(double u, double v);
+  void imageDragTo(double u, double v);
+  void imageRelease();
+  void imageFrame(int id, double du, double dv, std::vector<std::pair<double, double>>& corners) const;  // its corners, moved by (du, dv)
+  // Insert image: the picture's size in pixels as shown (its file's header only, read once per file); invalid: unknown.
+  QSizeF insertPicture();
+  QString m_insertFile;
+  QSizeF m_insertPicture;
+  QString m_calibrateShown;  // the Known distance calibrate's two clicks put there (a typed one is not replaced)
+  // A click with a modify tool on a curve (TODO 11 wave 3): it toggles the curve, or with the tool's "Select connected
+  // chain on click" on (offset by default) the whole connected chain. Per tool: setting it for one left the others alone.
+  bool chainOnClick() const;
+  void pickCurve(int id);
+  void applied();  // after an Apply that changed the sketch: the tool asks for its next curves, sources or line
   void refreshImages();
   std::vector<std::pair<double, double>> sampled(const opad::design::SkEntity& e) const;  // polyline of a curve, sketch coordinates
   double distanceTo(const opad::design::SkEntity& e, double u, double v) const;
@@ -395,6 +452,9 @@ class SketchEditor : public QObject, public SketchInput {
   int m_previewRevision=0;
   std::shared_ptr<opad::design::Sketch> m_toolPreview;
   Handle(AIS_InteractiveObject) m_toolPreviewOverlay;
+  // Shows it over everything, the X-ray layer too: a picked source's highlight (an edge right above its projection, a
+  // face or a body over its outline, seen square to the sketch) and a hover must not hide the preview of what it gives.
+  void showToolPreview();
   opad::design::SolveResult m_previewSolved;
   QString m_selectionFilter = "all",m_constraintFilter;
   std::set<int> m_conflicts;

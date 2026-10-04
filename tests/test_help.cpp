@@ -12,6 +12,8 @@
 #include "Motion.hpp"
 #include "RichTip.hpp"
 #include "ShortcutEditor.hpp"
+#include "SketchKeys.hpp"
+#include "SketchSteps.hpp"
 #include "Theme.hpp"
 #include "check.hpp"
 #include "opad/design/feature.hpp"
@@ -1021,6 +1023,217 @@ TEST(clip_guide_ranges) {
   CHECK(clips::guideRange("sketch.line", 0, 3) == R(0, 0) && clips::guideRange("design.extrude", 1, 2) == R(1, 2));
   // The drawing placer's panel (DrawingPlacer: plane, move, snap, Place): moving loops move, snap and Place; snapping its step.
   CHECK(clips::guideRange("drawing.place", 1, 4) == R(1, 3) && clips::guideRange("drawing.place", 2, 4) == R(2, 2) && clips::guideRange("drawing.place", 4, 4) == R(3, 3));
+}
+
+// A sketch clip presses Enter only where Enter acts in that tool (TODO 11 wave 3, audit 6.3 test 5): a chain tool's Done,
+// a value typed into the boxes (a hud or typedValue in the clip), or an Apply tool whose picks are complete
+// (sketchkeys::entersApply). The clips of mirror, break link and calibrate pressed it before the tools took it.
+TEST(sketch_clips_press_enter_only_where_it_acts) {
+  const QJsonObject library = QJsonDocument::fromJson(source("app/help/clips.json").toUtf8()).object();
+  const QJsonObject templates = library.value("templates").toObject();
+  auto enter = [](const QJsonObject& item) {
+    if (item.value("el").toString() != "key") return false;
+    if (item.value("fixed").toString().compare("enter", Qt::CaseInsensitive) == 0) return true;  // a fixed key, by name
+    const QJsonArray caps = item.value("caps").toArray();
+    return caps.size() == 1 && caps.at(0).toString() == "Enter";
+  };
+  auto typed = [](const QJsonObject& item) { return item.value("el").toString() == "hud" || item.value("use").toString() == "typedValue"; };
+  int checked = 0;
+  for (const QJsonValue& v : library.value("clips").toArray()) {
+    const QJsonObject clip = v.toObject();
+    const QString id = clip.value("id").toString();
+    if (!id.startsWith("sketch.") || id.startsWith("sketch.c.")) continue;
+    QJsonArray items = clip.value("items").toArray();
+    for (const QJsonValue& t : templates.value(clip.value("template").toString()).toObject().value("items").toArray()) items.append(t);
+    bool presses = false, types = false;
+    for (const QJsonValue& item : items) presses = presses || enter(item.toObject()), types = types || typed(item.toObject());
+    if (!presses) continue;
+    const std::string tool = id.mid(7).toStdString();
+    ++checked;
+    if (!sketchkeys::chainTool(tool) && !sketchkeys::entersApply(tool) && !types)
+      throw check::Failure(id.toStdString() + ": the clip presses Enter, which does nothing in that tool");
+  }
+  CHECK(checked >= 10);  // line, spline, mirror, project, the image tools... (a parse that found none proves nothing)
+  CHECK(sketchkeys::entersApply("mirror") && sketchkeys::entersApply("break_link") && sketchkeys::entersApply("image_calibrate") && !sketchkeys::entersApply("trim"));
+}
+
+// TODO 11 wave 3 (audit 6.3 test 5): a feature clip's card stands for the feature's panel, so a card titled as the feature
+// (or as one of its steps, "Extrude 1") names only the panel's fields: the inputs of feature_specs() and Operation. The
+// cards said Columns and Rows, Angle and Diameter where the panel says Count, Total angle and Coil diameter.
+TEST(design_cards_name_the_feature_fields) {
+  clips::load();
+  const QJsonObject library = QJsonDocument::fromJson(source("app/help/clips.json").toUtf8()).object();
+  int checked = 0;
+  QStringList wrong;
+  for (const QJsonValue& v : library.value("clips").toArray()) {
+    const QJsonObject clip = v.toObject();
+    const QString id = clip.value("id").toString();
+    if (!id.startsWith("design.")) continue;
+    for (const QJsonValue& item : clip.value("items").toArray()) {
+      const QJsonObject card = item.toObject();
+      if (card.value("el").toString() != "card") continue;
+      const QString title = card.value("title").toString();
+      const opad::design::FeatureSpec* spec = nullptr;
+      for (const auto& s : opad::design::feature_specs())
+        if (title == QString::fromStdString(s.label) || title.startsWith(QString::fromStdString(s.label) + " ")) spec = &s;
+      if (!spec) continue;
+      QStringList labels{"Operation"};
+      for (const auto& in : spec->inputs) labels << QString::fromStdString(in.label);
+      QJsonArray rows = card.value("rows").toArray();
+      for (const QJsonValue& key : card.value("keys").toArray())
+        for (const QJsonValue& r : key.toArray().at(1).toObject().value("rows").toArray()) rows.append(r);
+      for (const QJsonValue& r : rows) {
+        const QString label = r.isArray() ? r.toArray().at(0).toString()
+                              : r.toObject().contains("check") || r.toObject().contains("radio") ? r.toObject().value("text").toString() : QString();
+        if (!label.isEmpty() && !labels.contains(label)) wrong << QString("%1: \"%2\" (the panel: %3)").arg(id, label, labels.join(", "));
+        checked += !label.isEmpty();
+      }
+    }
+  }
+  wrong.removeDuplicates();
+  if (!wrong.isEmpty()) throw check::Failure("a card row names no field of its feature: " + wrong.join(" | ").toStdString());
+  CHECK(checked >= 15);
+}
+
+// TODO 11 wave 3 (audit 6.3 test 5): every step a tool panel's guide waits at has clip steps of its own: a clip with a
+// "guide" maps each of the tool's steps (one entry per step), one without shares its steps out, so it needs at least as
+// many as the tool has. The tools: the sketch tools (SketchSteps.hpp, SketchPanel's guide), the features (their required
+// picks, then the values and OK: FeaturePanel's guide), the measure tools (MainWindowInspect.cpp's table, ToolStepsPanel's
+// guide) and the plane picker's plane and origin. The clip replay (OPAD_BENCH_CLIPREPLAY) checks each step's loop shows it.
+TEST(every_tool_step_has_a_clip_step) {
+  clips::load();
+  QStringList wrong;
+  int checked = 0;
+  auto steps = [&](const QString& clip, int count, const QString& tool) {
+    if (!clips::has(clip) || count <= 0) return;
+    ++checked;
+    const int shown = int(clips::steps(clip).size()), mapped = clips::guideSteps(clip);
+    if (mapped && mapped != count) wrong << QString("%1: its guide maps %2 steps, %3 has %4").arg(clip).arg(mapped).arg(tool).arg(count);
+    if (!mapped && shown < count) wrong << QString("%1: %2 clip steps for the %3 steps of %4 (give it a guide)").arg(clip).arg(shown).arg(count).arg(tool);
+  };
+  for (const auto& t : sketchsteps::tools())
+    steps("sketch." + QString(t.id).replace(':', '.'), int(t.steps.size()), QString("the sketch tool ") + t.id);
+  for (const auto& spec : opad::design::feature_specs()) {
+    auto value = [&](const std::string& name) -> std::string {  // an input's default, as show_if compares it
+      for (const auto& in : spec.inputs)
+        if (in.name == name) return in.def.is_string() ? in.def.get<std::string>() : in.def.is_boolean() ? (in.def.get<bool>() ? "true" : "false") : in.def.dump();
+      return {};
+    };
+    auto shown = [&](const opad::design::InputSpec& in) {
+      if (in.show_if.empty()) return true;
+      const size_t eq = in.show_if.find('=');
+      const QStringList values = QString::fromStdString(in.show_if.substr(eq + 1)).split('|');
+      return values.contains(QString::fromStdString(value(in.show_if.substr(0, eq))));
+    };
+    const QStringList picks{"bodies", "faces", "edges", "profiles", "points", "plane", "axis", "path"}, single{"plane", "axis", "path"};
+    int needed = 0;
+    for (const auto& in : spec.inputs) {
+      const QString type = QString::fromStdString(in.type);
+      needed += picks.contains(type) && shown(in) && !in.optional && !(in.min_count < 1 && !single.contains(type));
+    }
+    steps("design." + QString::fromStdString(spec.kind), needed + 1, "the feature " + QString::fromStdString(spec.kind));
+  }
+  for (const auto& m : QRegularExpression(R"re(\{"(\w+)", \{QT_TR_NOOP\("[^"]+"\), "\w+", (\d+)\}\})re").globalMatch(source("app/MainWindowInspect.cpp")))
+    steps("inspect." + m.captured(1), m.captured(2).toInt(), "the measure tool " + m.captured(1));
+  steps("sketch.replane", 2, "the plane picker");
+  steps("design.sketch", 2, "the plane picker");
+  if (!wrong.isEmpty()) throw check::Failure(wrong.join(" | ").toStdString());
+  CHECK(checked >= 90);
+}
+
+// The replay's input (TODO 11 wave 3, audit 6.3 test 8): the pointer sampled along its way (0.6 mm apart at most), pressed,
+// dragged and released, clicked and double clicked; a key pressed; what a value box shows typed key by key; a card's value
+// rows when it comes and as they change, its list row picked, its page switch turned, its button pressed; a chip pressed; a
+// click on the chrome kept as such. The setup and expect blocks come as written.
+TEST(clip_input_is_what_the_clip_does) {
+  QTemporaryDir dir;
+  QFile f(dir.filePath("clips.json"));
+  CHECK(f.open(QIODevice::WriteOnly));
+  f.write(R"({"clips": [
+    {"id": "do", "duration": 4, "extent": [-10, -10, 10, 10], "steps": [{"to": 4, "caption": "All"}], "setup": {"tool": "line"}, "expect": {"entities": {"line": 1}},
+     "items": [
+      {"el": "cursor", "keys": [[0, {"pos": [0, 0]}], [0.5, {"pos": [4, 0], "click": 1}], [0.7, {"pos": [4, 0], "click": 1}], [1, {"pos": [4, 0], "down": true}],
+                               [1.5, {"pos": [6, 0], "down": false}], [2, {"screen": [0.3, 0.4]}], [2.2, {"screen": [0.3, 0.4], "click": 1}]]},
+      {"el": "key", "caps": ["Enter"], "press": 3},
+      {"el": "hud", "fields": ["{len} mm"], "typed": "", "focus": 0, "keys": [[2.5, {"typed": "1"}], [2.6, {"typed": "12"}], [2.7, {"typed": ""}], [2.8, {"typed": "3"}]]},
+      {"el": "card", "screen": [0.03, 0.06], "title": "Tool", "from": 0.1, "button": "Apply", "press": 3.5, "hl": -1,
+       "rows": [{"tabs": ["Tool", "Select"], "on": 0}, ["Count", "3"], {"label": "1", "value": "Horizontal"}],
+       "keys": [[1.2, {"rows": [{"tabs": ["Tool", "Select"], "on": 0}, ["Count", "4"], {"label": "1", "value": "Horizontal"}], "ease": "step"}],
+                [1.4, {"rows": [{"tabs": ["Tool", "Select"], "on": 1}, ["Count", "4"], {"label": "1", "value": "Horizontal"}], "ease": "step"}], [1.6, {"hl": 2}], [1.8, {"hl": 1}]]},
+      {"el": "chip", "screen": [0.03, 0.05], "text": "Cancel sketch", "keys": [[3.8, {"hl": true}]]}]}]})");
+  f.close();
+  clips::load(f.fileName());
+  CHECK(clips::problems().isEmpty());
+  using K = clips::Input::Kind;
+  const auto in = clips::input("do");
+  auto kinds = [&](K k) { QList<clips::Input> out; for (const auto& e : in) if (e.kind == k) out << e; return out; };
+  for (qsizetype i = 1; i < in.size(); ++i) CHECK(in[i].t >= in[i - 1].t - 1e-9);
+  const auto moves = kinds(K::Move);
+  CHECK(moves.size() > 16);  // 4 mm in half a second: 0.6 mm apart at most
+  for (qsizetype i = 1; i < moves.size(); ++i) CHECK((moves[i].at - moves[i - 1].at).length() <= 0.6f + 1e-4f);
+  const auto clicks = kinds(K::Click);
+  CHECK(clicks.size() == 2 && clicks[0].t == 0.5 && clicks[0].at == QVector3D(4, 0, 0) && clicks[1].screen == QPointF(0.3, 0.4));
+  CHECK(kinds(K::DoubleClick).size() == 1 && kinds(K::DoubleClick)[0].t == 0.7);
+  CHECK(kinds(K::Press).size() == 1 && kinds(K::Press)[0].t == 1 && kinds(K::Release).size() == 1 && kinds(K::Release)[0].at == QVector3D(6, 0, 0));
+  bool dragged = false;
+  for (const auto& m : moves) dragged = dragged || (m.down && m.t > 1 && m.t <= 1.5);
+  CHECK(dragged && std::none_of(moves.begin(), moves.end(), [](const clips::Input& m) { return m.down && (m.t < 1 || m.t > 1.5); }));
+  CHECK(kinds(K::Key).size() == 1 && kinds(K::Key)[0].caps == QStringList{"Enter"} && kinds(K::Key)[0].t == 3);
+  const auto typed = kinds(K::Type);
+  CHECK(typed.size() == 3 && typed[0].text == "1" && typed[1].text == "2" && typed[2].text == "3");
+  const auto rows = kinds(K::Row);
+  CHECK(rows.size() == 2 && rows[0].text == "Count" && rows[0].value == "3" && rows[0].t == 0.1 && rows[1].value == "4" && rows[1].t == 1.2);
+  CHECK(kinds(K::Page).size() == 1 && kinds(K::Page)[0].text == "Select" && kinds(K::Page)[0].index == 1);
+  CHECK(kinds(K::Pick).size() == 1 && kinds(K::Pick)[0].value == "Horizontal" && kinds(K::Pick)[0].index == 2);  // a value row lit is no pick
+  const auto buttons = kinds(K::Button);
+  CHECK(buttons.size() == 2 && buttons[0].text == "Apply" && buttons[0].value.isEmpty() && buttons[1].text == "Cancel sketch" && buttons[1].value == "chip");
+  CHECK(clips::setup("do").value("tool").toString() == "line" && clips::expect("do").contains("entities") && !clips::iso("do"));
+  clips::load();
+}
+
+// Every sketch clip carries its replay (setup and expect, OPAD_BENCH_CLIPREPLAY replays them all), and every click it shows
+// on the chrome is a card's or a chip's input of that moment (a row set, a list row picked, a page turned, a button
+// pressed): a click the replay could not name would be a step the tool never sees.
+TEST(sketch_clips_carry_their_replay) {
+  clips::load();
+  using K = clips::Input::Kind;
+  QStringList wrong;
+  int clipsChecked = 0;
+  for (const QString& id : clips::ids()) {
+    if (!id.startsWith("sketch.")) continue;
+    ++clipsChecked;
+    if (clips::expect(id).isEmpty()) wrong << id + ": no expect block";
+    const auto in = clips::input(id);
+    if (in.isEmpty()) wrong << id + ": no input";
+    for (const auto& click : in) {
+      if (click.kind != K::Click || click.screen.x() < 0) continue;
+      const bool named = std::any_of(in.begin(), in.end(), [&](const clips::Input& e) {
+        return (e.kind == K::Button || e.kind == K::Row || e.kind == K::Pick || e.kind == K::Page) && std::abs(e.t - click.t) < 0.06;
+      });
+      if (!named) wrong << QString("%1: the click on the chrome at %2 s changes no card or chip").arg(id).arg(click.t);
+    }
+  }
+  // Along the way, not only the end (CLAUDE.md safety net): a tool that previews before its last click, its Enter or its
+  // Apply (a shape's rubber band, an Apply tool's dashed result, a hover's arc, piece or run, a picture's frame) has its
+  // clip checked while the clip shows that preview, by a "during" entry inside the clip's time.
+  static const QStringList previewing{"line", "rect", "crect", "rect3", "circle", "circle2", "circle3", "arc3", "arcc", "tangent_arc", "tangent_circle",
+                                      "ellipse", "slot", "cslot", "arcslot", "polygon", "polygon_outer", "spline", "control_spline", "conic", "text",
+                                      "offset", "mirror", "move", "rotate", "scale", "copy", "rect_pattern", "polar_pattern", "chamfer", "fillet", "trim",
+                                      "extend", "union", "subtract", "intersect", "node", "project", "intersect_body", "silhouette", "include3d",
+                                      "image_insert", "image_calibrate", "image_edit"};
+  for (const QString& tool : previewing) {
+    const QString id = "sketch." + tool;
+    const QJsonArray during = clips::expect(id).value("during").toArray();
+    const bool previews = std::any_of(during.begin(), during.end(), [](const QJsonValue& v) {
+      const QJsonValue p = v.toObject().value("preview");
+      return p.isObject() ? !p.toObject().isEmpty() : p.toBool();
+    });
+    if (!previews) wrong << id + ": no \"during\" entry checks the preview the clip shows";
+    for (const QJsonValue& v : during)
+      if (v.toObject().value("t").toDouble() <= 0 || v.toObject().value("t").toDouble() >= clips::duration(id)) wrong << id + ": a \"during\" entry outside the clip";
+  }
+  if (!wrong.isEmpty()) throw check::Failure(wrong.join(" | ").toStdString());
+  CHECK(clipsChecked >= 80);
 }
 
 // The player loops a range of steps as one segment; reduced motion shows the range's last frame.

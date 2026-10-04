@@ -14,11 +14,13 @@
 #include <QSignalBlocker>
 #include <QTabWidget>
 #include <QTabBar>
+#include <QToolButton>
 #include <QFontComboBox>
 #include <QFileDialog>
 #include <QApplication>
 #include <QAbstractItemView>
 #include <QKeyEvent>
+#include <QListWidget>
 
 QList<SketchPanel::Tool> SketchPanel::tools() {
   return {
@@ -72,6 +74,11 @@ QList<SketchPanel::Tool> SketchPanel::tools() {
 SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
   auto* layout=new QVBoxLayout(this); layout->setContentsMargins(8,8,8,8); layout->setSpacing(6);
   m_state=new QLabel(this); m_state->setWordWrap(true); layout->addWidget(m_state);
+  // Its pages, switched here (TODO 11 wave 3, P6: the tab bar was hidden, so Select, Constraints and Snaps opened only
+  // through their own commands): a compact segmented row, the section panel's look.
+  auto* switcher=new QWidget(this);switcher->setObjectName("segmented");
+  auto* switches=new QHBoxLayout(switcher);switches->setContentsMargins(1,1,1,1);switches->setSpacing(0);
+  layout->addWidget(switcher);
   auto* tabs=new QTabWidget(this);m_pages=tabs;tabs->tabBar()->hide();layout->addWidget(tabs,1);
   auto page=[&](const QString& title) {
     auto* scroll=new QScrollArea(tabs); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
@@ -98,7 +105,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(place,&QPushButton::clicked,this,submit); connect(m_v,&QLineEdit::returnPressed,this,submit);
   tool->addStretch();
   auto* selection=page(tr("Select"));
-  auto* filter=new QComboBox(this);
+  auto* filter=new QComboBox(this);filter->setAccessibleName(tr("Filter"));  // what a pick or a window may select (no form label: named for screen readers)
   for(const auto& [id,title]:QList<QPair<QString,QString>>{{"all",tr("All geometry")},{"point",tr("Points")},{"line",tr("Lines")},{"arc",tr("Arcs and circles")},{"spline",tr("Splines")},{"construction",tr("Construction")},{"constraint",tr("Constraints")},{"dimension",tr("Dimensions")}}) filter->addItem(title,id);
   selection->addWidget(filter);
   connect(filter,&QComboBox::currentIndexChanged,this,[this,filter]{m_editor->m_selectionFilter=filter->currentData().toString();});
@@ -153,6 +160,13 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(tolerance,&QLineEdit::editingFinished,this,[tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) {QSettings().setValue("sketch/tolerance",v);preferences::changed("sketch/tolerance");}else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
   auto* iterations=new QSpinBox(this);iterations->setRange(1,1000);advanced->addRow(tr("Solver iterations"),iterations);
   preferences::bind(iterations,"sketch/iterations",100);settings->addStretch();
+  for(int i=0;i<tabs->count();++i) {
+    auto* b=new QToolButton(switcher);b->setObjectName("segmentPrimary");b->setText(tabs->tabText(i));b->setCheckable(true);b->setChecked(i==0);
+    b->setAutoRaise(true);b->setFixedHeight(24);b->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);b->setFocusPolicy(Qt::NoFocus);
+    b->setProperty("sketchPage",i);switches->addWidget(b,1);
+    connect(b,&QToolButton::clicked,this,[this,i]{showPage(i);});
+  }
+  connect(tabs,&QTabWidget::currentChanged,switcher,[switcher](int index){for(auto* b:switcher->findChildren<QToolButton*>())b->setChecked(b->property("sketchPage").toInt()==index);});
   m_status=new QLabel(this);m_status->setWordWrap(true);layout->addWidget(m_status);
   auto* footer=new QHBoxLayout;layout->addLayout(footer);
   // Finish sketch lives in the ribbon, next to Cancel sketch. The footer is Backspace and Esc as buttons (UI-20): Undo
@@ -188,6 +202,10 @@ void SketchPanel::buildFields() {
   auto field=[&](const QString& key,const QString& label,const QString& value) {
     auto* edit=new QLineEdit(m_editor->option(key,value),this);edit->setObjectName("sketchOption-"+key);m_fields->addRow(label,edit);
     connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){m_editor->m_options[key]=text;m_editor->scheduleToolPreview();});
+    // Enter in a value field applies, as Enter in the view does, when the tool has what it applies to (the guides of the
+    // node weights and Transform image type here and press Enter); a QLineEdit lets Return go nowhere. From the event loop:
+    // applying rebuilds these fields.
+    connect(edit,&QLineEdit::returnPressed,this,[editor=m_editor]{QTimer::singleShot(0,editor,[editor]{if(editor->active() && editor->appliesOnEnter())editor->done();});});
   };
   if(m_shown=="polygon" || m_shown=="polygon_outer")field("sides",tr("Number of sides:"),"6");
   if(m_shown=="fillet" || m_shown=="tangent_circle")field("radius",tr("Radius"),"2 mm");
@@ -209,14 +227,25 @@ void SketchPanel::buildFields() {
     connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();m_editor->scheduleToolPreview();if(key=="projectionPick")m_editor->referenceHover();});
   };
   if(m_shown=="project"||m_shown=="intersect_body"||m_shown=="silhouette"||m_shown=="include3d") {
-    choice("projectionPick",tr("Pick filter"),{{"edge",tr("Edges")},{"face",tr("Faces")},{"vertex",tr("Vertices")},{"body",tr("Bodies")}});
-    auto* sources=new QComboBox(this);sources->addItem(tr("Pick in the view"),m_editor->option("projectionSource"));
+    // Intersect with plane and Silhouette take whole bodies (referenceHover): no filter to choose there.
+    if(m_shown=="project"||m_shown=="include3d")choice("projectionPick",tr("Pick filter"),{{"edge",tr("Edges")},{"face",tr("Faces")},{"vertex",tr("Vertices")},{"body",tr("Bodies")}});
+    // Sources accumulate (TODO 11 wave 3, P4): clicks in the view and this list add them, a picked one again drops it; the
+    // list below shows them, Enter or Apply adds them all.
+    auto* sources=new QComboBox(this);sources->setObjectName("sketchSourceAdd");sources->addItem(tr("Pick in the view, or add one here"),QString());
     auto add=[&](const QString& label,const opad::json& source){sources->addItem(label,QString::fromStdString(source.dump()));};
     for(const auto& id:m_editor->m_doc->scene.all_bodies())add(m_editor->m_doc->nodeName(id),{{"body",id},{"kind","body"}});
     for(const auto& sk:m_editor->m_doc->scene.sketches)if(sk.id!=m_editor->m_id)add(QString::fromStdString(sk.name),{{"sketch",sk.id}});
     for(const auto& feature:m_editor->m_doc->scene.features)if(feature.result.contains("axis"))add(QString::fromStdString(feature.name),{{"feature",feature.id}});
     for(const auto* axis:{"x","y","z"})add(tr("Origin axis %1").arg(axis),{{"base",axis}});
-    m_fields->addRow(tr("Source"),sources);connect(sources,&QComboBox::currentIndexChanged,this,[this,sources]{m_editor->m_options["projectionSource"]=sources->currentData().toString();m_editor->invalidatePreview();m_editor->toolPrompt();});
+    m_fields->addRow(tr("Add source"),sources);
+    connect(sources,&QComboBox::activated,this,[this,sources](int index){
+      const QString source=sources->itemData(index).toString();
+      {QSignalBlocker block(sources);sources->setCurrentIndex(0);}
+      if(!source.isEmpty())QTimer::singleShot(0,m_editor,[editor=m_editor,source]{editor->toggleSource(source);});  // it rebuilds this panel
+    });
+    auto* list=new QListWidget(this);list->setObjectName("sketchSources");list->setSelectionMode(QAbstractItemView::NoSelection);list->setFocusPolicy(Qt::NoFocus);
+    connect(list,&QListWidget::itemDoubleClicked,this,[this](QListWidgetItem* row){const QString source=row->data(Qt::UserRole).toString();if(!source.isEmpty())QTimer::singleShot(0,m_editor,[editor=m_editor,source]{editor->toggleSource(source);});});
+    m_fields->addRow(tr("Sources"),list);  // filled by refresh(), as the picks change
     choice("projectionLinked",tr("Link behavior"),{{"1",tr("Associative link")},{"0",tr("Editable copy")}});
   }
   auto fileField=[&](const QString& key,bool image,bool save) {
@@ -250,8 +279,9 @@ void SketchPanel::buildFields() {
   }
   if(m_shown=="offset") {field("distance",tr("Distance"),"5 mm");choice("corners",tr("Corners"),{{"round",tr("Round")},{"sharp",tr("Sharp")}});}
   if(QStringList{"offset","move","copy","rotate","scale","mirror","rect_pattern","polar_pattern"}.contains(m_shown)) {
-    auto* chain=new QCheckBox(tr("Select connected chain on click"),this);chain->setChecked(m_editor->option("chain",m_shown=="offset"?"1":"0")=="1");m_fields->addRow(chain);
-    connect(chain,&QCheckBox::toggled,this,[this](bool on){m_editor->m_options["chain"]=on?"1":"0";});
+    // The tool's own (offset: on): ticking it for one tool left the others as they were.
+    auto* chain=new QCheckBox(tr("Select connected chain on click"),this);chain->setObjectName("sketchOption-chain");chain->setChecked(m_editor->chainOnClick());m_fields->addRow(chain);
+    connect(chain,&QCheckBox::toggled,this,[this](bool on){m_editor->m_options["chain:"+m_shown]=on?"1":"0";});
   }
   if(m_shown=="move"||m_shown=="copy") {
     auto* mode=new QComboBox(this);mode->setObjectName("sketchOption-moveMode");mode->addItem(tr("X and Y offsets"),"xy");mode->addItem(tr("Distance and angle"),"polar");
@@ -261,7 +291,7 @@ void SketchPanel::buildFields() {
     else {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
     if(m_shown=="copy")field("copies",tr("Copies"),"1");
   }
-  if(m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
+  if(m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"10 mm");}  // as the pattern takes them (applyModify)
   if(m_shown=="rotate"||m_shown=="scale"||m_shown=="polar_pattern") {field("cx",tr("Centre X"),"0 mm");field("cy",tr("Centre Y"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="polar_pattern")field("angle",tr("Angle"),m_shown=="rotate"?"45 deg":"360 deg");
   if(m_shown=="scale")field("scale",tr("Scale factor"),"2");
@@ -305,6 +335,15 @@ void SketchPanel::refresh() {
   if(!listed){QSignalBlocker block(m_tools);m_tools->setCurrentIndex(-1);}  // paste, copy with base point: not the last tool's name
   if(m_shown!=tool)m_guide->setCommand("sketch."+QString(tool).replace(':','.'));
   if(m_shown!=tool || m_editor->m_panelFieldsDirty) {m_shown=tool;m_editor->m_panelFieldsDirty=false;buildFields();}
+  if(auto* list=findChild<QListWidget*>("sketchSources")) {  // a reference tool's sources, one row each
+    QStringList shown;for(int i=0;i<list->count();++i)if(const QString s=list->item(i)->data(Qt::UserRole).toString();!s.isEmpty())shown<<s;
+    if(shown!=m_editor->m_sources || !list->count()) {
+      list->clear();
+      for(const auto& source:m_editor->m_sources){auto* row=new QListWidgetItem(m_editor->sourceLabel(source),list);row->setData(Qt::UserRole,source);row->setToolTip(tr("Double-click to drop it"));}
+      if(m_editor->m_sources.isEmpty())list->addItem(tr("No source picked yet"));
+      list->setFixedHeight(list->sizeHintForRow(0)*std::clamp(int(m_editor->m_sources.size()),1,4)+2*list->frameWidth()+2);
+    }
+  }
   for(auto* edit:findChildren<QLineEdit*>())if(edit->objectName().startsWith("sketchOption-") && !edit->hasFocus()) {
     const auto key=edit->objectName().mid(13);if(m_editor->m_options.contains(key)){QSignalBlocker block(edit);edit->setText(m_editor->option(key));}
   }
