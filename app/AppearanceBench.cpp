@@ -5,7 +5,6 @@
 // browser's document eye, and Delete of two operations (a batch, or one design plan); each step undone.
 #include <QApplication>
 #include <QElapsedTimer>
-#include <QInputDialog>
 #include <QTimer>
 
 #include <algorithm>
@@ -16,6 +15,7 @@
 #include <set>
 #include <tuple>
 
+#include "AssemblyWidgets.hpp"
 #include "BenchRegistry.hpp"
 #include "BrowserPanel.hpp"
 #include "MainWindow.hpp"
@@ -102,13 +102,12 @@ OPAD_BENCH(OPAD_BENCH_BATCH, batch) {
        [&] { return std::all_of(three.begin(), three.end(), [doc](const auto& id) { return doc->scene.node(id)->locked; }); });
   step("Opacity of three bodies", 3, AppDocument::tr("opacity"),
        [&] {
-         QTimer::singleShot(200, &w, [] {  // the dialog, answered (benches keep other windows off screen)
-           if (auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget())) {
-             dialog->setIntValue(50);
-             dialog->accept();
-           }
-         });
-         w.action("design.opacity")->trigger();
+         w.action("design.opacity")->trigger();  // its slider popup (UI-34): 50 %, written as it is let go
+         if (auto* popup = w.findChild<OpacityPopup*>()) {
+           popup->slider()->slider()->setValue(50);
+           popup->slider()->finish(true);
+           popup->close();
+         }
        },
        [&] { return std::all_of(three.begin(), three.end(), [doc](const auto& id) { return std::abs(doc->scene.node(id)->opacity - 0.5) < 1e-9; }); });
   // The browser's document eye: every root that changes, in one step.
