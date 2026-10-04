@@ -74,13 +74,13 @@ void SketchEditor::finishPrimitive() {
       keepAligned(second,{made[0]});  // its base along an axis (UI-23); the third click is a height, square to it
     } else if(m_tool=="circle2" && !made.empty())keepTyped(second,"diameter",SkConstraint::Type::Diameter,{made[0]});
     else if(m_tool=="tangent_arc" && !made.empty())keepTyped(last,"radius",SkConstraint::Type::Radius,{made[0]});
-    else if(m_tool=="polygon_outer" && made.size()>=4) {  // across flats: two opposite sides, or (an odd count) the centre to a side
-      const size_t sides=made.size()-1;const auto* guide=m_sk.entity(made.back());
-      if(sides%2==0)keepTyped(second,"diameter",SkConstraint::Type::Distance,{made[0],made[sides/2]});
-      else keepTyped(second,"diameter",SkConstraint::Type::Distance,{guide->p[0],made[0]},0.5);
-      Snap across=second;std::swap(across.horizontal,across.vertical);keepAligned(across,{made[sides-1]});  // the side facing the click, square to the way to its middle
+    else if(m_tool=="polygon_outer" && made.size()>=5) {  // across flats: the circle inside it; the apothem (to the click) its turn
+      const int circle=made[made.size()-2],apothem=made.back();const auto* radial=m_sk.entity(apothem);
+      keepTyped(second,"diameter",SkConstraint::Type::Diameter,{circle});
+      keepDirection(second,"angle",{apothem},direction(radial->p[0],radial->p[1]));
+      keepAligned(second,{apothem});  // the click level with (above) the centre: the side facing it upright (level)
     } else if(m_tool=="arcslot" && made.size()>=4) {  // its centre line's radius, its start (and end) along an axis
-      const bool swapped=sweep!=m_clicks.back().typed.end() && sweep->second.first<0;
+      const bool swapped=sweep<0;
       const int centre=m_sk.entity(made[0])->p[0],start=m_sk.entity(made[swapped?2:3])->p[0],end=m_sk.entity(made[swapped?3:2])->p[0];
       keepTyped(second,"radius",SkConstraint::Type::Distance,{centre,start});
       keepDirection(second,"angle",{centre,start},direction(centre,start));

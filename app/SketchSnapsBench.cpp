@@ -344,10 +344,12 @@ void SketchEditor::benchSnaps() {
   check(m_cursor.horizontal && exact(m_cursor.v, y0 - 25), QString("the side's middle level with the centre: horizontal") + where());
   const size_t before = m_sk.entities.size();
   place(97, y0 - 25 + 2 * px);
-  int facing = 0;
+  int facing = 0, apothem = 0;  // the side facing the click; the construction line from the centre to its middle (P6)
   for (size_t i = before; i < m_sk.entities.size(); ++i)
     if (const SkEntity& e = m_sk.entities[i]; e.type == SkEntity::Type::Line && std::abs(m_sk.point(e.p[0])->x - 97) < 1e-6 && std::abs(m_sk.point(e.p[1])->x - 97) < 1e-6) facing = e.id;
-  check(m_sk.entities.size() == before + 5 && facing && has(CT::Vertical, {facing}) && solved(), "the square is made, its side facing the click (x = 97) kept vertical");
+    else if (e.type == SkEntity::Type::Line && e.construction) apothem = e.id;
+  check(m_sk.entities.size() == before + 6 && facing && apothem && has(CT::Horizontal, {apothem}) && solved(),
+        "the square is made, its side facing the click (x = 97) kept vertical by the level line from the centre to its middle");
   m_options.remove("sides");
   if (f8) f8->setChecked(false);
   setTool("select");

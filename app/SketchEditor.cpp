@@ -866,8 +866,8 @@ int SketchEditor::pointFor(const Snap& s) {
 bool SketchEditor::pointHere() const {
   const size_t n = m_clicks.size();
   const QString& k = m_tool;
-  if (k == "line" || k == "spline" || k == "point" || k == "control_spline" || k == "conic" || k == "rect" || k == "crect" || k == "polygon") return true;
-  if (k == "circle" || k == "polygon_outer") return n == 0;
+  if (k == "line" || k == "spline" || k == "point" || k == "control_spline" || k == "conic" || k == "rect" || k == "crect" || k == "polygon" || k == "polygon_outer") return true;  // a circumscribed one's side middle (P6)
+  if (k == "circle") return n == 0;
   if (k == "arc3" || k == "arcc" || k == "slot" || k == "ellipse" || k == "rect3" || k == "arcslot") return n < 2;
   return (k == "cslot" || k == "tangent_arc") && n == 1;
 }
@@ -875,7 +875,7 @@ bool SketchEditor::pointHere() const {
 bool SketchEditor::curveHere() const {
   const size_t n = m_clicks.size();
   const QString& k = m_tool;
-  return k == "circle3" || k == "circle2" || (n == 1 && (k == "circle" || k == "polygon_outer")) || (n == 2 && (k == "arc3" || k == "arcc" || k == "rect3"));
+  return k == "circle3" || k == "circle2" || (n == 1 && k == "circle") || (n == 2 && (k == "arc3" || k == "arcc" || k == "rect3"));
 }
 
 std::vector<snapmarkers::Glyph> SketchEditor::snapGlyphs(const Snap& s) const {

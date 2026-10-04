@@ -334,10 +334,11 @@ void SketchEditor::benchShapes() {
     type("0");
     enter();
     const double half = 10 * std::tan(36 * degree);
-    bool across = false;
-    for (const auto& c : m_sk.constraints)
-      across = across || (c.type == CT::Distance && same(c.value, 10) && std::find(c.refs.begin(), c.refs.end(), pointAtXY(150, 0)) != c.refs.end());
-    check(lineBetween(160, -half, 160, half) && across, "20 Tab 0: a pentagon 20 across its flats, one side upright at x 160, the size held");
+    int inside = 0;  // the circle the sides touch (TODO 11 wave 3, P6), held by the size across the flats
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Circle && e.construction && at(e.p[0], 150, 0)) inside = e.id;
+    check(lineBetween(160, -half, 160, half) && inside && same(m_sk.entity(inside)->r, 10) && has(CT::Diameter, {inside}, 20),
+          "20 Tab 0: a pentagon 20 across its flats, one side upright at x 160, about a circle 20 across that holds the size");
     if (QToolButton* c = chip()) c->click();
     send(Qt::Key_Escape);
   });

@@ -109,7 +109,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     "stroke" (single lines), `weight` (stroke width / height, default 0.14), `align` left, center or right. The
     built-in font has Latin capitals (lower case is drawn in capitals), digits and `- _ + / . , : ( ) ! ?`; it is
     the same on every machine;
-  - also `polygon_outer` [centre, edge midpoint] with `sides`, `circle2` [a, b], `conic`, `control_spline`,
+  - also `polygon_outer` [centre, edge midpoint] with `sides` (every side touches its construction circle, whose diameter
+    is the size across the flats), `circle2` [a, b], `conic`, `control_spline`,
     `tangent_arc` [line end, end] with `line`, `tangent_circle` [near point] with `lines` and `radius`.
 - A boat hull section with straight sides, rounded stern corners and a pointed bow of two arcs tangent to the sides:
   `{"kind": "path", "picks": [[0,-12], [40,-12], [60,0], [40,12], [0,12]], "options": {"segments": ["line",
