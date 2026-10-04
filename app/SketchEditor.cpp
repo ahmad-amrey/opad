@@ -1905,8 +1905,7 @@ void SketchEditor::updateTransient() {
   } else if(m_hover.kind==Hit::Entity && !(gridPoints() && m_viewport->ownCursor())) {  // on the grid only the snap's own curve lights up
     // Trim lights up the piece the click removes, in red; the whole curve read as "this curve goes".
     const auto piece=m_tool=="trim"&&m_haveCursor?trimPreview(m_hover.id,m_cursor.u,m_cursor.v):std::vector<std::pair<double,double>>{};
-    if(!piece.empty())for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
-    if(piece.size()>1)++m_rubberKinds["trim"];
+    if(!piece.empty()){for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});++m_rubberKinds["trim"];}
     else if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov.lighter(115)});}
     if(m_tool=="extend" && m_haveCursor) {  // where a click there runs the end to (UI-28)
       const auto run=extendPreview(m_hover.id,m_pointer.u,m_pointer.v);
