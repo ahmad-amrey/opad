@@ -26,8 +26,9 @@ def coach(root, document):
 
 
 # A remapped keyboard (TODO 11 wave 3, help audit §6.3 test 6): the help must show these keys, never the defaults. Clear
-# measurement's saved key is dropped (Esc is fixed).
-REMAPPED = ("[shortcuts]\nview.fit=Ctrl+Alt+F\ninspect.pin=Ctrl+Alt+P\nhelp.current=Ctrl+F1\nhelp.shortcuts=Ctrl+Shift+K\n"
+# measurement's saved key is dropped (Esc is fixed). Pin takes a key no command has (Ctrl+Alt+P is Print's): a search
+# by its key finds Pin alone.
+REMAPPED = ("[shortcuts]\nview.fit=Ctrl+Alt+F\ninspect.pin=Ctrl+Alt+J\nhelp.current=Ctrl+F1\nhelp.shortcuts=Ctrl+Shift+K\n"
             "tools.commands=Ctrl+Space\nselect.faces=Ctrl+Alt+2\nview.home=\nview.unisolate=\ninspect.clear=Q\n")
 
 CASES = [

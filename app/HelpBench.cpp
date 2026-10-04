@@ -135,10 +135,13 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     check(light != run->dark && tip->state() == State::Expanded, QString("theme change repaints the card (%1 -> %2)").arg(run->dark.name(), light.name()));
     check(save("expanded-light"), "light card saved");
     w.action("view.dark")->setChecked(!w.action("view.dark")->isChecked());
-    QMouseEvent press(QEvent::MouseButtonPress, QPointF(4, 4), fit->mapToGlobal(QPointF(4, 4)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    // Fit is a split button (its arrow drops Fit all and the others): pressed in its middle, never on the arrow, which is on
+    // the left right to left and would open the menu in a loop of its own.
+    const QPointF middle(fit->width() / 2.0, fit->height() / 2.0);
+    QMouseEvent press(QEvent::MouseButtonPress, middle, fit->mapToGlobal(middle), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(fit, &press);
     check(tip->state() == State::Hidden && !tip->isVisible(), "a press hides the card");
-    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(4, 4), fit->mapToGlobal(QPointF(4, 4)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, middle, fit->mapToGlobal(middle), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(fit, &release);
     move(fit);
   });

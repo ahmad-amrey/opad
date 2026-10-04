@@ -36,7 +36,7 @@ QString plain(QString s) { return s.remove(QChar(0x2066)).remove(QChar(0x2069));
 }  // namespace
 
 // OPAD_BENCH_KEYHELP=<prefix> (a document with a box; the case's settings remap view.fit to Ctrl+Alt+F, inspect.pin to
-// Ctrl+Alt+P, help.current to Ctrl+F1, help.shortcuts to Ctrl+Shift+K, tools.commands to Ctrl+Space, select.faces to
+// Ctrl+Alt+J, help.current to Ctrl+F1, help.shortcuts to Ctrl+Shift+K, tools.commands to Ctrl+Space, select.faces to
 // Ctrl+Alt+2, clear view.home and view.unisolate, and save a key for Clear measurement): every help surface shows the
 // user's key, never the default. The rich card's caps and hint, Ctrl+F1 expanding it (F1 no longer does) and opening the
 // guide; the palette's key and search by key ("ctrl+alt+f" finds Fit); the Tool guide's key column and card; the cheat
@@ -139,8 +139,8 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
           "a clip's key elements: Fit's Ctrl Alt F, Home by its name, Enter");
     const auto clipSteps = clips::steps("keys");
     check(plain(clips::caption(clipSteps[0])) == plain(help::expand(QCoreApplication::translate("help", "Press %1").arg(keys::text("view.fit")))) &&
-              clips::caption(clipSteps[1]) == i18n::t("Home: choose it in the View menu") && plain(clips::caption(clipSteps[2])).contains("Ctrl+Alt+P"),
-          "its captions: \"" + plain(clips::caption(clipSteps[0])) + "\", the keyless one for Home, Pin's Ctrl+Alt+P");
+              clips::caption(clipSteps[1]) == i18n::t("Home: choose it in the View menu") && plain(clips::caption(clipSteps[2])).contains("Ctrl+Alt+J"),
+          "its captions: \"" + plain(clips::caption(clipSteps[0])) + "\", the keyless one for Home, Pin's Ctrl+Alt+J");
     frames("clip");
     clips::load();  // the library again (the Tool guide plays its clips)
     // The library's clips name their commands: Fit's clip shows Ctrl Alt F and says so, Home's (no key) shows Home by
@@ -170,7 +170,7 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
   });
   add(400, [=, &w] {
     PanelFooter* footer = w.m_toolSteps ? w.m_toolSteps->footer() : nullptr;
-    check(footer && PanelFooter::key(footer->primary()) == "Ctrl+Alt+P", "Distance's footer: Pin to document Ctrl+Alt+P (" + (footer ? PanelFooter::key(footer->primary()) : QString()) + ")");
+    check(footer && PanelFooter::key(footer->primary()) == "Ctrl+Alt+J", "Distance's footer: Pin to document Ctrl+Alt+J (" + (footer ? PanelFooter::key(footer->primary()) : QString()) + ")");
     const QString hints = plain(w.m_prompt->hints());
     check(hints.contains("1/Ctrl+Alt+2/3/4") && !hints.contains(QString::fromUtf8("1–4")), "its prompt names the filters' keys (" + hints + ")");
     if (w.m_toolPanel) w.m_toolPanel->grab().save(prefix + ".distance.png");
@@ -216,7 +216,7 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
       }
       check(ctrl && f && ctrl->mapTo(reference, QPoint()).x() < f->mapTo(reference, QPoint()).x(), "right to left the card's caps still read Ctrl ... F");
     }
-    reference->setFilter("ctrl+alt+p");
+    reference->setFilter("ctrl+alt+j");
     check(reference->shown() == QStringList({"inspect.pin"}), "searching a key finds Pin (" + reference->shown().join(' ') + ")");
     reference->setFilter(QString());
     reference->open("help.current");
