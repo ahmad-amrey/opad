@@ -12,22 +12,31 @@
 // (Ctrl adds), a drag on empty paper selects with a rectangle, a drag on a view moves it with the views projected from it:
 // a base or pictorial view anywhere, its centre snapping to the other views' centres (guides shown) and to whole
 // millimetres; a projected view only away from or towards its parent (its gap); one edit op on release. Keys: F fits the
-// sheet, Del deletes the selected views, Esc ends a placement or clears the selection. Nothing here measures or projects
-// on the UI thread.
+// sheet, Del deletes the selected views, Esc ends a placement or clears the selection. The pointer snaps to what the
+// sheet draws (snap.hpp: an index per part, built on the worker). Nothing here measures or projects on the UI thread.
+// Annotations (UI-79): a click on an item (its box, worked out on the worker) selects it, a drag moves its text or symbol
+// (one edit), Del deletes it; items that cannot be measured any more are reported (dangling). A tool (SheetInteraction)
+// gets the mouse and keys first; it picks model edges through pickAt (the snap under the pointer traced back to the
+// projection's body and edge) and shows what it would add through setPreview. Each pass ends with what changed since the
+// drawing's latest issue (UI-84: drawing::issue_changes), for the sheet bar.
 #include <QGraphicsView>
 #include <QPointer>
 #include <QTimer>
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/snap.hpp"
+#include "Jobs.hpp"
 
 class AppDocument;
 class Job;
@@ -36,6 +45,29 @@ class QGraphicsItem;
 class SheetPaperItem;
 class SheetViewItem;
 class SheetGuides;
+
+// What a tool on the canvas gets first (SheetAnnotate.hpp); false lets the canvas handle it.
+class SheetInteraction {
+ public:
+  virtual ~SheetInteraction() = default;
+  virtual bool mousePress(QMouseEvent*, const QPointF&) { return false; }
+  virtual bool mouseMove(QMouseEvent*, const QPointF&) { return false; }
+  virtual bool mouseRelease(QMouseEvent*, const QPointF&) { return false; }
+  virtual bool keyPress(QKeyEvent*) { return false; }
+  virtual bool wantsKey(QKeyEvent*) { return false; }  // a key the canvas takes before the window's shortcuts
+  virtual bool active() const { return false; }         // a tool runs: no context menu, no view or item picking
+};
+
+// A pick on a view: the snap under the pointer and the projection curve it lies on, as the core takes it
+// (drawing::pick_reference: node, edge or face, snap, at in sheet paper mm).
+struct SheetPick {
+  std::string view;
+  opad::json pick;
+  opad::drawing::Vec2 at{0, 0};  // sheet paper mm
+  bool circle = false, line = false;
+  opad::drawing::SnapKind kind = opad::drawing::SnapKind::Nearest;
+  opad::drawing::Curve curve;  // the picked curve on the sheet (paper mm), to highlight it
+};
 
 class SheetCanvas : public QGraphicsView {
   Q_OBJECT
@@ -65,11 +97,38 @@ class SheetCanvas : public QGraphicsView {
   void cancelPlacement();
   bool placing() const { return m_place.active; }
 
+  // Annotations (UI-79) and view tools (UI-82): each gets the mouse and keys first, in the order they were added.
+  void addInteraction(SheetInteraction* interaction) { m_interactions.push_back(interaction); }
+  void removeInteraction(SheetInteraction* interaction) { std::erase(m_interactions, interaction); }
+  void setGhost(const QRectF& scene, const QString& label = {});  // a view's frame while a tool places it (empty: none)
+  std::optional<SheetPick> pickAt(const QPointF& scene) const;  // a model edge or face of a view under the pointer
+  std::string viewUnder(const QPointF& scene) const;            // the view whose frame holds the point, else empty
+  // The body under the pointer in a view (UI-82): the one whose hatched section face holds the point, else the body of the
+  // nearest of the view's curves within 8 pixels (also an outline the cut made); with the view it is in. Empty: none.
+  std::pair<std::string, std::string> bodyAt(const QPointF& scene) const;
+  void setPreview(std::shared_ptr<const opad::drawing::Display> preview);  // drawn over the sheet in sheet paper mm
+  const std::shared_ptr<const opad::drawing::Display>& preview() const;
+  void setPrompt(const QString& text) { emit promptChanged(text); }
+  const std::vector<opad::drawing::ViewFrame>& frames() const { return m_frames; }  // as last laid out by the worker
+  const opad::drawing::ViewFrame* frame(const std::string& view) const;
+  // A worker that reads the document; while the sheet's own worker holds it, that one stops for it and resumes afterwards.
+  using ReadWork = std::function<void(const opad::Document&, const opad::Scene&, Progress)>;
+  void read(const QString& title, ReadWork work, std::function<void(bool ok, const QString& error)> done);
+  std::vector<std::string> selectedItems() const { return m_selItems; }
+  void selectItems(const std::vector<std::string>& ids);  // as the browser selected them; emits nothing
+  std::string itemAt(const QPointF& scene) const;         // the smallest annotation whose box holds the point
+  std::optional<QRectF> itemBox(const std::string& id) const;  // scene
+  std::map<std::string, QString> dangling() const;        // items of the shown sheet that cannot be measured: why
+  // The drawing's latest issue and what changed since: {"id", "rev", "date", "views", "values", "gone"}; null when it was never
+  // issued (or the worker has not got that far).
+  const opad::json& sinceIssue() const { return m_sinceIssue; }
+  void benchDragItem(const std::string& id, opad::drawing::Vec2 delta);  // as a drag on the item (one edit)
+
   // State for benches and the status bar.
   struct ViewState {
     std::string id;
     QRectF frame;      // scene
-    QRectF linework;   // scene: what its display draws
+    QRectF linework;   // scene: the view's projected edges (centre marks and annotations may reach past them)
     bool draft = false, final = false, picture = false;  // picture: drawn from a picture of its current linework
     int prims = 0;
     QString error;
@@ -87,14 +146,24 @@ class SheetCanvas : public QGraphicsView {
   // Drags a view by `delta` paper mm through the same path as the mouse (snapping off): one edit, as on release.
   void benchDrag(const std::string& id, opad::drawing::Vec2 delta);
   void placeAt(opad::drawing::Vec2 paper);  // a click at that point while placing (the mouse, benches)
+  // Snaps on what the sheet draws (ends, midpoints, centres, quadrants, crossings, the nearest point of a line), within 8
+  // pixels: the pointer shows the one it would take and the cursor readout gives its point. kinds: SnapKind bits, 0 off.
+  void setSnapKinds(unsigned kinds);
+  unsigned snapKinds() const { return m_snapKinds; }
+  std::optional<opad::drawing::Snap> snapAt(const QPointF& scene) const;  // its point in paper mm
+  const std::optional<opad::drawing::Snap>& hoverSnap() const { return m_hoverSnap; }
+  static QString snapName(opad::drawing::SnapKind kind);
 
  signals:
   void selectionChanged(const std::vector<std::string>& views);
-  void cursorMoved(double x, double y, bool onPaper);  // paper mm
+  void cursorMoved(double x, double y, bool onPaper, const QString& snap);  // paper mm; snap: what the point snapped to
   void promptChanged(const QString& text);             // what a placement asks for; empty when none
   void partsArrived();                                 // a part of the sheet was shown
-  void contextMenuRequested(const std::vector<std::string>& views, const QPoint& globalPos);
-  void deleteRequested(const std::vector<std::string>& views);
+  void contextMenuRequested(const std::vector<std::string>& views, const QPoint& globalPos);  // views or items
+  void deleteRequested(const std::vector<std::string>& views);  // views and items
+  void itemSelectionChanged(const std::vector<std::string>& items);
+  void danglingChanged();
+  void issueChanged();  // sinceIssue() is new
 
  protected:
   bool event(QEvent* e) override;
@@ -113,13 +182,26 @@ class SheetCanvas : public QGraphicsView {
   void scrollContentsBy(int dx, int dy) override;
 
  private:
+  // An annotation as a click finds it (paper mm): its texts' and fills' boxes and its lines, within its bounds.
+  struct ItemHit {
+    std::string id;
+    std::array<double, 4> bounds{0, 0, 0, 0};
+    std::vector<std::array<double, 4>> boxes;
+    std::vector<std::array<opad::drawing::Vec2, 2>> lines;
+  };
   struct Part {
-    enum Kind { Frames, Paper, View } kind = Frames;
+    enum Kind { Frames, Paper, View, Issue } kind = Frames;
     std::vector<opad::drawing::ViewFrame> frames;
     std::string id;
     std::shared_ptr<const opad::drawing::Display> display;
     std::array<double, 4> box{0, 0, 0, 0};     // the frame the view was drawn in (paper)
     std::array<double, 4> bounds{0, 0, 0, 0};  // the display's (measured on the worker)
+    std::array<double, 4> linework{0, 0, 0, 0};  // a view's own edges' (not its centre marks or annotations)
+    std::shared_ptr<const opad::drawing::SnapIndex> snaps;  // its curves' snaps (built on the worker)
+    std::shared_ptr<const opad::drawing::ViewGeometry> geometry;  // a view's projection (its curves come first)
+    std::vector<ItemHit> items;  // annotations drawn in it, to pick them
+    std::vector<std::pair<std::string, std::string>> dangling;         // items it could not measure: why
+    opad::json since;  // Issue: sinceIssue()
     bool draft = false;
   };
   struct Outbox {
@@ -133,12 +215,18 @@ class SheetCanvas : public QGraphicsView {
     std::map<SheetViewItem*, QPointF> origins;  // the items that move and where they were
     QPointF delta;                              // scene, constrained
   };
+  struct ItemDrag {
+    bool active = false, moved = false;
+    std::string id;
+    QPointF start, delta;  // scene
+  };
   struct Placement {
     bool active = false, projected = false, sized = false;
     std::string orient, parent, side;
     std::map<std::string, std::array<double, 2>> sizes;  // side (or "") -> frame size, paper mm
     QRectF ghost;                                       // scene
     opad::json source;                                  // a base view: what the sheet's first base view draws
+    bool marks = false;                                 // centre marks, as the sheet's first base view (or the parent) has them
     std::function<void(bool)> done;
     QPointer<Job> job;
   };
@@ -157,6 +245,9 @@ class SheetCanvas : public QGraphicsView {
   void commitDrag();
   void updatePlacement(const QPointF& scenePos);
   void emitSelection();
+  void hover(const QPointF& scene);  // the snap under the pointer and the cursor readout
+  void commitItemDrag();
+  void updateItemMarks();  // the selected items' boxes on the guides
 
   AppDocument* m_doc;
   JobRunner* m_jobs;
@@ -175,4 +266,21 @@ class SheetCanvas : public QGraphicsView {
   Drag m_drag;
   Placement m_place;
   int m_draftsShown = 0, m_paused = 0, m_rendering = 0;
+  unsigned m_snapKinds = opad::drawing::kAllSnaps;
+  std::optional<opad::drawing::Snap> m_hoverSnap;
+  std::vector<SheetInteraction*> m_interactions;
+  template <class F> bool offer(F f) {  // the first interaction that takes it
+    for (SheetInteraction* i : m_interactions)
+      if (f(i)) return true;
+    return false;
+  }
+  bool toolActive() const {
+    return std::any_of(m_interactions.begin(), m_interactions.end(), [](SheetInteraction* i) { return i->active(); });
+  }
+  std::vector<opad::drawing::ViewFrame> m_frames;
+  std::vector<std::string> m_selItems;
+  ItemDrag m_itemDrag;
+  std::map<std::string, std::vector<ItemHit>> m_items;  // part ("" the paper) -> items
+  std::map<std::string, std::vector<std::pair<std::string, std::string>>> m_dangling;          // part -> dangling items
+  opad::json m_sinceIssue;
 };

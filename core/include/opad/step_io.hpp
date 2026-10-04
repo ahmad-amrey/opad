@@ -45,6 +45,10 @@ struct ImportOptions {
   // The file the user chose, recorded on the import op (source_path, source_repo: UI-07) when it is not the one read (a
   // DWG behind the DXF it was converted to, BREP text read from a file); empty: the file read.
   std::filesystem::path source_file;
+  // DXF read as a drawing template (UI-78): model space attributes (ATTDEF, ATTRIB) and texts that are a placeholder ({title},
+  // <DWG_NO>) are returned here where they stand instead of drawn: {tag, sample, at [x, y] mm, height, halign 0-2, valign
+  // 0 baseline-3 top, angle, w}.
+  std::vector<json>* text_fields = nullptr;
 };
 
 struct ImportResult {
@@ -107,6 +111,7 @@ struct ExportOptions {
   int decimals = 6;                   // 2D coordinates
   int dpi = 300;                      // PNG
   std::string sheet;                  // 2D: a drawing sheet (id or name) as drawn, or "drawing:<name>": its sheets (PDF pages)
+  std::string issue;                  // with sheet: as that revision was issued (its frozen linework; drawing/tables.hpp)
   std::function<bool(double, const std::string&)> progress;  // 2D views: return false to cancel
 };
 

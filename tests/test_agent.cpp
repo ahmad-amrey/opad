@@ -82,15 +82,16 @@ int main(){try {
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
   // TODO 11: the tracks raised these from 105000 / 50000 each on its own. Live: +2.5 KB explode (UI-35) and +0.5 KB component
   // on feature, sketch and batches (UI-33) on t2b, +2 KB related (UI-94: its refs carry the reference schema) on t6, +0.1 KB
-  // KiCad (UI-134) on t4. Headless: +8.4 KB the drawing commands on t5a (project UI-77, sheets UI-76, materials UI-140, bom
-  // UI-83, export views UI-87, templates and document properties UI-78), +2 KB explode and component on t2b, +2.7 KB the KiCad
+  // KiCad (UI-134) on t4. Headless: +14.95 KB the drawing commands on t5a (project UI-77, sheets UI-76, materials UI-140, bom
+  // UI-83, export views UI-87, templates and document properties UI-78; 8.4 KB at the wave-3 merge, +6.55 KB at its final merge:
+  // annotations UI-79..81, section, detail and broken views UI-82, parts lists, balloons and issued revisions UI-84), +2 KB explode and component on t2b, +2.7 KB the KiCad
   // commands, linked assets, the image canvas (UI-70) and sketch_tool's project on t4 (1.2 KB at the wave-3 merge, +1.5 KB at its
   // final merge), +1.5 KB related on t6. Merged, what the tracks added within their own budgets adds up
   // as well: measured at the wave-3 merge, live 112671 bytes (2.6 KB past the raises) and headless 66678 (3.6 KB past). The
   // limits leave about 0.7 KB (live) and 4.4 KB (headless): a merge that grows a list past them raises the limit by what it
   // measured and says so in the commit.
-  CHECK(live<113400);
-  CHECK(headless<72550);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB)
+  CHECK(live<113400);  // the drawing commands are file-level for live agents (core/src/live.cpp)
+  CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

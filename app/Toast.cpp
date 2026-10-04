@@ -132,6 +132,20 @@ void ToastStack::place() {
   }
 }
 
+void ToastStack::setHost(QWidget* host) {
+  if (!host || host == m_host) return;
+  m_host->removeEventFilter(this);
+  m_host = host;
+  host->installEventFilter(this);
+  for (const QPointer<Toast>& t : m_toasts) {
+    if (!t) continue;
+    const bool shown = t->isVisible();
+    t->setParent(host);  // hides it
+    t->setVisible(shown);
+  }
+  place();
+}
+
 bool ToastStack::eventFilter(QObject* o, QEvent* e) {
   if (o == m_host && e->type() == QEvent::Resize) place();
   return QObject::eventFilter(o, e);

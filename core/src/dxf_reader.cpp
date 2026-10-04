@@ -198,6 +198,23 @@ std::string text_codes(std::string_view s, bool tabs = false) {
   return out;
 }
 
+// A template's placeholder text: the name in "{name}", "{{name}}", "<name>" (or an MTEXT's escaped "\{name\}"); else empty.
+std::string placeholder(std::string_view s) {
+  s = trimmed(s);
+  const auto strip = [&](std::string_view open, std::string_view close) {
+    if (s.size() > open.size() + close.size() && s.substr(0, open.size()) == open && s.substr(s.size() - close.size()) == close) {
+      s = trimmed(s.substr(open.size(), s.size() - open.size() - close.size()));
+      return true;
+    }
+    return false;
+  };
+  if (!strip("{{", "}}") && !strip("\\{", "\\}") && !strip("{", "}") && !strip("<", ">")) return "";
+  if (s.empty() || s.size() > 64) return "";
+  for (char c : s)
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.' && c != ':' && c != ' ') return "";
+  return std::string(s);
+}
+
 }  // namespace
 
 // AutoCAD Color Index -> RGB: 1-9 fixed, 10-249 24 hues x 5 shades x full/half saturation, 250-255 greys.
@@ -578,6 +595,7 @@ class Reader {
   TextRequest text_request(std::string_view style, std::string text, double height) const;
   void text_shape(const Out& o, const TextRequest& request, const gp_Ax3& at);
   static std::vector<std::filesystem::path> font_folders(const std::filesystem::path& file);
+  void field(const Fields& f, const std::string& tag, const std::string& sample, bool attribute, bool mtext);  // ImportOptions::text_fields
 
   gp_Pnt pnt(const Place& at, const gp_XYZ& wcs) const { return gp_Pnt(wcs.X() * m_unit - at.sx, wcs.Y() * m_unit - at.sy, 0); }
   void add(const Out& o, const TopoDS_Shape& s) {
@@ -1232,6 +1250,8 @@ void Reader::entity(const Entity& e, Place& at) {
     text(f, o, at, t == "ATTRIB");
   } else if (t == "MTEXT") {
     mtext(f, o, at);
+  } else if (t == "ATTDEF" && m_options.text_fields && at.model && !(f.integer(70) & 1)) {  // a template's field
+    field(f, decode(trimmed(f.str(2))), text_codes(decode(f.str(1))), true, false);
   } else if (t == "ATTDEF" || t == "VIEWPORT" || t == "WIPEOUT" || t == "LIGHT" || t == "SUN" || t == "SEQEND") {
     // attribute templates, layout windows, masks and lights draw nothing in model space
   } else {
@@ -1575,6 +1595,10 @@ void Reader::text(const Fields& f, Out& o, const Place& at, bool attrib) {
   if (attrib && (f.integer(70) & 1)) return;  // invisible attribute
   const std::string raw = decode(f.str(1));
   std::string s = text_codes(raw);
+  if (m_options.text_fields && at.model) {  // a template: its attributes and placeholders are fields, not drawn
+    if (attrib) return field(f, decode(trimmed(f.str(2))), s, true, false);
+    if (const std::string name = placeholder(s); !name.empty()) return field(f, name, "", false, false);
+  }
   if (blank(s)) return;
   const Ocs ocs(f.xyz(210, gp_XYZ(0, 0, 1)));
   TextRequest r = text_request(f.str(7, "STANDARD"), std::move(s), f.num(40));
@@ -1622,6 +1646,8 @@ void Reader::mtext(const Fields& f, Out& o, const Place& at) {
   for (size_t j = f.begin; j < f.end; ++j)
     if ((*f.pairs)[j].code == 3) raw += decode((*f.pairs)[j].value);
   raw += decode(f.str(1));
+  if (m_options.text_fields && at.model)
+    if (const std::string name = placeholder(raw); !name.empty()) return field(f, name, "", false, true);
   TextRequest r = text_request(f.str(7, "STANDARD"), "", f.num(40));
   r.spans = mtext_spans(raw, r, m_unit, r.paragraphs);
   std::string all;
@@ -1648,6 +1674,45 @@ void Reader::mtext(const Fields& f, Out& o, const Place& at) {
   r.v = row == 0 ? TextRequest::Top : row == 1 ? TextRequest::Middle : TextRequest::Bottom;
   const gp_XYZ normal(0, 0, ocs.az.Z() < 0 && ocs.planar() ? -1 : 1);
   text_shape(o, r, gp_Ax3(pnt(at, f.xyz(10)), gp_Dir(normal), gp_Dir(x)));
+}
+
+// Where a template field's text goes, as the text would have been drawn there: its anchor in the file's millimetres, its
+// height, alignment, direction and (fitted text, MTEXT) width.
+void Reader::field(const Fields& f, const std::string& tag, const std::string& sample, bool attribute, bool mtext) {
+  if (tag.empty()) return;
+  const Ocs ocs(f.xyz(210, gp_XYZ(0, 0, 1)));
+  double height = 0, w = 0, rotation = f.num(50) * kPi / 180;
+  int ha = 0, va = 0;
+  gp_XYZ anchor = f.xyz(10);
+  if (mtext) {
+    height = f.num(40, 2.5);
+    w = f.num(41);
+    const int attachment = std::clamp(f.integer(71, 1), 1, 9);
+    ha = (attachment - 1) % 3;
+    va = 3 - (attachment - 1) / 3;  // top, middle, bottom rows
+    if (f.has(11)) rotation = std::atan2(f.num(21), f.num(11));
+  } else {
+    const auto style = m_styles.find(upper(trimmed(f.str(7, "STANDARD"))));
+    height = f.num(40);
+    if (!(height > 0)) height = style != m_styles.end() && style->second.height > 0 ? style->second.height : 2.5;
+    ha = f.integer(72), va = f.integer(attribute ? 74 : 73);
+    const gp_XYZ p1 = f.xyz(10), p2 = f.has(11) ? f.xyz(11) : p1;
+    if (ha || va) anchor = p2;
+    if (ha == 3 || ha == 5) {  // aligned / fit: from p1 along p1 -> p2
+      anchor = p1;
+      w = (p2 - p1).Modulus();
+      if (w > 1e-12) rotation = std::atan2(p2.Y() - p1.Y(), p2.X() - p1.X());
+      ha = 0, va = 0;
+    } else if (ha == 4) {
+      ha = 1, va = 2;
+    }
+  }
+  const gp_XYZ p = ocs.to_wcs(anchor) * m_unit;
+  json j = {{"tag", tag}, {"at", {p.X(), p.Y()}}, {"height", height * m_unit}, {"halign", std::clamp(ha, 0, 2)}, {"valign", std::clamp(va, 0, 3)}};
+  if (!sample.empty()) j["sample"] = sample;
+  if (std::fabs(rotation) > 1e-9) j["angle"] = rotation;
+  if (w > 0) j["w"] = w * m_unit;
+  m_options.text_fields->push_back(std::move(j));
 }
 
 Drawing Reader::read() {

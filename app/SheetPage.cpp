@@ -2,7 +2,9 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
+#include <QSettings>
 #include <QStackedWidget>
 #include <QTabBar>
 #include <QToolButton>
@@ -12,9 +14,13 @@
 #include <set>
 
 #include "AppDocument.hpp"
+#include "I18n.hpp"
 #include "Icons.hpp"
+#include "SheetAnnotate.hpp"
 #include "SheetCanvas.hpp"
+#include "SheetViewTool.hpp"
 #include "Theme.hpp"
+#include "opad/drawing/tables.hpp"
 
 SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidget(parent), m_doc(doc) {
   setObjectName("sheetPage");
@@ -56,6 +62,9 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
   m_stack->addWidget(m_canvas);
   m_stack->addWidget(start);
   v->addWidget(m_stack, 1);
+  m_annotator = new SheetAnnotator(doc, m_canvas, this);
+  m_viewTool = new SheetViewTool(doc, m_canvas, this);
+  v->addWidget(m_annotator->bar());
   // The bar: sheets, +, prompt, cursor, sheet info.
   auto* bar = new QWidget(this);
   bar->setObjectName("sheetBar");
@@ -83,6 +92,62 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
   h->addWidget(m_add);
   h->addSpacing(12);
   h->addWidget(m_prompt, 1);
+  // Snaps: on or off, and which kinds (remembered).
+  m_snap = new QToolButton(bar);
+  m_snap->setObjectName("sheetSnap");
+  m_snap->setText(tr("Snap"));
+  m_snap->setCheckable(true);
+  m_snap->setAutoRaise(true);
+  m_snap->setPopupMode(QToolButton::MenuButtonPopup);
+  m_snap->setToolTip(tr("Snap the pointer to ends, midpoints, centres, quadrants, crossings and lines of the drawing"));
+  auto* kinds = new QMenu(m_snap);
+  QSettings settings;
+  const unsigned chosen = settings.value("drawings/snaps", opad::drawing::kAllSnaps).toUInt() & opad::drawing::kAllSnaps;
+  for (int k = 0; k <= static_cast<int>(opad::drawing::SnapKind::Nearest); ++k) {
+    const auto kind = static_cast<opad::drawing::SnapKind>(k);
+    QAction* a = kinds->addAction(SheetCanvas::snapName(kind));
+    a->setCheckable(true);
+    a->setChecked(chosen & opad::drawing::snap_bit(kind));
+    a->setData(opad::drawing::snap_bit(kind));
+  }
+  m_snap->setMenu(kinds);
+  m_snap->setChecked(settings.value("drawings/snap", true).toBool());
+  const auto applySnaps = [this, kinds] {
+    unsigned bits = 0;
+    for (QAction* a : kinds->actions())
+      if (a->isChecked()) bits |= a->data().toUInt();
+    QSettings s;
+    s.setValue("drawings/snaps", bits);
+    s.setValue("drawings/snap", m_snap->isChecked());
+    m_canvas->setSnapKinds(m_snap->isChecked() ? bits : 0);
+  };
+  connect(m_snap, &QToolButton::toggled, this, applySnaps);
+  connect(kinds, &QMenu::triggered, this, applySnaps);
+  m_canvas->setSnapKinds(m_snap->isChecked() ? chosen : 0);
+  h->addWidget(m_snap);
+  // Annotations whose references are gone: their count, a menu to re-attach each.
+  m_dangling = new QToolButton(bar);
+  m_dangling->setObjectName("sheetDangling");
+  m_dangling->setAutoRaise(true);
+  m_dangling->setIcon(icons::themed("warning"));
+  m_dangling->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  m_dangling->setPopupMode(QToolButton::InstantPopup);
+  m_dangling->setMenu(new QMenu(m_dangling));
+  m_dangling->setToolTip(tr("Annotations that cannot find what they measure any more: shown in magenta with the value they were made with"));
+  m_dangling->hide();
+  connect(m_canvas, &SheetCanvas::danglingChanged, this, &SheetPage::updateDangling);
+  h->addWidget(m_dangling);
+  // The drawing's revision, and whether it changed since it was issued.
+  m_issue = new QToolButton(bar);
+  m_issue->setObjectName("sheetIssue");
+  m_issue->setAutoRaise(true);
+  m_issue->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  m_issue->setPopupMode(QToolButton::MenuButtonPopup);
+  m_issue->setMenu(new QMenu(m_issue));
+  m_issue->hide();
+  connect(m_issue, &QToolButton::clicked, this, &SheetPage::issueRequested);
+  connect(m_canvas, &SheetCanvas::issueChanged, this, &SheetPage::updateIssue);
+  h->addWidget(m_issue);
   h->addWidget(m_cursor);
   h->addWidget(m_info);
   bar->setFixedHeight(30);
@@ -101,8 +166,8 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
     showSheet(m_tabs->tabData(i).toString().toStdString());
   });
   connect(m_canvas, &SheetCanvas::promptChanged, m_prompt, &QLabel::setText);
-  connect(m_canvas, &SheetCanvas::cursorMoved, this, [this](double x, double y, bool on) {
-    m_cursor->setText(on ? QString("x %1  y %2 mm").arg(x, 0, 'f', 1).arg(y, 0, 'f', 1) : QString());
+  connect(m_canvas, &SheetCanvas::cursorMoved, this, [this](double x, double y, bool on, const QString& snap) {
+    m_cursor->setText(on ? QString("x %1  y %2 mm").arg(x, 0, 'f', 2).arg(y, 0, 'f', 2) + (snap.isEmpty() ? QString() : " · " + snap) : QString());
   });
   documentChanged();
 }
@@ -112,6 +177,7 @@ bool SheetPage::empty() const { return m_stack->currentIndex() == 1; }
 
 void SheetPage::showSheet(const std::string& id) {
   if (!m_doc->scene.sheet(id)) return;
+  if (id != m_canvas->sheet()) m_annotator->cancel(), m_viewTool->cancel();  // their picks were on the other sheet
   m_canvas->setSheet(id);
   rebuildTabs();
   updateInfo();
@@ -122,6 +188,8 @@ void SheetPage::documentChanged() {
   const auto& sheets = m_doc->scene.sheets;
   const bool none = !m_doc->hasDocument || sheets.empty();
   m_stack->setCurrentIndex(none ? 1 : 0);
+  if (none || !m_doc->scene.sheet(m_canvas->sheet())) m_annotator->cancel(), m_viewTool->cancel();
+  if (!m_viewTool->view().empty() && !m_doc->scene.sheet_view(m_viewTool->view())) m_viewTool->cancel();  // its view was deleted (Ctrl+Z)
   if (none) {
     m_canvas->setSheet("");
   } else if (!m_doc->scene.sheet(m_canvas->sheet())) {
@@ -152,6 +220,51 @@ void SheetPage::rebuildTabs() {
   }
   m_add->setVisible(!ordered.empty());
   m_filling = false;
+}
+
+void SheetPage::updateDangling() {
+  const auto dangling = m_canvas->dangling();
+  m_dangling->setVisible(!dangling.empty());
+  m_dangling->setText(tr("%n dangling", nullptr, static_cast<int>(dangling.size())));
+  QMenu* menu = m_dangling->menu();
+  menu->clear();
+  for (const auto& [id, why] : dangling) {
+    const opad::SheetItem* t = m_doc->scene.sheet_item(id);
+    if (!t) continue;
+    const opad::json shown = t->def.value("result", opad::json::object()).value("shown", opad::json());
+    const QString name = shown.is_string() ? QString::fromStdString(shown.get<std::string>()).section('\n', 0, 0) : QString::fromStdString(t->kind);
+    QAction* a = menu->addAction(tr("Re-attach %1").arg(name), this, [this, id = id] { emit reattachRequested(id); });
+    a->setToolTip(i18n::t(why));  // the core's reason, in the UI's language when it has one
+  }
+}
+
+void SheetPage::updateIssue() {
+  const opad::json& since = m_canvas->sinceIssue();
+  m_issue->setVisible(since.is_object());
+  if (!since.is_object()) return;
+  const QString rev = QString::fromStdString(since.value("rev", "")), date = QString::fromStdString(since.value("date", ""));
+  const int views = static_cast<int>(since.value("views", opad::json::array()).size()), values = static_cast<int>(since.value("values", opad::json::array()).size()),
+            gone = static_cast<int>(since.value("gone", opad::json::array()).size());
+  const bool changed = views || values || gone;
+  m_issue->setIcon(icons::themed(changed ? "warning" : "issueRevision"));
+  m_issue->setText(changed ? tr("Changed since rev %1").arg(rev) : tr("Rev %1").arg(rev));
+  QStringList tip{changed ? tr("Revision %1 was issued on %2; since then:").arg(rev, date) : tr("Revision %1, issued on %2, is what the sheet shows.").arg(rev, date)};
+  if (views) tip << tr("%n views draw differently", nullptr, views);
+  if (values) tip << tr("%n annotations show other values", nullptr, values);
+  if (gone) tip << tr("%n views or annotations are gone", nullptr, gone);
+  tip << tr("Click to issue the next revision.");
+  m_issue->setToolTip(tip.join('\n'));
+  QMenu* menu = m_issue->menu();  // every revision, to export as it was issued
+  menu->clear();
+  menu->addAction(icons::themed("issueRevision", 16), tr("Issue the next revision…"), this, &SheetPage::issueRequested);
+  menu->addSeparator();
+  if (const opad::Sheet* s = m_doc->scene.sheet(m_canvas->sheet()))
+    for (const opad::SheetItem* t : opad::drawing::drawing_issues(m_doc->scene, *s)) {
+      const std::string r = t->def.value("rev", "");
+      QAction* a = menu->addAction(tr("Export revision %1 as issued…").arg(QString::fromStdString(r)), this, [this, r] { emit exportIssueRequested(r); });
+      a->setObjectName(QString::fromStdString("sheet.exportIssue." + r));
+      a->setToolTip(tr("Its views as they were frozen when it was issued, with the values it was issued with"));
+    }
 }
 
 void SheetPage::updateInfo() {

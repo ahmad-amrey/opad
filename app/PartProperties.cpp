@@ -72,7 +72,8 @@ Section section(const opad::json& props) {
   add(tr("Notes"), text("notes"));
   if (text("bom") == "exclude") add(tr("Bill of materials"), tr("Left out"));
   if (text("bom") == "purchased") add(tr("Bill of materials"), tr("Purchased, as one part"));
-  static const std::set<std::string> own = {"part_number", "description", "material", "density", "mass", "vendor", "notes", "bom"};
+  if (part.value("section", opad::json()) == false) add(tr("Section views"), tr("Never cut"));
+  static const std::set<std::string> own = {"part_number", "description", "material", "density", "mass", "vendor", "notes", "bom", "section"};
   for (auto it = part.begin(); it != part.end(); ++it)  // custom fields (CLI, agents), as named
     if (!own.count(it.key())) add(QString::fromStdString(it.key()), it->is_string() ? QString::fromStdString(it->get<std::string>()) : QString::fromStdString(it->dump()));
   return s;
@@ -117,6 +118,17 @@ PartPropertiesDialog::PartPropertiesDialog(AppDocument* doc, std::vector<std::st
   header(tr("PART"));
   form->addRow(tr("Part number"), m_number = line("part_number"));
   form->addRow(tr("Description"), m_description = line("description"));
+  m_section = new QCheckBox(tr("Never cut in section views (shafts, pins, keys, fasteners)"), this);
+  m_section->setObjectName("part.section");
+  m_section->setToolTip(tr("ISO 128-50: drawn whole wherever a section or a broken-out section passes through it; a view can still cut it"));
+  if (mixed.count("section")) {
+    m_section->setTristate(true);
+    m_section->setCheckState(Qt::PartiallyChecked);
+  } else {
+    m_section->setChecked(values.value("section", opad::json()) == false);
+  }
+  connect(m_section, &QCheckBox::stateChanged, this, &PartPropertiesDialog::refresh);
+  form->addRow(QString(), m_section);
 
   header(tr("MATERIAL"));
   m_material = new QComboBox(this);
@@ -202,6 +214,10 @@ opad::json PartPropertiesDialog::fields() const {
     f["material"] = i > 0 ? m_material->itemData(i).toString().toStdString() : shown.toStdString();  // a library material by id
   }
   if (const QString b = m_bom->currentData().toString(); !b.isEmpty()) f["bom"] = b == "include" ? opad::json() : opad::json(b.toStdString());
+  if (m_section->checkState() != Qt::PartiallyChecked) {  // ticked: false; unticked: whatever it had unless that was false
+    const opad::json was = values.value("section", opad::json());
+    f["section"] = m_section->isChecked() ? opad::json(false) : was == false ? opad::json() : was;
+  }
   return f;
 }
 

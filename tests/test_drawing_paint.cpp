@@ -17,6 +17,7 @@
 #include "drawing_sample.hpp"
 #include "opad/commands.hpp"
 #include "opad/drawing/paint.hpp"
+#include "opad/drawing/symbols.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/step_io.hpp"
@@ -137,6 +138,34 @@ TEST(text_is_as_tall_as_its_cap_height_and_aligned_as_the_writers_align_it) {
   CHECK(ink[2] < 0.5 && ink[2] > -1.5);
   CHECK(ink[0] < -10);
   CHECK(ink[3] > 0 && ink[1] < -6);  // joined letters on a baseline 5 below the anchor, the last one reaching under it
+}
+
+// UI-139: sheets are lettered in the OFL fonts compiled into the programs, the same in every package: Liberation Sans with
+// Arial's widths (the core lays text out with them), Noto Sans Arabic for Arabic; a PDF embeds both.
+TEST(drawings_are_lettered_in_the_fonts_compiled_in) {
+  const auto inked = [](const std::string& s) {  // the width of a text's ink: its advances less the outer side bearings
+    Display one;
+    one.layer({"Text", kInk, LineType::Continuous, 0.25});
+    one.text(0, s, {10, 10}, 10);
+    one.paper = {0, 0, 150, 30};  // the same window for both, wide enough
+    const auto ink = Picture(one, 400).ink();
+    return ink[2] - 10;
+  };
+  const double four = inked("HHHHHHHH") - inked("HHHH");  // the bearings cancel: four advances of H
+  CHECK(std::fabs(four - (text_width("HHHHHHHH", 10) - text_width("HHHH", 10))) < 0.01 * four);  // Arial's
+  const QStringList families = drawing_font_families();
+  CHECK(families.size() >= 3 && families[0] == "Liberation Sans" && families.contains("Noto Sans Arabic") && families.back() == "Arial");
+  Display d;
+  d.layer({"Text", kInk, LineType::Continuous, 0.25});
+  d.text(0, "HHHHHHHH", {10, 10}, 10);
+  Files f;
+  d.text(0, "\u0645\u0627\u062F\u0629", {10, 40}, 5);  // Arabic: material
+  write_drawing(d, f.dir / "fonts.pdf", "pdf");
+  const std::string pdf = read_text_file(f.dir / "fonts.pdf");
+  CHECK(pdf.find("LiberationSans") != std::string::npos && pdf.find("NotoSansArabic") != std::string::npos);
+  size_t embedded = 0;
+  for (size_t at = pdf.find("/FontFile2"); at != std::string::npos; at = pdf.find("/FontFile2", at + 1)) ++embedded;
+  CHECK(embedded >= 2);
 }
 
 TEST(images_are_painted_on_their_corners) {

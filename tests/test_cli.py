@@ -3,6 +3,7 @@
 
 usage: test_cli.py <path-to-opad-cli> <fixtures-dir>
 """
+import hashlib
 import json
 import os
 import re
@@ -152,11 +153,40 @@ def basic_workflow():
     sheet_doc = os.path.join(tmp, "sheet.opad")
     shutil.copy(DOC, sheet_doc)
     s = run("sheet", sheet_doc, "--size", "A3", "--name", "Assembly")
-    run("sheet_view", sheet_doc, "--sheet", s["id"], "--orient", "iso", "--scale", "auto")
+    iso = run("sheet_view", sheet_doc, "--sheet", s["id"], "--orient", "iso", "--scale", "auto")
     pdf = os.path.join(tmp, "sheet.pdf")
     v = run("export", sheet_doc, "--sheet", "Assembly", "--format", "pdf", "--out", pdf)
     assert v["paper"] == "A3" and v["page"] == [420, 297] and v["sheet"]["views"] == 1 and v["layers"]["Visible"] > 0, v
-    assert open(pdf, "rb").read(5) == b"%PDF-"
+    data = open(pdf, "rb").read()
+    assert data.startswith(b"%PDF-") and b"/Type /Font" in data  # its title block's text, in an embedded font
+    # lettered in the OFL font compiled into the program (UI-139), also with no system fonts to take from
+    nofonts = os.path.join(tmp, "nofonts")
+    os.makedirs(nofonts, exist_ok=True)
+    lone = os.path.join(tmp, "lone.pdf")
+    p = subprocess.run([CLI, "export", sheet_doc, "--sheet", "Assembly", "--format", "pdf", "--out", lone], capture_output=True, text=True,
+                       env=dict(os.environ, QT_QPA_FONTDIR=nofonts))
+    assert p.returncode == 0, p.stderr
+    data = open(lone, "rb").read()
+    assert b"/BaseFont /LiberationSans" in data and b"/FontFile2" in data, "the drawing font is not the compiled-in Liberation Sans"
+    # a parts list, auto-balloons and an issued revision whose PDF is written and hashed (UI-84)
+    run("sheet_item", sheet_doc, "--sheet", s["id"], "--kind", "parts_list")
+    balloons = run("sheet_balloons", sheet_doc, "--sheet", s["id"], "--view", iso["id"])
+    assert balloons["ids"] and not balloons["created"], balloons
+    issued_pdf = os.path.join(tmp, "issued.pdf")
+    issue = run("sheet_issue", sheet_doc, "--sheet", s["id"], "--description", "First release", "--out", issued_pdf)
+    assert issue["rev"] == "A" and issue["frozen"] == 1 and issue["pdf"] == "issued.pdf", issue
+    assert issue["pdf_sha256"] == hashlib.sha256(open(issued_pdf, "rb").read()).hexdigest()
+    info = run("sheet_info", sheet_doc, "--sheet", s["id"])
+    assert info["issues"][0]["rev"] == "A" and not info["issues"][0]["changed"]["views"], info["issues"]
+    # exported as issued after a note was added and a balloon deleted: the sheet as it stood then, pixel for pixel
+    at_issue, as_issued = os.path.join(tmp, "at-issue.png"), os.path.join(tmp, "as-issued.png")
+    run("export", sheet_doc, "--sheet", s["id"], "--format", "png", "--dpi", "60", "--out", at_issue)
+    run("sheet_item", sheet_doc, "--sheet", s["id"], "--kind", "note", "--text", "LATER", "--at", "[40,40]")
+    run("delete", sheet_doc, "--target", balloons["ids"][0])
+    v = run("export", sheet_doc, "--sheet", s["id"], "--format", "png", "--dpi", "60", "--issue", "A", "--out", as_issued)
+    assert v["issue"] == "A" and open(as_issued, "rb").read() == open(at_issue, "rb").read(), v
+    run("export", sheet_doc, "--sheet", s["id"], "--format", "png", "--dpi", "60", "--out", as_issued)
+    assert open(as_issued, "rb").read() != open(at_issue, "rb").read()
     # delete (tombstone) the annotation: it disappears from the resolved list but stays in the log
     run("delete", DOC, "--target", a["id"])
     assert len(run("annotations", DOC)["annotations"]) == 0

@@ -308,6 +308,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 
 ## Drawings
 
+Drawings are file-level: the commands below are in the CLI, Python and the headless MCP server, not in the live tool
+list (a live agent saves, and the drawing is made on the file).
+
 - `sheet` adds a drawing sheet: paper `size` (A4 to A0, ANSI-A to ANSI-E; or `width` and `height` in mm),
   `orientation`, `standard` iso|asme, `projection` first|third angle (default by standard), the views' `scale`
   ("1:2") and title block `values`. Paper coordinates are mm from the sheet's bottom-left corner, y up.
@@ -317,11 +320,54 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   the front view shows the left side and the one below it the top; third angle the other way round. Projected views
   stay aligned with their parent and take its scale. The result's `frame` is the view on the paper: `box`, `at`,
   `scale`, and its `x`, `y` and `dir` in world coordinates.
+- Views of a `parent` view (`kind`): `section` takes `cut`, the cutting line as points in the parent's view
+  coordinates (model mm, the parent frame's `x`/`y`: `frame.centre` is the view's middle); two points a full section,
+  more an offset or half section, or an aligned one (`aligned`, set by itself when a segment is inclined to the first:
+  each segment revolved onto the first one's line). It is placed on the line's left (`flip: true`: its right) and seen
+  from the other side in first angle; cut faces are hatched (ISO 128-50, automatic; `hatch` {pattern general|material|steel|copper|
+  aluminium|plastic|insulation|glass, angle, spacing, thin fill|hatch, bodies {node: {...}}} to choose); `whole` lists
+  nodes left uncut. The part property `section: false` (part_properties) leaves a body, or everything under a component,
+  uncut in every section and broken-out section (shafts, pins, keys, fasteners); a view's `sectioned` lists nodes it
+  cuts anyway. `detail` takes `center` and `radius` (view coordinates) and its own `scale`; `auxiliary` an
+  `angle` (degrees on the sheet from the parent: it looks along that line, e.g. square to a slanted edge). Letters come
+  automatically (A, B, ...; `letter` to choose). Any view takes `crop` [x0, y0, x1, y1] and `breaks` [{axis x|y, from,
+  to, gap}] in its view coordinates (sheet_edit adds them later; `style` {break: freehand} draws their break lines as
+  waves instead of zigzags). A base, projected or auxiliary view takes `breakouts` [{outline [[u, v], ...], depth}]
+  through sheet_edit: broken-out (local) sections, where within the smooth closed curve through the outline's points
+  whatever lies nearer the viewer than `depth` (along the frame's `dir`, model mm: `p . dir`) is taken away, the floor
+  hatched and the cut's edge drawn as a thin break line.
 - `sheet_item` adds a dimension measured in its `view` (`type` horizontal, vertical, aligned, radius, diameter or
   angle; `refs` two vertices or edges, one edge for its length, or one circle or cylinder; `aspects` start, end, mid
   or center per reference) or a note (`text`, `at`). A circle seen at a slant, or an angle between edges not parallel
-  to the view, is refused: dimension it in a view along its axis. A dimension keeps the value it was made with
-  (`result`); `sheet_info` gives the value now (`current`, `changed`), so model edits show as changed dimensions.
+  to the view, is refused: dimension it in a view along its axis. On a section's outline the cut's edges are no
+  edges of the model: reference the faces they lie on (`project` gives them as the curves' `face`): a flat face seen
+  edge on measures as its line, a cylinder seen from the side as its diameter. A dimension keeps the value it was made
+  with (`result`); `sheet_info` gives the value now (`current`, `changed`), so model edits show as changed dimensions.
+- More `sheet_item` kinds, each measured in its `view` from `refs` and kept with its `result`: `centermark` (a circle
+  or its cylinder) and `centerline` (a cylinder from the side, two circles or two parallel lines; `extend` mm);
+  `hole_callout` (a hole's wall or circle: diameter, depth or THRU, counterbore, countersink, drill point,
+  "4×" for equal holes; `holes` lists a body's holes as recognised); `hole_table` (`at`: the view's holes tagged A1,
+  A2, ... with their positions from the view's origin); `datum` (`letter` A-Z on an edge or face), `fcf` (feature
+  control frame: `characteristic` position, flatness, perpendicularity, ..., `value`, `zone` diameter, `material` M|L|S,
+  `datums` up to three letters such as "B(M)"; `place` alone for a frame without a leader) and `surface` (texture:
+  `value` such as "Ra 1.6", `process` any|removal|no_removal); `dimension_set` (`type` ordinate|baseline|chain, `refs`
+  the origin first then the features, `axis` horizontal|vertical). Dimensions take `precision` and `tolerance` {type
+  sym|dev|limits|fit, plus, minus, fit: "H7"}. `sheet_datum_dimensions` dimensions a view's features (default its
+  holes) from its datum symbols in one step (`type`, `datums`, `refs`).
+- Parts lists and balloons: `sheet_item` `parts_list` (`bom` {mode top|parts, root}, `columns` item, qty, name,
+  part_number, description, material, mass, vendor; `at`, `width`) numbers its rows 1, 2, ... and keeps them settled
+  in `numbers`, so a row keeps its number while parts come and go (`sheet_edit` `renumber: true` numbers them again);
+  `balloon` (`refs` one face, edge or vertex of a part, `list`, `qty`) shows its part's row number; `sheet_balloons`
+  balloons the parts a view shows that have none yet in one step (`view`; `all` every row again; `qty`), placed around
+  the view without crossing leaders,
+  creating the parts list when the drawing has none. `revision_table` lists the drawing's issues.
+- `sheet_issue` issues the next revision of a sheet's drawing (`rev`, default the next letter, I O Q S X Z skipped;
+  `description`, `approved`, `date`): the record keeps every item's value and the views' fingerprints and frames,
+  `freeze` (default true) stores the views' linework as body entries, so the revision draws as issued even after the
+  model changes (`export` with `issue` writes it as issued); `out` writes its PDF as it then shows (the revision in
+  the title block and revision table) and records the file's SHA-256. `tag` only records a tag name: the app's Issue
+  revision… commits and tags in git, the command does not. `sheet_info` lists each issue with what changed since.
+- In the app, Print… (Ctrl+Alt+P) prints the drawing's sheets at actual size or fitted, in black ink or colour.
 - `sheet_edit` changes a sheet, view or item (`set`; null removes a field); moving a base view moves the views
   projected from it. `delete` removes one; a deleted sheet takes its views and items with it.
 - `part_properties` sets part properties on bodies or components (`part_number`, `description`, `material`, `density`

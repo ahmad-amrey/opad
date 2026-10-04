@@ -26,9 +26,9 @@
 namespace opad::drawing {
 namespace {
 
-// Properties with a column of their own; any other is a custom column.
+// Properties with a column of their own, or none (section: how drawings cut it); any other is a custom column.
 bool own_field(const std::string& k) {
-  static const std::set<std::string> f = {"part_number", "description", "material", "density", "mass", "vendor", "notes", "bom"};
+  static const std::set<std::string> f = {"part_number", "description", "material", "density", "mass", "vendor", "notes", "bom", "section"};
   return f.count(k) > 0;
 }
 

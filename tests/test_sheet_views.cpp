@@ -1,0 +1,602 @@
+// Section, detail, auxiliary, cropped and broken views (TODO 11 UI-82): the records, the cut and its hatched faces, the
+// clipped and closed-up linework, alignment of auxiliary and section views, inherited breaks, dimensions across a break,
+// the marks a parent view draws for its section and detail views, labels, frozen linework with its section faces.
+#include <TopoDS_Shape.hxx>
+
+#include <algorithm>
+#include <cmath>
+#include <set>
+
+#include "check.hpp"
+#include "opad/commands.hpp"
+#include "opad/drawing/annotate.hpp"
+#include "opad/drawing/sheet.hpp"
+#include "opad/drawing/tables.hpp"
+#include "opad/geometry.hpp"
+#include "opad/inspect.hpp"
+
+using namespace opad;
+using namespace opad::drawing;
+
+namespace {
+
+json run(Document& doc, const std::string& command, const json& args) { return commands::run(command, args, &doc); }
+
+// A 60 x 40 x 10 plate centred on the origin (z 0..10) with a 10 mm hole through its middle, an A3 sheet, its front view.
+struct Plate {
+  Document doc = Document::create();
+  std::string body, sheet, front;
+  Plate() {
+    const json made = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "60 mm"}, {"width", "40 mm"}, {"height", "10 mm"}}}});
+    body = made["body_ids"][0];
+    run(doc, "feature", {{"kind", "cylinder"}, {"inputs", {{"plane", {{"base", "xy"}}}, {"x", 0}, {"y", 0}, {"diameter", 10}, {"height", 10}, {"operation", "cut"}, {"targets", {body}}}}});
+    sheet = run(doc, "sheet", {{"size", "A3"}})["id"];
+    front = run(doc, "sheet_view", {{"sheet", sheet}, {"orient", "front"}, {"at", {200, 180}}})["id"];
+  }
+};
+
+const ViewFrame& frame(const std::vector<ViewFrame>& frames, const std::string& id) {
+  for (const auto& f : frames)
+    if (f.id == id) return f;
+  throw Error("no frame");
+}
+
+double area(const std::vector<Vec2>& l) {
+  double a = 0;
+  for (size_t i = 0; i < l.size(); ++i) a += l[i][0] * l[(i + 1) % l.size()][1] - l[(i + 1) % l.size()][0] * l[i][1];
+  return std::fabs(a / 2);
+}
+
+int on_layer(const Display& d, const std::string& layer, const std::string& source = {}) {
+  int n = 0;
+  for (const auto& p : d.prims)
+    if (d.layers[static_cast<size_t>(p.layer)].name == layer && (source.empty() || p.source == source)) ++n;
+  return n;
+}
+
+std::set<std::string> texts(const Display& d, const std::string& source = {}) {
+  std::set<std::string> out;
+  for (const auto& p : d.prims)
+    if (p.kind == Prim::Kind::Text && (source.empty() || p.source == source)) out.insert(p.text);
+  return out;
+}
+
+}  // namespace
+
+TEST(views_records_checked) {
+  const std::string s = new_uuid(), p = new_uuid();
+  const auto view = [&](json extra) {
+    json op = {{"op", "sheet_view"}, {"sheet", s}, {"kind", "section"}, {"parent", p}};
+    op.update(extra);
+    return op;
+  };
+  Document::validate_op(view({{"cut", {{0, 0}, {0, 10}}}}));
+  CHECK_THROWS(Document::validate_op(view({{"cut", {{0, 0}}}})));
+  CHECK_THROWS(Document::validate_op(view({{"cut", {0, 1}}})));
+  CHECK_THROWS(Document::validate_op(view({{"radius", -2}})));
+  CHECK_THROWS(Document::validate_op(view({{"flip", "yes"}})));
+  CHECK_THROWS(Document::validate_op(view({{"crop", {0, 0, -1, 5}}})));
+  CHECK_THROWS(Document::validate_op(view({{"breaks", {{{"axis", "z"}, {"from", 0}, {"to", 1}}}}})));
+  CHECK_THROWS(Document::validate_op(view({{"breaks", {{{"axis", "x"}, {"from", 3}, {"to", 1}}}}})));
+  Document::validate_op(view({{"breaks", {{{"axis", "y"}, {"from", 1}, {"to", 3}, {"gap", 5}}}}}));
+  Plate pl;
+  CHECK_THROWS(run(pl.doc, "sheet_view", {{"sheet", pl.sheet}, {"kind", "section"}, {"parent", pl.front}, {"cut", {{0, 0}, {0, 0}}}}));
+  CHECK_THROWS(run(pl.doc, "sheet_view", {{"sheet", pl.sheet}, {"kind", "detail"}, {"parent", pl.front}, {"center", {0, 0}}}));
+  CHECK_THROWS(run(pl.doc, "sheet_view", {{"sheet", pl.sheet}, {"kind", "auxiliary"}, {"parent", pl.front}}));
+  CHECK_THROWS(run(pl.doc, "sheet_edit", {{"target", pl.front}, {"set", {{"breaks", {{{"axis", "x"}, {"from", 0}, {"to", 5}}, {{"axis", "x"}, {"from", 4}, {"to", 8}}}}}}}));
+  // Letters: A, B, ... skipping I, O and Q, over the drawing's views.
+  const Scene scene = resolve(pl.doc);
+  CHECK_EQ(next_view_letter(scene, *scene.sheet(pl.sheet)), "A");
+  for (int i = 0; i < 8; ++i) run(pl.doc, "sheet_view", {{"sheet", pl.sheet}, {"kind", "detail"}, {"parent", pl.front}, {"center", {0, 0}}, {"radius", 2}});
+  const Scene more = resolve(pl.doc);
+  CHECK_EQ(next_view_letter(more, *more.sheet(pl.sheet)), "J");
+}
+
+// A full section through the hole: the half towards the viewer taken away, the two cut faces hatched, the hole's far half
+// still drawn, edges of the body named after the body's own; the parent shows the cutting line, its ends, arrows, letters.
+TEST(views_full_section) {
+  Plate p;
+  const json made = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "section"}, {"parent", p.front}, {"cut", {{0, -10}, {0, 20}}}});
+  const std::string sec = made["id"];
+  Scene s = resolve(p.doc);
+  CHECK(s.unresolved.empty());
+  const SheetView& v = *s.sheet_view(sec);
+  CHECK_EQ(v.def["letter"], "A");
+  const ViewSpec spec = view_spec(s, v);
+  CHECK_EQ(spec.cut.size(), 2u);
+  CHECK(std::fabs(spec.dir[0] - 1) < 1e-12);  // first angle, placed left: seen from the right
+  CHECK(!spec.hidden);
+  const auto frames = layout(p.doc, s, *s.sheet(p.sheet));
+  const ViewFrame& f = frame(frames, sec);
+  const ViewFrame& fr = frame(frames, p.front);
+  CHECK(f.error.empty());
+  CHECK(f.box[2] < fr.box[0]);                 // left of the front view
+  CHECK(std::fabs(f.at[1] - fr.at[1]) < 1e-9);  // lined up with it
+  CHECK(std::fabs(fr.box[0] - f.box[2] - 20) < 1e-6);
+  const auto g = project(p.doc, s, spec, {}, false);
+  CHECK_EQ(g->sections.size(), 1u);
+  CHECK_EQ(g->sections[0].loops.size(), 2u);
+  for (const auto& l : g->sections[0].loops) CHECK(std::fabs(area(l) - 150) < 0.5);  // 15 x 10 either side of the hole
+  bool named = false;
+  int made_by_cut = 0;
+  std::set<int> walls, holes;  // the faces the cut's edges lie on: the plate's sides, the hole
+  for (const auto& c : g->curves) {
+    if (c.edge >= 0) {
+      const json e = inspect_ref(p.doc, s, Ref{p.body, Ref::Kind::Edge, c.edge});
+      named = named || e.value("curve", "") == "circle";  // the hole's rims, seen edge on
+    } else if (c.kind != Curve::Kind::Silhouette) {
+      ++made_by_cut;
+      CHECK(c.face >= 0);  // named after the face it lies on
+      const std::string surface = inspect_ref(p.doc, s, Ref{p.body, Ref::Kind::Face, c.face}).value("surface", "");
+      const auto pts = c.sample(0.01);
+      if (surface == "cylinder") holes.insert(c.face);
+      else if (std::all_of(pts.begin(), pts.end(), [](const Vec2& q) { return std::fabs(std::fabs(q[0]) - 20) < 1e-6; })) walls.insert(c.face);
+    }
+  }
+  CHECK(named && made_by_cut >= 6);
+  CHECK(walls.size() == 2 && holes.size() == 1);
+  // Dimensioned through those faces: the plate's depth across the section, the hole's diameter seen from the side.
+  const json across = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", sec}, {"type", "horizontal"},
+                                                {"refs", {Ref{p.body, Ref::Kind::Face, *walls.begin()}.str(), Ref{p.body, Ref::Kind::Face, *walls.rbegin()}.str()}},
+                                                {"place", {0, 15}}});
+  CHECK(std::fabs(across["result"]["value"].get<double>() - 40) < 1e-6);
+  const json bore = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", sec}, {"type", "diameter"}, {"refs", {Ref{p.body, Ref::Kind::Face, *holes.begin()}.str()}}, {"place", {0, 15}}});
+  CHECK(std::fabs(bore["result"]["value"].get<double>() - 10) < 1e-6);
+  {
+    const ViewFrame& fs = frame(layout(p.doc, resolve(p.doc), *resolve(p.doc).sheet(p.sheet)), sec);
+    const Scene now = resolve(p.doc);
+    const json pick = pick_reference(p.doc, now, fs, {{"node", p.body}, {"face", *walls.begin()}, {"snap", "nearest"}, {"at", {fs.at[0], fs.at[1]}}});
+    CHECK_EQ(pick["what"], "plane");
+    const int top = [&] {  // the plate's front face, seen flat on in the front view: not through a line there
+      for (int i = 0; i < subshape_count(node_world_shape(p.doc, now, p.body), Ref::Kind::Face); ++i) {
+        const json f = inspect_ref(p.doc, now, Ref{p.body, Ref::Kind::Face, i});
+        if (f.value("surface", "") == "plane" && std::fabs(std::fabs(f["normal"][1].get<double>()) - 1) < 1e-9) return i;
+      }
+      return -1;
+    }();
+    CHECK(top >= 0);
+    const ViewFrame& ff = frame(layout(p.doc, now, *now.sheet(p.sheet)), p.front);
+    CHECK_THROWS(pick_reference(p.doc, now, ff, {{"node", p.body}, {"face", top}, {"snap", "nearest"}, {"at", {ff.at[0], ff.at[1]}}}));
+  }
+  run(p.doc, "delete", {{"target", across["id"]}});
+  run(p.doc, "delete", {{"target", bore["id"]}});
+  // Nothing of the removed half: every curve within the plate's width and height in the view.
+  for (const auto& c : g->curves)
+    for (const auto& q : c.sample(0.01)) CHECK(std::fabs(q[0]) <= 20 + 1e-6 && q[1] >= -1e-6 && q[1] <= 10 + 1e-6);
+  CHECK(g->fingerprint != projection_fingerprint(p.doc, s, view_spec(s, *s.sheet_view(p.front)), Quality::Auto));
+  // Cached with its faces, in memory and in the user cache's blob.
+  CHECK(project(p.doc, s, spec).get() == project(p.doc, s, spec).get());
+  const ViewGeometry back = ViewGeometry::deserialize(g->serialize());
+  CHECK_EQ(back.sections.size(), 1u);
+  CHECK_EQ(back.sections[0].loops.size(), 2u);
+  CHECK_EQ(back.sections[0].loops[0].size(), g->sections[0].loops[0].size());
+  // Drawn: hatching on the section, its label, the cutting line on the front view with its letters.
+  json report;
+  const Display d = sheet_display(p.doc, s, *s.sheet(p.sheet), {}, &report);
+  CHECK_EQ(report["skipped"].size(), 0u);
+  CHECK(on_layer(d, "Hatch", sec) > 10);
+  CHECK(texts(d, sec).count("A-A"));
+  CHECK_EQ(on_layer(d, "Section line", p.front), 1);
+  CHECK_EQ(on_layer(d, "Section ends", p.front), 2);
+  CHECK(texts(d, p.front).count("A"));
+  for (const auto& prim : d.prims)  // hatch lines stay inside the cut faces (paper)
+    if (d.layers[static_cast<size_t>(prim.layer)].name == "Hatch")
+      for (const auto& q : prim.curve.pts) CHECK(q[0] >= f.box[0] - 1e-6 && q[0] <= f.box[2] + 1e-6 && q[1] >= f.box[1] - 1e-6 && q[1] <= f.box[3] + 1e-6);
+  CHECK(dxf_text(d).find("Hatch") != std::string::npos);
+  // Frozen linework keeps the faces.
+  const ViewGeometry frozen = frozen_geometry(shape_from_brep(linework_brep(*g)));
+  CHECK_EQ(frozen.sections.size(), 1u);
+  CHECK_EQ(frozen.sections[0].loops.size(), 2u);
+  // ASME: SECTION A-A.
+  run(p.doc, "sheet_edit", {{"target", p.sheet}, {"set", {{"standard", "asme"}, {"projection", "third"}}}});
+  s = resolve(p.doc);
+  CHECK(std::fabs(view_spec(s, *s.sheet_view(sec)).dir[0] + 1) < 1e-12);  // third angle: seen from the left, as placed
+  CHECK(texts(sheet_display(p.doc, s, *s.sheet(p.sheet)), sec).count("SECTION A-A"));
+}
+
+// An offset section: two parallel cutting planes joined by a step; only the faces facing the viewer are hatched. A body
+// left whole is not cut.
+TEST(views_offset_section_and_whole) {
+  Plate p;
+  const std::string sec = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "section"}, {"parent", p.front}, {"cut", {{-15, -10}, {-15, 5}, {15, 5}, {15, 20}}}})["id"];
+  Scene s = resolve(p.doc);
+  auto g = project(p.doc, s, view_spec(s, *s.sheet_view(sec)), {}, false);
+  CHECK_EQ(g->sections.size(), 1u);
+  double total = 0;
+  for (const auto& l : g->sections[0].loops) total += area(l);
+  CHECK_EQ(g->sections[0].loops.size(), 2u);
+  CHECK(std::fabs(total - 400) < 1);  // 40 x 5 at x = -15 and 40 x 5 at x = 15
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"whole", {p.body}}}}});
+  s = resolve(p.doc);
+  g = project(p.doc, s, view_spec(s, *s.sheet_view(sec)), {}, false);
+  CHECK(g->sections.empty());
+  CHECK(!g->curves.empty());
+  // Left whole by its part property (section false: shafts, fasteners) in every section, unless a view cuts it (sectioned).
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"whole", nullptr}}}});
+  s = resolve(p.doc);
+  const std::string cutPrint = projection_fingerprint(p.doc, s, view_spec(s, *s.sheet_view(sec)), Quality::Auto);
+  run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"section", false}}}});
+  CHECK_THROWS(run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"section", "no"}}}}));
+  s = resolve(p.doc);
+  CHECK(unsectioned(s) == std::vector<std::string>{p.body});
+  CHECK(left_whole(s, p.body) && !left_whole(s, p.body, {p.body}));
+  CHECK(projection_fingerprint(p.doc, s, view_spec(s, *s.sheet_view(sec)), Quality::Auto) != cutPrint);  // drawn again, not from the cache
+  CHECK(project(p.doc, s, view_spec(s, *s.sheet_view(sec)))->sections.empty());
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"sectioned", {p.body}}}}});
+  s = resolve(p.doc);
+  CHECK(unsectioned(s, s.sheet_view(sec)->def["sectioned"]).empty());
+  CHECK_EQ(project(p.doc, s, view_spec(s, *s.sheet_view(sec)), {}, false)->sections.size(), 1u);
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"sectioned", nullptr}}}});
+  run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"section", true}}}});  // explicitly cut again
+  s = resolve(p.doc);
+  CHECK(unsectioned(s).empty());
+  CHECK_EQ(project(p.doc, s, view_spec(s, *s.sheet_view(sec)), {}, false)->sections.size(), 1u);
+}
+
+// A detail view: the parent's projection within its circle at its own scale, the circle and letter on the parent.
+TEST(views_detail) {
+  Plate p;
+  const std::string det = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "detail"}, {"parent", p.front}, {"center", {25, 5}}, {"radius", 8},
+                                                    {"scale", "4:1"}, {"at", {330, 120}}})["id"];
+  const Scene s = resolve(p.doc);
+  const auto frames = layout(p.doc, s, *s.sheet(p.sheet));
+  const ViewFrame& f = frame(frames, det);
+  CHECK(f.error.empty());
+  CHECK_EQ(f.scale, 4);
+  CHECK(std::fabs(f.box[2] - f.box[0] - 64) < 1e-6);
+  CHECK_EQ(projection_fingerprint(p.doc, s, view_spec(s, *s.sheet_view(det)), Quality::Auto),
+           projection_fingerprint(p.doc, s, view_spec(s, *s.sheet_view(p.front)), Quality::Auto));  // one projection for both
+  const auto g = shape_linework(project(p.doc, s, view_spec(s, *s.sheet_view(det))), f);
+  CHECK(!g->curves.empty());
+  for (const auto& c : g->curves)
+    for (const auto& q : c.sample(0.01)) CHECK(std::hypot(q[0] - 25, q[1] - 5) <= 8 + 1e-6);
+  const Display d = sheet_display(p.doc, s, *s.sheet(p.sheet));
+  CHECK(texts(d, det).count("A (4:1)"));
+  CHECK_EQ(on_layer(d, "Detail", det), 1);      // its boundary
+  CHECK_EQ(on_layer(d, "Detail", p.front), 1);  // the circle on the parent
+  CHECK(texts(d, p.front).count("A"));
+}
+
+// An auxiliary view looks along a line at any angle and stays lined up with its parent across it.
+TEST(views_auxiliary_lined_up) {
+  Plate p;
+  const std::string aux = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "auxiliary"}, {"parent", p.front}, {"angle", 30}, {"gap", 15}})["id"];
+  const Scene s = resolve(p.doc);
+  const auto frames = layout(p.doc, s, *s.sheet(p.sheet));
+  const ViewFrame &f = frame(frames, aux), &fr = frame(frames, p.front);
+  CHECK(f.error.empty());
+  const double c = std::cos(M_PI / 6), k = std::sin(M_PI / 6);
+  CHECK(std::fabs(f.dir[0] + c) < 1e-9 && std::fabs(f.dir[2] + k) < 1e-9);  // first angle: from the opposite side
+  const Vec2 a{-k, c};
+  for (const Vec3& q : {Vec3{30, -20, 10}, Vec3{-30, 20, 0}, Vec3{5, 0, 3}}) {
+    const Vec2 p1 = fr.paper(q), p2 = f.paper(q);
+    CHECK(std::fabs((p1[0] - p2[0]) * a[0] + (p1[1] - p2[1]) * a[1]) < 1e-6);  // the same place across the line of sight
+  }
+  CHECK((f.at[0] - fr.at[0]) * c + (f.at[1] - fr.at[1]) * k > 0);  // out along its angle
+  CHECK(resolve(p.doc).sheet_view(aux)->def.value("letter", "").empty());
+}
+
+// A crop box keeps part of a view; breaks take bands out and close them up (the view projected from it follows), and a
+// dimension across a break keeps its true value while drawn shortened.
+TEST(views_crop_and_breaks) {
+  Plate p;
+  run(p.doc, "sheet_edit", {{"target", p.front}, {"set", {{"crop", {-30, -1, 0, 11}}}}});
+  Scene s = resolve(p.doc);
+  auto frames = layout(p.doc, s, *s.sheet(p.sheet));
+  CHECK(std::fabs(frame(frames, p.front).box[2] - frame(frames, p.front).box[0] - 30) < 1e-6);
+  const auto g = shape_linework(project(p.doc, s, view_spec(s, *s.sheet_view(p.front))), frame(frames, p.front));
+  for (const auto& c : g->curves)
+    for (const auto& q : c.sample(0.01)) CHECK(q[0] <= 1e-6);
+  CHECK(std::fabs(g->bounds[2]) < 1e-6 && std::fabs(g->bounds[0] + 30) < 1e-6);
+  CHECK_EQ(frame(frames, p.front).crop_cuts, 4);  // the right side cuts through it: a break line there
+  CHECK_EQ(on_layer(sheet_display(p.doc, s, *s.sheet(p.sheet)), "Break", p.front), 1);
+
+  Document doc = Document::create();
+  const std::string bar = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "200 mm"}, {"width", "20 mm"}, {"height", "10 mm"}}}})["body_ids"][0];
+  const std::string sheet = run(doc, "sheet", {{"size", "A3"}})["id"];
+  const std::string front = run(doc, "sheet_view", {{"sheet", sheet}, {"orient", "front"}, {"at", {200, 200}}, {"breaks", {{{"axis", "x"}, {"from", -60}, {"to", 60}}}}})["id"];
+  const std::string top = run(doc, "sheet_view", {{"sheet", sheet}, {"parent", front}, {"side", "bottom"}})["id"];
+  s = resolve(doc);
+  frames = layout(doc, s, *s.sheet(sheet));
+  const ViewFrame &f = frame(frames, front), &t = frame(frames, top);
+  CHECK(std::fabs(f.box[2] - f.box[0] - 86) < 1e-6);  // 200 - 120 + a 6 mm gap
+  CHECK(std::fabs(t.box[2] - t.box[0] - 86) < 1e-6);  // the top view broken with it
+  CHECK_EQ(t.breaks.size(), 1u);
+  for (double x : {-100.0, -70.0, 75.0, 100.0}) CHECK(std::fabs(f.unfold(f.fold({x, 3}))[0] - x) < 1e-9);
+  const auto lines = shape_linework(project(doc, s, view_spec(s, *s.sheet_view(front))), f);
+  for (const auto& c : lines->curves)
+    for (const auto& q : c.pts) CHECK(q[0] <= -60 + 1e-6 || q[0] >= -54 - 1e-6);  // nothing in the gap's place but the far half moved in
+  // The bar's top front edge dimensioned across the break: 200, drawn 86 long.
+  std::string edge;
+  const TopoDS_Shape shape = node_world_shape(doc, s, bar);
+  for (int i = 0; i < subshape_count(shape, Ref::Kind::Edge) && edge.empty(); ++i) {
+    const json e = inspect_ref(doc, s, Ref{bar, Ref::Kind::Edge, i});
+    if (e.contains("length") && std::fabs(e["length"].get<double>() - 200) < 1e-6 && std::fabs(e["bbox"]["center"][2].get<double>() - 10) < 1e-6 &&
+        e["bbox"]["center"][1].get<double>() < 0)
+      edge = Ref{bar, Ref::Kind::Edge, i}.str();
+  }
+  CHECK(!edge.empty());
+  const json dim = run(doc, "sheet_item", {{"sheet", sheet}, {"view", front}, {"type", "horizontal"}, {"refs", {edge}}, {"place", {0, 15}}});
+  CHECK(std::fabs(dim["result"]["value"].get<double>() - 200) < 1e-9);
+  const Display d = sheet_display(doc, resolve(doc), *resolve(doc).sheet(sheet));
+  CHECK_EQ(on_layer(d, "Break", front), 2);
+  CHECK_EQ(on_layer(d, "Break", top), 2);
+  std::array<double, 4> b{1e300, 1e300, -1e300, -1e300};
+  for (const auto& prim : d.prims)
+    if (prim.source == dim["id"].get<std::string>() && prim.kind == Prim::Kind::Curve)
+      for (const auto& q : prim.curve.pts) b = {std::min(b[0], q[0]), std::min(b[1], q[1]), std::max(b[2], q[0]), std::max(b[3], q[1])};
+  CHECK(std::fabs(b[2] - b[0] - 86) < 2.5);  // its extension lines 86 apart (arrows within)
+  CHECK(texts(d, dim["id"].get<std::string>()).count("200"));
+}
+
+namespace {
+
+// The Hatch lines a view drew: their angles (degrees mod 180) and their offsets across a direction (paper mm).
+struct Lines {
+  std::vector<double> angles;
+  std::vector<std::array<Vec2, 2>> lines;
+  int fills = 0;
+};
+Lines hatch_of(const Display& d, const std::string& source) {
+  Lines out;
+  for (const auto& p : d.prims) {
+    if (d.layers[static_cast<size_t>(p.layer)].name != "Hatch" || p.source != source) continue;
+    if (p.kind == Prim::Kind::Fill) ++out.fills;
+    if (p.kind != Prim::Kind::Curve || p.curve.pts.size() != 2) continue;
+    const Vec2 a = p.curve.pts[0], b = p.curve.pts[1];
+    double t = std::atan2(b[1] - a[1], b[0] - a[0]) * 180 / M_PI;
+    while (t < 0) t += 180;
+    out.angles.push_back(std::fmod(t, 180.0));
+    out.lines.push_back({a, b});
+  }
+  return out;
+}
+bool all_at(const std::vector<double>& angles, double want) {
+  return !angles.empty() && std::all_of(angles.begin(), angles.end(), [&](double a) { return std::min(std::fabs(a - want), 180 - std::fabs(a - want)) < 1e-6; });
+}
+
+}  // namespace
+
+// Section linings (ISO 128-50): 45 degrees to a part's main outlines, a part beside it turned the other way, the view's
+// own angle and spacing, a body's own, the material symbols, narrow faces filled; patterns as drawn.
+TEST(views_hatching) {
+  // The patterns on a square: lines inside it, crossed ones at two angles, dashed ones in pieces.
+  const std::vector<std::vector<Vec2>> square = {{{0, 0}, {20, 0}, {20, 20}, {0, 20}}};
+  for (const auto& name : hatch_patterns()) {
+    const auto lines = hatch_pattern(square, name, M_PI / 4, 2);
+    CHECK(!lines.empty());
+    for (const auto& l : lines)
+      for (const auto& q : l) CHECK(q[0] >= -1e-9 && q[0] <= 20 + 1e-9 && q[1] >= -1e-9 && q[1] <= 20 + 1e-9);
+  }
+  CHECK_EQ(hatch_pattern(square, "general", 0.3, 2).size(), hatch_lines(square, 0.3, 2).size());
+  CHECK_EQ(hatch_pattern(square, "a pattern of a newer OPAD", 0.3, 2).size(), hatch_lines(square, 0.3, 2).size());
+  CHECK(hatch_pattern(square, "glass", 0, 2).size() > 3 * hatch_lines(square, 0, 2).size());  // dashes
+  std::set<long> turns;
+  for (const auto& l : hatch_pattern(square, "insulation", M_PI / 4, 2)) turns.insert(std::lround(std::atan2(l[1][1] - l[0][1], l[1][0] - l[0][0]) * 180 / M_PI + 360) % 180);
+  CHECK_EQ(turns.size(), 2u);
+  CHECK_EQ(material_hatch("stainless"), "steel");
+  CHECK_EQ(material_hatch("brass"), "copper");
+  CHECK_EQ(material_hatch("nylon-12"), "plastic");
+  CHECK_EQ(material_hatch("unobtainium"), "general");
+
+  Plate p;
+  const std::string sec = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "section"}, {"parent", p.front}, {"cut", {{0, -10}, {0, 20}}}})["id"];
+  const auto drawn = [&] {
+    const Scene s = resolve(p.doc);
+    return hatch_of(sheet_display(p.doc, s, *s.sheet(p.sheet)), sec);
+  };
+  CHECK(all_at(drawn().angles, 45));
+  // The view's angle and spacing.
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"angle", 30}, {"spacing", 2}}}}}});
+  Lines l = drawn();
+  CHECK(all_at(l.angles, 30));
+  const Vec2 n{-std::sin(M_PI / 6), std::cos(M_PI / 6)};
+  for (const auto& x : l.lines) {
+    const double o = x[0][0] * n[0] + x[0][1] * n[1];
+    CHECK(std::fabs(o / 2 - std::round(o / 2)) < 1e-6);  // through the origin, 2 mm apart
+  }
+  // A body's own angle beats the view's.
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"angle", 30}, {"bodies", {{p.body, {{"angle", 60}}}}}}}}}});
+  CHECK(all_at(drawn().angles, 60));
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"spacing", -1}}}}}}));
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"pattern", "chequered"}}}}}}));
+  // The material's symbol: steel's lines in pairs.
+  run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"material", "steel"}}}});
+  run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"hatch", {{"pattern", "material"}}}}}});
+  l = drawn();
+  CHECK(all_at(l.angles, 45));
+  std::set<long> offsets;
+  for (const auto& x : l.lines) offsets.insert(std::lround((x[0][1] - x[0][0]) * M_SQRT1_2 * 1000));
+  std::set<long> gaps;
+  for (auto it = std::next(offsets.begin()); it != offsets.end(); ++it) gaps.insert(std::lround((*it - *std::prev(it)) / 10.0));
+  CHECK(!gaps.empty() && *gaps.rbegin() > 3 * *gaps.begin() && std::all_of(gaps.begin(), gaps.end(), [&](long g) { return g - *gaps.begin() <= 2 || *gaps.rbegin() - g <= 2; }));  // close pairs, wider between them
+  // A detail of the section takes its lining.
+  const std::string det = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "detail"}, {"parent", sec}, {"center", {-12, 5}}, {"radius", 6}, {"at", {80, 80}}})["id"];
+  {
+    const Scene s = resolve(p.doc);
+    const Lines dl = hatch_of(sheet_display(p.doc, s, *s.sheet(p.sheet)), det);
+    CHECK(all_at(dl.angles, 45) && dl.lines.size() > 4);
+  }
+
+  // Two blocks one on the other: turned apart. A block turned 30 degrees: 45 degrees to its own sides.
+  Document doc = Document::create();
+  const std::string a = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "60 mm"}, {"width", "40 mm"}, {"height", "10 mm"}}}})["body_ids"][0];
+  const std::string b = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "30 mm"}, {"width", "40 mm"}, {"height", "10 mm"}}}})["body_ids"][0];
+  run(doc, "transform", {{"target", b}, {"matrix", {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 10, 0, 0, 0, 1}}});
+  const std::string c = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "20 mm"}, {"width", "20 mm"}, {"height", "20 mm"}}}})["body_ids"][0];
+  const double co = std::cos(M_PI / 6), si = std::sin(M_PI / 6);
+  run(doc, "transform", {{"target", c}, {"matrix", {1, 0, 0, 0, 0, co, -si, 0, 0, si, co, 60, 0, 0, 0, 1}}});
+  const std::string sheet = run(doc, "sheet", {{"size", "A3"}})["id"];
+  const std::string front = run(doc, "sheet_view", {{"sheet", sheet}, {"orient", "front"}, {"at", {250, 150}}})["id"];
+  const std::string cut = run(doc, "sheet_view", {{"sheet", sheet}, {"kind", "section"}, {"parent", front}, {"cut", {{0, -20}, {0, 100}}}})["id"];
+  Scene s = resolve(doc);
+  const auto frames = layout(doc, s, *s.sheet(sheet));
+  const ViewFrame& f = frame(frames, cut);
+  l = hatch_of(sheet_display(doc, s, *s.sheet(sheet)), cut);
+  std::set<long> low, high, tilted;
+  for (size_t i = 0; i < l.lines.size(); ++i) {
+    const double y = (l.lines[i][0][1] + l.lines[i][1][1]) / 2 - f.at[1], v = f.centre[1] + y / f.scale;  // the model's z
+    (v < 10 ? low : v < 20 ? high : tilted).insert(std::lround(l.angles[i]) % 180);
+  }
+  CHECK(low.size() == 1 && high.size() == 1 && *low.begin() != *high.begin());
+  CHECK(tilted.size() == 1 && (*tilted.begin() % 90 == 15 || *tilted.begin() % 90 == 75));  // 45 degrees off its sides (seen from either side)
+  CHECK_EQ(l.fills, 0);
+  // A thin plate: filled, or hatched when asked.
+  const std::string sheet_metal = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "40 mm"}, {"width", "40 mm"}, {"height", "0.5 mm"}}}})["body_ids"][0];
+  run(doc, "transform", {{"target", sheet_metal}, {"matrix", {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -10, 0, 0, 0, 1}}});
+  s = resolve(doc);
+  CHECK_EQ(hatch_of(sheet_display(doc, s, *s.sheet(sheet)), cut).fills, 1);
+  run(doc, "sheet_edit", {{"target", cut}, {"set", {{"hatch", {{"thin", "hatch"}}}}}});
+  s = resolve(doc);
+  CHECK_EQ(hatch_of(sheet_display(doc, s, *s.sheet(sheet)), cut).fills, 0);
+}
+
+// An aligned section (ISO 128-40): a flange cut through a hole at 12 o'clock and, past the centre, through one at 30
+// degrees below 3 o'clock; the inclined segment's faces revolved onto the first one's line and hatched with them, no
+// seam where the pieces meet, the view's frame around the developed part, the last arrow square to its own segment.
+TEST(views_aligned_section) {
+  Document doc = Document::create();
+  const std::string disc = run(doc, "feature", {{"kind", "cylinder"}, {"inputs", {{"plane", {{"base", "xy"}}}, {"x", 0}, {"y", 0}, {"diameter", 80}, {"height", 10}}}})["body_ids"][0];
+  const double c30 = std::cos(M_PI / 6), s30 = std::sin(M_PI / 6);
+  for (const auto& [x, y, d] : std::initializer_list<std::array<double, 3>>{{0, 0, 20}, {0, 30, 8}, {30 * c30, -30 * s30, 8}})
+    run(doc, "feature", {{"kind", "cylinder"}, {"inputs", {{"plane", {{"base", "xy"}}}, {"x", x}, {"y", y}, {"diameter", d}, {"height", 10}, {"operation", "cut"}, {"targets", {disc}}}}});
+  const std::string sheet = run(doc, "sheet", {{"size", "A3"}})["id"];
+  const std::string top = run(doc, "sheet_view", {{"sheet", sheet}, {"orient", "top"}, {"at", {150, 150}}})["id"];
+  const json cut = {{0, 50}, {0, 0}, {50 * c30, -50 * s30}};
+  const std::string sec = run(doc, "sheet_view", {{"sheet", sheet}, {"kind", "section"}, {"parent", top}, {"cut", cut}})["id"];
+  Scene s = resolve(doc);
+  CHECK(s.sheet_view(sec)->def.value("aligned", false));  // an inclined segment: aligned by itself
+  CHECK(inclined_cut({{0, 50}, {0, 0}, {50 * c30, -50 * s30}}) && !inclined_cut({{-15, -10}, {-15, 5}, {15, 5}, {15, 20}}));
+  const ViewSpec spec = view_spec(s, *s.sheet_view(sec));
+  CHECK(spec.aligned);
+  const auto g = project(doc, s, spec, {}, false);
+  double area = 0;
+  for (const auto& r : g->sections)
+    for (const auto& l : r.loops) area += ::area(l);
+  CHECK(std::fabs(area - 440) < 2);  // (16 + 6) x 10 on either side of the centre, the inclined side revolved
+  // The developed part runs along the view from -40 to 40 (its radius either side), the inclined side where the cut
+  // runs on: no seam across it where the pieces meet (the joint, square to the first segment through the centre).
+  const ViewFrame& f = frame(layout(doc, s, *s.sheet(sheet)), sec);
+  Vec3 x, y, z;
+  view_axes(spec, x, y, z);
+  const int along = std::fabs(x[1]) > 0.5 ? 0 : 1;  // the view axis along the cutting line's first segment (world y)
+  CHECK(std::fabs(g->bounds[along] + 40) < 1e-3 && std::fabs(g->bounds[along + 2] - 40) < 1e-3);
+  const double width = along == 0 ? f.box[2] - f.box[0] : f.box[3] - f.box[1];
+  CHECK(std::fabs(width - 80 * f.scale) < 1e-3);  // the frame hugs it (each piece measured turned with it)
+  int seams = 0;
+  for (const auto& k : g->curves) {
+    const auto pts = k.sample(0.01);
+    if (std::all_of(pts.begin(), pts.end(), [&](const Vec2& p) { return std::fabs(p[static_cast<size_t>(along)]) < 1e-4; })) ++seams;
+  }
+  CHECK_EQ(seams, 0);
+  // Not aligned (as an older OPAD reads it): an offset section, only the first segment's faces hatched.
+  run(doc, "sheet_edit", {{"target", sec}, {"set", {{"aligned", nullptr}}}});
+  s = resolve(doc);
+  area = 0;
+  for (const auto& r : project(doc, s, view_spec(s, *s.sheet_view(sec)), {}, false)->sections)
+    for (const auto& l : r.loops) area += ::area(l);
+  CHECK(std::fabs(area - 220) < 2);
+  run(doc, "sheet_edit", {{"target", sec}, {"set", {{"aligned", true}}}});
+  CHECK_THROWS(run(doc, "sheet_edit", {{"target", sec}, {"set", {{"aligned", "yes"}}}}));
+  // The parent's arrows: at the first end square to the first segment, at the last square to the last one.
+  s = resolve(doc);
+  const Display d = sheet_display(doc, s, *s.sheet(sheet));
+  std::vector<std::array<Vec2, 2>> stems;
+  for (const auto& p : d.prims)
+    if (p.source == top && p.kind == Prim::Kind::Curve && d.layers[static_cast<size_t>(p.layer)].name == "Dimensions" && p.curve.pts.size() == 2)
+      stems.push_back({p.curve.pts[0], p.curve.pts[1]});
+  CHECK_EQ(stems.size(), 2u);
+  const ViewFrame& ft = frame(layout(doc, s, *s.sheet(sheet)), top);
+  for (const auto& st : stems) {
+    const Vec2 dir{st[1][0] - st[0][0], st[1][1] - st[0][1]};
+    const bool last = std::hypot(st[0][0] - ft.paper({50 * c30, -50 * s30, 0})[0], st[0][1] - ft.paper({50 * c30, -50 * s30, 0})[1]) < 1;
+    const Vec2 seg = last ? Vec2{c30, -s30} : Vec2{0, -1};
+    CHECK(std::fabs(dir[0] * seg[0] + dir[1] * seg[1]) < 1e-6 * std::hypot(dir[0], dir[1]));
+  }
+}
+
+// A broken-out section (ISO 128-40 local section) on the plate's front view: within a smooth outline round the hole,
+// what lies nearer than the plate's middle is taken away; the floor hatched, the hole's far half and its edges drawn,
+// a thin break line where the cut ends over the plate; freehand break lines on a cropped view.
+TEST(views_broken_out_section) {
+  Plate p;
+  Scene s = resolve(p.doc);
+  const ViewSpec plain = view_spec(s, *s.sheet_view(p.front));
+  const auto depth = view_depth(p.doc, s, plain);
+  CHECK(std::fabs(depth[0] + 20) < 1e-6 && std::fabs(depth[1] - 20) < 1e-6);  // the plate's 40 mm along the view
+  const std::vector<Vec2> outline = breakout_outline({{-9, -1}, {9, -1}, {9, 11}, {-9, 11}});
+  CHECK(outline.size() > 16);
+  for (const Vec2& q : {Vec2{-9, -1}, Vec2{9, 11}})
+    CHECK(std::any_of(outline.begin(), outline.end(), [&](const Vec2& o) { return std::hypot(o[0] - q[0], o[1] - q[1]) < 0.05; }));  // through its points
+  CHECK_THROWS(breakout_outline({{0, 0}, {1, 1}}));
+  const json breakouts = {{{"outline", {{-9, -1}, {9, -1}, {9, 11}, {-9, 11}}}, {"depth", 0}}};
+  run(p.doc, "sheet_edit", {{"target", p.front}, {"set", {{"breakouts", breakouts}}}});
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", p.front}, {"set", {{"breakouts", {{{"outline", {{0, 0}, {1, 1}}}, {"depth", 0}}}}}}}));
+  s = resolve(p.doc);
+  const ViewSpec spec = view_spec(s, *s.sheet_view(p.front));
+  CHECK_EQ(spec.breakouts.size(), 1u);
+  CHECK(projection_fingerprint(p.doc, s, spec, Quality::Auto) != projection_fingerprint(p.doc, s, plain, Quality::Auto));
+  const auto g = project(p.doc, s, spec, {}, false);
+  double floor = 0;
+  for (const auto& r : g->sections)
+    for (const auto& l : r.loops) floor += area(l);
+  // The plate's middle within the outline (its band 0 <= z <= 10), the hole (10 x 10) left out.
+  std::vector<Vec2> band = outline;
+  for (const auto& [n, c] : {std::pair{Vec2{0, -1}, 0.0}, std::pair{Vec2{0, 1}, 10.0}}) {
+    std::vector<Vec2> next;
+    for (size_t i = 0; i < band.size(); ++i) {
+      const Vec2 a = band[i], b = band[(i + 1) % band.size()];
+      const double da = n[0] * a[0] + n[1] * a[1] - c, db = n[0] * b[0] + n[1] * b[1] - c;
+      if (da <= 0) next.push_back(a);
+      if (da * db < 0) next.push_back({a[0] + (b[0] - a[0]) * da / (da - db), a[1] + (b[1] - a[1]) * da / (da - db)});
+    }
+    band.swap(next);
+  }
+  CHECK(std::fabs(floor - (area(band) - 100)) < 1);
+  int breaks = 0, rims = 0;
+  for (const auto& k : g->curves) {
+    if (k.kind == Curve::Kind::Break) {
+      ++breaks;
+      CHECK(!k.hidden);
+      for (const auto& q : k.sample(0.01)) {
+        double near = 1e300;  // to the outline as drawn
+        for (size_t i = 0; i < outline.size(); ++i) {
+          const Vec2 a = outline[i], b = outline[(i + 1) % outline.size()], ab{b[0] - a[0], b[1] - a[1]};
+          const double t = std::clamp(((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / (ab[0] * ab[0] + ab[1] * ab[1]), 0.0, 1.0);
+          near = std::min(near, std::hypot(q[0] - a[0] - t * ab[0], q[1] - a[1] - t * ab[1]));
+        }
+        CHECK(near < 0.05);
+      }
+    }
+    const auto pts = k.sample(0.01);
+    if (!k.hidden && k.kind != Curve::Kind::Break && std::all_of(pts.begin(), pts.end(), [](const Vec2& q) { return std::fabs(std::fabs(q[0]) - 5) < 1e-4; })) ++rims;
+  }
+  CHECK(breaks >= 2);  // over the plate, where the outline crosses it on either side
+  CHECK(rims >= 2);    // the hole's sides, seen now
+  CHECK(g->counts().value("break", 0) == breaks);
+  const ViewGeometry back = ViewGeometry::deserialize(g->serialize());
+  CHECK(std::count_if(back.curves.begin(), back.curves.end(), [](const Curve& k) { return k.kind == Curve::Kind::Break; }) == breaks);
+  Display d = sheet_display(p.doc, s, *s.sheet(p.sheet));
+  CHECK(on_layer(d, "Hatch", p.front) > 5 && on_layer(d, "Break", p.front) == breaks);
+  // Not on a section view; a projected view takes its own.
+  const std::string sec = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "section"}, {"parent", p.front}, {"cut", {{0, -10}, {0, 20}}}})["id"];
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"breakouts", breakouts}}}}));
+  const std::string top = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"parent", p.front}, {"side", "bottom"}})["id"];
+  s = resolve(p.doc);
+  CHECK(view_spec(s, *s.sheet_view(top)).breakouts.empty() && view_spec(s, *s.sheet_view(sec)).breakouts.empty());
+  // Freehand break lines where a crop cuts through the top view: a wave, not a zigzag.
+  run(p.doc, "sheet_edit", {{"target", top}, {"set", {{"crop", {-30, -25, 0, 25}}}}});
+  const auto points_on = [&](const std::string& view) {
+    const Scene now = resolve(p.doc);
+    size_t most = 0;
+    const Display dd = sheet_display(p.doc, now, *now.sheet(p.sheet));
+    for (const auto& prim : dd.prims)
+      if (prim.source == view && dd.layers[static_cast<size_t>(prim.layer)].name == "Break") most = std::max(most, prim.curve.pts.size());
+    return most;
+  };
+  CHECK_EQ(points_on(top), 6u);
+  run(p.doc, "sheet_edit", {{"target", top}, {"set", {{"style", {{"break", "freehand"}}}}}});
+  CHECK(points_on(top) > 20);
+}
+
+CHECK_MAIN()

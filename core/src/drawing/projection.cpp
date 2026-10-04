@@ -178,7 +178,9 @@ double unit_arc_error(double h) {
   return worst;
 }
 
-Handle(Geom2d_BSplineCurve) curve2d(const Curve& k) {
+}  // namespace
+
+Handle(Geom2d_BSplineCurve) detail::curve2d(const Curve& k) {
   const int n = static_cast<int>(k.pts.size());
   if (n < 2 || k.degree < 1 || static_cast<int>(k.knots.size()) != n + k.degree + 1) return nullptr;
   std::vector<double> knots;
@@ -199,6 +201,8 @@ Handle(Geom2d_BSplineCurve) curve2d(const Curve& k) {
   }
   return new Geom2d_BSplineCurve(poles, kv, mv, k.degree);
 }
+
+namespace {
 
 // ---- gathering, fingerprint, tier
 
@@ -231,9 +235,12 @@ std::vector<Source> gather(const Scene& scene, const ViewSpec& spec) {
   }
   std::sort(ids.begin(), ids.end());
   ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-  std::set<std::string> hidden;
+  std::set<std::string> hidden, whole;
   for (const auto& h : spec.hide)
     for (const auto& b : scene.bodies_under(h)) hidden.insert(b);
+  for (const auto& h : spec.whole)
+    if (scene.node(h))
+      for (const auto& b : scene.bodies_under(h)) whole.insert(b);
   std::vector<Source> out;
   for (const auto& id : ids) {
     const Node* n = scene.node(id);
@@ -252,6 +259,7 @@ std::vector<Source> gather(const Scene& scene, const ViewSpec& spec) {
     }
     s.rigid = mat_is_rigid(s.world);
     s.mesh = n->representation == "mesh";
+    s.whole = whole.count(id) > 0 || (spec.parts_whole && left_whole(scene, id, spec.sectioned));
     if (s.rigid) s.trsf = trsf_from_mat(s.world);
     out.push_back(std::move(s));
   }
@@ -305,6 +313,26 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
             {"x", {rounded(v.x.X()), rounded(v.x.Y()), rounded(v.x.Z())}}, {"y", {rounded(v.y.X()), rounded(v.y.Y()), rounded(v.y.Z())}},
             {"hidden", spec.hidden}, {"tangent", spec.tangent}, {"silhouettes", spec.silhouettes}, {"seams", spec.seams}, {"tolerance", spec.tolerance}};
   if (tier == Quality::Hybrid) j["resolution"] = spec.resolution;
+  if (!spec.cut.empty()) {
+    json line = json::array();
+    for (const auto& p : spec.cut) line.push_back({rounded(p[0]), rounded(p[1])});
+    j["cut"] = {{"line", line}, {"x", {rounded(spec.cut_x[0]), rounded(spec.cut_x[1]), rounded(spec.cut_x[2])}},
+                {"y", {rounded(spec.cut_y[0]), rounded(spec.cut_y[1]), rounded(spec.cut_y[2])}}, {"version", 2}};  // 2: cut edges named after their faces
+    if (spec.aligned) j["cut"]["aligned"] = true;
+    for (const auto& s : sources)
+      if (s.whole) j["cut"]["whole"].push_back(s.node);
+  }
+  if (!spec.breakouts.empty()) {
+    json all = json::array();
+    for (const auto& b : spec.breakouts) {
+      json outline = json::array();
+      for (const auto& p : b.outline) outline.push_back({rounded(p[0]), rounded(p[1])});
+      all.push_back({{"outline", outline}, {"depth", rounded(b.depth)}});
+    }
+    j["breakouts"] = {{"cuts", all}, {"version", 2}};
+    for (const auto& s : sources)
+      if (s.whole) j["breakouts"]["whole"].push_back(s.node);
+  }
   json bodies = json::array();
   for (const auto& s : sources) {
     json m = json::array();
@@ -455,7 +483,7 @@ void draft(const Document& doc, const std::vector<Source>& sources, const ViewSp
     if (run.cancelled()) return;
     const auto& s = *std::find_if(sources.begin(), sources.end(), [&](const Source& x) { return x.key == keys[static_cast<size_t>(i)]; });
     TopoDS_Shape copy = BRepBuilderAPI_Copy(s.proto, Standard_True, s.mesh).Shape();
-    if (!s.mesh) mesh_shape(copy, detail::deflection_for(doc, s.key));
+    if (!s.mesh) mesh_shape(copy, detail::deflection_for(doc, s.body_key()));
     meshed[static_cast<size_t>(i)] = copy;
     run.report(static_cast<double>(++done) / static_cast<double>(keys.size()) * 0.5, "hidden lines: meshing " + std::to_string(done.load()) + "/" + std::to_string(keys.size()));
   });
@@ -867,7 +895,7 @@ struct Reader {
   }
 };
 
-constexpr char kMagic[] = "OPADPRJ2";
+constexpr char kMagic[] = "OPADPRJ2", kMagicSections[] = "OPADPRJ3";  // 3: section faces follow the curves
 
 }  // namespace
 
@@ -890,6 +918,17 @@ Quality quality_from_name(const std::string& name) {
   throw Error("unknown projection quality '" + name + "' (auto, exact, draft, hybrid)");
 }
 
+bool left_whole(const Scene& scene, const std::string& body, const std::vector<std::string>& sectioned) {
+  for (std::string at = body; !at.empty();) {  // the body first, then up
+    if (std::find(sectioned.begin(), sectioned.end(), at) != sectioned.end()) return false;
+    const Node* n = scene.node(at);
+    if (!n) return false;
+    if (const auto s = n->properties.find("section"); s != n->properties.end() && s->is_boolean()) return !s->get<bool>();
+    at = n->parent;
+  }
+  return false;
+}
+
 ViewSpec ViewSpec::preset(const std::string& view) {
   const Camera c = Camera::preset(view);
   ViewSpec s;
@@ -906,6 +945,20 @@ json ViewSpec::to_json() const {
     json o = json::object();
     for (const auto& [node, shift] : offsets) o[node] = vec_json(shift);
     j["offsets"] = o;
+  }
+  if (!cut.empty()) {
+    json line = json::array();
+    for (const auto& p : cut) line.push_back({p[0], p[1]});
+    j["cut"] = {{"line", line}, {"x", vec_json(cut_x)}, {"y", vec_json(cut_y)}, {"whole", whole}};
+    if (aligned) j["cut"]["aligned"] = true;
+  }
+  if (parts_whole) j["parts_whole"] = true;
+  if (!sectioned.empty()) j["sectioned"] = sectioned;
+  for (const auto& b : breakouts) {
+    json outline = json::array();
+    for (const auto& p : b.outline) outline.push_back({p[0], p[1]});
+    j["breakouts"].push_back({{"outline", outline}, {"depth", b.depth}});
+    if (cut.empty()) j["whole"] = whole;
   }
   return j;
 }
@@ -927,6 +980,25 @@ ViewSpec ViewSpec::from_json(const json& j) {
   if (j.contains("hide") && j["hide"].is_array()) s.hide = j["hide"].get<std::vector<std::string>>();
   if (j.contains("offsets") && j["offsets"].is_object())
     for (const auto& [node, shift] : j["offsets"].items()) s.offsets[node] = vec_of(shift, {0, 0, 0});
+  if (const json c = j.value("cut", json()); c.is_object()) {
+    for (const auto& p : c.value("line", json::array()))
+      if (p.is_array() && p.size() == 2) s.cut.push_back({p[0].get<double>(), p[1].get<double>()});
+    s.cut_x = vec_of(c.value("x", json()), s.cut_x);
+    s.cut_y = vec_of(c.value("y", json()), s.cut_y);
+    if (c.contains("whole") && c["whole"].is_array()) s.whole = c["whole"].get<std::vector<std::string>>();
+    s.aligned = c.value("aligned", false);
+  }
+  if (j.contains("whole") && j["whole"].is_array()) s.whole = j["whole"].get<std::vector<std::string>>();
+  s.parts_whole = j.value("parts_whole", false);
+  if (j.contains("sectioned") && j["sectioned"].is_array()) s.sectioned = j["sectioned"].get<std::vector<std::string>>();
+  for (const auto& b : j.value("breakouts", json::array())) {
+    if (!b.is_object()) continue;
+    Breakout cut;
+    for (const auto& p : b.value("outline", json::array()))
+      if (p.is_array() && p.size() == 2) cut.outline.push_back({p[0].get<double>(), p[1].get<double>()});
+    cut.depth = b.value("depth", 0.0);
+    if (cut.outline.size() >= 3) s.breakouts.push_back(std::move(cut));
+  }
   return s;
 }
 
@@ -945,6 +1017,7 @@ const char* Curve::kind_name(Kind k) {
     case Kind::Tangent: return "tangent";
     case Kind::Seam: return "seam";
     case Kind::Silhouette: return "silhouette";
+    case Kind::Break: return "break";
     default: return "sharp";
   }
 }
@@ -966,7 +1039,7 @@ std::vector<Vec2> Curve::sample(double tol) const {
     }
     case Type::Spline: {
       try {
-        const Handle(Geom2d_BSplineCurve) s = curve2d(*this);
+        const Handle(Geom2d_BSplineCurve) s = detail::curve2d(*this);
         if (!s.IsNull()) {
           Geom2dAdaptor_Curve a(s);
           GCPnts_QuasiUniformDeflection d(a, tol);
@@ -1007,7 +1080,7 @@ std::vector<std::array<Vec2, 4>> Curve::beziers(double tol) const {
   }
   if (type == Type::Spline) {
     try {
-      Handle(Geom2d_BSplineCurve) s = curve2d(*this);
+      Handle(Geom2d_BSplineCurve) s = detail::curve2d(*this);
       if (!s.IsNull() && (s->IsRational() || s->Degree() > 3)) {
         Geom2dConvert_ApproxCurve approx(s, tol, GeomAbs_C1, 2000, 3);
         s = approx.HasResult() && approx.MaxError() <= tol ? approx.Curve() : nullptr;
@@ -1082,7 +1155,7 @@ json ViewGeometry::counts() const {
   for (const char* k : {"sharp", "tangent", "seam", "silhouette", "line", "arc", "ellipse", "spline", "polyline"}) j[k] = 0;
   for (const auto& c : curves) {
     j[c.hidden ? "hidden" : "visible"] = j[c.hidden ? "hidden" : "visible"].get<int>() + 1;
-    j[Curve::kind_name(c.kind)] = j[Curve::kind_name(c.kind)].get<int>() + 1;
+    j[Curve::kind_name(c.kind)] = j.value(Curve::kind_name(c.kind), 0) + 1;
     j[Curve::type_name(c.type)] = j[Curve::type_name(c.type)].get<int>() + 1;
   }
   return j;
@@ -1107,7 +1180,7 @@ std::string ViewGeometry::serialize() const {
   const std::string head = json{{"tier", quality_name(tier)}, {"fingerprint", fingerprint}, {"x", vec_json(x)}, {"y", vec_json(y)},
                                 {"dir", vec_json(dir)}, {"bounds", bounds}, {"bodies", b}, {"stats", stats}}.dump();
   Writer w;
-  w.out = kMagic;
+  w.out = sections.empty() ? kMagic : kMagicSections;
   w.put(static_cast<uint32_t>(head.size()));
   w.out += head;
   w.put(static_cast<uint32_t>(curves.size()));
@@ -1125,12 +1198,24 @@ std::string ViewGeometry::serialize() const {
     w.doubles(k.knots);
     w.doubles(k.weights);
   }
+  if (sections.empty()) return w.out;
+  w.put(static_cast<uint32_t>(sections.size()));
+  for (const auto& r : sections) {
+    w.put(static_cast<int32_t>(r.body));
+    w.put(static_cast<uint32_t>(r.loops.size()));
+    for (const auto& l : r.loops) {
+      std::vector<double> p;
+      for (const auto& q : l) p.insert(p.end(), {q[0], q[1]});
+      w.doubles(p);
+    }
+  }
   return w.out;
 }
 
 ViewGeometry ViewGeometry::deserialize(const std::string& blob) {
   const size_t m = sizeof kMagic - 1;
-  if (blob.size() < m + 4 || blob.compare(0, m, kMagic) != 0) throw Error("bad projection blob");
+  const bool with_sections = blob.size() >= m && blob.compare(0, m, kMagicSections) == 0;
+  if (blob.size() < m + 4 || (blob.compare(0, m, kMagic) != 0 && !with_sections)) throw Error("bad projection blob");
   Reader r{blob.data() + m, blob.data() + blob.size()};
   const uint32_t n = r.get<uint32_t>();
   if (r.p + n > r.end) throw Error("truncated projection blob");
@@ -1164,6 +1249,17 @@ ViewGeometry ViewGeometry::deserialize(const std::string& blob) {
     k.z = a[8];
     k.knots = r.doubles();
     k.weights = r.doubles();
+  }
+  if (with_sections) {
+    g.sections.resize(r.get<uint32_t>());
+    for (auto& s : g.sections) {
+      s.body = r.get<int32_t>();
+      s.loops.resize(r.get<uint32_t>());
+      for (auto& l : s.loops) {
+        const auto p = r.doubles();
+        for (size_t i = 0; i + 1 < p.size(); i += 2) l.push_back({p[i], p[i + 1]});
+      }
+    }
   }
   return g;
 }
@@ -1290,13 +1386,23 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
     if (auto hit = cached(fp)) return hit;
   load(doc, sources, true);
   auto g = std::make_shared<ViewGeometry>();
+  if (!spec.cut.empty() || !spec.breakouts.empty()) {
+    const auto cutting = std::chrono::steady_clock::now();
+    try {
+      if (!spec.cut.empty()) detail::cut_sources(doc, spec, v, sources, run, g->sections);
+      else detail::breakout_sources(doc, spec, v, sources, run, g->sections);
+    } catch (const Standard_Failure& e) {
+      throw Error(std::string("section failed: ") + e.GetMessageString());
+    }
+    g->stats["cut_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - cutting).count();
+  }
   g->stats["gather_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
   g->tier = tier;
   g->fingerprint = fp;
   g->x = {v.x.X(), v.x.Y(), v.x.Z()};
   g->y = {v.y.X(), v.y.Y(), v.y.Z()};
   g->dir = {v.z.X(), v.z.Y(), v.z.Z()};
-  for (const auto& s : sources) g->bodies.push_back({s.node, s.key});
+  for (const auto& s : sources) g->bodies.push_back({s.node, s.body_key()});
   if (!sources.empty()) {
     try {
       if (tier == Quality::Exact) exact(sources, spec, v, run, *g);
@@ -1304,6 +1410,11 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
       else detail::hybrid(doc, sources, spec, v, run, *g);
     } catch (const Standard_Failure& e) {
       throw Error(std::string("projection failed: ") + e.GetMessageString());
+    }
+    if (!spec.cut.empty() || !spec.breakouts.empty()) {
+      detail::name_cut_curves(sources, g->curves);
+      detail::drop_joint_curves(spec, v, sources, g->curves);
+      detail::mark_breakout_curves(spec, sources, g->curves);
     }
   }
   run.check();
@@ -1357,7 +1468,7 @@ Image preview_image(const ViewGeometry& g, int width, int height) {
   };
   for (int pass = 0; pass < 3; ++pass)  // hidden under tangent under visible
     for (const auto& k : g.curves) {
-      const int mine = k.hidden ? 0 : k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam ? 1 : 2;
+      const int mine = k.hidden ? 0 : k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam || k.kind == Curve::Kind::Break ? 1 : 2;
       if (mine != pass) continue;
       const uint8_t shade = pass == 0 ? 185 : pass == 1 ? 140 : 0;
       const auto pts = k.sample(0.25 / scale);

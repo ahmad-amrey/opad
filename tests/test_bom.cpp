@@ -499,7 +499,8 @@ TEST(bom_viewer_mode) {
   const json masses = drawing::bom(viewed, resolve(viewed), o);
   CHECK(masses["totals"]["mass_complete"].get<bool>());
   CHECK_NEAR(row(masses, "Spacer")["mass"].get<double>(), 10 * 10 * 5 * 7.85 / 1000, 1e-6);
-  std::filesystem::remove_all(dir);
+  std::error_code ec;  // a virus scanner or the indexer may still hold a file: left to the temp folder then
+  std::filesystem::remove_all(dir, ec);
 }
 
 TEST(bom_command) {
@@ -519,7 +520,8 @@ TEST(bom_command) {
   CHECK_THROWS(run(r.doc, "bom", {{"format", "xlsx"}}));
   CHECK_THROWS(run(r.doc, "bom", {{"separator", "|"}}));
   CHECK_THROWS(run(r.doc, "bom", {{"mass_unit", "oz"}}));
-  std::filesystem::remove_all(dir);
+  std::error_code ec;  // a virus scanner or the indexer may still hold a file: left to the temp folder then
+  std::filesystem::remove_all(dir, ec);
 }
 
 CHECK_MAIN()

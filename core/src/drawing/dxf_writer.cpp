@@ -2,10 +2,12 @@
 // tables a reader looks things up in (line types, layers with colour, line type and line weight, the Standard text
 // style, the model and paper space block records), the model and paper space blocks, the entities, and the objects
 // AutoCAD expects of an R2000 file (the root dictionary, groups, the Model and Layout1 layouts, plot style names).
-// Everything lies in model space at 1:1 mm. R2000 has no true colours: the nearest indexed colour is written.
+// Everything lies in model space at 1:1 mm. R2000 has no true colours: the nearest indexed colour is written. A sheet's
+// dimensions are DIMENSION entities, each over an anonymous block (*D1, ...) of what it draws.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <set>
 
 #include "../drawing_common.hpp"
@@ -100,9 +102,36 @@ bool convex(const std::vector<Vec2>& p) {
   return sign != 0;
 }
 
+// A dimension's text as a DIMENSION carries it: ⌀ ± ° as their %% codes, lines split by \P, the rest as escaped() writes it.
+std::string dimension_text(const std::string& s) {
+  static const std::pair<std::string, std::string> codes[] = {{"\xE2\x8C\x80", "%%c"}, {"\xC2\xB1", "%%p"}, {"\xC2\xB0", "%%d"}, {"\n", "\\P"}};
+  std::string out, run;
+  for (size_t i = 0; i < s.size();) {
+    const auto code = std::find_if(std::begin(codes), std::end(codes), [&](const auto& c) { return s.compare(i, c.first.size(), c.first) == 0; });
+    if (code == std::end(codes)) {
+      run += s[i++];
+      continue;
+    }
+    out += escaped(run) + code->second;
+    run.clear();
+    i += code->first.size();
+  }
+  return out + escaped(run);
+}
+
 class Writer {
  public:
-  Writer(const Display& d, int decimals, bool mtext) : m_d(d), m_dec(decimals), m_mtext(mtext) {}
+  Writer(const Display& d, int decimals, bool mtext, bool dimensions) : m_d(d), m_dec(decimals), m_mtext(mtext) {
+    if (!dimensions) return;
+    std::map<std::string, size_t> records;  // a source's dimension record (the first)
+    for (size_t i = d.dimensions.size(); i-- > 0;)
+      if (!d.dimensions[i].source.empty()) records[d.dimensions[i].source] = i;
+    for (const auto& p : d.prims)  // a block each, in the order they are drawn
+      if (const auto it = records.find(p.source); !p.source.empty() && it != records.end() && !m_blockOf.count(p.source)) {
+        m_blockOf[p.source] = m_blocks.size();
+        m_blocks.push_back({it->second, 0, "*D" + std::to_string(m_blocks.size() + 1), p.layer});
+      }
+  }
   std::string run();
 
  private:
@@ -139,21 +168,30 @@ class Writer {
   void entity(const char* type, const Prim& p, const char* subclass) {
     g(0, type);
     g(5, hex(handle()));
-    g(330, hex(m_modelRecord));
+    g(330, hex(m_owner));
     g(100, "AcDbEntity");
-    g(8, m_layerNames[static_cast<size_t>(std::clamp(p.layer, 0, static_cast<int>(m_layerNames.size()) - 1))]);
+    g(8, layerName(p.layer));
     if (p.rgb != kByLayer && p.layer >= 0 && p.layer < static_cast<int>(m_d.layers.size()) && aci(p.rgb) != aci(m_d.layers[static_cast<size_t>(p.layer)].rgb))
       gi(62, aci(p.rgb));
     g(100, subclass);
   }
+  const std::string& layerName(int layer) const { return m_layerNames[static_cast<size_t>(std::clamp(layer, 0, static_cast<int>(m_layerNames.size()) - 1))]; }
   void header();
   void tables();
   void blocks();
   void entities();
   void objects();
+  void prim(const Prim& p);
   void curve(const Prim& p);
   void fill(const Prim& p);
   void text(const Prim& p);
+  struct Block {
+    size_t record;     // Display::dimensions
+    unsigned handle;   // its BLOCK_RECORD
+    std::string name;  // *D1, *D2, ...
+    int layer;         // the DIMENSION's: its first primitive's
+  };
+  void dimension(const Block& b);
 
   const Display& m_d;
   int m_dec;
@@ -162,7 +200,9 @@ class Writer {
   unsigned m_next = 0x20;
   std::vector<std::string> m_layerNames;
   unsigned m_modelRecord = 0, m_paperRecord = 0, m_root = 0, m_groups = 0, m_layouts = 0, m_plotStyles = 0, m_placeholder = 0, m_modelLayout = 0,
-           m_paperLayout = 0, m_style = 0;
+           m_paperLayout = 0, m_style = 0, m_owner = 0;
+  std::vector<Block> m_blocks;              // a DIMENSION's each
+  std::map<std::string, size_t> m_blockOf;  // source -> m_blocks
 };
 
 void Writer::header() {
@@ -387,7 +427,7 @@ void Writer::tables() {
   g(0, "ENDTAB");
 
   t = handle();
-  table("BLOCK_RECORD", t, 2);
+  table("BLOCK_RECORD", t, 2 + static_cast<int>(m_blocks.size()));
   for (const auto& [h, name, layout] : {std::tuple{m_modelRecord, "*Model_Space", m_modelLayout}, std::tuple{m_paperRecord, "*Paper_Space", m_paperLayout}}) {
     g(0, "BLOCK_RECORD");
     g(5, hex(h));
@@ -396,6 +436,15 @@ void Writer::tables() {
     g(100, "AcDbBlockTableRecord");
     g(2, name);
     g(340, hex(layout));
+  }
+  for (const auto& b : m_blocks) {
+    g(0, "BLOCK_RECORD");
+    g(5, hex(b.handle));
+    g(330, hex(t));
+    g(100, "AcDbSymbolTableRecord");
+    g(100, "AcDbBlockTableRecord");
+    g(2, b.name);
+    g(340, "0");
   }
   g(0, "ENDTAB");
   g(0, "ENDSEC");
@@ -422,6 +471,31 @@ void Writer::blocks() {
     g(330, hex(record));
     g(100, "AcDbEntity");
     if (paper) gi(67, 1);
+    g(8, "0");
+    g(100, "AcDbBlockEnd");
+  }
+  // A dimension's block: what it draws, at the drawing's own coordinates (base point 0, 0), owned by its record.
+  for (const auto& b : m_blocks) {
+    g(0, "BLOCK");
+    g(5, hex(handle()));
+    g(330, hex(b.handle));
+    g(100, "AcDbEntity");
+    g(8, "0");
+    g(100, "AcDbBlockBegin");
+    g(2, b.name);
+    gi(70, 1);  // anonymous
+    point(10, {0, 0});
+    g(3, b.name);
+    g(1, "");
+    m_owner = b.handle;
+    const std::string& source = m_d.dimensions[b.record].source;
+    for (const auto& p : m_d.prims)
+      if (p.source == source) prim(p);
+    m_owner = m_modelRecord;
+    g(0, "ENDBLK");
+    g(5, hex(handle()));
+    g(330, hex(b.handle));
+    g(100, "AcDbEntity");
     g(8, "0");
     g(100, "AcDbBlockEnd");
   }
@@ -615,15 +689,75 @@ void Writer::text(const Prim& p) {
 void Writer::entities() {
   g(0, "SECTION");
   g(2, "ENTITIES");
+  std::set<size_t> written;
   for (const auto& p : m_d.prims) {
-    switch (p.kind) {
-      case Prim::Kind::Curve: curve(p); break;
-      case Prim::Kind::Fill: fill(p); break;
-      case Prim::Kind::Text: text(p); break;
-      case Prim::Kind::Image: throw Error("Raster images require SVG export; DXF raster references are not supported");
-    }
+    const auto it = p.source.empty() ? m_blockOf.end() : m_blockOf.find(p.source);
+    if (it == m_blockOf.end()) prim(p);
+    else if (written.insert(it->second).second) dimension(m_blocks[it->second]);  // where it is first drawn: its DIMENSION
   }
   g(0, "ENDSEC");
+}
+
+void Writer::prim(const Prim& p) {
+  switch (p.kind) {
+    case Prim::Kind::Curve: curve(p); break;
+    case Prim::Kind::Fill: fill(p); break;
+    case Prim::Kind::Text: text(p); break;
+    case Prim::Kind::Image: throw Error("Raster images require SVG export; DXF raster references are not supported");
+  }
+}
+
+// A DIMENSION over its block: the definition points, its type (with 32: the block is its own; 128: its text stands where
+// it was drawn), the measurement and the text as drawn; a linear scale (DIMLFAC) among the Standard style's overrides, so
+// a program that measures it again on paper finds the model's value.
+void Writer::dimension(const Block& b) {
+  const DimensionRecord& r = m_d.dimensions[b.record];
+  g(0, "DIMENSION");
+  g(5, hex(handle()));
+  g(330, hex(m_modelRecord));
+  g(100, "AcDbEntity");
+  g(8, layerName(b.layer));
+  g(100, "AcDbDimension");
+  g(2, b.name);
+  point(10, r.p10);
+  point(11, r.p11);
+  gi(70, r.type | 32 | 128);
+  g(1, dimension_text(r.text));
+  g(42, r.value);
+  g(3, "Standard");
+  const auto dist = [](Vec2 a, Vec2 c) { return std::hypot(c[0] - a[0], c[1] - a[1]); };
+  double paper = 0;  // what it spans on paper
+  if (r.type == 0 || r.type == 1) {
+    g(100, "AcDbAlignedDimension");
+    point(13, r.p13);
+    point(14, r.p14);
+    if (r.type == 0) {
+      g(50, degrees(r.angle));
+      g(100, "AcDbRotatedDimension");
+      paper = std::fabs((r.p14[0] - r.p13[0]) * std::cos(r.angle) + (r.p14[1] - r.p13[1]) * std::sin(r.angle));
+    } else {
+      paper = dist(r.p13, r.p14);
+    }
+  } else if (r.type == 2) {
+    g(100, "AcDb2LineAngularDimension");
+    point(13, r.p13);
+    point(14, r.p14);
+    point(15, r.p15);
+    point(16, r.p16);
+  } else {
+    g(100, r.type == 3 ? "AcDbDiametricDimension" : "AcDbRadialDimension");
+    point(15, r.p15);
+    g(40, r.leader);
+    paper = dist(r.p10, r.p15);
+  }
+  if (paper > 1e-9 && r.type != 2 && std::fabs(r.value / paper - 1) > 1e-9) {
+    g(1001, "ACAD");
+    g(1000, "DSTYLE");
+    g(1002, "{");
+    gi(1070, 144);
+    g(1040, num(r.value / paper, 12));
+    g(1002, "}");
+  }
 }
 
 void Writer::objects() {
@@ -721,6 +855,8 @@ std::string Writer::run() {
   m_placeholder = handle();
   m_modelLayout = handle();
   m_paperLayout = handle();
+  m_owner = m_modelRecord;
+  for (auto& b : m_blocks) b.handle = handle();
   header();
   tables();
   blocks();
@@ -733,6 +869,6 @@ std::string Writer::run() {
 
 }  // namespace
 
-std::string dxf_text(const Display& d, int decimals, bool mtext) { return Writer(d, decimals, mtext).run(); }
+std::string dxf_text(const Display& d, int decimals, bool mtext, bool dimensions) { return Writer(d, decimals, mtext, dimensions).run(); }
 
 }  // namespace opad::drawing

@@ -195,8 +195,8 @@ void PropertiesPanel::fill() {
   m_filledWidth = m_table->viewport()->width() - m_table->columnWidth(0);
   m_splitVectors = false;
   m_table->clear();
-  static const char* order[] = {"surface", "curve", "area", "length", "volume", "mass", "radius", "diameter", "normal", "axis", "center", "center_of_mass",
-                                "start", "end", "origin", "bbox", "faces", "edges", "vertices", "fills", "objects", "points", "solid", "representation", "material", "density", "instances",
+  static const char* order[] = {"surface", "curve", "area", "length", "volume", "mass", "material", "density", "radius", "diameter", "normal", "axis", "center",
+                                "center_of_mass", "start", "end", "origin", "bbox", "faces", "edges", "vertices", "fills", "objects", "points", "solid", "representation", "instances",
                                 "opacity", "visible", "locked", "transform", "world", "component", "source", "key", "source_op"};
   std::set<std::string> done;
   auto addKey = [&](const std::string& k) {

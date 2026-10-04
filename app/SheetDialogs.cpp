@@ -3,6 +3,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QHeaderView>
@@ -159,7 +160,12 @@ NewDrawingDialog::NewDrawingDialog(AppDocument* doc, const std::vector<std::stri
   m_tangent->addItem(tr("Tangent edges as edges"), "show");
   m_tangent->addItem(tr("No tangent edges"), "hide");
   m_tangent->setCurrentIndex(std::max(0, m_tangent->findData(settings.value("drawings/tangent", "thin"))));
+  m_marks = new QCheckBox(tr("Centre marks"), this);
+  m_marks->setObjectName("drawing.centermarks");
+  m_marks->setToolTip(tr("Centre marks on the circles seen along their axis and centre lines along the holes and shafts seen from the side"));
+  m_marks->setChecked(settings.value("drawings/centermarks", true).toBool());
   style->addWidget(m_hidden);
+  style->addWidget(m_marks);
   style->addWidget(m_tangent);
   style->addStretch();
   left->addRow(tr("Style"), style);
@@ -212,6 +218,7 @@ NewDrawingDialog::NewDrawingDialog(AppDocument* doc, const std::vector<std::stri
       if (box->isChecked()) views << id;
     s.setValue("drawings/views", views);
     s.setValue("drawings/hidden", m_hidden->isChecked());
+    s.setValue("drawings/centermarks", m_marks->isChecked());
     s.setValue("drawings/tangent", m_tangent->currentData());
     s.setValue("drawings/owner", m_owner->text().trimmed());
     accept();
@@ -252,6 +259,7 @@ opad::json NewDrawingDialog::args() const {
                   {"projection", m_projection->currentData().toString().toStdString()},
                   {"scale", m_scale->currentData().toString().toStdString()},
                   {"hidden", m_hidden->isChecked()},
+                  {"centermarks", m_marks->isChecked()},
                   {"tangent", m_tangent->currentData().toString().toStdString()}};
   const std::string base = m_base->currentData().toString().toStdString();
   opad::json views = {base};
@@ -430,6 +438,10 @@ SheetPropertiesDialog::SheetPropertiesDialog(AppDocument* doc, const std::string
   if (t.is_object() && t.contains("title_block"))
     for (const auto& f : t["title_block"].value("fields", opad::json::array()))
       if (f.value("key", "") != "projection") fields.push_back({f.value("key", ""), f.value("label", "")});
+  if (t.is_object())  // the template's own (a template file's attributes and placeholders, fields placed by hand)
+    for (const auto& f : t.value("fields", opad::json::array()))
+      if (f.is_object() && f.value("key", "") != "projection" && !f.value("key", "").empty())
+        fields.push_back({f.value("key", ""), !f.value("label", "").empty() ? f.value("label", "") : f.value("tag", f.value("key", ""))});
   if (fields.empty())
     for (const char* k : {"title", "number", "owner", "author", "revision"}) fields.push_back({k, k});
   for (const auto& [key, label] : fields) {
@@ -496,4 +508,77 @@ opad::json SheetPropertiesDialog::change() const {
   }
   if (values != before) set["values"] = values.empty() ? opad::json(nullptr) : values;
   return set.empty() ? opad::json(nullptr) : set;
+}
+
+// ---------------------------------------------------------------- hatching (UI-82)
+HatchDialog::HatchDialog(const opad::json& hatch, QWidget* parent) : QDialog(parent), m_before(hatch.is_object() ? hatch : opad::json::object()) {
+  setObjectName("hatchDialog");
+  setWindowTitle(tr("Hatching"));
+  auto* v = new QVBoxLayout(this);
+  v->setContentsMargins(16, 16, 16, 16);
+  v->setSpacing(10);
+  auto* intro = new QLabel(tr("ISO 128-50 draws every material alike, at 45 degrees to each part's main outlines, parts beside each other turned apart."), this);
+  intro->setObjectName("secondary");
+  intro->setWordWrap(true);
+  v->addWidget(intro);
+  auto* form = new QFormLayout();
+  m_pattern = new QComboBox(this);
+  m_pattern->setObjectName("hatch.pattern");
+  for (const auto& [value, label] : std::initializer_list<std::pair<const char*, QString>>{
+           {"general", tr("General (ISO 128-50)")}, {"material", tr("By each body's material")}, {"steel", tr("Steel")}, {"copper", tr("Copper alloys")},
+           {"aluminium", tr("Light alloys")}, {"plastic", tr("Plastics and rubber")}, {"insulation", tr("Insulation")}, {"glass", tr("Glass")}})
+    m_pattern->addItem(label, QString::fromLatin1(value));
+  m_pattern->setCurrentIndex(std::max(0, m_pattern->findData(QString::fromStdString(m_before.value("pattern", "general")))));
+  form->addRow(tr("Lining"), m_pattern);
+  const auto row = [&](QCheckBox*& automatic, QDoubleSpinBox*& spin, const char* key, const QString& name, double lo, double hi, double fallback, const QString& suffix) {
+    auto* line = new QHBoxLayout();
+    automatic = new QCheckBox(tr("Automatic"), this);
+    automatic->setObjectName(QString("hatch.auto.") + key);
+    spin = new QDoubleSpinBox(this);
+    spin->setObjectName(QString("hatch.") + key);
+    spin->setRange(lo, hi);
+    spin->setDecimals(1);
+    spin->setSuffix(suffix);
+    const bool given = m_before.contains(key) && m_before[key].is_number();
+    spin->setValue(given ? m_before[key].get<double>() : fallback);
+    automatic->setChecked(!given);
+    spin->setEnabled(given);
+    connect(automatic, &QCheckBox::toggled, spin, [spin](bool on) { spin->setEnabled(!on); });
+    line->addWidget(automatic);
+    line->addWidget(spin, 1);
+    form->addRow(name, line);
+  };
+  row(m_autoAngle, m_angle, "angle", tr("Angle"), 0, 180, 45, QString::fromUtf8("°"));
+  row(m_autoSpacing, m_spacing, "spacing", tr("Spacing"), 0.5, 20, 2, tr(" mm"));
+  v->addLayout(form);
+  m_fill = new QCheckBox(tr("Fill narrow faces (under about 1 mm on paper)"), this);
+  m_fill->setObjectName("hatch.fill");
+  m_fill->setChecked(m_before.value("thin", "fill") != "hatch");
+  v->addWidget(m_fill);
+  auto* footer = new QHBoxLayout();
+  footer->addStretch();
+  auto* cancel = new QPushButton(tr("Cancel   Esc"), this);
+  auto* apply = new QPushButton(tr("Apply"), this);
+  apply->setObjectName("primary");
+  apply->setDefault(true);
+  footer->addWidget(cancel);
+  footer->addWidget(apply);
+  v->addLayout(footer);
+  connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+  connect(apply, &QPushButton::clicked, this, &QDialog::accept);
+  resize(440, sizeHint().height());
+}
+
+opad::json HatchDialog::hatch() const {
+  opad::json after = m_before;  // per-body settings (sheet_edit, the CLI) are kept
+  const auto put = [&](const char* key, bool on, const opad::json& value) {
+    if (on) after[key] = value;
+    else after.erase(key);
+  };
+  const std::string pattern = m_pattern->currentData().toString().toStdString();
+  put("pattern", pattern != "general", pattern);
+  put("angle", !m_autoAngle->isChecked(), std::round(m_angle->value() * 10) / 10);
+  put("spacing", !m_autoSpacing->isChecked(), std::round(m_spacing->value() * 10) / 10);
+  put("thin", !m_fill->isChecked(), "hatch");
+  return after == m_before ? opad::json() : after;
 }

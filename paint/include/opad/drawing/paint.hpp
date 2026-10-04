@@ -37,5 +37,8 @@ json write_png(const Display& d, const std::filesystem::path& file, double dpi =
 // Makes write_drawing and the export command write "pdf" and "png" (drawing::set_paint_writer). A process without a Qt
 // application (opad-cli) gets a QGuiApplication on the offscreen platform the first time it paints, on that thread.
 void install_painter();
+// The families a sheet's text is drawn in: the compiled-in OFL fonts (Liberation Sans, Noto Sans Arabic), then Arial;
+// empty before a Qt GUI application exists (UI-139).
+QStringList drawing_font_families();
 
 }  // namespace opad::drawing

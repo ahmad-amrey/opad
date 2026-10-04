@@ -24,4 +24,7 @@ std::filesystem::path oda_file_converter();
 // The converter a DWG is read through now: "oda", "libredwg" or "override:<OPAD_DWG2DXF>". The viewer cache keys DWG reads
 // on it, so switching ODA on or off reads a remembered drawing again.
 std::string dwg_reader();
+// Whether a DWG converter is there for writing (toDwg) or reading DWG, found as the conversion looks for it: OPAD_DXF2DWG /
+// OPAD_DWG2DXF when set (that file alone), the ODA File Converter while it is switched on (use_oda), LibreDWG's beside the program or on PATH. File checks only.
+bool dwg_converter(bool toDwg);
 }

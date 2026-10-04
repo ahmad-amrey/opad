@@ -5,7 +5,10 @@
 #include <cmath>
 #include <map>
 
+#include "opad/drawing/annotate.hpp"
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/symbols.hpp"
+#include "views_internal.hpp"
 
 namespace opad::drawing {
 namespace {
@@ -32,24 +35,46 @@ void tag(Display& d, size_t from, const std::string& source) {
 
 }  // namespace
 
-void draw_view(Display& d, const ViewFrame& f, const SheetView& v, const ViewGeometry& g) {
+void draw_view(Display& d, const ViewFrame& f, const SheetView& v, const ViewGeometry& g, const Document* doc, const Scene* scene) {
   const int visible = d.layer({"Visible", kInk, LineType::Continuous, 0.5});
   const int tangent = d.layer({"Tangent", kInk, LineType::Continuous, 0.25});
   const int hidden = d.layer({"Hidden", kInk, LineType::Hidden, 0.25});
   const json style = v.def.value("style", json::object());
   const bool thin = !style.contains("tangent") || style["tangent"] != "show";
   const size_t from = d.prims.size();
+  int broken = -1;  // where a broken-out section ends over a body: a thin break line (ISO 128-2 type 01.1)
   for (const auto& c : g.curves) {
     const bool smooth = c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam;
-    d.curve(c.hidden ? hidden : smooth && thin ? tangent : visible, placed(c, f));
+    if (c.kind == Curve::Kind::Break && !c.hidden && broken < 0) broken = d.layer({"Break", kInk, LineType::Continuous, 0.25});
+    d.curve(c.hidden ? hidden : c.kind == Curve::Kind::Break ? broken : smooth && thin ? tangent : visible, placed(c, f));
   }
+  detail::draw_section_faces(d, f, v, g, doc, scene);
+  if (style.value("centermarks", false)) {
+    std::vector<std::array<Vec2, 2>> axes;
+    if (doc && scene) axes = cylinder_axes(*doc, *scene, f, view_spec(*scene, v));
+    if (f.shaped()) {  // the axes within what the view keeps
+      std::vector<std::array<Vec2, 2>> kept;
+      for (const auto& [a, b] : axes) {
+        Curve line;
+        line.pts = {f.unfold({f.centre[0] + (a[0] - f.at[0]) / f.scale, f.centre[1] + (a[1] - f.at[1]) / f.scale}),
+                    f.unfold({f.centre[0] + (b[0] - f.at[0]) / f.scale, f.centre[1] + (b[1] - f.at[1]) / f.scale})};
+        ViewGeometry one;
+        one.curves.push_back(line);
+        for (const auto& c : shape_linework(std::make_shared<const ViewGeometry>(one), f)->curves)
+          kept.push_back({placed(c, f).pts.front(), placed(c, f).pts.back()});
+      }
+      axes.swap(kept);
+    }
+    view_centre_marks(d, f, g, {}, doc && scene ? &axes : nullptr);
+  }
+  if (scene) detail::draw_view_marks(d, f, v, *scene);
   tag(d, from, v.id);
 }
 
 int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet& sheet, const std::vector<ViewFrame>& frames, const std::string& view,
                json& skipped) {
   const int dims = d.layer({"Dimensions", kInk, LineType::Continuous, 0.25});
-  const int notes = d.layer({"Text", kInk, LineType::Continuous, 0.25});
+  d.layer({"Text", kInk, LineType::Continuous, 0.25});
   std::map<std::string, const ViewFrame*> by_id;
   for (const auto& f : frames) by_id[f.id] = &f;
   DimStyle style;
@@ -57,43 +82,33 @@ int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet&
   for (const auto& id : sheet.items) {
     const SheetItem* t = scene.sheet_item(id);
     if (!t || t->view != view) continue;
-    const size_t from = d.prims.size();
+    const size_t from = d.prims.size(), records = d.dimensions.size();
     const ViewFrame* f = t->view.empty() ? nullptr : by_id.count(t->view) ? by_id[t->view] : nullptr;
     const Vec2 origin = f ? f->at : Vec2{0, 0};
-    if (t->kind == "note") {
-      d.text(notes, t->def.value("text", ""), plus(origin, vec2(t->def.value("at", json()))), t->def.value("height", 3.5));
-      tag(d, from, id);
-      ++items;
+    if (!known_item(t->kind, t->type) && t->kind != "note") {
+      skipped.push_back({{"id", id}, {"error", t->error.empty() ? "needs a newer OPAD (sheet_item kind '" + t->kind + "')" : t->error}});
       continue;
     }
-    if (t->kind != "dimension") {
-      skipped.push_back({{"id", id}, {"error", "needs a newer OPAD (sheet_item kind '" + t->kind + "')"}});
-      continue;
-    }
-    const Vec2 place = plus(origin, vec2(t->def.value("place", json::object()).value("text", json())));
     try {
       if (!t->error.empty()) throw Error(t->error);
-      if (!f || !f->error.empty()) throw Error("its view cannot be drawn");
-      const json now = evaluate_item(doc, scene, sheet, *t, *f);
-      const json& g = now["geometry"];
-      const std::string text = now["shown"].get<std::string>();
-      if (g.contains("lines")) {
-        const json& l = g["lines"];
-        angular_dimension(d, dims, {plus(origin, vec2(l[0][0])), plus(origin, vec2(l[0][1]))}, {plus(origin, vec2(l[1][0])), plus(origin, vec2(l[1][1]))}, place, text, style);
-      } else if (g.contains("centre")) {
-        radial_dimension(d, dims, plus(origin, vec2(g["centre"])), g["r"].get<double>(), place, text, t->type == "diameter", style);
-      } else {
-        const Vec2 a = plus(origin, vec2(g["from"])), b = plus(origin, vec2(g["to"]));
-        const Vec2 axis = t->type == "horizontal" ? Vec2{1, 0} : t->type == "vertical" ? Vec2{0, 1} : Vec2{b[0] - a[0], b[1] - a[1]};
-        linear_dimension(d, dims, a, b, axis, place, text, style);
-      }
+      if (!t->view.empty() && (!f || !f->error.empty())) throw Error("its view cannot be drawn");
+      draw_item(d, sheet, t->def, measure_item(doc, scene, sheet, *t, f), origin, style);
       ++items;
-    } catch (const std::exception& e) {  // dangling: the value it was made with, in magenta, where its text was
+    } catch (const std::exception& e) {  // dangling: what it showed when it was made, in magenta, where it stood
       d.prims.resize(from);
-      d.text(dims, t->def.value("result", json::object()).value("shown", "?"), place, style.text, 0, 1, 0, 0xFF00FF);
+      d.dimensions.resize(records);
+      const json& def = t->def;
+      const json result = def.value("result", json::object());
+      std::string shown = result.value("shown", json()).is_string() ? result["shown"].get<std::string>() : std::string();
+      if (result.value("shown", json()).is_array())
+        for (const auto& s : result["shown"]) shown += (shown.empty() ? "" : "  ") + s.get<std::string>();
+      if (shown.empty()) shown = def.value("letter", def.value("text", def.value("value", json("?")).is_string() ? def.value("value", "?") : std::string("?")));
+      const Vec2 at = def.contains("place") ? vec2(def["place"].value("text", json())) : vec2(def.value("at", json()));
+      rich_text(d, dims, shown, plus(t->kind == "hole_table" ? Vec2{0, 0} : origin, at), style.text, 0, 1, 0, 0xFF00FF);
       skipped.push_back({{"id", id}, {"error", e.what()}});
     }
     tag(d, from, id);
+    for (size_t k = records; k < d.dimensions.size(); ++k) d.dimensions[k].source = id;
   }
   return items;
 }
@@ -121,10 +136,10 @@ Display sheet_display(const Document& doc, const Scene& scene, const Sheet& shee
       continue;
     }
     const double n = static_cast<double>(frames.size());
-    const auto g = project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
+    const auto g = shape_linework(project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
       return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / n, phase);
-    });
-    draw_view(d, f, *v, *g);
+    }), f);
+    draw_view(d, f, *v, *g, &doc, &scene);
     bodies += static_cast<int>(g->bodies.size());
     ++views;
   }

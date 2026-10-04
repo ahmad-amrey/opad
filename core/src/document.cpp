@@ -428,17 +428,31 @@ std::vector<std::string> Document::gc() {
   std::set<std::string> live;
   // Feature results keep every intermediate state alive (the body before a fillet is what the fillet is
   // recomputed from); results an edit has superseded are not part of the effective log and go.
-  for (const auto& o : effective_ops(*this)) {
-    if (o.op->type == "import") collect_keys(o.data().value("nodes", json::array()), live);
-    else if (o.op->type == "feature" && o.data().contains("result"))
-      for (const auto& b : o.data()["result"].value("bodies", json::array())) live.insert(b.value("key", ""));
-    else if (drawing::is_sheet_record(o.op->type)) {  // a sheet's template geometry, an issue's frozen linework
-      std::vector<std::string> keys;
-      drawing::record_body_keys(o.data(), keys);
-      live.insert(keys.begin(), keys.end());
+  const auto keep = [&](const std::vector<EffectiveOp>& log) {
+    for (const auto& o : log) {
+      if (o.op->type == "import") collect_keys(o.data().value("nodes", json::array()), live);
+      else if (o.op->type == "feature" && o.data().contains("result"))
+        for (const auto& b : o.data()["result"].value("bodies", json::array())) live.insert(b.value("key", ""));
+      else if (drawing::is_sheet_record(o.op->type)) {  // a sheet's template geometry, an issue's frozen linework
+        std::vector<std::string> keys;
+        drawing::record_body_keys(o.data(), keys);
+        live.insert(keys.begin(), keys.end());
+      }
+      else if (!known_type(o.op->type)) collect_mentioned_keys(o.data(), bodies_index_, live);
     }
-    else if (!known_type(o.op->type)) collect_mentioned_keys(o.data(), bodies_index_, live);
-  }
+  };
+  const auto log = effective_ops(*this);
+  keep(log);
+  // An issued drawing revision keeps the model it showed (drawing::issued_scene: the log up to the issue).
+  for (const auto& o : log)
+    if (o.op->type == "sheet_item" && o.data().value("kind", "") == "issue") {
+      std::vector<const Op*> upto;
+      for (const auto& op : ops) {
+        upto.push_back(&op);
+        if (&op == o.op) break;
+      }
+      keep(effective_ops(upto));
+    }
   std::vector<std::string> removed;
   for (const auto& b : bodies_)
     if (!live.count(b.key)) removed.push_back(b.key);

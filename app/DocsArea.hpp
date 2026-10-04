@@ -6,14 +6,20 @@
 // The Drawings workspace (Ctrl+3, DocsWorkspace.cpp, UI-78): its ribbon tab (temporary until the ribbon is reorganised),
 // the sheet page in the viewport's place (SheetPage, SheetCanvas), New drawing from a template, new sheets, sheet
 // properties, a template from a DXF or DWG file, base, projected and isometric views placed with the mouse, view styles.
+// Its Annotate tab (DocsAnnotate.cpp, UI-79 to UI-81): dimensions, hole callouts and tables, centre marks and lines, notes,
+// datums, feature control frames, surface texture, ordinate/baseline/chain sets and dimensions from datums, re-attach;
+// parts lists, balloons (auto-balloon), revision tables and renumbering (UI-84).
 #include <functional>
 #include <string>
 #include <vector>
 
 #include "AreaController.hpp"
+#include "SheetAnnotate.hpp"
+#include "SheetViewTool.hpp"
 #include "opad/json.hpp"
 
 class SheetPage;
+class SheetPrintDialog;
 class QMenu;
 
 class DocsArea : public AreaController {
@@ -31,12 +37,20 @@ class DocsArea : public AreaController {
 
   // From the PART section's link, the context menu or Inspect > Part properties: the bodies and components of `ids`.
   void editPartProperties(std::vector<std::string> ids);
+  // Material (UI-140): the library's materials for the selected bodies and components (the one they share checked), colour
+  // as the material (remembered, on by default), None, Other… (the dialog); a choice is one part_properties step. The
+  // command's menu, also a submenu of the selection's context menu and a menu button on the ribbons.
+  void materialMenu(const std::vector<std::string>& nodes, QMenu& menu);
+  void setMaterial(std::vector<std::string> nodes, const std::string& id);  // "" clears it
   void exportBom(std::vector<std::string> ids = {});  // File > Export bill of materials: the dialog, then where to
   // File > Document properties… (and the Drawing tab): the document's own title block fields, one part_properties step.
   void documentProperties();
   // A sheet as PDF, SVG, DXF, DWG or PNG, a drawing ("drawing:<name>") as the PDF pages of its sheets (UI-86): the file's
   // type is the format, the views projected on a worker (ExportJob.hpp); OPAD_BENCH_EXPORT_OUT skips the file dialog.
-  void exportSheet(const std::string& id);
+  // issue: a revision of it as it was issued (its frozen linework, drawing::issued_display).
+  void exportSheet(const std::string& id, const std::string& issue = {});
+  // Its file types, (format, filter): several sheets only PDF, DWG only while a converter is found (opad::dwg_converter).
+  static std::vector<std::pair<QString, QString>> sheetExportTypes(bool several);
   void rowMenu(const std::string& id, QMenu& menu);  // the Drawings folder's menu of a row
   opad::json lastExport;  // the last sheet export's result, or {"error"} (benches)
   static DocsArea* of(const std::vector<AreaController*>& areas);  // the window's one (benches)
@@ -47,11 +61,35 @@ class DocsArea : public AreaController {
   void newSheet();         // one more sheet in the shown sheet's drawing, on its paper and template
   void sheetProperties();  // the dialog, then one sheet_edit
   void templateFromFile(const QString& file = {});  // read on a worker; the sheet takes its frame, title block and paper
+  void templateFields();   // the shown sheet's template fields placed with the mouse (TemplateFields.hpp), one sheet_edit
   void placeView(const std::string& orient);  // a base view placed with the mouse (front, top, ..., iso)
   void placeProjected();                      // a view projected from the selected one, placed with the mouse
+  // Section, detail or auxiliary view of the selected view, or crop or break it, with the mouse (SheetViewTool, UI-82).
+  void startViewTool(SheetViewTool::Tool tool);
   void setViewStyle(const std::vector<std::string>& views, const opad::json& style);  // merged into each view's style
+  void editHatching(const std::string& view);  // a section view's hatching, in its dialog (UI-82)
+  void editViewLetter(const std::string& view);  // a section, detail or auxiliary view's letter, in a small dialog
   void openSheet(const std::string& rowId);   // a Drawings folder row: its sheet in the Drawings workspace
   void viewMenu(const std::vector<std::string>& views, QMenu& menu);  // right-click on views
+  // Annotations (DocsAnnotate.cpp).
+  void startTool(SheetAnnotator::Tool tool);       // on the shown sheet (New drawing… without one)
+  void reattachSelected();                          // the selected annotation's references picked again
+  void dimensionFromDatums(const std::string& type);  // ordinate | baseline | chain sets from the view's datums, planned on a worker
+  void itemMenu(const std::vector<std::string>& items, QMenu& menu);  // right-click on annotations
+  // A balloon on every parts-list row the selected view (else the sheet's pictorial view, else its first) shows, planned on
+  // a worker; one step (a parts list comes with it when the drawing has none).
+  void autoBalloon();
+  void renumberList(const std::string& list);  // 1, 2, ... again in the BoM's order, worked out on a worker; one sheet_edit
+  // Issue revision (IssueRevision.cpp): the dialog; then the plan, the PDF (as the drawing will show the revision) and its
+  // hash on a worker and one sheet_issue step; tagged: the document saved, committed and tagged in git in the background.
+  // done gets sheet_issue's result with "git" ("tagged <tag>" or why not), or {"error"} / null (benches).
+  void issueRevision();
+  void issue(const opad::json& args, const QString& pdf, bool tagged, std::function<void(const opad::json&)> done = {});
+  opad::json lastIssue;
+  // Print… (SheetPrint.cpp, UI-86): the shown drawing's sheets drawn on a worker, then the print dialog with its preview;
+  // printing runs on a worker. opened gets the dialog (benches); lastPrint: {"pages"} or {"error"} once printed.
+  void printSheets(std::function<void(SheetPrintDialog*)> opened = {});
+  opad::json lastPrint;
   // A command once nothing reads the document (the sheet's own worker is stopped for it); `then` gets the result, or null
   // when it was refused (a message box said why).
   void run(const std::string& command, opad::json args, std::function<void(const opad::json&)> then = {});
@@ -62,6 +100,10 @@ class DocsArea : public AreaController {
   void buildDrawingCommands();
   void drawingsRibbon(RibbonLayout& layout);
   void readyDrawings();
+  void buildAnnotateCommands();
+  void annotateRibbon(RibbonLayout& layout);
+  void readyAnnotate();
   void syncStyleActions();  // Hidden lines / Tangent edges checked as the selected views show them
+  void commitAndTag(const QString& rev, const QString& tag, const QString& pdf, std::function<void(const opad::json&)> done);
   SheetPage* m_page = nullptr;
 };

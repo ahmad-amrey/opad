@@ -89,7 +89,7 @@ OPAD_BENCH(OPAD_BENCH_DRAWINGS, drawings) {
     w.m_doc->run("sheet_view", {{"sheet", sheet}, {"parent", front}, {"side", "top-right"}});
     const std::string width = w.m_doc->run("sheet_item", {{"sheet", sheet}, {"view", front}, {"type", "horizontal"}, {"refs", {edge}}})["id"];
     w.m_doc->run("sheet_item", {{"sheet", sheet}, {"text", "BREAK SHARP EDGES"}});
-    w.m_doc->run("append", {{"op", {{"op", "sheet_item"}, {"sheet", sheet}, {"view", side}, {"kind", "balloon"}}}});
+    w.m_doc->run("append", {{"op", {{"op", "sheet_item"}, {"sheet", sheet}, {"view", side}, {"kind", "weld"}}}});
     w.m_doc->run("part_properties", {{"target", body}, {"set", {{"part_number", "OP-1002"}, {"material", "aluminium-6061"}}}});
     check(w.m_timeline->shownOps() == design, QString("timeline keeps its %1 design markers, none for 8 drawing and properties ops").arg(design.size()));
     // UI-140: Properties names the material and its density at once, and the mass once the worker has the volume.
@@ -109,7 +109,7 @@ OPAD_BENCH(OPAD_BENCH_DRAWINGS, drawings) {
           "Properties shows the material in force and its density before measuring: " + first);
     check(measured.contains("Mass=" + units::format(units::Kind::Mass, 64.8)) && measured.contains("Volume=24000"), "and the plate's mass (24000 mm3 of aluminium 6061) after: " + measured);
 
-    const QString full = "Drawings[Drawing 1[Sheet 1[Front view[60],Left view[balloon!],Isometric view,BREAK SHARP EDGES]]]";
+    const QString full = "Drawings[Drawing 1[Sheet 1[Front view[60],Left view[weld!],Isometric view,BREAK SHARP EDGES]]]";
     check(listed() == full, "folder lists drawing > sheet > views with their items > the sheet's note: " + listed());
     QTreeWidgetItem *sheetRow = row(sheet), *widthRow = row(width);
     check(sheetRow && widthRow && sheetRow->toolTip(0).contains("A4") && sheetRow->toolTip(0).contains("first angle") && widthRow->toolTip(0).startsWith("Horizontal dimension"),

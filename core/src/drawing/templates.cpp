@@ -10,12 +10,14 @@
 #include <gp_Trsf.hxx>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <map>
 #include <set>
 
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/tables.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
@@ -172,6 +174,46 @@ void projection_symbol(Display& d, int layer, Vec2 c, double D, bool third) {
   d.circle(layer, {circles, c[1]}, small / 2);
 }
 
+// A title block field with its value, o + its place: a cell (rect [x, y, w, h], its label small in the top left corner when
+// it has one, the value fitted under it) or a text's anchor (at [x, y], as a template file had it: height, align left |
+// center | right, valign baseline | bottom | middle | top, angle; w: the width it may take).
+void draw_field(Display& d, int layer, const json& f, Vec2 o, double lh, const json& values, bool third) {
+  if (!f.is_object()) return;
+  const std::string key = f.value("key", ""), align = f.value("align", "left");
+  const int ha = align == "center" ? 1 : align == "right" ? 2 : 0;
+  const json at = f.value("at", json());
+  if (at.is_array() && at.size() == 2 && at[0].is_number() && at[1].is_number()) {
+    const Vec2 p{o[0] + at[0].get<double>(), o[1] + at[1].get<double>()};
+    double th = std::max(0.5, f.value("height", 2.5));
+    if (key == "projection") return projection_symbol(d, layer, p, std::max(3.0, 1.6 * th), third);
+    const std::string text = values.value(key, "");
+    if (text.empty()) return;
+    const std::string valign = f.value("valign", "baseline");
+    if (const double w = f.value("w", 0.0); w > 0) th = std::max(0.5, std::min(th, w / (0.62 * static_cast<double>(std::max<size_t>(characters(text), 1)))));
+    d.text(layer, text, p, th, f.value("angle", 0.0), ha, valign == "bottom" ? 1 : valign == "middle" ? 2 : valign == "top" ? 3 : 0);
+    return;
+  }
+  const json rect = f.value("rect", json());
+  if (!rect.is_array() || rect.size() != 4) return;
+  const double x = o[0] + rect[0].get<double>(), y = o[1] + rect[1].get<double>(), fw = rect[2].get<double>(), fh = rect[3].get<double>();
+  const std::string label = f.value("label", "");
+  if (label.empty()) lh = 0;
+  else d.text(layer, label, {x + 0.8, y + fh - 0.7}, lh, 0, 0, 3);
+  const double room = fh - lh - 1.4, under = fh - lh - 2.3;  // under the label; for a line from 1 mm up to 0.6 mm below it
+  if (key == "projection") return projection_symbol(d, layer, {x + fw / 2, y + room / 2 + 0.6}, std::min(room - 1.2, fw / 2.8), third);
+  const std::string text = values.value(key, "");
+  if (text.empty()) return;
+  const size_t lines = static_cast<size_t>(std::count(text.begin(), text.end(), '\n')) + 1;
+  const std::string valign = f.value("valign", label.empty() ? "middle" : "bottom");
+  double th = f.value("height", 2.5);
+  th = std::min({th, (fw - 2) / (0.62 * static_cast<double>(std::max<size_t>(characters(text), 1))), room / (1 + 1.6 * static_cast<double>(lines - 1)),
+                 lines == 1 && valign == "bottom" ? under / 1.3 : th});
+  th = std::max(th, 1.0);
+  const double tx = ha == 1 ? x + fw / 2 : ha == 2 ? x + fw - 1.2 : x + 1.2;
+  const double ty = valign == "middle" ? y + room / 2 + 0.4 + (label.empty() ? 0.3 : 0) : valign == "top" ? y + fh - lh - 1.6 : y + 1.0;
+  d.text(layer, text, {tx, ty}, th, 0, ha, valign == "middle" ? 2 : valign == "top" ? 3 : 1);
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------- templates
@@ -219,6 +261,9 @@ json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, b
   // The document's own properties: what every drawing of it says (owner, project, approvals); for a drawing of the whole
   // document also its title, number and description, before the one root part's.
   const auto own = [&](const std::string& k) { return text_of(scene.properties.value(k == "owner" && !scene.properties.contains("owner") ? "company" : k, json())); };
+  // The drawing's latest issue gives its revision, its date of issue and who approved it (UI-84).
+  const auto issues = drawing_issues(scene, sheet);
+  const json issued = issues.empty() ? json::object() : issues.back()->def;
   const auto lookup = [&](const std::string& what) -> std::string {
     if (what == "title") {
       if (whole && !own("title").empty()) return own("title");
@@ -231,7 +276,9 @@ json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, b
       return !mine.empty() || !whole ? mine : own(what);
     }
     if (what == "author") return !own("author").empty() ? own("author") : sheet.def.value("by", "");
-    if (what == "date") return sheet.def.value("ts", "").substr(0, 10);
+    if (what == "date") return issued.contains("date") ? text_of(issued["date"]) : sheet.def.value("ts", "").substr(0, 10);
+    if (what == "revision" && issued.contains("rev")) return text_of(issued["rev"]);
+    if (what == "approved" && issued.contains("approved")) return text_of(issued["approved"]);
     if (what == "scale") return scale_text(sheet.scale);
     if (what == "units") return inches ? "in" : "mm";
     if (what == "drawing") return sheet.drawing;
@@ -279,6 +326,8 @@ json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, b
   std::set<std::string> keys;
   if (t.contains("title_block") && t["title_block"].is_object())
     for (const auto& f : t["title_block"].value("fields", json::array())) keys.insert(f.value("key", ""));
+  for (const auto& f : t.value("fields", json::array()))
+    if (f.is_object()) keys.insert(f.value("key", ""));
   for (const auto& [k, v] : values.items()) keys.insert(k);
   keys.erase("");
   json out = json::object();
@@ -310,6 +359,7 @@ void draw_paper(Display& d, const Document& doc, const Scene& scene, const Sheet
     return;
   }
   const int thin = d.layer({"Title block", kInk, LineType::Continuous, 0.35});
+  json values;  // filled in once, when a field needs them
   if (t.contains("geometry") && t["geometry"].is_string() && doc.has_body(t["geometry"].get<std::string>())) {
     const int own = d.layer({"Template", kInk, LineType::Continuous, 0.35});
     TopoDS_Shape shape;
@@ -371,38 +421,49 @@ void draw_paper(Display& d, const Document& doc, const Scene& scene, const Sheet
         const double width = line.size() > 4 ? line[4].get<double>() : 0.35;
         d.line(width >= 0.5 ? frame : thin, {o[0] + line[0].get<double>(), o[1] + line[1].get<double>()}, {o[0] + line[2].get<double>(), o[1] + line[3].get<double>()});
       }
-      const json values = title_values(doc, scene, sheet);
+      if (values.is_null()) values = title_values(doc, scene, sheet);
       const double lh = tb.value("label_height", 1.8);
-      for (const auto& f : tb.value("fields", json::array())) {
-        const json rect = f.value("rect", json());
-        if (!rect.is_array() || rect.size() != 4) continue;
-        const double x = o[0] + rect[0].get<double>(), y = o[1] + rect[1].get<double>(), fw = rect[2].get<double>(), fh = rect[3].get<double>();
-        const std::string key = f.value("key", "");
-        d.text(thin, f.value("label", ""), {x + 0.8, y + fh - 0.7}, lh, 0, 0, 3);
-        const double room = fh - lh - 1.4, under = fh - lh - 2.3;  // under the label; for a line from 1 mm up to 0.6 mm below it
-        if (key == "projection") {
-          projection_symbol(d, thin, {x + fw / 2, y + room / 2 + 0.6}, std::min(room - 1.2, fw / 2.8), sheet.projection == "third");
-          continue;
-        }
-        const std::string text = values.value(key, "");
-        if (text.empty()) continue;
-        const size_t lines = static_cast<size_t>(std::count(text.begin(), text.end(), '\n')) + 1;
-        const std::string align = f.value("align", "left"), valign = f.value("valign", "bottom");
-        double th = f.value("height", 2.5);
-        th = std::min({th, (fw - 2) / (0.62 * static_cast<double>(std::max<size_t>(characters(text), 1))), room / (1 + 1.6 * static_cast<double>(lines - 1)),
-                       lines == 1 && valign == "bottom" ? under / 1.3 : th});
-        th = std::max(th, 1.0);
-        const double tx = align == "center" ? x + fw / 2 : x + 1.2;
-        const double ty = valign == "middle" ? y + room / 2 + 0.4 : valign == "top" ? y + fh - lh - 1.6 : y + 1.0;
-        d.text(thin, text, {tx, ty}, th, 0, align == "center" ? 1 : 0, valign == "middle" ? 2 : valign == "top" ? 3 : 1);
-      }
+      for (const auto& f : tb.value("fields", json::array())) draw_field(d, thin, f, o, lh, values, sheet.projection == "third");
     }
   }
+  // The template's own fields (a template file's attributes and placeholders, fields placed in the editor): paper mm.
+  const json own = t.value("fields", json::array());
+  if (own.is_array() && !own.empty()) {
+    if (values.is_null()) values = title_values(doc, scene, sheet);
+    for (const auto& f : own) draw_field(d, thin, f, {0, 0}, 0, values, sheet.projection == "third");
+  }
+}
+
+static std::string field_key(const std::string& tag) {
+  std::string k;
+  for (char c : tag)
+    if (std::isalnum(static_cast<unsigned char>(c))) k += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  static const std::map<std::string, std::string> known = {
+      {"TITLE", "title"}, {"DRAWINGTITLE", "title"}, {"DWGTITLE", "title"}, {"PARTNAME", "title"},
+      {"NUMBER", "number"}, {"DWGNO", "number"}, {"DRAWINGNO", "number"}, {"DRAWINGNUMBER", "number"}, {"DOCNO", "number"},
+      {"DOCUMENTNUMBER", "number"}, {"PARTNO", "number"}, {"PARTNUMBER", "number"}, {"PN", "number"}, {"IDNUMBER", "number"},
+      {"IDENTIFICATIONNUMBER", "number"}, {"REV", "revision"}, {"REVISION", "revision"}, {"DATE", "date"}, {"ISSUEDATE", "date"},
+      {"DATEOFISSUE", "date"}, {"SCALE", "scale"}, {"SHEET", "sheet"}, {"SHEETNO", "sheet"}, {"SHEETNUMBER", "sheet"}, {"SIZE", "size"},
+      {"FORMAT", "size"}, {"PAPER", "size"}, {"MATERIAL", "material"}, {"MAT", "material"}, {"MASS", "mass"}, {"WEIGHT", "mass"},
+      {"DRAWN", "author"}, {"DRAWNBY", "author"}, {"AUTHOR", "author"}, {"DESIGNER", "author"}, {"DESIGNEDBY", "author"},
+      {"CREATEDBY", "author"}, {"CHECKED", "checked"}, {"CHECKEDBY", "checked"}, {"APPROVED", "approved"}, {"APPROVEDBY", "approved"},
+      {"COMPANY", "owner"}, {"OWNER", "owner"}, {"LEGALOWNER", "owner"}, {"ORGANIZATION", "owner"}, {"ORGANISATION", "owner"},
+      {"DESCRIPTION", "description"}, {"DESC", "description"}, {"PROJECT", "project"}, {"STATUS", "status"}, {"UNITS", "units"},
+      {"TOLERANCE", "tolerance"}, {"GENERALTOLERANCE", "tolerance"}, {"TOL", "tolerance"}, {"DOCTYPE", "doctype"},
+      {"DOCUMENTTYPE", "doctype"}, {"PROJECTION", "projection"}};
+  if (const auto it = known.find(k); it != known.end()) return it->second;
+  if (tag.rfind("prop:", 0) == 0 || tag.rfind("doc:", 0) == 0) return tag;
+  std::string lower;
+  for (char c : tag) lower += c == ' ' || c == '-' ? '_' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return lower;
 }
 
 json read_template_file(const std::filesystem::path& file, std::string& brep) {
   Document scratch = Document::create();
-  import_file(scratch, file);
+  std::vector<json> found;
+  ImportOptions options;
+  options.text_fields = &found;
+  import_file(scratch, file, options);
   const Scene s = resolve(scratch);
   BRep_Builder builder;
   TopoDS_Compound all;
@@ -435,7 +496,27 @@ json read_template_file(const std::filesystem::path& file, std::string& brep) {
   // Drawn where the sheet is (its corner at the origin): kept; elsewhere: moved onto the paper.
   const bool onPaper = x0 > -1 && y0 > -1 && x1 < pw + 1 && y1 < ph + 1;
   json t = {{"id", "file"}, {"name", utf8(file.stem())}, {"source", utf8(file.filename())}, {"size", size}};
-  if (!onPaper) t["at"] = {rounded(-x0 + std::max(0.0, (pw - w) / 2)), rounded(-y0 + std::max(0.0, (ph - h) / 2))};
+  Vec2 shift{0, 0};
+  if (!onPaper) {
+    shift = {rounded(-x0 + std::max(0.0, (pw - w) / 2)), rounded(-y0 + std::max(0.0, (ph - h) / 2))};
+    t["at"] = shift;
+  }
+  // Its attributes and placeholders: fields where they stood, in paper mm.
+  json fields = json::array();
+  static const char* aligns[] = {"left", "center", "right"};
+  static const char* valigns[] = {"baseline", "bottom", "middle", "top"};
+  for (const auto& f : found) {
+    json field = {{"key", field_key(f.value("tag", ""))},
+                  {"at", {rounded(f["at"][0].get<double>() + shift[0]), rounded(f["at"][1].get<double>() + shift[1])}},
+                  {"height", rounded(f.value("height", 2.5))},
+                  {"align", aligns[std::clamp(f.value("halign", 0), 0, 2)]},
+                  {"valign", valigns[std::clamp(f.value("valign", 0), 0, 3)]}};
+    if (f.contains("angle")) field["angle"] = rounded(f["angle"].get<double>());
+    if (f.contains("w")) field["w"] = rounded(f["w"].get<double>());
+    if (field["key"] != f["tag"]) field["tag"] = f["tag"];
+    fields.push_back(std::move(field));
+  }
+  if (!fields.empty()) t["fields"] = fields;
   return t;
 }
 

@@ -181,6 +181,9 @@ struct Scene {
   std::unordered_map<std::string, int> instance_count;  // body key -> number of body nodes
   // The document's own properties (title, number, owner, project, ...): `properties` ops whose target is the header's uuid.
   json properties = json::object();
+  // What it was replayed from, for caches of things computed from it: resolve's log length, last op id and roll-back op, an
+  // issued revision's (drawing::issued_scene); empty when built otherwise (nothing cached for it).
+  std::string state;
 
   const Node* node(const std::string& id) const;
   Mat4 world(const std::string& id) const;

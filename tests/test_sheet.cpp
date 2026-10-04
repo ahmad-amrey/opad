@@ -116,9 +116,9 @@ TEST(sheet_records_checked_and_forward_compatible) {
 
   const std::string text = "#opad 2\n" + json{{"uuid", new_uuid()}, {"units", "mm"}, {"created", ""}, {"generator", ""}}.dump() + "\n#ops\n"
       "{\"op\":\"sheet\",\"id\":\"" + s + "\",\"ts\":\"\",\"by\":\"\",\"name\":\"S\",\"size\":{\"w\":420,\"h\":297},\"standard\":\"jis\",\"scale\":\"1:1\"}\n"
-      "{\"op\":\"sheet_view\",\"id\":\"" + v + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"section\",\"cut\":[[0,0],[1,1]]}\n"
-      "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"view\":\"" + v + "\",\"kind\":\"hole_callout\"}\n"
-      "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"dimension\",\"type\":\"ordinate\"}\n"
+      "{\"op\":\"sheet_view\",\"id\":\"" + v + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"broken_out\",\"depth\":5}\n"
+      "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"view\":\"" + v + "\",\"kind\":\"weld\"}\n"
+      "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"dimension\",\"type\":\"arc_length\"}\n"
       "#bodies\n";
   const Document doc = Document::parse(text);
   CHECK_EQ(doc.serialize(), text);
@@ -127,7 +127,7 @@ TEST(sheet_records_checked_and_forward_compatible) {
   CHECK_EQ(scene.sheets[0].views.size(), 1u);
   CHECK_EQ(scene.sheets[0].items.size(), 2u);
   CHECK(has_unresolved(scene, s, "needs a newer OPAD (standard 'jis')"));
-  CHECK(has_unresolved(scene, v, "needs a newer OPAD (sheet_view kind 'section')"));
+  CHECK(has_unresolved(scene, v, "needs a newer OPAD (sheet_view kind 'broken_out')"));
   CHECK_EQ(scene.unresolved.size(), 4u);
   for (const auto& u : scene.unresolved) CHECK(u.reason.find("needs a newer OPAD") != std::string::npos);
 }
@@ -202,7 +202,7 @@ TEST(sheet_dimensions_follow_the_model) {
   const json height = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.front}, {"type", "vertical"}, {"refs", {p.edge({-30, -20, 5}, {0, 0, 1})}}, {"precision", 1}});
   CHECK_NEAR(height["result"]["value"].get<double>(), 10, 1e-9);
   const json hole = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", top}, {"type", "diameter"}, {"refs", {p.circle(10)}}, {"tolerance", {{"type", "dev"}, {"plus", 0.1}, {"minus", 0}}}});
-  CHECK_EQ(hole["result"]["shown"], "⌀10 +0.1/+0");
+  CHECK_EQ(hole["result"]["shown"], "⌀10 +0.1/0");  // a zero deviation is a plain 0
   const std::string center = p.circle(10);
   const json offset = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", top}, {"type", "horizontal"},
                                                 {"refs", {p.edge({-30, 0, 10}, {0, 1, 0}), center.substr(0, center.find('/')) + "/center/" + center.substr(center.rfind('/') + 1)}}});
@@ -335,7 +335,7 @@ TEST(sheet_edits_and_auto_scale) {
   CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", note}, {"set", {{"view", there}}}}));
   run(p.doc, "sheet_edit", {{"target", note}, {"set", {{"view", nullptr}, {"at", {20, 20}}}}});
   CHECK(resolve(p.doc).sheet_item(note)->view.empty());
-  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"kind", "balloon"}}).id;
+  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"kind", "weld"}}).id;
   CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", later}, {"set", {{"at", {1, 1}}}}}));
 }
 
@@ -369,7 +369,7 @@ TEST(sheet_draws_as_a_drawing) {
   std::map<std::string, const Prim*> texts;
   for (const auto& prim : d.prims)
     if (prim.kind == Prim::Kind::Text) texts[prim.text] = &prim;
-  CHECK(texts.count("60") && texts.count("⌀10") && texts.count("90°") && texts.count("BREAK SHARP EDGES") && texts.count("7"));
+  CHECK(texts.count("60") && texts.count("10") && texts.count("90°") && texts.count("BREAK SHARP EDGES") && texts.count("7"));
   CHECK_NEAR(texts["60"]->at[0], 80, 1e-6);  // over the middle of the front view's top edge (50..110 on paper)
   CHECK(texts["60"]->at[1] > 180);
   CHECK_EQ(texts["7"]->rgb, 0xFF00FFu);
@@ -392,6 +392,13 @@ TEST(sheet_draws_as_a_drawing) {
   CHECK(text.find("width=\"297mm\" height=\"210mm\" viewBox=\"0 -210 297 210\"") != std::string::npos);
   const json dxf = run(p.doc, "export", {{"format", "dxf"}, {"sheet", "Sheet 1"}, {"out", (dir / "sheet.dxf").string()}});
   CHECK_EQ(dxf["sheet"]["id"], p.sheet);
+  {  // the three measured dimensions as DIMENSION entities (the dangling one is its text)
+    const std::string written = read_text_file(dir / "sheet.dxf");
+    size_t dims = 0;
+    for (size_t at = written.find("  0\nDIMENSION\n"); at != std::string::npos; at = written.find("  0\nDIMENSION\n", at + 1)) ++dims;
+    CHECK_EQ(dims, 3u);
+    CHECK(written.find("\n%%c10\n") != std::string::npos && written.find("\n90%%d\n") != std::string::npos);
+  }
   Document back = Document::create();
   import_file(back, dir / "sheet.dxf");
   std::set<std::string> layers;
@@ -417,7 +424,7 @@ TEST(sheet_outline_for_the_browser) {
   const std::string named = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"name", "Detail"}, {"dir", {1, 2, 3}}, {"at", {40, 40}}})["id"];
   const std::string width = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.front}, {"type", "horizontal"}, {"refs", {p.edge({0, -20, 10}, {1, 0, 0})}}})["id"];
   const std::string note = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"text", "BREAK SHARP EDGES\nALL OVER"}})["id"];
-  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", below}, {"kind", "balloon"}}).id;
+  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", below}, {"kind", "weld"}}).id;
   const std::string housing = run(p.doc, "sheet", {{"name", "Cover"}, {"drawing", "Housing"}})["id"];
   const std::string second = run(p.doc, "sheet", {{"name", "Parts"}, {"drawing", "Drawing 1"}})["id"];
   const std::string loose = p.doc.append({{"op", "sheet"}, {"name", "Loose"}, {"size", {{"w", 297}, {"h", 210}}}}).id;

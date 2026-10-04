@@ -6,32 +6,42 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QListWidget>
+#include <QMouseEvent>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTabBar>
+#include <QToolButton>
 
 #include <cmath>
+#include <map>
 #include <filesystem>
 #include <set>
 
 #include "BenchRegistry.hpp"
 #include "DocsArea.hpp"
+#include "IssueRevision.hpp"
 #include "SheetCanvas.hpp"
 #include "SheetDialogs.hpp"
 #include "SheetPage.hpp"
+#include "TemplateFields.hpp"
+#include "Toast.hpp"
 #include "opad/cache.hpp"
 #include "opad/drawing/sheet.hpp"
 
 // OPAD_BENCH_SHEET=<prefix> (UI-78): the Drawings workspace on a 60 x 40 x 10 plate with a 10 mm hole, made through the UI
 // code: Ctrl+3 shows the sheet page in the viewport's place (the "no drawing yet" card), New drawing… (the dialog's
-// template thumbnails, ISO A3, front + top + side + iso) lays the views out at 2:1 in first angle, the canvas shows each
+// template thumbnails, ISO A3, front + top + side + iso) lays the views out at 2:1 in first angle, snaps on the views (an
+// end, a middle, a centre, a point on an edge; the hover marker and readout; the Snap switch), the canvas shows each
 // view's draft before its final linework once the projections are not cached, the base view dragged on the canvas
 // takes its projected views along (alignment kept) and a projected view drags only along its axis (its gap), Ctrl+Z, a
 // base and a projected view placed with the mouse path, hidden lines from the ribbon, the sheet's properties (A2: the
-// template follows), Document properties (Approved by in the title block), a template from a DXF file, a new sheet in the
-// drawing, the browser's row opening its sheet, PDF export, Del and Esc on the canvas, and back to Design.
-// <prefix>.empty.png, .sheet.png, .final.png, .window.png.
+// template follows), Document properties (Approved by in the title block), a template from a DXF file (its placeholders
+// filled in), Title block fields (a field added and one moved with the mouse), a new sheet in the drawing, the browser's
+// row opening its sheet, PDF export, Del and Esc on the canvas, and back to Design. <prefix>.empty.png, .sheet.png,
+// .snap.png, .final.png, .window.png, .fields.png, .template.png.
 OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -81,6 +91,14 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     check(w.workspaceId() == "drawings" && w.m_stack->currentWidget() == page && page->empty(), "Ctrl+3 shows the Drawings workspace's page with its start card");
     check(w.m_ribbon->tabIds().contains("drawings.drawing") && w.action("workspace.drawings")->shortcut() == QKeySequence("Ctrl+3"), "its ribbon tab and Ctrl+3");
     page->grab().save(prefix + ".empty.png");
+    {  // toasts show over the page in the viewport's place (the window's notices, the areas' results)
+      QPointer<Toast> t = w.m_toasts->toast("Bench toast");
+      QCoreApplication::processEvents();
+      check(t && t->parentWidget() == page && t->isVisible() && std::abs(t->geometry().center().x() - page->rect().center().x()) <= 1 &&
+                t->geometry().bottom() < page->rect().bottom(),
+            "a toast shows over the Drawings page, bottom centre");
+      if (t) t->dismiss();
+    }
 
     // New drawing… through its dialog.
     w.action("drawings.new")->trigger();
@@ -101,8 +119,9 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     for (auto* r : dialog->findChildren<QRadioButton*>())
       if (r->text() == QObject::tr("Landscape")) r->setChecked(true);
     const opad::json args = dialog->args();
-    check(args["size"] == "A3" && args["projection"] == "first" && args["views"] == opad::json({"front", "top", "side", "iso"}) && args["scale"] == "auto",
-          "the dialog asks for ISO A3, first angle, front + top + side + iso at an automatic scale: " + QString::fromStdString(args.dump()));
+    check(args["size"] == "A3" && args["projection"] == "first" && args["views"] == opad::json({"front", "top", "side", "iso"}) && args["scale"] == "auto" &&
+              args.value("centermarks", false),
+          "the dialog asks for ISO A3, first angle, front + top + side + iso at an automatic scale, with centre marks: " + QString::fromStdString(args.dump()));
     for (auto* b : dialog->findChildren<QPushButton*>())
       if (b->objectName() == "primary") b->click();
     check(waitFor([&] { return views().size() == 4; }, 20000), "Create drawing adds a sheet with 4 views");
@@ -115,6 +134,13 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
               orient(side) == "left" && orient(iso) == "iso" && w.workspaceId() == "drawings" && !page->empty() && page->tabs()->count() == 1,
           "an ISO A3 sheet at 2:1: front, top (below), the view from the left (right of it), iso; shown in its tab");
     check(waitFor(settled, 30000), "every view drawn in its final linework");
+    {
+      double worst = 0;  // a frame's sides from its linework's (the isometric view's included)
+      for (const auto& s : canvas->viewStates())
+        worst = std::max({worst, std::fabs(s.frame.left() - s.linework.left()), std::fabs(s.frame.right() - s.linework.right()),
+                          std::fabs(s.frame.top() - s.linework.top()), std::fabs(s.frame.bottom() - s.linework.bottom())});
+      check(worst < 0.05, QString("every frame hugs its view's linework (at most %1 mm off)").arg(worst, 0, 'f', 3));
+    }
     const QRectF ff = state(front).frame, ft = state(top).frame, fs = state(side).frame, fi = state(iso).frame;
     check(std::fabs(ff.center().x() - ft.center().x()) < 0.01 && ft.center().y() > ff.center().y() && std::fabs(ff.center().y() - fs.center().y()) < 0.01 &&
               fs.center().x() > ff.center().x() && fi.center().x() > ff.center().x() && fi.center().y() > ff.center().y() &&
@@ -123,6 +149,44 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     check(canvas->paperPrims() > 80 && state(front).prims >= 4, QString("the paper draws its frame, zones and title block (%1 primitives), the front view its edges (%2)")
                                                                     .arg(canvas->paperPrims()).arg(state(front).prims));
     page->grab().save(prefix + ".sheet.png");
+
+    // Snaps on the projected geometry: a corner of the front view, the middle of its top edge, the hole's centre in the
+    // top view; the pointer shows the one it takes and the readout gives its point; the Snap switch turns them off.
+    {
+      const auto paperOf = [&](const QPointF& scene) { return canvas->toPaper(scene); };
+      const QRectF lf = state(front).linework, lt = state(top).linework;
+      const auto snapped = [&](const QPointF& around, opad::drawing::SnapKind kind, const QPointF& want) {
+        const auto s = canvas->snapAt(around);
+        const opad::drawing::Vec2 p = paperOf(want);
+        return s && s->kind == kind && std::hypot(s->at[0] - p[0], s->at[1] - p[1]) < 0.02;
+      };
+      check(snapped(lf.topLeft() + QPointF(0.4, 0.3), opad::drawing::SnapKind::End, lf.topLeft()) &&
+                snapped(QPointF(lf.center().x() + 0.4, lf.top() + 0.3), opad::drawing::SnapKind::Mid, QPointF(lf.center().x(), lf.top())) &&
+                snapped(lt.center() + QPointF(0.4, 0.4), opad::drawing::SnapKind::Centre, lt.center()) &&
+                snapped(QPointF(lf.left() + 7.3, lf.top() + 0.2), opad::drawing::SnapKind::Nearest, QPointF(lf.left() + 7.3, lf.top())),
+            "snaps: the front view's corner (end), its top edge's middle, the hole's centre in the top view, a point on an edge");
+      QWidget* vp = canvas->viewport();
+      const QPoint px = canvas->mapFromScene(lf.topLeft() + QPointF(0.4, 0.3));
+      QMouseEvent move(QEvent::MouseMove, QPointF(px), QPointF(vp->mapToGlobal(px)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+      QApplication::sendEvent(vp, &move);
+      QLabel* readout = page->cursorLabel();
+      const opad::drawing::Vec2 corner = paperOf(lf.topLeft());
+      check(canvas->hoverSnap() && canvas->hoverSnap()->kind == opad::drawing::SnapKind::End && readout &&
+                readout->text().contains(SheetCanvas::snapName(opad::drawing::SnapKind::End)) &&
+                readout->text().contains(QString::number(corner[0], 'f', 2)),
+            "hovering near the corner shows the end snap; the readout gives the corner: " + (readout ? readout->text() : QString()));
+      QCoreApplication::processEvents();  // the readout laid out for its text
+      const QImage seen = page->grab().toImage();
+      seen.save(prefix + ".snap.png");
+      const QPoint inside = canvas->mapTo(page, canvas->mapFromScene(QPointF(lf.center().x(), lf.top() + 0.25 * lf.height())));
+      check(QColor(seen.pixel(inside * seen.devicePixelRatio())).lightness() > 200, "the hovered view keeps its white paper (its dashed frame only)");
+      page->snapButton()->setChecked(false);
+      QApplication::sendEvent(vp, &move);
+      check(!canvas->hoverSnap() && canvas->snapKinds() == 0 && !readout->text().contains(SheetCanvas::snapName(opad::drawing::SnapKind::End)),
+            "the Snap switch turns them off");
+      page->snapButton()->setChecked(true);
+      check(canvas->snapKinds() == opad::drawing::kAllSnaps, "and on again, every kind");
+    }
 
     // Never projected as it is now: the drafts show first, then the final linework.
     for (const auto& id : v) {
@@ -215,6 +279,17 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
         if (p.source == front && d.layers[size_t(p.layer)].name == "Hidden") ++dashed;
     }
     check(dashed >= 2, QString("the front view draws the hole's two hidden lines (%1)").arg(dashed));
+    {  // centre marks by default: a mark on the hole seen from above, its axis from the front; the views placed since have them too
+      opad::json report;
+      const auto d = opad::drawing::sheet_display(w.m_doc->doc, w.m_doc->scene, *w.m_doc->scene.sheet(sheetId), {}, &report);
+      std::map<std::string, int> marks;
+      for (const auto& p : d.prims)
+        if (d.layers[size_t(p.layer)].name == "Center") ++marks[p.source];
+      bool placed = true;
+      for (size_t i = 4; i < views().size(); ++i) placed = placed && w.m_doc->scene.sheet_view(views()[i])->def.value("style", opad::json::object()).value("centermarks", false);
+      check(marks[top] >= 2 && marks[front] >= 1 && marks[side] >= 1 && placed && views().size() == 6,
+            QString("centre marks on new drawings: top %1, front %2, side %3 primitives; the views placed with the mouse take them").arg(marks[top]).arg(marks[front]).arg(marks[side]));
+    }
 
     // Sheet properties: A2, the title block's own fields; the template follows the paper.
     w.action("drawings.sheetProperties")->trigger();
@@ -271,10 +346,69 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
       company.polyline(ink, {{10, 10}, {410, 10}, {410, 287}, {10, 287}}, true);
       company.polyline(ink, {{250, 10}, {410, 10}, {410, 50}, {250, 50}}, true);
       company.text(ink, "OPAD BENCH WORKS", {260, 30}, 6);
+      company.text(ink, "{title}", {260, 40}, 5);  // placeholders: the title block's fields
+      company.text(ink, "<DWG_NO>", {260, 14}, 3.5);
       opad::write_text_file(std::filesystem::path((prefix + ".company.dxf").toStdU16String()), opad::drawing::dxf_text(company));
       docs->templateFromFile(prefix + ".company.dxf");
       check(waitFor([&] { return w.m_doc->scene.sheet(sheetId)->def["template"].value("id", "") == "file"; }, 15000) && w.m_doc->scene.sheet(sheetId)->width == 420,
             "Template from DXF: the company frame on A3, its geometry in the body store");
+      const opad::json fields = w.m_doc->scene.sheet(sheetId)->def["template"].value("fields", opad::json::array());
+      opad::drawing::Display paper;
+      opad::drawing::draw_paper(paper, w.m_doc->doc, w.m_doc->scene, *w.m_doc->scene.sheet(sheetId));
+      std::map<std::string, opad::drawing::Vec2> texts;
+      for (const auto& p : paper.prims)
+        if (p.kind == opad::drawing::Prim::Kind::Text) texts[p.text] = p.at;
+      check(fields.size() == 2 && fields[0]["key"] == "title" && fields[1]["key"] == "number" && texts.count("OP-2001") && std::fabs(texts["OP-2001"][0] - 260) < 0.01 &&
+                std::fabs(texts["OP-2001"][1] - 14) < 0.01 && !texts.count("<DWG_NO>"),
+            QString("its placeholders became fields, the part number written where <DWG_NO> stood (%1 fields)").arg(fields.size()));
+    }
+    // Title block fields…: the template behind the fields, a drag adds one, a drag moves one; one edit.
+    {
+      w.action("drawings.templateFields")->trigger();
+      TemplateFieldsDialog* tf = nullptr;
+      waitFor([&] {
+        for (QWidget* t : QApplication::topLevelWidgets())
+          if (auto* d = qobject_cast<TemplateFieldsDialog*>(t); d && d->isVisible()) tf = d;
+        return tf != nullptr;
+      }, 3000);
+      check(tf && tf->count() == 2, "Title block fields… opens with the template's two fields");
+      if (tf) {
+        check(waitFor([&] { return tf->pictured(); }, 10000), "the template drawn on a worker behind them");
+        QCoreApplication::processEvents();
+        QWidget* vp = tf->view()->viewport();
+        const auto mouse = [&](QEvent::Type type, opad::drawing::Vec2 at) {
+          const QPoint p = tf->at(at);
+          QMouseEvent e(type, QPointF(p), QPointF(vp->mapToGlobal(p)), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                        type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+          QApplication::sendEvent(vp, &e);
+        };
+        const auto dragOn = [&](opad::drawing::Vec2 a, opad::drawing::Vec2 b) {
+          mouse(QEvent::MouseButtonPress, a);
+          mouse(QEvent::MouseMove, {(a[0] + b[0]) / 2, (a[1] + b[1]) / 2});
+          mouse(QEvent::MouseMove, b);
+          mouse(QEvent::MouseButtonRelease, b);
+        };
+        tf->keyBox()->setCurrentIndex(tf->keyBox()->findData("project"));
+        dragOn({30, 270}, {90, 262});
+        const opad::json added = tf->count() == 3 ? tf->field(2) : opad::json();
+        const double mm = 1.5 / std::max(tf->view()->transform().m11(), 1e-6);  // a pixel or so
+        check(added.value("key", "") == "project" && std::fabs(added["rect"][0].get<double>() - 30) < mm && std::fabs(added["rect"][1].get<double>() - 262) < mm &&
+                  std::fabs(added["rect"][2].get<double>() - 60) < 2 * mm && std::fabs(added["rect"][3].get<double>() - 8) < 2 * mm,
+              "a drag on the paper adds a project field there: " + QString::fromStdString(added.dump()));
+        dragOn({270, 42}, {280, 46});
+        const opad::json moved = tf->field(0);
+        check(moved["key"] == "title" && !moved.contains("at") && moved.contains("rect") && std::fabs(moved["rect"][0].get<double>() - 270) < mm + 0.01,
+              "a drag on the title field moves it (its anchor becomes a box): " + QString::fromStdString(moved.dump()));
+        tf->grab().save(prefix + ".fields.png");
+        const size_t before = w.m_doc->doc.ops.size();
+        tf->accept();
+        check(waitFor([&] { return w.m_doc->doc.ops.size() == before + 1; }, 5000) &&
+                  w.m_doc->scene.sheet(sheetId)->def["template"]["fields"].size() == 3 &&
+                  opad::drawing::title_values(w.m_doc->doc, w.m_doc->scene, *w.m_doc->scene.sheet(sheetId), false).value("project", "") == "Bench pump",
+              "Apply is one edit; the project field shows the document's project");
+        waitFor(settled, 10000);
+        page->grab().save(prefix + ".template.png");
+      }
     }
     // A new sheet in the drawing, its tab, the browser's row opening the first again.
     w.action("drawings.newSheet")->trigger();
@@ -301,7 +435,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     // Back to Design: the viewport again.
     w.action("workspace.design")->trigger();
     QCoreApplication::processEvents();
-    check(w.m_stack->currentWidget() == w.m_viewport, "Design brings the viewport back");
+    check(w.m_stack->currentWidget() == w.m_viewport && w.m_toasts->host() == w.m_viewport, "Design brings the viewport back (the toasts with it)");
   } catch (const std::exception& e) {
     check(false, QString("bench: %1").arg(QString::fromUtf8(e.what())));
   }
@@ -311,9 +445,10 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
 }
 
 // OPAD_BENCH_SHEET_LOADED=<prefix> (UI-78, a big model: the Engine): the loaded file gets a drawing (A2, front + top + side +
-// iso at an automatic scale) through the area's own path; times the frames, the first draft, every view final and a drag
-// of the base view afterwards (cached projections), with a 1 ms ticker whose worst gap is the longest the event loop was
-// held. <prefix>.png is the sheet once drawn.
+// iso at an automatic scale) through the area's own path; times the frames, the first draft, every view final, a drag of the
+// base view afterwards (cached projections), Issue revision…'s measure of the frozen linework and an issue that freezes it (tens
+// of MB planned and hashed on a worker), with a 1 ms ticker whose worst gap is the longest the event loop was held. <prefix>.png
+// is the sheet once drawn.
 OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -352,7 +487,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
   docs->createDrawing({{"size", "A2"}, {"orientation", "landscape"}, {"standard", "iso"}, {"projection", "first"}, {"scale", "auto"}, {"views", {"front", "top", "side", "iso"}}},
                       [&](const std::string& id) { sheet = id; });
   const bool added_ = waitFor([&] { return !sheet.empty(); }, 600000);  // before the message: arguments have no order
-  check(added_, QString("the drawing laid out on a worker and added in %1 ms (worst event-loop gap %2 ms)").arg(clock.elapsed()).arg(worst));
+  check(added_ && worst < 250, QString("the drawing laid out on a worker and added in %1 ms (worst event-loop gap %2 ms)").arg(clock.elapsed()).arg(worst));
   const qint64 added = clock.elapsed();
   qint64 framed = -1, drafted = -1;
   QObject::connect(canvas, &SheetCanvas::partsArrived, canvas, [&] {
@@ -379,6 +514,36 @@ OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
     const bool moved = waitFor([&] { return w.m_doc->doc.ops.size() == ops + 1; }, 30000) && waitFor(settled, 120000);
     check(moved && worst < 250, QString("the base view dragged: drawn again in %1 ms from cached projections; worst event-loop gap %2 ms").arg(clock.elapsed()).arg(worst));
   }
+  // Issue revision… measures what the frozen linework adds on a worker (UI-84); closed without issuing.
+  worst = 0;
+  gap.restart();
+  clock.restart();
+  w.action("drawings.issue")->trigger();
+  IssueDialog* issue = nullptr;
+  waitFor([&] { return (issue = w.findChild<IssueDialog*>()) != nullptr; }, 5000);
+  const bool measured = issue && waitFor([&] { return issue->freezeBox()->text().contains("adds about"); }, 600000);
+  check(measured && worst < 250, QString("Issue revision… measured the frozen linework in %1 ms: %2; worst event-loop gap %3 ms")
+                                     .arg(clock.elapsed()).arg(issue ? issue->freezeBox()->text() : QString()).arg(worst));
+  if (issue) issue->reject();
+  waitFor([&] { return !w.m_doc->designBusy; }, 60000);
+  // Issued with every view's linework frozen (UI-84): planned and hashed on a worker, the UI thread only appends entries and ops.
+  worst = 0;
+  gap.restart();
+  clock.restart();
+  opad::json out;
+  bool issued = false;
+  docs->issue({{"sheet", sheet}, {"description", "Bench"}, {"freeze", true}}, QString(), false, [&](const opad::json& o) {
+    out = o;
+    issued = true;
+  });
+  const bool froze = waitFor([&] { return issued; }, 600000) && out.is_object() && out.value("frozen", 0) > 0 && waitFor(settled, 600000);
+  size_t bytes = 0;
+  const opad::SheetItem* made = froze ? w.m_doc->scene.sheet_item(out.value("id", "")) : nullptr;
+  const opad::json keys = made ? made->def.value("frozen", opad::json::object()) : opad::json::object();
+  for (const auto& [view, key] : keys.items())
+    if (const opad::BodyEntry* b = w.m_doc->doc.body(key.get<std::string>())) bytes += b->brep.size();
+  check(froze && bytes > 0 && worst < 250, QString("issued with %1 views' linework frozen (%2 MB) in %3 ms; worst event-loop gap %4 ms")
+                                              .arg(out.value("frozen", 0)).arg(static_cast<double>(bytes) / 1e6, 0, 'f', 1).arg(clock.elapsed()).arg(worst));
   ticker.stop();
   trace::log(QString("bench: sheet-loaded: done %1").arg(ok ? "PASS" : "FAIL"));
   QCoreApplication::exit(ok ? 0 : 2);

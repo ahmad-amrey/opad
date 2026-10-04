@@ -117,8 +117,8 @@ def story(root, name):
 
 
 def drawing_story(root, name):
-    """Drawing sheets with part and document properties (UI-76/78), exploded views (UI-35) and work in a component
-    (UI-33) on branches, merged by git through one driver; overlapping changes of each refused."""
+    """Drawing sheets with part and document properties (UI-76/78), parts list numbers (UI-84), exploded views (UI-35) and
+    work in a component (UI-33) on branches, merged by git through one driver; overlapping changes of each refused."""
     root.mkdir()
     doc = root / "part.opad"
     opad("new", doc)
@@ -226,6 +226,39 @@ def drawing_story(root, name):
     assert {c["id"] for c in lid_node["children"]} == set(made.values()), lid_node
     assert sum(f.get("component") == lid for f in opad("features", doc)) == 4
 
+    # Parts lists (UI-84): item numbers settled on both sides merge number by number. Each side adds a part and balloons it
+    # (number 2 on both): ours keeps 2, theirs' part is numbered after the highest and its balloon follows. The same number
+    # changed differently on both sides is refused.
+    listed = root / "listed.opad"
+    listed.write_bytes(drawn)
+    parts = opad("sheet_item", listed, sheet=sheet, kind="parts_list")["id"]
+    opad("sheet_balloons", listed, sheet=sheet, view=front)
+    numbered = listed.read_bytes()
+
+    def shown(path):  # body -> the number its balloon shows
+        return {i["refs"][0]["body"]: i["current"]["shown"] for i in opad("sheet_info", path, sheet=sheet)["items"] if i["kind"] == "balloon"}
+
+    added = {}
+
+    def settle(side, size, x):
+        def change(path):
+            body = opad("feature", path, kind="box", inputs={"plane": {"origin": [x, 0, 0], "normal": [0, 0, 1]}, "length": size,
+                                                              "width": size, "height": size, "operation": "new"})["body_ids"][0]
+            assert opad("sheet_balloons", path, sheet=sheet, view=front)["ids"]
+            assert shown(path)[body] == "2", shown(path)
+            added[side] = body
+        return change
+
+    code, reason, data, _ = three_way(numbered, settle("mine", 8, 100), settle("yours", 6, -100))
+    assert code == 0, reason
+    (root / "merged.opad").write_bytes(data)
+    numbers = shown(root / "merged.opad")
+    assert numbers[box] == "1" and numbers[added["mine"]] == "2" and numbers[added["yours"]] == "3", numbers
+    assert opad("ops", root / "merged.opad")[-1]["by"] == "merge" and opad("info", root / "merged.opad")["unresolved"] == 0
+    first = [e for e in opad("sheet_info", listed, sheet=sheet)["items"] if e["id"] == parts][0]["numbers"]
+    code, reason, data, before = three_way(numbered, lambda p: opad("sheet_edit", p, target=parts, set={"numbers": [dict(first[0], identity="left")]}),
+                                           lambda p: opad("sheet_edit", p, target=parts, set={"numbers": [dict(first[0], identity="right")]}))
+    assert code == 1 and data == before and "item 1 of parts list" in reason, (code, reason)
 
 with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
     root = Path(folder)
@@ -403,5 +436,5 @@ with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
         else:
             assert code == 0 and data == expected, (round, kind, other_reason)
 print(f"Git merge: {', '.join(drivers)} drivers agree on the git story, {len(cases)} cases and {rounds} mutated files; "
-      "multiline drawings/sketches/comments, drawing sheets, properties, exploded views and component work "
+      "multiline drawings/sketches/comments, drawing sheets, parts list numbers, properties, exploded views and component work "
       "retained; overlapping edits rejected")

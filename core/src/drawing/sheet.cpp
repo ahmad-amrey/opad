@@ -1,32 +1,36 @@
 // Drawing sheets (TODO 11 UI-76): paper sizes and scales, the records' checks, a view's projection and its place on the
-// sheet, and dimension values.
+// sheet (annotations and their values: annotate.cpp).
 #include "opad/drawing/sheet.hpp"
 
-#include <BRepAdaptor_Curve.hxx>
-#include <BRepAdaptor_Surface.hxx>
-#include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
-#include <TopoDS.hxx>
-#include <gp_Circ.hxx>
-#include <gp_Cylinder.hxx>
-#include <gp_Elips.hxx>
+#include <OSD_Parallel.hxx>
+#include <Standard_Failure.hxx>
+#include <TopLoc_Location.hxx>
+#include <gp_Trsf.hxx>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <unordered_map>
 
-#include "../design/engine.hpp"
+#include "opad/drawing/symbols.hpp"
 #include "opad/geometry.hpp"
 #include "opad/render.hpp"
+#include "projection_internal.hpp"
 
 namespace opad::drawing {
 namespace {
 
 double dot3(const Vec3& a, const Vec3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+// Bodies measured in a turned view's axes (view_extent): body key + turn -> xmin, ymin, xmax, ymax (empty when it could not
+// be measured so). Keys are content addresses: valid for every document.
+std::mutex g_turned_mu;
+std::unordered_map<std::string, std::array<double, 4>> g_turned;
 Vec3 cross3(const Vec3& a, const Vec3& b) { return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}; }
 Vec3 scaled(const Vec3& a, double s) { return {a[0] * s, a[1] * s, a[2] * s}; }
 Vec3 plus3(const Vec3& a, const Vec3& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
@@ -84,6 +88,26 @@ void apply_style(ViewSpec& s, const json& style) {
   if (style.contains("quality") && style["quality"].is_string()) s.quality = quality_from_name(style["quality"].get<std::string>());
 }
 
+// A view folded out from `s` towards d (a unit direction on the sheet, in its axes), as a projected view to that side
+// but at any angle (UI-82): first angle shows the object from the opposite side, third angle from that side; the axis
+// across d stays where it was on the sheet, so the two views line up along it.
+void fold_to(ViewSpec& s, Vec2 d, bool third) {
+  const double sign = third ? 1 : -1;
+  Vec3 x, y, z;
+  view_axes(s, x, y, z);
+  const Vec3 along = plus3(scaled(x, d[0]), scaled(y, d[1])), across = plus3(scaled(x, -d[1]), scaled(y, d[0]));
+  s.dir = scaled(along, sign);
+  s.up = plus3(scaled(z, -sign * d[1]), scaled(across, d[0]));
+}
+
+std::vector<Vec2> points(const json& j) {
+  std::vector<Vec2> out;
+  if (j.is_array())
+    for (const auto& p : j)
+      if (point2(p)) out.push_back({p[0].get<double>(), p[1].get<double>()});
+  return out;
+}
+
 // A view projected from `s` to the side (sx, sy) of it. First angle: the view right of its parent shows the object from the
 // left; third angle from the right. Corners are pictorial views from that corner.
 void turn_to_side(ViewSpec& s, int sx, int sy, bool third) {
@@ -102,6 +126,14 @@ void turn_to_side(ViewSpec& s, int sx, int sy, bool third) {
   }
 }
 
+std::vector<std::string> node_ids(const json& j) {
+  std::vector<std::string> out;
+  if (j.is_array())
+    for (const auto& n : j)
+      if (n.is_string()) out.push_back(n.get<std::string>());
+  return out;
+}
+
 void apply_source(const Scene& scene, ViewSpec& s, const json& src) {
   if (!src.is_object()) return;
   s.nodes.clear();
@@ -115,6 +147,18 @@ void apply_source(const Scene& scene, ViewSpec& s, const json& src) {
   s.visible_only = src.value("visible_only", false);
 }
 
+}  // namespace
+
+std::vector<std::string> unsectioned(const Scene& scene, const json& sectioned) {
+  std::vector<std::string> out;
+  const auto ids = node_ids(sectioned);
+  for (const auto& [id, n] : scene.nodes)
+    if (n.kind == Node::Kind::Body && left_whole(scene, id, ids)) out.push_back(id);
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+namespace {
 ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
   if (depth > 32) throw Error("its parent views form a loop");
   const json& d = v.def;
@@ -128,6 +172,34 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     if (!side_step(side, sx, sy)) throw Error("side is left, right, top, bottom or a corner such as top-right, not '" + side + "'");
     const Sheet* sheet = scene.sheet(v.sheet);
     turn_to_side(s, sx, sy, sheet && sheet->projection == "third");
+    s.cut.clear(), s.whole.clear(), s.aligned = false, s.breakouts.clear(), s.parts_whole = false, s.sectioned.clear();  // the model, also when projected from a section
+  } else if (v.kind == "section" || v.kind == "auxiliary") {
+    const SheetView* parent = scene.sheet_view(v.parent);
+    if (!parent) throw Error("its parent view " + v.parent + " does not exist");
+    s = spec_of(scene, *parent, depth + 1);
+    Vec2 toward;
+    if (!view_direction(v, toward))
+      throw Error(v.kind == "section" ? "a section needs a cutting line: cut [[u, v], ...], two or more points apart" : "an auxiliary view needs its angle");
+    Vec3 px, py, pz;
+    view_axes(s, px, py, pz);
+    const Sheet* sheet = scene.sheet(v.sheet);
+    fold_to(s, toward, sheet && sheet->projection == "third");
+    s.cut.clear(), s.whole.clear(), s.aligned = false, s.breakouts.clear(), s.parts_whole = false, s.sectioned.clear();
+    if (v.kind == "section") {
+      s.cut = points(d["cut"]);
+      s.cut_x = px, s.cut_y = py;
+      s.aligned = d.value("aligned", false) && s.cut.size() >= 3;
+      for (const auto& n : d.value("whole", json::array()))
+        if (n.is_string()) s.whole.push_back(n.get<std::string>());
+      s.parts_whole = true;
+      s.sectioned = node_ids(d.value("sectioned", json()));
+      s.hidden = false;  // section views draw hidden lines only when asked
+    }
+  } else if (v.kind == "detail") {
+    const SheetView* parent = scene.sheet_view(v.parent);
+    if (!parent) throw Error("its parent view " + v.parent + " does not exist");
+    s = spec_of(scene, *parent, depth + 1);  // the parent's projection: one cache entry for both
+    if (!point2(d.value("center", json())) || !(d.value("radius", 0.0) > 0)) throw Error("a detail view needs its center [u, v] and radius");
   } else if (v.kind == "base") {
     const json o = d.value("orient", json::object());
     if (o.contains("preset") && o["preset"].is_string()) {
@@ -150,9 +222,46 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
   } else {
     throw Error("needs a newer OPAD (sheet_view kind '" + v.kind + "')");
   }
+  if (v.kind == "base" || v.kind == "projected" || v.kind == "auxiliary") {  // broken-out sections (UI-82)
+    for (const auto& b : d.value("breakouts", json::array())) {
+      if (!b.is_object()) continue;
+      ViewSpec::Breakout cut;
+      cut.outline = points(b.value("outline", json()));
+      cut.depth = b.value("depth", 0.0);
+      if (cut.outline.size() >= 3) s.breakouts.push_back(std::move(cut));
+    }
+    if (!s.breakouts.empty()) {
+      for (const auto& n : d.value("whole", json::array()))
+        if (n.is_string()) s.whole.push_back(n.get<std::string>());
+      s.parts_whole = true;
+      s.sectioned = node_ids(d.value("sectioned", json()));
+    }
+  }
   if (d.contains("source")) apply_source(scene, s, d["source"]);
   apply_style(s, d.value("style", json()));
   return s;
+}
+
+// An item's name in the outline: what it showed when it was made (a dimension's value, a callout, a set's values), a
+// note's text, a datum's letter, a frame's characteristic and tolerance, a surface's requirement.
+std::string item_name(const SheetItem& t) {
+  const json& d = t.def;
+  const json shown = d.value("result", json::object()).value("shown", json());
+  if (shown.is_string()) return shown.get<std::string>();
+  if (shown.is_array()) {
+    std::string out;
+    for (const auto& s : shown)
+      if (s.is_string()) out += (out.empty() ? "" : ", ") + s.get<std::string>();
+    return out;
+  }
+  if (t.kind == "note") return d.value("text", "");
+  if (t.kind == "datum") return d.value("letter", "");
+  if (t.kind == "issue") return d.value("rev", "");
+  const json v = d.value("value", json());
+  const std::string value = v.is_string() ? v.get<std::string>() : v.is_number() ? number(v.get<double>(), 4) : std::string();
+  if (t.kind == "fcf") return characteristic_glyph(d.value("characteristic", "")) + " " + (d.value("zone", "") == "diameter" ? "⌀" : "") + value;
+  if (t.kind == "surface") return value;
+  return "";
 }
 
 }  // namespace
@@ -213,14 +322,64 @@ bool is_sheet_record(const std::string& op_type) { return op_type == "sheet" || 
 void validate_record(const json& op) {
   const std::string type = op.value("op", "");
   const auto fail = [&](const std::string& why) { throw Error(type + ": " + why); };
-  for (const char* k : {"sheet", "view", "parent"})
+  for (const char* k : {"sheet", "view", "parent", "list"})
     if (op.contains(k) && !(op[k].is_string() && is_uuid(op[k].get<std::string>()))) fail(std::string("'") + k + "' must be an op id");
-  for (const char* k : {"name", "drawing", "kind", "type", "standard", "projection", "units", "side", "scale", "text", "prefix", "suffix"})
+  for (const char* k : {"name", "drawing", "kind", "type", "standard", "projection", "units", "side", "scale", "text", "prefix", "suffix", "rev", "date",
+                        "description", "approved", "pdf", "pdf_sha256", "tag", "grow", "letter"})
     if (op.contains(k) && !op[k].is_string()) fail(std::string("'") + k + "' must be text");
-  for (const char* k : {"size", "template", "values", "source", "orient", "style", "label", "place", "result", "tol", "frozen"})
+  for (const char* k : {"size", "template", "values", "source", "orient", "style", "label", "place", "result", "tol", "frozen", "bom", "headers",
+                        "fingerprints", "frames"})
     if (op.contains(k) && !op[k].is_object()) fail(std::string("'") + k + "' must be an object");
-  for (const char* k : {"gap", "height", "precision"})
+  for (const char* k : {"gap", "height", "precision", "width", "diameter", "angle"})
     if (op.contains(k) && !finite(op[k])) fail(std::string("'") + k + "' must be a number");
+  // Section, detail, auxiliary, cropped and broken views (UI-82).
+  if (op.contains("cut") && !(op["cut"].is_array() && op["cut"].size() >= 2 && std::all_of(op["cut"].begin(), op["cut"].end(), point2)))
+    fail("a cutting line is [[u, v], [u, v], ...]: two or more points");
+  if (op.contains("center") && !point2(op["center"])) fail("'center' must be [u, v]");
+  if (op.contains("radius") && !(finite(op["radius"]) && op["radius"].get<double>() > 0)) fail("'radius' must be a positive number");
+  if (op.contains("flip") && !op["flip"].is_boolean()) fail("'flip' must be true or false");
+  if (op.contains("aligned") && !op["aligned"].is_boolean()) fail("'aligned' must be true or false");
+  for (const char* k : {"whole", "sectioned"})
+    if (op.contains(k) && !(op[k].is_array() && std::all_of(op[k].begin(), op[k].end(), [](const json& n) { return n.is_string(); })))
+      fail(std::string("'") + k + "' must be node ids");
+  if (op.contains("breakouts") && !(op["breakouts"].is_array() && std::all_of(op["breakouts"].begin(), op["breakouts"].end(), [](const json& b) {
+                                      const json o = b.is_object() ? b.value("outline", json()) : json();
+                                      return o.is_array() && o.size() >= 3 && std::all_of(o.begin(), o.end(), point2) && finite(b.value("depth", json()));
+                                    })))
+    fail("'breakouts' is a list of {outline [[u, v], ...] (three or more points), depth}");
+  if (op.contains("hatch")) {
+    const auto lining = [](const json& o) {
+      return o.is_object() && (!o.contains("pattern") || o["pattern"].is_string()) && (!o.contains("angle") || finite(o["angle"])) &&
+             (!o.contains("spacing") || (finite(o["spacing"]) && o["spacing"].get<double>() > 0));
+    };
+    const json& h = op["hatch"];
+    if (!lining(h) || (h.contains("thin") && !h["thin"].is_string()) ||
+        (h.contains("bodies") && !(h["bodies"].is_object() && std::all_of(h["bodies"].begin(), h["bodies"].end(), lining))))
+      fail("'hatch' is {pattern, angle, spacing (paper mm), thin, bodies: {node: {pattern, angle, spacing}}}");
+  }
+  if (op.contains("crop")) {
+    const json& c = op["crop"];
+    if (!(c.is_array() && c.size() == 4 && std::all_of(c.begin(), c.end(), finite) && c[0].get<double>() < c[2].get<double>() && c[1].get<double>() < c[3].get<double>()))
+      fail("'crop' must be [x0, y0, x1, y1] with x0 < x1 and y0 < y1");
+  }
+  if (op.contains("breaks")) {
+    const json& b = op["breaks"];
+    if (!b.is_array()) fail("'breaks' must be a list of {axis x|y, from, to, gap}");
+    for (const auto& e : b)
+      if (!e.is_object() || (e.value("axis", "") != "x" && e.value("axis", "") != "y") || !finite(e.value("from", json())) || !finite(e.value("to", json())) ||
+          e["from"].get<double>() >= e["to"].get<double>() || (e.contains("gap") && !(finite(e["gap"]) && e["gap"].get<double>() >= 0)))
+        fail("a break is {axis x|y, from, to (from < to), gap (paper mm)}");
+  }
+  if (op.contains("sheets") && !(op["sheets"].is_array() && std::all_of(op["sheets"].begin(), op["sheets"].end(), [](const json& s) {
+                                   return s.is_string() && is_uuid(s.get<std::string>());
+                                 })))
+    fail("'sheets' must be op ids");
+  if (op.contains("columns") && !(op["columns"].is_array() && std::all_of(op["columns"].begin(), op["columns"].end(), [](const json& c) { return c.is_string(); })))
+    fail("'columns' must be column names");
+  if (op.contains("numbers") && !(op["numbers"].is_array() && std::all_of(op["numbers"].begin(), op["numbers"].end(), [](const json& e) {
+                                    return e.is_object() && e.value("n", json()).is_number_integer() && e["n"].get<long long>() > 0;
+                                  })))
+    fail("item numbers are [{n, identity, node}] with n from 1");
   if (op.contains("at") && !point2(op["at"])) fail("'at' must be [x, y] in paper mm");
   if (op.contains("place"))
     for (const auto& [k, v] : op["place"].items())
@@ -241,6 +400,20 @@ void validate_record(const json& op) {
     if (op.contains("template") && op["template"].contains("geometry") && !op["template"]["geometry"].is_null() &&
         !body_key(op["template"]["geometry"]))
       fail("a template's geometry is a body key");
+    if (op.contains("template") && op["template"].contains("fields")) {
+      const json& fields = op["template"]["fields"];
+      if (!fields.is_array()) fail("a template's fields are a list");
+      for (const auto& f : fields) {
+        const json rect = f.is_object() ? f.value("rect", json()) : json();
+        const bool cell = rect.is_array() && rect.size() == 4 && std::all_of(rect.begin(), rect.end(), [](const json& v) { return finite(v); });
+        if (!f.is_object() || !f.value("key", json()).is_string() || !(cell || point2(f.value("at", json()))))
+          fail("a template field is {key, rect [x, y, w, h] or at [x, y], ...}");
+        for (const char* k : {"height", "w", "angle"})
+          if (f.contains(k) && !finite(f[k])) fail(std::string("a template field's ") + k + " is a number");
+        for (const char* k : {"label", "align", "valign"})
+          if (f.contains(k) && !f[k].is_string()) fail(std::string("a template field's ") + k + " is text");
+      }
+    }
   } else if (type == "sheet_view" || type == "sheet_item") {
     if (!op.contains("sheet")) fail("needs its sheet");
     if (!op.contains("kind")) fail("needs a kind");
@@ -290,7 +463,7 @@ std::vector<OutlineRow> outline(const Scene& scene) {
     }
     for (const auto& id : s.items) {
       const SheetItem* t = items.at(id);
-      std::string name = t->kind == "dimension" ? t->def.value("result", json::object()).value("shown", "") : t->def.value("text", "");
+      std::string name = item_name(*t);
       name = name.substr(0, name.find('\n'));
       OutlineRow row{id, "item", name, "", t->error, {}};
       if (const auto at = view_rows.find(t->view); at != view_rows.end()) sheet.children[at->second].children.push_back(std::move(row));
@@ -313,18 +486,62 @@ std::vector<OutlineRow> outline(const Scene& scene) {
 Vec2 ViewFrame::view(const Vec3& p) const { return {dot3(p, x), dot3(p, y)}; }
 
 Vec2 ViewFrame::paper(const Vec3& p) const {
-  const Vec2 v = view(p);
-  return {at[0] + scale * (v[0] - centre[0]), at[1] + scale * (v[1] - centre[1])};
+  const Vec2 l = local(view(p));
+  return {at[0] + l[0], at[1] + l[1]};
+}
+
+Vec2 ViewFrame::fold(Vec2 v) const {
+  Vec2 out = v;
+  for (const auto& b : breaks) {
+    const double r = v[static_cast<size_t>(b.axis)];
+    double& o = out[static_cast<size_t>(b.axis)];
+    if (r >= b.to) o -= b.to - b.from - b.gap;
+    else if (r > b.from) o -= (r - b.from) * (1 - b.gap / (b.to - b.from));
+  }
+  return out;
+}
+
+Vec2 ViewFrame::unfold(Vec2 v) const {
+  Vec2 out = v;
+  for (int axis = 0; axis < 2; ++axis) {
+    double shift = 0;
+    const double x = v[static_cast<size_t>(axis)];
+    for (const auto& b : breaks) {
+      if (b.axis != axis) continue;
+      const double at = b.from - shift;
+      if (x <= at) break;
+      if (x < at + b.gap) {
+        shift = b.from + (x - at) * (b.to - b.from) / std::max(b.gap, 1e-12) - x;
+        break;
+      }
+      shift += b.to - b.from - b.gap;
+    }
+    out[static_cast<size_t>(axis)] = x + shift;
+  }
+  return out;
+}
+
+Vec2 ViewFrame::local(Vec2 v) const {
+  const Vec2 f = fold(v);
+  return {scale * (f[0] - centre[0]), scale * (f[1] - centre[1])};
 }
 
 json ViewFrame::to_json() const {
   json j = {{"id", id}, {"scale", scale_text(scale)}, {"at", at}, {"centre", centre}, {"box", box}, {"x", x}, {"y", y}, {"dir", dir}};
+  if (crop[2] > crop[0]) j["crop"] = crop;
+  if (radius > 0) j["circle"] = {{"center", circle}, {"radius", radius}};
+  for (const auto& b : breaks) j["breaks"].push_back({{"axis", b.axis ? "y" : "x"}, {"from", b.from}, {"to", b.to}, {"gap", b.gap}});
   if (!error.empty()) j["error"] = error;
   return j;
 }
 
 std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const ViewSpec& spec) {
-  // The corners of every body's tight box (moved by its explode offset), in view coordinates.
+  // Bodies square to the view: the corners of their tight boxes (moved by their explode offsets), which is exact. Bodies
+  // seen turned (pictorial views, turned parts) of a part the exact tier draws: measured in the view's axes, where the
+  // turned corners of their own boxes would come out up to a quarter too big (cached by key and turn); of a bigger model
+  // the corners still (a measure per turn of every body would cost as much as the projection). An aligned section: its
+  // pieces revolved.
+  if (spec.aligned && spec.cut.size() >= 3) return detail::aligned_extent(doc, scene, spec);
   Vec3 x, y, z;
   view_axes(spec, x, y, z);
   std::array<double, 4> e{1e300, 1e300, -1e300, -1e300};
@@ -333,7 +550,75 @@ std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const
   for (const auto& [node, world] : bodies)
     if (const Node* n = scene.node(node)) keys.push_back(n->body_key);
   warm_tight_bboxes(doc, keys);
-  for (const auto& [node, world] : bodies) {
+  std::vector<std::string> turned(bodies.size());  // body -> its key and turn, when measured turned
+  std::vector<std::array<double, 9>> turns(bodies.size());
+  bool small = false;
+  {
+    ViewSpec probe = spec;
+    probe.quality = Quality::Auto;
+    try {
+      small = choose_tier(doc, scene, probe) == Quality::Exact;
+    } catch (const std::exception&) {
+    }
+  }
+  std::vector<size_t> missing;
+  for (size_t i = 0; small && i < bodies.size(); ++i) {
+    const Node* n = scene.node(bodies[i].first);
+    if (!n) continue;
+    const Mat4& w = bodies[i].second;
+    const Vec3 rows[3] = {x, y, z};
+    bool square = true;
+    std::string id = n->body_key;
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c) {
+        const double v = rows[r][0] * w.at(0, c) + rows[r][1] * w.at(1, c) + rows[r][2] * w.at(2, c);
+        turns[i][static_cast<size_t>(3 * r + c)] = v;
+        square = square && (std::fabs(v) < 1e-12 || std::fabs(std::fabs(v) - 1) < 1e-12);
+        char text[32];
+        std::snprintf(text, sizeof text, "|%.9f", std::fabs(v) < 5e-10 ? 0.0 : v);
+        id += text;
+      }
+    if (square) continue;
+    turned[i] = id;
+    std::lock_guard<std::mutex> lock(g_turned_mu);
+    if (!g_turned.count(id)) missing.push_back(i);
+  }
+  if (!missing.empty()) {
+    std::vector<std::array<double, 4>> found(missing.size(), {1, 1, -1, -1});
+    OSD_Parallel::For(0, static_cast<int>(missing.size()), [&](int k) {
+      const size_t i = missing[static_cast<size_t>(k)];
+      const auto& r = turns[i];
+      try {
+        gp_Trsf t;
+        t.SetValues(r[0], r[1], r[2], 0, r[3], r[4], r[5], 0, r[6], r[7], r[8], 0);
+        const Bnd_Box b = tight_bbox(body_shape(doc, scene.node(bodies[i].first)->body_key).Moved(TopLoc_Location(t)));
+        if (b.IsVoid()) return;
+        double c[6];
+        b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+        found[static_cast<size_t>(k)] = {c[0], c[1], c[3], c[4]};
+      } catch (const std::exception&) {
+      } catch (const Standard_Failure&) {  // not a rigid turn (a scaled node): its corners
+      }
+    });
+    std::lock_guard<std::mutex> lock(g_turned_mu);
+    if (g_turned.size() > 20000) g_turned.clear();
+    for (size_t k = 0; k < missing.size(); ++k) g_turned[turned[missing[k]]] = found[k];
+  }
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    const auto& [node, world] = bodies[i];
+    if (!turned[i].empty()) {
+      std::array<double, 4> b;
+      {
+        std::lock_guard<std::mutex> lock(g_turned_mu);
+        b = g_turned[turned[i]];
+      }
+      if (b[0] <= b[2]) {  // its turned extent, moved where the node is
+        const Vec3 shift{world.at(0, 3), world.at(1, 3), world.at(2, 3)};
+        const double u = dot3(shift, x), v = dot3(shift, y);
+        e = {std::min(e[0], b[0] + u), std::min(e[1], b[1] + v), std::max(e[2], b[2] + u), std::max(e[3], b[3] + v)};
+        continue;
+      }
+    }
     const Bnd_Box b = node_tight_bbox(doc, scene, node, false);
     if (b.IsVoid()) continue;
     const Mat4 placed = scene.world(node);
@@ -347,6 +632,31 @@ std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const
     }
   }
   if (e[0] > e[2]) e = {0, 0, 0, 0};
+  return e;
+}
+
+std::array<double, 2> view_depth(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+  Vec3 x, y, z;
+  view_axes(spec, x, y, z);
+  const auto bodies = view_bodies(scene, spec);
+  std::vector<std::string> keys;
+  for (const auto& [node, world] : bodies)
+    if (const Node* n = scene.node(node)) keys.push_back(n->body_key);
+  warm_tight_bboxes(doc, keys);
+  std::array<double, 2> e{1e300, -1e300};
+  for (const auto& [node, world] : bodies) {
+    const Bnd_Box b = node_tight_bbox(doc, scene, node, false);
+    if (b.IsVoid()) continue;
+    const Mat4 placed = scene.world(node);
+    const Vec3 shift{world.at(0, 3) - placed.at(0, 3), world.at(1, 3) - placed.at(1, 3), world.at(2, 3) - placed.at(2, 3)};
+    double c[6];
+    b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+    for (int k = 0; k < 8; ++k) {
+      const double w = dot3(plus3({c[(k & 1) ? 3 : 0], c[(k & 2) ? 4 : 1], c[(k & 4) ? 5 : 2]}, shift), z);
+      e = {std::min(e[0], w), std::max(e[1], w)};
+    }
+  }
+  if (e[0] > e[1]) e = {0, 0};
   return e;
 }
 
@@ -364,15 +674,64 @@ std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const She
       if (depth > 32) throw Error("its parent views form a loop");
       const ViewSpec spec = view_spec(scene, *v);
       view_axes(spec, f.x, f.y, f.dir);
-      const std::array<double, 4> e = view_extent(doc, scene, spec);
-      const double lo[2] = {e[0], e[1]}, hi[2] = {e[2], e[3]};
-      f.centre = {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
       const json& d = v->def;
-      if (v->kind == "projected") {
+      std::array<double, 4> e;
+      const ViewFrame* parent = nullptr;
+      if (!v->parent.empty()) {
+        parent = &place(v->parent, depth + 1);
+        if (!parent->error.empty()) throw Error("its parent view cannot be drawn: " + parent->error);
+      }
+      if (v->kind == "detail") {  // its circle, at its own scale (twice its parent's unless given)
+        f.circle = {d["center"][0].get<double>(), d["center"][1].get<double>()};
+        f.radius = d["radius"].get<double>();
+        e = {f.circle[0] - f.radius, f.circle[1] - f.radius, f.circle[0] + f.radius, f.circle[1] + f.radius};
+        f.scale = d.value("scale", "") != "" && d["scale"] != "sheet" ? parse_scale(d["scale"].get<std::string>()) : 2 * parent->scale;
+      } else {
+        e = view_extent(doc, scene, spec);
+        if (parent) f.scale = parent->scale;
+        else if (const std::string s = d.value("scale", "sheet"); s != "sheet") f.scale = parse_scale(s);
+      }
+      if (const json c = d.value("crop", json()); c.is_array() && c.size() == 4) {
+        f.crop = {c[0].get<double>(), c[1].get<double>(), c[2].get<double>(), c[3].get<double>()};
+        for (int k = 0; k < 4; ++k)
+          if (k < 2 ? f.crop[static_cast<size_t>(k)] > e[static_cast<size_t>(k)] : f.crop[static_cast<size_t>(k)] < e[static_cast<size_t>(k)]) f.crop_cuts |= 1 << k;
+        e = {std::max(e[0], f.crop[0]), std::max(e[1], f.crop[1]), std::min(e[2], f.crop[2]), std::min(e[3], f.crop[3])};
+        if (e[0] > e[2] || e[1] > e[3]) throw Error("its crop box holds nothing of it");
+      }
+      // Breaks: its own, and those of the view it lines up with along the axis they share.
+      for (const auto& b : d.value("breaks", json::array()))
+        f.breaks.push_back({b.value("axis", "x") == "y" ? 1 : 0, b["from"].get<double>(), b["to"].get<double>(), b.value("gap", 6.0) / f.scale});
+      Vec2 toward{0, 0};
+      if (parent && v->kind != "detail" && view_direction(*v, toward))
+        for (const auto& b : parent->breaks)
+          if (std::fabs(toward[b.axis ? 0 : 1]) > 1 - 1e-9) f.breaks.push_back(b);
+      std::sort(f.breaks.begin(), f.breaks.end(), [](const ViewFrame::Break& a, const ViewFrame::Break& b) { return std::tie(a.axis, a.from) < std::tie(b.axis, b.from); });
+      for (size_t k = 1; k < f.breaks.size(); ++k)
+        if (f.breaks[k].axis == f.breaks[k - 1].axis && f.breaks[k].from < f.breaks[k - 1].to) throw Error("its breaks overlap");
+      const Vec2 flo = f.fold({e[0], e[1]}), fhi = f.fold({e[2], e[3]});
+      const double lo[2] = {flo[0], flo[1]}, hi[2] = {fhi[0], fhi[1]};
+      f.centre = v->kind == "detail" ? f.circle : Vec2{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
+      if ((v->kind == "section" || v->kind == "auxiliary") && (!d.value("align", true) && d.contains("at"))) {
+        f.at = {d["at"][0].get<double>(), d["at"][1].get<double>()};
+      } else if (v->kind == "section" || v->kind == "auxiliary") {
+        // Lined up with its parent across `toward` (a point keeps its place along that axis), `gap` past its frame.
+        const ViewFrame& p = *parent;
+        const Vec2 a{-toward[1], toward[0]};
+        const auto along = [](Vec2 u, Vec2 w) { return u[0] * w[0] + u[1] * w[1]; };
+        double reach = 0, back = 0;
+        for (int k = 0; k < 4; ++k) {
+          reach = std::max(reach, along({(k & 1 ? p.box[2] : p.box[0]) - p.at[0], (k & 2 ? p.box[3] : p.box[1]) - p.at[1]}, toward));
+          back = std::max(back, -along({((k & 1 ? hi[0] : lo[0]) - f.centre[0]) * f.scale, ((k & 2 ? hi[1] : lo[1]) - f.centre[1]) * f.scale}, toward));
+        }
+        const double s = along(p.at, a) + f.scale * along({f.centre[0] - p.centre[0], f.centre[1] - p.centre[1]}, a);
+        const double t = along(p.at, toward) + reach + d.value("gap", 20.0) + back;
+        f.at = {a[0] * s + toward[0] * t, a[1] * s + toward[1] * t};
+      } else if (v->kind == "detail") {
+        f.at = d.contains("at") ? Vec2{d["at"][0].get<double>(), d["at"][1].get<double>()}
+                                : Vec2{parent->box[2] + 20 + f.radius * f.scale, (parent->box[1] + parent->box[3]) / 2};
+      } else if (v->kind == "projected") {
         // Aligned with its parent: the coordinate they share is the parent's, the other puts `gap` between the frames.
-        const ViewFrame& p = place(v->parent, depth + 1);
-        if (!p.error.empty()) throw Error("its parent view cannot be drawn: " + p.error);
-        f.scale = p.scale;
+        const ViewFrame& p = *parent;
         int sx = 0, sy = 0;
         side_step(d.value("side", ""), sx, sy);
         const double gap = d.value("gap", 20.0);
@@ -387,7 +746,6 @@ std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const She
           if (sy < 0) f.at[1] = p.box[1] - gap - (hi[1] - f.centre[1]) * f.scale;
         }
       } else {
-        if (const std::string s = d.value("scale", "sheet"); s != "sheet") f.scale = parse_scale(s);
         f.at = d.contains("at") ? Vec2{d["at"][0].get<double>(), d["at"][1].get<double>()} : Vec2{sheet.width / 2, sheet.height / 2};
       }
       f.box = {f.at[0] + (lo[0] - f.centre[0]) * f.scale, f.at[1] + (lo[1] - f.centre[1]) * f.scale,
@@ -519,169 +877,11 @@ json plan_views(const Document& doc, const Scene& scene, const json& sheet, cons
       const Planned& b = plan[0];
       const double between = p.cy == 0 ? std::fabs(cx[p.cx] - cx[0]) - (b.w + p.w) * s / 2 : std::fabs(cy[p.cy] - cy[0]) - (b.h + p.h) * s / 2;
       record = {{"op", "sheet_view"}, {"kind", "projected"}, {"parent", "base"}, {"side", p.side}, {"gap", r2(std::max(1.0, between))}};
+      if (style.is_object() && style.value("centermarks", false)) record["style"] = {{"centermarks", true}};  // drawn by each view itself
     }
     out.push_back({{"view", p.view}, {"record", record}});
   }
   return {{"scale", scale_text(s)}, {"views", out}};
-}
-
-// ---------------------------------------------------------------- dimensions
-std::string format_value(double value, const json& item) {
-  const int precision = std::clamp(item.value("precision", 2), 0, 8);
-  const std::string type = item.value("type", "");
-  std::string shown = number(value, precision);
-  if (item.contains("text") && item["text"].is_string()) {  // "<>" stands for the value, as drafting tools write it
-    std::string text = item["text"].get<std::string>();
-    if (const size_t at = text.find("<>"); at != std::string::npos) text.replace(at, 2, shown);
-    return text;
-  }
-  shown = (type == "diameter" ? "⌀" : type == "radius" ? "R" : "") + shown + (type == "angle" ? "°" : "");
-  if (item.contains("tol") && item["tol"].is_object()) {
-    const json& t = item["tol"];
-    const double plus = t.value("plus", 0.0), minus = t.value("minus", -plus);
-    const int decimals = std::max(precision, 3);
-    const auto sign = [&](double x) { return (x < 0 ? "-" : "+") + number(std::fabs(x), decimals); };
-    shown += t.value("type", "sym") == "sym" ? " ±" + number(std::fabs(plus), decimals) : " " + sign(plus) + "/" + sign(minus);
-  }
-  return item.value("prefix", "") + shown + item.value("suffix", "");
-}
-
-json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& item, const ViewFrame& frame) {
-  if (item.kind != "dimension") throw Error("only dimensions have a value");
-  if (!frame.error.empty()) throw Error("its view cannot be drawn: " + frame.error);
-  std::vector<design::ParamDef> defs;
-  for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
-  const design::ParamTable params(defs);
-  const std::map<std::string, TopoDS_Shape> fresh;
-  json notes = json::object();
-  const design::Ctx ctx{doc, params, scene, fresh, {}, &notes};
-
-  // What a reference gives a dimension: a point (its aspect), and the line, circle or cylinder it lies on.
-  struct Pick {
-    Vec3 p{0, 0, 0}, a{0, 0, 0}, b{0, 0, 0}, centre{0, 0, 0}, axis{0, 0, 1};
-    bool edge = false, line = false, circle = false, cylinder = false;
-    double r = 0;
-  };
-  const auto pick = [&](json r) {
-    Pick k;
-    if (r.is_string()) r = Ref::parse(r.get<std::string>()).to_json();
-    std::string aspect = r.value("aspect", "");
-    if (r.value("kind", "") == "center") r["kind"] = "edge", aspect = "center";
-    if (r.value("kind", "") == "point") {
-      k.p = Ref::from_json(r).point;
-      return k;
-    }
-    const TopoDS_Shape s = ctx.resolve(r).sub;
-    if (s.ShapeType() == TopAbs_VERTEX) {
-      k.p = of(BRep_Tool::Pnt(TopoDS::Vertex(s)));
-      return k;
-    }
-    if (s.ShapeType() == TopAbs_FACE) {
-      const BRepAdaptor_Surface f(TopoDS::Face(s));
-      if (f.GetType() != GeomAbs_Cylinder) throw Error("a dimension takes edges and vertices (a cylindrical face for a diameter)");
-      const gp_Cylinder c = f.Cylinder();
-      k.cylinder = true, k.r = c.Radius(), k.p = k.centre = of(c.Location()), k.axis = of(c.Axis().Direction());
-      return k;
-    }
-    if (s.ShapeType() != TopAbs_EDGE) throw Error("a dimension takes edges and vertices");
-    const TopoDS_Edge e = TopoDS::Edge(s);
-    const BRepAdaptor_Curve c(e);
-    const double t0 = c.FirstParameter(), t1 = c.LastParameter();
-    k.edge = true;
-    k.a = of(c.Value(t0)), k.b = of(c.Value(t1));
-    if (e.Orientation() == TopAbs_REVERSED) std::swap(k.a, k.b);
-    k.line = c.GetType() == GeomAbs_Line;
-    const bool conic = c.GetType() == GeomAbs_Circle || c.GetType() == GeomAbs_Ellipse;
-    if (c.GetType() == GeomAbs_Circle) {
-      const gp_Circ ci = c.Circle();
-      k.circle = true, k.r = ci.Radius(), k.centre = of(ci.Location()), k.axis = of(ci.Axis().Direction());
-    } else if (c.GetType() == GeomAbs_Ellipse) {
-      k.centre = of(c.Ellipse().Location());
-    }
-    if (aspect == "start") k.p = k.a;
-    else if (aspect == "end") k.p = k.b;
-    else if (aspect == "mid" || (aspect.empty() && !conic)) k.p = of(c.Value((t0 + t1) / 2));
-    else if (aspect == "center" || aspect.empty()) {
-      if (!conic) throw Error("only a circle or an ellipse has a centre");
-      k.p = k.centre;
-    } else throw Error("aspect is start, end, mid or center, not '" + aspect + "'");
-    return k;
-  };
-
-  std::vector<Pick> picks;
-  for (const auto& r : item.def.value("refs", json::array())) picks.push_back(pick(r));
-  const std::string& type = item.type;
-  const double units = sheet.def.value("units", "mm") == "in" ? 1 / 25.4 : 1;
-  double value = 0;
-  Vec3 anchor{0, 0, 0};
-  // What it measures on paper, for drawing it (paper mm from the view's centre, as the anchor).
-  json geometry = json::object();
-  const auto paper_of = [&](const Vec2& v) { return json::array({frame.scale * (v[0] - frame.centre[0]), frame.scale * (v[1] - frame.centre[1])}); };
-  if (type == "horizontal" || type == "vertical" || type == "aligned") {
-    Vec2 a, b;
-    if (picks.size() == 1 && picks[0].edge) {
-      a = frame.view(picks[0].a), b = frame.view(picks[0].b);
-      anchor = scaled(plus3(picks[0].a, picks[0].b), 0.5);
-    } else if (picks.size() == 2) {
-      a = frame.view(picks[0].p), b = frame.view(picks[1].p);
-      anchor = scaled(plus3(picks[0].p, picks[1].p), 0.5);
-    } else {
-      throw Error("a " + type + " dimension takes two references or one edge");
-    }
-    value = type == "horizontal" ? std::fabs(b[0] - a[0]) : type == "vertical" ? std::fabs(b[1] - a[1]) : std::hypot(b[0] - a[0], b[1] - a[1]);
-    geometry = {{"from", paper_of(a)}, {"to", paper_of(b)}};
-    if (type == "aligned" && picks.size() == 2 && picks[0].line && picks[1].line) {  // two parallel lines: across them
-      const Vec2 a0 = frame.view(picks[0].a), a1 = frame.view(picks[0].b), b0 = frame.view(picks[1].a), b1 = frame.view(picks[1].b);
-      const double la = std::hypot(a1[0] - a0[0], a1[1] - a0[1]), lb = std::hypot(b1[0] - b0[0], b1[1] - b0[1]);
-      if (la > 1e-9 && lb > 1e-9) {
-        const Vec2 u{(a1[0] - a0[0]) / la, (a1[1] - a0[1]) / la}, w{(b1[0] - b0[0]) / lb, (b1[1] - b0[1]) / lb};
-        if (std::fabs(u[0] * w[1] - u[1] * w[0]) < 1e-6) {
-          value = std::fabs(u[0] * (b0[1] - a0[1]) - u[1] * (b0[0] - a0[0]));
-          const Vec2 m{(a0[0] + a1[0]) / 2, (a0[1] + a1[1]) / 2};  // from the middle of the first line straight across
-          const double t = (m[0] - b0[0]) * w[0] + (m[1] - b0[1]) * w[1];
-          geometry = {{"from", paper_of(m)}, {"to", paper_of({b0[0] + w[0] * t, b0[1] + w[1] * t})}};
-        }
-      }
-    }
-  } else if (type == "radius" || type == "diameter") {
-    if (picks.size() != 1 || !(picks[0].circle || picks[0].cylinder)) throw Error("a " + type + " takes one circle or cylinder");
-    const double along = std::fabs(dot3(picks[0].axis, frame.dir));
-    if (picks[0].circle && along < 0.9999) throw Error("the circle is foreshortened in this view: dimension it in a view along its axis");
-    if (picks[0].cylinder && along < 0.9999 && along > 1e-4) throw Error("the cylinder is seen at a slant: dimension it in a view along or across its axis");
-    value = type == "radius" ? picks[0].r : 2 * picks[0].r;
-    anchor = picks[0].centre;
-    const Vec2 c = frame.view(picks[0].centre);
-    if (along >= 0.9999) {
-      geometry = {{"centre", paper_of(c)}, {"r", picks[0].r * frame.scale}};
-    } else {  // a cylinder seen from the side: across it, square to its axis
-      Vec2 n = frame.view(picks[0].axis);
-      const double l = std::hypot(n[0], n[1]);
-      n = {-n[1] / l, n[0] / l};
-      const double r = picks[0].r;
-      geometry = {{"from", paper_of(type == "radius" ? c : Vec2{c[0] - n[0] * r, c[1] - n[1] * r})}, {"to", paper_of({c[0] + n[0] * r, c[1] + n[1] * r})}};
-    }
-  } else if (type == "angle") {
-    if (picks.size() != 2 || !picks[0].line || !picks[1].line) throw Error("an angle takes two straight edges");
-    Vec2 d[2];
-    for (int i = 0; i < 2; ++i) {
-      const Vec3 e = unit(minus3(picks[size_t(i)].b, picks[size_t(i)].a));
-      if (std::fabs(dot3(e, frame.dir)) > 1e-4) throw Error("an edge is foreshortened in this view: dimension the angle in a view normal to both");
-      const Vec2 u = frame.view(e);
-      const double l = std::hypot(u[0], u[1]);
-      d[i] = {u[0] / l, u[1] / l};
-    }
-    value = std::acos(std::clamp(std::fabs(d[0][0] * d[1][0] + d[0][1] * d[1][1]), 0.0, 1.0)) * 180 / M_PI;
-    if (item.def.value("obtuse", false)) value = 180 - value;
-    anchor = scaled(plus3(plus3(picks[0].a, picks[0].b), plus3(picks[1].a, picks[1].b)), 0.25);
-    geometry = {{"lines", {{paper_of(frame.view(picks[0].a)), paper_of(frame.view(picks[0].b))}, {paper_of(frame.view(picks[1].a)), paper_of(frame.view(picks[1].b))}}}};
-  } else {
-    throw Error("needs a newer OPAD (dimension type '" + type + "')");
-  }
-  if (type != "angle") value *= units;
-  const Vec2 at = frame.paper(anchor);
-  json out = {{"value", value}, {"shown", format_value(value, item.def)}, {"anchor", {at[0] - frame.at[0], at[1] - frame.at[1]}}, {"geometry", geometry}};
-  if (notes.contains("rehinted")) out["rehinted"] = notes["rehinted"];
-  return out;
 }
 
 }  // namespace opad::drawing

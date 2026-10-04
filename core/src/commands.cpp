@@ -529,7 +529,7 @@ void register_builtins() {
   reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg|pdf|png or a plugin format (2D of solids: a hidden-line view)",
       {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|pdf|png|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
        {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"},
-       {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}, {"dpi", "int - PNG"}, {"sheet", "uuid|name|drawing:<name> - 2D: a sheet, or a drawing's"}},
+       {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}, {"dpi", "int - PNG"}, {"sheet", "uuid|name|drawing:<name> - 2D: a sheet, or a drawing's"}, {"issue", "string - with sheet: as issued"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
         if (has_exporter(a.value("format", "step"))) return run_exporter(a.value("format", "step"), doc, a);
@@ -1094,6 +1094,7 @@ json export_document(const Document& doc, const Scene& scene, const json& a, con
   o.decimals = std::clamp(a.value("decimals", 6), 0, 12);
   o.dpi = std::clamp(a.value("dpi", 300), 10, 2400);
   o.sheet = a.value("sheet", "");
+  o.issue = a.value("issue", "");
   o.progress = progress;
   const std::string out = a.value("out", "");
   if (out.empty()) throw Error("export: \"out\" path required");
