@@ -167,7 +167,7 @@ void Viewport::scheduleLooks() {
     if (m_lookQueued.insert(id).second) m_lookQueue.push_back(id);
   if (m_lookJob || m_lookQueue.empty()) return;
   struct Pass {
-    bool selected = false, moved = false;
+    bool selected = false, moved = false, shown = false;  // shown: a body shown or hidden
     size_t changed = 0;
   };
   auto pass = std::make_shared<Pass>();
@@ -182,6 +182,7 @@ void Viewport::scheduleLooks() {
       const BodyLook look = composeLook(*n);
       if (!(look == it->second.look)) {
         pass->selected = pass->selected || m_ctx->IsSelected(it->second.ais);
+        pass->shown = pass->shown || look.visible != it->second.look.visible;
         pass->moved = applyLook(id, it->second, look) || pass->moved;
         if ((++pass->changed & 127) == 0) redrawScene();  // the bodies change as the job goes
       }
@@ -205,6 +206,10 @@ void Viewport::scheduleLooks() {
         m_noteCamera.Reset();
         QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
       }
+    }
+    if (pass->moved || pass->shown) {  // a check's colours and overlap lie on the bodies as drawn (exploded, hidden by a look)
+      if (!m_tintWanted.empty()) buildCheckTints();
+      placeOverlap();
     }
     redrawScene();  // ghosts or not, translucency stays order-independent (setRenderQuality, UI-39)
     if (trace::enabled()) trace::log(QStringLiteral("looks: %1 bodies changed%2").arg(pass->changed).arg(completed ? "" : " (stopped)"));

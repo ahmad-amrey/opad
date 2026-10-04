@@ -17,7 +17,9 @@
 #include <TopoDS_Face.hxx>
 
 #include <algorithm>
+#include <array>
 #include <map>
+#include <optional>
 #include <utility>
 
 #include "BodyShape.hpp"
@@ -78,7 +80,8 @@ void Viewport::buildCheckTints() {
     const opad::Node* n = m_doc->scene.node(t.body);
     if (!n || n->body_missing) continue;
     const auto item = m_items.find(t.body);
-    const bool shown = !m_isolated.empty() ? m_isolated.count(t.body) > 0 : m_doc->scene.effectively_visible(t.body);
+    const bool shown = (item == m_items.end() || item->second.look.visible) &&  // a look hides it: none until it shows it again
+                       (!m_isolated.empty() ? m_isolated.count(t.body) > 0 : m_doc->scene.effectively_visible(t.body));
     if (item == m_items.end() || item->second.key != n->body_key || !m_ctx->IsDisplayed(item->second.ais)) {
       m_tintAgain = m_tintAgain || shown;
       continue;
@@ -98,7 +101,7 @@ void Viewport::buildCheckTints() {
   auto step = [wanted, st]() -> bool {
     if (st->b >= wanted->size()) return false;
     const Wanted& w = (*wanted)[st->b++];
-    const gp_Trsf body = w.ais->LocalTransformation();  // rigid placements live on the object (displayBody)
+    const gp_Trsf body = w.ais->LocalTransformation();  // rigid placements and explode offsets live on the object (displayBody)
     if (w.triangles) {
       // As the check numbers them (opad::check_print, print_mesh): every triangle of every face, in explorer order.
       std::vector<std::pair<TopoDS_Face, int>> faces;  // face, triangles before it
@@ -160,11 +163,12 @@ void Viewport::buildCheckTints() {
   m_tintJob = m_jobs->sliced(tr("Colouring the findings"), [step](Job&) { return step(); }, done);
 }
 
-void Viewport::showOverlap(const TopoDS_Shape& shape, std::shared_ptr<const BodyPrs> prs) {
+void Viewport::showOverlap(const TopoDS_Shape& shape, std::shared_ptr<const BodyPrs> prs, const std::vector<std::string>& pair) {
   if (!m_initialised) return;
   if (!m_overlap.IsNull()) {
     m_ctx->Remove(m_overlap, Standard_False);
     m_overlap.Nullify();
+    m_overlapPair.clear();
     redrawScene();
   }
   if (shape.IsNull() || !prs) return;
@@ -178,9 +182,34 @@ void Viewport::showOverlap(const TopoDS_Shape& shape, std::shared_ptr<const Body
   // Inside the pair, which is selected (Topmost, its own depth): drawn over everything, so it shows through them.
   ais->SetZLayer(Graphic3d_ZLayerId_TopOSD);
   ais->SetInfiniteState(Standard_True);
-  m_ctx->Display(ais, AIS_Shaded, -1, Standard_False);
   m_overlap = ais;
+  m_overlapPair = pair;
+  placeOverlap();
   redrawScene();
+}
+
+// The overlap is the assembled pair's: drawn with the explode offset both bodies share, and not at all while they are pulled
+// apart or either is not drawn (hidden, isolated away, a look). A pair not named (benches): drawn as computed.
+void Viewport::placeOverlap() {
+  if (!m_initialised || m_overlap.IsNull()) return;
+  bool drawn = true;
+  std::optional<std::array<double, 3>> offset;
+  for (const auto& id : m_overlapPair) {
+    const auto item = m_items.find(id);
+    if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais) || (offset && *offset != item->second.look.offset)) {
+      drawn = false;
+      break;
+    }
+    offset = item->second.look.offset;
+  }
+  if (!drawn) {
+    if (m_ctx->IsDisplayed(m_overlap)) m_ctx->Erase(m_overlap, Standard_False);
+    return;
+  }
+  gp_Trsf placed;
+  if (offset && *offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec((*offset)[0], (*offset)[1], (*offset)[2]));
+  m_ctx->SetLocation(m_overlap, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
+  if (!m_ctx->IsDisplayed(m_overlap)) m_ctx->Display(m_overlap, AIS_Shaded, -1, Standard_False);
 }
 
 void Viewport::clearCheckOverlays() {
@@ -190,7 +219,7 @@ void Viewport::clearCheckOverlays() {
 
 opad::json Viewport::benchCheckOverlays() const {
   opad::json j = {{"overhang_triangles", m_tintTriangles[0]}, {"thin_triangles", m_tintTriangles[1]}, {"tinting", m_tintJob != nullptr},
-                  {"overlap", !m_overlap.IsNull()}};
+                  {"overlap", !m_overlap.IsNull() && m_ctx->IsDisplayed(m_overlap)}, {"gap", !m_dimension.empty()}};
   for (int c = 0; c < 2; ++c)
     if (!m_checkTints[c].IsNull()) {
       double r = 0, g = 0, b = 0;
@@ -208,6 +237,8 @@ opad::json Viewport::benchCheckOverlays() const {
     q.Values(r, g, b, Quantity_TOC_sRGB);
     j["overlap_colour"] = {r, g, b};
     j["overlap_layer"] = int(m_overlap->ZLayer());
+    const gp_XYZ at = m_overlap->LocalTransformation().TranslationPart();  // an explode offset its pair shares
+    j["overlap_offset"] = {at.X(), at.Y(), at.Z()};
   }
   return j;
 }

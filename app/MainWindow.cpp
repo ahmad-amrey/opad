@@ -77,7 +77,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     clearMeasurement();
     m_measureHistory.clear();  // results of the document that goes
     m_viewport->clearPreviewBodies();
-    m_viewport->clearCheckOverlays();  // a check's findings belong to the document that goes, and so does its panel
+    clearCheckOverlays();  // a check's findings belong to the document that goes, and so does its panel
     if (m_toolStack->currentWidget() == m_checks && m_toolPanel->isVisible()) m_toolPanel->hide();
     m_viewport->clearCandidates();
     m_viewport->isolate({});
@@ -301,8 +301,11 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   m_toolPanel->setEscapeHandler([this] { toolEscape(); });
   connect(m_toolPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
-    if (!on && toolMeasures()) cancelTool();  // closing the tool's panel leaves the tool
-    if (!on && m_toolStack->currentWidget() == m_checks) endCheck();
+    // Closing the tool's panel (or another panel opening) leaves the tool or the check, and the check's colours go. Minimising
+    // the window hides it too, spontaneously: isVisible() stays true then, and everything stays as it was.
+    if (on || m_toolPanel->isVisible()) return;
+    if (toolMeasures()) cancelTool();
+    if (m_toolStack->currentWidget() == m_checks) endCheck();
   });
   connect(m_viewport, &Viewport::hoverChanged, this, [this](const QString& text) {
     if (m_tool.id.isEmpty() || text == m_toolHover) return;

@@ -453,8 +453,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // faces tinted in the warning amber (overhangs) and the error red (thin walls), one object per colour copied from the
   // meshes the bodies are drawn with (a sliced job, a body a step), over everything like the selection's X-ray (TopOSD: also
   // over a body selected whole, which is in Topmost); the volume an interfering pair shares in the error red, over the pair.
-  // Tints are made again when the bodies shown change (isolation, a body still being displayed when they were asked for).
-  // Never pickable, never framed by Fit.
+  // Tints are made again when the bodies shown change (isolation, a look hiding or showing one, a body still being displayed
+  // when they were asked for) or move in the view (an exploded view); the overlap is drawn where its pair is, while both are
+  // drawn together. Never pickable, never framed by Fit.
   struct CheckTint {
     std::string body;
     std::vector<int> faces;  // face ordinals, or a mesh body's triangle ordinals (triangles: as the print check numbers them)
@@ -462,7 +463,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
     bool triangles = false;
   };
   void showCheckTints(const std::vector<CheckTint>& tints);
-  void showOverlap(const TopoDS_Shape& shape, std::shared_ptr<const BodyPrs> prs);  // a null shape: none
+  void showOverlap(const TopoDS_Shape& shape, std::shared_ptr<const BodyPrs> prs, const std::vector<std::string>& pair = {});  // a null shape: none
   void clearCheckOverlays();
   opad::json benchCheckOverlays() const;  // the triangles of each tint, their colours and layers, the overlap's
   // Feature preview: these shapes (world coordinates, already meshed by the worker) are drawn in place of the
@@ -974,6 +975,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_tintAgain = false;                       // a body they colour was not shown yet, or the bodies shown changed: at finishSync
   void buildCheckTints();
   Handle(AIS_Shape) m_overlap;                    // showOverlap
+  std::vector<std::string> m_overlapPair;         // the bodies it lies in
+  void placeOverlap();  // with its pair's explode offset, or not drawn while they are apart or one is not drawn (no redraw)
   size_t m_candidateShown = 0;
   std::vector<opad::Ref> m_candidateRefs;
   std::map<const AIS_InteractiveObject*,Handle(SubHighlight)> m_bodyGlows;

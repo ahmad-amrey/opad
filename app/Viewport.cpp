@@ -2695,6 +2695,7 @@ void Viewport::finishSync(int pendingCount, bool added) {
   if (pendingCount == 0) m_needFit = false;
   if (m_sectionEnabled) updateSectionGizmo();  // the model's extent may have changed
   if (m_tintAgain && pendingCount == 0) buildCheckTints();
+  placeOverlap();  // its pair isolated away, or back
   m_view->Invalidate();
   requestRedraw();
 }

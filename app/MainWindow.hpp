@@ -315,6 +315,7 @@ class MainWindow : public QMainWindow {
   class CheckPanel* m_checks = nullptr;
   Job* m_checkJob = nullptr;
   Job* m_overlapJob = nullptr;
+  bool m_checkGap = false;  // a clearance finding's gap is drawn (the measurement dimension): it goes with the check's colours
   std::vector<std::string> m_checkSelect;  // what the check looks at: the selection when it started, else everything
   void startCheck(bool print);
   void runCheck();
@@ -322,6 +323,7 @@ class MainWindow : public QMainWindow {
   void showFinding(const opad::json& finding);
   void showPrintTints(const opad::json& except);  // the print check's findings coloured on the model, but `except` (the one shown)
   void endCheck();
+  void clearCheckOverlays();  // the check's colours, overlap and gap off the model, the overlap job given up
   LoadShade* m_loadShade = nullptr;
   KeyGuard* m_keyGuard = nullptr;
   bool m_timelineHiddenByViewer = false;

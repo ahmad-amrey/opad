@@ -118,11 +118,16 @@ OPAD_BENCH(OPAD_BENCH_INSPECT, inspect) {
 // the findings are coloured on the model at once (overhangs in the warning amber, thin walls in the error red, over
 // everything in TopOSD, after a body selected whole in Topmost), a clicked finding is selected in the selection's blue and
 // taken out of the colours. Interference: nothing is drawn until a row is clicked, then the pair is selected and their
-// overlap shown in the error red over them (TopOSD). The findings follow the model while the panel is open: a body moved
-// (a transform op) takes the colours or the overlap off at once and the check runs again; print: the same colours, 20 mm
-// along X with the body; interference: the pair moved apart, nothing left to list. A print check on more than one body:
-// isolating another one takes the colours off the hidden body, ending the isolation brings them back (the view's own
-// change, no new check). Closing the panel takes it all away.
+// overlap shown in the error red over them (TopOSD). Minimising the window (the panel's spontaneous hide) leaves the
+// colours, the overlap and the check as they were. Interference: a row clicked and Check pressed at once never draws that
+// row's overlap later; the overlap goes with its pair when one of them is pulled away in an exploded view, and is drawn
+// where the pair is when both are. The findings follow the model while the panel is open: a body moved (a transform op)
+// takes the colours or the overlap off at once and the check runs again; print: the same colours, 20 mm along X with the
+// body; interference: the pair moved apart, nothing left to list, then with a clearance a "too close" row shows the gap
+// as a dimension, which a move takes away with the rest. A print check on more than one body: isolating another one takes
+// the colours off the hidden body, ending the isolation brings them back (the view's own change, no new check). Print: an
+// exploded view takes the colours along with the body, a look hiding it takes them off, both ended brings them back where
+// they were. Closing the panel takes it all away.
 // OPAD_BENCH_UISHOT: <shot>.check.png (the panel), <shot>.view.png (after the check), <shot>.finding.png (after the click),
 // <shot>.moved.png (after the move and the new check).
 OPAD_BENCH(OPAD_BENCH_CHECK, check) {
@@ -140,6 +145,19 @@ OPAD_BENCH(OPAD_BENCH_CHECK, check) {
            std::abs(c[2].get<double>() - q.blueF()) < 0.02;
   };
   auto overlays = [v] { return v->benchCheckOverlays(); };
+  auto coloured = [overlays] { return overlays().value("overhang_triangles", 0) + overlays().value("thin_triangles", 0); };
+  auto settled = [&w, overlays] { return !w.m_checkJob && !w.m_overlapJob && !w.m_jobs->busy() && !overlays().value("tinting", false); };
+  // A look layer set and every displayed body showing it (the looks pass done, the colours made again after it).
+  auto look = [&w, v, settled](LookSource source, std::map<std::string, LookDelta> deltas, std::function<void(bool)> then) {
+    auto applied = std::make_shared<bool>(false);
+    QObject::connect(v, &Viewport::looksApplied, &w, [applied] { *applied = true; }, Qt::SingleShotConnection);
+    v->setLookLayer(source, std::move(deltas));
+    bench2d::pollUntil(&w, [applied, settled] { return *applied && settled(); }, 20000, std::move(then));
+  };
+  auto offsetBy = [](const opad::json& was, const opad::json& is, double dz) {
+    return was.is_array() && is.is_array() && was.size() == 6 && is.size() == 6 && std::abs(is[0].get<double>() - was[0].get<double>()) < 1e-3 &&
+           std::abs(is[2].get<double>() - was[2].get<double>() - dz) < 1e-3 && std::abs(is[5].get<double>() - was[5].get<double>() - dz) < 1e-3;
+  };
   w.startCheck(print);
   auto before = std::make_shared<opad::json>();
   bench2d::pollUntil(&w, [&w, overlays] { return !w.m_checkJob && !overlays().value("tinting", false); }, 30000, [=, &w](bool checked) {
@@ -155,28 +173,16 @@ OPAD_BENCH(OPAD_BENCH_CHECK, check) {
     else
       require(!before->value("overlap", true) && before->value("overhang_triangles", 1) == 0, "nothing is drawn before a pair is clicked");
     if (!shot.isEmpty()) v->grabImage().save(shot + ".view.png");
-    if (findings > 0) w.m_checks->activate(0);
-    bench2d::pollUntil(&w, [=, &w] {
+    const opad::json first = w.m_checks->findings().empty() ? opad::json() : w.m_checks->findings().front();
+    // The first finding's body (print) or the pair's second body (interference).
+    const std::string body = print ? first.value("body", "") : first.value("b", "");
+    auto shown = [=, &w] {
       const opad::json now = overlays();
-      return !v->selection().empty() && !w.m_jobs->busy() && !now.value("tinting", false) && (print || now.value("overlap", false));
-    }, 20000, [=, &w](bool shown) {
-      const opad::json now = overlays();
-      if (print)
-        require(shown && now.value("overhang_triangles", 0) + now.value("thin_triangles", 0) < overhangs + thin,
-                QString("a clicked finding is selected (%1 picks) and leaves the colours to the others: %2 of %3 triangles coloured")
-                    .arg(v->selection().size()).arg(now.value("overhang_triangles", 0) + now.value("thin_triangles", 0)).arg(overhangs + thin));
-      else
-        require(shown && v->selection().size() == 2 && sameColour(now.value("overlap_colour", opad::json()), theme::current().error) &&
-                    now.value("overlap_layer", 0) == int(Graphic3d_ZLayerId_TopOSD),
-                "a clicked pair is selected and their overlap shown in the error red over them: " + QString::fromStdString(now.dump()));
-      if (!shot.isEmpty()) {
-        v->grabImage().save(shot + ".finding.png");
-        w.m_toolPanel->grab().save(shot + ".check.png");
-      }
-      // The model changes while the panel stays open: the first finding's body (print) or the pair's second body
-      // (interference) moved 20 mm along X.
-      const opad::json first = w.m_checks->findings().empty() ? opad::json() : w.m_checks->findings().front();
-      const std::string body = print ? first.value("body", "") : first.value("b", "");
+      return !v->selection().empty() && settled() && (print || now.value("overlap", false));
+    };
+    // The model changes while the panel stays open: that body moved 20 mm (print) or 40 mm (interference) along X.
+    auto move = std::make_shared<std::function<void()>>();
+    *move = [=, &w] {
       const double shift = print ? 20 : 40;  // the cylinder is 10 mm across, 8 mm into a 20 mm box: 40 mm clears it
       opad::json moved;
       try {
@@ -193,10 +199,10 @@ OPAD_BENCH(OPAD_BENCH_CHECK, check) {
         return !w.m_checkJob && !w.m_jobs->busy() && !now.value("tinting", false) && (!print || now.value("overhang_triangles", 0) + now.value("thin_triangles", 0) > 0);
       }, 30000, [=, &w](bool rechecked) {
         const opad::json now = overlays();
+        const char* boxName = overhangs ? "overhang_box" : "thin_box";
         if (print) {
           // The same faces coloured, where the body is now.
-          const char* box = overhangs ? "overhang_box" : "thin_box";
-          const opad::json was = before->value(box, opad::json()), is = now.value(box, opad::json());
+          const opad::json was = before->value(boxName, opad::json()), is = now.value(boxName, opad::json());
           const bool followed = was.is_array() && is.is_array() && was.size() == 6 && is.size() == 6 && std::abs(is[0].get<double>() - was[0].get<double>() - shift) < 1e-3 &&
                                 std::abs(is[3].get<double>() - was[3].get<double>() - shift) < 1e-3 && std::abs(is[1].get<double>() - was[1].get<double>()) < 1e-3;
           require(rechecked && w.m_checks->findingCount() == findings && now.value("overhang_triangles", 0) == overhangs && now.value("thin_triangles", 0) == thin && followed,
@@ -210,27 +216,127 @@ OPAD_BENCH(OPAD_BENCH_CHECK, check) {
         auto close = [=, &w] {
           w.m_toolPanel->hide();
           const opad::json after = overlays();
-          require(after.value("overhang_triangles", 1) == 0 && after.value("thin_triangles", 1) == 0 && !after.value("overlap", true),
-                  "closing the panel takes the colours and the overlap away");
+          require(after.value("overhang_triangles", 1) == 0 && after.value("thin_triangles", 1) == 0 && !after.value("overlap", true) && !after.value("gap", true),
+                  "closing the panel takes the colours, the overlap and the gap away");
           QCoreApplication::exit(*all ? 0 : 2);
+        };
+        if (!print) {
+          // Apart now, the pair is only close: with a clearance it is listed, and its row shows the gap as a dimension.
+          w.m_checks->setClearance(100);
+          w.runCheck();
+          bench2d::pollUntil(&w, settled, 30000, [=, &w](bool) {
+            const auto& rows = w.m_checks->findings();
+            const bool tooClose = rows.size() == 1 && rows.front().value("kind", "") == "clearance";
+            require(tooClose, QString("with a 100 mm clearance the pair is listed as too close: %1 rows").arg(rows.size()));
+            if (!tooClose) return QCoreApplication::exit(2);
+            w.m_checks->activate(0);
+            bench2d::pollUntil(&w, [=] { return settled() && overlays().value("gap", false); }, 20000, [=, &w](bool gap) {
+              require(gap && !overlays().value("overlap", true), "a too-close row shows the pair's gap as a dimension, no overlap");
+              try {
+                w.m_doc->run("transform", {{"target", body}, {"matrix", opad::Mat4::translation(400, 0, 0).to_json()}});
+              } catch (const std::exception&) {
+              }
+              require(!overlays().value("gap", true) && w.m_checkJob, "moved again: the gap goes at once with the findings it belonged to");
+              bench2d::pollUntil(&w, settled, 30000, [=, &w](bool) {
+                require(w.m_checks->findingCount() == 0 && !overlays().value("gap", true), "checked again: nothing close any more, no dimension left on the model");
+                close();
+              });
+            });
+          });
+          return;
+        }
+        // Print: an exploded view takes the colours with the body; a look hiding it takes them off; both ended: back as they were.
+        const int tinted = overhangs + thin;
+        auto looks = [=, &w] {
+          const opad::json at = overlays();
+          LookDelta lifted;
+          lifted.offset = {0, 0, 30};
+          look(LookSource::Explode, {{body, lifted}}, [=, &w](bool) {
+            const opad::json now = overlays();
+            require(coloured() == tinted && offsetBy(at.value(boxName, opad::json()), now.value(boxName, opad::json()), 30) && !w.m_checkJob,
+                    QString("an exploded view lifts the body 30 mm: its colours go with it, no new check: %1 -> %2")
+                        .arg(QString::fromStdString(at.value(boxName, opad::json()).dump()), QString::fromStdString(now.value(boxName, opad::json()).dump())));
+            LookDelta hidden;
+            hidden.visible = false;
+            look(LookSource::Activation, {{body, hidden}}, [=, &w](bool) {
+              require(coloured() == 0 && !w.m_checkJob, QString("a look hides the body: its colours go too (%1 triangles left)").arg(coloured()));
+              v->clearLookLayer(LookSource::Activation);
+              look(LookSource::Explode, {}, [=, &w](bool) {
+                const opad::json back = overlays();
+                require(coloured() == tinted && offsetBy(at.value(boxName, opad::json()), back.value(boxName, opad::json()), 0),
+                        QString("shown and assembled again: the colours are back where they were (%1 triangles)").arg(coloured()));
+                close();
+              });
+            });
+          });
         };
         std::string other;
         for (const auto& id : w.m_doc->scene.all_bodies()) if (id != body) other = id;
-        if (!print || other.empty()) return close();
-        const int coloured = overhangs + thin;
-        auto settled = [=, &w] { return !w.m_jobs->busy() && !overlays().value("tinting", false); };
+        if (other.empty()) return looks();
         v->isolate({other});
         bench2d::pollUntil(&w, settled, 20000, [=, &w](bool) {
           const opad::json hidden = overlays();
           require(!w.m_checkJob && hidden.value("overhang_triangles", 0) + hidden.value("thin_triangles", 0) == 0,
                   "another body isolated: the hidden body's colours go, the check is not run again " + QString::fromStdString(hidden.dump()));
           v->isolate({});
-          bench2d::pollUntil(&w, [=, &w] { return settled() && overlays().value("overhang_triangles", 0) + overlays().value("thin_triangles", 0) > 0; }, 20000,
-                             [=, &w](bool back) {
-            const opad::json now = overlays();
-            require(back && !w.m_checkJob && now.value("overhang_triangles", 0) + now.value("thin_triangles", 0) == coloured,
-                    QString("isolation ended: its colours are back (%1 triangles)").arg(now.value("overhang_triangles", 0) + now.value("thin_triangles", 0)));
-            close();
+          bench2d::pollUntil(&w, [=] { return settled() && coloured() > 0; }, 20000, [=, &w](bool back) {
+            require(back && !w.m_checkJob && coloured() == tinted, QString("isolation ended: its colours are back (%1 triangles)").arg(coloured()));
+            looks();
+          });
+        });
+      });
+    };
+    if (findings > 0) w.m_checks->activate(0);
+    bench2d::pollUntil(&w, shown, 20000, [=, &w](bool ok) {
+      const opad::json now = overlays();
+      if (print)
+        require(ok && now.value("overhang_triangles", 0) + now.value("thin_triangles", 0) < overhangs + thin,
+                QString("a clicked finding is selected (%1 picks) and leaves the colours to the others: %2 of %3 triangles coloured")
+                    .arg(v->selection().size()).arg(now.value("overhang_triangles", 0) + now.value("thin_triangles", 0)).arg(overhangs + thin));
+      else
+        require(ok && v->selection().size() == 2 && sameColour(now.value("overlap_colour", opad::json()), theme::current().error) &&
+                    now.value("overlap_layer", 0) == int(Graphic3d_ZLayerId_TopOSD),
+                "a clicked pair is selected and their overlap shown in the error red over them: " + QString::fromStdString(now.dump()));
+      if (!shot.isEmpty()) {
+        v->grabImage().save(shot + ".finding.png");
+        w.m_toolPanel->grab().save(shot + ".check.png");
+      }
+      // Minimised: the panel is hidden spontaneously (isVisible() stays true), and nothing it shows goes.
+      QHideEvent minimised;
+      QCoreApplication::sendEvent(w.m_toolPanel, &minimised);
+      const opad::json kept = overlays();
+      require(w.m_toolPanel->isVisible() && w.m_checks->findingCount() == findings && kept.value("overlap", false) == now.value("overlap", false) &&
+                  kept.value("overhang_triangles", 0) + kept.value("thin_triangles", 0) == now.value("overhang_triangles", 0) + now.value("thin_triangles", 0),
+              "minimising the window leaves the panel, its findings and what they show on the model: " + QString::fromStdString(kept.dump()));
+      if (print) return (*move)();
+      // A row clicked and Check pressed at once: that row's overlap, still being computed, never shows up later.
+      w.m_checks->activate(-1);  // a click on the row that is current already changes nothing
+      w.m_checks->activate(0);
+      const bool computing = w.m_overlapJob != nullptr;
+      w.runCheck();
+      bench2d::pollUntil(&w, settled, 30000, [=, &w](bool) {
+        require(computing && w.m_checks->findingCount() == findings && !overlays().value("overlap", true),
+                "a row clicked, then Check at once: the check runs again and the row's overlap is not drawn over the new list");
+        w.m_checks->activate(0);
+        bench2d::pollUntil(&w, shown, 20000, [=, &w](bool again) {
+          require(again, "the row clicked again shows its overlap");
+          const std::string a = first.value("a", "");
+          LookDelta apart;
+          apart.offset = {0, 0, 50};
+          look(LookSource::Explode, {{body, apart}}, [=, &w](bool) {
+            require(!overlays().value("overlap", true), "exploded, one of the pair lifted 50 mm: the overlap is not drawn between them");
+            look(LookSource::Explode, {{a, apart}, {body, apart}}, [=, &w](bool) {
+              const opad::json both = overlays();
+              const opad::json at = both.value("overlap_offset", opad::json());
+              require(both.value("overlap", false) && at.is_array() && at.size() == 3 && std::abs(at[2].get<double>() - 50) < 1e-6,
+                      "both lifted 50 mm: the overlap is drawn where the pair is " + QString::fromStdString(both.dump()));
+              look(LookSource::Explode, {}, [=, &w](bool) {
+                const opad::json home = overlays().value("overlap_offset", opad::json());
+                require(overlays().value("overlap", false) && home.is_array() && home.size() == 3 && std::abs(home[2].get<double>()) < 1e-6,
+                        "assembled again: the overlap is back in place");
+                (*move)();
+              });
+            });
           });
         });
       });

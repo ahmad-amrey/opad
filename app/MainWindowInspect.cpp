@@ -626,6 +626,7 @@ void MainWindow::clearMeasurement() {
   clearAnnotationCardTarget();  // Esc with Annotations pinned open
   m_lastMeasure = opad::json();
   m_viewport->clearDimension();
+  m_checkGap = false;  // a clearance finding's gap was that dimension
   m_pinAction->setEnabled(false);
   m_viewport->clearSelection();
 }
@@ -637,7 +638,7 @@ void MainWindow::startCheck(bool print) {
   m_design->escape();
   if (!m_tool.id.isEmpty()) cancelTool();
   m_checkSelect = currentNodeIds();  // the selection when the check starts; clicking findings changes it later
-  m_viewport->clearCheckOverlays();
+  clearCheckOverlays();
   m_checks->begin(print ? CheckPanel::Mode::Print : CheckPanel::Mode::Interference);
   m_toolStack->setCurrentWidget(m_checks);
   m_toolPanel->setHeader(print ? "printcheck" : "interference", print ? tr("Print check") : tr("Interference"));
@@ -655,7 +656,7 @@ void MainWindow::runCheck() {
   if (!select.empty()) args["select"] = select;
   args["limit"] = 200;
   const bool print = m_checks->mode() == CheckPanel::Mode::Print;
-  m_viewport->clearCheckOverlays();  // the last run's colours go with its findings
+  clearCheckOverlays();  // the last run's colours, overlap and gap go with its findings (an overlap still on its way too)
   if (!m_checkSelect.empty() && select.empty()) return m_checks->setResult({{"items", opad::json::array()}, {"bodies", 0}});
   // The shapes of the bodies it reads, not a copy of the whole document (every BREP text, here on the UI thread): it runs
   // again on every change while its panel is open.
@@ -682,7 +683,6 @@ void MainWindow::runCheck() {
 // (the aboutToReplace handler).
 void MainWindow::recheck() {
   if (!m_toolPanel->isVisible() || m_toolStack->currentWidget() != m_checks || !m_doc->hasDocument || m_doc->loading) return;
-  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
   runCheck();
 }
 
@@ -703,16 +703,19 @@ void MainWindow::showPrintTints(const opad::json& except) {
 }
 
 void MainWindow::showFinding(const opad::json& f) {
+  // The last row's overlap (or the one still on its way) and its gap give way to this one.
+  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
   m_viewport->showOverlap(TopoDS_Shape(), nullptr);
+  if (std::exchange(m_checkGap, false)) m_viewport->clearDimension();
   if (f.contains("a")) {  // a pair of bodies
     const std::string a = f.value("a", ""), b = f.value("b", "");
     m_viewport->selectNodes({a, b});
-    if (f.value("kind", "") == "clearance" && f.contains("point_a")) {
+    if (f.value("kind", "") == "clearance" && f.contains("point_a")) {  // only close: their gap, as a dimension
       m_viewport->showMeasurement({{"kind", "distance"}, {"value", f.value("distance_mm", 0.0)}, {"unit", "mm"}, {"point_a", f["point_a"]}, {"point_b", f["point_b"]}});
+      m_checkGap = true;
       return;
     }
     // The overlap itself, in red over the pair (help audit P8): computed again on a worker (the check keeps its volume and box).
-    if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
     auto document = m_doc->shapesOf({a, b});
     auto scene = std::make_shared<opad::Scene>(m_doc->scene);
     auto shape = std::make_shared<TopoDS_Shape>();
@@ -725,9 +728,9 @@ void MainWindow::showFinding(const opad::json& f) {
       Bnd_Box box;
       BRepBndLib::Add(*shape, box, Standard_False);
       *prs = BodyPrs::build(*shape, box, true);
-    }, [this, shape, prs](bool ok, const QString&) {
+    }, [this, shape, prs, a, b](bool ok, const QString&) {
       m_overlapJob = nullptr;
-      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks && m_toolPanel->isVisible()) m_viewport->showOverlap(*shape, *prs);
+      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks && m_toolPanel->isVisible()) m_viewport->showOverlap(*shape, *prs, {a, b});
     });
     return;
   }
@@ -750,6 +753,11 @@ void MainWindow::showFinding(const opad::json& f) {
 
 void MainWindow::endCheck() {
   if (Job* old = std::exchange(m_checkJob, nullptr)) old->cancel();
-  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
+  clearCheckOverlays();
+}
+
+void MainWindow::clearCheckOverlays() {
+  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();  // drawn for findings that are gone otherwise
   m_viewport->clearCheckOverlays();
+  if (std::exchange(m_checkGap, false)) m_viewport->clearDimension();
 }

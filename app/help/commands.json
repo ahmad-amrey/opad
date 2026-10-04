@@ -495,7 +495,7 @@
    "id": "inspect.interference",
    "title": "Interference",
    "summary": "Finds bodies that overlap or nearly touch and lists each pair.",
-   "details": "It runs as the panel opens, on the selected bodies or on all solids when nothing is selected, and again whenever the model changes; a Clearance above 0 also lists pairs closer than it. Click a row: the pair is selected and their overlap shown in red over them.",
+   "details": "It runs as the panel opens, on the selected bodies or on all solids when nothing is selected, and again whenever the model changes; a Clearance above 0 also lists pairs closer than it. Click a row and the pair is selected: an overlap shows in red over them, a pair that is only close shows its gap as a dimension.",
    "keywords": ["collision", "clash", "overlap", "clearance"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
