@@ -242,6 +242,8 @@ def drawing_story(root, name):
 
     def settle(side, size, x):
         def change(path):
+            if side == "yours":  # deterministic ids follow the command and the log's length: the balloons' op must differ
+                opad("param", path, name="pitch", expr="2 mm")
             body = opad("feature", path, kind="box", inputs={"plane": {"origin": [x, 0, 0], "normal": [0, 0, 1]}, "length": size,
                                                               "width": size, "height": size, "operation": "new"})["body_ids"][0]
             assert opad("sheet_balloons", path, sheet=sheet, view=front)["ids"]
@@ -252,6 +254,7 @@ def drawing_story(root, name):
     code, reason, data, _ = three_way(numbered, settle("mine", 8, 100), settle("yours", 6, -100))
     assert code == 0, reason
     (root / "merged.opad").write_bytes(data)
+    numbered_merges[name] = data
     numbers = shown(root / "merged.opad")
     assert numbers[box] == "1" and numbers[added["mine"]] == "2" and numbers[added["yours"]] == "3", numbers
     assert opad("ops", root / "merged.opad")[-1]["by"] == "merge" and opad("info", root / "merged.opad")["unresolved"] == 0
@@ -266,8 +269,10 @@ with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
     merged, base, note, feature = stories["python"]
     for name, (raw, *_rest) in stories.items():
         assert raw == merged, f"{name} merged the git story differently from the Python driver"
-    for name in drivers:  # sheets, properties, exploded views and component work through every driver
+    numbered_merges = {}  # the parts list's numbers merged by each driver
+    for name in drivers:  # sheets, properties, parts lists, exploded views and component work through every driver
         drawing_story(root / ("drawings-" + name), name)
+    assert all(data == numbered_merges["python"] for data in numbered_merges.values()), "the drivers merged a parts list's numbers differently"
 
     work = root / "work"
     work.mkdir()

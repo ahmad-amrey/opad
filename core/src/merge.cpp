@@ -467,6 +467,143 @@ Version read_version(std::string_view text, Verified& verified) {
   return v;
 }
 
+// ---- parts lists' item numbers settled on both sides (TODO 11 UI-84): opad_merge.py's numbers_of and merge_numbers
+const char* py_type(const json& v) {
+  return v.is_null() ? "NoneType" : v.is_boolean() ? "bool" : v.is_number_integer() ? "int" : v.is_number() ? "float" : v.is_string() ? "str"
+       : v.is_array() ? "list" : "dict";
+}
+bool py_truthy(const json& v) {
+  if (v.is_null()) return false;
+  if (v.is_boolean()) return v.get<bool>();
+  if (v.is_number()) return v.get<double>() != 0;
+  return !v.empty();  // strings, lists, dicts
+}
+std::string py_str(const json& v) {  // str() of a ts or a part, as an f-string writes it
+  if (v.is_string()) return v.get<std::string>();
+  if (v.is_null()) return "None";
+  if (v.is_boolean()) return v.get<bool>() ? "True" : "False";
+  return v.dump();
+}
+// `"numbers" in op.get("set", {})`
+bool sets_numbers(const json& op) {
+  if (!op.contains("set")) return false;
+  const json& set = op["set"];
+  if (set.is_object()) return set.contains("numbers");
+  if (set.is_string()) return set.get<std::string>().find("numbers") != std::string::npos;
+  if (set.is_array()) return std::any_of(set.begin(), set.end(), [](const json& e) { return e.is_string() && e.get<std::string>() == "numbers"; });
+  throw Error(std::string("argument of type '") + py_type(set) + "' is not iterable");
+}
+bool numbers_edit(const json& op, const std::string& target) {
+  return op.contains("op") && op["op"] == "edit" && op.contains("target") && op["target"] == target && sets_numbers(op);
+}
+// A parts list's item numbers in a version: its record's, then each edit of them in log order; by number.
+std::map<long long, json> numbers_of(const Version& v, const std::string& target) {
+  const json& record = v.ops[v.at.at(target)].data;
+  json numbers = record.contains("numbers") ? record["numbers"] : json::array();
+  for (const auto& r : v.ops) {
+    if (!numbers_edit(r.data, target)) continue;
+    const json& set = r.data["set"];
+    if (!set.is_object()) throw Error(set.is_array() ? "list indices must be integers or slices, not str" : "string indices must be integers, not 'str'");
+    numbers = py_truthy(set["numbers"]) ? set["numbers"] : json::array();
+  }
+  std::map<long long, json> out;
+  if (numbers.is_object() || numbers.is_string()) return out;  // its keys or characters: no entries
+  if (!numbers.is_array()) throw Error(std::string("'") + py_type(numbers) + "' object is not iterable");
+  for (const auto& e : numbers) {
+    const auto n = e.is_object() ? e.find("n") : e.end();
+    if (n == e.end() || !(n->is_number_integer() || n->is_boolean())) continue;
+    const long long number = n->is_boolean() ? (n->get<bool>() ? 1 : 0) : n->get<long long>();
+    if (number > 0) out[number] = e;
+  }
+  return out;
+}
+// Number by number, a side's change wins over the base; a number both gave to different new parts stays with ours and
+// theirs' part is left unsettled (the list numbers it after the highest). Two changes of one number, or one part under
+// two numbers, need review. `theirs`: theirs' numbers.
+std::vector<json> merge_numbers(const Version& vb, const Version& vo, const Version& vt, const std::string& target, std::map<long long, json>& theirs) {
+  const std::map<long long, json> b = numbers_of(vb, target), o = numbers_of(vo, target);
+  theirs = numbers_of(vt, target);
+  auto find = [](const std::map<long long, json>& m, long long n) -> const json* {
+    const auto it = m.find(n);
+    return it == m.end() ? nullptr : &it->second;
+  };
+  auto equal = [](const json* x, const json* y) { return x && y ? py_equal(*x, *y) : x == y; };
+  std::set<long long> all;
+  for (const std::map<long long, json>* m : {&b, &o, const_cast<const std::map<long long, json>*>(&theirs)})
+    for (const auto& [n, e] : *m) all.insert(n);
+  std::map<long long, json> merged;
+  std::set<long long> theirsNew;
+  for (const long long n : all) {
+    const json *was = find(b, n), *left = find(o, n), *right = find(theirs, n), *value = nullptr;
+    if (equal(left, right) || equal(right, was)) value = left;
+    else if (equal(left, was)) {
+      value = right;
+      if (!was) theirsNew.insert(n);
+    } else if (!was) value = left;
+    else throw Error("item " + std::to_string(n) + " of parts list " + target + " changed on both sides; manual review required");
+    if (value) merged[n] = *value;
+  }
+  for (const char* kind : {"identity", "node"}) {
+    std::vector<long long> order;
+    for (const auto& [n, e] : merged) order.push_back(n);
+    std::stable_sort(order.begin(), order.end(), [&](long long x, long long y) { return theirsNew.count(x) < theirsNew.count(y); });
+    std::map<std::string, long long> seen;  // a part by Python's equality: 1, 1.0 and True alike, "1" apart
+    for (const long long n : order) {
+      const json& entry = merged.at(n);
+      const json part = entry.contains(kind) ? entry[kind] : json();
+      if (!py_truthy(part)) continue;
+      if (part.is_array() || part.is_object()) throw Error(std::string("unhashable type: '") + py_type(part) + "'");
+      char number[40];
+      std::snprintf(number, sizeof number, "%.17g", part.is_boolean() ? (part.get<bool>() ? 1.0 : 0.0) : part.is_number() ? part.get<double>() : 0.0);
+      const std::string key = part.is_string() ? "s" + part.get<std::string>() : std::string("n") + number;
+      if (const auto s = seen.find(key); s != seen.end()) {
+        if (!theirsNew.count(n))
+          throw Error("part " + py_str(part) + " numbered " + std::to_string(s->second) + " and " + std::to_string(n) + " in parts list " + target +
+                      "; manual review required");
+        merged.erase(n);
+      } else {
+        seen.emplace(key, n);
+      }
+    }
+  }
+  std::vector<json> out;
+  for (auto& [n, e] : merged) out.push_back(std::move(e));
+  return out;
+}
+// The edit the merge writes for a parts list whose numbers both sides settled (none when theirs' last edit says it all):
+// its id is made of the list's and the edits' ids, as the Python driver makes it (a version 4 UUID from their SHA-256).
+std::string numbers_record(const Version& vb, const Version& vo, const Version& vt, const std::string& target) {
+  std::map<long long, json> theirs;
+  const std::vector<json> numbers = merge_numbers(vb, vo, vt, target, theirs);
+  bool same = numbers.size() == theirs.size();
+  size_t i = 0;
+  for (auto it = theirs.begin(); same && it != theirs.end(); ++it) same = py_equal(numbers[i++], it->second);
+  if (same) return {};
+  std::vector<std::string> ids;
+  std::string ts;
+  bool any = false;
+  for (const Version* v : {&vo, &vt})
+    for (const auto& r : v->ops)
+      if (!vb.at.count(r.id) && numbers_edit(r.data, target)) {
+        ids.push_back(r.id);
+        const std::string t = r.data.contains("ts") ? py_str(r.data["ts"]) : std::string();
+        if (!any || t > ts) ts = t;
+        any = true;
+      }
+  std::sort(ids.begin(), ids.end());
+  std::string joined = target;
+  for (const auto& id : ids) joined += "|" + id;
+  std::string hex = sha256_hex(joined).substr(0, 32);
+  if (!any) throw Error("max() iterable argument is empty");
+  hex[12] = '4';
+  const int variant = hex[16] >= 'a' ? hex[16] - 'a' + 10 : hex[16] - '0';
+  hex[16] = "89ab"[variant & 3];
+  const std::string id = hex.substr(0, 8) + "-" + hex.substr(8, 4) + "-" + hex.substr(12, 4) + "-" + hex.substr(16, 4) + "-" + hex.substr(20);
+  json list = json::array();
+  for (const auto& e : numbers) list.push_back(e);
+  return json{{"op", "edit"}, {"id", id}, {"ts", ts}, {"by", "merge"}, {"target", target}, {"set", {{"numbers", std::move(list)}}}}.dump();
+}
+
 void write_merge(const std::filesystem::path& p, const FileMerge& m) {  // as write_text_file: a whole new file or none
   std::filesystem::path tmp = p;
   tmp += ".tmp";
@@ -524,6 +661,20 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs, bo
     for (const auto& r : vt.ops)
       if (!vb.at.count(r.id) && !vo.at.count(r.id))
         for (auto& [target, field] : op_effects(r.data)) changed[target].emplace_back(std::move(field), &r);
+    // Parts lists whose item numbers were settled on both sides merge number by number (numbers_record).
+    std::set<std::string> settled;
+    for (const auto& r : vo.ops) {
+      if (vb.at.count(r.id) || vt.at.count(r.id)) continue;
+      for (const auto& [target, field] : op_effects(r.data)) {
+        const auto it = changed.find(target);
+        const auto record = vb.at.find(target);
+        if (field != "numbers" || it == changed.end() || record == vb.at.end()) continue;
+        const json& list = vb.ops[record->second].data;
+        if (std::any_of(it->second.begin(), it->second.end(), [](const auto& c) { return c.first == "numbers"; }) && list.contains("op") &&
+            list["op"] == "sheet_item" && list.contains("kind") && list["kind"] == "parts_list")
+          settled.insert(target);
+      }
+    }
     std::string concurrent;
     std::set<std::tuple<std::string, std::string, std::string, std::string>> seen;
     for (const auto& r : vo.ops) {
@@ -532,7 +683,8 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs, bo
         const auto it = changed.find(target);
         if (it == changed.end()) continue;
         for (const auto& [other, op] : it->second)
-          if ((field == other || field == "*" || other == "*") && !same_effect(r.data, field, op->data, other, target)) {
+          if ((field == other || field == "*" || other == "*") && !same_effect(r.data, field, op->data, other, target) &&
+              !(field == "numbers" && other == "numbers" && settled.count(target))) {
             if (concurrent.empty()) concurrent = "concurrent changes to " + target + "/" + field + "; manual review required";
             MergeConflict c{target, field == "*" ? other : field, r.id, op->id};
             if (seen.emplace(c.target, c.field, c.ours, c.theirs).second) m.conflicts.push_back(std::move(c));
@@ -540,6 +692,10 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs, bo
       }
     }
     if (!concurrent.empty() && !keep_conflicts) throw Error(concurrent);
+    std::vector<std::shared_ptr<const std::string>> synthesized;  // their records, after the merged log
+    for (const auto& target : settled)
+      if (std::string record = numbers_record(vb, vo, vt, target); !record.empty())
+        synthesized.push_back(std::make_shared<const std::string>(std::move(record)));
     std::vector<const Record*> merged;
     merged.reserve(vo.ops.size() + vt.ops.size());
     for (const auto& r : vo.ops) merged.push_back(&r);
@@ -558,11 +714,19 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs, bo
       m.pieces.push_back(r->raw);
       m.pieces.push_back("\n");
     }
+    m.texts = {o, t};
+    std::unordered_set<std::string> written;
+    for (const auto& record : synthesized) {
+      const std::string id = json::parse(*record)["id"].get<std::string>();
+      if (vo.at.count(id) || vt.at.count(id) || !written.insert(id).second) continue;  // already in the log (setdefault)
+      m.pieces.push_back(*record);
+      m.pieces.push_back("\n");
+      m.texts.push_back(record);
+    }
     m.pieces.push_back("#bodies\n");
     for (const auto& [key, entry] : vo.bodies) m.pieces.push_back(entry);
     for (const auto& [key, entry] : vt.bodies)
       if (!vo.keys.count(key)) m.pieces.push_back(entry);
-    m.texts = {o, t};
   } catch (const std::exception& e) {
     m.error = e.what();
     m.pieces.clear();
