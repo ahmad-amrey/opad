@@ -23,6 +23,7 @@
 
 #include "AppDocument.hpp"
 #include "DocsArea.hpp"
+#include "I18n.hpp"
 #include "Jobs.hpp"
 #include "SheetCanvas.hpp"
 #include "SheetPage.hpp"
@@ -349,7 +350,7 @@ void DocsArea::commitAndTag(const QString& rev, const QString& tag, const QStrin
     if (!self) return;
     self->lastIssue["git"] = error.isEmpty() ? ("tagged " + tag).toStdString() : error.toStdString();
     if (error.isEmpty()) self->services().toast(tr("Committed and tagged %1").arg(tag));
-    else self->services().guarded([&] { throw opad::Error(("The revision is issued, but git did not take it: " + error).toStdString()); });
+    else self->services().guarded([&] { throw opad::Error(tr("The revision is issued, but git did not take it: %1").arg(i18n::t(error)).toStdString()); });
     if (done) done(self->lastIssue);
   };
   const opad::Sheet* sheet = m_page ? doc->scene.sheet(m_page->sheet()) : nullptr;

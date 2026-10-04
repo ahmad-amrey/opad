@@ -784,7 +784,7 @@ void SheetAnnotator::replan() {
         }
         if (m_tool == Tool::None) return;
         if (!ok) {
-          if (error != "cancelled") emit message(error);
+          if (error != "cancelled") emit message(i18n::t(error));
           promptForStep();
           return;
         }
@@ -794,7 +794,7 @@ void SheetAnnotator::replan() {
 
 void SheetAnnotator::planned(const json& plan) {
   if (plan.contains("error")) {  // the last pick makes nothing: taken back
-    emit message(QString::fromStdString(plan["error"].get<std::string>()));
+    emit message(i18n::t(QString::fromStdString(plan["error"].get<std::string>())));  // a core refusal, in the UI's language
     if (isTable(m_tool)) return cancel();  // nothing to list
     if (m_tool == Tool::HoleTable) m_view.clear();
     if (isSet(m_tool) && m_ending) m_ending = false;

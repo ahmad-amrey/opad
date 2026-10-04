@@ -14,6 +14,7 @@
 #include <set>
 
 #include "AppDocument.hpp"
+#include "I18n.hpp"
 #include "Icons.hpp"
 #include "SheetAnnotate.hpp"
 #include "SheetCanvas.hpp"
@@ -233,7 +234,7 @@ void SheetPage::updateDangling() {
     const opad::json shown = t->def.value("result", opad::json::object()).value("shown", opad::json());
     const QString name = shown.is_string() ? QString::fromStdString(shown.get<std::string>()).section('\n', 0, 0) : QString::fromStdString(t->kind);
     QAction* a = menu->addAction(tr("Re-attach %1").arg(name), this, [this, id = id] { emit reattachRequested(id); });
-    a->setToolTip(why);
+    a->setToolTip(i18n::t(why));  // the core's reason, in the UI's language when it has one
   }
 }
 

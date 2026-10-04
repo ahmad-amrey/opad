@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "AppDocument.hpp"
+#include "I18n.hpp"
 #include "SheetValueCard.hpp"
 #include "Theme.hpp"
 
@@ -213,7 +214,7 @@ void SheetViewTool::measure() {
         if (!self || *alive != generation) return;
         self->m_measuring = false;
         if (!ok) {
-          if (error != "cancelled") emit self->message(error);
+          if (error != "cancelled") emit self->message(i18n::t(error));
           self->back();
           return;
         }
@@ -452,7 +453,7 @@ void SheetViewTool::measureDepth() {
       },
       [self, alive, generation, out](bool ok, const QString& error) {
         if (!self || *alive != generation) return;
-        if (!ok && error != "cancelled") emit self->message(error);
+        if (!ok && error != "cancelled") emit self->message(i18n::t(error));
         self->m_depths = *out;
         self->m_haveDepths = ok;
       });

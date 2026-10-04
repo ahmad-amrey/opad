@@ -29,6 +29,7 @@
 
 #include "AppDocument.hpp"
 #include "DocsArea.hpp"
+#include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "SheetCanvas.hpp"
@@ -355,7 +356,7 @@ void DocsArea::printSheets(std::function<void(SheetPrintDialog*)> opened) {
             if (!self) return;
             self->lastPrint = ok ? opad::json{{"pages", count}} : opad::json{{"error", error.toStdString()}};
             if (ok) self->services().toast(s.pdf.isEmpty() ? tr("%n sheets sent to %1", nullptr, count).arg(s.printer) : tr("%n sheets printed to %1", nullptr, count).arg(s.pdf));
-            else if (error != "cancelled") self->services().guarded([&] { throw opad::Error(("Printing failed: " + error).toStdString()); });
+            else if (error != "cancelled") self->services().guarded([&] { throw opad::Error(tr("Printing failed: %1").arg(i18n::t(error)).toStdString()); });
           });
         });
         dialog->open();
