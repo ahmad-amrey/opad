@@ -9,7 +9,7 @@
 #include <QThread>
 
 Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwrite,
-                           std::function<void(bool,const QString&)> done,int testDelayMs) {
+                           std::function<void(bool,const QString&)> done,int testDelayMs,bool overwriteDisk) {
   if(!hasDocument || loading || designBusy || m_capturing)throw opad::Error("Document is busy or not open; retry after the current operation.");
   if(browse)throw opad::Error("Viewer-mode geometry cannot be saved directly; import it into an OPAD document first.");
   const QString destination=requested.isEmpty()?path():requested;
@@ -26,14 +26,14 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   const auto diskFile=m_diskFile;const auto diskStat=m_diskStat;  // the save guard (UI-56)
   const auto identity=generation;const auto savedRevision=revision;
   m_capturing=true;designBusy=true;emit undoChanged();
-  auto* job=jobs->async(tr("Saving document"),[source,result,destination,current,overwrite,testDelayMs,diskFile,diskStat](Progress progress){
+  auto* job=jobs->async(tr("Saving document"),[source,result,destination,current,overwrite,testDelayMs,diskFile,diskStat,overwriteDisk](Progress progress){
     try {
       const QFileInfo target(destination),original(current);
       const bool same=!current.isEmpty() && (QDir::cleanPath(destination)==QDir::cleanPath(current) ||
           (!original.canonicalFilePath().isEmpty() && original.canonicalFilePath()==target.canonicalFilePath()));
       const bool replace=overwrite || same;
       if(target.exists() && !replace)throw opad::Error("Destination already exists. Choose a new path or explicitly set overwrite=true.");
-      if(!diskFile.isEmpty() && target==QFileInfo(diskFile)){
+      if(!overwriteDisk && !diskFile.isEmpty() && target==QFileInfo(diskFile)){
         const auto now=statFile(destination);
         if(now.exists && now!=diskStat){result->blocked=true;throw opad::Error("changed_on_disk: the file changed on disk since this session read or wrote it (a git pull, another OPAD or opad-cli); merge or reload it, or save to another path");}
       }

@@ -13,6 +13,7 @@
 #include <algorithm>
 
 #include "Banner.hpp"
+#include "I18n.hpp"
 #include "Jobs.hpp"
 
 DiskSync::DiskSync(AppDocument* doc, JobRunner* jobs, QWidget* viewport, QWidget* window)
@@ -297,14 +298,20 @@ void DiskSync::reload(bool asked) {
 void DiskSync::overwrite() {
   confirm(tr("Overwrite %1 with your version?").arg(name()),
           tr("What was changed on disk since you opened or saved it is lost from the file (git still has it if it was committed)."), tr("Overwrite"), [this] {
-            try {
-              if (!m_doc->save(true)) return;
-              m_read.reset();
-              m_decided = false;
-              m_saveAfter = false;
+            try {  // on a worker, past the save guard; the banner comes back if it fails
+              m_doc->saveAsync(m_jobs, {}, true, [this](bool saved, const QString& why) {
+                m_decided = false;
+                if (!saved) {
+                  status(tr("Could not overwrite %1: %2").arg(name(), i18n::t(why)));
+                  return check();
+                }
+                m_read.reset();
+                m_saveAfter = false;
+              }, 0, true);
+              m_decided = true;
               m_banner->dismiss();
             } catch (const std::exception& e) {
-              status(QString::fromUtf8(e.what()));
+              status(i18n::t(QString::fromUtf8(e.what())));
             }
           });
 }
@@ -464,8 +471,13 @@ bool DiskSync::bench() {
         require(m_banner->state() == "replaced" && stamp() == st->stamp, "cancel keeps both");
         click("diskOverwrite");
         click("diskConfirm");
-        require(m_banner->state().isEmpty() && !m_doc->isDirty() && sessionIds() == fileIds() && nameOf(st->a) == "Mine3", "overwritten");
-        pass("overwrite with confirmation");
+        require(m_doc->snapshotBusy() && m_banner->state().isEmpty(), "overwrite: written on a worker");
+        return true;
+      },
+      [=, this] {
+        if (m_doc->isDirty()) return false;
+        require(m_banner->state().isEmpty() && sessionIds() == fileIds() && nameOf(st->a) == "Mine3", "overwritten");
+        pass("overwrite with confirmation, written on a worker");
         std::string text = opad::read_text_file(path());  // what a text merge without the OPAD driver leaves
         text.insert(text.find("#bodies"), "<<<<<<< HEAD\n=======\n>>>>>>> other\n");
         opad::write_text_file(path(), text);
@@ -480,7 +492,11 @@ bool DiskSync::bench() {
         require(stamp() == st->stamp && m_doc->isDirty(), "unreadable: Save refused");
         click("diskOverwrite");
         click("diskConfirm");
-        require(!m_doc->isDirty() && sessionIds() == fileIds(), "unreadable: overwritten");
+        return true;
+      },
+      [=, this] {
+        if (m_doc->isDirty()) return false;
+        require(sessionIds() == fileIds() && m_banner->state().isEmpty(), "unreadable: overwritten");
         pass("conflict markers");
         QFile::remove(st->file);
         return true;

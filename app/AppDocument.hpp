@@ -48,9 +48,10 @@ class AppDocument : public QObject {
   // `overwriteDisk` (asked first): changes made outside are merged or reported, never overwritten silently (UI-56).
   bool save(bool overwriteDisk = false);
   bool saveAs(const QString& path);
-  // Atomic background save; holds the document write guard until the worker really exits.
+  // Atomic background save; holds the document write guard until the worker really exits. `overwriteDisk`: past the save
+  // guard (DiskSync's Overwrite, asked first).
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
-                 std::function<void(bool,const QString&)> done, int testDelayMs=0);
+                 std::function<void(bool,const QString&)> done, int testDelayMs=0, bool overwriteDisk=false);
   opad::json run(const std::string& command, opad::json args);
 
   // Design changes are planned on a worker (design::plan_ops reads the document, see DesignController) and
