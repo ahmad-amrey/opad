@@ -416,7 +416,7 @@ OPAD_BENCH(OPAD_BENCH_SMALL_PARTS, small_parts) {
     v->fitAll();
     QTimer::singleShot(400, &w, [=, &w] {
       v->standardView("front");  // a move, as a frame reports it
-      v->cameraMoving();
+      v->smallPartsCameraMoved();
       waitFor(&w, [=] { return v->smallPartsHidden() && !v->looksPending(); }, 5000, [=, &w](bool hidden) {
         int gone = 0;
         for (size_t i = 1; i < chips.size(); ++i) gone += !v->shownLook(chips[i]).visible;
@@ -430,7 +430,7 @@ OPAD_BENCH(OPAD_BENCH_SMALL_PARTS, small_parts) {
           (*require)(v->grabImage().save(prefix + ".still.png"), "frame when still");
           hide->trigger();
           v->standardView("top");
-          v->cameraMoving();
+          v->smallPartsCameraMoved();
           (*require)(!hide->isChecked() && v->smallPartFilter() == 0 && !v->smallPartsHidden(), "off: a move hides nothing");
           require->finish();
         });

@@ -139,8 +139,9 @@ void CanvasArea::ribbon(RibbonLayout& layout) {
   // While a canvas is edited its own tab comes first in Design (edit shows it, finish hides it).
   layout.addContextualTab("design", "design.canvas", tr("Canvas"));
   auto group = [&](const char* id, const QString& title, std::initializer_list<const char*> commands) {
-    layout.addGroup("design.canvas", QString("design.canvas.") + id, title);
-    for (const char* command : commands) layout.addAction(QString("design.canvas.") + id, services().action(command));
+    const QString groupId = QString("design.canvas.") + id;
+    layout.addGroup("design.canvas", groupId, title);
+    for (const char* command : commands) layout.addAction(groupId, services().action(command));
   };
   group("place", tr("Place"), {"canvas.calibrate", "canvas.align"});
   group("picture", tr("Picture"), {"canvas.trace", "canvas.replace", "canvas.insert"});

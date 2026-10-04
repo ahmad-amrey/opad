@@ -180,12 +180,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   DisplayStats displayStats() const { return {m_meshCount.load(), m_displayCount, m_relocateCount}; }
   // Small parts hidden while the view moves (ViewportSmallParts.cpp): bodies whose box's longest side is under `mm` are
   // hidden (LookSource::Navigation) from the first frame the camera moves until it has been still for 300 ms, selected
-  // ones excepted; 0 turns it off. A camera change outside a frame (benches) is reported with cameraMoving().
+  // ones excepted; 0 turns it off. A camera change outside a frame (benches) is reported with smallPartsCameraMoved().
   void setSmallPartFilter(double mm);
   double smallPartFilter() const { return m_smallParts; }
   bool smallPartsHidden() const { return m_smallHidden; }
   int smallPartCount() const { return m_smallCount; }  // hidden by the last move
-  void cameraMoving();
+  void smallPartsCameraMoved();
   // The colours a displayed body's shaded presentation fills its groups with (sRGB): one, or the body's own and each face
   // colour (UI-74). Benches check what is drawn with it.
   std::vector<std::array<double, 3>> drawnColors(const std::string& nodeId) const;

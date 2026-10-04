@@ -1218,7 +1218,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   noteCameraMoved();
   pruneTracking();
   scheduleRefinement();
-  cameraMoving();  // the small-part filter
+  smallPartsCameraMoved();  // the small-part filter
   trackHoverFade();
   if (m_twoDimensional || m_sketchInput) updateInfiniteGrid(false);
   // Side by side: A's view is drawn after this one with its camera (the controller redraws it only when it is invalid).
