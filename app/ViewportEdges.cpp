@@ -105,7 +105,8 @@ void Viewport::buildEdgeOverlay() {
     if (!ok || serial != m_edgeSerial || m_style != Style::HiddenEdges) return;
     for (auto* overlay : {&m_edgesBehind, &m_edgesSeen})
       if (!overlay->IsNull()) m_ctx->Remove(*overlay, Standard_False);
-    const QColor bg = sceneBackgroundColor(), fg = m_tokens.fg;
+    const auto ink = drawingInk();  // the background's ink (UI-10), as Hidden line draws its edges
+    const QColor bg = sceneBackgroundColor(), fg = QColor::fromRgbF(ink[0], ink[1], ink[2]);
     const QColor dim = QColor::fromRgbF(fg.redF() * 0.35 + bg.redF() * 0.65, fg.greenF() * 0.35 + bg.greenF() * 0.65, fg.blueF() * 0.35 + bg.blueF() * 0.65);
     auto colour = [](const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); };
     m_edgesBehind = new EdgeOverlay(arrays, new Graphic3d_AspectLine3d(colour(dim), Aspect_TOL_DASH, 1.0));

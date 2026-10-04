@@ -671,7 +671,10 @@ bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   d->SetFaceBoundaryDraw(edges);
   // Line aspects ignore alpha here: a ghost's edges are blended towards the background instead. The body's own aspect
   // is changed in place, so the drawn groups (which share it) follow SynchronizeAspects as well as a recompute.
-  QColor edge = hidden ? m_tokens.fg : m_tokens.medge;
+  // Hidden line's edges in the ink of the scene's background (UI-10, as drawings take it): dark on white, light on the dark
+  // ones (the theme's text colour on its own background).
+  const auto ink = drawingInk();
+  QColor edge = hidden ? QColor::fromRgbF(ink[0], ink[1], ink[2]) : m_tokens.medge;
   if (look && look->ghost) {
     const double t = 1 - look->opacity;
     edge = QColor::fromRgbF(edge.redF() + (m_tokens.vp.redF() - edge.redF()) * t, edge.greenF() + (m_tokens.vp.greenF() - edge.greenF()) * t,
