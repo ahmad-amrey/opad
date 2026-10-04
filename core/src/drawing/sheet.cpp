@@ -87,6 +87,26 @@ void apply_style(ViewSpec& s, const json& style) {
   if (style.contains("quality") && style["quality"].is_string()) s.quality = quality_from_name(style["quality"].get<std::string>());
 }
 
+// A view folded out from `s` towards d (a unit direction on the sheet, in its axes), as a projected view to that side
+// but at any angle (UI-82): first angle shows the object from the opposite side, third angle from that side; the axis
+// across d stays where it was on the sheet, so the two views line up along it.
+void fold_to(ViewSpec& s, Vec2 d, bool third) {
+  const double sign = third ? 1 : -1;
+  Vec3 x, y, z;
+  view_axes(s, x, y, z);
+  const Vec3 along = plus3(scaled(x, d[0]), scaled(y, d[1])), across = plus3(scaled(x, -d[1]), scaled(y, d[0]));
+  s.dir = scaled(along, sign);
+  s.up = plus3(scaled(z, -sign * d[1]), scaled(across, d[0]));
+}
+
+std::vector<Vec2> points(const json& j) {
+  std::vector<Vec2> out;
+  if (j.is_array())
+    for (const auto& p : j)
+      if (point2(p)) out.push_back({p[0].get<double>(), p[1].get<double>()});
+  return out;
+}
+
 // A view projected from `s` to the side (sx, sy) of it. First angle: the view right of its parent shows the object from the
 // left; third angle from the right. Corners are pictorial views from that corner.
 void turn_to_side(ViewSpec& s, int sx, int sy, bool third) {
@@ -131,6 +151,31 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     if (!side_step(side, sx, sy)) throw Error("side is left, right, top, bottom or a corner such as top-right, not '" + side + "'");
     const Sheet* sheet = scene.sheet(v.sheet);
     turn_to_side(s, sx, sy, sheet && sheet->projection == "third");
+    s.cut.clear(), s.whole.clear();  // the model, also when projected from a section
+  } else if (v.kind == "section" || v.kind == "auxiliary") {
+    const SheetView* parent = scene.sheet_view(v.parent);
+    if (!parent) throw Error("its parent view " + v.parent + " does not exist");
+    s = spec_of(scene, *parent, depth + 1);
+    Vec2 toward;
+    if (!view_direction(v, toward))
+      throw Error(v.kind == "section" ? "a section needs a cutting line: cut [[u, v], ...], two or more points apart" : "an auxiliary view needs its angle");
+    Vec3 px, py, pz;
+    view_axes(s, px, py, pz);
+    const Sheet* sheet = scene.sheet(v.sheet);
+    fold_to(s, toward, sheet && sheet->projection == "third");
+    s.cut.clear(), s.whole.clear();
+    if (v.kind == "section") {
+      s.cut = points(d["cut"]);
+      s.cut_x = px, s.cut_y = py;
+      for (const auto& n : d.value("whole", json::array()))
+        if (n.is_string()) s.whole.push_back(n.get<std::string>());
+      s.hidden = false;  // section views draw hidden lines only when asked
+    }
+  } else if (v.kind == "detail") {
+    const SheetView* parent = scene.sheet_view(v.parent);
+    if (!parent) throw Error("its parent view " + v.parent + " does not exist");
+    s = spec_of(scene, *parent, depth + 1);  // the parent's projection: one cache entry for both
+    if (!point2(d.value("center", json())) || !(d.value("radius", 0.0) > 0)) throw Error("a detail view needs its center [u, v] and radius");
   } else if (v.kind == "base") {
     const json o = d.value("orient", json::object());
     if (o.contains("preset") && o["preset"].is_string()) {
@@ -241,13 +286,34 @@ void validate_record(const json& op) {
   for (const char* k : {"sheet", "view", "parent", "list"})
     if (op.contains(k) && !(op[k].is_string() && is_uuid(op[k].get<std::string>()))) fail(std::string("'") + k + "' must be an op id");
   for (const char* k : {"name", "drawing", "kind", "type", "standard", "projection", "units", "side", "scale", "text", "prefix", "suffix", "rev", "date",
-                        "description", "approved", "pdf", "pdf_sha256", "tag", "grow"})
+                        "description", "approved", "pdf", "pdf_sha256", "tag", "grow", "letter"})
     if (op.contains(k) && !op[k].is_string()) fail(std::string("'") + k + "' must be text");
   for (const char* k : {"size", "template", "values", "source", "orient", "style", "label", "place", "result", "tol", "frozen", "bom", "headers",
                         "fingerprints", "frames"})
     if (op.contains(k) && !op[k].is_object()) fail(std::string("'") + k + "' must be an object");
-  for (const char* k : {"gap", "height", "precision", "width", "diameter"})
+  for (const char* k : {"gap", "height", "precision", "width", "diameter", "angle"})
     if (op.contains(k) && !finite(op[k])) fail(std::string("'") + k + "' must be a number");
+  // Section, detail, auxiliary, cropped and broken views (UI-82).
+  if (op.contains("cut") && !(op["cut"].is_array() && op["cut"].size() >= 2 && std::all_of(op["cut"].begin(), op["cut"].end(), point2)))
+    fail("a cutting line is [[u, v], [u, v], ...]: two or more points");
+  if (op.contains("center") && !point2(op["center"])) fail("'center' must be [u, v]");
+  if (op.contains("radius") && !(finite(op["radius"]) && op["radius"].get<double>() > 0)) fail("'radius' must be a positive number");
+  if (op.contains("flip") && !op["flip"].is_boolean()) fail("'flip' must be true or false");
+  if (op.contains("whole") && !(op["whole"].is_array() && std::all_of(op["whole"].begin(), op["whole"].end(), [](const json& n) { return n.is_string(); })))
+    fail("'whole' must be node ids");
+  if (op.contains("crop")) {
+    const json& c = op["crop"];
+    if (!(c.is_array() && c.size() == 4 && std::all_of(c.begin(), c.end(), finite) && c[0].get<double>() < c[2].get<double>() && c[1].get<double>() < c[3].get<double>()))
+      fail("'crop' must be [x0, y0, x1, y1] with x0 < x1 and y0 < y1");
+  }
+  if (op.contains("breaks")) {
+    const json& b = op["breaks"];
+    if (!b.is_array()) fail("'breaks' must be a list of {axis x|y, from, to, gap}");
+    for (const auto& e : b)
+      if (!e.is_object() || (e.value("axis", "") != "x" && e.value("axis", "") != "y") || !finite(e.value("from", json())) || !finite(e.value("to", json())) ||
+          e["from"].get<double>() >= e["to"].get<double>() || (e.contains("gap") && !(finite(e["gap"]) && e["gap"].get<double>() >= 0)))
+        fail("a break is {axis x|y, from, to (from < to), gap (paper mm)}");
+  }
   if (op.contains("sheets") && !(op["sheets"].is_array() && std::all_of(op["sheets"].begin(), op["sheets"].end(), [](const json& s) {
                                    return s.is_string() && is_uuid(s.get<std::string>());
                                  })))
@@ -364,12 +430,51 @@ std::vector<OutlineRow> outline(const Scene& scene) {
 Vec2 ViewFrame::view(const Vec3& p) const { return {dot3(p, x), dot3(p, y)}; }
 
 Vec2 ViewFrame::paper(const Vec3& p) const {
-  const Vec2 v = view(p);
-  return {at[0] + scale * (v[0] - centre[0]), at[1] + scale * (v[1] - centre[1])};
+  const Vec2 l = local(view(p));
+  return {at[0] + l[0], at[1] + l[1]};
+}
+
+Vec2 ViewFrame::fold(Vec2 v) const {
+  Vec2 out = v;
+  for (const auto& b : breaks) {
+    const double r = v[static_cast<size_t>(b.axis)];
+    double& o = out[static_cast<size_t>(b.axis)];
+    if (r >= b.to) o -= b.to - b.from - b.gap;
+    else if (r > b.from) o -= (r - b.from) * (1 - b.gap / (b.to - b.from));
+  }
+  return out;
+}
+
+Vec2 ViewFrame::unfold(Vec2 v) const {
+  Vec2 out = v;
+  for (int axis = 0; axis < 2; ++axis) {
+    double shift = 0;
+    const double x = v[static_cast<size_t>(axis)];
+    for (const auto& b : breaks) {
+      if (b.axis != axis) continue;
+      const double at = b.from - shift;
+      if (x <= at) break;
+      if (x < at + b.gap) {
+        shift = b.from + (x - at) * (b.to - b.from) / std::max(b.gap, 1e-12) - x;
+        break;
+      }
+      shift += b.to - b.from - b.gap;
+    }
+    out[static_cast<size_t>(axis)] = x + shift;
+  }
+  return out;
+}
+
+Vec2 ViewFrame::local(Vec2 v) const {
+  const Vec2 f = fold(v);
+  return {scale * (f[0] - centre[0]), scale * (f[1] - centre[1])};
 }
 
 json ViewFrame::to_json() const {
   json j = {{"id", id}, {"scale", scale_text(scale)}, {"at", at}, {"centre", centre}, {"box", box}, {"x", x}, {"y", y}, {"dir", dir}};
+  if (crop[2] > crop[0]) j["crop"] = crop;
+  if (radius > 0) j["circle"] = {{"center", circle}, {"radius", radius}};
+  for (const auto& b : breaks) j["breaks"].push_back({{"axis", b.axis ? "y" : "x"}, {"from", b.from}, {"to", b.to}, {"gap", b.gap}});
   if (!error.empty()) j["error"] = error;
   return j;
 }
@@ -486,15 +591,62 @@ std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const She
       if (depth > 32) throw Error("its parent views form a loop");
       const ViewSpec spec = view_spec(scene, *v);
       view_axes(spec, f.x, f.y, f.dir);
-      const std::array<double, 4> e = view_extent(doc, scene, spec);
-      const double lo[2] = {e[0], e[1]}, hi[2] = {e[2], e[3]};
-      f.centre = {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
       const json& d = v->def;
-      if (v->kind == "projected") {
+      std::array<double, 4> e;
+      const ViewFrame* parent = nullptr;
+      if (!v->parent.empty()) {
+        parent = &place(v->parent, depth + 1);
+        if (!parent->error.empty()) throw Error("its parent view cannot be drawn: " + parent->error);
+      }
+      if (v->kind == "detail") {  // its circle, at its own scale (twice its parent's unless given)
+        f.circle = {d["center"][0].get<double>(), d["center"][1].get<double>()};
+        f.radius = d["radius"].get<double>();
+        e = {f.circle[0] - f.radius, f.circle[1] - f.radius, f.circle[0] + f.radius, f.circle[1] + f.radius};
+        f.scale = d.value("scale", "") != "" && d["scale"] != "sheet" ? parse_scale(d["scale"].get<std::string>()) : 2 * parent->scale;
+      } else {
+        e = view_extent(doc, scene, spec);
+        if (parent) f.scale = parent->scale;
+        else if (const std::string s = d.value("scale", "sheet"); s != "sheet") f.scale = parse_scale(s);
+      }
+      if (const json c = d.value("crop", json()); c.is_array() && c.size() == 4) {
+        f.crop = {c[0].get<double>(), c[1].get<double>(), c[2].get<double>(), c[3].get<double>()};
+        e = {std::max(e[0], f.crop[0]), std::max(e[1], f.crop[1]), std::min(e[2], f.crop[2]), std::min(e[3], f.crop[3])};
+        if (e[0] > e[2] || e[1] > e[3]) throw Error("its crop box holds nothing of it");
+      }
+      // Breaks: its own, and those of the view it lines up with along the axis they share.
+      for (const auto& b : d.value("breaks", json::array()))
+        f.breaks.push_back({b.value("axis", "x") == "y" ? 1 : 0, b["from"].get<double>(), b["to"].get<double>(), b.value("gap", 6.0) / f.scale});
+      Vec2 toward{0, 0};
+      if (parent && v->kind != "detail" && view_direction(*v, toward))
+        for (const auto& b : parent->breaks)
+          if (std::fabs(toward[b.axis ? 0 : 1]) > 1 - 1e-9) f.breaks.push_back(b);
+      std::sort(f.breaks.begin(), f.breaks.end(), [](const ViewFrame::Break& a, const ViewFrame::Break& b) { return std::tie(a.axis, a.from) < std::tie(b.axis, b.from); });
+      for (size_t k = 1; k < f.breaks.size(); ++k)
+        if (f.breaks[k].axis == f.breaks[k - 1].axis && f.breaks[k].from < f.breaks[k - 1].to) throw Error("its breaks overlap");
+      const Vec2 flo = f.fold({e[0], e[1]}), fhi = f.fold({e[2], e[3]});
+      const double lo[2] = {flo[0], flo[1]}, hi[2] = {fhi[0], fhi[1]};
+      f.centre = v->kind == "detail" ? f.circle : Vec2{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
+      if ((v->kind == "section" || v->kind == "auxiliary") && (!d.value("align", true) && d.contains("at"))) {
+        f.at = {d["at"][0].get<double>(), d["at"][1].get<double>()};
+      } else if (v->kind == "section" || v->kind == "auxiliary") {
+        // Lined up with its parent across `toward` (a point keeps its place along that axis), `gap` past its frame.
+        const ViewFrame& p = *parent;
+        const Vec2 a{-toward[1], toward[0]};
+        const auto along = [](Vec2 u, Vec2 w) { return u[0] * w[0] + u[1] * w[1]; };
+        double reach = 0, back = 0;
+        for (int k = 0; k < 4; ++k) {
+          reach = std::max(reach, along({(k & 1 ? p.box[2] : p.box[0]) - p.at[0], (k & 2 ? p.box[3] : p.box[1]) - p.at[1]}, toward));
+          back = std::max(back, -along({((k & 1 ? hi[0] : lo[0]) - f.centre[0]) * f.scale, ((k & 2 ? hi[1] : lo[1]) - f.centre[1]) * f.scale}, toward));
+        }
+        const double s = along(p.at, a) + f.scale * along({f.centre[0] - p.centre[0], f.centre[1] - p.centre[1]}, a);
+        const double t = along(p.at, toward) + reach + d.value("gap", 20.0) + back;
+        f.at = {a[0] * s + toward[0] * t, a[1] * s + toward[1] * t};
+      } else if (v->kind == "detail") {
+        f.at = d.contains("at") ? Vec2{d["at"][0].get<double>(), d["at"][1].get<double>()}
+                                : Vec2{parent->box[2] + 20 + f.radius * f.scale, (parent->box[1] + parent->box[3]) / 2};
+      } else if (v->kind == "projected") {
         // Aligned with its parent: the coordinate they share is the parent's, the other puts `gap` between the frames.
-        const ViewFrame& p = place(v->parent, depth + 1);
-        if (!p.error.empty()) throw Error("its parent view cannot be drawn: " + p.error);
-        f.scale = p.scale;
+        const ViewFrame& p = *parent;
         int sx = 0, sy = 0;
         side_step(d.value("side", ""), sx, sy);
         const double gap = d.value("gap", 20.0);
@@ -509,7 +661,6 @@ std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const She
           if (sy < 0) f.at[1] = p.box[1] - gap - (hi[1] - f.centre[1]) * f.scale;
         }
       } else {
-        if (const std::string s = d.value("scale", "sheet"); s != "sheet") f.scale = parse_scale(s);
         f.at = d.contains("at") ? Vec2{d["at"][0].get<double>(), d["at"][1].get<double>()} : Vec2{sheet.width / 2, sheet.height / 2};
       }
       f.box = {f.at[0] + (lo[0] - f.centre[0]) * f.scale, f.at[1] + (lo[1] - f.centre[1]) * f.scale,

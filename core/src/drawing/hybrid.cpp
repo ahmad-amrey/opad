@@ -1051,7 +1051,7 @@ void hybrid(const Document& doc, const std::vector<Source>& sources, const ViewS
     KeyInfo& k = infos[static_cast<size_t>(i)];
     try {
       if (!s.mesh) classify(s.proto, k);
-      k.defl = deflection_for(doc, s.key);
+      k.defl = deflection_for(doc, s.body_key());
       k.mesh = body_mesh(doc, s, k.defl);
       if (!s.mesh) {
         TopTools_IndexedMapOfShape in_solids;

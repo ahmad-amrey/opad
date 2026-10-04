@@ -65,8 +65,9 @@ void check_view(const Scene& scene, const std::string& id, const json& def) {
   v.kind = def.value("kind", "");
   v.def = def;
   need_sheet(scene, v.sheet);
-  if (v.kind != "base" && v.kind != "projected") throw Error("kind is base or projected");
-  if (v.kind == "projected") {
+  static const std::set<std::string> kinds = {"base", "projected", "section", "detail", "auxiliary"};
+  if (!kinds.count(v.kind)) throw Error("kind is base, projected, section, detail or auxiliary");
+  if (v.kind != "base") {
     const SheetView* p = scene.sheet_view(v.parent);
     if (!p) throw Error("parent view " + v.parent + " does not exist");
     if (p->sheet != v.sheet) throw Error("the parent view is on another sheet");
@@ -75,6 +76,11 @@ void check_view(const Scene& scene, const std::string& id, const json& def) {
       if (q->id == id) throw Error("a view cannot be projected from itself");
   }
   if (def.contains("scale") && def["scale"] != "sheet") drawing::parse_scale(def["scale"].get<std::string>());
+  std::vector<std::pair<std::string, std::pair<double, double>>> bands;
+  for (const auto& b : def.value("breaks", json::array())) bands.push_back({b.value("axis", "x"), {b["from"].get<double>(), b["to"].get<double>()}});
+  std::sort(bands.begin(), bands.end());
+  for (size_t i = 1; i < bands.size(); ++i)
+    if (bands[i].first == bands[i - 1].first && bands[i].second.first < bands[i - 1].second.second) throw Error("its breaks overlap");
   drawing::view_spec(scene, v);
 }
 
@@ -187,13 +193,16 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         return out;
       });
 
-  add({"sheet_view", "Add a base view, or one projected from parent (first/third angle as the sheet says); returns its paper frame",
-       {{"doc", "path"}, {"sheet", "uuid"}, {"kind", "base|projected"}, {"name", "string"},
+  add({"sheet_view",
+       "Add a base view, or one of parent: projected (first/third angle as the sheet says), section (cut in parent view mm), detail, auxiliary; "
+       "returns its paper frame",
+       {{"doc", "path"}, {"sheet", "uuid"}, {"kind", "base|projected|section|detail|auxiliary"}, {"name", "string"},
         {"orient", "string - front (default), top, right, iso, ... or a view bookmark id"}, {"dir", "[x,y,z] - towards the viewer"},
         {"up", "[x,y,z]"}, {"select", "array|csv - nodes (default all)"}, {"hide", "array|csv"}, {"at", "[x,y] - paper mm of its centre"},
         {"scale", "string - sheet (default), 1:5 or auto"}, {"parent", "uuid"},
         {"side", "left|right|top|bottom|top-left|top-right|bottom-left|bottom-right"}, {"gap", "number - mm between frames (20)"},
-        {"hidden", "bool - hidden lines"}, {"centermarks", "bool"}, {"by", "string"}},
+        {"hidden", "bool - hidden lines"}, {"centermarks", "bool"}, {"cut", "array - [[u,v],..]"}, {"flip", "bool"}, {"center", "[u,v]"}, {"radius", "number"},
+        {"angle", "number - deg"}, {"letter", "string"}, {"crop", "[x0,y0,x1,y1]"}, {"breaks", "array - {axis,from,to,gap}"}, {"whole", "array|csv"}, {"by", "string"}},
        true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
@@ -234,7 +243,31 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           op["parent"] = a.at("parent");
           op["side"] = a.value("side", "right");
           if (a.contains("gap")) op["gap"] = a["gap"];
+        } else if (kind == "section" || kind == "detail" || kind == "auxiliary") {  // UI-82
+          op["parent"] = a.at("parent");
+          if (kind == "section") {
+            op["cut"] = a.at("cut");
+            if (a.value("flip", false)) op["flip"] = true;
+            if (const auto whole = strings(a.value("whole", json())); !whole.empty()) op["whole"] = whole;
+          } else if (kind == "detail") {
+            op["center"] = a.at("center");
+            op["radius"] = a.at("radius");
+            if (a.contains("scale") && a["scale"] != "sheet") op["scale"] = drawing::scale_text(drawing::parse_scale(a["scale"].get<std::string>()));
+          } else {
+            op["angle"] = a.at("angle");
+          }
+          if (a.contains("gap")) op["gap"] = a["gap"];
+          if (a.contains("at")) {
+            op["at"] = a["at"];
+            if (kind != "detail") op["align"] = false;
+          }
+          if (a.contains("letter")) op["letter"] = a["letter"];
+          else if (kind != "auxiliary") op["letter"] = drawing::next_view_letter(scene, sheet);
+        } else {
+          throw Error("sheet_view: kind is base, projected, section, detail or auxiliary");
         }
+        if (a.contains("crop")) op["crop"] = a["crop"];
+        if (a.contains("breaks")) op["breaks"] = a["breaks"];
         if (a.contains("hidden")) op["style"]["hidden"] = a["hidden"].get<bool>();
         if (a.value("centermarks", false)) op["style"]["centermarks"] = true;
         check_view(scene, "", op);
@@ -527,7 +560,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           if (a.value("project", false) && frame_of(frames, id).error.empty()) {
             const auto g = drawing::project(doc, scene, drawing::view_spec(scene, v));
             j["projection"] = {{"tier", drawing::quality_name(g->tier)}, {"counts", g->counts()}, {"bounds", g->bounds}, {"fingerprint", g->fingerprint},
-                               {"ms", g->stats.value("ms", 0)}};
+                               {"ms", g->stats.value("ms", 0)}, {"sections", g->sections.size()}};
           }
           views.push_back(j);
         }

@@ -161,13 +161,10 @@ Pick pick_of(const Resolver& R, json r) {
   return k;
 }
 
-// Paper mm from a view's centre.
+// Paper mm from a view's centre (across a break: where the sheet shows it).
 struct Paper {
   const ViewFrame& f;
-  Vec2 operator()(const Vec3& p) const {
-    const Vec2 v = f.view(p);
-    return {f.scale * (v[0] - f.centre[0]), f.scale * (v[1] - f.centre[1])};
-  }
+  Vec2 operator()(const Vec3& p) const { return f.local(f.view(p)); }
   bool along(const Vec3& axis) const { return std::fabs(dot3(unit3(axis), f.dir)) >= 0.9999; }
   bool across(const Vec3& axis) const { return std::fabs(dot3(unit3(axis), f.dir)) <= 1e-4; }
 };
@@ -334,7 +331,7 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
   // What it measures on paper, for drawing it (paper mm from the view's centre, as the anchor).
   json geometry = json::object();
   const Paper paper{frame};
-  const auto paper_of = [&](const Vec2& v) { return json::array({frame.scale * (v[0] - frame.centre[0]), frame.scale * (v[1] - frame.centre[1])}); };
+  const auto paper_of = [&](const Vec2& v) { return js(frame.local(v)); };
   const auto lineish = [](const Pick& k) { return k.line && !k.point; };
   if (type == "horizontal" || type == "vertical" || type == "aligned") {
     Vec2 a, b;
@@ -667,11 +664,11 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
       tag += std::to_string(++numbers[l]);
       std::string size = hole_callout(f.h, 1, sheet.standard, units, num);
       std::replace(size.begin(), size.end(), '\n', ' ');
-      const Vec2 rel{frame->scale * (f.at[0] - frame->centre[0]), frame->scale * (f.at[1] - frame->centre[1])};
+      const Vec2 rel = frame->local(f.at);
       rows.push_back({{"tag", tag}, {"x", (f.at[0] - origin[0]) * units}, {"y", (f.at[1] - origin[1]) * units}, {"x_shown", num((f.at[0] - origin[0]) * units)},
                       {"y_shown", num((f.at[1] - origin[1]) * units)}, {"size", size}, {"centre", js(rel)}, {"r", f.h.outer() / 2 * frame->scale}});
     }
-    return {{"rows", rows}, {"origin", js({frame->scale * (origin[0] - frame->centre[0]), frame->scale * (origin[1] - frame->centre[1])})}};
+    return {{"rows", rows}, {"origin", js(frame->local(origin))}};
   }
   if (kind == "datum" || kind == "surface") {
     need(1, 1, "one edge");

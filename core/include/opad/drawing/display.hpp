@@ -106,6 +106,10 @@ void add_shape(Display& d, int layer, const TopoDS_Shape& shape, double tol = 0.
 // largest standard scale at which the view fits an A3 sheet when it does not fit at full size.
 Display view_display(const ViewGeometry& g, const std::string& title = {});
 
+// Hatch lines (ISO 128-50) over closed outlines (even-odd: holes inside outer ones): parallel lines at `angle` (radians)
+// `pitch` apart, through the origin so neighbouring pieces of one part line up, clipped to the inside.
+std::vector<std::array<Vec2, 2>> hatch_lines(const std::vector<std::vector<Vec2>>& loops, double angle, double pitch);
+
 // Dimensions drawn as geometry (ISO 129 look: extension lines 1 mm off the feature and 2 mm past the dimension line,
 // filled arrowheads, text above the dimension line and along it, read from below or from the right). Sizes are paper
 // mm times `scale` (drawing units per paper mm).

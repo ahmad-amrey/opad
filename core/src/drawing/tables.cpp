@@ -4,6 +4,8 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Geom_BSplineCurve.hxx>
@@ -428,7 +430,7 @@ json plan_balloons(const Document& doc, const Scene& scene, const json& args) {
     }
   // The longest edge of each row's parts that the view shows whole (a piece of an edge partly hidden counts a quarter).
   const ViewSpec spec = view_spec(scene, *v);
-  const auto g = project(doc, scene, spec);
+  const auto g = shape_linework(project(doc, scene, spec), f);  // what the view shows of them
   std::map<std::pair<int, int>, int> pieces;
   std::set<std::pair<int, int>> partly;
   for (const auto& c : g->curves) {
@@ -549,6 +551,22 @@ std::string linework_brep(const ViewGeometry& g) {
     }
   }
   for (auto& p : parts) b.Add(all, p);
+  if (!g.sections.empty()) {  // a section's cut faces (UI-82): a compound of closed outlines per body, after the lines
+    TopoDS_Compound faces;
+    b.MakeCompound(faces);
+    for (const auto& r : g.sections) {
+      TopoDS_Compound region;
+      b.MakeCompound(region);
+      for (const auto& l : r.loops) {
+        BRepBuilderAPI_MakePolygon poly;
+        for (const auto& q : l) poly.Add(gp_Pnt(q[0], q[1], 0));
+        poly.Close();
+        if (poly.IsDone()) b.Add(region, poly.Wire());
+      }
+      b.Add(faces, region);
+    }
+    b.Add(all, faces);
+  }
   return brep_from_shape(all);
 }
 
@@ -715,6 +733,22 @@ ViewGeometry frozen_geometry(const TopoDS_Shape& lines) {
     }
   }
   for (auto& c : g.curves) c.z = 0;
+  int part = 0;
+  for (TopoDS_Iterator it(lines); it.More(); it.Next(), ++part) {
+    if (part != 3) continue;
+    for (TopoDS_Iterator r(it.Value()); r.More(); r.Next()) {
+      ViewGeometry::Region region{static_cast<int>(g.sections.size()), {}};
+      for (TopExp_Explorer w(r.Value(), TopAbs_WIRE); w.More(); w.Next()) {
+        std::vector<Vec2> loop;
+        for (BRepTools_WireExplorer e(TopoDS::Wire(w.Current())); e.More(); e.Next()) {
+          const gp_Pnt q = BRep_Tool::Pnt(e.CurrentVertex());
+          loop.push_back({q.X(), q.Y()});
+        }
+        if (loop.size() > 2) region.loops.push_back(std::move(loop));
+      }
+      g.sections.push_back(std::move(region));
+    }
+  }
   return g;
 }
 
@@ -755,18 +789,18 @@ Display issued_display(const Document& doc, const Scene& then, const Sheet& shee
     const std::string key = frozen.value(f.id, "");
     try {
       if (!key.empty() && doc.has_body(key)) {
-        const ViewGeometry g = frozen_geometry(body_shape(doc, key));
+        const auto g = shape_linework(std::make_shared<const ViewGeometry>(frozen_geometry(body_shape(doc, key))), f);
         try {
-          draw_view(d, f, *v, g, &doc, &scene);  // centre lines on the cylinders of the model as issued
-        } catch (const std::exception&) {     // that model is gone (gc): the centre marks of its circles only
+          draw_view(d, f, *v, *g, &doc, &scene);  // centre lines on the cylinders of the model as issued
+        } catch (const std::exception&) {      // that model is gone (gc): the centre marks of its circles only
           d.prims.resize(from);
-          draw_view(d, f, *v, g, nullptr, nullptr);
+          draw_view(d, f, *v, *g, nullptr, &scene);
         }
       } else {
         if (!f.error.empty() || !v->error.empty()) throw Error(f.error.empty() ? v->error : f.error);
-        const auto g = project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
+        const auto g = shape_linework(project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
           return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / static_cast<double>(frames.size()), phase);
-        });
+        }), f);
         draw_view(d, f, *v, *g, &doc, &scene);
       }
       ++views;

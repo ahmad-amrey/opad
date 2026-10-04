@@ -3,10 +3,16 @@
 // merge driver never takes two people's sheets, views or dimensions for one change:
 //   sheet       name, drawing, size {preset, w, h} (paper mm), standard iso|asme, projection first|third, scale "1:2",
 //               units, values (title block fields), template (embedded, its geometry a body key)
-//   sheet_view  sheet, name, kind base|projected; base: source {nodes|"all", hide}, orient {preset} | {dir, up} |
-//               {view: bookmark op}, at [x, y] (paper mm of the view's centre), scale "sheet"|"1:5", style {hidden,
-//               tangent show|thin|hide, silhouettes, quality}; projected: parent, side (left right top bottom or a
-//               corner), gap (paper mm between the frames), align false + at to break the alignment
+//   sheet_view  sheet, name, kind base|projected|section|detail|auxiliary; base: source {nodes|"all", hide}, orient
+//               {preset} | {dir, up} | {view: bookmark op}, at [x, y] (paper mm of the view's centre), scale "sheet"|"1:5",
+//               style {hidden, tangent show|thin|hide, silhouettes, quality}; projected: parent, side (left right top
+//               bottom or a corner), gap (paper mm between the frames), align false + at to break the alignment;
+//               section (UI-82): parent, cut [[u, v], ...] (the cutting line in the parent's view coordinates, model mm:
+//               two points a full section, more an offset or half section), flip (placed on the cut's right instead of
+//               its left), letter, gap, align/at, whole [nodes not cut]; detail: parent, center [u, v], radius (model
+//               mm), letter, scale, at; auxiliary: parent, angle (degrees on the sheet from the parent to it: it looks
+//               along that line), gap, align/at, letter (optional); any view: crop [x0, y0, x1, y1] (view coordinates),
+//               breaks [{axis x|y, from, to, gap (paper mm)}]
 //   sheet_item  sheet, view, kind dimension|note; dimension: type horizontal|vertical|aligned|radius|diameter|angle,
 //               refs (references with hint and aspect start|end|mid|center), place {text: [x, y]} (paper mm from the
 //               view's centre), precision, tol {sym|dev, plus, minus}, text {prefix, suffix}, result {value, shown}
@@ -66,19 +72,43 @@ struct OutlineRow {
 };
 std::vector<OutlineRow> outline(const Scene& scene);
 
-// Where a view lands on its sheet: model point p -> at + scale * (view(p) - centre). Boxes come from the bodies' tight
-// boxes (walks the geometry the first time: workers only).
+// Where a view lands on its sheet: model point p -> at + scale * (fold(view(p)) - centre). Boxes come from the bodies'
+// tight boxes (walks the geometry the first time: workers only). What the sheet shows of the projection (UI-82): a crop
+// box, a detail view's circle, and breaks: bands along x (axis 0) or y taken out and closed up to `gap` (model mm), so
+// the centre is in folded coordinates and a dimension across a break keeps its true value.
 struct ViewFrame {
+  struct Break {
+    int axis = 0;
+    double from = 0, to = 0, gap = 0;  // view coordinates (model mm)
+  };
   std::string id;
   double scale = 1;
   Vec2 at{0, 0}, centre{0, 0};
   Vec3 x{1, 0, 0}, y{0, 0, 1}, dir{0, -1, 0};
   std::array<double, 4> box{0, 0, 0, 0};  // paper: xmin, ymin, xmax, ymax
+  std::array<double, 4> crop{0, 0, 0, 0}; // view coordinates; none when xmin >= xmax
+  Vec2 circle{0, 0};                       // a detail view's (view coordinates), when radius > 0
+  double radius = 0;
+  std::vector<Break> breaks;               // sorted, apart
   std::string error;
   Vec2 view(const Vec3& world) const;   // view coordinates (model mm)
   Vec2 paper(const Vec3& world) const;
+  Vec2 fold(Vec2 v) const;    // view coordinates with the breaks closed up (a point inside a band: squeezed into its gap)
+  Vec2 unfold(Vec2 v) const;  // the other way round
+  Vec2 local(Vec2 v) const;   // paper mm from `at` of a point in view coordinates
+  bool shaped() const { return crop[2] > crop[0] || radius > 0 || !breaks.empty(); }
   json to_json() const;
 };
+// The linework a view shows (UI-82): its projection clipped to the frame's crop box or circle, its breaks taken out and
+// closed up (curves stay exact: lines, arcs, ellipses and splines are cut at the boundary), section faces clipped the same
+// way; in folded view coordinates. g itself when the frame does none of it. Workers (a big view's every curve).
+std::shared_ptr<const ViewGeometry> shape_linework(const std::shared_ptr<const ViewGeometry>& g, const ViewFrame& f);
+// A section, detail or auxiliary view's letter for a new one on the sheet's drawing: the first of A, B, C, ... (I, O and
+// Q left out, then AA, AB, ...) that none of its views has.
+std::string next_view_letter(const Scene& scene, const Sheet& sheet);
+// Section views (UI-82): the 2D direction from the parent view to where it goes on the sheet (unit, parent view axes),
+// for a section, auxiliary or side-projected view; false for others.
+bool view_direction(const SheetView& view, Vec2& d);
 std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const Sheet& sheet);
 // The bodies' extent in a view: xmin, ymin, xmax, ymax in view coordinates (model mm); zeros when it draws nothing.
 std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const ViewSpec& spec);
@@ -108,6 +138,10 @@ std::string format_value(double value, const json& item, const Sheet* sheet = nu
 // listed in skipped as {id, error}); returns how many it drew.
 void draw_paper(Display& d, const Document& doc, const Scene& scene, const Sheet& sheet);
 // With the document (a worker), a view with style centermarks also draws the axes of the cylinders it sees from the side.
+// g is what shape_linework() returns for the frame. Its section faces are hatched (ISO 128-50: thin lines at 45 degrees,
+// another angle or spacing for each further body cut); with the scene, a view also draws its own label (A-A, B (2:1)), the
+// cutting lines (thick at the ends and corners, arrows, letters) and circles of the section and detail views taken from it,
+// and its breaks.
 void draw_view(Display& d, const ViewFrame& frame, const SheetView& view, const ViewGeometry& g, const Document* doc = nullptr, const Scene* scene = nullptr);
 int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet& sheet, const std::vector<ViewFrame>& frames, const std::string& view,
                json& skipped);

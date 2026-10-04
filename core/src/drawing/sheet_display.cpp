@@ -8,6 +8,7 @@
 #include "opad/drawing/annotate.hpp"
 #include "opad/drawing/sheet.hpp"
 #include "opad/drawing/symbols.hpp"
+#include "views_internal.hpp"
 
 namespace opad::drawing {
 namespace {
@@ -45,11 +46,26 @@ void draw_view(Display& d, const ViewFrame& f, const SheetView& v, const ViewGeo
     const bool smooth = c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam;
     d.curve(c.hidden ? hidden : smooth && thin ? tangent : visible, placed(c, f));
   }
+  detail::draw_section_faces(d, f, g);
   if (style.value("centermarks", false)) {
     std::vector<std::array<Vec2, 2>> axes;
     if (doc && scene) axes = cylinder_axes(*doc, *scene, f, view_spec(*scene, v));
+    if (f.shaped()) {  // the axes within what the view keeps
+      std::vector<std::array<Vec2, 2>> kept;
+      for (const auto& [a, b] : axes) {
+        Curve line;
+        line.pts = {f.unfold({f.centre[0] + (a[0] - f.at[0]) / f.scale, f.centre[1] + (a[1] - f.at[1]) / f.scale}),
+                    f.unfold({f.centre[0] + (b[0] - f.at[0]) / f.scale, f.centre[1] + (b[1] - f.at[1]) / f.scale})};
+        ViewGeometry one;
+        one.curves.push_back(line);
+        for (const auto& c : shape_linework(std::make_shared<const ViewGeometry>(one), f)->curves)
+          kept.push_back({placed(c, f).pts.front(), placed(c, f).pts.back()});
+      }
+      axes.swap(kept);
+    }
     view_centre_marks(d, f, g, {}, doc && scene ? &axes : nullptr);
   }
+  if (scene) detail::draw_view_marks(d, f, v, *scene);
   tag(d, from, v.id);
 }
 
@@ -118,9 +134,9 @@ Display sheet_display(const Document& doc, const Scene& scene, const Sheet& shee
       continue;
     }
     const double n = static_cast<double>(frames.size());
-    const auto g = project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
+    const auto g = shape_linework(project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
       return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / n, phase);
-    });
+    }), f);
     draw_view(d, f, *v, *g, &doc, &scene);
     bodies += static_cast<int>(g->bodies.size());
     ++views;

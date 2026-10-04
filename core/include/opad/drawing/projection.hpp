@@ -44,6 +44,13 @@ struct ViewSpec {
   int resolution = 4096;           // hybrid: depth-buffer pixels along the long side of the view
   double tolerance = 0.01;         // mm: approximated curves stay this close to the projection
   std::map<std::string, Vec3> offsets;  // node -> world translation added to it and its children (exploded views)
+  // A section (UI-82): the cutting line in a plane through the model (cut_x, cut_y: its axes, the parent view's; points in
+  // model mm), swept along that plane's normal. Whatever lies on the viewer's side of it (towards dir) is taken away from
+  // the bodies it crosses, and the faces the cut leaves facing the viewer come back as ViewGeometry::sections. One segment:
+  // a full section; more: an offset or half section. Bodies under `whole` (shafts, fasteners) and meshes are not cut.
+  std::vector<Vec2> cut;
+  Vec3 cut_x{1, 0, 0}, cut_y{0, 0, 1};
+  std::vector<std::string> whole;
   static ViewSpec preset(const std::string& view);  // the Camera::preset names: front, top, right, iso, ...
   json to_json() const;
   static ViewSpec from_json(const json& j);  // {"view":"front"} or {"dir":[..],"up":[..]}, plus the fields above
@@ -81,8 +88,15 @@ struct ViewGeometry {
   struct Body {
     std::string node, key;
   };
+  // A section's cut faces (UI-82), one region per body cut: closed outlines in view coordinates (holes inside outer ones,
+  // even-odd; the outline itself comes as curves), for draw_view to hatch.
+  struct Region {
+    int body = -1;
+    std::vector<std::vector<Vec2>> loops;
+  };
   std::vector<Body> bodies;
   std::vector<Curve> curves;
+  std::vector<Region> sections;
   Quality tier = Quality::Exact;
   std::string fingerprint;
   Vec3 x{1, 0, 0}, y{0, 0, 1}, dir{0, -1, 0};  // view x and y in world coordinates, and towards the viewer

@@ -116,7 +116,7 @@ TEST(sheet_records_checked_and_forward_compatible) {
 
   const std::string text = "#opad 2\n" + json{{"uuid", new_uuid()}, {"units", "mm"}, {"created", ""}, {"generator", ""}}.dump() + "\n#ops\n"
       "{\"op\":\"sheet\",\"id\":\"" + s + "\",\"ts\":\"\",\"by\":\"\",\"name\":\"S\",\"size\":{\"w\":420,\"h\":297},\"standard\":\"jis\",\"scale\":\"1:1\"}\n"
-      "{\"op\":\"sheet_view\",\"id\":\"" + v + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"section\",\"cut\":[[0,0],[1,1]]}\n"
+      "{\"op\":\"sheet_view\",\"id\":\"" + v + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"broken_out\",\"depth\":5}\n"
       "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"view\":\"" + v + "\",\"kind\":\"weld\"}\n"
       "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"dimension\",\"type\":\"arc_length\"}\n"
       "#bodies\n";
@@ -127,7 +127,7 @@ TEST(sheet_records_checked_and_forward_compatible) {
   CHECK_EQ(scene.sheets[0].views.size(), 1u);
   CHECK_EQ(scene.sheets[0].items.size(), 2u);
   CHECK(has_unresolved(scene, s, "needs a newer OPAD (standard 'jis')"));
-  CHECK(has_unresolved(scene, v, "needs a newer OPAD (sheet_view kind 'section')"));
+  CHECK(has_unresolved(scene, v, "needs a newer OPAD (sheet_view kind 'broken_out')"));
   CHECK_EQ(scene.unresolved.size(), 4u);
   for (const auto& u : scene.unresolved) CHECK(u.reason.find("needs a newer OPAD") != std::string::npos);
 }
