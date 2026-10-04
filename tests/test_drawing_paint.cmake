@@ -1,7 +1,7 @@
 # PDF and PNG of drawings; the painter makes its own (offscreen) Qt application, as in opad-cli. No painter (neither the
 # CLI nor the app is built): the test is not built.
 if(TARGET opad_paint)
-  target_link_libraries(${target} PRIVATE opad_paint)
+  target_link_libraries(${target} PRIVATE opad_paint ZLIB::ZLIB)  # zlib: the PDFs' content streams read back
   if(OPAD_STATIC)
     qt_import_plugins(${target} INCLUDE_BY_TYPE platforms Qt6::QOffscreenIntegrationPlugin Qt6::QWindowsIntegrationPlugin EXCLUDE_BY_TYPE imageformats iconengines)
   endif()

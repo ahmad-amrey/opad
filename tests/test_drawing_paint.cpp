@@ -9,8 +9,12 @@
 #include <QBuffer>
 #include <QGuiApplication>
 #include <QImage>
+#include <zlib.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstring>
 #include <filesystem>
 
 #include "check.hpp"
@@ -45,6 +49,136 @@ QImage painted(const Display& d, double dpi) {
     write_drawing(d, f.dir / "first.png", "png", 6, {{"dpi", 10}});
   }
   return paint_image(d, dpi);
+}
+
+// What a PDF's pages stroke, read back from their content streams (Flate, as Qt writes them): each stroked path's pieces
+// (a curve by its ends) in paper mm (y up, from the page's lower left), with the dash pattern and the line width it was
+// stroked with, in paper mm too (through the transforms in force).
+struct PdfStroke {
+  std::vector<std::array<Vec2, 2>> pieces;
+  std::vector<double> dash;
+  double width = 0;
+};
+std::vector<PdfStroke> pdf_strokes(const std::filesystem::path& file) {
+  const std::string data = read_text_file(file);
+  std::vector<std::string> streams;
+  for (size_t at = data.find(" obj"); at != std::string::npos; at = data.find(" obj", at + 4)) {
+    const size_t open = data.find("stream", at), next = data.find(" obj", at + 4);
+    if (open == std::string::npos || (next != std::string::npos && next < open)) continue;  // an object without a stream
+    size_t from = open + 6;
+    if (data.compare(from, 2, "\r\n") == 0) from += 2;
+    else if (data[from] == '\n') ++from;
+    const size_t end = data.find("endstream", from);
+    if (end == std::string::npos) break;
+    const std::string head = data.substr(at, open - at);
+    at = end;  // past its bytes
+    if (head.find("/FlateDecode") == std::string::npos || head.find("/Length1") != std::string::npos || head.find("/Subtype") != std::string::npos)
+      continue;  // fonts, pictures, metadata
+    std::string out(std::max<size_t>(1 << 16, (end - from) * 8), '\0');
+    for (;;) {
+      uLongf n = static_cast<uLongf>(out.size());
+      const int r = uncompress(reinterpret_cast<Bytef*>(out.data()), &n, reinterpret_cast<const Bytef*>(data.data() + from), static_cast<uLong>(end - from));
+      if (r == Z_BUF_ERROR && out.size() < (64u << 20)) {
+        out.resize(out.size() * 2);
+        continue;
+      }
+      if (r == Z_OK) streams.push_back(out.substr(0, n));
+      break;
+    }
+  }
+  struct State {
+    std::array<double, 6> ctm{1, 0, 0, 1, 0, 0};
+    std::vector<double> dash;
+    double width = 1;
+  };
+  const auto times = [](const std::array<double, 6>& m, const std::array<double, 6>& n) {  // m then n
+    return std::array<double, 6>{m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3], m[2] * n[0] + m[3] * n[2],
+                                 m[2] * n[1] + m[3] * n[3], m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5]};
+  };
+  const double mm = 25.4 / 72;  // a point
+  std::vector<PdfStroke> strokes;
+  for (const std::string& s : streams) {
+    std::vector<State> stack(1);
+    std::vector<double> nums, array;
+    bool in_array = false;
+    std::vector<std::array<Vec2, 2>> path;
+    Vec2 cur{0, 0}, start{0, 0};
+    const auto paper = [&](double x, double y) {
+      const auto& m = stack.back().ctm;
+      return Vec2{(m[0] * x + m[2] * y + m[4]) * mm, (m[1] * x + m[3] * y + m[5]) * mm};
+    };
+    const auto scale = [&] { return std::sqrt(std::fabs(stack.back().ctm[0] * stack.back().ctm[3] - stack.back().ctm[1] * stack.back().ctm[2])) * mm; };
+    for (size_t i = 0; i < s.size();) {
+      const char c = s[i];
+      if (std::isspace(static_cast<unsigned char>(c))) {
+        ++i;
+      } else if (c == '[') {
+        in_array = true, array.clear(), ++i;
+      } else if (c == ']') {
+        in_array = false, ++i;
+      } else if (c == '(') {  // a string: skipped
+        int depth = 0;
+        for (; i < s.size(); ++i) {
+          if (s[i] == '\\') ++i;
+          else if (s[i] == '(') ++depth;
+          else if (s[i] == ')' && --depth == 0) break;
+        }
+        ++i;
+      } else if (c == '<') {  // a hex string, or a dictionary's start
+        const size_t close = s.find('>', i);
+        i = close == std::string::npos ? s.size() : close + 1;
+      } else if (c == '/') {  // a name
+        ++i;
+        while (i < s.size() && !std::isspace(static_cast<unsigned char>(s[i])) && !std::strchr("[]()<>/", s[i])) ++i;
+      } else if (std::isdigit(static_cast<unsigned char>(c)) || c == '-' || c == '.' || c == '+') {
+        size_t used = 0;
+        const double v = std::stod(s.substr(i, 32), &used);
+        (in_array ? array : nums).push_back(v);
+        i += used;
+      } else {
+        size_t j = i;
+        while (j < s.size() && !std::isspace(static_cast<unsigned char>(s[j])) && !std::strchr("[]()<>/", s[j])) ++j;
+        if (j == i) {  // a stray delimiter (the end of a dictionary)
+          ++i;
+          continue;
+        }
+        const std::string op = s.substr(i, j - i);
+        i = j;
+        State& st = stack.back();
+        const auto arg = [&](size_t k) { return nums.size() > k ? nums[nums.size() - 1 - k] : 0.0; };  // k from the last
+        if (op == "q") stack.push_back(st);
+        else if (op == "Q" && stack.size() > 1) stack.pop_back();
+        else if (op == "cm") st.ctm = times({arg(5), arg(4), arg(3), arg(2), arg(1), arg(0)}, st.ctm);
+        else if (op == "w") st.width = arg(0) * scale();
+        else if (op == "d") {
+          st.dash.clear();
+          for (double v : array) st.dash.push_back(v * scale());
+        } else if (op == "m") cur = start = paper(arg(1), arg(0));
+        else if (op == "l") {
+          const Vec2 p = paper(arg(1), arg(0));
+          path.push_back({cur, p});
+          cur = p;
+        } else if (op == "c") {
+          const Vec2 p = paper(arg(1), arg(0));
+          path.push_back({cur, p});
+          cur = p;
+        } else if (op == "h") {
+          path.push_back({cur, start});
+          cur = start;
+        } else if (op == "re") {
+          const Vec2 a = paper(arg(3), arg(2)), b = paper(arg(3) + arg(1), arg(2) + arg(0));
+          path.push_back({a, Vec2{b[0], a[1]}}), path.push_back({Vec2{b[0], a[1]}, b}), path.push_back({b, Vec2{a[0], b[1]}}), path.push_back({Vec2{a[0], b[1]}, a});
+        } else if (op == "S" || op == "s" || op == "B" || op == "B*" || op == "b" || op == "b*") {
+          strokes.push_back({path, st.dash, st.width});
+          path.clear();
+        } else if (op == "f" || op == "F" || op == "f*" || op == "n") {
+          path.clear();
+        }
+        nums.clear();
+      }
+    }
+  }
+  return strokes;
 }
 
 // The pixel a drawing point lands on in a picture painted by paint_image.
@@ -338,6 +472,36 @@ TEST(an_exploded_views_trail_lines_print_as_phantom_lines) {
   CHECK(inked > samples / 3 && inked < samples * 9 / 10);  // drawn, and broken: dashes and dots
   r = commands::run("export", {{"format", "pdf"}, {"sheet", sheet}, {"out", (f.dir / "apart.pdf").string()}}, &doc);
   CHECK(read_text_file(f.dir / "apart.pdf").rfind("%PDF-", 0) == 0 && r["layers"].value("Trail", 0) > 0);
+  // The PDF itself (vectors, not a picture): each trail line one stroke, where the sheet draws it, with the phantom dash
+  // pattern (12, 3, 1.5, 3, 1.5, 3 mm on paper) at the Trail layer's 0.25 mm; the parts drawn with solid strokes; nothing
+  // else dashed.
+  const auto strokes = pdf_strokes(f.dir / "apart.pdf");
+  const auto& want = line_type_dashes(LineType::Phantom);
+  std::vector<std::array<Vec2, 2>> dashed;
+  int solid = 0, other = 0;
+  for (const auto& st : strokes) {
+    if (st.dash.empty()) {
+      ++solid;
+      continue;
+    }
+    bool phantom = st.dash.size() == want.size() && std::fabs(st.width - 0.25) < 1e-3;
+    for (size_t i = 0; phantom && i < want.size(); ++i) phantom = std::fabs(st.dash[i] - std::fabs(want[i])) < 1e-3;
+    if (!phantom) ++other;
+    else dashed.insert(dashed.end(), st.pieces.begin(), st.pieces.end());
+  }
+  CHECK_EQ(other, 0);
+  CHECK_EQ(dashed.size(), pieces.size());
+  for (const auto& [a, b] : pieces) {  // within 0.05 mm: Qt makes the 200 mm page 567 points high and draws from its top
+    const auto same = [&](const std::array<Vec2, 2>& s) {
+      const auto close = [](Vec2 p, Vec2 q) { return std::hypot(p[0] - q[0], p[1] - q[1]) < 0.05; };
+      return (close(s[0], a) && close(s[1], b)) || (close(s[0], b) && close(s[1], a));
+    };
+    CHECK(std::count_if(dashed.begin(), dashed.end(), same) == 1);
+  }
+  const auto visible = std::count_if(d.prims.begin(), d.prims.end(), [&](const Prim& p) {
+    return p.kind == Prim::Kind::Curve && p.source == view && d.layers[size_t(p.layer)].name == "Visible";
+  });
+  CHECK(visible > 0 && solid >= visible);
 }
 
 int main(int argc, char** argv) { return check::run_all(argc, argv); }

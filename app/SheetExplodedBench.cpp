@@ -4,7 +4,9 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QMenu>
+#include <QRegularExpression>
 #include <QStatusBar>
+#include <QtEndian>
 
 #include <algorithm>
 #include <cmath>
@@ -26,7 +28,8 @@
 // draws it and crossing no other part's lines; Exploded 1 updated with twice the spacing (the
 // Explode panel's Update view), the drawing view draws its parts further apart, the balloons still measured. The front
 // view's View state: Exploded 1 (one step, still from the front, with trail lines), then Assembled again. Then Publish PDF
-// from Review (UI-104, Review > Share and the File menu): the drawing's sheet written as a PDF, the workspace kept.
+// from Review (UI-104, Review > Share and the File menu): the drawing's sheet written as a PDF whose page strokes the
+// exploded view's trail lines with the phantom dash pattern (its content streams read back), the workspace kept.
 // <prefix>.exploded.png (both views apart), <prefix>.publish.pdf.
 OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
   using opad::drawing::Vec2;
@@ -252,12 +255,40 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
     check(publish && publish->menuPath == "file" && publish->workspaces.contains("review") && w.action("drawings.publish")->isEnabled(),
           "Publish PDF in the File menu and on Review > Share, enabled with a drawing in the document");
     w.action("drawings.publish")->trigger();
-    const auto written = [&] {
+    const auto pdfBytes = [&] {
       QFile f(pdf);
-      return f.open(QIODevice::ReadOnly) && f.read(5) == "%PDF-";
+      return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    };
+    const auto written = [&] {
+      const QByteArray b = pdfBytes();
+      return b.startsWith("%PDF-") && b.trimmed().endsWith("%%EOF");
     };
     check(waitFor(written, 60000) && w.workspaceId() == "review", "Publish PDF from Review writes the drawing as a PDF and stays in Review");
     qunsetenv("OPAD_BENCH_EXPORT_OUT");
+    {  // its pages are vectors: the exploded view's trail lines stroked with the phantom dash pattern, one stroke each
+      const QByteArray data = pdfBytes();
+      QByteArray content;  // the pages' content streams, inflated
+      for (qsizetype at = data.indexOf(" obj"); at >= 0; at = data.indexOf(" obj", at + 4)) {
+        const qsizetype open = data.indexOf("stream", at), next = data.indexOf(" obj", at + 4);
+        if (open < 0 || (next >= 0 && next < open)) continue;
+        qsizetype from = open + 6;
+        from += data.mid(from, 2) == "\r\n" ? 2 : data.mid(from, 1) == "\n" ? 1 : 0;
+        const qsizetype end = data.indexOf("endstream", from);
+        if (end < 0) break;
+        const QByteArray head = data.mid(at, open - at);
+        at = end;
+        if (!head.contains("/FlateDecode") || head.contains("/Length1") || head.contains("/Subtype")) continue;
+        QByteArray packed(4, '\0');
+        qToBigEndian<quint32>(quint32(std::min<qsizetype>((end - from) * 8 + 65536, 1 << 26)), packed.data());  // qUncompress grows it as needed
+        content += qUncompress(packed + data.mid(from, end - from));
+      }
+      static const QRegularExpression phantom(R"(\[12 3 1\.5\d* 3 1\.5\d* 3 \]0\s+d\s+((?:[-\d.]+ [-\d.]+ m\s+[-\d.]+ [-\d.]+ l\s+S\s+)+))");
+      long strokes = 0;
+      for (auto m = phantom.globalMatch(QString::fromLatin1(content)); m.hasNext();) strokes += m.next().captured(1).count(QRegularExpression(R"(\bS\b)"));
+      const long want = trails(drawn);
+      check(!content.isEmpty() && want >= 1 && strokes == want,
+            QString("its PDF strokes the exploded view's trail lines as phantom lines, one each (%1 of %2)").arg(strokes).arg(want));
+    }
   } catch (const std::exception& e) {
     check(false, QString("bench stopped: %1").arg(e.what()));
   }
