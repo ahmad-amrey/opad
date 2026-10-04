@@ -45,23 +45,35 @@ QString source(const QString& path) {
   return QString::fromUtf8(f.readAll());
 }
 
-// Command ids registered by MainWindow (MainWindow*.cpp): literal addAction ids (and the Help menu's help("help.about",
-// ...) helper of the IP branch), CommandInfo ids, the generated families, the sketch tool tables and the feature kinds of
-// the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
+// Command ids registered by MainWindow and the areas: literal addAction ids of MainWindow*.cpp (and the Help menu's
+// help("help.about", ...) helper of the IP branch); CommandInfo records in any source of the app that is not a bench
+// (info.id = "..." or CommandInfo name{"...", ...}) and the areas' helpers that make them (the Drawings workspace's add,
+// version control's command, the file location's fileCommand, the clipboard's add); an area's workspace (its
+// "workspace.<id>" command, the contextual sketch's excepted); the generated families, the sketch tool tables and the
+// feature kinds of the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
 std::set<QString> registeredIds() {
   std::set<QString> ids;
+  const QString name = R"(([a-z][a-z0-9]*\.[A-Za-z0-9_.]+))";
   QString main;
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"MainWindow*.cpp"}, QDir::Files, QDir::Name)) main += source("app/" + file);
-  for (const auto& m : QRegularExpression(R"(\b(?:addAction|help)\("([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(main)) ids.insert(m.captured(1));
-  const QRegularExpression info(R"(\.id\s*=\s*"([a-z]+\.[A-Za-z0-9_.]+)\")");
-  for (const auto& m : info.globalMatch(main)) ids.insert(m.captured(1));
-  // An area's records: info.id = "..." or CommandInfo name{"...", ...}.
-  const QRegularExpression braced(R"(\bCommandInfo\s+\w+\s*\{\s*"([a-z]+\.[A-Za-z0-9_.]+)\")");
-  for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*Area.cpp"}, QDir::Files, QDir::Name)) {
+  for (const auto& m : QRegularExpression(R"(\b(?:addAction|help)\(")" + name + "\"").globalMatch(main)) ids.insert(m.captured(1));
+  const QRegularExpression info(R"(\.id\s*=\s*")" + name + "\""), braced(R"(\bCommandInfo\s+\w+\s*\{\s*")" + name + "\""),
+      workspace(R"re(\baddWorkspace\("([a-z]+)")re");
+  const QHash<QString, QRegularExpression> helpers{{"DocsWorkspace.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
+                                                   {"VcsArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
+                                                   {"LocationArea.cpp", QRegularExpression(R"(\bfileCommand\(")" + name + "\"")},
+                                                   {"SketchClipboard.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")}};
+  for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*.cpp"}, QDir::Files, QDir::Name)) {
+    if (file.contains("Bench")) continue;
     const QString text = source("app/" + file);
     for (const auto& m : info.globalMatch(text)) ids.insert(m.captured(1));
     for (const auto& m : braced.globalMatch(text)) ids.insert(m.captured(1));
+    if (helpers.contains(file))
+      for (const auto& m : helpers.value(file).globalMatch(text)) ids.insert(m.captured(1));
+    for (const auto& m : workspace.globalMatch(text))
+      if (m.captured(1) != "sketch") ids.insert("workspace." + m.captured(1));
   }
+  for (const char* v : {"top", "right", "left", "back", "bottom"}) ids.insert(QString("drawings.baseView.") + v);  // the Base view button's menu
   for (const auto& m : QRegularExpression(R"re(\{"([a-z0-9_:]+)", tr\(")re").globalMatch(main)) ids.insert("sketch." + m.captured(1).replace(':', '.'));
   for (const auto& m : QRegularExpression(R"re(QObject::tr\("[^"]+"\),"([a-z0-9_:]+)")re").globalMatch(source("app/SketchPanel.cpp")))
     ids.insert("sketch." + m.captured(1).replace(':', '.'));
@@ -113,17 +125,10 @@ QString clean(QString s) { return s.remove('&').remove(QString::fromUtf8("…"))
 TEST(every_registered_command_has_help) {
   help::load("en");
   const auto ids = registeredIds();
-  CHECK(ids.size() > 200 && ids.count("help.reference"));
-  // Commands the TODO 11 tracks added before their help was written: the records come with the help and ribbon pass of wave 3
-  // (t7b), which empties this list.
-  const QStringList pending{"assembly.activate", "assembly.activateNew", "assembly.activateRoot", "assembly.activeHistory", "assembly.activeVisibility",
-                            "assembly.explode", "assembly.explodeGroup", "assembly.explodeKeep", "assembly.explodeOff", "assembly.explodePlay",
-                            "assembly.explodeSave", "assembly.explodeSplit", "assembly.explodeUngroup", "design.componentFromSelection", "design.remove_faces",
-                            "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.partProperties", "timeline.designOnly",
-                            "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.nextChange",
-                            "vcs.previousChange", "vcs.unsavedChanges"};
+  CHECK(ids.size() > 300 && ids.count("help.reference") && ids.count("drawings.baseView.top") && ids.count("vcs.push") && ids.count("edit.copy") &&
+        ids.count("drawing2d.layers") && ids.count("file.reveal") && ids.count("workspace.drawings") && ids.count("sketch.commandLine"));
   QStringList missing;
-  for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
+  for (const QString& id : ids) if (!help::find(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
 }
 
@@ -687,13 +692,8 @@ TEST(clip_keys_resolve) {
 // Arabic, and the help area's Arabic. Every token names a registered command (or a fixed key), and English and Arabic
 // carry the same tokens.
 TEST(help_texts_have_no_literal_keys) {
-  // A token may name any command the app makes, help or none yet: the help's own list, and every CommandInfo id or
-  // add("...") of the other sources (area commands such as drawing2d.objectSnap, the clipboard's edit.paste).
-  auto ids = registeredIds();
-  for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*.cpp"}, QDir::Files)) {
-    static const QRegularExpression made(R"re((?:\.id\s*=\s*|\bCommandInfo\s+\w+\s*\{\s*|\badd\()"([a-z][a-z0-9]*\.[A-Za-z0-9_.]+)")re");
-    for (const auto& m : made.globalMatch(source("app/" + file))) ids.insert(m.captured(1));
-  }
+  // A token may name any command the app makes (registeredIds: the window's and the areas', every one with help).
+  const auto ids = registeredIds();
   QStringList found, tokens;
   auto checkTokens = [&](const QString& where, const QString& english, const QString& arabic) {
     for (const QString& t : help::tokens(english)) {
@@ -1078,8 +1078,10 @@ TEST(command_areas) {
   CHECK(help::group("sketch.c.horizontal") == "Sketch constraints" && help::group("sketch.dimension") == "Sketch constraints");
   CHECK(help::group("view.fit") == "View" && help::group("nav.fusion") == "View" && help::group("help.about") == "Tools and help");
   CHECK(help::group("files.useOda") == "File" && help::group("help.licenses") == "Tools and help");
+  CHECK(help::group("vcs.commit") == "File" && help::group("timeline.names") == "View" && help::group("drawing2d.layers") == "View" &&
+        help::group("assembly.explode") == "Design" && help::group("drawings.baseView.top") == "Drawings");
   QStringList areas = help::areas();
-  CHECK(areas.size() == 11 && areas.removeDuplicates() == 0);
+  CHECK(areas.size() == 12 && areas.removeDuplicates() == 0);
   for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");
 }
 
