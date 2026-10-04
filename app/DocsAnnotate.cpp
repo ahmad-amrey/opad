@@ -206,7 +206,10 @@ void DocsArea::autoBalloon() {
       [self, plan](bool ok, const QString& error) {
         if (!self) return;
         if (!ok) return self->services().guarded([&] { throw opad::Error(error.toStdString()); });
-        if ((*plan)["ops"].empty()) return self->services().toast(tr("Every part the view shows has its balloon"));
+        if ((*plan)["ops"].empty()) {
+          self->services().toast(tr("Every part the view shows has its balloon"));
+          return;
+        }
         self->run("sheet_balloons", {{"plan", *plan}}, [self](const opad::json& out) {
           if (!self || out.is_null()) return;
           const int n = static_cast<int>(out.value("ids", opad::json::array()).size());

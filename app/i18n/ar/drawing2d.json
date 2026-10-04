@@ -144,7 +144,6 @@
  "Each layer's lineweight on paper (0.25 mm when it has none); off: every line 0.13 mm": "سماكة خط كل طبقة على الورق (0.25 مم إن لم تكن لها سماكة)؛ عند الإيقاف: كل خط 0.13 مم",
  "OUTPUT": "المخرجات",
  "PDF file": "ملف PDF",
- "Printer": "طابعة",
  "This build has no printing support": "هذا الإصدار لا يدعم الطباعة",
  "Gathering the drawing…": "جمع الرسم…",
  "Preparing the plot": "تجهيز الطباعة",

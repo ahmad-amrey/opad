@@ -555,7 +555,6 @@
   "The letter of the detail and of its circle on the parent view": "حرف التفصيل وحرف دائرته على المسقط الأصل",
   "The letter of the auxiliary view (VIEW A in ASME; empty: none)": "حرف المسقط المساعد (VIEW A في ASME؛ فارغ: بلا حرف)",
   "A section or detail view keeps its letter.": "يحتفظ المسقط المقطعي أو التفصيلي بحرفه.",
-  "Gap": "المسافة",
   "or type the values, Tab to the next, Enter": "أو اكتب القيم، Tab للتالية، Enter",
   "Printing failed: %1": "فشلت الطباعة: %1",
   "The revision is issued, but git did not take it: %1": "صدرت المراجعة، لكن git لم يقبلها: %1",
