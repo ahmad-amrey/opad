@@ -198,6 +198,10 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   require(candidates.size() >= 4 && allFaces && names.value(0).startsWith("Pin") && candidates.front().depth <= candidates.back().depth, "faces over the pin, nearest first: " + names.join(", "));
   if (candidates.size() < 3) return QCoreApplication::exit(2), true;
   require(v->choosePickCandidate(1) && v->selection().size() == 1 && v->selection().front().str() == candidates[1].ref.str(), "a face behind is chosen: " + names.value(1));
+  // The areas get it as they get a click (selectionChanged): what smart selection (UI-95) grows from.
+  const auto told = w.selectionContext().refs;
+  require(w.m_selRefs.size() == 1 && w.m_selRefs.front().str() == candidates[1].ref.str() && told.size() == 1 && told.front().str() == candidates[1].ref.str(),
+          "the window and its areas are told the chosen face as the selection");
   v->clearSelection();
   until([v] { return v->selection().empty(); }, 2000);
 
