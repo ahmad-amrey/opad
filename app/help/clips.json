@@ -3123,18 +3123,20 @@
    ]
   },
   {
-   "id": "file.importdoc", "duration": 4, "view": "iso",
+   "id": "file.importdoc", "duration": 4.4, "view": "iso",
    "items": [
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
-    {"el": "chip", "screen": [0.03, 0.05], "icon": "eye", "value": "bracket.step", "dot": "amber", "to": 1.3, "fade": 0},
-    {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "value": "bracket.opad", "dot": "green", "from": 1.3, "fade": 0},
-    {"el": "chip", "screen": [0.5, 0.05], "icon": "save", "text": "Save to edit", "to": 1.3, "keys": [[1, {"hl": true}]]},
-    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.9, {"screen": [0.62, 0.11]}], [1, {"screen": [0.62, 0.11], "click": 1}], [2, {"screen": [0.6, 0.65]}]]}
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "eye", "text": "Viewer · read-only", "to": 2.4, "fade": 0.2},
+    {"el": "chip", "screen": [0.5, 0.05], "icon": "save", "text": "Save to edit", "to": 2.4, "fade": 0.2, "keys": [[1, {"hl": true}]]},
+    {"el": "card", "screen": [0.03, 0.2], "w": 170, "title": "Save as OPAD document", "rows": [{"text": "Name", "entry": "bracket.opad"}], "button": "Save", "press": 2.0, "from": 1.1, "to": 2.2},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Saved bracket.opad; it can be edited now", "from": 2.4},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.9, {"screen": [0.62, 0.11]}], [1, {"screen": [0.62, 0.11], "click": 1}], [1.7, {"screen": [0.52, 0.58]}], [2.0, {"screen": [0.52, 0.58], "click": 1}], [2.8, {"screen": [0.85, 0.45]}]]}
    ],
    "steps": [
     {"to": 1.1, "caption": "A viewed file: Save to edit"},
-    {"to": 4, "caption": "It becomes an OPAD document you can edit"}
+    {"to": 2.3, "caption": "Choose where the .opad goes"},
+    {"to": 4.4, "caption": "It becomes an OPAD document you can edit"}
    ]
   },
   {
@@ -3170,34 +3172,39 @@
    ]
   },
   {
-   "id": "file.export", "duration": 4.6, "view": "iso", "extent": [-26, -11, 26, 16],
+   "id": "file.export", "duration": 5.0, "view": "iso", "extent": [-26, -11, 26, 16],
    "items": [
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0.35},
-    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Export", "button": "Export", "press": 2.4, "from": 0.9, "to": 2.6, "hl": -1, "rows": [{"label": "STEP", "radio": true}, {"label": "STL", "radio": false}, {"label": "3MF", "radio": false}, {"label": "DXF", "radio": false}], "keys": [[1.6, {"hl": 1, "rows": [{"label": "STEP", "radio": false}, {"label": "STL", "radio": true}, {"label": "3MF", "radio": false}, {"label": "DXF", "radio": false}], "ease": "step"}]]},
-    {"el": "chip", "screen": [0.62, 0.05], "icon": "export", "value": "bracket.stl", "dot": "green", "from": 2.6},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Export", "button": "Export", "press": 2.2, "from": 0.9, "to": 2.4, "hl": -1, "rows": [{"label": "STEP AP242", "radio": true}, {"label": "OBJ (+MTL)", "radio": false}, {"label": "STL", "radio": false}, {"label": "DXF (2D)", "radio": false}], "keys": [[1.6, {"hl": 2, "rows": [{"label": "STEP AP242", "radio": false}, {"label": "OBJ (+MTL)", "radio": false}, {"label": "STL", "radio": true}, {"label": "DXF (2D)", "radio": false}], "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Export to", "rows": [{"text": "Name", "entry": "bracket.stl"}], "button": "Save", "press": 3.0, "from": 2.5, "to": 3.1},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Exported 1 objects to bracket.stl", "from": 3.2},
     {"el": "key", "command": "file.export", "press": 0.8, "from": 0.45, "to": 1.3},
-    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.5, {"screen": [0.1, 0.4]}], [1.6, {"screen": [0.1, 0.4], "click": 1}], [2.2, {"screen": [0.4, 0.8]}], [2.4, {"screen": [0.4, 0.8], "click": 1}], [3.2, {"screen": [0.7, 0.85]}]]}
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.5, {"screen": [0.1, 0.53]}], [1.6, {"screen": [0.1, 0.53], "click": 1}], [2.0, {"screen": [0.38, 0.8]}], [2.2, {"screen": [0.38, 0.8], "click": 1}],
+                              [2.8, {"screen": [0.4, 0.44]}], [3.0, {"screen": [0.4, 0.44], "click": 1}], [3.8, {"screen": [0.85, 0.45]}]]}
    ],
    "steps": [
     {"to": 1, "caption": "{press:file.export}"},
-    {"to": 2.5, "caption": "Choose the format"},
-    {"to": 4.6, "caption": "The file is written"}
+    {"to": 2.4, "caption": "Choose the format and what to include"},
+    {"to": 3.1, "caption": "Choose where the file goes"},
+    {"to": 5.0, "caption": "The file is written"}
    ]
   },
   {
-   "id": "file.screenshot", "duration": 3.6, "view": "iso",
+   "id": "file.screenshot", "duration": 4.0, "view": "iso",
    "items": [
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
-    {"el": "veil", "color": "white", "from": 0.95, "to": 1.25, "fade": 0.12, "opacity": 0.7},
-    {"el": "chip", "screen": [0.62, 0.05], "icon": "image", "value": "view.png", "dot": "green", "from": 1.4},
-    {"el": "key", "command": "file.screenshot", "press": 0.9, "from": 0.55, "to": 1.4}
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Save screenshot", "rows": [{"text": "Name", "entry": "view.png"}], "button": "Save", "press": 1.8, "from": 1.0, "to": 1.9},
+    {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Saved view.png", "from": 2.0},
+    {"el": "key", "command": "file.screenshot", "press": 0.9, "from": 0.55, "to": 1.4},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.5, {"screen": [0.43, 0.44]}], [1.8, {"screen": [0.43, 0.44], "click": 1}], [2.6, {"screen": [0.85, 0.45]}]]}
    ],
    "steps": [
     {"to": 1, "caption": "{press:file.screenshot}"},
-    {"to": 3.6, "caption": "The view is saved as an image"}
+    {"to": 1.9, "caption": "Choose where the PNG goes"},
+    {"to": 4.0, "caption": "The view is saved as an image"}
    ]
   },
   {
@@ -3336,17 +3343,23 @@
    ]
   },
   {
-   "id": "panel.section", "duration": 4.4, "view": "iso", "extent": [-32, -12, 32, 22],
+   "id": "panel.section", "duration": 4.6, "view": "iso", "extent": [-32, -12, 32, 22],
    "items": [
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
-    {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "capColor": "cap", "hatch": true, "height": 16, "keys": [[1.8, {"height": 16}], [2.8, {"height": 10}]]},
-    {"el": "plane", "plane": "yz", "center": [0, 0, 7], "size": [26, 18], "color": "sel", "fillOpacity": 0.1, "keys": [[1.8, {"center": [0, 0, 7]}], [2.8, {"center": [-6, 0, 7]}]]},
-    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Section", "rows": [["Plane", "YZ (X = 0)"], {"text": "Offset", "entry": "0 mm"}, {"text": "Cap", "check": true}], "keys": [[1.8, {"rows": [["Plane", "YZ (X = 0)"], {"text": "Offset", "entry": "-6"}, {"text": "Cap", "check": true}], "ease": "step"}], [2.2, {"rows": [["Plane", "YZ (X = 0)"], {"text": "Offset", "entry": "-6 mm"}, {"text": "Cap", "check": true}], "ease": "step"}]]}
+    {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "height": 32, "to": 1.3, "fade": 0},
+    {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "capColor": "cap", "height": 16, "from": 1.3, "fade": 0, "keys": [[2.2, {"height": 16}], [2.6, {"height": 10}]]},
+    {"el": "plane", "plane": "yz", "center": [0, 0, 7], "size": [26, 18], "color": "sel", "fillOpacity": 0, "from": 1.3, "keys": [[2.2, {"center": [0, 0, 7]}], [2.6, {"center": [-6, 0, 7]}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Section panel", "hl": -1,
+     "rows": [["Axis", "Z"], {"slider": 0.5}, {"text": "Offset", "entry": "0 mm"}, {"text": "Cap faces", "check": true}],
+     "keys": [[1.2, {"hl": 0}], [1.3, {"rows": [["Axis", "X"], {"slider": 0.5}, {"text": "Offset", "entry": "0 mm"}, {"text": "Cap faces", "check": true}], "ease": "step"}], [1.6, {"hl": -1}],
+              [1.9, {"rows": [["Axis", "X"], {"slider": 0.5}, {"text": "Offset", "entry": "-6"}, {"text": "Cap faces", "check": true}], "ease": "step"}],
+              [2.2, {"rows": [["Axis", "X"], {"slider": 0.38}, {"text": "Offset", "entry": "-6 mm"}, {"text": "Cap faces", "check": true}], "ease": "step"}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.1, {"screen": [0.4, 0.285]}], [1.2, {"screen": [0.4, 0.285], "click": 1}], [1.6, {"screen": [0.4, 0.53]}], [1.7, {"screen": [0.4, 0.53], "click": 1}], [2.6, {"screen": [0.7, 0.8]}]]}
    ],
    "steps": [
-    {"to": 1.6, "caption": "Open the Section panel"},
-    {"to": 4.4, "caption": "Type an exact offset; the cut moves"}
+    {"to": 1.4, "caption": "Open the Section panel and choose an axis"},
+    {"to": 4.6, "caption": "Type an exact offset; the cut moves"}
    ]
   }
  ]

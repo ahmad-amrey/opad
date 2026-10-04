@@ -19,9 +19,9 @@
    "id": "file.import",
    "title": "Import",
    "summary": "Adds a CAD model, mesh or drawing file to this design.",
-   "details": "The file's parts join the open document as new bodies, under the selected component if you choose to. A 2D drawing asks where it goes: onto a selected planar face, or on a plane you pick and place.",
+   "details": "The file's parts join the open document as new bodies, under the selected component if you choose to. A 2D drawing asks where it goes: onto a selected planar face, or on a plane you pick and place. A KiCad board first asks what to build.",
    "keywords": ["insert", "add file", "merge", "step", "dxf", "mesh"],
-   "requires": "Open or create a document first; editing a file in viewer mode asks you to save it first."
+   "requires": "A file in viewer mode asks you to save it as an OPAD document first."
   },
   {
    "id": "file.importdoc",
@@ -58,8 +58,8 @@
   {
    "id": "file.export",
    "title": "Export",
-   "summary": "Writes the selection or the whole design to STEP, STL, 3MF, OBJ, DXF, SVG and other formats.",
-   "details": "Choose the format and what to include in the dialog. Mesh formats are tessellated from the exact shapes; the 2D formats write drawings and sketches.",
+   "summary": "Writes the selection or the whole design to STEP, STL, OBJ, GLB, DXF, SVG, DWG, PDF or PNG.",
+   "details": "Choose the format and what to include in the dialog, then where the file goes. Mesh formats are tessellated from the exact shapes; the 2D formats write drawings and sketches, or a 2D view of solids with hidden lines.",
    "keywords": ["save as step", "stl", "3mf", "dxf", "svg", "write file", "output"],
    "requires": "Open or create a document first."
   },
@@ -67,7 +67,7 @@
    "id": "file.screenshot",
    "title": "Save screenshot",
    "summary": "Saves an image of the 3D view.",
-   "details": "The image shows the view as it is now, at the window's size. PNG and JPEG are supported.",
+   "details": "A dialog asks where to save the PNG. The image is the 3D view as it is now, at its size on screen; panels and chips are left out.",
    "keywords": ["image", "picture", "png", "capture", "render"],
    "requires": "Open or create a document first."
   },
@@ -366,8 +366,8 @@
   {
    "id": "panel.section",
    "title": "Section panel",
-   "summary": "Opens the section panel: plane, offset, caps and named sections.",
-   "details": "Here you choose the cutting plane, type an exact offset and save sections by name. Dragging the plane's handle in the view does the same.",
+   "summary": "Opens the section panel: axis, offset, caps and named sections.",
+   "details": "Here you choose the cutting axis or a face, type an exact offset and save sections by name. Dragging the plane's edge in the view does the same.",
    "keywords": ["cut", "clipping", "cross section"],
    "requires": "Open or create a document first."
   },
@@ -745,7 +745,7 @@
   {
    "id": "help.reference",
    "title": "Tool guide",
-   "summary": "Every command with what it does, its keys and an animated guide, searchable.",
+   "summary": "The commands, each with what it does, its current keys and, for most, an animated guide; searchable.",
    "details": "Search by name or by what you want to do; pick a command to see its card and its clip, and click a step to loop it. A command not available now says what it needs.",
    "keywords": ["help", "reference", "manual", "documentation", "how to", "all commands", "tutorial"]
   },

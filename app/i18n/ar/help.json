@@ -462,7 +462,6 @@
  "Type the new name": "اكتب الاسم الجديد",
  "You go on in the new file": "تتابع العمل في الملف الجديد",
  "{press:file.export}": "{press:file.export}",
- "Choose the format": "اختر الصيغة",
  "The file is written": "يُكتب الملف",
  "{press:file.screenshot}": "{press:file.screenshot}",
  "The view is saved as an image": "يُحفظ العرض صورةً",
@@ -499,8 +498,6 @@
  "Every component, body and sketch is listed": "يُدرج كل مكوّن وجسم ورسم",
  "{press:panel.timeline}": "{press:panel.timeline}",
  "Each step; hover for who and when": "كل خطوة؛ مرّر لمعرفة من ومتى",
- "Cap": "الغطاء",
- "Open the Section panel": "افتح لوحة المقطع",
  "Type an exact offset; the cut moves": "اكتب إزاحة دقيقة؛ ينتقل القطع",
  "%1 is not available right now.": "%1 غير متاح الآن.",
  "Guide for this tool": "دليل هذه الأداة",
@@ -808,5 +805,13 @@
  "It goes; a Remove step keeps its history": "يختفي، وتحفظ خطوة الإزالة سجله",
  "Click a step: what it made is selected": "انقر خطوة: يُحدَّد ما صنعته",
  "{press:edit.selecttouched}: its whole bodies are selected": "{press:edit.selecttouched}: تُحدَّد أجسامها كاملة",
- "{press:annotate.resolve}": "{press:annotate.resolve}"
+ "{press:annotate.resolve}": "{press:annotate.resolve}",
+ "Choose where the .opad goes": "اختر مكان ملف ‎.opad‎",
+ "Saved bracket.opad; it can be edited now": "حُفظ bracket.opad؛ ويمكن تحريره الآن",
+ "Exported 1 objects to bracket.stl": "تم تصدير 1 عناصر إلى bracket.stl",
+ "Choose the format and what to include": "اختر الصيغة وما يُضمَّن",
+ "Choose where the file goes": "اختر مكان الملف",
+ "Saved view.png": "تم حفظ view.png",
+ "Choose where the PNG goes": "اختر مكان ملف PNG",
+ "Open the Section panel and choose an axis": "افتح لوحة المقطع واختر محورًا"
 }
