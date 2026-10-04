@@ -1,5 +1,6 @@
 #include "AppDocument.hpp"
 #include "check.hpp"
+#include "opad/design/feature.hpp"
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QFileInfo>
@@ -149,6 +150,64 @@ int main(int argc, char** argv) {
       doc.newDocument();  // another document: the root
       CHECK(doc.activeComponent().empty() && changes == 4);
       QObject::disconnect(counted);
+    }
+    // The user's roll-back (the timeline's playhead, UI-99): an editor takes it over and gives it back as it ends, also after
+    // committing an edit of an earlier step (shown from there); a step of another kind rolls forward to the end.
+    {
+      doc.newDocument();
+      auto box = [&](const char* name, double z) {
+        return doc.run("feature", opad::json{{"kind", "box"}, {"name", name}, {"inputs", {{"plane", {{"origin", {0, 0, z}}, {"normal", {0, 0, 1}}}}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "5 mm"}}}})["feature_id"].get<std::string>();
+      };
+      const std::string a = box("A", 0), b = box("B", 20), c = box("C", 40);
+      doc.rollBackTo(c);
+      CHECK(doc.rolledBack() && doc.rollback() == c && !doc.scene.feature(c));
+      doc.setRollback(a);  // an editor on A
+      CHECK(!doc.rolledBack() && doc.rollback() == a);
+      doc.setRollback({});  // cancelled
+      CHECK(doc.rolledBack() && doc.rollback() == c);
+      doc.setRollback({});  // a second end (the editor's clean-up) leaves the user's roll-back alone
+      CHECK(doc.rolledBack() && doc.rollback() == c);
+      doc.setRollback(b);
+      auto edit = [&](const std::string& op, const char* height) {  // as the feature panel commits it (the op itself rolled back)
+        opad::json inputs = doc.doc.find_op(op)->data["inputs"];
+        inputs["height"] = height;
+        doc.commitPlan(opad::design::plan_ops(doc.doc, {opad::design::make_edit_op(op, {{"inputs", inputs}})}), "edit");
+      };
+      edit(b, "8 mm");
+      doc.setRollback({});
+      CHECK(doc.rolledBack() && doc.rollback() == c && doc.scene.feature(b)->inputs["height"] == "8 mm" && !doc.scene.feature(c));
+      edit(a, "6 mm");  // rolled back by the user, an edit of an earlier step: still rolled back
+      CHECK(doc.rolledBack() && doc.rollback() == c && doc.scene.feature(a)->inputs["height"] == "6 mm");
+      doc.run("rename", opad::json{{"target", doc.scene.all_bodies().front()}, {"name", "x"}});  // anything else: at the end
+      CHECK(!doc.rolledBack() && doc.rollback().empty() && doc.scene.feature(c));
+      // How a body looks is view state: a later hide shows on an earlier state where the body is (one whose body comes later
+      // is left out quietly), and hiding while rolled back keeps the roll-back.
+      auto bodyOf = [&](const std::string& op) {
+        for (const auto& id : doc.scene.all_bodies())
+          if (doc.scene.node(id)->source_op == op) return id;
+        return std::string();
+      };
+      const std::string bodyA = bodyOf(a), bodyB = bodyOf(b), bodyC = bodyOf(c);
+      CHECK(!bodyA.empty() && !bodyB.empty() && !bodyC.empty());
+      doc.run("appearance", opad::json{{"target", bodyA}, {"visible", false}});
+      doc.run("appearance", opad::json{{"target", bodyC}, {"visible", false}});
+      doc.rollBackTo(c);
+      CHECK(doc.rolledBack() && !doc.scene.node(bodyA)->visible && !doc.scene.node(bodyC) && doc.scene.unresolved.empty());
+      doc.run("appearance", opad::json{{"target", bodyB}, {"color", {1.0, 0.0, 0.0}}});
+      CHECK(doc.rolledBack() && doc.rollback() == c && doc.scene.node(bodyB)->has_color && !doc.scene.feature(c));
+      doc.undo(3);
+      CHECK(doc.rolledBack() && doc.scene.node(bodyA)->visible && !doc.scene.node(bodyB)->has_color);
+      doc.rollBackTo(b);
+      doc.setRollback(a);
+      doc.commitPlan(opad::design::plan_ops(doc.doc, {opad::design::make_feature_op("box", "D", {{"length", "4 mm"}, {"width", "4 mm"}, {"height", "4 mm"}})}), "box");
+      doc.setRollback({});  // the editor committed a new step: it ends at the end
+      CHECK(!doc.rolledBack() && doc.rollback().empty() && doc.scene.feature(c));
+      doc.rollBackTo(c);
+      doc.setRollback(a);
+      doc.newDocument();  // another document: neither roll-back is kept
+      CHECK(!doc.rolledBack() && doc.rollback().empty());
+      doc.setRollback({});
+      CHECK(!doc.rolledBack() && doc.rollback().empty());
     }
     int resets=0;
     QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});

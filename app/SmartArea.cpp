@@ -18,6 +18,7 @@
 #include "Jobs.hpp"
 #include "Ribbon.hpp"
 #include "ShortcutEditor.hpp"
+#include "Units.hpp"
 #include "Viewport.hpp"
 #include "opad/geometry.hpp"
 
@@ -26,17 +27,16 @@ OPAD_ICON_TABLE(smart,
   {"similar", R"(<circle cx="6.5" cy="6.5" r="3" fill="currentColor" fill-opacity=".5"/><circle cx="17.5" cy="6.5" r="3"/><circle cx="6.5" cy="17.5" r="3"/><circle cx="17.5" cy="17.5" r="3"/>)"});
 
 namespace {
-QString amount(double v) { return QString::number(std::round(v * 1000) / 1000, 'g', 10); }
-// What a rule selected, in the user's language (the core's labels are English data).
+// What a rule selected, in the user's language (the core's labels are English data) and the shown units.
 QString similarText(const opad::Recognized& r) {
   const auto& p = r.params;
-  auto value = [&](const char* key) { return p.contains(key) && p[key].is_number() ? amount(p[key].get<double>()) : QString(); };
+  auto value = [&](const char* key, units::Kind kind = units::Kind::Length) { return p.contains(key) && p[key].is_number() ? units::compact(kind, p[key].get<double>()) : QString(); };
   if (r.rule == "hole") return p.value("through", false) ? SmartArea::tr("Holes Ø%1 through").arg(value("diameter")) : SmartArea::tr("Holes Ø%1").arg(value("diameter"));
   if (r.rule == "fillet") return SmartArea::tr("Fillets R%1").arg(value("radius"));
-  if (r.rule == "chamfer") return SmartArea::tr("Chamfers %1 mm").arg(value("distance"));
-  if (r.rule == "wall") return SmartArea::tr("Walls %1 mm").arg(value("thickness"));
+  if (r.rule == "chamfer") return SmartArea::tr("Chamfers %1").arg(value("distance"));
+  if (r.rule == "wall") return SmartArea::tr("Walls %1").arg(value("thickness"));
   if (r.rule == "radius") return r.faces.empty() ? SmartArea::tr("Circular edges R%1").arg(value("radius")) : SmartArea::tr("Round faces R%1").arg(value("radius"));
-  if (r.rule == "angle") return SmartArea::tr("Conical faces %1°").arg(value("angle"));
+  if (r.rule == "angle") return SmartArea::tr("Conical faces %1").arg(value("angle", units::Kind::Angle));
   if (r.rule == "normal") return SmartArea::tr("Faces facing the same way");
   if (r.rule == "area") return SmartArea::tr("Faces of the same area");
   if (r.rule == "direction") return SmartArea::tr("Parallel edges");

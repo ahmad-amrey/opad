@@ -241,6 +241,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     else if (!id.empty()) emit fitRequested({id});
   });
   connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
+    if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, id] { emit m_tree->eyeClicked(id); });  // a copy being taken: shortly
     if(!m_editedSketch.empty() && id==m_editedSketch){emit editedSketchVisibilityRequested();return;}
     if (id.empty()) {  // document row: toggle every root
       bool anyVisible = false;

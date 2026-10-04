@@ -15,8 +15,8 @@ class QScrollBar;
 // ---------------------------------------------------------------- timeline
 // One marker per op, left to right. Markers are icons, or icons with names (setShowNames); the design history alone hides
 // renames, colours, views and sections (setDesignOnly). The playhead after the last marker is the roll-back marker: drawn
-// where the scene stops (AppDocument::rollback, an editor's or the user's), dragged it asks for a roll-back
-// (rollbackRequested). Ctrl+C copies the current marker's op id.
+// where the scene stops (AppDocument::rollback, an editor's or the user's), dragged (or moved with Shift and the arrows,
+// Home and End) it asks for a roll-back (rollbackRequested). Ctrl+C copies the current marker's op id.
 class TimelineWidget : public QWidget {
   Q_OBJECT
  public:
@@ -40,6 +40,10 @@ class TimelineWidget : public QWidget {
   std::vector<std::string> shownOps() const;  // the ops drawn as markers, in order (benches)
   QString describe(const opad::Op& op) const;
   QString label(const opad::Op& op) const;  // the name a marker carries (its feature's, its file's)
+  QString icon(const opad::Op& op) const { return iconFor(op); }
+  // Whether an op gets a marker: every step but view state (visibility, notes, measurements); with `designOnly` only what
+  // makes and places geometry.
+  static bool shows(const opad::Document& doc, const opad::Op& op, bool designOnly);
   // Points at an op's marker (smart selection's hover, Find in timeline): scrolled into view, a candidate-amber ring that
   // pulses for about a second and a half. Empty: stops.
   void pulse(const std::string& id);
@@ -50,7 +54,8 @@ class TimelineWidget : public QWidget {
   bool designOnly() const { return m_designOnly; }
   size_t markerCount() const { return m_shown.size(); }
   QRect markerAt(const std::string& id) const;  // where an op's marker is drawn (empty when it is not shown)
-  QRect playhead() const;                       // the roll-back marker's grip
+  QRect playhead() const;                       // the roll-back marker's grip (where it is drawn while dragged or moved by keys)
+  bool playheadMoving() const { return m_dragging || m_keyed; }
   // The op the scene stops before for a playhead dropped after this op's marker (Roll back to here); empty: the end.
   std::string rollPointAfter(const std::string& id) const;
   // More lines for a marker's tooltip, from feature areas (an import's source file, who committed it): HTML, appended in
@@ -87,6 +92,9 @@ class TimelineWidget : public QWidget {
   void ensureVisible(size_t index);
   void ensureCurrentVisible();
   void setHover(int index);
+  static bool playheadKey(int key);
+  void nudgePlayhead(int key);
+  void dropPlayhead(size_t gap);  // the playhead let go in this gap: asks for that roll-back when it moved
   QScrollBar* m_scroll;
   QString iconFor(const opad::Op& op) const;
   int indexAt(const QPoint& p) const;
@@ -110,7 +118,9 @@ class TimelineWidget : public QWidget {
   class QTimer* m_pulseTimer = nullptr;
   QRect m_prevBtn, m_nextBtn;
   bool m_names = false, m_designOnly = false;
-  bool m_dragging = false;  // the playhead
+  bool m_dragging = false;  // the playhead, by the mouse
+  bool m_keyed = false;     // the playhead, by keys: drawn at m_dragGap until m_keyTimer drops it there
+  class QTimer* m_keyTimer = nullptr;
   size_t m_dragGap = 0;
   std::vector<TipProvider> m_tips;
 };

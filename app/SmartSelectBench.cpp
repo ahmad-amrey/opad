@@ -27,13 +27,15 @@
 // the boss's actions), again the body; Ctrl+Down twice climbs back to the two faces. Shift+Space lists the candidates; its
 // Select what depends on the boss selects Round's faces. Double-clicks are mouse events through the view's own handlers,
 // OCCT picking under the pointer (Viewport::benchFlush stands in for the frames a hidden window never paints): on the
-// boss's top one selects the boss, another one opens it for editing. An edge between two faces seen from the view,
+// boss's top one selects the boss (first in the Bodies filter, which turns to faces), another one opens it for editing. An edge between two faces seen from the view,
 // double-clicked 2 px off it: the loop of the face on the pointer's side (the top's, then the front's); Alt on a straight
 // edge says nothing continues it, on the boss's top selects its tangent chain. The chip's
 // Delete on the boss: the question names Round, which uses it, with the result previewed; deleting both leaves the base
 // alone, the toast's Undo brings them back. Deleting Round, which nothing uses, asks nothing. The chip's Find in timeline,
-// Isolate and Suppress (undone from its toast) on the boss. Suggestions off: no chip by itself, Ctrl+Up still asks; on
-// again with Edit > Suggestion delay at 1 s, the chip comes after a second. Enter on the boss's faces edits it. Shots: <prefix>.chip.png,
+// Isolate and Suppress (undone from its toast) on the boss. Suggestions off: no chip by itself, Ctrl+Up still asks, and
+// asks again after its query was dropped by a new selection; on again with Edit > Suggestion delay at 1 s, the chip comes
+// after a second. Enter on the boss's faces edits it. During a slow save a marker's question and nine Ctrl+Up's wait for
+// one copy and are all answered. Shots: <prefix>.chip.png,
 // .actions.png, .menu.png, .question.png, .hover.png. Texts are compared in the language shown (case smartselect-rtl).
 OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
   struct State {
@@ -42,7 +44,8 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
     std::vector<opad::Ref> bossFaces, roundFaces, two;
     opad::Ref top;    // the boss's top face
     opad::Ref front;  // the base's front top edge
-    bool usersSeen = false, frontSide = false, tangentAsked = false, tangent = false, quietAsked = false;
+    bool usersSeen = false, frontSide = false, tangentAsked = false, tangent = false, quietAsked = false, dropped = false, regrown = false, held = false;
+    bool bodyAsked = false, bodyDone = false;
     size_t ops = 0;
     int faces = 0;
     QElapsedTimer clock;
@@ -147,11 +150,20 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           state->ops = w.m_doc->doc.ops.size();
           w.setWorkspace("design");
           w.m_viewport->standardView("iso");
-          w.action("select.faces")->trigger();
           break;
         }
         case 2:
-          if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face) return;
+          if (!state->bodyDone) {  // the Bodies filter, the app's own at first: a double-click on the boss's top
+            if (!std::exchange(state->bodyAsked, true)) {
+              require(w.m_viewport->selectionFilter() == Viewport::SelFilter::Body, "the Bodies filter at first");
+              doubleClick(topPoint());
+              return;
+            }
+            if (!waitFor(selected(state->bossFaces) && w.m_viewport->selectionFilter() == Viewport::SelFilter::Face, "a double-click on the boss in the Bodies filter selects its faces")) return;
+            pass("a double-click on the boss's top in the Bodies filter switched the view to faces and selected the boss's five faces");
+            state->bodyDone = true;
+            return;
+          }
           pick(state->two);
           break;
         case 3: {
@@ -453,8 +465,24 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           break;
         }
         case 28: {
-          if (!waitFor(selected(state->bossFaces) && area->chip()->isVisible(), "Ctrl+Up still climbs with suggestions off")) return;
-          pass("with suggestions off no chip came by itself; Ctrl+Up still selected the boss, with its actions");
+          if (!state->dropped) {
+            if (!waitFor(selected(state->bossFaces) && area->chip()->isVisible(), "Ctrl+Up still climbs with suggestions off")) return;
+            pass("with suggestions off no chip came by itself; Ctrl+Up still selected the boss, with its actions");
+            // Ctrl+Up asks, and the picks go before the answer: that query is dropped and the next Ctrl+Up asks again.
+            pick(state->two);
+            w.action("edit.selectparent")->trigger();
+            pick({});
+            state->dropped = true;
+            return;
+          }
+          if (!state->regrown) {
+            pick(state->two);
+            w.action("edit.selectparent")->trigger();
+            state->regrown = true;
+            return;
+          }
+          if (!waitFor(selected(state->bossFaces) && area->chip()->isVisible(), "Ctrl+Up asks again after a query dropped by a new selection")) return;
+          pass("a query dropped by a new selection leaves nothing behind: the next Ctrl+Up selected the boss again");
           QMenu* delay = w.findChild<QMenu*>("smartSuggestDelay");
           require(delay && !delay->menuAction()->isEnabled(), "Edit > Suggestion delay, off with the suggestions");
           w.action("select.suggest")->trigger();
@@ -491,11 +519,33 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           w.m_design->escape();
           break;
         }
-        case 32:
+        case 32: {
           if (!waitFor(!w.m_design->featureActive(), "Esc leaves the edit")) return;
+          // A slow save holds the document: Boss's marker under the pointer and nine Ctrl+Up's all wait for one copy; none is
+          // dropped (each kind of question keeps its newest), so the marker's answer comes and the last Ctrl+Up climbs.
+          require(!area->made(), "what the steps made is asked again for this state");
+          w.m_doc->saveAsync(w.m_jobs, prefix + ".saved.opad", true, [](bool, const QString&) {}, 1200);
+          area->markerHovered(state->boss);
+          QTimer::singleShot(300, &w, [&w, state] {
+            for (int i = 0; i < 9; ++i) {
+              w.m_viewport->selectRefs(i % 2 ? std::vector<opad::Ref>{state->top} : state->two);
+              w.onViewportSelection();
+              w.action("edit.selectparent")->trigger();
+            }
+            state->held = w.m_doc->snapshotBusy();
+          });
+          break;
+        }
+        case 33: {
+          if (!waitFor(area->made() && selected(state->bossFaces), "the marker's answer and the last Ctrl+Up after the save")) return;
+          require(state->held, "the nine Ctrl+Up's came while the save held the document");
+          require(area->made()->count(state->boss) && area->made()->at(state->boss).faces.size() == 5, "what Boss made: its five faces");
+          area->markerHovered({});
+          pass("a marker's question and nine Ctrl+Up's waiting for one copy: all answered (Boss's five faces found, the last Ctrl+Up climbed)");
           timer->stop();
           QCoreApplication::exit(0);
           return;
+        }
       }
       ++state->phase;
     } catch (const std::exception& e) {

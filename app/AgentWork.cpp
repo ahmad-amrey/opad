@@ -7,6 +7,7 @@
 #include "opad/render.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mass.hpp"
+#include "opad/design/provenance.hpp"
 #include <QLocalSocket>
 #include <QUuid>
 #include <QThread>
@@ -264,8 +265,11 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       if(p.cancelled())throw opad::Error("cancelled");
       p.setPhase(tr("Computing geometry and context"));
       if(name=="live_state"){
-        result->output=state;auto& refs=result->output["selection"];for(auto& r:refs){
-          auto ref=opad::Ref::from_json(r);if(source->scene.node(ref.body))r=entity_details(*source->doc,source->scene,{{"ref",r},{"limit",10}});
+        result->output=state;auto& refs=result->output["selection"];
+        opad::design::Provenance provenance(*source->doc,[p]{return p.cancelled();});  // created_by: once per body, not per pick
+        for(auto& r:refs){
+          if(p.cancelled())throw opad::Error("cancelled");
+          auto ref=opad::Ref::from_json(r);if(source->scene.node(ref.body))r=entity_details(*source->doc,source->scene,{{"ref",r},{"limit",10}},&provenance);
         }
       }else if(name=="context")result->output=context(*source->doc,source->scene,args);
       else if(name=="sketch_details")result->output=sketch_details(*source->doc,source->scene,args);

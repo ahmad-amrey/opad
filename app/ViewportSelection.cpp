@@ -172,3 +172,17 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
     return true;
   },finish);
 }
+
+void Viewport::contextPick(const QPointF& at) {
+  if (!m_initialised || m_blocked || m_pickAccumulate || m_sketchInput || m_measureSelectionLocked || m_retainToolPicks || !m_bodiesPickable) return;
+  const Graphic3d_Vec2i p = devicePos(at);
+  m_ctx->MoveTo(p.x(), p.y(), m_view, Standard_False);
+  if (!m_ctx->HasDetected() || !Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner()).IsNull()) return;
+  const auto node = m_nodeOf.find(m_ctx->DetectedInteractive().get());  // a body's, not the cube, a note or a marker
+  if (node == m_nodeOf.end() || m_ctx->IsSelected(m_ctx->DetectedOwner())) return;
+  for (const auto& r : selection())
+    if (r.body == node->second && r.kind == opad::Ref::Kind::Body) return;  // its body is selected whole
+  if (trace::enabled()) trace::log("3D right click: selects what is under the pointer");
+  m_ctx->SelectDetected(AIS_SelectionScheme_Replace);
+  OnSelectionChanged(m_ctx, m_view);
+}

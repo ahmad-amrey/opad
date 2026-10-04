@@ -31,14 +31,13 @@ const std::map<std::string, smart::Made>* SmartSelect::made() const {
 }
 
 // Once per document state, on a worker; whatever asks meanwhile waits for the same answer.
-void SmartSelect::withMade(std::function<void(const std::map<std::string, smart::Made>&)> then) {
+void SmartSelect::withMade(Use use, std::function<void(const std::map<std::string, smart::Made>&)> then) {
   if (const auto* m = made()) return then(*m);
-  if (m_afterMade.size() >= 8) m_afterMade.erase(m_afterMade.begin());
-  m_afterMade.push_back(std::move(then));
+  m_afterMade[use] = std::move(then);  // the newest of each
   if (m_madeRunning) return;
   m_madeRunning = true;  // from the snapshot on (busy() counts it)
   const unsigned token = ++m_madeToken;
-  withSnapshot([this, token](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Made, [this, token](std::shared_ptr<const opad::Document> document) {
     if (token != m_madeToken) return;
     const auto revision = m_snap.revision, generation = m_snap.generation;  // the copy's state
     auto result = std::make_shared<std::map<std::string, smart::Made>>();
@@ -54,14 +53,14 @@ void SmartSelect::withMade(std::function<void(const std::map<std::string, smart:
         return;
       }
       if (d->revision != revision || d->generation != generation) {  // changed meanwhile: what it is now
-        for (auto& fn : std::exchange(m_afterMade, {})) withMade(std::move(fn));
+        for (auto& [use, fn] : std::exchange(m_afterMade, {})) withMade(use, std::move(fn));
         return;
       }
       m_made = result;
       m_madeRevision = revision;
       m_madeGeneration = generation;
       trace::log(QString("smart select: timeline: what %1 op(s) made found").arg(result->size()));
-      for (auto& fn : std::exchange(m_afterMade, {})) fn(*result);
+      for (auto& [use, fn] : std::exchange(m_afterMade, {})) fn(*result);
     });
   });
 }
@@ -110,7 +109,7 @@ void SmartSelect::showMarker() {
   if (std::find(deleted.begin(), deleted.end(), op) != deleted.end()) return show({});
   // A feature's own faces in the last state; rolled back, or anything else, the bodies as shown.
   if (!doc->rollback().empty() || !doc->scene.feature(op)) return show(markerBodies(op));
-  withMade([this, op, show](const std::map<std::string, smart::Made>& made) {
+  withMade(Use::Hover, [this, op, show](const std::map<std::string, smart::Made>& made) {
     const AppDocument* d = services().document();
     if (services().design()->sketchActive() || services().design()->ownsSelection()) return;
     if (!d->rollback().empty()) return show(markerBodies(op));  // rolled back meanwhile: other faces are shown
@@ -144,7 +143,7 @@ bool SmartSelect::markerClicked(const std::string& op) {
   const auto bodies = markerBodies(op);
   if (!made()) services().select(bodies);  // at once, the faces once they are known
   const auto picks = services().selection().refs;
-  withMade([this, c, token, bodies, picks](const std::map<std::string, smart::Made>& made) mutable {
+  withMade(Use::Click, [this, c, token, bodies, picks](const std::map<std::string, smart::Made>& made) mutable {
     if (token != m_markerToken || !idle() || services().timeline()->currentOp() != c.op || !smart::sameRefs(services().selection().refs, picks)) return;
     const auto it = made.find(c.op);
     if (it == made.end() || it->second.faces.empty()) return services().select(bodies);

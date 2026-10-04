@@ -151,6 +151,14 @@ Job* AppDocument::readAsync(JobRunner* jobs, const QString& title, std::function
   return job;
 }
 
+void AppDocument::afterCapture(std::function<void()> fn) {
+  if (!m_capturing) return fn();
+  const auto identity = generation;
+  QTimer::singleShot(10, this, [this, identity, fn = std::move(fn)] {
+    if (generation == identity) afterCapture(fn);
+  });
+}
+
 // Viewer mode -> editable (kept beside the other worker-backed document jobs; AppDocument.cpp stays free of JobRunner).
 void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const QString&)> done) {
   if (!browse || loading || designBusy || m_converting || m_capturing) {

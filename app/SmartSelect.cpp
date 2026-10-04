@@ -346,6 +346,7 @@ void SmartSelect::selectionChanged(const SelectionContext& selection) {
     m_pending = Pending::None;
     m_wait.stop();
     ++m_token;
+    if (m_job) m_job->cancel();
     m_found = {};
     return hideChip();
   }
@@ -375,7 +376,7 @@ void SmartSelect::run() {
   const unsigned token = ++m_token;
   const AppDocument* doc = services().document();
   const auto revision = doc->revision, generation = doc->generation;
-  withSnapshot([this, token, picks, revision, generation](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Related, [this, token, picks, revision, generation](std::shared_ptr<const opad::Document> document) {
     if (token != m_token) return;
     auto out = std::make_shared<Found>();
     out->picks = picks;
@@ -408,8 +409,8 @@ void SmartSelect::run() {
       box.Get(x0, y0, z0, x1, y1, z1);
       for (int i = 0; i < 8; ++i) out->corners.push_back({i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0});
     }, [this, token, out](bool ok, const QString& error) {
+      m_job = nullptr;  // the one running: each starts after the last one is cancelled
       if (token != m_token) return;  // a newer selection
-      m_job = nullptr;
       if (!ok) {
         if (error != "cancelled") trace::log("smart select: " + error);
         m_pending = Pending::None;
@@ -417,7 +418,10 @@ void SmartSelect::run() {
       }
       const AppDocument* doc = services().document();
       if (doc->revision != out->revision || doc->generation != out->generation) return request(true);
-      if (!smart::sameRefs(out->picks, m_current)) return;
+      if (!smart::sameRefs(out->picks, m_current)) {  // picked on meanwhile without asking (suggestions off): a key waits
+        if (m_pending != Pending::None) request(true);
+        return;
+      }
       out->best = smart::headline(out->candidates, out->picks, out->faces);
       out->active = smart::matching(out->candidates, out->picks);
       out->ready = true;
@@ -427,15 +431,13 @@ void SmartSelect::run() {
   });
 }
 
-void SmartSelect::withSnapshot(std::function<void(std::shared_ptr<const opad::Document>)> fn) {
+void SmartSelect::withSnapshot(Use use, std::function<void(std::shared_ptr<const opad::Document>)> fn) {
   AppDocument* doc = services().document();
   if (m_snap.doc && m_snap.revision == doc->revision && m_snap.generation == doc->generation) {
     m_dropSnapshot.start();
     return fn(m_snap.doc);
   }
-  // Everything that asks while the copy is made gets it (each drops a stale answer itself); a handful at most.
-  if (m_afterCapture.size() >= 8) m_afterCapture.erase(m_afterCapture.begin());
-  m_afterCapture.push_back(std::move(fn));
+  m_afterCapture[use] = std::move(fn);  // everything that asks while the copy is made gets it, the newest of each
   capture();
 }
 
@@ -445,16 +447,20 @@ void SmartSelect::capture() {
   const auto revision = doc->revision, generation = doc->generation;
   m_capturing = doc->captureSnapshot(services().jobs(), [this, revision, generation](std::shared_ptr<opad::Document> copy, const QString&) {
     m_capturing = false;
-    if (!copy) {
-      m_madeRunning = false;  // what waited for the copy is dropped
+    if (!copy) {  // cancelled or failed: what waited for the copy is dropped, a delete asked for says so
+      const bool deleting = m_afterCapture.count(Use::Delete) > 0;
+      m_afterCapture.clear();
+      m_madeRunning = false;
       m_afterMade.clear();
-      return m_afterCapture.clear();
+      m_pending = Pending::None;
+      if (deleting) services().showMessage(tr("The document could not be read to check the delete; delete again."), 6000);
+      return;
     }
     const AppDocument* d = services().document();
     if (d->revision != revision || d->generation != generation) return capture();  // changed meanwhile: what it is now
     m_snap = {std::move(copy), revision, generation};
     m_dropSnapshot.start();
-    for (auto& fn : std::exchange(m_afterCapture, {})) fn(m_snap.doc);
+    for (auto& [use, fn] : std::exchange(m_afterCapture, {})) fn(m_snap.doc);
   });
   if (!m_capturing) {  // busy (a design change, a save, another copy): once more shortly
     m_retrying = true;
@@ -753,12 +759,7 @@ QList<QAction*> SmartSelect::actionsFor(int index, QObject* parent) {
       });
     });
   }
-  if (!c.op.empty()) add("locate", tr("Find %1 in the timeline").arg(name), "smartFind", [this, c] {
-    if (TimelineWidget* t = services().timeline()) {
-      t->setCurrentOp(c.op);
-      t->pulse(c.op);
-    }
-  });
+  if (!c.op.empty()) add("locate", tr("Find %1 in the timeline").arg(name), "smartFind", [this, c] { services().findInTimeline(c.op); });
   const bool faces = !c.refs.empty() && c.refs.front().kind == opad::Ref::Kind::Face;
   if (c.group() && faces) {
     add("removeFaces", tr("Remove %1: the faces around it close the gap").arg(name), "smartRemove", [this, c] {
@@ -853,14 +854,12 @@ void SmartSelect::findOwner() {
   }
   const int o = owner();
   if (o < 0) return services().showMessage(tr("These were made by more than one step of the history: pick fewer to find what made them."), 6000);
-  if (TimelineWidget* t = services().timeline()) {
-    t->setCurrentOp(m_found.candidates[size_t(o)].op);
-    t->pulse(m_found.candidates[size_t(o)].op);
-  }
+  services().findInTimeline(m_found.candidates[size_t(o)].op);
 }
 
 void SmartSelect::documentChanged(bool replaced) {
   ++m_token;
+  if (m_job) m_job->cancel();
   m_pending = Pending::None;
   m_found = {};
   m_stack.clear();
@@ -887,6 +886,7 @@ void SmartSelect::doubleClicked(bool alt, const QPoint& at) {
   if (picks.size() != 1) return;
   const opad::Ref r = picks.front();
   if (r.kind == opad::Ref::Kind::Edge) return chain(r, alt, at);
+  if (r.kind == opad::Ref::Kind::Body && at.x() >= 0) return faceUnder(alt, at);
   if (r.kind != opad::Ref::Kind::Face) return;
   // Again on a face of the feature chosen before: edit that feature. Before the double-click: what was selected before its
   // first click, whether that click had reached the selection when the second came or not.
@@ -901,6 +901,26 @@ void SmartSelect::doubleClicked(bool alt, const QPoint& at) {
   }
   if (!smart::sameRefs(m_current, picks)) m_current = picks;
   alt ? tangentFaces() : grow();
+}
+
+// The Bodies filter picks bodies: the view switches to faces, picks the face under the pointer, and goes on from it as
+// from a double-click on that face (its feature or detail, Alt its tangent chain).
+void SmartSelect::faceUnder(bool alt, const QPoint& at) {
+  Viewport* v = services().viewport();
+  const unsigned token = ++m_switchToken;
+  m_switching = true;
+  connect(v, &Viewport::filterApplied, this, [this, v, alt, at, token] {
+    if (token != m_switchToken) return;
+    m_switching = false;
+    opad::Ref face;
+    if (!idle() || !v->referenceAt(QPointF(at), face) || face.kind != opad::Ref::Kind::Face) return;
+    trace::log("smart select: double-click on a body picked " + QString::fromStdString(face.str()));
+    m_expect = {face};
+    services().select({face});
+    m_current = {face};
+    alt ? tangentFaces() : grow();
+  }, Qt::SingleShotConnection);
+  v->setSelectionFilter(Viewport::SelFilter::Face);
 }
 
 void SmartSelect::tangentFaces() {
@@ -922,7 +942,7 @@ void SmartSelect::chain(const opad::Ref& edge, bool tangent, const QPoint& at) {
   const auto project = at.x() >= 0 ? v->projector() : Projector();
   const QPointF pointer(at);
   const unsigned token = ++m_chainToken;
-  withSnapshot([this, edge, tangent, view, project, pointer, token](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Chain, [this, edge, tangent, view, project, pointer, token](std::shared_ptr<const opad::Document> document) {
     if (token != m_chainToken) return;
     auto result = std::make_shared<std::vector<int>>();
     if (m_chainJob) m_chainJob->cancel();
@@ -972,8 +992,8 @@ void SmartSelect::chain(const opad::Ref& edge, bool tangent, const QPoint& at) {
         }
       }
     }, [this, token, edge, tangent, result](bool ok, const QString& error) {
-      if (token != m_chainToken) return;
       m_chainJob = nullptr;
+      if (token != m_chainToken) return;
       if (!ok) return services().showMessage(i18n::t(error), 6000);
       const auto picks = services().viewport()->selection();
       if (picks.size() != 1 || picks.front().body != edge.body || picks.front().index != edge.index || picks.front().kind != edge.kind) return;  // picked on
@@ -1054,20 +1074,24 @@ bool SmartSelect::deleteMarker(const std::string& op) {
 void SmartSelect::deleteFeature(const smart::Candidate& c) {
   if ((!c.feature() && c.kind != "sketch") || c.op.empty() || !services().requireEditable([this, c] { deleteFeature(c); })) return;
   AppDocument* doc = services().document();
-  if (doc->designBusy && !m_capturing) return services().showMessage(tr("The design is still being recomputed; try again in a moment."), 5000);
+  if (doc->designBusy && !doc->snapshotBusy()) return services().showMessage(tr("The design is still being recomputed; try again in a moment."), 5000);
   const auto revision = doc->revision, generation = doc->generation;
   const unsigned token = ++m_deleteToken;
-  withSnapshot([this, c, token, revision, generation](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Delete, [this, c, token, revision, generation](std::shared_ptr<const opad::Document> document) {
     if (token != m_deleteToken) return;
     auto plan = std::make_shared<opad::design::Plan>();
     auto parts = std::make_shared<std::vector<Viewport::PreviewPart>>();
     auto hidden = std::make_shared<std::vector<std::string>>();
     auto faces = std::make_shared<std::vector<opad::Ref>>();
+    auto deps = std::make_shared<std::vector<std::pair<std::string, std::string>>>();
     const bool findFaces = c.feature() && c.refs.empty();  // from its marker: what it made, for Remove its faces instead
-    services().jobs()->async(tr("Checking what deleting %1 changes").arg(QString::fromStdString(c.name)), [document, op = c.op, plan, parts, hidden, faces, findFaces](Progress p) {
+    services().jobs()->async(tr("Checking what deleting %1 changes").arg(QString::fromStdString(c.name)), [document, op = c.op, plan, parts, hidden, faces, deps, findFaces](Progress p) {
       const opad::design::Cancel cancel = [p] { return p.cancelled(); };
       *plan = opad::design::plan_ops(*document, {{{"op", "delete"}, {"target", op}}}, false, cancel);
-      if (findFaces && !plan->report.value("errors", opad::json::array()).empty()) {  // asked only when something depends on it
+      const opad::Scene before = opad::resolve(*document);
+      *deps = smart::dependents(plan->report, before, {op});
+      if (deps->empty()) return;  // nothing to ask about: this plan is committed
+      if (findFaces) {
         const auto made = smart::madeBy(*document, cancel);
         if (const auto it = made.find(op); it != made.end() && it->second.changes) *faces = it->second.faces;
       }
@@ -1076,7 +1100,7 @@ void SmartSelect::deleteFeature(const smart::Candidate& c) {
       opad::Document after = *document;
       after.shape_cache = opad::make_shape_cache();
       opad::design::commit(after, opad::design::Plan(*plan));
-      const opad::Scene before = opad::resolve(*document), now = opad::resolve(after);
+      const opad::Scene now = opad::resolve(after);
       for (const auto& id : before.all_bodies()) {
         if (cancel()) return;
         const opad::Node* n = now.node(id);
@@ -1091,7 +1115,7 @@ void SmartSelect::deleteFeature(const smart::Candidate& c) {
         BodyPrs::meshForDisplay(shape, box.IsVoid() ? 0.1 : std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.02, 2.0));
         parts->push_back({id, shape, BodyPrs::build(shape, box, true)});
       }
-    }, [this, found = c, token, plan, parts, hidden, faces, revision, generation](bool ok, const QString& error) {
+    }, [this, found = c, token, plan, parts, hidden, faces, deps, revision, generation](bool ok, const QString& error) {
       if (token != m_deleteToken) return;
       smart::Candidate c = found;
       if (c.refs.empty()) {
@@ -1104,10 +1128,9 @@ void SmartSelect::deleteFeature(const smart::Candidate& c) {
       }
       const AppDocument* d = services().document();
       if (d->revision != revision || d->generation != generation) return services().showMessage(tr("The document changed meanwhile; delete again."), 5000);
-      const auto deps = smart::dependents(plan->report, d->scene, {c.op});
-      if (trace::enabled()) trace::log(QString("smart select: deleting %1 breaks %2 feature(s)").arg(QString::fromStdString(c.name)).arg(deps.size()));
-      if (deps.empty()) return commitDelete(c, {c.op});
-      askDependents(c, deps, *parts, *hidden);
+      if (trace::enabled()) trace::log(QString("smart select: deleting %1 breaks %2 feature(s)").arg(QString::fromStdString(c.name)).arg(deps->size()));
+      if (deps->empty()) return commitDelete(c, {c.op}, plan);
+      askDependents(c, *deps, *parts, *hidden);
     });
   });
 }
@@ -1118,7 +1141,7 @@ void SmartSelect::selectUsers(const smart::Candidate& c) {
   const auto revision = doc->revision, generation = doc->generation;
   const unsigned token = ++m_usersToken;
   const QString name = QString::fromStdString(c.name);
-  withSnapshot([this, c, name, token, revision, generation](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Users, [this, c, name, token, revision, generation](std::shared_ptr<const opad::Document> document) {
     if (token != m_usersToken) return;
     auto users = std::make_shared<smart::Users>();
     services().jobs()->async(tr("Finding what depends on %1").arg(name), [document, op = c.op, users](Progress p) {
@@ -1200,17 +1223,19 @@ void SmartSelect::askDependents(const smart::Candidate& c, const std::vector<std
   menu->popup(m_chip && m_chip->isVisible() ? m_chip->mapToGlobal(QPoint(0, m_chip->height() + 2)) : QCursor::pos());
 }
 
-void SmartSelect::commitDelete(const smart::Candidate& c, std::vector<std::string> ops) {
+void SmartSelect::commitDelete(const smart::Candidate& c, std::vector<std::string> ops, std::shared_ptr<opad::design::Plan> planned) {
   services().viewport()->clearPreviewBodies();
   std::vector<opad::json> list;
   for (const auto& op : ops) list.push_back({{"op", "delete"}, {"target", op}});
   const QString name = QString::fromStdString(c.name);
   const size_t n = ops.size();
-  services().design()->applyOps(list, tr("delete %1").arg(name), [this, name, n](bool ok, const QString& error) {
+  auto done = [this, name, n](bool ok, const QString& error) {
     if (!ok) return emit services().design()->failed(error);
     trace::log(QString("smart select: deleted %1 (%2 op(s))").arg(name).arg(n));
     services().undoToast(n == 1 ? tr("Deleted %1").arg(name) : tr("Deleted %1 and %2 feature(s) using it").arg(name).arg(n - 1));
-  });
+  };
+  if (planned) return services().design()->commitPlanned(std::move(planned), tr("delete %1").arg(name), done);
+  services().design()->applyOps(list, tr("delete %1").arg(name), done);
 }
 
 // ---------------------------------------------------------------- words and icons

@@ -1,6 +1,7 @@
 #include "BenchRegistry.hpp"
 #include "MainWindow.hpp"
 #include "SmartArea.hpp"
+#include "Units.hpp"
 #include "opad/geometry.hpp"
 #include "opad/recognize.hpp"
 #include <BRepGProp.hxx>
@@ -69,7 +70,8 @@ OPAD_BENCH(OPAD_BENCH_SMART, smart) {
       case 3:
         require(area->similar().rules.size()==2,"two rules for a through hole wall: its holes, then every inside R3 face");
         require(same(w.m_viewport->selection(),state->four),"Select similar picked the four through holes");
-        require(w.statusBar()->currentMessage().contains("4 selected"),"the status bar says what was selected");
+        require(w.statusBar()->currentMessage().startsWith(SmartArea::tr("%1 · %2 selected").arg(SmartArea::tr("Holes Ø%1 through").arg(units::compact(units::Kind::Length,6))).arg(4)),
+                "the status bar says what was selected, in the shown units: "+w.statusBar()->currentMessage().toStdString());
         trace::log("bench: smart: Select similar from one wall selected the four through holes, status \""+w.statusBar()->currentMessage()+"\" PASS");
         w.m_ribbon->setCurrentTab(1);w.grab().save(prefix+".similar.png");  // Design > Modify, with Remove faces
         {

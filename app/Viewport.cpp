@@ -2470,6 +2470,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   }
   if (m_rightPress && e->button() == Qt::RightButton && (e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;
+    contextPick(e->position());
     emit contextMenuRequested(e->globalPosition().toPoint());
   }
   // A camera gesture is over: the sketch's own cursor again at once (ownCursorChanged: the editor snaps where the pointer is

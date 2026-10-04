@@ -330,6 +330,12 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
     // Another command drops one waiting for its selection; looking around (view, filters, panels, help) does not.
     static const QStringList looking{"view.", "select.", "nav.", "panel.", "help.", "workspace.", "edit.selectparent", "edit.filter", "edit.selectall", "edit.invert", "tools.commands"};
     if (!m_pendingPick.isEmpty() && std::none_of(looking.begin(), looking.end(), [&id](const QString& p) { return id.startsWith(p); })) cancelPendingPick();
+    // A copy of the document is being taken (smart selection's, an agent's) or it is being saved: a change or another
+    // document waits for that instead of failing.
+    if (m_doc->snapshotBusy() && (m_commands.editsDocument(id) || id.startsWith("file.") || id.startsWith("design.") || id == "edit.hide" || id == "edit.showall")) {
+      if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
+      return m_doc->afterCapture([a] { a->trigger(); });
+    }
     if (m_doc->viewOnly() && m_commands.editsDocument(id)) {  // viewer mode, read-only: offered, and asks to save first
       if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
       requireEditable([a] { a->trigger(); });
@@ -337,11 +343,16 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
     }
     // Rolled back with the timeline's marker (UI-99): a change goes at the end, so the model is rolled forward first,
     // and picks on the bodies as they were with it (TimelineArea).
-    if (m_doc->rolledBack() && m_commands.editsDocument(id))
+    if (m_doc->rolledBack() && m_commands.editsDocument(id)) {
+      // Picked faces and edges are the earlier state's and go as it rolls forward: Del on them must not fall through to
+      // their body or to the timeline's marker (UI-04).
+      if (id == "edit.delete" && !m_timeline->hasFocus() && std::any_of(m_selRefs.begin(), m_selRefs.end(), [](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Body; }))
+        return statusBar()->showMessage(tr("Rolled back: these faces and edges are an earlier state's. Roll forward and pick them again to delete what made them."), 8000);
       if (QAction* forward = action("timeline.rollForward")) {
         forward->trigger();
         statusBar()->showMessage(tr("Rolled forward to the end of the timeline: the change is added there."), 6000);
       }
+    }
     QScopedValueRollback<QString> running(m_runningCommand, id);
     guarded(fn);
     noteCommand(id);

@@ -17,19 +17,23 @@
 #include <QPointer>
 #include <QTimer>
 #include <functional>
+#include <map>
 #include <memory>
 #include <vector>
 
 #include "AreaController.hpp"
+#include "Jobs.hpp"
 #include "SmartRules.hpp"
 #include "Viewport.hpp"
 
-class Job;
 class QLabel;
 class QMenu;
 class QToolButton;
 namespace opad {
 class Document;
+namespace design {
+struct Plan;
+}
 }
 
 // The chip: a native child of the viewport (rounded by a mask: no translucency over the GL surface), 28 px high, never
@@ -119,11 +123,13 @@ class SmartSelect : public AreaController {
 
  private:
   enum class Pending { None, Grow, Menu, Delete, Tangent, Edit, Find };
+  // What waits for the document's copy or for what the steps made: the newest of each (an older one drops its answer).
+  enum class Use { Related, Chain, Made, Delete, Users, Hover, Click };
   bool idle() const;  // nothing else owns the picks: no load, sketch, feature input, guided tool or note
   static bool subPicks(const std::vector<opad::Ref>& refs);  // faces and edges only, a few thousand at most
   void request(bool now);
   void run();
-  void withSnapshot(std::function<void(std::shared_ptr<const opad::Document>)> fn);
+  void withSnapshot(Use use, std::function<void(std::shared_ptr<const opad::Document>)> fn);
   void finished();  // a result for the current picks arrived: the chip, then whatever waited for it
   void refreshChip();
   void hideChip();
@@ -136,9 +142,11 @@ class SmartSelect : public AreaController {
   QList<QAction*> actionsFor(int index, QObject* parent);  // new actions for that candidate (the chip's buttons, the menus)
   void askDependents(const smart::Candidate& c, const std::vector<std::pair<std::string, std::string>>& deps, const std::vector<Viewport::PreviewPart>& parts,
                      const std::vector<std::string>& hidden);
-  void commitDelete(const smart::Candidate& c, std::vector<std::string> ops);
+  // One undo step; `planned`: the plan deleteFeature made for exactly these ops on the document as it is.
+  void commitDelete(const smart::Candidate& c, std::vector<std::string> ops, std::shared_ptr<opad::design::Plan> planned = {});
   void deletePicks();
   void tangentFaces();  // Alt+double-click on a face: the faces joined to it by smooth edges
+  void faceUnder(bool alt, const QPoint& at);  // a double-click on a body (Bodies filter): the face at `at`, then as on it
   int owner() const;    // the candidate of the feature or import that made every pick, -1 if none
   void editOwner();     // the context menu's Edit (UI-100): that feature, once the answer is there
   void findOwner();     // its Find in timeline
@@ -161,10 +169,9 @@ class SmartSelect : public AreaController {
   Pending m_pending = Pending::None;
   QTimer m_wait, m_settle, m_dropSnapshot;
   unsigned m_token = 0, m_switchToken = 0, m_deleteToken = 0, m_chainToken = 0, m_usersToken = 0;
-  Job* m_job = nullptr;
-  Job* m_chainJob = nullptr;
+  QPointer<Job> m_job, m_chainJob;  // cleared as they finish, whatever selection they were for
   bool m_capturing = false;
-  std::vector<std::function<void(std::shared_ptr<const opad::Document>)>> m_afterCapture;  // waiting for the copy
+  std::map<Use, std::function<void(std::shared_ptr<const opad::Document>)>> m_afterCapture;  // waiting for the copy
   bool m_retrying = false;
   void capture();  // a copy of the document for what waits (again shortly while the document is busy)
   struct Snapshot {
@@ -182,10 +189,10 @@ class SmartSelect : public AreaController {
   bool markerClicked(const std::string& op);  // command timeline.select: true when it selects that feature's faces
   void showMarker();
   std::vector<opad::Ref> markerBodies(const std::string& op) const;  // what an op made or changed, as bodies of the scene shown
-  void withMade(std::function<void(const std::map<std::string, smart::Made>&)> then);
+  void withMade(Use use, std::function<void(const std::map<std::string, smart::Made>&)> then);
   std::shared_ptr<const std::map<std::string, smart::Made>> m_made;
   unsigned long long m_madeRevision = 0, m_madeGeneration = 0;
-  std::vector<std::function<void(const std::map<std::string, smart::Made>&)>> m_afterMade;
+  std::map<Use, std::function<void(const std::map<std::string, smart::Made>&)>> m_afterMade;
   bool m_madeRunning = false;
   unsigned m_madeToken = 0;
   std::string m_marker;  // hovered

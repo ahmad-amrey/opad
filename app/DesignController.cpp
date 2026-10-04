@@ -61,8 +61,6 @@ Viewport::SelFilter filterFor(const std::string& type) {
   return Viewport::SelFilter::Body;
 }
 
-QString titleCase(const std::string& label) { return QString::fromStdString(label).section(' ', 0, 0); }
-
 gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 
 // What a plan says the op `target` makes (its own result, or a regeneration's). An edit that changed nothing is not
@@ -217,6 +215,7 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
     else if (!ok) emit failed(error);
     emit stateChanged();
   };
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, ops = std::move(ops), label, done] { applyOps(ops, label, done); });  // a copy being taken
   if (m_doc->designBusy) return report(false, tr("The design is still being recomputed; try again in a moment."));
   m_doc->designBusy = true;
   const auto generation = m_doc->generation;
@@ -244,6 +243,31 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
         report(false, QString::fromUtf8(e.what()));
       }
     });
+  });
+}
+
+void DesignController::commitPlanned(std::shared_ptr<Plan> plan, const QString& label, std::function<void(bool, const QString&)> done) {
+  if (!m_doc->hasDocument || m_doc->browse) return;
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, plan, label, done] { commitPlanned(plan, label, done); });
+  auto report = [this, done](bool ok, const QString& error) {
+    if (done) done(ok, error);
+    else if (!ok) emit failed(error);
+    emit stateChanged();
+  };
+  if (m_doc->designBusy) return report(false, tr("The design is still being recomputed; try again in a moment."));
+  m_doc->designBusy = true;
+  const auto generation = m_doc->generation;
+  whenNobodyReads(this, [this, plan, label, report, generation] {
+    if (generation != m_doc->generation) return;
+    m_doc->designBusy = false;
+    try {
+      const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
+      const size_t errors = rep.value("errors", opad::json::array()).size();
+      if (errors > 0) emit status(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
+      report(true, {});
+    } catch (const std::exception& e) {
+      report(false, QString::fromUtf8(e.what()));
+    }
   });
 }
 
@@ -306,7 +330,7 @@ void DesignController::startFeature(const QString& kind) {
   m_featureOn = true;
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
-  m_form->begin(*spec, inputs, QString::fromStdString(next_name(m_doc->scene, titleCase(spec->label).toStdString())), false);
+  m_form->begin(*spec, inputs, QString::fromStdString(next_name(m_doc->scene, name_prefix(*spec))), false);
   if (m_currentComponent) m_form->setBodyDefaults(m_currentComponent());
   if (m_panel) {
     m_panel->setHeader(QString::fromStdString(spec->icon), i18n::t(QString::fromStdString(spec->label)));
@@ -339,6 +363,7 @@ void DesignController::startFeature(const QString& kind, const std::vector<std::
 }
 
 void DesignController::editOp(const std::string& opId) {
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, op = opId] { editOp(op); });  // a copy being taken: shortly
   if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy) return;
   if (m_sketch->active() || m_featureOn) return emit notice(tr("Finish what is open first."));
   if (const opad::SketchItem* s = m_doc->scene.sketch(opId)) {

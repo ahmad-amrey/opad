@@ -78,7 +78,8 @@ class AppDocument : public QObject {
   const std::string& rollback() const { return m_rollback; }
   // The same, asked for by the user (the timeline's playhead, Roll back to here, UI-99): the model as it was before that
   // op, until it is rolled forward (empty). Nothing is inserted at the marker (UI-130): a step appended meanwhile rolls
-  // forward first, so it shows. An editor's setRollback takes over from it.
+  // forward first, so it shows, unless it only edits or deletes earlier steps. An editor's setRollback takes over from it
+  // and gives it back as the editor ends (setRollback({})), when what it committed was such an edit or nothing.
   void rollBackTo(const std::string& opId);
   bool rolledBack() const { return m_userRollback && !m_rollback.empty(); }
 
@@ -113,6 +114,9 @@ class AppDocument : public QObject {
   // UI thread. `work` gets the document and a copy of the scene. Null when the document is busy or there is none.
   Job* readAsync(JobRunner* jobs, const QString& title, std::function<void(const opad::Document&, const opad::Scene&, Progress)> work,
                  std::function<void(bool ok, const QString& error)> done);
+  // A writer waits for the copy or the save that reads the document now (a few hundred ms on a big one) instead of
+  // failing: `fn` runs once it is done (at once when none runs), dropped when another document comes.
+  void afterCapture(std::function<void()> fn);
   void recover(opad::Document&& document, opad::Scene&& resolved);  // an unsaved copy, no path (see Recovered)
   // Prepared on a worker. Swaps the old values back into the caller for worker disposal.
   void commitSnapshot(opad::Document& document, opad::Scene& resolved,
@@ -225,6 +229,9 @@ class AppDocument : public QObject {
   void checkActive();  // the active component still a component of the (whole) scene, else the root
   std::string m_rollback, m_active;
   bool m_userRollback = false;  // m_rollback is the user's (rollBackTo), not an editor's
+  std::string m_resume;         // the user's roll-back an editor took over (setRollback): back to it when the editor ends
+  bool changesBefore(const std::string& point, size_t from) const;
+  void dropRollback();
   std::vector<Step> m_undo, m_redo;
   int m_undoLimit = 50;
   std::vector<std::string> m_savedIds;

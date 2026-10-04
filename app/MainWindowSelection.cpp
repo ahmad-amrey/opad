@@ -3,7 +3,9 @@
 
 #include <QColorDialog>
 #include <QCoreApplication>
+#include <QLabel>
 #include <QMenu>
+#include <QWidgetAction>
 
 #include <algorithm>
 #include <functional>
@@ -16,6 +18,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "SmartRules.hpp"
+#include "Theme.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
@@ -239,7 +242,18 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
     connect(a, &QAction::triggered, this, [this, fn] { guarded(fn); });
     return a;
   };
-  auto title = [&](const QString& text) { menu.addSection(text)->setObjectName("contextTitle"); };  // areas insert after it
+  auto title = [&](const QString& text) {  // what the menu is about, drawn (a section's text is not in this style); areas insert after it
+    auto* label = new QLabel(text);
+    label->setObjectName("contextTitleLabel");
+    label->setFont(theme::ui(12, QFont::DemiBold));
+    label->setStyleSheet(QString("color: %1; padding: 5px 10px 3px 10px;").arg(theme::current().fg2.name()));
+    auto* a = new QWidgetAction(&menu);
+    a->setDefaultWidget(label);
+    a->setText(text);
+    a->setObjectName("contextTitle");
+    a->setEnabled(false);  // not an entry: the keys and the pointer pass over it
+    menu.addAction(a);
+  };
   if (QAction* repeat = repeatAction()) {
     menu.addAction(repeat);
     menu.addSeparator();

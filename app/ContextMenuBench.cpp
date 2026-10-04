@@ -1,5 +1,10 @@
 #include <QApplication>
+#include <QLabel>
 #include <QMenu>
+#include <QMouseEvent>
+#include <QTimer>
+
+#include <tuple>
 
 #include "BenchRegistry.hpp"
 #include "MainWindow.hpp"
@@ -248,6 +253,200 @@ OPAD_BENCH(OPAD_BENCH_CONTEXT, contextmenus) {
     } catch (const std::exception& e) {
       timer->stop();
       trace::log(QString("bench: context FAIL: %1").arg(e.what()));
+      QCoreApplication::exit(2);
+    }
+  });
+  timer->start();
+  return true;
+}
+
+// OPAD_BENCH_RIGHTCLICK=<prefix> (UI-100; cases right-click and right-click-rtl in tools/bench_cases/smart.py) on the 40 mm
+// base with a 10 mm boss joined on top (the body renamed Part), and an empty component Spare. Right clicks are mouse events
+// through the view's own handlers, OCCT picking under the pointer (Viewport::benchFlush); the menu they open is read and
+// closed from inside its own event loop (it never shows: BenchQuiet). Faces: a right click on the boss's top with nothing
+// selected selects that face and the menu is about it, under its drawn title "Face of Part"; again on it, or on nothing,
+// the selection stays; on a face of the base it moves there. While Distance runs a right click picks nothing. Bodies: on
+// the body, the body, "Part" with Remove Part. The empty component: its menu offers Remove Spare, which takes it out as
+// one step (a Remove feature), undone. Shots: <prefix>.face.png, .body.png (the menus as shown).
+OPAD_BENCH(OPAD_BENCH_RIGHTCLICK, rightclick) {
+  struct Menu {
+    bool shown = false;
+    QStringList names;
+    QString title, remove;
+    bool titleDrawn = false;
+  };
+  struct State {
+    int phase = 0, ticks = 0, wait = 0;
+    std::string body, base, boss, spare;
+    std::vector<opad::Ref> bossFaces, baseFaces;
+    std::vector<opad::Ref> before;
+    size_t ops = 0;
+  };
+  auto state = std::make_shared<State>();
+  SmartSelect* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* smart = dynamic_cast<SmartSelect*>(a)) area = smart;
+  if (!area) {
+    trace::log("bench: rightclick FAIL: the smart selection area is off");
+    QCoreApplication::exit(2);
+    return true;
+  }
+  auto* timer = new QTimer(&w);
+  timer->setInterval(100);
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, area, state, timer, prefix = value] {
+    try {
+      if (++state->ticks > 1200) throw opad::Error("timed out in phase " + std::to_string(state->phase));
+      if (w.m_doc->loading || w.m_doc->designBusy || w.m_doc->snapshotBusy() || w.m_jobs->busy() || area->busy()) return;
+      auto require = [](bool ok, const std::string& why) {
+        if (!ok) throw opad::Error(why);
+      };
+      auto pass = [](const QString& what) { trace::log("bench: rightclick: " + what + " PASS"); };
+      auto waitFor = [&](bool ok, const std::string& why) {
+        if (ok) {
+          state->wait = 0;
+          return true;
+        }
+        require(++state->wait < 80, why);
+        return false;
+      };
+      // A right click as the mouse delivers it (move, press, release; each followed by what the next frame does). The menu
+      // it opens is read and closed from its own event loop; `shot` saves it.
+      auto rightClick = [&](const QPointF& at, const QString& shot = {}) {
+        auto menu = std::make_shared<Menu>();
+        auto* poll = new QTimer(&w);  // until the menu is up (in its own event loop), then once
+        poll->setInterval(20);
+        QObject::connect(poll, &QTimer::timeout, &w, [menu, shot, poll, tries = 0]() mutable {
+          QMenu* m = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+          for (QWidget* top : QApplication::topLevelWidgets())
+            if (auto* candidate = qobject_cast<QMenu*>(top); !m && candidate && candidate->isVisible()) m = candidate;
+          if (!m && ++tries < 250) return;
+          poll->deleteLater();
+          poll->stop();
+          if (!m) return;
+          menu->shown = true;
+          for (QAction* a : m->actions()) {
+            if (a->isSeparator()) continue;
+            menu->names << (a->objectName().isEmpty() ? a->text() : a->objectName());
+            if (a->objectName() == "contextDelete") menu->remove = a->text().split('\t').front();
+          }
+          if (auto* label = m->findChild<QLabel*>("contextTitleLabel")) {
+            menu->title = label->text();
+            menu->titleDrawn = label->isVisible() && label->width() > label->fontMetrics().horizontalAdvance(label->text());
+          }
+          if (!shot.isEmpty()) m->grab().save(shot);
+          m->close();
+        });
+        poll->start();
+        using Step = std::tuple<QEvent::Type, Qt::MouseButton, Qt::MouseButtons>;
+        for (const auto& [type, button, buttons] : {Step{QEvent::MouseMove, Qt::NoButton, Qt::NoButton}, Step{QEvent::MouseButtonPress, Qt::RightButton, Qt::RightButton},
+                                                    Step{QEvent::MouseButtonRelease, Qt::RightButton, Qt::NoButton}}) {
+          QMouseEvent e(type, at, w.m_viewport->mapToGlobal(at), button, buttons, Qt::NoModifier);
+          QApplication::sendEvent(w.m_viewport, &e);
+          w.m_viewport->benchFlush();
+        }
+        trace::log("right click menu: " + menu->title + " | " + menu->names.join(", "));
+        return *menu;
+      };
+      auto selection = [&] { return w.m_viewport->selection(); };
+      auto one = [&](const std::vector<opad::Ref>& among) {
+        const auto sel = selection();
+        return sel.size() == 1 && std::any_of(among.begin(), among.end(), [&](const opad::Ref& r) { return r.body == sel.front().body && r.kind == sel.front().kind && r.index == sel.front().index; });
+      };
+      const QPointF top = w.m_viewport->widgetPoint({20, 20, 20}), baseTop = w.m_viewport->widgetPoint({5, 5, 10}), nothing(12, w.m_viewport->height() - 12);
+      switch (state->phase) {
+        case 0: {
+          require(w.m_doc->scene.all_bodies().size() == 1, "one body");
+          state->body = w.m_doc->scene.all_bodies().front();
+          for (const auto& f : w.m_doc->scene.features) {
+            if (f.name == "Base") state->base = f.id;
+            if (f.name == "Boss") state->boss = f.id;
+          }
+          w.m_doc->run("rename", opad::json{{"target", state->body}, {"name", "Part"}});
+          state->spare = w.m_doc->run("component", opad::json{{"name", "Spare"}}).value("id", "");
+          opad::design::Provenance provenance(w.m_doc->doc);
+          const auto owners = provenance.face_owners(state->body);
+          for (size_t i = 0; i < owners.size(); ++i) {
+            const opad::Ref r = opad::Ref::parse(state->body + "/face/" + std::to_string(i));
+            if (owners[i].op == state->boss) state->bossFaces.push_back(r);
+            if (owners[i].op == state->base) state->baseFaces.push_back(r);
+          }
+          require(state->bossFaces.size() == 5 && !state->baseFaces.empty() && w.m_doc->scene.node(state->spare), "the fixture, Part and an empty component Spare");
+          w.setWorkspace("design");
+          w.m_viewport->standardView("iso");
+          w.action("select.faces")->trigger();
+          break;
+        }
+        case 1: {
+          if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face) return;
+          require(selection().empty(), "nothing selected");
+          const Menu m = rightClick(top, prefix + ".face.png");
+          require(m.shown, "a right click on the boss's top opens the menu");
+          require(one(state->bossFaces), "the right click selected the boss's face under the pointer");
+          require(m.title == MainWindow::tr("Face of %1").arg("Part") && m.titleDrawn && m.names.contains("contextSketchOn"), "the menu is about that face, its title drawn: \"" + m.title.toStdString() + "\"");
+          pass("a right click on the boss's top selects that face; the menu is about it, under its drawn title \"" + m.title + "\"");
+          state->before = selection();
+          break;
+        }
+        case 2: {
+          if (!waitFor(area->found().ready, "smart selection answers for the face")) return;
+          const Menu again = rightClick(top);
+          require(again.shown && smart::sameRefs(selection(), state->before) && again.names.contains("smartSelectBest"), "again on the selected face: the selection stays (" + again.names.join(",").toStdString() + ")");
+          pass("again on the selected face: the selection stays, the boss's entries are there");
+          const Menu empty = rightClick(nothing);
+          require(empty.shown && smart::sameRefs(selection(), state->before) && empty.title == MainWindow::tr("Face of %1").arg("Part"), "on nothing: the selection and its menu stay");
+          pass("a right click on nothing keeps the selection and its menu");
+          const Menu base = rightClick(baseTop);
+          require(base.shown && one(state->baseFaces), "on a face of the base: the selection moves there");
+          pass("a right click on a face of the base selects it instead");
+          w.m_viewport->clearSelection();
+          break;
+        }
+        case 3: {
+          if (!waitFor(selection().empty() && w.m_selRefs.empty(), "the selection cleared")) return;
+          w.action("inspect.distance")->trigger();
+          require(w.m_tool.id == "distance", "Distance started");
+          const Menu m = rightClick(top);
+          require(m.shown && selection().empty(), "while Distance runs a right click picks nothing");
+          w.cancelTool();
+          pass("while Distance runs, a right click opens the menu and picks nothing");
+          w.action("select.bodies")->trigger();
+          break;
+        }
+        case 4: {
+          if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Body || !w.m_tool.id.isEmpty()) return;
+          const Menu m = rightClick(top, prefix + ".body.png");
+          const auto sel = selection();
+          require(m.shown && sel.size() == 1 && sel.front().body == state->body && sel.front().kind == opad::Ref::Kind::Body, "a right click on the body selects it");
+          require(m.title == "Part" && m.titleDrawn && m.remove == MainWindow::tr("Remove %1").arg("Part"), "the body's menu: \"" + m.title.toStdString() + "\", " + m.remove.toStdString());
+          pass("bodies: a right click selects the body, its menu \"" + m.title + "\" offers " + m.remove);
+          w.m_viewport->clearSelection();
+          // The empty component (in the browser): Remove Spare, one step.
+          QMenu menu;
+          w.buildContextMenu(menu, {state->spare});
+          QAction* remove = nullptr;
+          for (QAction* a : menu.actions())
+            if (a->objectName() == "contextDelete") remove = a;
+          require(remove && remove->text().startsWith(MainWindow::tr("Remove %1").arg("Spare")), "the empty component's menu offers Remove Spare");
+          state->ops = w.m_doc->doc.ops.size();
+          remove->trigger();
+          break;
+        }
+        case 5: {
+          if (!waitFor(w.m_doc->doc.ops.size() > state->ops, "Remove Spare is committed")) return;
+          require(!w.m_doc->scene.node(state->spare) && w.m_doc->scene.all_bodies().size() == 1 && w.m_doc->doc.ops.size() == state->ops + 1, "Spare is gone, the body stays, one op");
+          pass("Remove Spare takes the empty component out as one step");
+          w.m_doc->undo();
+          require(w.m_doc->scene.node(state->spare) && w.m_doc->doc.ops.size() == state->ops, "undone: Spare is back");
+          pass("undone: Spare is back");
+          timer->stop();
+          QCoreApplication::exit(0);
+          return;
+        }
+      }
+      ++state->phase;
+    } catch (const std::exception& e) {
+      timer->stop();
+      trace::log(QString("bench: rightclick FAIL: %1").arg(e.what()));
       QCoreApplication::exit(2);
     }
   });

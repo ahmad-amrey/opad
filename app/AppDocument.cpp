@@ -213,7 +213,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
       assetStates = report.is_object() ? report.value("assets", opad::json::array()) : opad::json::array();
       emit aboutToReplace();
       ++generation;
-      m_rollback.clear();
+      dropRollback();
       doc = std::move(*result);
       browse = viewer;
       readOnly = locked;
@@ -329,7 +329,7 @@ void AppDocument::newDocument() {
   if (loading || designBusy) return;
   emit aboutToReplace();
   ++generation;
-  m_rollback.clear();
+  dropRollback();
   doc = opad::Document::create();
   assetStates = opad::json::array();
   browse = readOnly = false;
@@ -346,7 +346,7 @@ void AppDocument::closeDocument() {
   if (loading || designBusy) return;
   emit aboutToReplace();
   ++generation;
-  m_rollback.clear();
+  dropRollback();
   doc = opad::Document();
   assetStates = opad::json::array();
   browse = readOnly = false;
@@ -376,7 +376,7 @@ void AppDocument::open(const QString& path) {
   }
   emit aboutToReplace();
   ++generation;
-  m_rollback.clear();
+  dropRollback();
   doc = std::move(next);
   browse = readOnly = false;
   hasDocument = true;
@@ -537,8 +537,18 @@ opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& lab
   return report;
 }
 
-void AppDocument::setRollback(const std::string& opId) {
+void AppDocument::dropRollback() {  // another document: no roll-back of the user's or an editor's
+  m_rollback.clear();
   m_userRollback = false;
+  m_resume.clear();
+}
+
+void AppDocument::setRollback(const std::string& opId) {
+  if (opId.empty() && rolledBack()) return;  // the user's roll-back: no editor's to end
+  if (!opId.empty() && rolledBack()) m_resume = m_rollback;  // an editor takes it over: back there when it is done
+  m_userRollback = false;
+  if (opId.empty() && !m_resume.empty())
+    if (const std::string resume = std::exchange(m_resume, {}); doc.find_op(resume)) return rollBackTo(resume);
   if (m_rollback == opId) return;
   m_rollback = opId;
   refresh();
@@ -554,6 +564,7 @@ void AppDocument::rollBackTo(const std::string& opId) {
 
 void AppDocument::refresh() {
   if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
+  if (!m_resume.empty() && !doc.find_op(m_resume)) m_resume.clear();
   scene = hasDocument ? opad::resolve(doc, m_rollback) : opad::Scene{};
   if (!m_rollback.empty())  // an earlier op edited: values are still shown and typed in the document's unit, the last one
     for (const auto& e : opad::effective_ops(doc))
@@ -568,7 +579,7 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {rec
 
 void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved,const Recovered& into) {
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
-  emit aboutToReplace();++generation;++revision;m_rollback.clear();
+  emit aboutToReplace();++generation;++revision;m_rollback.clear();m_userRollback=false;m_resume.clear();
   dispose(std::make_shared<opad::Document>(std::move(doc)));
   doc=std::move(document);scene=std::move(resolved);
   browse=readOnly=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
@@ -591,7 +602,7 @@ void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
     throw opad::Error("stale_revision: the document changed while the agent was working");
   const auto before=doc.ops.size();
   document.path=doc.path; // Save As may have changed the path without changing geometry.
-  std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();
+  std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();m_userRollback=false;m_resume.clear();
   recordStep(label,before);updateDirty();++revision;checkActive();emit changed();emit undoChanged();
 }
 
@@ -609,11 +620,30 @@ void AppDocument::detach() {
   emit undoChanged();
 }
 
+// Ops appended from `from` on that change only ops before `point`: edits (and the regeneration they bring) and tombstones,
+// which a model rolled back to the point shows.
+bool AppDocument::changesBefore(const std::string& point, size_t from) const {
+  auto index = [this](const std::string& id) {
+    const opad::Op* op = doc.find_op(id);
+    return op ? size_t(op - doc.ops.data()) : doc.ops.size();
+  };
+  const size_t at = std::min(index(point), from);
+  for (size_t i = from; i < doc.ops.size(); ++i) {
+    const opad::Op& op = doc.ops[i];
+    if (op.type == "regen" || op.type == "appearance") continue;  // how things look shows on the earlier state too (resolve)
+    if ((op.type != "edit" && op.type != "delete") || index(op.data.value("target", "")) >= at) return false;
+  }
+  return true;
+}
+
 void AppDocument::recordStep(const QString& label, size_t opsBefore) {
   if (doc.ops.size() <= opsBefore) return;  // the command appended nothing
-  if (rolledBack()) {  // the new step goes at the end: shown from there (the caller refreshes)
-    m_rollback.clear();
+  // Rolled back by the user (or an editor over it): an edit of an earlier step shows there and the model stays rolled
+  // back; any other step goes at the end and is shown from there (the caller refreshes; an editor rolls forward as it ends).
+  if (const std::string& point = rolledBack() ? m_rollback : m_resume; !point.empty() && !changesBefore(point, opsBefore)) {
+    if (rolledBack()) m_rollback.clear();
     m_userRollback = false;
+    m_resume.clear();
     emit message(tr("Rolled forward to the end of the timeline: new steps are added there."));
   }
   m_undo.push_back(Step{label, doc.ops.size() - opsBefore, {}});

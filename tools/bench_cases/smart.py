@@ -55,6 +55,13 @@ CASES = [
     # names on the markers, the design history alone; Roll back to here, the playhead dragged to the end and back, a change
     # made while rolled back rolls forward.
     ("timeline", boss, {"OPAD_BENCH_TIMELINE": "{prefix}"}),
+    # The roll-back marker by keys (Shift+Left / Right / Home / End on the timeline, the model following once they rest) and
+    # an edit of an earlier step while rolled back: Esc and OK both leave the model rolled back where the user put it.
+    ("timeline-rollback", boss, {"OPAD_BENCH_ROLLBACK": "{prefix}"}),
+    # The History list in the browser: a row per marker, a row selected points at its step, the marker's menu, the
+    # roll-back row, editing, the design filter, failing and deleted steps, Del on a row.
+    ("timeline-history", boss, {"OPAD_BENCH_HISTORYLIST": "{prefix}"}),
+    ("timeline-history-rtl", boss, {"OPAD_BENCH_HISTORYLIST": "{prefix}", "OPAD_LANG": "ar"}),
     # The same on the Engine (skipped where it is not): the pointer on every marker, rolled back and forward by the
     # playhead, names and the design history toggled, no event-loop gap over 250 ms.
     ("timeline-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TIMELINEPERF": "1"}),
@@ -62,6 +69,11 @@ CASES = [
     # the open sketch, each with its own entries (Repeat of the last tool first, the picks' feature to edit or find).
     ("context-menus", boss, {"OPAD_BENCH_CONTEXT": "{prefix}"}),
     ("context-menus-rtl", boss, {"OPAD_BENCH_CONTEXT": "{prefix}", "OPAD_LANG": "ar"}),
+    # Right clicks through the view's own handlers (UI-100): a face not selected becomes the selection and the menu is about
+    # it (its title drawn), on a selected one or on nothing the selection stays, a running tool keeps its picks; the body
+    # in body mode; an empty component's Remove, one step.
+    ("right-click", boss, {"OPAD_BENCH_RIGHTCLICK": "{prefix}"}),
+    ("right-click-rtl", boss, {"OPAD_BENCH_RIGHTCLICK": "{prefix}", "OPAD_LANG": "ar"}),
     # The chip on the imported plate (no history): a hole wall is the hole, its sizes in the tooltip and Measure's toast, its
     # Remove and Del start Remove faces.
     ("smartselect-import", imported, {"OPAD_BENCH_SMARTIMPORT": "{prefix}"}),

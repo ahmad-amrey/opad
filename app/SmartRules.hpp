@@ -39,12 +39,13 @@ int matching(const std::vector<Candidate>& c, const std::vector<opad::Ref>& pick
 int headline(const std::vector<Candidate>& c, const std::vector<opad::Ref>& picks, size_t bodyFaces = 0);
 
 // Del on objects (UI-04): what to tombstone and what to take out with a Remove feature, never more than was selected.
-// Sketches are tombstoned. Bodies (a component counts as its bodies) of a document with a design history go to one
+// Sketches are tombstoned. Bodies and components (whole, an empty one too) of a document with a design history go to one
 // Remove feature, so the history and everything built on them stays. Without a history an import is tombstoned only
-// when every body it made is selected; the bodies of an import picked in part are removed instead.
+// when every body it made is selected (one that made none, a New component: every component it made); what an import
+// picked in part made is removed instead.
 struct Deletion {
   std::vector<std::string> tombstone;  // op ids (imports, sketches)
-  std::vector<std::string> remove;     // body ids for one Remove feature
+  std::vector<std::string> remove;     // body and component ids for one Remove feature
   bool empty() const { return tombstone.empty() && remove.empty(); }
 };
 Deletion routeDelete(const opad::Scene& scene, const std::vector<std::string>& ids);

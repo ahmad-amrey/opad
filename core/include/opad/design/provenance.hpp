@@ -29,10 +29,10 @@ class Provenance {
   Provenance& operator=(const Provenance&) = delete;
 
   // Per face ordinal (TopExp::MapShapes order, as references count them) of the node's current body. Empty for a node
-  // that is not a solid body (meshes, drawings, missing geometry).
-  std::vector<FaceOwner> face_owners(const std::string& node);
+  // that is not a solid body (meshes, drawings, missing geometry). Found once per node and kept while this lives.
+  const std::vector<FaceOwner>& face_owners(const std::string& node);
   // Per edge ordinal: the owner of its faces when they agree, else the later of them (the step that made the edge).
-  std::vector<FaceOwner> edge_owners(const std::string& node);
+  const std::vector<FaceOwner>& edge_owners(const std::string& node);
   // An owner op as the history shows it: {"op","type":"feature"|"import","kind","name","category","icon"} (null if unknown).
   json op_info(const std::string& op);
   // op_info of an owner, with `via` (op_info of the source owner) and `merged` when set.
