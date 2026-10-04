@@ -121,6 +121,8 @@ TEST(ribbon_layout) {
   layout.addWorkspace("review", {"Review", "eye", "Ctrl+1", "", ""});
   layout.addWorkspace("design", {"Design", "component", "Ctrl+2", "", ""});
   CHECK(layout.addWorkspace("review", {"Other", "", "", "", ""}).workspace.name == "Review");  // an id once
+  const Workspace probe{"Probe", "dot", "Ctrl+9", "What it is for", "ops: none"};  // the positional form every area uses
+  CHECK(probe.description == "What it is for" && probe.ops == "ops: none" && probe.command.isEmpty() && !probe.contextual);
   CHECK(layout.addTab("review", "review.view", "View", {{&a}}) && layout.addTab("design", "design.solid", "Solid"));
   CHECK(!layout.addTab("drawings", "drawings.sheet", "Sheet"));  // no such workspace
   CHECK(layout.addGroup("review.view", {&b, &c}) && !layout.addGroup("review.none", {&a}));

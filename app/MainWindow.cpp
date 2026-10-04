@@ -26,7 +26,9 @@
 #include <cmath>
 #include <memory>
 
+#include "CommandHelp.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
@@ -345,6 +347,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   updateChips();
   m_areaGeneration = m_doc->generation;
   shortcuts::settleAlternates(m_actions);  // every command is made: an alternate key another one uses goes
+  keys::announce();  // and every key is final: what was labelled while the areas were still adding theirs reads them again
   for (AreaController* area : m_areas) area->ready();
   m_areasReady = true;
   if (!m_areas.empty()) positionOverlays();
@@ -378,6 +381,7 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
   a->setObjectName(id);
   a->setData(info.icon);
   if (!info.icon.isEmpty()) a->setIcon(icons::themed(info.icon));
+  a->setProperty("fixedShortcut", info.fixedKey);
   shortcuts::initialize(a,info.key,m_settings);
   a->setCheckable(info.checkable);
   a->setShortcutContext(Qt::WindowShortcut);
@@ -447,7 +451,7 @@ void MainWindow::guarded(const std::function<void()>& fn) {
   } catch (const opad::UserHint& h) {
     hint(QString::fromUtf8(h.what()), h.pick);
   } catch (const std::exception& e) {
-    QMessageBox::warning(this, tr("OPAD"), i18n::message(QString::fromUtf8(e.what())));
+    QMessageBox::warning(this, tr("OPAD"), help::expand(i18n::message(QString::fromUtf8(e.what()))));  // keys named by token
   }
 }
 
@@ -456,7 +460,7 @@ void MainWindow::guarded(const std::function<void()>& fn) {
 // Cancel, Esc or another command drop the wait. Without a view to show it over (start page), the status bar says it.
 void MainWindow::hint(const QString& text, bool pick) {
   cancelPendingPick();
-  const QString shown = i18n::t(text);
+  const QString shown = help::expand(i18n::t(text));  // a key named by token ({key:id}): the user's now
   if (!m_toasts || !m_viewport->isVisible()) return statusBar()->showMessage(shown, 6000);
   if (!pick || m_runningCommand.isEmpty()) {
     m_toasts->toast(shown, QString(), {}, 6000);

@@ -20,7 +20,7 @@
   "Base view": "مسقط أساسي",
   "Projected from %1": "مُسقَط من %1",
   "%1 when it was made": "%1 عند إنشائه",
-  "Deleted %1 · Ctrl+Z brings it back": "حُذف %1 · ‏Ctrl+Z يعيده",
+  "Deleted %1 · Undo ({key:edit.undo}) brings it back": "حُذف %1 · التراجع ({key:edit.undo}) يعيده",
   "Copy id": "نسخ المعرّف",
   "Delete drawing": "حذف الرسم",
   "Delete sheet": "حذف اللوحة",

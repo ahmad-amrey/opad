@@ -16,6 +16,7 @@
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSettings>
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
@@ -417,6 +418,31 @@ OPAD_BENCH(OPAD_BENCH_TOOL_KEYS, toolKeys) {
   press(Qt::Key_2, Qt::NoModifier, "2");
   (*check)(view->selectionFilter() == Viewport::SelFilter::Face && !offset->isVisible(), "with the panel closed, 2 is the Faces filter's key again");
   press(Qt::Key_1, Qt::NoModifier, "1");
+  w.action("inspect.section")->setChecked(false);
+  // The panel opened with the section off: an axis chosen in it turns the section on (help audit P9.5, as panel.section's
+  // guide shows), Flip section's key does not.
+  w.openPanel(w.m_sectionPanel);
+  w.action("inspect.flip")->trigger();
+  const bool stayedOff = !section->enabled() && !w.action("inspect.section")->isChecked();
+  w.action("inspect.flip")->trigger();
+  QToolButton* axisX = nullptr;
+  for (auto* b : section->findChildren<QToolButton*>())
+    if (b->text() == "X") axisX = b;
+  if (axisX) axisX->click();
+  (*check)(stayedOff && axisX && section->enabled() && w.action("inspect.section")->isChecked() && std::abs(section->normal()[0]) > 0.9,
+           "with the section off, Flip section's key leaves it off; X chosen in the panel turns it on along X");
+  // Placed by hand somewhere else (a saved place, moved), the panel goes back to its default place with Reset layout (help
+  // audit P9.6). Not dragged here: Qt gives a sent mouse event the pointer's real place, so a drag would not move.
+  {
+    ToolPanel* panel = w.m_sectionPanel;
+    const QPoint home = panel->pos();
+    QSettings().setValue("panels/section/offset", QPoint(300, 300));
+    panel->move(home + QPoint(-150, 90));
+    w.action("panel.reset")->trigger();
+    (*check)(panel->pos() == home && !panel->userPlaced() && !QSettings().contains("panels/section/offset"),
+             QString("the Section panel moved away is back at its default place after Reset layout (%1,%2; default %3,%4), its saved place forgotten")
+                 .arg(panel->pos().x()).arg(panel->pos().y()).arg(home.x()).arg(home.y()));
+  }
   w.action("inspect.section")->setChecked(false);
 
   // A drawing being placed on XY.

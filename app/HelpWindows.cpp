@@ -3,6 +3,7 @@
 #include "CommandHelp.hpp"
 #include "HelpClip.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 
 #include <QAction>
@@ -30,37 +31,48 @@
 #include <algorithm>
 
 namespace help {
-QStringList keyCaps(const QString& keys) {
+QString KeyRow::text() const {
   QStringList out;
-  QString text = keys;
-  while (!text.isEmpty()) {
-    const qsizetype plus = text.indexOf('+', 1);  // a '+' key stays one cap
-    if (plus < 0) { out << text; break; }
-    out << text.left(plus);
-    text = text.mid(plus + 1);
-  }
-  return out;
+  for (const QStringList& caps : keys) out << keys::joined(caps);
+  return out.join(" / ");
 }
 
-QStringList keyAlternates(const QString& keys) { return keys.split(" / ", Qt::SkipEmptyParts); }
+KeyRow keyRow(const QString& label, const QList<QKeySequence>& sequences) {
+  KeyRow row{label, {}, {}};
+  QStringList portable;
+  for (const QKeySequence& key : sequences)
+    if (keys::pressable(key)) {
+      row.keys << keys::caps(key);
+      portable << key.toString(QKeySequence::PortableText);
+    }
+  row.search = portable.join(' ');
+  return row;
+}
+
+// A fixed key or mouse modifier (named for the platform) and a mouse word: Shift + Middle drag.
+static QStringList with(const QString& modifier, const QString& gesture) { return modifier.isEmpty() ? QStringList{gesture} : keys::fixedCaps(modifier) << gesture; }
 
 QList<KeyRow> mouseRows(const QString& preset) {
   const QString middle = QCoreApplication::translate("help", "Middle drag"), right = QCoreApplication::translate("help", "Right drag");
-  QString orbit = "Shift+" + middle, pan = middle;  // Viewport::setNavPreset
-  if (preset == "solidworks") orbit = middle, pan = "Ctrl+" + middle;
-  else if (preset == "onshape") orbit = right, pan = middle;
-  else if (preset == "blender") orbit = middle, pan = "Shift+" + middle;
-  return {{QCoreApplication::translate("help", "Orbit"), orbit},
-          {QCoreApplication::translate("help", "Pan"), pan},
-          {QCoreApplication::translate("help", "Zoom at the cursor"), QCoreApplication::translate("help", "Wheel")},
-          {QCoreApplication::translate("help", "Select"), QCoreApplication::translate("help", "Click")},
-          {QCoreApplication::translate("help", "Select in a window"), QCoreApplication::translate("help", "Left drag")}};
+  QStringList orbit = with("shift", middle), pan = with({}, middle);  // Viewport::setNavPreset
+  if (preset == "solidworks") orbit = with({}, middle), pan = with("ctrl", middle);
+  else if (preset == "onshape") orbit = with({}, right), pan = with({}, middle);
+  else if (preset == "blender") orbit = with({}, middle), pan = with("shift", middle);
+  return {{QCoreApplication::translate("help", "Orbit"), {orbit}, {}},
+          {QCoreApplication::translate("help", "Pan"), {pan}, {}},
+          {QCoreApplication::translate("help", "Zoom at the cursor"), {{QCoreApplication::translate("help", "Wheel")}}, {}},
+          {QCoreApplication::translate("help", "Select"), {{QCoreApplication::translate("help", "Click")}}, {}},
+          {QCoreApplication::translate("help", "Select in a window"), {{QCoreApplication::translate("help", "Left drag")}}, {}}};
 }
 
 QList<KeyGroup> keyGroups(const QList<QAction*>& actions, bool sketching, const QString& preset) {
   QList<KeyGroup> groups;
+  QAction* helpCurrent = nullptr;
   for (QAction* a : actions) {
-    if (!a || a->shortcut().isEmpty() || a->objectName().isEmpty()) continue;
+    if (a && a->objectName() == "help.current") helpCurrent = a;
+    if (!a || a->objectName().isEmpty()) continue;
+    const QList<QKeySequence> live = a->shortcuts();  // the keys that work now (a sketch holds some)
+    if (std::none_of(live.begin(), live.end(), keys::pressable)) continue;
     QString group = a->property("commandGroup").toString();
     if (group.isEmpty()) group = help::group(a->objectName());
     const CommandHelp* h = help::find(a->objectName());
@@ -68,10 +80,7 @@ QList<KeyGroup> keyGroups(const QList<QAction*>& actions, bool sketching, const 
     label.remove('&').remove(QString::fromUtf8("…"));
     auto it = std::find_if(groups.begin(), groups.end(), [&](const KeyGroup& g) { return g.title == group; });
     if (it == groups.end()) it = groups.insert(groups.end(), KeyGroup{group, {}});
-    QStringList keys;  // an alternate too (Redo: Ctrl+Y / Ctrl+Shift+Z)
-    for (const QKeySequence& key : a->shortcuts())
-      if (!key.isEmpty()) keys << key.toString(QKeySequence::NativeText);
-    it->rows << KeyRow{label, keys.join(" / ")};
+    it->rows << keyRow(label, live);  // an alternate too (Redo: Ctrl+Y / Ctrl+Shift+Z)
   }
   if (sketching)  // the sketch's keys first
     std::stable_partition(groups.begin(), groups.end(), [&](const KeyGroup& g) {
@@ -79,15 +88,19 @@ QList<KeyGroup> keyGroups(const QList<QAction*>& actions, bool sketching, const 
     });
   groups << KeyGroup{QCoreApplication::translate("help", "Mouse"), mouseRows(preset)};
   groups << KeyGroup{QCoreApplication::translate("help", "Without the mouse"),  // UI-124
-                     {{QCoreApplication::translate("help", "Key tips on the ribbon's tabs and tools"), "Alt"},
-                      {QCoreApplication::translate("help", "Show or hide the browser's rows, suppress a timeline marker"), QCoreApplication::translate("help", "Space")},
-                      {QCoreApplication::translate("help", "The menu of a browser row or a timeline marker"), QCoreApplication::translate("help", "Menu key") + " / Shift+F10"},
-                      {QCoreApplication::translate("help", "Repeat the last tool, in the view while nothing runs"), "Enter"}}};
-  groups << KeyGroup{QCoreApplication::translate("help", "In every tool"),
-                     {{QCoreApplication::translate("help", "Step back, or leave the tool"), "Esc"},
-                      {QCoreApplication::translate("help", "OK, or finish"), "Enter"},
-                      {QCoreApplication::translate("help", "The full card of the button under the pointer"), "Shift"},
-                      {QCoreApplication::translate("help", "Guide of the tool you are using"), "F1"}}};
+                     {{QCoreApplication::translate("help", "Key tips on the ribbon's tabs and tools"), {keys::fixedCaps("alt")}, {}},
+                      {QCoreApplication::translate("help", "Show or hide the browser's rows, suppress a timeline marker"), {{QCoreApplication::translate("help", "Space")}}, {}},
+                      {QCoreApplication::translate("help", "The menu of a browser row or a timeline marker"),
+                       {{QCoreApplication::translate("help", "Menu key")}, keys::caps(QKeySequence(QKeyCombination(Qt::ShiftModifier, Qt::Key_F10)))}, {}},
+                      {QCoreApplication::translate("help", "Repeat the last tool, in the view while nothing runs"), {keys::fixedCaps("enter")}, {}}}};
+  KeyGroup every{QCoreApplication::translate("help", "In every tool"),
+                 {{QCoreApplication::translate("help", "Step back, or leave the tool"), {keys::fixedCaps("esc")}, {}},
+                  {QCoreApplication::translate("help", "OK, or finish"), {keys::fixedCaps("enter")}, {}},
+                  {QCoreApplication::translate("help", "The full card of the button under the pointer"), {keys::fixedCaps("shift")}, {}}}};
+  // Help for this tool's key, as the user bound it; no row without one.
+  if (helpCurrent && !keys::binding(helpCurrent).isEmpty())
+    every.rows << keyRow(QCoreApplication::translate("help", "Guide of the tool you are using"), {keys::binding(helpCurrent)});
+  groups << every;
   return groups;
 }
 
@@ -125,9 +138,19 @@ ShortcutSheet::ShortcutSheet(QWidget* parent) : QWidget(parent, Qt::Window) {
   v->addWidget(scroll, 1);
   connect(m_search, &QLineEdit::textChanged, this, &ShortcutSheet::setFilter);
   connect(edit, &QPushButton::clicked, this, &ShortcutSheet::editRequested);
-  auto* again = new QShortcut(QKeySequence("Ctrl+/"), this);  // the key that opened it closes it, as Esc does
-  connect(again, &QShortcut::activated, this, &QWidget::close);
+  m_again = new QShortcut(this);  // the key that opened it closes it, as Esc does: help.shortcuts', whatever the user bound
+  connect(m_again, &QShortcut::activated, this, &QWidget::close);
+  rebind();
+  connect(keys::notifier(), &keys::Notifier::changed, this, &ShortcutSheet::rebind);
 }
+
+void ShortcutSheet::rebind() {
+  const QKeySequence key = keys::binding(QStringLiteral("help.shortcuts"));
+  m_again->setKey(key);
+  m_again->setEnabled(!key.isEmpty());
+}
+
+QKeySequence ShortcutSheet::closeKey() const { return m_again->isEnabled() ? m_again->key() : QKeySequence(); }
 
 void ShortcutSheet::keyPressEvent(QKeyEvent* e) {
   if (e->key() == Qt::Key_Escape) close();
@@ -170,17 +193,23 @@ void ShortcutSheet::setGroups(const QList<help::KeyGroup>& groups) {
       auto* label = new QLabel(r.label, row);
       label->setWordWrap(true);
       h->addWidget(label, 1);
-      const QStringList alternates = help::keyAlternates(r.keys);
-      for (qsizetype i = 0; i < alternates.size(); ++i) {
-        if (i) h->addWidget(new QLabel("/", row), 0, Qt::AlignTop);  // between the alternates, never a cap
-        for (const QString& cap : help::keyCaps(alternates[i])) {
-          auto* key = new QLabel(cap, row);
-          key->setObjectName("keycap");
-          h->addWidget(key, 0, Qt::AlignTop);
+      // The caps read left to right in every language ("Ctrl" before "F"): their own box, placed as a whole.
+      auto* caps = new QWidget(row);
+      caps->setLayoutDirection(Qt::LeftToRight);
+      auto* ch = new QHBoxLayout(caps);
+      ch->setContentsMargins(0, 0, 0, 0);
+      ch->setSpacing(4);
+      for (qsizetype i = 0; i < r.keys.size(); ++i) {
+        if (i) ch->addWidget(new QLabel("/", caps), 0, Qt::AlignTop);  // between the alternates, never a cap
+        for (const QString& cap : r.keys[i]) {
+          auto* key = new QLabel(cap, caps);
+          if (cap != keys::kThen) key->setObjectName("keycap");  // a multi-chord key's separator is plain text
+          ch->addWidget(key, 0, Qt::AlignTop);
         }
       }
+      h->addWidget(caps, 0, Qt::AlignTop);
       bv->addWidget(row);
-      m_rows << Row{row, r.label + ' ' + r.keys, int(m_groups.size())};
+      m_rows << Row{row, r.label + ' ' + r.text(), r.search, int(m_groups.size())};
     }
     column[c]->addWidget(box);
     m_groups << box;
@@ -194,7 +223,7 @@ void ShortcutSheet::setFilter(const QString& text) {
   const QStringList words = text.split(' ', Qt::SkipEmptyParts);
   QList<bool> any(m_groups.size(), false);
   for (const Row& r : m_rows) {
-    const bool show = std::all_of(words.begin(), words.end(), [&](const QString& w) { return r.text.contains(w, Qt::CaseInsensitive); });
+    const bool show = std::all_of(words.begin(), words.end(), [&](const QString& w) { return r.text.contains(w, Qt::CaseInsensitive) || r.search.contains(w, Qt::CaseInsensitive); });
     r.widget->setVisible(show);
     if (show) any[r.group] = true;
   }
@@ -220,34 +249,39 @@ QStringList ShortcutSheet::shown() const {
 QList<GettingStarted::Lesson> GettingStarted::lessons(const QString& preset) {
   QString orbit, pan;
   for (const help::KeyRow& r : help::mouseRows(preset)) {
-    const QString keys = help::keyCaps(r.keys).join(" + ");
+    const QString keys = r.keys.value(0).join(" + ");
     if (r.label == QCoreApplication::translate("help", "Orbit")) orbit = keys;
     else if (r.label == QCoreApplication::translate("help", "Pan")) pan = keys;
   }
+  // Every key named is the user's now ({key:...}, help::expand): a command without one is named without it.
   return {
       {tr("Move around the view"),
-       tr("Orbit with %1, pan with %2 and zoom with the wheel, toward the cursor. F fits the selection or everything, H goes home, and a click "
-          "on the view cube turns the view to that side. View > Navigation preset sets the mouse as other CAD programs do.").arg(orbit, pan),
+       help::expand(tr("Orbit with %1, pan with %2 and zoom with the wheel, toward the cursor. Fit ({key:view.fit}) frames the selection or everything, "
+                       "Home ({key:view.home}) goes home, and a click on the view cube turns the view to that side. View > Navigation preset sets the "
+                       "mouse as other CAD programs do.")).arg(orbit, pan),
        "nav." + preset, QString()},
       {tr("Open a file"),
        tr("Open an OPAD document, or a STEP, IGES, STL, 3MF, OBJ, DXF, DWG or SVG file: other formats open read-only, at once. Hide, isolate, "
           "colour and cut what you see; Save turns the file into an editable OPAD document."),
        "file.open", "file.open"},
       {tr("Measure"),
-       tr("Press D and click two faces, edges or points: the distance and its X, Y and Z parts. A measures angles, R radii and B the bounding "
-          "box; P pins a result to the document."),
+       help::expand(tr("Start Distance ({key:inspect.distance}) and click two faces, edges, points or bodies: the distance and its X, Y and Z parts. "
+                       "Angle ({key:inspect.angle}) measures angles, Radius ({key:inspect.radius}) radii and Bounding box ({key:inspect.bbox}) the "
+                       "box around the selection; Pin ({key:inspect.pin}) keeps a result in the document.")),
        "inspect.distance", "inspect.distance"},
       {tr("Sketch"),
-       tr("In Design (Ctrl+2) choose New sketch and click a plane or a flat face. Draw with Line (L), Rectangle (R) and Circle (C), type "
-          "lengths as you go, add dimensions with D, then Finish sketch (Ctrl+Enter)."),
+       help::expand(tr("In Design ({key:workspace.design}) choose New sketch, pick a plane or a flat face, then OK. Draw with Line ({key:sketch.line}), "
+                       "Rectangle ({key:sketch.rect}) and Circle ({key:sketch.circle}), type lengths as you go, add dimensions with Dimension "
+                       "({key:sketch.dimension}), then Finish sketch ({key:sketch.finish}).")),
        "design.sketch", "design.sketch"},
       {tr("Make it solid"),
-       tr("Extrude (E) pulls a closed profile into a solid: drag the arrow or type the distance. Fillets, shells, patterns and the other "
-          "features follow on the timeline, where every step can be changed later."),
+       help::expand(tr("Extrude ({key:design.extrude}) pulls a closed profile into a solid: drag the arrow or type the distance. Fillets, shells, "
+                       "patterns and the other features follow on the timeline, where every step can be changed later.")),
        "design.extrude", "design.extrude"},
       {tr("Find any command"),
-       tr("Press S and type what you want to do: every command with its keys and an animated guide. Over a button, Shift shows its full "
-          "card; F1 opens the guide of the tool you are using, Ctrl+/ lists every shortcut and the ? of a panel opens its guide."),
+       help::expand(tr("{press:tools.commands} and type what you want to do: every command with its key and, for most, an animated guide. Over a "
+                       "button, Shift shows its full card; Help for this tool ({key:help.current}) opens the guide of the tool you are using, the "
+                       "Shortcuts cheat sheet ({key:help.shortcuts}) lists every shortcut and the ? of a panel opens its guide.")),
        "tools.commands", "tools.commands"},
   };
 }
@@ -310,6 +344,7 @@ GettingStarted::GettingStarted(std::function<QAction*(const QString&)> lookup, s
     if (i >= 0 && i < m_lessons.size() && m_run && !m_lessons[i].command.isEmpty()) m_run(m_lessons[i].command);
   });
   setPreset("fusion");
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { setPreset(m_preset); });  // the keys the lessons name
 }
 
 void GettingStarted::keyPressEvent(QKeyEvent* e) {
@@ -319,6 +354,7 @@ void GettingStarted::keyPressEvent(QKeyEvent* e) {
 
 void GettingStarted::setPreset(const QString& preset) {
   const int keep = std::max(0, m_list->currentRow());
+  m_preset = preset;
   m_lessons = lessons(preset);
   const QSignalBlocker quiet(m_list);
   m_list->clear();
@@ -403,9 +439,11 @@ CoachCard::CoachCard(QWidget* viewport) : QFrame(viewport) {
   text->setObjectName("secondary");
   text->setWordWrap(true);
   v->addWidget(text);
-  auto* steps = new QLabel(tr("1  New sketch    2  Line L, Rectangle R, Circle C    3  Extrude E"), this);
-  steps->setObjectName("tertiary");
-  v->addWidget(steps);
+  m_steps = new QLabel(this);
+  m_steps->setObjectName("tertiary");
+  v->addWidget(m_steps);
+  rekey();
+  connect(keys::notifier(), &keys::Notifier::changed, this, &CoachCard::rekey);
   v->addStretch(1);
   auto* buttons = new QHBoxLayout();
   buttons->setSpacing(6);
@@ -422,6 +460,14 @@ CoachCard::CoachCard(QWidget* viewport) : QFrame(viewport) {
   connect(theme::notifier(), &theme::Notifier::changed, this, &CoachCard::restyle);
   adjustSize();
 }
+
+// The tools of the first steps with the user's keys (a tool without one is named alone).
+void CoachCard::rekey() {
+  m_steps->setText(help::expand(tr("1  New sketch    2  Line ({key:sketch.line}), Rectangle ({key:sketch.rect}), Circle ({key:sketch.circle})    "
+                                   "3  Extrude ({key:design.extrude})")));
+}
+
+QString CoachCard::steps() const { return m_steps->text(); }
 
 QPushButton* CoachCard::button(const QString& command) const {
   for (auto* b : findChildren<QPushButton*>())

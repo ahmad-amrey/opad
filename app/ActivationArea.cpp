@@ -33,6 +33,7 @@
 
 #include "AreaController.hpp"
 #include "BrowserPanel.hpp"
+#include "CommandHelp.hpp"
 #include "Commands.hpp"
 #include "DesignController.hpp"
 #include "Icons.hpp"
@@ -299,7 +300,7 @@ class Activation : public AreaController {
       const bool on = id == active;
       d.lead.icon = on ? "radioOn" : "radioOff";
       d.lead.color = on ? &Tokens::sel : &Tokens::fg3;
-      d.lead.tooltip = on ? tr("Active: new sketches, features, bodies and imports go here") : id.empty() ? tr("Activate the root (the whole model)") : tr("Activate this component (or Alt+click its row)");
+      d.lead.tooltip = on ? tr("Active: new sketches, features, bodies and imports go here") : id.empty() ? tr("Activate the root (the whole model)") : help::expand(tr("Activate this component (or click its row with {fixed:alt} held)"));
       d.lead.clicked = [this, id, on] { if (!on) setActive(id); };  // the active one's click is no colour pick either
       if (on && !id.empty()) {
         d.bold = true;

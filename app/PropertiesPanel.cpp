@@ -13,6 +13,7 @@
 #include <string>
 
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "PartProperties.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
@@ -67,6 +68,7 @@ bool isVector(const opad::json& v) {
 // ---------------------------------------------------------------- PropertiesPanel
 PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
   connect(units::notifier(), &units::Notifier::changed, this, [this] { if (!m_props.is_null()) fill(); });
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { if (m_props.is_null()) clear(); });  // the filters' keys
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(12, 12, 12, 0);
   layout->setSpacing(4);
@@ -277,7 +279,9 @@ void PropertiesPanel::refresh() {
 
 void PropertiesPanel::clear() {
   m_title->setText(tr("Nothing selected"));
-  m_subtitle->setText(tr("Click a body, or pick faces, edges and vertices with the Select filter (1–4)."));
+  const QString filters = keys::span({"select.bodies", "select.faces", "select.edges", "select.vertices"});  // their keys now
+  m_subtitle->setText(filters.isEmpty() ? tr("Click a body, or pick faces, edges and vertices with the Select filter.")
+                                        : tr("Click a body, or pick faces, edges and vertices with the Select filter (%1).").arg(filters));
   m_id->clear();
   m_props = opad::json();
   m_subject = PropertySubject();

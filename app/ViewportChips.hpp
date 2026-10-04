@@ -25,7 +25,8 @@ class ViewportChips : public QWidget {
   bool eventFilter(QObject* object, QEvent* event) override;
   bool event(QEvent* event) override;
  private:
-  bool m_areaChips = false;
+  void keyTexts();  // the tooltips that name keys, as bound now (keys::notifier)
+  bool m_areaChips = false, m_document = false;
   QLabel* m_mode;
   QLabel* m_proj;
   QLabel* m_twoD;

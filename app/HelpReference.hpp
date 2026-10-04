@@ -1,6 +1,6 @@
 #pragma once
 // Help > Tool guide (UI-107/108, design notes B §4 "where clips appear" 3 and 4). Every command's help, searched
-// by title, keywords or summary and listed by area; the selected command shows its card: icon, title, key caps,
+// by title, keywords, summary or the key it has now and listed by area; the selected command shows its card: icon, title, key caps,
 // summary, the animated clip with its steps (a click on a step loops it), details, and in amber what it needs when it
 // is not available now. CommandPreview is that card alone; the command palette shows it, compact, beside its list.
 #include <QPointer>
@@ -16,26 +16,31 @@ class QLineEdit;
 class QListWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
+namespace clips { struct Step; }
 
 class CommandPreview : public QWidget {
   Q_OBJECT
  public:
   enum class Size { Compact, Full };  // the palette's pane (288 px clip, no steps or details) or the reference's
   explicit CommandPreview(Size size, QWidget* parent = nullptr);
-  // The command's card; `action` (may be null) gives the icon, the live shortcut and whether it is available now.
-  void setCommand(const QString& id, QAction* action);
+  // The command's card; `action` (may be null) gives the icon, the live shortcut and whether it is available now; `clip`
+  // plays instead of the record's (the part of the command running now, HelpArea's runningClip).
+  void setCommand(const QString& id, QAction* action, const QString& clip = QString());
   QString command() const { return m_id; }
   ClipView* clip() const { return m_clip; }  // hidden for a command without a clip
   QListWidget* steps() const { return m_steps; }  // Full: "All steps" then the clip's steps; a click loops one
   bool showsRequirement() const;
+  QStringList keyCaps() const;  // the key caps shown, left to right: the command's key now
 
  private:
   void refresh();
+  static QString stepText(int i, const clips::Step& step);
   Size m_size;
   QString m_id;
   QPointer<QAction> m_action;
   QMetaObject::Connection m_changed;
   QLabel *m_icon, *m_title, *m_summary, *m_details, *m_requirement;
+  QWidget* m_keyBox;  // left to right in every language
   QHBoxLayout* m_keys;
   ClipView* m_clip;
   QListWidget* m_steps = nullptr;
@@ -47,8 +52,9 @@ class CommandReference : public QWidget {
   // `lookup`: the QAction of a command id (MainWindow::action), or null; a record whose command this build does not
   // have (one of another build or of a branch not merged yet) is not listed. Without a lookup every record is.
   explicit CommandReference(std::function<QAction*(const QString&)> lookup, QWidget* parent = nullptr);
-  // Shows the window at that command (the filter is cleared when it hides it); empty keeps the one shown.
-  void open(const QString& id = QString());
+  // Shows the window at that command (the filter is cleared when it hides it); empty keeps the one shown. `clip`: played
+  // instead of the command's own until another command is chosen.
+  void open(const QString& id = QString(), const QString& clip = QString());
   QString current() const;
   void setFilter(const QString& text);
   QStringList shown() const;  // the command ids listed now, in order

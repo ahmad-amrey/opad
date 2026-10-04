@@ -3,8 +3,10 @@
 #include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 
+#include <QAction>
 #include <QCoreApplication>
 #include <QFile>
 #include <QJsonArray>
@@ -61,6 +63,7 @@ struct Clip {
   QList<clips::Step> steps;
   QList<QPair<int, int>> guide;  // per tool step, the clip steps a tool panel loops
   QStringList texts;
+  QList<clips::KeyRef> keys;  // its key elements
 };
 struct Library {
   QHash<QString, Clip> clips;
@@ -98,7 +101,7 @@ const QHash<QString, QStringList>& schema() {
         {"chip", {"at", "screen", "text", "value", "dot", "icon", "close", "color", "dx", "dy", "hl"}},
         {"cursor", {"kind", "pos", "screen", "dx", "dy", "badge", "down"}},
         {"hud", {"at", "dx", "dy", "fields", "focus", "typed", "origin", "dec", "unit"}},
-        {"key", {"caps", "corner", "press"}},
+        {"key", {"caps", "command", "fixed", "corner", "press"}},
         {"glyph", {"kind", "at", "dx", "dy", "color"}},
         {"snap", {"kind", "at", "color"}},
         {"card", {"screen", "w", "title", "rows", "hl", "button", "press"}},
@@ -118,7 +121,7 @@ const QStringList kColorProps{"color", "fill", "glow", "hatch", "tone", "edges",
 const QStringList kTokens{"bg", "bg2", "bg3", "bg4", "line", "fg", "fg2", "fg3", "vp", "sel", "selbg", "hov", "amber", "green", "red",
                           "mtop", "mleft", "mright", "medge", "cap", "onsel", "glow", "blue", "white", "black"};
 const QHash<QString, QStringList> kKinds{
-    {"cursor", {"arrow", "cross", "move"}},
+    {"cursor", {"arrow", "cross", "move", "wheel"}},
     {"glyph", {"horizontal", "vertical", "parallel", "perpendicular", "coincident", "tangent", "equal", "concentric", "fix", "midpoint", "symmetric", "collinear", "smooth"}},
     {"snap", {"endpoint", "midpoint", "center", "quadrant", "intersection", "tangent", "nearest", "perpendicular"}},
     {"dim", {"linear", "radial", "diameter", "angular"}},
@@ -336,6 +339,8 @@ void checkValue(const QString& el, const QString& prop, const QJsonValue& v, con
   if (prop == "markers")
     for (const QJsonValue& m : v.toArray()) if (!icons::has(m.toString())) problem(QString("%1: no icon %2").arg(el, m.toString()));
   if ((prop == "badge" || prop == "icon") && !v.toString().isEmpty() && !icons::has(v.toString())) problem(QString("%1: no icon %2").arg(el, v.toString()));
+  // "" names no key (a template's optional one, navPreset's modifier): nothing is drawn.
+  if (el == "key" && prop == "fixed" && !v.toString().isEmpty() && !keys::fixedNames().contains(v.toString())) problem(QString("key: unknown fixed key %1").arg(v.toString()));
 }
 
 void parseItem(const QJsonObject& o, Clip& c, const Problem& problem) {
@@ -361,6 +366,14 @@ void parseItem(const QJsonObject& o, Clip& c, const Problem& problem) {
   if (it.el == "cursor" && !it.base.contains("down")) it.base.insert("down", false);
   if (it.el == "chip" && !it.base.contains("hl")) it.base.insert("hl", false);
   collectTexts(it.el, it.base, c.texts);
+  if (it.el == "key") {
+    const int named = int(o.contains("caps")) + int(o.contains("command")) + int(o.contains("fixed"));
+    if (named != 1) problem("key: one of caps, command or fixed");
+    c.keys << clips::KeyRef{o.value("command").toString(), o.value("fixed").toString(), {}, it.from, it.to};
+    for (const QJsonValue& k : o.value("caps").toArray()) c.keys.last().caps << k.toString();
+    // Literal caps show a default the user may have changed (or a key on one keyboard only): still drawn, but named.
+    if (o.contains("caps")) problem(QString("key: literal caps %1 (name the command, \"command\": id, or the fixed key, \"fixed\": name)").arg(c.keys.last().caps.join('+')));
+  }
   double last = -1e9;
   for (const QJsonValue& kv : o.value("keys").toArray()) {
     const QJsonArray pair = kv.toArray();
@@ -428,9 +441,12 @@ void parseClip(QJsonObject raw, const QJsonObject& templates, Library& l) {
   double from = 0;
   for (const QJsonValue& v : raw.value("steps").toArray()) {
     const QJsonObject s = v.toObject();
-    clips::Step step{s.value("from").toDouble(from), s.value("to").toDouble(c.duration), s.value("caption").toString()};
+    clips::Step step{s.value("from").toDouble(from), s.value("to").toDouble(c.duration), s.value("caption").toString(), s.value("captionNoKey").toString()};
     if (step.caption.isEmpty() || step.to <= step.from) problem("a step needs a caption and to > from");
+    for (const QString& key : s.keys())
+      if (!QStringList{"from", "to", "caption", "captionNoKey"}.contains(key)) problem("a step has no field " + key);
     if (!c.texts.contains(step.caption)) c.texts.prepend(step.caption);
+    if (!step.captionNoKey.isEmpty() && !c.texts.contains(step.captionNoKey)) c.texts << step.captionNoKey;
     c.steps << step;
     from = step.to;
   }
@@ -528,8 +544,10 @@ struct Ctx {
 };
 
 QString literal(const QString& s) { return QChar(0x202A) + s + QChar(0x202C); }  // numbers and units keep their order in RTL
+// A text of the clip as shown: translated, the user's keys put in for its key tokens.
+QString said(const QString& english) { return help::expand(i18n::t(english)); }
 QString shown(const QJsonObject& o) {  // "text" is translated, "value" shown as written
-  if (o.contains("text")) return i18n::t(o.value("text").toString());
+  if (o.contains("text")) return said(o.value("text").toString());
   const QJsonValue v = o.value("value");
   return v.isDouble() ? literal(QString::number(v.toDouble(), 'f', 0)) : v.toString().isEmpty() ? QString() : literal(v.toString());
 }
@@ -1005,18 +1023,23 @@ void glyph(Ctx& c, const QString& kind, const QPointF& at, const QColor& color) 
   const double k = 4 * u;
   const QPointF o = at;
   auto L = [&](double x1, double y1, double x2, double y2) { p.drawLine(o + QPointF(x1, y1) * k, o + QPointF(x2, y2) * k); };
-  if (kind == "horizontal") L(-1, 0, 1, 0);
-  else if (kind == "vertical") L(0, -1, 0, 1);
+  // As the sketch draws its badges (SnapMarkers.hpp glyph, y up there): a level bar and an upright bar with end ticks, a
+  // stake for Fix, a caret on a line for Midpoint, chevrons for Symmetric.
+  if (kind == "horizontal") { L(-1, 0, 1, 0); L(-1, -0.4, -1, 0.4); L(1, -0.4, 1, 0.4); }
+  else if (kind == "vertical") { L(0, -1, 0, 1); L(-0.4, -1, 0.4, -1); L(-0.4, 1, 0.4, 1); }
   else if (kind == "parallel") { L(-0.9, 0.8, -0.1, -0.8); L(0.1, 0.8, 0.9, -0.8); }
   else if (kind == "perpendicular") { L(-1, 0.9, 1, 0.9); L(0, 0.9, 0, -1); }
   else if (kind == "coincident") { p.setBrush(color); p.drawEllipse(o, 1.8 * u, 1.8 * u); }
   else if (kind == "tangent") { p.drawEllipse(o + QPointF(0, -0.25) * k, 0.65 * k, 0.65 * k); L(-1, 0.6, 1, 0.6); }
   else if (kind == "equal") { L(-0.9, -0.4, 0.9, -0.4); L(-0.9, 0.4, 0.9, 0.4); }
   else if (kind == "concentric") { p.drawEllipse(o, 0.95 * k, 0.95 * k); p.drawEllipse(o, 0.4 * k, 0.4 * k); }
-  else if (kind == "fix") { p.drawRect(QRectF(o + QPointF(-0.75, -0.1) * k, QSizeF(1.5 * k, 1.05 * k))); p.drawArc(QRectF(o + QPointF(-0.5, -0.95) * k, QSizeF(k, 1.4 * k)), 0, 180 * 16); }
-  else if (kind == "midpoint") { L(-1, 0.6, 1, 0.6); p.setBrush(color); p.drawPolygon(QPolygonF{o + QPointF(0, -0.6) * k, o + QPointF(0.5, 0.25) * k, o + QPointF(-0.5, 0.25) * k}); }
-  else if (kind == "symmetric") { L(0, -1, 0, 1); p.setBrush(color); p.drawEllipse(o + QPointF(-0.6, 0) * k, 1.2 * u, 1.2 * u); p.drawEllipse(o + QPointF(0.6, 0) * k, 1.2 * u, 1.2 * u); }
-  else if (kind == "collinear") { L(-1, 0.5, -0.2, 0.5); L(0.2, 0.5, 1, 0.5); L(-1, -0.5, 1, -0.5); }
+  else if (kind == "fix") { L(0, -1, 0, 0.3); L(-0.9, 0.3, 0.9, 0.3); for (const double x : {-0.6, 0.0, 0.6}) L(x, 0.3, x - 0.35, 0.95); }
+  else if (kind == "midpoint") { L(-1, 0.5, 1, 0.5); L(-0.45, 0.5, 0, -0.5); L(0, -0.5, 0.45, 0.5); }
+  else if (kind == "symmetric") {
+    L(0, -1, 0, -0.55); L(0, -0.2, 0, 0.2); L(0, 0.55, 0, 1);
+    L(-0.4, -0.7, -0.9, 0); L(-0.9, 0, -0.4, 0.7); L(0.4, -0.7, 0.9, 0); L(0.9, 0, 0.4, 0.7);
+  }
+  else if (kind == "collinear") { L(-1, 0.6, -0.15, 0); L(0.15, -0.2, 1, -0.8); }
   else if (kind == "smooth") { QPainterPath s; s.moveTo(o + QPointF(-1, 0.7) * k); s.cubicTo(o + QPointF(0, 0.7) * k, o + QPointF(0, -0.7) * k, o + QPointF(1, -0.7) * k); p.drawPath(s); }
 }
 
@@ -1056,6 +1079,19 @@ void cursorGlyph(Ctx& c, const QString& kind, const QPointF& o) {
   p.setPen(QPen(Qt::black, 1.0 * u, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
   p.setBrush(Qt::white);
   p.drawPolygon(arrow);
+  if (kind == "wheel") {  // the pointer with a mouse whose wheel turns: zoom by scrolling, no button held
+    const QPointF m = o + QPointF(19, 6) * u;
+    const QColor fg = token(*c.tk, "fg"), sel = token(*c.tk, "sel");
+    p.setPen(QPen(fg, 1.2 * u));
+    p.setBrush(alpha(token(*c.tk, "vp"), 0.9));
+    p.drawRoundedRect(QRectF(m, QSizeF(10, 15) * u), 5 * u, 5 * u);
+    p.setPen(QPen(sel, 2 * u, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(m + QPointF(5, 3) * u, m + QPointF(5, 6.5) * u);
+    p.setPen(Qt::NoPen);
+    p.setBrush(sel);
+    arrowHead(p, m + QPointF(5, -3) * u, QPointF(0, -1), 3.2 * u, 2.4 * u);
+    arrowHead(p, m + QPointF(5, 18) * u, QPointF(0, 1), 3.2 * u, 2.4 * u);
+  }
 }
 
 // Value boxes beside the cursor: numbers formatted, {len} {dia} {ang} {w} {h} measured from `origin` to the cursor, the focused
@@ -1114,16 +1150,42 @@ void hud(Ctx& c, const QJsonObject& o, const Xf& x) {
   }
 }
 
+// What a key element draws now: the caps of the user's key for its command, of a fixed key, or as written; a command
+// without a key: no caps, `title` is its name (drawn as a chip with its icon in the caps' place).
+QStringList resolvedCaps(const QJsonObject& o, QString* title = nullptr, QString* icon = nullptr) {
+  if (o.contains("fixed")) return keys::fixedCaps(o.value("fixed").toString());
+  if (o.contains("command")) {
+    const QString id = o.value("command").toString();
+    const QStringList caps = keys::caps(keys::binding(id));
+    if (caps.isEmpty()) {
+      if (title) *title = help::title(id);
+      if (icon) {
+        const QAction* a = keys::action(id);
+        *icon = a && icons::has(a->data().toString()) ? a->data().toString() : QString();
+      }
+    }
+    return caps;
+  }
+  QStringList out;
+  for (const QJsonValue& k : o.value("caps").toArray()) out << k.toString();
+  return out;
+}
+
 void keycaps(Ctx& c, const QJsonObject& o) {
   QPainter& p = *c.p;
-  const QJsonArray keys = o.value("caps").toArray();
-  const QFont f = c.font(10, QFont::Medium, true);
-  p.setFont(f);
+  QString title, icon;
+  const QStringList keys = resolvedCaps(o, &title, &icon);
+  const QFont f = c.font(10, QFont::Medium, true), named = c.font(10, QFont::Medium);
   const QFontMetricsF fm(f);
-  const double h = 19 * c.u, pad = 6 * c.u, gap = 4 * c.u, m = 8 * c.u;
+  const double h = 19 * c.u, pad = 6 * c.u, gap = 4 * c.u, m = 8 * c.u, iconSize = 12 * c.u;
+  // The chord separator of a multi-chord key is plain text between the caps, never a cap.
+  auto width = [&](const QString& k) { return k == keys::kThen ? fm.horizontalAdvance(k) : std::max(fm.horizontalAdvance(k) + 2 * pad, h); };
   double total = 0;
-  for (const QJsonValue& k : keys) total += std::max(fm.horizontalAdvance(k.toString()) + 2 * pad, h) + gap;
-  total -= gap;
+  if (keys.isEmpty() && !title.isEmpty()) total = QFontMetricsF(named).horizontalAdvance(title) + 2 * pad + (icon.isEmpty() ? 0 : iconSize + 4 * c.u);
+  else {
+    for (const QString& k : keys) total += width(k) + gap;
+    total -= gap;
+  }
   const QString corner = o.value("corner").toString("br");
   double x = corner.endsWith('l') ? c.scene.left() + m : corner.endsWith('c') ? c.scene.center().x() - total / 2 : c.scene.right() - m - total;
   const double y = corner.startsWith('t') ? c.scene.top() + m : c.scene.bottom() - m - h;
@@ -1131,19 +1193,47 @@ void keycaps(Ctx& c, const QJsonObject& o) {
   const bool pressed = since > -0.06 && since < 0.24;
   // Left to right ("Ctrl" before "Enter") in every language, mirrored as a group: the corner flips, not the order.
   if (c.rtl && !corner.endsWith('c')) x = c.scene.left() + c.scene.right() - x - total;
-  for (const QJsonValue& k : keys) {
-    const double w = std::max(fm.horizontalAdvance(k.toString()) + 2 * pad, h);
-    const QRectF cap(x, y + (pressed ? 1.5 * c.u : 0), w, h);
+  auto face = [&](const QRectF& cap, double radius) {
     p.setPen(Qt::NoPen);
     p.setBrush(alpha(Qt::black, 0.25));
-    if (!pressed) p.drawRoundedRect(cap.translated(0, 1.5 * c.u), 3.5 * c.u, 3.5 * c.u);
+    if (!pressed) p.drawRoundedRect(cap.translated(0, 1.5 * c.u), radius, radius);
     p.setPen(QPen(pressed ? token(*c.tk, "sel") : token(*c.tk, "line"), 1 * c.u));
     p.setBrush(pressed ? token(*c.tk, "sel") : token(*c.tk, "bg4"));
-    p.drawRoundedRect(cap, 3.5 * c.u, 3.5 * c.u);
+    p.drawRoundedRect(cap, radius, radius);
     p.setPen(pressed ? token(*c.tk, "onsel") : token(*c.tk, "fg"));
-    p.drawText(cap, Qt::AlignCenter, k.toString());
+  };
+  if (keys.isEmpty() && !title.isEmpty()) {  // no key: the command by its icon and name, what the user would choose
+    const QRectF chip(x, y + (pressed ? 1.5 * c.u : 0), total, h);
+    face(chip, h / 2);
+    const bool flip = c.rtl;
+    double cx = flip ? chip.right() - pad : chip.left() + pad;
+    if (!icon.isEmpty()) {
+      const QRectF ir(flip ? cx - iconSize : cx, chip.center().y() - iconSize / 2, iconSize, iconSize);
+      p.drawPixmap(ir.toRect(), icons::pixmap(icon, pressed ? token(*c.tk, "onsel") : token(*c.tk, "fg2"), int(std::lround(iconSize)), p.device()->devicePixelRatioF()));
+      cx += (flip ? -1 : 1) * (iconSize + 4 * c.u);
+    }
+    p.setFont(named);
+    const double tw = QFontMetricsF(named).horizontalAdvance(title);
+    p.drawText(QRectF(flip ? cx - tw : cx, chip.top(), tw + 1, h), Qt::AlignLeft | Qt::AlignVCenter, title);
+    return;
+  }
+  p.setFont(f);
+  // A key's name is left to right in every language: in a right-to-left frame "]" alone came out mirrored as "[".
+  const Qt::LayoutDirection frame = p.layoutDirection();
+  p.setLayoutDirection(Qt::LeftToRight);
+  for (const QString& k : keys) {
+    const double w = width(k);
+    const QRectF cap(x, y + (pressed ? 1.5 * c.u : 0), w, h);
+    if (k == keys::kThen) {
+      p.setPen(token(*c.tk, "fg2"));
+      p.drawText(cap, Qt::AlignCenter, k);
+    } else {
+      face(cap, 3.5 * c.u);
+      p.drawText(cap, Qt::AlignCenter, k);
+    }
     x += w + gap;
   }
+  p.setLayoutDirection(frame);
 }
 
 // A panel stub: title, rows (label and value, radio, check box, slider, indent, icon), a highlighted row, a button.
@@ -1165,14 +1255,14 @@ void card(Ctx& c, const QJsonObject& o) {
   p.drawRoundedRect(box, 5 * u, 5 * u);
   p.setFont(c.font(10.5, QFont::DemiBold));
   p.setPen(t.fg);
-  p.drawText(c.mirror(QRectF(ltr.left() + pad, ltr.top(), w - 2 * pad, titleH)), Qt::AlignLeft | Qt::AlignVCenter, i18n::t(o.value("title").toString()));
+  p.drawText(c.mirror(QRectF(ltr.left() + pad, ltr.top(), w - 2 * pad, titleH)), Qt::AlignLeft | Qt::AlignVCenter, said(o.value("title").toString()));
   p.setPen(QPen(t.line, 1 * u));
   p.drawLine(QPointF(box.left() + 1, box.top() + titleH), QPointF(box.right() - 1, box.top() + titleH));
   const int hl = o.value("hl").toInt(-1);
   double y = ltr.top() + titleH + 2 * u;
   for (qsizetype i = 0; i < rows.size(); ++i, y += rowH) {
     // [label, value], or {"text" (translated) | "label" (as written), "value", "entry" (a text field, as written), "radio", "check",
-    // "indent", "icon", "slider", "dim", "color"}
+    // "check2" (a box in a second column), "swatches" (colour tokens, "pick" ringed), "indent", "icon", "slider", "dim", "color"}
     const QJsonObject r = rows[i].isArray() ? QJsonObject{{"text", rows[i].toArray().at(0)}, {"value", rows[i].toArray().at(1)}} : rows[i].toObject();
     const QRectF row(ltr.left() + 2 * u, y, w - 4 * u, rowH);
     if (i == hl) {
@@ -1182,12 +1272,11 @@ void card(Ctx& c, const QJsonObject& o) {
     }
     double x = row.left() + pad - 2 * u + r.value("indent").toDouble() * 10 * u;
     const bool dim = r.value("dim").toBool();
-    if (r.contains("radio") || r.contains("check")) {
-      const bool on = r.value(r.contains("radio") ? "radio" : "check").toBool();
-      const QRectF mark = c.mirror(QRectF(x, y + rowH / 2 - 4.5 * u, 9 * u, 9 * u));
+    auto tick = [&](double left, bool on, bool radio) {
+      const QRectF mark = c.mirror(QRectF(left, y + rowH / 2 - 4.5 * u, 9 * u, 9 * u));
       p.setPen(QPen(on ? t.sel : t.fg3, 1.2 * u));
       p.setBrush(Qt::NoBrush);
-      if (r.contains("radio")) {
+      if (radio) {
         p.drawEllipse(mark);
         if (on) { p.setPen(Qt::NoPen); p.setBrush(t.sel); p.drawEllipse(mark.center(), 2.4 * u, 2.4 * u); }
       } else {
@@ -1199,7 +1288,21 @@ void card(Ctx& c, const QJsonObject& o) {
           p.drawPolyline(QPolygonF{m0 + QPointF(-2.4, 0) * u, m0 + QPointF(-0.6, 1.8) * u, m0 + QPointF(2.6, -1.8) * u});
         }
       }
+    };
+    if (r.contains("radio") || r.contains("check")) {
+      tick(x, r.value(r.contains("radio") ? "radio" : "check").toBool(), r.contains("radio"));
       x += 14 * u;
+    }
+    if (r.contains("check2")) tick(row.right() - pad - 9 * u, r.value("check2").toBool(), false);  // a second column's box
+    if (r.contains("swatches")) {  // a colour dialog's swatches, "pick" ringed
+      const QJsonArray swatches = r.value("swatches").toArray();
+      const int pick = r.value("pick").toInt(-1);
+      for (qsizetype k = 0; k < swatches.size(); ++k) {
+        const QRectF s = c.mirror(QRectF(x + k * 15 * u, y + 2.5 * u, 12 * u, rowH - 5 * u));
+        p.setPen(QPen(k == pick ? t.fg : t.line, (k == pick ? 1.6 : 1) * u));
+        p.setBrush(c.col(swatches[k], "fg"));
+        p.drawRoundedRect(s, 2 * u, 2 * u);
+      }
     }
     if (const QString icon = r.value("icon").toString(); icons::has(icon)) {
       const QRectF ir = c.mirror(QRectF(x, y + rowH / 2 - 6 * u, 12 * u, 12 * u));
@@ -1208,9 +1311,15 @@ void card(Ctx& c, const QJsonObject& o) {
     }
     p.setFont(c.font(10));
     p.setPen(dim ? t.fg3 : t.fg2);
-    if (r.contains("text") || r.contains("label"))
-      p.drawText(c.mirror(QRectF(x, y, row.right() - x - pad, rowH)), Qt::AlignLeft | Qt::AlignVCenter,
-                 r.contains("text") ? i18n::t(r.value("text").toString()) : literal(r.value("label").toString()));
+    if (r.contains("text") || r.contains("label")) {
+      // A value on the right keeps its room: a label too long for the rest is cut short, never drawn under it.
+      const bool valued = r.contains("value") && !r.contains("slider") && !r.contains("entry");
+      const QString value = r.value("value").toString();
+      const QFontMetricsF metrics(p.font());
+      const double room = row.right() - x - pad - (valued ? metrics.horizontalAdvance(wordy(value) ? said(value) : literal(value)) + 6 * u : 0);
+      const QString label = r.contains("text") ? said(r.value("text").toString()) : literal(r.value("label").toString());
+      p.drawText(c.mirror(QRectF(x, y, std::max(0.0, room), rowH)), Qt::AlignLeft | Qt::AlignVCenter, metrics.elidedText(label, Qt::ElideRight, std::max(0.0, room)));
+    }
     if (r.contains("slider")) {
       const double sx0 = row.left() + w * 0.42, sx1 = row.right() - pad, f = std::clamp(r.value("slider").toDouble(), 0.0, 1.0), cy = y + rowH / 2;
       const QRectF track = c.mirror(QRectF(sx0, cy - 1.5 * u, sx1 - sx0, 3 * u)), done = c.mirror(QRectF(sx0, cy - 1.5 * u, (sx1 - sx0) * f, 3 * u));
@@ -1240,11 +1349,11 @@ void card(Ctx& c, const QJsonObject& o) {
     } else if (r.contains("value")) {
       p.setPen(dim ? t.fg3 : r.value("color").isString() ? c.col(r.value("color"), "fg") : t.fg);
       const QString value = r.value("value").toString();
-      p.drawText(c.mirror(QRectF(x, y, row.right() - x - pad, rowH)), Qt::AlignRight | Qt::AlignVCenter, wordy(value) ? i18n::t(value) : literal(value));
+      p.drawText(c.mirror(QRectF(x, y, row.right() - x - pad, rowH)), Qt::AlignRight | Qt::AlignVCenter, wordy(value) ? said(value) : literal(value));
     }
   }
   if (button) {
-    const QString label = i18n::t(o.value("button").toString());
+    const QString label = said(o.value("button").toString());
     const QFont f = c.font(10, QFont::DemiBold);
     const double bw = QFontMetricsF(f).horizontalAdvance(label) + 20 * u;
     const QRectF b = c.mirror(QRectF(ltr.right() - pad - bw, y + 4 * u, bw, 18 * u));
@@ -1446,7 +1555,7 @@ void picture(Ctx& c, const QJsonObject& o, const Xf& x) {
 }
 
 // The timeline at the foot of a panel: one marker per step (an icon), each in a state: "" plain, "dim" (rolled back),
-// "struck" (deleted), "sel" (selected), "flash" (being computed); "at" puts the rollback bar after that many markers.
+// "tombstoned" (deleted: dashed and hollow, as the app draws it), "sel" (selected), "flash" (being computed), "error" (failed: a red !); "at" puts the rollback bar after that many markers.
 // Left to right in every language like the app's timeline; the strip itself sits on the mirrored side.
 void timeline(Ctx& c, const QJsonObject& o) {
   QPainter& p = *c.p;
@@ -1465,15 +1574,21 @@ void timeline(Ctx& c, const QJsonObject& o) {
     const QRectF m(box.left() + pad + i * cell + 2 * u, box.top() + 4 * u, cell - 4 * u, h - 8 * u);
     const bool later = i >= bar - 1e-9;
     p.setOpacity(p.opacity() * (state == "dim" || later ? 0.4 : 1));
-    p.setPen(QPen(state == "sel" || state == "flash" ? t.sel : t.line, 1 * u));
-    p.setBrush(state == "flash" ? t.sel : state == "sel" ? t.selbg : t.bg4);
+    const bool tombstoned = state == "tombstoned";
+    p.setPen(QPen(state == "sel" || state == "flash" ? t.sel : tombstoned ? t.fg2 : t.line, (tombstoned ? 1.5 : 1) * u, tombstoned ? Qt::DashLine : Qt::SolidLine));
+    p.setBrush(state == "flash" ? t.sel : state == "sel" ? t.selbg : tombstoned ? QBrush(Qt::NoBrush) : QBrush(t.bg4));
     p.drawRoundedRect(m, 3 * u, 3 * u);
     const int size = int(std::lround(12 * u));
     p.drawPixmap(QRectF(m.center() - QPointF(6, 6) * u, QSizeF(12, 12) * u).toRect(),
                  icons::pixmap(markers[i].toString(), state == "flash" ? t.onsel : state == "sel" ? t.sel : t.fg2, size, p.device()->devicePixelRatioF()));
-    if (state == "struck") {
-      p.setPen(QPen(t.red, 1.6 * u, Qt::SolidLine, Qt::RoundCap));
-      p.drawLine(m.bottomLeft() + QPointF(2, -2) * u, m.topRight() + QPointF(-2, 2) * u);
+    if (state == "error") {  // a step that failed: the timeline's red "!" at the marker's corner
+      const QPointF e = m.bottomRight() - QPointF(1, 1) * u;
+      p.setPen(QPen(t.bg2, 1 * u));
+      p.setBrush(t.red);
+      p.drawEllipse(e, 4.5 * u, 4.5 * u);
+      p.setPen(QPen(Qt::white, 1.4 * u, Qt::SolidLine, Qt::RoundCap));
+      p.drawLine(e + QPointF(0, -2.5) * u, e + QPointF(0, 0.5) * u);
+      p.drawPoint(e + QPointF(0, 2.4) * u);
     }
     p.setOpacity(p.opacity() / (state == "dim" || later ? 0.4 : 1));
   }
@@ -1816,7 +1931,7 @@ void captionBar(Ctx& c, const Clip& clip, const QRectF& bar) {
   QString text;
   if (c.still) {
     QStringList parts;
-    for (int i = 0; i < n; ++i) parts << QString("%1 %2").arg(i + 1).arg(i18n::t(clip.steps[i].caption));
+    for (int i = 0; i < n; ++i) parts << QString("%1 %2").arg(i + 1).arg(clips::caption(clip.steps[i]));
     text = parts.join(QString::fromUtf8("  ›  "));
   } else if (n) {
     const QRectF badge = M(QRectF(x, bar.center().y() - 7 * u, 14 * u, 14 * u));
@@ -1827,7 +1942,7 @@ void captionBar(Ctx& c, const Clip& clip, const QRectF& bar) {
     p.setPen(t.onsel);
     p.drawText(badge, Qt::AlignCenter, QString::number(current + 1));
     x += 20 * u;
-    text = i18n::t(clip.steps[current].caption);
+    text = clips::caption(clip.steps[current]);
   }
   const QFont f = c.font(10.5);
   p.setFont(f);
@@ -1945,7 +2060,37 @@ bool has(const QString& id) {
 }
 QStringList problems() {
   ensureLoaded();
-  return lib().problems;
+  QStringList out = lib().problems;
+  if (keys::hasLookup())  // the commands this build has: a key element for another one shows nothing true
+    for (auto it = lib().clips.constBegin(); it != lib().clips.constEnd(); ++it)
+      for (const KeyRef& k : it->keys)
+        if (!k.command.isEmpty() && !keys::action(k.command)) out << it.key() + ": key: no command " + k.command;
+  return out;
+}
+
+QString caption(const Step& step) {
+  bool bound = true;
+  const QString text = help::expand(i18n::t(step.caption), &bound);
+  return bound || step.captionNoKey.isEmpty() ? text : help::expand(i18n::t(step.captionNoKey));
+}
+
+QList<KeyRef> keyRefs(const QString& id) {
+  ensureLoaded();
+  return lib().clips.value(id).keys;
+}
+
+QList<QStringList> resolvedKeys(const QString& id, double t) {
+  ensureLoaded();
+  QList<QStringList> out;
+  const auto it = lib().clips.constFind(id);
+  if (it == lib().clips.constEnd()) return out;
+  for (const Item& item : it->items) {
+    if (item.el != "key" || (t >= 0 && visibility(item, t) <= 0)) continue;
+    QString title;
+    const QStringList caps = resolvedCaps(evaluate(item, std::max(0.0, t)), &title);
+    out << (caps.isEmpty() && !title.isEmpty() ? QStringList{title} : caps);
+  }
+  return out;
 }
 double duration(const QString& id) {
   ensureLoaded();
@@ -2042,6 +2187,7 @@ ClipView::ClipView(const QString& clip, QWidget* parent) : QWidget(parent) {
   m_timer.setInterval(33);
   connect(&m_timer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
   connect(theme::notifier(), &theme::Notifier::changed, this, qOverload<>(&QWidget::update));
+  connect(keys::notifier(), &keys::Notifier::changed, this, qOverload<>(&QWidget::update));  // a still frame shows the new key too
   setClip(clip);
 }
 

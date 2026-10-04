@@ -1,6 +1,7 @@
 #include "CommandHelp.hpp"
 
 #include "I18n.hpp"
+#include "KeyText.hpp"
 
 #include <QAction>
 #include <QCoreApplication>
@@ -126,14 +127,82 @@ const QList<CommandHelp>& all() {
 QString requirement(const CommandHelp& h, const QVariantMap& args) {
   QString text = h.requirement;
   for (auto it = args.begin(); it != args.end(); ++it) text.replace("{" + it.key() + "}", it.value().toString());
-  return text;
+  return expand(text);
+}
+
+namespace {
+const QRegularExpression& tokenPattern() {
+  static const QRegularExpression re(R"(\{(key|press|fixed):([A-Za-z0-9_.]+)\})");
+  return re;
+}
+}  // namespace
+
+QStringList tokens(const QString& text) {
+  QStringList out;
+  if (!text.contains('{')) return out;
+  for (const auto& m : tokenPattern().globalMatch(text)) out << m.captured(1) + ':' + m.captured(2);
+  return out;
+}
+
+QString title(const QString& id) {
+  if (const CommandHelp* h = find(id); h && !h->title.isEmpty()) return h->title;
+  if (QAction* a = keys::action(id)) {
+    QString label = a->text();
+    return label.remove('&').remove(QString::fromUtf8("…")).remove("...").trimmed();
+  }
+  return id;
+}
+
+QString expand(const QString& text, bool* allBound) {
+  if (allBound) *allBound = true;
+  if (!text.contains('{')) return text;
+  QString out;
+  qsizetype last = 0;
+  for (const auto& m : tokenPattern().globalMatch(text)) {
+    const QString kind = m.captured(1), name = m.captured(2);
+    qsizetype start = m.capturedStart(), end = m.capturedEnd();
+    QString replacement;
+    if (kind == "fixed") {
+      replacement = keys::fixedText(name);
+      if (replacement.isEmpty()) replacement = m.captured(0);  // an unknown name stays as written (the tests name it)
+    } else if (const QString key = keys::text(name); !key.isEmpty()) {
+      replacement = kind == "press" ? QCoreApplication::translate("help", "Press %1").arg(key) : key;
+    } else {
+      if (allBound) *allBound = false;
+      if (kind == "press") {
+        replacement = QCoreApplication::translate("help", "Choose %1").arg(title(name));
+      } else {
+        // "(token)": the brackets go too, with the space before them; a bare token names the command.
+        qsizetype open = start, close = end;
+        while (open > last && text[open - 1].isSpace()) --open;
+        while (close < text.size() && text[close].isSpace()) ++close;
+        if (open > last && text[open - 1] == '(' && close < text.size() && text[close] == ')') {
+          start = open - 1;
+          if (start > last && text[start - 1].isSpace()) --start;
+          end = close + 1;
+        } else {
+          replacement = title(name);
+        }
+      }
+    }
+    out += text.mid(last, start - last) + replacement;
+    last = end;
+  }
+  return out + text.mid(last);
 }
 
 bool matches(const CommandHelp& h, const QString& query) {
   const QString haystack = h.title + ' ' + h.keywords.join(' ') + ' ' + h.summary;
+  bool all = true;
   for (const QString& word : query.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts))
-    if (!haystack.contains(word, Qt::CaseInsensitive)) return false;
-  return true;
+    if (!haystack.contains(word, Qt::CaseInsensitive)) all = false;
+  if (all) return true;
+  // The key it has now, typed as shown ("Ctrl+Alt+F") or as Qt writes it; spaces and case do not count.
+  const QKeySequence key = keys::binding(h.id);
+  if (key.isEmpty()) return false;
+  auto squeeze = [](QString s) { return s.remove(QRegularExpression("\\s+")).toLower(); };
+  const QString q = squeeze(query);
+  return !q.isEmpty() && (q == squeeze(keys::plain(key)) || q == squeeze(key.toString(QKeySequence::PortableText)));
 }
 
 QString group(const QString& id) {
@@ -141,10 +210,15 @@ QString group(const QString& id) {
   if (area == "file" || area == "files") return QCoreApplication::translate("help", "File");
   if (area == "edit") return QCoreApplication::translate("help", "Edit");
   if (area == "select") return QCoreApplication::translate("help", "Select");
-  if (area == "view" || area == "nav" || area == "panel" || area == "workspace") return QCoreApplication::translate("help", "View");
+  // The areas' commands go where their menus have them: version control in File, the timeline's and the 2D drawings'
+  // switches in View, components and exploded views in Design; the Drawings workspace's commands have a group of their own.
+  if (area == "vcs") return QCoreApplication::translate("help", "File");
+  if (area == "view" || area == "nav" || area == "panel" || area == "workspace" || area == "timeline" || area == "drawing2d")
+    return QCoreApplication::translate("help", "View");
   if (area == "inspect") return QCoreApplication::translate("help", "Inspect");
   if (area == "annotate") return QCoreApplication::translate("help", "Annotate");
-  if (area == "design") return QCoreApplication::translate("help", "Design");
+  if (area == "design" || area == "assembly") return QCoreApplication::translate("help", "Design");
+  if (area == "drawings") return QCoreApplication::translate("help", "Drawings");
   if (id.startsWith("sketch.c.") || id == "sketch.dimension" || id == "sketch.constraints" || id == "sketch.moreConstrain")
     return QCoreApplication::translate("help", "Sketch constraints");
   if (area == "sketch") return QCoreApplication::translate("help", "Sketch");
@@ -154,7 +228,7 @@ QString group(const QString& id) {
 
 QStringList areas() {
   QStringList out;
-  for (const char* id : {"file.", "edit.", "select.", "view.", "inspect.", "annotate.", "design.", "sketch.", "sketch.c.", "tools.", "x."}) out << group(id);
+  for (const char* id : {"file.", "edit.", "select.", "view.", "inspect.", "annotate.", "design.", "drawings.", "sketch.", "sketch.c.", "tools.", "x."}) out << group(id);
   return out;
 }
 
@@ -164,8 +238,8 @@ QString tooltip(const QAction* a) {
   const CommandHelp* h = find(a->objectName());
   if (h && !h->title.isEmpty()) title = h->title;
   QString text = "<b>" + title.toHtmlEscaped() + "</b>";
-  if (!a->shortcut().isEmpty()) text += "&nbsp;&nbsp;(" + a->shortcut().toString(QKeySequence::NativeText).toHtmlEscaped() + ")";
-  if (h && !h->summary.isEmpty()) text += "<br>" + h->summary.toHtmlEscaped();
+  if (const QString key = keys::text(keys::binding(a)); !key.isEmpty()) text += "&nbsp;&nbsp;(" + key.toHtmlEscaped() + ")";
+  if (h && !h->summary.isEmpty()) text += "<br>" + expand(h->summary).toHtmlEscaped();
   return "<qt>" + text + "</qt>";
 }
 

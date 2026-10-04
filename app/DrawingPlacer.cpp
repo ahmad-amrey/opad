@@ -33,6 +33,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+#include "HelpClip.hpp"
 #include <cmath>
 
 namespace {
@@ -137,12 +138,17 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
   connect(cancelButton, &QPushButton::clicked, this, &DrawingPlacer::cancel);
   connect(units::notifier(), &units::Notifier::changed, this, [this] { if (m_active) refresh(); });
   view->installEventFilter(this);
+  // The guide of placing a drawing, under the hint: the tool guide's clip for this panel too (its "?", Help for this tool).
+  m_guide = new ToolGuide(body);
+  layout->insertWidget(1, m_guide);
+  connect(m_guide, &ToolGuide::resized, this, [this, body] { m_panel->setDefaultHeight(std::max(385, body->sizeHint().height())); });
 }
 
 void DrawingPlacer::start(const QString& file, const opad::Frame& plane, std::function<void(ToolPanel*)> open) {
   stop();
   m_active = true;
   m_file = file;
+  m_guide->setCommand(QStringList{"dxf", "dwg", "svg"}.contains(QFileInfo(file).suffix().toLower()) ? QString(kGuideClip) : QString());  // a drawing's clip
   m_plane = plane;
   m_du = m_dv = 0;
   m_loaded = false;
@@ -324,6 +330,7 @@ void DrawingPlacer::move() {
 }
 
 void DrawingPlacer::refresh() {
+  if (m_guide) m_guide->setWaiting(m_snapStage ? 2 : 1, 4);  // the clip's steps: plane, move, snap, Place
   if (!m_u->hasFocus()) m_u->setText(units::editable(units::Kind::Length, m_du));
   if (!m_v->hasFocus()) m_v->setText(units::editable(units::Kind::Length, m_dv));
   if (!m_widthEdit->hasFocus()) m_widthEdit->setText(m_width > 0 ? units::editable(units::Kind::Length, m_width) : QString());

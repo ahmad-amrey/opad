@@ -6,6 +6,8 @@
 
 #include <initializer_list>
 
+#include "CommandHelp.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 
 // ---------------------------------------------------------------- ViewportChips
@@ -30,7 +32,6 @@ ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
   // 2D mode is a mode the view stays in (no orbit, locked projection): shown as its own card while on.
   m_twoD = new QLabel(tr("2D mode"), this);
   m_twoD->setObjectName("chipSel");
-  m_twoD->setToolTip(tr("2D mode is on: the view is locked to a plane and does not orbit. Click, or press Shift+2, to turn it off."));
   m_twoD->setCursor(Qt::PointingHandCursor);
   m_twoD->installEventFilter(this);
   m_twoD->hide();
@@ -44,7 +45,6 @@ ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
   m_saveToEdit = new QToolButton(this);
   m_saveToEdit->setObjectName("chipAction");
   m_saveToEdit->setText(tr("Save to edit"));
-  m_saveToEdit->setToolTip(tr("Save as an OPAD document, which can be edited (Ctrl+S). The file you opened is not changed."));
   m_saveToEdit->setCursor(Qt::PointingHandCursor);
   m_saveToEdit->setFocusPolicy(Qt::NoFocus);
   connect(m_saveToEdit, &QToolButton::clicked, this, &ViewportChips::saveToEditRequested);
@@ -58,6 +58,14 @@ ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
   l->addWidget(m_section);
   l->addWidget(m_isolate);
   l->addStretch();
+  keyTexts();
+  connect(keys::notifier(), &keys::Notifier::changed, this, &ViewportChips::keyTexts);
+}
+
+void ViewportChips::keyTexts() {
+  m_twoD->setToolTip(help::expand(tr("2D mode is on: the view is locked to a plane and does not orbit. Click to turn it off, or use 2D mode ({key:view.2d}).")));
+  m_saveToEdit->setToolTip(help::expand(m_document ? tr("Save a copy of the document, which can be edited ({key:file.save}). The file you opened is not changed.")
+                                                   : tr("Save as an OPAD document, which can be edited ({key:file.save}). The file you opened is not changed.")));
 }
 
 bool ViewportChips::eventFilter(QObject* object, QEvent* event) {
@@ -76,8 +84,8 @@ void ViewportChips::setViewer(const QString& file, bool document) {
                        : document ? tr("%1 is open read-only: measure, section, hide and colour freely; the file is not changed. Editing needs a copy.").arg(file)
                                   : tr("%1 is shown read-only: measure, section, hide and colour freely. Editing needs it saved as an OPAD document.").arg(file));
   m_saveToEdit->setText(document ? tr("Save a copy to edit") : tr("Save to edit"));
-  m_saveToEdit->setToolTip(document ? tr("Save a copy of the document, which can be edited (Ctrl+S). The file you opened is not changed.")
-                                    : tr("Save as an OPAD document, which can be edited (Ctrl+S). The file you opened is not changed."));
+  m_document = document;
+  keyTexts();
   m_saveToEdit->setVisible(on);
   adjustSize();
 }

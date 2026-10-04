@@ -45,6 +45,7 @@
 
 #include "Icons.hpp"
 #include "Jobs.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 #include "opad/cache.hpp"
 
@@ -354,9 +355,19 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
   l->setContentsMargins(0, 0, 0, 0);
   l->setSpacing(6);
   l->addWidget(header(tr("START"), left));
-  auto* open = new QPushButton(icons::icon("open", theme::current().onsel), tr("Open   Ctrl+O"), left);
+  auto* open = new QPushButton(icons::icon("open", theme::current().onsel), QString(), left);
   open->setObjectName("primary");
-  auto* create = new QPushButton(icons::themed("doc", 16), tr("New Document   Ctrl+N"), left);
+  auto* create = new QPushButton(icons::themed("doc", 16), QString(), left);
+  auto labels = [open, create] {  // Open's and New document's keys now (keys::notifier), none without one
+    auto label = [](const QString& text, const QString& id) {
+      const QString key = keys::text(id);
+      return key.isEmpty() ? text : text + QStringLiteral("   ") + key;
+    };
+    open->setText(label(tr("Open"), "file.open"));
+    create->setText(label(tr("New Document"), "file.new"));
+  };
+  labels();
+  connect(keys::notifier(), &keys::Notifier::changed, this, labels);
   m_clone = link("git", QString(), left);
   m_clone->hide();
   for (QPushButton* b : {open, create}) b->setProperty("startButton", true);

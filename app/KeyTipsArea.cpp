@@ -316,7 +316,7 @@ OPAD_BENCH(OPAD_BENCH_KEYTIPS, keytips) {
     check(area->level() == 0, "Alt with another key (Alt+F) shows none");
     bool listed = false;
     for (const auto& g : help::keyGroups(w.m_actions, false, "fusion"))
-      for (const auto& r : g.rows) listed = listed || r.keys == "Alt";
+      for (const auto& r : g.rows) listed = listed || r.text() == "Alt";
     check(listed, "the shortcuts cheat sheet lists them (Alt)");
     trace::log(QString("bench: key tips: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);

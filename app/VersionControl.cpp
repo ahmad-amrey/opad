@@ -34,6 +34,7 @@
 #include "AreaController.hpp"
 #include "CompareMode.hpp"
 #include "DesignController.hpp"
+#include "KeyText.hpp"
 #include "DiskSync.hpp"
 #include "GitWatch.hpp"
 #include "I18n.hpp"
@@ -549,7 +550,7 @@ void VersionControl::commit() {
   run->setObjectName("primary");
   run->setProperty("action", "vcsCommitRun");
   run->setDefault(true);
-  run->setToolTip(tr("Ctrl+Enter"));
+  run->setToolTip(keys::joined(keys::fixedCaps("ctrlEnter")));  // the dialog's own key, named for the platform
   buttons->addButton(run, QDialogButtonBox::AcceptRole);
   col->addWidget(buttons);
   auto valid = [files, message, run] {

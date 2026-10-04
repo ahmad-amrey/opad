@@ -122,10 +122,12 @@ void PromptBar::paintEvent(QPaintEvent*) {
         p.setPen(t.fg3);
         p.drawText(at, baseline, rtl ? QString::fromUtf8("‹") : piece.text);
         break;
-      case Piece::Hint:
+      case Piece::Hint:  // "<key> <verb> · ...": a right-to-left sentence in Arabic, the keys isolated in it (keys::text)
         p.setFont(theme::mono(11));
         p.setPen(t.fg3);
+        p.setLayoutDirection(rtl ? Qt::RightToLeft : Qt::LeftToRight);  // the paragraph's direction; `at` stays its left edge
         p.drawText(at, baseline, piece.text);
+        p.setLayoutDirection(Qt::LeftToRight);
         break;
     }
     x += piece.width + 8;
@@ -338,7 +340,7 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   m_copy = m_footer->addSecondary(tr("Copy"));
   m_copy->setToolTip(tr("Copy measurement values"));
   m_footer->setCancel(tr("Clear"));
-  m_footer->setPrimary(tr("Pin to document"), QStringLiteral("P"));
+  m_footer->setPrimary(tr("Pin to document"), QStringLiteral("inspect.pin"));  // Pin's key now
   m_footer->setKeysStayWithWindow(true);  // Esc / P / Enter stay with the main window
   outer->addWidget(m_footer);
   m_footer->hide();

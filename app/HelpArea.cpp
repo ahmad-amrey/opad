@@ -1,9 +1,10 @@
 // The help area (UI-106/107/108): every ribbon button, status-bar toggle and menu command shows its command's rich card
 // (RichTip) with the command's animated clip (ClipView). The tool, feature and sketch panels play their own guides
 // (ToolGuide), and the "?" of every tool panel opens the tool guide at its command; the command palette previews the
-// current command. The Help menu: Help for this tool (F1, at the command running now), Tool guide, Shortcuts cheat
-// sheet (Ctrl+/), Getting started, Report a problem, above the window's own entries (licences, About). An empty document
-// shows the coach card: how a design starts, with buttons for the first step.
+// current command. The Help menu: Help for this tool (F1 by default, at the command running now), Tool guide, Shortcuts
+// cheat sheet (Ctrl+/ by default), Getting started, Report a problem, above the window's own entries (licences, About).
+// An empty document shows the coach card: how a design starts, with buttons for the first step. Every key the help shows
+// is the user's key now (keys::, its lookup installed here) and follows a change in the shortcut editor.
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -29,6 +30,7 @@
 #include "HelpReference.hpp"
 #include "HelpWindows.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "Icons.hpp"
 #include "Ribbon.hpp"
 #include "RichTip.hpp"
@@ -47,14 +49,16 @@ class HelpArea : public AreaController {
   explicit HelpArea(AreaServices& services) : AreaController(services) {
     RibbonBar::setCommandButtonHook(&RichTip::attach);  // the ribbon is built after the areas are made
     RichTip::setActionLookup([&services](const QString& id) { return services.action(id); });
+    keys::setLookup([&services](const QString& id) { return services.action(id); });  // the keys help texts and clips name
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);
     RichTip::setMenuCards(true);  // every menu's command entries
-    RichTip::setGuideHook([this](const QString& id) { openReference(id); });  // F1 on an expanded card
-    ToolPanel::setHelpHook([this](ToolPanel* panel) { openReference(panelCommand(panel)); });  // the panels are built later
+    RichTip::setGuideHook([this](const QString& id) { openReference(id); });  // Help for this tool's key on an expanded card
+    ToolPanel::setHelpHook([this](ToolPanel* panel) { openReference(panelCommand(panel), guideClip(panel)); });  // the panels are built later
   }
   ~HelpArea() override {
     RibbonBar::setCommandButtonHook({});
     RichTip::setActionLookup({});
+    keys::setLookup({});
     RichTip::setClipFactory({});
     RichTip::setMenuCards(false);
     RichTip::setGuideHook({});
@@ -62,13 +66,16 @@ class HelpArea : public AreaController {
   }
 
   void buildActions() override {
-    CommandInfo current;  // over a ribbon button or a menu entry F1 expands that command's card instead (RichTip)
+    CommandInfo current;  // over a ribbon button or a menu entry its key expands that command's card instead (RichTip)
     current.id = "help.current";
     current.label = tr("Help for this tool");
     current.icon = "help";
     current.key = QKeySequence("F1");
-    current.keywords = {"F1", "how to", "current tool"};
-    services().addCommand(current, [this] { openReference(currentCommand()); });
+    current.keywords = {"how to", "current tool"};  // its key is found as the key it has now (help::matches)
+    services().addCommand(current, [this] {
+      const QString id = currentCommand();
+      openReference(id, runningClip(id));
+    });
     CommandInfo guide;
     guide.id = "help.reference";
     guide.label = tr("Tool guide");
@@ -88,6 +95,11 @@ class HelpArea : public AreaController {
     start.icon = "start";
     start.keywords = {"tutorial", "learn", "first steps", "basics"};
     services().addCommand(start, [this] { openGettingStarted(0); });
+    // The cheat sheet lists the keys as they are: a change in the shortcut editor shows at once.
+    connect(keys::notifier(), &keys::Notifier::changed, this, [this] {
+      if (auto* sheet = services().window()->findChild<ShortcutSheet*>(); sheet && sheet->isVisible())
+        sheet->setGroups(help::keyGroups(services().commands().actions(), services().selection().sketching, preset()));
+    });
     CommandInfo report;
     report.id = "help.report";
     report.label = tr("Report a problem…");
@@ -181,15 +193,35 @@ class HelpArea : public AreaController {
     return id;
   }
 
-  // What a panel's "?" opens: its own help id, else the tool running in it, else the panel's command.
+  // What a panel's "?" opens: its own help id, else the tool running in it, else the panel's command. The plane picker
+  // serves New sketch, Redefine sketch plane, Align view to plane, Import's drawing and a feature's plane input.
   QString panelCommand(const ToolPanel* panel) const {
     if (help::find(panel->helpId())) return panel->helpId();
     static const QHash<QString, QString> commands{{"properties", "inspect.properties"}, {"annotations", "panel.annotations"}, {"section", "panel.section"},
                                                   {"parameters", "design.parameters"}, {"sketch", "sketch.panel"}, {"drawing", "design.convertDrawing"},
                                                   {"drawing-place", "file.import"}, {"sketch-plane", "design.sketch"}};
     const QString active = services().activeCommand();
-    if (!active.isEmpty() && QStringList({"tool", "feature", "annotation", "sketch"}).contains(panel->id())) return active;
+    if (!active.isEmpty() && QStringList({"tool", "feature", "annotation", "sketch", "sketch-plane", "drawing-place"}).contains(panel->id())) return active;
     return commands.value(panel->id(), active);
+  }
+
+  // The clip a panel's own guide plays (ToolGuide), when it has one: what the user does in it now, which may be another
+  // part of the command than its card's clip shows (Import's card: a file joining the design; its drawing placer: the
+  // drawing placed on a plane, TODO 11 help audit WP10). Only a guide on the page the panel shows: the "tool" panel keeps
+  // the last measure's steps (and their guide) on a hidden page while it shows the interference or print check.
+  static QString guideClip(const ToolPanel* panel) {
+    for (const ToolGuide* guide : panel->findChildren<ToolGuide*>()) {
+      const QWidget* holder = guide->parentWidget();  // the guide itself hides when switched off: its holder tells the page
+      if (clips::has(guide->command()) && holder && (holder == panel || holder->isVisibleTo(panel))) return guide->command();
+    }
+    return {};
+  }
+  // Help for this tool: the clip the running command's open panel plays.
+  QString runningClip(const QString& id) const {
+    if (id.isEmpty() || id != services().activeCommand()) return {};
+    for (const ToolPanel* panel : services().window()->findChildren<ToolPanel*>())
+      if (panel->isVisible() && panelCommand(panel) == id) return guideClip(panel);
+    return {};
   }
 
   QString preset() const {  // the navigation preset's id: its command is the checked nav.* one
@@ -198,12 +230,12 @@ class HelpArea : public AreaController {
     return "fusion";
   }
 
-  // The tool guide at `id` (empty: where it was).
-  void openReference(const QString& id) {
+  // The tool guide at `id` (empty: where it was), playing `clip` instead of the command's own when given.
+  void openReference(const QString& id, const QString& clip = QString()) {
     QWidget* window = services().window();
     auto* reference = window->findChild<CommandReference*>();
     if (!reference) reference = new CommandReference([this](const QString& command) { return services().action(command); }, window);
-    reference->open(id);
+    reference->open(id, clip);
   }
 
   void openSheet() {

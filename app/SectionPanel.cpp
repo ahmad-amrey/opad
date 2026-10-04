@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "CommandHelp.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 #include "ToolValues.hpp"
 #include "Units.hpp"
@@ -52,7 +54,8 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
       m_pick = false;
       m_axis = i;
       m_exact.reset();
-      emitChange();
+      if (m_enabled) emitChange();
+      else setEnabled(true);
     });
   }
   layout->addWidget(seg);
@@ -74,7 +77,15 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   auto* toggles = new QHBoxLayout();
   m_flipButton = new QToolButton(this);
   m_flipButton->setObjectName("segment");
-  m_flipButton->setText(tr("Flip   Shift+X"));
+  auto label = [this] {  // Flip and Flip section's key now
+    const QString key = keys::text("inspect.flip");
+    m_flipButton->setText(key.isEmpty() ? tr("Flip") : tr("Flip") + QStringLiteral("   ") + key);
+  };
+  label();
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this, label] {
+    label();
+    describe();
+  });
   m_flipButton->setCheckable(true);
   m_flipButton->setFixedHeight(28);
   m_capButton = new QToolButton(this);
@@ -102,13 +113,20 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   save->setObjectName("primary");
   layout->addWidget(save);
 
-  connect(m_slider, &QSlider::actionTriggered, this, [this](int) { m_exact.reset(); });  // moved by hand: the slider's place
+  connect(m_slider, &QSlider::actionTriggered, this, [this](int) {  // moved by hand: the slider's place
+    m_exact.reset();
+    turnOn();
+  });
   connect(m_slider, &QSlider::valueChanged, this, [this](int) { emitChange(); });
   connect(m_value, &QLineEdit::editingFinished, this, [this] {  // in the shown unit ("0.5 in"), a bare number too
-    if (const auto mm = units::parse(units::Kind::Length, m_value->text())) setAlong(*mm);
+    const auto mm = units::parse(units::Kind::Length, m_value->text());
+    if (!mm || (!m_enabled && !m_value->isModified())) return;  // the keyboard leaving an untouched field is no change
+    turnOn();
+    setAlong(*mm);
   });
   connect(m_flipButton, &QToolButton::toggled, this, [this](bool on) { m_flip = on; emitChange(); });
   connect(m_capButton, &QToolButton::toggled, this, [this](bool) { emitChange(); });
+  for (QToolButton* b : {m_flipButton, m_capButton}) connect(b, &QToolButton::clicked, this, [this] { turnOn(); });  // a click, not Flip section's key
   connect(save, &QPushButton::clicked, this, [this] {
     QString name = QString("Section %1").arg(m_doc->scene.sections.size() + 1);
     emit saveRequested(name, origin(), normal());
@@ -200,9 +218,10 @@ void SectionPanel::describe() {
   const opad::Vec3 o = origin();
   const double along = this->along();
   m_value->setText(units::format(units::Kind::Length, along));
-  m_state->setText(!m_enabled ? tr("Section off · press X or use Inspect › Section to enable")
-                   : m_pick ? tr("Section along the picked face = %1 · drag the slider or the plane's edge, Shift+X flips").arg(units::format(units::Kind::Length, along))
-                            : tr("Section %1 = %2 · drag the slider or the plane's edge, Shift+X flips").arg(axes[m_axis]).arg(units::format(units::Kind::Length, o[m_axis])));
+  // The keys as bound now (a command without one: its name alone, help::expand).
+  m_state->setText(help::expand(!m_enabled ? tr("Section off · choose an axis, or turn it on with Inspect › Section ({key:inspect.section})")
+                   : m_pick ? tr("Section along the picked face = %1 · drag the slider or the plane's edge; Flip section ({key:inspect.flip}) turns it over").arg(units::format(units::Kind::Length, along))
+                            : tr("Section %1 = %2 · drag the slider or the plane's edge; Flip section ({key:inspect.flip}) turns it over").arg(axes[m_axis]).arg(units::format(units::Kind::Length, o[m_axis]))));
 }
 
 void SectionPanel::setEnabled(bool on) {

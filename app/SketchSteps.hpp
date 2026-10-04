@@ -32,7 +32,7 @@ struct Tool {
 
 inline const std::vector<Tool>& tools() {
   static const std::vector<Tool> all = {
-      {"select", tr("Select"), {tr("Select points, curves or dimensions"), tr("Drag, constrain or change the selection")}, tr("double-click a dimension to change it · Del deletes · X construction")},
+      {"select", tr("Select"), {tr("Select points, curves or dimensions"), tr("Drag, constrain or change the selection")}, tr("double-click a dimension to change it · Del deletes · Construction ({key:sketch.construction})")},
       // Create
       {"line", tr("Line"), {tr("Click the start point"), tr("Click the next point"), tr("Click more points or press Enter to end")}, tr("a double-click or Esc ends the chain too")},
       {"rect", tr("Rectangle"), {tr("Click the first corner"), tr("Click the opposite corner")}},
@@ -78,7 +78,7 @@ inline const std::vector<Tool>& tools() {
       {"heal", tr("Heal endpoints"), {tr("Set the gap tolerance"), tr("Apply to merge nearby endpoints")}},
       {"explode", tr("Explode pattern"), {tr("Select a pattern instance"), tr("Apply to make its copies editable")}},
       {"node", tr("Spline node weights"), {tr("Pick a spline node"), tr("Set the weights and apply")}},
-      {"copybase", tr("Copy with base point"), {tr("Select the curves to copy"), tr("Click the base point")}, tr("then Ctrl+V pastes them by it")},
+      {"copybase", tr("Copy with base point"), {tr("Select the curves to copy"), tr("Click the base point")}, tr("then Paste ({key:edit.paste}) places them by it")},
       {"paste", tr("Paste"), {tr("Click where the base point goes")}, tr("typed: X and Y, or @ΔX,ΔY from where they were copied")},
       // Constrain
       {"dimension", tr("Dimension"), {tr("Pick a line, a circle, an arc or two points"), tr("Click where the value sits"), tr("Set the value and apply")}},

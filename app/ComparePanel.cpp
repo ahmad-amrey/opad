@@ -237,8 +237,8 @@ ComparePanel::ComparePanel(QWidget* parent) : QWidget(parent) {
   b->addWidget(m_details);
   v->addWidget(body, 1);
   m_footer = new PanelFooter(this);
-  QPushButton* previous = m_footer->addSecondary(tr("Previous"), QStringLiteral("["));
-  QPushButton* next = m_footer->addSecondary(tr("Next"), QStringLiteral("]"));
+  QPushButton* previous = m_footer->addSecondary(tr("Previous"), QStringLiteral("vcs.previousChange"));
+  QPushButton* next = m_footer->addSecondary(tr("Next"), QStringLiteral("vcs.nextChange"));
   previous->setObjectName("comparePrevious");
   next->setObjectName("compareNext");
   m_footer->setCancel(tr("Done"));

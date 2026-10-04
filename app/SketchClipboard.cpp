@@ -22,6 +22,7 @@
 #include "AppDocument.hpp"
 #include "AreaController.hpp"
 #include "BrowserPanel.hpp"
+#include "CommandHelp.hpp"
 #include "Commands.hpp"
 #include "CurveSamples.hpp"
 #include "DesignController.hpp"
@@ -89,7 +90,7 @@ bool SketchEditor::copyFrom(const std::vector<int>& ids, double bu, double bv, b
     auto* mime = new QMimeData;
     mime->setData(kClipMime, bytes);
     QApplication::clipboard()->setMimeData(mime);
-    emit status(cut ? tr("Cut %1 curves; Ctrl+V pastes them").arg(curves) : tr("Copied %1 curves; Ctrl+V pastes them").arg(curves));
+    emit status(help::expand(cut ? tr("Cut %1 curves; Paste ({key:edit.paste}) places them").arg(curves) : tr("Copied %1 curves; Paste ({key:edit.paste}) places them").arg(curves)));
   };
   const int serial = ++m_copies;
   if (ids.size() <= 2000) {
@@ -133,7 +134,7 @@ bool SketchEditor::copyFrom(const std::vector<int>& ids, double bu, double bv, b
 void SketchEditor::paste() {
   if (!m_active || m_editJob) return;
   const QMimeData* mime = QApplication::clipboard()->mimeData();
-  if (!mime || !mime->hasFormat(kClipMime)) return emit status(tr("The clipboard holds no sketch curves: copy some first (Ctrl+C)"));
+  if (!mime || !mime->hasFormat(kClipMime)) return emit status(help::expand(tr("The clipboard holds no sketch curves: copy some first ({key:edit.copy})")));
   // Read and checked on a worker (a clip of a converted drawing is megabytes), with its outline for the preview.
   const QByteArray bytes = mime->data(kClipMime);
   const int revision = ++m_clipRevision, session = m_session;
@@ -302,7 +303,7 @@ class ClipboardArea : public AreaController {
       mime->setData(SketchEditor::kClipMime, *bytes);
       QApplication::clipboard()->setMimeData(mime);
       services().showMessage(more ? tr("Copied, not cut: deleting them would take %1 more objects made with them").arg(more)
-                                  : tr("Copied %1 objects: Ctrl+V pastes new bodies, Ctrl+Shift+V linked instances").arg(count));
+                                  : help::expand(tr("Copied %1 objects: Paste ({key:edit.paste}) adds them as new bodies, Paste as linked instances ({key:edit.pastelinked}) as instances").arg(count)));
     });
     if (cut && !more)
       if (QAction* remove = services().action("edit.delete")) remove->trigger();
@@ -329,7 +330,7 @@ class ClipboardArea : public AreaController {
   void paste(bool linked) {
     if (services().design()->sketchActive()) return services().design()->sketch()->paste();
     const QMimeData* mime = QApplication::clipboard()->mimeData();
-    if (!mime || !mime->hasFormat(SketchEditor::kClipMime)) return services().showMessage(tr("The clipboard holds no bodies or components: copy some first (Ctrl+C)"));
+    if (!mime || !mime->hasFormat(SketchEditor::kClipMime)) return services().showMessage(help::expand(tr("The clipboard holds no bodies or components: copy some first ({key:edit.copy})")));
     const QByteArray bytes = mime->data(SketchEditor::kClipMime);
     auto clip = std::make_shared<opad::json>();
     const int serial = ++m_pastes;

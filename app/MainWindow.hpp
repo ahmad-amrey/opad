@@ -93,6 +93,7 @@ class MainWindow : public QMainWindow {
   // "review", "design" or an area's (RibbonLayout ids): swaps the ribbon tab set (same document, same timeline); an id
   // that is not there changes nothing. The sketch's contextual workspace is entered and left by updateDesignState.
   void setWorkspace(const QString& id);
+  QString workspaceKeys() const;  // "Ctrl+1 / 2": the keys that switch workspace now (status bar)
   bool setContextualTab(const QString& id, bool shown);  // a contextual tab (RibbonLayout::addContextualTab) shown or hidden
   QString workspaceId() const { return m_workspaceId; }  // the one shown, "sketch" included
   void buildCentral();
@@ -262,7 +263,7 @@ class MainWindow : public QMainWindow {
   ToolPanel* m_featurePanel = nullptr;
   int m_sketchWorkspace = -1, m_workspaceBeforeSketch = 0;
   QStringList m_workspaceIds;            // by RibbonBar index
-  QString m_workspaceId, m_workspaceKeys;  // the one shown (as the areas were told); "Ctrl+1 / 2" for the status bar
+  QString m_workspaceId;  // the one shown (as the areas were told)
   class QActionGroup* m_workspaceGroup = nullptr;  // the workspace.* commands: one checked
   QMenu* m_viewMenu = nullptr;
   QStackedWidget* m_stack = nullptr;

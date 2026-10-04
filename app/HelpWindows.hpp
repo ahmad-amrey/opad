@@ -1,6 +1,7 @@
 #pragma once
-// The Help menu's own windows (UI-108): the shortcuts cheat sheet (Ctrl+/), Getting started and Report a problem. The
-// help area (HelpArea.cpp) opens them; what they show comes from the commands, their help records and the clips.
+// The Help menu's own windows (UI-108): the shortcuts cheat sheet, Getting started and Report a problem. The help area
+// (HelpArea.cpp) opens them; what they show comes from the commands, their help records and the clips. Every key they
+// name is the user's key now (keys::, TODO 11 wave 3), and they follow a change while open.
 #include <QDialog>
 #include <QFrame>
 #include <QList>
@@ -22,24 +23,27 @@ class QToolButton;
 
 namespace help {
 struct KeyRow {
-  QString label, keys;  // keys: "Ctrl+Shift+U" ('+' between the caps), alternates " / " between ("Ctrl+Y / Ctrl+Shift+Z")
+  QString label;
+  QList<QStringList> keys;  // each alternate's caps, left to right: Redo {Ctrl, Y}, {Ctrl, Shift, Z}
+  QString search;           // what a search also finds besides the label and text(): Qt's names ("ctrl+/")
+  QString text() const;     // as read: "Ctrl+Y / Ctrl+Shift+Z" (keys::joined, " / " between alternates)
 };
 struct KeyGroup {
   QString title;
   QList<KeyRow> rows;
 };
-// Every command with a key, by its group (the registry's, as the palette shows it) in command order, the sketch's first
-// while sketching; then the mouse of the navigation preset ("fusion", "solidworks", "onshape", "blender") and the keys
-// every tool knows.
+// Every command with a key that works now, by its group (the registry's, as the palette shows it) in command order, the
+// sketch's first while sketching; then the mouse of the navigation preset ("fusion", "solidworks", "onshape",
+// "blender") and the keys every tool knows (Help for this tool's own row only while it has a key).
 QList<KeyGroup> keyGroups(const QList<QAction*>& actions, bool sketching, const QString& preset);
 QList<KeyRow> mouseRows(const QString& preset);  // orbit, pan, zoom, select, select in a window
-QStringList keyCaps(const QString& keys);        // one chord: "Ctrl+/" -> Ctrl, /; "Shift++" -> Shift, +
-QStringList keyAlternates(const QString& keys);  // "Ctrl+Y / Ctrl+Shift+Z" -> Ctrl+Y, Ctrl+Shift+Z; "Ctrl+/" stays one
+KeyRow keyRow(const QString& label, const QList<QKeySequence>& keys);  // a row of keys::caps, alternates in order
 // Report a problem: what the user wrote and the facts about the program and the computer, as one text.
 QString problemReport(const QString& description, const QStringList& facts);
 }  // namespace help
 
-// Help > Shortcuts cheat sheet: every key at a glance in columns, searched by name or key; Esc or Ctrl+/ closes it.
+// Help > Shortcuts cheat sheet: every key at a glance in columns, searched by name or key; Esc or the cheat sheet's own
+// key (help.shortcuts, whatever the user bound) closes it.
 class ShortcutSheet : public QWidget {
   Q_OBJECT
  public:
@@ -48,6 +52,7 @@ class ShortcutSheet : public QWidget {
   void setFilter(const QString& text);
   QStringList titles() const;  // the groups shown now, in order
   QStringList shown() const;   // the rows shown now: "label keys"
+  QKeySequence closeKey() const;  // besides Esc: the key that opened it
  signals:
   void editRequested();  // Change shortcuts…
 
@@ -57,10 +62,12 @@ class ShortcutSheet : public QWidget {
  private:
   struct Row {
     QWidget* widget;
-    QString text;
+    QString text, search;
     int group;
   };
+  void rebind();  // the closing key follows help.shortcuts'
   QLineEdit* m_search;
+  class QShortcut* m_again;
   QWidget* m_page;
   QList<QWidget*> m_groups;
   QStringList m_titles;
@@ -77,7 +84,7 @@ class GettingStarted : public QWidget {
   };
   // `lookup`: a command's QAction (null: none); `run` runs one (the help area switches the workspace first when needed).
   GettingStarted(std::function<QAction*(const QString&)> lookup, std::function<void(const QString&)> run, QWidget* parent = nullptr);
-  static QList<Lesson> lessons(const QString& preset);
+  static QList<Lesson> lessons(const QString& preset);  // with the user's keys now (help::expand)
   void setPreset(const QString& preset);  // the navigation lesson follows the mouse preset
   void open(int lesson);  // shown and raised at that lesson
   int current() const;
@@ -92,6 +99,7 @@ class GettingStarted : public QWidget {
   void refresh();
   std::function<QAction*(const QString&)> m_lookup;
   std::function<void(const QString&)> m_run;
+  QString m_preset = "fusion";
   QList<Lesson> m_lessons;
   QListWidget* m_list;
   QLabel *m_title, *m_text, *m_needs;
@@ -112,6 +120,7 @@ class CoachCard : public QFrame {
   QPushButton* button(const QString& command) const;  // the button that runs a command: design.sketch, design.box, file.import, help.start
   QToolButton* closeButton() const { return m_close; }
   QPushButton* neverButton() const { return m_never; }
+  QString steps() const;  // the line of first steps, with the user's keys
  signals:
   void run(const QString& command);
   void dismissed();   // ×: not for this document
@@ -119,7 +128,9 @@ class CoachCard : public QFrame {
 
  private:
   void restyle();
+  void rekey();  // the first steps' keys
   ClipView* m_clip;
+  QLabel* m_steps;
   QToolButton* m_close;
   QPushButton* m_never;
 };

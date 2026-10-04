@@ -6,6 +6,7 @@
 #include "HelpClip.hpp"
 #include "HelpReference.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "RichTip.hpp"
 #include "SketchPanel.hpp"
 #include "Theme.hpp"
@@ -188,7 +189,7 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     key(fit, Qt::Key_A);
     check(tip->state() == State::Hidden, "another key hides the card");
     if (translated) check(tip->layoutDirection() == (QApplication::isRightToLeft() ? Qt::RightToLeft : Qt::LeftToRight) && help::find("view.fit")->translated, "card in the UI language and direction");
-    if (translated) check(RichTip::tr("Shift or F1 for more") != QLatin1String("Shift or F1 for more"), "the card's own strings translated (app/i18n/ar/help.json)");
+    if (translated) check(RichTip::tr("Shift or %1 for more") != QLatin1String("Shift or %1 for more"), "the card's own strings translated (app/i18n/ar/help.json)");
     move(w.statusBar());
     move(home);
     key(home, Qt::Key_Shift);
@@ -291,7 +292,11 @@ OPAD_BENCH(OPAD_BENCH_CLIPS, clips) {
   QStringList untranslated;
   if (rtl)
     for (const QString& id : clips::ids())
-      for (const QString& text : clips::texts(id)) if (i18n::t(text) == text) untranslated << id + ": " + text;
+      for (const QString& text : clips::texts(id)) {
+        QString words = text;  // a token alone ("{press:view.fit}") has its words from help::expand ("Press %1")
+        for (const QString& token : help::tokens(text)) words.remove('{' + token + '}');
+        if (i18n::t(text) == text && !words.trimmed().isEmpty()) untranslated << id + ": " + text;
+      }
   if (rtl) check(untranslated.isEmpty(), "every caption and label translated " + untranslated.join(" | "));
 
   // OPAD_BENCH_CLIPS_ONLY=<prefix,...>: sheets of those clips only (authoring).
@@ -649,7 +654,7 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
   });
   add(300, [=, &w] {
     QTreeWidgetItem* item = row("view.unisolate");
-    check(item && item->foreground(0).color() != theme::current().fg3 && item->text(1) == QKeySequence("Ctrl+Alt+F11").toString(QKeySequence::NativeText),
+    check(item && item->foreground(0).color() != theme::current().fg3 && item->text(1) == keys::text(QKeySequence("Ctrl+Alt+F11")),
           "left open, its row follows the command's availability and key (" + (item ? item->text(1) : QString()) + ")");
     w.action("view.unisolate")->setEnabled(false);
     w.action("view.unisolate")->setShortcut(*keyWas);
@@ -795,6 +800,9 @@ OPAD_BENCH(OPAD_BENCH_PANELHELP, panelhelp) {
     w.startCheck(true);
     QString at = ask(w.m_toolPanel);
     check(at == "inspect.printcheck", "the same panel in the print check: its guide (" + at + ")");
+    auto* reference = w.findChild<CommandReference*>();
+    const QString clip = reference ? reference->preview()->clip()->clip() : QString();
+    check(clip == "inspect.printcheck", "with the print check's clip, not the last measure's (" + clip + ")");
     w.endCheck();
     w.m_toolPanel->hide();
     w.m_design->startFeature("extrude");

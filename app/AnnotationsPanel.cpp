@@ -9,6 +9,7 @@
 #include <set>
 
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "Notes.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
@@ -44,7 +45,13 @@ AnnotationsPanel::AnnotationsPanel(AppDocument* doc, QWidget* parent) : QWidget(
   cl->addStretch();
   scroll->setWidget(m_cards);
   layout->addWidget(scroll, 1);
-  auto* add = new QPushButton(tr("Add note   N"), this);
+  auto* add = new QPushButton(this);
+  auto label = [add] {  // Note's key now (keys::notifier), none without one
+    const QString key = keys::text("annotate.add");
+    add->setText(key.isEmpty() ? tr("Add note") : tr("Add note") + QStringLiteral("   ") + key);
+  };
+  label();
+  connect(keys::notifier(), &keys::Notifier::changed, add, label);
   add->setObjectName("primary");
   layout->addWidget(add);
   connect(add, &QPushButton::clicked, this, &AnnotationsPanel::addRequested);

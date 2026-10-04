@@ -3,6 +3,9 @@
 // a short hint (setHint), then secondary actions ("Copy", "Undo point"), in the order added. Trailing side: Cancel, then the primary button, each with its key ("Esc", "Enter"). The primary is accent-styled
 // and named by what it does: OK when it commits and closes the panel, Apply when it commits and the panel stays open, or
 // a verb of its own ("Place", "Pin to document"). A right-to-left UI mirrors it (secondary right, primary far left).
+// A button's key is given as a fixed key's name ("esc", "enter": keys::fixedNames, named for the platform), a command id
+// ("inspect.pin": the key the user has bound now, none shown without one, following a change in the shortcut editor) or
+// literal text.
 //
 // The Esc ladder, a contract for every tool, panel and overlay. Each Esc does the first of these that applies, and the
 // prompt bar or the footer's Cancel says what the next one will do:
@@ -32,9 +35,9 @@ class PanelFooter : public QWidget {
   QPushButton* setBack(const QString& text = QString(), const QString& key = QString());
   void setBackVisible(bool on);
   void setHint(const QString& text);  // after Back, before the secondary actions, in the dimmer text; empty: none
-  void setPrimary(Primary kind, const QString& key = QStringLiteral("Enter"));
-  void setPrimary(const QString& verb, const QString& key = QStringLiteral("Enter"));
-  void setCancel(const QString& text, const QString& key = QStringLiteral("Esc"));  // "Cancel" unless set: "Clear" where Esc clears
+  void setPrimary(Primary kind, const QString& key = QStringLiteral("enter"));
+  void setPrimary(const QString& verb, const QString& key = QStringLiteral("enter"));
+  void setCancel(const QString& text, const QString& key = QStringLiteral("esc"));  // "Cancel" unless set: "Clear" where Esc clears
   void setPrimaryVisible(bool on);
   void setCancelVisible(bool on);
   void setPrimaryEnabled(bool on);
@@ -47,7 +50,7 @@ class PanelFooter : public QWidget {
   QString primaryText() const;  // the label without its key
   QString cancelText() const;
   static QString text(QPushButton* button);  // a footer button's label
-  static QString key(QPushButton* button);   // and its key
+  static QString key(QPushButton* button);   // and its key as shown now ("" when its command has none)
  signals:
   void accepted();
   void cancelled();
@@ -57,6 +60,7 @@ class PanelFooter : public QWidget {
  private:
   QPushButton* button(const QString& text, const QString& key);
   void relabel(QPushButton* button, const QString& text, const QString& key);
+  void rekey();  // the keys again (a binding changed)
   QHBoxLayout* m_row;
   int m_secondaries = 0;
   QPushButton* m_cancel;

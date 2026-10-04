@@ -24,6 +24,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
+#include "KeyText.hpp"
 #include "Notes.hpp"
 #include "Panels.hpp"
 #include "Theme.hpp"
@@ -191,6 +192,7 @@ AnnotationEditor::AnnotationEditor(AppDocument* doc, Viewport* viewport, ToolPan
   connect(doc, &AppDocument::changed, this, &AnnotationEditor::cancel);
   connect(doc, &AppDocument::aboutToReplace, this, &AnnotationEditor::cancel);
   connect(viewport, &Viewport::filterApplied, this, [this] { refreshPrompt(); });
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { refreshPrompt(); });  // the filters' keys
   connect(viewport, &Viewport::notesMoved, this, &AnnotationEditor::positionOverlays);  // every camera move
   qApp->installEventFilter(this);
   chooseType("note");
@@ -350,8 +352,9 @@ void AnnotationEditor::build() {
     m_count->setObjectName("annotationStrokeCount");
     m_count->setProperty("annotationRole", "section");
     head->addWidget(m_count, 1);
-    m_undoButton = flatButton(m_sections, "annotationUndo", "rollLeft", tr("Undo stroke (Ctrl+Z)"));
-    m_redoButton = flatButton(m_sections, "annotationRedo", "rollRight", tr("Redo stroke (Ctrl+Shift+Z)"));
+    // The editor's own keys are the platform's Undo and Redo (keyPress: QKeySequence::Undo/Redo), named its way.
+    m_undoButton = flatButton(m_sections, "annotationUndo", "rollLeft", tr("Undo stroke (%1)").arg(keys::fixedText("undo")));
+    m_redoButton = flatButton(m_sections, "annotationRedo", "rollRight", tr("Redo stroke (%1)").arg(keys::fixedText("redo")));
     m_clearButton = flatButton(m_sections, "annotationClear", "delete", tr("Clear strokes"));
     for (QToolButton* b : {m_undoButton, m_redoButton, m_clearButton}) head->addWidget(b);
     list->addLayout(head);
@@ -566,7 +569,8 @@ void AnnotationEditor::refreshPrompt() {
                          : filter == Viewport::SelFilter::Edge ? tr("Select an edge")
                                                                : tr("Select a vertex");
   const QString next = !m_drawingMode ? tr("Write the note") : m_eraser ? tr("Erase strokes") : tr("Draw strokes");
-  const QString hints = !m_anchored    ? tr("Esc cancel · 1–4 change filter")
+  const QString filters = keys::span({"select.bodies", "select.faces", "select.edges", "select.vertices"}), cancel = tr("%1 cancel").arg(keys::fixedText("esc"));
+  const QString hints = !m_anchored    ? (filters.isEmpty() ? cancel : cancel + QStringLiteral(" · ") + tr("%1 change filter").arg(filters))
                         : m_drawingMode ? tr("Orbit for a new plane · B pen · E eraser · 1–4 colour · [ ] width")
                                         : tr("Click another object to move the note · Esc cancel");
   m_prompt->set(m_drawingMode ? "pen" : "annotate", m_drawingMode ? tr("Hand drawing") : tr("Note"),

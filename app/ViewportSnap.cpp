@@ -3,6 +3,7 @@
 // sketch's snap set and settings) under the mouse, with a marker of the kind's shape; a click picks that point. Indexes
 // per body key (a sketch's per version of it), built on a worker the first time a pick needs them.
 #include "Viewport.hpp"
+#include "CommandHelp.hpp"
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -319,7 +320,7 @@ void Viewport::updateObjectSnap() {
   s.glyph->SetZLayer(Graphic3d_ZLayerId_Topmost);
   s.glyph->SetInfiniteState(true);  // never part of Fit
   m_ctx->Display(s.glyph, 0, -1, false);  // never pickable: a click is taken in objectSnapPress
-  const QString text = tr("%1 · click to pick this point (F3 turns object snap off)").arg(snapWord(kind));
+  const QString text = help::expand(tr("%1 · click to pick this point · Object snap ({key:drawing2d.objectSnap}) turns snapping to objects off").arg(snapWord(kind)));
   if (text != m_hover) {
     m_hover = text;
     emit hoverChanged(text);

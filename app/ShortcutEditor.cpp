@@ -1,4 +1,5 @@
 #include "ShortcutEditor.hpp"
+#include "KeyText.hpp"
 #include <QDialogButtonBox>
 #include <QGridLayout>
 #include <QHash>
@@ -9,6 +10,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QStyle>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -56,6 +58,7 @@ QKeySequence binding(const QAction* a) {return bindings(a).value(0);}
 void bind(QAction* a,const QList<QKeySequence>& keys) {
   if(a->property("heldShortcut").isValid())a->setProperty("heldShortcut",QVariant::fromValue(keys));else a->setShortcuts(keys);
   updateTooltip(a);
+  ::keys::announce();  // help cards, the cheat sheet, lessons: key text shown anywhere follows (quiet while the editor applies)
 }
 void migrate(QSettings& settings) {
   if(settings.value("shortcuts/inputDefaultsVersion",0).toInt()<1) {
@@ -74,6 +77,12 @@ void migrate(QSettings& settings) {
     // Properties moved from Ctrl+P (Print's everywhere) to Alt+Enter (UI-111); the old editor saved every row.
     if(QKeySequence(settings.value("shortcuts/inspect.properties").toString())==QKeySequence("Ctrl+P"))settings.remove("shortcuts/inspect.properties");
     settings.setValue("shortcuts/standardDefaultsVersion",1);
+  }
+  if(settings.value("shortcuts/escapeDefaultsVersion",0).toInt()<1) {
+    // Esc is fixed (TODO 11 wave 3): Clear measurement is the window's whole Esc ladder (cancel a note, leave a feature,
+    // step a tool back, close a panel, clear the measurement) and every footer and prompt says Esc. A saved key goes.
+    settings.remove("shortcuts/inspect.clear");settings.remove("shortcutAlternates/inspect.clear");
+    settings.setValue("shortcuts/escapeDefaultsVersion",1);
   }
   if(settings.value("shortcuts/viewDefaultsVersion",0).toInt()>=1)return;
   // The old editor saved every row, including untouched defaults. Keep actual custom bindings.
@@ -105,8 +114,10 @@ QList<QKeySequence> alternates(const QString& id) {
   static const QHash<QString,QList<QKeySequence>> table{{"edit.redo",{QKeySequence("Ctrl+Shift+Z")}}};
   return table.value(id);
 }
+bool fixedKey(const QAction* a) {return a->property("fixedShortcut").toBool();}
 void initialize(QAction* a,const QKeySequence& key,QSettings& settings) {
   a->setProperty("defaultShortcut",key.toString(QKeySequence::PortableText));
+  if(fixedKey(a)){a->setShortcuts(key.isEmpty()?QList<QKeySequence>{}:QList<QKeySequence>{key});updateTooltip(a);return;}  // no setting changes it
   const QString id=a->objectName(),path="shortcuts/"+id,second="shortcutAlternates/"+id;
   const QKeySequence first=settings.contains(path)?QKeySequence(settings.value(path).toString(),QKeySequence::PortableText):key;
   QList<QKeySequence> keys{first};
@@ -200,8 +211,10 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
   m_tree->header()->setSectionResizeMode(0,QHeaderView::Stretch);for(int c=1;c<4;++c)m_tree->header()->setSectionResizeMode(c,QHeaderView::ResizeToContents);
   layout->addWidget(m_tree,1);
   QMap<QString,QTreeWidgetItem*> folders;
+  QList<QAction*> fixed;  // a key no setting changes (Esc): listed with the reserved keys below
   for(auto* action:actions) {
     if(action->text().isEmpty()||action->isSeparator())continue;
+    if(shortcuts::fixedKey(action)){fixed<<action;continue;}
     QTreeWidgetItem* parentItem=nullptr;QString path;
     for(const auto& part:groups(action)) {
       path+="/"+part;
@@ -218,7 +231,13 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
   auto* reservedGroup=new QTreeWidgetItem(m_tree);reservedGroup->setText(0,tr("Editing controls (reserved)"));reservedGroup->setData(0,Qt::UserRole,-1);
   // The value keys belong to every tool that takes values (UI-122): a sketch tool, a feature panel, the section, a drawing
   // being placed. The filters' and display styles' digits work while none runs.
-  for(const auto& [text,keys,where]:QList<std::tuple<QString,QString,QString>>{{tr("End the current step, then close the tool"),"Esc",tr("In sketch")},{tr("Complete current input"),"Return",tr("In sketch")},
+  // Esc is Clear measurement's, fixed (TODO 11 wave 3): the window's whole Esc ladder, the sketch's step back included.
+  for(QAction* action:fixed) {
+    auto* item=new QTreeWidgetItem(reservedGroup);
+    item->setText(0,action->objectName()=="inspect.clear"?tr("Step back, close the tool or panel, clear the measurement"):QString(action->text()).remove('&'));
+    item->setText(1,shortcuts::binding(action).toString(QKeySequence::NativeText));item->setText(3,scopeName(action->objectName()));item->setData(0,Qt::UserRole,-1);item->setToolTip(0,action->objectName());
+  }
+  for(const auto& [text,keys,where]:QList<std::tuple<QString,QString,QString>>{{tr("Complete current input"),"Return",tr("In sketch")},
                                                                              {tr("Delete sketch selection"),"Del",tr("In sketch")},{tr("Undo the last sketch point"),"Backspace",tr("In sketch")},
                                                                              {tr("Type a value into the tool's boxes"),"0-9 . , - +",tr("In tools that take values")},{tr("Next or previous value box"),"Tab, Shift+Tab",tr("In tools that take values")}}) {
     auto* item=new QTreeWidgetItem(reservedGroup);item->setText(0,text);item->setText(1,keys);item->setText(3,where);item->setData(0,Qt::UserRole,-1);
@@ -260,9 +279,10 @@ QString ShortcutEditor::name(const Hit& h)const {return h.slot?tr("%1 (alternate
 // Every key or alternate (the command's own other one too) that `key` would clash with in slot `slot` of command i.
 QVector<ShortcutEditor::Hit> ShortcutEditor::collisions(int i,const QKeySequence& key,int slot)const {
   QVector<Hit> result;
+  if(key.isEmpty())return result;  // no key clashes with nothing (most alternates): OK checks every slot of every command
   for(int n=0;n<m_entries.size();++n)
-    for(int s=0;s<2;++s)
-      if((n!=i||s!=slot)&&shortcuts::overlaps(m_entries[i].action->objectName(),m_entries[n].action->objectName())&&shortcuts::conflicts(key,m_entries[n].slot(s)))result.push_back({n,s});
+    for(int s=0;s<2;++s)  // the keys first: scope() per pair made OK take ~0.2 s
+      if((n!=i||s!=slot)&&shortcuts::conflicts(key,m_entries[n].slot(s))&&shortcuts::overlaps(m_entries[i].action->objectName(),m_entries[n].action->objectName()))result.push_back({n,s});
   return result;
 }
 void ShortcutEditor::filter() {
@@ -352,19 +372,28 @@ void ShortcutEditor::accept() {
     for(int s=0;s<2;++s)if(!collisions(n,m_entries[n].slot(s),s).isEmpty()&&!assign(n,m_entries[n].slot(s),s))return;
   QSettings settings;
   QList<QAction*> actions;
+  QSignalBlocker quiet(keys::notifier());  // one announcement once every key is set, not one per command
   for(auto& e:m_entries) {
     if(e.key.isEmpty())std::swap(e.key,e.alternate);  // an alternate alone is the key
     const QString id=e.action->objectName();
     const bool standard=e.key==QKeySequence(e.action->property("defaultShortcut").toString());
-    shortcuts::bind(e.action,e.alternate.isEmpty()?QList<QKeySequence>{e.key}:QList<QKeySequence>{e.key,e.alternate});  // held while a sketch is open: taken back when it closes
-    shortcuts::updateTooltip(e.action);actions<<e.action;
-    const QString path="shortcuts/"+id;
-    if(standard)settings.remove(path);
-    else settings.setValue(path,e.key.toString(QKeySequence::PortableText));
+    const QList<QKeySequence> chosen=e.alternate.isEmpty()?QList<QKeySequence>{e.key}:QList<QKeySequence>{e.key,e.alternate};
+    QList<QKeySequence> now=shortcuts::bindings(e.action);now.removeAll(QKeySequence());
+    QList<QKeySequence> wanted=chosen;wanted.removeAll(QKeySequence());
+    // Only the commands whose keys change: rebinding all of them (each QAction::changed, its tooltip) cost ~0.3 s per OK.
+    if(now!=wanted)shortcuts::bind(e.action,chosen);  // held while a sketch is open: taken back when it closes
+    actions<<e.action;
+    // Written only where they change: every remove or set marks the file, which is then written out whole.
+    auto put=[&settings](const QString& path,bool keep,const QString& value) {
+      if(!keep){if(settings.contains(path))settings.remove(path);}
+      else if(!settings.contains(path)||settings.value(path).toString()!=value)settings.setValue(path,value);
+    };
+    put("shortcuts/"+id,!standard,e.key.toString(QKeySequence::PortableText));
     // Saved only where it differs from what the key implies: the default alternate with the default key, else none.
-    if(e.alternate==(standard?shortcuts::alternates(id).value(0):QKeySequence()))settings.remove("shortcutAlternates/"+id);
-    else settings.setValue("shortcutAlternates/"+id,e.alternate.toString(QKeySequence::PortableText));
+    put("shortcutAlternates/"+id,e.alternate!=(standard?shortcuts::alternates(id).value(0):QKeySequence()),e.alternate.toString(QKeySequence::PortableText));
   }
   shortcuts::settleAlternates(actions);
+  quiet.unblock();
+  keys::announce();
   QDialog::accept();
 }

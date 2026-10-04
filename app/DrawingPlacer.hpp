@@ -8,6 +8,7 @@ class QLineEdit;
 class QLabel;
 class QPushButton;
 class ToolValues;
+class ToolGuide;
 
 // Import of a drawing with no face selected (TODO 10 A12): after the plane is chosen, the drawing is shown on it, its
 // own origin at the plane's, and moved there before the import op is written: dragged, given a typed offset, or
@@ -23,6 +24,9 @@ class DrawingPlacer : public QObject {
   void cancel();
   bool active() const { return m_active; }
   ToolPanel* panel() const { return m_panel; }
+  // The panel's guide (TODO 11 help audit WP10): a drawing's placing, looping what can be done now (move, snap, Place).
+  ToolGuide* guide() const { return m_guide; }
+  static constexpr const char* kGuideClip = "drawing.place";
   // The offset typed from the keyboard (TODO 11 UI-122): X and Y boxes beside the pointer, the drawing following as they
   // are typed; Enter places it.
   ToolValues* values() const { return m_values; }
@@ -69,4 +73,5 @@ class DrawingPlacer : public QObject {
   std::vector<gp_Pnt> m_vertices;  // drawing coordinates
   Handle(AIS_InteractiveObject) m_preview, m_marker;
   Viewport::SelFilter m_oldFilter = Viewport::SelFilter::Body;
+  ToolGuide* m_guide = nullptr;
 };

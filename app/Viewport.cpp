@@ -4,6 +4,7 @@
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
 #include "Drawing2D.hpp"
+#include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "Motion.hpp"
 #include "Highlight.hpp"
@@ -622,7 +623,7 @@ void Viewport::twoDimensionalHint(const QPoint& global) {
   const qint64 now = QDateTime::currentMSecsSinceEpoch();
   if (now - m_twoDHintShown < 1500) return;  // once per attempt, not per trackpad event
   m_twoDHintShown = now;
-  const QString text = tr("2D mode is on: turn it off (Shift+2) to orbit");
+  const QString text = help::expand(tr("2D mode is on: turn 2D mode ({key:view.2d}) off to orbit"));
   QToolTip::showText(global + QPoint(14, 18), text, this, QRect(), 2500);
   emit hoverChanged(text);
 }

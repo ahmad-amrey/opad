@@ -17,7 +17,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "CommandHelp.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "PanelFooter.hpp"
 #include "Theme.hpp"
 
@@ -62,7 +64,11 @@ ExplodePanel::ExplodePanel(QWidget* parent) : QWidget(parent) {
   layout->setSpacing(6);
   m_switch = new QCheckBox(tr("Exploded"), body);
   m_switch->setObjectName("explodeSwitch");
-  m_switch->setToolTip(tr("Off: the parts go back together and the view lets go of them (Shift+E opens this panel again)"));
+  auto tip = [this] {  // Exploded view's key now (keys::notifier)
+    m_switch->setToolTip(help::expand(tr("Off: the parts go back together and the view lets go of them; Exploded view ({key:assembly.explode}) opens this panel again")));
+  };
+  tip();
+  connect(keys::notifier(), &keys::Notifier::changed, m_switch, tip);
   layout->addWidget(m_switch);
   m_status = new QLabel(body);
   m_status->setObjectName("secondary");

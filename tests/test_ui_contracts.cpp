@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "Commands.hpp"
+#include "KeyText.hpp"
 #include "KeyTips.hpp"
 #include "PanelFooter.hpp"
 #include "Ribbon.hpp"
@@ -191,6 +192,21 @@ TEST(panel_footer) {
     CHECK(footer->primary()->focusPolicy() != Qt::NoFocus);
     footer->setKeysStayWithWindow(true);
     CHECK(footer->primary()->focusPolicy() == Qt::NoFocus && footer->cancel()->focusPolicy() == Qt::NoFocus && copy->focusPolicy() != Qt::NoFocus);
+    // A key given as a command: the key the user has bound now, none without one, and a change in the editor at once.
+    QAction pin("Pin");
+    pin.setObjectName("inspect.pin");
+    pin.setShortcut(QKeySequence("Ctrl+Alt+P"));
+    keys::setLookup([&pin](const QString& id) { return id == "inspect.pin" ? &pin : nullptr; });
+    footer->setPrimary("Pin to document", "inspect.pin");
+    QPushButton* next = footer->addSecondary("Next", "vcs.nextChange");  // no such command here: no key
+    CHECK(PanelFooter::key(footer->primary()) == "Ctrl+Alt+P" && footer->primary()->toolTip() == "Pin to document  (Ctrl+Alt+P)" && PanelFooter::key(next).isEmpty());
+    pin.setShortcut(QKeySequence("P"));
+    keys::announce();
+    CHECK(PanelFooter::key(footer->primary()) == "P" && PanelFooter::text(footer->primary()) == "Pin to document");
+    pin.setShortcut(QKeySequence());
+    keys::announce();
+    CHECK(PanelFooter::key(footer->primary()).isEmpty() && footer->primary()->toolTip() == "Pin to document");
+    keys::setLookup({});
   }
 }
 

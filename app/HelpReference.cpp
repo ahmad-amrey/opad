@@ -4,6 +4,7 @@
 #include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 
 #include <QAction>
@@ -20,20 +21,6 @@
 #include <QVBoxLayout>
 
 namespace {
-// "Ctrl+Shift+U" -> Ctrl, Shift, U (a "+" key stays one cap); the first chord only.
-QStringList keyParts(const QKeySequence& key) {
-  if (key.isEmpty()) return {};
-  QString text = QKeySequence(key[0]).toString(QKeySequence::NativeText);
-  QStringList out;
-  while (!text.isEmpty()) {
-    const qsizetype plus = text.indexOf('+', 1);
-    if (plus < 0) { out << text; break; }
-    out << text.left(plus);
-    text = text.mid(plus + 1);
-  }
-  return out;
-}
-
 QLabel* wrapped(const char* name, QWidget* parent) {
   auto* l = new QLabel(parent);
   l->setObjectName(name);
@@ -58,11 +45,17 @@ CommandPreview::CommandPreview(Size size, QWidget* parent) : QWidget(parent), m_
   m_icon = new QLabel(this);
   m_icon->setFixedSize(20, 20);
   m_title = wrapped("panelTitle", this);
-  m_keys = new QHBoxLayout();
+  // The caps read left to right in every language ("Ctrl" before "F"): their own left-to-right box, which right to left
+  // places on the other side as a whole.
+  m_keyBox = new QWidget(this);
+  m_keyBox->setObjectName("keyCaps");
+  m_keyBox->setLayoutDirection(Qt::LeftToRight);
+  m_keys = new QHBoxLayout(m_keyBox);
+  m_keys->setContentsMargins(0, 0, 0, 0);
   m_keys->setSpacing(4);
   head->addWidget(m_icon, 0, Qt::AlignTop);
   head->addWidget(m_title, 1);
-  head->addLayout(m_keys);
+  head->addWidget(m_keyBox, 0, Qt::AlignTop);
   v->addLayout(head);
   m_summary = wrapped("secondary", this);
   v->addWidget(m_summary);
@@ -86,18 +79,31 @@ CommandPreview::CommandPreview(Size size, QWidget* parent) : QWidget(parent), m_
   v->addWidget(m_requirement);
   v->addStretch(1);
   connect(theme::notifier(), &theme::Notifier::changed, this, &CommandPreview::refresh);
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] {  // its key, and the keys its texts and steps name
+    refresh();
+    const QList<clips::Step> steps = clips::steps(m_clip->clip());
+    for (int i = 0; m_steps && i < steps.size() && i + 1 < m_steps->count(); ++i) m_steps->item(i + 1)->setText(stepText(i, steps[i]));
+  });
+}
+
+QString CommandPreview::stepText(int i, const clips::Step& step) { return QString("%1  %2").arg(i + 1).arg(clips::caption(step)); }
+
+QStringList CommandPreview::keyCaps() const {
+  QStringList out;
+  for (QLabel* l : m_keyBox->findChildren<QLabel*>(QString(), Qt::FindDirectChildrenOnly)) out << l->text();
+  return out;
 }
 
 bool CommandPreview::showsRequirement() const { return !m_requirement->isHidden() && !m_requirement->text().isEmpty(); }
 
-void CommandPreview::setCommand(const QString& id, QAction* action) {
+void CommandPreview::setCommand(const QString& id, QAction* action, const QString& shown) {
   disconnect(m_changed);
   m_action = action;
   if (action) m_changed = connect(action, &QAction::changed, this, &CommandPreview::refresh);  // shortcut, availability
-  if (id == m_id) return refresh();
-  m_id = id;
   const CommandHelp* h = help::find(id);
-  const QString clip = h && clips::has(h->clip) ? h->clip : QString();
+  const QString clip = clips::has(shown) ? shown : h && clips::has(h->clip) ? h->clip : QString();
+  if (id == m_id && clip == m_clip->clip()) return refresh();
+  m_id = id;
   m_clip->setClip(clip);
   m_clip->setVisible(!clip.isEmpty());
   if (m_steps) {
@@ -106,7 +112,7 @@ void CommandPreview::setCommand(const QString& id, QAction* action) {
     if (!clip.isEmpty()) {
       m_steps->addItem(tr("All steps"));
       const QList<clips::Step> steps = clips::steps(clip);
-      for (int i = 0; i < steps.size(); ++i) m_steps->addItem(QString("%1  %2").arg(i + 1).arg(i18n::t(steps[i].caption)));
+      for (int i = 0; i < steps.size(); ++i) m_steps->addItem(stepText(i, steps[i]));
       m_steps->setCurrentRow(0);
     }
     m_steps->setVisible(!clip.isEmpty());
@@ -127,13 +133,14 @@ void CommandPreview::refresh() {
     delete it->widget();
     delete it;
   }
-  for (const QString& k : keyParts(m_action ? m_action->shortcut() : QKeySequence())) {
-    auto* cap = new QLabel(k, this);
-    cap->setObjectName("keycap");
+  for (const QString& k : keys::caps(keys::binding(m_action.data()))) {  // the user's key, also while a sketch holds it
+    auto* cap = new QLabel(k, m_keyBox);
+    if (k != keys::kThen) cap->setObjectName("keycap");  // a multi-chord key's separator is plain text
     m_keys->addWidget(cap, 0, Qt::AlignTop);
   }
-  m_summary->setText(h ? h->summary : QString());
-  m_details->setText(h ? h->details : QString());
+  m_keyBox->setVisible(m_keys->count() > 0);
+  m_summary->setText(h ? help::expand(h->summary) : QString());
+  m_details->setText(h ? help::expand(h->details) : QString());
   m_details->setVisible(m_size == Size::Full && !m_details->text().isEmpty());
   const bool available = !m_action || m_action->isEnabled();
   m_requirement->setText(available || m_id.isEmpty() ? QString() : QString::fromUtf8("⚠  ") + (h && !h->requirement.isEmpty() ? help::requirement(*h) : tr("Not available right now.")));
@@ -195,6 +202,7 @@ CommandReference::CommandReference(std::function<QAction*(const QString&)> looku
   auto restyle = [rule] { rule->setStyleSheet(QString("background: %1;").arg(theme::css(theme::current().line))); };
   restyle();
   connect(theme::notifier(), &theme::Notifier::changed, this, [this, restyle] { restyle(); refill(); });
+  connect(keys::notifier(), &keys::Notifier::changed, this, &CommandReference::refill);  // the key column, and search by key, at once (the shown command stays)
   m_stale.setSingleShot(true);
   m_stale.setInterval(100);
   connect(&m_stale, &QTimer::timeout, this, [this] { if (isVisible()) updateItems(); });
@@ -217,7 +225,7 @@ void CommandReference::updateItems() {
     const QString id = (*it)->data(0, Qt::UserRole).toString();
     QAction* a = id.isEmpty() || !m_lookup ? nullptr : m_lookup(id);
     if (!a) continue;
-    (*it)->setText(1, a->shortcut().toString(QKeySequence::NativeText));
+    (*it)->setText(1, keys::text(keys::binding(a)));
     if (a->isEnabled()) (*it)->setData(0, Qt::ForegroundRole, QVariant());
     else (*it)->setForeground(0, t.fg3);
   }
@@ -256,9 +264,9 @@ void CommandReference::refill() {
   for (const CommandHelp& h : help::all()) {
     QAction* a = m_lookup ? m_lookup(h.id) : nullptr;
     if (!listed(h) || (m_lookup && !a) || (!query.isEmpty() && !help::matches(h, query))) continue;  // not in this build: not listed
-    auto* item = new QTreeWidgetItem(groups.value(help::group(h.id)), {h.title, a ? a->shortcut().toString(QKeySequence::NativeText) : QString()});
+    auto* item = new QTreeWidgetItem(groups.value(help::group(h.id)), {h.title, keys::text(keys::binding(a))});
     item->setData(0, Qt::UserRole, h.id);
-    item->setToolTip(0, h.summary);
+    item->setToolTip(0, help::expand(h.summary));
     item->setForeground(1, t.fg3);
     item->setFont(1, theme::mono(11));
     const QString icon = a ? a->data().toString() : QString();
@@ -292,7 +300,7 @@ QStringList CommandReference::shown() const {
 
 void CommandReference::setFilter(const QString& text) { m_search->setText(text); }
 
-void CommandReference::open(const QString& id) {
+void CommandReference::open(const QString& id, const QString& clip) {
   if (!id.isEmpty() && help::find(id)) {
     if (!shown().contains(id)) m_search->clear();
     for (QTreeWidgetItemIterator it(m_list); *it; ++it)
@@ -301,6 +309,10 @@ void CommandReference::open(const QString& id) {
         m_list->scrollToItem(*it, QAbstractItemView::PositionAtCenter);
         break;
       }
+    // The clip asked for, else the record's own (one asked for before goes); the card is left as it is when it plays it.
+    const CommandHelp* h = help::find(id);
+    const QString shown = clips::has(clip) ? clip : clips::has(h->clip) ? h->clip : QString();
+    if (current() == id && m_preview->clip()->clip() != shown) m_preview->setCommand(id, m_lookup ? m_lookup(id) : nullptr, clip);
   }
   show();
   raise();

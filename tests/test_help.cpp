@@ -8,8 +8,10 @@
 #include "HelpReference.hpp"
 #include "HelpWindows.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "Motion.hpp"
 #include "RichTip.hpp"
+#include "ShortcutEditor.hpp"
 #include "Theme.hpp"
 #include "check.hpp"
 #include "opad/design/feature.hpp"
@@ -17,9 +19,11 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMouseEvent>
@@ -27,8 +31,11 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QKeySequenceEdit>
 #include <QTranslator>
 #include <QToolButton>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 #include <set>
 
@@ -39,23 +46,35 @@ QString source(const QString& path) {
   return QString::fromUtf8(f.readAll());
 }
 
-// Command ids registered by MainWindow (MainWindow*.cpp): literal addAction ids (and the Help menu's help("help.about",
-// ...) helper of the IP branch), CommandInfo ids, the generated families, the sketch tool tables and the feature kinds of
-// the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
+// Command ids registered by MainWindow and the areas: literal addAction ids of MainWindow*.cpp (and the Help menu's
+// help("help.about", ...) helper of the IP branch); CommandInfo records in any source of the app that is not a bench
+// (info.id = "..." or CommandInfo name{"...", ...}) and the areas' helpers that make them (the Drawings workspace's add,
+// version control's command, the file location's fileCommand, the clipboard's add); an area's workspace (its
+// "workspace.<id>" command, the contextual sketch's excepted); the generated families, the sketch tool tables and the
+// feature kinds of the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
 std::set<QString> registeredIds() {
   std::set<QString> ids;
+  const QString name = R"(([a-z][a-z0-9]*\.[A-Za-z0-9_.]+))";
   QString main;
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"MainWindow*.cpp"}, QDir::Files, QDir::Name)) main += source("app/" + file);
-  for (const auto& m : QRegularExpression(R"(\b(?:addAction|help)\("([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(main)) ids.insert(m.captured(1));
-  const QRegularExpression info(R"(\.id\s*=\s*"([a-z]+\.[A-Za-z0-9_.]+)\")");
-  for (const auto& m : info.globalMatch(main)) ids.insert(m.captured(1));
-  // An area's records: info.id = "..." or CommandInfo name{"...", ...}.
-  const QRegularExpression braced(R"(\bCommandInfo\s+\w+\s*\{\s*"([a-z]+\.[A-Za-z0-9_.]+)\")");
-  for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*Area.cpp"}, QDir::Files, QDir::Name)) {
+  for (const auto& m : QRegularExpression(R"(\b(?:addAction|help)\(")" + name + "\"").globalMatch(main)) ids.insert(m.captured(1));
+  const QRegularExpression info(R"(\.id\s*=\s*")" + name + "\""), braced(R"(\bCommandInfo\s+\w+\s*\{\s*")" + name + "\""),
+      workspace(R"re(\baddWorkspace\("([a-z]+)")re");
+  const QHash<QString, QRegularExpression> helpers{{"DocsWorkspace.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
+                                                   {"VcsArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
+                                                   {"LocationArea.cpp", QRegularExpression(R"(\bfileCommand\(")" + name + "\"")},
+                                                   {"SketchClipboard.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")}};
+  for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*.cpp"}, QDir::Files, QDir::Name)) {
+    if (file.contains("Bench")) continue;
     const QString text = source("app/" + file);
     for (const auto& m : info.globalMatch(text)) ids.insert(m.captured(1));
     for (const auto& m : braced.globalMatch(text)) ids.insert(m.captured(1));
+    if (helpers.contains(file))
+      for (const auto& m : helpers.value(file).globalMatch(text)) ids.insert(m.captured(1));
+    for (const auto& m : workspace.globalMatch(text))
+      if (m.captured(1) != "sketch") ids.insert("workspace." + m.captured(1));
   }
+  for (const char* v : {"top", "right", "left", "back", "bottom"}) ids.insert(QString("drawings.baseView.") + v);  // the Base view button's menu
   for (const auto& m : QRegularExpression(R"re(\{"([a-z0-9_:]+)", tr\(")re").globalMatch(main)) ids.insert("sketch." + m.captured(1).replace(':', '.'));
   for (const auto& m : QRegularExpression(R"re(QObject::tr\("[^"]+"\),"([a-z0-9_:]+)")re").globalMatch(source("app/SketchPanel.cpp")))
     ids.insert("sketch." + m.captured(1).replace(':', '.'));
@@ -63,6 +82,7 @@ std::set<QString> registeredIds() {
   for (const char* v : {"fusion", "solidworks", "onshape", "blender"}) ids.insert(QString("nav.") + v);
   for (const char* v : {"bodies", "faces", "edges", "vertices"}) ids.insert(QString("select.") + v);
   for (const char* v : {"view.extensions", "view.tracking", "view.gridSnap", "view.orthoSnap", "view.polarSnap", "sketch.selectionOptions", "sketch.constraints", "sketch.snaps"}) ids.insert(v);
+  for (const char* v : {"vcs.nextChange", "vcs.previousChange"}) ids.insert(v);  // VcsArea's loop of tuples
   for (const char* v : {"Create", "Modify", "Constrain", "Reference", "Files"}) ids.insert(QString("sketch.more") + v);
   ids.erase("sketch.more");  // the prefix of the generated menu ids
   for (const auto& spec : opad::design::feature_specs()) ids.insert("design." + QString::fromStdString(spec.kind));
@@ -80,6 +100,25 @@ class Arabic : public QTranslator {
   QHash<QString, QString> m_table;
 };
 
+// A key spelled in a help text instead of a token: Ctrl+X, F9, "Press D", "press Del", "(S)", and a letter that acts
+// ("G again hides it", "· P pins"; not an axis or a size: "X offset") (English and Arabic). Fixed keys (Enter, Esc, Tab,
+// Del in a sketch, Backspace, Shift+Tab, a modifier held with a click or a drag) are allowed, and so are the note
+// editor's own pen keys (B, E: AnnotationEditor) and Compare's versions A and B.
+QStringList literalKeys(QString text) {
+  static const QRegularExpression token(R"(\{(key|press|fixed):[^}]*\})"),
+      allowed(R"((Ctrl|Shift|Alt)\+(Tab\b|((left|middle|right) )?(click|drag))|\b(B pen|E eraser)\b|\bB (alone|continues|is|in)\b)", QRegularExpression::CaseInsensitiveOption);
+  static const QList<QRegularExpression> patterns{
+      QRegularExpression(R"(\b(Ctrl|Shift|Alt|Meta|Cmd)\+)"), QRegularExpression(R"(\bF\d{1,2}\b)"), QRegularExpression(R"([Pp]ress [A-Z0-9]\b)"),
+      QRegularExpression(R"([Pp]ress (Del|Delete|Home|End|PgUp|PgDn|Space)\b)"), QRegularExpression(R"(\([A-Z0-9]\))"),
+      QRegularExpression(R"((?:^|[·;:,(]\s*)[B-HJ-Z]\s+(?!(?:offsets?|axis|position|and|or|spacing|size|direction|coordinates?|values?|scale|parts?|sizes?)\b)[a-z]+)"),
+      QRegularExpression(QString::fromUtf8(R"(اضغط\s+[A-Z0-9]\b)"))};
+  text.remove(token).remove(allowed);
+  QStringList out;
+  for (const QRegularExpression& re : patterns)
+    for (const auto& m : re.globalMatch(text)) out << m.captured(0);
+  return out;
+}
+
 int sentences(const QString& text) { return static_cast<int>(text.count(QRegularExpression(R"([.!?](\s|$))"))); }
 QString clean(QString s) { return s.remove('&').remove(QString::fromUtf8("…")).remove("...").trimmed(); }
 }  // namespace
@@ -87,17 +126,14 @@ QString clean(QString s) { return s.remove('&').remove(QString::fromUtf8("…"))
 TEST(every_registered_command_has_help) {
   help::load("en");
   const auto ids = registeredIds();
-  CHECK(ids.size() > 200 && ids.count("help.reference"));
-  // Commands the TODO 11 tracks added before their help was written: the records come with the help and ribbon pass of wave 3
-  // (t7b), which empties this list.
-  const QStringList pending{"assets.autoSync", "assembly.activate", "assembly.activateNew", "assembly.activateRoot", "assembly.activeHistory", "assembly.activeVisibility",
-                            "assembly.explode", "assembly.explodeGroup", "assembly.explodeKeep", "assembly.explodeOff", "assembly.explodePlay",
-                            "assembly.explodeSave", "assembly.explodeSplit", "assembly.explodeUngroup", "design.componentFromSelection", "design.remove_faces",
-                            "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.length", "inspect.material", "inspect.partProperties", "timeline.designOnly",
-                            "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.unsavedChanges",
-                            "view.hidden", "view.hiddenEdges", "view.hideothers"};
+  CHECK(ids.size() > 300 && ids.count("help.reference") && ids.count("drawings.baseView.top") && ids.count("vcs.push") && ids.count("edit.copy") &&
+        ids.count("drawing2d.layers") && ids.count("file.reveal") && ids.count("workspace.drawings") && ids.count("sketch.commandLine"));
+  // Commands of the tracks merged after the wave 3 help pass (assets, measure, hidden-line views): their records and clips
+  // are still to be written. A listed command that has help is stale here.
+  const QStringList pending{"assets.autoSync", "inspect.length", "inspect.material", "view.hidden", "view.hiddenEdges", "view.hideothers"};
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
+  for (const QString& id : pending) if (help::find(id)) missing << id + " (has help: drop it from pending)";
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
 }
 
@@ -254,6 +290,70 @@ TEST(rich_tip_states_and_layout) {
   RichTip::detach(button);
 }
 
+// TODO 11 wave 3: the card's caps are the command's key now, its hint names Help for this tool's key, and that key (not
+// F1 once it is another) expands the card and then opens the guide; a change of keys relayouts a card that is up; right
+// to left the caps keep their order (the group mirrors).
+TEST(rich_tip_follows_the_help_key) {
+  help::load("en");
+  QWidget window;
+  auto* layout = new QVBoxLayout(&window);
+  QAction fit("Fit"), current("Help for this tool");
+  fit.setObjectName("view.fit");
+  fit.setShortcut(QKeySequence("Ctrl+Alt+F"));
+  current.setObjectName("help.current");
+  current.setShortcut(QKeySequence("Ctrl+F1"));
+  auto* button = new QToolButton(&window);
+  button->setDefaultAction(&fit);
+  layout->addWidget(button);
+  window.resize(300, 200);
+  window.show();
+  keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "help.current" ? &current : nullptr; });
+  QString guided;
+  RichTip::setGuideHook([&](const QString& id) { guided = id; });
+  RichTip::attach(button, "view.fit");
+  RichTip* tip = RichTip::instance();
+  auto plain = [](QString s) { return s.remove(QChar(0x2066)).remove(QChar(0x2069)); };
+  auto send = [&](QEvent::Type type, int key, Qt::KeyboardModifiers m) {
+    QKeyEvent e(type, key, m);
+    e.ignore();
+    QApplication::sendEvent(button, &e);
+    return e.isAccepted();
+  };
+  tip->showFor(button, RichTip::State::Compact);
+  CHECK(tip->keyCaps() == QStringList({"Ctrl", "Alt", "F"}) && plain(tip->hint()) == "Shift or Ctrl+F1 for more");
+  CHECK(!send(QEvent::ShortcutOverride, Qt::Key_F1, Qt::NoModifier));  // not Help for this tool's key now: the window's
+  send(QEvent::KeyPress, Qt::Key_F1, Qt::NoModifier);
+  CHECK(tip->state() == RichTip::State::Hidden);  // any other key hides the card
+  tip->showFor(button, RichTip::State::Compact);
+  CHECK(send(QEvent::ShortcutOverride, Qt::Key_F1, Qt::ControlModifier));
+  send(QEvent::KeyPress, Qt::Key_F1, Qt::ControlModifier);
+  CHECK(tip->state() == RichTip::State::Expanded && plain(tip->hint()) == "Ctrl+F1 for the tool guide");
+  send(QEvent::KeyPress, Qt::Key_F1, Qt::ControlModifier);
+  CHECK(guided == "view.fit" && tip->state() == RichTip::State::Hidden);
+  // Unbound: Shift alone expands; no key for the guide.
+  current.setShortcut(QKeySequence());
+  tip->showFor(button, RichTip::State::Compact);
+  CHECK(tip->hint() == "Shift for more");
+  tip->showFor(button, RichTip::State::Expanded);
+  CHECK(tip->hint().isEmpty());
+  // Keys change while the card is up: it follows.
+  tip->showFor(button, RichTip::State::Compact);
+  shortcuts::bind(&fit, QKeySequence("F"));
+  CHECK(tip->keyCaps() == QStringList({"F"}));
+  // Right to left: the group mirrors, the caps keep their order.
+  fit.setShortcut(QKeySequence("Ctrl+Alt+F"));
+  QApplication::setLayoutDirection(Qt::RightToLeft);
+  tip->hideTip();
+  tip->showFor(button, RichTip::State::Compact);
+  const QList<QRect> caps = tip->keyRects();
+  CHECK(tip->layoutDirection() == Qt::RightToLeft && caps.size() == 3 && caps[0].left() < caps[1].left() && caps[1].left() < caps[2].left() && caps[2].right() < tip->width() / 2);
+  QApplication::setLayoutDirection(Qt::LeftToRight);
+  tip->hideTip();
+  RichTip::detach(button);
+  RichTip::setGuideHook({});
+  keys::setLookup({});
+}
+
 // The palette's recent commands (UI-106): newest first, each once, at most kRecent; the palette itself and undo/redo are
 // not remembered.
 TEST(palette_recent_commands) {
@@ -275,20 +375,34 @@ TEST(palette_recent_commands) {
 // keys), the problem report's text and the Getting started lessons (each clip and command there).
 TEST(help_menu_contents) {
   help::load("en");
-  CHECK_EQ(help::keyCaps("Ctrl+Shift+U"), QStringList({"Ctrl", "Shift", "U"}));
-  CHECK_EQ(help::keyCaps("Ctrl++"), QStringList({"Ctrl", "+"}));
-  CHECK_EQ(help::keyCaps("F1"), QStringList({"F1"}));
-  CHECK_EQ(help::keyAlternates("Ctrl+Y / Ctrl+Shift+Z"), QStringList({"Ctrl+Y", "Ctrl+Shift+Z"}));
-  CHECK_EQ(help::keyAlternates("Ctrl+/"), QStringList({"Ctrl+/"}));
-  {  // the cheat sheet draws each alternate's caps, a plain "/" between them
+  CHECK_EQ(help::keyRow("Redo", {QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")}).text(), QString("Ctrl+Y / Ctrl+Shift+Z"));
+  CHECK(help::keyRow("Zoom in", {QKeySequence("Ctrl++")}).keys == QList<QStringList>({{"Ctrl", "+"}}));
+  {  // the cheat sheet draws each alternate's caps, a plain "/" between them; a search finds Qt's names too
     ShortcutSheet sheet;
-    sheet.setGroups({help::KeyGroup{"Edit", {help::KeyRow{"Redo", "Ctrl+Y / Ctrl+Shift+Z"}, help::KeyRow{"Menu", "Menu key / Shift+F10"}}}});
+    sheet.setGroups({help::KeyGroup{"Edit", {help::keyRow("Redo", {QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")}),
+                                             help::KeyRow{"Menu", {{"Menu key"}, {"Shift", "F10"}}, {}},
+                                             help::keyRow("Confirm", {QKeySequence("Ctrl+Return")})}}});
     QStringList caps, plain;
     for (QLabel* l : sheet.findChildren<QLabel*>()) (l->objectName() == "keycap" ? caps : plain) << l->text();
-    CHECK_EQ(caps, QStringList({"Ctrl", "Y", "Ctrl", "Shift", "Z", "Menu key", "Shift", "F10"}));
+    CHECK_EQ(caps, QStringList({"Ctrl", "Y", "Ctrl", "Shift", "Z", "Menu key", "Shift", "F10", "Ctrl", "Enter"}));
     CHECK(plain.count("/") == 2);
+    CHECK(sheet.shown().contains("Redo Ctrl+Y / Ctrl+Shift+Z") && sheet.shown().contains("Confirm Ctrl+Enter"));
+    sheet.setFilter("ctrl+return");
+    CHECK_EQ(sheet.shown(), QStringList({"Confirm Ctrl+Enter"}));
+    // Right to left: the caps still read Ctrl, Y (their own left-to-right box).
+    sheet.setFilter(QString());
+    sheet.setLayoutDirection(Qt::RightToLeft);
+    sheet.resize(900, 400);
+    sheet.show();
+    QLabel *ctrl = nullptr, *y = nullptr;
+    for (QLabel* l : sheet.findChildren<QLabel*>("keycap")) {
+      if (!ctrl && l->text() == "Ctrl") ctrl = l;
+      if (!y && l->text() == "Y") y = l;
+    }
+    CHECK(ctrl && y && ctrl->mapTo(&sheet, QPoint()).x() < y->mapTo(&sheet, QPoint()).x());
+    sheet.close();
   }
-  auto mouse = [](const QString& preset, int row) { return help::mouseRows(preset).value(row).keys; };
+  auto mouse = [](const QString& preset, int row) { return help::mouseRows(preset).value(row).text(); };
   CHECK_EQ(mouse("fusion", 0), QString("Shift+Middle drag"));
   CHECK_EQ(mouse("fusion", 1), QString("Middle drag"));
   CHECK_EQ(mouse("solidworks", 0), QString("Middle drag"));
@@ -310,7 +424,7 @@ TEST(help_menu_contents) {
   };
   const auto groups = help::keyGroups({&fit, &line, &box}, false, "fusion");
   CHECK_EQ(titles(groups), QStringList({"View", "Sketch", "Mouse", "Without the mouse", "In every tool"}));
-  CHECK(groups[0].rows.size() == 1 && groups[0].rows[0].label == help::find("view.fit")->title && groups[0].rows[0].keys == "F");
+  CHECK(groups[0].rows.size() == 1 && groups[0].rows[0].label == help::find("view.fit")->title && groups[0].rows[0].text() == "F");
   CHECK_EQ(titles(help::keyGroups({&fit, &line, &box}, true, "fusion")), QStringList({"Sketch", "View", "Mouse", "Without the mouse", "In every tool"}));
   CHECK_EQ(help::problemReport("  It broke \n", {"OPAD 1", "Qt 6"}), QString("What happened:\nIt broke\n\nOPAD and this computer:\n- OPAD 1\n- Qt 6\n"));
   CHECK(help::problemReport("", {}).contains("(not described)"));
@@ -325,6 +439,327 @@ TEST(help_menu_contents) {
     }
   }
   CHECK(GettingStarted::lessons("onshape")[0].text.contains("Right drag"));
+  // "In every tool": Help for this tool's row is its key now, and none without one.
+  QAction current("Help for this tool");
+  current.setObjectName("help.current");
+  current.setShortcut(QKeySequence("Ctrl+F1"));
+  auto every = [&] { return help::keyGroups({&fit, &current}, false, "fusion").last(); };
+  CHECK(every().rows.last().text() == "Ctrl+F1");
+  current.setShortcut(QKeySequence());
+  for (const help::KeyRow& r : every().rows) CHECK(r.text() != "F1" && r.label != QCoreApplication::translate("help", "Guide of the tool you are using"));
+}
+
+// TODO 11 wave 3 (help audit §4.3, §6.3 test 3): the one key formatter. Caps from the key combination (never split on
+// '+'), one naming table, multi-chord sequences, the macOS glyphs and order (tested here through the Style parameter),
+// LRI..PDI around inline text, the fixed keys, and the binding of a command through the lookup (held during a sketch).
+TEST(keys_caps_and_text) {
+  using keys::Style;
+  using L = QStringList;
+  CHECK_EQ(keys::caps(QKeySequence("Ctrl+Shift+F"), Style::Pc), L({"Ctrl", "Shift", "F"}));
+  CHECK_EQ(keys::caps(QKeySequence("Shift+Alt+Ctrl+Meta+X"), Style::Pc), L({"Meta", "Ctrl", "Alt", "Shift", "X"}));
+  CHECK_EQ(keys::caps(QKeySequence(Qt::Key_Return), Style::Pc), L({"Enter"}));
+  CHECK_EQ(keys::caps(QKeySequence(Qt::Key_Enter), Style::Pc), L({"Enter"}));
+  CHECK_EQ(keys::caps(QKeySequence(Qt::Key_PageDown), Style::Pc), L({"PgDn"}));
+  CHECK_EQ(keys::caps(QKeySequence(Qt::Key_PageUp), Style::Pc), L({"PgUp"}));
+  CHECK_EQ(keys::caps(QKeySequence(Qt::Key_Escape), Style::Pc), L({"Esc"}));
+  CHECK_EQ(keys::caps(QKeySequence(Qt::Key_Delete), Style::Pc), L({"Del"}));
+  CHECK_EQ(keys::caps(QKeySequence("Shift+Del"), Style::Pc), L({"Shift", "Del"}));
+  CHECK_EQ(keys::caps(QKeySequence("Ctrl+Up"), Style::Pc), L({"Ctrl", QString::fromUtf8("↑")}));
+  CHECK_EQ(keys::caps(QKeySequence("Ctrl++"), Style::Pc), L({"Ctrl", "+"}));
+  CHECK_EQ(keys::caps(QKeySequence("Ctrl+/"), Style::Pc), L({"Ctrl", "/"}));
+  CHECK_EQ(keys::caps(QKeySequence("F1"), Style::Pc), L({"F1"}));
+  CHECK_EQ(keys::caps(QKeySequence("Ctrl+K, Ctrl+S"), Style::Pc), L({"Ctrl", "K", keys::kThen, "Ctrl", "S"}));
+  CHECK_EQ(keys::plain(QKeySequence("Ctrl+K, Ctrl+S"), Style::Pc), QString("Ctrl+K, Ctrl+S"));
+  CHECK_EQ(keys::plain(QKeySequence("Ctrl+Alt+F"), Style::Pc), QString("Ctrl+Alt+F"));
+  CHECK(keys::caps(QKeySequence()).isEmpty() && keys::plain(QKeySequence()).isEmpty() && keys::text(QKeySequence()).isEmpty());
+  // macOS: Control, Option, Shift, Command (Qt's Control is Command there), glyphs, no '+'.
+  CHECK_EQ(keys::caps(QKeySequence("Ctrl+Shift+F"), Style::Mac), L({QString::fromUtf8("⇧"), QString::fromUtf8("⌘"), "F"}));
+  CHECK_EQ(keys::caps(QKeySequence("Ctrl+Shift+Alt+Meta+X"), Style::Mac), L({QString::fromUtf8("⌃"), QString::fromUtf8("⌥"), QString::fromUtf8("⇧"), QString::fromUtf8("⌘"), "X"}));
+  CHECK_EQ(keys::plain(QKeySequence("Ctrl+Return"), Style::Mac), QString::fromUtf8("⌘↩"));
+  CHECK_EQ(keys::caps(QKeySequence(Qt::Key_Backspace), Style::Mac), L({QString::fromUtf8("⌫")}));
+  CHECK_EQ(keys::caps(QKeySequence(Qt::Key_Delete), Style::Mac), L({QString::fromUtf8("⌦")}));
+  CHECK_EQ(keys::plain(QKeySequence("Ctrl+K, Ctrl+S"), Style::Mac), QString::fromUtf8("⌘K, ⌘S"));
+  // Inline text keeps its order in right-to-left sentences.
+  CHECK_EQ(keys::text(QKeySequence("Ctrl+F"), Style::Pc), QString(QChar(0x2066)) + "Ctrl+F" + QChar(0x2069));
+  CHECK_EQ(keys::isolate("F"), QString(QChar(0x2066)) + "F" + QChar(0x2069));
+  // The fixed keys.
+  for (const QString& name : keys::fixedNames()) {
+    if (keys::fixedCaps(name, Style::Pc).isEmpty()) throw check::Failure("no caps for fixed key " + name.toStdString());
+    CHECK(!keys::fixedCaps(name, Style::Mac).isEmpty());
+  }
+  CHECK_EQ(keys::fixedCaps("ctrlEnter", Style::Pc), L({"Ctrl", "Enter"}));
+  CHECK_EQ(keys::fixedCaps("ctrlEnter", Style::Mac), L({QString::fromUtf8("⌘"), QString::fromUtf8("↩")}));
+  CHECK_EQ(keys::fixedCaps("shiftTab", Style::Pc), L({"Shift", "Tab"}));
+  CHECK_EQ(keys::fixedCaps("esc", Style::Pc), L({"Esc"}));
+  CHECK_EQ(keys::fixedCaps("shift", Style::Mac), L({QString::fromUtf8("⇧")}));
+  CHECK_EQ(keys::fixedCaps("redo", Style::Pc), keys::caps(QKeySequence::keyBindings(QKeySequence::Redo).value(0), Style::Pc));
+  CHECK(keys::fixedCaps("nope").isEmpty() && keys::fixedText("nope").isEmpty());
+  CHECK_EQ(keys::fixedText("enter", Style::Pc), keys::isolate("Enter"));
+  // A command's key through the lookup: the user's binding, held while a sketch is open, none when unassigned.
+  QAction fit("Fit"), faces("Faces"), home("Home");
+  fit.setObjectName("view.fit");
+  fit.setShortcut(QKeySequence("Ctrl+Alt+F"));
+  faces.setObjectName("select.faces");
+  faces.setShortcut(QKeySequence("Ctrl+Alt+2"));
+  home.setObjectName("view.home");
+  keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "select.faces" ? &faces : id == "view.home" ? &home : nullptr; });
+  CHECK(keys::hasLookup() && keys::action("view.fit") == &fit && !keys::action("no.such"));
+  CHECK_EQ(keys::text("view.fit", Style::Pc), keys::isolate("Ctrl+Alt+F"));
+  shortcuts::suspendOutsideSketch({&faces}, true);  // a sketch holds the filters' keys: still the user's key
+  CHECK(faces.shortcut().isEmpty() && keys::text("select.faces", Style::Pc) == keys::isolate("Ctrl+Alt+2"));
+  shortcuts::suspendOutsideSketch({&faces}, false);
+  CHECK(keys::text("view.home").isEmpty() && keys::text("no.such").isEmpty() && keys::binding("view.home").isEmpty());
+  // Qt's standard Quit on Windows is Key_Exit, which no keyboard has: no key rather than "Exit".
+  CHECK(!keys::pressable(QKeySequence(Qt::Key_Exit)) && keys::pressable(QKeySequence("F")) && !keys::pressable(QKeySequence()));
+  home.setShortcuts({QKeySequence(Qt::Key_Exit), QKeySequence("Ctrl+Q")});
+  CHECK(keys::binding("view.home") == QKeySequence("Ctrl+Q") && keys::bindings(&home).size() == 1);
+  home.setShortcut(QKeySequence());
+  CHECK_EQ(keys::hint("view.fit", "fit"), keys::text("view.fit") + " fit");
+  CHECK(keys::hint("view.home", "home").isEmpty());
+  // A hint's span of keys ("1–4 filter"), and a key given as a fixed name, a command or text (PanelFooter, SegmentButton).
+  {
+    QAction one("Bodies"), two("Faces"), three("Edges"), four("Vertices");
+    QList<QAction*> filters{&one, &two, &three, &four};
+    const QStringList ids{"select.bodies", "select.faces", "select.edges", "select.vertices"};
+    for (int i = 0; i < 4; ++i) {
+      filters[i]->setObjectName(ids[i]);
+      filters[i]->setShortcut(QKeySequence(QString::number(i + 1)));
+    }
+    keys::setLookup([&](const QString& id) { const qsizetype i = ids.indexOf(id); return i >= 0 ? filters[i] : id == "view.fit" ? &fit : nullptr; });
+    CHECK_EQ(keys::span(ids), keys::isolate(QString::fromUtf8("1–4")));
+    two.setShortcut(QKeySequence("Ctrl+Alt+2"));
+    CHECK_EQ(keys::span(ids), keys::isolate("1/Ctrl+Alt+2/3/4"));
+    two.setShortcut(QKeySequence());
+    CHECK_EQ(keys::span(ids), keys::isolate("1/3/4"));
+    for (QAction* a : filters) a->setShortcut(QKeySequence());
+    CHECK(keys::span(ids).isEmpty());
+    CHECK(keys::isCommandId("inspect.pin") && keys::isCommandId("sketch.c.horizontal") && !keys::isCommandId("Alt+Left") && !keys::isCommandId("Esc") && !keys::isCommandId("P"));
+    CHECK(keys::spec("esc") == "Esc" && keys::spec("view.fit") == "Ctrl+Alt+F" && keys::spec("select.faces").isEmpty() && keys::spec("Alt+Left") == "Alt+Left");
+    CHECK(keys::fixedCaps("shiftDel", Style::Pc) == L({"Shift", "Del"}) && keys::fixedCaps("f2", Style::Pc) == L({"F2"}));
+    keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "select.faces" ? &faces : id == "view.home" ? &home : nullptr; });
+  }
+  // The shortcut editor says when it applied, once; a fixed key (Esc) is not the user's to change and is listed as reserved.
+  int announced = 0;
+  const auto counting = QObject::connect(keys::notifier(), &keys::Notifier::changed, [&] { ++announced; });
+  QSettings().setValue("shortcuts/inspect.clear", "Q");
+  QAction clear("Clear measurement");
+  clear.setObjectName("inspect.clear");
+  clear.setProperty("fixedShortcut", true);
+  {
+    QSettings settings;
+    shortcuts::initialize(&clear, QKeySequence("Esc"), settings);
+    shortcuts::initialize(&fit, QKeySequence("F"), settings);
+    shortcuts::initialize(&home, QKeySequence("H"), settings);
+  }
+  CHECK(clear.shortcut() == QKeySequence("Esc") && shortcuts::fixedKey(&clear));
+  {
+    QSettings settings;
+    shortcuts::migrate(settings);
+    CHECK(!settings.contains("shortcuts/inspect.clear"));
+  }
+  {
+    ShortcutEditor editor({&fit, &home, &clear});
+    auto* tree = editor.findChild<QTreeWidget*>("shortcutTree");
+    QTreeWidgetItem *clearRow = nullptr, *fitRow = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+      if ((*it)->toolTip(0) == "inspect.clear") clearRow = *it;
+      if ((*it)->toolTip(0) == "view.fit") fitRow = *it;
+    }
+    CHECK(clearRow && clearRow->data(0, Qt::UserRole).toInt() == -1 && clearRow->text(1) == "Esc" && clearRow->parent());  // reserved, not editable
+    CHECK(fitRow);
+    tree->setCurrentItem(fitRow);
+    editor.findChild<QKeySequenceEdit*>("shortcutBinding")->setKeySequence(QKeySequence("Ctrl+Alt+F"));
+    editor.accept();
+  }
+  CHECK(announced == 1 && fit.shortcut() == QKeySequence("Ctrl+Alt+F") && clear.shortcut() == QKeySequence("Esc"));
+  shortcuts::bind(&home, QKeySequence("Ctrl+H"));
+  CHECK(announced == 2 && keys::text("view.home", Style::Pc) == keys::isolate("Ctrl+H"));
+  QObject::disconnect(counting);
+  keys::setLookup({});
+  CHECK(!keys::hasLookup() && keys::text("view.fit").isEmpty());
+  QSettings().remove("shortcuts");
+}
+
+// §6.3 test 4: key tokens in help texts with a fake lookup: bound and unbound keys, "(...)" dropped with the space before
+// it, {press} as "Press ..." or "Choose <title>", {fixed}, a clip step's captionNoKey, requirements, search by key, Arabic.
+TEST(help_expand_tokens) {
+  help::load("en");
+  auto plain = [](QString s) { return s.remove(QChar(0x2066)).remove(QChar(0x2069)); };
+  QAction pin("Pin"), home("Home"), commands("Search commands");
+  pin.setObjectName("inspect.pin");
+  pin.setShortcut(QKeySequence("Ctrl+Alt+P"));
+  home.setObjectName("view.home");  // no key
+  commands.setObjectName("tools.commands");
+  commands.setShortcut(QKeySequence("Ctrl+Space"));
+  keys::setLookup([&](const QString& id) { return id == "inspect.pin" ? &pin : id == "view.home" ? &home : id == "tools.commands" ? &commands : nullptr; });
+  bool bound = false;
+  CHECK_EQ(plain(help::expand("Pin ({key:inspect.pin}) keeps it.", &bound)), QString("Pin (Ctrl+Alt+P) keeps it."));
+  CHECK(bound);
+  CHECK(help::expand("Pin ({key:inspect.pin}) keeps it.").contains(keys::isolate(keys::plain(QKeySequence("Ctrl+Alt+P")))));
+  CHECK_EQ(help::expand("Home ({key:view.home}) goes home.", &bound), QString("Home goes home."));
+  CHECK(!bound);
+  CHECK_EQ(help::expand("Home ( {key:view.home} ), then on."), QString("Home, then on."));
+  CHECK_EQ(help::expand("Then {key:view.home} goes home."), QString("Then Home goes home."));  // bare: the command's title
+  CHECK_EQ(plain(help::expand("Pin ({key:inspect.pin}) or Home ({key:view.home}).")), QString("Pin (Ctrl+Alt+P) or Home."));
+  CHECK_EQ(plain(help::expand("{press:tools.commands} and type")), QString("Press Ctrl+Space and type"));
+  CHECK_EQ(help::expand("{press:view.home} to go back", &bound), QString("Choose Home to go back"));
+  CHECK(!bound);
+  CHECK_EQ(plain(help::expand("{fixed:enter} applies, {fixed:esc} steps back")), QString("Enter applies, Esc steps back"));
+  CHECK_EQ(help::expand("{fixed:nope} stays"), QString("{fixed:nope} stays"));
+  CHECK_EQ(help::expand("Select {n} bodies"), QString("Select {n} bodies"));  // not a key token
+  CHECK_EQ(help::tokens("A ({key:view.fit}) {press:x.y} {fixed:esc} {n}"), QStringList({"key:view.fit", "press:x.y", "fixed:esc"}));
+  CHECK_EQ(help::title("view.home"), help::find("view.home")->title);
+  CHECK_EQ(help::title("no.such"), QString("no.such"));
+  // A clip step: its captionNoKey when a key in the caption is unassigned.
+  clips::Step step{0, 1, "Press {key:view.home} to go home", "Choose Home in the view's menu"};
+  CHECK_EQ(clips::caption(step), QString("Choose Home in the view's menu"));
+  step.caption = "Pin ({key:inspect.pin}) keeps it";
+  CHECK_EQ(plain(clips::caption(step)), QString("Pin (Ctrl+Alt+P) keeps it"));
+  step = clips::Step{0, 1, "Home ({key:view.home}) goes home", {}};
+  CHECK_EQ(clips::caption(step), QString("Home goes home"));  // no keyless caption: the brackets drop
+  // Requirements and tooltips expand too; search finds a command by the key it has now.
+  CommandHelp h;
+  h.requirement = "Pin ({key:inspect.pin}) needs {n} result";
+  CHECK_EQ(plain(help::requirement(h, {{"n", 1}})), QString("Pin (Ctrl+Alt+P) needs 1 result"));
+  CHECK(plain(help::tooltip(&pin)).contains("(Ctrl+Alt+P)"));
+  CHECK(help::matches(*help::find("inspect.pin"), "ctrl+alt+p") && help::matches(*help::find("inspect.pin"), "Ctrl + Alt + P"));
+  CHECK(!help::matches(*help::find("view.home"), "ctrl+alt+p") && !help::matches(*help::find("inspect.pin"), "ctrl+alt"));
+  {  // Arabic: the translation keeps the tokens; the words around the key are translated.
+    Arabic on;
+    help::load("ar");
+    CHECK_EQ(plain(help::expand("{press:tools.commands}")), QString::fromUtf8("اضغط Ctrl+Space"));
+    CHECK_EQ(help::expand("{press:view.home}"), QString::fromUtf8("اختر ") + help::find("view.home")->title);
+    const QString details = help::expand(QString::fromUtf8("ويحفظ التثبيت ({key:inspect.pin}) النتيجة"));
+    CHECK(details.contains(QChar(0x2066)) && details.contains(QChar(0x2069)) && plain(details) == QString::fromUtf8("ويحفظ التثبيت (Ctrl+Alt+P) النتيجة"));
+    CHECK_EQ(help::expand(QString::fromUtf8("ويعيد الرئيسي ({key:view.home}) العرض")), QString::fromUtf8("ويعيد الرئيسي العرض"));
+  }
+  help::load("en");
+  keys::setLookup({});
+}
+
+// §6.3 test 1: every key element of every clip names a command this app registers or a fixed key, and shows its key
+// now; no literal caps (a load problem). A command without a key draws its name instead.
+TEST(clip_keys_resolve) {
+  clips::load();
+  const auto ids = registeredIds();
+  QStringList wrong, literal;
+  for (const QString& id : clips::ids())
+    for (const clips::KeyRef& k : clips::keyRefs(id)) {
+      if (!k.command.isEmpty() && !ids.count(k.command)) wrong << id + ": " + k.command;
+      if (!k.fixed.isEmpty() && !keys::fixedNames().contains(k.fixed)) wrong << id + ": fixed " + k.fixed;
+      if (!k.caps.isEmpty()) literal << id + ": " + k.caps.join('+');
+    }
+  if (!wrong.isEmpty()) throw check::Failure("key elements for no command: " + wrong.join(", ").toStdString());
+  if (!literal.isEmpty()) throw check::Failure("literal key caps (name the command: {\"el\": \"key\", \"command\": ...}): " + literal.join(", ").toStdString());
+  for (const QString& p : clips::problems())
+    if (p.contains("literal caps")) throw check::Failure("the loader lets literal caps by: " + p.toStdString());
+  // How they resolve: the user's key, a fixed key, the command's name without one; a lookup names unknown commands.
+  QTemporaryDir dir;
+  QFile f(dir.filePath("clips.json"));
+  CHECK(f.open(QIODevice::WriteOnly));
+  f.write(R"({"clips": [{"id": "keys", "duration": 3, "items": [{"el": "grid"},
+      {"el": "key", "command": "view.fit", "press": 0.5, "from": 0, "to": 1},
+      {"el": "key", "command": "view.home", "from": 1, "to": 2},
+      {"el": "key", "fixed": "ctrlEnter", "from": 2, "to": 3},
+      {"el": "key", "command": "no.such", "from": 2, "to": 3}],
+     "steps": [{"to": 1, "caption": "{press:view.fit}"}, {"to": 2, "caption": "{press:view.home}", "captionNoKey": "Use Home from the view cube's menu"}, {"to": 3, "caption": "{fixed:ctrlEnter}"}]},
+    {"id": "bad", "duration": 1, "items": [{"el": "key", "fixed": "hyper"}, {"el": "key", "caps": ["F"], "command": "view.fit"}, {"el": "key", "caps": ["Ctrl", "S"]},
+      {"el": "key", "fixed": ""}], "steps": [{"to": 1, "caption": "A"}]}]})");
+  f.close();
+  QAction fit("Fit"), home("Home");
+  fit.setObjectName("view.fit");
+  fit.setShortcut(QKeySequence("Ctrl+Alt+F"));
+  home.setObjectName("view.home");
+  keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "view.home" ? &home : nullptr; });
+  clips::load(f.fileName());
+  const QString problems = clips::problems().join("\n");
+  for (const char* expected : {"bad: key: unknown fixed key hyper", "bad: key: one of caps, command or fixed", "keys: key: no command no.such", "bad: key: literal caps Ctrl+S"})
+    if (!problems.contains(expected)) throw check::Failure("missing problem \"" + std::string(expected) + "\" in:\n" + problems.toStdString());
+  CHECK(!problems.contains("unknown fixed key \n") && !problems.endsWith("unknown fixed key "));  // "": no key, drawn as nothing
+  using L = QList<QStringList>;
+  CHECK(clips::resolvedKeys("keys", 0.5) == L({{"Ctrl", "Alt", "F"}}));
+  CHECK(clips::resolvedKeys("keys", 1.5) == L({{help::title("view.home")}}));
+  CHECK(clips::resolvedKeys("keys", 2.5) == L({keys::fixedCaps("ctrlEnter"), {help::title("no.such")}}));
+  CHECK(clips::resolvedKeys("keys").size() == 4);
+  auto plain = [](QString s) { return s.remove(QChar(0x2066)).remove(QChar(0x2069)); };
+  const auto steps = clips::steps("keys");
+  CHECK(plain(clips::caption(steps[0])) == "Press Ctrl+Alt+F" && clips::caption(steps[1]) == "Use Home from the view cube's menu");
+  // The frames show the new key at once (the still frame too) and the name chip without one.
+  const QImage before = clips::frame("keys", 0.5, {288, 162});
+  fit.setShortcut(QKeySequence("F"));
+  CHECK(clips::resolvedKeys("keys", 0.5) == L({{"F"}}) && clips::frame("keys", 0.5, {288, 162}) != before);
+  CHECK(!clips::frame("keys", 1.5, {288, 162}).isNull());
+  keys::setLookup({});
+  clips::load();
+}
+
+// §6.3 test 2: no help text spells a key the user can change: records (English and Arabic), every clip text and its
+// Arabic, and the help area's Arabic. Every token names a registered command (or a fixed key), and English and Arabic
+// carry the same tokens.
+TEST(help_texts_have_no_literal_keys) {
+  // A token may name any command the app makes (registeredIds: the window's and the areas', every one with help).
+  const auto ids = registeredIds();
+  QStringList found, tokens;
+  auto checkTokens = [&](const QString& where, const QString& english, const QString& arabic) {
+    for (const QString& t : help::tokens(english)) {
+      const QString kind = t.section(':', 0, 0), name = t.section(':', 1);
+      if (kind == "fixed" ? !keys::fixedNames().contains(name) : !ids.count(name)) tokens << where + ": " + t;
+    }
+    QStringList en = help::tokens(english), ar = help::tokens(arabic);
+    en.sort();
+    ar.sort();
+    if (!arabic.isEmpty() && en != ar) tokens << where + ": the Arabic has " + ar.join(' ') + " for " + en.join(' ');
+  };
+  // Records, English and Arabic, field by field.
+  const QJsonArray english = QJsonDocument::fromJson(source("app/help/commands.json").toUtf8()).object().value("commands").toArray();
+  const QJsonObject translated = QJsonDocument::fromJson(source("app/help/commands.ar.json").toUtf8()).object();
+  for (const QJsonValue& v : english) {
+    const QJsonObject o = v.toObject();
+    const QString id = o.value("id").toString();
+    const QJsonObject ar = translated.value(id).toObject();
+    QStringList keysFound;
+    for (const char* field : {"summary", "details", "requires"}) {
+      keysFound << literalKeys(o.value(field).toString()) << literalKeys(ar.value(field).toString());
+      checkTokens(id + "." + field, o.value(field).toString(), ar.value(field).toString());
+    }
+    // Keywords are words, not keys: search matches the key the command has now (help::matches).
+    static const QRegularExpression keyword(R"(^(ctrl|shift|alt|cmd|meta)[ +]\S|\+|^f\d{1,2}$|^(del|esc|ctrl|alt)$|^[a-z0-9]$)", QRegularExpression::CaseInsensitiveOption);
+    for (const QJsonObject& r : {o, ar})
+      for (const QJsonValue& k : r.value("keywords").toArray())
+        if (keyword.match(k.toString()).hasMatch()) keysFound << "keyword " + k.toString();
+    if (!keysFound.isEmpty()) found << "record " + id + ": " + keysFound.join(", ");
+  }
+  // Clip texts (captions, keyless captions, labels, chips, cards) and their Arabic.
+  const QHash<QString, QString> arabic = i18n::table("ar", {QStringLiteral(OPAD_SOURCE_DIR) + "/app/i18n"});
+  clips::load();
+  QSet<QString> clipTexts;
+  for (const QString& id : clips::ids()) {
+    QStringList keysFound;
+    for (const QString& text : clips::texts(id)) {
+      clipTexts.insert(text);
+      keysFound << literalKeys(text) << literalKeys(arabic.value(text));
+      checkTokens(id + ": " + text, text, arabic.value(text));
+    }
+    if (!keysFound.isEmpty()) found << "clip " + id + ": " + keysFound.join(", ");
+  }
+  // Every other text the app shows in Arabic (app/i18n/ar.json and its fragments: the tr() texts of every area, the help
+  // area's lessons and coach card, toasts and error messages), the English and its translation.
+  for (auto it = arabic.constBegin(); it != arabic.constEnd(); ++it) {
+    if (it.key().startsWith('@') || clipTexts.contains(it.key())) continue;
+    const QStringList keysFound = literalKeys(it.key()) + literalKeys(it.value());
+    checkTokens("ar: " + it.key(), it.key(), it.value());
+    if (!keysFound.isEmpty()) found << "text \"" + it.key() + "\": " + keysFound.join(", ");
+  }
+  if (!tokens.isEmpty()) throw check::Failure("tokens: " + tokens.join(" | ").toStdString());
+  if (!found.isEmpty()) throw check::Failure("literal keys (use {key:id}, {press:id} or {fixed:name}): " + found.join(" | ").toStdString());
+  // The checker itself.
+  CHECK_EQ(literalKeys("Press D, then Ctrl+Z or F9 (S)"), QStringList({"Ctrl+", "F9", "Press D", "(S)"}));
+  CHECK_EQ(literalKeys("Select it and press Del"), QStringList({"press Del"}));
+  CHECK_EQ(literalKeys("G again hides it"), QStringList({"G again"}));
+  CHECK_EQ(literalKeys("%1: pick more, P pins, Esc clears"), QStringList({", P pins"}));
+  CHECK(literalKeys("Press Enter or Esc; Shift+Tab goes back; Ctrl+click adds, Shift+drag pans; {press:view.fit} ({key:inspect.pin})").isEmpty());
+  CHECK(literalKeys("X offset · Y axis · Orbit · B pen · E eraser · B is an earlier A · {press:view.grid} again hides it").isEmpty());
+  CHECK_EQ(literalKeys(QString::fromUtf8("اضغط F لملاءمة العرض")), QStringList({QString::fromUtf8("اضغط F")}));
 }
 
 // Menu entries that are commands with help show their card beside the menu; other entries (no id, a submenu) none.
@@ -388,9 +823,13 @@ TEST(clips_load_cleanly) {
     CHECK(clips::stepAt(id, 0) == 0 && clips::stepAt(id, clips::duration(id)) == steps.size() - 1);
     CHECK(clips::stillTime(id) > 0 && clips::stillTime(id) <= clips::duration(id));
   }
-  // Every command id with a clip of its own has a help record (future commands name theirs here first).
+  // Every clip is shown somewhere: a command's own (its help record), one a record adopts by its "clip" field, or a panel's
+  // own guide (the drawing placer's); insert.canvas waits for the canvas commands (future commands name theirs here first).
+  help::load("en");
+  QSet<QString> adopted;
+  for (const CommandHelp& h : help::all()) adopted.insert(h.clip);
   for (const QString& id : clips::ids())
-    if (!help::find(id) && !QStringList{"assembly.explode", "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView"}.contains(id))
+    if (!help::find(id) && !adopted.contains(id) && !QStringList{"drawing.place", "insert.canvas"}.contains(id))
       throw check::Failure(id.toStdString() + ": a clip for no command");
 }
 
@@ -561,6 +1000,8 @@ TEST(clip_guide_ranges) {
   CHECK(clips::problems().join("\n").contains("wrong: guide entries are clip steps"));
   clips::load();
   CHECK(clips::guideRange("sketch.line", 0, 3) == R(0, 0) && clips::guideRange("design.extrude", 1, 2) == R(1, 2));
+  // The drawing placer's panel (DrawingPlacer: plane, move, snap, Place): moving loops move, snap and Place; snapping its step.
+  CHECK(clips::guideRange("drawing.place", 1, 4) == R(1, 3) && clips::guideRange("drawing.place", 2, 4) == R(2, 2) && clips::guideRange("drawing.place", 4, 4) == R(3, 3));
 }
 
 // The player loops a range of steps as one segment; reduced motion shows the range's last frame.
@@ -640,6 +1081,43 @@ TEST(tool_guide_follows_the_command) {
   QSettings().remove("help");
 }
 
+// The palette ranks the query as a whole name first, then as a whole word, then as the start of a word, all above letters
+// scattered through a name (an Arabic label that keeps a Latin name, "ODA File Converter", never wins "fit").
+TEST(palette_ranks_whole_words_first) {
+  help::load("en");
+  QSettings().remove("palette/recent");
+  QAction oda(QString::fromUtf8("استخدام ODA File Converter")), fitting("Fitting"), sheet("Fit sheet"), fit("Fit");
+  oda.setObjectName("x.oda");
+  fitting.setObjectName("x.fitting");
+  sheet.setObjectName("x.sheet");
+  fit.setObjectName("x.fit");
+  CommandPalette palette({&oda, &fitting, &sheet, &fit});
+  palette.findChild<QLineEdit*>("paletteInput")->setText("fit");
+  auto* list = palette.findChild<QListWidget*>("paletteList");
+  QStringList order;
+  for (int i = 0; i < list->count(); ++i) order << static_cast<QAction*>(list->item(i)->data(Qt::UserRole).value<void*>())->objectName();
+  CHECK_EQ(order, QStringList({"x.fit", "x.sheet", "x.fitting", "x.oda"}));
+  // A key typed: first with a modifier or a name ("ctrl+l", "f2"), but one plain letter is the start of a name search.
+  QAction line("Line"), copy("Copy"), rename("Rename");
+  line.setObjectName("x.line");
+  copy.setObjectName("x.copy");
+  rename.setObjectName("x.rename");
+  line.setShortcut(QKeySequence("C"));
+  copy.setShortcut(QKeySequence("Ctrl+L"));
+  rename.setShortcut(QKeySequence("F2"));
+  CommandPalette keyed({&line, &copy, &rename});
+  auto first = [&keyed](const QString& query) {
+    keyed.findChild<QLineEdit*>("paletteInput")->setText(query);
+    QStringList ids;
+    auto* rows = keyed.findChild<QListWidget*>("paletteList");
+    for (int i = 0; i < rows->count(); ++i) ids << static_cast<QAction*>(rows->item(i)->data(Qt::UserRole).value<void*>())->objectName();
+    return ids;
+  };
+  CHECK_EQ(first("c"), QStringList({"x.copy", "x.line"}));  // Copy's name, then Line's key
+  CHECK_EQ(first("ctrl+l").value(0), QString("x.copy"));
+  CHECK_EQ(first("f2").value(0), QString("x.rename"));
+}
+
 // Commands are listed by area (the palette's group column, the reference's headings), every area named once.
 TEST(command_areas) {
   help::load("en");
@@ -648,8 +1126,10 @@ TEST(command_areas) {
   CHECK(help::group("sketch.c.horizontal") == "Sketch constraints" && help::group("sketch.dimension") == "Sketch constraints");
   CHECK(help::group("view.fit") == "View" && help::group("nav.fusion") == "View" && help::group("help.about") == "Tools and help");
   CHECK(help::group("files.useOda") == "File" && help::group("help.licenses") == "Tools and help");
+  CHECK(help::group("vcs.commit") == "File" && help::group("timeline.names") == "View" && help::group("drawing2d.layers") == "View" &&
+        help::group("assembly.explode") == "Design" && help::group("drawings.baseView.top") == "Drawings");
   QStringList areas = help::areas();
-  CHECK(areas.size() == 11 && areas.removeDuplicates() == 0);
+  CHECK(areas.size() == 12 && areas.removeDuplicates() == 0);
   for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");
 }
 
@@ -685,6 +1165,14 @@ TEST(command_reference_lists_searches_and_opens) {
   CHECK(!card->showsRequirement());
   reference.open("file.quit");
   CHECK(card->command() == "file.quit" && card->clip()->isHidden() && card->steps()->isHidden());
+  // A panel's "?" and Help for this tool open a command with the clip of what is being done in it (Import's drawing
+  // placer); opened again without one, its own clip is back.
+  reference.open("file.import", "drawing.place");
+  CHECK(card->command() == "file.import" && card->clip()->clip() == "drawing.place" && card->steps()->count() == clips::steps("drawing.place").size() + 1);
+  reference.open("file.import");
+  CHECK(card->command() == "file.import" && card->clip()->clip() == "file.import" && card->steps()->count() == clips::steps("file.import").size() + 1);
+  reference.open("design.extrude", "no.such.clip");
+  CHECK(card->clip()->clip() == "design.extrude");
   reference.close();
 }
 
