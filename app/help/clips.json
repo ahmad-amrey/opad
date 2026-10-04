@@ -525,7 +525,7 @@
     {"use": "patternCopy", "args": {"profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "rot": 240, "t0": 2.0, "t1": 3.0}},
     {"el": "solid", "profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.8, {"toneAmount": 0.45}], [3.6, {"toneAmount": 0.45}], [3.8, {"toneAmount": 0}]]},
     {"use": "patternCopy", "args": {"profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "rot": 300, "t0": 2.0, "t1": 3.0}},
-    {"el": "card", "screen": [0.03, 0.06], "w": 118, "title": "Circular pattern", "rows": [["Count", "6"], ["Angle", "360°"]], "from": 1.7, "to": 3.8},
+    {"el": "card", "screen": [0.03, 0.06], "w": 118, "title": "Circular pattern", "rows": [["Count", "6"], ["Total angle", "360°"]], "from": 1.7, "to": 3.8},
     {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [20, -20, 4]}], [0.8, {"pos": [11, 0, 10], "click": 1}], [1.5, {"pos": [0, 0, 16], "click": 1}], [2.2, {"pos": [0, 0, 16]}], [3.0, {"pos": [22, -16, 12]}]]}
    ],
@@ -957,10 +957,10 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 24, 14]}, "height": 10, "tone": "sel", "toneAmount": 0, "to": 2.3, "fade": 0, "keys": [[0.8, {"toneAmount": 0.35}]]},
     {"el": "solid", "profile": {"points": [[-12, -7], [2, -7], [2, 7], [-12, 7]]}, "height": 10, "tone": "sel", "from": 2.3, "fade": 0,
-     "keys": [[2.3, {"offset": [0, 0, 0], "toneAmount": 0.35}], [2.9, {"offset": [-3, 0, 0]}], [3.3, {"toneAmount": 0.35}], [3.5, {"toneAmount": 0}]]},
+     "keys": [[2.3, {"offset": [0, 0, 0], "toneAmount": 0.35}], [3.3, {"toneAmount": 0.35}], [3.5, {"toneAmount": 0}]]},
     {"el": "plane", "plane": "yz", "center": [2, 0, 5], "size": [20, 14], "color": "fg2", "fillOpacity": 0.08, "keys": [[1.5, {"color": "sel", "fillOpacity": 0.16}], [3.0, {"color": "fg2", "fillOpacity": 0.06}]]},
     {"el": "solid", "profile": {"points": [[2, -7], [12, -7], [12, 7], [2, 7]]}, "height": 10, "tone": "amber", "from": 2.3, "fade": 0,
-     "keys": [[2.3, {"offset": [0, 0, 0], "toneAmount": 0.35}], [2.9, {"offset": [3, 0, 0]}], [3.3, {"toneAmount": 0.35}], [3.5, {"toneAmount": 0}]]},
+     "keys": [[2.3, {"offset": [0, 0, 0], "toneAmount": 0.35}], [3.3, {"toneAmount": 0.35}], [3.5, {"toneAmount": 0}]]},
     {"el": "key", "caps": ["Enter"], "press": 2.3, "from": 2.05, "to": 2.8},
     {"el": "cursor", "keys": [[0, {"pos": [18, -16, 0]}], [0.8, {"pos": [-6, -3, 10], "click": 1}], [1.5, {"pos": [2, -6, 12], "click": 1}], [2.4, {"pos": [16, -12, 12]}]]}
    ],
@@ -2628,13 +2628,12 @@
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
-    {"el": "solid", "plane": "xz", "at": [0, 7, 0], "height": 14, "profile": {"points": [[-10, 0], [10, 0], [10, 12], [-10, 12]]}, "tone": "sel", "toneAmount": 0, "keys": [[2.2, {"profile": {"points": [[-10, 0], [10, 0], [10, 12], [-10, 12]]}, "toneAmount": 0}], [2.4, {"toneAmount": 0.3}], [3.2, {"profile": {"points": [[-10, 0], [10, 0], [8.95, 12], [-8.95, 12]]}}], [3.8, {"toneAmount": 0.3}], [4, {"toneAmount": 0}]]},
+    {"el": "solid", "plane": "xz", "at": [0, 7, 0], "height": 14, "profile": {"points": [[-10, 0], [10, 0], [10, 12], [-10, 12]]}, "tone": "sel", "toneAmount": 0, "keys": [[2.2, {"profile": {"points": [[-10, 0], [10, 0], [10, 12], [-10, 12]]}, "toneAmount": 0}], [2.4, {"toneAmount": 0.3}], [3.2, {"profile": {"points": [[-10, 0], [10, 0], [8.95, 12], [-10, 12]]}}], [3.8, {"toneAmount": 0.3}], [4, {"toneAmount": 0}]]},
     {"use": "pickFace", "args": {"face": [[10, -7, 0], [10, 7, 0], [10, 7, 12], [10, -7, 12]], "hover": 0.4, "pick": 0.8, "until": 2.3}},
-    {"use": "pickFace", "args": {"face": [[-10, -7, 0], [10, -7, 0], [10, -7, 12], [-10, -7, 12]], "hover": 0.9, "pick": 1.2, "until": 2.3}},
-    {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [28, 20], "color": "sel", "fillOpacity": 0.12, "from": 1.7, "to": 3.8},
+    {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [28, 20], "color": "fg2", "fillOpacity": 0.06, "from": 0.9, "to": 3.8, "keys": [[1.75, {"color": "fg2", "fillOpacity": 0.06}], [1.85, {"color": "sel", "fillOpacity": 0.12}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 110, "title": "Draft", "rows": [["Angle", "5°"]], "from": 1.9},
     {"el": "key", "caps": ["Enter"], "press": 3.8, "from": 3.5, "to": 4.3},
-    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [10, 0, 6], "click": 1}], [1.2, {"pos": [2, -7, 6], "click": 1}], [1.6, {"pos": [12, -10, 0]}], [1.8, {"pos": [12, -10, 0], "click": 1}], [2.6, {"pos": [16, -14, 0]}]]}
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [10, 0, 6], "click": 1}], [1.6, {"pos": [12, -10, 0]}], [1.8, {"pos": [12, -10, 0], "click": 1}], [2.6, {"pos": [16, -14, 0]}]]}
    ],
    "steps": [
     {"to": 1.3, "caption": "Select the faces to tilt"},
@@ -2678,12 +2677,12 @@
    "items": [
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"circle": [0, 0, 7], "n": 56}, "height": 12},
-    {"el": "poly", "closed": true, "points": [[7, 0, 12], [6.89, 1.22, 12], [6.58, 2.39, 12], [6.06, 3.5, 12], [5.36, 4.5, 12], [4.5, 5.36, 12], [3.5, 6.06, 12], [2.39, 6.58, 12], [1.22, 6.89, 12], [0, 7, 12], [-1.22, 6.89, 12], [-2.39, 6.58, 12], [-3.5, 6.06, 12], [-4.5, 5.36, 12], [-5.36, 4.5, 12], [-6.06, 3.5, 12], [-6.58, 2.39, 12], [-6.89, 1.22, 12], [-7, 0, 12], [-6.89, -1.22, 12], [-6.58, -2.39, 12], [-6.06, -3.5, 12], [-5.36, -4.5, 12], [-4.5, -5.36, 12], [-3.5, -6.06, 12], [-2.39, -6.58, 12], [-1.22, -6.89, 12], [0, -7, 12], [1.22, -6.89, 12], [2.39, -6.58, 12], [3.5, -6.06, 12], [4.5, -5.36, 12], [5.36, -4.5, 12], [6.06, -3.5, 12], [6.58, -2.39, 12], [6.89, -1.22, 12]], "color": "glow", "width": 2, "fill": "glow", "fillOpacity": 0.5, "from": 0.5, "to": 1, "fade": 0.08},
+    {"use": "pickFace", "args": {"face": [[4.95, 4.95, 12], [6.06, 3.5, 12], [6.76, 1.81, 12], [7, 0, 12], [6.76, -1.81, 12], [6.06, -3.5, 12], [4.95, -4.95, 12], [3.5, -6.06, 12], [1.81, -6.76, 12], [0, -7, 12], [-1.81, -6.76, 12], [-3.5, -6.06, 12], [-4.95, -4.95, 12], [-4.95, -4.95, 0], [-3.5, -6.06, 0], [-1.81, -6.76, 0], [0, -7, 0], [1.81, -6.76, 0], [3.5, -6.06, 0], [4.95, -4.95, 0], [6.06, -3.5, 0], [6.76, -1.81, 0], [7, 0, 0], [6.76, 1.81, 0], [6.06, 3.5, 0], [4.95, 4.95, 0]], "hover": 0.5, "pick": 1}},
     {"el": "poly", "points": [[0, 0, -6], [0, 0, 22]], "color": "sel", "dash": true, "width": 1.8, "from": 1.2, "fade": 0, "keys": [[1.2, {"progress": 0}], [1.9, {"progress": 1}]]},
-    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [1, {"pos": [2, -2, 12], "click": 1}], [1.8, {"pos": [2, -2, 12]}], [2.6, {"pos": [16, -12, 10]}]]}
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [1, {"pos": [4.95, -4.95, 6], "click": 1}], [1.8, {"pos": [4.95, -4.95, 6]}], [2.6, {"pos": [16, -12, 10]}]]}
    ],
    "steps": [
-    {"to": 1.1, "caption": "Select a round face, an edge or two points"},
+    {"to": 1.1, "caption": "Select an edge or a round face"},
     {"to": 4, "caption": "An axis to revolve or pattern about"}
    ]
   },
