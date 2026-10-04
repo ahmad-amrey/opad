@@ -354,7 +354,6 @@ class SketchEditor : public QObject, public SketchInput {
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();
-  void projectHovered();
   void referenceHover();
   void pickReference();
   // The reference tools' sources (TODO 11 wave 3, P4): picked in the view or chosen in the panel, each a JSON reference;

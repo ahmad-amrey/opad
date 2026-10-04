@@ -165,7 +165,6 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   const Hit hit = hitTest(s.u, s.v);
   if (m_tool.startsWith("c:")) return constraintClick(hit);
   if (m_tool == "dimension") return dimensionClick(hit, s.u, s.v);
-  if (m_tool == "project") return projectHovered();
   if (m_tool == "offset" || m_tool == "node") {
     const Hit h=hitTest(s.u,s.v);
     if(h.kind!=Hit::None) {
@@ -1504,47 +1503,6 @@ void SketchEditor::offsetSelection() {
     const bool round=option("corners","round")=="round";
     runSketchEdit(tr("Offset"),[ids,distance,round](Sketch& sk){offset_entities(sk,ids,distance,round);});
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
-}
-
-// Body edges as fixed reference curves in the sketch (not associative: project again after the body changes).
-void SketchEditor::projectHovered() {
-  TopoDS_Shape shape;
-  if (!m_viewport->hoveredEdge(shape)) return emit status(tr("Project: point at an edge of a body and click"));
-  BRepAdaptor_Curve c(TopoDS::Edge(shape));
-  auto local = [&](const gp_Pnt& p, double& u, double& v) { m_frame.to_local({p.X(), p.Y(), p.Z()}, u, v); };
-  const opad::Vec3 n = m_frame.normal();
-  double au, av, bu, bv;
-  local(c.Value(c.FirstParameter()), au, av);
-  local(c.Value(c.LastParameter()), bu, bv);
-  begin_change();
-  if (c.GetType() == GeomAbs_Line) {
-    if (std::hypot(bu - au, bv - av) < 1e-7) {
-      cancel_change();
-      return emit status(tr("Project: that edge is perpendicular to the sketch plane"));
-    }
-    const int line = m_sk.add_line(m_sk.add_point(au, av, true), m_sk.add_point(bu, bv, true));
-    m_sk.entity(line)->fixed = true;
-  } else if (c.GetType() == GeomAbs_Circle && std::fabs(std::fabs(c.Circle().Axis().Direction().Dot(gp_Dir(n[0], n[1], n[2]))) - 1.0) < 1e-9) {
-    double cu, cv;
-    local(c.Circle().Location(), cu, cv);
-    const int centre = m_sk.add_point(cu, cv, true);
-    int made = 0;
-    if (std::hypot(bu - au, bv - av) < 1e-7) {
-      made = m_sk.add_circle(centre, c.Circle().Radius());
-    } else {
-      double mu, mv;  // which way round: the arc's mid point tells
-      local(c.Value((c.FirstParameter() + c.LastParameter()) / 2), mu, mv);
-      const double a0 = std::atan2(av - cv, au - cu), a1 = std::atan2(bv - cv, bu - cu), am = std::atan2(mv - cv, mu - cu);
-      const bool ccw = norm_angle(am - a0) < norm_angle(a1 - a0);
-      const int ps = m_sk.add_point(au, av, true), pe = m_sk.add_point(bu, bv, true);
-      made = m_sk.add_arc(centre, ccw ? ps : pe, ccw ? pe : ps);
-    }
-    m_sk.entity(made)->fixed = true;
-  } else {
-    cancel_change();
-    return emit status(tr("Project: only straight edges, and circles parallel to the sketch plane, can be projected"));
-  }
-  end_change(tr("Project"));
 }
 
 bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
