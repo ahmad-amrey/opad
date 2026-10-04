@@ -642,6 +642,25 @@ json plan_issue(const Document& doc, const Scene& scene, const json& args, std::
   return {{"op", op}, {"edits", edits}};
 }
 
+design::Plan issue_commit_plan(const Scene& scene, json op, const json& edits, std::map<std::string, std::string>&& frozen) {
+  design::Plan plan;
+  for (auto& [view, brep] : frozen) {
+    const SheetView* v = scene.sheet_view(view);
+    design::NewBody b;
+    b.key = sha256_hex(brep);
+    b.meta = {{"name", (v && !v->name.empty() ? v->name : "View") + " rev " + op.value("rev", "")}, {"representation", "drawing2d"}, {"frozen", true}};
+    b.brep = std::move(brep);
+    op["frozen"][view] = b.key;
+    plan.bodies.push_back(std::move(b));
+  }
+  for (const auto& e : edits) plan.ops.push_back(e);
+  plan.report = {{"rev", op["rev"]}, {"frozen", op.value("frozen", json::object()).size()}};
+  for (const char* k : {"pdf", "pdf_sha256"})
+    if (op.contains(k)) plan.report[k] = op[k];
+  plan.ops.push_back(std::move(op));
+  return plan;
+}
+
 Scene with_issue(const Scene& scene, const json& op) {
   Scene s = scene;
   SheetItem t;

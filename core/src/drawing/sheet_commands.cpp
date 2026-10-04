@@ -408,14 +408,17 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         const Scene scene = resolve(doc);
         json op, edits;
         std::map<std::string, std::string> frozen;
-        if (a.contains("op")) {  // planned (and its PDF written) on a worker: the app
+        if (a.contains("op")) {  // planned (and its PDF written) elsewhere; the app commits issue_commit_plan's instead
           op = a["op"];
           if (!op.is_object() || op.value("op", "") != "sheet_item" || op.value("kind", "") != "issue") throw Error("sheet_issue: op is an issue record");
           const Sheet& sheet = need_sheet(scene, op.value("sheet", ""));
           for (const SheetItem* t : drawing::drawing_issues(scene, sheet))
             if (t->def.value("rev", "") == op.value("rev", "")) throw Error("sheet_issue: revision " + op.value("rev", "") + " was issued already");
           const json given = a.value("frozen", json::object());
-          for (const auto& [view, brep] : given.items()) frozen[view] = brep.get<std::string>();
+          for (const auto& [view, brep] : given.items()) {  // a caller's text: read back before it is stored
+            if (!brep.is_string() || shape_from_brep(brep.get<std::string>()).IsNull()) throw Error("sheet_issue: the linework of view " + view + " is not BREP");
+            frozen[view] = brep.get<std::string>();
+          }
           edits = a.value("edits", json::array());
           for (const auto& e : edits)
             if (const SheetItem* t = scene.sheet_item(e.value("target", "")); e.value("op", "") != "edit" || !t || t->kind != "parts_list")
@@ -438,18 +441,8 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
             op["pdf_sha256"] = sha256_hex(read_text_file(file));
           }
         }
-        for (const auto& [view, brep] : frozen) {
-          if (shape_from_brep(brep).IsNull()) throw Error("sheet_issue: the linework of view " + view + " is not BREP");
-          const SheetView* v = scene.sheet_view(view);
-          const std::string name = (v && !v->name.empty() ? v->name : "View") + " rev " + op.value("rev", "");
-          op["frozen"][view] = doc.add_body(brep, {{"name", name}, {"representation", "drawing2d"}, {"frozen", true}});
-        }
-        const std::string by = a.value("by", "");
-        for (const auto& e : edits) doc.append(e, by);
-        const std::string id = doc.append(op, by).id;
-        json out = {{"id", id}, {"rev", op["rev"]}, {"frozen", op.value("frozen", json::object()).size()}};
-        for (const char* k : {"pdf", "pdf_sha256"})
-          if (op.contains(k)) out[k] = op[k];
+        json out = design::commit(doc, drawing::issue_commit_plan(scene, std::move(op), edits, std::move(frozen)), a.value("by", ""));
+        out["id"] = doc.ops.back().id;
         return out;
       });
 

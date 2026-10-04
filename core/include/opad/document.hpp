@@ -57,6 +57,8 @@ class Document {
   const Op& append(json op, const std::string& author = {});
   // Adds a body entry (no-op when the key already exists). Returns the key.
   std::string add_body(const std::string& brep, json meta);
+  // The same with the key hashed already (sha256_hex(brep), by a worker): the UI thread neither hashes nor copies the text.
+  std::string add_body(std::string&& brep, json meta, const std::string& key);
   // Viewer mode: a body that exists only as a live shape in the shape cache, with no BREP text. A document
   // holding such bodies cannot be serialised (see has_live_bodies).
   std::string add_live_body(const std::string& key, json meta);

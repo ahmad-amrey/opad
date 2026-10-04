@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "opad/design/feature.hpp"
 #include "opad/drawing/display.hpp"
 #include "opad/drawing/sheet.hpp"
 
@@ -62,6 +63,10 @@ std::string next_revision(const Scene& scene, const Sheet& sheet);
 // id in *frozen, for the command to store; {"op", "edits": the parts lists' settled numbers as edit ops}. Projects every
 // view: workers. Throws when the revision was issued already.
 json plan_issue(const Document& doc, const Scene& scene, const json& args, std::map<std::string, std::string>* frozen = nullptr);
+// That plan ready for design::commit (the app's AppDocument::commitPlan): the frozen linework as body entries hashed here,
+// named after their views, their keys in the op's frozen; ops: the edits, then the issue; report: {rev, frozen: how many, pdf,
+// pdf_sha256}. Workers: the UI thread neither parses nor hashes tens of megabytes of linework.
+design::Plan issue_commit_plan(const Scene& scene, json op, const json& edits, std::map<std::string, std::string>&& frozen);
 // The scene as it will be once `op` (an issue planned above) is appended: title blocks and revision tables show it, so the
 // PDF written before the op is what the drawing then shows.
 Scene with_issue(const Scene& scene, const json& op);

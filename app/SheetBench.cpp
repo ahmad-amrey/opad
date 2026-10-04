@@ -446,8 +446,9 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
 
 // OPAD_BENCH_SHEET_LOADED=<prefix> (UI-78, a big model: the Engine): the loaded file gets a drawing (A2, front + top + side +
 // iso at an automatic scale) through the area's own path; times the frames, the first draft, every view final, a drag of the
-// base view afterwards (cached projections) and Issue revision…'s measure of the frozen linework, with a 1 ms ticker whose
-// worst gap is the longest the event loop was held. <prefix>.png is the sheet once drawn.
+// base view afterwards (cached projections), Issue revision…'s measure of the frozen linework and an issue that freezes it (tens
+// of MB planned and hashed on a worker), with a 1 ms ticker whose worst gap is the longest the event loop was held. <prefix>.png
+// is the sheet once drawn.
 OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -525,6 +526,24 @@ OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
                                      .arg(clock.elapsed()).arg(issue ? issue->freezeBox()->text() : QString()).arg(worst));
   if (issue) issue->reject();
   waitFor([&] { return !w.m_doc->designBusy; }, 60000);
+  // Issued with every view's linework frozen (UI-84): planned and hashed on a worker, the UI thread only appends entries and ops.
+  worst = 0;
+  gap.restart();
+  clock.restart();
+  opad::json out;
+  bool issued = false;
+  docs->issue({{"sheet", sheet}, {"description", "Bench"}, {"freeze", true}}, QString(), false, [&](const opad::json& o) {
+    out = o;
+    issued = true;
+  });
+  const bool froze = waitFor([&] { return issued; }, 600000) && out.is_object() && out.value("frozen", 0) > 0 && waitFor(settled, 600000);
+  size_t bytes = 0;
+  const opad::SheetItem* made = froze ? w.m_doc->scene.sheet_item(out.value("id", "")) : nullptr;
+  const opad::json keys = made ? made->def.value("frozen", opad::json::object()) : opad::json::object();
+  for (const auto& [view, key] : keys.items())
+    if (const opad::BodyEntry* b = w.m_doc->doc.body(key.get<std::string>())) bytes += b->brep.size();
+  check(froze && bytes > 0 && worst < 250, QString("issued with %1 views' linework frozen (%2 MB) in %3 ms; worst event-loop gap %4 ms")
+                                              .arg(out.value("frozen", 0)).arg(static_cast<double>(bytes) / 1e6, 0, 'f', 1).arg(clock.elapsed()).arg(worst));
   ticker.stop();
   trace::log(QString("bench: sheet-loaded: done %1").arg(ok ? "PASS" : "FAIL"));
   QCoreApplication::exit(ok ? 0 : 2);

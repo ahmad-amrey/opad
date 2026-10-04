@@ -269,43 +269,41 @@ void DocsArea::issueRevision() {
 
 void DocsArea::issue(const opad::json& args, const QString& pdf, bool tagged, std::function<void(const opad::json&)> done) {
   if (!m_page) return;
-  struct Planned {
-    opad::json op, frozen = opad::json::object(), edits = opad::json::array();
-  };
-  auto planned = std::make_shared<Planned>();
+  // Planned, its PDF written and its linework hashed on a worker; the UI thread only appends the entries and ops.
+  auto plan = std::make_shared<opad::design::Plan>();
   const std::filesystem::path file(pdf.toStdU16String());
   const QString phase = tr("Writing the issued PDF");
   QPointer<DocsArea> self(this);
   lastIssue = nullptr;
   m_page->canvas()->read(
       tr("Issuing the revision"),
-      [args, pdf, file, planned, phase](const opad::Document& doc, const opad::Scene& scene, Progress p) {
+      [args, pdf, file, plan, phase](const opad::Document& doc, const opad::Scene& scene, Progress p) {
         namespace dr = opad::drawing;
         std::map<std::string, std::string> frozen;
-        const opad::json plan = dr::plan_issue(doc, scene, args, &frozen);
-        planned->op = plan["op"];
-        planned->edits = plan["edits"];
-        for (const auto& [view, brep] : frozen) planned->frozen[view] = brep;
-        if (pdf.isEmpty()) return;
-        const opad::Scene issued = dr::with_issue(scene, planned->op);  // the revision in its title block and revision table
-        std::vector<dr::Display> pages;
-        const opad::json& sheets = planned->op["sheets"];
-        for (size_t i = 0; i < sheets.size(); ++i) {
-          const opad::Sheet* s = issued.sheet(sheets[i].get<std::string>());
-          if (!s) continue;
-          pages.push_back(dr::sheet_display(doc, issued, *s, [&](double f, const std::string&) {
-            p.setPhase(phase, f < 0 ? -1 : static_cast<int>(100 * (static_cast<double>(i) + f) / static_cast<double>(sheets.size())));
-            return !p.cancelled();
-          }));
+        const opad::json planned = dr::plan_issue(doc, scene, args, &frozen);
+        opad::json op = planned["op"];
+        if (!pdf.isEmpty()) {
+          const opad::Scene issued = dr::with_issue(scene, op);  // the revision in its title block and revision table
+          std::vector<dr::Display> pages;
+          const opad::json& sheets = op["sheets"];
+          for (size_t i = 0; i < sheets.size(); ++i) {
+            const opad::Sheet* s = issued.sheet(sheets[i].get<std::string>());
+            if (!s) continue;
+            pages.push_back(dr::sheet_display(doc, issued, *s, [&](double f, const std::string&) {
+              p.setPhase(phase, f < 0 ? -1 : static_cast<int>(100 * (static_cast<double>(i) + f) / static_cast<double>(sheets.size())));
+              return !p.cancelled();
+            }));
+          }
+          std::vector<const dr::Display*> list;
+          for (const auto& d : pages) list.push_back(&d);
+          dr::write_pages(list, file, "pdf");
+          const auto name = file.filename().u8string();
+          op["pdf"] = std::string(name.begin(), name.end());
+          op["pdf_sha256"] = opad::sha256_hex(opad::read_text_file(file));
         }
-        std::vector<const dr::Display*> list;
-        for (const auto& d : pages) list.push_back(&d);
-        dr::write_pages(list, file, "pdf");
-        const auto name = file.filename().u8string();
-        planned->op["pdf"] = std::string(name.begin(), name.end());
-        planned->op["pdf_sha256"] = opad::sha256_hex(opad::read_text_file(file));
+        *plan = dr::issue_commit_plan(scene, std::move(op), planned["edits"], std::move(frozen));
       },
-      [self, planned, pdf, tagged, done](bool ok, const QString& error) {
+      [self, plan, pdf, tagged, done](bool ok, const QString& error) {
         if (!self) return;
         if (!ok) {
           self->lastIssue = {{"error", error.toStdString()}};
@@ -313,8 +311,20 @@ void DocsArea::issue(const opad::json& args, const QString& pdf, bool tagged, st
           if (done) done(self->lastIssue);
           return;
         }
-        self->run("sheet_issue", {{"op", planned->op}, {"frozen", planned->frozen}, {"edits", planned->edits}}, [self, planned, pdf, tagged, done](const opad::json& out) {
+        self->whenFree([self, plan, pdf, tagged, done] {
           if (!self) return;
+          opad::json out;
+          const std::string tag = plan->ops.back().value("tag", "");
+          self->services().guarded([&] {
+            AppDocument* doc = self->services().document();
+            const opad::json& op = plan->ops.back();
+            const opad::Sheet* sheet = doc->scene.sheet(op.value("sheet", ""));
+            if (!sheet) throw opad::Error("the sheet is gone");
+            for (const opad::SheetItem* t : opad::drawing::drawing_issues(doc->scene, *sheet))  // issued meanwhile
+              if (t->def.value("rev", "") == op.value("rev", "")) throw opad::Error("revision " + op.value("rev", "") + " was issued already");
+            out = doc->commitPlan(std::move(*plan), tr("issue revision"));
+            out["id"] = doc->doc.ops.back().id;
+          });
           if (out.is_null()) {
             if (done) done(nullptr);
             return;
@@ -326,7 +336,7 @@ void DocsArea::issue(const opad::json& args, const QString& pdf, bool tagged, st
             if (done) done(out);
             return;
           }
-          self->commitAndTag(rev, QString::fromStdString(planned->op.value("tag", "")), pdf, done);
+          self->commitAndTag(rev, QString::fromStdString(tag), pdf, done);
         });
       });
 }

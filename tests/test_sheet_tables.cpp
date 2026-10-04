@@ -289,6 +289,28 @@ TEST(issued_revisions) {
   const Scene ahead = with_issue(s, planned);
   CHECK_EQ(title_values(a.doc, ahead, *ahead.sheet(a.sheet))["revision"], "10");
   CHECK_EQ(title_values(a.doc, s, *s.sheet(a.sheet))["revision"], "9");
+  // The app's path: planned and hashed on a worker, committed as it is (no parse, no hash on the UI thread).
+  a.doc.append({{"op", "transform"}, {"target", bracket}, {"matrix", Mat4{{1, 0, 0, 7, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}.to_json()}});
+  s = a.scene();
+  std::map<std::string, std::string> frozen;
+  const json p10 = plan_issue(a.doc, s, {{"sheet", a.sheet}, {"rev", "10"}}, &frozen);
+  CHECK_EQ(frozen.size(), 1u);
+  const std::string text = frozen.begin()->second;
+  opad::design::Plan plan = issue_commit_plan(s, p10["op"], p10["edits"], std::move(frozen));
+  CHECK_EQ(plan.bodies.size(), 1u);
+  CHECK_EQ(plan.bodies[0].key, sha256_hex(text));
+  CHECK_EQ(plan.ops.back()["frozen"][a.front], plan.bodies[0].key);
+  CHECK(!a.doc.has_body(plan.bodies[0].key));
+  const json report = opad::design::commit(a.doc, std::move(plan));
+  CHECK_EQ(report["rev"], "10");
+  CHECK_EQ(report["frozen"], 1);
+  s = a.scene();
+  const SheetItem* ten = s.sheet_item(a.doc.ops.back().id);
+  CHECK(ten && ten->kind == "issue" && a.doc.has_body(ten->def["frozen"][a.front]) && a.doc.body(ten->def["frozen"][a.front])->brep == text);
+  // A caller's planned op: its linework is read back before it is stored.
+  json op11 = plan_issue(a.doc, a.scene(), {{"sheet", a.sheet}, {"rev", "11"}})["op"];
+  CHECK_THROWS(run(a.doc, "sheet_issue", {{"op", op11}, {"frozen", {{a.front, "not a shape\n"}}}}));
+  CHECK_EQ(run(a.doc, "sheet_issue", {{"op", op11}, {"frozen", {{a.front, text}}}})["frozen"], 1);
 }
 
 // A sheet drawn as it was issued, in the scene as it stood then: the views from their frozen linework where they stood with

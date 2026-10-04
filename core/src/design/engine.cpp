@@ -969,7 +969,7 @@ Plan plan_regenerate(const Document& doc, bool force, const Cancel& cancel) {
 
 json commit(Document& doc, Plan&& plan, const std::string& author) {
   for (auto& b : plan.bodies) {
-    doc.add_body(b.brep, b.meta);
+    doc.add_body(std::move(b.brep), std::move(b.meta), b.key);  // hashed by the plan's worker
     if (b.shape) cache_shape(doc, b.key, *b.shape);
   }
   for (auto& op : plan.ops) doc.append(op, author);
