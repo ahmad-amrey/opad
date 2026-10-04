@@ -172,14 +172,25 @@ OPAD_BENCH(OPAD_BENCH_PANEL_FOCUS, panelFocus) {
         if (h == under) return true;
       return false;
     };
-    SetWindowPos(other, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    const bool behind = over(other, hwnd);
+    // The order part needs both panels shown by Windows. In a hidden bench run neither is (IsWindowVisible is false, the run
+    // keeps every window off the screen), and SetWindowPos leaves hidden windows in the order they are: the Annotations
+    // panel stayed under the Section panel, so "behind" never held and the check failed on every hidden run. It is
+    // checked where the panels are shown, else said to be left out.
+    const bool shown = IsWindowVisible(hwnd) && IsWindowVisible(other);
+    bool behind = false;
+    if (shown) {
+      SetWindowPos(other, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+      behind = over(other, hwnd);
+    }
     const LRESULT button = asked(y);
     const bool front = over(hwnd, other);
     const LRESULT text = asked(field), items = asked(list);
     (*check)(button == MA_NOACTIVATE && text == MA_ACTIVATE && items == MA_ACTIVATE,
              QString("WM_MOUSEACTIVATE: no activation on a button, activation on the text field and the list (%1 %2 %3)").arg(button).arg(text).arg(items));
-    (*check)(behind && front, "a click on a button of a panel behind another brings it to the front");
+    if (shown)
+      (*check)(behind && front, QString("a click on a button of a panel behind another brings it to the front (behind first %1, in front after %2)").arg(behind).arg(front));
+    else
+      trace::log("bench: panel focus: a click on a button of a panel behind another brings it to the front: not checked, the panels are not shown in a hidden run");
   }
 #endif
 
