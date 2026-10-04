@@ -1009,6 +1009,18 @@ class ClipReplay : public QObject {
         }
       check(same, "the spline's weights are " + have.join(", "));
     }
+    if (x.contains("dark") || x.contains("light")) {  // what the view shows there: a backdrop the right way up (sketch points)
+      const QImage shot = view()->grabImage();
+      const double k = shot.width() / double(std::max(1, view()->width()));
+      for (const char* shade : {"dark", "light"})
+        for (const QJsonValue& v : x.value(shade).toArray()) {
+          const QJsonArray at = v.toArray();
+          const QPoint p = view()->widgetPoint(m_frame.to_world(at.at(0).toDouble(), at.at(1).toDouble()));
+          const int grey = qGray(shot.pixel(std::clamp(int(p.x() * k), 0, shot.width() - 1), std::clamp(int(p.y() * k), 0, shot.height() - 1)));
+          // A light picture is drawn a little greyer than it is (lit); a dark one, or a curve's fill over it, stays dark.
+          check(std::string(shade) == "dark" ? grey < 110 : grey > 130, QString("the view is %1 at %2, %3 (grey %4)").arg(shade).arg(at.at(0).toDouble()).arg(at.at(1).toDouble()).arg(grey));
+        }
+    }
     if (x.contains("status")) check(m_status.contains(x.value("status").toString()), "the status says \"" + x.value("status").toString() + "\" (" + m_status + ")");
   }
 

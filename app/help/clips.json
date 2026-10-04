@@ -2601,8 +2601,8 @@
   },
   {
    "id": "sketch.image_trace", "duration": 5, "extent": [-30, -14, 30, 14],
-   "setup": {"image": {"corners": [[-6, -8], [18, 8]], "opacity": 1, "shapes": [{"rect": [6, 0.32, 15.36, 7.36], "round": 1.6, "holes": [[1.92, 0.32, 1.4], [10.08, 0.32, 1.4]]}]}},
-   "expect": {"images": 1, "entities": {"line": [40, 200]}},
+   "setup": {"image": {"corners": [[-6, -8], [18, 8]], "opacity": 1, "shapes": [{"rect": [6, 0.32, 15.36, 7.36], "round": 1.6, "holes": [[1.92, 0.32, 1.4], [10.08, 0.32, 1.4]]}, {"rect": [-4, 6, 2.4, 2.4]}]}},
+   "expect": {"images": 1, "entities": {"line": [40, 200]}, "dark": [[-4, 6]], "light": [[-4, -6]]},
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "sketchScene"},

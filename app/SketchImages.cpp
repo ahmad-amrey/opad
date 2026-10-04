@@ -211,7 +211,9 @@ std::vector<Handle(AIS_InteractiveObject)> prepareSketchBackdrops(const opad::js
       for(int i=0;i<3;++i){placed.x[i]=frame.x[i]*std::cos(angle)+frame.y[i]*std::sin(angle);placed.y[i]=-frame.x[i]*std::sin(angle)+frame.y[i]*std::cos(angle);}
       auto shape=BRepBuilderAPI_MakeFace(frame_plane(placed),0,width,0,height).Face();BRepMesh_IncrementalMesh mesh(shape,.1);
       Handle(Image_PixMap) pixels=new Image_PixMap();pixels->InitTrash(Image_Format_RGBA,image.width(),image.height());pixels->SetTopDown(false);
-      for(int row=0;row<image.height();++row){auto* target=pixels->ChangeRow(row);std::memcpy(target,image.constScanLine(image.height()-1-row),image.width()*4);for(int x=0;x<image.width();++x)target[x*4+3]=static_cast<unsigned char>(target[x*4+3]*data.value("opacity",.5));}
+      // ChangeRow counts from the top whichever way the rows lie in memory (SetTopDown), as QImage's scan lines do: the picture's
+      // rows go straight across (they were flipped, which drew every backdrop upside down: the clip replay's trace showed it).
+      for(int row=0;row<image.height();++row){auto* target=pixels->ChangeRow(row);std::memcpy(target,image.constScanLine(row),image.width()*4);for(int x=0;x<image.width();++x)target[x*4+3]=static_cast<unsigned char>(target[x*4+3]*data.value("opacity",.5));}
       Handle(AIS_TexturedShape) prs=new AIS_TexturedShape(shape);prs->SetTexturePixMap(pixels);prs->SetTextureMapOn();prs->DisableTextureModulate();prs->SetTextureRepeat(false);prs->SetTransparency(float(1-data.value("opacity",.5)));prs->Attributes()->SetAutoTriangulation(false);made.push_back(prs);
     }
   return made;
