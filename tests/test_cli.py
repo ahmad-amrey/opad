@@ -155,6 +155,15 @@ def basic_workflow():
     assert v["paper"] == "A3" and v["page"] == [420, 297] and v["sheet"]["views"] == 1 and v["layers"]["Visible"] > 0, v
     data = open(pdf, "rb").read()
     assert data.startswith(b"%PDF-") and b"/Type /Font" in data  # its title block's text, in an embedded font
+    # lettered in the OFL font compiled into the program (UI-139), also with no system fonts to take from
+    nofonts = os.path.join(tmp, "nofonts")
+    os.makedirs(nofonts, exist_ok=True)
+    lone = os.path.join(tmp, "lone.pdf")
+    p = subprocess.run([CLI, "export", sheet_doc, "--sheet", "Assembly", "--format", "pdf", "--out", lone], capture_output=True, text=True,
+                       env=dict(os.environ, QT_QPA_FONTDIR=nofonts))
+    assert p.returncode == 0, p.stderr
+    data = open(lone, "rb").read()
+    assert b"/BaseFont /LiberationSans" in data and b"/FontFile2" in data, "the drawing font is not the compiled-in Liberation Sans"
     # a parts list, auto-balloons and an issued revision whose PDF is written and hashed (UI-84)
     run("sheet_item", sheet_doc, "--sheet", s["id"], "--kind", "parts_list")
     balloons = run("sheet_balloons", sheet_doc, "--sheet", s["id"], "--view", iso["id"])

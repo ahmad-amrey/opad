@@ -149,7 +149,7 @@ std::string Writer::run() {
         }
         m_out += "<path d=\"" + f + "\" stroke=\"none\" fill-rule=\"evenodd\"" + (own.empty() ? std::string() : " fill=\"" + own + "\"") + "/>\n";
       } else if (p.kind == Prim::Kind::Text) {
-        m_out += "<g stroke=\"none\" font-family=\"Arial, Helvetica, sans-serif\">\n";
+        m_out += "<g stroke=\"none\" font-family=\"Arial, 'Liberation Sans', 'Noto Sans Arabic', Helvetica, sans-serif\">\n";
         text(p);
         m_out += "</g>\n";
       } else {

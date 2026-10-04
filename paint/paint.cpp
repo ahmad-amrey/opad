@@ -3,6 +3,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QPageLayout>
@@ -57,20 +58,40 @@ QPen pen_of(const Layer& l, double pen_scale, const QColor& c, double least = 0)
   return pen;
 }
 
+// The drawing fonts compiled in (third_party/fonts, SIL Open Font License 1.1; UI-139): Liberation Sans has Arial's
+// advance widths, which the core lays text out with (symbols.hpp text_width), Noto Sans Arabic the Arabic letters. So a
+// sheet's text is the same on every system and in every package, the single-file build's offscreen CLI included;
+// Arial and the system's fonts only where neither has a glyph. Registered once a Qt GUI application exists.
+std::once_flag g_fonts_once;
+QStringList g_families;
+
+void register_fonts() {
+  if (!qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return;
+  std::call_once(g_fonts_once, [] {
+    for (const char* file : {":/opad/fonts/LiberationSans-Regular.ttf", ":/opad/fonts/NotoSansArabic-Regular.ttf"})
+      if (const int id = QFontDatabase::addApplicationFont(QString::fromLatin1(file)); id >= 0) g_families << QFontDatabase::applicationFontFamilies(id);
+    g_families << QStringLiteral("Arial");
+  });
+}
+
 QFont text_font() {
-  QFont f(QStringLiteral("Arial"));
+  register_fonts();
+  QFont f;
+  f.setFamilies(g_families.isEmpty() ? QStringList{QStringLiteral("Arial")} : g_families);
   f.setStyleHint(QFont::SansSerif);
   f.setPixelSize(1000);
   return f;
 }
 
 // Text lines laid out as the writers lay them (text_lines), each drawn in its own frame: the anchor in device units,
-// turned by the text's angle, scaled so the font's capitals are the text height.
+// turned by the text's angle, scaled so the font's capitals are the text height and its advances as wide as the core
+// counts them (symbols.hpp text_width: Arial's, whose capitals are 0.716 of its em; Liberation Sans has the same advances
+// with capitals of 0.688, so its glyphs come 4% narrower than drawn square).
 void paint_text(QPainter& p, const Prim& t, const QColor& c, const QTransform& fit, const QTransform& base) {
   const QFont font = text_font();
   const QFontMetricsF fm(font, p.device());
   const double cap = fm.capHeight() > 0 ? fm.capHeight() : 0.716 * fm.height();
-  const double k = t.height * std::hypot(fit.m11(), fit.m12()) / cap;
+  const double h = t.height * std::hypot(fit.m11(), fit.m12()), k = h / cap, kx = h / (0.716 * font.pixelSize());
   p.setFont(font);
   p.setPen(c);
   p.setBrush(Qt::NoBrush);
@@ -85,7 +106,7 @@ void paint_text(QPainter& p, const Prim& t, const QColor& c, const QTransform& f
     QTransform local;
     local.translate(at.x(), at.y());
     local.rotate(-t.angle * 180 / M_PI);
-    local.scale(k, k);
+    local.scale(kx, k);
     p.setTransform(local * base);
     const QPointF from(t.halign == 1 ? -w / 2 : t.halign == 2 ? -w : 0, 0);
     if (outlines) {
@@ -283,7 +304,13 @@ json write_png(const Display& d, const std::filesystem::path& file, double dpi) 
   return {{"pixels", {img.width(), img.height()}}, {"dpi", std::lround(img.dotsPerMeterX() * 0.0254)}};
 }
 
+QStringList drawing_font_families() {
+  register_fonts();
+  return g_families;
+}
+
 void install_painter() {
+  register_fonts();  // the app's own QApplication: before any worker paints
   set_paint_writer([](const std::vector<const Display*>& pages, const std::filesystem::path& file, const std::string& format, const json& options) {
     {
       static std::mutex mu;
@@ -304,6 +331,7 @@ void install_painter() {
 #endif
         new QGuiApplication(argc, argv);  // for the rest of the process
       }
+      register_fonts();
     }
     if (format == "pdf") return write_pdf(pages, file);
     if (format == "png" && pages.size() == 1) return write_png(*pages[0], file, options.value("dpi", 300.0));

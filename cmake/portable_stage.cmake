@@ -68,6 +68,16 @@ file(WRITE "${OPAD_STAGE}/opad.portable"
   "Portable install: OPAD keeps its settings and cache in the data folder beside this file.\n"
   "Delete this file to use the registry and %LOCALAPPDATA% instead.\n")
 file(COPY "${OPAD_SOURCE_DIR}/LICENSE" DESTINATION "${OPAD_STAGE}")
+# The drawing fonts are compiled into the programs (paint/CMakeLists.txt); their licences travel with the package.
+file(MAKE_DIRECTORY "${OPAD_STAGE}/licenses")
+foreach(_font_licence LiberationSans-LICENSE.txt NotoSansArabic-OFL.txt)
+  configure_file("${OPAD_SOURCE_DIR}/third_party/fonts/${_font_licence}" "${OPAD_STAGE}/licenses/${_font_licence}" COPYONLY)
+endforeach()
+file(WRITE "${OPAD_STAGE}/licenses/Fonts-NOTICE.txt"
+  "Technical drawings are lettered in Liberation Sans 2.1.5 (Red Hat; Arimo by Google) and Noto Sans Arabic\n"
+  "(The Noto Project Authors), compiled into opad.exe and opad-cli.exe unmodified. Both are licensed under the\n"
+  "SIL Open Font License 1.1 (LiberationSans-LICENSE.txt, NotoSansArabic-OFL.txt). Title-block templates and drawing\n"
+  "symbols are OPAD's own, drawn from general drafting practice.\n")
 
 # DWG: LibreDWG's dwg2dxf / dxf2dwg (GPLv3) are separate programs OPAD runs; they travel with their licence and where
 # their source is.

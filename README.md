@@ -490,3 +490,6 @@ shadows are best-effort, interactive drag of the section plane (slider today), c
 ## Licence
 
 MIT. OCCT (LGPL 2.1 with exception) and Qt 6 (LGPL 3) are linked dynamically.
+
+Drawings are lettered in Liberation Sans and Noto Sans Arabic (SIL Open Font License 1.1), compiled into the programs
+from `third_party/fonts`, where their licences are; the portable package carries them in `licenses/`.
