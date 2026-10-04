@@ -155,7 +155,8 @@ bool SketchEditor::applyImageTool() {
     } else if(m_tool=="image_calibrate") {
       if(m_clicks.size()!=2)throw opad::Error("pick two calibration points");const auto a=m_clicks[0],b=m_clicks[1];const double known=length("knownDistance","10 mm"),distance=std::hypot(b.u-a.u,b.v-a.v);
       if(known<=0||distance<1e-9)throw opad::Error("calibration distances must be positive");const double factor=known/distance;
-      if(std::fabs(factor-1)<1e-9){emit status(tr("Type the real distance between the two points, then apply."));return true;}  // the measured one: nothing to scale
+      // The measured distance as the clicks put it in the box (rounded there, so its factor is never quite 1): nothing to scale.
+      if(option("knownDistance")==m_calibrateShown || std::fabs(factor-1)<1e-9){emit status(tr("Type the real distance between the two points, then apply."));return true;}
       runSketchEdit(tr("Calibrate image"),[id,a,factor](Sketch& sk){auto& image=backdrop(sk,id);image["width"]=image.at("width").get<double>()*factor;image["height"]=image.at("height").get<double>()*factor;image["position"]={a.u+(image.at("position")[0].get<double>()-a.u)*factor,a.v+(image.at("position")[1].get<double>()-a.v)*factor};});
     } else if(m_tool=="image_edit") {
       const double x=length("imageX","0 mm"),y=length("imageY","0 mm"),width=length("imageWidth","100 mm"),angle=params.angle(option("imageAngle","0 deg").toStdString()),opacity=params.number(option("imageOpacity","0.5").toStdString());
@@ -174,7 +175,8 @@ bool SketchEditor::applyImageTool() {
         simplify_sketch(traced,std::max(1e-6,options.tolerance*std::min(sx,sy)));append_reference(sk,traced,{},"project",false);
       });
     } else if(m_tool=="simplify") {
-      const double tolerance=length("curveTolerance","0.05 mm");runSketchEdit(tr("Simplifying sketch"),[tolerance](Sketch& sk){simplify_sketch(sk,tolerance);});
+      const double tolerance=length("curveTolerance","0.01 mm");  // the panel's and the box's default
+      runSketchEdit(tr("Simplifying sketch"),[tolerance](Sketch& sk){simplify_sketch(sk,tolerance);});
     } else if(m_tool=="vector_import") {
       const auto path=option("vectorFile");if(path.isEmpty())throw opad::Error("choose an SVG or DXF file");const double tolerance=length("curveTolerance","0.01 mm");
       runSketchEdit(tr("Importing sketch vectors"),[path,tolerance](Sketch& sk){opad::Document doc=opad::Document::create();opad::import_file(doc,std::filesystem::path(path.toStdWString()));const auto scene=opad::resolve(doc);std::vector<DrawingLayer> layers;for(const auto& id:scene.all_bodies())if(const auto* n=scene.node(id);n&&n->raster.is_null())layers.push_back({id,false});append_reference(sk,drawing_sketch(doc,scene,layers,{},tolerance),{},"project",false);});

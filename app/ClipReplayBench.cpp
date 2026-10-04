@@ -276,6 +276,7 @@ class ClipReplay : public QObject {
     m_snapSeen.clear();
     m_answered.clear();
     m_held = nullptr;
+    m_typedField = nullptr;
     m_phase = design() ? Phase::DesignSetup : Phase::Open;
     if (m_expect.isEmpty()) fail("the clip has an expect block");
   }
@@ -803,10 +804,13 @@ class ClipReplay : public QObject {
     return w && !w->isHidden() && (w == view() || view()->isAncestorOf(w)) ? w : view();  // the view or a box over it
   }
   void send(int key, Qt::KeyboardModifiers mods, const QString& text) {
+    // Enter after a value typed in a sketch panel's field (a card row): where the user's keyboard is then, that field,
+    // which must apply as Enter in the view does (it went nowhere, while the replay sent it to the view).
+    QWidget* to = (key == Qt::Key_Return || key == Qt::Key_Enter) && m_typedField && !mods ? static_cast<QWidget*>(m_typedField.data()) : keyboard();
     QKeyEvent press(QEvent::KeyPress, key, mods, text);  // not spontaneous: Qt sends it as a shortcut override first
-    QApplication::sendEvent(keyboard(), &press);
+    QApplication::sendEvent(to, &press);
     QKeyEvent release(QEvent::KeyRelease, key, mods, text);
-    QApplication::sendEvent(keyboard(), &release);
+    QApplication::sendEvent(to, &release);
   }
 
   static QString plain(QString s) { return s.remove('&').section(QStringLiteral("   "), 0, 0).trimmed(); }
@@ -929,6 +933,7 @@ class ClipReplay : public QObject {
         edit->setText(v);
         edit->setModified(true);
         QMetaObject::invokeMethod(edit, "editingFinished");
+        if (panel() && panel()->isAncestorOf(edit)) m_typedField = edit;  // the keyboard is in it now: an Enter that follows goes there
       } else if (auto* combo = qobject_cast<QComboBox*>(found[i])) {
         int index = -1;
         for (int j = 0; j < combo->count() && index < 0; ++j)
@@ -1034,6 +1039,7 @@ class ClipReplay : public QObject {
     double u = 0, v = 0;
     local(in.at, u, v);
     const bool scene = in.screen.x() < 0;
+    if (scene && (in.kind == K::Press || in.kind == K::Click || in.kind == K::DoubleClick)) m_typedField = nullptr;  // the keyboard back in the view
     if (m_verbose && in.kind != K::Move)  // OPAD_BENCH_CLIPVERBOSE: every input but the moves, as it is applied
       trace::log(QString("bench: clip replay: %1: %2 s: %3 at %4, %5 %6 %7 (tool %8, %9 selected)")
                      .arg(m_id).arg(in.t, 0, 'f', 2).arg(int(in.kind)).arg(u, 0, 'f', 2).arg(v, 0, 'f', 2).arg(in.caps.join('+') + in.text, in.value, e->tool()).arg(e->m_sel.size()));
@@ -1473,6 +1479,7 @@ class ClipReplay : public QObject {
   int m_clip = -1, m_next = 0, m_ticks = 0, m_wait = 0, m_settled = 0, m_modal = 0, m_sketches = 0;
   bool m_ok = true, m_clipOk = true, m_inTick = false, m_reopening = false;
   QPointer<QWidget> m_held;  // the handle a drag holds
+  QPointer<QLineEdit> m_typedField;  // the sketch panel's field a card row typed into, until a click in the view
   QPointF m_heldShift;      // where on it the press went, from where the clip pressed (view pixels)
   const bool m_verbose = qEnvironmentVariableIsSet("OPAD_BENCH_CLIPVERBOSE");
 };

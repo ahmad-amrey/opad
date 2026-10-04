@@ -1077,7 +1077,7 @@ void Viewport::refreshSubHighlight() {
     if (!completed) return;  // superseded by a newer selection
     flush(true);
     m_subHl = st->hl;
-    m_subHl->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_subHl->SetZLayer(m_selectionXray ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top);
     m_ctx->Display(m_subHl, 0, -1, Standard_False);  // selection mode -1: never pickable
     redrawScene();
     emit subHighlightApplied();
@@ -1110,7 +1110,8 @@ void Viewport::applySelectionLayers() {
     const bool selected=m_ctx->IsSelected(ais);
     Graphic3d_ZLayerId rest=Graphic3d_ZLayerId_Default;  // where its look puts it (UI-121); selected: Topmost, the X-ray, last
     if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end()) if(const auto item=m_items.find(node->second);item!=m_items.end()) rest=item->second.look.layer;
-    const auto want=selected?Graphic3d_ZLayerId_Topmost:rest;
+    const auto selectedLayer=m_selectionXray?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Top;
+    const auto want=selected?selectedLayer:rest;
     if(ais->ZLayer()!=want) m_ctx->SetZLayer(ais,want);
     if(!selected || !prs) return;
     // A body a feature preview stands in for (moved, joined, cut) shows no glow where it was: it read as a copy left behind.
@@ -1125,11 +1126,12 @@ void Viewport::applySelectionLayers() {
       if(!shown->triangles.IsNull()) glow->m_triangles.push_back(shown->triangles);
       if(!shown->boundaries.IsNull()) glow->m_segments.push_back(shown->boundaries);
       if(!shown->loosePoints.IsNull()) glow->m_points.push_back(shown->loosePoints);
-      glow->SetZLayer(Graphic3d_ZLayerId_Topmost);
+      glow->SetZLayer(selectedLayer);
       glow->SetClipPlanes(ais->ClipPlanes());
       m_ctx->Display(glow,0,-1,false);
       if(m_side) if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end()) maskSide(node->second,glow);
     }
+    else if(glow->ZLayer()!=selectedLayer) m_ctx->SetZLayer(glow,selectedLayer);
     glow->SetLocalTransformation(ais->Transformation());
   };
   auto step=[this,state,update](Job*) {

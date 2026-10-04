@@ -28,11 +28,14 @@ using namespace opad::design;
 // preview follows and Enter moves it. Project (on the box): a click in the view adds a source and previews it, a source
 // added in the panel previews both, the panel lists them, Backspace takes the last back, Enter adds them linked. Break
 // link: a click picks a linked curve (an unlinked one is refused), a window picks the linked ones, Enter unlinks them.
-// Include: an origin axis as a construction curve on Enter. Insert image: the frame at the width set follows the pointer,
+// Project again: the view picks edges again; an edge picked (highlighted under the sketch, not X-ray), then Include: the pick
+// and its highlight go. Include: an origin axis as a construction curve on Enter. A second calibration shows its own measured
+// distance, and Enter with it unchanged scales nothing. Insert image: the frame at the width set follows the pointer,
 // stays at the click, Enter places the picture there. Calibrate: the measure follows the pointer, the Known distance box
 // takes the two points' distance, typing the real one and Enter scales the picture. Transform image: the panel shows the
-// picture's place, an angle and an opacity typed there and Enter turn and fade it in place. Node weights: the spline's new shape
-// is previewed while the weight changes, Enter keeps it. Silhouette: the box's outline previewed, Enter adds it. Intersect
+// picture's place, an angle and an opacity typed there and Enter in that field turn and fade it in place. Node weights: a click
+// loads the node's own weight, the spline's new shape is previewed while the weight typed in the panel changes, Enter in the
+// field keeps it. Silhouette: the box's outline previewed, Enter adds it. Intersect
 // with plane: a click on the post standing through the plane (the case's document: the box and Cylinder1) previews the
 // circle where it crosses, Enter adds it linked. <prefix>.mirror.png, <prefix>.project.png (and the panel's list,
 // <prefix>.panel.png), <prefix>.image.png, <prefix>.calibrate.png, <prefix>.intersect.png.
@@ -66,6 +69,13 @@ void SketchEditor::benchApply() {
   auto send = [keyboard](int key, const QString& text = {}) {
     QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, text);  // not spontaneous: Qt sends it as a shortcut override first
     QApplication::sendEvent(keyboard(), &press);
+  };
+  // Enter in a panel's value field (the keyboard stays there after typing): it applies as Enter in the view does.
+  auto enterIn = [check](QLineEdit* field) {
+    check(field != nullptr, "the panel has the value field Enter is pressed in");
+    if (!field) return;
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+    QApplication::sendEvent(field, &press);
   };
   auto place = [this](double u, double v) {  // a click, Alt: exactly there
     sketchMove(u, v, Qt::AltModifier, false);
@@ -195,6 +205,7 @@ void SketchEditor::benchApply() {
         m_viewport->grabImage();  // a frame: the picker clips to the camera's depth range, which a redraw sets
         opad::Ref ref;
         const bool hovered = m_viewport->referenceAt(m_viewport->widgetPoint({0, -10, 10}), ref) && ref.body == box && ref.kind == opad::Ref::Kind::Edge;
+        st["viewPicks"] = hovered;  // the view picks here (a frame drawn): Project chosen again must too
         place(0, -10);  // the click in the view: what the pointer is on
         if (!hovered) {  // no frame in a hidden window: that edge by hand (the box's edge from (-15,-10,10) to (15,-10,10))
           m_sources.clear();
@@ -264,17 +275,37 @@ void SketchEditor::benchApply() {
       }
       case 13: {
         check(int(linked().size()) == st["linked"] - st["selected"], "break link: Enter unlinks them");
+        // ---- Project again after Break link (which made the bodies unpickable), the view's filter Edges all along: the view
+        // picks edges again (once the bodies are activated: a sliced job).
+        setTool("project");
+        st["until"] = *ticks + 8;
+        break;
+      }
+      case 14: {
+        m_viewport->grabImage();  // a frame: the picker clips to the camera's depth range, which a redraw sets
+        opad::Ref ref;
+        const bool picks = m_viewport->referenceAt(m_viewport->widgetPoint({0, -10, 10}), ref) && ref.body == box && ref.kind == opad::Ref::Kind::Edge;
+        check(picks || !st["viewPicks"], "project: chosen again after another tool, the view picks the box's edges");
+        // An edge picked, then Include: both pick edges (the filter stays as it is), and the edge's highlight goes with the
+        // pick; while it is shown, the selection sits under the sketch (not X-ray).
+        {
+          const opad::Node* node = m_doc->scene.node(box);
+          const TopoDS_Shape shape = node ? opad::body_shape(m_doc->doc, node->body_key) : TopoDS_Shape();
+          if (!shape.IsNull() && opad::subshape_count(shape, opad::Ref::Kind::Edge) > 0) toggleSource(QString::fromStdString(opad::json{{"body", box}, {"kind", "edge"}, {"index", 0}}.dump()));
+        }
+        check(m_sources.size() == 1 && highlighted(box, opad::Ref::Kind::Edge) == 1 && !m_viewport->selectionXray(), "project: a picked edge is highlighted, under the sketch");
         // ---- Include: the X axis as a construction curve.
         setTool("include3d");
+        check(m_sources.isEmpty() && m_viewport->selection().empty() && m_viewport->selectionXray(), "include: chosen after Project, Project's pick and its highlight are gone");
         st["entities"] = int(m_sk.entities.size());
         toggleSource(QStringLiteral("{\"base\":\"x\"}"));
         break;
       }
-      case 14:
+      case 15:
         check(previewed() && int(m_toolPreview->entities.size()) > st["entities"], "include: the source previewed");
         send(Qt::Key_Return);
         break;
-      case 15: {
+      case 16: {
         const SkEntity* e = int(m_sk.entities.size()) > st["entities"] ? &m_sk.entities.back() : nullptr;
         check(e && e->construction && !e->source.is_null(), "include: Enter adds it as a construction curve on the sketch plane, linked");
         // ---- Insert image: the frame follows the pointer, then stays at the click.
@@ -291,7 +322,7 @@ void SketchEditor::benchApply() {
         send(Qt::Key_Return);
         break;
       }
-      case 16: {
+      case 17: {
         const auto* image = m_sk.images.empty() ? nullptr : &m_sk.images.back();
         check(image && std::abs(image->at("width").get<double>() - 40) < 1e-9 && std::abs(image->at("height").get<double>() - 20) < 1e-9 &&
                   std::abs(image->at("position")[0].get<double>() - 50) < 1e-9 && std::abs(image->at("position")[1].get<double>() - 30) < 1e-9,
@@ -309,14 +340,25 @@ void SketchEditor::benchApply() {
         send(Qt::Key_Return);
         break;
       }
-      case 17: {
+      case 18: {
         const auto* image = m_sk.images.empty() ? nullptr : &m_sk.images.back();
         check(image && std::abs(image->at("width").get<double>() - 80) < 1e-6, "calibrate: the real distance typed and Enter scale the picture");
+        // A second calibration, off any grid: the box shows these clicks' distance (not the 40 typed before), and Enter with it
+        // as measured scales nothing (the box holds it rounded, so its factor is not quite 1).
+        setTool("image_calibrate");
+        place(50.123456, 30.000017);
+        place(63.333337, 31.777771);
+        const double measured = std::hypot(63.333337 - 50.123456, 31.777771 - 30.000017);
+        check(option("knownDistance") == units::editable(units::Kind::Length, measured), "calibrate: a second calibration shows its own measured distance");
+        const size_t steps = m_undo.size();
+        send(Qt::Key_Return);
+        image = m_sk.images.empty() ? nullptr : &m_sk.images.back();
+        check(!m_editJob && m_undo.size() == steps && image && std::abs(image->at("width").get<double>() - 80) < 1e-9, "calibrate: Enter with the measured distance scales nothing");
         // ---- Transform image: the panel holds the picture's place, the angle and opacity typed there, Enter applies them.
         setTool("image_edit");
         break;
       }
-      case 18: {
+      case 19: {
         auto* x = panel->findChild<QLineEdit*>("sketchOption-imageX");
         auto* width = panel->findChild<QLineEdit*>("sketchOption-imageWidth");
         auto* angle = panel->findChild<QLineEdit*>("sketchOption-imageAngle");
@@ -326,10 +368,10 @@ void SketchEditor::benchApply() {
         if (angle) angle->setText(QStringLiteral("30 deg"));
         if (opacity) opacity->setText(QStringLiteral("0.8"));
         check(appliesOnEnter() && sketchkeys::enter(keyState()) == sketchkeys::Enter::Apply && keyHints().contains(tr("Enter apply")), "transform image: Enter would apply the values");
-        send(Qt::Key_Return);
+        enterIn(opacity);  // where the keyboard is after typing there, as the guide types and presses Enter
         break;
       }
-      case 19: {
+      case 20: {
         const auto* image = m_sk.images.empty() ? nullptr : &m_sk.images.back();
         check(image && std::abs(image->value("angle", 0.0) - M_PI / 6) < 1e-9 && std::abs(image->value("opacity", 0.0) - 0.8) < 1e-9 &&
                   std::abs(image->at("width").get<double>() - 80) < 1e-6 && std::abs(image->at("position")[0].get<double>() - 50) < 1e-6 &&
@@ -351,22 +393,24 @@ void SketchEditor::benchApply() {
         st["node"] = spline && spline->p.size() > 3 ? spline->p[3] : 0;
         const SkPoint* node = m_sk.point(st["node"]);
         setTool("node");
+        m_options["weight"] = "7";  // what the box held for another node
         if (node) place(node->x, node->y);
         check(m_sel == std::vector<int>{st["node"]}, "node: a click picks the spline's middle node");
-        m_options["weight"] = "4";
-        scheduleToolPreview();
+        auto* weight = panel->findChild<QLineEdit*>("sketchOption-weight");
+        check(option("weight") == "1" && weight && weight->text() == "1", "node: the pick loads the node's own weight into the box");
+        if (weight) weight->setText(QStringLiteral("4"));  // typed in the panel, as the guide does
         break;
       }
-      case 20: {
+      case 21: {
         const SkEntity* spline = m_sk.entity(st["spline"]);
         const SkEntity* shown = m_toolPreview ? m_toolPreview->entity(st["spline"]) : nullptr;
         check(previewed() && shown && shown->weights.size() > 3 && std::abs(shown->weights[3] - 4) < 1e-9 && spline && (spline->weights.size() <= 3 || std::abs(spline->weights[3] - 4) > 1e-9),
               "node: the weight set, the curve's new shape is previewed and the sketch unchanged");
         check(sketchkeys::enter(keyState()) == sketchkeys::Enter::Apply, "node: Enter would keep it");
-        send(Qt::Key_Return);
+        enterIn(panel->findChild<QLineEdit*>("sketchOption-weight"));
         break;
       }
-      case 21: {
+      case 22: {
         const SkEntity* spline = m_sk.entity(st["spline"]);
         check(spline && spline->weights.size() > 3 && std::abs(spline->weights[3] - 4) < 1e-9, "node: Enter keeps the new weight");
         // ---- Silhouette: the box picked, its outline previewed, Enter adds it.
@@ -375,7 +419,7 @@ void SketchEditor::benchApply() {
         addInPanel(box);
         break;
       }
-      case 22:
+      case 23:
         check(m_sources.size() == 1 && previewed() && int(m_toolPreview->entities.size()) >= st["entities"] + 4 && int(m_sk.entities.size()) == st["entities"],
               "silhouette: the box's outline previewed before Enter");
         check(m_viewport->selection().size() == 1 && highlighted(box, opad::Ref::Kind::Body) == 1, "silhouette: the picked body stays highlighted");
@@ -383,14 +427,14 @@ void SketchEditor::benchApply() {
         st["previewed"] = m_toolPreview ? int(m_toolPreview->entities.size()) : -1;
         send(Qt::Key_Return);
         break;
-      case 23:
+      case 24:
         check(int(m_sk.entities.size()) == st["previewed"] && m_sources.isEmpty() && m_viewport->selection().empty(), "silhouette: Enter adds the outline, the highlight goes");
         // ---- Intersect with plane: a click on the post that stands through the plane (once the view picks bodies).
         setTool("intersect_body");
         st["entities"] = int(m_sk.entities.size());
         st["until"] = *ticks + 8;
         break;
-      case 24: {
+      case 25: {
         m_viewport->grabImage();  // a frame, as for project's pick
         opad::Ref ref;
         const bool hovered = m_viewport->referenceAt(m_viewport->widgetPoint({20, -30, 5}), ref) && ref.body == post;
@@ -405,7 +449,7 @@ void SketchEditor::benchApply() {
               "intersect: a click on the post adds it, Enter would apply");
         break;
       }
-      case 25: {
+      case 26: {
         // Where the post (12 mm across, its axis at 20, -30) crosses the plane: that circle and nothing else, dashed.
         int round = 0, other = 0;
         for (size_t i = st["entities"]; m_toolPreview && i < m_toolPreview->entities.size(); ++i) {
@@ -424,7 +468,7 @@ void SketchEditor::benchApply() {
         send(Qt::Key_Return);
         break;
       }
-      case 26: {
+      case 27: {
         bool linkedAll = int(m_sk.entities.size()) > st["entities"];
         for (size_t i = st["entities"]; i < m_sk.entities.size(); ++i) linkedAll = linkedAll && !m_sk.entities[i].source.is_null();
         check(int(m_sk.entities.size()) == st["previewed"] && linkedAll && m_sources.isEmpty() && m_viewport->selection().empty(),
@@ -437,7 +481,7 @@ void SketchEditor::benchApply() {
         st["until"] = *ticks + 8;
         break;
       }
-      case 27: {
+      case 28: {
         m_viewport->grabImage();
         opad::Ref ref;
         const bool hovered = m_viewport->referenceAt(m_viewport->widgetPoint({-5, 3, 10}), ref) && ref.body == box && ref.kind == opad::Ref::Kind::Face;
@@ -460,7 +504,7 @@ void SketchEditor::benchApply() {
               "project: with the Faces filter a click picks the box's top face, highlighted");
         break;
       }
-      case 28:
+      case 29:
         check(previewed() && int(m_toolPreview->entities.size()) >= st["entities"] + 4 && int(m_sk.entities.size()) == st["entities"], "project: the face's outline previewed");
         sketchMove(30, -30, Qt::AltModifier, false);
         m_viewport->grabImage().save(prefix + ".face.png");

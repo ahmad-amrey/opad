@@ -177,6 +177,9 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
       if(h.kind==Hit::Entity)pickCurve(h.id);  // the offset: its connected chain (the tool's option, on by default)
       else if(auto it=std::find(m_sel.begin(),m_sel.end(),h.id);it==m_sel.end())m_sel.push_back(h.id);
       else m_sel.erase(it);
+      // A node picked in the tool: its own weights in the boxes, as Alt+W loads them (the previous node's, or 1, were
+      // previewed and applied).
+      if(m_tool=="node" && m_sel.size()==1)loadNodeWeights(m_sel.front());
       invalidatePreview();
       rebuild();emit changed();toolPrompt();
       scheduleToolPreview();
@@ -587,9 +590,13 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
       if (lines.size() == 1 && rounds.size() == 1) sets.push_back({lines[0], rounds[0]});
       else if (lines.empty() && rounds.size() == 2) sets.push_back(rounds);
       break;
-    case CT::Concentric:
-      if (rounds.size() == 2 && lines.empty()) sets.push_back(rounds);
+    case CT::Concentric: {  // circles, arcs and ellipses (its step says so; the core takes them), in pick order
+      std::vector<int> centred;
+      for (int id : ids)
+        if (const SkEntity* e = m_sk.entity(id); e && (e->type == ET::Circle || e->type == ET::Arc || e->type == ET::Ellipse)) centred.push_back(id);
+      if (centred.size() == 2 && lines.empty()) sets.push_back(centred);
       break;
+    }
     case CT::Midpoint:
       if (points.size() == 1 && lines.size() == 1) sets.push_back({points[0], lines[0]});
       break;

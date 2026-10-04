@@ -110,6 +110,9 @@ class SketchEditor : public QObject, public SketchInput {
   void redefinePlane(const opad::json& plane, const opad::Frame& frame);
   QString tool() const { return m_tool; }
   void editSplineNode();
+  // The node tool's weight boxes take this control node's weights (its own, and its handles' on a cubic's knot); false when
+  // it is no node of an editable spline.
+  bool loadNodeWeights(int point);
   void findOpenVertices();
   void insertSplineNode(double u,double v);
   void toggleConstruction();
@@ -381,6 +384,10 @@ class SketchEditor : public QObject, public SketchInput {
   void toggleSource(const QString& source);
   QString sourceLabel(const QString& source) const;
   QStringList m_sources;
+  // A preview that fails drops the sources that gave nothing, which its worker lists (each one tried); when the solver
+  // refused them together, the one the last pick added (m_sourceAdded; empty after a pick that dropped one).
+  QString m_sourceAdded;
+  std::shared_ptr<QStringList> m_sourcesFailed;
   // The picked sources in the model (edges, faces, vertices, bodies) shown as the view's selection while the tool runs, as
   // a feature's picks are; called by rebuild(), so every change of m_sources reaches the view.
   void showSources();

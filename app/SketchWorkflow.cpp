@@ -192,10 +192,18 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     if(!ok){
       if(stale)return;
       if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}
-      // A source that gives nothing here (an edge square to the plane, a body the plane misses): the pick is not kept, the
-      // others stay and preview again.
+      // A source that gives nothing here (an edge square to the plane, a body the plane misses): that pick is not kept, the
+      // others stay and preview again. The worker named the ones that failed (applyReference); a failure of them all
+      // together (the solver's) drops the one the last pick added, else only says why.
       if(preview && sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()) {
-        m_sources.removeLast();emit status(tr("Not added: %1").arg(i18n::t(error)));rebuild();emit changed();emit workflowChanged();scheduleToolPreview();return;
+        QStringList drop;
+        if(m_sourcesFailed)for(const auto& source:*m_sourcesFailed)if(m_sources.contains(source))drop<<source;
+        if(drop.isEmpty() && !m_sourceAdded.isEmpty() && m_sources.contains(m_sourceAdded))drop<<m_sourceAdded;
+        m_sourcesFailed.reset();
+        if(drop.isEmpty()){emit status(i18n::t(error));return;}
+        for(const auto& source:drop)m_sources.removeOne(source);
+        if(drop.contains(m_sourceAdded))m_sourceAdded.clear();
+        emit status(tr("Not added: %1").arg(i18n::t(error)));rebuild();emit changed();emit workflowChanged();scheduleToolPreview();return;
       }
       emit status(i18n::t(error));return;
     }
@@ -511,6 +519,7 @@ void SketchEditor::invalidatePreview(bool keepOverlay) {
 }
 void SketchEditor::applied() {
   if(m_tool=="mirror")m_options["mirrorStage"]="seed";  // the next curves to mirror, then their line
+  if(m_tool=="image_calibrate"){m_options.remove("knownDistance");m_calibrateShown.clear();}  // the next two clicks show their own distance
   if(sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()){m_sources.clear();emit workflowChanged();}  // the next sources
 }
 void SketchEditor::showToolPreview() {

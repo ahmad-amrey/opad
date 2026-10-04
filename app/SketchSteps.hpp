@@ -98,7 +98,7 @@ inline const std::vector<Tool>& tools() {
       {"c:fix", tr("Fix"), {tr("Pick the point or curve to fix")}},
       // Reference
       {"project", tr("Project"), {tr("Pick the source edges, faces or bodies"), tr("Choose the link and apply")}, tr("they become fixed reference curves")},
-      {"intersect_body", tr("Body-plane intersection"), {tr("Pick the source bodies or faces"), tr("Choose the link and apply")}},
+      {"intersect_body", tr("Body-plane intersection"), {tr("Pick the source bodies"), tr("Choose the link and apply")}},
       {"silhouette", tr("Silhouette"), {tr("Pick the source bodies"), tr("Choose the link and apply")}},
       {"include3d", tr("Include reference curves"), {tr("Pick the source curves"), tr("Choose the link and apply")}},
       {"break_link", tr("Break projection link"), {tr("Select projected curves"), tr("Apply to make them editable")}},

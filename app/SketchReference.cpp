@@ -9,11 +9,16 @@ using namespace opad::design;
 
 void SketchEditor::referenceHover() {
   const bool on=sketchkeys::referenceTool(m_tool.toStdString());
+  const auto before=m_viewport->selectionFilter();
   m_viewport->setEdgeHover(on);
   if(on) {
     const auto filter=option("projectionPick","edge");
-    m_viewport->setSelectionFilter(m_tool=="intersect_body"||m_tool=="silhouette"||filter=="body"?Viewport::SelFilter::Body:filter=="face"?Viewport::SelFilter::Face:filter=="vertex"?Viewport::SelFilter::Vertex:Viewport::SelFilter::Edge);
-    m_sourcesShown.clear();  // a filter change clears the view's selection: the picks are shown again
+    const auto want=m_tool=="intersect_body"||m_tool=="silhouette"||filter=="body"?Viewport::SelFilter::Body:filter=="face"?Viewport::SelFilter::Face:filter=="vertex"?Viewport::SelFilter::Vertex:Viewport::SelFilter::Edge;
+    m_viewport->setSelectionFilter(want);
+    // A filter change (setEdgeHover passes through Edges) clears the view's selection: the picks are shown again. The same
+    // filter keeps it, and then what is shown must be compared as it is: two reference tools with Edges (Project, then
+    // Include) left the first one's pick highlighted after setTool dropped it.
+    if(before!=Viewport::SelFilter::Edge || want!=Viewport::SelFilter::Edge)m_sourcesShown.clear();
   }
   showSources();
 }
@@ -22,6 +27,9 @@ void SketchEditor::referenceHover() {
 // preview is drawn over them (showToolPreview). Origin axes, sketches and features chosen in the panel are listed there.
 void SketchEditor::showSources() {
   const QStringList shown=m_active && m_visible && sketchkeys::referenceTool(m_tool.toStdString())?m_sources:QStringList();  // a hidden sketch: none
+  // Under the sketch, not X-ray: in Topmost a picked body or face was depth-tested against the sketch drawn there and hid
+  // its curves inside the pick's outline until the tool let it go. Back to X-ray as soon as none is shown.
+  m_viewport->setSelectionXray(shown.isEmpty());
   if(shown==m_sourcesShown)return;
   m_sourcesShown=shown;
   std::vector<opad::Ref> refs;
@@ -46,7 +54,8 @@ void SketchEditor::pickReference() {
 void SketchEditor::toggleSource(const QString& source) {
   if(source.isEmpty() || !sketchkeys::referenceTool(m_tool.toStdString()))return;
   invalidatePreview();
-  if(!m_sources.removeOne(source))m_sources<<source;
+  if(!m_sources.removeOne(source)){m_sources<<source;m_sourceAdded=source;}
+  else m_sourceAdded.clear();
   emit status(m_sources.isEmpty()?tr("Pick source geometry in the view, or choose it in the panel.")
                                   :tr("%1: click more to add them, or press Enter or Apply").arg(m_sources.size()==1?tr("1 source"):tr("%1 sources").arg(m_sources.size())));
   rebuild();emit changed();emit workflowChanged();scheduleToolPreview();
@@ -89,11 +98,24 @@ bool SketchEditor::applyReference() {
     auto doc=std::make_shared<opad::Document>(m_doc->doc);auto scene=std::make_shared<opad::Scene>(m_doc->scene);
     const auto frame=m_frame;const bool linked=option("projectionLinked","1")=="1";
     const std::string mode=m_tool=="intersect_body"?"intersect":m_tool=="include3d"?"include":m_tool.toStdString();
-    runSketchEdit(tr("Projecting geometry"),[doc,scene,frame,sources,linked,mode](Sketch& sk)mutable{
-      for(auto& source:sources) {
-        if(source.contains("body"))source=make_ref(*doc,*scene,opad::Ref::from_json(source));
-        const auto generated=derive_sketch(*doc,*scene,frame,source,mode);append_reference(sk,generated,source,mode,linked);
+    // The preview tries every source, so that a failure names the ones that gave nothing (an edge square to the plane, a
+    // body the plane misses), not the last pick; Apply stops at the first.
+    const QStringList texts=m_sources;const bool preview=m_previewRequested;
+    auto failed=std::make_shared<QStringList>();m_sourcesFailed=failed;
+    runSketchEdit(tr("Projecting geometry"),[doc,scene,frame,sources,linked,mode,texts,preview,failed](Sketch& sk)mutable{
+      std::string first;
+      for(size_t i=0;i<sources.size();++i) {
+        auto& source=sources[i];
+        try {
+          if(source.contains("body"))source=make_ref(*doc,*scene,opad::Ref::from_json(source));
+          const auto generated=derive_sketch(*doc,*scene,frame,source,mode);append_reference(sk,generated,source,mode,linked);
+        } catch(const std::exception& e) {
+          if(!preview)throw;
+          if(first.empty())first=e.what();
+          failed->push_back(texts.value(qsizetype(i)));
+        }
       }
+      if(!first.empty())throw opad::Error(first);
     });
     // Done with those sources: the tool asks for the next ones (they stayed "ready", and Apply again projected them twice).
     if(!m_previewRequested){m_sources.clear();emit workflowChanged();}

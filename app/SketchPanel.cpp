@@ -202,6 +202,10 @@ void SketchPanel::buildFields() {
   auto field=[&](const QString& key,const QString& label,const QString& value) {
     auto* edit=new QLineEdit(m_editor->option(key,value),this);edit->setObjectName("sketchOption-"+key);m_fields->addRow(label,edit);
     connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){m_editor->m_options[key]=text;m_editor->scheduleToolPreview();});
+    // Enter in a value field applies, as Enter in the view does, when the tool has what it applies to (the guides of the
+    // node weights and Transform image type here and press Enter); a QLineEdit lets Return go nowhere. From the event loop:
+    // applying rebuilds these fields.
+    connect(edit,&QLineEdit::returnPressed,this,[editor=m_editor]{QTimer::singleShot(0,editor,[editor]{if(editor->active() && editor->appliesOnEnter())editor->done();});});
   };
   if(m_shown=="polygon" || m_shown=="polygon_outer")field("sides",tr("Number of sides:"),"6");
   if(m_shown=="fillet" || m_shown=="tangent_circle")field("radius",tr("Radius"),"2 mm");
@@ -223,7 +227,8 @@ void SketchPanel::buildFields() {
     connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();m_editor->scheduleToolPreview();if(key=="projectionPick")m_editor->referenceHover();});
   };
   if(m_shown=="project"||m_shown=="intersect_body"||m_shown=="silhouette"||m_shown=="include3d") {
-    choice("projectionPick",tr("Pick filter"),{{"edge",tr("Edges")},{"face",tr("Faces")},{"vertex",tr("Vertices")},{"body",tr("Bodies")}});
+    // Intersect with plane and Silhouette take whole bodies (referenceHover): no filter to choose there.
+    if(m_shown=="project"||m_shown=="include3d")choice("projectionPick",tr("Pick filter"),{{"edge",tr("Edges")},{"face",tr("Faces")},{"vertex",tr("Vertices")},{"body",tr("Bodies")}});
     // Sources accumulate (TODO 11 wave 3, P4): clicks in the view and this list add them, a picked one again drops it; the
     // list below shows them, Enter or Apply adds them all.
     auto* sources=new QComboBox(this);sources->setObjectName("sketchSourceAdd");sources->addItem(tr("Pick in the view, or add one here"),QString());
@@ -283,7 +288,7 @@ void SketchPanel::buildFields() {
     else {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
     if(m_shown=="copy")field("copies",tr("Copies"),"1");
   }
-  if(m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
+  if(m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"10 mm");}  // as the pattern takes them (applyModify)
   if(m_shown=="rotate"||m_shown=="scale"||m_shown=="polar_pattern") {field("cx",tr("Centre X"),"0 mm");field("cy",tr("Centre Y"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="polar_pattern")field("angle",tr("Angle"),m_shown=="rotate"?"45 deg":"360 deg");
   if(m_shown=="scale")field("scale",tr("Scale factor"),"2");
