@@ -59,8 +59,12 @@ class VersionControl : public QObject {
   void pull();
   void fetch();
   // Every git/fetchMinutes (10; 0: never) while the branch follows a remote: a quiet fetch that never asks anyone to sign
-  // in, so the chip's ↓ count is current; new commits there are said once, with Pull.
+  // in, so the chip's ↓ count is current; new commits there are said once, with Pull. Fetch in the background
+  // (vcs.backgroundFetch: File > Version control, the chip's menu) turns it on and off; the setting is read again at each
+  // turn, so a change made elsewhere takes effect without a restart.
   void backgroundFetch();
+  void setBackgroundFetch(bool on);
+  void armFetch();
   void newBranch(const QString& start = {}, const QString& startLabel = {});
   void switchTo(const git::Branch& branch);
   void mergeBranch(const QString& name);

@@ -649,5 +649,6 @@
  "%1: deleted in the file (stays deleted)": "%1: حُذف في الملف (يبقى محذوفًا)",
  "(stays deleted)": "(يبقى محذوفًا)",
  "Changes of yours to what the file deleted: %1 (it stays deleted).": "تغييراتك على ما حذفه الملف: %1 (يبقى محذوفًا).",
- "Removing old copies of versions": "إزالة النسخ القديمة من الإصدارات"
+ "Removing old copies of versions": "إزالة النسخ القديمة من الإصدارات",
+ "Fetch in the background": "الجلب في الخلفية"
 }

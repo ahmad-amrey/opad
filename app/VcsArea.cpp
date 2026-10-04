@@ -83,6 +83,16 @@ class Vcs : public AreaController {
     command("vcs.branches", tr("Branches"), "branch", {"git", "switch", "checkout", "merge"}, [](VersionControl* v) { v->openPanel(VersionControl::Branches); });
     command("vcs.pack", tr("Pack the repository"), "git", {"git", "gc", "maintenance", "size", "compress"}, [](VersionControl* v) { v->pack(); });
     command("vcs.resolve", tr("Resolve conflicts…"), "merge", {"git", "merge", "conflict", "mine", "theirs"}, [](VersionControl* v) { v->resolveConflicts(); });
+    CommandInfo fetching;  // git/fetchMinutes: off for a metered or slow link
+    fetching.id = "vcs.backgroundFetch";
+    fetching.label = tr("Fetch in the background");
+    fetching.icon = "pull";
+    fetching.group = group;
+    fetching.checkable = true;
+    fetching.keywords = {"git", "remote", "fetch", "network", "automatic", "metered", "poll"};
+    services().addCommand(fetching, [this] {
+      if (m_version) m_version->setBackgroundFetch(services().action("vcs.backgroundFetch")->isChecked());
+    });
     // ] and [ step through the changes while Compare is open; elsewhere they do nothing.
     for (const auto& [id, label, key, delta] : {std::tuple{"vcs.nextChange", tr("Next change"), "]", 1}, std::tuple{"vcs.previousChange", tr("Previous change"), "[", -1}}) {
       CommandInfo step;
@@ -107,7 +117,7 @@ class Vcs : public AreaController {
     file->insertAction(before, services().action("vcs.unsavedChanges"));
     auto* version = new QMenu(tr("Version control"), file);
     version->setObjectName("versionMenu");
-    for (const char* id : {"vcs.panel", "vcs.commit", "vcs.pull", "vcs.push", "vcs.fetch", "-", "vcs.history", "vcs.branches", "vcs.newBranch", "-",
+    for (const char* id : {"vcs.panel", "vcs.commit", "vcs.pull", "vcs.push", "vcs.fetch", "vcs.backgroundFetch", "-", "vcs.history", "vcs.branches", "vcs.newBranch", "-",
                            "vcs.resolve", "vcs.pack"})
       if (QString::fromLatin1(id) == "-") version->addSeparator();
       else version->addAction(services().action(QString::fromLatin1(id)));

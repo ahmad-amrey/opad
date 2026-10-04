@@ -188,10 +188,11 @@ VersionControl::VersionControl(AreaServices& services, GitWatch* git, CompareMod
     say(tr("Who changed what could not be read from git: %1").arg(m_provenance->error()));
     showHistoryOf({}, {});
   });
-  if (const int minutes = QSettings().value("git/fetchMinutes", 10).toInt(); minutes > 0) {
-    connect(&m_fetch, &QTimer::timeout, this, &VersionControl::backgroundFetch);
-    m_fetch.start(minutes * 60000);
-  }
+  connect(&m_fetch, &QTimer::timeout, this, [this] {
+    armFetch();  // the setting as it is now
+    if (m_fetch.isActive()) backgroundFetch();
+  });
+  armFetch();
   if (compare)  // Compare opened from the panel took its place: the panel comes back when it ends
     connect(compare, &CompareMode::activeChanged, this, [this](bool on) {
       if (on) return;
@@ -804,6 +805,23 @@ void VersionControl::fetch() {
   }, git::RunOptions::network());
 }
 
+void VersionControl::setBackgroundFetch(bool on) {
+  QSettings s;
+  if (!on) s.setValue("git/fetchMinutes", 0);
+  else if (s.value("git/fetchMinutes", 10).toInt() <= 0) s.setValue("git/fetchMinutes", 10);
+  armFetch();
+}
+
+void VersionControl::armFetch() {
+  const int minutes = QSettings().value("git/fetchMinutes", 10).toInt();
+  if (minutes <= 0) m_fetch.stop();
+  else if (!m_fetch.isActive() || m_fetch.interval() != minutes * 60000) m_fetch.start(minutes * 60000);
+  if (QAction* a = m_services.action("vcs.backgroundFetch")) {
+    const QSignalBlocker quiet(a);
+    a->setChecked(minutes > 0);
+  }
+}
+
 void VersionControl::backgroundFetch() {
   const git::Repo& r = m_git->repo();
   if (!ready() || r.status.upstream.isEmpty() || r.merging || m_running || m_fetching) return;
@@ -1302,5 +1320,6 @@ void VersionControl::extendMenu(QMenu* m) {
   }
   if (ready() && m_git->repo().doc() == git::Repo::Doc::Conflict)
     if (QAction* a = m_services.action("vcs.resolve")) m->addAction(a);
+  if (QAction* a = m_services.action("vcs.backgroundFetch"); a && ready()) m->addAction(a);
   m->addSeparator();
 }

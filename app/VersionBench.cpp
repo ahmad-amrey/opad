@@ -17,6 +17,7 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QSettings>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -270,6 +271,18 @@ bool VersionControl::bench(const QString& prefix) {
         for (QAction* a : chip->actions()) names << a->objectName();
         require(names.mid(0, 4) == QStringList({"vcs.panel", "vcs.commit", "vcs.pull", "vcs.push"}), "the chip's menu starts with them: " + names.join(", "));
         pass("commands in File, the palette and the chip's menu");
+        QAction* fetching = m_services.action("vcs.backgroundFetch");  // the background fetch: on by default, off and on again
+        require(names.contains("vcs.backgroundFetch") && fetching->isCheckable() && fetching->isChecked() && m_fetch.isActive() && m_fetch.interval() == 600000,
+                "Fetch in the background: on, every 10 minutes");
+        fetching->trigger();
+        require(!fetching->isChecked() && !m_fetch.isActive() && QSettings().value("git/fetchMinutes").toInt() == 0, "off: no timer, git/fetchMinutes 0");
+        QSettings().setValue("git/fetchMinutes", 3);  // set elsewhere (a preference): taken at the next turn
+        armFetch();
+        require(fetching->isChecked() && m_fetch.interval() == 180000, "a changed setting rearms it");
+        fetching->trigger();
+        fetching->trigger();
+        require(fetching->isChecked() && m_fetch.isActive() && m_fetch.interval() == 600000, "off and on again: every 10 minutes");
+        pass("the background fetch turned off and on (git/fetchMinutes)");
         m_services.action("vcs.panel")->trigger();
         return true;
       },
