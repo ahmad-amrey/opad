@@ -2,8 +2,10 @@
 #include <set>
 namespace opad::agent {
 namespace {
-// Drawing sheets join the live list with the Drawings workspace (UI-78); until then they are file-level, like project.
-const std::set<std::string> excluded={"new","append","diff","cache","gc","mesh","render","project","sheet","sheet_view","sheet_item","sheet_edit","sheet_info","part_properties","materials","bom","sheet_datum_dimensions","holes"};
+// Drawings are file-level for live agents, all of them alike (like project): the sheet commands' schemas would add a fifth to
+// the live tool list (about 20 KB) that every session pays for; the CLI, Python and the headless MCP server have them.
+const std::set<std::string> excluded={"new","append","diff","cache","gc","mesh","render","project","sheet","sheet_view","sheet_item","sheet_edit","sheet_info",
+                                      "part_properties","materials","bom","sheet_datum_dimensions","holes","sheet_balloons","sheet_issue"};
 json object(json properties={},json required=json::array()) {
   if(properties.is_null())properties=json::object();
   return {{"type","object"},{"properties",properties},{"required",required},{"additionalProperties",false}};

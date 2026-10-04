@@ -363,8 +363,18 @@ Hatching… sets the angle, the spacing and the bodies' material symbols, after 
 circle of their parent, auxiliary views look square to a slanted edge, and any view can be cropped to a box or broken to
 shorten a long part (dimensions across a break keep their true value; break lines ruled with a zigzag or freehand). A
 broken-out section opens up a view within a smooth closed outline down to a depth picked in a view beside it (`breakouts`
-on the view): its floor hatched, a thin break line where it ends over the part. In the Drawings workspace these are
-drawn with the mouse on the selected view (Views group, or the view's menu); while a tool runs its value card beside the
+on the view): its floor hatched, a thin break line where it ends over the part.
+
+Annotations are `sheet_item` kinds measured from the model and kept with what they showed: dimensions (with precision,
+tolerances and fits), centre marks and lines, hole callouts read from the hole's own faces (depth or THRU, counterbores,
+countersinks, "4×" for equal holes) and hole tables, datum symbols, feature control frames, surface texture symbols and
+ordinate, baseline or chain dimension sets (`sheet_datum_dimensions` makes them from a view's datums). A parts list
+numbers the drawing's bill of materials and keeps the numbers settled; balloons show their part's number
+(`sheet_balloons` balloons a whole view at once). `sheet_issue` releases a revision: the values, the views' linework
+and, with `out`, a PDF and its SHA-256 are kept, the revision table and title block show it, and the sheet can later
+be exported exactly as issued; in the app Issue revision… also saves, commits and tags it in git. Print… (Ctrl+Alt+P)
+prints the sheets at actual size or fitted to the printer's paper. In the Drawings workspace section, detail and
+auxiliary views, crops, breaks and broken-out sections are drawn with the mouse on the selected view (Views group, or the view's menu); while a tool runs its value card beside the
 pointer takes the numbers by keyboard (a section's or auxiliary view's gap, a detail's radius and scale, a crop's width
 and height, a break's length, a broken-out section's depth below the part's front), Tab to the next, Enter to take them.
 A view's menu also sets a detail's own scale and a section's, detail's or auxiliary view's letter.
