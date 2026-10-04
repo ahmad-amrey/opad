@@ -278,9 +278,10 @@ QString ShortcutEditor::name(const Hit& h)const {return h.slot?tr("%1 (alternate
 // Every key or alternate (the command's own other one too) that `key` would clash with in slot `slot` of command i.
 QVector<ShortcutEditor::Hit> ShortcutEditor::collisions(int i,const QKeySequence& key,int slot)const {
   QVector<Hit> result;
+  if(key.isEmpty())return result;  // no key clashes with nothing (most alternates): OK checks every slot of every command
   for(int n=0;n<m_entries.size();++n)
-    for(int s=0;s<2;++s)
-      if((n!=i||s!=slot)&&shortcuts::overlaps(m_entries[i].action->objectName(),m_entries[n].action->objectName())&&shortcuts::conflicts(key,m_entries[n].slot(s)))result.push_back({n,s});
+    for(int s=0;s<2;++s)  // the keys first: scope() per pair made OK take ~0.2 s
+      if((n!=i||s!=slot)&&shortcuts::conflicts(key,m_entries[n].slot(s))&&shortcuts::overlaps(m_entries[i].action->objectName(),m_entries[n].action->objectName()))result.push_back({n,s});
   return result;
 }
 void ShortcutEditor::filter() {
@@ -375,14 +376,20 @@ void ShortcutEditor::accept() {
     if(e.key.isEmpty())std::swap(e.key,e.alternate);  // an alternate alone is the key
     const QString id=e.action->objectName();
     const bool standard=e.key==QKeySequence(e.action->property("defaultShortcut").toString());
-    shortcuts::bind(e.action,e.alternate.isEmpty()?QList<QKeySequence>{e.key}:QList<QKeySequence>{e.key,e.alternate});  // held while a sketch is open: taken back when it closes
-    shortcuts::updateTooltip(e.action);actions<<e.action;
-    const QString path="shortcuts/"+id;
-    if(standard)settings.remove(path);
-    else settings.setValue(path,e.key.toString(QKeySequence::PortableText));
+    const QList<QKeySequence> chosen=e.alternate.isEmpty()?QList<QKeySequence>{e.key}:QList<QKeySequence>{e.key,e.alternate};
+    QList<QKeySequence> now=shortcuts::bindings(e.action);now.removeAll(QKeySequence());
+    QList<QKeySequence> wanted=chosen;wanted.removeAll(QKeySequence());
+    // Only the commands whose keys change: rebinding all of them (each QAction::changed, its tooltip) cost ~0.3 s per OK.
+    if(now!=wanted)shortcuts::bind(e.action,chosen);  // held while a sketch is open: taken back when it closes
+    actions<<e.action;
+    // Written only where they change: every remove or set marks the file, which is then written out whole.
+    auto put=[&settings](const QString& path,bool keep,const QString& value) {
+      if(!keep){if(settings.contains(path))settings.remove(path);}
+      else if(!settings.contains(path)||settings.value(path).toString()!=value)settings.setValue(path,value);
+    };
+    put("shortcuts/"+id,!standard,e.key.toString(QKeySequence::PortableText));
     // Saved only where it differs from what the key implies: the default alternate with the default key, else none.
-    if(e.alternate==(standard?shortcuts::alternates(id).value(0):QKeySequence()))settings.remove("shortcutAlternates/"+id);
-    else settings.setValue("shortcutAlternates/"+id,e.alternate.toString(QKeySequence::PortableText));
+    put("shortcutAlternates/"+id,e.alternate!=(standard?shortcuts::alternates(id).value(0):QKeySequence()),e.alternate.toString(QKeySequence::PortableText));
   }
   shortcuts::settleAlternates(actions);
   quiet.unblock();
