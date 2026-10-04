@@ -464,6 +464,10 @@ void SketchEditor::benchApply() {
         check(previewed() && int(m_toolPreview->entities.size()) >= st["entities"] + 4 && int(m_sk.entities.size()) == st["entities"], "project: the face's outline previewed");
         sketchMove(30, -30, Qt::AltModifier, false);
         m_viewport->grabImage().save(prefix + ".face.png");
+        setVisible(false);  // the browser's Hide sketch: the pick's highlight goes with the preview, and comes back
+        st["hidden"] = int(m_viewport->selection().size());
+        setVisible(true);
+        check(st["hidden"] == 0 && highlighted(box, opad::Ref::Kind::Face) == 1, "project: hiding the sketch hides the pick's highlight, showing it shows it again");
         send(Qt::Key_Escape);
         check(m_sources.isEmpty() && m_viewport->selection().empty() && !m_toolPreview && int(m_sk.entities.size()) == st["entities"],
               "project: Esc drops the pick, its highlight and its preview");

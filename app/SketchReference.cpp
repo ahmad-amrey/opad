@@ -21,7 +21,7 @@ void SketchEditor::referenceHover() {
 // them go (TODO 11 wave 3, P4: the guides show them in the selection colour until Enter, as Fusion's Project does); the
 // preview is drawn over them (showToolPreview). Origin axes, sketches and features chosen in the panel are listed there.
 void SketchEditor::showSources() {
-  const QStringList shown=m_active && sketchkeys::referenceTool(m_tool.toStdString())?m_sources:QStringList();
+  const QStringList shown=m_active && m_visible && sketchkeys::referenceTool(m_tool.toStdString())?m_sources:QStringList();  // a hidden sketch: none
   if(shown==m_sourcesShown)return;
   m_sourcesShown=shown;
   std::vector<opad::Ref> refs;

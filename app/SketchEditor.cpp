@@ -281,6 +281,7 @@ void SketchEditor::setVisible(bool visible) {
     if(visible)m_viewport->showOverlay(prs);else m_viewport->removeOverlay(prs);
   }
   if(visible)showToolPreview();else m_viewport->removeOverlay(m_toolPreviewOverlay);
+  showSources();  // the picks' highlight goes and comes back with the preview
   for(const auto& prs:m_imagePrs) {
     if(visible)m_viewport->showBackdrop(prs);else m_viewport->removeOverlay(prs);
   }
