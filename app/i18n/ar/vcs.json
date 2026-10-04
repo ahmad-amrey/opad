@@ -648,5 +648,6 @@
  "Not saved: %1 changed on disk. Merge or reload it from the bar over the view first.": "لم يُحفظ: تغيّر %1 على القرص. ادمجه أو أعد تحميله أولًا من الشريط فوق العرض.",
  "%1: deleted in the file (stays deleted)": "%1: حُذف في الملف (يبقى محذوفًا)",
  "(stays deleted)": "(يبقى محذوفًا)",
- "Changes of yours to what the file deleted: %1 (it stays deleted).": "تغييراتك على ما حذفه الملف: %1 (يبقى محذوفًا)."
+ "Changes of yours to what the file deleted: %1 (it stays deleted).": "تغييراتك على ما حذفه الملف: %1 (يبقى محذوفًا).",
+ "Removing old copies of versions": "إزالة النسخ القديمة من الإصدارات"
 }

@@ -132,6 +132,8 @@ class VersionControl : public QObject {
   void runMerge(std::shared_ptr<Incoming> in);
   void runSwitch(const QStringList& args, const QString& name);
   QString versionsFolder() const;
+  // Whole copies there (read-only versions, merge previews) older than two days go, on a worker; at start-up.
+  void pruneVersions(std::function<void()> done = {});
   AreaServices& m_services;
   GitWatch* m_git;
   CompareMode* m_compare;
@@ -159,7 +161,8 @@ class VersionControl : public QObject {
   QString m_listed;  // the repository and document the lists are of
   QTimer m_reload, m_fetch;
   bool m_fetching = false;
-  QString m_lastFailure, m_lastDone, m_lastOpened;  // benches
+  QString m_lastFailure, m_lastDone, m_lastOpened, m_lastPreview;  // benches
+  QStringList m_previews;  // merge previews Compare still shows: removed when it ends
   int m_page = History;
   bool m_reopen = false;  // Compare took the panel's place: back when it ends
   bool m_benching = false;

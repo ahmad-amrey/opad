@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -193,8 +194,23 @@ VersionControl::VersionControl(AreaServices& services, GitWatch* git, CompareMod
   }
   if (compare)  // Compare opened from the panel took its place: the panel comes back when it ends
     connect(compare, &CompareMode::activeChanged, this, [this](bool on) {
-      if (!on && std::exchange(m_reopen, false)) openPanel();
+      if (on) return;
+      for (const QString& file : std::exchange(m_previews, {})) QFile::remove(file);
+      if (std::exchange(m_reopen, false)) openPanel();
     });
+  pruneVersions();
+}
+
+void VersionControl::pruneVersions(std::function<void()> done) {
+  const QString folder = versionsFolder();
+  m_services.jobs()->quiet(tr("Removing old copies of versions"), [folder](Progress) {
+    const QDateTime old = QDateTime::currentDateTime().addDays(-2);  // another window may still show a newer one
+    for (const QFileInfo& f : QDir(folder).entryInfoList({"*.opad"}, QDir::Files))
+      if (f.lastModified() < old) {
+        QFile::setPermissions(f.absoluteFilePath(), QFile::ReadOwner | QFile::WriteOwner);  // a read-only version's copy
+        QFile::remove(f.absoluteFilePath());
+      }
+  }, [done](bool, const QString&) { if (done) done(); });
 }
 
 QString VersionControl::documentPath() const { return m_git->repo().state == git::Repo::State::Ready ? m_git->repo().rel : QString(); }
@@ -881,6 +897,12 @@ void VersionControl::showIncoming(std::shared_ptr<Incoming> in, bool pull) {
   if (m_incoming) m_incoming->close();
   auto* d = new QDialog(m_services.window());
   m_incoming = d;
+  m_lastPreview = in->merged;
+  if (!in->merged.isEmpty())  // the merge preview (a whole document) goes with the dialog, or when Compare stops showing it
+    connect(d, &QObject::destroyed, this, [this, file = in->merged] {
+      if (m_compare && m_compare->active()) m_previews << file;
+      else QFile::remove(file);
+    });
   d->setObjectName("vcsIncoming");
   d->setAttribute(Qt::WA_DeleteOnClose);
   d->setModal(false);  // Compare can be looked at meanwhile

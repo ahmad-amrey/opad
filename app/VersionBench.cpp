@@ -5,6 +5,7 @@
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDialog>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -51,7 +52,7 @@ bool VersionControl::bench(const QString& prefix) {
   struct State {
     size_t step = 0;
     int wait = 0, exit = 0, ops = 0;
-    bool running = false;
+    bool running = false, pruned = false;
     QString file, dir, error, current, other, first, boxBody, merged;
     std::vector<QStringList> pending;
     std::function<void()> next;
@@ -234,6 +235,25 @@ bool VersionControl::bench(const QString& prefix) {
       },
   };
   else steps = {
+      [=, this] {  // copies of versions in the temporary folder: older than two days they go
+        QDir().mkpath(versionsFolder());
+        for (const char* name : {"bench old.opad", "bench new.opad"}) {
+          QFile f(QDir(versionsFolder()).filePath(QString::fromLatin1(name)));
+          require(f.open(QIODevice::WriteOnly) && f.write("#opad 2") > 0, "a copy");
+          if (QString::fromLatin1(name).contains("old")) f.setFileTime(QDateTime::currentDateTime().addDays(-3), QFileDevice::FileModificationTime);
+        }
+        QFile::setPermissions(QDir(versionsFolder()).filePath("bench old.opad"), QFile::ReadOwner);  // as a read-only version's copy
+        pruneVersions([st] { st->pruned = true; });
+        return true;
+      },
+      [=, this] {
+        if (!st->pruned) return false;
+        require(!QFileInfo::exists(QDir(versionsFolder()).filePath("bench old.opad")) && QFileInfo::exists(QDir(versionsFolder()).filePath("bench new.opad")),
+                "the old copy removed, the new one kept");
+        QFile::remove(QDir(versionsFolder()).filePath("bench new.opad"));
+        pass("old copies of versions removed from the temporary folder");
+        return true;
+      },
       [=, this] {  // the clone's merge driver (the case committed .gitattributes asking for it)
         if (!idle() || m_git->repo().state != git::Repo::State::Ready) return false;
         require(m_git->repo().needsDriver(), "the driver not set up yet");
@@ -392,6 +412,7 @@ bool VersionControl::bench(const QString& prefix) {
       [=, this] {  // someone else pushes a box of their own
         if (!idle() || !finished("delete") || item(m_panel->branches(), "feature/arm", 0)) return false;
         pass("a merged branch deleted");
+        require(!m_lastPreview.isEmpty() && !QFileInfo::exists(m_lastPreview), "the merge preview removed with its dialog: " + m_lastPreview);
         QStringList feature{cli, "feature", st->other + "/model.opad", "--kind", "box", "--inputs", R"({"x":"120 mm","length":"5 mm","width":"5 mm","height":"5 mm"})"};
         external({gitArgs({"clone", "-q", st->dir + "-remote.git", st->other}), feature,
                   gitArgs({"-C", st->other, "commit", "-q", "-am", "Box from elsewhere"}), gitArgs({"-C", st->other, "push", "-q"})});
