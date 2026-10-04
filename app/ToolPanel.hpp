@@ -43,6 +43,8 @@ class ToolPanel : public QWidget {
   void setDefaultTop(int top) { if (!m_userPlaced) m_offset.setY(top); }
   int bottom() const { return m_offset.y() + height() - 2 * kMargin; }  // in viewport coordinates
   void anchorTo(const QRect& viewportGlobal);
+  // Back at its default place and size, forgetting the saved ones: a double-click on the header, Reset layout.
+  void restoreDefaultPlace();
   // Opt-in content fitting for inspect results; other floating panels keep their saved sizing.
   void setContentSizeHint(std::function<QSize(int)> hint);
   void requestContentFit();
