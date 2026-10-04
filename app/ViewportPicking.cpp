@@ -212,6 +212,7 @@ bool Viewport::trackingEscape(QEvent* e) {
 }
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
+  if (zoomWindowKey(object, e)) return true;
   if(e->type()==QEvent::MouseButtonPress || e->type()==QEvent::MouseButtonDblClick) {
     const auto widget=qobject_cast<QWidget*>(object);
     if(widget && (widget==window() || window()->isAncestorOf(widget)))resetHoverFade();

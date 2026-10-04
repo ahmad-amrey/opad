@@ -528,6 +528,7 @@ QPoint Viewport::widgetPoint(const opad::Vec3& world) const {
 
 void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (e->button() == Qt::MiddleButton && !m_zoomWindow) { emit fitRequested(); return; }  // a middle double click fits (UI-47)
   double u, v;
   if (m_sketchInput && e->button() == Qt::LeftButton && planePoint(e->position(), m_sketchFrame, u, v)) return m_sketchInput->sketchDoubleClick(u, v);
   mousePressEvent(e);

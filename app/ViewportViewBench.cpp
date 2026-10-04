@@ -1,11 +1,16 @@
-// Benches of the view's looks and navigation (T2 viewer): OPAD_BENCH_TRANSPARENCY (UI-39), OPAD_BENCH_HIGHLIGHT (UI-38).
+// Benches of the view's looks and navigation (T2 viewer): OPAD_BENCH_TRANSPARENCY (UI-39), OPAD_BENCH_HIGHLIGHT (UI-38),
+// OPAD_BENCH_NAVIGATE (UI-47).
 // Cases in tools/bench_cases/viewer.py; Qt events stay within the hidden window.
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QImage>
 #include <QKeyEvent>
+#include <QLineF>
+#include <QMenu>
+#include <QMouseEvent>
 #include <QTimer>
 
+#include <AIS_RubberBand.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -364,6 +369,247 @@ OPAD_BENCH(OPAD_BENCH_HIGHLIGHT, highlight) {
       ok = sketchRoles(v, sketch, value) && ok;
     }
     w.applyTheme(true);
+    return ok;
+  });
+  return true;
+}
+
+// (1) The zoom window: Z's mode frames a dragged rectangle (its centre comes to the view's centre, the zoom by its width), a
+// click zooms in twice there, Esc and a right click leave it untouched. (2) Fit, Home, a standard view and the previous
+// view animate from where the camera is to exactly where the instant move goes. (3) Previous and next view walk the views
+// the camera rested at; a new view drops what was ahead. (4) CAD 2D: the middle button pans, Shift+middle too (it orbits
+// in the Fusion preset: the control), nothing orbits. (5) Home set to a front view looks that way, reset it is iso again.
+// (6) A right click on the cube asks for its menu, elsewhere for the context menu. (7) In 2D mode the view twists: a turn,
+// a typed angle, untwisted. <prefix>.zoom-band.png: the rectangle being dragged.
+bool Viewport::benchNavigation(const QString& prefix) {
+  bool all = true;
+  auto require = [&](bool ok, const QString& what) {
+    trace::log(QString("bench: navigate: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    all = all && ok;
+    return ok;
+  };
+  if (!require(m_initialised && !m_items.empty(), "a model is displayed")) return false;
+  auto mouse = [this](QEvent::Type type, const QPointF& at, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+    QMouseEvent e(type, at, mapToGlobal(at), button, buttons, mods);
+    QCoreApplication::sendEvent(this, &e);
+    paintEvent(nullptr);  // a hidden window has no paint cycle: the controller's input is applied here
+  };
+  auto drag = [&](Qt::MouseButton button, const QPointF& from, const QPointF& to, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+    mouse(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton, mods);
+    mouse(QEvent::MouseButtonPress, from, button, button, mods);
+    for (int i = 1; i <= 4; ++i) mouse(QEvent::MouseMove, from + (to - from) * (i / 4.0), Qt::NoButton, button, mods);
+    mouse(QEvent::MouseButtonRelease, to, button, Qt::NoButton, mods);
+  };
+  auto direction = [this] { return m_view->Camera()->Direction(); };
+  myViewAnimation->Stop();
+  m_forceAnimate = false;
+  standardView("iso");
+  fitAll();
+  m_view->Redraw();
+  const QPointF centre(width() / 2.0, height() / 2.0);
+
+  // (1) Zoom window.
+  const ViewState start = viewState();
+  startZoomWindow();
+  require(m_zoomWindow && cursor().shape() == Qt::CrossCursor, "the zoom window waits for a rectangle, cross cursor");
+  const QPointF a(width() * 0.40, height() * 0.38), b(width() * 0.60, height() * 0.52), middle = (a + b) / 2;
+  Standard_Real px = 0, py = 0, pz = 0;
+  m_view->Convert(devicePos(middle).x(), devicePos(middle).y(), px, py, pz);  // the point under the rectangle's centre
+  mouse(QEvent::MouseButtonPress, a, Qt::LeftButton, Qt::LeftButton);
+  mouse(QEvent::MouseMove, b, Qt::NoButton, Qt::LeftButton);
+  require(m_ctx->IsDisplayed(myRubberBand), "the rectangle is drawn while dragging");
+  m_view->Redraw();
+  grabImage().save(prefix + ".zoom-band.png");
+  mouse(QEvent::MouseButtonRelease, b, Qt::LeftButton, Qt::NoButton);
+  const ViewState zoomed = viewState();
+  const QPointF there(widgetPoint({px, py, pz}));
+  require(!m_zoomWindow && !m_ctx->IsDisplayed(myRubberBand) && cursor().shape() != Qt::CrossCursor, "the drag ends it, the rectangle goes");
+  require(std::abs(zoomed.scale / start.scale - 0.2) < 0.03, QString("it zooms by the rectangle's width: %1 of the height before").arg(zoomed.scale / start.scale));
+  require(QLineF(there, centre).length() < 6, QString("what was at the rectangle's centre is at the view's: %1 px off").arg(QLineF(there, centre).length()));
+  startZoomWindow();
+  QKeyEvent escape(QEvent::ShortcutOverride, Qt::Key_Escape, Qt::NoModifier);
+  QCoreApplication::sendEvent(this, &escape);
+  require(!m_zoomWindow && escape.isAccepted() && viewState().same(zoomed), "Esc leaves it at the shortcut stage, the view as it was");
+  int menus = 0;
+  const auto counted = connect(this, &Viewport::contextMenuRequested, this, [&menus] { ++menus; });
+  startZoomWindow();
+  mouse(QEvent::MouseButtonPress, centre, Qt::RightButton, Qt::RightButton);
+  mouse(QEvent::MouseButtonRelease, centre, Qt::RightButton, Qt::NoButton);
+  require(!m_zoomWindow && menus == 0 && viewState().same(zoomed), "a right click leaves it, no context menu");
+  startZoomWindow();
+  mouse(QEvent::MouseButtonPress, centre, Qt::LeftButton, Qt::LeftButton);
+  mouse(QEvent::MouseButtonRelease, centre, Qt::LeftButton, Qt::NoButton);
+  require(std::abs(viewState().scale / zoomed.scale - 0.5) < 0.02, "a click zooms in twice there");
+
+  // (2) Animated moves end exactly where the instant ones go.
+  m_forceAnimate = true;
+  auto animated = [&](const QString& what, const std::function<void(bool)>& move) {
+    const Handle(Graphic3d_Camera) from = new Graphic3d_Camera(*m_view->Camera());
+    const ViewState origin = viewState();
+    move(false);
+    const ViewState instant = viewState();
+    m_view->Camera()->Copy(from);
+    move(true);
+    const bool running = !myViewAnimation->IsStopped(), startsHere = viewState().same(origin);
+    myViewAnimation->Update(0.12);
+    const ViewState partway = viewState();
+    myViewAnimation->Update(10.0);
+    myViewAnimation->Stop();
+    require(running && startsHere && !partway.same(origin) && !partway.same(instant) && viewState().same(instant),
+            QString("%1 animates, partway at 0.12 s, and ends where the instant move goes").arg(what));
+  };
+  standardView("iso");
+  animated("a front view", [this](bool on) { standardView("front", on); });
+  animated("Home", [this](bool on) { home(on); });
+  m_view->Camera()->SetScale(m_view->Camera()->Scale() / 6);
+  animated("Fit all", [this](bool on) { fitAll(on); });
+  m_forceAnimate = false;
+
+  // (3) Previous and next view.
+  m_history.clear();
+  standardView("top");
+  settleView();
+  const ViewState top = viewState();
+  standardView("front");
+  settleView();
+  const ViewState front = viewState();
+  standardView("right");
+  const ViewState right = viewState();  // not rested: Previous records it first
+  require(previousView() && viewState().same(front), "Previous goes back to the front view, the right one recorded");
+  require(previousView() && viewState().same(top), "and to the top view");
+  require(!previousView() && viewState().same(top), "nothing before the first");
+  require(nextView() && viewState().same(front) && nextView() && viewState().same(right) && !nextView(), "Next walks forward to the last");
+  require(previousView() && viewState().same(front), "back once more");
+  standardView("iso");
+  settleView();
+  require(!nextView() && m_history.size() == 3, "a new view drops what was ahead");
+  require(previousView() && viewState().same(front), "and goes back to where it left");
+
+  // (4) The CAD 2D preset: no orbit on any button.
+  const NavPreset preset = m_preset;
+  standardView("iso");
+  fitAll();
+  setNavPreset(NavPreset::Fusion);
+  gp_Dir d0 = direction();
+  drag(Qt::MiddleButton, centre, centre + QPointF(60, 30), Qt::ShiftModifier);
+  require(!direction().IsParallel(d0, 1e-3), "Fusion: Shift+middle orbits (the control)");
+  standardView("iso");
+  fitAll();
+  setNavPreset(NavPreset::Cad2D);
+  bool orbits = false;
+  for (AIS_MouseGestureMap::Iterator it(ChangeMouseGestureMap()); it.More(); it.Next())
+    orbits = orbits || it.Value() == AIS_MouseGesture_RotateOrbit || it.Value() == AIS_MouseGesture_RotateView;
+  require(!orbits && ChangeMouseGestureMap().Find(Aspect_VKeyMouse_MiddleButton) == AIS_MouseGesture_Pan, "CAD 2D binds no orbit, the middle button pans");
+  d0 = direction();
+  const gp_Pnt c0 = m_view->Camera()->Center();
+  drag(Qt::MiddleButton, centre, centre + QPointF(60, 30));
+  const gp_Pnt c1 = m_view->Camera()->Center();
+  drag(Qt::MiddleButton, centre, centre + QPointF(60, 30), Qt::ShiftModifier);
+  require(direction().IsParallel(d0, 1e-9) && c0.Distance(c1) > pixelSize() * 20, "CAD 2D: a middle drag pans, Shift+middle does not orbit");
+  setNavPreset(preset);
+
+  // (5) Home: set to a front view, then reset.
+  standardView("front");
+  const gp_Dir frontDirection = direction();
+  setHomeView();
+  standardView("top");
+  home();
+  require(customHome() && direction().IsEqual(frontDirection, 1e-9), "Home set to the front view looks that way");
+  resetHomeView();
+  home();
+  require(!customHome() && direction().IsEqual(gp_Dir(-1, 1, -1), 1e-9), "reset, Home is the iso view again");
+
+  // (6) The cube's menu: which menu a right click asks for (signals held: the window's context menu is modal).
+  {
+    const QSignalBlocker held(this);
+    m_view->Redraw();
+    mouse(QEvent::MouseButtonPress, cubeCentre(), Qt::RightButton, Qt::RightButton);
+    const bool onCube = m_cubeMenu;
+    mouse(QEvent::MouseButtonRelease, cubeCentre(), Qt::RightButton, Qt::NoButton);
+    mouse(QEvent::MouseButtonPress, QPointF(8, height() - 8), Qt::RightButton, Qt::RightButton);
+    const bool elsewhere = m_cubeMenu;
+    mouse(QEvent::MouseButtonRelease, QPointF(8, height() - 8), Qt::RightButton, Qt::NoButton);
+    require(onCube && !elsewhere && !m_cubeMenu, "a right click on the cube asks for the cube's menu, elsewhere for the context menu");
+  }
+  disconnect(counted);
+
+  // (7) The 2D twist.
+  setTwoDimensional(true);
+  const gp_Dir flat = direction();
+  require(std::abs(twistAngle()) < 1e-6, "2D mode starts untwisted");
+  rollView(90);
+  require(std::abs(twistAngle() - 90) < 1e-6 && direction().IsEqual(flat, 1e-9), QString("a turn twists the 2D view: %1°").arg(twistAngle()));
+  twistView(30);
+  require(std::abs(twistAngle() - 30) < 1e-6 && direction().IsEqual(flat, 1e-9), QString("a typed twist: %1°").arg(twistAngle()));
+  twistView(0);
+  require(std::abs(twistAngle()) < 1e-6 && m_view->Camera()->Up().IsEqual(naturalUp(), 1e-9), "untwisted, the plan's Y is up again");
+  setTwoDimensional(false);
+  standardView("iso");
+  fitAll();
+  return all;
+}
+
+// The viewport's part, then the window's: Z through its command and Esc, a middle double click fitting everything through
+// Fit all, the CAD 2D preset chosen and given up from the menu (saved), the cube's menu, the turn buttons twisting in 2D.
+OPAD_BENCH(OPAD_BENCH_NAVIGATE, navigate) {
+  Viewport* v = w.m_viewport;
+  whenDisplayed(&w, v, [&w, v, value] {
+    bool ok = v->benchNavigation(value);
+    auto require = [&ok](bool pass, const QString& what) {
+      trace::log(QString("bench: navigate: %1 %2").arg(what, pass ? "PASS" : "FAIL"));
+      ok = ok && pass;
+    };
+    QAction* zoom = w.action("view.zoomWindow");
+    zoom->trigger();
+    const bool started = v->zoomWindowActive() && zoom->isChecked();
+    QKeyEvent escape(QEvent::ShortcutOverride, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(w.m_viewport, &escape);
+    require(started && !v->zoomWindowActive() && !zoom->isChecked(), "Zoom window (Z) starts the mode, its button pressed until Esc");
+    // A middle double click: Fit all.
+    v->fitAll();
+    const opad::json fitted = v->cameraJson();
+    opad::json closer = fitted;
+    closer["scale"] = fitted["scale"].get<double>() / 5;
+    v->setCameraJson(closer);
+    const QPointF centre(v->width() / 2.0, v->height() / 2.0);
+    QMouseEvent twice(QEvent::MouseButtonDblClick, centre, v->mapToGlobal(centre), Qt::MiddleButton, Qt::MiddleButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(v, &twice);
+    require(std::abs(v->cameraJson()["scale"].get<double>() / fitted["scale"].get<double>() - 1) < 1e-6, "a middle double click fits everything");
+    // CAD 2D from the menu, saved; another preset unticks it.
+    w.action("nav.cad2d")->trigger();
+    require(v->navPreset() == Viewport::NavPreset::Cad2D && w.m_settings.value("ui/nav").toString() == "CAD2D" && w.action("nav.cad2d")->isChecked() &&
+                !w.action("nav.fusion")->isChecked(), "Navigation: CAD 2D is chosen and saved");
+    w.action("nav.fusion")->trigger();
+    require(v->navPreset() == Viewport::NavPreset::Fusion && !w.action("nav.cad2d")->isChecked() && w.m_settings.value("ui/nav").toString() == "Fusion",
+            "another preset unticks it");
+    // Animate view changes, a setting.
+    w.action("view.animate")->trigger();
+    const bool off = !v->animateViews() && !w.m_settings.value("view/animate").toBool();
+    w.action("view.animate")->trigger();
+    require(off && v->animateViews() && w.m_settings.value("view/animate").toBool(), "Animate view changes turns off and on, saved");
+    // The cube's menu.
+    const QPointF cube = v->cubeCentre();
+    v->grabImage();
+    QMouseEvent press(QEvent::MouseButtonPress, cube, v->mapToGlobal(cube), Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(v, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, cube, v->mapToGlobal(cube), Qt::RightButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(v, &release);
+    QMenu* menu = w.findChild<QMenu*>("cubeMenu");
+    QStringList ids;
+    if (menu)
+      for (QAction* a : menu->actions()) ids << a->objectName();
+    require(menu && ids.contains("view.home") && ids.contains("view.setHome") && ids.contains("view.resetHome") && ids.contains("view.top") &&
+                ids.contains("view.previous") && ids.contains("view.ortho") && !w.action("view.resetHome")->isEnabled(),
+            QString("the cube's menu: %1 (Reset Home off: Home is the default)").arg(ids.join(' ')));
+    if (menu) menu->close();
+    // The turn buttons twist the 2D view.
+    w.action("view.2d")->setChecked(true);
+    require(!w.m_rollLeft->isHidden() && !w.m_rollRight->isHidden(), "the turn buttons stay in 2D mode");
+    w.action("view.rollleft")->trigger();
+    require(std::abs(v->twistAngle() - 90) < 1e-6, "Turn 90° left twists the 2D view");
+    w.action("view.untwist")->trigger();
+    require(std::abs(v->twistAngle()) < 1e-6, "Untwist view");
+    w.action("view.2d")->setChecked(false);
     return ok;
   });
   return true;

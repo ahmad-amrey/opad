@@ -154,4 +154,10 @@ CASES = [
     # vertex are hued, the cube's side in a top view is drawn as selected and its hover is white; in a sketch a selected
     # line is hued over a halo and a hovered one glows white. <prefix>.<theme>.{hover,body,outline,edge,cube,sketch}.png.
     ("highlight", colour_boxes, {"OPAD_BENCH_HIGHLIGHT": "{prefix}"}),
+    # Navigation staples (UI-47): the zoom window (a dragged rectangle comes to the centre at its width's zoom, a click
+    # zooms in twice, Esc and a right click leave it), animated standard views, Home and Fit all ending where the instant
+    # moves go, previous and next view, the CAD 2D preset (no orbit on any button, against Fusion's Shift+middle), Home set
+    # to a view and reset, the cube's menu, the 2D twist; then through the window: Z and Esc, a middle double click fitting
+    # everything, CAD 2D chosen from the menu and saved, the turn buttons twisting in 2D. <prefix>.zoom-band.png.
+    ("navigate", colour_boxes, {"OPAD_BENCH_NAVIGATE": "{prefix}"}),
 ]

@@ -15,5 +15,22 @@
  "Clearing the view": "تفريغ العرض",
  "Working in the background:": "يجري العمل في الخلفية:",
  "Still loading: “%1” runs once every body is shown": "ما زال التحميل جارياً: يُنفَّذ “%1” بعد عرض كل الأجسام",
- "Parsing %1": "تحليل %1"
+ "Parsing %1": "تحليل %1",
+ "Zoom window": "تكبير نافذة",
+ "Previous view": "المنظر السابق",
+ "Next view": "المنظر التالي",
+ "Set current view as Home": "تعيين المنظر الحالي كمنظر رئيسي",
+ "Reset Home to the iso view": "إعادة المنظر الرئيسي إلى المنظر المتساوي القياس",
+ "Twist view…": "لفّ المنظر…",
+ "Untwist view": "إلغاء لفّ المنظر",
+ "Navigation: CAD 2D": "التنقل: CAD ثنائي الأبعاد",
+ "Twist view": "لفّ المنظر",
+ "Turn the view about its axis (counter-clockwise; 0 untwists):": "أدر المنظر حول محوره (عكس عقارب الساعة؛ 0 يلغي اللف):",
+ "Not an angle: %1": "ليست زاوية: %1",
+ "Zoom window: drag around what to see, or click to zoom in there · Esc cancels": "تكبير نافذة: اسحب حول ما تريد رؤيته، أو انقر للتكبير هناك · Esc للإلغاء",
+ "No earlier view": "لا يوجد منظر سابق",
+ "No later view": "لا يوجد منظر لاحق",
+ "Home looks this way now": "المنظر الرئيسي يتجه هكذا الآن",
+ "Home is the iso view again": "المنظر الرئيسي هو المنظر المتساوي القياس من جديد",
+ "Animate view changes": "تحريك تغييرات المنظر"
 }

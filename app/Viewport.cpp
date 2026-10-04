@@ -142,6 +142,11 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   m_syncTimer.setSingleShot(true);
   m_syncTimer.setInterval(50);
   connect(&m_syncTimer, &QTimer::timeout, this, &Viewport::sync);
+  m_settleTimer.setSingleShot(true);
+  m_settleTimer.setInterval(500);
+  connect(&m_settleTimer, &QTimer::timeout, this, &Viewport::settleView);
+  connect(doc, &AppDocument::aboutToReplace, this, [this] { m_history.clear(); });  // its views were of that document
+  m_animateViews = settings.value("view/animate", true).toBool();
   m_refineTimer.setSingleShot(true);
   m_refineTimer.setInterval(350);
   connect(&m_refineTimer, &QTimer::timeout, this, &Viewport::refineVisible);
@@ -485,10 +490,15 @@ void Viewport::setNavPreset(NavPreset p) {
       map.Bind(M | SHIFT, AIS_MouseGesture_Pan);
       map.Bind(M | CTRL, AIS_MouseGesture_Zoom);
       break;
+    case NavPreset::Cad2D:  // drafting: the middle button pans, the wheel (or Ctrl+middle) zooms, nothing orbits
+      map.Bind(M, AIS_MouseGesture_Pan);
+      map.Bind(M | SHIFT, AIS_MouseGesture_Pan);
+      map.Bind(M | CTRL, AIS_MouseGesture_Zoom);
+      break;
   }
   // Meta is reserved for synthetic trackpad drags; qt_flags() does not pass it from physical mouse events.
   map.Bind(M | Aspect_VKeyFlags_META, AIS_MouseGesture_Pan);
-  map.Bind(M | Aspect_VKeyFlags_META | SHIFT, AIS_MouseGesture_RotateOrbit);
+  map.Bind(M | Aspect_VKeyFlags_META | SHIFT, p == NavPreset::Cad2D ? AIS_MouseGesture_Pan : AIS_MouseGesture_RotateOrbit);
   if (m_twoDimensional)
     for (AIS_MouseGestureMap::Iterator it(map); it.More(); it.Next())
       if (it.Value() == AIS_MouseGesture_RotateOrbit || it.Value() == AIS_MouseGesture_RotateView)
@@ -499,12 +509,13 @@ bool Viewport::orbitGesture(unsigned gesture) const {
   const unsigned L = Aspect_VKeyMouse_LeftButton, M = Aspect_VKeyMouse_MiddleButton, R = Aspect_VKeyMouse_RightButton;
   const unsigned SHIFT = Aspect_VKeyFlags_SHIFT;
   (void)L;
-  if (gesture == (M | Aspect_VKeyFlags_META | SHIFT)) return true;  // Shift + two-finger drag
+  if (gesture == (M | Aspect_VKeyFlags_META | SHIFT)) return m_preset != NavPreset::Cad2D;  // Shift + two-finger drag
   switch (m_preset) {
     case NavPreset::Fusion: return gesture == (M | SHIFT);
     case NavPreset::SolidWorks: return gesture == M;
     case NavPreset::Onshape: return gesture == R;
     case NavPreset::Blender: return gesture == M;
+    case NavPreset::Cad2D: return false;
   }
   return false;
 }
@@ -1091,6 +1102,10 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   trackHoverFade();
   if (m_twoDimensional) updateInfiniteGrid(false);
   updateCubeSide();
+  if (const auto camera = m_view->Camera()->WorldViewProjState(); camera != m_settleCamera) {  // moved: recorded once it rests
+    m_settleCamera = camera;
+    m_settleTimer.start();
+  }
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }
@@ -1205,15 +1220,15 @@ Bnd_Box Viewport::fitBounds(bool fallback) const {
   return bounds;
 }
 
-void Viewport::fitAll() {
+void Viewport::fitAll(bool animate) {
   if (!m_initialised) return;
-  m_view->FitAll(fitBounds(), 0.02, Standard_False);
-  // A flat wire can make OCCT put an orthographic eye exactly on its target.
-  // Keep a usable picking ray without changing the fitted on-screen scale.
-  const auto camera=m_view->Camera();
-  if(camera->IsOrthographic() && camera->Distance()<1.0){camera->SetDistance(std::max(1.0,camera->Scale()));m_view->ZFitAll();}
-  m_view->Invalidate();
-  requestRedraw();
+  moveCamera(animate, 0.35, [this] {
+    m_view->FitAll(fitBounds(), 0.02, Standard_False);
+    // A flat wire can make OCCT put an orthographic eye exactly on its target.
+    // Keep a usable picking ray without changing the fitted on-screen scale.
+    const auto camera=m_view->Camera();
+    if(camera->IsOrthographic() && camera->Distance()<1.0){camera->SetDistance(std::max(1.0,camera->Scale()));m_view->ZFitAll();}
+  });
 }
 
 void Viewport::fitWhenReady() {
@@ -1260,7 +1275,7 @@ void Viewport::fitNodes(const std::vector<std::string>& ids) {
   requestRedraw();
 }
 
-void Viewport::fitSelection() {
+void Viewport::fitSelection(bool animate) {
   if (!m_initialised) return;
   m_needFit = false;
   Bnd_Box box;
@@ -1278,13 +1293,11 @@ void Viewport::fitSelection() {
     else if (it != m_nodeOf.end()) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, it->second));
   }
   if (trace::enabled()) { double a = 0, b = 0, c = 0, d = 0, e = 0, f = 0; if (!box.IsVoid()) box.Get(a, b, c, d, e, f); trace::log(QStringLiteral("fitSelection: box void=%1 [%2 %3 %4]-[%5 %6 %7]").arg(box.IsVoid()).arg(a).arg(b).arg(c).arg(d).arg(e).arg(f)); }
-  if (box.IsVoid()) return fitAll();
-  m_view->FitAll(box, 0.02, Standard_False);
-  m_view->Invalidate();
-  requestRedraw();
+  if (box.IsVoid()) return fitAll(animate);
+  moveCamera(animate, 0.35, [this, &box] { m_view->FitAll(box, 0.02, Standard_False); });
 }
 
-void Viewport::standardView(const QString& name) {
+void Viewport::standardView(const QString& name, bool animate) {
   if (m_twoDimensional && name.startsWith("iso")) return;
   if (!m_initialised) return;
   m_needFit = false;
@@ -1298,20 +1311,31 @@ void Viewport::standardView(const QString& name) {
   else if (name == "right") o = V3d_Xpos;
   else if (name == "left") o = V3d_Xneg;
   else if (name == "iso-back") o = V3d_XnegYposZpos;
-  m_view->SetProj(o);
-  fitAll();
+  moveCamera(animate, 0.4, [this, o] {
+    m_view->SetProj(o);
+    fitAll();
+  });
 }
 
-void Viewport::home() {
+void Viewport::home(bool animate) {
   if(!m_initialised) return;
   myViewAnimation->Stop();m_needFit=false;
-  if(!m_twoDimensional) m_view->SetProj(V3d_XposYnegZpos);
-  const Bnd_Box bounds=fitBounds();
-  const gp_Pnt center((bounds.CornerMin().XYZ()+bounds.CornerMax().XYZ())*.5);
-  const auto camera=m_view->Camera();const gp_Vec shift(camera->Center(),center);
-  camera->SetEyeAndCenter(camera->Eye().Translated(shift),center);
-  m_view->FitAll(bounds,0.02,Standard_False);
-  m_view->Invalidate();requestRedraw();
+  moveCamera(animate,0.4,[this] {
+    // The orientation Home was set to (setHomeView, UI-47), else the iso view; 2D mode keeps its plane.
+    if(!m_twoDimensional) {
+      const QStringList eye=QSettings().value("view/homeEye").toString().split(','),up=QSettings().value("view/homeUp").toString().split(',');
+      gp_Vec e,u;bool custom=eye.size()==3 && up.size()==3;
+      if(custom) {e=gp_Vec(eye[0].toDouble(),eye[1].toDouble(),eye[2].toDouble());u=gp_Vec(up[0].toDouble(),up[1].toDouble(),up[2].toDouble());}
+      custom=custom && e.Magnitude()>1e-9 && u.Magnitude()>1e-9 && e.CrossMagnitude(u)>1e-6*e.Magnitude()*u.Magnitude();
+      if(custom) {m_view->SetProj(e.X(),e.Y(),e.Z());m_view->SetUp(u.X(),u.Y(),u.Z());}
+      else m_view->SetProj(V3d_XposYnegZpos);
+    }
+    const Bnd_Box bounds=fitBounds();
+    const gp_Pnt center((bounds.CornerMin().XYZ()+bounds.CornerMax().XYZ())*.5);
+    const auto camera=m_view->Camera();const gp_Vec shift(camera->Center(),center);
+    camera->SetEyeAndCenter(camera->Eye().Translated(shift),center);
+    m_view->FitAll(bounds,0.02,Standard_False);
+  });
 }
 void Viewport::configureGrid(double spacing,double extent) {
   QSettings().setValue("view/gridSpacing",m_gridSpacing=std::max(0.0,spacing));QSettings().setValue("view/gridExtent",m_gridExtentSetting=std::max(1.0,extent));
@@ -1319,19 +1343,15 @@ void Viewport::configureGrid(double spacing,double extent) {
 }
 
 void Viewport::rollView(double degrees) {
-  if (!m_initialised || m_twoDimensional) return;
+  if (!m_initialised) return;
+  finishAnimation();  // a turn while one runs adds to where that one ends
   m_needFit = false;
   Handle(Graphic3d_Camera) cam = m_view->Camera();
-  Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*cam), end = new Graphic3d_Camera(*cam);
+  Handle(Graphic3d_Camera) end = new Graphic3d_Camera(*cam);
   gp_Dir up = cam->Up();
   up.Rotate(gp_Ax1(gp::Origin(), cam->Direction()), degrees * M_PI / 180.0);  // about the axis into the screen
   end->SetUp(up);
-  myViewAnimation->SetView(m_view);
-  myViewAnimation->SetCameraStart(start);
-  myViewAnimation->SetCameraEnd(end);
-  myViewAnimation->SetOwnDuration(0.25);
-  myViewAnimation->StartTimer(0.0, 1.0, Standard_True);  // the 16 ms timer redraws while it runs
-  requestRedraw();
+  animateCamera(end, 0.25);  // the 16 ms timer redraws while it runs
 }
 
 opad::json Viewport::cameraJson() const {
@@ -2282,6 +2302,10 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   m_pressPos = (e->position()+m_dragOffset).toPoint();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
+  // The zoom window takes the left drag (UI-47); a right click leaves it.
+  if (m_zoomWindow && e->button() == Qt::LeftButton) { m_zoomDrag = true; m_zoomFrom = m_zoomTo = e->position(); return; }
+  if (m_zoomWindow && e->button() == Qt::RightButton) { m_rightPress = false; cancelZoomWindow(); return; }
+  m_cubeMenu = m_rightPress && cubeAt(e->position());  // a right click on the cube opens its menu
   if (sectionMousePress(e)) return;  // a press on the section plane's handle strip starts a drag, never a selection
   // A press can arrive without a preceding hover. Refresh only near the cube (or when the old hover was
   // the cube) so the gesture below uses this press's owner without an extra scene pick on every model click.
@@ -2352,6 +2376,12 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (m_zoomDrag && e->button() == Qt::LeftButton) {
+    m_zoomDrag = false;
+    m_zoomTo = e->position();
+    finishZoomWindow();
+    return;
+  }
   if (sectionMouseRelease(e)) return;
   if (!m_snapClick.empty() && e->button()==Qt::LeftButton) {
     const auto key=m_snapClick;
@@ -2393,7 +2423,8 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   }
   if (m_rightPress && e->button() == Qt::RightButton && (e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;
-    emit contextMenuRequested(e->globalPosition().toPoint());
+    if (std::exchange(m_cubeMenu, false)) emit cubeMenuRequested(e->globalPosition().toPoint());
+    else emit contextMenuRequested(e->globalPosition().toPoint());
   }
   if (e->buttons() == Qt::NoButton) { m_dragOffset = {}; m_warpGate.pending=false; }
 }
@@ -2437,6 +2468,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   m_trackingCursor = e->position();
   m_trackingDirty = true;
   if (m_blocked) return;
+  if (m_zoomDrag) { m_zoomTo = e->position(); showZoomBand(); return; }
   if (m_trackpadMode != TrackpadMode::None && e->buttons() == Qt::NoButton) finishTrackpadScroll();
   if (m_measureAnchorPress) return;
   if (sectionMouseMove(e)) return;  // dragging the section plane
@@ -2509,7 +2541,7 @@ void Viewport::wheelEvent(QWheelEvent* e) {
 
 void Viewport::trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit) {
   if (orbit && m_twoDimensional) twoDimensionalHint(mapToGlobal(position).toPoint());
-  orbit = orbit && !m_twoDimensional;
+  orbit = orbit && !m_twoDimensional && m_preset != NavPreset::Cad2D;
   if (delta.isNull()) return;
   const TrackpadMode mode = orbit ? TrackpadMode::Orbit : TrackpadMode::Pan;
   if (mode != m_trackpadMode) {

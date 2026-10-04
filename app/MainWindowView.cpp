@@ -27,9 +27,9 @@
 #include "Units.hpp"
 
 void MainWindow::buildViewActions() {
-  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
-  addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(); });
-  addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
+  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitSelection(true); });  // the selection, or everything when nothing is selected
+  addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(true); });
+  addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(true); });
   addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Shift+A"),[this] {
     if(m_design->sketchActive()) {m_viewport->lookAt(m_design->sketch()->frame(),false,false);return;}
     cancelTool();
@@ -38,7 +38,7 @@ void MainWindow::buildViewActions() {
   addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence("Alt+Left"), [this] { m_viewport->rollView(90); });
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence("Alt+Right"), [this] { m_viewport->rollView(-90); });
   for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Shift+Up"}, {"front", "Shift+PgUp"}, {"right", "Shift+Right"}, {"iso", "Shift+H"}, {"bottom", "Shift+Down"}, {"back", "Shift+PgDown"}, {"left", "Shift+Left"}})
-    addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
+    addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n, true); });
   auto* flat = addAction("view.2d",tr("2D mode"),"drawing",QKeySequence("Shift+2"),[this]{},true);
   flat->setObjectName("view.2d");
   flat->setCheckable(true);
@@ -47,7 +47,7 @@ void MainWindow::buildViewActions() {
     m_viewport->setTwoDimensional(on);
 
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
-    m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on); m_alignPlane->setVisible(!on);
+    m_homeBtn->setVisible(!on); m_alignPlane->setVisible(!on);  // the turn buttons stay: in 2D they twist the view (UI-47)
     updateChips();
   });
   QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("Shift+3"), [this] {}, true);

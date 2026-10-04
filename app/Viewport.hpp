@@ -37,6 +37,7 @@
 #include "BodyShape.hpp"
 #include "Theme.hpp"
 #include "Tracking.hpp"
+#include "ViewNav.hpp"
 
 class JobRunner;
 class Job;
@@ -59,7 +60,8 @@ class SketchInput {
 class Viewport : public QWidget, protected AIS_ViewController {
   Q_OBJECT
  public:
-  enum class NavPreset { Fusion, SolidWorks, Onshape, Blender };
+  // Cad2D (UI-47): pan on the middle button, zoom on the wheel, no orbit (drafting, named after no product).
+  enum class NavPreset { Fusion, SolidWorks, Onshape, Blender, Cad2D };
   enum class Style { Shaded, ShadedEdges, Wireframe };
   enum class SelFilter { Body, Face, Edge, Vertex };
 
@@ -97,7 +99,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setSelectionFilter(SelFilter f);
   SelFilter selectionFilter() const { return m_filter; }
 
-  void fitAll();
+  // Fit, Home and the standard views move the camera at once, or (animate, the commands) in a short animation on screen.
+  void fitAll(bool animate = false);
   void requestRefinement() { m_refineTimer.start(); }  // zoom refinement without waiting for a frame (benches)
   bool benchLeave();  // OPAD_BENCH_LEAVE: hover a body, leave the view, nothing may stay highlighted
   void fitWhenReady();   // fit now if bodies are displayed, otherwise once the first meshes arrive
@@ -116,11 +119,24 @@ class Viewport : public QWidget, protected AIS_ViewController {
   int partialSyncCount() const { return m_partialSyncs; }  // syncs of the bodies under the nodes a change touched (UI-40)
   qint64 syncMs() const { return m_syncMs; }  // the time of both, and the UI thread's CPU time in them
   qint64 syncCpuMs() const { return m_syncCpuMs; }
-  void fitSelection();
+  void fitSelection(bool animate = false);
   void fitNodes(const std::vector<std::string>& ids);
-  void standardView(const QString& name);
-  void home();
-  void rollView(double degrees);  // animated turn about the view axis; positive = counter-clockwise on screen
+  void standardView(const QString& name, bool animate = false);
+  void home(bool animate = false);
+  void rollView(double degrees);  // animated turn about the view axis; positive = counter-clockwise on screen; 2D too (twist)
+  // Navigation staples (UI-47, ViewportNavigation.cpp).
+  void startZoomWindow();  // the next left drag frames what to zoom into (a click zooms in twice there); Esc, right click cancel
+  void cancelZoomWindow();
+  bool zoomWindowActive() const { return m_zoomWindow; }
+  bool previousView();  // the view the camera rested at before this one (ViewNav.hpp); false: none
+  bool nextView();
+  void setHomeView();    // Home looks the way the view looks now (direction and up; it still fits), in every document
+  void resetHomeView();  // Home is the iso view again
+  bool customHome() const;
+  void twistView(double degrees);  // the view turned this far about its axis from untwisted (2D view twist), animated
+  double twistAngle() const;       // how far it is turned now, degrees
+  void setAnimateViews(bool on);   // setting view/animate (default on)
+  bool animateViews() const { return m_animateViews; }
 
   void warmUp();  // create the OpenGL viewer now rather than on first paint
   void setBlocked(bool on);  // while a file loads: mouse input is ignored (the shade window covers the view)
@@ -143,6 +159,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
   // displayed last, in the rasterised qualities (UI-39)
   bool benchTransparency(const QString& prefix);
+  // OPAD_BENCH_NAVIGATE (ViewportViewBench.cpp): zoom window, previous and next view, the CAD 2D preset, animated standard
+  // views, fit and Home, a custom Home, the cube's menu and the 2D twist (UI-47)
+  bool benchNavigation(const QString& prefix);
   // OPAD_BENCH_HIGHLIGHT (ViewportViewBench.cpp): hover and selection roles in the current theme (UI-38): a body, its
   // face, edge and vertex hovered (white) and selected (hued, edges thicker in a halo), a body in the selection's own
   // colour outlined, the view cube's side in a standard view and its hover
@@ -310,6 +329,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
   void sectionDragged(const opad::Vec3& origin);  // the section plane's handle was dragged here
   void looksApplied();  // a setLookLayer (or a scene change under one) has reached every displayed body
+  void zoomWindowChanged(bool active);
+  void fitRequested();  // a double click of the middle button: the window fits everything (its Fit all)
+  void cubeMenuRequested(const QPoint& globalPos);  // a right click on the view cube
 
  public slots:
   void sync();
@@ -668,4 +690,22 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_cubeClick = false;       // the current left press is on the view cube: its click is not a selection change
   bool m_pickAccumulate = false;  // guided tools: left click toggles (XOR)
   bool m_cubeGesture = false;  // this left press started on the view cube: dragging orbits instead of rubber-banding
+  // navigation (ViewportNavigation.cpp, UI-47)
+  bool m_zoomWindow = false, m_zoomDrag = false, m_cubeMenu = false, m_animateViews = true, m_forceAnimate = false;
+  QPointF m_zoomFrom, m_zoomTo;
+  void showZoomBand();
+  void finishZoomWindow();
+  ViewHistory m_history;
+  QTimer m_settleTimer;  // the camera has rested: settleView
+  Graphic3d_WorldViewProjState m_settleCamera;
+  void settleView();
+  ViewState viewState() const;
+  void goTo(const ViewState& state);
+  bool animationsShown() const;  // only on screen: a hidden window (benches) has no frames to run them, moves at once
+  // `move` changes the camera at once; animated, the camera is put back and animated to where it led.
+  void moveCamera(bool animate, double seconds, const std::function<void()>& move);
+  void animateCamera(const Handle(Graphic3d_Camera)& end, double seconds);
+  void finishAnimation();  // a running camera animation jumps to its end
+  gp_Dir naturalUp() const;
+  bool zoomWindowKey(QObject* object, QEvent* e);  // Esc leaves the zoom window before anything else sees it
 };

@@ -103,7 +103,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     const bool viewing = drawing && m_doc->browse;
     if (viewing && !action("view.2d")->isChecked()) setAutoTwoD(true);
   });
-  connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
+  connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, [this] { m_viewport->home(); });
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
   connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
   connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] {  // a card left from a viewed file: gone, no silent no-op
