@@ -45,8 +45,9 @@ constexpr int kRecentRole = Qt::UserRole + 1;
 
 // 0 when the query's letters are not all in the text in order. The query as typed from the start of a word comes above any
 // scattered match (an Arabic label that keeps a Latin name, "ODA File Converter", must not beat Fit's keyword "fit"
-// with f-i from File and the t of Converter), then runs of letters and word starts score more.
-constexpr int kWordHit = 1000;
+// with f-i from File and the t of Converter); among those the whole text ("Fit" for fit) comes first, then a whole word
+// ("Fit sheet"), then the start of a word ("Fitting"); then runs of letters and word starts score more.
+constexpr int kWordHit = 1000, kWholeWord = 100, kWholeText = 200;
 int fuzzyScore(const QString& text, const QString& query, QList<int>* positions) {
   if (query.isEmpty()) return 1;
   int score = 0, qi = 0, last = -2;
@@ -61,7 +62,13 @@ int fuzzyScore(const QString& text, const QString& query, QList<int>* positions)
     }
   }
   if (qi != lq.size()) return 0;
-  return score + (lt.startsWith(lq) || lt.contains(' ' + lq) ? kWordHit : 0);
+  int best = 0;  // the best place the query starts a word at
+  for (qsizetype at = lt.indexOf(lq); at >= 0; at = lt.indexOf(lq, at + 1)) {
+    if (at > 0 && lt[at - 1] != ' ') continue;
+    const qsizetype end = at + lq.size();
+    best = std::max(best, lq.size() == lt.size() ? kWordHit + kWholeText : end == lt.size() || !lt[end].isLetterOrNumber() ? kWordHit + kWholeWord : kWordHit);
+  }
+  return score + best;
 }
 
 // Laid out left to right and mirrored for right-to-left languages: icon, name, summary (or what a command not available

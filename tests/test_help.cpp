@@ -23,6 +23,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMouseEvent>
@@ -1068,6 +1069,24 @@ TEST(tool_guide_follows_the_command) {
   const int last = int(clips::steps("inspect.distance").size()) - 1;
   CHECK(steps.guide()->view()->range() == qMakePair(last, last));
   QSettings().remove("help");
+}
+
+// The palette ranks the query as a whole name first, then as a whole word, then as the start of a word, all above letters
+// scattered through a name (an Arabic label that keeps a Latin name, "ODA File Converter", never wins "fit").
+TEST(palette_ranks_whole_words_first) {
+  help::load("en");
+  QSettings().remove("palette/recent");
+  QAction oda(QString::fromUtf8("استخدام ODA File Converter")), fitting("Fitting"), sheet("Fit sheet"), fit("Fit");
+  oda.setObjectName("x.oda");
+  fitting.setObjectName("x.fitting");
+  sheet.setObjectName("x.sheet");
+  fit.setObjectName("x.fit");
+  CommandPalette palette({&oda, &fitting, &sheet, &fit});
+  palette.findChild<QLineEdit*>("paletteInput")->setText("fit");
+  auto* list = palette.findChild<QListWidget*>("paletteList");
+  QStringList order;
+  for (int i = 0; i < list->count(); ++i) order << static_cast<QAction*>(list->item(i)->data(Qt::UserRole).value<void*>())->objectName();
+  CHECK_EQ(order, QStringList({"x.fit", "x.sheet", "x.fitting", "x.oda"}));
 }
 
 // Commands are listed by area (the palette's group column, the reference's headings), every area named once.
