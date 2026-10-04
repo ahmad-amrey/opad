@@ -342,10 +342,11 @@ void DiskSync::overwrite() {
 // ---------------------------------------------------------------- bench
 // OPAD_BENCH_EXTERNAL_CHANGE=<prefix> (with --bench-select on a saved document with bodies; OPAD_BENCH_CLI or the
 // opad-cli beside the app): opad-cli appends while the document is open and clean (it comes in), then while it has
-// unsaved changes (merge banner; an agent's save refused for good, Save until the file is read; Merge), a conflicting change (yours win), a reset (replaced banner,
-// Reload), a reset over unsaved changes (Overwrite asks, Cancel, Overwrite), git conflict markers (unreadable, Save
-// refused, Overwrite), a deleted file (Save writes it again), a touched file (Save waits for the read, then goes ahead)
-// and the app's own saves (never read back).
+// unsaved changes (merge banner; an agent's save refused for good, Save until the file is read; Merge), a conflicting
+// change (yours win), a delete of what is edited here (said apart: it stays deleted), a reset (replaced banner, Reload),
+// a reset over unsaved changes (Overwrite asks, Cancel, the same by keys, Overwrite on a worker), git conflict markers
+// (unreadable, Save refused, Overwrite), a deleted file (Save writes it again), a touched file (Save waits for the read,
+// then goes ahead) and the app's own saves (never read back).
 // Banner pictures at <prefix>.<state>.png.
 bool DiskSync::bench() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_EXTERNAL_CHANGE");
@@ -512,7 +513,7 @@ bool DiskSync::bench() {
         require(m_banner->state() == "replaced" && stamp() == st->stamp, "cancel keeps both");
         {  // the keyboard: Tab reaches the choices, Enter presses one, the confirmation takes the focus to Cancel and Esc is Cancel
           QPushButton* over = m_banner->button("diskOverwrite");
-          require(over->focusPolicy() == Qt::TabFocus && over->autoDefault(), "keyboard: Tab reaches the banner's buttons, Enter presses them");
+          require(over->focusPolicy() == Qt::TabFocus, "keyboard: Tab reaches the banner's buttons");
           over->setFocus(Qt::TabFocusReason);
           QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
           QCoreApplication::sendEvent(over, &enter);

@@ -1,5 +1,6 @@
 #include "Banner.hpp"
 
+#include <QAbstractButton>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -79,7 +80,6 @@ QPushButton* Banner::addButton(const QString& action, const QString& text, std::
   if (primary) b->setObjectName("primary");
   b->setProperty("action", action);
   b->setCursor(Qt::PointingHandCursor);
-  b->setAutoDefault(true);  // Enter presses the focused one
   watchKeys(b);
   connect(b, &QPushButton::clicked, this, [fn = std::move(fn)] { fn(); });
   m_buttons->addWidget(b);
@@ -136,6 +136,10 @@ bool Banner::eventFilter(QObject* watched, QEvent* event) {
     }
     if (event->type() == QEvent::KeyPress && key == Qt::Key_Escape) {
       escape();
+      return true;
+    }
+    if (event->type() == QEvent::KeyPress && (key == Qt::Key_Return || key == Qt::Key_Enter)) {  // Enter presses the focused one
+      if (auto* b = qobject_cast<QAbstractButton*>(watched)) b->click();
       return true;
     }
   }
