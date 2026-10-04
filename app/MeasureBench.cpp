@@ -26,7 +26,9 @@
 #include <sstream>
 
 #include "BenchRegistry.hpp"
+#include "I18n.hpp"
 #include "MainWindow.hpp"
+#include "Theme.hpp"
 #include "Notes.hpp"
 #include "Units.hpp"
 #include "opad/geometry.hpp"
@@ -132,6 +134,12 @@ OPAD_BENCH(OPAD_BENCH_MEASURE, measure) {
   require(error && error->isVisibleTo(w.m_toolSteps) && error->text().contains("has no radius") && error->text().contains("Block"),
           "a face with no radius is explained in the panel: " + (error ? error->text() : QString()));
   require(w.m_toolPicks.empty() && w.m_lastMeasure.is_null() && w.m_viewport->selection().empty(), "and the pick is asked for again");
+  // The reason is the core's fixed text and what was picked, each with an Arabic entry (the whole sentence had none).
+  const auto arabic = i18n::table("ar", {":/i18n"});
+  require(error && error->text().endsWith("(need a cylindrical/spherical face or circular edge); it is a bspline face") &&
+              arabic.contains("reference has no radius (need a cylindrical/spherical face or circular edge)") && arabic.contains("%1; it is a %2 %3") &&
+              arabic.contains("bspline") && arabic.contains("face") && arabic.contains("%1 cannot be measured: %2"),
+          "the reason says what was picked, and each part of it has Arabic: " + (error ? error->text() : QString()));
   settle(200);
   w.m_toolPanel->grab().save(prefix + ".radius-error.png");
   pick(rodId, opad::Ref::Kind::Face, side);

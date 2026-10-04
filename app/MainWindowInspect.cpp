@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QKeyEvent>
+#include <QRegularExpression>
 #include <QStackedWidget>
 #include <QStatusBar>
 
@@ -27,6 +28,17 @@
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+
+namespace {
+// Why a pick cannot be measured, as the core says it, translated (UI-50): the radius' "not a <type> <kind>" (what was
+// picked) is made at run time, so it is split off and its words translated on their own.
+QString measureReason(const QString& why) {
+  static const QRegularExpression found(QStringLiteral(", not a (\\w+) (\\w+)\\)$"));
+  const QRegularExpressionMatch m = found.match(why);
+  if (!m.hasMatch()) return i18n::t(why);
+  return MainWindow::tr("%1; it is a %2 %3").arg(i18n::t(why.left(m.capturedStart()) + ")"), i18n::t(m.captured(1)), i18n::t(m.captured(2)));
+}
+}  // namespace
 
 OPAD_ICON_TABLE(measure, {"length", R"(<path d="M3 16.5L16.5 3L21 7.5L7.5 21z"/><path d="M7.5 12l2 2M10.5 9l2 2M13.5 6l2 2"/>)"});
 
@@ -270,7 +282,7 @@ void MainWindow::runToolMeasure() {
       QString why = error;
       for (const auto& pick : m_toolPicks)  // the core names the reference by its id: the panel names the pick
         if (why.endsWith(": " + QString::fromStdString(pick.str()))) why.chop(static_cast<int>(pick.str().size()) + 2);
-      m_toolError = tr("%1 cannot be measured: %2").arg(m_toolPicks.empty() ? tr("That pick") : refLabel(m_toolPicks.back()), i18n::t(why));
+      m_toolError = tr("%1 cannot be measured: %2").arg(m_toolPicks.empty() ? tr("That pick") : refLabel(m_toolPicks.back()), measureReason(why));
       statusBar()->showMessage(m_toolError, 6000);
       m_viewport->deselectLast();
       return refreshToolUi();

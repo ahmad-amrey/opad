@@ -269,7 +269,7 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
 
   m_components = new QCheckBox(tr("Show ΔX, ΔY, ΔZ arrows"), this);
   m_components->setChecked(true);
-  m_components->setToolTip(tr("Signed world-axis components from point 1 to point 2. Red X, green Y, blue Z."));
+  m_components->setToolTip(tr("Signed components from point 1 to point 2 along the X, Y and Z axes: the world's, or the component's when its coordinates are chosen. Red X, green Y, blue Z."));
   m_components->hide();
   auto* componentRow = new QHBoxLayout();
   componentRow->setContentsMargins(12, 4, 12, 4);
