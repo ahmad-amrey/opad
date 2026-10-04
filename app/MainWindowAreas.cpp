@@ -32,6 +32,7 @@ Viewport* AreaServices::viewport() const { return m_window->m_viewport; }
 JobRunner* AreaServices::jobs() const { return m_window->m_jobs; }
 DesignController* AreaServices::design() const { return m_window->m_design; }
 BrowserPanel* AreaServices::browser() const { return m_window->m_browser; }
+void AreaServices::revealBrowser() { m_window->m_browserOverlay->reveal(); }
 PropertiesPanel* AreaServices::properties() const { return m_window->m_props; }
 TimelineWidget* AreaServices::timeline() const { return m_window->m_timeline; }
 ViewportChips* AreaServices::chips() const { return m_window->m_chips; }

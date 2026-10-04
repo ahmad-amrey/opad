@@ -1,5 +1,13 @@
 #include "opad/explode.hpp"
 
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <gp_Cylinder.hxx>
+#include <gp_Lin.hxx>
+
 #include <algorithm>
 #include <cmath>
 
@@ -126,6 +134,8 @@ struct Builder {
     Box box;
     double solid = 0;  // the volumes of its bodies' boxes: a unit of four corner screws is mostly air
     Box main;          // its largest body's box: a board with the capacitors that ride on it is still the board
+    bool axial = false;  // fasteners: every body under it a fastener along `axis`
+    Vec3 axis{0, 0, 1};
   };
   const Scene& scene;
   const ExplodeSpec& spec;
@@ -274,6 +284,15 @@ struct Builder {
       Work& x = w[static_cast<size_t>(k)];
       if (x.box.empty || k == base) continue;
       const Vec3 v = sub(x.u.centre, pc);
+      if (x.axial) {  // out along its axis, the short way out of the parent (a tie: the parent's way)
+        double from = 0, to = 0;
+        P.span(x.axis, from, to);
+        const double c = dot(x.u.centre, x.axis), tol = 1e-6 * std::max(1.0, pd);
+        const double sign = to - c < c - from - tol ? 1 : c - from < to - c - tol ? -1 : dot(w[static_cast<size_t>(p)].u.dir, x.axis) < 0 ? -1 : 1;
+        x.u.dir = mul(x.axis, sign);
+        x.u.distance = spec.spacing * (std::abs(dot(v, x.axis)) + 0.5 * x.box.extent(x.axis) + 0.25 * P.extent(x.axis));
+        continue;
+      }
       if (spec.mode == "axis") {
         const double along = dot(v, a);
         x.u.dir = along < -1e-9 * std::max(1.0, pd) ? mul(a, -1) : a;
@@ -339,7 +358,7 @@ struct Builder {
   void rest(const std::vector<int>& kids) {
     for (int k : kids) {
       Work& x = w[static_cast<size_t>(k)];
-      if (x.box.empty || x.u.distance == 0) continue;
+      if (x.box.empty || x.u.distance == 0 || x.axial) continue;
       double under = 0;
       for (int j : kids) {
         const Box& y = w[static_cast<size_t>(j)].main;
@@ -367,7 +386,7 @@ struct Builder {
     const std::vector<int> order = by_size(w, kids);
     for (size_t n = 0; n < order.size(); ++n) {
       Work& x = w[static_cast<size_t>(order[n])];
-      if (x.box.empty) continue;
+      if (x.box.empty || x.axial) continue;  // a fastener leaves its hole along its axis
       for (size_t m = n; m-- > 0;) {  // the smallest larger one first
         const Work& c = w[static_cast<size_t>(order[m])];
         if (c.box.empty || c.box.diag() <= x.box.diag() || c.solid < 0.2 * c.box.volume() || !x.box.within(c.box, spec.touch)) continue;
@@ -487,6 +506,7 @@ json ExplodeSpec::to_json() const {
   if (mode != "radial") j["axis"] = axis;
   j["spacing"] = spacing;
   j["attach_small"] = attach_small;
+  if (fasteners) j["fasteners"] = true;
   if (small_ratio != d.small_ratio) j["small_ratio"] = small_ratio;
   if (small_size != d.small_size) j["small_size"] = small_size;
   if (touch != d.touch) j["touch"] = touch;
@@ -498,7 +518,7 @@ json ExplodeSpec::to_json() const {
     for (const auto& [id, v] : offsets) o[id] = v;
     j["offsets"] = o;
   }
-  if (stages != d.stages) j["stages"] = stages;
+  j["stages"] = stages;  // always: what a spec without it means has changed once (TODO 11 D4)
   if (duration != d.duration) j["duration"] = duration;
   j["t"] = t;
   return j;
@@ -528,6 +548,10 @@ ExplodeSpec ExplodeSpec::from_json(const json& j) {
     if (!j["attach_small"].is_boolean()) bad("attach_small must be true or false");
     s.attach_small = j["attach_small"].get<bool>();
   }
+  if (j.contains("fasteners")) {
+    if (!j["fasteners"].is_boolean()) bad("fasteners must be true or false");
+    s.fasteners = j["fasteners"].get<bool>();
+  }
   s.small_ratio = number_of(j, "small_ratio", s.small_ratio, 0, 1);
   s.small_size = number_of(j, "small_size", s.small_size, 0, 1e9);
   s.touch = number_of(j, "touch", s.touch, 0, 1e9);
@@ -548,7 +572,8 @@ ExplodeSpec ExplodeSpec::from_json(const json& j) {
   }
   if (j.contains("stages")) {
     s.stages = j["stages"].is_string() ? j["stages"].get<std::string>() : "";
-    if (s.stages != "levels" && s.stages != "together" && s.stages != "units") bad("stages is levels, together or units");
+    if (s.stages == "levels") s.stages = "together";  // no longer staged by level (TODO 11 D4)
+    if (s.stages != "together" && s.stages != "units") bad("stages is together or units");
   }
   s.duration = number_of(j, "duration", s.duration, 0, 600);
   s.t = number_of(j, "t", s.t, 0, 1);
@@ -586,7 +611,86 @@ int explode_depth(const Scene& scene, const ExplodeSpec& spec) {
   return out;
 }
 
-std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, const ExplodeSpec& spec, const ExplodeBoxFn& box_of) {
+std::optional<Vec3> fastener_axis(const TopoDS_Shape& shape) {
+  if (shape.IsNull()) return std::nullopt;
+  struct Group {
+    gp_Ax1 axis;
+    double radius = 0, area = 0, lo = HUGE_VAL, hi = -HUGE_VAL;
+  };
+  std::vector<Group> groups;
+  int faces = 0;
+  for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
+    if (++faces > 2000) return std::nullopt;  // no fastener; bounded cost
+    const TopoDS_Face& face = TopoDS::Face(f.Current());
+    const BRepAdaptor_Surface s(face, false);
+    if (s.GetType() != GeomAbs_Cylinder) continue;
+    const gp_Cylinder c = s.Cylinder();
+    double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+    BRepTools::UVBounds(face, u0, u1, v0, v1);
+    const double r = c.Radius(), tol = 1e-6 * std::max(1.0, r);
+    auto g = std::find_if(groups.begin(), groups.end(), [&](const Group& x) {
+      return x.axis.Direction().IsParallel(c.Axis().Direction(), 1e-4) && gp_Lin(x.axis).Distance(c.Location()) < 1e3 * tol;
+    });
+    if (g == groups.end()) g = groups.insert(groups.end(), Group{c.Axis()});
+    const gp_Dir d = g->axis.Direction();
+    const double base = gp_Vec(g->axis.Location(), c.Location()).Dot(gp_Vec(d)), turn = c.Axis().Direction().Dot(d);
+    g->radius = std::max(g->radius, r);
+    g->area += r * std::min(u1 - u0, 2 * M_PI) * (v1 - v0);
+    g->lo = std::min({g->lo, base + v0 * turn, base + v1 * turn});
+    g->hi = std::max({g->hi, base + v0 * turn, base + v1 * turn});
+  }
+  if (groups.empty()) return std::nullopt;
+  const Group& best = *std::max_element(groups.begin(), groups.end(), [](const Group& a, const Group& b) { return a.area < b.area; });
+  // How far the part reaches along the axis and around it: its vertices (a cylinder's seam ends sit on its radius).
+  const gp_Vec d(best.axis.Direction());
+  double lo = best.lo, hi = best.hi, around = best.radius;
+  for (TopExp_Explorer v(shape, TopAbs_VERTEX); v.More(); v.Next()) {
+    const gp_Vec to(best.axis.Location(), BRep_Tool::Pnt(TopoDS::Vertex(v.Current())));
+    const double along = to.Dot(d);
+    lo = std::min(lo, along);
+    hi = std::max(hi, along);
+    around = std::max(around, (to - d * along).Magnitude());
+  }
+  if (best.radius < 0.6 * around || hi - lo < 3 * best.radius) return std::nullopt;  // a hole in a plate, a disc
+  Vec3 a{d.X(), d.Y(), d.Z()};
+  size_t big = 0;
+  for (size_t i = 1; i < 3; ++i)
+    if (std::abs(a[i]) > std::abs(a[big]) + 1e-9) big = i;
+  return a[big] < 0 ? mul(a, -1) : a;
+}
+
+ExplodeAxisFn fastener_axes(const Document& doc, const Scene& scene, std::shared_ptr<FastenerAxes> cache) {
+  if (!cache) cache = std::make_shared<FastenerAxes>();
+  return [&doc, &scene, cache](const std::string& id) -> std::optional<Vec3> {
+    const Node* n = scene.node(id);
+    if (!n) return std::nullopt;
+    std::optional<Vec3> a;
+    bool known = false;
+    {
+      std::lock_guard<std::mutex> lock(cache->mu);
+      if (const auto it = cache->by_key.find(n->body_key); it != cache->by_key.end()) {
+        a = it->second;
+        known = true;
+      }
+    }
+    if (!known) {
+      try {
+        a = fastener_axis(body_shape(doc, n->body_key));
+      } catch (const std::exception&) {
+      }
+      std::lock_guard<std::mutex> lock(cache->mu);
+      cache->by_key.emplace(n->body_key, a);
+    }
+    if (!a) return std::nullopt;
+    const Mat4 m = scene.world(id);
+    Vec3 out{0, 0, 0};
+    for (int r = 0; r < 3; ++r) out[static_cast<size_t>(r)] = m.at(r, 0) * (*a)[0] + m.at(r, 1) * (*a)[1] + m.at(r, 2) * (*a)[2];
+    return unit(out);
+  };
+}
+
+std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, const ExplodeSpec& spec, const ExplodeBoxFn& box_of,
+                                       const ExplodeAxisFn& axis_of) {
   Builder b(scene, spec);
   const std::string root = explode_root(scene, spec);
   for (const auto& c : children_of(scene, root)) b.place(0, c, 1, false);
@@ -630,6 +734,28 @@ std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, 
   }
   for (size_t i = 0; i < b.w.size(); ++i)
     if (!b.w[i].dead && spec.attach_small) b.attach(static_cast<int>(i));
+  if (spec.fasteners && spec.mode == "radial") {  // units of fasteners that lie the same way
+    const ExplodeAxisFn axis = axis_of ? axis_of : fastener_axes(doc, scene);
+    for (size_t i = 1; i < b.w.size(); ++i) {
+      auto& x = b.w[i];
+      std::vector<std::string> under;
+      if (!x.dead) b.bodies_under(static_cast<int>(i), under);
+      if (under.empty() || under.size() > 64) continue;
+      std::optional<Vec3> first;
+      for (const auto& id : under) {
+        const std::optional<Vec3> a = axis(id);
+        if (!a || (first && std::abs(dot(*a, *first)) < 0.999)) {
+          first.reset();
+          break;
+        }
+        if (!first) first = a;
+      }
+      if (first) {
+        x.axial = true;
+        x.axis = *first;
+      }
+    }
+  }
   for (size_t i = 0; i < b.w.size(); ++i)
     if (!b.w[i].dead) b.spread(static_cast<int>(i));
 
@@ -640,33 +766,45 @@ std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, 
 }
 
 void explode_stage(std::vector<ExplodeUnit>& units, const ExplodeSpec& spec) {
-  int stages = 0;
   for (auto& u : units) {
-    stages = std::max(stages, u.level);
     u.t0 = 0;
     u.t1 = 1;
   }
-  if (spec.stages == "levels") {
-    for (auto& u : units) {
-      u.t0 = double(u.level - 1) / stages;
-      u.t1 = double(u.level) / stages;
+  if (spec.stages != "units") return;
+  // One after another: the farthest move first, a unit never before the moving unit that holds it (the screws leave the
+  // lid once it is out). The order follows the moves, not the levels (TODO 11 D4).
+  std::vector<double> travel(units.size(), 0);
+  std::vector<char> moves(units.size(), 0);
+  for (size_t i = 0; i < units.size(); ++i) {
+    Vec3 own = mul(units[i].dir, units[i].distance);
+    if (const auto m = spec.offsets.find(units[i].id); m != spec.offsets.end()) own = add(own, m->second);
+    travel[i] = norm(own);
+    moves[i] = units[i].distance > 0 || spec.offsets.count(units[i].id);
+  }
+  auto later = [&](size_t x, size_t y) { return travel[x] != travel[y] ? travel[x] < travel[y] : x > y; };  // heap: farthest, then tree order
+  std::vector<size_t> ready;
+  std::vector<std::vector<size_t>> after(units.size());
+  for (size_t i = 0; i < units.size(); ++i) {
+    if (!moves[i]) continue;
+    int above = units[i].parent;
+    while (above >= 0 && !moves[static_cast<size_t>(above)]) above = units[static_cast<size_t>(above)].parent;
+    (above < 0 ? ready : after[static_cast<size_t>(above)]).push_back(i);
+  }
+  std::make_heap(ready.begin(), ready.end(), later);
+  std::vector<size_t> order;
+  while (!ready.empty()) {
+    std::pop_heap(ready.begin(), ready.end(), later);
+    const size_t i = ready.back();
+    ready.pop_back();
+    order.push_back(i);
+    for (const size_t c : after[i]) {
+      ready.push_back(c);
+      std::push_heap(ready.begin(), ready.end(), later);
     }
-  } else if (spec.stages == "units") {  // one after another: level by level, the farthest first (outer parts leave first)
-    std::vector<size_t> order;
-    std::vector<double> travel(units.size(), 0);
-    for (size_t i = 0; i < units.size(); ++i) {
-      Vec3 own = mul(units[i].dir, units[i].distance);
-      if (const auto m = spec.offsets.find(units[i].id); m != spec.offsets.end()) own = add(own, m->second);
-      travel[i] = norm(own);
-      if (units[i].distance > 0 || spec.offsets.count(units[i].id)) order.push_back(i);
-    }
-    std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) {
-      return units[x].level != units[y].level ? units[x].level < units[y].level : travel[x] > travel[y];
-    });
-    for (size_t n = 0; n < order.size(); ++n) {
-      units[order[n]].t0 = double(n) / order.size();
-      units[order[n]].t1 = double(n + 1) / order.size();
-    }
+  }
+  for (size_t n = 0; n < order.size(); ++n) {
+    units[order[n]].t0 = double(n) / order.size();
+    units[order[n]].t1 = double(n + 1) / order.size();
   }
 }
 

@@ -225,7 +225,11 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
   auto list = std::make_shared<std::vector<opad::json>>(std::move(ops));  // not copied with the job (a converted drawing's curves)
   m_jobs->async(tr("Updating the design"), [doc, list, plan](Progress p) {
     Reading reading;
-    *plan = plan_ops(*doc, std::move(*list), true, [p] { return p.cancelled(); });
+    try {
+      *plan = plan_ops(*doc, std::move(*list), true, [p] { return p.cancelled(); });
+    } catch (const opad::LockedError& e) {
+      throw opad::Error(AppDocument::lockedMessage(e).toStdString());
+    }
   }, [this, plan, label, report, generation](bool ok, const QString& error) {
     whenNobodyReads(this, [this, plan, label, report, ok, error, generation] {
       if (generation != m_doc->generation) return;
@@ -807,7 +811,11 @@ void DesignController::runPreview(bool commit) {
     opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
     if (!editing) op["id"] = target;
     if (!component.empty()) op["component"] = component;
-    *plan = plan_ops(*doc, {op}, true, [p] { return p.cancelled(); });
+    try {
+      *plan = plan_ops(*doc, {op}, true, [p] { return p.cancelled(); });
+    } catch (const opad::LockedError& e) {
+      throw opad::Error(AppDocument::lockedMessage(e).toStdString());
+    }
     // An edit that changes nothing is not recomputed (its fingerprint matches), so the plan has nothing to show and the
     // rolled-back view was empty while the feature was open: show what it makes now. Copies are meshed, not the cached
     // prototypes the view draws.

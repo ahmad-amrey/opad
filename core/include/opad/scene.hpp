@@ -77,6 +77,15 @@ struct Unresolved {
   std::string op_id, op_type, reason;
 };
 
+// A change refused because a node is locked (TODO 11 UI-37), with what a UI needs to say it in its own words: the
+// node's and the lock holder's names (the same when the node is locked itself), the change refused (changing, moving,
+// removing) and how many other locked items it touches.
+struct LockedError : Error {
+  std::string node, holder, change;
+  size_t more = 0;
+  LockedError(std::string node, std::string holder, std::string change, size_t more = 0);
+};
+
 // ---- design (param / sketch / feature ops). Replay never runs the kernel or the sketch solver: a sketch
 // carries its solved coordinates and a feature the keys of the bodies it produced (see docs/design.md).
 struct Param {
@@ -175,6 +184,7 @@ struct Scene {
   Mat4 world(const std::string& id) const;
   bool effectively_visible(const std::string& id) const;
   bool effectively_locked(const std::string& id) const;  // it or a component above it is locked
+  const Node* lock_holder(const std::string& id) const;   // the nearest of those that is locked (unlocking it frees id), or null
   std::vector<std::string> bodies_under(const std::string& id) const;  // depth-first
   std::vector<std::string> all_bodies() const;
   std::vector<std::string> path_to(const std::string& id) const;  // root..id
@@ -222,10 +232,11 @@ class SceneBuilder {
 // `until`: stop before this op (the state an earlier feature was computed in; timeline roll-back).
 Scene resolve(const Document& doc, const std::string& until = {});
 
-// The ops (of the effective log) that touch a component and what is under it, for a timeline that dims the others
-// while it is active (TODO 11 UI-33): what made its nodes, sketches and features made in it, features that change a
-// body in it, reparent / transform / appearance / rename ops on something in it or putting something into it, and notes
-// and measurements on it. An empty component is the document root: every op.
+// The ops that touch a component and what is under it, for a timeline that dims the others while it is active (TODO 11
+// UI-33): what made its nodes, sketches and features made in it, features that change a body in it, reparent /
+// transform / appearance / rename ops on something in it or putting something into it, and notes and measurements on
+// it; tombstoned ones too (as written) and the delete ops of any of them. An empty component is the document root:
+// every op but edits and regenerations.
 std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, const std::string& component);
 
 }  // namespace opad

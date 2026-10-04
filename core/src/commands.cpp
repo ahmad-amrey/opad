@@ -174,13 +174,13 @@ json append_per_target(Document& doc, const std::string& command, const json& a,
 }
 
 // TODO 11 UI-37: a locked node, or one under a locked component, is not moved (a transform, a reparent): refused naming
-// it before anything is appended.
+// it and what holds the lock before anything is appended.
 void refuse_locked(const Document& doc, const std::vector<json>& targets, const char* what) {
   if (!design::has_locks(doc)) return;
   const Scene s = resolve(doc);
   for (const auto& t : targets)
-    if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr; n && s.effectively_locked(n->id))
-      throw Error("\"" + n->name + "\" is locked: unlock it before " + what + " it");
+    if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr)
+      if (const Node* holder = s.lock_holder(n->id)) throw LockedError(n->name, holder->name, what);
 }
 
 KicadOptions kicad_options(const json& a) {
@@ -708,14 +708,37 @@ void register_builtins() {
       });
 
   reg("reparent", "Move a node, or several (targets, kept in that order), under another component (null = root)",
-      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"parent", "uuid|null"}, {"index", "int"}}, true,
+      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"parent", "uuid|null"}, {"index", "int"},
+       {"keep_place", "bool - stay put in the world (adds transforms)"}}, true,
       [](Document* d, const json& a) {
-        refuse_locked(need(d), targets_of("reparent", a), "moving");
-        return append_per_target(need(d), "reparent", a, [&](const json&, size_t i, size_t) {
-          json op = {{"parent", a.contains("parent") ? a["parent"] : json(nullptr)}};
+        Document& doc = need(d);
+        const std::vector<json> targets = targets_of("reparent", a);
+        refuse_locked(doc, targets, "moving");
+        const json parent = a.contains("parent") ? a["parent"] : json(nullptr);
+        std::vector<std::pair<std::string, Mat4>> kept;  // node -> its local under the new parent, from the scene before
+        if (a.value("keep_place", false)) {
+          const Scene s = resolve(doc);
+          const std::string into = parent.is_string() ? parent.get<std::string>() : std::string();
+          const Node* p = into.empty() ? nullptr : s.node(into);
+          if (into.empty() || (p && p->kind == Node::Kind::Component)) {
+            const std::vector<std::string> above = into.empty() ? std::vector<std::string>() : s.path_to(into);
+            const Mat4 back = p ? s.world(into).inverse() : Mat4{};
+            for (const auto& t : targets)
+              if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr;
+                  n && std::find(above.begin(), above.end(), n->id) == above.end()) {  // a cycle is not replayed: nothing moves
+                const Mat4 local = back * s.world(n->id);
+                if (!(local * n->local.inverse()).is_identity(1e-9)) kept.emplace_back(n->id, local);
+              }
+          }
+        }
+        json j = append_per_target(doc, "reparent", a, [&](const json&, size_t i, size_t) {
+          json op = {{"parent", parent}};
           if (a.contains("index")) op["index"] = a["index"].get<int>() < 0 ? a["index"].get<int>() : a["index"].get<int>() + static_cast<int>(i);
           return op;
         });
+        for (const auto& [id, local] : kept) doc.append({{"op", "transform"}, {"target", id}, {"matrix", local.to_json()}}, a.value("by", ""));
+        if (!kept.empty()) j["transformed"] = kept.size();
+        return j;
       });
 
   reg("section", "Add a named section plane", {{"doc", "path"}, {"name", "string"}, {"origin", "[x,y,z]"}, {"normal", "[x,y,z]"}}, true,
@@ -748,15 +771,16 @@ void register_builtins() {
        {"mode", "radial|axis|stack"}, {"axis", "[x,y,z] - for axis and stack (default +Z)"}, {"spacing", "number - distance factor"},
        {"keep", "array|csv - components moving as one unit"}, {"split", "array|csv - components whose parts split beyond levels"},
        {"groups", "array - node id lists, each moving as one unit"}, {"offsets", "object - manual moves {unit id: [x,y,z]}"},
-       {"attach_small", "bool - small parts ride on what they touch"}, {"small_ratio", "number - small: diagonal share of the parent (0.05)"},
-       {"small_size", "number - small: diagonal in mm"}, {"stages", "levels|together|units"}, {"t", "number - 0 assembled .. 1 exploded"},
+       {"attach_small", "bool - small parts ride on what they touch"}, {"fasteners", "bool - radial: screws, pins and bolts leave along their axis"},
+       {"small_ratio", "number - small: diagonal share of the parent (0.05)"},
+       {"small_size", "number - small: diagonal in mm"}, {"stages", "together|units (one after another)"}, {"t", "number - 0 assembled .. 1 exploded"},
        {"name", "string - save as a new view"}, {"camera", "object - the new view's camera"}, {"update", "bool - save into view"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
         const Scene s = resolve(doc);
         const std::string view = a.value("view", "");
         json spec_json = view.empty() ? ExplodeSpec{}.to_json() : view_explode(s, view).to_json();
-        for (const char* k : {"root", "levels", "mode", "axis", "spacing", "groups", "offsets", "attach_small", "small_ratio", "small_size", "stages", "t"})
+        for (const char* k : {"root", "levels", "mode", "axis", "spacing", "groups", "offsets", "attach_small", "fasteners", "small_ratio", "small_size", "stages", "t"})
           if (a.contains(k)) spec_json[k] = a[k];
         for (const char* k : {"keep", "split"})
           if (a.contains(k)) spec_json[k] = str_list(a[k]);
@@ -765,6 +789,7 @@ void register_builtins() {
           throw Error("explode: root " + spec.root + " is not a component of the document");
         if (a.contains("name") && a.value("update", false)) throw Error("explode: name saves a new view, update saves into view: give one");
         json warnings = json::array();
+        if (a.value("stages", json()) == "levels") warnings.push_back("stages levels is read as together: the parts no longer move level by level");
         auto known = [&](const std::string& id, const std::string& what) {
           if (!s.node(id)) warnings.push_back(what + " " + id + " is not in the document");
         };
@@ -775,10 +800,10 @@ void register_builtins() {
         const std::vector<ExplodeUnit> units = explode_units(doc, s, spec);
         const std::vector<Vec3> moves = explode_unit_offsets(units, spec, spec.t);
         json list = json::array(), offsets = json::object();
-        int stages = 0;
+        int deepest = 0;
         for (size_t i = 0; i < units.size(); ++i) {
           const ExplodeUnit& u = units[i];
-          stages = std::max(stages, u.level);
+          deepest = std::max(deepest, u.level);
           list.push_back({{"id", u.id}, {"name", u.name}, {"level", u.level}, {"parent", u.parent < 0 ? json(nullptr) : json(units[static_cast<size_t>(u.parent)].id)},
                           {"bodies", u.bodies}, {"centre", u.centre}, {"dir", u.dir}, {"distance", u.distance}, {"t0", u.t0}, {"t1", u.t1}, {"offset", moves[i]}});
           if (moves[i] != Vec3{0, 0, 0})
@@ -790,7 +815,7 @@ void register_builtins() {
         json j;
         j["root"] = root.empty() ? json(nullptr) : json(root);
         j["depth"] = explode_depth(s, spec);
-        j["stages"] = stages;
+        j["deepest_level"] = deepest;
         j["explode"] = spec.to_json();
         j["units"] = list;
         j["offsets"] = offsets;

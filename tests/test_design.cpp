@@ -2028,6 +2028,18 @@ TEST(ops_that_touch_a_component) {
   for (const std::string op : {loose["feature_id"].get<std::string>(), renamed, param}) CHECK(!in.count(op));
   CHECK_EQ(in.size(), 8u);
   CHECK_EQ(ops_in_component(doc, s, "").size(), effective_ops(doc).size());
+  // A feature made in it and tombstoned still touches it, as do its tombstone and the restore of it.
+  const std::string box = commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "30 mm"}, {"length", "2 mm"}, {"width", "2 mm"}, {"height", "2 mm"}}}, {"component", lid}}, &doc)["feature_id"];
+  const std::string gone = commands::run("delete", {{"target", box}}, &doc)["id"];
+  const std::string other = commands::run("delete", {{"target", loose["feature_id"]}}, &doc)["id"];
+  std::set<std::string> now = ops_in_component(doc, resolve(doc), lid);
+  CHECK(now.count(box) && now.count(gone) && !now.count(other) && !now.count(loose["feature_id"].get<std::string>()));
+  const std::string back = commands::run("delete", {{"target", gone}}, &doc)["id"];
+  now = ops_in_component(doc, resolve(doc), lid);
+  CHECK(now.count(box) && now.count(gone) && now.count(back));
+  size_t listed = 0;
+  for (const auto& op : doc.ops) listed += op.type != "edit" && op.type != "regen";
+  CHECK_EQ(ops_in_component(doc, resolve(doc), "").size(), listed);
 }
 
 // TODO 11 UI-37: a locked body, or one under a locked component, is not changed, moved or removed: the change is
@@ -2056,6 +2068,9 @@ TEST(locked_bodies_are_left_alone) {
     return why;
   };
   auto locked = [&](const std::string& name, const char* verb) { return "\"" + name + "\" is locked: unlock it before " + verb + " it"; };
+  auto held = [&](const std::string& name, const std::string& holder, const char* verb) {  // locked with a component above it: that is unlocked
+    return "\"" + name + "\" is locked with \"" + holder + "\": unlock \"" + holder + "\" before " + verb + " it";
+  };
   const std::string name = s.node(plate)->name;
   CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}}}}), locked(name, "changing"));
   CHECK_EQ(refusal("feature", {{"kind", "box"}, {"inputs", {{"length", "4 mm"}, {"width", "4 mm"}, {"height", "20 mm"}, {"operation", "cut"}, {"targets", json::array({body_ref(plate)})}}}}),
@@ -2086,9 +2101,15 @@ TEST(locked_bodies_are_left_alone) {
   commands::run("appearance", {{"target", inner}, {"locked", true}}, &doc);
   s = resolve(doc);
   CHECK(s.effectively_locked(pin) && !s.node(pin)->locked);
-  CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({pin + "/edge/0"})}, {"radius", "0.5 mm"}}}}), locked(s.node(pin)->name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({pin + "/edge/0"})}, {"radius", "0.5 mm"}}}}), held(s.node(pin)->name, "Inner", "changing"));
   CHECK_EQ(refusal("transform", {{"target", inner}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked("Inner", "moving"));
-  CHECK_EQ(refusal("reparent", {{"target", pin}, {"parent", nullptr}}), locked(s.node(pin)->name, "moving"));
+  CHECK_EQ(refusal("reparent", {{"target", pin}, {"parent", nullptr}}), held(s.node(pin)->name, "Inner", "moving"));
+  try {  // what a UI words in its own language
+    commands::run("transform", {{"target", pin}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}, &doc);
+    CHECK(false);
+  } catch (const LockedError& e) {
+    CHECK(e.node == s.node(pin)->name && e.holder == "Inner" && e.change == "moving" && e.more == 0);
+  }
   CHECK_EQ(refusal("reparent", {{"target", inner}, {"parent", shelf}}), locked("Inner", "moving"));
   commands::run("reparent", {{"target", outer}, {"parent", shelf}}, &doc);  // the component above it may, it along
   commands::run("reparent", {{"target", outer}, {"parent", nullptr}}, &doc);
@@ -2100,8 +2121,9 @@ TEST(locked_bodies_are_left_alone) {
   Scene gone = s;
   gone.nodes.erase(plate);
   gone.nodes.erase(pin);
-  CHECK(locked_change(s, gone).find(" is locked: unlock it before removing it (and 1 more locked)") != std::string::npos);
-  CHECK(locked_change(s, s).empty());
+  const auto two = locked_change(s, gone);
+  CHECK(two && two->more == 1 && two->change == "removing" && std::string(two->what()).find(" before removing it (and 1 more locked)") != std::string::npos);
+  CHECK(!locked_change(s, s));
   // A drawing whose layer is locked (an import node's "locked"): the layer's body alone is not removed, the drawing is.
   const json line = {{"type", "body"}, {"id", new_uuid()}, {"name", "Walls"}, {"key", block_key}};
   const json walls = {{"type", "component"}, {"id", new_uuid()}, {"name", "Walls"}, {"locked", true}, {"layer", {{"name", "Walls"}, {"locked", true}}}, {"children", json::array({line})}};
@@ -2117,4 +2139,90 @@ TEST(locked_bodies_are_left_alone) {
   commands::run("appearance", {{"target", plate}, {"locked", false}}, &doc);
   feature_cmd(doc, "fillet", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}});
   CHECK(resolve(doc).node(plate)->body_key != plate_key);
+}
+
+// TODO 11 UI-34: reparent with keep_place (the browser's drop, Move to component…, Component from selection) leaves what
+// moves where it is in the world: a transform follows each node whose new parent is placed elsewhere, none for a reorder
+// or a cycle (not replayed); without it a node goes with its new parent's placement.
+TEST(reparent_keeps_place) {
+  Document doc = Document::create();
+  auto box = [&](const char* x) { return feature_cmd(doc, "box", {{"x", x}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "4 mm"}})["body_ids"][0].get<std::string>(); };
+  const std::string a = box("10 mm"), b = box("20 mm"), c = box("30 mm");
+  const std::string frame = commands::run("component", {{"name", "Frame"}}, &doc)["component_id"];
+  const std::string inner = commands::run("component", {{"name", "Inner"}, {"parent", frame}}, &doc)["component_id"];
+  Mat4 turned;  // a quarter turn about Z, raised
+  turned.m = {0, -1, 0, 5, 1, 0, 0, 0, 0, 0, 1, 50, 0, 0, 0, 1};
+  commands::run("transform", {{"target", frame}, {"matrix", turned.to_json()}}, &doc);
+  Scene s = resolve(doc);
+  const Mat4 wa = s.world(a), wb = s.world(b), wc = s.world(c);
+  auto same = [](const Mat4& x, const Mat4& y) { return (x * y.inverse()).is_identity(1e-9); };
+  size_t ops = doc.ops.size();
+  const json moved = commands::run("reparent", {{"targets", json::array({a, b})}, {"parent", inner}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 4);
+  CHECK_EQ(moved.value("transformed", 0), 2);
+  CHECK_EQ(moved["ids"].size(), 2u);
+  s = resolve(doc);
+  CHECK(s.node(a)->parent == inner && s.node(b)->parent == inner);
+  CHECK(same(s.world(a), wa) && same(s.world(b), wb) && !same(s.node(a)->local, wa));
+  ops = doc.ops.size();
+  commands::run("reparent", {{"target", b}, {"parent", inner}, {"index", 0}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 1);
+  CHECK_EQ(resolve(doc).node(inner)->children.front(), b);
+  commands::run("reparent", {{"target", a}, {"parent", nullptr}, {"keep_place", true}}, &doc);
+  s = resolve(doc);
+  CHECK(s.node(a)->parent.empty() && same(s.world(a), wa) && same(s.node(a)->local, wa));
+  ops = doc.ops.size();
+  commands::run("reparent", {{"target", frame}, {"parent", inner}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 1);
+  CHECK(resolve(doc).node(frame)->parent.empty());
+  commands::run("reparent", {{"target", c}, {"parent", inner}}, &doc);
+  CHECK(!same(resolve(doc).world(c), wc));
+}
+
+// A body made in a placed component and moved out of it keeping its place (a transform counting on the frame it was
+// made in) stays put when the component is deleted, as one moved into another component does; one left in it stays
+// put too (it is made again in world coordinates).
+TEST(bodies_moved_out_of_a_deleted_component_stay) {
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  const std::string shelf = commands::run("component", {{"name", "Shelf"}}, &doc)["component_id"];
+  commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 40).to_json()}}, &doc);
+  commands::run("transform", {{"target", shelf}, {"matrix", Mat4::translation(10, 0, 0).to_json()}}, &doc);
+  auto box = [&](const char* x) {
+    return commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", x}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "3 mm"}}}, {"component", lid}}, &doc)["body_ids"][0].get<std::string>();
+  };
+  const std::string out = box("0 mm"), moved = box("10 mm"), stays = box("20 mm");
+  auto where = [&](const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, resolve(doc), id), b);
+    return std::array<double, 2>{b.CornerMin().X(), b.CornerMin().Z()};
+  };
+  const auto out0 = where(out), moved0 = where(moved), stays0 = where(stays);
+  commands::run("reparent", {{"target", out}, {"parent", nullptr}, {"keep_place", true}}, &doc);
+  commands::run("reparent", {{"target", moved}, {"parent", shelf}, {"keep_place", true}}, &doc);
+  auto unchanged = [&](const std::string& id, const std::array<double, 2>& at) {
+    const auto now = where(id);
+    CHECK_NEAR(now[0], at[0], 1e-6);
+    CHECK_NEAR(now[1], at[1], 1e-6);
+  };
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  const std::string removal = commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc)["id"];
+  Scene s = resolve(doc);
+  CHECK(!s.node(lid) && s.node(out)->parent.empty() && s.node(moved)->parent == shelf && s.node(stays)->parent.empty());
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  unchanged(stays, stays0);
+  CHECK(design::plan_regenerate(doc).ops.empty());
+  commands::run("delete", {{"target", removal}}, &doc);  // the lid back: each where it was, the last one in it again
+  s = resolve(doc);
+  CHECK(s.node(out)->parent.empty() && s.node(moved)->parent == shelf && s.node(stays)->parent == lid);
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  unchanged(stays, stays0);
+  // Moved back into the lid, a body counts as left in it again.
+  commands::run("reparent", {{"target", out}, {"parent", lid}, {"keep_place", true}}, &doc);
+  commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc);
+  unchanged(out, out0);
+  for (const auto& u : resolve(doc).unresolved) CHECK(u.op_type == "transform" || u.op_type == "reparent");  // of the lid, into the lid
 }

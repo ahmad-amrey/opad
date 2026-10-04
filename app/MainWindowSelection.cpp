@@ -305,10 +305,7 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
       if (!c.isValid()) return;
       m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
     });
-    const opad::Node* n = m_doc->node(ids.front());
-    entry("lock", n && n->locked ? tr("Unlock") : tr("Lock"), "contextLock", [this, ids, locked = n && n->locked] {
-      m_doc->run("appearance", opad::json{{"targets", ids}, {"locked", !locked}});
-    });
+    add("design.lock");  // Lock or Unlock, as the selection is (the Lock area)
   };
   // Picked faces and edges as Del does (UI-04), through smart selection; objects by what the selection covers.
   auto remove = [&](bool picks) {

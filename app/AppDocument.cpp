@@ -439,7 +439,13 @@ opad::json AppDocument::run(const std::string& command, opad::json args, const Q
   if (browse && command != "appearance") throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
   const size_t before = doc.ops.size();
   if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
-  opad::json out = opad::commands::run(command, args, &doc);
+  opad::json out;
+  try {
+    out = opad::commands::run(command, args, &doc);
+  } catch (const opad::LockedError& e) {
+    throw opad::Error(lockedMessage(e).toStdString());
+  }
+  if (m_batching) return out;
   recordStep(label.isEmpty() ? labelFor(command, args) : label, before);
   refresh();
   return out;
@@ -458,14 +464,50 @@ opad::json AppDocument::runAll(const std::vector<std::pair<std::string, opad::js
       if (!args.contains("by")) args["by"] = by;
       out.push_back(opad::commands::run(command, args, &doc));
     }
-  } catch (...) {
+  } catch (const opad::LockedError& e) {
     doc.truncate_ops(before);  // all or nothing
+    updateDirty();
+    throw opad::Error(lockedMessage(e).toStdString());
+  } catch (...) {
+    doc.truncate_ops(before);
     updateDirty();
     throw;
   }
+  if (m_batching) return out;
   recordStep(label, before);
   refresh();
   return out;
+}
+
+QString AppDocument::lockedMessage(const opad::LockedError& e) {
+  const QString node = QString::fromStdString(e.node), holder = QString::fromStdString(e.holder);
+  QString text;
+  if (e.node == e.holder)
+    text = e.change == "removing" ? tr("“%1” is locked: unlock it before removing it").arg(node)
+         : e.change == "moving"   ? tr("“%1” is locked: unlock it before moving it").arg(node)
+                                  : tr("“%1” is locked: unlock it before changing it").arg(node);
+  else
+    text = e.change == "removing" ? tr("“%1” is locked with “%2”: unlock “%2” before removing it").arg(node, holder)
+         : e.change == "moving"   ? tr("“%1” is locked with “%2”: unlock “%2” before moving it").arg(node, holder)
+                                  : tr("“%1” is locked with “%2”: unlock “%2” before changing it").arg(node, holder);
+  return e.more > 0 ? tr("%1 (and %2 more locked)").arg(text).arg(e.more) : text;
+}
+
+void AppDocument::batch(const QString& label, const std::function<void()>& commands) {
+  if (m_batching) return commands();
+  const size_t before = doc.ops.size();
+  m_batching = true;
+  try {
+    commands();
+  } catch (...) {
+    m_batching = false;
+    if (doc.ops.size() > before) doc.truncate_ops(before);
+    refresh();
+    throw;
+  }
+  m_batching = false;
+  recordStep(label, before);
+  refresh();
 }
 
 opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {
@@ -769,12 +811,26 @@ QString AppDocument::nodeName(const std::string& id) const {
   return n ? QString::fromStdString(n->name) : QString::fromStdString(id.substr(0, 8));
 }
 
-void AppDocument::setActiveComponent(const std::string& id) {
+static QString rememberKey(const opad::Document& doc) { return "view/active/" + QString::fromStdString(doc.header.uuid); }
+
+void AppDocument::setActiveComponent(const std::string& id, bool remember) {
   const opad::Node* n = id.empty() ? nullptr : scene.node(id);
   if (!id.empty() && (!n || n->kind != opad::Node::Kind::Component)) throw opad::Error("Only a component can be activated.");
+  if (remember && !browse && !doc.header.uuid.empty()) {
+    QSettings settings;
+    if (id.empty()) settings.remove(rememberKey(doc));
+    else settings.setValue(rememberKey(doc), QString::fromStdString(id));
+  }
   if (m_active == id) return;
   m_active = id;
   emit activeComponentChanged();
+}
+
+std::string AppDocument::rememberedComponent() const {
+  if (browse || doc.header.uuid.empty()) return {};
+  const std::string id = QSettings().value(rememberKey(doc)).toString().toStdString();
+  const opad::Node* n = id.empty() ? nullptr : scene.node(id);
+  return n && n->kind == opad::Node::Kind::Component ? id : std::string();
 }
 
 void AppDocument::checkActive() {

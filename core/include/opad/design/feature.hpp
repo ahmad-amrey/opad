@@ -10,6 +10,7 @@
 //   * work is split in two so the app can keep its UI-thread rule: plan_*() only reads the document (worker
 //     thread, cancellable) and commit() applies a finished plan (owner thread, cheap).
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -90,10 +91,11 @@ json apply_ops(Document& doc, std::vector<json> new_ops, const std::string& auth
 
 // Locks (TODO 11 UI-37): whether an op of the document locks anything (a scan of the log, no replay), and why going
 // from `before` to `after` is refused: it removes, changes or moves a body or component that is locked in `before`
-// (empty: it does not). A locked one that goes with an unlocked component above it (a drawing deleted with a locked
-// layer) may go; one inside a component that moves stays where it is in it.
+// (none: it does not; the outermost such node is named with what holds its lock, the rest counted). A locked one that
+// goes with an unlocked component above it (a drawing deleted with a locked layer) may go; one inside a component that
+// moves stays where it is in it.
 bool has_locks(const Document& doc);
-std::string locked_change(const Scene& before, const Scene& after);
+std::optional<LockedError> locked_change(const Scene& before, const Scene& after);
 
 // ---------------------------------------------------------------- helpers shared with the app
 // Op builders (no results; feed them to plan_ops).

@@ -135,9 +135,13 @@ ExplodePanel::ExplodePanel(QWidget* parent) : QWidget(parent) {
   layout->addLayout(grid);
   m_attach = new QCheckBox(tr("Keep small parts with what they touch"), body);
   m_attach->setToolTip(tr("A small part (a capacitor, a solder joint) moves with the larger part it sits on"));
+  m_fasteners = new QCheckBox(tr("Screws and pins along their axis"), body);
+  m_fasteners->setObjectName("explodeFasteners");
+  m_fasteners->setToolTip(tr("Radial: a screw, pin or bolt (or a folder of parallel ones) leaves along its own axis, the short way out"));
   m_lines = new QCheckBox(tr("Explode lines"), body);
   m_lines->setToolTip(tr("A dashed line from where each part was to where it is"));
   layout->addWidget(m_attach);
+  layout->addWidget(m_fasteners);
   layout->addWidget(m_lines);
 
   layout->addWidget(header(tr("DRAG A PART ALONG"), body));
@@ -203,6 +207,7 @@ ExplodePanel::ExplodePanel(QWidget* parent) : QWidget(parent) {
   connect(m_spacing, &QDoubleSpinBox::valueChanged, this, &ExplodePanel::spacingChosen);
   connect(m_stages, &QComboBox::activated, this, [this] { emit stagesChosen(m_stages->currentData().toString()); });
   connect(m_attach, &QCheckBox::toggled, this, &ExplodePanel::attachSmallToggled);
+  connect(m_fasteners, &QCheckBox::toggled, this, &ExplodePanel::fastenersToggled);
   connect(m_lines, &QCheckBox::toggled, this, &ExplodePanel::linesToggled);
   connect(reset, &QPushButton::clicked, this, &ExplodePanel::resetRequested);
   connect(m_views, &QComboBox::activated, this, [this](int i) {
@@ -235,7 +240,7 @@ void ExplodePanel::showSpec(const opad::ExplodeSpec& spec, int depth, bool on, b
   rebuildLevels(depth);
   const int chosen = spec.levels > std::clamp(depth, 1, 6) ? 0 : spec.levels;
   for (QToolButton* b : m_levels) b->setChecked(b->property("levels").toInt() == chosen);
-  const QSignalBlocker a(m_switch), b(m_mode), c(m_axis), d(m_spacing), e(m_stages), f(m_attach), g(m_lines);
+  const QSignalBlocker a(m_switch), b(m_mode), c(m_axis), d(m_spacing), e(m_stages), f(m_attach), g(m_lines), h(m_fasteners);
   m_switch->setChecked(on);
   m_mode->setCurrentIndex(std::max(0, m_mode->findData(QString::fromStdString(spec.mode))));
   int axis = 3;  // a direction of its own: the view's up when it was chosen
@@ -244,11 +249,10 @@ void ExplodePanel::showSpec(const opad::ExplodeSpec& spec, int depth, bool on, b
   m_axis->setCurrentIndex(axis);
   m_axis->setEnabled(spec.mode != "radial");
   m_spacing->setValue(spec.spacing);
-  const int levelled = m_stages->findData("levels");
-  if (spec.stages == "levels" && levelled < 0) m_stages->addItem(tr("Level by level (as saved)"), "levels");
-  else if (spec.stages != "levels" && levelled >= 0) m_stages->removeItem(levelled);
   m_stages->setCurrentIndex(std::max(0, m_stages->findData(QString::fromStdString(spec.stages))));
   m_attach->setChecked(spec.attach_small);
+  m_fasteners->setChecked(spec.fasteners);
+  m_fasteners->setEnabled(spec.mode == "radial");
   m_lines->setChecked(lines);
 }
 

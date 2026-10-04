@@ -1,5 +1,6 @@
 // The fixed order in which per-body looks compose (UI-121): base appearance, then asset, lock, activation, compare,
-// explode and candidate layers; selection is the viewport's (Topmost) and comes after all of them.
+// explode and candidate layers; selection is the viewport's (Topmost) and comes after all of them. A locked body (UI-37)
+// is a reference only.
 #include "BodyLook.hpp"
 #include "check.hpp"
 
@@ -69,6 +70,30 @@ TEST(lock_fade_explode_and_candidate) {
   CHECK_NEAR(all.opacity, 0.4, 1e-12);
   const BodyLook moved = looks::compose(base(), with({{LookSource::Asset, &again}, {LookSource::Explode, &explode}}), false);
   CHECK(moved.offset == (std::array<double, 3>{11, 2, -2}));  // offsets add up
+}
+
+TEST(an_edited_opacity_is_the_documents_until_written) {
+  LookDelta edit, lock;
+  edit.opacity = 0.4;  // the opacity slider being dragged (UI-34)
+  lock.fade = 0.5;
+  CHECK_NEAR(looks::compose(base(), with({{LookSource::Edit, &edit}}), false).opacity, 0.4, 1e-12);
+  CHECK_NEAR(looks::compose(base(), with({{LookSource::Edit, &edit}, {LookSource::Lock, &lock}}), false).opacity, 0.2, 1e-12);  // then faded
+}
+
+TEST(locked_is_a_reference_only) {
+  LookDelta lock, ghost, inside;
+  lock.fade = 0.5;
+  lock.reference = true;
+  ghost.ghost = true;
+  // Faded and never selected; picked while references are (a guided tool, a feature input, snaps), not ghosted.
+  const BodyLook idle = looks::compose(base(), with({{LookSource::Lock, &lock}}), false);
+  CHECK(!idle.pickable && !idle.ghost && idle.visible && idle.color == base().color);
+  CHECK_NEAR(idle.opacity, 0.4, 1e-12);
+  CHECK(looks::compose(base(), with({{LookSource::Lock, &lock}}), true).pickable);
+  // In the active component (its entry changes nothing) it stays a reference; outside it the ghost rules, as references too.
+  CHECK(!looks::compose(base(), with({{LookSource::Lock, &lock}, {LookSource::Activation, &inside}}), false).pickable);
+  const BodyLook ghosted = looks::compose(base(), with({{LookSource::Lock, &lock}, {LookSource::Activation, &ghost}}), true);
+  CHECK(ghosted.ghost && ghosted.pickable);
 }
 
 TEST(lock_fade_then_ghost_and_hidden) {

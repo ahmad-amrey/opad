@@ -195,7 +195,7 @@ OPAD_BENCH(OPAD_BENCH_CONTEXT, contextmenus) {
           w.m_areaServices.select({ref(opad::Ref::Kind::Body, -1)});
           Built b = build({state->body});
           const QStringList want = {"contextTitle", "contextFit", "view.isolate", "contextHideOthers", "edit.hide", "contextEditSource", "contextFind", "edit.rename",
-                                    "contextColour", "contextLock", "design.move", "edit.selectparent", "contextExport", "inspect.properties", "contextDelete"};
+                                    "contextColour", "design.lock", "design.move", "edit.selectparent", "contextExport", "inspect.properties", "contextDelete"};
           require(has(b, want), "a body's entries, missing " + missing(b, want));
           require(b.text("contextEditSource") == MainWindow::tr("Edit %1").arg("Base") && b.text("contextDelete").startsWith(MainWindow::tr("Remove %1").arg("Part")),
                   "Edit Base and Remove Part: " + b.text("contextEditSource").toStdString() + " / " + b.text("contextDelete").toStdString());

@@ -1,6 +1,7 @@
 // OPAD_BENCH_EXPLODE: exploded views (UI-36, app/ExplodeArea.cpp) in the running app. Cases in
 // tools/bench_cases/assembly.py; the layout itself is core's (tests/test_explode).
 #include <QCoreApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QKeyEvent>
@@ -341,6 +342,14 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                       for (size_t k = 0; k < 3; ++k) worst = std::max({worst, std::abs(cli[i].dir[k] - app[i].dir[k]), std::abs(cli[i].centre[k] - app[i].centre[k])});
                     }
                     require(exact && worst < 1e-9, QString("laid out again from the measured tight boxes: %1 units as opad-cli explode lays them out (worst difference %2)").arg(app.size()).arg(worst));
+                    // Screws along their axis (on for a new explode): the Screws leave down, the short way out of the enclosure.
+                    QCheckBox* fasteners = form->findChild<QCheckBox*>("explodeFasteners");
+                    const int screws = area->unitOf(s->screws);
+                    const opad::Vec3 down = screws >= 0 ? area->units()[static_cast<size_t>(screws)].dir : opad::Vec3{0, 0, 0};
+                    require(fasteners && fasteners->isChecked() && area->spec().fasteners && same(down, {0, 0, -1}) && offset(s->screw[0])[2] < 0,
+                            QString("screws and pins along their axis: the Screws leave %1, down out of the enclosure (z %2)").arg(vec(down)).arg(offset(s->screw[0])[2], 0, 'f', 1));
+                    v->grabImage().save(prefix + ".fasteners.png");
+                    if (fasteners) fasteners->click();  // the rest of the bench spreads them sideways
                     doc->setActiveComponent(s->pcb);  // the explode follows the active component
                   }});
   list.push_back({[=] { return laidOut() && area->spec().root == s->pcb; }, [=, &w](bool followed) {
@@ -368,10 +377,13 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     const auto board = offset(s->board), chip = offset(s->chip), cap = offset(s->cap);
                     require(done && same(board, chip) && same(board, cap) && length(board) > 0, "kept: the PCB moves whole at level 2 " + vec(board));
                     w.m_browser->grab().save(prefix + ".browser.png");
+                    w.m_browser->selectIds({s->pcb});  // the palette and shortcuts toggle Keep / Explode its parts from what they show
+                    require(w.action("assembly.explodeKeep")->isChecked() && !w.action("assembly.explodeSplit")->isChecked(), "the kept PCB selected: Keep together shows checked");
                     area->setLevels(1);
                     w.m_browser->selectIds({s->screws});
                   }});
   list.push_back({[=, &w] { return laidOut() && w.action("assembly.explodeSplit")->isEnabled(); }, [=, &w](bool enabled) {
+                    require(!w.action("assembly.explodeKeep")->isChecked() && !w.action("assembly.explodeSplit")->isChecked(), "the Screws selected (following the level): neither shows checked");
                     SelectionContext context = w.selectionContext();
                     QMenu menu;
                     for (AreaController* a : w.m_areas) a->contextMenu(context, menu);
@@ -380,8 +392,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                       if (!a->objectName().isEmpty()) entries << a->objectName();
                     require(enabled && entries.contains("assembly.explodeKeep") && entries.contains("assembly.explodeSplit"), "the Screws' context menu: " + entries.join(' '));
                     QAction* split = w.action("assembly.explodeSplit");
-                    split->setChecked(false);
-                    split->trigger();  // checkable: on, as a click in the menu turns it
+                    split->trigger();  // checkable: on, as a click in the menu or the palette turns it
                     require(area->spec().split.count(s->screws) > 0, "Explode its parts on the Screws");
                     w.m_browser->selectIds({});
                   }});
@@ -640,6 +651,29 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     require(measured && std::abs(got - drawn) < 1e-6 && drawn > assembled + 5 && w.m_lastMeasure.value("exploded", false) && !w.action("inspect.pin")->isEnabled(),
                             QString("the distance tool measures lid to shell where they are drawn: %1 mm (exploded %2, assembled %3), not pinned").arg(got).arg(drawn).arg(assembled));
                     w.cancelTool();
+                    // Section > Pick face on a face of the moved lid across its way out: the plane goes through it where it is drawn.
+                    const opad::Vec3 lift = v->shownOffset(s->lid);
+                    double model = 0, expected = 0, along = 0;
+                    opad::Vec3 normal{0, 0, 1};
+                    for (int i = 0; i < 6 && std::abs(along) < 5; ++i) {
+                      opad::Ref face;
+                      face.body = s->lid;
+                      face.kind = opad::Ref::Kind::Face;
+                      face.index = i;
+                      const opad::json info = opad::inspect_ref(doc->doc, doc->scene, face);
+                      if (!info.contains("normal") || !info.contains("center")) continue;
+                      normal = info["normal"].get<opad::Vec3>();
+                      const opad::Vec3 c = info["center"].get<opad::Vec3>();
+                      along = lift[0] * normal[0] + lift[1] * normal[1] + lift[2] * normal[2];
+                      model = c[0] * normal[0] + c[1] * normal[1] + c[2] * normal[2];
+                      expected = model + along;
+                      if (std::abs(along) >= 5) w.sectionFromFace(face);
+                    }
+                    const opad::Vec3 o = w.m_section->origin();
+                    const double cut = o[0] * normal[0] + o[1] * normal[1] + o[2] * normal[2];
+                    require(std::abs(along) >= 5 && w.m_section->enabled() && std::abs(cut - expected) < 0.01 * std::abs(along),
+                            QString("Section > Pick face on the moved lid: the plane at %1 along the face's normal, where it is drawn (%2; in the model %3)").arg(cut, 0, 'f', 2).arg(expected, 0, 'f', 2).arg(model, 0, 'f', 2));
+                    w.m_section->setEnabled(false);
                     w.m_browser->selectIds({s->screw[0], s->screw[1]});
                   }});
   // Groups.

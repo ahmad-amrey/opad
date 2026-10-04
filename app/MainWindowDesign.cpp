@@ -3,7 +3,6 @@
 
 #include <QActionGroup>
 #include <QColorDialog>
-#include <QInputDialog>
 #include <QMap>
 #include <QMenu>
 #include <QMessageBox>
@@ -40,55 +39,12 @@ void MainWindow::buildDesignActions() {
     if (!op || (op->type != "feature" && op->type != "sketch")) throw opad::UserHint("Select a feature or a sketch on the timeline first (or double-click it).", true);
     m_design->editOp(id);
   });
-  addAction("design.newcomponent", tr("New component"), "plus", QKeySequence(), [this] {
-    bool ok = false;
-    const QString name = QInputDialog::getText(this, tr("New component"), tr("Name:"), QLineEdit::Normal, tr("Component"), &ok);
-    if (!ok || name.trimmed().isEmpty()) return;
-    opad::json args{{"name", name.trimmed().toStdString()}};
-    const auto ids = currentNodeIds();
-    if (!m_doc->activeComponent().empty()) args["parent"] = m_doc->activeComponent();  // under the active component (UI-33)
-    else if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component) args["parent"] = ids[0];
-    m_doc->run("component", args);
-  });
-  addAction("design.reparent", tr("Reparent"), "reparent", QKeySequence(), [this] {
-    const auto ids = currentNodeIds();
-    if (ids.empty()) throw opad::UserHint("Select the objects to move under another component first.", true);
-    QStringList names{tr("(document root)")};
-    std::vector<std::string> targets{""};
-    for (const auto& [id, n] : m_doc->scene.nodes)
-      if (n.kind == opad::Node::Kind::Component && std::find(ids.begin(), ids.end(), id) == ids.end()) {
-        QStringList path;
-        for (const auto& p : m_doc->scene.path_to(id)) path << m_doc->nodeName(p);
-        names << path.join(QString::fromUtf8(" › "));
-        targets.push_back(id);
-      }
-    bool ok = false;
-    const QString chosen = QInputDialog::getItem(this, tr("Reparent"), tr("Move under:"), names, 0, false, &ok);
-    if (!ok) return;
-    const std::string& parent = targets[static_cast<size_t>(names.indexOf(chosen))];
-    m_doc->run("reparent", opad::json{{"targets", ids}, {"parent", parent.empty() ? opad::json(nullptr) : opad::json(parent)}});
-  });
   addAction("design.colour", tr("Colour"), "shaded", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
     if (ids.empty()) throw opad::UserHint("Select the objects to colour first.", true);
     const QColor c = QColorDialog::getColor(nodeColour(ids.front()), this, tr("Colour"));
     if (!c.isValid()) return;
     m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
-  });
-  addAction("design.opacity", tr("Opacity"), "wireframe", QKeySequence(), [this] {
-    const auto ids = currentNodeIds();
-    if (ids.empty()) throw opad::UserHint("Select the objects to make see-through first.", true);
-    bool ok = false;
-    const opad::Node* n = m_doc->node(ids.front());
-    const int pct = QInputDialog::getInt(this, tr("Opacity"), tr("Opacity (10–100 %):"), n ? static_cast<int>(n->opacity * 100) : 100, 10, 100, 10, &ok);
-    if (!ok) return;
-    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"opacity", pct / 100.0}});
-  });
-  addAction("design.lock", tr("Lock"), "lock", QKeySequence(), [this] {
-    const auto ids = currentNodeIds();
-    if (ids.empty()) throw opad::UserHint("Select the objects to lock or unlock first.", true);
-    const opad::Node* n = m_doc->node(ids.front());
-    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !(n && n->locked)}});
   });
 
   // Sketch mode.

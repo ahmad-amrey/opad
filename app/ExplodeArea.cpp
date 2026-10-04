@@ -84,11 +84,11 @@ opad::ExplodeRule nextRule(opad::ExplodeRule r) {
 }  // namespace
 
 namespace {
-// What a new explode starts from: every level moving with the distance at once (the core's default moves the levels in
-// turn, one stretch of the slider each: not offered here, TODO 11 D4).
+// What a new explode starts from: every level moving with the distance at once (never a stretch of the slider per level,
+// TODO 11 D4), screws and pins out along their axis.
 opad::ExplodeSpec fresh() {
   opad::ExplodeSpec spec;
-  spec.stages = "together";
+  spec.fasteners = true;
   return spec;
 }
 }  // namespace
@@ -102,6 +102,7 @@ Explode::Explode(AreaServices& services) : AreaController(services), m_spec(fres
 }
 
 Explode::~Explode() {
+  ++m_serial;  // a cancelled job reports at once: not to this
   if (m_job) m_job->cancel();
   if (m_measure) m_measure->cancel();
 }
@@ -265,6 +266,7 @@ void Explode::ready() {
   connect(m_form, &ExplodePanel::spacingChosen, this, [this](double spacing) { edit([&](opad::ExplodeSpec& s) { s.spacing = spacing; }); });
   connect(m_form, &ExplodePanel::stagesChosen, this, [this](const QString& stages) { edit([&](opad::ExplodeSpec& s) { s.stages = stages.toStdString(); }, false); });
   connect(m_form, &ExplodePanel::attachSmallToggled, this, [this](bool on) { edit([&](opad::ExplodeSpec& s) { s.attach_small = on; }); });
+  connect(m_form, &ExplodePanel::fastenersToggled, this, [this](bool on) { edit([&](opad::ExplodeSpec& s) { s.fasteners = on; }); });
   connect(m_form, &ExplodePanel::linesToggled, this, [this](bool on) {
     m_lines = on;
     QSettings().setValue("view/explodeLines", on);
@@ -414,10 +416,10 @@ void Explode::tick() {
     m_units.clear();
     m_bodyUnits.clear();
     m_sketchUnits.clear();
+    ++m_serial;  // before the cancel, which reports at once
+    m_relayout = false;
     if (m_job) m_job->cancel();
     m_job = nullptr;
-    m_relayout = false;
-    ++m_serial;
     refreshPanel();
     services().browser()->refreshDecorations();
     services().updateCommands();
@@ -559,7 +561,10 @@ void Explode::layout() {
         (*boxes)[id] = opad::node_world_bbox(doc->doc, doc->scene, id);
       } catch (const std::exception&) {
       }
-    measureBoxes(missing);
+    std::vector<std::string> measurable;
+    for (const auto& k : missing)
+      if (!m_unmeasured.count(k)) measurable.push_back(k);
+    if (!measurable.empty()) measureBoxes(measurable);
   }
   auto measured = std::make_shared<opad::Document>();  // the shapes and their boxes, cached
   measured->shape_cache = doc->doc.shape_cache;
@@ -571,19 +576,23 @@ void Explode::layout() {
     std::string root;
   };
   auto out = std::make_shared<Out>();
-  m_job = services().jobs()->async(tr("Laying out the exploded view"), [scene, boxes, spec, out, measured, exact](Progress) {
-    out->units = exact ? opad::explode_units(*measured, *scene, spec)
+  m_job = services().jobs()->async(tr("Laying out the exploded view"), [scene, boxes, spec, out, measured, exact, axes = m_axes](Progress) {
+    const opad::ExplodeAxisFn axis = opad::fastener_axes(*measured, *scene, axes);  // each shape once per document
+    out->units = exact ? opad::explode_units(*measured, *scene, spec, {}, axis)
                        : opad::explode_units(*measured, *scene, spec, [boxes](const std::string& id) {
                            const auto it = boxes->find(id);
                            return it == boxes->end() ? Bnd_Box() : it->second;
-                         });
+                         }, axis);
     out->depth = opad::explode_depth(*scene, spec);
     out->root = opad::explode_root(*scene, spec);
   }, [this, serial, out, exact](bool ok, const QString& error) {
     if (serial != m_serial) return;
     m_job = nullptr;
     if (m_relayout) return layout();  // the spec or the document changed meanwhile
-    if (!ok) return services().showMessage(error, 6000);
+    if (!ok) {
+      if (error != QLatin1String("cancelled")) services().showMessage(error, 6000);
+      return;
+    }
     m_units = std::move(out->units);
     m_exact = exact;
     m_bodyUnits = opad::explode_body_units(m_units);
@@ -609,10 +618,11 @@ void Explode::measureBoxes(const std::vector<std::string>& keys) {
   measured->shape_cache = services().document()->doc.shape_cache;
   m_measure = services().jobs()->async(tr("Measuring the parts for the exploded view"), [measured, keys](Progress p) {
     opad::warm_tight_bboxes(*measured, keys, [p] { return p.cancelled(); });
-  }, [this](bool ok, const QString&) {
+  }, [this, measured, keys](bool ok, const QString&) {
     m_measure = nullptr;
-    if (!ok) m_measureRefused = true;  // cancelled: the view's boxes for this document
-    else if (m_on) layout();
+    if (!ok) return void(m_measureRefused = true);  // cancelled: the view's boxes for this document
+    for (const auto& k : opad::missing_tight_bboxes(*measured, keys)) m_unmeasured.insert(k);  // no shape to measure (not cached)
+    if (m_on) layout();
   });
 }
 
@@ -737,6 +747,19 @@ void Explode::refreshPanel() {
   const std::string root = m_on ? m_root : m_spec.root;
   m_panel->setContext(root.empty() ? doc->title() : doc->nodeName(root));
   m_form->footer()->setPrimaryEnabled(m_on);
+  checkRules(services().selection());
+}
+
+void Explode::checkRules(const SelectionContext& selection) {
+  if (!m_keep || !m_split) return;
+  std::vector<std::string> components;
+  for (const auto& id : selection.ids)
+    if (const opad::Node* n = services().document()->scene.node(id); n && n->kind == opad::Node::Kind::Component && belowRoot(id)) components.push_back(id);
+  auto all = [&](opad::ExplodeRule rule) {
+    return !components.empty() && std::all_of(components.begin(), components.end(), [&](const std::string& id) { return opad::explode_rule(m_spec, id) == rule; });
+  };
+  m_keep->setChecked(all(opad::ExplodeRule::Keep));
+  m_split->setChecked(all(opad::ExplodeRule::Split));
 }
 
 void Explode::refreshChip() {
@@ -797,9 +820,7 @@ void Explode::contextMenu(const SelectionContext& selection, QMenu& menu) {
   if (!any) return;
   menu.addSeparator();
   if (!components.empty()) {
-    auto all = [&](opad::ExplodeRule rule) { return std::all_of(components.begin(), components.end(), [&](const std::string& id) { return opad::explode_rule(m_spec, id) == rule; }); };
-    m_keep->setChecked(all(opad::ExplodeRule::Keep));
-    m_split->setChecked(all(opad::ExplodeRule::Split));
+    checkRules(selection);
     menu.addAction(m_keep);
     menu.addAction(m_split);
   }
@@ -833,18 +854,21 @@ void Explode::selectionChanged(const SelectionContext& selection) {
       if (std::vector<std::string> ids = members(unit); ids != selection.ids)
         QTimer::singleShot(0, this, [this, ids] { services().browser()->selectIds(ids); });
   }
+  checkRules(selection);
   placeHandle();
 }
 
 void Explode::documentChanged(bool replaced) {
   if (replaced) {  // another document: nothing of this one's explode carries over
     m_tick.stop();
+    ++m_serial;  // before the cancels, which report at once
     if (m_job) m_job->cancel();
     m_job = nullptr;
     if (m_measure) m_measure->cancel();
     m_measure = nullptr;
     m_measureRefused = m_exact = false;
-    ++m_serial;
+    m_unmeasured.clear();
+    m_axes = std::make_shared<opad::FastenerAxes>();
     m_on = m_offAfter = m_relayout = false;
     m_rootFollows = true;
     m_spec = fresh();
@@ -860,6 +884,7 @@ void Explode::documentChanged(bool replaced) {
     refreshPanel();
     return;
   }
+  m_unmeasured.clear();  // shapes may be cached now: one more pass at most per change
   if (m_on) layout();  // bodies added, moved, hidden or gone
   refreshPanel();
 }

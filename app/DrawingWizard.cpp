@@ -185,6 +185,7 @@ void MainWindow::drawingToSketch() {
         summary->show(); return;
       }
       if(snapshot->ops.size()!=m_doc->doc.ops.size()) { state->applying=false; note->setText(tr("Document changed. Please retry.")); update(); return; }
+      if(!m_doc->activeComponent().empty()) (*op)["component"]=m_doc->activeComponent();  // made in the active component, as Finish sketch does (UI-33)
       std::vector<opad::json> ops; ops.push_back(std::move(*op));
       if(removeSource->isChecked()) for(const auto& source:sources) ops.push_back({{"op","delete"},{"target",source}});
       m_design->applyOps(std::move(ops),tr("Convert drawing to sketch"),[=,this](bool applied,const QString& failure) {

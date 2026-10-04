@@ -69,7 +69,8 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
       hint(tr("Section: that face is %1; pick a planar face").arg(QString::fromStdString(info.value("surface", "not planar"))), false);
       return;
     }
-    const opad::Vec3 o{info["center"][0].get<double>(), info["center"][1].get<double>(), info["center"][2].get<double>()};
+    const opad::Vec3 lift = m_viewport->shownOffset(face.body);  // an exploded part: the plane goes where the face is drawn
+    const opad::Vec3 o{info["center"][0].get<double>() + lift[0], info["center"][1].get<double>() + lift[1], info["center"][2].get<double>() + lift[2]};
     const opad::Vec3 n{info["normal"][0].get<double>(), info["normal"][1].get<double>(), info["normal"][2].get<double>()};
     if (trace::enabled()) trace::log(QStringLiteral("section from face: origin %1 %2 %3 normal %4 %5 %6").arg(o[0]).arg(o[1]).arg(o[2]).arg(n[0]).arg(n[1]).arg(n[2]));
     m_section->setFromFace(o, n);

@@ -1,9 +1,9 @@
 #pragma once
-// Per-body display state (UI-121). Features that change how bodies look for a while (activation ghosts, lock fade,
-// compare tints, explode offsets, smart-select candidates, asset styling) each own one layer of LookDeltas on the
-// viewport (Viewport::setLookLayer) instead of writing AIS state themselves; the viewport composes the layers over the
-// document's appearance in one fixed order and applies the result per body. Hover and selection come after all of
-// them: a selected body moves to the Topmost layer (X-ray) whatever its look, and is highlighted there.
+// Per-body display state (UI-121). Features that change how bodies look for a while (an appearance being edited,
+// activation ghosts, lock fade, compare tints, explode offsets, smart-select candidates, asset styling) each own one layer
+// of LookDeltas on the viewport (Viewport::setLookLayer) instead of writing AIS state themselves; the viewport composes
+// the layers over the document's appearance in one fixed order and applies the result per body. Hover and selection come
+// after all of them: a selected body moves to the Topmost layer (X-ray) whatever its look, and is highlighted there.
 //
 // Composition, in LookSource order, each layer over what the earlier ones made:
 //   visible, color, opacity, pickable, layer   replaced when the delta has them
@@ -12,6 +12,8 @@
 //                                              pickable (pickable while ghosts are, Viewport::setGhostsPickable); the
 //                                              viewport passes the theme's ghost role (Tokens::ghost, its alpha), the
 //                                              delta's ghostOpacity replaces that alpha
+//   reference                                  pickable only while ghosts are (a reference: measured, snapped to, a
+//                                              feature's input), never selected: a locked body
 //   offset                                     added (a world translation; picking follows)
 // So an activation ghost under a compare tint is drawn in the tint at the ghost's opacity, a lock fade under a ghost
 // ends at the ghost's opacity, and a smart-select candidate on a ghost may set its own opacity and pickable.
@@ -22,7 +24,8 @@
 #include <cstdint>
 #include <optional>
 
-enum class LookSource { Asset, Lock, Activation, Compare, Explode, Candidate, Count };
+// Edit: an appearance being edited and not written yet (the opacity slider while it is dragged), over the document's.
+enum class LookSource { Edit, Asset, Lock, Activation, Compare, Explode, Candidate, Count };
 constexpr std::size_t kLookSources = static_cast<std::size_t>(LookSource::Count);
 
 struct LookDelta {
@@ -32,6 +35,7 @@ struct LookDelta {
   double fade = 1;
   bool ghost = false;
   std::optional<double> ghostOpacity;  // a ghost's opacity in place of the theme's (the user's inactive opacity)
+  bool reference = false;              // picked only as a reference (while ghosts are), never selected: a locked body
   std::optional<bool> pickable;
   std::optional<Graphic3d_ZLayerId> layer;  // where the body is drawn while it is not selected
   std::array<double, 3> offset{0, 0, 0};

@@ -16,6 +16,7 @@
 #include <functional>
 #include <map>
 
+#include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
@@ -275,10 +276,10 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   });
   connect(m_tree, &BrowserTree::reparentRequested, this, [this](const std::vector<std::string>& ids, const std::string& parent, int index) {
     if (ids.empty()) return;
-    opad::json op{{"targets", ids}};  // one step, kept in the dragged order
+    opad::json op{{"targets", ids}, {"keep_place", true}};  // one step, kept in the dragged order, where they are in the world
     op["parent"] = parent.empty() ? opad::json(nullptr) : opad::json(parent);
     if (index >= 0) op["index"] = index;
-    try { m_doc->run("reparent", op); } catch (const std::exception& e) { emit m_doc->message(QString::fromUtf8(e.what())); }
+    try { m_doc->run("reparent", op); } catch (const std::exception& e) { emit m_doc->message(i18n::t(QString::fromUtf8(e.what()))); }
   });
   connect(doc, &AppDocument::changed, this, &BrowserPanel::rebuild);
   connect(doc, &AppDocument::activeComponentChanged, this, &BrowserPanel::updateBreadcrumb);

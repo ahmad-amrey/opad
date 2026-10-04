@@ -193,11 +193,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool ghostsPickable() const { return m_ghostsPickable || m_pickAccumulate || m_edgeHover; }
   BodyLook bodyLook(const std::string& body) const;  // as composed now (whether displayed yet or not); a sketch's too
   BodyLook shownLook(const std::string& body) const;  // as applied to the displayed body or sketch (the default look if none)
-  QString hoverName(const std::string& node) const;   // the status text of a hovered node: "Lid (inactive)" for a ghost
+  QString hoverName(const std::string& node) const;   // the status text of a hovered node: "Lid (inactive)" for a ghost, "(locked)"
   const QString& hoverText() const { return m_hover; }  // the status text of what picking finds under the mouse now
-  // The ghost drawn nearest under a point of the view (widget px), found as the orbit pivot is (ghosts are not picked):
-  // "" when there is none or a body that is no ghost is in front of it. One pick of the navigation selector.
-  std::string ghostAt(const QPointF& point);
+  // The body drawn nearest under a point of the view (widget px), found as the orbit pivot is, whether it is picked or not
+  // (a ghost, a locked body): "" when there is none. One pick of the navigation selector.
+  std::string drawnAt(const QPointF& point);
+  std::string ghostAt(const QPointF& point);  // drawnAt when that is a ghost, else ""
   bool looksPending() const { return m_lookJob != nullptr || !m_lookQueue.empty(); }
   // How far looks moved what is drawn (an exploded view): the displayed bodies off their place, and one node's offset
   // (a component's by its own entry). Measuring and annotating take the parts where they are drawn.

@@ -52,9 +52,14 @@ class AppDocument : public QObject {
   // Atomic background save; holds the document write guard until the worker really exits.
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0);
-  opad::json run(const std::string& command, opad::json args, const QString& label = {});  // label: the undo step's, else by command
+  opad::json run(const std::string& command, opad::json args, const QString& label = {});  // label: the undo step's, else by command; a lock refusal comes back as lockedMessage
+  // A change refused by a lock (UI-37) in the shown language: the node, what holds its lock and the change refused.
+  static QString lockedMessage(const opad::LockedError& e);
   // Several commands as one step to undo, under one label and one refresh (a drawing's layer state restored); all or none.
   opad::json runAll(const std::vector<std::pair<std::string, opad::json>>& commands, const QString& label);
+  // Several commands as one step (one undo, one refresh): `commands` calls run() as often as it needs, the scene is not
+  // resolved in between (read what you need first). One that throws takes back what the others appended, and rethrows.
+  void batch(const QString& label, const std::function<void()>& commands);
 
   // Design changes are planned on a worker (design::plan_ops reads the document, see DesignController) and
   // committed here. While a plan is being computed the document must not change under it: designBusy makes
@@ -132,7 +137,10 @@ class AppDocument : public QObject {
   // go into it, and the view ghosts everything else. Empty = the document root. Back to the root when it goes (deleted,
   // undone; not while the scene is rolled back to an earlier op) or another document comes in. Also in viewer mode.
   const std::string& activeComponent() const { return m_active; }
-  void setActiveComponent(const std::string& id);  // a component of the scene, or empty; throws for anything else
+  // A component of the scene, or empty; throws for anything else. remember: it comes back when this document is opened
+  // again (setting view/active/<uuid>; not for a viewed file, read afresh each time).
+  void setActiveComponent(const std::string& id, bool remember = false);
+  std::string rememberedComponent() const;  // what setActiveComponent(.., true) last left for this document, if still a component
   // ---- The file on disk (UI-56): what this session last read or wrote there, so that a change made outside (a git
   // pull or checkout, another OPAD, opad-cli) is noticed (DiskSync), merged or reported, and never overwritten.
   struct DiskStat {
@@ -222,6 +230,7 @@ class AppDocument : public QObject {
   std::shared_ptr<std::atomic<bool>> m_alive;
   std::shared_ptr<std::atomic<unsigned>> m_loadToken = std::make_shared<std::atomic<unsigned>>(0);  // the load whose result counts
   bool m_capturing = false;
+  bool m_batching = false;  // inside batch(): run() neither records a step nor refreshes
   bool m_converting = false;
   QString m_cacheSource;  // the viewed file, when its read was slow enough to remember
   bool m_cacheCenter = false;

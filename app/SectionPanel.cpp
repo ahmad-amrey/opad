@@ -130,6 +130,9 @@ bool SectionPanel::pickRange(double& dmin, double& dmax) const {
     dmin = std::min(dmin, d);
     dmax = std::max(dmax, d);
   }
+  const double d0 = m_pickOrigin[0] * m_pickNormal[0] + m_pickOrigin[1] * m_pickNormal[1] + m_pickOrigin[2] * m_pickNormal[2];
+  dmin = std::min(dmin, d0);  // the picked face may be drawn out of the model's box (an exploded part)
+  dmax = std::max(dmax, d0);
   return dmax > dmin;
 }
 

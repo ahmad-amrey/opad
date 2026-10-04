@@ -189,11 +189,8 @@ class Activation : public AreaController {
   void documentChanged(bool replaced) override {
     // A document opened again: the component last activated in it comes back (setting view/active/<uuid>).
     AppDocument* doc = services().document();
-    if (replaced && doc->hasDocument && !doc->browse && doc->activeComponent().empty()) {
-      const std::string id = QSettings().value(rememberKey(*doc)).toString().toStdString();
-      const opad::Node* n = id.empty() ? nullptr : doc->scene.node(id);
-      if (n && n->kind == opad::Node::Kind::Component) return doc->setActiveComponent(id);  // its signal refreshes
-    }
+    if (replaced && doc->hasDocument && doc->activeComponent().empty())
+      if (const std::string id = doc->rememberedComponent(); !id.empty()) return doc->setActiveComponent(id);  // its signal refreshes
     refresh();
   }
 
@@ -290,17 +287,8 @@ class Activation : public AreaController {
     emit view->hoverChanged(text.isEmpty() ? view->hoverText() : text);
   }
 
-  static QString rememberKey(const AppDocument& doc) { return "view/active/" + QString::fromStdString(doc.doc.header.uuid); }
-
   void setActive(const std::string& id) const {
-    services().guarded([&] {
-      AppDocument* doc = services().document();
-      doc->setActiveComponent(id);
-      if (doc->browse || doc->doc.header.uuid.empty()) return;  // a viewed file is read afresh each time
-      QSettings settings;
-      if (id.empty()) settings.remove(rememberKey(*doc));
-      else settings.setValue(rememberKey(*doc), QString::fromStdString(id));
-    });
+    services().guarded([&] { services().document()->setActiveComponent(id, true); });
   }
 
   void decorate(const browser::Row& row, browser::Decoration& d) const {
@@ -366,8 +354,7 @@ class Activation : public AreaController {
       const std::set<std::string> in = opad::ops_in_component(doc->doc, scene, active);
       std::set<std::string> dimmed;
       for (const auto& op : doc->doc.ops)
-        if (!in.count(op.id) && !(op.type == "delete" && in.count(op.data.value("target", ""))))  // nor the tombstone of one that does
-          dimmed.insert(op.id);
+        if (!in.count(op.id)) dimmed.insert(op.id);  // tombstoned ones and their tombstones are weighed too
       services().timeline()->setDimmedOps(std::move(dimmed), m_history->isChecked());
       if (trace::enabled()) trace::log(QStringLiteral("activation: timeline scope %1 ms").arg(clock.elapsed()));
     }

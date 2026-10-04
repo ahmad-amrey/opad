@@ -19,6 +19,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <optional>
 #include <set>
 
@@ -605,6 +606,21 @@ struct Walk {
     }
   }
 
+  // Whether a body a feature made in `component` is in it at the end of the history (no later reparent took it
+  // elsewhere), or the stored result has none there.
+  bool left_in(const json& stored, const std::string& component) const {
+    std::map<std::string, std::string> last;  // body made there -> the parent its last reparent gave it
+    if (const auto bodies = stored.find("bodies"); bodies != stored.end())
+      for (const auto& b : *bodies)
+        if (b.value("new", false) && b.value("parent", "") == component) last[b.value("id", "")] = component;
+    if (last.empty() || !timeline) return true;
+    for (const auto& e : *timeline)
+      if (e.op->type == "reparent")
+        if (const auto it = last.find(e.data().value("target", "")); it != last.end())
+          it->second = e.data().value("parent", json()).is_string() ? e.data()["parent"].get<std::string>() : "";
+    return std::any_of(last.begin(), last.end(), [&](const auto& kv) { return kv.second == component; });
+  }
+
   // New bodies are named, placed and coloured when they are first made, and the entry keeps it: a regeneration never
   // renames or moves them, and replay only reads what is stored (TODO 10 B14, C2). A body made from scratch takes
   // the feature's name (numbered when the feature makes several) and goes into the feature's component (UI-33); a copy
@@ -886,13 +902,16 @@ struct Walk {
         const std::string kind = data.value("kind", "");
         json inputs = data.value("inputs", json::object());
         // Made in a component (UI-33): whether it is there counts too, so a body made from scratch is put back in world
-        // coordinates when the component goes and into it again when it comes back. Others keep their fingerprints.
+        // coordinates when the component goes and into it again when it comes back. Not when every body it made has
+        // been moved out of it since: a move that kept its place (reparent keep_place) is a transform counting on the
+        // frame the body was made in. Others keep their fingerprints.
         const std::string named = data.contains("component") && data["component"].is_string() ? data["component"].get<std::string>() : "";
         const Node* in_component = named.empty() ? nullptr : builder.scene().node(named);
         const std::string component = in_component && in_component->kind == Node::Kind::Component ? named : "";
+        const bool gone = !named.empty() && component.empty() && left_in(stored, named);
         auto fingerprint = [&] {
           const std::string f = feature_fingerprint(builder.scene(), params, kind, inputs);
-          return named.empty() ? f : sha256_hex(f + "|component:" + (component.empty() ? "gone" : component)).substr(0, 24);
+          return named.empty() ? f : sha256_hex(f + "|component:" + (gone ? "gone" : named)).substr(0, 24);
         };
         std::string fp = fingerprint();
         if (!force && stored.value("in", "") == fp) {
@@ -953,7 +972,7 @@ struct Walk {
       for (const auto& err : errors)
         if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
       if (locked_before)
-        if (const std::string why = locked_change(*locked_before, builder.scene()); !why.empty()) throw Error(why);
+        if (const auto why = locked_change(*locked_before, builder.scene())) throw *why;
     }
 
     plan.ops = new_ops;
@@ -1032,8 +1051,8 @@ bool has_locks(const Document& doc) {
   return false;
 }
 
-std::string locked_change(const Scene& before, const Scene& after) {
-  std::string first;
+std::optional<LockedError> locked_change(const Scene& before, const Scene& after) {
+  std::optional<LockedError> first;
   size_t count = 0;
   std::function<void(const std::string&)> visit = [&](const std::string& id) {  // in tree order: the outermost is named
     const Node* n = before.node(id);
@@ -1050,11 +1069,14 @@ std::string locked_change(const Scene& before, const Scene& after) {
     } else if (now->local.m != n->local.m) {
       what = "moving";
     }
-    if (what && ++count == 1) first = "\"" + n->name + "\" is locked: unlock it before " + what + " it";
+    if (what && ++count == 1) first.emplace(n->name, before.lock_holder(id)->name, what);
     for (const auto& c : n->children) visit(c);
   };
   for (const auto& r : before.roots) visit(r);
-  if (count > 1) first += " (and " + std::to_string(count - 1) + " more locked)";
+  if (count > 1) {
+    const LockedError one = *first;
+    first.emplace(one.node, one.holder, one.change, count - 1);
+  }
   return first;
 }
 
