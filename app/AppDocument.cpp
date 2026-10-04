@@ -36,10 +36,10 @@ QString phaseLabel(const std::string& what, const QString& file) {
 // Where a phase lies in the whole load (UI-40): its start and span in per cent. The bodies' display after the document is
 // built takes the rest, from displayStart(). Measured: the Engine .opad reads and parses in 2 s, prepares its bodies in 3 s
 // and displays them in 7 s; a large STEP file is mostly translation (21 of 23 s: scanned by bytes in 0.4 s, parsed in 2.2
-// s), meshes and drawings mostly reading.
+// s), meshes and drawings mostly reading. `what` whole: "reading drawing" (DXF, DWG) is a drawing's long read, not the scan.
 std::pair<int, int> phaseSpan(const std::string& what, bool opad) {
   if (opad) return what == "preparing" ? std::pair{20, 25} : std::pair{0, 20};  // opening: read and parsed by bytes
-  if (what == "reading") return {0, 2};
+  if (what == "reading") return {0, 2};  // STEP's byte scan, a mesh file read in
   if (what == "parsing") return {2, 8};
   if (what == "building") return {70, 10};
   if (what == "preparing") return {80, 5};
@@ -61,7 +61,7 @@ opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<b
   auto alive = m_alive;
   o.progress = [this, cancel, alive, last, lastEmit, file, opad](double frac, const std::string& what) {
     const int pct = frac >= 0 ? static_cast<int>(frac * 100.0) : -1;  // a STEP file's reading has no progress source
-    const auto [start, span] = phaseSpan(what.substr(0, what.find(' ')), opad);
+    const auto [start, span] = phaseSpan(what, opad);
     const int overall = start + span * std::max(pct, 0) / 100;
     if (trace::enabled()) trace::log(QStringLiteral("import progress: %1 %2").arg(QString::fromStdString(what)).arg(frac));
     // The STEP reader reports thousands of sub-steps per second; the strip only needs ~20 updates/s, so

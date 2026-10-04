@@ -1,5 +1,6 @@
 #include "AppDocument.hpp"
 #include "check.hpp"
+#include "opad/geometry.hpp"
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QTemporaryDir>
@@ -135,6 +136,33 @@ int main(int argc, char** argv) {
       doc.redo();
       CHECK(doc.lastChange().whole);
       doc.undo();
+    }
+    // A worker's document for the nodes a click inspects (UI-51): the shared shape cache, their entries without BREP text.
+    {
+      const auto all = doc.scene.all_bodies();
+      const std::string key = doc.scene.node(all[0])->body_key;
+      const auto shapes = doc.shapesOf({all[0]});
+      CHECK(shapes->shape_cache == doc.doc.shape_cache && shapes->body_count() == 1 && shapes->bodies()[0].brep.empty() && !doc.doc.body(key)->brep.empty());
+      CHECK(!opad::body_shape(*shapes, key).IsNull());
+    }
+    // Load progress (UI-40): a drawing's read is placed after the scan (it sat at 0-2 % and then jumped to 70).
+    {
+      const QString dxf = tmp.path() + "/lines.dxf";
+      std::string text = "0\nSECTION\n2\nENTITIES\n";
+      for (int i = 0; i < 10000; ++i) {
+        const std::string x = std::to_string(i % 100 * 5), y = std::to_string(i / 100 * 5), x2 = std::to_string(i % 100 * 5 + 3);
+        text += "0\nLINE\n8\nGrid\n10\n" + x + "\n20\n" + y + "\n30\n0\n11\n" + x2 + "\n21\n" + y + "\n31\n0\n";
+      }
+      opad::write_text_file(dxf.toStdString(), text + "0\nENDSEC\n0\nEOF\n");
+      int read = 0, early = 0;
+      auto watched = QObject::connect(&doc, &AppDocument::loadProgress, &doc, [&](const QString& phase, int, int overall) {
+        if (phase == "reading drawing") ++read, early += overall < 10;
+      });
+      doc.viewerOpens = true;
+      doc.startOpen(dxf);
+      loop.exec();
+      QObject::disconnect(watched);
+      CHECK(success && read > 0 && early == 0);
     }
     int resets=0;
     QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});
