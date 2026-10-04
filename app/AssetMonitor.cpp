@@ -316,7 +316,7 @@ void AssetMonitor::watch() {
       add(found);
       add(QFileInfo(found).absolutePath());
       for (const auto& model : s->value("model_files", opad::json::array()))  // a board's 3D models and their folders
-        if (const QString m = qpath(model.get<std::string>()); !m.isEmpty()) {
+        if (const QString m = qpath(model.get<std::string>()); !m.isEmpty() && !networkPath(m)) {  // a share is not looked at
           add(m);
           add(QFileInfo(m).absolutePath());
         }

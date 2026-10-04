@@ -147,8 +147,6 @@ std::string kind_of(const fs::path& file) {
   return "mesh";
 }
 
-// A UNC path (\\server\share): opening it can hand the user's credentials to that server, so a document never makes OPAD
-// look at one by itself.
 bool network(const fs::path& p) {
 #ifdef _WIN32
   const std::wstring& s = p.native();
@@ -609,6 +607,8 @@ std::string file_sha256(const fs::path& file, bool compute) {
   if (fs::file_time_type::clock::now() - time > std::chrono::seconds(3)) cache_put("asset-sha", stat, sha);
   return sha;
 }
+
+bool network_path(const fs::path& p) { return network(p); }
 
 bool has_assets(const Document& doc) {
   for (const auto& o : doc.ops)

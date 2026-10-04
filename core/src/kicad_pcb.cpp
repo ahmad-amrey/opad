@@ -663,7 +663,21 @@ std::string library_path(const std::string& var, const std::string& rest) {
 // The library's release for a KiCad version (its models move and get renamed between them).
 std::string library_tag(int version) { return version <= 0 ? "master" : version == 5 ? "5.1.12" : std::to_string(version) + ".0.0"; }
 
-// Footprints' 3D model files for one board (kicad_model_file).
+// Whether `p` lies in `root`, as written (nothing on disk is touched).
+bool lies_in(const std::filesystem::path& p, const std::filesystem::path& root) {
+  if (root.empty()) return false;
+  const std::filesystem::path a = p.lexically_normal(), r = root.lexically_normal();
+  auto ai = a.begin();
+  for (auto ri = r.begin(); ri != r.end(); ++ri, ++ai) {
+    if (ri->empty()) continue;  // a trailing separator
+    if (ai == a.end() || lower(utf8(*ai)) != lower(utf8(*ri))) return false;
+  }
+  return true;
+}
+
+// Footprints' 3D model files for one board (kicad_model_file). A model on a network share is looked for only where the user
+// put it (the board's own folder, the model folders, KiCad's variables as the user's environment and KiCad's settings give
+// them): a board or its project naming \\server\share must not make OPAD hand that server the user's credentials.
 class Resolver {
  public:
   struct Found {
@@ -714,9 +728,18 @@ class Resolver {
       candidates.push_back(d / path_from_utf8(rest).filename());
     }
     if (!out.library.empty()) candidates.push_back(kicad_download_dir() / path_from_utf8(out.library));
+    auto allowed = [&](const std::filesystem::path& c) {
+      if (!network_path(c) || lies_in(c, dir)) return true;
+      if (std::any_of(user.begin(), user.end(), [&](const auto& d) { return lies_in(c, d); })) return true;
+      if (var.empty() || var == "KIPRJMOD") return false;
+      auto it = own.find(var);
+      if (it == own.end()) it = own.emplace(var, variable_dirs(var, {})).first;  // the project's text variables left out
+      return std::any_of(it->second.begin(), it->second.end(), [&](const auto& d) { return lies_in(c, d); });
+    };
     for (const bool vrml : {false, true})  // a STEP anywhere before a VRML
       for (const auto& c : candidates)
-        if (auto f = existing(c.lexically_normal(), vrml); !f.empty()) {
+        // As written on a share: libstdc++ knows no UNC root and lexically_normal makes \\server\share a folder of this drive.
+        if (auto f = allowed(c) ? existing(network_path(c) ? c : c.lexically_normal(), vrml) : std::filesystem::path(); !f.empty()) {
           out.file = f;
           return out;
         }
@@ -727,7 +750,7 @@ class Resolver {
   std::filesystem::path dir;
   std::vector<std::filesystem::path> user;
   std::map<std::string, std::string> project;
-  std::map<std::string, std::vector<std::filesystem::path>> vars;
+  std::map<std::string, std::vector<std::filesystem::path>> vars, own;
 };
 
 }  // namespace

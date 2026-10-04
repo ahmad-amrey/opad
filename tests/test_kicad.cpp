@@ -679,6 +679,24 @@ TEST(model_lookup) {
   CHECK(kicad_model_file("${KICAD9_3DMODEL_DIR}/Test.3dshapes/alone.wrl", b, {f.mine}) == (f.mine / "alone.wrl").lexically_normal());
   CHECK(kicad_model_file("${KICAD9_3DMODEL_DIR}/Test.3dshapes/both.wrl", b, {f.mine}) == (kicad_download_dir() / "Test.3dshapes" / "both.step").lexically_normal());
   CHECK(kicad_model_file("${OPAD_TEST_NOT_SET}/Test.3dshapes/both.step", b).empty());  // not a library variable
+#ifdef _WIN32
+  // A model the board or its project names on a share is never looked for (the user's credentials would go to that server),
+  // only in the user's own model folders. Shown with the same folder through this machine's administrative share when it is
+  // there (a model folder on a share is found as written: lexically_normal made it a folder of this drive).
+  const std::wstring local = std::filesystem::absolute(f.mine).wstring();
+  std::wstring unc = L"//localhost/" + local.substr(0, 1) + L"$" + local.substr(2);
+  std::replace(unc.begin(), unc.end(), L'\\', L'/');
+  const std::filesystem::path share = unc;
+  CHECK(network_path(share) && !network_path(f.mine) && !network_path(L"\\\\?\\C:\\x"));
+  auto u8 = [](const std::filesystem::path& p) { const auto s = p.u8string(); return std::string(s.begin(), s.end()); };
+  write(std::filesystem::path(b).replace_extension(".kicad_pro"), json{{"text_variables", {{"SHARED", u8(share)}}}}.dump());
+  CHECK(kicad_model_file("${SHARED}/other.step", b).empty());
+  CHECK(kicad_model_file(u8(share / "other.step"), b).empty());
+  if (std::error_code e; std::filesystem::is_regular_file(share / "other.step", e)) {
+    const auto found = kicad_model_file("${SHARED}/other.step", b, {share});
+    CHECK(network_path(found) && std::filesystem::is_regular_file(found, e));
+  }
+#endif
 }
 
 // The project's text variables (<board>.kicad_pro) name model folders, ${KIPRJMOD} inside them too; a footprint whose only
