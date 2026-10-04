@@ -37,8 +37,17 @@ QString orientation(const std::string& o) {
   return tr("View");
 }
 
+// A section, detail or auxiliary view by its letter (UI-82), else by what it shows.
+QString kindName(const opad::SheetView& v, const std::string& orient) {
+  const QString letter = qs(v.def.value("letter", ""));
+  if (v.kind == "section") return letter.isEmpty() ? tr("Section view") : tr("Section %1-%1").arg(letter);
+  if (v.kind == "detail") return letter.isEmpty() ? tr("Detail view") : tr("Detail %1").arg(letter);
+  if (v.kind == "auxiliary") return letter.isEmpty() ? tr("Auxiliary view") : tr("Auxiliary view %1").arg(letter);
+  return orientation(orient);
+}
+
 QString viewName(const opad::Scene& s, const opad::SheetView& v) {
-  return v.name.empty() ? orientation(opad::drawing::view_orientation(s, v)) : qs(v.name);
+  return v.name.empty() ? kindName(v, opad::drawing::view_orientation(s, v)) : qs(v.name);
 }
 
 QString itemType(const opad::SheetItem& t) {
@@ -103,10 +112,14 @@ Row make(const opad::Scene& s, const Index& ix, const opad::drawing::OutlineRow&
     tip << r.name << QString::fromUtf8("%1 · %2 · %3 · %4").arg(size.contains("preset") ? qs(size.value("preset", "")) + QString::fromUtf8(" · ") + paper : paper,
                                                                qs(sheet->standard).toUpper(), projection(sheet->projection), qs(opad::drawing::scale_text(sheet->scale)));
   } else if (const opad::SheetView* view = o.kind == "view" ? Index::get(ix.views, o.id) : nullptr) {
-    r.name = o.name.empty() ? orientation(o.orient) : qs(o.name);
-    r.icon = "ortho";
+    r.name = o.name.empty() ? kindName(*view, o.orient) : qs(o.name);
+    r.icon = view->kind == "section" ? "viewSection" : view->kind == "detail" ? "viewDetail" : view->kind == "auxiliary" ? "viewAuxiliary" : "ortho";
     r.editable = true;
     tip << r.name;
+    if (const opad::SheetView* parent = view->kind == "section" || view->kind == "detail" || view->kind == "auxiliary" ? Index::get(ix.views, view->parent) : nullptr)
+      tip << (view->kind == "section" ? tr("Section of %1") : view->kind == "detail" ? tr("Detail of %1") : tr("Auxiliary view of %1")).arg(viewName(s, *parent));
+    if (view->def.contains("crop")) tip << tr("Cropped");
+    if (view->def.contains("breaks")) tip << tr("Broken view");
     if (view->kind == "base") {
       const std::string scale = view->def.value("scale", "sheet");
       const opad::Sheet* sheet = Index::get(ix.sheets, view->sheet);

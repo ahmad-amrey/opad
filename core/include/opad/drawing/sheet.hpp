@@ -87,6 +87,7 @@ struct ViewFrame {
   Vec3 x{1, 0, 0}, y{0, 0, 1}, dir{0, -1, 0};
   std::array<double, 4> box{0, 0, 0, 0};  // paper: xmin, ymin, xmax, ymax
   std::array<double, 4> crop{0, 0, 0, 0}; // view coordinates; none when xmin >= xmax
+  int crop_cuts = 0;                       // the crop's sides that cut through the view: 1 left, 2 bottom, 4 right, 8 top
   Vec2 circle{0, 0};                       // a detail view's (view coordinates), when radius > 0
   double radius = 0;
   std::vector<Break> breaks;               // sorted, apart

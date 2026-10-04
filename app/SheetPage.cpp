@@ -17,6 +17,7 @@
 #include "Icons.hpp"
 #include "SheetAnnotate.hpp"
 #include "SheetCanvas.hpp"
+#include "SheetViewTool.hpp"
 #include "Theme.hpp"
 #include "opad/drawing/tables.hpp"
 
@@ -61,6 +62,7 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
   m_stack->addWidget(start);
   v->addWidget(m_stack, 1);
   m_annotator = new SheetAnnotator(doc, m_canvas, this);
+  m_viewTool = new SheetViewTool(doc, m_canvas, this);
   v->addWidget(m_annotator->bar());
   // The bar: sheets, +, prompt, cursor, sheet info.
   auto* bar = new QWidget(this);
@@ -174,7 +176,7 @@ bool SheetPage::empty() const { return m_stack->currentIndex() == 1; }
 
 void SheetPage::showSheet(const std::string& id) {
   if (!m_doc->scene.sheet(id)) return;
-  if (id != m_canvas->sheet()) m_annotator->cancel();  // its picks were on the other sheet
+  if (id != m_canvas->sheet()) m_annotator->cancel(), m_viewTool->cancel();  // their picks were on the other sheet
   m_canvas->setSheet(id);
   rebuildTabs();
   updateInfo();
@@ -185,7 +187,8 @@ void SheetPage::documentChanged() {
   const auto& sheets = m_doc->scene.sheets;
   const bool none = !m_doc->hasDocument || sheets.empty();
   m_stack->setCurrentIndex(none ? 1 : 0);
-  if (none || !m_doc->scene.sheet(m_canvas->sheet())) m_annotator->cancel();
+  if (none || !m_doc->scene.sheet(m_canvas->sheet())) m_annotator->cancel(), m_viewTool->cancel();
+  if (!m_viewTool->view().empty() && !m_doc->scene.sheet_view(m_viewTool->view())) m_viewTool->cancel();  // its view was deleted (Ctrl+Z)
   if (none) {
     m_canvas->setSheet("");
   } else if (!m_doc->scene.sheet(m_canvas->sheet())) {

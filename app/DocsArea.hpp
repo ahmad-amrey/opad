@@ -15,6 +15,7 @@
 
 #include "AreaController.hpp"
 #include "SheetAnnotate.hpp"
+#include "SheetViewTool.hpp"
 #include "opad/json.hpp"
 
 class SheetPage;
@@ -58,6 +59,8 @@ class DocsArea : public AreaController {
   void templateFields();   // the shown sheet's template fields placed with the mouse (TemplateFields.hpp), one sheet_edit
   void placeView(const std::string& orient);  // a base view placed with the mouse (front, top, ..., iso)
   void placeProjected();                      // a view projected from the selected one, placed with the mouse
+  // Section, detail or auxiliary view of the selected view, or crop or break it, with the mouse (SheetViewTool, UI-82).
+  void startViewTool(SheetViewTool::Tool tool);
   void setViewStyle(const std::vector<std::string>& views, const opad::json& style);  // merged into each view's style
   void openSheet(const std::string& rowId);   // a Drawings folder row: its sheet in the Drawings workspace
   void viewMenu(const std::vector<std::string>& views, QMenu& menu);  // right-click on views

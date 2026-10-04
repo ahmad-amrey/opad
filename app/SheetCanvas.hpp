@@ -23,6 +23,7 @@
 #include <QPointer>
 #include <QTimer>
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <map>
@@ -96,8 +97,10 @@ class SheetCanvas : public QGraphicsView {
   void cancelPlacement();
   bool placing() const { return m_place.active; }
 
-  // Annotations (UI-79).
-  void setInteraction(SheetInteraction* interaction) { m_interaction = interaction; }
+  // Annotations (UI-79) and view tools (UI-82): each gets the mouse and keys first, in the order they were added.
+  void addInteraction(SheetInteraction* interaction) { m_interactions.push_back(interaction); }
+  void removeInteraction(SheetInteraction* interaction) { std::erase(m_interactions, interaction); }
+  void setGhost(const QRectF& scene, const QString& label = {});  // a view's frame while a tool places it (empty: none)
   std::optional<SheetPick> pickAt(const QPointF& scene) const;  // a model edge or face of a view under the pointer
   std::string viewUnder(const QPointF& scene) const;            // the view whose frame holds the point, else empty
   void setPreview(std::shared_ptr<const opad::drawing::Display> preview);  // drawn over the sheet in sheet paper mm
@@ -262,7 +265,15 @@ class SheetCanvas : public QGraphicsView {
   int m_draftsShown = 0, m_paused = 0, m_rendering = 0;
   unsigned m_snapKinds = opad::drawing::kAllSnaps;
   std::optional<opad::drawing::Snap> m_hoverSnap;
-  SheetInteraction* m_interaction = nullptr;
+  std::vector<SheetInteraction*> m_interactions;
+  template <class F> bool offer(F f) {  // the first interaction that takes it
+    for (SheetInteraction* i : m_interactions)
+      if (f(i)) return true;
+    return false;
+  }
+  bool toolActive() const {
+    return std::any_of(m_interactions.begin(), m_interactions.end(), [](SheetInteraction* i) { return i->active(); });
+  }
   std::vector<opad::drawing::ViewFrame> m_frames;
   std::vector<std::string> m_selItems;
   ItemDrag m_itemDrag;

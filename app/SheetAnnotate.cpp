@@ -211,14 +211,14 @@ SheetAnnotator::SheetAnnotator(AppDocument* doc, SheetCanvas* canvas, QWidget* p
   connect(&m_debounce, &QTimer::timeout, this, [this] {
     if (m_tool != Tool::None && (!m_picks.empty() || isTable(m_tool))) replan();
   });
-  canvas->setInteraction(this);
+  canvas->addInteraction(this);
   m_card = new SheetValueCard(canvas->viewport());
   showFields();
 }
 
 SheetAnnotator::~SheetAnnotator() {
   *m_alive = false;
-  if (m_canvas) m_canvas->setInteraction(nullptr);
+  if (m_canvas) m_canvas->removeInteraction(this);
 }
 
 std::string SheetAnnotator::sheetId() const { return m_canvas ? m_canvas->sheet() : std::string(); }

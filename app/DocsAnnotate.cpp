@@ -151,6 +151,7 @@ void DocsArea::startTool(Tool tool) {
   if (!m_page || m_page->sheet().empty()) return newDrawing();
   services().setWorkspace("drawings");
   m_page->canvas()->setFocus();
+  m_page->viewTool()->cancel();
   m_page->annotator()->start(tool);
 }
 

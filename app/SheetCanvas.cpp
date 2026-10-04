@@ -109,6 +109,7 @@ class SheetViewItem : public SheetPartItem {
   std::string id, parent, kind, side;
   double gap = 20;
   bool aligned = true, draft = false, final = false, hovered = false;
+  QPointF toward;  // a section or auxiliary view lined up with its parent: the way it moves from it (paper, y up)
   QElapsedTimer stale;  // since its linework may be out of date: marked after a moment (a cached view comes back at once)
   void markStale() {
     if (!final) return;
@@ -387,6 +388,8 @@ void SheetCanvas::syncFromScene() {
       item->side = v->def.value("side", "");
       item->gap = v->def.value("gap", 20.0);
       item->aligned = v->def.value("align", true);
+      opad::drawing::Vec2 d{0, 0};
+      item->toward = (v->kind == "section" || v->kind == "auxiliary") && item->aligned && opad::drawing::view_direction(*v, d) ? QPointF(d[0], d[1]) : QPointF();
     }
   dropViews(keep);
 }
@@ -434,6 +437,7 @@ void SheetCanvas::start() {
         // What the canvas shows of a frame hugs the linework once it is known (a big model's pictorial view is laid out by
         // its bodies' turned boxes, up to a quarter bigger); the layout itself never depends on what is cached.
         const auto hug = [](ViewFrame f, const ViewGeometry& g) {
+          if (f.radius > 0) return f;  // a detail view: its circle
           if (g.bounds[2] > g.bounds[0] || g.bounds[3] > g.bounds[1])
             f.box = {f.at[0] + f.scale * (g.bounds[0] - f.centre[0]), f.at[1] + f.scale * (g.bounds[1] - f.centre[1]),
                      f.at[0] + f.scale * (g.bounds[2] - f.centre[0]), f.at[1] + f.scale * (g.bounds[3] - f.centre[1])};
@@ -445,7 +449,7 @@ void SheetCanvas::start() {
           const opad::SheetView* v = fr.error.empty() ? scene.sheet_view(fr.id) : nullptr;
           if (!v || p.cancelled()) continue;
           try {
-            if (const auto g = cached_projection(doc, scene, view_spec(scene, *v))) fr = hug(fr, *g);
+            if (const auto g = cached_projection(doc, scene, view_spec(scene, *v))) fr = hug(fr, *shape_linework(g, fr));
           } catch (const std::exception&) {
           }
         }
@@ -498,7 +502,8 @@ void SheetCanvas::start() {
             p.setPhase(phase, t < 0 ? -1 : static_cast<int>(100 * (static_cast<double>(i) + t) / static_cast<double>(frames.size())));
             return !p.cancelled();
           };
-          const auto part = [&](std::shared_ptr<const ViewGeometry> g, bool draft) {
+          const auto part = [&](std::shared_ptr<const ViewGeometry> projected, bool draft) {
+            const auto g = shape_linework(projected, fr);  // a detail's circle, a crop, breaks
             auto out = std::make_shared<Display>();
             draw_view(*out, fr, *v, *g, &doc, &scene);
             const size_t from = skipped.size();
@@ -723,8 +728,8 @@ void SheetCanvas::emitSelection() { emit selectionChanged(selectedViews()); }
 std::vector<SheetViewItem*> SheetCanvas::family(SheetViewItem* item) const {
   std::vector<SheetViewItem*> out{item};
   for (size_t i = 0; i < out.size(); ++i)
-    for (const auto& [id, v] : m_views)
-      if (v->parent == out[i]->id && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
+    for (const auto& [id, v] : m_views)  // those placed where they stand (details, views moved away) stay
+      if (v->parent == out[i]->id && v->kind != "detail" && v->aligned && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
   return out;
 }
 
@@ -777,7 +782,7 @@ void SheetCanvas::mousePressEvent(QMouseEvent* e) {
     else if (e->button() == Qt::RightButton) cancelPlacement();
     return;
   }
-  if (m_interaction && m_interaction->mousePress(e, at)) return;
+  if (offer([&](SheetInteraction* i) { return i->mousePress(e, at); })) return;
   if (e->button() != Qt::LeftButton) return QGraphicsView::mousePressEvent(e);
   if (const std::string it = itemAt(at); !it.empty()) {  // an annotation: selected, dragged by its text or symbol
     std::vector<std::string> items = m_selItems;
@@ -847,7 +852,7 @@ void SheetCanvas::mouseMoveEvent(QMouseEvent* e) {
     return;
   }
   if (m_place.active) return updatePlacement(at);
-  if (m_interaction && m_interaction->mouseMove(e, at)) return;
+  if (offer([&](SheetInteraction* i) { return i->mouseMove(e, at); })) return;
   if (m_itemDrag.active) {
     const QPointF d = at - m_itemDrag.start;
     if (!m_itemDrag.moved && QLineF(QPointF(), d).length() * pixelsPerMm() < QApplication::startDragDistance()) return;
@@ -871,7 +876,10 @@ void SheetCanvas::mouseMoveEvent(QMouseEvent* e) {
     for (const auto& [v, o] : m_drag.origins) moving.push_back(v);
     if (sx) d.setY(0);
     else if (sy) d.setX(0);
-    else {  // free: the centre snaps to the other views' centres and to whole millimetres
+    else if (!item->toward.isNull()) {  // a section or auxiliary view: away from or towards its parent
+      const QPointF u(item->toward.x(), -item->toward.y());
+      d = u * QPointF::dotProduct(d, u);
+    } else {  // free: the centre snaps to the other views' centres and to whole millimetres
       const QPointF c = item->frame().center() - (item->pos() - m_drag.origins[item]);
       d = snapCentre(c + d, moving, !(e->modifiers() & Qt::ShiftModifier)) - c;
     }
@@ -901,7 +909,7 @@ void SheetCanvas::mouseReleaseEvent(QMouseEvent* e) {
     m_guides->set({});
     return;
   }
-  if (m_interaction && m_interaction->mouseRelease(e, mapToScene(e->pos()))) return;
+  if (offer([&](SheetInteraction* i) { return i->mouseRelease(e, mapToScene(e->pos())); })) return;
   if (m_itemDrag.active) {
     if (m_itemDrag.moved) commitItemDrag();
     else m_itemDrag = ItemDrag();
@@ -931,6 +939,8 @@ void SheetCanvas::commitDrag() {
   if (item->kind == "projected" && (item->side == "left" || item->side == "right" || item->side == "top" || item->side == "bottom")) {
     const double along = item->side == "right" ? pd[0] : item->side == "left" ? -pd[0] : item->side == "top" ? pd[1] : -pd[1];
     set = {{"gap", r2(std::max(0.0, item->gap + along))}};
+  } else if (!item->toward.isNull()) {
+    set = {{"gap", r2(std::max(0.0, item->gap + pd[0] * item->toward.x() + pd[1] * item->toward.y()))}};
   } else {
     const Vec2 at = toPaper(item->frame().center());
     set = {{"at", {r2(at[0]), r2(at[1])}}};
@@ -959,7 +969,7 @@ void SheetCanvas::benchDrag(const std::string& id, Vec2 delta) {
 }
 
 void SheetCanvas::contextMenuEvent(QContextMenuEvent* e) {
-  if (m_place.active || (m_interaction && m_interaction->active())) return;
+  if (m_place.active || toolActive()) return;
   if (const std::string it = itemAt(mapToScene(e->pos())); !it.empty()) {  // an annotation's menu
     if (std::find(m_selItems.begin(), m_selItems.end(), it) == m_selItems.end()) {
       m_selItems = {it};
@@ -978,9 +988,9 @@ void SheetCanvas::contextMenuEvent(QContextMenuEvent* e) {
 
 // ---------------------------------------------------------------- keys
 bool SheetCanvas::event(QEvent* e) {
-  if (e->type() == QEvent::KeyPress && m_interaction) {  // Tab before QWidget::event moves the focus off the canvas
+  if (e->type() == QEvent::KeyPress && !m_interactions.empty()) {  // Tab before QWidget::event moves the focus off the canvas
     auto* k = static_cast<QKeyEvent*>(e);
-    if ((k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab) && m_interaction->wantsKey(k)) {
+    if ((k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab) && offer([&](SheetInteraction* i) { return i->wantsKey(k); })) {
       keyPressEvent(k);
       return true;
     }
@@ -988,7 +998,7 @@ bool SheetCanvas::event(QEvent* e) {
   if (e->type() == QEvent::ShortcutOverride) {  // these keys are the sheet's while it has the focus
     auto* k = static_cast<QKeyEvent*>(e);
     const bool plain = !(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
-    if (m_interaction && m_interaction->wantsKey(k)) {
+    if (offer([&](SheetInteraction* i) { return i->wantsKey(k); })) {
       e->accept();
       return true;
     }
@@ -1002,7 +1012,7 @@ bool SheetCanvas::event(QEvent* e) {
 }
 
 void SheetCanvas::keyPressEvent(QKeyEvent* e) {
-  if (m_interaction && m_interaction->keyPress(e)) return;
+  if (offer([&](SheetInteraction* i) { return i->keyPress(e); })) return;
   switch (e->key()) {
     case Qt::Key_F:
     case Qt::Key_Home: return fitSheet();
@@ -1330,6 +1340,7 @@ std::optional<SheetPick> SheetCanvas::pickAt(const QPointF& scene) const {
 }
 
 void SheetCanvas::setPreview(std::shared_ptr<const Display> preview) { m_guides->setPreview(std::move(preview)); }
+void SheetCanvas::setGhost(const QRectF& scene, const QString& label) { m_guides->set({}, scene, label); }
 const std::shared_ptr<const Display>& SheetCanvas::preview() const { return m_guides->preview; }
 
 void SheetCanvas::read(const QString& title, ReadWork work, std::function<void(bool, const QString&)> done) {

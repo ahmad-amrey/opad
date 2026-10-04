@@ -610,6 +610,8 @@ std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const She
       }
       if (const json c = d.value("crop", json()); c.is_array() && c.size() == 4) {
         f.crop = {c[0].get<double>(), c[1].get<double>(), c[2].get<double>(), c[3].get<double>()};
+        for (int k = 0; k < 4; ++k)
+          if (k < 2 ? f.crop[static_cast<size_t>(k)] > e[static_cast<size_t>(k)] : f.crop[static_cast<size_t>(k)] < e[static_cast<size_t>(k)]) f.crop_cuts |= 1 << k;
         e = {std::max(e[0], f.crop[0]), std::max(e[1], f.crop[1]), std::min(e[2], f.crop[2]), std::min(e[3], f.crop[3])};
         if (e[0] > e[2] || e[1] > e[3]) throw Error("its crop box holds nothing of it");
       }

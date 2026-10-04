@@ -40,7 +40,12 @@ OPAD_ICON_TABLE(sheets,
                 {"hiddenLines", R"(<rect x="4" y="5" width="16" height="14"/><path d="M4 12h16" stroke-dasharray="3 2"/>)"},
                 {"tangentEdges", R"(<path d="M3 19h7a7 7 0 0 0 7-7V4"/><path d="M8.5 15.5a6 6 0 0 0 5-5" opacity=".55"/>)"},
                 {"viewsUpdate", R"(<rect x="3" y="5" width="11" height="9" rx="1"/><path d="M21 13a5 5 0 1 1-1.5-3.6M21 7.5v3h-3"/>)"},
-                {"templateFields", R"(<rect x="3" y="4" width="18" height="16" rx="1" opacity=".55"/><rect x="6" y="12" width="12" height="5" stroke-dasharray="2 1.5"/><path d="M9 13.5v2" />)"});
+                {"templateFields", R"(<rect x="3" y="4" width="18" height="16" rx="1" opacity=".55"/><rect x="6" y="12" width="12" height="5" stroke-dasharray="2 1.5"/><path d="M9 13.5v2" />)"},
+                {"viewSection", R"(<rect x="3" y="7" width="12" height="10"/><path d="M3 12l3.5-5M5.5 17l7-10M10 17l5-7" opacity=".55"/><path d="M19 3v18" stroke-dasharray="3 1.5 1 1.5"/><path d="M19 3h3M19 21h3"/>)"},
+                {"viewDetail", R"(<path d="M3 15V5h12" opacity=".55"/><circle cx="10" cy="9" r="3"/><path d="M12.2 11.2l2.3 2.3"/><circle cx="18" cy="17.5" r="4"/>)"},
+                {"viewAuxiliary", R"(<rect x="3" y="11" width="8" height="8"/><path d="M14 9l4.5-4.5 3 3L17 12z"/><path d="M11 11l3-2" stroke-dasharray="1.5 1.5"/>)"},
+                {"viewCrop", R"(<path d="M6 2v16h16"/><path d="M2 6h16v16"/>)"},
+                {"viewBreak", R"(<path d="M2 8h7M2 16h7M15 8h7M15 16h7"/><path d="M10 5l-1 3 2 2-2 2 2 2-1 3M15 5l-1 3 2 2-2 2 2 2-1 3"/>)"});
 
 namespace {
 std::vector<std::string> nodesIn(AppDocument* doc, std::vector<std::string> ids) {  // bodies and components
@@ -94,6 +99,15 @@ void DocsArea::buildDrawingCommands() {
   add("drawings.projectedView", tr("Projected view"), "viewProjected", [this] { placeProjected(); },
       [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedViews().size() == 1; }, {"side view", "top view", "orthographic"});
   add("drawings.isoView", tr("Isometric view"), "viewIso", [this] { placeView("iso"); }, sheetShown, {"pictorial", "3D view"});
+  const auto oneView = [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedViews().size() == 1; };
+  using VT = SheetViewTool::Tool;
+  add("drawings.sectionView", tr("Section view"), "viewSection", [this] { startViewTool(VT::Section); }, oneView,
+      {"cut", "cross section", "hatch", "cutting plane", "offset section", "half section", "A-A"});
+  add("drawings.detailView", tr("Detail view"), "viewDetail", [this] { startViewTool(VT::Detail); }, oneView, {"enlarged", "zoom", "magnified", "circle"});
+  add("drawings.auxiliaryView", tr("Auxiliary view"), "viewAuxiliary", [this] { startViewTool(VT::Auxiliary); }, oneView,
+      {"inclined face", "true shape", "slanted", "square to an edge"});
+  add("drawings.cropView", tr("Crop view"), "viewCrop", [this] { startViewTool(VT::Crop); }, oneView, {"partial view", "trim", "clip"});
+  add("drawings.breakView", tr("Break view"), "viewBreak", [this] { startViewTool(VT::Break); }, oneView, {"broken view", "shorten", "long part", "interrupted"});
   QAction* hidden = add("drawings.hiddenLines", tr("Hidden lines"), "hiddenLines", [] {}, sheetShown, {"dashed", "hidden edges"}, true);
   QAction* tangent = add("drawings.tangentEdges", tr("Tangent edges"), "tangentEdges", [] {}, sheetShown, {"smooth edges"}, true);
   const auto views = [this] {  // the selected views, else the sheet's
@@ -145,6 +159,8 @@ void DocsArea::drawingsRibbon(RibbonLayout& layout) {
   layout.addAction("drawings.drawing.views", services().action("drawings.baseView"), RibbonLayout::Size::Large, bases);
   layout.addAction("drawings.drawing.views", services().action("drawings.projectedView"));
   layout.addAction("drawings.drawing.views", services().action("drawings.isoView"));
+  for (const char* id : {"drawings.sectionView", "drawings.detailView", "drawings.auxiliaryView", "drawings.cropView", "drawings.breakView"})
+    layout.addAction("drawings.drawing.views", services().action(id));
   group("style", tr("Style"), {"drawings.hiddenLines", "drawings.tangentEdges", "drawings.update"});
   layout.addGroup("drawings.drawing", "drawings.drawing.output", tr("Output"));
   layout.addAction("drawings.drawing.output", services().action("drawings.print"));
@@ -180,6 +196,17 @@ void DocsArea::readyDrawings() {
   connect(canvas, &SheetCanvas::deleteRequested, this, [this](const std::vector<std::string>& views) {
     whenFree([this, views] { services().guarded([&] { drawings::remove(services().document(), views); }); });
   });
+  SheetViewTool* tool = m_page->viewTool();
+  tool->setRunner([self = QPointer<DocsArea>(this)](const std::string& command, const opad::json& args, std::function<void(const opad::json&)> then) {
+    if (self) self->run(command, args, std::move(then));
+  });
+  connect(tool, &SheetViewTool::message, this, [this](const QString& text) { services().toast(text); });
+  connect(tool, &SheetViewTool::toolChanged, this, [this] { services().updateCommands(); });
+  connect(tool, &SheetViewTool::added, this, [this](const std::string& id) {  // the new or changed view, selected
+    m_page->canvas()->selectViews({id});
+    services().browser()->selectIds({id});
+    services().updateCommands();
+  });
   readyAnnotate();
   if (services().workspace() == "drawings") workspaceChanged("drawings");  // the one the window started in
 }
@@ -193,6 +220,7 @@ void DocsArea::workspaceChanged(const QString& id) {
   } else if (services().centralPage() == m_page) {
     m_page->canvas()->cancelPlacement();
     m_page->annotator()->cancel();
+    m_page->viewTool()->cancel();
     services().setCentralPage(nullptr);
   }
   services().updateCommands();
@@ -413,6 +441,14 @@ void DocsArea::placeProjected() {
   m_page->canvas()->placeProjected(views[0]);
 }
 
+void DocsArea::startViewTool(SheetViewTool::Tool tool) {
+  const std::vector<std::string> views = m_page ? m_page->canvas()->selectedViews() : std::vector<std::string>{};
+  if (views.size() != 1) throw opad::Error("Select the view to work on first.");
+  m_page->canvas()->cancelPlacement();
+  m_page->annotator()->cancel();
+  m_page->viewTool()->start(tool, views[0]);
+}
+
 void DocsArea::setViewStyle(const std::vector<std::string>& views, const opad::json& style) {
   const opad::Scene& s = services().document()->scene;
   opad::json ops = opad::json::array();
@@ -460,6 +496,18 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
   if (views.size() == 1) {
     QAction* projected = menu.addAction(icons::themed("viewProjected", 16), tr("Add projected view"), this, [this] { services().guarded([&] { placeProjected(); }); });
     projected->setObjectName("drawings.menu.projected");
+    // UI-82: views taken from it, and what it keeps of itself.
+    for (const char* id : {"drawings.sectionView", "drawings.detailView", "drawings.auxiliaryView"})
+      if (QAction* a = services().action(id)) menu.addAction(a);
+    const opad::SheetView* v = s.sheet_view(views[0]);
+    if (v && v->kind != "detail") {
+      for (const char* id : {"drawings.cropView", "drawings.breakView"})
+        if (QAction* a = services().action(id)) menu.addAction(a);
+      const auto clear = [this, id = views[0]](const char* key) { run("sheet_edit", {{"target", id}, {"set", {{key, nullptr}}}}); };
+      if (v->def.contains("crop")) menu.addAction(tr("Remove crop"), this, [clear] { clear("crop"); })->setObjectName("drawings.menu.uncrop");
+      if (v->def.contains("breaks")) menu.addAction(tr("Remove breaks"), this, [clear] { clear("breaks"); })->setObjectName("drawings.menu.unbreak");
+    }
+    menu.addSeparator();
   }
   bool hidden = true, base = true;
   std::string tangent;

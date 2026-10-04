@@ -233,6 +233,8 @@ TEST(views_crop_and_breaks) {
   for (const auto& c : g->curves)
     for (const auto& q : c.sample(0.01)) CHECK(q[0] <= 1e-6);
   CHECK(std::fabs(g->bounds[2]) < 1e-6 && std::fabs(g->bounds[0] + 30) < 1e-6);
+  CHECK_EQ(frame(frames, p.front).crop_cuts, 4);  // the right side cuts through it: a break line there
+  CHECK_EQ(on_layer(sheet_display(p.doc, s, *s.sheet(p.sheet)), "Break", p.front), 1);
 
   Document doc = Document::create();
   const std::string bar = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "200 mm"}, {"width", "20 mm"}, {"height", "10 mm"}}}})["body_ids"][0];

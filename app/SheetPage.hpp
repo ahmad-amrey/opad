@@ -18,6 +18,7 @@ class QTabBar;
 class QToolButton;
 class SheetAnnotator;
 class SheetCanvas;
+class SheetViewTool;
 
 class SheetPage : public QWidget {
   Q_OBJECT
@@ -25,6 +26,7 @@ class SheetPage : public QWidget {
   SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent = nullptr);
   SheetCanvas* canvas() const { return m_canvas; }
   SheetAnnotator* annotator() const { return m_annotator; }
+  SheetViewTool* viewTool() const { return m_viewTool; }  // section, detail and auxiliary views, crops, breaks (UI-82)
   QToolButton* danglingButton() const { return m_dangling; }
   QToolButton* issueButton() const { return m_issue; }
   void documentChanged();  // tabs again; the sheet shown stays while it exists, else the first
@@ -51,6 +53,7 @@ class SheetPage : public QWidget {
   AppDocument* m_doc;
   SheetCanvas* m_canvas;
   SheetAnnotator* m_annotator;
+  SheetViewTool* m_viewTool;
   QStackedWidget* m_stack;
   QTabBar* m_tabs;
   QToolButton *m_add, *m_snap, *m_dangling, *m_issue;

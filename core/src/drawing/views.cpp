@@ -435,24 +435,29 @@ void draw_view_marks(Display& d, const ViewFrame& f, const SheetView& v, const S
   }
   // A detail view's boundary.
   if (v.kind == "detail" && f.radius > 0) d.circle(d.layer({"Detail", kInk, LineType::Continuous, 0.25}), f.at, f.radius * f.scale);
-  // Breaks: two thin lines with a zigzag across the view, where the halves meet.
-  if (!f.breaks.empty()) {
-    const int layer = d.layer({"Break", kInk, LineType::Continuous, 0.25});
-    for (const auto& b : f.breaks) {
-      const size_t a = static_cast<size_t>(b.axis), o = 1 - a;
-      const Vec2 at = f.local(b.axis ? Vec2{0, b.from} : Vec2{b.from, 0});
-      const double lo = f.box[o] - 3, hi = f.box[o + 2] + 3, mid = (lo + hi) / 2, z = std::min(3.0, (hi - lo) / 8);
-      for (double edge : {f.at[a] + at[a], f.at[a] + at[a] + b.gap * f.scale}) {
-        std::vector<Vec2> pts;
-        for (const auto& [along, off] : std::initializer_list<std::pair<double, double>>{{lo, 0}, {mid - z, 0}, {mid - z / 2, z}, {mid + z / 2, -z}, {mid + z, 0}, {hi, 0}}) {
-          Vec2 p;
-          p[a] = edge + off, p[o] = along;
-          pts.push_back(p);
-        }
-        d.polyline(layer, pts);
-      }
+  // Breaks: two thin lines with a zigzag across the view, where the halves meet; a partial view's the same where its crop
+  // box cuts through it (ISO 128-34).
+  const auto zigzag = [&](size_t a, double edge, double lo, double hi) {
+    const size_t o = 1 - a;
+    const double mid = (lo + hi) / 2, z = std::min(3.0, (hi - lo) / 8);
+    std::vector<Vec2> pts;
+    for (const auto& [along, off] : std::initializer_list<std::pair<double, double>>{{lo, 0}, {mid - z, 0}, {mid - z / 2, z}, {mid + z / 2, -z}, {mid + z, 0}, {hi, 0}}) {
+      Vec2 p;
+      p[a] = edge + off, p[o] = along;
+      pts.push_back(p);
     }
+    d.polyline(d.layer({"Break", kInk, LineType::Continuous, 0.25}), pts);
+  };
+  for (const auto& b : f.breaks) {
+    const size_t a = static_cast<size_t>(b.axis), o = 1 - a;
+    const Vec2 at = f.local(b.axis ? Vec2{0, b.from} : Vec2{b.from, 0});
+    for (double edge : {f.at[a] + at[a], f.at[a] + at[a] + b.gap * f.scale}) zigzag(a, edge, f.box[o] - 3, f.box[o + 2] + 3);
   }
+  for (int k = 0; k < 4; ++k)
+    if (f.crop_cuts & (1 << k)) {
+      const size_t a = static_cast<size_t>(k % 2), o = 1 - a;
+      zigzag(a, f.box[k < 2 ? a : a + 2], f.box[o] - 2, f.box[o + 2] + 2);
+    }
   // What its section, detail and lettered auxiliary views mark on it.
   const SheetView* self = scene.sheet_view(v.id);
   for (const auto& id : self ? self->children : std::vector<std::string>{}) {

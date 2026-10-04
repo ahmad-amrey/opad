@@ -45,4 +45,10 @@ CASES = [
     # sheets printed at actual size and one fitted, through the printer path into PDFs whose pages are checked; Export sheet
     # offers DWG only with a converter. <prefix>.print.png, .actual.pdf, .fit.pdf.
     ("sheet-print", "empty", {"OPAD_BENCH_SHEET_PRINT": "{prefix}"}),
+    # Section, detail and auxiliary views, crops and breaks (UI-82) with mouse and key events: the cutting line clicked
+    # (kept upright, previewed, Esc takes a point back), Enter, the section measured on a worker and placed lined up on
+    # the side it goes (hatched, A-A, the cutting line on its parent), dragged only along its way; a detail at the next
+    # standard scale; an auxiliary view square to an edge; a crop box dragged, a break clicked (the view lined up breaks
+    # with it), Remove crop from the menu, Ctrl+Z. <prefix>.views.png.
+    ("sheet-views", "empty", {"OPAD_BENCH_SHEET_VIEWS": "{prefix}"}),
 ]
