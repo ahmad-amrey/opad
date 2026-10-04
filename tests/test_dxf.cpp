@@ -18,6 +18,7 @@
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/step_io.hpp"
+#include "../core/src/import_common.hpp"  // the DWG conversion kept by converter
 
 using namespace opad;
 
@@ -717,20 +718,24 @@ TEST(oda_converter_only_when_switched_on) {
   set_use_oda(false);
   _wputenv_s(L"OPAD_USE_ODA", L"1");
   CHECK(use_oda() && !bodies(import(f.dir / "plan.dwg")).empty());
-  // A remembered slow read names its converter: switched off, the drawing is read again (LibreDWG); on, it is found.
+  // A kept conversion names its converter (a DWG keeps the DXF its conversion made, UI-75; the viewer cache leaves drawings
+  // alone): ODA's is read while ODA is switched on; switched off, LibreDWG's turn finds none.
   _wputenv_s(L"OPAD_USE_ODA", L"");
   set_use_oda(true);
   ImportOptions viewer;
   viewer.viewer = true;
   Document read = Document::create();
   import_file(read, f.dir / "plan.dwg", viewer);
-  CHECK(viewer_cache_store(read, f.dir / "plan.dwg", viewer, 60000).value("kept", false));  // a minute's read: kept
-  Document again = Document::create();
-  CHECK(viewer_cache_load(again, f.dir / "plan.dwg", viewer) && bodies(again).size() == 1 && bodies(again)[0].layer == "ODA");
+  CHECK_EQ(viewer_cache_store(read, f.dir / "plan.dwg", viewer, 60000).value("reason", std::string()), std::string("drawing"));
+  CHECK(detail::dwg_converter().rfind("oda:", 0) == 0);
+  write_text_file(f.dir / "kept.dxf", "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nKept\n10\n0\n20\n0\n11\n10\n21\n0\n0\nENDSEC\n0\nEOF\n");
+  CHECK(detail::dwg_cache_keep(f.dir / "plan.dwg", detail::dwg_converter(), f.dir / "kept.dxf", 1700, 850));
+  const auto kept = bodies(import(f.dir / "plan.dwg"));
+  CHECK(kept.size() == 1 && kept[0].layer == "Kept");
   set_use_oda(false);
   CHECK_EQ(dwg_reader(), std::string("libredwg"));
-  Document off = Document::create();
-  CHECK(!viewer_cache_load(off, f.dir / "plan.dwg", viewer));
+  CHECK_EQ(detail::dwg_converter(), std::string("libredwg"));
+  CHECK(detail::dwg_cache_find(f.dir / "plan.dwg", detail::dwg_converter()).empty());
   std::error_code e;
   std::filesystem::remove_all(kCacheDir, e);
 }

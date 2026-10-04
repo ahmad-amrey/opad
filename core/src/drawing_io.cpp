@@ -267,15 +267,23 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
               " to it). Saving the drawing as DXF works without one." + oda_hint);
 }
 
-// Which converter convert_dwg would read a DWG with: a kept conversion is only good for the same one.
+}  // namespace
+
+namespace detail {
+// Which converter convert_dwg would read a DWG with: a kept conversion is only good for the same one. ODA only while it is
+// switched on (use_oda), as convert_dwg takes it.
 std::string dwg_converter() {
   if (const char* override = std::getenv("OPAD_DWG2DXF"); override && *override) return std::string("override:") + override;
-  if (const auto oda = oda_converter(); !oda.empty()) {
-    const auto u8 = oda.u8string();
-    return "oda:" + std::string(u8.begin(), u8.end());
-  }
+  if (use_oda())
+    if (const auto oda = oda_converter(); !oda.empty()) {
+      const auto u8 = oda.u8string();
+      return "oda:" + std::string(u8.begin(), u8.end());
+    }
   return "libredwg";
 }
+}  // namespace detail
+
+namespace {
 
 std::string extension(const std::filesystem::path& file) {
   std::string e = file.extension().string();
@@ -642,7 +650,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
   if(ext==".dwg") {
     // Converting is what is slow about a DWG: the DXF text it made is kept by the DWG's content (viewer_cache.cpp).
     auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
-    const std::string converter=dwg_converter();
+    const std::string converter=detail::dwg_converter();
     ImportOptions o=options; if(o.source_file.empty()) o.source_file=file;  // the op names the DWG, not the DXF read
     if(const auto kept=detail::dwg_cache_find(file,converter);!kept.empty()) return import_drawing(doc,kept,name,o);
     Conversion work;

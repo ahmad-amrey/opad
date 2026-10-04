@@ -60,6 +60,9 @@ void asset_cache_store(const Document& doc, const std::string& content, const st
 // long as reading the DXF (opening it again is then at least twice as fast).
 std::filesystem::path dwg_cache_find(const std::filesystem::path& dwg, const std::string& converter);
 bool dwg_cache_keep(const std::filesystem::path& dwg, const std::string& converter, const std::filesystem::path& dxf, double convert_ms, double read_ms);
+// The converter a DWG is read with now, as the kept conversion is keyed (drawing_io.cpp): "oda:<path>" while ODA is
+// switched on and installed, "override:<path>" (OPAD_DWG2DXF), else "libredwg".
+std::string dwg_converter();
 
 // Where the source file is, on its import op (UI-07): "source_path" (absolute) and "source_repo" (relative to the git
 // work tree it lies in; none outside one), both UTF-8 with '/'; of opt.source_file when set, else of `file`.
