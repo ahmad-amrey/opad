@@ -149,6 +149,7 @@ void Viewport::scheduleLooks() {
     if ((params.TransparencyMethod == Graphic3d_RTM_BLEND_OIT) != ghosts) params.TransparencyMethod = ghosts ? Graphic3d_RTM_BLEND_OIT : Graphic3d_RTM_BLEND_UNORDERED;
     redrawScene();
     if (trace::enabled()) trace::log(QStringLiteral("looks: %1 bodies changed%2").arg(pass->changed).arg(completed ? "" : " (stopped)"));
+    if (m_style == Style::HiddenEdges && pass->changed) scheduleEdgeOverlay();  // shown, hidden or moved: the edges follow
     if (completed) emit looksApplied();
   }, JobKind::Background);
 }

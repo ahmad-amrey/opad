@@ -286,9 +286,10 @@ std::atomic<int>& stockWireframeCount() {
 
 int BodyShape::stockWireframes() { return stockWireframeCount(); }
 
-bool BodyShape::setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge) {
-  if (on == m_hiddenLine && (!on || (face.IsEqual(m_hiddenFace) && edge.IsEqual(m_hiddenEdge)))) return false;
+bool BodyShape::setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge, bool outlined) {
+  if (on == m_hiddenLine && (!on || (face.IsEqual(m_hiddenFace) && edge.IsEqual(m_hiddenEdge) && outlined == m_outlined))) return false;
   m_hiddenLine = on;
+  m_outlined = outlined;
   m_hiddenFace = face;
   m_hiddenEdge = edge;
   return true;
@@ -689,9 +690,15 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     face->SetInteriorColor(m_hiddenFace);
     face->SetAlphaMode(Graphic3d_AlphaMode_Opaque);
     face->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
-    face->SetDrawSilhouette(true);
+    face->SetDrawSilhouette(m_outlined);
     face->SetEdgeColor(m_hiddenEdge);
     face->SetEdgeWidth(myDrawer->FaceBoundaryAspect()->Aspect()->Width());
+    // Further back than shaded: every edge is drawn over these faces, also in a later layer (hidden edges visible), where
+    // the usual offset left a rim seen at a slant z-fighting with them.
+    Standard_Integer offsetMode = Aspect_POM_Fill;
+    Standard_ShortReal factor = 1, units = 1;
+    face->PolygonOffsets(offsetMode, factor, units);
+    face->SetPolygonOffsets(Aspect_POM_Fill, factor + 2.0f, units + 8.0f);
     g->SetGroupPrimitivesAspect(face);
   } else g->SetGroupPrimitivesAspect(myDrawer->ShadingAspect()->Aspect());
   // Ray intersections do not use raster depth offsets. Separate only the render

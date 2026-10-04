@@ -60,8 +60,10 @@ bool Viewport::benchStyles(const QString& prefix, const std::function<void(const
     require(filled > 60 && outline > 0, QString("Shaded + edges fills the part (its middle %1 off the background, its side at x = %2)").arg(filled).arg(outline));
   }
   struct Step { QString command, name; Style style; };
+  auto settle = [this] { return !stylePending() && !m_jobs->busy() && (m_style != Style::HiddenEdges || edgeOverlayShown()); };
   for (const Step& s : {Step{"view.wire", "wireframe", Style::Wireframe}, Step{"view.hidden", "hidden", Style::HiddenLine},
-                        Step{"view.shaded", "shaded", Style::Shaded}, Step{"view.edges", "edges", Style::ShadedEdges}}) {
+                        Step{"view.hiddenEdges", "hidden-edges", Style::HiddenEdges}, Step{"view.shaded", "shaded", Style::Shaded},
+                        Step{"view.edges", "edges", Style::ShadedEdges}}) {
     waitUntil([this] { return !m_jobs->busy(); }, 30000);
     waitUntil([] { return false; }, 100);  // the watchdog reports the last frame dump's stall before the count starts
     const int stock = BodyShape::stockWireframes();
@@ -71,7 +73,7 @@ bool Viewport::benchStyles(const QString& prefix, const std::function<void(const
     t.start();
     trigger(s.command);
     const qint64 call = t.elapsed(), callCpu = trace::threadCpuMs() - cpu;
-    const bool settled = waitUntil([this] { return !stylePending() && !m_jobs->busy(); }, 60000);
+    const bool settled = waitUntil(settle, 60000);
     const trace::Stalls stalls = trace::stalls();
     require(settled && m_style == s.style && std::max(callCpu, stalls.longestCpu) < 150 && std::max(call, stalls.longest) < 600,
             QString("%1: %2 ms in the command (%3 ms CPU), longest stall %4 ms (%5 ms CPU), applied to %6 bodies after %7 ms").arg(s.name).arg(call)
@@ -88,6 +90,31 @@ bool Viewport::benchStyles(const QString& prefix, const std::function<void(const
       require(middle < 30 && outline > 0,
               QString("hidden line: the face takes the background's colour (%1 off it) and the part is outlined where it turns away (x = %2)").arg(middle).arg(outline));
     }
+  }
+  // Hidden edges visible against Hidden line, seen from an iso view: the edges behind the faces show, dashed and dim (the
+  // back of the cylinder's bottom rim), and only those differ.
+  if (one) {
+    m_view->SetProj(V3d_XposYnegZpos);
+    m_view->FitAll(fitBounds(), 0.1, Standard_False);
+    trigger("view.hidden");
+    waitUntil(settle, 60000);
+    const QImage hidden = shot("hidden-iso");
+    trigger("view.hiddenEdges");
+    waitUntil(settle, 60000);
+    const QImage dashed = shot("hidden-edges-iso");
+    int added = 0, brighter = 0;
+    const QRgb background = hidden.pixel(10, hidden.height() - 10);
+    for (int y = 0; y < hidden.height(); ++y)
+      for (int x = 0; x < hidden.width(); ++x)
+        if (distance(hidden.pixel(x, y), dashed.pixel(x, y)) > 30) {
+          ++added;
+          brighter += distance(dashed.pixel(x, y), background) > 400;  // as bright as a seen edge: not a dim dash
+        }
+    require(edgeOverlayShown() && added > 50 && brighter < added / 10,
+            QString("hidden edges visible: the edges behind show, dim (%1 pixels more than in Hidden line, %2 of them bright)").arg(added).arg(brighter));
+    trigger("view.edges");
+    waitUntil(settle, 60000);
+    require(!edgeOverlayShown(), "leaving the style removes its edges");
   }
   return all;
 }

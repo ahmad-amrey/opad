@@ -64,8 +64,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
  public:
   // Cad2D (UI-47): pan on the middle button, zoom on the wheel, no orbit (drafting, named after no product).
   enum class NavPreset { Fusion, SolidWorks, Onshape, Blender, Cad2D };
-  // HiddenLine (UI-48): the faces in the background's colour with their edges and outlines, so what is behind is hidden.
-  enum class Style { Shaded, ShadedEdges, Wireframe, HiddenLine };
+  // HiddenLine (UI-48): the faces in the background's colour with their edges and outlines, so what is behind is hidden;
+  // HiddenEdges: the same with the hidden edges dashed and dim (ViewportEdges.cpp).
+  enum class Style { Shaded, ShadedEdges, Wireframe, HiddenLine, HiddenEdges };
   enum class SelFilter { Body, Face, Edge, Vertex };
 
   explicit Viewport(AppDocument* doc, QWidget* parent = nullptr);
@@ -564,6 +565,18 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);
   Job* m_styleJob = nullptr;
   QColor backgroundColor() const;  // the scene's (hidden line draws its faces in it)
+  // Hidden edges visible (ViewportEdges.cpp): every body's edges in world coordinates, built on a worker, drawn by two
+  // objects: dashed and dim with no depth test (m_hiddenLayer, after the faces), solid against the faces' depth (Top).
+  Handle(AIS_InteractiveObject) m_edgesBehind, m_edgesSeen;
+  Graphic3d_ZLayerId m_hiddenLayer = Graphic3d_ZLayerId_UNKNOWN;
+  QTimer m_edgeTimer;
+  unsigned m_edgeSerial = 0;
+  void scheduleEdgeOverlay();  // after a change of the scene, a look or the style: built again shortly, or removed
+  void buildEdgeOverlay();
+  void clearEdgeOverlay();
+ public:
+  bool edgeOverlayShown() const { return !m_edgesSeen.IsNull(); }  // benches
+ private:
   void activateSelection(const Handle(AIS_Shape)& ais);
   bool drawingLayer(const Handle(AIS_InteractiveObject)& ais) const;  // a displayed drawing2d body (picked whole in the Face filter)
   void startMeshing(std::vector<std::string> keys);

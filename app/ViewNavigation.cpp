@@ -22,7 +22,8 @@ OPAD_ICON_TABLE(viewnav,
                 {"viewBack", R"(<path d="M9 6l-6 6 6 6"/><path d="M3 12h11a6 6 0 0 1 6 6"/>)"},
                 {"viewForward", R"(<path d="M15 6l6 6-6 6"/><path d="M21 12H10a6 6 0 0 0-6 6"/>)"},
                 {"twist", R"(<path d="M12 8l4 4-4 4-4-4z"/><path d="M4.5 12a7.5 7.5 0 0 1 13.3-4.7"/><path d="M19 3v5h-5"/>)"},
-                {"hiddenLine", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>)"});
+                {"hiddenLine", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>)"},
+                {"hiddenEdges", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/><path d="M4 16l8-4 8 4M12 4v8" stroke-dasharray="2 2"/>)"});
 
 namespace {
 // The presets by their setting value (ui/nav): the named ones MainWindow makes, and the generic CAD 2D one.
@@ -89,13 +90,18 @@ class ViewNavigation : public AreaController {
     }
   }
 
-  // Under Fit's arrow in both View tabs: the tabs keep their width (every group of Review and Design large at 1600 px).
+  // Under Fit's arrow in both View tabs, and Hidden edges visible under Hidden line's (UI-48): the tabs keep their width
+  // (every group of Review and Design large at 1600 px).
   void ribbon(RibbonLayout& layout) override {
     for (const QString id : {"review.view.navigate", "design.view.navigate"})
       if (RibbonLayout::Group* group = layout.group(id))
         for (RibbonLayout::Item& item : group->items)
           if (item.action && item.action->objectName() == "view.fit")
             for (const QString variant : {"view.fitall", "view.zoomWindow", "view.previous", "view.next"}) item.variants << services().action(variant);
+    for (const QString id : {"review.view.display", "design.view.display"})
+      if (RibbonLayout::Group* group = layout.group(id))
+        for (RibbonLayout::Item& item : group->items)
+          if (item.action && item.action->objectName() == "view.hidden") item.variants << services().action("view.hiddenEdges");
   }
 
   void ready() override {

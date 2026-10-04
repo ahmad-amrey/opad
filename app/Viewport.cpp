@@ -157,6 +157,9 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   m_qualityTimer.setSingleShot(true);
   m_qualityTimer.setInterval(350);
   connect(&m_qualityTimer, &QTimer::timeout, this, &Viewport::restoreQuality);
+  m_edgeTimer.setSingleShot(true);
+  m_edgeTimer.setInterval(100);
+  connect(&m_edgeTimer, &QTimer::timeout, this, &Viewport::buildEdgeOverlay);
   m_timer.setInterval(16);
   connect(&m_timer, &QTimer::timeout, this, [this] {
     if (!m_initialised) return;
@@ -560,8 +563,12 @@ void Viewport::twoDimensionalHint(const QPoint& global) {
 // ---------------------------------------------------------------- display styles (F19)
 bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   Handle(Prs3d_Drawer) d = ais->Attributes();
-  const bool hidden = m_style == Style::HiddenLine && !drawingLayer(ais);  // a drawing has nothing behind its lines
-  const bool edges = m_style == Style::ShadedEdges || m_style == Style::HiddenLine;
+  // A drawing has nothing behind its lines. In Hidden edges visible the edges are the overlay's (ViewportEdges.cpp), save a
+  // body drawn without the worker's arrays.
+  const bool drawing = drawingLayer(ais), hidden = (m_style == Style::HiddenLine || m_style == Style::HiddenEdges) && !drawing;
+  const auto shaped = Handle(BodyShape)::DownCast(ais);
+  const bool overlaid = m_style == Style::HiddenEdges && !drawing && !shaped.IsNull() && shaped->prs() && !shaped->prs()->triangles.IsNull();
+  const bool edges = m_style == Style::ShadedEdges || m_style == Style::HiddenLine || (m_style == Style::HiddenEdges && !overlaid);
   bool changed = bool(d->FaceBoundaryDraw()) != edges;
   d->SetFaceBoundaryDraw(edges);
   // Line aspects ignore alpha here: a ghost's edges are blended towards the background instead. The body's own aspect
@@ -574,7 +581,7 @@ bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   }
   if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
   else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
-  if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull()) changed = body->setHiddenLine(hidden, occ(backgroundColor()), occ(edge)) || changed;
+  if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull()) changed = body->setHiddenLine(hidden, occ(backgroundColor()), occ(edge), m_style == Style::HiddenLine) || changed;
   if (changed) ais->SetToUpdate(AIS_Shaded);
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
   return changed;
@@ -605,6 +612,7 @@ void Viewport::setStyle(Style s) {
   auto done = [this, selected](bool) {
     m_styleJob = nullptr;
     if (*selected) m_ctx->HilightSelected(Standard_False);
+    scheduleEdgeOverlay();
     redrawScene();
   };
   if (!m_jobs || bodies->size() <= 16) {
@@ -2027,6 +2035,7 @@ void Viewport::sync() {
   m_syncCpuMs += trace::threadCpuMs() - cpu;
   if (!m_displayQueue.empty()) emit meshingProgress(remainingBodies());  // first: the window may make a job to report the stream (the pump's parent)
   runPump();
+  if (m_style == Style::HiddenEdges) scheduleEdgeOverlay();
 }
 
 // A displayed body that goes (UI-41): erased at once, which only hides it and turns its picking off, and removed from the
@@ -2199,6 +2208,7 @@ void Viewport::updateDepthBias() {
 }
 
 void Viewport::finishSync(int pendingCount, bool added) {
+  if (added && m_style == Style::HiddenEdges) scheduleEdgeOverlay();
   if (added) updateDepthBias();
   if (added) m_refineTimer.start();  // bodies that arrived in a zoomed-in view
   updateGridExtent();

@@ -303,7 +303,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   action("view.grid")->setChecked(m_settings.value("view/grid",false).toBool());
   action("view.ortho")->setChecked(m_settings.value("view/orthographic",true).toBool());
   const auto style=m_settings.value("view/style","view.edges").toString();
-  if(style=="view.shaded" || style=="view.edges" || style=="view.wire" || style=="view.hidden") action(style)->trigger();
+  if(style=="view.shaded" || style=="view.edges" || style=="view.wire" || style=="view.hidden" || style=="view.hiddenEdges") action(style)->trigger();
   m_empty->setRecent(recent());
   showDocument(false);
   updateTitle();

@@ -127,9 +127,9 @@ class BodyShape : public AIS_Shape {
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
   const std::shared_ptr<const BodyPrs>& prs() const { return m_prs; }
   bool curveOnly() const { return m_prs && m_prs->triangles.IsNull() && !m_prs->boundaries.IsNull(); }  // a wire or drawing layer
-  // Hidden line (UI-48): the faces in `face` (the background), unlit, outlined in `edge` where they turn away from the eye
+  // Hidden line (UI-48): the faces in `face` (the background), unlit, `outlined` in `edge` where they turn away from the eye
   // (OCCT's silhouette), under the edges. True when that changes the shaded presentation (the caller has it computed again).
-  bool setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge);
+  bool setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge, bool outlined);
   bool hiddenLine() const { return m_hiddenLine; }
   static int stockWireframes();  // wireframes OCCT computed from the shape on the UI thread so far (benches: none for meshed bodies)
  protected:
@@ -142,7 +142,7 @@ class BodyShape : public AIS_Shape {
   void computeSubShapes(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode);
   std::shared_ptr<const BodyPrs> m_prs, m_display;
   double m_rayBias=0;
-  bool m_hiddenLine=false;
+  bool m_hiddenLine=false, m_outlined=false;
   Quantity_Color m_hiddenFace, m_hiddenEdge;
   Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
   std::vector<Handle(SubShapeOwner)> m_edgeOwners, m_vertexOwners;  // by ordinal, as picked (grouped edges, vertices only)

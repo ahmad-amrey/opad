@@ -57,12 +57,14 @@ void MainWindow::buildViewActions() {
   QAction* edges = addAction("view.edges", tr("Shaded + edges"), "shadedEdges", QKeySequence("6"), [this] {}, true);
   QAction* wire = addAction("view.wire", tr("Wireframe"), "wireframe", QKeySequence("7"), [this] {}, true);
   QAction* hidden = addAction("view.hidden", tr("Hidden line"), "hiddenLine", QKeySequence("8"), [this] {}, true);  // UI-48
+  QAction* dashed = addAction("view.hiddenEdges", tr("Hidden edges visible"), "hiddenEdges", QKeySequence("9"), [this] {}, true);
   auto* styleGroup = new QActionGroup(this);
-  for (QAction* a : {shaded, edges, wire, hidden}) styleGroup->addAction(a);
+  for (QAction* a : {shaded, edges, wire, hidden, dashed}) styleGroup->addAction(a);
   edges->setChecked(true);
-  connect(styleGroup, &QActionGroup::triggered, this, [this, shaded, wire, hidden](QAction* a) {
+  connect(styleGroup, &QActionGroup::triggered, this, [this, shaded, wire, hidden, dashed](QAction* a) {
     m_settings.setValue("view/style",a->objectName());
-    m_viewport->setStyle(a == shaded ? Viewport::Style::Shaded : a == wire ? Viewport::Style::Wireframe : a == hidden ? Viewport::Style::HiddenLine : Viewport::Style::ShadedEdges);
+    m_viewport->setStyle(a == shaded ? Viewport::Style::Shaded : a == wire ? Viewport::Style::Wireframe : a == hidden ? Viewport::Style::HiddenLine
+                         : a == dashed ? Viewport::Style::HiddenEdges : Viewport::Style::ShadedEdges);
     updateChips();
   });
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
@@ -247,7 +249,8 @@ void MainWindow::setAutoTwoD(bool on) {
 void MainWindow::updateChips() {
   if (!m_chips) return;
   const Viewport::Style style = m_viewport->style();
-  QString mode = style == Viewport::Style::Shaded ? tr("Shaded") : style == Viewport::Style::Wireframe ? tr("Wireframe") : style == Viewport::Style::HiddenLine ? tr("Hidden line") : tr("Shaded + edges");
+  QString mode = style == Viewport::Style::Shaded ? tr("Shaded") : style == Viewport::Style::Wireframe ? tr("Wireframe") : style == Viewport::Style::HiddenLine ? tr("Hidden line")
+                 : style == Viewport::Style::HiddenEdges ? tr("Hidden edges visible") : tr("Shaded + edges");
   QString proj = m_viewport->isOrthographic() ? tr("Orthographic") : tr("Perspective");
   QString section;
   if (m_section && m_section->enabled()) {
