@@ -547,5 +547,12 @@
   "that face is seen at a slant in this view: pick one of its edges": "هذا الوجه مائل في هذا المسقط: اختر إحدى حوافه",
   "issue revision": "إصدار مراجعة",
   "the sheet is gone": "لم تعد اللوحة موجودة",
-  "This sheet: %1": "هذه اللوحة: %1"
+  "This sheet: %1": "هذه اللوحة: %1",
+  "Twice its parent's (%1)": "ضعف مقياس المسقط الأصل (%1)",
+  "Letter…": "الحرف…",
+  "View letter": "حرف المسقط",
+  "The letter of the section (A-A) and of its cutting line": "حرف المقطع (A-A) وحرف خط القطع الخاص به",
+  "The letter of the detail and of its circle on the parent view": "حرف التفصيل وحرف دائرته على المسقط الأصل",
+  "The letter of the auxiliary view (VIEW A in ASME; empty: none)": "حرف المسقط المساعد (VIEW A في ASME؛ فارغ: بلا حرف)",
+  "A section or detail view keeps its letter.": "يحتفظ المسقط المقطعي أو التفصيلي بحرفه."
 }

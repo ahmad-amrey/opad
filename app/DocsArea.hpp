@@ -68,6 +68,7 @@ class DocsArea : public AreaController {
   void startViewTool(SheetViewTool::Tool tool);
   void setViewStyle(const std::vector<std::string>& views, const opad::json& style);  // merged into each view's style
   void editHatching(const std::string& view);  // a section view's hatching, in its dialog (UI-82)
+  void editViewLetter(const std::string& view);  // a section, detail or auxiliary view's letter, in a small dialog
   void openSheet(const std::string& rowId);   // a Drawings folder row: its sheet in the Drawings workspace
   void viewMenu(const std::vector<std::string>& views, QMenu& menu);  // right-click on views
   // Annotations (DocsAnnotate.cpp).

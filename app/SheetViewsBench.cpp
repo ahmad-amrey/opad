@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QKeyEvent>
+#include <QInputDialog>
 #include <QMenu>
 #include <QMouseEvent>
 
@@ -369,6 +370,29 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
           QString("detail B at 5:1 (twice 2:1, the next standard scale), about 8 mm around its centre, on the paper where clicked: scale %1, radius %2")
               .arg(df.scale)
               .arg(df.radius));
+    {  // its own scale and its letter, from its menu
+      QMenu menu;
+      docs->viewMenu({det}, menu);
+      QAction* four = menu.findChild<QAction*>("drawings.menu.scale.4:1");
+      QAction* five = menu.findChild<QAction*>("drawings.menu.scale.5:1");
+      QAction* twice = menu.findChild<QAction*>("drawings.menu.scale.sheet");
+      QAction* letter = menu.findChild<QAction*>("drawings.menu.letter");
+      check(four && five && five->isChecked() && twice && !twice->isChecked() && letter, "the detail's menu offers its scale (5:1 checked, twice its parent's, 4:1, ...) and its letter");
+      if (four) four->trigger();
+      check(waitFor([&] { return frameOf(det).scale == 4 && settled(); }, 15000), "4:1 from its menu: drawn at 4:1");
+      if (letter) letter->trigger();
+      auto* dialog = w.findChild<QInputDialog*>("viewLetterDialog");
+      check(dialog && dialog->textValue() == "B", "Letter… asks for its letter (B)");
+      if (dialog) {
+        dialog->setTextValue("k");
+        dialog->accept();
+      }
+      const auto labelled = [&] {
+        const auto d = opad::drawing::sheet_display(doc->doc, doc->scene, *doc->scene.sheet(sheet));
+        return std::any_of(d.prims.begin(), d.prims.end(), [&](const opad::drawing::Prim& p) { return p.kind == opad::drawing::Prim::Kind::Text && p.text == "K (4:1)"; });
+      };
+      check(waitFor([&] { return doc->scene.sheet_view(det)->def.value("letter", "") == "K" && settled(); }, 15000) && labelled(), "lettered K: labelled K (4:1)");
+    }
 
     // Auxiliary view square to an edge of the top view.
     select(top);

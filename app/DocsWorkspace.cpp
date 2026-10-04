@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QMainWindow>
 #include <QMenu>
 #include <QPointer>
@@ -502,6 +503,27 @@ void DocsArea::openSheet(const std::string& row) {
   if (!view.empty()) m_page->canvas()->selectViews({view});
 }
 
+void DocsArea::editViewLetter(const std::string& view) {
+  const opad::SheetView* v = services().document()->scene.sheet_view(view);
+  if (!v) return;
+  auto* dialog = new QInputDialog(services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->setObjectName("viewLetterDialog");
+  dialog->setWindowTitle(tr("View letter"));
+  dialog->setLabelText(v->kind == "section" ? tr("The letter of the section (A-A) and of its cutting line")
+                       : v->kind == "detail" ? tr("The letter of the detail and of its circle on the parent view")
+                                             : tr("The letter of the auxiliary view (VIEW A in ASME; empty: none)"));
+  dialog->setTextValue(QString::fromStdString(v->def.value("letter", "")));
+  connect(dialog, &QInputDialog::textValueSelected, this, [this, view, kind = v->kind](const QString& text) {
+    services().guarded([&] {
+      const QString letter = text.trimmed().toUpper();
+      if (letter.isEmpty() && kind != "auxiliary") throw opad::Error("A section or detail view keeps its letter.");
+      run("sheet_edit", {{"target", view}, {"set", {{"letter", letter.isEmpty() ? opad::json() : opad::json(letter.toStdString())}}}});
+    });
+  });
+  dialog->open();
+}
+
 void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
   const opad::Scene& s = services().document()->scene;
   if (views.empty()) {  // on the paper: what goes onto it
@@ -554,7 +576,7 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
     }
     menu.addSeparator();
   }
-  bool hidden = true, base = true;
+  bool hidden = true, base = true, detail = true;
   std::string tangent;
   for (const auto& id : views)
     if (const opad::SheetView* v = s.sheet_view(id)) {
@@ -564,6 +586,7 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
       } catch (const std::exception&) {
       }
       base = base && v->kind == "base";
+      detail = detail && v->kind == "detail";
       if (tangent.empty()) {
         const opad::json st = v->def.value("style", opad::json::object());
         tangent = st.is_object() && st.contains("tangent") && st["tangent"].is_string() ? st["tangent"].get<std::string>() : "thin";
@@ -581,24 +604,39 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
     a->setChecked(tangent == value);
     group->addAction(a);
   }
-  if (base) {  // a base view's scale; the views projected from it follow
+  if (base || detail) {  // a base view's scale (the views projected from it follow), a detail view's own
     QMenu* scale = menu.addMenu(tr("View scale"));
-    const opad::Sheet* sheet = s.sheet(m_page->sheet());
-    scale->addAction(tr("Sheet scale (%1)").arg(sheet ? QString::fromStdString(opad::drawing::scale_text(sheet->scale)) : QString()), this, [this, views] {
+    scale->setObjectName("drawings.menu.scale");
+    const opad::SheetView* first = s.sheet_view(views[0]);
+    const std::string now = first ? first->def.value("scale", std::string("sheet")) : std::string();
+    auto* group = new QActionGroup(scale);
+    const auto set = [this, views](opad::json value) {
       opad::json ops = opad::json::array();
-      for (const auto& id : views) ops.push_back({{"op", "edit"}, {"target", id}, {"set", {{"scale", "sheet"}}}});
+      for (const auto& id : views) ops.push_back({{"op", "edit"}, {"target", id}, {"set", {{"scale", value}}}});
       run("append", {{"ops", ops}});
-    });
-    for (const char* text : {"10:1", "5:1", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100"})
-      scale->addAction(QString::fromLatin1(text), this, [this, views, v = std::string(text)] {
-        opad::json ops = opad::json::array();
-        for (const auto& id : views) ops.push_back({{"op", "edit"}, {"target", id}, {"set", {{"scale", v}}}});
-        run("append", {{"ops", ops}});
-      });
+    };
+    const auto choice = [&](const QString& label, const std::string& value, opad::json stored) {
+      QAction* a = scale->addAction(label, this, [set, stored] { set(stored); });
+      a->setCheckable(true);
+      a->setChecked(now == value);
+      a->setObjectName(QString::fromStdString("drawings.menu.scale." + value));
+      group->addAction(a);
+    };
+    if (base) {
+      const opad::Sheet* sheet = s.sheet(m_page->sheet());
+      choice(tr("Sheet scale (%1)").arg(sheet ? QString::fromStdString(opad::drawing::scale_text(sheet->scale)) : QString()), "sheet", "sheet");
+    } else {  // a detail: twice its parent's unless it has its own
+      const opad::drawing::ViewFrame* parent = first ? m_page->canvas()->frame(first->parent) : nullptr;
+      choice(tr("Twice its parent's (%1)").arg(parent ? QString::fromStdString(opad::drawing::scale_text(2 * parent->scale)) : QString()), "sheet", "sheet");
+    }
+    scale->addSeparator();
+    for (const char* text : {"10:1", "5:1", "4:1", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100"}) choice(QString::fromLatin1(text), text, text);
   }
   menu.addSeparator();
   if (views.size() == 1)
     menu.addAction(icons::themed("rename", 16), tr("Rename"), this, [this, id = views[0]] { services().browser()->startRename(id); });
+  if (const opad::SheetView* v = views.size() == 1 ? s.sheet_view(views[0]) : nullptr; v && (v->kind == "section" || v->kind == "detail" || v->kind == "auxiliary"))
+    menu.addAction(tr("Letter…"), this, [this, id = views[0]] { services().guarded([&] { editViewLetter(id); }); })->setObjectName("drawings.menu.letter");
   QAction* del = menu.addAction(icons::themed("delete", 16), views.size() == 1 ? tr("Delete view") + "\tDel" : tr("Delete %1 views").arg(views.size()) + "\tDel", this, [this, views] {
     whenFree([this, views] { services().guarded([&] { drawings::remove(services().document(), views); }); });
   });
