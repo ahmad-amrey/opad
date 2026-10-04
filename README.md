@@ -355,7 +355,8 @@ opad-cli sheet_view plate.opad --sheet <sheet> --kind section --parent <front vi
 opad-cli sheet_view plate.opad --sheet <sheet> --kind detail --parent <front view> --center '[25,5]' --radius 8 --scale 4:1
 ```
 
-Section views take a cutting line drawn on their parent (two points a full section, more an offset or half section):
+Section views take a cutting line drawn on their parent (two points a full section, more an offset or half section, or
+an aligned one when a segment is inclined: each segment revolved onto the first one's line, as through a flange's holes):
 the bodies it crosses are cut where it is swept through the model and the cut faces are hatched (ISO 128-50: at 45
 degrees to each part's main outlines, parts beside each other turned apart, narrow faces filled; `hatch` or the view's
 Hatching… sets the angle, the spacing and the bodies' material symbols, after ASME Y14.2); detail views enlarge a

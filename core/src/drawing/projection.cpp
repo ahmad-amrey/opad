@@ -318,6 +318,7 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
     for (const auto& p : spec.cut) line.push_back({rounded(p[0]), rounded(p[1])});
     j["cut"] = {{"line", line}, {"x", {rounded(spec.cut_x[0]), rounded(spec.cut_x[1]), rounded(spec.cut_x[2])}},
                 {"y", {rounded(spec.cut_y[0]), rounded(spec.cut_y[1]), rounded(spec.cut_y[2])}}, {"version", 1}};
+    if (spec.aligned) j["cut"]["aligned"] = true;
     for (const auto& s : sources)
       if (s.whole) j["cut"]["whole"].push_back(s.node);
   }
@@ -927,6 +928,7 @@ json ViewSpec::to_json() const {
     json line = json::array();
     for (const auto& p : cut) line.push_back({p[0], p[1]});
     j["cut"] = {{"line", line}, {"x", vec_json(cut_x)}, {"y", vec_json(cut_y)}, {"whole", whole}};
+    if (aligned) j["cut"]["aligned"] = true;
   }
   return j;
 }
@@ -954,6 +956,7 @@ ViewSpec ViewSpec::from_json(const json& j) {
     s.cut_x = vec_of(c.value("x", json()), s.cut_x);
     s.cut_y = vec_of(c.value("y", json()), s.cut_y);
     if (c.contains("whole") && c["whole"].is_array()) s.whole = c["whole"].get<std::vector<std::string>>();
+    s.aligned = c.value("aligned", false);
   }
   return s;
 }
@@ -1365,7 +1368,10 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
     } catch (const Standard_Failure& e) {
       throw Error(std::string("projection failed: ") + e.GetMessageString());
     }
-    if (!spec.cut.empty()) detail::name_cut_curves(sources, g->curves);
+    if (!spec.cut.empty()) {
+      detail::name_cut_curves(sources, g->curves);
+      detail::drop_joint_curves(spec, v, sources, g->curves);
+    }
   }
   run.check();
   const auto finish = std::chrono::steady_clock::now();

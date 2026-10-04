@@ -53,7 +53,8 @@ CASES = [
     # (kept upright, previewed, Esc takes a point back), Enter, the section measured on a worker and placed lined up on
     # the side it goes (hatched, A-A, the cutting line on its parent), dragged only along its way; a detail at the next
     # standard scale; an auxiliary view square to an edge; a crop box dragged, a break clicked (the view lined up breaks
-    # with it), Remove crop from the menu, Ctrl+Z; Hatching… (angle and spacing typed, automatic again). <prefix>.views.png,
+    # with it), Remove crop from the menu, Ctrl+Z; Hatching… (angle and spacing typed, automatic again); an aligned section
+    # (an inclined segment revolved, both sides hatched). <prefix>.views.png,
     # <prefix>.hatch.png.
     ("sheet-views", "empty", {"OPAD_BENCH_SHEET_VIEWS": "{prefix}"}),
 ]

@@ -1,8 +1,9 @@
 #pragma once
 // Section, detail and auxiliary views, crops and breaks with the mouse on the sheet canvas (TODO 11 UI-82). A tool works
 // on one view (the selected one): Section takes the cutting line's points on it (snapped to what the sheet draws, kept
-// level or upright within 6 degrees), Enter ends the line, then the new view follows the pointer on the side it goes
-// (its size measured on a worker for both sides) and a click places it lined up with its parent: one sheet_view step.
+// level or upright within 6 degrees; a segment inclined to the first makes it an aligned section), Enter ends the line,
+// then the new view follows the pointer on the side it goes (its size measured on a worker for both sides) and a click
+// places it lined up with its parent: one sheet_view step.
 // Detail takes a centre, a radius, then where the detail goes (twice the parent's scale, the next standard one).
 // Auxiliary takes a straight edge of the view (it looks square to it), then the side. Crop takes a box (two clicks or a
 // drag), Break two points (the band between them, along the longer way): one sheet_edit each. Esc steps back (the last

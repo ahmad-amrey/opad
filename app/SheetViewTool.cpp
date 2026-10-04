@@ -135,7 +135,7 @@ void SheetViewTool::promptForStage() {
   switch (m_tool) {
     case Tool::Section:
       text = m_stage == Stage::Place ? tr("Move to the side the section goes and click")
-             : m_points.size() < 2   ? tr("Click the cutting line's points on the view: two for a full section, more for an offset or half section")
+             : m_points.size() < 2   ? tr("Click the cutting line's points on the view: two for a full section, more for an offset, half or aligned section")
                                      : tr("Click more points, or press Enter to end the cutting line");
       break;
     case Tool::Detail:
@@ -161,6 +161,7 @@ opad::json SheetViewTool::probe(int side) const {
     r["kind"] = "section";
     r["cut"] = cut;
     if (side < 0) r["flip"] = true;
+    if (opad::drawing::inclined_cut(m_points)) r["aligned"] = true;  // its inclined segments revolved onto the first one's line
   } else if (m_tool == Tool::Auxiliary) {
     const Vec2 d = mul(left(m_edge), side);
     r["kind"] = "auxiliary";

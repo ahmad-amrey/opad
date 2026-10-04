@@ -47,10 +47,12 @@ struct ViewSpec {
   // A section (UI-82): the cutting line in a plane through the model (cut_x, cut_y: its axes, the parent view's; points in
   // model mm), swept along that plane's normal. Whatever lies on the viewer's side of it (towards dir) is taken away from
   // the bodies it crosses, and the faces the cut leaves facing the viewer come back as ViewGeometry::sections. One segment:
-  // a full section; more: an offset or half section. Bodies under `whole` (shafts, fasteners) and meshes are not cut.
+  // a full section; more: an offset or half section, or with `aligned` each segment's strip cut on its own and revolved
+  // about the joints before it onto the first one's line. Bodies under `whole` (shafts, fasteners) and meshes are not cut.
   std::vector<Vec2> cut;
   Vec3 cut_x{1, 0, 0}, cut_y{0, 0, 1};
   std::vector<std::string> whole;
+  bool aligned = false;
   static ViewSpec preset(const std::string& view);  // the Camera::preset names: front, top, right, iso, ...
   json to_json() const;
   static ViewSpec from_json(const json& j);  // {"view":"front"} or {"dir":[..],"up":[..]}, plus the fields above

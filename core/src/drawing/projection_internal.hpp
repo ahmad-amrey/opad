@@ -81,5 +81,11 @@ void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, st
                  std::vector<ViewGeometry::Region>& regions);
 // A cut body's curves named after the body's own edges and faces (Source::edges, faces).
 void name_cut_curves(const std::vector<Source>& sources, std::vector<Curve>& curves);
+// An aligned section's seams: the cut bodies' curves where its revolved pieces meet (planes square to the first
+// segment through the joints, seen edge on: the cut's own edges, surfaces' seams lying there), left out.
+void drop_joint_curves(const ViewSpec& spec, const View& view, const std::vector<Source>& sources, std::vector<Curve>& curves);
+// An aligned section's extent in its view (xmin, ymin, xmax, ymax): the bodies' boxes cut to each piece and revolved with
+// it. Walks the bodies' boxes the first time: workers only.
+std::array<double, 4> aligned_extent(const Document& doc, const Scene& scene, const ViewSpec& spec);
 
 }  // namespace opad::drawing::detail

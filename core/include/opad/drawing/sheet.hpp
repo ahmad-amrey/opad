@@ -8,8 +8,9 @@
 //               style {hidden, tangent show|thin|hide, silhouettes, quality}; projected: parent, side (left right top
 //               bottom or a corner), gap (paper mm between the frames), align false + at to break the alignment;
 //               section (UI-82): parent, cut [[u, v], ...] (the cutting line in the parent's view coordinates, model mm:
-//               two points a full section, more an offset or half section), flip (placed on the cut's right instead of
-//               its left), letter, gap, align/at, whole [nodes not cut]; detail: parent, center [u, v], radius (model
+//               two points a full section, more an offset or half section; aligned true: each segment revolved onto the
+//               first one's line), flip (placed on the cut's right instead of its left), letter, gap, align/at, whole
+//               [nodes not cut]; detail: parent, center [u, v], radius (model
 //               mm), letter, scale, at; auxiliary: parent, angle (degrees on the sheet from the parent to it: it looks
 //               along that line), gap, align/at, letter (optional); any view: crop [x0, y0, x1, y1] (view coordinates),
 //               breaks [{axis x|y, from, to, gap (paper mm)}]; a section (and its details): hatch {pattern general |
@@ -113,6 +114,9 @@ std::string next_view_letter(const Scene& scene, const Sheet& sheet);
 // Section views (UI-82): the 2D direction from the parent view to where it goes on the sheet (unit, parent view axes),
 // for a section, auxiliary or side-projected view; false for others.
 bool view_direction(const SheetView& view, Vec2& d);
+// Whether a cutting line turns other than square to its first segment: an aligned section (sheet_view `aligned`, which
+// the commands and the app set for such a line), its inclined segments revolved onto the first one's line.
+bool inclined_cut(const std::vector<Vec2>& cut);
 std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const Sheet& sheet);
 // The bodies' extent in a view: xmin, ymin, xmax, ymax in view coordinates (model mm); zeros when it draws nothing.
 std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const ViewSpec& spec);

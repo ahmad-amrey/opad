@@ -396,4 +396,68 @@ TEST(views_hatching) {
   CHECK_EQ(hatch_of(sheet_display(doc, s, *s.sheet(sheet)), cut).fills, 0);
 }
 
+// An aligned section (ISO 128-40): a flange cut through a hole at 12 o'clock and, past the centre, through one at 30
+// degrees below 3 o'clock; the inclined segment's faces revolved onto the first one's line and hatched with them, no
+// seam where the pieces meet, the view's frame around the developed part, the last arrow square to its own segment.
+TEST(views_aligned_section) {
+  Document doc = Document::create();
+  const std::string disc = run(doc, "feature", {{"kind", "cylinder"}, {"inputs", {{"plane", {{"base", "xy"}}}, {"x", 0}, {"y", 0}, {"diameter", 80}, {"height", 10}}}})["body_ids"][0];
+  const double c30 = std::cos(M_PI / 6), s30 = std::sin(M_PI / 6);
+  for (const auto& [x, y, d] : std::initializer_list<std::array<double, 3>>{{0, 0, 20}, {0, 30, 8}, {30 * c30, -30 * s30, 8}})
+    run(doc, "feature", {{"kind", "cylinder"}, {"inputs", {{"plane", {{"base", "xy"}}}, {"x", x}, {"y", y}, {"diameter", d}, {"height", 10}, {"operation", "cut"}, {"targets", {disc}}}}});
+  const std::string sheet = run(doc, "sheet", {{"size", "A3"}})["id"];
+  const std::string top = run(doc, "sheet_view", {{"sheet", sheet}, {"orient", "top"}, {"at", {150, 150}}})["id"];
+  const json cut = {{0, 50}, {0, 0}, {50 * c30, -50 * s30}};
+  const std::string sec = run(doc, "sheet_view", {{"sheet", sheet}, {"kind", "section"}, {"parent", top}, {"cut", cut}})["id"];
+  Scene s = resolve(doc);
+  CHECK(s.sheet_view(sec)->def.value("aligned", false));  // an inclined segment: aligned by itself
+  CHECK(inclined_cut({{0, 50}, {0, 0}, {50 * c30, -50 * s30}}) && !inclined_cut({{-15, -10}, {-15, 5}, {15, 5}, {15, 20}}));
+  const ViewSpec spec = view_spec(s, *s.sheet_view(sec));
+  CHECK(spec.aligned);
+  const auto g = project(doc, s, spec, {}, false);
+  double area = 0;
+  for (const auto& r : g->sections)
+    for (const auto& l : r.loops) area += ::area(l);
+  CHECK(std::fabs(area - 440) < 2);  // (16 + 6) x 10 on either side of the centre, the inclined side revolved
+  // The developed part runs along the view from -40 to 40 (its radius either side), the inclined side where the cut
+  // runs on: no seam across it where the pieces meet (the joint, square to the first segment through the centre).
+  const ViewFrame& f = frame(layout(doc, s, *s.sheet(sheet)), sec);
+  Vec3 x, y, z;
+  view_axes(spec, x, y, z);
+  const int along = std::fabs(x[1]) > 0.5 ? 0 : 1;  // the view axis along the cutting line's first segment (world y)
+  CHECK(std::fabs(g->bounds[along] + 40) < 1e-3 && std::fabs(g->bounds[along + 2] - 40) < 1e-3);
+  const double width = along == 0 ? f.box[2] - f.box[0] : f.box[3] - f.box[1];
+  CHECK(std::fabs(width - 80 * f.scale) < 1e-3);  // the frame hugs it (each piece measured turned with it)
+  int seams = 0;
+  for (const auto& k : g->curves) {
+    const auto pts = k.sample(0.01);
+    if (std::all_of(pts.begin(), pts.end(), [&](const Vec2& p) { return std::fabs(p[static_cast<size_t>(along)]) < 1e-4; })) ++seams;
+  }
+  CHECK_EQ(seams, 0);
+  // Not aligned (as an older OPAD reads it): an offset section, only the first segment's faces hatched.
+  run(doc, "sheet_edit", {{"target", sec}, {"set", {{"aligned", nullptr}}}});
+  s = resolve(doc);
+  area = 0;
+  for (const auto& r : project(doc, s, view_spec(s, *s.sheet_view(sec)), {}, false)->sections)
+    for (const auto& l : r.loops) area += ::area(l);
+  CHECK(std::fabs(area - 220) < 2);
+  run(doc, "sheet_edit", {{"target", sec}, {"set", {{"aligned", true}}}});
+  CHECK_THROWS(run(doc, "sheet_edit", {{"target", sec}, {"set", {{"aligned", "yes"}}}}));
+  // The parent's arrows: at the first end square to the first segment, at the last square to the last one.
+  s = resolve(doc);
+  const Display d = sheet_display(doc, s, *s.sheet(sheet));
+  std::vector<std::array<Vec2, 2>> stems;
+  for (const auto& p : d.prims)
+    if (p.source == top && p.kind == Prim::Kind::Curve && d.layers[static_cast<size_t>(p.layer)].name == "Dimensions" && p.curve.pts.size() == 2)
+      stems.push_back({p.curve.pts[0], p.curve.pts[1]});
+  CHECK_EQ(stems.size(), 2u);
+  const ViewFrame& ft = frame(layout(doc, s, *s.sheet(sheet)), top);
+  for (const auto& st : stems) {
+    const Vec2 dir{st[1][0] - st[0][0], st[1][1] - st[0][1]};
+    const bool last = std::hypot(st[0][0] - ft.paper({50 * c30, -50 * s30, 0})[0], st[0][1] - ft.paper({50 * c30, -50 * s30, 0})[1]) < 1;
+    const Vec2 seg = last ? Vec2{c30, -s30} : Vec2{0, -1};
+    CHECK(std::fabs(dir[0] * seg[0] + dir[1] * seg[1]) < 1e-6 * std::hypot(dir[0], dir[1]));
+  }
+}
+
 CHECK_MAIN()

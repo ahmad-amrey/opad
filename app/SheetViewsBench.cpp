@@ -28,7 +28,8 @@ using opad::drawing::Vec2;
 // pointer lined up on the side it goes, a click places it (one step): hatched, labelled A-A, the front view drawing its
 // cutting line; dragged, it moves only away from its parent; Esc steps back a point, then leaves. Detail view: centre,
 // radius, place (5:1, the next standard scale from twice 2:1). Auxiliary view square to an edge of the top view, lined up.
-// Hatching… (the dialog, a typed angle and spacing, automatic again). Crop by dragging a box on the top view, Break by two
+// Hatching… (the dialog, a typed angle and spacing, automatic again). An aligned section on the top view (three points,
+// the last segment at 30 degrees: both sides hatched). Crop by dragging a box on the top view, Break by two
 // clicks on the front view (the top view broken with it), Remove crop from the view's menu, Ctrl+Z. <prefix>.views.png,
 // <prefix>.hatch.png.
 OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
@@ -241,6 +242,41 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
     w.action("drawings.sectionView")->trigger();
     key(Qt::Key_Escape);
     check(!tool->active() && tool->prompt().isEmpty(), "Esc with no point leaves the tool");
+
+    // An aligned section on the top view: down to the hole's middle, then on at 30 degrees below level (not snapped): the
+    // inclined side revolved onto the first one's line and hatched with it, one step.
+    {
+      select(top);
+      w.action("drawings.sectionView")->trigger();
+      click(at(top, {0, 26}));
+      click(at(top, {0, 0}));
+      click(at(top, {30 * std::cos(M_PI / 6), -30 * std::sin(M_PI / 6)}));
+      key(Qt::Key_Return);
+      check(waitFor([&] { return tool->placing(); }, 15000), "three points, Enter: measured and following the pointer");
+      const opad::drawing::ViewFrame tf = frameOf(top);
+      const size_t before = views("section").size();
+      click(canvas->toScene({tf.box[2] + 40, tf.at[1]}));
+      check(waitFor([&] { return views("section").size() == before + 1; }, 15000) && waitFor(settled, 30000), "a click places it");
+      const std::string al = views("section").empty() ? std::string() : views("section").back();
+      const opad::SheetView* v = doc->scene.sheet_view(al);
+      double area = 0;
+      if (v) {
+        const auto g = opad::drawing::project(doc->doc, doc->scene, opad::drawing::view_spec(doc->scene, *v));
+        for (const auto& r : g->sections)
+          for (const auto& l : r.loops) {
+            double a = 0;
+            for (size_t k = 0; k < l.size(); ++k) a += l[k][0] * l[(k + 1) % l.size()][1] - l[(k + 1) % l.size()][0] * l[k][1];
+            area += std::fabs(a / 2);
+          }
+      }
+      // The plate is 10 thick: 15 mm of it from the hole to the edge (20) up the first side, and from the hole to the right
+      // edge (30 / cos 30) along the inclined one.
+      const double want = 10 * (15 + 30 / std::cos(M_PI / 6) - 5);
+      check(v && v->def.value("aligned", false) && v->def["cut"].size() == 3 && std::fabs(area - want) < 1.5 && st(al).final,
+            QString("aligned section B: its faces %1 mm² (both sides, the inclined one revolved; %2 expected)").arg(area).arg(want));
+      w.action("edit.undo")->trigger();
+      check(waitFor([&] { return views("section").size() == before && settled(); }, 15000), "Ctrl+Z takes it away");
+    }
 
     // Detail view: centre, radius, place.
     select(front);

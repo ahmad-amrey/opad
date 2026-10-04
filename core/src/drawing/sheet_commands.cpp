@@ -56,6 +56,14 @@ const drawing::ViewFrame& frame_of(const std::vector<drawing::ViewFrame>& frames
   throw Error("view " + id + " is not on its sheet");
 }
 
+std::vector<drawing::Vec2> points_of(const json& j) {
+  std::vector<drawing::Vec2> out;
+  if (j.is_array())
+    for (const auto& p : j)
+      if (p.is_array() && p.size() == 2 && p[0].is_number() && p[1].is_number()) out.push_back({p[0].get<double>(), p[1].get<double>()});
+  return out;
+}
+
 // The view as replay will take it: its orientation through the parents, side, sources and style. Throws.
 void check_view(const Scene& scene, const std::string& id, const json& def) {
   SheetView v;
@@ -212,7 +220,8 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         {"up", "[x,y,z]"}, {"select", "array|csv - nodes (default all)"}, {"hide", "array|csv"}, {"at", "[x,y] - paper mm of its centre"},
         {"scale", "string - sheet (default), 1:5 or auto"}, {"parent", "uuid"},
         {"side", "left|right|top|bottom|top-left|top-right|bottom-left|bottom-right"}, {"gap", "number - mm between frames (20)"},
-        {"hidden", "bool - hidden lines"}, {"centermarks", "bool"}, {"cut", "array - [[u,v],..]"}, {"flip", "bool"}, {"center", "[u,v]"}, {"radius", "number"},
+        {"hidden", "bool - hidden lines"}, {"centermarks", "bool"}, {"cut", "array - [[u,v],..]"}, {"flip", "bool"}, {"aligned", "bool"},
+        {"center", "[u,v]"}, {"radius", "number"},
         {"angle", "number - deg"}, {"letter", "string"}, {"crop", "[x0,y0,x1,y1]"}, {"breaks", "array - {axis,from,to,gap}"}, {"whole", "array|csv"},
         {"hatch", "object - pattern general|material|steel|.., angle, spacing, thin, bodies"}, {"by", "string"}},
        true},
@@ -260,6 +269,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           if (kind == "section") {
             op["cut"] = a.at("cut");
             if (a.value("flip", false)) op["flip"] = true;
+            if (a.contains("aligned") ? a["aligned"].get<bool>() : drawing::inclined_cut(points_of(op["cut"]))) op["aligned"] = true;
             if (const auto whole = strings(a.value("whole", json())); !whole.empty()) op["whole"] = whole;
           } else if (kind == "detail") {
             op["center"] = a.at("center");

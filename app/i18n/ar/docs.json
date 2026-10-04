@@ -489,7 +489,7 @@
   "Select a view that is drawn on the sheet first.": "اختر أولًا مسقطًا مرسومًا على اللوحة.",
   "A detail view is cropped by its circle already.": "المسقط التفصيلي مقصوص بدائرته أصلًا.",
   "Move to the side the section goes and click": "حرّك المؤشر إلى الجهة التي يوضع فيها المقطع وانقر",
-  "Click the cutting line's points on the view: two for a full section, more for an offset or half section": "انقر نقاط خط القطع على المسقط: نقطتان لمقطع كامل، وأكثر لمقطع متدرج أو نصفي",
+  "Click the cutting line's points on the view: two for a full section, more for an offset, half or aligned section": "انقر نقاط خط القطع على المسقط: نقطتان لمقطع كامل، وأكثر لمقطع متدرج أو نصفي أو مُدار",
   "Click more points, or press Enter to end the cutting line": "انقر نقاطًا أخرى، أو اضغط Enter لإنهاء خط القطع",
   "Click the centre of the detail": "انقر مركز التفصيل",
   "Click to set the detail's radius": "انقر لتحديد نصف قطر التفصيل",

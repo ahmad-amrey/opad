@@ -269,6 +269,18 @@ bool view_direction(const SheetView& view, Vec2& d) {
   return false;
 }
 
+bool inclined_cut(const std::vector<Vec2>& cut) {
+  if (cut.size() < 3 || len(sub(cut[1], cut[0])) < 1e-9) return false;
+  const Vec2 t0 = unit(sub(cut[1], cut[0]));
+  for (size_t i = 2; i < cut.size(); ++i) {
+    const Vec2 d = sub(cut[i], cut[i - 1]);
+    if (len(d) < 1e-9) continue;
+    const double c = dot(unit(d), t0);
+    if (std::fabs(c) > 1e-6 && std::fabs(c) < 1 - 1e-6) return true;
+  }
+  return false;
+}
+
 std::string next_view_letter(const Scene& scene, const Sheet& sheet) {
   std::set<std::string> used;
   for (const auto& s : scene.sheets)
@@ -702,10 +714,18 @@ void draw_view_marks(Display& d, const ViewFrame& f, const SheetView& v, const S
       stub(pts.front(), pts[1], 6), stub(pts.back(), pts[pts.size() - 2], 6);
       for (size_t i = 1; i + 1 < pts.size(); ++i) stub(pts[i], pts[i - 1], 3), stub(pts[i], pts[i + 1], 3);
       const Vec2 look = mul(toward, third ? -1 : 1);  // first angle: the view lies where one looks; third: where one stands
+      // Aligned: the last segment is looked at square to itself (turned with it).
+      Vec2 last_look = look;
+      if (c->def.value("aligned", false)) {
+        const Vec2 a = sub(pts[1], pts[0]), b = sub(pts.back(), pts[pts.size() - 2]);
+        const double t = std::atan2(b[1], b[0]) - std::atan2(a[1], a[0]);
+        last_look = {std::cos(t) * look[0] - std::sin(t) * look[1], std::sin(t) * look[0] + std::cos(t) * look[1]};
+      }
       const int arrows = d.layer({"Dimensions", kInk, LineType::Continuous, 0.25});
       for (const auto& [end, inner] : {std::pair{pts.front(), pts[1]}, std::pair{pts.back(), pts[pts.size() - 2]}}) {
-        arrow(arrows, end, add(end, mul(look, 8)));
-        if (!mark.empty()) d.text(text, mark, add(add(end, mul(look, 5)), mul(unit(sub(end, inner)), 4)), h, 0, 1, 2);
+        const Vec2 way = end == pts.front() ? look : last_look;
+        arrow(arrows, end, add(end, mul(way, 8)));
+        if (!mark.empty()) d.text(text, mark, add(add(end, mul(way, 5)), mul(unit(sub(end, inner)), 4)), h, 0, 1, 2);
       }
     } else if (c->kind == "detail") {
       const json at = c->def.value("center", json());

@@ -20,6 +20,7 @@
 #include "opad/drawing/symbols.hpp"
 #include "opad/geometry.hpp"
 #include "opad/render.hpp"
+#include "projection_internal.hpp"
 
 namespace opad::drawing {
 namespace {
@@ -151,7 +152,7 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     if (!side_step(side, sx, sy)) throw Error("side is left, right, top, bottom or a corner such as top-right, not '" + side + "'");
     const Sheet* sheet = scene.sheet(v.sheet);
     turn_to_side(s, sx, sy, sheet && sheet->projection == "third");
-    s.cut.clear(), s.whole.clear();  // the model, also when projected from a section
+    s.cut.clear(), s.whole.clear(), s.aligned = false;  // the model, also when projected from a section
   } else if (v.kind == "section" || v.kind == "auxiliary") {
     const SheetView* parent = scene.sheet_view(v.parent);
     if (!parent) throw Error("its parent view " + v.parent + " does not exist");
@@ -163,10 +164,11 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     view_axes(s, px, py, pz);
     const Sheet* sheet = scene.sheet(v.sheet);
     fold_to(s, toward, sheet && sheet->projection == "third");
-    s.cut.clear(), s.whole.clear();
+    s.cut.clear(), s.whole.clear(), s.aligned = false;
     if (v.kind == "section") {
       s.cut = points(d["cut"]);
       s.cut_x = px, s.cut_y = py;
+      s.aligned = d.value("aligned", false) && s.cut.size() >= 3;
       for (const auto& n : d.value("whole", json::array()))
         if (n.is_string()) s.whole.push_back(n.get<std::string>());
       s.hidden = false;  // section views draw hidden lines only when asked
@@ -299,6 +301,7 @@ void validate_record(const json& op) {
   if (op.contains("center") && !point2(op["center"])) fail("'center' must be [u, v]");
   if (op.contains("radius") && !(finite(op["radius"]) && op["radius"].get<double>() > 0)) fail("'radius' must be a positive number");
   if (op.contains("flip") && !op["flip"].is_boolean()) fail("'flip' must be true or false");
+  if (op.contains("aligned") && !op["aligned"].is_boolean()) fail("'aligned' must be true or false");
   if (op.contains("whole") && !(op["whole"].is_array() && std::all_of(op["whole"].begin(), op["whole"].end(), [](const json& n) { return n.is_string(); })))
     fail("'whole' must be node ids");
   if (op.contains("hatch")) {
@@ -493,7 +496,9 @@ std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const
   // Bodies square to the view: the corners of their tight boxes (moved by their explode offsets), which is exact. Bodies
   // seen turned (pictorial views, turned parts) of a part the exact tier draws: measured in the view's axes, where the
   // turned corners of their own boxes would come out up to a quarter too big (cached by key and turn); of a bigger model
-  // the corners still (a measure per turn of every body would cost as much as the projection).
+  // the corners still (a measure per turn of every body would cost as much as the projection). An aligned section: its
+  // pieces revolved.
+  if (spec.aligned && spec.cut.size() >= 3) return detail::aligned_extent(doc, scene, spec);
   Vec3 x, y, z;
   view_axes(spec, x, y, z);
   std::array<double, 4> e{1e300, 1e300, -1e300, -1e300};
