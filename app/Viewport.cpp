@@ -978,12 +978,15 @@ void Viewport::refreshSubHighlight() {
   }
   if (st->owners.empty()) return;
   QColor body;  // the selection's look over the first body close to its colour, else any (UI-38: an outline on a blue part)
-  for (const auto& o : st->owners)
+  std::unordered_set<const void*> bodies;  // the colour is the body's: each one looked at once, not per selected face
+  for (const auto& o : st->owners) {
+    if (!bodies.insert(o->Selectable().get()).second) continue;
     if (const auto node = m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(o->Selectable()).get()); node != m_nodeOf.end()) {
       const QColor colour = shownColor(node->second);
       if (!body.isValid() || highlight::closeToSelection(m_tokens, colour)) body = colour;
       if (highlight::closeToSelection(m_tokens, body)) break;
     }
+  }
   st->hl = new SubHighlight(glowStyle(body, false));
   constexpr size_t kChunk = 200000;  // nodes per primitive array: turning a chunk into an array stays a small step
   auto flush = [st](bool all) {
