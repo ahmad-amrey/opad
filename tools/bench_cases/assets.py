@@ -4,6 +4,7 @@ its own cache (OPAD_CACHE_DIR) into the run's folder, so nothing reaches the use
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import zipfile
 
@@ -137,6 +138,13 @@ def asset_git(root, document):
     (parts / "part.step").unlink()
     if git("lfs", "version").returncode == 0:
         env["OPAD_BENCH_ASSET_GIT_LFS"] = "1"
+    # A mesh over 20 MB in the work tree, linked by the bench: Track with Git LFS is offered as it comes in.
+    count = 21 * 1024 * 1024 // 50
+    with open(project / "big.stl", "wb") as f:
+        f.write(b"\0" * 80 + struct.pack("<I", count))
+        for i in range(count):
+            x, y = float(i % 1000), float(i // 1000)
+            f.write(struct.pack("<12fH", 0, 0, 1, x, y, 0, x + 1, y, 0, x, y + 1, 0, 0))
     return design, env
 
 
@@ -257,7 +265,7 @@ CASES = [
     # (<prefix>.properties.png); Settings > KiCad boards… and Linked files… (the import choice, a trusted folder removed).
     ("asset-kicad", asset_kicad, {"OPAD_BENCH_ASSET_KICAD": "{prefix}"}),
     # Assets in git (UI-69): a linked file deleted from its work tree, offered and recovered from git, its parts back; packed
-    # into the project, Track with Git LFS offered and done (.gitattributes, the LFS mark).
+    # into the project, Track with Git LFS offered and done (.gitattributes, the LFS mark); offered for a big file linked in.
     ("asset-git", asset_git, {"OPAD_BENCH_ASSET_GIT": "{prefix}"}),
     # What the core says of linked files (states, failed syncs) shown in Arabic: whole, a sentence and its path, counted.
     ("asset-reasons", "empty", {"OPAD_BENCH_ASSET_REASONS": "1", "OPAD_LANG": "ar"}),

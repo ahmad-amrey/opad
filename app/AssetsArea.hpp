@@ -13,6 +13,7 @@
 #include <QString>
 #include <filesystem>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -128,6 +129,9 @@ class AssetsArea : public AreaController {
   void notify(const QString& text, bool undo = false, int ms = 6000);  // a toast (with Undo), replacing the last one
   void updateLooks();
   void offerModels();  // once per board and session: its downloadable models, as a toast (or at once: setting always)
+  // Once per file: a file over 20 MB linked in this session inside a git work tree and not stored by Git LFS gets Track with
+  // Git LFS offered (UI-69); the files the document opened with are not asked about.
+  void offerLfs();
   bool downloadable(const std::string& import) const;
   QString name(const std::string& import) const;
   QString stateText(const std::string& import) const;
@@ -140,6 +144,7 @@ class AssetsArea : public AreaController {
   bool m_busy = false;
   QPointer<Toast> m_toast;
   QStringList m_offered;  // boards whose models were offered for download this session
+  std::set<std::string> m_opened, m_lfsOffered;  // imports the document opened with; those offered Git LFS
   QPointer<Job> m_download;
   std::function<void(const std::string&)> m_previewer;
 };

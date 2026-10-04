@@ -696,7 +696,8 @@ OPAD_BENCH(OPAD_BENCH_ASSET_KICAD, asset_kicad) {
 // OPAD_BENCH_ASSET_GIT=<prefix> on a document in a git work tree whose linked parts/part.step was committed and then deleted:
 // missing, Recover from git offered in Properties and the context menu (the badge says so); recovered on a worker, its parts
 // read again; packed into the project's assets/, a toast offers Track with Git LFS (OPAD_BENCH_ASSET_GIT_LFS), which writes
-// the pattern into .gitattributes and the file gets the LFS mark. Frame: <prefix>.properties.png.
+// the pattern into .gitattributes and the file gets the LFS mark; a 21 MB mesh linked into the work tree gets it offered as it
+// comes in. Frame: <prefix>.properties.png.
 OPAD_BENCH(OPAD_BENCH_ASSET_GIT, asset_git) {
   static bool started = false;
   if (std::exchange(started, true)) return true;
@@ -766,11 +767,22 @@ OPAD_BENCH(OPAD_BENCH_ASSET_GIT, asset_git) {
         if (!asked) return QCoreApplication::exit(2);
         offer()->actionButton()->click();
         const QString attributes = QFileInfo(doc->path()).absolutePath() + "/.gitattributes";
-        waitFor(&w, [=] { return state().value("lfs", false) && !monitor->checking(); }, 30000, [=](bool lfs) {
+        waitFor(&w, [=] { return state().value("lfs", false) && !monitor->checking(); }, 30000, [=, &w](bool lfs) {
           QFile file(attributes);
           const QString text = file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
           (*require)(lfs && text.contains("assets/part.step filter=lfs"), "tracked with Git LFS: .gitattributes names it, its LFS mark: " + text.trimmed());
-          QCoreApplication::exit(require->all ? 0 : 2);
+          // A file over 20 MB linked into the work tree: Track with Git LFS offered as it comes in.
+          w.beginLoad({});
+          doc->startImport(QFileInfo(doc->path()).absolutePath() + "/big.stl", {}, {}, {}, true);
+          auto bigOffer = [&w]() {
+            for (Toast* t : w.m_toasts->toasts())
+              if (t->text().startsWith("big.stl is in a git work tree") && t->actionButton() && t->actionButton()->text() == "Track with Git LFS") return true;
+            return false;
+          };
+          waitFor(&w, [=] { return !doc->loading && bigOffer(); }, 60000, [=](bool offered) {
+            (*require)(offered, "a 21 MB mesh linked into the work tree: Track with Git LFS offered");
+            QCoreApplication::exit(require->all ? 0 : 2);
+          });
         });
       });
     });

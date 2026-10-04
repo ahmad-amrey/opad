@@ -274,6 +274,7 @@ void AssetsArea::ready() {
   connect(m_monitor, &AssetMonitor::statesChanged, this, [this] {
     updateLooks();
     offerModels();
+    offerLfs();
     services().browser()->refreshDecorations();
     services().properties()->refresh();
     services().updateCommands();
@@ -288,6 +289,10 @@ void AssetsArea::ready() {
 void AssetsArea::documentChanged(bool replaced) {
   if (replaced) m_queue.clear();
   if (m_monitor) m_monitor->documentChanged(replaced);
+  if (replaced && m_monitor) {
+    m_opened.clear();
+    for (const auto& [import, a] : m_monitor->assets()) m_opened.insert(import);
+  }
 }
 
 std::vector<std::string> AssetsArea::imports(const SelectionContext& selection) const {
@@ -711,7 +716,7 @@ void AssetsArea::pack(const std::string& import) {
             const QString path = native(QString::fromStdString(report.value("path", std::string())));
             if (ok) notify(copy ? tr("%1 now links the project's copy: %2").arg(title, path) : tr("%1 is packed into the project: %2").arg(title, path), true, 8000);
             else notify(tr("%1 could not be packed: %2").arg(title, reasonText(error.toStdString())), false, 10000);
-            if (ok && report.value("offer_lfs", false))
+            if (ok && report.value("offer_lfs", false) && m_lfsOffered.insert(import).second)
               services().toast(tr("%1 is in a git work tree but not stored by Git LFS").arg(title), tr("Track with Git LFS"), [this, import] { trackLfs(import); }, 12000);
             emit done("pack", import, ok, error, report);
           });
@@ -782,6 +787,17 @@ bool AssetsArea::downloadable(const std::string& import) const {
   const AssetMonitor::Asset* a = m_monitor ? m_monitor->asset(import) : nullptr;
   const opad::json* s = a ? m_monitor->state(import) : nullptr;
   return s && s->value("models_downloadable", 0) > 0 && s->contains("file") && !a->asset.contains("derived") && a->asset.value("storage", "linked") != "embedded";
+}
+
+void AssetsArea::offerLfs() {
+  for (const auto& [import, a] : m_monitor->assets()) {
+    const opad::json* s = m_monitor->state(import);
+    if (m_opened.count(import) || m_lfsOffered.count(import) || !s || s->value("state", "") != "ok" || !s->contains("work_tree") || s->value("lfs", false) ||
+        s->value("bytes", qint64(0)) <= assets::kSuggestBytes || a.asset.value("storage", "linked") == "embedded")
+      continue;
+    m_lfsOffered.insert(import);
+    services().toast(tr("%1 is in a git work tree but not stored by Git LFS").arg(name(import)), tr("Track with Git LFS"), [this, import] { trackLfs(import); }, 12000);
+  }
 }
 
 void AssetsArea::offerModels() {
