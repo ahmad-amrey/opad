@@ -174,6 +174,10 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   connect(&m_dwellTimer, &QTimer::timeout, this, [this] { m_trackingDirty = true; requestRedraw(); });
   m_holdTimer.setSingleShot(true);
   connect(&m_holdTimer, &QTimer::timeout, this, &Viewport::pressHeld);
+  m_selectOtherTimer.setSingleShot(true);
+  connect(&m_selectOtherTimer, &QTimer::timeout, this, [this] {
+    if (QMenu* menu = selectOtherMenu(m_selectOtherAt)) menu->popup(m_selectOtherGlobal);
+  });
 #if !defined(__APPLE__)
   grabGesture(Qt::PinchGesture);  // fallback for touch devices without native pinch events
 #endif
@@ -1765,6 +1769,18 @@ void Viewport::benchClick(double fx, double fy) {
   trace::log(QStringLiteral("bench: mouse click posted at %1,%2").arg(pt.x()).arg(pt.y()));
 }
 
+void Viewport::benchDoubleClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) {
+  if (!m_initialised) return;
+  m_view->Redraw();
+  using Step = std::pair<QEvent::Type, Qt::MouseButtons>;
+  for (const auto& [type, buttons] : {Step{QEvent::MouseButtonPress, Qt::LeftButton}, Step{QEvent::MouseButtonRelease, Qt::NoButton},
+                                      Step{QEvent::MouseButtonDblClick, Qt::LeftButton}, Step{QEvent::MouseButtonRelease, Qt::NoButton}}) {
+    QMouseEvent e(type, at, mapToGlobal(at), Qt::LeftButton, buttons, modifiers);
+    QCoreApplication::sendEvent(this, &e);
+    paintEvent(nullptr);
+  }
+}
+
 void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) {
   if (!m_initialised) return;
   m_view->Redraw();  // the picker needs a frame after a camera change
@@ -2427,13 +2443,17 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   m_cubeClick = false;
   m_holdTimer.stop();
   m_holdPress = false;
+  const bool listPending = m_selectOtherTimer.isActive();  // an Alt+click's list waits out the double-click time
+  m_selectOtherTimer.stop();
   // The zoom window takes the left drag (UI-47); a right click leaves it.
   if (m_zoomWindow && e->button() == Qt::LeftButton) { m_zoomDrag = true; m_zoomFrom = m_zoomTo = e->position(); return; }
   if (m_zoomWindow && e->button() == Qt::RightButton) { m_rightPress = false; cancelZoomWindow(); return; }
   m_cubeMenu = m_rightPress && cubeAt(e->position());  // a right click on the cube opens its menu
   if (sectionMousePress(e)) return;  // a press on the section plane's handle strip starts a drag, never a selection
-  // Alt+click lists everything under the pointer (UI-128): the press and its release are not the controller's.
-  if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::AltModifier && !m_sketchInput && !cubeAt(e->position())) {
+  // Alt+click lists everything under the pointer (UI-128): the press and its release are not the controller's. The second
+  // click of an Alt+double-click is (a click, smart selection's tangent chain): it opens no list.
+  if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::AltModifier && !m_sketchInput && !cubeAt(e->position())
+      && !(listPending && e->type() == QEvent::MouseButtonDblClick)) {
     m_selectOtherPress = true;
     e->accept();
     return;
@@ -2525,8 +2545,11 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (sectionMouseRelease(e)) return;
   if (m_selectOtherPress && e->button() == Qt::LeftButton) {
     m_selectOtherPress = false;
-    if ((e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4)
-      if (QMenu* menu = selectOtherMenu(e->position())) menu->popup(e->globalPosition().toPoint());
+    if ((e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
+      m_selectOtherAt = e->position();
+      m_selectOtherGlobal = e->globalPosition().toPoint();
+      m_selectOtherTimer.start(QGuiApplication::styleHints()->mouseDoubleClickInterval());
+    }
     e->accept();
     return;
   }

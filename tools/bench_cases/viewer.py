@@ -248,8 +248,9 @@ CASES = [
     # <prefix>.frame.png.
     ("measure", fresh("measure-empty"), {"OPAD_BENCH_MEASURE": "{prefix}"}),
     # Select other (UI-128): a box, its twin in the same place and a pin through them, from the top. The bodies under the
-    # pin are listed nearest first, Alt+click opens the list, a hovered row is hovered in the view and choosing it selects
-    # it; faces behind the pin's top are listed and chosen; Tab / Shift+Tab hover the next and previous face in place and a
+    # pin are listed nearest first, Alt+click opens the list once the double-click time has passed (an Alt+double-click
+    # opens none: its second click is a click, smart selection's gesture), a hovered row is hovered in the view and
+    # choosing it selects it; faces behind the pin's top are listed and chosen; Tab / Shift+Tab hover the next and previous face in place and a
     # click takes it; over an edge only edges are listed (no occluder faces); in the Distance tool a row is the pick; a
     # right click's context menu offers Select other... with the same list; a plain press held still opens it too and its
     # release selects nothing, while a press that moves on, a quick click and a held press on nothing or on one thing alone

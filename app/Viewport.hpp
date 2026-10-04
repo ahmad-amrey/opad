@@ -210,6 +210,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Benches: a left click at a widget point as the mouse handlers deliver it (move, press, release and the frames that
   // handle them), with these modifiers held; then a plain move there.
   void benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+  void benchDoubleClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers);  // press, release, double-click, release
   void benchHoverAt(const QPointF& at);  // a plain move there and the frame that handles it (the hover text follows)
   // The document changed: what the status said is under the pointer may be gone or renamed. Cleared; the next frame
   // says it again for whatever is still there.
@@ -485,7 +486,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<Handle(SelectMgr_EntityOwner)> m_pickOwners;  // pickCandidates' owners, same order
   Graphic3d_Vec2i m_pickAt, m_cycledAt;
   bool m_hoverCycled = false;  // the hover was chosen (Tab, a list row): kept until the pointer moves, occluded or not
-  bool m_selectOtherPress = false;  // an Alt+press: its release opens the list
+  bool m_selectOtherPress = false;  // an Alt+press: its release opens the list, once the double-click time has passed
+  QTimer m_selectOtherTimer;
+  QPointF m_selectOtherAt;
+  QPoint m_selectOtherGlobal;
   // A plain left press held still for the platform's press-and-hold time opens the list too, when more than one thing is
   // under it: the controller forgets the press (no click, no rubber band) and its release is the view's.
   QTimer m_holdTimer;

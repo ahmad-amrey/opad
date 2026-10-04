@@ -97,8 +97,10 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   QStringList names = labels(candidates);
   require(names.size() == 3 && names.value(0) == "Pin" && names.contains("Box") && names.contains("Twin"), "over the pin, nearest first: " + names.join(", "));
   v->benchClickAt(overPin, Qt::AltModifier);
+  const bool waits = !v->findChild<QMenu*>("selectOther");  // the double-click time first: a second click is no list
+  until([v] { return v->findChild<QMenu*>("selectOther") != nullptr; }, 3000);
   QMenu* menu = v->findChild<QMenu*>("selectOther");
-  require(menu && rows(menu).size() == 3 && rows(menu).value(0)->text() == "Pin", "Alt+click opens the list as a menu");
+  require(waits && menu && rows(menu).size() == 3 && rows(menu).value(0)->text() == "Pin", "Alt+click opens the list as a menu, once the double-click time has passed");
   if (!menu) return QCoreApplication::exit(2), true;
   require(v->selection().empty(), "and selects nothing by itself");
   const QString behind = rows(menu).value(1)->text();
@@ -111,6 +113,18 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   menu->close();
   auto selected = v->selection();
   require(selected.size() == 1 && selected.front().body == ids[behind] && selected.front().kind == opad::Ref::Kind::Body, "choosing it selects " + behind + " though the pin is in front");
+  v->clearSelection();
+  // Alt+double-click is smart selection's gesture (UI-95: an edge's tangent chain): no list, its second click a click.
+  v->benchClickAt(overPin);
+  const auto clicked = v->selection();
+  v->clearSelection();
+  v->benchDoubleClickAt(overPin, Qt::AltModifier);
+  until([] { return false; }, QGuiApplication::styleHints()->mouseDoubleClickInterval() + 200);
+  selected = v->selection();
+  auto named = [&w](const std::vector<opad::Ref>& refs) { return refs.empty() ? QString("nothing") : w.m_doc->nodeName(refs.front().body); };
+  require(!v->findChild<QMenu*>("selectOther") && selected.size() == 1 && clicked.size() == 1 && selected.front().str() == clicked.front().str(),
+          QString("Alt+double-click opens no list (%1); its second click selects what a click does: %2 (a click: %3)")
+              .arg(v->findChild<QMenu*>("selectOther") ? "a list" : "none", named(selected), named(clicked)));
   v->clearSelection();
 
   // The same list from the view's context menu (a right click, no modifier).
@@ -254,6 +268,7 @@ OPAD_BENCH(OPAD_BENCH_SELECTOTHER, selectother) {
   w.startTool("distance");
   v->benchHoverAt(overPin);
   v->benchClickAt(overPin, Qt::AltModifier);
+  until([v] { return v->findChild<QMenu*>("selectOther") != nullptr; }, 3000);
   menu = v->findChild<QMenu*>("selectOther");
   const auto toolRows = rows(menu);
   if (toolRows.size() > 1) toolRows[1]->trigger();
