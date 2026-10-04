@@ -156,7 +156,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
     docs->lastPrint = nullptr;
     emit dialog->printRequested();
     dialog->accept();
-    Job* job = docs->services().jobs()->current();
+    Job* job = docs->services().jobs()->newest();  // the printing just begun
     const bool begun = job && job->title().startsWith("Printing") && waitFor([&] { return QFile::exists(dropped); }, 20000);
     if (job && begun) job->cancel();
     check(begun && waitFor([&] { return docs->lastPrint.is_object(); }, 5000) && docs->lastPrint.value("error", "") == "cancelled" &&

@@ -150,7 +150,8 @@ OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
   auto settled = [&w, v] {
     int expected = 0;
     for (const auto& id : w.m_doc->scene.all_bodies()) expected += w.m_doc->scene.effectively_visible(id) && !w.m_doc->scene.node(id)->body_missing;
-    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() + v->skippedCount() >= expected && v->displayedCount() > 0 && !v->looksPending();
+    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() + v->skippedCount() >= expected && v->displayedCount() > 0 && !v->looksPending() &&
+           !v->notesPending();
   };
   pollUntil(&w, settled, 220000, [&w, v, require, finish, settled](bool shown) {
     const auto bodies = w.m_doc->scene.all_bodies();
@@ -215,8 +216,7 @@ OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
             up.offset = {0, 0, 40};
             QPoint pinned;
             const bool anchored = v->noteAnchor(note, pinned);
-            const opad::json info = opad::inspect_ref(w.m_doc->doc, w.m_doc->scene, opad::Ref::parse(b));  // where updateAnnotations pins it
-            const opad::json centre = info.contains("center") ? info["center"] : info.value("bbox", opad::json::object()).value("center", opad::json());
+            const opad::json centre = opad::annotation_anchor(w.m_doc->doc, w.m_doc->scene, opad::Ref::parse(b));  // where updateAnnotations pins it
             auto moved = std::make_shared<int>(0);
             QObject::connect(v, &Viewport::notesMoved, &w, [moved] { ++*moved; });
             v->setLookLayer(LookSource::Explode, {{component, up}});

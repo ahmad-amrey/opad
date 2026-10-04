@@ -12,11 +12,14 @@
 #include <QMimeData>
 #include <QPushButton>
 #include <QStandardPaths>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QTimer>
 #include <QUrl>
 
+#include <algorithm>
 #include <memory>
+#include <utility>
 
 #include "AssetsArea.hpp"
 #include "FileLocation.hpp"
@@ -24,6 +27,8 @@
 #include "Icons.hpp"
 #include "KicadBoards.hpp"
 #include "Units.hpp"
+#include "KeyGuard.hpp"
+#include "Toast.hpp"
 #include "opad/drawing_io.hpp"
 
 void MainWindow::buildFileActions() {
@@ -101,7 +106,7 @@ bool MainWindow::isEditAction(const QString& id) {
   // Design tools change the model; how it looks (colour, opacity, lock) is a view setting while viewing.
   if (id.startsWith("design.")) return id != "design.colour" && id != "design.opacity" && id != "design.lock";
   static const QStringList edits = {"edit.rename", "edit.delete", "edit.restore", "edit.cut", "edit.paste", "edit.pastelinked", "annotate.add", "annotate.draw", "annotate.resolve",
-                                    "inspect.pin", "view.saveview", "file.import"};
+                                    "inspect.pin", "view.saveview", "view.setHome", "view.resetHome", "file.import"};
   return edits.contains(id);
 }
 
@@ -164,8 +169,18 @@ void MainWindow::saveViewerAs(std::function<void()> then) {
 // on a worker if one was chosen; `then` runs when the document can be edited.
 void MainWindow::makeEditable(const QString& savePath, std::function<void()> then) {
   statusBar()->showMessage(tr("Preparing %1 for editing…").arg(QFileInfo(m_doc->viewing).fileName()));
-  m_doc->startEditable(m_jobs, [this, savePath, then](bool ok, const QString& error) {
+  // A command resumed afterwards (Rename) gets the one-key presses typed while the copy is made, the window's shortcuts
+  // none of them (UI-09); KeyGuard drops them when it opens no editor.
+  QPointer<KeyGuard> guard = then ? m_keyGuard : nullptr;
+  if (guard) guard->hold();
+  auto finish = [then, guard](bool resume) {
+    const std::function<void()> command = resume ? then : nullptr;
+    if (guard) guard->release(command);
+    else if (command) command();
+  };
+  m_doc->startEditable(m_jobs, [this, savePath, finish](bool ok, const QString& error) {
     if (!ok) {
+      finish(false);
       statusBar()->clearMessage();
       QMessageBox::warning(this, tr("OPAD"), i18n::t(error));
       return;
@@ -174,19 +189,22 @@ void MainWindow::makeEditable(const QString& savePath, std::function<void()> the
     if (savePath.isEmpty()) {
       statusBar()->clearMessage();
       m_toasts->toast(tr("Editable copy: save it to keep your changes"), tr("Save"), [this] { action("file.save")->trigger(); }, 8000);
-      if (then) then();
+      finish(true);
       return;
     }
+    bool saving = false;
     guarded([&] {
-      m_doc->saveAsync(m_jobs, savePath, true, [this, savePath, then](bool saved, const QString& why) {
-        if (!saved) { QMessageBox::warning(this, tr("OPAD"), i18n::t(why)); return; }
+      m_doc->saveAsync(m_jobs, savePath, true, [this, savePath, finish](bool saved, const QString& why) {
+        if (!saved) { finish(false); QMessageBox::warning(this, tr("OPAD"), i18n::t(why)); return; }
         addRecent(savePath);
         m_viewPath = QFileInfo(savePath).absoluteFilePath();
         statusBar()->clearMessage();
         resultToast(tr("Saved %1; it can be edited now").arg(QFileInfo(savePath).fileName()), QFileInfo(savePath).absolutePath());
-        if (then) then();
+        finish(true);
       });
+      saving = true;
     });
+    if (!saving) finish(false);
   });
 }
 
@@ -350,8 +368,14 @@ void MainWindow::openPath(const QString& path, bool readOnly) {
   beginLoad([this, path] { m_viewPath=QFileInfo(path).absoluteFilePath(); addRecent(path); m_viewport->fitWhenReady(); updateViewerCard(); },
             tr("Opening %1").arg(QFileInfo(path).fileName()), tr("Opened %1 · %2 bodies").arg(QFileInfo(path).fileName()));
   // A drawing is picked by its edges (see loadFinished): set before its bodies are displayed, so each is activated once.
-  if (const QString suffix = QFileInfo(path).suffix().toLower(); suffix == "dxf" || suffix == "dwg" || suffix == "svg")
+  const QString suffix = QFileInfo(path).suffix().toLower();
+  if (suffix == "dxf" || suffix == "dwg" || suffix == "svg") {
+    if (m_viewport->selectionFilter() != Viewport::SelFilter::Edge) m_autoEdges = true;
     m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);
+  } else if (m_autoEdges) {  // the next file that is not a drawing picks bodies again, unless the filter was chosen meanwhile
+    m_autoEdges = false;
+    m_viewport->setSelectionFilter(Viewport::SelFilter::Body);
+  }
   m_doc->startOpen(path, readOnly);
 }
 
@@ -366,6 +390,7 @@ void MainWindow::beginLoad(std::function<void()> after, const QString& title, co
   m_viewport->resetMeshing();
   m_loadJob = m_jobs->begin(title.isEmpty() ? tr("Loading…") : title, true);
   m_loadShade->setStatus(m_loadJob->title(), QString(), -1);
+  m_viewport->setStreamJob(m_loadJob);  // the display pump is its child: one Cancel stops reading, meshing and showing
   setLoading(true);
   // OPAD_BENCH_LOADSHOT=<prefix>: the status bar every 2 s while the load runs (<prefix>-<n>.png).
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_LOADSHOT"); !shot.isEmpty()) {
@@ -385,6 +410,7 @@ void MainWindow::beginLoad(std::function<void()> after, const QString& title, co
     m_loadJob = nullptr;
     m_afterLoad = nullptr;
     setLoading(false);
+    const QPointer<QAction> deferred = std::exchange(m_afterStream, nullptr);
     if (!ok) {
       if (err.contains("cancel", Qt::CaseInsensitive)) resultToast(tr("Load cancelled"));
       else QMessageBox::warning(this, tr("OPAD"), i18n::message(err));
@@ -392,14 +418,7 @@ void MainWindow::beginLoad(std::function<void()> after, const QString& title, co
     if(ok) {
       m_doc->storeViewerCache(m_jobs);  // a slow viewer read, now meshed: the next open of the file skips it
       if(!m_benchSelect) QTimer::singleShot(0, this, [this] { offerKicadModels(); if(trustAfterLoad()) offerAssetTrust(); });  // library models, linked files (benches call them)
-      if(!m_doc->path().isEmpty()) m_viewPath=QFileInfo(m_doc->path()).absoluteFilePath();
-      if((!m_benchSelect || qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
-        try {
-          const auto camera=opad::json::parse(m_settings.value("view/lastCamera").toString().toStdString());
-          action("view.ortho")->setChecked(camera.value("projection","")=="orthographic");
-          m_viewport->setCameraJson(camera);
-        } catch(const std::exception&) { /* Ignore stale settings from another version. */ }
-      }
+      if (deferred) QTimer::singleShot(0, deferred, &QAction::trigger);  // the edit asked for while the bodies streamed in
     }
     if (int skipped = m_viewport->skippedCount()) m_toasts->toast(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), QString(), {}, 8000);
     if (m_benchSelect && !ok && !m_doc->hasDocument) {  // nothing to run the benches on: say so instead of walking an empty scene
@@ -413,23 +432,31 @@ QString MainWindow::meshPhase() const {
   return tr("Tessellating and displaying bodies (%1 of %2)").arg(m_meshTotal - m_meshRemaining).arg(m_meshTotal);
 }
 
-void MainWindow::setLoadPhase(const QString& phase, int pct) {
+// The document's own phases come with their place in the whole load (AppDocument::loadProgress); the display of the bodies
+// fills the rest, from AppDocument::displayStart (UI-40).
+void MainWindow::setLoadPhase(const QString& phase, int pct, int overall) {
   if (!m_loadJob) return;
-  if (trace::enabled()) trace::log(QStringLiteral("load phase: %1 (%2%)").arg(phase).arg(pct));
+  if (overall < 0) overall = m_doc->displayStart() + std::max(pct, 0) * (100 - m_doc->displayStart()) / 100;
+  if (trace::enabled()) trace::log(QStringLiteral("load phase: %1 (%2%, overall %3%)").arg(phase).arg(pct).arg(overall));
   m_loadJob->setPhase(phase, pct);
-  m_loadJob->setOverall(overallPercent(phase, pct));
+  m_loadJob->setOverall(overall);
   m_loadShade->setStatus(m_loadJob->title(), phase, pct);
 }
 
-// Maps a phase name + within-phase percent to an overall 0-100 across reading -> building -> tessellating.
-int MainWindow::overallPercent(const QString& phase, int pct) const {
-  int base = 65, span = 35;  // tessellating + displaying (last phase) by default
-  if (phase.contains("Reading") || phase.contains("Opening")) { base = 0; span = 10; }
-  else if (phase.contains("Translating")) { base = 10; span = 30; }
-  else if (phase.contains("Building")) { base = 40; span = 15; }
-  else if (phase.contains("Preparing")) { base = 55; span = 10; }
-  const int within = pct < 0 ? 0 : pct;
-  return base + within * span / 100;
+void MainWindow::restoreLastView() {
+  if (!m_doc->path().isEmpty()) m_viewPath = QFileInfo(m_doc->path()).absoluteFilePath();
+  if ((m_benchSelect && !qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) || m_viewPath.isEmpty() || m_settings.value("view/lastPath").toString() != m_viewPath) return;
+  try {
+    const auto camera = opad::json::parse(m_settings.value("view/lastCamera").toString().toStdString());
+    action("view.ortho")->setChecked(camera.value("projection", "") == "orthographic");
+    m_viewport->setCameraJson(camera);
+  } catch (const std::exception&) { /* Ignore stale settings from another version. */ }
+}
+
+void MainWindow::deferEdit(QAction* a) {
+  if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
+  m_afterStream = a;  // the last one asked for
+  m_toasts->toast(tr("Still loading: “%1” runs once every body is shown").arg(a->text().remove('&')));
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* e) {

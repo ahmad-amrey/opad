@@ -29,9 +29,12 @@
 struct ObjectSnapState {
   std::map<std::string, std::shared_ptr<const opad::snap2d::Index>> indexes;  // by body key, or a sketch's version key
   struct Version {
-    std::string stamp, key;
+    // The sketch's wire its index was asked for: a wire is built again for each version of the sketch's geometry, and held
+    // here its address is never another wire's.
+    Handle(AIS_InteractiveObject) wire;
+    std::string key;
   };
-  std::map<std::string, Version> sketches;  // by sketch id: the stamp its index was asked for and that index's key
+  std::map<std::string, Version> sketches;  // by sketch id: the wire its index was asked for and that index's key
   int versions = 0;
   std::set<std::string> declined;  // keys whose indexing was cancelled: not asked again until snapping starts anew
   std::optional<opad::Vec3> from;  // the point picked before
@@ -120,9 +123,9 @@ std::string Viewport::sketchSnapKey(const std::string& id) {
   if (wire == m_sketchWires.end() || !m_ctx->IsDisplayed(wire->second.ais)) return {};
   ObjectSnapState& s = snapState();
   ObjectSnapState::Version& v = s.sketches[id];
-  if (v.key.empty() || v.stamp != wire->second.stamp) {
+  if (v.key.empty() || v.wire != wire->second.ais) {
     if (!v.key.empty()) s.indexes.erase(v.key);
-    v = {wire->second.stamp, "sketch:" + id + ":" + std::to_string(++s.versions)};
+    v = {wire->second.ais, "sketch:" + id + ":" + std::to_string(++s.versions)};
   }
   return v.key;
 }

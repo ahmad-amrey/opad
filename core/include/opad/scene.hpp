@@ -73,6 +73,7 @@ struct ViewBookmark {
   json camera;
   json explode;  // optional exploded view (explode.hpp ExplodeSpec); null for a plain camera bookmark
   json display;  // optional: what is shown, {"layers": {layer id: state}} (a drawing's layer state, UI-89); null otherwise
+  bool home = false;  // the document's Home (optional "home": true on the view op; the last live one wins)
 };
 
 struct Unresolved {
@@ -192,6 +193,9 @@ struct Scene {
   const Node* lock_holder(const std::string& id) const;   // the nearest of those that is locked (unlocking it frees id), or null
   std::vector<std::string> bodies_under(const std::string& id) const;  // depth-first
   std::vector<std::string> all_bodies() const;
+  // Hide others (UI-02): the fewest shown nodes to hide so that only the bodies under `keep` stay shown: every visible
+  // subtree with bodies but none kept, as high up as it goes. Sketches are not nodes: they stay as they are.
+  std::vector<std::string> others_to_hide(const std::vector<std::string>& keep) const;
   std::vector<std::string> path_to(const std::string& id) const;  // root..id
   json tree_json(int max_depth = -1) const;
   const SketchItem* sketch(const std::string& id) const;

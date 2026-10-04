@@ -233,7 +233,7 @@ OPAD_BENCH(OPAD_BENCH_OSNAP, osnap) {
     // The indexing's Cancel (its progress strip): nothing is indexed, nor asked again while this tool runs; the next run asks.
     script->add("cancel the indexing", [&w, v, require] {
       const bool ready = v->snapIndexesReady();
-      Job* job = w.m_jobs->current();
+      Job* job = w.m_jobs->newest();  // the indexing just begun
       require(!ready && job, "the first snap asks for the drawings' indexes on a worker");
       if (job) job->cancel();
     }, [v] { return v->snapIndexesReady(); });

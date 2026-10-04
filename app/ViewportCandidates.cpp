@@ -124,9 +124,14 @@ void Viewport::showCandidateRefs(const std::vector<opad::Ref>& refs) {
   auto done = [this, st](bool completed) {
     m_candidateJob = nullptr;
     if (!completed || (st->tv.empty() && st->sv.empty())) return;
-    Handle(SubHighlight) hl = new SubHighlight(Quantity_Color(m_tokens.candidate.redF(), m_tokens.candidate.greenF(), m_tokens.candidate.blueF(), Quantity_TOC_sRGB));
-    hl->fillAlpha = 0.42f;
-    hl->glow = false;
+    // The candidate amber alone (UI-95): no halo, the core and its "halo" one line, a stronger tint than the selection's.
+    GlowStyle style;
+    style.fill = style.edge = style.halo = Quantity_Color(m_tokens.candidate.redF(), m_tokens.candidate.greenF(), m_tokens.candidate.blueF(), Quantity_TOC_sRGB);
+    style.fillAlpha = 0.42f;
+    const float scale = float(viewScale().x());
+    style.edgeWidth = style.haloWidth = 3.0f * scale;
+    style.point = style.pointHalo = 2.5f * scale;
+    Handle(SubHighlight) hl = new SubHighlight(style);
     if (!st->tv.empty()) {
       Handle(Graphic3d_ArrayOfTriangles) a = new Graphic3d_ArrayOfTriangles(static_cast<int>(st->tv.size()), static_cast<int>(st->ti.size()));
       for (const gp_Pnt& p : st->tv) a->AddVertex(p);

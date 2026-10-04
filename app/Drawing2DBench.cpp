@@ -488,7 +488,7 @@ OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
         require(text == MainWindow::tr("%1 selected · %2").arg(1).arg(i18n::t("object")), "a picked line counts as an object: " + text);
         w.statusBar()->grab().save(value + ".status.png");
         w.action("inspect.properties")->trigger();
-      }, [&w] { return w.m_propsPanel->isVisible(); });
+      }, [&w] { return w.m_propsPanel->isVisible() && !w.m_propsJob; });  // a picked object's details come from a worker (UI-51)
       auto title = [&w] { return w.m_props->findChild<QLabel*>("panelTitle")->text(); };
       auto subtitle = [&w] {
         for (auto* label : w.m_props->findChildren<QLabel*>())

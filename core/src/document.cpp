@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <fstream>
 #include <set>
 #include <sstream>
 
@@ -543,8 +544,9 @@ std::string Document::serialize() const {
   return out;
 }
 
-Document Document::parse(const std::string& text, const std::filesystem::path& origin, const BodyFilter& skip_body) {
-  return parse_text(text, origin, skip_body, false);
+Document Document::parse(const std::string& text, const std::filesystem::path& origin, const BodyFilter& skip_body,
+                         const Progress& progress) {
+  return parse_text(text, origin, skip_body, false, progress);
 }
 
 Document Document::parse_index(std::string text, const std::filesystem::path& origin, const BodyFilter& skip_body) {
@@ -563,8 +565,17 @@ Document Document::parse_index(std::string text, const std::filesystem::path& or
   return d;
 }
 
-Document Document::parse_text(std::string_view text, const std::filesystem::path& origin, const BodyFilter& skip_body, bool index) {
+Document Document::parse_text(std::string_view text, const std::filesystem::path& origin, const BodyFilter& skip_body, bool index,
+                               const Progress& progress) {
   Document d;
+  double reported = 0;
+  auto report = [&](std::string_view at) {  // how far through the text `at` begins, every half per cent
+    if (!progress || text.empty()) return;
+    const double f = static_cast<double>(at.data() - text.data()) / static_cast<double>(text.size());
+    if (f - reported < 0.005) return;
+    reported = f;
+    if (!progress(f)) throw Error("cancelled");
+  };
   d.path = origin;
   std::string where = origin.empty() ? std::string("<memory>") : origin.string();
   auto fail = [&](size_t line, const std::string& msg) {
@@ -603,6 +614,7 @@ Document Document::parse_text(std::string_view text, const std::filesystem::path
   while (next()) {
     if (l == "#bodies") { bodies = true; break; }
     if (l.empty()) continue;
+    report(l);
     if (l.rfind("<<<<<<<", 0) == 0 || l.rfind("=======", 0) == 0 || l.rfind(">>>>>>>", 0) == 0)
       fail(i, "unresolved git conflict marker");
     if (l[0] == '#') continue;  // reserved for future section-level metadata; ignored
@@ -650,6 +662,7 @@ Document Document::parse_text(std::string_view text, const std::filesystem::path
   }
   while (bodies && next()) {
     if (l.empty()) continue;
+    report(l);
     if (l.rfind("#body ", 0) != 0) fail(i, "expected '#body <key> <lines> <meta>'");
     std::istringstream hs{std::string(l.substr(6))};
     std::string key;
@@ -698,8 +711,25 @@ Document Document::parse_text(std::string_view text, const std::filesystem::path
   return d;
 }
 
-Document Document::load(const std::filesystem::path& p, const BodyFilter& skip_body) {
-  Document d = parse(read_text_file(p), p, skip_body);
+Document Document::load(const std::filesystem::path& p, const BodyFilter& skip_body, const Progress& progress) {
+  if (!progress) {
+    Document d = parse(read_text_file(p), p, skip_body);
+    d.path = p;
+    return d;
+  }
+  // Read in blocks into a string of the file's size (the first fifth of the progress), then parsed (the rest).
+  std::ifstream in(p, std::ios::binary | std::ios::ate);
+  if (!in) throw Error("cannot open file: " + path_to_utf8(p));
+  const auto size = static_cast<size_t>(in.tellg());
+  in.seekg(0);
+  std::string text(size, '\0');
+  constexpr size_t kBlock = 8u << 20;
+  for (size_t at = 0; at < size; at += kBlock) {
+    const size_t n = std::min(kBlock, size - at);
+    if (!in.read(text.data() + at, static_cast<std::streamsize>(n))) throw Error("cannot read file: " + path_to_utf8(p));
+    if (!progress(0.2 * static_cast<double>(at + n) / static_cast<double>(size))) throw Error("cancelled");
+  }
+  Document d = parse(text, p, skip_body, [&](double f) { return progress(0.2 + 0.8 * f); });
   d.path = p;
   return d;
 }

@@ -28,6 +28,7 @@
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
+#include "StartUp.hpp"
 #include "opad/core.hpp"
 #include "opad/drawing/paint.hpp"
 #include "opad/render.hpp"
@@ -94,6 +95,7 @@ int textconv(int argc, char** argv) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  startup::begin();
   if (argc >= 2 && std::string_view(argv[1]) == "--merge-driver") return mergeDriver(argc, argv);
   if (argc >= 2 && std::string_view(argv[1]) == "--textconv") return textconv(argc, argv);
   // The start page's pictures where no opad-cli is beside the app (the single-file exe, UI-113): opad --thumbnail <file>
@@ -125,6 +127,7 @@ int main(int argc, char** argv) {
 #endif
   QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
   QApplication app(argc, argv);
+  startup::prepare();
   // Workers (the jobs' threads, OCCT's pool on every logical processor) run at normal priority: above them the event loop
   // is not starved while they keep every core busy (gaps of 300-700 ms on the Engine's drawing otherwise). Measured on the
   // Engine after the t4/t5a merges, with and without it: tracking-engine's box picks held the loop 127 / 52 ms (332 / 293 ms
@@ -176,8 +179,7 @@ int main(int argc, char** argv) {
   win.setBenchSelect(parser.isSet(bench));
   win.show();
   trace::log("startup: window shown");
-  QTimer::singleShot(0, &win, [&win] { win.warmUpViewport(); });  // GL init off the first-open path
   const QStringList args = parser.positionalArguments();
-  if (!args.isEmpty()) win.openPath(args.first(), parser.isSet(readOnly));
+  startup::run(&win, args.isEmpty() ? QString() : args.first(), parser.isSet(readOnly));  // the shell painted first, then the viewer, then the file
   return app.exec();
 }

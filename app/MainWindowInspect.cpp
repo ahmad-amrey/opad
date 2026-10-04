@@ -2,7 +2,10 @@
 #include "MainWindow.hpp"
 #include "CheckPanel.hpp"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QKeyEvent>
+#include <QRegularExpression>
 #include <QStackedWidget>
 #include <QStatusBar>
 
@@ -15,16 +18,33 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include "Drawing2D.hpp"
 #include "CommandHelp.hpp"
 #include "HelpClip.hpp"
 #include "I18n.hpp"
+#include "Icons.hpp"
 #include "Units.hpp"
 #include "opad/checks.hpp"
 #include "opad/explode.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+
+namespace {
+// Why a pick cannot be measured, as the core says it, translated (UI-50): the radius' "not a <type> <kind>" (what was
+// picked) is made at run time, so it is split off and its words translated on their own.
+QString measureReason(const QString& why) {
+  static const QRegularExpression found(QStringLiteral(", not a (\\w+) (\\w+)\\)$"));
+  const QRegularExpressionMatch m = found.match(why);
+  if (!m.hasMatch()) return i18n::t(why);
+  return MainWindow::tr("%1; it is a %2 %3").arg(i18n::t(why.left(m.capturedStart()) + ")"), i18n::t(m.captured(1)), i18n::t(m.captured(2)));
+}
+}  // namespace
+
+OPAD_ICON_TABLE(measure, {"length", R"(<path d="M3 16.5L16.5 3L21 7.5L7.5 21z"/><path d="M7.5 12l2 2M10.5 9l2 2M13.5 6l2 2"/>)"});
 
 void MainWindow::buildInspectActions() {
   addAction("inspect.distance", tr("Distance"), "distance", QKeySequence("D"), [this] { toggleTool("distance"); }, true);
@@ -32,9 +52,12 @@ void MainWindow::buildInspectActions() {
   addAction("inspect.radius", tr("Radius"), "radius", QKeySequence("R"), [this] { toggleTool("radius"); }, true);
   addAction("inspect.bbox", tr("Bounding box"), "bbox", QKeySequence("B"), [this] { toggleTool("bbox"); }, true);
   addAction("inspect.area", tr("Area"), "area", QKeySequence(), [this] { toggleTool("area"); }, true);  // placed by the drawing2d area (UI-90)
+  addAction("inspect.length", tr("Length and area"), "length", QKeySequence("Shift+L"), [this] { toggleTool("length"); }, true);
   addAction("inspect.interference", tr("Interference"), "interference", QKeySequence(), [this] { startCheck(false); });
   addAction("inspect.printcheck", tr("Print check"), "printcheck", QKeySequence(), [this] { startCheck(true); });
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
+  m_distanceMode = std::clamp(m_settings.value("measure/distanceMode", 0).toInt(), 0, 2);
+  m_measureFrame = std::clamp(m_settings.value("measure/frame", 0).toInt(), 0, 1);
   m_pinAction->setShortcutContext(Qt::ApplicationShortcut);
   m_pinAction->setEnabled(false);
   addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
@@ -63,9 +86,23 @@ void MainWindow::buildInspectActions() {
 }
 
 // ---------------------------------------------------------------- inspect (F23)
+// The face is inspected on a worker (UI-51: inspect_ref walks the body); the plane is set when it answers.
 void MainWindow::sectionFromFace(const opad::Ref& face) {
-  try {
-    opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, face);
+  if (Job* old = std::exchange(m_sectionJob, nullptr)) old->cancel();
+  auto document = m_doc->shapesOf({face.body});
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  auto result = std::make_shared<opad::json>();
+  const auto generation = m_doc->generation;
+  m_sectionJob = m_jobs->async(tr("Section from the picked face"), [document, scene, face, result](Progress) {
+    *result = opad::inspect_ref(*document, *scene, face);
+  }, [this, face, result, generation](bool ok, const QString& error) {
+    m_sectionJob = nullptr;
+    if (generation != m_doc->generation || error == "cancelled") return;
+    if (!ok) {
+      if (trace::enabled()) trace::log(QStringLiteral("section from face failed: %1").arg(error));
+      return hint(error, false);
+    }
+    const opad::json& info = *result;
     if (!info.contains("normal") || !info.contains("center")) {
       if (trace::enabled()) trace::log(QStringLiteral("section from face: not planar (%1)").arg(QString::fromStdString(info.value("surface", "?"))));
       hint(tr("Section: that face is %1; pick a planar face").arg(QString::fromStdString(info.value("surface", "not planar"))), false);
@@ -78,10 +115,7 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
     m_section->setFromFace(o, n);
     m_section->setEnabled(true);
     m_toasts->toast(tr("Section plane set from the picked face (Shift+X flips it)"), tr("Flip"), [this] { m_section->flip(); });
-  } catch (const std::exception& e) {
-    if (trace::enabled()) trace::log(QStringLiteral("section from face failed: %1").arg(QString::fromUtf8(e.what())));
-    hint(QString::fromUtf8(e.what()), false);
-  }
+  });
 }
 
 // ---------------------------------------------------------------- guided tools
@@ -136,26 +170,30 @@ void MainWindow::startTool(const QString& id) {
   m_toolStack->setCurrentWidget(m_toolSteps);
   static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
       {"distance", {QT_TR_NOOP("Distance"), "distance", 2}}, {"angle", {QT_TR_NOOP("Angle"), "angle", 2}},       {"radius", {QT_TR_NOOP("Radius"), "radius", 1}},
-      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}, {"area", {QT_TR_NOOP("Area"), "area", 0}}};
+      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}, {"area", {QT_TR_NOOP("Area"), "area", 0}},
+      {"length", {QT_TR_NOOP("Length and area"), "length", 1}}};
   const auto it = kTools.find(id);
   if (it == kTools.end()) return;
   m_tool = Tool{id, tr(std::get<0>(it->second)), std::get<1>(it->second), std::get<2>(it->second)};
   m_toolPicks.clear();
   m_toolPoints.clear();
   m_toolHover.clear();
+  m_toolError.clear();
   ++m_toolRun;
   // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face.
   const Viewport::SelFilter f = m_viewport->selectionFilter();
   const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex);
   // Area takes fills or faces, objects or points, never bodies: a drawing's objects, a solid's faces. In 2D words the Faces
-  // filter is gone (the drawing2d area hides it): a drawing's objects instead (a hidden action still triggers).
+  // filter is gone (the drawing2d area hides it): a drawing's objects instead (a hidden action still triggers). Length and
+  // area takes edges, faces or bodies: not vertices.
   const bool noFaces = !action("select.faces")->isVisible() && id != "sectionface";
-  const bool wantEdges = (id == "area" && f == Viewport::SelFilter::Body && drawing2d::drawingOnly(m_doc->scene)) ||
+  const bool wantEdges = (id == "length" && f == Viewport::SelFilter::Vertex) ||
+                         (id == "area" && f == Viewport::SelFilter::Body && drawing2d::drawingOnly(m_doc->scene)) ||
                          (noFaces && (wantFaces || (id == "area" && f == Viewport::SelFilter::Body)));
   m_viewport->setPickAccumulate(true, id == "distance");
   // Object snap where a free point is a pick; Radius takes a circle's centre (its marker), the section a face.
   m_viewport->setSnapPicks(id == "distance" || id == "bbox" || id == "area" ? Viewport::SnapPicks::Points : Viewport::SnapPicks::None);
-  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area"})
+  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area", "inspect.length"})
     action(a)->setChecked(id == QString(a).section('.', 1));
   if (toolMeasures()) {
     m_toolPanel->setHeader(m_tool.icon, m_tool.title);
@@ -177,14 +215,16 @@ void MainWindow::startTool(const QString& id) {
 void MainWindow::cancelTool() {
   if (m_tool.id.isEmpty()) return;
   m_tool = Tool();  // first: hiding the panel below reports back here
+  m_toolError.clear();
   ++m_toolRun;
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
   m_toolPicks.clear();
   m_toolPoints.clear();
   m_viewport->setSnapFrom(std::nullopt);
   m_viewport->setSnapPicks(Viewport::SnapPicks::None);
-  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area"}) action(a)->setChecked(false);
+  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area", "inspect.length"}) action(a)->setChecked(false);
   m_viewport->setPickAccumulate(false);
+  m_viewport->setMeasurementFrame(gp_Trsf());
   m_prompt->hide();
   m_toolPanel->hide();
   clearMeasurement();
@@ -216,6 +256,7 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
   } else {
     m_toolPoints.resize(picks.size());
   }
+  if (picks.size() > m_toolPicks.size()) m_toolError.clear();  // a new pick: the last one's error is over (a step back keeps it)
   m_toolPicks = picks;
   // Perpendicular and tangent snaps go from the point picked last (UI-90).
   m_viewport->setSnapFrom(picks.empty() ? std::nullopt : picks.back().kind == opad::Ref::Kind::Point ? std::optional(picks.back().point)
@@ -226,7 +267,7 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
   m_pinAction->setEnabled(false);
   m_viewport->clearDimension();
   m_viewport->clearPreview();
-  m_viewport->setMeasurementSelectionLocked(m_tool.id == "distance" && picks.size() == 2
+  m_viewport->setMeasurementSelectionLocked(m_tool.id == "distance" && m_distanceMode == 0 && picks.size() == 2
       && picks[0].kind == opad::Ref::Kind::Edge && picks[1].kind == opad::Ref::Kind::Edge);
   std::vector<opad::Vec3> marks;
   for (const auto& p : m_toolPoints) if (p.first) marks.push_back(p.second);
@@ -243,15 +284,20 @@ void MainWindow::runToolMeasure() {
   const int run = m_toolRun;
   auto result = std::make_shared<opad::json>();
   const QString kind = m_tool.id;
+  const int mode = m_distanceMode;
   // Straight to the measure functions with the app's resolved scene; the "measure" command would resolve the
   // whole scene from the op log again on every call.
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
-  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  std::vector<std::string> picked;
+  for (const auto& r : refs) picked.push_back(r.body);
+  auto document = m_doc->shapesOf(picked);
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   const auto moved = m_viewport->shownOffsets();  // an exploded view: measured where the parts are drawn
-  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [document, scene, moved, refs, pickedPoints, snapTolerance, kind, result](Progress progress) {
+  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [document, scene, moved, refs, pickedPoints, snapTolerance, kind, mode, result](Progress progress) {
     if (!moved.empty()) *scene = opad::exploded_scene(*scene, moved);
-    if (kind == "distance" && refs.at(0).kind == opad::Ref::Kind::Edge && refs.at(1).kind == opad::Ref::Kind::Edge) {
+    if (kind == "distance" && mode == 1) *result = opad::measure_center_distance(*document, *scene, refs.at(0), refs.at(1));
+    else if (kind == "distance" && mode == 2) *result = opad::measure_max_distance(*document, *scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
+    else if (kind == "distance" && refs.at(0).kind == opad::Ref::Kind::Edge && refs.at(1).kind == opad::Ref::Kind::Edge) {
       const bool clicked = pickedPoints.size() >= 2 && pickedPoints[0].first && pickedPoints[1].first;
       opad::json closest;
       if (!clicked) closest = opad::measure_distance(*document, *scene, refs[0], refs[1], [progress] { return progress.cancelled(); });
@@ -265,17 +311,33 @@ void MainWindow::runToolMeasure() {
     else if (kind == "radius") *result = opad::measure_radius(*document, *scene, refs.at(0));
     else if (kind == "area") *result = opad::measure_area(*document, *scene, refs, [progress] { return progress.cancelled(); },
                                                           pickedPoints.size() == 1 && pickedPoints[0].first ? std::optional(pickedPoints[0].second) : std::nullopt);
+    else if (kind == "length") *result = opad::measure_length(*document, *scene, refs.at(0));
     else *result = opad::measure_bbox(*document, *scene, refs);
     if (!moved.empty()) (*result)["exploded"] = true;  // not pinned: a pinned measurement is the assembled model's
   }, [this, run, result](bool ok, const QString& error) {
     if (run == m_toolRun) m_measureJob = nullptr;
     if (run != m_toolRun || m_tool.id.isEmpty()) return;  // the picks moved on
-    if (!ok) {
-      hint(error, false);
-      return m_viewport->deselectLast();  // that pick does not work for this tool: ask for it again
+    if (!ok) {  // that pick does not work for this tool: said in the panel (UI-50), and the pick is asked for again
+      QString why = error;
+      for (const auto& pick : m_toolPicks)  // the core names the reference by its id: the panel names the pick
+        if (why.endsWith(": " + QString::fromStdString(pick.str()))) why.chop(static_cast<int>(pick.str().size()) + 2);
+      m_toolError = tr("%1 cannot be measured: %2").arg(m_toolPicks.empty() ? tr("That pick") : refLabel(m_toolPicks.back()), measureReason(why));
+      statusBar()->showMessage(m_toolError, 6000);
+      m_viewport->deselectLast();
+      return refreshToolUi();
     }
     m_lastMeasure = *result;
-    m_pinAction->setEnabled(!m_doc->browse && !measuredExploded() && m_lastMeasure.value("closed", true));
+    // An area the picks do not close yet (UI-90) is neither kept among the earlier results nor pinned; a length's "closed"
+    // says whether its edge is a loop.
+    const bool unclosed = m_tool.id == "area" && !m_lastMeasure.value("closed", false);
+    // Earlier results (UI-144): an open tool's (Area, after every pick) replaces its own until the picks start over.
+    if (!unclosed) {
+      const bool same = !m_tool.steps && m_toolPicks.size() > 1 && !m_measureHistory.empty() && m_measureHistory.front().result.value("kind", "") == m_lastMeasure.value("kind", "");
+      if (same) m_measureHistory.front() = MeasureRecord{*result};
+      else m_measureHistory.insert(m_measureHistory.begin(), MeasureRecord{*result});
+      if (m_measureHistory.size() > 12) m_measureHistory.pop_back();
+    }
+    m_pinAction->setEnabled(!m_doc->browse && !measuredExploded() && !unclosed);
     m_viewport->showMeasurement(m_lastMeasure);
     refreshToolUi();
   });
@@ -299,6 +361,14 @@ void MainWindow::refreshToolUi() {
   const QString kinds = action(f == Viewport::SelFilter::Face ? "select.faces" : f == Viewport::SelFilter::Edge ? "select.edges" : f == Viewport::SelFilter::Vertex ? "select.vertices" : "select.bodies")->text().remove('&');
   m_toolPanel->setContext(m_tool.steps ? tr("%1 · %2 of %3").arg(kinds.toLower()).arg(picked).arg(m_tool.steps) : tr("%1 · %2 picked").arg(kinds.toLower()).arg(picked));
   m_toolSteps->setSteps(steps, m_toolHover);
+  // Points in a component's axes (UI-144): offered for what gives points (not a box, nor an area's outline).
+  const std::string frameBody = m_toolPicks.empty() ? std::string() : m_toolPicks.front().body;
+  const std::string component = m_tool.id == "bbox" || m_tool.id == "area" ? std::string() : measureComponent(frameBody);
+  const QString frameName = component.empty() ? QString() : m_doc->nodeName(component);
+  m_toolSteps->setFrameOptions(component.empty() ? QStringList() : QStringList{tr("World"), tr("%1 (component)").arg(frameName)}, m_measureFrame);
+  gp_Trsf toWorld;
+  const bool framed = !component.empty() && measureFrame(frameBody, toWorld);
+  m_viewport->setMeasurementFrame(framed ? toWorld : gp_Trsf());
   // While picks are asked for, the steps above (and the guide's clip) say what to do: the summary under them is the
   // tool's one sentence when no guide plays, never the header and the waiting step again (UI-116). Done: the result; an
   // area not closed yet says why (UI-90).
@@ -319,12 +389,26 @@ void MainWindow::refreshToolUi() {
                                                           : tr("The area inside the picked boundary; areas inside it are holes.");
   } else {
     if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
-    else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
+    else if (m_tool.id == "distance" && m_distanceMode == 1)
+      explanation = framed ? tr("Distance between the centres of the selections: circle and sphere centres, cylinder axes, face and body centroids. Δ = point 2 − point 1 in the axes of %1.").arg(frameName)
+                           : tr("Distance between the centres of the selections: circle and sphere centres, cylinder axes, face and body centroids. Δ = point 2 − point 1 in world axes.");
+    else if (m_tool.id == "distance" && m_distanceMode == 2)
+      explanation = framed ? tr("Largest distance between the selections, between their farthest points. Δ = point 2 − point 1 in the axes of %1.").arg(frameName)
+                           : tr("Largest distance between the selections, between their farthest points. Δ = point 2 − point 1 in world axes.");
+    else if (m_tool.id == "distance")
+      explanation = framed ? tr("Shortest distance between the selections. Δ = point 2 − point 1 in the axes of %1.").arg(frameName)
+                           : tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
     else if (m_tool.id == "angle") explanation = tr("Directions compared at a common origin. Planar faces use their normals; curved faces use their axes.");
+    else if (m_tool.id == "radius" && m_lastMeasure.contains("recognized"))
+      explanation = tr("Radius from the center or cylinder axis to the surface. The surface is free-form (a B-spline) and is measured as the %1 it matches.").arg(i18n::t(QString::fromStdString(m_lastMeasure["recognized"].get<std::string>())));
     else if (m_tool.id == "radius") explanation = tr("Radius from the center or cylinder axis to the surface.");
+    else if (m_tool.id == "length" && m_lastMeasure.value("kind", "") == "length") explanation = tr("Length of the edge along its curve, and the perimeter of each face loop it belongs to.");
+    else if (m_tool.id == "length" && m_toolPicks.size() == 1 && m_toolPicks.front().kind == opad::Ref::Kind::Body) explanation = tr("Surface area of the body, and its volume when it is a solid.");
+    else if (m_tool.id == "length") explanation = tr("Area of the face, its perimeter (every loop, seams left out) and its outer loop's.");
     else explanation = tr("Bounding box aligned with the world X, Y and Z axes.");
   }
   m_toolSteps->setSummary(done || open ? m_tool.title : QString(), explanation, open ? tr("open") : done && !m_doc->browse ? tr("unpinned") : QString());
+  m_toolSteps->setError(m_toolError);
   QStringList anchorLabels;
   int anchorIndex = 0;
   if (done && m_lastMeasure.contains("anchors")) {
@@ -349,6 +433,7 @@ void MainWindow::refreshToolUi() {
     }
   }
   m_toolSteps->setAnchorOptions(anchorLabels, anchorIndex);
+  m_toolSteps->setModeOptions(m_tool.id == "distance" ? QStringList{tr("Minimum"), tr("Centre to centre"), tr("Maximum")} : QStringList(), m_distanceMode);
   m_toolSteps->setComponentsState(done && m_viewport->measurementHasMultipleAxes(), m_viewport->measurementComponents());
   QList<QPair<QString, QString>> rows;
   if (m_tool.id == "area") {  // the area and its perimeter; while open, how long the picks are
@@ -362,26 +447,20 @@ void MainWindow::refreshToolUi() {
     }
     m_toolSteps->setResult(rows);
     m_toolSteps->footer()->setCancel(tr("Back"));  // Esc takes the last pick back
-    m_toolSteps->setFooter(done, !m_doc->browse);
+    m_toolSteps->setFooter(done, !m_doc->browse && !measuredExploded());
+    refreshMeasureHistory();
     return;
   }
-  if (done) {
-    const opad::json& r = m_lastMeasure;
-    // Results come in mm and degrees; they are shown in the document's unit and precision (UI-123).
-    const units::Kind kind = r.value("unit", "mm") == "deg" ? units::Kind::Angle : units::Kind::Length;
-    if (r.contains("value")) rows << qMakePair(m_tool.title, units::format(kind, r["value"].get<double>()));
-    if (r.contains("delta"))
-      for (int i = 0; i < 3; ++i) {
-        const double d = r["delta"][i].get<double>();
-        const bool plus = d > 0 && units::number(units::Kind::Length, d) != units::number(units::Kind::Length, 0);
-        rows << qMakePair(tr("Δ%1").arg(QChar("XYZ"[i])), (plus ? "+" : "") + units::format(units::Kind::Length, d));
-      }
-    if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), units::format(units::Kind::Angle, r["supplement"].get<double>()));
-    if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), units::format(units::Kind::Length, r["diameter"].get<double>()));
-    for (const char* k : {"size", "min", "max"})
-      if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), units::vector(units::Kind::Length, r[k].get<std::array<double, 3>>()));
-    if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
-  }
+  if (done) rows = measureRows(m_lastMeasure);
+  // Where each pick was clicked (UI-144): while the next pick is awaited, and for a one-pick tool's result.
+  const gp_Trsf toFrame = toWorld.Inverted();
+  for (size_t i = 0; i < m_toolPoints.size() && i < m_toolPicks.size(); ++i)
+    if (m_toolPoints[i].first && (!done || m_tool.steps == 1)) {
+      gp_Pnt at(m_toolPoints[i].second[0], m_toolPoints[i].second[1], m_toolPoints[i].second[2]);
+      if (framed) at.Transform(toFrame);
+      if (framed && !done && rows.isEmpty()) rows << qMakePair(tr("Coordinates in"), frameName);
+      rows << qMakePair(m_tool.steps == 1 ? tr("Picked at") : tr("Pick %1 at").arg(i + 1), units::vector(units::Kind::Length, opad::Vec3{at.X(), at.Y(), at.Z()}));
+    }
   for(size_t i=0;i<m_toolPicks.size();++i) {
     const auto info=m_viewport->circleInfo(m_toolPicks[i]);
     if(info.contains("diameter")) rows << qMakePair(tr("Circle %1 diameter").arg(i+1),units::format(units::Kind::Length,info["diameter"].get<double>()));
@@ -390,20 +469,131 @@ void MainWindow::refreshToolUi() {
   m_toolSteps->setResult(rows);
   m_toolSteps->footer()->setCancel(tr("Clear"));
   m_toolSteps->setFooter(done, !m_doc->browse && !measuredExploded());
+  refreshMeasureHistory();
 }
 
-void MainWindow::pinMeasurement() {
-  if (m_lastMeasure.is_null()) return;
-  if (measuredExploded()) return statusBar()->showMessage(tr("Pinned measurements are taken on the assembled model: collapse the exploded view, then measure again."), 6000);
-  if (!requireEditable([this] { pinMeasurement(); })) return;  // a pinned measurement is part of the document
+// Results come in mm, mm² and degrees; they are shown in the document's unit and precision (UI-123).
+QString MainWindow::measureTitle(const opad::json& r) const {
+  const std::string kind = r.value("kind", "distance"), mode = r.value("mode", "");
+  if (kind == "distance") return mode == "center" ? tr("Centre to centre") : mode == "max" ? tr("Maximum distance") : tr("Distance");
+  if (kind == "angle") return tr("Angle");
+  if (kind == "radius") return tr("Radius");
+  if (kind == "length") return tr("Length");
+  if (kind == "area") return tr("Area");
+  return tr("Bounding box");
+}
+
+// UI-144: points can be given in the axes of the component the first pick lies in (its parent; a body at the root has
+// none, nor one whose component lies as the world does: an imported file's root, mostly). A placement that is not rigid
+// leaves them in world axes.
+std::string MainWindow::measureComponent(const std::string& body) const {
+  const opad::Node* n = body.empty() ? nullptr : m_doc->scene.node(body);
+  return n && !n->parent.empty() && m_doc->scene.node(n->parent) && !m_doc->scene.world(n->parent).is_identity() ? n->parent : std::string();
+}
+
+bool MainWindow::measureFrame(const std::string& body, gp_Trsf& toWorld) const {
+  const std::string component = m_measureFrame == 1 ? measureComponent(body) : std::string();
+  if (component.empty()) return false;
+  try {
+    toWorld = opad::trsf_from_mat(m_doc->scene.world(component));
+  } catch (const opad::Error&) {
+    return false;
+  }
+  return true;
+}
+
+QList<QPair<QString, QString>> MainWindow::measureRows(const opad::json& r) const {
+  QList<QPair<QString, QString>> rows;
+  const std::string kind = r.value("kind", "distance"), unit = r.value("unit", "mm");
+  const units::Kind L = units::Kind::Length;
+  const opad::json refs = r.value("refs", opad::json::array());
+  const std::string body = !refs.empty() && refs[0].is_string() ? opad::Ref::parse(refs[0].get<std::string>()).body : std::string();
+  gp_Trsf toWorld;
+  const bool framed = kind != "bbox" && measureFrame(body, toWorld);  // a box stays aligned with the world
+  const gp_Trsf toFrame = toWorld.Inverted();
+  auto vec = [L, framed, &toFrame](const opad::json& p) {
+    gp_Pnt q(p[0].get<double>(), p[1].get<double>(), p[2].get<double>());
+    if (framed) q.Transform(toFrame);
+    return units::vector(L, opad::Vec3{q.X(), q.Y(), q.Z()});
+  };
+  if (r.contains("value")) rows << qMakePair(measureTitle(r), units::format(unit == "deg" ? units::Kind::Angle : unit == "mm2" ? units::Kind::Area : L, r["value"].get<double>()));
+  if (framed) rows << qMakePair(tr("Coordinates in"), m_doc->nodeName(measureComponent(body)));
+  if (r.contains("delta")) {
+    gp_Vec delta(r["delta"][0].get<double>(), r["delta"][1].get<double>(), r["delta"][2].get<double>());
+    if (framed) delta.Transform(toFrame);
+    for (int i = 0; i < 3; ++i) {
+      const double d = delta.Coord(i + 1);
+      const bool plus = d > 0 && units::number(L, d) != units::number(L, 0);
+      rows << qMakePair(tr("Δ%1").arg(QChar("XYZ"[i])), (plus ? "+" : "") + units::format(L, d));
+    }
+  }
+  if (r.value("approximate", false) && r.contains("tolerance_mm")) rows << qMakePair(tr("Accuracy"), tr("within %1").arg(units::format(L, r["tolerance_mm"].get<double>())));
+  if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), units::format(units::Kind::Angle, r["supplement"].get<double>()));
+  if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), units::format(L, r["diameter"].get<double>()));
+  if (r.contains("recognized"))  // a B-spline cylinder or circle (UI-50): what it was taken for, and how closely
+    rows << qMakePair(tr("Recognised as"), tr("%1, within %2").arg(i18n::t(QString::fromStdString(r["recognized"].get<std::string>())), units::format(L, r.value("deviation", 0.0), 4)));
+  for (const char* k : {"size", "min", "max"})
+    if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), vec(r[k]));
+  if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
+  // Lengths and areas (UI-144): the loops an edge belongs to, a face's perimeters, a solid's volume.
+  for (const auto& loop : r.value("loops", opad::json::array()))
+    if (loop.is_object()) rows << qMakePair(loop.value("outer", true) ? tr("Loop on face %1").arg(loop.value("face", 0)) : tr("Inner loop on face %1").arg(loop.value("face", 0)), units::format(L, loop.value("perimeter", 0.0)));
+  if (r.contains("perimeter")) rows << qMakePair(tr("Perimeter"), units::format(L, r["perimeter"].get<double>()));
+  if (r.value("loops", opad::json()).is_number() && r["loops"].get<int>() > 1) {
+    if (r.contains("outer_perimeter")) rows << qMakePair(tr("Outer loop"), units::format(L, r["outer_perimeter"].get<double>()));
+    rows << qMakePair(tr("Loops"), QString::number(r["loops"].get<int>()));
+  }
+  if (r.value("holes", 0) > 0) rows << qMakePair(tr("Holes"), QString::number(r.value("holes", 0)));  // an Area tool's (UI-90)
+  if (r.contains("volume")) rows << qMakePair(tr("Volume"), units::format(units::Kind::Volume, r["volume"].get<double>()));
+  // The measured points, world XYZ (UI-144): where a distance starts and ends (the centres it took), a radius's centre.
+  if (kind == "distance" && r.contains("point_a") && r.contains("point_b")) {
+    const QString a = r.contains("centre_a") ? tr("Point 1 (%1)").arg(i18n::t(QString::fromStdString(r["centre_a"].get<std::string>()))) : tr("Point 1");
+    const QString b = r.contains("centre_b") ? tr("Point 2 (%1)").arg(i18n::t(QString::fromStdString(r["centre_b"].get<std::string>()))) : tr("Point 2");
+    rows << qMakePair(a, vec(r["point_a"])) << qMakePair(b, vec(r["point_b"]));
+  } else if (kind == "radius" && r.contains("point_a")) rows << qMakePair(tr("Centre"), vec(r["point_a"]));
+  else if (kind == "angle" && r.contains("vertex")) rows << qMakePair(tr("Vertex"), vec(r["vertex"]));
+  else if (kind == "length" && r.contains("start") && !r.value("closed", false)) rows << qMakePair(tr("Start point"), vec(r["start"])) << qMakePair(tr("End point"), vec(r["end"]));
+  else if (kind == "length" && r.contains("point")) rows << qMakePair(tr("Midpoint"), vec(r["point"]));
+  else if (kind == "area" && r.contains("point")) rows << qMakePair(tr("Centroid"), vec(r["point"]));
+  return rows;
+}
+
+void MainWindow::copyMeasurement(const opad::json& result) {
+  QStringList lines;
+  for (const auto& [key, value] : measureRows(result)) lines << key + "\t" + value;
+  QApplication::clipboard()->setText(lines.join('\n'));
+}
+
+// The earlier results under the current one (the newest is the result shown, unless it was cleared).
+void MainWindow::refreshMeasureHistory() {
+  if (!toolMeasures()) return;
+  QList<ToolHistoryRow> rows;
+  for (size_t i = m_lastMeasure.is_null() ? 0 : 1; i < m_measureHistory.size(); ++i) {
+    const opad::json& r = m_measureHistory[i].result;
+    const auto values = measureRows(r);
+    rows << ToolHistoryRow{measureTitle(r), values.isEmpty() ? QString() : values.front().second, m_measureHistory[i].pinned};
+  }
+  m_toolSteps->setHistory(rows, !m_doc->browse);
+}
+
+void MainWindow::pinMeasurement(opad::json result) {
+  const bool current = result.is_null();
+  if (current) result = m_lastMeasure;
+  if (result.is_null()) return;
+  if (result.value("exploded", false))
+    return statusBar()->showMessage(tr("Pinned measurements are taken on the assembled model: collapse the exploded view, then measure again."), 6000);
+  if (!requireEditable([this, result] { pinMeasurement(result); })) return;  // a pinned measurement is part of the document
   opad::json op;
   op["op"] = "measurement";
-  op["kind"] = m_lastMeasure.value("kind", "distance");
+  op["kind"] = result.value("kind", "distance");
   opad::json refs = opad::json::array();
-  for (const auto& r : m_lastMeasure.value("refs", opad::json::array())) refs.push_back(opad::Ref::parse(r.get<std::string>()).to_json());
+  for (const auto& r : result.value("refs", opad::json::array())) refs.push_back(opad::Ref::parse(r.get<std::string>()).to_json());
   op["refs"] = refs;
-  op["result"] = m_lastMeasure;
+  op["result"] = result;
   opad::json r = m_doc->run("append", opad::json{{"op", op}});
+  for (auto& record : m_measureHistory)
+    if (record.result == result) record.pinned = true;
+  if (!current) return refreshMeasureHistory();
   if (r.contains("appended") && !r["appended"].empty()) m_timeline->setCurrentOp(r["appended"][0].get<std::string>());
   m_toasts->toast(tr("Measurement pinned. Manage it in Annotations (Alt+2)."), tr("Show"), [this] { if (!action("panel.annotations")->isChecked()) action("panel.annotations")->trigger(); });
   if (!m_tool.id.isEmpty()) m_viewport->clearSelection();  // the tool stays on for the next measurement

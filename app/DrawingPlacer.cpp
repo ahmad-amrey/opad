@@ -384,18 +384,26 @@ bool DrawingPlacer::eventFilter(QObject* object, QEvent* event) {
     }
     if (m_snapStage == 2) {
       opad::Ref ref;
-      if (m_view->originReferenceAt(e->position(), ref)) {
-        try {
-          const opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, ref);
+      if (m_view->originReferenceAt(e->position(), ref)) {  // where it is: inspected on a worker (UI-51, it walks the body)
+        if (m_snapJob) m_snapJob->cancel();
+        auto document = m_doc->shapesOf({ref.body});
+        auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+        auto target = std::make_shared<opad::Vec3>();
+        const int serial = m_serial;
+        QPointer<DrawingPlacer> guard(this);
+        m_snapJob = m_jobs->async(tr("Snapping"), [document, scene, ref, target](Progress) {
+          const opad::json info = opad::inspect_ref(*document, *scene, ref);
           const opad::json& p = info.contains("point") ? info["point"] : info.at("center");
-          snap(m_snapFrom, {p[0].get<double>(), p[1].get<double>(), p[2].get<double>()});
+          *target = {p[0].get<double>(), p[1].get<double>(), p[2].get<double>()};
+        }, [this, guard, serial, target](bool ok, const QString& error) {
+          if (!guard || !m_active || serial != m_serial || m_snapStage != 2) return;
+          if (!ok) return m_status->setText(i18n::t(error));
+          snap(m_snapFrom, *target);
           m_snapStage = 0;
           m_snap->setChecked(false);
           if (!m_marker.IsNull()) m_view->removeOverlay(m_marker);
           m_marker.Nullify();
-        } catch (const std::exception& error) {
-          m_status->setText(i18n::t(QString::fromUtf8(error.what())));
-        }
+        });
       } else m_status->setText(tr("Snap: click a vertex of a body, a drawing or a sketch"));
       return true;
     }

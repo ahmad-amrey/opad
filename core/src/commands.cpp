@@ -354,6 +354,7 @@ void register_builtins() {
           views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
           if (!v.explode.is_null()) views.back()["explode"] = v.explode;
           if (!v.display.is_null()) views.back()["display"] = v.display;
+          if (v.home) views.back()["home"] = true;
         }
         json j;
         j["annotations"] = ann;
@@ -365,10 +366,11 @@ void register_builtins() {
         return j;
       });
 
-  reg("measure", "Distance, angle, radius, bbox or area between references; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
-      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox|area"}, {"refs", "array - references"},
+  reg("measure", "Distance (minimum, centre to centre or maximum), angle, radius, bbox, area, or an edge's length / a face's area and perimeter; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
+      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox|area|length"}, {"refs", "array - references"},
+       {"mode", "min|center|max - distance only: the shortest (default), between the centres, or the largest"},
        {"at", "[x,y,z] - area: where one drawing object was clicked (the part of it whose cell is measured)"},
-       {"queries", "array - several measurements [{kind, refs, at}], answered in order as results (a failed one carries error)"},
+       {"queries", "array - several measurements [{kind, refs, mode, at}], answered in order as results (a failed one carries error)"},
        {"pin", "bool - append a measurement op (each, with queries)"}, {"explode", "uuid|object - measure in an exploded view: a view op id or an explode spec"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -377,13 +379,16 @@ void register_builtins() {
           if (a.value("pin", false)) throw Error("measure: pinned measurements use the assembled model; pin without explode");
           s = exploded_scene(doc, s, a["explode"]);
         }
-        auto one = [&](const std::string& kind, const json& refArgs, const json& at) {
+        auto one = [&](const std::string& kind, const json& refArgs, const std::string& mode, const json& at) {
           std::vector<Ref> refs;
           for (const auto& r : str_list(refArgs)) refs.push_back(Ref::parse(r));
           json res;
           if (kind == "distance") {
             if (refs.size() != 2) throw Error("distance needs exactly two refs");
-            res = measure_distance(doc, s, refs[0], refs[1]);
+            if (mode == "center") res = measure_center_distance(doc, s, refs[0], refs[1]);
+            else if (mode == "max") res = measure_max_distance(doc, s, refs[0], refs[1]);
+            else if (mode == "min" || mode.empty()) res = measure_distance(doc, s, refs[0], refs[1]);
+            else throw Error("unknown distance mode: " + mode + " (min, center, max)");
           } else if (kind == "angle") {
             if (refs.size() != 2) throw Error("angle needs exactly two refs");
             res = measure_angle(doc, s, refs[0], refs[1]);
@@ -394,6 +399,9 @@ void register_builtins() {
             res = measure_bbox(doc, s, refs);
           } else if (kind == "area") {
             res = measure_area(doc, s, refs, {}, at.is_array() ? std::optional(at.get<Vec3>()) : std::nullopt);
+          } else if (kind == "length") {
+            if (refs.size() != 1) throw Error("length needs exactly one ref");
+            res = measure_length(doc, s, refs[0]);
           } else {
             throw Error("unknown measurement kind: " + kind);
           }
@@ -411,13 +419,13 @@ void register_builtins() {
         };
         if (!a.contains("queries")) {
           if (!a.contains("refs")) throw Error("measure: pass refs (with kind) or queries");
-          return one(a.value("kind", "distance"), a["refs"], a.value("at", json()));
+          return one(a.value("kind", "distance"), a["refs"], a.value("mode", ""), a.value("at", json()));
         }
         json results = json::array();
         for (const auto& q : a["queries"]) {
           const std::string kind = q.value("kind", "distance");
           try {
-            results.push_back(one(kind, q.value("refs", json()), q.value("at", json())));
+            results.push_back(one(kind, q.value("refs", json()), q.value("mode", a.value("mode", "")), q.value("at", json())));
           } catch (const Standard_Failure& e) {
             results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", std::string("the modelling kernel failed: ") + e.GetMessageString()}});
           } catch (const std::exception& e) {
@@ -858,11 +866,14 @@ void register_builtins() {
         return j;
       });
 
-  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}, {"explode", "object - an exploded view (see the explode command)"}, {"display", "object - layers: {layer id: state} restored with it"}}, true,
-      [](Document* d, const json& a) {
+  reg("view", "Add a named camera bookmark",
+      {{"doc", "path"}, {"name", "string"}, {"camera", "object"}, {"explode", "object - an exploded view (see the explode command)"},
+       {"display", "object - layers: {layer id: state} restored with it"}, {"home", "bool - optional: the document's Home view (H)"}},
+      true, [](Document* d, const json& a) {
     json op;
     op["op"] = "view";
-    op["name"] = a.at("name");
+    const bool home = a.value("home", false);
+    op["name"] = home ? json(a.value("name", "Home")) : a.at("name");
     op["camera"] = a.contains("camera") ? a["camera"] : Camera::preset(a.value("preset", "iso")).to_json();
     if (a.contains("explode")) op["explode"] = ExplodeSpec::from_json(a["explode"]).to_json();
     if (a.contains("display")) {
@@ -873,6 +884,7 @@ void register_builtins() {
       }
       op["display"] = display;
     }
+    if (home) op["home"] = true;  // an optional key: an older build reads it as a view named Home
     json j;
     j["id"] = need(d).append(op, a.value("by", "")).id;
     return j;
@@ -950,8 +962,9 @@ void register_builtins() {
     return j;
   });
 
-  // F25: the running app publishes its selection to <cache>/selection.json; agents read it here.
-  reg("selection", "Current GUI selection (uuids + descriptors) as published by the running app", json::object(), false,
+  // F25: the running app publishes its selection to <cache>/selection.json while agent access is on (UI-06); agents read
+  // it here.
+  reg("selection", "Current GUI selection (refs, node names, types, body keys and boxes; at most 2,000, with the total) as published by the running app while its agent access is on", json::object(), false,
       [](Document*, const json&) {
         json j;
         std::filesystem::path p = cache_dir() / "selection.json";

@@ -14,6 +14,7 @@
 #include <V3d_Viewer.hxx>
 
 #include <QImage>
+#include <QPointer>
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QWidget>
@@ -31,15 +32,18 @@
 #include <vector>
 
 #include <TopoDS_Shape.hxx>
+#include <gp_Trsf.hxx>
 
 #include "AppDocument.hpp"
 #include "BodyLook.hpp"
 #include "BodyShape.hpp"
 #include "Theme.hpp"
 #include "Tracking.hpp"
+#include "ViewNav.hpp"
 
 class JobRunner;
 class Job;
+class QMenu;
 class QKeyEvent;
 struct ObjectSnapState;
 class QNativeGestureEvent;
@@ -61,8 +65,11 @@ class SketchInput {
 class Viewport : public QWidget, protected AIS_ViewController {
   Q_OBJECT
  public:
-  enum class NavPreset { Fusion, SolidWorks, Onshape, Blender };
-  enum class Style { Shaded, ShadedEdges, Wireframe };
+  // Cad2D (UI-47): pan on the middle button, zoom on the wheel, no orbit (drafting, named after no product).
+  enum class NavPreset { Fusion, SolidWorks, Onshape, Blender, Cad2D };
+  // HiddenLine (UI-48): the faces in the background's colour with their edges and outlines, so what is behind is hidden;
+  // HiddenEdges: the same with the hidden edges dashed and dim (ViewportEdges.cpp).
+  enum class Style { Shaded, ShadedEdges, Wireframe, HiddenLine, HiddenEdges };
   enum class SelFilter { Body, Face, Edge, Vertex };
 
   explicit Viewport(AppDocument* doc, QWidget* parent = nullptr);
@@ -71,8 +78,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setTokens(const Tokens& t);
   void setNavPreset(NavPreset p);
   NavPreset navPreset() const { return m_preset; }
+  // A sliced job (UI-48), a body a step: recomputing every body at once froze the Engine for 0.5 s, its wireframes for longer.
   void setStyle(Style s);
   Style style() const { return m_style; }
+  bool stylePending() const { return m_styleJob != nullptr; }
+  // OPAD_BENCH_STYLES (ViewportStyleBench.cpp): each style applied in steps within the budget, the wireframe from the
+  // worker's arrays, no refinement in it, hidden line hiding what is behind with outlines (UI-48)
+  bool benchStyles(const QString& prefix, const std::function<void(const QString&)>& trigger);
   // G: the grid's visibility, one state outside sketches (view/grid) and one inside (sketch/grid, on unless hidden
   // there); gridShownChanged tells the G action which one it shows.
   void setGrid(bool on);
@@ -102,11 +114,22 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
   void setRenderQuality(int level);
+  // Adaptive quality (UI-45, ViewportSettings.cpp): while the camera moves under a gesture, the wheel or an animation and a
+  // frame at full quality takes longer than kSmoothFrameMs, Studio draws at 1.0x resolution without shadows and ray
+  // tracing at half resolution; still for 350 ms, the view is drawn at full quality again. Setting view/adaptive.
+  static constexpr qint64 kSmoothFrameMs = 20;
+  void setAdaptiveQuality(bool on);
+  bool adaptiveQuality() const { return m_adaptive; }
+  bool degraded() const { return m_degraded; }
+  qint64 fullFrameMs() const { return m_fullFrameMs; }  // the last frame drawn at full quality, ms
+  // OPAD_BENCH_ORBITFPS (ViewportQualityBench.cpp): an orbit drag on a heavy model draws faster while it moves, at full
+  // quality once still; one light casts shadows (UI-45)
+  bool benchOrbitFps(const QString& prefix);
   static int savedRenderQuality();
   static int savedSceneBackground();
   void setSceneBackground(int style);
   int sceneBackground() const { return m_sceneBackground; }
-  QColor sceneBackgroundColor() const;  // its colour (the gradient's middle)
+  QColor sceneBackgroundColor() const;  // its colour (the gradient's middle; hidden line draws its faces in it)
   // What a 2D drawing without a colour (DXF colour 7) is drawn in: light on a dark background, dark on a light one (UI-10).
   std::array<double, 3> drawingInk() const;
   // The 2D vocabulary (UI-118, ViewportDrawing.cpp): in a drawing-only scene or 2D mode, a hovered drawing entity reads as
@@ -127,7 +150,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setSelectionFilter(SelFilter f);
   SelFilter selectionFilter() const { return m_filter; }
 
-  void fitAll();
+  // Fit, Home and the standard views move the camera at once, or (animate, the commands) in a short animation on screen.
+  void fitAll(bool animate = false);
   void animateFitAll(double seconds = 0.35);  // the camera glides to what fitAll frames, also in a view that draws no frames
   bool cameraMoving() const;  // a camera animation (fit, cube, roll) is under way
   bool showsAll() const;  // every corner of what Fit All frames is inside the view
@@ -140,14 +164,44 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // A viewer document became editable: the same shapes under content keys. What is meshed and drawn carries over.
   void renameBodyKeys(const std::map<std::string, std::string>& keys);
   int skippedCount() const { return static_cast<int>(m_meshSkipped.size()); }
-  void fitSelection();
-  void fitNodes(const std::vector<std::string>& ids);
-  void standardView(const QString& name);
-  void home();
-  void rollView(double degrees);  // animated turn about the view axis; positive = counter-clockwise on screen
+  // Bodies to be shown that are not yet: waiting for their mesh or in the display queue (meshingProgress reports it).
+  int remainingBodies() const { return static_cast<int>(m_waitingNodes + m_displayQueue.size()); }
+  // The job that reports bodies streaming in (a load, Displaying bodies): the display pump runs as its child, so its
+  // Cancel stops the pump too (UI-40). Null: the pump is a Background job.
+  void setStreamJob(Job* job);
+  int syncCount() const { return m_syncs; }  // full syncs so far (benches: one per document change, none per batch of meshes)
+  int partialSyncCount() const { return m_partialSyncs; }  // syncs of the bodies under the nodes a change touched (UI-40)
+  qint64 syncMs() const { return m_syncMs; }  // the time of both, and the UI thread's CPU time in them
+  qint64 syncCpuMs() const { return m_syncCpuMs; }
+  void fitSelection(bool animate = false);
+  void fitNodes(const std::vector<std::string>& ids, bool animate = false);  // animate: the commands (browser, context menu)
+  void standardView(const QString& name, bool animate = false);
+  void home(bool animate = false);
+  void rollView(double degrees);  // animated turn about the view axis; positive = counter-clockwise on screen; 2D too (twist)
+  // Navigation staples (UI-47, ViewportNavigation.cpp).
+  void startZoomWindow();  // the next left drag frames what to zoom into (a click zooms in twice there); Esc, right click cancel
+  void cancelZoomWindow();
+  bool zoomWindowActive() const { return m_zoomWindow; }
+  bool previousView();  // the view the camera rested at before this one (ViewNav.hpp); false: none
+  bool nextView();
+  // The document's Home: the camera of its last live view op with "home" (ViewNavigation's Set current view as Home),
+  // null when it has none (Home is then the iso view, fitted).
+  opad::json homeCamera() const;
+  bool customHome() const { return !homeCamera().is_null(); }
+  void twistView(double degrees);  // the view turned this far about its axis from untwisted (2D view twist), animated
+  double twistAngle() const;       // how far it is turned now, degrees
+  void setAnimateViews(bool on);   // setting view/animate (default on)
+  bool animateViews() const { return m_animateViews; }
 
-  void warmUp();  // create the OpenGL viewer now rather than on first paint
+  // Startup (StartUp.hpp, UI-44): the OpenGL viewer is made by warmUp(), which the window calls once its shell has been
+  // painted, and its first frame (the shaders) drawn by firstFrame() on a later turn; a show or paint of the view before
+  // warmUp() makes nothing.
+  void warmUp();
+  void firstFrame();
   void setBlocked(bool on);  // while a file loads: mouse input is ignored (the shade window covers the view)
+  bool blocked() const { return m_blocked; }
+  const Job* pumpJob() const { return m_displayJob; }  // the display pump's job while it runs (benches)
+  int pumpRuns() const { return m_pumpRuns; }          // pump jobs started so far (benches: one per stream, not per batch)
   void benchShot(const QString& path);  // --bench-select with OPAD_BENCH_SHOT: hover the view cube, save a frame
   QString benchCubePart(int dx, int dy);  // hover the cube this far from its centre (Qt points): "side", "edge", "corner" or ""
   std::string benchHeaviest() const;       // OPAD_BENCH_FILTER: the body with the most faces, the pick target
@@ -160,7 +214,42 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool benchTracking(const QString& prefix, bool endsOnly = false);
   // OPAD_BENCH_CROSSLOCK (ViewportCrossLockBench.cpp): lock on one anchor, acquire another, take where they line up (UI-32)
   bool benchCrossLock(const QString& prefix);
+  // OPAD_BENCH_BIGDRAWING (ViewportDrawingBench.cpp): a drawing layer of 100,000 lines is picked in groups (UI-42): hover,
+  // click, Ctrl+click, crossing and window boxes and selectRefs reach the right edges
+  bool benchBigDrawing(const QString& prefix);
+  // OPAD_BENCH_DRAWINGFILTERS (ViewportDrawingBench.cpp): in the Face filter every drawing layer is picked whole, in the
+  // Vertex filter a big layer's ends in groups (UI-42): hover, click, a box and selectRefs reach the right ones
+  bool benchDrawingFilter(const QString& prefix);
+  // OPAD_BENCH_BOXSCAN (ViewportBoxBench.cpp): crossing and window boxes settle within 3 s and take exactly what is seen in
+  // them (UI-43)
+  bool benchBoxScan(const QString& prefix);
+  // OPAD_BENCH_ORBITPIVOT (ViewportOrbitBench.cpp): the pivot of a press away from a big drawing is found run by run, fast,
+  // and is the point a scan of every segment finds (UI-51)
+  bool benchOrbitPivot(const QString& prefix);
+  // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
+  // displayed last, in the rasterised qualities (UI-39)
+  bool benchTransparency(const QString& prefix);
+  // OPAD_BENCH_NAVIGATE (ViewportViewBench.cpp): zoom window, previous and next view, the CAD 2D preset, animated standard
+  // views, fit and Home, a custom Home, the cube's menu and the 2D twist (UI-47)
+  bool benchNavigation(const QString& prefix);
+  // OPAD_BENCH_HIGHLIGHT (ViewportViewBench.cpp): hover and selection roles in the current theme (UI-38): a body, its
+  // face, edge and vertex hovered (white) and selected (hued, edges thicker in a halo), a body in the selection's own
+  // colour outlined, the view cube's side in a standard view and its hover
+  bool benchHighlight(const QString& prefix);
+  QPointF cubeCentre() const;  // the view cube's centre, widget coordinates
+  bool benchWireHighlight(const std::string& sketch, const QString& prefix);  // OPAD_BENCH_HIGHLIGHT: a sketch's wire in 3D
+  // The longest displayBody so far, in wall and UI-thread CPU time (benches: no display step over 50 ms, UI-42).
+  qint64 longestDisplay() const { return m_longestDisplay; }
+  qint64 longestDisplayCpu() const { return m_longestDisplayCpu; }
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
+  // Benches: a left click at a widget point as the mouse handlers deliver it (move, press, release and the frames that
+  // handle them), with these modifiers held; then a plain move there.
+  void benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+  void benchDoubleClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers);  // press, release, double-click, release
+  void benchHoverAt(const QPointF& at);  // a plain move there and the frame that handles it (the hover text follows)
+  // The document changed: what the status said is under the pointer may be gone or renamed. Cleared; the next frame
+  // says it again for whatever is still there.
+  void clearHover();
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
   // Highlights the given nodes' bodies as a sliced job; emits selectionApplied() when it has settled. Sets
@@ -271,10 +360,28 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showMeasurement(const opad::json& result);
   void setMeasurementComponents(bool on);
   bool measurementComponents() const { return m_measureComponents; }
+  // The axes the current distance's ΔX, ΔY and ΔZ are drawn along: a component's (world <- component; UI-144), else world.
+  void setMeasurementFrame(const gp_Trsf& toWorld);
   bool measurementHasMultipleAxes() const;
   void clearDimension();
   void setMeasurementSelectionLocked(bool locked) { m_measureSelectionLocked = locked; }
   QStringList measurementCaptions() const { return m_measureCaptions; }  // the labels as drawn (benches)
+
+  // Select other (UI-128, ViewportSelectOther.cpp): everything picking finds under a point of the view in the current filter,
+  // nearest first (bodies, faces, edges, vertices, feature candidates), never a face that only stands in front of edges and
+  // vertices (UI-31's occluders) or an arc's centre finder. Alt+click lists them (selectOtherMenu): hovering a row hovers it
+  // in the view, choosing one selects it as a click would (a guided tool takes it as its next pick). Tab and Shift+Tab hover
+  // the next or previous one under the resting pointer in place, and a click there takes it. A plain press held still opens
+  // the list as Alt+click does (pressHeld).
+  struct PickCandidate { opad::Ref ref; std::string candidate; QString label; double depth = 0; };
+  std::vector<PickCandidate> pickCandidates(const QPointF& at);  // widget coordinates; also what preview/choose index
+  // nullptr: fewer than `fewest` things there (said in a tip when there is nothing); owned by the view, deleted once closed
+  QMenu* selectOtherMenu(const QPointF& at, size_t fewest = 1);
+  void previewPickCandidate(int index);  // -1: nothing hovered
+  bool choosePickCandidate(int index);
+  bool cycleHover(bool forward);
+  // While the context menu of a right click in the view is open: where it was clicked (widget coordinates).
+  bool contextMenuPoint(QPointF& at) const { at = m_contextAt; return m_inContextMenu; }
 
   // Guided tools (distance, angle, ...: the tool asks for one pick per step). While accumulating, a plain click
   // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
@@ -321,7 +428,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::shared_ptr<BodyPrs> presentation;  // drawn more solid (construction planes among faint origin planes)
   };
   void showCandidates(const std::vector<Candidate>& candidates);
-  void clearCandidates();
+  void clearCandidates();  // with the origin guide on, its planes come back
+  // The origin guide (UI-51, an empty design document): the origin's axes (X red, Y green, Z blue, labelled, never
+  // picked), its XY, XZ and YZ planes as candidates ({"base":"xy"}, ...) whenever nothing else shows
+  // candidates, and the grid whatever its setting says.
+  void setOriginGuide(bool on);
+  bool originGuide() const { return m_originGuide; }
   std::string hoveredCandidate() const;
   std::vector<std::string> selectedCandidates() const;  // in pick order
   // Makes the context selection exactly these (bodies, faces/edges/vertices by ordinal, candidates).
@@ -348,7 +460,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);
   void endSketchInput();
   bool sketching() const { return m_sketchInput != nullptr; }
-  void lookAt(const opad::Frame& frame, bool fit = true, bool animate = true);  // camera along the plane normal, plane x to the right
+  // Camera along the plane normal, plane x to the right; animate: as the standard views (on screen, Animate view changes).
+  void lookAt(const opad::Frame& frame, bool fit = true, bool animate = false);
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
   // Where the mouse met the hovered body at the last detection (ViewportReadout.cpp); false: no body under it.
   bool detectedPoint(opad::Vec3& p) const;
@@ -366,7 +479,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::function<QPointF(const opad::Vec3&)> projector() const;
   // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
   // coordinates); notesMoved() follows every camera move or scene change so it can place them again.
-  bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, or behind the eye
+  bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, not measured yet, or behind the eye
+  bool notesPending() const { return m_anchorJobs > 0; }  // anchors being measured on a worker
+  int anchorsMeasured() const { return m_anchorsMeasured; }
+  bool noteAnchorPoint(const std::string& opId, opad::Vec3& out) const;  // world, without a look's offset
   void setNoteLeaders(const std::map<std::string, QPoint>& ends, bool shown);  // shown=false: notes hidden, nothing drawn
   void setNoteTypeFilter(const std::string& type) { m_noteTypeFilter=type; }
   // The note / hand drawing editor (AnnotationEditor.cpp). Its target is drawn in the selection blue, tinted with a
@@ -434,6 +550,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void gridShownChanged(bool on);
   void ownCursorChanged(bool shown);  // the system pointer went blank (the editor draws its cursor) or came back
   void looksApplied();  // a setLookLayer (or a scene change under one) has reached every displayed body
+  void zoomWindowChanged(bool active);
+  void fitRequested();  // a double click of the middle button: the window fits everything (its Fit all)
+  void cubeMenuRequested(const QPoint& globalPos);  // a right click on the view cube
 
  public slots:
   void sync();
@@ -470,6 +589,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // about what is under the pointer. On what is selected, on nothing, or while a tool or an editor owns the picks: unchanged.
   void contextPick(const QPointF& at);
   int m_renderQuality = 1, m_sceneBackground = 0;
+  bool m_adaptive = true, m_degraded = false;
+  qint64 m_fullFrameMs = 0;
+  QElapsedTimer m_wheelClock;  // the last wheel turn: zooming is navigating
+  QTimer m_qualityTimer;       // still for this long: full quality again
+  Graphic3d_WorldViewProjState m_qualityCamera;
+  void degradeWhileNavigating();  // from every redraw: the camera moved
+  void restoreQuality();
+  void applyQuality();  // the rendering parameters of m_renderQuality, lowered while m_degraded
+  void outlineBodies();  // silhouettes in Shaded + edges, none while m_degraded (only the flag: nothing recomputed)
   void updateDepthBias();
   bool m_twoDimensional = false;
   Handle(Graphic3d_Camera) m_threeDimensionalCamera;
@@ -477,13 +605,21 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_selectThrough=false, m_boxCrossing=false;
   Graphic3d_Vec2i m_boxStart,m_boxEnd;
   Job* m_boxJob=nullptr;
+  // The view as drawn, for the box's visibility test (ViewportSelection.cpp, UI-43): the projection and the frame's depth.
+  struct DepthImage;
+  std::shared_ptr<const DepthImage> captureDepth();
   CursorWarpGate m_warpGate;
   void updateGridExtent();
-  void showGrid();  // gridShown() on screen
+  void showGrid();  // gridDrawn() on screen
+  // Drawn: the G setting in force (gridShown) or the origin guide of an empty Design document (UI-51), whatever the setting.
+  bool gridDrawn() const { return gridShown() || m_originGuide; }
   void applyGridColors();  // faint lines from the theme in a sketch and 2D mode, OCCT's greys in 3D
   void applyOwnCursor();   // the system pointer blank or back, as setOwnCursor asked and what is under it allows
   double layoutStep() const;  // the sketch / 2D grid's step at this zoom (0: none)
   double planePixel() const;  // world units per pixel on the sketch's plane, the longer screen direction (a tilt)
+  void showOriginPlanes();
+  bool m_originGuide = false, m_originPlanes = false;  // m_originPlanes: the candidates shown are the origin's
+  std::vector<Handle(AIS_InteractiveObject)> m_originAxes;
   void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
   // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images, a feature preview, Compare's parts
   // (never the grid, gizmos, overlays or annotations); the default grid square when there is nothing (void if !fallback).
@@ -510,6 +646,25 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool detectedPoint(gp_Pnt& p) const;  // where the pointer met the detected owner
   // A detected occluder, or a detected edge or vertex whose point is behind a face (Edge and Vertex modes): cleared.
   bool dropOccluded();
+  // select other (ViewportSelectOther.cpp)
+  bool selectOtherOwner(const Handle(SelectMgr_EntityOwner)& owner, opad::Ref& ref, std::string& candidate) const;
+  bool detectOwner(const Handle(SelectMgr_EntityOwner)& owner);
+  bool cycleKey(QEvent* e);  // Tab / Shift+Tab: cycleHover
+  std::vector<Handle(SelectMgr_EntityOwner)> m_pickOwners;  // pickCandidates' owners, same order
+  Graphic3d_Vec2i m_pickAt, m_cycledAt;
+  bool m_hoverCycled = false;  // the hover was chosen (Tab, a list row): kept until the pointer moves, occluded or not
+  bool m_selectOtherPress = false;  // an Alt+press: its release opens the list, once the double-click time has passed
+  QTimer m_selectOtherTimer;
+  QPointF m_selectOtherAt;
+  QPoint m_selectOtherGlobal;
+  // A plain left press held still for the platform's press-and-hold time opens the list too, when more than one thing is
+  // under it: the controller forgets the press (no click, no rubber band) and its release is the view's.
+  QTimer m_holdTimer;
+  QPointF m_holdAt;
+  bool m_holdPress = false;
+  void pressHeld();
+  QPointF m_contextAt;
+  bool m_inContextMenu = false;
   void moveTo(const Graphic3d_Vec2i& at);  // the context's MoveTo, then dropOccluded
   static constexpr int kTrackingDwellMs = 350;
   bool m_trackingEnabled = true, m_extensionEnabled = true;
@@ -594,15 +749,42 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool nearestSurface(int x, int y, gp_Pnt& point);
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
   void focusCube();
+  void updateCubeSide();  // the side the view looks straight at, drawn as selected (UI-38)
   void syncWindowSize();
-  void applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);  // look: a ghost's edges fade with it
+  // look: a ghost's edges fade with it. True when its shaded presentation must be computed again (edges, hidden line): it
+  // is flagged, and drawn again once shown in that mode; the other mode's is kept (no second upload switching back).
+  bool applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);
+  Job* m_styleJob = nullptr;
+  // Hidden edges visible (ViewportEdges.cpp): every body's edges in world coordinates, built on a worker, drawn by two
+  // objects: dashed and dim with no depth test (m_hiddenLayer, after the faces), solid against the faces' depth (m_seenLayer).
+  Handle(AIS_InteractiveObject) m_edgesBehind, m_edgesSeen;
+  Graphic3d_ZLayerId m_hiddenLayer = Graphic3d_ZLayerId_UNKNOWN, m_seenLayer = Graphic3d_ZLayerId_UNKNOWN;
+  QTimer m_edgeTimer;
+  unsigned m_edgeSerial = 0;
+  void scheduleEdgeOverlay();  // after a change of the scene, a look or the style: built again shortly, or removed
+  void buildEdgeOverlay();
+  void clearEdgeOverlay();
+ public:
+  bool edgeOverlayShown() const { return !m_edgesSeen.IsNull(); }  // benches
+  int outlinedBodies() const;  // benches: bodies drawn with their silhouettes
+ private:
   void activateSelection(const Handle(AIS_Shape)& ais);
+  bool drawingLayer(const Handle(AIS_InteractiveObject)& ais) const;  // a displayed drawing2d body (picked whole in the Face filter)
   void startMeshing(std::vector<std::string> keys);
   void displayBody(const std::string& id);
+  // Objects of bodies no longer shown (UI-41): erased by retire(), removed from the context by removeRetired's background
+  // job, a few per slice.
+  struct Retired { Handle(AIS_Shape) ais; Handle(NavigationShape) navigation; };
+  std::deque<Retired> m_retired;
+  Job* m_retireJob = nullptr;
+  void retire(const Item& item);
+  void removeRetired();
   void finishSync(int pendingCount, bool added);
   void showShade(const std::vector<std::string>& ids);
   void refreshSubHighlight();   // rebuilds m_subHl from the context's selected faces/edges/vertices (sliced)
   void applySelectionLayers();  // selected bodies live in the Topmost layer (own depth buffer): X-ray through occluders
+  QColor shownColor(const std::string& node) const;  // a displayed body's or sketch's colour as drawn; invalid if not shown
+  GlowStyle glowStyle(const QColor& body, bool wholeBody) const;  // the selection over it (Highlight.hpp, UI-38)
   void markPickedPoints();      // a filled dot on each picked point candidate
   void clearShade();
   double deflectionFor(const std::string& key);
@@ -659,9 +841,18 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<opad::Vec3> m_annotationCorners;  // the target's box, world
   Job* m_targetJob = nullptr;                   // a body target's tint, built on a worker when the body has no arrays
   std::map<std::string, NoteMark> m_notes;  // open notes by op id
+  // Where each note is pinned (UI-03), by op id: measured once on a worker (opad::annotation_anchor) and again only when
+  // its signature (the reference, the pinned node's body keys and placements) changes. ready && !found: nothing to pin to.
+  struct NoteAnchor { size_t signature = 0; bool ready = false, found = false, queued = false; gp_Pnt at; };
+  std::map<std::string, NoteAnchor> m_noteAnchors;
+  size_t anchorSignature(const opad::Ref& ref) const;
+  int m_anchorJobs = 0;                        // anchor jobs running
+  int m_anchorsMeasured = 0;                   // anchors measured so far (benches: a sync must not measure again)
+  unsigned long long m_notesRevision = ~0ull;  // the document revision the notes were laid out for (sync skips the same)
   Graphic3d_WorldViewProjState m_noteCamera;
   QSize m_noteSize;
   bool m_measureComponents = true;
+  gp_Trsf m_measureFrame;
   struct MeasurementAnchor { int side; opad::Vec3 point; };
   std::vector<MeasurementAnchor> m_measureAnchors;  // same candidates for drawing and hit testing
   bool m_measureSelectionLocked = false, m_measureAnchorPress = false, m_retainToolPicks = false;
@@ -682,11 +873,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter m_filter = SelFilter::Body;
   bool m_gridSnap=false;
   double m_gridStep=10;
-  double m_gridSpacing=0;  // view/gridSpacing (0 = automatic), read when the grid settings change
+  // view/gridSpacing (0 = automatic) and view/gridExtent, read once and when the grid settings change (configureGrid):
+  // every sync's finish lays the 3D grid out again, and read them three times there.
+  double m_gridSpacing=0, m_gridExtentSetting=100;
   double m_gridShownStep=0, m_gridShownExtent=0, m_gridShownX=0, m_gridShownY=0;  // the infinite grid as last laid out
   bool m_sketchGrid = true;  // the grid in sketches (sketch/grid)
   bool m_ownCursorWanted = false, m_ownCursorShown = false, m_ownCursorAside = false;  // aside: over the cube, a camera gesture
-  bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
+  bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false, m_warmed = false;
   std::vector<std::string> m_fitNodesOnSync;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;
   opad::Vec3 m_sectionOrigin{0, 0, 0}, m_sectionNormal{0, 0, 1};
@@ -725,7 +918,27 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::pair<int, int> m_lastSyncedSize{-1, -1};  // Qt size and display-scale stamp for syncWindowSize
   qreal m_cubeScale = 1.0;  // OCCT backing pixels per Qt point
   JobRunner* m_jobs = nullptr;
-  Job* m_displayJob = nullptr;                    // in-flight sync(): bodies being added to the context
+  // Display pump (UI-40): the mesh workers hand finished keys over (handOver, m_meshMu held: m_newlyMeshed, one queued
+  // pumpMeshed per batch); the nodes that waited for them join m_displayQueue, which the display job works through.
+  void handOver(const std::string& key);
+  void pumpMeshed();
+  void runPump();
+  void streamSettled();
+  std::vector<std::string> m_newlyMeshed;  // under m_meshMu
+  bool m_pumpPosted = false;               // under m_meshMu
+  std::unordered_map<std::string, std::vector<std::string>> m_waiting;  // body key -> nodes to show once it is meshed
+  size_t m_waitingNodes = 0;
+  std::deque<std::string> m_displayQueue;
+  bool m_streamAdded = false;  // bodies displayed since the stream last settled completely
+  unsigned m_pumpSteps = 0;
+  int m_pumpRuns = 0;
+  QElapsedTimer m_streamFit;   // the last fit while streaming
+  QPointer<Job> m_streamJob;
+  int m_syncs = 0, m_partialSyncs = 0;
+  qint64 m_longestDisplay = 0, m_longestDisplayCpu = 0;
+  qint64 m_syncMs = 0, m_syncCpuMs = 0;
+  unsigned long long m_syncedRevision = 0;  // the document revision the last sync saw: the next one may take its change set
+  Job* m_displayJob = nullptr;                    // the display pump's job while it runs
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
   Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer
@@ -745,11 +958,18 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::shared_ptr<std::atomic<bool>> m_alive;
 
   // design
-  void syncSketches();  // the scene's visible sketches as wire objects
+  // The scene's visible sketches as wire objects. `sameGeometry`: the change could not touch any sketch's geometry or plane
+  // (AppDocument::lastChange), so a sketch drawn already is only checked for being shown.
+  void syncSketches(bool sameGeometry = false);
+  // What a sketch's wire was built from, compared rather than printed: a dump of the Engine's big sketch took 5-8 ms a sync.
+  struct SketchStamp {
+    opad::json geometry, frame;
+    bool matches(const opad::SketchItem& s) const { return frame == s.frame.to_json() && geometry == s.geometry; }
+  };
   struct SketchWire {
     Handle(AIS_Shape) ais;
     std::shared_ptr<BodyPrs> prs;
-    std::string stamp;  // geometry + frame it was built from
+    SketchStamp stamp;  // geometry + frame it was built from
     std::vector<Handle(AIS_InteractiveObject)> backdrops;
     BodyLook look;  // as applied (ViewportLooks.cpp); colour = the selection blue it is drawn in
   };
@@ -758,7 +978,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // background (line aspects ignore alpha). Applied in place like a body's, images included.
   BodyLook sketchLook(const std::string& id) const;
   void applySketchLook(SketchWire& wire, const BodyLook& look);
-  struct PreparedSketch { std::string stamp; TopoDS_Shape shape; std::shared_ptr<BodyPrs> prs; std::vector<Handle(AIS_InteractiveObject)> backdrops; bool ready=false; };
+  struct PreparedSketch { SketchStamp stamp; TopoDS_Shape shape; std::shared_ptr<BodyPrs> prs; std::vector<Handle(AIS_InteractiveObject)> backdrops; bool ready=false; };
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
@@ -818,4 +1038,23 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateObjectSnap();                 // after the hover, every frame
   void pruneSnapIndexes();                 // in sync: drops the indexes of what the scene no longer has
   bool objectSnapPress(QMouseEvent* e);  // true: the press picks the shown snap
+  // navigation (ViewportNavigation.cpp, UI-47)
+  bool m_zoomWindow = false, m_zoomDrag = false, m_cubeMenu = false, m_animateViews = true, m_forceAnimate = false;
+  QPointF m_zoomFrom, m_zoomTo;
+  void showZoomBand();
+  void finishZoomWindow();
+  ViewHistory m_history;
+  QTimer m_settleTimer;  // the camera has rested: settleView
+  Graphic3d_WorldViewProjState m_settleCamera;
+  void settleView();
+  ViewState viewState() const;
+  void goTo(const ViewState& state);
+  bool animationsShown() const;  // only on screen: a hidden window (benches) has no frames to run them, moves at once
+  // `move` changes the camera at once; animated, the camera is put back and animated to where it led.
+  void moveCamera(bool animate, double seconds, const std::function<void()>& move);
+  void animateCamera(const Handle(Graphic3d_Camera)& end, double seconds);
+  void finishAnimation();  // a running camera animation jumps to its end
+  gp_Dir naturalUp() const;
+  bool applyHomeCamera();  // the camera to the document's Home (homeCamera); false: none to go to
+  bool zoomWindowKey(QObject* object, QEvent* e);  // Esc leaves the zoom window before anything else sees it
 };

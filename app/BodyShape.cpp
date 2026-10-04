@@ -13,6 +13,7 @@
 #include <TopoDS_Compound.hxx>
 #include <cmath>
 #include <algorithm>
+#include <atomic>
 #include <tuple>
 #include <BRepAdaptor_Curve.hxx>
 #include <Select3D_SensitiveCurve.hxx>
@@ -99,67 +100,282 @@ class SegmentSet : public Select3D_SensitiveSet {
   }
   Standard_Real distanceToCOG(SelectBasics_SelectingVolumeManager& volume) override { return volume.DistToGeometryCenter(m_center); }
 
- private:
   const gp_Pnt& first(int i) const { return m_points[size_t(m_order[size_t(i)]) * 2]; }
   const gp_Pnt& second(int i) const { return m_points[size_t(m_order[size_t(i)]) * 2 + 1]; }
-  std::vector<gp_Pnt> m_points;
-  std::vector<int> m_order;
+  std::vector<gp_Pnt> m_points;  // segment s: 2s, 2s + 1
+  std::vector<int> m_order;      // the BVH's order of the segments
   Select3D_BndBox3d m_box;
   gp_Pnt m_center;
 };
 
-// Faces + edges above which a body's picking is built on the worker (BodyPrs::whole / edgeSensitives).
-constexpr int kBigBody = 3000;
+// How close the segment ab comes to the pick ray (from its near to its far point).
+double rayDistance(const gp_Pnt& eye, const gp_Pnt& away, const gp_Pnt& a, const gp_Pnt& b) {
+  const gp_Vec u(eye, away), v(a, b), w(a, eye);
+  const double uu = u.Dot(u), uv = u.Dot(v), vv = v.Dot(v), uw = u.Dot(w), vw = v.Dot(w), det = uu * vv - uv * uv;
+  double t = det > 1e-18 * uu * vv ? (uu * vw - uv * uw) / det : (vv > 0 ? vw / vv : 0);  // along the segment
+  t = std::clamp(t, 0.0, 1.0);
+  const gp_Pnt on = a.Translated(v * t);
+  const double along = uu > 0 ? gp_Vec(eye, on).Dot(u) / uu : 0;
+  return on.Distance(eye.Translated(u * along));
 }
+
+// A group of a big drawing layer's edges or vertices (UI-42), built on the mesh worker; GroupSensitive puts each body's
+// owners on it.
+class PickGroup {
+ public:
+  virtual ~PickGroup() = default;
+  virtual int firstOrdinal() const = 0;
+  // A point pick: the ordinal of the one nearest the pointer's ray among those in reach, -1 for none.
+  virtual int pick(SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) = 0;
+  // A box or polygon: the ordinals of the ones it takes (an edge crossing: any part; window: all of it).
+  virtual void take(SelectBasics_SelectingVolumeManager& volume, std::vector<int>& out) const = 0;
+};
+
+// One group of a big drawing layer's edges (BodyPrs::edgeGroups): their sampled segments under one BVH and the edge each
+// one belongs to.
+class EdgeGroupSet : public SegmentSet, public PickGroup {
+  DEFINE_STANDARD_RTTI_INLINE(EdgeGroupSet, SegmentSet)
+ public:
+  struct Edge { int ordinal, first, count; Select3D_BndBox3d box; };
+  EdgeGroupSet(std::vector<gp_Pnt> pairs, std::vector<int> edgeOf, std::vector<Edge> edges)
+      : SegmentSet(std::move(pairs)), m_edgeOf(std::move(edgeOf)), m_edges(std::move(edges)) {}
+  int firstOrdinal() const override { return m_edges.front().ordinal; }
+  int pick(SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) override {
+    m_best = -1;
+    m_bestDistance = RealLast();
+    if (!Select3D_SensitiveSet::Matches(volume, result) || m_best < 0) return -1;
+    return m_edges[size_t(m_edgeOf[size_t(m_best)])].ordinal;
+  }
+  void take(SelectBasics_SelectingVolumeManager& volume, std::vector<int>& out) const override {
+    const bool crossing = volume.IsOverlapAllowed(), polyline = volume.GetActiveSelectionType() == SelectMgr_SelectionType_Polyline;
+    SelectBasics_PickResult unused;
+    for (const Edge& e : m_edges) {
+      bool inside = false;
+      if (!volume.OverlapsBox(e.box.CornerMin(), e.box.CornerMax(), &inside)) continue;
+      bool hit = inside;
+      for (int s = e.first; !hit && crossing && s < e.first + e.count; ++s) hit = volume.OverlapsSegment(m_points[size_t(s) * 2], m_points[size_t(s) * 2 + 1], unused);
+      if (!hit && !crossing) {
+        hit = true;
+        for (int s = e.first; hit && s < e.first + e.count; ++s) {
+          const gp_Pnt &a = m_points[size_t(s) * 2], &b = m_points[size_t(s) * 2 + 1];
+          hit = polyline ? volume.OverlapsSegment(a, b, unused) : volume.OverlapsPoint(a) && volume.OverlapsPoint(b);
+        }
+      }
+      if (hit) out.push_back(e.ordinal);
+    }
+  }
+
+ protected:
+  Standard_Boolean overlapsElement(SelectBasics_PickResult& result, SelectBasics_SelectingVolumeManager& volume, Standard_Integer i,
+                                   Standard_Boolean inside) override {
+    if (!SegmentSet::overlapsElement(result, volume, i, inside)) return false;
+    if (volume.GetActiveSelectionType() == SelectMgr_SelectionType_Point) {
+      const double d = rayDistance(volume.GetNearPickedPnt(), volume.GetFarPickedPnt(), first(i), second(i));
+      if (d < m_bestDistance) {
+        m_bestDistance = d;
+        m_best = m_order[size_t(i)];
+      }
+    }
+    return true;
+  }
+
+ private:
+  std::vector<int> m_edgeOf;  // segment -> index into m_edges
+  std::vector<Edge> m_edges;
+  int m_best = -1;  // the segment nearest the ray in the last point pick (UI thread only)
+  double m_bestDistance = 0;
+};
+
+// One group of a big drawing layer's vertices (BodyPrs::vertexGroups): their points under one BVH, with their ordinals.
+class VertexGroupSet : public Select3D_SensitiveSet, public PickGroup {
+  DEFINE_STANDARD_RTTI_INLINE(VertexGroupSet, Select3D_SensitiveSet)
+ public:
+  VertexGroupSet(std::vector<gp_Pnt> points, std::vector<int> ordinals)
+      : Select3D_SensitiveSet(nullptr), m_points(std::move(points)), m_ordinals(std::move(ordinals)), m_order(m_points.size()) {
+    gp_XYZ sum(0, 0, 0);
+    for (size_t i = 0; i < m_points.size(); ++i) {
+      m_order[i] = int(i);
+      m_box.Add(SelectMgr_Vec3(m_points[i].X(), m_points[i].Y(), m_points[i].Z()));
+      sum += m_points[i].XYZ();
+    }
+    if (!m_points.empty()) m_center = gp_Pnt(sum / double(m_points.size()));
+    SetSensitivityFactor(12);  // as OCCT's Select3D_SensitivePoint: a vertex is a target that small
+  }
+  Standard_Integer Size() const override { return int(m_order.size()); }
+  Select3D_BndBox3d Box(const Standard_Integer i) const override {
+    const gp_Pnt& p = at(i);
+    return Select3D_BndBox3d(SelectMgr_Vec3(p.X(), p.Y(), p.Z()), SelectMgr_Vec3(p.X(), p.Y(), p.Z()));
+  }
+  Standard_Real Center(const Standard_Integer i, const Standard_Integer axis) const override { return at(i).Coord(axis + 1); }
+  void Swap(const Standard_Integer i, const Standard_Integer j) override { std::swap(m_order[size_t(i)], m_order[size_t(j)]); }
+  Select3D_BndBox3d BoundingBox() override { return m_box; }
+  gp_Pnt CenterOfGeometry() const override { return m_center; }
+  Standard_Integer NbSubElements() const override { return Size(); }
+  int firstOrdinal() const override { return m_ordinals.front(); }
+  int pick(SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) override {
+    m_best = -1;
+    m_bestDistance = RealLast();
+    if (!Select3D_SensitiveSet::Matches(volume, result) || m_best < 0) return -1;
+    return m_ordinals[size_t(m_best)];
+  }
+  void take(SelectBasics_SelectingVolumeManager& volume, std::vector<int>& out) const override {
+    if (!volume.OverlapsBox(m_box.CornerMin(), m_box.CornerMax())) return;
+    for (size_t i = 0; i < m_points.size(); ++i)
+      if (volume.OverlapsPoint(m_points[i])) out.push_back(m_ordinals[i]);
+  }
+
+ protected:
+  Standard_Boolean overlapsElement(SelectBasics_PickResult& result, SelectBasics_SelectingVolumeManager& volume, Standard_Integer i,
+                                   Standard_Boolean inside) override {
+    if (!inside && !volume.OverlapsPoint(at(i), result)) return false;
+    if (volume.GetActiveSelectionType() == SelectMgr_SelectionType_Point) {
+      const double d = rayDistance(volume.GetNearPickedPnt(), volume.GetFarPickedPnt(), at(i), at(i));
+      if (d < m_bestDistance) {
+        m_bestDistance = d;
+        m_best = m_order[size_t(i)];
+      }
+    }
+    return true;
+  }
+  Standard_Boolean elementIsInside(SelectBasics_SelectingVolumeManager& volume, Standard_Integer i, Standard_Boolean inside) override {
+    return inside || volume.OverlapsPoint(at(i));
+  }
+  Standard_Real distanceToCOG(SelectBasics_SelectingVolumeManager& volume) override { return volume.DistToGeometryCenter(m_center); }
+
+ private:
+  const gp_Pnt& at(int i) const { return m_points[size_t(m_order[size_t(i)])]; }
+  std::vector<gp_Pnt> m_points;
+  std::vector<int> m_ordinals, m_order;  // m_order: the BVH's order of the points
+  Select3D_BndBox3d m_box;
+  gp_Pnt m_center;
+  int m_best = -1;  // the point nearest the ray in the last point pick (UI thread only)
+  double m_bestDistance = 0;
+};
+
+// Faces + edges above which a body's picking is built on the worker (BodyPrs::whole / edgeSensitives / edgeGroups).
+constexpr int kBigBody = 3000;
+constexpr size_t kEdgeGroup = 256;  // edges (or vertices) per group
+
+// The Morton order of points in a box: groups of consecutive ones lie near each other.
+std::vector<std::pair<uint64_t, int>> mortonOrder(const std::vector<std::pair<gp_XYZ, int>>& points, const Bnd_Box& bounds) {
+  double x0 = 0, y0 = 0, z0 = 0, x1 = 1, y1 = 1, z1 = 1;
+  if (!bounds.IsVoid()) bounds.Get(x0, y0, z0, x1, y1, z1);
+  auto spread = [](uint64_t v) {  // 10 bits, two zeros after each
+    v &= 0x3ff;
+    v = (v | v << 16) & 0x30000ff;
+    v = (v | v << 8) & 0x300f00f;
+    v = (v | v << 4) & 0x30c30c3;
+    return (v | v << 2) & 0x9249249;
+  };
+  auto cell = [](double v, double lo, double hi) { return uint64_t(std::clamp((v - lo) / std::max(hi - lo, 1e-12), 0.0, 1.0) * 1023); };
+  std::vector<std::pair<uint64_t, int>> order;
+  order.reserve(points.size());
+  for (const auto& [c, index] : points)
+    order.emplace_back(spread(cell(c.X(), x0, x1)) | spread(cell(c.Y(), y0, y1)) << 1 | spread(cell(c.Z(), z0, z1)) << 2, index);
+  std::sort(order.begin(), order.end());
+  return order;
+}
+}
+
+namespace {
+std::atomic<int>& stockWireframeCount() {
+  static std::atomic<int> count{0};
+  return count;
+}
+}  // namespace
+
+int BodyShape::stockWireframes() { return stockWireframeCount(); }
+
+bool BodyShape::setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge) {
+  if (on == m_hiddenLine && (!on || (face.IsEqual(m_hiddenFace) && edge.IsEqual(m_hiddenEdge)))) return false;
+  m_hiddenLine = on;
+  m_hiddenFace = face;
+  m_hiddenEdge = edge;
+  return true;
+}
+
+HoverLines& HoverLines::current() {
+  static HoverLines lines;
+  return lines;
+}
+
+namespace {
+// A curve body's lines at one width, coloured by the highlight it is drawn with: the hover's core and rim (HoverLines).
+class HoverLinesPrs : public AIS_InteractiveObject {
+ public:
+  HoverLinesPrs(Handle(Graphic3d_ArrayOfSegments) segments, float width) : m_segments(std::move(segments)), m_width(width) {}
+ protected:
+  void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, const Standard_Integer) override {
+    Handle(Graphic3d_Group) g = prs->NewGroup();
+    g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(Quantity_NOC_WHITE, Aspect_TOL_SOLID, m_width));
+    g->AddPrimitiveArray(m_segments);
+  }
+  void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
+ private:
+  Handle(Graphic3d_ArrayOfSegments) m_segments;
+  float m_width;
+};
+
+// Draws `prs` as the owner's hover draws its own (same layer, placement and immediate list), coloured by `style`.
+void hoverAlike(const Handle(PrsMgr_PresentationManager)& pm, const Handle(PrsMgr_PresentableObject)& prs, const Handle(Prs3d_Drawer)& style,
+                const Handle(Prs3d_Drawer)& hover, const Handle(SelectMgr_SelectableObject)& selectable, const gp_Trsf& placement) {
+  prs->SetZLayer(selectable->ZLayer());
+  prs->SetTransformPersistence(selectable->TransformPersistence());
+  prs->SetLocalTransformation(placement);
+  pm->Color(prs, style, 0, selectable, hover->ZLayer() != Graphic3d_ZLayerId_UNKNOWN ? hover->ZLayer() : selectable->ZLayer());
+}
+}  // namespace
 
 void SubShapeOwner::HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) {
   if(pm->IsImmediateModeOn()) {
     if(curve && curve->size()>1 && myPrsSh.IsNull()) myPrsSh=new CurvePresentation(myShape,curve);
+    // On a light background an edge's white hover gets a darker rim under it, drawn first (HoverLines).
+    if(const auto& rim=HoverLines::current().rim; !rim.IsNull() && HasSelectable() && !myShape.IsNull() && myShape.ShapeType()==TopAbs_EDGE) {
+      if(m_rim.IsNull()) {
+        Handle(StdSelect_Shape) wide=curve && curve->size()>1 ? Handle(StdSelect_Shape)(new CurvePresentation(myShape,curve)) : new StdSelect_Shape(myShape);
+        wide->Attributes()->SetLink(rim);
+        m_rim=wide;
+      }
+      hoverAlike(pm,m_rim,rim,style,Selectable(),Location());
+    }
     StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
   }
 }
 
 void SubShapeOwner::Unhilight(const Handle(PrsMgr_PresentationManager)& pm, const Standard_Integer mode) {
   if (!myPrsSh.IsNull()) StdSelect_BRepOwner::Unhilight(pm, mode);  // with no presentation the base un-highlights the whole body
+  if (!m_rim.IsNull()) pm->Unhighlight(m_rim);
 }
 
 void SubHighlight::Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, const Standard_Integer) {
+  const GlowStyle& s = m_style;
+  auto translucent = [](const Handle(Graphic3d_Aspects)& aspect, const Quantity_Color& color, float alpha) {
+    aspect->SetInteriorColor(Quantity_ColorRGBA(color, alpha));
+    if (alpha < 1) aspect->SetAlphaMode(Graphic3d_AlphaMode_Blend);  // else drawn in order with the opaque ones, under the core
+    return aspect;
+  };
   if (!m_triangles.empty()) {
     Handle(Graphic3d_AspectFillArea3d) fill = new Graphic3d_AspectFillArea3d();
     fill->SetInteriorStyle(Aspect_IS_SOLID);
-    fill->SetInteriorColor(Quantity_ColorRGBA(m_color, fillAlpha));
-    fill->SetAlphaMode(Graphic3d_AlphaMode_Blend);
     fill->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // a flat tint: the arrays carry no normals
     Handle(Graphic3d_Group) g = prs->NewGroup();
-    g->SetGroupPrimitivesAspect(fill);
+    g->SetGroupPrimitivesAspect(translucent(fill, s.fill, s.fillAlpha));
     for (const auto& a : m_triangles) g->AddPrimitiveArray(a);
-    if (glow) {
-      Handle(Graphic3d_AspectFillArea3d) white = new Graphic3d_AspectFillArea3d(*fill);
-      white->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.12f));
-      auto group=prs->NewGroup();group->SetGroupPrimitivesAspect(white);
-      for(const auto& a:m_triangles) group->AddPrimitiveArray(a);
-    }
   }
-  if (!m_segments.empty()) {
-    if (glow) {
-      auto halo=prs->NewGroup();Handle(Graphic3d_AspectLine3d) aspect=new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,6);
-      aspect->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.35f));aspect->SetAlphaMode(Graphic3d_AlphaMode_Blend);halo->SetGroupPrimitivesAspect(aspect);
-      for(const auto& a:m_segments) halo->AddPrimitiveArray(a);
-    }
+  if (!m_segments.empty()) {  // the core over a wider halo
+    Handle(Graphic3d_Group) halo = prs->NewGroup();
+    halo->SetGroupPrimitivesAspect(translucent(new Graphic3d_AspectLine3d(s.halo, Aspect_TOL_SOLID, s.haloWidth), s.halo, s.haloAlpha));
+    for (const auto& a : m_segments) halo->AddPrimitiveArray(a);
     Handle(Graphic3d_Group) g = prs->NewGroup();
-    g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(m_color, Aspect_TOL_SOLID, 3.0));
+    g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(s.edge, Aspect_TOL_SOLID, s.edgeWidth));
     for (const auto& a : m_segments) g->AddPrimitiveArray(a);
-    if (glow) {
-      auto white=prs->NewGroup();white->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,1.5));
-      for(const auto& a:m_segments) white->AddPrimitiveArray(a);
-    }
   }
   if (!m_points.empty()) {
-    auto halo=prs->NewGroup();Handle(Graphic3d_AspectMarker3d) glow=new Graphic3d_AspectMarker3d(Aspect_TOM_BALL,Quantity_NOC_WHITE,6.0);
-    glow->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.55f));glow->SetAlphaMode(Graphic3d_AlphaMode_Blend);halo->SetGroupPrimitivesAspect(glow);
-    for(const auto& a:m_points) halo->AddPrimitiveArray(a);
+    Handle(Graphic3d_Group) halo = prs->NewGroup();
+    halo->SetGroupPrimitivesAspect(translucent(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, s.halo, s.pointHalo), s.halo, s.haloAlpha));
+    for (const auto& a : m_points) halo->AddPrimitiveArray(a);
     Handle(Graphic3d_Group) g = prs->NewGroup();
-    g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, m_color, 2.5));
+    g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, s.edge, s.point));
     for (const auto& a : m_points) g->AddPrimitiveArray(a);
   }
 }
@@ -198,6 +414,43 @@ class NavigationTriangles : public Select3D_SensitivePrimitiveArray {
 };
 }
 
+void BodyPrs::buildSegmentRuns() {
+  const size_t n = drawingSegments.size() / 2;
+  segmentOrder.clear();
+  segmentRuns.clear();
+  if (n == 0) return;
+  Bnd_Box all;
+  for (const gp_Pnt& p : drawingSegments) all.Add(p);
+  const gp_Pnt lo = all.CornerMin(), hi = all.CornerMax();
+  auto spread = [](uint32_t v) {  // 10 bits to every third bit
+    v &= 0x3ff;
+    v = (v | (v << 16)) & 0x030000ff;
+    v = (v | (v << 8)) & 0x0300f00f;
+    v = (v | (v << 4)) & 0x030c30c3;
+    return (v | (v << 2)) & 0x09249249;
+  };
+  auto cell = [](double v, double a, double b) { return b - a > 1e-12 ? static_cast<uint32_t>(std::clamp((v - a) / (b - a), 0.0, 1.0) * 1023) : 0u; };
+  std::vector<std::pair<uint32_t, uint32_t>> keys(n);
+  for (size_t i = 0; i < n; ++i) {
+    const gp_Pnt m((drawingSegments[2 * i].XYZ() + drawingSegments[2 * i + 1].XYZ()) / 2);
+    keys[i] = {spread(cell(m.X(), lo.X(), hi.X())) | spread(cell(m.Y(), lo.Y(), hi.Y())) << 1 | spread(cell(m.Z(), lo.Z(), hi.Z())) << 2, static_cast<uint32_t>(i)};
+  }
+  std::sort(keys.begin(), keys.end());
+  segmentOrder.reserve(n);
+  for (const auto& k : keys) segmentOrder.push_back(k.second);
+  constexpr size_t kRun = 256;
+  for (size_t first = 0; first < n; first += kRun) {
+    SegmentRun run;
+    run.first = first;
+    run.count = std::min(kRun, n - first);
+    for (size_t k = first; k < first + run.count; ++k) {
+      run.box.Add(drawingSegments[2 * segmentOrder[k]]);
+      run.box.Add(drawingSegments[2 * segmentOrder[k] + 1]);
+    }
+    segmentRuns.push_back(run);
+  }
+}
+
 opad::MeshingReport BodyPrs::meshForDisplay(const TopoDS_Shape& shape, double deflection) {
   const auto report = opad::mesh_shape(shape, deflection);
   opad::straighten_ruled_faces(shape);  // extruded walls stay upright seen along the extrusion (TODO 10 A1)
@@ -209,7 +462,7 @@ size_t BodyPrs::triangleCount() const {
   return size_t(triangles->EdgeNumber() > 0 ? triangles->EdgeNumber() : triangles->VertexNumber()) / 3;
 }
 
-std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly,
+std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly, bool drawing,
                                         std::shared_ptr<const opad::FaceColors> faceColors) {
   auto p = std::make_shared<BodyPrs>();
   p->box = box;
@@ -326,20 +579,27 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     p->circles.emplace(fit.index,Circle{rim,fit.circle.Location(),sensitive,fit.index,fit.circle.Radius(),fit.segments,fit.edges});
   }
   if (big) {
-    // Each edge's sensitive (the Edge filter wraps them with owners) and the whole body's: its triangles (the
-    // navigation set) and its free edges' segments in one set (the Body filter).
+    // Each edge's sensitive (the Edge filter wraps them with owners; a drawing layer's in groups) and the whole body's:
+    // its triangles (the navigation set) and its free edges' segments in one set (the Body filter).
     TopTools_IndexedDataMapOfShapeListOfShape faces;
     TopExp::MapShapesAndAncestors(meshedProto, TopAbs_EDGE, TopAbs_FACE, faces);
-    p->edgeSensitives.resize(size_t(edges.Extent()));
+    if (drawing) {
+      p->buildEdgeGroups(edges, box);
+      TopTools_IndexedMapOfShape vertices;
+      TopExp::MapShapes(meshedProto, TopAbs_VERTEX, vertices);
+      p->buildVertexGroups(vertices, box);
+    } else p->edgeSensitives.resize(size_t(edges.Extent()));
     std::vector<gp_Pnt> loose;
     for (const auto& [index, points] : p->curves) {
       if (points->size() < 2) continue;
-      TColgp_Array1OfPnt array(1, int(points->size()));
-      for (int j = 1; j <= array.Length(); ++j) array(j) = (*points)[size_t(j - 1)];
-      Handle(Select3D_SensitiveCurve) sensitive = new Select3D_SensitiveCurve(nullptr, array);
-      sensitive->BVH();
-      sensitive->BoundingBox();  // computed once and kept: the selector asks for it on the UI thread otherwise
-      p->edgeSensitives[size_t(index)] = sensitive;
+      if (!drawing) {
+        TColgp_Array1OfPnt array(1, int(points->size()));
+        for (int j = 1; j <= array.Length(); ++j) array(j) = (*points)[size_t(j - 1)];
+        Handle(Select3D_SensitiveCurve) sensitive = new Select3D_SensitiveCurve(nullptr, array);
+        sensitive->BVH();
+        sensitive->BoundingBox();  // computed once and kept: the selector asks for it on the UI thread otherwise
+        p->edgeSensitives[size_t(index)] = sensitive;
+      }
       const TopoDS_Shape& edge = edges(index + 1);
       if (!faces.Contains(edge) || faces.FindFromKey(edge).IsEmpty())
         for (size_t j = 1; j < points->size(); ++j) { loose.push_back((*points)[j - 1]); loose.push_back((*points)[j]); }
@@ -350,6 +610,33 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
       set->BVH();
       p->whole.push_back(set);
     }
+  } else if (!p->navigation.IsNull()) {
+    // Any other meshed body picks as a whole (the Body filter, which every display activates) through the same set: OCCT
+    // builds a triangulation sensitive and its BVH per face on the UI thread, 50-90 ms for a heavy Engine part (UI-40).
+    // A face without a mesh or a vertex of its own keeps the stock path.
+    bool meshed = !TopExp_Explorer(meshedProto, TopAbs_VERTEX, TopAbs_EDGE).More();
+    for (TopExp_Explorer f(meshedProto, TopAbs_FACE); f.More() && meshed; f.Next()) {
+      TopLoc_Location at;
+      meshed = !BRep_Tool::Triangulation(TopoDS::Face(f.Current()), at).IsNull();
+    }
+    if (meshed) {
+      TopTools_IndexedDataMapOfShapeListOfShape faces;
+      TopExp::MapShapesAndAncestors(meshedProto, TopAbs_EDGE, TopAbs_FACE, faces);
+      const double span = box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent());
+      std::vector<gp_Pnt> loose;
+      for (int i = 1; i <= edges.Extent(); ++i) {
+        const TopoDS_Edge& edge = TopoDS::Edge(edges(i));
+        if (BRep_Tool::Degenerated(edge) || (faces.Contains(edge) && !faces.FindFromKey(edge).IsEmpty())) continue;
+        const auto samples = curveSamples(edge, std::max(1e-6, span * 1e-5));
+        for (size_t j = 1; j < samples.size(); ++j) { loose.push_back(samples[j - 1]); loose.push_back(samples[j]); }
+      }
+      p->whole.push_back(p->navigation);
+      if (!loose.empty()) {
+        Handle(SegmentSet) set = new SegmentSet(std::move(loose));
+        set->BVH();
+        p->whole.push_back(set);
+      }
+    }
   }
   p->closed = false;
   for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next()) {
@@ -357,22 +644,27 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     if (!BRep_Tool::IsClosed(e.Current())) { p->closed = false; break; }
   }
   if (meshedProto.ShapeType() > TopAbs_SHELL) p->closed = false;  // a bare face or lower
-  if (!p->triangles.IsNull()) {  // lines beside faces (a drawing layer's lines next to its text and fills) are drawn too
+  if(!p->triangles.IsNull()) {  // the wireframe's edges of no face, sampled as the picking's are
+    TopTools_IndexedDataMapOfShapeListOfShape faces;
+    TopExp::MapShapesAndAncestors(meshedProto, TopAbs_EDGE, TopAbs_FACE, faces);
     const double span = box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent());
     std::vector<gp_Pnt> free;
-    for (TopExp_Explorer e(meshedProto, TopAbs_EDGE, TopAbs_FACE); e.More(); e.Next()) {
-      if (BRep_Tool::Degenerated(TopoDS::Edge(e.Current()))) continue;
-      const auto samples = curveSamples(TopoDS::Edge(e.Current()), std::max(1e-6, span * 1e-5));
-      for (size_t j = 1; j < samples.size(); ++j) free.insert(free.end(), {samples[j - 1], samples[j]});
+    for (int i = 1; i <= edges.Extent(); ++i) {
+      const TopoDS_Edge& edge = TopoDS::Edge(edges(i));
+      if (BRep_Tool::Degenerated(edge) || (faces.Contains(edge) && !faces.FindFromKey(edge).IsEmpty())) continue;
+      const auto found = p->curves.find(i - 1);
+      const auto samples = found != p->curves.end() ? *found->second : curveSamples(edge, std::max(1e-6, span * 1e-5));
+      for (size_t j = 1; j < samples.size(); ++j) { free.push_back(samples[j - 1]); free.push_back(samples[j]); }
     }
     if (!free.empty()) {
       p->freeEdges = new Graphic3d_ArrayOfSegments(int(free.size()));
-      for (const auto& point : free) p->freeEdges->AddVertex(point);
+      for (const gp_Pnt& point : free) p->freeEdges->AddVertex(point);
     }
   }
   if(p->triangles.IsNull() && !p->drawingSegments.empty()) {
     p->boundaries=new Graphic3d_ArrayOfSegments(int(p->drawingSegments.size()));
     for(const auto& point:p->drawingSegments) p->boundaries->AddVertex(point);
+    p->buildSegmentRuns();
   }
   std::vector<gp_Pnt> loose;
   for(TopExp_Explorer vertex(meshedProto,TopAbs_VERTEX,TopAbs_EDGE);vertex.More();vertex.Next())
@@ -440,14 +732,42 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     }
     return;
   }
+  if (mode == AIS_WireFrame && shown && !shown->triangles.IsNull()) {  // the worker's edges (UI-48): StdPrs_WFShape took 0.2 s a body
+    for (const auto& lines : {shown->boundaries, m_prs ? m_prs->freeEdges : Handle(Graphic3d_ArrayOfSegments)()})
+      if (!lines.IsNull()) { auto g = prs->NewGroup(); g->SetGroupPrimitivesAspect(myDrawer->WireAspect()->Aspect()); g->AddPrimitiveArray(lines); }
+    if (m_prs && !m_prs->loosePoints.IsNull()) { auto g = prs->NewGroup(); g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect()); g->AddPrimitiveArray(m_prs->loosePoints); }
+    return;
+  }
   if (mode != AIS_Shaded || !shown || shown->triangles.IsNull()) {
-    AIS_Shape::Compute(mgr, prs, mode);  // wireframe/HLR, or nothing precomputed: the stock path
+    if (mode == AIS_WireFrame) ++stockWireframeCount();
+    AIS_Shape::Compute(mgr, prs, mode);  // HLR, or nothing precomputed: the stock path
     return;
   }
   // Min/max are supplied from the worker's box; evaluating them here walks every vertex on the UI thread.
   const bool haveBox = !shown->box.IsVoid();
   double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
   if (haveBox) shown->box.Get(x0, y0, z0, x1, y1, z1);
+  Handle(Graphic3d_AspectFillArea3d) hidden;  // Hidden line (UI-48): every face in the background, painted ones too
+  if (m_hiddenLine) {  // a copy: the looks recolour the body's own aspect in place, which must not show here
+    Handle(Graphic3d_AspectFillArea3d) face = hidden = new Graphic3d_AspectFillArea3d(*myDrawer->ShadingAspect()->Aspect());
+    Graphic3d_MaterialAspect material = face->FrontMaterial();
+    material.SetColor(m_hiddenFace);
+    material.SetTransparency(0);
+    face->SetFrontMaterial(material);
+    face->SetBackMaterial(material);
+    face->SetInteriorColor(m_hiddenFace);
+    face->SetAlphaMode(Graphic3d_AlphaMode_Opaque);
+    face->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    face->SetDrawSilhouette(Standard_True);
+    face->SetEdgeColor(m_hiddenEdge);
+    face->SetEdgeWidth(myDrawer->FaceBoundaryAspect()->Aspect()->Width());
+    // Further back than shaded: every edge is drawn over these faces, also in a later layer (hidden edges visible), where
+    // the usual offset left a rim seen at a slant z-fighting with them.
+    Standard_Integer offsetMode = Aspect_POM_Fill;
+    Standard_ShortReal factor = 1, units = 1;
+    face->PolygonOffsets(offsetMode, factor, units);
+    face->SetPolygonOffsets(Aspect_POM_Fill, factor + 2.0f, units + 8.0f);
+  }
   // Ray intersections do not use raster depth offsets. Separate only the render
   // skin along its normals; the analytic shape, selection and exports stay exact.
   auto biased=[this](const Handle(Graphic3d_ArrayOfTriangles)& src) {
@@ -470,7 +790,8 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     g->AddPrimitiveArray(biased(triangles), !haveBox);
     if (haveBox) g->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
   };
-  if (shown->painted.empty()) fill(shown->triangles, myDrawer->ShadingAspect()->Aspect());
+  if (!hidden.IsNull()) fill(shown->triangles, hidden);
+  else if (shown->painted.empty()) fill(shown->triangles, myDrawer->ShadingAspect()->Aspect());
   else {
     // The body's colour where the file gave a face none of its own, each face colour in its own group with the same look.
     if (!shown->own.IsNull()) fill(shown->own, myDrawer->ShadingAspect()->Aspect());
@@ -493,13 +814,33 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
 namespace {
 // Whole-body selection uses a lightweight overlay of the prepared arrays, so
 // the original material remains visible beneath its tint and white glow.
+// A curve body (sketch wire, drawing layer) hovered as a whole: its lines as wide as a hovered edge's, in white over the
+// rim on a light background (HoverLines); the stock hover alone kept the body's thin lines.
 class BodySelectionOwner : public StdSelect_BRepOwner {
  public:
   BodySelectionOwner(const TopoDS_Shape& shape,const Handle(SelectMgr_SelectableObject)& body,int priority)
       : StdSelect_BRepOwner(shape,body,priority,false) {}
   void HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm,const Handle(Prs3d_Drawer)& style,Standard_Integer mode) override {
-    if(pm->IsImmediateModeOn()) StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
+    if(!pm->IsImmediateModeOn()) return;
+    const auto body=Handle(BodyShape)::DownCast(Selectable());
+    if(body.IsNull() || !body->curveOnly()) return StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
+    const HoverLines& look=HoverLines::current();
+    if(m_core.IsNull()) m_core=new HoverLinesPrs(body->prs()->boundaries,look.coreWidth);
+    if(!look.rim.IsNull()) {
+      const float width=float(look.rim->WireAspect()->Aspect()->Width());
+      if(m_rim.IsNull() || m_rimWidth!=width) m_rim=new HoverLinesPrs(body->prs()->boundaries,m_rimWidth=width);
+      hoverAlike(pm,m_rim,look.rim,style,body,body->Transformation());
+    }
+    StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
+    hoverAlike(pm,m_core,style,style,body,body->Transformation());
   }
+  void Unhilight(const Handle(PrsMgr_PresentationManager)& pm,const Standard_Integer mode) override {
+    StdSelect_BRepOwner::Unhilight(pm,mode);
+    for(const auto& prs:{m_rim,m_core}) if(!prs.IsNull()) pm->Unhighlight(prs);
+  }
+ private:
+  Handle(PrsMgr_PresentableObject) m_rim,m_core;
+  float m_rimWidth=0;
 };
 // Facets remain compact triangulations in the document. Construct an analytic
 // triangle/segment/vertex only when that primitive is actually picked.
@@ -572,6 +913,18 @@ void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, c
       selection->Add(new SharedSensitive(circleOwners.at(index),circle.sensitive));
     return;
   }
+  if(mode==AIS_Shape::SelectionMode(TopAbs_EDGE) && groupedEdges()) {  // a big drawing layer: one sensitive per group (UI-42)
+    for(const auto& group:m_prs->edgeGroups) selection->Add(new GroupSensitive(this,TopAbs_EDGE,group));
+    return;
+  }
+  if(mode==AIS_Shape::SelectionMode(TopAbs_VERTEX) && groupedVertices()) {  // its vertices too, and the circles' centres
+    for(const auto& group:m_prs->vertexGroups) selection->Add(new GroupSensitive(this,TopAbs_VERTEX,group));
+    for(const auto& [index,circle]:m_prs->circles) {
+      Handle(CircleOwner) owner=new CircleOwner(circle,this,circle.canonical<0?index:circle.canonical);
+      selection->Add(new SharedSensitive(owner,circle.sensitive));
+    }
+    return;
+  }
   if(m_prs && !m_prs->curves.empty() && mode==AIS_Shape::SelectionMode(TopAbs_EDGE)) {
     TopTools_IndexedMapOfShape edges;TopExp::MapShapes(myshape,TopAbs_EDGE,edges);
     for(const auto& [index,points]:m_prs->curves) {
@@ -586,7 +939,7 @@ void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, c
     }
     return;
   }
-  if (mode == 0 && m_prs && !m_prs->whole.empty()) {  // a big body: its picking was built on the worker
+  if (mode == 0 && m_prs && !m_prs->whole.empty()) {  // a meshed body: its picking was built on the worker
     Handle(SelectMgr_EntityOwner) owner=new BodySelectionOwner(myshape,this,5);
     for (const auto& sensitive : m_prs->whole) selection->Add(new SharedSensitive(owner,sensitive));
     return;
@@ -622,6 +975,95 @@ void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, c
       for(TopExp_Explorer vertex(circle.edge,TopAbs_VERTEX);vertex.More();vertex.Next())
         selection->Add(new Select3D_SensitivePoint(owner,BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current()))));
     }
+}
+
+// The edges in groups of kEdgeGroup lying near each other (the Morton order of their centres in the body's box), so a
+// group's box stays small and a pick tests few of them.
+void BodyPrs::buildEdgeGroups(const TopTools_IndexedMapOfShape& edges, const Bnd_Box& bounds) {
+  edgeShapes.reserve(size_t(edges.Extent()));
+  for (int i = 1; i <= edges.Extent(); ++i) edgeShapes.push_back(edges(i));
+  std::vector<std::pair<gp_XYZ, int>> centres;
+  for (const auto& [index, points] : curves)
+    if (points->size() >= 2) centres.emplace_back((points->front().XYZ() + (*points)[points->size() / 2].XYZ()) / 2, index);
+  const auto order = mortonOrder(centres, bounds);
+  for (size_t from = 0; from < order.size(); from += kEdgeGroup) {
+    std::vector<gp_Pnt> pairs;
+    std::vector<int> edgeOf;
+    std::vector<EdgeGroupSet::Edge> group;
+    for (size_t k = from; k < std::min(order.size(), from + kEdgeGroup); ++k) {
+      const auto& points = *curves.at(order[k].second);
+      EdgeGroupSet::Edge e{order[k].second, int(pairs.size() / 2), int(points.size() - 1), {}};
+      for (size_t j = 1; j < points.size(); ++j) {
+        pairs.push_back(points[j - 1]);
+        pairs.push_back(points[j]);
+        edgeOf.push_back(int(group.size()));
+      }
+      for (const auto& q : points) e.box.Add(SelectMgr_Vec3(q.X(), q.Y(), q.Z()));
+      group.push_back(e);
+    }
+    Handle(EdgeGroupSet) set = new EdgeGroupSet(std::move(pairs), std::move(edgeOf), std::move(group));
+    set->BVH();
+    edgeGroups.push_back(set);
+  }
+}
+
+// The same for the vertices: kEdgeGroup points a group, by the Morton order of the points.
+void BodyPrs::buildVertexGroups(const TopTools_IndexedMapOfShape& vertices, const Bnd_Box& bounds) {
+  vertexShapes.reserve(size_t(vertices.Extent()));
+  std::vector<std::pair<gp_XYZ, int>> points;
+  points.reserve(size_t(vertices.Extent()));
+  for (int i = 1; i <= vertices.Extent(); ++i) {
+    vertexShapes.push_back(vertices(i));
+    points.emplace_back(BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))).XYZ(), i - 1);
+  }
+  const auto order = mortonOrder(points, bounds);
+  for (size_t from = 0; from < order.size(); from += kEdgeGroup) {
+    std::vector<gp_Pnt> group;
+    std::vector<int> ordinals;
+    for (size_t k = from; k < std::min(order.size(), from + kEdgeGroup); ++k) {
+      group.emplace_back(points[size_t(order[k].second)].first);
+      ordinals.push_back(order[k].second);
+    }
+    Handle(VertexGroupSet) set = new VertexGroupSet(std::move(group), std::move(ordinals));
+    set->BVH();
+    vertexGroups.push_back(set);
+  }
+}
+
+GroupSensitive::GroupSensitive(BodyShape* body, TopAbs_ShapeEnum type, const Handle(Select3D_SensitiveEntity)& group)
+    : Select3D_SensitiveEntity(body->groupOwner(type, dynamic_cast<PickGroup&>(*group).firstOrdinal())), m_body(body), m_type(type), m_group(group) {
+  SetSensitivityFactor(group->SensitivityFactor());
+}
+
+Standard_Boolean GroupSensitive::Matches(SelectBasics_SelectingVolumeManager& mgr, SelectBasics_PickResult& result) {
+  m_hits.clear();
+  auto& group = dynamic_cast<PickGroup&>(*m_group);
+  if (mgr.GetActiveSelectionType() == SelectMgr_SelectionType_Point) {
+    const int index = group.pick(mgr, result);
+    if (index < 0) return false;
+    Set(owner(index));  // the selector takes the owner after this
+    return true;
+  }
+  group.take(mgr, m_hits);
+  if (m_hits.empty()) return false;
+  Set(owner(m_hits.front()));
+  return true;
+}
+
+Handle(SubShapeOwner) BodyShape::groupOwner(TopAbs_ShapeEnum type, int index) {
+  const bool edge = type == TopAbs_EDGE;
+  if (!m_prs) return nullptr;
+  const auto& shapes = edge ? m_prs->edgeShapes : m_prs->vertexShapes;
+  if (index < 0 || size_t(index) >= shapes.size()) return nullptr;
+  auto& owners = edge ? m_edgeOwners : m_vertexOwners;
+  if (owners.empty()) owners.resize(shapes.size());
+  Handle(SubShapeOwner)& owner = owners[size_t(index)];
+  if (owner.IsNull()) {
+    owner = new SubShapeOwner(shapes[size_t(index)], this, edge ? 7 : 8, index);  // OCCT's priorities for edges and vertices
+    if (edge)
+      if (const auto curve = m_prs->curves.find(index); curve != m_prs->curves.end()) owner->curve = curve->second;
+  }
+  return owner;
 }
 
 void NavigationShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, Standard_Integer) {

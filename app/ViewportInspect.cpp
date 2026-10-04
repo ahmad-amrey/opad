@@ -10,6 +10,7 @@
 #include <Prs3d_ShadingAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <Precision.hxx>
+#include <gp.hxx>
 #include <QFontMetricsF>
 #include <algorithm>
 #include <cmath>
@@ -18,10 +19,12 @@ namespace {
 Quantity_Color color(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
 gp_Pnt point(const opad::json& j) { return gp_Pnt(j[0].get<double>(), j[1].get<double>(), j[2].get<double>()); }
 bool samePoint(const gp_Pnt& a, const gp_Pnt& b) { return a.SquareDistance(b) <= 1e-14; }
-int componentCount(const gp_Pnt& a, const gp_Pnt& b) {
+gp_Vec frameDelta(const gp_Pnt& a, const gp_Pnt& b, const gp_Trsf& frame) { return gp_Vec(a, b).Transformed(frame.Inverted()); }
+int componentCount(const gp_Pnt& a, const gp_Pnt& b, const gp_Trsf& frame = gp_Trsf()) {
+  const gp_Vec d = frameDelta(a, b, frame);
   int count = 0;
   for (int axis = 1; axis <= 3; ++axis)
-    if (std::abs(b.Coord(axis) - a.Coord(axis)) > Precision::Confusion()) ++count;
+    if (std::abs(d.Coord(axis)) > Precision::Confusion()) ++count;
   return count;
 }
 
@@ -144,10 +147,20 @@ void Viewport::setMeasurementComponents(bool on) {
   redrawScene();
 }
 
+void Viewport::setMeasurementFrame(const gp_Trsf& toWorld) {
+  const gp_Mat was = m_measureFrame.VectorialPart(), now = toWorld.VectorialPart();  // only the axes count
+  bool same = true;
+  for (int r = 1; r <= 3; ++r) for (int c = 1; c <= 3; ++c) same = same && std::abs(was(r, c) - now(r, c)) < 1e-12;
+  m_measureFrame = toWorld;
+  if (same) return;
+  refreshMeasurement(true);
+  redrawScene();
+}
+
 bool Viewport::measurementHasMultipleAxes() const {
   return !m_measurement.is_null() && m_measurement.value("kind", "distance") == "distance"
       && m_measurement.contains("point_a") && m_measurement.contains("point_b")
-      && componentCount(point(m_measurement["point_a"]), point(m_measurement["point_b"])) > 1;
+      && componentCount(point(m_measurement["point_a"]), point(m_measurement["point_b"]), m_measureFrame) > 1;
 }
 
 int Viewport::measurementAnchorAt(const QPointF& position) const {
@@ -264,7 +277,9 @@ void Viewport::refreshMeasurement(bool force) {
   if (kind == "distance" || kind == "radius") {
     if (!r.contains("point_a") || !r.contains("point_b")) continue;
     const gp_Pnt a = point(r["point_a"]), b = point(r["point_b"]);
-    const int components = componentCount(a, b);
+    const gp_Trsf frame = r == m_measurement ? m_measureFrame : gp_Trsf();  // pinned ones keep world axes
+    const gp_Vec local = frameDelta(a, b, frame);
+    const int components = componentCount(a, b, frame);
     const bool aligned = kind == "distance" && components == 1;
     graphic->endpoints = {a, b};
     if (r == m_measurement) for (const auto& anchor : m_measureAnchors) {
@@ -287,26 +302,37 @@ void Viewport::refreshMeasurement(bool force) {
       if (clearance(normal) < 8 && clearance(-normal) > clearance(normal)) normal = -normal;
       arrow(a, b, m_tokens.fg, kind == "distance");
       beside(gp_Pnt((a.X()+b.X())/2, (a.Y()+b.Y())/2, (a.Z()+b.Z())/2),
-            (kind == "distance" ? tr("Distance %1") : tr("R %1")).arg(units::format(units::Kind::Length, r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
+            (kind == "radius" ? tr("R %1") : r.value("mode", "") == "center" ? tr("Centre to centre %1") : r.value("mode", "") == "max" ? tr("Maximum %1") : tr("Distance %1"))
+                .arg(units::format(units::Kind::Length, r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
     }
     label(a, kind == "distance" ? (a.Distance(b) < 1e-9 ? tr("1 = 2") : tr("1")) : tr("Center"), m_tokens.fg2, -16, -19);
     if (a.Distance(b) > 1e-9) label(b, kind == "distance" ? tr("2") : tr("Radius"), m_tokens.fg2, 16, -19);
     if (kind == "distance" && (aligned || (components > 1 && m_measureComponents))) {
       gp_Pnt start = a;
       for (int i = 0; i < 3; ++i) {
-        gp_Pnt end = start;
-        end.SetCoord(i + 1, b.Coord(i + 1));
-        const double delta = b.Coord(i + 1) - a.Coord(i + 1);
+        const double delta = local.Coord(i + 1);
+        gp_Pnt end = start.Translated(gp_Vec(i == 0 ? gp::DX() : i == 1 ? gp::DY() : gp::DZ()).Transformed(frame) * delta);
+        if (i == 2) end = b;  // exactly
         // Zero components stay in the result table, without extra viewport labels.
         if (std::abs(delta) <= Precision::Confusion()) { start = end; continue; }
         arrow(start, end, axes[i]);
         const QString value = (delta > 0 && units::number(units::Kind::Length, delta) != units::number(units::Kind::Length, 0) ? "+" : "") + units::format(units::Kind::Length, delta);
         const QPointF normal = screenNormal(start, end);
-        beside(gp_Pnt((start.X()+end.X())/2, (start.Y()+end.Y())/2, (start.Z()+end.Z())/2),
-              QString("Δ%1 %2").arg(QChar("XYZ"[i])).arg(value), axes[i], -normal, 12);
+        // Along one axis the axis label is the measurement's; one that is not the shortest says which it is (UI-144).
+        const std::string mode = r.value("mode", "");
+        const QString caption = aligned && (mode == "center" || mode == "max")
+            ? (mode == "center" ? tr("Centre to centre %1") : tr("Maximum %1")).arg(units::format(units::Kind::Length, r["value"].get<double>()))
+            : QString("Δ%1 %2").arg(QChar("XYZ"[i])).arg(value);
+        beside(gp_Pnt((start.X()+end.X())/2, (start.Y()+end.Y())/2, (start.Z()+end.Z())/2), caption, axes[i], -normal, 12);
         start = end;
       }
     }
+  } else if ((kind == "length" || kind == "area") && r.contains("point") && r.contains("value")) {  // UI-144: a label at the edge's middle or the face's centroid
+    const gp_Pnt at = point(r["point"]);
+    graphic->endpoints = {at};
+    if (kind == "length" && r.contains("start") && !r.value("closed", false)) graphic->snapPoints = {point(r["start"]), point(r["end"])};
+    label(at, (kind == "length" ? tr("L %1").arg(units::format(units::Kind::Length, r["value"].get<double>()))
+                                : tr("A %1").arg(units::format(units::Kind::Area, r["value"].get<double>()))), m_tokens.fg, 0, 26);
   } else if (kind == "bbox") {
     const gp_Pnt lo = point(r["min"]), hi = point(r["max"]);
     for (int mask = 0; mask < 8; ++mask) {

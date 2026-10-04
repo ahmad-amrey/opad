@@ -268,9 +268,8 @@ void AppDocument::storeViewerCache(JobRunner* jobs) {
   options.center_drawing = m_cacheCenter;
   const double readMs = m_cacheReadMs;
   const std::filesystem::path file(source.toStdU16String());
-  jobs->backgroundNext();
   jobs->async(tr("Remembering %1 for faster opening").arg(QFileInfo(source).fileName()), [copy, file, options, readMs](Progress p) {
     const opad::json kept = opad::viewer_cache_store(*copy, file, options, readMs, [p] { return p.cancelled(); });
     if (trace::enabled()) trace::log(QString("viewer cache: %1").arg(QString::fromStdString(kept.dump())));
-  });
+  }, {}, JobKind::Background);
 }

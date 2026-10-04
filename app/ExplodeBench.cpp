@@ -669,6 +669,9 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                       expected = model + along;
                       if (std::abs(along) >= 5) w.sectionFromFace(face);
                     }
+                    QElapsedTimer inspecting;  // the face is inspected on a worker (UI-51): the plane is set when it answers
+                    inspecting.start();
+                    while (w.m_sectionJob && inspecting.elapsed() < 10000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
                     const opad::Vec3 o = w.m_section->origin();
                     const double cut = o[0] * normal[0] + o[1] * normal[1] + o[2] * normal[2];
                     require(std::abs(along) >= 5 && w.m_section->enabled() && std::abs(cut - expected) < 0.01 * std::abs(along),

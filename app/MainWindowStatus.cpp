@@ -75,6 +75,20 @@ void MainWindow::buildStatusBar() {
   statusBar()->addPermanentWidget(m_statusHover, 1);
   connect(statusBar(), &QStatusBar::messageChanged, this, [this] { setPrompt(m_promptText); });
   statusBar()->addPermanentWidget(m_progress, 1);
+  // Background jobs (UI-40) never take the strip: a dot while any has run 0.5 s, its tooltip naming them.
+  m_activityDot = new QLabel(this);
+  m_activityDot->setObjectName("activityDot");
+  m_activityDot->setFixedSize(8, 8);
+  m_activityDot->hide();
+  auto paintDot = [this] { m_activityDot->setStyleSheet(QString("QLabel#activityDot { background: %1; border-radius: 4px; }").arg(theme::current().sel.name())); };
+  paintDot();
+  connect(theme::notifier(), &theme::Notifier::changed, m_activityDot, paintDot);
+  connect(m_jobs, &JobRunner::activityChanged, m_activityDot, [this](const QStringList& titles) {
+    m_activityDot->setVisible(!titles.isEmpty());
+    m_activityDot->setToolTip(tr("Working in the background:") + "\n" + titles.join("\n"));
+    m_activityDot->setAccessibleName(m_activityDot->toolTip());
+  });
+  statusBar()->addPermanentWidget(m_activityDot);
   // The drafting toggles (UI-112 adds Ortho and Polar, the sketch's line directions): each a command with its key, its
   // setting, and a right-click menu of its quick settings (toggleMenu).
   struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };

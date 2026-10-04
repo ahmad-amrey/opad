@@ -142,7 +142,7 @@ OPAD_BENCH(OPAD_BENCH_FEEDBACK, feedback) {
     check(!w.m_jobs->busyCursor() && !QGuiApplication::overrideCursor(), "a background job leaves the cursor alone");
     // Recovery and the agent bridge copy the document in the background (every 2 min while it is dirty).
     const bool started = w.m_doc->captureSnapshot(w.m_jobs, [](std::shared_ptr<opad::Document>, const QString&) {}, true);
-    Job* capture = w.m_jobs->current();
+    Job* capture = w.m_jobs->newest();  // the job begun last (current(): the oldest Foreground one, UI-40)
     check(started && capture && capture->title() == QCoreApplication::translate("AppDocument", "Capturing document") && capture->background(),
           "a recovery snapshot's capture is a background job");
   });
@@ -172,8 +172,9 @@ OPAD_BENCH(OPAD_BENCH_FEEDBACK, feedback) {
   steps.add(800, [=, &w] {
     const QString others = w.m_progress->othersText();
     const QString tip = w.m_progress->findChild<QLabel*>("progressOthers")->toolTip();
-    check(w.m_progress->isVisible() && others == "+2" && tip.contains("Bench job 1") && tip.contains("Bench job 2") && !tip.contains("Bench job 3"),
-          "three jobs: the newest in the strip, +2 beside it, named in its tooltip (" + others + ")");
+    // The oldest keeps the strip (UI-40: a load's Cancel stays where it is while others begin).
+    check(w.m_progress->isVisible() && others == "+2" && !tip.contains("Bench job 1") && tip.contains("Bench job 2") && tip.contains("Bench job 3"),
+          "three jobs: the oldest in the strip, +2 beside it, named in its tooltip (" + others + ")");
     w.statusBar()->grab().save(prefix + ".strip.png");
   });
   steps.add(1000, [=, &w] {
