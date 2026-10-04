@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileOpenEvent>
 #include <QSettings>
+#include <QThread>
 #include <QTimer>
 #include <QSurfaceFormat>
 
@@ -48,6 +49,9 @@ int main(int argc, char** argv) {
 #endif
   QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
   QApplication app(argc, argv);
+  // Workers (the jobs' threads, OCCT's pool on every logical processor) run at normal priority: above them the event loop
+  // is not starved while they keep every core busy (gaps of 300-700 ms on the Engine's drawing otherwise).
+  QThread::currentThread()->setPriority(QThread::HighPriority);
   QApplication::setApplicationName("OPAD");
   QApplication::setOrganizationName("opad");
   QApplication::setApplicationVersion(QString::fromStdString(opad::version_string()));
