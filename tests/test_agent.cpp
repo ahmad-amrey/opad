@@ -89,8 +89,9 @@ int main(){try {
   // final merge), +1.5 KB related on t6. Merged, what the tracks added within their own budgets adds up
   // as well: measured at the wave-3 merge, live 112671 bytes (2.6 KB past the raises) and headless 66678 (3.6 KB past). The
   // limits leave about 0.7 KB (live) and 4.4 KB (headless): a merge that grows a list past them raises the limit by what it
-  // measured and says so in the commit.
-  CHECK(live<113400);  // the drawing commands are file-level for live agents (core/src/live.cpp)
+  // measured and says so in the commit. t2a's final merge: measure's mode and length kind (UI-144) and view's home (UI-47),
+  // live 113583 bytes (+0.9 KB).
+  CHECK(live<114300);  // the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
