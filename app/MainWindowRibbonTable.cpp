@@ -156,7 +156,7 @@ void MainWindow::sketchTab(RibbonLayout& layout, const QString& tab) {
          {"sketch.move", S, {"sketch.rotate", "sketch.scale", "sketch.copy"}},
          {"sketch.rect_pattern", S, {"sketch.polar_pattern"}},
          {"sketch.union", S, {"sketch.subtract", "sketch.intersect"}},
-         {"sketch.heal", S, {"sketch.explode", "sketch.simplify"}},
+         {"sketch.heal", S, {"sketch.explode", "sketch.simplify", "sketch.node"}},
          {"sketch.construction", S}});
   group("constrain", tr("Constrain"),
         {{"sketch.dimension"},
@@ -176,7 +176,7 @@ void MainWindow::sketchTab(RibbonLayout& layout, const QString& tab) {
         {{"sketch.image_insert", L, {"sketch.image_edit", "sketch.image_calibrate", "sketch.image_trace", "sketch.image_remove"}},
          {"sketch.vector_import", S, {"sketch.vector_export"}}});
   group("options", tr("Options"),
-        {{"sketch.snaps", S},
+        {{"sketch.snaps", S, {"sketch.selectionOptions"}},
          {"view.grid", S, {"view.gridSettings"}},
          {"view.2d", S, {"view.alignPlane"}},
          {"sketch.showConstraints", S},
