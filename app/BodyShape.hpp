@@ -54,12 +54,14 @@ struct BodyPrs {
   // edges; any meshed body without unmeshed faces or lone vertices) and, for a big body, each edge by ordinal (the Edge
   // filter; empty otherwise).
   std::vector<Handle(Select3D_SensitiveEntity)> whole, edgeSensitives;
-  // A big drawing layer's Edge filter instead (UI-42): groups of up to a few hundred edges lying near each other, one
-  // sensitive each (EdgeGroupSensitive), and the edges by ordinal for the owners made as they are picked. OCCT builds an
-  // object's picking BVH over its sensitives on the UI thread when a mode is activated: 0.5-1 s for 100,000 edges.
-  std::vector<Handle(Select3D_SensitiveEntity)> edgeGroups;
-  std::vector<TopoDS_Shape> edgeShapes;
-  void buildEdgeGroups(const TopTools_IndexedMapOfShape& edges, const Bnd_Box& box);  // worker: edgeGroups and edgeShapes
+  // A big drawing layer's Edge and Vertex filters instead (UI-42): groups of up to a few hundred edges or vertices lying
+  // near each other, one sensitive each (GroupSensitive), and the edges and vertices by ordinal for the owners made as
+  // they are picked. OCCT builds an object's picking BVH over its sensitives on the UI thread when a mode is activated:
+  // 0.5-1 s for 100,000 edges, and the stock Vertex filter of a DWG's text layer took 0.9 s a layer.
+  std::vector<Handle(Select3D_SensitiveEntity)> edgeGroups, vertexGroups;
+  std::vector<TopoDS_Shape> edgeShapes, vertexShapes;
+  void buildEdgeGroups(const TopTools_IndexedMapOfShape& edges, const Bnd_Box& box);        // worker: edgeGroups and edgeShapes
+  void buildVertexGroups(const TopTools_IndexedMapOfShape& vertices, const Bnd_Box& box);  // worker: vertexGroups and vertexShapes
   bool closed = false;                           // closed solid: back faces can be culled
   std::vector<gp_Pnt> drawingSegments; // sampled pairs for drawing-only orbit fallback
   // The segments in runs lying near each other (by the Morton order of their middles), 256 a run, each run's box: the orbit
@@ -107,10 +109,14 @@ class BodyShape : public AIS_Shape {
   DEFINE_STANDARD_RTTI_INLINE(BodyShape, AIS_Shape)
  public:
   BodyShape(const TopoDS_Shape& proto, std::shared_ptr<const BodyPrs> prs) : AIS_Shape(proto), m_prs(std::move(prs)) {}
-  // The owner of edge `index` of a big drawing layer in the Edge filter (BodyPrs::edgeGroups), made the first time it is
-  // picked and kept, so a pick of it again finds the same one (a second click takes it out). Null for any other body.
-  Handle(SubShapeOwner) edgeOwner(int index);
+  // The owner of edge or vertex `index` of a big drawing layer in the Edge or Vertex filter (BodyPrs::edgeGroups,
+  // vertexGroups), made the first time it is picked and kept, so a pick of it again finds the same one (a second click
+  // takes it out). Null for any other body.
+  Handle(SubShapeOwner) edgeOwner(int index) { return groupOwner(TopAbs_EDGE, index); }
+  Handle(SubShapeOwner) vertexOwner(int index) { return groupOwner(TopAbs_VERTEX, index); }
+  Handle(SubShapeOwner) groupOwner(TopAbs_ShapeEnum type, int index);
   bool groupedEdges() const { return m_prs && !m_prs->edgeGroups.empty(); }
+  bool groupedVertices() const { return m_prs && !m_prs->vertexGroups.empty(); }
 
  public:
   bool setRayBias(double offset) { if (offset==m_rayBias) return false; m_rayBias=offset; m_rayTriangles.Nullify(); SetToUpdate(); return true; }
@@ -131,26 +137,30 @@ class BodyShape : public AIS_Shape {
   std::shared_ptr<const BodyPrs> m_prs, m_display;
   double m_rayBias=0;
   Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
-  std::vector<Handle(SubShapeOwner)> m_edgeOwners;  // by edge ordinal, as picked (grouped edges only)
+  std::vector<Handle(SubShapeOwner)> m_edgeOwners, m_vertexOwners;  // by ordinal, as picked (grouped edges, vertices only)
 };
 
-// One group of a big drawing layer's edges in the Edge filter of one body (UI-42): the worker's group (shared by the
-// body's instances) under the owner of the edge it found, which it takes on in Matches (OCCT's selector reads the owner
-// after Matches). A point pick finds the edge nearest the pointer's ray (a drawing is flat: depths tie); a box or polygon
-// keeps every edge of the group it takes in hits() (crossing: any part; window: all of it), for the box selection.
-class EdgeGroupSensitive : public Select3D_SensitiveEntity {
-  DEFINE_STANDARD_RTTI_INLINE(EdgeGroupSensitive, Select3D_SensitiveEntity)
+// One group of a big drawing layer's edges or vertices in the Edge or Vertex filter of one body (UI-42): the worker's
+// group (shared by the body's instances) under the owner of the edge or vertex it found, which it takes on in Matches
+// (OCCT's selector reads the owner after Matches). A point pick finds the one nearest the pointer's ray (a drawing is
+// flat: depths tie); a box or polygon keeps every one of the group it takes in hits() (an edge crossing: any part; window:
+// all of it), for the box selection.
+class GroupSensitive : public Select3D_SensitiveEntity {
+  DEFINE_STANDARD_RTTI_INLINE(GroupSensitive, Select3D_SensitiveEntity)
  public:
-  EdgeGroupSensitive(BodyShape* body, const Handle(Select3D_SensitiveEntity)& group);
+  GroupSensitive(BodyShape* body, TopAbs_ShapeEnum type, const Handle(Select3D_SensitiveEntity)& group);
   Standard_Boolean Matches(SelectBasics_SelectingVolumeManager& mgr, SelectBasics_PickResult& result) override;
   Standard_Integer NbSubElements() const override { return m_group->NbSubElements(); }
   Select3D_BndBox3d BoundingBox() override { return m_group->BoundingBox(); }
   gp_Pnt CenterOfGeometry() const override { return m_group->CenterOfGeometry(); }
   Standard_Boolean ToBuildBVH() const override { return false; }
   BodyShape* body() const { return m_body; }
-  const std::vector<int>& hits() const { return m_hits; }  // edge ordinals the last box or polygon test took
+  TopAbs_ShapeEnum type() const { return m_type; }
+  const std::vector<int>& hits() const { return m_hits; }  // ordinals the last box or polygon test took
+  Handle(SubShapeOwner) owner(int index) const { return m_body->groupOwner(m_type, index); }
  private:
   BodyShape* m_body;  // the body whose selection holds this (as an owner's selectable)
+  TopAbs_ShapeEnum m_type;
   Handle(Select3D_SensitiveEntity) m_group;
   std::vector<int> m_hits;
 };

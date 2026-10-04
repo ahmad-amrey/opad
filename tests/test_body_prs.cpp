@@ -6,6 +6,7 @@
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <BRep_Builder.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <gp_Circ.hxx>
@@ -328,7 +329,7 @@ TEST(big_drawing_layer_picks_its_lines_in_groups) {
     for (const auto& entity : selection->Entities()) {
       SelectBasics_PickResult result;
       if (!entity->BaseSensitive()->Matches(box, result)) continue;
-      const auto group = Handle(EdgeGroupSensitive)::DownCast(entity->BaseSensitive());
+      const auto group = Handle(GroupSensitive)::DownCast(entity->BaseSensitive());
       CHECK(!group.IsNull() && !group->hits().empty());
       taken.insert(group->hits().begin(), group->hits().end());
     }
@@ -336,6 +337,80 @@ TEST(big_drawing_layer_picks_its_lines_in_groups) {
                                         : std::set<int>{ordinal(20, 25), ordinal(20, 26)};
     CHECK(taken == want);
   }
+}
+
+// UI-42: the same layer's Vertex filter is a few sensitives over groups of nearby line ends (and its circles' centres), not
+// one per vertex; a point pick takes on the owner of the end nearest the pointer, a box keeps every end in it.
+TEST(big_drawing_layer_picks_its_vertices_in_groups) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  BRep_Builder builder;
+  TopoDS_Compound layer;
+  builder.MakeCompound(layer);
+  constexpr int columns = 70, rows = 50;  // 3,500 lines 1 mm long, 2 mm apart: 7,000 ends
+  for (int i = 0; i < columns; ++i)
+    for (int j = 0; j < rows; ++j) builder.Add(layer, BRepBuilderAPI_MakeEdge(gp_Pnt(i * 2, j * 2, 0), gp_Pnt(i * 2 + 1, j * 2, 0)).Edge());
+  builder.Add(layer, BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(-20, -20, 0), gp::DZ()), 5)).Edge());
+  Bnd_Box bounds;
+  BRepBndLib::Add(layer, bounds);
+  const auto prs = BodyPrs::build(layer, bounds, false, true);
+  TopTools_IndexedMapOfShape vertices;
+  TopExp::MapShapes(layer, TopAbs_VERTEX, vertices);
+  CHECK_EQ(prs->vertexShapes.size(), size_t(vertices.Extent()));
+  CHECK_EQ(prs->vertexGroups.size(), size_t((vertices.Extent() + 255) / 256));
+  CHECK(BodyPrs::build(layer, bounds)->vertexGroups.empty());  // not a drawing: OCCT's
+  Handle(TestBody) body = new TestBody(layer, prs);
+  CHECK(body->groupedVertices());
+  const int mode = AIS_Shape::SelectionMode(TopAbs_VERTEX);
+  Handle(SelectMgr_Selection) selection = new SelectMgr_Selection(mode);
+  body->ComputeSelection(selection, mode);
+  int circles = 0, groups = 0;
+  for (const auto& entity : selection->Entities()) {
+    circles += !Handle(CircleOwner)::DownCast(entity->BaseSensitive()->OwnerId()).IsNull();
+    groups += !Handle(GroupSensitive)::DownCast(entity->BaseSensitive()).IsNull();
+  }
+  CHECK_EQ(groups, int(prs->vertexGroups.size()));
+  CHECK_EQ(circles, 1);  // the circle's centre finder (taken with Ctrl)
+  auto ordinalAt = [&](double x, double y) {
+    for (int i = 1; i <= vertices.Extent(); ++i)
+      if (BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))).Distance(gp_Pnt(x, y, 0)) < 1e-9) return i - 1;
+    return -1;
+  };
+  Handle(Graphic3d_Camera) camera = new Graphic3d_Camera();
+  camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  camera->SetEyeAndCenter(gp_Pnt(40.5, 50, 100), gp_Pnt(40.5, 50, 0));
+  camera->SetUp(gp::DY());
+  camera->SetScale(20);  // 50 px a millimetre
+  auto pickAt = [&](double x, double y) {
+    SelectMgr_SelectingVolumeManager point;
+    point.InitPointSelectingVolume(gp_Pnt2d(500 + (x - 40.5) * 50, 500 - (y - 50) * 50));
+    point.SetCamera(camera); point.SetWindowSize(1000, 1000); point.SetPixelTolerance(4); point.BuildSelectingVolume();
+    Handle(SubShapeOwner) found;
+    for (const auto& entity : selection->Entities()) {
+      SelectBasics_PickResult result;
+      if (!Handle(GroupSensitive)::DownCast(entity->BaseSensitive()).IsNull() && entity->BaseSensitive()->Matches(point, result))
+        found = Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+    }
+    return found;
+  };
+  const auto first = pickAt(40.02, 50.03);  // beside the start of line (20, 25)
+  CHECK(!first.IsNull() && first->index() == ordinalAt(40, 50) && first->kind() == opad::Ref::Kind::Vertex);
+  CHECK(first->Shape().IsSame(vertices(ordinalAt(40, 50) + 1)));
+  CHECK(pickAt(40, 50) == first && body->vertexOwner(first->index()) == first);  // the same owner again
+  CHECK(pickAt(40.97, 50)->index() == ordinalAt(41, 50));  // the line's other end
+  CHECK(pickAt(40.5, 50).IsNull());                        // the middle of the line: no end in reach
+  // A box from (39.6, 49.6) to (41.2, 52.4) takes the ends (40|41, 50|52).
+  SelectMgr_SelectingVolumeManager box;
+  box.InitBoxSelectingVolume(gp_Pnt2d(500 + (39.6 - 40.5) * 50, 500 - (52.4 - 50) * 50), gp_Pnt2d(500 + (41.2 - 40.5) * 50, 500 - (49.6 - 50) * 50));
+  box.SetCamera(camera); box.SetWindowSize(1000, 1000); box.BuildSelectingVolume();
+  std::set<int> taken;
+  for (const auto& entity : selection->Entities()) {
+    SelectBasics_PickResult result;
+    const auto group = Handle(GroupSensitive)::DownCast(entity->BaseSensitive());
+    if (group.IsNull() || !group->Matches(box, result)) continue;
+    CHECK(group->type() == TopAbs_VERTEX && !group->hits().empty());
+    taken.insert(group->hits().begin(), group->hits().end());
+  }
+  CHECK(taken == (std::set<int>{ordinalAt(40, 50), ordinalAt(41, 50), ordinalAt(40, 52), ordinalAt(41, 52)}));
 }
 
 // UI-51: a curve body's segments in runs of nearby ones (the orbit pivot's search): every segment in exactly one run, each

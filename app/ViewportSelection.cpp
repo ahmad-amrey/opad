@@ -49,9 +49,9 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
     if(!Handle(CircleOwner)::DownCast(owner).IsNull() || !Handle(OccluderOwner)::DownCast(owner).IsNull()) continue;
     const auto body=m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
     if(body==m_nodeOf.end()) continue;
-    if(const auto group=Handle(EdgeGroupSensitive)::DownCast(selector->PickedEntity(i));!group.IsNull()) {  // every edge it took (UI-42)
-      for(const int edge:group->hits())
-        if(const auto sub=group->body()->edgeOwner(edge);!sub.IsNull()) {state->candidates.push_back(sub);state->probes.push_back({sub,body->second});}
+    if(const auto group=Handle(GroupSensitive)::DownCast(selector->PickedEntity(i));!group.IsNull()) {  // every edge or vertex it took (UI-42)
+      for(const int index:group->hits())
+        if(const auto sub=group->owner(index);!sub.IsNull()) {state->candidates.push_back(sub);state->probes.push_back({sub,body->second});}
       continue;
     }
     state->candidates.push_back(owner);

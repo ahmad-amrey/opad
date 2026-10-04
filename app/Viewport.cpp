@@ -707,7 +707,16 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
     case SelFilter::Edge: t = TopAbs_EDGE; break;
     case SelFilter::Vertex: t = TopAbs_VERTEX; break;
   }
+  // A drawing has no faces to pick (UI-42): its text and hatches are a layer's, which the Face filter picks whole. OCCT
+  // built a sensitive per glyph and hatch face on the UI thread there (a DWG's text layer: 0.1-0.2 s, 2.3-2.7 s in all).
+  if (t == TopAbs_FACE && drawingLayer(ais)) t = TopAbs_SHAPE;
   m_ctx->Activate(ais, AIS_Shape::SelectionMode(t));
+}
+
+bool Viewport::drawingLayer(const Handle(AIS_InteractiveObject)& ais) const {
+  const auto node = m_nodeOf.find(ais.get());
+  const opad::Node* n = node == m_nodeOf.end() ? nullptr : m_doc->scene.node(node->second);
+  return n && n->representation == "drawing2d";
 }
 
 void Viewport::setSelectionFilter(SelFilter f) {
@@ -1310,7 +1319,7 @@ void Viewport::fitSelection(bool animate) {
     Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->SelectedOwner());
     auto it = m_nodeOf.find(m_ctx->SelectedInteractive().get());
     if(const auto sub=Handle(SubShapeOwner)::DownCast(owner);!sub.IsNull()) sub->prepare();
-    if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
+    if (!owner.IsNull() && owner->HasShape() && owner->ComesFromDecomposition() && m_filter != SelFilter::Body) {  // not a drawing layer picked whole
       TopoDS_Shape sub = owner->Shape();
       Handle(AIS_InteractiveObject) obj = m_ctx->SelectedInteractive();
       if (!obj.IsNull() && obj->HasTransformation()) sub = sub.Moved(TopLoc_Location(obj->LocalTransformation()));
@@ -2253,7 +2262,7 @@ void Viewport::paintEvent(QPaintEvent*) {
     if (it != m_nodeOf.end()) {
       hover = hoverName(it->second);
       Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
-      if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
+      if (!owner.IsNull() && owner->HasShape() && owner->ComesFromDecomposition() && m_filter != SelFilter::Body) {
         const TopoDS_Shape& sub = owner->Shape();
         const char* kind = sub.ShapeType() == TopAbs_FACE ? "face" : sub.ShapeType() == TopAbs_EDGE ? "edge" : "vertex";
         Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);

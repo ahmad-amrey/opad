@@ -95,6 +95,46 @@ def lines_100k(root, document):
     return path
 
 
+def drawing_layers(root, document):
+    """A DXF of 20 layers apart: six of 400 texts (thousands of glyph faces each), ten of walls (1,500 lines, 300 arcs and
+    200 circles, under the big-layer size) and four grids of 4,000 lines (big layers)."""
+    out = ["0", "SECTION", "2", "ENTITIES"]
+
+    def entity(kind, layer, *pairs):
+        out.extend(["0", kind, "8", layer])
+        for code, value in pairs:
+            out.extend([str(code), f"{value:.3f}" if isinstance(value, float) else str(value)])
+    for t in range(6):
+        for k in range(400):
+            entity("TEXT", f"Text-{t + 1}", (10, t * 500.0 + (k % 20) * 20), (20, (k // 20) * 8.0), (30, 0.0), (40, 2.5), (1, f"ROOM {t}{k:03d} A"))
+    for w in range(10):
+        ox, oy = w * 250.0, 400.0
+        for k in range(1500):
+            x, y = ox + (k % 50) * 4, oy + (k // 50) * 4
+            entity("LINE", f"Walls-{w + 1}", (10, x), (20, y), (30, 0.0), (11, x + 3.0), (21, y + (1.0 if k % 2 else 0.0)), (31, 0.0))
+        for k in range(300):
+            entity("ARC", f"Walls-{w + 1}", (10, ox + (k % 20) * 10.0), (20, oy + 130 + (k // 20) * 10.0), (30, 0.0), (40, 3.0), (50, 0.0), (51, 90.0))
+        for k in range(200):
+            entity("CIRCLE", f"Walls-{w + 1}", (10, ox + (k % 20) * 10.0), (20, oy + 290 + (k // 20) * 10.0), (30, 0.0), (40, 2.0))
+    for g in range(4):
+        ox, oy = g * 600.0, 800.0
+        for k in range(4000):
+            x, y = ox + (k % 80) * 6, oy + (k // 80) * 6
+            entity("LINE", f"Grid-{g + 1}", (10, x), (20, y), (30, 0.0), (11, x + (4.0 if k % 2 else 0.0)), (21, y + (0.0 if k % 2 else 4.0)), (31, 0.0))
+    out += ["0", "ENDSEC", "0", "EOF"]
+    path = root / "drawing-layers.dxf"
+    path.write_text("\n".join(out) + "\n", encoding="ascii")
+    return path
+
+
+def architectural_dwg(root, document):
+    """The evaluation's architectural DWG (3 MB, 176 layers) where it is on this machine and the build converts DWG files
+    (dwg2dxf beside the app); else a path that does not exist, which skips the case."""
+    here = Path(__file__).resolve().parents[2]
+    drawing = Path.home() / "Desktop" / "temp" / "المخطط المعماري .dwg"
+    return drawing if drawing.exists() and (here / "build" / "windows" / "bin" / "dwg2dxf.exe").exists() else root / "no-architectural.dwg"
+
+
 def boxes_with_notes(root, document):
     """The 1,000 boxes with five notes pinned to boxes (design note E's synthetic document; anchors measured on a worker)."""
     return boxes(root, document, notes=5)
@@ -148,6 +188,12 @@ CASES = [
     # groups built on the mesh worker); hover, click, Ctrl+click, crossing and window boxes and selectRefs reach exactly
     # the right lines; the Body filter and back and closing it stay within the budget. <prefix>.png.
     ("big-drawing", lines_100k, {"OPAD_BENCH_BIGDRAWING": "{prefix}"}),
+    # Every filter on a drawing of many layers (UI-42): no display step over 50 ms; the Face filter picks each layer whole
+    # (never OCCT's per-face sensitives: a click on a text layer selects the layer), the Vertex filter a big layer's ends in
+    # groups built on the worker (hover beside an end, click, a box, selectRefs), each filter switch within the budget.
+    # On a synthetic DXF and on the architectural DWG where it is. <prefix>.vertices.png.
+    ("drawing-filters", drawing_layers, {"OPAD_BENCH_DRAWINGFILTERS": "{prefix}"}),
+    ("drawing-filters-dwg", architectural_dwg, {"OPAD_BENCH_DRAWINGFILTERS": "{prefix}"}),
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,
     # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.
     ("selection-publish", boxes, {"OPAD_BENCH_SELPUBLISH": "{prefix}"}),

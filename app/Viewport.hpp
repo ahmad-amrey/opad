@@ -160,6 +160,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_BIGDRAWING (ViewportDrawingBench.cpp): a drawing layer of 100,000 lines is picked in groups (UI-42): hover,
   // click, Ctrl+click, crossing and window boxes and selectRefs reach the right edges
   bool benchBigDrawing(const QString& prefix);
+  // OPAD_BENCH_DRAWINGFILTERS (ViewportDrawingBench.cpp): in the Face filter every drawing layer is picked whole, in the
+  // Vertex filter a big layer's ends in groups (UI-42): hover, click, a box and selectRefs reach the right ones
+  bool benchDrawingFilter(const QString& prefix);
   // OPAD_BENCH_ORBITPIVOT (ViewportOrbitBench.cpp): the pivot of a press away from a big drawing is found run by run, fast,
   // and is the point a scan of every segment finds (UI-51)
   bool benchOrbitPivot(const QString& prefix);
@@ -523,6 +526,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void syncWindowSize();
   void applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);  // look: a ghost's edges fade with it
   void activateSelection(const Handle(AIS_Shape)& ais);
+  bool drawingLayer(const Handle(AIS_InteractiveObject)& ais) const;  // a displayed drawing2d body (picked whole in the Face filter)
   void startMeshing(std::vector<std::string> keys);
   void displayBody(const std::string& id);
   // Objects of bodies no longer shown (UI-41): erased by retire(), removed from the context by removeRetired's background

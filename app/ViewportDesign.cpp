@@ -296,8 +296,9 @@ void Viewport::selectRefs(const std::vector<opad::Ref>& refs, const std::vector<
       continue;
     }
     const TopAbs_ShapeEnum t = r.kind == opad::Ref::Kind::Face ? TopAbs_FACE : r.kind == opad::Ref::Kind::Edge ? TopAbs_EDGE : TopAbs_VERTEX;
-    if (const auto body = Handle(BodyShape)::DownCast(ais); t == TopAbs_EDGE && !body.IsNull() && body->groupedEdges()) {  // owners made as picked (UI-42)
-      if (const auto owner = body->edgeOwner(r.index); !owner.IsNull() && !m_ctx->IsSelected(owner)) m_ctx->AddOrRemoveSelected(owner, Standard_False);
+    if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull() && ((t == TopAbs_EDGE && body->groupedEdges()) || (t == TopAbs_VERTEX && body->groupedVertices()))) {
+      // owners made as picked (UI-42)
+      if (const auto owner = body->groupOwner(t, r.index); !owner.IsNull() && !m_ctx->IsSelected(owner)) m_ctx->AddOrRemoveSelected(owner, Standard_False);
       continue;
     }
     const Handle(SelectMgr_Selection)& sel = ais->Selection(AIS_Shape::SelectionMode(t));
