@@ -84,6 +84,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   arc_length` take `value` (mm, or radians for angles) and optionally `expr` (`"width / 2"`), which then drives it.
 - `smooth` (G2) and `curvature` join a spline's end to another spline, a line, a circle or an arc: smooth puts the end on
   it, along it and bending as it does, curvature only bends it so (straight by a line); `tangent` takes a spline too.
+  These take open control-point splines of degree 2 or more (`degree` given), not fit splines. Both curves move as
+  little as they can: fix the one that must stay.
 - `hdistance`/`vdistance` between two points drive the size of the difference and keep the side it is on; with
   `signed: true` they drive `q - p` itself, so a negative value or expression puts q before p. On one point they are
   its coordinate from the sketch origin, signed: two of them fix a point at (expression, expression).

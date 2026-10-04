@@ -1037,6 +1037,32 @@ TEST(spline_joins_older_builds_cannot_read_are_kept_apart) {
   CHECK(apply_sketch_delta(before, delta) == saved);
 }
 
+// The Smooth and Curvature guides (clips.json sketch.c.smooth and sketch.c.curvature) join a fixed line to a control-point
+// cubic whose first pole is the line's end. The line stays and the poles move to where the guides draw them (to 0.01).
+TEST(smooth_and_curvature_guides_show_the_solver) {
+  struct Case { CT type; double x1, y1, x2, y2, ex1, ey1, ex2, ey2; };
+  for (const Case& k : {Case{CT::Smooth, 5, -3, 11, 0, 5.92, -6, 14.48, -6}, Case{CT::Curvature, 2, 1, 10, 7, 4.92, 1.55, 8.77, 7.47}}) {
+    Sketch sk;
+    const int a = sk.add_point(-20, -6), b = sk.add_point(0, -6);
+    const int line = sk.add_line(a, b);
+    sk.add_constraint(CT::Fix, {line});
+    const int p1 = sk.add_point(k.x1, k.y1), p2 = sk.add_point(k.x2, k.y2), p3 = sk.add_point(20, 8);
+    const int spline = cubic(sk, {b, p1, p2, p3});
+    sk.add_constraint(k.type, {line, spline});
+    CHECK(solve(sk).converged);
+    CHECK_NEAR(sk.point(a)->x, -20, 1e-9);
+    CHECK_NEAR(sk.point(a)->y, -6, 1e-9);
+    CHECK_NEAR(sk.point(b)->x, 0, 1e-9);
+    CHECK_NEAR(sk.point(b)->y, -6, 1e-9);
+    CHECK_NEAR(sk.point(p3)->x, 20, 1e-9);
+    CHECK_NEAR(sk.point(p3)->y, 8, 1e-9);
+    CHECK_NEAR(sk.point(p1)->x, k.ex1, 0.006);
+    CHECK_NEAR(sk.point(p1)->y, k.ey1, 0.006);
+    CHECK_NEAR(sk.point(p2)->x, k.ex2, 0.006);
+    CHECK_NEAR(sk.point(p2)->y, k.ey2, 0.006);
+  }
+}
+
 TEST(reference_dimensions_cannot_indirectly_drive_geometry) {
   Sketch sk;int a=sk.add_point(0,0),b=sk.add_point(10,0),c=sk.add_point(0,20);
   int r=sk.add_constraint(CT::Distance,{a,b},10),d=sk.add_constraint(CT::Distance,{a,c},20,"indirect");sk.constraint(r)->reference=true;

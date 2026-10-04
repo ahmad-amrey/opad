@@ -623,8 +623,16 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
 void SketchEditor::constraintClick(const Hit& h) {
   if (h.kind == Hit::None || h.kind == Hit::Dimension) return;
   if (std::find(m_picked.begin(), m_picked.end(), h.id) != m_picked.end()) return;
-  m_picked.push_back(h.id);
   const CT type = SkConstraint::type_from_name(m_tool.mid(2).toStdString());
+  // Smooth, Curvature and Tangent hold a spline by its poles: one drawn through its points (or closed, or of degree 1)
+  // cannot take them. It is not picked, and the status line says why (the core's message named a constraint id).
+  if (type == CT::Smooth || type == CT::Curvature || type == CT::Tangent)
+    if (const SkEntity* e = m_sk.entity(h.id); e && e->type == ET::Spline &&
+        (e->degree < 2 || e->periodic || e->multiplicities.empty() || e->multiplicities.front() != e->degree + 1 || e->multiplicities.back() != e->degree + 1)) {
+      emit status(tr("This constraint takes control-point splines of degree 2 or more, not splines drawn through points"));
+      return;
+    }
+  m_picked.push_back(h.id);
   const std::vector<int> ids = m_picked;
   // Try after every pick: a line is enough for Horizontal, Symmetric needs three picks.
   const bool lineOnly = (type == CT::Horizontal || type == CT::Vertical) && m_sk.point(h.id) != nullptr && ids.size() < 2;

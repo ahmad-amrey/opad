@@ -3,6 +3,7 @@
 #include "Jobs.hpp"
 #include "Units.hpp"
 #include "I18n.hpp"
+#include "SketchGeometryCache.hpp"
 #include "opad/design/sketch_edit.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include <QApplication>
@@ -42,7 +43,8 @@ End bezierStart(const Sketch& sk, const SkEntity& e) {
 // pointer's side and moves to the other side with it, the click makes that one. Arc slot: the slot runs the way the pointer
 // went round its centre, clockwise over the top (the guide's -120 degrees, read out signed) or counter-clockwise past half a
 // turn. Circumscribed polygon: its circle is inside, touching every side, as big as the pointer's distance. Smooth (G2) joins a
-// line to a spline and Curvature an arc to a spline, picked as the guides pick them. The Constraints page, opened with the
+// line to a spline and Curvature an arc to a spline, picked as the guides pick them: the line held by Fix stays, as the guide
+// shows it, and a spline drawn through its points is not picked (the status says why). The Constraints page, opened with the
 // panel's page switch, lights a picked row's geometry. Open ends: an end dragged onto the other is merged, the profile closes.
 // Transform image: a press on the picture and a drag move it, the picture following; the release keeps the place.
 // <prefix>.tangent.png, .arcslot.png, .polygon.png, .constraints.png (the panel), .image.png.
@@ -84,6 +86,14 @@ void SketchEditor::benchPointer() {
   const int spline1 = bezier({{60.4, -19.4}, {66, -6}, {78, -6}, {84, -19}});
   const int arc = m_sk.add_arc(m_sk.add_point(130, -10), m_sk.add_point(130, -20), m_sk.add_point(140, -10));
   const int spline2 = bezier({{129.6, -19.7}, {122, -26}, {110, -26}, {104, -18}});
+  int fit = 0;  // a spline through its points, beside the line
+  {
+    SkEntity e;
+    e.type = SkEntity::Type::Spline;
+    e.p = {m_sk.add_point(40, -44), m_sk.add_point(50, -34), m_sk.add_point(60, -44)};
+    e.id = fit = m_sk.next_id();
+    m_sk.entities.push_back(e);
+  }
   const int first = m_sk.add_point(0, 20), loose = m_sk.add_point(3, 22);
   const int c1 = m_sk.add_point(20, 20), c2 = m_sk.add_point(20, 30), c3 = m_sk.add_point(0, 30);
   m_sk.add_line(first, c1), m_sk.add_line(c1, c2), m_sk.add_line(c2, c3);
@@ -221,11 +231,27 @@ void SketchEditor::benchPointer() {
         check(circle && std::abs(m_sk.entity(circle)->r - 12) < 1e-9 && touching == 6 && apart && m_solved.converged,
               "circumscribed polygon: its circle 24 across touches all six sides");
         m_viewport->grabImage().save(prefix + ".polygon.png");
-        // ---- Smooth: the line, then the spline, as the guide picks them.
+        // ---- Smooth: the line, held by Fix as in the guide, then the spline, as the guide picks them.
+        setTool("c:fix");
+        place(45, -20);
+        bool fixed = false;
+        for (const auto& c : m_sk.constraints) fixed = fixed || (c.type == SkConstraint::Type::Fix && c.refs == std::vector<int>{straight});
+        check(fixed, "smooth: the line is fixed first, as the guide holds it");
+        const SkPoint heldA = *m_sk.point(m_sk.entity(straight)->p[0]), heldB = *m_sk.point(m_sk.entity(straight)->p[1]);
         setTool("c:smooth");
         check(!toolSteps().isEmpty() && toolSteps().front().label == i18n::t("Pick a line, circle, arc or spline"), "smooth: its first step asks for a line, circle, arc or spline");
         place(50, -20);
+        QString said;
+        const auto listening = connect(this, &SketchEditor::status, this, [&said](const QString& text) { said = text; });
+        const auto* through = m_geometry ? m_geometry->samples(m_sk, *m_sk.entity(fit)) : nullptr;
+        if (through && through->size() > 4) place((*through)[through->size() / 4].first, (*through)[through->size() / 4].second);  // clear of its points
+        disconnect(listening);
+        check(through && m_picked == std::vector<int>{straight} && said == tr("This constraint takes control-point splines of degree 2 or more, not splines drawn through points"),
+              "smooth: a spline drawn through its points is not picked, the status says so (" + said + ")");
         place((60.4 + 3 * 66 + 3 * 78 + 84) / 8, (-19.4 + 3 * -6 + 3 * -6 - 19) / 8);  // its middle, clear of its poles
+        const SkPoint *nowA = m_sk.point(m_sk.entity(straight)->p[0]), *nowB = m_sk.point(m_sk.entity(straight)->p[1]);
+        check(std::hypot(nowA->x - heldA.x, nowA->y - heldA.y) < 1e-9 && std::hypot(nowB->x - heldB.x, nowB->y - heldB.y) < 1e-9,
+              "smooth: the held line stays, the spline reshapes");
         int smooth = 0;
         for (const auto& c : m_sk.constraints)
           if (c.type == SkConstraint::Type::Smooth) smooth = c.id;
@@ -273,8 +299,11 @@ void SketchEditor::benchPointer() {
           for (int i = 0; i < list->topLevelItemCount(); ++i)
             if (list->topLevelItem(i)->data(0, Qt::UserRole).toInt() == int(st["smooth"])) tree = list, row = list->topLevelItem(i);
         if (row) tree->setCurrentItem(row);
-        check(row && m_sel == std::vector<int>{int(st["smooth"])} && double(sketchSolid(t.hov)) > st["lit"] + 10,
-              QString("a row picked in the list lights what it holds (%1 lit segments, %2 before)").arg(sketchSolid(t.hov)).arg(st["lit"]));
+        // The line (one segment) and every segment the spline is drawn with.
+        const auto* drawn = m_geometry ? m_geometry->samples(m_sk, *m_sk.entity(spline1)) : nullptr;
+        const double held = 1 + (drawn && !drawn->empty() ? double(drawn->size() - 1) : 1e9);
+        check(row && m_sel == std::vector<int>{int(st["smooth"])} && double(sketchSolid(t.hov)) >= st["lit"] + held,
+              QString("a row picked in the list lights what it holds (%1 lit segments, %2 before, the line and the spline %3)").arg(sketchSolid(t.hov)).arg(st["lit"]).arg(held));
         panel->grab().save(prefix + ".constraints.png");
         for (auto* b : panel->findChildren<QToolButton*>())
           if (b->property("sketchPage").toInt() == 0 && b->property("sketchPage").isValid()) b->click();

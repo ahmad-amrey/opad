@@ -1579,7 +1579,7 @@
    "id": "sketch.c.smooth",
    "title": "Smooth spline join (G2)",
    "summary": "Joins a spline to a line, an arc or another spline with matching curvature (G2).",
-   "details": "Pick the line, arc or spline, then the spline that joins it, at their shared end. Stronger than Tangent: the curvature also flows on, which reflects light without a visible seam.",
+   "details": "Pick the line, circle, arc or spline, then the control-point spline that joins it, near their shared end. Stronger than Tangent: the curvature also flows on, which reflects light without a visible seam. Both curves move as little as they can; one held by other constraints, such as Fix, stays put.",
    "keywords": ["g2", "curvature continuous", "blend", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1587,7 +1587,7 @@
    "id": "sketch.c.curvature",
    "title": "Equal endpoint curvature",
    "summary": "Gives a spline's end the curvature of the line, arc or spline it meets.",
-   "details": "Pick the line, arc or spline, then the spline. By a line the spline's end runs straight; by an arc it bends as the arc does. Use it with Tangent for smooth spline transitions.",
+   "details": "Pick the line, circle, arc or spline, then the control-point spline. By a line the spline's end runs straight; by an arc it bends as the arc does. A curve held by other constraints, such as Fix, stays put. Use it with Tangent for smooth spline transitions.",
    "keywords": ["curvature", "spline", "continuity", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
