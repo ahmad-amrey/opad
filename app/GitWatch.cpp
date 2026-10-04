@@ -1095,7 +1095,8 @@ bool GitWatch::bench() {
         QFile attributes(m_repo.top + "/.gitattributes"), ignore(m_repo.top + "/.gitignore");
         require(attributes.open(QIODevice::ReadOnly) && attributes.readAll().contains("*.opad text eol=lf merge=opad diff=opad"), ".gitattributes");
         require(ignore.open(QIODevice::ReadOnly) && ignore.readAll().contains("*.opad.tmp"), ".gitignore");
-        require(m_repo.managed && m_repo.driver == here.mergeDriver() && m_repo.textconv == here.textconv() && m_repo.wantsDriver, "the managed driver config");
+        require(m_repo.managed && m_repo.driver == here.mergeDriver() && m_repo.textconv == here.textconv() && m_repo.difftool == here.difftool() && m_repo.wantsDriver,
+                "the managed driver config (merge, textconv, difftool)");
         require(m_repo.lfsVersion.isEmpty() || m_repo.lfsHooks, "Git LFS hooks in the clone");
         require(m_repo.status.branch == "main" && m_repo.status.oid == "(initial)", "a fresh repository on main");
         require(m_repo.doc() == D::Untracked && text() == "main · " + tr("untracked"), "the chip: main · untracked");
@@ -1311,7 +1312,8 @@ bool GitWatch::bench() {
         const QString folder = QFileInfo(st->clone).canonicalFilePath();
         if (!settled() || folder.isEmpty() || QFileInfo(m_file).canonicalPath() != folder || m_repo.state != S::Ready) return false;
         require(QSettings().value("git/cloneFolder").toString() == QFileInfo(st->clone).absolutePath(), "the folder kept for the next clone");
-        require(m_repo.managed && m_repo.driver == here.mergeDriver() && m_repo.textconv == here.textconv() && !m_repo.needsDriver(), "the clone's driver config");
+        require(m_repo.managed && m_repo.driver == here.mergeDriver() && m_repo.textconv == here.textconv() && m_repo.difftool == here.difftool() && !m_repo.needsDriver(),
+                "the clone's driver config");
         require(m_repo.lfsVersion.isEmpty() || m_repo.lfsHooks, "Git LFS hooks in the clone");
         require(m_repo.status.branch == "main" && m_repo.status.upstream == "origin/main" && m_repo.sync() == Y::Synced && m_repo.doc() == D::Clean,
                 "the clone: main, in step with origin/main, clean");

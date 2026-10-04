@@ -389,9 +389,9 @@ Repo::Sync Repo::sync() const {
 
 bool Repo::driverStale() const {
   if (state != State::Ready || !managed) return false;
-  for (const QString& command : {driver, textconv})
+  for (const QString& command : {driver, textconv, difftool})
     if (!command.isEmpty() && !QFileInfo::exists(commandProgram(command))) return true;
-  return driver.isEmpty();
+  return driver.isEmpty() || difftool.isEmpty();  // set up before OPAD wrote the difftool: written now
 }
 
 void readStatus(const Context& c, Repo& r) {
@@ -431,6 +431,7 @@ void readConfig(const Context& c, Repo& r) {
     else if (key == "core.sshcommand") r.sshCommand = value;
     else if (key == "merge.opad.driver") r.driver = value;
     else if (key == "diff.opad.textconv") r.textconv = value;
+    else if (key == "difftool.opad.cmd") r.difftool = value;
     else if (key == "opad.managed") r.managed = value == "true";
   }
 }
@@ -525,6 +526,8 @@ QString Install::mergeDriver() const {
 
 QString Install::textconv() const { return cli.isEmpty() ? quoted(app) + " --textconv" : quoted(cli) + " textconv"; }
 
+QString Install::difftool() const { return app.isEmpty() ? QString() : quoted(app) + " --compare \"$LOCAL\" \"$REMOTE\""; }
+
 QString attributesText(const QString& existing, bool lfs) {
   QStringList lines = QString(existing).remove('\r').split('\n');
   while (!lines.isEmpty() && lines.last().trimmed().isEmpty()) lines.removeLast();
@@ -561,8 +564,11 @@ void configureDriver(const Context& c, const Install& in) {
   const std::pair<const char*, QString> config[] = {{"merge.opad.name", QStringLiteral("OPAD record-aware merge")},
                                                      {"merge.opad.driver", in.mergeDriver()},
                                                      {"diff.opad.textconv", in.textconv()},
+                                                     {"diff.opad.cachetextconv", QStringLiteral("true")},
+                                                     {"difftool.opad.cmd", in.difftool()},
                                                      {"opad.managed", QStringLiteral("true")}};
-  for (const auto& [key, value] : config) check(c, {"config", "--local", QString::fromLatin1(key), value});
+  for (const auto& [key, value] : config)
+    if (!value.isEmpty()) check(c, {"config", "--local", QString::fromLatin1(key), value});
 }
 
 QStringList setUp(const Context& base, const QString& folder, const Install& in, const SetupOptions& o, const RunOptions& ro) {
