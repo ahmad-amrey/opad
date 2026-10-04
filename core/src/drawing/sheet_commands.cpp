@@ -123,7 +123,44 @@ json item_now(const Document& doc, const Scene& scene, const Sheet& sheet, const
 }
 
 }  // namespace
+}  // namespace opad::commands
 
+namespace opad::drawing {
+json plan_item_edit(const Document& doc, const Scene& scene, const std::string& id, json set, bool planned) {
+  const SheetItem* t = scene.sheet_item(id);
+  if (!t) throw Error("sheet_edit: it is not on a sheet any more");
+  if (planned && (set.contains("renumber") || set.contains("aspects"))) throw Error("sheet_edit: a planned set has its numbers and references settled");
+  if (set.value("renumber", false)) {  // a parts list's items numbered 1, 2, ... again in the BoM's order
+    if (t->kind != "parts_list") throw Error("sheet_edit: renumber is a parts list's");
+    set["numbers"] = parts_rows(doc, scene, *scene.sheet(t->sheet), t->def, true)["numbers"];
+  }
+  set.erase("renumber");
+  if (set.contains("refs") && !planned) set["refs"] = item_references(doc, scene, set["refs"], set.value("aspects", json()));  // re-attached
+  set.erase("aspects");
+  if (set.contains("place") && set["place"].is_array()) set["place"] = {{"text", set["place"]}};
+  json after = t->def;
+  for (const auto& [k, v] : set.items()) {
+    if (v.is_null()) after.erase(k);
+    else after[k] = v;
+  }
+  Document::validate_op(after);
+  const std::string kind = after.value("kind", "");
+  if (kind != "note" && !known_item(kind, after.value("type", ""))) throw Error("sheet_edit: a " + kind + " needs a newer OPAD");
+  if (set.contains("tol")) check_tolerance(set["tol"]);
+  const Sheet* sheet = scene.sheet(after.value("sheet", ""));
+  if (!sheet) throw Error("sheet_edit: its sheet is gone");
+  if (after.contains("view"))
+    if (const SheetView* v = scene.sheet_view(after["view"].get<std::string>()); !v || v->sheet != sheet->id) throw Error("sheet_edit: its view is not on its sheet");
+  static const std::set<std::string> touches = {"refs", "type", "view", "precision", "prefix", "suffix", "text", "tol", "obtuse", "axis", "list"};
+  bool again = false;
+  for (const auto& [k, v] : set.items()) again = again || touches.count(k);
+  if (again && !planned)
+    if (const json result = item_result(after, commands::item_now(doc, scene, *sheet, id, after)); !result.is_null()) set["result"] = result;
+  return set;
+}
+}  // namespace opad::drawing
+
+namespace opad::commands {
 void register_sheet_commands(const std::function<void(const CommandInfo&, Handler)>& add) {
   add({"sheet", "Add a drawing sheet with a template; views: laid out at a scale that fits",
        {{"doc", "path"}, {"name", "string"}, {"drawing", "string - the drawing it belongs to"},
@@ -460,7 +497,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
       });
 
   add({"sheet_edit", "Change a sheet, view or item: set fields as sheet_info shows them (null removes); a dimension is measured again; sheets also take template, template_file",
-       {{"doc", "path"}, {"target", "uuid"}, {"set", "object"}, {"by", "string"}}, true},
+       {{"doc", "path"}, {"target", "uuid"}, {"set", "object"}, {"planned", "bool - an item's set measured beforehand"}, {"by", "string"}}, true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
         const Scene scene = resolve(doc);
@@ -503,45 +540,26 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
               set["template"]["fields"] = was["fields"];  // placed on the sheet by hand: kept
           }
         }
-        if (set.value("renumber", false)) {  // a parts list's items numbered 1, 2, ... again in the BoM's order
-          const SheetItem* t = scene.sheet_item(id);
-          if (!t || t->kind != "parts_list") throw Error("sheet_edit: renumber is a parts list's");
-          set["numbers"] = drawing::parts_rows(doc, scene, *scene.sheet(t->sheet), t->def, true)["numbers"];
-        }
-        set.erase("renumber");
-        if (set.contains("refs") && target->type == "sheet_item")  // re-attached: references as sheet_item keeps them
-          set["refs"] = drawing::item_references(doc, scene, set["refs"], set.value("aspects", json()));
-        set.erase("aspects");
-        if (set.contains("place") && set["place"].is_array()) set["place"] = {{"text", set["place"]}};
-        json after = def;
-        for (const auto& [k, v] : set.items()) {
-          if (v.is_null()) after.erase(k);
-          else after[k] = v;
-        }
-        Document::validate_op(after);
-        if (target->type == "sheet") {
-          drawing::parse_scale(after.value("scale", "1:1"));
-          const auto one_of = [&](const char* key, const char* fallback, const std::set<std::string>& known) {
-            if (!known.count(after.value(key, fallback))) throw Error(std::string("sheet_edit: ") + key + " is not one this build knows");
-          };
-          one_of("standard", "iso", {"iso", "asme"});
-          one_of("projection", after.value("standard", "iso") == "asme" ? "third" : "first", {"first", "third"});
-          one_of("units", "mm", {"mm", "in"});
-        } else if (target->type == "sheet_view") {
-          check_view(scene, id, after);
+        if (target->type == "sheet_item") {
+          set = drawing::plan_item_edit(doc, scene, id, std::move(set), a.value("planned", false));
         } else {
-          const std::string kind = after.value("kind", "");
-          if (kind != "note" && !drawing::known_item(kind, after.value("type", ""))) throw Error("sheet_edit: a " + kind + " needs a newer OPAD");
-          if (set.contains("tol")) drawing::check_tolerance(set["tol"]);
-          const Sheet& sheet = need_sheet(scene, after.at("sheet").get<std::string>());
-          if (after.contains("view"))
-            if (const SheetView* v = scene.sheet_view(after["view"].get<std::string>()); !v || v->sheet != sheet.id)
-              throw Error("sheet_edit: its view is not on its sheet");
-          static const std::set<std::string> touches = {"refs", "type", "view", "precision", "prefix", "suffix", "text", "tol", "obtuse", "axis", "list"};
-          bool again = false;
-          for (const auto& [k, v] : set.items()) again = again || touches.count(k);
-          if (again)
-            if (const json result = drawing::item_result(after, item_now(doc, scene, sheet, id, after)); !result.is_null()) set["result"] = result;
+          json after = def;
+          for (const auto& [k, v] : set.items()) {
+            if (v.is_null()) after.erase(k);
+            else after[k] = v;
+          }
+          Document::validate_op(after);
+          if (target->type == "sheet") {
+            drawing::parse_scale(after.value("scale", "1:1"));
+            const auto one_of = [&](const char* key, const char* fallback, const std::set<std::string>& known) {
+              if (!known.count(after.value(key, fallback))) throw Error(std::string("sheet_edit: ") + key + " is not one this build knows");
+            };
+            one_of("standard", "iso", {"iso", "asme"});
+            one_of("projection", after.value("standard", "iso") == "asme" ? "third" : "first", {"first", "third"});
+            one_of("units", "mm", {"mm", "in"});
+          } else {
+            check_view(scene, id, after);
+          }
         }
         const std::string edit = doc.append({{"op", "edit"}, {"target", id}, {"set", set}}, a.value("by", "")).id;
         json out = {{"id", edit}};

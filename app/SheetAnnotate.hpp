@@ -59,7 +59,7 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   QString nextLetter() const;  // the first datum letter the shown sheet does not use
 
   // State for benches.
-  bool busy() const { return m_pending; }
+  bool busy() const { return m_pending || m_editing > 0; }
   int pickCount() const { return static_cast<int>(m_picks.size()); }
   const opad::json& plan() const { return m_plan; }
   QString prompt() const { return m_prompt; }
@@ -116,6 +116,9 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   std::pair<opad::json, opad::json> current();
   void commit();
   void finishReattach();
+  // A selected annotation changed: the edit planned on a worker (references, measure: drawing::plan_item_edit), then one
+  // sheet_edit step.
+  void editItem(const std::string& item, opad::json set, std::function<void(const opad::json&)> then = {});
   opad::json args() const;          // what the tool adds, without picks
   opad::json tolerance() const;     // the bar's tolerance, in the sheet's units; null: none
   void fieldChanged(const char* key);  // an option changed: plan again, or edit the selected annotation
@@ -140,6 +143,7 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   std::vector<SheetPick> m_picks;
   opad::json m_plan;  // the worker's last answer for the picks shown
   bool m_pending = false, m_again = false, m_ending = false, m_filling = false;
+  int m_editing = 0;  // edits of the selected annotation being planned
   int m_needed = 0;  // re-attach: how many references
   QPointF m_mouse;
   QString m_prompt;

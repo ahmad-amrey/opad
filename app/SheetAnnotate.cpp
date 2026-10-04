@@ -16,6 +16,7 @@
 #include <set>
 
 #include "AppDocument.hpp"
+#include "I18n.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
 #include "opad/drawing/annotate.hpp"
@@ -522,7 +523,26 @@ void SheetAnnotator::fieldChanged(const char* key) {
   }
   if (set.empty()) return;
   if (k == "text" && item->kind == "note" && m_text->text().isEmpty()) return;  // a note keeps some text
-  m_runner("sheet_edit", {{"target", m_item}, {"set", set}}, {});
+  editItem(m_item, set);
+}
+
+void SheetAnnotator::editItem(const std::string& item, json set, std::function<void(const json&)> then) {
+  if (!m_canvas || !m_runner) return;
+  auto planned = std::make_shared<json>();
+  auto alive = m_alive;
+  ++m_editing;
+  m_canvas->read(
+      tr("Measuring the annotation"),
+      [item, set, planned](const opad::Document& doc, const opad::Scene& scene, Progress) { *planned = opad::drawing::plan_item_edit(doc, scene, item, set); },
+      [this, alive, item, planned, then](bool ok, const QString& error) {
+        if (!*alive) return;
+        --m_editing;
+        if (!ok) {
+          if (error != "cancelled") emit message(i18n::t(error));
+          return;
+        }
+        m_runner("sheet_edit", {{"target", item}, {"set", *planned}, {"planned", true}}, then);
+      });
 }
 
 QString SheetAnnotator::nextLetter() const {
@@ -1119,7 +1139,7 @@ void SheetAnnotator::finishReattach() {
   auto alive = m_alive;
   cancel();
   if (!m_runner || refs.empty()) return;
-  m_runner("sheet_edit", {{"target", item}, {"set", {{"refs", refs}}}}, [this, alive, item](const json& out) {
+  editItem(item, {{"refs", refs}}, [this, alive, item](const json& out) {
     if (*alive && !out.is_null()) emit added(item);
   });
 }

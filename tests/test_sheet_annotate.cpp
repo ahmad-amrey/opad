@@ -446,6 +446,16 @@ TEST(values_and_compatibility) {
   CHECK_EQ(fit["result"]["shown"], "⌀10 H7");
   CHECK_EQ(run(p.doc, "sheet_edit", {{"target", fit["id"]}, {"set", {{"tol", {{"type", "fit"}, {"fit", "H7"}, {"plus", 0.015}, {"minus", 0}}}}}})["result"]["shown"], "⌀10 H7 (+0.015/0)");
   CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", fit["id"]}, {"set", {{"tol", {{"type", "fit"}, {"fit", "H"}}}}}}));
+  // The app's path: planned on a worker (measured there), appended as it is.
+  const json set = plan_item_edit(p.doc, resolve(p.doc), fit["id"], {{"precision", 3}, {"tol", nullptr}});
+  CHECK_EQ(set["result"]["shown"], "⌀10");
+  const size_t ops = p.doc.ops.size();
+  CHECK_EQ(run(p.doc, "sheet_edit", {{"target", fit["id"]}, {"set", set}, {"planned", true}})["result"]["shown"], "⌀10");
+  CHECK_EQ(p.doc.ops.size(), ops + 1);
+  CHECK_EQ(resolve(p.doc).sheet_item(fit["id"])->def["result"]["shown"], "⌀10");
+  CHECK(!plan_item_edit(p.doc, resolve(p.doc), fit["id"], {{"place", {5, 5}}}).contains("result"));  // moved: nothing measured
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", fit["id"]}, {"set", {{"refs", {p.circle(0, 10)}}, {"aspects", {"center"}}}}, {"planned", true}}));
+  CHECK_THROWS(plan_item_edit(p.doc, resolve(p.doc), fit["id"], {{"view", p.sheet}}));
   CHECK_THROWS(run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.top}, {"type", "diameter"}, {"refs", {p.circle(0, 10)}}, {"tolerance", {{"type", "fits"}}}}));
   const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", p.top}, {"kind", "weld"}, {"refs", {p.circle(0, 10)}}}).id;
   const std::string typed = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", p.top}, {"kind", "dimension_set"}, {"type", "running"}}).id;

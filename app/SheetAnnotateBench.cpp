@@ -315,8 +315,10 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
             "a click on the dimension selects it; the bar shows its own options");
       const size_t before = w.m_doc->doc.ops.size();
       tools->precisionBox()->setCurrentIndex(1);
-      check(waitFor([&] { return w.m_doc->doc.ops.size() == before + 1; }, 5000) && w.m_doc->scene.sheet_item(widthId)->def.value("precision", 2) == 1,
-            "a precision from the bar is one edit");
+      const bool planning = tools->busy() && w.m_doc->doc.ops.size() == before;  // measured on a worker, then appended
+      check(planning && waitFor([&] { return w.m_doc->doc.ops.size() == before + 1 && !tools->busy(); }, 5000) &&
+                w.m_doc->scene.sheet_item(widthId)->def.value("precision", 2) == 1 && w.m_doc->scene.sheet_item(widthId)->def.contains("result"),
+            "a precision from the bar is one edit, measured on a worker first");
       const opad::json place = w.m_doc->scene.sheet_item(widthId)->def["place"]["text"];
       canvas->benchDragItem(widthId, {5, 6});
       check(waitFor([&] { return w.m_doc->doc.ops.size() == before + 2; }, 5000) &&

@@ -64,6 +64,11 @@ json item_references(const Document& doc, const Scene& scene, const json& refs, 
 // measures unless args place it. args as the command takes them (sheet, view, kind, type, refs or picks, aspects, place,
 // ...). Workers: measures. The app plans on a worker and appends the record (sheet_item "op").
 json plan_item(const Document& doc, const Scene& scene, const json& args, json* measured = nullptr);
+// The fields sheet_edit sets on an item (id), as it appends them: renumber made a parts list's numbers, refs kept as
+// item_references keeps them, place as {text}, checked against the record they make, and measured again (result) when they
+// change what it measures. planned: a set made so beforehand (renumber and aspects refused, nothing resolved or measured).
+// Workers: measures (a hole table walks every body of its view). The app plans on a worker and appends (sheet_edit planned).
+json plan_item_edit(const Document& doc, const Scene& scene, const std::string& id, json set, bool planned = false);
 // The readings a smart dimension of these picks or refs can have, each planned: {"picks": [pick_reference...],
 // "choices": [{"type", "op", "measured"}]}: one circle -> diameter (radius for an arc); a cylinder from the side ->
 // diameter; one line or two points -> horizontal, vertical and aligned; two lines that meet -> angle (and those three);
