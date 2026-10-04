@@ -112,8 +112,8 @@
   {
    "id": "view.home",
    "title": "Home",
-   "summary": "Returns to the home camera: an isometric view with everything in sight.",
-   "details": "Use it when you lose your way after orbiting. The view cube's house button does the same.",
+   "summary": "Returns to the document's Home view, or to an isometric view with everything in sight while none is set.",
+   "details": "Set current view as Home, under Fit's arrow and in the View menu, keeps the camera in the document. Use it when you lose your way after orbiting. The view cube's house button does the same.",
    "keywords": ["reset view", "isometric", "default view"],
    "requires": "Open or create a document first."
   },
@@ -462,8 +462,8 @@
   {
    "id": "inspect.distance",
    "title": "Distance",
-   "summary": "Measures the shortest distance between two picks.",
-   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance and its X, Y and Z parts. A dashed preview line follows the cursor after the first pick, and P pins the result to the document.",
+   "summary": "Measures the distance between two picks: the shortest, centre to centre or the largest.",
+   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance, its X, Y and Z parts and the measured points. Minimum, Centre to centre and Maximum in the panel choose which distance. A dashed preview line follows the cursor after the first pick, and P pins the result to the document.",
    "keywords": ["measure", "length", "gap", "clearance", "dimension"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
