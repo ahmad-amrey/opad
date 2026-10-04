@@ -228,8 +228,10 @@ CASES = [
     # (<prefix>.browser.png).
     ("asset-drawing", asset_drawing, {"OPAD_BENCH_ASSET_DRAWING": "{prefix}"}),
     # A linked board's missing models of KiCad's library: counted, offered, shown in Properties, downloaded, synced in
-    # (<prefix>.properties.png).
+    # (<prefix>.properties.png); Settings > KiCad boards… and Linked files… (the import choice, a trusted folder removed).
     ("asset-kicad", asset_kicad, {"OPAD_BENCH_ASSET_KICAD": "{prefix}"}),
+    # What the core says of linked files (states, failed syncs) shown in Arabic: whole, a sentence and its path, counted.
+    ("asset-reasons", "empty", {"OPAD_BENCH_ASSET_REASONS": "1", "OPAD_LANG": "ar"}),
     # Pictures (UI-71): a JPEG canvas decoded on a worker; a picture inserted into a sketch kept as the file has it and a
     # canvas on the sketch's plane once finished, traced by the sketch's Trace image (UI-70); an older file's backdrop
     # moved storing only its fields (<prefix>.canvas.png).

@@ -19,6 +19,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QPushButton>
 #include <QSettings>
 #include <QTimer>
@@ -361,7 +362,7 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
     badge.icon = "warning";
     badge.text = tr("error");
     badge.color = &Tokens::error;
-    badge.tooltip = i18n::t(QString::fromStdString(s->value("reason", std::string())));
+    badge.tooltip = reasonText(s->value("reason", std::string()));
   } else if (state == "syncing") {
     badge.icon = "regen";
     badge.text = tr("syncing…");
@@ -407,7 +408,7 @@ void AssetsArea::section(const PropertySubject& subject, const opad::json&, QLis
   sec.title = tr("Linked file");
   sec.rows << qMakePair(tr("File"), name(import)) << qMakePair(tr("Status"), embedded ? tr("Embedded in the document") : stateText(import));
   const bool copy = !embedded && fromProjectCopy(import);
-  if (s && s->contains("reason") && !embedded) sec.rows << qMakePair(tr("Note"), i18n::t(QString::fromStdString((*s)["reason"].get<std::string>())));
+  if (s && s->contains("reason") && !embedded) sec.rows << qMakePair(tr("Note"), reasonText((*s)["reason"].get<std::string>()));
   else if (copy) sec.rows << qMakePair(tr("Note"), tr("Not found where it was linked: the project's copy is read"));
   const QString recorded = QString::fromStdString(asset.value("path", asset.value("abs", std::string())));
   sec.rows << qMakePair(embedded ? tr("Embedded from") : tr("Path"), native(recorded));
@@ -634,7 +635,7 @@ void AssetsArea::syncDone(const std::string& import, bool ok, const QString& err
   emit done("sync", import, ok, error, report);
   if (!m_queue.empty()) return nextSync();
   if (!ok) {
-    notify(tr("%1 could not be synced: %2").arg(title, i18n::t(error)), false, 10000);
+    notify(tr("%1 could not be synced: %2").arg(title, reasonText(error.toStdString())), false, 10000);
   } else if (m_synced + m_syncFailed > 1) {
     notify(m_syncFailed ? tr("%1 linked files synced, %2 could not be").arg(m_synced).arg(m_syncFailed) : tr("%1 linked files synced").arg(m_synced));
   } else if (report.value("up_to_date", false)) {
@@ -676,7 +677,7 @@ void AssetsArea::embed(const std::string& import) {
           [import](opad::Document& doc, const Progress& p) { return opad::plan_asset_embed(doc, import, [p] { return p.cancelled(); }); },
           [this, import, title](bool ok, const QString& error, const opad::json& report) {
             if (ok) notify(tr("%1 is embedded: its parts are stored in the document and can be edited").arg(title), true, 8000);
-            else notify(tr("%1 could not be embedded: %2").arg(title, i18n::t(error)), false, 10000);
+            else notify(tr("%1 could not be embedded: %2").arg(title, reasonText(error.toStdString())), false, 10000);
             emit done("embed", import, ok, error, report);
           });
 }
@@ -703,7 +704,7 @@ void AssetsArea::pack(const std::string& import) {
           [this, import, title, copy](bool ok, const QString& error, const opad::json& report) {
             const QString path = native(QString::fromStdString(report.value("path", std::string())));
             if (ok) notify(copy ? tr("%1 now links the project's copy: %2").arg(title, path) : tr("%1 is packed into the project: %2").arg(title, path), true, 8000);
-            else notify(tr("%1 could not be packed: %2").arg(title, i18n::t(error)), false, 10000);
+            else notify(tr("%1 could not be packed: %2").arg(title, reasonText(error.toStdString())), false, 10000);
             emit done("pack", import, ok, error, report);
           });
 }
@@ -722,7 +723,7 @@ void AssetsArea::copyPath(const std::string& import) {
 }
 
 void AssetsArea::trust(const std::string& import) {
-  assets::askTrust(services().window(), services().document(), services().jobs(), [this](const QString& error) { notify(i18n::t(error), false, 8000); }, {import});
+  assets::askTrust(services().window(), services().document(), services().jobs(), [this](const QString& error) { notify(reasonText(error.toStdString()), false, 8000); }, {import});
 }
 
 // A board read by OPAD's reader (kicad-cli finds its models itself) with missing models of KiCad's library.
@@ -776,6 +777,18 @@ void AssetsArea::downloadModels(const std::string& import, bool requested) {
     }
     m_monitor->check(0);
   });
+}
+
+QString AssetsArea::reasonText(const std::string& reason) {
+  const QString text = QString::fromStdString(reason);
+  if (const QString whole = i18n::t(text); whole != text) return whole;
+  static const QRegularExpression differ(R"(^(\d+) parts differ from the version synced$)"), gone(R"(^(\d+) parts are no longer in the file(?:, (\d+) differ)?$)");
+  if (const auto m = differ.match(text); m.hasMatch()) return tr("%1 parts differ from the version synced").arg(m.captured(1));
+  if (const auto m = gone.match(text); m.hasMatch())
+    return m.captured(2).isEmpty() ? tr("%1 parts are no longer in the file").arg(m.captured(1)) : tr("%1 parts are no longer in the file, %2 differ").arg(m.captured(1), m.captured(2));
+  if (const qsizetype at = text.indexOf(": "); at > 0)  // a sentence, then the path or the name it is about
+    if (const QString head = text.left(at), translated = i18n::t(head); translated != head) return translated + ": " + text.mid(at + 2);
+  return text;
 }
 
 void AssetsArea::modelFolders() {

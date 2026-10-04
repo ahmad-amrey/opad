@@ -693,6 +693,32 @@ OPAD_BENCH(OPAD_BENCH_ASSET_KICAD, asset_kicad) {
   return true;
 }
 
+// OPAD_BENCH_ASSET_REASONS=1 with OPAD_LANG=ar: what the core says of a linked file (its state, a failed sync, embed or pack)
+// reaches the UI in Arabic, whole, as a sentence followed by its path, or counted; something unknown stays as written.
+OPAD_BENCH(OPAD_BENCH_ASSET_REASONS, asset_reasons) {
+  Checks require;
+  require.name = "asset-reasons";
+  const QString path = "C:/proj/parts/board.kicad_pcb";
+  auto arabic = [](const QString& s) { return std::any_of(s.begin(), s.end(), [](QChar c) { return c.unicode() >= 0x0600 && c.unicode() <= 0x06FF; }); };
+  for (const char* whole : {"its 3D models changed", "the asset is embedded already", "the linked file is not loaded: locate or sync it first",
+                            "the version synced is shown (remembered); sync to take the file as it is now", "made again from the file synced"}) {
+    const QString shown = AssetsArea::reasonText(whole);
+    require(arabic(shown), QString("'%1' -> '%2'").arg(whole, shown));
+  }
+  for (const char* head : {"not found", "outside the document's project", "on a network share", "the linked file is not found"}) {
+    const QString shown = AssetsArea::reasonText(std::string(head) + ": " + path.toStdString());
+    require(arabic(shown) && shown.endsWith(": " + path), QString("'%1: <path>' -> '%2'").arg(head, shown));
+  }
+  for (const char* counted : {"3 parts differ from the version synced", "2 parts are no longer in the file", "2 parts are no longer in the file, 1 differ"}) {
+    const QString shown = AssetsArea::reasonText(counted);
+    const QString given = counted;
+    require(arabic(shown) && std::all_of(given.begin(), given.end(), [&](QChar c) { return !c.isDigit() || shown.contains(c); }), QString("'%1' -> '%2'").arg(given, shown));
+  }
+  require(AssetsArea::reasonText("kernel said: no") == "kernel said: no", "an unknown reason stays as written");
+  QCoreApplication::exit(require.all ? 0 : 2);
+  return true;
+}
+
 // OPAD_BENCH_ASSET_PERF=sync[:<file>]|embed on a document linking a big file (the Engine STEP; not a gui_benches case): once
 // the file is looked at and every body is displayed, the first linked file is synced (from <file> as Replace does: a changed
 // copy is read in full) or embedded through the area as the user's click does; the trace shows the job's time and any stall

@@ -97,6 +97,9 @@ class AssetsArea : public AreaController {
   void downloadModels(const std::string& import, bool requested = true);
   void modelFolders();  // the KiCad settings (model folders), then the boards looked at again
   void settings();      // LinkedFilesDialog, then the files looked at again (a folder no longer trusted)
+  // A reason or an error from the core (a file's state, a sync, an embed, a pack) in the UI's language: whole, else its
+  // sentence before ": " followed by the path or name as written, else its counted forms.
+  static QString reasonText(const std::string& reason);
   void link();                                // Link as asset…: a file dialog, then the file imported linked
   bool busy() const { return m_busy; }
   // What shows a changed KiCad board's changes before it is synced (KicadArea's sync preview): its toast offers that.
