@@ -157,6 +157,26 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
     check(waitFor([&] { const opad::SheetView* v = doc->scene.sheet_view(sec); return v && std::fabs(v->def.value("gap", 0.0) - (gap + 10)) < 0.05; }, 10000) &&
               waitFor(settled, 30000) && std::fabs(frameOf(sec).at[1] - frameOf(front).at[1]) < 1e-6,
           "dragged left and up: 10 mm further away, still lined up");
+    // Bodies left uncut: from the section's menu, a click on the plate draws it whole; again, cut.
+    {
+      QMenu menu;
+      docs->viewMenu({sec}, menu);
+      QAction* uncut = menu.findChild<QAction*>("drawings.menu.uncut");
+      check(uncut != nullptr, "a section view's menu offers Leave bodies uncut…");
+      if (uncut) uncut->trigger();
+      check(tool->tool() == SheetViewTool::Tool::Uncut, "it starts its tool");
+      const auto whole = [&] { const opad::SheetView* v = doc->scene.sheet_view(sec); return v ? v->def.value("whole", opad::json::array()) : opad::json::array(); };
+      const auto hatched = [&] {
+        const auto d = opad::drawing::sheet_display(doc->doc, doc->scene, *doc->scene.sheet(sheet));
+        return onLayer(d, "Hatch", sec);
+      };
+      click(at(sec, {-12, 5}));  // inside the plate's hatched cut face
+      check(waitFor([&] { return whole().size() == 1 && settled(); }, 15000) && hatched() == 0 && tool->active(), "a click on the plate: drawn whole, not hatched; the tool stays");
+      click(at(sec, {-20, 5}));  // its outline, drawn whole now
+      check(waitFor([&] { return whole().empty() && settled(); }, 15000) && hatched() > 10, "a click again: cut and hatched");
+      key(Qt::Key_Escape);
+      check(!tool->active(), "Esc ends it");
+    }
     // Esc with nothing clicked leaves.
     select(front);
     w.action("drawings.sectionView")->trigger();

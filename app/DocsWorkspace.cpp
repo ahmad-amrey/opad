@@ -506,6 +506,13 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
       const auto clear = [this, id = views[0]](const char* key) { run("sheet_edit", {{"target", id}, {"set", {{key, nullptr}}}}); };
       if (v->def.contains("crop")) menu.addAction(tr("Remove crop"), this, [clear] { clear("crop"); })->setObjectName("drawings.menu.uncrop");
       if (v->def.contains("breaks")) menu.addAction(tr("Remove breaks"), this, [clear] { clear("breaks"); })->setObjectName("drawings.menu.unbreak");
+      if (v->kind == "section") {  // shafts, fasteners: drawn whole (ISO 128-50)
+        menu.addAction(tr("Leave bodies uncut…"), this, [this, id = views[0]] {
+              m_page->annotator()->cancel();
+              m_page->viewTool()->start(SheetViewTool::Tool::Uncut, id);
+            })->setObjectName("drawings.menu.uncut");
+        if (v->def.contains("whole")) menu.addAction(tr("Cut every body"), this, [clear] { clear("whole"); })->setObjectName("drawings.menu.cutAll");
+      }
     }
     menu.addSeparator();
   }

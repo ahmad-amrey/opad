@@ -42,6 +42,7 @@ QString SheetViewTool::title(Tool tool) {
     case Tool::Auxiliary: return tr("Auxiliary view");
     case Tool::Crop: return tr("Crop view");
     case Tool::Break: return tr("Break view");
+    case Tool::Uncut: return tr("Bodies left uncut");
     default: return {};
   }
 }
@@ -57,6 +58,10 @@ bool SheetViewTool::start(Tool tool, const std::string& view) {
   }
   if ((tool == Tool::Crop || tool == Tool::Break) && v->kind == "detail") {
     emit message(tr("A detail view is cropped by its circle already."));
+    return false;
+  }
+  if (tool == Tool::Uncut && v->kind != "section") {
+    emit message(tr("Bodies are left uncut in a section view."));
     return false;
   }
   m_tool = tool;
@@ -141,6 +146,7 @@ void SheetViewTool::promptForStage() {
       break;
     case Tool::Crop: text = m_stage == Stage::Pick ? tr("Drag a box around the part of the view to keep") : tr("Click the box's other corner"); break;
     case Tool::Break: text = m_stage == Stage::Pick ? tr("Click where the break starts") : tr("Click where it ends: the band between is taken out"); break;
+    case Tool::Uncut: text = tr("Click a body in the section to draw it whole (shafts, fasteners); click it again to cut it"); break;
     default: break;
   }
   if (m_measuring) text = tr("Measuring the view…");
@@ -326,6 +332,26 @@ void SheetViewTool::clickAt(const QPointF& scene) {
         measure();
       }
       break;
+    case Tool::Uncut: {
+      const auto [node, in] = m_canvas ? m_canvas->bodyAt(scene) : std::pair<std::string, std::string>{};
+      const opad::SheetView* v = m_doc->scene.sheet_view(m_view);
+      if (node.empty() || in != m_view || !v || !m_runner) {
+        emit message(tr("Click a body in the section."));
+        return;
+      }
+      opad::json whole = opad::json::array();
+      bool was = false;
+      for (const auto& n : v->def.value("whole", opad::json::array()))
+        if (n == node) was = true;
+        else whole.push_back(n);
+      if (!was) whole.push_back(node);
+      const std::string view = m_view;
+      QPointer<SheetViewTool> self(this);
+      m_runner("sheet_edit", {{"target", view}, {"set", {{"whole", whole.empty() ? opad::json() : whole}}}}, [self, view](const opad::json& out) {
+        if (self && !out.is_null()) emit self->added(view);
+      });
+      return;  // the tool stays for the next body
+    }
     case Tool::Crop:
     case Tool::Break:
       if (m_stage == Stage::Pick) {
@@ -412,7 +438,7 @@ void SheetViewTool::updatePreview() {
   } else if (m_tool == Tool::Detail && !m_points.empty()) {
     const Vec2 c = paper(m_points[0]);
     d->circle(thin, c, m_stage == Stage::Size ? len(sub(mouse, c)) : m_radius * f->scale);
-  } else if (m_tool == Tool::Auxiliary) {
+  } else if (m_tool == Tool::Auxiliary || m_tool == Tool::Uncut) {
     if (m_stage == Stage::Pick) {
       if (const auto pick = m_canvas->pickAt(m_mouse); pick && pick->line && pick->view == m_view)
         d->curve(d->layer({"Edge", ink, LineType::Continuous, 0.7}), pick->curve);

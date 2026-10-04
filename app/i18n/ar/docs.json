@@ -512,5 +512,11 @@
   "Other material…": "مادة أخرى…",
   "Material: %1": "المادة: %1",
   "Material cleared": "أُزيلت المادة",
-  "A column with each part's mass, from its material's density and its volume": "عمود بكتلة كل قطعة، من كثافة مادتها وحجمها"
+  "A column with each part's mass, from its material's density and its volume": "عمود بكتلة كل قطعة، من كثافة مادتها وحجمها",
+  "Leave bodies uncut…": "ترك أجسام دون قطع…",
+  "Cut every body": "قطع كل الأجسام",
+  "Bodies left uncut": "أجسام بلا قطع",
+  "Bodies are left uncut in a section view.": "تُترك الأجسام دون قطع في المسقط المقطعي.",
+  "Click a body in the section to draw it whole (shafts, fasteners); click it again to cut it": "انقر جسمًا في المقطع لرسمه كاملًا (أعمدة، مثبتات)؛ انقره مجددًا لقطعه",
+  "Click a body in the section.": "انقر جسمًا في المقطع."
 }

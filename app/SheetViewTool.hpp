@@ -7,7 +7,8 @@
 // Auxiliary takes a straight edge of the view (it looks square to it), then the side. Crop takes a box (two clicks or a
 // drag), Break two points (the band between them, along the longer way): one sheet_edit each. Esc steps back (the last
 // point, the last stage), then leaves; points are kept in the view's own coordinates, so the sheet redrawing meanwhile
-// changes nothing. Nothing is measured on the UI thread.
+// changes nothing. Uncut, on a section view: a click on a body leaves it whole (ISO 128-50: shafts, fasteners), a click on
+// it again cuts it, one sheet_edit each, until Esc. Nothing is measured on the UI thread.
 #include <QObject>
 #include <QPointer>
 #include <QPointF>
@@ -25,7 +26,7 @@ class AppDocument;
 class SheetViewTool : public QObject, public SheetInteraction {
   Q_OBJECT
  public:
-  enum class Tool { None, Section, Detail, Auxiliary, Crop, Break };
+  enum class Tool { None, Section, Detail, Auxiliary, Crop, Break, Uncut };  // Uncut: bodies a section draws whole
   SheetViewTool(AppDocument* doc, SheetCanvas* canvas, QObject* parent);
   ~SheetViewTool() override;
   void setRunner(SheetCanvas::Runner runner) { m_runner = std::move(runner); }

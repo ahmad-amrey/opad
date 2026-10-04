@@ -103,6 +103,9 @@ class SheetCanvas : public QGraphicsView {
   void setGhost(const QRectF& scene, const QString& label = {});  // a view's frame while a tool places it (empty: none)
   std::optional<SheetPick> pickAt(const QPointF& scene) const;  // a model edge or face of a view under the pointer
   std::string viewUnder(const QPointF& scene) const;            // the view whose frame holds the point, else empty
+  // The body under the pointer in a view (UI-82): the one whose hatched section face holds the point, else the body of the
+  // nearest of the view's curves within 8 pixels (also an outline the cut made); with the view it is in. Empty: none.
+  std::pair<std::string, std::string> bodyAt(const QPointF& scene) const;
   void setPreview(std::shared_ptr<const opad::drawing::Display> preview);  // drawn over the sheet in sheet paper mm
   const std::shared_ptr<const opad::drawing::Display>& preview() const;
   void setPrompt(const QString& text) { emit promptChanged(text); }

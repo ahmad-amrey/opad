@@ -1339,6 +1339,36 @@ std::optional<SheetPick> SheetCanvas::pickAt(const QPointF& scene) const {
   return best;
 }
 
+std::pair<std::string, std::string> SheetCanvas::bodyAt(const QPointF& scene) const {
+  const double r = 8 / std::max(pixelsPerMm(), 1e-6);
+  std::pair<std::string, std::string> best;
+  double bestD = 1e300;
+  for (const auto& [id, item] : m_views) {
+    if (!item->geometry || item->geometry->bodies.empty() || !(item->frame() | item->displayRect.translated(item->pos())).adjusted(-r, -r, r, r).contains(scene)) continue;
+    const QPointF local = scene - item->pos();  // where the display was drawn
+    const Vec2 paper = toPaper(local);
+    if (const opad::drawing::ViewFrame* f = frame(id)) {  // inside a cut face: even-odd over its outlines
+      const Vec2 v{f->centre[0] + (paper[0] - f->at[0]) / f->scale, f->centre[1] + (paper[1] - f->at[1]) / f->scale};
+      for (const auto& region : item->geometry->sections) {
+        bool in = false;
+        for (const auto& l : region.loops)
+          for (size_t i = 0, j = l.size() - 1; i < l.size(); j = i++)
+            if ((l[i][1] > v[1]) != (l[j][1] > v[1]) && v[0] < l[j][0] + (l[i][0] - l[j][0]) * (v[1] - l[j][1]) / (l[i][1] - l[j][1])) in = !in;
+        if (in && region.body >= 0 && static_cast<size_t>(region.body) < item->geometry->bodies.size()) return {item->geometry->bodies[static_cast<size_t>(region.body)].node, id};
+      }
+    }
+    if (!item->snaps) continue;
+    const int own = static_cast<int>(item->geometry->curves.size());
+    const auto s = item->snaps->find(paper, r, opad::drawing::snap_bit(opad::drawing::SnapKind::Nearest), own);
+    if (!s || s->curve < 0 || s->curve >= own || s->distance >= bestD) continue;
+    const opad::drawing::Curve& c = item->geometry->curves[static_cast<size_t>(s->curve)];
+    if (c.body < 0 || static_cast<size_t>(c.body) >= item->geometry->bodies.size()) continue;
+    best = {item->geometry->bodies[static_cast<size_t>(c.body)].node, id};
+    bestD = s->distance;
+  }
+  return best;
+}
+
 void SheetCanvas::setPreview(std::shared_ptr<const Display> preview) { m_guides->setPreview(std::move(preview)); }
 void SheetCanvas::setGhost(const QRectF& scene, const QString& label) { m_guides->set({}, scene, label); }
 const std::shared_ptr<const Display>& SheetCanvas::preview() const { return m_guides->preview; }
