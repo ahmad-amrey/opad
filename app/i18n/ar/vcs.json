@@ -645,5 +645,8 @@
  "Could not overwrite %1: %2": "تعذّرت الكتابة فوق %1: %2",
  "Git stopped a merge on it and wrote conflict markers into it. Resolve the conflicts to keep both sides' changes; overwriting it keeps only yours.": "أوقف git دمجًا عليه وكتب فيه علامات التعارض. حُلّ التعارضات لتبقى تغييرات الجانبين؛ أما الكتابة فوقه فتُبقي تغييراتك وحدها.",
  "%1 is in a merge conflict": "%1 في تعارض دمج",
- "Not saved: %1 changed on disk. Merge or reload it from the bar over the view first.": "لم يُحفظ: تغيّر %1 على القرص. ادمجه أو أعد تحميله أولًا من الشريط فوق العرض."
+ "Not saved: %1 changed on disk. Merge or reload it from the bar over the view first.": "لم يُحفظ: تغيّر %1 على القرص. ادمجه أو أعد تحميله أولًا من الشريط فوق العرض.",
+ "%1: deleted in the file (stays deleted)": "%1: حُذف في الملف (يبقى محذوفًا)",
+ "(stays deleted)": "(يبقى محذوفًا)",
+ "Changes of yours to what the file deleted: %1 (it stays deleted).": "تغييراتك على ما حذفه الملف: %1 (يبقى محذوفًا)."
 }

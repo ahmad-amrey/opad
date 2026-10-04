@@ -7,11 +7,13 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMainWindow>
 #include <QProcess>
 #include <QPushButton>
 #include <QStatusBar>
 #include <algorithm>
+#include <set>
 
 #include "Banner.hpp"
 #include "I18n.hpp"
@@ -190,15 +192,28 @@ void DiskSync::decide() {
 
 void DiskSync::showMerge(const opad::MergePlan& plan) {
   QString text = tr("Changes there: %1, unsaved here: %2. Merge keeps both, the file's first, then yours.").arg(plan.incoming).arg(plan.mine.size());
-  if (!plan.conflicts.empty()) text += ' ' + tr("Conflicting changes: %1 (yours win).").arg(plan.conflicts.size());
+  // Yours come last and win, except over a delete in the file: an op it tombstoned stays deleted, whatever came after it.
+  size_t clashes = 0;
+  std::set<std::string> deleted;  // targets (an edit and its regen meet one delete twice)
   QStringList details;
   for (const auto& c : plan.conflicts) {
+    const opad::Op* theirs = m_read && m_read->doc ? m_read->doc->find_op(c.theirs) : nullptr;
+    const opad::Op* ours = m_doc->doc.find_op(c.ours);
+    const bool gone = theirs && theirs->type == "delete" && (!ours || ours->type != "delete");
+    if (gone) deleted.insert(c.target);
+    else ++clashes;
     const opad::Node* n = m_doc->node(c.target);
-    const QString what = n ? QString::fromStdString(n->name) : QString::fromStdString(c.target.rfind("parameter:", 0) == 0 ? c.target.substr(10) : c.target.substr(0, 8));
-    details << tr("%1: %2").arg(what, c.field == "*" ? tr("everything") : QString::fromStdString(c.field));
+    const opad::Op* op = n ? nullptr : m_doc->doc.find_op(c.target);
+    const QString what = n ? QString::fromStdString(n->name) : op && op->data.contains("name") ? QString::fromStdString(op->data.value("name", ""))
+                         : QString::fromStdString(c.target.rfind("parameter:", 0) == 0 ? c.target.substr(10) : c.target.substr(0, 8));
+    details << (gone ? tr("%1: deleted in the file (stays deleted)").arg(what) : tr("%1: %2").arg(what, c.field == "*" ? tr("everything") : QString::fromStdString(c.field)));
   }
+  details.removeDuplicates();
+  if (clashes) text += ' ' + tr("Conflicting changes: %1 (yours win).").arg(clashes);
+  if (!deleted.empty()) text += ' ' + tr("Changes of yours to what the file deleted: %1 (it stays deleted).").arg(deleted.size());
   m_banner->present("merge", Banner::Tone::Warning, tr("%1 changed on disk").arg(name()), text, details.join('\n'));
   m_banner->setProperty("conflicts", static_cast<int>(plan.conflicts.size()));
+  m_banner->setProperty("deleted", static_cast<int>(deleted.size()));
   m_banner->addButton("diskMerge", tr("Merge"), [this] { merge(); }, true);
   m_banner->addButton("diskReload", tr("Reload…"), [this] { reload(); });
   m_banner->addButton("diskSaveAs", tr("Save as…"), [this] { trigger("file.saveas"); });
@@ -350,8 +365,8 @@ bool DiskSync::bench() {
     std::vector<std::string> bodies;
     bool running = false;
     QString file;
-    std::string a, b;
-    size_t ops = 0;
+    std::string a, b, feature;
+    size_t ops = 0, kept = 0;
     AppDocument::DiskStat stamp;
   };
   auto st = std::make_shared<State>();
@@ -376,9 +391,9 @@ bool DiskSync::bench() {
     return ids;
   };
   auto stamp = [st] { return AppDocument::statFile(st->file); };  // a write moves it
-  auto reset = [path] {  // as `git reset --hard HEAD~1` would leave it: the last op gone
+  auto reset = [path](size_t keep = SIZE_MAX) {  // as `git reset --hard HEAD~1` would leave it: the last op (or those after `keep`) gone
     opad::Document d = opad::Document::load(path());
-    d.truncate_ops(d.ops.size() - 1);
+    d.truncate_ops(std::min(keep, d.ops.size() - 1));
     opad::write_text_file(path(), d.serialize());
   };
   auto click = [this](const char* action) {
@@ -456,8 +471,26 @@ bool DiskSync::bench() {
         trigger("file.save");
         require(!m_doc->isDirty(), "conflict: saved");
         pass("conflict");
+        st->kept = m_doc->doc.ops.size();
+        for (const auto& o : m_doc->doc.ops)  // the file deletes the cylinder while it is edited here
+          if (o.type == "feature") st->feature = o.id;
+        m_doc->run("feature_edit", opad::json{{"target", st->feature}, {"inputs", {{"height", "40 mm"}}}});
+        run({"delete", st->file, "--target", QString::fromStdString(st->feature)});
+        return true;
+      },
+      [=, this] {
+        if (st->running || m_banner->state() != "merge") return false;
+        require(st->exit == 0, "opad-cli delete");
+        require(m_banner->property("conflicts").toInt() >= 1 && m_banner->property("deleted").toInt() == 1 && m_banner->toolTip().contains(tr("(stays deleted)")) &&
+                    !m_banner->findChild<QLabel*>("secondary")->text().contains(tr("Conflicting changes: %1 (yours win).").section(':', 0, 0)),
+                "deleted there, edited here: said as such, not as yours winning");
+        click("diskMerge");
+        require(m_doc->doc.is_deleted(st->feature) && m_doc->isDirty(), "the cylinder stays deleted, as the banner said");
+        trigger("file.save");
+        require(!m_doc->isDirty(), "deleted: saved");
+        pass("a change to what the file deleted: said, it stays deleted");
         st->ops = m_doc->doc.ops.size();
-        reset();
+        reset(st->kept - 1);  // back before the conflict's rename
         return true;
       },
       [=, this] {
