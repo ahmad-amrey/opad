@@ -42,9 +42,11 @@ void draw_view(Display& d, const ViewFrame& f, const SheetView& v, const ViewGeo
   const json style = v.def.value("style", json::object());
   const bool thin = !style.contains("tangent") || style["tangent"] != "show";
   const size_t from = d.prims.size();
+  int broken = -1;  // where a broken-out section ends over a body: a thin break line (ISO 128-2 type 01.1)
   for (const auto& c : g.curves) {
     const bool smooth = c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam;
-    d.curve(c.hidden ? hidden : smooth && thin ? tangent : visible, placed(c, f));
+    if (c.kind == Curve::Kind::Break && !c.hidden && broken < 0) broken = d.layer({"Break", kInk, LineType::Continuous, 0.25});
+    d.curve(c.hidden ? hidden : c.kind == Curve::Kind::Break ? broken : smooth && thin ? tangent : visible, placed(c, f));
   }
   detail::draw_section_faces(d, f, v, g, doc, scene);
   if (style.value("centermarks", false)) {

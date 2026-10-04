@@ -460,4 +460,88 @@ TEST(views_aligned_section) {
   }
 }
 
+// A broken-out section (ISO 128-40 local section) on the plate's front view: within a smooth outline round the hole,
+// what lies nearer than the plate's middle is taken away; the floor hatched, the hole's far half and its edges drawn,
+// a thin break line where the cut ends over the plate; freehand break lines on a cropped view.
+TEST(views_broken_out_section) {
+  Plate p;
+  Scene s = resolve(p.doc);
+  const ViewSpec plain = view_spec(s, *s.sheet_view(p.front));
+  const auto depth = view_depth(p.doc, s, plain);
+  CHECK(std::fabs(depth[0] + 20) < 1e-6 && std::fabs(depth[1] - 20) < 1e-6);  // the plate's 40 mm along the view
+  const std::vector<Vec2> outline = breakout_outline({{-9, -1}, {9, -1}, {9, 11}, {-9, 11}});
+  CHECK(outline.size() > 16);
+  for (const Vec2& q : {Vec2{-9, -1}, Vec2{9, 11}})
+    CHECK(std::any_of(outline.begin(), outline.end(), [&](const Vec2& o) { return std::hypot(o[0] - q[0], o[1] - q[1]) < 0.05; }));  // through its points
+  CHECK_THROWS(breakout_outline({{0, 0}, {1, 1}}));
+  const json breakouts = {{{"outline", {{-9, -1}, {9, -1}, {9, 11}, {-9, 11}}}, {"depth", 0}}};
+  run(p.doc, "sheet_edit", {{"target", p.front}, {"set", {{"breakouts", breakouts}}}});
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", p.front}, {"set", {{"breakouts", {{{"outline", {{0, 0}, {1, 1}}}, {"depth", 0}}}}}}}));
+  s = resolve(p.doc);
+  const ViewSpec spec = view_spec(s, *s.sheet_view(p.front));
+  CHECK_EQ(spec.breakouts.size(), 1u);
+  CHECK(projection_fingerprint(p.doc, s, spec, Quality::Auto) != projection_fingerprint(p.doc, s, plain, Quality::Auto));
+  const auto g = project(p.doc, s, spec, {}, false);
+  double floor = 0;
+  for (const auto& r : g->sections)
+    for (const auto& l : r.loops) floor += area(l);
+  // The plate's middle within the outline (its band 0 <= z <= 10), the hole (10 x 10) left out.
+  std::vector<Vec2> band = outline;
+  for (const auto& [n, c] : {std::pair{Vec2{0, -1}, 0.0}, std::pair{Vec2{0, 1}, 10.0}}) {
+    std::vector<Vec2> next;
+    for (size_t i = 0; i < band.size(); ++i) {
+      const Vec2 a = band[i], b = band[(i + 1) % band.size()];
+      const double da = n[0] * a[0] + n[1] * a[1] - c, db = n[0] * b[0] + n[1] * b[1] - c;
+      if (da <= 0) next.push_back(a);
+      if (da * db < 0) next.push_back({a[0] + (b[0] - a[0]) * da / (da - db), a[1] + (b[1] - a[1]) * da / (da - db)});
+    }
+    band.swap(next);
+  }
+  CHECK(std::fabs(floor - (area(band) - 100)) < 1);
+  int breaks = 0, rims = 0;
+  for (const auto& k : g->curves) {
+    if (k.kind == Curve::Kind::Break) {
+      ++breaks;
+      CHECK(!k.hidden);
+      for (const auto& q : k.sample(0.01)) {
+        double near = 1e300;  // to the outline as drawn
+        for (size_t i = 0; i < outline.size(); ++i) {
+          const Vec2 a = outline[i], b = outline[(i + 1) % outline.size()], ab{b[0] - a[0], b[1] - a[1]};
+          const double t = std::clamp(((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / (ab[0] * ab[0] + ab[1] * ab[1]), 0.0, 1.0);
+          near = std::min(near, std::hypot(q[0] - a[0] - t * ab[0], q[1] - a[1] - t * ab[1]));
+        }
+        CHECK(near < 0.05);
+      }
+    }
+    const auto pts = k.sample(0.01);
+    if (!k.hidden && k.kind != Curve::Kind::Break && std::all_of(pts.begin(), pts.end(), [](const Vec2& q) { return std::fabs(std::fabs(q[0]) - 5) < 1e-4; })) ++rims;
+  }
+  CHECK(breaks >= 2);  // over the plate, where the outline crosses it on either side
+  CHECK(rims >= 2);    // the hole's sides, seen now
+  CHECK(g->counts().value("break", 0) == breaks);
+  const ViewGeometry back = ViewGeometry::deserialize(g->serialize());
+  CHECK(std::count_if(back.curves.begin(), back.curves.end(), [](const Curve& k) { return k.kind == Curve::Kind::Break; }) == breaks);
+  Display d = sheet_display(p.doc, s, *s.sheet(p.sheet));
+  CHECK(on_layer(d, "Hatch", p.front) > 5 && on_layer(d, "Break", p.front) == breaks);
+  // Not on a section view; a projected view takes its own.
+  const std::string sec = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"kind", "section"}, {"parent", p.front}, {"cut", {{0, -10}, {0, 20}}}})["id"];
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", sec}, {"set", {{"breakouts", breakouts}}}}));
+  const std::string top = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"parent", p.front}, {"side", "bottom"}})["id"];
+  s = resolve(p.doc);
+  CHECK(view_spec(s, *s.sheet_view(top)).breakouts.empty() && view_spec(s, *s.sheet_view(sec)).breakouts.empty());
+  // Freehand break lines where a crop cuts through the top view: a wave, not a zigzag.
+  run(p.doc, "sheet_edit", {{"target", top}, {"set", {{"crop", {-30, -25, 0, 25}}}}});
+  const auto points_on = [&](const std::string& view) {
+    const Scene now = resolve(p.doc);
+    size_t most = 0;
+    const Display dd = sheet_display(p.doc, now, *now.sheet(p.sheet));
+    for (const auto& prim : dd.prims)
+      if (prim.source == view && dd.layers[static_cast<size_t>(prim.layer)].name == "Break") most = std::max(most, prim.curve.pts.size());
+    return most;
+  };
+  CHECK_EQ(points_on(top), 6u);
+  run(p.doc, "sheet_edit", {{"target", top}, {"set", {{"style", {{"break", "freehand"}}}}}});
+  CHECK(points_on(top) > 20);
+}
+
 CHECK_MAIN()

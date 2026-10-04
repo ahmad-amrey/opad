@@ -361,8 +361,10 @@ the bodies it crosses are cut where it is swept through the model and the cut fa
 degrees to each part's main outlines, parts beside each other turned apart, narrow faces filled; `hatch` or the view's
 Hatching… sets the angle, the spacing and the bodies' material symbols, after ASME Y14.2); detail views enlarge a
 circle of their parent, auxiliary views look square to a slanted edge, and any view can be cropped to a box or broken to
-shorten a long part (dimensions across a break keep their true value). In the Drawings workspace these are drawn with
-the mouse on the selected view (Views group, or the view's menu).
+shorten a long part (dimensions across a break keep their true value; break lines ruled with a zigzag or freehand). A
+broken-out section opens up a view within a smooth closed outline down to a depth picked in a view beside it (`breakouts`
+on the view): its floor hatched, a thin break line where it ends over the part. In the Drawings workspace these are
+drawn with the mouse on the selected view (Views group, or the view's menu).
 
 The hidden-line linework of a view is never stored: it is a pure function of the bodies' content keys, their
 placements and the view's definition, so it is projected when a sheet is shown or exported and cached under that

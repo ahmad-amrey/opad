@@ -13,7 +13,10 @@
 //               [nodes not cut]; detail: parent, center [u, v], radius (model
 //               mm), letter, scale, at; auxiliary: parent, angle (degrees on the sheet from the parent to it: it looks
 //               along that line), gap, align/at, letter (optional); any view: crop [x0, y0, x1, y1] (view coordinates),
-//               breaks [{axis x|y, from, to, gap (paper mm)}]; a section (and its details): hatch {pattern general |
+//               breaks [{axis x|y, from, to, gap (paper mm)}], style.break zigzag | freehand (the lines where a crop or a
+//               break cuts through it); a base, projected or auxiliary view: breakouts [{outline [[u, v], ...] (three or
+//               more points of a smooth closed curve), depth (along its dir: what lies nearer is taken away)}] (broken-out
+//               sections); a section, a view with breakouts (and their details): hatch {pattern general |
 //               material | a lining (display.hpp hatch_patterns), angle (degrees: the first part's, neighbours turned from
 //               it), spacing (paper mm), thin fill | hatch (faces under about a millimetre filled), bodies {node: {pattern,
 //               angle, spacing}}}, all optional (automatic: ISO 128-50 at 45 degrees to each part's main outlines)
@@ -120,6 +123,11 @@ bool inclined_cut(const std::vector<Vec2>& cut);
 std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const Sheet& sheet);
 // The bodies' extent in a view: xmin, ymin, xmax, ymax in view coordinates (model mm); zeros when it draws nothing.
 std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const ViewSpec& spec);
+// How deep they lie in it: the least and the most of p . dir over their tight boxes (model mm); zeros when it draws nothing.
+std::array<double, 2> view_depth(const Document& doc, const Scene& scene, const ViewSpec& spec);
+// A broken-out section's outline as drawn and cut (UI-82): the smooth closed curve through its points (view coordinates),
+// within tol, its last point not repeated. Throws Error for fewer than three points apart.
+std::vector<Vec2> breakout_outline(const std::vector<Vec2>& points, double tol = 0.01);
 
 // A dimension's value from its references now (hint-aware, as features resolve theirs): {"value", "shown", "anchor",
 // "geometry"} in the sheet's units, angles in degrees; anchor is where it measures, paper mm from the view's centre, and

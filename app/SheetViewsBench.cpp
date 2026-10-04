@@ -29,8 +29,10 @@ using opad::drawing::Vec2;
 // cutting line; dragged, it moves only away from its parent; Esc steps back a point, then leaves. Detail view: centre,
 // radius, place (5:1, the next standard scale from twice 2:1). Auxiliary view square to an edge of the top view, lined up.
 // Hatching… (the dialog, a typed angle and spacing, automatic again). An aligned section on the top view (three points,
-// the last segment at 30 degrees: both sides hatched). Crop by dragging a box on the top view, Break by two
-// clicks on the front view (the top view broken with it), Remove crop from the view's menu, Ctrl+Z. <prefix>.views.png,
+// the last segment at 30 degrees: both sides hatched). A broken-out section on the front view (outline previewed, Esc
+// back from the depth, the depth clicked on the hole's centre in the top view; floor hatched, break lines; removed from
+// the menu, Ctrl+Z). Crop by dragging a box on the top view, Break by two clicks on the front view (the top view broken
+// with it), freehand break lines from the menu, Remove crop from the view's menu, Ctrl+Z. <prefix>.views.png,
 // <prefix>.hatch.png.
 OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
   const QString& prefix = value;
@@ -278,6 +280,43 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
       check(waitFor([&] { return views("section").size() == before && settled(); }, 15000), "Ctrl+Z takes it away");
     }
 
+    // A broken-out section on the front view: four points round the hole (the closed curve previewed), Enter, Esc back to
+    // the points, Enter, then the depth clicked on the hole's centre in the top view: one edit, the floor hatched, thin
+    // break lines where the cut ends over the plate. Removed from the menu, Ctrl+Z.
+    {
+      select(front);
+      check(w.action("drawings.breakoutView")->isEnabled(), "Broken-out section is offered for the front view");
+      w.action("drawings.breakoutView")->trigger();
+      for (const Vec2 q : {Vec2{-9, -1}, Vec2{9, -1}, Vec2{9, 11}}) click(at(front, q));
+      mouse(QEvent::MouseMove, at(front, {-9, 11}));
+      check(tool->tool() == SheetViewTool::Tool::Breakout && canvas->preview() && canvas->preview()->prims.size() >= 4, "three points: the closed curve through them and the pointer previewed");
+      click(at(front, {-9, 11}));
+      key(Qt::Key_Return);
+      check(tool->askingDepth() && tool->prompt().contains("depth"), "Enter closes the outline and asks for the depth");
+      key(Qt::Key_Escape);
+      check(!tool->askingDepth() && tool->points() == 4 && tool->active(), "Esc goes back to the outline's points");
+      key(Qt::Key_Return);
+      const size_t before = doc->doc.ops.size();
+      click(at(top, {0, 0}));  // the hole's centre: the cut goes through the hole's axis
+      const auto opened = [&] { const opad::SheetView* v = doc->scene.sheet_view(front); return v ? v->def.value("breakouts", opad::json::array()) : opad::json::array(); };
+      check(waitFor([&] { return opened().size() == 1 && settled(); }, 30000) && doc->doc.ops.size() == before + 1 && std::fabs(opened()[0].value("depth", 99.0)) < 1e-6 &&
+                opened()[0]["outline"].size() == 4 && !tool->active(),
+            "the depth clicked in the top view: one edit through the hole's middle; the tool ends");
+      const auto drawnOn = [&](const std::string& layer) {
+        const auto d = opad::drawing::sheet_display(doc->doc, doc->scene, *doc->scene.sheet(sheet));
+        return onLayer(d, layer, front);
+      };
+      check(drawnOn("Hatch") > 4 && drawnOn("Break") >= 2 && st(front).final, "its floor hatched, thin break lines where it ends over the plate");
+      QMenu menu;
+      docs->viewMenu({front}, menu);
+      QAction* remove = menu.findChild<QAction*>("drawings.menu.unbreakout");
+      check(remove && menu.findChild<QAction*>("drawings.menu.hatching"), "the front view's menu offers Remove broken-out sections and Hatching…");
+      if (remove) remove->trigger();
+      check(waitFor([&] { return opened().empty() && settled(); }, 15000) && drawnOn("Hatch") == 0, "removed: the plain front view again");
+      w.action("edit.undo")->trigger();
+      check(waitFor([&] { return opened().size() == 1 && settled(); }, 15000) && drawnOn("Break") >= 2, "Ctrl+Z: opened again");
+    }
+
     // Detail view: centre, radius, place.
     select(front);
     w.action("drawings.detailView")->trigger();
@@ -331,6 +370,26 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
     click(at(front, {-10, 5}));
     check(waitFor([&] { return doc->scene.sheet_view(front)->def.contains("breaks") && settled() && std::fabs(width(front) - 106) < 0.5 && frameOf(top).breaks.size() == 1; }, 30000),
           QString("broken: 10 mm taken out of the front view, 6 mm between the halves (%1 mm wide); the top view broken too").arg(width(front)));
+    // Its break lines freehand, from the view's menu.
+    {
+      const auto longest = [&] {
+        size_t most = 0;
+        const auto d = opad::drawing::sheet_display(doc->doc, doc->scene, *doc->scene.sheet(sheet));
+        for (const auto& p : d.prims)
+          if (p.source == front && d.layers[static_cast<size_t>(p.layer)].name == "Break" && p.curve.type == opad::drawing::Curve::Type::Polyline) most = std::max(most, p.curve.pts.size());
+        return most;
+      };
+      const size_t zigzag = longest();
+      QMenu menu;
+      docs->viewMenu({front}, menu);
+      QAction* freehand = menu.findChild<QAction*>("drawings.menu.break.freehand");
+      QAction* ruled = menu.findChild<QAction*>("drawings.menu.break.zigzag");
+      check(freehand && ruled && ruled->isChecked() && zigzag == 6, "the broken view's menu offers its break lines, ruled with a zigzag now");
+      if (freehand) freehand->trigger();
+      check(waitFor([&] { const opad::SheetView* v = doc->scene.sheet_view(front); return v && v->def.value("style", opad::json::object()).value("break", "") == "freehand" && settled(); }, 15000) &&
+                longest() > 20,
+            QString("Freehand: one edit, the break lines drawn as waves (%1 points)").arg(longest()));
+    }
     // Remove crop from the view's menu; Ctrl+Z puts it back.
     QMenu menu;
     docs->viewMenu({top}, menu);

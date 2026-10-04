@@ -87,5 +87,14 @@ void drop_joint_curves(const ViewSpec& spec, const View& view, const std::vector
 // An aligned section's extent in its view (xmin, ymin, xmax, ymax): the bodies' boxes cut to each piece and revolved with
 // it. Walks the bodies' boxes the first time: workers only.
 std::array<double, 4> aligned_extent(const Document& doc, const Scene& scene, const ViewSpec& spec);
+// Broken-out sections (section.cpp): the sources a pocket reaches (an outline at its depth swept towards the viewer)
+// replaced by what is left of them (cached like a section's cuts), the pockets' floors as regions. Parallel.
+void breakout_sources(const Document& doc, const ViewSpec& spec, const View& view, std::vector<Source>& sources, Run& run,
+                      std::vector<ViewGeometry::Region>& regions);
+// The cut bodies' curves along the outlines (the pockets' walls seen edge on): visible ones Curve::Kind::Break, hidden
+// ones left out.
+void mark_breakout_curves(const ViewSpec& spec, const std::vector<Source>& sources, std::vector<Curve>& curves);
+// A broken-out section's outline: the periodic cubic through its points (repeats dropped). Throws Error for fewer than 3.
+Handle(Geom2d_BSplineCurve) breakout_spline(const std::vector<Vec2>& points);
 
 }  // namespace opad::drawing::detail

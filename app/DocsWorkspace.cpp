@@ -45,7 +45,8 @@ OPAD_ICON_TABLE(sheets,
                 {"viewDetail", R"(<path d="M3 15V5h12" opacity=".55"/><circle cx="10" cy="9" r="3"/><path d="M12.2 11.2l2.3 2.3"/><circle cx="18" cy="17.5" r="4"/>)"},
                 {"viewAuxiliary", R"(<rect x="3" y="11" width="8" height="8"/><path d="M14 9l4.5-4.5 3 3L17 12z"/><path d="M11 11l3-2" stroke-dasharray="1.5 1.5"/>)"},
                 {"viewCrop", R"(<path d="M6 2v16h16"/><path d="M2 6h16v16"/>)"},
-                {"viewBreak", R"(<path d="M2 8h7M2 16h7M15 8h7M15 16h7"/><path d="M10 5l-1 3 2 2-2 2 2 2-1 3M15 5l-1 3 2 2-2 2 2 2-1 3"/>)"});
+                {"viewBreak", R"(<path d="M2 8h7M2 16h7M15 8h7M15 16h7"/><path d="M10 5l-1 3 2 2-2 2 2 2-1 3M15 5l-1 3 2 2-2 2 2 2-1 3"/>)"},
+                {"viewBreakout", R"(<rect x="3" y="5" width="18" height="14"/><path d="M8 9.5c1.5-2.5 6.5-2.5 8-.5s1 5.5-1.5 6.5-6.5 1-7-1.5-.5-3 .5-4.5z"/><path d="M9.5 14.5l4-5M12 15.5l3.5-4.5" opacity=".55"/>)"});
 
 namespace {
 std::vector<std::string> nodesIn(AppDocument* doc, std::vector<std::string> ids) {  // bodies and components
@@ -108,6 +109,8 @@ void DocsArea::buildDrawingCommands() {
       {"inclined face", "true shape", "slanted", "square to an edge"});
   add("drawings.cropView", tr("Crop view"), "viewCrop", [this] { startViewTool(VT::Crop); }, oneView, {"partial view", "trim", "clip"});
   add("drawings.breakView", tr("Break view"), "viewBreak", [this] { startViewTool(VT::Break); }, oneView, {"broken view", "shorten", "long part", "interrupted"});
+  add("drawings.breakoutView", tr("Broken-out section"), "viewBreakout", [this] { startViewTool(VT::Breakout); }, oneView,
+      {"local section", "partial section", "break out", "cut away", "freehand"});
   QAction* hidden = add("drawings.hiddenLines", tr("Hidden lines"), "hiddenLines", [] {}, sheetShown, {"dashed", "hidden edges"}, true);
   QAction* tangent = add("drawings.tangentEdges", tr("Tangent edges"), "tangentEdges", [] {}, sheetShown, {"smooth edges"}, true);
   const auto views = [this] {  // the selected views, else the sheet's
@@ -159,7 +162,7 @@ void DocsArea::drawingsRibbon(RibbonLayout& layout) {
   layout.addAction("drawings.drawing.views", services().action("drawings.baseView"), RibbonLayout::Size::Large, bases);
   layout.addAction("drawings.drawing.views", services().action("drawings.projectedView"));
   layout.addAction("drawings.drawing.views", services().action("drawings.isoView"));
-  for (const char* id : {"drawings.sectionView", "drawings.detailView", "drawings.auxiliaryView", "drawings.cropView", "drawings.breakView"})
+  for (const char* id : {"drawings.sectionView", "drawings.detailView", "drawings.auxiliaryView", "drawings.breakoutView", "drawings.cropView", "drawings.breakView"})
     layout.addAction("drawings.drawing.views", services().action(id));
   group("style", tr("Style"), {"drawings.hiddenLines", "drawings.tangentEdges", "drawings.update"});
   layout.addGroup("drawings.drawing", "drawings.drawing.output", tr("Output"));
@@ -465,7 +468,7 @@ void DocsArea::setViewStyle(const std::vector<std::string>& views, const opad::j
 
 void DocsArea::editHatching(const std::string& view) {
   const opad::SheetView* v = services().document()->scene.sheet_view(view);
-  if (!v || v->kind != "section") throw opad::Error("Hatching is a section view's.");
+  if (!v || (v->kind != "section" && !v->def.contains("breakouts"))) throw opad::Error("Hatching is a section view's or a broken-out section's.");
   auto* dialog = new HatchDialog(v->def.value("hatch", opad::json::object()), services().window());
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &QDialog::accepted, this, [this, dialog, view] {
@@ -515,12 +518,31 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
       if (QAction* a = services().action(id)) menu.addAction(a);
     const opad::SheetView* v = s.sheet_view(views[0]);
     if (v && v->kind != "detail") {
+      const bool opened = v->def.contains("breakouts");
+      if (v->kind != "section")
+        if (QAction* a = services().action("drawings.breakoutView")) menu.addAction(a);
       for (const char* id : {"drawings.cropView", "drawings.breakView"})
         if (QAction* a = services().action(id)) menu.addAction(a);
       const auto clear = [this, id = views[0]](const char* key) { run("sheet_edit", {{"target", id}, {"set", {{key, nullptr}}}}); };
+      if (opened) menu.addAction(tr("Remove broken-out sections"), this, [clear] { clear("breakouts"); })->setObjectName("drawings.menu.unbreakout");
       if (v->def.contains("crop")) menu.addAction(tr("Remove crop"), this, [clear] { clear("crop"); })->setObjectName("drawings.menu.uncrop");
       if (v->def.contains("breaks")) menu.addAction(tr("Remove breaks"), this, [clear] { clear("breaks"); })->setObjectName("drawings.menu.unbreak");
-      if (v->kind == "section") {  // shafts, fasteners: drawn whole (ISO 128-50)
+      const opad::drawing::ViewFrame* f = m_page->canvas()->frame(views[0]);
+      if (f && (f->crop_cuts || !f->breaks.empty())) {  // its break lines: zigzag or freehand (ISO 128-2)
+        const opad::json st = v->def.value("style", opad::json::object());
+        const std::string now = st.is_object() && st.value("break", "") == "freehand" ? "freehand" : "zigzag";
+        QMenu* lines = menu.addMenu(icons::themed("viewBreak", 16), tr("Break lines"));
+        lines->setObjectName("drawings.menu.breakLines");
+        auto* group = new QActionGroup(lines);
+        for (const auto& [value, label] : std::initializer_list<std::pair<const char*, QString>>{{"zigzag", tr("Ruled, with a zigzag")}, {"freehand", tr("Freehand")}}) {
+          QAction* a = lines->addAction(label, this, [this, id = views[0], v = std::string(value)] { setViewStyle({id}, {{"break", v}}); });
+          a->setObjectName(QString("drawings.menu.break.") + value);
+          a->setCheckable(true);
+          a->setChecked(now == value);
+          group->addAction(a);
+        }
+      }
+      if (v->kind == "section" || opened) {  // shafts, fasteners: drawn whole (ISO 128-50)
         menu.addAction(tr("Leave bodies uncut…"), this, [this, id = views[0]] {
               m_page->annotator()->cancel();
               m_page->viewTool()->start(SheetViewTool::Tool::Uncut, id);

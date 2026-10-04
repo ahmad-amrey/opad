@@ -53,6 +53,14 @@ struct ViewSpec {
   Vec3 cut_x{1, 0, 0}, cut_y{0, 0, 1};
   std::vector<std::string> whole;
   bool aligned = false;
+  // Broken-out (local) sections (UI-82): within each outline (view coordinates; a smooth closed curve through its points)
+  // whatever lies nearer the viewer than `depth` (along dir, model mm) is taken away from the bodies it reaches; the faces
+  // left at the depth come back as sections, and where the cut ends over a body it is drawn as a thin break line.
+  struct Breakout {
+    std::vector<Vec2> outline;
+    double depth = 0;
+  };
+  std::vector<Breakout> breakouts;
   static ViewSpec preset(const std::string& view);  // the Camera::preset names: front, top, right, iso, ...
   json to_json() const;
   static ViewSpec from_json(const json& j);  // {"view":"front"} or {"dir":[..],"up":[..]}, plus the fields above
@@ -60,7 +68,7 @@ struct ViewSpec {
 
 struct Curve {
   enum class Type : uint8_t { Line, Arc, Ellipse, Spline, Polyline };
-  enum class Kind : uint8_t { Sharp, Tangent, Seam, Silhouette };
+  enum class Kind : uint8_t { Sharp, Tangent, Seam, Silhouette, Break };  // Break: where a broken-out section ends (thin)
   Type type = Type::Line;
   Kind kind = Kind::Sharp;
   bool hidden = false;

@@ -2,24 +2,35 @@
 // towards the viewer taken away), and the faces the cut leaves facing the viewer, for hatching. Bodies wholly on one side
 // are kept or dropped by their boxes, without a boolean; each cut is cached by body key, placement and cut. An aligned
 // section cuts each segment's strip on its own and revolves it about the joints before it onto the first segment's line.
+// A broken-out section takes away what lies nearer the viewer than its depth within a closed outline.
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <Bnd_Box2d.hxx>
+#include <BndLib_Add2dCurve.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
+#include <Geom2dAPI_Interpolate.hxx>
+#include <Geom2dAdaptor_Curve.hxx>
+#include <GeomAPI.hxx>
 #include <NCollection_DataMap.hxx>
 #include <OSD_Parallel.hxx>
 #include <Standard_Failure.hxx>
+#include <TColgp_HArray1OfPnt2d.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopTools_ShapeMapHasher.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -32,6 +43,7 @@
 #include <map>
 #include <mutex>
 
+#include "opad/drawing/sheet.hpp"
 #include "opad/geometry.hpp"
 #include "projection_internal.hpp"
 
@@ -230,7 +242,7 @@ void remember(const std::string& id, std::shared_ptr<const CutBody> cut) {
 }
 
 // The ordinals of `result`'s sub-shapes of a type in `original`'s (-1 for those the boolean made).
-std::shared_ptr<const std::vector<int>> trace(BRepAlgoAPI_Common& algo, const TopoDS_Shape& original, const TopoDS_Shape& result, TopAbs_ShapeEnum type) {
+std::shared_ptr<const std::vector<int>> trace(BRepAlgoAPI_BooleanOperation& algo, const TopoDS_Shape& original, const TopoDS_Shape& result, TopAbs_ShapeEnum type) {
   TopTools_IndexedMapOfShape before, after;
   TopExp::MapShapes(original, type, before);
   TopExp::MapShapes(result, type, after);
@@ -298,13 +310,8 @@ Cutter cutter_of(const ViewSpec& spec) {
   return c;
 }
 
-}  // namespace
-
-void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, std::vector<Source>& sources, Run& run,
-                 std::vector<ViewGeometry::Region>& regions) {
-  if (spec.cut.size() < 2) return;
-  Cutter c = cutter_of(spec);
-  // Large enough to hold every body and the line, small enough for the booleans' tolerances.
+// The sources' world boxes, and the largest coordinate of any of them (at least 1).
+std::vector<Bnd_Box> world_boxes(const Document& doc, const std::vector<Source>& sources, double& r) {
   Bnd_Box all;
   std::vector<Bnd_Box> boxes(sources.size());
   for (size_t i = 0; i < sources.size(); ++i) {
@@ -325,12 +332,237 @@ void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, st
     } catch (const std::exception&) {
     }
   }
-  double r = 1;
+  r = 1;
   if (!all.IsVoid()) {
     double lo[3], hi[3];
     all.Get(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
     for (int k = 0; k < 3; ++k) r = std::max({r, std::fabs(lo[k]), std::fabs(hi[k])});
   }
+  return boxes;
+}
+
+// A cut body in the source's place: its cut shape (placed in the world) and the maps of its edges and faces.
+void take_cut(Source& s, const CutBody& cut, const std::string& id) {
+  s.base = s.key;
+  s.key = id;
+  s.proto = s.placed = cut.shape;
+  s.world = Mat4::identity();
+  s.rigid = true;
+  s.trsf = gp_Trsf();
+  s.edges = cut.edges;
+  s.faces = cut.faces;
+}
+
+std::string cache_id(const std::string& cut, const Source& s) {
+  std::string id = cut + "|" + s.key;
+  char buf[32];
+  for (double v : s.world.m) {
+    std::snprintf(buf, sizeof buf, "|%.9f", std::fabs(v) < 5e-10 ? 0.0 : v);
+    id += buf;
+  }
+  return sha256_hex(id);
+}
+
+}  // namespace
+
+Handle(Geom2d_BSplineCurve) breakout_spline(const std::vector<Vec2>& pts) {
+  std::vector<Vec2> p;
+  for (const auto& q : pts)
+    if (p.empty() || std::hypot(q[0] - p.back()[0], q[1] - p.back()[1]) > 1e-6) p.push_back(q);
+  while (p.size() > 1 && std::hypot(p.front()[0] - p.back()[0], p.front()[1] - p.back()[1]) <= 1e-6) p.pop_back();
+  if (p.size() < 3) throw Error("a broken-out section's outline needs three points apart");
+  Handle(TColgp_HArray1OfPnt2d) a = new TColgp_HArray1OfPnt2d(1, static_cast<int>(p.size()));
+  for (size_t i = 0; i < p.size(); ++i) a->SetValue(static_cast<int>(i + 1), gp_Pnt2d(p[i][0], p[i][1]));
+  try {
+    Geom2dAPI_Interpolate smooth(a, Standard_True, 1e-7);
+    smooth.Perform();
+    if (smooth.IsDone()) return smooth.Curve();
+  } catch (const Standard_Failure&) {
+  }
+  throw Error("a broken-out section's outline makes no closed curve");
+}
+
+void breakout_sources(const Document& doc, const ViewSpec& spec, const View& view, std::vector<Source>& sources, Run& run,
+                      std::vector<ViewGeometry::Region>& regions) {
+  if (spec.breakouts.empty()) return;
+  double r = 1;
+  const std::vector<Bnd_Box> boxes = world_boxes(doc, sources, r);
+  for (const auto& b : spec.breakouts) {
+    r = std::max(r, std::fabs(b.depth));
+    for (const auto& p : b.outline) r = std::max({r, std::fabs(p[0]), std::fabs(p[1])});
+  }
+  const double reach = 2 * r + 10;
+  // The pockets: each outline's curve at its depth, swept towards the viewer past every body; their outlines sampled.
+  struct Pocket {
+    TopoDS_Shape solid;
+    std::array<double, 4> box{1e300, 1e300, -1e300, -1e300};
+    double depth = 0;
+  };
+  std::vector<Pocket> pockets;
+  std::string cut_id = "breakout-v1";
+  char buf[96];
+  for (const gp_Dir* a : {&view.x, &view.y, &view.z}) {
+    std::snprintf(buf, sizeof buf, "|%.9f,%.9f,%.9f", a->X(), a->Y(), a->Z());
+    cut_id += buf;
+  }
+  for (const auto& b : spec.breakouts) {
+    for (const auto& p : b.outline) {
+      std::snprintf(buf, sizeof buf, "|%.9f,%.9f", p[0], p[1]);
+      cut_id += buf;
+    }
+    std::snprintf(buf, sizeof buf, "|d%.9f", b.depth);
+    cut_id += buf;
+    const Handle(Geom2d_BSplineCurve) curve = breakout_spline(b.outline);
+    Pocket pocket;
+    pocket.depth = b.depth;
+    try {
+      const gp_Pln plane(gp_Ax3(gp_Pnt(view.z.XYZ() * b.depth), view.z, view.x));
+      const TopoDS_Wire wire = BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(GeomAPI::To3d(curve, plane)).Edge()).Wire();
+      pocket.solid = BRepPrimAPI_MakePrism(BRepBuilderAPI_MakeFace(wire, Standard_True).Face(), gp_Vec(view.z.XYZ() * (reach - b.depth))).Shape();
+      Bnd_Box2d box;
+      BndLib_Add2dCurve::Add(curve, 0, box);
+      box.Get(pocket.box[0], pocket.box[1], pocket.box[2], pocket.box[3]);
+    } catch (const Standard_Failure& e) {
+      throw Error(std::string("broken-out section: its outline makes no solid (") + e.GetMessageString() + ")");
+    }
+    if (b.depth < reach) pockets.push_back(std::move(pocket));
+  }
+  // The bodies a pocket's box reaches nearer than its depth are cut; the others stay as they are.
+  std::vector<std::vector<size_t>> reached(sources.size());
+  std::vector<size_t> crossed;
+  for (size_t i = 0; i < sources.size(); ++i) {
+    if (sources[i].whole || sources[i].mesh || boxes[i].IsVoid()) continue;
+    double lo[3], hi[3];
+    boxes[i].Get(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+    std::array<double, 4> rect{1e300, 1e300, -1e300, -1e300};
+    double front = -1e300;
+    for (int k = 0; k < 8; ++k) {
+      const gp_Pnt p(k & 1 ? hi[0] : lo[0], k & 2 ? hi[1] : lo[1], k & 4 ? hi[2] : lo[2]);
+      const Vec2 q = view.at(p);
+      rect = {std::min(rect[0], q[0]), std::min(rect[1], q[1]), std::max(rect[2], q[0]), std::max(rect[3], q[1])};
+      front = std::max(front, view.depth(p));
+    }
+    for (size_t k = 0; k < pockets.size(); ++k) {
+      const auto& b = pockets[k].box;
+      if (front > pockets[k].depth && rect[0] <= b[2] && b[0] <= rect[2] && rect[1] <= b[3] && b[1] <= rect[3]) reached[i].push_back(k);
+    }
+    if (!reached[i].empty()) crossed.push_back(i);
+  }
+  std::vector<std::shared_ptr<const CutBody>> cuts(sources.size());
+  std::vector<std::string> ids(sources.size());
+  std::atomic<size_t> done{0};
+  std::mutex failed_mu;
+  std::string failed;
+  OSD_Parallel::For(0, static_cast<int>(crossed.size()), [&](int k) {
+    if (run.cancelled()) return;
+    const size_t i = crossed[static_cast<size_t>(k)];
+    const Source& s = sources[i];
+    ids[i] = cache_id(cut_id, s);
+    auto hit = remembered(ids[i]);
+    if (!hit) {
+      try {
+        const TopoDS_Shape copy = BRepBuilderAPI_Copy(s.proto, Standard_True, Standard_False).Shape();
+        const TopoDS_Shape placed = s.rigid ? copy.Moved(TopLoc_Location(s.trsf)) : BRepBuilderAPI_Copy(s.placed, Standard_True, Standard_False).Shape();
+        TopTools_ListOfShape arguments, tools;
+        arguments.Append(placed);
+        for (size_t p : reached[i]) tools.Append(BRepBuilderAPI_Copy(pockets[p].solid, Standard_True, Standard_False).Shape());
+        BRepAlgoAPI_Cut cut;
+        cut.SetArguments(arguments);
+        cut.SetTools(tools);
+        cut.Build();
+        if (!cut.IsDone() || cut.HasErrors()) throw Error("the boolean failed");
+        auto body = std::make_shared<CutBody>();
+        body->shape = cut.Shape();
+        body->edges = trace(cut, placed, body->shape, TopAbs_EDGE);
+        body->faces = trace(cut, placed, body->shape, TopAbs_FACE);
+        hit = body;
+        remember(ids[i], hit);
+      } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(failed_mu);
+        failed = s.node + ": " + e.what();
+      } catch (const Standard_Failure& e) {
+        std::lock_guard<std::mutex> lock(failed_mu);
+        failed = s.node + ": " + e.GetMessageString();
+      }
+    }
+    cuts[i] = hit;
+    run.report(0.1 * static_cast<double>(++done) / static_cast<double>(crossed.size()), "broken-out section: cutting " + std::to_string(done.load()) + "/" + std::to_string(crossed.size()));
+  });
+  run.check();
+  if (!failed.empty()) throw Error("broken-out section: a body could not be cut (" + failed + ")");
+  std::vector<Source> out;
+  for (size_t i = 0; i < sources.size(); ++i) {
+    if (cuts[i] && cuts[i]->faces->empty()) continue;  // wholly within a pocket
+    Source s = std::move(sources[i]);
+    if (const auto& cut = cuts[i]) {
+      take_cut(s, *cut, ids[i]);
+      // The pockets' floors: faces the cut made, square to the view at a pocket's depth.
+      ViewGeometry::Region region;
+      region.body = static_cast<int>(out.size());
+      TopTools_IndexedMapOfShape faces;
+      TopExp::MapShapes(cut->shape, TopAbs_FACE, faces);
+      for (int f = 1; f <= faces.Extent(); ++f) {
+        if (static_cast<size_t>(f - 1) < cut->faces->size() && (*cut->faces)[static_cast<size_t>(f - 1)] >= 0) continue;
+        const TopoDS_Face& face = TopoDS::Face(faces(f));
+        try {
+          const BRepAdaptor_Surface surface(face, Standard_False);
+          if (surface.GetType() != GeomAbs_Plane) continue;
+          gp_Dir normal = surface.Plane().Axis().Direction();
+          if (face.Orientation() == TopAbs_REVERSED) normal.Reverse();
+          if (normal.XYZ().Dot(view.z.XYZ()) < 1 - 1e-6) continue;
+          TopExp_Explorer vx(face, TopAbs_VERTEX);
+          if (!vx.More()) continue;
+          const double z = view.depth(BRep_Tool::Pnt(TopoDS::Vertex(vx.Current())));
+          if (std::none_of(pockets.begin(), pockets.end(), [&](const Pocket& p) { return std::fabs(z - p.depth) <= 1e-6 * reach; })) continue;
+          for (auto& l : loops_of(face, view, spec.tolerance)) region.loops.push_back(std::move(l));
+        } catch (const Standard_Failure&) {
+        }
+      }
+      if (!region.loops.empty()) regions.push_back(std::move(region));
+    }
+    out.push_back(std::move(s));
+  }
+  sources.swap(out);
+}
+
+void mark_breakout_curves(const ViewSpec& spec, const std::vector<Source>& sources, std::vector<Curve>& curves) {
+  if (spec.breakouts.empty()) return;
+  std::vector<std::vector<Vec2>> rims;
+  for (const auto& b : spec.breakouts) rims.push_back(breakout_outline(b.outline, 0.002));
+  const double tol = 0.02 + spec.tolerance;
+  const auto on_rim = [&](Vec2 p) {
+    for (const auto& rim : rims)
+      for (size_t i = 0; i < rim.size(); ++i) {
+        const Vec2 a = rim[i], d = sub(rim[(i + 1) % rim.size()], a);
+        const double t = std::clamp(dot(sub(p, a), d) / std::max(dot(d, d), 1e-30), 0.0, 1.0);
+        if (std::hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1]) <= tol) return true;
+      }
+    return false;
+  };
+  // What the cut made along the outlines (the pockets' walls, seen edge on): the break line where it lies over a body,
+  // visible; behind something, left out.
+  std::vector<Curve> kept;
+  for (auto& k : curves) {
+    const bool made = k.edge < 0 && k.face < 0 && k.body >= 0 && static_cast<size_t>(k.body) < sources.size() && sources[static_cast<size_t>(k.body)].edges;
+    if (made) {
+      const auto pts = k.sample(std::max(spec.tolerance, 1e-3));
+      if (!pts.empty() && std::all_of(pts.begin(), pts.end(), on_rim)) {
+        if (k.hidden) continue;
+        k.kind = Curve::Kind::Break;
+      }
+    }
+    kept.push_back(std::move(k));
+  }
+  curves.swap(kept);
+}
+
+void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, std::vector<Source>& sources, Run& run,
+                 std::vector<ViewGeometry::Region>& regions) {
+  if (spec.cut.size() < 2) return;
+  Cutter c = cutter_of(spec);
+  // Large enough to hold every body and the line, small enough for the booleans' tolerances.
+  double r = 1;
+  const std::vector<Bnd_Box> boxes = world_boxes(doc, sources, r);
   for (const auto& p : c.line) r = std::max({r, std::fabs(p[0]), std::fabs(p[1])});
   c.reach = 2 * r + 10;
   const Vec2 removed = unit({view.z.XYZ().Dot(c.x), view.z.XYZ().Dot(c.y)});
@@ -414,13 +646,7 @@ void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, st
     if (run.cancelled()) return;
     const size_t i = crossed[static_cast<size_t>(k)];
     const Source& s = sources[i];
-    std::string id = cut_id + "|" + s.key;
-    char buf[32];
-    for (double v : s.world.m) {
-      std::snprintf(buf, sizeof buf, "|%.9f", std::fabs(v) < 5e-10 ? 0.0 : v);
-      id += buf;
-    }
-    id = sha256_hex(id);
+    const std::string id = cache_id(cut_id, s);
     ids[i] = id;
     auto hit = remembered(id);
     if (!hit) {
@@ -480,14 +706,7 @@ void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, st
       s.placed = s.placed.Moved(TopLoc_Location(m));
     }
     if (const auto& cut = cuts[i]) {
-      s.base = s.key;
-      s.key = ids[i];
-      s.proto = s.placed = cut->shape;
-      s.world = Mat4::identity();
-      s.rigid = true;
-      s.trsf = gp_Trsf();
-      s.edges = cut->edges;
-      s.faces = cut->faces;
+      take_cut(s, *cut, ids[i]);
       // The faces the cut left facing the viewer: flat, square to the view, on one of the hatched lines.
       ViewGeometry::Region region;
       region.body = static_cast<int>(out.size());
@@ -674,3 +893,17 @@ std::array<double, 4> aligned_extent(const Document& doc, const Scene& scene, co
 }
 
 }  // namespace opad::drawing::detail
+
+namespace opad::drawing {
+
+std::vector<Vec2> breakout_outline(const std::vector<Vec2>& points, double tol) {
+  const Handle(Geom2d_BSplineCurve) c = detail::breakout_spline(points);
+  const Geom2dAdaptor_Curve a(c);
+  GCPnts_QuasiUniformDeflection d(a, std::max(tol, 1e-6), a.FirstParameter(), a.LastParameter());
+  std::vector<Vec2> out;
+  if (d.IsDone())
+    for (int i = 1; i < d.NbPoints(); ++i) out.push_back({d.Value(i).X(), d.Value(i).Y()});  // closed: the last is the first
+  return out;
+}
+
+}  // namespace opad::drawing

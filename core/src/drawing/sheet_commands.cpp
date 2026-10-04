@@ -89,6 +89,9 @@ void check_view(const Scene& scene, const std::string& id, const json& def) {
   std::sort(bands.begin(), bands.end());
   for (size_t i = 1; i < bands.size(); ++i)
     if (bands[i].first == bands[i - 1].first && bands[i].second.first < bands[i - 1].second.second) throw Error("its breaks overlap");
+  if (def.contains("breakouts") && v.kind != "base" && v.kind != "projected" && v.kind != "auxiliary")
+    throw Error("broken-out sections are on base, projected and auxiliary views");
+  for (const auto& b : def.value("breakouts", json::array())) drawing::breakout_outline(points_of(b["outline"]));  // a closed curve
   if (const json h = def.value("hatch", json()); h.is_object()) {  // what this build draws (the loader keeps a newer one's)
     const auto& known = drawing::hatch_patterns();
     const auto pattern = [&](const json& o) {

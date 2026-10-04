@@ -43,6 +43,7 @@ QString SheetViewTool::title(Tool tool) {
     case Tool::Crop: return tr("Crop view");
     case Tool::Break: return tr("Break view");
     case Tool::Uncut: return tr("Bodies left uncut");
+    case Tool::Breakout: return tr("Broken-out section");
     default: return {};
   }
 }
@@ -60,7 +61,11 @@ bool SheetViewTool::start(Tool tool, const std::string& view) {
     emit message(tr("A detail view is cropped by its circle already."));
     return false;
   }
-  if (tool == Tool::Uncut && v->kind != "section") {
+  if (tool == Tool::Breakout && v->kind != "base" && v->kind != "projected" && v->kind != "auxiliary") {
+    emit message(tr("A broken-out section goes on a base, projected or auxiliary view."));
+    return false;
+  }
+  if (tool == Tool::Uncut && v->kind != "section" && !v->def.contains("breakouts")) {
     emit message(tr("Bodies are left uncut in a section view."));
     return false;
   }
@@ -81,7 +86,7 @@ void SheetViewTool::cancel() {
   m_stage = Stage::Pick;
   m_points.clear();
   m_extents.clear();
-  m_measuring = m_pressed = false;
+  m_measuring = m_pressed = m_haveDepths = false;
   m_ghost = QRectF();
   if (m_canvas && was) {
     m_canvas->setPreview(nullptr);
@@ -147,6 +152,11 @@ void SheetViewTool::promptForStage() {
     case Tool::Crop: text = m_stage == Stage::Pick ? tr("Drag a box around the part of the view to keep") : tr("Click the box's other corner"); break;
     case Tool::Break: text = m_stage == Stage::Pick ? tr("Click where the break starts") : tr("Click where it ends: the band between is taken out"); break;
     case Tool::Uncut: text = tr("Click a body in the section to draw it whole (shafts, fasteners); click it again to cut it"); break;
+    case Tool::Breakout:
+      text = m_stage == Stage::Depth ? tr("Click a point in a view beside it for the depth (the cut goes through it), or press Enter for the part's middle")
+             : m_points.size() < 3   ? tr("Click points round what to open up: a smooth closed curve goes through them")
+                                     : tr("Click more points, or press Enter to close the outline");
+      break;
     default: break;
   }
   if (m_measuring) text = tr("Measuring the view…");
@@ -248,6 +258,54 @@ void SheetViewTool::place(const QPointF& scene) {
 
 QString SheetViewTool::scaleLabel() const { return QString::fromStdString(opad::drawing::scale_text(detailScale())); }
 
+// ---------------------------------------------------------------- broken-out sections
+std::vector<Vec2> SheetViewTool::outline() const {
+  std::vector<Vec2> pts = m_points;
+  if (m_stage == Stage::Pick && m_canvas) pts.push_back(toView(m_mouse));
+  try {
+    return opad::drawing::breakout_outline(pts, 0.02);
+  } catch (const std::exception&) {
+    return {};
+  }
+}
+
+std::optional<double> SheetViewTool::depthAt(const QPointF& scene) const {
+  const auto* f = frame();
+  const opad::Sheet* sheet = m_canvas ? m_doc->scene.sheet(m_canvas->sheet()) : nullptr;
+  if (!f || !sheet) return std::nullopt;
+  const Vec2 p = m_canvas->toPaper(snapped(scene));
+  for (const auto& id : sheet->views) {
+    const opad::drawing::ViewFrame* o = m_canvas->frame(id);
+    if (!o || id == m_view || !o->error.empty() || p[0] < o->box[0] - 2 || p[0] > o->box[2] + 2 || p[1] < o->box[1] - 2 || p[1] > o->box[3] + 2) continue;
+    const auto dot3 = [](const opad::Vec3& a, const opad::Vec3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+    if (std::fabs(dot3(o->dir, f->dir)) > 1e-6) continue;  // it sees the depth along itself: not square to this view
+    const Vec2 v = o->unfold({o->centre[0] + (p[0] - o->at[0]) / o->scale, o->centre[1] + (p[1] - o->at[1]) / o->scale});
+    return dot3(f->dir, o->x) * v[0] + dot3(f->dir, o->y) * v[1];
+  }
+  return std::nullopt;
+}
+
+void SheetViewTool::measureDepth() {
+  if (!m_canvas) return;
+  m_haveDepths = false;
+  const int generation = ++*m_generation;
+  auto out = std::make_shared<std::array<double, 2>>();
+  const std::string view = m_view;
+  QPointer<SheetViewTool> self(this);
+  auto alive = m_generation;
+  m_canvas->read(
+      tr("Measuring the view"),
+      [out, view](const opad::Document& doc, const opad::Scene& scene, Progress) {
+        if (const opad::SheetView* v = scene.sheet_view(view)) *out = opad::drawing::view_depth(doc, scene, opad::drawing::view_spec(scene, *v));
+      },
+      [self, alive, generation, out](bool ok, const QString& error) {
+        if (!self || *alive != generation) return;
+        if (!ok && error != "cancelled") emit self->message(error);
+        self->m_depths = *out;
+        self->m_haveDepths = ok;
+      });
+}
+
 void SheetViewTool::commit() {
   const auto* f = frame();
   if (!f || !m_runner || !m_canvas) return;
@@ -261,6 +319,14 @@ void SheetViewTool::commit() {
     const Vec2 at = m_canvas->toPaper(m_ghost.center());
     args.update({{"kind", "detail"}, {"parent", m_view}, {"center", js(m_points[0])}, {"radius", r4(m_radius)}, {"scale", opad::drawing::scale_text(detailScale())},
                  {"at", js(at)}});
+  } else if (m_tool == Tool::Breakout) {
+    const opad::SheetView* v = m_doc->scene.sheet_view(m_view);
+    if (!v) return cancel();
+    command = "sheet_edit";
+    opad::json breakouts = v->def.value("breakouts", opad::json::array()), outline = opad::json::array();
+    for (const auto& p : m_points) outline.push_back(js(p));
+    breakouts.push_back({{"outline", outline}, {"depth", r4(m_depth)}});
+    args = {{"target", m_view}, {"set", {{"breakouts", breakouts}}}};
   } else {
     const opad::SheetView* v = m_doc->scene.sheet_view(m_view);
     if (!v) return cancel();
@@ -353,6 +419,21 @@ void SheetViewTool::clickAt(const QPointF& scene) {
       });
       return;  // the tool stays for the next body
     }
+    case Tool::Breakout:
+      if (m_stage == Stage::Depth) {
+        const auto depth = depthAt(scene);
+        if (!depth) {
+          emit message(tr("Click a point in a view beside this one (square to it): the cut goes through it."));
+          return;
+        }
+        m_depth = *depth;
+        return commit();
+      } else {
+        const Vec2 p = toView(snapped(scene));
+        if (!m_points.empty() && len(sub(p, m_points.back())) * frame()->scale < 0.2) return finish();  // a double click: closed
+        m_points.push_back(p);
+      }
+      break;
     case Tool::Crop:
     case Tool::Break:
       if (m_stage == Stage::Pick) {
@@ -379,6 +460,24 @@ void SheetViewTool::moveTo(const QPointF& scene) {
 }
 
 void SheetViewTool::finish() {
+  if (m_tool == Tool::Breakout) {
+    if (m_stage == Stage::Pick) {
+      try {
+        opad::drawing::breakout_outline(m_points);
+      } catch (const std::exception&) {
+        emit message(tr("An outline needs three points at least."));
+        return;
+      }
+      m_stage = Stage::Depth;
+      measureDepth();
+      promptForStage();
+      updatePreview();
+    } else if (m_haveDepths) {  // through the part's middle
+      m_depth = (m_depths[0] + m_depths[1]) / 2;
+      commit();
+    }
+    return;
+  }
   if (m_tool == Tool::Section && m_stage == Stage::Pick && !m_measuring) {
     if (m_points.size() < 2) {
       emit message(tr("A cutting line needs two points at least."));
@@ -403,7 +502,10 @@ void SheetViewTool::back() {
   } else if (m_stage == Stage::Size) {
     m_stage = Stage::Pick;
     m_points.clear();
-  } else if (!m_points.empty() && m_tool == Tool::Section) {
+  } else if (m_stage == Stage::Depth) {
+    m_stage = Stage::Pick;
+    m_haveDepths = false;
+  } else if (!m_points.empty() && (m_tool == Tool::Section || m_tool == Tool::Breakout)) {
     m_points.pop_back();
   } else {
     return cancel();
@@ -447,6 +549,17 @@ void SheetViewTool::updatePreview() {
       const Vec2 at = paper(m_points[0]);
       d->line(d->layer({"Edge", ink, LineType::Continuous, 0.7}), sub(at, mul(m_edge, 10)), add(at, mul(m_edge, 10)));
     }
+  } else if (m_tool == Tool::Breakout) {  // the closed curve through the points (and the pointer while picking)
+    if (const auto c = outline(); !c.empty()) {
+      std::vector<Vec2> pts;
+      for (const auto& p : c) pts.push_back(paper(p));
+      d->polyline(d->layer({"Outline", ink, LineType::Continuous, 0.35}), pts, true);
+    } else if (!m_points.empty()) {
+      d->polyline(thin, {paper(m_points.back()), mouse});
+    }
+    for (const auto& p : m_points) d->circle(thin, paper(p), 0.8);
+    if (m_stage == Stage::Depth)  // where the cut would go through, on the view under the pointer
+      if (const auto depth = depthAt(m_mouse); depth) d->circle(d->layer({"Depth", ink, LineType::Continuous, 0.5}), m_canvas->toPaper(snapped(m_mouse)), 1.2);
   } else if ((m_tool == Tool::Crop || m_tool == Tool::Break) && !m_points.empty()) {
     const Vec2 a = paper(m_points[0]), b = mouse;
     if (m_tool == Tool::Crop) {
@@ -464,7 +577,7 @@ void SheetViewTool::updatePreview() {
 bool SheetViewTool::mousePress(QMouseEvent* e, const QPointF& scene) {
   if (m_tool == Tool::None) return false;
   if (e->button() == Qt::RightButton) {
-    if (m_tool == Tool::Section && m_stage == Stage::Pick && m_points.size() >= 2) finish();
+    if ((m_tool == Tool::Section && m_stage == Stage::Pick && m_points.size() >= 2) || (m_tool == Tool::Breakout && m_stage == Stage::Pick && m_points.size() >= 3)) finish();
     else back();
     return true;
   }

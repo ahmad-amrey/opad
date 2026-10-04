@@ -152,7 +152,7 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     if (!side_step(side, sx, sy)) throw Error("side is left, right, top, bottom or a corner such as top-right, not '" + side + "'");
     const Sheet* sheet = scene.sheet(v.sheet);
     turn_to_side(s, sx, sy, sheet && sheet->projection == "third");
-    s.cut.clear(), s.whole.clear(), s.aligned = false;  // the model, also when projected from a section
+    s.cut.clear(), s.whole.clear(), s.aligned = false, s.breakouts.clear();  // the model, also when projected from a section
   } else if (v.kind == "section" || v.kind == "auxiliary") {
     const SheetView* parent = scene.sheet_view(v.parent);
     if (!parent) throw Error("its parent view " + v.parent + " does not exist");
@@ -164,7 +164,7 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     view_axes(s, px, py, pz);
     const Sheet* sheet = scene.sheet(v.sheet);
     fold_to(s, toward, sheet && sheet->projection == "third");
-    s.cut.clear(), s.whole.clear(), s.aligned = false;
+    s.cut.clear(), s.whole.clear(), s.aligned = false, s.breakouts.clear();
     if (v.kind == "section") {
       s.cut = points(d["cut"]);
       s.cut_x = px, s.cut_y = py;
@@ -199,6 +199,18 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     s.hidden = false;  // sheets draw hidden lines only when asked
   } else {
     throw Error("needs a newer OPAD (sheet_view kind '" + v.kind + "')");
+  }
+  if (v.kind == "base" || v.kind == "projected" || v.kind == "auxiliary") {  // broken-out sections (UI-82)
+    for (const auto& b : d.value("breakouts", json::array())) {
+      if (!b.is_object()) continue;
+      ViewSpec::Breakout cut;
+      cut.outline = points(b.value("outline", json()));
+      cut.depth = b.value("depth", 0.0);
+      if (cut.outline.size() >= 3) s.breakouts.push_back(std::move(cut));
+    }
+    if (!s.breakouts.empty())
+      for (const auto& n : d.value("whole", json::array()))
+        if (n.is_string()) s.whole.push_back(n.get<std::string>());
   }
   if (d.contains("source")) apply_source(scene, s, d["source"]);
   apply_style(s, d.value("style", json()));
@@ -304,6 +316,11 @@ void validate_record(const json& op) {
   if (op.contains("aligned") && !op["aligned"].is_boolean()) fail("'aligned' must be true or false");
   if (op.contains("whole") && !(op["whole"].is_array() && std::all_of(op["whole"].begin(), op["whole"].end(), [](const json& n) { return n.is_string(); })))
     fail("'whole' must be node ids");
+  if (op.contains("breakouts") && !(op["breakouts"].is_array() && std::all_of(op["breakouts"].begin(), op["breakouts"].end(), [](const json& b) {
+                                      const json o = b.is_object() ? b.value("outline", json()) : json();
+                                      return o.is_array() && o.size() >= 3 && std::all_of(o.begin(), o.end(), point2) && finite(b.value("depth", json()));
+                                    })))
+    fail("'breakouts' is a list of {outline [[u, v], ...] (three or more points), depth}");
   if (op.contains("hatch")) {
     const auto lining = [](const json& o) {
       return o.is_object() && (!o.contains("pattern") || o["pattern"].is_string()) && (!o.contains("angle") || finite(o["angle"])) &&
@@ -589,6 +606,31 @@ std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const
     }
   }
   if (e[0] > e[2]) e = {0, 0, 0, 0};
+  return e;
+}
+
+std::array<double, 2> view_depth(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+  Vec3 x, y, z;
+  view_axes(spec, x, y, z);
+  const auto bodies = view_bodies(scene, spec);
+  std::vector<std::string> keys;
+  for (const auto& [node, world] : bodies)
+    if (const Node* n = scene.node(node)) keys.push_back(n->body_key);
+  warm_tight_bboxes(doc, keys);
+  std::array<double, 2> e{1e300, -1e300};
+  for (const auto& [node, world] : bodies) {
+    const Bnd_Box b = node_tight_bbox(doc, scene, node, false);
+    if (b.IsVoid()) continue;
+    const Mat4 placed = scene.world(node);
+    const Vec3 shift{world.at(0, 3) - placed.at(0, 3), world.at(1, 3) - placed.at(1, 3), world.at(2, 3) - placed.at(2, 3)};
+    double c[6];
+    b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+    for (int k = 0; k < 8; ++k) {
+      const double w = dot3(plus3({c[(k & 1) ? 3 : 0], c[(k & 2) ? 4 : 1], c[(k & 4) ? 5 : 2]}, shift), z);
+      e = {std::min(e[0], w), std::max(e[1], w)};
+    }
+  }
+  if (e[0] > e[1]) e = {0, 0};
   return e;
 }
 

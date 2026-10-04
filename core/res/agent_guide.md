@@ -282,7 +282,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   nodes left uncut. `detail` takes `center` and `radius` (view coordinates) and its own `scale`; `auxiliary` an
   `angle` (degrees on the sheet from the parent: it looks along that line, e.g. square to a slanted edge). Letters come
   automatically (A, B, ...; `letter` to choose). Any view takes `crop` [x0, y0, x1, y1] and `breaks` [{axis x|y, from,
-  to, gap}] in its view coordinates (sheet_edit adds them later).
+  to, gap}] in its view coordinates (sheet_edit adds them later; `style` {break: freehand} draws their break lines as
+  waves instead of zigzags). A base, projected or auxiliary view takes `breakouts` [{outline [[u, v], ...], depth}]
+  through sheet_edit: broken-out (local) sections, where within the smooth closed curve through the outline's points
+  whatever lies nearer the viewer than `depth` (along the frame's `dir`, model mm: `p . dir`) is taken away, the floor
+  hatched and the cut's edge drawn as a thin break line.
 - `sheet_item` adds a dimension measured in its `view` (`type` horizontal, vertical, aligned, radius, diameter or
   angle; `refs` two vertices or edges, one edge for its length, or one circle or cylinder; `aspects` start, end, mid
   or center per reference) or a note (`text`, `at`). A circle seen at a slant, or an angle between edges not parallel

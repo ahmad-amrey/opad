@@ -9,13 +9,17 @@
 // drag), Break two points (the band between them, along the longer way): one sheet_edit each. Esc steps back (the last
 // point, the last stage), then leaves; points are kept in the view's own coordinates, so the sheet redrawing meanwhile
 // changes nothing. Uncut, on a section view: a click on a body leaves it whole (ISO 128-50: shafts, fasteners), a click on
-// it again cuts it, one sheet_edit each, until Esc. Nothing is measured on the UI thread.
+// it again cuts it, one sheet_edit each, until Esc. Breakout, on a base, projected or auxiliary view: points round what
+// to open up (a smooth closed curve through them), Enter, then the depth: a click in a view square to it (the cut goes
+// through that point) or Enter (the part's middle): one sheet_edit. Nothing is measured on the UI thread.
 #include <QObject>
 #include <QPointer>
 #include <QPointF>
 #include <QRectF>
 
+#include <array>
 #include <map>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,7 +31,7 @@ class AppDocument;
 class SheetViewTool : public QObject, public SheetInteraction {
   Q_OBJECT
  public:
-  enum class Tool { None, Section, Detail, Auxiliary, Crop, Break, Uncut };  // Uncut: bodies a section draws whole
+  enum class Tool { None, Section, Detail, Auxiliary, Crop, Break, Uncut, Breakout };  // Uncut: bodies a section draws whole
   SheetViewTool(AppDocument* doc, SheetCanvas* canvas, QObject* parent);
   ~SheetViewTool() override;
   void setRunner(SheetCanvas::Runner runner) { m_runner = std::move(runner); }
@@ -39,6 +43,7 @@ class SheetViewTool : public QObject, public SheetInteraction {
   QString prompt() const { return m_prompt; }
   int points() const { return static_cast<int>(m_points.size()); }
   bool placing() const { return m_stage == Stage::Place; }
+  bool askingDepth() const { return m_stage == Stage::Depth; }  // breakout: the outline closed, the depth next
   bool measuring() const { return m_measuring; }
   QRectF ghost() const { return m_ghost; }  // scene: the new view's frame while it follows the pointer
   static QString title(Tool tool);
@@ -61,7 +66,7 @@ class SheetViewTool : public QObject, public SheetInteraction {
   void message(const QString& text);
 
  private:
-  enum class Stage { Pick, Size, Place };
+  enum class Stage { Pick, Size, Place, Depth };
   struct Extent {
     double w = 0, h = 0;                // model mm
     opad::drawing::Vec2 centre{0, 0};   // its middle in its own view coordinates
@@ -78,6 +83,9 @@ class SheetViewTool : public QObject, public SheetInteraction {
   void promptForStage();
   void updatePreview();
   double detailScale() const;
+  std::optional<double> depthAt(const QPointF& scene) const;  // breakout: from a point in a view square to this one
+  void measureDepth();                                         // breakout: the bodies' depths on a worker (Enter: their middle)
+  std::vector<opad::drawing::Vec2> outline() const;            // breakout: the curve through the points (and the pointer)
   QString scaleLabel() const;
 
   AppDocument* m_doc;
@@ -89,6 +97,9 @@ class SheetViewTool : public QObject, public SheetInteraction {
   std::vector<opad::drawing::Vec2> m_points;  // view coordinates (model mm)
   opad::drawing::Vec2 m_edge{1, 0};           // auxiliary: the picked edge's direction
   double m_radius = 0;                        // detail: model mm
+  std::array<double, 2> m_depths{0, 0};       // breakout: the bodies' least and most depth in the view
+  bool m_haveDepths = false;
+  double m_depth = 0;                         // breakout: the one picked
   std::map<int, Extent> m_extents;
   int m_side = 1;
   double m_gap = 20;

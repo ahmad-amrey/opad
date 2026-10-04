@@ -672,13 +672,26 @@ void draw_view_marks(Display& d, const ViewFrame& f, const SheetView& v, const S
   }
   // A detail view's boundary.
   if (v.kind == "detail" && f.radius > 0) d.circle(d.layer({"Detail", kInk, LineType::Continuous, 0.25}), f.at, f.radius * f.scale);
-  // Breaks: two thin lines with a zigzag across the view, where the halves meet; a partial view's the same where its crop
-  // box cuts through it (ISO 128-34).
+  // Breaks: two thin lines across the view, where the halves meet, with a zigzag (ISO 128-2 01.1.19) or freehand (01.1.18:
+  // style break freehand, a steady wave whose phase comes from where it is drawn); a partial view's the same where its
+  // crop box cuts through it (ISO 128-34).
+  const json style = v.def.value("style", json::object());
+  const bool freehand = style.is_object() && style.value("break", "") == "freehand";
   const auto zigzag = [&](size_t a, double edge, double lo, double hi) {
     const size_t o = 1 - a;
     const double mid = (lo + hi) / 2, z = std::min(3.0, (hi - lo) / 8);
+    std::vector<std::pair<double, double>> path;  // along the line, off it
+    if (freehand) {
+      const double phase = std::fmod(std::fabs(edge) * 1.618 + 0.7, kTau);
+      for (double t = lo;; t = std::min(hi, t + 0.4)) {
+        path.push_back({t, 0.6 * std::sin(kTau * t / 9 + phase) + 0.3 * std::sin(kTau * t / 3.7 + 2 * phase)});
+        if (t >= hi) break;
+      }
+    } else {
+      path = {{lo, 0}, {mid - z, 0}, {mid - z / 2, z}, {mid + z / 2, -z}, {mid + z, 0}, {hi, 0}};
+    }
     std::vector<Vec2> pts;
-    for (const auto& [along, off] : std::initializer_list<std::pair<double, double>>{{lo, 0}, {mid - z, 0}, {mid - z / 2, z}, {mid + z / 2, -z}, {mid + z, 0}, {hi, 0}}) {
+    for (const auto& [along, off] : path) {
       Vec2 p;
       p[a] = edge + off, p[o] = along;
       pts.push_back(p);

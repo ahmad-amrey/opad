@@ -287,7 +287,7 @@ Display view_display(const ViewGeometry& g, const std::string& title) {
     if (k.hidden) {
       if (hidden < 0) hidden = d.layer({"Hidden", kInk, LineType::Hidden, 0.25});
       l = hidden;
-    } else if (k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam) {
+    } else if (k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam || k.kind == Curve::Kind::Break) {
       if (tangent < 0) tangent = d.layer({"Tangent", kInk, LineType::Continuous, 0.25});
       l = tangent;
     } else {

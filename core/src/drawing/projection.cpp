@@ -322,6 +322,17 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
     for (const auto& s : sources)
       if (s.whole) j["cut"]["whole"].push_back(s.node);
   }
+  if (!spec.breakouts.empty()) {
+    json all = json::array();
+    for (const auto& b : spec.breakouts) {
+      json outline = json::array();
+      for (const auto& p : b.outline) outline.push_back({rounded(p[0]), rounded(p[1])});
+      all.push_back({{"outline", outline}, {"depth", rounded(b.depth)}});
+    }
+    j["breakouts"] = {{"cuts", all}, {"version", 1}};
+    for (const auto& s : sources)
+      if (s.whole) j["breakouts"]["whole"].push_back(s.node);
+  }
   json bodies = json::array();
   for (const auto& s : sources) {
     json m = json::array();
@@ -930,6 +941,12 @@ json ViewSpec::to_json() const {
     j["cut"] = {{"line", line}, {"x", vec_json(cut_x)}, {"y", vec_json(cut_y)}, {"whole", whole}};
     if (aligned) j["cut"]["aligned"] = true;
   }
+  for (const auto& b : breakouts) {
+    json outline = json::array();
+    for (const auto& p : b.outline) outline.push_back({p[0], p[1]});
+    j["breakouts"].push_back({{"outline", outline}, {"depth", b.depth}});
+    if (cut.empty()) j["whole"] = whole;
+  }
   return j;
 }
 
@@ -958,6 +975,15 @@ ViewSpec ViewSpec::from_json(const json& j) {
     if (c.contains("whole") && c["whole"].is_array()) s.whole = c["whole"].get<std::vector<std::string>>();
     s.aligned = c.value("aligned", false);
   }
+  if (j.contains("whole") && j["whole"].is_array()) s.whole = j["whole"].get<std::vector<std::string>>();
+  for (const auto& b : j.value("breakouts", json::array())) {
+    if (!b.is_object()) continue;
+    Breakout cut;
+    for (const auto& p : b.value("outline", json::array()))
+      if (p.is_array() && p.size() == 2) cut.outline.push_back({p[0].get<double>(), p[1].get<double>()});
+    cut.depth = b.value("depth", 0.0);
+    if (cut.outline.size() >= 3) s.breakouts.push_back(std::move(cut));
+  }
   return s;
 }
 
@@ -976,6 +1002,7 @@ const char* Curve::kind_name(Kind k) {
     case Kind::Tangent: return "tangent";
     case Kind::Seam: return "seam";
     case Kind::Silhouette: return "silhouette";
+    case Kind::Break: return "break";
     default: return "sharp";
   }
 }
@@ -1113,7 +1140,7 @@ json ViewGeometry::counts() const {
   for (const char* k : {"sharp", "tangent", "seam", "silhouette", "line", "arc", "ellipse", "spline", "polyline"}) j[k] = 0;
   for (const auto& c : curves) {
     j[c.hidden ? "hidden" : "visible"] = j[c.hidden ? "hidden" : "visible"].get<int>() + 1;
-    j[Curve::kind_name(c.kind)] = j[Curve::kind_name(c.kind)].get<int>() + 1;
+    j[Curve::kind_name(c.kind)] = j.value(Curve::kind_name(c.kind), 0) + 1;
     j[Curve::type_name(c.type)] = j[Curve::type_name(c.type)].get<int>() + 1;
   }
   return j;
@@ -1344,10 +1371,11 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
     if (auto hit = cached(fp)) return hit;
   load(doc, sources, true);
   auto g = std::make_shared<ViewGeometry>();
-  if (!spec.cut.empty()) {
+  if (!spec.cut.empty() || !spec.breakouts.empty()) {
     const auto cutting = std::chrono::steady_clock::now();
     try {
-      detail::cut_sources(doc, spec, v, sources, run, g->sections);
+      if (!spec.cut.empty()) detail::cut_sources(doc, spec, v, sources, run, g->sections);
+      else detail::breakout_sources(doc, spec, v, sources, run, g->sections);
     } catch (const Standard_Failure& e) {
       throw Error(std::string("section failed: ") + e.GetMessageString());
     }
@@ -1368,9 +1396,10 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
     } catch (const Standard_Failure& e) {
       throw Error(std::string("projection failed: ") + e.GetMessageString());
     }
-    if (!spec.cut.empty()) {
+    if (!spec.cut.empty() || !spec.breakouts.empty()) {
       detail::name_cut_curves(sources, g->curves);
       detail::drop_joint_curves(spec, v, sources, g->curves);
+      detail::mark_breakout_curves(spec, sources, g->curves);
     }
   }
   run.check();
@@ -1424,7 +1453,7 @@ Image preview_image(const ViewGeometry& g, int width, int height) {
   };
   for (int pass = 0; pass < 3; ++pass)  // hidden under tangent under visible
     for (const auto& k : g.curves) {
-      const int mine = k.hidden ? 0 : k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam ? 1 : 2;
+      const int mine = k.hidden ? 0 : k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam || k.kind == Curve::Kind::Break ? 1 : 2;
       if (mine != pass) continue;
       const uint8_t shade = pass == 0 ? 185 : pass == 1 ? 140 : 0;
       const auto pts = k.sample(0.25 / scale);

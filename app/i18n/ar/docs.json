@@ -529,5 +529,19 @@
   "Plastics and rubber": "اللدائن والمطاط",
   "Insulation": "العوازل",
   "Lining": "النقش",
-  "Fill narrow faces (under about 1 mm on paper)": "املأ الوجوه الضيقة (أقل من نحو 1 مم على الورق)"
+  "Fill narrow faces (under about 1 mm on paper)": "املأ الوجوه الضيقة (أقل من نحو 1 مم على الورق)",
+  "Broken-out section": "مقطع موضعي",
+  "Remove broken-out sections": "إزالة المقاطع الموضعية",
+  "Break lines": "خطوط الكسر",
+  "Ruled, with a zigzag": "مستقيمة بتعرّج",
+  "Freehand": "يدوية",
+  "A broken-out section goes on a base, projected or auxiliary view.": "يوضع المقطع الموضعي على مسقط أساسي أو مُسقَط أو مساعد.",
+  "Click a point in a view beside it for the depth (the cut goes through it), or press Enter for the part's middle": "انقر نقطة في مسقط مجاور لتحديد العمق (يمر القطع بها)، أو اضغط Enter لمنتصف القطعة",
+  "Click points round what to open up: a smooth closed curve goes through them": "انقر نقاطًا حول ما تريد كشفه: يمر بها منحنى مغلق أملس",
+  "Click more points, or press Enter to close the outline": "انقر نقاطًا أخرى، أو اضغط Enter لإغلاق المحيط",
+  "Click a point in a view beside this one (square to it): the cut goes through it.": "انقر نقطة في مسقط مجاور لهذا (متعامد معه): يمر القطع بها.",
+  "An outline needs three points at least.": "يحتاج المحيط إلى ثلاث نقاط على الأقل.",
+  "Hatching is a section view's or a broken-out section's.": "التهشير خاص بالمسقط المقطعي أو المقطع الموضعي.",
+  "broken-out sections are on base, projected and auxiliary views": "المقاطع الموضعية على المساقط الأساسية والمُسقَطة والمساعدة",
+  "a broken-out section's outline needs three points apart": "يحتاج محيط المقطع الموضعي إلى ثلاث نقاط متباعدة"
 }
