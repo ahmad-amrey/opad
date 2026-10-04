@@ -2,6 +2,8 @@
 #include "MainWindow.hpp"
 #include "CheckPanel.hpp"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QKeyEvent>
 #include <QStackedWidget>
 #include <QStatusBar>
@@ -17,19 +19,24 @@
 #include <Bnd_Box.hxx>
 
 #include "I18n.hpp"
+#include "Icons.hpp"
 #include "Units.hpp"
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+
+OPAD_ICON_TABLE(measure, {"length", R"(<path d="M3 16.5L16.5 3L21 7.5L7.5 21z"/><path d="M7.5 12l2 2M10.5 9l2 2M13.5 6l2 2"/>)"});
 
 void MainWindow::buildInspectActions() {
   addAction("inspect.distance", tr("Distance"), "distance", QKeySequence("D"), [this] { toggleTool("distance"); }, true);
   addAction("inspect.angle", tr("Angle"), "angle", QKeySequence("A"), [this] { toggleTool("angle"); }, true);
   addAction("inspect.radius", tr("Radius"), "radius", QKeySequence("R"), [this] { toggleTool("radius"); }, true);
   addAction("inspect.bbox", tr("Bounding box"), "bbox", QKeySequence("B"), [this] { toggleTool("bbox"); }, true);
+  addAction("inspect.length", tr("Length and area"), "length", QKeySequence("Shift+L"), [this] { toggleTool("length"); }, true);
   addAction("inspect.interference", tr("Interference"), "interference", QKeySequence(), [this] { startCheck(false); });
   addAction("inspect.printcheck", tr("Print check"), "printcheck", QKeySequence(), [this] { startCheck(true); });
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
+  m_distanceMode = std::clamp(m_settings.value("measure/distanceMode", 0).toInt(), 0, 2);
   m_pinAction->setShortcutContext(Qt::ApplicationShortcut);
   m_pinAction->setEnabled(false);
   addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
@@ -118,7 +125,8 @@ void MainWindow::startTool(const QString& id) {
   m_toolStack->setCurrentWidget(m_toolSteps);
   static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
       {"distance", {QT_TR_NOOP("Distance"), "distance", 2}}, {"angle", {QT_TR_NOOP("Angle"), "angle", 2}},       {"radius", {QT_TR_NOOP("Radius"), "radius", 1}},
-      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}};
+      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}},
+      {"length", {QT_TR_NOOP("Length and area"), "length", 1}}};
   const auto it = kTools.find(id);
   if (it == kTools.end()) return;
   m_tool = Tool{id, tr(std::get<0>(it->second)), std::get<1>(it->second), std::get<2>(it->second)};
@@ -130,15 +138,16 @@ void MainWindow::startTool(const QString& id) {
   // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face.
   const Viewport::SelFilter f = m_viewport->selectionFilter();
   const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex);
+  const bool wantEdges = id == "length" && f == Viewport::SelFilter::Vertex;  // lengths of edges, areas of faces or bodies
   m_viewport->setPickAccumulate(true, id == "distance");
-  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"})
+  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.length"})
     action(a)->setChecked(id == QString(a).section('.', 1));
   if (toolMeasures()) {
     m_toolPanel->setHeader(m_tool.icon, m_tool.title);
     openPanel(m_toolPanel);
   }
-  if (wantFaces) {
-    action("select.faces")->trigger();  // clears the picks and refreshes the prompt (see the select actions)
+  if (wantFaces || wantEdges) {
+    action(wantFaces ? "select.faces" : "select.edges")->trigger();  // clears the picks and refreshes the prompt (see the select actions)
   } else {
     const auto before = m_viewport->selection();  // selected first, tool second still works
     if (!before.empty() && static_cast<int>(before.size()) <= m_tool.steps) toolPicksChanged(before, false);
@@ -155,7 +164,7 @@ void MainWindow::cancelTool() {
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
   m_toolPicks.clear();
   m_toolPoints.clear();
-  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}) action(a)->setChecked(false);
+  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.length"}) action(a)->setChecked(false);
   m_viewport->setPickAccumulate(false);
   m_prompt->hide();
   m_toolPanel->hide();
@@ -196,7 +205,7 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
   m_pinAction->setEnabled(false);
   m_viewport->clearDimension();
   m_viewport->clearPreview();
-  m_viewport->setMeasurementSelectionLocked(m_tool.id == "distance" && picks.size() == 2
+  m_viewport->setMeasurementSelectionLocked(m_tool.id == "distance" && m_distanceMode == 0 && picks.size() == 2
       && picks[0].kind == opad::Ref::Kind::Edge && picks[1].kind == opad::Ref::Kind::Edge);
   std::vector<opad::Vec3> marks;
   for (const auto& p : m_toolPoints) if (p.first) marks.push_back(p.second);
@@ -213,13 +222,16 @@ void MainWindow::runToolMeasure() {
   const int run = m_toolRun;
   auto result = std::make_shared<opad::json>();
   const QString kind = m_tool.id;
+  const int mode = m_distanceMode;
   // Straight to the measure functions with the app's resolved scene; the "measure" command would resolve the
   // whole scene from the op log again on every call.
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
   auto document = std::make_shared<opad::Document>(m_doc->doc);
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
-  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [document, scene, refs, pickedPoints, snapTolerance, kind, result](Progress progress) {
-    if (kind == "distance" && refs.at(0).kind == opad::Ref::Kind::Edge && refs.at(1).kind == opad::Ref::Kind::Edge) {
+  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [document, scene, refs, pickedPoints, snapTolerance, kind, mode, result](Progress progress) {
+    if (kind == "distance" && mode == 1) *result = opad::measure_center_distance(*document, *scene, refs.at(0), refs.at(1));
+    else if (kind == "distance" && mode == 2) *result = opad::measure_max_distance(*document, *scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
+    else if (kind == "distance" && refs.at(0).kind == opad::Ref::Kind::Edge && refs.at(1).kind == opad::Ref::Kind::Edge) {
       const bool clicked = pickedPoints.size() >= 2 && pickedPoints[0].first && pickedPoints[1].first;
       opad::json closest;
       if (!clicked) closest = opad::measure_distance(*document, *scene, refs[0], refs[1], [progress] { return progress.cancelled(); });
@@ -231,6 +243,7 @@ void MainWindow::runToolMeasure() {
     else if (kind == "distance") *result = opad::measure_distance(*document, *scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
     else if (kind == "angle") *result = opad::measure_angle(*document, *scene, refs.at(0), refs.at(1));
     else if (kind == "radius") *result = opad::measure_radius(*document, *scene, refs.at(0));
+    else if (kind == "length") *result = opad::measure_length(*document, *scene, refs.at(0));
     else *result = opad::measure_bbox(*document, *scene, refs);
   }, [this, run, result](bool ok, const QString& error) {
     if (run == m_toolRun) m_measureJob = nullptr;
@@ -245,6 +258,8 @@ void MainWindow::runToolMeasure() {
       return refreshToolUi();
     }
     m_lastMeasure = *result;
+    m_measureHistory.insert(m_measureHistory.begin(), MeasureRecord{*result});
+    if (m_measureHistory.size() > 12) m_measureHistory.pop_back();
     m_pinAction->setEnabled(!m_doc->browse);
     m_viewport->showMeasurement(m_lastMeasure);
     refreshToolUi();
@@ -270,11 +285,16 @@ void MainWindow::refreshToolUi() {
   QString explanation = waiting;
   if (done) {
     if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
+    else if (m_tool.id == "distance" && m_distanceMode == 1) explanation = tr("Distance between the centres of the selections: circle and sphere centres, cylinder axes, face and body centroids. Δ = point 2 − point 1 in world axes.");
+    else if (m_tool.id == "distance" && m_distanceMode == 2) explanation = tr("Largest distance between the selections, between their farthest points. Δ = point 2 − point 1 in world axes.");
     else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
     else if (m_tool.id == "angle") explanation = tr("Directions compared at a common origin. Planar faces use their normals; curved faces use their axes.");
     else if (m_tool.id == "radius" && m_lastMeasure.contains("recognized"))
       explanation = tr("Radius from the center or cylinder axis to the surface. The surface is free-form (a B-spline) and is measured as the %1 it matches.").arg(i18n::t(QString::fromStdString(m_lastMeasure["recognized"].get<std::string>())));
     else if (m_tool.id == "radius") explanation = tr("Radius from the center or cylinder axis to the surface.");
+    else if (m_tool.id == "length" && m_lastMeasure.value("kind", "") == "length") explanation = tr("Length of the edge along its curve, and the perimeter of each face loop it belongs to.");
+    else if (m_tool.id == "length" && m_toolPicks.size() == 1 && m_toolPicks.front().kind == opad::Ref::Kind::Body) explanation = tr("Surface area of the body, and its volume when it is a solid.");
+    else if (m_tool.id == "length") explanation = tr("Area of the face, its perimeter (every loop, seams left out) and its outer loop's.");
     else explanation = tr("Bounding box aligned with the world X, Y and Z axes.");
   }
   m_toolSteps->setSummary(m_tool.title, explanation, done && !m_doc->browse ? tr("unpinned") : QString());
@@ -303,27 +323,14 @@ void MainWindow::refreshToolUi() {
     }
   }
   m_toolSteps->setAnchorOptions(anchorLabels, anchorIndex);
+  m_toolSteps->setModeOptions(m_tool.id == "distance" ? QStringList{tr("Minimum"), tr("Centre to centre"), tr("Maximum")} : QStringList(), m_distanceMode);
   m_toolSteps->setComponentsState(done && m_viewport->measurementHasMultipleAxes(), m_viewport->measurementComponents());
   QList<QPair<QString, QString>> rows;
-  if (done) {
-    const opad::json& r = m_lastMeasure;
-    // Results come in mm and degrees; they are shown in the document's unit and precision (UI-123).
-    const units::Kind kind = r.value("unit", "mm") == "deg" ? units::Kind::Angle : units::Kind::Length;
-    if (r.contains("value")) rows << qMakePair(m_tool.title, units::format(kind, r["value"].get<double>()));
-    if (r.contains("delta"))
-      for (int i = 0; i < 3; ++i) {
-        const double d = r["delta"][i].get<double>();
-        const bool plus = d > 0 && units::number(units::Kind::Length, d) != units::number(units::Kind::Length, 0);
-        rows << qMakePair(tr("Δ%1").arg(QChar("XYZ"[i])), (plus ? "+" : "") + units::format(units::Kind::Length, d));
-      }
-    if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), units::format(units::Kind::Angle, r["supplement"].get<double>()));
-    if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), units::format(units::Kind::Length, r["diameter"].get<double>()));
-    if (r.contains("recognized"))  // a B-spline cylinder or circle (UI-50): what it was taken for, and how closely
-      rows << qMakePair(tr("Recognised as"), tr("%1, within %2").arg(i18n::t(QString::fromStdString(r["recognized"].get<std::string>())), units::format(units::Kind::Length, r.value("deviation", 0.0), 4)));
-    for (const char* k : {"size", "min", "max"})
-      if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), units::vector(units::Kind::Length, r[k].get<std::array<double, 3>>()));
-    if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
-  }
+  if (done) rows = measureRows(m_lastMeasure);
+  // Where each pick was clicked (UI-144): while the next pick is awaited, and for a one-pick tool's result.
+  for (size_t i = 0; i < m_toolPoints.size() && i < m_toolPicks.size(); ++i)
+    if (m_toolPoints[i].first && (!done || m_tool.steps == 1))
+      rows << qMakePair(m_tool.steps == 1 ? tr("Picked at") : tr("Pick %1 at").arg(i + 1), units::vector(units::Kind::Length, m_toolPoints[i].second));
   for(size_t i=0;i<m_toolPicks.size();++i) {
     const auto info=m_viewport->circleInfo(m_toolPicks[i]);
     if(info.contains("diameter")) rows << qMakePair(tr("Circle %1 diameter").arg(i+1),units::format(units::Kind::Length,info["diameter"].get<double>()));
@@ -331,19 +338,96 @@ void MainWindow::refreshToolUi() {
   }
   m_toolSteps->setResult(rows);
   m_toolSteps->setFooter(done, !m_doc->browse);
+  refreshMeasureHistory();
 }
 
-void MainWindow::pinMeasurement() {
-  if (m_lastMeasure.is_null()) return;
-  if (!requireEditable([this] { pinMeasurement(); })) return;  // a pinned measurement is part of the document
+// Results come in mm, mm² and degrees; they are shown in the document's unit and precision (UI-123).
+QString MainWindow::measureTitle(const opad::json& r) const {
+  const std::string kind = r.value("kind", "distance"), mode = r.value("mode", "");
+  if (kind == "distance") return mode == "center" ? tr("Centre to centre") : mode == "max" ? tr("Maximum distance") : tr("Distance");
+  if (kind == "angle") return tr("Angle");
+  if (kind == "radius") return tr("Radius");
+  if (kind == "length") return tr("Length");
+  if (kind == "area") return tr("Area");
+  return tr("Bounding box");
+}
+
+QList<QPair<QString, QString>> MainWindow::measureRows(const opad::json& r) const {
+  QList<QPair<QString, QString>> rows;
+  const std::string kind = r.value("kind", "distance"), unit = r.value("unit", "mm");
+  const units::Kind L = units::Kind::Length;
+  auto vec = [L](const opad::json& p) { return units::vector(L, p.get<std::array<double, 3>>()); };
+  if (r.contains("value")) rows << qMakePair(measureTitle(r), units::format(unit == "deg" ? units::Kind::Angle : unit == "mm2" ? units::Kind::Area : L, r["value"].get<double>()));
+  if (r.contains("delta"))
+    for (int i = 0; i < 3; ++i) {
+      const double d = r["delta"][i].get<double>();
+      const bool plus = d > 0 && units::number(L, d) != units::number(L, 0);
+      rows << qMakePair(tr("Δ%1").arg(QChar("XYZ"[i])), (plus ? "+" : "") + units::format(L, d));
+    }
+  if (r.value("approximate", false) && r.contains("tolerance_mm")) rows << qMakePair(tr("Accuracy"), tr("within %1").arg(units::format(L, r["tolerance_mm"].get<double>())));
+  if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), units::format(units::Kind::Angle, r["supplement"].get<double>()));
+  if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), units::format(L, r["diameter"].get<double>()));
+  if (r.contains("recognized"))  // a B-spline cylinder or circle (UI-50): what it was taken for, and how closely
+    rows << qMakePair(tr("Recognised as"), tr("%1, within %2").arg(i18n::t(QString::fromStdString(r["recognized"].get<std::string>())), units::format(L, r.value("deviation", 0.0), 4)));
+  for (const char* k : {"size", "min", "max"})
+    if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), vec(r[k]));
+  if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
+  // Lengths and areas (UI-144): the loops an edge belongs to, a face's perimeters, a solid's volume.
+  for (const auto& loop : r.value("loops", opad::json::array()))
+    if (loop.is_object()) rows << qMakePair(loop.value("outer", true) ? tr("Loop on face %1").arg(loop.value("face", 0)) : tr("Inner loop on face %1").arg(loop.value("face", 0)), units::format(L, loop.value("perimeter", 0.0)));
+  if (r.contains("perimeter")) rows << qMakePair(tr("Perimeter"), units::format(L, r["perimeter"].get<double>()));
+  if (r.value("loops", opad::json()).is_number() && r["loops"].get<int>() > 1) {
+    rows << qMakePair(tr("Outer loop"), units::format(L, r.value("outer_perimeter", 0.0)));
+    rows << qMakePair(tr("Loops"), QString::number(r["loops"].get<int>()));
+  }
+  if (r.contains("volume")) rows << qMakePair(tr("Volume"), units::format(units::Kind::Volume, r["volume"].get<double>()));
+  // The measured points, world XYZ (UI-144): where a distance starts and ends (the centres it took), a radius's centre.
+  if (kind == "distance" && r.contains("point_a") && r.contains("point_b")) {
+    const QString a = r.contains("centre_a") ? tr("Point 1 (%1)").arg(i18n::t(QString::fromStdString(r["centre_a"].get<std::string>()))) : tr("Point 1");
+    const QString b = r.contains("centre_b") ? tr("Point 2 (%1)").arg(i18n::t(QString::fromStdString(r["centre_b"].get<std::string>()))) : tr("Point 2");
+    rows << qMakePair(a, vec(r["point_a"])) << qMakePair(b, vec(r["point_b"]));
+  } else if (kind == "radius" && r.contains("point_a")) rows << qMakePair(tr("Centre"), vec(r["point_a"]));
+  else if (kind == "angle" && r.contains("vertex")) rows << qMakePair(tr("Vertex"), vec(r["vertex"]));
+  else if (kind == "length" && r.contains("start") && !r.value("closed", false)) rows << qMakePair(tr("Start"), vec(r["start"])) << qMakePair(tr("End"), vec(r["end"]));
+  else if (kind == "length" && r.contains("point")) rows << qMakePair(tr("Middle"), vec(r["point"]));
+  else if (kind == "area" && r.contains("point")) rows << qMakePair(tr("Centroid"), vec(r["point"]));
+  return rows;
+}
+
+void MainWindow::copyMeasurement(const opad::json& result) {
+  QStringList lines;
+  for (const auto& [key, value] : measureRows(result)) lines << key + "\t" + value;
+  QApplication::clipboard()->setText(lines.join('\n'));
+}
+
+// The earlier results under the current one (the newest is the result shown, unless it was cleared).
+void MainWindow::refreshMeasureHistory() {
+  if (!toolMeasures()) return;
+  QList<ToolHistoryRow> rows;
+  for (size_t i = m_lastMeasure.is_null() ? 0 : 1; i < m_measureHistory.size(); ++i) {
+    const opad::json& r = m_measureHistory[i].result;
+    const auto values = measureRows(r);
+    rows << ToolHistoryRow{measureTitle(r), values.isEmpty() ? QString() : values.front().second, m_measureHistory[i].pinned};
+  }
+  m_toolSteps->setHistory(rows, !m_doc->browse);
+}
+
+void MainWindow::pinMeasurement(opad::json result) {
+  const bool current = result.is_null();
+  if (current) result = m_lastMeasure;
+  if (result.is_null()) return;
+  if (!requireEditable([this, result] { pinMeasurement(result); })) return;  // a pinned measurement is part of the document
   opad::json op;
   op["op"] = "measurement";
-  op["kind"] = m_lastMeasure.value("kind", "distance");
+  op["kind"] = result.value("kind", "distance");
   opad::json refs = opad::json::array();
-  for (const auto& r : m_lastMeasure.value("refs", opad::json::array())) refs.push_back(opad::Ref::parse(r.get<std::string>()).to_json());
+  for (const auto& r : result.value("refs", opad::json::array())) refs.push_back(opad::Ref::parse(r.get<std::string>()).to_json());
   op["refs"] = refs;
-  op["result"] = m_lastMeasure;
+  op["result"] = result;
   opad::json r = m_doc->run("append", opad::json{{"op", op}});
+  for (auto& record : m_measureHistory)
+    if (record.result == result) record.pinned = true;
+  if (!current) return refreshMeasureHistory();
   if (r.contains("appended") && !r["appended"].empty()) m_timeline->setCurrentOp(r["appended"][0].get<std::string>());
   statusBar()->showMessage(tr("Measurement pinned. Manage it in Annotations (Alt+2)."), 4000);
   if (!m_tool.id.isEmpty()) m_viewport->clearSelection();  // the tool stays on for the next measurement

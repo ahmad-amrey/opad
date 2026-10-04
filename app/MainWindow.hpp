@@ -140,11 +140,16 @@ class MainWindow : public QMainWindow {
   void refreshToolUi();
   QList<ToolStep> toolSteps() const;
   QString refLabel(const opad::Ref& r) const;
-  bool toolMeasures() const { return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox"; }
+  bool toolMeasures() const { return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox" || m_tool.id == "length"; }
+  // A result's name ("Distance", "Centre to centre", "Area") and its rows as the tool panel lists them, in the shown units:
+  // the value, components, what was recognised, perimeters, the measured points' XYZ (UI-144).
+  QString measureTitle(const opad::json& result) const;
+  QList<QPair<QString, QString>> measureRows(const opad::json& result) const;
+  void copyMeasurement(const opad::json& result);
   void updateUndoActions();
   QMenu* historyMenu(bool undo);  // the steps under the quick-access Undo ▾ / Redo ▾
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
-  void pinMeasurement();
+  void pinMeasurement(opad::json result = {});  // the current result when none is given
   void clearMeasurement();
   void startAnnotation(bool drawing);  // Note (false) or Hand drawing (true); the same command again closes it
   void syncAnnotationActions();
@@ -213,6 +218,10 @@ class MainWindow : public QMainWindow {
   int m_toolRun = 0;  // bumps whenever the picks change: a measure result for an older run is dropped
   QString m_toolHover;
   QString m_toolError;  // why the last pick could not be measured, shown in the tool panel until the next pick (UI-50)
+  int m_distanceMode = 0;  // Distance: 0 minimum, 1 centre to centre, 2 maximum (setting measure/distanceMode, UI-144)
+  struct MeasureRecord { opad::json result; bool pinned = false; };
+  std::vector<MeasureRecord> m_measureHistory;  // this document's results, newest first (UI-144)
+  void refreshMeasureHistory();
   PromptBar* m_prompt = nullptr;
   ToolStepsPanel* m_toolSteps = nullptr;
   ToolPanel* m_toolPanel = nullptr;

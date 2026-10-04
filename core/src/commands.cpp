@@ -294,20 +294,24 @@ void register_builtins() {
         return j;
       });
 
-  reg("measure", "Distance, angle, radius or bbox between references; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
-      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox"}, {"refs", "array - references"},
+  reg("measure", "Distance (minimum, centre to centre or maximum), angle, radius, bbox, or an edge's length / a face's area and perimeter; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
+      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox|length"}, {"refs", "array - references"},
+       {"mode", "min|center|max - distance only: the shortest (default), between the centres, or the largest"},
        {"queries", "array - several measurements [{kind, refs}], answered in order as results (a failed one carries error)"},
        {"pin", "bool - append a measurement op (each, with queries)"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
         Scene s = resolve(doc);  // once for every query (gap log #4)
-        auto one = [&](const std::string& kind, const json& refArgs) {
+        auto one = [&](const std::string& kind, const json& refArgs, const std::string& mode) {
           std::vector<Ref> refs;
           for (const auto& r : str_list(refArgs)) refs.push_back(Ref::parse(r));
           json res;
           if (kind == "distance") {
             if (refs.size() != 2) throw Error("distance needs exactly two refs");
-            res = measure_distance(doc, s, refs[0], refs[1]);
+            if (mode == "center") res = measure_center_distance(doc, s, refs[0], refs[1]);
+            else if (mode == "max") res = measure_max_distance(doc, s, refs[0], refs[1]);
+            else if (mode == "min" || mode.empty()) res = measure_distance(doc, s, refs[0], refs[1]);
+            else throw Error("unknown distance mode: " + mode + " (min, center, max)");
           } else if (kind == "angle") {
             if (refs.size() != 2) throw Error("angle needs exactly two refs");
             res = measure_angle(doc, s, refs[0], refs[1]);
@@ -316,6 +320,9 @@ void register_builtins() {
             res = measure_radius(doc, s, refs[0]);
           } else if (kind == "bbox") {
             res = measure_bbox(doc, s, refs);
+          } else if (kind == "length" || kind == "area") {
+            if (refs.size() != 1) throw Error("length needs exactly one ref");
+            res = measure_length(doc, s, refs[0]);
           } else {
             throw Error("unknown measurement kind: " + kind);
           }
@@ -333,13 +340,13 @@ void register_builtins() {
         };
         if (!a.contains("queries")) {
           if (!a.contains("refs")) throw Error("measure: pass refs (with kind) or queries");
-          return one(a.value("kind", "distance"), a["refs"]);
+          return one(a.value("kind", "distance"), a["refs"], a.value("mode", ""));
         }
         json results = json::array();
         for (const auto& q : a["queries"]) {
           const std::string kind = q.value("kind", "distance");
           try {
-            results.push_back(one(kind, q.value("refs", json())));
+            results.push_back(one(kind, q.value("refs", json()), q.value("mode", a.value("mode", ""))));
           } catch (const Standard_Failure& e) {
             results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", std::string("the modelling kernel failed: ") + e.GetMessageString()}});
           } catch (const std::exception& e) {

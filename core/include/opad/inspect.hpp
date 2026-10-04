@@ -30,6 +30,19 @@ json shape_distance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, const std::f
 json measure_edge_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b,
                            const Vec3& picked_a, const Vec3& picked_b, double snap_tolerance,
                            const std::function<bool()>& cancelled = {});
+// Centre to centre (UI-144): between the references' centres, as centre_a / centre_b name them: a circle's, an ellipse's or
+// a sphere's centre, a cylinder's or cone's axis where it passes the face's centroid, a face's or curve's centroid, a solid
+// body's volume centroid (another body's area centroid), a vertex or point itself. mode "center".
+json measure_center_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b);
+// The farthest two points of the references (UI-144), mode "max": among their vertices, their edges sampled finely and the
+// mesh nodes of their curved faces (a plane's farthest point is on its boundary), then climbed to the farthest pair. Exact
+// between straight-edged, flat shapes; else approximate within tolerance_mm. cancelled: as measure_distance.
+json measure_max_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b, const std::function<bool()>& cancelled = {});
+// Length and area (UI-144). An edge: kind "length", its length along the curve, start, end, its middle as point, and loops:
+// each wire of a face around it that holds it, with that face, its perimeter (seams left out), its edge count and whether it
+// is the face's outer loop. A face: kind "area", its area, centroid as point, perimeter (every loop), outer_perimeter and
+// loops. A body: kind "area", its surface area and, for a solid, its volume.
+json measure_length(const Document& doc, const Scene& scene, const Ref& a);
 json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const Ref& b);
 json measure_radius(const Document& doc, const Scene& scene, const Ref& a);
 json measure_bbox(const Document& doc, const Scene& scene, const std::vector<Ref>& refs);

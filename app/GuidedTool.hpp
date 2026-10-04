@@ -19,6 +19,12 @@ struct ToolStep {
   QString picked;  // the picked target, empty while the step is open
 };
 
+// An earlier result of the session, listed under the current one with Copy and Pin (UI-144).
+struct ToolHistoryRow {
+  QString title, value;  // "Distance", "25.000 mm"
+  bool pinned = false;
+};
+
 // 16 px numbered ring: pending fg3, waiting sel, done filled sel with a check.
 enum class StepState { Pending, Waiting, Done };
 QPixmap stepRing(StepState state, int number, qreal dpr);
@@ -57,6 +63,9 @@ class ToolStepsPanel : public QWidget {
   void setFooter(bool visible, bool canPin);
   void setComponentsState(bool visible, bool checked);
   void setAnchorOptions(const QStringList& labels, int current);
+  // Segmented choice above the result (Distance: minimum, centre to centre, maximum); empty labels hide it (UI-144).
+  void setModeOptions(const QStringList& labels, int current);
+  void setHistory(const QList<ToolHistoryRow>& rows, bool canPin);
   QSize preferredSize(int width);
   PanelFooter* footer() const { return m_footer; }
  signals:
@@ -64,6 +73,9 @@ class ToolStepsPanel : public QWidget {
   void pinRequested();
   void componentsChanged(bool on);
   void anchorChanged(int index);
+  void modeChanged(int index);
+  void historyCopyRequested(int index);  // by row of the last setHistory
+  void historyPinRequested(int index);
   void contentSizeChanged();
  protected:
   void resizeEvent(QResizeEvent* event) override;
@@ -77,6 +89,11 @@ class ToolStepsPanel : public QWidget {
   QCheckBox* m_components;
   QWidget* m_anchorRow;
   QComboBox* m_anchors;
+  QWidget* m_modeRow;
+  class QButtonGroup* m_modes;
+  QStringList m_modeLabels;
+  QWidget* m_historyBox;
+  QTreeWidget* m_history;
   QPushButton* m_copy;
   QScrollArea* m_scroll;
   QWidget* m_body;

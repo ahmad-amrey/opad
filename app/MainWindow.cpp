@@ -64,6 +64,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_viewPath.clear();
     cancelTool();
     clearMeasurement();
+    m_measureHistory.clear();  // results of the document that goes
     m_viewport->clearPreviewBodies();
     m_viewport->clearCandidates();
     m_viewport->isolate({});
@@ -217,6 +218,20 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_toolSteps, &ToolStepsPanel::pinRequested, this, [this] { guarded([this] { pinMeasurement(); }); });
   connect(m_toolSteps, &ToolStepsPanel::clearRequested, this, &MainWindow::toolEscape);
   connect(m_toolSteps, &ToolStepsPanel::componentsChanged, m_viewport, &Viewport::setMeasurementComponents);
+  connect(m_toolSteps, &ToolStepsPanel::modeChanged, this, [this](int mode) {  // Distance: minimum, centre to centre, maximum (UI-144)
+    if (mode == m_distanceMode) return;
+    m_distanceMode = mode;
+    m_settings.setValue("measure/distanceMode", mode);
+    if (m_tool.id == "distance") toolPicksChanged(m_viewport->selection(), false);  // measured again in the new mode
+  });
+  connect(m_toolSteps, &ToolStepsPanel::historyCopyRequested, this, [this](int row) {
+    const size_t i = row + (m_lastMeasure.is_null() ? 0 : 1);
+    if (i < m_measureHistory.size()) copyMeasurement(m_measureHistory[i].result);
+  });
+  connect(m_toolSteps, &ToolStepsPanel::historyPinRequested, this, [this](int row) {
+    const size_t i = row + (m_lastMeasure.is_null() ? 0 : 1);
+    if (i < m_measureHistory.size()) guarded([this, i] { pinMeasurement(m_measureHistory[i].result); });
+  });
   connect(m_toolSteps, &ToolStepsPanel::anchorChanged, this, [this](int index) {
     if (!m_lastMeasure.contains("anchors") || index < 0 || index >= static_cast<int>(m_lastMeasure["anchors"].size())) return;
     const opad::json& anchor = m_lastMeasure["anchors"][index];

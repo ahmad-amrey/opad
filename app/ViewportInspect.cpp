@@ -275,7 +275,8 @@ void Viewport::refreshMeasurement(bool force) {
       if (clearance(normal) < 8 && clearance(-normal) > clearance(normal)) normal = -normal;
       arrow(a, b, m_tokens.fg, kind == "distance");
       beside(gp_Pnt((a.X()+b.X())/2, (a.Y()+b.Y())/2, (a.Z()+b.Z())/2),
-            (kind == "distance" ? tr("Distance %1") : tr("R %1")).arg(units::format(units::Kind::Length, r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
+            (kind == "radius" ? tr("R %1") : r.value("mode", "") == "center" ? tr("Centre to centre %1") : r.value("mode", "") == "max" ? tr("Maximum %1") : tr("Distance %1"))
+                .arg(units::format(units::Kind::Length, r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
     }
     label(a, kind == "distance" ? (a.Distance(b) < 1e-9 ? tr("1 = 2") : tr("1")) : tr("Center"), m_tokens.fg2, -16, -19);
     if (a.Distance(b) > 1e-9) label(b, kind == "distance" ? tr("2") : tr("Radius"), m_tokens.fg2, 16, -19);
@@ -290,11 +291,21 @@ void Viewport::refreshMeasurement(bool force) {
         arrow(start, end, axes[i]);
         const QString value = (delta > 0 && units::number(units::Kind::Length, delta) != units::number(units::Kind::Length, 0) ? "+" : "") + units::format(units::Kind::Length, delta);
         const QPointF normal = screenNormal(start, end);
-        beside(gp_Pnt((start.X()+end.X())/2, (start.Y()+end.Y())/2, (start.Z()+end.Z())/2),
-              QString("Δ%1 %2").arg(QChar("XYZ"[i])).arg(value), axes[i], -normal, 12);
+        // Along one axis the axis label is the measurement's; one that is not the shortest says which it is (UI-144).
+        const std::string mode = r.value("mode", "");
+        const QString caption = aligned && (mode == "center" || mode == "max")
+            ? (mode == "center" ? tr("Centre to centre %1") : tr("Maximum %1")).arg(units::format(units::Kind::Length, r["value"].get<double>()))
+            : QString("Δ%1 %2").arg(QChar("XYZ"[i])).arg(value);
+        beside(gp_Pnt((start.X()+end.X())/2, (start.Y()+end.Y())/2, (start.Z()+end.Z())/2), caption, axes[i], -normal, 12);
         start = end;
       }
     }
+  } else if ((kind == "length" || kind == "area") && r.contains("point") && r.contains("value")) {  // UI-144: a label at the edge's middle or the face's centroid
+    const gp_Pnt at = point(r["point"]);
+    graphic->endpoints = {at};
+    if (kind == "length" && r.contains("start") && !r.value("closed", false)) graphic->snapPoints = {point(r["start"]), point(r["end"])};
+    label(at, (kind == "length" ? tr("L %1").arg(units::format(units::Kind::Length, r["value"].get<double>()))
+                                : tr("A %1").arg(units::format(units::Kind::Area, r["value"].get<double>()))), m_tokens.fg, 0, 26);
   } else if (kind == "bbox") {
     const gp_Pnt lo = point(r["min"]), hi = point(r["max"]);
     for (int mask = 0; mask < 8; ++mask) {
