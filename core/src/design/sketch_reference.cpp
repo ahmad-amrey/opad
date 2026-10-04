@@ -58,7 +58,21 @@ TopoDS_Shape asset_source(const Ctx& ctx,const Frame& frame,const json& source) 
 }
 
 bool asset_ref(const json& ref){return ref.is_object()&&ref.contains("asset");}
+
+void named_nodes(const json& j,std::set<std::string>& out) {
+  if(j.is_object()){for(const char* k:{"body","node"})if(j.contains(k)&&j[k].is_string())out.insert(j[k].get<std::string>());for(const auto& [k,v]:j.items())if(k!="hint")named_nodes(v,out);}
+  else if(j.is_array())for(const auto& v:j)named_nodes(v,out);
+}
 }  // namespace
+
+bool unloaded_link(const Scene& scene,const json& ref) {
+  std::set<std::string> nodes;named_nodes(ref,nodes);
+  for(const auto& id:nodes)if(const Node* n=scene.node(id)) {
+    const std::vector<std::string> bodies=n->kind==Node::Kind::Body?std::vector<std::string>{id}:scene.bodies_under(id);
+    for(const auto& b:bodies)if(const Node* m=scene.node(b);m && m->linked && m->body_missing)return true;
+  }
+  return false;
+}
 
 Sketch derive_sketch(const Document& doc,const Scene& scene,const Frame& frame,const json& source,const std::string& mode,const std::map<std::string,TopoDS_Shape>& fresh) {
   ParamTable params;Ctx ctx{doc,params,scene,fresh,{}};TopoDS_Shape shape;

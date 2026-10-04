@@ -505,6 +505,62 @@ TEST(agents_project_a_board) {
   CHECK_THROWS(commands::run("sketch_tool", {{"target", sketch}, {"tool", "project"}, {"inputs", json::object()}}, &d));
 }
 
+// A sketch projecting a board that is not loaded (its file gone) keeps the projection a sync gave it through an unrelated edit:
+// no error saved into it, no regeneration of it, the widened outline and the moved hole as synced.
+TEST(projection_kept_while_the_board_is_missing) {
+  Files files;
+  configure_kernel_logging(false);
+  const auto dir = files.dir / "away";
+  const auto board = dir / "board.kicad_pcb";
+  auto text = [](const std::string& width, const std::string& h1) {
+    return "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end " + width + " 30) (layer \"Edge.Cuts\"))\n" +
+           footprint("MountingHole:MountingHole_3.2mm", "H1", h1, "    (pad \"\" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2))\n") + ")\n";
+  };
+  write(board, text("50", "45 5"));
+  Document d = Document::create();
+  d.save_as(dir / "enclosure.opad");
+  link_file(d, board);
+  std::string import_id;
+  for (const auto& o : d.ops)
+    if (o.type == "import") import_id = o.id;
+  design::apply_ops(d, {design::make_param_op("gap", "2 mm")});
+  const std::string sketch = design::apply_ops(d, {design::make_sketch_op("Case", {{"base", "xy"}}, design::Sketch{}.to_json())})["ids"][0].get<std::string>();
+  Scene s = resolve(d);
+  for (const auto& [what, node] : std::vector<std::pair<std::string, std::string>>{{"outline", named(s, "Outline")->id}, {"holes", named(s, "Mounting holes")->id}})
+    commands::run("sketch_tool", {{"target", sketch}, {"tool", "project"}, {"inputs", {{"source", {{"asset", import_id}, {"kicad", what}, {"node", node}}}}}}, &d);
+  write(board, text("80", "70 10"));
+  design::commit(d, plan_asset_sync(d, import_id));
+  struct Seen {
+    double x1 = -1e9, cx = 0, cy = 0;
+    std::string error;
+  };
+  auto seen = [&](const Document& doc) {
+    const Scene sc = resolve(doc);
+    const design::Sketch g = design::Sketch::from_json(sc.sketch(sketch)->geometry);
+    Seen out;
+    out.error = sc.sketch(sketch)->error;
+    for (const auto& p : g.points) out.x1 = std::max(out.x1, p.x);
+    for (const auto& e : g.entities)
+      if (e.type == design::SkEntity::Type::Circle) out.cx = g.point(e.p[0])->x, out.cy = g.point(e.p[0])->y;
+    return out;
+  };
+  Seen synced = seen(d);
+  CHECK(synced.error.empty() && about(synced.x1, 55) && about(synced.cx, 45) && about(synced.cy, 5));  // page (25, 15) is the origin
+  d.save();
+  std::filesystem::rename(board, dir / "elsewhere.kicad_pcb");
+  Document away = Document::load(dir / "enclosure.opad");
+  CHECK_EQ(load_assets(away)[0].state, "missing");
+  const size_t ops = away.ops.size();
+  std::string gap;
+  for (const auto& o : away.ops)
+    if (o.type == "param") gap = o.id;
+  design::apply_ops(away, {design::make_edit_op(gap, {{"expr", "3 mm"}})});
+  CHECK(away.ops.size() > ops);
+  Seen kept = seen(away);
+  CHECK(kept.error.empty() && about(kept.x1, 55) && about(kept.cx, 45) && about(kept.cy, 5));
+  for (size_t i = ops; i < away.ops.size(); ++i) CHECK(away.ops[i].type != "regen" || !away.ops[i].data["results"].contains(sketch));
+}
+
 // UI-134: a board's clearance to its enclosure counts only pairs of a board part and an enclosure part (the connector sits on
 // the board and the lid touches the wall: neither is reported), the board's part second; a smaller gap is clear.
 TEST(clearance_to_an_enclosure) {

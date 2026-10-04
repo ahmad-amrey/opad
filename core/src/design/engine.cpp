@@ -695,14 +695,49 @@ struct Walk {
     return result;
   }
 
+  // The curves a reference gave the sketch when it was last computed (`last`: its solved geometry, else as given), as
+  // derive_sketch hands them: by slot, each point once in the order the sketch has them.
+  static Sketch last_projection(const json& last, const json& ref, const std::string& mode, const std::string& why) {
+    const Sketch was = Sketch::from_json(last);
+    std::vector<const SkEntity*> mine;
+    for (const auto& e : was.entities)
+      if (!e.source.is_null() && e.source.at("ref") == ref && e.source.value("mode", "project") == mode) mine.push_back(&e);
+    if (mine.empty()) throw Error(why);
+    std::sort(mine.begin(), mine.end(), [](const SkEntity* a, const SkEntity* b) { return a->source.value("slot", 0) < b->source.value("slot", 0); });
+    std::set<int> used;
+    for (const auto* e : mine) used.insert(e->p.begin(), e->p.end());
+    Sketch out;
+    std::map<int, int> points;
+    for (const auto& p : was.points)
+      if (used.count(p.id)) points[p.id] = out.add_point(p.x, p.y, true);
+    for (const auto* e : mine) {
+      SkEntity c = *e;
+      c.id = out.next_id();
+      c.source = nullptr;
+      for (int& p : c.p) p = points.at(p);
+      out.entities.push_back(std::move(c));
+    }
+    return out;
+  }
+
   json compute_sketch(const Ctx& ctx, const json& data, std::string& fp) {
     const json& geometry = data.at("geometry");
     const json& plane = data.at("plane");
     Sketch sk = Sketch::from_json(geometry);
     std::string s = "sketch|" + geometry.dump() + "|" + plane.dump() + "|";
     std::string error;
+    const json stored = data.value("result", json::object());
     try {
-      refresh_references(sk,[&](const json& ref,const std::string& mode){return derive_sketch(ctx.doc,ctx.scene,ctx.plane(plane),ref,mode,ctx.fresh);});
+      refresh_references(sk,[&](const json& ref,const std::string& mode){
+        try {
+          return derive_sketch(ctx.doc,ctx.scene,ctx.plane(plane),ref,mode,ctx.fresh);
+        } catch (const std::exception& e) {
+          // A linked file not loaded here (missing, not trusted yet): its projection as last computed stays, so an unrelated
+          // edit neither saves an error into the sketch nor drops what a sync projected.
+          if (!unloaded_link(ctx.scene, ref)) throw;
+          return last_projection(stored.contains("geometry") ? stored["geometry"] : geometry, ref, mode, e.what());
+        }
+      });
       s+=sk.to_json().dump();
       evaluate_patterns(sk,ctx.params);
       s += sk.patterns.dump();
@@ -725,7 +760,6 @@ struct Walk {
         if (const Feature* f = ctx.scene.feature(id)) s += id + ":" + f->result.value("plane", json()).dump() + ";";
     }
     fp = sha256_hex(s).substr(0, 24);
-    const json stored = data.value("result", json::object());
     if (!force && stored.value("in", "") == fp) return stored;
 
     json result = json::object();
