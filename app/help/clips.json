@@ -3192,7 +3192,7 @@
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
-    {"el": "poly", "closed": true, "points": [[9, -6, 0], [9, 6, 0], [9, 6, 6], [9, -6, 6]], "color": "sel", "width": 1.6, "fill": "sel", "fillOpacity": 0.38, "from": 3, "fade": 0.15},
+    {"el": "poly", "closed": true, "points": [[9, -6, 0], [9, 6, 0], [9, 6, 6], [9, -6, 6]], "color": "sel", "width": 1.6, "dash": true, "fill": "sel", "fillOpacity": 0.32, "from": 3, "fade": 0.15},
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Annotations", "hl": -1, "rows": [["Type", "All"], {"text": "Check the clearance", "icon": "annotate"}, {"text": "Round this edge", "icon": "annotate"}, {"text": "Hole too small", "icon": "issue"}], "keys": [[1.2, {"rows": [["Type", "Issue"], {"text": "Hole too small", "icon": "issue"}, {"text": "Wall too thin", "icon": "issue"}], "hl": 0, "ease": "step"}], [1.5, {"hl": -1}], [2.9, {"hl": 2}]]},
     {"el": "key", "caps": ["Alt", "2"], "press": 0.5, "from": 0.15, "to": 1},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.1, {"screen": [0.4, 0.28]}], [1.2, {"screen": [0.4, 0.28], "click": 1}], [2.8, {"screen": [0.2, 0.52]}], [2.9, {"screen": [0.2, 0.52], "click": 1}], [3.8, {"screen": [0.7, 0.85]}]]}

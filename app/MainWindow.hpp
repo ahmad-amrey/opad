@@ -198,6 +198,11 @@ class MainWindow : public QMainWindow {
   void syncAnnotationActions();
   void resolveCurrentAnnotation();
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
+  // A card clicked in Annotations lights up what its note is pinned to, as the note editor shows a target (help audit
+  // P9.4); a click in the view, another selection, a change of the document, Esc, a note being written or the panel
+  // closing puts it out.
+  void showAnnotationCardTarget(const opad::Ref& anchor);
+  void clearAnnotationCardTarget();
   void exportDialog(std::vector<std::string> ids = {});
   void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker (ExportJob.hpp), the result in m_lastExport
   void drawingToSketch();
@@ -321,6 +326,7 @@ class MainWindow : public QMainWindow {
   AnnotationsPanel* m_annotations = nullptr;
   QPointer<AnnotationEditor> m_annotationEditor;
   ToolPanel* m_annotationPanel = nullptr;  // the editor's: type, pen, text
+  bool m_cardTarget = false;  // the viewport's annotation target is an Annotations card's (not the editor's)
   NoteCards* m_noteCards = nullptr;  // one card beside every open note, over the viewport
   SectionPanel* m_section = nullptr;
   ToolPanel* m_propsPanel = nullptr;  // floating tool panels over the viewport (no fixed right dock)

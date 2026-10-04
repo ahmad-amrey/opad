@@ -607,6 +607,7 @@ void MainWindow::pinMeasurement(opad::json result) {
 bool MainWindow::measuredExploded() const { return m_lastMeasure.is_object() && m_lastMeasure.value("exploded", false); }
 
 void MainWindow::clearMeasurement() {
+  clearAnnotationCardTarget();  // Esc with Annotations pinned open
   m_lastMeasure = opad::json();
   m_viewport->clearDimension();
   m_pinAction->setEnabled(false);

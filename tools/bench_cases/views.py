@@ -1,5 +1,5 @@
-"""gui_benches cases of the help audit's view and inspect tools (TODO 11 wave 3, P7 and P8): the tools do what their guides
-show. The benches are in app/ViewsBench.cpp and app/InspectBench.cpp."""
+"""gui_benches cases of the help audit's view, inspect and panel tools (TODO 11 wave 3, P7, P8 and P9): the tools do what
+their guides show. The benches are in app/ViewsBench.cpp, app/InspectBench.cpp and app/PanelsBench.cpp."""
 
 
 def three_boxes(root, document):
@@ -51,4 +51,8 @@ CASES = [
     # interference: the overlap in red), following the fin's body when it moves and when the cube is isolated.
     # <prefix>.view.png, <prefix>.finding.png, <prefix>.moved.png.
     ("print-check-thin", thin_fin, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
+    # P9 on a box with four notes: a card in Annotations lights up exactly what its note is pinned to (body, face, edge,
+    # point) and selects nothing; a selection, a click in the view, Esc and a note being written put it out.
+    # <prefix>.face.png.
+    ("panels", "box", {"OPAD_BENCH_PANELS": "{prefix}"}),
 ]

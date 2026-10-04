@@ -51,6 +51,7 @@ QColor MainWindow::nodeColour(const std::string& id) const {
 }
 
 void MainWindow::onViewportSelection() {
+  clearAnnotationCardTarget();  // a click in the view puts out what an Annotations card lit up
   if (m_design->ownsSelection()) return m_design->viewportSelectionChanged();  // picks for a feature input or a sketch plane
   if (m_syncing) return;
   m_syncing = true;
@@ -71,6 +72,7 @@ void MainWindow::onViewportSelection() {
 }
 
 void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
+  clearAnnotationCardTarget();
   if (m_syncing) return;
   m_syncing = true;
   // An area's rows (a provided folder's) are no nodes: the view, the edit commands and the tools never see them.

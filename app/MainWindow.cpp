@@ -200,7 +200,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);
   connect(m_annotations, &AnnotationsPanel::styleRequested, this, &MainWindow::restyleAnnotation);
-  connect(m_annotations, &AnnotationsPanel::selectNode, this, [this](const std::string& id) { onBrowserSelection({id}); m_browser->setSelectedIds({id}); });
+  connect(m_annotations, &AnnotationsPanel::targetRequested, this, &MainWindow::showAnnotationCardTarget);
   m_noteCards = new NoteCards(m_doc, m_viewport, this);
   connect(m_annotations,&AnnotationsPanel::typeFilterChanged,m_noteCards,&NoteCards::setTypeFilter);
   connect(m_noteCards, &NoteCards::resolveRequested, this, &MainWindow::deleteOp);

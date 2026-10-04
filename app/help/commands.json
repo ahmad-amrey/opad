@@ -359,7 +359,7 @@
    "id": "panel.annotations",
    "title": "Annotations",
    "summary": "Lists notes, hand drawings and pinned measurements.",
-   "details": "Filter by author, type and status; click a card to show its target. Resolved notes stay in the history.",
+   "details": "Filter by author, type and status. Click a card and what its note is pinned to lights up in the view, the face, edge, point or body itself, without changing the selection; a click in the view puts it out. Resolved notes stay in the history.",
    "keywords": ["notes", "comments", "markup", "review"],
    "requires": "Open an OPAD document; a file in viewer mode has no annotations."
   },

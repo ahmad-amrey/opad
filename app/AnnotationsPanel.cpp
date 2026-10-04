@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QStyle>
 #include <QVBoxLayout>
 
 #include <set>
@@ -96,7 +97,7 @@ void AnnotationsPanel::rebuild() {
     NoteInfo n;
     n.id = op.id; n.by = by; n.ts = op.data.value("ts", ""); n.text = op.data.value("text", ""); n.body = anchor.body;
     n.style = op.data.value("style", "note");
-    for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) { n.style = a.style; n.text = a.text; n.comments = a.comments; }  // after edits
+    for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) { n.style = a.style; n.text = a.text; n.comments = a.comments; anchor = a.anchor; n.body = anchor.body; }  // after edits (a re-pick)
     if(op.type=="measurement") {
       n.measurement=true;
       const auto result=op.data.value("result",opad::json::object());
@@ -113,14 +114,30 @@ void AnnotationsPanel::rebuild() {
     n.target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
     if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) n.target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
     auto* card = new NoteCard(n, m_cards, m_doc);
+    // The current card (the one clicked last, which Resolve acts on) is ringed in the selection colour.
+    card->setStyleSheet(card->styleSheet() + QString("QFrame#card[current=\"true\"] { border: 2px solid %1; }").arg(theme::current().sel.name()));
+    card->setProperty("current", n.id == m_current);
     connect(card, &NoteCard::resolveRequested, this, &AnnotationsPanel::resolveRequested);
     connect(card, &NoteCard::restoreRequested, this, &AnnotationsPanel::restoreRequested);
     connect(card, &NoteCard::styleRequested, this, &AnnotationsPanel::styleRequested);
-    connect(card, &NoteCard::pressed, this, [this, card] {
+    // A click shows what the note is pinned to: the face, edge, point or body (help audit P9.4), not its whole body.
+    connect(card, &NoteCard::pressed, this, [this, card, anchor] {
       m_current = card->note().id;
-      if (!card->note().body.empty()) emit selectNode(card->note().body);
+      markCurrent();
+      emit targetRequested(anchor);
     });
     cl->insertWidget(cl->count() - 1, card);
   }
   m_count->setText(tr("%1 of %2").arg(shown).arg(total));
+}
+
+void AnnotationsPanel::markCurrent() {
+  for (NoteCard* card : m_cards->findChildren<NoteCard*>()) {
+    const bool current = card->note().id == m_current;
+    if (card->property("current").toBool() == current) continue;
+    card->setProperty("current", current);
+    card->style()->unpolish(card);
+    card->style()->polish(card);
+    card->update();
+  }
 }

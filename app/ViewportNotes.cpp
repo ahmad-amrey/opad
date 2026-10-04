@@ -362,6 +362,18 @@ bool Viewport::annotationPick(const QPointF& point, opad::Ref& target, bool& hit
 bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre) {
   clearAnnotationTarget();
   if (!m_initialised) return false;
+  if (target.kind == opad::Ref::Kind::Point) {  // a point in space (a pinned measurement's end, a note an agent placed): ringed
+    Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.selected3d);
+    mark->rings.push_back(gp_Pnt(target.point[0], target.point[1], target.point[2]));
+    mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    mark->SetInfiniteState(Standard_True);
+    m_ctx->Display(mark, 0, -1, Standard_False);
+    m_annotationTarget = mark;
+    m_annotationCorners.push_back(target.point);
+    if (centre) *centre = target.point;
+    redrawScene();
+    return true;
+  }
   const auto item = m_items.find(target.body);
   if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) return false;
   const Handle(AIS_Shape)& ais = item->second.ais;

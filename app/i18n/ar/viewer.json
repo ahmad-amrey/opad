@@ -136,5 +136,7 @@
  "Only the isolated bodies are shown. Click to show everything again (Exit isolate).": "لا تظهر إلا الأجسام المعزولة. انقر لإظهار كل شيء مجددًا (إنهاء العزل).",
  "Or click × on the Isolated card": "أو انقر × في بطاقة «معزول»",
  "Select bodies, faces or edges · each click adds": "حدد أجسامًا أو أوجهًا أو حوافًا · كل نقرة تضيف",
- "Colouring the findings": "تلوين النتائج"
+ "Colouring the findings": "تلوين النتائج",
+ "What this note was pinned to no longer exists.": "ما ثُبّتت عليه هذه الملاحظة لم يعد موجودًا.",
+ "What this note is pinned to is not shown in the view (hidden or isolated away).": "ما ثُبّتت عليه هذه الملاحظة غير ظاهر في العرض (مخفي أو خارج العزل)."
 }

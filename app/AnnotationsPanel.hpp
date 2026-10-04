@@ -13,7 +13,8 @@ class AnnotationsPanel : public QWidget {
   explicit AnnotationsPanel(AppDocument* doc, QWidget* parent = nullptr);
   std::string currentOpId() const { return m_current; }
  signals:
-  void selectNode(const std::string& id);
+  // A card was clicked: what its note (or pinned measurement) is anchored to, to light up in the view (help audit P9.4).
+  void targetRequested(const opad::Ref& anchor);
   void addRequested();
   void typeFilterChanged(const std::string& type);
   void resolveRequested(const std::string& opId);
@@ -22,6 +23,7 @@ class AnnotationsPanel : public QWidget {
  public slots:
   void rebuild();
  private:
+  void markCurrent();  // the card of m_current drawn as the current one (what Resolve acts on)
   AppDocument* m_doc;
   QComboBox* m_author;
   QComboBox* m_type;
