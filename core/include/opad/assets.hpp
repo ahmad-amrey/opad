@@ -80,6 +80,9 @@ std::filesystem::path locate_asset(const Document& doc, const json& asset, const
 // Whether `file` may be read for `doc` without asking: inside the document's folder or the git work tree it is in, inside
 // one of opt.trusted, or opt.trust_all. A document not saved yet holds only what was linked in this session: trusted.
 bool asset_trusted(const Document& doc, const std::filesystem::path& file, const AssetOptions& opt = {});
+// A UNC path (\\server\share): opening it can hand the user's credentials to that server, so a document never makes OPAD
+// look at one by itself.
+bool network_path(const std::filesystem::path& p);
 // A file's SHA-256, remembered in the user cache per path, size and time (a big STEP is hashed once). `compute` false: only
 // the remembered one, else empty (nothing is read).
 std::string file_sha256(const std::filesystem::path& file, bool compute = true);
@@ -96,6 +99,15 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt = {})
 // {"import","sha256","up_to_date","added","removed","changed","kept","regenerated","errors"}.
 design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, const AssetOptions& opt = {},
                              const std::filesystem::path& file = {});
+// What such a plan does to the design built on the asset (UI-134, a sync preview), in log order: each sketch it recomputes
+// with its references to the asset that move or are projected again (kicad, node, ref or the node's name, change: "moved" |
+// "projected_again"), the dimensions that go with them ("dimensions_removed"), measure another value ("dimensions_changed":
+// before/after) or hold geometry to a moving reference ("dimensions_moved"), and a new error; each feature it recomputes
+// (kind, bodies_changed, a new error). {"sketches": [...], "features": [...], "errors": N}.
+json asset_sync_affects(const Document& doc, const std::string& import_id, const design::Plan& plan);
+// The asset's own bodies such a plan changes, adds and removes, by node: {"changed": [{"node", "name"}], "added", "removed",
+// "kept": N} (a sync preview of any linked file; a KiCad board's says more per footprint: kicad_sync_preview).
+json asset_sync_parts(const Document& doc, const std::string& import_id, const design::Plan& plan);
 // Embed: the asset's bodies become ordinary body-store entries (healed like a full import, content keys), editable; the
 // asset object stays with storage "embedded" (where it came from) and the file is no longer read.
 design::Plan plan_asset_embed(const Document& doc, const std::string& import_id, const std::function<bool()>& cancel = {});
@@ -105,7 +117,24 @@ design::Plan plan_asset_embed(const Document& doc, const std::string& import_id,
 // {"import","path","copied"}.
 json pack_asset(Document& doc, const std::string& import_id, const std::string& author = {});
 
+// Assets in git (UI-69; the local git command, nothing remote). The work tree the linked file belongs to where the document
+// expects it (beside it as recorded, else its absolute path), or empty; a network path is never looked at.
+std::filesystem::path asset_work_tree(const Document& doc, const json& asset);
+// Recover from git: the linked file gone from its work tree (a checkout, a delete) written back where the document expects it
+// from the last commit of any branch that has it (git restore: Git LFS gives the file, not its pointer). Its path; throws
+// when it is there already, outside a work tree, or git or a version of it is missing.
+std::filesystem::path recover_asset(const Document& doc, const std::string& import_id, const std::function<bool()>& cancelled = {});
+// Track with Git LFS: `git lfs track` of the linked file's path in its work tree (.gitattributes), so it is committed to LFS
+// from then on. {"pattern","attributes"}; throws without git-lfs.
+json track_asset_lfs(const Document& doc, const std::string& import_id, const std::function<bool()>& cancelled = {});
+// The same from an asset object and the document's path alone (a worker in the app holds no copy of the document).
+std::filesystem::path recover_asset(const std::filesystem::path& document, const json& asset, const std::function<bool()>& cancelled = {});
+json track_asset_lfs(const std::filesystem::path& document, const json& asset, const std::function<bool()>& cancelled = {});
+
 // Linked imports and their edits not saved yet get their path relative to `dir`, where the document is being saved.
 void rebase_asset_paths(Document& doc, const std::filesystem::path& dir);
+// The linked files whose path as saved would name another place from `dir` (Save As to another folder), as edits of their
+// asset to append (the saved lines stay: the log is append-only). Document::save_as appends them; the app as an undo step.
+std::vector<json> asset_path_edits(const Document& doc, const std::filesystem::path& dir);
 
 }  // namespace opad

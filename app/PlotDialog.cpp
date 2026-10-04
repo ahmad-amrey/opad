@@ -600,7 +600,7 @@ void PlotDialog::plotToPdf(const QString& path) {
     m_outputJob = nullptr;
     if (error == "cancelled") return;  // the dialog went
     emit plotted(ok, error);
-    if (!ok) return m_services.toast(tr("The plot could not be written: %1").arg(i18n::t(error)), QString(), {}, 6000);
+    if (!ok) { m_services.toast(tr("The plot could not be written: %1").arg(i18n::t(error)), QString(), {}, 6000); return; }
     m_services.toast(tr("Plotted to %1").arg(QFileInfo(path).fileName()), tr("Show"), [path] { QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath())); });
     if (isVisible()) accept();
   });
@@ -625,7 +625,7 @@ void PlotDialog::plotToPrinter(std::shared_ptr<QPrinter> printer) {
     m_outputJob = nullptr;
     if (error == "cancelled") return;  // the dialog went
     emit plotted(ok, error);
-    if (!ok) return m_services.toast(tr("The plot could not be printed: %1").arg(i18n::t(error)), QString(), {}, 6000);
+    if (!ok) { m_services.toast(tr("The plot could not be printed: %1").arg(i18n::t(error)), QString(), {}, 6000); return; }
     m_services.toast(printer->outputFileName().isEmpty() ? tr("Plot sent to %1").arg(printer->printerName()) : tr("Plotted to %1").arg(QFileInfo(printer->outputFileName()).fileName()));
     if (isVisible()) accept();
   });

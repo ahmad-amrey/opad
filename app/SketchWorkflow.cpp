@@ -1,5 +1,6 @@
 #include "SketchEditor.hpp"
 #include "SketchGeometryCache.hpp"
+#include "opad/canvas.hpp"
 #include "DimensionHandle.hpp"
 #include "SketchPanel.hpp"
 #include "SketchSteps.hpp"
@@ -397,7 +398,7 @@ void SketchEditor::benchWorkflow() {
         case 8:{require(std::fabs(m_sk.images[0]["angle"].get<double>()-M_PI/6)<1e-8,"image rotation");auto camera=m_viewport->cameraJson();camera["scale"]=48;camera["target"]={8,8,0};camera["eye"]={8,8,100};m_viewport->setCameraJson(camera);m_viewport->grabImage().save(prefix+".viewport.png");for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())panel->grab().save(prefix+".panel.png");setTool("image_remove");applyTool();break;}
         case 9:require(m_sk.images.empty()&&m_imagePrs.empty(),"remove backdrop");undo();require(m_sk.images.size()==1,"image undo");break;
         case 10:for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())QMetaObject::invokeMethod(panel,"finishRequested");break;
-        case 11:if(m_active||m_doc->designBusy){--*phase;break;}require(m_imagePrs.empty()&&!m_imageJob,"image cleanup on sketch exit");require(!m_doc->scene.sketches.empty()&&!m_doc->scene.sketches.back().geometry.at("images").empty(),"backdrop committed to document");break;
+        case 11:if(m_active||m_doc->designBusy){--*phase;break;}require(m_imagePrs.empty()&&!m_imageJob,"image cleanup on sketch exit");require(!m_doc->scene.sketches.empty()&&m_doc->scene.sketches.back().geometry.value("images",opad::json::array()).empty(),"no picture record left in the sketch");{bool canvas=false;for(const auto& id:m_doc->scene.all_bodies())canvas=canvas||opad::is_canvas(*m_doc->scene.node(id));require(canvas,"backdrop committed to document as an image canvas on the sketch's plane");}break;
         case 12:case 13:case 14:case 15:case 16:case 17:case 18:case 19:break;
         default:{auto camera=m_viewport->cameraJson();camera["scale"]=48;camera["target"]={8,8,0};camera["eye"]={8,8,100};m_viewport->setCameraJson(camera);m_viewport->grabImage().save(prefix+".saved.png");timer->stop();trace::log("bench: sketch projection, image and vector workflow PASS");QCoreApplication::exit(0);break;}
       }

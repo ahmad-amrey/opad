@@ -25,7 +25,8 @@
 #include <optional>
 
 // Edit: an appearance being edited and not written yet (the opacity slider while it is dragged), over the document's.
-enum class LookSource { Edit, Asset, Lock, Activation, Compare, Explode, Candidate, Count };
+// Navigation: parts hidden while the view moves (Viewport::setSmallPartFilter), over everything else.
+enum class LookSource { Edit, Asset, Lock, Activation, Compare, Explode, Candidate, Navigation, Count };
 constexpr std::size_t kLookSources = static_cast<std::size_t>(LookSource::Count);
 
 struct LookDelta {

@@ -7,6 +7,7 @@
 #include <QSaveFile>
 #include <QTemporaryFile>
 #include <QThread>
+#include <algorithm>
 #include <set>
 
 Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwrite,
@@ -17,8 +18,8 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   if(destination.isEmpty())throw opad::Error("This document has no file path. Supply an absolute .opad path for the first save.");
   if(!QDir::isAbsolutePath(destination) || QFileInfo(destination).suffix().compare("opad",Qt::CaseInsensitive)!=0)
     throw opad::Error("Save requires an absolute path ending in .opad.");
-  opad::rebase_asset_paths(doc,std::filesystem::path(QFileInfo(destination).absolutePath().toStdU16String()));  // linked files not saved yet
   if(readOnly && QFileInfo(destination)==QFileInfo(path()))throw opad::Error("This document is open read-only: save a copy to edit it.");
+  followAssetPaths(destination);
   struct Save {
     std::atomic<bool> finished{false};bool written=false,blocked=false;QString error;
     std::vector<std::string> ids;size_t bodies=0;
@@ -203,7 +204,7 @@ void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const 
   });
 }
 
-void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done) {
+void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done, const std::vector<std::string>& only) {
   if (!hasDocument || browse || loading || designBusy) {
     if (done) done(false, tr("The document is busy; try again in a moment."));
     return;
@@ -216,6 +217,7 @@ void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(
   std::set<std::string> wanted;
   for (const auto& e : opad::effective_ops(doc)) {
     if (e.op->type != "import" || !e.data().contains("asset")) continue;
+    if (!only.empty() && std::find(only.begin(), only.end(), e.op->id) == only.end()) continue;
     bool loaded = true;
     std::function<void(const opad::json&)> walk = [&](const opad::json& nodes) {
       for (const auto& n : nodes) {

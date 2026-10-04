@@ -225,8 +225,11 @@ void SketchPanel::buildFields() {
   };
   if(m_shown=="image_insert"){fileField("imageFile",true,false);field("imageWidth",tr("Image width"),"100 mm");}
   if(m_shown.startsWith("image_")&&m_shown!="image_insert") {
-    auto* images=new QComboBox(this);for(const auto& image:m_editor->m_sk.images)images->addItem(tr("Image %1").arg(image.at("id").get<int>()),image.at("id").get<int>());
-    const int id=m_editor->option("imageId",m_editor->m_sk.images.empty()?"0":QString::number(m_editor->m_sk.images.back().at("id").get<int>())).toInt();images->setCurrentIndex(images->findData(id));m_fields->addRow(tr("Backdrop"),images);
+    auto* images=new QComboBox(this);for(const auto& image:m_editor->m_sk.images)images->addItem(tr("Image %1").arg(image.at("id").get<int>()),QString::number(image.at("id").get<int>()));
+    if(m_shown=="image_trace")for(const auto& [canvas,name]:m_editor->planeCanvases())images->addItem(tr("Canvas %1").arg(name),QString::fromStdString("canvas:"+canvas));  // image canvases on this plane
+    const QString current=m_editor->option("imageId",m_editor->m_sk.images.empty()?"0":QString::number(m_editor->m_sk.images.back().at("id").get<int>()));
+    int at=images->findData(current);if(at<0&&m_shown=="image_trace"&&images->count()>0){at=0;m_editor->m_options["imageId"]=images->itemData(0).toString();}
+    images->setCurrentIndex(at);m_fields->addRow(tr("Backdrop"),images);const int id=current.toInt();
     connect(images,&QComboBox::currentIndexChanged,this,[this,images]{m_editor->m_options["imageId"]=images->currentData().toString();m_editor->invalidatePreview();m_editor->m_panelFieldsDirty=true;refresh();});
     if(m_shown=="image_edit") {
       for(const auto& image:m_editor->m_sk.images)if(image.at("id").get<int>()==id) {

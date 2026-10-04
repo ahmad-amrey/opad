@@ -1,8 +1,10 @@
 """gui_benches cases of the assets area (T4): KiCad boards, linked files, pictures, import colours, the viewer cache. The
 benches are in app/KicadBench.cpp, app/AssetLinks.cpp and app/PictureBench.cpp. Each case makes its own files and points
 its own cache (OPAD_CACHE_DIR) into the run's folder, so nothing reaches the user's."""
+import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import zipfile
 
@@ -77,6 +79,119 @@ def linked_files(root, document):
     return linked, env
 
 
+def assembly_step(document, name, out, inputs):
+    """A STEP of one box inside a component "Bracket": linked, its top node with a part under it."""
+    path = document(name, ("feature", "--kind", "box", "--inputs", inputs))
+
+    def cli(*args):
+        return json.loads(subprocess.run([str(document.cli), args[0], str(path), *args[1:]], check=True, capture_output=True, text=True).stdout)
+    component = cli("component", "--name", "Bracket")["id"]
+    body = next(n["id"] for n in cli("tree")["roots"] if n["type"] == "body")
+    cli("reparent", "--target", body, "--parent", component)
+    cli("export", "--format", "step", "--out", str(out))
+    return out
+
+
+def asset_sync(root, document):
+    """A document in a git work tree whose .gitattributes stores assets/** with LFS, linking parts/part.step and
+    parts/second.step (in sync, each a component holding a box), with the next version of both and a third of the part in
+    next/."""
+    project = root / "asset-sync"
+    parts, later = project / "parts", project / "next"
+    parts.mkdir(parents=True)
+    later.mkdir()
+    (project / ".git").mkdir()  # a work tree as far as finding its root goes
+    (project / ".gitattributes").write_text("*.opad text eol=lf\nassets/** filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8")
+    env = {"OPAD_CACHE_DIR": str(root / "asset-sync-cache")}
+    second = '{{"y":"30 mm","length":"8 mm","width":"8 mm","height":"{}"}}'
+    assembly_step(document, "sync-part", parts / "part.step", '{"length":"10 mm","width":"10 mm","height":"10 mm"}')
+    assembly_step(document, "sync-second", parts / "second.step", second.format("8 mm"))
+    assembly_step(document, "sync-part-2", later / "part.step", '{"length":"12 mm","width":"10 mm","height":"10 mm"}')
+    assembly_step(document, "sync-second-2", later / "second.step", second.format("12 mm"))
+    assembly_step(document, "sync-part-3", later / "part-3.step", '{"length":"14 mm","width":"10 mm","height":"10 mm"}')
+    design = document("asset-sync/design")
+    for target in (parts / "part.step", parts / "second.step"):
+        subprocess.run([str(document.cli), "import", str(design), str(target), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
+def asset_git(root, document):
+    """A document in a real git work tree linking parts/part.step, committed, then the file deleted (as a checkout of a branch
+    without it would). OPAD_BENCH_ASSET_GIT_LFS=1 when git-lfs is installed (Track with Git LFS is checked then)."""
+    project = root / "asset-git"
+    parts = project / "parts"
+    parts.mkdir(parents=True)
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(project), "-c", "commit.gpgsign=false", *args], capture_output=True)
+    env = {"OPAD_CACHE_DIR": str(root / "asset-git-cache")}
+    if git("--version").returncode != 0:
+        return document("asset-git/design"), {**env, "OPAD_BENCH_ASSET_GIT_NONE": "1"}
+    for args in (("init", "-q"), ("config", "core.autocrlf", "false"), ("config", "user.name", "OPAD bench"), ("config", "user.email", "bench@opad.invalid")):
+        git(*args)
+    assembly_step(document, "git-part", parts / "part.step", '{"length":"10 mm","width":"10 mm","height":"10 mm"}')
+    design = document("asset-git/design")
+    subprocess.run([str(document.cli), "import", str(design), str(parts / "part.step"), "--link", "true"], check=True, capture_output=True,
+                   env={**os.environ, "OPAD_CACHE_DIR": str(root / "asset-git-cli-cache")})
+    git("add", "-A")
+    git("commit", "-q", "-m", "linked part")
+    (parts / "part.step").unlink()
+    if git("lfs", "version").returncode == 0:
+        env["OPAD_BENCH_ASSET_GIT_LFS"] = "1"
+    # A mesh over 20 MB in the work tree, linked by the bench: Track with Git LFS is offered as it comes in.
+    count = 21 * 1024 * 1024 // 50
+    with open(project / "big.stl", "wb") as f:
+        f.write(b"\0" * 80 + struct.pack("<I", count))
+        for i in range(count):
+            x, y = float(i % 1000), float(i // 1000)
+            f.write(struct.pack("<12fH", 0, 0, 1, x, y, 0, x + 1, y, 0, x, y + 1, 0, 0))
+    return design, env
+
+
+def asset_look(root, document):
+    """A document linking parts/part.step (a component holding a box), which changed since its sync; the CLI linked it with a
+    cache of its own, so the app's never saw the version synced and reads the file as it is (its part stale)."""
+    parts = root / "asset-look" / "parts"
+    parts.mkdir(parents=True)
+    assembly_step(document, "look-part", parts / "part.step", '{"length":"10 mm","width":"10 mm","height":"10 mm"}')
+    design = document("asset-look/design")
+    subprocess.run([str(document.cli), "import", str(design), str(parts / "part.step"), "--link", "true"], check=True, capture_output=True,
+                   env={**os.environ, "OPAD_CACHE_DIR": str(root / "asset-look-cli-cache")})
+    assembly_step(document, "look-part-2", parts / "part.step", '{"length":"14 mm","width":"10 mm","height":"10 mm"}')
+    return design, {"OPAD_CACHE_DIR": str(root / "asset-look-cache")}
+
+
+def asset_drawing(root, document):
+    """A document holding a box, with plan.dxf beside it (a 40 mm line on layer Cut) and its next version (60 mm) in next/."""
+    folder = root / "asset-drawing"
+    (folder / "next").mkdir(parents=True)
+    line = "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n{}\n21\n0\n0\nENDSEC\n0\nEOF\n"
+    (folder / "plan.dxf").write_text(line.format(40), encoding="ascii")
+    (folder / "next" / "plan.dxf").write_text(line.format(60), encoding="ascii")
+    (folder / "next" / "plan-40.dxf").write_text(line.format(40), encoding="ascii")
+    design = document("asset-drawing/design", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'))
+    return design, {"OPAD_CACHE_DIR": str(root / "asset-drawing-cache")}
+
+
+def asset_kicad(root, document):
+    """A document beside a board it links: D1's model is in KiCad's library, missing here, downloadable from a local copy of
+    the library (its own cache, so nothing reaches the user's)."""
+    folder, none = root / "asset-kicad", root / "asset-kicad-none"
+    library = root / "asset-kicad-library" / "9.0.0" / "Bench.3dshapes"
+    for f in (folder, none, library):
+        f.mkdir(parents=True)
+    step(document, "asset-kicad-model", library / "library.step", "cylinder", '{"diameter":"3 mm","height":"4 mm"}')
+    board = folder / "board.kicad_pcb"
+    board.write_text('(kicad_pcb (version 20241229) (general (thickness 1.6))\n(gr_rect (start 100 100) (end 130 120) (layer "Edge.Cuts"))\n'
+                     '(footprint "Bench:Part" (layer "F.Cu") (at 110 110) (property "Reference" "D1")\n'
+                     '  (model "${KICAD9_3DMODEL_DIR}/Bench.3dshapes/library.step" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0))))\n)\n',
+                     encoding="utf-8")
+    env = {"OPAD_KICAD_MODELS_URL": (root / "asset-kicad-library").as_uri(), "OPAD_CACHE_DIR": str(root / "asset-kicad-cache"), "KICAD9_3DMODEL_DIR": str(none)}
+    design = document("asset-kicad/design")
+    subprocess.run([str(document.cli), "import", str(design), str(board), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
 def colors_obj(root, document):
     """An OBJ cube, Y up: its top in a gold material of its own, the rest grey (Kd 0.439, which OCCT reads as sRGB)."""
     colors = root / "colors-obj"
@@ -108,6 +223,12 @@ def colors_3mf(root, document):
     return colors / "painted.3mf", {"OPAD_CACHE_DIR": str(root / "colors-cache")}
 
 
+def canvas_document(root, document):
+    """A 40 mm box centred on x = 150, y = 20 (130..170, 0..40, 0..40): its front face lies on the XZ plane, so a canvas inserted
+    on XZ is aligned onto its vertices."""
+    return document("canvas/design", ("feature", "--kind", "box", "--inputs", '{"x":"150 mm","y":"20 mm","length":"40 mm","width":"40 mm","height":"40 mm"}'))
+
+
 def viewer_cache(root, document):
     """The screw read and stored once shown, its copy elsewhere opened from the cache, a drawing never stored."""
     screw = ROOT / "tests" / "corpus" / "occt-screw.step"
@@ -131,10 +252,35 @@ CASES = [
     # Linked files: changed, outside the project (asked about), saved without their bodies, synced, a linked import and a
     # linked picture (<prefix>.png, .picture.png).
     ("assets", linked_files, {"OPAD_BENCH_ASSETS": "{prefix}.png"}),
-    # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
-    # its fields (<prefix>.canvas.png).
+    # The linked-file UI (UI-68): badges, read-only parts, Properties, the monitor's toast and Sync all, a badge's sync, a
+    # missing file located, pack (LFS badge) and embed (<prefix>.browser.png, .changed.png, .syncing.png, .properties.png, .final.png).
+    ("asset-sync", asset_sync, {"OPAD_BENCH_ASSET_SYNC": "{prefix}"}),
+    # The asset look in the view (UI-68 / UI-121): a part read from a file not the version synced is tinted stale, fades while
+    # it syncs, then shows in its own colour (<prefix>.stale.png, .synced.png).
+    ("asset-look", asset_look, {"OPAD_BENCH_ASSET_LOOK": "{prefix}"}),
+    # A drawing linked where it was placed (picked plane, offset), synced after it changed: same node, same place
+    # (<prefix>.browser.png).
+    ("asset-drawing", asset_drawing, {"OPAD_BENCH_ASSET_DRAWING": "{prefix}"}),
+    # A linked board's missing models of KiCad's library: counted, offered, shown in Properties, downloaded, synced in
+    # (<prefix>.properties.png); Settings > KiCad boards… and Linked files… (the import choice, a trusted folder removed).
+    ("asset-kicad", asset_kicad, {"OPAD_BENCH_ASSET_KICAD": "{prefix}"}),
+    # Assets in git (UI-69): a linked file deleted from its work tree, offered and recovered from git, its parts back; packed
+    # into the project, Track with Git LFS offered and done (.gitattributes, the LFS mark); offered for a big file linked in.
+    ("asset-git", asset_git, {"OPAD_BENCH_ASSET_GIT": "{prefix}"}),
+    # What the core says of linked files (states, failed syncs) shown in Arabic: whole, a sentence and its path, counted.
+    ("asset-reasons", "empty", {"OPAD_BENCH_ASSET_REASONS": "1", "OPAD_LANG": "ar"}),
+    # Pictures (UI-71): a JPEG canvas decoded on a worker; a picture inserted into a sketch kept as the file has it and a
+    # canvas on the sketch's plane once finished, traced by the sketch's Trace image (UI-70); an older file's backdrop
+    # moved storing only its fields (<prefix>.canvas.png).
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),
-    # Import colours (UI-74): an OBJ material per face, recoloured (<prefix>.png, .red.png); a painted 3MF, also stretched.
+    # The image canvas (UI-70): inserted on XZ through the placer at a width, a corner dragged (live, one op), Shift on a
+    # corner stretching it, digits into X,
+    # Calibrate, Align to the box, lock, flip/through/selectable, Trace, Replace, a backdrop turned into a canvas, a picture
+    # linked through the placer at a width (centred, the width kept by the asset)
+    # (<prefix>.png, .panel.png, .place.png, .flipped.png).
+    ("canvas", canvas_document, {"OPAD_BENCH_CANVAS": "{prefix}"}),
+    # Import colours (UI-74): an OBJ material per face, recoloured, then faded and ghosted (the face colour's group follows)
+    # (<prefix>.png, .red.png); a painted 3MF, also stretched.
     ("colors", colors_obj, {"OPAD_BENCH_COLORS": "{prefix}.png"}),
     ("colors-3mf", colors_3mf, {"OPAD_BENCH_COLORS": "{prefix}.png", "OPAD_BENCH_COLORS_PAINTED": "1"}),
     # The viewer cache (UI-75): stored after display, found by content, no drawing stored.

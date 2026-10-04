@@ -19,6 +19,7 @@
 #include <QVBoxLayout>
 #include <memory>
 
+#include "AssetsArea.hpp"
 #include "MainWindow.hpp"
 #include "opad/kicad_pcb.hpp"
 
@@ -177,25 +178,7 @@ void MainWindow::offerKicadModels() {
   const int count = last.contains("info") ? last["info"].value("downloadable", 0) : 0;
   if (count <= 0 || !board.endsWith(".kicad_pcb", Qt::CaseInsensitive) || m_kicadOffered.contains(QFileInfo(board).absoluteFilePath())) return;
   m_kicadOffered << QFileInfo(board).absoluteFilePath();
-  QString mode = m_settings.value("kicad/download", "ask").toString();
-  if (mode == "never") return;
-  if (mode != "always") {
-    QMessageBox box(QMessageBox::Question, tr("KiCad 3D models"),
-                    tr("%1 3D models of this board come from KiCad's library, which is not installed here. Download them from the KiCad library "
-                       "(gitlab.com/kicad/libraries/kicad-packages3D)?").arg(count),
-                    QMessageBox::NoButton, this);
-    box.setInformativeText(tr("They are licensed CC-BY-SA 4.0 with KiCad's design exception: free to use in your own designs. They are saved in "
-                              "OPAD's cache for you alone and are not part of OPAD."));
-    QPushButton* once = box.addButton(tr("Download"), QMessageBox::AcceptRole);
-    QPushButton* always = box.addButton(tr("Always download"), QMessageBox::AcceptRole);
-    QPushButton* never = box.addButton(tr("Never"), QMessageBox::DestructiveRole);
-    box.addButton(tr("Not now"), QMessageBox::RejectRole);
-    box.setDefaultButton(once);
-    box.exec();
-    if (box.clickedButton() == never) m_settings.setValue("kicad/download", "never");
-    if (box.clickedButton() == always) m_settings.setValue("kicad/download", "always");
-    if (box.clickedButton() != once && box.clickedButton() != always) return;
-  }
+  if (!assets::askModelDownload(this, count, false)) return;
   const opad::KicadOptions options = AppDocument::kicadOptions();
   auto result = std::make_shared<opad::json>();
   const QString phase = tr("Downloading KiCad 3D models");

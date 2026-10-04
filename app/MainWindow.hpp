@@ -219,6 +219,9 @@ class MainWindow : public QMainWindow {
   // Viewer mode (a file other than .opad shown read-only): edits ask to save it as an OPAD document first.
   static bool isEditAction(const QString& id);
   static QString fileFilter(bool withOpad);                 // "*.step *.stl ..." for the file dialogs
+  // Import…'s file: mode -1 asks whether it comes in linked or as a copy when linking suits it (assets::askImport), 0 a
+  // copy, 1 linked (a drawing is placed first either way, DrawingPlacer); under the selected component if the user says so.
+  void importPath(const QString& path, int mode);
   bool requireEditable(std::function<void()> resume = {});  // true when the document can be edited
   void saveViewerAs(std::function<void()> then = {});       // Save as OPAD: made editable in place, then written
   void makeEditable(const QString& savePath, std::function<void()> then = {});
@@ -310,14 +313,17 @@ class MainWindow : public QMainWindow {
   Job* m_loadJob = nullptr;         // open/import: document worker + tessellation, one job
   Job* m_displayJob = nullptr;      // bodies shown after a load (unhide, un-isolate): same status-bar progress
   class DrawingPlacer* m_drawingPlacer = nullptr;
-  // A drawing imported onto the selected planar face, or onto a picked plane and moved there first (TODO 10 A12).
-  void importDrawing(const QString& path, const QString& parent);
+  // A drawing imported onto the selected planar face, or onto a picked plane and moved there first (TODO 10 A12); `link`:
+  // as a linked asset (its placement recorded with it, kept by every sync).
+  void importDrawing(const QString& path, const QString& parent, bool link = false);
   // KiCad boards (KicadBoards.cpp): after a board loads with models of KiCad's library missing, offer to download them
   // (setting kicad/download: ask, always, never; once per board and session), then read a viewed board again.
   void offerKicadModels();
-  // Linked files (AssetLinks.cpp): after a load, one question before reading those outside the document's project
-  // (read once, trust their folders in the settings, or not now). Whether it asked.
+  // Linked files (AssetLinks.cpp): after an open, one question before reading those outside the document's project
+  // (read once, trust their folders in the settings, or not now). Whether it asked. Never after an import (trustAfterLoad):
+  // the answer to the open stands for the session.
   bool offerAssetTrust();
+  bool trustAfterLoad() const;
   QStringList m_kicadOffered;
   int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer

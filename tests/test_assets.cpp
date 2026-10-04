@@ -16,6 +16,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <thread>
 
 #include "check.hpp"
@@ -277,6 +278,10 @@ TEST(sync_keeps_ids_and_regenerates_what_depends) {
   CHECK_EQ(plan.report["changed"].size(), 1u);
   CHECK(plan.report["added"].empty() && plan.report["removed"].empty());
   CHECK_EQ(plan.report["regenerated"].size(), 1u);  // the pocket
+  // What a sync preview says of it (UI-134): A changed by node, B kept; the pocket recomputed with another block.
+  const json parts = asset_sync_parts(d, import_id, plan), affects = asset_sync_affects(d, import_id, plan);
+  CHECK(parts["changed"].size() == 1 && parts["changed"][0]["node"] == a && parts["added"].empty() && parts["removed"].empty() && parts["kept"] == 1);
+  CHECK(affects["sketches"].empty() && affects["features"].size() == 1 && affects["features"][0]["name"] == "Pocket" && affects["features"][0]["bodies_changed"] == 1);
   design::commit(d, std::move(plan));
   CHECK_EQ(d.ops.size(), ops + 2);  // one edit of the import, one regen
   CHECK_EQ(d.ops[ops].type, "edit");
@@ -302,6 +307,53 @@ TEST(sync_keeps_ids_and_regenerates_what_depends) {
   CHECK(relocate.report["up_to_date"].get<bool>() && relocate.ops.size() == 1);
   design::commit(third, std::move(relocate));
   CHECK_EQ(asset_of(third, import_id)["path"], "moved/model.step");
+}
+
+// A feature recomputed because something upstream changed, while a linked part it needs is not loaded (the file gone): what it
+// last made stays and no error is saved; once the file is back the next change computes it again. Editing that feature itself
+// still says why it cannot be computed.
+TEST(features_wait_for_a_missing_file) {
+  Files f;
+  const fs::path step = f.dir / "parts" / "model.step";
+  two_boxes(step, 5);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, step);
+  Scene s = resolve(d);
+  const std::string a = linked(s, 0);
+  design::apply_ops(d, {design::make_param_op("L", "40 mm")});
+  design::apply_ops(d, {design::make_feature_op("box", "Block", {{"length", "L"}, {"width", 40}, {"height", 40}})});
+  s = resolve(d);
+  const std::string block = s.features.back().result["bodies"][0]["id"];
+  const std::string pocket = design::apply_ops(d, {design::make_feature_op("combine", "Pocket", {{"target", {block}}, {"tools", {a}}, {"operation", "cut"}, {"keep_tools", true}})})["ids"][0];
+  d.save();
+  fs::rename(step, f.dir / "parts" / "away.step");
+  Document away = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(away)[0].state, "missing");
+  std::string param;
+  for (const auto& o : away.ops)
+    if (o.type == "param") param = o.id;
+  auto pocket_result = [&](const Document& doc) {
+    for (const auto& e : effective_ops(doc))
+      if (e.op->id == pocket) return e.data().value("result", json::object());
+    return json();
+  };
+  const json before = pocket_result(away);
+  design::apply_ops(away, {design::make_edit_op(param, {{"expr", "50 mm"}})});
+  s = resolve(away);
+  CHECK(pocket_result(away) == before && !before.contains("error"));
+  for (const auto& feature : s.features) CHECK(!feature.result.contains("error"));
+  CHECK_THROWS(design::apply_ops(away, {design::make_edit_op(pocket, {{"inputs", {{"target", {block}}, {"tools", {a}}, {"operation", "cut"}, {"keep_tools", false}}}})}));
+  away.save();
+  fs::rename(f.dir / "parts" / "away.step", step);
+  Document back = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(back)[0].state, "ok");
+  for (const auto& o : back.ops)
+    if (o.type == "param") param = o.id;
+  design::apply_ops(back, {design::make_edit_op(param, {{"expr", "45 mm"}})});
+  s = resolve(back);
+  CHECK(pocket_result(back) != before && !pocket_result(back).contains("error"));
+  CHECK(about(volume(back, s, block), 45 * 40 * 40 - 1000));
 }
 
 // The same parts written the other way round (roots are known by position): each is found again by its geometry, so ids,
@@ -333,6 +385,39 @@ TEST(reordered_parts_found_by_geometry) {
   design::commit(reopened, std::move(plan));
   s = resolve(reopened);
   CHECK(s.node(a)->body_key == key_a && s.node(b)->body_key == key_b && s.node(a)->name == "Big box");
+}
+
+// A part come in front of one found again by its geometry takes no id another part holds (roots are placed by position:
+// the new part's place was the old one's; it gave two nodes one id, and one part vanished): two bodies, two ids, the old kept.
+TEST(new_part_in_front_takes_a_free_id) {
+  Files f;
+  const fs::path obj = f.dir / "parts.obj";
+  auto tetra = [](double x, double size, int first) {  // one object named Part
+    std::string t = "o Part\n";
+    for (const auto& [dx, dy, dz] : std::vector<std::array<double, 3>>{{0, 0, 0}, {size, 0, 0}, {0, size, 0}, {0, 0, size}})
+      t += "v " + std::to_string(x + dx) + " " + std::to_string(dy) + " " + std::to_string(dz) + "\n";
+    for (const auto& [i, j, k] : std::vector<std::array<int, 3>>{{0, 2, 1}, {0, 1, 3}, {0, 3, 2}, {1, 2, 3}})
+      t += "f " + std::to_string(first + i) + " " + std::to_string(first + j) + " " + std::to_string(first + k) + "\n";
+    return t;
+  };
+  write(obj, tetra(0, 10, 1));
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, obj);
+  const std::string import_id = last_import(d).id;
+  Scene s = resolve(d);
+  const std::string a = linked(s, 0), key = s.node(a)->body_key;
+  write(obj, tetra(50, 7, 1) + tetra(0, 10, 5));
+  design::Plan plan = plan_asset_sync(d, import_id);
+  CHECK(plan.report["added"].size() == 1 && plan.report["changed"].empty() && plan.report["removed"].empty() && plan.report["kept"] == 1);
+  design::commit(d, std::move(plan));
+  s = resolve(d);
+  std::set<std::string> ids;
+  for (const auto& id : s.all_bodies())
+    if (s.node(id)->linked) ids.insert(id);
+  CHECK_EQ(ids.size(), 2u);
+  CHECK(ids.count(a) && s.node(a)->body_key == key);
+  CHECK(s.unresolved.empty());
 }
 
 TEST(linked_parts_are_read_only) {
@@ -506,6 +591,7 @@ TEST(derived_file_read_in_the_sources_place) {
   reopened.save();
   // The derived file gone (a clone): missing without the converter, made again with it.
   remove_tree(f.dir / "made");
+  CHECK_EQ(asset_status(reopened, converter)[0].state, "ok");  // its shapes are loaded here: nothing to sync (the app's monitor)
   Document clone = Document::load(f.dir / "design.opad");
   st = load_assets(clone, uncached)[0];
   CHECK_EQ(st.state, "missing");
@@ -588,6 +674,78 @@ TEST(pictures_import_and_link) {
   CHECK(s.node(canvas)->raster["href"] == resolve(reopened).node(canvas)->raster["href"] && !s.node(canvas)->body_missing);
 }
 
+// A picture linked at a width and centred (Insert canvas on a big picture) comes in at that size and place, and every read
+// keeps them; a sync keeps the canvas's flags as the user set them (it took the reader's defaults).
+TEST(linked_picture_keeps_its_width_and_flags) {
+  Files f;
+  const fs::path pic = f.dir / "plan.png";
+  png(pic, 400, 200, 3937, "first");  // 101.6 x 50.8 mm at its resolution
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  ImportOptions o;
+  o.canvas = {{"width", 200}, {"center", true}};
+  link_file(d, pic, o);
+  const std::string import_id = last_import(d).id;
+  Scene s = resolve(d);
+  const std::string canvas = linked(s, 0);
+  auto info = [&](Document& doc) { return commands::run("canvas", {{"action", "info"}, {"target", canvas}}, &doc); };
+  json i = info(d);
+  CHECK(about(i["width"], 200) && about(i["height"], 100) && about(i["x"], 0) && about(i["y"], 0));
+  commands::run("canvas", {{"action", "flags"}, {"target", canvas}, {"set", {{"display_through", true}, {"flip", {true, false}}, {"selectable", false}}}}, &d);
+  d.save();
+  Document reopened = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(reopened)[0].state, "ok");
+  png(pic, 400, 200, 3937, "second");
+  design::commit(reopened, plan_asset_sync(reopened, import_id));
+  i = info(reopened);
+  CHECK(about(i["width"], 200) && about(i["height"], 100) && about(i["x"], 0) && about(i["y"], 0));
+  CHECK(i["display_through"] == true && i["flip"] == json({true, false}) && i["selectable"] == false);
+}
+
+// A drawing linked where it was placed (UI-68): the placement goes with the asset, so a sync of the changed drawing keeps it,
+// node and id; Replace with another kind of file reads it as that kind.
+TEST(drawing_linked_with_its_placement) {
+  Files f;
+  const fs::path plan = f.dir / "plan.dxf";
+  auto line = [&](int to) {
+    write(plan, "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n" + std::to_string(to) + "\n21\n0\n0\nENDSEC\n0\nEOF\n");
+  };
+  line(40);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  ImportOptions o;
+  o.placement = Mat4::translation(10, 20, 5);
+  link_file(d, plan, o);
+  const Op& op = last_import(d);
+  const std::string import_id = op.id;
+  CHECK_EQ(op.data["asset"]["kind"], "drawing");
+  CHECK(op.data["asset"]["builder"]["options"].contains("placement"));
+  Scene s = resolve(d);
+  const std::string body = linked(s, 0);
+  CHECK_EQ(s.node(body)->representation, "drawing2d");
+  auto span = [&](const Scene& sc) {
+    double x0, y0, z0, x1, y1, z1;
+    node_world_bbox(d, sc, body).Get(x0, y0, z0, x1, y1, z1);
+    return std::array<double, 3>{x0, x1, (z0 + z1) / 2};
+  };
+  auto at = span(s);
+  CHECK(about(at[0], 10, 0.01) && about(at[1], 50, 0.01) && about(at[2], 5, 0.01));
+  line(60);
+  CHECK_EQ(asset_status(d)[0].state, "changed");
+  design::Plan synced = plan_asset_sync(d, import_id);
+  CHECK_EQ(synced.report["changed"].size(), 1u);
+  design::commit(d, std::move(synced));
+  s = resolve(d);
+  at = span(s);
+  CHECK(s.node(body) && about(at[0], 10, 0.01) && about(at[1], 70, 0.01) && about(at[2], 5, 0.01));
+  CHECK_EQ(asset_status(d)[0].state, "ok");
+  // Replaced by a STEP: read as one.
+  two_boxes(f.dir / "model.step", 5);
+  design::commit(d, plan_asset_sync(d, import_id, {}, f.dir / "model.step"));
+  CHECK_EQ(asset_of(d, import_id)["kind"], "step");
+  CHECK_EQ(asset_status(d)[0].state, "ok");
+}
+
 TEST(embed_and_pack) {
   Files f;
   const fs::path step = f.dir / "outside" / "model.step";
@@ -599,6 +757,7 @@ TEST(embed_and_pack) {
   // Pack: a copy under assets/, the asset pointing there.
   const json packed = pack_asset(d, import_id);
   CHECK_EQ(packed["path"], "assets/model.step");
+  CHECK_EQ(packed["import"], import_id);  // read before the edit was appended (the log may move)
   CHECK_EQ(packed["copied"], 1);
   CHECK(fs::exists(f.dir / "project" / "assets" / "model.step"));
   CHECK_EQ(asset_of(d, import_id)["storage"], "project");
@@ -612,8 +771,10 @@ TEST(embed_and_pack) {
   Scene s = resolve(reopened);
   for (const auto& id : s.all_bodies()) {
     CHECK(!s.node(id)->linked && !s.node(id)->body_missing);
-    CHECK(!reopened.body(s.node(id)->body_key)->brep.empty());
+    const BodyEntry* entry = reopened.body(s.node(id)->body_key);
+    CHECK(!entry->brep.empty() && sha256_hex(entry->brep) == entry->key);  // committed under the planner's key, not hashed again
   }
+  CHECK_THROWS(reopened.add_body("not a hash", std::string("x\n"), json::object()));
   reopened.save();
   remove_tree(f.dir / "project" / "assets");
   Document alone = Document::parse(read_text_file(f.dir / "project" / "design.opad"));
@@ -633,11 +794,62 @@ TEST(paths_follow_save_as) {
   d.save_as(f.dir / "work" / "design.opad");
   CHECK_EQ(last_import(d).data["asset"]["path"], "../lib/model.step");
   CHECK(read_text_file(f.dir / "work" / "design.opad").find("\"path\":\"../lib/model.step\"") != std::string::npos);
-  // A saved op is never rewritten: Save As elsewhere keeps its line (the absolute path still finds the file).
-  d.save_as(f.dir / "other" / "design.opad");
+  // A saved op is never rewritten: Save As elsewhere keeps its line and appends an edit of the asset with the path from there
+  // (a project moved or cloned as a whole finds it again); saved again where it is, nothing more.
+  const std::string import_id = last_import(d).id;
+  d.save_as(f.dir / "other" / "design.opad");  // a sibling folder: the same path
+  CHECK_EQ(d.ops.back().type, "import");
+  d.save_as(f.dir / "deep" / "er" / "design.opad");
   CHECK_EQ(last_import(d).data["asset"]["path"], "../lib/model.step");
+  CHECK(d.ops.back().type == "edit" && d.ops.back().data["target"] == import_id);
+  CHECK_EQ(asset_of(d, import_id)["path"], "../../lib/model.step");
+  const size_t ops = d.ops.size();
+  d.save();
+  CHECK_EQ(d.ops.size(), ops);
+  Document again = Document::load(f.dir / "deep" / "er" / "design.opad");
+  CHECK_EQ(asset_status(again)[0].state, "untrusted");  // found by its path, outside this folder: asked first
+  CHECK_EQ(asset_status(again)[0].file.lexically_normal(), step.lexically_normal());
   // An edit op: Document::append checks what the import becomes.
   CHECK_THROWS(d.append({{"op", "edit"}, {"target", last_import(d).id}, {"set", {{"nodes", {{{"type", "body"}, {"id", "x"}}}}}}}));
+}
+
+// Assets in git (UI-69): a linked file deleted from its work tree comes back from the last commit that has it, as it was synced;
+// Track with Git LFS writes its pattern into .gitattributes. Skipped without git (and the LFS part without git-lfs).
+TEST(recover_from_git_and_lfs) {
+  Files f;
+  auto git = [&](std::vector<fs::path> args) {
+    args.insert(args.begin(), {"-C", f.dir, "-c", "commit.gpgsign=false"});
+    return detail::run_program("git", args, f.dir);
+  };
+  if (git({"--version"}) != 0) return (void)std::printf("  (no git: skipped)\n");
+  CHECK(git({"init", "-q"}) == 0 && git({"config", "core.autocrlf", "false"}) == 0 && git({"config", "user.name", "OPAD test"}) == 0 &&
+        git({"config", "user.email", "test@opad.invalid"}) == 0);
+  const fs::path step = f.dir / "parts" / "model.step";
+  two_boxes(step, 5);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, step);
+  d.save();
+  const std::string import_id = last_import(d).id;
+  CHECK(fs::equivalent(asset_work_tree(d, asset_of(d, import_id)), f.dir));
+  CHECK_THROWS(recover_asset(d, import_id));  // there
+  CHECK(git({"add", "parts/model.step", "design.opad"}) == 0 && git({"commit", "-q", "-m", "linked"}) == 0);
+  fs::remove(step);
+  CHECK_EQ(asset_status(d)[0].state, "missing");
+  CHECK(fs::equivalent(recover_asset(d, import_id), step));
+  CHECK_EQ(asset_status(d)[0].state, "ok");  // the version synced
+  CHECK(git({"lfs", "version"}) != 0 || [&] {
+    const json tracked = track_asset_lfs(d, import_id);
+    return tracked["pattern"] == "parts/model.step" && read_text_file(f.dir / ".gitattributes").find("parts/model.step filter=lfs") != std::string::npos;
+  }());
+  Files plain;  // outside a work tree: nothing to recover from
+  two_boxes(plain.dir / "m.step", 5);
+  Document p = Document::create();
+  p.save_as(plain.dir / "p.opad");
+  link_file(p, plain.dir / "m.step");
+  fs::remove(plain.dir / "m.step");
+  CHECK(asset_work_tree(p, asset_of(p, last_import(p).id)).empty());
+  CHECK_THROWS(recover_asset(p, last_import(p).id));
 }
 
 TEST(kicad_board_linked_and_synced) {
@@ -691,6 +903,19 @@ TEST(kicad_board_linked_and_synced) {
   CHECK_EQ(s.node(board_body)->body_key, board_key);
   CHECK(!kicad_sync_preview(d)["changed"].get<bool>());  // the preview reads the synced import
   for (const auto& id : s.all_bodies()) CHECK(!s.node(id)->body_missing);
+  // Gone from where it was linked, its project copy (laid out as pack does) is read; packing then only points the link at it.
+  const fs::path copy = f.dir / "mech" / "assets" / "board";
+  fs::create_directories(copy);
+  fs::copy_file(board, copy / "board.kicad_pcb");
+  fs::copy_file(f.dir / "hw" / "m1.step", copy / "m1.step");
+  fs::rename(board, f.dir / "hw" / "board.old");
+  const AssetState found = asset_status(d)[0];
+  CHECK_EQ(found.state, "ok");
+  CHECK(fs::equivalent(found.file, copy / "board.kicad_pcb"));
+  const json packed = pack_asset(d, import_id);
+  CHECK_EQ(packed["path"], "assets/board/board.kicad_pcb");
+  CHECK_EQ(packed["copied"], 0);
+  CHECK_EQ(asset_of(d, import_id)["storage"], "project");
 }
 
 TEST(command_layer) {

@@ -4,12 +4,14 @@
 #include <Standard_Failure.hxx>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <mutex>
 #include <set>
 
 #include "opad/assets.hpp"
 #include "opad/cache.hpp"
+#include "opad/canvas.hpp"
 #include "opad/diff.hpp"
 #include "opad/explode.hpp"
 #include "opad/inspect.hpp"
@@ -437,10 +439,11 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG or a KiCad board into the document",
-      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG, a KiCad board or a picture into the document",
+      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb/.png/.jpg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
        {"placement", "[16] - drawings and boards: where the file's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
        {"center", "bool - drawings: centre the drawing on its origin (default false)"},
+       {"width", "number - pictures: mm"},
        {"model_dirs", "string|array - KiCad: model folders"}, {"components", "bool - KiCad: models (default true)"}, {"dnp", "bool - KiCad: do-not-populate parts"},
        {"vias", "bool - KiCad (default false)"}, {"placeholder_height", "number - KiCad: missing-model box, mm"}, {"origin", "auto|center|page - KiCad"},
        {"kicad_cli", "string|array - KiCad: via kicad-cli, adding tracks,pads,silkscreen or none"},
@@ -458,14 +461,16 @@ void register_builtins() {
           Mat4 m;
           for (int r = 0; r < 3; ++r) { m.at(r, 0) = f.x[r]; m.at(r, 1) = f.y[r]; m.at(r, 2) = n[r]; m.at(r, 3) = f.origin[r]; }
           o.placement = m * o.placement;
+          o.canvas["plane"] = f.to_json();  // a picture's place is given in it
         }
+        if (a.contains("width")) o.canvas["width"] = a["width"].get<double>();
         o.center_drawing = a.value("center", false);
         const auto file = path_from_utf8(a.at("file").get<std::string>());
         return (a.value("link", false) ? link_file(need(d), file, o) : import_file(need(d), file, o)).to_json();
       });
 
-  reg("asset", "Linked files (import link=true): status, or sync (read the changed file), embed (editable copy) or pack (copy into assets/)",
-      {{"doc", "path"}, {"action", "status|sync|embed|pack"}, {"import", "uuid - its import (default: the only one)"}, {"file", "path - sync: the moved file"},
+  reg("asset", "Linked files (import link=true): status, or sync (read the changed file), embed (editable copy), pack (copy into assets/), git recover or lfs track",
+      {{"doc", "path"}, {"action", "status|sync|embed|pack|recover|lfs"}, {"import", "uuid - its import (default: the only one)"}, {"file", "path - sync: the moved file"},
        {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -477,9 +482,14 @@ void register_builtins() {
           return json{{"assets", out}};
         }
         if (action == "pack") return pack_asset(doc, import_arg(a), a.value("by", ""));
+        if (action == "recover") {
+          const auto file = recover_asset(doc, import_arg(a)).generic_u8string();
+          return json{{"file", std::string(file.begin(), file.end())}};
+        }
+        if (action == "lfs") return track_asset_lfs(doc, import_arg(a));
         design::Plan plan = action == "sync" ? plan_asset_sync(doc, import_arg(a), o, a.contains("file") ? path_from_utf8(a["file"].get<std::string>()) : std::filesystem::path())
                           : action == "embed" ? plan_asset_embed(doc, import_arg(a))
-                                              : throw Error("action is status, sync, embed or pack");
+                                              : throw Error("action is status, sync, embed, pack, recover or lfs");
         json report = plan.report;
         design::commit(doc, std::move(plan), a.value("by", ""));
         return report;
@@ -727,6 +737,78 @@ void register_builtins() {
         refuse_locked(need(d), {op["target"]}, "moving");
         json j;
         j["id"] = need(d).append(op, a.value("by", "")).id;
+        return j;
+      });
+
+  reg("canvas", "Image canvas: info; place (set: x y its centre in its plane, width|height (both: stretched), angle deg); calibrate (points [a,b], distance); align "
+      "(points [a,a_to,b,b_to]); flags (set: selectable display_through flip); replace (file); from_backdrop (sketch, images)",
+      {{"doc", "path"}, {"action", "info|place|calibrate|align|flags|replace|from_backdrop"}, {"target", "uuid"}, {"set", "object"},
+       {"points", {{"type", "array"}, {"items", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}}}}}, {"distance", "number"},
+       {"file", "path"}, {"sketch", "uuid"}, {"images", {{"type", "array"}, {"items", {{"type", "integer"}}}}}, {"by", "string"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        const std::string action = a.value("action", "info"), by = a.value("by", "");
+        auto describe = [](const Scene& s, const std::string& id) {
+          const Node& n = canvas_node(s, id);
+          const CanvasPlace p = canvas_place(s, id);
+          const CanvasFlags f = CanvasFlags::of(n.canvas);
+          json j = {{"canvas", id}, {"import", n.source_op}, {"name", n.name}, {"x", p.x}, {"y", p.y}, {"width", p.width}, {"height", p.height},
+                    {"angle", p.angle * 180 / M_PI}, {"plane", p.plane.to_json()}, {"on_plane", p.on_plane}, {"body", {p.body_w, p.body_h}},
+                    {"selectable", f.selectable}, {"display_through", f.through}, {"flip", {f.flip[0], f.flip[1]}}, {"opacity", n.opacity},
+                    {"visible", n.visible}, {"locked", n.locked}};
+          if (n.raster.contains("px")) j["px"] = n.raster["px"];
+          if (p.stretched()) j["stretched"] = true;
+          if (n.linked) j["linked"] = true;
+          return j;
+        };
+        if (action == "from_backdrop") {
+          std::vector<int> images;
+          for (const auto& i : a.value("images", json::array())) images.push_back(i.get<int>());
+          return design::commit(doc, plan_canvas_from_backdrop(doc, a.at("sketch").get<std::string>(), images), by);
+        }
+        const std::string id = a.at("target").get<std::string>();
+        const Scene scene = resolve(doc);
+        const Node& n = canvas_node(scene, id);
+        if (action == "info") return describe(scene, id);
+        if (action == "replace") {
+          json report = design::commit(doc, plan_canvas_replace(doc, id, path_from_utf8(a.at("file").get<std::string>())), by);
+          return report.update(describe(resolve(doc), id)), report;
+        }
+        const json set = a.value("set", json::object());
+        auto point = [&](size_t i) { return a.at("points").at(i).get<Vec3>(); };
+        if (action == "flags") {
+          CanvasFlags f = CanvasFlags::of(n.canvas);
+          if (set.contains("selectable")) f.selectable = set["selectable"].get<bool>();
+          if (set.contains("display_through")) f.through = set["display_through"].get<bool>();
+          if (set.contains("flip")) f.flip = {set["flip"].at(0).get<bool>(), set["flip"].at(1).get<bool>()};
+          if (!f.plane.is_object()) f.plane = canvas_place(scene, id).plane.to_json();
+          json j = describe(scene, id);
+          j["id"] = doc.append(design::make_edit_op(n.source_op, {{"canvas", f.to_json()}}), by).id;
+          return j.update(describe(resolve(doc), id)), j;
+        }
+        if (n.locked) throw Error("the canvas " + n.name + " is locked: unlock it to move it");
+        Mat4 world;
+        double residual = 0;
+        if (action == "place") {
+          CanvasPlace p = canvas_place(scene, id);
+          if (set.contains("x")) p.x = set["x"].get<double>();
+          if (set.contains("y")) p.y = set["y"].get<double>();
+          if (set.contains("angle")) p.angle = set["angle"].get<double>() * M_PI / 180;
+          const double ratio = p.height / p.width;  // alone, width or height keeps its proportions (a stretched canvas stays so)
+          if (set.contains("width")) p.width = set["width"].get<double>(), p.height = set.contains("height") ? set["height"].get<double>() : p.width * ratio;
+          else if (set.contains("height")) p.height = set["height"].get<double>(), p.width = p.height / ratio;
+          world = canvas_world(p);
+        } else if (action == "calibrate") {
+          world = canvas_calibrate(scene.world(id), point(0), point(1), a.at("distance").get<double>());
+        } else if (action == "align") {
+          world = canvas_align(scene.world(id), point(0), point(1), point(2), point(3), &residual);
+        } else {
+          throw Error("action is info, place, calibrate, align, flags, replace or from_backdrop");
+        }
+        json j;
+        j["id"] = doc.append(canvas_transform_op(scene, id, world), by).id;
+        j.update(describe(resolve(doc), id));
+        if (action == "align") j["residual"] = residual;
         return j;
       });
 

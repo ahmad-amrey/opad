@@ -31,6 +31,7 @@
 #include "I18n.hpp"
 #include "SketchSteps.hpp"
 #include "Units.hpp"
+#include "opad/canvas.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
@@ -208,24 +209,26 @@ void DesignController::setPanel(ToolPanel* panel, std::function<void(ToolPanel*)
 }
 
 // ---------------------------------------------------------------- applying changes
-void DesignController::applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done) {
+void DesignController::applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done,
+                                std::function<void(opad::Document&, opad::design::Plan&)> extend) {
   if (!m_doc->hasDocument || m_doc->browse) return;
   auto report = [this, done](bool ok, const QString& error) {
     if (done) done(ok, error);
     else if (!ok) emit failed(error);
     emit stateChanged();
   };
-  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, ops = std::move(ops), label, done] { applyOps(ops, label, done); });  // a copy being taken
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, ops = std::move(ops), label, done, extend] { applyOps(ops, label, done, extend); });  // a copy being taken
   if (m_doc->designBusy) return report(false, tr("The design is still being recomputed; try again in a moment."));
   m_doc->designBusy = true;
   const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
   auto doc = std::make_shared<opad::Document>(m_doc->doc);
   auto list = std::make_shared<std::vector<opad::json>>(std::move(ops));  // not copied with the job (a converted drawing's curves)
-  m_jobs->async(tr("Updating the design"), [doc, list, plan](Progress p) {
+  m_jobs->async(tr("Updating the design"), [doc, list, plan, extend](Progress p) {
     Reading reading;
     try {
       *plan = plan_ops(*doc, std::move(*list), true, [p] { return p.cancelled(); });
+      if (extend) extend(*doc, *plan);
     } catch (const opad::LockedError& e) {
       throw opad::Error(AppDocument::lockedMessage(e).toStdString());
     }
@@ -1125,19 +1128,44 @@ void DesignController::finishSketch(std::function<void()> then) {
   };
   if (m_sketch->sketchId().empty() && m_sketch->empty()) return leave();  // nothing was drawn: no op
   if (!m_sketch->sketchId().empty() && !m_sketch->modified()) return leave();
-  opad::json op;
+  // The pictures inserted while it was open become image canvases on its plane in the same step (UI-70: bytes stored once,
+  // moved by transform ops), never records of the sketch; the ones it already had stay (Backdrop images to canvases).
+  Sketch sk = Sketch::from_json(m_sketch->geometry());
+  std::set<int> had;
+  for (const auto& image : m_sketch->initialGeometry().value("images", opad::json::array())) had.insert(image.value("id", -1));
+  opad::json pictures = opad::json::array(), kept = opad::json::array();
+  for (const auto& image : sk.images) (had.count(image.value("id", -1)) ? kept : pictures).push_back(image);
+  if (!pictures.empty()) {
+    sk.id_watermark = std::max(sk.id_watermark, sk.next_id() - 1);  // their ids are never given again
+    sk.images = kept;
+  }
+  const opad::json geometry = sk.to_json();
+  std::vector<opad::json> ops;
   if (m_sketch->sketchId().empty()) {
-    op = make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), m_sketch->geometry());
-    if (!m_doc->activeComponent().empty()) op["component"] = m_doc->activeComponent();  // made in the active component (UI-33)
+    if (pictures.empty() || !sk.entities.empty() || !sk.images.empty() || !sk.points.empty()) {
+      opad::json op = make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), geometry);
+      if (!m_doc->activeComponent().empty()) op["component"] = m_doc->activeComponent();  // made in the active component (UI-33)
+      ops.push_back(std::move(op));
+    }
   } else {
     opad::json plane = m_sketch->plane();  // a plane picked now goes in where the sketch's component was when it was made
     if (const opad::SketchItem* s = m_doc->scene.sketch(m_sketch->sketchId()); s && plane != s->plane) plane = plane_as_made(*s, std::move(plane));
-    op = make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", m_sketch->geometryDelta()}, {"plane", plane}});
+    ops.push_back(make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", sketch_delta(m_sketch->initialGeometry(), geometry)}, {"plane", plane}}));
   }
-  applyOps({op}, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave](bool ok, const QString& error) {
+  std::function<void(opad::Document&, Plan&)> canvases;
+  if (!pictures.empty())
+    canvases = [pictures, frame = m_sketch->frame()](opad::Document& doc, Plan& plan) {
+      opad::CanvasImports made = opad::canvas_imports(doc, pictures, frame);
+      plan.ops.insert(plan.ops.end(), made.ops.begin(), made.ops.end());
+      plan.bodies.insert(plan.bodies.end(), made.bodies.begin(), made.bodies.end());
+      plan.report["canvases"] = made.canvases;
+    };
+  const int placed = int(pictures.size());
+  applyOps(ops, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave, placed](bool ok, const QString& error) {
     if (!ok) return emit failed(error);  // stay in the sketch so nothing drawn is lost
     leave();
-  });
+    if (placed > 0) emit status(tr("%n picture(s) placed as image canvases on the sketch's plane", nullptr, placed));
+  }, canvases);
 }
 
 void DesignController::cancelSketch() {

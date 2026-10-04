@@ -109,6 +109,8 @@ TEST(lock_fade_then_ghost_and_hidden) {
   LookDelta show;
   show.visible = true;
   CHECK(looks::compose(base(), with({{LookSource::Compare, &hide}, {LookSource::Candidate, &show}}), false).visible);
+  // A small part hidden while the view moves stays hidden whatever the layers under it show.
+  CHECK(!looks::compose(base(), with({{LookSource::Candidate, &show}, {LookSource::Navigation, &hide}}), false).visible);
   LookDelta loud;
   loud.opacity = 3;
   CHECK_NEAR(looks::compose(base(), with({{LookSource::Candidate, &loud}}), false).opacity, 1, 1e-12);

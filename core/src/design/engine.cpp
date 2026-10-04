@@ -518,19 +518,9 @@ struct Walk {
     return id + ":" + n->body_key + ":" + scene.world(id).to_json().dump() + ";";
   }
 
-  std::string feature_fingerprint(const Scene& scene, const ParamTable& params, const std::string& kind, const json& inputs) const {
-    std::string s = "feature|" + kind + "|" + inputs.dump() + "|";
-    if (const FeatureSpec* spec = feature_spec(kind))
-      for (const auto& in : spec->inputs) {
-        if (!inputs.contains(in.name) || !input_shown(in, inputs)) continue;
-        if (in.type != "length" && in.type != "angle" && in.type != "number" && in.type != "count") continue;
-        try {
-          s += in.name + "=" + json(eval_input(params, inputs[in.name], dim_of(in.type))).dump() + ";";
-        } catch (const std::exception& e) {
-          s += in.name + "!" + e.what() + ";";
-        }
-      }
-    std::set<std::string> nodes, sketches, features;
+  // The nodes, sketches and features a feature's inputs depend on.
+  void feature_refs(const Scene& scene, const std::string& kind, const json& inputs, std::set<std::string>& nodes, std::set<std::string>& sketches,
+                    std::set<std::string>& features) const {
     collect_refs(inputs, nodes, sketches, features);
     // Plain-string references count too (agents and the CLI write "uuid" and "uuid/edge/3"): without them a fillet
     // or a pattern did not regenerate when its body changed. A component stands for the bodies under it, as
@@ -553,6 +543,33 @@ struct Walk {
     const bool every = kind == "interference" && (!inputs.contains("bodies") || inputs["bodies"].empty());
     if (automatic || every)
       for (const auto& b : scene.all_bodies()) nodes.insert(b);
+  }
+
+  // Whether a feature depends on a linked file's part that is not loaded (missing, not trusted yet).
+  bool unloaded_inputs(const Scene& scene, const std::string& kind, const json& inputs) const {
+    std::set<std::string> nodes, sketches, features;
+    feature_refs(scene, kind, inputs, nodes, sketches, features);
+    return std::any_of(nodes.begin(), nodes.end(), [&](const std::string& id) { const Node* n = scene.node(id); return n && n->linked && n->body_missing; });
+  }
+
+  bool edited(const std::string& id) const {  // a new op of the plan edits it (the user's change of it)
+    return std::any_of(new_ops.begin(), new_ops.end(), [&](const json& op) { return op.value("op", "") == "edit" && op.value("target", "") == id; });
+  }
+
+  std::string feature_fingerprint(const Scene& scene, const ParamTable& params, const std::string& kind, const json& inputs) const {
+    std::string s = "feature|" + kind + "|" + inputs.dump() + "|";
+    if (const FeatureSpec* spec = feature_spec(kind))
+      for (const auto& in : spec->inputs) {
+        if (!inputs.contains(in.name) || !input_shown(in, inputs)) continue;
+        if (in.type != "length" && in.type != "angle" && in.type != "number" && in.type != "count") continue;
+        try {
+          s += in.name + "=" + json(eval_input(params, inputs[in.name], dim_of(in.type))).dump() + ";";
+        } catch (const std::exception& e) {
+          s += in.name + "!" + e.what() + ";";
+        }
+      }
+    std::set<std::string> nodes, sketches, features;
+    feature_refs(scene, kind, inputs, nodes, sketches, features);
     for (const auto& n : nodes) s += node_state(scene, n);
     for (const auto& id : sketches)
       if (const SketchItem* sk = scene.sketch(id)) s += id + ":" + sk->geometry.dump() + sk->frame.to_json().dump() + ";";
@@ -725,14 +742,49 @@ struct Walk {
     return result;
   }
 
+  // The curves a reference gave the sketch when it was last computed (`last`: its solved geometry, else as given), as
+  // derive_sketch hands them: by slot, each point once in the order the sketch has them.
+  static Sketch last_projection(const json& last, const json& ref, const std::string& mode, const std::string& why) {
+    const Sketch was = Sketch::from_json(last);
+    std::vector<const SkEntity*> mine;
+    for (const auto& e : was.entities)
+      if (!e.source.is_null() && e.source.at("ref") == ref && e.source.value("mode", "project") == mode) mine.push_back(&e);
+    if (mine.empty()) throw Error(why);
+    std::sort(mine.begin(), mine.end(), [](const SkEntity* a, const SkEntity* b) { return a->source.value("slot", 0) < b->source.value("slot", 0); });
+    std::set<int> used;
+    for (const auto* e : mine) used.insert(e->p.begin(), e->p.end());
+    Sketch out;
+    std::map<int, int> points;
+    for (const auto& p : was.points)
+      if (used.count(p.id)) points[p.id] = out.add_point(p.x, p.y, true);
+    for (const auto* e : mine) {
+      SkEntity c = *e;
+      c.id = out.next_id();
+      c.source = nullptr;
+      for (int& p : c.p) p = points.at(p);
+      out.entities.push_back(std::move(c));
+    }
+    return out;
+  }
+
   json compute_sketch(const Ctx& ctx, const json& data, std::string& fp) {
     const json& geometry = data.at("geometry");
     const json& plane = data.at("plane");
     Sketch sk = Sketch::from_json(geometry);
     std::string s = "sketch|" + geometry.dump() + "|" + plane.dump() + "|";
     std::string error;
+    const json stored = data.value("result", json::object());
     try {
-      refresh_references(sk,[&](const json& ref,const std::string& mode){return derive_sketch(ctx.doc,ctx.scene,ctx.plane(plane),ref,mode,ctx.fresh);});
+      refresh_references(sk,[&](const json& ref,const std::string& mode){
+        try {
+          return derive_sketch(ctx.doc,ctx.scene,ctx.plane(plane),ref,mode,ctx.fresh);
+        } catch (const std::exception& e) {
+          // A linked file not loaded here (missing, not trusted yet): its projection as last computed stays, so an unrelated
+          // edit neither saves an error into the sketch nor drops what a sync projected.
+          if (!unloaded_link(ctx.scene, ref)) throw;
+          return last_projection(stored.contains("geometry") ? stored["geometry"] : geometry, ref, mode, e.what());
+        }
+      });
       s+=sk.to_json().dump();
       evaluate_patterns(sk,ctx.params);
       s += sk.patterns.dump();
@@ -755,7 +807,6 @@ struct Walk {
         if (const Feature* f = ctx.scene.feature(id)) s += id + ":" + f->result.value("plane", json()).dump() + ";";
     }
     fp = sha256_hex(s).substr(0, 24);
-    const json stored = data.value("result", json::object());
     if (!force && stored.value("in", "") == fp) return stored;
 
     json result = json::object();
@@ -939,7 +990,10 @@ struct Walk {
             if (std::string(ex.what()) == "cancelled") throw;
             result = {{"error", ex.what()}};
           }
-          result["in"] = fp;
+          // Recomputed only because something upstream changed, but it needs a linked file that is not loaded: what it last
+          // made stays, under its old fingerprint, so it is computed again once the file is back (no error saved meanwhile).
+          if (result.contains("error") && stored.contains("in") && !is_new(id) && !edited(id) && unloaded_inputs(builder.scene(), kind, inputs)) result = stored;
+          else result["in"] = fp;
         }
         if (conditional) result["suppressed"] = false;
       }
@@ -1035,7 +1089,7 @@ Plan plan_regenerate(const Document& doc, bool force, const Cancel& cancel) {
 json commit(Document& doc, Plan&& plan, const std::string& author) {
   for (auto& b : plan.bodies) {
     if (b.brep.empty()) doc.add_external_body(b.key, b.meta);  // a linked asset's body (asset sync)
-    else doc.add_body(b.brep, b.meta);
+    else doc.add_body(b.key, std::move(b.brep), std::move(b.meta));  // its key is its text's hash, made by the planner
     if (b.shape) cache_shape(doc, b.key, *b.shape);
   }
   for (auto& op : plan.ops) doc.append(std::move(op), author);  // not copied: a converted drawing's curves are big

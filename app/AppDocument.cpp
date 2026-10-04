@@ -52,6 +52,23 @@ QString phaseLabel(const std::string& what, const QString& file) {
   }
   return QString::fromStdString(what);
 }
+// A linked file's parts are the file's (opad/assets.hpp): renamed, moved or regrouped they would no longer say what the file
+// says. Its top node may be (a name, a placement) and holds nothing else; hide, colour and lock are views.
+void refuseLinkedParts(const opad::Scene& scene, const std::string& command, const opad::json& args) {
+  auto part = [&](const std::string& id) {
+    const opad::Node* n = scene.node(id);
+    const opad::Node* p = n && n->linked && !n->parent.empty() ? scene.node(n->parent) : nullptr;
+    return p && p->linked && p->source_op == n->source_op;
+  };
+  std::vector<std::string> targets;
+  if (args.contains("target") && args["target"].is_string()) targets.push_back(args["target"].get<std::string>());
+  if (args.contains("targets") && args["targets"].is_array())
+    for (const auto& t : args["targets"]) if (t.is_string()) targets.push_back(t.get<std::string>());
+  for (const auto& id : targets)
+    if (part(id)) throw opad::Error("Parts of a linked file are read-only: embed the file to edit them.");
+  if (command == "reparent" && args.contains("parent") && args["parent"].is_string())
+    if (const opad::Node* p = scene.node(args["parent"].get<std::string>()); p && p->linked) throw opad::Error("A linked file holds only its own parts.");
+}
 }  // namespace
 
 AppDocument::AppDocument(QObject* parent) : QObject(parent), m_storage(std::make_shared<opad::Document>()), doc(*m_storage), m_alive(std::make_shared<std::atomic<bool>>(true)) {
@@ -240,7 +257,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
   });
 }
 
-void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane, bool link) {
+void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane, bool link, const opad::json& canvas) {
   if (loading || designBusy) return;
   if (!hasDocument || browse) {
     doc = opad::Document::create();
@@ -263,6 +280,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   // A drawing placed in world coordinates (on a face, a picked plane) keeps its place under a moved component: its
   // placement is relative to the component it goes into.
   const opad::Mat4 into = !o.parent.empty() && scene.node(o.parent) && (!placement.is_identity() || plane.is_object()) ? scene.world(o.parent).inverse() : opad::Mat4();
+  o.canvas = canvas;
   // Import into a snapshot: selection/render callbacks retain a valid live document.
   auto work = std::make_shared<opad::Document>(doc);
   const size_t opsBefore = work->ops.size();
@@ -436,6 +454,18 @@ bool AppDocument::save(bool overwriteDisk) {
   return true;
 }
 
+void AppDocument::followAssetPaths(const QString& destination) {
+  const std::filesystem::path folder(QFileInfo(destination).absolutePath().toStdU16String());
+  if(auto edits=opad::asset_path_edits(doc,folder);!edits.empty()) {  // saved elsewhere: the linked files' saved paths follow, one undo step
+    opad::design::Plan moved;moved.ops=std::move(edits);
+    const bool locked=readOnly;  // a read-only document's copy: the copy's paths follow too (it is this session's file once saved)
+    readOnly=false;
+    try { commitPlan(std::move(moved),tr("Linked file paths")); } catch (...) { readOnly=locked; throw; }
+    readOnly=locked;
+  }
+  opad::rebase_asset_paths(doc,folder);  // linked files not saved yet
+}
+
 bool AppDocument::saveAs(const QString& path) {
   if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
@@ -445,6 +475,7 @@ bool AppDocument::saveAs(const QString& path) {
     emit saveBlocked(true);
     return false;
   }
+  followAssetPaths(path);
   doc.save_as(fsPath(path));
   readOnly = false;  // the copy is this session's file now
   markSaved();
@@ -461,6 +492,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args, const Q
   // Viewer mode changes how things look (shown, colour, opacity), never the model.
   if (browse && command != "appearance") throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
   if (readOnly && command != "appearance") throw opad::Error("This document is open read-only: save a copy to edit it.");
+  if (command == "rename" || command == "reparent" || command == "transform") refuseLinkedParts(scene, command, args);
   const size_t before = doc.ops.size();
   if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out;
@@ -481,6 +513,7 @@ opad::json AppDocument::runAll(const std::vector<std::pair<std::string, opad::js
   for (const auto& [command, args] : commands) {
     if (browse && command != "appearance") throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
     if (readOnly && command != "appearance") throw opad::Error("This document is open read-only: save a copy to edit it.");
+    if (command == "rename" || command == "reparent" || command == "transform") refuseLinkedParts(scene, command, args);
   }
   const size_t before = doc.ops.size();
   const std::string by = QSettings().value("user/name").toString().trimmed().toStdString();
@@ -764,6 +797,11 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
   if (command == "view") return tr("named view");
   if (command == "import") return tr("import");
   if (command == "transform") return tr("transform");
+  if (command == "canvas") {  // the image canvas (opad/canvas.hpp)
+    const std::string action = args.value("action", "");
+    return action == "flags" ? tr("canvas settings") : action == "calibrate" ? tr("calibrate canvas") : action == "align" ? tr("align canvas")
+         : action == "replace" ? tr("replace picture") : action == "from_backdrop" ? tr("backdrop to canvas") : tr("move canvas");
+  }
   if (command == "component") return tr("new component");
   return QString::fromStdString(command);
 }

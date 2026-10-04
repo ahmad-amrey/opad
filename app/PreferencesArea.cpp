@@ -296,8 +296,13 @@ class PreferencesArea : public AreaController {
     form.note(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
     if (associations::supported()) form.button(tr("File types…"), [this] { FileTypesDialog(services().window()).exec(); }, "files/types");
     if (QAction* oda = action("files.useOda")) form.option(oda, QString(oda->text()).remove('&'));  // asks for ODA's terms first
-    // What a KiCad board builds, where its footprints' 3D models are looked for, downloads (read at the next open).
-    form.button(tr("KiCad boards…"), [this] { KicadDialog(services().window(), false).exec(); }, "files/kicad");
+    // What a KiCad board builds, where its footprints' 3D models are looked for, downloads (read at the next open; linked
+    // boards looked at again: the assets area's command); linked files: the import choice and the trusted folders.
+    form.button(tr("KiCad boards…"), [this] {
+      if (QAction* kicad = action("assets.kicadSettings")) kicad->trigger();
+      else KicadDialog(services().window(), false).exec();
+    }, "files/kicad");
+    if (QAction* linked = action("assets.settings")) form.button(tr("Linked files…"), [linked] { linked->trigger(); }, "files/linked");
     form.section(tr("Tessellation cache"), tr("Meshes of files opened before, so they open faster next time. Clearing it is safe."));
     QLabel* where = form.note(tr("Measuring…"));
     where->setObjectName("files/cacheInfo");

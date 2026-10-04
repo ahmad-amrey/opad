@@ -52,8 +52,10 @@ class DesignController : public QObject {
   void setParametersPanel(ToolPanel* panel) { m_parametersPanel=panel; }
   void regenerate(bool force);
   void setSuppressed(const std::string& featureId, bool on);
-  // Plans `ops` on a worker and commits them. `done(ok, error)` runs on the UI thread.
-  void applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done = {});
+  // Plans `ops` on a worker and commits them. `done(ok, error)` runs on the UI thread. `extend` adds to the plan on the
+  // worker (its own ops and bodies, against the same copy of the document).
+  void applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done = {},
+                std::function<void(opad::Document&, opad::design::Plan&)> extend = {});
   // A plan made on a worker over a copy of the document as it is now (the caller compared the revision) committed as
   // applyOps commits its own, without planning again.
   void commitPlanned(std::shared_ptr<opad::design::Plan> plan, const QString& label, std::function<void(bool, const QString&)> done = {});

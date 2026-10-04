@@ -55,6 +55,9 @@ class SketchEditor : public QObject, public SketchInput {
   const opad::Frame& frame() const { return m_frame; }
   opad::json geometry() const { return m_sk.to_json(); }
   opad::json geometryDelta() const { return opad::design::sketch_delta(m_initialGeometry, geometry()); }
+  const opad::json& initialGeometry() const { return m_initialGeometry; }  // as the sketch was opened
+  // The image canvases lying on the sketch's plane (Trace image takes them as well as its own backdrops): id and name.
+  std::vector<std::pair<std::string, QString>> planeCanvases() const;
   bool modified() const { return m_modified; }
   bool empty() const;  // nothing but the origin
   // Copies one entity per UI slice, then serializes on a worker. A changed sketch
@@ -73,6 +76,10 @@ class SketchEditor : public QObject, public SketchInput {
   void setOption(const QString& key, const QString& value) { m_options[key] = value; }
   QString dimensionText(const opad::design::SkConstraint& c) const;  // "R1 in", "fx: 12.5 mm", "(45°)"
   void applyTool();
+  // References from outside the Project tool (a KiCad board's outline, mounting holes and parts by node, UI-134): read from a
+  // copy of the document taken on a worker and derived there into the sketch's frame, all one change of the sketch; linked
+  // ones follow their source when the design regenerates. False when the sketch or the document is busy.
+  bool projectSources(const std::vector<opad::json>& sources, bool linked);
   void previewTool();
   void invalidatePreview(bool keepOverlay = false);  // keepOverlay: the shown one stays until the next replaces it (live drags)
   void dropPreviewJob();  // a preview being computed is cancelled: a click or a key acts on the sketch as it is

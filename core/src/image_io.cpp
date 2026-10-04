@@ -2,12 +2,15 @@
 // unless the file says), the picture on it as the SVG reader's rasters are: `raster` holds the file's own bytes (never
 // decoded or encoded again) and the picture's corners. Nothing is decoded here: size and resolution come from the headers.
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <TopoDS_Face.hxx>
 #include <gp_Pln.hxx>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 
 #include "import_common.hpp"
+#include "opad/canvas.hpp"
 #include "opad/geometry.hpp"
 
 namespace opad::detail {
@@ -113,7 +116,67 @@ std::string base64(const std::string& bytes) {
   return out;
 }
 
+// The node showing a picture on a w x h mm rectangle (its key comes with the body). Corners: the picture's top left, top
+// right and bottom left (as SVG images are kept).
+json picture_node(const std::string& encoded, const Picture& p, const std::string& name, double w, double h) {
+  json node = {{"type", "body"}, {"id", new_uuid()}, {"name", name}, {"representation", "image"}};
+  node["raster"] = {{"href", "data:" + p.mime + ";base64," + encoded}, {"corners", {{0, h, 0}, {w, h, 0}, {0, 0, 0}}}, {"px", {p.w, p.h}}};
+  if (p.dpi >= 1) node["raster"]["dpi"] = p.dpi;
+  return node;
+}
+
+TopoDS_Face rectangle(double w, double h) { return BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), 0, w, 0, h).Face(); }
+
+Vec3 unit(const Vec3& v) {
+  const double l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+  return l > 1e-15 ? Vec3{v[0] / l, v[1] / l, v[2] / l} : v;
+}
+
+// The import op of a picture's canvas node (w x h mm): placed as the options say (a width scales it uniformly, the body
+// stays the picture's own rectangle; centred on request), with its flags and the plane its place is given in (the
+// placement's, unless the caller chose the plane).
+json canvas_import(json node, const std::string& name, double w, double h, const ImportOptions& opt) {
+  const json given = opt.canvas.is_object() ? opt.canvas : json::object();
+  CanvasFlags flags = CanvasFlags::of(given);
+  if (!flags.plane.is_object()) flags.plane = Frame{opt.placement.apply({0, 0, 0}), unit(opt.placement.apply_dir({1, 0, 0})), unit(opt.placement.apply_dir({0, 1, 0}))}.to_json();
+  Mat4 placement = opt.placement;
+  if (const double width = given.value("width", 0.0); width > 0) {
+    Mat4 scale;
+    scale.at(0, 0) = scale.at(1, 1) = scale.at(2, 2) = width / w;
+    placement = placement * scale;
+  }
+  if (opt.center_drawing || given.value("center", false)) placement = placement * Mat4::translation(-w / 2, -h / 2, 0);
+  if (!placement.is_identity()) node["transform"] = placement.to_json();
+  json op = {{"op", "import"}, {"source", name}, {"units", "mm"}, {"nodes", json::array({node})}, {"canvas", flags.to_json()}};
+  if (!opt.parent.empty()) op["parent"] = opt.parent;
+  return op;
+}
+
 }  // namespace
+
+bool picture_size(const std::string& bytes, long& w, long& h, double& dpi, std::string& mime) {
+  try {
+    const Picture p = picture(bytes, "");
+    w = p.w, h = p.h, dpi = p.dpi, mime = p.mime;
+    return true;
+  } catch (const Error&) {
+    return false;
+  }
+}
+
+CanvasBody canvas_body(const std::string& bytes, const std::string& name, double w, double h, const std::string& encoded) {
+  const Picture p = picture(bytes, name);
+  if (!(w > 0) || !(h > 0)) throw Error("a canvas needs a positive size: " + name);
+  CanvasBody out;
+  out.px_w = p.w, out.px_h = p.h, out.dpi = p.dpi;
+  out.node = picture_node(encoded.empty() ? base64(bytes) : encoded, p, name, w, h);
+  const TopoDS_Face face = rectangle(w, h);
+  out.body.meta = {{"name", name}, {"units", "mm"}, {"source", name}, {"representation", "image"}};
+  out.body.key = body_key_for(face, &out.body.brep);
+  out.body.shape = std::make_shared<TopoDS_Shape>(face);
+  out.node["key"] = out.body.key;
+  return out;
+}
 
 ImportResult import_image(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
   if (opt.progress && !opt.progress(-1, "reading")) throw Error("import cancelled");
@@ -124,22 +187,36 @@ ImportResult import_image(Document& doc, const std::filesystem::path& file, cons
   const double dpi = p.dpi >= 1 ? p.dpi : 96.0, w = double(p.w) * 25.4 / dpi, h = double(p.h) * 25.4 / dpi;
   ImportResult res;
   Document staged = doc;
-  json body = {{"type", "body"}, {"id", new_uuid()}, {"name", std::string(stem.begin(), stem.end())}, {"representation", "image"}};
-  body["key"] = store_body(staged, BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), 0, w, 0, h).Face(),
-                           {{"name", body["name"]}, {"units", "mm"}, {"source", name}, {"representation", "image"}}, opt, false, &res);
-  // Corners: the picture's top left, top right and bottom left (as SVG images are kept).
-  body["raster"] = {{"href", "data:" + p.mime + ";base64," + base64(bytes)}, {"corners", {{0, h, 0}, {w, h, 0}, {0, 0, 0}}}, {"px", {p.w, p.h}}};
-  if (p.dpi >= 1) body["raster"]["dpi"] = p.dpi;
-  Mat4 placement = opt.placement;
-  if (opt.center_drawing) placement = placement * Mat4::translation(-w / 2, -h / 2, 0);
-  if (!placement.is_identity()) body["transform"] = placement.to_json();
+  json body = picture_node(base64(bytes), p, std::string(stem.begin(), stem.end()), w, h);
+  body["key"] = store_body(staged, rectangle(w, h), {{"name", body["name"]}, {"units", "mm"}, {"source", name}, {"representation", "image"}}, opt, false, &res);
   ++res.bodies;
-  json op = {{"op", "import"}, {"source", name}, {"units", "mm"}, {"nodes", json::array({body})}};
-  if (!opt.parent.empty()) op["parent"] = opt.parent;
-  res.op_id = staged.append(op, opt.author).id;
+  res.op_id = staged.append(canvas_import(body, name, w, h, opt), opt.author).id;
   doc = std::move(staged);
-  res.info = {{"px", {p.w, p.h}}, {"dpi", dpi}, {"size_mm", {w, h}}};
+  res.info = {{"px", {p.w, p.h}}, {"dpi", dpi}, {"size_mm", {w, h}}, {"canvas", body["id"]}};
   return res;
 }
 
 }  // namespace opad::detail
+
+namespace opad {
+design::Plan plan_canvas_import(const std::filesystem::path& file, const ImportOptions& opt) {
+  const std::string bytes = read_text_file(file);
+  const auto u8 = file.filename().u8string(), stem = file.stem().u8string();
+  const std::string name(u8.begin(), u8.end());
+  long pw = 0, ph = 0;
+  double dpi = 0;
+  std::string mime;
+  if (!detail::picture_size(bytes, pw, ph, dpi, mime)) throw Error("not a picture OPAD reads, or a damaged one: " + name);
+  if (dpi < 1) dpi = 96;
+  const double w = double(pw) * 25.4 / dpi, h = double(ph) * 25.4 / dpi;
+  detail::CanvasBody made = detail::canvas_body(bytes, std::string(stem.begin(), stem.end()), w, h);
+  made.body.meta["source"] = name;
+  json op = detail::canvas_import(made.node, name, w, h, opt);
+  op["id"] = new_uuid();
+  design::Plan plan;
+  plan.report = {{"op", op["id"]}, {"canvas", made.node["id"]}, {"px", {pw, ph}}, {"size_mm", {w, h}}};
+  plan.ops.push_back(std::move(op));
+  plan.bodies.push_back(std::move(made.body));
+  return plan;
+}
+}  // namespace opad

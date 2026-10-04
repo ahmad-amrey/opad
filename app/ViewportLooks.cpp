@@ -23,6 +23,7 @@
 
 #include "Drawing2D.hpp"
 #include "Jobs.hpp"
+#include "opad/canvas.hpp"
 #include "opad/geometry.hpp"
 
 namespace {
@@ -55,6 +56,11 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
     const drawing2d::LinePattern dashes = linePatternOf(style, drawing2d::kPatternPixelsPerMm * style.scale * displayScale() * renderScale());
     base.linePattern = dashes.bits;
     base.lineFactor = dashes.factor;
+  }
+  if (!body.canvas.is_null()) {  // a canvas's flags (opad/canvas.hpp): picked in the view or only from the browser, drawn through the model
+    const opad::CanvasFlags flags = opad::CanvasFlags::of(body.canvas);
+    base.pickable = flags.selectable;
+    if (flags.through) base.layer = m_throughLayer;
   }
   std::array<const LookDelta*, kLookSources> found{};
   if (layered()) {
@@ -219,6 +225,7 @@ bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look
     ais->SetColor(rgb(look.color));
     ais->SetTransparency(1.0 - look.opacity);
     applyStyle(ais, &look);  // a ghost's edges fade with it
+    if (const Handle(BodyShape) body = Handle(BodyShape)::DownCast(ais)) body->syncPainted(look.ghost);  // face colours fade too
     ais->SynchronizeAspects();
   }
   if (look.visible != was.visible) {
@@ -244,7 +251,7 @@ bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look
   if (look.offset == was.offset) return false;
   gp_Trsf placed;
   if (look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));
-  if (item.rigid && !item.world.is_identity()) placed.Multiply(opad::trsf_from_mat(item.world));  // offset after the placement
+  if (item.rigid) placed.Multiply(item.placement);  // offset after the placement
   m_ctx->SetLocation(ais, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
   if (!item.navigation.IsNull()) {
     item.navigation->SetLocalTransformation(placed);
@@ -301,8 +308,10 @@ opad::json Viewport::benchLookState(const std::string& body) const {
   c.Values(r, g, b, Quantity_TOC_sRGB);
   const gp_XYZ t = ais->LocalTransformation().TranslationPart();
   const Handle(Graphic3d_AspectLine3d)& line = ais->Attributes()->WireAspect()->Aspect();
+  const Graphic3d_ZLayerSettings& layer = m_viewer->ZLayerSettings(ais->ZLayer());
   return {{"displayed", m_ctx->IsDisplayed(ais)}, {"activated", modes.Extent()}, {"transparency", ais->Transparency()}, {"color", {r, g, b}},
-          {"layer", ais->ZLayer()}, {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)},
+          {"layer", ais->ZLayer()}, {"depth_test", layer.ToEnableDepthTest()}, {"depth_write", layer.ToEnableDepthWrite()},
+          {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)},
           {"lineWidth", line->Width()}, {"lineType", int(line->LineType())}, {"linePattern", line->LinePattern()}, {"lineFactor", line->LineStippleFactor()},
           {"lineColor", {line->Color().Red(), line->Color().Green(), line->Color().Blue()}}};
 }

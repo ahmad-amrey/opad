@@ -67,23 +67,23 @@ CurvePreview curvePreview(const opad::design::Sketch& sk,const opad::Frame& fram
 std::atomic<int> runningConversions{0};  // workers still converting (the preview bench checks a cancelled one stops)
 }  // namespace
 
-void MainWindow::importDrawing(const QString& path, const QString& parent) {
+void MainWindow::importDrawing(const QString& path, const QString& parent, bool link) {
   if (!m_doc->hasDocument || m_doc->browse) return openPath(path);  // nothing to place it among: as Open
   // A planar face selected: straight onto it, nothing asked (the face's frame: its lower-left corner and axes).
   const auto refs = m_viewport->selection();
   if (refs.size() == 1 && refs.front().kind == opad::Ref::Kind::Face) {
     beginLoad([this, path] { addRecent(path); m_viewport->fitWhenReady(); });
-    m_doc->startImport(path, parent, {}, opad::json{{"face", refs.front().to_json()}});
+    m_doc->startImport(path, parent, {}, opad::json{{"face", refs.front().to_json()}}, link);
     return;
   }
   // Otherwise the plane is chosen first, then the drawing is moved on it before the import op is written.
   cancelTool();
-  m_design->pickSketchPlane([this, path, parent](opad::json, opad::Frame frame) {
-    m_drawingPlacer->placed = [this, path, parent](const opad::Mat4& placement) {
+  m_design->pickSketchPlane([this, path, parent, link](opad::json, opad::Frame frame) {
+    m_drawingPlacer->placed = [this, path, parent, link](const opad::Mat4& placement) {
       beginLoad([this, path] { addRecent(path); m_viewport->fitWhenReady(); });
-      m_doc->startImport(path, parent, placement);
+      m_doc->startImport(path, parent, placement, {}, link);
     };
-    m_drawingPlacer->back = [this, path, parent] { QTimer::singleShot(0, this, [this, path, parent] { importDrawing(path, parent); }); };
+    m_drawingPlacer->back = [this, path, parent, link] { QTimer::singleShot(0, this, [this, path, parent, link] { importDrawing(path, parent, link); }); };
     m_drawingPlacer->start(path, frame, [this](ToolPanel* panel) { openPanel(panel); });
   }, false);
 }

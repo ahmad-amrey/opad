@@ -22,9 +22,11 @@
 #include <cwctype>
 #include <map>
 #include <set>
+#include <sstream>
 
 #include "import_common.hpp"
 #include "opad/cache.hpp"
+#include "opad/design/sketch.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/kicad_pcb.hpp"
@@ -146,8 +148,6 @@ std::string kind_of(const fs::path& file) {
   return "mesh";
 }
 
-// A UNC path (\\server\share): opening it can hand the user's credentials to that server, so a document never makes OPAD
-// look at one by itself.
 bool network(const fs::path& p) {
 #ifdef _WIN32
   const std::wstring& s = p.native();
@@ -276,10 +276,21 @@ void relabel(json& nodes, const std::string& op, const std::string& parent, cons
         for (size_t k = 0; k < left_now.size(); ++k) match[left_now[k]] = static_cast<int>(left_then[k]);
     }
   }
+  // A node not found again takes its place's id unless a part found again holds it (a part come in front of one matched by
+  // its geometry: roots are placed by position), then the next free one.
+  std::set<std::string> given;
+  for (size_t i = 0; i < nodes.size(); ++i)
+    if (match[i] >= 0 && (*was)[size_t(match[i])].contains("id")) given.insert((*was)[size_t(match[i])]["id"].get<std::string>());
   for (size_t i = 0; i < nodes.size(); ++i) {
     json& n = nodes[i];
     const json* before = match[i] >= 0 ? &(*was)[size_t(match[i])] : nullptr;
-    n["id"] = before && before->contains("id") ? (*before)["id"] : json(place_id(op, parent + "/" + now[i]));
+    if (before && before->contains("id")) n["id"] = (*before)["id"];
+    else {
+      std::string id = place_id(op, parent + "/" + now[i]);
+      for (int k = 1; given.count(id); ++k) id = place_id(op, parent + "/" + now[i] + "#" + std::to_string(k));
+      given.insert(id);
+      n["id"] = id;
+    }
     if (n.contains("children")) relabel(n["children"], op, n["id"].get<std::string>(), before && before->contains("children") ? &(*before)["children"] : nullptr, keys);
   }
 }
@@ -347,6 +358,7 @@ json builder_options(const std::string& kind, const ImportOptions& opt) {
   if (kind == "kicad_pcb")
     o = {{"components", opt.kicad.components}, {"dnp", opt.kicad.dnp}, {"vias", opt.kicad.vias},
          {"placeholder_height", opt.kicad.placeholder_height}, {"origin", opt.kicad.origin}};
+  if (kind == "image" && opt.canvas.is_object() && !opt.canvas.empty()) o["canvas"] = opt.canvas;  // its width, centring and plane
   if (opt.center_drawing) o["center"] = true;
   if (!opt.placement.is_identity()) o["placement"] = opt.placement.to_json();
   return o;
@@ -368,6 +380,7 @@ ImportOptions read_options(const json& asset, const AssetOptions& opt) {
     o.kicad.origin_at = {b["origin_at"][0].get<double>(), b["origin_at"][1].get<double>()};
   o.center_drawing = b.value("center", false);
   if (b.contains("placement")) o.placement = Mat4::from_json(b["placement"]);
+  if (b.contains("canvas") && b["canvas"].is_object()) o.canvas = b["canvas"];
   return o;
 }
 
@@ -454,14 +467,18 @@ void bind_body(Document& doc, const Document& scratch, const std::string& from, 
 
 bool cancelled_error(const std::exception& e) { return std::string(e.what()).find("cancelled") != std::string::npos; }
 
-// Where an asset may be: beside the document as recorded, the project's copy, the absolute path.
+// Where an asset may be: beside the document as recorded, the project's copy (assets/<name>, a KiCad board's in
+// assets/<board>/ as pack lays it out), the absolute path.
 std::vector<fs::path> candidates(const Document& doc, const json& asset) {
   std::vector<fs::path> out;
   if (!asset.is_object()) return out;
   const std::string rel = asset.value("path", ""), abs = asset.value("abs", "");
   if (const fs::path dir = doc_dir(doc); !dir.empty()) {
     if (!rel.empty()) out.push_back((dir / path_from_utf8(rel)).lexically_normal());
-    if (const fs::path name = path_from_utf8(rel.empty() ? abs : rel).filename(); !name.empty()) out.push_back(dir / "assets" / name);
+    if (const fs::path name = path_from_utf8(rel.empty() ? abs : rel).filename(); !name.empty()) {
+      out.push_back(dir / "assets" / name);
+      if (asset.value("kind", "") == "kicad_pcb") out.push_back(dir / "assets" / name.stem() / name);
+    }
   }
   if (!abs.empty()) out.push_back(path_from_utf8(abs));
   return out;
@@ -543,6 +560,8 @@ AssetState status_of(const Document& doc, const EffectiveOp& e, const AssetOptio
         if (st.derived.empty() && !opt.derive) {
           st.state = "missing";
           st.reason = "the file read in its place is missing and " + builder_name(*dv) + " is not available here: " + dv->value("path", dv->value("abs", std::string()));
+        } else if (st.state == "ok" && st.derived.empty() && st.unbound == 0) {
+          st.reason = "the file read in its place is missing: it is made again when it is read next";  // its shapes are here: nothing to sync
         } else if (st.state == "ok" && st.derived_sha256 != dv->value("sha256", "")) {
           st.state = "changed";
           st.reason = st.derived.empty() ? "the file read in its place is missing: it is made again" : "the file read in its place changed";
@@ -589,6 +608,8 @@ std::string file_sha256(const fs::path& file, bool compute) {
   if (fs::file_time_type::clock::now() - time > std::chrono::seconds(3)) cache_put("asset-sha", stat, sha);
   return sha;
 }
+
+bool network_path(const fs::path& p) { return network(p); }
 
 bool has_assets(const Document& doc) {
   for (const auto& o : doc.ops)
@@ -801,6 +822,11 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   if (where.empty()) throw Error("the linked file is not found: " + asset.value("path", asset.value("abs", std::string())));
   if (file.empty() && !asset_trusted(doc, where, opt)) throw Error("the linked file is outside the document's project; trust it first: " + utf8(where));
   const std::string sha = file_sha256(where);
+  if (!file.empty() && !derived_of(asset))  // Replace may bring another kind of file (a drawing for a STEP): read as that
+    if (const std::string kind = kind_of(where); kind != asset.value("kind", "")) {
+      asset["kind"] = kind;
+      asset.erase("models_sha256");
+    }
   auto place = [&](json& a) {
     a["abs"] = utf8(where);
     if (const std::string rel = relative_to(where, doc_dir(doc)); !rel.empty()) a["path"] = rel;
@@ -882,6 +908,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   asset["synced"] = now_iso8601();
   place(asset);
   fresh["asset"] = asset;
+  if (fresh.contains("canvas") && data.contains("canvas")) fresh["canvas"] = data["canvas"];  // the user's flags and plane stay
   for (const auto& [k, v] : data.items())  // what the reader no longer says (warnings) goes
     if (!fresh.contains(k) && k != "op" && k != "id" && k != "ts" && k != "by" && k != "parent") fresh[k] = nullptr;
   Document staged = doc;  // the plan's walk reads the new bodies from it
@@ -907,6 +934,117 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   plan.report["changed"] = changed;
   plan.report["kept"] = kept;
   return plan;
+}
+
+json asset_sync_affects(const Document& doc, const std::string& import_id, const design::Plan& plan) {
+  json regen = json::object(), fresh_nodes = json::array();
+  for (const auto& op : plan.ops)
+    if (op.value("op", "") == "regen") regen = op.value("results", json::object());
+    else if (op.value("op", "") == "edit" && op.value("target", "") == import_id) fresh_nodes = op.value("set", json::object()).value("nodes", json::array());
+  std::map<std::string, std::string> names;  // node id -> name, as the file has them now, else as synced
+  for (const auto& e : effective_ops(doc))
+    if (e.op->id == import_id) each_node(nodes_of(e.data()), [&](const json& n) { names[n.value("id", "")] = n.value("name", ""); });
+  each_node(fresh_nodes, [&](const json& n) { names[n.value("id", "")] = n.value("name", ""); });
+  json sketches = json::array(), features = json::array();
+  size_t errors = 0;
+  for (const auto& e : effective_ops(doc)) {
+    const std::string id = e.op->id;
+    if (!regen.contains(id) || (e.op->type != "sketch" && e.op->type != "feature")) continue;
+    const json& data = e.data();
+    const json& was = data.value("result", json::object()), &now = regen[id];
+    json entry = {{"op", id}, {"name", data.value("name", "")}};
+    if (const std::string error = now.value("error", ""); !error.empty() && error != was.value("error", "")) entry["error"] = error, ++errors;
+    if (e.op->type == "feature") {
+      std::map<std::string, std::string> keys;
+      for (const auto& b : was.value("bodies", json::array())) keys[b.value("id", "")] = b.value("key", "");
+      int changed = 0;
+      for (const auto& b : now.value("bodies", json::array())) changed += keys[b.value("id", "")] != b.value("key", "");
+      entry["kind"] = data.value("kind", "");
+      entry["bodies_changed"] = changed;
+      features.push_back(entry);
+      continue;
+    }
+    if (now.contains("error") && !now.contains("geometry")) {  // not projected again: the error says why
+      sketches.push_back(entry);
+      continue;
+    }
+    json after = data;
+    after["result"] = now;
+    design::Sketch b, a;
+    try {
+      b = design::Sketch::from_json(design::solved_geometry(data));
+      a = design::Sketch::from_json(design::solved_geometry(after));
+    } catch (const std::exception&) {
+      sketches.push_back(entry);
+      continue;
+    }
+    // The references to this asset: moved (same curves elsewhere) or projected again (other curves: the dimensions on the old go).
+    std::map<std::string, json> refs;
+    std::set<int> moving;  // entities and points of references that move or go
+    for (const auto& c : b.entities) {
+      const json ref = c.source.is_object() ? c.source.value("ref", json()) : json();
+      if (!ref.is_object() || ref.value("asset", "") != import_id) continue;
+      const design::SkEntity* n = a.entity(c.id);
+      std::string change = !n || n->source.is_null() ? "projected_again" : "";
+      if (change.empty()) {
+        bool same = n->p.size() == c.p.size() && std::abs(n->r - c.r) < 1e-9;
+        for (size_t i = 0; same && i < c.p.size(); ++i) {
+          const design::SkPoint *p = b.point(c.p[i]), *q = a.point(n->p[i]);
+          same = p && q && std::abs(p->x - q->x) < 1e-9 && std::abs(p->y - q->y) < 1e-9;
+        }
+        if (!same) change = "moved";
+      }
+      if (change.empty()) continue;
+      moving.insert(c.id);
+      moving.insert(c.p.begin(), c.p.end());
+      json& r = refs[ref.dump()];
+      if (r.is_null() || change == "projected_again") {
+        const std::string node = ref.value("node", "");
+        r = {{"kicad", ref.value("kicad", "")}, {"node", node}, {"change", change}};
+        if (ref.contains("ref")) r["ref"] = ref["ref"];
+        else if (names.count(node) && ref.value("kicad", "") == "hole") r["ref"] = names[node];
+      }
+    }
+    json list = json::array(), removed = json::array(), changed = json::array(), moved = json::array();
+    for (auto& [k, r] : refs) list.push_back(r);
+    for (const auto& c : b.constraints) {
+      if (!c.is_dimension()) continue;
+      const json named = {{"name", "d" + std::to_string(c.id)}, {"type", design::SkConstraint::type_name(c.type)}, {"value", c.value}};
+      const auto n = std::find_if(a.constraints.begin(), a.constraints.end(), [&](const design::SkConstraint& x) { return x.id == c.id; });
+      if (n == a.constraints.end()) removed.push_back(named);
+      else if (std::abs(n->value - c.value) > 1e-9) changed.push_back({{"name", named["name"]}, {"type", named["type"]}, {"before", c.value}, {"after", n->value}});
+      else if (std::any_of(c.refs.begin(), c.refs.end(), [&](int r) { return moving.count(r) > 0; })) moved.push_back(named);
+    }
+    entry["references"] = list;
+    entry["dimensions_removed"] = removed;
+    entry["dimensions_changed"] = changed;
+    entry["dimensions_moved"] = moved;
+    sketches.push_back(entry);
+  }
+  return {{"sketches", sketches}, {"features", features}, {"errors", errors}};
+}
+
+json asset_sync_parts(const Document& doc, const std::string& import_id, const design::Plan& plan) {
+  json changed = json::array(), added = json::array(), removed = json::array();
+  int kept = 0;
+  const json* fresh = nullptr;
+  for (const auto& op : plan.ops)
+    if (op.value("op", "") == "edit" && op.value("target", "") == import_id && op.contains("set") && op["set"].contains("nodes")) fresh = &op["set"]["nodes"];
+  if (!fresh) return {{"changed", changed}, {"added", added}, {"removed", removed}, {"kept", kept}};
+  std::map<std::string, std::pair<std::string, std::string>> was;  // node -> key, name
+  for (const auto& e : effective_ops(doc))
+    if (e.op->id == import_id) each_body(nodes_of(e.data()), [&](const json& n) { was[n.value("id", "")] = {n.value("key", ""), n.value("name", "")}; });
+  each_body(*fresh, [&](const json& n) {
+    const std::string id = n.value("id", "");
+    const json entry = {{"node", id}, {"name", n.value("name", "")}};
+    const auto it = was.find(id);
+    if (it == was.end()) added.push_back(entry);
+    else if (it->second.first != n.value("key", "")) changed.push_back(entry);
+    else ++kept;
+    if (it != was.end()) was.erase(it);
+  });
+  for (const auto& [id, w] : was) removed.push_back({{"node", id}, {"name", w.second}});
+  return {{"changed", changed}, {"added", added}, {"removed", removed}, {"kept", kept}};
 }
 
 design::Plan plan_asset_embed(const Document& doc, const std::string& import_id, const std::function<bool()>& cancel) {
@@ -1021,8 +1159,140 @@ json pack_asset(Document& doc, const std::string& import_id, const std::string& 
     copy(made, to);
     place_derived(asset["derived"], to, dv->value("sha256", ""), dir);
   }
-  doc.append(design::make_edit_op(e.op->id, {{"asset", asset}}), author);
-  return {{"import", e.op->id}, {"path", asset["path"]}, {"copied", copied}};
+  const std::string id = e.op->id;  // appending may move the log's ops
+  doc.append(design::make_edit_op(id, {{"asset", asset}}), author);
+  return {{"import", id}, {"path", asset["path"]}, {"copied", copied}};
+}
+
+namespace {
+// Where a document (its path) expects an asset: beside it as recorded, else its absolute path.
+fs::path expected_place(const fs::path& document, const json& asset) {
+  const std::string rel = asset.value("path", ""), abs = asset.value("abs", "");
+  if (!document.empty() && !rel.empty()) return (fs::absolute(document).parent_path() / path_from_utf8(rel)).lexically_normal();
+  return abs.empty() ? fs::path() : path_from_utf8(abs).lexically_normal();
+}
+
+fs::path work_tree_of(const fs::path& file) {
+  if (file.empty() || network(file)) return {};
+  std::error_code ec;
+  for (fs::path p = fs::absolute(file, ec).parent_path(); !p.empty(); p = p.parent_path()) {
+    if (fs::exists(p / ".git", ec)) return p;
+    if (p == p.parent_path()) break;
+  }
+  return {};
+}
+
+// git in `root`: its exit status (-1: it did not run), what it wrote in `out`.
+int git(const fs::path& root, std::vector<fs::path> args, std::string& out, const std::function<bool()>& cancelled) {
+  const fs::path log = fs::temp_directory_path() / ("opad-git-" + new_uuid() + ".txt");
+  args.insert(args.begin(), {"-C", root});
+  detail::RunOptions run;
+  run.output = log;
+  run.timeout_ms = 600000;  // an LFS download
+  run.cancelled = cancelled;
+  const int status = detail::run_program("git", args, root, run);
+  try {
+    out = read_text_file(log);
+  } catch (const std::exception&) {
+    out.clear();
+  }
+  std::error_code ec;
+  fs::remove(log, ec);
+  return status;
+}
+
+std::string first_line(const std::string& text) {
+  const size_t start = text.find_first_not_of(" \r\n\t");
+  if (start == std::string::npos) return "no output";
+  return text.substr(start, text.find_first_of("\r\n", start) - start);
+}
+
+// The linked file of an import in its work tree: the asset, the file and its path from the root (git's spelling).
+struct InTree {
+  json asset;
+  fs::path file, root;
+  std::string rel;
+};
+InTree in_tree(const fs::path& document, const json& asset) {
+  InTree t;
+  t.asset = asset;
+  if (!asset.is_object() || t.asset.value("storage", "linked") == "embedded") throw Error("the asset is embedded: it is no longer read from a file");
+  t.file = expected_place(document, t.asset);
+  t.root = work_tree_of(t.file);
+  if (t.root.empty()) throw Error("the linked file is not in a git work tree");
+  t.rel = relative_to(fs::absolute(t.file), t.root);
+  if (t.rel.empty() || t.rel.rfind("..", 0) == 0) throw Error("the linked file is not in a git work tree");
+  return t;
+}
+}  // namespace
+
+fs::path asset_work_tree(const Document& doc, const json& asset) {
+  return asset.is_object() && asset.value("storage", "linked") != "embedded" ? work_tree_of(expected_place(doc.path, asset)) : fs::path();
+}
+
+fs::path recover_asset(const Document& doc, const std::string& import_id, const std::function<bool()>& cancelled) {
+  return recover_asset(doc.path, find_asset(doc, import_id).data()["asset"], cancelled);
+}
+
+json track_asset_lfs(const Document& doc, const std::string& import_id, const std::function<bool()>& cancelled) {
+  return track_asset_lfs(doc.path, find_asset(doc, import_id).data()["asset"], cancelled);
+}
+
+fs::path recover_asset(const fs::path& document, const json& asset, const std::function<bool()>& cancelled) {
+  const InTree t = in_tree(document, asset);
+  std::error_code ec;
+  if (fs::is_regular_file(t.file, ec)) throw Error("the linked file is there: nothing to recover");
+  std::string out;
+  if (git(t.root, {"log", "--all", "-n", "1", "--format=%H", "--diff-filter=AMRC", "--", path_from_utf8(t.rel)}, out, cancelled) != 0)
+    throw Error("git did not run: " + first_line(out));
+  std::string hash;  // the line that is a commit (a warning may come first: stderr goes to the same file)
+  std::istringstream lines(out);
+  for (std::string line; hash.empty() && std::getline(lines, line);) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    if (line.size() == 40 && std::all_of(line.begin(), line.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); })) hash = line;
+  }
+  if (hash.empty()) throw Error("git has no version of the linked file");
+  if (git(t.root, {"restore", "--source=" + hash, "--worktree", "--", path_from_utf8(t.rel)}, out, cancelled) != 0 &&
+      git(t.root, {"checkout", hash, "--", path_from_utf8(t.rel)}, out, cancelled) != 0)  // a git older than restore
+    throw Error("git could not restore the linked file: " + first_line(out));
+  if (!fs::is_regular_file(t.file, ec)) throw Error("git could not restore the linked file");
+  return t.file;
+}
+
+json track_asset_lfs(const fs::path& document, const json& asset, const std::function<bool()>& cancelled) {
+  const InTree t = in_tree(document, asset);
+  std::string out;
+  if (git(t.root, {"lfs", "track", path_from_utf8(t.rel)}, out, cancelled) != 0) throw Error("Git LFS did not track the linked file: " + first_line(out));
+  return {{"pattern", t.rel}, {"attributes", utf8(t.root / ".gitattributes")}};
+}
+
+std::vector<json> asset_path_edits(const Document& doc, const fs::path& dir) {
+  std::vector<json> out;
+  if (dir.empty() || doc.path.empty()) return out;
+  const fs::path base = fs::absolute(dir).lexically_normal();
+  if (lower(utf8(base)) == lower(utf8(doc_dir(doc).lexically_normal()))) return out;  // saved where it is: nothing moves
+  std::set<std::string> deleted;
+  for (const auto& o : doc.ops)
+    if (o.type == "delete") deleted.insert(o.data.value("target", ""));
+  std::map<std::string, size_t> last;  // import -> the op that set its asset last
+  for (size_t i = 0; i < doc.ops.size(); ++i) {
+    const Op& o = doc.ops[i];
+    if (o.type == "import" && o.data.contains("asset")) last[o.id] = i;
+    else if (o.type == "edit" && !deleted.count(o.id) && o.data["set"].contains("asset") && last.count(o.data.value("target", ""))) last[o.data.value("target", "")] = i;
+  }
+  for (const auto& [import, i] : last) {
+    if (i >= doc.persisted_ops() || deleted.count(import)) continue;  // not saved yet: rewritten in place (rebase_asset_paths)
+    const json asset = asset_of(doc, import);
+    if (!asset.is_object() || asset.value("storage", "linked") == "embedded") continue;
+    const fs::path found = locate_asset(doc, asset);  // where the document finds it from its own folder now
+    if (found.empty()) continue;
+    json moved = asset;
+    moved["abs"] = utf8(fs::absolute(found).lexically_normal());
+    if (const std::string rel = relative_to(found, base); rel.empty()) moved.erase("path");
+    else moved["path"] = rel;
+    if (moved != asset) out.push_back(design::make_edit_op(import, {{"asset", moved}}));
+  }
+  return out;
 }
 
 void rebase_asset_paths(Document& doc, const fs::path& dir) {

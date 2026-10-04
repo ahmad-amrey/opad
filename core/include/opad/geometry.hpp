@@ -42,6 +42,8 @@ Bnd_Box tight_bbox(const TopoDS_Shape& shape);
 void warm_tight_bboxes(const Document& doc, const std::vector<std::string>& keys, const std::function<bool()>& cancelled = {});
 // The keys among these whose tight box is not measured yet (a lookup each: fine on the UI thread).
 std::vector<std::string> missing_tight_bboxes(const Document& doc, const std::vector<std::string>& keys);
+// A body entry's tight box in its own frame, measured once per key (workers only).
+Bnd_Box key_tight_bbox(const Document& doc, const std::string& key);
 // exact=false: a turned node gets the turned corners of its shape's cached tight box (unions over many bodies).
 Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id, bool exact = true);
 // Triangulation-only bodies use facet, facet-side and mesh-node ordinals.

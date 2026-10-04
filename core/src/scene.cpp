@@ -177,6 +177,7 @@ json Scene::tree_json(int max_depth) const {
     if (n->kind == Node::Kind::Body) {
       j["representation"] = n->representation;
       if(!n->raster.is_null()) j["raster"] = n->raster;
+      if (!n->canvas.is_null()) j["canvas"] = n->canvas;
       j["key"] = n->body_key;
       auto it = instance_count.find(n->body_key);
       j["instances"] = it == instance_count.end() ? 1 : it->second;
@@ -297,6 +298,7 @@ struct SceneBuilder::Impl {
   }
 
   std::string asset_file;  // the linked asset whose nodes are being built (its path, for unresolved reasons)
+  json canvas;             // the import's "canvas" object (opad/canvas.hpp), given to its picture
   void build_nodes(const json& nodes, const std::string& parent, const std::string& op_id, const std::string& op_type) {
     for (const auto& jn : nodes) {
       Node n;
@@ -309,6 +311,7 @@ struct SceneBuilder::Impl {
       n.name = jn.value("name", n.kind == Node::Kind::Body ? "Body" : "Component");
       n.representation = jn.value("representation", "solid");
       n.raster = jn.value("raster", json());
+      if (n.representation == "image" && n.raster.is_object()) n.canvas = canvas.is_object() ? canvas : json::object();
       if (jn.contains("transform")) n.local = Mat4::from_json(jn["transform"]);
       if (jn.contains("color") && jn["color"].is_array() && jn["color"].size() == 3) {
         n.has_color = true;
@@ -465,8 +468,10 @@ struct SceneBuilder::Impl {
       asset_file.clear();
       if (asset.is_object() && asset.value("storage", "linked") != "embedded")
         asset_file = asset.value("path", asset.value("abs", d.value("source", std::string("?"))));
+      canvas = d.value("canvas", json());
       build_nodes(d.value("nodes", json::array()), parent, id, type);
       asset_file.clear();
+      canvas = nullptr;
     } else if (type == "reparent") {
       Node* n = target_of(id, type, d);
       if (!n) return;

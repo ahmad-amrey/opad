@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QStandardItemModel>
 #include <QFileInfo>
@@ -17,6 +18,8 @@
 #include <functional>
 #include <set>
 
+#include "AssetMonitor.hpp"
+#include "AssetsArea.hpp"
 #include "Jobs.hpp"
 #include "KicadBoards.hpp"
 #include "Viewport.hpp"
@@ -174,7 +177,37 @@ OPAD_BENCH(OPAD_BENCH_COLORS, colors) {
       if (!drawn(red) || !drawn(gold) || drawn(grey)) return (void)fail("the groups did not follow the body's new colour");
       if (redAfter < 500 || goldAfter < goldBefore / 2) return (void)fail("the red body or its gold top does not show");
       trace::log("bench: colors OBJ material kept as shown, own face colour drawn as its own group, body recoloured keeps it PASS");
-      QCoreApplication::exit(0);
+      // Looks reach the face colour's group too: a fade (a syncing asset, an explode) and a ghost (an active component).
+      Viewport* view = w.m_viewport;
+      const std::string id = w.m_doc->scene.all_bodies().front();
+      auto alphas = [view, id](double transparency) {
+        const auto t = view->drawnTransparencies(id);
+        return t.size() == 2 && std::all_of(t.begin(), t.end(), [&](double v) { return std::abs(v - transparency) < 0.01; });
+      };
+      LookDelta fade;
+      fade.fade = 0.45;
+      QObject::connect(view, &Viewport::looksApplied, view, [view, id, fail, alphas, drawn, gold, red] {
+        const bool faded = alphas(0.55) && drawn(gold) && drawn(red);
+        trace::log(QString("bench: colors: faded, the gold group follows the fade %1").arg(faded ? "PASS" : "FAIL"));
+        LookDelta ghost;
+        ghost.ghost = true;
+        QObject::connect(view, &Viewport::looksApplied, view, [view, id, fail, alphas, drawn, gold, red, faded] {
+          const auto colors = view->drawnColors(id);
+          const auto t = view->drawnTransparencies(id);
+          const bool ghosted = colors.size() == 2 && !drawn(gold) && t.size() == 2 && t[0] > 0.5 && alphas(t[0]);
+          trace::log(QString("bench: colors: ghosted, the gold group drawn as the ghost (transparency %1) %2").arg(t.empty() ? -1 : t[0]).arg(ghosted ? "PASS" : "FAIL"));
+          QObject::connect(view, &Viewport::looksApplied, view, [fail, alphas, drawn, gold, red, faded, ghosted] {
+            const bool back = alphas(0) && drawn(gold) && drawn(red);
+            trace::log(QString("bench: colors: looks cleared, gold and red opaque again %1").arg(back ? "PASS" : "FAIL"));
+            if (!faded || !ghosted || !back) return (void)fail("a face colour's group did not follow the body's look");
+            QCoreApplication::exit(0);
+          }, Qt::SingleShotConnection);
+          view->clearLookLayer(LookSource::Activation);
+          view->clearLookLayer(LookSource::Explode);
+        }, Qt::SingleShotConnection);
+        view->setLookLayer(LookSource::Activation, {{id, ghost}});
+      }, Qt::SingleShotConnection);
+      view->setLookLayer(LookSource::Explode, {{id, fade}});
     });
   });
   return true;
@@ -225,7 +258,8 @@ OPAD_BENCH(OPAD_BENCH_KICAD, kicad) {
                      "%9 downloadable, downloaded %10, model folders %11")
                  .arg(phase).arg(board).arg(models).arg(keys.size()).arg(placeholders).arg(layers).arg(w.m_viewport->displayedCount()).arg(shown)
                  .arg(downloadable).arg(downloaded).arg(dirs.join(';')));
-  if (!board || layers != 3 || w.m_viewport->displayedCount() != shown) return fail("board, layers or display");
+  // Edge.Cuts, Outline, the two courtyards and the mounting hole (UI-134)
+  if (!board || layers != 5 || w.m_viewport->displayedCount() != shown) return fail("board, layers or display");
   switch (phase++) {
     case 0:  // the settings folder's model on both footprints, boxes for the other two; the library one is fetched
       if (models != 2 || keys.size() != 1 || placeholders != 2 || dirs.isEmpty()) return fail("the model in the settings folder was not shared by both footprints");
@@ -292,8 +326,9 @@ OPAD_BENCH(OPAD_BENCH_KICAD, kicad) {
 // OPAD_BENCH_KICAD_CLI=<prefix> (UI-73), on a document beside a board (tools/gui_benches.py writes both, with a stand-in
 // kicad-cli as OPAD_KICAD_CLI and the settings kicad/reader=kicad-cli, kicad/tracks=true): the import dialog offers KiCad's
 // export with its extras (<prefix>.dialog.png); the board imported through it is linked, read from the STEP kicad-cli made
-// (asked for the tracks, at the reader's origin), every footprint a component named after it (<prefix>.png); saved and
-// reopened with that STEP gone, the read remembered shows it as synced; with the memory gone too, kicad-cli makes it again.
+// (asked for the tracks, at the reader's origin), every footprint a component named after it (<prefix>.png), the board and the
+// 3D model it names watched (UI-68); saved and reopened with that STEP gone, the read remembered shows it as synced; with the
+// memory gone too, kicad-cli makes it again.
 OPAD_BENCH(OPAD_BENCH_KICAD_CLI, kicad_cli) {
   const QString prefix = value;
   static int phase = 0;
@@ -367,7 +402,17 @@ OPAD_BENCH(OPAD_BENCH_KICAD_CLI, kicad_cli) {
         w.m_viewport->fitAll();
         QTimer::singleShot(600, &w, [&w, prefix, derived, fail] {
           if (!w.m_viewport->grabImage().save(prefix + ".png")) return (void)fail("frame");
-          trace::log("bench: kicad-cli board read through KiCad's export, linked, parts named after their footprints PASS");
+          {  // the monitor watches the board and the 3D model it names (UI-68)
+            QStringList watched;
+            for (AreaController* a : w.m_areas)
+              if (auto* area = qobject_cast<AssetsArea*>(a)) watched = area->monitor()->watched();
+            const QString dir = QFileInfo(w.m_doc->path()).absolutePath();
+            auto has = [&watched](const QString& path) {
+              return std::any_of(watched.begin(), watched.end(), [&](const QString& p) { return QDir::cleanPath(p).compare(QDir::cleanPath(path), Qt::CaseInsensitive) == 0; });
+            };
+            if (!has(dir + "/board.kicad_pcb") || !has(dir + "/part.step")) return (void)fail("the board and its model are not watched: " + watched.join(", "));
+          }
+          trace::log("bench: kicad-cli board read through KiCad's export, linked, parts named after their footprints, the board and its model watched PASS");
           try {
             w.m_doc->save();
           } catch (const std::exception& e) {

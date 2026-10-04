@@ -249,7 +249,12 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   Status, sync (after the file changed), embed (an editable copy) and pack (a copy in `assets/`) are the `opad-cli
   asset` command.
 - Pictures (`.png .jpg .bmp .gif .webp`) import as a flat canvas on XY at the picture's resolution (96 dpi unless the
-  file says); `transform` places and scales it.
+  file says), or on `plane` at `width` mm (with `center: true` its centre on the plane's origin). The headless `canvas`
+  command places it in its plane (`set`: `x`, `y` of its centre, `width` or `height` keeping its proportions, both to
+  stretch it, `angle` in degrees), calibrates it (`points` [a, b] of it and their real `distance`), aligns it
+  (`points` [a, a_to, b, b_to]: its points onto model points), sets its flags (`set`: `selectable`, `display_through`,
+  `flip`), replaces its picture in place and turns a sketch's backdrop images into canvases (`from_backdrop`); `info`
+  reports all of it. Opacity and lock are `appearance`.
 - Which feature made a face: `entity_details` of a face or edge has `created_by` (`op`, `name`, `kind`, `category`:
   body, boss, pocket, hole, groove, fillet, chamfer, shell, draft, press_pull, pattern, mirror, combine, split,
   transform or imported). `related` with `refs` lists, for the picked faces/edges, each owning feature with every

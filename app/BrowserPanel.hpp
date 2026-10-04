@@ -36,6 +36,7 @@ class BrowserTree : public QTreeWidget {
   void mousePressEvent(QMouseEvent* e) override;
   void mouseMoveEvent(QMouseEvent* e) override;
   void mouseDoubleClickEvent(QMouseEvent* e) override;
+  void startDrag(Qt::DropActions actions) override;  // not with a read-only row (Decoration::readOnly)
   void drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const override;
  private:
   std::function<void()> badgeClick(const QPoint& pos) const;  // a decorator's clickable badge under pos

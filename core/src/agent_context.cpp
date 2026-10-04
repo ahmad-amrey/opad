@@ -8,6 +8,7 @@
 #include "opad/design/provenance.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
+#include "opad/design/sketch_reference.hpp"
 #include <BRepCheck_Analyzer.hxx>
 #include <TopExp_Explorer.hxx>
 #include <algorithm>
@@ -216,9 +217,9 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   }),false},run([](const Document& d,const Scene& s,const json& a){return agent::query_entities(d,s,a);}));
   add({"entity_details","Exact geometry and paged adjacency with a checked reference token",bounded({{"ref",{{"type",{"string","object"}}}},{"feature",{{"type","string"}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::entity_details(d,s,a);}));
   add({"resolve_reference","Check a reference token, optionally remap only a unique proven geometric match",{{"doc",{{"type","string"}}},{"reference",{{"type","object"},{"required",{"document","ref"}}}},{"remap",{{"type","boolean"},{"default",false}}}},false},run([](const Document& d,const Scene& s,const json& a){return agent::resolve_reference(d,s,a.at("reference"),a.value("remap",false));}));
-  add({"validate","Exact solid counts, volumes, areas and kernel validity in bounded pages. checks adds interference (overlapping pairs with their overlap volume and box; with clearance_mm, pairs closer than that; ignore lists pairs meant to overlap) and print (overhangs past overhang_deg against build_direction, walls thinner than min_wall_mm, build-plate contact, thin features)",
+  add({"validate","Exact solid counts, volumes, areas and kernel validity in bounded pages. checks adds interference (overlapping pairs with their overlap volume and box; with clearance_mm, pairs closer than that; ignore lists pairs meant to overlap; against: only pairs with one side in these, e.g. a board) and print (overhangs past overhang_deg against build_direction, walls thinner than min_wall_mm, build-plate contact, thin features)",
     bounded({{"select",{{"type","array"},{"items",{{"type","string"}}}}},{"checks",{{"type","array"},{"items",{{"type","string"},{"enum",{"solid","interference","print"}}}},{"default",{"solid"}}}},
-      {"clearance_mm",{{"type","number"},{"minimum",0}}},{"ignore",{{"type","array"},{"items",{{"type","array"},{"items",{{"type","string"}}},{"minItems",2},{"maxItems",2}}}}},
+      {"clearance_mm",{{"type","number"},{"minimum",0}}},{"against",{{"type","array"},{"items",{{"type","string"}}}}},{"ignore",{{"type","array"},{"items",{{"type","array"},{"items",{{"type","string"}}},{"minItems",2},{"maxItems",2}}}}},
       {"max_pairs",{{"type","integer"},{"minimum",1}}},{"build_direction",{{"anyOf",{{{"type","string"},{"enum",{"+x","-x","+y","-y","+z","-z"}}},{{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}}}}},
       {"overhang_deg",{{"type","number"},{"minimum",0},{"maximum",89}}},{"min_wall_mm",{{"type","number"},{"minimum",0}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::validate_design(d,s,a);}));
   add({"feature_schema","Input schema, defaults and an example for one supported feature kind",{{"kind",{{"type","string"}}}},false},[](Document*,const json& a){
@@ -246,8 +247,9 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   editInputs["properties"]["round"]={{"type","boolean"},{"default",true}};
   editInputs["properties"]["boundary"]={{"type","integer"},{"minimum",1}};
   editInputs["properties"]["at"]={{"type","array"},{"items",{{"type","number"}}},{"minItems",2},{"maxItems",2}};
-  add({"sketch_tool","Modify sketch geometry using the same offset, transform, repair and chain algorithms as the desktop. Coordinates are local mm; angle inputs accept degree expressions.",
-    {{"doc",{{"type","string"}}},{"target",{{"type","string"}}},{"tool",{{"type","string"},{"enum",{"offset","move","copy","rotate","scale","mirror","split","extend","heal","break_intersections","chamfer","delete"}}}},
+  editInputs["properties"]["source"]={{"type","object"}};editInputs["properties"]["linked"]={{"type","boolean"},{"default",true}};
+  add({"sketch_tool","Modify sketch geometry using the same offset, transform, repair and chain algorithms as the desktop. Coordinates are local mm; angle inputs accept degree expressions. project: inputs.source ({asset,kicad,node} of a KiCad board, a reference, {sketch}) as linked curves.",
+    {{"doc",{{"type","string"}}},{"target",{{"type","string"}}},{"tool",{{"type","string"},{"enum",{"offset","move","copy","rotate","scale","mirror","split","extend","heal","break_intersections","chamfer","delete","project"}}}},
      {"entities",{{"type","array"},{"items",{{"type","integer"},{"minimum",1}}},{"maxItems",10000}}},{"chain",{{"type","boolean"},{"default",false}}},{"inputs",editInputs},{"by",{{"type","string"}}}},true},
     [](Document* doc,const json& a){
       if(!doc)throw Error("Pass a document or bind a live session");
@@ -269,6 +271,10 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
       else if(tool=="break_intersections")design::break_intersections(sk,ids);
       else if(tool=="chamfer")design::chamfer_corner(sk,single(),length("first",1),length("second",1));
       else if(tool=="delete")for(int id:ids)sk.remove(id);
+      else if(tool=="project"){  // UI-134: a board's outline, holes or parts by node, kept by a sync, as the desktop projects them
+        const auto source=inputs.value("source",json());if(!source.is_object())throw Error("project: inputs.source names the geometry to project");
+        design::append_reference(sk,design::derive_sketch(*doc,scene,item->frame,source,"project"),source,"project",inputs.value("linked",true));
+      }
       else throw Error("Unsupported sketch tool: "+tool);
       sk.validate();return design::apply_ops(*doc,{design::make_edit_op(target,{{"geometry_delta",design::sketch_delta(item->geometry,sk.to_json())}})},a.value("by",""));
     });

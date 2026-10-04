@@ -65,6 +65,10 @@ struct Out {
 
 Out compute_feature(const Ctx& ctx, const std::string& kind, const json& inputs);
 
+// Whether a reference names a linked part (or a component of them) that is not loaded (its file missing, not trusted yet):
+// nothing is known of it, so a sketch keeps its projection as last computed instead of saving an error (compute_sketch).
+bool unloaded_link(const Scene& scene, const json& ref);
+
 // A plane through `origin` with that normal (TODO 10 B5). Its x is `x` laid onto the plane, or when none is given
 // world X laid onto it (world Y when X is the normal), so the same inputs always give the same frame.
 Frame plane_through(const gp_Pnt& origin, const gp_Vec& normal, const gp_Vec* x = nullptr);

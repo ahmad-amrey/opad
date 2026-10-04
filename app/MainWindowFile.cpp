@@ -18,6 +18,7 @@
 
 #include <memory>
 
+#include "AssetsArea.hpp"
 #include "FileLocation.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -37,18 +38,7 @@ void MainWindow::buildFileActions() {
   });
   addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {
     QString p = QFileDialog::getOpenFileName(this, tr("Import design"), m_settings.value("ui/lastDir").toString(), tr("Design files (%1)").arg(fileFilter(false)));
-    if (p.isEmpty()) return;
-    m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
-    auto ids = currentNodeIds();
-    QString parent;  // the active component's (AppDocument::startImport) unless the root is active and one is selected
-    if (m_doc->activeComponent().empty() && ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component &&
-        QMessageBox::question(this, tr("Import"), tr("Import under the selected component “%1”?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes)
-      parent = QString::fromStdString(ids[0]);
-    const QString suffix = QFileInfo(p).suffix().toLower();
-    if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
-    if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
-    beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); }, tr("Importing %1").arg(QFileInfo(p).fileName()), tr("Imported %1 · %2 bodies").arg(QFileInfo(p).fileName()));
-    m_doc->startImport(p, parent, {}, {}, suffix == "kicad_pcb" && KicadDialog::linked());  // KiCad's export: linked to its board
+    if (!p.isEmpty()) importPath(p, -1);
   });
   addAction("file.importdoc", tr("Save as OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] { if (m_doc->browse) saveViewerAs(); });
   addAction("file.save", tr("&Save"), "save", QKeySequence("Ctrl+S"), [this] {
@@ -83,6 +73,27 @@ void MainWindow::buildFileActions() {
     statusBar()->showMessage(tr("Document closed"), 4000);
   });
   addAction("file.quit", tr("&Quit"), "", QKeySequence::Quit, [this] { close(); })->setMenuRole(QAction::QuitRole);
+}
+
+void MainWindow::importPath(const QString& p, int mode) {
+  m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
+  auto ids = currentNodeIds();
+  QString parent;  // the active component's (AppDocument::startImport) unless the root is active and one is selected
+  if (m_doc->activeComponent().empty() && ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component && !m_doc->node(ids[0])->linked &&
+      QMessageBox::question(this, tr("Import"), tr("Import under the selected component “%1”?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes)
+    parent = QString::fromStdString(ids[0]);
+  const QString suffix = QFileInfo(p).suffix().toLower();
+  const bool drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";
+  if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
+  bool link = mode == 1 || (suffix == "kicad_pcb" && KicadDialog::linked());  // KiCad's export: linked to its board
+  if (!link && mode < 0) {
+    const assets::Mode chosen = assets::askImport(this, p);
+    if (chosen == assets::Mode::Cancel) return;
+    link = chosen == assets::Mode::Link;
+  }
+  if (drawing) return importDrawing(p, parent, link);
+  beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); }, tr("Importing %1").arg(QFileInfo(p).fileName()), tr("Imported %1 · %2 bodies").arg(QFileInfo(p).fileName()));
+  m_doc->startImport(p, parent, {}, {}, link);
 }
 
 bool MainWindow::isEditAction(const QString& id) {
@@ -380,7 +391,7 @@ void MainWindow::beginLoad(std::function<void()> after, const QString& title, co
     }
     if(ok) {
       m_doc->storeViewerCache(m_jobs);  // a slow viewer read, now meshed: the next open of the file skips it
-      if(!m_benchSelect) QTimer::singleShot(0, this, [this] { offerKicadModels(); offerAssetTrust(); });  // library models, linked files (benches call them)
+      if(!m_benchSelect) QTimer::singleShot(0, this, [this] { offerKicadModels(); if(trustAfterLoad()) offerAssetTrust(); });  // library models, linked files (benches call them)
       if(!m_doc->path().isEmpty()) m_viewPath=QFileInfo(m_doc->path()).absoluteFilePath();
       if((!m_benchSelect || qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
         try {
@@ -429,6 +440,11 @@ void MainWindow::dropEvent(QDropEvent* e) {
   for (const QUrl& u : e->mimeData()->urls()) {
     QString p = u.toLocalFile();
     QString ext = QFileInfo(p).suffix().toLower();
+    if (QAction* canvas = action("canvas.insert"); canvas && m_doc->hasDocument && !m_doc->browse && QStringList{"png", "jpg", "jpeg", "bmp", "gif", "webp"}.contains(ext)) {
+      canvas->setProperty("file", p);  // a picture dropped onto a document: an image canvas in it (UI-70)
+      canvas->trigger();
+      return;
+    }
     if (ext == "opad" || fileFilter(false).split(' ').contains("*." + ext)) { openPath(p); return; }
   }
 }

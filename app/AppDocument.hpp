@@ -59,6 +59,9 @@ class AppDocument : public QObject {
   // guard (DiskSync's Overwrite, asked first).
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0, bool overwriteDisk=false);
+  // Before saving at `destination`: linked files' saved paths follow it as one undo step (opad::asset_path_edits), unsaved
+  // ones are rewritten (opad::rebase_asset_paths).
+  void followAssetPaths(const QString& destination);
   opad::json run(const std::string& command, opad::json args, const QString& label = {});  // label: the undo step's, else by command; a lock refusal comes back as lockedMessage
   // A change refused by a lock (UI-37) in the shown language: the node, what holds its lock and the change refused.
   static QString lockedMessage(const opad::LockedError& e);
@@ -96,11 +99,12 @@ class AppDocument : public QObject {
   void storeViewerCache(JobRunner* jobs);
   bool converting() const { return m_converting; }
   // A drawing goes where `placement` puts its XY plane and origin, after `plane` (resolved on the worker) if given.
-  // `link`: a linked asset (opad::link_file) rather than a copy.
-  void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {}, bool link = false);
+  // `link`: a linked asset (opad::link_file) rather than a copy. `canvas`: a picture's canvas options (ImportOptions::canvas).
+  void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {}, bool link = false,
+                   const opad::json& canvas = {});
   // Reads the linked files whose bodies are not loaded (missing then, or not trusted) on a worker; `trustAll` for files the
-  // user has just agreed to. The bodies join the document on the UI thread; assetStates is updated.
-  void loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done = {});
+  // user has just agreed to. The bodies join the document on the UI thread; assetStates is updated. `only`: those imports.
+  void loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done = {}, const std::vector<std::string>& only = {});
   // Linked files: the folders trusted in the settings (assets/trusted) and this machine's KiCad options.
   static opad::AssetOptions assetOptions();
   static QString assetSummary(const opad::json& states);  // "Linked files: 1 changed since the last sync, ..." or empty

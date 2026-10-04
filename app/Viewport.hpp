@@ -174,9 +174,22 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
   int displayedCount() const { return static_cast<int>(m_items.size()); }
+  // What the view did with bodies since the document opened (benches: a sync re-meshes only the shapes that changed, a
+  // moved part is relocated, never displayed again): bodies meshed (one per key), displayed, relocated in place.
+  struct DisplayStats { int meshed = 0, displayed = 0, relocated = 0; };
+  DisplayStats displayStats() const { return {m_meshCount.load(), m_displayCount, m_relocateCount}; }
+  // Small parts hidden while the view moves (ViewportSmallParts.cpp): bodies whose box's longest side is under `mm` are
+  // hidden (LookSource::Navigation) from the first frame the camera moves until it has been still for 300 ms, selected
+  // ones excepted; 0 turns it off. A camera change outside a frame (benches) is reported with cameraMoving().
+  void setSmallPartFilter(double mm);
+  double smallPartFilter() const { return m_smallParts; }
+  bool smallPartsHidden() const { return m_smallHidden; }
+  int smallPartCount() const { return m_smallCount; }  // hidden by the last move
+  void cameraMoving();
   // The colours a displayed body's shaded presentation fills its groups with (sRGB): one, or the body's own and each face
   // colour (UI-74). Benches check what is drawn with it.
   std::vector<std::array<double, 3>> drawnColors(const std::string& nodeId) const;
+  std::vector<double> drawnTransparencies(const std::string& nodeId) const;  // the same groups' (front material)
   // Pictures on bodies (SVG images, canvases) decoded on workers so far (UI-71), and whether a displayed body shows one.
   int rastersDecoded() const { return m_rastersDecoded; }
   bool showsPicture(const std::string& nodeId) const;
@@ -205,6 +218,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::unordered_map<std::string, opad::Vec3> shownOffsets() const;
   opad::Vec3 shownOffset(const std::string& node) const;
   opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
+  Graphic3d_ZLayerId throughLayer() const { return m_throughLayer; }  // where a canvas shown through the model is drawn
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
   void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
@@ -369,6 +383,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showOverlay(const Handle(AIS_InteractiveObject)& obj);
   void updateOverlay(const Handle(AIS_InteractiveObject)& obj);
   void removeOverlay(const Handle(AIS_InteractiveObject)& obj);
+  void moveOverlay(const Handle(AIS_InteractiveObject)& obj, const gp_Trsf& to);  // its location only: nothing recomputed
   const Tokens& tokens() const { return m_tokens; }
   // Sketch "Project": lets body edges be hovered while the editor keeps the clicks, and hands over the edge
   // under the mouse (world coordinates).
@@ -383,6 +398,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   size_t previewSegments() const;
   size_t previewParts() const { return m_previewBodies.size(); }
   void showBackdrop(const Handle(AIS_InteractiveObject)& obj);
+  // A canvas dragged by its handles (CanvasEditor): drawn at `world` through its local transformation (no remesh; picking
+  // and its selection glow follow; stretched out of its proportions, its one rectangle is rebuilt at that aspect) until
+  // endPlacementPreview, or until a scene sync puts it where the document says. False: not displayed, or not placed rigidly.
+  bool previewPlacement(const std::string& node, const opad::Mat4& world);
+  void endPlacementPreview(const std::string& node);
+  bool shownPlacement(const std::string& node, opad::Mat4& world) const;  // what it is drawn at now (benches)
   opad::json sectionState() const;
   void restoreSection(const opad::json& state);
   void benchDesignShot(const QString& path);  // OPAD_BENCH_DESIGN: fit, redraw, dump the 3D frame
@@ -529,11 +550,23 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::string raster;  // its picture (rasterKey), empty without one
     BodyLook look;      // as applied (ViewportLooks.cpp)
     bool rigid = true;  // the world placement is the object's local transformation (else baked into `located`)
+    // A canvas stretched out of its picture's proportions (free aspect) is drawn rigidly too: `located` is its rectangle
+    // `stretch` times as tall, `placement` the similarity left of its world matrix.
+    double stretch = 1;
+    gp_Trsf placement;  // its local transformation for `world` (rigid), before a look's offset
   };
+  // Where a rigidly drawn body goes for `world`: its local transformation and, for a canvas, its stretch (1 in its
+  // picture's proportions). False: `world` is neither rigid nor a stretched canvas's.
+  static bool rigidPlacement(const opad::Node& n, const opad::Mat4& world, gp_Trsf& placement, double& stretch);
+  // The item drawn at `world` without displaying it again: its location (with its look's offset), and a canvas whose stretch
+  // changed gets its rectangle at the new one (one face, meshed here). False: it cannot be placed that way.
+  bool relocate(Item& item, const opad::Node& n, const opad::Mat4& world);
   // looks (ViewportLooks.cpp)
   std::array<std::unordered_map<std::string, LookDelta>, kLookSources> m_lookLayers;
   bool m_ghostsPickable = false, m_edgeHover = false;
   void referencesChanged(bool wasPickable);  // ghostsPickable() may have changed: ghosts (de)activated by the look job
+  // Canvases shown through the model (opad/canvas.hpp): after the model, no depth test, no depth written (initViewer).
+  Graphic3d_ZLayerId m_throughLayer = Graphic3d_ZLayerId_Topmost;
   Job* m_lookJob = nullptr;
   std::deque<std::string> m_lookQueue;  // displayed bodies whose look may have changed, applied in this order
   std::unordered_set<std::string> m_lookQueued;
@@ -666,6 +699,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Zoom refinement (ViewportRefine.cpp): finer drawing arrays per key for bodies seen close up, bounded in total.
   struct Refined { double deflection = 0; std::shared_ptr<const BodyPrs> prs; qint64 used = 0; };
   std::map<std::string, Refined> m_refined;
+  std::atomic<int> m_meshCount{0};
+  int m_displayCount = 0, m_relocateCount = 0;
+  double m_smallParts = 0;
+  bool m_smallHidden = false;
+  int m_smallCount = 0;
+  QTimer m_smallTimer;
+  Graphic3d_WorldViewProjState m_smallCamera;
+  std::unordered_map<std::string, double> m_partSizes;  // body key -> its box's longest side (the cached view box)
+  void restoreSmallParts();
   QTimer m_refineTimer;
   Graphic3d_WorldViewProjState m_refineCamera;
   Job* m_refineJob = nullptr;

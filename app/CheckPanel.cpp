@@ -132,6 +132,12 @@ opad::json CheckPanel::options() const {
   return {{"build_direction", m_direction->currentData().toString().toStdString()}, {"overhang_deg", m_overhang->property("stored").toDouble()}, {"min_wall_mm", m_minWall->property("stored").toDouble()}};
 }
 
+void CheckPanel::setClearance(double mm) {
+  m_clearance->setProperty("stored", mm);
+  QSignalBlocker block(m_clearance);
+  m_clearance->setValue(units::toDisplay(units::Kind::Length, mm));
+}
+
 void CheckPanel::setRunning(const QString& status) {
   m_result = opad::json();
   m_findings.clear();

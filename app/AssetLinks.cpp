@@ -1,5 +1,5 @@
-// Linked files (opad/assets.hpp) in the window: the question before reading files outside the document's project, and the
-// bench that opens, trusts, saves, syncs and links them.
+// Linked files (opad/assets.hpp) in the window: the question after a load before reading files outside the document's project
+// (AssetsArea.cpp asks it), and the bench that opens, trusts, saves, syncs and links them.
 #include "MainWindow.hpp"
 #include "BenchRegistry.hpp"
 
@@ -12,52 +12,31 @@
 #include <QPushButton>
 #include <QStatusBar>
 #include <QTimer>
+#include <QToolButton>
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 
 #include "AppDocument.hpp"
+#include "AssetsArea.hpp"
 #include "Jobs.hpp"
 #include "Viewport.hpp"
 #include "opad/assets.hpp"
 
-// A document from elsewhere must not make OPAD open files of its choosing (a network share hands over the user's
-// credentials): the linked files outside its project are read only once the user says so, here or for good (settings).
+// The question about the linked files outside the document's project after a load (assets::askTrust, AssetsArea.cpp).
 bool MainWindow::offerAssetTrust() {
-  QStringList files, folders;
-  for (const auto& s : m_doc->assetStates) {
-    if (s.value("state", "") != "untrusted") continue;
-    const QString file = QString::fromStdString(s.value("file", s.value("path", std::string())));
-    files << QDir::toNativeSeparators(file);
-    if (const QString folder = QFileInfo(file).absolutePath(); !folders.contains(folder)) folders << folder;
-  }
-  if (files.isEmpty()) return false;
-  QMessageBox box(QMessageBox::Question, tr("Linked files"),
-                  tr("This document links files outside its project folder:\n\n%1\n\nRead them?").arg(files.mid(0, 6).join('\n') + (files.size() > 6 ? "\n…" : "")),
-                  QMessageBox::NoButton, this);
-  auto* once = box.addButton(tr("Read them"), QMessageBox::AcceptRole);
-  auto* always = box.addButton(folders.size() == 1 ? tr("Always trust this folder") : tr("Always trust these folders"), QMessageBox::AcceptRole);
-  box.addButton(tr("Not now"), QMessageBox::RejectRole);
-  box.exec();
-  if (box.clickedButton() == always) {
-    QStringList trusted = m_settings.value("assets/trusted").toStringList();
-    for (const QString& f : folders)
-      if (!trusted.contains(f)) trusted << f;
-    m_settings.setValue("assets/trusted", trusted);
-  } else if (box.clickedButton() != once) {
-    return true;
-  }
-  m_doc->loadAssets(m_jobs, box.clickedButton() == once, [this](bool ok, const QString& error) {
-    if (!ok) statusBar()->showMessage(error, 6000);
-  });
-  return true;
+  return assets::askTrust(this, m_doc, m_jobs, [this](const QString& error) { statusBar()->showMessage(error, 6000); });
 }
 
+bool MainWindow::trustAfterLoad() const { return !m_doc->lastLoad.contains("op"); }  // an import's report names its op
+
 // OPAD_BENCH_ASSETS=<png>: tools/gui_benches.py writes a document beside parts/part.step (changed since it was linked) that
-// also links ../outside/other.step, and parts/third.step. Opened: the part's bodies come from its file (state "changed"),
-// the outside file is not read (its bodies missing) and the question about it is asked; read once trusted, its bodies are
-// displayed; saved, the file holds no body of either; a sync planned on a worker commits as one edit of the import that
-// keeps the node and changes its body, and undoes and redoes; third.step imported linked shows its bodies, none stored; a
-// picture linked last is shown on its canvas (its colour in the frame) while the op keeps none of its bytes.
+// also links ../outside/other.step, and parts/third.step. Opened: the part's bodies come from its file (state "changed", a toast
+// offers to sync it), the outside file is not read (its bodies missing, its badge offers to read it) and the question about it
+// is asked; read once trusted, its bodies are displayed; saved, the file holds no body of either; a sync planned on a worker
+// commits as one edit of the import that keeps the node and changes its body, and undoes and redoes; third.step imported
+// linked shows its bodies, none stored; a picture linked last is shown on its canvas (its colour in the frame) while the op
+// keeps none of its bytes.
 OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
   const QString shot = value;
   static int phase = 0;
@@ -107,6 +86,22 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
     if (state("part.step") != "changed" || state("other.step") != "untrusted") return fail("states");
     if (partMissing || !otherMissing) return fail("the part read, the outside file not");
     if (w.m_doc->isDirty() || w.m_viewport->displayedCount() != 1) return fail("opened dirty, or not one body displayed");
+    {  // The asset UI (UI-68): the load's toast offers to sync the changed file; the outside file's badge offers to read it.
+      AssetsArea* area = nullptr;
+      for (AreaController* a : w.m_areas)
+        if (auto* found = qobject_cast<AssetsArea*>(a)) area = found;
+      const QList<Toast*> toasts = w.m_toasts->toasts();
+      const bool toast = std::any_of(toasts.begin(), toasts.end(), [](Toast* t) {
+        return t->text() == "part.step changed since the last sync" && t->actionButton() && t->actionButton()->text() == "Sync";
+      });
+      std::string body;
+      for (const auto& id : w.m_doc->scene.all_bodies())
+        if (w.m_doc->node(id)->source_op == other) body = id;
+      browser::Decoration d;
+      if (area) area->decorate({body, "body", {}, w.m_doc->node(body)}, d);
+      if (!toast || d.badges.isEmpty() || d.badges[0].text != "not read" || !d.badges[0].clicked || !d.italic) return fail("the changed file's toast, the outside file's badge");
+    }
+    if (!w.trustAfterLoad()) return fail("the open does not ask about the outside file");
     if (!w.offerAssetTrust()) return fail("no question about the outside file");  // dismissed: nothing read
     if (linked(other, otherMissing) != 1 || !otherMissing) return fail("read without the user's answer");
     w.m_doc->loadAssets(w.m_jobs, true, [=, &w](bool ok, const QString& error) {
@@ -169,6 +164,20 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
         if (magenta < frame.width() * frame.height() / 50) return (void)fail("the picture is not shown on its canvas");
         frame.save(QString(shot).replace(".png", ".picture.png"));
         trace::log("bench: assets picture linked, shown on its canvas, its bytes not in the document PASS");
+        // Saved as into a folder deeper down: the saved links follow it as one undo step, the file saved clean.
+        const QString deeper = QFileInfo(w.m_doc->path()).absolutePath() + "/deep/er/design.opad";
+        QDir().mkpath(QFileInfo(deeper).absolutePath());
+        try {
+          w.m_doc->saveAs(deeper);
+        } catch (const std::exception& e) {
+          return (void)fail(QString("save as: ") + e.what());
+        }
+        const opad::Op& last = w.m_doc->doc.ops.back();
+        const opad::json asset = opad::asset_of(w.m_doc->doc, part);
+        trace::log(QString("bench: assets: saved deeper: %1, undo '%2'").arg(QString::fromStdString(asset.value("path", ""))).arg(w.m_doc->undoLabel()));
+        if (last.type != "edit" || asset.value("path", "") != "../../parts/part.step" || w.m_doc->undoLabel() != "Linked file paths" || w.m_doc->isDirty())
+          return (void)fail("Save As elsewhere: the linked paths do not follow as one undo step");
+        trace::log("bench: assets Save As into another folder: the linked paths follow as one undo step PASS");
         QCoreApplication::exit(0);
       });
     });
@@ -177,6 +186,7 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
   const std::string third = import_of("third.step");
   bool missing = true;
   if (third.empty() || linked(third, missing) != 1 || missing || state("third.step") != "ok") return fail("the linked import");
+  if (w.trustAfterLoad()) return fail("an import asks about the outside file again");
   for (const auto& id : w.m_doc->scene.all_bodies())
     if (w.m_doc->node(id)->source_op == third && !w.m_doc->doc.body(w.m_doc->node(id)->body_key)->external) return fail("its body is stored");
   displayed(3, [=, &w](bool shown) {
