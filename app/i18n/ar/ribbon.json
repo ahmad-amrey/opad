@@ -29,5 +29,9 @@
  "Drafting": "الرسم ثنائي الأبعاد",
  "2D drawings (DXF, DWG, SVG): layers, measuring, plotting, and a drawing turned into a sketch to edit. Viewing a drawing comes here.": "الرسومات ثنائية الأبعاد (DXF وDWG وSVG): الطبقات والقياس والطباعة وتحويل الرسم إلى مخطط لتحريره. يأتي عرض أي رسم إلى هنا.",
  "ops: annotation · measurement · view": "العمليات: ملاحظة · قياس · منظر",
- "Save an exploded view first: Exploded view in Design > Assemble, then Save exploded view in its Explode tab.": "احفظ عرضًا مفكَّكًا أولًا: العرض المفكَّك في التصميم > تجميع، ثم حفظ العرض المفكَّك في تبويب التفكيك."
+ "Save an exploded view first: Exploded view in Design > Assemble, then Save exploded view in its Explode tab.": "احفظ عرضًا مفكَّكًا أولًا: العرض المفكَّك في التصميم > تجميع، ثم حفظ العرض المفكَّك في تبويب التفكيك.",
+ "AI integration…": "تكامل الذكاء الاصطناعي…",
+ "I&nsert": "إدراج",
+ "Ve&rsion": "النسخ",
+ "Compare with a file…": "المقارنة مع ملف…"
 }

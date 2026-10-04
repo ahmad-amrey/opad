@@ -141,7 +141,8 @@ class AreaController : public QObject {
 
   // Construction.
   virtual void buildActions() {}  // add commands (services().addAction); after the built-in ones, in area order
-  // Add entries to the menu bar's menus ("file", "edit", "view", "inspect", "design", "tools", "help"), or menus of its own.
+  // Add entries to the menu bar's menus ("file", "edit", "view", "insert", "inspect", "design", "sketch", "version", "tools",
+  // "help"), or menus of its own. Insert: an area's one-click inserts go before its first separator, their submenus after.
   virtual void menus(QMenuBar* bar, const QMap<QString, QMenu*>& menus) {}
   // Add a workspace of the area's own or the contextual tabs it shows (Ribbon.hpp), before the ribbon is built. Where its
   // commands go on the built-in tabs is the window's ribbon table (MainWindowRibbonTable.cpp), by command id.
@@ -178,6 +179,7 @@ bool add(const char* name, Factory factory);                  // static registra
 QStringList names();                                          // registered, sorted
 QStringList clashes();                                        // names registered twice (the first one keeps it)
 std::vector<AreaController*> create(AreaServices& services);  // one of each, by name; the caller owns them
+QAction* firstSeparator(const QMenu* menu);                   // where an entry goes before the menu's first group ends; null: the end
 }  // namespace areas
 
 #define OPAD_AREA(Class) \

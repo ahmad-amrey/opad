@@ -1,5 +1,8 @@
 #include "AreaController.hpp"
 
+#include <QAction>
+#include <QMenu>
+
 namespace {
 // Function-local statics: the registrations are static initialisers in other files, in no particular order.
 QMap<QString, areas::Factory>& factories() {
@@ -32,6 +35,12 @@ std::vector<AreaController*> create(AreaServices& services) {
       out.push_back(area);
     }
   return out;
+}
+
+QAction* firstSeparator(const QMenu* menu) {
+  for (QAction* a : menu->actions())
+    if (a->isSeparator()) return a;
+  return nullptr;
 }
 
 }  // namespace areas

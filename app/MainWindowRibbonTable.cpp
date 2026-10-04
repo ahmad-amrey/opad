@@ -82,8 +82,10 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
   group("review.markup", "notes", tr("Notes"), {{"annotate.add"}, {"annotate.draw"}, {"annotate.resolve", S}, {"annotate.show", S}, {"panel.annotations", S}});
   group("review.markup", "views", tr("Saved views"), {{"view.saveview"}, {"assembly.explodeSave", S}});
   layout.addTab("review", "review.compare", tr("Compare"));
-  group("review.compare", "compare", tr("Compare"), {{"vcs.compare"}, {"vcs.unsavedChanges", S}, {"vcs.previousChange", S}, {"vcs.nextChange", S}});
-  group("review.compare", "versions", tr("Versions"), {{"vcs.panel"}, {"vcs.history", S}, {"vcs.commit", S}, {"vcs.branches", S}, {"vcs.newBranch", S}});
+  group("review.compare", "compare", tr("Compare"),
+        {{"vcs.compare", L, {"vcs.unsavedChanges", "vcs.compareFile"}}, {"vcs.previousChange", S}, {"vcs.nextChange", S}});
+  group("review.compare", "versions", tr("Versions"),
+        {{"vcs.panel"}, {"vcs.history", S}, {"vcs.commit", S}, {"vcs.branches", S}, {"vcs.newBranch", S}, {"file.recover", S}});
   group("review.compare", "remote", tr("Remote"), {{"vcs.pull", S}, {"vcs.push", S}, {"vcs.fetch", S}});
   layout.addTab("review", "review.share", tr("Share"));
   group("review.share", "export", tr("Export"), {{"file.export"}, {"file.exportBom", S}, {"file.screenshot"}, {"drawing2d.plot"}});

@@ -40,6 +40,15 @@ void MainWindow::buildToolsActions() {
     const QString dir = QString::fromStdString(r["dir"].get<std::string>());
     resultToast(tr("Cache cleared: %1").arg(QDir::toNativeSeparators(dir)), dir);
   });
+  // The Tools menu's own entries (Appendix A §4) and the gear menu's: what used to be plain entries of one menu.
+  addAction("tools.ai", tr("AI integration…"), "agent", QKeySequence(), [this] { if (m_agent) m_agent->settings(); });
+  addAction("tools.agentActivity", tr("Agent activity"), "history", QKeySequence(), [this] { if (m_agent) m_agent->showActivity(); });
+  // The files OPAD opens from Explorer (Preferences > Files has the same button); where the system declares them, the page.
+  addAction("tools.fileTypes", tr("File types…"), "open", QKeySequence(), [this] {
+    if (associations::supported()) FileTypesDialog(this).exec();
+    else PreferencesDialog::open(this, "files");
+  });
+  addAction("file.recover", tr("Recover documents…"), "restore", QKeySequence(), [this] { if (m_recovery) m_recovery->offerRecovery(); });
   auto help = [this](const QString& id, const QString& label, const QStringList& keywords, std::function<void()> fn) {
     CommandInfo info;  // with the words the palette finds it by
     info.id = id;
@@ -52,6 +61,10 @@ void MainWindow::buildToolsActions() {
   help("help.aboutqt", tr("About Qt"), {"Qt", "licence", "license", "version"}, [this] { QMessageBox::aboutQt(this); })->setMenuRole(QAction::AboutQtRole);
 }
 
+// The menu bar (UI-104, Appendix A §4): File, Edit, View, Insert, Inspect, Design, Sketch (while sketching), Version, Tools,
+// Help. Edit keeps undoing, selecting and the object's name and history; how things show is View's (Hide, Show notes),
+// notes are Inspect's beside the measuring, inserts have their own menu and the selection filters sit in the ribbon's
+// Select control with their keys 1 to 4. The areas add theirs (AreaController::menus).
 void MainWindow::buildMenus() {
   auto add = [&](QMenu* m, std::initializer_list<const char*> ids) {
     for (const char* id : ids) {
@@ -68,11 +81,12 @@ void MainWindow::buildMenus() {
   m_recentMenu = file->addMenu(tr("Recent"));
   m_recentMenu->setObjectName("recent");
   location::addContextMenus(m_recentMenu, [this](const QString& path, QWidget* parent) { return recentMenu(path, parent); });
-  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "file.savetemplate", "-", "file.export", "file.screenshot", "-", "file.quit"});
+  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "file.savetemplate", "-", "file.export", "file.screenshot", "-", "file.recover", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.undo", "edit.redo", "edit.repeat", "-", "edit.selectall", "edit.invert", "edit.selectparent", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.undo", "edit.redo", "edit.repeat", "-", "edit.selectall", "edit.invert", "edit.selectparent", "edit.selecttouched", "-", "edit.rename", "edit.delete",
+             "edit.restore", "-", "edit.filter"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
-  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.hidden", "view.hiddenEdges", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "view.hideothers", "-", "view.saveview"});
+  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.hidden", "view.hiddenEdges", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "view.hideothers", "edit.hide", "edit.showall", "annotate.show", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   m_viewsMenu->setObjectName("views");
   view->addSeparator();
@@ -84,8 +98,11 @@ void MainWindow::buildMenus() {
   add(m_snappingMenu, {"drawing2d.objectSnap"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset", "-",
              "view.nextRegion", "view.previousRegion"});
+  QMenu* insert = menuBar()->addMenu(tr("I&nsert"));  // the areas add theirs before the separator (one click), submenus after it
+  insert->setObjectName("insertMenu");
+  add(insert, {"file.import", "-"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.length", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.length", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip", "-", "annotate.add", "annotate.draw", "annotate.resolve"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -102,12 +119,17 @@ void MainWindow::buildMenus() {
                      "sketch.dimension", "sketch.construction", "sketch.node", "sketch.copybase", "-", "sketch.showConstraints", "sketch.openEnds", "sketch.constraints",
                      "sketch.snaps", "sketch.selectionOptions", "sketch.panel", "sketch.commandLine", "sketch.replane", "-", "sketch.cancel", "sketch.finish"});
   m_sketchMenu->menuAction()->setVisible(false);
+  QMenu* version = menuBar()->addMenu(tr("Ve&rsion"));  // version control's (VcsArea): hidden when no area fills it
+  version->setObjectName("versionMenu");
   QMenu* tools = menuBar()->addMenu(tr("&Tools"));
-  add(tools, {"tools.commands", "tools.shortcuts", "tools.cache"});
+  add(tools, {"tools.commands", "tools.shortcuts", "-", "tools.ai", "tools.agentActivity", "-", "tools.fileTypes", "tools.cache"});
   QMenu* help = menuBar()->addMenu(tr("&Help"));
   add(help, {"help.licenses", "help.aboutqt", "-", "help.about"});
-  const QMap<QString, QMenu*> menus{{"file", file}, {"edit", edit}, {"view", view}, {"inspect", inspect}, {"design", designMenu}, {"sketch", m_sketchMenu}, {"tools", tools}, {"help", help}};
+  const QMap<QString, QMenu*> menus{{"file", file},       {"edit", edit},         {"view", view},       {"insert", insert}, {"inspect", inspect},
+                                    {"design", designMenu}, {"sketch", m_sketchMenu}, {"version", version}, {"tools", tools},   {"help", help}};
   for (AreaController* area : m_areas) area->menus(menuBar(), menus);
+  version->menuAction()->setVisible(!version->isEmpty());
+  if (QAction* last = insert->actions().value(insert->actions().size() - 1); last && last->isSeparator()) insert->removeAction(last);  // no submenus after it
   rebuildRecentMenu();
   // Each command's menu path, by menu ids ("design/create"): a top menu by its key above (an area's own by its title), a
   // submenu by its object name, else its title.
@@ -225,7 +247,10 @@ void MainWindow::buildRibbon() {
   // The compact Select control: the filters as icons with their keys, the rest of selecting under "Select ▾".
   auto* selectMore = new QMenu(this);
   selectMore->addActions(acts({"edit.selectall", "edit.invert", "select.through", "select.similar", "edit.selectparent"}));
-  m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"}, selectMore);
+  const QList<QAction*> filters = acts({"select.bodies", "select.faces", "select.edges", "select.vertices"});
+  m_ribbon->setSelectFilters(filters, {"1", "2", "3", "4"}, selectMore);
+  for (const QString& ws : m_workspaceIds)  // the control ends every workspace's strip: the filters' place (they left the Edit menu)
+    for (QAction* a : filters + selectMore->actions()) m_commands.addWorkspace(a->objectName(), ws);
   // The tab row's cluster: quick access (Save, Undo ▾, Redo ▾), search, the areas' widgets, settings.
   m_ribbon->addQuickAction(action("file.save"));
   m_ribbon->addQuickAction(action("edit.undo"), historyMenu(true));
@@ -243,8 +268,7 @@ void MainWindow::buildRibbon() {
   QMenu* panels = settings->addMenu(tr("Panels"));
   panels->addActions(acts({"panel.browser", "panel.annotations", "panel.timeline", "panel.reset"}));
   settings->addSeparator();
-  settings->addAction(tr("Recover documents"),this,[this]{m_recovery->offerRecovery();});
-  settings->addAction(tr("Agent activity"),this,[this]{m_agent->showActivity();});
+  settings->addActions(acts({"file.recover", "tools.agentActivity"}));
   settings->addSeparator();
   legal::applySettings();  // the ODA File Converter is opt-in (its terms: non-members non-commercial only)
   CommandInfo odaInfo;

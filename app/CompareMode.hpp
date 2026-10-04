@@ -40,6 +40,7 @@ class CompareMode : public QObject {
   // Opens it on the open document: A the last commit when git tracks the file, else the file as saved; B this session.
   void open();
   void showUnsaved();  // Show unsaved changes (UI-59): the saved file (A) against this session (B)
+  void openWithFile();  // Compare with a file…: an .opad chosen in a file dialog (A) against this session (B)
   void compare(const CompareVersion& a, const CompareVersion& b);  // opens it too
   // Two versions of the document at `file`, which is opened first when it is not the open one (as File > Open does:
   // unsaved changes are asked about), e.g. the Recovery offer's Compare…: the file and a snapshot of it.

@@ -245,7 +245,11 @@ void AssetsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
       if (entries[i]->objectName() == "file.import") before = entries.value(i + 1);
     file->insertAction(before, services().action("assets.link"));
   }
-  if (QMenu* design = menus.value("design")) {
+  // Insert (Appendix A §4): Link as asset… with the other inserts, then every linked-file command in its submenu; the
+  // Design menu where there is no Insert menu.
+  QMenu* insert = menus.value("insert");
+  if (insert) insert->insertAction(areas::firstSeparator(insert), services().action("assets.link"));
+  if (QMenu* design = insert ? insert : menus.value("design")) {
     QMenu* sub = design->addMenu(tr("Linked files"));
     sub->setObjectName("assets");
     for (const char* id : {"assets.link", "assets.sync", "assets.syncAll", "assets.autoSync", "assets.replace", "assets.reveal", "assets.copyPath", "assets.embed",

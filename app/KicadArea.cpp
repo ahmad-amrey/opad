@@ -120,7 +120,9 @@ void KicadArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
       if (entries[i]->objectName() == "assets.link" || (!before && entries[i]->objectName() == "file.import")) before = entries.value(i + 1);
     file->insertAction(before, services().action("kicad.insert"));
   }
-  if (QMenu* design = menus.value("design")) {
+  QMenu* insert = menus.value("insert");  // Insert KiCad PCB… with the other inserts, the board's commands in a submenu after them
+  if (insert) insert->insertAction(areas::firstSeparator(insert), services().action("kicad.insert"));
+  if (QMenu* design = insert ? insert : menus.value("design")) {
     QMenu* sub = design->addMenu(icons::themed("kicadboard", 16), tr("KiCad"));
     sub->setObjectName("kicad");
     for (const char* id : {"kicad.insert", "kicad.previewSync", "kicad.project", "kicad.clearance"}) sub->addAction(services().action(id));

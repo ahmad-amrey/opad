@@ -1200,6 +1200,42 @@
    "requires": "Only while a sketch is open: start one with New sketch."
   },
   {
+   "id": "vcs.compareFile",
+   "title": "Compare with a file",
+   "summary": "Compares another OPAD document, such as a copy or a variant, with this session.",
+   "details": "Choose the .opad file: Compare opens with it as A and this session as B, its changes listed in the panel and drawn in the view. The panel's pickers change either side afterwards.",
+   "keywords": ["diff", "other document", "variant", "copy", "changes"],
+   "requires": "Open an OPAD document; not while a sketch is open."
+  },
+  {
+   "id": "file.recover",
+   "title": "Recover documents",
+   "summary": "Lists the snapshots an earlier session left behind, to restore, merge or compare them.",
+   "details": "Each snapshot is shown against its file as it is now, with Restore into file, Merge into current, Restore as copy, Compare, Discard snapshot and Later. With none left, the status bar says so.",
+   "keywords": ["autosave", "crash", "snapshot", "restore", "recovery"]
+  },
+  {
+   "id": "tools.ai",
+   "title": "AI integration",
+   "summary": "Sets up local AI agent access to this window: the connection, what an agent may change and its activity.",
+   "details": "Enable local agent access, choose whether an agent may make design edits and exports, and copy the MCP server configuration for your AI client. The status bar's AI chip opens the same dialog.",
+   "keywords": ["agent", "MCP", "assistant", "AI"]
+  },
+  {
+   "id": "tools.agentActivity",
+   "title": "Agent activity",
+   "summary": "Shows what a connected AI agent is doing, with a button that stops its work.",
+   "details": "The panel lists the agent's requests as they come, and Follow changes shows its edits in the view. Stop agent work ends what it started.",
+   "keywords": ["agent", "AI", "MCP", "log", "stop"]
+  },
+  {
+   "id": "tools.fileTypes",
+   "title": "File types",
+   "summary": "Chooses which file types Windows opens with OPAD.",
+   "details": "Tick the formats and press Open with OPAD; they are registered for your Windows account only, and Default apps lets you make OPAD the app for a type. Elsewhere the system declares them, and the command opens the Files page of Preferences instead.",
+   "keywords": ["associations", "open with", "default app", "Explorer", "extensions"]
+  },
+  {
    "id": "sketch.circle",
    "title": "Circle",
    "summary": "Draws a circle from its centre and a point on it.",
