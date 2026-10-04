@@ -277,10 +277,21 @@ void relabel(json& nodes, const std::string& op, const std::string& parent, cons
         for (size_t k = 0; k < left_now.size(); ++k) match[left_now[k]] = static_cast<int>(left_then[k]);
     }
   }
+  // A node not found again takes its place's id unless a part found again holds it (a part come in front of one matched by
+  // its geometry: roots are placed by position), then the next free one.
+  std::set<std::string> given;
+  for (size_t i = 0; i < nodes.size(); ++i)
+    if (match[i] >= 0 && (*was)[size_t(match[i])].contains("id")) given.insert((*was)[size_t(match[i])]["id"].get<std::string>());
   for (size_t i = 0; i < nodes.size(); ++i) {
     json& n = nodes[i];
     const json* before = match[i] >= 0 ? &(*was)[size_t(match[i])] : nullptr;
-    n["id"] = before && before->contains("id") ? (*before)["id"] : json(place_id(op, parent + "/" + now[i]));
+    if (before && before->contains("id")) n["id"] = (*before)["id"];
+    else {
+      std::string id = place_id(op, parent + "/" + now[i]);
+      for (int k = 1; given.count(id); ++k) id = place_id(op, parent + "/" + now[i] + "#" + std::to_string(k));
+      given.insert(id);
+      n["id"] = id;
+    }
     if (n.contains("children")) relabel(n["children"], op, n["id"].get<std::string>(), before && before->contains("children") ? &(*before)["children"] : nullptr, keys);
   }
 }

@@ -16,6 +16,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <thread>
 
 #include "check.hpp"
@@ -337,6 +338,39 @@ TEST(reordered_parts_found_by_geometry) {
   design::commit(reopened, std::move(plan));
   s = resolve(reopened);
   CHECK(s.node(a)->body_key == key_a && s.node(b)->body_key == key_b && s.node(a)->name == "Big box");
+}
+
+// A part come in front of one found again by its geometry takes no id another part holds (roots are placed by position:
+// the new part's place was the old one's; it gave two nodes one id, and one part vanished): two bodies, two ids, the old kept.
+TEST(new_part_in_front_takes_a_free_id) {
+  Files f;
+  const fs::path obj = f.dir / "parts.obj";
+  auto tetra = [](double x, double size, int first) {  // one object named Part
+    std::string t = "o Part\n";
+    for (const auto& [dx, dy, dz] : std::vector<std::array<double, 3>>{{0, 0, 0}, {size, 0, 0}, {0, size, 0}, {0, 0, size}})
+      t += "v " + std::to_string(x + dx) + " " + std::to_string(dy) + " " + std::to_string(dz) + "\n";
+    for (const auto& [i, j, k] : std::vector<std::array<int, 3>>{{0, 2, 1}, {0, 1, 3}, {0, 3, 2}, {1, 2, 3}})
+      t += "f " + std::to_string(first + i) + " " + std::to_string(first + j) + " " + std::to_string(first + k) + "\n";
+    return t;
+  };
+  write(obj, tetra(0, 10, 1));
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, obj);
+  const std::string import_id = last_import(d).id;
+  Scene s = resolve(d);
+  const std::string a = linked(s, 0), key = s.node(a)->body_key;
+  write(obj, tetra(50, 7, 1) + tetra(0, 10, 5));
+  design::Plan plan = plan_asset_sync(d, import_id);
+  CHECK(plan.report["added"].size() == 1 && plan.report["changed"].empty() && plan.report["removed"].empty() && plan.report["kept"] == 1);
+  design::commit(d, std::move(plan));
+  s = resolve(d);
+  std::set<std::string> ids;
+  for (const auto& id : s.all_bodies())
+    if (s.node(id)->linked) ids.insert(id);
+  CHECK_EQ(ids.size(), 2u);
+  CHECK(ids.count(a) && s.node(a)->body_key == key);
+  CHECK(s.unresolved.empty());
 }
 
 TEST(linked_parts_are_read_only) {
