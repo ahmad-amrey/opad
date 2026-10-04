@@ -169,6 +169,27 @@ struct Paper {
   bool across(const Vec3& axis) const { return std::fabs(dot3(unit3(axis), f.dir)) <= 1e-4; }
 };
 
+// A flat face seen edge on (a section's outline names the faces its edges lie on): the line it shows, its ends where the
+// face reaches furthest along it, so it measures as a straight edge does.
+void edge_on(Pick& k, const ViewFrame& f) {
+  if (!k.plane || k.sub.IsNull() || std::fabs(dot3(unit3(k.axis), f.dir)) > 1e-4) return;
+  const Vec2 n = f.view(k.axis), u = unit(left(n));
+  double lo = 1e300, hi = -1e300;
+  for (TopExp_Explorer e(k.sub, TopAbs_EDGE); e.More(); e.Next()) {
+    try {
+      const BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
+      for (int i = 0; i <= 16; ++i) {
+        const Vec3 p = of(c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * i / 16));
+        const double t = dot(f.view(p), u);
+        if (t < lo) lo = t, k.a = p;
+        if (t > hi) hi = t, k.b = p;
+      }
+    } catch (const Standard_Failure&) {
+    }
+  }
+  if (lo < hi) k.line = true;
+}
+
 double per_mm(const Sheet& sheet) { return sheet.def.value("units", "mm") == "in" ? 1 / 25.4 : 1; }
 
 const Sheet* sheet_of(const Scene& scene, const std::string& id) { return scene.sheet(id); }
@@ -324,6 +345,7 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
   const Resolver R(doc, scene);
   std::vector<Pick> picks;
   for (const auto& r : item.def.value("refs", json::array())) picks.push_back(pick_of(R, r));
+  for (auto& k : picks) edge_on(k, frame);
   const std::string& type = item.type;
   const double units = per_mm(sheet);
   double value = 0;
@@ -335,7 +357,7 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
   const auto lineish = [](const Pick& k) { return k.line && !k.point; };
   if (type == "horizontal" || type == "vertical" || type == "aligned") {
     Vec2 a, b;
-    if (picks.size() == 1 && picks[0].edge && !picks[0].point) {
+    if (picks.size() == 1 && (picks[0].edge || (picks[0].plane && picks[0].line)) && !picks[0].point) {
       a = frame.view(picks[0].a), b = frame.view(picks[0].b);
       anchor = scaled(plus3(picks[0].a, picks[0].b), 0.5);
     } else if (picks.size() == 1 && picks[0].cylinder && paper.across(picks[0].axis)) {  // a cylinder from the side: across it
@@ -447,6 +469,7 @@ json pick_reference(const Document& doc, const Scene& scene, const ViewFrame& fr
   const Resolver R(doc, scene);
   const Paper paper{frame};
   Pick k = pick_of(R, ref);
+  if (k.plane && !paper.across(k.axis)) throw Error("that face is seen at a slant in this view: pick one of its edges");  // a section's outline
   std::string what;
   Vec2 point = paper(k.p);
   if (k.cylinder) what = "cylinder";
@@ -1130,19 +1153,20 @@ json plan_dimension(const Document& doc, const Scene& scene, const json& args) {
     const Resolver R(doc, scene);
     for (const auto& r : refs) {
       const Pick k = pick_of(R, r);
-      whats.push_back(k.point ? "vertex" : k.cylinder ? "cylinder" : k.line ? "line" : k.circle ? (k.full ? "circle" : "arc") : k.edge ? "edge" : "face");
+      whats.push_back(k.point ? "vertex" : k.cylinder ? "cylinder" : k.plane ? "plane" : k.line ? "line" : k.circle ? (k.full ? "circle" : "arc") : k.edge ? "edge" : "face");
     }
   }
   std::vector<std::string> types;
   const auto pointish = [](const std::string& w) { return w == "vertex" || w == "midpoint" || w == "center"; };
+  const auto straight = [](const std::string& w) { return w == "line" || w == "plane"; };  // a flat face seen edge on is a line here
   if (whats.size() == 1) {
     if (whats[0] == "circle" || whats[0] == "cylinder") types = {"diameter"};
     else if (whats[0] == "arc") types = {"radius", "diameter"};
-    else if (whats[0] == "line" || whats[0] == "edge") types = {"horizontal", "vertical", "aligned"};
+    else if (straight(whats[0]) || whats[0] == "edge") types = {"horizontal", "vertical", "aligned"};
     else throw Error("pick a second point to dimension to");
   } else if (whats.size() == 2) {
-    if (whats[0] == "line" && whats[1] == "line") types = {"angle", "aligned", "horizontal", "vertical"};
-    else if (pointish(whats[0]) || pointish(whats[1]) || whats[0] == "circle" || whats[1] == "circle" || whats[0] == "line" || whats[1] == "line")
+    if (straight(whats[0]) && straight(whats[1])) types = {"angle", "aligned", "horizontal", "vertical"};
+    else if (pointish(whats[0]) || pointish(whats[1]) || whats[0] == "circle" || whats[1] == "circle" || straight(whats[0]) || straight(whats[1]))
       types = {"horizontal", "vertical", "aligned"};
     else throw Error("these two cannot be dimensioned to each other");
   } else {

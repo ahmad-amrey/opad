@@ -31,6 +31,7 @@ struct Source {
   // edges and faces map the cut shape's ordinals to the body's (-1: made by the cut). proto is placed in the world.
   std::string base;
   std::shared_ptr<const std::vector<int>> edges, faces;
+  std::shared_ptr<const std::vector<int>> lies_on;  // per edge of the cut shape the cut made: the body's face it lies on
   const std::string& body_key() const { return base.empty() ? key : base; }
 };
 
@@ -79,7 +80,8 @@ void hybrid(const Document& doc, const std::vector<Source>& sources, const ViewS
 // viewer as regions in view coordinates, by source index. Parallel; cancellable between bodies.
 void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, std::vector<Source>& sources, Run& run,
                  std::vector<ViewGeometry::Region>& regions);
-// A cut body's curves named after the body's own edges and faces (Source::edges, faces).
+// A cut body's curves named after the body's own edges and faces (Source::edges, faces); an edge the cut made gets the
+// face it lies on (Source::lies_on) as its face, so a pick on a section's outline references that face.
 void name_cut_curves(const std::vector<Source>& sources, std::vector<Curve>& curves);
 // An aligned section's seams: the cut bodies' curves where its revolved pieces meet (planes square to the first
 // segment through the joints, seen edge on: the cut's own edges, surfaces' seams lying there), left out.

@@ -290,8 +290,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - `sheet_item` adds a dimension measured in its `view` (`type` horizontal, vertical, aligned, radius, diameter or
   angle; `refs` two vertices or edges, one edge for its length, or one circle or cylinder; `aspects` start, end, mid
   or center per reference) or a note (`text`, `at`). A circle seen at a slant, or an angle between edges not parallel
-  to the view, is refused: dimension it in a view along its axis. A dimension keeps the value it was made with
-  (`result`); `sheet_info` gives the value now (`current`, `changed`), so model edits show as changed dimensions.
+  to the view, is refused: dimension it in a view along its axis. On a section's outline the cut's edges are no
+  edges of the model: reference the faces they lie on (`project` gives them as the curves' `face`): a flat face seen
+  edge on measures as its line, a cylinder seen from the side as its diameter. A dimension keeps the value it was made
+  with (`result`); `sheet_info` gives the value now (`current`, `changed`), so model edits show as changed dimensions.
 - `sheet_edit` changes a sheet, view or item (`set`; null removes a field); moving a base view moves the views
   projected from it. `delete` removes one; a deleted sheet takes its views and items with it.
 - `part_properties` sets part properties on bodies or components (`part_number`, `description`, `material`, `density`

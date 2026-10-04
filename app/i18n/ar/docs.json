@@ -543,5 +543,6 @@
   "An outline needs three points at least.": "يحتاج المحيط إلى ثلاث نقاط على الأقل.",
   "Hatching is a section view's or a broken-out section's.": "التهشير خاص بالمسقط المقطعي أو المقطع الموضعي.",
   "broken-out sections are on base, projected and auxiliary views": "المقاطع الموضعية على المساقط الأساسية والمُسقَطة والمساعدة",
-  "a broken-out section's outline needs three points apart": "يحتاج محيط المقطع الموضعي إلى ثلاث نقاط متباعدة"
+  "a broken-out section's outline needs three points apart": "يحتاج محيط المقطع الموضعي إلى ثلاث نقاط متباعدة",
+  "that face is seen at a slant in this view: pick one of its edges": "هذا الوجه مائل في هذا المسقط: اختر إحدى حوافه"
 }

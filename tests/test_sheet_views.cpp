@@ -9,6 +9,7 @@
 
 #include "check.hpp"
 #include "opad/commands.hpp"
+#include "opad/drawing/annotate.hpp"
 #include "opad/drawing/sheet.hpp"
 #include "opad/drawing/tables.hpp"
 #include "opad/geometry.hpp"
@@ -116,15 +117,49 @@ TEST(views_full_section) {
   CHECK_EQ(g->sections.size(), 1u);
   CHECK_EQ(g->sections[0].loops.size(), 2u);
   for (const auto& l : g->sections[0].loops) CHECK(std::fabs(area(l) - 150) < 0.5);  // 15 x 10 either side of the hole
-  bool named = false, made_by_cut = false;
+  bool named = false;
+  int made_by_cut = 0;
+  std::set<int> walls, holes;  // the faces the cut's edges lie on: the plate's sides, the hole
   for (const auto& c : g->curves) {
     if (c.edge >= 0) {
       const json e = inspect_ref(p.doc, s, Ref{p.body, Ref::Kind::Edge, c.edge});
       named = named || e.value("curve", "") == "circle";  // the hole's rims, seen edge on
+    } else if (c.kind != Curve::Kind::Silhouette) {
+      ++made_by_cut;
+      CHECK(c.face >= 0);  // named after the face it lies on
+      const std::string surface = inspect_ref(p.doc, s, Ref{p.body, Ref::Kind::Face, c.face}).value("surface", "");
+      const auto pts = c.sample(0.01);
+      if (surface == "cylinder") holes.insert(c.face);
+      else if (std::all_of(pts.begin(), pts.end(), [](const Vec2& q) { return std::fabs(std::fabs(q[0]) - 20) < 1e-6; })) walls.insert(c.face);
     }
-    made_by_cut = made_by_cut || (c.edge < 0 && c.face < 0);
   }
-  CHECK(named && made_by_cut);
+  CHECK(named && made_by_cut >= 6);
+  CHECK(walls.size() == 2 && holes.size() == 1);
+  // Dimensioned through those faces: the plate's depth across the section, the hole's diameter seen from the side.
+  const json across = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", sec}, {"type", "horizontal"},
+                                                {"refs", {Ref{p.body, Ref::Kind::Face, *walls.begin()}.str(), Ref{p.body, Ref::Kind::Face, *walls.rbegin()}.str()}},
+                                                {"place", {0, 15}}});
+  CHECK(std::fabs(across["result"]["value"].get<double>() - 40) < 1e-6);
+  const json bore = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", sec}, {"type", "diameter"}, {"refs", {Ref{p.body, Ref::Kind::Face, *holes.begin()}.str()}}, {"place", {0, 15}}});
+  CHECK(std::fabs(bore["result"]["value"].get<double>() - 10) < 1e-6);
+  {
+    const ViewFrame& fs = frame(layout(p.doc, resolve(p.doc), *resolve(p.doc).sheet(p.sheet)), sec);
+    const Scene now = resolve(p.doc);
+    const json pick = pick_reference(p.doc, now, fs, {{"node", p.body}, {"face", *walls.begin()}, {"snap", "nearest"}, {"at", {fs.at[0], fs.at[1]}}});
+    CHECK_EQ(pick["what"], "plane");
+    const int top = [&] {  // the plate's front face, seen flat on in the front view: not through a line there
+      for (int i = 0; i < subshape_count(node_world_shape(p.doc, now, p.body), Ref::Kind::Face); ++i) {
+        const json f = inspect_ref(p.doc, now, Ref{p.body, Ref::Kind::Face, i});
+        if (f.value("surface", "") == "plane" && std::fabs(std::fabs(f["normal"][1].get<double>()) - 1) < 1e-9) return i;
+      }
+      return -1;
+    }();
+    CHECK(top >= 0);
+    const ViewFrame& ff = frame(layout(p.doc, now, *now.sheet(p.sheet)), p.front);
+    CHECK_THROWS(pick_reference(p.doc, now, ff, {{"node", p.body}, {"face", top}, {"snap", "nearest"}, {"at", {ff.at[0], ff.at[1]}}}));
+  }
+  run(p.doc, "delete", {{"target", across["id"]}});
+  run(p.doc, "delete", {{"target", bore["id"]}});
   // Nothing of the removed half: every curve within the plate's width and height in the view.
   for (const auto& c : g->curves)
     for (const auto& q : c.sample(0.01)) CHECK(std::fabs(q[0]) <= 20 + 1e-6 && q[1] >= -1e-6 && q[1] <= 10 + 1e-6);

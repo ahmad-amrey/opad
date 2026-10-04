@@ -14,6 +14,7 @@
 
 #include "BenchRegistry.hpp"
 #include "DocsArea.hpp"
+#include "SheetAnnotate.hpp"
 #include "SheetCanvas.hpp"
 #include "SheetDialogs.hpp"
 #include "SheetPage.hpp"
@@ -28,7 +29,8 @@ using opad::drawing::Vec2;
 // pointer lined up on the side it goes, a click places it (one step): hatched, labelled A-A, the front view drawing its
 // cutting line; dragged, it moves only away from its parent; Esc steps back a point, then leaves. Detail view: centre,
 // radius, place (5:1, the next standard scale from twice 2:1). Auxiliary view square to an edge of the top view, lined up.
-// Hatching… (the dialog, a typed angle and spacing, automatic again). An aligned section on the top view (three points,
+// Dimensioned on its outline (two cut lines pick the plate's sides: 40). Hatching… (the dialog, a typed angle and
+// spacing, automatic again). An aligned section on the top view (three points,
 // the last segment at 30 degrees: both sides hatched). A broken-out section on the front view (outline previewed, Esc
 // back from the depth, the depth clicked on the hole's centre in the top view; floor hatched, break lines; removed from
 // the menu, Ctrl+Z). Crop by dragging a box on the top view, Break by two clicks on the front view (the top view broken
@@ -160,8 +162,40 @@ OPAD_BENCH(OPAD_BENCH_SHEET_VIEWS, sheetViews) {
       return SheetCanvas::ViewState{};
     };
     check(st(sec).final && st(sec).prims > 10 && st(sec).frame.right() < st(front).frame.left(), "on the canvas: final linework, left of the front view");
+    // Dimensioned on its outline: the cut's edges pick the faces they lie on (the plate's sides), read horizontally.
+    {
+      SheetAnnotator* notes = page->annotator();
+      const auto planned = [&] { return waitFor([&] { return !notes->busy(); }, 15000); };
+      const auto onSec = [&](opad::Vec3 p) {
+        const opad::drawing::ViewFrame f = frameOf(sec);
+        const Vec2 q = f.paper(p);
+        return canvas->toScene(q);
+      };
+      w.action("drawings.dimension")->trigger();
+      click(onSec({0, 20, 5}));
+      planned();
+      click(onSec({0, -20, 5}));
+      const bool measured = planned();
+      const opad::json picks = notes->plan().is_object() ? notes->plan().value("picks", opad::json::array()) : opad::json::array();
+      check(measured && notes->pickCount() == 2 && picks.size() == 2 && picks[0].value("what", "") == "plane" && picks[1].value("what", "") == "plane",
+            "two clicks on the section's outer cut lines pick the plate's sides: " + QString::fromStdString(picks.dump()));
+      const QPointF below = onSec({0, 0, 0}) + QPointF(0, canvas->toScene({0, 0}).y() - canvas->toScene({0, 12}).y());
+      click(below);
+      const auto dims = [&] {
+        std::vector<const opad::SheetItem*> out;
+        for (const auto& id : doc->scene.sheet(sheet)->items)
+          if (const opad::SheetItem* t = doc->scene.sheet_item(id); t && t->kind == "dimension" && t->view == sec) out.push_back(t);
+        return out;
+      };
+      check(waitFor([&] { return dims().size() == 1 && settled(); }, 15000) && std::fabs(dims()[0]->def["result"]["value"].get<double>() - 40) < 1e-6,
+            "placed below: 40, the plate's depth across the section");
+      key(Qt::Key_Escape);
+      key(Qt::Key_Escape);
+      check(notes->tool() == SheetAnnotator::Tool::None, "Esc leaves the dimension tool");
+    }
     // Dragged: only away from or towards its parent (its gap).
-    const double gap = sv ? sv->def.value("gap", 20.0) : 0;
+    const opad::SheetView* placed = doc->scene.sheet_view(sec);  // the scene was rebuilt by the dimension
+    const double gap = placed ? placed->def.value("gap", 20.0) : 0;
     canvas->benchDrag(sec, {-10, 7});
     check(waitFor([&] { const opad::SheetView* v = doc->scene.sheet_view(sec); return v && std::fabs(v->def.value("gap", 0.0) - (gap + 10)) < 0.05; }, 10000) &&
               waitFor(settled, 30000) && std::fabs(frameOf(sec).at[1] - frameOf(front).at[1]) < 1e-6,

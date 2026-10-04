@@ -81,7 +81,7 @@ struct Curve {
   std::vector<double> knots, weights;
   int body = -1;  // index into ViewGeometry::bodies
   int edge = -1;  // edge ordinal in that body (also for a silhouette that runs along an edge)
-  int face = -1;  // face ordinal: a silhouette inside a face
+  int face = -1;  // face ordinal: a silhouette inside a face, or the face of the body a section's cut edge lies on
   double z = 0;   // depth of its middle towards the viewer: of coincident pieces the nearest one is kept
   std::vector<Vec2> sample(double tol) const;  // a polyline within tol of the curve
   // Cubic Béziers (start, two controls, end) within tol of the curve, for writers without splines or ellipses (SVG

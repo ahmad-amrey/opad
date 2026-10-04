@@ -317,7 +317,7 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
     json line = json::array();
     for (const auto& p : spec.cut) line.push_back({rounded(p[0]), rounded(p[1])});
     j["cut"] = {{"line", line}, {"x", {rounded(spec.cut_x[0]), rounded(spec.cut_x[1]), rounded(spec.cut_x[2])}},
-                {"y", {rounded(spec.cut_y[0]), rounded(spec.cut_y[1]), rounded(spec.cut_y[2])}}, {"version", 1}};
+                {"y", {rounded(spec.cut_y[0]), rounded(spec.cut_y[1]), rounded(spec.cut_y[2])}}, {"version", 2}};  // 2: cut edges named after their faces
     if (spec.aligned) j["cut"]["aligned"] = true;
     for (const auto& s : sources)
       if (s.whole) j["cut"]["whole"].push_back(s.node);
@@ -329,7 +329,7 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
       for (const auto& p : b.outline) outline.push_back({rounded(p[0]), rounded(p[1])});
       all.push_back({{"outline", outline}, {"depth", rounded(b.depth)}});
     }
-    j["breakouts"] = {{"cuts", all}, {"version", 1}};
+    j["breakouts"] = {{"cuts", all}, {"version", 2}};
     for (const auto& s : sources)
       if (s.whole) j["breakouts"]["whole"].push_back(s.node);
   }

@@ -29,6 +29,7 @@
 #include <TColgp_HArray1OfPnt2d.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopTools_ShapeMapHasher.hxx>
@@ -219,7 +220,27 @@ Side side_of(const Cutter& c, const std::vector<Vec2>& kept, const Bnd_Box& worl
 struct CutBody {
   TopoDS_Shape shape;
   std::shared_ptr<const std::vector<int>> edges, faces;
+  std::shared_ptr<const std::vector<int>> lies_on;  // per edge the cut made: the body's face it lies on (-1: none)
 };
+
+// The faces of the body the edges the cut made lie on: of the two faces an edge bounds, the one that was the body's.
+std::shared_ptr<const std::vector<int>> lying_on(const TopoDS_Shape& shape, const std::vector<int>& edges, const std::vector<int>& faces) {
+  TopTools_IndexedMapOfShape all_edges, all_faces;
+  TopExp::MapShapes(shape, TopAbs_EDGE, all_edges);
+  TopExp::MapShapes(shape, TopAbs_FACE, all_faces);
+  TopTools_IndexedDataMapOfShapeListOfShape around;
+  TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, around);
+  auto out = std::make_shared<std::vector<int>>(static_cast<size_t>(all_edges.Extent()), -1);
+  for (int i = 1; i <= all_edges.Extent() && static_cast<size_t>(i - 1) < edges.size(); ++i) {
+    if (edges[static_cast<size_t>(i - 1)] >= 0 || !around.Contains(all_edges(i))) continue;
+    for (const auto& f : around.FindFromKey(all_edges(i)))
+      if (const int at = all_faces.FindIndex(f); at > 0 && static_cast<size_t>(at - 1) < faces.size() && faces[static_cast<size_t>(at - 1)] >= 0) {
+        (*out)[static_cast<size_t>(i - 1)] = faces[static_cast<size_t>(at - 1)];
+        break;
+      }
+  }
+  return out;
+}
 
 // Cuts by content (body key, placement, cut), for the process: a section and its detail view share them.
 std::mutex g_cuts_mu;
@@ -351,6 +372,7 @@ void take_cut(Source& s, const CutBody& cut, const std::string& id) {
   s.trsf = gp_Trsf();
   s.edges = cut.edges;
   s.faces = cut.faces;
+  s.lies_on = cut.lies_on;
 }
 
 std::string cache_id(const std::string& cut, const Source& s) {
@@ -475,6 +497,7 @@ void breakout_sources(const Document& doc, const ViewSpec& spec, const View& vie
         body->shape = cut.Shape();
         body->edges = trace(cut, placed, body->shape, TopAbs_EDGE);
         body->faces = trace(cut, placed, body->shape, TopAbs_FACE);
+        body->lies_on = lying_on(body->shape, *body->edges, *body->faces);
         hit = body;
         remember(ids[i], hit);
       } catch (const std::exception& e) {
@@ -543,7 +566,7 @@ void mark_breakout_curves(const ViewSpec& spec, const std::vector<Source>& sourc
   // visible; behind something, left out.
   std::vector<Curve> kept;
   for (auto& k : curves) {
-    const bool made = k.edge < 0 && k.face < 0 && k.body >= 0 && static_cast<size_t>(k.body) < sources.size() && sources[static_cast<size_t>(k.body)].edges;
+    const bool made = k.edge < 0 && k.kind != Curve::Kind::Silhouette && k.body >= 0 && static_cast<size_t>(k.body) < sources.size() && sources[static_cast<size_t>(k.body)].edges;
     if (made) {
       const auto pts = k.sample(std::max(spec.tolerance, 1e-3));
       if (!pts.empty() && std::all_of(pts.begin(), pts.end(), on_rim)) {
@@ -680,6 +703,7 @@ void cut_sources(const Document& doc, const ViewSpec& spec, const View& view, st
           body->edges = combined(parts, edge_parts, TopAbs_EDGE);
           body->faces = combined(parts, face_parts, TopAbs_FACE);
         }
+        body->lies_on = lying_on(body->shape, *body->edges, *body->faces);
         hit = body;
         remember(id, hit);
       } catch (const std::exception& e) {
@@ -747,8 +771,12 @@ void name_cut_curves(const std::vector<Source>& sources, std::vector<Curve>& cur
       if (!map || ordinal < 0) return;
       ordinal = static_cast<size_t>(ordinal) < map->size() ? (*map)[static_cast<size_t>(ordinal)] : -1;
     };
+    const int cut_edge = k.edge;
     rename(k.edge, s.edges);
     rename(k.face, s.faces);
+    // An edge the cut made, named after the face of the body it lies on (a section's outline: dimensioned through it).
+    if (k.edge < 0 && cut_edge >= 0 && k.face < 0 && k.kind != Curve::Kind::Silhouette && s.lies_on && static_cast<size_t>(cut_edge) < s.lies_on->size())
+      k.face = (*s.lies_on)[static_cast<size_t>(cut_edge)];
   }
 }
 
