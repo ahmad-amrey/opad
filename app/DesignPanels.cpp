@@ -547,7 +547,7 @@ void FeaturePanel::setValue(const QString& name, const opad::json& value) {
 }
 
 void FeaturePanel::setValues(const std::vector<std::pair<QString, opad::json>>& values) {
-  bool any = false;
+  bool any = false, shown = false;  // shown: a choice or a flag changed, which can show or hide rows
   for (const auto& [name, value] : values) {
     auto it = m_widgets.find(name);
     if (it == m_widgets.end()) continue;
@@ -557,13 +557,15 @@ void FeaturePanel::setValues(const std::vector<std::pair<QString, opad::json>>& 
       it->second.expr->setText(QString::fromStdString(value.get<std::string>()));
     } else if (it->second.combo && value.is_string()) {
       it->second.combo->setCurrentIndex(std::max(0, it->second.combo->findData(QString::fromStdString(value.get<std::string>()))));
+      shown = true;
     } else if (it->second.check && value.is_boolean()) {
       it->second.check->setChecked(value.get<bool>());
+      shown = true;
     }
     any = true;
   }
   if (!any) return;
-  refreshVisibility();
+  if (shown) refreshVisibility();  // values alone (a primitive sized by the pointer, every move) change no row
   emit inputsChanged();
 }
 

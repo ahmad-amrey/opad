@@ -46,7 +46,7 @@ CASES = [
     # a torus (ring, then section) placed by the pointer, each preview checked while the pointer moves or the arrow is held,
     # the committed inputs against the values shown; a cylinder by Enter alone.
     ("primitive-place", primitive_parts, {"OPAD_BENCH_PRIMITIVES": "{prefix}"}),
-    # P1 on the Engine: every mouse event of placing and sizing a cylinder handled in under 50 ms (picks, the face's frame and
+    # P1 on the Engine: every mouse event of placing and sizing a cylinder handled in under 100 ms (picks, the face's frame and
     # the previews on workers).
     ("primitive-place-engine", engine(), {"OPAD_BENCH_PRIMITIVES_PERF": "1"}),
     # P3: the region then the Z axis (revolve), the body then the YZ plane (mirror), target then tool (combine), a face then
