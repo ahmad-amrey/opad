@@ -113,6 +113,7 @@ class VersionControl : public QObject {
   void reload();  // history and branches (and remotes) on a worker
   void scheduleReload();
   void failed(const QString& title, const QString& text);
+  void saveFailed(const QString& why);  // a save before a git command: the file changed on disk is the disk banner's to settle
   void done(const QString& what, bool ok, const QString& text = {});
   void say(const QString& text, const QString& action = {}, std::function<void()> fn = {}, int ms = 4000);  // a toast
   // A window-modal question; answers are (id, text, run) and the box gets Cancel too. Benches press them by "answer".

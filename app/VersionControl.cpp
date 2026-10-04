@@ -35,6 +35,7 @@
 #include "DesignController.hpp"
 #include "DiskSync.hpp"
 #include "GitWatch.hpp"
+#include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "ToolPanel.hpp"
@@ -333,6 +334,13 @@ void VersionControl::failed(const QString& title, const QString& text) {
   box->open();
 }
 
+void VersionControl::saveFailed(const QString& why) {
+  if (!why.startsWith("changed_on_disk")) return failed(tr("Could not save"), i18n::t(why));
+  m_lastFailure = tr("Not saved: %1 changed on disk. Merge or reload it from the bar over the view first.").arg(QFileInfo(documentPath()).fileName());
+  if (trace::enabled()) trace::log("version: " + m_lastFailure);
+  say(m_lastFailure);  // no box over the banner that says what to do
+}
+
 void VersionControl::say(const QString& text, const QString& action, std::function<void()> fn, int ms) {
   m_said << text;
   m_services.toast(text, action, std::move(fn), m_benching ? 0 : ms);  // a bench reads them when it gets there
@@ -382,7 +390,7 @@ void VersionControl::whenClean(const QString& what, std::function<void()> then, 
           try {
             doc->saveAsync(m_services.jobs(), QString(), false, [this, self = QPointer<VersionControl>(this), what, then, commitAllowed](bool saved, const QString& why) {
               if (!self) return;
-              if (!saved) return failed(tr("Could not save"), why);
+              if (!saved) return saveFailed(why);
               // git's view of the file after the save, then on
               auto* link = new QMetaObject::Connection;
               *link = connect(m_git, &GitWatch::changed, this, [this, link, what, then, commitAllowed] {
@@ -643,7 +651,7 @@ void VersionControl::runCommit(const QStringList& files, const QString& message,
       doc->saveAsync(m_services.jobs(), QString(), false, [this, self = QPointer<VersionControl>(this), go](bool saved, const QString& why) {
         if (!self) return;
         if (saved) return go();
-        failed(tr("Could not save"), why);
+        saveFailed(why);
         done("commit", false, why);
       });
     } catch (const std::exception& e) {

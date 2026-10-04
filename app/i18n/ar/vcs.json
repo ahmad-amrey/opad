@@ -644,5 +644,6 @@
  "It was missing when your version was restored into it, and is back now.": "كان مفقودًا حين استُعيدت نسختك إليه، وقد عاد الآن.",
  "Could not overwrite %1: %2": "تعذّرت الكتابة فوق %1: %2",
  "Git stopped a merge on it and wrote conflict markers into it. Resolve the conflicts to keep both sides' changes; overwriting it keeps only yours.": "أوقف git دمجًا عليه وكتب فيه علامات التعارض. حُلّ التعارضات لتبقى تغييرات الجانبين؛ أما الكتابة فوقه فتُبقي تغييراتك وحدها.",
- "%1 is in a merge conflict": "%1 في تعارض دمج"
+ "%1 is in a merge conflict": "%1 في تعارض دمج",
+ "Not saved: %1 changed on disk. Merge or reload it from the bar over the view first.": "لم يُحفظ: تغيّر %1 على القرص. ادمجه أو أعد تحميله أولًا من الشريط فوق العرض."
 }

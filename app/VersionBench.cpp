@@ -23,6 +23,7 @@
 
 #include "AppDocument.hpp"
 #include "AreaController.hpp"
+#include "Banner.hpp"
 #include "BenchRegistry.hpp"
 #include "CompareMode.hpp"
 #include "GitWatch.hpp"
@@ -613,6 +614,34 @@ bool VersionControl::bench(const QString& prefix) {
       [=, this] {
         if (!idle() || !finished("commit") || m_git->repo().doc() != D::Clean) return false;
         pass("committed what the switch refused to overwrite");
+        box(200);  // Commit… over a file changed on disk meanwhile: the save is refused, the disk banner says what to do
+        opad::Document d = opad::Document::load(std::filesystem::path(st->file.toStdU16String()));
+        d.append({{"op", "rename"}, {"target", st->boxBody.toStdString()}, {"name", "Elsewhere"}});
+        d.save();
+        commitDialog("Box at 200");
+        return true;
+      },
+      [=, this] {
+        if (!idle() || m_lastDone != "commit failed") return false;
+        require(doc->isDirty() && toast(tr("Not saved: %1 changed on disk. Merge or reload it from the bar over the view first.").arg("model.opad")) &&
+                    !m_lastFailure.contains("changed_on_disk"),
+                "a refused save said in words, no error code: " + m_lastFailure);
+        pass("Commit… over a file changed on disk: the save refused in words, the disk banner to settle it");
+        return true;
+      },
+      [=, this] {
+        Banner* bar = nullptr;
+        for (Banner* b : m_services.viewport()->findChildren<Banner*>())
+          if (b->state() == "merge") bar = b;
+        if (!idle() || !bar) return false;
+        bar->button("diskMerge")->click();
+        require(doc->nodeName(st->boxBody.toStdString()) == "Elsewhere" && doc->isDirty(), "merged with the file");
+        commitDialog("Box at 200 and the rename");
+        return true;
+      },
+      [=, this] {
+        if (!idle() || !finished("commit") || m_git->repo().doc() != D::Clean) return false;
+        pass("merged from the banner, then committed");
         return true;
       },
   };
