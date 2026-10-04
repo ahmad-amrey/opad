@@ -1,6 +1,6 @@
 {
  "@about": "Animated help clips (UI-107), played by ClipView (app/HelpClip.hpp): vector items keyframed in seconds, model coordinates in millimetres (plane view: x right, y up; iso view: z up). Captions, label/chip texts and card titles/rows are English source text translated through app/i18n/<lang>/help.json. All artwork is original and procedural.",
- "@replay": "Every sketch clip carries its replay (TODO 11 wave 3; OPAD_BENCH_CLIPREPLAY, app/ClipReplayBench.cpp): the clip's own pointer, keys, typed values and card changes are fed into the tool on a sketch made from \"setup\", and what the tool made is compared with \"expect\". setup: tool (default: the clip id's), command (run first), curves and drawn (after the sketch opened: it is modified) as {line: [a, b]} {poly: [...], closed} {rect: [corner, corner]} {circle: c, r} {arc: c, r, start, sweep (degrees, negative clockwise)} {slot: [c1, c2], r} {spline: [...], poles} {point: p}, each optionally construction or linked (points at one place are shared), constraints [{type, on: [curve index, \"i.k\" its k-th piece, or [x, y] a point], value, label}], patterns [{on, inputs}], options {key: value}, image {corners, angle, opacity, shapes}, file (png, svg, dxf), plane {origin}, bodies [{kind, inputs}] (made by tools/bench_cases/help.py through opad-cli feature). expect: entities and construction (counts by kind; a kind not named is none; [least, most] allowed), linked, constraints {type: count}, dimensions (driving values, mm or degrees), arcs [{center, r, start, sweep}], circles, points, selected, tool, images, image {x, y, width, angle, opacity}, active, sketches (added), page, rings (open ends), snaps [{at, kind}], plane {normal, origin}, file, status, weights.",
+ "@replay": "Every sketch clip carries its replay (TODO 11 wave 3; OPAD_BENCH_CLIPREPLAY, app/ClipReplayBench.cpp): the clip's own pointer, keys, typed values and card changes are fed into the tool on a sketch made from \"setup\", and what the tool made is compared with \"expect\". setup: tool (default: the clip id's), command (run first), curves and drawn (after the sketch opened: it is modified) as {line: [a, b]} {poly: [...], closed} {rect: [corner, corner]} {circle: c, r} {arc: c, r, start, sweep (degrees, negative clockwise)} {slot: [c1, c2], r} {spline: [...], poles} {point: p}, each optionally construction or linked (points at one place are shared), constraints [{type, on: [curve index, \"i.k\" its k-th piece, or [x, y] a point], value, label}], patterns [{on, inputs}], options {key: value}, image {corners, angle, opacity, shapes}, file (png, svg, dxf), plane {origin}, bodies [{kind, inputs}] (made by tools/bench_cases/help.py through opad-cli feature). expect: entities and construction (counts by kind; a kind not named is none; [least, most] allowed), linked, constraints {type: count}, dimensions (driving values, mm or degrees), arcs [{center, r, start, sweep}], circles, points, selected, tool, images, image {x, y, width, angle, opacity}, active, sketches (added), page, rings (open ends), snaps [{at, kind}], plane {normal, origin}, file, status, weights, bounds [[u0, v0], [u1, v1], tolerance (default 0.3)] (the extent of the curves), regions (closed regions they enclose), area (the regions together, mm2, within 3 %), during [{t, ...}]: along the way, in time order, what the clip shows at t once the inputs before it are applied: preview (the kinds the tool previews: its rubber band by kind, an Apply tool's result less the sketch, \"construction <kind>\", \"outline\", \"trim\", \"extension\", \"frame\", \"measure\"; true: some, false: none), readouts (texts beside the pointer or an arrow), labels (texts the sketch draws), and any end-state field.",
  "templates": {
   "sketchScene": {"params": {}, "items": [{"el": "grid", "spacing": 5}, {"el": "axes"}]},
   "isoScene": {"params": {"area": [-30, -22, 30, 22]}, "items": [{"el": "grid", "spacing": 10, "area": "$area"}, {"el": "axes", "len": 6}]},
@@ -146,7 +146,7 @@
   {
    "id": "sketch.line", "duration": 4.8, "extent": [-30, -14, 30, 14], "guide": [0, 1, [2, 3]],
    "setup": {},
-   "expect": {"entities": {"line": 3}, "constraints": {"horizontal": 1, "vertical": 1}, "dimensions": [30], "points": [[-20, -9], [10, -9], [10, 8]]},
+   "expect": {"entities": {"line": 3}, "constraints": {"horizontal": 1, "vertical": 1}, "dimensions": [30], "points": [[-20, -9], [10, -9], [10, 8]], "during": [{"t": 1.6, "preview": {"line": 1}, "readouts": ["24.00", "0.0"]}, {"t": 2.0, "preview": {"line": 1}, "readouts": ["30"]}, {"t": 2.95, "entities": {"line": 1}, "preview": {"line": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-20, -9], [10, -9], [10, 8]], "closed": true, "fill": "sel", "fillOpacity": 0.16, "width": 0, "from": 3.85, "fade": 0.3},
@@ -158,7 +158,7 @@
     {"el": "poly", "color": "hov", "points": [[10, 8], "cursor"], "from": 3.0, "to": 3.8, "fade": 0},
     {"el": "glyph", "kind": "horizontal", "at": [-5, -9], "dx": 0, "dy": 13, "from": 0.9},
     {"el": "glyph", "kind": "vertical", "at": [10, 0], "dx": 13, "dy": 0, "from": 2.6},
-    {"el": "dim", "a": [-20, -9], "b": [10, -9], "offset": 12, "value": "30.00", "color": "fg2", "from": 2.1},
+    {"el": "dim", "a": [-20, -9], "b": [10, -9], "offset": 12, "value": "30 mm", "color": "fg2", "from": 2.1},
     {"el": "snap", "kind": "endpoint", "at": [-20, -9], "from": 3.4, "to": 3.85},
     {"el": "hud", "origin": [-20, -9], "fields": ["{len} mm", "{ang}°"], "typed": "", "focus": -1, "from": 0.7, "to": 2.05,
      "keys": [[1.55, {"focus": 0}], [1.65, {"typed": "3"}], [1.8, {"typed": "30"}]]},
@@ -177,7 +177,7 @@
   {
    "id": "sketch.rect", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"line": 4}, "constraints": {"horizontal": 2, "vertical": 2}, "dimensions": [30, 16], "points": [[-18, -9], [12, 7]]},
+   "expect": {"entities": {"line": 4}, "constraints": {"horizontal": 2, "vertical": 2}, "dimensions": [30, 16], "points": [[-18, -9], [12, 7]], "during": [{"t": 1.6, "preview": {"line": 4}, "readouts": ["26.00", "13.00"]}, {"t": 2.3, "preview": {"line": 4}, "readouts": ["30", "16"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "rect", "corners": [[-18, -9], [12, 7]], "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.5, "fade": 0.3},
@@ -201,7 +201,7 @@
   {
    "id": "sketch.circle", "duration": 4.2, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"circle": 1}, "dimensions": [24], "circles": [{"center": [-4, 0], "r": 12}]},
+   "expect": {"entities": {"circle": 1}, "dimensions": [24], "circles": [{"center": [-4, 0], "r": 12}], "during": [{"t": 1.6, "preview": {"circle": 1}, "readouts": ["21.63"]}, {"t": 2.3, "preview": {"circle": 1}, "readouts": ["24"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "circle", "center": [-4, 0], "r": 12, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.5, "fade": 0.3},
@@ -222,7 +222,7 @@
   {
    "id": "sketch.arc3", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"arc": 1}, "arcs": [{"center": [-1, -6.893], "r": 15.027, "start": 3.41, "sweep": 173.19}]},
+   "expect": {"entities": {"arc": 1}, "arcs": [{"center": [-1, -6.893], "r": 15.027, "start": 3.41, "sweep": 173.19}], "during": [{"t": 1.6, "preview": {"line": 1}}, {"t": 3.1, "preview": {"arc": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-16, -6], "cursor"], "color": "hov", "dash": true, "width": 1.3, "from": 0.7, "to": 1.7, "fade": 0},
@@ -243,7 +243,7 @@
   {
    "id": "sketch.slot", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"line": 2, "arc": 2}, "construction": {"line": 1}, "constraints": {"horizontal": 1}, "arcs": [{"center": [-12, 0], "r": 6}, {"center": [12, 0], "r": 6}]},
+   "expect": {"entities": {"line": 2, "arc": 2}, "construction": {"line": 1}, "constraints": {"horizontal": 1}, "arcs": [{"center": [-12, 0], "r": 6}, {"center": [12, 0], "r": 6}], "during": [{"t": 1.7, "preview": {"line": 1}, "readouts": ["24.00"]}, {"t": 3.0, "preview": {"line": 2, "arc": 2, "construction line": 1}, "readouts": ["12.00"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "slot", "c1": [-12, 0], "c2": [12, 0], "r": 6, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 3.1, "fade": 0.3},
@@ -266,7 +266,7 @@
   {
    "id": "sketch.polygon", "duration": 4.6, "extent": [-30, -14, 30, 14], "guide": [[0, 1], 2],
    "setup": {},
-   "expect": {"entities": {"line": 6}, "construction": {"circle": 1}, "circles": [{"center": [4, 0], "r": 11.705}], "points": [[15, 4]]},
+   "expect": {"entities": {"line": 6}, "construction": {"circle": 1}, "circles": [{"center": [4, 0], "r": 11.705}], "points": [[15, 4]], "during": [{"t": 2.9, "preview": {"line": 6, "construction circle": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "polygon", "center": [4, 0], "n": 6, "corner": [15, 4], "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 3.0, "fade": 0.3},
@@ -290,7 +290,7 @@
   {
    "id": "sketch.offset", "duration": 4.8, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"rect": [[-16, -6], [8, 6]]}]},
-   "expect": {"entities": {"line": 8, "arc": 4}, "arcs": [{"center": [-16, -6], "r": 6}, {"center": [8, -6], "r": 6}, {"center": [8, 6], "r": 6}, {"center": [-16, 6], "r": 6}], "points": [[-22, -6], [14, 6]]},
+   "expect": {"entities": {"line": 8, "arc": 4}, "arcs": [{"center": [-16, -6], "r": 6}, {"center": [8, -6], "r": 6}, {"center": [8, 6], "r": 6}, {"center": [-16, 6], "r": 6}], "points": [[-22, -6], [14, 6]], "during": [{"t": 1.5, "selected": 4, "preview": {"line": 4, "arc": 4}, "readouts": ["5"]}, {"t": 2.45, "preview": {"line": 4, "arc": 4}}, {"t": 3.3, "preview": {"line": 4, "arc": 4}, "readouts": ["6"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "rect", "corners": [[-16, -6], [8, 6]], "color": "glow", "width": 6.5, "from": 0.55, "to": 0.9, "fade": 0.08},
@@ -311,7 +311,7 @@
   {
    "id": "sketch.trim", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-20, 2], [20, 2]]}, {"line": [[-8, -10], [-8, 11]]}, {"line": [[8, -10], [8, 11]]}]},
-   "expect": {"entities": {"line": 4}, "points": [[-20, 2], [20, 2], [-8, -10], [8, 11]]},
+   "expect": {"entities": {"line": 4}, "points": [[-20, 2], [20, 2], [-8, -10], [8, 11]], "during": [{"t": 1.5, "preview": {"trim": 1}}, {"t": 2.9, "preview": {"trim": 1}, "entities": {"line": 4}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-20, 2], [-8, 2]], "dots": true},
@@ -334,12 +334,13 @@
   {
    "id": "sketch.fillet", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-18, -8], [8, -8]]}, {"line": [[8, -8], [8, 10]]}]},
-   "expect": {"entities": {"line": 2, "arc": 1}, "constraints": {"tangent": 2}, "arcs": [{"center": [2, -2], "r": 6, "start": -90, "sweep": 90}]},
+   "expect": {"entities": {"line": 2, "arc": 1}, "constraints": {"tangent": 2}, "arcs": [{"center": [2, -2], "r": 6, "start": -90, "sweep": 90}], "during": [{"t": 1.25, "preview": {"arc": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-6, -8], [8, -8], [8, 6]], "color": "glow", "width": 6.5, "from": 0.8, "to": 1.3, "fade": 0.08},
     {"el": "poly", "dots": true, "points": [[-18, -8], [8, -8]], "keys": [[1.5, {"points": [[-18, -8], [8, -8]]}], [2.2, {"points": [[-18, -8], [2, -8]]}]]},
     {"el": "poly", "dots": true, "points": [[8, -8], [8, 10]], "keys": [[1.5, {"points": [[8, -8], [8, 10]]}], [2.2, {"points": [[8, -2], [8, 10]]}]]},
+    {"el": "arc", "center": [2, -2], "r": 6, "start": -90, "sweep": 90, "color": "hov", "from": 1.0, "to": 1.3, "fade": 0.05},
     {"el": "arc", "start": -90, "sweep": 90, "center": [8, -8], "r": 0.01, "from": 1.5, "fade": 0, "keys": [[1.5, {"center": [8, -8], "r": 0.01}], [2.2, {"center": [2, -2], "r": 6}]]},
     {"el": "glyph", "kind": "tangent", "at": [2, -8], "dx": 0, "dy": 13, "from": 2.3},
     {"el": "glyph", "kind": "tangent", "at": [8, -2], "dx": 13, "dy": 0, "from": 2.3},
@@ -355,13 +356,13 @@
   {
    "id": "sketch.dimension", "duration": 4.8, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-20, -6], [4, -6]]}]},
-   "expect": {"entities": {"line": 1}, "dimensions": [40], "points": [[-28, -6], [12, -6]]},
+   "expect": {"entities": {"line": 1}, "dimensions": [40], "points": [[-28, -6], [12, -6]], "during": [{"t": 1.5, "labels": ["24 mm"]}, {"t": 2.05, "readouts": ["24 mm"]}, {"t": 2.5, "readouts": ["40"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-20, -6], [4, -6]], "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
     {"el": "poly", "dots": true, "color": "fg", "points": [[-20, -6], [4, -6]], "keys": [[0.9, {"color": "sel"}], [1.9, {"color": "fg"}], [2.85, {"points": [[-20, -6], [4, -6]]}], [3.3, {"points": [[-28, -6], [12, -6]]}]]},
-    {"el": "dim", "a": [-20, -6], "b": [4, -6], "value": "24.00", "color": "hov", "offset": 4, "from": 0.95, "fade": 0, "keys": [[0.95, {"offset": 4}], [1.9, {"offset": 38, "color": "fg"}], [2.0, {"color": "sel"}], [2.85, {"a": [-20, -6], "b": [4, -6], "value": "40.00"}], [3.3, {"a": [-28, -6], "b": [12, -6], "color": "fg"}]]},
-    {"use": "typedValue", "args": {"t": 2.0, "s1": "4", "s2": "40", "press": 2.85, "at": [-8, 2], "dx": -14, "dy": -40, "field": "24.00"}},
+    {"el": "dim", "a": [-20, -6], "b": [4, -6], "value": "24 mm", "color": "hov", "offset": 4, "from": 0.95, "fade": 0, "keys": [[0.95, {"offset": 4}], [1.9, {"offset": 38, "color": "fg"}], [2.0, {"color": "sel"}], [2.85, {"a": [-20, -6], "b": [4, -6], "value": "40 mm"}], [3.3, {"a": [-28, -6], "b": [12, -6], "color": "fg"}]]},
+    {"use": "typedValue", "args": {"t": 2.0, "s1": "4", "s2": "40", "press": 2.85, "at": [-8, 2], "dx": -14, "dy": -40, "field": "24 mm"}},
     {"use": "sketchDraw", "args": {"badge": "dimension", "keys": [[0, {"pos": [-24, 6]}], [0.9, {"pos": [-10, -6], "click": 1}], [1.8, {"pos": [-6, 2]}], [1.9, {"pos": [-6, 2], "click": 1}], [2.3, {"pos": [-1, -2]}], [3.4, {"pos": [-1, -2]}], [4.2, {"pos": [-17, 10]}]]}}
    ],
    "steps": [
@@ -383,7 +384,7 @@
   {
    "id": "sketch.c.coincident", "template": "constraint",
    "setup": {"curves": [{"line": [[-18, 8], [-2, 2]]}, {"line": [[-14, -6], [18, -6]]}], "constraints": [{"type": "fix", "on": [1]}]},
-   "expect": {"entities": {"line": 2}, "constraints": {"coincident": 1, "fix": 1}, "points": [[-18, 8], [-2, -6]]},
+   "expect": {"entities": {"line": 2}, "constraints": {"coincident": 1, "fix": 1}, "points": [[-18, 8], [-2, -6]], "during": [{"t": 1.5, "constraints": {"coincident": 0, "fix": 1}}]},
    "args": {"a": [[-18, 8], [-2, 2]], "a2": [[-18, 8], [-2, -6]], "b": [[-14, -6], [18, -6]], "pa": [-2, 2], "pb": [10, -6], "glyph": "coincident", "ga": [-2, -6], "gb": [-2, -6], "gady": 13, "gbdy": 13, "caption1": "Click a point", "caption2": "Click the curve or point to join", "caption3": "The point moves onto it"},
    "items": [
     {"el": "glyph", "kind": "fix", "at": [14, -6], "dx": 0, "dy": 13}
@@ -392,7 +393,7 @@
   {
    "id": "sketch.c.parallel", "template": "constraint",
    "setup": {"curves": [{"line": [[-16, -6], [14, -12]]}, {"line": [[-16, 4], [14, 10]]}], "constraints": [{"type": "fix", "on": [1]}]},
-   "expect": {"entities": {"line": 2}, "constraints": {"parallel": 1, "fix": 1}, "points": [[-17.13, -12.23], [15.13, -5.77], [-16, 4], [14, 10]]},
+   "expect": {"entities": {"line": 2}, "constraints": {"parallel": 1, "fix": 1}, "points": [[-17.13, -12.23], [15.13, -5.77], [-16, 4], [14, 10]], "during": [{"t": 1.5, "constraints": {"parallel": 0, "fix": 1}, "points": [[-16, -6], [14, -12]]}]},
    "args": {"a": [[-16, -6], [14, -12]], "a2": [[-17.13, -12.23], [15.13, -5.77]], "b": [[-16, 4], [14, 10]], "pa": [-1, -9], "pb": [-1, 7], "glyph": "parallel", "ga": [-1, -9], "gb": [-1, 7], "caption3": "The first line turns parallel"},
    "items": [
     {"el": "glyph", "kind": "fix", "at": [8, 8.8], "dx": 0, "dy": -14}
@@ -401,7 +402,7 @@
   {
    "id": "sketch.c.perpendicular", "template": "constraint",
    "setup": {"curves": [{"line": [[0, -4], [9, 9]]}, {"line": [[-18, -7], [16, -7]]}], "constraints": [{"type": "fix", "on": [1]}]},
-   "expect": {"entities": {"line": 2}, "constraints": {"perpendicular": 1, "fix": 1}, "points": [[4.5, -6.76], [4.5, 11.76], [-18, -7], [16, -7]]},
+   "expect": {"entities": {"line": 2}, "constraints": {"perpendicular": 1, "fix": 1}, "points": [[4.5, -6.76], [4.5, 11.76], [-18, -7], [16, -7]], "during": [{"t": 1.5, "constraints": {"perpendicular": 0, "fix": 1}}]},
    "args": {"a": [[0, -4], [9, 9]], "a2": [[4.5, -6.76], [4.5, 11.76]], "b": [[-18, -7], [16, -7]], "pa": [4.5, 2.5], "pb": [-10, -7], "glyph": "perpendicular", "ga": [4.5, 2.5], "gb": [-10, -7], "gadx": 14, "gady": 0, "gbdy": 13, "caption3": "The first line turns square to it"},
    "items": [
     {"el": "glyph", "kind": "fix", "at": [10, -7], "dx": 0, "dy": 13}
@@ -410,7 +411,7 @@
   {
    "id": "sketch.c.equal", "template": "constraint",
    "setup": {"curves": [{"line": [[-14, 5], [-4, 5]]}, {"line": [[-14, -6], [10, -6]]}], "constraints": [{"type": "fix", "on": [1]}]},
-   "expect": {"entities": {"line": 2}, "constraints": {"equal": 1, "fix": 1}, "points": [[-21, 5], [3, 5], [-14, -6], [10, -6]]},
+   "expect": {"entities": {"line": 2}, "constraints": {"equal": 1, "fix": 1}, "points": [[-21, 5], [3, 5], [-14, -6], [10, -6]], "during": [{"t": 1.5, "constraints": {"equal": 0, "fix": 1}}]},
    "args": {"a": [[-14, 5], [-4, 5]], "a2": [[-21, 5], [3, 5]], "b": [[-14, -6], [10, -6]], "pa": [-9, 5], "pb": [0, -6], "glyph": "equal", "ga": [-2, 5], "gb": [-2, -6], "caption2": "Click the line to match", "caption3": "The lengths become equal"},
    "items": [
     {"el": "glyph", "kind": "fix", "at": [6, -6], "dx": 0, "dy": 13}
@@ -419,7 +420,7 @@
   {
    "id": "sketch.c.tangent", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-18, 10], [18, 6]]}, {"circle": [2, -3], "r": 7}], "constraints": [{"type": "fix", "on": [1]}]},
-   "expect": {"entities": {"line": 1, "circle": 1}, "constraints": {"tangent": 1, "fix": 1}, "points": [[-18.33, 7.06], [17.53, 1.8]], "circles": [{"center": [2, -3], "r": 7}]},
+   "expect": {"entities": {"line": 1, "circle": 1}, "constraints": {"tangent": 1, "fix": 1}, "points": [[-18.33, 7.06], [17.53, 1.8]], "circles": [{"center": [2, -3], "r": 7}], "during": [{"t": 1.5, "constraints": {"tangent": 0, "fix": 1}, "points": [[-18, 10], [18, 6]]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "circle", "center": [2, -3], "r": 7, "color": "glow", "width": 6.5, "from": 1.45, "to": 1.9, "fade": 0.08},
@@ -439,7 +440,7 @@
   {
    "id": "sketch.c.concentric", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"circle": [6, -1], "r": 10}, {"circle": [-14, 4], "r": 4}], "constraints": [{"type": "fix", "on": [0]}]},
-   "expect": {"entities": {"circle": 2}, "constraints": {"concentric": 1, "fix": 1}, "circles": [{"center": [6, -1], "r": 10}, {"center": [6, -1], "r": 4}]},
+   "expect": {"entities": {"circle": 2}, "constraints": {"concentric": 1, "fix": 1}, "circles": [{"center": [6, -1], "r": 10}, {"center": [6, -1], "r": 4}], "during": [{"t": 1.5, "constraints": {"concentric": 0, "fix": 1}, "circles": [{"center": [-14, 4], "r": 4}]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "circle", "center": [6, -1], "r": 10, "color": "glow", "width": 6.5, "from": 1.45, "to": 1.9, "fade": 0.08},
@@ -1081,7 +1082,7 @@
   {
    "id": "sketch.spline", "duration": 4.6, "extent": [-30, -14, 30, 14], "guide": [0, 1, [1, 2]],
    "setup": {},
-   "expect": {"entities": {"spline": 1}, "points": [[-20, -6], [-8, 6], [6, -6], [18, 6]]},
+   "expect": {"entities": {"spline": 1}, "points": [[-20, -6], [-8, 6], [6, -6], [18, 6]], "during": [{"t": 1.0, "preview": {"spline": 1}}, {"t": 3.4, "preview": {"spline": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "smooth": true, "color": "hov", "from": 0.7, "to": 3.5, "fade": 0, "points": [[-20, -6], "cursor"], "keys": [[1.4, {"points": [[-20, -6], [-8, 6], "cursor"]}], [2.1, {"points": [[-20, -6], [-8, 6], [6, -6], "cursor"]}], [2.8, {"points": [[-20, -6], [-8, 6], [6, -6], [18, 6], "cursor"]}]]},
@@ -1099,7 +1100,7 @@
   {
    "id": "sketch.point", "duration": 3.8, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"rect": [[-20, -9], [20, 9]]}]},
-   "expect": {"entities": {"line": 4, "point": 3}, "points": [[-10, 0], [0, 0], [10, 0]]},
+   "expect": {"entities": {"line": 4, "point": 3}, "points": [[-10, 0], [0, 0], [10, 0]], "during": [{"t": 1.2, "entities": {"line": 4, "point": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "rect", "corners": [[-20, -9], [20, 9]], "color": "fg2"},
@@ -1119,7 +1120,7 @@
   {
    "id": "sketch.construction", "duration": 3.6, "extent": [-30, -14, 30, 14],
    "setup": {"tool": "select", "curves": [{"rect": [[-18, -9], [14, 9]]}, {"line": [[-18, -9], [14, 9]]}]},
-   "expect": {"entities": {"line": 4}, "construction": {"line": 1}},
+   "expect": {"entities": {"line": 4}, "construction": {"line": 1}, "during": [{"t": 1.2, "selected": 1, "entities": {"line": 5}, "construction": {}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "rect", "corners": [[-18, -9], [14, 9]], "dots": true},
@@ -1136,7 +1137,7 @@
   {
    "id": "sketch.mirror", "duration": 5.6, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"poly": [[0, -8], [12, -8], [12, -2], [4, 6], [0, 6]], "closed": true}, {"line": [[-4, -10], [-4, 11]], "construction": true}]},
-   "expect": {"entities": {"line": 10}, "construction": {"line": 1}, "constraints": {"symmetric": [4, 10]}, "points": [[-8, -8], [-20, -8], [-20, -2], [-12, 6], [-8, 6]]},
+   "expect": {"entities": {"line": 10}, "construction": {"line": 1}, "constraints": {"symmetric": [4, 10]}, "points": [[-8, -8], [-20, -8], [-20, -2], [-12, 6], [-8, 6]], "during": [{"t": 1.1, "selected": 5, "preview": false}, {"t": 2.9, "preview": {"line": 5}, "entities": {"line": 5}, "construction": {"line": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-4, 11], [-4, -10]], "color": "glow", "width": 6.5, "from": 1.75, "to": 2.1, "fade": 0.08},
@@ -1663,7 +1664,7 @@
   {
    "id": "sketch.crect", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"line": 4}, "construction": {"line": 1}, "constraints": {"horizontal": 2, "vertical": 2}, "points": [[-16, -8], [12, 8], [-2, 0]]},
+   "expect": {"entities": {"line": 4}, "construction": {"line": 1}, "constraints": {"horizontal": 2, "vertical": 2}, "points": [[-16, -8], [12, 8], [-2, 0]], "during": [{"t": 2.05, "preview": {"line": 4}, "readouts": ["28.00", "16.00"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "rect", "corners": [[-16, -8], [12, 8]], "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.25, "fade": 0.3},
@@ -1685,7 +1686,7 @@
   {
    "id": "sketch.rect3", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"line": 4}, "constraints": {"perpendicular": 1}, "points": [[-16, -9], [8, 1], [4.15, 10.23], [-19.85, 0.23]]},
+   "expect": {"entities": {"line": 4}, "constraints": {"perpendicular": 1}, "points": [[-16, -9], [8, 1], [4.15, 10.23], [-19.85, 0.23]], "during": [{"t": 1.65, "preview": {"line": 1}, "readouts": ["26.00", "22.6"]}, {"t": 2.75, "preview": {"line": 4}, "readouts": ["10.00"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-16, -9], [8, 1], [4.15, 10.23], [-19.85, 0.23]], "closed": true, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.85, "fade": 0.3},
@@ -1707,7 +1708,7 @@
   {
    "id": "sketch.circle2", "duration": 4, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"circle": 1}, "circles": [{"center": [-1, 0.5], "r": 11.011}]},
+   "expect": {"entities": {"circle": 1}, "circles": [{"center": [-1, 0.5], "r": 11.011}], "during": [{"t": 1.95, "preview": {"circle": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "circle", "center": [-1, 0], "r": 11, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.05, "fade": 0.3},
@@ -1726,13 +1727,13 @@
   {
    "id": "sketch.circle3", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"circle": 1}, "circles": [{"center": [0, 0], "r": 10}]},
+   "expect": {"entities": {"circle": 1}, "circles": [{"center": [0, 0], "r": 10}], "during": [{"t": 1.45, "preview": {"line": 1}}, {"t": 2.55, "preview": {"circle": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "circle", "center": [0, 0], "r": 10, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.65, "fade": 0.3},
     {"el": "circle", "center": [0, 0], "r": 10, "from": 2.6, "fade": 0},
     {"el": "poly", "points": [[-8.66, -5], "cursor"], "color": "hov", "dash": true, "width": 1.2, "from": 0.7, "to": 1.5, "fade": 0},
-    {"el": "arc", "through": [[-8.66, -5], [8.66, -5], "cursor"], "color": "hov", "from": 1.55, "to": 2.6, "fade": 0},
+    {"el": "circle", "through": [[-8.66, -5], [8.66, -5], "cursor"], "color": "hov", "from": 1.55, "to": 2.6, "fade": 0},
     {"el": "poly", "points": [[-8.66, -5], [-8.66, -5]], "width": 0, "dots": true, "from": 0.7},
     {"el": "poly", "points": [[8.66, -5], [8.66, -5]], "width": 0, "dots": true, "from": 1.5},
     {"el": "poly", "points": [[0, 10], [0, 10]], "width": 0, "dots": true, "from": 2.6},
@@ -1747,7 +1748,7 @@
   {
    "id": "sketch.tangent_circle", "duration": 4.8, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-14, -8], [22, -8]]}, {"line": [[-10, -10], [14, 12]]}]},
-   "expect": {"entities": {"line": 2, "circle": 1}, "constraints": {"tangent": 2}, "circles": [{"center": [2.5, -4], "r": 4}]},
+   "expect": {"entities": {"line": 2, "circle": 1}, "constraints": {"tangent": 2}, "circles": [{"center": [2.5, -4], "r": 4}], "during": [{"t": 1.3, "preview": false}, {"t": 2.4, "preview": {"circle": 1}}, {"t": 3.35, "preview": {"circle": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-10, -10], [14, 12]], "color": "glow", "width": 6.5, "from": 1.3, "to": 1.7, "fade": 0.08},
@@ -1770,7 +1771,7 @@
   {
    "id": "sketch.arcc", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"arc": 1}, "arcs": [{"center": [-2, -6], "r": 12, "start": 30, "sweep": 130}]},
+   "expect": {"entities": {"arc": 1}, "arcs": [{"center": [-2, -6], "r": 12, "start": 30, "sweep": 130}], "during": [{"t": 1.5, "preview": {"line": 1}}, {"t": 2.85, "preview": {"arc": 1, "construction line": 1}, "readouts": ["-130.0"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-2, -6], "cursor"], "color": "fg3", "dash": true, "width": 1.1, "from": 0.7, "to": 1.6, "fade": 0},
@@ -1792,7 +1793,7 @@
   {
    "id": "sketch.tangent_arc", "duration": 4.2, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-20, -6], [-4, -6]]}]},
-   "expect": {"entities": {"line": 1, "arc": 1}, "constraints": {"tangent": 1}, "arcs": [{"center": [-4, 6], "r": 12, "start": -90, "sweep": 90}]},
+   "expect": {"entities": {"line": 1, "arc": 1}, "constraints": {"tangent": 1}, "arcs": [{"center": [-4, 6], "r": 12, "start": -90, "sweep": 90}], "during": [{"t": 2.35, "preview": {"arc": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-20, -6], [-4, -6]], "dots": true},
@@ -1811,14 +1812,13 @@
   {
    "id": "sketch.ellipse", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"ellipse": 1}, "points": [[-2, 0], [12, 0]]},
+   "expect": {"entities": {"ellipse": 1}, "points": [[-2, 0], [12, 0]], "during": [{"t": 1.5, "preview": {"line": 1}}, {"t": 2.75, "preview": {"ellipse": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "circle", "center": [-2, 0], "r": 14, "r2": 6, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.85, "fade": 0.3},
     {"el": "circle", "center": [-2, 0], "r": 14, "r2": 6, "from": 2.8, "fade": 0},
-    {"el": "poly", "points": [[-2, 0], "cursor"], "color": "fg3", "dash": true, "width": 1.1, "from": 0.7, "to": 1.6, "fade": 0},
+    {"el": "poly", "points": [[-2, 0], "cursor"], "color": "hov", "width": 1.2, "from": 0.7, "to": 1.6, "fade": 0},
     {"el": "poly", "points": [[-16, 0], [12, 0]], "color": "fg3", "dash": true, "width": 1.1, "from": 1.6},
-    {"el": "circle", "center": [-2, 0], "r": "cursor", "color": "hov", "from": 0.7, "to": 1.6, "fade": 0},
     {"el": "circle", "center": [-2, 0], "r": 14, "r2": 14, "color": "hov", "from": 1.6, "to": 2.8, "fade": 0, "keys": [[1.65, {"r2": 14}], [2.7, {"r2": 6}]]},
     {"el": "poly", "points": [[-2, 0], [-2, 0]], "width": 0, "dots": true, "from": 0.7},
     {"el": "poly", "points": [[12, 0], [12, 0]], "width": 0, "dots": true, "from": 1.6},
@@ -1833,7 +1833,7 @@
   {
    "id": "sketch.cslot", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"line": 2, "arc": 2}, "arcs": [{"center": [-12, 0], "r": 6}, {"center": [12, 0], "r": 6}]},
+   "expect": {"entities": {"line": 2, "arc": 2}, "arcs": [{"center": [-12, 0], "r": 6}, {"center": [12, 0], "r": 6}], "during": [{"t": 1.55, "preview": {"line": 1}}, {"t": 2.75, "preview": {"line": 2, "arc": 2}, "readouts": ["12.00"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "slot", "c1": [-12, 0], "c2": [12, 0], "r": 6, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 2.85, "fade": 0.3},
@@ -1853,7 +1853,7 @@
   {
    "id": "sketch.arcslot", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"arc": 4}, "arcs": [{"center": [0, -10], "r": 17, "start": 30, "sweep": 120}, {"center": [0, -10], "r": 11, "start": 30, "sweep": 120}, {"center": [-12.12, -3], "r": 3}, {"center": [12.12, -3], "r": 3}]},
+   "expect": {"entities": {"arc": 4}, "arcs": [{"center": [0, -10], "r": 17, "start": 30, "sweep": 120}, {"center": [0, -10], "r": 11, "start": 30, "sweep": 120}, {"center": [-12.12, -3], "r": 3}, {"center": [12.12, -3], "r": 3}], "during": [{"t": 1.4, "preview": {"line": 1}}, {"t": 2.65, "preview": {"arc": 4}, "readouts": ["-120.0"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "arc", "center": [0, -10], "r": 17, "start": 150, "sweep": -120, "from": 2.7, "fade": 0.15},
@@ -1861,7 +1861,11 @@
     {"el": "arc", "center": [-12.12, -3], "r": 3, "start": 150, "sweep": 180, "from": 2.7, "fade": 0.15},
     {"el": "arc", "center": [12.12, -3], "r": 3, "start": 30, "sweep": -180, "from": 2.7, "fade": 0.15},
     {"el": "poly", "points": [[0, -10], "cursor"], "color": "fg3", "dash": true, "width": 1.1, "from": 0.7, "to": 1.5, "fade": 0},
-    {"el": "arc", "center": [0, -10], "r": 14, "start": 150, "sweep": -0.5, "color": "hov", "dash": true, "width": 1.2, "from": 1.5, "fade": 0, "keys": [[1.55, {"sweep": -0.5}], [2.6, {"sweep": -120, "ease": "linear"}]]},
+    {"el": "arc", "center": [0, -10], "r": 14, "start": 150, "sweep": -0.5, "color": "hov", "dash": true, "width": 1.2, "from": 1.5, "to": 2.7, "fade": 0.15, "keys": [[1.55, {"sweep": -0.5}], [2.6, {"sweep": -120, "ease": "linear"}]]},
+    {"el": "arc", "center": [0, -10], "r": 17, "start": 150, "sweep": -0.5, "color": "hov", "from": 1.5, "to": 2.7, "fade": 0, "keys": [[1.55, {"sweep": -0.5}], [2.6, {"sweep": -120, "ease": "linear"}]]},
+    {"el": "arc", "center": [0, -10], "r": 11, "start": 150, "sweep": -0.5, "color": "hov", "from": 1.5, "to": 2.7, "fade": 0, "keys": [[1.55, {"sweep": -0.5}], [2.6, {"sweep": -120, "ease": "linear"}]]},
+    {"el": "arc", "center": [-12.12, -3], "r": 3, "start": 150, "sweep": 180, "color": "hov", "from": 1.5, "to": 2.7, "fade": 0},
+    {"el": "arc", "center": [-12.06, -2.89], "r": 3, "start": 149.5, "sweep": -180, "color": "hov", "from": 1.5, "to": 2.7, "fade": 0, "keys": [[1.55, {"center": [-12.06, -2.89], "start": 149.5}], [1.655, {"center": [-10.33, -0.55], "start": 137.55, "ease": "linear"}], [1.76, {"center": [-8.15, 1.38], "start": 125.6, "ease": "linear"}], [1.865, {"center": [-5.62, 2.82], "start": 113.65, "ease": "linear"}], [1.97, {"center": [-2.84, 3.71], "start": 101.7, "ease": "linear"}], [2.075, {"center": [0.06, 4.0], "start": 89.75, "ease": "linear"}], [2.18, {"center": [2.96, 3.68], "start": 77.8, "ease": "linear"}], [2.285, {"center": [5.73, 2.77], "start": 65.85, "ease": "linear"}], [2.39, {"center": [8.25, 1.31], "start": 53.9, "ease": "linear"}], [2.495, {"center": [10.41, -0.64], "start": 41.95, "ease": "linear"}], [2.6, {"center": [12.12, -3.0], "start": 30.0, "ease": "linear"}]]},
     {"el": "poly", "points": [[0, -10], [0, -10]], "width": 0, "dots": true, "from": 0.7},
     {"el": "poly", "points": [[-12.12, -3], [-12.12, -3]], "width": 0, "dots": true, "from": 1.5},
     {"el": "poly", "points": [[12.12, -3], [12.12, -3]], "width": 0, "dots": true, "from": 2.6},
@@ -1877,7 +1881,7 @@
   {
    "id": "sketch.polygon_outer", "duration": 4.6, "extent": [-30, -14, 30, 14], "guide": [[0, 1], 2],
    "setup": {},
-   "expect": {"entities": {"line": 6}, "construction": {"circle": 1, "line": 1}, "circles": [{"center": [4, 0], "r": 12}], "points": [[16, 0]]},
+   "expect": {"entities": {"line": 6}, "construction": {"circle": 1, "line": 1}, "circles": [{"center": [4, 0], "r": 12}], "points": [[16, 0]], "during": [{"t": 2.9, "preview": {"line": 6, "construction circle": 1, "construction line": 1}, "readouts": ["24.00"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "polygon", "center": [4, 0], "n": 6, "r": 13.86, "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 3, "fade": 0.3},
@@ -1901,7 +1905,7 @@
   {
    "id": "sketch.control_spline", "duration": 4.6, "extent": [-30, -14, 30, 14], "guide": [0, [0, 1]],
    "setup": {},
-   "expect": {"entities": {"spline": 1}, "points": [[-20, -8], [-10, 10], [6, -10], [18, 8]]},
+   "expect": {"entities": {"spline": 1}, "points": [[-20, -8], [-10, 10], [6, -10], [18, 8]], "during": [{"t": 1.0, "preview": {"spline": 1}}, {"t": 3.2, "preview": {"spline": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-20, -8], [-20, -8]], "color": "fg3", "dash": true, "width": 1, "dots": true, "from": 0.6, "fade": 0, "keys": [[0.6, {"points": [[-20, -8], [-20, -8], [-20, -8], [-20, -8]]}], [1.3, {"points": [[-20, -8], [-10, 10], [-10, 10], [-10, 10]], "ease": "step"}], [2, {"points": [[-20, -8], [-10, 10], [6, -10], [6, -10]], "ease": "step"}], [2.7, {"points": [[-20, -8], [-10, 10], [6, -10], [18, 8]], "ease": "step"}]]},
@@ -1918,7 +1922,7 @@
   {
    "id": "sketch.conic", "duration": 5.4, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"spline": 1}, "points": [[-18, -8], [18, -8]]},
+   "expect": {"entities": {"spline": 1}, "points": [[-18, -8], [18, -8]], "during": [{"t": 1.4, "preview": {"line": 1}}, {"t": 2.6, "preview": {"spline": 1}, "readouts": ["0.50"]}, {"t": 3.6, "preview": {"spline": 1}, "readouts": ["0.72"]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-18, -8], "cursor"], "color": "fg3", "dash": true, "width": 1, "from": 0.7, "to": 1.5, "fade": 0},
@@ -1942,7 +1946,7 @@
   {
    "id": "sketch.text", "duration": 4.8, "extent": [-30, -14, 30, 14],
    "setup": {},
-   "expect": {"entities": {"line": [4, 400], "arc": [0, 400], "spline": [0, 400]}},
+   "expect": {"entities": {"line": [4, 400], "arc": [0, 400], "spline": [0, 400]}, "regions": 8, "bounds": [[-1, -6], [18, -1], 0.5], "during": [{"t": 1.95, "preview": {"outline": 8}, "entities": {}}]},
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "sketchScene"},
@@ -1967,9 +1971,9 @@
     {"el": "rect", "dots": true, "corners": [[-14, -7], [10, 7]], "keys": [[0.9, {"corners": [[-14, -7], [10, 7]]}], [1.9, {"corners": [[-14, -7], [10, 10]]}], [3.9, {"corners": [[-14, -7], [10, 10]]}], [4.3, {"corners": [[-17, -7], [13, 10]]}]]},
     {"el": "glyph", "kind": "horizontal", "at": [-2, 7], "dx": 0, "dy": -13, "keys": [[0.9, {"at": [-2, 7]}], [1.9, {"at": [-2, 10]}]]},
     {"el": "glyph", "kind": "vertical", "at": [-14, 0], "dx": -13, "dy": 0, "keys": [[0.9, {"at": [-14, 0]}], [1.9, {"at": [-14, 1.5]}], [3.9, {"at": [-14, 1.5]}], [4.3, {"at": [-17, 1.5]}]]},
-    {"el": "dim", "a": [-14, -7], "b": [10, -7], "offset": -18, "value": "24.00", "color": "fg", "keys": [[2.6, {"color": "fg"}], [2.7, {"color": "sel"}], [3.9, {"a": [-14, -7], "b": [10, -7], "value": "30.00"}], [4.3, {"a": [-17, -7], "b": [13, -7], "color": "fg"}]]},
+    {"el": "dim", "a": [-14, -7], "b": [10, -7], "offset": -18, "value": "24 mm", "color": "fg", "keys": [[2.6, {"color": "fg"}], [2.7, {"color": "sel"}], [3.9, {"a": [-14, -7], "b": [10, -7], "value": "30 mm"}], [4.3, {"a": [-17, -7], "b": [13, -7], "color": "fg"}]]},
     {"el": "snap", "kind": "endpoint", "at": [10, 7], "color": "hov", "from": 0.5, "to": 0.9},
-    {"use": "typedValue", "args": {"t": 2.8, "s1": "3", "s2": "30", "press": 3.8, "at": [-4, -7], "dx": -14, "dy": 22, "field": "24.00"}},
+    {"use": "typedValue", "args": {"t": 2.8, "s1": "3", "s2": "30", "press": 3.8, "at": [-4, -7], "dx": -14, "dy": 22, "field": "24 mm"}},
     {"el": "cursor", "keys": [[0, {"pos": [18, 12]}], [0.8, {"pos": [10, 7]}], [0.9, {"pos": [10, 7], "down": true}], [1.9, {"pos": [10, 10], "down": false}], [2.4, {"pos": [-2, -11]}], [2.6, {"pos": [-2, -11], "click": 1}], [2.7, {"pos": [-2, -11], "click": 1}], [4.4, {"pos": [-1, -12]}], [4.9, {"pos": [20, 12]}]]}
    ],
    "steps": [
@@ -1998,24 +2002,24 @@
   },
   {"id": "sketch.move",
    "setup": {"curves": [{"poly": [[-6, -7], [6, -7], [6, -3], [-2, -3], [-2, 7], [-6, 7]], "closed": true}]},
-   "expect": {"entities": {"line": 6}, "points": [[2, -5], [14, -5], [14, -1], [6, -1], [6, 9], [2, 9]]},
+   "expect": {"entities": {"line": 6}, "points": [[2, -5], [14, -5], [14, -1], [6, -1], [6, 9], [2, 9]], "during": [{"t": 2.9, "selected": 6, "preview": true}]},
    "template": "sketchTransform", "args": {"points": [[-6, -7], [6, -7], [6, -3], [-2, -3], [-2, 7], [-6, 7]], "xf1": {"offset": [8, 2]}, "title": "Move", "rows": [["X offset", "8 mm"], ["Y offset", "2 mm"]], "bandA": [-9, 10], "bandB": [9, -10], "button": [0.36, 0.56], "badge": "move", "caption2": "Set the offset: a preview follows"}},
   {"id": "sketch.copy",
    "setup": {"curves": [{"poly": [[-6, -7], [6, -7], [6, -3], [-2, -3], [-2, 7], [-6, 7]], "closed": true}]},
-   "expect": {"entities": {"line": 12}, "points": [[-6, -7], [6, -7], [2, -5], [14, -5], [6, 9], [2, 9]]},
+   "expect": {"entities": {"line": 12}, "points": [[-6, -7], [6, -7], [2, -5], [14, -5], [6, 9], [2, 9]], "during": [{"t": 2.9, "selected": 6, "preview": {"line": 6}}]},
    "template": "sketchTransform", "args": {"points": [[-6, -7], [6, -7], [6, -3], [-2, -3], [-2, 7], [-6, 7]], "xf1": {"offset": [8, 2]}, "keep": 1, "title": "Copy with offset", "rows": [["X offset", "8 mm"], ["Y offset", "2 mm"]], "bandA": [-9, 10], "bandB": [9, -10], "button": [0.36, 0.56], "badge": "copy", "caption2": "Set the offset: a preview follows", "caption3": "Apply: a copy is placed"}},
   {"id": "sketch.rotate",
    "setup": {"curves": [{"rect": [[-4, -8], [12, -2]]}]},
-   "expect": {"entities": {"line": 4}, "points": [[-4, -8], [4, 5.856], [-9.196, -5], [-1.196, 8.856]]},
+   "expect": {"entities": {"line": 4}, "points": [[-4, -8], [4, 5.856], [-9.196, -5], [-1.196, 8.856]], "during": [{"t": 2.9, "selected": 4, "preview": true}]},
    "template": "sketchTransform", "args": {"points": [[-4, -8], [12, -8], [12, -2], [-4, -2]], "pivot": [-4, -8], "xf1": {"rot": 60}, "title": "Rotate", "rows": [["Centre", "-4, -8"], ["Angle", "60 deg"]], "bandA": [-7, 1], "bandB": [15, -11], "button": [0.36, 0.56], "badge": "rotate", "caption2": "Set the centre and angle"}, "items": [{"el": "poly", "points": [[-4, -8], [-4, -8]], "width": 0, "dots": true, "color": "amber"}]},
   {"id": "sketch.scale",
    "setup": {"curves": [{"poly": [[-6, -7], [6, -7], [6, -3], [-2, -3], [-2, 7], [-6, 7]], "closed": true}]},
-   "expect": {"entities": {"line": 6}, "points": [[-9, -10.5], [9, -10.5], [9, -4.5], [-3, -4.5], [-3, 10.5], [-9, 10.5]]},
+   "expect": {"entities": {"line": 6}, "points": [[-9, -10.5], [9, -10.5], [9, -4.5], [-3, -4.5], [-3, 10.5], [-9, 10.5]], "during": [{"t": 2.9, "selected": 6, "preview": true}]},
    "template": "sketchTransform", "args": {"points": [[-6, -7], [6, -7], [6, -3], [-2, -3], [-2, 7], [-6, 7]], "pivot": [0, 0], "xf1": {"scale": [1.5, 1.5, 1]}, "title": "Scale", "rows": [["Centre", "0, 0"], ["Scale factor", "1.5"]], "bandA": [-9, 10], "bandB": [9, -10], "button": [0.36, 0.56], "badge": "scale", "caption2": "Set the centre and factor"}, "items": [{"el": "poly", "points": [[0, 0], [0, 0]], "width": 0, "dots": true, "color": "amber"}]},
   {
    "id": "sketch.chamfer", "duration": 4.2, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-18, -8], [8, -8]]}, {"line": [[8, -8], [8, 10]]}]},
-   "expect": {"entities": {"line": 3}, "dimensions": [], "points": [[4, -8], [8, -4]]},
+   "expect": {"entities": {"line": 3}, "dimensions": [], "points": [[4, -8], [8, -4]], "during": [{"t": 2.3, "preview": {"line": 1}, "entities": {"line": 2}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-6, -8], [8, -8], [8, 6]], "color": "glow", "width": 6.5, "from": 0.7, "to": 1.1, "fade": 0.08},
@@ -2036,7 +2040,7 @@
   {
    "id": "sketch.rect_pattern", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"circle": [-6, -6], "r": 2.5}]},
-   "expect": {"entities": {"circle": 6}, "circles": [{"center": [-6, -6], "r": 2.5}, {"center": [4, -6], "r": 2.5}, {"center": [14, -6], "r": 2.5}, {"center": [-6, 3], "r": 2.5}, {"center": [4, 3], "r": 2.5}, {"center": [14, 3], "r": 2.5}]},
+   "expect": {"entities": {"circle": 6}, "circles": [{"center": [-6, -6], "r": 2.5}, {"center": [4, -6], "r": 2.5}, {"center": [14, -6], "r": 2.5}, {"center": [-6, 3], "r": 2.5}, {"center": [4, 3], "r": 2.5}, {"center": [14, 3], "r": 2.5}], "during": [{"t": 2.9, "preview": {"circle": 5}, "entities": {"circle": 1}}]},
    "items": [
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
@@ -2064,7 +2068,7 @@
   {
    "id": "sketch.polar_pattern", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"slot": [[7, 0], [13, 0]], "r": 1.6}, {"circle": [0, 0], "r": 4}]},
-   "expect": {"entities": {"line": 12, "arc": 12, "circle": 1}, "arcs": [{"center": [6.5, 11.258], "r": 1.6}, {"center": [-13, 0], "r": 1.6}]},
+   "expect": {"entities": {"line": 12, "arc": 12, "circle": 1}, "arcs": [{"center": [6.5, 11.258], "r": 1.6}, {"center": [-13, 0], "r": 1.6}], "during": [{"t": 2.9, "preview": {"line": 10, "arc": 10}}]},
    "items": [
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
@@ -2094,7 +2098,7 @@
   {
    "id": "sketch.split", "duration": 3.8, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-18, -2], [18, -2]]}]},
-   "expect": {"entities": {"line": 2}, "points": [[-18, -2], [2, -2], [18, -2]]},
+   "expect": {"entities": {"line": 2}, "points": [[-18, -2], [2, -2], [18, -2]], "during": [{"t": 0.95, "entities": {"line": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-18, -2], [18, -2]], "dots": true, "to": 1.05, "fade": 0},
@@ -2111,7 +2115,7 @@
   {
    "id": "sketch.extend", "duration": 4, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-18, -6], [0, -6]]}, {"line": [[12, -12], [12, 10]]}]},
-   "expect": {"entities": {"line": 2}, "points": [[-18, -6], [12, -6]]},
+   "expect": {"entities": {"line": 2}, "points": [[-18, -6], [12, -6]], "during": [{"t": 0.85, "preview": {"extension": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-18, -6], [0, -6]], "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
@@ -2129,7 +2133,7 @@
   {
    "id": "sketch.break", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-14, -6], [14, -6]]}, {"line": [[-6, -12], [-6, 10]]}, {"line": [[6, -12], [6, 10]]}]},
-   "expect": {"entities": {"line": 7}, "points": [[-6, -6], [6, -6]]},
+   "expect": {"entities": {"line": 7}, "points": [[-6, -6], [6, -6]], "during": [{"t": 2.3, "selected": 3, "preview": false}]},
    "items": [
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
@@ -2154,7 +2158,7 @@
   {
    "id": "sketch.union", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"rect": [[-10, -8], [6, 6]]}, {"rect": [[0, -4], [14, 10]]}]},
-   "expect": {"entities": {"line": 8}, "points": [[-10, -8], [14, 10], [6, -4], [0, 6]], "construction": {"line": 8}},
+   "expect": {"entities": {"line": 8}, "points": [[-10, -8], [14, 10], [6, -4], [0, 6]], "construction": {"line": 8}, "during": [{"t": 2.3, "preview": true}]},
    "items": [
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
@@ -2162,6 +2166,7 @@
     {"el": "poly", "points": [[0, -4], [14, -4], [14, 10], [0, 10]], "closed": true, "dots": true, "to": 2.6, "fade": 0.25},
     {"el": "poly", "points": [[-10, -8], [6, -8], [6, 6], [-10, 6]], "closed": true, "width": 0, "fill": "sel", "fillOpacity": 0.25, "from": 0.8, "to": 2.5, "fade": 0.2},
     {"el": "poly", "points": [[0, -4], [14, -4], [14, 10], [0, 10]], "closed": true, "width": 0, "fill": "amber", "fillOpacity": 0.25, "from": 1.6, "to": 2.5, "fade": 0.2},
+    {"el": "poly", "points": [[-10, -8], [6, -8], [6, -4], [14, -4], [14, 10], [0, 10], [0, 6], [-10, 6]], "closed": true, "color": "amber", "dash": true, "width": 1.6, "from": 1.75, "to": 2.5, "fade": 0},
     {"el": "poly", "points": [[-10, -8], [6, -8], [6, -4], [14, -4], [14, 10], [0, 10], [0, 6], [-10, 6]], "closed": true, "color": "sel", "width": 2.2, "fill": "sel", "fillOpacity": 0.18, "from": 2.5, "fade": 0.25},
     {"el": "card", "screen": [0.03, 0.06], "w": 122, "title": "Region union", "rows": [{"text": "First loop", "check": false}, {"text": "Second loop", "check": false}], "from": 0.1, "button": "Apply", "press": 2.4, "keys": [[0.8, {"rows": [{"text": "First loop", "check": true}, {"text": "Second loop", "check": false}], "ease": "step"}], [1.6, {"rows": [{"text": "First loop", "check": true}, {"text": "Second loop", "check": true}], "ease": "step"}]]},
     {"use": "sketchDraw", "args": {"badge": "combine", "keys": [[0, {"pos": [16, 12]}], [0.8, {"pos": [-6, 0], "click": 1}], [1.6, {"pos": [10, 6], "click": 1}], [2.25, {"screen": [0.34, 0.56]}], [2.4, {"screen": [0.34, 0.56], "click": 1}], [3.2, {"screen": [0.85, 0.88]}]]}}
@@ -2175,7 +2180,7 @@
   {
    "id": "sketch.subtract", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"rect": [[-10, -8], [11, 8]]}, {"circle": [11, 0], "r": 6}]},
-   "expect": {"entities": {"line": 5, "arc": 1}, "arcs": [{"center": [11, 0], "r": 6}], "construction": {"line": 4, "circle": 1}},
+   "expect": {"entities": {"line": 5, "arc": 1}, "arcs": [{"center": [11, 0], "r": 6}], "construction": {"line": 4, "circle": 1}, "during": [{"t": 2.3, "preview": true}]},
    "items": [
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
@@ -2183,6 +2188,7 @@
     {"el": "circle", "center": [11, 0], "r": 6, "to": 2.6, "fade": 0.25},
     {"el": "poly", "points": [[-10, -8], [11, -8], [11, 8], [-10, 8]], "closed": true, "width": 0, "fill": "sel", "fillOpacity": 0.25, "from": 0.8, "to": 2.5, "fade": 0.2},
     {"el": "poly", "points": [[17, 0], [16.88, 1.17], [16.54, 2.3], [15.99, 3.33], [15.24, 4.24], [14.33, 4.99], [13.3, 5.54], [12.17, 5.88], [11, 6], [9.83, 5.88], [8.7, 5.54], [7.67, 4.99], [6.76, 4.24], [6.01, 3.33], [5.46, 2.3], [5.12, 1.17], [5, 0], [5.12, -1.17], [5.46, -2.3], [6.01, -3.33], [6.76, -4.24], [7.67, -4.99], [8.7, -5.54], [9.83, -5.88], [11, -6], [12.17, -5.88], [13.3, -5.54], [14.33, -4.99], [15.24, -4.24], [15.99, -3.33], [16.54, -2.3], [16.88, -1.17]], "closed": true, "width": 0, "fill": "amber", "fillOpacity": 0.25, "from": 1.6, "to": 2.5, "fade": 0.2},
+    {"el": "poly", "points": [[-10, -8], [11, -8], [11, -6], [11, -6], [9.83, -5.88], [8.7, -5.54], [7.67, -4.99], [6.76, -4.24], [6.01, -3.33], [5.46, -2.3], [5.12, -1.17], [5, 0], [5.12, 1.17], [5.46, 2.3], [6.01, 3.33], [6.76, 4.24], [7.67, 4.99], [8.7, 5.54], [9.83, 5.88], [11, 6], [11, 8], [-10, 8]], "closed": true, "color": "amber", "dash": true, "width": 1.6, "from": 1.75, "to": 2.5, "fade": 0},
     {"el": "poly", "points": [[-10, -8], [11, -8], [11, -6], [11, -6], [9.83, -5.88], [8.7, -5.54], [7.67, -4.99], [6.76, -4.24], [6.01, -3.33], [5.46, -2.3], [5.12, -1.17], [5, 0], [5.12, 1.17], [5.46, 2.3], [6.01, 3.33], [6.76, 4.24], [7.67, 4.99], [8.7, 5.54], [9.83, 5.88], [11, 6], [11, 8], [-10, 8]], "closed": true, "color": "sel", "width": 2.2, "fill": "sel", "fillOpacity": 0.18, "from": 2.5, "fade": 0.25},
     {"el": "card", "screen": [0.03, 0.06], "w": 122, "title": "Region subtract", "rows": [{"text": "First loop", "check": false}, {"text": "Second loop", "check": false}], "from": 0.1, "button": "Apply", "press": 2.4, "keys": [[0.8, {"rows": [{"text": "First loop", "check": true}, {"text": "Second loop", "check": false}], "ease": "step"}], [1.6, {"rows": [{"text": "First loop", "check": true}, {"text": "Second loop", "check": true}], "ease": "step"}]]},
     {"use": "sketchDraw", "args": {"badge": "subtract", "keys": [[0, {"pos": [16, 12]}], [0.8, {"pos": [-4, 2], "click": 1}], [1.6, {"pos": [14, 2], "click": 1}], [2.25, {"screen": [0.34, 0.56]}], [2.4, {"screen": [0.34, 0.56], "click": 1}], [3.2, {"screen": [0.85, 0.88]}]]}}
@@ -2196,7 +2202,7 @@
   {
    "id": "sketch.intersect", "duration": 4.6, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"rect": [[-10, -8], [8, 8]]}, {"circle": [8, 0], "r": 8}]},
-   "expect": {"entities": {"line": 1, "arc": 1}, "arcs": [{"center": [8, 0], "r": 8}], "construction": {"line": 4, "circle": 1}},
+   "expect": {"entities": {"line": 1, "arc": 1}, "arcs": [{"center": [8, 0], "r": 8}], "construction": {"line": 4, "circle": 1}, "during": [{"t": 2.3, "preview": true}]},
    "items": [
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
@@ -2204,6 +2210,7 @@
     {"el": "circle", "center": [8, 0], "r": 8, "to": 2.6, "fade": 0.25},
     {"el": "poly", "points": [[-10, -8], [8, -8], [8, 8], [-10, 8]], "closed": true, "width": 0, "fill": "sel", "fillOpacity": 0.25, "from": 0.8, "to": 2.5, "fade": 0.2},
     {"el": "poly", "points": [[16, 0], [15.85, 1.56], [15.39, 3.06], [14.65, 4.44], [13.66, 5.66], [12.44, 6.65], [11.06, 7.39], [9.56, 7.85], [8, 8], [6.44, 7.85], [4.94, 7.39], [3.56, 6.65], [2.34, 5.66], [1.35, 4.44], [0.61, 3.06], [0.15, 1.56], [0, 0], [0.15, -1.56], [0.61, -3.06], [1.35, -4.44], [2.34, -5.66], [3.56, -6.65], [4.94, -7.39], [6.44, -7.85], [8, -8], [9.56, -7.85], [11.06, -7.39], [12.44, -6.65], [13.66, -5.66], [14.65, -4.44], [15.39, -3.06], [15.85, -1.56]], "closed": true, "width": 0, "fill": "amber", "fillOpacity": 0.25, "from": 1.6, "to": 2.5, "fade": 0.2},
+    {"el": "poly", "points": [[8, 8], [6.75, 7.9], [5.53, 7.61], [4.37, 7.13], [3.3, 6.47], [2.34, 5.66], [1.53, 4.7], [0.87, 3.63], [0.39, 2.47], [0.1, 1.25], [0, 0], [0.1, -1.25], [0.39, -2.47], [0.87, -3.63], [1.53, -4.7], [2.34, -5.66], [3.3, -6.47], [4.37, -7.13], [5.53, -7.61], [6.75, -7.9], [8, -8]], "closed": true, "color": "amber", "dash": true, "width": 1.6, "from": 1.75, "to": 2.5, "fade": 0},
     {"el": "poly", "points": [[8, 8], [6.75, 7.9], [5.53, 7.61], [4.37, 7.13], [3.3, 6.47], [2.34, 5.66], [1.53, 4.7], [0.87, 3.63], [0.39, 2.47], [0.1, 1.25], [0, 0], [0.1, -1.25], [0.39, -2.47], [0.87, -3.63], [1.53, -4.7], [2.34, -5.66], [3.3, -6.47], [4.37, -7.13], [5.53, -7.61], [6.75, -7.9], [8, -8]], "closed": true, "color": "sel", "width": 2.2, "fill": "sel", "fillOpacity": 0.18, "from": 2.5, "fade": 0.25},
     {"el": "card", "screen": [0.03, 0.06], "w": 122, "title": "Region intersection", "rows": [{"text": "First loop", "check": false}, {"text": "Second loop", "check": false}], "from": 0.1, "button": "Apply", "press": 2.4, "keys": [[0.8, {"rows": [{"text": "First loop", "check": true}, {"text": "Second loop", "check": false}], "ease": "step"}], [1.6, {"rows": [{"text": "First loop", "check": true}, {"text": "Second loop", "check": true}], "ease": "step"}]]},
     {"use": "sketchDraw", "args": {"badge": "intersect", "keys": [[0, {"pos": [16, 12]}], [0.8, {"pos": [-4, 4], "click": 1}], [1.6, {"pos": [12, 4], "click": 1}], [2.25, {"screen": [0.34, 0.56]}], [2.4, {"screen": [0.34, 0.56], "click": 1}], [3.2, {"screen": [0.85, 0.88]}]]}}
@@ -2217,7 +2224,7 @@
   {
    "id": "sketch.heal", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-10, -8], [14, -8]]}, {"line": [[13.5, -7.4], [14, 8]]}, {"line": [[14, 8], [-10, 8]]}, {"line": [[-10, -8], [-10.4, 7.4]]}]},
-   "expect": {"entities": {"line": 4}, "points": [[14, -8], [-10, 8]]},
+   "expect": {"entities": {"line": 4}, "points": [[14, -8], [-10, 8]], "during": [{"t": 2.2, "entities": {"line": 4}, "points": [[13.5, -7.4], [-10.4, 7.4]]}]},
    "items": [
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
@@ -2236,7 +2243,7 @@
   {
    "id": "sketch.explode", "duration": 4.2, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"circle": [-12, 0], "r": 3}], "patterns": [{"on": [0], "inputs": {"count": "3", "dx": "12 mm", "rows": "1", "dy": "0 mm"}}]},
-   "expect": {"entities": {"circle": 3}, "selected": 1, "tool": "select"},
+   "expect": {"entities": {"circle": 3}, "selected": 1, "tool": "select", "during": [{"t": 2.3, "selected": 1, "entities": {"circle": 3}}]},
    "items": [
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
@@ -2258,7 +2265,7 @@
   {
    "id": "sketch.node", "duration": 4.4, "extent": [-30, -14, 30, 14], "guide": [0, [1, 2]],
    "setup": {"tool": "select", "curves": [{"spline": [[-12, -8], [4, 8], [18, -8]], "poles": true}]},
-   "expect": {"entities": {"spline": 1}, "weights": [1, 4, 1]},
+   "expect": {"entities": {"spline": 1}, "weights": [1, 4, 1], "during": [{"t": 2.7, "preview": true}]},
    "items": [
     {"el": "camera", "center": [-10, 0]},
     {"use": "sketchScene"},
@@ -2300,7 +2307,7 @@
   {
    "id": "sketch.c.collinear", "template": "constraint",
    "setup": {"curves": [{"line": [[-18, -9], [-4, -3]]}, {"line": [[2, -4], [18, -4]]}], "constraints": [{"type": "fix", "on": [1]}]},
-   "expect": {"entities": {"line": 2}, "constraints": {"collinear": 1, "fix": 1}, "points": [[-20.14, -4], [-3.57, -4], [2, -4], [18, -4]]},
+   "expect": {"entities": {"line": 2}, "constraints": {"collinear": 1, "fix": 1}, "points": [[-20.14, -4], [-3.57, -4], [2, -4], [18, -4]], "during": [{"t": 1.5, "constraints": {"collinear": 0, "fix": 1}}]},
    "args": {"a": [[-18, -9], [-4, -3]], "a2": [[-20.14, -4], [-3.57, -4]], "b": [[2, -4], [18, -4]], "pa": [-11, -6], "pb": [10, -4], "glyph": "collinear", "ga": [-11, -4], "gb": [10, -4], "gady": 13, "gbdy": 13, "caption3": "The first line falls in line with it"},
    "items": [
     {"el": "glyph", "kind": "fix", "at": [16, -4], "dx": 0, "dy": 13}
@@ -2309,7 +2316,7 @@
   {
    "id": "sketch.c.midpoint", "template": "constraint",
    "setup": {"curves": [{"point": [-12, 6]}, {"line": [[-16, -6], [20, -6]]}], "constraints": [{"type": "fix", "on": [1]}]},
-   "expect": {"entities": {"line": 1, "point": 1}, "constraints": {"midpoint": 1, "fix": 1}, "points": [[2, -6]]},
+   "expect": {"entities": {"line": 1, "point": 1}, "constraints": {"midpoint": 1, "fix": 1}, "points": [[2, -6]], "during": [{"t": 1.5, "constraints": {"midpoint": 0, "fix": 1}}]},
    "args": {"a": [[-12, 6], [-12, 6]], "a2": [[2, -6], [2, -6]], "b": [[-16, -6], [20, -6]], "pa": [-12, 6], "pb": [12, -6], "glyph": "midpoint", "ga": [2, -6], "gb": [2, -6], "gady": 13, "gbdy": 13, "caption1": "Click a point", "caption2": "Click the line", "caption3": "The point moves to its middle"},
    "items": [
     {"el": "glyph", "kind": "fix", "at": [-12, -6], "dx": 0, "dy": 13}
@@ -2318,7 +2325,7 @@
   {
    "id": "sketch.c.smooth", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-20, -6], [0, -6]]}, {"spline": [[0, -6], [5, -3], [11, 0], [20, 8]], "poles": true}], "constraints": [{"type": "fix", "on": [0]}]},
-   "expect": {"entities": {"line": 1, "spline": 1}, "constraints": {"smooth": 1, "fix": 1}, "points": [[-20, -6], [0, -6], [20, 8]]},
+   "expect": {"entities": {"line": 1, "spline": 1}, "constraints": {"smooth": 1, "fix": 1}, "points": [[-20, -6], [0, -6], [20, 8]], "during": [{"t": 1.5, "constraints": {"smooth": 0, "fix": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[0.0, -6.0], [0.63, -5.62], [1.27, -5.25], [1.93, -4.87], [2.59, -4.48], [3.27, -4.08], [3.97, -3.67], [4.68, -3.25], [5.41, -2.81], [6.15, -2.36], [6.92, -1.89], [7.7, -1.39], [8.5, -0.88], [9.32, -0.33], [10.17, 0.24], [11.04, 0.85], [11.93, 1.48], [12.84, 2.15], [13.78, 2.86], [14.75, 3.61], [15.74, 4.39], [16.76, 5.22], [17.81, 6.1], [18.89, 7.03], [20.0, 8.0]], "color": "glow", "width": 6.5, "from": 1.45, "to": 1.9, "fade": 0.08},
@@ -2339,7 +2346,7 @@
   {
    "id": "sketch.c.curvature", "duration": 4.4, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[-20, -6], [0, -6]]}, {"spline": [[0, -6], [2, 1], [10, 7], [20, 8]], "poles": true}], "constraints": [{"type": "fix", "on": [0]}]},
-   "expect": {"entities": {"line": 1, "spline": 1}, "constraints": {"curvature": 1, "fix": 1}, "points": [[-20, -6], [0, -6], [20, 8]]},
+   "expect": {"entities": {"line": 1, "spline": 1}, "constraints": {"curvature": 1, "fix": 1}, "points": [[-20, -6], [0, -6], [20, 8]], "during": [{"t": 1.5, "constraints": {"curvature": 0, "fix": 1}}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[0.0, -6.0], [0.28, -5.13], [0.62, -4.27], [1.02, -3.43], [1.48, -2.6], [2.0, -1.79], [2.56, -1.0], [3.18, -0.23], [3.85, 0.52], [4.57, 1.24], [5.34, 1.94], [6.15, 2.61], [7.0, 3.25], [7.9, 3.86], [8.83, 4.44], [9.8, 4.98], [10.81, 5.48], [11.86, 5.95], [12.94, 6.38], [14.05, 6.76], [15.19, 7.1], [16.35, 7.4], [17.54, 7.65], [18.76, 7.85], [20.0, 8.0]], "color": "glow", "width": 6.5, "from": 1.45, "to": 1.9, "fade": 0.08},
@@ -2360,7 +2367,7 @@
   {
    "id": "sketch.c.symmetric", "duration": 4.8, "extent": [-30, -14, 30, 14],
    "setup": {"curves": [{"line": [[0, -12], [0, 12]], "construction": true}, {"point": [-12, 4]}, {"point": [8, -5]}], "constraints": [{"type": "fix", "on": [0]}, {"type": "fix", "on": [1]}]},
-   "expect": {"entities": {"point": 2}, "construction": {"line": 1}, "constraints": {"symmetric": 1, "fix": 2}, "points": [[-12, 4], [12, 4]]},
+   "expect": {"entities": {"point": 2}, "construction": {"line": 1}, "constraints": {"symmetric": 1, "fix": 2}, "points": [[-12, 4], [12, 4]], "during": [{"t": 2.2, "constraints": {"symmetric": 0, "fix": 2}, "points": [[-12, 4], [8, -5]]}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[0, -12], [0, 12]], "color": "fg2", "dash": true, "width": 1.2, "keys": [[2.3, {"color": "glow", "width": 6.5}], [2.6, {"color": "sel", "width": 1.6}], [3.6, {"color": "fg2", "width": 1.2}]]},
@@ -2412,8 +2419,8 @@
     {"el": "poly", "points": [[16, -8], [16, 6]], "color": "glow", "width": 6.5, "from": 2.6, "to": 3.6, "fade": 0.1},
     {"el": "glyph", "kind": "horizontal", "at": [5, 6], "dx": 0, "dy": -13},
     {"el": "glyph", "kind": "vertical", "at": [16, -1], "dx": 13, "dy": 0},
-    {"el": "dim", "a": [-6, -8], "b": [16, -8], "offset": -14, "value": "22.00", "color": "fg", "keys": [[3.8, {"color": "fg"}], [3.9, {"color": "sel"}]]},
-    {"el": "card", "screen": [0.03, 0.06], "w": 128, "title": "Constraints", "rows": [{"label": "1", "value": "Horizontal"}, {"label": "2", "value": "Vertical"}, {"label": "d3", "value": "22.00"}], "from": 0.1, "hl": -1, "keys": [[1.1, {"hl": 0}], [2.5, {"hl": 1}], [3.8, {"hl": 2}]]},
+    {"el": "dim", "a": [-6, -8], "b": [16, -8], "offset": -14, "value": "22 mm", "color": "fg", "keys": [[3.8, {"color": "fg"}], [3.9, {"color": "sel"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 128, "title": "Constraints", "rows": [{"label": "1", "value": "Horizontal"}, {"label": "2", "value": "Vertical"}, {"label": "d3", "value": "22 mm"}], "from": 0.1, "hl": -1, "keys": [[1.1, {"hl": 0}], [2.5, {"hl": 1}], [3.8, {"hl": 2}]]},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.8]}], [1, {"screen": [0.2, 0.28]}], [1.1, {"screen": [0.2, 0.28], "click": 1}], [2.4, {"screen": [0.2, 0.4]}], [2.5, {"screen": [0.2, 0.4], "click": 1}], [3.7, {"screen": [0.2, 0.52]}], [3.8, {"screen": [0.2, 0.52], "click": 1}], [4.4, {"screen": [0.25, 0.6]}]]}
    ],
    "steps": [
@@ -2424,7 +2431,7 @@
   {
    "id": "sketch.project", "duration": 5.4, "view": "iso", "extent": [-20, -13, 20, 17], "guide": [[0, 1], [1, 2]],
    "setup": {"bodies": [{"kind": "box", "inputs": {"plane": {"origin": [0, 0, 6], "normal": [0, 0, 1]}, "x": "2 mm", "length": "16 mm", "width": "10 mm", "height": "6 mm"}}]},
-   "expect": {"entities": {"line": 5}, "linked": 5, "points": [[-6, -5], [10, -5], [10, 5], [-6, 5]]},
+   "expect": {"entities": {"line": 5}, "linked": 5, "points": [[-6, -5], [10, -5], [10, 5], [-6, 5]], "during": [{"t": 2.3, "preview": {"line": 1}, "entities": {}}, {"t": 3.3, "preview": {"line": 5}, "entities": {}}]},
    "items": [
     {"el": "camera", "center": [-7, 0]},
     {"use": "isoScene", "args": {"area": [-18, -13, 18, 13]}},
@@ -2452,7 +2459,7 @@
   {
    "id": "sketch.intersect_body", "duration": 4.2, "view": "iso", "guide": [0, [1, 2]],
    "setup": {"plane": {"origin": [0, 0, 5]}, "bodies": [{"kind": "cylinder", "inputs": {"plane": {"origin": [0, 0, -2], "normal": [0, 0, 1]}, "diameter": "14 mm", "height": "16 mm"}}]},
-   "expect": {"entities": {"circle": 1}, "linked": 1, "circles": [{"center": [0, 0], "r": 7}]},
+   "expect": {"entities": {"circle": 1}, "linked": 1, "circles": [{"center": [0, 0], "r": 7}], "during": [{"t": 2.2, "preview": {"circle": 1}, "entities": {}}]},
    "items": [
     {"use": "isoScene", "args": {"area": [-18, -13, 18, 13]}},
     {"el": "solid", "profile": {"circle": [0, 0, 7], "n": 48}, "at": [0, 0, -2], "height": 7},
@@ -2474,7 +2481,7 @@
   {
    "id": "sketch.silhouette", "duration": 4.2, "view": "iso", "extent": [-20, -13, 20, 22], "guide": [0, [1, 2]],
    "setup": {"bodies": [{"kind": "sphere", "inputs": {"plane": {"origin": [0, 0, 11], "normal": [0, 0, 1]}, "diameter": "14 mm"}}]},
-   "expect": {"entities": {"circle": 1}, "linked": 1, "circles": [{"center": [0, 0], "r": 7}]},
+   "expect": {"entities": {"circle": 1}, "linked": 1, "circles": [{"center": [0, 0], "r": 7}], "during": [{"t": 2.2, "preview": {"circle": 1}, "entities": {}}]},
    "items": [
     {"use": "isoScene", "args": {"area": [-18, -13, 18, 13]}},
     {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [36, 26], "color": "sel", "fillOpacity": 0.08},
@@ -2494,7 +2501,7 @@
   {
    "id": "sketch.include3d", "duration": 4.8, "view": "iso", "extent": [-20, -12, 20, 18], "guide": [0, [0, 1]],
    "setup": {"bodies": [{"kind": "box", "inputs": {"length": "24 mm", "width": "12 mm", "height": "4 mm"}}, {"kind": "box", "inputs": {"plane": {"origin": [0, 0, 4], "normal": [0, 0, 1]}, "x": "-8 mm", "length": "8 mm", "width": "12 mm", "height": "8 mm", "operation": "join"}}]},
-   "expect": {"construction": {"line": 2}, "linked": 2, "points": [[-4, -6], [-4, 6], [12, -6]]},
+   "expect": {"construction": {"line": 2}, "linked": 2, "points": [[-4, -6], [-4, 6], [12, -6]], "during": [{"t": 1.5, "preview": {"construction line": 1}}, {"t": 2.7, "preview": {"construction line": 2}}]},
    "items": [
     {"el": "camera", "center": [-7, 0]},
     {"use": "isoScene", "args": {"area": [-18, -13, 18, 13]}},
@@ -2519,7 +2526,7 @@
   {
    "id": "sketch.break_link", "duration": 5, "extent": [-30, -14, 30, 14], "guide": [0, [1, 2]],
    "setup": {"curves": [{"rect": [[-14, -7], [10, 7]], "linked": true}]},
-   "expect": {"entities": {"line": 4}, "linked": 0, "tool": "select", "points": [[14, 9]]},
+   "expect": {"entities": {"line": 4}, "linked": 0, "tool": "select", "points": [[14, 9]], "during": [{"t": 1.4, "selected": 4, "linked": 4}]},
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-14, -7], [10, -7], [10, 7], [-14, 7]], "closed": true, "color": "amber", "width": 2,
@@ -2543,7 +2550,7 @@
   {
    "id": "sketch.image_insert", "duration": 4.4, "extent": [-30, -14, 30, 14], "guide": [0, 0, 1],
    "setup": {"file": "png"},
-   "expect": {"images": 1, "image": {"x": -6, "y": -4, "width": 24}},
+   "expect": {"images": 1, "image": {"x": -6, "y": -4, "width": 24}, "during": [{"t": 1.0, "preview": {"frame": 1}}, {"t": 2.2, "preview": {"frame": 1}, "images": 0}]},
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "sketchScene"},
@@ -2564,7 +2571,7 @@
   {
    "id": "sketch.image_edit", "duration": 5.2, "extent": [-30, -14, 30, 14], "guide": [0, [0, 2]],
    "setup": {"image": {"corners": [[-4, -6], [16, 6]], "opacity": 1}},
-   "expect": {"images": 1, "image": {"x": -2, "y": -5, "width": 20, "angle": 12, "opacity": 0.5}},
+   "expect": {"images": 1, "image": {"x": -2, "y": -5, "width": 20, "angle": 12, "opacity": 0.5}, "during": [{"t": 1.6, "preview": {"frame": 1}}, {"t": 3.5, "image": {"x": -2, "y": -5, "width": 20, "angle": 0, "opacity": 1}}]},
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "sketchScene"},
@@ -2583,7 +2590,7 @@
   {
    "id": "sketch.image_calibrate", "duration": 5, "extent": [-30, -14, 30, 14], "guide": [0, 0, 1],
    "setup": {"image": {"corners": [[-4, -6], [16, 6]]}},
-   "expect": {"images": 1, "image": {"x": -6.817, "y": -9.068, "width": 30.435}},
+   "expect": {"images": 1, "image": {"x": -6.817, "y": -9.068, "width": 30.435}, "during": [{"t": 1.5, "preview": {"measure": 1}}, {"t": 2.5, "readouts": ["14"], "image": {"x": -4, "y": -6, "width": 20}}]},
    "items": [
     {"el": "camera", "center": [-3, 0]},
     {"use": "sketchScene"},
@@ -2602,7 +2609,7 @@
   {
    "id": "sketch.image_trace", "duration": 5, "extent": [-30, -14, 30, 14],
    "setup": {"image": {"corners": [[-6, -8], [18, 8]], "opacity": 1, "shapes": [{"rect": [6, 0.32, 15.36, 7.36], "round": 1.6, "holes": [[1.92, 0.32, 1.4], [10.08, 0.32, 1.4]]}, {"rect": [-4, 6, 2.4, 2.4]}]}},
-   "expect": {"images": 1, "entities": {"line": [40, 200]}, "dark": [[-4, 6]], "light": [[-4, -6]]},
+   "expect": {"images": 1, "entities": {"line": [40, 200]}, "regions": 4, "bounds": [[-5.2, -3.36], [13.68, 7.2]], "area": 116.6, "dark": [[-4, 6]], "light": [[-4, -6]], "during": [{"t": 1.4, "images": 1, "entities": {}}]},
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "sketchScene"},
@@ -2620,7 +2627,7 @@
   {
    "id": "sketch.image_remove", "duration": 3.6, "extent": [-30, -14, 30, 14], "guide": [0, [0, 1]],
    "setup": {"image": {"corners": [[-6, -8], [18, 8]]}, "curves": [{"rect": [[-1.68, -3.36], [13.68, 4]]}, {"circle": [1.92, 0.32], "r": 1.4}, {"circle": [10.08, 0.32], "r": 1.4}]},
-   "expect": {"images": 0, "entities": {"line": 4, "circle": 2}},
+   "expect": {"images": 0, "entities": {"line": 4, "circle": 2}, "during": [{"t": 1.0, "images": 1}]},
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "sketchScene"},
@@ -2637,7 +2644,7 @@
   {
    "id": "sketch.simplify", "duration": 4.2, "extent": [-30, -14, 30, 14], "guide": [0, [0, 1]],
    "setup": {"curves": [{"poly": [[-18.0, -1.17], [-17.4, -1.74], [-16.8, -2.3], [-16.2, -2.83], [-15.6, -3.33], [-15.0, -3.81], [-14.4, -4.24], [-13.8, -4.64], [-13.2, -4.99], [-12.6, -5.29], [-12.0, -5.54], [-11.4, -5.74], [-10.8, -5.88], [-10.2, -5.97], [-9.6, -6.0], [-9.0, -5.97], [-8.4, -5.88], [-7.8, -5.74], [-7.2, -5.54], [-6.6, -5.29], [-6.0, -4.99], [-5.4, -4.64], [-4.8, -4.24], [-4.2, -3.81], [-3.6, -3.33], [-3.0, -2.83], [-2.4, -2.3], [-1.8, -1.74], [-1.2, -1.17], [-0.6, -0.59], [0.0, 0.0], [0.6, 0.59], [1.2, 1.17], [1.8, 1.74], [2.4, 2.3], [3.0, 2.83], [3.6, 3.33], [4.2, 3.81], [4.8, 4.24], [5.4, 4.64], [6.0, 4.99], [6.6, 5.29], [7.2, 5.54], [7.8, 5.74], [8.4, 5.88], [9.0, 5.97], [9.6, 6.0], [10.2, 5.97], [10.8, 5.88], [11.4, 5.74], [12.0, 5.54], [12.6, 5.29], [13.2, 4.99], [13.8, 4.64], [14.4, 4.24], [15.0, 3.81], [15.6, 3.33], [16.2, 2.83], [16.8, 2.3], [17.4, 1.74], [18.0, 1.17]]}]},
-   "expect": {"entities": {"spline": 1}, "points": [[-18.0, -1.17], [18.0, 1.17]]},
+   "expect": {"entities": {"spline": 1}, "points": [[-18.0, -1.17], [18.0, 1.17]], "during": [{"t": 1.7, "entities": {"line": 60}}]},
    "items": [
     {"el": "camera", "center": [-14, 0]},
     {"use": "sketchScene"},
@@ -2656,7 +2663,7 @@
   {
    "id": "sketch.vector_import", "duration": 4.2, "extent": [-30, -14, 30, 14], "guide": [0, [0, 1]],
    "setup": {"file": "svg"},
-   "expect": {"entities": {"line": [4, 40], "arc": [0, 40], "spline": [0, 40]}},
+   "expect": {"entities": {"line": 14}, "regions": 3, "bounds": [[1, -9], [18, -1], 0.01], "area": 92, "during": [{"t": 1.2, "entities": {}}]},
    "items": [
     {"el": "camera", "center": [-8, 0]},
     {"use": "sketchScene"},

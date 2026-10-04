@@ -85,7 +85,7 @@ const QHash<QString, QStringList>& schema() {
         {"axes", {"len", "at"}},
         {"poly", stroke + QStringList{"points", "closed"}},
         {"rect", stroke + QStringList{"corners"}},
-        {"circle", stroke + QStringList{"center", "r", "r2", "plane"}},
+        {"circle", stroke + QStringList{"center", "r", "r2", "plane", "through"}},
         {"arc", stroke + QStringList{"center", "r", "r2", "start", "sweep", "through", "plane"}},
         {"slot", stroke + QStringList{"c1", "c2", "r"}},
         {"polygon", stroke + QStringList{"center", "r", "n", "corner"}},
@@ -418,10 +418,19 @@ void parseClip(QJsonObject raw, const QJsonObject& templates, Library& l) {
   // The replay's blocks (clips.json "@replay"): only the fields the bench reads, so a misspelt one is no silent pass.
   static const QStringList setupFields{"tool", "command", "curves", "drawn", "constraints", "patterns", "options", "image", "file", "plane", "bodies", "note"};
   static const QStringList expectFields{"entities", "construction", "linked", "constraints", "dimensions", "arcs", "circles", "points", "selected", "tool",
-                                        "images", "image", "active", "sketches", "page", "rings", "snaps", "plane", "file", "status", "weights", "dark", "light", "note"};
+                                        "images", "image", "active", "sketches", "page", "rings", "snaps", "plane", "file", "status", "weights", "dark", "light", "note",
+                                        "bounds", "regions", "area", "during"};
   for (const auto& [block, known] : {std::pair{"setup", &setupFields}, std::pair{"expect", &expectFields}})
     for (const QString& key : raw.value(block).toObject().keys())
       if (!known->contains(key)) problem(QString("%1: unknown field %2").arg(block, key));
+  double last = -1;  // "during": entries in time order, each with its time, what the tool previews and reads out, end-state fields
+  for (const QJsonValue& v : raw.value("expect").toObject().value("during").toArray()) {
+    const QJsonObject entry = v.toObject();
+    if (!entry.contains("t") || entry.value("t").toDouble() < last) problem("expect: during entries need a time, in order");
+    last = entry.value("t").toDouble();
+    for (const QString& key : entry.keys())
+      if (key != "t" && key != "preview" && key != "readouts" && key != "labels" && (key == "during" || !expectFields.contains(key))) problem("expect: during: unknown field " + key);
+  }
   Clip c;
   c.id = id;
   c.setup = raw.value("setup").toObject();
@@ -1698,6 +1707,21 @@ void paintItem(Ctx& c, const Item& it, const QJsonObject& o) {
     if (el == "arc" && o.contains("through")) {
       const QJsonArray k = o.value("through").toArray();
       stroke(c, mapped(arcThrough(c.pt(k.at(0), x), c.pt(k.at(2), x), c.pt(k.at(1), x))), false, o);
+    } else if (o.contains("through")) {  // the whole circle through three points (a 3-point circle as the pointer moves)
+      const QJsonArray k = o.value("through").toArray();
+      const QVector<V3> arc = arcThrough(c.pt(k.at(0), x), c.pt(k.at(2), x), c.pt(k.at(1), x));
+      if (arc.size() > 2) {  // its centre and radius from three of the arc's points
+        const V3 a = arc.first(), m = arc[arc.size() / 2], b = arc.last();
+        const double d = 2 * (a.x() * (m.y() - b.y()) + m.x() * (b.y() - a.y()) + b.x() * (a.y() - m.y()));
+        if (std::abs(d) > 1e-9) {
+          auto sq = [](const V3& p) { return double(p.x()) * p.x() + double(p.y()) * p.y(); };
+          const V3 centre(float((sq(a) * (m.y() - b.y()) + sq(m) * (b.y() - a.y()) + sq(b) * (a.y() - m.y())) / d),
+                          float((sq(a) * (b.x() - m.x()) + sq(m) * (a.x() - b.x()) + sq(b) * (m.x() - a.x())) / d), a.z());
+          QVector<V3> pts = circlePoints(centre, (a - centre).length(), 90, 360, o.value("plane").toString(), 64);
+          pts.removeLast();
+          stroke(c, mapped(pts), true, o);
+        }
+      }
     } else if (r > 1e-6) {
       const bool circle = el == "circle";
       QVector<V3> pts = circlePoints(ctr, r, circle ? 90 : o.value("start").toDouble(), circle ? 360 : o.value("sweep").toDouble(90), o.value("plane").toString(), 64,

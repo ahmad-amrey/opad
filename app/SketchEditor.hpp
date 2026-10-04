@@ -288,6 +288,12 @@ class SketchEditor : public QObject, public SketchInput {
   QStringList transientTexts() const;                 // what the rubber band reads out (benches)
   size_t transientLocked() const;                     // segments drawn thick dashed: a Shift lock's line (benches)
   size_t transientCursor() const;                     // segments of the drawing cursor drawn (benches)
+  // What the rubber band draws now, by kind (benches; the clip replay compares it with what its clip shows): the curves a
+  // click makes ("line", "arc", "circle", "ellipse", "spline", "construction <kind>" for those it makes as construction, a
+  // dashed guide among them), "line" for a straight band to the pointer, "outline" for each of a text's or a paste's
+  // outlines, "trim" the piece a click removes, "extension" where an end runs to, "frame" a picture's, "measure" a distance.
+  const std::map<QString, int>& rubberKinds() const { return m_rubberKinds; }
+  std::map<QString, int> m_rubberKinds;
   bool cursorCrisp() const;                           // its arms lie on whole device pixels (benches)
   QStringList overlayTexts() const;                   // the texts the sketch's overlay draws (benches)
   size_t badgeTriangles() const;                      // the constraint badges' backs, two triangles each (benches)

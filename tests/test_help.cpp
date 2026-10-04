@@ -753,6 +753,25 @@ TEST(sketch_clips_carry_their_replay) {
       if (!named) wrong << QString("%1: the click on the chrome at %2 s changes no card or chip").arg(id).arg(click.t);
     }
   }
+  // Along the way, not only the end (CLAUDE.md safety net): a tool that previews before its last click, its Enter or its
+  // Apply (a shape's rubber band, an Apply tool's dashed result, a hover's arc, piece or run, a picture's frame) has its
+  // clip checked while the clip shows that preview, by a "during" entry inside the clip's time.
+  static const QStringList previewing{"line", "rect", "crect", "rect3", "circle", "circle2", "circle3", "arc3", "arcc", "tangent_arc", "tangent_circle",
+                                      "ellipse", "slot", "cslot", "arcslot", "polygon", "polygon_outer", "spline", "control_spline", "conic", "text",
+                                      "offset", "mirror", "move", "rotate", "scale", "copy", "rect_pattern", "polar_pattern", "chamfer", "fillet", "trim",
+                                      "extend", "union", "subtract", "intersect", "node", "project", "intersect_body", "silhouette", "include3d",
+                                      "image_insert", "image_calibrate", "image_edit"};
+  for (const QString& tool : previewing) {
+    const QString id = "sketch." + tool;
+    const QJsonArray during = clips::expect(id).value("during").toArray();
+    const bool previews = std::any_of(during.begin(), during.end(), [](const QJsonValue& v) {
+      const QJsonValue p = v.toObject().value("preview");
+      return p.isObject() ? !p.toObject().isEmpty() : p.toBool();
+    });
+    if (!previews) wrong << id + ": no \"during\" entry checks the preview the clip shows";
+    for (const QJsonValue& v : during)
+      if (v.toObject().value("t").toDouble() <= 0 || v.toObject().value("t").toDouble() >= clips::duration(id)) wrong << id + ": a \"during\" entry outside the clip";
+  }
   if (!wrong.isEmpty()) throw check::Failure(wrong.join(" | ").toStdString());
   CHECK(clipsChecked >= 80);
 }

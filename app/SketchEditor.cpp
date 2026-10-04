@@ -1872,6 +1872,7 @@ void SketchEditor::updateTransient() {
   };
   if(!m_geometry || m_geometryJob)return show();  // a large sketch's curves being prepared: only the cursor moves on meanwhile
   d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.locked.clear();d.points.clear();d.bigPoints.clear();d.rings.clear();d.texts.clear();d.fill.clear();
+  m_rubberKinds.clear();
   d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto mark=[&](double x,double y,const std::vector<snapmarkers::Seg>& segs,double ox,double oy,const QColor& c) {  // (ox, oy): px off (x, y)
     auto at=[&](double sx,double sy){return W(x+(sx+ox)*rx+(sy+oy)*ux,y+(sx+ox)*ry+(sy+oy)*uy);};
@@ -1899,15 +1900,18 @@ void SketchEditor::updateTransient() {
     if(m_tool=="fillet") {  // the arc a click there makes, at the radius set (typed before anything is picked too)
       const auto arc=filletPreview(m_hover.id);
       for(size_t i=1;i<arc.size();++i)d.solid.push_back({W(arc[i-1].first,arc[i-1].second),W(arc[i].first,arc[i].second),t.hov});
+      if(arc.size()>1)++m_rubberKinds["arc"];
     }
   } else if(m_hover.kind==Hit::Entity && !(gridPoints() && m_viewport->ownCursor())) {  // on the grid only the snap's own curve lights up
     // Trim lights up the piece the click removes, in red; the whole curve read as "this curve goes".
     const auto piece=m_tool=="trim"&&m_haveCursor?trimPreview(m_hover.id,m_cursor.u,m_cursor.v):std::vector<std::pair<double,double>>{};
     if(!piece.empty())for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
+    if(piece.size()>1)++m_rubberKinds["trim"];
     else if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov.lighter(115)});}
     if(m_tool=="extend" && m_haveCursor) {  // where a click there runs the end to (UI-28)
       const auto run=extendPreview(m_hover.id,m_pointer.u,m_pointer.v);
       for(size_t i=1;i<run.size();++i)d.dashed.push_back({W(run[i-1].first,run[i-1].second),W(run[i].first,run[i].second),t.green});
+      if(run.size()>1)++m_rubberKinds["extension"];
     }
   }
   if(m_boxSelecting) {
@@ -1949,25 +1953,32 @@ void SketchEditor::updateTransient() {
       if(nodes.size()>=2) {
         const int id=add_cubic_spline(preview,nodes);auto edge=entity_edge(preview,*preview.entity(id),opad::Frame{});
         if(!edge.IsNull()) {BRepAdaptor_Curve c(edge);auto previous=c.Value(c.FirstParameter());const int samples=int(nodes.size())*24;
-          for(int i=1;i<=samples;++i) {auto at=c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*i/samples);seg(previous.X(),previous.Y(),at.X(),at.Y());previous=at;}}
+          for(int i=1;i<=samples;++i) {auto at=c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*i/samples);seg(previous.X(),previous.Y(),at.X(),at.Y());previous=at;}
+          ++m_rubberKinds["spline"];}
       }
     } else if (m_tool == "line" && !m_chain.empty()) {
-      if (const SkPoint* p = m_geometry->point(m_sk,m_chain.back())) seg(p->x, p->y, cu, cv);
+      if (const SkPoint* p = m_geometry->point(m_sk,m_chain.back())) seg(p->x, p->y, cu, cv), ++m_rubberKinds["line"];
     } else if (!m_clicks.empty()) {
       const Snap& a = m_clicks[0];
-      if (m_tool == "rect") { seg(a.u, a.v, cu, a.v); seg(cu, a.v, cu, cv); seg(cu, cv, a.u, cv); seg(a.u, cv, a.u, a.v); }
+      if (m_tool == "rect") { seg(a.u, a.v, cu, a.v); seg(cu, a.v, cu, cv); seg(cu, cv, a.u, cv); seg(a.u, cv, a.u, a.v); m_rubberKinds["line"] += 4; }
       else if (m_tool == "crect") {
         const double w = std::fabs(cu - a.u), h = std::fabs(cv - a.v);
         seg(a.u - w, a.v - h, a.u + w, a.v - h); seg(a.u + w, a.v - h, a.u + w, a.v + h); seg(a.u + w, a.v + h, a.u - w, a.v + h); seg(a.u - w, a.v + h, a.u - w, a.v - h);
-      } else if (m_tool == "circle") circle(a.u, a.v, std::hypot(cu - a.u, cv - a.v));
+        m_rubberKinds["line"] += 4;
+      } else if (m_tool == "circle") circle(a.u, a.v, std::hypot(cu - a.u, cv - a.v)), ++m_rubberKinds["circle"];
       else if (m_tool == "polygon") {
-        // The polygon itself, its first corner at the pointer, as the click will make it.
+        // The polygon itself, its first corner at the pointer, as the click will make it, and dashed the construction circle
+        // through its corners that the click keeps (as its guide draws it).
         const int sides = std::clamp(option("sides", "6").toInt(), 3, 256);
         const double r = std::hypot(cu - a.u, cv - a.v), a0 = std::atan2(cv - a.v, cu - a.u);
         for (int i = 0; i < sides; ++i) {
           const double t0 = a0 + 2 * M_PI * i / sides, t1 = a0 + 2 * M_PI * (i + 1) / sides;
           seg(a.u + r * std::cos(t0), a.v + r * std::sin(t0), a.u + r * std::cos(t1), a.v + r * std::sin(t1));
         }
+        for (int i = 0; i < 72; ++i)
+          d.dashed.push_back({W(a.u + r * std::cos(i * M_PI / 36), a.v + r * std::sin(i * M_PI / 36)), W(a.u + r * std::cos((i + 1) * M_PI / 36), a.v + r * std::sin((i + 1) * M_PI / 36)), rb});
+        m_rubberKinds["line"] += sides;
+        ++m_rubberKinds["construction circle"];
       }
       // The final shape through the pointer for the three-click tools, instead of straight rubber bands.
       else if (m_clicks.size() == 2 && (m_tool == "arc3" || m_tool == "circle3" || m_tool == "arcc" || m_tool == "slot" || m_tool == "ellipse")) {
@@ -1979,16 +1990,17 @@ void SketchEditor::updateTransient() {
         };
         if (m_tool == "arc3" || m_tool == "circle3") {
           const double ax = a.u, ay = a.v, bx = b.u, by = b.v, cx = cu, cy = cv, dd = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
-          if (std::fabs(dd) < 1e-12) { seg(ax, ay, bx, by); seg(bx, by, cx, cy); }
+          if (std::fabs(dd) < 1e-12) { seg(ax, ay, bx, by); seg(bx, by, cx, cy); m_rubberKinds["line"] += 2; }
           else {
             const double ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / dd;
             const double uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / dd;
             const double r = std::hypot(ax - ux, ay - uy);
-            if (m_tool == "circle3") circle(ux, uy, r);
+            if (m_tool == "circle3") circle(ux, uy, r), ++m_rubberKinds["circle"];
             else {  // from the first click to the second, round the side the pointer is on (as the click decides it)
               const double a0 = std::atan2(ay - uy, ax - ux), a1 = std::atan2(by - uy, bx - ux), am = std::atan2(cy - uy, cx - ux);
               const bool ccw = positive(am - a0) < positive(a1 - a0);
               arc(ux, uy, r, a0, ccw ? positive(a1 - a0) : -positive(a0 - a1));
+              ++m_rubberKinds["arc"];
             }
           }
         } else if (m_tool == "arcc") {
@@ -1997,6 +2009,8 @@ void SketchEditor::updateTransient() {
           if (const auto typed = m_typedValues.find("sweep"); typed != m_typedValues.end()) sweep = typed->second;
           arc(a.u, a.v, r, from, sweep);
           d.dashed.push_back({W(a.u, a.v), W(b.u, b.v), rb});
+          ++m_rubberKinds["arc"];
+          ++m_rubberKinds["construction line"];  // the dashed radius to the start
         } else if (m_tool == "slot") {
           const double dx = b.u - a.u, dy = b.v - a.v, len = std::hypot(dx, dy);
           if (len > 1e-9) {
@@ -2006,6 +2020,9 @@ void SketchEditor::updateTransient() {
             arc(b.u, b.v, r, along - M_PI / 2, M_PI);
             arc(a.u, a.v, r, along + M_PI / 2, M_PI);
             d.dashed.push_back({W(a.u, a.v), W(b.u, b.v), rb});
+            m_rubberKinds["line"] += 2;
+            m_rubberKinds["arc"] += 2;
+            ++m_rubberKinds["construction line"];  // the centre line, made as construction
           }
         } else {  // ellipse: centre, end of the major axis, then the minor half-axis from the pointer
           const double dx = b.u - a.u, dy = b.v - a.v, major = std::hypot(dx, dy);
@@ -2016,12 +2033,18 @@ void SketchEditor::updateTransient() {
               const auto p = at(i), q = at(i + 1);
               seg(p.first, p.second, q.first, q.second);
             }
+            ++m_rubberKinds["ellipse"];
           }
         }
-      } else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") seg(a.u, a.v, cu, cv);
+      } else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") seg(a.u, a.v, cu, cv), ++m_rubberKinds["line"];
+      // Before their shape can show, the other tools of three clicks draw the band their guides draw from the first click: a
+      // 3-point rectangle's base, an arc slot's radius, a conic's start tangent, and a centre slot's centre line both ways.
+      else if (m_clicks.size() == 1 && (m_tool == "rect3" || m_tool == "arcslot" || m_tool == "conic")) seg(a.u, a.v, cu, cv), ++m_rubberKinds["line"];
+      else if (m_clicks.size() == 1 && m_tool == "cslot") seg(2 * a.u - cu, 2 * a.v - cv, cu, cv), ++m_rubberKinds["line"];
       else if (m_tool == "image_calibrate") {  // the distance being measured: to the pointer, then between the two clicks
         if (m_clicks.size() == 1) d.dashed.push_back({W(a.u, a.v), W(cu, cv), t.amber});
         else d.solid.push_back({W(a.u, a.v), W(m_clicks[1].u, m_clicks[1].v), t.amber});
+        ++m_rubberKinds["measure"];
       }
       for (const auto& k : m_clicks) d.points.push_back({W(k.u, k.v), m_tool == "image_calibrate" ? t.amber : rb});  // where the clicks so far went (a centre, the first end)
     }
@@ -2040,6 +2063,7 @@ void SketchEditor::updateTransient() {
         d.dashed.push_back({W(x + width, y), W(x + width, y + h), rb});
         d.dashed.push_back({W(x + width, y + h), W(x, y + h), rb});
         d.dashed.push_back({W(x, y + h), W(x, y), rb});
+        ++m_rubberKinds["frame"];
       }
     }
     if (m_tool == "image_edit") {  // the picture a press takes (under the pointer), or the one dragged where it goes (P5)
@@ -2048,19 +2072,29 @@ void SketchEditor::updateTransient() {
       else if (const int id = imageAt(m_pointer.u, m_pointer.v)) imageFrame(id, 0, 0, corners);
       for (size_t i = 0; i < corners.size(); ++i)
         d.dashed.push_back({W(corners[i].first, corners[i].second), W(corners[(i + 1) % corners.size()].first, corners[(i + 1) % corners.size()].second), rb});
+      if (!corners.empty()) ++m_rubberKinds["frame"];
     }
     if (m_tool == "paste" && m_clip)  // the copied curves by their base point at the pointer, as the click places them
-      for (const auto& line : m_clip->outline)
+      for (const auto& line : m_clip->outline) {
         for (size_t i = 1; i < line.size(); ++i) seg(cu + line[i - 1].first, cv + line[i - 1].second, cu + line[i].first, cv + line[i].second);
+        ++m_rubberKinds["outline"];
+      }
     if (m_tool == "text")  // the letters on their baseline from the pointer, as the click places them (there was only a dot)
-      for (const auto& line : textPreview())
+      for (const auto& line : textPreview()) {
         for (size_t i = 1; i < line.size(); ++i) seg(cu + line[i - 1].first, cv + line[i - 1].second, cu + line[i].first, cv + line[i].second);
+        ++m_rubberKinds["outline"];
+      }
     const Sketch preview=primitivePreview();
     for(const auto& e:preview.entities) {
       const auto edge=entity_edge(preview,e,opad::Frame{});
       if(edge.IsNull())continue;
+      static const char* const kinds[]={"point","line","circle","arc","ellipse","spline"};
+      ++m_rubberKinds[QString(e.construction?"construction ":"")+kinds[std::clamp(int(e.type),0,5)]];
       const auto pts=curveSamples(edge,px*0.25);
-      for(size_t i=1;i<pts.size();++i)seg(pts[i-1].X(),pts[i-1].Y(),pts[i].X(),pts[i].Y());
+      for(size_t i=1;i<pts.size();++i) {  // construction curves dashed, as the sketch draws them once made
+        if(e.construction)d.dashed.push_back({W(pts[i-1].X(),pts[i-1].Y()),W(pts[i].X(),pts[i].Y()),rb});
+        else seg(pts[i-1].X(),pts[i-1].Y(),pts[i].X(),pts[i].Y());
+      }
     }
     // The sizes and angles of the step, read out where they are measured; a typed one held, with a padlock (UI-17).
     for (const auto& r : readouts()) {

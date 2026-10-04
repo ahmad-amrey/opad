@@ -11,7 +11,10 @@
 // into the value boxes key by key, a card's rows set in the panel's fields of that label, its list row picked, its page
 // switch turned, its button (or a chip, or a dialog's button) pressed by its text. A click on a body (an iso clip's
 // reference tool, the plane picker) takes what the view finds there, else the nearest edge, face or body. Then what the
-// tool made is compared with the clip's "expect" block. Along the way the Tool guide is checked: every click, key, value
+// tool made is compared with the clip's "expect" block (counts, constraints, dimensions, places, and for outlines their
+// extent, closed regions and area), and on the way at each of its "during" entries (the clip's time reached, the inputs
+// before it settled): what the tool previews then by kind (SketchEditor::rubberKinds, an Apply tool's result), what the
+// view reads out, what the sketch holds so far. Along the way the Tool guide is checked too: every click, key, value
 // and button of the clip falls in a clip step that the guide (clips::guideRange) loops while the tool waits for the step
 // it is waiting for then, so the panel never loops a segment that shows something else. Logs
 // "bench: clip replay: <id>: <what> PASS/FAIL" and quits; tools/bench_cases/help.py runs it.
@@ -24,6 +27,7 @@
 #include "SketchEditor.hpp"
 #include "SketchPanel.hpp"
 #include "opad/design/sketch.hpp"
+#include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/geometry.hpp"
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -101,7 +105,7 @@ class ClipReplay : public QObject {
   SketchPanel* panel() const { return m_window.findChild<SketchPanel*>(); }
 
   void check(bool pass, const QString& what) {
-    trace::log(QString("bench: clip replay: %1: %2 %3").arg(m_id, what, pass ? "PASS" : "FAIL"));
+    trace::log(QString("bench: clip replay: %1: %2%3 %4").arg(m_id, m_when, what, pass ? "PASS" : "FAIL"));
     m_ok = m_ok && pass;
     m_clipOk = m_clipOk && pass;
   }
@@ -162,6 +166,20 @@ class ClipReplay : public QObject {
             continue;
           }
           const clips::Input& in = m_events[m_next];
+          // A "during" entry whose time this input reaches: what the clip shows then is compared once the inputs before it
+          // have settled (this tick's moves on the next tick, a few more for the view's own events; jobs and the preview's
+          // timer are waited for above).
+          if (m_duringNext < m_during.size() && in.t >= m_during.at(m_duringNext).toObject().value("t").toDouble()) {
+            if (moves) return;
+            if (!m_duringSettled) {
+              m_duringSettled = true;
+              m_wait = 3;
+              return;
+            }
+            m_duringSettled = false;
+            during(m_during.at(m_duringNext++).toObject());
+            return;
+          }
           if (in.kind == clips::Input::Kind::Move) {
             if (++moves > 40) return;  // the view's events in between
             ++m_next;
@@ -188,7 +206,8 @@ class ClipReplay : public QObject {
           return;
         }
         if (++m_settled < 6) return;
-        compare();
+        while (m_duringNext < m_during.size()) during(m_during.at(m_duringNext++).toObject());  // after the clip's last input
+        compare(m_expect);
         return next();
       case Phase::Done: return;
     }
@@ -211,6 +230,9 @@ class ClipReplay : public QObject {
     m_events = clips::input(m_id);
     m_setup = clips::setup(m_id);
     m_expect = clips::expect(m_id);
+    m_during = m_expect.value("during").toArray();
+    m_duringNext = 0;
+    m_duringSettled = false;
     m_next = 0;
     m_ticks = 0;
     m_modal = 0;
@@ -852,9 +874,9 @@ class ClipReplay : public QObject {
   }
   static QString shown(const QJsonValue& v) { return v.isArray() ? QString("%1 to %2").arg(v.toArray().at(0).toInt()).arg(v.toArray().at(1).toInt()) : QString::number(v.toInt()); }
 
-  void compare() {
+  // The tool's state compared with an expect block (the end state's, or a "during" entry's).
+  void compare(const QJsonObject& x) {
     SketchEditor* e = ed();
-    const QJsonObject& x = m_expect;
     if (x.contains("active")) check(e->active() == x.value("active").toBool(), x.value("active").toBool() ? "the sketch is still open" : "the sketch was left");
     if (x.contains("sketches"))
       check(int(e->m_doc->scene.sketches.size()) - m_sketches == x.value("sketches").toInt(), QString("the clip adds %1 sketches to the document (%2)").arg(x.value("sketches").toInt()).arg(int(e->m_doc->scene.sketches.size()) - m_sketches));
@@ -885,8 +907,39 @@ class ClipReplay : public QObject {
                       .arg(from, 0, 'f', 1).arg(std::fmod(to - from + 720, 360), 0, 'f', 1);
         }
       }
-      trace::log(QString("bench: clip replay: %1: made %2; constraints %3; dimensions %4; selected %5; tool %6; status \"%7\"")
-                     .arg(m_id, made.join(", "), held.join(", "), dims.join(", "), QString::number(e->m_sel.size()), e->tool(), m_status));
+      trace::log(QString("bench: clip replay: %1: %2made %3; constraints %4; dimensions %5; selected %6; tool %7; status \"%8\"")
+                     .arg(m_id, m_when, made.join(", "), held.join(", "), dims.join(", "), QString::number(e->m_sel.size()), e->tool(), m_status));
+    }
+    // The outline the curves draw: their extent and the closed regions they enclose (text, a trace, an import: what the clip
+    // draws where it draws it, not only how many pieces). Sketch-sized; a bench's own check.
+    double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300, area = 0;
+    for (const SkEntity& c : sk.entities)
+      if (!c.construction && c.type != SkEntity::Type::Point)
+        for (const auto& [u, v] : e->sampled(c)) u0 = std::min(u0, u), v0 = std::min(v0, v), u1 = std::max(u1, u), v1 = std::max(v1, v);
+    int regions = 0;
+    if (x.contains("regions") || x.contains("area") || x.contains("bounds")) {
+      try {
+        for (const Region& r : sketch_regions(sk, opad::Frame{})) ++regions, area += r.area;
+      } catch (const std::exception&) {
+        regions = -1;
+      }
+      trace::log(QString("bench: clip replay: %1: %2extent (%3, %4) to (%5, %6); %7 closed regions, %8 mm2").arg(m_id, m_when).arg(u0, 0, 'f', 2).arg(v0, 0, 'f', 2)
+                     .arg(u1, 0, 'f', 2).arg(v1, 0, 'f', 2).arg(regions).arg(area, 0, 'f', 1));
+    }
+    if (x.contains("bounds")) {  // [[u0, v0], [u1, v1]] (sketch mm), within 0.3 mm, or the third entry's tolerance
+      const QJsonArray b = x.value("bounds").toArray();
+      const double tol = b.size() > 2 ? b.at(2).toDouble() : 0.3;
+      const double want[] = {b.at(0).toArray().at(0).toDouble(), b.at(0).toArray().at(1).toDouble(), b.at(1).toArray().at(0).toDouble(), b.at(1).toArray().at(1).toDouble()};
+      const double have[] = {u0, v0, u1, v1};
+      bool same = true;
+      for (int i = 0; i < 4; ++i) same = same && std::abs(want[i] - have[i]) <= tol;
+      check(same, QString("the curves reach from (%1, %2) to (%3, %4), expected %5, %6 to %7, %8").arg(u0, 0, 'f', 2).arg(v0, 0, 'f', 2).arg(u1, 0, 'f', 2)
+                      .arg(v1, 0, 'f', 2).arg(want[0]).arg(want[1]).arg(want[2]).arg(want[3]));
+    }
+    if (x.contains("regions")) check(counts(x.value("regions"), regions), QString("%1 closed regions (expected %2)").arg(regions).arg(shown(x.value("regions"))));
+    if (x.contains("area")) {  // what the regions cover together, within 3 %
+      const double want = x.value("area").toDouble();
+      check(std::abs(area - want) <= 0.03 * want, QString("the regions cover %1 mm2 (expected %2)").arg(area, 0, 'f', 1).arg(want));
     }
     std::map<QString, int> made, construction;
     int linked = 0;
@@ -1024,12 +1077,82 @@ class ClipReplay : public QObject {
     if (x.contains("status")) check(m_status.contains(x.value("status").toString()), "the status says \"" + x.value("status").toString() + "\" (" + m_status + ")");
   }
 
+  // ---- along the way ---------------------------------------------------------------------------------------------------
+  // What the tool previews now, by kind ("construction <kind>" for construction curves): an Apply tool's preview (what it
+  // adds to the sketch, less what it takes away), and what the rubber band draws (SketchEditor::rubberKinds: a shape, the
+  // next piece of a line or a spline, a text's outlines, a fillet's arc, the piece a trim removes, a picture's frame ...).
+  std::map<QString, int> previewKinds() const {
+    SketchEditor* e = ed();
+    std::map<QString, int> out = e->rubberKinds();
+    if (e->m_toolPreview) {
+      for (const SkEntity& c : e->m_toolPreview->entities) ++out[(c.construction ? "construction " : "") + kindName(c.type)];
+      for (const SkEntity& c : e->m_sk.entities) --out[(c.construction ? "construction " : "") + kindName(c.type)];
+    }
+    for (auto it = out.begin(); it != out.end();) it = it->second ? std::next(it) : out.erase(it);
+    return out;
+  }
+  // The values the view reads out now: the rubber band's sizes and angles, the boxes beside the pointer or on an arrow (what
+  // is typed, else the grey value they show), a dimension's box.
+  QStringList readouts() const {
+    SketchEditor* e = ed();
+    QStringList out = e->transientTexts();
+    for (DynamicInput* input : view()->findChildren<DynamicInput*>())
+      if (input->isVisible())
+        for (int i = 0; i < input->count(); ++i)
+          if (QLineEdit* box = input->box(i)) out << (box->text().isEmpty() ? box->placeholderText() : box->text());
+    if (e->m_dimEdit && e->m_dimEdit->isVisible()) out << e->m_dimEdit->text();
+    return out;
+  }
+  // A "during" entry: the clip at its time "t", the inputs before it applied. "preview": the kinds the tool previews (a kind
+  // not named is none; true: some, false: none), "readouts": texts the view reads out beside the pointer or an arrow, "labels":
+  // texts the sketch draws (a dimension being placed), each found in one of them, and any of the end state's fields (what
+  // the sketch holds so far, the selection, the tool, the status).
+  void during(const QJsonObject& x) {
+    m_when = QString("at %1 s: ").arg(x.value("t").toDouble(), 0, 'f', 2);
+    const std::map<QString, int> kinds = previewKinds();
+    QStringList previewed;
+    for (const auto& [k, n] : kinds) previewed << QString("%1 %2").arg(n).arg(k);
+    const QStringList shownTexts = readouts();
+    trace::log(QString("bench: clip replay: %1: %2preview %3; readouts %4").arg(m_id, m_when, previewed.isEmpty() ? QString("none") : previewed.join(", "), shownTexts.join(" | ")));
+    if (x.value("preview").isBool()) {
+      const bool want = x.value("preview").toBool();
+      const bool drawn = !kinds.empty() || ed()->m_toolPreview;
+      check(drawn == want, want ? "the tool previews what the clip shows" : "the tool previews nothing, as the clip");
+    } else if (x.contains("preview")) {
+      const QJsonObject want = x.value("preview").toObject();
+      QStringList wrong;
+      std::set<QString> names;
+      for (const auto& [k, n] : kinds) names.insert(k);
+      for (const QString& k : want.keys()) names.insert(k);
+      for (const QString& k : names) {
+        const int n = kinds.count(k) ? kinds.at(k) : 0;
+        if (!counts(want.value(k), n)) wrong << QString("%1 %2 (expected %3)").arg(n).arg(k).arg(shown(want.value(k)));
+      }
+      check(wrong.isEmpty(), "the preview: " + (wrong.isEmpty() ? previewed.join(", ") : wrong.join(", ")));
+    }
+    for (const QJsonValue& v : x.value("readouts").toArray()) {
+      const QString want = v.toString();
+      check(std::any_of(shownTexts.begin(), shownTexts.end(), [&](const QString& s) { return s.contains(want); }), QString("the view reads out \"%1\"").arg(want));
+    }
+    const QStringList labels = ed()->overlayTexts();  // the sketch's own texts: its dimensions, one being placed
+    for (const QJsonValue& v : x.value("labels").toArray()) {
+      const QString want = v.toString();
+      check(std::any_of(labels.begin(), labels.end(), [&](const QString& s) { return s.contains(want); }), QString("the sketch shows the label \"%1\" (%2)").arg(want, labels.join(" | ")));
+    }
+    compare(x);
+    m_when.clear();
+  }
+
   MainWindow& m_window;
   DesignController* m_design;
   std::function<QAction*(const QString&)> m_action;
   QStringList m_ids, m_failed;
   QString m_shots, m_id, m_status;
   QJsonObject m_setup, m_expect;
+  QJsonArray m_during;  // the expect block's "during" entries, in time order
+  int m_duringNext = 0;
+  bool m_duringSettled = false;
+  QString m_when;  // "at <t> s: " while a during entry is compared
   QList<clips::Input> m_events;
   QSet<QString> m_snapSeen;
   QSet<int> m_answered;
