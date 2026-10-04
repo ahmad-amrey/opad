@@ -134,9 +134,17 @@ OPAD_BENCH(OPAD_BENCH_STATE, state) {
   w.action("view.2d")->trigger();  // off and on again by hand
   const bool byHand = w.action("view.2d")->isChecked() && !w.m_autoTwoD;
   w.action("file.new")->trigger();
+  // The filter is switched by a sliced job; its chips follow when it is applied (Viewport::filterApplied).
+  QElapsedTimer chips;
+  chips.start();
+  const bool followed = waitUntil([&] { return w.action("select.bodies")->isChecked(); }, 3000);
+  trace::log(QString("bench: state: Ctrl+N: the Bodies chip %1 after %2 ms").arg(followed ? "checked" : "not checked").arg(chips.elapsed()));
   require(byHand && !doc->browse && !w.action("view.2d")->isChecked() && !w.m_autoTwoD && !cardShown() && !v->twoDimensional() &&
               v->selectionFilter() == Viewport::SelFilter::Body && w.action("select.bodies")->isChecked(),
-          "Ctrl+N: 2D mode (set again by hand) off, the viewer card gone, bodies picked again (not the drawing's edges)");
+          QString("Ctrl+N: 2D mode (set again by hand) off, the viewer card gone, bodies picked again (not the drawing's edges); "
+                  "by hand %1, browse %2, 2D %3/%4/%5, card %6, filter %7, Bodies %8")
+              .arg(byHand).arg(doc->browse).arg(w.action("view.2d")->isChecked()).arg(w.m_autoTwoD).arg(v->twoDimensional()).arg(cardShown())
+              .arg(int(v->selectionFilter())).arg(w.action("select.bodies")->isChecked()));
   emit w.m_chips->saveToEditRequested();  // a stale card's click
   require(!doc->browse && !cardShown() && doc->hasDocument && doc->doc.ops.empty(), "a stale Save to edit changes nothing");
   w.action("view.2d")->trigger();
