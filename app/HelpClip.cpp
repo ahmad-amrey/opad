@@ -489,6 +489,7 @@ struct Ctx {
   V3 cursor;
   bool hasCursor = false;
   Bounds* record = nullptr;  // measuring: the view-unit bounds of every model point
+  QList<QRectF> cards;       // the cards on screen now (where they are drawn): value boxes keep clear of them
   QStringList* problems = nullptr;
 
   void camera(double az, double el) {
@@ -1094,6 +1095,16 @@ void hud(Ctx& c, const QJsonObject& o, const Xf& x) {
   if (at.x() + total > c.scene.right() - 4 * c.u) at.setX(anchor.x() - std::abs(dx) - total);
   at.setX(std::clamp(at.x(), c.scene.left() + 4 * c.u, std::max(c.scene.left() + 4 * c.u, c.scene.right() - 4 * c.u - total)));
   at.setY(std::clamp(at.y(), c.scene.top() + 4 * c.u, std::max(c.scene.top() + 4 * c.u, c.scene.bottom() - 4 * c.u - h)));
+  // Never under a card (right to left the cards change sides, the model does not): the anchor's other side when it is clear
+  // there, as the app's boxes turn back at the view's edge.
+  auto covered = [&](double x) {
+    const QRectF boxes(x, at.y(), total, h);
+    return std::any_of(c.cards.begin(), c.cards.end(), [&](const QRectF& card) { return card.intersects(boxes); });
+  };
+  if (covered(at.x())) {
+    const double other = at.x() >= anchor.x() ? anchor.x() - std::abs(dx) - total : anchor.x() + std::abs(dx);
+    if (other >= c.scene.left() + 4 * c.u && other + total <= c.scene.right() - 4 * c.u && !covered(other)) at.setX(other);
+  }
   double cx = at.x();
   for (qsizetype i = 0; i < texts.size(); ++i) {
     const QString& text = texts[i];
@@ -1147,15 +1158,21 @@ void keycaps(Ctx& c, const QJsonObject& o) {
 }
 
 // A panel stub: title, rows (label and value, radio, check box, slider, indent, icon), a highlighted row, a button.
+// Where a card is laid out (left to right; Ctx::mirror puts it where it is drawn) and how tall its rows make it.
+QRectF cardLayout(const Ctx& c, const QJsonObject& o) {
+  const double u = c.u, w = o.value("w").toDouble(140) * u, rowH = 17 * u, titleH = 21 * u;
+  const double h = titleH + o.value("rows").toArray().size() * rowH + (o.contains("button") ? 26 * u : 0) + 4 * u;
+  const QJsonArray at = o.value("screen").toArray();
+  return QRectF(c.scene.left() + at.at(0).toDouble() * c.scene.width(), c.scene.top() + at.at(1).toDouble() * c.scene.height(), w, h);
+}
+
 void card(Ctx& c, const QJsonObject& o) {
   QPainter& p = *c.p;
   const Tokens& t = *c.tk;
   const double u = c.u, w = o.value("w").toDouble(140) * u, pad = 7 * u, rowH = 17 * u, titleH = 21 * u;
   const QJsonArray rows = o.value("rows").toArray();
   const bool button = o.contains("button");
-  const double h = titleH + rows.size() * rowH + (button ? 26 * u : 0) + 4 * u;
-  const QJsonArray at = o.value("screen").toArray();
-  const QRectF ltr(c.scene.left() + at.at(0).toDouble() * c.scene.width(), c.scene.top() + at.at(1).toDouble() * c.scene.height(), w, h);  // laid out here
+  const QRectF ltr = cardLayout(c, o);  // laid out here
   const QRectF box = c.mirror(ltr);
   p.setPen(Qt::NoPen);
   p.setBrush(alpha(Qt::black, t.dark ? 0.3 : 0.12));
@@ -2015,6 +2032,8 @@ void paint(QPainter& p, const QRectF& r, const QString& id, double t, const Opti
   prepare(c, clip, zoom, pan);
   c.s = std::min(c.scene.width() / ext.width(), c.scene.height() / ext.height()) * zoom;
   c.center = ext.center() + pan;
+  for (const Item& it : clip.items)
+    if (it.el == "card" && visibility(it, c.t) > 0) c.cards << c.mirror(cardLayout(c, evaluate(it, c.t)));
   p.save();
   p.setClipRect(c.scene, Qt::IntersectClip);
   paintScene(c, clip);

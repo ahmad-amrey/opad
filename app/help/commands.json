@@ -923,7 +923,7 @@
    "id": "design.revolve",
    "title": "Revolve",
    "summary": "Turns sketch profiles about an axis into a solid.",
-   "details": "Pick the profiles, then the axis: a sketch line, an edge or an origin axis. A full turn is 360 degrees; Symmetric splits the angle on both sides. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Pick the profiles, then click the axis in the view: a sketch line, an origin axis or a construction axis (an edge or a round face through the Axis box). The preview turns them a full 360 degrees at once; type another angle to change it, and Symmetric splits it on both sides. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["lathe", "turn", "rotate profile", "axisymmetric"],
    "requires": "Open or create a document first."
   },
@@ -1027,7 +1027,7 @@
    "id": "design.combine",
    "title": "Combine",
    "summary": "Joins, cuts or intersects bodies.",
-   "details": "Pick the target bodies, then the tool bodies, and choose the operation. Keep tools leaves the tool bodies in place after the cut.",
+   "details": "Pick the target body (more through the Target bodies box), then the tool bodies, and choose the operation. Keep tools leaves the tool bodies in place after the cut.",
    "keywords": ["boolean", "union", "subtract", "intersect", "merge"],
    "requires": "Open or create a document first."
   },
@@ -1035,7 +1035,7 @@
    "id": "design.split",
    "title": "Split body",
    "summary": "Cuts bodies in two along a plane.",
-   "details": "Pick the bodies and the splitting plane. Both halves become separate bodies you can move, hide or delete.",
+   "details": "Pick the bodies, then click the splitting plane in the view: an origin or a construction plane (a planar face through the Splitting plane box). Both halves become separate bodies you can move, hide or delete.",
    "keywords": ["cut in half", "divide", "separate", "slice"],
    "requires": "Open or create a document first."
   },
@@ -1059,7 +1059,7 @@
    "id": "design.pattern_circ",
    "title": "Circular pattern",
    "summary": "Copies bodies about an axis.",
-   "details": "Pick the bodies, the axis, the count and the total angle. 360 degrees spreads the copies evenly around a full turn. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Pick the bodies: the copies go round the Z axis at once; click another axis (an origin or construction axis, a sketch line) to turn them about it. Set the count and the total angle: 360 degrees spreads the copies evenly around a full turn. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["polar array", "radial", "around", "repeat"],
    "requires": "Open or create a document first."
   },
