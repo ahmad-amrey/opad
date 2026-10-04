@@ -518,7 +518,8 @@ OPAD_BENCH(OPAD_BENCH_GUIDE, guide) {
     ToolGuide* s = panels.isEmpty() ? nullptr : panels.front()->findChild<ToolGuide*>();
     check(w.m_design->sketchActive() && plays(s, "sketch.line") && s->view()->range() == qMakePair(0, 0), "the sketch panel plays the line tool at its first point (" + range(s) + ")");
     w.m_design->sketch()->placePrecise("0", "0", 0);
-    check(s && s->view()->range() == qMakePair(1, 2), "a placed point moves it on (" + range(s) + ")");
+    // The second point: the clip step that places it (typed, Enter); the clicks after it loop while more points or Enter wait.
+    check(s && s->view()->range() == qMakePair(1, 1), "a placed point moves it on (" + range(s) + ")");
   });
   add(400, [=, &w] {
     auto panels = w.findChildren<SketchPanel*>();

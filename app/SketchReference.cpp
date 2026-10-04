@@ -35,7 +35,8 @@ void SketchEditor::showSources() {
 void SketchEditor::pickReference() {
   opad::Ref ref;
   // What the pointer rests on, else what is under the press: a click that came before any hover pass picked nothing.
-  if(!m_viewport->hoveredReference(ref) && !m_viewport->referenceAt(m_viewport->mapFromGlobal(QCursor::pos()),ref))
+  if(m_replayReference)ref=*m_replayReference;
+  else if(!m_viewport->hoveredReference(ref) && !m_viewport->referenceAt(m_viewport->mapFromGlobal(QCursor::pos()),ref))
     return emit status(tr("Pick source geometry in the view, or choose it in the panel."));
   toggleSource(QString::fromStdString(ref.to_json().dump()));
 }

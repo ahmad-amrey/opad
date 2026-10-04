@@ -105,7 +105,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(place,&QPushButton::clicked,this,submit); connect(m_v,&QLineEdit::returnPressed,this,submit);
   tool->addStretch();
   auto* selection=page(tr("Select"));
-  auto* filter=new QComboBox(this);
+  auto* filter=new QComboBox(this);filter->setAccessibleName(tr("Filter"));  // what a pick or a window may select (no form label: named for screen readers)
   for(const auto& [id,title]:QList<QPair<QString,QString>>{{"all",tr("All geometry")},{"point",tr("Points")},{"line",tr("Lines")},{"arc",tr("Arcs and circles")},{"spline",tr("Splines")},{"construction",tr("Construction")},{"constraint",tr("Constraints")},{"dimension",tr("Dimensions")}}) filter->addItem(title,id);
   selection->addWidget(filter);
   connect(filter,&QComboBox::currentIndexChanged,this,[this,filter]{m_editor->m_selectionFilter=filter->currentData().toString();});

@@ -173,6 +173,7 @@ class SketchEditor : public QObject, public SketchInput {
 
  private:
   friend class SketchPanel;
+  friend class ClipReplay;  // the help clips replayed into the tools (ClipReplayBench.cpp)
   opad::design::SolveOptions solveOptions() const;
   bool selectable(int id) const;
   void runSketchEdit(const QString& label,std::function<void(opad::design::Sketch&)> work);
@@ -366,6 +367,9 @@ class SketchEditor : public QObject, public SketchInput {
   void updateDimensionHandle();
   void referenceHover();
   void pickReference();
+  // The reference a replayed press is on (ClipReplayBench.cpp: a clip's click on a body, found where the clip shows it), which
+  // pickReference takes before the view's hover; none otherwise.
+  std::optional<opad::Ref> m_replayReference;
   // The reference tools' sources (TODO 11 wave 3, P4): picked in the view or chosen in the panel, each a JSON reference;
   // a pick toggles one (a picked one again drops it), the preview shows them all and Enter or Apply adds them together.
   void toggleSource(const QString& source);

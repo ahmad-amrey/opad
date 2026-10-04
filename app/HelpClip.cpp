@@ -61,6 +61,7 @@ struct Clip {
   QList<clips::Step> steps;
   QList<QPair<int, int>> guide;  // per tool step, the clip steps a tool panel loops
   QStringList texts;
+  QJsonObject setup, expect;  // the replay's (clips::input)
 };
 struct Library {
   QHash<QString, Clip> clips;
@@ -412,10 +413,19 @@ void parseClip(QJsonObject raw, const QJsonObject& templates, Library& l) {
     base.remove("params");
     raw = base;
   }
-  static const QStringList fields{"id", "duration", "still", "view", "camera", "extent", "pad", "items", "steps", "guide", "note"};
+  static const QStringList fields{"id", "duration", "still", "view", "camera", "extent", "pad", "items", "steps", "guide", "note", "setup", "expect"};
   for (auto it = raw.begin(); it != raw.end(); ++it) if (!fields.contains(it.key())) problem("unknown field " + it.key());
+  // The replay's blocks (clips.json "@replay"): only the fields the bench reads, so a misspelt one is no silent pass.
+  static const QStringList setupFields{"tool", "command", "curves", "drawn", "constraints", "patterns", "options", "image", "file", "plane", "bodies", "note"};
+  static const QStringList expectFields{"entities", "construction", "linked", "constraints", "dimensions", "arcs", "circles", "points", "selected", "tool",
+                                        "images", "image", "active", "sketches", "page", "rings", "snaps", "plane", "file", "status", "weights", "note"};
+  for (const auto& [block, known] : {std::pair{"setup", &setupFields}, std::pair{"expect", &expectFields}})
+    for (const QString& key : raw.value(block).toObject().keys())
+      if (!known->contains(key)) problem(QString("%1: unknown field %2").arg(block, key));
   Clip c;
   c.id = id;
+  c.setup = raw.value("setup").toObject();
+  c.expect = raw.value("expect").toObject();
   c.duration = raw.value("duration").toDouble(4);
   c.still = raw.value("still").toDouble(c.duration);
   c.pad = raw.value("pad").toDouble(0.1);
@@ -2004,6 +2014,215 @@ int stepAt(const QString& id, double t) {
 QStringList texts(const QString& id) {
   ensureLoaded();
   return lib().clips.value(id).texts;
+}
+
+QJsonObject setup(const QString& id) {
+  ensureLoaded();
+  return lib().clips.value(id).setup;
+}
+QJsonObject expect(const QString& id) {
+  ensureLoaded();
+  return lib().clips.value(id).expect;
+}
+bool iso(const QString& id) {
+  ensureLoaded();
+  return lib().clips.value(id).iso;
+}
+QRectF extent(const QString& id) {
+  ensureLoaded();
+  const auto it = lib().clips.find(id);
+  return it == lib().clips.end() ? QRectF() : fit(*it, theme::tokens(false));
+}
+
+// The pointer as the clip moves it (cursorAt, in model coordinates): sampled densely between its places so the tool sees
+// the way it went (an arc slot's sweep, the side of a tangent circle), its button going down and up (a drag), its clicks
+// (two in one place within 0.45 s: a double click); places on the chrome ("screen") only click. Keys, typed values and the
+// panel stubs (a card's rows, its list and page switch, its button; a chip pressed) at their times.
+QList<Input> input(const QString& id) {
+  ensureLoaded();
+  const auto clip = lib().clips.constFind(id);
+  if (clip == lib().clips.constEnd()) return {};
+  QList<Input> out;
+  auto event = [](Input::Kind kind, double t) {
+    Input in;
+    in.kind = kind;
+    in.t = std::max(0.0, t);
+    return in;
+  };
+  for (const Item& it : clip->items) {
+    if (it.el == "cursor") {
+      struct Anchor { double t; QJsonValue v; Ease ease; bool screen; };
+      QList<Anchor> anchors;
+      const Track* down = nullptr;
+      for (const Track& k : it.tracks) {
+        if (k.prop == "down") down = &k;
+        if (k.prop == "pos" || k.prop == "screen")
+          for (qsizetype i = 0; i < k.t.size(); ++i) anchors << Anchor{k.t[i], k.v[i], k.ease[i], k.prop == "screen"};
+      }
+      std::stable_sort(anchors.begin(), anchors.end(), [](const Anchor& a, const Anchor& b) { return a.t < b.t; });
+      if (anchors.isEmpty()) anchors << Anchor{0, it.base.contains("screen") ? it.base.value("screen") : it.base.value("pos"), Ease::InOut, it.base.contains("screen")};
+      // Where the pointer is at t: on the scene (false: on the chrome, or moving between the two), and there.
+      auto place = [&](double t, V3& at, QPointF& screen) {
+        qsizetype i = 0;
+        while (i + 1 < anchors.size() && anchors[i + 1].t <= t) ++i;
+        const Anchor& a = anchors[i];
+        if (a.screen || (t > a.t && i + 1 < anchors.size() && anchors[i + 1].screen)) {
+          const QJsonArray s = (a.screen ? a.v : anchors[i + 1].v).toArray();
+          screen = QPointF(s.at(0).toDouble(), s.at(1).toDouble());
+          return false;
+        }
+        at = vec(a.v);
+        if (t > a.t && i + 1 < anchors.size()) {
+          const Anchor& b = anchors[i + 1];
+          at = at + (vec(b.v) - at) * float(eased(b.ease, (t - a.t) / std::max(1e-9, b.t - a.t)));
+        }
+        return true;
+      };
+      std::vector<double> times;
+      for (qsizetype i = 0; i < anchors.size(); ++i) {
+        times.push_back(anchors[i].t);
+        if (i + 1 < anchors.size() && !anchors[i].screen && !anchors[i + 1].screen) {
+          // As a hand moves: every 40 ms, and no more than 0.6 mm apart, so a curve the pointer crosses is passed within 0.3 mm
+          // (hovered); eased, the pointer goes up to 3 times as fast as on average.
+          const double reach = (vec(anchors[i + 1].v) - vec(anchors[i].v)).length();
+          const int n = std::max({1, int(std::ceil((anchors[i + 1].t - anchors[i].t) / 0.04)), int(std::ceil(3 * reach / 0.6))});
+          for (int k = 1; k < n; ++k) times.push_back(anchors[i].t + (anchors[i + 1].t - anchors[i].t) * k / n);
+        }
+      }
+      for (double t : it.clicks) times.push_back(t);
+      if (down) for (double t : down->t) times.push_back(t);
+      std::sort(times.begin(), times.end());
+      times.erase(std::unique(times.begin(), times.end(), [](double a, double b) { return std::abs(a - b) < 1e-9; }), times.end());
+      bool held = it.base.value("down").toBool();
+      double lastClick = -10;
+      V3 lastAt;
+      for (const double t : times) {
+        if (t < it.from - 1e-9 || t > it.to + 1e-9) continue;
+        V3 at;
+        QPointF screen;
+        const bool scene = place(t, at, screen);
+        const bool now = down ? evaluate(it, t).value("down").toBool() : held;  // before its first key: the item's own (up)
+        if (scene) {
+          Input move = event(Input::Kind::Move, t);
+          move.at = at;
+          move.down = held;  // the move that ends a drag still drags
+          out << move;
+        }
+        if (now != held) {
+          Input edge = event(now ? Input::Kind::Press : Input::Kind::Release, t);
+          edge.at = at;
+          if (!scene) edge.screen = screen;
+          out << edge;
+          held = now;
+        }
+        if (std::any_of(it.clicks.begin(), it.clicks.end(), [t](double c) { return std::abs(c - t) < 1e-9; })) {
+          const bool twice = scene && t - lastClick < 0.45 && (at - lastAt).length() < 0.5f;
+          Input click = event(twice ? Input::Kind::DoubleClick : Input::Kind::Click, t);
+          click.at = at;
+          if (!scene) click.screen = screen;
+          out << click;
+          lastClick = scene ? t : -10;
+          lastAt = at;
+        }
+      }
+    } else if (it.el == "key") {
+      Input key = event(Input::Kind::Key, it.base.value("press").toDouble(-1));
+      for (const QJsonValue& cap : it.base.value("caps").toArray()) key.caps << cap.toString();
+      key.value = it.base.value("command").toString();  // a key given as its command's or as a fixed key (wave 3, keys)
+      key.text = it.base.value("fixed").toString();
+      if (it.base.value("press").isDouble()) out << key;
+    } else if (it.el == "hud") {  // what is typed into the focused box, key by key
+      QString typed = it.base.value("typed").toString();
+      for (const Track& k : it.tracks) {
+        if (k.prop != "typed") continue;
+        for (qsizetype i = 0; i < k.t.size(); ++i) {
+          const QString now = k.v[i].toString();
+          if (now != typed && now.startsWith(typed)) {
+            Input type = event(Input::Kind::Type, k.t[i]);
+            type.text = now.mid(typed.size());
+            out << type;
+          }
+          typed = now;
+        }
+      }
+    } else if (it.el == "card") {
+      // Value rows ([label, value], a text field {"text", "entry"}): set when the card comes and whenever they change; a list
+      // row ({"label" or "text", "value"}) highlighted is picked; a page switch ({"tabs", "on"}) turned; the button pressed.
+      const double from = std::max(0.0, it.from);
+      std::vector<double> times{from};
+      for (const Track& k : it.tracks)
+        if (k.prop == "rows" || k.prop == "hl")
+          for (double t : k.t) if (t > from + 1e-9 && t <= it.to + 1e-9) times.push_back(t);
+      std::sort(times.begin(), times.end());
+      times.erase(std::unique(times.begin(), times.end(), [](double a, double b) { return std::abs(a - b) < 1e-9; }), times.end());
+      QHash<QString, QString> values;
+      int page = -1, picked = -1;
+      for (const double t : times) {
+        const QJsonObject o = evaluate(it, t);
+        const QJsonArray rows = o.value("rows").toArray();
+        for (qsizetype i = 0; i < rows.size(); ++i) {
+          QString label, value;
+          if (rows[i].isArray()) {
+            label = rows[i].toArray().at(0).toString();
+            value = rows[i].toArray().at(1).toString();
+          } else if (const QJsonObject r = rows[i].toObject(); r.contains("entry")) {
+            label = r.value(r.contains("text") ? "text" : "label").toString();
+            value = r.value("entry").toString();
+          } else if (r.contains("tabs")) {
+            if (const int on = r.value("on").toInt(); page >= 0 && on != page) {
+              Input turn = event(Input::Kind::Page, t);
+              turn.index = on;
+              turn.text = r.value("tabs").toArray().at(on).toString();
+              out << turn;
+            }
+            page = r.value("on").toInt();
+            continue;
+          } else {
+            continue;
+          }
+          if (values.contains(label) && values.value(label) == value) continue;
+          values.insert(label, value);
+          Input row = event(Input::Kind::Row, t);
+          row.text = label;
+          row.value = value;
+          out << row;
+        }
+        const int hl = o.value("hl").toInt(-1);
+        if (hl != picked && hl >= 0 && hl < rows.size() && rows[hl].isObject()) {
+          const QJsonObject r = rows[hl].toObject();
+          if (!r.contains("tabs") && !r.contains("entry") && r.contains("value")) {
+            Input pick = event(Input::Kind::Pick, t);
+            pick.index = int(hl);
+            pick.text = r.value(r.contains("label") ? "label" : "text").toString();
+            pick.value = r.value("value").toString();
+            out << pick;
+          }
+        }
+        picked = hl;
+      }
+      if (it.base.contains("button") && it.base.value("press").isDouble()) {
+        Input press = event(Input::Kind::Button, it.base.value("press").toDouble());
+        press.text = it.base.value("button").toString();
+        out << press;
+      }
+    } else if (it.el == "chip") {  // a chip that lights up as the pointer presses it: a button
+      for (const Track& k : it.tracks) {
+        if (k.prop != "hl") continue;
+        bool lit = it.base.value("hl").toBool();
+        for (qsizetype i = 0; i < k.t.size(); ++i) {
+          if (k.v[i].toBool() && !lit) {
+            Input press = event(Input::Kind::Button, k.t[i]);
+            press.text = it.base.value("text").toString();
+            press.value = "chip";
+            out << press;
+          }
+          lit = k.v[i].toBool();
+        }
+      }
+    }
+  }
+  std::stable_sort(out.begin(), out.end(), [](const Input& a, const Input& b) { return a.t < b.t - 1e-9; });
+  return out;
 }
 
 int guideSteps(const QString& id) {

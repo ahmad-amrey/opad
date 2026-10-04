@@ -681,6 +681,82 @@ TEST(every_tool_step_has_a_clip_step) {
   CHECK(checked >= 90);
 }
 
+// The replay's input (TODO 11 wave 3, audit 6.3 test 8): the pointer sampled along its way (0.6 mm apart at most), pressed,
+// dragged and released, clicked and double clicked; a key pressed; what a value box shows typed key by key; a card's value
+// rows when it comes and as they change, its list row picked, its page switch turned, its button pressed; a chip pressed; a
+// click on the chrome kept as such. The setup and expect blocks come as written.
+TEST(clip_input_is_what_the_clip_does) {
+  QTemporaryDir dir;
+  QFile f(dir.filePath("clips.json"));
+  CHECK(f.open(QIODevice::WriteOnly));
+  f.write(R"({"clips": [
+    {"id": "do", "duration": 4, "extent": [-10, -10, 10, 10], "steps": [{"to": 4, "caption": "All"}], "setup": {"tool": "line"}, "expect": {"entities": {"line": 1}},
+     "items": [
+      {"el": "cursor", "keys": [[0, {"pos": [0, 0]}], [0.5, {"pos": [4, 0], "click": 1}], [0.7, {"pos": [4, 0], "click": 1}], [1, {"pos": [4, 0], "down": true}],
+                               [1.5, {"pos": [6, 0], "down": false}], [2, {"screen": [0.3, 0.4]}], [2.2, {"screen": [0.3, 0.4], "click": 1}]]},
+      {"el": "key", "caps": ["Enter"], "press": 3},
+      {"el": "hud", "fields": ["{len} mm"], "typed": "", "focus": 0, "keys": [[2.5, {"typed": "1"}], [2.6, {"typed": "12"}], [2.7, {"typed": ""}], [2.8, {"typed": "3"}]]},
+      {"el": "card", "screen": [0.03, 0.06], "title": "Tool", "from": 0.1, "button": "Apply", "press": 3.5, "hl": -1,
+       "rows": [{"tabs": ["Tool", "Select"], "on": 0}, ["Count", "3"], {"label": "1", "value": "Horizontal"}],
+       "keys": [[1.2, {"rows": [{"tabs": ["Tool", "Select"], "on": 0}, ["Count", "4"], {"label": "1", "value": "Horizontal"}], "ease": "step"}],
+                [1.4, {"rows": [{"tabs": ["Tool", "Select"], "on": 1}, ["Count", "4"], {"label": "1", "value": "Horizontal"}], "ease": "step"}], [1.6, {"hl": 2}], [1.8, {"hl": 1}]]},
+      {"el": "chip", "screen": [0.03, 0.05], "text": "Cancel sketch", "keys": [[3.8, {"hl": true}]]}]}]})");
+  f.close();
+  clips::load(f.fileName());
+  CHECK(clips::problems().isEmpty());
+  using K = clips::Input::Kind;
+  const auto in = clips::input("do");
+  auto kinds = [&](K k) { QList<clips::Input> out; for (const auto& e : in) if (e.kind == k) out << e; return out; };
+  for (qsizetype i = 1; i < in.size(); ++i) CHECK(in[i].t >= in[i - 1].t - 1e-9);
+  const auto moves = kinds(K::Move);
+  CHECK(moves.size() > 16);  // 4 mm in half a second: 0.6 mm apart at most
+  for (qsizetype i = 1; i < moves.size(); ++i) CHECK((moves[i].at - moves[i - 1].at).length() <= 0.6f + 1e-4f);
+  const auto clicks = kinds(K::Click);
+  CHECK(clicks.size() == 2 && clicks[0].t == 0.5 && clicks[0].at == QVector3D(4, 0, 0) && clicks[1].screen == QPointF(0.3, 0.4));
+  CHECK(kinds(K::DoubleClick).size() == 1 && kinds(K::DoubleClick)[0].t == 0.7);
+  CHECK(kinds(K::Press).size() == 1 && kinds(K::Press)[0].t == 1 && kinds(K::Release).size() == 1 && kinds(K::Release)[0].at == QVector3D(6, 0, 0));
+  bool dragged = false;
+  for (const auto& m : moves) dragged = dragged || (m.down && m.t > 1 && m.t <= 1.5);
+  CHECK(dragged && std::none_of(moves.begin(), moves.end(), [](const clips::Input& m) { return m.down && (m.t < 1 || m.t > 1.5); }));
+  CHECK(kinds(K::Key).size() == 1 && kinds(K::Key)[0].caps == QStringList{"Enter"} && kinds(K::Key)[0].t == 3);
+  const auto typed = kinds(K::Type);
+  CHECK(typed.size() == 3 && typed[0].text == "1" && typed[1].text == "2" && typed[2].text == "3");
+  const auto rows = kinds(K::Row);
+  CHECK(rows.size() == 2 && rows[0].text == "Count" && rows[0].value == "3" && rows[0].t == 0.1 && rows[1].value == "4" && rows[1].t == 1.2);
+  CHECK(kinds(K::Page).size() == 1 && kinds(K::Page)[0].text == "Select" && kinds(K::Page)[0].index == 1);
+  CHECK(kinds(K::Pick).size() == 1 && kinds(K::Pick)[0].value == "Horizontal" && kinds(K::Pick)[0].index == 2);  // a value row lit is no pick
+  const auto buttons = kinds(K::Button);
+  CHECK(buttons.size() == 2 && buttons[0].text == "Apply" && buttons[0].value.isEmpty() && buttons[1].text == "Cancel sketch" && buttons[1].value == "chip");
+  CHECK(clips::setup("do").value("tool").toString() == "line" && clips::expect("do").contains("entities") && !clips::iso("do"));
+  clips::load();
+}
+
+// Every sketch clip carries its replay (setup and expect, OPAD_BENCH_CLIPREPLAY replays them all), and every click it shows
+// on the chrome is a card's or a chip's input of that moment (a row set, a list row picked, a page turned, a button
+// pressed): a click the replay could not name would be a step the tool never sees.
+TEST(sketch_clips_carry_their_replay) {
+  clips::load();
+  using K = clips::Input::Kind;
+  QStringList wrong;
+  int clipsChecked = 0;
+  for (const QString& id : clips::ids()) {
+    if (!id.startsWith("sketch.")) continue;
+    ++clipsChecked;
+    if (clips::expect(id).isEmpty()) wrong << id + ": no expect block";
+    const auto in = clips::input(id);
+    if (in.isEmpty()) wrong << id + ": no input";
+    for (const auto& click : in) {
+      if (click.kind != K::Click || click.screen.x() < 0) continue;
+      const bool named = std::any_of(in.begin(), in.end(), [&](const clips::Input& e) {
+        return (e.kind == K::Button || e.kind == K::Row || e.kind == K::Pick || e.kind == K::Page) && std::abs(e.t - click.t) < 0.06;
+      });
+      if (!named) wrong << QString("%1: the click on the chrome at %2 s changes no card or chip").arg(id).arg(click.t);
+    }
+  }
+  if (!wrong.isEmpty()) throw check::Failure(wrong.join(" | ").toStdString());
+  CHECK(clipsChecked >= 80);
+}
+
 // The player loops a range of steps as one segment; reduced motion shows the range's last frame.
 TEST(clip_view_loops_a_range) {
   clips::load();

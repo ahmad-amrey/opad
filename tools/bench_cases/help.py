@@ -1,5 +1,10 @@
 """gui_benches cases of the help area (UI-106/107/108, UI-113, UI-116, UI-124); the benches are in app/HelpBench.cpp,
-HelpMenuBench.cpp, StartPageBench.cpp, PolishBench.cpp and AccessibilityArea.cpp, the area in app/HelpArea.cpp."""
+HelpMenuBench.cpp, StartPageBench.cpp, PolishBench.cpp, AccessibilityArea.cpp and ClipReplayBench.cpp, the area in
+app/HelpArea.cpp."""
+import json
+from pathlib import Path
+
+CLIPS = Path(__file__).resolve().parents[2] / "app" / "help" / "clips.json"
 
 
 def guided(root, document):
@@ -76,3 +81,28 @@ CASES = [
     ("keytips", "box", {"OPAD_BENCH_KEYTIPS": "{prefix}"}),
     ("keytips-ar", "box", {"OPAD_BENCH_KEYTIPS": "{prefix}", "OPAD_LANG": "ar"}),
 ]
+
+
+def replayed():
+    """The sketch clips with a replay: those on an empty document (in order), and by clip id those whose setup needs bodies
+    (made here through opad-cli)."""
+    clips = [c for c in json.loads(CLIPS.read_text(encoding="utf-8"))["clips"] if c["id"].startswith("sketch.") and "expect" in c]
+    bodies = {c["id"]: c["setup"]["bodies"] for c in clips if c.get("setup", {}).get("bodies")}
+    return [c["id"] for c in clips if c["id"] not in bodies], bodies
+
+
+def bodies_for(clip, bodies):
+    """A document of the clip's own (none: empty; the shared "empty" one gets a body from the design bench)."""
+    def make(root, document):
+        return document("replay-" + clip[7:], *[("feature", "--kind", b["kind"], "--inputs", json.dumps(b["inputs"])) for b in bodies])
+    return make
+
+
+# TODO 11 wave 3 (audit 6.3 test 8): every sketch clip's pointer, keys, typed values and panel stubs replayed into its tool,
+# the result compared with the clip's expect block, the Tool guide checked at every step; the clips on bodies one case each.
+# The empty document's in two halves, each well inside a case's time.
+EMPTY, ON_BODIES = replayed()
+CASES += [(f"clip-replay-{half + 1}", bodies_for(f"sketch.half{half + 1}", []), {"OPAD_BENCH_CLIPREPLAY": ",".join(EMPTY[half::2]), "OPAD_BENCH_CLIPSHOT": "{prefix}"})
+          for half in range(2)]
+CASES += [("clip-replay-" + clip[7:].replace("_", "-"), bodies_for(clip, bodies), {"OPAD_BENCH_CLIPREPLAY": clip, "OPAD_BENCH_CLIPSHOT": "{prefix}"})
+          for clip, bodies in ON_BODIES.items()]

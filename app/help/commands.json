@@ -1115,7 +1115,7 @@
    "id": "sketch.cancel",
    "title": "Cancel sketch",
    "summary": "Leaves the sketch and discards the changes made since it opened.",
-   "details": "A new sketch is not created at all; an edited sketch goes back to how it was. Use Finish sketch to keep your work.",
+   "details": "A new sketch is not created at all; an edited sketch goes back to how it was. If you changed the sketch, you confirm discarding first. Use Finish sketch to keep your work.",
    "keywords": ["discard", "abort", "throw away"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1131,7 +1131,7 @@
    "id": "sketch.replane",
    "title": "Redefine sketch plane",
    "summary": "Moves the sketch to another plane, keeping its geometry.",
-   "details": "Pick a new origin plane, planar face or construction plane. Features built on the sketch follow it to the new place.",
+   "details": "Pick a new origin plane, planar face or construction plane, place the sketch origin on it and press OK. Features built on the sketch follow it to the new place.",
    "keywords": ["move sketch", "change plane", "reattach"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
