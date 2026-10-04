@@ -17,6 +17,7 @@
 
 #include <array>
 #include <functional>
+#include <memory>
 #include <set>
 #include <unordered_map>
 #include <string>
@@ -27,6 +28,7 @@
 
 class DimensionHandle;
 class ExplodePanel;
+class TranslateTriad;
 namespace browser {
 struct Row;
 struct Decoration;
@@ -88,7 +90,7 @@ class Explode : public AreaController {
   const std::string& viewId() const { return m_viewId; }
   // The drag triad on the selected part (ExplodeDrag.cpp): the DimensionHandle's arrow is its first axis, two arrows the
   // axes square to it, a square in the middle moves the part in the view's plane; a press on the part drags it too.
-  bool triadShown() const { return m_triadShown; }
+  bool triadShown() const;
   QPointF triadPoint(int part) const;  // a widget point on a part: 0 the square, 1-2 an arrow (benches)
   const std::array<opad::Vec3, 2>& triadAxes() const { return m_triadAxes; }
   bool dragging() const { return m_drag.part >= 0; }
@@ -153,20 +155,15 @@ class Explode : public AreaController {
   DimensionHandle* m_handle = nullptr;
   int m_dragUnit = -1;
   Viewport* m_view = nullptr;
-  Handle(AIS_InteractiveObject) m_triad;
-  bool m_triadShown = false, m_bodyArmed = false, m_replaying = false;
-  int m_triadHover = -1;
-  opad::Vec3 m_triadAt{0, 0, 0};
+  std::unique_ptr<TranslateTriad> m_triad;  // drawn and measured there (TranslateTriad.cpp)
+  bool m_bodyArmed = false, m_replaying = false;
   std::array<opad::Vec3, 2> m_triadAxes{};
-  QPointF m_triadCentre, m_pressAt, m_pressGlobal;
-  std::array<std::pair<QPointF, QPointF>, 2> m_triadArrows{};
+  QPointF m_pressAt, m_pressGlobal;
   struct Drag {
     int part = -1;  // -1 none, 0 in the view's plane, 1-2 along an arrow
     std::string unit;
-    QPointF start, screenAxis;
     opad::Vec3 manual{0, 0, 0}, axis{0, 0, 0};
     double scale = 1;  // the part's progress at t: a drag of d moves its offset by d / scale
-    opad::Frame plane;
   } m_drag;
   QLabel* m_chip = nullptr;
   PromptBar* m_hint = nullptr;

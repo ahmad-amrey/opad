@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <array>
 #include <functional>
+#include <memory>
 #include <set>
 #include <tuple>
 
@@ -19,11 +20,13 @@
 #include "PlanePicker.hpp"
 
 class ToolValues;
+class TranslateTriad;
 
 class DesignController : public QObject {
   Q_OBJECT
  public:
   DesignController(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QWidget* window);
+  ~DesignController() override;
   FeaturePanel* featurePanel() const { return m_form; }
   SketchEditor* sketch() const { return m_sketch; }
   // The feature's values typed from the keyboard (UI-122): its boxes beside the pointer, and the extrude's by the arrow.
@@ -143,7 +146,29 @@ class DesignController : public QObject {
   bool m_activating = false;    // the selection is being re-applied for the newly active input: not a pick
   Viewport::SelFilter m_filterBefore = Viewport::SelFilter::Body;
   QTimer m_previewTimer;
-  QPointer<DimensionHandle> m_distanceHandle;
+  QPointer<DimensionHandle> m_distanceHandle;  // the feature's value arrow (TODO 11 P2): extrude's distance, a fillet's radius, ...
+  QString m_handleInput = "distance";          // the input it pulls
+  void showHandle(const opad::json& handle);   // a feature_handles entry: the arrow there, bound to its input
+  // Move / copy's triad (TODO 11 P2, DesignTriad.cpp): X, Y and Z arrows and a square on the picked bodies; a pull sets the
+  // distances (rounded at this zoom) and the preview follows as during the extrude's drag; the boxes by the pointer show
+  // the values, the pulled arrow's taking what is typed next.
+  std::unique_ptr<TranslateTriad> m_triad;
+  struct TriadPull {
+    int part = -1;                   // -1 none, 0 the square, 1-3 X, Y, Z
+    opad::Vec3 start{0, 0, 0};       // dx, dy, dz at the press
+  } m_pull;
+  void placeMoveTriad();
+  bool triadEvent(QEvent* event);  // the viewport's mouse events; true: the triad took it
+  bool pulling() const;            // a handle or the triad is being pulled: previews as fast as plans come
+  double lengthInput(const QString& name, double fallback) const;  // a length input's value now (fallback: it does not evaluate)
+ public:
+  // Benches (TODO 11 P2): Move's triad, the input the value arrow pulls while it shows (empty: none), the preview plan on
+  // screen and the inputs it was made for.
+  TranslateTriad* moveTriad() const { return m_triad.get(); }
+  QString handleInput() const;
+  std::shared_ptr<const opad::design::Plan> readyPreview() const { return m_readyPlan; }
+  opad::json readyPreviewInputs() const { return m_readyPlan ? m_readyValues : opad::json(); }
+ private:
   ToolValues* m_values = nullptr;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
@@ -160,6 +185,7 @@ class DesignController : public QObject {
   int m_planSerial = 0;
   std::shared_ptr<opad::design::Plan> m_readyPlan;  // computed for m_readyInputs on m_readyOps ops
   std::string m_readyInputs;
+  opad::json m_readyValues;  // its inputs (benches)
   size_t m_readyOps = 0;
   // What preview plans read: copies of the document and the (rolled back) scene, made once per document state
   // instead of once per plan (on the Engine each copy cost the UI thread tens of ms per drag step).

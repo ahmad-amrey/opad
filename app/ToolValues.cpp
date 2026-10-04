@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QCursor>
 #include <QKeyEvent>
+#include <QPoint>
 
 #include "DimensionHandle.hpp"
 #include "InputKeys.hpp"
@@ -68,8 +69,21 @@ void ToolValues::type(const QKeyEvent* key) {
   refresh();
   if (!m_input || !m_input->count()) return;
   show();
+  if (!tab && !m_prefer.isEmpty() && !m_input->editing())
+    for (int i = 0; i < m_input->count(); ++i)
+      if (m_input->key(i) == m_prefer) m_input->select(i);
+  m_prefer.clear();
   if (tab) m_input->cycle(back);
   else m_input->type(key->text());
+}
+
+void ToolValues::showNear(const QPoint& at, const QString& key) {
+  refresh();
+  if (!m_input || !m_input->count()) return;
+  m_prefer = key;
+  m_input->placeNear(at);
+  m_input->show();
+  m_input->raise();
 }
 
 // Beside the pointer when it is over the view, else in the middle of it (typed while the pointer is over a panel).
@@ -88,6 +102,7 @@ void ToolValues::refresh() {
 }
 
 void ToolValues::reset() {
+  m_prefer.clear();
   if (!m_input) return;  // the window closing (a panel hidden after the view went)
   m_input->used();
   m_input->setFields({});

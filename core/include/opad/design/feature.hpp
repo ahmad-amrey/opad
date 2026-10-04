@@ -137,5 +137,13 @@ json make_ref(const Document& doc, const Scene& scene, const Ref& ref);
 // Feature inputs with a hint added to every face/edge/vertex reference that has none (the app picks plain
 // references in its click handler and leaves this geometry walk to the worker).
 json hint_refs(const Document& doc, const Scene& scene, json inputs);
+// Drag handles for a feature's values (TODO 11 P2), for the app's preview: worked out on a worker in the state before the
+// feature and never stored. Each is {input, origin, axis, value, scale}: the arrow sits at origin + axis * value * scale
+// and a pull of d along the axis changes the input by d / scale. Fillet and chamfer: the radius or distance, half way
+// along the first picked edge, pointing out between its two faces; thicken: the thickness off the first face (inwards with
+// Other side); press pull: the distance off the first face's centre along its outward normal; an offset construction
+// plane: the distance from its plane's origin; box, cylinder and cone: the height at the middle of the footprint. The
+// extrusion keeps the distance_handle its result stores. Empty when the kind has none or what it needs does not resolve.
+json feature_handles(const Document& doc, const Scene& scene, const std::string& kind, const json& inputs);
 
 }  // namespace opad::design

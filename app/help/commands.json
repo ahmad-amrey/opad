@@ -963,7 +963,7 @@
    "id": "design.thicken",
    "title": "Thicken",
    "summary": "Gives faces a thickness: a solid skin over the picked faces.",
-   "details": "Pick the faces and set the thickness; Other side grows it inward. Useful to turn a surface into a part. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Pick the faces, then drag the arrow or type the thickness; Other side grows it inward. Useful to turn a surface into a part. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["skin", "offset surface", "solidify"],
    "requires": "Open or create a document first."
   },
@@ -979,7 +979,7 @@
    "id": "design.fillet",
    "title": "Fillet",
    "summary": "Rounds edges.",
-   "details": "Pick the edges and set the radius; edges that meet tangentially are rounded together. Select by geometry helps pick every similar edge at once.",
+   "details": "Pick the edges, then drag the arrow on the first edge or type the radius; edges that meet tangentially are rounded together. By rule… in the panel, or Select similar, picks every similar edge at once.",
    "keywords": ["round", "radius", "blend edge"],
    "requires": "Open or create a document first."
   },
@@ -987,7 +987,7 @@
    "id": "design.chamfer",
    "title": "Chamfer",
    "summary": "Bevels edges.",
-   "details": "Pick the edges and set one distance, or two distances for an unequal bevel. Chamfers break sharp edges and ease assembly.",
+   "details": "Pick the edges, then drag the arrow on the first edge or type the distance, or two distances (Type) for an unequal bevel. Chamfers break sharp edges and ease assembly.",
    "keywords": ["bevel", "edge break", "angle edge"],
    "requires": "Open or create a document first."
   },
@@ -1011,7 +1011,7 @@
    "id": "design.offset_face",
    "title": "Press pull",
    "summary": "Pushes planar faces in or pulls them out.",
-   "details": "Pick one or more faces and drag the arrow or type the distance; a negative value pushes into the material. Neighbouring faces stretch to follow.",
+   "details": "Pick one or more faces and drag the arrow or type the distance; a negative value pushes into the material. The face moves straight along its normal: sides square to it extend, slanted sides do not (use Draft for those).",
    "keywords": ["push pull", "offset face", "move face", "direct edit"],
    "requires": "Open or create a document first."
   },
@@ -1067,7 +1067,7 @@
    "id": "design.move",
    "title": "Move / copy",
    "summary": "Moves or copies bodies by distances and an optional turn.",
-   "details": "Pick the bodies and type X, Y and Z; turn on Rotate for an axis and an angle. Make a copy leaves the original in place, and every value can be an expression.",
+   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z; turn on Rotate for an axis and an angle. Make a copy leaves the original in place, and every value can be an expression.",
    "keywords": ["translate", "position", "transform", "copy"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -1083,7 +1083,7 @@
    "id": "design.plane",
    "title": "Construction plane",
    "summary": "A plane to sketch on, or to mirror, split and draft about.",
-   "details": "Make it offset from a plane, at an angle about an axis, midway between two planes, through three points or through a point normal to an axis. It follows its references when they change.",
+   "details": "Make it offset from a plane (drag its arrow or type the distance), at an angle about an axis, midway between two planes, through three points or through a point normal to an axis. It follows its references when they change.",
    "keywords": ["work plane", "datum plane", "reference plane", "offset plane"],
    "requires": "Open or create a document first."
   },

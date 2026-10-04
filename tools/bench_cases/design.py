@@ -1,5 +1,6 @@
 """gui_benches cases of the Design workspace's tools as the help guides show them (TODO 11 wave 3): clicks in the view reach the
-input the guide's animation clicks (app/PickRoutingBench.cpp)."""
+input the guide's animation clicks (app/PickRoutingBench.cpp); the value arrows and Move's triad the guides pull
+(app/HandlesBench.cpp)."""
 
 
 def routing_parts(root, document):
@@ -13,9 +14,20 @@ def routing_parts(root, document):
                     ("sketch", "--name", "Ring", "--plane", '{"base":"xz"}', "--geometry", '{"shapes":[{"kind":"rect2","picks":[[15,0],[22,10]]}]}'))
 
 
+def handle_parts(root, document):
+    """A 30 x 20 x 10 box centred on the origin: pressed down, filleted, moved and arrowed by the handles case."""
+    path = root / "handle-parts.opad"
+    if path.exists():
+        return path
+    return document("handle-parts", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+
+
 CASES = [
     # P3: the region then the Z axis (revolve), the body then the YZ plane (mirror), target then tool (combine), a face then
     # the XY plane and the Neutral plane box not taking that face (draft), axes for a circular pattern, a round face for a
     # construction axis, a face and an origin plane for a construction plane, the XY plane and Enter for a new sketch.
     ("pick-routing", routing_parts, {"OPAD_BENCH_PICKROUTING": "{prefix}"}),
+    # P2: the press pull's arrow pulled below its face (negative, the preview following while held), the fillet's on its first
+    # edge pulled out and typed into, Move's X arrow pulled and typed into, and where chamfer, thicken, plane and box put theirs.
+    ("handles", handle_parts, {"OPAD_BENCH_HANDLES": "{prefix}"}),
 ]

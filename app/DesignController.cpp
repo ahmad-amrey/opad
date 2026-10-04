@@ -2,6 +2,7 @@
 #include "opad/inspect.hpp"
 #include "DimensionHandle.hpp"
 #include "ToolValues.hpp"
+#include "TranslateTriad.hpp"
 #include "CurveSamples.hpp"
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -130,8 +131,8 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   m_form = new FeaturePanel(doc, window);
   m_distanceHandle=new DimensionHandle(viewport,jobs);
   connect(m_distanceHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){
-    if(!m_featureOn)return;
-    m_form->setValue("distance",text.toStdString());m_distanceHandle->setProblem("value",m_form->problem("distance"));
+    if(!m_featureOn || !m_form->input(m_handleInput))return;
+    m_form->setValue(m_handleInput,text.toStdString());m_distanceHandle->setProblem("value",m_form->problem(m_handleInput));
   });
   connect(m_distanceHandle,&DimensionHandle::extraEdited,this,&DesignController::typeValue);  // the taper and the others by the arrow
   connect(m_distanceHandle,&DimensionHandle::accepted,this,[this]{if(m_featureOn)runPreview(true);});  // Enter in the box: OK
@@ -178,6 +179,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::schedulePreview);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::refreshValues);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::inputsSettled);
+  connect(viewport, &Viewport::notesMoved, this, [this] { if (m_triad && m_triad->shown()) placeMoveTriad(); });  // every camera move
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
   connect(m_form, &FeaturePanel::accepted, this, [this] { runPreview(true); });
@@ -188,7 +190,10 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   m_viewport->installEventFilter(this);
 }
 
+DesignController::~DesignController() = default;
+
 bool DesignController::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == m_viewport && m_triad && triadEvent(event)) return true;  // Move's triad pulled
   // The panel says "OK Enter", but after a pick in the view the view has the keyboard: Enter there accepts too.
   if (watched == m_viewport && event->type() == QEvent::KeyPress && m_featureOn && !m_pickPlane && !m_sketch->active()) {
     auto* key = static_cast<QKeyEvent*>(event);
@@ -418,6 +423,11 @@ void DesignController::editOp(const std::string& opId) {
 void DesignController::endFeature() {
   m_distanceHandle->hide();
   m_values->reset();
+  if (m_triad) {
+    m_pull = {};
+    m_triad->end();
+    m_triad->hide();
+  }
   if (!m_featureOn) return;
   m_featureOn = false;
   ++m_planSerial;
@@ -958,6 +968,21 @@ void DesignController::viewportSelectionChanged() {
 }
 
 DimensionHandle* DesignController::distanceHandle() const { return m_distanceHandle; }
+QString DesignController::handleInput() const { return m_featureOn && m_distanceHandle && m_distanceHandle->isVisible() ? m_handleInput : QString(); }
+
+// A value arrow the core placed (feature_handles, TODO 11 P2): a fillet's radius on its first edge, a press pull's distance
+// off its face, ... Pulled, it sets that input and the preview follows as the extrusion's does; its box takes typed values.
+void DesignController::showHandle(const opad::json& handle) {
+  const QString input = QString::fromStdString(handle.value("input", ""));
+  const InputSpec* in = m_form->input(input);
+  if (!in) return m_distanceHandle->hide();
+  m_handleInput = input;
+  m_distanceHandle->setScale(handle.value("scale", 1.0));
+  m_distanceHandle->setAnchorSegments({});
+  m_distanceHandle->setLabel(i18n::t(QString::fromStdString(in->label)));
+  m_distanceHandle->setExtraFields(valueFields(input));
+  m_distanceHandle->configure(handle.at("origin").get<opad::Vec3>(), handle.at("axis").get<opad::Vec3>(), handle.at("value").get<double>(), m_form->valueText(input));
+}
 
 // The panel's values that show, in its order (UI-122): one box each, grey with what the panel holds until typed into.
 QList<DynamicInput::Field> DesignController::valueFields(const QString& except) const {
@@ -986,16 +1011,17 @@ void DesignController::typeValue(const QString& key, QString value) {
 void DesignController::refreshValues() {
   if (!m_featureOn) return;
   m_values->refresh();
-  if (m_distanceHandle->isVisible()) m_distanceHandle->setExtraFields(valueFields("distance"));
+  if (m_distanceHandle->isVisible()) m_distanceHandle->setExtraFields(valueFields(m_handleInput));
 }
 
 void DesignController::schedulePreview() {
   if (!m_featureOn) return;
+  placeMoveTriad();  // every pick and value change comes here: Move's triad follows them
   m_readyPlan.reset();
   // While the handle is pulled, preview as fast as plans come back (the latest value wins) instead of waiting for
   // the pointer to rest: the body follows the drag as if its face were dragged. Otherwise inputs settle first.
-  if (m_distanceHandle && m_distanceHandle->dragging()) {
-    stretchPreview(m_distanceHandle->value());  // at once: plans take 15 ms here, 150 ms on a large model
+  if (pulling()) {
+    if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // at once: plans take 15 ms here, 150 ms on a large model
     m_previewTimer.stop();
     if (m_planJob) m_previewPending = true;
     else runPreview(false);
@@ -1072,10 +1098,12 @@ void DesignController::runPreview(bool commit) {
   // line, else nothing showed where it would go.
   const double reach = kind == "plane" || kind == "axis" ? modelReach() : 0.0;
   auto construction = std::make_shared<std::vector<Viewport::PreviewPart>>();
+  auto handles = std::make_shared<opad::json>(opad::json::array());  // the value arrows (TODO 11 P2), also when the plan fails
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component, handles](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
+    if (kind != "extrude") *handles = feature_handles(*doc, *scene, kind, hinted);  // the extrusion's comes with its result
     opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
     if (!editing) op["id"] = target;
     if (!component.empty()) op["component"] = component;
@@ -1147,13 +1175,15 @@ void DesignController::runPreview(bool commit) {
         }
       }
     }
-  }, [this, serial, plan, stamp, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction](bool ok, const QString& error) {
+  }, [this, serial, plan, stamp, inputs, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction, handles](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
     if (std::exchange(m_previewPending, false) && !commit) QTimer::singleShot(0, this, [this] { if (m_featureOn && !m_planJob) runPreview(false); });
     if (!ok) {
-      if(!m_distanceHandle->interacting())m_distanceHandle->hide();
+      // A value that does not work (a radius too big for the edge) keeps its arrow, to be pulled back.
+      if (!handles->empty() && error != "cancelled") showHandle(handles->front());
+      else if(!m_distanceHandle->interacting())m_distanceHandle->hide();
       m_readyPlan.reset();
       m_viewport->clearPreviewBodies();
       // Before anything is picked a refusal is the guidance (a shell: "pick faces to remove, or a body to hollow"),
@@ -1170,6 +1200,7 @@ void DesignController::runPreview(bool commit) {
     }
     m_readyPlan = plan;
     m_readyInputs = stamp;
+    m_readyValues = inputs;
     m_readyOps = m_doc->doc.ops.size();
     m_form->setStatus(QString(), false);
     if (commit) return commitReady();
@@ -1197,12 +1228,15 @@ void DesignController::runPreview(bool commit) {
             m_stretch.footprint=true;m_stretch.u0=u0-margin;m_stretch.u1=u1+margin;m_stretch.v0=v0-margin;m_stretch.v1=v1+margin;
           }
         }
+        m_handleInput="distance";
         m_distanceHandle->setScale(symmetric?0.5:1.0);  // a symmetric extrusion's end moves half the distance: so does the arrow
         m_distanceHandle->setAnchorSegments(std::move(*anchors));
+        m_distanceHandle->setLabel(i18n::t("Distance"));
         m_distanceHandle->setExtraFields(valueFields("distance"));  // Tab goes on to the taper (UI-122)
         m_distanceHandle->configure(origin,axis,value,QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
       }
     }
+    if(!hasHandle && !handles->empty()){hasHandle=true;showHandle(handles->front());}
     if(!hasHandle)m_distanceHandle->hide();
     m_values->refresh();  // the boxes beside the pointer give way to the handle's
     std::vector<Viewport::PreviewPart> parts;
