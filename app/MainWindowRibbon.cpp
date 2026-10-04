@@ -105,7 +105,7 @@ void MainWindow::buildMenus() {
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
   add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.length", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip", "-", "annotate.add", "annotate.draw", "annotate.resolve"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
-  add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
+  add(designMenu, {"design.sketch", "design.drawOnDrawing", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
     QMenu* sub = designMenu->addMenu(i18n::t(QString(group).left(1).toUpper() + QString(group).mid(1)));
     sub->setObjectName(group);
@@ -113,7 +113,8 @@ void MainWindow::buildMenus() {
       if (spec.group == group && spec.kind != "interference") sub->addAction(action("design." + QString::fromStdString(spec.kind)));
     if (QString(group) == "construct") add(sub, {"-", "design.showOrigin"});
   }
-  add(designMenu, {"-", "design.edit", "design.suppress", "timeline.rollBack", "design.regenerate", "-", "design.newcomponent", "design.reparent", "design.colour", "design.opacity", "design.lock"});
+  add(designMenu, {"-", "design.edit", "design.suppress", "timeline.rollBack", "design.regenerate", "-", "design.newcomponent", "design.reparent", "design.colour", "design.opacity", "design.lock", "-",
+                   "assembly.explode"});
   // Sketch: while a sketch is open (updateDesignState), every tool by its group and the sketch's own commands.
   m_sketchMenu = menuBar()->addMenu(tr("&Sketch"));
   m_sketchMenu->setObjectName("sketchMenu");
