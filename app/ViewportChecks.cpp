@@ -208,7 +208,8 @@ void Viewport::placeOverlap() {
   }
   gp_Trsf placed;
   if (offset && *offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec((*offset)[0], (*offset)[1], (*offset)[2]));
-  m_ctx->SetLocation(m_overlap, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
+  if (!m_overlap->LocalTransformation().TranslationPart().IsEqual(placed.TranslationPart(), 1e-9))  // every sync asks: only a move moves it
+    m_ctx->SetLocation(m_overlap, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
   if (!m_ctx->IsDisplayed(m_overlap)) m_ctx->Display(m_overlap, AIS_Shaded, -1, Standard_False);
 }
 
