@@ -262,9 +262,11 @@ class MainWindow : public QMainWindow {
   // KiCad boards (KicadBoards.cpp): after a board loads with models of KiCad's library missing, offer to download them
   // (setting kicad/download: ask, always, never; once per board and session), then read a viewed board again.
   void offerKicadModels();
-  // Linked files (AssetLinks.cpp): after a load, one question before reading those outside the document's project
-  // (read once, trust their folders in the settings, or not now). Whether it asked.
+  // Linked files (AssetLinks.cpp): after an open, one question before reading those outside the document's project
+  // (read once, trust their folders in the settings, or not now). Whether it asked. Never after an import (trustAfterLoad):
+  // the answer to the open stands for the session.
   bool offerAssetTrust();
+  bool trustAfterLoad() const;
   QStringList m_kicadOffered;
   int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer

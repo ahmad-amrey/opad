@@ -245,7 +245,7 @@ void MainWindow::beginLoad(std::function<void()> after) {
     }
     if(ok) {
       m_doc->storeViewerCache(m_jobs);  // a slow viewer read, now meshed: the next open of the file skips it
-      if(!m_benchSelect) QTimer::singleShot(0, this, [this] { offerKicadModels(); offerAssetTrust(); });  // library models, linked files (benches call them)
+      if(!m_benchSelect) QTimer::singleShot(0, this, [this] { offerKicadModels(); if(trustAfterLoad()) offerAssetTrust(); });  // library models, linked files (benches call them)
       if(!m_doc->path().isEmpty()) m_viewPath=QFileInfo(m_doc->path()).absoluteFilePath();
       if((!m_benchSelect || qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
         try {

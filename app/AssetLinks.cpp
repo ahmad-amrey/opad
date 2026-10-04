@@ -28,6 +28,8 @@ bool MainWindow::offerAssetTrust() {
   return assets::askTrust(this, m_doc, m_jobs, [this](const QString& error) { statusBar()->showMessage(error, 6000); });
 }
 
+bool MainWindow::trustAfterLoad() const { return !m_doc->lastLoad.contains("op"); }  // an import's report names its op
+
 // OPAD_BENCH_ASSETS=<png>: tools/gui_benches.py writes a document beside parts/part.step (changed since it was linked) that
 // also links ../outside/other.step, and parts/third.step. Opened: the part's bodies come from its file (state "changed", a toast
 // offers to sync it), the outside file is not read (its bodies missing, its badge offers to read it) and the question about it
@@ -99,6 +101,7 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
       if (area) area->decorate({body, "body", {}, w.m_doc->node(body)}, d);
       if (!toast || d.badges.isEmpty() || d.badges[0].text != "not read" || !d.badges[0].clicked || !d.italic) return fail("the changed file's toast, the outside file's badge");
     }
+    if (!w.trustAfterLoad()) return fail("the open does not ask about the outside file");
     if (!w.offerAssetTrust()) return fail("no question about the outside file");  // dismissed: nothing read
     if (linked(other, otherMissing) != 1 || !otherMissing) return fail("read without the user's answer");
     w.m_doc->loadAssets(w.m_jobs, true, [=, &w](bool ok, const QString& error) {
@@ -169,6 +172,7 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
   const std::string third = import_of("third.step");
   bool missing = true;
   if (third.empty() || linked(third, missing) != 1 || missing || state("third.step") != "ok") return fail("the linked import");
+  if (w.trustAfterLoad()) return fail("an import asks about the outside file again");
   for (const auto& id : w.m_doc->scene.all_bodies())
     if (w.m_doc->node(id)->source_op == third && !w.m_doc->doc.body(w.m_doc->node(id)->body_key)->external) return fail("its body is stored");
   displayed(3, [=, &w](bool shown) {
