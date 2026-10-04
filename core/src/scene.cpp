@@ -727,6 +727,7 @@ Scene resolve(const Document& doc, const std::string& until) {
     }
   }
   b.finish();
+  b.scene().state = std::to_string(doc.ops.size()) + ":" + (doc.ops.empty() ? std::string() : doc.ops.back().id) + (until.empty() ? std::string() : "<" + until);
   return b.take();
 }
 

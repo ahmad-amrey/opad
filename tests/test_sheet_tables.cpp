@@ -381,6 +381,38 @@ TEST(issued_revision_drawn_as_issued) {
   std::filesystem::remove(out);
 }
 
+// A parts list measured in the scene as issued, rolled back and now, in either order, from one document: each its own BoM
+// (the cache keys on the state the scene was replayed from, not on the document's).
+TEST(parts_lists_as_issued_and_now) {
+  Assembly a;
+  const std::string washer = a.doc.add_body(brep_from_shape(BRepPrimAPI_MakeCylinder(5, 1).Shape()), {{"name", "Washer"}, {"units", "mm"}});
+  const std::string placed = a.doc.append({{"op", "import"}, {"source", "design"}, {"parent", a.assembly}, {"nodes", {body("Washer", washer, 30, 20, 5)}}}).id;
+  const std::string list = run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"kind", "parts_list"}})["id"];
+  const json issued = run(a.doc, "sheet_issue", {{"sheet", a.sheet}, {"freeze", false}});
+  const std::string issue = issued["id"];
+  a.doc.append({{"op", "delete"}, {"target", placed}});  // the washer gone since, a spacer added
+  const std::string spacer = a.doc.add_body(brep_from_shape(BRepPrimAPI_MakeCylinder(4, 8).Shape()), {{"name", "Spacer"}, {"units", "mm"}});
+  const std::string later = a.doc.append({{"op", "import"}, {"source", "design"}, {"parent", a.assembly}, {"nodes", {body("Spacer", spacer, 30, 30, 5)}}}).id;
+  const auto names = [&](const Scene& s) {
+    std::set<std::string> out;
+    const json rows = parts_rows(a.doc, s, *s.sheet(a.sheet), s.sheet_item(list)->def)["rows"];
+    for (const auto& r : rows) out.insert(r["name"].get<std::string>());
+    return out;
+  };
+  const Scene now = a.scene();
+  CHECK(!names(now).count("Washer") && names(now).count("Spacer"));  // the current state first
+  const Scene then = issued_scene(a.doc, *now.sheet_item(issue));
+  CHECK_EQ(names(then).size(), 4u);
+  CHECK(names(then).count("Washer") && !names(then).count("Spacer"));
+  CHECK_EQ(names(a.scene()).size(), 4u);  // and the current one again after it
+  CHECK(names(a.scene()).count("Spacer"));
+  const Scene back = resolve(a.doc, later);  // rolled back to before the spacer
+  CHECK_EQ(names(back).size(), 3u);
+  CHECK(!names(back).count("Spacer"));
+  CHECK(names(resolve(a.doc)).count("Spacer"));
+  CHECK(issued_scene(a.doc, *now.sheet_item(issue)).state != now.state && back.state != now.state && Scene().state.empty());
+}
+
 // The records' checks: item numbers, sheets, a balloon's list; the kinds are known and the outline names an issue by its
 // revision.
 TEST(records_are_checked) {

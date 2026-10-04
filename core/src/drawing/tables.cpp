@@ -101,12 +101,13 @@ std::string header_of(const std::string& column, const std::string& mass_unit) {
   return up;
 }
 
-// The BoM of the document's state, kept for a few states: every balloon of a sheet looks its number up in it.
+// The BoM of a scene's state (Scene::state: the log it was replayed from, so the current one, a roll-back and a revision as
+// issued each have their own), kept for a few states: every balloon of a sheet looks its number up in it.
 std::mutex g_bom_mu;
 std::list<std::pair<std::string, json>> g_boms;  // newest first
 json cached_bom(const Document& doc, const Scene& scene, const BomOptions& o) {
-  std::string key = std::to_string(reinterpret_cast<uintptr_t>(&doc)) + "|" + std::to_string(doc.ops.size()) + "|" +
-                    (doc.ops.empty() ? std::string() : doc.ops.back().id) + "|" + std::to_string(doc.body_count()) + "|" + o.mode + "|" + o.root + "|" +
+  if (scene.state.empty()) return bom(doc, scene, o);
+  std::string key = std::to_string(reinterpret_cast<uintptr_t>(&doc)) + "|" + scene.state + "|" + std::to_string(doc.body_count()) + "|" + o.mode + "|" + o.root + "|" +
                     (o.mass ? o.mass_unit : std::string("-"));
   {
     std::lock_guard<std::mutex> lock(g_bom_mu);
@@ -735,6 +736,7 @@ Scene issued_scene(const Document& doc, const SheetItem& issue) {
     }
   }
   b.finish();
+  b.scene().state = "issue " + issue.id;
   return b.take();
 }
 
