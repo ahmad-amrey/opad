@@ -277,9 +277,10 @@ void SketchEditor::setVisible(bool visible) {
   if(!m_active || m_visible==visible)return;
   m_visible=visible;
   updateDimensionHandle();updateInput();m_viewport->setOwnCursor(drawsCursor());
-  for(const auto& prs:{m_prs,m_transientPrs,m_toolPreviewOverlay}) {
+  for(const auto& prs:{m_prs,m_transientPrs}) {
     if(visible)m_viewport->showOverlay(prs);else m_viewport->removeOverlay(prs);
   }
+  if(visible)showToolPreview();else m_viewport->removeOverlay(m_toolPreviewOverlay);
   for(const auto& prs:m_imagePrs) {
     if(visible)m_viewport->showBackdrop(prs);else m_viewport->removeOverlay(prs);
   }

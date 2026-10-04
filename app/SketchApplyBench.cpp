@@ -6,6 +6,7 @@
 #include "opad/design/sketch_edit.hpp"
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <QApplication>
@@ -221,7 +222,8 @@ void SketchEditor::benchApply() {
       case 9:
         check(m_sources.size() == 2 && sources() == 2, "project: the box added in the panel joins the edge; the panel lists both");
         check(previewed() && int(m_toolPreview->entities.size()) - st["entities"] > st["one"], "project: the preview shows both sources");
-        check(m_viewport->selection().size() == 1 && highlighted(box, opad::Ref::Kind::Edge) == 1, "project: the edge stays highlighted, the whole body is listed only");
+        check(m_toolPreviewOverlay->ZLayer() == Graphic3d_ZLayerId_TopOSD, "project: the preview is drawn over the picks' highlight");
+        check(highlighted(box, opad::Ref::Kind::Edge) == 1 && highlighted(box, opad::Ref::Kind::Body) == 1, "project: both picks highlighted");
         sketchMove(30, -30, Qt::AltModifier, false);  // the pointer off the edge: the pick's highlight, not the hover
         m_viewport->grabImage().save(prefix + ".project.png");
         panel->grab().save(prefix + ".panel.png");
@@ -376,13 +378,13 @@ void SketchEditor::benchApply() {
       case 22:
         check(m_sources.size() == 1 && previewed() && int(m_toolPreview->entities.size()) >= st["entities"] + 4 && int(m_sk.entities.size()) == st["entities"],
               "silhouette: the box's outline previewed before Enter");
-        check(m_viewport->selection().empty(), "silhouette: the picked body is not selected (in the X-ray layer it would hide its outline)");
+        check(m_viewport->selection().size() == 1 && highlighted(box, opad::Ref::Kind::Body) == 1, "silhouette: the picked body stays highlighted");
         m_viewport->grabImage().save(prefix + ".silhouette.png");
         st["previewed"] = m_toolPreview ? int(m_toolPreview->entities.size()) : -1;
         send(Qt::Key_Return);
         break;
       case 23:
-        check(int(m_sk.entities.size()) == st["previewed"] && m_sources.isEmpty() && m_viewport->selection().empty(), "silhouette: Enter adds the outline");
+        check(int(m_sk.entities.size()) == st["previewed"] && m_sources.isEmpty() && m_viewport->selection().empty(), "silhouette: Enter adds the outline, the highlight goes");
         // ---- Intersect with plane: a click on the post that stands through the plane (once the view picks bodies).
         setTool("intersect_body");
         st["entities"] = int(m_sk.entities.size());
@@ -415,8 +417,8 @@ void SketchEditor::benchApply() {
         }
         check(previewed() && round >= 1 && other == 0 && int(m_sk.entities.size()) == st["entities"],
               "intersect: the circle where the post crosses the plane is previewed before Enter, the sketch unchanged");
-        check(m_viewport->selection().empty(), "intersect: the picked post is not selected (in the X-ray layer it would hide the circle)");
-        sketchMove(60, -40, Qt::AltModifier, false);  // the pointer off the post: its hover goes
+        check(m_viewport->selection().size() == 1 && highlighted(post, opad::Ref::Kind::Body) == 1, "intersect: the picked post stays highlighted");
+        sketchMove(60, -40, Qt::AltModifier, false);  // the pointer off the post: its hover goes, the pick's highlight stays
         m_viewport->grabImage().save(prefix + ".intersect.png");
         st["previewed"] = m_toolPreview ? int(m_toolPreview->entities.size()) : -1;
         send(Qt::Key_Return);
@@ -426,10 +428,47 @@ void SketchEditor::benchApply() {
         bool linkedAll = int(m_sk.entities.size()) > st["entities"];
         for (size_t i = st["entities"]; i < m_sk.entities.size(); ++i) linkedAll = linkedAll && !m_sk.entities[i].source.is_null();
         check(int(m_sk.entities.size()) == st["previewed"] && linkedAll && m_sources.isEmpty() && m_viewport->selection().empty(),
-              "intersect: Enter adds the circle, linked to the post");
-        setTool("select");
+              "intersect: Enter adds the circle, linked to the post; the highlight goes");
+        // ---- Project with the Faces filter (as its guide switches it): the box's top face, highlighted, then Esc.
+        setTool("project");
+        m_options["projectionPick"] = "face";
+        referenceHover();  // as the panel's Pick filter does
+        st["entities"] = int(m_sk.entities.size());
+        st["until"] = *ticks + 8;
         break;
       }
+      case 27: {
+        m_viewport->grabImage();
+        opad::Ref ref;
+        const bool hovered = m_viewport->referenceAt(m_viewport->widgetPoint({-5, 3, 10}), ref) && ref.body == box && ref.kind == opad::Ref::Kind::Face;
+        place(-5, 3);
+        if (!hovered) {  // no frame in a hidden window: the top face (every vertex at z 10) by hand
+          m_sources.clear();
+          const opad::Node* node = m_doc->scene.node(box);
+          const TopoDS_Shape shape = node ? opad::body_shape(m_doc->doc, node->body_key) : TopoDS_Shape();
+          for (int i = 0; !shape.IsNull() && i < opad::subshape_count(shape, opad::Ref::Kind::Face); ++i) {
+            bool top = true;
+            for (TopExp_Explorer v(opad::subshape(shape, opad::Ref::Kind::Face, i), TopAbs_VERTEX); v.More(); v.Next()) top = top && std::abs(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).Z() - 10) < 1e-6;
+            if (top) {
+              toggleSource(QString::fromStdString(opad::json{{"body", box}, {"kind", "face"}, {"index", i}}.dump()));
+              break;
+            }
+          }
+        }
+        trace::log(QString("bench: sketch apply: the view pick %1").arg(hovered ? "found the box's top face" : "found nothing (hidden window): the face added by hand"));
+        check(m_sources.size() == 1 && m_viewport->selection().size() == 1 && highlighted(box, opad::Ref::Kind::Face) == 1,
+              "project: with the Faces filter a click picks the box's top face, highlighted");
+        break;
+      }
+      case 28:
+        check(previewed() && int(m_toolPreview->entities.size()) >= st["entities"] + 4 && int(m_sk.entities.size()) == st["entities"], "project: the face's outline previewed");
+        sketchMove(30, -30, Qt::AltModifier, false);
+        m_viewport->grabImage().save(prefix + ".face.png");
+        send(Qt::Key_Escape);
+        check(m_sources.isEmpty() && m_viewport->selection().empty() && !m_toolPreview && int(m_sk.entities.size()) == st["entities"],
+              "project: Esc drops the pick, its highlight and its preview");
+        setTool("select");
+        break;
       default:
         timer->stop();
         trace::log(QString("bench: sketch apply %1").arg(*ok ? "PASS" : "FAIL"));

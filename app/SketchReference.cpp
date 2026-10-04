@@ -17,10 +17,9 @@ void SketchEditor::referenceHover() {
   }
   showSources();
 }
-// The picked edges, faces and vertices stay highlighted until the tool adds them or lets them go (TODO 11 wave 3, P4: the
-// guides show them in the selection colour until Enter, as Fusion's Project does). A whole body is listed in the panel
-// only: selected, it is drawn in the X-ray layer, over the preview of its own outline or section. So are origin axes,
-// sketches and features chosen there.
+// The picked edges, faces, vertices and bodies stay highlighted as the view's selection until the tool adds them or lets
+// them go (TODO 11 wave 3, P4: the guides show them in the selection colour until Enter, as Fusion's Project does); the
+// preview is drawn over them (showToolPreview). Origin axes, sketches and features chosen in the panel are listed there.
 void SketchEditor::showSources() {
   const QStringList shown=m_active && sketchkeys::referenceTool(m_tool.toStdString())?m_sources:QStringList();
   if(shown==m_sourcesShown)return;
@@ -29,7 +28,7 @@ void SketchEditor::showSources() {
   for(const auto& text:shown) {
     const auto j=opad::json::parse(text.toStdString(),nullptr,false);
     if(!j.is_object() || !j.contains("body"))continue;
-    try{if(auto ref=opad::Ref::from_json(j);ref.kind!=opad::Ref::Kind::Body)refs.push_back(std::move(ref));}catch(const std::exception&){}
+    try{refs.push_back(opad::Ref::from_json(j));}catch(const std::exception&){}
   }
   m_viewport->selectRefs(refs);
 }

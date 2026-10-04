@@ -203,7 +203,8 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     if(preview){
       if(!stale){m_toolPreview=after;m_previewSolved=*solved;}
       m_viewport->removeOverlay(m_toolPreviewOverlay);
-      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());m_toolPreviewOverlay=overlay;if(m_visible)m_viewport->showOverlay(m_toolPreviewOverlay);
+      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());overlay->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);  // dashed: what Enter would add, apart from the amber references (as the guides draw it)
+      m_toolPreviewOverlay=overlay;if(m_visible)showToolPreview();
       if(!stale)emit status(tr("Preview ready. Press Enter or Apply to keep it, or change the values."));return;}
     ++m_modelRevision;m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
     m_clicks.clear();m_picked.clear();m_sel.clear();applied();rebuild();scheduleFill();toolPrompt();emit changed();
@@ -511,6 +512,11 @@ void SketchEditor::invalidatePreview(bool keepOverlay) {
 void SketchEditor::applied() {
   if(m_tool=="mirror")m_options["mirrorStage"]="seed";  // the next curves to mirror, then their line
   if(sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()){m_sources.clear();emit workflowChanged();}  // the next sources
+}
+void SketchEditor::showToolPreview() {
+  if(m_toolPreviewOverlay.IsNull())return;
+  m_viewport->showOverlay(m_toolPreviewOverlay);
+  m_toolPreviewOverlay->SetZLayer(Graphic3d_ZLayerId_TopOSD);  // no depth test there (as the offset's arrow over its body)
 }
 void SketchEditor::scheduleToolPreview() {
   // While the offset arrow is dragged the preview follows as fast as it is computed (throttled, the shown one stays

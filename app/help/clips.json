@@ -2288,8 +2288,10 @@
    "items": [
     {"use": "isoScene", "args": {"area": [-18, -13, 18, 13]}},
     {"el": "solid", "profile": {"circle": [0, 0, 7], "n": 48}, "at": [0, 0, -2], "height": 7},
+    {"el": "solid", "profile": {"circle": [0, 0, 7], "n": 48}, "at": [0, 0, -2], "height": 7, "tone": "sel", "toneAmount": 0.35, "from": 0.9, "to": 2.4, "fade": 0.2},
     {"el": "plane", "plane": "xy", "center": [0, 0, 5], "size": [36, 26], "color": "sel", "fillOpacity": 0.12},
     {"el": "solid", "profile": {"circle": [0, 0, 7], "n": 48}, "at": [0, 0, 5], "height": 9},
+    {"el": "solid", "profile": {"circle": [0, 0, 7], "n": 48}, "at": [0, 0, 5], "height": 9, "tone": "sel", "toneAmount": 0.35, "from": 0.9, "to": 2.4, "fade": 0.2},
     {"el": "circle", "center": [0, 0, 5], "r": 7, "color": "amber", "dash": true, "width": 2.2, "from": 1.15, "to": 2.45, "fade": 0.1},
     {"el": "circle", "center": [0, 0, 5], "r": 7, "color": "amber", "width": 2.2, "from": 2.4, "fade": 0.1},
     {"el": "key", "caps": ["Enter"], "press": 2.3, "from": 2.05, "to": 2.75},
@@ -2307,6 +2309,7 @@
     {"use": "isoScene", "args": {"area": [-18, -13, 18, 13]}},
     {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [36, 26], "color": "sel", "fillOpacity": 0.08},
     {"el": "lathe", "profile": [[0.01, -7], [1.22, -6.89], [2.39, -6.58], [3.5, -6.06], [4.5, -5.36], [5.36, -4.5], [6.06, -3.5], [6.58, -2.39], [6.89, -1.22], [7, 0], [6.89, 1.22], [6.58, 2.39], [6.06, 3.5], [5.36, 4.5], [4.5, 5.36], [3.5, 6.06], [2.39, 6.58], [1.22, 6.89], [0.01, 7]], "at": [0, 0, 11], "n": 40},
+    {"el": "lathe", "profile": [[0.01, -7], [1.22, -6.89], [2.39, -6.58], [3.5, -6.06], [4.5, -5.36], [5.36, -4.5], [6.06, -3.5], [6.58, -2.39], [6.89, -1.22], [7, 0], [6.89, 1.22], [6.58, 2.39], [6.06, 3.5], [5.36, 4.5], [4.5, 5.36], [3.5, 6.06], [2.39, 6.58], [1.22, 6.89], [0.01, 7]], "at": [0, 0, 11], "n": 40, "tone": "sel", "toneAmount": 0.35, "from": 0.9, "to": 2.4, "fade": 0.2},
     {"el": "circle", "center": [0, 0, 0], "r": 7, "color": "amber", "dash": true, "width": 2.2, "from": 1.2, "to": 2.45, "fade": 0.1},
     {"el": "circle", "center": [0, 0, 0], "r": 7, "color": "amber", "width": 2.2, "from": 2.4, "fade": 0.1},
     {"el": "key", "caps": ["Enter"], "press": 2.3, "from": 2.05, "to": 2.75},

@@ -408,6 +408,9 @@ class SketchEditor : public QObject, public SketchInput {
   int m_previewRevision=0;
   std::shared_ptr<opad::design::Sketch> m_toolPreview;
   Handle(AIS_InteractiveObject) m_toolPreviewOverlay;
+  // Shows it over everything, the X-ray layer too: a picked source's highlight (an edge right above its projection, a
+  // face or a body over its outline, seen square to the sketch) and a hover must not hide the preview of what it gives.
+  void showToolPreview();
   opad::design::SolveResult m_previewSolved;
   QString m_selectionFilter = "all",m_constraintFilter;
   std::set<int> m_conflicts;
