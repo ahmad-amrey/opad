@@ -2,6 +2,7 @@
 #include "DesignController.hpp"
 #include "DimensionHandle.hpp"
 #include "HelpClip.hpp"
+#include "I18n.hpp"
 #include "MainWindow.hpp"
 #include "PrimitivePlacer.hpp"
 #include "ToolValues.hpp"
@@ -207,6 +208,8 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         require(about(st->size1, mm("diameter"), 0.1), "the preview's base is not the diameter shown: " + str(st->size1));
         DynamicInput* boxes = design->values()->input();
         require(placer->outlineShown(), "the base is not outlined on the plane while the pointer sizes it");
+        require(win->m_promptText == placer->prompt() && placer->prompt().startsWith(form->input("diameter") ? i18n::t("Base diameter") : QString()),
+                "the status bar's prompt is not the sizing step's: " + win->m_promptText.toStdString());
         require(boxes && boxes->isVisible() && boxes->count() == 1 && boxes->key(0) == "diameter" && boxes->box(0)->placeholderText() == form->valueText("diameter"),
                 "the box beside the pointer does not show the base diameter");
         moveTo({st->centre[0] + 12, st->centre[1], 0});
@@ -218,6 +221,7 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         require(std::abs(st->size2 - st->size1) > 5 && about(st->size2, mm("diameter"), 0.1), "the preview's base did not change between the moves: " + str(st->size1) + " then " + str(st->size2));
         shot("cone-size");
         design->values()->input()->shot().save(prefix + ".cone-size.box.png");
+        win->grab().save(prefix + ".cone-size.window.png");  // the panel, the guide and the prompt (the 3D view is blank there)
         pass("cone: the pointer sizes the base; the preview follows it (" + QString::number(st->size1) + " then " + QString::number(st->size2) + " mm) and the box beside it shows the diameter");
         clickAt({st->centre[0] + 12, st->centre[1], 0});
         return true;
