@@ -80,9 +80,16 @@ int main(){try {
   const size_t live=agent::live_tools().dump().size();
   size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
-  // TODO 11 tracks raised these from 105000 / 50000 each on its own; merged, their raises add up (wave 3).
-  CHECK(live<113400);  // +2.5 KB: explode (TODO 11 UI-35); +0.5 KB: component on feature, sketch and batches (UI-33); +2 KB for related (UI-94: its refs carry the reference schema); +3.3 KB the drawing commands (UI-76..87); +0.1 KB KiCad (UI-134)
-  CHECK(headless<71050);  // +500 for project (hidden-line drawing views, TODO 11 UI-77), +5.5 KB for the drawing sheet commands (UI-76), +500 for materials (UI-140), +500 for bom (UI-83), +500 for export views (UI-87), +800 for sheet templates and laid-out views (UI-78), +100 for document properties (UI-78); +2 KB explode and component (UI-35, UI-33); +1.2 KB the KiCad commands and linked assets (asset, import's link); +1.5 KB related (UI-94)
+  // TODO 11: the tracks raised these from 105000 / 50000 each on its own. Live: +2.5 KB explode (UI-35) and +0.5 KB component
+  // on feature, sketch and batches (UI-33) on t2b, +2 KB related (UI-94: its refs carry the reference schema) on t6, +0.1 KB
+  // KiCad (UI-134) on t4. Headless: +8.4 KB the drawing commands on t5a (project UI-77, sheets UI-76, materials UI-140, bom
+  // UI-83, export views UI-87, templates and document properties UI-78), +2 KB explode and component on t2b, +1.2 KB the KiCad
+  // commands and linked assets on t4, +1.5 KB related on t6. Merged, what the tracks added within their own budgets adds up
+  // as well: measured at the wave-3 merge, live 112671 bytes (2.6 KB past the raises) and headless 66678 (3.6 KB past). The
+  // limits leave about 0.7 KB (live) and 4.4 KB (headless): a merge that grows a list past them raises the limit by what it
+  // measured and says so in the commit.
+  CHECK(live<113400);
+  CHECK(headless<71050);
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});
