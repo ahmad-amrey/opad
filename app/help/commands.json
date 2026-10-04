@@ -479,7 +479,7 @@
    "id": "inspect.radius",
    "title": "Radius",
    "summary": "Measures the radius and diameter of a circular edge or a cylindrical face.",
-   "details": "Pick one round edge or face. The result shows R and Ø; Pin ({key:inspect.pin}) keeps it in the document.",
+   "details": "Pick one round face, or a circular edge with the Edges filter. The result shows R and Ø; Pin ({key:inspect.pin}) keeps it in the document.",
    "keywords": ["diameter", "hole size", "circle", "measure"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -541,7 +541,7 @@
   {
    "id": "inspect.section",
    "title": "Section",
-   "summary": "Cuts the view with a plane to look inside; drag the plane's handle to move it.",
+   "summary": "Cuts the view with a plane to look inside; drag the plane's edge to move it.",
    "details": "Only the view is cut, never the model. Cut faces get caps so solids read as solid, and the Section panel holds exact offsets and named sections.",
    "keywords": ["cut", "clip", "cross section", "inside"],
    "requires": "Open or create a document first; not available while a sketch is open."
@@ -558,7 +558,7 @@
    "id": "annotate.add",
    "title": "Note",
    "summary": "Pins a text note to a body, face, edge or point.",
-   "details": "Pick the target, type the note and save it with {fixed:ctrlEnter}. Notes keep their author and time, and live in the document's history.",
+   "details": "Click the target (the selection filter decides whether that is a body, face, edge or point), type the note and save it with {fixed:ctrlEnter}. Notes keep their author and time, and live in the document's history.",
    "keywords": ["comment", "markup", "review", "issue"],
    "requires": "Open an OPAD document, and finish the sketch first."
   },
@@ -574,7 +574,7 @@
    "id": "annotate.resolve",
    "title": "Resolve note",
    "summary": "Marks the selected note as resolved.",
-   "details": "A resolved note is dimmed but stays in the history, so the discussion is never lost. Filter the Annotations panel by status to hide them.",
+   "details": "A resolved note leaves the view and is dimmed in the Annotations panel, where Restore brings it back; it stays in the history, so the discussion is never lost. Filter the panel by status to hide them.",
    "keywords": ["done", "close issue", "complete"],
    "requires": "Select a note in the Annotations panel first."
   },
@@ -606,7 +606,7 @@
    "id": "edit.repeat",
    "title": "Repeat",
    "summary": "Runs the last tool, feature, check or edit again.",
-   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. Enter in the view repeats it too while nothing runs, except Delete, Restore, Hide and Show all, which repeat only from here. View changes, file commands and selection commands are never repeated.",
+   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. Enter in the view repeats it too while nothing runs, except Delete, Restore, Hide and Show all, which repeat only from here. View navigation, file open and save, panel toggles and plain selection commands are not repeated; Import, Export, Screenshot, Isolate, Save view and Select similar are.",
    "keywords": ["again", "redo command", "last command", "repeat last"]
   },
   {
@@ -664,9 +664,9 @@
   },
   {
    "id": "edit.delete",
-   "title": "Delete (tombstone)",
-   "summary": "Removes the selection; a tombstone in the history keeps it restorable.",
-   "details": "Nothing is erased from the history: a delete step is added on the timeline. Select that marker and use Restore to bring the objects back.",
+   "title": "Delete",
+   "summary": "Removes the selection; the history keeps it restorable.",
+   "details": "In a design the bodies leave through a Remove step at the end of the timeline; a sketch, or a whole import in an imported model, is tombstoned by a delete step. Undo brings them back, and a tombstoned import or sketch also comes back with Restore ({key:edit.restore}) on its struck marker.",
    "keywords": ["remove", "erase"],
    "requires": "Select the objects first, in the view or in the browser."
   },
@@ -682,7 +682,7 @@
    "id": "edit.selecttouched",
    "title": "Select what it touches",
    "summary": "Selects the objects the current timeline step changed.",
-   "details": "Click a marker on the timeline, then choose Select what it touches ({key:edit.selecttouched}). Its bodies, components or notes are selected in the view and the browser.",
+   "details": "Clicking a marker on the timeline already selects what the step made. Select what it touches ({key:edit.selecttouched}) then takes the whole bodies or components it changed, in the view and the browser.",
    "keywords": ["targets", "affected", "timeline"],
    "requires": "Click a marker on the timeline first."
   },
@@ -697,14 +697,14 @@
    "id": "tools.shortcuts",
    "title": "Keyboard shortcuts",
    "summary": "Shows every shortcut and lets you change them.",
-   "details": "Search by name or press the keys to find what they do. Conflicts are flagged before you save, and Reset puts a command back to its default.",
+   "details": "Search by name or press the keys to find what they do. Conflicts are flagged before you save, and Restore default puts a command back to its default.",
    "keywords": ["keys", "hotkeys", "bindings", "keyboard"]
   },
   {
    "id": "tools.author",
    "title": "Annotation author",
    "summary": "Sets the name recorded on your notes and changes.",
-   "details": "The name appears on note cards and in the timeline's tooltips. It defaults to your git or system user name.",
+   "details": "The name appears on note cards and in the timeline's tooltips. It defaults to your system user name (GIT_AUTHOR_NAME or OPAD_AUTHOR when set).",
    "keywords": ["user name", "author", "identity"]
   },
   {

@@ -562,19 +562,20 @@
    "items": [
     {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
     {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "height": 32, "to": 0.9, "fade": 0},
-    {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "capColor": "cap", "hatch": true, "height": 16, "from": 0.9, "fade": 0,
+    {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "capColor": "cap", "height": 16, "from": 0.9, "fade": 0,
      "keys": [[1.6, {"height": 16}], [2.8, {"height": 8}]]},
     {"el": "solid", "plane": "yz", "at": [0, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "height": 16, "from": 0.9, "to": 1.45, "fade": 0,
      "keys": [[0.9, {"opacity": 0.6}], [1.45, {"opacity": 0}]]},
-    {"el": "plane", "plane": "yz", "center": [0, 0, 7], "size": [26, 18], "color": "sel", "fillOpacity": 0.1, "from": 0.9, "keys": [[1.6, {"center": [0, 0, 7]}], [2.8, {"center": [-8, 0, 7]}]]},
-    {"use": "dragHandle", "args": {"at0": [0, 0, 16], "at1": [-8, 0, 16], "dir": [1, 0, 0], "t0": 1.6, "t1": 2.8, "v0": 0, "v1": -8, "from": 1.0, "to": 3.4, "dx": 16, "dy": -26}},
+    {"el": "plane", "plane": "yz", "center": [0, 0, 7], "size": [26, 18], "color": "sel", "fillOpacity": 0, "from": 0.9, "keys": [[1.6, {"center": [0, 0, 7]}], [2.8, {"center": [-8, 0, 7]}]]},
+    {"el": "poly", "points": [[0, -13, 16], [0, 13, 16]], "color": "amber", "width": 3, "from": 1.3, "to": 3.0, "fade": 0.1, "keys": [[1.6, {"points": [[0, -13, 16], [0, 13, 16]]}], [2.8, {"points": [[-8, -13, 16], [-8, 13, 16]]}]]},
+    {"el": "poly", "points": [[-3, 0, 16], [3, 0, 16]], "color": "amber", "width": 2.2, "arrow": "both", "from": 1.3, "to": 3.0, "fade": 0.1, "keys": [[1.6, {"points": [[-3, 0, 16], [3, 0, 16]]}], [2.8, {"points": [[-11, 0, 16], [-5, 0, 16]]}]]},
     {"el": "key", "command": "inspect.section", "press": 0.85, "from": 0.6, "to": 1.3},
-    {"el": "cursor", "keys": [[0, {"pos": [12, -20, 4]}], [1.3, {"pos": [3, 0, 16]}], [1.6, {"pos": [3, 0, 16], "down": true}], [2.8, {"pos": [-5, 0, 16], "down": false}], [3.6, {"pos": [-5, 0, 16]}], [4.4, {"pos": [12, -16, 20]}]]}
+    {"el": "cursor", "keys": [[0, {"pos": [12, -20, 4]}], [1.3, {"pos": [0, 4, 16]}], [1.6, {"pos": [0, 4, 16], "down": true}], [2.8, {"pos": [-8, 4, 16], "down": false}], [3.6, {"pos": [-5, 0, 16]}], [4.4, {"pos": [12, -16, 20]}]]}
    ],
    "steps": [
     {"to": 1.0, "caption": "{press:inspect.section} to cut the view"},
-    {"to": 3.0, "caption": "Drag the handle to move the cut"},
-    {"to": 5.0, "caption": "The cut face is hatched"}
+    {"to": 3.0, "caption": "Drag the plane's edge to move the cut"},
+    {"to": 5.0, "caption": "Cut faces are capped"}
    ]
   },
   {
@@ -623,14 +624,13 @@
     {"use": "isoScene", "args": {"area": [-18, -18, 18, 18]}},
     {"el": "camera", "center": [-10, 0], "zoom": 0.9},
     {"el": "solid", "profile": {"circle": [0, 0, 10], "n": 56}, "height": 14},
-    {"el": "circle", "center": [0, 0, 14], "r": 10, "color": "glow", "width": 6.5, "from": 0.6, "to": 1.1, "fade": 0.08},
-    {"el": "circle", "center": [0, 0, 14], "r": 10, "color": "sel", "width": 2.6, "from": 1.1},
+    {"use": "pickFace", "args": {"face": [[-7.07, -7.07, 0], [-5.0, -8.66, 0], [-2.59, -9.66, 0], [0.0, -10.0, 0], [2.59, -9.66, 0], [5.0, -8.66, 0], [7.07, -7.07, 0], [8.66, -5.0, 0], [9.66, -2.59, 0], [10.0, 0.0, 0], [9.66, 2.59, 0], [8.66, 5.0, 0], [7.07, 7.07, 0], [7.07, 7.07, 14], [8.66, 5.0, 14], [9.66, 2.59, 14], [10.0, 0.0, 14], [9.66, -2.59, 14], [8.66, -5.0, 14], [7.07, -7.07, 14], [5.0, -8.66, 14], [2.59, -9.66, 14], [0.0, -10.0, 14], [-2.59, -9.66, 14], [-5.0, -8.66, 14], [-7.07, -7.07, 14]], "hover": 0.6, "pick": 1.1}},
     {"el": "dim", "kind": "radial", "center": [0, 0, 14], "r": 10, "angle": -60, "value": "R 10.000", "color": "sel", "from": 1.3},
     {"el": "card", "screen": [0.03, 0.06], "w": 124, "title": "Radius", "rows": [["Radius", "10.000 mm"], ["Diameter", "20.000 mm"]], "from": 1.6},
-    {"el": "cursor", "badge": "radius", "keys": [[0, {"pos": [-18, -18, 0]}], [1.1, {"pos": [-5, -8.66, 14], "click": 1}], [2.0, {"pos": [-5, -8.66, 14]}], [2.8, {"pos": [-18, -14, 12]}]]}
+    {"el": "cursor", "badge": "radius", "keys": [[0, {"pos": [-18, -18, 0]}], [1.1, {"pos": [5, -8.66, 7], "click": 1}], [2.0, {"pos": [5, -8.66, 7]}], [2.8, {"pos": [-18, -14, 12]}]]}
    ],
    "steps": [
-    {"to": 1.2, "caption": "Select a circular edge or round face"},
+    {"to": 1.2, "caption": "Select a round face (or a circular edge with the Edges filter)"},
     {"to": 4.4, "caption": "Read the radius and the diameter"}
    ]
   },
@@ -1478,15 +1478,14 @@
     {"el": "solid", "profile": {"rect": [-10, 0, 10, 14]}, "height": 8},
     {"el": "solid", "profile": {"rect": [10, 0, 10, 14]}, "height": 12},
     {"el": "dim", "a": [-5, -7, 8], "b": [5, -7, 8], "offset": 18, "value": "10.000 mm", "color": "hov", "keys": [[1.3, {"color": "hov"}], [1.35, {"color": "sel"}]]},
-    {"el": "glyph", "kind": "fix", "at": [0, -7, 8], "dx": 0, "dy": -44, "color": "sel", "from": 1.35},
     {"el": "key", "command": "inspect.pin", "press": 1.3, "from": 0.9, "to": 1.8},
-    {"el": "timeline", "screen": [0.03, 0.78], "markers": ["box", "box"], "states": ["", ""],
-     "keys": [[1.4, {"markers": ["box", "box"], "states": ["", ""]}], [1.45, {"markers": ["box", "box", "pin"], "states": ["", "", "flash"]}], [2.2, {"states": ["", "", ""]}]]}
+    {"el": "card", "screen": [0.03, 0.06], "w": 170, "title": "Annotations", "from": 1.5, "hl": 1,
+     "rows": [{"text": "Check the clearance", "icon": "annotate"}, {"text": "distance measurement", "value": "10.000 mm", "icon": "distance"}], "keys": [[2.6, {"hl": -1}]]}
    ],
    "steps": [
     {"to": 1.0, "caption": "Measure something"},
     {"to": 2.4, "caption": "{press:inspect.pin} to pin it"},
-    {"to": 4.6, "caption": "It stays in the document's timeline"}
+    {"to": 4.6, "caption": "It stays in the document: Annotations lists it"}
    ]
   },
   {
@@ -2887,8 +2886,9 @@
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
-    {"use": "pickFace", "args": {"face": [[-9, -6, 6], [9, -6, 6], [9, 6, 6], [-9, 6, 6]], "hover": 0.5, "pick": 0.9, "until": 3.4}},
-    {"el": "chip", "at": [-2, 0, 6], "dx": 30, "dy": 34, "icon": "annotate", "text": "Note · Face 3", "from": 1, "to": 3.4},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0, "from": 0.5, "to": 3.4, "fade": 0,
+     "keys": [[0.5, {"toneAmount": 0.15}], [0.9, {"toneAmount": 0.4}]]},
+    {"el": "chip", "at": [-2, 0, 6], "dx": 30, "dy": 34, "icon": "annotate", "text": "Note · Bracket", "from": 1, "to": 3.4},
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Note", "rows": [{"text": "Text", "entry": ""}], "from": 1.2, "to": 3.4, "keys": [[1.6, {"rows": [{"text": "Text", "entry": "Check"}], "ease": "step"}], [2, {"rows": [{"text": "Text", "entry": "Check the clearance"}], "ease": "step"}]]},
     {"el": "key", "fixed": "ctrlEnter", "press": 3.3, "from": 2.95, "to": 3.8},
     {"el": "poly", "points": [[-2, 0, 6], [-2, 0, 11]], "color": "amber", "width": 1.2, "from": 3.4, "fade": 0.2},
@@ -2896,7 +2896,7 @@
     {"el": "cursor", "badge": "annotate", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [-2, 0, 6], "click": 1}], [1.5, {"pos": [14, -12, 4]}]]}
    ],
    "steps": [
-    {"to": 1, "caption": "Click a face, edge or point"},
+    {"to": 1, "caption": "Click the body, face, edge or point (the filter decides)"},
     {"to": 3.3, "caption": "Type the note"},
     {"to": 5, "caption": "{fixed:ctrlEnter} pins it to the model"}
    ]
@@ -2925,14 +2925,15 @@
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
-    {"el": "poly", "points": [[-2, 0, 6], [-2, 0, 11]], "color": "amber", "width": 1.2, "keys": [[1.6, {"opacity": 1}], [2, {"opacity": 0.35}]]},
-    {"el": "label", "at": [-2, 0, 11], "dx": 40, "dy": -10, "value": "Check the clearance", "box": "bg2", "color": "fg", "keys": [[1.6, {"opacity": 1}], [2, {"opacity": 0.35}]]},
-    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Annotations", "rows": [{"text": "Check the clearance", "icon": "annotate", "dim": false}, {"label": "Ahmad · Issue", "dim": false}], "hl": 0, "keys": [[1.6, {"rows": [{"text": "Check the clearance", "icon": "check"}, {"label": "Ahmad · Issue"}], "ease": "step"}], [1.8, {"rows": [{"text": "Check the clearance", "icon": "check", "dim": true}, {"label": "Ahmad · Resolved", "dim": true}], "hl": -1, "ease": "step"}]]},
+    {"el": "poly", "points": [[-2, 0, 6], [-2, 0, 11]], "color": "amber", "width": 1.2, "keys": [[1.6, {"opacity": 1}], [2, {"opacity": 0}]]},
+    {"el": "label", "at": [-2, 0, 11], "dx": 40, "dy": -10, "value": "Check the clearance", "box": "bg2", "color": "fg", "keys": [[1.6, {"opacity": 1}], [2, {"opacity": 0}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Annotations", "rows": [{"text": "Check the clearance", "icon": "annotate", "dim": false}, {"label": "Ahmad · Issue", "dim": false}], "hl": 0, "keys": [[1.6, {"rows": [{"text": "Check the clearance", "icon": "check"}, {"label": "Ahmad · Issue"}], "ease": "step"}], [1.8, {"rows": [{"text": "Check the clearance", "icon": "check", "dim": true}, {"label": "Ahmad · Resolved", "dim": true}, {"text": "Restore", "icon": "restore", "dim": true}], "hl": -1, "ease": "step"}]]},
     {"el": "key", "command": "annotate.resolve", "press": 1.6, "from": 1.25, "to": 2.1}
    ],
    "steps": [
     {"to": 1, "caption": "Select the note"},
-    {"to": 4.2, "caption": "{press:annotate.resolve}: it is resolved and stays in history"}
+    {"to": 2.0, "caption": "{press:annotate.resolve}"},
+    {"to": 4.2, "caption": "Resolved: it leaves the view, Annotations keeps it"}
    ]
   },
   {
@@ -2944,11 +2945,12 @@
     {"el": "label", "at": [-2, 0, 11], "dy": -10, "value": "Check the clearance", "box": "bg2", "color": "fg", "to": 1.2, "fade": 0.4},
     {"el": "poly", "points": [[6, 4, 6], [10, 8, 9]], "color": "amber", "width": 1.2, "to": 1.2, "fade": 0.4},
     {"el": "label", "at": [10, 8, 9], "dy": -10, "value": "Round this edge", "box": "bg2", "color": "fg", "to": 1.2, "fade": 0.4},
-    {"el": "chip", "screen": [0.03, 0.05], "icon": "annotate", "text": "Show notes", "dot": "sel", "keys": [[0.9, {"hl": true, "dot": "sel"}], [1, {"dot": "fg3", "ease": "step"}]]},
-    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.8, {"screen": [0.1, 0.11]}], [0.9, {"screen": [0.1, 0.11], "click": 1}], [1.8, {"screen": [0.6, 0.65]}]]}
+    {"el": "card", "screen": [0.03, 0.06], "w": 120, "title": "Markup", "rows": [{"text": "Show notes", "check": true, "icon": "annotate"}], "hl": -1,
+     "keys": [[0.8, {"hl": 0}], [0.9, {"rows": [{"text": "Show notes", "check": false, "icon": "annotate"}], "ease": "step"}], [1.4, {"hl": -1}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.8, {"screen": [0.07, 0.285]}], [0.9, {"screen": [0.07, 0.285], "click": 1}], [1.8, {"screen": [0.6, 0.65]}]]}
    ],
    "steps": [
-    {"to": 1, "caption": "Toggle Show notes"},
+    {"to": 1, "caption": "Untick Show notes (Annotate tab)"},
     {"to": 3.8, "caption": "The cards hide; the notes stay"}
    ]
   },
@@ -3031,11 +3033,11 @@
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12]}, "height": 4},
-    {"el": "solid", "profile": {"circle": [-6, -3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
-    {"el": "solid", "profile": {"circle": [6, -3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
-    {"el": "solid", "profile": {"circle": [-6, 3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
-    {"el": "solid", "profile": {"circle": [6, 3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
-    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"entry": ""}, {"text": "Plate", "icon": "body"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}], "from": 0.9, "keys": [[1.3, {"rows": [{"entry": "bo"}, {"text": "Plate", "icon": "body"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}], "ease": "step"}], [1.6, {"rows": [{"entry": "bolt"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}, {"label": "Bolt 3", "icon": "body"}], "ease": "step"}]]},
+    {"el": "solid", "profile": {"circle": [-6, -3, 1.6]}, "at": [0, 0, 4], "height": 5},
+    {"el": "solid", "profile": {"circle": [6, -3, 1.6]}, "at": [0, 0, 4], "height": 5},
+    {"el": "solid", "profile": {"circle": [-6, 3, 1.6]}, "at": [0, 0, 4], "height": 5},
+    {"el": "solid", "profile": {"circle": [6, 3, 1.6]}, "at": [0, 0, 4], "height": 5},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"entry": ""}, {"text": "Plate", "icon": "body"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}], "from": 0.9, "keys": [[1.3, {"rows": [{"entry": "bo"}, {"text": "Plate", "icon": "body"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}], "ease": "step"}], [1.6, {"rows": [{"entry": "bolt"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}, {"label": "Bolt 3", "icon": "body"}, {"label": "Bolt 4", "icon": "body"}], "ease": "step"}]]},
     {"el": "key", "command": "edit.filter", "press": 0.8, "from": 0.45, "to": 1.3}
    ],
    "steps": [
@@ -3070,7 +3072,7 @@
    ],
    "steps": [
     {"to": 1, "caption": "Select it and press {key:edit.delete}", "captionNoKey": "Select it and choose Delete"},
-    {"to": 3.8, "caption": "It goes; a delete step keeps it restorable"}
+    {"to": 3.8, "caption": "It goes; a Remove step keeps its history"}
    ]
   },
   {
@@ -3089,18 +3091,19 @@
    ]
   },
   {
-   "id": "edit.selecttouched", "duration": 3.8, "view": "iso",
+   "id": "edit.selecttouched", "duration": 4.2, "view": "iso",
    "items": [
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
-    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.6, {"toneAmount": 0.45}]]},
-    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder", "fillet"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "sel", ""], "ease": "step"}]]},
-    {"el": "key", "command": "edit.selecttouched", "press": 1.55, "from": 1.2, "to": 2.05},
-    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [0.8, {"screen": [0.15, 0.89]}], [0.9, {"screen": [0.15, 0.89], "click": 1}], [2, {"screen": [0.6, 0.6]}]]}
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[2.3, {"toneAmount": 0}], [2.4, {"toneAmount": 0.45}]]},
+    {"el": "circle", "center": [8, 0, 10], "r": 3.6, "color": "sel", "width": 3, "from": 0.9, "to": 2.4, "fade": 0},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder", "fillet"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "", "sel"], "ease": "step"}]]},
+    {"el": "key", "command": "edit.selecttouched", "press": 2.3, "from": 1.9, "to": 2.8},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [0.8, {"screen": [0.217, 0.886]}], [0.9, {"screen": [0.217, 0.886], "click": 1}], [1.6, {"screen": [0.6, 0.6]}]]}
    ],
    "steps": [
-    {"to": 1, "caption": "Click a step on the timeline"},
-    {"to": 3.8, "caption": "{press:edit.selecttouched}: what it changed is selected"}
+    {"to": 1.9, "caption": "Click a step: what it made is selected"},
+    {"to": 4.2, "caption": "{press:edit.selecttouched}: its whole bodies are selected"}
    ]
   },
   {
