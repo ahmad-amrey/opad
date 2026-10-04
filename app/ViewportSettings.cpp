@@ -216,6 +216,16 @@ void Viewport::updateDrawingHighlights() {
   m_drawingHover->SetColor(hover);
 }
 
+// The grid lies in the principal plane 2D mode looks at (a sketch keeps its own plane), in 3D on XY.
+void Viewport::alignGridPlane() {
+  if (!m_initialised || m_sketchInput) return;
+  const gp_Dir d = m_view->Camera()->Direction();
+  const double ax = std::abs(d.X()), ay = std::abs(d.Y()), az = std::abs(d.Z());
+  if (!m_twoDimensional || az >= std::max(ax, ay)) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DZ(), gp::DX()));
+  else if (ax >= ay) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DX(), gp::DY()));
+  else m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DY(), gp::DZ()));
+}
+
 void Viewport::setTwoDimensional(bool on) {
   const bool entering = on && m_threeDimensionalCamera.IsNull();
   m_twoDimensional = on;
@@ -259,14 +269,7 @@ void Viewport::setTwoDimensional(bool on) {
     m_ctx->Display(m_cube, false);
     m_ctx->Activate(m_cube, 0);
   }
-  // The grid lies in the plane 2D mode looks at (a sketch keeps its own plane), and in 2D mode it never ends.
-  if (!m_sketchInput) {
-    const gp_Dir d = m_view->Camera()->Direction();
-    const double ax = std::abs(d.X()), ay = std::abs(d.Y()), az = std::abs(d.Z());
-    if (!on || az >= std::max(ax, ay)) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DZ(), gp::DX()));
-    else if (ax >= ay) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DX(), gp::DY()));
-    else m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DY(), gp::DZ()));
-  }
+  alignGridPlane();  // in 2D mode it never ends
   updateGridExtent();
   applyGridColors();
   m_ctx->ClearDetected(false);

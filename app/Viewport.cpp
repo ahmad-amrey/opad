@@ -1650,7 +1650,9 @@ void Viewport::standardView(const QString& name, bool animate) {
   moveCamera(animate, 0.4, [this, o] {
     m_view->SetProj(o);
     fitAll();
+    if (m_twoDimensional) alignGridPlane();  // a plan, an elevation or a side in 2D mode: the grid in the plane it ends on
   });
+  if (m_twoDimensional) updateGridExtent();
 }
 
 void Viewport::home(bool animate) {

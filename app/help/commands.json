@@ -169,9 +169,9 @@
    "id": "view.iso",
    "title": "Isometric view",
    "summary": "Looks at the model from a corner, at equal angles to the three axes.",
-   "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
+   "details": "The camera turns smoothly and the model is fitted. The matching corner of the view cube does the same. Not available in 2D mode, which keeps a principal plane.",
    "keywords": ["standard view", "iso", "orientation", "camera"],
-   "requires": "Open or create a document first."
+   "requires": "Open or create a document first; not available in 2D mode."
   },
   {
    "id": "view.bottom",

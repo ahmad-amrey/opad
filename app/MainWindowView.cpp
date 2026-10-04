@@ -61,6 +61,7 @@ void MainWindow::buildViewActions() {
 
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
     m_homeBtn->setVisible(!on); m_alignPlane->setVisible(!on);  // the turn buttons stay: in 2D they twist the view (UI-47)
+    action("view.iso")->setEnabled(!on && m_doc->hasDocument);  // a corner view has no plane to lock to
     updateChips();
   });
   QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("Shift+3"), [this] {}, true);

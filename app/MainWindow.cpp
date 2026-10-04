@@ -515,7 +515,8 @@ void MainWindow::showDocument(bool has) {
   for (QAction* a : m_actions) {
     QString id = a->objectName();
     const bool setting = id == "view.dark" || id == "view.cubeEdgesCorners";  // in the Settings menu: also without a document
-    if (id.startsWith("view.") && !setting) a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()));
+    if (id.startsWith("view.") && !setting)  // no corner view in 2D mode (it keeps a principal plane)
+      a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()) && (id != "view.iso" || !action("view.2d")->isChecked()));
     if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);

@@ -232,6 +232,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_NAVIGATE (ViewportViewBench.cpp): zoom window, previous and next view, the CAD 2D preset, animated standard
   // views, fit and Home, a custom Home, the cube's menu and the 2D twist (UI-47)
   bool benchNavigation(const QString& prefix);
+  // OPAD_BENCH_VIEWS (ViewsBench.cpp, help audit P7): the view commands as their guides show them, run through the window's
+  // `trigger` with animations on as on screen: the seven standard views turn, Isometric is off in 2D mode, where a standard
+  // view takes the grid to its plane; on a drawing in 2D mode Turn 90° left twists it and the grid stays in its plane.
+  bool benchViews(const QString& prefix, const std::function<void(const QString&)>& trigger, const std::function<bool(const QString&)>& enabled);
   // OPAD_BENCH_HIGHLIGHT (ViewportViewBench.cpp): hover and selection roles in the current theme (UI-38): a body, its
   // face, edge and vertex hovered (white) and selected (hued, edges thicker in a halo), a body in the selection's own
   // colour outlined, the view cube's side in a standard view and its hover
@@ -610,6 +614,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::shared_ptr<const DepthImage> captureDepth();
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void alignGridPlane();  // the grid's plane: the principal plane 2D mode looks at (a standard view there changes it), else XY
   void showGrid();  // gridDrawn() on screen
   // Drawn: the G setting in force (gridShown) or the origin guide of an empty Design document (UI-51), whatever the setting.
   bool gridDrawn() const { return gridShown() || m_originGuide; }
