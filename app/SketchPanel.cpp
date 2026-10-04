@@ -14,6 +14,7 @@
 #include <QSignalBlocker>
 #include <QTabWidget>
 #include <QTabBar>
+#include <QToolButton>
 #include <QFontComboBox>
 #include <QFileDialog>
 #include <QApplication>
@@ -73,6 +74,11 @@ QList<SketchPanel::Tool> SketchPanel::tools() {
 SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
   auto* layout=new QVBoxLayout(this); layout->setContentsMargins(8,8,8,8); layout->setSpacing(6);
   m_state=new QLabel(this); m_state->setWordWrap(true); layout->addWidget(m_state);
+  // Its pages, switched here (TODO 11 wave 3, P6: the tab bar was hidden, so Select, Constraints and Snaps opened only
+  // through their own commands): a compact segmented row, the section panel's look.
+  auto* switcher=new QWidget(this);switcher->setObjectName("segmented");
+  auto* switches=new QHBoxLayout(switcher);switches->setContentsMargins(1,1,1,1);switches->setSpacing(0);
+  layout->addWidget(switcher);
   auto* tabs=new QTabWidget(this);m_pages=tabs;tabs->tabBar()->hide();layout->addWidget(tabs,1);
   auto page=[&](const QString& title) {
     auto* scroll=new QScrollArea(tabs); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
@@ -154,6 +160,13 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(tolerance,&QLineEdit::editingFinished,this,[tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) {QSettings().setValue("sketch/tolerance",v);preferences::changed("sketch/tolerance");}else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
   auto* iterations=new QSpinBox(this);iterations->setRange(1,1000);advanced->addRow(tr("Solver iterations"),iterations);
   preferences::bind(iterations,"sketch/iterations",100);settings->addStretch();
+  for(int i=0;i<tabs->count();++i) {
+    auto* b=new QToolButton(switcher);b->setObjectName("segmentPrimary");b->setText(tabs->tabText(i));b->setCheckable(true);b->setChecked(i==0);
+    b->setAutoRaise(true);b->setFixedHeight(24);b->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);b->setFocusPolicy(Qt::NoFocus);
+    b->setProperty("sketchPage",i);switches->addWidget(b,1);
+    connect(b,&QToolButton::clicked,this,[this,i]{showPage(i);});
+  }
+  connect(tabs,&QTabWidget::currentChanged,switcher,[switcher](int index){for(auto* b:switcher->findChildren<QToolButton*>())b->setChecked(b->property("sketchPage").toInt()==index);});
   m_status=new QLabel(this);m_status->setWordWrap(true);layout->addWidget(m_status);
   auto* footer=new QHBoxLayout;layout->addLayout(footer);
   // Finish sketch lives in the ribbon, next to Cancel sketch. The footer is Backspace and Esc as buttons (UI-20): Undo

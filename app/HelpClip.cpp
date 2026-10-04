@@ -325,6 +325,7 @@ void collectTexts(const QString& el, const QJsonObject& o, QStringList& out) {
       const QJsonValue text = r.isArray() ? r.toArray().first() : r.toObject().value("text"), value = r.isArray() ? r.toArray().at(1) : r.toObject().value("value");
       add(text);
       if (wordy(value.toString())) add(value);
+      for (const QJsonValue& tab : r.toObject().value("tabs").toArray()) add(tab);
     }
   }
 }
@@ -1152,7 +1153,8 @@ void keycaps(Ctx& c, const QJsonObject& o) {
   }
 }
 
-// A panel stub: title, rows (label and value, radio, check box, slider, indent, icon), a highlighted row, a button.
+// A panel stub: title, rows (label and value, radio, check box, slider, indent, icon, a page switch), a highlighted row, a
+// button.
 void card(Ctx& c, const QJsonObject& o) {
   QPainter& p = *c.p;
   const Tokens& t = *c.tk;
@@ -1185,6 +1187,34 @@ void card(Ctx& c, const QJsonObject& o) {
       p.setPen(Qt::NoPen);
       p.setBrush(t.selbg);
       p.drawRoundedRect(c.mirror(row), 3 * u, 3 * u);
+    }
+    if (r.contains("tabs")) {  // a segmented switch of a panel's pages, the one shown filled ({"tabs": [...], "on": i})
+      const QJsonArray tabs = r.value("tabs").toArray();
+      const int on = r.value("on").toInt(0);
+      const double x0 = row.left() + pad - 3 * u, x1 = row.right() - pad + 3 * u;
+      p.setPen(QPen(t.line, 1 * u));
+      p.setBrush(t.bg);
+      p.drawRoundedRect(c.mirror(QRectF(x0, y + 1.5 * u, x1 - x0, rowH - 3 * u)), 3 * u, 3 * u);
+      p.setFont(c.font(8.5));
+      // Each segment as wide as its name and the same margin, the row shared out in proportion.
+      const QFontMetricsF metrics(p.font());
+      QList<double> widths;
+      double total = 0;
+      for (const QJsonValue& tab : tabs) total += widths.emplace_back(metrics.horizontalAdvance(i18n::t(tab.toString())) + 8 * u);
+      double left = x0;
+      for (qsizetype k = 0; k < tabs.size(); ++k) {
+        const double sw = widths[k] * (x1 - x0) / std::max(1e-9, total);
+        const QRectF segment = c.mirror(QRectF(left, y + 1.5 * u, sw, rowH - 3 * u));
+        left += sw;
+        if (k == on) {
+          p.setPen(Qt::NoPen);
+          p.setBrush(t.sel);
+          p.drawRoundedRect(segment.adjusted(1 * u, 1 * u, -1 * u, -1 * u), 2.5 * u, 2.5 * u);
+        }
+        p.setPen(k == on ? t.onsel : t.fg2);
+        p.drawText(segment, Qt::AlignCenter, i18n::t(tabs[k].toString()));
+      }
+      continue;
     }
     double x = row.left() + pad - 2 * u + r.value("indent").toDouble() * 10 * u;
     const bool dim = r.value("dim").toBool();

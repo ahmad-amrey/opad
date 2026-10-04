@@ -1469,8 +1469,14 @@ void SketchEditor::rebuild() {
   const std::set<int> freePts(m_solved.free_points.begin(), m_solved.free_points.end());
   const std::set<int> selected(m_sel.begin(), m_sel.end());
   const std::set<int> picked(m_picked.begin(), m_picked.end());
+  // What a selected constraint or dimension holds lights up with it (TODO 11 wave 3, P6: a row picked in the Constraints
+  // list, a badge clicked), as on hover.
+  std::set<int> held;
+  if (!selected.empty())
+    for (const auto& c : m_sk.constraints)
+      if (selected.count(c.id)) held.insert(c.refs.begin(), c.refs.end());
   auto entityColor = [&](const SkEntity& e) {
-    if (selected.count(e.id) || picked.count(e.id)) return t.hov;
+    if (selected.count(e.id) || picked.count(e.id) || held.count(e.id)) return t.hov;
     if (!e.source.is_null())return t.amber;
     if (e.fixed) return t.green;
     bool free = false;
@@ -1500,7 +1506,7 @@ void SketchEditor::rebuild() {
     for (size_t i = 0; i + 1 < pts.size(); ++i) into.push_back({W(pts[i].first, pts[i].second), W(pts[i + 1].first, pts[i + 1].second), c});
   }
   for (const auto& p : m_sk.points) {
-    const bool hot = selected.count(p.id) || picked.count(p.id);
+    const bool hot = selected.count(p.id) || picked.count(p.id) || held.count(p.id);
     const QColor c = hot ? t.hov : p.fixed ? t.green : freePts.count(p.id) ? t.sel : t.fg;
     (hot ? d.bigPoints : !p.fixed && freePts.count(p.id) ? d.rings : d.points).push_back({W(p.x, p.y), c});  // free: a ring without its dot
     if(m_dangling.count(p.id)) d.bigPoints.push_back({W(p.x,p.y),t.red});

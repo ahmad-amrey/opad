@@ -149,6 +149,8 @@ def clip_texts():
                         texts.append(text)
                         if wordy(value):
                             texts.append(value)
+                        if isinstance(row, dict):
+                            texts += row.get('tabs', [])  # a page switch's names
         for t in texts:
             if isinstance(t, str) and t:
                 found.setdefault(t, clip['id'])
