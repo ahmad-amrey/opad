@@ -348,7 +348,7 @@ void RecoveryManager::bench(const QString& mode) {
           trace::log("bench: recovery snapshot, cancellation guard and incremental unchanged suppression and live-instance exclusion PASS; simulated crash");std::_Exit(0);
         });});});
       }))return fail("snapshot refused");
-      m_jobs->current()->cancel();
+      m_jobs->newest()->cancel();  // the capture just begun (the strip's own job may be an older one)
       try {m_doc->run("param",{{"name","shouldNotWrite"},{"expr","1 mm"}});fail("write allowed while copying document");}catch(const opad::Error&){}
     });timer->start();
   }catch(const std::exception& e){fail(e.what());}

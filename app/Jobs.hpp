@@ -115,6 +115,7 @@ class JobRunner : public QObject {
   void resume(Job* job);  // a paused sliced job slices again from the next event-loop turn
   bool busy() const { return !m_jobs.empty(); }
   Job* current() const;  // the oldest Foreground job: what the strip shows and cancels
+  Job* newest() const { return m_jobs.empty() ? nullptr : m_jobs.back(); }  // the job begun last
   QStringList background() const;  // titles of the Background jobs (and orphaned children) running now
   int begun() const { return m_begun; }  // jobs begun so far (benches count them)
  signals:
