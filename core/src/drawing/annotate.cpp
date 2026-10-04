@@ -210,6 +210,26 @@ struct Paper {
   bool across(const Vec3& axis) const { return std::fabs(dot3(unit3(axis), f.dir)) <= 1e-4; }
 };
 
+// Where a balloon's leader ends on what it points at (a circle seen along its axis: on it, facing the balloon; another
+// circle: its start; else the reference's point), where the frame's view draws it.
+BalloonAnchor balloon_anchor(const Resolver& R, const ViewFrame& frame, const json& ref) {
+  const Pick k = pick_of(R, ref);
+  const Paper paper{frame};
+  BalloonAnchor a;
+  a.node = k.node;
+  a.tip = paper(k.p);
+  a.dot = k.plane || k.cylinder || (!k.edge && !k.point);
+  if (k.circle && !k.point && paper.along(k.axis)) {
+    a.round = true;
+    a.centre = paper(k.centre);
+    a.r = k.r * frame.scale;
+    a.tip = a.toward(a.centre);
+  } else if (k.circle && !k.point) {
+    a.tip = paper(k.a);
+  }
+  return a;
+}
+
 // A flat face seen edge on (a section's outline names the faces its edges lie on): the line it shows, its ends where the
 // face reaches furthest along it, so it measures as a straight edge does.
 void edge_on(Pick& k, const ViewFrame& f) {
@@ -323,6 +343,24 @@ void feature_values(const Resolver& R, const std::string& node, Hole& h) {
 }  // namespace
 
 json item_references(const Document& doc, const Scene& scene, const json& refs, const json& aspects) { return references(doc, scene, refs, aspects); }
+
+Vec2 BalloonAnchor::toward(Vec2 place) const { return round ? add(centre, mul(unit(sub(place, centre), {1, 1}), r)) : tip; }
+
+std::vector<std::optional<BalloonAnchor>> balloon_anchors(const Document& doc, const Scene& scene, const ViewFrame& frame, const std::vector<json>& refs) {
+  std::vector<std::optional<BalloonAnchor>> out;
+  if (!frame.error.empty()) return std::vector<std::optional<BalloonAnchor>>(refs.size());
+  const Resolver R(doc, scene, frame.id);
+  for (const json& ref : refs) {
+    try {
+      out.emplace_back(balloon_anchor(R, frame, ref));
+    } catch (const Error&) {
+      out.emplace_back();
+    } catch (const Standard_Failure&) {
+      out.emplace_back();
+    }
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------- values
 std::string format_number(double value, int precision, const Sheet* sheet) {
@@ -578,22 +616,15 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     if (refs.size() != 1) throw Error("a balloon points at one part");
     if (!frame->error.empty()) throw Error("its view cannot be drawn: " + frame->error);
     const Resolver R(doc, scene, frame->id);  // on the part where an exploded view draws it
-    const Pick k = pick_of(R, refs[0]);
-    if (k.node.empty()) throw Error("a balloon points at a part of the model");
-    const Paper paper{*frame};
-    Vec2 tip = paper(k.p);
-    if (k.circle && !k.point && paper.along(k.axis)) {  // onto the circle, on the balloon's side
-      const Vec2 c = paper(k.centre);
-      tip = add(c, mul(unit(sub(vec2(d.value("place", json::object()).value("text", json()), c), c), {1, 1}), k.r * frame->scale));
-    } else if (k.circle && !k.point) {
-      tip = paper(k.a);
-    }
+    const BalloonAnchor a = balloon_anchor(R, *frame, refs[0]);
+    if (a.node.empty()) throw Error("a balloon points at a part of the model");
+    const Vec2 tip = a.toward(vec2(d.value("place", json::object()).value("text", json()), a.centre));
     const SheetItem* list = parts_list_of(scene, sheet, d.value("list", ""));
     const Sheet* listed = list ? scene.sheet(list->sheet) : &sheet;
     const json rows = parts_rows(doc, scene, listed ? *listed : sheet, list ? list->def : json::object());
-    const json* row = row_of(scene, rows["rows"], k.node);
+    const json* row = row_of(scene, rows["rows"], a.node);
     if (!row) throw Error(list ? "that part is not in the parts list" : "that part is not in the bill of materials");
-    json m = {{"tip", js(tip)}, {"number", std::to_string(row->value("number", 0))}, {"qty", row->value("qty", 1)}, {"dot", k.plane || k.cylinder || (!k.edge && !k.point)}};
+    json m = {{"tip", js(tip)}, {"number", std::to_string(row->value("number", 0))}, {"qty", row->value("qty", 1)}, {"dot", a.dot}};
     if (list && !row->value("settled", false)) m["settle"] = {{"list", list->id}, {"numbers", rows["numbers"]}};
     if (R.notes.contains("rehinted")) m["rehinted"] = R.notes["rehinted"];
     return m;

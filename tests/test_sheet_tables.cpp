@@ -226,6 +226,38 @@ TEST(auto_balloon) {
   CHECK_EQ(run(a.doc, "sheet_balloons", {{"sheet", a.sheet}, {"view", a.front}, {"all", true}})["ids"].size(), 3u);
 }
 
+// Auto-balloon keeps its balloons inside the frame and off what is on the sheet: a parts list placed right under the
+// view (where the plate's balloon would go, below its long bottom edge), the title block, the other views.
+TEST(auto_balloon_keeps_off_the_sheets_tables) {
+  Assembly a;
+  run(a.doc, "sheet_view", {{"sheet", a.sheet}, {"parent", a.front}, {"side", "top"}});
+  Scene s = a.scene();
+  auto frames = layout(a.doc, s, *s.sheet(a.sheet));
+  const ViewFrame front = *std::find_if(frames.begin(), frames.end(), [&](const ViewFrame& x) { return x.id == a.front; });
+  const std::string list = run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"kind", "parts_list"}, {"width", 120}, {"grow", "down"}, {"at", {front.box[2] + 20, front.box[1] - 4}}})["id"];
+  const json made = run(a.doc, "sheet_balloons", {{"sheet", a.sheet}, {"view", a.front}});
+  CHECK_EQ(made["ids"].size(), 3u);
+  s = a.scene();
+  frames = layout(a.doc, s, *s.sheet(a.sheet));
+  const Sheet& sheet = *s.sheet(a.sheet);
+  std::vector<std::array<double, 4>> taken;
+  for (const auto& f : frames)
+    if (f.id != a.front) taken.push_back(f.box);
+  Display d;
+  draw_table_item(d, s.sheet_item(list)->def, measure_item(a.doc, s, sheet, *s.sheet_item(list), nullptr));
+  const auto table = d.bounds();
+  CHECK(table[3] > front.box[1] - 13 + 5);  // a balloon below the view would sit on it
+  taken.push_back(table);
+  const json block = sheet.def["template"]["title_block"];
+  taken.push_back({sheet.width - 10 - block["w"].get<double>(), 10, sheet.width - 10, 10 + block["h"].get<double>()});
+  for (const auto& id : made["ids"]) {
+    const SheetItem& b = *s.sheet_item(id.get<std::string>());
+    const Vec2 at{front.at[0] + b.def["place"]["text"][0].get<double>(), front.at[1] + b.def["place"]["text"][1].get<double>()};
+    CHECK(at[0] - 5 >= 20 && at[0] + 5 <= sheet.width - 10 && at[1] - 5 >= 10 && at[1] + 5 <= sheet.height - 10);  // inside the frame
+    for (const auto& t : taken) CHECK(!(at[0] + 5 > t[0] && at[0] - 5 < t[2] && at[1] + 5 > t[1] && at[1] - 5 < t[3]));
+  }
+}
+
 // Issues: the revision table lists them, the title block shows the latest's revision, date and approver; an issue keeps
 // every value, the views' fingerprints and their linework (gc keeps it); a model change shows as changed views and values
 // since; a revision cannot be issued twice; the next one follows the letters (I, O, Q, S, X, Z skipped).
@@ -669,4 +701,107 @@ TEST(exploded_view_state_follows_its_exploded_view) {
   const ViewSpec back = spec_of_front(s);
   CHECK(!s.sheet_view(a.front)->def.value("source", json::object()).contains("explode"));
   CHECK(back.offsets.empty() && back.trails.empty());
+}
+
+namespace {
+
+bool segments_cross(Vec2 a, Vec2 b, Vec2 c, Vec2 d) {
+  const auto side = [](Vec2 o, Vec2 p, Vec2 q) { return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]); };
+  const double d1 = side(c, d, a), d2 = side(c, d, b), d3 = side(a, b, c), d4 = side(a, b, d);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+// Each balloon of a view as drawn: where its circle is, where its leader ends, the part it points at (sheet paper mm).
+struct Drawn {
+  Vec2 at, tip;
+  std::string node;
+};
+std::vector<Drawn> balloons_drawn(const Document& doc, const Scene& s, const Sheet& sheet, const ViewFrame& f, const json& ids) {
+  std::vector<Drawn> out;
+  for (const auto& id : ids) {
+    const SheetItem& b = *s.sheet_item(id.get<std::string>());
+    const json m = measure_item(doc, s, sheet, b, &f);
+    out.push_back({{f.at[0] + b.def["place"]["text"][0].get<double>(), f.at[1] + b.def["place"]["text"][1].get<double>()},
+                   {f.at[0] + m["tip"][0].get<double>(), f.at[1] + m["tip"][1].get<double>()},
+                   b.refs[0].body});
+  }
+  return out;
+}
+
+// A view's visible lines on the sheet (paper mm) in short pieces, each with the part it draws ("" for a trail line).
+struct Piece {
+  Vec2 a, b;
+  std::string node;
+};
+std::vector<Piece> pieces_shown(const ViewGeometry& g, const ViewFrame& f) {
+  std::vector<Piece> out;
+  const auto paper = [&](Vec2 p) { return Vec2{f.at[0] + f.scale * (p[0] - f.centre[0]), f.at[1] + f.scale * (p[1] - f.centre[1])}; };
+  for (const Curve& c : g.curves) {
+    if (c.hidden) continue;
+    const auto pts = c.sample(0.01);
+    for (size_t k = 1; k < pts.size(); ++k) out.push_back({paper(pts[k - 1]), paper(pts[k]), c.body < 0 ? "" : g.bodies[size_t(c.body)].node});
+  }
+  return out;
+}
+
+double distance_to(Vec2 p, const Piece& s) {
+  const Vec2 d{s.b[0] - s.a[0], s.b[1] - s.a[1]};
+  const double l2 = d[0] * d[0] + d[1] * d[1];
+  const double t = l2 > 0 ? std::clamp(((p[0] - s.a[0]) * d[0] + (p[1] - s.a[1]) * d[1]) / l2, 0.0, 1.0) : 0;
+  return std::hypot(s.a[0] + t * d[0] - p[0], s.a[1] + t * d[1] - p[1]);
+}
+
+// The parts' lines a balloon's leader crosses (from its circle to a millimetre short of its tip): of other parts, of its
+// own (each line once).
+std::pair<int, int> leader_crossings(const std::vector<Piece>& shown, const Drawn& b, double radius = 5) {
+  const double l = std::hypot(b.tip[0] - b.at[0], b.tip[1] - b.at[1]);
+  const Vec2 u{(b.tip[0] - b.at[0]) / l, (b.tip[1] - b.at[1]) / l};
+  const Vec2 from{b.at[0] + u[0] * radius, b.at[1] + u[1] * radius}, to{b.tip[0] - u[0], b.tip[1] - u[1]};
+  int others = 0, own = 0;
+  for (const Piece& s : shown)
+    if (!s.node.empty() && segments_cross(from, to, s.a, s.b)) ++(s.node == b.node ? own : others);
+  return {others, own};
+}
+
+}  // namespace
+
+// Auto-balloon on an exploded stack (UI-85): a plate, a post and a lid apart along Z, seen from the exploded view's
+// camera. Every balloon's leader ends on its part's visible lines and reaches it over nothing drawn (the post's used to
+// run up across the plate below it), and no two leaders cross; numbered as the parts list numbers them.
+TEST(auto_balloon_leaders_reach_their_parts_over_nothing_else) {
+  Document doc = Document::create();
+  run(doc, "feature", {{"kind", "box"}, {"inputs", {{"length", "60 mm"}, {"width", "40 mm"}, {"height", "8 mm"}}}});
+  run(doc, "feature", {{"kind", "cylinder"}, {"inputs", {{"plane", {{"origin", {0, 0, 8}}, {"normal", {0, 0, 1}}}}, {"diameter", 16}, {"height", 24}, {"operation", "new"}}}});
+  run(doc, "feature", {{"kind", "box"}, {"inputs", {{"plane", {{"origin", {0, 0, 32}}, {"normal", {0, 0, 1}}}}, {"length", "60 mm"}, {"width", "40 mm"}, {"height", "4 mm"}, {"operation", "new"}}}});
+  run(doc, "explode", {{"mode", "axis"}, {"name", "Exploded 1"}});
+  const std::string exploded = resolve(doc).views.back().id;
+  const std::string sheet = run(doc, "sheet", {{"size", "A3"}, {"orientation", "landscape"}, {"scale", "1:1"}, {"views", {"front"}}})["id"];
+  for (const char* orient : {"", "front"}) {  // its own camera (iso), then from the front
+    json args = {{"sheet", sheet}, {"explode", exploded}, {"at", orient[0] ? json::array({90, 150}) : json::array({310.8, 163.35})}};
+    if (orient[0]) args["orient"] = orient;
+    const std::string view = run(doc, "sheet_view", args)["id"];
+    const json made = run(doc, "sheet_balloons", {{"sheet", sheet}, {"view", view}});
+    CHECK_EQ(made["ids"].size(), 3u);
+    const Scene s = resolve(doc);
+    const auto frames = layout(doc, s, *s.sheet(sheet));
+    const ViewFrame& f = *std::find_if(frames.begin(), frames.end(), [&](const ViewFrame& x) { return x.id == view; });
+    const auto shown = pieces_shown(*shape_linework(project(doc, s, view_spec(s, *s.sheet_view(view))), f), f);
+    const auto drawn = balloons_drawn(doc, s, *s.sheet(sheet), f, made["ids"]);
+    const json rows = parts_rows(doc, s, *s.sheet(sheet), s.sheet_item(made["list"])->def)["rows"];
+    for (const Drawn& b : drawn) {
+      double nearest = 1e9;  // the tip on its part's visible lines
+      for (const Piece& p : shown)
+        if (p.node == b.node) nearest = std::min(nearest, distance_to(b.tip, p));
+      CHECK(nearest < 0.05);
+      const auto [others, own] = leader_crossings(shown, b);
+      CHECK_EQ(others, 0);
+      CHECK_EQ(own, 0);
+      CHECK(row_of(s, rows, b.node));
+    }
+    for (size_t i = 0; i < drawn.size(); ++i)
+      for (size_t j = i + 1; j < drawn.size(); ++j) {
+        CHECK(!segments_cross(drawn[i].at, drawn[i].tip, drawn[j].at, drawn[j].tip));
+        CHECK(std::hypot(drawn[i].at[0] - drawn[j].at[0], drawn[i].at[1] - drawn[j].at[1]) >= 10);
+      }
+  }
 }

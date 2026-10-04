@@ -15,13 +15,15 @@
 #include "SheetCanvas.hpp"
 #include "SheetPage.hpp"
 #include "Toast.hpp"
+#include "opad/drawing/annotate.hpp"
 #include "opad/drawing/sheet.hpp"
 
 // OPAD_BENCH_SHEET_EXPLODED=<prefix>: a plate, a post and a lid stacked, drawn front on an A3 sheet. Exploded view with
 // none saved says how to save one and places nothing; with "Exploded 1" saved (explode along Z), it follows the pointer
 // at the size the exploded parts take and a click places a view of it: one step, the view op naming the exploded view and
 // seen from its camera, drawn apart with its trail lines on the Trail layer, the front view as it was. Auto-balloon with
-// no view selected balloons the exploded view and adds the parts list; Exploded 1 updated with twice the spacing (the
+// no view selected balloons the exploded view and adds the parts list, each leader ending on its part where the view
+// draws it and crossing no other part's lines; Exploded 1 updated with twice the spacing (the
 // Explode panel's Update view), the drawing view draws its parts further apart, the balloons still measured. The front
 // view's View state: Exploded 1 (one step, still from the front, with trail lines), then Assembled again. Then Publish PDF
 // from Review (UI-104, Review > Share and the File menu): the drawing's sheet written as a PDF, the workspace kept.
@@ -150,6 +152,58 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
     const bool ballooned = waitFor([&] { return count("balloon", drawn) >= 3 && !doc->designBusy; }, 30000) && waitFor(settled, 60000);
     check(ballooned && count("balloon", front) == 0 && count("parts_list", "") == 1 && canvas->dangling().empty(),
           QString("Auto-balloon with no view selected balloons the exploded view (%1 balloons) and adds the parts list").arg(count("balloon", drawn)));
+    {  // each leader ends on its part's lines where the view draws it apart, over no other part (the post's crossed the plate)
+      const opad::Sheet* s = doc->scene.sheet(sheet);
+      const auto frames = opad::drawing::layout(doc->doc, doc->scene, *s);
+      const auto f = std::find_if(frames.begin(), frames.end(), [&](const opad::drawing::ViewFrame& x) { return x.id == drawn; });
+      int good = 0, balloons = 0;
+      QStringList bad;
+      if (f != frames.end()) {
+        const auto g = opad::drawing::shape_linework(opad::drawing::project(doc->doc, doc->scene, opad::drawing::view_spec(doc->scene, *doc->scene.sheet_view(drawn))), *f);
+        struct Piece {
+          Vec2 a, b;
+          std::string node;
+        };
+        std::vector<Piece> shown;
+        const auto paper = [&](Vec2 p) { return Vec2{f->at[0] + f->scale * (p[0] - f->centre[0]), f->at[1] + f->scale * (p[1] - f->centre[1])}; };
+        for (const auto& c : g->curves)
+          if (!c.hidden && c.body >= 0) {
+            const auto pts = c.sample(0.01);
+            for (size_t k = 1; k < pts.size(); ++k) shown.push_back({paper(pts[k - 1]), paper(pts[k]), g->bodies[size_t(c.body)].node});
+          }
+        const auto side = [](Vec2 o, Vec2 p, Vec2 q) { return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]); };
+        const auto crosses = [&](Vec2 a, Vec2 b, Vec2 c, Vec2 d) {
+          const double d1 = side(c, d, a), d2 = side(c, d, b), d3 = side(a, b, c), d4 = side(a, b, d);
+          return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+        };
+        for (const auto& id : s->items) {
+          const opad::SheetItem* t = doc->scene.sheet_item(id);
+          if (!t || t->kind != "balloon" || t->view != drawn) continue;
+          ++balloons;
+          const opad::json m = opad::drawing::measure_item(doc->doc, doc->scene, *s, *t, &*f);
+          const Vec2 at{f->at[0] + t->def["place"]["text"][0].get<double>(), f->at[1] + t->def["place"]["text"][1].get<double>()};
+          const Vec2 tip{f->at[0] + m["tip"][0].get<double>(), f->at[1] + m["tip"][1].get<double>()};
+          const double l = std::hypot(tip[0] - at[0], tip[1] - at[1]);
+          const Vec2 from{at[0] + (tip[0] - at[0]) * 5 / l, at[1] + (tip[1] - at[1]) * 5 / l}, to{tip[0] - (tip[0] - at[0]) / l, tip[1] - (tip[1] - at[1]) / l};
+          double nearest = 1e9;
+          int across = 0;
+          for (const Piece& p : shown) {
+            if (p.node == t->refs[0].body) {
+              const Vec2 d{p.b[0] - p.a[0], p.b[1] - p.a[1]};
+              const double l2 = d[0] * d[0] + d[1] * d[1];
+              const double u = l2 > 0 ? std::clamp(((tip[0] - p.a[0]) * d[0] + (tip[1] - p.a[1]) * d[1]) / l2, 0.0, 1.0) : 0;
+              nearest = std::min(nearest, std::hypot(p.a[0] + u * d[0] - tip[0], p.a[1] + u * d[1] - tip[1]));
+            } else {
+              across += crosses(from, to, p.a, p.b);
+            }
+          }
+          if (nearest < 0.05 && across == 0) ++good;
+          else bad << QString("%1 (%2 mm off its part, across %3)").arg(QString::fromStdString(m.value("number", ""))).arg(nearest, 0, 'f', 2).arg(across);
+        }
+      }
+      check(balloons >= 3 && good == balloons, QString("each balloon's leader ends on its part where it is drawn apart and crosses no other part (%1 of %2)%3")
+                                                   .arg(good).arg(balloons).arg(bad.isEmpty() ? QString() : ": " + bad.join(", ")));
+    }
     // The exploded view updated (Explode panel's Update view: one edit of its explode): the drawing view follows.
     const QRectF wasDrawn = stateOf(drawn).linework;
     doc->run("explode", {{"view", exploded}, {"spacing", 2}, {"update", true}});

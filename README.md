@@ -417,7 +417,8 @@ tolerances and fits), centre marks and lines, hole callouts read from the hole's
 countersinks, "4×" for equal holes) and hole tables, datum symbols, feature control frames, surface texture symbols and
 ordinate, baseline or chain dimension sets (`sheet_datum_dimensions` makes them from a view's datums). A parts list
 numbers the drawing's bill of materials and keeps the numbers settled; balloons show their part's number
-(`sheet_balloons` balloons a whole view at once). `sheet_issue` releases a revision: the values, the views' linework
+(`sheet_balloons` balloons a whole view at once, each leader to an edge of its part that the view shows, from the side
+of the view where it crosses the fewest other lines, off the title block, other views and tables). `sheet_issue` releases a revision: the values, the views' linework
 and, with `out`, a PDF and its SHA-256 are kept, the revision table and title block show it, and the sheet can later
 be exported exactly as issued; in the app Issue revision… also saves, commits and tags it in git. Print… (Ctrl+Alt+P)
 prints the sheets at actual size or fitted to the printer's paper; **Publish PDF…** (File, Review > Share) writes a

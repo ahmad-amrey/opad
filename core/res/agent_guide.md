@@ -359,8 +359,10 @@ list (a live agent saves, and the drawing is made on the file).
   part_number, description, material, mass, vendor; `at`, `width`) numbers its rows 1, 2, ... and keeps them settled
   in `numbers`, so a row keeps its number while parts come and go (`sheet_edit` `renumber: true` numbers them again);
   `balloon` (`refs` one face, edge or vertex of a part, `list`, `qty`) shows its part's row number; `sheet_balloons`
-  balloons the parts a view shows that have none yet in one step (`view`; `all` every row again; `qty`), placed around
-  the view without crossing leaders,
+  balloons the parts a view shows that have none yet in one step (`view`; `all` every row again; `qty`), each beside
+  the view on the side whose leader reaches an edge of its part that the view shows across the fewest other
+  lines (another part's least of all; in an exploded view the parts where it draws them), inside the frame and off
+  the title block, other views, tables and balloons, spread so none overlap,
   creating the parts list when the drawing has none. `revision_table` lists the drawing's issues.
 - `sheet_issue` issues the next revision of a sheet's drawing (`rev`, default the next letter, I O Q S X Z skipped;
   `description`, `approved`, `date`): the record keeps every item's value and the views' fingerprints and frames,

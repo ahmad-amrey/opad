@@ -48,10 +48,12 @@ const json& parts_list_columns();
 json plan_revision_table(const Scene& scene, const json& args);
 
 // Auto-balloon (args: sheet, view, list, qty, all): a balloon for every row of the parts list that the view shows and that
-// has none there yet (all: every row again), on the longest edge of the part that the view shows whole, placed in columns
-// and rows around the view, spread so that none overlap and their leaders do not cross. {"ops": balloon records, "list":
-// its id, "create": a parts list record when the drawing has none (the balloons then number from it), "numbers": the list's
-// settled numbers when they changed}. Projects the view: workers.
+// has none there yet (all: every row again), on one of the part's longest edges the view shows, beside the view on one of
+// its sides: the edge and side whose leader ends where the view shows the edge and runs across the fewest lines (another
+// part's above all, an exploded view's parts are where it draws them) and sits inside the frame, off the title block, the
+// other views, the tables and the balloons there, then the shortest; spread along each side so that none overlap.
+// {"ops": balloon records, "list": its id, "create": a parts list record when the drawing has none (the balloons then
+// number from it), "numbers": the list's settled numbers when they changed}. Projects the view: workers.
 json plan_balloons(const Document& doc, const Scene& scene, const json& args);
 
 // The issues of the sheet's drawing (the sheet's own when it has no drawing), oldest first.

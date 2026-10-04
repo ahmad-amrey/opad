@@ -257,6 +257,109 @@ TopoDS_Edge edge_of(const Curve& c) {
   }
 }
 
+// The lines a view shows, on the sheet (paper mm), in short pieces bucketed in a grid over its frame: what a balloon's
+// leader would run across, and whether a leader's end lies on an edge where the view shows it.
+class Ink {
+ public:
+  struct Count {
+    int others = 0, own = 0, trails = 0;  // other parts' lines, its own part's, trail lines
+  };
+  Ink(const ViewGeometry& g, const ViewFrame& f) : g_(g), box_(f.box) {
+    const double w = std::max(box_[2] - box_[0], 1.0), h = std::max(box_[3] - box_[1], 1.0);
+    cell_ = std::max(1.0, std::max(w, h) / 64);
+    nx_ = static_cast<int>(w / cell_) + 1, ny_ = static_cast<int>(h / cell_) + 1;
+    grid_.resize(static_cast<size_t>(nx_) * static_cast<size_t>(ny_));
+    const double tol = 0.05 / std::max(f.scale, 1e-9);
+    const auto paper = [&](Vec2 p) { return Vec2{f.at[0] + f.scale * (p[0] - f.centre[0]), f.at[1] + f.scale * (p[1] - f.centre[1])}; };
+    for (size_t i = 0; i < g.curves.size(); ++i) {
+      const Curve& c = g.curves[i];
+      if (c.hidden || (c.body < 0 && c.kind != Curve::Kind::Trail)) continue;
+      const auto pts = c.sample(tol);
+      const size_t first = segs_.size();
+      for (size_t k = 1; k < pts.size(); ++k) {
+        const Seg s{paper(pts[k - 1]), paper(pts[k]), static_cast<int>(i)};
+        const auto [x0, y0, x1, y1] = cells(s.a, s.b);
+        for (int y = y0; y <= y1; ++y)
+          for (int x = x0; x <= x1; ++x) grid_[static_cast<size_t>(y * nx_ + x)].push_back(static_cast<int>(segs_.size()));
+        segs_.push_back(s);
+      }
+      if (c.body >= 0 && c.edge >= 0) edges_[{c.body, c.edge}].push_back({first, segs_.size()});
+    }
+  }
+  // Whether p lies on the edge where the view shows it (within tol mm).
+  bool shows(int body, int edge, Vec2 p, double tol = 0.1) const {
+    const auto it = edges_.find({body, edge});
+    if (it == edges_.end()) return false;
+    for (const auto& [from, to] : it->second)
+      for (size_t i = from; i < to; ++i)
+        if (distance(p, segs_[i]) <= tol) return true;
+    return false;
+  }
+  // The lines (each counted once) that the leader p-q runs across or along, away from its end q: own(body) tells a line
+  // of the part it points at.
+  template <class Own>
+  Count across(Vec2 p, Vec2 q, const Own& own, double spare = 0.5) const {
+    Count n;
+    std::set<int> met;
+    const auto [x0, y0, x1, y1] = cells(p, q);
+    for (int y = y0; y <= y1; ++y)
+      for (int x = x0; x <= x1; ++x)
+        for (int id : grid_[static_cast<size_t>(y * nx_ + x)]) {
+          const Seg& s = segs_[static_cast<size_t>(id)];
+          if (met.count(s.curve) || !meets(p, q, s, spare)) continue;
+          met.insert(s.curve);
+          const Curve& c = g_.curves[static_cast<size_t>(s.curve)];
+          ++(c.body < 0 ? n.trails : own(c.body) ? n.own : n.others);
+        }
+    return n;
+  }
+  // Whether segments a-b and c-d cross (not merely touch).
+  static bool cross(Vec2 a, Vec2 b, Vec2 c, Vec2 d) {
+    const double d1 = side(c, d, a), d2 = side(c, d, b), d3 = side(a, b, c), d4 = side(a, b, d);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  }
+
+ private:
+  struct Seg {
+    Vec2 a, b;
+    int curve;
+  };
+  static double side(Vec2 o, Vec2 p, Vec2 q) { return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]); }
+  static double distance(Vec2 p, const Seg& s) {
+    const Vec2 d{s.b[0] - s.a[0], s.b[1] - s.a[1]};
+    const double l2 = d[0] * d[0] + d[1] * d[1];
+    const double t = l2 > 0 ? std::clamp(((p[0] - s.a[0]) * d[0] + (p[1] - s.a[1]) * d[1]) / l2, 0.0, 1.0) : 0;
+    return std::hypot(s.a[0] + t * d[0] - p[0], s.a[1] + t * d[1] - p[1]);
+  }
+  // A leader p-q meets a piece: crosses it, or runs along it for more than half a millimetre, away from q.
+  static bool meets(Vec2 p, Vec2 q, const Seg& s, double spare) {
+    const Vec2 u{q[0] - p[0], q[1] - p[1]}, v{s.b[0] - s.a[0], s.b[1] - s.a[1]};
+    const double lu = std::hypot(u[0], u[1]), lv = std::hypot(v[0], v[1]);
+    if (lu < 1e-9 || lv < 1e-9) return false;
+    const double den = u[0] * v[1] - u[1] * v[0];
+    if (std::fabs(den) <= 1e-9 * lu * lv) {  // parallel: along it?
+      if (std::fabs(side(p, q, s.a)) / lu > 0.2) return false;
+      const double t0 = ((s.a[0] - p[0]) * u[0] + (s.a[1] - p[1]) * u[1]) / lu, t1 = ((s.b[0] - p[0]) * u[0] + (s.b[1] - p[1]) * u[1]) / lu;
+      return std::min(std::max(t0, t1), lu - spare) - std::max(std::min(t0, t1), 0.0) > 0.5;
+    }
+    if (!cross(p, q, s.a, s.b)) return false;
+    const double t = ((s.a[0] - p[0]) * v[1] - (s.a[1] - p[1]) * v[0]) / den;  // along p-q
+    return (1 - t) * lu > spare;
+  }
+  std::array<int, 4> cells(Vec2 a, Vec2 b) const {
+    const auto cx = [&](double x) { return std::clamp(static_cast<int>(std::floor((x - box_[0]) / cell_)), 0, nx_ - 1); };
+    const auto cy = [&](double y) { return std::clamp(static_cast<int>(std::floor((y - box_[1]) / cell_)), 0, ny_ - 1); };
+    return {cx(std::min(a[0], b[0])), cy(std::min(a[1], b[1])), cx(std::max(a[0], b[0])), cy(std::max(a[1], b[1]))};
+  }
+  const ViewGeometry& g_;
+  std::array<double, 4> box_;
+  double cell_ = 1;
+  int nx_ = 1, ny_ = 1;
+  std::vector<Seg> segs_;
+  std::vector<std::vector<int>> grid_;
+  std::map<std::pair<int, int>, std::vector<std::pair<size_t, size_t>>> edges_;  // (body, edge) -> its pieces' segments
+};
+
 }  // namespace
 
 const json& parts_list_columns() { return default_columns(); }
@@ -431,84 +534,151 @@ json plan_balloons(const Document& doc, const Scene& scene, const json& args) {
       if (!t || t->kind != "balloon" || t->view != view || t->refs.empty()) continue;
       if (const json* r = row_of(scene, listed, t->refs[0].body)) done.insert(r->value("number", 0));
     }
-  // The longest edge of each row's parts that the view shows whole (a piece of an edge partly hidden counts a quarter).
+  // Each edge of a row's parts that the view shows: how much of it, whether whole (one piece, none of it hidden), sharp.
   const ViewSpec spec = view_spec(scene, *v);
   const auto g = shape_linework(project(doc, scene, spec), f);  // what the view shows of them
-  std::map<std::pair<int, int>, int> pieces;
-  std::set<std::pair<int, int>> partly;
-  for (const auto& c : g->curves) {
-    if (c.edge < 0 || c.body < 0) continue;
-    ++pieces[{c.body, c.edge}];
-    if (c.hidden) partly.insert({c.body, c.edge});
-  }
-  struct Best {
-    double score = -1;
-    const Curve* curve = nullptr;
-    std::string node;
+  std::vector<int> row_n(g->bodies.size(), 0);  // the row number of each body the view draws (0: none, or ballooned)
+  for (size_t b = 0; b < g->bodies.size(); ++b)
+    if (const json* row = row_of(scene, listed, g->bodies[b].node); row && !done.count(row->value("number", 0))) row_n[b] = row->value("number", 0);
+  struct Seen {
+    int body = -1, edge = -1, pieces = 0;
+    double length = 0;  // paper mm shown
+    bool hidden = false, sharp = true;
+    double score() const { return length * (pieces == 1 && !hidden ? 1 : 0.25) * (sharp ? 1 : 0.5); }
+    double quality() const { return std::min(1.0, length / 15) * (pieces == 1 && !hidden ? 1 : 0.5) * (sharp ? 1 : 0.7); }
   };
-  std::map<int, Best> best;
+  std::map<std::pair<int, int>, Seen> seen;
   for (const auto& c : g->curves) {
-    if (c.hidden || c.edge < 0 || c.body < 0 || static_cast<size_t>(c.body) >= g->bodies.size()) continue;
-    const std::string& node = g->bodies[static_cast<size_t>(c.body)].node;
-    const json* r = row_of(scene, listed, node);
-    if (!r) continue;
-    const int n = r->value("number", 0);
-    if (done.count(n)) continue;
-    const bool whole = !partly.count({c.body, c.edge}) && pieces[{c.body, c.edge}] == 1;
-    const double score = c.length() * (whole ? 1 : 0.25) * (c.kind == Curve::Kind::Sharp ? 1 : 0.5);
-    Best& b = best[n];
-    if (score > b.score) b = {score, &c, node};
+    if (c.edge < 0 || c.body < 0 || static_cast<size_t>(c.body) >= g->bodies.size() || !row_n[static_cast<size_t>(c.body)]) continue;
+    Seen& e = seen[{c.body, c.edge}];
+    e.body = c.body, e.edge = c.edge;
+    if (c.hidden) {
+      e.hidden = true;
+      continue;
+    }
+    e.length += c.length() * f.scale;
+    ++e.pieces;
+    if (c.kind != Curve::Kind::Sharp) e.sharp = false;
   }
-  // Balloons around the frame on the side each tip is nearest, spread along it so that none overlap.
+  // A row's best few edges (long, whole and sharp first), and where a balloon on each ends its leader as it will be drawn.
+  std::map<int, std::vector<const Seen*>> edges;
+  for (const auto& [key, e] : seen)
+    if (e.pieces > 0) edges[row_n[static_cast<size_t>(e.body)]].push_back(&e);
+  std::vector<json> refs;
+  std::vector<const Seen*> asked;
+  for (auto& [n, list] : edges) {
+    std::stable_sort(list.begin(), list.end(), [](const Seen* a, const Seen* b) { return a->score() > b->score(); });
+    if (list.size() > 8) list.resize(8);
+    for (const Seen* e : list) {
+      refs.push_back(Ref{g->bodies[static_cast<size_t>(e->body)].node, Ref::Kind::Edge, e->edge}.str());
+      asked.push_back(e);
+    }
+  }
+  const auto anchors = balloon_anchors(doc, scene, f, refs);
+  std::map<const Seen*, BalloonAnchor> anchor;
+  for (size_t i = 0; i < asked.size(); ++i)
+    if (anchors[i]) anchor[asked[i]] = *anchors[i];
+  // For each row the edge and the side of the frame whose leader (straight out to that side) ends where the view shows the
+  // edge and runs across the fewest lines (other parts' most of all, then its own, trail lines, the leaders chosen before),
+  // then the shortest, on the better edge.
   const double diameter = args.value("diameter", 10.0), r = diameter / 2, gap = 8, pitch = diameter + 3;
+  const Ink ink(*g, f);
+  // Where a balloon may not go: off the frame, on the title block, on another view, on the sheet's tables (the parts list it
+  // numbers from, a revision table) or on a balloon already there.
+  const json tmpl = sheet.def.value("template", json());
+  const json fr = tmpl.is_object() ? tmpl.value("frame", json::object()) : json::object();
+  const std::array<double, 4> room = fr.empty() ? std::array<double, 4>{20, 10, sheet.width - 10, sheet.height - 10}
+                                                : std::array<double, 4>{fr.value("left", 10.0), fr.value("bottom", 10.0), sheet.width - fr.value("right", 10.0),
+                                                                        sheet.height - fr.value("top", 10.0)};
+  std::vector<std::array<double, 4>> taken;
+  if (const Margins m = margins(sheet.def); m.block_w > 0 && m.block_h > 0)
+    taken.push_back({sheet.width - m.right - m.block_w, m.bottom, sheet.width - m.right, m.bottom + m.block_h});
+  for (const auto& other : frames)
+    if (other.id != view && other.error.empty()) taken.push_back(other.box);
+  const auto table = [&](const json& item, const json& measured) {
+    Display d;
+    draw_table_item(d, item, measured);
+    if (!d.prims.empty()) taken.push_back(d.bounds());
+  };
+  if (!list || list->sheet == sheet.id) table(def, rows);
+  for (const auto& id : sheet.items) {
+    const SheetItem* t = scene.sheet_item(id);
+    if (!t || !t->error.empty()) continue;
+    if (t->kind == "revision_table") {
+      try {
+        table(t->def, measure_item(doc, scene, sheet, *t, nullptr));
+      } catch (const Error&) {
+      }
+    } else if (t->kind == "balloon") {
+      const auto on = std::find_if(frames.begin(), frames.end(), [&](const ViewFrame& x) { return x.id == t->view; });
+      const Vec2 c = vec2(t->def.value("place", json::object()).value("text", json()));
+      const double rb = t->def.value("diameter", 10.0) / 2;
+      if (on != frames.end()) taken.push_back({on->at[0] + c[0] - rb, on->at[1] + c[1] - rb, on->at[0] + c[0] + rb, on->at[1] + c[1] + rb});
+    }
+  }
+  const auto misplaced = [&](Vec2 at) {  // 0: free; else how bad
+    const double e = r + 1;
+    if (at[0] - e < room[0] || at[0] + e > room[2] || at[1] - e < room[1] || at[1] + e > room[3]) return 100;
+    for (const auto& b : taken)
+      if (at[0] + e > b[0] && at[0] - e < b[2] && at[1] + e > b[1] && at[1] - e < b[3]) return 40;
+    return 0;
+  };
   struct Placed {
     int n;
     std::string node;
-    const Curve* curve;
+    int edge;
     Vec2 tip, at;
     int side;
   };
   std::vector<Placed> placed;
-  const double cx = (f.box[0] + f.box[2]) / 2, cy = (f.box[1] + f.box[3]) / 2;
-  const double hw = std::max(1e-6, (f.box[2] - f.box[0]) / 2), hh = std::max(1e-6, (f.box[3] - f.box[1]) / 2);
-  for (const auto& [n, b] : best) {
-    const Curve& c = *b.curve;
-    Vec2 mid;
-    if (c.type == Curve::Type::Line) mid = {(c.pts[0][0] + c.pts[1][0]) / 2, (c.pts[0][1] + c.pts[1][1]) / 2};
-    else if (c.type == Curve::Type::Arc) mid = {c.c[0] + c.r1 * std::cos((c.a0 + c.a1) / 2), c.c[1] + c.r1 * std::sin((c.a0 + c.a1) / 2)};
-    else {
-      const auto pts = c.sample(0.05);
-      mid = pts[pts.size() / 2];
+  std::vector<std::array<Vec2, 2>> leaders;
+  for (const auto& [n, list] : edges) {
+    double best = 1e300;
+    Placed choice{n, "", -1, {0, 0}, {0, 0}, 0};
+    for (const Seen* e : list) {
+      const auto a = anchor.find(e);
+      if (a == anchor.end()) continue;
+      for (int side = 0; side < 4; ++side) {  // right, left, top, bottom
+        const int along = side < 2 ? 1 : 0;   // the coordinate that varies along the side
+        Vec2 at;
+        at[along] = f.at[along] + (a->second.round ? a->second.centre[along] : a->second.tip[along]);
+        at[1 - along] = side == 0 ? f.box[2] + gap + r : side == 1 ? f.box[0] - gap - r : side == 2 ? f.box[3] + gap + r : f.box[1] - gap - r;
+        const Vec2 local = a->second.toward({at[0] - f.at[0], at[1] - f.at[1]}), tip{f.at[0] + local[0], f.at[1] + local[1]};
+        const double l = std::hypot(tip[0] - at[0], tip[1] - at[1]);
+        if (l <= r) continue;
+        const Vec2 from{at[0] + (tip[0] - at[0]) * r / l, at[1] + (tip[1] - at[1]) * r / l};
+        double cost = 0.1 * (l - r) + 3 * (1 - e->quality());
+        if (!ink.shows(e->body, e->edge, tip)) cost += 1000;  // hidden there (behind another part, in a break): only if nothing else
+        const auto met = ink.across(from, tip, [&](int body) { return row_n[static_cast<size_t>(body)] == n; });
+        cost += 20 * met.others + 8 * met.own + 2 * met.trails + misplaced(at);
+        for (const auto& [p, q] : leaders) cost += Ink::cross(from, tip, p, q) ? 10 : 0;
+        if (cost < best) best = cost, choice = {n, g->bodies[static_cast<size_t>(e->body)].node, e->edge, tip, at, side};
+      }
     }
-    const Vec2 tip{f.at[0] + f.scale * (mid[0] - f.centre[0]), f.at[1] + f.scale * (mid[1] - f.centre[1])};
-    const double dx = (tip[0] - cx) / hw, dy = (tip[1] - cy) / hh;
-    const int side = std::fabs(dx) >= std::fabs(dy) ? (dx >= 0 ? 0 : 1) : (dy >= 0 ? 2 : 3);  // right, left, top, bottom
-    placed.push_back({n, b.node, &c, tip, tip, side});
+    if (choice.edge < 0) continue;  // none of its edges resolves
+    placed.push_back(choice);
+    leaders.push_back({choice.at, choice.tip});
   }
+  // Spread along each side so that none overlap, their order along it kept.
   for (int side = 0; side < 4; ++side) {
     std::vector<Placed*> on;
     for (auto& p : placed)
       if (p.side == side) on.push_back(&p);
-    const int along = side < 2 ? 1 : 0;  // the coordinate that varies along the side
-    std::stable_sort(on.begin(), on.end(), [&](const Placed* a, const Placed* b) { return a->tip[along] < b->tip[along]; });
+    const int along = side < 2 ? 1 : 0;
+    std::stable_sort(on.begin(), on.end(), [&](const Placed* a, const Placed* b) { return a->at[along] < b->at[along]; });
     std::vector<double> pos;
     double want = 0, have = 0;
     for (size_t k = 0; k < on.size(); ++k) {
-      pos.push_back(k ? std::max(on[k]->tip[along], pos[k - 1] + pitch) : on[k]->tip[along]);
-      want += on[k]->tip[along], have += pos[k];
+      pos.push_back(k ? std::max(on[k]->at[along], pos[k - 1] + pitch) : on[k]->at[along]);
+      want += on[k]->at[along], have += pos[k];
     }
     const double shift = on.empty() ? 0 : (want - have) / static_cast<double>(on.size());
-    for (size_t k = 0; k < on.size(); ++k) {
-      Vec2 at;
-      at[along] = pos[k] + shift;
-      at[1 - along] = side == 0 ? f.box[2] + gap + r : side == 1 ? f.box[0] - gap - r : side == 2 ? f.box[3] + gap + r : f.box[1] - gap - r;
-      on[k]->at = at;
-    }
+    for (size_t k = 0; k < on.size(); ++k) on[k]->at[along] = pos[k] + shift;
   }
   std::stable_sort(placed.begin(), placed.end(), [](const Placed& a, const Placed& b) { return a.n < b.n; });
   for (const auto& p : placed) {
     json op = {{"op", "sheet_item"}, {"sheet", sheet.id}, {"view", view}, {"kind", "balloon"},
-               {"refs", {design::make_ref(doc, scene, Ref{p.node, Ref::Kind::Edge, p.curve->edge})}},
+               {"refs", {design::make_ref(doc, scene, Ref{p.node, Ref::Kind::Edge, p.edge})}},
                {"place", {{"text", js({p.at[0] - f.at[0], p.at[1] - f.at[1]})}}}};
     if (list) op["list"] = list->id;
     if (args.value("qty", false)) op["qty"] = true;
