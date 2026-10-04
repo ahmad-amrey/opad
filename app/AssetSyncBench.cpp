@@ -2,7 +2,11 @@
 // Sync all, a badge click, a missing file located, pack (LFS) and embed; the asset look in the view. Cases "asset-sync" and
 // "asset-look" in tools/bench_cases/assets.py.
 #include <QAbstractItemView>
-#include <QCoreApplication>
+#include <QApplication>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QListWidget>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -639,7 +643,50 @@ OPAD_BENCH(OPAD_BENCH_ASSET_KICAD, asset_kicad) {
       waitFor(&w, [=] { return !area->busy() && state().value("state", "") == "ok" && !monitor->checking(); }, 30000, [=, &w](bool synced) {
         const double after = tallest();
         (*require)(synced && before < 2 && after > 3.9, QString("synced: D1's model shows (tallest part %1 mm, was %2)").arg(after, 0, 'f', 2).arg(before, 0, 'f', 2));
-        QCoreApplication::exit(require->all ? 0 : 2);
+        // Settings: KiCad boards… (model folders) looks at the linked board again; Linked files… shows the import choice and the
+        // trusted folders, and saves them as changed (a folder removed, Ask each time again).
+        auto answer = [&w](const QString& dialogName, std::function<void(QDialog*)> fill) {
+          auto* timer = new QTimer(&w);
+          QObject::connect(timer, &QTimer::timeout, &w, [timer, dialogName, fill] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog || dialog->objectName() != dialogName) return;
+            timer->stop();
+            timer->deleteLater();
+            fill(dialog);
+            for (auto* b : dialog->findChild<QDialogButtonBox*>()->buttons())
+              if (dialog->findChild<QDialogButtonBox*>()->buttonRole(b) == QDialogButtonBox::AcceptRole) b->click();
+          });
+          timer->start(100);
+        };
+        const int looks = monitor->looks();
+        answer("kicadDialog", [](QDialog*) {});
+        w.action("assets.kicadSettings")->trigger();
+        waitFor(&w, [=] { return monitor->looks() > looks && !monitor->checking(); }, 15000, [=, &w](bool looked) {
+          (*require)(looked, "Settings > KiCad boards… accepted: the linked board looked at again");
+          QSettings().setValue("assets/import", "link");
+          QSettings().setValue("assets/trusted", QStringList{"C:/trusted/one", "C:/trusted/two"});
+          auto shown = std::make_shared<QString>();
+          answer("linkedFilesDialog", [shown](QDialog* dialog) {
+            auto* import = dialog->findChild<QComboBox*>("assetsImport");
+            auto* trusted = dialog->findChild<QListWidget*>("assetsTrusted");
+            auto* remove = dialog->findChild<QPushButton*>("assetsTrustedRemove");
+            if (!import || !trusted || !remove) return;
+            *shown = QString("%1, %2 folders, remove %3").arg(import->currentData().toString()).arg(trusted->count()).arg(remove->isEnabled() ? "on" : "off");
+            import->setCurrentIndex(0);
+            trusted->setCurrentRow(0);
+            *shown += remove->isEnabled() ? " then on" : " then off";
+            remove->click();
+          });
+          const int before = monitor->looks();
+          w.action("assets.settings")->trigger();
+          const QStringList left = QSettings().value("assets/trusted").toStringList();
+          (*require)(*shown == "link, 2 folders, remove off then on" && !QSettings().contains("assets/import") && left == QStringList{"C:/trusted/two"},
+                     "Linked files…: the remembered choice and the trusted folders shown (" + *shown + "), saved as Ask each time and one folder left: " + left.join(", "));
+          waitFor(&w, [=] { return monitor->looks() > before && !monitor->checking(); }, 15000, [=](bool again) {
+            (*require)(again, "Linked files… accepted: the files looked at again");
+            QCoreApplication::exit(require->all ? 0 : 2);
+          });
+        });
       });
     });
   });

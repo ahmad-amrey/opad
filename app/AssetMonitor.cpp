@@ -58,6 +58,7 @@ AssetMonitor::AssetMonitor(AppDocument* doc, JobRunner* jobs, QObject* parent) :
   connect(&m_debounce, &QTimer::timeout, this, [this] {
     if (m_job) { m_again = true; return; }
     if (m_records.empty() || !m_doc->hasDocument) return;
+    ++m_looks;
     auto probe = std::make_shared<opad::Document>(opad::Document::create());  // the records alone: nothing of the model
     probe->path = m_doc->doc.path;
     try {

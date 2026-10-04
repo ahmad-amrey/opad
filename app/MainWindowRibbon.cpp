@@ -19,7 +19,6 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
-#include "KicadBoards.hpp"
 #include "opad/design/feature.hpp"
 
 void MainWindow::buildToolsActions() {
@@ -287,8 +286,10 @@ void MainWindow::buildRibbon() {
   viewerMode->setToolTip(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
   connect(viewerMode, &QAction::toggled, this, [this](bool on) { m_doc->viewerOpens = on; m_settings.setValue("files/viewerMode", on); });
   if (associations::supported()) settings->addAction(tr("File types…"), this, [this] { FileTypesDialog(this).exec(); });
-  // KiCad boards: what is built, where footprints' 3D models are looked for, downloads (read at the next open).
-  settings->addAction(tr("KiCad boards…"), this, [this] { KicadDialog(this, false).exec(); });
+  // KiCad boards: what is built, where footprints' 3D models are looked for, downloads (read at the next open; linked boards
+  // looked at again); linked files: the import choice and the trusted folders.
+  settings->addAction(action("assets.kicadSettings"));
+  settings->addAction(action("assets.settings"));
   settings->addAction(action("panel.browser"));
   auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
   autoBrowser->setCheckable(true);

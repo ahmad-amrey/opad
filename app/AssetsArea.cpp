@@ -5,10 +5,14 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QLabel>
+#include <QListWidget>
 #include <QLocale>
 #include <QMainWindow>
 #include <QMenu>
@@ -18,6 +22,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QTimer>
+#include <QVBoxLayout>
 
 #include <algorithm>
 #include <atomic>
@@ -198,6 +203,8 @@ void AssetsArea::buildActions() {
   auto one = [this](const CommandContext& c) { return c.document && !c.viewer && imports(c.selection).size() == 1; };
   auto selected = [this] { return imports(services().selection()); };
   command("assets.link", tr("Link as asset…"), "link", {"insert", "reference", "external", "xref"}, {}, [this] { link(); });
+  command("assets.settings", tr("Linked files…"), "settings", {"trust", "trusted folders", "ask", "link or copy", "preferences"}, {}, [this] { settings(); });
+  command("assets.kicadSettings", tr("KiCad boards…"), "settings", {"kicad", "3d models", "model folders", "preferences"}, {}, [this] { modelFolders(); });
   command("assets.sync", tr("Sync linked file"), "regen", {"reload", "update", "refresh"},
           [this](const CommandContext& c) { return c.document && !c.viewer && !imports(c.selection).empty(); }, [this, selected] { sync(selected()); });
   command("assets.syncAll", tr("Sync all linked files"), "regen", {"reload", "update", "refresh"},
@@ -243,6 +250,8 @@ void AssetsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
     for (const char* id : {"assets.link", "assets.sync", "assets.syncAll", "assets.autoSync", "assets.replace", "assets.reveal", "assets.copyPath", "assets.embed",
                            "assets.pack"})
       sub->addAction(services().action(id));
+    sub->addSeparator();
+    sub->addAction(services().action("assets.settings"));
   }
 }
 
@@ -771,6 +780,56 @@ void AssetsArea::downloadModels(const std::string& import, bool requested) {
 
 void AssetsArea::modelFolders() {
   if (KicadDialog(services().window(), false).exec() == QDialog::Accepted) m_monitor->check(0);
+}
+
+void AssetsArea::settings() {
+  LinkedFilesDialog dialog(services().window());
+  if (dialog.exec() != QDialog::Accepted) return;
+  dialog.save();
+  m_monitor->check(0);
+}
+
+LinkedFilesDialog::LinkedFilesDialog(QWidget* parent) : QDialog(parent) {
+  setObjectName("linkedFilesDialog");
+  setWindowTitle(AssetsArea::tr("Linked files"));
+  auto* layout = new QVBoxLayout(this);
+  layout->addWidget(new QLabel(AssetsArea::tr("Importing STEP, IGES, KiCad boards and files over 20 MB:"), this));
+  m_import = new QComboBox(this);
+  m_import->setObjectName("assetsImport");
+  m_import->addItem(AssetsArea::tr("Ask each time"), QString());
+  m_import->addItem(AssetsArea::tr("Link as asset"), QString("link"));
+  m_import->addItem(AssetsArea::tr("Import editable copy"), QString("copy"));
+  QSettings settings;
+  m_import->setCurrentIndex(std::max(0, m_import->findData(settings.value("assets/import").toString())));
+  layout->addWidget(m_import);
+  auto* label = new QLabel(AssetsArea::tr("Folders trusted for linked files outside a document's project (read without asking):"), this);
+  label->setWordWrap(true);
+  layout->addWidget(label);
+  m_trusted = new QListWidget(this);
+  m_trusted->setObjectName("assetsTrusted");
+  m_trusted->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  for (const QString& folder : settings.value("assets/trusted").toStringList()) (new QListWidgetItem(QDir::toNativeSeparators(folder), m_trusted))->setData(Qt::UserRole, folder);
+  layout->addWidget(m_trusted);
+  auto* remove = new QPushButton(AssetsArea::tr("Remove"), this);
+  remove->setObjectName("assetsTrustedRemove");
+  remove->setEnabled(false);
+  connect(m_trusted, &QListWidget::itemSelectionChanged, remove, [this, remove] { remove->setEnabled(!m_trusted->selectedItems().isEmpty()); });
+  connect(remove, &QPushButton::clicked, this, [this] { qDeleteAll(m_trusted->selectedItems()); });
+  layout->addWidget(remove, 0, Qt::AlignLeading);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+  connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+  layout->addWidget(buttons);
+  resize(520, sizeHint().height());
+}
+
+void LinkedFilesDialog::save() const {
+  QSettings settings;
+  if (const QString mode = m_import->currentData().toString(); mode.isEmpty()) settings.remove("assets/import");
+  else settings.setValue("assets/import", mode);
+  QStringList trusted;
+  for (int i = 0; i < m_trusted->count(); ++i) trusted << m_trusted->item(i)->data(Qt::UserRole).toString();
+  settings.setValue("assets/trusted", trusted);
 }
 
 void AssetsArea::link() {

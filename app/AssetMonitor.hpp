@@ -34,6 +34,7 @@ class AssetMonitor : public QObject {
   void documentChanged(bool replaced);
   void check(int delayMs = 0);  // look at the files again (a running look is followed by another)
   bool checking() const { return m_job || m_again; }
+  int looks() const { return m_looks; }  // looks at the files started so far (benches)
 
   struct Asset {
     opad::json asset;            // as its edits leave it
@@ -78,6 +79,7 @@ class AssetMonitor : public QObject {
   QTimer m_debounce, m_poll;
   Job* m_job = nullptr;
   bool m_again = false;
+  int m_looks = 0;
   std::map<std::string, Asset> m_assets;
   std::vector<std::string> m_order;  // its imports in the log's order
   std::unordered_map<std::string, std::string> m_nodes;  // node -> its linked import

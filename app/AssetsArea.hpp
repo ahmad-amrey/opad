@@ -8,6 +8,7 @@
 // project copy when the file is read from it), Download KiCad models, Preview sync of a changed file (the previewer, KicadArea's
 // panel). AssetMonitor watches the files; a change shows a toast that offers to sync (a board: to show its changes). A sync, an embed and a pack are planned on a worker against a copy of the document (nothing changes
 // it meanwhile: designBusy) and committed as one undo step.
+#include <QDialog>
 #include <QPointer>
 #include <QString>
 #include <filesystem>
@@ -26,6 +27,8 @@ class AppDocument;
 class Job;
 class JobRunner;
 class Progress;
+class QComboBox;
+class QListWidget;
 class QWidget;
 
 namespace assets {
@@ -46,6 +49,20 @@ bool askModelDownload(QWidget* parent, int count, bool requested);
 // The program and arguments that show `file` selected in the system's file manager.
 std::pair<QString, QStringList> revealCommand(const QString& file);
 }  // namespace assets
+
+// Linked files settings (the gear menu, Design > Linked files): how Import… brings in a file linking suits (ask, link or copy:
+// setting assets/import, which "Do not ask again" sets) and the folders trusted for good (assets/trusted, which "Always trust"
+// fills), each removable.
+class LinkedFilesDialog : public QDialog {
+  Q_OBJECT
+ public:
+  explicit LinkedFilesDialog(QWidget* parent);
+  void save() const;  // into the settings (done on accept)
+
+ private:
+  QComboBox* m_import;
+  QListWidget* m_trusted;
+};
 
 class AssetsArea : public AreaController {
   Q_OBJECT
@@ -79,6 +96,7 @@ class AssetsArea : public AreaController {
   // `requested`: from the user's click (asked even when the setting says never).
   void downloadModels(const std::string& import, bool requested = true);
   void modelFolders();  // the KiCad settings (model folders), then the boards looked at again
+  void settings();      // LinkedFilesDialog, then the files looked at again (a folder no longer trusted)
   void link();                                // Link as asset…: a file dialog, then the file imported linked
   bool busy() const { return m_busy; }
   // What shows a changed KiCad board's changes before it is synced (KicadArea's sync preview): its toast offers that.

@@ -339,5 +339,9 @@
   "Check clearance…": "فحص الخلوص…",
   "Only a linked file is synced with its file": "لا يُزامَن مع ملفه إلا الملف المرتبط",
   "Changed": "تغيّر",
-  "The file is as last synced": "الملف كما كان عند آخر مزامنة"
+  "The file is as last synced": "الملف كما كان عند آخر مزامنة",
+  "Linked files…": "الملفات المرتبطة…",
+  "Importing STEP, IGES, KiCad boards and files over 20 MB:": "عند استيراد ملفات STEP وIGES ولوحات KiCad والملفات الأكبر من 20 ميغابايت:",
+  "Ask each time": "السؤال في كل مرة",
+  "Folders trusted for linked files outside a document's project (read without asking):": "المجلدات الموثوقة للملفات المرتبطة خارج مشروع المستند (تُقرأ دون سؤال):"
 }
