@@ -56,14 +56,16 @@ struct SkConstraint {
     Parallel,       // [line, line]
     Perpendicular,  // [line, line]
     Collinear,      // [line, line]
-    Tangent,        // [line, circle|arc] or [circle|arc, circle|arc]
+    Tangent,        // [line, circle|arc] or [circle|arc, circle|arc]; a spline's end with a line, a circle, an arc or a spline
     Equal,          // [line, line] length, or [circle|arc, circle|arc] radius
     Concentric,     // [circle|arc, circle|arc]
     Midpoint,       // [point, line]
     Symmetric,      // [point, point, line]: mirror images about the line
     Fix,            // [point] or [entity]: stays where it is now
-    Smooth,         // [spline,spline]: coincident endpoints, opposite tangents and equal curvature (G2)
-    Curvature,      // [spline,spline]: equal signed endpoint curvature along the joined path
+    Smooth,         // [spline,spline]: coincident endpoints, opposite tangents and equal curvature (G2); [line|circle|arc,
+                    // spline] or the other way round: the spline's end on it, along it and bending as it does (0 by a line)
+    Curvature,      // [spline,spline]: equal signed endpoint curvature along the joined path; with a line, a circle or an
+                    // arc: the spline's end curvature that of the line (0) or the circle (1/r, towards its centre)
     // driving dimensions (value in mm or radians)
     Distance,       // [point, point], [point, line], [line] = its length, or [line, line] (parallel lines)
     HDistance,      // [point, point] along u (with `is_signed`, q.u - p.u); [point]: its u from the sketch origin

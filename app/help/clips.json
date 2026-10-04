@@ -2190,10 +2190,10 @@
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[0, -6], [5, 3], [12, 2], [20, 8]], "color": "glow", "width": 6.5, "from": 1.45, "to": 1.9, "fade": 0.08},
-    {"el": "poly", "points": [[0, -6], [5, 3], [12, 2], [20, 8]], "smooth": true, "dots": true, "color": "fg", "keys": [[1.9, {"color": "sel", "points": [[0, -6], [5, 3], [12, 2], [20, 8]]}], [2.1, {"points": [[0, -6], [5, 3], [12, 2], [20, 8]]}], [2.8, {"points": [[0, -6], [8, -5.6], [14, 1], [20, 8]]}], [3, {"color": "fg"}]]},
+    {"el": "poly", "points": [[0, -6], [5, 3], [12, 2], [20, 8]], "smooth": true, "dots": true, "color": "fg", "keys": [[1.9, {"color": "sel", "points": [[0, -6], [5, 3], [12, 2], [20, 8]]}], [2.1, {"points": [[0, -6], [5, 3], [12, 2], [20, 8]]}], [2.8, {"points": [[0, -6], [4, 0], [10, 9], [20, 10]]}], [3, {"color": "fg"}]]},
     {"el": "poly", "points": [[-20, -6], [0, -6]], "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
     {"el": "poly", "points": [[-20, -6], [0, -6]], "dots": true, "color": "fg", "keys": [[0.9, {"color": "sel"}], [3, {"color": "fg"}]]},
-    {"el": "glyph", "kind": "smooth", "at": [0, -6], "dx": 0, "dy": 14, "from": 2.8},
+    {"el": "glyph", "kind": "curvature", "at": [0, -6], "dx": 0, "dy": 14, "from": 2.8},
     {"el": "cursor", "keys": [[0, {"pos": [-24, 8]}], [0.9, {"pos": [-10, -6], "click": 1}], [1.9, {"pos": [12, 2], "click": 1}], [2.5, {"pos": [12, 2]}], [3.4, {"pos": [-20, 8]}]]}
    ],
    "steps": [

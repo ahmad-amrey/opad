@@ -119,7 +119,7 @@ const QStringList kTokens{"bg", "bg2", "bg3", "bg4", "line", "fg", "fg2", "fg3",
                           "mtop", "mleft", "mright", "medge", "cap", "onsel", "glow", "blue", "white", "black"};
 const QHash<QString, QStringList> kKinds{
     {"cursor", {"arrow", "cross", "move"}},
-    {"glyph", {"horizontal", "vertical", "parallel", "perpendicular", "coincident", "tangent", "equal", "concentric", "fix", "midpoint", "symmetric", "collinear", "smooth"}},
+    {"glyph", {"horizontal", "vertical", "parallel", "perpendicular", "coincident", "tangent", "equal", "concentric", "fix", "midpoint", "symmetric", "collinear", "smooth", "curvature"}},
     {"snap", {"endpoint", "midpoint", "center", "quadrant", "intersection", "tangent", "nearest", "perpendicular"}},
     {"dim", {"linear", "radial", "diameter", "angular"}},
     {"style", {"shaded", "plain", "wire"}},
@@ -1018,6 +1018,12 @@ void glyph(Ctx& c, const QString& kind, const QPointF& at, const QColor& color) 
   else if (kind == "symmetric") { L(0, -1, 0, 1); p.setBrush(color); p.drawEllipse(o + QPointF(-0.6, 0) * k, 1.2 * u, 1.2 * u); p.drawEllipse(o + QPointF(0.6, 0) * k, 1.2 * u, 1.2 * u); }
   else if (kind == "collinear") { L(-1, 0.5, -0.2, 0.5); L(0.2, 0.5, 1, 0.5); L(-1, -0.5, 1, -0.5); }
   else if (kind == "smooth") { QPainterPath s; s.moveTo(o + QPointF(-1, 0.7) * k); s.cubicTo(o + QPointF(0, 0.7) * k, o + QPointF(0, -0.7) * k, o + QPointF(1, -0.7) * k); p.drawPath(s); }
+  else if (kind == "curvature") {  // an arc and its radius, as the sketch's Curvature badge (SnapMarkers.hpp)
+    const QPointF centre = o + QPointF(0, 0.9) * k;
+    p.drawArc(QRectF(centre - QPointF(1.6, 1.6) * k, QSizeF(3.2, 3.2) * k), 60 * 16, 60 * 16);
+    L(0, 0.9, 0, -0.7);
+    p.drawPolyline(QPolygonF{o + QPointF(-0.25, -0.4) * k, o + QPointF(0, -0.7) * k, o + QPointF(0.25, -0.4) * k});
+  }
 }
 
 void snap(Ctx& c, const QString& kind, const QPointF& o, const QColor& color) {

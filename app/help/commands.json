@@ -1578,16 +1578,16 @@
   {
    "id": "sketch.c.smooth",
    "title": "Smooth spline join (G2)",
-   "summary": "Joins two curves with matching curvature (G2).",
-   "details": "Pick the two curves at their shared end. Stronger than Tangent: the curvature also flows on, which reflects light without a visible seam.",
+   "summary": "Joins a spline to a line, an arc or another spline with matching curvature (G2).",
+   "details": "Pick the line, arc or spline, then the spline that joins it, at their shared end. Stronger than Tangent: the curvature also flows on, which reflects light without a visible seam.",
    "keywords": ["g2", "curvature continuous", "blend", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
   {
    "id": "sketch.c.curvature",
    "title": "Equal endpoint curvature",
-   "summary": "Gives two curves the same curvature where they meet.",
-   "details": "Pick the two curves at their shared end. Use it with Tangent for smooth spline transitions.",
+   "summary": "Gives a spline's end the curvature of the line, arc or spline it meets.",
+   "details": "Pick the line, arc or spline, then the spline. By a line the spline's end runs straight; by an arc it bends as the arc does. Use it with Tangent for smooth spline transitions.",
    "keywords": ["curvature", "spline", "continuity", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },

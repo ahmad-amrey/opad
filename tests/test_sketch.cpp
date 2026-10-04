@@ -874,6 +874,90 @@ TEST(sketch_line_spline_tangent_preserves_endpoint_on_line) {
   CHECK_NEAR(sk.point(e.p[0])->y,0,1e-7);CHECK_NEAR(sk.point(e.p[1])->y,0,1e-7);
 }
 
+// TODO 11 wave 3, P6: Smooth (G2) and Curvature join a spline to a line, a circle or an arc too, as their guides show (a line
+// clicked, then the spline). Smooth: the spline's end on the curve, along it and bending as it does (straight by a line, its
+// centre of curvature the arc's centre); Curvature: the bend only; Tangent takes an arc and a spline as well.
+TEST(sketch_spline_joins_a_line_or_an_arc_smoothly) {
+  auto bezier = [](Sketch& sk, std::initializer_list<std::pair<double, double>> poles) {
+    SkEntity e;
+    e.type = SkEntity::Type::Spline;
+    e.degree = 3;
+    e.knots = {0, 1};
+    e.multiplicities = {4, 4};
+    for (auto [x, y] : poles) {
+      e.p.push_back(sk.add_point(x, y));
+      e.weights.push_back(1);
+    }
+    e.id = sk.next_id();
+    sk.entities.push_back(e);
+    return e.id;
+  };
+  struct End { double x, y, fx, fy, k; };
+  auto start = [](const Sketch& sk, int id) {  // the cubic's first end: where, which way and how much it bends
+    const auto& e = *sk.entity(id);
+    const auto p = *sk.point(e.p[0]), q = *sk.point(e.p[1]), r = *sk.point(e.p[2]);
+    const double fx = 3 * (q.x - p.x), fy = 3 * (q.y - p.y), sx = 6 * (r.x - 2 * q.x + p.x), sy = 6 * (r.y - 2 * q.y + p.y);
+    return End{p.x, p.y, fx, fy, (fx * sy - fy * sx) / std::pow(std::hypot(fx, fy), 3)};
+  };
+  // A line along X ending at the origin, a spline starting near it: Smooth makes the join G2 (its first three poles on the line).
+  {
+    Sketch sk;
+    const int line = sk.add_line(sk.add_point(-20, 0, true), sk.add_point(0, 0, true));
+    const int spline = bezier(sk, {{0.4, 0.6}, {5, 3}, {10, 2}, {15, 6}});
+    const int join = sk.add_constraint(CT::Smooth, {line, spline});
+    CHECK_EQ(sk.constraint(join)->anchors, std::vector<int>{sk.entity(spline)->p.front()});
+    CHECK(solve(sk).converged);
+    const End e = start(sk, spline);
+    CHECK_NEAR(e.y, 0, 1e-7);
+    CHECK_NEAR(e.fy, 0, 1e-6);
+    CHECK_NEAR(e.k, 0, 1e-7);
+    const auto saved = sk.to_json();
+    CHECK(Sketch::from_json(saved).to_json() == saved);
+  }
+  // Curvature alone with a line: the end goes straight on, it stays where it was.
+  {
+    Sketch sk;
+    const int line = sk.add_line(sk.add_point(-20, 0, true), sk.add_point(0, 0, true));
+    const int spline = bezier(sk, {{0, 5}, {5, 8}, {10, 6}, {15, 9}});
+    sk.add_constraint(CT::Curvature, {line, spline});
+    CHECK(solve(sk).converged);
+    const End e = start(sk, spline);
+    CHECK_NEAR(e.k, 0, 1e-7);
+    CHECK(e.y > 4);
+  }
+  // A quarter arc about (0, 10) from (0, 0) round to (10, 10), held; a spline leaving near its start: Smooth, Curvature and
+  // Tangent, the spline picked first or second.
+  for (const CT type : {CT::Smooth, CT::Curvature, CT::Tangent})
+    for (const bool splineFirst : {false, true}) {
+      Sketch sk;
+      const int arc = sk.add_arc(sk.add_point(0, 10, true), sk.add_point(0, 0, true), sk.add_point(10, 10, true));
+      const int spline = bezier(sk, {{-0.4, 0.3}, {-5, 1}, {-10, 3}, {-15, 2}});
+      sk.add_constraint(type, splineFirst ? std::vector<int>{spline, arc} : std::vector<int>{arc, spline});
+      CHECK(solve(sk).converged);
+      const End e = start(sk, spline);
+      const double ox = 0, oy = 10, r = 10, along = std::hypot(e.fx, e.fy);
+      if (type != CT::Curvature) {
+        CHECK_NEAR(std::hypot(e.x - ox, e.y - oy), r, 1e-7);              // on the circle
+        CHECK_NEAR((e.fx * (e.x - ox) + e.fy * (e.y - oy)) / along, 0, 1e-6);  // along it
+      }
+      if (type != CT::Tangent) {
+        // Bending as the arc does: towards its centre (on its right as it leaves westwards), by 1/r (with Smooth its centre
+        // of curvature is the arc's).
+        CHECK(e.fx * (oy - e.y) - e.fy * (ox - e.x) < 0);
+        CHECK_NEAR(e.k, -1 / r, 1e-7);
+        if (type == CT::Smooth) {
+          CHECK_NEAR(e.x - e.fy / along / e.k, ox, 1e-5);
+          CHECK_NEAR(e.y + e.fx / along / e.k, oy, 1e-5);
+        }
+      }
+    }
+  // Two lines still do not take it, nor a line with a circle.
+  Sketch sk;
+  const int a = sk.add_line(sk.add_point(0, 0), sk.add_point(10, 0)), b = sk.add_line(sk.add_point(10, 0), sk.add_point(20, 5));
+  CHECK_THROWS(sk.add_constraint(CT::Smooth, {a, b}));
+  CHECK_THROWS(sk.add_constraint(CT::Curvature, {a, sk.add_circle(sk.add_point(30, 0), 4)}));
+}
+
 TEST(reference_dimensions_cannot_indirectly_drive_geometry) {
   Sketch sk;int a=sk.add_point(0,0),b=sk.add_point(10,0),c=sk.add_point(0,20);
   int r=sk.add_constraint(CT::Distance,{a,b},10),d=sk.add_constraint(CT::Distance,{a,c},20,"indirect");sk.constraint(r)->reference=true;

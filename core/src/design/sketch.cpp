@@ -94,9 +94,12 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
     case CType::Perpendicular:
     case CType::Collinear:
     case CType::Angle: return ll;
-    case CType::Tangent: return rr || (n == 2 && ((is(0, Kind::Line) && (is_round(k[1]) || is(1,Kind::Spline))) || ((is_round(k[0]) || is(0,Kind::Spline)) && is(1, Kind::Line)) || (is(0,Kind::Spline)&&is(1,Kind::Spline))));
+    case CType::Tangent: return rr || (n == 2 && ((is(0, Kind::Line) && (is_round(k[1]) || is(1,Kind::Spline))) || ((is_round(k[0]) || is(0,Kind::Spline)) && is(1, Kind::Line)) || (is(0,Kind::Spline)&&is(1,Kind::Spline)) || (is_round(k[0])&&is(1,Kind::Spline)) || (is(0,Kind::Spline)&&is_round(k[1]))));
     case CType::Smooth:
-    case CType::Curvature: return n==2 && is(0,Kind::Spline) && is(1,Kind::Spline);
+    case CType::Curvature: {  // a spline with a spline, a line, a circle or an arc (TODO 11 wave 3, P6)
+      auto joins = [&](size_t i) { return i < n && (k[i] == Kind::Spline || k[i] == Kind::Line || is_round(k[i])); };
+      return n == 2 && joins(0) && joins(1) && (is(0, Kind::Spline) || is(1, Kind::Spline));
+    }
     case CType::Equal: return ll || rr;
     case CType::Concentric: {
       auto centred = [](Kind x) { return is_round(x) || x == Kind::Ellipse; };
@@ -294,8 +297,8 @@ int Sketch::add_constraint(SkConstraint::Type t, std::vector<int> refs, double v
   c.refs = std::move(refs);
   if(t==CType::Smooth || t==CType::Curvature || t==CType::Tangent) {
     std::vector<const SkEntity*> splines;
-    const SkEntity* line=nullptr;
-    for(int ref:c.refs)if(const auto* e=entity(ref)){if(e->type==EType::Spline)splines.push_back(e);if(e->type==EType::Line)line=e;}
+    const SkEntity *line=nullptr,*round=nullptr;
+    for(int ref:c.refs)if(const auto* e=entity(ref)){if(e->type==EType::Spline)splines.push_back(e);if(e->type==EType::Line)line=e;if(e->type==EType::Circle||e->type==EType::Arc)round=e;}
     if(splines.size()==2) {
       double best=INFINITY;
       for(int a:{splines[0]->p.front(),splines[0]->p.back()})for(int b:{splines[1]->p.front(),splines[1]->p.back()}) {
@@ -304,6 +307,14 @@ int Sketch::add_constraint(SkConstraint::Type t, std::vector<int> refs, double v
     } else if(splines.size()==1 && line) {
       const auto a=*point(line->p[0]),b=*point(line->p[1]);double best=INFINITY;
       for(int id:{splines[0]->p.front(),splines[0]->p.back()}){const auto p=*point(id);const double distance=std::fabs((b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x));if(distance<best){best=distance;c.anchors={id};}}
+    } else if(splines.size()==1 && round) {
+      // The spline's end nearer the arc's ends (where it joins an arc), or nearer the circle.
+      const auto o=*point(round->p[0]);double best=INFINITY;
+      for(int id:{splines[0]->p.front(),splines[0]->p.back()}) {
+        const auto p=*point(id);double distance=std::fabs(std::hypot(p.x-o.x,p.y-o.y)-round->r);
+        if(round->type==EType::Arc){distance=INFINITY;for(int end:{round->p[1],round->p[2]})distance=std::min(distance,std::hypot(p.x-point(end)->x,p.y-point(end)->y));}
+        if(distance<best){best=distance;c.anchors={id};}
+      }
     }
   }
   if (c.is_dimension()) {

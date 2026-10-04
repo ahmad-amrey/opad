@@ -573,12 +573,13 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
         for (size_t i = 1; i < rounds.size(); ++i) sets.push_back({rounds[0], rounds[i]});
       break;
     case CT::Smooth:
-    case CT::Curvature:
+    case CT::Curvature:  // a spline with a spline, a line or an arc (TODO 11 wave 3, P6: the guides join a line and a spline)
       if(splines.size()==2)sets.push_back(splines);
+      else if(splines.size()==1 && lines.size()+rounds.size()==1)sets.push_back({lines.empty()?rounds[0]:lines[0],splines[0]});
       break;
     case CT::Tangent:
       if(splines.size()==2)sets.push_back(splines);
-      else if(splines.size()==1 && lines.size()==1)sets.push_back({lines[0],splines[0]});
+      else if(splines.size()==1 && lines.size()+rounds.size()==1)sets.push_back({lines.empty()?rounds[0]:lines[0],splines[0]});
       if (lines.size() == 1 && rounds.size() == 1) sets.push_back({lines[0], rounds[0]});
       else if (lines.empty() && rounds.size() == 2) sets.push_back(rounds);
       break;
