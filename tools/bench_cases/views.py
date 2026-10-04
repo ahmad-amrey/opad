@@ -1,5 +1,5 @@
 """gui_benches cases of the help audit's view and inspect tools (TODO 11 wave 3, P7 and P8): the tools do what their guides
-show. The benches are in app/ViewsBench.cpp."""
+show. The benches are in app/ViewsBench.cpp and app/InspectBench.cpp."""
 
 
 def three_boxes(root, document):
@@ -24,7 +24,7 @@ GRID = "[view]\ngrid=true\n"
 
 CASES = [
     # P7: the seven standard views animate to their axes; in 2D mode Isometric is off and a standard view takes the grid to
-    # its plane. <prefix>.top-partway.png.
+    # its plane; Isolate's card with its × ends the isolation. <prefix>.top-partway.png, <prefix>.chip.png.
     ("views", three_boxes, {"OPAD_BENCH_VIEWS": "{prefix}"}, GRID),
     # P7 on a drawing in 2D mode: Turn 90° left twists it in an animation, the direction and the grid's plane stay.
     # <prefix>.roll-partway.png, <prefix>.roll.png.

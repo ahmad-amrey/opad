@@ -190,6 +190,7 @@ void MainWindow::buildCentral() {
   m_chips = new ViewportChips(m_viewport);
   m_chips->setAttribute(Qt::WA_NativeWindow);
   connect(m_chips, &ViewportChips::leaveTwoDimensional, this, [this] { action("view.2d")->setChecked(false); });
+  connect(m_chips, &ViewportChips::exitIsolation, this, [this] { action("view.unisolate")->trigger(); });
   m_prompt = new PromptBar(m_viewport);
   m_prompt->setAttribute(Qt::WA_NativeWindow);
   m_prompt->hide();
@@ -284,7 +285,8 @@ void MainWindow::updateChips() {
     const char axes[] = {'X', 'Y', 'Z'};
     section = tr("Section %1 = %2").arg(axes[axis]).arg(units::format(units::Kind::Length, o[axis]));
   }
-  m_chips->set(mode, proj, section, m_viewport->isIsolated() ? tr("Isolated · %1 bodies").arg(m_viewport->isolatedCount()) : QString(),
+  const int isolated = m_viewport->isIsolated() ? m_viewport->isolatedCount() : 0;
+  m_chips->set(mode, proj, section, isolated == 1 ? tr("Isolated · 1 body") : isolated ? tr("Isolated · %1 bodies").arg(isolated) : QString(),
                action("view.2d")->isChecked());
   positionOverlays();
 }

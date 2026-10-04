@@ -279,7 +279,7 @@
    "id": "view.isolate",
    "title": "Isolate",
    "summary": "Shows only the selection until you exit isolation.",
-   "details": "Everything else is hidden from view, not from the document. Exit isolate (Shift+I) brings it back.",
+   "details": "Everything else is hidden from view, not from the document, and the view frames what is isolated. Exit isolate (Shift+I) or the × on the Isolated card in the view brings it back.",
    "keywords": ["focus", "show only", "solo"],
    "requires": "Open or create a document first."
   },
@@ -287,7 +287,7 @@
    "id": "view.unisolate",
    "title": "Exit isolate",
    "summary": "Brings back everything isolation hid.",
-   "details": "The camera stays where it is. Visibility you set yourself is kept.",
+   "details": "The camera stays where it is. Visibility you set yourself is kept. A click on the Isolated card in the view (its ×) does the same.",
    "keywords": ["show all", "end isolate", "unisolate"],
    "requires": "Nothing is isolated."
   },

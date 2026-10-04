@@ -1,11 +1,13 @@
 // OPAD_BENCH_VIEWS (TODO 11 wave 3, help audit P7): the view commands do what their guides show. On a 3D document: each of
 // the seven standard views turns the camera in an animation (a frame partway differs from where it was and from where it
 // ends) and ends where the instant move goes, along its axis; in 2D mode Isometric is off and a standard view takes the
-// grid to the plane it looks at. On a drawing (opened in 2D mode): Turn 90° left twists it a quarter in an animation, the view
-// still looking at its plane and the grid lying in it. <prefix>.top-partway.png, <prefix>.roll.png.
+// grid to the plane it looks at; Isolate's card reads "Isolated · 1 body" (or "2 bodies") with its ×, and a click on it
+// ends the isolation. On a drawing (opened in 2D mode): Turn 90° left twists it a quarter in an animation, the view
+// still looking at its plane and the grid lying in it. <prefix>.top-partway.png, <prefix>.chip.png, <prefix>.roll.png.
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QTimer>
 
@@ -17,9 +19,11 @@
 #include <memory>
 
 #include "BenchRegistry.hpp"
+#include "BrowserPanel.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "Viewport.hpp"
+#include "ViewportChips.hpp"
 
 namespace {
 // Runs `run` once every body of the document is displayed (or after a minute, reported), then quits with its outcome.
@@ -134,11 +138,39 @@ bool Viewport::benchViews(const QString& prefix, const std::function<void(const 
   return all;
 }
 
-// The viewport's part through the window's commands.
+// The viewport's part, then the window's: Isolate's card and its ×.
 OPAD_BENCH(OPAD_BENCH_VIEWS, views) {
   Viewport* v = w.m_viewport;
   whenShown(&w, v, [&w, v, value] {
-    return v->benchViews(value, [&w](const QString& id) { w.action(id)->trigger(); }, [&w](const QString& id) { return w.action(id)->isEnabled(); });
+    bool ok = v->benchViews(value, [&w](const QString& id) { w.action(id)->trigger(); }, [&w](const QString& id) { return w.action(id)->isEnabled(); });
+    if (v->twoDimensional()) return ok;
+    auto require = [&ok](bool pass, const QString& what) {
+      trace::log(QString("bench: views: %1 %2").arg(what, pass ? "PASS" : "FAIL"));
+      ok = ok && pass;
+    };
+    QLabel* chip = w.m_chips->isolationChip();
+    const std::vector<std::string> bodies = w.m_doc->scene.all_bodies();
+    if (bodies.size() < 2) {
+      require(false, "the document has two bodies to isolate");
+      return false;
+    }
+    w.m_browser->selectIds({bodies[0]});  // as a click in the browser (the view's own selection is applied in a sliced job)
+    w.action("view.isolate")->trigger();
+    const QString one = chip->text();
+    require(v->isIsolated() && !chip->isHidden() && one == MainWindow::tr("Isolated · 1 body") + QStringLiteral("  ×") && w.action("view.unisolate")->isEnabled(),
+            "Isolate shows the card \"" + one + "\" with its ×");
+    w.m_chips->grab().save(value + ".chip.png");
+    const QPointF cross(chip->width() - 6, chip->height() / 2.0);  // on the ×
+    QMouseEvent press(QEvent::MouseButtonPress, cross, chip->mapToGlobal(cross), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(chip, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, cross, chip->mapToGlobal(cross), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(chip, &release);
+    require(!one.isEmpty() && !v->isIsolated() && chip->isHidden() && !w.action("view.unisolate")->isEnabled(), "a click on the card's × ends the isolation, the card goes");
+    w.m_browser->selectIds({bodies[0], bodies[1]});
+    w.action("view.isolate")->trigger();
+    require(v->isIsolated() && chip->text() == MainWindow::tr("Isolated · %1 bodies").arg(2) + QStringLiteral("  ×"), "two bodies: \"" + chip->text() + "\"");
+    require(v->isolatedCount() == 2 && (w.action("view.unisolate")->trigger(), !v->isIsolated()) && chip->isHidden(), "Exit isolate ends it too, the card goes");
+    return ok;
   });
   return true;
 }
