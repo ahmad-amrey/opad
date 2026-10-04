@@ -611,18 +611,19 @@ void unshare(Drawing& drawing) {
       if (found == done.end()) {
         const TopoDS_Shape base = s.Located(TopLoc_Location()).Oriented(TopAbs_FORWARD);
         TopoDS_Shape result = base;
-        if (owner[t] != group) {
-          result = BRepBuilderAPI_Copy(base, false, false).Shape();
-        } else if (base.ShapeType() == TopAbs_COMPOUND) {
-          TopoDS_Compound rebuilt;
+        const bool foreign = owner[t] != group;
+        if (base.ShapeType() == TopAbs_COMPOUND) {  // a foreign one rebuilt too: what it shares with others is copied once
+          TopoDS_Compound rebuilt;                  // (a text the reader placed in several groups, its glyphs in other texts)
           builder.MakeCompound(rebuilt);
-          bool changed = false;
+          bool changed = foreign;
           for (TopoDS_Iterator i(base, false, false); i.More(); i.Next()) {
             const TopoDS_Shape child = own(i.Value());
             changed = changed || child.TShape() != i.Value().TShape();
             builder.Add(rebuilt, child);
           }
           if (changed) result = rebuilt;
+        } else if (foreign) {
+          result = BRepBuilderAPI_Copy(base, false, false).Shape();
         }
         found = done.emplace(t, result).first;
       }

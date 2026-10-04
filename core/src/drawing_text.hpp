@@ -105,6 +105,11 @@ class TextOutliner {
   std::unique_ptr<Impl> m;
 };
 
+// Every field of the request that its outline depends on, as bytes: two requests with the same key outline the same (a
+// reader lays a repeated text out once and places it by location). A field added to TextFormat, TextSpan, TextParagraph
+// or TextRequest goes in here too.
+std::string text_key(const TextRequest& request);
+
 bool text_shaping();  // built with HarfBuzz
 // The Unicode bidi algorithm's embedding levels of one paragraph (explicit embeddings, overrides and isolates too):
 // `base` is its direction (the first strong character's, isolates left out), each character's level; and the

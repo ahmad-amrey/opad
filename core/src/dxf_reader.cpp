@@ -25,6 +25,7 @@
 #include <GeomAPI_Interpolate.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <OSD_Parallel.hxx>
+#include <OSD_ThreadPool.hxx>
 #include <Standard_Failure.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <TColStd_Array1OfReal.hxx>
@@ -48,10 +49,12 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <set>
 #include <sstream>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
 
 #include "opad/util.hpp"
 
@@ -445,6 +448,16 @@ struct Ocs {
   gp_XYZ to_wcs(const gp_XYZ& p) const { return to_wcs(p.X(), p.Y(), p.Z()); }
 };
 
+// Anything in it but empty compounds (a text's placeholder stays empty when no font loads or a part in a colour of its
+// own shows nothing).
+bool drawn(const TopoDS_Shape& s) {
+  if (s.IsNull()) return false;
+  if (s.ShapeType() != TopAbs_COMPOUND) return true;
+  for (TopoDS_Iterator it(s, false, false); it.More(); it.Next())
+    if (drawn(it.Value())) return true;
+  return false;
+}
+
 // Geometry by (layer as written, colour key, linetype, lineweight, linetype scale): model space, or a block's content in
 // its own coordinates. Linetype "" and lineweight -1 are by layer, "BYBLOCK" and -2 by block.
 struct Space {
@@ -510,7 +523,7 @@ double signed_area(const std::vector<gp_XY>& poly) {
 
 class Reader {
  public:
-  Reader(const std::filesystem::path& file, const ImportOptions& options) : m_options(options), m_text(font_folders(file)) { load(file); }
+  Reader(const std::filesystem::path& file, const ImportOptions& options) : m_options(options), m_fontFolders(font_folders(file)) { load(file); }
   Drawing read();
 
  private:
@@ -596,7 +609,7 @@ class Reader {
   void tick();
 
   const ImportOptions& m_options;
-  TextOutliner m_text;
+  std::vector<std::filesystem::path> m_fontFolders;  // where a style's font file is looked for (font_folders)
   std::string m_buffer;
   std::vector<Pair> m_pairs;
   std::vector<Entity> m_model, m_blockEntities;
@@ -627,6 +640,17 @@ class Reader {
     TopoDS_Compound into;
   };
   std::vector<CopyJob> m_copyJobs;
+  // A text laid out once per request (text_key) at the origin and placed by location: half the texts of a plan repeat one.
+  // Outlined in finish() side by side, before the copies (a copied block shows its texts); until then its placeholders
+  // are empty: the part in the text's colour, if it has one, and each part in a colour of its own (MTEXT \C).
+  struct TextJob {
+    TextRequest request;
+    TopoDS_Compound into;
+    std::map<uint32_t, TopoDS_Compound> colored;
+    int uses = 0;
+  };
+  std::vector<TextJob> m_textJobs;
+  std::unordered_map<std::string, size_t> m_texts;  // text_key -> its job
 };
 
 void Reader::load(const std::filesystem::path& file) {
@@ -863,7 +887,47 @@ void Reader::finish() {
     for (TopoDS_Iterator it(made); it.More(); it.Next()) builder.Add(into, it.Value());
     into.Free(false);
   };
-  std::atomic<int> broken{0};
+  std::atomic<int> broken{0}, noFont{0};
+  if (!m_textJobs.empty()) {
+    if (m_options.progress && !m_options.progress(0.99, "reading drawing")) throw Error("cancelled");
+    // In runs of about equal length, each with an outliner of its own (glyph caches and HarfBuzz buffers are not shared),
+    // texts of one font and size together so that their glyphs are outlined once.
+    auto font = [](const TextRequest& r) { return std::tie(r.font, r.family, r.bold, r.italic, r.size, r.width, r.oblique); };
+    std::vector<size_t> order(m_textJobs.size());
+    std::iota(order.begin(), order.end(), size_t(0));
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return font(m_textJobs[a].request) < font(m_textJobs[b].request); });
+    auto weight = [this](size_t job) {
+      const TextRequest& r = m_textJobs[job].request;
+      size_t w = 8 + r.text.size();
+      for (const auto& span : r.spans) w += span.text.size() + span.bottom.size();
+      return w;
+    };
+    size_t total = 0;
+    for (size_t job : order) total += weight(job);
+    const size_t runs = std::min(order.size(), size_t(std::max(1, OSD_ThreadPool::DefaultPool()->NbDefaultThreadsToLaunch())));
+    std::vector<size_t> starts{0};
+    for (size_t i = 0, sum = 0; i < order.size() && starts.size() < runs; ++i)
+      if ((sum += weight(order[i])) * runs >= total * starts.size() && i + 1 < order.size()) starts.push_back(i + 1);
+    starts.push_back(order.size());
+    OSD_Parallel::For(0, int(starts.size() - 1), [&](int run) {
+      TextOutliner outliner(m_fontFolders);
+      for (size_t i = starts[size_t(run)]; i < starts[size_t(run) + 1]; ++i) {
+        TextJob& job = m_textJobs[order[i]];
+        try {
+          std::map<uint32_t, TopoDS_Compound> colored;
+          const TopoDS_Shape made = outliner.outline(job.request, gp_Ax3(), &colored);
+          if (made.IsNull()) { noFont += job.uses; continue; }
+          if (!job.into.IsNull()) deliver(job.into, made);
+          for (auto& [color, into] : job.colored)
+            if (const auto part = colored.find(color); part != colored.end()) deliver(into, part->second);
+        } catch (...) {
+          broken += job.uses;
+        }
+      }
+    });
+    m_textJobs.clear();
+    m_texts.clear();
+  }
   int top = -1;
   for (const auto& job : m_copyJobs) top = std::max(top, job.level);
   for (int level = 0; level <= top; ++level) {
@@ -873,6 +937,7 @@ void Reader::finish() {
       if (job.level == level) now.push_back(&job);
     OSD_Parallel::For(0, int(now.size()), [&](int i) {
       const CopyJob& job = *now[size_t(i)];
+      if (!drawn(job.source)) return;  // texts with no font, say
       try {
         deliver(job.into, job.p.kind == Placement::General ? BRepBuilderAPI_GTransform(job.source, job.p.gtrsf, true).Shape()
                                                            : BRepBuilderAPI_Transform(job.source, job.p.trsf, true).Shape());
@@ -883,6 +948,7 @@ void Reader::finish() {
   }
   m_copyJobs.clear();
   m_broken += broken;
+  m_noFont += noFont;
 }
 
 const Space& Reader::build(Block& b) {
@@ -1479,16 +1545,30 @@ TextRequest Reader::text_request(std::string_view styleName, std::string text, d
 
 // Parts in colours of their own (MTEXT \C) go into the bodies of those colours.
 void Reader::text_shape(const Out& o, const TextRequest& request, const gp_Ax3& at) {
-  std::map<uint32_t, TopoDS_Compound> colored;
-  const TopoDS_Shape shape = m_text.outline(request, at, &colored);
-  if (shape.IsNull()) { ++m_noFont; return; }
-  if (shape.NbChildren() > 0) add(o, shape);
-  for (const auto& [color, part] : colored)
-    if (part.NbChildren() > 0) {
-      Out own = o;
-      own.color = color;
-      add(own, part);
+  auto [it, fresh] = m_texts.try_emplace(text_key(request), m_textJobs.size());
+  if (fresh) {
+    TextJob job;
+    job.request = request;
+    std::vector<const TextFormat*> parts;  // a part's own colour sends it to the placeholder of that colour
+    if (request.spans.empty()) parts.push_back(&request);
+    for (const auto& span : request.spans) parts.push_back(&span);
+    for (const TextFormat* part : parts) {
+      TopoDS_Compound& into = part->color == TextFormat::kInherit ? job.into : job.colored[part->color];
+      if (into.IsNull()) m_builder.MakeCompound(into);
     }
+    m_textJobs.push_back(std::move(job));
+  }
+  TextJob& job = m_textJobs[it->second];
+  ++job.uses;
+  gp_Trsf place;
+  place.SetDisplacement(gp_Ax3(gp::XOY()), at);
+  const TopLoc_Location location(place);
+  if (!job.into.IsNull()) add(o, job.into.Moved(location));
+  for (const auto& [color, part] : job.colored) {
+    Out own = o;
+    own.color = color;
+    add(own, part.Moved(location));
+  }
 }
 
 void Reader::text(const Fields& f, Out& o, const Place& at, bool attrib) {
@@ -1678,6 +1758,7 @@ Drawing Reader::read() {
   Place at{&model, distant ? out.origin.X() : 0, distant ? out.origin.Y() : 0, true};
   run(m_model, 0, m_model.size(), at);
   finish();
+  for (auto it = model.groups.begin(); it != model.groups.end();) it = drawn(it->second) ? std::next(it) : model.groups.erase(it);
 
   std::map<std::string, std::vector<double>> patterns;  // by the upper-case decoded name
   for (const auto& [name, d] : m_linetypes) patterns[upper(decode(name))] = d;

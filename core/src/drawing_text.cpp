@@ -40,6 +40,7 @@
 #include <mutex>
 #include <optional>
 #include <tuple>
+#include <type_traits>
 
 #include "opad/util.hpp"
 #include "shx_font.hpp"
@@ -134,6 +135,38 @@ std::u32string utf32(const std::string& s) {
     i += ok ? size_t(n) : 1;
   }
   return out;
+}
+
+namespace {
+void put(std::string& key, const std::string& s) {
+  const uint64_t n = s.size();
+  key.append(reinterpret_cast<const char*>(&n), sizeof n);
+  key += s;
+}
+template <class T>
+void put(std::string& key, T value) {
+  static_assert(std::is_trivially_copyable_v<T>);
+  key.append(reinterpret_cast<const char*>(&value), sizeof value);
+}
+void put_format(std::string& key, const TextFormat& f) {
+  put(key, f.font), put(key, f.family), put(key, f.bold), put(key, f.italic), put(key, f.size), put(key, f.width);
+  put(key, f.oblique), put(key, f.tracking), put(key, f.color), put(key, f.underline), put(key, f.overline), put(key, f.strike);
+  put(key, int(f.align));
+}
+}  // namespace
+
+std::string text_key(const TextRequest& r) {
+  std::string key;
+  put_format(key, r);
+  put(key, r.text), put(key, r.cap), put(key, r.spacing), put(key, r.wrap), put(key, r.fit), put(key, r.aligned);
+  put(key, int(r.h)), put(key, int(r.v)), put(key, uint64_t(r.spans.size()));
+  for (const auto& s : r.spans) put_format(key, s), put(key, s.text), put(key, s.stack), put(key, s.bottom);
+  put(key, uint64_t(r.paragraphs.size()));
+  for (const auto& p : r.paragraphs) {
+    put(key, p.justify), put(key, p.left), put(key, p.first), put(key, p.right), put(key, uint64_t(p.tabs.size()));
+    for (double tab : p.tabs) put(key, tab);
+  }
+  return key;
 }
 
 std::vector<uint8_t> bidi_levels(const std::u32string& text, int& base) {
@@ -1255,6 +1288,7 @@ TopoDS_Shape TextOutliner::outline(const TextRequest& request, const gp_Ax3& at,
   if (const std::string ext = dot == std::string::npos ? "" : lower(r.font.substr(dot)); ext == ".ttf" || ext == ".ttc" || ext == ".otf")
     if (const auto ref = file_font(trim(r.font), m->folders)) file = ref->path;
   auto init = [&](StdPrs_BRepFont& font, double size) {
+    std::lock_guard<std::mutex> guard(manager_lock());  // FindAndInit asks Font_FontMgr (outliners run side by side)
     return file.empty() ? font.FindAndInit("Arial", Font_FA_Regular, size) : font.Init(NCollection_String(file.c_str()), size, 0);
   };
   auto ratio = m->capRatio.find(file);

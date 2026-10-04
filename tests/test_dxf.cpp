@@ -388,6 +388,7 @@ TEST(mtext_parts_keep_their_own_formats) {
   for (const auto& g : {mtext("Plain", 0, "HELL"), mtext("Big", 50, "HE{\\H2x;LL}"), mtext("Red", 100, "HE{\\C1;LL}O"), mtext("Blue", 150, "H\\c16711680;E"),
                         mtext("Under", 200, "H\\LELL\\lO"), mtext("Fraction", 250, "1\\S1/2;"), mtext("Tolerance", 300, "12\\S+0.1^-0.2;"),
                         mtext("Centre", 350, "HHHHHHHH\\P\\pxqc;{\\C1;HH}"), mtext("List", 650, "\\pxi-3,l3,t3;1.^I{\\C1;HE}\\P2.^I{\\C1;EH}"),
+                        mtext("RedAgain", 700, "HE{\\C1;LL}O"), mtext("AllRed", 750, "{\\C1;HI}"), mtext("BlankRed", 800, "{\\C1; }HI"),
                         text("TextPlain", 400, "IIII"), text("TextUnder", 450, "%%uIIII%%u"),
                         text("Leaning", 500, "IIII", {{51, "15"}}), text("Styled", 550, "IIII", {{7, "SLANT"}})})
     entities.insert(entities.end(), g.begin(), g.end());
@@ -404,6 +405,18 @@ TEST(mtext_parts_keep_their_own_formats) {
   for (const auto& b : all)
     if (b.layer == "Red" && !b.has_color) rest = &b;
   CHECK(red && rest && red->faces == 2 && rest->faces == 3);  // LL red, HE and O as the layer draws them
+  // A repeated text is laid out once and placed, its coloured parts too; no body is left empty by a text wholly in a colour
+  // of its own or by a coloured part that draws nothing.
+  const auto* redAgain = find(all, "RedAgain", 1, 0, 0);
+  int restAgain = 0, allRed = 0, blankRed = 0;
+  for (const auto& b : all) {
+    if (b.layer == "RedAgain" && !b.has_color && b.faces == 3) ++restAgain;
+    allRed += b.layer == "AllRed";
+    blankRed += b.layer == "BlankRed";
+  }
+  CHECK(redAgain && redAgain->faces == 2 && restAgain == 1);
+  CHECK(allRed == 1 && find(all, "AllRed", 1, 0, 0) && find(all, "AllRed", 1, 0, 0)->faces == 2);
+  CHECK(blankRed == 1 && !find(all, "BlankRed")->has_color && find(all, "BlankRed")->faces == 2);
   CHECK(find(all, "Blue", 0, 0, 1) && find(all, "Blue", 0, 0, 1)->faces == 1);  // \c is 0xBBGGRR
   CHECK(find(all, "Under")->lines == 1 && find(all, "Plain")->lines == 0);
   const auto* fraction = find(all, "Fraction");
