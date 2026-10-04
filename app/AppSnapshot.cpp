@@ -74,7 +74,7 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
     // The file holds what was written; it is this document's file when the path moved there or was already it.
     if(result->written && generation==identity && (revision==savedRevision || QFileInfo(destination)==QFileInfo(m_diskFile)))
       setDisk(QFileInfo(destination).absoluteFilePath(),result->stat,result->manifest);
-    if(result->blocked)emit saveBlocked();
+    if(result->blocked)emit saveBlocked(false);
     if(result->written && generation==identity && revision==savedRevision){
       doc.path=std::filesystem::path(destination.toStdU16String());doc.header.format=opad::kFormatVersion;readOnly=false;
       m_savedIds=std::move(result->ids);m_savedBodies=result->bodies;doc.dirty=false;

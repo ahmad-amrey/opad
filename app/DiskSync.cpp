@@ -28,13 +28,14 @@ DiskSync::DiskSync(AppDocument* doc, JobRunner* jobs, QWidget* viewport, QWidget
   // Loads, saves and reloads: a new state of the file to compare with.
   connect(doc, &AppDocument::pathChanged, this, [this] {
     m_dismissed.reset();
+    m_saveAfter = false;  // the Save it waited for is done, or the document is another file now
     m_read.reset();
     m_decided = false;
     check();
   });
-  connect(doc, &AppDocument::aboutToReplace, this, [this] { m_read.reset(); m_decided = false; m_banner->dismiss(); });
-  connect(doc, &AppDocument::saveBlocked, this, [this] {
-    m_saveAfter = true;
+  connect(doc, &AppDocument::aboutToReplace, this, [this] { m_read.reset(); m_decided = false; m_saveAfter = false; m_banner->dismiss(); });
+  connect(doc, &AppDocument::saveBlocked, this, [this](bool retry) {
+    m_saveAfter = m_saveAfter || retry;
     m_dismissed.reset();
     m_decided = false;
     if (!m_banner->state().isEmpty()) m_banner->flash();
@@ -311,7 +312,7 @@ void DiskSync::overwrite() {
 // ---------------------------------------------------------------- bench
 // OPAD_BENCH_EXTERNAL_CHANGE=<prefix> (with --bench-select on a saved document with bodies; OPAD_BENCH_CLI or the
 // opad-cli beside the app): opad-cli appends while the document is open and clean (it comes in), then while it has
-// unsaved changes (merge banner; Save refused; Merge), a conflicting change (yours win), a reset (replaced banner,
+// unsaved changes (merge banner; an agent's save refused for good, Save until the file is read; Merge), a conflicting change (yours win), a reset (replaced banner,
 // Reload), a reset over unsaved changes (Overwrite asks, Cancel, Overwrite), git conflict markers (unreadable, Save
 // refused, Overwrite), a deleted file (Save writes it again), a touched file (Save waits for the read, then goes ahead)
 // and the app's own saves (never read back).
@@ -327,7 +328,7 @@ bool DiskSync::bench() {
 #endif
   struct State {
     size_t step = 0;
-    int wait = 0, ticks = 0, exit = 0, reads = 0;
+    int wait = 0, ticks = 0, exit = 0, reads = 0, saved = 0;
     std::vector<std::string> bodies;
     bool running = false;
     QString file;
@@ -407,8 +408,14 @@ bool DiskSync::bench() {
         require(m_banner->property("conflicts").toInt() == 0, "merge banner: no conflict");
         shot(".merge.png");
         st->stamp = stamp();
+        m_doc->saveAsync(m_jobs, {}, false, [st](bool saved, const QString&) { st->saved = saved ? 1 : 2; });  // an agent's save
+        return true;
+      },
+      [=, this] {
+        if (!st->saved) return false;
+        require(st->saved == 2 && stamp() == st->stamp && !m_saveAfter && m_banner->state() == "merge", "save guard: an agent's save refused, never run later");
         trigger("file.save");
-        require(stamp() == st->stamp && m_doc->isDirty() && m_banner->state() == "merge", "save guard: nothing written");
+        require(stamp() == st->stamp && m_doc->isDirty() && m_banner->state() == "merge" && m_saveAfter, "save guard: nothing written, Save waits");
         pass("save guard");
         click("diskMerge");
         require(m_banner->state().isEmpty(), "merge: banner gone");

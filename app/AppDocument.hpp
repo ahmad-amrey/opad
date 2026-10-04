@@ -161,7 +161,9 @@ class AppDocument : public QObject {
   void changed();
   void pathChanged();
   void saved();  // successful explicit Save / Save As, not an open or title change
-  void saveBlocked();  // Save found the file changed on disk and wrote nothing
+  // Save found the file changed on disk and wrote nothing. `retry`: the window's Save (or Save as), run again once the file
+  // turns out unchanged; a save of another caller (saveAsync: an agent, Commit) failed for good.
+  void saveBlocked(bool retry);
   void message(const QString& text);
   void loadProgress(const QString& phase, int percent);  // percent < 0: unknown
   void loadFinished(bool ok, const QString& error);

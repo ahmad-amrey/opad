@@ -57,7 +57,7 @@ class DiskSync : public QObject {
   QPointer<Job> m_job;
   std::shared_ptr<AppDocument::DiskRead> m_read;  // the file as last read, until acted on
   bool m_decided = false;    // the banner (or nothing) for m_read is up
-  bool m_saveAfter = false;  // Save was refused: it runs once the file turns out unchanged
+  bool m_saveAfter = false;  // the window's Save was refused: it runs once the file turns out unchanged (until the path changes)
   bool m_reloadAfter = false;
   bool m_adopt = false;      // the next change is the window's own (adopt)
   std::optional<AppDocument::DiskStat> m_dismissed;  // the banner was closed for this state of the file

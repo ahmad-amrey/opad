@@ -332,7 +332,7 @@ bool AppDocument::save(bool overwriteDisk) {
   if (readOnly) throw opad::Error("This document is open read-only: save a copy to edit it.");
   if (!overwriteDisk && !doc.path.empty() && QFileInfo(path()) == QFileInfo(m_diskFile) && diskChanged()) {
     emit message(tr("Not saved: %1 changed on disk").arg(QFileInfo(m_diskFile).fileName()));
-    emit saveBlocked();
+    emit saveBlocked(true);
     return false;
   }
   doc.save();
@@ -350,7 +350,7 @@ bool AppDocument::saveAs(const QString& path) {
   if (readOnly && QFileInfo(path) == QFileInfo(this->path())) throw opad::Error("This document is open read-only: save a copy to edit it.");
   if (QFileInfo(path) == QFileInfo(m_diskFile) && diskChanged()) {  // the open file chosen again: the same as Save
     emit message(tr("Not saved: %1 changed on disk").arg(QFileInfo(m_diskFile).fileName()));
-    emit saveBlocked();
+    emit saveBlocked(true);
     return false;
   }
   doc.save_as(fsPath(path));
