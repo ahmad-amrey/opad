@@ -215,6 +215,13 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   m_subtitle->setWordWrap(true);
   sl->addWidget(m_subtitle);
   layout->addWidget(summary);
+  m_error = new QLabel(this);
+  m_error->setObjectName("toolError");
+  m_error->setWordWrap(true);
+  m_error->setTextFormat(Qt::PlainText);
+  m_error->setContentsMargins(12, 0, 12, 8);
+  m_error->hide();
+  layout->addWidget(m_error);
 
   m_anchorRow = new QWidget(this);
   auto* anchorLayout = new QHBoxLayout(m_anchorRow);
@@ -284,6 +291,7 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   auto restyle = [this, rule] {
     const Tokens& t = theme::current();
     rule->setStyleSheet(QString("background: %1;").arg(theme::css(t.line)));
+    m_error->setStyleSheet(QString("color: %1;").arg(theme::css(t.error)));
     m_grid->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(t.line)));
     QList<QPair<QString, QString>> rows;
     for (int i = 0; i < m_grid->topLevelItemCount(); ++i) {
@@ -349,6 +357,13 @@ void ToolStepsPanel::setSummary(const QString& title, const QString& subtitle, c
   const bool visible=!title.isEmpty()||!subtitle.isEmpty()||!state.isEmpty();
   m_title->parentWidget()->setVisible(visible);
   if(auto* rule=findChild<QFrame*>("toolRule"))rule->setVisible(visible);
+  emit contentSizeChanged();
+}
+
+void ToolStepsPanel::setError(const QString& text) {
+  if (m_error->text() == text && m_error->isVisibleTo(this) == !text.isEmpty()) return;
+  m_error->setText(text);
+  m_error->setVisible(!text.isEmpty());
   emit contentSizeChanged();
 }
 

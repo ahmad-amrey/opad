@@ -29,7 +29,14 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
+#include <ShapeAnalysis_CanonicalRecognition.hxx>
+#include <Standard_Failure.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Cylinder.hxx>
+#include <gp_Lin.hxx>
+#include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Sphere.hxx>
 
 #include <algorithm>
 #include <atomic>
@@ -98,6 +105,48 @@ const char* curve_type(GeomAbs_CurveType t) {
   }
 }
 
+// A free-form face or edge (B-spline, Bezier, an offset or swept surface) that is a cylinder, sphere or circle within
+// tolerance (UI-50): STEP exporters write rods and holes that way, and the radius tool said they had none. The tolerance
+// grows with the entity (a thousandth of its box, at least 0.1 um); gap is how far the geometry is from the analytic form.
+struct Recognised {
+  enum class Kind { None, Cylinder, Sphere, Plane, Circle, Line } kind = Kind::None;
+  gp_Cylinder cylinder;
+  gp_Sphere sphere;
+  gp_Pln plane;
+  gp_Circ circle;
+  gp_Lin line;
+  double gap = 0;
+  const char* name() const { return kind == Kind::Cylinder ? "cylinder" : kind == Kind::Sphere ? "sphere" : kind == Kind::Plane ? "plane" : kind == Kind::Circle ? "circle" : kind == Kind::Line ? "line" : ""; }
+};
+bool freeForm(GeomAbs_SurfaceType t) { return t != GeomAbs_Plane && t != GeomAbs_Cylinder && t != GeomAbs_Cone && t != GeomAbs_Sphere && t != GeomAbs_Torus; }
+bool freeForm(GeomAbs_CurveType t) { return t != GeomAbs_Line && t != GeomAbs_Circle && t != GeomAbs_Ellipse && t != GeomAbs_Hyperbola && t != GeomAbs_Parabola; }
+Recognised recognise(const TopoDS_Shape& s) {
+  Recognised r;
+  if (s.IsNull() || (s.ShapeType() != TopAbs_FACE && s.ShapeType() != TopAbs_EDGE)) return r;
+  if (s.ShapeType() == TopAbs_FACE ? !freeForm(BRepAdaptor_Surface(TopoDS::Face(s)).GetType()) : !freeForm(BRepAdaptor_Curve(TopoDS::Edge(s)).GetType())) return r;
+  const Bnd_Box box = tight_bbox(s);
+  const double tol = box.IsVoid() ? 1e-4 : std::max(1e-4, 1e-3 * std::sqrt(box.SquareExtent()));
+  try {
+    ShapeAnalysis_CanonicalRecognition analysis(s);
+    auto attempt = [&](Recognised::Kind kind, auto test) {
+      if (r.kind != Recognised::Kind::None) return;
+      analysis.ClearStatus();
+      if (test()) { r.kind = kind; r.gap = analysis.GetGap(); }
+    };
+    if (s.ShapeType() == TopAbs_FACE) {
+      attempt(Recognised::Kind::Plane, [&] { return analysis.IsPlane(tol, r.plane); });
+      attempt(Recognised::Kind::Cylinder, [&] { return analysis.IsCylinder(tol, r.cylinder); });
+      attempt(Recognised::Kind::Sphere, [&] { return analysis.IsSphere(tol, r.sphere); });
+    } else {
+      attempt(Recognised::Kind::Line, [&] { return analysis.IsLine(tol, r.line); });
+      attempt(Recognised::Kind::Circle, [&] { return analysis.IsCircle(tol, r.circle); });
+    }
+  } catch (const Standard_Failure&) {
+    r.kind = Recognised::Kind::None;
+  }
+  return r;
+}
+
 // World-space shape for a reference.
 TopoDS_Shape ref_shape(const Document& doc, const Scene& scene, const Ref& ref) {
   if (ref.kind == Ref::Kind::Point) return BRepBuilderAPI_MakeVertex(gp_Pnt(ref.point[0], ref.point[1], ref.point[2]));
@@ -137,7 +186,14 @@ bool ref_direction(const Document& doc, const Scene& scene, const Ref& ref, gp_D
       case GeomAbs_Cylinder: return axis(surf.Cylinder().Axis());
       case GeomAbs_Cone: return axis(surf.Cone().Axis());
       case GeomAbs_Torus: return axis(surf.Torus().Axis());
-      default: return false;
+      default: {
+        const Recognised r = recognise(s);
+        if (r.kind == Recognised::Kind::Cylinder) return axis(r.cylinder.Axis());
+        if (r.kind != Recognised::Kind::Plane) return false;
+        gp_Dir n = r.plane.Axis().Direction();
+        if (s.Orientation() == TopAbs_REVERSED) n.Reverse();
+        out = n; what = "normal"; at = mid; return true;
+      }
     }
   }
   if (ref.kind == Ref::Kind::Edge) {
@@ -147,6 +203,9 @@ bool ref_direction(const Document& doc, const Scene& scene, const Ref& ref, gp_D
       case GeomAbs_Circle: out = c.Circle().Axis().Direction(); what = "axis"; at = c.Circle().Location(); return true;
       case GeomAbs_Ellipse: out = c.Ellipse().Axis().Direction(); what = "axis"; at = c.Ellipse().Location(); return true;
       default: {
+        const Recognised r = recognise(s);
+        if (r.kind == Recognised::Kind::Circle) { out = r.circle.Axis().Direction(); what = "axis"; at = r.circle.Location(); return true; }
+        if (r.kind == Recognised::Kind::Line) { out = r.line.Direction(); what = "direction"; at = c.Value((c.FirstParameter() + c.LastParameter()) * 0.5); return true; }
         gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
         if (a.Distance(b) < 1e-9) return false;
         out = gp_Dir(gp_Vec(a, b)); what = "chord"; at = gp_Pnt((a.XYZ() + b.XYZ()) * 0.5); return true;
@@ -500,8 +559,28 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
         j["major_radius"] = surf.Torus().MajorRadius();
         j["minor_radius"] = surf.Torus().MinorRadius();
         break;
-      default:
+      default: {
+        const Recognised r = recognise(face);
+        if (r.kind == Recognised::Kind::None) break;
+        j["recognized"] = r.name();
+        j["deviation"] = r.gap;
+        if (r.kind == Recognised::Kind::Cylinder) {
+          j["axis"] = dir(r.cylinder.Axis().Direction());
+          j["axis_origin"] = pnt(r.cylinder.Location());
+          j["radius"] = r.cylinder.Radius();
+          j["diameter"] = 2 * r.cylinder.Radius();
+        } else if (r.kind == Recognised::Kind::Sphere) {
+          j["center"] = pnt(r.sphere.Location());
+          j["radius"] = r.sphere.Radius();
+          j["diameter"] = 2 * r.sphere.Radius();
+        } else {
+          gp_Dir nrm = r.plane.Axis().Direction();
+          if (reversed) nrm.Reverse();
+          j["normal"] = dir(nrm);
+          j["origin"] = pnt(r.plane.Location());
+        }
         break;
+      }
     }
     // Adjacent faces and bounding edges, by ordinal in the prototype.
     TopoDS_Shape proto_face = subshape(proto, Ref::Kind::Face, ref.index);
@@ -546,7 +625,20 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
         j["major_radius"] = c.Ellipse().MajorRadius();
         j["minor_radius"] = c.Ellipse().MinorRadius();
         break;
-      default: break;
+      default: {
+        const Recognised r = recognise(edge);
+        if (r.kind == Recognised::Kind::None) break;
+        j["recognized"] = r.name();
+        j["deviation"] = r.gap;
+        if (r.kind == Recognised::Kind::Line) j["direction"] = dir(r.line.Direction());
+        else {
+          j["center"] = pnt(r.circle.Location());
+          j["axis"] = dir(r.circle.Axis().Direction());
+          j["radius"] = r.circle.Radius();
+          j["diameter"] = 2 * r.circle.Radius();
+        }
+        break;
+      }
     }
     TopoDS_Shape proto_edge = subshape(proto, Ref::Kind::Edge, ref.index);
     TopTools_IndexedDataMapOfShapeListOfShape edge_faces;
@@ -1120,7 +1212,10 @@ json measure_radius(const Document& doc, const Scene& scene, const Ref& a) {
     return result;
   }
   json info = inspect_ref(doc, scene, a);
-  if (!info.contains("radius")) throw Error("reference has no radius (need a cylindrical/spherical face or circular edge): " + a.str());
+  if (!info.contains("radius")) {
+    const std::string what = info.value("surface", info.value("curve", std::string()));
+    throw Error("reference has no radius (need a cylindrical/spherical face or circular edge" + (what.empty() ? std::string() : ", not a " + what + " " + info.value("type", std::string("entity"))) + "): " + a.str());
+  }
   json j;
   j["kind"] = "radius";
   j["refs"] = {a.str()};
@@ -1129,22 +1224,24 @@ json measure_radius(const Document& doc, const Scene& scene, const Ref& a) {
   j["unit"] = "mm";
   if (info.contains("center")) j["center"] = info["center"];
   if (info.contains("axis")) j["axis"] = info["axis"];
-  // Radius endpoints on the analytic geometry, including a cylinder's axis rather than
+  for (const char* key : {"recognized", "deviation"})
+    if (info.contains(key)) j[key] = info[key];
+  // Radius endpoints on the analytic geometry (recognised for a free-form one), including a cylinder's axis rather than
   // the surface's centre of mass (which is off-axis for a trimmed cylindrical face).
   const TopoDS_Shape shape = ref_shape(doc, scene, a);
   gp_Pnt center, rim;
   if (a.kind == Ref::Kind::Edge) {
     BRepAdaptor_Curve curve(TopoDS::Edge(shape));
-    center = curve.Circle().Location();
+    center = json_pnt(info["center"]);
     rim = curve.Value((curve.FirstParameter() + curve.LastParameter()) * 0.5);
   } else {
     BRepAdaptor_Surface surface(TopoDS::Face(shape));
     rim = surface.Value((surface.FirstUParameter() + surface.LastUParameter()) * 0.5,
                         (surface.FirstVParameter() + surface.LastVParameter()) * 0.5);
-    if (surface.GetType() == GeomAbs_Cylinder) {
-      const gp_Ax1 axis = surface.Cylinder().Axis();
+    if (info.contains("axis_origin")) {
+      const gp_Ax1 axis(json_pnt(info["axis_origin"]), gp_Dir(info["axis"][0].get<double>(), info["axis"][1].get<double>(), info["axis"][2].get<double>()));
       center = axis.Location().Translated(gp_Vec(axis.Direction()) * gp_Vec(axis.Location(), rim).Dot(gp_Vec(axis.Direction())));
-    } else center = surface.Sphere().Location();
+    } else center = json_pnt(info["center"]);
   }
   j["point_a"] = pnt(center);
   j["point_b"] = pnt(rim);

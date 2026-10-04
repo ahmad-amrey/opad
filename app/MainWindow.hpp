@@ -212,6 +212,7 @@ class MainWindow : public QMainWindow {
   std::vector<std::pair<bool, opad::Vec3>> m_toolPoints;  // where each pick was clicked (false: picked some other way)
   int m_toolRun = 0;  // bumps whenever the picks change: a measure result for an older run is dropped
   QString m_toolHover;
+  QString m_toolError;  // why the last pick could not be measured, shown in the tool panel until the next pick (UI-50)
   PromptBar* m_prompt = nullptr;
   ToolStepsPanel* m_toolSteps = nullptr;
   ToolPanel* m_toolPanel = nullptr;

@@ -52,6 +52,7 @@ class ToolStepsPanel : public QWidget {
   explicit ToolStepsPanel(QWidget* parent = nullptr);
   void setSteps(const QList<ToolStep>& steps, const QString& hover);  // hover: candidate under the mouse, shown in the waiting row
   void setSummary(const QString& title, const QString& subtitle, const QString& state);
+  void setError(const QString& text);  // why the last pick could not be measured (UI-50); empty: none
   void setResult(const QList<QPair<QString, QString>>& rows);  // empty: nothing to show yet
   void setFooter(bool visible, bool canPin);
   void setComponentsState(bool visible, bool checked);
@@ -70,7 +71,7 @@ class ToolStepsPanel : public QWidget {
  private:
   void sizeResults(int width);
   QVBoxLayout* m_stepRows;
-  QLabel *m_title, *m_subtitle, *m_state;
+  QLabel *m_title, *m_subtitle, *m_state, *m_error;
   QTreeWidget* m_grid = nullptr;
   PanelFooter* m_footer;
   QCheckBox* m_components;

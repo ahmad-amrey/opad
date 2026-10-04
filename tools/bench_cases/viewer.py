@@ -164,4 +164,8 @@ CASES = [
     # saved, kept off the named views, in 2D only along its plane, reset in one step), the turn buttons twisting in 2D.
     # <prefix>.zoom-band.png.
     ("navigate", colour_boxes, {"OPAD_BENCH_NAVIGATE": "{prefix}"}),
+    # The measuring tools (UI-50): a rod written as B-splines reads its radius (recognised as a cylinder) in the Radius tool,
+    # a B-spline box face is explained in the panel and its pick taken back, the next pick clears it.
+    # <prefix>.radius.png, <prefix>.radius-error.png.
+    ("measure", "empty", {"OPAD_BENCH_MEASURE": "{prefix}"}),
 ]

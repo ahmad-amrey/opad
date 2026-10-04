@@ -34,5 +34,15 @@
  "reset Home": "إعادة تعيين المنظر الرئيسي",
  "set Home": "تعيين المنظر الرئيسي",
  "Home view": "المنظر الرئيسي",
- "Animate view changes": "تحريك تغييرات المنظر"
+ "Animate view changes": "تحريك تغييرات المنظر",
+ "%1 cannot be measured: %2": "تعذّر قياس %1: %2",
+ "That pick": "هذا الاختيار",
+ "Radius from the center or cylinder axis to the surface. The surface is free-form (a B-spline) and is measured as the %1 it matches.": "نصف القطر من المركز أو محور الأسطوانة إلى السطح. السطح حرّ الشكل (B-spline) ويُقاس على أنه %1 المطابق له.",
+ "Recognised as": "مُتعرَّف عليه على أنه",
+ "%1, within %2": "%1، ضمن %2",
+ "cylinder": "أسطوانة",
+ "sphere": "كرة",
+ "circle": "دائرة",
+ "plane": "مستوى",
+ "line": "خط"
 }

@@ -125,6 +125,7 @@ void MainWindow::startTool(const QString& id) {
   m_toolPicks.clear();
   m_toolPoints.clear();
   m_toolHover.clear();
+  m_toolError.clear();
   ++m_toolRun;
   // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face.
   const Viewport::SelFilter f = m_viewport->selectionFilter();
@@ -149,6 +150,7 @@ void MainWindow::startTool(const QString& id) {
 void MainWindow::cancelTool() {
   if (m_tool.id.isEmpty()) return;
   m_tool = Tool();  // first: hiding the panel below reports back here
+  m_toolError.clear();
   ++m_toolRun;
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
   m_toolPicks.clear();
@@ -186,6 +188,7 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
   } else {
     m_toolPoints.resize(picks.size());
   }
+  if (picks.size() > m_toolPicks.size()) m_toolError.clear();  // a new pick: the last one's error is over (a step back keeps it)
   m_toolPicks = picks;
   ++m_toolRun;
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();  // a superseded measure must stop computing, not just be ignored
@@ -232,9 +235,14 @@ void MainWindow::runToolMeasure() {
   }, [this, run, result](bool ok, const QString& error) {
     if (run == m_toolRun) m_measureJob = nullptr;
     if (run != m_toolRun || m_tool.id.isEmpty()) return;  // the picks moved on
-    if (!ok) {
-      statusBar()->showMessage(i18n::t(error), 6000);
-      return m_viewport->deselectLast();  // that pick does not work for this tool: ask for it again
+    if (!ok) {  // that pick does not work for this tool: said in the panel (UI-50), and the pick is asked for again
+      QString why = error;
+      for (const auto& pick : m_toolPicks)  // the core names the reference by its id: the panel names the pick
+        if (why.endsWith(": " + QString::fromStdString(pick.str()))) why.chop(static_cast<int>(pick.str().size()) + 2);
+      m_toolError = tr("%1 cannot be measured: %2").arg(m_toolPicks.empty() ? tr("That pick") : refLabel(m_toolPicks.back()), i18n::t(why));
+      statusBar()->showMessage(m_toolError, 6000);
+      m_viewport->deselectLast();
+      return refreshToolUi();
     }
     m_lastMeasure = *result;
     m_pinAction->setEnabled(!m_doc->browse);
@@ -264,10 +272,13 @@ void MainWindow::refreshToolUi() {
     if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
     else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
     else if (m_tool.id == "angle") explanation = tr("Directions compared at a common origin. Planar faces use their normals; curved faces use their axes.");
+    else if (m_tool.id == "radius" && m_lastMeasure.contains("recognized"))
+      explanation = tr("Radius from the center or cylinder axis to the surface. The surface is free-form (a B-spline) and is measured as the %1 it matches.").arg(i18n::t(QString::fromStdString(m_lastMeasure["recognized"].get<std::string>())));
     else if (m_tool.id == "radius") explanation = tr("Radius from the center or cylinder axis to the surface.");
     else explanation = tr("Bounding box aligned with the world X, Y and Z axes.");
   }
   m_toolSteps->setSummary(m_tool.title, explanation, done && !m_doc->browse ? tr("unpinned") : QString());
+  m_toolSteps->setError(m_toolError);
   QStringList anchorLabels;
   int anchorIndex = 0;
   if (done && m_lastMeasure.contains("anchors")) {
@@ -307,6 +318,8 @@ void MainWindow::refreshToolUi() {
       }
     if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), units::format(units::Kind::Angle, r["supplement"].get<double>()));
     if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), units::format(units::Kind::Length, r["diameter"].get<double>()));
+    if (r.contains("recognized"))  // a B-spline cylinder or circle (UI-50): what it was taken for, and how closely
+      rows << qMakePair(tr("Recognised as"), tr("%1, within %2").arg(i18n::t(QString::fromStdString(r["recognized"].get<std::string>())), units::format(units::Kind::Length, r.value("deviation", 0.0), 4)));
     for (const char* k : {"size", "min", "max"})
       if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), units::vector(units::Kind::Length, r[k].get<std::array<double, 3>>()));
     if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
