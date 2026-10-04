@@ -11,6 +11,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QScopedValueRollback>
 #include <QStatusBar>
 #include <QToolBar>
 
@@ -163,8 +164,10 @@ void MainWindow::followDrawing(bool drawing) {
   if (drawing) {
     if (m_workspaceId == "drafting" || !m_workspaceIds.contains("drafting") || (m_design && m_design->sketchActive())) return;
     m_workspaceBeforeDrafting = m_workspaceId;
+    QScopedValueRollback<bool> automatic(m_automaticSwitch, true);  // the next start opens where the user was
     setWorkspace("drafting");
   } else if (m_workspaceId == "drafting" && !m_workspaceBeforeDrafting.isEmpty()) {
+    QScopedValueRollback<bool> automatic(m_automaticSwitch, true);
     setWorkspace(std::exchange(m_workspaceBeforeDrafting, QString()));
   }
 }
@@ -273,17 +276,21 @@ void MainWindow::buildRibbon() {
     // A sketch is open: its tab stays until it is finished, in Design (or in Drafting, for one drawn there).
     if (const QString sketchSpace = m_sketchTab.section('.', 0, 0); !sketchSpace.isEmpty() && id != sketchSpace && m_design && m_design->sketchActive()) {
       statusBar()->showMessage(tr("Finish or cancel the sketch first"), 4000);
+      QScopedValueRollback<bool> automatic(m_automaticSwitch, true);  // back where it was: nobody chose it now
       return setWorkspace(sketchSpace);
     }
     if (id != "drafting") m_workspaceBeforeDrafting.clear();  // left by hand (or by followDrawing): the next document stays where it is
     if (std::exchange(m_workspaceId, id) != id) forEachArea([&id](AreaController* area) { area->workspaceChanged(id); });
     updateCommands();
     if (m_ribbon->workspaceAt(i).contextual) return;  // entered and left with the sketch (or an area's mode), never remembered
-    m_settings.setValue("ui/workspace", id == "design" ? 1 : 0);
-    m_settings.setValue("ui/workspaceId", id);
+    if (!m_automaticSwitch) {  // one the user chose (by hand or with a command), not the app's own (followDrawing, a sketch)
+      m_settings.setValue("ui/workspace", id == "design" ? 1 : 0);
+      m_settings.setValue("ui/workspaceId", id);
+    }
     if (QAction* a = action("workspace." + id)) a->setChecked(true);
-    if (id == "design" && m_doc->hasDocument && !(m_design && m_design->sketchActive()) && m_viewport->selectionFilter() != Viewport::SelFilter::Body)
-      action("select.bodies")->trigger();  // Design works on bodies
+    // Design works on bodies; a Design command started elsewhere keeps the faces or edges picked for it.
+    if (id == "design" && !m_commandSwitch && m_doc->hasDocument && !(m_design && m_design->sketchActive()) && m_viewport->selectionFilter() != Viewport::SelFilter::Body)
+      action("select.bodies")->trigger();
     statusBar()->showMessage(tr("%1 workspace · %2 switch workspace").arg(m_ribbon->workspaceAt(i).name, m_workspaceKeys), 4000);
   });
   // The compact Select control: the filters as icons with their keys, the rest of selecting under "Select ▾".

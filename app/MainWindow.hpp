@@ -279,6 +279,10 @@ class MainWindow : public QMainWindow {
   QString m_workspaceBeforeSketch;    // where a sketch was started from: Finish goes back there
   QString m_sketchTab;                // the open sketch's contextual tab: "design.sketch", or "drafting.sketch" in Drafting
   QString m_workspaceBeforeDrafting;  // where a viewed drawing came from into Drafting (followDrawing)
+  // How the switch being made came about. The app's own (a drawing viewed into Drafting and out again, a sketch shown in
+  // Design and back) is never saved as the workspace the next start opens in; a Design command's keeps the selection
+  // filter and the faces or edges picked for it (Fillet from Review), where a switch by hand goes back to bodies.
+  bool m_automaticSwitch = false, m_commandSwitch = false;
   QStringList m_workspaceIds;            // by RibbonBar index
   QString m_workspaceId, m_workspaceKeys;  // the one shown (as the areas were told); "Ctrl+1 / 2" for the status bar
   class QActionGroup* m_workspaceGroup = nullptr;  // the workspace.* commands: one checked

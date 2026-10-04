@@ -420,7 +420,10 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
         statusBar()->showMessage(tr("Rolled forward to the end of the timeline: the change is added there."), 6000);
       }
     }
-    if (switchesToDesign(id)) setWorkspace("design");  // E in Review: its tools and panel are Design's (UI-104)
+    if (switchesToDesign(id)) {  // E in Review: its tools and panel are Design's (UI-104), with what was picked for it
+      QScopedValueRollback<bool> command(m_commandSwitch, true);
+      setWorkspace("design");
+    }
     QScopedValueRollback<QString> running(m_runningCommand, id);
     guarded(fn);
     noteCommand(id);

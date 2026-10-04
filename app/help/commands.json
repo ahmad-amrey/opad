@@ -396,7 +396,7 @@
    "id": "workspace.design",
    "title": "Design workspace",
    "summary": "Switches the ribbon to Design: sketches, features, parameters and the assembly.",
-   "details": "Design is where parts are modelled and arranged. The selection filter returns to bodies when you switch.",
+   "details": "Design is where parts are modelled and arranged. Switching to it returns the selection filter to bodies; a Design command started in another workspace keeps the filter and the faces or edges picked for it.",
    "keywords": ["modelling", "cad", "features"]
   },
   {
@@ -1203,7 +1203,7 @@
    "id": "workspace.drafting",
    "title": "Drafting workspace",
    "summary": "Switches the ribbon to Drafting: 2D drawings (DXF, DWG, SVG) to draw on, measure, plot and turn into sketches.",
-   "details": "Viewing a drawing file comes here by itself, and the next other document goes back to where you were. Draw on drawing opens a sketch on the drawing's own plane with its Sketch tab first in Drafting. The document and its timeline stay the same; only the ribbon's tabs change.",
+   "details": "Viewing a drawing file comes here by itself, and the next other document goes back to where you were; arriving this way is not remembered for the next start. Draw on drawing started here opens a sketch on the drawing's own plane with its Sketch tab first in Drafting. The document and its timeline stay the same; only the ribbon's tabs change.",
    "keywords": ["2D", "DXF", "DWG", "drafting", "layers", "plot"]
   },
   {

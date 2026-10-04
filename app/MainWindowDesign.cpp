@@ -6,6 +6,7 @@
 #include <QMap>
 #include <QMenu>
 #include <QMessageBox>
+#include <QScopedValueRollback>
 
 #include <algorithm>
 #include <map>
@@ -228,11 +229,17 @@ void MainWindow::updateDesignState() {
     const bool drafting = m_workspaceId == "drafting" && m_ribbon->contextualTabs(int(m_workspaceIds.indexOf("drafting"))).contains("drafting.sketch");
     m_sketchTab = drafting ? "drafting.sketch" : "design.sketch";
     m_workspaceBeforeSketch = m_workspaceId;
-    if (!drafting) setWorkspace("design");
+    if (!drafting) {
+      QScopedValueRollback<bool> automatic(m_automaticSwitch, true);  // not where the next start opens
+      setWorkspace("design");
+    }
     m_ribbon->setContextualTab(m_sketchTab, true);
   } else if (!sketching && !m_sketchTab.isEmpty()) {
     m_ribbon->setContextualTab(std::exchange(m_sketchTab, QString()), false);
-    if (!m_workspaceBeforeSketch.isEmpty() && m_workspaceBeforeSketch != m_workspaceId) setWorkspace(m_workspaceBeforeSketch);
+    if (!m_workspaceBeforeSketch.isEmpty() && m_workspaceBeforeSketch != m_workspaceId) {
+      QScopedValueRollback<bool> automatic(m_automaticSwitch, true);
+      setWorkspace(m_workspaceBeforeSketch);
+    }
     m_workspaceBeforeSketch.clear();
   }
   if (m_sketchMenu) m_sketchMenu->menuAction()->setVisible(sketching);

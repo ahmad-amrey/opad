@@ -1,9 +1,11 @@
-// The workspaces' promises (UI-104): a Design command started from Review switches to Design; a sketch puts its Sketch
-// tab first in Design with Finish sketch as the primary button, keeps Design while it is open and goes back to where it
-// was started from; Interference is one command whose Keep as check stores the Interference check feature in Design; a
-// drawing file viewed comes into Drafting, where Draw on drawing (after Edit unsaved copy) opens a sketch on the drawing's
-// plane with its Sketch tab first in Drafting and Finish keeps Drafting; the next document goes back. Suppress and Roll
-// back to here act on the timeline's marker. Case in tools/bench_cases/core.py.
+// The workspaces' promises (UI-104): a Design command started from Review switches to Design, with the faces or edges picked
+// for it (Fillet on an edge picked in Review); the app's own switches (into Drafting, a sketch shown in Design) are not
+// where the next start opens; a sketch puts its Sketch tab first in Design with Finish sketch as the primary button,
+// keeps Design while it is open and goes back to where it was started from; Interference is one command whose Keep as
+// check stores the Interference check feature in Design; a drawing file viewed comes into Drafting, where Draw on drawing
+// (after Edit unsaved copy) opens a sketch on the drawing's plane with its Sketch tab first in Drafting and Finish keeps
+// Drafting; the next document goes back. Suppress and Roll back to here act on the timeline's marker.
+// Case in tools/bench_cases/core.py.
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QMenu>
@@ -24,6 +26,7 @@
 #include "PlanePicker.hpp"
 #include "SketchEditor.hpp"
 #include "TimelineWidget.hpp"
+#include "Viewport.hpp"
 #include "opad/design/drawing_sketch.hpp"
 
 namespace {
@@ -73,6 +76,8 @@ OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
   auto boxOp = std::make_shared<std::string>();
   for (const auto& op : w.m_doc->doc.ops)
     if (op.type == "feature" && boxOp->empty()) *boxOp = op.id;
+  auto edges = std::make_shared<bool>(false);  // the Edges filter applied (a sliced job)
+  auto saved = [&w] { return w.m_settings.value("ui/workspaceId").toString(); };  // where the next start opens
   auto suppressed = [&w, boxOp] { const opad::Feature* f = w.m_doc->scene.feature(*boxOp); return f && f->suppressed; };
   add({}, [=, &w](bool) {
     w.setWorkspace("review");
@@ -95,6 +100,26 @@ OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
     w.setWorkspace("review");
     w.action("view.fit")->trigger();
     require(w.workspaceId() == "review", "Fit stays in Review");
+    QObject::connect(w.m_viewport, &Viewport::filterApplied, &w, [edges] { *edges = true; }, Qt::SingleShotConnection);
+    w.action("select.edges")->trigger();  // 3
+  });
+  // Fillet from Review on an edge picked there: the switch to Design keeps the Edges filter and the pick, the panel takes it.
+  add([=] { return *edges; }, [=, &w](bool applied) {
+    opad::Ref edge;
+    edge.body = w.m_doc->scene.all_bodies().front();
+    edge.kind = opad::Ref::Kind::Edge;
+    edge.index = 0;
+    w.m_viewport->selectRefs({edge});
+    require(applied && w.workspaceId() == "review" && w.m_viewport->selection().size() == 1, "an edge picked in Review with the Edges filter");
+    w.action("design.fillet")->trigger();
+  });
+  add([=] { return design->featureActive(); }, [=, &w](bool open) {
+    const opad::json picks = open ? design->featurePanel()->picks(design->featurePanel()->activeInput()) : opad::json();
+    require(open && kind() == "fillet" && w.workspaceId() == "design" && w.m_viewport->selectionFilter() == Viewport::SelFilter::Edge && picks.is_array() && picks.size() == 1,
+            QString("Fillet from Review: in Design with the Edges filter and the edge picked in Review as its first pick: %1 %2").arg(kind(), QString::fromStdString(picks.dump())));
+    design->escape();
+    w.action("select.bodies")->trigger();
+    w.setWorkspace("review");
     w.action("design.sketch")->trigger();
   });
   add([=] { return design->pickingPlane(); }, [=, &w](bool picking) {
@@ -128,6 +153,7 @@ OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
   add([=] { return design->pickingPlane(); }, [=](bool) { pickXY(); });
   add([=] { return design->sketchActive(); }, [=, &w](bool sketching) {
     require(sketching && w.workspaceId() == "design" && w.m_ribbon->tabIds().value(0) == "design.sketch", "a sketch started in Review shows in Design");
+    require(saved() == "review", "that switch is the app's own: the next start still opens in Review: " + saved());
     w.action("sketch.cancel")->trigger();
   });
   add([=] { return !design->sketchActive(); }, [=, &w](bool left) {
@@ -151,6 +177,7 @@ OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
   add([=, &w] { return w.m_doc->browse && !w.m_doc->loading && w.viewingDrawing(); }, [=, &w](bool viewing) {
     require(viewing && w.workspaceId() == "drafting" && w.m_ribbon->tabIds() == draftingTabs,
             "a drawing file viewed comes into Drafting: " + w.workspaceId() + " " + w.m_ribbon->tabIds().join(' '));
+    require(saved() == "review", "moved there by the app: the next start opens in Review, not Drafting: " + saved());
     const CommandInfo* draw = w.m_commands.find("design.drawOnDrawing");
     require(draw && draw->editsDocument && draw->workspaces == QStringList{"drafting"} && w.action("design.drawOnDrawing")->isEnabled(),
             "Draw on drawing in Drafting, offered on the viewed file (it asks for an editable copy first)");
@@ -173,7 +200,8 @@ OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
             "Draw on drawing: an editable copy, a sketch in Drafting with its Sketch tab first and current: " + w.workspaceId() + " " + tabs.join(' '));
     require(sketching && same(design->sketch()->frame(), drawingFrame()), "the sketch lies on the drawing's own plane and origin");
     w.setWorkspace("review");
-    require(w.workspaceId() == "drafting" && w.m_ribbon->tabIds().value(0) == "drafting.sketch", "while it is open another workspace is refused");
+    require(w.workspaceId() == "drafting" && w.m_ribbon->tabIds().value(0) == "drafting.sketch" && saved() == "review",
+            "while it is open another workspace is refused (and Drafting, entered by the app, is still not saved): " + saved());
     SketchEditor* sketch = design->sketch();
     sketch->setTool("line");
     sketch->enter("0,0");
@@ -200,7 +228,7 @@ OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
     w.openPath(box);
   });
   add([=, &w] { return !w.m_doc->browse && !w.m_doc->loading && w.m_doc->path() == box; }, [=, &w](bool back) {
-    require(back && w.workspaceId() == "review", "the next document goes back to Review: " + w.workspaceId());
+    require(back && w.workspaceId() == "review" && saved() == "review", "the next document goes back to Review: " + w.workspaceId() + ", saved " + saved());
   });
   runSteps(&w, steps, 0, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   return true;

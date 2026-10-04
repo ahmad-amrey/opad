@@ -276,12 +276,13 @@ Workspace shortcuts are Ctrl+1 Review, Ctrl+2 Design, Ctrl+3 Drawings and Ctrl+4
 views use Ctrl+Alt+1 through 7. Review looks, measures, marks up, compares and shares (View, Inspect, Markup, Compare,
 Share); Design models (Solid, Assemble, Construct, Inspect, Insert, View), and a sketch adds its Sketch tab in front of
 them until it is finished; a viewed DXF, DWG or SVG file comes into Drafting (Draw on drawing: a sketch on the drawing's
-plane with the Sketch tab first in Drafting; Drawing to sketch, layers, measuring, plot). A Design command started from
-Review (E for Extrude) switches to Design. Solid > History has Edit feature with Suppress and Roll back to here under its
-arrow (for the marker selected on the timeline); Construct has Origin planes and axes; the View tabs have Named views,
-Rendering and Panels dropdowns. The menu bar: File, Edit, View, Insert (Import, Link as asset, KiCad, canvases and their
-submenus), Inspect (measuring, notes, Compare), Design, Sketch (while sketching), Version, Tools (AI integration, Agent
-activity, File types), Help.
+plane with the Sketch tab first in Drafting; Drawing to sketch, layers, measuring, plot), and coming there by itself is
+not remembered for the next start. A Design command started from Review (E for Extrude, Fillet on edges picked there)
+switches to Design with those picks. Solid > History has Edit feature with Suppress and Roll back to here under its
+arrow (for the marker selected on the timeline); Construct has Origin planes and axes (shown over a model, picked only
+in New sketch's plane step); the View tabs have Named views, Rendering and Panels dropdowns. The menu bar: File, Edit,
+View, Insert (Import, Link as asset, KiCad, canvases and their submenus), Inspect (measuring, notes, Compare), Design,
+Sketch (while sketching), Version, Tools (AI integration, Agent activity, File types), Help.
 Annotations are created and edited inline, with type selection and comment threads. Set your display
 name in Settings to identify new annotations, comments and design operations.
 Drag a note's title to move its card without changing the document; the card stays attached to its
