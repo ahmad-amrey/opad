@@ -10,7 +10,8 @@ class CommandPreview;
 
 // ---------------------------------------------------------------- command search (F30)
 // Rows: icon, name (the letters found in bold), the help's one-line summary (for a command not available now, what it
-// needs, in amber), its group ("Recent" for a command used lately) and its key. With nothing typed the recent commands
+// needs, in amber), its group ("Recent" for a command used lately) and its key now (keys::). A query that is a key
+// ("ctrl+alt+f") finds the command that has it. With nothing typed the recent commands
 // come first; Enter on a command not available now keeps the palette open and says why. Beside the list, the current
 // command's card and clip (UI-107).
 class CommandPalette : public QDialog {

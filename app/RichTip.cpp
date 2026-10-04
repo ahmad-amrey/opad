@@ -3,6 +3,7 @@
 #include "CommandHelp.hpp"
 #include "HelpClip.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 
 #include <QAction>
@@ -29,18 +30,10 @@ bool g_menus = false;
 std::function<void(const QString&)> g_guide;
 constexpr int kPad = 12, kMinText = 200, kMaxText = 336, kShowMs = 450, kGraceMs = 300, kGrowMs = 120;
 
-// "Ctrl+Shift+U" -> Ctrl, Shift, U (a "+" key stays one cap); the first chord only.
-QStringList keyParts(const QKeySequence& key) {
-  if (key.isEmpty()) return {};
-  QString text = QKeySequence(key[0]).toString(QKeySequence::NativeText);
-  QStringList out;
-  while (!text.isEmpty()) {
-    const qsizetype plus = text.indexOf('+', 1);
-    if (plus < 0) { out << text; break; }
-    out << text.left(plus);
-    text = text.mid(plus + 1);
-  }
-  return out;
+// The key that expands a card and opens the guide from it: Help for this tool's, whatever the user made it (one chord).
+bool helpKey(const QKeyEvent* e) {
+  const QKeySequence help = keys::binding(QStringLiteral("help.current"));
+  return help.count() == 1 && QKeySequence(e->keyCombination()) == help;
 }
 
 QFont titleFont() { return theme::ui(13, QFont::Medium); }
@@ -64,6 +57,7 @@ RichTip::RichTip(QWidget* owner) : QWidget(owner, Qt::ToolTip | Qt::FramelessWin
   connect(&m_expand, &QTimer::timeout, this, [this] { if (m_state == State::Compact) present(State::Expanded); });
   connect(&m_hide, &QTimer::timeout, this, &RichTip::hideTip);
   connect(theme::notifier(), &theme::Notifier::changed, this, [this] { if (m_state != State::Hidden) { relayout(m_state); place(false); update(); } });
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { if (m_state != State::Hidden) { relayout(m_state); place(false); update(); } });  // its key, the hint
   qApp->installEventFilter(this);
 }
 
@@ -217,25 +211,30 @@ void RichTip::relayout(State state) {
   QString label = a ? a->text() : m_id;
   label.remove('&').remove(QString::fromUtf8("…"));
   m_title = h && !h->title.isEmpty() ? h->title : label;
-  m_summary = h ? h->summary : QString();
-  const QString details = h ? h->details : QString();
+  m_summary = h ? help::expand(h->summary) : QString();
+  const QString details = h ? help::expand(h->details) : QString();
   const bool enabled = (!m_target || m_target->isEnabled()) && (!a || a->isEnabled());
   m_requirement = enabled ? QString() : h && !h->requirement.isEmpty() ? help::requirement(*h) : tr("Not available right now.");
-  m_keys = a ? keyParts(a->shortcut()) : QStringList();
+  m_keys = keys::caps(keys::binding(a));  // the user's key, also while a sketch holds it
   m_icon = a && icons::has(a->data().toString()) ? a->data().toString() : QString();
   const bool expanded = state == State::Expanded;
   m_details = expanded ? details : QString();
   const bool clip = g_clips && h && (!g_hasClip || g_hasClip(h->clip));
   m_expandable = !details.isEmpty() || clip;
-  m_hint = !expanded && m_expandable ? tr("Shift or F1 for more") : g_guide ? tr("F1 for the tool guide") : QString();
+  // The expand key is Help for this tool's, as the user bound it; without one Shift alone expands and no key opens the guide.
+  const QString expandKey = keys::text(QStringLiteral("help.current"));
+  m_hint = !expanded && m_expandable ? (expandKey.isEmpty() ? tr("Shift for more") : tr("Shift or %1 for more").arg(expandKey))
+           : g_guide && !expandKey.isEmpty() ? tr("%1 for the tool guide").arg(expandKey) : QString();
   if (!expanded) delete m_clip;
   else if (!m_clip && clip && (m_clip = g_clips(h->clip, this)) && m_clip->parentWidget() != this) m_clip->setParent(this);
 
   // One width for both states (it never jumps sideways when the card grows): what the longest text needs, clamped.
   const QFontMetrics title(titleFont()), body(bodyFont()), key(theme::mono(11));
   m_keyRects.clear();
+  // A multi-chord key's separator is plain text between the caps.
+  auto capWidth = [&key](const QString& k) { return k == keys::kThen ? key.horizontalAdvance(k) : key.horizontalAdvance(k) + 10; };
   int keysWidth = 0;
-  for (const QString& k : m_keys) keysWidth += key.horizontalAdvance(k) + 10 + (keysWidth ? 4 : 0);
+  for (const QString& k : m_keys) keysWidth += capWidth(k) + (keysWidth ? 4 : 0);
   const int iconWidth = m_icon.isEmpty() ? 0 : 28;
   int natural = iconWidth + title.horizontalAdvance(m_title) + (keysWidth ? 16 + keysWidth : 0);
   for (const QString& text : {m_summary, details}) natural = std::max(natural, body.horizontalAdvance(text));
@@ -249,7 +248,7 @@ void RichTip::relayout(State state) {
   m_titleRect = QRect(x + iconWidth, y, titleWidth, row);
   int kx = x + w - keysWidth;
   for (const QString& k : m_keys) {
-    const int kw = key.horizontalAdvance(k) + 10;
+    const int kw = capWidth(k);
     m_keyRects << QRect(kx, y + (row - 18) / 2, kw, 18);
     kx += kw + 4;
   }
@@ -335,11 +334,14 @@ void RichTip::paintEvent(QPaintEvent*) {
   p.setPen(t.fg);
   p.drawText(at(m_titleRect), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, m_title);
   p.setFont(theme::mono(11));
-  for (int i = 0; i < m_keyRects.size(); ++i) {
-    const QRect r = at(m_keyRects[i]);
-    p.setPen(QPen(t.line, 1));
-    p.setBrush(t.bg4);
-    p.drawRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+  const QList<QRect> caps = keyRects();
+  for (int i = 0; i < caps.size(); ++i) {
+    const QRect r = caps[i];
+    if (m_keys[i] != keys::kThen) {
+      p.setPen(QPen(t.line, 1));
+      p.setBrush(t.bg4);
+      p.drawRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+    }
     p.setPen(t.fg2);
     p.drawText(r, Qt::AlignCenter, m_keys[i]);
   }
@@ -373,6 +375,17 @@ void RichTip::paintEvent(QPaintEvent*) {
     p.setPen(t.fg3);
     p.drawText(at(m_hintRect), text, m_hint);
   }
+}
+
+// The caps as painted: left to right in every language ("Ctrl" before "F"); right to left mirrors the group, not each cap.
+QList<QRect> RichTip::keyRects() const {
+  if (m_keyRects.isEmpty()) return {};
+  QRect group;
+  for (const QRect& r : m_keyRects) group |= r;
+  const int dx = QStyle::visualRect(layoutDirection(), rect(), group).left() - group.left();
+  QList<QRect> out;
+  for (const QRect& r : m_keyRects) out << r.translated(dx, 0);
+  return out;
 }
 
 bool RichTip::eventFilter(QObject* o, QEvent* e) {
@@ -423,19 +436,21 @@ bool RichTip::eventFilter(QObject* o, QEvent* e) {
     case QEvent::WindowDeactivate:
       if (m_target && o == m_target->window()) hideTip();
       return false;
-    case QEvent::ShortcutOverride:  // F1 over a command: its card, not the window's F1 shortcut
-      if (static_cast<QKeyEvent*>(e)->key() == Qt::Key_F1 && hovering() && mode() == 2) { e->accept(); return true; }
+    case QEvent::ShortcutOverride:  // Help for this tool's key over a command: its card, not the window's shortcut
+      if (helpKey(static_cast<QKeyEvent*>(e)) && hovering() && mode() == 2) { e->accept(); return true; }
       return false;
     case QEvent::KeyPress: {
       if (!hovering()) return false;
       const int key = static_cast<QKeyEvent*>(e)->key();
-      if (key == Qt::Key_Shift || key == Qt::Key_F1) {
-        if (key == Qt::Key_F1 && g_guide && mode() == 2 && (m_state == State::Expanded || (m_state == State::Compact && !m_expandable))) {
+      const bool help = helpKey(static_cast<QKeyEvent*>(e));
+      if (key == Qt::Key_Shift || help) {
+        if (help) e->accept();  // taken here: not offered to the parents too (the second delivery would open the guide)
+        if (help && g_guide && mode() == 2 && (m_state == State::Expanded || (m_state == State::Compact && !m_expandable))) {
           openGuide();
           return true;
         }
         if (m_state != State::Expanded && mode() == 2) present(State::Expanded);
-        return key == Qt::Key_F1;
+        return help;
       }
       if (key == Qt::Key_Control || key == Qt::Key_Alt || key == Qt::Key_Meta || static_cast<QKeyEvent*>(e)->isAutoRepeat()) return false;
       dismiss();

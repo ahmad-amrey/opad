@@ -10,7 +10,8 @@ metadata. A language is <code>.json plus the area fragments in <code>/, merged i
 handed straight to a label, tooltip, status or toast as QString("...") instead of tr("...") fail the check too.
 Strings looked up at run time (property names, error messages) are not tr() literals, so this script does not
 know them: keep them in a file by hand. Exit code 1 when something is missing, when a key appears twice (in one
-file or across the files of a language) with different translations, or when a fragment folder has no language.
+file or across the files of a language) with different translations, when a translation does not keep the key tokens
+of its source ({key:id}, {press:id}, {fixed:name}: help::expand), or when a fragment folder has no language.
 """
 import glob
 import json
@@ -96,9 +97,40 @@ def help_missing():
     return bad
 
 
+TOKEN = re.compile(r'\{(?:key|press|fixed):[A-Za-z0-9_.]+\}')
+
+
+def tokens(text):
+    """The key tokens of a help text ({key:view.fit}, {press:tools.commands}, {fixed:enter}; help::expand), sorted."""
+    return sorted(TOKEN.findall(text or ''))
+
+
+def token_parity():
+    """A translation keeps the key tokens of its source verbatim (help::expand puts the user's keys in after the lookup):
+    every string of each language (app/i18n/<code>.json and fragments) and every help record field."""
+    bad = []
+    for path in sorted(glob.glob(os.path.join(ROOT, 'app', 'i18n', '*.json'))):
+        for key, value in language(path)[1].items():
+            if value and tokens(key) != tokens(value):
+                bad.append('%s: %s has %s, the source %s' % (os.path.basename(path), json.dumps(key, ensure_ascii=False)[:70], tokens(value), tokens(key)))
+    english = json.load(open(os.path.join(ROOT, 'app', 'help', 'commands.json'), encoding='utf-8'))['commands']
+    for path in sorted(glob.glob(os.path.join(ROOT, 'app', 'help', 'commands.*.json'))):
+        have = json.load(open(path, encoding='utf-8'))
+        for c in english:
+            for field in ('title', 'summary', 'details', 'requires'):
+                value = have.get(c['id'], {}).get(field)
+                if value and tokens(c.get(field)) != tokens(value):
+                    bad.append('%s: %s.%s has %s, the English %s' % (os.path.basename(path), c['id'], field, tokens(value), tokens(c.get(field))))
+    print('key tokens ({key:...}, {press:...}, {fixed:...}) changed by a translation: %d' % len(bad))
+    for b in bad:
+        print('  ' + b)
+    return len(bad)
+
+
 def clip_texts():
     """The translatable English texts of app/help/clips.json, templates expanded as app/HelpClip.cpp does: step
-    captions, label and chip texts, card titles, buttons, row labels and word-only row values."""
+    captions and their keyless captionNoKey, label and chip texts, card titles, buttons, row labels and word-only
+    row values."""
     data = json.load(open(os.path.join(ROOT, 'app', 'help', 'clips.json'), encoding='utf-8'))
     templates = data.get('templates', {})
     name = re.compile(r'\$([A-Za-z_][A-Za-z0-9_]*)')
@@ -137,7 +169,7 @@ def clip_texts():
             base = sub(template, bound(template, clip.get('args')))
             clip = dict(base, **{k: v for k, v in clip.items() if k not in ('items', 'template', 'args')},
                         items=base.get('items', []) + clip.get('items', []))
-        texts = [s.get('caption') for s in clip.get('steps', [])]
+        texts = [s.get(field) for s in clip.get('steps', []) for field in ('caption', 'captionNoKey')]
         for item in expand(clip.get('items', [])):
             for props in [item] + [k[1] for k in item.get('keys', []) if isinstance(k, list) and len(k) == 2 and isinstance(k[1], dict)]:
                 if item.get('el') in ('label', 'chip'):
@@ -193,6 +225,7 @@ def main():
         bad += len(missing) + len(clashes)
     bad += help_missing()
     bad += clips_missing()
+    bad += token_parity()
     bad += untranslated()
     return 1 if bad else 0
 

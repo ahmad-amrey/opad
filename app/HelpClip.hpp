@@ -6,7 +6,8 @@
 // easing; templates ("use") share whole families (constraints, picks, handle drags, typed values). Everything is
 // painted with QPainter from the theme tokens on every frame: no media files, all artwork original, sharp at any
 // scale. The scene is model space and never mirrored; the caption bar, cards, chips and key caps follow the layout
-// direction, and numbers keep their order (LRE..PDF). ClipView plays one clip: a 30 fps timer only while visible, the
+// direction, and numbers keep their order (LRE..PDF). Key caps name a command ({"el": "key", "command": "view.fit"}) or a
+// fixed key ("fixed": "enter") and show the key the user has now; texts may carry key tokens ({key:id}, help::expand). ClipView plays one clip: a 30 fps timer only while visible, the
 // whole clip or one step's segment (a tool panel's waiting step), the hold-and-fade loop, and the still frame with
 // the clicks numbered when motion is reduced (ui/tipAnimate, by default the system's animation setting).
 #include <QElapsedTimer>
@@ -23,7 +24,17 @@ struct Tokens;
 namespace clips {
 struct Step {
   double from = 0, to = 0;
-  QString caption;  // English; translated when painted
+  QString caption;       // English; translated when painted, its key tokens expanded (help::expand)
+  QString captionNoKey;  // optional: shown instead when a {key}/{press} in the caption names a command without a key
+};
+// A step's caption as shown now: translated, the user's keys put in (captionNoKey when one has none).
+QString caption(const Step& step);
+// A key element ({"el": "key", ...}): the command whose key it shows, a fixed key ("enter", keys::fixedNames), or
+// literal caps (kept until every clip names its command; tests list them).
+struct KeyRef {
+  QString command, fixed;
+  QStringList caps;
+  double from = -1e9, to = 1e9;  // when it is on screen
 };
 struct Options {
   const Tokens* tokens = nullptr;  // theme::current() when null (contact sheets render light and dark)
@@ -36,12 +47,18 @@ struct Options {
 void load(const QString& path = QString());
 QStringList ids();
 bool has(const QString& id);
-QStringList problems();  // what the last load found wrong: unknown element, property, colour, template or parameter
+// What the last load found wrong: unknown element, property, colour, template, parameter or fixed key; with a command
+// lookup installed (keys::setLookup), a key element for a command this build does not have.
+QStringList problems();
 double duration(const QString& id);
 double stillTime(const QString& id);
 QList<Step> steps(const QString& id);
 int stepAt(const QString& id, double t);
 QStringList texts(const QString& id);  // the translatable English texts (captions, labels, chips, cards)
+QList<KeyRef> keyRefs(const QString& id);  // its key elements, in order
+// The caps its key elements draw (at time t, or all of them for t < 0) with the keys the user has now; a command
+// without a key draws its title in a chip instead: that title alone.
+QList<QStringList> resolvedKeys(const QString& id, double t = -1);
 // The clip steps [first, last] a tool panel loops while the tool waits for its step `step` of `count` (a tool lists its
 // own steps, which need not match the clip's): the clip's "guide" entry for that step when it has one, else the clip's
 // steps shared out evenly; once every step is done (step >= count) the last one. {-1, -1}: no such clip.

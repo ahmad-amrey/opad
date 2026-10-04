@@ -16,6 +16,7 @@
 #include "CommandHelp.hpp"
 #include "HelpReference.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 
 QString opGroup(const QAction* a) {
@@ -85,7 +86,7 @@ class PaletteDelegate : public QStyledItemDelegate {
     const QString iconName = a->data().toString();
     if (!iconName.isEmpty()) p->drawPixmap(at(QRect(left, row.top() + 6, 16, 16)), icons::pixmap(iconName, sel ? t.onsel : t.fg2, 16, p->device()->devicePixelRatioF()));
     left += 24;
-    const QString sc = a->shortcut().toString(QKeySequence::NativeText);
+    const QString sc = keys::text(keys::binding(a));  // the user's key, also while a sketch holds it
     if (!sc.isEmpty()) {
       const QFontMetrics mm(theme::mono(11));
       const int w = mm.horizontalAdvance(sc) + 10;
@@ -132,7 +133,7 @@ class PaletteDelegate : public QStyledItemDelegate {
     // What it does; for a command not available now, what it needs.
     const CommandHelp* h = help::find(a->objectName());
     const bool needs = !a->isEnabled() && h && !h->requirement.isEmpty();
-    const QString note = needs ? help::requirement(*h) : h ? h->summary : QString();
+    const QString note = needs ? help::requirement(*h) : h ? help::expand(h->summary) : QString();
     if (right - left > 40 && !note.isEmpty()) {
       p->setFont(small);
       p->setPen(sel ? QColor(t.onsel.red(), t.onsel.green(), t.onsel.blue(), 190) : needs ? t.amber : t.fg3);
@@ -217,9 +218,20 @@ void CommandPalette::refill(const QString& filter) {
   const QStringList recent = palette::recent();
   auto rank = [&recent](const QAction* a) { const qsizetype i = recent.indexOf(a->objectName()); return i < 0 ? recent.size() : i; };
   QList<QPair<int, QAction*>> scored;
+  // A key typed as shown or as Qt writes it ("ctrl+alt+f"): the command that has it now comes first; with a '+' the
+  // commands whose key starts so follow ("ctrl+alt" lists them).
+  auto squeeze = [](QString s) { return s.remove(' ').toLower(); };
+  const QString typedKey = squeeze(query);
   for (QAction* a : m_actions) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
     int s = fuzzyScore(a->text().remove('&'), query, nullptr);
+    for (const QKeySequence& key : keys::bindings(a)) {
+      if (typedKey.isEmpty()) break;
+      for (const QString& written : {squeeze(keys::plain(key)), squeeze(key.toString(QKeySequence::PortableText))}) {
+        if (written == typedKey) s = std::max(s, 3 * kWordHit);
+        else if (typedKey.contains('+') && written.startsWith(typedKey)) s = std::max(s, 2 * kWordHit);
+      }
+    }
     for (const QString& keyword : a->property("commandKeywords").toStringList()) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);  // below a label match of its kind (a word hit above a scattered one)
     if (const CommandHelp* h = help::find(a->objectName())) {  // its help's keywords (the English name too), then its summary
       for (const QString& keyword : h->keywords) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);

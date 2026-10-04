@@ -6,6 +6,7 @@
 #include "HelpClip.hpp"
 #include "HelpReference.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "RichTip.hpp"
 #include "SketchPanel.hpp"
 #include "Theme.hpp"
@@ -188,7 +189,7 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     key(fit, Qt::Key_A);
     check(tip->state() == State::Hidden, "another key hides the card");
     if (translated) check(tip->layoutDirection() == (QApplication::isRightToLeft() ? Qt::RightToLeft : Qt::LeftToRight) && help::find("view.fit")->translated, "card in the UI language and direction");
-    if (translated) check(RichTip::tr("Shift or F1 for more") != QLatin1String("Shift or F1 for more"), "the card's own strings translated (app/i18n/ar/help.json)");
+    if (translated) check(RichTip::tr("Shift or %1 for more") != QLatin1String("Shift or %1 for more"), "the card's own strings translated (app/i18n/ar/help.json)");
     move(w.statusBar());
     move(home);
     key(home, Qt::Key_Shift);
@@ -649,7 +650,7 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
   });
   add(300, [=, &w] {
     QTreeWidgetItem* item = row("view.unisolate");
-    check(item && item->foreground(0).color() != theme::current().fg3 && item->text(1) == QKeySequence("Ctrl+Alt+F11").toString(QKeySequence::NativeText),
+    check(item && item->foreground(0).color() != theme::current().fg3 && item->text(1) == keys::text(QKeySequence("Ctrl+Alt+F11")),
           "left open, its row follows the command's availability and key (" + (item ? item->text(1) : QString()) + ")");
     w.action("view.unisolate")->setEnabled(false);
     w.action("view.unisolate")->setShortcut(*keyWas);

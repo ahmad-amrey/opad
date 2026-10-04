@@ -1,9 +1,10 @@
 // The help area (UI-106/107/108): every ribbon button, status-bar toggle and menu command shows its command's rich card
 // (RichTip) with the command's animated clip (ClipView). The tool, feature and sketch panels play their own guides
 // (ToolGuide), and the "?" of every tool panel opens the tool guide at its command; the command palette previews the
-// current command. The Help menu: Help for this tool (F1, at the command running now), Tool guide, Shortcuts cheat
-// sheet (Ctrl+/), Getting started, Report a problem, above the window's own entries (licences, About). An empty document
-// shows the coach card: how a design starts, with buttons for the first step.
+// current command. The Help menu: Help for this tool (F1 by default, at the command running now), Tool guide, Shortcuts
+// cheat sheet (Ctrl+/ by default), Getting started, Report a problem, above the window's own entries (licences, About).
+// An empty document shows the coach card: how a design starts, with buttons for the first step. Every key the help shows
+// is the user's key now (keys::, its lookup installed here) and follows a change in the shortcut editor.
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -29,6 +30,7 @@
 #include "HelpReference.hpp"
 #include "HelpWindows.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "Icons.hpp"
 #include "Ribbon.hpp"
 #include "RichTip.hpp"
@@ -47,14 +49,16 @@ class HelpArea : public AreaController {
   explicit HelpArea(AreaServices& services) : AreaController(services) {
     RibbonBar::setCommandButtonHook(&RichTip::attach);  // the ribbon is built after the areas are made
     RichTip::setActionLookup([&services](const QString& id) { return services.action(id); });
+    keys::setLookup([&services](const QString& id) { return services.action(id); });  // the keys help texts and clips name
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);
     RichTip::setMenuCards(true);  // every menu's command entries
-    RichTip::setGuideHook([this](const QString& id) { openReference(id); });  // F1 on an expanded card
+    RichTip::setGuideHook([this](const QString& id) { openReference(id); });  // Help for this tool's key on an expanded card
     ToolPanel::setHelpHook([this](ToolPanel* panel) { openReference(panelCommand(panel)); });  // the panels are built later
   }
   ~HelpArea() override {
     RibbonBar::setCommandButtonHook({});
     RichTip::setActionLookup({});
+    keys::setLookup({});
     RichTip::setClipFactory({});
     RichTip::setMenuCards(false);
     RichTip::setGuideHook({});
@@ -62,12 +66,12 @@ class HelpArea : public AreaController {
   }
 
   void buildActions() override {
-    CommandInfo current;  // over a ribbon button or a menu entry F1 expands that command's card instead (RichTip)
+    CommandInfo current;  // over a ribbon button or a menu entry its key expands that command's card instead (RichTip)
     current.id = "help.current";
     current.label = tr("Help for this tool");
     current.icon = "help";
     current.key = QKeySequence("F1");
-    current.keywords = {"F1", "how to", "current tool"};
+    current.keywords = {"how to", "current tool"};  // its key is found as the key it has now (help::matches)
     services().addCommand(current, [this] { openReference(currentCommand()); });
     CommandInfo guide;
     guide.id = "help.reference";
@@ -88,6 +92,11 @@ class HelpArea : public AreaController {
     start.icon = "start";
     start.keywords = {"tutorial", "learn", "first steps", "basics"};
     services().addCommand(start, [this] { openGettingStarted(0); });
+    // The cheat sheet lists the keys as they are: a change in the shortcut editor shows at once.
+    connect(keys::notifier(), &keys::Notifier::changed, this, [this] {
+      if (auto* sheet = services().window()->findChild<ShortcutSheet*>(); sheet && sheet->isVisible())
+        sheet->setGroups(help::keyGroups(services().commands().actions(), services().selection().sketching, preset()));
+    });
     CommandInfo report;
     report.id = "help.report";
     report.label = tr("Report a problem…");

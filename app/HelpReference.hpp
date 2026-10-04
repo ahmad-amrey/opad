@@ -1,6 +1,6 @@
 #pragma once
 // Help > Tool guide (UI-107/108, design notes B §4 "where clips appear" 3 and 4). Every command's help, searched
-// by title, keywords or summary and listed by area; the selected command shows its card: icon, title, key caps,
+// by title, keywords, summary or the key it has now and listed by area; the selected command shows its card: icon, title, key caps,
 // summary, the animated clip with its steps (a click on a step loops it), details, and in amber what it needs when it
 // is not available now. CommandPreview is that card alone; the command palette shows it, compact, beside its list.
 #include <QPointer>
@@ -16,6 +16,7 @@ class QLineEdit;
 class QListWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
+namespace clips { struct Step; }
 
 class CommandPreview : public QWidget {
   Q_OBJECT
@@ -28,14 +29,17 @@ class CommandPreview : public QWidget {
   ClipView* clip() const { return m_clip; }  // hidden for a command without a clip
   QListWidget* steps() const { return m_steps; }  // Full: "All steps" then the clip's steps; a click loops one
   bool showsRequirement() const;
+  QStringList keyCaps() const;  // the key caps shown, left to right: the command's key now
 
  private:
   void refresh();
+  static QString stepText(int i, const clips::Step& step);
   Size m_size;
   QString m_id;
   QPointer<QAction> m_action;
   QMetaObject::Connection m_changed;
   QLabel *m_icon, *m_title, *m_summary, *m_details, *m_requirement;
+  QWidget* m_keyBox;  // left to right in every language
   QHBoxLayout* m_keys;
   ClipView* m_clip;
   QListWidget* m_steps = nullptr;

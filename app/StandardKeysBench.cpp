@@ -3,6 +3,7 @@
 #include "MainWindow.hpp"
 #include "BenchRegistry.hpp"
 #include "HelpWindows.hpp"
+#include "KeyText.hpp"
 #include "ShortcutEditor.hpp"
 
 #include <QApplication>
@@ -75,13 +76,13 @@ OPAD_BENCH(OPAD_BENCH_STANDARDKEYS, standardkeys) {
     const QStringList sheet = [&w] {
       QStringList rows;
       for (const auto& g : help::keyGroups(w.m_actions, false, "fusion"))
-        for (const auto& r : g.rows) rows << r.keys;
+        for (const auto& r : g.rows) rows << r.text();
       return rows;
     }();
     check(w.action("edit.repeat")->shortcuts() == QList<QKeySequence>({QKeySequence("Shift+Return"), second}) &&
               QSettings().value("shortcutAlternates/edit.repeat").toString() == second.toString() &&
               w.action("edit.repeat")->toolTip().contains(second.toString(QKeySequence::NativeText)) &&
-              sheet.contains(QKeySequence("Shift+Return").toString(QKeySequence::NativeText) + " / " + second.toString(QKeySequence::NativeText)),
+              sheet.contains(keys::plain(QKeySequence("Shift+Return")) + " / " + keys::plain(second)),
           "Repeat answers to both keys, saved, in its tooltip and the cheat sheet");
     {
       ShortcutEditor editor(w.m_actions, &w);
