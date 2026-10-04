@@ -303,7 +303,8 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue, bool
   if (!issue.empty()) stem += tr(" rev %1 as issued").arg(QString::fromStdString(issue));
   for (const QChar c : QString("<>:\"/\\|?*")) stem.replace(c, '_');
   QSettings settings;
-  const auto types = sheetExportTypes(sheets > 1 || pdfOnly);
+  const bool onlyPdf = sheets > 1 || pdfOnly;  // Publish PDF, a drawing of several sheets: a PDF whatever name is typed
+  const auto types = sheetExportTypes(onlyPdf);
   QString last = settings.value("export/sheetFormat", "pdf").toString();
   if (std::none_of(types.begin(), types.end(), [&](const auto& t) { return t.first == last; })) last = "pdf";
   QString out = qEnvironmentVariable("OPAD_BENCH_EXPORT_OUT");  // benches: no file dialog
@@ -319,9 +320,10 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue, bool
     if (out.isEmpty()) return;
   }
   QString format = QFileInfo(out).suffix().toLower();
-  if (format != "pdf" && format != "svg" && format != "dxf" && format != "dwg" && format != "png") out += "." + (format = last);
+  const bool known = onlyPdf ? format == "pdf" : format == "pdf" || format == "svg" || format == "dxf" || format == "dwg" || format == "png";
+  if (!known) out += "." + (format = last);  // last is pdf when only a PDF is offered
   settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
-  if (sheets == 1) settings.setValue("export/sheetFormat", format);
+  if (!onlyPdf) settings.setValue("export/sheetFormat", format);  // Export sheet's own choice, never Publish PDF's
   QPointer<DocsArea> self(this);
   opad::json args = {{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}};
   if (!issue.empty()) args["issue"] = issue;

@@ -3,6 +3,7 @@
 
 #include <QElapsedTimer>
 #include <QFile>
+#include <QSettings>
 #include <QMenu>
 #include <QRegularExpression>
 #include <QStatusBar>
@@ -29,8 +30,9 @@
 // Explode panel's Update view), the drawing view draws its parts further apart, the balloons still measured. The front
 // view's View state: Exploded 1 (one step, still from the front, with trail lines), then Assembled again. Then Publish PDF
 // from Review (UI-104, Review > Share and the File menu): the drawing's sheet written as a PDF whose page strokes the
-// exploded view's trail lines with the phantom dash pattern (its content streams read back), the workspace kept.
-// <prefix>.exploded.png (both views apart), <prefix>.publish.pdf.
+// exploded view's trail lines with the phantom dash pattern (its content streams read back), the workspace kept, a PDF
+// also for a name typed with .dxf and Export sheet's remembered format left alone.
+// <prefix>.exploded.png (both views apart), <prefix>.publish.dxf.pdf.
 OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
   using opad::drawing::Vec2;
   const QString& prefix = value;
@@ -245,11 +247,14 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
       const opad::SheetView* f = doc->scene.sheet_view(front);
       check(f && !f->def.value("source", opad::json::object()).contains("explode") && trails(front) == 0, "the front view is drawn assembled again, without trail lines");
     }
-    // Publish PDF from Review: the drawing written as a PDF without going to Drawings (no file dialog in a bench).
+    // Publish PDF from Review: the drawing written as a PDF without going to Drawings (no file dialog in a bench), whatever
+    // name was typed (here one ending in .dxf), and Export sheet keeps the format it was last used with (DXF here).
     w.setWorkspace("review");
-    const QString pdf = prefix + ".publish.pdf";
+    const QString typed = prefix + ".publish.dxf", pdf = typed + ".pdf";
     QFile::remove(pdf);
-    qputenv("OPAD_BENCH_EXPORT_OUT", pdf.toUtf8());
+    QFile::remove(typed);
+    QSettings().setValue("export/sheetFormat", "dxf");
+    qputenv("OPAD_BENCH_EXPORT_OUT", typed.toUtf8());
     const CommandInfo* publish = w.m_commands.find("drawings.publish");
     w.updateCommands();
     check(publish && publish->menuPath == "file" && publish->workspaces.contains("review") && w.action("drawings.publish")->isEnabled(),
@@ -265,6 +270,8 @@ OPAD_BENCH(OPAD_BENCH_SHEET_EXPLODED, sheetExploded) {
     };
     check(waitFor(written, 60000) && w.workspaceId() == "review", "Publish PDF from Review writes the drawing as a PDF and stays in Review");
     qunsetenv("OPAD_BENCH_EXPORT_OUT");
+    check(!QFile::exists(typed) && QSettings().value("export/sheetFormat").toString() == "dxf",
+          "a name typed with .dxf still gets a PDF (.dxf.pdf), and Export sheet still offers DXF first");
     {  // its pages are vectors: the exploded view's trail lines stroked with the phantom dash pattern, one stroke each
       const QByteArray data = pdfBytes();
       QByteArray content;  // the pages' content streams, inflated
