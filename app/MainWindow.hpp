@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QPointer>
 #include <functional>
+#include <optional>
 
 #include "AnnotationEditor.hpp"
 #include "AreaController.hpp"
@@ -175,7 +176,7 @@ class MainWindow : public QMainWindow {
   // Guided tools: the tool is started first and asks for its picks one step at a time (see GuidedTool.hpp).
   void toggleTool(const QString& id);  // distance, angle, radius, bbox, note, sectionface
   void startTool(const QString& id);
-  void cancelTool();
+  void cancelTool(bool restoreFilter = true);  // false: another tool starts at once (it keeps the filter to set back)
   void toolEscape();  // Esc: result -> measure again; otherwise one step back; with no pick left, leave the tool
   void toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromClick);
   void runToolMeasure();
@@ -200,6 +201,11 @@ class MainWindow : public QMainWindow {
   void syncAnnotationActions();
   void resolveCurrentAnnotation();
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
+  // A card clicked in Annotations lights up what its note is pinned to, as the note editor shows a target (help audit
+  // P9.4); a click in the view, another selection, a change of the document, Esc, a note being written or the panel
+  // closing puts it out.
+  void showAnnotationCardTarget(const std::vector<opad::Ref>& anchors);  // a note's anchor, every pick of a pinned measurement
+  void clearAnnotationCardTarget();
   void exportDialog(std::vector<std::string> ids = {});
   void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker (ExportJob.hpp), the result in m_lastExport
   void drawingToSketch();
@@ -282,6 +288,14 @@ class MainWindow : public QMainWindow {
     int steps = 0;  // 0: open (Area): measured after every pick, as many as the user makes
   };
   Tool m_tool;  // id empty: no tool is running
+  // The filter a tool switched to for its picks (faces for Distance, Angle and Radius from the Bodies filter, for the
+  // section's pick; edges where there are no faces) and the one it switched from: set back when the tool ends, unless
+  // another filter was chosen meanwhile. A tool started straight from another keeps the first one's.
+  struct ToolFilter {
+    Viewport::SelFilter before, set;
+    bool autoEdges = false;  // m_autoEdges as it was (the select actions clear it)
+  };
+  std::optional<ToolFilter> m_toolFilter;
   std::vector<opad::Ref> m_toolPicks;
   std::vector<std::pair<bool, opad::Vec3>> m_toolPoints;  // where each pick was clicked (false: picked some other way)
   int m_toolRun = 0;  // bumps whenever the picks change: a measure result for an older run is dropped
@@ -303,11 +317,15 @@ class MainWindow : public QMainWindow {
   class CheckPanel* m_checks = nullptr;
   Job* m_checkJob = nullptr;
   Job* m_overlapJob = nullptr;
+  bool m_checkGap = false;  // a clearance finding's gap is drawn (the measurement dimension): it goes with the check's colours
   std::vector<std::string> m_checkSelect;  // what the check looks at: the selection when it started, else everything
   void startCheck(bool print);
   void runCheck();
+  void recheck();  // the document changed while the check's panel is open: its findings and colours follow (help audit P8)
   void showFinding(const opad::json& finding);
+  void showPrintTints(const opad::json& except);  // the print check's findings coloured on the model, but `except` (the one shown)
   void endCheck();
+  void clearCheckOverlays();  // the check's colours, overlap and gap off the model, the overlap job given up
   LoadShade* m_loadShade = nullptr;
   KeyGuard* m_keyGuard = nullptr;
   bool m_timelineHiddenByViewer = false;
@@ -321,6 +339,7 @@ class MainWindow : public QMainWindow {
   AnnotationsPanel* m_annotations = nullptr;
   QPointer<AnnotationEditor> m_annotationEditor;
   ToolPanel* m_annotationPanel = nullptr;  // the editor's: type, pen, text
+  bool m_cardTarget = false;  // the viewport's annotation target is an Annotations card's (not the editor's)
   NoteCards* m_noteCards = nullptr;  // one card beside every open note, over the viewport
   SectionPanel* m_section = nullptr;
   ToolPanel* m_propsPanel = nullptr;  // floating tool panels over the viewport (no fixed right dock)

@@ -79,6 +79,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     clearMeasurement();
     m_measureHistory.clear();  // results of the document that goes
     m_viewport->clearPreviewBodies();
+    clearCheckOverlays();  // a check's findings belong to the document that goes, and so does its panel
+    if (m_toolStack->currentWidget() == m_checks && m_toolPanel->isVisible()) m_toolPanel->hide();
     m_viewport->clearCandidates();
     m_viewport->isolate({});
     if (action("inspect.section")->isChecked()) action("inspect.section")->setChecked(false);
@@ -200,7 +202,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);
   connect(m_annotations, &AnnotationsPanel::styleRequested, this, &MainWindow::restyleAnnotation);
-  connect(m_annotations, &AnnotationsPanel::selectNode, this, [this](const std::string& id) { onBrowserSelection({id}); m_browser->setSelectedIds({id}); });
+  connect(m_annotations, &AnnotationsPanel::targetRequested, this, &MainWindow::showAnnotationCardTarget);
   m_noteCards = new NoteCards(m_doc, m_viewport, this);
   connect(m_annotations,&AnnotationsPanel::typeFilterChanged,m_noteCards,&NoteCards::setTypeFilter);
   connect(m_noteCards, &NoteCards::resolveRequested, this, &MainWindow::deleteOp);
@@ -301,8 +303,11 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   m_toolPanel->setEscapeHandler([this] { toolEscape(); });
   connect(m_toolPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
-    if (!on && toolMeasures()) cancelTool();  // closing the tool's panel leaves the tool
-    if (!on && m_toolStack->currentWidget() == m_checks) endCheck();
+    // Closing the tool's panel (or another panel opening) leaves the tool or the check, and the check's colours go. Minimising
+    // the window hides it too, spontaneously: isVisible() stays true then, and everything stays as it was.
+    if (on || m_toolPanel->isVisible()) return;
+    if (toolMeasures()) cancelTool();
+    if (m_toolStack->currentWidget() == m_checks) endCheck();
   });
   connect(m_viewport, &Viewport::hoverChanged, this, [this](const QString& text) {
     if (m_tool.id.isEmpty() || text == m_toolHover) return;
@@ -519,7 +524,8 @@ void MainWindow::showDocument(bool has) {
   for (QAction* a : m_actions) {
     QString id = a->objectName();
     const bool setting = id == "view.dark" || id == "view.cubeEdgesCorners";  // in the Settings menu: also without a document
-    if (id.startsWith("view.") && !setting) a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()));
+    if (id.startsWith("view.") && !setting)  // no corner view in 2D mode (it keeps a principal plane)
+      a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()) && (id != "view.iso" || !action("view.2d")->isChecked()));
     if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);

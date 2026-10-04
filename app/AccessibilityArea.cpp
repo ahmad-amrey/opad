@@ -599,8 +599,10 @@ OPAD_BENCH(OPAD_BENCH_A11Y, accessibility) {
     check(jumped && !clips::animations(), "reduced motion: the camera jumps, the clips hold still");
     motion::setReduced(false);
     const opad::json turned = w.m_viewport->cameraJson();
+    w.m_viewport->benchAnimate(true);  // as on screen: a hidden window moves the camera at once anyway (UI-47)
     w.m_viewport->rollView(-90);
-    check(w.m_viewport->cameraJson()["up"] == turned["up"] && clips::animations(), "without it the camera turns over a few frames");
+    check(w.m_viewport->cameraJson()["up"] == turned["up"] && w.m_viewport->cameraMoving() && clips::animations(), "without it the camera turns over a few frames");
+    w.m_viewport->benchAnimate(false);
     QSettings().remove("ui/reduceMotion");
     // Hit targets: the extrude arrow.
     const auto& sketches = w.m_doc->scene.sketches;

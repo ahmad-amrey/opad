@@ -87,6 +87,9 @@ std::set<QString> registeredIds() {
     ids.insert("sketch." + m.captured(1).replace(':', '.'));
   for (const char* v : {"top", "front", "right", "iso", "bottom", "back", "left"}) ids.insert(QString("view.") + v);
   for (const char* v : {"fusion", "solidworks", "onshape", "blender"}) ids.insert(QString("nav.") + v);
+  // The view navigation staples (ViewNavigation.cpp, UI-47): its add("...") helper and one CommandInfo of its own.
+  for (const auto& m : QRegularExpression(R"re(\b(?:add\(|CommandInfo\s+\w+\s*\{)"([a-z0-9]+\.[A-Za-z0-9_.]+)")re").globalMatch(source("app/ViewNavigation.cpp")))
+    ids.insert(m.captured(1));
   for (const char* v : {"bodies", "faces", "edges", "vertices"}) ids.insert(QString("select.") + v);
   for (const char* v : {"view.extensions", "view.tracking", "view.gridSnap", "view.orthoSnap", "view.polarSnap", "sketch.selectionOptions", "sketch.constraints", "sketch.snaps"}) ids.insert(v);
   for (const char* v : {"vcs.nextChange", "vcs.previousChange"}) ids.insert(v);  // VcsArea's loop of tuples
@@ -142,8 +145,7 @@ TEST(every_registered_command_has_help) {
   // found only once it learned their areas' helpers (the richtip bench listed them as without help).
   const QStringList pending = QStringList{"assets.autoSync", "drawings.auxiliaryView", "drawings.breakView", "drawings.breakoutView", "drawings.cropView",
                                           "drawings.detailView", "drawings.exportDrawing", "drawings.issue", "drawings.print", "drawings.sectionView",
-                                          "drawings.templateFields", "inspect.length", "inspect.material", "view.hidden", "view.hiddenEdges", "view.hideothers",
-                                          "view.resetHome"} +
+                                          "drawings.templateFields", "inspect.material", "view.resetHome"} +
                               QStringList{"assets.copyPath", "assets.embed", "assets.kicadSettings", "assets.link", "assets.pack", "assets.replace", "assets.reveal",
                                           "assets.settings", "assets.sync", "assets.syncAll", "canvas.align", "canvas.calibrate", "canvas.edit", "canvas.finish",
                                           "canvas.fromBackdrop", "canvas.insert", "canvas.replace", "canvas.trace", "drawings.autoBalloon", "drawings.balloon",

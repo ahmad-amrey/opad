@@ -18,8 +18,10 @@ class ViewportChips : public QWidget {
   // QToolButton "chipAction"), e.g. the active component or an exploded view. The area shows, hides and words it; the row
   // fits itself to it. The row is a native child of the viewport, so the chip is opaque and never translucent.
   void addChip(QWidget* chip);
+  QLabel* isolationChip() const { return m_isolate; }  // benches: "Isolated · n bodies  ×", clicked to end it
  signals:
   void leaveTwoDimensional();  // the 2D mode card was clicked
+  void exitIsolation();        // the isolation card (its ×) was clicked
   void saveToEditRequested();
  protected:
   bool eventFilter(QObject* object, QEvent* event) override;

@@ -38,9 +38,15 @@ void MainWindow::buildDocks() {
   m_toolPanel->setContentSizeHint([this](int width) { return m_toolStack->currentWidget() == m_checks ? m_checks->preferredSize(width) : m_toolSteps->preferredSize(width); });
   connect(m_checks, &CheckPanel::runRequested, this, &MainWindow::runCheck);
   connect(m_checks, &CheckPanel::findingActivated, this, &MainWindow::showFinding);
+  connect(m_doc, &AppDocument::changed, this, &MainWindow::recheck);
   connect(m_toolSteps, &ToolStepsPanel::contentSizeChanged, m_toolPanel, &ToolPanel::requestContentFit);
   connect(m_checks, &CheckPanel::contentResized, m_toolPanel, &ToolPanel::requestContentFit);
   m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};
+  // What a card lit up goes with the panel, and with any change of the document (its ordinals may name other faces).
+  connect(m_annotationsPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
+    if (!on && !m_annotationsPanel->isVisible()) clearAnnotationCardTarget();  // not when minimising (isVisible() stays true)
+  });
+  connect(m_doc, &AppDocument::changed, this, &MainWindow::clearAnnotationCardTarget);
   // The note / hand drawing editor's panel: filled by each AnnotationEditor, open exactly as long as it runs. Not one
   // of m_panels, so opening another panel never ends an annotation in progress.
   auto* annotationHost = new QWidget(this);
@@ -130,7 +136,10 @@ void MainWindow::resetLayout() {
     d->setFloating(false);
     d->show();
   }
-  m_browserOverlay->show();
+  // The browser comes back with its command ticked again (Browser stayed unticked, so a document opened next hid it once
+  // more); without a document it shows when one opens, as at the start.
+  action("panel.browser")->setChecked(true);
+  m_browserOverlay->setVisible(m_doc->hasDocument);
   m_browserOverlay->place();
   addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
   setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);

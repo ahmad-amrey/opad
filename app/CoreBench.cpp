@@ -187,8 +187,8 @@ OPAD_BENCH(OPAD_BENCH_UNITS, units) {
         w.m_doc->setRollback({});
         break;
       }
-    w.startTool("distance");
-    w.toolPicksChanged(ends, false);
+    w.startTool("distance");  // from the Body filter it turns to Faces (help audit P8): the picks once that is applied
+    pollUntil(&w, [&w] { return w.m_viewport->selectionFilter() == Viewport::SelFilter::Face && !w.m_jobs->busy(); }, 10000, [&w, ends](bool) { w.toolPicksChanged(ends, false); });
     pollUntil(&w, [&w] { return !w.m_lastMeasure.is_null(); }, 20000, [&w, require, finish, result](bool measured) {
       const QString value = result(w.m_tool.title);
       const QStringList captions = w.m_viewport->measurementCaptions();

@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QStyle>
 #include <QVBoxLayout>
 
 #include <set>
@@ -100,10 +101,13 @@ void AnnotationsPanel::rebuild() {
     if ((status == 1 && state != "open") || (status == 2 && state != "unresolved") || (status == 3 && state != "resolved")) continue;
     opad::Ref anchor;
     try { anchor = opad::Ref::from_json(op.type=="measurement"?op.data.at("refs").at(0):op.data.at("anchor")); } catch (...) {}
+    std::vector<opad::Ref> targets;  // what a click lights up: the note's anchor, every pick of a pinned measurement
+    if (op.type == "measurement")
+      try { for (const auto& r : op.data.at("refs")) targets.push_back(opad::Ref::from_json(r)); } catch (...) {}
     NoteInfo n;
     n.id = op.id; n.by = by; n.ts = op.data.value("ts", ""); n.text = op.data.value("text", ""); n.body = anchor.body;
     n.style = op.data.value("style", "note");
-    for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) { n.style = a.style; n.text = a.text; n.comments = a.comments; }  // after edits
+    for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) { n.style = a.style; n.text = a.text; n.comments = a.comments; anchor = a.anchor; n.body = anchor.body; }  // after edits (a re-pick)
     if(op.type=="measurement") {
       n.measurement=true;
       const auto result=op.data.value("result",opad::json::object());
@@ -112,22 +116,39 @@ void AnnotationsPanel::rebuild() {
       if(result.contains("value") && result["value"].is_number()) n.value+=" - "+units::format(unit=="deg"?units::Kind::Angle:unit=="mm2"?units::Kind::Area:units::Kind::Length,result["value"].get<double>());
       if(unit=="mm2" && result.contains("perimeter") && result["perimeter"].is_number()) n.value+=" · "+tr("perimeter %1").arg(units::format(units::Kind::Length,result["perimeter"].get<double>()));
       else if(result.contains("size") && result["size"].is_array() && result["size"].size()==3) n.value+=" - "+units::vector(units::Kind::Length,result["size"].get<std::array<double,3>>());
-      for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;}
+      for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;if(!m.refs.empty())targets=m.refs;}
     }
+    if (targets.empty()) targets.push_back(anchor);
     n.state = state;
     if(!m_type->currentData().toString().isEmpty() && n.style!=m_type->currentData().toString().toStdString()) continue;
     ++shown;
     n.target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
     if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) n.target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
     auto* card = new NoteCard(n, m_cards, m_doc);
+    // The current card (the one clicked last, which Resolve acts on) is ringed in the selection colour.
+    card->setStyleSheet(card->styleSheet() + QString("QFrame#card[current=\"true\"] { border: 2px solid %1; }").arg(theme::current().sel.name()));
+    card->setProperty("current", n.id == m_current);
     connect(card, &NoteCard::resolveRequested, this, &AnnotationsPanel::resolveRequested);
     connect(card, &NoteCard::restoreRequested, this, &AnnotationsPanel::restoreRequested);
     connect(card, &NoteCard::styleRequested, this, &AnnotationsPanel::styleRequested);
-    connect(card, &NoteCard::pressed, this, [this, card] {
+    // A click shows what the note is pinned to: the face, edge, point or body (help audit P9.4), not its whole body.
+    connect(card, &NoteCard::pressed, this, [this, card, targets] {
       m_current = card->note().id;
-      if (!card->note().body.empty()) emit selectNode(card->note().body);
+      markCurrent();
+      emit targetRequested(targets);
     });
     cl->insertWidget(cl->count() - 1, card);
   }
   m_count->setText(tr("%1 of %2").arg(shown).arg(total));
+}
+
+void AnnotationsPanel::markCurrent() {
+  for (NoteCard* card : m_cards->findChildren<NoteCard*>()) {
+    const bool current = card->note().id == m_current;
+    if (card->property("current").toBool() == current) continue;
+    card->setProperty("current", current);
+    card->style()->unpolish(card);
+    card->style()->polish(card);
+    card->update();
+  }
 }

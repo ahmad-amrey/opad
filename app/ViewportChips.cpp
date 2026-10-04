@@ -2,6 +2,7 @@
 
 #include <QEvent>
 #include <QHBoxLayout>
+#include <QMouseEvent>
 #include <QPalette>
 
 #include <initializer_list>
@@ -39,6 +40,10 @@ ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
   m_section->setObjectName("chipSel");
   m_isolate = new QLabel(this);
   m_isolate->setObjectName("chipSel");
+  // Isolation is a mode the view stays in too: the card ends it, its × says so (Exit isolate does the same).
+  m_isolate->setToolTip(tr("Only the isolated bodies are shown. Click to show everything again (Exit isolate)."));
+  m_isolate->setCursor(Qt::PointingHandCursor);
+  m_isolate->installEventFilter(this);
   // Viewer mode: what is shown, and saving it to edit.
   m_viewer = new QLabel(tr("Viewer · read-only"), this);
   m_viewer->setObjectName("chipSel");
@@ -73,6 +78,10 @@ bool ViewportChips::eventFilter(QObject* object, QEvent* event) {
     emit leaveTwoDimensional();
     return true;
   }
+  if (object == m_isolate && event->type() == QEvent::MouseButtonRelease && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+    emit exitIsolation();
+    return true;
+  }
   return QWidget::eventFilter(object, event);
 }
 
@@ -102,7 +111,7 @@ void ViewportChips::set(const QString& mode, const QString& projection, const QS
   m_twoD->setVisible(twoDimensional);
   m_section->setText(section);
   m_section->setVisible(!section.isEmpty());
-  m_isolate->setText(isolate);
+  m_isolate->setText(isolate.isEmpty() ? QString() : isolate + QStringLiteral("  ×"));  // the close glyph: a click ends it
   m_isolate->setVisible(!isolate.isEmpty());
   adjustSize();
 }

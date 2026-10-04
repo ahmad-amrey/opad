@@ -196,6 +196,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double twistAngle() const;       // how far it is turned now, degrees
   void setAnimateViews(bool on);   // setting view/animate (default on)
   bool animateViews() const { return m_animateViews; }
+  void benchAnimate(bool on) { m_forceAnimate = on; }  // benches: camera moves animate in a hidden window as on screen
 
   // Startup (StartUp.hpp, UI-44): the OpenGL viewer is made by warmUp(), which the window calls once its shell has been
   // painted, and its first frame (the shaders) drawn by firstFrame() on a later turn; a show or paint of the view before
@@ -236,6 +237,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_NAVIGATE (ViewportViewBench.cpp): zoom window, previous and next view, the CAD 2D preset, animated standard
   // views, fit and Home, a custom Home, the cube's menu and the 2D twist (UI-47)
   bool benchNavigation(const QString& prefix);
+  // OPAD_BENCH_VIEWS (ViewsBench.cpp, help audit P7): the view commands as their guides show them, run through the window's
+  // `trigger` with animations on as on screen: the seven standard views turn, Isometric is off in 2D mode, where a standard
+  // view takes the grid to its plane; on a drawing in 2D mode Turn 90° left twists it and the grid stays in its plane.
+  bool benchViews(const QString& prefix, const std::function<void(const QString&)>& trigger, const std::function<bool(const QString&)>& enabled);
   // OPAD_BENCH_HIGHLIGHT (ViewportViewBench.cpp): hover and selection roles in the current theme (UI-38): a body, its
   // face, edge and vertex hovered (white) and selected (hued, edges thicker in a halo), a body in the selection's own
   // colour outlined, the view cube's side in a standard view and its hover
@@ -459,6 +464,23 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // there are many), whole bodies take the look compositor's candidate layer. Empty: nothing shown.
   void showCandidateRefs(const std::vector<opad::Ref>& refs);
   size_t candidateRefsShown() const { return m_candidateShown; }  // faces and edges drawn now (benches)
+  // The design checks' findings on the model (ViewportChecks.cpp, help audit P8), until replaced or cleared: the print check's
+  // faces tinted in the warning amber (overhangs) and the error red (thin walls), one object per colour copied from the
+  // meshes the bodies are drawn with (a sliced job, a body a step), over everything like the selection's X-ray (TopOSD: also
+  // over a body selected whole, which is in Topmost); the volume an interfering pair shares in the error red, over the pair.
+  // Tints are made again when the bodies shown change (isolation, a look hiding or showing one, a body still being displayed
+  // when they were asked for) or move in the view (an exploded view); the overlap is drawn where its pair is, while both are
+  // drawn together. Never pickable, never framed by Fit.
+  struct CheckTint {
+    std::string body;
+    std::vector<int> faces;  // face ordinals, or a mesh body's triangle ordinals (triangles: as the print check numbers them)
+    bool error = false;      // a thin wall or a narrow face (red), else an overhang (amber)
+    bool triangles = false;
+  };
+  void showCheckTints(const std::vector<CheckTint>& tints);
+  void showOverlap(const TopoDS_Shape& shape, std::shared_ptr<const BodyPrs> prs, const std::vector<std::string>& pair = {});  // a null shape: none
+  void clearCheckOverlays();
+  opad::json benchCheckOverlays() const;  // the triangles of each tint, their colours and layers, the overlap's
   // Feature preview: these shapes (world coordinates, already meshed by the worker) are drawn in place of the
   // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
   void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
@@ -503,7 +525,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // The note / hand drawing editor (AnnotationEditor.cpp). Its target is drawn in the selection blue, tinted with a
   // dashed outline, on top of everything; the target's widget rectangle places the editor's badge.
   bool annotationPick(const QPointF& point, opad::Ref& target, bool& hit);  // body/face/edge/vertex; hit: point = where
-  bool showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre = nullptr);  // false: not in the view
+  // Why a target could not be lit: its body is not shown (hidden, isolated away, hidden by a look), not drawn (still on its
+  // way to the view, not a body, no viewer yet), or the face, edge or vertex it names is no longer in the body (it changed).
+  enum class TargetMiss { None, Hidden, NotDrawn, Changed };
+  // false: not in the view (`miss` says why). `add`: lit beside the ones already shown (every pick of a pinned measurement).
+  bool showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre = nullptr, bool add = false, TargetMiss* miss = nullptr);
   void clearAnnotationTarget();
   QRect annotationTargetRect() const;  // null while nothing is shown
   opad::Frame annotationCameraPlane(const opad::Vec3& origin) const;  // through origin, facing the camera
@@ -634,6 +660,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::shared_ptr<const DepthImage> captureDepth();
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void alignGridPlane();  // the grid's plane: the principal plane 2D mode looks at (a standard view there changes it), else XY
   void showGrid();  // gridDrawn() on screen
   // Drawn: the G setting in force (gridShown) or the origin guide of an empty Design document (UI-51), whatever the setting.
   bool gridDrawn() const { return gridShown() || m_originGuide; }
@@ -861,9 +888,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   gp_Vec lookOffset(const std::string& node) const;  // how far a look moved it (an exploded part): its notes follow
   std::string m_noteTypeFilter;
   Handle(AIS_InteractiveObject) m_drawingPreview;
-  Handle(AIS_InteractiveObject) m_annotationTarget;
-  std::vector<opad::Vec3> m_annotationCorners;  // the target's box, world
-  Job* m_targetJob = nullptr;                   // a body target's tint, built on a worker when the body has no arrays
+  std::vector<Handle(AIS_InteractiveObject)> m_annotationTargets;  // what showAnnotationTarget lit
+  std::vector<opad::Vec3> m_annotationCorners;  // the targets' boxes, world
+  std::vector<Job*> m_targetJobs;               // a body target's tint, built on a worker when the body has no arrays
   std::map<std::string, NoteMark> m_notes;  // open notes by op id
   // Where each note is pinned (UI-03), by op id: measured once on a worker (opad::annotation_anchor) and again only when
   // its signature (the reference, the pinned node's body keys and placements) changes. ready && !found: nothing to pin to.
@@ -970,6 +997,16 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_selectionXray = true;                    // the selection in Topmost (else Top: setSelectionXray)
   Handle(SubHighlight) m_candidateHl;             // showCandidateRefs' faces and edges
   Job* m_candidateJob = nullptr;
+  Handle(SubHighlight) m_checkTints[2];           // showCheckTints: overhangs, thin walls
+  std::array<size_t, 2> m_tintTriangles{0, 0};
+  Bnd_Box m_tintBoxes[2];                         // where they are (benches)
+  Job* m_tintJob = nullptr;
+  std::vector<CheckTint> m_tintWanted;            // what showCheckTints was last asked for
+  bool m_tintAgain = false;                       // a body they colour was not shown yet, or the bodies shown changed: at finishSync
+  void buildCheckTints();
+  Handle(AIS_Shape) m_overlap;                    // showOverlap
+  std::vector<std::string> m_overlapPair;         // the bodies it lies in
+  void placeOverlap();  // with its pair's explode offset, or not drawn while they are apart or one is not drawn (no redraw)
   size_t m_candidateShown = 0;
   std::vector<opad::Ref> m_candidateRefs;
   std::map<const AIS_InteractiveObject*,Handle(SubHighlight)> m_bodyGlows;

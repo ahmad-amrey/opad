@@ -531,8 +531,7 @@ OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
         require(v->selectionFilter() == Viewport::SelFilter::Edge && w.action("select.edges")->isChecked() && !faces->isChecked() &&
                     w.toolSteps().value(0).label == MainWindow::tr("Select an object"),
                 "Radius from Groups picks objects, not the hidden Faces filter: " + w.toolSteps().value(0).label);
-        w.action("inspect.radius")->trigger();
-        w.action("inspect.distance")->trigger();
+        w.action("inspect.distance")->trigger();  // straight from Radius: the Objects filter it set stays until Distance ends
       }, [&w, v] { return w.m_tool.id == "distance" && v->selectionFilter() == Viewport::SelFilter::Edge; });
       auto line = std::make_shared<opad::Ref>();
       script->add("a picked object", [&w, v, doc, line] {
@@ -547,7 +546,8 @@ OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
         require(picked == expected && w.toolSteps().value(1).label == MainWindow::tr("Select second %1").arg(i18n::t("object")),
                 "the tool names its picks as a drawing's: " + picked + " / " + w.toolSteps().value(1).label);
         w.action("inspect.distance")->trigger();
-      }, [&w] { return w.m_tool.id.isEmpty(); });
+      }, [&w, v] { return w.m_tool.id.isEmpty() && v->selectionFilter() == Viewport::SelFilter::Body && w.action("select.bodies")->isChecked(); });
+      script->add("the Groups filter back", [require] { require(true, "Distance ended: the Groups filter Radius switched from is back"); });
     }
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });

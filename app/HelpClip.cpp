@@ -111,7 +111,7 @@ const QHash<QString, QStringList>& schema() {
         {"veil", {"color"}},
         {"timeline", {"screen", "markers", "states", "at"}},
         {"letters", {"at", "value", "height", "plane", "align", "color", "width", "fill", "fillOpacity"}},
-        {"camera", {"az", "elev", "zoom", "center", "roll", "persp", "dragged"}},  // "elev": "el" names the element
+        {"camera", {"az", "elev", "zoom", "center", "roll", "persp", "dragged", "framing"}},  // "elev": "el" names the element
     };
     for (auto it = h.begin(); it != h.end(); ++it) *it << "el" << "from" << "to" << "fade" << "opacity" << "keys" << "offset" << "rot" << "pivot" << "scale" << "note";
     return h;
@@ -2079,8 +2079,9 @@ void prepare(Ctx& c, const Clip& clip, double& zoom, QPointF& pan) {
       zoom = o.value("zoom").toDouble(1);
       c.roll = o.value("roll").toDouble();
       c.persp = o.value("persp").toDouble();
-      // The pan makes room for the screen chrome (cards, chips), which flips sides in right-to-left languages.
-      pan = QPointF(vec(o.value("center")).x() * (c.rtl ? -1 : 1), vec(o.value("center")).y());
+      // The pan makes room for the screen chrome (cards, chips), which flips sides in right-to-left languages; a camera that
+      // frames part of the model ("framing": Isolate's reframe) pans to that part, the same in every language.
+      pan = QPointF(vec(o.value("center")).x() * (c.rtl && !o.value("framing").toBool() ? -1 : 1), vec(o.value("center")).y());
     } else if (it.el == "cursor" && !c.hasCursor) {
       const QJsonObject o = evaluate(it, c.t);
       c.cursor = xform(o).apply(vec(o.value("pos")));

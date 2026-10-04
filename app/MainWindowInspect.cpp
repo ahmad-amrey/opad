@@ -140,15 +140,21 @@ QString MainWindow::refLabel(const opad::Ref& r) const {
 
 QList<ToolStep> MainWindow::toolSteps() const {
   const Viewport::SelFilter f = m_viewport->selectionFilter();
-  if (!m_tool.steps) {  // an open tool (Area): one step, the picks so far as what it got
+  const bool words2d = m_viewport->drawingWords() && drawing2d::hasDrawings(m_doc->scene);  // as the filters are named then (UI-118)
+  if (!m_tool.steps) {  // an open tool (Area, Bounding box): one step, the picks so far as what it got
     ToolStep s;
-    s.label = f == Viewport::SelFilter::Vertex ? tr("Select points around the area") : f == Viewport::SelFilter::Face ? tr("Select fills or faces")
-                                                                                          : tr("Select a closed object or the objects around an area");
+    if (m_tool.id == "bbox")  // what a click adds: what the filter picks, in the words the filters have (a drawing's in 2D)
+      s.label = f == Viewport::SelFilter::Vertex ? (words2d ? tr("Select points · each click adds") : tr("Select vertices or points · each click adds"))
+                : f == Viewport::SelFilter::Edge ? (words2d ? tr("Select objects · each click adds") : tr("Select edges · each click adds"))
+                : f == Viewport::SelFilter::Face ? (words2d ? tr("Select fills · each click adds") : tr("Select faces · each click adds"))
+                                                 : (words2d ? tr("Select groups · each click adds") : tr("Select bodies · each click adds"));
+    else
+      s.label = f == Viewport::SelFilter::Vertex ? tr("Select points around the area") : f == Viewport::SelFilter::Face ? tr("Select fills or faces")
+                                                                                         : tr("Select a closed object or the objects around an area");
     if (m_toolPicks.size() == 1) s.picked = refLabel(m_toolPicks.front());
     else if (!m_toolPicks.empty()) s.picked = tr("%1 picked").arg(m_toolPicks.size());
     return {s};
   }
-  const bool words2d = m_viewport->drawingWords() && drawing2d::hasDrawings(m_doc->scene);  // as the filters are named then (UI-118)
   const QString kind = f == Viewport::SelFilter::Vertex && m_tool.id != "sectionface"
       ? (m_tool.id == "radius" ? tr("circle center") : words2d ? tr("point or center") : tr("vertex or center"))
       : i18n::t(m_tool.id == "sectionface" ? "face" : f == Viewport::SelFilter::Face ? (words2d ? "fill" : "face") : f == Viewport::SelFilter::Edge ? (words2d ? "object" : "edge") : (words2d ? "group" : "body"));
@@ -172,24 +178,29 @@ void MainWindow::startTool(const QString& id) {
   if (!m_doc->hasDocument || m_design->sketchActive()) return;
   if (m_annotationEditor) m_annotationEditor->cancel();  // one guide at a time
   m_design->escape();  // a feature panel or a plane pick gives way
-  if (!m_tool.id.isEmpty()) cancelTool();
+  if (!m_tool.id.isEmpty()) cancelTool(false);  // the filter the first one switched from is set back when this one ends
   if (m_toolStack->currentWidget() == m_checks) endCheck();
   m_toolStack->setCurrentWidget(m_toolSteps);
   static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
       {"distance", {QT_TR_NOOP("Distance"), "distance", 2}}, {"angle", {QT_TR_NOOP("Angle"), "angle", 2}},       {"radius", {QT_TR_NOOP("Radius"), "radius", 1}},
-      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}, {"area", {QT_TR_NOOP("Area"), "area", 0}},
+      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 0}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}, {"area", {QT_TR_NOOP("Area"), "area", 0}},
       {"length", {QT_TR_NOOP("Length and area"), "length", 1}}};
   const auto it = kTools.find(id);
-  if (it == kTools.end()) return;
+  if (it == kTools.end()) return m_toolFilter.reset();
   m_tool = Tool{id, tr(std::get<0>(it->second)), std::get<1>(it->second), std::get<2>(it->second)};
   m_toolPicks.clear();
   m_toolPoints.clear();
   m_toolHover.clear();
   m_toolError.clear();
   ++m_toolRun;
-  // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face.
+  // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face. Distance measures faces
+  // from the Body filter too (help audit P8: its guide clicks two faces; bodies are one filter key away), unless bodies were
+  // selected first (selected first, tool second: those are measured) or a drawing has no faces (2D words). A filter a tool
+  // switches to is its own: the one it switched from comes back when it ends (m_toolFilter).
   const Viewport::SelFilter f = m_viewport->selectionFilter();
-  const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex);
+  const bool distanceFaces = id == "distance" && f == Viewport::SelFilter::Body && m_viewport->selection().empty() && action("select.faces")->isVisible();
+  const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face
+                                             : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex) || distanceFaces;
   // Area takes fills or faces, objects or points, never bodies: a drawing's objects, a solid's faces. In 2D words the Faces
   // filter is gone (the drawing2d area hides it): a drawing's objects instead (a hidden action still triggers). Length and
   // area takes edges, faces or bodies: not vertices.
@@ -207,10 +218,11 @@ void MainWindow::startTool(const QString& id) {
     m_toolSteps->setGuide("inspect." + id);  // UI-107
     openPanel(m_toolPanel);
   }
-  if (wantEdges) {
-    action("select.edges")->trigger();
-  } else if (wantFaces || (id == "area" && f == Viewport::SelFilter::Body)) {
-    action("select.faces")->trigger();  // clears the picks and refreshes the prompt (see the select actions)
+  if (wantEdges || wantFaces || (id == "area" && f == Viewport::SelFilter::Body)) {
+    const Viewport::SelFilter set = wantEdges ? Viewport::SelFilter::Edge : Viewport::SelFilter::Face;
+    if (!m_toolFilter) m_toolFilter = ToolFilter{f, set, m_autoEdges};
+    else m_toolFilter->set = set;
+    action(wantEdges ? "select.edges" : "select.faces")->trigger();  // clears the picks and refreshes the prompt (see the select actions)
   } else {
     const auto before = m_viewport->selection();  // selected first, tool second still works
     if (!before.empty() && (!m_tool.steps || static_cast<int>(before.size()) <= m_tool.steps)) toolPicksChanged(before, false);
@@ -219,7 +231,7 @@ void MainWindow::startTool(const QString& id) {
   if (!m_tool.id.isEmpty()) refreshToolUi();
 }
 
-void MainWindow::cancelTool() {
+void MainWindow::cancelTool(bool restoreFilter) {
   if (m_tool.id.isEmpty()) return;
   m_tool = Tool();  // first: hiding the panel below reports back here
   m_toolError.clear();
@@ -235,6 +247,15 @@ void MainWindow::cancelTool() {
   m_prompt->hide();
   m_toolPanel->hide();
   clearMeasurement();
+  // The filter the tool switched to goes with it, unless another one was chosen while it ran (that one stays).
+  if (const auto filter = std::exchange(m_toolFilter, std::nullopt); filter && m_viewport->selectionFilter() == filter->set) {
+    if (!restoreFilter) {
+      m_toolFilter = filter;  // the next tool starts at once: it sets this one back
+    } else if (filter->before != filter->set) {
+      m_viewport->setSelectionFilter(filter->before);  // the chips follow (filterApplied)
+      m_autoEdges = filter->autoEdges;
+    }
+  }
 }
 
 void MainWindow::toolEscape() {
@@ -365,7 +386,7 @@ void MainWindow::refreshToolUi() {
     entries.removeAll(QString());
     return entries.join(QStringLiteral(" · "));
   };
-  const QString hints = m_tool.id == "area" ? (done ? (m_doc->browse ? list({click, back, filter}) : list({click, pin, back})) : picked ? list({click, back, filter}) : list({cancel, change}))
+  const QString hints = !m_tool.steps ? (done ? (m_doc->browse ? list({click, back, filter}) : list({click, pin, back})) : picked ? list({click, back, filter}) : list({cancel, change}))
       : m_viewport->selectionFilter() == Viewport::SelFilter::Vertex && !done ? list({tr("%1-click arc to select center").arg(keys::fixedText("ctrl")), back})
       : done ? list({pin, clear, filter}) : picked ? list({back, change}) : list({cancel, change});
   m_prompt->set(m_tool.icon, m_tool.title, steps, hints);
@@ -484,7 +505,7 @@ void MainWindow::refreshToolUi() {
     if(info.contains("segments")) rows << qMakePair(tr("Circle %1 mesh segments (approximate)").arg(i+1),QString::number(info["segments"].get<int>()));
   }
   m_toolSteps->setResult(rows);
-  m_toolSteps->footer()->setCancel(tr("Clear"));
+  m_toolSteps->footer()->setCancel(m_tool.steps ? tr("Clear") : tr("Back"));  // an open tool's Esc takes the last pick back
   m_toolSteps->setFooter(done, !m_doc->browse && !measuredExploded());
   refreshMeasureHistory();
 }
@@ -619,8 +640,10 @@ void MainWindow::pinMeasurement(opad::json result) {
 bool MainWindow::measuredExploded() const { return m_lastMeasure.is_object() && m_lastMeasure.value("exploded", false); }
 
 void MainWindow::clearMeasurement() {
+  clearAnnotationCardTarget();  // Esc with Annotations pinned open
   m_lastMeasure = opad::json();
   m_viewport->clearDimension();
+  m_checkGap = false;  // a clearance finding's gap was that dimension
   m_pinAction->setEnabled(false);
   m_viewport->clearSelection();
 }
@@ -632,6 +655,7 @@ void MainWindow::startCheck(bool print) {
   m_design->escape();
   if (!m_tool.id.isEmpty()) cancelTool();
   m_checkSelect = currentNodeIds();  // the selection when the check starts; clicking findings changes it later
+  clearCheckOverlays();
   m_checks->begin(print ? CheckPanel::Mode::Print : CheckPanel::Mode::Interference);
   m_toolStack->setCurrentWidget(m_checks);
   m_toolPanel->setHeader(print ? "printcheck" : "interference", print ? tr("Print check") : tr("Interference"));
@@ -642,35 +666,74 @@ void MainWindow::startCheck(bool print) {
 void MainWindow::runCheck() {
   if (Job* old = std::exchange(m_checkJob, nullptr)) old->cancel();
   opad::json args = m_checks->options();
-  if (!m_checkSelect.empty()) args["select"] = m_checkSelect;
+  // What the selection the check started with still names (a node deleted or undone since is left out); none of it left:
+  // nothing to check, rather than the whole model nobody asked about.
+  std::vector<std::string> select;
+  for (const auto& id : m_checkSelect) if (m_doc->scene.node(id)) select.push_back(id);
+  if (!select.empty()) args["select"] = select;
   args["limit"] = 200;
   const bool print = m_checks->mode() == CheckPanel::Mode::Print;
-  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  clearCheckOverlays();  // the last run's colours, overlap and gap go with its findings (an overlap still on its way too)
+  if (!m_checkSelect.empty() && select.empty()) return m_checks->setResult({{"items", opad::json::array()}, {"bodies", 0}});
+  // The shapes of the bodies it reads, not a copy of the whole document (every BREP text, here on the UI thread): it runs
+  // again on every change while its panel is open.
+  std::vector<std::string> nodes = select;
+  if (nodes.empty())
+    for (const auto& body : m_doc->scene.all_bodies()) if (m_doc->scene.effectively_visible(body)) nodes.push_back(body);
+  auto document = m_doc->shapesOf(nodes);
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   auto result = std::make_shared<opad::json>();
   m_checks->setRunning(tr("Checking…"));
   m_checkJob = m_jobs->async(print ? tr("Print check") : tr("Interference"), [document, scene, args, print, result](Progress p) {
     const auto cancelled = [p] { return p.cancelled(); };
     *result = print ? opad::check_print(*document, *scene, args, cancelled) : opad::check_interference(*document, *scene, args, cancelled);
-  }, [this, result](bool ok, const QString& error) {
+  }, [this, result, print](bool ok, const QString& error) {
     m_checkJob = nullptr;
     if (!ok) return m_checks->setFailed(error == "cancelled" ? tr("Cancelled.") : i18n::t(error));
     m_checks->setResult(*result);
+    if (print) showPrintTints(opad::json());  // the findings on the model, as the guide shows them
   });
 }
 
+// The findings follow the model (help audit P8): a change while the check's panel is open (an edit, an undo, a body moved or
+// hidden) takes the colours and the overlap off at once and runs the check again. A document replaced closes the panel
+// (the aboutToReplace handler).
+void MainWindow::recheck() {
+  if (!m_toolPanel->isVisible() || m_toolStack->currentWidget() != m_checks || !m_doc->hasDocument || m_doc->loading) return;
+  runCheck();
+}
+
+// Overhangs amber and thin walls red on the model (help audit P8), until the panel closes or the check runs again.
+void MainWindow::showPrintTints(const opad::json& except) {
+  std::vector<Viewport::CheckTint> tints;
+  for (const opad::json& f : m_checks->findings()) {
+    const std::string kind = f.value("kind", "");
+    if (f == except || (kind != "overhang" && kind != "thin_wall" && kind != "thin_feature")) continue;
+    Viewport::CheckTint t;
+    t.body = f.value("body", "");
+    for (const auto& i : f.value("faces", opad::json::array())) t.faces.push_back(i.get<int>());
+    t.error = kind != "overhang";
+    t.triangles = f.value("mesh", false);
+    tints.push_back(std::move(t));
+  }
+  m_viewport->showCheckTints(tints);
+}
+
 void MainWindow::showFinding(const opad::json& f) {
-  m_viewport->clearPreviewBodies();
+  // The last row's overlap (or the one still on its way) and its gap give way to this one.
+  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
+  m_viewport->showOverlap(TopoDS_Shape(), nullptr);
+  if (std::exchange(m_checkGap, false)) m_viewport->clearDimension();
   if (f.contains("a")) {  // a pair of bodies
     const std::string a = f.value("a", ""), b = f.value("b", "");
     m_viewport->selectNodes({a, b});
-    if (f.value("kind", "") == "clearance" && f.contains("point_a")) {
+    if (f.value("kind", "") == "clearance" && f.contains("point_a")) {  // only close: their gap, as a dimension
       m_viewport->showMeasurement({{"kind", "distance"}, {"value", f.value("distance_mm", 0.0)}, {"unit", "mm"}, {"point_a", f["point_a"]}, {"point_b", f["point_b"]}});
+      m_checkGap = true;
       return;
     }
-    // The overlap itself, shown as a preview body: computed again on a worker (the check keeps its volume and box).
-    if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
-    auto document = std::make_shared<opad::Document>(m_doc->doc);
+    // The overlap itself, in red over the pair (help audit P8): computed again on a worker (the check keeps its volume and box).
+    auto document = m_doc->shapesOf({a, b});
     auto scene = std::make_shared<opad::Scene>(m_doc->scene);
     auto shape = std::make_shared<TopoDS_Shape>();
     auto prs = std::make_shared<std::shared_ptr<const BodyPrs>>();
@@ -682,13 +745,14 @@ void MainWindow::showFinding(const opad::json& f) {
       Bnd_Box box;
       BRepBndLib::Add(*shape, box, Standard_False);
       *prs = BodyPrs::build(*shape, box, true);
-    }, [this, shape, prs](bool ok, const QString&) {
+    }, [this, shape, prs, a, b](bool ok, const QString&) {
       m_overlapJob = nullptr;
-      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks) m_viewport->setPreviewBodies(std::vector<Viewport::PreviewPart>{{std::string(), *shape, *prs}}, {});
+      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks && m_toolPanel->isVisible()) m_viewport->showOverlap(*shape, *prs, {a, b});
     });
     return;
   }
-  // A print finding: the body's faces, highlighted as a face selection.
+  // A print finding: the body's faces, highlighted as a face selection (in the selection's blue: the others keep their colour).
+  showPrintTints(f);
   const std::string body = f.value("body", "");
   std::vector<opad::Ref> refs;
   for (const auto& i : f.value("faces", opad::json::array())) {
@@ -706,6 +770,11 @@ void MainWindow::showFinding(const opad::json& f) {
 
 void MainWindow::endCheck() {
   if (Job* old = std::exchange(m_checkJob, nullptr)) old->cancel();
-  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
-  m_viewport->clearPreviewBodies();
+  clearCheckOverlays();
+}
+
+void MainWindow::clearCheckOverlays() {
+  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();  // drawn for findings that are gone otherwise
+  m_viewport->clearCheckOverlays();
+  if (std::exchange(m_checkGap, false)) m_viewport->clearDimension();
 }

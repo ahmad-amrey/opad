@@ -27,6 +27,7 @@ class CheckPanel : public QWidget {
   void setFailed(const QString& error);
   QSize preferredSize(int width) const;
   int findingCount() const { return static_cast<int>(m_findings.size()); }
+  const std::vector<opad::json>& findings() const { return m_findings; }  // as findingActivated hands them out, in row order
   void activate(int row);  // benches: as if the row were clicked
   // Its clearance, overhang and wall typed over `view` or the panel while `active` (UI-122: never the filters' or the
   // styles' digits); Enter checks again.

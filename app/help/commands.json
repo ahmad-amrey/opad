@@ -269,12 +269,52 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "view.zoomWindow",
+   "title": "Zoom window",
+   "summary": "Zooms in on a rectangle you drag around what you want to see.",
+   "details": "Start it, then drag a box in the view, or click to zoom in around that point; Esc cancels. The camera keeps its direction. It is under Fit's arrow, in the View menu and in the view cube's right-click menu.",
+   "keywords": ["zoom box", "zoom area", "rectangle", "magnify"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.previous",
+   "title": "Previous view",
+   "summary": "Goes back to the view you had before the last camera move.",
+   "details": "A view is remembered each time the camera comes to rest, the last 50 of them, and Next view goes forward again. When there is no earlier view the status bar says so. It is under Fit's arrow, in the View menu and in the view cube's right-click menu.",
+   "keywords": ["back", "undo view", "camera history", "last view"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.next",
+   "title": "Next view",
+   "summary": "Goes forward again through the views Previous view stepped back from.",
+   "details": "A new camera move after stepping back drops the views ahead, as a browser's history does. When there is no later view the status bar says so.",
+   "keywords": ["forward", "redo view", "camera history"],
+   "requires": "Open or create a document first."
+  },
+  {
    "id": "view.home",
    "title": "Home",
    "summary": "Returns to the document's Home view, or to an isometric view with everything in sight while none is set.",
-   "details": "Set current view as Home, under Fit's arrow and in the View menu, keeps the camera in the document. Use it when you lose your way after orbiting. The view cube's house button does the same.",
+   "details": "Set current view as Home, in the View menu and in the view cube's right-click menu, keeps the camera in the document. Use it when you lose your way after orbiting. The view cube's house button does the same.",
    "keywords": ["reset view", "isometric", "default view"],
    "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.setHome",
+   "title": "Set current view as Home",
+   "summary": "Makes the current camera the document's Home view.",
+   "details": "From then on Home and the view cube's house button return to it, and it is saved with the document; Undo takes it back. It is in the View menu and in the view cube's right-click menu. A file in viewer mode is first saved as an OPAD document or edited as an unsaved copy, as you choose.",
+   "keywords": ["home view", "default view", "start view", "camera"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.resetHome",
+   "title": "Reset Home to the iso view",
+   "summary": "Drops the document's own Home view, so Home is the isometric view again.",
+   "details": "Every Home set in the document goes in one step, which Undo takes back. It is available only while the document has a Home of its own, and not in viewer mode; it is in the View menu and in the view cube's right-click menu.",
+   "keywords": ["home view", "default view", "isometric"],
+   "requires": "The document needs a Home of its own (Set current view as Home); not available in viewer mode."
   },
   {
    "id": "view.alignPlane",
@@ -298,6 +338,22 @@
    "summary": "Turns the view 90 degrees to the right about the screen's axis.",
    "details": "The model is not moved, only the camera. Use it to stand a drawing or a face upright.",
    "keywords": ["rotate view", "roll", "clockwise"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.twist",
+   "title": "Twist view",
+   "summary": "Turns the view about its own axis by an angle you type.",
+   "details": "The angle is counter-clockwise, in the angle unit shown, and 0 untwists. Only the camera turns, never the model. It is in the View menu after the 90° turns.",
+   "keywords": ["rotate view", "roll", "angle", "twist"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.untwist",
+   "title": "Untwist view",
+   "summary": "Stands the view upright again, without any twist.",
+   "details": "Up on screen is the model's Z again (Y when looking from above or below), or the sketch's own y while a sketch is open. Only the camera turns.",
+   "keywords": ["upright", "reset roll", "level", "twist"],
    "requires": "Open or create a document first."
   },
   {
@@ -328,9 +384,9 @@
    "id": "view.iso",
    "title": "Isometric view",
    "summary": "Looks at the model from a corner, at equal angles to the three axes.",
-   "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
+   "details": "The camera turns smoothly and the model is fitted. The view cube's matching corner does the same while its corners turn the view. Not available in 2D mode.",
    "keywords": ["standard view", "iso", "orientation", "camera"],
-   "requires": "Open or create a document first."
+   "requires": "Open or create a document first; not available in 2D mode."
   },
   {
    "id": "view.bottom",
@@ -450,6 +506,22 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "view.hidden",
+   "title": "Hidden line",
+   "summary": "Draws bodies as line drawings, leaving out the edges hidden behind faces.",
+   "details": "Faces are filled in the background's colour and their edges and outlines drawn in an ink that stands out against it, so what lies behind a face is hidden, as on a drawing. Drawings (DXF, DWG, SVG) keep their own lines. Hidden edges visible, under its arrow in the View tab, also shows the hidden ones, dashed.",
+   "keywords": ["display style", "hidden line removal", "line drawing", "technical drawing"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.hiddenEdges",
+   "title": "Hidden edges visible",
+   "summary": "Draws bodies as line drawings, with the hidden edges dashed.",
+   "details": "As in Hidden line, the faces take the background's colour and hide what is behind them; the edges behind them are drawn as well, dashed and dim, so inner features show. The dashes are built on a worker thread and follow the model as it changes. It is under Hidden line's arrow in the View tab.",
+   "keywords": ["display style", "hidden lines", "dashed", "x-ray"],
+   "requires": "Open or create a document first."
+  },
+  {
    "id": "view.grid",
    "title": "Grid",
    "summary": "Shows or hides the ground grid.",
@@ -477,7 +549,7 @@
    "id": "view.isolate",
    "title": "Isolate",
    "summary": "Shows only the selection until you exit isolation.",
-   "details": "Everything else is hidden from view, not from the document. Exit isolate ({key:view.unisolate}) brings it back.",
+   "details": "Everything else is hidden from view, not from the document, and the view frames what is isolated. Exit isolate ({key:view.unisolate}) or the × on the Isolated card in the view brings it back.",
    "keywords": ["focus", "show only", "solo"],
    "requires": "Open or create a document first."
   },
@@ -485,9 +557,17 @@
    "id": "view.unisolate",
    "title": "Exit isolate",
    "summary": "Brings back everything isolation hid.",
-   "details": "The camera stays where it is. Visibility you set yourself is kept.",
+   "details": "The camera stays where it is. Visibility you set yourself is kept. A click on the Isolated card in the view (its ×) does the same.",
    "keywords": ["show all", "end isolate", "unisolate"],
    "requires": "Nothing is isolated."
+  },
+  {
+   "id": "view.hideothers",
+   "title": "Hide others",
+   "summary": "Hides everything but the selection, in one step.",
+   "details": "Unlike Isolate, it hides the other objects in the document itself, as Hide does; one Undo brings them all back. Unhide all or the browser's eye shows them again.",
+   "keywords": ["show only", "hide rest", "visibility", "hide unselected"],
+   "requires": "Select the objects to keep shown first, in the view or in the browser."
   },
   {
    "id": "view.saveview",
@@ -557,7 +637,7 @@
    "id": "panel.annotations",
    "title": "Annotations",
    "summary": "Lists notes, hand drawings and pinned measurements.",
-   "details": "Filter by author, type and status; click a card to show its target. Resolved notes stay in the history.",
+   "details": "Filter by author, type and status. Click a card and what its note is pinned to lights up in the view, the face, edge, point or body itself (every pick of a pinned measurement), without changing the selection; a click in the view puts it out. Resolved notes stay in the history.",
    "keywords": ["notes", "comments", "markup", "review"],
    "requires": "Open an OPAD document; a file in viewer mode has no annotations."
   },
@@ -799,6 +879,27 @@
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "blender"]
   },
   {
+   "id": "nav.cad2d",
+   "title": "Navigation: CAD 2D",
+   "summary": "Uses drafting mouse buttons: the middle button pans, the wheel zooms and nothing orbits.",
+   "details": "Ctrl with the middle button zooms as well, and a trackpad pans instead of orbiting. It changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
+   "keywords": ["mouse", "pan", "zoom", "drafting", "2d", "navigation"]
+  },
+  {
+   "id": "view.animate",
+   "title": "Animate view changes",
+   "summary": "Turns the camera smoothly to a new view instead of jumping there.",
+   "details": "It applies to the standard views, Home, Fit, Previous and Next view, the zoom window and the turns. Off, the camera jumps straight to the new view, as it also does while Reduce motion is on in Preferences › Display. The choice is kept for the next start.",
+   "keywords": ["animation", "smooth camera", "transition", "motion"]
+  },
+  {
+   "id": "view.adaptive",
+   "title": "Lower quality while navigating",
+   "summary": "Draws a model that is slow to draw with less detail while the view moves.",
+   "details": "When a full frame takes longer than about 20 ms, shadows, outlines and extra resolution are left out while you orbit, pan or zoom, and the full image is back a moment after the view rests. Off, every frame is drawn in full, however slow. The choice is kept for the next start.",
+   "keywords": ["performance", "frame rate", "smooth", "large model", "quality"]
+  },
+  {
    "id": "select.bodies",
    "title": "Bodies",
    "summary": "Makes a click pick whole bodies.",
@@ -834,7 +935,7 @@
    "id": "inspect.distance",
    "title": "Distance",
    "summary": "Measures the distance between two picks: the shortest, centre to centre or the largest.",
-   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance, its X, Y and Z parts and the measured points. Minimum, Centre to centre and Maximum in the panel choose which distance. A dashed preview line follows the cursor after the first pick, and Pin ({key:inspect.pin}) keeps the result in the document.",
+   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance, its X, Y and Z parts and the measured points. Started from the Bodies filter it picks faces until it ends: select bodies first, or choose Bodies while it runs, to measure whole bodies. Minimum, Centre to centre and Maximum in the panel choose which distance. A dashed preview line follows the cursor after the first pick, and Pin ({key:inspect.pin}) keeps the result in the document.",
    "keywords": ["measure", "length", "gap", "clearance", "dimension"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -858,7 +959,7 @@
    "id": "inspect.bbox",
    "title": "Bounding box",
    "summary": "Draws the world-aligned box around the picks and reports its size.",
-   "details": "Pick one or more bodies, faces or edges. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
+   "details": "Each click adds what the selection filter picks, a body, face, edge or vertex, and the box grows to hold them all; Esc takes the last one back. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
    "keywords": ["size", "extents", "dimensions", "overall size"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -871,10 +972,18 @@
    "requires": "Open or create a document first; not available while a sketch is open."
   },
   {
+   "id": "inspect.length",
+   "title": "Length and area",
+   "summary": "Measures an edge's length, a face's area or a body's surface area.",
+   "details": "Pick one edge, face or body. An edge gives its length along the curve and the perimeter of each face loop it belongs to; a face its area and perimeters; a body its surface area, and its volume when it is a solid. From the Vertices filter it picks edges while it runs.",
+   "keywords": ["perimeter", "surface area", "edge length", "measure"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
    "id": "inspect.interference",
    "title": "Interference",
    "summary": "Finds bodies that overlap or nearly touch and lists each pair.",
-   "details": "Checks the selected bodies, or all solids when nothing is selected. Click a row to highlight that overlap in the view.",
+   "details": "It runs as the panel opens, on the selected bodies or on all solids when nothing is selected, and again whenever the model changes; a Clearance above 0 also lists pairs closer than it. Click a row and the pair is selected: an overlap shows in red over them, a pair that is only close shows its gap as a dimension.",
    "keywords": ["collision", "clash", "overlap", "clearance"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -882,7 +991,7 @@
    "id": "inspect.printcheck",
    "title": "Print check",
    "summary": "Checks a part for 3D printing: overhangs, build-plate contact and thin walls.",
-   "details": "Works on solids and on meshes such as STL and 3MF. Each finding is a region; click it to highlight it on the part.",
+   "details": "Works on solids and on meshes such as STL and 3MF. It runs as the panel opens and again whenever the model changes, and lists each finding; on the part overhangs turn amber and thin walls red, seen through the model like a selection, until the panel closes. A clicked finding is selected.",
    "keywords": ["3d print", "overhang", "support", "wall thickness", "stl"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },

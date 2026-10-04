@@ -74,7 +74,7 @@ class OpacityPopup : public QFrame {
   OpacitySlider* slider() const { return m_slider; }
   void popup(const QPoint& global);
  protected:
-  bool event(QEvent* event) override;
+  bool event(QEvent* event) override;  // its keys are its own: no window command takes Esc, Enter or the slider's keys
   void keyPressEvent(QKeyEvent* event) override;
   void hideEvent(QHideEvent* event) override;
  private:

@@ -1015,7 +1015,8 @@ void Viewport::applySelectionFilter(SelFilter f) {
   auto i = std::make_shared<size_t>(0);
   m_filterJob = m_jobs->sliced(tr("Switching selection mode"), [this, items, i](Job&) {
     if (*i >= items->size()) return false;
-    activateSelection((*items)[(*i)++]);
+    // One removed meanwhile (a sync, another document) stays out: Load would put it back in the context, pickable unseen.
+    if (const Handle(AIS_Shape)& ais = (*items)[(*i)++]; m_ctx->DisplayStatus(ais) != PrsMgr_DisplayStatus_None) activateSelection(ais);
     return *i < items->size();
   }, [this](bool completed) {
     m_filterJob = nullptr;
@@ -1668,7 +1669,9 @@ void Viewport::standardView(const QString& name, bool animate) {
   moveCamera(animate, 0.4, [this, o] {
     m_view->SetProj(o);
     fitAll();
+    if (m_twoDimensional) alignGridPlane();  // a plan, an elevation or a side in 2D mode: the grid in the plane it ends on
   });
+  if (m_twoDimensional) updateGridExtent();
 }
 
 void Viewport::home(bool animate) {
@@ -2462,6 +2465,9 @@ void Viewport::sync() {
   if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // the retired bodies' selected sub-shapes went with them
   if (!pending.empty()) startMeshing(pending);
+  // The print check's colours lie on the bodies drawn: made again once the view settles when those change (isolation); a
+  // document change runs the check again instead (MainWindow::recheck).
+  if (!m_tintWanted.empty() && (removed || moved || !pending.empty() || !m_displayQueue.empty())) m_tintAgain = true;
   if (layered()) scheduleLooks();  // the hierarchy under a layer's components may have changed
   syncSketches(partial);
   applySelectionLayers();
@@ -2714,6 +2720,8 @@ void Viewport::finishSync(int pendingCount, bool added) {
   if(!m_needFit)m_fitNodesOnSync.clear();
   if (pendingCount == 0) m_needFit = false;
   if (m_sectionEnabled) updateSectionGizmo();  // the model's extent may have changed
+  if (m_tintAgain && pendingCount == 0) buildCheckTints();
+  placeOverlap();  // its pair isolated away, or back
   m_view->Invalidate();
   requestRedraw();
 }

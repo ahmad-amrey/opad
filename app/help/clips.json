@@ -86,8 +86,7 @@
     {"el": "grid", "spacing": 10, "area": [-18, -14, 18, 14]},
     {"el": "axes", "len": 6, "at": [-16, -12, 0]},
     {"use": "bracket"},
-    {"el": "key", "command": "$command", "press": 0.9, "from": 0.5, "to": 1.4},
-    {"el": "chip", "screen": [0.03, 0.05], "icon": "home", "text": "$name", "from": 2.0}],
+    {"el": "key", "command": "$command", "press": 0.9, "from": 0.5, "to": 1.4}],
    "steps": [{"to": 1.0, "caption": "$caption1"}, {"to": 3.8, "caption": "The camera turns to look from there"}]},
   "viewStyle": {"params": {"command": null, "name": null, "caption1": null, "caption2": null, "from": null, "to": null},
    "duration": 3.6, "view": "iso",
@@ -917,6 +916,7 @@
   {
    "id": "view.isolate", "duration": 4.2, "view": "iso",
    "items": [
+    {"el": "camera", "framing": true, "keys": [[1.2, {"zoom": 1, "center": [0, 0]}], [1.9, {"zoom": 1.7, "center": [4.2, -2.7]}]]},
     {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
     {"el": "solid", "profile": {"rect": [0, 0, 36, 22], "round": 2}, "height": 3, "keys": [[1.1, {"opacity": 1}], [1.6, {"opacity": 0}], [3.3, {"opacity": 0}], [3.8, {"opacity": 1}]]},
     {"el": "solid", "profile": {"circle": [-10, 4, 4]}, "at": [0, 0, 3], "height": 9, "keys": [[1.1, {"opacity": 1}], [1.6, {"opacity": 0}], [3.3, {"opacity": 0}], [3.8, {"opacity": 1}]]},
@@ -1285,18 +1285,24 @@
    ]
   },
   {
-   "id": "view.unisolate", "duration": 3.6, "view": "iso",
+   "id": "view.unisolate", "duration": 6.4, "view": "iso",
    "items": [
+    {"el": "camera", "framing": true, "zoom": 1.7, "center": [4.2, -2.7]},
     {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
-    {"el": "solid", "profile": {"rect": [0, 0, 36, 22], "round": 2}, "height": 3, "opacity": 0, "keys": [[1.1, {"opacity": 0}], [1.7, {"opacity": 1}]]},
-    {"el": "solid", "profile": {"circle": [-10, 4, 4]}, "at": [0, 0, 3], "height": 9, "opacity": 0, "keys": [[1.1, {"opacity": 0}], [1.7, {"opacity": 1}]]},
+    {"el": "solid", "profile": {"rect": [0, 0, 36, 22], "round": 2}, "height": 3, "opacity": 0,
+     "keys": [[1.1, {"opacity": 0}], [1.7, {"opacity": 1}], [3.6, {"opacity": 1}], [3.9, {"opacity": 0}], [5.1, {"opacity": 0}], [5.6, {"opacity": 1}]]},
+    {"el": "solid", "profile": {"circle": [-10, 4, 4]}, "at": [0, 0, 3], "height": 9, "opacity": 0,
+     "keys": [[1.1, {"opacity": 0}], [1.7, {"opacity": 1}], [3.6, {"opacity": 1}], [3.9, {"opacity": 0}], [5.1, {"opacity": 0}], [5.6, {"opacity": 1}]]},
     {"el": "solid", "profile": {"rect": [8, -2, 10, 8]}, "at": [0, 0, 3], "height": 6, "tone": "sel", "toneAmount": 0.45},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Isolated · 1 body", "dot": "amber", "close": true, "from": 3.8, "to": 5.1, "keys": [[4.75, {"hl": false}], [4.8, {"hl": true}]]},
+    {"el": "cursor", "from": 3.8, "dx": 98, "dy": 9.5, "keys": [[3.8, {"screen": [0.45, 0.6]}], [4.8, {"screen": [0.03, 0.05]}], [5.0, {"screen": [0.03, 0.05], "click": 1}], [6.0, {"screen": [0.2, 0.4]}]]},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Isolated · 1 body", "dot": "amber", "close": true, "to": 1.1},
     {"el": "key", "command": "view.unisolate", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
     {"to": 1.0, "caption": "While isolated, press {key:view.unisolate}", "captionNoKey": "While isolated, choose Exit isolate"},
     {"to": 3.6, "caption": "Everything hidden comes back"}
+    , {"to": 6.4, "caption": "Or click × on the Isolated card"}
    ]
   },
   {
@@ -1525,27 +1531,39 @@
    ]
   },
   {
-   "id": "inspect.bbox", "duration": 4.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "id": "inspect.bbox", "duration": 6.4, "view": "iso", "extent": [-31, -13, 31, 26],
    "items": [
     {"el": "camera", "center": [-8, 0]},
-    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 18]}},
     {"el": "solid", "profile": {"rect": [0, 0, 20, 10], "round": 2}, "holes": [{"circle": [5, 0, 2]}], "height": 6, "rot": 30, "tone": "sel", "toneAmount": 0, "keys": [[0.9, {"toneAmount": 0.35}]]},
+    {"el": "solid", "profile": {"circle": [8, 13, 3]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[3.0, {"toneAmount": 0.35}]]},
     {"el": "poly", "closed": true, "points": [[-11.16, -9.33, 0], [11.16, -9.33, 0], [11.16, 9.33, 0], [-11.16, 9.33, 0]], "color": "sel", "dash": true, "width": 1.2, "from": 1.1, "fade": 0,
-     "keys": [[1.1, {"progress": 0}], [1.8, {"progress": 1, "ease": "linear"}]]},
+     "keys": [[1.1, {"progress": 0}], [1.8, {"progress": 1, "ease": "linear"}],
+              [3.1, {"points": [[-11.16, -9.33, 0], [11.16, -9.33, 0], [11.16, 9.33, 0], [-11.16, 9.33, 0]]}],
+              [3.6, {"points": [[-11.16, -9.33, 0], [11.16, -9.33, 0], [11.16, 16, 0], [-11.16, 16, 0]]}]]},
     {"el": "poly", "closed": true, "points": [[-11.16, -9.33, 6], [11.16, -9.33, 6], [11.16, 9.33, 6], [-11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.1, "fade": 0,
-     "keys": [[1.1, {"progress": 0}], [1.8, {"progress": 1, "ease": "linear"}]]},
-    {"el": "poly", "points": [[11.16, -9.33, 0], [11.16, -9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8},
-    {"el": "poly", "points": [[-11.16, -9.33, 0], [-11.16, -9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8},
-    {"el": "poly", "points": [[11.16, 9.33, 0], [11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8},
-    {"el": "poly", "points": [[-11.16, 9.33, 0], [-11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8},
+     "keys": [[1.1, {"progress": 0}], [1.8, {"progress": 1, "ease": "linear"}],
+              [3.1, {"points": [[-11.16, -9.33, 6], [11.16, -9.33, 6], [11.16, 9.33, 6], [-11.16, 9.33, 6]]}],
+              [3.6, {"points": [[-11.16, -9.33, 10], [11.16, -9.33, 10], [11.16, 16, 10], [-11.16, 16, 10]]}]]},
+    {"el": "poly", "points": [[11.16, -9.33, 0], [11.16, -9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8,
+     "keys": [[3.1, {"points": [[11.16, -9.33, 0], [11.16, -9.33, 6]]}], [3.6, {"points": [[11.16, -9.33, 0], [11.16, -9.33, 10]]}]]},
+    {"el": "poly", "points": [[-11.16, -9.33, 0], [-11.16, -9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8,
+     "keys": [[3.1, {"points": [[-11.16, -9.33, 0], [-11.16, -9.33, 6]]}], [3.6, {"points": [[-11.16, -9.33, 0], [-11.16, -9.33, 10]]}]]},
+    {"el": "poly", "points": [[11.16, 9.33, 0], [11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8,
+     "keys": [[3.1, {"points": [[11.16, 9.33, 0], [11.16, 9.33, 6]]}], [3.6, {"points": [[11.16, 16, 0], [11.16, 16, 10]]}]]},
+    {"el": "poly", "points": [[-11.16, 9.33, 0], [-11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8,
+     "keys": [[3.1, {"points": [[-11.16, 9.33, 0], [-11.16, 9.33, 6]]}], [3.6, {"points": [[-11.16, 16, 0], [-11.16, 16, 10]]}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 110, "title": "Bounding box", "from": 2.2,
-     "rows": [{"value": "X  22.32 mm", "color": "red"}, {"value": "Y  18.66 mm", "color": "green"}, {"value": "Z  6.00 mm", "color": "blue"}]},
-    {"el": "cursor", "badge": "bbox", "keys": [[0, {"pos": [16, -16, 0]}], [0.9, {"pos": [1, -2, 6], "click": 1}], [1.6, {"pos": [1, -2, 6]}], [2.6, {"pos": [16, -12, 4]}]]}
+     "rows": [{"value": "X  22.32 mm", "color": "red"}, {"value": "Y  18.66 mm", "color": "green"}, {"value": "Z  6.00 mm", "color": "blue"}],
+     "keys": [[3.6, {"rows": [{"value": "X  22.32 mm", "color": "red"}, {"value": "Y  25.33 mm", "color": "green"}, {"value": "Z  10.00 mm", "color": "blue"}]}]]},
+    {"el": "cursor", "badge": "bbox", "keys": [[0, {"pos": [16, -16, 0]}], [0.9, {"pos": [1, -2, 6], "click": 1}], [1.6, {"pos": [1, -2, 6]}], [2.5, {"pos": [8, 13, 10]}],
+                                              [3.0, {"pos": [8, 13, 10], "click": 1}], [3.8, {"pos": [8, 13, 10]}], [4.6, {"pos": [16, -12, 4]}]]}
    ],
    "steps": [
     {"to": 1.0, "caption": "Select bodies, faces or edges"},
-    {"to": 2.2, "caption": "A box square to the axes wraps them"},
-    {"to": 4.8, "caption": "Read its X, Y and Z sizes"}
+    {"to": 2.4, "caption": "A box square to the axes wraps them"},
+    {"to": 4.2, "caption": "Each click adds: the box grows around it"},
+    {"to": 6.4, "caption": "Read its X, Y and Z sizes"}
    ]
   },
   {
@@ -1592,34 +1610,36 @@
    "items": [
     {"el": "camera", "center": [-18, 0]},
     {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
-    {"el": "solid", "profile": {"rect": [-3, 0, 20, 14]}, "height": 8},
-    {"el": "solid", "profile": {"circle": [7, 0, 5]}, "at": [0, 0, 2], "height": 12, "keys": [[1.4, {"opacity": 1}], [1.7, {"opacity": 0.55}]]},
-    {"el": "solid", "profile": {"circle": [7, 0, 5]}, "at": [0, 0, 2], "height": 6, "tone": "red", "toneAmount": 0.7, "from": 1.5, "fade": 0.3},
-    {"el": "card", "screen": [0.03, 0.06], "w": 132, "title": "Interference", "button": "Check", "press": 1.2, "hl": -1,
-     "rows": [{"text": "All solids", "radio": true}],
-     "keys": [[1.5, {"rows": [{"text": "All solids", "radio": true}, {"value": "Plate × Pin  471 mm³", "color": "red"}]}], [2.6, {"hl": 1}]]},
-    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.75]}], [1.0, {"screen": [0.38, 0.36]}], [1.2, {"screen": [0.38, 0.36], "click": 1}], [2.4, {"screen": [0.25, 0.42]}],
-                              [2.6, {"screen": [0.25, 0.42], "click": 1}], [3.4, {"screen": [0.62, 0.72]}]]}
+    {"el": "solid", "profile": {"rect": [-3, 0, 20, 14]}, "height": 8, "tone": "sel", "toneAmount": 0, "keys": [[2.6, {"toneAmount": 0}], [2.8, {"toneAmount": 0.4}]]},
+    {"el": "solid", "profile": {"circle": [7, 0, 5]}, "at": [0, 0, 2], "height": 12, "tone": "sel", "toneAmount": 0, "keys": [[2.6, {"toneAmount": 0}], [2.8, {"toneAmount": 0.4}]]},
+    {"el": "solid", "profile": {"circle": [7, 0, 5]}, "at": [0, 0, 2], "height": 6, "tone": "red", "toneAmount": 0.75, "from": 2.7, "fade": 0.3},
+    {"el": "card", "screen": [0.03, 0.06], "w": 166, "title": "Interference", "button": "Check", "hl": -1, "from": 0.3,
+     "rows": [["Clearance", "0 mm"], {"text": "Checking…", "dim": true}],
+     "keys": [[1.1, {"rows": [["Clearance", "0 mm"], {"text": "Overlapping pairs: 1", "dim": true}, {"text": "Plate and Pin: overlap 471 mm³", "color": "red"}]}], [2.6, {"hl": 2}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.75]}], [1.4, {"screen": [0.6, 0.75]}], [2.3, {"screen": [0.2, 0.47]}], [2.6, {"screen": [0.2, 0.47], "click": 1}],
+                              [3.4, {"screen": [0.62, 0.72]}]]}
    ],
    "steps": [
-    {"to": 1.3, "caption": "Open Interference and run the check"},
+    {"to": 1.3, "caption": "Open Interference: the check runs at once"},
     {"to": 2.5, "caption": "Each overlapping pair is listed"},
     {"to": 5.0, "caption": "The overlap is shown in red"}
    ]
   },
   {
-   "id": "inspect.printcheck", "duration": 5.2, "view": "iso", "extent": [-35, -16, 35, 16],
+   "id": "inspect.printcheck", "duration": 5.2, "view": "iso", "extent": [-42, -16, 42, 20],
    "items": [
-    {"el": "camera", "center": [-11, 0]},
+    {"el": "camera", "center": [-17, 0]},
     {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [36, 28], "color": "fg3", "fillOpacity": 0.1},
     {"el": "solid", "plane": "xz", "at": [0, 6, 0], "height": 12, "profile": {"points": [[-3, 0], [3, 0], [3, 10], [12, 10], [12, 14], [-12, 14], [-12, 10], [-3, 10]]}},
-    {"el": "solid", "profile": {"rect": [10, -10, 8, 0.6]}, "height": 9, "tone": "red", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.8, {"toneAmount": 0.55}], [2.9, {"toneAmount": 0.55}], [3.1, {"toneAmount": 0.85}]]},
+    {"el": "solid", "profile": {"rect": [10, -10, 8, 0.6]}, "height": 9, "tone": "red", "toneAmount": 0, "to": 3.1, "fade": 0.15, "keys": [[1.5, {"toneAmount": 0}], [1.8, {"toneAmount": 0.55}]]},
+    {"el": "solid", "profile": {"rect": [10, -10, 8, 0.6]}, "height": 9, "tone": "sel", "toneAmount": 0.5, "from": 2.95, "fade": 0.15},
     {"el": "solid", "plane": "xz", "at": [0, 6, 10], "height": 12, "profile": {"points": [[-12, 0], [-3, 0], [-3, 4], [-12, 4]]}, "tone": "amber", "toneAmount": 0.6, "from": 1.4, "fade": 0.3},
     {"el": "solid", "plane": "xz", "at": [0, 6, 10], "height": 12, "profile": {"points": [[3, 0], [12, 0], [12, 4], [3, 4]]}, "tone": "amber", "toneAmount": 0.6, "from": 1.4, "fade": 0.3},
-    {"el": "card", "screen": [0.03, 0.06], "w": 132, "title": "Print check", "hl": -1, "from": 0.3,
-     "rows": [{"text": "Checking…"}],
-     "keys": [[1.4, {"rows": [{"text": "Overhangs", "value": "2", "color": "amber"}, {"text": "Thin walls", "value": "1", "color": "red"}, {"text": "Plate contact", "value": "OK", "color": "green"}]}], [2.9, {"hl": 1}]]},
-    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.75]}], [2.6, {"screen": [0.2, 0.32]}], [2.9, {"screen": [0.2, 0.32], "click": 1}], [3.8, {"screen": [0.62, 0.72]}]]}
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Print check", "hl": -1, "from": 0.3,
+     "rows": [{"text": "Checking…", "dim": true}],
+     "keys": [[1.4, {"rows": [{"text": "Findings: 2. Bodies checked: 1.", "dim": true}, {"text": "Bracket: face 7 overhangs 60°", "color": "amber"},
+                              {"text": "Bracket: wall 0.6 mm at face 3", "color": "red"}]}], [2.9, {"hl": 2}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.75]}], [2.6, {"screen": [0.2, 0.43]}], [2.9, {"screen": [0.2, 0.43], "click": 1}], [3.8, {"screen": [0.62, 0.72]}]]}
    ],
    "steps": [
     {"to": 1.4, "caption": "Run the 3D-print check"},
@@ -3583,7 +3603,7 @@
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
-    {"el": "poly", "closed": true, "points": [[9, -6, 0], [9, 6, 0], [9, 6, 6], [9, -6, 6]], "color": "sel", "width": 1.6, "fill": "sel", "fillOpacity": 0.38, "from": 3, "fade": 0.15},
+    {"el": "poly", "closed": true, "points": [[9, -6, 0], [9, 6, 0], [9, 6, 6], [9, -6, 6]], "color": "sel", "width": 1.6, "dash": true, "fill": "sel", "fillOpacity": 0.32, "from": 3, "fade": 0.15},
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Annotations", "hl": -1, "rows": [["Type", "All"], {"text": "Check the clearance", "icon": "annotate"}, {"text": "Round this edge", "icon": "annotate"}, {"text": "Hole too small", "icon": "issue"}], "keys": [[1.2, {"rows": [["Type", "Issue"], {"text": "Hole too small", "icon": "issue"}, {"text": "Wall too thin", "icon": "issue"}], "hl": 0, "ease": "step"}], [1.5, {"hl": -1}], [2.9, {"hl": 2}]]},
     {"el": "key", "command": "panel.annotations", "press": 0.5, "from": 0.15, "to": 1},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.1, {"screen": [0.4, 0.28]}], [1.2, {"screen": [0.4, 0.28], "click": 1}], [2.8, {"screen": [0.2, 0.52]}], [2.9, {"screen": [0.2, 0.52], "click": 1}], [3.8, {"screen": [0.7, 0.85]}]]}
