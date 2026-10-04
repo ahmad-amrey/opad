@@ -171,7 +171,10 @@ void MainWindow::sketchTab(RibbonLayout& layout, const QString& tab) {
          {"sketch.constraints", I}});
   group("reference", tr("Reference"),
         {{"sketch.project", L, {"sketch.intersect_body", "sketch.silhouette", "sketch.include3d", "sketch.break_link"}}, {"kicad.project", S}});
-  group("insert", tr("Insert"), {{"sketch.moreFiles"}});
+  // Pictures and vector files by their own tools (the Sketch menu keeps its Images and files list).
+  group("insert", tr("Insert"),
+        {{"sketch.image_insert", L, {"sketch.image_edit", "sketch.image_calibrate", "sketch.image_trace", "sketch.image_remove"}},
+         {"sketch.vector_import", S, {"sketch.vector_export"}}});
   group("options", tr("Options"),
         {{"sketch.snaps", S},
          {"view.grid", S, {"view.gridSettings"}},
