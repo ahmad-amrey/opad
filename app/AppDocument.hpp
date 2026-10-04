@@ -113,6 +113,10 @@ class AppDocument : public QObject {
   };
   const Change& lastChange() const { return m_change; }
   QString nodeName(const std::string& id) const;
+  // For a worker that reads the shapes of these nodes (the bodies under them) and nothing else of the document: an empty
+  // document sharing the shape cache, their shapes put there first (a hit for any body loaded or displayed), their entries
+  // without the BREP text. A copy of `doc` copies every BREP text on the UI thread (80-150 ms a click on the Engine).
+  std::shared_ptr<opad::Document> shapesOf(const std::vector<std::string>& nodes) const;
 
  signals:
   // A viewer document became editable: the same shapes, now under content keys (live key -> content key). Emitted just

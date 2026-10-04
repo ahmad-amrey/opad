@@ -566,3 +566,19 @@ QString AppDocument::nodeName(const std::string& id) const {
   const opad::Node* n = scene.node(id);
   return n ? QString::fromStdString(n->name) : QString::fromStdString(id.substr(0, 8));
 }
+
+std::shared_ptr<opad::Document> AppDocument::shapesOf(const std::vector<std::string>& nodes) const {
+  auto out = std::make_shared<opad::Document>();
+  out->shape_cache = doc.shape_cache;
+  out->header = doc.header;
+  for (const auto& id : nodes)
+    for (const auto& body : scene.node(id) ? scene.bodies_under(id) : std::vector<std::string>{})
+      if (const opad::Node* n = scene.node(body); n && !n->body_missing && !out->has_body(n->body_key)) try {
+        opad::body_shape(doc, n->body_key);
+        const opad::BodyEntry* e = doc.body(n->body_key);
+        out->add_live_body(n->body_key, e ? e->meta : opad::json::object());
+      } catch (const std::exception&) {
+      } catch (const Standard_Failure&) {
+      }
+  return out;
+}

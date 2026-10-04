@@ -301,7 +301,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
 // The bbox of a component walks every body under it; it is added to the panel by a sliced job.
 void MainWindow::showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid) {
   if (m_propsJob) m_propsJob->cancel();
-  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto document = m_doc->shapesOf({id});
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   auto result = std::make_shared<opad::json>();
   const auto generation = m_doc->generation;
@@ -316,7 +316,7 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 
 void MainWindow::showRefGeometry(const opad::Ref& ref, const QString& subtitle, const QString& nid) {
   if (m_propsJob) m_propsJob->cancel();
-  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto document = m_doc->shapesOf({ref.body});
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   auto result = std::make_shared<opad::json>();
   const auto generation = m_doc->generation;

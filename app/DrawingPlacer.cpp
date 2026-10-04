@@ -281,7 +281,7 @@ bool DrawingPlacer::eventFilter(QObject* object, QEvent* event) {
       opad::Ref ref;
       if (m_view->originReferenceAt(e->position(), ref)) {  // where it is: inspected on a worker (UI-51, it walks the body)
         if (m_snapJob) m_snapJob->cancel();
-        auto document = std::make_shared<opad::Document>(m_doc->doc);
+        auto document = m_doc->shapesOf({ref.body});
         auto scene = std::make_shared<opad::Scene>(m_doc->scene);
         auto target = std::make_shared<opad::Vec3>();
         const int serial = m_serial;

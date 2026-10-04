@@ -73,7 +73,7 @@ void MainWindow::buildInspectActions() {
 // The face is inspected on a worker (UI-51: inspect_ref walks the body); the plane is set when it answers.
 void MainWindow::sectionFromFace(const opad::Ref& face) {
   if (Job* old = std::exchange(m_sectionJob, nullptr)) old->cancel();
-  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto document = m_doc->shapesOf({face.body});
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   auto result = std::make_shared<opad::json>();
   const auto generation = m_doc->generation;
@@ -242,7 +242,9 @@ void MainWindow::runToolMeasure() {
   // Straight to the measure functions with the app's resolved scene; the "measure" command would resolve the
   // whole scene from the op log again on every call.
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
-  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  std::vector<std::string> picked;
+  for (const auto& r : refs) picked.push_back(r.body);
+  auto document = m_doc->shapesOf(picked);
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [document, scene, refs, pickedPoints, snapTolerance, kind, mode, result](Progress progress) {
     if (kind == "distance" && mode == 1) *result = opad::measure_center_distance(*document, *scene, refs.at(0), refs.at(1));
