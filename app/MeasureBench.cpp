@@ -343,6 +343,21 @@ OPAD_BENCH(OPAD_BENCH_MEASURE, measure) {
           QString("and back in world axes: Δ %1 %2 %3, the view's arrows %4").arg(row("ΔX"), row("ΔY"), row("ΔZ"), shownCaptions.join(" | ")));
   if (auto* minimum = modeButton(0)) minimum->click();
   w.cancelTool();
+  // A component that lies as the world does (an imported file's root, mostly) offers no axes of its own.
+  const int displayed = w.m_viewport->displayedCount();
+  const std::string shelf = w.m_doc->run("component", {{"name", "Shelf"}}).value("id", "");
+  w.m_doc->run("import_brep", {{"brep", brepText(cube)}, {"name", "Book"}, {"parent", shelf}});
+  std::string bookId;
+  for (const auto& id : w.m_doc->scene.all_bodies())
+    if (w.m_doc->nodeName(id) == "Book") bookId = id;
+  require(until([&w, displayed] { return w.m_viewport->displayedCount() > displayed && w.m_viewport->remainingBodies() == 0; }, 30000) && !bookId.empty(),
+          "the book in the unmoved component is displayed");
+  w.startTool("length");
+  w.m_viewport->selectRefs({faceRef(bookId, capTop)});
+  w.onViewportSelection();
+  until([&w] { return !w.m_lastMeasure.is_null(); }, 20000);
+  require(!w.m_lastMeasure.is_null() && !frameShown() && row("Coordinates in").isEmpty(), "a pick in a component at the world's placement offers no component axes");
+  w.cancelTool();
 
   QCoreApplication::exit(all ? 0 : 2);
   return true;

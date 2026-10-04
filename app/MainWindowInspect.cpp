@@ -401,10 +401,11 @@ QString MainWindow::measureTitle(const opad::json& r) const {
 }
 
 // UI-144: points can be given in the axes of the component the first pick lies in (its parent; a body at the root has
-// none). A placement that is not rigid leaves them in world axes.
+// none, nor one whose component lies as the world does: an imported file's root, mostly). A placement that is not rigid
+// leaves them in world axes.
 std::string MainWindow::measureComponent(const std::string& body) const {
   const opad::Node* n = body.empty() ? nullptr : m_doc->scene.node(body);
-  return n && !n->parent.empty() && m_doc->scene.node(n->parent) ? n->parent : std::string();
+  return n && !n->parent.empty() && m_doc->scene.node(n->parent) && !m_doc->scene.world(n->parent).is_identity() ? n->parent : std::string();
 }
 
 bool MainWindow::measureFrame(const std::string& body, gp_Trsf& toWorld) const {
