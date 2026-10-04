@@ -35,6 +35,7 @@ CASES = [
     # P7 on a drawing in 2D mode: Turn 90° left twists it in an animation, the direction and the grid's plane stay.
     # <prefix>.roll-partway.png, <prefix>.roll.png.
     ("views-2d", plan, {"OPAD_BENCH_VIEWS": "{prefix}"}, GRID),
-    # P8 on two blocks apart: Distance from the Body filter picks faces (bodies selected first are measured).
+    # P8 on two blocks apart: Distance from the Body filter picks faces (bodies selected first are measured); Bounding box
+    # grows with each click and Back (Esc) takes the last pick back.
     ("inspect", two_blocks, {"OPAD_BENCH_INSPECT": "{prefix}"}),
 ]

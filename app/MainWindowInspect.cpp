@@ -133,9 +133,10 @@ QString MainWindow::refLabel(const opad::Ref& r) const {
 
 QList<ToolStep> MainWindow::toolSteps() const {
   const Viewport::SelFilter f = m_viewport->selectionFilter();
-  if (!m_tool.steps) {  // an open tool (Area): one step, the picks so far as what it got
+  if (!m_tool.steps) {  // an open tool (Area, Bounding box): one step, the picks so far as what it got
     ToolStep s;
-    s.label = f == Viewport::SelFilter::Vertex ? tr("Select points around the area") : f == Viewport::SelFilter::Face ? tr("Select fills or faces")
+    s.label = m_tool.id == "bbox" ? tr("Select bodies, faces or edges · each click adds")
+              : f == Viewport::SelFilter::Vertex ? tr("Select points around the area") : f == Viewport::SelFilter::Face ? tr("Select fills or faces")
                                                                                           : tr("Select a closed object or the objects around an area");
     if (m_toolPicks.size() == 1) s.picked = refLabel(m_toolPicks.front());
     else if (!m_toolPicks.empty()) s.picked = tr("%1 picked").arg(m_toolPicks.size());
@@ -170,7 +171,7 @@ void MainWindow::startTool(const QString& id) {
   m_toolStack->setCurrentWidget(m_toolSteps);
   static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
       {"distance", {QT_TR_NOOP("Distance"), "distance", 2}}, {"angle", {QT_TR_NOOP("Angle"), "angle", 2}},       {"radius", {QT_TR_NOOP("Radius"), "radius", 1}},
-      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}, {"area", {QT_TR_NOOP("Area"), "area", 0}},
+      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 0}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}, {"area", {QT_TR_NOOP("Area"), "area", 0}},
       {"length", {QT_TR_NOOP("Length and area"), "length", 1}}};
   const auto it = kTools.find(id);
   if (it == kTools.end()) return;
@@ -353,7 +354,7 @@ void MainWindow::refreshToolUi() {
   const int picked = static_cast<int>(m_toolPicks.size());
   const bool open = m_tool.id == "area" && !m_lastMeasure.is_null() && !m_lastMeasure.value("closed", false);  // picked so far encloses nothing
   const bool done = !m_lastMeasure.is_null() && !open;
-  const QString hints = m_tool.id == "area" ? (done ? (m_doc->browse ? tr("Click to add · Esc back · 1–4 filter") : tr("Click to add · P pin · Esc back")) : picked ? tr("Click to add · Esc back · 1–4 filter") : tr("Esc cancel · 1–4 change filter"))
+  const QString hints = !m_tool.steps ? (done ? (m_doc->browse ? tr("Click to add · Esc back · 1–4 filter") : tr("Click to add · P pin · Esc back")) : picked ? tr("Click to add · Esc back · 1–4 filter") : tr("Esc cancel · 1–4 change filter"))
       : m_viewport->selectionFilter() == Viewport::SelFilter::Vertex && !done ? tr("Ctrl-click arc to select center · Esc back") : done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter");
   m_prompt->set(m_tool.icon, m_tool.title, steps, hints);
   m_prompt->show();
@@ -471,7 +472,7 @@ void MainWindow::refreshToolUi() {
     if(info.contains("segments")) rows << qMakePair(tr("Circle %1 mesh segments (approximate)").arg(i+1),QString::number(info["segments"].get<int>()));
   }
   m_toolSteps->setResult(rows);
-  m_toolSteps->footer()->setCancel(tr("Clear"));
+  m_toolSteps->footer()->setCancel(m_tool.steps ? tr("Clear") : tr("Back"));  // an open tool's Esc takes the last pick back
   m_toolSteps->setFooter(done, !m_doc->browse && !measuredExploded());
   refreshMeasureHistory();
 }

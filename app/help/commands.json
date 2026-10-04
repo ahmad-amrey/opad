@@ -487,7 +487,7 @@
    "id": "inspect.bbox",
    "title": "Bounding box",
    "summary": "Draws the world-aligned box around the picks and reports its size.",
-   "details": "Pick one or more bodies, faces or edges. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
+   "details": "Each click adds a body, face or edge and the box grows to hold them all; Esc takes the last one back. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
    "keywords": ["size", "extents", "dimensions", "overall size"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },

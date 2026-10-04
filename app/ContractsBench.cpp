@@ -184,14 +184,14 @@ OPAD_BENCH(OPAD_BENCH_FOOTER, footer) {
       QPushButton* copy = nullptr;
       for (QPushButton* b : t->findChildren<QPushButton*>())
         if (PanelFooter::text(b) == QObject::tr("Copy")) copy = b;
-      (*require)(shown && copy && t->cancelText() == QObject::tr("Clear") && PanelFooter::key(t->cancel()) == "Esc" && t->primaryText() == QObject::tr("Pin to document") &&
+      (*require)(shown && copy && t->cancelText() == QObject::tr("Back") && PanelFooter::key(t->cancel()) == "Esc" && t->primaryText() == QObject::tr("Pin to document") &&
                      PanelFooter::key(t->primary()) == "P" && t->primary()->focusPolicy() == Qt::NoFocus && t->cancel()->focusPolicy() == Qt::NoFocus,
-                 "tool panel: Copy, Clear (Esc) and Pin to document (P) once there is a result; Esc, P and Enter stay with the window");
+                 "tool panel: Copy, Back (Esc: Bounding box takes picks one by one) and Pin to document (P) once there is a result; Esc, P and Enter stay with the window");
       (*require)(copy && inReadingOrder(t, {copy, t->cancel(), t->primary()}), "tool panel: Copy on the leading side, Pin at the trailing end");
       if (const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !shot.isEmpty()) w.m_toolPanel->grab().save(shot + ".tool.png");
-      t->cancel()->click();  // Esc: the result goes, the tool measures again
+      t->cancel()->click();  // Esc: the pick goes back, with it the result; the tool measures again
       waitFor(&w, [&w, t] { return !t->isVisibleTo(w.m_toolSteps) && w.m_lastMeasure.is_null(); }, 10000, [&w, require, finish, t, body](bool cleared) {
-        (*require)(cleared && w.m_tool.id == "bbox", "Clear drops the result and the tool waits for a pick");
+        (*require)(cleared && w.m_tool.id == "bbox", "Back takes the only pick back, the result goes and the tool waits for a pick");
         w.m_browser->selectIds({body});
         waitFor(&w, [&w, t] { return t->isVisibleTo(w.m_toolSteps) && t->primary()->isEnabled(); }, 20000, [&w, require, finish, t](bool again) {
           const size_t before = w.m_doc->doc.ops.size();

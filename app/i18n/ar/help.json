@@ -235,6 +235,7 @@
  "Select bodies, faces or edges": "حدد أجسامًا أو أوجهًا أو حوافًا",
  "A box square to the axes wraps them": "يحيط بها صندوق موازٍ للمحاور",
  "Read its X, Y and Z sizes": "اقرأ أبعاده الثلاثة",
+ "Each click adds: the box grows around it": "كل نقرة تضيف: يكبر الصندوق ليحيط بها",
  "Measure something": "قِس شيئًا",
  "Press P to pin it": "اضغط P لتثبيته",
  "It stays in the document's timeline": "يبقى في الخط الزمني للمستند",

@@ -1434,27 +1434,39 @@
    ]
   },
   {
-   "id": "inspect.bbox", "duration": 4.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "id": "inspect.bbox", "duration": 6.4, "view": "iso", "extent": [-31, -13, 31, 26],
    "items": [
     {"el": "camera", "center": [-8, 0]},
-    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 18]}},
     {"el": "solid", "profile": {"rect": [0, 0, 20, 10], "round": 2}, "holes": [{"circle": [5, 0, 2]}], "height": 6, "rot": 30, "tone": "sel", "toneAmount": 0, "keys": [[0.9, {"toneAmount": 0.35}]]},
+    {"el": "solid", "profile": {"circle": [8, 13, 3]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[3.0, {"toneAmount": 0.35}]]},
     {"el": "poly", "closed": true, "points": [[-11.16, -9.33, 0], [11.16, -9.33, 0], [11.16, 9.33, 0], [-11.16, 9.33, 0]], "color": "sel", "dash": true, "width": 1.2, "from": 1.1, "fade": 0,
-     "keys": [[1.1, {"progress": 0}], [1.8, {"progress": 1, "ease": "linear"}]]},
+     "keys": [[1.1, {"progress": 0}], [1.8, {"progress": 1, "ease": "linear"}],
+              [3.1, {"points": [[-11.16, -9.33, 0], [11.16, -9.33, 0], [11.16, 9.33, 0], [-11.16, 9.33, 0]]}],
+              [3.6, {"points": [[-11.16, -9.33, 0], [11.16, -9.33, 0], [11.16, 16, 0], [-11.16, 16, 0]]}]]},
     {"el": "poly", "closed": true, "points": [[-11.16, -9.33, 6], [11.16, -9.33, 6], [11.16, 9.33, 6], [-11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.1, "fade": 0,
-     "keys": [[1.1, {"progress": 0}], [1.8, {"progress": 1, "ease": "linear"}]]},
-    {"el": "poly", "points": [[11.16, -9.33, 0], [11.16, -9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8},
-    {"el": "poly", "points": [[-11.16, -9.33, 0], [-11.16, -9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8},
-    {"el": "poly", "points": [[11.16, 9.33, 0], [11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8},
-    {"el": "poly", "points": [[-11.16, 9.33, 0], [-11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8},
+     "keys": [[1.1, {"progress": 0}], [1.8, {"progress": 1, "ease": "linear"}],
+              [3.1, {"points": [[-11.16, -9.33, 6], [11.16, -9.33, 6], [11.16, 9.33, 6], [-11.16, 9.33, 6]]}],
+              [3.6, {"points": [[-11.16, -9.33, 10], [11.16, -9.33, 10], [11.16, 16, 10], [-11.16, 16, 10]]}]]},
+    {"el": "poly", "points": [[11.16, -9.33, 0], [11.16, -9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8,
+     "keys": [[3.1, {"points": [[11.16, -9.33, 0], [11.16, -9.33, 6]]}], [3.6, {"points": [[11.16, -9.33, 0], [11.16, -9.33, 10]]}]]},
+    {"el": "poly", "points": [[-11.16, -9.33, 0], [-11.16, -9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8,
+     "keys": [[3.1, {"points": [[-11.16, -9.33, 0], [-11.16, -9.33, 6]]}], [3.6, {"points": [[-11.16, -9.33, 0], [-11.16, -9.33, 10]]}]]},
+    {"el": "poly", "points": [[11.16, 9.33, 0], [11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8,
+     "keys": [[3.1, {"points": [[11.16, 9.33, 0], [11.16, 9.33, 6]]}], [3.6, {"points": [[11.16, 16, 0], [11.16, 16, 10]]}]]},
+    {"el": "poly", "points": [[-11.16, 9.33, 0], [-11.16, 9.33, 6]], "color": "sel", "dash": true, "width": 1.2, "from": 1.8,
+     "keys": [[3.1, {"points": [[-11.16, 9.33, 0], [-11.16, 9.33, 6]]}], [3.6, {"points": [[-11.16, 16, 0], [-11.16, 16, 10]]}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 110, "title": "Bounding box", "from": 2.2,
-     "rows": [{"value": "X  22.32 mm", "color": "red"}, {"value": "Y  18.66 mm", "color": "green"}, {"value": "Z  6.00 mm", "color": "blue"}]},
-    {"el": "cursor", "badge": "bbox", "keys": [[0, {"pos": [16, -16, 0]}], [0.9, {"pos": [1, -2, 6], "click": 1}], [1.6, {"pos": [1, -2, 6]}], [2.6, {"pos": [16, -12, 4]}]]}
+     "rows": [{"value": "X  22.32 mm", "color": "red"}, {"value": "Y  18.66 mm", "color": "green"}, {"value": "Z  6.00 mm", "color": "blue"}],
+     "keys": [[3.6, {"rows": [{"value": "X  22.32 mm", "color": "red"}, {"value": "Y  25.33 mm", "color": "green"}, {"value": "Z  10.00 mm", "color": "blue"}]}]]},
+    {"el": "cursor", "badge": "bbox", "keys": [[0, {"pos": [16, -16, 0]}], [0.9, {"pos": [1, -2, 6], "click": 1}], [1.6, {"pos": [1, -2, 6]}], [2.5, {"pos": [8, 13, 10]}],
+                                              [3.0, {"pos": [8, 13, 10], "click": 1}], [3.8, {"pos": [8, 13, 10]}], [4.6, {"pos": [16, -12, 4]}]]}
    ],
    "steps": [
     {"to": 1.0, "caption": "Select bodies, faces or edges"},
-    {"to": 2.2, "caption": "A box square to the axes wraps them"},
-    {"to": 4.8, "caption": "Read its X, Y and Z sizes"}
+    {"to": 2.4, "caption": "A box square to the axes wraps them"},
+    {"to": 4.2, "caption": "Each click adds: the box grows around it"},
+    {"to": 6.4, "caption": "Read its X, Y and Z sizes"}
    ]
   },
   {
