@@ -1023,18 +1023,23 @@ void glyph(Ctx& c, const QString& kind, const QPointF& at, const QColor& color) 
   const double k = 4 * u;
   const QPointF o = at;
   auto L = [&](double x1, double y1, double x2, double y2) { p.drawLine(o + QPointF(x1, y1) * k, o + QPointF(x2, y2) * k); };
-  if (kind == "horizontal") L(-1, 0, 1, 0);
-  else if (kind == "vertical") L(0, -1, 0, 1);
+  // As the sketch draws its badges (SnapMarkers.hpp glyph, y up there): a level bar and an upright bar with end ticks, a
+  // stake for Fix, a caret on a line for Midpoint, chevrons for Symmetric.
+  if (kind == "horizontal") { L(-1, 0, 1, 0); L(-1, -0.4, -1, 0.4); L(1, -0.4, 1, 0.4); }
+  else if (kind == "vertical") { L(0, -1, 0, 1); L(-0.4, -1, 0.4, -1); L(-0.4, 1, 0.4, 1); }
   else if (kind == "parallel") { L(-0.9, 0.8, -0.1, -0.8); L(0.1, 0.8, 0.9, -0.8); }
   else if (kind == "perpendicular") { L(-1, 0.9, 1, 0.9); L(0, 0.9, 0, -1); }
   else if (kind == "coincident") { p.setBrush(color); p.drawEllipse(o, 1.8 * u, 1.8 * u); }
   else if (kind == "tangent") { p.drawEllipse(o + QPointF(0, -0.25) * k, 0.65 * k, 0.65 * k); L(-1, 0.6, 1, 0.6); }
   else if (kind == "equal") { L(-0.9, -0.4, 0.9, -0.4); L(-0.9, 0.4, 0.9, 0.4); }
   else if (kind == "concentric") { p.drawEllipse(o, 0.95 * k, 0.95 * k); p.drawEllipse(o, 0.4 * k, 0.4 * k); }
-  else if (kind == "fix") { p.drawRect(QRectF(o + QPointF(-0.75, -0.1) * k, QSizeF(1.5 * k, 1.05 * k))); p.drawArc(QRectF(o + QPointF(-0.5, -0.95) * k, QSizeF(k, 1.4 * k)), 0, 180 * 16); }
-  else if (kind == "midpoint") { L(-1, 0.6, 1, 0.6); p.setBrush(color); p.drawPolygon(QPolygonF{o + QPointF(0, -0.6) * k, o + QPointF(0.5, 0.25) * k, o + QPointF(-0.5, 0.25) * k}); }
-  else if (kind == "symmetric") { L(0, -1, 0, 1); p.setBrush(color); p.drawEllipse(o + QPointF(-0.6, 0) * k, 1.2 * u, 1.2 * u); p.drawEllipse(o + QPointF(0.6, 0) * k, 1.2 * u, 1.2 * u); }
-  else if (kind == "collinear") { L(-1, 0.5, -0.2, 0.5); L(0.2, 0.5, 1, 0.5); L(-1, -0.5, 1, -0.5); }
+  else if (kind == "fix") { L(0, -1, 0, 0.3); L(-0.9, 0.3, 0.9, 0.3); for (const double x : {-0.6, 0.0, 0.6}) L(x, 0.3, x - 0.35, 0.95); }
+  else if (kind == "midpoint") { L(-1, 0.5, 1, 0.5); L(-0.45, 0.5, 0, -0.5); L(0, -0.5, 0.45, 0.5); }
+  else if (kind == "symmetric") {
+    L(0, -1, 0, -0.55); L(0, -0.2, 0, 0.2); L(0, 0.55, 0, 1);
+    L(-0.4, -0.7, -0.9, 0); L(-0.9, 0, -0.4, 0.7); L(0.4, -0.7, 0.9, 0); L(0.9, 0, 0.4, 0.7);
+  }
+  else if (kind == "collinear") { L(-1, 0.6, -0.15, 0); L(0.15, -0.2, 1, -0.8); }
   else if (kind == "smooth") { QPainterPath s; s.moveTo(o + QPointF(-1, 0.7) * k); s.cubicTo(o + QPointF(0, 0.7) * k, o + QPointF(0, -0.7) * k, o + QPointF(1, -0.7) * k); p.drawPath(s); }
 }
 

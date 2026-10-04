@@ -1115,7 +1115,7 @@
    "id": "sketch.cancel",
    "title": "Cancel sketch",
    "summary": "Leaves the sketch and discards the changes made since it opened.",
-   "details": "A new sketch is not created at all; an edited sketch goes back to how it was. Use Finish sketch to keep your work.",
+   "details": "A new sketch is not created at all; an edited sketch goes back to how it was. Use Finish sketch to keep your work. If you changed the sketch, you confirm discarding first.",
    "keywords": ["discard", "abort", "throw away"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1131,7 +1131,7 @@
    "id": "sketch.replane",
    "title": "Redefine sketch plane",
    "summary": "Moves the sketch to another plane, keeping its geometry.",
-   "details": "Pick a new origin plane, planar face or construction plane. Features built on the sketch follow it to the new place.",
+   "details": "Pick a new origin plane, planar face or construction plane, place the sketch origin on it and press OK. Features built on the sketch follow it to the new place.",
    "keywords": ["move sketch", "change plane", "reattach"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1139,7 +1139,7 @@
    "id": "sketch.node",
    "title": "Spline node weights",
    "summary": "Edits the weights of a spline node and its handles.",
-   "details": "Select a node of a spline, set the weights and apply. A heavier node pulls the curve closer to it.",
+   "details": "Select a node of a spline (or double-click it), set the weights and press Enter or Apply. A heavier node pulls the curve closer to it.",
    "keywords": ["spline weight", "nurbs", "handle"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1315,7 +1315,7 @@
    "id": "sketch.control_spline",
    "title": "Control-point spline",
    "summary": "Draws a spline shaped by control points.",
-   "details": "The curve follows the dashed control polygon without passing through its points. Set the degree in the panel and Apply to finish.",
+   "details": "The curve follows its thin grey control polygon without passing through its points. Set the degree in the panel; Enter (Done) finishes.",
    "keywords": ["nurbs", "control polygon", "bezier"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1323,7 +1323,7 @@
    "id": "sketch.conic",
    "title": "Conic",
    "summary": "Draws a conic between two ends, shaped by a tangent point and rho.",
-   "details": "Click the start, the point where the end tangents meet, then the end. Rho from 0 to 1 sets how sharp the curve is.",
+   "details": "Click the start and the point where the end tangents meet; the preview follows the pointer. Set rho (0 to 1, how sharp the curve is) before you click the end.",
    "keywords": ["parabola", "hyperbola", "rho"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1371,7 +1371,7 @@
    "id": "sketch.chamfer",
    "title": "Chamfer",
    "summary": "Bevels a corner by two distances.",
-   "details": "Pick the corner, set the two distances and apply. Equal distances give a 45 degree bevel.",
+   "details": "Pick the corner and set the two distances: the bevel previews; press Enter or Apply. Equal distances on a square corner give a 45 degree bevel.",
    "keywords": ["bevel corner", "cut corner"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1515,7 +1515,7 @@
    "id": "sketch.c.horizontal",
    "title": "Horizontal",
    "summary": "Makes a line horizontal, or two points level.",
-   "details": "Pick a line, or two points. The H badge shows the constraint; delete the badge to remove it.",
+   "details": "Pick a line, or two points. A level-bar badge shows the constraint; select it and press {fixed:del} to remove it.",
    "keywords": ["level", "flat", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1523,7 +1523,7 @@
    "id": "sketch.c.vertical",
    "title": "Vertical",
    "summary": "Makes a line vertical, or two points one above the other.",
-   "details": "Pick a line, or two points. The V badge shows the constraint; delete the badge to remove it.",
+   "details": "Pick a line, or two points. An upright-bar badge shows the constraint; select it and press {fixed:del} to remove it.",
    "keywords": ["upright", "plumb", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1547,7 +1547,7 @@
    "id": "sketch.c.parallel",
    "title": "Parallel",
    "summary": "Makes one line parallel to another.",
-   "details": "Pick the two lines; the second turns to match the first. Dimension the distance between them to fix it.",
+   "details": "Pick the two lines; they turn parallel, each moving as little as it can, and a line held by other constraints stays put. Dimension the distance between them to fix it.",
    "keywords": ["same direction", "align", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1555,7 +1555,7 @@
    "id": "sketch.c.perpendicular",
    "title": "Perpendicular",
    "summary": "Makes two lines meet at a right angle.",
-   "details": "Pick the two lines; they need not touch. The square badge shows the constraint.",
+   "details": "Pick the two lines; they need not touch. A ⊥ badge shows the constraint.",
    "keywords": ["right angle", "90 degrees", "normal", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1619,7 +1619,7 @@
    "id": "sketch.c.fix",
    "title": "Fix",
    "summary": "Locks points or curves where they are.",
-   "details": "Fixed geometry no longer moves when you drag or dimension other curves. Delete the pin badge to free it.",
+   "details": "Fixed geometry no longer moves when you drag or dimension other curves. Select its badge and press {fixed:del} to free it.",
    "keywords": ["lock", "anchor", "pin", "ground", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -1650,7 +1650,7 @@
   {
    "id": "sketch.project",
    "title": "Project",
-   "summary": "Projects body edges onto the sketch as reference curves.",
+   "summary": "Projects body edges, faces or vertices onto the sketch as reference curves.",
    "details": "Click straight or circular edges of bodies behind the sketch plane. Linked projections follow the body when it changes; an editable copy does not.",
    "keywords": ["reference edges", "use edges", "convert entities"],
    "requires": "Only while a sketch is open: start one with New sketch."
