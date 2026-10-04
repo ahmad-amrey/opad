@@ -487,7 +487,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
   docs->createDrawing({{"size", "A2"}, {"orientation", "landscape"}, {"standard", "iso"}, {"projection", "first"}, {"scale", "auto"}, {"views", {"front", "top", "side", "iso"}}},
                       [&](const std::string& id) { sheet = id; });
   const bool added_ = waitFor([&] { return !sheet.empty(); }, 600000);  // before the message: arguments have no order
-  check(added_, QString("the drawing laid out on a worker and added in %1 ms (worst event-loop gap %2 ms)").arg(clock.elapsed()).arg(worst));
+  check(added_ && worst < 250, QString("the drawing laid out on a worker and added in %1 ms (worst event-loop gap %2 ms)").arg(clock.elapsed()).arg(worst));
   const qint64 added = clock.elapsed();
   qint64 framed = -1, drafted = -1;
   QObject::connect(canvas, &SheetCanvas::partsArrived, canvas, [&] {

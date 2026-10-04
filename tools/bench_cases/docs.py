@@ -1,6 +1,28 @@
 """gui_benches cases of the documentation area (TODO 11 track t5a: drawings, part properties, bills of materials, 2D
 export); the benches are in app/DrawingsBench.cpp, app/BomBench.cpp, app/ExportBench.cpp and app/SheetBench.cpp, the area
 in app/DocsArea.cpp and app/DocsWorkspace.cpp."""
+import os
+from pathlib import Path
+import subprocess
+
+ENGINE = Path("opad_resources") / "bench_step_files" / "Engine V8-XT Turbo.opad"
+
+
+def engine(root, document):
+    """The Engine beside the repository, or beside the main checkout when this is a git worktree (OPAD_BENCH_ENGINE: a file)."""
+    if os.environ.get("OPAD_BENCH_ENGINE"):
+        return Path(os.environ["OPAD_BENCH_ENGINE"])
+    here = Path(__file__).resolve().parents[2]
+    places = [here.parent]
+    try:
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=here, capture_output=True, text=True).stdout.strip()
+        if common:
+            places.append(Path(common).parent.parent)
+    except OSError:
+        pass
+    found = [p / ENGINE for p in places if (p / ENGINE).exists()]
+    return found[0] if found else places[0] / ENGINE
+
 
 CASES = [
     # The browser's Drawings folder (UI-76): nested and worded rows, F2 and Del through the folder, Ctrl+Z, the rows' menu;
@@ -22,10 +44,10 @@ CASES = [
     # sheet, PDF export, Del and Esc, snaps on the views (marker, readout, switch), template fields from placeholders and
     # placed with the mouse. <prefix>.empty.png, .sheet.png, .snap.png, .final.png, .window.png, .fields.png, .template.png.
     ("sheet", "empty", {"OPAD_BENCH_SHEET": "{prefix}"}),
-    # The same workspace on the Engine (beside the repository; skipped where it is not): an A2 drawing of four views laid
-    # out on a worker, drawn and dragged, and Issue revision… measuring what the frozen linework adds, with no event-loop
-    # gap over 250 ms. <prefix>.png.
-    ("sheet-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_SHEET_LOADED": "{prefix}"}),
+    # The same workspace on the Engine (beside the repository or the main checkout of a worktree, or OPAD_BENCH_ENGINE;
+    # skipped where it is not): an A2 drawing of four views laid out on a worker, drawn and dragged, Issue revision…
+    # measuring what the frozen linework adds and an issue freezing it, with no event-loop gap over 250 ms. <prefix>.png.
+    ("sheet-engine", engine, {"OPAD_BENCH_SHEET_LOADED": "{prefix}"}),
     # Annotating a sheet (UI-79, UI-80, UI-81) with mouse and key events on the canvas: smart dimensions (an edge, a hole's
     # diameter with a tolerance from the options bar, a corner to a centre), hole callouts from hole features (also from the side), a centre mark
     # and line, a note with a leader, datums, a feature control frame, surface texture, a chain set, dimensions from datums,
