@@ -1207,6 +1207,14 @@
    "keywords": ["2D", "DXF", "DWG", "drafting", "layers", "plot"]
   },
   {
+   "id": "design.drawOnDrawing",
+   "title": "Draw on drawing",
+   "summary": "Opens a sketch on the drawing's own plane and origin, to draw new curves over it with the sketch tools.",
+   "details": "The Sketch tab comes first in Drafting while it is open, and Finish sketch keeps the curves as a sketch in the document; the drawing's own lines stay as they are. A file open in viewer mode is saved as an OPAD document, or copied, first. With drawings in several planes, select a layer of the one to draw on.",
+   "keywords": ["sketch on drawing", "draw lines", "DXF", "DWG", "drafting", "2D"],
+   "requires": "Open a 2D drawing (DXF, DWG or SVG) first; not while a sketch is open."
+  },
+  {
    "id": "design.suppress",
    "title": "Suppress",
    "summary": "Suppresses the feature selected on the timeline, or brings back one that is suppressed.",

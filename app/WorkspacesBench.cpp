@@ -1,7 +1,9 @@
 // The workspaces' promises (UI-104): a Design command started from Review switches to Design; a sketch puts its Sketch
 // tab first in Design with Finish sketch as the primary button, keeps Design while it is open and goes back to where it
 // was started from; Interference is one command whose Keep as check stores the Interference check feature in Design; a
-// drawing file viewed comes into Drafting and the next document goes back. Case in tools/bench_cases/core.py.
+// drawing file viewed comes into Drafting, where Draw on drawing (after Edit unsaved copy) opens a sketch on the drawing's
+// plane with its Sketch tab first in Drafting and Finish keeps Drafting; the next document goes back. Suppress and Roll
+// back to here act on the timeline's marker. Case in tools/bench_cases/core.py.
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QMenu>
@@ -145,9 +147,56 @@ OPAD_BENCH(OPAD_BENCH_WORKSPACES, workspaces) {
     w.setWorkspace("review");
     w.openPath(drawing);
   });
+  const QStringList draftingTabs{"drafting.home", "drafting.annotate", "drafting.view", "drafting.output"};
   add([=, &w] { return w.m_doc->browse && !w.m_doc->loading && w.viewingDrawing(); }, [=, &w](bool viewing) {
-    require(viewing && w.workspaceId() == "drafting" && w.m_ribbon->tabIds() == QStringList({"drafting.home", "drafting.annotate", "drafting.view", "drafting.output"}),
+    require(viewing && w.workspaceId() == "drafting" && w.m_ribbon->tabIds() == draftingTabs,
             "a drawing file viewed comes into Drafting: " + w.workspaceId() + " " + w.m_ribbon->tabIds().join(' '));
+    const CommandInfo* draw = w.m_commands.find("design.drawOnDrawing");
+    require(draw && draw->editsDocument && draw->workspaces == QStringList{"drafting"} && w.action("design.drawOnDrawing")->isEnabled(),
+            "Draw on drawing in Drafting, offered on the viewed file (it asks for an editable copy first)");
+    w.makeEditable({}, [&w] { w.action("design.drawOnDrawing")->trigger(); });  // the question's Edit unsaved copy, then the command again
+  });
+  auto drawingFrame = [&w] {
+    std::vector<opad::design::DrawingLayer> layers;
+    for (const auto& id : w.m_doc->scene.all_bodies())
+      if (w.m_doc->scene.node(id)->representation == "drawing2d") layers.push_back({id, false});
+    return opad::design::drawing_frame(w.m_doc->scene, layers);
+  };
+  auto same = [](const opad::Frame& a, const opad::Frame& b) {
+    auto equal = [](const opad::Vec3& p, const opad::Vec3& q) { return std::abs(p[0] - q[0]) + std::abs(p[1] - q[1]) + std::abs(p[2] - q[2]) < 1e-9; };
+    return equal(a.origin, b.origin) && equal(a.x, b.x) && equal(a.y, b.y);
+  };
+  add([=] { return design->sketchActive(); }, [=, &w](bool sketching) {
+    const QStringList tabs = w.m_ribbon->tabIds();
+    require(sketching && !w.m_doc->browse && w.workspaceId() == "drafting" && tabs.value(0) == "drafting.sketch" && tabs.mid(1) == draftingTabs &&
+                w.m_ribbon->currentPage() == w.m_ribbon->page("drafting.sketch") && !w.m_ribbon->contextualTabShown("design.sketch"),
+            "Draw on drawing: an editable copy, a sketch in Drafting with its Sketch tab first and current: " + w.workspaceId() + " " + tabs.join(' '));
+    require(sketching && same(design->sketch()->frame(), drawingFrame()), "the sketch lies on the drawing's own plane and origin");
+    w.setWorkspace("review");
+    require(w.workspaceId() == "drafting" && w.m_ribbon->tabIds().value(0) == "drafting.sketch", "while it is open another workspace is refused");
+    SketchEditor* sketch = design->sketch();
+    sketch->setTool("line");
+    sketch->enter("0,0");
+    sketch->enter("@20,0");
+    sketch->done();
+    require(!sketch->empty(), "a line drawn on it (typed points)");
+    w.action("sketch.finish")->trigger();
+  });
+  add([=, &w] { return !design->sketchActive() && !design->busy() && !w.m_doc->scene.sketches.empty(); }, [=, &w](bool finished) {
+    require(finished && w.workspaceId() == "drafting" && w.m_ribbon->tabIds() == draftingTabs && w.m_doc->scene.sketches.size() == 1 &&
+                same(w.m_doc->scene.sketches.back().frame, drawingFrame()),
+            "Finish: the sketch is in the document on the drawing's plane, Drafting stays with its own tabs: " + w.m_ribbon->tabIds().join(' '));
+    // Roll back to here on the drawing's marker: the model as it was before the sketch.
+    std::string drawingOp;
+    for (const auto& op : w.m_doc->doc.ops)
+      if (op.type == "import" && drawingOp.empty()) drawingOp = op.id;
+    const std::string sketchOp = w.m_doc->scene.sketches.empty() ? std::string() : w.m_doc->scene.sketches.back().id;
+    w.m_timeline->setCurrentOp(drawingOp);
+    w.action("timeline.rollBack")->trigger();
+    require(!drawingOp.empty() && w.m_doc->rolledBack() && w.m_doc->rollback() == sketchOp && w.m_doc->scene.sketches.empty(),
+            "Roll back to here on the drawing's marker: the model stops before the sketch");
+    w.action("timeline.rollForward")->trigger();
+    require(!w.m_doc->rolledBack() && w.m_doc->scene.sketches.size() == 1, "rolled forward: the sketch is back");
     w.openPath(box);
   });
   add([=, &w] { return !w.m_doc->browse && !w.m_doc->loading && w.m_doc->path() == box; }, [=, &w](bool back) {

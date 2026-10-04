@@ -97,10 +97,12 @@ class MainWindow : public QMainWindow {
   QAction* menuCommand(const CommandInfo& info, QMenu* menu);
   void ribbonTable(RibbonLayout& layout);    // Review, Design and the Sketch tabs: every command's slot (MainWindowRibbonTable.cpp)
   void draftingTable(RibbonLayout& layout);  // Drafting, after the areas' workspaces
+  void sketchTab(RibbonLayout& layout, const QString& tab);  // the Sketch tab's groups (Design's and Drafting's)
   // A command of Design started from a workspace that does not show it (E in Review, the palette) switches to Design first.
   bool switchesToDesign(const QString& id) const;
   void followDrawing(bool drawing);  // a viewed drawing file goes into Drafting, and the next other document back out of it
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
+  void drawOnDrawing();       // design.drawOnDrawing: a sketch on the drawing's plane
   void buildDesign();         // the controller, its floating panel and the wiring
   void updateDesignState();   // sketch mode <-> the Sketch tab first in Design, action enabling
   void updateSketchPrompt();  // the sketch's prompt: its steps and what the keys do now
@@ -275,6 +277,7 @@ class MainWindow : public QMainWindow {
   DesignController* m_design = nullptr;
   ToolPanel* m_featurePanel = nullptr;
   QString m_workspaceBeforeSketch;    // where a sketch was started from: Finish goes back there
+  QString m_sketchTab;                // the open sketch's contextual tab: "design.sketch", or "drafting.sketch" in Drafting
   QString m_workspaceBeforeDrafting;  // where a viewed drawing came from into Drafting (followDrawing)
   QStringList m_workspaceIds;            // by RibbonBar index
   QString m_workspaceId, m_workspaceKeys;  // the one shown (as the areas were told); "Ctrl+1 / 2" for the status bar

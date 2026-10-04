@@ -78,9 +78,9 @@ OPAD_BENCH(OPAD_BENCH_COMMANDS, commands) {
           "design.extrude: group " + (extrude ? extrude->group + ", menu " + extrude->menuPath + ", workspaces " + extrude->workspaces.join(' ') : QString("none")));
   const CommandInfo* fit = registry.find("view.fit");
   require(fit && fit->workspaces == QStringList({"review", "design", "drafting"}) && fit->menuPath == "view" && registry.find("nav.fusion")->menuPath == "view/navigation" &&
-              registry.find("sketch.line")->workspaces == QStringList{"design"} && registry.find("sketch.line")->menuPath == "sketch/create" &&
+              registry.find("sketch.line")->workspaces == QStringList({"design", "drafting"}) && registry.find("sketch.line")->menuPath == "sketch/create" &&
               registry.inWorkspace("review").contains("inspect.distance") && !registry.inWorkspace("review").contains("design.extrude"),
-          "workspaces from the ribbon (the Sketch tab is Design's), menu paths from the menu bar");
+          "workspaces from the ribbon (the Sketch tab is Design's and Drafting's), menu paths from the menu bar");
   // The filters are one choice among four; Select through objects is a setting of its own that they leave as it is.
   QAction* through = w.action("select.through");
   const bool wasThrough = through->isChecked();

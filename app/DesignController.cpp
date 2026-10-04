@@ -1039,6 +1039,12 @@ void DesignController::redefineSketchPlane() {
   m_planePicked=[this](opad::json plane,opad::Frame frame){m_sketch->redefinePlane(plane,frame);};
   beginPlanePick();
 }
+void DesignController::startSketchOn(const opad::json& plane, const opad::Frame& frame) {
+  if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy || m_sketch->active()) return;
+  if (m_featureOn) endFeature();
+  if (m_pickPlane) m_planePicker->cancel();  // a plane pick under way gives way
+  enterSketch({}, QString::fromStdString(next_name(m_doc->scene, "Sketch")), plane, frame, opad::json::object());
+}
 
 void DesignController::beginPlanePick() {
   if(m_featureOn)endFeature();

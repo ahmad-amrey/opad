@@ -269,11 +269,12 @@ void MainWindow::buildRibbon() {
   action("workspace." + m_workspaceId)->setChecked(true);
   connect(m_ribbon, &RibbonBar::workspaceChanged, this, [this](int i) {  // from the shortcuts or the chip's list
     const QString id = m_workspaceIds.value(i);
-    if (id != "drafting") m_workspaceBeforeDrafting.clear();  // left by hand (or by followDrawing): the next document stays where it is
-    if (id != "design" && m_design && m_design->sketchActive()) {  // a sketch is open: its tab stays until it is finished
+    // A sketch is open: its tab stays until it is finished, in Design (or in Drafting, for one drawn there).
+    if (const QString sketchSpace = m_sketchTab.section('.', 0, 0); !sketchSpace.isEmpty() && id != sketchSpace && m_design && m_design->sketchActive()) {
       statusBar()->showMessage(tr("Finish or cancel the sketch first"), 4000);
-      return setWorkspace("design");
+      return setWorkspace(sketchSpace);
     }
+    if (id != "drafting") m_workspaceBeforeDrafting.clear();  // left by hand (or by followDrawing): the next document stays where it is
     if (std::exchange(m_workspaceId, id) != id) forEachArea([&id](AreaController* area) { area->workspaceChanged(id); });
     updateCommands();
     if (m_ribbon->workspaceAt(i).contextual) return;  // entered and left with the sketch (or an area's mode), never remembered

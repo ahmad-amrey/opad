@@ -9,12 +9,14 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "opad/design/drawing_sketch.hpp"
 #include "opad/design/feature.hpp"
 
 // ---------------------------------------------------------------- design workspace
@@ -22,6 +24,14 @@
 // only live while a sketch is open, when the ribbon shows the contextual Sketch tab set.
 void MainWindow::buildDesignActions() {
   addAction("design.convertDrawing",tr("Drawing to sketch"),"drawing",QKeySequence(),[this] { drawingToSketch(); });
+  {
+    CommandInfo draw{"design.drawOnDrawing", tr("Draw on drawing"), "sketch"};  // Drafting > Home > Draw (UI-104)
+    draw.keywords = {tr("sketch on drawing"), tr("draw lines"), "DXF", "DWG", tr("drafting")};
+    draw.group = tr("Drafting");
+    draw.editsDocument = isEditAction(draw.id);  // a viewed drawing file asks to be saved as an OPAD document (or an unsaved copy) first
+    draw.enabledWhen = [](const CommandContext& c) { return c.document && !c.sketching; };
+    addCommand(draw, [this] { drawOnDrawing(); });
+  }
   addAction("design.sketch", tr("New sketch"), "sketch", QKeySequence(), [this] { m_design->startSketch(); });
   static const std::map<std::string, const char*> kKeys = {{"extrude", "E"}, {"offset_face", "Q"}, {"move", "M"}};
   for (const auto& spec : opad::design::feature_specs()) {
@@ -182,19 +192,48 @@ void MainWindow::buildDesign() {
   updateDesignState();
 }
 
+// Draw on drawing (Drafting > Home, UI-104 phase 1): a new sketch on the drawing's own plane and origin (the layers' frame,
+// design::drawing_frame, as Drawing to sketch takes it), drawn with the sketch tools over the drawing; the Sketch tab comes
+// first in Drafting. The selected drawing's, else the one drawing there is; drawings in several planes ask for a pick.
+void MainWindow::drawOnDrawing() {
+  if (!m_doc->hasDocument || m_doc->browse || m_design->busy() || m_design->sketchActive()) return;
+  std::set<std::string> chosen;  // the drawings (import ops) of what is selected
+  for (const auto& id : currentNodeIds())
+    for (const auto& body : m_doc->scene.bodies_under(id))
+      if (const opad::Node* n = m_doc->scene.node(body); n && n->representation == "drawing2d") chosen.insert(n->source_op);
+  std::vector<opad::design::DrawingLayer> layers;
+  for (const auto& id : m_doc->scene.all_bodies()) {
+    const opad::Node* n = m_doc->scene.node(id);
+    if (n && n->representation == "drawing2d" && n->raster.is_null() && (chosen.empty() || chosen.count(n->source_op))) layers.push_back({id, false});
+  }
+  if (layers.empty()) throw opad::UserHint("Open or import a 2D drawing first: the sketch is drawn on its plane.");
+  opad::Frame frame;
+  try {
+    frame = opad::design::drawing_frame(m_doc->scene, layers);
+  } catch (const std::exception&) {
+    throw opad::UserHint("The drawings here lie in different planes: select a layer of the one to draw on.", true);
+  }
+  cancelTool();
+  m_design->startSketchOn(opad::json{{"frame", frame.to_json()}}, frame);
+}
+
 // Sketch mode puts its Sketch tab first in Design (UI-104: the Design tabs stay beside it) and takes it away again, back in
-// the workspace the sketch was started from; tool buttons follow the editor's tool.
+// the workspace the sketch was started from; in Drafting (Draw on drawing, a drawing's sketch edited there) the tab comes
+// first in Drafting instead. Tool buttons follow the editor's tool.
 void MainWindow::updateDesignState() {
   const bool sketching = m_design->sketchActive();
   const bool has = m_doc->hasDocument;  // viewer mode too: the tools say that the file has to be saved first
   m_timeline->setEditingOp(m_design->editingOp());
-  if (sketching && !m_ribbon->contextualTabShown("design.sketch")) {
+  if (sketching && m_sketchTab.isEmpty()) {
+    const bool drafting = m_workspaceId == "drafting" && m_ribbon->contextualTabs(int(m_workspaceIds.indexOf("drafting"))).contains("drafting.sketch");
+    m_sketchTab = drafting ? "drafting.sketch" : "design.sketch";
     m_workspaceBeforeSketch = m_workspaceId;
-    setWorkspace("design");
-    m_ribbon->setContextualTab("design.sketch", true);
-  } else if (!sketching && m_ribbon->contextualTabShown("design.sketch")) {
-    m_ribbon->setContextualTab("design.sketch", false);
-    if (!m_workspaceBeforeSketch.isEmpty() && m_workspaceBeforeSketch != m_workspaceId) setWorkspace(std::exchange(m_workspaceBeforeSketch, QString()));
+    if (!drafting) setWorkspace("design");
+    m_ribbon->setContextualTab(m_sketchTab, true);
+  } else if (!sketching && !m_sketchTab.isEmpty()) {
+    m_ribbon->setContextualTab(std::exchange(m_sketchTab, QString()), false);
+    if (!m_workspaceBeforeSketch.isEmpty() && m_workspaceBeforeSketch != m_workspaceId) setWorkspace(m_workspaceBeforeSketch);
+    m_workspaceBeforeSketch.clear();
   }
   if (m_sketchMenu) m_sketchMenu->menuAction()->setVisible(sketching);
   const QString tool = sketching ? m_design->sketch()->tool() : QString();

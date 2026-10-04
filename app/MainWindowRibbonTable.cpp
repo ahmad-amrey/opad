@@ -6,8 +6,10 @@
 // in Review and Design alike), so a button is enabled, checked and keyed the same everywhere.
 //   Review (Ctrl+1)   View · Inspect · Markup · Compare · Share       look, measure, mark up, compare, share
 //   Design (Ctrl+2)   [Sketch] Solid · Assemble · Construct · Inspect · Insert · View
-//   Drafting (Ctrl+4) Home · Annotate · View · Output                 2D files: layers, measure, plot, to sketch
-// Sketch is the contextual tab a sketch opens first in Design, Finish sketch its primary button at the end.
+//   Drafting (Ctrl+4) [Sketch] Home · Annotate · View · Output        2D files: draw, layers, measure, plot, to sketch
+// Sketch is the contextual tab a sketch opens first in Design (in Drafting for one drawn on a drawing), Finish sketch its
+// primary button at the end. A dropdown (Named views ▾, Rendering ▾, Panels ▾) is a command with a menu
+// (MainWindow::buildRibbonMenus); its entries count as placed where it is.
 #include "MainWindow.hpp"
 
 #include <functional>
@@ -128,7 +130,14 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
 
   // ---------------------------------------------------------------- Sketch (contextual, first in Design while sketching)
   layout.addContextualTab("design", "design.sketch", tr("Sketch"));
-  group("design.sketch", "create", tr("Create"),
+  sketchTab(layout, "design.sketch");
+}
+
+// The Sketch tab's groups, the same in Design and in Drafting (a sketch drawn on a drawing, design.drawOnDrawing).
+void MainWindow::sketchTab(RibbonLayout& layout, const QString& tab) {
+  const auto find = [this](const QString& id) { return action(id); };
+  auto group = [&](const char* name, const QString& title, const std::vector<RibbonTool>& tools) { addGroup(layout, find, tab, name, title, tools); };
+  group("create", tr("Create"),
         {{"sketch.line"},
          {"sketch.rect", L, {"sketch.crect", "sketch.rect3"}},
          {"sketch.circle", L, {"sketch.circle2", "sketch.circle3", "sketch.tangent_circle"}},
@@ -139,7 +148,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
          {"sketch.ellipse", S, {"sketch.conic"}},
          {"sketch.point", S},
          {"sketch.text", S}});
-  group("design.sketch", "modify", tr("Modify"),
+  group("modify", tr("Modify"),
         {{"sketch.trim", L, {"sketch.extend", "sketch.split", "sketch.break"}},
          {"sketch.offset", S},
          {"sketch.fillet", S, {"sketch.chamfer"}},
@@ -149,7 +158,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
          {"sketch.union", S, {"sketch.subtract", "sketch.intersect"}},
          {"sketch.heal", S, {"sketch.explode", "sketch.simplify"}},
          {"sketch.construction", S}});
-  group("design.sketch", "constrain", tr("Constrain"),
+  group("constrain", tr("Constrain"),
         {{"sketch.dimension"},
          {"sketch.c.horizontal", I},
          {"sketch.c.vertical", I},
@@ -160,17 +169,17 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
          {"sketch.c.equal", I, {"sketch.c.symmetric"}},
          {"sketch.c.fix", I},
          {"sketch.constraints", I}});
-  group("design.sketch", "reference", tr("Reference"),
+  group("reference", tr("Reference"),
         {{"sketch.project", L, {"sketch.intersect_body", "sketch.silhouette", "sketch.include3d", "sketch.break_link"}}, {"kicad.project", S}});
-  group("design.sketch", "insert", tr("Insert"), {{"sketch.moreFiles"}});
-  group("design.sketch", "options", tr("Options"),
+  group("insert", tr("Insert"), {{"sketch.moreFiles"}});
+  group("options", tr("Options"),
         {{"sketch.snaps", S},
          {"view.grid", S, {"view.gridSettings"}},
          {"view.2d", S, {"view.alignPlane"}},
          {"sketch.showConstraints", S},
          {"sketch.openEnds", S},
          {"sketch.panel", S}});
-  group("design.sketch", "finish", tr("Finish"), {{"sketch.cancel", S}, {"sketch.finish", L, {}, true}});
+  group("finish", tr("Finish"), {{"sketch.cancel", S}, {"sketch.finish", L, {}, true}});
 }
 
 // Drafting (UI-104, Appendix A "Draft 2D", phase 1 with the tools there are): after the areas' workspaces in the switcher.
@@ -179,23 +188,28 @@ void MainWindow::draftingTable(RibbonLayout& layout) {
   const auto find = [this](const QString& id) { return action(id); };
   auto group = [&](const QString& tab, const char* name, const QString& title, const std::vector<RibbonTool>& tools) { addGroup(layout, find, tab, name, title, tools); };
   layout.addWorkspace("drafting", {tr("Drafting"), "drawing", "Ctrl+4",
-                                   tr("2D drawings (DXF, DWG, SVG): layers, measuring, plotting, and a drawing turned into a sketch to edit. Viewing a drawing comes here."),
-                                   tr("ops: annotation · measurement · view")});
+                                   tr("2D drawings (DXF, DWG, SVG): draw on them, layers, measuring, plotting, and a drawing turned into a sketch to edit. Viewing a drawing comes here."),
+                                   tr("ops: sketch · annotation · measurement · view")});
   layout.addTab("drafting", "drafting.home", tr("Home"));
-  group("drafting.home", "layers", tr("Layers"), {{"drawing2d.layers"}, {"drawing2d.layerWalk", S}, {"drawing2d.isolateLayer", S}});
+  // Draw: a sketch on the drawing's plane with the sketch tools (phase 1: new curves beside the drawing's, which stay as they
+  // are), or the drawing's own curves turned into a sketch to edit.
+  group("drafting.home", "draw", tr("Draw"), {{"design.drawOnDrawing"}, {"design.convertDrawing"}});
   group("drafting.home", "measure", tr("Measure"),
         {{"inspect.distance"}, {"inspect.area"}, {"inspect.angle", S}, {"inspect.radius", S}, {"inspect.length", S}, {"inspect.bbox", S}, {"inspect.pin"}});
+  group("drafting.home", "layers", tr("Layers"), {{"drawing2d.layers"}, {"drawing2d.layerWalk", S}, {"drawing2d.isolateLayer", S}});
   group("drafting.home", "snap", tr("Snap"), {{"drawing2d.objectSnap", S}, {"view.gridSnap", S}, {"view.orthoSnap", S}, {"view.polarSnap", S}});
-  group("drafting.home", "edit", tr("Edit"), {{"design.convertDrawing"}});
   layout.addTab("drafting", "drafting.annotate", tr("Annotate"));
   group("drafting.annotate", "notes", tr("Notes"), {{"annotate.add"}, {"annotate.draw"}, {"annotate.resolve", S}, {"annotate.show", S}, {"panel.annotations", S}});
   group("drafting.annotate", "views", tr("Saved views"), {{"view.saveview"}});
   layout.addTab("drafting", "drafting.view", tr("View"));
   group("drafting.view", "navigate", tr("Navigate"),
-        {{"view.fit", L, {"view.fitall", "view.zoomWindow", "view.previous", "view.next"}}, {"view.home", L, {"view.setHome", "view.resetHome"}}, {"view.rollleft", S, {"view.rollright"}}});
+        {{"view.fit", L, {"view.fitall", "view.zoomWindow", "view.previous", "view.next"}}, {"view.home", L, {"view.setHome", "view.resetHome"}}, {"view.rollleft", S, {"view.rollright"}},
+         {"view.namedViews", S}});
   group("drafting.view", "display", tr("Display"), {{"view.2d"}, {"view.grid", S, {"view.gridSettings"}}});
   group("drafting.view", "visibility", tr("Visibility"), {{"view.isolate"}, {"view.unisolate", S}, {"view.hideothers", S}, {"edit.hide", S}, {"edit.showall", S}});
   layout.addTab("drafting", "drafting.output", tr("Output"));
   group("drafting.output", "output", tr("Output"), {{"drawing2d.plot"}, {"file.export"}, {"file.screenshot"}});
   group("drafting.output", "file", tr("File"), {{"file.importdoc"}, {"file.reveal", S}, {"file.copyPath", S}});
+  layout.addContextualTab("drafting", "drafting.sketch", tr("Sketch"));
+  sketchTab(layout, "drafting.sketch");
 }
