@@ -1070,6 +1070,10 @@ void SheetCanvas::placeBase(const std::string& orient, std::function<void(bool)>
       if (source.is_null() && v->def.contains("source")) source = v->def["source"];
       if (id == s->views.front()) m_place.marks = v->def.value("style", opad::json::object()).value("centermarks", false);
     }
+  // What it shows (select, hide), never another view's exploded state: an exploded view is placed with its own (below), and
+  // an ordinary one was measured as the exploded parts, a frame much bigger than the view it then placed.
+  if (source.is_object()) source.erase("explode");
+  if (source.is_object() && source.empty()) source = nullptr;
   const double scale = s->scale;
   auto size = std::make_shared<std::array<double, 2>>(std::array<double, 2>{40, 30});
   QPointer<SheetCanvas> self(this);
