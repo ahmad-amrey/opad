@@ -1074,8 +1074,8 @@ TEST(design_cards_name_the_feature_fields) {
       if (card.value("el").toString() != "card") continue;
       const QString title = card.value("title").toString();
       const opad::design::FeatureSpec* spec = nullptr;
-      for (const auto& s : opad::design::feature_specs())
-        if (title == QString::fromStdString(s.label) || title.startsWith(QString::fromStdString(s.label) + " ")) spec = &s;
+      for (const auto& s : opad::design::feature_specs())  // the longest label that fits: "Remove faces" is not "Remove"
+        if ((title == QString::fromStdString(s.label) || title.startsWith(QString::fromStdString(s.label) + " ")) && (!spec || s.label.size() > spec->label.size())) spec = &s;
       if (!spec) continue;
       QStringList labels{"Operation"};
       for (const auto& in : spec->inputs) labels << QString::fromStdString(in.label);
@@ -1154,7 +1154,7 @@ TEST(clip_input_is_what_the_clip_does) {
      "items": [
       {"el": "cursor", "keys": [[0, {"pos": [0, 0]}], [0.5, {"pos": [4, 0], "click": 1}], [0.7, {"pos": [4, 0], "click": 1}], [1, {"pos": [4, 0], "down": true}],
                                [1.5, {"pos": [6, 0], "down": false}], [2, {"screen": [0.3, 0.4]}], [2.2, {"screen": [0.3, 0.4], "click": 1}]]},
-      {"el": "key", "caps": ["Enter"], "press": 3},
+      {"el": "key", "fixed": "enter", "press": 3},
       {"el": "hud", "fields": ["{len} mm"], "typed": "", "focus": 0, "keys": [[2.5, {"typed": "1"}], [2.6, {"typed": "12"}], [2.7, {"typed": ""}], [2.8, {"typed": "3"}]]},
       {"el": "card", "screen": [0.03, 0.06], "title": "Tool", "from": 0.1, "button": "Apply", "press": 3.5, "hl": -1,
        "rows": [{"tabs": ["Tool", "Select"], "on": 0}, ["Count", "3"], {"label": "1", "value": "Horizontal"}],
@@ -1178,7 +1178,7 @@ TEST(clip_input_is_what_the_clip_does) {
   bool dragged = false;
   for (const auto& m : moves) dragged = dragged || (m.down && m.t > 1 && m.t <= 1.5);
   CHECK(dragged && std::none_of(moves.begin(), moves.end(), [](const clips::Input& m) { return m.down && (m.t < 1 || m.t > 1.5); }));
-  CHECK(kinds(K::Key).size() == 1 && kinds(K::Key)[0].caps == QStringList{"Enter"} && kinds(K::Key)[0].t == 3);
+  CHECK(kinds(K::Key).size() == 1 && kinds(K::Key)[0].text == "enter" && kinds(K::Key)[0].caps.isEmpty() && kinds(K::Key)[0].t == 3);
   const auto typed = kinds(K::Type);
   CHECK(typed.size() == 3 && typed[0].text == "1" && typed[1].text == "2" && typed[2].text == "3");
   const auto rows = kinds(K::Row);

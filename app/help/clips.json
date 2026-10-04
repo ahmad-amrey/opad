@@ -383,7 +383,7 @@
    "id": "sketch.c.parallel", "template": "constraint",
    "setup": {"curves": [{"line": [[-16, -6], [14, -12]]}, {"line": [[-16, 4], [14, 10]]}], "constraints": [{"type": "fix", "on": [1]}]},
    "expect": {"entities": {"line": 2}, "constraints": {"parallel": 1, "fix": 1}, "points": [[-17.13, -12.23], [15.13, -5.77], [-16, 4], [14, 10]], "during": [{"t": 1.5, "constraints": {"parallel": 0, "fix": 1}, "points": [[-16, -6], [14, -12]]}]},
-   "args": {"a": [[-16, -6], [14, -12]], "a2": [[-17.13, -12.23], [15.13, -5.77]], "b": [[-16, 4], [14, 10]], "pa": [-1, -9], "pb": [-1, 7], "glyph": "parallel", "ga": [-1, -9], "gb": [-1, 7], "caption3": "The first line turns parallel"},
+   "args": {"a": [[-16, -6], [14, -12]], "a2": [[-17.13, -12.23], [15.13, -5.77]], "b": [[-16, 4], [14, 10]], "pa": [-1, -9], "pb": [-1, 7], "glyph": "parallel", "ga": [-1, -9], "gb": [-1, 7], "caption3": "The first line turns parallel; the held one stays"},
    "items": [
     {"el": "glyph", "kind": "fix", "at": [8, 8.8], "dx": 0, "dy": -14}
    ]
