@@ -124,7 +124,7 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
   m_tree->setIconSize(QSize(16, 16));
   m_tree->setAllColumnsShowFocus(true);
   m_tree->setLayoutDirection(Qt::LeftToRight);  // fixed columns, as the browser's: an Arabic name still reads right to left
-  QStringList headers{tr("Name"), QString(), QString(), QString(), QString(), tr("Linetype"), tr("Weight"), QString()};
+  QStringList headers{tr("Name"), QString(), QString(), QString(), QString(), tr("Linetype"), tr("Lineweight"), QString()};
   m_tree->setHeaderLabels(headers);
   const QStringList tips{tr("Layer"), tr("On: shown or turned off"), tr("Freeze: frozen layers are hidden and stay so while turned on"),
                          tr("Lock: a locked layer cannot be changed or picked"), tr("Colour"), tr("Linetype"), tr("Lineweight"),

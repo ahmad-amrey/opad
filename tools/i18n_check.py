@@ -43,7 +43,8 @@ SHOWN = re.compile(r'\b(setText|showMessage|setToolTip|setPlaceholderText|setWin
 
 def untranslated():
     """Words handed to something the user reads without tr(): setText(QString("Section %1")), emit status(QString(...)).
-    File extensions (".step"), markup and %N placeholders are not words; the benches' own texts are left alone."""
+    File extensions (".step"), markup, %N placeholders and example addresses (a placeholder URL or e-mail) are not words;
+    the benches' own texts are left alone."""
     found = []
     for path in sorted(glob.glob(os.path.join(ROOT, 'app', '*.cpp'))):
         if 'Bench' in os.path.basename(path):
@@ -51,7 +52,7 @@ def untranslated():
         for number, line in enumerate(open(path, encoding='utf-8'), 1):
             for m in SHOWN.finditer(line):
                 text = re.sub(r'<[^>]*>|%\d|(?<![A-Za-z])\.[A-Za-z0-9]+', '', m.group(2)[1:-1])
-                if re.search(r'[A-Za-z]{3,}', text):
+                if re.search(r'[A-Za-z]{3,}', text) and not re.search(r'://|@', text):  # a URL or an e-mail address is no word
                     found.append('%s:%d %s' % (os.path.basename(path), number, m.group(2)))
     print('untranslated literals shown: %d' % len(found))
     for f in found:
