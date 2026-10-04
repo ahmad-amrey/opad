@@ -676,8 +676,8 @@ void KicadArea::section(const PropertySubject& subject, QList<PropertySection>& 
   if (subject.refs.front().body != b.root) return;  // the board's own node: its parts have the Linked file section's
   PropertySection sec;
   sec.title = tr("KiCad board");
-  sec.rows << qMakePair(tr("Footprints placed"), QString::number(b.parts.size())) << qMakePair(tr("Mounting holes"), QString::number(b.holeNodes.size()))
-           << qMakePair(tr("Exploded views"), tr("Kept together"));
+  // The board's root is marked to stay together in exploded views (explode_keep_defaults), said here once explode reads it.
+  sec.rows << qMakePair(tr("Footprints placed"), QString::number(b.parts.size())) << qMakePair(tr("Mounting holes"), QString::number(b.holeNodes.size()));
   if (b.linked) sec.actions << qMakePair(tr("Preview sync…"), std::function<void()>([this, import] { QTimer::singleShot(0, this, [this, import] { preview(import); }); }));
   sec.actions << qMakePair(tr("Check clearance…"), std::function<void()>([this, import] { QTimer::singleShot(0, this, [this, import] { clearance(import); }); }));
   out << sec;
