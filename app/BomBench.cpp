@@ -110,12 +110,15 @@ OPAD_BENCH(OPAD_BENCH_BOM, bom) {
   };
   try {
     // The documentation area's commands (DocsArea): records of their own, each right after its neighbour in every menu
-    // that shows it (File, Inspect, the ribbon groups' menus) and in the selection's context menu, on both ribbons.
+    // that shows it (File, Inspect, the ribbon groups' menus of Review > Share and the Inspect tabs) and in the selection's
+    // context menu.
     const CommandInfo *bomCommand = w.m_commands.find("file.exportBom"), *partCommand = w.m_commands.find("inspect.partProperties");
     const auto follows = [&](const char* id, const char* anchor) {
       int menus = 0;
       for (QObject* o : w.action(id)->associatedObjects())
         if (auto* menu = qobject_cast<QMenu*>(o)) {
+          // Drawings > Tables > Parts lists the parts list's tools, Export bill of materials last (UI-104): no Export there.
+          if (auto* g = qobject_cast<RibbonGroup*>(menu->parent()); g && g->menu()->actions().contains(w.action("drawings.partsList"))) continue;
           const QList<QAction*> all = menu->actions();
           const qsizetype at = all.indexOf(w.action(id));
           if (at < 1 || all[at - 1] != w.action(anchor)) return false;
@@ -128,10 +131,12 @@ OPAD_BENCH(OPAD_BENCH_BOM, bom) {
     context.addAction(w.action("edit.delete"));
     docs->contextMenu({}, context);
     check(bomCommand && partCommand && !bomCommand->editsDocument && partCommand->editsDocument && bomCommand->menuPath == "file" &&
-              partCommand->menuPath == "inspect" && bomCommand->workspaces.contains("review") && bomCommand->workspaces.contains("design") &&
+              partCommand->menuPath == "inspect" && bomCommand->workspaces.contains("review") && bomCommand->workspaces.contains("drawings") &&
+              partCommand->workspaces.contains("design") &&
               partCommand->workspaces.contains("review") && follows("file.exportBom", "file.export") && follows("inspect.partProperties", "inspect.properties") &&
               context.actions().value(1) == w.action("inspect.partProperties"),
-          "Export bill of materials and Part properties are the area's commands, placed after Export… and Properties");
+          "Export bill of materials and Part properties are the area's commands, placed after Export… (File, Review > Share; in Drawings > Tables "
+          "with the parts list) and Properties");
     w.m_doc->newDocument();
     const std::string plate = w.m_doc->run("feature", {{"kind", "box"}, {"inputs", {{"length", "60 mm"}, {"width", "40 mm"}, {"height", "10 mm"}}}})["body_ids"][0];
     const auto pin = [&](const char* x) {
