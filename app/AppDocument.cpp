@@ -398,9 +398,19 @@ void AppDocument::save() {
   emit message(tr("Saved %1").arg(path()));
 }
 
+void AppDocument::followAssetPaths(const QString& destination) {
+  const std::filesystem::path folder(QFileInfo(destination).absolutePath().toStdU16String());
+  if(auto edits=opad::asset_path_edits(doc,folder);!edits.empty()) {  // saved elsewhere: the linked files' saved paths follow, one undo step
+    opad::design::Plan moved;moved.ops=std::move(edits);
+    commitPlan(std::move(moved),tr("Linked file paths"));
+  }
+  opad::rebase_asset_paths(doc,folder);  // linked files not saved yet
+}
+
 void AppDocument::saveAs(const QString& path) {
   if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
+  followAssetPaths(path);
   doc.save_as(fsPath(path));
   markSaved();
   emit pathChanged();

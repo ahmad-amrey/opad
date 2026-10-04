@@ -1163,6 +1163,35 @@ json pack_asset(Document& doc, const std::string& import_id, const std::string& 
   return {{"import", id}, {"path", asset["path"]}, {"copied", copied}};
 }
 
+std::vector<json> asset_path_edits(const Document& doc, const fs::path& dir) {
+  std::vector<json> out;
+  if (dir.empty() || doc.path.empty()) return out;
+  const fs::path base = fs::absolute(dir).lexically_normal();
+  if (lower(utf8(base)) == lower(utf8(doc_dir(doc).lexically_normal()))) return out;  // saved where it is: nothing moves
+  std::set<std::string> deleted;
+  for (const auto& o : doc.ops)
+    if (o.type == "delete") deleted.insert(o.data.value("target", ""));
+  std::map<std::string, size_t> last;  // import -> the op that set its asset last
+  for (size_t i = 0; i < doc.ops.size(); ++i) {
+    const Op& o = doc.ops[i];
+    if (o.type == "import" && o.data.contains("asset")) last[o.id] = i;
+    else if (o.type == "edit" && !deleted.count(o.id) && o.data["set"].contains("asset") && last.count(o.data.value("target", ""))) last[o.data.value("target", "")] = i;
+  }
+  for (const auto& [import, i] : last) {
+    if (i >= doc.persisted_ops() || deleted.count(import)) continue;  // not saved yet: rewritten in place (rebase_asset_paths)
+    const json asset = asset_of(doc, import);
+    if (!asset.is_object() || asset.value("storage", "linked") == "embedded") continue;
+    const fs::path found = locate_asset(doc, asset);  // where the document finds it from its own folder now
+    if (found.empty()) continue;
+    json moved = asset;
+    moved["abs"] = utf8(fs::absolute(found).lexically_normal());
+    if (const std::string rel = relative_to(found, base); rel.empty()) moved.erase("path");
+    else moved["path"] = rel;
+    if (moved != asset) out.push_back(design::make_edit_op(import, {{"asset", moved}}));
+  }
+  return out;
+}
+
 void rebase_asset_paths(Document& doc, const fs::path& dir) {
   if (dir.empty()) return;
   const fs::path base = fs::absolute(dir);

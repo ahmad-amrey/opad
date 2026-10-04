@@ -747,9 +747,21 @@ TEST(paths_follow_save_as) {
   d.save_as(f.dir / "work" / "design.opad");
   CHECK_EQ(last_import(d).data["asset"]["path"], "../lib/model.step");
   CHECK(read_text_file(f.dir / "work" / "design.opad").find("\"path\":\"../lib/model.step\"") != std::string::npos);
-  // A saved op is never rewritten: Save As elsewhere keeps its line (the absolute path still finds the file).
-  d.save_as(f.dir / "other" / "design.opad");
+  // A saved op is never rewritten: Save As elsewhere keeps its line and appends an edit of the asset with the path from there
+  // (a project moved or cloned as a whole finds it again); saved again where it is, nothing more.
+  const std::string import_id = last_import(d).id;
+  d.save_as(f.dir / "other" / "design.opad");  // a sibling folder: the same path
+  CHECK_EQ(d.ops.back().type, "import");
+  d.save_as(f.dir / "deep" / "er" / "design.opad");
   CHECK_EQ(last_import(d).data["asset"]["path"], "../lib/model.step");
+  CHECK(d.ops.back().type == "edit" && d.ops.back().data["target"] == import_id);
+  CHECK_EQ(asset_of(d, import_id)["path"], "../../lib/model.step");
+  const size_t ops = d.ops.size();
+  d.save();
+  CHECK_EQ(d.ops.size(), ops);
+  Document again = Document::load(f.dir / "deep" / "er" / "design.opad");
+  CHECK_EQ(asset_status(again)[0].state, "untrusted");  // found by its path, outside this folder: asked first
+  CHECK_EQ(asset_status(again)[0].file.lexically_normal(), step.lexically_normal());
   // An edit op: Document::append checks what the import becomes.
   CHECK_THROWS(d.append({{"op", "edit"}, {"target", last_import(d).id}, {"set", {{"nodes", {{{"type", "body"}, {"id", "x"}}}}}}}));
 }

@@ -164,6 +164,20 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
         if (magenta < frame.width() * frame.height() / 50) return (void)fail("the picture is not shown on its canvas");
         frame.save(QString(shot).replace(".png", ".picture.png"));
         trace::log("bench: assets picture linked, shown on its canvas, its bytes not in the document PASS");
+        // Saved as into a folder deeper down: the saved links follow it as one undo step, the file saved clean.
+        const QString deeper = QFileInfo(w.m_doc->path()).absolutePath() + "/deep/er/design.opad";
+        QDir().mkpath(QFileInfo(deeper).absolutePath());
+        try {
+          w.m_doc->saveAs(deeper);
+        } catch (const std::exception& e) {
+          return (void)fail(QString("save as: ") + e.what());
+        }
+        const opad::Op& last = w.m_doc->doc.ops.back();
+        const opad::json asset = opad::asset_of(w.m_doc->doc, part);
+        trace::log(QString("bench: assets: saved deeper: %1, undo '%2'").arg(QString::fromStdString(asset.value("path", ""))).arg(w.m_doc->undoLabel()));
+        if (last.type != "edit" || asset.value("path", "") != "../../parts/part.step" || w.m_doc->undoLabel() != "Linked file paths" || w.m_doc->isDirty())
+          return (void)fail("Save As elsewhere: the linked paths do not follow as one undo step");
+        trace::log("bench: assets Save As into another folder: the linked paths follow as one undo step PASS");
         QCoreApplication::exit(0);
       });
     });

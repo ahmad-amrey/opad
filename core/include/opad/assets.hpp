@@ -119,5 +119,8 @@ json pack_asset(Document& doc, const std::string& import_id, const std::string& 
 
 // Linked imports and their edits not saved yet get their path relative to `dir`, where the document is being saved.
 void rebase_asset_paths(Document& doc, const std::filesystem::path& dir);
+// The linked files whose path as saved would name another place from `dir` (Save As to another folder), as edits of their
+// asset to append (the saved lines stay: the log is append-only). Document::save_as appends them; the app as an undo step.
+std::vector<json> asset_path_edits(const Document& doc, const std::filesystem::path& dir);
 
 }  // namespace opad

@@ -603,6 +603,7 @@ void Document::save() {
 
 void Document::save_as(const std::filesystem::path& p) {
   header.format = kFormatVersion;  // migrate on save (F9)
+  for (auto& edit : asset_path_edits(*this, p.parent_path())) append(std::move(edit));  // saved elsewhere: linked paths follow
   rebase_asset_paths(*this, p.parent_path());
   write_text_file(p, serialize());
   path = p;

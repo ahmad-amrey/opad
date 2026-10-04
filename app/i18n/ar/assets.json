@@ -368,5 +368,6 @@
   "the file holds nothing to show": "لا يحتوي الملف على شيء لعرضه",
   "%1 parts differ from the version synced": "%1 من الأجزاء تختلف عن النسخة المُزامَنة",
   "%1 parts are no longer in the file": "%1 من الأجزاء لم تعد في الملف",
-  "%1 parts are no longer in the file, %2 differ": "%1 من الأجزاء لم تعد في الملف، و%2 تختلف"
+  "%1 parts are no longer in the file, %2 differ": "%1 من الأجزاء لم تعد في الملف، و%2 تختلف",
+  "Linked file paths": "مسارات الملفات المرتبطة"
 }

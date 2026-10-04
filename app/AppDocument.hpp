@@ -48,6 +48,9 @@ class AppDocument : public QObject {
   // Atomic background save; holds the document write guard until the worker really exits.
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0);
+  // Before saving at `destination`: linked files' saved paths follow it as one undo step (opad::asset_path_edits), unsaved
+  // ones are rewritten (opad::rebase_asset_paths).
+  void followAssetPaths(const QString& destination);
   opad::json run(const std::string& command, opad::json args);
 
   // Design changes are planned on a worker (design::plan_ops reads the document, see DesignController) and
