@@ -188,7 +188,7 @@ TEST(value_keys_display_styles_and_the_sketch) {
   CHECK(wire.shortcut()==QKeySequence("8") && shortcuts::binding(&wire)==QKeySequence("8") && !wire.property("heldShortcut").isValid());
   {
     ShortcutEditor dialog({&wire,&line,&fit});
-    CHECK(item(dialog,"view.wire")->text(2)=="Outside sketch");
+    CHECK(item(dialog,"view.wire")->text(3)=="Outside sketch");  // the context after the alternate (UI-111)
     choose(dialog,"sketch.line","5");assign(dialog,"cancel");  // refused: a running tool types 5
     CHECK(item(dialog,"sketch.line")->text(1)=="L");
     choose(dialog,"view.wire","5");dialog.findChild<QPushButton*>("shortcutAssign")->click();
