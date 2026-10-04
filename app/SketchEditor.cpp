@@ -506,7 +506,10 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   const auto localCandidates=m_geometry->query(u-grip*1.1,v-grip*1.1,u+grip*1.1,v+grip*1.1);
   Hit hit;
   double best = grip;
-  for (size_t index : localCandidates.points) {
+  // Trim takes a piece of a curve: its points are no target (within the 12 px a point takes, UI-124, a click near a line's
+  // end hit the end and trimmed the wrong piece).
+  const std::vector<size_t> none;
+  for (size_t index : m_tool == "trim" ? none : localCandidates.points) {
     const auto& p=m_sk.points[index];
     if (!selectable(p.id)) continue;
     const double d = std::hypot(p.x - u, p.y - v);
