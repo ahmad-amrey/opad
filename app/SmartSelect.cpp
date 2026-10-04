@@ -1018,7 +1018,8 @@ bool SmartSelect::eventFilter(QObject* watched, QEvent* event) {
   if (watched == services().viewport()) {
     if (event->type() == QEvent::MouseButtonDblClick) {
       const auto* e = static_cast<QMouseEvent*>(event);
-      if (e->button() == Qt::LeftButton && idle() && !services().viewport()->sketching()) {
+      // Not on a ghost (a body outside the active component): that double-click activates its component (UI-33).
+      if (e->button() == Qt::LeftButton && idle() && !services().viewport()->sketching() && services().viewport()->ghostAt(e->position()).empty()) {
         m_doubleArmed = true;
         m_doubleAlt = e->modifiers() & Qt::AltModifier;
         m_doubleAt = e->position().toPoint();
