@@ -3,6 +3,7 @@
 #include <QLabel>
 #include <QWidget>
 #include <string>
+#include <vector>
 
 #include "AppDocument.hpp"
 
@@ -13,8 +14,9 @@ class AnnotationsPanel : public QWidget {
   explicit AnnotationsPanel(AppDocument* doc, QWidget* parent = nullptr);
   std::string currentOpId() const { return m_current; }
  signals:
-  // A card was clicked: what its note (or pinned measurement) is anchored to, to light up in the view (help audit P9.4).
-  void targetRequested(const opad::Ref& anchor);
+  // A card was clicked: what its note is anchored to, or every pick of a pinned measurement, to light up in the view (help
+  // audit P9.4).
+  void targetRequested(const std::vector<opad::Ref>& anchors);
   void addRequested();
   void typeFilterChanged(const std::string& type);
   void resolveRequested(const std::string& opId);

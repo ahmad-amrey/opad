@@ -2,7 +2,8 @@
 // say. On a box with four notes (pinned to the body, a face, an edge and a point): a click on a card lights up exactly what
 // its note is pinned to (the face's outline lies inside the body's, an edge, a point ringed), rings the card as the current
 // one and leaves the selection as it was; another selection, a click in the view, Esc closing the panel and a note being
-// written put it out; a note on a hidden body says so. Reset layout brings the browser and the timeline back with their
+// written put it out; a note on a hidden body says so. A pinned distance's card lights both its picks; a note on a face the
+// body no longer has says that it is gone from the body, not that it is hidden. Reset layout brings the browser and the timeline back with their
 // commands ticked. <prefix>.face.png: the view with the face lit and the panel.
 #include <QApplication>
 #include <QDockWidget>
@@ -35,7 +36,7 @@ OPAD_BENCH(OPAD_BENCH_PANELS, panels) {
   Viewport* v = w.m_viewport;
   auto script = std::make_shared<bench2d::Script>();
   struct State {
-    std::string body, onBody, onFace, onEdge, onPoint;
+    std::string body, onBody, onFace, onEdge, onPoint, measured, stale;
     QRect bodyRect, faceRect;
   };
   auto st = std::make_shared<State>();
@@ -134,7 +135,25 @@ OPAD_BENCH(OPAD_BENCH_PANELS, panels) {
             "a note on a hidden body lights nothing and says why: " + message);
     w.m_doc->undo();
   }, [=, &w] { return idle() && card(st->onFace) && w.m_doc->scene.effectively_visible(st->body) && v->remainingBodies() == 0; });
+  // A pinned distance between two faces lights both; a note on a face the body no longer has says that, not "hidden".
+  script->add("a pinned measurement and a note on a face that is gone", [=, &w] {
+    const opad::json pinned = w.m_doc->run("measure", {{"kind", "distance"}, {"refs", {st->body + "/face/0", st->body + "/face/1"}}, {"pin", true}});
+    st->measured = pinned.value("pinned_op", "");
+    st->stale = w.m_doc->run("annotate", {{"anchor", st->body + "/face/99"}, {"text", "A face since removed"}}).value("id", "");
+  }, [=] { return idle() && card(st->measured) && card(st->stale); });
+  script->add("the measurement's card", [=] { press(st->measured); }, [&w] { return w.m_cardTarget; });
+  script->add("the gone face's card", [=, &w] {
+    const QRect both = lit();
+    require(both.contains(st->faceRect.adjusted(2, 2, -2, -2)) && both.width() * both.height() > st->faceRect.width() * st->faceRect.height() * 3 / 2 &&
+                current(st->measured) && v->selection().empty(),
+            QString("a pinned measurement's card lights both its picks: %1x%2 around the first face's %3x%4")
+                .arg(both.width()).arg(both.height()).arg(st->faceRect.width()).arg(st->faceRect.height()));
+    press(st->stale);
+  }, [&w, lit] { return !w.m_cardTarget && lit().isNull(); });
   script->add("Esc", [=, &w] {
+    const QString message = w.statusBar()->currentMessage();
+    require(message == MainWindow::tr("What this note was pinned to is no longer in its body: the body has changed since."),
+            "a note on a face the body no longer has lights nothing and says so, not that it is hidden: " + message);
     press(st->onFace);
     require(w.m_cardTarget && !lit().isNull(), "shown again, the face lights up again");
     w.action("inspect.clear")->trigger();

@@ -510,7 +510,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // The note / hand drawing editor (AnnotationEditor.cpp). Its target is drawn in the selection blue, tinted with a
   // dashed outline, on top of everything; the target's widget rectangle places the editor's badge.
   bool annotationPick(const QPointF& point, opad::Ref& target, bool& hit);  // body/face/edge/vertex; hit: point = where
-  bool showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre = nullptr);  // false: not in the view
+  // Why a target could not be lit: its body is not shown (hidden, isolated away, hidden by a look), not drawn (still on its
+  // way to the view, not a body, no viewer yet), or the face, edge or vertex it names is no longer in the body (it changed).
+  enum class TargetMiss { None, Hidden, NotDrawn, Changed };
+  // false: not in the view (`miss` says why). `add`: lit beside the ones already shown (every pick of a pinned measurement).
+  bool showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre = nullptr, bool add = false, TargetMiss* miss = nullptr);
   void clearAnnotationTarget();
   QRect annotationTargetRect() const;  // null while nothing is shown
   opad::Frame annotationCameraPlane(const opad::Vec3& origin) const;  // through origin, facing the camera
@@ -860,9 +864,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   gp_Vec lookOffset(const std::string& node) const;  // how far a look moved it (an exploded part): its notes follow
   std::string m_noteTypeFilter;
   Handle(AIS_InteractiveObject) m_drawingPreview;
-  Handle(AIS_InteractiveObject) m_annotationTarget;
-  std::vector<opad::Vec3> m_annotationCorners;  // the target's box, world
-  Job* m_targetJob = nullptr;                   // a body target's tint, built on a worker when the body has no arrays
+  std::vector<Handle(AIS_InteractiveObject)> m_annotationTargets;  // what showAnnotationTarget lit
+  std::vector<opad::Vec3> m_annotationCorners;  // the targets' boxes, world
+  std::vector<Job*> m_targetJobs;               // a body target's tint, built on a worker when the body has no arrays
   std::map<std::string, NoteMark> m_notes;  // open notes by op id
   // Where each note is pinned (UI-03), by op id: measured once on a worker (opad::annotation_anchor) and again only when
   // its signature (the reference, the pinned node's body keys and placements) changes. ready && !found: nothing to pin to.

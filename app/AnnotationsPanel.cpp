@@ -94,6 +94,9 @@ void AnnotationsPanel::rebuild() {
     if ((status == 1 && state != "open") || (status == 2 && state != "unresolved") || (status == 3 && state != "resolved")) continue;
     opad::Ref anchor;
     try { anchor = opad::Ref::from_json(op.type=="measurement"?op.data.at("refs").at(0):op.data.at("anchor")); } catch (...) {}
+    std::vector<opad::Ref> targets;  // what a click lights up: the note's anchor, every pick of a pinned measurement
+    if (op.type == "measurement")
+      try { for (const auto& r : op.data.at("refs")) targets.push_back(opad::Ref::from_json(r)); } catch (...) {}
     NoteInfo n;
     n.id = op.id; n.by = by; n.ts = op.data.value("ts", ""); n.text = op.data.value("text", ""); n.body = anchor.body;
     n.style = op.data.value("style", "note");
@@ -106,8 +109,9 @@ void AnnotationsPanel::rebuild() {
       if(result.contains("value") && result["value"].is_number()) n.value+=" - "+units::format(unit=="deg"?units::Kind::Angle:unit=="mm2"?units::Kind::Area:units::Kind::Length,result["value"].get<double>());
       if(unit=="mm2" && result.contains("perimeter") && result["perimeter"].is_number()) n.value+=" · "+tr("perimeter %1").arg(units::format(units::Kind::Length,result["perimeter"].get<double>()));
       else if(result.contains("size") && result["size"].is_array() && result["size"].size()==3) n.value+=" - "+units::vector(units::Kind::Length,result["size"].get<std::array<double,3>>());
-      for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;}
+      for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;if(!m.refs.empty())targets=m.refs;}
     }
+    if (targets.empty()) targets.push_back(anchor);
     n.state = state;
     if(!m_type->currentData().toString().isEmpty() && n.style!=m_type->currentData().toString().toStdString()) continue;
     ++shown;
@@ -121,10 +125,10 @@ void AnnotationsPanel::rebuild() {
     connect(card, &NoteCard::restoreRequested, this, &AnnotationsPanel::restoreRequested);
     connect(card, &NoteCard::styleRequested, this, &AnnotationsPanel::styleRequested);
     // A click shows what the note is pinned to: the face, edge, point or body (help audit P9.4), not its whole body.
-    connect(card, &NoteCard::pressed, this, [this, card, anchor] {
+    connect(card, &NoteCard::pressed, this, [this, card, targets] {
       m_current = card->note().id;
       markCurrent();
-      emit targetRequested(anchor);
+      emit targetRequested(targets);
     });
     cl->insertWidget(cl->count() - 1, card);
   }

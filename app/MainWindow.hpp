@@ -202,7 +202,7 @@ class MainWindow : public QMainWindow {
   // A card clicked in Annotations lights up what its note is pinned to, as the note editor shows a target (help audit
   // P9.4); a click in the view, another selection, a change of the document, Esc, a note being written or the panel
   // closing puts it out.
-  void showAnnotationCardTarget(const opad::Ref& anchor);
+  void showAnnotationCardTarget(const std::vector<opad::Ref>& anchors);  // a note's anchor, every pick of a pinned measurement
   void clearAnnotationCardTarget();
   void exportDialog(std::vector<std::string> ids = {});
   void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker (ExportJob.hpp), the result in m_lastExport

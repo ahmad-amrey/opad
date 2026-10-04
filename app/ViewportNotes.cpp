@@ -28,6 +28,8 @@
 #include "Notes.hpp"
 #include "opad/geometry.hpp"
 
+#include <algorithm>
+
 namespace {
 Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
 
@@ -359,8 +361,11 @@ bool Viewport::annotationPick(const QPointF& point, opad::Ref& target, bool& hit
 }
 
 // Cheap on purpose (it runs in a click): one sub-shape's mesh, or the arrays the body is already drawn with.
-bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre) {
-  clearAnnotationTarget();
+bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre, bool add, TargetMiss* miss) {
+  if (!add) clearAnnotationTarget();
+  TargetMiss why = TargetMiss::NotDrawn;
+  if (!miss) miss = &why;
+  *miss = TargetMiss::NotDrawn;
   if (!m_initialised) return false;
   if (target.kind == opad::Ref::Kind::Point) {  // a point in space (a pinned measurement's end, a note an agent placed): ringed
     Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.selected3d);
@@ -368,14 +373,23 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
     mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
     mark->SetInfiniteState(Standard_True);
     m_ctx->Display(mark, 0, -1, Standard_False);
-    m_annotationTarget = mark;
+    m_annotationTargets.push_back(mark);
     m_annotationCorners.push_back(target.point);
     if (centre) *centre = target.point;
     redrawScene();
+    *miss = TargetMiss::None;
     return true;
   }
   const auto item = m_items.find(target.body);
-  if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) return false;
+  if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) {
+    // Not drawn: hidden (its flags, an isolation without it, a look), else not here yet (meshing, the display pump) or not a body.
+    const opad::Node* n = m_doc->scene.node(target.body);
+    const bool hidden = item != m_items.end() ? !item->second.look.visible || m_previewHidden.count(target.body) > 0
+                                              : n && n->kind == opad::Node::Kind::Body && !n->body_missing &&
+                                                    (!m_isolated.empty() ? !m_isolated.count(target.body) : !m_doc->scene.effectively_visible(target.body));
+    if (hidden) *miss = TargetMiss::Hidden;
+    return false;
+  }
   const Handle(AIS_Shape)& ais = item->second.ais;
   const bool rigid = item->second.rigid, shared = rigid && item->second.stretch == 1;  // see displayBody: a stretched canvas is its own rectangle
   Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.selected3d);
@@ -392,17 +406,20 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
       } else if (rigid) {  // drawn without the worker's arrays: build them there too, the tint follows
         auto shape = std::make_shared<TopoDS_Shape>(ais->Shape());
         auto built = std::make_shared<std::shared_ptr<BodyPrs>>();
-        m_targetJob = m_jobs->async(tr("Highlighting %1").arg(m_doc->nodeName(target.body)), [shape, built](Progress) {
+        auto job = std::make_shared<Job*>(nullptr);
+        *job = m_jobs->async(tr("Highlighting %1").arg(m_doc->nodeName(target.body)), [shape, built](Progress) {
           Bnd_Box bounds;
           BRepBndLib::Add(*shape, bounds, Standard_True);
           *built = BodyPrs::build(*shape, bounds);
-        }, [this, mark, built](bool ok, const QString&) {
-          if (m_annotationTarget == mark) m_targetJob = nullptr;
-          if (!ok || m_annotationTarget != mark || !*built || (*built)->triangles.IsNull()) return;
+        }, [this, mark, built, job](bool ok, const QString&) {
+          m_targetJobs.erase(std::remove(m_targetJobs.begin(), m_targetJobs.end(), *job), m_targetJobs.end());
+          const bool shown = std::find(m_annotationTargets.begin(), m_annotationTargets.end(), Handle(AIS_InteractiveObject)(mark)) != m_annotationTargets.end();
+          if (!ok || !shown || !*built || (*built)->triangles.IsNull()) return;
           mark->fills.push_back((*built)->triangles);
           m_ctx->Redisplay(mark, Standard_False);
           redrawScene();
         }, JobKind::Background);
+        m_targetJobs.push_back(*job);
       }
       if (shared) box = opad::body_bbox(m_doc->doc, item->second.key);
       else if (rigid) BRepBndLib::Add(ais->Shape(), box, Standard_True);  // one rectangle
@@ -410,7 +427,10 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
       boxSegments(box, mark->outline);
     } else {
       const TopoDS_Shape sub = opad::subshape(ais->Shape(), target.kind, target.index);
-      if (sub.IsNull()) return false;
+      if (sub.IsNull()) {
+        *miss = TargetMiss::Changed;
+        return false;
+      }
       BRepBndLib::Add(sub, box, Standard_True);
       if (sub.ShapeType() == TopAbs_FACE) {
         TopLoc_Location loc;
@@ -435,8 +455,10 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
       }
     }
   } catch (const Standard_Failure&) {
+    *miss = TargetMiss::Changed;
     return false;
   } catch (const std::exception&) {  // the ordinal is gone (the body changed)
+    *miss = TargetMiss::Changed;
     return false;
   }
   const gp_Trsf trsf = ais->Transformation();  // identity for a non-rigid body: its shape is already placed
@@ -447,7 +469,7 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
   m_ctx->Display(mark, 0, -1, Standard_False);
   if (trace::enabled()) trace::log(QStringLiteral("annotation target %1: %2 fills, %3 outline, %4 lines, rigid %5").arg(QString::fromStdString(target.str())).arg(mark->fills.size()).arg(mark->outline.size()).arg(mark->lines.size()).arg(rigid));
   m_ctx->ClearDetected(Standard_False);  // the pick's hover highlight
-  m_annotationTarget = mark;
+  m_annotationTargets.push_back(mark);
   if (!box.IsVoid()) {
     const gp_Pnt lo = box.CornerMin(), hi = box.CornerMax();
     for (int i = 0; i < 8; ++i) {
@@ -460,15 +482,15 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
     }
   }
   redrawScene();
+  *miss = TargetMiss::None;
   return true;
 }
 
 void Viewport::clearAnnotationTarget() {
   m_annotationCorners.clear();
-  if (Job* job = std::exchange(m_targetJob, nullptr)) job->cancel();
-  if (!m_initialised || m_annotationTarget.IsNull()) return;
-  m_ctx->Remove(m_annotationTarget, Standard_False);
-  m_annotationTarget.Nullify();
+  for (Job* job : std::exchange(m_targetJobs, {})) job->cancel();
+  if (!m_initialised || m_annotationTargets.empty()) return;
+  for (const Handle(AIS_InteractiveObject)& mark : std::exchange(m_annotationTargets, {})) m_ctx->Remove(mark, Standard_False);
   redrawScene();
 }
 

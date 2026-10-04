@@ -43,7 +43,9 @@ void MainWindow::buildDocks() {
   connect(m_checks, &CheckPanel::contentResized, m_toolPanel, &ToolPanel::requestContentFit);
   m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};
   // What a card lit up goes with the panel, and with any change of the document (its ordinals may name other faces).
-  connect(m_annotationsPanel, &ToolPanel::visibilityChanged, this, [this](bool on) { if (!on) clearAnnotationCardTarget(); });
+  connect(m_annotationsPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
+    if (!on && !m_annotationsPanel->isVisible()) clearAnnotationCardTarget();  // not when minimising (isVisible() stays true)
+  });
   connect(m_doc, &AppDocument::changed, this, &MainWindow::clearAnnotationCardTarget);
   // The note / hand drawing editor's panel: filled by each AnnotationEditor, open exactly as long as it runs. Not one
   // of m_panels, so opening another panel never ends an annotation in progress.
