@@ -28,6 +28,7 @@ CASES = [
     # construction axis, a face and an origin plane for a construction plane, the XY plane and Enter for a new sketch.
     ("pick-routing", routing_parts, {"OPAD_BENCH_PICKROUTING": "{prefix}"}),
     # P2: the press pull's arrow pulled below its face (negative, the preview following while held), the fillet's on its first
-    # edge pulled out and typed into, Move's X arrow pulled and typed into, and where chamfer, thicken, plane and box put theirs.
+    # edge pulled out and typed into, Move's X arrow and ring pulled and typed into, and the chamfer, thicken, plane and box
+    # arrows pulled out, each preview checked while the button is held.
     ("handles", handle_parts, {"OPAD_BENCH_HANDLES": "{prefix}"}),
 ]

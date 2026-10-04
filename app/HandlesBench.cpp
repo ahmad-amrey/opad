@@ -4,6 +4,7 @@
 #include "MainWindow.hpp"
 #include "ToolValues.hpp"
 #include "TranslateTriad.hpp"
+#include "opad/design/feature.hpp"
 #include "opad/geometry.hpp"
 #include "opad/util.hpp"
 
@@ -38,14 +39,16 @@
 //   Move with Rotate: a ring round Z through the box's middle, the triad on it 90 degrees round; pulled round, the angle
 //   goes on in 5 degree steps and the triad and the preview travel along it while held; 4 and 5 typed go into Angle; Enter
 //   turns the box 45 degrees.
-//   Chamfer, Thicken, Construction plane and Box show their arrow on Distance, Thickness, Distance and Height.
+//   Chamfer (a bottom edge), Thicken (the top face), Construction plane (offset from XY) and Box: the arrow on Distance,
+//   Thickness, Distance and Height is where the core's feature_handles puts it; pulled out, the value grows and, the button
+//   still held, the preview cuts more, is thicker, plans the plane at the distance, is 20 x 20 x the height; Esc leaves.
 // Shots: <prefix>.<step>.png (the view: arrows and triad are drawn in it) and <prefix>.<step>.box.png (the value box).
 OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
   struct State {
     size_t step = 0;
     int ticks = 0, wait = 0;
     std::string box;
-    double volume = 0, previewBefore = 0, pxPerMm = 0, top = 10;
+    double volume = 0, previewBefore = 0, pxPerMm = 0, top = 10, before = 0;
     QPointF press, dir, last;
     opad::Vec3 centre{0, 0, 0};
   };
@@ -101,16 +104,17 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
     }
     return -1;
   };
-  auto topEdges = [shape, st]() {
+  auto edgesAt = [shape](double z) {  // straight edges lying at height z
     std::set<int> out;
     TopTools_IndexedMapOfShape edges;
     TopExp::MapShapes(shape(), TopAbs_EDGE, edges);
     for (int i = 1; i <= edges.Extent(); ++i) {
       BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
-      if (std::abs(c.Value(c.FirstParameter()).Z() - st->top) < 1e-6 && std::abs(c.Value(c.LastParameter()).Z() - st->top) < 1e-6) out.insert(i - 1);
+      if (c.GetType() == GeomAbs_Line && std::abs(c.Value(c.FirstParameter()).Z() - z) < 1e-6 && std::abs(c.Value(c.LastParameter()).Z() - z) < 1e-6) out.insert(i - 1);
     }
     return out;
   };
+  auto topEdges = [edgesAt, st]() { return edgesAt(st->top); };
   auto edgeMiddle = [shape](int index) {
     TopTools_IndexedMapOfShape edges;
     TopExp::MapShapes(shape(), TopAbs_EDGE, edges);
@@ -132,10 +136,10 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
     view->benchClickAt(at->x(), at->y());
   };
   // The pointer through the viewport's event filters (the arrow's, the triad's), in widget coordinates.
-  auto mouse = [view](QEvent::Type type, const QPointF& at) {
+  auto mouse = [view](QEvent::Type type, const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
     const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
     const Qt::MouseButtons buttons = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
-    QMouseEvent e(type, at, view->mapToGlobal(at), button, buttons, Qt::NoModifier);
+    QMouseEvent e(type, at, view->mapToGlobal(at), button, buttons, modifiers);
     QApplication::sendEvent(view, &e);
   };
   auto key = [view](int code, const QString& text) {
@@ -429,42 +433,100 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         pass("move: Enter turns the box 45 degrees about Z");
         return true;
       },
-      // ---- The other arrows: where they are and what they pull.
-      [=] {
-        start("chamfer");
-        TopTools_IndexedMapOfShape edges;
-        TopExp::MapShapes(shape(), TopAbs_EDGE, edges);
-        form->setPicks("edges", opad::json::array({{{"body", st->box}, {"kind", "edge"}, {"index", 0}}}));
-        return true;
-      },
-      [=] {
-        if (!waitFor(design->handleInput() == "distance", "chamfer shows no arrow on Distance")) return false;
-        design->escape();
-        start("thicken");
-        form->setPicks("faces", opad::json::array({{{"body", st->box}, {"kind", "face"}, {"index", topFace()}}}));
-        return true;
-      },
-      [=] {
-        if (!waitFor(design->handleInput() == "thickness", "thicken shows no arrow on Thickness")) return false;
-        design->escape();
-        start("plane");
-        return true;
-      },
-      [=] {
-        if (!waitFor(design->handleInput() == "distance", "the construction plane shows no arrow on Distance")) return false;
-        shot("plane", true);
-        design->escape();
-        start("box");
-        return true;
-      },
-      [=] {
-        if (!waitFor(design->handleInput() == "height", "the box shows no arrow on Height")) return false;
-        shot("box", true);
-        pass("chamfer, thicken, construction plane and box show their arrows on Distance, Thickness, Distance and Height");
-        design->escape();
-        return true;
-      },
   };
+
+  // ---- The other arrows, each pulled the same way: drawn where the core puts it (feature_handles: origin + axis x value),
+  // pulled `mm` out along itself, the value grows; while the button is still held the preview is what the value makes
+  // (`held` says what is wrong, empty if nothing); let go, Esc leaves the feature without changing the box.
+  auto pullArrow = [=](const char* kind, std::function<void()> setup, const char* input, double mm, std::function<std::string()> held, const QString& what) {
+    return std::vector<std::function<bool()>>{
+        [=] {
+          start(kind);
+          setup();
+          return true;
+        },
+        [=] {
+          if (!waitFor(design->handleInput() == input && previewFor(input), std::string(kind) + " shows no arrow on " + input)) return false;
+          const opad::json hs = opad::design::feature_handles(win->m_doc->doc, win->m_doc->scene, kind, form->inputs());
+          require(hs.size() == 1 && hs[0].value("input", "") == input, std::string("the core has no ") + input + " arrow for " + kind);
+          const opad::Vec3 o = hs[0].at("origin").get<opad::Vec3>(), a = hs[0].at("axis").get<opad::Vec3>();
+          const double v = hs[0].at("value").get<double>();
+          const opad::Vec3 foot{o[0] + a[0] * v, o[1] + a[1] * v, o[2] + a[2] * v};
+          require(closeTo(handle->arrowLine().p1(), view->widgetPoint(foot), 4), std::string("the ") + kind + " arrow is not where the core puts it: " + str(handle->arrowLine().p1()) + " vs " + str(view->widgetPoint(foot)));
+          st->previewBefore = previewVolume();
+          st->before = evaluated(input);
+          st->pxPerMm = pixelsPerMm(foot, a);
+          const QLineF line = handle->arrowLine();
+          st->dir = (line.p2() - line.p1()) / std::max(1e-9, line.length());
+          st->press = line.pointAt(0.5);
+          mouse(QEvent::MouseButtonPress, st->press);
+          require(handle->dragging(), std::string("a press on the ") + kind + " arrow did not grip it");
+          mouse(QEvent::MouseMove, st->press + st->dir * (mm / 2 * st->pxPerMm));
+          st->last = st->press + st->dir * (mm * st->pxPerMm);
+          mouse(QEvent::MouseMove, st->last);
+          require(evaluated(input) > st->before + mm / 2,std::string("pulling the ") + kind + " arrow out did not grow " + input + ": " + form->valueText(input).toStdString());
+          return true;
+        },
+        [=] {
+          if (!waitFor(previewFor(input), std::string("the ") + kind + " preview did not follow the pull")) return false;
+          require(handle->dragging(), std::string("the ") + kind + " arrow let go before the release");
+          const std::string wrong = held();
+          require(wrong.empty(), wrong);
+          shot(kind, true);
+          pass(what + ": the arrow is where the core puts it; pulled out while held, " + QString(input) + " is " + form->valueText(input) + " and the preview follows");
+          mouse(QEvent::MouseButtonRelease, st->last);
+          design->escape();
+          return true;
+        },
+        [=] { return waitFor(!design->featureActive(), std::string("Esc did not leave ") + kind); },
+    };
+  };
+  auto append = [&steps](std::vector<std::function<bool()>> more) { steps.insert(steps.end(), more.begin(), more.end()); };
+  // Chamfer: the bottom edge whose arrow the view sees best (the box is turned 45 degrees by now); a bigger distance cuts more.
+  append(pullArrow(
+      "chamfer",
+      [=] {
+        int best = -1;
+        double side = 2;
+        const opad::Vec3 d = view->viewDirection();
+        for (int e : edgesAt(0)) {
+          const opad::json ref{{"body", st->box}, {"kind", "edge"}, {"index", e}};
+          const opad::json hs = opad::design::feature_handles(win->m_doc->doc, win->m_doc->scene, "chamfer", {{"edges", opad::json::array({ref})}, {"type", "equal"}, {"distance", "2 mm"}});
+          if (hs.size() != 1) continue;
+          const opad::Vec3 a = hs[0].at("axis").get<opad::Vec3>();
+          const double along = std::abs(a[0] * d[0] + a[1] * d[1] + a[2] * d[2]);
+          if (along < side) side = along, best = e;
+        }
+        require(best >= 0, "the box has no bottom edge to chamfer");
+        form->setPicks("edges", opad::json::array({{{"body", st->box}, {"kind", "edge"}, {"index", best}}}));
+      },
+      "distance", 1.5,
+      [=] { return previewVolume() < st->previewBefore - 1e-3 ? std::string() : "the chamfer preview during the pull does not cut more: " + std::to_string(previewVolume()) + " vs " + std::to_string(st->previewBefore); },
+      "chamfer"));
+  // Thicken: the top face; a thicker skin has more volume.
+  append(pullArrow(
+      "thicken", [=] { form->setPicks("faces", opad::json::array({{{"body", st->box}, {"kind", "face"}, {"index", topFace()}}})); }, "thickness", 1.5,
+      [=] { return previewVolume() > st->previewBefore + 1e-3 ? std::string() : "the thicken preview during the pull is not thicker: " + std::to_string(previewVolume()) + " vs " + std::to_string(st->previewBefore); },
+      "thicken"));
+  // Construction plane (offset from XY): the planned plane is as far up as the pulled distance.
+  append(pullArrow(
+      "plane", [] {}, "distance", 4,
+      [=] {
+        const auto plan = design->readyPreview();
+        if (!plan) return std::string("the plane has no preview");
+        for (auto op = plan->ops.rbegin(); op != plan->ops.rend(); ++op)
+          if (op->contains("result") && (*op)["result"].contains("plane")) {
+            const double z = (*op)["result"]["plane"]["origin"][2].get<double>();
+            return std::abs(z - evaluated("distance")) < 1e-6 ? std::string() : "the planned plane is at " + std::to_string(z) + ", not at the pulled distance";
+          }
+        return std::string("the plane's preview plans no plane");
+      },
+      "construction plane"));
+  // Box: its height arrow; the preview is 20 x 20 x the pulled height.
+  append(pullArrow(
+      "box", [] {}, "height", 6,
+      [=] { return std::abs(previewVolume() - 400 * evaluated("height")) < 1e-3 * previewVolume() ? std::string() : "the box preview during the pull is not 20 x 20 x " + form->valueText("height").toStdString(); },
+      "box"));
   auto* timer = new QTimer(&w);
   timer->setInterval(100);
   QObject::connect(timer, &QTimer::timeout, &w, [&w, st, steps, timer] {
