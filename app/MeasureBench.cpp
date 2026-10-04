@@ -27,6 +27,7 @@
 
 #include "BenchRegistry.hpp"
 #include "MainWindow.hpp"
+#include "Notes.hpp"
 #include "Units.hpp"
 #include "opad/geometry.hpp"
 
@@ -313,6 +314,11 @@ OPAD_BENCH(OPAD_BENCH_MEASURE, measure) {
           "in the Lid's axes: " + row("Centroid") + " (" + row("Coordinates in") + ")");
   settle(200);
   w.m_toolPanel->grab().save(prefix + ".frame.png");
+  w.pinMeasurement();  // its card in Annotations reads as an area
+  QStringList cards;
+  for (const auto* card : w.m_annotations->findChildren<NoteCard*>())
+    if (card->note().measurement) cards << card->note().value;
+  require(cards.contains(QString::fromUtf8("area measurement - 100.000 mm²")), "a pinned area's card reads in mm²: " + cards.join(" | "));
   w.cancelTool();
   w.startTool("distance");
   if (auto* centres = modeButton(1)) centres->click();
