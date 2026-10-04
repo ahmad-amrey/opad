@@ -1445,7 +1445,12 @@ json measure_max_distance(const Document& doc, const Scene& scene, const Ref& a,
 json measure_length(const Document& doc, const Scene& scene, const Ref& a) {
   if (a.kind != Ref::Kind::Edge && a.kind != Ref::Kind::Face && a.kind != Ref::Kind::Body)
     throw Error("length and area need an edge, a face or a body: " + a.str());
-  const TopoDS_Shape s = ref_shape(doc, scene, a);
+  // The edge and the faces around it from one world shape: each call places the body anew (a new location, a new
+  // GTransform), and an edge of one is not the same edge of another.
+  Ref whole = a;
+  whole.kind = Ref::Kind::Body;
+  const TopoDS_Shape body = ref_shape(doc, scene, whole);
+  const TopoDS_Shape s = a.kind == Ref::Kind::Body ? body : subshape(body, a.kind, a.index);
   json j;
   j["refs"] = {a.str()};
   if (a.kind == Ref::Kind::Edge) {
@@ -1459,7 +1464,6 @@ json measure_length(const Document& doc, const Scene& scene, const Ref& a) {
     j["end"] = pnt(c.Value(c.LastParameter()));
     j["point"] = pnt(c.Value((c.FirstParameter() + c.LastParameter()) / 2));
     j["closed"] = BRep_Tool::IsClosed(edge);
-    const TopoDS_Shape body = node_world_shape(doc, scene, a.body);
     TopTools_IndexedMapOfShape faces;
     TopExp::MapShapes(body, TopAbs_FACE, faces);
     TopTools_IndexedDataMapOfShapeListOfShape owners;

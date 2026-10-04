@@ -193,6 +193,14 @@ TEST(length_and_area) {
     CHECK(loop["outer"].get<bool>());
   }
   CHECK_NEAR(perimeters, 80 + 100, 1e-9);  // the 10 x 30 and the 20 x 30 side
+  // Moved, and stretched (not rigid): the loops are found on the placed body too.
+  Mat4 stretch = Mat4::translation(0, 50, 0);
+  stretch.at(0, 0) = 2;
+  for (const Mat4& placed : {Mat4::translation(100, 0, 0), stretch}) {
+    const json moved = measure_length(d, scene, ref(add_body(d, scene, "box", box, placed), Ref::Kind::Edge, upright));
+    CHECK_NEAR(moved["value"].get<double>(), 30, 1e-9);
+    CHECK_EQ(moved["loops"].size(), 2u);
+  }
   const int bottom = face_where(box, [](const BRepAdaptor_Surface& s) { return s.GetType() == GeomAbs_Plane && std::abs(s.Plane().Axis().Direction().Z()) > 0.5; });
   r = measure_length(d, scene, ref(id, Ref::Kind::Face, bottom));
   CHECK_EQ(r["kind"].get<std::string>(), "area");
