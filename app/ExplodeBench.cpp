@@ -632,6 +632,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     v->clearSelection();
                     v->grabImage().save(prefix + ".view.png");
                     w.startTool("distance");
+                    w.action("select.bodies")->trigger();  // lid to shell, body to body (Distance starts in Faces from the Body filter)
                   }});
   list.push_back({[=, &w] { return v->ghostsPickable() && !w.m_jobs->busy(); }, [=, &w](bool) {
                     int x = 0, y = 0;

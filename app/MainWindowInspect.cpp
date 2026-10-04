@@ -180,9 +180,13 @@ void MainWindow::startTool(const QString& id) {
   m_toolHover.clear();
   m_toolError.clear();
   ++m_toolRun;
-  // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face.
+  // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face. Distance measures faces
+  // from the Body filter too (help audit P8: its guide clicks two faces; bodies are one filter key away), unless bodies were
+  // selected first (selected first, tool second: those are measured) or a drawing has no faces (2D words).
   const Viewport::SelFilter f = m_viewport->selectionFilter();
-  const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex);
+  const bool distanceFaces = id == "distance" && f == Viewport::SelFilter::Body && m_viewport->selection().empty() && action("select.faces")->isVisible();
+  const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face
+                                             : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex) || distanceFaces;
   // Area takes fills or faces, objects or points, never bodies: a drawing's objects, a solid's faces. In 2D words the Faces
   // filter is gone (the drawing2d area hides it): a drawing's objects instead (a hidden action still triggers). Length and
   // area takes edges, faces or bodies: not vertices.

@@ -20,6 +20,12 @@ def plan(root, document):
     return path
 
 
+def two_blocks(root, document):
+    """A 10 mm cube at the origin and a 10 x 10 x 20 mm block 40 mm along X and 30 mm along Y."""
+    return document("inspect-blocks", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
+                    ("feature", "--kind", "box", "--inputs", '{"x":"40 mm","y":"30 mm","length":"10 mm","width":"10 mm","height":"20 mm"}'))
+
+
 GRID = "[view]\ngrid=true\n"
 
 CASES = [
@@ -29,4 +35,6 @@ CASES = [
     # P7 on a drawing in 2D mode: Turn 90° left twists it in an animation, the direction and the grid's plane stay.
     # <prefix>.roll-partway.png, <prefix>.roll.png.
     ("views-2d", plan, {"OPAD_BENCH_VIEWS": "{prefix}"}, GRID),
+    # P8 on two blocks apart: Distance from the Body filter picks faces (bodies selected first are measured).
+    ("inspect", two_blocks, {"OPAD_BENCH_INSPECT": "{prefix}"}),
 ]
