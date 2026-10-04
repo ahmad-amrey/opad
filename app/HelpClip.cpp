@@ -416,10 +416,10 @@ void parseClip(QJsonObject raw, const QJsonObject& templates, Library& l) {
   static const QStringList fields{"id", "duration", "still", "view", "camera", "extent", "pad", "items", "steps", "guide", "note", "setup", "expect"};
   for (auto it = raw.begin(); it != raw.end(); ++it) if (!fields.contains(it.key())) problem("unknown field " + it.key());
   // The replay's blocks (clips.json "@replay"): only the fields the bench reads, so a misspelt one is no silent pass.
-  static const QStringList setupFields{"tool", "command", "curves", "drawn", "constraints", "patterns", "options", "image", "file", "plane", "bodies", "note"};
+  static const QStringList setupFields{"tool", "command", "curves", "drawn", "constraints", "patterns", "options", "image", "file", "plane", "bodies", "sketches", "note"};
   static const QStringList expectFields{"entities", "construction", "linked", "constraints", "dimensions", "arcs", "circles", "points", "selected", "tool",
                                         "images", "image", "active", "sketches", "page", "rings", "snaps", "plane", "file", "status", "weights", "dark", "light", "note",
-                                        "bounds", "regions", "area", "during"};
+                                        "bounds", "regions", "area", "during", "features", "bodies", "inputs", "picks", "values", "volume", "total", "box", "open"};
   for (const auto& [block, known] : {std::pair{"setup", &setupFields}, std::pair{"expect", &expectFields}})
     for (const QString& key : raw.value(block).toObject().keys())
       if (!known->contains(key)) problem(QString("%1: unknown field %2").arg(block, key));

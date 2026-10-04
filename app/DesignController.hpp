@@ -62,6 +62,7 @@ class DesignController : public QObject {
   bool pickingPlane() const { return m_pickPlane; }
   bool sketchActive() const { return m_sketch->active(); }
   bool busy() const { return m_doc->designBusy; }
+  bool previewing() const { return m_planJob || m_previewTimer.isActive() || m_previewPending; }  // a preview being planned (benches: wait for it)
   bool ownsSelection() const { return featureActive() || m_pickPlane; }  // the viewport's picks belong to a design input
   void viewportSelectionChanged();
   bool escape();  // Esc: leaves the plane pick or the feature; false when there was nothing to leave

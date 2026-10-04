@@ -1,6 +1,6 @@
 {
  "@about": "Animated help clips (UI-107), played by ClipView (app/HelpClip.hpp): vector items keyframed in seconds, model coordinates in millimetres (plane view: x right, y up; iso view: z up). Captions, label/chip texts and card titles/rows are English source text translated through app/i18n/<lang>/help.json. All artwork is original and procedural.",
- "@replay": "Every sketch clip carries its replay (TODO 11 wave 3; OPAD_BENCH_CLIPREPLAY, app/ClipReplayBench.cpp): the clip's own pointer, keys, typed values and card changes are fed into the tool on a sketch made from \"setup\", and what the tool made is compared with \"expect\". setup: tool (default: the clip id's), command (run first), curves and drawn (after the sketch opened: it is modified) as {line: [a, b]} {poly: [...], closed} {rect: [corner, corner]} {circle: c, r} {arc: c, r, start, sweep (degrees, negative clockwise)} {slot: [c1, c2], r} {spline: [...], poles} {point: p}, each optionally construction or linked (points at one place are shared), constraints [{type, on: [curve index, \"i.k\" its k-th piece, or [x, y] a point], value, label}], patterns [{on, inputs}], options {key: value}, image {corners, angle, opacity, shapes}, file (png, svg, dxf), plane {origin}, bodies [{kind, inputs}] (made by tools/bench_cases/help.py through opad-cli feature). expect: entities and construction (counts by kind; a kind not named is none; [least, most] allowed), linked, constraints {type: count}, dimensions (driving values, mm or degrees), arcs [{center, r, start, sweep}], circles, points, selected, tool, images, image {x, y, width, angle, opacity}, active, sketches (added), page, rings (open ends), snaps [{at, kind}], plane {normal, origin}, file, status, weights, bounds [[u0, v0], [u1, v1], tolerance (default 0.3)] (the extent of the curves), regions (closed regions they enclose), area (the regions together, mm2, within 3 %), during [{t, ...}]: along the way, in time order, what the clip shows at t once the inputs before it are applied: preview (the kinds the tool previews: its rubber band by kind, an Apply tool's result less the sketch, \"construction <kind>\", \"outline\", \"trim\", \"extension\", \"frame\", \"measure\"; true: some, false: none), readouts (texts beside the pointer or an arrow), labels (texts the sketch draws), and any end-state field.",
+ "@replay": "Every sketch clip carries its replay (TODO 11 wave 3; OPAD_BENCH_CLIPREPLAY, app/ClipReplayBench.cpp): the clip's own pointer, keys, typed values and card changes are fed into the tool on a sketch made from \"setup\", and what the tool made is compared with \"expect\". setup: tool (default: the clip id's), command (run first), curves and drawn (after the sketch opened: it is modified) as {line: [a, b]} {poly: [...], closed} {rect: [corner, corner]} {circle: c, r} {arc: c, r, start, sweep (degrees, negative clockwise)} {slot: [c1, c2], r} {spline: [...], poles} {point: p}, each optionally construction or linked (points at one place are shared), constraints [{type, on: [curve index, \"i.k\" its k-th piece, or [x, y] a point], value, label}], patterns [{on, inputs}], options {key: value}, image {corners, angle, opacity, shapes}, file (png, svg, dxf), plane {origin}, bodies [{kind, inputs}] (made by tools/bench_cases/help.py through opad-cli feature). expect: entities and construction (counts by kind; a kind not named is none; [least, most] allowed), linked, constraints {type: count}, dimensions (driving values, mm or degrees), arcs [{center, r, start, sweep}], circles, points, selected, tool, images, image {x, y, width, angle, opacity}, active, sketches (added), page, rings (open ends), snaps [{at, kind}], plane {normal, origin}, file, status, weights, bounds [[u0, v0], [u1, v1], tolerance (default 0.3)] (the extent of the curves), regions (closed regions they enclose), area (the regions together, mm2, within 3 %), during [{t, ...}]: along the way, in time order, what the clip shows at t once the inputs before it are applied: preview (the kinds the tool previews: its rubber band by kind, an Apply tool's result less the sketch, \"construction <kind>\", \"outline\", \"trim\", \"extension\", \"frame\", \"measure\"; true: some, false: none), readouts (texts beside the pointer or an arrow), labels (texts the sketch draws), and any end-state field. A feature's clip (design.*, an iso clip) replays through the view's own mouse handlers: setup sketches [{plane: xy | xz | yz | {base, origin}, curves, constraints}] (in the plane's coordinates; bodies as above), the command (default: the clip id) run, its clicks picked where they land, presses on an arrow dragged, card rows set in the feature panel by their labels; expect features {kind: count}, bodies (added), inputs (the new feature's, as stored: \"20 mm\"; \"~18 mm\" within a quarter unit), picks {input: count}, volume (added bodies, within 1 %), total (every body), box [[x0, y0, z0], [x1, y1, z1]], open (the panel), and during: preview (bodies previewed), readouts, values (the panel's inputs now). What it added is undone after it.",
  "templates": {
   "sketchScene": {"params": {}, "items": [{"el": "grid", "spacing": 5}, {"el": "axes"}]},
   "isoScene": {"params": {"area": [-30, -22, 30, 22]}, "items": [{"el": "grid", "spacing": 10, "area": "$area"}, {"el": "axes", "len": 6}]},
@@ -460,19 +460,22 @@
   },
   {
    "id": "design.extrude", "duration": 5.0, "view": "iso",
+   "setup": {"sketches": [{"plane": "xy", "curves": [{"rect": [[-15, -9], [15, 9]], "round": 3}, {"circle": [7, 0], "r": 4}]}]},
+   "expect": {"features": {"extrude": 1}, "bodies": 1, "inputs": {"distance": "20 mm"}, "volume": 9640.2, "box": [[-15, -9, 0], [15, 9, 20]], "open": false,
+              "during": [{"t": 1.1, "preview": true, "values": {"distance": "10 mm"}, "readouts": ["10 mm"]}, {"t": 2.65, "preview": true, "values": {"distance": "~18 mm"}}, {"t": 3.3, "readouts": ["20"]}]},
    "items": [
     {"use": "isoScene", "args": {"area": [-25, -20, 25, 20]}},
     {"el": "shape", "profile": {"rect": [0, 0, 30, 18], "round": 3}, "holes": [{"circle": [7, 0, 4]}], "fill": "fg3", "fillOpacity": 0.18, "color": "fg2", "width": 1.3,
      "keys": [[0.6, {"fill": "fg3", "fillOpacity": 0.18}], [0.75, {"fill": "glow", "fillOpacity": 0.4}], [1.0, {"fill": "sel", "fillOpacity": 0.32}]]},
-    {"el": "solid", "profile": {"rect": [0, 0, 30, 18], "round": 3}, "holes": [{"circle": [7, 0, 4]}], "tone": "sel", "from": 1.2, "fade": 0,
-     "keys": [[1.2, {"height": 0.01, "toneAmount": 0.35, "opacity": 0.85}], [1.5, {"height": 6}], [1.6, {"height": 6}], [2.6, {"height": 14}], [2.95, {"height": 14}], [3.2, {"height": 20}],
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 18], "round": 3}, "holes": [{"circle": [7, 0, 4]}], "tone": "sel", "from": 1.05, "fade": 0,
+     "keys": [[1.05, {"height": 0.01, "toneAmount": 0.35, "opacity": 0.85}], [1.2, {"height": 10}], [1.6, {"height": 10}], [2.6, {"height": 18}], [2.95, {"height": 18}], [3.2, {"height": 20}],
               [3.35, {"toneAmount": 0.35, "opacity": 0.85}], [3.6, {"toneAmount": 0, "opacity": 1}]]},
-    {"el": "arrow", "dir": [0, 0, 1], "from": 1.2, "to": 3.35,
-     "keys": [[1.2, {"at": [-7, 0, 0]}], [1.5, {"at": [-7, 0, 6]}], [1.6, {"at": [-7, 0, 6]}], [2.6, {"at": [-7, 0, 14]}], [2.95, {"at": [-7, 0, 14]}], [3.2, {"at": [-7, 0, 20]}]]},
-    {"el": "hud", "dx": 16, "dy": -8, "dec": 1, "unit": " mm", "fields": [0], "from": 1.3, "to": 2.7, "keys": [[1.2, {"fields": [0]}], [1.5, {"fields": [6]}], [1.6, {"fields": [6]}], [2.6, {"fields": [14]}]]},
-    {"use": "typedValue", "args": {"t": 2.7, "s1": "2", "s2": "20", "press": 3.35, "field": "14.0 mm"}},
-    {"el": "cursor", "keys": [[0, {"pos": [-24, -16, 0]}], [0.9, {"pos": [-4, -5, 0]}], [1.0, {"pos": [-4, -5, 0], "click": 1}], [1.45, {"pos": [-7, 0, 9]}], [1.6, {"pos": [-7, 0, 9], "down": true}],
-                              [2.6, {"pos": [-7, 0, 17], "down": false}], [3.4, {"pos": [-7, 0, 17]}], [4.2, {"pos": [-20, -12, 14]}]]}
+    {"el": "arrow", "dir": [0, 0, 1], "from": 1.05, "to": 3.35,
+     "keys": [[1.05, {"at": [-7, -9, 0]}], [1.2, {"at": [-7, -9, 10]}], [1.6, {"at": [-7, -9, 10]}], [2.6, {"at": [-7, -9, 18]}], [2.95, {"at": [-7, -9, 18]}], [3.2, {"at": [-7, -9, 20]}]]},
+    {"el": "hud", "dx": 16, "dy": -8, "dec": 1, "unit": " mm", "fields": [10], "from": 1.2, "to": 2.7, "keys": [[1.6, {"fields": [10]}], [2.6, {"fields": [18]}]]},
+    {"use": "typedValue", "args": {"t": 2.7, "s1": "2", "s2": "20", "press": 3.35, "field": "18.0 mm"}},
+    {"el": "cursor", "keys": [[0, {"pos": [-24, -16, 0]}], [0.9, {"pos": [-4, -5, 0]}], [1.0, {"pos": [-4, -5, 0], "click": 1}], [1.3, {"pos": [-7, -9, 10]}], [1.45, {"pos": [-7, -9, 13]}], [1.6, {"pos": [-7, -9, 13], "down": true}],
+                              [2.6, {"pos": [-7, -9, 21], "down": false}], [3.4, {"pos": [-7, -9, 21]}], [4.2, {"pos": [-20, -12, 14]}]]}
    ],
    "steps": [
     {"to": 1.1, "caption": "Select a profile or a planar face"},
@@ -525,7 +528,10 @@
    ]
   },
   {
-   "id": "design.hole", "duration": 5.0, "view": "iso",
+   "id": "design.hole", "duration": 5.0, "view": "iso", "guide": [0, [0, 2]],
+   "setup": {"bodies": [{"kind": "box", "inputs": {"length": "40 mm", "width": "22 mm", "height": "6 mm"}}],
+             "sketches": [{"plane": {"base": "xy", "origin": [0, 0, 6]}, "curves": [{"point": [-12, 0]}, {"point": [0, 0]}, {"point": [12, 0]}]}]},
+   "expect": {"features": {"hole": 1}, "bodies": 0, "picks": {"points": 3}, "inputs": {"diameter": "6 mm", "extent": "all"}, "total": 4771.1, "open": false},
    "items": [
     {"use": "isoScene", "args": {"area": [-26, -18, 26, 18]}},
     {"el": "camera", "center": [-8, 0]},
@@ -536,13 +542,13 @@
     {"el": "poly", "points": [[-12, 0, 6], [-12, 0, 6]], "width": 0, "dots": true, "color": "fg", "to": 2.3, "keys": [[0.7, {"color": "sel"}]]},
     {"el": "poly", "points": [[0, 0, 6], [0, 0, 6]], "width": 0, "dots": true, "color": "fg", "to": 2.3, "keys": [[1.2, {"color": "sel"}]]},
     {"el": "poly", "points": [[12, 0, 6], [12, 0, 6]], "width": 0, "dots": true, "color": "fg", "to": 2.3, "keys": [[1.7, {"color": "sel"}]]},
-    {"el": "card", "screen": [0.03, 0.06], "w": 124, "title": "Hole", "rows": [["Diameter", "6 mm"], ["Depth", "Through all"]], "from": 1.9, "to": 3.8},
+    {"el": "card", "screen": [0.03, 0.06], "w": 124, "title": "Hole", "rows": [["Diameter", "6 mm"], ["Extent", "All"]], "from": 1.9, "to": 3.8},
     {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [-22, -16, 6]}], [0.7, {"pos": [-12, 0, 6], "click": 1}], [1.2, {"pos": [0, 0, 6], "click": 1}], [1.7, {"pos": [12, 0, 6], "click": 1}], [2.6, {"pos": [24, -10, 8]}]]}
    ],
    "steps": [
     {"to": 1.8, "caption": "Select sketch points"},
-    {"to": 3.4, "caption": "Set the diameter and the depth"},
+    {"to": 3.4, "caption": "Set the diameter and the extent"},
     {"to": 5.0, "caption": "Press Enter to drill the holes"}
    ]
   },
@@ -2781,6 +2787,8 @@
   {"id": "design.torus", "template": "primitive", "args": {"body": {"tone": "sel", "from": 1.2, "fade": 0, "el": "lathe", "profile": [[12, 3], [11.82, 4.03], [11.3, 4.93], [10.5, 5.6], [9.52, 5.95], [8.48, 5.95], [7.5, 5.6], [6.7, 4.93], [6.18, 4.03], [6, 3], [6.18, 1.97], [6.7, 1.07], [7.5, 0.4], [8.48, 0.05], [9.52, 0.05], [10.5, 0.4], [11.3, 1.07], [11.82, 1.97]], "at": [2, 1, 0], "n": 56, "pivot": [2, 1, 3], "keys": [[1.2, {"scale": [0.01, 0.01, 0.01], "toneAmount": 0.35}], [2.4, {"scale": [1, 1, 1]}], [3.1, {"toneAmount": 0.35}], [3.3, {"toneAmount": 0}]]}, "title": "Torus", "rows": [["Ring diameter", "24 mm"], ["Section diameter", "6 mm"]], "caption3": "Press Enter to add the torus", "w": 140}},
   {
    "id": "design.sweep", "duration": 4.8, "view": "iso",
+   "setup": {"sketches": [{"plane": "xz", "curves": [{"circle": [10, 3], "r": 2.5}]}, {"plane": {"base": "xy", "origin": [0, 0, 3]}, "curves": [{"arc": [0, 0], "r": 10, "start": 0, "sweep": -120}]}]},
+   "expect": {"features": {"sweep": 1}, "bodies": 1, "picks": {"profiles": 1}, "volume": 411.2, "open": false},
    "items": [
     {"el": "camera", "center": [-4, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
@@ -2798,7 +2806,9 @@
    ]
   },
   {
-   "id": "design.loft", "duration": 4.6, "view": "iso", "extent": [-20, -12, 20, 22],
+   "id": "design.loft", "duration": 4.6, "view": "iso", "extent": [-20, -12, 20, 22], "guide": [[0, 1], 2],
+   "setup": {"sketches": [{"plane": "xy", "curves": [{"circle": [0, 0], "r": 10}]}, {"plane": {"base": "xy", "origin": [0, 0, 14]}, "curves": [{"circle": [0, 0], "r": 5}]}]},
+   "expect": {"features": {"loft": 1}, "bodies": 1, "picks": {"profiles": 2}, "volume": 2565.6, "box": [[-10, -10, 0], [10, 10, 14]], "open": false},
    "items": [
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "lathe", "profile": [[0.01, 0], [10, 0], [5, 14], [0.01, 14]], "n": 48, "tone": "sel", "from": 2, "fade": 0.6, "keys": [[2, {"toneAmount": 0.35}], [3.6, {"toneAmount": 0.35}], [3.8, {"toneAmount": 0}]]},
@@ -2807,7 +2817,7 @@
     {"el": "chip", "at": [10, 0, 0], "dx": 18, "dy": 0, "value": "1", "from": 0.9, "to": 2.4},
     {"el": "chip", "at": [5, 0, 14], "dx": 18, "dy": 0, "value": "2", "from": 1.6, "to": 2.4},
     {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.3, "to": 4.1},
-    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [7.07, -7.07, 0], "click": 1}], [1.6, {"pos": [3.54, -3.54, 14], "click": 1}], [2.4, {"pos": [3.54, -3.54, 14]}], [3.2, {"pos": [16, -12, 10]}]]}
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [4, -4, 0], "click": 1}], [1.6, {"pos": [2, -2, 14], "click": 1}], [2.4, {"pos": [2, -2, 14]}], [3.2, {"pos": [16, -12, 10]}]]}
    ],
    "steps": [
     {"to": 1, "caption": "Select the first profile"},
@@ -2817,6 +2827,8 @@
   },
   {
    "id": "design.pipe", "duration": 4.6, "view": "iso", "extent": [-26, -12, 26, 16],
+   "setup": {"sketches": [{"plane": {"base": "xy", "origin": [0, 0, 2]}, "curves": [{"poly": [[-10, -6], [2, -6], [2, 8]]}]}]},
+   "expect": {"features": {"pipe": 1}, "bodies": 1, "inputs": {"diameter": "4 mm", "hollow": false}, "volume": 326.7, "box": [[-10, -8, 0], [4, 8, 4]], "open": false},
    "items": [
     {"el": "camera", "center": [-6, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},

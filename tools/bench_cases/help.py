@@ -84,25 +84,33 @@ CASES = [
 
 
 def replayed():
-    """The sketch clips with a replay: those on an empty document (in order), and by clip id those whose setup needs bodies
-    (made here through opad-cli)."""
-    clips = [c for c in json.loads(CLIPS.read_text(encoding="utf-8"))["clips"] if c["id"].startswith("sketch.") and "expect" in c]
+    """The clips with a replay: the sketch clips on an empty document (in order), the feature clips on one, and by clip id
+    those whose setup needs bodies (made here through opad-cli)."""
+    clips = [c for c in json.loads(CLIPS.read_text(encoding="utf-8"))["clips"] if c["id"].split(".")[0] in ("sketch", "design") and "expect" in c]
     bodies = {c["id"]: c["setup"]["bodies"] for c in clips if c.get("setup", {}).get("bodies")}
-    return [c["id"] for c in clips if c["id"] not in bodies], bodies
+    empty = [c["id"] for c in clips if c["id"] not in bodies]
+    return [i for i in empty if i.startswith("sketch.")], [i for i in empty if i.startswith("design.")], bodies
+
+
+def short(clip):
+    """The case's name for a clip: a sketch clip by its tool, a feature's with its area."""
+    return (clip[7:] if clip.startswith("sketch.") else clip.replace(".", "-")).replace("_", "-")
 
 
 def bodies_for(clip, bodies):
     """A document of the clip's own (none: empty; the shared "empty" one gets a body from the design bench)."""
     def make(root, document):
-        return document("replay-" + clip[7:], *[("feature", "--kind", b["kind"], "--inputs", json.dumps(b["inputs"])) for b in bodies])
+        return document("replay-" + short(clip), *[("feature", "--kind", b["kind"], "--inputs", json.dumps(b["inputs"])) for b in bodies])
     return make
 
 
 # TODO 11 wave 3 (audit 6.3 test 8): every sketch clip's pointer, keys, typed values and panel stubs replayed into its tool,
 # the result compared with the clip's expect block, the Tool guide checked at every step; the clips on bodies one case each.
-# The empty document's in two halves, each well inside a case's time.
-EMPTY, ON_BODIES = replayed()
+# The empty document's in two halves, each well inside a case's time. The feature clips with a replay (iso clips: their
+# clicks go through the view's own mouse handlers) in one case on an empty document, those on bodies one case each.
+EMPTY, DESIGN, ON_BODIES = replayed()
 CASES += [(f"clip-replay-{half + 1}", bodies_for(f"sketch.half{half + 1}", []), {"OPAD_BENCH_CLIPREPLAY": ",".join(EMPTY[half::2]), "OPAD_BENCH_CLIPSHOT": "{prefix}"})
           for half in range(2)]
-CASES += [("clip-replay-" + clip[7:].replace("_", "-"), bodies_for(clip, bodies), {"OPAD_BENCH_CLIPREPLAY": clip, "OPAD_BENCH_CLIPSHOT": "{prefix}"})
+CASES += [("clip-replay-design", bodies_for("design.empty", []), {"OPAD_BENCH_CLIPREPLAY": ",".join(DESIGN), "OPAD_BENCH_CLIPSHOT": "{prefix}"})]
+CASES += [("clip-replay-" + short(clip), bodies_for(clip, bodies), {"OPAD_BENCH_CLIPREPLAY": clip, "OPAD_BENCH_CLIPSHOT": "{prefix}"})
           for clip, bodies in ON_BODIES.items()]

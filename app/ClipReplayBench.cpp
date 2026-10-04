@@ -1,4 +1,4 @@
-// OPAD_BENCH_CLIPREPLAY=<ids> (TODO 11 wave 3, audit 6.3 test 8): the help clips of the sketch tools replayed into the tools,
+// OPAD_BENCH_CLIPREPLAY=<ids> (TODO 11 wave 3, audit 6.3 test 8): the help clips of the sketch tools and features replayed into the tools,
 // the strongest check that a clip's flow is the tool's flow. <ids>: clip ids, comma separated; "sketch.*" every sketch clip
 // with a replay ("setup" and "expect" blocks, clips.json "@replay"). OPAD_BENCH_CLIPSHOT=<prefix>: a picture of the view
 // after each clip, <prefix>.<id>.png, and the files the setups need (a backdrop picture, an SVG to import).
@@ -18,6 +18,12 @@
 // and button of the clip falls in a clip step that the guide (clips::guideRange) loops while the tool waits for the step
 // it is waiting for then, so the panel never loops a segment that shows something else. Logs
 // "bench: clip replay: <id>: <what> PASS/FAIL" and quits; tools/bench_cases/help.py runs it.
+//
+// A feature's clip (design.*, iso) is replayed on the model: its setup's sketches committed, its command run, its clicks sent
+// through the view's own mouse handlers where the clip's points land on the screen (what the view picks there is the pick;
+// the pointer's moves hover, so an arrow comes to the outline the clip passes), a press on an arrow dragged, keys and typed
+// values to what has the keyboard, card rows set in the feature panel by their labels; its panel's guide is checked at
+// every input, what it made compared with "expect" (features, bodies, inputs, volume, box) and then undone.
 #include "BenchRegistry.hpp"
 #include "DesignController.hpp"
 #include "DimensionHandle.hpp"
@@ -26,12 +32,17 @@
 #include "MainWindow.hpp"
 #include "SketchEditor.hpp"
 #include "SketchPanel.hpp"
+#include "DesignPanels.hpp"
+#include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/geometry.hpp"
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepGProp.hxx>
+#include <Bnd_Box.hxx>
+#include <GProp_GProps.hxx>
 #include <QAbstractButton>
 #include <QApplication>
 #include <QBuffer>
@@ -58,6 +69,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <cmath>
+#include <set>
 
 using namespace opad::design;
 
@@ -68,6 +80,7 @@ class ClipReplay : public QObject {
     m_timer.setInterval(25);
     connect(&m_timer, &QTimer::timeout, this, [this] { tick(); });
     connect(m_design->sketch(), &SketchEditor::status, this, [this](const QString& text) { m_status = text; });
+    connect(m_design, &DesignController::status, this, [this](const QString& text) { if (this->design()) m_status = text; });
   }
   void start() {
     trace::log(QString("bench: clip replay: %1 clips").arg(m_ids.size()));
@@ -99,8 +112,9 @@ class ClipReplay : public QObject {
   }
 
  private:
-  enum class Phase { Next, Open, Prepare, Play, Settle, Done };
+  enum class Phase { Next, Open, Prepare, DesignSetup, DesignWait, Play, Settle, Done };
   SketchEditor* ed() const { return m_design->sketch(); }
+  bool design() const { return m_id.startsWith("design."); }  // a feature's clip: no sketch, its iso view is the model's
   Viewport* view() const { return ed()->m_viewport; }
   SketchPanel* panel() const { return m_window.findChild<SketchPanel*>(); }
 
@@ -114,7 +128,7 @@ class ClipReplay : public QObject {
   // Jobs, the tool's preview timer, a solve: the next input waits for them, as a hand that pauses does.
   bool busy() const {
     SketchEditor* e = ed();
-    return e->m_editJob || e->m_geometryJob || e->m_imageJob || e->m_toolPreviewTimer.isActive() || m_design->busy() || e->m_jobs->busy();
+    return e->m_editJob || e->m_geometryJob || e->m_imageJob || e->m_toolPreviewTimer.isActive() || m_design->busy() || m_design->previewing() || e->m_jobs->busy();
   }
 
   void tick() {
@@ -136,6 +150,22 @@ class ClipReplay : public QObject {
     }
     switch (m_phase) {
       case Phase::Next: return next();
+      case Phase::DesignSetup:
+        if (busy()) return;
+        try {
+          designSetup();
+        } catch (const std::exception& e) {
+          fail(QString("the setup is made (%1)").arg(QString::fromUtf8(e.what())));
+          return next();
+        }
+        return;
+      case Phase::DesignWait:  // the setup's sketches committed: the command runs on the view framed as the clip frames it
+        if (!m_setupDone || busy()) return;
+        frameView();
+        if (!trigger(m_setup.value("command").toString(m_id))) return next();
+        m_phase = Phase::Play;
+        m_wait = 8;
+        return;
       case Phase::Open:
         if (ed()->active()) {
           m_phase = Phase::Prepare;
@@ -207,7 +237,13 @@ class ClipReplay : public QObject {
         }
         if (++m_settled < 6) return;
         while (m_duringNext < m_during.size()) during(m_during.at(m_duringNext++).toObject());  // after the clip's last input
-        compare(m_expect);
+        if (design()) {
+          compareDesign(m_expect);
+          if (!m_shots.isEmpty()) view()->grabImage().save(m_shots + "." + m_id + ".png");  // before it is taken back
+          designReset();
+        } else {
+          compare(m_expect);
+        }
         return next();
       case Phase::Done: return;
     }
@@ -215,7 +251,7 @@ class ClipReplay : public QObject {
 
   void next() {
     if (!m_id.isEmpty()) {
-      if (!m_shots.isEmpty()) view()->grabImage().save(m_shots + "." + m_id + ".png");
+      if (!m_shots.isEmpty() && !design()) view()->grabImage().save(m_shots + "." + m_id + ".png");
       trace::log(QString("bench: clip replay: %1 %2").arg(m_id, m_clipOk ? "PASS" : "FAIL"));
       if (!m_clipOk) m_failed << m_id;
     }
@@ -239,7 +275,8 @@ class ClipReplay : public QObject {
     m_clipOk = true;
     m_snapSeen.clear();
     m_answered.clear();
-    m_phase = Phase::Open;
+    m_held = nullptr;
+    m_phase = design() ? Phase::DesignSetup : Phase::Open;
     if (m_expect.isEmpty()) fail("the clip has an expect block");
   }
 
@@ -274,6 +311,18 @@ class ClipReplay : public QObject {
       if (c.contains("line")) {
         const QJsonArray l = c.value("line").toArray();
         made.push_back(sk.add_line(point(l.at(0)), point(l.at(1)), construction));
+      } else if (c.contains("rect") && c.value("round").toDouble() > 0) {  // corners rounded: four lines and four arcs
+        const QJsonArray r = c.value("rect").toArray();
+        const double x0 = r.at(0).toArray().at(0).toDouble(), y0 = r.at(0).toArray().at(1).toDouble(), x1 = r.at(1).toArray().at(0).toDouble(), y1 = r.at(1).toArray().at(1).toDouble();
+        const double k = c.value("round").toDouble();
+        made.push_back(sk.add_line(point(at(x0 + k, y0)), point(at(x1 - k, y0)), construction));
+        made.push_back(sk.add_arc(point(at(x1 - k, y0 + k)), point(at(x1 - k, y0)), point(at(x1, y0 + k)), construction));
+        made.push_back(sk.add_line(point(at(x1, y0 + k)), point(at(x1, y1 - k)), construction));
+        made.push_back(sk.add_arc(point(at(x1 - k, y1 - k)), point(at(x1, y1 - k)), point(at(x1 - k, y1)), construction));
+        made.push_back(sk.add_line(point(at(x1 - k, y1)), point(at(x0 + k, y1)), construction));
+        made.push_back(sk.add_arc(point(at(x0 + k, y1 - k)), point(at(x0 + k, y1)), point(at(x0, y1 - k)), construction));
+        made.push_back(sk.add_line(point(at(x0, y1 - k)), point(at(x0, y0 + k)), construction));
+        made.push_back(sk.add_arc(point(at(x0 + k, y0 + k)), point(at(x0, y0 + k)), point(at(x0 + k, y0)), construction));
       } else if (c.contains("poly") || c.contains("rect")) {
         QJsonArray pts = c.value("poly").toArray();
         bool closed = c.value("closed").toBool();
@@ -475,6 +524,253 @@ class ClipReplay : public QObject {
     ed()->m_options["vectorFile"] = path;
   }
 
+  // ---- a feature's clip ------------------------------------------------------------------------------------------------
+  // Its setup's sketches ({"plane": "xy" | "xz" | "yz" | {"base", "origin"}, curves, constraints}, curves in the plane's own
+  // coordinates) are committed as sketch ops, one undo step; its bodies come with the document (tools/bench_cases/help.py).
+  // After the clip everything it added is undone, so the next clip starts from the same model.
+  void designSetup() {
+    SketchEditor* e = ed();
+    AppDocument* doc = e->m_doc;
+    if (e->active()) {  // a sketch clip's Sketch1, left as it is
+      e->end();
+      doc->setRollback({});
+      emit m_design->stateChanged();
+    }
+    for (int i = 0; i < 4 && m_design->featureActive(); ++i) m_design->escape();
+    if (!doc->hasDocument) doc->newDocument();
+    m_undoBefore = int(doc->undoLabels().size());
+    m_featuresBefore = doc->scene.features.size();
+    m_bodiesBefore.clear();
+    for (const std::string& id : doc->scene.all_bodies()) m_bodiesBefore.insert(id);
+    m_frame = opad::Frame{};  // the clip draws in model coordinates
+    std::vector<opad::json> ops;
+    int n = 0;
+    for (const QJsonValue& v : m_setup.value("sketches").toArray()) {
+      const QJsonObject s = v.toObject();
+      const QJsonValue p = s.value("plane");
+      const std::string base = (p.isString() ? p.toString() : p.toObject().value("base").toString("xy")).toStdString();
+      opad::Frame frame = base_frame(base);
+      const QJsonArray o = p.toObject().value("origin").toArray();
+      if (!o.isEmpty()) frame.origin = {o.at(0).toDouble(), o.at(1).toDouble(), o.at(2).toDouble()};
+      opad::json plane = o.isEmpty() ? opad::json{{"base", base}} : opad::json{{"origin", {frame.origin[0], frame.origin[1], frame.origin[2]}}, {"normal", {frame.normal()[0], frame.normal()[1], frame.normal()[2]}}};
+      plane["frame"] = frame.to_json();
+      Sketch sk;
+      sk.add_point(0, 0, true);
+      Builder b{sk};
+      for (const QJsonValue& c : s.value("curves").toArray()) b.add(c.toObject());
+      for (const QJsonValue& c : s.value("constraints").toArray()) b.constrain(c.toObject());
+      try {
+        solve(sk);
+      } catch (const std::exception&) {
+      }
+      ops.push_back(make_sketch_op(s.value("name").toString(QString("Sketch%1").arg(++n)).toStdString(), plane, sk.to_json()));
+    }
+    m_setupDone = ops.empty();
+    if (!ops.empty())
+      m_design->applyOps(ops, QStringLiteral("Bench"), [this](bool ok, const QString& error) {
+        if (!ok) fail("the setup's sketches are made (" + error + ")");
+        m_setupDone = true;
+      });
+    m_phase = Phase::DesignWait;
+  }
+  void designReset() {
+    for (int i = 0; i < 4 && m_design->featureActive(); ++i) m_design->escape();
+    AppDocument* doc = ed()->m_doc;
+    if (const int steps = int(doc->undoLabels().size()) - m_undoBefore; steps > 0) doc->undo(steps);
+  }
+
+  // The bodies the clip added, by node id.
+  std::vector<std::string> addedBodies() const {
+    std::vector<std::string> out;
+    for (const std::string& id : ed()->m_doc->scene.all_bodies())
+      if (!m_bodiesBefore.count(id)) out.push_back(id);
+    return out;
+  }
+  // A stored input as the card would read it: "20 mm", a choice's key, true or false, a pick list's size.
+  static QString inputText(const opad::json& v) {
+    if (v.is_string()) return QString::fromStdString(v.get<std::string>());
+    if (v.is_boolean()) return v.get<bool>() ? "true" : "false";
+    if (v.is_number()) return QString::number(v.get<double>(), 'g', 10);
+    return QString::fromStdString(v.dump());
+  }
+  void compareInputs(const QJsonObject& want, const opad::json& have, const QString& what) {
+    for (auto it = want.begin(); it != want.end(); ++it) {
+      const opad::json value = have.is_object() ? have.value(it.key().toStdString(), opad::json()) : opad::json();
+      QString wanted = it.value().isBool() ? (it.value().toBool() ? "true" : "false") : it.value().isDouble() ? QString::number(it.value().toDouble(), 'g', 10) : it.value().toString();
+      const QString shownValue = inputText(value);
+      bool same = shownValue.trimmed() == wanted.trimmed();
+      if (wanted.startsWith('~')) {  // "~18 mm": what a drag gives, within a quarter of a unit
+        wanted = wanted.mid(1);
+        const QStringList a = shownValue.split(' ', Qt::SkipEmptyParts), b = wanted.split(' ', Qt::SkipEmptyParts);
+        same = a.size() == b.size() && a.size() <= 2 && a.value(1) == b.value(1) && std::abs(a.value(0).toDouble() - b.value(0).toDouble()) <= 0.25;
+      }
+      check(same, QString("%1 %2 is %3 (expected %4)").arg(what, it.key(), shownValue, wanted));
+    }
+  }
+  // A feature clip's expect block: the features it added by kind ("features", a kind not named is none), the bodies it
+  // added ("bodies"), the last feature's stored inputs ("inputs", as typed: "20 mm") and how many picks an input holds
+  // ("picks"), the added bodies' volume (within 1 %) and box ([[x0, y0, z0], [x1, y1, z1]], within 0.1 mm), whether the
+  // feature panel is still open ("open"), and during the clip its values now ("values").
+  void compareDesign(const QJsonObject& x) {
+    AppDocument* doc = ed()->m_doc;
+    std::map<QString, int> kinds;
+    const opad::Feature* last = nullptr;
+    for (size_t i = m_featuresBefore; i < doc->scene.features.size(); ++i) {
+      ++kinds[QString::fromStdString(doc->scene.features[i].kind)];
+      last = &doc->scene.features[i];
+    }
+    const std::vector<std::string> bodies = addedBodies();
+    double volume = 0;
+    Bnd_Box box;
+    for (const std::string& id : bodies)
+      if (const opad::Node* node = doc->scene.node(id)) {
+        const TopoDS_Shape shape = opad::body_shape(doc->doc, node->body_key);
+        if (shape.IsNull()) continue;
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(shape, props);
+        volume += props.Mass();
+        box.Add(opad::node_tight_bbox(doc->doc, doc->scene, id));
+      }
+    double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+    if (!box.IsVoid()) box.Get(x0, y0, z0, x1, y1, z1);
+    QStringList made;
+    for (const auto& [k, n] : kinds) made << QString("%1 %2").arg(n).arg(k);
+    trace::log(QString("bench: clip replay: %1: %2features %3; %4 bodies, volume %5, box (%6, %7, %8) to (%9, %10, %11); last inputs %12; panel %13")
+                   .arg(m_id, m_when, made.join(", ")).arg(bodies.size()).arg(volume, 0, 'f', 1).arg(x0, 0, 'f', 2).arg(y0, 0, 'f', 2).arg(z0, 0, 'f', 2).arg(x1, 0, 'f', 2)
+                   .arg(y1, 0, 'f', 2).arg(z1, 0, 'f', 2).arg(last ? QString::fromStdString(last->inputs.dump()).left(400) : QString("none"), m_design->featureActive() ? "open" : "closed"));
+    if (x.contains("features")) {
+      const QJsonObject want = x.value("features").toObject();
+      std::set<QString> names;
+      for (const auto& [k, n] : kinds) names.insert(k);
+      for (const QString& k : want.keys()) names.insert(k);
+      QStringList wrong;
+      for (const QString& k : names)
+        if (!counts(want.value(k), kinds.count(k) ? kinds.at(k) : 0)) wrong << QString("%1 %2 (expected %3)").arg(kinds.count(k) ? kinds.at(k) : 0).arg(k, shown(want.value(k)));
+      check(wrong.isEmpty(), "features added: " + (wrong.isEmpty() ? (made.isEmpty() ? QString("none") : made.join(", ")) : wrong.join(", ")));
+    }
+    if (x.contains("bodies")) check(counts(x.value("bodies"), int(bodies.size())), QString("%1 bodies added (expected %2)").arg(bodies.size()).arg(shown(x.value("bodies"))));
+    if (x.contains("inputs")) {
+      if (!last) fail("a feature was added, whose inputs the clip shows");
+      else compareInputs(x.value("inputs").toObject(), last->inputs, "the feature's");
+    }
+    if (x.contains("picks") && last) {
+      const QJsonObject want = x.value("picks").toObject();
+      for (auto it = want.begin(); it != want.end(); ++it) {
+        const opad::json v = last->inputs.value(it.key().toStdString(), opad::json());
+        const int n = v.is_array() ? int(v.size()) : v.is_null() ? 0 : 1;
+        check(counts(it.value(), n), QString("the feature's %1 holds %2 picks (expected %3)").arg(it.key()).arg(n).arg(shown(it.value())));
+      }
+    }
+    if (x.contains("values")) compareInputs(x.value("values").toObject(), m_design->featurePanel()->inputs(), "the panel's");
+    if (x.contains("volume")) {
+      const double want = x.value("volume").toDouble();
+      check(std::abs(volume - want) <= 0.01 * std::abs(want), QString("the bodies added hold %1 mm3 (expected %2)").arg(volume, 0, 'f', 1).arg(want));
+    }
+    if (x.contains("total")) {  // every body's volume: what a feature that changes a body (a hole) left
+      double total = 0;
+      for (const std::string& id : doc->scene.all_bodies())
+        if (const opad::Node* node = doc->scene.node(id))
+          if (const TopoDS_Shape shape = opad::body_shape(doc->doc, node->body_key); !shape.IsNull()) {
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(shape, props);
+            total += props.Mass();
+          }
+      const double want = x.value("total").toDouble();
+      check(std::abs(total - want) <= 0.01 * std::abs(want), QString("the bodies hold %1 mm3 together (expected %2)").arg(total, 0, 'f', 1).arg(want));
+    }
+    if (x.contains("box")) {
+      const QJsonArray b = x.value("box").toArray();
+      const double want[] = {b.at(0).toArray().at(0).toDouble(), b.at(0).toArray().at(1).toDouble(), b.at(0).toArray().at(2).toDouble(),
+                             b.at(1).toArray().at(0).toDouble(), b.at(1).toArray().at(1).toDouble(), b.at(1).toArray().at(2).toDouble()};
+      const double have[] = {x0, y0, z0, x1, y1, z1};
+      bool same = !box.IsVoid();
+      for (int i = 0; i < 6; ++i) same = same && std::abs(want[i] - have[i]) <= 0.1;
+      check(same, QString("the bodies added reach from (%1, %2, %3) to (%4, %5, %6)").arg(x0, 0, 'f', 2).arg(y0, 0, 'f', 2).arg(z0, 0, 'f', 2).arg(x1, 0, 'f', 2).arg(y1, 0, 'f', 2).arg(z1, 0, 'f', 2));
+    }
+    if (x.contains("open")) check(m_design->featureActive() == x.value("open").toBool(), x.value("open").toBool() ? "the feature panel is still open" : "the feature panel closed");
+    if (x.contains("status")) check(m_status.contains(x.value("status").toString()), "the status says \"" + x.value("status").toString() + "\" (" + m_status + ")");
+  }
+
+  // A card row in a feature's panel: the spec's input of that label ("Operation" too), its choice by its words, a flag, or
+  // the expression as typed.
+  void designRow(const QString& label, const QString& value) {
+    FeaturePanel* f = m_design->featurePanel();
+    const FeatureSpec* spec = f->spec();
+    const InputSpec* in = nullptr;
+    if (spec)
+      for (const InputSpec& s : spec->inputs)
+        if (QString::fromStdString(s.label).compare(label, Qt::CaseInsensitive) == 0) in = &s;
+    if (!in) return fail(QString("the card's row \"%1\" is a field of the feature's panel").arg(label));
+    const QString name = QString::fromStdString(in->name);
+    if (in->type == "choice") {
+      for (const std::string& c : in->choices)
+        if (QString::fromStdString(c).replace('_', ' ').compare(value, Qt::CaseInsensitive) == 0) return f->setValue(name, c);
+      return fail(QString("the card's \"%1: %2\" is a choice of the panel's field").arg(label, value));
+    }
+    if (in->type == "bool") return f->setValue(name, value == "true" || value == "on" || value == "1");
+    f->setValue(name, value.toStdString());
+  }
+
+  // The feature panel's guide loops the clip step this input is in.
+  void designGuide(const clips::Input& in) {
+    ToolGuide* g = m_design->featurePanel()->guide();
+    if (!m_design->featureActive() || !g || g->command() != m_id || !g->shown()) return;
+    const auto [first, last] = g->view()->range();
+    const int shownStep = clips::stepAt(m_id, in.t), before = clips::stepAt(m_id, in.t - 0.06);
+    if (first < 0 || (shownStep >= first && shownStep <= last) || (before >= first && before <= last)) return;
+    fail(QString("the guide: at %1 s the clip shows step %2 (\"%3\"), the feature panel's guide loops clip steps %4 to %5")
+             .arg(in.t, 0, 'f', 2).arg(shownStep + 1).arg(clips::steps(m_id).value(shownStep).caption).arg(first + 1).arg(last + 1));
+  }
+
+  // A feature clip's input, through the view's own mouse handlers: a click where the clip clicks (the view picks what is
+  // there), a press on an arrow and the drag to where the clip lets go, keys to what has the keyboard, card rows in the panel.
+  void applyDesign(const clips::Input& in) {
+    using K = clips::Input::Kind;
+    if (in.kind != K::Move && in.kind != K::Release && in.kind != K::Row && in.screen.x() < 0 && in.caps != QStringList{"Esc"} && in.text != "esc") designGuide(in);
+    const QPointF at = view()->widgetPoint({in.at.x(), in.at.y(), in.at.z()});
+    const bool scene = in.screen.x() < 0;
+    if (m_verbose && in.kind != K::Move) {
+      FeaturePanel* f = m_design->featurePanel();
+      trace::log(QString("bench: clip replay: %1: %2 s: %3 at %4, %5, %6 (view %7, %8) %9 %10 (input %11, inputs %12, status \"%13\" / \"%14\")").arg(m_id).arg(in.t, 0, 'f', 2).arg(int(in.kind))
+                     .arg(in.at.x()).arg(in.at.y()).arg(in.at.z()).arg(at.x()).arg(at.y()).arg(in.caps.join('+') + in.text, in.value, f->activeInput(),
+                          QString::fromStdString(f->inputs().dump()).left(300), f->statusText(), m_status));
+    }
+    const double s = view()->displayScale();
+    switch (in.kind) {
+      case K::Move:
+        if (m_held) mouse(m_held, QEvent::MouseMove, at);
+        else if (scene) {  // the pointer over the view: what it hovers lights up, an arrow comes to the outline it passes
+          QMouseEvent move(QEvent::MouseMove, at, view()->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+          QApplication::sendEvent(view(), &move);
+        }
+        break;
+      case K::Press:
+        if (!scene) break;
+        if ((m_held = handleAt(at, m_heldShift))) mouse(m_held, QEvent::MouseButtonPress, at);
+        else fail(QString("the clip's press at %1 s is on an arrow of the tool").arg(in.t, 0, 'f', 2));
+        break;
+      case K::Release:
+        if (m_held) mouse(m_held, QEvent::MouseButtonRelease, at);
+        m_held = nullptr;
+        break;
+      case K::DoubleClick:
+        if (scene) view()->benchClickAt(qRound(at.x() * s), qRound(at.y() * s));
+        [[fallthrough]];
+      case K::Click:
+        if (scene) view()->benchClickAt(qRound(at.x() * s), qRound(at.y() * s));
+        break;
+      case K::Key:
+        if (!in.value.isEmpty()) trigger(in.value);
+        else key(in.text.isEmpty() ? in.caps : fixedCaps(in.text));
+        break;
+      case K::Type: type(in.text); break;
+      case K::Row: designRow(in.text, in.value); break;
+      case K::Button: button(in.text, in.value == "chip"); break;
+      case K::Pick:
+      case K::Page: fail("a feature's clip picks a list row or turns a page, which the replay does not do yet"); break;
+    }
+  }
+
   // The view square to the sketch, framing what the clip frames (its extent; an iso clip: its own iso camera, for picks).
   void frameView() {
     const QRectF ext = clips::extent(m_id);
@@ -659,7 +955,7 @@ class ClipReplay : public QObject {
         }
       return fail("the dialog \"" + modal->windowTitle() + "\" has the card's button " + text);
     }
-    for (QWidget* root : {static_cast<QWidget*>(panel()), static_cast<QWidget*>(m_design->planePanel())})
+    for (QWidget* root : {static_cast<QWidget*>(panel()), static_cast<QWidget*>(m_design->planePanel()), static_cast<QWidget*>(m_design->featurePanel())})
       if (root)
         for (QPushButton* b : root->findChildren<QPushButton*>())
           if (b->isVisibleTo(root) && b->isEnabled() && plain(b->text()) == want) {
@@ -729,6 +1025,7 @@ class ClipReplay : public QObject {
   }
 
   void apply(const clips::Input& in) {
+    if (design()) return applyDesign(in);
     using K = clips::Input::Kind;
     SketchEditor* e = ed();
     // The guide at the hand's actions; a value set in the panel can come any time (a "Set" step a default already fills), a
@@ -742,18 +1039,18 @@ class ClipReplay : public QObject {
                      .arg(m_id).arg(in.t, 0, 'f', 2).arg(int(in.kind)).arg(u, 0, 'f', 2).arg(v, 0, 'f', 2).arg(in.caps.join('+') + in.text, in.value, e->tool()).arg(e->m_sel.size()));
     switch (in.kind) {
       case K::Move:
-        if (m_held) mouse(m_held, QEvent::MouseMove, u, v);  // dragging a handle over the view
+        if (m_held) mouse(m_held, QEvent::MouseMove, pointOf(u, v));  // dragging a handle over the view
         else if (!m_design->pickingPlane()) e->sketchMove(u, v, Qt::NoModifier, in.down);
         noteSnap(in);
         break;
       case K::Press:
         if (!scene) break;
-        if ((m_held = handleAt(u, v, m_heldShift))) mouse(m_held, QEvent::MouseButtonPress, u, v);  // the offset's arrow: the press is its
+        if ((m_held = handleAt(pointOf(u, v), m_heldShift))) mouse(m_held, QEvent::MouseButtonPress, pointOf(u, v));  // the offset's arrow: the press is its
         else e->sketchPress(u, v, Qt::NoModifier);
         break;
       case K::Release:
         if (!scene) break;
-        if (m_held) mouse(m_held, QEvent::MouseButtonRelease, u, v);
+        if (m_held) mouse(m_held, QEvent::MouseButtonRelease, pointOf(u, v));
         else e->sketchRelease(u, v, Qt::NoModifier);
         m_held = nullptr;
         break;
@@ -798,8 +1095,8 @@ class ClipReplay : public QObject {
   // A press the clip makes on a handle's arrow (the offset's, a DimensionHandle drawn over the view): the clip draws the arrow
   // to its own scale, the view at a fixed size in pixels, so a press on the arrow's line beyond its base is a press on the
   // arrow; the drag that follows keeps the clip's distances (the press moved onto the arrow, the moves by as much).
-  DimensionHandle* handleAt(double u, double v, QPointF& shift) const {
-    const QPointF p = view()->widgetPoint(m_frame.to_world(u, v));
+  QPointF pointOf(double u, double v) const { return view()->widgetPoint(m_frame.to_world(u, v)); }  // a sketch point in the view
+  DimensionHandle* handleAt(const QPointF& p, QPointF& shift) const {
     for (DimensionHandle* h : view()->findChildren<DimensionHandle*>()) {
       if (m_verbose) trace::log(QString("bench: clip replay: %1: handle %2 hidden %3 arrow %4,%5 %6,%7 press %8,%9").arg(m_id).arg(quintptr(h)).arg(h->isHidden())
                                     .arg(h->arrowLine().p1().x()).arg(h->arrowLine().p1().y()).arg(h->arrowLine().p2().x()).arg(h->arrowLine().p2().y()).arg(p.x()).arg(p.y()));
@@ -818,8 +1115,8 @@ class ClipReplay : public QObject {
     }
     return nullptr;
   }
-  void mouse(QWidget* w, QEvent::Type type, double u, double v) {
-    const QPointF at = QPointF(view()->widgetPoint(m_frame.to_world(u, v))) + m_heldShift, local = at - QPointF(w->pos());
+  void mouse(QWidget* w, QEvent::Type type, const QPointF& p) {
+    const QPointF at = p + m_heldShift, local = at - QPointF(w->pos());
     const Qt::MouseButtons buttons = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
     QMouseEvent event(type, local, view()->mapToGlobal(at), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
     QApplication::sendEvent(w, &event);
@@ -1109,6 +1406,16 @@ class ClipReplay : public QObject {
   // the sketch holds so far, the selection, the tool, the status).
   void during(const QJsonObject& x) {
     m_when = QString("at %1 s: ").arg(x.value("t").toDouble(), 0, 'f', 2);
+    if (design()) {  // a feature: its preview bodies on screen, the readouts, what it holds so far
+      const QStringList texts = readouts();
+      trace::log(QString("bench: clip replay: %1: %2%3 preview bodies; readouts %4").arg(m_id, m_when).arg(view()->previewBodyCount()).arg(texts.join(" | ")));
+      if (x.contains("preview")) check((view()->previewBodyCount() > 0) == x.value("preview").toBool(), x.value("preview").toBool() ? "the feature previews its result" : "nothing is previewed");
+      for (const QJsonValue& v : x.value("readouts").toArray())
+        check(std::any_of(texts.begin(), texts.end(), [&](const QString& t) { return t.contains(v.toString()); }), QString("the view reads out \"%1\"").arg(v.toString()));
+      compareDesign(x);
+      m_when.clear();
+      return;
+    }
     const std::map<QString, int> kinds = previewKinds();
     QStringList previewed;
     for (const auto& [k, n] : kinds) previewed << QString("%1 %2").arg(n).arg(k);
@@ -1150,6 +1457,10 @@ class ClipReplay : public QObject {
   QString m_shots, m_id, m_status;
   QJsonObject m_setup, m_expect;
   QJsonArray m_during;  // the expect block's "during" entries, in time order
+  bool m_setupDone = false;              // a feature clip's setup sketches are committed
+  int m_undoBefore = 0;                  // its undo steps before it, taken back after it
+  size_t m_featuresBefore = 0;
+  std::set<std::string> m_bodiesBefore;
   int m_duringNext = 0;
   bool m_duringSettled = false;
   QString m_when;  // "at <t> s: " while a during entry is compared
@@ -1178,6 +1489,7 @@ OPAD_BENCH(OPAD_BENCH_CLIPREPLAY, clipReplay) {
   }
   // The clips that leave the sketch or move it (finish, cancel, a new plane) last: the others share the sketch on XY.
   std::stable_partition(ids.begin(), ids.end(), [](const QString& id) { return clips::expect(id).value("active").toBool(true) && !clips::expect(id).contains("plane"); });
+  std::stable_partition(ids.begin(), ids.end(), [](const QString& id) { return !id.startsWith("design."); });  // features after the sketches
   w.setWorkspace("design");
   auto* replay = new ClipReplay(w, w.m_design, [&w](const QString& id) { return w.action(id); }, ids, qEnvironmentVariable("OPAD_BENCH_CLIPSHOT"));
   w.m_design->benchSketch([replay] { replay->start(); });
