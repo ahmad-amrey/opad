@@ -131,6 +131,8 @@ class Vcs : public AreaController {
   void ready() override {
     AppDocument* doc = services().document();
     auto* disk = new DiskSync(doc, services().jobs(), services().viewport(), services().window());  // changed on disk: merged or reported, never overwritten
+    disk->setConflicted([this] { return m_git->repo().doc() == git::Repo::Doc::Conflict; });  // markers of a stopped merge: resolved
+    connect(m_git, &GitWatch::changed, disk, &DiskSync::gitChanged);
     connect(doc, &AppDocument::pathChanged, this, [this, doc] {
       m_git->setFile(doc->hasDocument && !doc->browse && !doc->doc.path.empty() ? doc->path() : QString());
     });

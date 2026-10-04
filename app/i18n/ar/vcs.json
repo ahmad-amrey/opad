@@ -642,5 +642,7 @@
  "Conflicts resolved: commit the merge to finish it.": "حُلّت التعارضات: أودع الدمج لإتمامه.",
  "Who changed what could not be read from git: %1": "تعذّرت قراءة من غيّر ماذا من git: %1",
  "It was missing when your version was restored into it, and is back now.": "كان مفقودًا حين استُعيدت نسختك إليه، وقد عاد الآن.",
- "Could not overwrite %1: %2": "تعذّرت الكتابة فوق %1: %2"
+ "Could not overwrite %1: %2": "تعذّرت الكتابة فوق %1: %2",
+ "Git stopped a merge on it and wrote conflict markers into it. Resolve the conflicts to keep both sides' changes; overwriting it keeps only yours.": "أوقف git دمجًا عليه وكتب فيه علامات التعارض. حُلّ التعارضات لتبقى تغييرات الجانبين؛ أما الكتابة فوقه فتُبقي تغييراتك وحدها.",
+ "%1 is in a merge conflict": "%1 في تعارض دمج"
 }

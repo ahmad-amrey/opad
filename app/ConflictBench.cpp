@@ -4,7 +4,8 @@
 // index stages and lists the name and the colour (the lock both made alike is no conflict); theirs for the name, mine for
 // the colour; the file comes in with both sides' other changes, git no longer has it in conflict, and Commit… from the
 // toast makes the merge commit (two parents). With OPAD_BENCH_CONFLICT_MARKERS=1 the clone's driver is never set up: git
-// merges the text and writes conflict markers into the file, which the stages still resolve. Pictures at
+// merges the text and writes conflict markers into the file: the bar over the view offers Resolve conflicts… (not
+// Overwrite…) as its first choice, and the stages still resolve it. Pictures at
 // <prefix>.<step>.png.
 #include <QComboBox>
 #include <QCoreApplication>
@@ -18,6 +19,7 @@
 #include <memory>
 
 #include "AppDocument.hpp"
+#include "Banner.hpp"
 #include "BenchRegistry.hpp"
 #include "GitWatch.hpp"
 #include "MainWindow.hpp"
@@ -106,13 +108,23 @@ OPAD_BENCH(OPAD_BENCH_CONFLICT, conflict) {
         }
         case 2: {
           if (!idle || st->lastDone != "merge failed" || !r.merging || r.doc() != git::Repo::Doc::Conflict) return;
+          Banner* bar = nullptr;  // conflict markers: the bar over the view offers Resolve conflicts… first, Overwrite… after it
+          for (Banner* b : w.m_viewport->findChildren<Banner*>())
+            if (b->state() == "unreadable") bar = b;
+          if (markers && (!bar || !bar->button("diskResolve"))) return;  // the file read on a worker, git's view in
+          require(!bar == !markers, "the unreadable banner exactly when the file holds conflict markers");
+          if (bar) {
+            require(bar->button("diskResolve")->objectName() == "primary" && bar->button("diskOverwrite")->objectName() != "primary", "Resolve conflicts… first, Overwrite… not");
+            if (!prefix.isEmpty()) bar->grab().save(prefix + ".banner.png");
+          }
           Toast* t = toast(VersionControl::tr("Resolve…"));
           require(t, "no Resolve… toast after the stopped merge");
           require(doc->nodeName(st->body) == "Ours" && !doc->isDirty(), "the document keeps ours while in conflict");
           QFile file(doc->path());
           require(file.open(QIODevice::ReadOnly) && file.readAll().contains("<<<<<<<") == markers, markers ? "git's conflict markers in the file" : "the file kept as ours");
-          pass(markers ? "git merged the text and wrote conflict markers, Resolve… offered" : "the merge stopped on the document, Resolve… offered");
-          t->actionButton()->click();
+          pass(markers ? "git merged the text and wrote conflict markers, Resolve conflicts… offered first by the bar over the view" : "the merge stopped on the document, Resolve… offered");
+          if (bar) bar->button("diskResolve")->click();
+          else t->actionButton()->click();
           st->step = 3;
           return;
         }

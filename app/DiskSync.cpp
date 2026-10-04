@@ -214,11 +214,21 @@ void DiskSync::showReplaced(const QString& text) {
 
 void DiskSync::showUnreadable() {
   const QString error = m_read ? m_read->error : QString();
-  const QString text = error.contains("conflict marker") ? tr("It holds git conflict markers: the OPAD merge driver is not set up for this repository. Keep your version over it or under another name.")
-                                                          : error;
-  m_banner->present("unreadable", Banner::Tone::Danger, tr("%1 on disk cannot be read").arg(name()), text, error);
+  const bool markers = error.contains("conflict marker"), stopped = markers && m_conflicted && m_conflicted();
+  const QString text = stopped ? tr("Git stopped a merge on it and wrote conflict markers into it. Resolve the conflicts to keep both sides' changes; overwriting it keeps only yours.")
+                       : markers ? tr("It holds git conflict markers: the OPAD merge driver is not set up for this repository. Keep your version over it or under another name.")
+                                 : i18n::t(error);
+  m_banner->present("unreadable", stopped ? Banner::Tone::Warning : Banner::Tone::Danger,
+                    stopped ? tr("%1 is in a merge conflict").arg(name()) : tr("%1 on disk cannot be read").arg(name()), text, error);
+  if (stopped) m_banner->addButton("diskResolve", tr("Resolve conflicts…"), [this] { trigger("vcs.resolve"); }, true);
   m_banner->addButton("diskSaveAs", tr("Save as…"), [this] { trigger("file.saveas"); });
-  m_banner->addButton("diskOverwrite", tr("Overwrite…"), [this] { overwrite(); }, true);
+  m_banner->addButton("diskOverwrite", tr("Overwrite…"), [this] { overwrite(); }, !stopped);
+}
+
+void DiskSync::gitChanged() {
+  if (m_banner->state() != "unreadable" || !m_read || m_read->doc) return;
+  const bool stopped = m_read->error.contains("conflict marker") && m_conflicted && m_conflicted();
+  if (stopped != (m_banner->button("diskResolve") != nullptr)) showUnreadable();
 }
 
 void DiskSync::showDeleted() {
