@@ -251,6 +251,22 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   layout->addWidget(m_modeRow);
   m_modeRow->hide();
 
+  m_frameRow = new QWidget(this);
+  auto* frameLayout = new QHBoxLayout(m_frameRow);
+  frameLayout->setContentsMargins(12, 4, 12, 4);
+  frameLayout->setSpacing(8);
+  auto* frameLabel = new QLabel(tr("Coordinates"), m_frameRow);
+  frameLabel->setObjectName("secondary");
+  m_frames = new QComboBox(m_frameRow);
+  m_frames->setObjectName("toolFrame");
+  m_frames->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  m_frames->setToolTip(tr("Give the measured points and Δ in world axes, or in the axes of the component the first pick lies in."));
+  frameLayout->addWidget(frameLabel);
+  frameLayout->addWidget(m_frames, 1);
+  layout->addWidget(m_frameRow);
+  m_frameRow->hide();
+  connect(m_frames, qOverload<int>(&QComboBox::currentIndexChanged), this, &ToolStepsPanel::frameChanged);
+
   m_components = new QCheckBox(tr("Show ΔX, ΔY, ΔZ arrows"), this);
   m_components->setChecked(true);
   m_components->setToolTip(tr("Signed world-axis components from point 1 to point 2. Red X, green Y, blue Z."));
@@ -488,6 +504,19 @@ void ToolStepsPanel::setModeOptions(const QStringList& labels, int current) {
     b->setChecked(true);
   }
   m_modeRow->setVisible(!labels.isEmpty());
+  emit contentSizeChanged();
+}
+
+void ToolStepsPanel::setFrameOptions(const QStringList& labels, int current) {
+  const QSignalBlocker blocker(m_frames);
+  QStringList now;
+  for (int i = 0; i < m_frames->count(); ++i) now << m_frames->itemText(i);
+  if (now != labels) {
+    m_frames->clear();
+    m_frames->addItems(labels);
+  }
+  if (!labels.isEmpty()) m_frames->setCurrentIndex(std::clamp(current, 0, static_cast<int>(labels.size()) - 1));
+  m_frameRow->setVisible(labels.size() > 1);
   emit contentSizeChanged();
 }
 

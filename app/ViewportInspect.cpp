@@ -10,6 +10,7 @@
 #include <Prs3d_ShadingAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <Precision.hxx>
+#include <gp.hxx>
 #include <QFontMetricsF>
 #include <algorithm>
 #include <cmath>
@@ -18,10 +19,12 @@ namespace {
 Quantity_Color color(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
 gp_Pnt point(const opad::json& j) { return gp_Pnt(j[0].get<double>(), j[1].get<double>(), j[2].get<double>()); }
 bool samePoint(const gp_Pnt& a, const gp_Pnt& b) { return a.SquareDistance(b) <= 1e-14; }
-int componentCount(const gp_Pnt& a, const gp_Pnt& b) {
+gp_Vec frameDelta(const gp_Pnt& a, const gp_Pnt& b, const gp_Trsf& frame) { return gp_Vec(a, b).Transformed(frame.Inverted()); }
+int componentCount(const gp_Pnt& a, const gp_Pnt& b, const gp_Trsf& frame = gp_Trsf()) {
+  const gp_Vec d = frameDelta(a, b, frame);
   int count = 0;
   for (int axis = 1; axis <= 3; ++axis)
-    if (std::abs(b.Coord(axis) - a.Coord(axis)) > Precision::Confusion()) ++count;
+    if (std::abs(d.Coord(axis)) > Precision::Confusion()) ++count;
   return count;
 }
 
@@ -132,10 +135,20 @@ void Viewport::setMeasurementComponents(bool on) {
   redrawScene();
 }
 
+void Viewport::setMeasurementFrame(const gp_Trsf& toWorld) {
+  const gp_Mat was = m_measureFrame.VectorialPart(), now = toWorld.VectorialPart();  // only the axes count
+  bool same = true;
+  for (int r = 1; r <= 3; ++r) for (int c = 1; c <= 3; ++c) same = same && std::abs(was(r, c) - now(r, c)) < 1e-12;
+  m_measureFrame = toWorld;
+  if (same) return;
+  refreshMeasurement(true);
+  redrawScene();
+}
+
 bool Viewport::measurementHasMultipleAxes() const {
   return !m_measurement.is_null() && m_measurement.value("kind", "distance") == "distance"
       && m_measurement.contains("point_a") && m_measurement.contains("point_b")
-      && componentCount(point(m_measurement["point_a"]), point(m_measurement["point_b"])) > 1;
+      && componentCount(point(m_measurement["point_a"]), point(m_measurement["point_b"]), m_measureFrame) > 1;
 }
 
 int Viewport::measurementAnchorAt(const QPointF& position) const {
@@ -252,7 +265,9 @@ void Viewport::refreshMeasurement(bool force) {
   if (kind == "distance" || kind == "radius") {
     if (!r.contains("point_a") || !r.contains("point_b")) continue;
     const gp_Pnt a = point(r["point_a"]), b = point(r["point_b"]);
-    const int components = componentCount(a, b);
+    const gp_Trsf frame = r == m_measurement ? m_measureFrame : gp_Trsf();  // pinned ones keep world axes
+    const gp_Vec local = frameDelta(a, b, frame);
+    const int components = componentCount(a, b, frame);
     const bool aligned = kind == "distance" && components == 1;
     graphic->endpoints = {a, b};
     if (r == m_measurement) for (const auto& anchor : m_measureAnchors) {
@@ -283,9 +298,9 @@ void Viewport::refreshMeasurement(bool force) {
     if (kind == "distance" && (aligned || (components > 1 && m_measureComponents))) {
       gp_Pnt start = a;
       for (int i = 0; i < 3; ++i) {
-        gp_Pnt end = start;
-        end.SetCoord(i + 1, b.Coord(i + 1));
-        const double delta = b.Coord(i + 1) - a.Coord(i + 1);
+        const double delta = local.Coord(i + 1);
+        gp_Pnt end = start.Translated(gp_Vec(i == 0 ? gp::DX() : i == 1 ? gp::DY() : gp::DZ()).Transformed(frame) * delta);
+        if (i == 2) end = b;  // exactly
         // Zero components stay in the result table, without extra viewport labels.
         if (std::abs(delta) <= Precision::Confusion()) { start = end; continue; }
         arrow(start, end, axes[i]);

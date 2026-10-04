@@ -2,6 +2,7 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QToolButton>
 #include <QElapsedTimer>
@@ -56,8 +57,9 @@ std::string brepText(const TopoDS_Shape& shape) {
 // next pick is awaited; Distance between the plate's side and the pin in its three modes from the panel's buttons
 // (minimum 7, centre to centre 10 with the centres named, maximum 19.846 within its accuracy) with the measured points' XYZ
 // and the view's caption; Length and area on the plate's top (area, perimeter) and on the pin's rim (length, the loops of
-// the cap and the side); the earlier results listed with Copy and Pin (a measurement op of that result). <prefix>.modes.png
-// / .length.png / .history.png.
+// the cap and the side); the earlier results listed with Copy and Pin (a measurement op of that result). Points and Δ in
+// the axes of a turned component the pick lies in, its arrows in the view along them. <prefix>.modes.png / .length.png /
+// .history.png / .frame.png.
 OPAD_BENCH(OPAD_BENCH_MEASURE, measure) {
   bool all = true;
   auto require = [&all](bool ok, const QString& what) {
@@ -269,6 +271,63 @@ OPAD_BENCH(OPAD_BENCH_MEASURE, measure) {
   require(rowButton(centre, "historyPin") && !rowButton(centre, "historyPin")->isEnabled(), "and the row says it is pinned");
   settle(200);
   w.m_toolPanel->grab().save(prefix + ".history.png");
+  w.cancelTool();
+
+  // ---- UI-144: points in the axes of the first pick's component. A 10 mm cube in the component Lid, turned 90 degrees
+  // about Z and moved 100 mm along X: its top's centroid is (95, 5, 10) in the world and (5, 5, 10) in the Lid's axes; the
+  // centre to centre distance from its -X side to its top is Δ (0, +5, +5) in the world and (+5, 0, +5) in the Lid's.
+  const opad::json made = w.m_doc->run("component", {{"name", "Lid"}});
+  const std::string lid = made.value("id", "");
+  w.m_doc->run("transform", {{"target", lid}, {"matrix", {0, -1, 0, 100, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}});
+  const TopoDS_Shape cube = BRepPrimAPI_MakeBox(10, 10, 10).Shape();
+  w.m_doc->run("import_brep", {{"brep", brepText(cube)}, {"name", "Cap"}, {"parent", lid}});
+  std::string capId;
+  for (const auto& id : w.m_doc->scene.all_bodies())
+    if (w.m_doc->nodeName(id) == "Cap") capId = id;
+  require(until([&w] { return w.m_viewport->displayedCount() >= 5 && w.m_viewport->remainingBodies() == 0; }, 30000) && !capId.empty(), "the cap in the turned component is displayed");
+  const int capTop = faceWhere(cube, [](const BRepAdaptor_Surface& s) { return std::abs(s.Plane().Axis().Direction().Z()) > 0.5 && s.Value(s.FirstUParameter(), s.FirstVParameter()).Z() > 9; });
+  const int capSide = faceWhere(cube, [](const BRepAdaptor_Surface& s) { return std::abs(s.Plane().Axis().Direction().X()) > 0.5 && s.Value(s.FirstUParameter(), s.FirstVParameter()).X() < 1; });
+  auto* frames = w.m_toolSteps->findChild<QComboBox*>("toolFrame");
+  auto frameShown = [&w, frames] { return frames && frames->parentWidget()->isVisibleTo(w.m_toolSteps); };
+  if (frames) frames->setCurrentIndex(0);
+  w.m_measureFrame = 0;
+  w.startTool("length");
+  filtered = false;
+  once = QObject::connect(w.m_viewport, &Viewport::filterApplied, &w, [&filtered] { filtered = true; });
+  w.action("select.faces")->trigger();
+  until([&filtered] { return filtered; }, 10000);
+  QObject::disconnect(once);
+  w.m_viewport->selectRefs({faceRef(plateId, plateTop)});
+  w.onViewportSelection();
+  until([&w] { return !w.m_lastMeasure.is_null(); }, 20000);
+  require(!frameShown() && row("Coordinates in").isEmpty(), "a pick at the root offers no component axes");
+  w.toolEscape();
+  until([&w] { return w.m_lastMeasure.is_null() && w.m_toolPicks.empty(); }, 5000);
+  w.m_viewport->selectRefs({faceRef(capId, capTop)});
+  w.onViewportSelection();
+  until([&w] { return !w.m_lastMeasure.is_null(); }, 20000);
+  require(frameShown() && frames->count() == 2 && frames->itemText(1) == "Lid (component)" && row("Centroid") == "(95.000, 5.000, 10.000) mm" && row("Coordinates in").isEmpty(),
+          "the cap's top in world axes: " + row("Centroid") + ", the choice offers " + (frames ? frames->itemText(1) : QString()));
+  if (frames) frames->setCurrentIndex(1);
+  require(row("Centroid") == "(5.000, 5.000, 10.000) mm" && row("Coordinates in") == "Lid" && w.m_settings.value("measure/frame").toInt() == 1,
+          "in the Lid's axes: " + row("Centroid") + " (" + row("Coordinates in") + ")");
+  settle(200);
+  w.m_toolPanel->grab().save(prefix + ".frame.png");
+  w.cancelTool();
+  w.startTool("distance");
+  if (auto* centres = modeButton(1)) centres->click();
+  pickTwo(faceRef(capId, capSide), faceRef(capId, capTop));
+  until([&w] { return w.m_lastMeasure.is_object() && w.m_lastMeasure.value("mode", "") == "center"; }, 20000);
+  QStringList shownCaptions = w.m_viewport->measurementCaptions();
+  require(row("ΔX") == "+5.000 mm" && row("ΔY") == "0.000 mm" && row("ΔZ") == "+5.000 mm" && row("Point 1 (face centroid)") == "(0.000, 5.000, 5.000) mm"
+          && shownCaptions.contains("ΔX +5.000 mm") && shownCaptions.contains("ΔZ +5.000 mm") && !shownCaptions.filter("ΔY").size(),
+          QString("centre to centre in the Lid's axes: Δ %1 %2 %3, the view's arrows %4").arg(row("ΔX"), row("ΔY"), row("ΔZ"), shownCaptions.join(" | ")));
+  if (frames) frames->setCurrentIndex(0);
+  shownCaptions = w.m_viewport->measurementCaptions();
+  require(row("ΔX") == "0.000 mm" && row("ΔY") == "+5.000 mm" && row("ΔZ") == "+5.000 mm" && row("Point 1 (face centroid)") == "(95.000, 0.000, 5.000) mm"
+          && shownCaptions.contains("ΔY +5.000 mm") && !shownCaptions.filter("ΔX").size(),
+          QString("and back in world axes: Δ %1 %2 %3, the view's arrows %4").arg(row("ΔX"), row("ΔY"), row("ΔZ"), shownCaptions.join(" | ")));
+  if (auto* minimum = modeButton(0)) minimum->click();
   w.cancelTool();
 
   QCoreApplication::exit(all ? 0 : 2);

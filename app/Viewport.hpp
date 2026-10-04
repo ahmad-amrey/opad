@@ -31,6 +31,7 @@
 #include <vector>
 
 #include <TopoDS_Shape.hxx>
+#include <gp_Trsf.hxx>
 
 #include "AppDocument.hpp"
 #include "BodyLook.hpp"
@@ -225,6 +226,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showMeasurement(const opad::json& result);
   void setMeasurementComponents(bool on);
   bool measurementComponents() const { return m_measureComponents; }
+  // The axes the current distance's ΔX, ΔY and ΔZ are drawn along: a component's (world <- component; UI-144), else world.
+  void setMeasurementFrame(const gp_Trsf& toWorld);
   bool measurementHasMultipleAxes() const;
   void clearDimension();
   void setMeasurementSelectionLocked(bool locked) { m_measureSelectionLocked = locked; }
@@ -601,6 +604,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Graphic3d_WorldViewProjState m_noteCamera;
   QSize m_noteSize;
   bool m_measureComponents = true;
+  gp_Trsf m_measureFrame;
   struct MeasurementAnchor { int side; opad::Vec3 point; };
   std::vector<MeasurementAnchor> m_measureAnchors;  // same candidates for drawing and hit testing
   bool m_measureSelectionLocked = false, m_measureAnchorPress = false, m_retainToolPicks = false;

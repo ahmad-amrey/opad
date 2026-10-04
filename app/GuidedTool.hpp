@@ -65,6 +65,8 @@ class ToolStepsPanel : public QWidget {
   void setAnchorOptions(const QStringList& labels, int current);
   // Segmented choice above the result (Distance: minimum, centre to centre, maximum); empty labels hide it (UI-144).
   void setModeOptions(const QStringList& labels, int current);
+  // What measured points are given in: World or the pick's component (UI-144); fewer than two labels hide it.
+  void setFrameOptions(const QStringList& labels, int current);
   void setHistory(const QList<ToolHistoryRow>& rows, bool canPin);
   QSize preferredSize(int width);
   PanelFooter* footer() const { return m_footer; }
@@ -74,6 +76,7 @@ class ToolStepsPanel : public QWidget {
   void componentsChanged(bool on);
   void anchorChanged(int index);
   void modeChanged(int index);
+  void frameChanged(int index);
   void historyCopyRequested(int index);  // by row of the last setHistory
   void historyPinRequested(int index);
   void contentSizeChanged();
@@ -92,6 +95,8 @@ class ToolStepsPanel : public QWidget {
   QWidget* m_modeRow;
   class QButtonGroup* m_modes;
   QStringList m_modeLabels;
+  QWidget* m_frameRow;
+  QComboBox* m_frames;
   QWidget* m_historyBox;
   QTreeWidget* m_history;
   QPushButton* m_copy;

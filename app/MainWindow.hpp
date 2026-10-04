@@ -222,6 +222,10 @@ class MainWindow : public QMainWindow {
   QString m_toolHover;
   QString m_toolError;  // why the last pick could not be measured, shown in the tool panel until the next pick (UI-50)
   int m_distanceMode = 0;  // Distance: 0 minimum, 1 centre to centre, 2 maximum (setting measure/distanceMode, UI-144)
+  // Measured points and Δ in 0 world axes, 1 the axes of the component the first pick lies in (setting measure/frame).
+  int m_measureFrame = 0;
+  std::string measureComponent(const std::string& body) const;  // the component a pick lies in, empty at the root
+  bool measureFrame(const std::string& body, gp_Trsf& toWorld) const;  // false: world axes
   struct MeasureRecord { opad::json result; bool pinned = false; };
   std::vector<MeasureRecord> m_measureHistory;  // this document's results, newest first (UI-144)
   void refreshMeasureHistory();

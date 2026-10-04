@@ -173,8 +173,10 @@ CASES = [
     # Radius tool, a B-spline box face is explained in the panel and its pick taken back, the next pick clears it; a click's
     # XYZ is listed while the next pick is awaited; Distance in its three modes from the panel's buttons (minimum, centre to
     # centre with the centres named, maximum within its accuracy) with the measured points and the view's caption; Length and
-    # area on a face (area, perimeter) and a rim (length, its loops); earlier results listed with Copy and Pin.
-    # <prefix>.radius.png, <prefix>.radius-error.png, <prefix>.modes.png, <prefix>.length.png, <prefix>.history.png.
+    # area on a face (area, perimeter) and a rim (length, its loops); earlier results listed with Copy and Pin; points and Δ
+    # in the axes of a turned component the first pick lies in (none offered at the root), the view's arrows along them.
+    # <prefix>.radius.png, <prefix>.radius-error.png, <prefix>.modes.png, <prefix>.length.png, <prefix>.history.png,
+    # <prefix>.frame.png.
     ("measure", fresh("measure-empty"), {"OPAD_BENCH_MEASURE": "{prefix}"}),
     # Select other (UI-128): a box, its twin in the same place and a pin through them, from the top. The bodies under the
     # pin are listed nearest first, Alt+click opens the list, a hovered row is hovered in the view and choosing it selects

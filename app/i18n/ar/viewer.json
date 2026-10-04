@@ -102,5 +102,13 @@
  "Section from the picked face": "مقطع من الوجه المختار",
  "Snapping": "الالتقاط",
  "Select other…": "تحديد عنصر آخر…",
- "Everything under the pointer, nearest first (Alt+click; Tab hovers the next)": "كل ما تحت المؤشر، الأقرب أولًا (Alt+نقرة؛ Tab يمرّر إلى التالي)"
+ "Everything under the pointer, nearest first (Alt+click; Tab hovers the next)": "كل ما تحت المؤشر، الأقرب أولًا (Alt+نقرة؛ Tab يمرّر إلى التالي)",
+ "Coordinates": "الإحداثيات",
+ "Give the measured points and Δ in world axes, or in the axes of the component the first pick lies in.": "إعطاء النقاط المقيسة و Δ على محاور العالم، أو على محاور المكوّن الذي يقع فيه الاختيار الأول.",
+ "World": "العالم",
+ "%1 (component)": "%1 (مكوّن)",
+ "Coordinates in": "الإحداثيات في",
+ "Shortest distance between the selections. Δ = point 2 − point 1 in the axes of %1.": "أقصر مسافة بين التحديدين. Δ = النقطة 2 − النقطة 1 على محاور %1.",
+ "Distance between the centres of the selections: circle and sphere centres, cylinder axes, face and body centroids. Δ = point 2 − point 1 in the axes of %1.": "المسافة بين مراكز العناصر المحددة: مراكز الدوائر والكرات، ومحاور الأسطوانات، ومراكز الأوجه والأجسام. Δ = النقطة 2 − النقطة 1 على محاور %1.",
+ "Largest distance between the selections, between their farthest points. Δ = point 2 − point 1 in the axes of %1.": "أكبر مسافة بين العناصر المحددة، بين أبعد نقاطها. Δ = النقطة 2 − النقطة 1 على محاور %1."
 }

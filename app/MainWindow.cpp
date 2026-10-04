@@ -224,6 +224,12 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_settings.setValue("measure/distanceMode", mode);
     if (m_tool.id == "distance") toolPicksChanged(m_viewport->selection(), false);  // measured again in the new mode
   });
+  connect(m_toolSteps, &ToolStepsPanel::frameChanged, this, [this](int frame) {  // world or the first pick's component axes (UI-144)
+    if (frame < 0 || frame == m_measureFrame) return;
+    m_measureFrame = frame;
+    m_settings.setValue("measure/frame", frame);
+    refreshToolUi();
+  });
   connect(m_toolSteps, &ToolStepsPanel::historyCopyRequested, this, [this](int row) {
     const size_t i = row + (m_lastMeasure.is_null() ? 0 : 1);
     if (i < m_measureHistory.size()) copyMeasurement(m_measureHistory[i].result);

@@ -17,6 +17,9 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -37,6 +40,7 @@ void MainWindow::buildInspectActions() {
   addAction("inspect.printcheck", tr("Print check"), "printcheck", QKeySequence(), [this] { startCheck(true); });
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
   m_distanceMode = std::clamp(m_settings.value("measure/distanceMode", 0).toInt(), 0, 2);
+  m_measureFrame = std::clamp(m_settings.value("measure/frame", 0).toInt(), 0, 1);
   m_pinAction->setShortcutContext(Qt::ApplicationShortcut);
   m_pinAction->setEnabled(false);
   addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
@@ -177,6 +181,7 @@ void MainWindow::cancelTool() {
   m_toolPoints.clear();
   for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.length"}) action(a)->setChecked(false);
   m_viewport->setPickAccumulate(false);
+  m_viewport->setMeasurementFrame(gp_Trsf());
   m_prompt->hide();
   m_toolPanel->hide();
   clearMeasurement();
@@ -294,11 +299,24 @@ void MainWindow::refreshToolUi() {
   m_toolSteps->setSteps(steps, m_toolHover);
   const QString waiting = picked < steps.size() ? steps[picked].label : tr("Measuring…");
   QString explanation = waiting;
+  const std::string frameBody = m_toolPicks.empty() ? std::string() : m_toolPicks.front().body;
+  const std::string component = m_tool.id == "bbox" ? std::string() : measureComponent(frameBody);
+  const QString frameName = component.empty() ? QString() : m_doc->nodeName(component);
+  m_toolSteps->setFrameOptions(component.empty() ? QStringList() : QStringList{tr("World"), tr("%1 (component)").arg(frameName)}, m_measureFrame);
+  gp_Trsf toWorld;
+  const bool framed = !component.empty() && measureFrame(frameBody, toWorld);
+  m_viewport->setMeasurementFrame(framed ? toWorld : gp_Trsf());
   if (done) {
     if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
-    else if (m_tool.id == "distance" && m_distanceMode == 1) explanation = tr("Distance between the centres of the selections: circle and sphere centres, cylinder axes, face and body centroids. Δ = point 2 − point 1 in world axes.");
-    else if (m_tool.id == "distance" && m_distanceMode == 2) explanation = tr("Largest distance between the selections, between their farthest points. Δ = point 2 − point 1 in world axes.");
-    else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
+    else if (m_tool.id == "distance" && m_distanceMode == 1)
+      explanation = framed ? tr("Distance between the centres of the selections: circle and sphere centres, cylinder axes, face and body centroids. Δ = point 2 − point 1 in the axes of %1.").arg(frameName)
+                           : tr("Distance between the centres of the selections: circle and sphere centres, cylinder axes, face and body centroids. Δ = point 2 − point 1 in world axes.");
+    else if (m_tool.id == "distance" && m_distanceMode == 2)
+      explanation = framed ? tr("Largest distance between the selections, between their farthest points. Δ = point 2 − point 1 in the axes of %1.").arg(frameName)
+                           : tr("Largest distance between the selections, between their farthest points. Δ = point 2 − point 1 in world axes.");
+    else if (m_tool.id == "distance")
+      explanation = framed ? tr("Shortest distance between the selections. Δ = point 2 − point 1 in the axes of %1.").arg(frameName)
+                           : tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
     else if (m_tool.id == "angle") explanation = tr("Directions compared at a common origin. Planar faces use their normals; curved faces use their axes.");
     else if (m_tool.id == "radius" && m_lastMeasure.contains("recognized"))
       explanation = tr("Radius from the center or cylinder axis to the surface. The surface is free-form (a B-spline) and is measured as the %1 it matches.").arg(i18n::t(QString::fromStdString(m_lastMeasure["recognized"].get<std::string>())));
@@ -339,9 +357,14 @@ void MainWindow::refreshToolUi() {
   QList<QPair<QString, QString>> rows;
   if (done) rows = measureRows(m_lastMeasure);
   // Where each pick was clicked (UI-144): while the next pick is awaited, and for a one-pick tool's result.
+  const gp_Trsf toFrame = toWorld.Inverted();
   for (size_t i = 0; i < m_toolPoints.size() && i < m_toolPicks.size(); ++i)
-    if (m_toolPoints[i].first && (!done || m_tool.steps == 1))
-      rows << qMakePair(m_tool.steps == 1 ? tr("Picked at") : tr("Pick %1 at").arg(i + 1), units::vector(units::Kind::Length, m_toolPoints[i].second));
+    if (m_toolPoints[i].first && (!done || m_tool.steps == 1)) {
+      gp_Pnt at(m_toolPoints[i].second[0], m_toolPoints[i].second[1], m_toolPoints[i].second[2]);
+      if (framed) at.Transform(toFrame);
+      if (framed && !done && rows.isEmpty()) rows << qMakePair(tr("Coordinates in"), frameName);
+      rows << qMakePair(m_tool.steps == 1 ? tr("Picked at") : tr("Pick %1 at").arg(i + 1), units::vector(units::Kind::Length, opad::Vec3{at.X(), at.Y(), at.Z()}));
+    }
   for(size_t i=0;i<m_toolPicks.size();++i) {
     const auto info=m_viewport->circleInfo(m_toolPicks[i]);
     if(info.contains("diameter")) rows << qMakePair(tr("Circle %1 diameter").arg(i+1),units::format(units::Kind::Length,info["diameter"].get<double>()));
@@ -363,18 +386,49 @@ QString MainWindow::measureTitle(const opad::json& r) const {
   return tr("Bounding box");
 }
 
+// UI-144: points can be given in the axes of the component the first pick lies in (its parent; a body at the root has
+// none). A placement that is not rigid leaves them in world axes.
+std::string MainWindow::measureComponent(const std::string& body) const {
+  const opad::Node* n = body.empty() ? nullptr : m_doc->scene.node(body);
+  return n && !n->parent.empty() && m_doc->scene.node(n->parent) ? n->parent : std::string();
+}
+
+bool MainWindow::measureFrame(const std::string& body, gp_Trsf& toWorld) const {
+  const std::string component = m_measureFrame == 1 ? measureComponent(body) : std::string();
+  if (component.empty()) return false;
+  try {
+    toWorld = opad::trsf_from_mat(m_doc->scene.world(component));
+  } catch (const opad::Error&) {
+    return false;
+  }
+  return true;
+}
+
 QList<QPair<QString, QString>> MainWindow::measureRows(const opad::json& r) const {
   QList<QPair<QString, QString>> rows;
   const std::string kind = r.value("kind", "distance"), unit = r.value("unit", "mm");
   const units::Kind L = units::Kind::Length;
-  auto vec = [L](const opad::json& p) { return units::vector(L, p.get<std::array<double, 3>>()); };
+  const opad::json refs = r.value("refs", opad::json::array());
+  const std::string body = !refs.empty() && refs[0].is_string() ? opad::Ref::parse(refs[0].get<std::string>()).body : std::string();
+  gp_Trsf toWorld;
+  const bool framed = kind != "bbox" && measureFrame(body, toWorld);  // a box stays aligned with the world
+  const gp_Trsf toFrame = toWorld.Inverted();
+  auto vec = [L, framed, &toFrame](const opad::json& p) {
+    gp_Pnt q(p[0].get<double>(), p[1].get<double>(), p[2].get<double>());
+    if (framed) q.Transform(toFrame);
+    return units::vector(L, opad::Vec3{q.X(), q.Y(), q.Z()});
+  };
   if (r.contains("value")) rows << qMakePair(measureTitle(r), units::format(unit == "deg" ? units::Kind::Angle : unit == "mm2" ? units::Kind::Area : L, r["value"].get<double>()));
-  if (r.contains("delta"))
+  if (framed) rows << qMakePair(tr("Coordinates in"), m_doc->nodeName(measureComponent(body)));
+  if (r.contains("delta")) {
+    gp_Vec delta(r["delta"][0].get<double>(), r["delta"][1].get<double>(), r["delta"][2].get<double>());
+    if (framed) delta.Transform(toFrame);
     for (int i = 0; i < 3; ++i) {
-      const double d = r["delta"][i].get<double>();
+      const double d = delta.Coord(i + 1);
       const bool plus = d > 0 && units::number(L, d) != units::number(L, 0);
       rows << qMakePair(tr("Δ%1").arg(QChar("XYZ"[i])), (plus ? "+" : "") + units::format(L, d));
     }
+  }
   if (r.value("approximate", false) && r.contains("tolerance_mm")) rows << qMakePair(tr("Accuracy"), tr("within %1").arg(units::format(L, r["tolerance_mm"].get<double>())));
   if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), units::format(units::Kind::Angle, r["supplement"].get<double>()));
   if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), units::format(L, r["diameter"].get<double>()));
