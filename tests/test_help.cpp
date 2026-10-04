@@ -10,6 +10,7 @@
 #include "I18n.hpp"
 #include "Motion.hpp"
 #include "RichTip.hpp"
+#include "SketchKeys.hpp"
 #include "Theme.hpp"
 #include "check.hpp"
 #include "opad/design/feature.hpp"
@@ -17,6 +18,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -560,6 +562,38 @@ TEST(clip_guide_ranges) {
   CHECK(clips::problems().join("\n").contains("wrong: guide entries are clip steps"));
   clips::load();
   CHECK(clips::guideRange("sketch.line", 0, 3) == R(0, 0) && clips::guideRange("design.extrude", 1, 2) == R(1, 2));
+}
+
+// A sketch clip presses Enter only where Enter acts in that tool (TODO 11 wave 3, audit 6.3 test 5): a chain tool's Done,
+// a value typed into the boxes (a hud or typedValue in the clip), or an Apply tool whose picks are complete
+// (sketchkeys::entersApply). The clips of mirror, break link and calibrate pressed it before the tools took it.
+TEST(sketch_clips_press_enter_only_where_it_acts) {
+  const QJsonObject library = QJsonDocument::fromJson(source("app/help/clips.json").toUtf8()).object();
+  const QJsonObject templates = library.value("templates").toObject();
+  auto enter = [](const QJsonObject& item) {
+    if (item.value("el").toString() != "key") return false;
+    if (item.value("fixed").toString().compare("enter", Qt::CaseInsensitive) == 0) return true;  // a fixed key, by name
+    const QJsonArray caps = item.value("caps").toArray();
+    return caps.size() == 1 && caps.at(0).toString() == "Enter";
+  };
+  auto typed = [](const QJsonObject& item) { return item.value("el").toString() == "hud" || item.value("use").toString() == "typedValue"; };
+  int checked = 0;
+  for (const QJsonValue& v : library.value("clips").toArray()) {
+    const QJsonObject clip = v.toObject();
+    const QString id = clip.value("id").toString();
+    if (!id.startsWith("sketch.") || id.startsWith("sketch.c.")) continue;
+    QJsonArray items = clip.value("items").toArray();
+    for (const QJsonValue& t : templates.value(clip.value("template").toString()).toObject().value("items").toArray()) items.append(t);
+    bool presses = false, types = false;
+    for (const QJsonValue& item : items) presses = presses || enter(item.toObject()), types = types || typed(item.toObject());
+    if (!presses) continue;
+    const std::string tool = id.mid(7).toStdString();
+    ++checked;
+    if (!sketchkeys::chainTool(tool) && !sketchkeys::entersApply(tool) && !types)
+      throw check::Failure(id.toStdString() + ": the clip presses Enter, which does nothing in that tool");
+  }
+  CHECK(checked >= 10);  // line, spline, mirror, project, the image tools... (a parse that found none proves nothing)
+  CHECK(sketchkeys::entersApply("mirror") && sketchkeys::entersApply("break_link") && sketchkeys::entersApply("image_calibrate") && !sketchkeys::entersApply("trim"));
 }
 
 // The player loops a range of steps as one segment; reduced motion shows the range's last frame.
