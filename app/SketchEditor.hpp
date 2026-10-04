@@ -362,6 +362,10 @@ class SketchEditor : public QObject, public SketchInput {
   void toggleSource(const QString& source);
   QString sourceLabel(const QString& source) const;
   QStringList m_sources;
+  // The picked sources in the model (edges, faces, vertices, bodies) shown as the view's selection while the tool runs, as
+  // a feature's picks are; called by rebuild(), so every change of m_sources reaches the view.
+  void showSources();
+  QStringList m_sourcesShown;
   bool applyReference();
   bool applyImageTool();
   bool imageClick(double u,double v);

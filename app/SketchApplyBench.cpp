@@ -81,6 +81,12 @@ void SketchEditor::benchApply() {
   auto has = [this](int id) { return std::find(m_sel.begin(), m_sel.end(), id) != m_sel.end(); };
   auto linked = [this] { std::vector<int> out; for (const auto& e : m_sk.entities) if (!e.source.is_null()) out.push_back(e.id); return out; };
   auto previewed = [this] { return m_toolPreview && !m_toolPreviewOverlay.IsNull(); };
+  // The view's selection: the picked sources, highlighted until the tool adds them (as the guides show the picks).
+  auto highlighted = [this](const std::string& body, opad::Ref::Kind kind) {
+    int n = 0;
+    for (const opad::Ref& r : m_viewport->selection()) n += r.body == body && r.kind == kind;
+    return n;
+  };
   auto sources = [panel] { auto* list = panel->findChild<QListWidget*>("sketchSources"); int n = 0; if (list) for (int i = 0; i < list->count(); ++i) n += !list->item(i)->data(Qt::UserRole).toString().isEmpty(); return n; };
   auto addInPanel = [panel](const std::string& body) {  // the panel's Add source list, as a choice there makes
     auto* combo = panel->findChild<QComboBox*>("sketchSourceAdd");
@@ -208,16 +214,20 @@ void SketchEditor::benchApply() {
       }
       case 8:
         check(previewed() && int(m_toolPreview->entities.size()) > st["entities"] && int(m_sk.entities.size()) == st["entities"], "project: the source previewed before Enter, the sketch unchanged");
+        check(m_viewport->selection().size() == 1 && highlighted(box, opad::Ref::Kind::Edge) == 1, "project: the picked edge stays highlighted (the view's selection)");
         st["one"] = m_toolPreview ? int(m_toolPreview->entities.size()) - st["entities"] : 0;
         check(addInPanel(box), "project: the panel lists the box to add");
         break;
       case 9:
         check(m_sources.size() == 2 && sources() == 2, "project: the box added in the panel joins the edge; the panel lists both");
         check(previewed() && int(m_toolPreview->entities.size()) - st["entities"] > st["one"], "project: the preview shows both sources");
+        check(m_viewport->selection().size() == 1 && highlighted(box, opad::Ref::Kind::Edge) == 1, "project: the edge stays highlighted, the whole body is listed only");
+        sketchMove(30, -30, Qt::AltModifier, false);  // the pointer off the edge: the pick's highlight, not the hover
         m_viewport->grabImage().save(prefix + ".project.png");
         panel->grab().save(prefix + ".panel.png");
         send(Qt::Key_Backspace);
-        check(m_sources.size() == 1 && keyHints().contains(tr("⌫ undo pick")), "project: Backspace takes the last source back");
+        check(m_sources.size() == 1 && keyHints().contains(tr("⌫ undo pick")) && m_viewport->selection().size() == 1 && highlighted(box, opad::Ref::Kind::Edge) == 1,
+              "project: Backspace takes the last source back, its highlight too");
         break;
       case 10:
         check(sources() == 1 && previewed(), "project: the panel and the preview follow");
@@ -232,6 +242,7 @@ void SketchEditor::benchApply() {
         const auto now = linked();
         check(int(m_sk.entities.size()) == st["previewed"] && int(now.size()) == st["previewed"] - st["entities"] && m_sources.isEmpty() && sources() == 0,
               "project: Enter adds what the preview showed, linked; the tool asks for new sources");
+        check(m_viewport->selection().empty(), "project: the picks added, nothing is highlighted any more");
         // ---- Break link
         setTool("break_link");
         m_sel.clear();
@@ -365,11 +376,13 @@ void SketchEditor::benchApply() {
       case 22:
         check(m_sources.size() == 1 && previewed() && int(m_toolPreview->entities.size()) >= st["entities"] + 4 && int(m_sk.entities.size()) == st["entities"],
               "silhouette: the box's outline previewed before Enter");
+        check(m_viewport->selection().empty(), "silhouette: the picked body is not selected (in the X-ray layer it would hide its outline)");
+        m_viewport->grabImage().save(prefix + ".silhouette.png");
         st["previewed"] = m_toolPreview ? int(m_toolPreview->entities.size()) : -1;
         send(Qt::Key_Return);
         break;
       case 23:
-        check(int(m_sk.entities.size()) == st["previewed"] && m_sources.isEmpty(), "silhouette: Enter adds the outline");
+        check(int(m_sk.entities.size()) == st["previewed"] && m_sources.isEmpty() && m_viewport->selection().empty(), "silhouette: Enter adds the outline");
         // ---- Intersect with plane: a click on the post that stands through the plane (once the view picks bodies).
         setTool("intersect_body");
         st["entities"] = int(m_sk.entities.size());
@@ -402,6 +415,8 @@ void SketchEditor::benchApply() {
         }
         check(previewed() && round >= 1 && other == 0 && int(m_sk.entities.size()) == st["entities"],
               "intersect: the circle where the post crosses the plane is previewed before Enter, the sketch unchanged");
+        check(m_viewport->selection().empty(), "intersect: the picked post is not selected (in the X-ray layer it would hide the circle)");
+        sketchMove(60, -40, Qt::AltModifier, false);  // the pointer off the post: its hover goes
         m_viewport->grabImage().save(prefix + ".intersect.png");
         st["previewed"] = m_toolPreview ? int(m_toolPreview->entities.size()) : -1;
         send(Qt::Key_Return);
@@ -410,7 +425,8 @@ void SketchEditor::benchApply() {
       case 26: {
         bool linkedAll = int(m_sk.entities.size()) > st["entities"];
         for (size_t i = st["entities"]; i < m_sk.entities.size(); ++i) linkedAll = linkedAll && !m_sk.entities[i].source.is_null();
-        check(int(m_sk.entities.size()) == st["previewed"] && linkedAll && m_sources.isEmpty(), "intersect: Enter adds the circle, linked to the post");
+        check(int(m_sk.entities.size()) == st["previewed"] && linkedAll && m_sources.isEmpty() && m_viewport->selection().empty(),
+              "intersect: Enter adds the circle, linked to the post");
         setTool("select");
         break;
       }

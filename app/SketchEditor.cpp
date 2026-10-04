@@ -338,7 +338,7 @@ void SketchEditor::end() {
   for(const auto& prs:m_imagePrs)m_viewport->removeOverlay(prs);m_imagePrs.clear();
   m_viewport->restoreSection(m_sectionBefore);
   ++m_session;if(m_editJob)m_editJob->cancel();m_editJob=nullptr;
-  m_active = false;m_toolPreview.reset();
+  m_active = false;m_toolPreview.reset();showSources();  // the picks the tool had
   m_fillTimer.stop();
   if (m_fillJob) m_fillJob->cancel();m_fillJob=nullptr;
   if (m_dimEdit) m_dimEdit->hide();
@@ -1432,6 +1432,7 @@ bool SketchEditor::prepareGeometry() {
 }
 
 void SketchEditor::rebuild() {
+  showSources();
   if(m_prs.IsNull() || !prepareGeometry())return;
   refreshImages();
   if (m_prs.IsNull()) return;
