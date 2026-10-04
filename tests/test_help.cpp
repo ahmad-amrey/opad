@@ -48,8 +48,9 @@ QString source(const QString& path) {
 
 // Command ids registered by MainWindow and the areas: literal addAction ids of MainWindow*.cpp (and the Help menu's
 // help("help.about", ...) helper of the IP branch); CommandInfo records in any source of the app that is not a bench
-// (info.id = "..." or CommandInfo name{"...", ...}) and the areas' helpers that make them (the Drawings workspace's add,
-// version control's command, the file location's fileCommand, the clipboard's add); an area's workspace (its
+// (info.id = "..." or CommandInfo name{"...", ...}) and the areas' helpers that make them (the Drawings workspace's add
+// and its annotations' add, version control's command, the file location's fileCommand, the clipboard's add, the linked
+// files' and the canvas' command, KiCad's add; GitWatch and VersionPanel's add only name menu items); an area's workspace (its
 // "workspace.<id>" command, the contextual sketch's excepted); the generated families, the sketch tool tables and the
 // feature kinds of the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
 std::set<QString> registeredIds() {
@@ -63,7 +64,11 @@ std::set<QString> registeredIds() {
   const QHash<QString, QRegularExpression> helpers{{"DocsWorkspace.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
                                                    {"VcsArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
                                                    {"LocationArea.cpp", QRegularExpression(R"(\bfileCommand\(")" + name + "\"")},
-                                                   {"SketchClipboard.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")}};
+                                                   {"SketchClipboard.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
+                                                   {"DocsAnnotate.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
+                                                   {"AssetsArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
+                                                   {"CanvasArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
+                                                   {"KicadArea.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")}};
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*.cpp"}, QDir::Files, QDir::Name)) {
     if (file.contains("Bench")) continue;
     const QString text = source("app/" + file);
@@ -126,14 +131,25 @@ QString clean(QString s) { return s.remove('&').remove(QString::fromUtf8("…"))
 TEST(every_registered_command_has_help) {
   help::load("en");
   const auto ids = registeredIds();
-  CHECK(ids.size() > 300 && ids.count("help.reference") && ids.count("drawings.baseView.top") && ids.count("vcs.push") && ids.count("edit.copy") &&
-        ids.count("drawing2d.layers") && ids.count("file.reveal") && ids.count("workspace.drawings") && ids.count("sketch.commandLine"));
+  CHECK(ids.size() > 300 && ids.count("help.reference") && ids.count("drawings.baseView.top") && ids.count("vcs.push") && ids.count("edit.copy") &&
+        ids.count("drawing2d.layers") && ids.count("file.reveal") && ids.count("workspace.drawings") && ids.count("sketch.commandLine") &&
+        ids.count("assets.link") && ids.count("canvas.insert") && ids.count("kicad.insert") && ids.count("drawings.dimension"));
   // Commands of the tracks merged after the wave 3 help pass (assets, measure, hidden-line views, the drawings' views and
   // sheets, Reset Home): their records and clips are still to be written. A listed command that has help is stale here.
-  const QStringList pending{"assets.autoSync", "drawings.auxiliaryView", "drawings.breakView", "drawings.breakoutView", "drawings.cropView",
-                            "drawings.detailView", "drawings.exportDrawing", "drawings.issue", "drawings.print", "drawings.sectionView",
-                            "drawings.templateFields", "inspect.length", "inspect.material", "view.hidden", "view.hiddenEdges", "view.hideothers",
-                            "view.resetHome"};
+  // The second list: the commands of the linked files, the canvas, the drawings' annotations and KiCad, which the scan
+  // found only once it learned their areas' helpers (the richtip bench listed them as without help).
+  const QStringList pending = QStringList{"assets.autoSync", "drawings.auxiliaryView", "drawings.breakView", "drawings.breakoutView", "drawings.cropView",
+                                          "drawings.detailView", "drawings.exportDrawing", "drawings.issue", "drawings.print", "drawings.sectionView",
+                                          "drawings.templateFields", "inspect.length", "inspect.material", "view.hidden", "view.hiddenEdges", "view.hideothers",
+                                          "view.resetHome"} +
+                              QStringList{"assets.copyPath", "assets.embed", "assets.kicadSettings", "assets.link", "assets.pack", "assets.replace", "assets.reveal",
+                                          "assets.settings", "assets.sync", "assets.syncAll", "canvas.align", "canvas.calibrate", "canvas.edit", "canvas.finish",
+                                          "canvas.fromBackdrop", "canvas.insert", "canvas.replace", "canvas.trace", "drawings.autoBalloon", "drawings.balloon",
+                                          "drawings.baseline", "drawings.centerLine", "drawings.centerMark", "drawings.centerMarks", "drawings.chain", "drawings.datum",
+                                          "drawings.dimension", "drawings.fcf", "drawings.fromDatums", "drawings.fromDatums.baseline", "drawings.fromDatums.chain",
+                                          "drawings.holeCallout", "drawings.holeTable", "drawings.note", "drawings.ordinate", "drawings.partsList", "drawings.reattach",
+                                          "drawings.revisionTable", "drawings.surface", "kicad.clearance", "kicad.insert", "kicad.previewSync", "kicad.project",
+                                          "view.hideSmallParts", "view.smallPartSize"};
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
   for (const QString& id : pending) if (help::find(id)) missing << id + " (has help: drop it from pending)";

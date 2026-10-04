@@ -772,7 +772,7 @@
  "They move under it and keep their place": "تنتقل تحته وتبقى في مكانها",
  "Moved into Frame": "نُقل إلى الإطار",
  "Select bodies; pick a colour and OK": "حدد أجسامًا؛ واختر لونًا ثم موافق",
- "Select an edge or a round face (Type: Two points for points)": "اختر حافة أو وجهًا دائريًا (النوع: نقطتان للنقاط)",
+ "Select an edge or a round face": "اختر حافة أو وجهًا دائريًا",
  "Place the origin (or keep it), then OK": "ضع نقطة الأصل (أو أبقها) ثم موافق",
  "Pick a tool and draw, then Finish sketch": "اختر أداة وارسم ثم أنهِ الرسم التخطيطي",
  "Add the check: it is kept with the design": "أضف الفحص: يُحفظ مع التصميم",

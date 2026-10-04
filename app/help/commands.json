@@ -1646,7 +1646,7 @@
    "id": "design.axis",
    "title": "Construction axis",
    "summary": "An axis to revolve or pattern about.",
-   "details": "Make it along an edge or through a round face's centre, through two points, or normal to a plane through a point. Revolve and the circular pattern can pick it.",
+   "details": "Make it along an edge or through a round face's centre. Set Type to Two points to make it through two points, or to Normal for one normal to a plane through a point. Revolve and the circular pattern can pick it.",
    "keywords": ["work axis", "datum axis", "reference axis"],
    "requires": "Open or create a document first."
   },
