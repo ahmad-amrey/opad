@@ -1,5 +1,5 @@
 {
- "@about": "Animated help clips (UI-107), played by ClipView (app/HelpClip.hpp): vector items keyframed in seconds, model coordinates in millimetres (plane view: x right, y up; iso view: z up). Captions, label/chip texts and card titles/rows are English source text translated through app/i18n/<lang>/help.json. All artwork is original and procedural.",
+ "@about": "Animated help clips (UI-107), played by ClipView (app/HelpClip.hpp): vector items keyframed in seconds, model coordinates in millimetres (plane view: x right, y up; iso view: z up). Captions, label/chip texts and card titles/rows are English source text translated through app/i18n/<lang>/help.json; they name keys by token ({key:command.id}, {press:command.id}, {fixed:enter}), and a step may add a captionNoKey for when a named command has no key. A key element names the command whose key it shows ({\"el\": \"key\", \"command\": \"view.fit\"}) or a fixed key ({\"fixed\": \"enter\"}; \"\" in a template: none), never literal caps: the user may have changed the key. All artwork is original and procedural.",
  "templates": {
   "sketchScene": {"params": {}, "items": [{"el": "grid", "spacing": 5}, {"el": "axes"}]},
   "isoScene": {"params": {"area": [-30, -22, 30, 22]}, "items": [{"el": "grid", "spacing": 10, "area": "$area"}, {"el": "axes", "len": 6}]},
@@ -16,11 +16,11 @@
    "items": [
     {"el": "arrow", "dir": "$dir", "at": "$at0", "from": "$from", "to": "$to", "keys": [["$t0", {"at": "$at0"}], ["$t1", {"at": "$at1"}]]},
     {"el": "hud", "dx": "$dx", "dy": "$dy", "unit": "$unit", "dec": 1, "fields": ["$v0"], "from": "$from", "to": "$to", "keys": [["$t0", {"fields": ["$v0"]}], ["$t1", {"fields": ["$v1"]}]]}]},
-  "typedValue": {"params": {"t": null, "s1": null, "s2": null, "press": null, "at": "cursor", "dx": 16, "dy": -8, "caps": ["Enter"], "field": ""},
+  "typedValue": {"params": {"t": null, "s1": null, "s2": null, "press": null, "at": "cursor", "dx": 16, "dy": -8, "field": ""},
    "items": [
     {"el": "hud", "at": "$at", "dx": "$dx", "dy": "$dy", "fields": ["$field"], "focus": 0, "typed": "", "from": "$t", "to": "$press", "fade": 0,
      "keys": [["$t+0.12", {"typed": "$s1"}], ["$t+0.27", {"typed": "$s2"}]]},
-    {"el": "key", "caps": "$caps", "press": "$press", "from": "$press-0.25", "to": "$press+0.45"}]},
+    {"el": "key", "fixed": "enter", "press": "$press", "from": "$press-0.25", "to": "$press+0.45"}]},
   "patternCopy": {"params": {"profile": null, "at": [0, 0, 0], "height": 6, "offset": [0, 0, 0], "rot": 0, "t0": 1.9, "t1": 2.9, "done": 3.6},
    "items": [
     {"el": "solid", "profile": "$profile", "at": "$at", "height": "$height", "tone": "sel", "pivot": [0, 0, 0], "from": "$t0", "fade": 0,
@@ -59,16 +59,16 @@
     {"use": "pickEdge", "args": {"edge": [[-14, -10, 12], [14, -10, 12]], "hover": 0.5, "pick": 0.9, "until": 2.4}},
     {"use": "pickEdge", "args": {"edge": [[-14, 10, 12], [14, 10, 12]], "hover": 1.25, "pick": 1.6, "until": 2.4}},
     {"use": "dragHandle", "args": {"at0": [2, -10, 12], "at1": [2, -10, 12], "dir": [0, -1, 1], "t0": 2.5, "t1": 3.2, "v0": 0, "v1": "$v1", "from": 2.0, "to": 3.6, "dx": 18, "dy": -6}},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.35, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [-8, -24, 0]}], [0.9, {"pos": [2, -10, 12], "click": 1}], [1.6, {"pos": [6, 10, 12], "click": 1}], [2.3, {"pos": [2, -12, 14]}],
                               [2.5, {"pos": [2, -12, 14], "down": true}], [3.2, {"pos": [2, -14.5, 16.5], "down": false}], [3.9, {"pos": [2, -14.5, 16.5]}], [4.6, {"pos": [14, -20, 4]}]]}
    ],
    "steps": [{"to": 1.7, "caption": "Select the edges"}, {"to": 3.4, "caption": "$caption2"}, {"to": 5.0, "caption": "$caption3"}]},
-  "filterScene": {"params": {"caps": null, "caption1": null},
+  "filterScene": {"params": {"command": null, "caption1": null},
    "duration": 4.4, "view": "iso",
    "items": [
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
-    {"el": "key", "caps": "$caps", "press": 0.45, "from": 0.1, "to": 0.9}],
+    {"el": "key", "command": "$command", "press": 0.45, "from": 0.1, "to": 0.9}],
    "steps": [{"to": 0.8, "caption": "$caption1"}, {"to": 3.3, "caption": "Hover: what a click picks lights up"}, {"to": 4.4, "caption": "Click to select it"}]},
   "filterCursor": {"params": {"p1": null, "p2": null, "p3": null},
    "items": [{"el": "cursor", "keys": [[0, {"pos": [18, -14, 0]}], [0.8, {"pos": "$p1"}], [1.4, {"pos": "$p1"}], [1.6, {"pos": "$p2"}], [2.3, {"pos": "$p2"}], [2.5, {"pos": "$p3"}],
@@ -77,17 +77,17 @@
    "items": [
     {"el": "solid", "plane": "xz", "at": [0, 8, 0], "height": 16, "tone": "$tone", "toneAmount": "$toneAmount", "style": "$style",
      "profile": {"points": [[-12, 0], [12, 0], [12, 4], [-6, 4], [-6, 14], [-12, 14]]}, "holes": [{"circle": [-9, 9.5, 1.8]}]}]},
-  "standardView": {"params": {"caps": null, "az": null, "elev": null, "name": null, "caption1": null, "az0": -45, "elev0": 35.264},
+  "standardView": {"params": {"command": null, "az": null, "elev": null, "name": null, "caption1": null, "az0": -45, "elev0": 35.264},
    "duration": 3.8, "view": "iso", "extent": [-21, -11, 21, 22],
    "items": [
     {"el": "camera", "keys": [[1.0, {"az": "$az0", "elev": "$elev0"}], [2.1, {"az": "$az", "elev": "$elev"}]]},
     {"el": "grid", "spacing": 10, "area": [-18, -14, 18, 14]},
     {"el": "axes", "len": 6, "at": [-16, -12, 0]},
     {"use": "bracket"},
-    {"el": "key", "caps": "$caps", "press": 0.9, "from": 0.5, "to": 1.4},
+    {"el": "key", "command": "$command", "press": 0.9, "from": 0.5, "to": 1.4},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "home", "text": "$name", "from": 2.0}],
    "steps": [{"to": 1.0, "caption": "$caption1"}, {"to": 3.8, "caption": "The camera turns to look from there"}]},
-  "viewStyle": {"params": {"caps": null, "name": null, "caption1": null, "caption2": null, "from": null, "to": null},
+  "viewStyle": {"params": {"command": null, "name": null, "caption1": null, "caption2": null, "from": null, "to": null},
    "duration": 3.6, "view": "iso",
    "items": [
     {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
@@ -95,7 +95,7 @@
      "profile": {"points": [[-12, 0], [12, 0], [12, 4], [-6, 4], [-6, 14], [-12, 14]]}, "holes": [{"circle": [-9, 9.5, 1.8]}]},
     {"el": "solid", "plane": "xz", "at": [0, 8, 0], "height": 16, "style": "$to", "from": 1.0, "fade": 0.35,
      "profile": {"points": [[-12, 0], [12, 0], [12, 4], [-6, 4], [-6, 14], [-12, 14]]}, "holes": [{"circle": [-9, 9.5, 1.8]}]},
-    {"el": "key", "caps": "$caps", "press": 0.9, "from": 0.5, "to": 1.4},
+    {"el": "key", "command": "$command", "press": 0.9, "from": 0.5, "to": 1.4},
     {"el": "chip", "screen": [0.03, 0.05], "text": "$name", "dot": "sel", "from": 1.1}],
    "steps": [{"to": 1.0, "caption": "$caption1"}, {"to": 3.6, "caption": "$caption2"}]},
   "sketchTransform": {"params": {"points": null, "pivot": [0, 0], "xf0": {"offset": [0, 0], "rot": 0, "scale": [1, 1, 1]}, "xf1": null, "keep": 0, "title": null, "rows": null,
@@ -121,10 +121,10 @@
      "keys": [[0.5, {"color": "hov", "fillOpacity": 0.16}], [0.8, {"color": "sel", "fillOpacity": 0.1}], [1.6, {"color": "fg2", "fillOpacity": 0}]]},
     "$body",
     {"el": "card", "screen": [0.03, 0.06], "w": "$w", "title": "$title", "rows": "$rows", "from": 1.0, "to": 3.3},
-    {"el": "key", "caps": ["Enter"], "press": 3.1, "from": 2.85, "to": 3.6},
+    {"el": "key", "fixed": "enter", "press": 3.1, "from": 2.85, "to": 3.6},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [2, 1, 0]}], [1.0, {"pos": [2, 1, 0], "click": 1}], [1.8, {"pos": [14, -6, 0]}], [3.0, {"pos": [16, -8, 0]}]]}],
    "steps": [{"to": 1.1, "caption": "Pick a plane and a position"}, {"to": 3.0, "caption": "Set the sizes"}, {"to": 4.4, "caption": "$caption3"}]},
-  "navPreset": {"params": {"name": null, "orbit": null, "pan": null, "zoom": null, "caps1": [], "caps2": [], "caps3": []},
+  "navPreset": {"params": {"name": null, "orbit": null, "pan": null, "zoom": null, "fixed1": "", "fixed2": "", "fixed3": ""},
    "duration": 5.4, "view": "iso", "extent": [-26, -11, 26, 22],
    "items": [
     {"el": "camera", "dragged": true, "keys": [[0, {"az": -45, "elev": 35.264, "center": [-10, 0], "zoom": 1}], [0.4, {"az": -45}], [1.6, {"az": -95}], [2.0, {"center": [-10, 0]}], [3.2, {"center": [-14, -2]}],
@@ -133,9 +133,9 @@
     {"use": "bracket"},
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "$name", "hl": 0, "rows": [["Orbit", "$orbit"], ["Pan", "$pan"], ["Zoom", "$zoom"]],
      "keys": [[0.3, {"hl": 0}], [1.9, {"hl": 1}], [3.5, {"hl": 2}]]},
-    {"el": "key", "caps": "$caps1", "press": 0.3, "from": 0.1, "to": 1.7},
-    {"el": "key", "caps": "$caps2", "press": 1.9, "from": 1.7, "to": 3.3},
-    {"el": "key", "caps": "$caps3", "press": 3.5, "from": 3.3, "to": 4.9},
+    {"el": "key", "fixed": "$fixed1", "press": 0.3, "from": 0.1, "to": 1.7},
+    {"el": "key", "fixed": "$fixed2", "press": 1.9, "from": 1.7, "to": 3.3},
+    {"el": "key", "fixed": "$fixed3", "press": 3.5, "from": 3.3, "to": 4.9},
     {"el": "cursor", "kind": "move", "keys": [[0, {"screen": [0.62, 0.55]}], [0.3, {"screen": [0.62, 0.55], "down": true}], [1.6, {"screen": [0.82, 0.55], "down": false}],
                                              [1.9, {"screen": [0.62, 0.55], "down": true}], [3.2, {"screen": [0.78, 0.66], "down": false}], [3.5, {"screen": [0.66, 0.5], "down": true}],
                                              [4.8, {"screen": [0.66, 0.38], "down": false}], [5.2, {"screen": [0.7, 0.4]}]]}],
@@ -159,7 +159,7 @@
     {"el": "hud", "origin": [-20, -9], "fields": ["{len} mm", "{ang}°"], "typed": "", "focus": -1, "from": 0.7, "to": 2.05,
      "keys": [[1.55, {"focus": 0}], [1.65, {"typed": "3"}], [1.8, {"typed": "30"}]]},
     {"el": "hud", "origin": [10, -9], "fields": ["{len} mm", "{ang}°"], "from": 2.2, "to": 3.0},
-    {"el": "key", "caps": ["Enter"], "press": 2.05, "from": 1.9, "to": 2.6},
+    {"el": "key", "fixed": "enter", "press": 2.05, "from": 1.9, "to": 2.6},
     {"use": "sketchDraw", "args": {"badge": "line", "keys": [[0, {"pos": [-27, -2]}], [0.6, {"pos": [-20, -9], "click": 1}], [1.5, {"pos": [4, -9]}], [2.15, {"pos": [4.5, -8]}],
                                                        [3.0, {"pos": [10, 8], "click": 1}], [3.8, {"pos": [-20, -9], "click": 1}], [4.5, {"pos": [-25, -3]}]]}}
    ],
@@ -182,8 +182,8 @@
     {"el": "glyph", "kind": "vertical", "at": [12, -1], "dx": 13, "dy": 0, "from": 2.4},
     {"el": "hud", "origin": [-18, -9], "fields": ["{w} mm", "{h} mm"], "typed": "", "focus": -1, "from": 0.8, "to": 2.4,
      "keys": [[1.55, {"focus": 0}], [1.65, {"typed": "3"}], [1.75, {"typed": "30"}], [1.9, {"focus": 1, "typed": "", "fields": ["30.0 mm", "{h} mm"]}], [2.0, {"typed": "1"}], [2.1, {"typed": "16"}]]},
-    {"el": "key", "caps": ["Tab"], "press": 1.88, "from": 1.75, "to": 2.15},
-    {"el": "key", "caps": ["Enter"], "press": 2.38, "from": 2.2, "to": 2.9},
+    {"el": "key", "fixed": "tab", "press": 1.88, "from": 1.75, "to": 2.15},
+    {"el": "key", "fixed": "enter", "press": 2.38, "from": 2.2, "to": 2.9},
     {"use": "sketchDraw", "args": {"badge": "rect", "keys": [[0, {"pos": [-26, -3]}], [0.7, {"pos": [-18, -9], "click": 1}], [1.5, {"pos": [8, 4]}], [2.6, {"pos": [8, 4]}], [3.4, {"pos": [17, -4]}]]}}
    ],
    "steps": [
@@ -202,7 +202,7 @@
     {"el": "poly", "points": [[-4, 0], "cursor"], "color": "fg3", "dash": true, "width": 1.2, "from": 0.7, "to": 2.45, "fade": 0},
     {"el": "circle", "center": [-4, 0], "color": "hov", "r": "cursor", "from": 0.7, "to": 2.45, "fade": 0, "keys": [[1.9, {"r": "cursor"}], [1.91, {"r": 12}]]},
     {"el": "hud", "origin": [-4, 0], "fields": ["Ø {dia} mm"], "typed": "", "focus": -1, "from": 0.8, "to": 2.45, "keys": [[1.55, {"focus": 0}], [1.65, {"typed": "2"}], [1.8, {"typed": "24"}]]},
-    {"el": "key", "caps": ["Enter"], "press": 2.4, "from": 2.2, "to": 2.9},
+    {"el": "key", "fixed": "enter", "press": 2.4, "from": 2.2, "to": 2.9},
     {"use": "sketchDraw", "args": {"badge": "circle", "keys": [[0, {"pos": [-22, 6]}], [0.7, {"pos": [-4, 0], "click": 1}], [1.5, {"pos": [5, 6]}], [2.6, {"pos": [5, 6]}], [3.4, {"pos": [16, -6]}]]}}
    ],
    "steps": [
@@ -436,7 +436,7 @@
      "keys": [[2.1, {"sweep": -1, "toneAmount": 0.35, "opacity": 0.85}], [3.6, {"sweep": -360}], [4.0, {"toneAmount": 0.35, "opacity": 0.85}], [4.25, {"toneAmount": 0, "opacity": 1}]]},
     {"el": "poly", "points": [[0, 0, -4], [0, 0, 26]], "dash": true, "color": "fg2", "width": 1.2, "keys": [[1.9, {"color": "sel", "width": 2}], [4.0, {"color": "fg2", "width": 1.2}]]},
     {"el": "hud", "at": [12, 0, 10], "dx": 14, "dy": -8, "unit": "°", "dec": 0, "fields": [0], "from": 2.1, "to": 4.0, "keys": [[2.1, {"fields": [0]}], [3.6, {"fields": [360]}]]},
-    {"el": "key", "caps": ["Enter"], "press": 4.0, "from": 3.8, "to": 4.5},
+    {"el": "key", "fixed": "enter", "press": 4.0, "from": 3.8, "to": 4.5},
     {"el": "cursor", "keys": [[0, {"pos": [-14, -14, 0]}], [0.95, {"pos": [9, 0, 8], "click": 1}], [1.9, {"pos": [0, 0, 23], "click": 1}], [2.6, {"pos": [0, 0, 23]}], [3.5, {"pos": [-14, -10, 26]}]]}
    ],
    "steps": [
@@ -460,7 +460,7 @@
               [3.6, {"toneAmount": 0.3}], [3.8, {"toneAmount": 0}]]},
     {"use": "pickFace", "args": {"face": [[-14, -9, 14], [14, -9, 14], [14, 9, 14], [-14, 9, 14]], "hover": 0.5, "pick": 0.9, "until": 2.3}},
     {"el": "card", "screen": [0.03, 0.06], "w": 120, "title": "Shell", "rows": [["Thickness", "2 mm"], ["Direction", "Inside"]], "from": 1.3, "to": 3.8},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.35, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [-10, -22, 0]}], [0.9, {"pos": [4, -2, 14], "click": 1}], [2.0, {"pos": [4, -2, 14]}], [3.0, {"pos": [22, -12, 16]}]]}
    ],
    "steps": [
@@ -482,7 +482,7 @@
     {"el": "poly", "points": [[0, 0, 6], [0, 0, 6]], "width": 0, "dots": true, "color": "fg", "to": 2.3, "keys": [[1.2, {"color": "sel"}]]},
     {"el": "poly", "points": [[12, 0, 6], [12, 0, 6]], "width": 0, "dots": true, "color": "fg", "to": 2.3, "keys": [[1.7, {"color": "sel"}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 124, "title": "Hole", "rows": [["Diameter", "6 mm"], ["Depth", "Through all"]], "from": 1.9, "to": 3.8},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.35, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [-22, -16, 6]}], [0.7, {"pos": [-12, 0, 6], "click": 1}], [1.2, {"pos": [0, 0, 6], "click": 1}], [1.7, {"pos": [12, 0, 6], "click": 1}], [2.6, {"pos": [24, -10, 8]}]]}
    ],
    "steps": [
@@ -503,7 +503,7 @@
     {"use": "patternCopy", "args": {"profile": {"circle": [-15, -8, 3]}, "at": [0, 0, 3], "offset": [15, 0, 0]}},
     {"use": "patternCopy", "args": {"profile": {"circle": [-15, -8, 3]}, "at": [0, 0, 3], "offset": [30, 0, 0]}},
     {"el": "card", "screen": [0.03, 0.06], "w": 128, "title": "Rectangular pattern", "rows": [["Columns", "3"], ["Rows", "2"], ["Spacing", "15 × 16 mm"]], "from": 1.2, "to": 3.8},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.35, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [-26, -22, 3]}], [0.8, {"pos": [-15, -8, 9], "click": 1}], [1.6, {"pos": [-15, -8, 9]}], [2.6, {"pos": [24, -22, 6]}]]}
    ],
    "steps": [
@@ -526,7 +526,7 @@
     {"el": "solid", "profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.8, {"toneAmount": 0.45}], [3.6, {"toneAmount": 0.45}], [3.8, {"toneAmount": 0}]]},
     {"use": "patternCopy", "args": {"profile": {"circle": [11, 0, 2.6]}, "at": [0, 0, 4], "rot": 300, "t0": 2.0, "t1": 3.0}},
     {"el": "card", "screen": [0.03, 0.06], "w": 118, "title": "Circular pattern", "rows": [["Count", "6"], ["Angle", "360°"]], "from": 1.7, "to": 3.8},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.35, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [20, -20, 4]}], [0.8, {"pos": [11, 0, 10], "click": 1}], [1.5, {"pos": [0, 0, 16], "click": 1}], [2.2, {"pos": [0, 0, 16]}], [3.0, {"pos": [22, -16, 12]}]]}
    ],
    "steps": [
@@ -545,7 +545,7 @@
     {"el": "plane", "center": [0, 0, 6], "size": [26, 12], "plane": "yz", "color": "fg2", "fillOpacity": 0.08, "keys": [[1.6, {"color": "sel", "fillOpacity": 0.16}], [3.6, {"color": "fg2", "fillOpacity": 0.08}]]},
     {"el": "solid", "profile": {"points": [[2, -9], [18, -9], [18, -3], [8, -3], [8, 9], [2, 9]]}, "height": 6, "tone": "sel", "toneAmount": 0,
      "keys": [[0.9, {"toneAmount": 0.45}], [3.6, {"toneAmount": 0.45}], [3.8, {"toneAmount": 0}]]},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.35, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.35, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [24, -18, 0]}], [0.9, {"pos": [13, -6, 6], "click": 1}], [1.6, {"pos": [0, -8, 10], "click": 1}], [2.4, {"pos": [0, -8, 10]}], [3.2, {"pos": [22, -14, 10]}]]}
    ],
    "steps": [
@@ -565,7 +565,7 @@
      "keys": [[0.9, {"opacity": 0.6}], [1.45, {"opacity": 0}]]},
     {"el": "plane", "plane": "yz", "center": [0, 0, 7], "size": [26, 18], "color": "sel", "fillOpacity": 0.1, "from": 0.9, "keys": [[1.6, {"center": [0, 0, 7]}], [2.8, {"center": [-8, 0, 7]}]]},
     {"use": "dragHandle", "args": {"at0": [0, 0, 16], "at1": [-8, 0, 16], "dir": [1, 0, 0], "t0": 1.6, "t1": 2.8, "v0": 0, "v1": -8, "from": 1.0, "to": 3.4, "dx": 16, "dy": -26}},
-    {"el": "key", "caps": ["X"], "press": 0.85, "from": 0.6, "to": 1.3},
+    {"el": "key", "command": "inspect.section", "press": 0.85, "from": 0.6, "to": 1.3},
     {"el": "cursor", "keys": [[0, {"pos": [12, -20, 4]}], [1.3, {"pos": [3, 0, 16]}], [1.6, {"pos": [3, 0, 16], "down": true}], [2.8, {"pos": [-5, 0, 16], "down": false}], [3.6, {"pos": [-5, 0, 16]}], [4.4, {"pos": [12, -16, 20]}]]}
    ],
    "steps": [
@@ -690,7 +690,7 @@
      "keys": [[2.1, {"toneAmount": 0, "tone": "amber"}], [2.3, {"toneAmount": 0.45}], [2.8, {"toneAmount": 0.45, "tone": "amber"}], [2.81, {"tone": "sel"}], [2.95, {"toneAmount": 0.55}]]},
     {"use": "pickFace", "args": {"face": [[-2, -5, 11], [12, -5, 11], [12, 5, 11], [-2, 5, 11]], "hover": 0.5, "pick": 0.9, "until": 2.85}},
     {"el": "chip", "at": [12, 5, 11], "dx": 40, "dy": -22, "icon": "extrude", "text": "Boss · 5 faces", "hl": false, "from": 1.3, "keys": [[2.1, {"hl": true}], [2.9, {"hl": false}]]},
-    {"el": "key", "caps": ["Ctrl", "↑"], "press": 2.8, "from": 2.45, "to": 3.4},
+    {"el": "key", "command": "edit.selectparent", "press": 2.8, "from": 2.45, "to": 3.4},
     {"el": "cursor", "keys": [[0, {"pos": [-22, -16, 4]}], [0.9, {"pos": [5, 0, 11], "click": 1}], [1.6, {"pos": [5, 0, 11]}], [2.1, {"pos": [12, 5, 11], "dx": 40, "dy": -22}],
                               [2.8, {"pos": [12, 5, 11], "dx": 40, "dy": -22, "click": 1}], [3.8, {"pos": [22, -14, 4], "dx": 0, "dy": 0}]]}
    ],
@@ -716,8 +716,8 @@
     {"el": "chip", "screen": [0.62, 0.82], "dot": "amber", "text": "1 changed", "from": 1.2},
     {"el": "chip", "at": [12, -5, 13], "dy": -16, "text": "Added: Boss 2", "hl": true, "from": 2.7, "to": 3.6},
     {"el": "chip", "at": [9, 5, 5], "dx": 0, "dy": 26, "text": "Extrude 1: 6 → 10 mm", "hl": true, "from": 3.7},
-    {"el": "key", "caps": ["]"], "press": 2.6, "from": 2.35, "to": 3.0},
-    {"el": "key", "caps": ["]"], "press": 3.6, "from": 3.35, "to": 4.0}
+    {"el": "key", "command": "vcs.nextChange", "press": 2.6, "from": 2.35, "to": 3.0},
+    {"el": "key", "command": "vcs.nextChange", "press": 3.6, "from": 3.35, "to": 4.0}
    ],
    "steps": [
     {"to": 0.9, "caption": "Open Compare and pick two versions"},
@@ -734,7 +734,7 @@
     {"el": "card", "screen": [0.03, 0.05], "w": 160, "title": "Commit", "button": "Commit", "press": 2.9, "from": 0.4, "to": 3.3,
      "rows": [{"check": true, "label": "bracket.opad", "value": "M"}, {"check": true, "label": "assets/board.step", "value": "A"}, {"text": "Edit Extrude 1; add Fillet 2"}],
      "hl": -1, "keys": [[1.4, {"hl": 2}], [2.5, {"hl": -1}]]},
-    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 2.9, "from": 2.55, "to": 3.4},
+    {"el": "key", "fixed": "ctrlEnter", "press": 2.9, "from": 2.55, "to": 3.4},
     {"el": "chip", "screen": [0.3, 0.82], "icon": "git", "dot": "amber", "text": "2 uncommitted changes", "keys": [[3.0, {"dot": "amber", "text": "2 uncommitted changes"}], [3.05, {"dot": "green", "text": "Committed · 3f2a1c"}]]}
    ],
    "steps": [
@@ -785,7 +785,7 @@
     {"el": "poly", "points": [[-2, -3], [-2, 3]], "width": 1.2, "dash": true, "color": "hov", "from": 2.6, "fade": 0.15, "offset": [-14, 4],
      "keys": [[2.6, {"offset": [-14, 4]}], [3.4, {"offset": [-14, 8.5]}], [3.5, {"dash": false, "color": "fg"}]]},
     {"el": "dim", "a": [-20, -6.5], "b": [-8, -6.5], "offset": -10, "value": "60", "from": 4.3},
-    {"el": "key", "caps": ["Enter"], "corner": "tr", "press": 3.95, "from": 3.7, "to": 4.4},
+    {"el": "key", "fixed": "enter", "corner": "tr", "press": 3.95, "from": 3.7, "to": 4.4},
     {"el": "cursor", "keys": [[0, {"pos": [12, 6]}], [0.3, {"pos": [4, -6]}], [1.2, {"pos": [-14, -2]}], [1.3, {"pos": [-14, -2], "click": 1}], [2.4, {"pos": [2, -2]}], [2.5, {"pos": [2, -2], "click": 1}],
                               [3.4, {"pos": [-14, 8.5]}], [3.5, {"pos": [-14, 8.5], "click": 1}], [4.4, {"pos": [-4, 4]}]]}
    ],
@@ -823,7 +823,7 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "shape", "profile": {"rect": [0, 0, 22, 12], "round": 3}, "holes": [{"circle": [5, 0, 3]}], "fill": "sel", "fillOpacity": 0.16, "keys": [[2.2, {"fillOpacity": 0.16}], [2.6, {"fillOpacity": 0.32}]]},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "sketch", "text": "Sketch", "dot": "sel", "to": 1.1},
-    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 0.8, "from": 0.4, "to": 1.4},
+    {"el": "key", "command": "sketch.finish", "press": 0.8, "from": 0.4, "to": 1.4},
     {"el": "label", "at": [0, -6, 0], "dy": 22, "text": "Profile", "box": "bg2", "from": 2.5}
    ],
    "steps": [
@@ -837,7 +837,7 @@
     {"el": "camera", "keys": [[1.05, {"zoom": 0.38, "center": [16, 9]}], [2.1, {"zoom": 1, "center": [0, 0]}]]},
     {"use": "isoScene", "args": {"area": [-14, -10, 14, 10]}},
     {"el": "solid", "profile": {"rect": [0, 0, 16, 10], "round": 1.5}, "holes": [{"circle": [3, 0, 2.5]}], "height": 8, "tone": "sel", "toneAmount": 0.35},
-    {"el": "key", "caps": ["F"], "press": 1.0, "from": 0.6, "to": 1.5}
+    {"el": "key", "command": "view.fit", "press": 1.0, "from": 0.6, "to": 1.5}
    ],
    "steps": [
     {"to": 1.05, "caption": "Press F"},
@@ -850,7 +850,7 @@
     {"el": "camera", "keys": [[1.0, {"az": -45, "elev": 35.264, "center": [0, 0]}], [2.0, {"az": -90, "elev": 90}], [2.6, {"center": [0, 0]}], [3.6, {"center": [-8, 3]}]]},
     {"use": "isoScene", "args": {"area": [-24, -16, 24, 16]}},
     {"el": "solid", "profile": {"rect": [0, 0, 26, 16], "round": 3}, "holes": [{"circle": [-6, 0, 3]}, {"circle": [6, 0, 3]}], "height": 3},
-    {"el": "key", "caps": ["Shift", "2"], "press": 0.9, "from": 0.5, "to": 1.5},
+    {"el": "key", "command": "view.2d", "press": 0.9, "from": 0.5, "to": 1.5},
     {"el": "chip", "screen": [0.03, 0.05], "text": "2D mode", "dot": "sel", "close": true, "from": 2.0},
     {"el": "cursor", "kind": "arrow", "keys": [[0, {"pos": [16, -12, 0]}], [2.2, {"kind": "arrow"}], [2.25, {"kind": "move"}], [2.4, {"pos": [6, -4, 3]}], [2.6, {"pos": [6, -4, 3], "down": true}], [3.6, {"pos": [6, -4, 3], "down": false}], [4.4, {"pos": [6, -4, 3]}]]}
    ],
@@ -868,8 +868,8 @@
     {"el": "solid", "profile": {"circle": [-10, 4, 4]}, "at": [0, 0, 3], "height": 9, "keys": [[1.1, {"opacity": 1}], [1.6, {"opacity": 0}], [3.3, {"opacity": 0}], [3.8, {"opacity": 1}]]},
     {"el": "solid", "profile": {"rect": [8, -2, 10, 8]}, "at": [0, 0, 3], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[0.8, {"toneAmount": 0.45}]]},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Isolated · 1 body", "dot": "amber", "close": true, "from": 1.5, "to": 3.3},
-    {"el": "key", "caps": ["I"], "press": 1.1, "from": 0.8, "to": 1.6},
-    {"el": "key", "caps": ["Shift", "I"], "press": 3.3, "from": 2.9, "to": 3.8},
+    {"el": "key", "command": "view.isolate", "press": 1.1, "from": 0.8, "to": 1.6},
+    {"el": "key", "command": "view.unisolate", "press": 3.3, "from": 2.9, "to": 3.8},
     {"el": "cursor", "keys": [[0, {"pos": [20, -16, 3]}], [0.8, {"pos": [8, -2, 9], "click": 1}], [1.6, {"pos": [16, -14, 9]}]]}
    ],
    "steps": [
@@ -878,26 +878,26 @@
     {"to": 4.2, "caption": "Shift+I brings everything back"}
    ]
   },
-  {"id": "select.bodies", "template": "filterScene", "args": {"caps": ["1"], "caption1": "Press 1 to pick whole bodies"},
+  {"id": "select.bodies", "template": "filterScene", "args": {"command": "select.bodies", "caption1": "Press 1 to pick whole bodies"},
    "items": [
     {"el": "solid", "profile": {"rect": [0, 0, 24, 16]}, "height": 10, "tone": "hov", "toneAmount": 0,
      "keys": [[0.75, {"toneAmount": 0, "tone": "hov"}], [0.9, {"toneAmount": 0.3}], [3.3, {"toneAmount": 0.3, "tone": "hov"}], [3.31, {"tone": "sel"}], [3.4, {"toneAmount": 0.45}]]},
     {"use": "filterCursor", "args": {"p1": [2, 2, 10], "p2": [-4, -8, 4], "p3": [12, 2, 5]}}]},
-  {"id": "select.faces", "template": "filterScene", "args": {"caps": ["2"], "caption1": "Press 2 to pick faces"},
+  {"id": "select.faces", "template": "filterScene", "args": {"command": "select.faces", "caption1": "Press 2 to pick faces"},
    "items": [
     {"el": "solid", "profile": {"rect": [0, 0, 24, 16]}, "height": 10},
     {"el": "poly", "closed": true, "color": "glow", "width": 2.2, "fill": "glow", "fillOpacity": 0.55, "points": [[-12, -8, 10], [12, -8, 10], [12, 8, 10], [-12, 8, 10]], "from": 0.8, "to": 1.5, "fade": 0.08},
     {"el": "poly", "closed": true, "color": "glow", "width": 2.2, "fill": "glow", "fillOpacity": 0.55, "points": [[-12, -8, 0], [12, -8, 0], [12, -8, 10], [-12, -8, 10]], "from": 1.6, "to": 2.4, "fade": 0.08},
     {"use": "pickFace", "args": {"face": [[12, -8, 0], [12, 8, 0], [12, 8, 10], [12, -8, 10]], "hover": 2.5, "pick": 3.3}},
     {"use": "filterCursor", "args": {"p1": [2, 2, 10], "p2": [-4, -8, 4], "p3": [12, 2, 5]}}]},
-  {"id": "select.edges", "template": "filterScene", "args": {"caps": ["3"], "caption1": "Press 3 to pick edges"},
+  {"id": "select.edges", "template": "filterScene", "args": {"command": "select.edges", "caption1": "Press 3 to pick edges"},
    "items": [
     {"el": "solid", "profile": {"rect": [0, 0, 24, 16]}, "height": 10},
     {"el": "poly", "points": [[-12, -8, 10], [12, -8, 10]], "color": "glow", "width": 6.5, "from": 0.8, "to": 1.5, "fade": 0.08},
     {"el": "poly", "points": [[12, -8, 0], [12, -8, 10]], "color": "glow", "width": 6.5, "from": 1.6, "to": 2.4, "fade": 0.08},
     {"use": "pickEdge", "args": {"edge": [[12, -8, 10], [12, 8, 10]], "hover": 2.5, "pick": 3.3}},
     {"use": "filterCursor", "args": {"p1": [2, -8, 10], "p2": [12, -8, 5], "p3": [12, 2, 10]}}]},
-  {"id": "select.vertices", "template": "filterScene", "args": {"caps": ["4"], "caption1": "Press 4 to pick vertices"},
+  {"id": "select.vertices", "template": "filterScene", "args": {"command": "select.vertices", "caption1": "Press 4 to pick vertices"},
    "items": [
     {"el": "solid", "profile": {"rect": [0, 0, 24, 16]}, "height": 10},
     {"el": "snap", "kind": "endpoint", "at": [-12, -8, 10], "color": "hov", "from": 0.8, "to": 1.5, "fade": 0.08},
@@ -914,7 +914,7 @@
      "keys": [[1.3, {"height": 8, "toneAmount": 0}], [1.4, {"toneAmount": 0.3}], [2.6, {"height": 14}], [3.1, {"toneAmount": 0.3}], [3.3, {"toneAmount": 0}]]},
     {"use": "pickFace", "args": {"face": [[-12, -8, 8], [12, -8, 8], [12, 8, 8], [-12, 8, 8]], "hover": 0.5, "pick": 0.9, "until": 1.4}},
     {"use": "dragHandle", "args": {"at0": [0, 0, 8], "at1": [0, 0, 14], "t0": 1.4, "t1": 2.6, "v0": 0, "v1": 6, "from": 1.1, "to": 3.1}},
-    {"el": "key", "caps": ["Enter"], "press": 3.1, "from": 2.85, "to": 3.6},
+    {"el": "key", "fixed": "enter", "press": 3.1, "from": 2.85, "to": 3.6},
     {"el": "cursor", "keys": [[0, {"pos": [18, -14, 0]}], [0.9, {"pos": [2, -2, 8], "click": 1}], [1.25, {"pos": [0, 0, 11]}], [1.4, {"pos": [0, 0, 11], "down": true}],
                               [2.6, {"pos": [0, 0, 17], "down": false}], [3.6, {"pos": [0, 0, 17]}], [4.2, {"pos": [16, -12, 14]}]]}
    ],
@@ -935,7 +935,7 @@
      "keys": [[1.5, {"toneAmount": 0.45, "opacity": 1}], [2.4, {"opacity": 1}], [2.6, {"opacity": 0.35}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 120, "title": "Combine", "rows": [["Operation", "Join"]], "from": 1.7, "to": 3.4,
      "keys": [[2.1, {"rows": [["Operation", "Join"]]}], [2.15, {"rows": [["Operation", "Cut"]]}]]},
-    {"el": "key", "caps": ["Enter"], "press": 3.2, "from": 2.95, "to": 3.7},
+    {"el": "key", "fixed": "enter", "press": 3.2, "from": 2.95, "to": 3.7},
     {"el": "cursor", "keys": [[0, {"pos": [18, -16, 0]}], [0.8, {"pos": [-6, -3, 10], "click": 1}], [1.5, {"pos": [5, -4, 14], "click": 1}], [2.4, {"pos": [16, -12, 12]}]]}
    ],
    "steps": [
@@ -954,7 +954,7 @@
     {"el": "plane", "plane": "yz", "center": [2, 0, 5], "size": [20, 14], "color": "fg2", "fillOpacity": 0.08, "keys": [[1.5, {"color": "sel", "fillOpacity": 0.16}], [3.0, {"color": "fg2", "fillOpacity": 0.06}]]},
     {"el": "solid", "profile": {"points": [[2, -7], [12, -7], [12, 7], [2, 7]]}, "height": 10, "tone": "amber", "from": 2.3, "fade": 0,
      "keys": [[2.3, {"offset": [0, 0, 0], "toneAmount": 0.35}], [2.9, {"offset": [3, 0, 0]}], [3.3, {"toneAmount": 0.35}], [3.5, {"toneAmount": 0}]]},
-    {"el": "key", "caps": ["Enter"], "press": 2.3, "from": 2.05, "to": 2.8},
+    {"el": "key", "fixed": "enter", "press": 2.3, "from": 2.05, "to": 2.8},
     {"el": "cursor", "keys": [[0, {"pos": [18, -16, 0]}], [0.8, {"pos": [-6, -3, 10], "click": 1}], [1.5, {"pos": [2, -6, 12], "click": 1}], [2.4, {"pos": [16, -12, 12]}]]}
    ],
    "steps": [
@@ -974,7 +974,7 @@
     {"el": "arrow", "dir": [0, 0, 1], "color": "blue", "len": 26, "at": [-6, 0, 8], "from": 1.0, "to": 3.3, "keys": [[1.5, {"at": [-6, 0, 8]}], [2.7, {"at": [8, 0, 8]}]]},
     {"el": "arrow", "dir": [1, 0, 0], "color": "red", "len": 26, "at": [-6, 0, 8], "from": 1.0, "to": 3.3, "keys": [[1.5, {"at": [-6, 0, 8]}], [2.7, {"at": [8, 0, 8]}]]},
     {"el": "hud", "fields": [0], "unit": " mm", "dec": 1, "from": 1.5, "to": 3.3, "keys": [[1.5, {"fields": [0]}], [2.7, {"fields": [14]}]]},
-    {"el": "key", "caps": ["Enter"], "press": 3.3, "from": 3.05, "to": 3.8},
+    {"el": "key", "fixed": "enter", "press": 3.3, "from": 3.05, "to": 3.8},
     {"el": "cursor", "keys": [[0, {"pos": [18, -16, 0]}], [0.8, {"pos": [-4, -3, 8], "click": 1}], [1.35, {"pos": [-2, 0, 8]}], [1.5, {"pos": [-2, 0, 8], "down": true}],
                               [2.7, {"pos": [12, 0, 8], "down": false}], [3.6, {"pos": [12, 0, 8]}], [4.3, {"pos": [20, -12, 6]}]]}
    ],
@@ -995,7 +995,7 @@
      "keys": [[1.2, {"profile": {"rect": [2, 1, 0.01, 0.01]}, "height": 0.01, "toneAmount": 0.35}], [1.8, {"profile": {"rect": [2, 1, 24, 16]}}], [2.4, {"height": 10}],
               [3.1, {"toneAmount": 0.35}], [3.3, {"toneAmount": 0}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 112, "title": "Box", "rows": [["Length", "24 mm"], ["Width", "16 mm"], ["Height", "10 mm"]], "from": 1.0, "to": 3.3},
-    {"el": "key", "caps": ["Enter"], "press": 3.1, "from": 2.85, "to": 3.6},
+    {"el": "key", "fixed": "enter", "press": 3.1, "from": 2.85, "to": 3.6},
     {"el": "cursor", "keys": [[0, {"pos": [18, -14, 0]}], [0.8, {"pos": [2, 1, 0]}], [1.0, {"pos": [2, 1, 0], "click": 1}], [1.8, {"pos": [14, -7, 0]}], [3.0, {"pos": [16, -12, 0]}]]}
    ],
    "steps": [
@@ -1012,7 +1012,7 @@
     {"use": "pickFace", "args": {"face": [[-12, -8, 8], [12, -8, 8], [12, 8, 8], [-12, 8, 8]], "hover": 0.5, "pick": 0.9, "until": 1.3}},
     {"el": "plane", "plane": "xy", "size": [30, 20], "color": "sel", "fillOpacity": 0.14, "center": [0, 0, 8], "from": 1.2, "keys": [[1.4, {"center": [0, 0, 8]}], [2.5, {"center": [0, 0, 16]}]]},
     {"use": "dragHandle", "args": {"at0": [0, 0, 8], "at1": [0, 0, 16], "t0": 1.4, "t1": 2.5, "v0": 0, "v1": 8, "from": 1.2, "to": 3.0}},
-    {"el": "key", "caps": ["Enter"], "press": 3.0, "from": 2.75, "to": 3.5},
+    {"el": "key", "fixed": "enter", "press": 3.0, "from": 2.75, "to": 3.5},
     {"el": "cursor", "keys": [[0, {"pos": [18, -14, 0]}], [0.9, {"pos": [3, -3, 8], "click": 1}], [1.25, {"pos": [0, 0, 11]}], [1.4, {"pos": [0, 0, 11], "down": true}],
                               [2.5, {"pos": [0, 0, 19], "down": false}], [3.4, {"pos": [0, 0, 19]}], [4.0, {"pos": [16, -12, 16]}]]}
    ],
@@ -1031,7 +1031,7 @@
     {"el": "poly", "width": 0, "dots": true, "from": 0.7, "to": 3.5, "fade": 0, "points": [[-20, -6], [-20, -6]],
      "keys": [[1.4, {"points": [[-20, -6], [-8, 6]]}], [2.1, {"points": [[-20, -6], [-8, 6], [6, -6]]}], [2.8, {"points": [[-20, -6], [-8, 6], [6, -6], [18, 6]]}]]},
     {"el": "poly", "smooth": true, "dots": true, "points": [[-20, -6], [-8, 6], [6, -6], [18, 6]], "from": 3.5, "fade": 0},
-    {"el": "key", "caps": ["Enter"], "press": 3.5, "from": 3.25, "to": 4.0},
+    {"el": "key", "fixed": "enter", "press": 3.5, "from": 3.25, "to": 4.0},
     {"use": "sketchDraw", "args": {"badge": "spline", "keys": [[0, {"pos": [-26, 4]}], [0.7, {"pos": [-20, -6], "click": 1}], [1.4, {"pos": [-8, 6], "click": 1}], [2.1, {"pos": [6, -6], "click": 1}],
                                                          [2.8, {"pos": [18, 6], "click": 1}], [3.3, {"pos": [22, 2]}], [4.2, {"pos": [24, -8]}]]}}
    ],
@@ -1066,7 +1066,7 @@
     {"el": "rect", "corners": [[-18, -9], [14, 9]], "dots": true},
     {"el": "poly", "points": [[-18, -9], [14, 9]], "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
     {"el": "poly", "points": [[-18, -9], [14, 9]], "dots": true, "color": "fg", "dash": false, "keys": [[0.9, {"color": "sel"}], [1.5, {"color": "fg2", "dash": true}]]},
-    {"el": "key", "caps": ["X"], "press": 1.5, "from": 1.2, "to": 2.0},
+    {"el": "key", "command": "sketch.construction", "press": 1.5, "from": 1.2, "to": 2.0},
     {"el": "cursor", "keys": [[0, {"pos": [-24, 10]}], [0.9, {"pos": [-2, 0], "click": 1}], [1.8, {"pos": [-2, 0]}], [2.6, {"pos": [20, 10]}]]}
    ],
    "steps": [
@@ -1084,7 +1084,7 @@
     {"el": "poly", "points": [[0, -8], [12, -8], [12, -2], [4, 6], [0, 6]], "closed": true, "dots": true, "color": "hov", "pivot": [-4, 0], "from": 2.1, "fade": 0,
      "keys": [[2.1, {"scale": [1, 1, 1]}], [3.0, {"scale": [-1, 1, 1]}], [3.4, {"color": "fg"}]]},
     {"el": "glyph", "kind": "symmetric", "at": [-4, -8], "dx": 0, "dy": 14, "from": 3.1},
-    {"el": "key", "caps": ["Enter"], "press": 1.1, "from": 0.9, "to": 1.5},
+    {"el": "key", "fixed": "enter", "press": 1.1, "from": 0.9, "to": 1.5},
     {"el": "cursor", "keys": [[0, {"pos": [24, 10]}], [0.8, {"pos": [6, -8], "click": 1}], [1.9, {"pos": [-4, 4], "click": 1}], [2.6, {"pos": [-4, 4]}], [3.4, {"pos": [-20, 10]}]]}
    ],
    "steps": [
@@ -1101,7 +1101,7 @@
     {"el": "solid", "profile": {"rect": [-15, -8, 10, 8], "round": 1.5}, "holes": [{"circle": [-15, -8, 2]}], "height": 6, "tone": "sel", "toneAmount": 0.35},
     {"el": "solid", "profile": {"circle": [12, 8, 5]}, "height": 12},
     {"el": "solid", "profile": {"rect": [13, -11, 12, 6]}, "height": 4},
-    {"el": "key", "caps": ["Shift", "F"], "press": 1.0, "from": 0.6, "to": 1.5}
+    {"el": "key", "command": "view.fitall", "press": 1.0, "from": 0.6, "to": 1.5}
    ],
    "steps": [
     {"to": 1.05, "caption": "Press Shift+F"},
@@ -1114,7 +1114,7 @@
     {"el": "camera", "keys": [[1.0, {"az": -90, "elev": 89.5, "zoom": 1.35, "center": [3, -4]}], [2.3, {"az": -45, "elev": 35.264, "zoom": 1, "center": [0, 0]}]]},
     {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
     {"use": "bracket"},
-    {"el": "key", "caps": ["H"], "press": 0.9, "from": 0.5, "to": 1.4}
+    {"el": "key", "command": "view.home", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
     {"to": 1.0, "caption": "Press H"},
@@ -1127,7 +1127,7 @@
     {"el": "camera", "keys": [[1.0, {"persp": 1.1}], [2.0, {"persp": 0}]]},
     {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 20, 16], "round": 1}, "holes": [{"circle": [5, 0, 3]}], "height": 16},
-    {"el": "key", "caps": ["Shift", "3"], "press": 0.9, "from": 0.5, "to": 1.4},
+    {"el": "key", "command": "view.ortho", "press": 0.9, "from": 0.5, "to": 1.4},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Perspective", "to": 1.2, "fade": 0},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Orthographic", "dot": "sel", "from": 1.2, "fade": 0}
    ],
@@ -1137,19 +1137,19 @@
    ]
   },
   {"id": "view.shaded", "template": "viewStyle",
-   "args": {"caps": ["5"], "name": "Shaded", "from": "shaded", "to": "plain", "caption1": "Press 5", "caption2": "Faces only, no edge lines"}},
+   "args": {"command": "view.shaded", "name": "Shaded", "from": "shaded", "to": "plain", "caption1": "Press 5", "caption2": "Faces only, no edge lines"}},
   {"id": "view.edges", "template": "viewStyle",
-   "args": {"caps": ["6"], "name": "Shaded with edges", "from": "plain", "to": "shaded", "caption1": "Press 6", "caption2": "Faces with their edges drawn"}},
+   "args": {"command": "view.edges", "name": "Shaded with edges", "from": "plain", "to": "shaded", "caption1": "Press 6", "caption2": "Faces with their edges drawn"}},
   {"id": "view.wire", "template": "viewStyle",
-   "args": {"caps": ["7"], "name": "Wireframe", "from": "shaded", "to": "wire", "caption1": "Press 7", "caption2": "Edges only; hidden ones show through"}},
+   "args": {"command": "view.wire", "name": "Wireframe", "from": "shaded", "to": "wire", "caption1": "Press 7", "caption2": "Edges only; hidden ones show through"}},
   {
    "id": "view.grid", "duration": 4.2, "view": "iso", "extent": [-20, -14, 20, 14],
    "items": [
     {"el": "grid", "spacing": 10, "area": [-18, -14, 18, 14], "from": 1.0, "to": 3.2, "fade": 0.35},
     {"el": "axes", "len": 6, "from": 1.0, "to": 3.2, "fade": 0.35},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
-    {"el": "key", "caps": ["G"], "press": 0.9, "from": 0.5, "to": 1.4},
-    {"el": "key", "caps": ["G"], "press": 3.1, "from": 2.7, "to": 3.6}
+    {"el": "key", "command": "view.grid", "press": 0.9, "from": 0.5, "to": 1.4},
+    {"el": "key", "command": "view.grid", "press": 3.1, "from": 2.7, "to": 3.6}
    ],
    "steps": [
     {"to": 1.0, "caption": "Press G"},
@@ -1185,7 +1185,7 @@
     {"el": "solid", "profile": {"rect": [-2, -5, 16, 8]}, "height": 7, "tone": "sel", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.7, {"toneAmount": 0.45}], [2.4, {"toneAmount": 0.45}], [2.6, {"toneAmount": 0}], [3.9, {"toneAmount": 0}], [4.1, {"toneAmount": 0.45}]]},
     {"el": "band", "a": [-14, -8, 18], "b": "cursor", "from": 0.5, "to": 1.6, "fade": 0},
     {"el": "band", "a": [-14, -8, 18], "b": "cursor", "from": 2.9, "to": 4.0, "fade": 0},
-    {"el": "key", "caps": ["Alt", "X"], "press": 2.4, "from": 2.0, "to": 2.9},
+    {"el": "key", "command": "select.through", "press": 2.4, "from": 2.0, "to": 2.9},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "wireframe", "text": "Select through", "dot": "sel", "from": 2.45},
     {"el": "cursor", "keys": [[0, {"pos": [-14, -8, 18]}], [0.5, {"pos": [-14, -8, 18], "down": true}], [1.5, {"pos": [20, 1, 0], "down": false}], [2.6, {"pos": [20, 6, 0]}],
                               [2.8, {"pos": [-14, -8, 18]}], [2.9, {"pos": [-14, -8, 18], "down": true}], [3.9, {"pos": [20, 1, 0], "down": false}], [4.8, {"pos": [20, 6, 0]}]]}
@@ -1204,7 +1204,7 @@
     {"el": "solid", "profile": {"circle": [-10, 4, 4]}, "at": [0, 0, 3], "height": 9, "opacity": 0, "keys": [[1.1, {"opacity": 0}], [1.7, {"opacity": 1}]]},
     {"el": "solid", "profile": {"rect": [8, -2, 10, 8]}, "at": [0, 0, 3], "height": 6, "tone": "sel", "toneAmount": 0.45},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Isolated · 1 body", "dot": "amber", "close": true, "to": 1.1},
-    {"el": "key", "caps": ["Shift", "I"], "press": 0.9, "from": 0.5, "to": 1.4}
+    {"el": "key", "command": "view.unisolate", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
     {"to": 1.0, "caption": "While isolated, press Shift+I"},
@@ -1218,7 +1218,7 @@
     {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
     {"el": "solid", "plane": "xz", "at": [0, 8, 0], "height": 16, "profile": {"points": [[-12, 0], [12, 0], [12, 4], [-12, 16]]}},
     {"use": "pickFace", "args": {"face": [[12, -8, 4], [12, 8, 4], [-12, 8, 16], [-12, -8, 16]], "hover": 0.5, "pick": 1.0, "until": 3.6}},
-    {"el": "key", "caps": ["Shift", "A"], "press": 1.3, "from": 1.0, "to": 1.8},
+    {"el": "key", "command": "view.alignPlane", "press": 1.3, "from": 1.0, "to": 1.8},
     {"el": "cursor", "to": 1.9, "keys": [[0, {"pos": [14, -14, 0]}], [1.0, {"pos": [0, 0, 10], "click": 1}], [1.9, {"pos": [6, -10, 4]}]]}
    ],
    "steps": [
@@ -1226,13 +1226,13 @@
     {"to": 4.4, "caption": "Shift+A turns the view square to it"}
    ]
   },
-  {"id": "view.top", "template": "standardView", "args": {"caps": ["Shift", "↑"], "az": -90, "elev": 89.5, "name": "Top", "caption1": "Press Shift+↑"}},
-  {"id": "view.front", "template": "standardView", "args": {"caps": ["Shift", "PgUp"], "az": -90, "elev": 0, "name": "Front", "caption1": "Press Shift+PgUp"}},
-  {"id": "view.right", "template": "standardView", "args": {"caps": ["Shift", "→"], "az": 0, "elev": 0, "name": "Right", "caption1": "Press Shift+→"}},
-  {"id": "view.iso", "template": "standardView", "args": {"caps": ["Shift", "H"], "az": -45, "elev": 35.264, "name": "Isometric", "caption1": "Press Shift+H", "az0": -90, "elev0": 0}},
-  {"id": "view.bottom", "template": "standardView", "args": {"caps": ["Shift", "↓"], "az": -90, "elev": -89.5, "name": "Bottom", "caption1": "Press Shift+↓"}},
-  {"id": "view.back", "template": "standardView", "args": {"caps": ["Shift", "PgDn"], "az": 90, "elev": 0, "name": "Back", "caption1": "Press Shift+PgDn"}},
-  {"id": "view.left", "template": "standardView", "args": {"caps": ["Shift", "←"], "az": 180, "elev": 0, "name": "Left", "caption1": "Press Shift+←"}},
+  {"id": "view.top", "template": "standardView", "args": {"command": "view.top", "az": -90, "elev": 89.5, "name": "Top", "caption1": "Press Shift+↑"}},
+  {"id": "view.front", "template": "standardView", "args": {"command": "view.front", "az": -90, "elev": 0, "name": "Front", "caption1": "Press Shift+PgUp"}},
+  {"id": "view.right", "template": "standardView", "args": {"command": "view.right", "az": 0, "elev": 0, "name": "Right", "caption1": "Press Shift+→"}},
+  {"id": "view.iso", "template": "standardView", "args": {"command": "view.iso", "az": -45, "elev": 35.264, "name": "Isometric", "caption1": "Press Shift+H", "az0": -90, "elev0": 0}},
+  {"id": "view.bottom", "template": "standardView", "args": {"command": "view.bottom", "az": -90, "elev": -89.5, "name": "Bottom", "caption1": "Press Shift+↓"}},
+  {"id": "view.back", "template": "standardView", "args": {"command": "view.back", "az": 90, "elev": 0, "name": "Back", "caption1": "Press Shift+PgDn"}},
+  {"id": "view.left", "template": "standardView", "args": {"command": "view.left", "az": 180, "elev": 0, "name": "Left", "caption1": "Press Shift+←"}},
   {
    "id": "view.rollleft", "duration": 3.6, "extent": [-24, -15, 24, 15],
    "items": [
@@ -1240,7 +1240,7 @@
     {"el": "grid", "spacing": 5},
     {"el": "shape", "profile": {"points": [[-12, -8], [10, -8], [10, -3], [-6, -3], [-6, 9], [-12, 9]]}, "holes": [{"circle": [-9, 5, 1.6]}], "fill": "fg3", "fillOpacity": 0.25, "color": "fg2"},
     {"el": "letters", "value": "F", "at": [2, -6.8], "height": 3, "color": "fg2"},
-    {"el": "key", "caps": ["Alt", "←"], "press": 0.9, "from": 0.5, "to": 1.4}
+    {"el": "key", "command": "view.rollleft", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
     {"to": 1.0, "caption": "Press Alt+←"},
@@ -1254,7 +1254,7 @@
     {"el": "grid", "spacing": 5},
     {"el": "shape", "profile": {"points": [[-12, -8], [10, -8], [10, -3], [-6, -3], [-6, 9], [-12, 9]]}, "holes": [{"circle": [-9, 5, 1.6]}], "fill": "fg3", "fillOpacity": 0.25, "color": "fg2"},
     {"el": "letters", "value": "F", "at": [2, -6.8], "height": 3, "color": "fg2"},
-    {"el": "key", "caps": ["Alt", "→"], "press": 0.9, "from": 0.5, "to": 1.4}
+    {"el": "key", "command": "view.rollright", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
     {"to": 1.0, "caption": "Press Alt+→"},
@@ -1313,7 +1313,7 @@
     {"el": "poly", "points": [[-8, 6], "cursor"], "color": "green", "dash": true, "width": 1.2, "from": 2.1, "to": 4.8, "fade": 0.1,
      "keys": [[3.4, {"width": 1.2}], [3.5, {"width": 2.4}]]},
     {"el": "glyph", "kind": "fix", "at": "cursor", "dx": 14, "dy": 12, "from": 3.5, "to": 4.8},
-    {"el": "key", "caps": ["Shift"], "press": 3.45, "from": 3.2, "to": 4.6},
+    {"el": "key", "fixed": "shift", "press": 3.45, "from": 3.2, "to": 4.6},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "tracking", "text": "Tracking F12", "dot": "sel"},
     {"use": "sketchDraw", "args": {"badge": "line", "keys": [[0, {"pos": [-2, -8]}], [0.9, {"pos": [-8, 6]}], [1.4, {"pos": [-8, 6]}], [2.1, {"pos": [4, 6.4]}], [2.9, {"pos": [12, 6]}],
                                                       [3.5, {"pos": [12, 6]}], [4.3, {"pos": [20, 6]}], [4.8, {"pos": [20, 6], "click": 1}]]}}
@@ -1329,7 +1329,7 @@
    "items": [
     {"use": "sketchScene"},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "grid", "text": "Grid snapping F9", "keys": [[2.0, {"dot": "fg3"}], [2.05, {"dot": "sel"}]], "dot": "fg3"},
-    {"el": "key", "caps": ["F9"], "press": 2.0, "from": 1.7, "to": 2.5},
+    {"el": "key", "command": "view.gridSnap", "press": 2.0, "from": 1.7, "to": 2.5},
     {"el": "circle", "center": "cursor", "r": 1.2, "color": "green", "width": 1.3, "from": 2.6},
     {"use": "sketchDraw", "args": {"badge": "", "keys": [[0, {"pos": [-22, -9.3]}], [1.7, {"pos": [-7.4, 3.1], "ease": "linear"}], [2.4, {"pos": [-5, 5], "ease": "step"}],
                                                   [2.9, {"pos": [0, 5], "ease": "step"}], [3.4, {"pos": [5, 5], "ease": "step"}], [3.9, {"pos": [5, 0], "ease": "step"}],
@@ -1345,7 +1345,7 @@
    "items": [
     {"use": "sketchScene"},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Ortho F8", "keys": [[1.0, {"dot": "fg3"}], [1.05, {"dot": "sel"}]], "dot": "fg3"},
-    {"el": "key", "caps": ["F8"], "press": 1.0, "from": 0.7, "to": 1.5},
+    {"el": "key", "command": "view.orthoSnap", "press": 1.0, "from": 0.7, "to": 1.5},
     {"el": "poly", "color": "hov", "from": 1.6, "to": 3.6, "fade": 0, "points": [[-18, -7], [-18, -7]],
      "keys": [[1.6, {"points": [[-18, -7], [-18, -7]]}], [2.4, {"points": [[-18, -7], [-4, -7]]}], [3.0, {"points": [[-18, -7], [6, -7]]}], [3.5, {"points": [[-18, -7], [8, -7]]}]]},
     {"el": "poly", "points": [[-18, -7], [8, -7]], "dots": true, "from": 3.6, "fade": 0},
@@ -1367,7 +1367,7 @@
    "items": [
     {"use": "sketchScene"},
     {"el": "chip", "screen": [0.03, 0.05], "text": "Polar F10", "keys": [[1.0, {"dot": "fg3"}], [1.05, {"dot": "sel"}]], "dot": "fg3"},
-    {"el": "key", "caps": ["F10"], "press": 1.0, "from": 0.7, "to": 1.5},
+    {"el": "key", "command": "view.polarSnap", "press": 1.0, "from": 0.7, "to": 1.5},
     {"el": "poly", "points": [[-16, -8], [14, 9.32]], "color": "green", "dash": true, "width": 1.2, "from": 2.0, "to": 3.6, "fade": 0.15},
     {"el": "poly", "points": [[-16, -8], [-4, -8]], "color": "fg3", "dash": true, "width": 1, "from": 2.0, "to": 3.6, "fade": 0.15},
     {"el": "label", "at": [-9.5, -6.6], "value": "30°", "color": "green", "from": 2.0, "to": 3.6},
@@ -1390,7 +1390,7 @@
     {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1, {"toneAmount": 0}], [1.1, {"toneAmount": 0.4}]]},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[1, {"toneAmount": 0}], [1.1, {"toneAmount": 0.4}]]},
     {"el": "solid", "profile": {"circle": [-6, 10, 2.5]}, "height": 7, "tone": "sel", "toneAmount": 0, "keys": [[1, {"toneAmount": 0}], [1.1, {"toneAmount": 0.4}]]},
-    {"el": "key", "caps": ["Ctrl", "A"], "press": 0.95, "from": 0.6, "to": 1.45}
+    {"el": "key", "command": "edit.selectall", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+A"},
@@ -1406,7 +1406,7 @@
      "keys": [[0.6, {"toneAmount": 0}], [0.7, {"toneAmount": 0.4}], [1.5, {"toneAmount": 0.4}], [1.6, {"toneAmount": 0}]]},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.6, {"toneAmount": 0.4}]]},
     {"el": "solid", "profile": {"circle": [-6, 10, 2.5]}, "height": 7, "tone": "sel", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.6, {"toneAmount": 0.4}]]},
-    {"el": "key", "caps": ["Ctrl", "Shift", "I"], "press": 1.45, "from": 1.1, "to": 1.95},
+    {"el": "key", "command": "edit.invert", "press": 1.45, "from": 1.1, "to": 1.95},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.6, {"pos": [-1, -3, 5], "click": 1}], [1.4, {"pos": [14, 8, 0]}]]}
    ],
    "steps": [
@@ -1424,8 +1424,8 @@
      "keys": [[0.5, {"toneAmount": 0}], [0.6, {"toneAmount": 0.4}], [1.0, {"opacity": 1}], [1.5, {"opacity": 0}]]},
     {"el": "solid", "profile": {"circle": [-6, 10, 2.5]}, "height": 7, "tone": "sel", "toneAmount": 0,
      "keys": [[2.0, {"toneAmount": 0}], [2.1, {"toneAmount": 0.4}], [2.8, {"opacity": 1}], [3.3, {"opacity": 0}]]},
-    {"el": "key", "caps": ["V"], "press": 0.95, "from": 0.6, "to": 1.45},
-    {"el": "key", "caps": ["Shift", "Enter"], "press": 2.75, "from": 2.4, "to": 3.3},
+    {"el": "key", "command": "edit.hide", "press": 0.95, "from": 0.6, "to": 1.45},
+    {"el": "key", "command": "edit.repeat", "press": 2.75, "from": 2.4, "to": 3.3},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.5, {"pos": [8, 0, 10], "click": 1}], [1.5, {"pos": [14, -8, 4]}], [2.0, {"pos": [-6, 10, 7], "click": 1}], [3.0, {"pos": [14, 8, 0]}]]}
    ],
    "steps": [
@@ -1466,7 +1466,7 @@
     {"el": "solid", "profile": {"rect": [10, 0, 10, 14]}, "height": 12},
     {"el": "dim", "a": [-5, -7, 8], "b": [5, -7, 8], "offset": 18, "value": "10.000 mm", "color": "hov", "keys": [[1.3, {"color": "hov"}], [1.35, {"color": "sel"}]]},
     {"el": "glyph", "kind": "fix", "at": [0, -7, 8], "dx": 0, "dy": -44, "color": "sel", "from": 1.35},
-    {"el": "key", "caps": ["P"], "press": 1.3, "from": 0.9, "to": 1.8},
+    {"el": "key", "command": "inspect.pin", "press": 1.3, "from": 0.9, "to": 1.8},
     {"el": "timeline", "screen": [0.03, 0.78], "markers": ["box", "box"], "states": ["", ""],
      "keys": [[1.4, {"markers": ["box", "box"], "states": ["", ""]}], [1.45, {"markers": ["box", "box", "pin"], "states": ["", "", "flash"]}], [2.2, {"states": ["", "", ""]}]]}
    ],
@@ -1547,7 +1547,7 @@
     {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "height": 16, "opacity": 0.15, "from": 1.2, "fade": 0.2},
     {"el": "solid", "plane": "yz", "at": [0, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "height": 16, "from": 1.2, "fade": 0.2},
     {"el": "plane", "plane": "yz", "center": [0, 0, 7], "size": [26, 18], "color": "sel", "fillOpacity": 0.1},
-    {"el": "key", "caps": ["Shift", "X"], "press": 1.0, "from": 0.6, "to": 1.5}
+    {"el": "key", "command": "inspect.flip", "press": 1.0, "from": 0.6, "to": 1.5}
    ],
    "steps": [
     {"to": 1.1, "caption": "With a section on, press Shift+X"},
@@ -1589,7 +1589,7 @@
     {"use": "pickFace", "args": {"face": [[-5, -7, 0], [-5, 7, 0], [-5, 7, 8], [-5, -7, 8]], "hover": -1, "pick": 0, "until": 1.2}},
     {"use": "pickFace", "args": {"face": [[5, -7, 0], [5, 7, 0], [5, 7, 12], [5, -7, 12]], "hover": -1, "pick": 0, "until": 1.2}},
     {"el": "dim", "a": [-5, -7, 8], "b": [5, -7, 8], "offset": 18, "value": "10.000 mm", "color": "sel", "to": 1.2, "fade": 0.3},
-    {"el": "key", "caps": ["Esc"], "press": 0.9, "from": 0.5, "to": 1.4}
+    {"el": "key", "fixed": "esc", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
     {"to": 1.0, "caption": "Press Esc"},
@@ -1817,7 +1817,7 @@
     {"el": "poly", "points": [[-20, -8], [-20, -8]], "color": "fg3", "dash": true, "width": 1, "dots": true, "from": 0.6, "fade": 0, "keys": [[0.6, {"points": [[-20, -8], [-20, -8], [-20, -8], [-20, -8]]}], [1.3, {"points": [[-20, -8], [-10, 10], [-10, 10], [-10, 10]], "ease": "step"}], [2, {"points": [[-20, -8], [-10, 10], [6, -10], [6, -10]], "ease": "step"}], [2.7, {"points": [[-20, -8], [-10, 10], [6, -10], [18, 8]], "ease": "step"}]]},
     {"el": "poly", "points": [[-20, -8], [-19.58, -7.25], [-19.17, -6.5], [-18.75, -5.75], [-18.33, -5], [-17.92, -4.25], [-17.5, -3.5], [-17.08, -2.75], [-16.67, -2], [-16.25, -1.25], [-15.83, -0.5], [-15.42, 0.25], [-15, 1], [-14.58, 1.75], [-14.17, 2.5], [-13.75, 3.25], [-13.33, 4], [-12.92, 4.75], [-12.5, 5.5], [-12.08, 6.25], [-11.67, 7], [-11.25, 7.75], [-10.83, 8.5], [-10.42, 9.25], [-10, 10]], "color": "hov", "from": 1.3, "to": 3.3, "fade": 0, "keys": [[1.3, {"points": [[-20, -8], [-19.58, -7.25], [-19.17, -6.5], [-18.75, -5.75], [-18.33, -5], [-17.92, -4.25], [-17.5, -3.5], [-17.08, -2.75], [-16.67, -2], [-16.25, -1.25], [-15.83, -0.5], [-15.42, 0.25], [-15, 1], [-14.58, 1.75], [-14.17, 2.5], [-13.75, 3.25], [-13.33, 4], [-12.92, 4.75], [-12.5, 5.5], [-12.08, 6.25], [-11.67, 7], [-11.25, 7.75], [-10.83, 8.5], [-10.42, 9.25], [-10, 10]]}], [2, {"points": [[-20, -8], [-19.16, -6.57], [-18.29, -5.26], [-17.41, -4.09], [-16.5, -3.06], [-15.57, -2.15], [-14.62, -1.38], [-13.66, -0.73], [-12.67, -0.22], [-11.66, 0.16], [-10.62, 0.4], [-9.57, 0.52], [-8.5, 0.5], [-7.41, 0.35], [-6.29, 0.07], [-5.16, -0.34], [-4, -0.89], [-2.82, -1.57], [-1.62, -2.38], [-0.41, -3.32], [0.83, -4.39], [2.09, -5.59], [3.37, -6.93], [4.68, -8.4], [6, -10]], "ease": "step"}], [2.7, {"points": [[-20, -8], [-18.72, -5.94], [-17.38, -4.25], [-15.99, -2.88], [-14.55, -1.81], [-13.06, -1.01], [-11.53, -0.44], [-9.97, -0.06], [-8.37, 0.15], [-6.75, 0.23], [-5.1, 0.21], [-3.43, 0.12], [-1.75, 0], [-0.06, -0.12], [1.64, -0.21], [3.34, -0.23], [5.04, -0.15], [6.73, 0.06], [8.41, 0.44], [10.07, 1.01], [11.71, 1.81], [13.33, 2.88], [14.92, 4.25], [16.48, 5.94], [18, 8]], "ease": "step"}]]},
     {"el": "poly", "points": [[-20, -8], [-18.72, -5.94], [-17.38, -4.25], [-15.99, -2.88], [-14.55, -1.81], [-13.06, -1.01], [-11.53, -0.44], [-9.97, -0.06], [-8.37, 0.15], [-6.75, 0.23], [-5.1, 0.21], [-3.43, 0.12], [-1.75, 0], [-0.06, -0.12], [1.64, -0.21], [3.34, -0.23], [5.04, -0.15], [6.73, 0.06], [8.41, 0.44], [10.07, 1.01], [11.71, 1.81], [13.33, 2.88], [14.92, 4.25], [16.48, 5.94], [18, 8]], "from": 3.3, "fade": 0},
-    {"el": "key", "caps": ["Enter"], "press": 3.3, "from": 3, "to": 3.8},
+    {"el": "key", "fixed": "enter", "press": 3.3, "from": 3, "to": 3.8},
     {"use": "sketchDraw", "args": {"badge": "controlSpline", "keys": [[0, {"pos": [-26, 2]}], [0.6, {"pos": [-20, -8], "click": 1}], [1.3, {"pos": [-10, 10], "click": 1}], [2, {"pos": [6, -10], "click": 1}], [2.7, {"pos": [18, 8], "click": 1}], [3.5, {"pos": [24, 0]}]]}}
    ],
    "steps": [
@@ -2133,7 +2133,7 @@
     {"el": "poly", "points": [[-12, -8], [-12, -8]], "width": 0, "dots": true},
     {"el": "poly", "points": [[18, -8], [18, -8]], "width": 0, "dots": true},
     {"el": "card", "screen": [0.03, 0.06], "w": 138, "title": "Spline node weights", "rows": [["Node weight", "1"]], "from": 1.1, "keys": [[1.6, {"rows": [["Node weight", "1"]]}], [2, {"rows": [["Node weight", "2"]], "ease": "step"}], [2.4, {"rows": [["Node weight", "4"]], "ease": "step"}]]},
-    {"el": "key", "caps": ["Alt", "W"], "press": 1, "from": 0.65, "to": 1.5},
+    {"el": "key", "command": "sketch.node", "press": 1, "from": 0.65, "to": 1.5},
     {"el": "cursor", "keys": [[0, {"pos": [16, 8]}], [0.9, {"pos": [4, 8], "click": 1}], [1.6, {"pos": [8, 10]}], [3.4, {"pos": [16, 10]}]]}
    ],
    "steps": [
@@ -2150,7 +2150,7 @@
     {"el": "circle", "center": [-12, 7.2], "r": 2, "color": "red", "width": 1.6, "from": 1, "fade": 0.25},
     {"el": "circle", "center": [-10.6, 8], "r": 2, "color": "red", "width": 1.6, "from": 1, "fade": 0.25},
     {"el": "circle", "center": [2, -13], "r": 2, "color": "red", "width": 1.6, "from": 1, "fade": 0.25},
-    {"el": "key", "caps": ["Alt", "E"], "press": 0.8, "from": 0.45, "to": 1.3}
+    {"el": "key", "command": "sketch.openEnds", "press": 0.8, "from": 0.45, "to": 1.3}
    ],
    "steps": [
     {"to": 0.9, "caption": "Press Alt+E"},
@@ -2323,7 +2323,7 @@
     {"el": "rect", "corners": [[-14, -7], [10, 7]], "color": "amber", "width": 2, "keys": [[1.5, {"color": "amber"}], [1.6, {"color": "fg"}]]},
     {"el": "rect", "corners": [[-14, -7], [10, 7]], "dots": true, "width": 0, "from": 1.6},
     {"el": "chip", "at": [10, 7], "dx": 34, "dy": -14, "icon": "breakLink", "text": "Linked", "to": 1.6},
-    {"el": "key", "caps": ["Enter"], "press": 1.5, "from": 1.2, "to": 2},
+    {"el": "key", "fixed": "enter", "press": 1.5, "from": 1.2, "to": 2},
     {"el": "cursor", "keys": [[0, {"pos": [-20, 10]}], [0.9, {"pos": [-2, 7], "click": 1}], [2.2, {"pos": [-2, 7]}], [2.6, {"pos": [10, 7]}], [2.8, {"pos": [10, 7], "down": true}], [3.5, {"pos": [14, 9], "down": false}]]}
    ],
    "steps": [
@@ -2519,7 +2519,7 @@
     {"use": "sketchScene"},
     {"el": "rect", "corners": [[-4, -6], [14, 6]], "dots": true},
     {"el": "card", "screen": [-0.5, 0.06], "w": 132, "title": "Sketch tools", "rows": [{"text": "Line", "icon": "line"}, ["Input", "Relative"], {"text": "Constraints", "icon": "list"}, {"text": "Snaps", "icon": "magnet"}], "keys": [[0.9, {"screen": [-0.5, 0.06]}], [1.4, {"screen": [0.03, 0.06]}]]},
-    {"el": "key", "caps": ["Ctrl", "Alt", "S"], "press": 0.8, "from": 0.45, "to": 1.3}
+    {"el": "key", "command": "sketch.panel", "press": 0.8, "from": 0.45, "to": 1.3}
    ],
    "steps": [
     {"to": 0.9, "caption": "Press Ctrl+Alt+S"},
@@ -2539,7 +2539,7 @@
     {"el": "arc", "center": [0, 0, 3], "r": 10, "start": 0, "sweep": -120, "color": "fg2", "dash": true, "width": 1.3, "keys": [[1.8, {"color": "sel", "width": 1.8}]]},
     {"el": "circle", "center": [10, 0, 3], "r": 2.5, "plane": "xz", "color": "fg2", "fill": "fg3", "fillOpacity": 0.2, "keys": [[0.5, {"color": "glow"}], [0.9, {"color": "sel", "fill": "sel", "fillOpacity": 0.3}]]},
     {"el": "lathe", "profile": [[12.5, 3], [12.41, 3.65], [12.17, 4.25], [11.77, 4.77], [11.25, 5.17], [10.65, 5.41], [10, 5.5], [9.35, 5.41], [8.75, 5.17], [8.23, 4.77], [7.83, 4.25], [7.59, 3.65], [7.5, 3], [7.59, 2.35], [7.83, 1.75], [8.23, 1.23], [8.75, 0.83], [9.35, 0.59], [10, 0.5], [10.65, 0.59], [11.25, 0.83], [11.77, 1.23], [12.17, 1.75], [12.41, 2.35]], "n": 40, "tone": "sel", "from": 2, "fade": 0, "keys": [[2, {"sweep": -0.6, "toneAmount": 0.35}], [3.4, {"sweep": -120}], [3.8, {"toneAmount": 0.35}], [4, {"toneAmount": 0}]]},
-    {"el": "key", "caps": ["Enter"], "press": 3.8, "from": 3.5, "to": 4.3},
+    {"el": "key", "fixed": "enter", "press": 3.8, "from": 3.5, "to": 4.3},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [10, -2, 5], "click": 1}], [1.8, {"pos": [0, -10, 3], "click": 1}], [2.6, {"pos": [0, -10, 3]}], [3.4, {"pos": [14, -14, 6]}]]}
    ],
    "steps": [
@@ -2557,7 +2557,7 @@
     {"el": "circle", "center": [0, 0, 14], "r": 5, "color": "fg2", "width": 1.6, "to": 2.4, "fade": 0.3, "keys": [[1.6, {"color": "sel"}]]},
     {"el": "chip", "at": [10, 0, 0], "dx": 18, "dy": 0, "value": "1", "from": 0.9, "to": 2.4},
     {"el": "chip", "at": [5, 0, 14], "dx": 18, "dy": 0, "value": "2", "from": 1.6, "to": 2.4},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.3, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.3, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [7.07, -7.07, 0], "click": 1}], [1.6, {"pos": [3.54, -3.54, 14], "click": 1}], [2.4, {"pos": [3.54, -3.54, 14]}], [3.2, {"pos": [16, -12, 10]}]]}
    ],
    "steps": [
@@ -2577,7 +2577,7 @@
     {"el": "lathe", "profile": [[0.01, -9], [1.56, -8.86], [3.08, -8.46], [4.5, -7.79], [5.79, -6.89], [6.89, -5.79], [7.79, -4.5], [8.46, -3.08], [8.86, -1.56], [9, 0], [8.86, 1.56], [8.46, 3.08], [7.79, 4.5], [6.89, 5.79], [5.79, 6.89], [4.5, 7.79], [3.08, 8.46], [1.56, 8.86], [0.01, 9]], "at": [2, -6, 2], "n": 32, "pivot": [2, -6, 2], "scale": [0.22, 0.22, 0.22], "tone": "sel", "from": 2.6, "fade": 0.1, "keys": [[3.6, {"toneAmount": 0.35}], [3.8, {"toneAmount": 0}]]},
     {"el": "solid", "plane": "xz", "dir": [0, 1, 0], "at": [0, -6, 0], "profile": {"circle": [2, 2, 2], "n": 32}, "tone": "sel", "from": 2.6, "fade": 0, "keys": [[2.6, {"height": 0.01, "toneAmount": 0.35}], [3.2, {"height": 14}], [3.6, {"toneAmount": 0.35}], [3.8, {"toneAmount": 0}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 120, "title": "Pipe", "rows": [["Diameter", "4 mm"], {"text": "Hollow", "check": false}], "from": 1.2},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.3, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.3, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [-4, -6, 2], "click": 1}], [1.8, {"pos": [-4, -6, 2]}], [2.8, {"pos": [14, -10, 6]}]]}
    ],
    "steps": [
@@ -2607,7 +2607,7 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "lathe", "profile": [[10, 0], [10.05, 0], [10.05, 12], [10, 12]], "at": [0, 0, 0], "start": -140, "sweep": 100, "n": 30, "tone": "sel", "toneAmount": 0, "keys": [[0.9, {"toneAmount": 0.3, "profile": [[10, 0], [10.05, 0], [10.05, 12], [10, 12]]}], [1.6, {"profile": [[10, 0], [10.05, 0], [10.05, 12], [10, 12]]}], [2.8, {"profile": [[10, 0], [13, 0], [13, 12], [10, 12]]}], [3.4, {"toneAmount": 0.3}], [3.6, {"toneAmount": 0}]]},
     {"use": "dragHandle", "args": {"at0": [-1.7, -9.85, 6], "at1": [-2.2, -12.8, 6], "dir": [-0.17, -0.98, 0], "t0": 1.6, "t1": 2.8, "v0": 0, "v1": 3, "from": 1.2, "to": 3.4, "dx": 14, "dy": -20}},
-    {"el": "key", "caps": ["Enter"], "press": 3.4, "from": 3.1, "to": 3.9},
+    {"el": "key", "fixed": "enter", "press": 3.4, "from": 3.1, "to": 3.9},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [3, -9.5, 6], "click": 1}], [1.6, {"pos": [-1.7, -11, 6], "down": true}], [2.8, {"pos": [-2.2, -14, 6], "down": false}], [3.8, {"pos": [14, -14, 8]}]]}
    ],
    "steps": [
@@ -2626,7 +2626,7 @@
     {"use": "pickFace", "args": {"face": [[-10, -7, 0], [10, -7, 0], [10, -7, 12], [-10, -7, 12]], "hover": 0.9, "pick": 1.2, "until": 2.3}},
     {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [28, 20], "color": "sel", "fillOpacity": 0.12, "from": 1.7, "to": 3.8},
     {"el": "card", "screen": [0.03, 0.06], "w": 110, "title": "Draft", "rows": [["Angle", "5°"]], "from": 1.9},
-    {"el": "key", "caps": ["Enter"], "press": 3.8, "from": 3.5, "to": 4.3},
+    {"el": "key", "fixed": "enter", "press": 3.8, "from": 3.5, "to": 4.3},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [10, 0, 6], "click": 1}], [1.2, {"pos": [2, -7, 6], "click": 1}], [1.6, {"pos": [12, -10, 0]}], [1.8, {"pos": [12, -10, 0], "click": 1}], [2.6, {"pos": [16, -14, 0]}]]}
    ],
    "steps": [
@@ -2642,7 +2642,7 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 12, 8], "round": 1.5}, "holes": [{"circle": [2.5, 0, 1.5]}], "height": 5, "pivot": [0, 0, 0], "tone": "sel", "toneAmount": 0, "keys": [[0.8, {"toneAmount": 0.35, "scale": [1, 1, 1]}], [1.6, {"scale": [1, 1, 1]}], [2.6, {"scale": [1.6, 1.6, 1.6]}], [3.2, {"toneAmount": 0.35}], [3.4, {"toneAmount": 0}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 116, "title": "Scale", "rows": [["Factor", "1.6"], ["About", "Centre"]], "from": 1},
-    {"el": "key", "caps": ["Enter"], "press": 3.2, "from": 2.9, "to": 3.7},
+    {"el": "key", "fixed": "enter", "press": 3.2, "from": 2.9, "to": 3.7},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [2, -2, 5], "click": 1}], [1.5, {"pos": [16, -12, 4]}]]}
    ],
    "steps": [
@@ -2658,7 +2658,7 @@
     {"el": "solid", "profile": {"rect": [-6, 0, 14, 12]}, "height": 6},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[0.8, {"toneAmount": 0.4, "opacity": 1}], [1.6, {"opacity": 1}], [2.2, {"opacity": 0}]]},
     {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "cylinder"], "states": ["", "", ""], "keys": [[1.7, {"markers": ["sketch", "extrude", "cylinder"], "states": ["", "", ""]}], [1.75, {"markers": ["sketch", "extrude", "cylinder", "delete"], "states": ["", "", "", "flash"]}], [2.6, {"states": ["", "", "", ""]}]]},
-    {"el": "key", "caps": ["Enter"], "press": 1.6, "from": 1.3, "to": 2.1},
+    {"el": "key", "fixed": "enter", "press": 1.6, "from": 1.3, "to": 2.1},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [10, -3, 10], "click": 1}], [1.6, {"pos": [16, -12, 8]}]]}
    ],
    "steps": [
@@ -2707,7 +2707,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 16, 10]}, "height": 6, "keys": [[2.4, {"profile": {"rect": [0, 0, 16, 10]}}], [3.2, {"profile": {"rect": [0, 0, 24, 10]}}]]},
     {"el": "dim", "a": [-8, -5, 0], "b": [8, -5, 0], "offset": -16, "value": "fx: width", "color": "sel", "keys": [[2.4, {"a": [-8, -5, 0], "b": [8, -5, 0]}], [3.2, {"a": [-12, -5, 0], "b": [12, -5, 0]}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 130, "title": "Parameters", "rows": [{"text": "width", "value": "16 mm"}, {"text": "depth", "value": "10 mm"}], "from": 0.1, "hl": -1, "keys": [[1, {"hl": 0}], [1.2, {"rows": [{"text": "width", "entry": ""}, {"text": "depth", "value": "10 mm"}], "ease": "step"}], [1.6, {"rows": [{"text": "width", "entry": "24"}, {"text": "depth", "value": "10 mm"}], "ease": "step"}], [2, {"rows": [{"text": "width", "entry": "24 mm"}, {"text": "depth", "value": "10 mm"}], "ease": "step"}], [2.4, {"rows": [{"text": "width", "value": "24 mm"}, {"text": "depth", "value": "10 mm"}], "ease": "step"}], [2.5, {"hl": -1}]]},
-    {"el": "key", "caps": ["Enter"], "press": 2.35, "from": 2.05, "to": 2.85},
+    {"el": "key", "fixed": "enter", "press": 2.35, "from": 2.05, "to": 2.85},
     {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.85]}], [0.9, {"screen": [0.36, 0.28]}], [1, {"screen": [0.36, 0.28], "click": 1}], [1.1, {"screen": [0.36, 0.28], "click": 1}], [1.6, {"screen": [0.45, 0.4]}], [2.6, {"screen": [0.75, 0.88]}]]}
    ],
    "steps": [
@@ -2739,7 +2739,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": [0, 0, 3, 3]}, "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[1.2, {"height": 6, "toneAmount": 0, "profile": {"rect": [0, 0, 18, 12], "round": [0, 0, 3, 3]}}], [1.3, {"profile": {"rect": [0, 0, 18, 12], "round": [0, 0, 0, 0]}, "toneAmount": 0.3}], [2.4, {"height": 6}], [3.2, {"height": 11}], [3.7, {"profile": {"rect": [0, 0, 18, 12], "round": [0, 0, 0, 0]}, "toneAmount": 0.3}], [3.9, {"profile": {"rect": [0, 0, 18, 12], "round": [0, 0, 3, 3]}, "toneAmount": 0}]]},
     {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "fillet"], "states": ["", "", ""], "keys": [[1, {"states": ["", "", ""], "at": 3}], [1.1, {"states": ["", "sel", ""], "at": 2, "ease": "step"}], [3.6, {"states": ["", "sel", ""], "at": 2}], [3.7, {"states": ["", "", ""], "at": 3, "ease": "step"}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 120, "title": "Extrude 1", "rows": [["Distance", "6 mm"]], "from": 1.3, "to": 3.7, "keys": [[2.4, {"rows": [["Distance", "6 mm"]]}], [2.5, {"rows": [["Distance", "11 mm"]], "ease": "step"}]]},
-    {"el": "key", "caps": ["Enter"], "press": 3.6, "from": 3.3, "to": 4.1},
+    {"el": "key", "fixed": "enter", "press": 3.6, "from": 3.3, "to": 4.1},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [0.9, {"screen": [0.15, 0.89]}], [1, {"screen": [0.15, 0.89], "click": 1}], [1.1, {"screen": [0.15, 0.89], "click": 1}], [2, {"screen": [0.6, 0.6]}]]}
    ],
    "steps": [
@@ -2859,7 +2859,7 @@
     {"use": "pickFace", "args": {"face": [[-9, -6, 6], [9, -6, 6], [9, 6, 6], [-9, 6, 6]], "hover": 0.5, "pick": 0.9, "until": 3.4}},
     {"el": "chip", "at": [-2, 0, 6], "dx": 30, "dy": 34, "icon": "annotate", "text": "Note · Face 3", "from": 1, "to": 3.4},
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Note", "rows": [{"text": "Text", "entry": ""}], "from": 1.2, "to": 3.4, "keys": [[1.6, {"rows": [{"text": "Text", "entry": "Check"}], "ease": "step"}], [2, {"rows": [{"text": "Text", "entry": "Check the clearance"}], "ease": "step"}]]},
-    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 3.3, "from": 2.95, "to": 3.8},
+    {"el": "key", "fixed": "ctrlEnter", "press": 3.3, "from": 2.95, "to": 3.8},
     {"el": "poly", "points": [[-2, 0, 6], [-2, 0, 11]], "color": "amber", "width": 1.2, "from": 3.4, "fade": 0.2},
     {"el": "label", "at": [-2, 0, 11], "dy": -10, "value": "Check the clearance", "box": "bg2", "color": "fg", "from": 3.4, "fade": 0.2},
     {"el": "cursor", "badge": "annotate", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [-2, 0, 6], "click": 1}], [1.5, {"pos": [14, -12, 4]}]]}
@@ -2879,7 +2879,7 @@
     {"use": "pickFace", "args": {"face": [[-9, -6, 6], [9, -6, 6], [9, 6, 6], [-9, 6, 6]], "hover": 0.4, "pick": 0.8, "until": 1.2}},
     {"el": "poly", "points": [[8.5, 0, 6.05], [8.28, 1.39, 6.05], [7.64, 2.65, 6.05], [6.65, 3.64, 6.05], [5.39, 4.28, 6.05], [4, 4.5, 6.05], [2.61, 4.28, 6.05], [1.35, 3.64, 6.05], [0.36, 2.65, 6.05], [-0.28, 1.39, 6.05], [-0.5, 0, 6.05], [-0.28, -1.39, 6.05], [0.36, -2.65, 6.05], [1.35, -3.64, 6.05], [2.61, -4.28, 6.05], [4, -4.5, 6.05], [5.39, -4.28, 6.05], [6.65, -3.64, 6.05], [7.64, -2.65, 6.05], [8.28, -1.39, 6.05], [8.5, 0, 6.05]], "color": "red", "width": 2.4, "smooth": true, "from": 1.2, "fade": 0, "keys": [[1.2, {"progress": 0}], [2.4, {"progress": 1, "ease": "linear"}]]},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "pen", "text": "Hand drawing", "dot": "red", "from": 0.9, "to": 4.4},
-    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 4.3, "from": 3.95, "to": 4.8},
+    {"el": "key", "fixed": "ctrlEnter", "press": 4.3, "from": 3.95, "to": 4.8},
     {"el": "cursor", "kind": "cross", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [0, -3, 6], "click": 1}], [1.2, {"pos": [8.5, 0, 6.05], "down": true}], [1.26, {"pos": [8.28, 1.39, 6.05]}], [1.32, {"pos": [7.64, 2.65, 6.05]}], [1.38, {"pos": [6.65, 3.64, 6.05]}], [1.44, {"pos": [5.39, 4.28, 6.05]}], [1.5, {"pos": [4, 4.5, 6.05]}], [1.56, {"pos": [2.61, 4.28, 6.05]}], [1.62, {"pos": [1.35, 3.64, 6.05]}], [1.68, {"pos": [0.36, 2.65, 6.05]}], [1.74, {"pos": [-0.28, 1.39, 6.05]}], [1.8, {"pos": [-0.5, 0, 6.05]}], [1.86, {"pos": [-0.28, -1.39, 6.05]}], [1.92, {"pos": [0.36, -2.65, 6.05]}], [1.98, {"pos": [1.35, -3.64, 6.05]}], [2.04, {"pos": [2.61, -4.28, 6.05]}], [2.1, {"pos": [4, -4.5, 6.05]}], [2.16, {"pos": [5.39, -4.28, 6.05]}], [2.22, {"pos": [6.65, -3.64, 6.05]}], [2.28, {"pos": [7.64, -2.65, 6.05]}], [2.34, {"pos": [8.28, -1.39, 6.05]}], [2.4, {"pos": [8.5, 0, 6.05]}], [2.5, {"pos": [8.5, 0, 6.05], "down": false}], [3.2, {"pos": [14, -10, 6]}]]}
    ],
    "steps": [
@@ -2897,7 +2897,7 @@
     {"el": "poly", "points": [[-2, 0, 6], [-2, 0, 11]], "color": "amber", "width": 1.2, "keys": [[1.6, {"opacity": 1}], [2, {"opacity": 0.35}]]},
     {"el": "label", "at": [-2, 0, 11], "dx": 40, "dy": -10, "value": "Check the clearance", "box": "bg2", "color": "fg", "keys": [[1.6, {"opacity": 1}], [2, {"opacity": 0.35}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Annotations", "rows": [{"text": "Check the clearance", "icon": "annotate", "dim": false}, {"label": "Ahmad · Issue", "dim": false}], "hl": 0, "keys": [[1.6, {"rows": [{"text": "Check the clearance", "icon": "check"}, {"label": "Ahmad · Issue"}], "ease": "step"}], [1.8, {"rows": [{"text": "Check the clearance", "icon": "check", "dim": true}, {"label": "Ahmad · Resolved", "dim": true}], "hl": -1, "ease": "step"}]]},
-    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 1.6, "from": 1.25, "to": 2.1}
+    {"el": "key", "command": "annotate.resolve", "press": 1.6, "from": 1.25, "to": 2.1}
    ],
    "steps": [
     {"to": 1, "caption": "Select the note"},
@@ -2927,7 +2927,7 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 4}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "keys": [[0.9, {"profile": {"rect": [0, 0, 18, 12], "round": 4}}], [1, {"profile": {"rect": [0, 0, 18, 12], "round": 0}, "ease": "step"}]]},
     {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "fillet"], "states": ["", "", ""], "keys": [[0.9, {"markers": ["sketch", "extrude", "fillet"], "states": ["", "", ""]}], [1, {"markers": ["sketch", "extrude"], "states": ["", ""], "ease": "step"}]]},
-    {"el": "key", "caps": ["Ctrl", "Z"], "press": 0.95, "from": 0.6, "to": 1.45}
+    {"el": "key", "command": "edit.undo", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+Z"},
@@ -2940,7 +2940,7 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 0}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "keys": [[0.9, {"profile": {"rect": [0, 0, 18, 12], "round": 0}}], [1, {"profile": {"rect": [0, 0, 18, 12], "round": 4}, "ease": "step"}]]},
     {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude"], "states": ["", ""], "keys": [[0.9, {"markers": ["sketch", "extrude"], "states": ["", ""]}], [1, {"markers": ["sketch", "extrude", "fillet"], "states": ["", "", ""], "ease": "step"}]]},
-    {"el": "key", "caps": ["Ctrl", "Y"], "press": 0.95, "from": 0.6, "to": 1.45}
+    {"el": "key", "command": "edit.redo", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+Y"},
@@ -2954,8 +2954,8 @@
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0.35},
     {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Body 1", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "from": 0.1, "hl": 0, "keys": [[1, {"rows": [{"entry": "", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "ease": "step"}], [1.3, {"rows": [{"entry": "Brack", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "ease": "step"}], [1.6, {"rows": [{"entry": "Bracket", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "ease": "step"}], [2.2, {"rows": [{"label": "Bracket", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "ease": "step"}]]},
-    {"el": "key", "caps": ["F2"], "press": 0.9, "from": 0.55, "to": 1.3},
-    {"el": "key", "caps": ["Enter"], "press": 2.1, "from": 1.8, "to": 2.6}
+    {"el": "key", "command": "edit.rename", "press": 0.9, "from": 0.55, "to": 1.3},
+    {"el": "key", "fixed": "enter", "press": 2.1, "from": 1.8, "to": 2.6}
    ],
    "steps": [
     {"to": 1, "caption": "Select it and press F2"},
@@ -2971,7 +2971,7 @@
     {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0.4, "keys": [[1, {"opacity": 1}], [1.5, {"opacity": 0}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Base", "icon": "eye"}, {"text": "Post", "icon": "eye"}], "from": 0.1, "hl": 1, "keys": [[1, {"rows": [{"text": "Base", "icon": "eye"}, {"text": "Post", "icon": "hide", "dim": true}], "ease": "step"}]]},
-    {"el": "key", "caps": ["V"], "press": 0.95, "from": 0.6, "to": 1.45}
+    {"el": "key", "command": "edit.hide", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
     {"to": 1, "caption": "Select bodies and press V"},
@@ -2987,7 +2987,7 @@
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "style": "wire", "to": 1.2, "fade": 0.3, "opacity": 0.5},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "from": 1, "fade": 0.4},
     {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Base", "icon": "eye"}, {"text": "Post", "icon": "hide", "dim": true}], "from": 0.1, "keys": [[1, {"rows": [{"text": "Base", "icon": "eye"}, {"text": "Post", "icon": "eye"}], "ease": "step"}]]},
-    {"el": "key", "caps": ["Shift", "V"], "press": 0.95, "from": 0.6, "to": 1.45}
+    {"el": "key", "command": "edit.showall", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
     {"to": 1, "caption": "Press Shift+V"},
@@ -3005,7 +3005,7 @@
     {"el": "solid", "profile": {"circle": [-6, 3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
     {"el": "solid", "profile": {"circle": [6, 3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"entry": ""}, {"text": "Plate", "icon": "body"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}], "from": 0.9, "keys": [[1.3, {"rows": [{"entry": "bo"}, {"text": "Plate", "icon": "body"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}], "ease": "step"}], [1.6, {"rows": [{"entry": "bolt"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}, {"label": "Bolt 3", "icon": "body"}], "ease": "step"}]]},
-    {"el": "key", "caps": ["Ctrl", "F"], "press": 0.8, "from": 0.45, "to": 1.3}
+    {"el": "key", "command": "edit.filter", "press": 0.8, "from": 0.45, "to": 1.3}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+F"},
@@ -3021,7 +3021,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12]}, "height": 4, "tone": "sel", "toneAmount": 0, "keys": [[1, {"toneAmount": 0}], [1.1, {"toneAmount": 0.4}]]},
     {"el": "solid", "profile": {"circle": [0, 0, 2.5]}, "at": [0, 0, 4], "height": 8, "tone": "sel", "toneAmount": 0.4},
     {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Assembly", "icon": "component"}, {"text": "Plate", "icon": "body", "indent": 1}, {"text": "Pin", "icon": "body", "indent": 1}], "from": 0.1, "hl": 2, "keys": [[1, {"hl": 0}]]},
-    {"el": "key", "caps": ["Ctrl", "↑"], "press": 0.95, "from": 0.6, "to": 1.45}
+    {"el": "key", "command": "edit.selectparent", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
     {"to": 1, "caption": "With a body selected, press Ctrl+↑"},
@@ -3035,7 +3035,7 @@
     {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0.4, "keys": [[1, {"opacity": 1}], [1.5, {"opacity": 0}]]},
     {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder"], "states": ["", ""], "keys": [[1, {"markers": ["box", "cylinder"], "states": ["", ""]}], [1.05, {"markers": ["box", "cylinder", "delete"], "states": ["", "", "flash"], "ease": "step"}], [1.8, {"states": ["", "", ""]}]]},
-    {"el": "key", "caps": ["Del"], "press": 0.95, "from": 0.6, "to": 1.45}
+    {"el": "key", "command": "edit.delete", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
     {"to": 1, "caption": "Select it and press Del"},
@@ -3049,7 +3049,7 @@
     {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "opacity": 0, "keys": [[1.6, {"opacity": 0}], [2.1, {"opacity": 1}]]},
     {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder", "delete"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "", "sel"], "ease": "step"}], [1.6, {"markers": ["box", "cylinder", "delete", "restore"], "states": ["", "", "struck", "flash"], "ease": "step"}], [2.3, {"states": ["", "", "struck", ""]}]]},
-    {"el": "key", "caps": ["Shift", "Del"], "press": 1.55, "from": 1.2, "to": 2.05},
+    {"el": "key", "command": "edit.restore", "press": 1.55, "from": 1.2, "to": 2.05},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [0.8, {"screen": [0.22, 0.89]}], [0.9, {"screen": [0.22, 0.89], "click": 1}], [1.8, {"screen": [0.6, 0.6]}]]}
    ],
    "steps": [
@@ -3064,7 +3064,7 @@
     {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.6, {"toneAmount": 0.45}]]},
     {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder", "fillet"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "sel", ""], "ease": "step"}]]},
-    {"el": "key", "caps": ["T"], "press": 1.55, "from": 1.2, "to": 2.05},
+    {"el": "key", "command": "edit.selecttouched", "press": 1.55, "from": 1.2, "to": 2.05},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [0.8, {"screen": [0.15, 0.89]}], [0.9, {"screen": [0.15, 0.89], "click": 1}], [2, {"screen": [0.6, 0.6]}]]}
    ],
    "steps": [
@@ -3081,7 +3081,7 @@
     {"el": "chip", "screen": [0.62, 0.05], "icon": "import", "value": "bracket.step", "to": 1.5, "keys": [[0.6, {"dy": 0}], [1.4, {"dy": 50}]]},
     {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0.35, "from": 1.4, "fade": 0.5, "keys": [[2.6, {"toneAmount": 0.35}], [2.9, {"toneAmount": 0}]]},
     {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Base", "icon": "body"}], "from": 0.1, "keys": [[1.5, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "component"}], "hl": 1, "ease": "step"}], [2.9, {"hl": -1}]], "hl": -1},
-    {"el": "key", "caps": ["Ctrl", "I"], "press": 0.5, "from": 0.15, "to": 1}
+    {"el": "key", "command": "file.import", "press": 0.5, "from": 0.15, "to": 1}
    ],
    "steps": [
     {"to": 0.9, "caption": "Press Ctrl+I and choose a file"},
@@ -3110,7 +3110,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "value": "bracket.opad *", "dot": "amber", "to": 1, "fade": 0},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "value": "bracket.opad", "dot": "green", "from": 1, "fade": 0},
-    {"el": "key", "caps": ["Ctrl", "S"], "press": 0.95, "from": 0.6, "to": 1.45}
+    {"el": "key", "command": "file.save", "press": 0.95, "from": 0.6, "to": 1.45}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+S"},
@@ -3126,7 +3126,7 @@
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Save as", "button": "Save", "press": 2.2, "from": 0.9, "to": 2.4, "rows": [{"text": "Name", "entry": "bracket"}], "keys": [[1.4, {"rows": [{"text": "Name", "entry": "bracket-v2"}], "ease": "step"}]]},
     {"el": "chip", "screen": [0.62, 0.05], "icon": "doc", "value": "bracket.opad", "to": 2.3, "fade": 0},
     {"el": "chip", "screen": [0.62, 0.05], "icon": "doc", "value": "bracket-v2.opad", "dot": "green", "from": 2.3, "fade": 0},
-    {"el": "key", "caps": ["Ctrl", "Shift", "S"], "press": 0.8, "from": 0.45, "to": 1.3},
+    {"el": "key", "command": "file.saveas", "press": 0.8, "from": 0.45, "to": 1.3},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [2, {"screen": [0.47, 0.44]}], [2.2, {"screen": [0.47, 0.44], "click": 1}], [3, {"screen": [0.7, 0.8]}]]}
    ],
    "steps": [
@@ -3143,7 +3143,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0.35},
     {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Export", "button": "Export", "press": 2.4, "from": 0.9, "to": 2.6, "hl": -1, "rows": [{"label": "STEP", "radio": true}, {"label": "STL", "radio": false}, {"label": "3MF", "radio": false}, {"label": "DXF", "radio": false}], "keys": [[1.6, {"hl": 1, "rows": [{"label": "STEP", "radio": false}, {"label": "STL", "radio": true}, {"label": "3MF", "radio": false}, {"label": "DXF", "radio": false}], "ease": "step"}]]},
     {"el": "chip", "screen": [0.62, 0.05], "icon": "export", "value": "bracket.stl", "dot": "green", "from": 2.6},
-    {"el": "key", "caps": ["Ctrl", "E"], "press": 0.8, "from": 0.45, "to": 1.3},
+    {"el": "key", "command": "file.export", "press": 0.8, "from": 0.45, "to": 1.3},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.5, {"screen": [0.1, 0.4]}], [1.6, {"screen": [0.1, 0.4], "click": 1}], [2.2, {"screen": [0.4, 0.8]}], [2.4, {"screen": [0.4, 0.8], "click": 1}], [3.2, {"screen": [0.7, 0.85]}]]}
    ],
    "steps": [
@@ -3159,7 +3159,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
     {"el": "veil", "color": "white", "from": 0.95, "to": 1.25, "fade": 0.12, "opacity": 0.7},
     {"el": "chip", "screen": [0.62, 0.05], "icon": "image", "value": "view.png", "dot": "green", "from": 1.4},
-    {"el": "key", "caps": ["Ctrl", "Shift", "P"], "press": 0.9, "from": 0.55, "to": 1.4}
+    {"el": "key", "command": "file.screenshot", "press": 0.9, "from": 0.55, "to": 1.4}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+Shift+P"},
@@ -3174,7 +3174,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
     {"el": "poly", "closed": true, "points": [[9, -6, 0], [9, 6, 0], [9, 6, 6], [9, -6, 6]], "color": "sel", "width": 1.6, "fill": "sel", "fillOpacity": 0.38, "from": 3, "fade": 0.15},
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Annotations", "hl": -1, "rows": [["Type", "All"], {"text": "Check the clearance", "icon": "annotate"}, {"text": "Round this edge", "icon": "annotate"}, {"text": "Hole too small", "icon": "issue"}], "keys": [[1.2, {"rows": [["Type", "Issue"], {"text": "Hole too small", "icon": "issue"}, {"text": "Wall too thin", "icon": "issue"}], "hl": 0, "ease": "step"}], [1.5, {"hl": -1}], [2.9, {"hl": 2}]]},
-    {"el": "key", "caps": ["Alt", "2"], "press": 0.5, "from": 0.15, "to": 1},
+    {"el": "key", "command": "panel.annotations", "press": 0.5, "from": 0.15, "to": 1},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.1, {"screen": [0.4, 0.28]}], [1.2, {"screen": [0.4, 0.28], "click": 1}], [2.8, {"screen": [0.2, 0.52]}], [2.9, {"screen": [0.2, 0.52], "click": 1}], [3.8, {"screen": [0.7, 0.85]}]]}
    ],
    "steps": [
@@ -3183,10 +3183,10 @@
     {"to": 4.6, "caption": "Click a card: its target lights up"}
    ]
   },
-  {"id": "nav.fusion", "template": "navPreset", "args": {"name": "Fusion-style", "orbit": "Shift + middle", "pan": "Middle", "zoom": "Wheel", "caps1": ["Shift"]}},
-  {"id": "nav.solidworks", "template": "navPreset", "args": {"name": "SOLIDWORKS-style", "orbit": "Middle", "pan": "Ctrl + middle", "zoom": "Wheel", "caps2": ["Ctrl"]}},
+  {"id": "nav.fusion", "template": "navPreset", "args": {"name": "Fusion-style", "orbit": "Shift + middle", "pan": "Middle", "zoom": "Wheel", "fixed1": "shift"}},
+  {"id": "nav.solidworks", "template": "navPreset", "args": {"name": "SOLIDWORKS-style", "orbit": "Middle", "pan": "Ctrl + middle", "zoom": "Wheel", "fixed2": "ctrl"}},
   {"id": "nav.onshape", "template": "navPreset", "args": {"name": "Onshape-style", "orbit": "Right", "pan": "Middle", "zoom": "Wheel"}},
-  {"id": "nav.blender", "template": "navPreset", "args": {"name": "Blender-style", "orbit": "Middle", "pan": "Shift + middle", "zoom": "Wheel", "caps2": ["Shift"]}},
+  {"id": "nav.blender", "template": "navPreset", "args": {"name": "Blender-style", "orbit": "Middle", "pan": "Shift + middle", "zoom": "Wheel", "fixed2": "shift"}},
   {
    "id": "tools.commands", "duration": 4.6, "view": "iso", "extent": [-26, -11, 26, 16],
    "items": [
@@ -3195,8 +3195,8 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
     {"el": "card", "screen": [0.03, 0.06], "w": 156, "title": "Search commands", "from": 0.6, "to": 2.6, "hl": 0, "rows": [{"entry": ""}, {"text": "Fillet", "icon": "fillet"}, {"text": "Fit", "icon": "fit"}, {"text": "Fit all", "icon": "fit"}], "keys": [[1.1, {"rows": [{"entry": "fil"}, {"text": "Fillet", "icon": "fillet"}, {"text": "Sketch fillet", "icon": "fillet"}, {"text": "Filter objects", "icon": "search"}], "hl": 1, "ease": "step"}]]},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "fillet", "text": "Fillet", "dot": "sel", "from": 2.6},
-    {"el": "key", "caps": ["S"], "press": 0.5, "from": 0.2, "to": 1},
-    {"el": "key", "caps": ["Enter"], "press": 2.5, "from": 2.2, "to": 3}
+    {"el": "key", "command": "tools.commands", "press": 0.5, "from": 0.2, "to": 1},
+    {"el": "key", "fixed": "enter", "press": 2.5, "from": 2.2, "to": 3}
    ],
    "steps": [
     {"to": 0.9, "caption": "Press S"},
@@ -3212,7 +3212,7 @@
     {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Open", "from": 0.6, "to": 2, "hl": -1, "rows": [{"label": "bracket.opad", "icon": "doc"}, {"label": "housing.step", "icon": "body"}, {"label": "floor-plan.dxf", "icon": "drawing"}], "keys": [[1.4, {"hl": 1}]]},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "from": 2, "fade": 0.4},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "eye", "value": "housing.step", "dot": "amber", "from": 2.1},
-    {"el": "key", "caps": ["Ctrl", "O"], "press": 0.5, "from": 0.2, "to": 1},
+    {"el": "key", "command": "file.open", "press": 0.5, "from": 0.2, "to": 1},
     {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.85]}], [1.3, {"screen": [0.25, 0.4]}], [1.4, {"screen": [0.25, 0.4], "click": 1}], [1.5, {"screen": [0.25, 0.4], "click": 1}], [2.4, {"screen": [0.7, 0.85]}]]}
    ],
    "steps": [
@@ -3227,7 +3227,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "to": 1, "fade": 0.3},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "value": "bracket.opad", "to": 1, "fade": 0},
     {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "text": "Untitled", "from": 1, "fade": 0},
-    {"el": "key", "caps": ["Ctrl", "N"], "press": 0.9, "from": 0.6, "to": 1.4}
+    {"el": "key", "command": "file.new", "press": 0.9, "from": 0.6, "to": 1.4}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+N"},
@@ -3245,7 +3245,7 @@
     {"el": "chip", "screen": [0.03, 0.05], "text": "Solid", "from": 1, "to": 9, "fade": 0.15},
     {"el": "chip", "screen": [0.22, 0.05], "text": "Modify", "from": 1, "to": 9, "fade": 0.15},
     {"el": "chip", "screen": [0.43, 0.05], "text": "Assemble", "from": 1, "to": 9, "fade": 0.15},
-    {"el": "key", "caps": ["Ctrl", "2"], "press": 0.9, "from": 0.6, "to": 1.4}
+    {"el": "key", "command": "workspace.design", "press": 0.9, "from": 0.6, "to": 1.4}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+2"},
@@ -3263,7 +3263,7 @@
     {"el": "chip", "screen": [0.03, 0.05], "text": "View", "from": 1, "to": 9, "fade": 0.15},
     {"el": "chip", "screen": [0.2, 0.05], "text": "Inspect", "from": 1, "to": 9, "fade": 0.15},
     {"el": "chip", "screen": [0.43, 0.05], "text": "Annotate", "from": 1, "to": 9, "fade": 0.15},
-    {"el": "key", "caps": ["Ctrl", "1"], "press": 0.9, "from": 0.6, "to": 1.4}
+    {"el": "key", "command": "workspace.review", "press": 0.9, "from": 0.6, "to": 1.4}
    ],
    "steps": [
     {"to": 1, "caption": "Press Ctrl+1"},
@@ -3278,7 +3278,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
     {"el": "card", "screen": [-0.6, 0.06], "w": 140, "title": "Browser", "hl": -1, "rows": [{"text": "Assembly", "icon": "component"}, {"text": "Plate", "icon": "body", "indent": 1}, {"text": "Sketch 1", "icon": "sketch", "indent": 1}], "keys": [[0.9, {"screen": [-0.6, 0.06]}], [1.4, {"screen": [0.03, 0.06]}], [2.2, {"hl": 1}]]},
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0.4, "from": 2.2, "fade": 0.1},
-    {"el": "key", "caps": ["Alt", "1"], "press": 0.8, "from": 0.5, "to": 1.3},
+    {"el": "key", "command": "panel.browser", "press": 0.8, "from": 0.5, "to": 1.3},
     {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.85]}], [2.1, {"screen": [0.15, 0.36]}], [2.2, {"screen": [0.15, 0.36], "click": 1}], [3, {"screen": [0.7, 0.85]}]]}
    ],
    "steps": [
@@ -3293,7 +3293,7 @@
     {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
     {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "hole", "fillet"], "states": ["", "", "", ""], "from": 0.9, "fade": 0.3, "keys": [[2.2, {"states": ["", "", "sel", ""], "ease": "step"}]]},
     {"el": "chip", "screen": [0.03, 0.62], "value": "Hole 1 · Ahmad · 10:42", "from": 2.2},
-    {"el": "key", "caps": ["Alt", "3"], "press": 0.8, "from": 0.5, "to": 1.3},
+    {"el": "key", "command": "panel.timeline", "press": 0.8, "from": 0.5, "to": 1.3},
     {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [2.1, {"screen": [0.22, 0.89]}], [3, {"screen": [0.22, 0.89]}]]}
    ],
    "steps": [

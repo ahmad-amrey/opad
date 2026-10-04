@@ -339,7 +339,8 @@ void checkValue(const QString& el, const QString& prop, const QJsonValue& v, con
   if (prop == "markers")
     for (const QJsonValue& m : v.toArray()) if (!icons::has(m.toString())) problem(QString("%1: no icon %2").arg(el, m.toString()));
   if ((prop == "badge" || prop == "icon") && !v.toString().isEmpty() && !icons::has(v.toString())) problem(QString("%1: no icon %2").arg(el, v.toString()));
-  if (el == "key" && prop == "fixed" && !keys::fixedNames().contains(v.toString())) problem(QString("key: unknown fixed key %1").arg(v.toString()));
+  // "" names no key (a template's optional one, navPreset's modifier): nothing is drawn.
+  if (el == "key" && prop == "fixed" && !v.toString().isEmpty() && !keys::fixedNames().contains(v.toString())) problem(QString("key: unknown fixed key %1").arg(v.toString()));
 }
 
 void parseItem(const QJsonObject& o, Clip& c, const Problem& problem) {
@@ -370,6 +371,8 @@ void parseItem(const QJsonObject& o, Clip& c, const Problem& problem) {
     if (named != 1) problem("key: one of caps, command or fixed");
     c.keys << clips::KeyRef{o.value("command").toString(), o.value("fixed").toString(), {}, it.from, it.to};
     for (const QJsonValue& k : o.value("caps").toArray()) c.keys.last().caps << k.toString();
+    // Literal caps show a default the user may have changed (or a key on one keyboard only): still drawn, but named.
+    if (o.contains("caps")) problem(QString("key: literal caps %1 (name the command, \"command\": id, or the fixed key, \"fixed\": name)").arg(c.keys.last().caps.join('+')));
   }
   double last = -1e9;
   for (const QJsonValue& kv : o.value("keys").toArray()) {

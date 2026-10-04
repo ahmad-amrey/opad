@@ -29,8 +29,8 @@ struct Step {
 };
 // A step's caption as shown now: translated, the user's keys put in (captionNoKey when one has none).
 QString caption(const Step& step);
-// A key element ({"el": "key", ...}): the command whose key it shows, a fixed key ("enter", keys::fixedNames), or
-// literal caps (kept until every clip names its command; tests list them).
+// A key element ({"el": "key", ...}): the command whose key it shows or a fixed key ("enter", keys::fixedNames); literal
+// caps are drawn as written but are a load problem (they show a default the user may have changed).
 struct KeyRef {
   QString command, fixed;
   QStringList caps;
@@ -47,8 +47,8 @@ struct Options {
 void load(const QString& path = QString());
 QStringList ids();
 bool has(const QString& id);
-// What the last load found wrong: unknown element, property, colour, template, parameter or fixed key; with a command
-// lookup installed (keys::setLookup), a key element for a command this build does not have.
+// What the last load found wrong: unknown element, property, colour, template, parameter or fixed key, a key element
+// with literal caps; with a command lookup installed (keys::setLookup), a key element for a command this build lacks.
 QStringList problems();
 double duration(const QString& id);
 double stillTime(const QString& id);

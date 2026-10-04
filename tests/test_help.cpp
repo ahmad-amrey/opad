@@ -69,6 +69,7 @@ std::set<QString> registeredIds() {
   for (const char* v : {"fusion", "solidworks", "onshape", "blender"}) ids.insert(QString("nav.") + v);
   for (const char* v : {"bodies", "faces", "edges", "vertices"}) ids.insert(QString("select.") + v);
   for (const char* v : {"view.extensions", "view.tracking", "view.gridSnap", "view.orthoSnap", "view.polarSnap", "sketch.selectionOptions", "sketch.constraints", "sketch.snaps"}) ids.insert(v);
+  for (const char* v : {"vcs.nextChange", "vcs.previousChange"}) ids.insert(v);  // VcsArea's loop of tuples
   for (const char* v : {"Create", "Modify", "Constrain", "Reference", "Files"}) ids.insert(QString("sketch.more") + v);
   ids.erase("sketch.more");  // the prefix of the generated menu ids
   for (const auto& spec : opad::design::feature_specs()) ids.insert("design." + QString::fromStdString(spec.kind));
@@ -89,32 +90,22 @@ class Arabic : public QTranslator {
 // TODO 11 wave 3: what still names a key by its default instead of the user's (help audit §4.2). The convert-every-
 // static-key-place package (WP1) names the commands (key elements, {key}/{press} tokens) and empties these lists; a new
 // clip, record or text must not join them.
-const QStringList kLiteralKeyClips{"annotate.add", "annotate.draw", "annotate.resolve", "design.box", "design.chamfer",
-                                  "design.combine", "design.cone", "design.cylinder", "design.draft", "design.edit",
-                                  "design.extrude", "design.fillet", "design.hole", "design.loft", "design.mirror",
-                                  "design.move", "design.offset_face", "design.parameters", "design.pattern_circ",
-                                  "design.pattern_rect", "design.pipe", "design.plane", "design.remove",
-                                  "design.revolve", "design.scale", "design.shell", "design.sphere", "design.split",
-                                  "design.sweep", "design.thicken", "design.torus", "drawing.baseView", "edit.delete",
-                                  "edit.filter", "edit.hide", "edit.invert", "edit.redo", "edit.rename",
-                                  "edit.repeat", "edit.restore", "edit.selectall", "edit.selectparent",
-                                  "edit.selecttouched", "edit.showall", "edit.undo", "file.export", "file.import",
-                                  "file.new", "file.open", "file.save", "file.saveas", "file.screenshot",
-                                  "insert.canvas", "inspect.clear", "inspect.flip", "inspect.pin",
-                                  "inspect.properties", "inspect.section", "nav.blender", "nav.fusion", "nav.onshape",
-                                  "nav.solidworks", "panel.annotations", "panel.browser", "panel.timeline",
-                                  "select.bodies", "select.edges", "select.faces", "select.smart", "select.through",
-                                  "select.vertices", "sketch.break_link", "sketch.circle", "sketch.construction",
-                                  "sketch.control_spline", "sketch.dimension", "sketch.finish",
-                                  "sketch.image_calibrate", "sketch.line", "sketch.mirror", "sketch.node",
-                                  "sketch.offset", "sketch.openEnds", "sketch.panel", "sketch.rect", "sketch.select",
-                                  "sketch.spline", "tools.commands", "vcs.commit", "vcs.compare", "view.2d",
-                                  "view.alignPlane", "view.back", "view.bottom", "view.edges", "view.extensions",
-                                  "view.fit", "view.fitall", "view.front", "view.grid", "view.gridSettings",
-                                  "view.gridSnap", "view.home", "view.iso", "view.isolate", "view.left", "view.ortho",
-                                  "view.orthoSnap", "view.polarSnap", "view.right", "view.rollleft", "view.rollright",
-                                  "view.shaded", "view.top", "view.tracking", "view.unisolate", "view.wire",
-                                  "workspace.design", "workspace.review"};
+const QStringList kLiteralKeyClips{"annotate.add", "annotate.resolve", "design.parameters", "edit.filter", "edit.hide",
+                                   "edit.invert", "edit.redo", "edit.rename", "edit.repeat", "edit.restore",
+                                   "edit.selectall", "edit.selectparent", "edit.showall", "edit.undo", "file.export",
+                                   "file.import", "file.new", "file.open", "file.save", "file.saveas",
+                                   "file.screenshot", "inspect.flip", "inspect.pin", "inspect.properties",
+                                   "inspect.section", "nav.blender", "nav.fusion", "nav.onshape", "nav.solidworks",
+                                   "panel.annotations", "panel.browser", "panel.timeline", "select.bodies",
+                                   "select.edges", "select.faces", "select.smart", "select.through", "select.vertices",
+                                   "sketch.construction", "sketch.finish", "sketch.openEnds", "sketch.panel",
+                                   "tools.commands", "vcs.commit", "view.2d", "view.alignPlane", "view.back",
+                                   "view.bottom", "view.edges", "view.extensions", "view.fit", "view.fitall",
+                                   "view.front", "view.grid", "view.gridSettings", "view.gridSnap", "view.home",
+                                   "view.iso", "view.isolate", "view.left", "view.ortho", "view.orthoSnap",
+                                   "view.polarSnap", "view.right", "view.rollleft", "view.rollright", "view.shaded",
+                                   "view.top", "view.tracking", "view.unisolate", "view.wire", "workspace.design",
+                                   "workspace.review"};
 const QStringList kLiteralKeyRecords{"annotate.add", "edit.hide", "edit.selecttouched", "panel.browser",
                                     "sketch.moreConstrain", "sketch.moreCreate", "sketch.moreFiles",
                                     "sketch.moreModify", "sketch.moreReference", "view.isolate"};
@@ -150,7 +141,8 @@ TEST(every_registered_command_has_help) {
                             "assembly.explode", "assembly.explodeGroup", "assembly.explodeKeep", "assembly.explodeOff", "assembly.explodePlay",
                             "assembly.explodeSave", "assembly.explodeSplit", "assembly.explodeUngroup", "design.componentFromSelection", "design.remove_faces",
                             "file.clone", "file.documentProperties", "file.exportBom", "inspect.area", "inspect.partProperties", "timeline.designOnly",
-                            "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.unsavedChanges"};
+                            "timeline.historyList", "timeline.names", "timeline.rollForward", "vcs.backgroundFetch", "vcs.compare", "vcs.nextChange",
+                            "vcs.previousChange", "vcs.unsavedChanges"};
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id) && !pending.contains(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
@@ -635,7 +627,7 @@ TEST(help_expand_tokens) {
 }
 
 // §6.3 test 1: every key element of every clip names a command this app registers or a fixed key, and shows its key
-// now; literal caps only in the clips WP1 has not converted yet. A command without a key draws its name instead.
+// now; no literal caps (a load problem). A command without a key draws its name instead.
 TEST(clip_keys_resolve) {
   clips::load();
   const auto ids = registeredIds();
@@ -644,10 +636,12 @@ TEST(clip_keys_resolve) {
     for (const clips::KeyRef& k : clips::keyRefs(id)) {
       if (!k.command.isEmpty() && !ids.count(k.command)) wrong << id + ": " + k.command;
       if (!k.fixed.isEmpty() && !keys::fixedNames().contains(k.fixed)) wrong << id + ": fixed " + k.fixed;
-      if (k.command.isEmpty() && k.fixed.isEmpty() && !kLiteralKeyClips.contains(id)) literal << id + ": " + k.caps.join('+');
+      if (!k.caps.isEmpty()) literal << id + ": " + k.caps.join('+');
     }
   if (!wrong.isEmpty()) throw check::Failure("key elements for no command: " + wrong.join(", ").toStdString());
   if (!literal.isEmpty()) throw check::Failure("literal key caps (name the command: {\"el\": \"key\", \"command\": ...}): " + literal.join(", ").toStdString());
+  for (const QString& p : clips::problems())
+    if (p.contains("literal caps")) throw check::Failure("the loader lets literal caps by: " + p.toStdString());
   // How they resolve: the user's key, a fixed key, the command's name without one; a lookup names unknown commands.
   QTemporaryDir dir;
   QFile f(dir.filePath("clips.json"));
@@ -658,7 +652,8 @@ TEST(clip_keys_resolve) {
       {"el": "key", "fixed": "ctrlEnter", "from": 2, "to": 3},
       {"el": "key", "command": "no.such", "from": 2, "to": 3}],
      "steps": [{"to": 1, "caption": "{press:view.fit}"}, {"to": 2, "caption": "{press:view.home}", "captionNoKey": "Use Home from the view cube's menu"}, {"to": 3, "caption": "{fixed:ctrlEnter}"}]},
-    {"id": "bad", "duration": 1, "items": [{"el": "key", "fixed": "hyper"}, {"el": "key", "caps": ["F"], "command": "view.fit"}], "steps": [{"to": 1, "caption": "A"}]}]})");
+    {"id": "bad", "duration": 1, "items": [{"el": "key", "fixed": "hyper"}, {"el": "key", "caps": ["F"], "command": "view.fit"}, {"el": "key", "caps": ["Ctrl", "S"]},
+      {"el": "key", "fixed": ""}], "steps": [{"to": 1, "caption": "A"}]}]})");
   f.close();
   QAction fit("Fit"), home("Home");
   fit.setObjectName("view.fit");
@@ -667,8 +662,9 @@ TEST(clip_keys_resolve) {
   keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "view.home" ? &home : nullptr; });
   clips::load(f.fileName());
   const QString problems = clips::problems().join("\n");
-  for (const char* expected : {"bad: key: unknown fixed key hyper", "bad: key: one of caps, command or fixed", "keys: key: no command no.such"})
+  for (const char* expected : {"bad: key: unknown fixed key hyper", "bad: key: one of caps, command or fixed", "keys: key: no command no.such", "bad: key: literal caps Ctrl+S"})
     if (!problems.contains(expected)) throw check::Failure("missing problem \"" + std::string(expected) + "\" in:\n" + problems.toStdString());
+  CHECK(!problems.contains("unknown fixed key \n") && !problems.endsWith("unknown fixed key "));  // "": no key, drawn as nothing
   using L = QList<QStringList>;
   CHECK(clips::resolvedKeys("keys", 0.5) == L({{"Ctrl", "Alt", "F"}}));
   CHECK(clips::resolvedKeys("keys", 1.5) == L({{help::title("view.home")}}));
