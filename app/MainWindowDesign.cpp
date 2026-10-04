@@ -118,13 +118,15 @@ void MainWindow::buildDesignActions() {
     auto* a=addAction(id,tool.label,icon,QKeySequence(keys.value(tool.id)),[this,id=tool.id]{m_design->sketch()->setTool(id);},true);
     a->setProperty("sketchTool",tool.id);tools->addAction(a);
   }
-  // Every tool of a group, in the menu bar's Sketch menu (the ribbon's Sketch tab has them in its groups' menus).
+  // Every tool of a group, in the menu bar's Sketch menu (the ribbon's Sketch tab has them in its groups' menus); run by
+  // name (the palette, a key of one's own) the list opens at the pointer.
   for(const auto& [id,group,label]:std::vector<std::tuple<QString,QString,QString>>{{"Create",tr("Create"),tr("More create tools")},{"Modify",tr("Modify"),tr("More modify tools")},
         {"Constrain",tr("Constrain"),tr("More constraints")},{"Reference",tr("Reference"),tr("More reference tools")},{"Files",tr("Images and files"),tr("Images and files")}}) {
-    auto* a=addAction("sketch.more"+id,label,id=="Files"?"image":"more",{},[]{});
     auto* menu=new QMenu(this);menu->setObjectName(id.toLower());
     for(const auto& tool:registry)if(tool.group==group)menu->addAction(action("sketch."+QString(tool.id).replace(':','.')));
-    a->setMenu(menu);
+    CommandInfo info{"sketch.more"+id,label,id=="Files"?QString("image"):QString("more")};
+    info.editsDocument=isEditAction(info.id);
+    menuCommand(info,menu);
   }
   int page=1;
   const QMap<QString,QString> pageIcons{{"selectionOptions","cursor"},{"constraints","list"},{"snaps","magnet"}};
