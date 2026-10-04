@@ -106,7 +106,9 @@ OPAD_BENCH(OPAD_BENCH_INSPECT, inspect) {
 // taken out of the colours. Interference: nothing is drawn until a row is clicked, then the pair is selected and their
 // overlap shown in the error red over them (TopOSD). The findings follow the model while the panel is open: a body moved
 // (a transform op) takes the colours or the overlap off at once and the check runs again; print: the same colours, 20 mm
-// along X with the body; interference: the pair moved apart, nothing left to list. Closing the panel takes it all away.
+// along X with the body; interference: the pair moved apart, nothing left to list. A print check on more than one body:
+// isolating another one takes the colours off the hidden body, ending the isolation brings them back (the view's own
+// change, no new check). Closing the panel takes it all away.
 // OPAD_BENCH_UISHOT: <shot>.check.png (the panel), <shot>.view.png (after the check), <shot>.finding.png (after the click),
 // <shot>.moved.png (after the move and the new check).
 OPAD_BENCH(OPAD_BENCH_CHECK, check) {
@@ -191,11 +193,32 @@ OPAD_BENCH(OPAD_BENCH_CHECK, check) {
                   QString("checked again: the pair moved apart, %1 findings and no overlap drawn").arg(w.m_checks->findingCount()));
         }
         if (!shot.isEmpty()) v->grabImage().save(shot + ".moved.png");
-        w.m_toolPanel->hide();
-        const opad::json after = overlays();
-        require(after.value("overhang_triangles", 1) == 0 && after.value("thin_triangles", 1) == 0 && !after.value("overlap", true),
-                "closing the panel takes the colours and the overlap away");
-        QCoreApplication::exit(*all ? 0 : 2);
+        auto close = [=, &w] {
+          w.m_toolPanel->hide();
+          const opad::json after = overlays();
+          require(after.value("overhang_triangles", 1) == 0 && after.value("thin_triangles", 1) == 0 && !after.value("overlap", true),
+                  "closing the panel takes the colours and the overlap away");
+          QCoreApplication::exit(*all ? 0 : 2);
+        };
+        std::string other;
+        for (const auto& id : w.m_doc->scene.all_bodies()) if (id != body) other = id;
+        if (!print || other.empty()) return close();
+        const int coloured = overhangs + thin;
+        auto settled = [=, &w] { return !w.m_jobs->busy() && !overlays().value("tinting", false); };
+        v->isolate({other});
+        bench2d::pollUntil(&w, settled, 20000, [=, &w](bool) {
+          const opad::json hidden = overlays();
+          require(!w.m_checkJob && hidden.value("overhang_triangles", 0) + hidden.value("thin_triangles", 0) == 0,
+                  "another body isolated: the hidden body's colours go, the check is not run again " + QString::fromStdString(hidden.dump()));
+          v->isolate({});
+          bench2d::pollUntil(&w, [=, &w] { return settled() && overlays().value("overhang_triangles", 0) + overlays().value("thin_triangles", 0) > 0; }, 20000,
+                             [=, &w](bool back) {
+            const opad::json now = overlays();
+            require(back && !w.m_checkJob && now.value("overhang_triangles", 0) + now.value("thin_triangles", 0) == coloured,
+                    QString("isolation ended: its colours are back (%1 triangles)").arg(now.value("overhang_triangles", 0) + now.value("thin_triangles", 0)));
+            close();
+          });
+        });
       });
     });
   });

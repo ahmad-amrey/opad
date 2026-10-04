@@ -27,10 +27,12 @@ def two_blocks(root, document):
 
 
 def thin_fin(root, document):
-    """A 20 x 20 x 5 mm base with a 0.5 mm fin standing on it, 10 mm tall: a wall thinner than the print check's 0.8 mm."""
+    """A 20 x 20 x 5 mm base with a 0.5 mm fin standing on it, 10 mm tall: a wall thinner than the print check's 0.8 mm; and
+    a 10 mm cube 40 mm along Y, which prints as it is (the body the bench isolates)."""
     return document("thin-fin", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"5 mm"}'),
                     ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,5],"normal":[0,0,1]},"length":"20 mm","width":"0.5 mm",'
-                     '"height":"10 mm","operation":"join"}'))
+                     '"height":"10 mm","operation":"join"}'),
+                    ("feature", "--kind", "box", "--inputs", '{"y":"40 mm","length":"10 mm","width":"10 mm","height":"10 mm"}'))
 
 
 GRID ="[view]\ngrid=true\n"
@@ -46,6 +48,7 @@ CASES = [
     # grows with each click and Back (Esc) takes the last pick back.
     ("inspect", two_blocks, {"OPAD_BENCH_INSPECT": "{prefix}"}),
     # P8: the print check's thin walls in the error red on the model (the built-in print-check case: overhangs in amber,
-    # interference: the overlap in red). <prefix>.view.png, <prefix>.finding.png.
+    # interference: the overlap in red), following the fin's body when it moves and when the cube is isolated.
+    # <prefix>.view.png, <prefix>.finding.png, <prefix>.moved.png.
     ("print-check-thin", thin_fin, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
 ]
