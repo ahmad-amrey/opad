@@ -48,4 +48,14 @@ TEST(picked_edges_are_thicker_than_the_hover_in_a_halo) {
   CHECK(edge.pointHalo > edge.point);
 }
 
+// On the light background a hovered line's white gets a rim between the background and the ink; the dark theme needs none.
+TEST(hovered_lines_have_a_rim_on_the_light_background) {
+  CHECK(!highlight::hoverRim(theme::tokens(true)).isValid());
+  const Tokens t = theme::tokens(false);
+  const QColor rim = highlight::hoverRim(t);
+  CHECK(rim.isValid() && rim.hsvSaturationF() < 0.1);  // a grey, not a role colour
+  CHECK(rim.lightness() < t.vp.lightness() - 40 && rim.lightness() > t.fg.lightness() + 40 && theme::deltaE(rim, t.hover) > 30);
+  CHECK(highlight::kHoverRimWidth > highlight::kHoverEdgeWidth + 2 && highlight::kHoverRimWidth <= 8);  // a rim each side, within the clamp
+}
+
 CHECK_MAIN()

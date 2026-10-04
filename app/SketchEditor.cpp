@@ -59,6 +59,7 @@ class SketchPrs : public AIS_InteractiveObject {
   std::vector<Pt> glowPoints;
   QColor glowColor;
   float glowAlpha = 1;  // opaque: drawn first, under the lines
+  QColor rimColor;      // valid: a darker rim under the glow (the hover's on a light background, highlight::hoverRim)
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
   QColor fillColor, textBack;
@@ -100,17 +101,29 @@ class SketchPrs : public AIS_InteractiveObject {
       g->SetGroupPrimitivesAspect(aspect);
       g->AddPrimitiveArray(array);
     };
+    // With a rim the glow stays inside it: lines are drawn no wider than about 7 device pixels (kHoverRimWidth).
+    const bool rim = rimColor.isValid();
     if (!glow.empty()) {
       Handle(Graphic3d_ArrayOfSegments) arr = new Graphic3d_ArrayOfSegments(static_cast<int>(glow.size()) * 2);
       for (const auto& s : glow) {
         arr->AddVertex(gp_Pnt(s.a[0], s.a[1], s.a[2]));
         arr->AddVertex(gp_Pnt(s.b[0], s.b[1], s.b[2]));
       }
-      halo(new Graphic3d_AspectLine3d(occ(glowColor), Aspect_TOL_SOLID, 8.0 * scale), arr);
+      if (rim) {
+        Handle(Graphic3d_Group) g = prs->NewGroup();
+        g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(occ(rimColor), Aspect_TOL_SOLID, highlight::kHoverRimWidth));
+        g->AddPrimitiveArray(arr);
+      }
+      halo(new Graphic3d_AspectLine3d(occ(glowColor), Aspect_TOL_SOLID, rim ? highlight::kHoverRimWidth - 2 : 8.0 * scale), arr);
     }
     if (!glowPoints.empty()) {
       Handle(Graphic3d_ArrayOfPoints) arr = new Graphic3d_ArrayOfPoints(static_cast<int>(glowPoints.size()));
       for (const auto& p : glowPoints) arr->AddVertex(gp_Pnt(p.p[0], p.p[1], p.p[2]));
+      if (rim) {
+        Handle(Graphic3d_Group) g = prs->NewGroup();
+        g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, occ(rimColor), 7.5 * scale));
+        g->AddPrimitiveArray(arr);
+      }
       halo(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, occ(glowColor), 6.0 * scale), arr);
     }
     lines(thin, Aspect_TOL_SOLID, 1.0 * scale);
@@ -1131,7 +1144,7 @@ void SketchEditor::updateTransient() {
   if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
   d.solid.clear();d.thin.clear();d.dashed.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();d.glow.clear();d.glowPoints.clear();
-  const auto& t=m_viewport->tokens();d.glowColor=highlight::hoverHalo(t);d.glowAlpha=1;d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
+  const auto& t=m_viewport->tokens();d.glowColor=highlight::hoverHalo(t);d.rimColor=highlight::hoverRim(t);d.glowAlpha=1;d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto W=[&](double u,double v){return m_frame.to_world(u,v);};
   const double px=m_viewport->pixelSize();
   if(m_hover.kind==Hit::Point) {

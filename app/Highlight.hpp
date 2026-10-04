@@ -11,6 +11,7 @@
 namespace highlight {
 constexpr double kCloseDeltaE = 25;     // CIE76: under this a body's colour reads as the selection colour itself
 constexpr double kHoverEdgeWidth = 3;   // the hover's edge line (white, no halo)
+constexpr double kHoverRimWidth = 7;    // under a hovered line on a light background: the driver's widest line (device px)
 
 struct Selection {
   QColor fill;  // over the selected faces, at fillAlpha
@@ -30,6 +31,9 @@ bool closeToSelection(const Tokens& t, const QColor& body);
 QColor outlineFor(const QColor& body);  // white on a dark colour, near black on a light one
 // The hover's glow under a line drawn on the view's background (sketch curves): the white role, dimmed on the dark theme.
 QColor hoverHalo(const Tokens& t);
+// On a light background white alone hardly reads: a rim darker than the background under the hover's white line or glow
+// (edges, curve bodies, sketch curves). Invalid on the dark theme, where the white stands out by itself.
+QColor hoverRim(const Tokens& t);
 // A whole body's look when selected (its face boundaries thinner) or a picked face's, edge's or vertex's (wholeBody false);
 // body: its colour, invalid when unknown.
 Selection selection(const Tokens& t, const QColor& body, bool wholeBody);

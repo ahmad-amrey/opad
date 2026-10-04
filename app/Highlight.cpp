@@ -17,6 +17,8 @@ QColor mix(const QColor& a, const QColor& b, double t) {
 
 QColor hoverHalo(const Tokens& t) { return t.dark ? mix(t.hover, t.vp, 0.4) : t.hover; }
 
+QColor hoverRim(const Tokens& t) { return t.dark ? QColor() : mix(t.fg, t.vp, 0.6); }
+
 Selection selection(const Tokens& t, const QColor& body, bool wholeBody) {
   Selection s;
   s.fill = s.edge = t.selected3d;

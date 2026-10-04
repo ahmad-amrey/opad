@@ -24,6 +24,15 @@ struct GlowStyle {
   float fillAlpha = 0.4f, edgeWidth = 3, haloAlpha = 1, haloWidth = 7, point = 3, pointHalo = 7;
 };
 
+// The hover on lines (UI-38, set by Viewport::applyTokens): a curve body (sketch wire, drawing layer) hovered as a whole
+// gets a white core as wide as a hovered edge, and on a light background a hovered edge or curve body gets a darker rim
+// under its white line, which reads there where white alone hardly does. The owners read it while hovering (UI thread).
+struct HoverLines {
+  Handle(Prs3d_Drawer) rim;  // null: no rim (dark theme); else its colour and its wide WireAspect
+  float coreWidth = 3;       // device pixels (highlight::kHoverEdgeWidth)
+  static HoverLines& current();
+};
+
 // Per body-store key; shared by every instance of that body. Built off the UI thread.
 struct BodyPrs {
   Handle(Graphic3d_ArrayOfTriangles) triangles;
@@ -84,6 +93,7 @@ class SubShapeOwner : public StdSelect_BRepOwner {
 
  private:
   int m_index;
+  Handle(PrsMgr_PresentableObject) m_rim;  // the edge drawn wide in the rim colour under the hover (HoverLines)
 };
 
 class BodyShape : public AIS_Shape {
@@ -102,6 +112,7 @@ class BodyShape : public AIS_Shape {
   bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.Nullify(); SetToUpdate(); return true; }
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
   const std::shared_ptr<const BodyPrs>& prs() const { return m_prs; }
+  bool curveOnly() const { return m_prs && m_prs->triangles.IsNull() && !m_prs->boundaries.IsNull(); }  // a wire or drawing layer
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
   // Sub-shape modes: the stock owners are swapped for SubShapeOwner. The Edge and Vertex modes also hold the body's

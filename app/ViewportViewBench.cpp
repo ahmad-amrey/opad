@@ -65,6 +65,21 @@ QColor pixel(const QImage& frame, const QWidget* view, const QPointF& at) {
   return frame.rect().contains(x, y) ? frame.pixelColor(x, y) : QColor();
 }
 
+// The hover's rim (highlight::hoverRim) across a hovered line: pixels of a vertical run either side of `at` that were the
+// background in `plain` and are darker than it in `hovered`, but no line's ink.
+int rimAcross(const QImage& plain, const QImage& hovered, const QWidget* view, const QPointF& at, double reach, const QColor& background) {
+  const double scale = double(hovered.height()) / view->height();
+  const int x = qRound(at.x() * scale), y = qRound(at.y() * scale), r = qRound(reach * scale);
+  int n = 0;
+  for (int dy = -r; dy <= r; ++dy) {
+    if (!hovered.rect().contains(x, y + dy) || channelGap(plain.pixelColor(x, y + dy), background) > 6) continue;
+    const int l = hovered.pixelColor(x, y + dy).lightness();
+    if (l < background.lightness() - 20 && l > 80) ++n;
+  }
+  return n;
+}
+bool white(const QColor& c) { return std::min({c.red(), c.green(), c.blue()}) > 235; }  // over the light background (228) too
+
 // The pixels of a vertical run of `reach` widget points either side of `at` that pass `test`.
 int across(const QImage& frame, const QWidget* view, const QPointF& at, double reach, const std::function<bool(const QColor&)>& test) {
   const double scale = double(frame.height()) / view->height();
@@ -263,6 +278,21 @@ bool Viewport::benchHighlight(const QString& prefix) {
   require(edgeStyle.edgeWidth >= highlight::kHoverEdgeWidth && edgeStyle.haloWidth > edgeStyle.edgeWidth,
           QString("an edge is %1 px in a %2 px halo").arg(edgeStyle.edgeWidth).arg(edgeStyle.haloWidth));
   require(selectedWidth > hoverWidth && selectedWidth >= 3 * scale, QString("the selected edge is %1 px across, its hover %2").arg(selectedWidth).arg(hoverWidth));
+  // A silhouette edge (the top face on one side, the background on the other) hovered: on the light theme its white line
+  // lies on a rim darker than the background; on the dark theme the white stands out alone.
+  m_ctx->ClearSelected(Standard_False);
+  refreshSubHighlight();
+  const QPointF silhouette = at(gl.X(), gl.Y() + (gh.Y() - gl.Y()) * 0.6, gh.Z());
+  hover(away);
+  const QImage still = frame();
+  require(hover(silhouette) && !Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner()).IsNull(), "a silhouette edge is hovered");
+  shot = frame();
+  shot.save(prefix + "." + theme + ".edge-hover.png");
+  const QColor rimColour = highlight::hoverRim(m_tokens);
+  const int edgeRim = rimAcross(still, shot, this, silhouette, 12, m_tokens.vp);
+  const int edgeWhite = across(shot, this, silhouette, 12, white);
+  require(edgeWhite >= 2 && (m_tokens.dark ? !rimColour.isValid() && edgeRim == 0 : edgeRim >= 2),
+          QString("hovered, it is white (%1 px) %2").arg(edgeWhite).arg(m_tokens.dark ? QString("with no rim") : QString("on a darker rim (%1 px of %2 on the background side)").arg(edgeRim).arg(rimColour.name())));
   filter(SelFilter::Vertex);
   const QPointF corner = at(gh.X(), gl.Y(), gh.Z());
   require(click(corner) && !m_subHl.IsNull() && !m_subHl->m_points.empty(), "a vertex is selected");
@@ -314,8 +344,21 @@ bool Viewport::benchWireHighlight(const std::string& sketch, const QString& pref
   standardView("top");
   m_view->Redraw();
   const QPointF mid(widgetPoint({25, -40, 0}));
+  moveTo(devicePos(QPointF(4, height() - 4)));
+  m_view->Redraw();
+  m_view->RedrawImmediate();
+  const QImage still = grabImage();
   moveTo(devicePos(mid));
   require(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == wire->second.ais, "hovered, it is picked");
+  // Its hover: white lines as wide as a hovered edge's (the wire's own are thinner), on the light theme over a rim.
+  m_view->Redraw();
+  m_view->RedrawImmediate();
+  const QImage hovered = grabImage();
+  hovered.save(prefix + "." + theme + ".wire-hover.png");
+  const int core = across(hovered, this, mid, 12, white), plainCore = across(still, this, mid, 12, white);
+  const int rim = rimAcross(still, hovered, this, mid, 12, m_tokens.vp);
+  require(core >= 2 && core > plainCore && (m_tokens.dark ? rim == 0 : rim >= 2),
+          QString("hovered, its lines are white %1 px across%2").arg(core).arg(m_tokens.dark ? QString() : QString(" on a darker rim (%1 px)").arg(rim)));
   m_ctx->SelectDetected(AIS_SelectionScheme_Replace);
   OnSelectionChanged(m_ctx, m_view);
   m_ctx->ClearDetected(Standard_False);
@@ -360,9 +403,15 @@ bool sketchRoles(Viewport* v, SketchEditor* sketch, const QString& prefix) {
   sketch->sketchMove(25, -40, Qt::NoModifier, false);
   frame = v->grabImage();
   frame.save(prefix + "." + theme + ".sketch-hover.png");
-  const QColor glow = highlight::hoverHalo(t);
-  const int hovered = across(frame, v, mid, 14, [&](const QColor& c) { return channelGap(c, glow) < 12 && channelGap(c, t.vp) >= 15; });
-  require(hovered >= 3 * scale && !hued(pixel(frame, v, mid)), QString("a hovered line glows white: %1 px of the glow across").arg(hovered));
+  const QColor glow = highlight::hoverHalo(t), rimColour = highlight::hoverRim(t);
+  const int hovered = t.dark ? across(frame, v, mid, 14, [&](const QColor& c) { return channelGap(c, glow) < 12 && channelGap(c, t.vp) >= 15; })
+                             : across(frame, v, mid, 14, white);
+  // On the light background the glow lies inside a darker rim; lines are drawn no wider than about 7 device pixels, so
+  // the glow is narrower there.
+  const int rim = across(frame, v, mid, 14, [&](const QColor& c) { return c.lightness() < t.vp.lightness() - 20 && c.lightness() > t.fg.lightness() + 40; });
+  require(hovered >= (t.dark ? 3 * scale : 2) && !hued(pixel(frame, v, mid)), QString("a hovered line glows white: %1 px of the glow across").arg(hovered));
+  require(t.dark ? !rimColour.isValid() && rim == 0 : rim >= 2,
+          t.dark ? QString("no rim on the dark background") : QString("on the light background the glow has a darker rim: %1 px").arg(rim));
   sketch->sketchMove(25, -90, Qt::NoModifier, false);
   return all;
 }

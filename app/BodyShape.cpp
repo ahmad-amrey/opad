@@ -180,15 +180,57 @@ constexpr int kBigBody = 3000;
 constexpr size_t kEdgeGroup = 256;  // edges per group
 }
 
+HoverLines& HoverLines::current() {
+  static HoverLines lines;
+  return lines;
+}
+
+namespace {
+// A curve body's lines at one width, coloured by the highlight it is drawn with: the hover's core and rim (HoverLines).
+class HoverLinesPrs : public AIS_InteractiveObject {
+ public:
+  HoverLinesPrs(Handle(Graphic3d_ArrayOfSegments) segments, float width) : m_segments(std::move(segments)), m_width(width) {}
+ protected:
+  void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, const Standard_Integer) override {
+    Handle(Graphic3d_Group) g = prs->NewGroup();
+    g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(Quantity_NOC_WHITE, Aspect_TOL_SOLID, m_width));
+    g->AddPrimitiveArray(m_segments);
+  }
+  void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
+ private:
+  Handle(Graphic3d_ArrayOfSegments) m_segments;
+  float m_width;
+};
+
+// Draws `prs` as the owner's hover draws its own (same layer, placement and immediate list), coloured by `style`.
+void hoverAlike(const Handle(PrsMgr_PresentationManager)& pm, const Handle(PrsMgr_PresentableObject)& prs, const Handle(Prs3d_Drawer)& style,
+                const Handle(Prs3d_Drawer)& hover, const Handle(SelectMgr_SelectableObject)& selectable, const gp_Trsf& placement) {
+  prs->SetZLayer(selectable->ZLayer());
+  prs->SetTransformPersistence(selectable->TransformPersistence());
+  prs->SetLocalTransformation(placement);
+  pm->Color(prs, style, 0, selectable, hover->ZLayer() != Graphic3d_ZLayerId_UNKNOWN ? hover->ZLayer() : selectable->ZLayer());
+}
+}  // namespace
+
 void SubShapeOwner::HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) {
   if(pm->IsImmediateModeOn()) {
     if(curve && curve->size()>1 && myPrsSh.IsNull()) myPrsSh=new CurvePresentation(myShape,curve);
+    // On a light background an edge's white hover gets a darker rim under it, drawn first (HoverLines).
+    if(const auto& rim=HoverLines::current().rim; !rim.IsNull() && HasSelectable() && !myShape.IsNull() && myShape.ShapeType()==TopAbs_EDGE) {
+      if(m_rim.IsNull()) {
+        Handle(StdSelect_Shape) wide=curve && curve->size()>1 ? Handle(StdSelect_Shape)(new CurvePresentation(myShape,curve)) : new StdSelect_Shape(myShape);
+        wide->Attributes()->SetLink(rim);
+        m_rim=wide;
+      }
+      hoverAlike(pm,m_rim,rim,style,Selectable(),Location());
+    }
     StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
   }
 }
 
 void SubShapeOwner::Unhilight(const Handle(PrsMgr_PresentationManager)& pm, const Standard_Integer mode) {
   if (!myPrsSh.IsNull()) StdSelect_BRepOwner::Unhilight(pm, mode);  // with no presentation the base un-highlights the whole body
+  if (!m_rim.IsNull()) pm->Unhighlight(m_rim);
 }
 
 void SubHighlight::Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, const Standard_Integer) {
@@ -482,13 +524,33 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
 namespace {
 // Whole-body selection uses a lightweight overlay of the prepared arrays, so
 // the original material remains visible beneath its tint and white glow.
+// A curve body (sketch wire, drawing layer) hovered as a whole: its lines as wide as a hovered edge's, in white over the
+// rim on a light background (HoverLines); the stock hover alone kept the body's thin lines.
 class BodySelectionOwner : public StdSelect_BRepOwner {
  public:
   BodySelectionOwner(const TopoDS_Shape& shape,const Handle(SelectMgr_SelectableObject)& body,int priority)
       : StdSelect_BRepOwner(shape,body,priority,false) {}
   void HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm,const Handle(Prs3d_Drawer)& style,Standard_Integer mode) override {
-    if(pm->IsImmediateModeOn()) StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
+    if(!pm->IsImmediateModeOn()) return;
+    const auto body=Handle(BodyShape)::DownCast(Selectable());
+    if(body.IsNull() || !body->curveOnly()) return StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
+    const HoverLines& look=HoverLines::current();
+    if(m_core.IsNull()) m_core=new HoverLinesPrs(body->prs()->boundaries,look.coreWidth);
+    if(!look.rim.IsNull()) {
+      const float width=float(look.rim->WireAspect()->Aspect()->Width());
+      if(m_rim.IsNull() || m_rimWidth!=width) m_rim=new HoverLinesPrs(body->prs()->boundaries,m_rimWidth=width);
+      hoverAlike(pm,m_rim,look.rim,style,body,body->Transformation());
+    }
+    StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
+    hoverAlike(pm,m_core,style,style,body,body->Transformation());
   }
+  void Unhilight(const Handle(PrsMgr_PresentationManager)& pm,const Standard_Integer mode) override {
+    StdSelect_BRepOwner::Unhilight(pm,mode);
+    for(const auto& prs:{m_rim,m_core}) if(!prs.IsNull()) pm->Unhighlight(prs);
+  }
+ private:
+  Handle(PrsMgr_PresentableObject) m_rim,m_core;
+  float m_rimWidth=0;
 };
 // Facets remain compact triangulations in the document. Construct an analytic
 // triangle/segment/vertex only when that primitive is actually picked.

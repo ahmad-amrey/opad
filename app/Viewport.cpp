@@ -406,6 +406,19 @@ void Viewport::applyTokens() {
     drawer->SetLineAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
     drawer->SetWireAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
   }
+  // A curve body hovered whole: lines as wide as a hovered edge; on the light theme a darker rim under hovered lines.
+  HoverLines& lines = HoverLines::current();
+  lines.coreWidth = float(edge);
+  lines.rim.Nullify();
+  if (const QColor rim = highlight::hoverRim(t); rim.isValid()) {
+    lines.rim = new Prs3d_Drawer();
+    lines.rim->SetLink(m_ctx->DefaultDrawer());  // the rest (deflection, the other aspects) as everything else
+    lines.rim->SetColor(occ(rim));
+    lines.rim->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    lines.rim->SetDisplayMode(0);
+    lines.rim->SetWireAspect(new Prs3d_LineAspect(occ(rim), Aspect_TOL_SOLID, highlight::kHoverRimWidth));
+    lines.rim->SetLineAspect(new Prs3d_LineAspect(occ(rim), Aspect_TOL_SOLID, highlight::kHoverRimWidth));
+  }
   if (!m_subHl.IsNull()) refreshSubHighlight();  // drawn by us in the selection colour
   for (const auto& [ais, glow] : m_bodyGlows) m_ctx->Remove(glow, Standard_False);  // made again in the new colours
   if (!m_bodyGlows.empty()) { m_bodyGlows.clear(); applySelectionLayers(); }

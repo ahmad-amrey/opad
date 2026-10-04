@@ -151,8 +151,10 @@ CASES = [
     ("transparency", "box", {"OPAD_BENCH_TRANSPARENCY": "{prefix}"}),
     # Hover and selection roles (UI-38), in both themes: a hovered body glows white, a selected one is hued (pixels), a
     # body in the selection's own colour is outlined, a selected edge is thicker than its hover in a halo, a face and a
-    # vertex are hued, the cube's side in a top view is drawn as selected and its hover is white; in a sketch a selected
-    # line is hued over a halo and a hovered one glows white. <prefix>.<theme>.{hover,body,outline,edge,cube,sketch}.png.
+    # vertex are hued, the cube's side in a top view is drawn as selected and its hover is white; a hovered silhouette edge
+    # and a finished sketch's wire are white, on the light theme over a darker rim (none on the dark); in a sketch a selected
+    # line is hued over a halo and a hovered one glows white (in a rim on the light theme).
+    # <prefix>.<theme>.{hover,body,outline,edge,edge-hover,cube,sketch,sketch-hover,wire,wire-hover}.png.
     ("highlight", colour_boxes, {"OPAD_BENCH_HIGHLIGHT": "{prefix}"}),
     # Navigation staples (UI-47): the zoom window (a dragged rectangle comes to the centre at its width's zoom, a click
     # zooms in twice, Esc and a right click leave it), animated standard views, Home and Fit all ending where the instant
