@@ -2,6 +2,7 @@
 #include "MainWindow.hpp"
 #include "BenchRegistry.hpp"
 #include "CheckPanel.hpp"
+#include "Drawing2DBench.hpp"
 #include "FileAssociations.hpp"
 #include "RecoveryManager.hpp"
 
@@ -442,8 +443,22 @@ void MainWindow::runBench() {
   }
   // OPAD_BENCH_TOOL=<distance|angle|radius|bbox>[,faces]: walk a guided tool without a mouse. Start it, click twice
   // through the view controller, log the tool's state after each, dump the prompt bar and the panel next to
-  // OPAD_BENCH_UISHOT, step back with Esc, quit.
+  // OPAD_BENCH_UISHOT, step back with Esc, quit. The tool left, quit waits for the filter it switched from to be back on
+  // every body (at most 60 s; "bench: tool: filter back after N ms"). OPAD_BENCH_TOOL_SHOWROOT=1 shows hidden roots in
+  // memory first and walks once every body is displayed (the Engine .opad has its root hidden; never saved).
   if (const QStringList spec = qEnvironmentVariable("OPAD_BENCH_TOOL").split(',', Qt::SkipEmptyParts); !spec.isEmpty()) {
+    if (qEnvironmentVariableIsSet("OPAD_BENCH_TOOL_SHOWROOT") && !qEnvironmentVariableIsSet("OPAD_BENCH_TOOL_SHOWN")) {
+      for (const auto& root : m_doc->scene.roots)
+        if (const auto* n = m_doc->scene.node(root); n && !n->visible) m_doc->run("appearance", opad::json{{"target", root}, {"visible", true}});
+      auto clock = std::make_shared<QElapsedTimer>();
+      clock->start();
+      bench2d::pollUntil(this, [this] { return !m_displayJob && m_meshRemaining == 0 && !m_jobs->busy(); }, 300000, [this, clock](bool shown) {
+        trace::log(QStringLiteral("bench: tool: %1 bodies displayed after %2 ms%3").arg(m_viewport->displayedCount()).arg(clock->elapsed()).arg(shown ? "" : " (timed out)"));
+        qputenv("OPAD_BENCH_TOOL_SHOWN", "1");
+        runBench();
+      });
+      return;
+    }
     auto state = [this](const char* when) {
       trace::log(QStringLiteral("bench: tool '%1' %2: %3 picks, result %4").arg(m_tool.id, when).arg(m_toolPicks.size()).arg(QString::fromStdString(m_lastMeasure.dump()).left(240)));
     };
@@ -462,8 +477,18 @@ void MainWindow::runBench() {
       }
       toolEscape();
     });
-    QTimer::singleShot(14800, this, [this, state] { state("after Esc"); toolEscape(); toolEscape(); state("after Esc x3"); });
-    QTimer::singleShot(15500, qApp, &QCoreApplication::quit);
+    QTimer::singleShot(14800, this, [this, state] {
+      state("after Esc");
+      toolEscape();
+      toolEscape();
+      state("after Esc x3");
+      auto clock = std::make_shared<QElapsedTimer>();
+      clock->start();
+      bench2d::pollUntil(this, [this] { return m_tool.id.isEmpty() && !m_jobs->busy(); }, 60000, [this, clock](bool back) {
+        trace::log(QStringLiteral("bench: tool: filter back after %1 ms (%2, %3 bodies)").arg(clock->elapsed()).arg(back ? "settled" : "timed out").arg(m_viewport->displayedCount()));
+        QCoreApplication::exit(0);  // not quit(): roots shown make the document dirty, and nothing is saved
+      });
+    });
     };
     // On a big model the filter switch is a sliced job: picking before it has reached every body hits nothing.
     if (spec.size() > 1) {
