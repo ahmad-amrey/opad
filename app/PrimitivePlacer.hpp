@@ -4,12 +4,15 @@
 //   1. Place: a click on an origin plane, a construction plane or a planar face writes Plane and Position X/Y (in that
 //      plane's frame). The pointer shows where on the hovered plane it would go, snapped as a sketch's points are
 //      (PlaneSnap: the sketches' and drawings' object snaps, the hovered face's corners, centres and midpoints, the plane's
-//      origin, else the grid while Grid snapping is on; Alt: free), the snap's marker and name shown. Over nothing the plane
-//      the panel holds takes the click (XY unless chosen; the origin plane facing the view when that one is edge-on).
+//      origin, else the grid while Grid snapping is on, on a face in the frame a click resolves for it, from its corner as a
+//      sketch's on it; Alt: free), the snap's marker and name shown; a snapped point or grid node is written exactly. Over
+//      nothing the plane the panel holds takes the click (XY unless chosen; the origin plane facing the view when that one is
+//      edge-on).
 //   2. Size: the pointer draws the footprint (FeatureSpec::footprint): a rectangle's length and width about the click (Centred
 //      on, or from it as a corner), a diameter from it, a ring's diameter through the tube's middle; the outline follows at
-//      once, the preview as fast as plans come; the pointer snaps as when placing (a snapped point's size is exact, others
-//      are rounded at this zoom). The values show in boxes beside the pointer; Tab goes round them and a typed value (or one
+//      once, the preview as fast as plans come; the pointer snaps as when placing (a snapped point's or grid node's size is
+//      exact, others are rounded at this zoom). The values show in boxes beside the pointer; Tab goes round them (a box's
+//      length and width; a round base has one box) and a typed value (or one
 //      typed into the panel) holds while the pointer sets the others. A click fixes them (a press, drag and release from the
 //      first click does too). The pointer never sizes what the kernel refuses: a ring smaller than its section takes a
 //      thinner section (until the section is typed), a coil stays wider than twice its section, a cone's base differs from
@@ -57,6 +60,7 @@ class PrimitivePlacer : public QObject {
   bool previewShown() const;   // a body to preview: not while the plane is picked, nor before the pointer gave a size
   bool arrowShown() const;     // the value arrow (the height) may show
   void showPlanes();           // the planes to click again (after a pick box of the panel took the view)
+  void panelPicking(bool on);  // a pick box of the panel takes the view (on), or let go of it: the Face filter, planes, prompt
   QList<DynamicInput::Field> fields() const;  // the boxes beside the pointer while it sizes (empty: the panel's)
   QStringList arrowExtras() const;            // the inputs Tab reaches from the arrow's box, in order
   void typed(const QString& key);             // a box typed into or emptied: that size holds, or follows the pointer again
@@ -100,6 +104,7 @@ class PrimitivePlacer : public QObject {
   void setStatus(const QString& text);
   QString withSnap(const QString& text, const QString& kind) const;  // "Endpoint · <text>" when snapped
   double gridOr(double fallback, bool free) const;  // the grid step while it snaps, else the fallback
+  bool faceFrame(const TopoDS_Face& face, opad::Frame& frame);  // the frame a click on the face resolves (cached per face)
   double value(const QString& key, double fallback) const;  // an input as the feature gets it, in mm
   double parsed(const QString& text, double fallback) const;
   QString sizeText(double mm, bool exact) const;
@@ -135,4 +140,7 @@ class PrimitivePlacer : public QObject {
   QString m_status, m_markerKind;
   PlaneSnap m_snap;
   QString m_sectionText;          // a ring's section as the sizing of its diameter began: what it goes back to when there is room
+  TopoDS_Face m_frameFace;        // the face m_faceFrame is of
+  opad::Frame m_faceFrame;
+  bool m_faceFrameOk = false;
 };

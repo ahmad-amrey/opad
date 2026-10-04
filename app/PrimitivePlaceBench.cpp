@@ -51,6 +51,13 @@
 //   The sketch plane's origin snaps the same way: on XY, pressed a few pixels off the circle's centre, the origin is the
 //   centre; with Alt, where the pointer is.
 //   Box with Centred off: the click is a corner and the box runs towards the pointer; Esc twice leaves.
+//   Box, Operation Cut: its Bodies to change box clicked takes the view (no marker), clicked again lets go: the pointer over
+//   the block's top face shows the marker on it and the click places the box on that face (the view picks faces again), the
+//   status bar shows the placing prompt again.
+//   Cylinder, grid snapping on, over the block's top face: the marker is a node of the face's own grid (from its corner, as
+//   a sketch on it counts), not of the XY grid, and the click writes that node's Position X/Y exactly.
+//   Box, a 1.25 mm grid, Centred off: the node's place (3.75, -1.25) and the sizes from it (3.75 x 1.25) are written exactly,
+//   not to the decimals of the zoom's pull step.
 //   Cylinder: Enter before any click adds the panel's defaults at the XY origin (the keyboard's way).
 // Along the way the panel's guide loops the clip's step for the stage (placing, sizing, then the arrow and Enter).
 // Shots: <prefix>.<step>.png (the view: marker, outline, preview and arrow are drawn in it), <prefix>.panel.png.
@@ -662,6 +669,109 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         pass("box: with Centred off the click is a corner and the box runs towards the pointer");
         design->escape();
         design->escape();
+        return true;
+      },
+      [=] { return waitFor(!design->featureActive(), "Esc twice did not leave the box"); },
+      // ---- A pick box of the panel used while placing, then let go: the view picks faces again, the prompt is the placer's.
+      [=] {
+        start("box");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the box does not wait for a plane")) return false;
+        view->grabImage();
+        moveTo(front());
+        require(placer->markerShown(), "the pointer over XY shows no marker");
+        form->setValue("operation", "cut");
+        form->activate("targets");  // its Bodies to change box clicked
+        return true;
+      },
+      [=] {
+        if (!waitFor(form->activeInput() == "targets" && view->selectionFilter() == Viewport::SelFilter::Body, "the Bodies to change box did not take the view")) return false;
+        require(!placer->markerShown(), "the placing marker stayed while the pick box has the view");
+        form->activate(QString());  // the box clicked again: it lets go of the view
+        return true;
+      },
+      [=] {
+        if (!waitFor(form->activeInput().isEmpty() && view->selectionFilter() == Viewport::SelFilter::Face,
+                     "letting go of the pick box did not give the view its faces back: filter " + std::to_string(int(view->selectionFilter())))) return false;
+        require(placer->stage() == Stage::Place && win->m_promptText == placer->prompt(), "the status bar does not show the placing prompt again: " + win->m_promptText.toStdString());
+        view->grabImage();
+        moveTo({-40, 0, 10});
+        opad::Vec3 marker;
+        require(placer->markerShown(&marker) && about(marker[2], 10, 1e-6), "after the pick box, the pointer over the block's top face shows no marker on it");
+        clickAt({-40, 0, 10});
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Size, "after the pick box, the click on the block's top face did not place the box")) return false;
+        const opad::json plane = form->picks("plane");
+        require(plane.is_object() && plane.contains("face"), "after the pick box the click placed the box on " + plane.dump() + ", not on the face");
+        pass("box: its Bodies to change box takes the view (no marker) and, let go, gives it back: the marker and the click on the block's top face, the placing prompt");
+        design->escape();
+        design->escape();
+        return true;
+      },
+      [=] { return waitFor(!design->featureActive(), "Esc twice did not leave the box"); },
+      // ---- Grid snapping over a face: a node of the face's own grid, the one the click writes.
+      [=] {
+        view->setGridSnap(true);
+        st->grid = view->gridStep();
+        start("cylinder");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the cylinder does not wait for a plane")) return false;
+        view->grabImage();
+        const double g = st->grid;
+        // The block's top face runs from its corner (-55, -10, 10) along X and Y: the pointer 1.37 and 1.32 steps from it
+        // is nearest the node one step along each (-45, 0 with a 10 mm grid; the XY grid's nearest node is -40, 0).
+        const opad::Vec3 p{-55 + 1.37 * g, -10 + 1.32 * g, 10};
+        moveTo(p);
+        opad::Vec3 marker;
+        require(placer->markerShown(&marker) && placer->snapKind() == "grid" && about(marker[0], -55 + g, 1e-6) && about(marker[1], -10 + g, 1e-6) && about(marker[2], 10, 1e-6),
+                "over the top face the marker is not on the face's grid node: " + placer->snapKind().toStdString() + " " + str(marker[0]) + ", " + str(marker[1]) + ", " + str(marker[2]));
+        clickAt(p);
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Size, "the click on the top face did not place the cylinder")) return false;
+        const double g = st->grid;
+        const opad::json plane = form->picks("plane");
+        require(plane.is_object() && plane.contains("face") && about(mm("x"), g, 1e-9) && about(mm("y"), g, 1e-9),
+                "the click on the face did not write the node the marker showed: " + plane.dump() + " " + form->valueText("x").toStdString() + ", " + form->valueText("y").toStdString());
+        pass("grid on a face: the marker and the click are the face's own grid node (" + form->valueText("x") + ", " + form->valueText("y") + " from its corner)");
+        design->escape();
+        design->escape();
+        view->setGridSnap(false);
+        return true;
+      },
+      [=] { return waitFor(!design->featureActive(), "Esc twice did not leave the cylinder"); },
+      // ---- A fractional grid: what the node and the sizes from it give is written exactly.
+      [=] {
+        view->configureGrid(1.25, 100);
+        view->setGridSnap(true);
+        start("box");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the box does not wait for a plane")) return false;
+        view->grabImage();
+        require(about(view->gridStep(), 1.25, 1e-12), "the grid spacing is not 1.25 mm: " + str(view->gridStep()));
+        form->setValue("centered", false);
+        const opad::Vec3 p{3.4 * 1.25, -1.3 * 1.25, 0};  // nearest the node (3.75, -1.25)
+        moveTo(p);
+        clickAt(p);
+        require(placer->stage() == Stage::Size && mm("x") == 3.75 && mm("y") == -1.25,
+                "the 1.25 mm grid's node is not written exactly: " + form->valueText("x").toStdString() + ", " + form->valueText("y").toStdString());
+        moveTo({3.75 + 3.2 * 1.25, -1.25 + 0.9 * 1.25, 0});  // nearest the node three steps along X and one along Y
+        require(mm("length") == 3.75 && mm("width") == 1.25, "the sizes from the grid's nodes are not written exactly: " + form->valueText("length").toStdString() + " x " + form->valueText("width").toStdString());
+        pass("grid: a 1.25 mm grid's node is written " + form->valueText("x") + ", " + form->valueText("y") + " and the box from it " + form->valueText("length") + " x " +
+             form->valueText("width") + " (the zoom's pull step " + QString::number(pullStep()) + " mm)");
+        design->escape();
+        design->escape();
+        view->setGridSnap(false);
+        view->configureGrid(0, 100);
         return true;
       },
       [=] { return waitFor(!design->featureActive(), "Esc twice did not leave the box"); },

@@ -13,6 +13,7 @@
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <GeomAPI_Interpolate.hxx>
@@ -131,6 +132,42 @@ Frame base_frame(const std::string& base) {
   if (base == "xz") { f.x = {1, 0, 0}; f.y = {0, 0, 1}; }
   else if (base == "yz") { f.x = {0, 1, 0}; f.y = {0, 0, 1}; }
   else if (base != "xy") throw Error("unknown base plane \"" + base + "\" (xy, xz or yz)");
+  return f;
+}
+
+Frame face_frame(const TopoDS_Face& face) {
+  BRepAdaptor_Surface surf(face);
+  if (surf.GetType() != GeomAbs_Plane) throw Error("that face is not planar");
+  gp_Ax3 ax = surf.Plane().Position();
+  gp_Dir n = ax.Direction();
+  if (!ax.Direct()) n.Reverse();
+  if (face.Orientation() == TopAbs_REVERSED) n.Reverse();  // outward from the body
+  // Use the face centre to establish its axes before choosing the lower-left corner.
+  GProp_GProps g;
+  BRepGProp::SurfaceProperties(face, g);
+  gp_Dir xd = ax.XDirection();
+  // Prefer a world-aligned x so sketches on box faces are not rotated arbitrarily.
+  for (const gp_Dir& cand : {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)})
+    if (std::fabs(cand.Dot(n)) < 1e-6) {
+      xd = cand;
+      break;
+    }
+  Frame f = frame_from_ax3(gp_Ax3(g.CentreOfMass(), n, xd));
+  bool have = false;
+  double bestU = 0, bestV = 0;
+  Vec3 corner = f.origin;
+  for (TopExp_Explorer vertices(face, TopAbs_VERTEX); vertices.More(); vertices.Next()) {
+    const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current()));
+    double u, v;
+    f.to_local({p.X(), p.Y(), p.Z()}, u, v);
+    if (!have || v < bestV - 1e-7 || (std::abs(v - bestV) <= 1e-7 && u < bestU)) {
+      have = true;
+      bestU = u;
+      bestV = v;
+      corner = {p.X(), p.Y(), p.Z()};
+    }
+  }
+  if (have) f.origin = corner;
   return f;
 }
 

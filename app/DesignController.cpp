@@ -727,7 +727,10 @@ void DesignController::activateInput(const QString& name) {
     if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
     m_activeCandidates.clear();
     refreshRoute();  // nothing routed without an active input
-    if (m_placer->stage() == PrimitivePlacer::Stage::Place) return m_placer->showPlanes();  // a pick box let go: the planes again
+    if (m_placer->active()) {  // a pick box let go: the faces to click (not the box's whole bodies), the planes, the prompt
+      m_placer->panelPicking(false);
+      if (m_placer->stage() == PrimitivePlacer::Stage::Place) return;
+    }
     // A construction plane's From plane (or any plane input) takes a click on a planar face, an origin plane or a
     // construction plane while nothing else is being picked (TODO 11 P3): the guide's face click.
     m_idlePlane = idlePlaneInput();
@@ -760,6 +763,7 @@ void DesignController::activateInput(const QString& name) {
     // Not the selection: that is the feature's other picks (a single draft face became its own neutral plane).
     emit stateChanged();QTimer::singleShot(0,this,[this]{if(m_pickPlane&&m_featureOn){m_planePicker->panel()->setHeader("plane",tr("Choose plane"));m_planePicker->start(false,m_openPanel,false);}});return;
   }
+  if (m_placer->active()) m_placer->panelPicking(true);  // the box takes the clicks: no marker meanwhile
   const Viewport::SelFilter want = filterFor(in->type);
   const bool roundFaces = in->type == "axis";  // a cylinder's, cone's or torus's face gives its axis (the guide's face click)
   showCandidatesFor(QString::fromStdString(in->type));

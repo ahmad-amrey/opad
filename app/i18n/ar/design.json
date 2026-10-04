@@ -8,6 +8,7 @@
   "Click in the view": "انقر في العرض",
   "Click a plane or a planar face to place the %1 · Enter adds it where the panel says": "انقر مستوى أو وجهًا مستويًا لوضع %1 · يضيفه Enter حيث تقول اللوحة",
   "%1: move the pointer and click, or type it (Tab: the next box) · Enter adds the %2": "%1: حرّك المؤشر وانقر، أو اكتبه (Tab: المربع التالي) · يضيف Enter %2",
+  "%1: move the pointer and click, or type it · Enter adds the %2": "%1: حرّك المؤشر وانقر، أو اكتبه · يضيف Enter %2",
   "Length and width": "الطول والعرض",
   "Drag the arrow or type the height · Enter adds the %1": "اسحب السهم أو اكتب الارتفاع · يضيف Enter %1",
   "The panel has every value to change · Enter adds the %1": "في اللوحة كل القيم لتغييرها · يضيف Enter %1",

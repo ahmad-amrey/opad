@@ -138,6 +138,17 @@ void PrimitivePlacer::showPlanes() {
   m_view->showCandidates(m_planes);
 }
 
+// A pick box of the panel took the view (the bodies a cut changes): no marker meanwhile; it let go: the faces to click and
+// snap to again (the box had the view pick whole bodies), the planes while placing, and the stage's prompt.
+void PrimitivePlacer::panelPicking(bool on) {
+  if (m_stage == Stage::Off) return;
+  if (on) return clearMarker();
+  if (m_view->selectionFilter() != Viewport::SelFilter::Face || m_view->roundFacesPickable()) m_view->setSelectionFilter(Viewport::SelFilter::Face);
+  showPlanes();
+  m_status.clear();  // the box's own line replaced it in the status bar
+  setStatus(prompt());
+}
+
 int PrimitivePlacer::guideCount() const { return ring() ? 4 : 3; }
 
 int PrimitivePlacer::guideStep() const {
@@ -160,10 +171,11 @@ QString PrimitivePlacer::prompt() const {
   };
   switch (m_stage) {
     case Stage::Place: return tr("Click a plane or a planar face to place the %1 · Enter adds it where the panel says").arg(what);
+    // Tab goes on to the next box only where there are two (a box's length and width); a round base or a tube has one.
     case Stage::Size:
-      return tr("%1: move the pointer and click, or type it (Tab: the next box) · Enter adds the %2")
-          .arg(m_spec->footprint == "rect" ? tr("Length and width") : label("diameter"), what);
-    case Stage::Section: return tr("%1: move the pointer and click, or type it (Tab: the next box) · Enter adds the %2").arg(label("section"), what);
+      if (m_spec->footprint == "rect") return tr("%1: move the pointer and click, or type it (Tab: the next box) · Enter adds the %2").arg(tr("Length and width"), what);
+      return tr("%1: move the pointer and click, or type it · Enter adds the %2").arg(label("diameter"), what);
+    case Stage::Section: return tr("%1: move the pointer and click, or type it · Enter adds the %2").arg(label("section"), what);
     case Stage::Height: return tr("Drag the arrow or type the height · Enter adds the %1").arg(what);
     case Stage::Done: return tr("The panel has every value to change · Enter adds the %1").arg(what);
     default: return {};
@@ -239,13 +251,31 @@ double PrimitivePlacer::parsed(const QString& text, double fallback) const {
   }
 }
 
-// A length as the pointer writes it: a point of the model's exactly, else to the decimals this zoom tells apart (as a pull of
-// the arrows is).
+// A length as the pointer writes it: a point of the model's or a grid node's exactly, else to the decimals this zoom tells
+// apart (as a pull of the arrows is).
 QString PrimitivePlacer::sizeText(double mm, bool exact) const {
   return exact ? units::editable(units::Kind::Length, mm) : DimensionHandle::pulledText(mm, DimensionHandle::pullStep(m_view->pixelSize()));
 }
 
 double PrimitivePlacer::gridOr(double fallback, bool free) const { return m_view->gridSnap() && !free && m_view->gridStep() > 0 ? m_view->gridStep() : fallback; }
+
+// The frame the feature resolves for a planar face (opad::design::face_frame: its lower-left corner, a world axis for x), once
+// per face hovered: the grid's nodes on the face are the ones a click there writes.
+bool PrimitivePlacer::faceFrame(const TopoDS_Face& face, opad::Frame& frame) {
+  if (!face.IsEqual(m_frameFace)) {
+    m_frameFace = face;
+    try {
+      m_faceFrame = opad::design::face_frame(face);
+      m_faceFrameOk = true;
+    } catch (const std::exception&) {
+      m_faceFrameOk = false;
+    } catch (const Standard_Failure&) {
+      m_faceFrameOk = false;
+    }
+  }
+  if (m_faceFrameOk) frame = m_faceFrame;
+  return m_faceFrameOk;
+}
 
 QString PrimitivePlacer::withSnap(const QString& text, const QString& kind) const {
   if (kind.isEmpty() || kind == "grid") return text;
@@ -298,15 +328,18 @@ PrimitivePlacer::Hit PrimitivePlacer::hitAt(const QPointF& pos, bool free, bool 
       gp_Dir n = ax.Direction();
       if (!ax.Direct()) n.Reverse();
       if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
-      // Where the pointer meets the face's plane now (the hover's detection is a frame old), else where it snapped; the
-      // frame the feature resolves (from the face's corner) is worked out on a worker when it is clicked.
-      const opad::Frame plane = opad::design::frame_from_ax3(gp_Ax3(ax.Location(), n, ax.XDirection()));
-      const PlaneSnap::Result snap = m_snap.at(pos, plane, face, {free, false, false});
+      // Where the pointer meets the face's plane now (the hover's detection is a frame old), else where it snapped: the
+      // face's points, else a grid node in the frame the feature will resolve for it (from its corner, as a sketch on it), so
+      // the node the marker shows is the one the click writes. The face's reference is named on a worker when it is clicked.
+      opad::Frame plane;
+      if (!faceFrame(face, plane)) plane = opad::design::frame_from_ax3(gp_Ax3(ax.Location(), n, ax.XDirection()));
+      const PlaneSnap::Result snap = m_snap.at(pos, plane, face, {free, false, true});
       if (snap.ok) at = snap.at;
       h.ok = true;
       h.snapped = snap.exact();
-      h.kind = snap.kind;
-      h.frame = opad::design::frame_from_ax3(gp_Ax3(pnt(at), n, ax.XDirection()));
+      h.kind = snap.ok ? snap.kind : QString();
+      h.frame = plane;
+      h.frame.origin = at;
       h.at = at;
       h.seen = h.snapped ? snap.seen : at;
       return h;
@@ -470,8 +503,8 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
     return;
   }
   m_placedAt = pos;
-  const bool snapped = hit.snapped;
-  if (hit.frameKnown) return placeAt(hit.plane, hit.frame, hit.u, hit.v, snapped);
+  const QString kind = hit.kind;  // a point of the model, a grid node ("grid") or none: what the marker showed
+  if (hit.frameKnown) return placeAt(hit.plane, hit.frame, hit.u, hit.v, !kind.isEmpty());
   // A face: its frame as the feature will resolve it (from the face's corner, kernel work) on a worker, then the click's
   // point in it.
   // The face is named on the worker too: a reopened document's bodies have stock owners, whose ordinal is a walk of the body.
@@ -498,7 +531,7 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
     *plane = json{{"face", ref.to_json()}};
     *frame = opad::design::resolve_plane(*doc, *scene, *plane);
     (*plane)["face"] = opad::design::make_ref(*doc, *scene, ref);
-  }, [this, serial, plane, frame, at, free, snapped](bool ok, const QString& error) {
+  }, [this, serial, plane, frame, at, free, kind](bool ok, const QString& error) {
     if (serial != m_serial || m_stage != Stage::Place) return;
     m_job = nullptr;
     if (!ok) {
@@ -507,14 +540,14 @@ void PrimitivePlacer::click(const QPointF& pos, bool free) {
     }
     double u = 0, v = 0;
     frame->to_local(at, u, v);
-    // A point of the model it snapped to stays where it is; anything else is rounded as on an origin plane (to the grid's
-    // nodes in the face's own frame while grid snapping is on).
-    if (!snapped) {
-      const double s = gridOr(DimensionHandle::pullStep(m_view->pixelSize()), free);
+    // A point of the model it snapped to stays where it is; a grid node is that node of the face's frame (the marker's was
+    // in the same frame, made from the face on the UI thread); anything else is rounded at this zoom.
+    if (kind == "grid" || kind.isEmpty()) {
+      const double pull = DimensionHandle::pullStep(m_view->pixelSize()), s = kind == "grid" ? gridOr(pull, free) : pull;
       u = std::round(u / s) * s;
       v = std::round(v / s) * s;
     }
-    placeAt(*plane, *frame, u, v, snapped);
+    placeAt(*plane, *frame, u, v, !kind.isEmpty());
     if (m_release.pending) {  // pressed, dragged and let go while the face was resolved: the footprint is that drag
       sizeFrom(m_release.at, m_release.free, true);
       fixSize();
@@ -537,9 +570,11 @@ void PrimitivePlacer::sizeFrom(const QPointF& pos, bool free, bool fresh) {
   const PlaneSnap::Result snap = m_snap.at(pos, m_frame, face, {free, true, true, &centre});
   if (!snap.ok) return;
   showSnap(snap);
-  const bool exact = snap.exact();
+  // A point of the model or a grid node: the size it gives is written as it is (a 1/16 in grid's 3/16 in, not the zoom's
+  // 0.19 in); anything else is rounded at this zoom.
+  const bool exact = !snap.kind.isEmpty();
   const double pull = DimensionHandle::pullStep(m_view->pixelSize());
-  auto size = [&](double mm) { return std::max(pull, exact ? mm : std::round(mm / pull) * pull); };  // grid nodes give whole steps already
+  auto size = [&](double mm) { return std::max(pull, exact ? mm : std::round(mm / pull) * pull); };
   const double du = snap.u - m_cu, dv = snap.v - m_cv;
   std::vector<std::pair<QString, json>> out;
   auto put = [&](const char* key, double mm, bool sharp) {
