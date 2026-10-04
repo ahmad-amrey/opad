@@ -134,6 +134,7 @@
  "entity": "عنصر",
  "Signed components from point 1 to point 2 along the X, Y and Z axes: the world's, or the component's when its coordinates are chosen. Red X, green Y, blue Z.": "المركبات الموقّعة من النقطة 1 إلى النقطة 2 على المحاور X وY وZ: محاور العالم، أو محاور المكوّن عند اختيار إحداثياته. X أحمر وY أخضر وZ أزرق.",
  "Only the isolated bodies are shown. Click to show everything again (Exit isolate).": "لا تظهر إلا الأجسام المعزولة. انقر لإظهار كل شيء مجددًا (إنهاء العزل).",
+ "Or click × on the Isolated card": "أو انقر × في بطاقة «معزول»",
  "Select bodies, faces or edges · each click adds": "حدد أجسامًا أو أوجهًا أو حوافًا · كل نقرة تضيف",
  "Colouring the findings": "تلوين النتائج"
 }
