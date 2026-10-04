@@ -31,9 +31,9 @@ void MainWindow::buildViewActions() {
   addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(true); });
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(true); });
   addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Shift+A"),[this] {
-    if(m_design->sketchActive()) {m_viewport->lookAt(m_design->sketch()->frame(),false,false);return;}
+    if(m_design->sketchActive()) {m_viewport->lookAt(m_design->sketch()->frame(),false,true);return;}
     cancelTool();
-    m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame,true,false); });
+    m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame,true,true); });
   });
   addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence("Alt+Left"), [this] { m_viewport->rollView(90); });
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence("Alt+Right"), [this] { m_viewport->rollView(-90); });

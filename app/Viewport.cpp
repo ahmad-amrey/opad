@@ -1262,7 +1262,7 @@ void Viewport::resetMeshing() {
   m_meshSkipped.clear();
 }
 
-void Viewport::fitNodes(const std::vector<std::string>& ids) {
+void Viewport::fitNodes(const std::vector<std::string>& ids, bool animate) {
   if (!m_initialised) return;
   m_needFit = false;
   Bnd_Box box;
@@ -1272,10 +1272,8 @@ void Viewport::fitNodes(const std::vector<std::string>& ids) {
       if (m_items.count(b)) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, b));
   }
   if (trace::enabled()) { double a, b, c, d, e, f; if (!box.IsVoid()) box.Get(a, b, c, d, e, f); trace::log(QStringLiteral("fitNodes: box void=%1 [%2 %3 %4]-[%5 %6 %7]").arg(box.IsVoid()).arg(a).arg(b).arg(c).arg(d).arg(e).arg(f)); }
-  if (box.IsVoid()) return fitAll();
-  m_view->FitAll(box, 0.02, Standard_False);
-  m_view->Invalidate();
-  requestRedraw();
+  if (box.IsVoid()) return fitAll(animate);
+  moveCamera(animate, 0.35, [this, &box] { m_view->FitAll(box, 0.02, Standard_False); });
 }
 
 void Viewport::fitSelection(bool animate) {

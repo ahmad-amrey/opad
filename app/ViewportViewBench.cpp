@@ -1,9 +1,11 @@
 // Benches of the view's looks and navigation (T2 viewer): OPAD_BENCH_TRANSPARENCY (UI-39), OPAD_BENCH_HIGHLIGHT (UI-38),
 // OPAD_BENCH_NAVIGATE (UI-47).
 // Cases in tools/bench_cases/viewer.py; Qt events stay within the hidden window.
+#include <QApplication>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLineF>
 #include <QMenu>
@@ -28,6 +30,7 @@
 #include "NavCube.hpp"
 #include "PlanePicker.hpp"
 #include "SketchEditor.hpp"
+#include "Units.hpp"
 #include "Viewport.hpp"
 #include "opad/design/sketch_geom.hpp"
 
@@ -423,7 +426,7 @@ OPAD_BENCH(OPAD_BENCH_HIGHLIGHT, highlight) {
 
 // (1) The zoom window: Z's mode frames a dragged rectangle (its centre comes to the view's centre, the zoom by its width), a
 // click zooms in twice there, Esc and a right click leave it untouched. (2) Fit, Home, a standard view and the previous
-// view animate from where the camera is to exactly where the instant move goes. (3) Previous and next view walk the views
+// view, Align view to plane and a Fit on one body animate from where the camera is to exactly where the instant move goes. (3) Previous and next view walk the views
 // the camera rested at; a new view drops what was ahead. (4) CAD 2D: the middle button pans, Shift+middle too (it orbits
 // in the Fusion preset: the control), nothing orbits. (5) A right click on the cube asks for its menu, elsewhere for the
 // context menu. (6) In 2D mode the view twists: a turn, a typed angle, untwisted. <prefix>.zoom-band.png: the rectangle
@@ -510,6 +513,11 @@ bool Viewport::benchNavigation(const QString& prefix) {
   animated("Home", [this](bool on) { home(on); });
   m_view->Camera()->SetScale(m_view->Camera()->Scale() / 6);
   animated("Fit all", [this](bool on) { fitAll(on); });
+  standardView("iso");
+  animated("Align view to plane (XZ)", [this](bool on) { lookAt(opad::design::base_frame("xz"), true, on); });
+  standardView("iso");
+  const std::string firstBody = m_items.begin()->first;
+  animated("Fit on one body (browser, context menu)", [this, &firstBody](bool on) { fitNodes({firstBody}, on); });
   m_forceAnimate = false;
 
   // (3) Previous and next view.
@@ -719,6 +727,30 @@ OPAD_BENCH(OPAD_BENCH_NAVIGATE, navigate) {
     require(!w.m_rollLeft->isHidden() && !w.m_rollRight->isHidden(), "the turn buttons stay in 2D mode");
     w.action("view.rollleft")->trigger();
     require(std::abs(v->twistAngle() - 90) < 1e-6, "Turn 90° left twists the 2D view");
+    // Twist view…: the angle typed in the shown unit (the dialog answered: benches keep other windows off screen).
+    auto typeTwist = [&w](const QString& text) {
+      auto shown = std::make_shared<QString>();
+      QTimer::singleShot(0, &w, [shown, text] {
+        if (auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget())) {
+          *shown = dialog->textValue();
+          dialog->setTextValue(text);
+          dialog->accept();
+        }
+      });
+      w.action("view.twist")->trigger();
+      return *shown;
+    };
+    const QString offered = typeTwist("45");
+    require(units::parse(units::Kind::Angle, offered).value_or(0) == 90 && std::abs(v->twistAngle() - 45) < 1e-6,
+            QString("Twist view… offers the twist now (%1) and turns to the angle typed: %2°").arg(offered).arg(v->twistAngle()));
+    typeTwist("north");
+    require(std::abs(v->twistAngle() - 45) < 1e-6, "a text that is not an angle changes nothing");
+    const units::Display display = units::current();
+    units::setPrecision(display.decimals, true, display.fraction);
+    const QString inRadians = typeTwist("0.5");
+    units::setPrecision(display.decimals, display.radians, display.fraction);
+    require(inRadians.endsWith("rad") && std::abs(v->twistAngle() - 0.5 * 180 / M_PI) < 1e-6,
+            QString("in radians it offers %1 and a bare 0.5 is radians: %2°").arg(inRadians).arg(v->twistAngle()));
     w.action("view.untwist")->trigger();
     require(std::abs(v->twistAngle()) < 1e-6, "Untwist view");
     w.action("view.2d")->setChecked(false);

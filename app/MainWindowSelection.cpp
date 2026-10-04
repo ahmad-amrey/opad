@@ -240,7 +240,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
   if (!ids.empty()) {
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
-    connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids); });
+    connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids, true); });
     if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){for(const auto& body:m_doc->scene.bodies_under(id))if(m_doc->scene.node(body)->representation=="drawing2d")return true;return false;}))add("design.convertDrawing");
     if(ids.size()==1 && m_doc->scene.sketch(ids.front())) {
       menu.addAction(tr("Redefine sketch plane"),this,[this,id=ids.front()]{m_design->editOp(id);m_design->redefineSketchPlane();});

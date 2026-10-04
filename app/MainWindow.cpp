@@ -174,7 +174,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   m_browserOverlay->setHold([browser = QPointer<BrowserPanel>(m_browser)] { return browser && browser->renameEditor(); });
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
-  connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
+  connect(m_browser, &BrowserPanel::fitRequested, m_viewport, [this](const std::vector<std::string>& ids) { m_viewport->fitNodes(ids, true); });
   connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { startAnnotation(false); });
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);

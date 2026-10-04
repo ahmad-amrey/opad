@@ -120,7 +120,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   qint64 syncMs() const { return m_syncMs; }  // the time of both, and the UI thread's CPU time in them
   qint64 syncCpuMs() const { return m_syncCpuMs; }
   void fitSelection(bool animate = false);
-  void fitNodes(const std::vector<std::string>& ids);
+  void fitNodes(const std::vector<std::string>& ids, bool animate = false);  // animate: the commands (browser, context menu)
   void standardView(const QString& name, bool animate = false);
   void home(bool animate = false);
   void rollView(double degrees);  // animated turn about the view axis; positive = counter-clockwise on screen; 2D too (twist)
@@ -269,7 +269,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);
   void endSketchInput();
   bool sketching() const { return m_sketchInput != nullptr; }
-  void lookAt(const opad::Frame& frame, bool fit = true, bool animate = true);  // camera along the plane normal, plane x to the right
+  // Camera along the plane normal, plane x to the right; animate: as the standard views (on screen, Animate view changes).
+  void lookAt(const opad::Frame& frame, bool fit = true, bool animate = false);
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
   double pixelSize() const;                    // world units per widget pixel at the view's focus
   double displayScale() const { return viewScale().x(); }  // device pixels per widget point: overlay text, markers, lines

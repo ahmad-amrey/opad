@@ -466,8 +466,9 @@ opad::Frame Viewport::cameraPlane() const {
 void Viewport::lookAt(const opad::Frame& frame, bool fit, bool animate) {
   if (!m_initialised) return;
   m_needFit = false;
+  finishAnimation();  // from where a running move was going
   Handle(Graphic3d_Camera) cam = m_view->Camera();
-  Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*cam), end = new Graphic3d_Camera(*cam);
+  Handle(Graphic3d_Camera) end = new Graphic3d_Camera(*cam);
   const opad::Vec3 n = frame.normal();
   const double dist = std::max(cam->Distance(), 1.0);
   const gp_Pnt centre(frame.origin[0], frame.origin[1], frame.origin[2]);
@@ -486,12 +487,7 @@ void Viewport::lookAt(const opad::Frame& frame, bool fit, bool animate) {
   if(!animate) {
     myViewAnimation->Stop();m_view->SetCamera(end);m_view->Invalidate();requestRedraw();return;
   }
-  myViewAnimation->SetView(m_view);
-  myViewAnimation->SetCameraStart(start);
-  myViewAnimation->SetCameraEnd(end);
-  myViewAnimation->SetOwnDuration(0.35);
-  myViewAnimation->StartTimer(0.0, 1.0, Standard_True);
-  requestRedraw();
+  animateCamera(end, 0.35);  // on screen and with Animate view changes on, like the standard views (UI-47); else at once
 }
 
 bool Viewport::planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const {
