@@ -82,8 +82,9 @@ OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
     {
       const QImage& img = dialog->preview();
       int ink = 0, coloured = 0;
-      for (int y = 0; y < img.height(); y += 2)
-        for (int x = 0; x < img.width(); x += 2) {
+      const int step = img.width() >= 800 ? 2 : 1;  // every pixel of a small preview (a window at display scale 1)
+      for (int y = 0; y < img.height(); y += step)
+        for (int x = 0; x < img.width(); x += step) {
           const QRgb c = img.pixel(x, y);
           ink += qGray(c) < 100;
           coloured += std::max({qRed(c), qGreen(c), qBlue(c)}) - std::min({qRed(c), qGreen(c), qBlue(c)}) > 24;
