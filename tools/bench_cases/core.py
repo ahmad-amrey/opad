@@ -31,6 +31,8 @@ CASES = [
     # Toasts over the viewport: stacking, an Undo action on a real edit, timing, theme, mirroring.
     ("toast", "box", {"OPAD_BENCH_TOAST": "{prefix}"}),
     ("toast-rtl", "box", {"OPAD_BENCH_TOAST": "{prefix}", "OPAD_LANG": "ar"}),
+    # A toast's action that asks (a modal box) while the toast times out and newer toasts push it out: no crash on the answer.
+    ("toast-modal", "box", {"OPAD_BENCH_TOAST_MODAL": "1"}),
     # The ribbon at 1280 and 1600 px in every workspace and tab: titled groups, adaptive collapse, never elided; the tab
     # row's cluster (quick access, search compact when narrow), the compact Select control, Undo/Redo step lists; a
     # contextual tab with a split button. <prefix>.<width>.<workspace>.png, <prefix>.narrow.png.

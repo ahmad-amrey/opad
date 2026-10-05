@@ -40,8 +40,11 @@ Toast::Toast(const QString& text, const QString& detail, const QList<Action>& ac
     button->setCursor(Qt::PointingHandCursor);
     connect(button, &QToolButton::clicked, this, [this, callback = a.callback] {
       if (property("dismissed").toBool()) return;  // a second click before it went
-      if (callback) callback();
+      // The toast goes first, then the action runs from a copy: an action that asks (a modal box: KiCad's "Download…") runs
+      // an event loop, in which the toast's own timeout or a newer toast deleted it under this handler (a crash on the answer).
+      const std::function<void()> run = callback;
       dismiss();
+      if (run) run();
     });
     m_actions << button;
   }
