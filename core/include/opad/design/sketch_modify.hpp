@@ -91,6 +91,12 @@ TrimOutcome trim_entity(Sketch& sk,int id,double u,double v);
 // What measures a curve's whole extent and means something else once it is trimmed shorter: on a line its length (a length
 // dimension, an "equal" with another line) and a point held at its middle; on an arc its length.
 void drop_extent_constraints(Sketch& sk,int id);
+// The two lines ending at `point` (construction ones ending there too left out when two others do, as for a fillet), first
+// to last in the sketch; empty when there are not two.
+std::vector<int> corner_lines(const Sketch& sk,int point);
+// Cuts the corner `point` of its two lines (corner_lines) `first` along the first and `second` along the second; what
+// measured a side and the old corner are kept as a fillet keeps them (a construction line along the old side, a virtual
+// sharp). Throws (the sketch as it was) when the corner is not two lines or a distance reaches past a line's end.
 void chamfer_corner(Sketch& sk,int point,double first,double second);
 void delete_curve_node(Sketch& sk,int point);
 void boolean_regions(Sketch& sk,double ax,double ay,double bx,double by,const std::string& operation);

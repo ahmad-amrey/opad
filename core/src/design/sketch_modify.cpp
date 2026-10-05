@@ -318,6 +318,44 @@ bool fillet_geometry(const Sketch& sk,int point,double r,FilletCorner& out) {
   return std::isfinite(best);
 }
 
+namespace {
+// A corner rounded or cut (fillet, chamfer): curves `first` and `second` now end at `ta` and `tb` instead of `point`. The
+// sides are shorter now. What measured a whole line (a polygon's "equal"s, a length, a midpoint) moves to a construction line
+// along the old side, from its far end to the old corner: held on the shortened side it pulled the whole shape out of place.
+// An arc's length means another arc now. The old corner stays as a virtual sharp on both curves when something still refers
+// to it (those lines, a dimension, a diagonal); otherwise it goes.
+void keep_corner(Sketch& sk,int point,int first,int second,int ta,int tb) {
+  using T=SkConstraint::Type;
+  bool referenced=false;
+  for(const int id:{first,second}) {
+    auto on=[id](const SkConstraint& c){return std::find(c.refs.begin(),c.refs.end(),id)!=c.refs.end();};
+    if(sk.entity(id)->type==SkEntity::Type::Arc){std::erase_if(sk.constraints,[&](const SkConstraint& c){return c.type==T::ArcLength && on(c);});continue;}
+    auto measures=[&](const SkConstraint& c){return on(c) && (c.type==T::Equal || c.type==T::Midpoint || (c.type==T::Distance && c.refs.size()==1));};
+    if(std::none_of(sk.constraints.begin(),sk.constraints.end(),measures))continue;
+    const SkEntity* e=sk.entity(id);
+    const int whole=sk.add_line(e->p[0]==ta || e->p[0]==tb?e->p[1]:e->p[0],point,true);
+    for(auto& c:sk.constraints)if(measures(c))std::replace(c.refs.begin(),c.refs.end(),id,whole);
+    referenced=true;
+  }
+  for(const auto& c:sk.constraints)referenced=referenced || std::find(c.refs.begin(),c.refs.end(),point)!=c.refs.end();
+  for(const auto& e:sk.entities)referenced=referenced || std::find(e.p.begin(),e.p.end(),point)!=e.p.end();
+  if(referenced) {
+    sk.add_constraint(T::Coincident,{point,first});
+    sk.add_constraint(T::Coincident,{point,second});
+  } else {
+    sk.remove(point);
+  }
+}
+}  // namespace
+
+std::vector<int> corner_lines(const Sketch& sk,int point) {
+  std::vector<const SkEntity*> lines;
+  for(const auto& e:sk.entities)if(e.type==SkEntity::Type::Line && std::find(e.p.begin(),e.p.end(),point)!=e.p.end())lines.push_back(&e);
+  if(std::count_if(lines.begin(),lines.end(),[](const SkEntity* e){return !e->construction;})==2)std::erase_if(lines,[](const SkEntity* e){return e->construction;});
+  if(lines.size()!=2)return {};
+  return {lines[0]->id,lines[1]->id};
+}
+
 int fillet_corner(Sketch& sk,int point,double r,const std::string& expr) {
   FilletCorner f;
   if(!fillet_geometry(sk,point,r,f))throw Error("no fillet of that radius fits there: pick a corner where two lines or arcs end, with room for it");
@@ -331,29 +369,7 @@ int fillet_corner(Sketch& sk,int point,double r,const std::string& expr) {
   sk.add_constraint(T::Tangent,{f.first,arc});
   sk.add_constraint(T::Tangent,{f.second,arc});
   sk.add_constraint(T::Radius,{arc},r,expr);
-  // The sides are shorter now. What measured a whole line (a polygon's "equal"s, a length, a midpoint) moves to a
-  // construction line along the old side, from its far end to the old corner: held on the trimmed side it pulled the whole
-  // shape out of place. An arc's length means another arc now.
-  bool referenced=false;
-  for(const int id:{f.first,f.second}) {
-    auto on=[id](const SkConstraint& c){return std::find(c.refs.begin(),c.refs.end(),id)!=c.refs.end();};
-    if(sk.entity(id)->type==SkEntity::Type::Arc){std::erase_if(sk.constraints,[&](const SkConstraint& c){return c.type==T::ArcLength && on(c);});continue;}
-    auto measures=[&](const SkConstraint& c){return on(c) && (c.type==T::Equal || c.type==T::Midpoint || (c.type==T::Distance && c.refs.size()==1));};
-    if(std::none_of(sk.constraints.begin(),sk.constraints.end(),measures))continue;
-    const SkEntity* e=sk.entity(id);
-    const int whole=sk.add_line(e->p[0]==ta || e->p[0]==tb?e->p[1]:e->p[0],point,true);
-    for(auto& c:sk.constraints)if(measures(c))std::replace(c.refs.begin(),c.refs.end(),id,whole);
-    referenced=true;
-  }
-  // The old corner stays as a virtual sharp on both curves when something still refers to it; otherwise it goes.
-  for(const auto& c:sk.constraints)referenced=referenced || std::find(c.refs.begin(),c.refs.end(),point)!=c.refs.end();
-  for(const auto& e:sk.entities)referenced=referenced || std::find(e.p.begin(),e.p.end(),point)!=e.p.end();
-  if(referenced) {
-    sk.add_constraint(T::Coincident,{point,f.first});
-    sk.add_constraint(T::Coincident,{point,f.second});
-  } else {
-    sk.remove(point);
-  }
+  keep_corner(sk,point,f.first,f.second,ta,tb);
   return arc;
 }
 
@@ -728,11 +744,14 @@ TrimOutcome trim_entity(Sketch& sk,int id,double u,double v) {
 }
 
 void chamfer_corner(Sketch& sk,int point,double first,double second) {
-  if(first<=0||second<=0)throw Error("chamfer distances must be positive");std::vector<int> lines;
-  for(const auto& e:sk.entities)if(e.type==SkEntity::Type::Line&&std::find(e.p.begin(),e.p.end(),point)!=e.p.end())lines.push_back(e.id);
-  if(lines.size()!=2)throw Error("pick a corner joining exactly two lines");const auto corner=*sk.point(point);std::vector<int> cuts;
-  for(size_t i=0;i<2;++i){const auto* e=sk.entity(lines[i]);const auto end=*sk.point(e->p[e->p[0]==point?1:0]);const double length=std::hypot(end.x-corner.x,end.y-corner.y),distance=i?second:first;if(distance>=length)throw Error("chamfer distance exceeds a line length");const int p=sk.add_point(corner.x+(end.x-corner.x)*distance/length,corner.y+(end.y-corner.y)*distance/length);cuts.push_back(p);auto* line=sk.entity(lines[i]);for(int& id:line->p)if(id==point)id=p;}
-  sk.add_line(cuts[0],cuts[1]);sk.remove(point);
+  if(first<=0||second<=0)throw Error("chamfer distances must be positive");
+  const std::vector<int> lines=corner_lines(sk,point);
+  if(lines.size()!=2)throw Error("pick a corner joining exactly two lines");
+  const auto corner=*sk.point(point);std::vector<int> cuts;
+  for(size_t i=0;i<2;++i){const auto* e=sk.entity(lines[i]);const auto end=*sk.point(e->p[e->p[0]==point?1:0]);const double length=std::hypot(end.x-corner.x,end.y-corner.y),distance=i?second:first;if(distance>=length)throw Error("chamfer distance exceeds a line length");}
+  for(size_t i=0;i<2;++i){const auto* e=sk.entity(lines[i]);const auto end=*sk.point(e->p[e->p[0]==point?1:0]);const double length=std::hypot(end.x-corner.x,end.y-corner.y),distance=i?second:first;const int p=sk.add_point(corner.x+(end.x-corner.x)*distance/length,corner.y+(end.y-corner.y)*distance/length);cuts.push_back(p);auto* line=sk.entity(lines[i]);for(int& id:line->p)if(id==point)id=p;}
+  sk.add_line(cuts[0],cuts[1]);
+  keep_corner(sk,point,lines[0],lines[1],cuts[0],cuts[1]);
 }
 
 void identify_regions(const Sketch& sk,std::vector<Region>& regions,const Frame& frame) {
