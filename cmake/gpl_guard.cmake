@@ -24,7 +24,7 @@ string(CONCAT OPAD_GPL_WHY
   "OpenVR, and OPAD uses none of them. Such FFmpeg builds are GPL with the GPL x264, x265 and xvid encoders, FreeImage "
   "is GPLv2: handing this package to anyone makes OPAD a GPL work whose every recipient is owed its complete source, "
   "and distributes codecs under patent pools. Build Open CASCADE without them (USE_FFMPEG=OFF USE_FREEIMAGE=OFF "
-  "USE_OPENVR=OFF, as cmake/occt_static.cmake does) or, on Windows, ship the single-file build (preset windows-static).")
+  "USE_OPENVR=OFF, as cmake/occt_source.cmake does) or, on Windows, ship the single-file build (preset windows-static).")
 
 # opad_gpl_guard(<package> <folder> <files...>): stops with the reason (removing <folder> and <folder>.zip) when one of
 # the files is refused; with OPAD_ALLOW_GPL_DLLS on it warns and writes NOT-FOR-DISTRIBUTION.txt into <folder>.

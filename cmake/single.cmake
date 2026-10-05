@@ -26,6 +26,13 @@ if(NOT WIN32)
     list(APPEND _single_lib_dirs "${_dir}/lib")
   endforeach()
   list(APPEND _single_lib_dirs ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES} /usr/local/lib)
+  set(_single_occt "")
+  set(_single_env "")
+  if(OPAD_OCCT_BUNDLED)  # OCCT built in this tree (cmake/occt_bundled.cmake): its notice, and linuxdeploy finds it
+    list(PREPEND _single_lib_dirs "${OPAD_OCCT_INSTALL_DIR}/lib")
+    set(_single_occt "${OPAD_OCCT_INSTALL_DIR}|${OPAD_OCCT_VERSION}|${OPAD_OCCT_URL}|${OPAD_OCCT_SOURCE_DIR}")
+    set(_single_env "LD_LIBRARY_PATH=${OPAD_OCCT_INSTALL_DIR}/lib")
+  endif()
   string(REPLACE ";" "|" _single_lib_dirs "${_single_lib_dirs}")
   set(_single_headers "")
   if(TARGET nlohmann_json::nlohmann_json)
@@ -38,7 +45,7 @@ if(NOT WIN32)
   endif()
   set(_single_stage ${CMAKE_COMMAND} "-DOPAD_SOURCE_DIR=${PROJECT_SOURCE_DIR}" "-DOPAD_VERSION=${PROJECT_VERSION}"
     "-DOPAD_ALLOW_GPL_DLLS=${OPAD_ALLOW_GPL_DLLS}" "-DOPAD_QT_LIBS=${_single_qt_libs}" "-DOPAD_QT_PLUGINS=${_single_qt_plugins}"
-    "-DOPAD_LIB_DIRS=${_single_lib_dirs}" "-DOPAD_NOTICES_HEADERS=${_single_headers}")
+    "-DOPAD_LIB_DIRS=${_single_lib_dirs}" "-DOPAD_NOTICES_HEADERS=${_single_headers}" "-DNOTICES_OCCT=${_single_occt}")
 endif()
 
 if(WIN32)
@@ -120,7 +127,7 @@ elseif(UNIX)
   add_custom_target(opad-single
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${_single_dir}/AppDir"
     COMMAND ${CMAKE_COMMAND} -E copy "${PROJECT_SOURCE_DIR}/app/res/opad-256.png" "${_single_dir}/opad.png"
-    COMMAND ${CMAKE_COMMAND} -E env "QMAKE=${_single_qmake}"
+    COMMAND ${CMAKE_COMMAND} -E env "QMAKE=${_single_qmake}" ${_single_env}
             "${OPAD_LINUXDEPLOY}" --appdir "${_single_dir}/AppDir" --executable "$<TARGET_FILE:opad>"
             --desktop-file "${PROJECT_SOURCE_DIR}/app/res/opad.desktop" --icon-file "${_single_dir}/opad.png"
             --plugin qt

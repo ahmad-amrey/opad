@@ -39,6 +39,8 @@ include(cmake/libredwg.cmake)  # DWG converters (third_party/libredwg) built and
 if(OPAD_STATIC)
   include(cmake/static.cmake)       # link flags of the single-file build
   include(cmake/occt_static.cmake)  # builds the static OCCT toolkits once, sets OpenCASCADE_DIR
+else()
+  include(cmake/occt_bundled.cmake)  # OPAD_OCCT_BUILD: the system OCCT, or 7.9.2 built once (Linux with OCCT < 7.8)
 endif()
 find_package(OpenCASCADE CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)

@@ -406,7 +406,7 @@ function(_opad_notices)
     list(SORT occt_files)
     list(JOIN occt_files " " names)
     string(APPEND text "* opencascade ${occt_version}: Open CASCADE Technology, built from source by OPAD's build "
-      "(cmake/occt_static.cmake)\n  Licence: LGPL-2.1-or-later WITH OCCT-exception-1.0\n  Home:    https://dev.opencascade.org\n"
+      "(cmake/occt_source.cmake)\n  Licence: LGPL-2.1-or-later WITH OCCT-exception-1.0\n  Home:    https://dev.opencascade.org\n"
       "  Source:  ${occt_url}\n  Files:   ${names}\n\n")
     set(occt_texts "${occt_src}/LICENSE_LGPL_21.txt" "${occt_src}/OCCT_LGPL_EXCEPTION.txt")
     _opad_notice_texts(opencascade occt_texts)
