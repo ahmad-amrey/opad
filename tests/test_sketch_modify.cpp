@@ -231,3 +231,43 @@ TEST(trim_cuts_splines_and_ellipses_at_any_curve) {
   CHECK_THROWS(trim_curve(once,e2.id,-10,0));CHECK(once.to_json()==json);
   CHECK_THROWS(trim_curve(once,once.entities.back().id,5,0));  // a line is the editor's to trim
 }
+
+// Fillets on lines that carry constraints (the user's "lines with constraints can't be filleted"): a rectangle as the tool
+// makes it (horizontals and verticals, its corner on the fixed origin), its width and height dimensioned, a construction
+// diagonal from one corner to the other with a point held at its middle, and more on its sides (a perpendicular, an angle,
+// a point-to-line distance). Every corner rounds, one after the other, and the sketch still solves: the first fillet leaves
+// its sides' lengths on construction lines ending at the next corners, which took them for a third and a fourth curve
+// there ("no fillet fits"). What measured a side keeps its value on the virtual sharp; the corners stay where they were.
+TEST(fillets_round_every_corner_of_a_constrained_rectangle) {
+  using T=SkConstraint::Type;
+  Sketch sk;
+  const int a=sk.add_point(0,0,true),b=sk.add_point(40,0),c=sk.add_point(40,20),d=sk.add_point(0,20);
+  const int l0=sk.add_line(a,b),l1=sk.add_line(b,c),l2=sk.add_line(c,d),l3=sk.add_line(d,a);
+  sk.add_constraint(T::Horizontal,{l0});sk.add_constraint(T::Horizontal,{l2});sk.add_constraint(T::Vertical,{l1});sk.add_constraint(T::Vertical,{l3});
+  const int width=sk.add_constraint(T::Distance,{l0},40),height=sk.add_constraint(T::Distance,{l1},20);
+  const int diagonal=sk.add_line(a,c,true),middle=sk.add_point(20,10);sk.add_constraint(T::Midpoint,{middle,diagonal});
+  sk.add_constraint(T::Perpendicular,{l2,l3});sk.add_constraint(T::Angle,{l0,l1},M_PI/2);sk.add_constraint(T::Distance,{d,l1},40);
+  CHECK(solve(sk).converged);
+  for(const int corner:{b,a,c,d}) {
+    FilletCorner f;
+    CHECK(fillet_geometry(sk,corner,3,f));
+    const int round=fillet_corner(sk,corner,3);
+    CHECK(sk.entity(round) && sk.entity(round)->type==E::Arc);
+    const auto solved=solve(sk);CHECK(solved.converged);
+    sk.validate();
+  }
+  CHECK_EQ(std::count_if(sk.entities.begin(),sk.entities.end(),[](const SkEntity& e){return e.type==E::Arc;}),4);
+  // The corners stay as virtual sharps where they were; the width and height still measure 40 and 20 there.
+  CHECK_NEAR(sk.point(c)->x,40,1e-7);CHECK_NEAR(sk.point(c)->y,20,1e-7);CHECK_NEAR(sk.point(a)->x,0,1e-9);
+  for(const int dimension:{width,height}) {
+    const SkConstraint* k=sk.constraint(dimension);CHECK(k && k->refs.size()==1);
+    const SkEntity* whole=sk.entity(k->refs[0]);CHECK(whole && whole->construction);
+    CHECK_NEAR(std::hypot(sk.point(whole->p[1])->x-sk.point(whole->p[0])->x,sk.point(whole->p[1])->y-sk.point(whole->p[0])->y),k->value,1e-7);
+  }
+  // The sides are shorter by the radius at each end.
+  CHECK_NEAR(std::abs(sk.point(sk.entity(l0)->p[1])->x-sk.point(sk.entity(l0)->p[0])->x),34,1e-7);
+  // Three curves that are not construction ending on one point: still no fillet there.
+  Sketch three;const int o=three.add_point(0,0);
+  for(const auto& [x,y]:std::vector<std::pair<double,double>>{{10,0},{0,10},{-10,-10}})three.add_line(o,three.add_point(x,y));
+  FilletCorner f;CHECK(!fillet_geometry(three,o,1,f));
+}

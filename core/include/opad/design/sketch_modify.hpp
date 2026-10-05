@@ -20,8 +20,9 @@ void extend_entity(Sketch& sk,int entity,int boundary,double x,double y);
 // One-click extend (TODO 11 UI-28): the end of the line or arc nearer (x, y) to the nearest curve it meets on its way,
 // whichever that is. Returns the boundary reached.
 int extend_entity(Sketch& sk,int entity,double x,double y);
-// A fillet at a point where two lines or arcs end (TODO 11 UI-28): its centre, where it touches the first and the second
-// curve (along each from the corner, the nearest that fits) and the curves; false when none fits.
+// A fillet at a point where two lines or arcs end (TODO 11 UI-28; construction ones ending there too are left out when two
+// others do: a fillet's whole side, a diagonal): its centre, where it touches the first and the second curve (along each
+// from the corner, the nearest that fits) and the curves; false when none fits.
 struct FilletCorner { double cx=0,cy=0,ax=0,ay=0,bx=0,by=0,r=0; int first=0,second=0; bool ccw=true; };  // ccw: from a to b
 bool fillet_geometry(const Sketch& sk,int point,double r,FilletCorner& out);
 // Makes it: each curve ends where the arc touches it, the arc is tangent to both with its radius (`expr` kept as typed);

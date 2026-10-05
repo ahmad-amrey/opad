@@ -234,14 +234,24 @@ struct Side {
 bool corner_sides(const Sketch& sk,int point,Side out[2]) {
   const SkPoint* p=sk.point(point);
   if(!p)return false;
-  int n=0;
+  // The two lines or arcs ending there. Construction curves ending there too stay out of it when two others do: the whole
+  // side a fillet on the next corner left (what measures a side's length), a centre rectangle's diagonal.
+  std::vector<const SkEntity*> ending;
   for(const auto& e:sk.entities) {
     if(e.type==SkEntity::Type::Spline && !e.p.empty() && (e.p.front()==point || e.p.back()==point))return false;
     const bool line=e.type==SkEntity::Type::Line;
     if(!line && e.type!=SkEntity::Type::Arc)continue;
     const int a=line?e.p[0]:e.p[1],b=line?e.p[1]:e.p[2];
-    if(a!=point && b!=point)continue;
-    if(n==2)return false;
+    if(a==point || b==point)ending.push_back(&e);
+  }
+  if(std::count_if(ending.begin(),ending.end(),[](const SkEntity* e){return !e->construction;})==2)
+    std::erase_if(ending,[](const SkEntity* e){return e->construction;});
+  if(ending.size()!=2)return false;
+  int n=0;
+  for(const SkEntity* edge:ending) {
+    const SkEntity& e=*edge;
+    const bool line=e.type==SkEntity::Type::Line;
+    const int a=line?e.p[0]:e.p[1],b=line?e.p[1]:e.p[2];
     Side& s=out[n++];
     s.id=e.id;s.line=line;s.px=p->x;s.py=p->y;
     if(line) {
