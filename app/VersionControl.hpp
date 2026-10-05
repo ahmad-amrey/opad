@@ -101,6 +101,7 @@ class VersionControl : public QObject {
   ToolPanel* toolPanel() const { return m_tool; }
   VersionPanel* panel() const { return m_panel; }
   bool bench(const QString& prefix);  // OPAD_BENCH_VERSION (VersionBench.cpp)
+  bool benchProtect(const QString& prefix);  // OPAD_BENCH_VERSION_PROTECT (VersionProtectBench.cpp)
   // What merging a branch or the upstream brings (read on a worker by incoming()).
   struct Incoming {
     QString target, label;           // what is merged ("@{u}", a branch) and how it is named
@@ -129,6 +130,11 @@ class VersionControl : public QObject {
     std::function<void()> run;
   };
   void ask(const QString& name, const QString& title, const QString& text, const std::vector<Answer>& answers);
+  // Branch protection (Preferences > Version control, GitAgent.hpp): where it applies, the user is asked first (agents are
+  // refused): `go` runs `again` once more, which then passes; New branch… offers a branch instead. True: asked.
+  bool protectedAsk(bool applies, const QString& title, const QString& text, const QString& go, std::function<void()> again);
+  bool m_protectAnswered = false;
+  QStringList m_asked;  // the questions asked (benches)
   // Unsaved changes saved, uncommitted ones of the document committed (or let through when `anyway`), then `then`.
   void whenClean(const QString& what, std::function<void()> then, bool commitAllowed = true);
   void runCommit(const QStringList& files, const QString& message, bool amend, bool pushAfter);

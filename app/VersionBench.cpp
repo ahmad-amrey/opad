@@ -28,6 +28,7 @@
 #include "Banner.hpp"
 #include "BenchRegistry.hpp"
 #include "CompareMode.hpp"
+#include "GitAgent.hpp"
 #include "GitWatch.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
@@ -48,6 +49,7 @@ bool VersionControl::bench(const QString& prefix) {
   static bool started = false;
   if (std::exchange(started, true)) return true;
   m_benching = true;
+  QSettings().setValue(gitagent::kBranchesKey, QString());  // commits and merges on main here: branch protection has its bench (version-protect)
   QString cli = qEnvironmentVariable("OPAD_BENCH_CLI");
   if (cli.isEmpty()) cli = git::Install::here().cli;
   struct State {

@@ -245,6 +245,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     auto it=m_receipts.find(key);if(it==m_receipts.end())reply(s,live_result({{"state","unknown"},{"request_id",args["request_id"]}}));
     else replyReceipt(s,it->second);return;
   }
+  if(git_tool(name)){gitTool(s,name,std::move(args),key,hash);return;}  // the document's repository (AgentGit.cpp)
   const bool write=live_mutation(name,args);
   if(write && (!args.contains("expected_revision") || !args.contains("request_id"))){fail(s,"invalid_arguments",tr("A pinned measurement changes the document: pass expected_revision and request_id."));return;}
   if(write){

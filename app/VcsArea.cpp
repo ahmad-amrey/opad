@@ -12,6 +12,7 @@
 #include <QStatusBar>
 #include <tuple>
 
+#include "AgentBridge.hpp"
 #include "AppDocument.hpp"
 #include "Commands.hpp"
 #include "CompareMode.hpp"
@@ -157,6 +158,13 @@ class Vcs : public AreaController {
     });
     m_compare = new CompareMode(services(), m_git);
     m_version = new VersionControl(services(), m_git, m_compare, disk);
+    // An agent's git tool (AgentGit.cpp): the chip and the panel read the repository again, and the file comes in when
+    // git may have rewritten it (a switch, a merge, a pull, a resolve).
+    if (auto* agent = services().window()->findChild<AgentBridge*>())
+      connect(agent, &AgentBridge::gitChanged, this, [this, disk](bool files) {
+        if (files) disk->adopt();
+        m_git->refresh(true);
+      });
     services().timeline()->addTipProvider([this](const opad::Op& op) { return m_version->provenance()->tip(op); });
     if (auto* recovery = services().window()->findChild<RecoveryManager*>())  // the Recovery offer's Compare…: the file, then the snapshot
       connect(recovery, &RecoveryManager::compareRequested, this, [this](const QString& source, const QString& snapshot, const QString& time) {

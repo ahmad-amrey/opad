@@ -34,8 +34,12 @@ class AgentBridge : public QObject {
   opad::json liveState() const;  // what live_state answers (benches read it too)
   // Used only by the isolated application acceptance harness.
   void bench();
+  QStringList activityLines() const;  // Agent activity's lines (benches)
  signals:
   void statusChanged();
+  // An agent's git tool changed the repository (AgentGit.cpp); `files`: the work tree may have changed too (a switch,
+  // a merge, a pull, a resolve), so the open document follows the file. The Version control area refreshes on it.
+  void gitChanged(bool files);
  public:
   // The sub-shape references a connection was given (entity_details, query_entities, selection, change lists), by
   // normalised ref, with the body key and placement they were given for (TODO 10 B6). Transport only.
@@ -71,6 +75,7 @@ class AgentBridge : public QObject {
   bool editorBusy() const;
   json editingState() const;
   void waitForIdle(const std::shared_ptr<Session>&,int,unsigned long long,std::shared_ptr<QElapsedTimer>);
+  void gitTool(const std::shared_ptr<Session>&,const std::string& name,json args,const std::string& receipt,const std::string& hash);  // AgentGit.cpp
   AppDocument* m_doc;DesignController* m_design;Viewport* m_viewport;JobRunner* m_jobs;QWidget* m_window;
   QLocalServer m_server;QString m_instance,m_endpoint,m_directory,m_file;
   std::unique_ptr<QLockFile> m_lock;

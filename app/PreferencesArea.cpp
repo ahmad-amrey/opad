@@ -30,6 +30,7 @@
 #include "Commands.hpp"
 #include "DesignController.hpp"
 #include "FileAssociations.hpp"
+#include "GitAgent.hpp"
 #include "I18n.hpp"
 #include "KicadBoards.hpp"
 #include "Motion.hpp"
@@ -77,7 +78,7 @@ class PreferencesArea : public AreaController {
     preferences::addPage({"grid", tr("Grid"), "grid", 50, {"spacing", "extent", "snap"}, [this] { return grid(); }});
     preferences::addPage({"files", tr("Files"), "open", 60, {"viewer", "read-only", "cache", "file types", "associations"}, [this] { return files(); }});
     preferences::addPage({"recovery", tr("Autosave and recovery"), "restore", 70, {"autosave", "snapshot", "crash"}, [this] { return recovery(); }});
-    preferences::addPage({"vcs", tr("Version control"), "git", 80, {"git", "merge", "branch"}, [this] { return versionControl(); }});
+    preferences::addPage({"vcs", tr("Version control"), "git", 80, {"git", "merge", "branch", "protected", "protection", "agent", "main"}, [this] { return versionControl(); }});
     preferences::addPage({"keyboard", tr("Keyboard and mouse"), "keyboard", 90, {"shortcuts", "keys", "navigation", "mouse", "orbit", "preset", "wheel", "scroll", "trackpad", "touchpad", "zoom", "pan"}, [this] { return keyboard(); }});
     preferences::addPage({"ai", tr("AI integration"), "agent", 100, {"agent", "mcp", "assistant"}, [window] { return ai(window); }});
     connect(services().viewport(), &Viewport::scrollInputQuestion, this, [this] { askScrollInput(); });
@@ -376,6 +377,18 @@ class PreferencesArea : public AreaController {
     line->setFont(QFont("Consolas"));
     form.button(tr("Copy"), [attribute] { QApplication::clipboard()->setText(attribute + '\n'); }, "vcs/copyAttributes");
     form.note(tr("Then register the driver as the README's Git section shows (git config merge.opad.driver ...)."));
+    form.section(tr("New repositories"));
+    form.text(gitagent::kInitialBranchKey, tr("Initial branch"), QStringLiteral("main"));
+    // Branch protection (GitAgent.hpp): AI agents' git tools are refused, the Version control panel asks you first.
+    form.section(tr("Branch protection"), tr("Protected branches keep AI agents' changes off them: an agent's git tools are refused there and the agent is told to work on a branch "
+                                              "of its own. The Version control panel asks you before doing the same. Force pushes, resets and other destructive operations are "
+                                              "never offered to agents."));
+    form.text(gitagent::kBranchesKey, tr("Protected branches"), gitagent::defaultBranches())->setPlaceholderText(tr("main, master, release/*"));
+    form.check(gitagent::kCommitsKey, tr("Refuse commits to a protected branch"), true);
+    form.check(gitagent::kMergesKey, tr("Refuse merges into a protected branch"), true);
+    form.check(gitagent::kPushesKey, tr("Refuse pushes of a protected branch"), false);
+    form.note(tr("Names are separated by commas or spaces; * matches any run of characters. A fast-forward pull of a branch's own remote branch is not a merge into it. "
+                 "opad-cli's MCP server reads these settings too."));
     form.finish();
     return page;
   }

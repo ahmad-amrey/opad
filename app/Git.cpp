@@ -8,6 +8,9 @@
 #else
 #include <signal.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 #include <QCoreApplication>
@@ -151,9 +154,25 @@ const Qt::CaseSensitivity kPathCase =
 
 const char* const kIgnored[] = {"*.opad.tmp", "*.opad.orig", "opad-data/", "/data/cache/", "/data/recovery/", nullptr};
 
+QString selfFile() {
+  if (QCoreApplication::instance()) return QCoreApplication::applicationFilePath();
+#ifdef _WIN32
+  std::wstring buffer(32768, L'\0');
+  const DWORD n = GetModuleFileNameW(nullptr, buffer.data(), DWORD(buffer.size()));
+  return n && n < buffer.size() ? QDir::cleanPath(QString::fromWCharArray(buffer.data(), int(n))) : QString();
+#elif defined(__APPLE__)
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  std::string path(size, '\0');
+  return _NSGetExecutablePath(path.data(), &size) == 0 ? QFileInfo(QString::fromUtf8(path.c_str())).canonicalFilePath() : QString();
+#else
+  return QFileInfo(QStringLiteral("/proc/self/exe")).canonicalFilePath();
+#endif
+}
+
 QString findProgram() {
   if (qEnvironmentVariableIsSet("OPAD_GIT")) return executable(qEnvironmentVariable("OPAD_GIT"));
-  const QString dir = QCoreApplication::applicationDirPath();
+  const QString dir = QFileInfo(selfFile()).absolutePath();
   if (const QString located = QSettings().value("git/path").toString(); !located.isEmpty())  // Locate git…
     if (const QString f = executable(QDir(dir).absoluteFilePath(located)); !f.isEmpty()) return f;
 #ifdef _WIN32
@@ -509,14 +528,19 @@ void forgetTools() {
 
 Install Install::here() {
   Install in;
-  const QString dir = QCoreApplication::applicationDirPath();
+  const QString self = selfFile(), dir = QFileInfo(self).absolutePath();
 #ifdef _WIN32
-  in.cli = dir + "/opad-cli.exe";
+  const QString suffix = QStringLiteral(".exe");
 #else
-  in.cli = dir + "/opad-cli";
+  const QString suffix;
 #endif
+  in.cli = dir + "/opad-cli" + suffix;
   if (!QFileInfo::exists(in.cli)) in.cli.clear();
-  in.app = QCoreApplication::applicationFilePath();
+  in.app = self;
+  if (QFileInfo(self).completeBaseName().startsWith(QLatin1String("opad-cli"))) {  // opad-cli's own git tools (GitAgent.cpp)
+    in.cli = self;
+    in.app = QFileInfo::exists(dir + "/opad" + suffix) ? dir + "/opad" + suffix : QString();
+  }
   return in;
 }
 
@@ -585,11 +609,13 @@ QStringList setUp(const Context& base, const QString& folder, const Install& in,
   if (top.isEmpty()) {
     if (!o.init) fail(tr("%1 is not in a git repository.").arg(QDir::toNativeSeparators(folder)));
     phase(tr("Creating the repository"));
-    if (!run(c, {"init", "-b", "main"}).ok()) {  // git before 2.28 has no -b
+    const QString branch = validBranchName(o.branch) ? o.branch : QStringLiteral("main");
+    if (!run(c, {"init", "-b", branch}).ok()) {  // git before 2.28 has no -b
       check(c, {"init"});
-      check(c, {"symbolic-ref", "HEAD", "refs/heads/main"});
+      check(c, {"symbolic-ref", "HEAD", "refs/heads/" + branch});
     }
-    done << tr("Created a git repository in %1 (branch main).").arg(QDir::toNativeSeparators(folder));
+    done << (branch == "main" ? tr("Created a git repository in %1 (branch main).").arg(QDir::toNativeSeparators(folder))
+                              : tr("Created a git repository in %1 (branch %2).").arg(QDir::toNativeSeparators(folder), branch));
     top = folder;
   }
   c.dir = top;
