@@ -11,4 +11,8 @@ dist/
 compile_commands.json
 CLAUDE.md
 .claude/
-/docs/
+!/docs/
+/docs/*
+!/docs/building.md
+!/docs/features.md
+!/docs/media/
