@@ -63,6 +63,9 @@ struct Out {
   std::vector<Body> bodies;
   std::vector<std::string> removed;
   std::vector<std::string> used_targets;  // creation features with automatic targets: who took part
+  // Nodes moved as they are, with the world motion each takes: a linked file's top nodes, which Move places (its parts are
+  // the file's and stay out of the document). The result keeps each one's new local placement ("placements").
+  std::vector<std::pair<std::string, gp_Trsf>> placed;
   // Creation features (apply_operation): the solid they add, remove or intersect with, in world coordinates, and the
   // operation it was used for ("new", "join", "cut", "intersect"; an "auto" input says here what it was taken as).
   TopoDS_Shape tool;

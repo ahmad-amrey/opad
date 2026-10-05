@@ -444,8 +444,7 @@ TEST(linked_parts_are_read_only) {
     }
     throw check::Failure(kind + " was allowed on a linked part");
   };
-  refused("move", {{"bodies", a_ref}, {"dz", "5 mm"}}, "cannot be changed");
-  refused("move", {{"bodies", a_ref}, {"dz", "5 mm"}, {"copy", true}}, "cannot be copied");
+  refused("move", {{"bodies", a_ref}, {"dz", "5 mm"}, {"copy", true}}, "cannot be copied");  // a move moves the whole file (below)
   refused("pattern_circ", {{"bodies", a_ref}, {"count", "3"}}, "cannot be copied");
   commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "10 mm"}, {"y", "10 mm"}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "100 mm"}}}}, &d);
   const std::string pin = resolve(d).features.back().result["bodies"][0]["id"];
@@ -464,6 +463,157 @@ TEST(linked_parts_are_read_only) {
   CHECK(!resolve(d).node(b));
   CHECK(d.serialize().find("#body ") != std::string::npos);  // the block's, never A's or B's
   for (const auto& entry : d.bodies()) CHECK(entry.key != key_a || entry.external);
+}
+
+namespace {
+std::array<double, 3> low_corner(const Document& d, const Scene& s, const std::string& id) {
+  double x0, y0, z0, x1, y1, z1;
+  node_tight_bbox(d, s, id).Get(x0, y0, z0, x1, y1, z1);
+  return {x0, y0, z0};
+}
+bool near3(const std::array<double, 3>& a, const std::array<double, 3>& b, double tol = 1e-3) {
+  return about(a[0], b[0], tol) && about(a[1], b[1], tol) && about(a[2], b[2], tol);
+}
+}  // namespace
+
+// Move of a linked file's part moves the whole file as one: its top nodes are placed by the feature's result ("placements"),
+// its parts keep their keys and stay out of the store; the move stays a feature (edited, rolled back, suppressed, undone),
+// replays the same after a save, is left alone by unrelated edits, and a sync of the file keeps the place. A copy is refused.
+TEST(move_places_a_linked_file_as_one) {
+  Files f;
+  const fs::path step = f.dir / "model.step";
+  two_boxes(step, 5);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, step);
+  const std::string import_id = last_import(d).id;
+  Scene s = resolve(d);
+  const std::string a = linked(s, 0), b = linked(s, 1);
+  const std::vector<std::string> tops = linked_tops(s, a);
+  CHECK(!tops.empty());
+  CHECK(linked_tops(s, b) == tops);
+  for (const auto& top : tops) CHECK(linked_tops(s, top) == tops);
+  for (const auto& id : {a, b}) {  // every part is under a top
+    std::string up = id;
+    while (!s.node(up)->parent.empty() && s.node(s.node(up)->parent)->linked) up = s.node(up)->parent;
+    CHECK(std::find(tops.begin(), tops.end(), up) != tops.end());
+  }
+  const std::string key_a = s.node(a)->body_key, key_b = s.node(b)->body_key;
+  const auto a0 = low_corner(d, s, a), b0 = low_corner(d, s, b);
+  CHECK(near3(a0, {5, 5, 30}));
+  commands::run("feature", {{"kind", "box"}, {"inputs", {{"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}, &d);
+  s = resolve(d);
+  const std::string block = s.features.back().result["bodies"][0]["id"];
+  const auto block0 = low_corner(d, s, block);
+  const size_t stored = d.bodies().size();
+  // One part picked (and the block): the whole file moves 10 mm along X, the block with it.
+  const json picks = json::array({{{"body", a}, {"kind", "body"}}, {{"body", block}, {"kind", "body"}}});
+  const json made = commands::run("feature", {{"kind", "move"}, {"inputs", {{"bodies", picks}, {"dx", "10 mm"}}}}, &d);
+  const std::string move = made["feature_id"];
+  CHECK_EQ(made["placed_ids"].size(), tops.size());
+  CHECK_EQ(made["body_ids"].size(), 1u);  // the block
+  s = resolve(d);
+  CHECK(s.unresolved.empty());
+  const json& result = s.feature(move)->result;
+  CHECK(result.contains("placements") && result["placements"].size() == tops.size());
+  CHECK_EQ(s.node(a)->body_key, key_a);
+  CHECK_EQ(s.node(b)->body_key, key_b);
+  CHECK(near3(low_corner(d, s, a), {a0[0] + 10, a0[1], a0[2]}));
+  CHECK(near3(low_corner(d, s, b), {b0[0] + 10, b0[1], b0[2]}));  // the part not picked moved too: one unit
+  CHECK(near3(low_corner(d, s, block), {block0[0] + 10, block0[1], block0[2]}));
+  CHECK_EQ(d.bodies().size(), stored + 1);  // the moved block's entry; nothing of the file
+  for (const auto& entry : d.bodies()) CHECK(entry.key != key_a || entry.external);
+  // Rolled back to before it: where the file was.
+  CHECK(near3(low_corner(d, resolve(d, move), a), a0));
+  // Edited: 20 mm and a quarter turn about Z.
+  commands::run("feature_edit", {{"target", move}, {"inputs", {{"dx", "20 mm"}, {"rotate", true}, {"axis", {{"base", "z"}}}, {"angle", "90 deg"}}}}, &d);
+  s = resolve(d);
+  // A's corner (5,5) .. (15,15) turned about Z: x in -15..-5, y in 5..15; then 20 mm along X.
+  CHECK(near3(low_corner(d, s, a), {5, 5, 30}));
+  CHECK(near3(low_corner(d, s, b), {-105 + 20, 100, 0}));
+  CHECK_EQ(s.node(a)->body_key, key_a);
+  const Mat4 placed_a = s.world(a), placed_b = s.world(b);
+  // Unrelated edits leave it alone: a new feature, a parameter, an edit of the box before it.
+  commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "200 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}}}}, &d);
+  const std::string other = resolve(d).features.back().id;
+  const json edited = commands::run("feature_edit", {{"target", other}, {"inputs", {{"height", "7 mm"}}}}, &d);
+  for (const auto& r : edited.value("regenerated", json::array())) CHECK(r != move);
+  CHECK(design::plan_regenerate(d).ops.empty());
+  // Suppressed: back where it was; unsuppressed: moved again.
+  commands::run("feature_edit", {{"target", move}, {"suppressed", true}}, &d);
+  CHECK(near3(low_corner(d, resolve(d), b), b0));
+  const size_t ops = d.ops.size();
+  commands::run("feature_edit", {{"target", move}, {"suppressed", false}}, &d);
+  s = resolve(d);
+  CHECK(s.world(b).m == placed_b.m);
+  // Undo (the step's ops taken off) and redo (put back): the same.
+  std::vector<Op> undone = d.truncate_ops(ops);
+  CHECK(near3(low_corner(d, resolve(d), b), b0));
+  d.restore_ops(std::move(undone));
+  CHECK(resolve(d).world(b).m == placed_b.m);
+  // Saved and opened again: the same text, the same places.
+  d.save();
+  const std::string text = d.serialize();
+  Document reopened = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(reopened)[0].state, "ok");
+  CHECK_EQ(reopened.serialize(), text);
+  s = resolve(reopened);
+  CHECK(s.unresolved.empty());
+  CHECK(s.world(a).m == placed_a.m && s.world(b).m == placed_b.m);
+  CHECK(design::plan_regenerate(reopened).ops.empty());
+  // A sync of the file (A up 8 mm in it): the parts keep the place the move gave the file.
+  two_boxes(step, 5, 38);
+  design::Plan sync = plan_asset_sync(d, import_id);
+  CHECK(!sync.report["up_to_date"].get<bool>());
+  design::commit(d, std::move(sync));
+  s = resolve(d);
+  CHECK(s.unresolved.empty());
+  CHECK(near3(low_corner(d, s, a), {5, 5, 38}));
+  CHECK(near3(low_corner(d, s, b), {-85, 100, 0}));
+  CHECK(design::plan_regenerate(d).ops.empty());
+  // A copy of a linked file is refused, saying why.
+  const size_t before = d.ops.size();
+  try {
+    commands::run("feature", {{"kind", "move"}, {"inputs", {{"bodies", picks}, {"dz", "5 mm"}, {"copy", true}}}}, &d);
+    throw check::Failure("a copy of a linked file was made");
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()).find("A linked file cannot be copied") != std::string::npos);
+  }
+  CHECK_EQ(d.ops.size(), before);
+  // A locked file stays where it is.
+  d.append({{"op", "appearance"}, {"target", tops[0]}, {"locked", true}});
+  const json locked_move = {{"kind", "move"}, {"inputs", {{"bodies", json::array({{{"body", b}, {"kind", "body"}}})}, {"dz", "5 mm"}}}};
+  CHECK_THROWS(commands::run("feature", locked_move, &d));
+}
+
+// A KiCad board linked: a footprint's part picked moves the board with every footprint, by the board's one top component.
+TEST(move_places_a_linked_board_as_one) {
+  Files f;
+  const fs::path board = f.dir / "hw" / "board.kicad_pcb";
+  two_boxes(f.dir / "hw" / "m1.step", 0);
+  write(board, "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\"))\n"
+               "  (footprint \"Sync:R\" (layer \"F.Cu\") (uuid \"aaaaaaaa-0000-0000-0000-000000000001\") (at 10 10)\n"
+               "    (property \"Reference\" \"R1\")\n    (model \"${KIPRJMOD}/m1.step\"))\n)\n");
+  fs::create_directories(f.dir / ".git");
+  Document d = Document::create();
+  d.save_as(f.dir / "enclosure.opad");
+  link_file(d, board);
+  Scene s = resolve(d);
+  const std::string board_body = body_named(s, "Board");
+  std::string part;
+  for (const auto& id : s.all_bodies())
+    if (id != board_body && s.node(id)->linked) part = id;
+  CHECK(!part.empty());
+  const std::vector<std::string> tops = linked_tops(s, part);
+  CHECK_EQ(tops.size(), 1u);
+  CHECK(s.node(tops[0])->kind == Node::Kind::Component);
+  const auto board0 = low_corner(d, s, board_body), part0 = low_corner(d, s, part);
+  const json made = commands::run("feature", {{"kind", "move"}, {"inputs", {{"bodies", json::array({{{"body", part}, {"kind", "body"}}})}, {"dz", "12 mm"}}}}, &d);
+  CHECK_EQ(made["placed_ids"], json::array({tops[0]}));
+  s = resolve(d);
+  CHECK(near3(low_corner(d, s, board_body), {board0[0], board0[1], board0[2] + 12}));
+  CHECK(near3(low_corner(d, s, part), {part0[0], part0[1], part0[2] + 12}));
+  CHECK(s.unresolved.empty());
 }
 
 TEST(changed_file_shows_the_version_synced_when_remembered) {

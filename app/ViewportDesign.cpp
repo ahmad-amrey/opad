@@ -527,8 +527,34 @@ void Viewport::setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs
   if (any) redrawScene();
 }
 
+void Viewport::setPreviewMotion(const std::vector<std::pair<std::string, gp_Trsf>>& bodies) {
+  if (!m_initialised) return;
+  std::unordered_map<std::string, gp_Trsf> next;
+  for (const auto& [id, motion] : bodies)
+    if (motion.Form() != gp_Identity) next[id] = motion;
+  if (next.empty() && m_previewMotion.empty()) return;
+  std::vector<std::string> touched;
+  for (const auto& [id, motion] : m_previewMotion) touched.push_back(id);
+  for (const auto& [id, motion] : next)
+    if (!m_previewMotion.count(id)) touched.push_back(id);
+  m_previewMotion = std::move(next);
+  // Their own objects move (a location each: nothing is meshed or walked), as an exploded view moves them.
+  for (const auto& id : touched)
+    if (const auto it = m_items.find(id); it != m_items.end()) placeItem(id, it->second);
+  clearCenters();          // circle centres were found where the bodies were
+  applySelectionLayers();  // the glows of selected bodies follow them
+  if (!m_subHl.IsNull() || m_subJob) refreshSubHighlight();
+  redrawScene();
+}
+
+gp_Trsf Viewport::previewMotion(const std::string& node) const {
+  const auto it = m_previewMotion.find(node);
+  return it != m_previewMotion.end() ? it->second : gp_Trsf();
+}
+
 void Viewport::clearPreviewBodies() {
   if (!m_initialised) return;
+  if (!m_previewMotion.empty()) setPreviewMotion({});
   if (m_previewBodies.empty() && m_previewHidden.empty()) return;
   for (const auto& p : m_previewBodies) m_ctx->Remove(p, Standard_False);
   m_previewBodies.clear();

@@ -28,5 +28,9 @@
   "Farthest contact": "أبعد تلامس",
   "Sketch on face": "رسم على الوجه",
   "Offset from face": "الإزاحة عن الوجه",
-  "Sketching on the start face": "الرسم على وجه البداية"
+  "Sketching on the start face": "الرسم على وجه البداية",
+  "%1 moves as one": "%1 يتحرك كوحدة واحدة",
+  "%1 linked files, each as one": "%1 ملفات مرتبطة، كل منها كوحدة واحدة",
+  "%1 selected · %2": "%1 محدد · %2",
+  "A linked file cannot be copied: a copy would store its parts in the document. Link the file again for another copy, or embed it first.": "لا يمكن نسخ ملف مرتبط: فالنسخة ستخزّن أجزاءه في المستند. اربط الملف مرة أخرى للحصول على نسخة أخرى، أو ضمّنه أولاً."
 }

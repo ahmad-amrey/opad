@@ -1,5 +1,5 @@
 """gui_benches cases of the assets area (T4): KiCad boards, linked files, pictures, import colours, the viewer cache. The
-benches are in app/KicadBench.cpp, app/AssetLinks.cpp and app/PictureBench.cpp. Each case makes its own files and points
+benches are in app/KicadBench.cpp, app/AssetLinks.cpp, app/AssetSyncBench.cpp, app/LinkedMoveBench.cpp and app/PictureBench.cpp. Each case makes its own files and points
 its own cache (OPAD_CACHE_DIR) into the run's folder, so nothing reaches the user's."""
 import json
 import os
@@ -192,6 +192,26 @@ def asset_kicad(root, document):
     return design, env
 
 
+def linked_move(root, document):
+    """A document holding a box at x = 60, linking board.kicad_pcb beside it (two footprints sharing part.step through
+    ${KIPRJMOD}), with the board's next version (R2 moved) in next/."""
+    folder = root / "linked-move"
+    (folder / "next").mkdir(parents=True)
+    step(document, "linked-move-part", folder / "part.step", inputs='{"length":"4 mm","width":"2 mm","height":"1.5 mm"}')
+
+    def board(r2):
+        return ('(kicad_pcb (version 20241229) (general (thickness 1.6))\n(gr_rect (start 100 100) (end 140 120) (layer "Edge.Cuts"))\n'
+                + "".join(f'(footprint "Bench:Part" (layer "F.Cu") (uuid "bbbbbbbb-0000-0000-0000-00000000000{i}") (at {at}) (property "Reference" "R{i}")\n'
+                          f'  (model "${{KIPRJMOD}}/part.step" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0))))\n'
+                          for i, at in ((1, "108 106"), (2, r2))) + ")\n")
+    (folder / "board.kicad_pcb").write_text(board("120 112"), encoding="utf-8")
+    (folder / "next" / "board.kicad_pcb").write_text(board("126 112"), encoding="utf-8")
+    env = {"OPAD_CACHE_DIR": str(root / "linked-move-cache")}
+    design = document("linked-move/design", ("feature", "--kind", "box", "--inputs", '{"x":"60 mm","length":"10 mm","width":"10 mm","height":"10 mm"}'))
+    subprocess.run([str(document.cli), "import", str(design), str(folder / "board.kicad_pcb"), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
 def colors_obj(root, document):
     """An OBJ cube, Y up: its top in a gold material of its own, the rest grey (Kd 0.439, which OCCT reads as sRGB)."""
     colors = root / "colors-obj"
@@ -267,6 +287,10 @@ CASES = [
     # Assets in git (UI-69): a linked file deleted from its work tree, offered and recovered from git, its parts back; packed
     # into the project, Track with Git LFS offered and done (.gitattributes, the LFS mark); offered for a big file linked in.
     ("asset-git", asset_git, {"OPAD_BENCH_ASSET_GIT": "{prefix}"}),
+    # Move of a linked board's part moves the whole board as one (its top node placed by the Move's result): the Bodies box
+    # says so, the preview draws every part moved, the triad sits on the board; committed, edited, undone, saved and read
+    # again, synced (the place kept); a copy refused (<prefix>.preview.png, .panel.png).
+    ("linked-move", linked_move, {"OPAD_BENCH_LINKED_MOVE": "{prefix}"}),
     # What the core says of linked files (states, failed syncs) shown in Arabic: whole, a sentence and its path, counted.
     ("asset-reasons", "empty", {"OPAD_BENCH_ASSET_REASONS": "1", "OPAD_LANG": "ar"}),
     # Pictures (UI-71): a JPEG canvas decoded on a worker; a picture inserted into a sketch kept as the file has it and a

@@ -2598,16 +2598,26 @@ bool Viewport::relocate(Item& item, const opad::Node& n, const opad::Mat4& world
     }
   }
   item.placement = placement;
+  placeItem(n.id, item);
+  return true;
+}
+
+gp_Trsf Viewport::drawnAt(const std::string& id, const std::array<double, 3>& offset, bool rigid, const gp_Trsf& placement) const {
   gp_Trsf placed;
-  if (item.look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(item.look.offset[0], item.look.offset[1], item.look.offset[2]));
-  placed.Multiply(placement);
+  if (offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(offset[0], offset[1], offset[2]));  // an explode offset, after the placement
+  if (const auto motion = m_previewMotion.find(id); motion != m_previewMotion.end()) placed.Multiply(motion->second);
+  if (rigid) placed.Multiply(placement);
+  return placed;
+}
+
+void Viewport::placeItem(const std::string& id, Item& item) {
+  const gp_Trsf placed = drawnAt(id, item.look.offset, item.rigid, item.placement);
   m_ctx->SetLocation(item.ais, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
   if (!item.navigation.IsNull()) {
     item.navigation->SetLocalTransformation(placed);
     m_navSelection->Update(item.navigation, Standard_False);
   }
   if (const auto glow = m_bodyGlows.find(item.ais.get()); glow != m_bodyGlows.end()) glow->second->SetLocalTransformation(item.ais->Transformation());
-  return true;
 }
 
 // Adds one body to the context: presentation + selection entities are computed here.
@@ -2658,9 +2668,7 @@ void Viewport::displayBody(const std::string& id) {
   } else if (r != m_rasters.end()) {
     emit hoverChanged(tr("Embedded image could not be decoded; showing its frame"));
   }
-  gp_Trsf placed;
-  if (look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));  // an explode offset, after the placement
-  if (rigid) placed.Multiply(placement);
+  const gp_Trsf placed = drawnAt(id, look.offset, rigid, placement);
   if (placed.Form() != gp_Identity) ais->SetLocalTransformation(placed);
   ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
   ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));

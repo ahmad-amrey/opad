@@ -287,6 +287,8 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const std::string op = plan.ops.front()["id"].get<std::string>();
         json bodies = json::array();
         for (const auto& b : plan.ops.front()["result"].value("bodies", json::array())) bodies.push_back(b["id"]);
+        json placed = json::array();  // a linked file Move moved as one: its top nodes
+        for (const auto& p : plan.ops.front()["result"].value("placements", json::array())) placed.push_back(p["id"]);
         const size_t before = plan.ops.size();
         const size_t made = design::style_new_bodies(plan, op, style);
         json styling = json::array();
@@ -297,6 +299,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         json out = design::commit(doc, std::move(plan), a.value("by", ""));
         out["feature_id"] = op;
         out["body_ids"] = bodies;
+        if (!placed.empty()) out["placed_ids"] = placed;
         if (copies) {
           json all = picked_bodies(*scene, inputs.value("bodies", json::array()));
           for (const auto& b : bodies)

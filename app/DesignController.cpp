@@ -1268,8 +1268,9 @@ void DesignController::runPreview(bool commit) {
   // What the feature does with its tool (new, join, cut, intersect; an automatic operation as decided) and, for a cut, the
   // tool meshed: drawn in red through the bodies it cuts.
   auto tool = std::make_shared<std::pair<std::string, Viewport::PreviewPart>>();
+  auto motions = std::make_shared<std::vector<std::pair<std::string, gp_Trsf>>>();  // bodies drawn moved as they are
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component, handles, tool](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component, handles, tool, motions](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
     if (kind != "extrude") *handles = feature_handles(*doc, *scene, kind, hinted);  // the extrusion's comes with its result
@@ -1301,6 +1302,26 @@ void DesignController::runPreview(bool commit) {
       for (const auto& removed : editResult.value("removed", opad::json::array()))
         if (removed.is_string()) plan->changed.push_back({target, removed.get<std::string>(), nullptr, true});
     }
+    // A linked file Move moves as one (its top nodes placed): every part's own object is drawn moved, nothing is meshed. An
+    // edit that changed nothing shows where its stored placements put the file.
+    std::vector<std::pair<std::string, opad::Mat4>> placed;
+    for (const auto& m : plan->moved)
+      if (m.op == target) placed.push_back({m.node, m.motion});
+    if (editing && placed.empty())
+      for (const auto& p : editResult.value("placements", opad::json::array())) try {
+          const opad::Node* n = scene->node(p.value("id", ""));
+          if (!n) continue;
+          const opad::Mat4 parent = n->parent.empty() ? opad::Mat4() : scene->world(n->parent);
+          placed.push_back({n->id, parent * opad::Mat4::from_json(p.at("transform")) * scene->world(n->id).inverse()});
+        } catch (const std::exception&) {
+        }
+    for (const auto& [top, motion] : placed) try {
+        const opad::Node* n = scene->node(top);
+        if (!n) continue;
+        const gp_Trsf t = opad::trsf_from_mat(motion);
+        for (const auto& body : n->kind == opad::Node::Kind::Body ? std::vector<std::string>{top} : scene->bodies_under(top)) motions->push_back({body, t});
+      } catch (const std::exception&) {  // not rigid: not drawn moved
+      }
     meshes->resize(plan->changed.size());
     for (size_t i = 0; i < plan->changed.size(); ++i) {  // the preview is displayed without meshing or walking meshes on the UI thread
       auto& c = plan->changed[i];
@@ -1356,7 +1377,7 @@ void DesignController::runPreview(bool commit) {
         }
       }
     }
-  }, [this, serial, plan, stamp, inputs, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction, handles, tool](bool ok, const QString& error) {
+  }, [this, serial, plan, stamp, inputs, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction, handles, tool, motions](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
@@ -1449,6 +1470,7 @@ void DesignController::runPreview(bool commit) {
     }
     parts.insert(parts.end(), construction->begin(), construction->end());
     m_viewport->setPreviewBodies(parts, hidden);
+    m_viewport->setPreviewMotion(*motions);  // a linked file moving as one
     if (m_stretch.valid) for (const auto& part : parts) m_stretch.base.push_back(part.prs);
     if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // this plan is for an older value
   });

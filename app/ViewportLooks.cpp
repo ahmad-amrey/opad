@@ -251,14 +251,7 @@ bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look
   }
   if (look.layer != was.layer && !m_ctx->IsSelected(ais)) m_ctx->SetZLayer(ais, look.layer);  // selected: Topmost until deselected
   if (look.offset == was.offset) return false;
-  gp_Trsf placed;
-  if (look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));
-  if (item.rigid) placed.Multiply(item.placement);  // offset after the placement
-  m_ctx->SetLocation(ais, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
-  if (!item.navigation.IsNull()) {
-    item.navigation->SetLocalTransformation(placed);
-    m_navSelection->Update(item.navigation, Standard_False);
-  }
+  placeItem(id, item);  // offset after the placement
   return true;
 }
 

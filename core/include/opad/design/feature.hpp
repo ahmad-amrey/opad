@@ -77,6 +77,15 @@ struct Plan {
     bool removed = false;
   };
   std::vector<Changed> changed;
+  // Preview: nodes a feature places instead of changing their bodies (a linked file Move moves as one, by its top nodes): the
+  // world motion from where the node was just before the feature, and the node's new local placement as the result keeps it.
+  struct Moved {
+    std::string op;
+    std::string node;
+    Mat4 motion;
+    Mat4 local;
+  };
+  std::vector<Moved> moved;
   // Preview: the solid each creation feature computed here adds, removes or intersects with (world coordinates) and the
   // operation it was used for: "new", "join", "cut" or "intersect" (an "auto" operation as it was decided). The app draws
   // a cut's tool in red over the bodies it cuts.

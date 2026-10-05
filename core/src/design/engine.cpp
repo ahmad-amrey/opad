@@ -23,6 +23,7 @@
 #include <optional>
 #include <set>
 
+#include "opad/assets.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/recognize.hpp"
@@ -528,6 +529,14 @@ struct Walk {
     for (const auto& id : std::set<std::string>(nodes))
       if (const Node* n = scene.node(id); n && n->kind == Node::Kind::Component)
         for (const auto& b : scene.bodies_under(id)) nodes.insert(b);
+    // A move of a linked file's part places the whole file by its top nodes: where each one is counts (a STEP's other root
+    // placed since). Only a move of a linked part names them, so no other feature's fingerprint changes.
+    if (kind == "move") {
+      std::set<std::string> files;
+      for (const auto& id : std::set<std::string>(nodes))
+        if (const Node* n = scene.node(id); n && n->linked && files.insert(n->source_op).second)
+          for (const auto& top : linked_tops(scene, id)) nodes.insert(top);
+    }
     // Automatic targets (join/cut/intersect with none named) depend on every body. Only features with a targets input
     // have them: combine's own operation names its target and tools, so it depends on those alone.
     const std::string op = inputs.value("operation", "new");
@@ -635,9 +644,10 @@ struct Walk {
   // renames or moves them, and replay only reads what is stored (TODO 10 B14, C2). A body made from scratch takes
   // the feature's name (numbered when the feature makes several) and goes into the feature's component (UI-33); a copy
   // or a piece takes its source's name, the component its source is in and its source's colour.
-  // A linked file's parts (assets.hpp) are read-only, references and tools only: changing, moving or copying one would store
-  // the file's geometry in the document, so the file is embedded first. A combine does not consume one either (the board an
-  // enclosure was cut with would leave the design); Remove takes one out explicitly.
+  // A linked file's parts (assets.hpp) are read-only, references and tools only: changing or copying one would store the file's
+  // geometry in the document, so the file is embedded first (Move moves the whole file instead, by placing its top nodes:
+  // Out::placed). A combine does not consume one either (the board an enclosure was cut with would leave the design); Remove
+  // takes one out explicitly.
   static void check_read_only(const Ctx& ctx, const std::string& kind, const Out& out) {
     auto refuse = [&](const std::string& node, const std::string& what) {
       if (const Node* n = ctx.scene.node(node); n && n->linked) throw Error("'" + n->name + "' is part of a linked file and cannot be " + what);
@@ -727,6 +737,21 @@ struct Walk {
       plan.changed.push_back({op_id, entry["id"].get<std::string>(), std::make_shared<TopoDS_Shape>(b.shape), false});
     }
     if (!bodies.empty()) result["bodies"] = bodies;
+    // Nodes placed as they are (a linked file Move moved as one): their new local placement, which replay puts on them, in
+    // their parent's frame as it is now.
+    if (!out.placed.empty()) {
+      json placements = json::array();
+      for (const auto& [id, motion] : out.placed) {
+        const Node* n = ctx.scene.node(id);
+        if (!n) throw Error("a moved component no longer exists");
+        const Mat4 world = mat_from_trsf(motion);
+        const Mat4 parent = n->parent.empty() ? Mat4() : ctx.scene.world(n->parent);
+        const Mat4 local = parent.inverse() * world * parent * n->local;
+        placements.push_back({{"id", id}, {"transform", local.to_json()}});
+        plan.moved.push_back({op_id, id, world, local});
+      }
+      result["placements"] = placements;
+    }
     if (!out.removed.empty()) {
       result["removed"] = out.removed;
       for (const auto& r : out.removed) plan.changed.push_back({op_id, r, nullptr, true});

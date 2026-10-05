@@ -49,6 +49,7 @@ class PickBox : public QPushButton {
   explicit PickBox(QWidget* parent = nullptr);
   void set(int count, const QString& what, bool active, bool satisfied);
   void setNote(const QString& note);  // what the box says instead, as if waiting (a primitive's plane: "Click in the view")
+  QString what() const { return m_what; }  // what it says of its picks (benches); empty: "%1 selected"
  signals:
   void cleared();
  protected:
@@ -94,6 +95,7 @@ class FeaturePanel : public QWidget {
   void setSuggestion(const QString& input, const QString& value);
   QString suggestion(const QString& input) const;
   QString choiceText(const QString& input) const;  // what a choice's box shows (benches)
+  QString pickText(const QString& input) const;    // what a pick box says of its picks (benches; empty: the count)
   // TODO 10 B14: the name, colour and component of the bodies a new feature makes, shown while its operation is
   // "new". Left alone they keep the defaults (the feature's name, no colour, `component` = the one selected in the
   // browser; copies follow the picked bodies). bodyStyle() is the argument of design::style_new_bodies.
@@ -125,6 +127,9 @@ class FeaturePanel : public QWidget {
   // (Extent: To face), unless the active input still waits for its own; an active input it hid gives way to the next.
   void focusRevealed(const std::set<QString>& before, const QString& wasActive);
   bool makesCopies() const;
+  // Move's Bodies box when a linked file's part is picked: the file moves as one ("board.kicad_pcb moves as one"); `plain`
+  // otherwise.
+  QString linkedMoveText(const opad::json& picks, const QString& plain) const;
  public:
   static bool isPick(const std::string& type);  // an input picked in the view (bodies, faces, edges, profiles, ...)
  private:

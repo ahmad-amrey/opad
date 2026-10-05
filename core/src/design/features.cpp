@@ -69,6 +69,7 @@
 #include <tuple>
 
 #include "engine.hpp"
+#include "opad/assets.hpp"
 #include "opad/design/sketch_reference.hpp"
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
@@ -1929,8 +1930,26 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     return out;
   }
   if (kind == "move") {
-    std::vector<std::string> ids;
-    const auto bodies = world_bodies(ctx, in.value("bodies", json()), &ids);
+    // A linked file's part stands for the whole file: it moves as one, by its top nodes' placement (out.placed), and its parts
+    // stay the file's. Any other body moves as a new shape of its node.
+    const bool copying = in.value("copy", false);
+    std::vector<std::string> ids, tops;
+    std::set<std::string> files;  // import ops whose tops are taken
+    const std::vector<std::string> picked = body_ids(ctx, in.value("bodies", json()));
+    if (picked.empty()) throw Error("pick at least one body");
+    for (const auto& id : picked) {
+      const Node* n = ctx.scene.node(id);
+      if (!n || !n->linked) {
+        ids.push_back(id);
+        continue;
+      }
+      if (copying)
+        throw Error("A linked file cannot be copied: a copy would store its parts in the document. Link the file again for another copy, or embed it first.");
+      if (files.insert(n->source_op).second)
+        for (const auto& top : linked_tops(ctx.scene, id)) tops.push_back(top);
+    }
+    std::vector<TopoDS_Shape> bodies;
+    for (const auto& id : ids) bodies.push_back(ctx.node_shape(id));
     gp_Trsf t;
     t.SetTranslation(gp_Vec(ctx.length(in, "dx"), ctx.length(in, "dy"), ctx.length(in, "dz")));
     if (in.value("rotate", false)) {
@@ -1939,8 +1958,8 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       t = t * r;
     }
     if (t.Form() == gp_Identity) throw Error("the move does nothing");
-    const bool copying = in.value("copy", false);
     for (size_t i = 0; i < ids.size(); ++i) out.bodies.push_back({copying ? std::string() : ids[i], moved(bodies[i], t), copying ? ids[i] : std::string()});
+    for (const auto& top : tops) out.placed.push_back({top, t});
     return out;
   }
   if (kind == "remove") {
