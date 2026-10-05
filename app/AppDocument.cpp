@@ -337,7 +337,10 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
       if (error.isEmpty()) recordStep(tr("import"), opsBefore);
       if (error.isEmpty() && r.contains("info") && r["info"].value("linked", false))  // read just now: as it is
         assetStates.push_back({{"import", r.value("op", "")}, {"name", QFileInfo(path).fileName().toStdString()}, {"kind", r["info"].value("kind", "")},
-                               {"storage", "linked"}, {"state", "ok"}, {"bodies", r.value("bodies", 0)}});
+                               {"storage", "linked"}, {"state", "ok"}, {"bodies", r.value("bodies", 0)},
+                               // where: the file the user chose stays trusted (AssetMonitor::options), even outside a saved
+                               // document's project (a board linked from another folder showed "not read" at once)
+                               {"file", QFileInfo(path).absoluteFilePath().toStdString()}});
       refresh();
       emit undoChanged();
       if (!error.isEmpty()) {

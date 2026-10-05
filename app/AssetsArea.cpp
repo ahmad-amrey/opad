@@ -145,6 +145,8 @@ bool assets::askTrust(QWidget* parent, AppDocument* doc, JobRunner* jobs, std::f
     settings.setValue("assets/trusted", trusted);
   } else if (box.clickedButton() != once) {
     return true;
+  } else {
+    doc->trustForNow(folders);  // read and watched until another document is opened; the badge clears at the next look
   }
   doc->loadAssets(jobs, box.clickedButton() == once, [failed](bool ok, const QString& error) {
     if (!ok && failed) failed(error);
@@ -382,6 +384,7 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
     d.badges << lfs;
   }
   QStringList tip{tr("Linked file: %1").arg(file)};
+  if (state == "untrusted" || state == "missing" || state == "changed" || state == "error") tip << stateText(import);  // why its badge shows
   if (a) {
     QStringList facts;
     if (const std::string sha = a->asset.value("sha256", ""); !sha.empty()) facts << "SHA-256 " + QString::fromStdString(sha.substr(0, 12));
@@ -779,7 +782,10 @@ void AssetsArea::copyPath(const std::string& import) {
 }
 
 void AssetsArea::trust(const std::string& import) {
-  assets::askTrust(services().window(), services().document(), services().jobs(), [this](const QString& error) { notify(reasonText(error.toStdString()), false, 8000); }, {import});
+  // Read them: the files not read yet are read on a worker; one already read (linked in this session) is only looked at
+  // again, which says it is fine now (the badge stayed when only unread files were read).
+  if (assets::askTrust(services().window(), services().document(), services().jobs(), [this](const QString& error) { notify(reasonText(error.toStdString()), false, 8000); }, {import}) && m_monitor)
+    m_monitor->check();
 }
 
 // A board read by OPAD's reader (kicad-cli finds its models itself) with missing models of KiCad's library.

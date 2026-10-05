@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QMessageBox>
@@ -18,6 +19,7 @@
 #include <functional>
 
 #include "AppDocument.hpp"
+#include "AssetMonitor.hpp"
 #include "AssetsArea.hpp"
 #include "Jobs.hpp"
 #include "Viewport.hpp"
@@ -36,7 +38,8 @@ bool MainWindow::trustAfterLoad() const { return !m_doc->lastLoad.contains("op")
 // is asked; read once trusted, its bodies are displayed; saved, the file holds no body of either; a sync planned on a worker
 // commits as one edit of the import that keeps the node and changes its body, and undoes and redoes; third.step imported
 // linked shows its bodies, none stored; a picture linked last is shown on its canvas (its colour in the frame) while the op
-// keeps none of its bytes.
+// keeps none of its bytes; saved deeper, the links follow; a file linked then from a folder outside the project (a KiCad board
+// from another project's folder) stays read after the next look at the files: no "not read" badge for what the user chose.
 OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
   const QString shot = value;
   static int phase = 0;
@@ -141,6 +144,39 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
     });
     return true;
   }
+  if (phase == 3) {
+    AssetsArea* area = nullptr;
+    for (AreaController* a : w.m_areas)
+      if (auto* found = qobject_cast<AssetsArea*>(a)) area = found;
+    if (!area || !area->monitor()) return fail("no linked files area");
+    area->monitor()->check();
+    auto* timer = new QTimer(&w);
+    auto clock = std::make_shared<QElapsedTimer>();
+    clock->start();
+    const int looks = area->monitor()->looks();
+    QObject::connect(timer, &QTimer::timeout, &w, [=, &w] {
+      if ((area->monitor()->checking() || area->monitor()->looks() == looks) && clock->elapsed() < 15000) return;
+      timer->stop();
+      timer->deleteLater();
+      std::string body, now = "none";
+      std::string fourth;  // the last import (its source is the STEP's own name, other.step)
+      for (const auto& o : w.m_doc->doc.ops)
+        if (o.type == "import") fourth = o.id;
+      for (const auto& s : w.m_doc->assetStates)
+        if (s.value("import", "") == fourth) now = s.value("state", "");
+      for (const auto& id : w.m_doc->scene.all_bodies())
+        if (w.m_doc->node(id)->source_op == fourth) body = id;
+      browser::Decoration d;
+      if (!body.empty()) area->decorate({body, "body", {}, w.m_doc->node(body)}, d);
+      const bool notRead = std::any_of(d.badges.begin(), d.badges.end(), [](const browser::Badge& b) { return b.text == "not read"; });
+      trace::log(QString("bench: assets: fourth.step after a look at the files: %1, %2 looks").arg(QString::fromStdString(now)).arg(area->monitor()->looks()));
+      if (now != "ok" || notRead || body.empty()) return (void)fail("a file linked from outside the project is called not read after the next look");
+      trace::log("bench: assets a file linked from a folder outside the saved document's project stays read (no not read badge) PASS");
+      QCoreApplication::exit(0);
+    });
+    timer->start(100);
+    return true;
+  }
   if (phase == 2) {
     const std::string picture = import_of("picture.png");
     bool gone = true;
@@ -178,7 +214,14 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
         if (last.type != "edit" || asset.value("path", "") != "../../parts/part.step" || w.m_doc->undoLabel() != "Linked file paths" || w.m_doc->isDirty())
           return (void)fail("Save As elsewhere: the linked paths do not follow as one undo step");
         trace::log("bench: assets Save As into another folder: the linked paths follow as one undo step PASS");
-        QCoreApplication::exit(0);
+        // A file linked now from a folder outside the saved document's project (a KiCad board beside another project): the user
+        // chose it, so it is read and stays trusted, never "not read" with a Read them that changed nothing.
+        const QString elsewhere = QFileInfo(w.m_doc->path()).absolutePath() + "/../../../../elsewhere/fourth.step";
+        QDir().mkpath(QFileInfo(elsewhere).absolutePath());
+        if (!QFile::copy(QFileInfo(w.m_doc->path()).absolutePath() + "/../../../outside/other.step", elsewhere)) return (void)fail("no copy of other.step elsewhere");
+        phase = 3;
+        w.beginLoad({});
+        w.m_doc->startImport(QFileInfo(elsewhere).absoluteFilePath(), {}, {}, {}, true);  // runBench again
       });
     });
     return true;

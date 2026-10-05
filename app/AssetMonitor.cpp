@@ -174,6 +174,8 @@ opad::AssetOptions AssetMonitor::options(const AppDocument* doc) {
   for (const auto& s : doc->assetStates)  // read in this session (trusted once, or linked just now): still trusted
     if ((s.value("state", "") == "ok" || s.value("state", "") == "changed") && s.contains("file"))
       o.trusted.push_back(opad::path_from_utf8(s["file"].get<std::string>()).parent_path());
+  for (const QString& folder : doc->trustedForNow())  // "Read them" for this document (its bodies may be loaded already)
+    o.trusted.push_back(std::filesystem::path(folder.toStdU16String()));
   return o;
 }
 

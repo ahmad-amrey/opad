@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <utility>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -44,6 +45,14 @@ class AppDocument : public QObject {
   opad::json lastLoad;       // what the reader of the last finished open or import said (ImportResult::to_json + "file")
   // Linked files (opad/assets.hpp) of the open document as the last load found them: AssetState::to_json per asset.
   opad::json assetStates = opad::json::array();
+  // Folders of linked files the user said to read while this document is open ("Read them" once): read and watched as the
+  // project's own until another document replaces it.
+  void trustForNow(const QStringList& folders) {
+    if (std::exchange(m_trustedGeneration, generation) != generation) m_trustedNow.clear();
+    for (const QString& f : folders)
+      if (!m_trustedNow.contains(f)) m_trustedNow << f;
+  }
+  QStringList trustedForNow() const { return m_trustedGeneration == generation ? m_trustedNow : QStringList(); }
 
   void newDocument();
   // The document becomes an untitled copy with an identity of its own (New from template): Save asks where to put it.
@@ -237,6 +246,8 @@ class AppDocument : public QObject {
   void undoChanged();  // stacks or labels changed
 
  private:
+  QStringList m_trustedNow;
+  unsigned long long m_trustedGeneration = 0;
   opad::ImportOptions loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file, bool opad);
   int m_displayStart = 45;
   struct Step {
