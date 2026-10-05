@@ -316,7 +316,7 @@ minute and a half; `-DOPAD_DWG=OFF` skips it).
 | Host and target | Install | Build |
 |---|---|---|
 | Windows | [MSYS2](https://www.msys2.org), then in its shell: `pacman -S mingw-w64-x86_64-{cmake,ninja,gcc,opencascade,qt6-base,nlohmann-json,pybind11,python}` | `cmake --workflow --preset windows` |
-| Linux (Ubuntu 24.04) | `sudo apt install cmake ninja-build g++ libocct-*-dev libtbb-dev qt6-base-dev nlohmann-json3-dev pybind11-dev python3-dev libgl1-mesa-dev` | `cmake --workflow --preset linux` |
+| Linux (Ubuntu 24.04) | `sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev rapidjson-dev pybind11-dev python3-dev`, plus `xvfb` for the GUI benches; no OCCT package (see below) | `cmake --workflow --preset linux` |
 | macOS | `xcode-select --install`, then `brew install cmake ninja opencascade qt nlohmann-json pybind11 python` | `cmake --workflow --preset macos` |
 
 The three steps can also be run one by one: `cmake --preset <os>`, `cmake --build --preset <os>`,
@@ -325,8 +325,8 @@ the real app in hidden windows (drag handles, note cards, 2D mode, drawing place
 refinement...). It needs a desktop session with OpenGL, so the default presets leave it out. Outputs land in `build/<os>/bin`: `opad` (app), `opad-cli`, `opad.pyd`/`opad.so`, the sample
 plugin and the test binaries. `tests/fixtures.cpp` generates the STEP fixtures used by the tests.
 
-Requirements: CMake 3.25+, a C++20 compiler, Open CASCADE Technology 7.6+ (7.8+ recommended), nlohmann-json,
-pybind11 (optional), Qt 6 Widgets (optional, app only).
+Requirements: CMake 3.25+, a C++20 compiler, Open CASCADE Technology 7.8+ (on Linux the build compiles 7.9.2 itself
+when the system has none or an older one), nlohmann-json, pybind11 (optional), Qt 6.4+ Widgets (optional, app only).
 
 - **Windows:** run the commands with `C:\msys64\mingw64\bin` first on PATH. The preset expects MSYS2 in `C:\msys64`;
   for another location override `CMAKE_PREFIX_PATH`, `CMAKE_C_COMPILER` and `CMAKE_CXX_COMPILER` with `-D` or in a
@@ -358,11 +358,19 @@ pybind11 (optional), Qt 6 Widgets (optional, app only).
   target stops, because that OCCT pulls in GPL FFmpeg (with the x264/x265/xvid encoders) and FreeImage; see
   [Licence](#licence) (`-DOPAD_ALLOW_GPL_DLLS=ON` stages them anyway, for local use only). The exe icon is the logo's
   cube mark; `python tools/make_icon.py <opad_logo.png>` (Pillow, numpy) regenerates `app/res` when the logo changes.
-- **Linux:** other distros need the same packages under their own names. On Wayland the app runs through
-  XWayland, since OCCT's viewer needs an X11 window.
+- **Linux:** OPAD needs OCCT 7.8 or newer and Ubuntu 24.04 ships 7.6, so the first `cmake --preset linux` (the first
+  step of the workflow) downloads the OCCT 7.9.2 source and builds the toolkits OPAD uses as shared libraries into
+  `build/linux/occt/install` (once, about 15 minutes; later configures reuse it, delete that folder to build it
+  again). It is the same kernel the Windows and macOS builds run. The programs and tests find it through their build
+  RPATH, and `linux-single` bundles it into the AppImage. `-DOPAD_OCCT_BUILD=AUTO` (default) builds it only when the
+  system OCCT is missing or older than 7.8, `ON` always builds it, `OFF` requires a system OCCT 7.8+ (point
+  `OpenCASCADE_DIR` at its `lib/cmake/opencascade`) and stops otherwise. Other distros need the same packages under
+  their own names. The GUI benches run in a virtual display: `xvfb-run -a ctest --test-dir build/linux -L gui`. On
+  Wayland the app runs through XWayland, since OCCT's viewer needs an X11 window.
 - **Options:** `OPAD_BUILD_APP`, `OPAD_BUILD_CLI`, `OPAD_BUILD_PYTHON`, `OPAD_BUILD_PLUGINS`, `OPAD_BUILD_TESTS`
   (all ON). Pass them on the configure step, e.g. `cmake --preset linux -DOPAD_BUILD_APP=OFF` for core and CLI only.
   `OPAD_STATIC` (OFF; the `windows-static` preset turns it on) links everything statically, see above.
+  `OPAD_OCCT_BUILD` (AUTO, ON or OFF) chooses between the system OCCT and 7.9.2 built from source, see Linux above.
 - **Adding a target** (another toolchain, architecture or package source): add a configure preset in
   `CMakePresets.json` that inherits `base` and sets what differs (compiler, `CMAKE_PREFIX_PATH`, toolchain file),
   plus matching build, test and workflow entries. It gets its own `build/<preset>` tree automatically.
