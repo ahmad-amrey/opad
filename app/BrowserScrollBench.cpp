@@ -123,6 +123,11 @@ OPAD_BENCH(OPAD_BENCH_BROWSER_SCROLL, browserScroll) {
   QScrollBar* bar = tree->verticalScrollBar();
   auto resets = std::make_shared<int>(0);  // the rows made again (QTreeWidget::clear resets its model)
   QObject::connect(tree->model(), &QAbstractItemModel::modelReset, &w, [resets] { ++*resets; });
+  for (const std::string& id : doc->scene.all_bodies())
+    if (const opad::Node* n = doc->scene.node(id))
+      trace::log(QString("bench: browser scroll: body %1 '%2' in %3, %4 ops")
+                     .arg(QString::fromStdString(id).left(8), QString::fromStdString(n->name), QString::fromStdString(n->parent).left(8))
+                     .arg(doc->doc.ops.size()));
   if (!require(closed[0] && closed[1] && bar->maximum() > 8 && doc->scene.all_bodies().size() == 1,
                QString("90 components and a box in the browser, two closed, it scrolls (0 to %1; rows %2 %3, bodies %4)").arg(bar->maximum()).arg(closed[0] != nullptr).arg(closed[1] != nullptr).arg(doc->scene.all_bodies().size())))
     return finish();
