@@ -77,12 +77,13 @@ inline bool isTrackpad(const Scroll& s, Mode m = Mode::Automatic) {
 // How far a trackpad's scroll moves the view, in pixels. An eighth of the angle on xcb: there the pixel delta is the
 // driver's raw valuator delta, 8 x the finger's px on Xorg with xf86-input-libinput 1.2 or later (ScrollPixelDistance 15
 // scaled into its increment of 120), while the angle's eighth is 15 px per increment, about the finger's own px on Xorg
-// and 1.5 x on XWayland. Elsewhere the pixel delta when there is one.
+// and 1.5 x on XWayland. Elsewhere, or with no angle at all, the pixel delta when there is one.
 struct Pan {
   double x = 0, y = 0;
 };
 inline Pan panStep(const Scroll& s) {
-  if (s.platform == "xcb" || (s.pixelX == 0 && s.pixelY == 0)) return {s.angleX / 8.0, s.angleY / 8.0};
+  const bool angled = s.angleX != 0 || s.angleY != 0, pixelled = s.pixelX != 0 || s.pixelY != 0;
+  if ((s.platform == "xcb" && angled) || !pixelled) return {s.angleX / 8.0, s.angleY / 8.0};
   return {double(s.pixelX), double(s.pixelY)};
 }
 }  // namespace scrollinput

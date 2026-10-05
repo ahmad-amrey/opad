@@ -89,6 +89,9 @@ TEST(pan_step) {
   CHECK(panStep(s).y == 20.0 && panStep(s).x == 0.0);
   CHECK(panStep(wheel("xcb", true, 37)).y == 37 / 8.0);    // XWayland: no pixels
   CHECK(panStep(wheel("xcb", true, 0, -24)).x == -3.0);    // sideways, the sign kept
+  Scroll bare = fingers("xcb", true, Phase::Update, 6, 0);  // pixels and no angle (synthetic events): the pixels
+  bare.angleX = bare.angleY = 0;
+  CHECK(panStep(bare).x == 6.0);
   // Elsewhere the pixel delta when there is one, else an eighth of the angle (as before).
   CHECK(panStep(fingers("cocoa", false, Phase::Update, 4, 9)).x == 4.0 && panStep(fingers("cocoa", false, Phase::Update, 4, 9)).y == 9.0);
   CHECK(panStep(fingers("wayland", false, Phase::Update, 0, 7)).y == 7.0);
