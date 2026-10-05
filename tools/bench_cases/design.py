@@ -61,4 +61,7 @@ CASES = [
     # edge pulled out and typed into, Move's X arrow and ring pulled and typed into, and the chamfer, thicken, plane and box
     # arrows pulled out, each preview checked while the button is held.
     ("handles", handle_parts, {"OPAD_BENCH_HANDLES": "{prefix}"}),
+    # New sketch on the box's top face starts its origin at the face's own (lower-left) corner, the origin set there is the
+    # sketch's in the editor and once committed, and New sketch on that sketch's plane starts at that sketch's origin.
+    ("sketch-origin", "box", {"OPAD_BENCH_SKETCH_ORIGIN": "1"}),
 ]
