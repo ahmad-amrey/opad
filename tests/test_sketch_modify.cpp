@@ -327,3 +327,38 @@ TEST(trim_keeps_what_still_holds_and_drops_what_measured_the_whole_curve) {
   CHECK(trim_entity(once,circle,-5,0)==TrimOutcome::CrossedOnce);CHECK(trim_entity(once,once.points.front().id,0,0)==TrimOutcome::NotACurve);
   CHECK(once.to_json()==before);
 }
+
+// Chamfers on lines that carry constraints, as the fillets above: every corner of the dimensioned rectangle with its
+// construction diagonal (a third line at two corners: "pick a corner joining exactly two lines") is cut, one after the
+// other, and the sketch still solves with nothing moving. What measured a side (its length, a point at its middle) stays on
+// a construction line along the old side to the corner, kept as a virtual sharp on both sides.
+TEST(chamfers_cut_every_corner_of_a_constrained_rectangle) {
+  using T=SkConstraint::Type;
+  Sketch sk;
+  const int a=sk.add_point(0,0,true),b=sk.add_point(40,0),c=sk.add_point(40,20),d=sk.add_point(0,20);
+  const int l0=sk.add_line(a,b),l1=sk.add_line(b,c),l2=sk.add_line(c,d),l3=sk.add_line(d,a);
+  sk.add_constraint(T::Horizontal,{l0});sk.add_constraint(T::Horizontal,{l2});sk.add_constraint(T::Vertical,{l1});sk.add_constraint(T::Vertical,{l3});
+  const int width=sk.add_constraint(T::Distance,{l0},40),height=sk.add_constraint(T::Distance,{l1},20);
+  const int diagonal=sk.add_line(a,c,true),middle=sk.add_point(20,10);sk.add_constraint(T::Midpoint,{middle,diagonal});
+  const int half=sk.add_point(20,20);sk.add_constraint(T::Midpoint,{half,l2});
+  sk.add_constraint(T::Perpendicular,{l2,l3});sk.add_constraint(T::Distance,{d,l1},40);
+  CHECK(solve(sk).converged);
+  for(const int corner:{b,a,c,d}) {
+    chamfer_corner(sk,corner,3,2);
+    CHECK(solve(sk).converged);
+    sk.validate();
+  }
+  // Four cuts, the corners where they were, the width and height still 40 and 20 on the virtual sharps.
+  CHECK_EQ(std::count_if(sk.entities.begin(),sk.entities.end(),[](const SkEntity& e){return e.type==E::Line && !e.construction;}),8);
+  CHECK_NEAR(sk.point(c)->x,40,1e-7);CHECK_NEAR(sk.point(c)->y,20,1e-7);CHECK_NEAR(sk.point(b)->x,40,1e-7);CHECK_NEAR(sk.point(b)->y,0,1e-7);
+  CHECK_NEAR(sk.point(half)->x,20,1e-7);
+  for(const int dimension:{width,height}) {
+    const SkConstraint* k=sk.constraint(dimension);CHECK(k && k->refs.size()==1);
+    const SkEntity* whole=sk.entity(k->refs[0]);CHECK(whole && whole->construction);
+    CHECK_NEAR(std::hypot(sk.point(whole->p[1])->x-sk.point(whole->p[0])->x,sk.point(whole->p[1])->y-sk.point(whole->p[0])->y),k->value,1e-7);
+  }
+  // Three lines that are not construction ending on one point: still refused, nothing changed.
+  Sketch three;const int o=three.add_point(0,0);
+  for(const auto& [x,y]:std::vector<std::pair<double,double>>{{10,0},{0,10},{-10,-10}})three.add_line(o,three.add_point(x,y));
+  const auto before=three.to_json();CHECK_THROWS(chamfer_corner(three,o,1,1));CHECK(three.to_json()==before);
+}
