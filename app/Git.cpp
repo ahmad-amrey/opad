@@ -633,7 +633,7 @@ Result clone(const Context& base, const QString& url, const QString& folder, con
 }
 
 QString cloneName(const QString& url) {
-  QString s = QDir::fromNativeSeparators(url.trimmed());
+  QString s = url.trimmed().replace('\\', '/');  // a Windows path names its folder on every system
   auto trim = [&s] {
     while (s.endsWith('/')) s.chop(1);
   };
