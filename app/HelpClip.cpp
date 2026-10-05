@@ -120,7 +120,7 @@ const QHash<QString, QStringList>& schema() {
 }
 const QStringList kColorProps{"color", "fill", "glow", "hatch", "tone", "edges", "capColor", "dot", "box"};
 const QStringList kTokens{"bg", "bg2", "bg3", "bg4", "line", "fg", "fg2", "fg3", "vp", "sel", "selbg", "hov", "amber", "green", "red",
-                          "mtop", "mleft", "mright", "medge", "cap", "onsel", "glow", "blue", "white", "black"};
+                          "mtop", "mleft", "mright", "medge", "cap", "onsel", "glow", "blue", "white", "black", "magenta"};
 const QHash<QString, QStringList> kKinds{
     {"cursor", {"arrow", "cross", "move", "wheel"}},
     {"glyph", {"horizontal", "vertical", "parallel", "perpendicular", "coincident", "tangent", "equal", "concentric", "fix", "midpoint", "symmetric", "collinear", "smooth", "curvature"}},
@@ -139,6 +139,7 @@ QColor token(const Tokens& t, const QString& name) {
   if (name == "glow") return t.dark ? QColor(255, 255, 255, 150) : QColor(t.hov.red(), t.hov.green(), t.hov.blue(), 120);  // hover
   if (name == "white") return Qt::white;
   if (name == "black") return Qt::black;
+  if (name == "magenta") return QColor(255, 0, 255);  // a dangling sheet annotation, as the sheet draws it (sheet_display.cpp)
   return t.fg;
 }
 QColor mix(const QColor& a, const QColor& b, double f) {

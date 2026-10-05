@@ -27,7 +27,7 @@
    "id": "vcs.compare",
    "title": "Compare versions",
    "summary": "Shows two versions of the document in one view: what was added, removed, changed or moved.",
-   "details": "Pick A and B in the Compare panel: this session, the saved file, git commits, recovery snapshots or another file. The view draws B tinted by change with ghosts of A, the panel lists the changes and Next change ({key:vcs.nextChange}) steps through them; Done or Esc ends it.",
+   "details": "Pick A and B in the Compare panel: this session, the saved file, git commits, recovery snapshots or another file. The view draws B tinted by change with ghosts of A, the panel lists the changes and Next change ({key:vcs.nextChange}) steps through them; Done or {fixed:esc} ends it.",
    "keywords": ["diff", "changes", "git", "history", "version", "revision"],
    "requires": "Open an OPAD document; not while a sketch is open."
   },
@@ -232,7 +232,7 @@
    "id": "assets.settings",
    "title": "Linked files",
    "summary": "Sets how STEP, IGES, KiCad boards and big files come in, and which folders are trusted for linked files.",
-   "details": "Importing those files can ask each time, link them as assets or import an editable copy. Linked files outside a document's project folder are read only once you say so, unless their folder is trusted; the list of trusted folders is edited here. OK keeps the choices.",
+   "details": "Importing those files can ask each time, link them as assets or import an editable copy. Linked files outside a document's project folder are read only once you say so, unless their folder is trusted. The trusted folders are listed here, where Remove takes one off; the question's Always trust this folder adds one. OK keeps the choices.",
    "keywords": ["trust", "trusted folders", "ask", "link or copy", "preferences"]
   },
   {
@@ -287,7 +287,7 @@
    "id": "canvas.edit",
    "title": "Edit canvas",
    "summary": "Shows the selected canvas's handles and the Canvas panel, to move, size, turn and set it.",
-   "details": "Drag the picture to move it, a corner dot to size it (Shift frees its proportions) and the knob above it to turn it; or type X, Y, width, height and angle in the panel. The panel also sets its opacity, flips, whether it shows through the model or takes clicks, and its lock. A double-click on a canvas does the same, and each change is one step.",
+   "details": "Drag the picture to move it, a corner dot to size it ({fixed:shift} frees its proportions) and the knob above it to turn it; or type X, Y, width, height and angle in the panel. The panel also sets its opacity, flips, whether it shows through the model or takes clicks, and its lock. A double-click on a canvas does the same, and each change is one step.",
    "keywords": ["image", "picture", "move", "scale", "rotate"],
    "requires": "Select a canvas first, or edit one; not while a sketch is open."
   },
@@ -295,7 +295,7 @@
    "id": "canvas.calibrate",
    "title": "Calibrate canvas",
    "summary": "Scales the canvas so that two points on the picture lie a distance you know apart.",
-   "details": "Pick two points on the picture, such as the ends of an edge whose length you know, then type their real distance and press {fixed:enter} or Apply. The picture scales about the first point; Esc takes back the last point.",
+   "details": "Pick two points on the picture, such as the ends of an edge whose length you know, then type their real distance and press {fixed:enter} or Apply. The picture scales about the first point; {fixed:esc} takes back the last point.",
    "keywords": ["scale", "real size", "measure picture"],
    "requires": "Select a canvas first, or edit one; not while a sketch is open."
   },
@@ -303,7 +303,7 @@
    "id": "canvas.align",
    "title": "Align canvas to model",
    "summary": "Moves, turns and scales the canvas so that two points on the picture land on two points of the model.",
-   "details": "Pick a point on the picture, then the vertex or circle centre of the model where it belongs, then a second pair. The canvas stays in its plane: model points off it are taken square onto it, and a toast says how far off they were. Esc takes back the last pick.",
+   "details": "Pick a point on the picture, then the vertex or circle centre of the model where it belongs, then a second pair. The canvas stays in its plane: model points off it are taken square onto it, and a toast says how far off they were. {fixed:esc} takes back the last pick.",
    "keywords": ["scale relative", "match", "fit picture"],
    "requires": "Select a canvas first, or edit one; not while a sketch is open."
   },
@@ -327,7 +327,7 @@
    "id": "canvas.finish",
    "title": "Close canvas",
    "summary": "Ends editing the canvas: its handles and the Canvas panel close.",
-   "details": "What was changed stays; each change was its own step. OK in the panel and Esc do the same.",
+   "details": "What was changed stays; each change was its own step. OK in the panel and {fixed:esc} do the same.",
    "keywords": ["done", "finish", "leave"],
    "requires": "Only while a canvas is being edited."
   },
@@ -453,7 +453,7 @@
    "id": "view.zoomWindow",
    "title": "Zoom window",
    "summary": "Zooms in on a rectangle you drag around what you want to see.",
-   "details": "Start it, then drag a box in the view, or click to zoom in around that point; Esc cancels. The camera keeps its direction. It is under Fit's arrow, in the View menu and in the view cube's right-click menu.",
+   "details": "Start it, then drag a box in the view, or click to zoom in around that point; {fixed:esc} cancels. The camera keeps its direction. It is under Fit's arrow, in the View menu and in the view cube's right-click menu.",
    "keywords": ["zoom box", "zoom area", "rectangle", "magnify"],
    "requires": "Open or create a document first."
   },
@@ -597,7 +597,7 @@
    "id": "view.nextRegion",
    "title": "Next region",
    "summary": "Moves the keyboard to the next part of the window: ribbon, browser, view, timeline, then each open panel.",
-   "details": "The part reached is ringed, and its controls take the keys: arrows in the ribbon's tabs, the browser and the timeline, Tab in a panel. After the last panel it starts again at the ribbon; a click anywhere takes the ring away.",
+   "details": "The part reached is ringed, and its controls take the keys: arrows in the ribbon's tabs, the browser and the timeline, {fixed:tab} in a panel. After the last panel it starts again at the ribbon; a click anywhere takes the ring away.",
    "keywords": ["keyboard", "focus", "accessibility", "panes"]
   },
   {
@@ -776,14 +776,14 @@
    "id": "view.tracking",
    "title": "Tracking",
    "summary": "Shows alignment lines through points you hover, along X, Y and Z.",
-   "details": "Rest on a point to acquire it, then move away: a dashed line appears when the cursor lines up with it. Hold Shift to lock onto the line; a tap keeps it locked until Esc. With several guides or snaps in reach, a tap shows the next.",
+   "details": "Rest on a point to acquire it, then move away: a dashed line appears when the cursor lines up with it. Hold {fixed:shift} to lock onto the line; a tap keeps it locked until {fixed:esc}. With several guides or snaps in reach, a tap shows the next.",
    "keywords": ["alignment", "object snap tracking", "guides"]
   },
   {
    "id": "view.gridSnap",
    "title": "Grid snapping",
    "summary": "Makes placed points jump to grid intersections.",
-   "details": "Applies to points you click in sketches (hold Alt to place one off the grid), when placing a drawing or a sketch's origin, to the point and the base of a box, cylinder or other primitive (on a face, in steps from its corner, as a sketch on that face counts them), and to the distances Move / copy's triad is dragged. Set a fixed spacing in Grid settings for predictable steps.",
+   "details": "Applies to points you click in sketches (hold {fixed:alt} to place one off the grid), when placing a drawing or a sketch's origin, to the point and the base of a box, cylinder or other primitive (on a face, in steps from its corner, as a sketch on that face counts them), and to the distances Move / copy's triad is dragged. Set a fixed spacing in Grid settings for predictable steps.",
    "keywords": ["snap to grid", "step", "increment"]
   },
   {
@@ -1017,7 +1017,7 @@
    "id": "drawings.sectionView",
    "title": "Section view",
    "summary": "Cuts the selected view along a line you draw and places the cut as a new, hatched view.",
-   "details": "Click the cutting line's points on the view: two for a full section, more for an offset, half or aligned section; then press {fixed:enter}. The new view follows the pointer on the side it goes, lined up with its parent, and a click places it; type its gap to set it exactly. Esc takes back the last point, then leaves.",
+   "details": "Click the cutting line's points on the view: two for a full section, more for an offset, half or aligned section; then press {fixed:enter}. The new view follows the pointer on the side it goes, lined up with its parent, and a click places it; type its gap to set it exactly. {fixed:esc} takes back the last point, then leaves.",
    "keywords": ["cut", "cross section", "hatch", "cutting plane", "offset section", "half section"],
    "requires": "Select one view on the sheet first."
   },
@@ -1025,7 +1025,7 @@
    "id": "drawings.detailView",
    "title": "Detail view",
    "summary": "Places an enlarged view of a round area of the selected view.",
-   "details": "Click the centre of the detail, then its radius, then where the detail view goes; it is drawn at the next standard scale up from twice the parent's. Type the radius, or a scale such as 5:1, to set them exactly. Esc takes back the last step.",
+   "details": "Click the centre of the detail, then its radius, then where the detail view goes; it is drawn at twice the parent's scale, or the next standard scale up when that is not one. Type the radius, or a scale such as 5:1, to set them exactly. {fixed:esc} takes back the last step.",
    "keywords": ["enlarged", "zoom", "magnified", "circle"],
    "requires": "Select one view on the sheet first."
   },
@@ -1033,7 +1033,7 @@
    "id": "drawings.auxiliaryView",
    "title": "Auxiliary view",
    "summary": "Places a view that looks square to a slanted edge of the selected view, so an inclined face shows at its true shape.",
-   "details": "Click a straight edge of the view, then move to the side the new view goes and click to place it, lined up along that edge. Type its gap to set it exactly; Esc steps back.",
+   "details": "Click a straight edge of the view, then move to the side the new view goes and click to place it, lined up along that edge. Type its gap to set it exactly; {fixed:esc} steps back.",
    "keywords": ["inclined face", "true shape", "slanted", "square to an edge"],
    "requires": "Select one view on the sheet first."
   },
@@ -1057,7 +1057,7 @@
    "id": "drawings.breakView",
    "title": "Break view",
    "summary": "Shortens a long view by taking out the band between two points.",
-   "details": "Click where the break starts and where it ends: the band between them is taken out along the view's longer way, and zigzag break lines mark where the halves meet. Type its length to set it exactly; the change is one step.",
+   "details": "Click where the break starts and where it ends: the band between them is taken out in the direction they lie farther apart (sideways or up and down), and zigzag break lines mark where the halves meet. Type its length to set it exactly; the change is one step.",
    "keywords": ["broken view", "shorten", "long part", "interrupted"],
    "requires": "Select one view on the sheet first."
   },
@@ -1129,7 +1129,7 @@
    "id": "drawings.dimension",
    "title": "Dimension",
    "summary": "Adds a dimension to a view: pick what to measure and click where it goes.",
-   "details": "Pick an edge, a circle or a point, and a second one for a distance or an angle; where the pointer is chooses horizontal, vertical, aligned, angle, radius or diameter. Click to place it, or type its offset, decimals or tolerance in the boxes beside the pointer and press {fixed:enter}. The bar under the sheet sets its type, precision, tolerance and text; Esc takes back a pick, then leaves.",
+   "details": "Pick an edge, a circle or a point, and a second one for a distance or an angle; where the pointer is chooses horizontal, vertical, aligned, angle, radius or diameter. Click to place it, or type its offset, decimals or tolerance in the boxes beside the pointer and press {fixed:enter}. The bar under the sheet sets its type, precision, tolerance and text; {fixed:esc} takes back a pick, then leaves.",
    "keywords": ["smart dimension", "length", "distance", "angle", "radius", "diameter", "tolerance", "precision"],
    "requires": "Only while a sheet is shown in the Drawings workspace."
   },
@@ -1201,7 +1201,7 @@
    "id": "drawings.centerMark",
    "title": "Centre mark",
    "summary": "Marks the centre of a circle on a view with a cross.",
-   "details": "Pick a circle seen along its axis: the mark is added at once, each one a step. The tool stays on for the next circle; Esc leaves.",
+   "details": "Pick a circle seen along its axis: the mark is added at once, each one a step. The tool stays on for the next circle; {fixed:esc} leaves.",
    "keywords": ["center mark", "cross", "circle centre"],
    "requires": "Only while a sheet is shown in the Drawings workspace."
   },
@@ -1209,7 +1209,7 @@
    "id": "drawings.centerLine",
    "title": "Centre line",
    "summary": "Draws a centre line along a cylinder seen from the side, between two circles or between two parallel edges.",
-   "details": "Pick a cylinder seen from the side and the line is added at once; or pick two circles or two parallel edges, and it is added after the second. The tool stays on for the next one; Esc leaves.",
+   "details": "Pick a cylinder seen from the side and the line is added at once; or pick two circles or two parallel edges, and it is added after the second. The tool stays on for the next one; {fixed:esc} leaves.",
    "keywords": ["center line", "axis", "symmetry"],
    "requires": "Only while a sheet is shown in the Drawings workspace."
   },
@@ -1325,7 +1325,7 @@
    "id": "nav.cad2d",
    "title": "Navigation: CAD 2D",
    "summary": "Uses drafting mouse buttons: the middle button pans, the wheel zooms and nothing orbits.",
-   "details": "Ctrl with the middle button zooms as well, and a trackpad pans instead of orbiting. It changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
+   "details": "{fixed:ctrl} with the middle button zooms as well, and a trackpad pans instead of orbiting. It changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
    "keywords": ["mouse", "pan", "zoom", "drafting", "2d", "navigation"]
   },
   {
@@ -1402,7 +1402,7 @@
    "id": "inspect.bbox",
    "title": "Bounding box",
    "summary": "Draws the world-aligned box around the picks and reports its size.",
-   "details": "Each click adds what the selection filter picks, a body, face, edge or vertex, and the box grows to hold them all; Esc takes the last one back. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
+   "details": "Each click adds what the selection filter picks, a body, face, edge or vertex, and the box grows to hold them all; {fixed:esc} takes the last one back. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
    "keywords": ["size", "extents", "dimensions", "overall size"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -1450,7 +1450,7 @@
    "id": "inspect.clear",
    "title": "Clear measurement",
    "summary": "Steps back one level: closes a popup or panel, cancels a pick, leaves a tool or clears the measurement.",
-   "details": "Esc always undoes the most recent thing first. Press it again to keep stepping back until nothing is left.",
+   "details": "{fixed:esc} always undoes the most recent thing first. Press it again to keep stepping back until nothing is left.",
    "keywords": ["escape", "cancel", "back"]
   },
   {
@@ -1567,7 +1567,7 @@
    "id": "edit.paste",
    "title": "Paste",
    "summary": "Places what was copied: bodies as new bodies, sketch curves in the open sketch.",
-   "details": "In the document they came from, the copies start beside the originals in a Move / copy panel, and Enter makes them; from another document they are imported as they were. In a sketch the curves follow the pointer by their base point until a click places them.",
+   "details": "In the document they came from, the copies start beside the originals in a Move / copy panel, and {fixed:enter} makes them; from another document they are imported as they were. In a sketch the curves follow the pointer by their base point until a click places them.",
    "keywords": ["clipboard", "new bodies", "duplicate"]
   },
   {
@@ -1581,7 +1581,7 @@
    "id": "edit.repeat",
    "title": "Repeat",
    "summary": "Runs the last tool, feature, check or edit again.",
-   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. Enter in the view repeats it too while nothing runs, except Delete, Restore, Hide and Show all, which repeat only from here. View navigation, file open and save, panel toggles and plain selection commands are not repeated; Import, Export, Screenshot, Isolate, Save view and Select similar are.",
+   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. {fixed:enter} in the view repeats it too while nothing runs, except Delete, Restore, Hide and Show all, which repeat only from here. View navigation, file open and save, panel toggles and plain selection commands are not repeated; Import, Export, Screenshot, Isolate, Save view and Select similar are.",
    "keywords": ["again", "redo command", "last command", "repeat last"]
   },
   {
@@ -1687,7 +1687,7 @@
    "id": "tools.commands",
    "title": "Search commands",
    "summary": "Finds any command by typing part of its name.",
-   "details": "Use the arrow keys and Enter to run the command. Every command of the menus and the ribbon is listed with its shortcut.",
+   "details": "Use the arrow keys and {fixed:enter} to run the command. Every command of the menus and the ribbon is listed with its shortcut.",
    "keywords": ["palette", "find command", "run", "quick"]
   },
   {
@@ -1750,7 +1750,7 @@
    "id": "help.shortcuts",
    "title": "Shortcuts cheat sheet",
    "summary": "Lists every keyboard shortcut and mouse gesture at a glance.",
-   "details": "The keys are grouped as in the command search, with the mouse of your navigation preset and the keys every tool knows. Search by name or key; Change shortcuts opens the editor, and Esc or the key that opened it ({key:help.shortcuts}) closes the sheet.",
+   "details": "The keys are grouped as in the command search, with the mouse of your navigation preset and the keys every tool knows. Search by name or key; Change shortcuts opens the editor, and {fixed:esc} or the key that opened it ({key:help.shortcuts}) closes the sheet.",
    "keywords": ["keys", "keyboard", "hotkeys", "cheat sheet", "mouse"]
   },
   {
@@ -1840,7 +1840,7 @@
    "id": "design.reparent",
    "title": "Move to component",
    "summary": "Moves the selection under another component, keeping it where it is.",
-   "details": "A list opens at the pointer with the document root and every component the selection can go to; type to narrow it, then click one or press Enter. What moves keeps its place in the world, as one step.",
+   "details": "A list opens at the pointer with the document root and every component the selection can go to; type to narrow it, then click one or press {fixed:enter}. What moves keeps its place in the world, as one step.",
    "keywords": ["move to component", "regroup", "assembly"],
    "requires": "Open or create a document first."
   },
@@ -1902,7 +1902,7 @@
    "id": "assembly.explodePlay",
    "title": "Play explode",
    "summary": "Moves the parts out, or back together when they are out.",
-   "details": "It animates the exploded view's distance. Space does the same in the Explode panel.",
+   "details": "It animates the exploded view's distance. {fixed:space} does the same in the Explode panel.",
    "keywords": ["animate", "explode", "assemble"],
    "requires": "Open or create a document first; not while a sketch is open."
   },
@@ -1982,7 +1982,7 @@
    "id": "design.box",
    "title": "Box",
    "summary": "A box on a plane at a position, sized by length, width and height.",
-   "details": "Click a plane or a planar face where it goes, move the pointer to draw the base and click, then drag the arrow or type the height; Enter adds it and Esc steps back. Length runs along the plane's X, width along its Y and height along its normal (a negative height grows the other way); the base is centred on the click unless you turn that off, then the click is a corner. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face where it goes, move the pointer to draw the base and click, then drag the arrow or type the height; {fixed:enter} adds it and {fixed:esc} steps back. Length runs along the plane's X, width along its Y and height along its normal (a negative height grows the other way); the base is centred on the click unless you turn that off, then the click is a corner. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["cube", "block", "primitive", "rectangular prism"],
    "requires": "Open or create a document first."
   },
@@ -1990,7 +1990,7 @@
    "id": "design.cylinder",
    "title": "Cylinder",
    "summary": "A cylinder standing on a plane at a position.",
-   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click, then drag the arrow or type the height; Enter adds it and Esc steps back. Its axis is the plane's normal; a negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click, then drag the arrow or type the height; {fixed:enter} adds it and {fixed:esc} steps back. Its axis is the plane's normal; a negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["rod", "shaft", "primitive", "round"],
    "requires": "Open or create a document first."
   },
@@ -1998,7 +1998,7 @@
    "id": "design.sphere",
    "title": "Sphere",
    "summary": "A sphere centred on a plane at a position.",
-   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click; Enter adds it and Esc steps back. The plane runs through its middle. Combine it with other bodies to round off shapes. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click; {fixed:enter} adds it and {fixed:esc} steps back. The plane runs through its middle. Combine it with other bodies to round off shapes. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["ball", "primitive", "round"],
    "requires": "Open or create a document first."
   },
@@ -2006,7 +2006,7 @@
    "id": "design.cone",
    "title": "Cone",
    "summary": "A cone or a truncated cone standing on a plane at a position.",
-   "details": "Click a plane or a planar face for the centre of its base, move the pointer to set the base diameter and click, then drag the arrow or type the height; Tab from the height's box reaches the top diameter, which cuts the tip off above zero. Enter adds it and Esc steps back. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for the centre of its base, move the pointer to set the base diameter and click, then drag the arrow or type the height; {fixed:tab} from the height's box reaches the top diameter, which cuts the tip off above zero. {fixed:enter} adds it and {fixed:esc} steps back. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["taper", "frustum", "primitive"],
    "requires": "Open or create a document first."
   },
@@ -2014,7 +2014,7 @@
    "id": "design.torus",
    "title": "Torus",
    "summary": "A ring centred on a plane at a position.",
-   "details": "Click a plane or a planar face for its centre, move the pointer to set the ring diameter (through the middle of the tube) and click, then the tube's section diameter and click; Enter adds it and Esc steps back. The plane runs through the middle of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the ring diameter (through the middle of the tube) and click, then the tube's section diameter and click; {fixed:enter} adds it and {fixed:esc} steps back. The plane runs through the middle of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["ring", "donut", "o-ring", "primitive"],
    "requires": "Open or create a document first."
   },
@@ -2062,7 +2062,7 @@
    "id": "design.coil",
    "title": "Coil",
    "summary": "A round or square section wound about an axis: springs and threads.",
-   "details": "Click a plane or a planar face for its axis, move the pointer to set the coil diameter (through the middle of the section) and click, then set the pitch between turns and the number of turns in the panel; Enter adds it and Esc steps back. Left-handed winds it the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its axis, move the pointer to set the coil diameter (through the middle of the section) and click, then set the pitch between turns and the number of turns in the panel; {fixed:enter} adds it and {fixed:esc} steps back. Left-handed winds it the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["spring", "helix", "thread", "spiral"],
    "requires": "Open or create a document first."
   },
@@ -2126,7 +2126,7 @@
    "id": "design.remove_faces",
    "title": "Remove faces",
    "summary": "Deletes faces and closes the gap by extending the faces around them.",
-   "details": "Pick the faces of a hole, fillet, chamfer or boss and press Enter; the neighbouring faces grow until they meet. Imported bodies can be simplified this way. It is also on Press pull's menu and on the right-click menu of a picked face.",
+   "details": "Pick the faces of a hole, fillet, chamfer or boss and press {fixed:enter}; the neighbouring faces grow until they meet. Imported bodies can be simplified this way. It is also on Press pull's menu and on the right-click menu of a picked face.",
    "keywords": ["delete faces", "defeature", "simplify", "close hole", "heal"],
    "requires": "Open or create a document first."
   },
@@ -2182,7 +2182,7 @@
    "id": "design.move",
    "title": "Move / copy",
    "summary": "Moves or copies bodies by distances and an optional turn.",
-   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z; with Grid snapping on, a drag goes in grid steps (hold Alt to drag freely). Turn on Rotate for an axis and an angle: a ring round that axis through the bodies turns them in 5° steps, or type the angle. Make a copy leaves the original in place, and every value can be an expression.",
+   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z; with Grid snapping on, a drag goes in grid steps (hold {fixed:alt} to drag freely). Turn on Rotate for an axis and an angle: a ring round that axis through the bodies turns them in 5° steps, or type the angle. Make a copy leaves the original in place, and every value can be an expression.",
    "keywords": ["translate", "position", "transform", "copy"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -2246,7 +2246,7 @@
    "id": "sketch.commandLine",
    "title": "Command line",
    "summary": "A line at the bottom left of the sketch for drafting by the keyboard: type a tool's name or a value.",
-   "details": "A word runs a tool or an editing command (its name or a short form such as LINE or REC); anything else goes into the step's value boxes, then Enter. Up and Down recall earlier entries, and its close button hides it until this command ({key:sketch.commandLine}) opens it again.",
+   "details": "A word runs a tool or an editing command (its name or a short form such as LINE or REC); anything else goes into the step's value boxes, then {fixed:enter}. Up and Down recall earlier entries, and its close button hides it until this command ({key:sketch.commandLine}) opens it again.",
    "keywords": ["type a command", "coordinates", "keyboard"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2262,7 +2262,7 @@
    "id": "sketch.node",
    "title": "Spline node weights",
    "summary": "Edits the weights of a spline node and its handles.",
-   "details": "Select a node of a spline (or double-click it) and set the weights: the curve previews its new shape. Press Enter or Apply to keep it. A heavier node pulls the curve closer to it.",
+   "details": "Select a node of a spline (or double-click it) and set the weights: the curve previews its new shape. Press {fixed:enter} or Apply to keep it. A heavier node pulls the curve closer to it.",
    "keywords": ["spline weight", "nurbs", "handle"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2302,7 +2302,7 @@
    "id": "sketch.select",
    "title": "Select",
    "summary": "Selects, drags and edits sketch geometry; double-click a dimension to change it.",
-   "details": "Dragging moves geometry while the constraints keep holding. Del deletes the selection and Construction ({key:sketch.construction}) makes it construction geometry.",
+   "details": "Dragging moves geometry while the constraints keep holding. {fixed:del} deletes the selection and Construction ({key:sketch.construction}) makes it construction geometry.",
    "keywords": ["pick", "drag", "edit", "pointer"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2310,7 +2310,7 @@
    "id": "sketch.line",
    "title": "Line",
    "summary": "Draws connected lines; click point after point.",
-   "details": "Each click ends one segment and starts the next. Close the loop on the start point, or press Enter or double-click to stop; horizontal and vertical constraints are added as you draw.",
+   "details": "Each click ends one segment and starts the next. Close the loop on the start point, or press {fixed:enter} or double-click to stop; horizontal and vertical constraints are added as you draw.",
    "keywords": ["polyline", "segment", "draw line"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2445,8 +2445,8 @@
   {
    "id": "sketch.spline",
    "title": "Spline",
-   "summary": "Draws a smooth curve through the points you click; Enter finishes.",
-   "details": "The curve updates as you add points. Alt-click a finished spline to insert a node, and double-click a node to edit its weights.",
+   "summary": "Draws a smooth curve through the points you click; {fixed:enter} finishes.",
+   "details": "The curve updates as you add points. {fixed:alt}-click a finished spline to insert a node, and double-click a node to edit its weights.",
    "keywords": ["curve", "freeform", "interpolate", "bezier"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2454,7 +2454,7 @@
    "id": "sketch.control_spline",
    "title": "Control-point spline",
    "summary": "Draws a spline shaped by control points.",
-   "details": "The curve follows its thin grey control polygon without passing through its points. Set the degree in the panel; Enter (Done) finishes.",
+   "details": "The curve follows its thin grey control polygon without passing through its points. Set the degree in the panel; {fixed:enter} (Done) finishes.",
    "keywords": ["nurbs", "control polygon", "bezier"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2510,7 +2510,7 @@
    "id": "sketch.chamfer",
    "title": "Chamfer",
    "summary": "Bevels a corner by two distances.",
-   "details": "Pick the corner and set the two distances: the bevel previews; press Enter or Apply. Equal distances on a square corner give a 45 degree bevel.",
+   "details": "Pick the corner and set the two distances: the bevel previews; press {fixed:enter} or Apply. Equal distances on a square corner give a 45 degree bevel.",
    "keywords": ["bevel corner", "cut corner"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2526,7 +2526,7 @@
    "id": "sketch.mirror",
    "title": "Mirror",
    "summary": "Mirrors curves about a line.",
-   "details": "Select the curves to mirror (click or drag a window), press Enter, click the mirror line and press Enter again. The copies get symmetric constraints, so they follow the originals.",
+   "details": "Select the curves to mirror (click or drag a window), press {fixed:enter}, click the mirror line and press {fixed:enter} again. The copies get symmetric constraints, so they follow the originals.",
    "keywords": ["symmetry", "reflect", "flip"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2790,7 +2790,7 @@
    "id": "sketch.project",
    "title": "Project",
    "summary": "Projects body edges, faces or vertices onto the sketch as reference curves.",
-   "details": "Pick edges, or faces, vertices and bodies with the panel's Pick filter, then press Enter or Apply: they are flattened onto the sketch plane. Linked projections follow the body when it changes; an editable copy does not.",
+   "details": "Pick edges, or faces, vertices and bodies with the panel's Pick filter, then press {fixed:enter} or Apply: they are flattened onto the sketch plane. Linked projections follow the body when it changes; an editable copy does not.",
    "keywords": ["reference edges", "use edges", "convert entities"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2798,7 +2798,7 @@
    "id": "sketch.intersect_body",
    "title": "Body-plane intersection",
    "summary": "Adds the curves where bodies cut the sketch plane.",
-   "details": "Pick the bodies, or choose them in the panel, then press Enter or Apply. Useful to sketch on the section of an existing part.",
+   "details": "Pick the bodies, or choose them in the panel, then press {fixed:enter} or Apply. Useful to sketch on the section of an existing part.",
    "keywords": ["section curve", "slice", "cut outline"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2806,7 +2806,7 @@
    "id": "sketch.silhouette",
    "title": "Silhouette",
    "summary": "Adds the outline of bodies as seen along the sketch normal.",
-   "details": "Pick the bodies, then press Enter or Apply. Handy for covers, gaskets and cut-outs that follow a part's shape.",
+   "details": "Pick the bodies, then press {fixed:enter} or Apply. Handy for covers, gaskets and cut-outs that follow a part's shape.",
    "keywords": ["outline", "shadow", "profile of body"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2814,7 +2814,7 @@
    "id": "sketch.include3d",
    "title": "Include reference curves",
    "summary": "Brings other sketches' curves and construction axes into this sketch as references.",
-   "details": "Choose the source in the panel or pick it in the view, then press Enter or Apply: its curves come in as construction geometry flattened onto the sketch plane. Linked references follow their source when it changes.",
+   "details": "Choose the source in the panel or pick it in the view, then press {fixed:enter} or Apply: its curves come in as construction geometry flattened onto the sketch plane. Linked references follow their source when it changes.",
    "keywords": ["reference", "other sketch", "axis"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2822,7 +2822,7 @@
    "id": "sketch.break_link",
    "title": "Break projection link",
    "summary": "Makes a linked projection editable.",
-   "details": "Select the projected curves and press Enter or Apply: they stop following the body and become normal sketch curves. The link cannot be restored afterwards.",
+   "details": "Select the projected curves and press {fixed:enter} or Apply: they stop following the body and become normal sketch curves. The link cannot be restored afterwards.",
    "keywords": ["unlink", "make editable"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2838,7 +2838,7 @@
    "id": "sketch.image_insert",
    "title": "Insert image",
    "summary": "Places an image on the sketch plane as a backdrop to trace over.",
-   "details": "Choose the file and set the width, click the insertion point (the image's lower-left corner), then press Enter or Apply. Calibrate image then scales it to a known distance.",
+   "details": "Choose the file and set the width, click the insertion point (the image's lower-left corner), then press {fixed:enter} or Apply. Calibrate image then scales it to a known distance.",
    "keywords": ["picture", "backdrop", "canvas", "reference image"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2846,7 +2846,7 @@
    "id": "sketch.image_edit",
    "title": "Transform image",
    "summary": "Moves, scales, rotates or fades a backdrop image.",
-   "details": "Drag the image in the view to move it, or choose it and type its position, width, rotation and opacity, then press Enter or Apply. The image is a view aid and is never part of a profile.",
+   "details": "Drag the image in the view to move it, or choose it and type its position, width, rotation and opacity, then press {fixed:enter} or Apply. The image is a view aid and is never part of a profile.",
    "keywords": ["move image", "rotate image", "opacity"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
@@ -2854,7 +2854,7 @@
    "id": "sketch.image_calibrate",
    "title": "Calibrate image",
    "summary": "Scales a backdrop image by a distance you know.",
-   "details": "Click two points on the image, type their real distance over the measured one, then press Enter or Apply. Trace and dimension after calibrating so the sizes are right.",
+   "details": "Click two points on the image, type their real distance over the measured one, then press {fixed:enter} or Apply. Trace and dimension after calibrating so the sizes are right.",
    "keywords": ["scale image", "known distance", "calibration"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },

@@ -143,7 +143,7 @@ void DocsArea::buildDrawingCommands() {
   }
   add("drawings.exportDrawing", tr("Export drawing as PDF…"), "export", [this] {
         const opad::Sheet* s = services().document()->scene.sheet(m_page->sheet());
-        exportSheet(s && !s->drawing.empty() ? "drawing:" + s->drawing : m_page->sheet());
+        exportSheet(s && !s->drawing.empty() ? "drawing:" + s->drawing : m_page->sheet(), {}, true);  // PDF only, one sheet too
       }, sheetShown, {"PDF", "pages", "all sheets"});
   buildAnnotateCommands();
 }

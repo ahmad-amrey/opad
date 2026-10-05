@@ -129,6 +129,17 @@ QStringList literalKeys(QString text) {
   return out;
 }
 
+// A fixed key spelled out in a help record or a clip text: those name it with {fixed:name} too, so macOS shows its own
+// glyphs (↩ ⇧ ⌘ ⌥ ⇥ ⌦). "Delete" is the command's name, never the key. Latin letters only around it: Arabic writes "وEsc".
+QStringList fixedKeys(QString text) {
+  static const QRegularExpression token(R"(\{(key|press|fixed):[^}]*\})"),
+      fixed(R"((?<![A-Za-z{:])(Esc|Enter|Return|Shift|Ctrl|Alt|Tab|Del|Backspace|Space)(?![A-Za-z]))");
+  text.remove(token);
+  QStringList out;
+  for (const auto& m : fixed.globalMatch(text)) out << m.captured(0);
+  return out;
+}
+
 int sentences(const QString& text) { return static_cast<int>(text.count(QRegularExpression(R"([.!?](\s|$))"))); }
 QString clean(QString s) { return s.remove('&').remove(QString::fromUtf8("…")).remove("...").trimmed(); }
 }  // namespace
@@ -745,7 +756,8 @@ TEST(help_texts_have_no_literal_keys) {
     const QJsonObject ar = translated.value(id).toObject();
     QStringList keysFound;
     for (const char* field : {"summary", "details", "requires"}) {
-      keysFound << literalKeys(o.value(field).toString()) << literalKeys(ar.value(field).toString());
+      keysFound << literalKeys(o.value(field).toString()) << literalKeys(ar.value(field).toString()) << fixedKeys(o.value(field).toString())
+                << fixedKeys(ar.value(field).toString());
       checkTokens(id + "." + field, o.value(field).toString(), ar.value(field).toString());
     }
     // Keywords are words, not keys: search matches the key the command has now (help::matches).
@@ -763,7 +775,7 @@ TEST(help_texts_have_no_literal_keys) {
     QStringList keysFound;
     for (const QString& text : clips::texts(id)) {
       clipTexts.insert(text);
-      keysFound << literalKeys(text) << literalKeys(arabic.value(text));
+      keysFound << literalKeys(text) << literalKeys(arabic.value(text)) << fixedKeys(text) << fixedKeys(arabic.value(text));
       checkTokens(id + ": " + text, text, arabic.value(text));
     }
     if (!keysFound.isEmpty()) found << "clip " + id + ": " + keysFound.join(", ");
@@ -786,6 +798,9 @@ TEST(help_texts_have_no_literal_keys) {
   CHECK(literalKeys("Press Enter or Esc; Shift+Tab goes back; Ctrl+click adds, Shift+drag pans; {press:view.fit} ({key:inspect.pin})").isEmpty());
   CHECK(literalKeys("X offset · Y axis · Orbit · B pen · E eraser · B is an earlier A · {press:view.grid} again hides it").isEmpty());
   CHECK_EQ(literalKeys(QString::fromUtf8("اضغط F لملاءمة العرض")), QStringList({QString::fromUtf8("اضغط F")}));
+  CHECK_EQ(fixedKeys(QString::fromUtf8("Press Enter, then Esc; Alt-click; Shift + middle; وEsc")),
+           QStringList({"Enter", "Esc", "Alt", "Shift", "Esc"}));
+  CHECK(fixedKeys("Press {fixed:enter}; as Delete does; Escape hatch; Entering; the Sketch tab").isEmpty());
 }
 
 // Menu entries that are commands with help show their card beside the menu; other entries (no id, a submenu) none.

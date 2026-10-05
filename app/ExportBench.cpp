@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QTimer>
 
 #include <functional>
@@ -39,8 +40,9 @@
 // dialog, <prefix>.front.dxf and <prefix>.iso.svg the files. Then PDF (UI-87: one vector page on A4, the hidden lines
 // in it) and PNG (300 dpi, the outline where the drawing puts it) of the front view: <prefix>.front.pdf/.png, and the
 // dialog with PDF chosen, <prefix>.pdf-dialog.png. Last a drawing sheet (two views, a dimension, a note) exported from
-// its row's Export sheet… as a PDF of its A4 paper, and with a second (A3) sheet the drawing's Export drawing… as a
-// PDF of two pages: <prefix>.sheet.pdf, <prefix>.drawing.pdf.
+// its row's Export sheet… as a PDF of its A4 paper, the drawing of that one sheet as a PDF though the last sheet export
+// was a DXF (<prefix>.one-sheet.pdf), and with a second (A3) sheet the drawing's Export drawing… as a PDF of two pages:
+// <prefix>.sheet.pdf, <prefix>.drawing.pdf.
 // OPAD_BENCH_EXPORT_OPEN=<prefix>: the loaded file's roots (hidden or not) as a front view with hidden lines through the
 // dialog, as DXF or as OPAD_BENCH_EXPORT_FORMAT says (pdf, png, ...), timed (the Engine: the stall watchdog stays quiet
 // while the worker projects and writes); <prefix>.<format>.
@@ -267,6 +269,21 @@ bool MainWindowBench<exportBench>::run(MainWindow& w, const QString& prefix, con
     check(drawn.value("views", 0) == 2 && drawn.value("items", 0) == 2 && docs->lastExport.value("paper", "") == "A4" &&
               docs->lastExport.value("layers", opad::json::object()).value("Dimensions", 0) > 0 && sheetOpen && sheetFile.read(5) == "%PDF-",
           "the sheet as an A4 PDF page: 2 views, the dimension and the note " + QString::fromStdString(docs->lastExport.dump()).left(400));
+
+    // Export drawing as PDF on a drawing of one sheet: a PDF, also when the last sheet export was a DXF (it used to open
+    // Export sheet with every type and that DXF chosen). No suffix typed: the dialog's type decides.
+    QSettings().setValue("export/sheetFormat", "dxf");
+    const QString oneSheet = prefix + ".one-sheet";
+    QFile::remove(oneSheet + ".pdf");
+    QFile::remove(oneSheet + ".dxf");
+    qputenv("OPAD_BENCH_EXPORT_OUT", oneSheet.toUtf8());
+    docs->lastExport = opad::json();
+    docs->exportSheet("drawing:Plate drawing");
+    settle([&] { return !docs->lastExport.is_null(); }, 60000);
+    QFile onePdf(oneSheet + ".pdf");
+    check(onePdf.open(QIODevice::ReadOnly) && onePdf.read(5) == "%PDF-" && !QFile::exists(oneSheet + ".dxf") && DocsArea::sheetExportTypes(true).size() == 1 &&
+              QSettings().value("export/sheetFormat").toString() == "dxf",
+          "a drawing of one sheet exports as PDF only, the sheet's last format (DXF) left alone " + QString::fromStdString(docs->lastExport.dump()).left(300));
 
     // The whole drawing (its row's Export drawing…): a second sheet, A3 with an isometric view, as the second page.
     const std::string second = w.m_doc->run("sheet", {{"size", "A3"}, {"name", "Plate iso"}, {"drawing", "Plate drawing"}})["id"];

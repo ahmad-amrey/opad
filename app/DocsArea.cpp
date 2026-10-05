@@ -301,11 +301,12 @@ void DocsArea::exportBom(std::vector<std::string> ids) {
   dialog->open();
 }
 
-void DocsArea::exportSheet(const std::string& id, const std::string& issue) {
+void DocsArea::exportSheet(const std::string& id, const std::string& issue, bool pdf) {
   AppDocument* doc = services().document();
   QString stem;
   int sheets = 0;
   if (id.rfind("drawing:", 0) == 0) {
+    pdf = true;  // the drawing's sheets as the pages of one PDF, also when it has one sheet
     for (const auto& s : doc->scene.sheets) sheets += s.drawing == id.substr(8);
     stem = QString::fromStdString(id.substr(8));
   } else if (const opad::Sheet* sheet = doc->scene.sheet(id)) {
@@ -316,8 +317,8 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue) {
   if (!issue.empty()) stem += tr(" rev %1 as issued").arg(QString::fromStdString(issue));
   for (const QChar c : QString("<>:\"/\\|?*")) stem.replace(c, '_');
   QSettings settings;
-  const auto types = sheetExportTypes(sheets > 1);
-  QString last = settings.value("export/sheetFormat", "pdf").toString();
+  const auto types = sheetExportTypes(pdf || sheets > 1);
+  QString last = pdf ? QString("pdf") : settings.value("export/sheetFormat", "pdf").toString();
   if (std::none_of(types.begin(), types.end(), [&](const auto& t) { return t.first == last; })) last = "pdf";
   QString out = qEnvironmentVariable("OPAD_BENCH_EXPORT_OUT");  // benches: no file dialog
   if (out.isEmpty()) {
@@ -327,14 +328,14 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue) {
       filters << label;
       if (f == last) chosen = label;
     }
-    out = QFileDialog::getSaveFileName(services().window(), sheets > 1 ? tr("Export drawing") : tr("Export sheet"),
+    out = QFileDialog::getSaveFileName(services().window(), pdf || sheets > 1 ? tr("Export drawing") : tr("Export sheet"),
                                        QDir(settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(stem + "." + last), filters.join(";;"), &chosen);
     if (out.isEmpty()) return;
   }
   QString format = QFileInfo(out).suffix().toLower();
-  if (format != "pdf" && format != "svg" && format != "dxf" && format != "dwg" && format != "png") out += "." + (format = last);
+  if (pdf ? format != "pdf" : format != "svg" && format != "dxf" && format != "dwg" && format != "png" && format != "pdf") out += "." + (format = last);
   settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
-  if (sheets == 1) settings.setValue("export/sheetFormat", format);
+  if (!pdf && sheets == 1) settings.setValue("export/sheetFormat", format);
   QPointer<DocsArea> self(this);
   opad::json args = {{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}};
   if (!issue.empty()) args["issue"] = issue;

@@ -172,7 +172,7 @@
    ],
    "steps": [
     {"to": 0.7, "caption": "Click the start point"},
-    {"to": 2.2, "caption": "Type a length and press Enter"},
+    {"to": 2.2, "caption": "Type a length and press {fixed:enter}"},
     {"to": 3.1, "caption": "Click the next point"},
     {"to": 4.8, "caption": "Click the start again to close it"}
    ]
@@ -219,7 +219,7 @@
    "steps": [
     {"to": 0.8, "caption": "Click the centre"},
     {"to": 2.4, "caption": "Move to size it, or type the diameter"},
-    {"to": 4.2, "caption": "Press Enter or click to place it"}
+    {"to": 4.2, "caption": "Press {fixed:enter} or click to place it"}
    ]
   },
   {
@@ -308,7 +308,7 @@
    "steps": [
     {"to": 1.0, "caption": "Click a curve: its chain is picked"},
     {"to": 3.1, "caption": "Drag the arrow or type the distance"},
-    {"to": 4.8, "caption": "Press Enter to place the copy"}
+    {"to": 4.8, "caption": "Press {fixed:enter} to place the copy"}
    ]
   },
   {
@@ -483,7 +483,7 @@
    "steps": [
     {"to": 1.1, "caption": "Select a profile or a planar face"},
     {"to": 3.3, "caption": "Drag the arrow, or type the distance"},
-    {"to": 5.0, "caption": "Press Enter to create the body"}
+    {"to": 5.0, "caption": "Press {fixed:enter} to create the body"}
    ]
   },
   {
@@ -502,17 +502,17 @@
    "steps": [
     {"to": 1.0, "caption": "Select the profile"},
     {"to": 2.0, "caption": "Select the axis to turn it about"},
-    {"to": 5.4, "caption": "Set the angle and press Enter"}
+    {"to": 5.4, "caption": "Set the angle and press {fixed:enter}"}
    ]
   },
   {"id": "design.fillet", "template": "edgeFeature",
    "args": {"p0": {"rect": [0, 6, 20, 12], "round": [0, 0, 0, 0]}, "pa": {"rect": [0, 6, 20, 12], "round": [0, 0, 0, 2]}, "pb": {"rect": [0, 6, 20, 12], "round": [0, 0, 2, 2]},
             "p1": {"rect": [0, 6, 20, 12], "round": [0, 0, 4, 4]}, "v0": 2, "v1": 4,
-            "caption2": "Drag the arrow or type the radius", "caption3": "Press Enter to round the edges"}},
+            "caption2": "Drag the arrow or type the radius", "caption3": "Press {fixed:enter} to round the edges"}},
   {"id": "design.chamfer", "template": "edgeFeature",
    "args": {"p0": {"rect": [0, 6, 20, 12], "chamfer": [0, 0, 0, 0]}, "pa": {"rect": [0, 6, 20, 12], "chamfer": [0, 0, 0, 2]}, "pb": {"rect": [0, 6, 20, 12], "chamfer": [0, 0, 2, 2]},
             "p1": {"rect": [0, 6, 20, 12], "chamfer": [0, 0, 4, 4]}, "v0": 2, "v1": 4,
-            "caption2": "Drag the arrow or type the distance", "caption3": "Press Enter to bevel the edges"}},
+            "caption2": "Drag the arrow or type the distance", "caption3": "Press {fixed:enter} to bevel the edges"}},
   {
    "id": "design.shell", "duration": 5.0, "view": "iso",
    "items": [
@@ -528,7 +528,7 @@
    "steps": [
     {"to": 1.0, "caption": "Select the faces to open"},
     {"to": 3.4, "caption": "Set the wall thickness"},
-    {"to": 5.0, "caption": "Press Enter to hollow the body"}
+    {"to": 5.0, "caption": "Press {fixed:enter} to hollow the body"}
    ]
   },
   {
@@ -553,7 +553,7 @@
    "steps": [
     {"to": 1.8, "caption": "Select sketch points"},
     {"to": 3.4, "caption": "Set the diameter and the extent"},
-    {"to": 5.0, "caption": "Press Enter to drill the holes"}
+    {"to": 5.0, "caption": "Press {fixed:enter} to drill the holes"}
    ]
   },
   {
@@ -575,7 +575,7 @@
    "steps": [
     {"to": 1.0, "caption": "Select what to copy"},
     {"to": 3.4, "caption": "Count and spacing; then Second direction"},
-    {"to": 5.0, "caption": "Press Enter to place the copies"}
+    {"to": 5.0, "caption": "Press {fixed:enter} to place the copies"}
    ]
   },
   {
@@ -598,7 +598,7 @@
     {"to": 1.0, "caption": "Select what to copy"},
     {"to": 2.0, "caption": "Copies go round Z, or click an axis"},
     {"to": 3.4, "caption": "Set the count and the angle"},
-    {"to": 5.2, "caption": "Press Enter to place the copies"}
+    {"to": 5.2, "caption": "Press {fixed:enter} to place the copies"}
    ]
   },
   {
@@ -616,7 +616,7 @@
    "steps": [
     {"to": 1.0, "caption": "Select the bodies to mirror"},
     {"to": 1.8, "caption": "Select the mirror plane"},
-    {"to": 5.0, "caption": "Press Enter to add the mirrored copy"}
+    {"to": 5.0, "caption": "Press {fixed:enter} to add the mirrored copy"}
    ]
   },
   {
@@ -970,7 +970,7 @@
    "steps": [
     {"to": 1.0, "caption": "Select planar faces"},
     {"to": 2.9, "caption": "Drag the arrow or type the distance"},
-    {"to": 4.4, "caption": "Press Enter to move the faces"}
+    {"to": 4.4, "caption": "Press {fixed:enter} to move the faces"}
    ]
   },
   {
@@ -988,7 +988,7 @@
    ],
    "steps": [
     {"to": 1.0, "caption": "Select the faces to remove"},
-    {"to": 2.3, "caption": "Press Enter"},
+    {"to": 2.3, "caption": "Press {fixed:enter}"},
     {"to": 4.2, "caption": "The faces around grow and close the gap"}
    ]
   },
@@ -1009,7 +1009,7 @@
    "steps": [
     {"to": 1.0, "caption": "Select the target body"},
     {"to": 1.8, "caption": "Select the tool bodies"},
-    {"to": 4.8, "caption": "Pick Join, Cut or Intersect; Enter"}
+    {"to": 4.8, "caption": "Pick Join, Cut or Intersect; {fixed:enter}"}
    ]
   },
   {
@@ -1028,7 +1028,7 @@
    "steps": [
     {"to": 1.0, "caption": "Select the bodies to split"},
     {"to": 2.2, "caption": "Click the splitting plane"},
-    {"to": 4.4, "caption": "Press Enter: each body becomes two"}
+    {"to": 4.4, "caption": "Press {fixed:enter}: each body becomes two"}
    ]
   },
   {
@@ -1048,7 +1048,7 @@
    "steps": [
     {"to": 1.0, "caption": "Select the bodies"},
     {"to": 3.0, "caption": "Drag an arrow or type the distances"},
-    {"to": 4.6, "caption": "Press Enter to move them"}
+    {"to": 4.6, "caption": "Press {fixed:enter} to move them"}
    ]
   },
   {
@@ -1069,7 +1069,7 @@
     {"to": 1.0, "caption": "Click a plane or a face to place it"},
     {"to": 2.3, "caption": "Move to size the base, then click"},
     {"to": 3.6, "caption": "Drag the arrow or type the height"},
-    {"to": 5.0, "caption": "Press Enter to create the box"}
+    {"to": 5.0, "caption": "Press {fixed:enter} to create the box"}
    ]
   },
   {
@@ -1090,7 +1090,7 @@
    "steps": [
     {"to": 1.0, "caption": "Select a face or a plane"},
     {"to": 2.8, "caption": "Drag the arrow or type the offset"},
-    {"to": 4.2, "caption": "Press Enter to add the plane"}
+    {"to": 4.2, "caption": "Press {fixed:enter} to add the plane"}
    ]
   },
   {
@@ -1108,7 +1108,7 @@
    "steps": [
     {"to": 0.8, "caption": "Click where the curve starts"},
     {"to": 3.0, "caption": "Click points: it bends through each"},
-    {"to": 4.6, "caption": "Press Enter to finish"}
+    {"to": 4.6, "caption": "Press {fixed:enter} to finish"}
    ]
   },
   {
@@ -1167,9 +1167,9 @@
                               [2.1, {"pos": [-4, 4], "click": 1}], [2.7, {"pos": [-4, 4]}], [3.6, {"pos": [-20, 10]}]]}
    ],
    "steps": [
-    {"to": 1.3, "caption": "Select the curves, press Enter"},
+    {"to": 1.3, "caption": "Select the curves, press {fixed:enter}"},
     {"to": 3.1, "caption": "Click the mirror line: the copy is previewed"},
-    {"to": 5.6, "caption": "Press Enter to keep the mirrored copy"}
+    {"to": 5.6, "caption": "Press {fixed:enter} to keep the mirrored copy"}
    ]
   },
   {
@@ -1412,7 +1412,7 @@
    "steps": [
     {"to": 1.5, "caption": "Rest on a point to acquire it"},
     {"to": 3.2, "caption": "Move away: a line holds its X or Y"},
-    {"to": 5.2, "caption": "Hold Shift to lock onto the line"}
+    {"to": 5.2, "caption": "Hold {fixed:shift} to lock onto the line"}
    ]
   },
   {
@@ -1696,7 +1696,7 @@
     {"el": "key", "fixed": "esc", "press": 0.9, "from": 0.5, "to": 1.4}
    ],
    "steps": [
-    {"to": 1.0, "caption": "Press Esc"},
+    {"to": 1.0, "caption": "Press {fixed:esc}"},
     {"to": 3.4, "caption": "The measurement and its picks clear"}
    ]
   },
@@ -1956,7 +1956,7 @@
    ],
    "steps": [
     {"to": 3.1, "caption": "Click control points: the curve follows"},
-    {"to": 4.6, "caption": "Press Enter to finish"}
+    {"to": 4.6, "caption": "Press {fixed:enter} to finish"}
    ]
   },
   {
@@ -2074,7 +2074,7 @@
    ],
    "steps": [
     {"to": 1.1, "caption": "Click the corner"},
-    {"to": 4.2, "caption": "Set the distances, then press Enter"}
+    {"to": 4.2, "caption": "Set the distances, then press {fixed:enter}"}
    ]
   },
   {
@@ -2323,7 +2323,7 @@
    "steps": [
     {"to": 1, "caption": "Select a spline node"},
     {"to": 3.0, "caption": "Raise its weight: the curve pulls in"},
-    {"to": 4.4, "caption": "Press Enter to keep it"}
+    {"to": 4.4, "caption": "Press {fixed:enter} to keep it"}
    ]
   },
   {
@@ -2443,7 +2443,7 @@
    ],
    "steps": [
     {"to": 1, "caption": "Click a point or curve"},
-    {"to": 1.7, "caption": "A badge shows it is fixed; Esc ends the tool"},
+    {"to": 1.7, "caption": "A badge shows it is fixed; {fixed:esc} ends the tool"},
     {"to": 4.4, "caption": "Dragging it no longer moves it"}
    ]
   },
@@ -2493,7 +2493,7 @@
    "steps": [
     {"to": 1, "caption": "Click a body edge or face"},
     {"to": 3.2, "caption": "More picks add to it; a face gives its outline"},
-    {"to": 5.4, "caption": "Press Enter: they land on the plane, amber"}
+    {"to": 5.4, "caption": "Press {fixed:enter}: they land on the plane, amber"}
    ]
   },
   {
@@ -2515,7 +2515,7 @@
    "steps": [
     {"to": 1, "caption": "Click a body that crosses the plane"},
     {"to": 2.2, "caption": "Where it cuts the plane is previewed"},
-    {"to": 4.2, "caption": "Press Enter: it becomes a curve"}
+    {"to": 4.2, "caption": "Press {fixed:enter}: it becomes a curve"}
    ]
   },
   {
@@ -2535,7 +2535,7 @@
    "steps": [
     {"to": 1, "caption": "Click a body"},
     {"to": 2.2, "caption": "Its outline seen from the plane is previewed"},
-    {"to": 4.2, "caption": "Press Enter to add it"}
+    {"to": 4.2, "caption": "Press {fixed:enter} to add it"}
    ]
   },
   {
@@ -2560,7 +2560,7 @@
    ],
    "steps": [
     {"to": 1.8, "caption": "Click body edges"},
-    {"to": 4.8, "caption": "Press Enter: added as construction references"}
+    {"to": 4.8, "caption": "Press {fixed:enter}: added as construction references"}
    ]
   },
   {
@@ -2582,7 +2582,7 @@
    ],
    "steps": [
     {"to": 1, "caption": "Select the projected curves"},
-    {"to": 2.3, "caption": "Press Enter: they become plain curves"},
+    {"to": 2.3, "caption": "Press {fixed:enter}: they become plain curves"},
     {"to": 5, "caption": "Now they can be edited and dragged"}
    ]
   },
@@ -2603,7 +2603,7 @@
    ],
    "steps": [
     {"to": 1.25, "caption": "Choose a picture, click where it goes"},
-    {"to": 2.4, "caption": "Press Enter to place it"},
+    {"to": 2.4, "caption": "Press {fixed:enter} to place it"},
     {"to": 4.4, "caption": "It lies on the sketch plane, behind the curves"}
    ]
   },
@@ -2623,7 +2623,7 @@
    "steps": [
     {"to": 2, "caption": "Drag the image to place it"},
     {"to": 3.5, "caption": "Set its angle and opacity"},
-    {"to": 5.2, "caption": "Press Enter to apply them"}
+    {"to": 5.2, "caption": "Press {fixed:enter} to apply them"}
    ]
   },
   {
@@ -2832,7 +2832,7 @@
     {"to": 1.0, "caption": "Click a plane or a face to place it"},
     {"to": 2.3, "caption": "Move to size the base, then click"},
     {"to": 3.6, "caption": "Drag the arrow or type the height"},
-    {"to": 5.0, "caption": "Press Enter to add the cylinder"}
+    {"to": 5.0, "caption": "Press {fixed:enter} to add the cylinder"}
    ]
   },
   {
@@ -2852,7 +2852,7 @@
    "steps": [
     {"to": 1.0, "caption": "Click a plane or a face to place it"},
     {"to": 2.4, "caption": "Move to size it, then click"},
-    {"to": 4.0, "caption": "Press Enter to add the sphere"}
+    {"to": 4.0, "caption": "Press {fixed:enter} to add the sphere"}
    ]
   },
   {
@@ -2873,7 +2873,7 @@
     {"to": 1.0, "caption": "Click a plane or a face to place it"},
     {"to": 2.3, "caption": "Move to size the base, then click"},
     {"to": 3.6, "caption": "Drag the arrow or type the height"},
-    {"to": 5.0, "caption": "Press Enter to add the cone"}
+    {"to": 5.0, "caption": "Press {fixed:enter} to add the cone"}
    ]
   },
   {
@@ -2895,7 +2895,7 @@
     {"to": 1.0, "caption": "Click a plane or a face to place it"},
     {"to": 2.3, "caption": "Move to set the ring diameter, then click"},
     {"to": 3.8, "caption": "Move to set the tube, then click"},
-    {"to": 5.4, "caption": "Press Enter to add the torus"}
+    {"to": 5.4, "caption": "Press {fixed:enter} to add the torus"}
    ]
   },
   {
@@ -2957,7 +2957,7 @@
    "steps": [
     {"to": 1, "caption": "Select the path"},
     {"to": 3.4, "caption": "Set the diameter: the pipe follows"},
-    {"to": 4.6, "caption": "Press Enter to add it"}
+    {"to": 4.6, "caption": "Press {fixed:enter} to add it"}
    ]
   },
   {
@@ -2978,7 +2978,7 @@
     {"to": 1.0, "caption": "Click a plane or a face to place it"},
     {"to": 2.3, "caption": "Move to set the coil diameter, then click"},
     {"to": 3.9, "caption": "Pitch and turns change it in the panel"},
-    {"to": 5.4, "caption": "Press Enter to add the coil"}
+    {"to": 5.4, "caption": "Press {fixed:enter} to add the coil"}
    ]
   },
   {
@@ -2993,7 +2993,7 @@
    "steps": [
     {"to": 1, "caption": "Select faces"},
     {"to": 3.2, "caption": "Drag or type the thickness"},
-    {"to": 4.4, "caption": "Press Enter: a solid skin"}
+    {"to": 4.4, "caption": "Press {fixed:enter}: a solid skin"}
    ]
   },
   {
@@ -3129,7 +3129,7 @@
    "steps": [
     {"to": 1.2, "caption": "Double-click a feature on the timeline"},
     {"to": 3.7, "caption": "Later steps roll back while you change it"},
-    {"to": 5, "caption": "Enter: they are computed again"}
+    {"to": 5, "caption": "{fixed:enter}: they are computed again"}
    ]
   },
   {
@@ -3351,7 +3351,7 @@
    ],
    "steps": [
     {"to": 1, "caption": "Select it and press {key:edit.rename}", "captionNoKey": "Select it and choose Rename"},
-    {"to": 2.2, "caption": "Type the name, Enter"},
+    {"to": 2.2, "caption": "Type the name, {fixed:enter}"},
     {"to": 4.4, "caption": "Several at once: Leg {n} numbers them"}
    ]
   },
@@ -3609,10 +3609,10 @@
     {"to": 4.6, "caption": "Click a card: its target lights up"}
    ]
   },
-  {"id": "nav.fusion", "template": "navPreset", "args": {"name": "Fusion-style", "orbit": "Shift + middle", "pan": "Middle", "zoom": "Wheel", "fixed1": "shift"}},
-  {"id": "nav.solidworks", "template": "navPreset", "args": {"name": "SOLIDWORKS-style", "orbit": "Middle", "pan": "Ctrl + middle", "zoom": "Wheel", "fixed2": "ctrl"}},
+  {"id": "nav.fusion", "template": "navPreset", "args": {"name": "Fusion-style", "orbit": "{fixed:shift} + middle", "pan": "Middle", "zoom": "Wheel", "fixed1": "shift"}},
+  {"id": "nav.solidworks", "template": "navPreset", "args": {"name": "SOLIDWORKS-style", "orbit": "Middle", "pan": "{fixed:ctrl} + middle", "zoom": "Wheel", "fixed2": "ctrl"}},
   {"id": "nav.onshape", "template": "navPreset", "args": {"name": "Onshape-style", "orbit": "Right", "pan": "Middle", "zoom": "Wheel"}},
-  {"id": "nav.blender", "template": "navPreset", "args": {"name": "Blender-style", "orbit": "Middle", "pan": "Shift + middle", "zoom": "Wheel", "fixed2": "shift"}},
+  {"id": "nav.blender", "template": "navPreset", "args": {"name": "Blender-style", "orbit": "Middle", "pan": "{fixed:shift} + middle", "zoom": "Wheel", "fixed2": "shift"}},
   {
    "id": "tools.commands", "duration": 4.6, "view": "iso", "extent": [-26, -11, 26, 16],
    "items": [
@@ -3626,7 +3626,7 @@
    ],
    "steps": [
     {"to": 0.9, "caption": "{press:tools.commands}"},
-    {"to": 2.6, "caption": "Type part of a name; Enter runs it"},
+    {"to": 2.6, "caption": "Type part of a name; {fixed:enter} runs it"},
     {"to": 4.6, "caption": "The command starts"}
    ]
   },
@@ -3914,7 +3914,7 @@
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "solid", "profile": {"rect": [0, 0, 26, 18], "round": 1}, "height": 2},
-    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Linked files", "hl": -1, "button": "OK", "press": 3.0, "rows": [{"text": "Importing STEP, IGES, KiCad boards and files over 20 MB:", "dim": true}, {"text": "Ask each time", "indent": 1}, {"text": "Folders trusted for linked files outside a document's project (read without asking):", "dim": true}, {"label": "D:\\Shared\\parts", "indent": 1}], "to": 3.2, "fade": 0.15, "keys": [[0.9, {"hl": 1}], [1.5, {"rows": [{"text": "Importing STEP, IGES, KiCad boards and files over 20 MB:", "dim": true}, {"text": "Link as asset", "indent": 1}, {"text": "Folders trusted for linked files outside a document's project (read without asking):", "dim": true}, {"label": "D:\\Shared\\parts", "indent": 1}], "ease": "step"}], [1.8, {"hl": -1}], [2.2, {"hl": 3}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 240, "title": "Linked files", "hl": -1, "button": "OK", "press": 3.0, "rows": [{"text": "Importing STEP, IGES, boards, big files:", "dim": true}, {"text": "Ask each time", "indent": 1}, {"text": "Trusted folders (read without asking):", "dim": true}, {"label": "D:\\Shared\\parts", "indent": 1}], "to": 3.2, "fade": 0.15, "keys": [[0.9, {"hl": 1}], [1.5, {"rows": [{"text": "Importing STEP, IGES, boards, big files:", "dim": true}, {"text": "Link as asset", "indent": 1}, {"text": "Trusted folders (read without asking):", "dim": true}, {"label": "D:\\Shared\\parts", "indent": 1}], "ease": "step"}], [1.8, {"hl": -1}], [2.2, {"hl": 3}]]},
     {"el": "chip", "screen": [0.62, 0.05], "icon": "import", "value": "bracket.step", "from": 3.4, "to": 4.3, "keys": [[3.4, {"dy": 0}], [4.2, {"dy": 50}]]},
     {"el": "solid", "profile": {"rect": [2, 0, 14, 10], "round": 1.5}, "holes": [{"circle": [5, 0, 2]}], "at": [0, 0, 2], "height": 6, "tone": "sel", "toneAmount": 0, "from": 4.2, "fade": 0.3},
     {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.7]}], [0.8, {"screen": [0.2, 0.411]}], [0.9, {"screen": [0.2, 0.411], "click": 1}], [1.4, {"screen": [0.2, 0.411]}], [1.5, {"screen": [0.2, 0.411], "click": 1}], [2.1, {"screen": [0.2, 0.658]}], [2.9, {"screen": [0.644, 0.814]}], [3.0, {"screen": [0.644, 0.814], "click": 1}], [3.8, {"screen": [0.75, 0.7]}]]}
@@ -4002,7 +4002,7 @@
    "items": [
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
-    {"el": "solid", "profile": {"rect": [0, 0, 34.8, 26], "round": 2}, "holes": [{"rect": [0, 0, 30.8, 22], "round": 1, "depth": 4}], "at": [0, 0, -1], "height": 5, "tone": "fg3", "toneAmount": 0.1},
+    {"el": "solid", "profile": {"rect": [0, 0, 34.8, 26], "round": 2}, "holes": [{"rect": [0, 0, 30.8, 22], "round": 1, "depth": 4}], "at": [0, 0, -1], "height": 5, "tone": "fg3", "toneAmount": 0.1, "keys": [[2.9, {"tone": "sel", "toneAmount": 0.4}]]},
     {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "holes": [{"circle": [-12.5, -7.5, 1.2]}, {"circle": [12.5, -7.5, 1.2]}, {"circle": [12.5, 7.5, 1.2]}, {"circle": [-12.5, 7.5, 1.2]}], "height": 1.6, "tone": "green", "toneAmount": 0.65},
     {"el": "solid", "profile": {"rect": [12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "fg3", "toneAmount": 0.3},
     {"el": "solid", "profile": {"rect": [2, 2, 8, 8]}, "at": [0, 0, 1.6], "height": 1.2, "tone": "black", "toneAmount": 0.6},
@@ -4135,7 +4135,7 @@
     {"el": "grid", "spacing": 5},
     {"el": "picture", "corners": [[-6, -5.6], [10, 5.6]], "keys": [[3.6, {"corners": [[-6, -5.6], [10, 5.6]]}], [4.1, {"corners": [[-8.48, -8.28], [15.04, 8.18]]}]]},
     {"el": "chip", "screen": [0.6, 0.05], "text": "Calibrate", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0},
-    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Calibrate canvas", "hl": 0, "rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "5.44 mm", "indent": 1}], "from": 0.9, "to": 3.7, "fade": 0.15, "keys": [[1.6, {"hl": 1}], [2.3, {"hl": 2}], [2.75, {"rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "8", "indent": 1}], "ease": "step"}], [3.0, {"rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "8 mm", "indent": 1}], "ease": "step"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Calibrate canvas", "hl": 0, "rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}], "from": 0.9, "to": 3.7, "fade": 0.15, "keys": [[1.6, {"hl": 1}], [2.3, {"hl": 2, "rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "5.44 mm", "indent": 1}], "ease": "step"}], [2.75, {"rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "8", "indent": 1}], "ease": "step"}], [3.0, {"rows": [{"text": "Pick a point on the picture"}, {"text": "Pick a second point"}, {"text": "Real distance"}, {"entry": "8 mm", "indent": 1}], "ease": "step"}]]},
     {"el": "snap", "kind": "center", "at": [-0.72, 0.11], "color": "sel", "from": 1.6, "to": 3.6, "fade": 0},
     {"el": "snap", "kind": "center", "at": [4.72, 0.11], "color": "sel", "from": 2.3, "to": 3.6, "fade": 0},
     {"el": "poly", "points": [[-0.72, 0.11], [4.72, 0.11]], "color": "sel", "width": 1.2, "dash": true, "from": 2.3, "to": 3.6, "fade": 0},
@@ -4263,7 +4263,7 @@
     {"el": "camera", "center": [-12, 0]},
     {"use": "sketchScene"},
     {"el": "chip", "screen": [0.6, 0.05], "text": "Project KiCad board", "keys": [[0.5, {"hl": true}], [0.8, {"hl": false}]], "from": 0.1, "to": 1.0, "icon": "project"},
-    {"el": "card", "screen": [0.03, 0.06], "w": 190, "title": "Project KiCad board", "hl": -1, "button": "Project", "press": 2.4, "rows": [{"text": "Board outline", "check": true}, {"text": "Mounting holes, also ones added later", "check": true}, {"label": "J1 USB_C", "check": false}, {"label": "U1 ESP32", "check": false}, {"text": "Linked: follows the board when it is synced", "check": true}], "from": 0.9, "to": 2.6, "fade": 0.15, "keys": [[1.6, {"hl": 2}], [1.7, {"rows": [{"text": "Board outline", "check": true}, {"text": "Mounting holes, also ones added later", "check": true}, {"label": "J1 USB_C", "check": true}, {"label": "U1 ESP32", "check": false}, {"text": "Linked: follows the board when it is synced", "check": true}], "ease": "step"}], [2.0, {"hl": -1}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 245, "title": "Project KiCad board", "hl": -1, "button": "Project", "press": 2.4, "rows": [{"text": "Board outline", "check": true}, {"text": "Mounting holes, also ones added later", "check": true}, {"label": "J1 USB_C", "check": false}, {"label": "U1 ESP32", "check": false}, {"text": "Linked: follows the board when it is synced", "check": true}], "from": 0.9, "to": 2.6, "fade": 0.15, "keys": [[1.6, {"hl": 2}], [1.7, {"rows": [{"text": "Board outline", "check": true}, {"text": "Mounting holes, also ones added later", "check": true}, {"label": "J1 USB_C", "check": true}, {"label": "U1 ESP32", "check": false}, {"text": "Linked: follows the board when it is synced", "check": true}], "ease": "step"}], [2.0, {"hl": -1}]]},
     {"el": "shape", "profile": {"rect": [8, 0, 20, 14], "round": 1}, "holes": [{"circle": [0.5, -5.5, 1]}, {"circle": [15.5, -5.5, 1]}, {"circle": [15.5, 5.5, 1]}, {"circle": [0.5, 5.5, 1]}, {"rect": [1, 0, 4, 5]}], "color": "amber", "width": 1.6, "from": 2.6, "fade": 0.5},
     {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.75]}], [0.4, {"screen": [0.66, 0.119]}], [0.5, {"screen": [0.66, 0.119], "click": 1}], [1.5, {"screen": [0.1, 0.534]}], [1.7, {"screen": [0.1, 0.534], "click": 1}], [2.3, {"screen": [0.555, 0.937]}], [2.4, {"screen": [0.555, 0.937], "click": 1}], [3.4, {"screen": [0.85, 0.82]}]], "kind": "cross"}
    ],
@@ -4321,13 +4321,13 @@
     {"el": "circle", "center": [-22, 6], "r": "cursor", "color": "sel", "width": 1.2, "dash": true, "from": 1.9, "to": 2.7, "fade": 0},
     {"el": "circle", "center": [-22, 6], "r": 3.5, "color": "sel", "width": 1.2, "from": 2.7, "fade": 0, "keys": [[4.55, {"color": "sel", "width": 1.2}], [4.6, {"color": "fg", "width": 0.8, "ease": "step"}]]},
     {"el": "rect", "corners": [[-7, -7], [7, 7]], "color": "sel", "width": 1.2, "dash": true, "fill": "sel", "fillOpacity": 0.12, "from": 2.8, "to": 4.6, "fade": 0, "keys": [[2.9, {"offset": [0, 4]}], [4.4, {"offset": [4, 2]}]]},
-    {"el": "label", "at": [-7, 7], "text": "Detail 2:1", "align": "left", "box": "sel", "color": "onsel", "size": 7, "dy": -6, "from": 2.8, "to": 4.6, "fade": 0, "keys": [[2.9, {"offset": [0, 4]}], [4.4, {"offset": [4, 2]}]]},
+    {"el": "label", "at": [-7, 7], "text": "Detail 1:1", "align": "left", "box": "sel", "color": "onsel", "size": 7, "dy": -6, "from": 2.8, "to": 4.6, "fade": 0, "keys": [[2.9, {"offset": [0, 4]}], [4.4, {"offset": [4, 2]}]]},
     {"el": "label", "at": [-26, 9.6], "value": "B", "size": 7, "color": "fg", "from": 4.6, "fade": 0.15},
     {"el": "circle", "center": [4, 2], "r": 7, "color": "fg", "width": 0.8, "from": 4.6, "fade": 0.1},
     {"el": "poly", "points": [[0, -3.74], [0, 6]], "color": "fg", "width": 1.2, "from": 4.6, "fade": 0.1},
     {"el": "poly", "points": [[0, 6], [9.74, 6]], "color": "fg", "width": 1.2, "from": 4.6, "fade": 0.1},
     {"el": "arc", "center": [8, -4], "r": 3.2, "start": 50.4, "sweep": 146.6, "color": "fg", "width": 1.2, "from": 4.6, "fade": 0.1},
-    {"el": "label", "at": [4, 10.3], "value": "B (2:1)", "size": 7.5, "color": "fg", "from": 4.6, "fade": 0.15},
+    {"el": "label", "at": [4, 10.3], "value": "B (1:1)", "size": 7.5, "color": "fg", "from": 4.6, "fade": 0.15},
     {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.5, {"pos": [-15, 8]}], [0.6, {"pos": [-15, 8], "click": 1}], [1.1, {"screen": [0.08, 0.119]}], [1.2, {"screen": [0.08, 0.119], "click": 1}], [1.8, {"pos": [-22, 6]}], [1.9, {"pos": [-22, 6], "click": 1}], [2.6, {"pos": [-18.5, 6]}], [2.7, {"pos": [-18.5, 6], "click": 1}], [2.9, {"pos": [0, 4]}], [4.4, {"pos": [4, 2]}], [4.6, {"pos": [4, 2], "click": 1}], [5.5, {"pos": [12, 6]}]]}
    ],
    "steps": [
@@ -4355,7 +4355,7 @@
    "steps": [
     {"to": 1.7, "caption": "Select the view, then Auxiliary view"},
     {"to": 2.8, "caption": "Click its slanted edge"},
-    {"to": 6.0, "caption": "Move to its side and click: the face's true shape"}
+    {"to": 6.0, "caption": "Click on its side: the face's true shape"}
    ]
   },
   {
@@ -5185,6 +5185,7 @@
     {"el": "label", "screen": [0.5, 0.9], "align": "center", "box": "bg2", "text": "Pick reference 1 of 1 for the annotation", "from": 1.5, "to": 2.75, "fade": 0.1},
     {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "glow", "width": 6, "from": 2.2, "to": 2.6, "fade": 0.08},
     {"el": "poly", "points": [[-8.4, 3.0], [-8.455, 3.414], [-8.614, 3.8], [-8.869, 4.131], [-9.2, 4.386], [-9.586, 4.545], [-10.0, 4.6], [-10.414, 4.545], [-10.8, 4.386], [-11.131, 4.131], [-11.386, 3.8], [-11.545, 3.414], [-11.6, 3.0], [-11.545, 2.586], [-11.386, 2.2], [-11.131, 1.869], [-10.8, 1.614], [-10.414, 1.455], [-10.0, 1.4], [-9.586, 1.455], [-9.2, 1.614], [-8.869, 1.869], [-8.614, 2.2], [-8.455, 2.586]], "closed": true, "color": "sel", "width": 1.8, "from": 2.6, "to": 2.8, "fade": 0.1},
+    {"el": "label", "at": [-8.774, 4.028], "dx": 27.5, "dy": -16.5, "value": "⌀3.2", "size": 10.5, "color": "magenta", "to": 2.8, "fade": 0.1},
     {"el": "dim", "kind": "diameter", "center": [-10, 3], "r": 1.6, "value": "⌀3.2", "angle": 40, "from": 2.8, "fade": 0.2},
     {"el": "cursor", "keys": [[0, {"pos": [6, 6]}], [0.7, {"screen": [0.68, 0.119]}], [0.8, {"screen": [0.68, 0.119], "click": 1}], [1.3, {"screen": [0.66, 0.368]}], [1.4, {"screen": [0.66, 0.368], "click": 1}], [2.5, {"pos": [-8.4, 3]}], [2.6, {"pos": [-8.4, 3], "click": 1}], [3.5, {"pos": [6, 2]}]]}
    ],
