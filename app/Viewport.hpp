@@ -257,6 +257,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // overrides both ways; prefix (if any): <prefix>.card.png
   bool benchWheel(const std::function<bool(int)>& choose, const std::function<QList<Toast*>()>& cards, const std::function<void()>& other,
                   const QString& prefix);
+  // OPAD_BENCH_CAVITYZOOM (ViewportZoomBench.cpp): wheel zoom at a face deep in an open box, in perspective and orthographic:
+  // every notch gets closer, the face under the pointer stays there, unclipped and pickable, and perspective reaches inside
+  bool benchCavityZoom(const QString& prefix);
   // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
   // displayed last, in the rasterised qualities (UI-39)
   bool benchTransparency(const QString& prefix);
@@ -663,6 +666,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,const Handle(V3d_View)& view) override;
   void handleMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
+  // Perspective zoom at the pointer (ViewportZoom.cpp): the wheel, a pinch, Ctrl+scroll and the zoom drag fly along the
+  // pointer's ray towards what is drawn under it, whatever picks; the rest is OCCT's.
+  void handleCameraActions(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const AIS_WalkDelta& walk) override;
   // Every hover and click pick of the controller: what lies behind a face is taken for nothing (dropOccluded).
   void contextLazyMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const Graphic3d_Vec2i& point) override;
 
@@ -833,6 +839,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void discoverCenter();
   void clearCenters();
   bool navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point);
+  // One perspective zoom step at a device pixel (ViewportZoom.cpp): the eye moves along the pixel's ray by a share of the
+  // distance to what is drawn there (a body whatever the filter, a sketch's or a drawing's plane; nothing: the model's
+  // middle), never less than a floor that keeps that surface in front of the near plane, so it never stalls and goes on
+  // through an opening or past a surface reached.
+  void zoomAlongRay(const Handle(V3d_View)& view, const Graphic3d_Vec2i& pixel, double delta);
   gp_Pnt centralOrbitPoint();
   bool nearestSurface(int x, int y, gp_Pnt& point);
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
