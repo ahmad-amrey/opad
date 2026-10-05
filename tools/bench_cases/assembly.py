@@ -96,4 +96,9 @@ CASES = [
     # The Engine (skipped where it is not): laid out, level 2, the tight boxes measured on a worker and laid out again, 60
     # ticks from 0 to 1 each timed until every body moved, and collapsed, with no event-loop gap over 250 ms.
     ("explode-engine", engine(), {"OPAD_BENCH_EXPLODE": "{prefix}"}),
+    # The browser keeps its place (app/BrowserScrollBench.cpp): 90 components and a box, two closed, scrolled to the
+    # middle; a row's eye clicked and undone updates the rows in place (no model reset) with the scroll position, the row
+    # at the top, the open rows, the selection and the current row unchanged; a rebuild keeps them too; with the History
+    # list on (a row added above on each change) the row at the top stays.
+    ("browser-scroll", "empty", {"OPAD_BENCH_BROWSER_SCROLL": "1"}),
 ]
