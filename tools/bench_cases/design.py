@@ -65,4 +65,7 @@ CASES = [
     # picked; Ctrl held shows the box as it is with the picked edge selected, the prompt and the panel's hint say so; a
     # Ctrl+click adds an edge (its preview waits), the release brings the preview of both back; a Ctrl+click takes one back.
     ("preview-peek", handle_parts, {"OPAD_BENCH_PREVIEWPEEK": "{prefix}"}),
+    # New sketch on the box's top face starts its origin at the face's own (lower-left) corner, the origin set there is the
+    # sketch's in the editor and once committed, and New sketch on that sketch's plane starts at that sketch's origin.
+    ("sketch-origin", "box", {"OPAD_BENCH_SKETCH_ORIGIN": "1"}),
 ]

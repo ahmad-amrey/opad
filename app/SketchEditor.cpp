@@ -20,6 +20,7 @@
 #include <TColStd_HArray1OfByte.hxx>
 #include <Graphic3d_AspectText3d.hxx>
 #include <Graphic3d_Text.hxx>
+#include <Graphic3d_TransformPers.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Prs3d_Presentation.hxx>
 #include <TopExp_Explorer.hxx>
@@ -69,8 +70,21 @@ struct SketchDrawing {
   QColor rimColor;      // valid: a darker rim under the glow (the hover's on a light background, highlight::hoverRim)
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
-  std::vector<opad::Vec3> badges;  // the constraint badges' backs (UI-24): opaque triangles, over the curves, under the marks
-  QColor fillColor, textBack, badgeColor;
+  // Pictograms that face the viewer (the constraint badges, UI-24; snap markers and their constraint badges, UI-21): about a
+  // point of the sketch, in logical pixels with x right and y up, at one size and never skewed whatever the camera does
+  // (transform persistence). Laid in the sketch plane along the screen's axes as the view had them when drawn, they were
+  // squashed and sheared once the view was orbited or the plane seen at a slant.
+  struct Mark { double x0, y0, x1, y1; QColor c; bool operator==(const Mark&) const = default; };
+  struct Sprite {
+    opad::Vec3 at;          // the point it is about, in the world
+    double dx = 0, dy = 0;  // its centre off that point on the screen, pixels
+    double back = 0;        // > 0: an opaque square of this half size behind its marks, in backColor
+    QColor backColor;
+    std::vector<Mark> marks;  // about its centre
+    bool operator==(const Sprite&) const = default;
+  };
+  std::vector<Sprite> sprites;
+  QColor fillColor, textBack;
   float fillAlpha = 0.18f;
   // Line widths, marker sizes and text heights are device pixels: times the display scale they read the same at
   // 100 % and 150 % (at 1.0 they were tiny on a 4K screen).
@@ -143,19 +157,37 @@ class SketchPrs : public AIS_InteractiveObject, public SketchDrawing {
     lines(thin, Aspect_TOL_SOLID, 1.0 * scale);
     lines(dashed, Aspect_TOL_DASH, 1.5 * scale);
     lines(solid, Aspect_TOL_SOLID, 2.0 * scale);
-    if (!badges.empty()) {
-      Handle(Graphic3d_ArrayOfTriangles) tri = new Graphic3d_ArrayOfTriangles(static_cast<int>(badges.size()));
-      for (const auto& p : badges) tri->AddVertex(gp_Pnt(p[0], p[1], p[2]));
-      Handle(Graphic3d_AspectFillArea3d) a = new Graphic3d_AspectFillArea3d();
-      a->SetInteriorStyle(Aspect_IS_SOLID);
-      a->SetInteriorColor(occ(badgeColor));
-      a->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
-      a->SetSuppressBackFaces(false);
-      Handle(Graphic3d_Group) g = prs->NewGroup();
-      g->SetGroupPrimitivesAspect(a);
-      g->AddPrimitiveArray(tri);
-    }
     lines(marks, Aspect_TOL_SOLID, 1.5 * scale);
+    // Each sprite in groups of its own, held at its point at a constant size facing the viewer: their units are device
+    // pixels (times the display scale), +z towards the viewer, so the back lies over the curves and the marks over the back.
+    for (const auto& s : sprites) {
+      const Handle(Graphic3d_TransformPers) pers = new Graphic3d_TransformPers(Graphic3d_TMF_ZoomRotatePers, gp_Pnt(s.at[0], s.at[1], s.at[2]));
+      const double k = scale, cx = s.dx * k, cy = s.dy * k;
+      if (s.back > 0) {
+        const double h = s.back * k;
+        Handle(Graphic3d_ArrayOfTriangles) tri = new Graphic3d_ArrayOfTriangles(6);
+        for (const auto& [x, y] : {std::pair{-h, -h}, std::pair{h, -h}, std::pair{h, h}, std::pair{-h, -h}, std::pair{h, h}, std::pair{-h, h}}) tri->AddVertex(gp_Pnt(cx + x, cy + y, k));
+        Handle(Graphic3d_AspectFillArea3d) a = new Graphic3d_AspectFillArea3d();
+        a->SetInteriorStyle(Aspect_IS_SOLID);
+        a->SetInteriorColor(occ(s.backColor));
+        a->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+        a->SetSuppressBackFaces(false);
+        Handle(Graphic3d_Group) g = prs->NewGroup();
+        g->SetTransformPersistence(pers);
+        g->SetGroupPrimitivesAspect(a);
+        g->AddPrimitiveArray(tri);
+      }
+      if (s.marks.empty()) continue;
+      Handle(Graphic3d_ArrayOfSegments) arr = new Graphic3d_ArrayOfSegments(static_cast<int>(s.marks.size()) * 2, 0, Standard_True);
+      for (const auto& m : s.marks) {
+        arr->AddVertex(gp_Pnt(cx + m.x0 * k, cy + m.y0 * k, 2 * k), occ(m.c));
+        arr->AddVertex(gp_Pnt(cx + m.x1 * k, cy + m.y1 * k, 2 * k), occ(m.c));
+      }
+      Handle(Graphic3d_Group) g = prs->NewGroup();
+      g->SetTransformPersistence(pers);
+      g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(occ(s.marks.front().c), Aspect_TOL_SOLID, 1.5 * scale));
+      g->AddPrimitiveArray(arr);
+    }
     lines(locked, Aspect_TOL_DASH, 3.0 * scale);
     auto markers = [&](const std::vector<Pt>& pts, const Handle(Graphic3d_AspectMarker3d)& aspect) {
       if (pts.empty()) return;
@@ -262,6 +294,9 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     if(m_inView && m_viewport->ownCursor())followPointer();
     const double pixels=m_viewport->pixelSize();
     if(pixels<m_samplePixelSize*.75 || pixels>m_samplePixelSize*1.5) rebuild();
+    // Turned (an orbit): the badges face the viewer as they are, but were laid out apart for the view before; again once it rests.
+    const opad::Vec3 look=m_viewport->viewDirection();
+    if(look[0]*m_layoutLook[0]+look[1]*m_layoutLook[1]+look[2]*m_layoutLook[2]<std::cos(2*M_PI/180))m_relayoutTimer.start();
     if(m_dimEdit && m_dimEdit->isVisible())if(const auto* c=m_sk.constraint(m_dimEditing)) {  // the value box stays on its label
       double lu,lv;labelPosition(*c,lu,lv);const QPoint at=m_viewport->widgetPoint(m_frame.to_world(lu,lv));
       m_dimEdit->move(at.x()-m_dimEdit->width()/2,at.y()-m_dimEdit->height()/2);
@@ -276,6 +311,9 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     sketchsnap::track(m_tracked, m_dwellPoint);
     resnap();
   });
+  m_relayoutTimer.setSingleShot(true);
+  m_relayoutTimer.setInterval(250);
+  connect(&m_relayoutTimer,&QTimer::timeout,this,[this]{if(m_active && !m_geometryJob)rebuild();});
   m_fillTimer.setSingleShot(true);
   m_fillTimer.setInterval(150);
   connect(&m_fillTimer, &QTimer::timeout, this, [this] {
@@ -373,7 +411,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
-  m_toolPreviewTimer.stop();m_dwellTimer.stop();m_dimensionHandle->hide();forgetTyped();m_input->setFields({});m_input->hide();
+  m_toolPreviewTimer.stop();m_dwellTimer.stop();m_relayoutTimer.stop();m_dimensionHandle->hide();forgetTyped();m_input->setFields({});m_input->hide();
   m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
@@ -550,10 +588,12 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   const auto localCandidates=m_geometry->query(u-grip*1.1,v-grip*1.1,u+grip*1.1,v+grip*1.1);
   Hit hit;
   double best = grip;
-  // Trim takes a piece of a curve: its points are no target (within the 12 px a point takes, UI-124, a click near a line's
-  // end hit the end and trimmed the wrong piece).
+  // Trim, extend and split take a piece of a curve: points, dimension values and constraint badges are no target. Within the
+  // 12 px a point takes (UI-124) a click near a line's end hit the end and trimmed the wrong piece; a badge on a constrained
+  // line's middle, or a dimension's value beside a short or upright one, took the click and the trim asked for a curve.
+  const bool curvesOnly = m_tool == "trim" || m_tool == "extend" || m_tool == "split";
   const std::vector<size_t> none;
-  for (size_t index : m_tool == "trim" ? none : localCandidates.points) {
+  for (size_t index : curvesOnly ? none : localCandidates.points) {
     const auto& p=m_sk.points[index];
     if (!selectable(p.id)) continue;
     const double d = std::hypot(p.x - u, p.y - v);
@@ -561,13 +601,23 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   }
   if (hit.kind != Hit::None) return hit;
   for (const auto& c : m_sk.constraints) {
+    if (curvesOnly) break;
     if (!c.is_dimension() || !selectable(c.id)) continue;
     double lu, lv;
     labelPosition(c, lu, lv);
     if (std::fabs(lu - u) < 3.5 * t && std::fabs(lv - v) < 1.4 * t) return {Hit::Dimension, c.id};
   }
   best = t;
-  for(const auto& [id,x,y]:m_glyphHits)if(selectable(id) && std::fabs(x-u)<grip && std::fabs(y-v)<grip)return {Hit::Dimension,id};
+  // A constraint's badge faces the viewer at its size in pixels (a sprite): it is hit on the screen, where the view shows it now.
+  if(!curvesOnly && !m_glyphHits.empty()) {
+    const QPoint at=m_viewport->widgetPoint(m_frame.to_world(u,v));
+    for(size_t i=0;i<m_glyphHits.size() && i<m_glyphAnchors.size();++i) {
+      const int id=std::get<0>(m_glyphHits[i]);const GlyphAnchor& g=m_glyphAnchors[i];
+      if(!selectable(id))continue;
+      const QPoint anchor=m_viewport->widgetPoint(m_frame.to_world(g.u,g.v));
+      if(std::fabs(anchor.x()+g.dx-at.x())<kHandlePixels && std::fabs(anchor.y()-g.dy-at.y())<kHandlePixels)return {Hit::Dimension,id};
+    }
+  }
   for (size_t index : localCandidates.entities) {
     const auto& e=m_sk.entities[index];
     if (!selectable(e.id)) continue;
@@ -1492,7 +1542,7 @@ void SketchEditor::rebuild() {
   d.dashed.clear();
   d.thin.clear();
   d.marks.clear();
-  d.badges.clear();
+  d.sprites.clear();
   d.points.clear();
   d.bigPoints.clear();
   d.dots.clear();
@@ -1506,6 +1556,7 @@ void SketchEditor::rebuild() {
   d.fill = m_fill;
   d.fillColor = t.sel;
   m_glyphHits.clear();
+  m_glyphAnchors.clear();
   d.textBack = t.bg2;
   d.scale = m_viewport->displayScale();
   d.font = theme::ui().family().toStdString();
@@ -1569,9 +1620,6 @@ void SketchEditor::rebuild() {
   // One badge of a kind per curve: a hexagon's first side holds five "equal"s and a slot's caps two tangents each, which drew
   // rows of identical badges. The others stay reachable through the badge on the other curve.
   using G = snapmarkers::Glyph;
-  double rx = px, ry = 0, ux = 0, uy = px;  // one pixel right and up on the screen, in sketch coordinates
-  pixelAxes(rx, ry, ux, uy);
-  const double det = rx * uy - ux * ry;
   const opad::Vec3 normal = m_frame.normal(), look = m_viewport->viewDirection();
   const double toward = normal[0] * look[0] + normal[1] * look[1] + normal[2] * look[2] > 0 ? -1 : 1;
   auto lifted = [&](double u, double v, double pixels) {  // off the plane towards the viewer: badges cover the curves under them
@@ -1597,7 +1645,9 @@ void SketchEditor::rebuild() {
       default: return std::nullopt;  // coincident: a dot on its point; dimensions draw themselves
     }
   };
-  struct Badge { int id; G glyph; snapmarkers::Place at; QColor color; bool conflict; };  // conflict: red and marked "!" (not by colour alone, UI-124)
+  // at: where the view shows the point it is about, in pixels (x right, y up); u, v: that point. conflict: red and marked "!"
+  // (not by colour alone, UI-124).
+  struct Badge { int id; G glyph; snapmarkers::Place at; double u, v; QColor color; bool conflict; };
   std::vector<Badge> badges;
   std::set<std::pair<int, int>> shownGlyphs;
   m_coincidentDots.clear();
@@ -1617,7 +1667,7 @@ void SketchEditor::rebuild() {
       continue;
     }
     const auto glyph = glyphOf(c.type);
-    if (!glyph || !(std::fabs(det) > 0)) continue;
+    if (!glyph) continue;
     for (int ref : c.refs) {
       double gu = 0, gv = 0;
       if (const SkEntity* e = m_sk.entity(ref)) {
@@ -1633,7 +1683,8 @@ void SketchEditor::rebuild() {
         continue;
       }
       if (!shownGlyphs.insert({ref, int(*glyph)}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
-      badges.push_back({c.id, *glyph, {(gu * uy - ux * gv) / det, (rx * gv - gu * ry) / det}, colourOf(c), m_conflicts.count(c.id) > 0});  // in pixels
+      const QPoint seen = m_viewport->widgetPoint(W(gu, gv));
+      badges.push_back({c.id, *glyph, {double(seen.x()), -double(seen.y())}, gu, gv, colourOf(c), m_conflicts.count(c.id) > 0});
       if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one badge is enough
     }
   }
@@ -1657,16 +1708,28 @@ void SketchEditor::rebuild() {
   for (const auto& b : badges) anchors.push_back(b.at);
   const auto placed = snapmarkers::layoutBadges(anchors, 16, 2);
   for (size_t i = 0; i < badges.size(); ++i) {
-    const double cu = placed[i].x * rx + placed[i].y * ux, cv = placed[i].x * ry + placed[i].y * uy;  // back in sketch coordinates
-    auto at = [&](double x, double y, double lift) { return lifted(cu + x * rx + y * ux, cv + x * ry + y * uy, lift); };
-    for (const auto& corner : {std::array<double, 6>{-8, -8, 8, -8, 8, 8}, std::array<double, 6>{-8, -8, 8, 8, -8, 8}})
-      for (int k = 0; k < 3; ++k) d.badges.push_back(at(corner[size_t(2 * k)], corner[size_t(2 * k + 1)], 1));
-    for (const auto& s : snapmarkers::badge(16, 16, 4)) d.marks.push_back({at(s.x0, s.y0, 2), at(s.x1, s.y1, 2), badges[i].color == t.green ? t.line : badges[i].color});
-    for (const auto& s : snapmarkers::glyph(badges[i].glyph, 11)) d.marks.push_back({at(s.x0, s.y0, 2), at(s.x1, s.y1, 2), badges[i].color});
-    if (badges[i].conflict) d.texts.push_back({at(10, 10, 2), QStringLiteral("!"), badges[i].color, true});
+    // Facing the viewer about the point it is about, moved off it on the screen as the layout placed it (a sprite: SketchDrawing).
+    SketchDrawing::Sprite sprite;
+    sprite.at = W(badges[i].u, badges[i].v);
+    sprite.dx = placed[i].x - badges[i].at.x;
+    sprite.dy = placed[i].y - badges[i].at.y;
+    sprite.back = 8;
+    sprite.backColor = t.bg2;
+    for (const auto& s : snapmarkers::badge(16, 16, 4)) sprite.marks.push_back({s.x0, s.y0, s.x1, s.y1, badges[i].color == t.green ? t.line : badges[i].color});
+    for (const auto& s : snapmarkers::glyph(badges[i].glyph, 11)) sprite.marks.push_back({s.x0, s.y0, s.x1, s.y1, badges[i].color});
+    d.sprites.push_back(std::move(sprite));
+    // Its centre in the sketch as the view shows it now (the hover, a bench), and where it hangs: hits follow the camera.
+    double cu = badges[i].u, cv = badges[i].v;
+    m_viewport->planePoint(QPointF(placed[i].x, -placed[i].y), m_frame, cu, cv);
+    if (badges[i].conflict) {
+      double eu = cu, ev = cv;
+      m_viewport->planePoint(QPointF(placed[i].x + 10, -placed[i].y - 10), m_frame, eu, ev);
+      d.texts.push_back({lifted(eu, ev, 2), QStringLiteral("!"), badges[i].color, true});
+    }
     m_glyphHits.push_back({badges[i].id, cu, cv});
+    m_glyphAnchors.push_back({badges[i].u, badges[i].v, placed[i].x - badges[i].at.x, placed[i].y - badges[i].at.y});
   }
-  d.badgeColor = t.bg2;
+  m_layoutLook = m_viewport->viewDirection();
 
   // Dimensions.
   auto dimension = [&](const SkConstraint& c, bool pending) {
@@ -1792,7 +1855,11 @@ QStringList SketchEditor::overlayTexts() const {
   return out;
 }
 
-size_t SketchEditor::badgeTriangles() const { return m_prs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_prs.get())->badges.size() / 3; }
+size_t SketchEditor::badgeTriangles() const {
+  if (m_prs.IsNull()) return 0;
+  const auto& sprites = static_cast<const SketchPrs*>(m_prs.get())->sprites;
+  return 2 * size_t(std::count_if(sprites.begin(), sprites.end(), [](const SketchDrawing::Sprite& s) { return s.back > 0; }));  // a square behind each
+}
 size_t SketchEditor::coincidenceDots() const { return m_prs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_prs.get())->dots.size(); }
 
 size_t SketchEditor::transientSolid(const QColor& c) const {
@@ -1926,15 +1993,17 @@ void SketchEditor::updateTransient() {
     if(m_visible)m_viewport->updateOverlay(m_transientPrs);
   };
   if(!m_geometry || m_geometryJob)return show();  // a large sketch's curves being prepared: only the cursor moves on meanwhile
-  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.locked.clear();d.points.clear();d.bigPoints.clear();d.rings.clear();d.texts.clear();d.fill.clear();
+  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.sprites.clear();d.locked.clear();d.points.clear();d.bigPoints.clear();d.rings.clear();d.texts.clear();d.fill.clear();
   d.glow.clear();d.glowPoints.clear();
   // The hover's role (UI-38): a white glow under what is hovered, over a darker rim on a light background.
   d.glowColor=highlight::hoverHalo(t);d.rimColor=highlight::hoverRim(t);d.glowAlpha=1;
   m_rubberKinds.clear();
   d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
-  auto mark=[&](double x,double y,const std::vector<snapmarkers::Seg>& segs,double ox,double oy,const QColor& c) {  // (ox, oy): px off (x, y)
-    auto at=[&](double sx,double sy){return W(x+(sx+ox)*rx+(sy+oy)*ux,y+(sx+ox)*ry+(sy+oy)*uy);};
-    for(const auto& s:segs)d.marks.push_back({at(s.x0,s.y0),at(s.x1,s.y1),c});
+  // A marker facing the viewer about (x, y), (ox, oy) pixels off it on the screen (a sprite: SketchDrawing).
+  auto mark=[&](double x,double y,const std::vector<snapmarkers::Seg>& segs,double ox,double oy,const QColor& c,double back=0) {
+    SketchDrawing::Sprite sprite;sprite.at=W(x,y);sprite.dx=ox;sprite.dy=oy;sprite.back=back;sprite.backColor=t.bg2;
+    for(const auto& s:segs)sprite.marks.push_back({s.x0,s.y0,s.x1,s.y1,c});
+    d.sprites.push_back(std::move(sprite));
   };
   m_marker.reset();
   m_markerTurn=0;
@@ -2318,14 +2387,10 @@ void SketchEditor::updateTransient() {
     m_glyphs = snapGlyphs(m_cursor);
     for (size_t i = 0; i < m_glyphs.size(); ++i) {
       const double ox = 24 + 19 * double(i), oy = -22, h = 8;
-      auto at = [&](double x, double y) { return W(cu + (x + ox) * rx + (y + oy) * ux, cv + (x + ox) * ry + (y + oy) * uy); };
-      for (const auto& corner : {std::array<double, 6>{-h, -h, h, -h, h, h}, std::array<double, 6>{-h, -h, h, h, -h, h}})
-        for (int k = 0; k < 3; ++k) d.fill.push_back(at(corner[size_t(2 * k)], corner[size_t(2 * k + 1)]));
-      mark(cu, cv, snapmarkers::badge(2 * h, 2 * h, 4), ox, oy, t.line);
-      mark(cu, cv, snapmarkers::glyph(m_glyphs[i], 10), ox, oy, snapColor);
+      mark(cu, cv, snapmarkers::badge(2 * h, 2 * h, 4), ox, oy, t.line, h);
+      auto& badge = d.sprites.back().marks;
+      for (const auto& s : snapmarkers::glyph(m_glyphs[i], 10)) badge.push_back({s.x0, s.y0, s.x1, s.y1, snapColor});
     }
-    d.fillColor = t.bg2;
-    d.fillAlpha = 0.92f;
   }
   show();
 }

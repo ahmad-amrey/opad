@@ -757,6 +757,44 @@ TEST(face_sketch_origin_uses_lower_left_corner_and_preserves_existing_placement)
   CHECK_NEAR(kept.origin[0],8,1e-8);CHECK_NEAR(kept.origin[1],7,1e-8);
 }
 
+// A new sketch's frame as committed (plan_ops + commit, as the sketch editor's Finish does) is the frame the plane picker
+// resolved and previewed: on a face with its origin typed (uv), left where it starts (world), on a vertex (ref), and on the
+// face picked first (no origin step).
+TEST(new_sketch_commits_the_frame_the_picker_resolved) {
+  Document doc=Document::create();
+  feature_cmd(doc,"box",{{"length","40 mm"},{"width","30 mm"},{"height","20 mm"}});  // centred: its corners away from the origin
+  const auto scene=resolve(doc);const auto body=scene.all_bodies().front();
+  const auto shape=node_world_shape(doc,scene,body);json top;int index=0;
+  Bnd_Box box;BRepBndLib::Add(shape,box);const double zTop=box.CornerMax().Z();
+  for(TopExp_Explorer faces(shape,TopAbs_FACE);faces.More();faces.Next(),++index){
+    BRepAdaptor_Surface surface(TopoDS::Face(faces.Current()));
+    if(surface.GetType()==GeomAbs_Plane && std::abs(surface.Plane().Location().Z()-zTop)<1e-6 && std::abs(surface.Plane().Axis().Direction().Z())>.99)
+      top={{"body",body},{"kind","face"},{"index",index}};
+  }
+  CHECK(!top.is_null());
+  const json support={{"face",make_ref(doc,scene,Ref::from_json(top))}};
+  auto check_commit=[&](const json& picked){
+    const Frame previewed=resolve_plane(doc,scene,picked);
+    json plane=picked;plane["frame"]=previewed.to_json();
+    Document d=doc;
+    commit(d,plan_ops(d,{make_sketch_op("S",plane,rectangle(0,0,5,5).to_json())}),"test");
+    const Frame made=resolve(d).sketches.back().frame;
+    for(int i=0;i<3;++i){CHECK_NEAR(made.origin[i],previewed.origin[i],1e-7);CHECK_NEAR(made.x[i],previewed.x[i],1e-9);CHECK_NEAR(made.y[i],previewed.y[i],1e-9);}
+    return made;
+  };
+  // The picker's origin step starts at the face's own origin, its lower-left corner (uv 0, 0), as the face picked first does.
+  const Frame corner=check_commit({{"support",support},{"origin",{{"uv",{0,0}}}}});
+  const Frame first=check_commit(support);
+  CHECK_NEAR(corner.origin[0],-20,1e-7);CHECK_NEAR(corner.origin[1],-15,1e-7);CHECK_NEAR(corner.origin[2],20,1e-7);
+  for(int i=0;i<3;++i)CHECK_NEAR(first.origin[i],corner.origin[i],1e-7);
+  const Frame typed=check_commit({{"support",support},{"origin",{{"uv",{5,7}}}}});
+  CHECK_NEAR(typed.origin[0],-15,1e-7);CHECK_NEAR(typed.origin[1],-8,1e-7);
+  // Sketches made before keep their stored origin: under the world origin, or on a vertex.
+  const Frame world=check_commit({{"support",support},{"origin",{{"world",{0,0,0}}}}});
+  CHECK_NEAR(world.origin[0],0,1e-7);CHECK_NEAR(world.origin[1],0,1e-7);CHECK_NEAR(world.origin[2],20,1e-7);
+  check_commit({{"support",support},{"origin",{{"ref",make_ref(doc,scene,Ref{body,Ref::Kind::Vertex,0})}}}});
+}
+
 // TODO 10 A1: an extruded profile with spline and arc edges is an exact extrusion of its sketch curves, at the bottom
 // and at the top. (What did not follow them on screen was the display mesh: see test_mesh_recovery.)
 TEST(extrude_follows_its_sketch_curves_exactly) {
