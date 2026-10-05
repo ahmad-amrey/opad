@@ -281,8 +281,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   qint64 longestDisplayCpu() const { return m_longestDisplayCpu; }
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   // Benches: a left click at a widget point as the mouse handlers deliver it (move, press, release and the frames that
-  // handle them), with these modifiers held; then a plain move there.
-  void benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+  // handle them), with these modifiers held; then a plain move there (`held`: a move with them still held).
+  void benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier, bool held = false);
   void benchDoubleClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers);  // press, release, double-click, release
   void benchHoverAt(const QPointF& at);  // a plain move there and the frame that handles it (the hover text follows)
   // The document changed: what the status said is under the pointer may be gone or renamed. Cleared; the next frame
@@ -525,6 +525,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void clearPreviewBodies();
   size_t previewBodyCount() const { return m_previewBodies.size(); }  // bench checks: a feature preview is on screen
   void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
+  // A preview stands in for the bodies it changes (they are erased, unpickable, and it takes no picks): holding Ctrl alone
+  // over the view while `gate` allows it (a feature is open) shows those bodies as they are, pickable, the preview out of
+  // the way, until Ctrl is released (the report "Ctrl shows the original to allow selecting more"). A Ctrl+click there
+  // adds or takes back a pick, as everywhere. Previews made meanwhile wait for the release.
+  void setPreviewPeekGate(std::function<bool()> gate) { m_peekGate = std::move(gate); }
+  void setPreviewPeek(bool on);
+  bool previewPeek() const { return m_previewPeek; }
+  bool previewStandsIn(const std::string& node) const { return m_previewHidden.count(node) > 0; }  // benches
+  bool previewShown() const;  // benches: a preview body is on screen
   // Sketch editing.
   void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);
   void endSketchInput();
@@ -633,6 +642,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void ownCursorChanged(bool shown);  // the system pointer went blank (the editor draws its cursor) or came back
   void looksApplied();  // a setLookLayer (or a scene change under one) has reached every displayed body
   void zoomWindowChanged(bool active);
+  void previewPeekChanged(bool on);  // Ctrl shows the bodies a preview stands in for (on), or the preview again
   void fitRequested();  // a double click of the middle button: the window fits everything (its Fit all)
   void cubeMenuRequested(const QPoint& globalPos);  // a right click on the view cube
   // The first scroll while Scroll wheel / trackpad was never chosen (Windows, Linux) has zoomed: ask once whether it was a
@@ -1096,6 +1106,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Handle(AIS_Shape) displayCandidate(const Candidate& c);
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
+  std::map<const AIS_InteractiveObject*, int> m_previewModes;  // each preview's display mode, to show it again after a peek
+  bool m_previewPeek = false;
+  std::function<bool()> m_peekGate;
+  void standIn(const std::string& node);  // a preview stands in for it: erased (not while peeking), its glow gone
+  void showOriginal(const std::string& node);  // as it is: displayed and pickable again
+  void showPreviewPart(const Handle(AIS_Shape)& ais, int mode);  // displayed, or kept back while peeking
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_compareParts;  // ViewportCompare.cpp
   std::vector<char> m_compareViews;                                       // each part's `view`
   Handle(AIS_InteractiveObject) m_compareArrows;

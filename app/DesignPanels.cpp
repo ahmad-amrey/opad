@@ -17,6 +17,7 @@
 #include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
 
@@ -294,7 +295,10 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
     for (const auto& [label, id] : components) m_bodyParent->addItem(label, id);
     m_bodyParent->setCurrentIndex(0);
   }
-  m_hint->setText(i18n::t(QString::fromStdString(spec.hint)));
+  // A feature that picks on bodies: its preview stands in for them, and Ctrl held shows them as they are to pick more.
+  const bool picks = std::any_of(spec.inputs.begin(), spec.inputs.end(), [](const auto& in) { return in.type == "bodies" || in.type == "faces" || in.type == "edges" || in.type == "points"; });
+  m_hint->setText(i18n::t(QString::fromStdString(spec.hint)) +
+                  (picks ? "\n" + tr("Hold %1 to see the bodies without the preview and pick more on them.").arg(keys::fixedText("ctrl")) : QString()));
   m_guide->setCommand(editing ? QString() : "design." + QString::fromStdString(spec.kind));
   m_footer->setPrimary(PanelFooter::Primary::Close);setEditHidden(false);
   setStatus(QString(), false);

@@ -32,6 +32,7 @@
 
 #include "CommandHelp.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "SketchSteps.hpp"
 #include "Units.hpp"
 #include "opad/canvas.hpp"
@@ -234,6 +235,18 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_sketch, &SketchEditor::changed, this, &DesignController::stateChanged);
   connect(m_sketch, &SketchEditor::toolChanged, this, &DesignController::stateChanged);
   m_viewport->installEventFilter(this);
+  // Ctrl held while a feature is open: the bodies its preview stands in for, as they are, with the input's picks on them,
+  // so a Ctrl+click adds one or takes one back; the preview comes back with the release (and follows the picks then).
+  m_viewport->setPreviewPeekGate([this] { return m_featureOn && !m_pickPlane && !m_sketch->active(); });
+  connect(m_viewport, &Viewport::previewPeekChanged, this, [this](bool on) {
+    if (!m_featureOn) return;
+    if (!on) {  // the prompt of the input again
+      emit status(QString());
+      return pickStatus();
+    }
+    syncSelectionToInput();
+    emit status(tr("The bodies as they are, without the preview: %1+click picks more, releasing %1 shows the preview.").arg(keys::fixedText("ctrl")));
+  });
 }
 
 DesignController::~DesignController() = default;
