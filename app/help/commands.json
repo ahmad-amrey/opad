@@ -1721,7 +1721,7 @@
   {
    "id": "tools.settings",
    "title": "Settings",
-   "summary": "Opens the settings menu: Preferences, keyboard shortcuts, the theme, the navigation preset and the panels.",
+   "summary": "Opens the settings menu: Preferences, keyboard shortcuts, the theme, the navigation preset and the panels, then Recover documents and Agent activity.",
    "details": "Everything that is set once lives in Preferences; this menu keeps the switches used every day. Every setting is kept for the next start.",
    "keywords": ["preferences", "options", "configuration", "gear"]
   },

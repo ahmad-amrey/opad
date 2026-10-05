@@ -237,7 +237,7 @@
  "Command or point: x,y  @dx,dy  @length<angle": "أمر أو نقطة: x,y  @dx,dy  @length<angle",
  "Type a command (L, C, REC, TR, O, M ...) or a point, then Enter · while a word is typed ↑/↓ choose among the commands listed and Tab completes · else ↑/↓ earlier entries · Enter on an empty line ends the step · Esc clears, then steps back": "اكتب أمرًا (L، C، REC، TR، O، M ...) أو نقطة، ثم Enter · أثناء كتابة كلمة يختار ↑/↓ من الأوامر المعروضة ويكملها Tab · وإلا ↑/↓ المدخلات السابقة · Enter في سطر فارغ ينهي الخطوة · Esc يمسح، ثم يرجع خطوة",
  "Hide the command line (%1 shows it again)": "إخفاء سطر الأوامر (%1 يظهره مجددًا)",
- "Hide the command line (Command line on the ribbon shows it again)": "إخفاء سطر الأوامر (زر سطر الأوامر في الشريط يظهره مجددًا)",
+ "Hide the command line (Sketch > Command line shows it again)": "إخفاء سطر الأوامر (رسم تخطيطي > سطر الأوامر يظهره مجددًا)",
  "Command:": "الأمر:",
  "Command line": "سطر الأوامر",
  "type a command": "اكتب أمرًا",

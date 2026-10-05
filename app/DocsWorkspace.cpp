@@ -164,14 +164,19 @@ void DocsArea::buildDrawingCommands() {
 }
 
 void DocsArea::publishPdf() {
-  std::vector<std::string> drawings;
-  for (const auto& s : services().document()->scene.sheets)
-    if (std::find(drawings.begin(), drawings.end(), s.drawing) == drawings.end()) drawings.push_back(s.drawing);
+  // What the outline lists (drawing::outline): each drawing with its sheets, and a sheet of no drawing (an older file, or
+  // one made with "drawing": "") on its own, under its own name, never all of those together as a drawing called "".
+  std::vector<std::pair<std::string, QString>> drawings;  // exportSheet id, menu label
+  for (const auto& s : services().document()->scene.sheets) {
+    const std::string id = s.drawing.empty() ? s.id : "drawing:" + s.drawing;
+    if (std::none_of(drawings.begin(), drawings.end(), [&](const auto& d) { return d.first == id; }))
+      drawings.emplace_back(id, QString::fromStdString(s.drawing.empty() ? s.name : s.drawing));
+  }
   if (drawings.empty()) throw opad::UserHint("Make a drawing first: New drawing in the Drawings workspace.");
-  const auto publish = [this](const std::string& drawing) { services().guarded([&] { exportSheet("drawing:" + drawing, {}, true); }); };
-  if (drawings.size() == 1) return publish(drawings.front());
+  const auto publish = [this](const std::string& id) { services().guarded([&] { exportSheet(id, {}, true); }); };
+  if (drawings.size() == 1) return publish(drawings.front().first);
   QMenu menu;
-  for (const std::string& d : drawings) menu.addAction(icons::themed("drawingSheet", 16), QString::fromStdString(d), this, [publish, d] { publish(d); });
+  for (const auto& [id, label] : drawings) menu.addAction(icons::themed("drawingSheet", 16), label, this, [publish, id] { publish(id); });
   menu.exec(QCursor::pos());
 }
 

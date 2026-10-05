@@ -11,7 +11,8 @@ handed straight to a label, tooltip, status or toast as QString("...") instead o
 Strings looked up at run time (property names, error messages) are not tr() literals, so this script does not
 know them: keep them in a file by hand. Exit code 1 when something is missing, when a key appears twice (in one
 file or across the files of a language) with different translations, when a translation does not keep the key tokens
-of its source ({key:id}, {press:id}, {fixed:name}: help::expand), or when a fragment folder has no language.
+of its source ({key:id}, {press:id}, {fixed:name}: help::expand), when a translation has question marks its source does
+not (letters lost to a code page), or when a fragment folder has no language.
 """
 import glob
 import json
@@ -127,6 +128,37 @@ def token_parity():
     return len(bad)
 
 
+GARBLED = re.compile(r'\?{2,}')
+
+
+def garbled():
+    """A translation saved through a code page that has no such letters comes back as question marks ("?????? ???????"):
+    the key is there, so it does not count as missing. Any run of two or more '?' its source does not have fails, in each
+    language's strings and in every help record field."""
+    bad = []
+
+    def check(where, source, value):
+        if isinstance(value, str) and len(GARBLED.findall(value)) > len(GARBLED.findall(source or '')):
+            bad.append('%s: %s -> %s' % (where, json.dumps(source, ensure_ascii=False)[:60], json.dumps(value, ensure_ascii=False)[:60]))
+
+    for path in sorted(glob.glob(os.path.join(ROOT, 'app', 'i18n', '*.json'))):
+        for file in language(path)[0]:
+            for key, value in pairs(file):
+                if not key.startswith('@'):
+                    check(os.path.relpath(file, ROOT).replace(os.sep, '/'), key, value)
+    english = {c['id']: c for c in json.load(open(os.path.join(ROOT, 'app', 'help', 'commands.json'), encoding='utf-8'))['commands']}
+    for path in sorted(glob.glob(os.path.join(ROOT, 'app', 'help', 'commands.*.json'))):
+        for command, record in json.load(open(path, encoding='utf-8')).items():
+            for field, value in (record.items() if isinstance(record, dict) else []):
+                source = english.get(command, {}).get(field)
+                for v in (value if isinstance(value, list) else [value]):
+                    check('%s %s.%s' % (os.path.basename(path), command, field), source if isinstance(source, str) else '', v)
+    print('translations turned into question marks: %d' % len(bad))
+    for b in bad:
+        print('  ' + b)
+    return len(bad)
+
+
 def clip_texts():
     """The translatable English texts of app/help/clips.json, templates expanded as app/HelpClip.cpp does: step
     captions and their keyless captionNoKey, label and chip texts, card titles, buttons, row labels and word-only
@@ -228,6 +260,7 @@ def main():
     bad += help_missing()
     bad += clips_missing()
     bad += token_parity()
+    bad += garbled()
     bad += untranslated()
     return 1 if bad else 0
 

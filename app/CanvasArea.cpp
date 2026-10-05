@@ -138,7 +138,6 @@ void CanvasArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
 }
 
 void CanvasArea::ribbon(RibbonLayout& layout) {
-  layout.addAction("design.construct.construct", services().action("canvas.insert"));
   // While a canvas is edited its own tab comes first in Design (edit shows it, finish hides it).
   layout.addContextualTab("design", "design.canvas", tr("Canvas"));
   auto group = [&](const char* id, const QString& title, std::initializer_list<const char*> commands) {

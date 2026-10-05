@@ -775,6 +775,7 @@ void MainWindow::keepCheck() {
   opad::json picks = opad::json::array();
   for (const auto& id : m_checkSelect)
     if (m_doc->scene.node(id)) picks.push_back(opad::Ref{id}.to_json());
+  if (!m_checkSelect.empty() && picks.empty()) return;  // the checked bodies are gone: not a check over every solid instead
   std::vector<std::pair<QString, opad::json>> given;
   if (!picks.empty()) given.emplace_back("bodies", picks);
   given.emplace_back("clearance", units::editable(units::Kind::Length, m_checks->options().value("clearance_mm", 0.0)).toStdString());

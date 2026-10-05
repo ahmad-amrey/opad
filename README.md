@@ -222,9 +222,9 @@ and a viewer card at the top of the view say so. Anything that edits asks to sav
 to edit) makes the file an OPAD document in place, keeping hidden layers and colours and the meshes on screen;
 "Edit unsaved copy" does the same without choosing a file yet. The file you opened is never written. Opening a
 file while another loads drops that load. A slow read (a big STEP or IGES) is remembered in the user cache with its display
-meshes, so opening the unchanged file again skips the translation (Hydrostatic: 23 s, then 1.8 s). Settings > Open
-other formats read-only turns viewer mode off (they then open as editable, unsaved documents), and Settings > File
-types registers OPAD for these formats with Windows (current user only, removable), with thumbnails of the model or
+meshes, so opening the unchanged file again skips the translation (Hydrostatic: 23 s, then 1.8 s). Preferences > Files >
+Open other formats read-only turns viewer mode off (they then open as editable, unsaved documents), and Tools > File
+types… (also on Preferences > Files) registers OPAD for these formats with Windows (current user only, removable), with thumbnails of the model or
 drawing in Explorer and the Open dialog (`opad-thumbnails.dll`, which runs `opad-cli thumbnail <file> --out x.png`).
 Viewing a DXF, DWG or SVG turns 2D mode on, whose grid follows the view without end. Import adds a file to the
 current document. Properties show a body's material as the file named it, its source file and whether it is a
@@ -425,7 +425,7 @@ and, with `out`, a PDF and its SHA-256 are kept, the revision table and title bl
 be exported exactly as issued; in the app Issue revision… also saves, commits and tags it in git. Print… (Ctrl+Alt+P)
 prints the sheets at actual size or fitted to the printer's paper; **Publish PDF…** (File, Review > Share) writes a
 drawing's sheets as one PDF from any workspace. In the Drawings workspace section, detail and
-auxiliary views, crops, breaks and broken-out sections are drawn with the mouse on the selected view (Views group, or the view's menu); while a tool runs its value card beside the
+auxiliary views, crops, breaks and broken-out sections are drawn with the mouse on the selected view (Views > From a view, or the view's menu); while a tool runs its value card beside the
 pointer takes the numbers by keyboard (a section's or auxiliary view's gap, a detail's radius and scale, a crop's width
 and height, a break's length, a broken-out section's depth below the part's front), Tab to the next, Enter to take them.
 A view's menu also sets a detail's own scale and a section's, detail's or auxiliary view's letter.

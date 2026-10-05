@@ -180,14 +180,12 @@ TEST(every_registered_command_has_help) {
   if (!clipless.isEmpty()) throw check::Failure("no clip for " + clipless.join(", ").toStdString());
 }
 
-// The other way round: a record is for a command the app has. The licence, ODA and view cube commands come with the IP
-// branch (UI-13/14, t8-ip); their help is here ahead of it, and the Tool guide lists only what the build has.
+// The other way round: a record is for a command the app has.
 TEST(every_record_has_a_command) {
   help::load("en");
   const auto ids = registeredIds();
-  const QStringList ahead{"help.licenses", "help.aboutqt", "files.useOda", "view.cubeEdgesCorners"};
   QStringList stale;
-  for (const CommandHelp& h : help::all()) if (!ids.count(h.id) && !ahead.contains(h.id)) stale << h.id;
+  for (const CommandHelp& h : help::all()) if (!ids.count(h.id)) stale << h.id;
   if (!stale.isEmpty()) throw check::Failure("help for no command: " + stale.join(", ").toStdString());
 }
 

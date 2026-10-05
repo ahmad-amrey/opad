@@ -120,7 +120,12 @@ void CheckPanel::setKeepable(bool on) {
   showKeep();
 }
 
-void CheckPanel::showKeep() { m_keep->setVisible(m_keepable && m_mode == Mode::Interference && !m_result.is_null()); }
+// Only beside a result that checked bodies: not while a check (or a live re-check) runs, not after it failed or was
+// cancelled, and not when the bodies the check started with are gone ("Bodies checked: 0"), where keeping it would
+// make a check over every solid.
+void CheckPanel::showKeep() {
+  m_keep->setVisible(m_keepable && m_mode == Mode::Interference && m_result.is_object() && m_result.value("bodies", 0) > 0);
+}
 
 void CheckPanel::begin(Mode mode) {
   m_mode = mode;
@@ -158,12 +163,15 @@ void CheckPanel::setRunning(const QString& status) {
   m_list->clear();
   m_status->setText(status);
   m_run->setEnabled(false);
+  showKeep();
   showFindings();
 }
 
 void CheckPanel::setFailed(const QString& error) {
+  m_result = opad::json();
   m_status->setText(error);
   m_run->setEnabled(true);
+  showKeep();
   showFindings();
 }
 

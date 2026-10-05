@@ -67,10 +67,10 @@ CommandLine::CommandLine(QWidget* view) : QFrame(view), m_view(view) {
   m_match->setObjectName("commandMatch");
   m_close = new QToolButton(this);
   m_close->setObjectName("commandClose");
-  // Its key as the user has it (Space by default), or the ribbon's button when it has none.
+  // Its key as the user has it (Space by default), or its entry in the Sketch menu when it has none.
   auto closeTip = [this] {
     const QString key = keys::text(QStringLiteral("sketch.commandLine"));
-    m_close->setToolTip(key.isEmpty() ? tr("Hide the command line (Command line on the ribbon shows it again)") : tr("Hide the command line (%1 shows it again)").arg(key));
+    m_close->setToolTip(key.isEmpty() ? tr("Hide the command line (Sketch > Command line shows it again)") : tr("Hide the command line (%1 shows it again)").arg(key));
   };
   closeTip();
   connect(keys::notifier(), &keys::Notifier::changed, this, closeTip);
