@@ -12,6 +12,7 @@
 #include <QWidget>
 #include <functional>
 #include <map>
+#include <set>
 
 #include "AppDocument.hpp"
 #include "PanelFooter.hpp"
@@ -88,6 +89,11 @@ class FeaturePanel : public QWidget {
   QString problem(const QString& input) const;    // why it does not evaluate; empty: it does
   void activate(const QString& input);  // empty: none
   void activateNextPick();              // the first shown pick input that still needs picks
+  // An "auto" choice as it was decided (the extrusion's operation, from its preview): its item says "Automatic: Cut" and the
+  // New body section follows it. Empty: not known (yet). Changes no input.
+  void setSuggestion(const QString& input, const QString& value);
+  QString suggestion(const QString& input) const;
+  QString choiceText(const QString& input) const;  // what a choice's box shows (benches)
   // TODO 10 B14: the name, colour and component of the bodies a new feature makes, shown while its operation is
   // "new". Left alone they keep the defaults (the feature's name, no colour, `component` = the one selected in the
   // browser; copies follow the picked bodies). bodyStyle() is the argument of design::style_new_bodies.
@@ -114,6 +120,10 @@ class FeaturePanel : public QWidget {
  private:
   void refreshVisibility();
   void refreshNewBody();
+  std::set<QString> shownPicks() const;
+  // After a choice or a flag changed which rows show: a pick input it brought up that still needs picks takes the clicks
+  // (Extent: To face), unless the active input still waits for its own; an active input it hid gives way to the next.
+  void focusRevealed(const std::set<QString>& before, const QString& wasActive);
   bool makesCopies() const;
  public:
   static bool isPick(const std::string& type);  // an input picked in the view (bodies, faces, edges, profiles, ...)
@@ -150,6 +160,7 @@ class FeaturePanel : public QWidget {
   opad::json m_values = opad::json::object();  // picks and the values of hidden inputs
   QString m_active;
   std::map<QString, QString> m_notes;  // setPickNote
+  std::map<QString, QString> m_suggested;  // setSuggestion
   int m_guideStep = 0, m_guideCount = 0;  // setGuideStep
 };
 

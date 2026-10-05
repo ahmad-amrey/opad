@@ -514,8 +514,20 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
   void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
   // The same, with arrays built on the worker (BodyPrs::build): displaying them walks no triangulation here.
-  struct PreviewPart { std::string node; TopoDS_Shape shape; std::shared_ptr<const BodyPrs> prs; };
+  // `tint`: the operation's colour (Theme's preview roles; invalid: the selection colour), a changed body's own colour mixed
+  // in; `transparency` (negative: the default); `xray`: drawn in the Topmost layer, through the bodies in front of it (a
+  // cut's tool, the volume it removes).
+  struct PreviewPart {
+    std::string node;
+    TopoDS_Shape shape;
+    std::shared_ptr<const BodyPrs> prs;
+    QColor tint = QColor();
+    double transparency = -1;
+    bool xray = false;
+  };
   void setPreviewBodies(const std::vector<PreviewPart>& parts, const std::vector<std::string>& hidden);
+  // Benches: the colour each preview body is drawn in and whether it is drawn through the model, in the parts' order.
+  std::vector<std::pair<QColor, bool>> previewLooks() const { return m_previewLooks; }
   // Other arrays to draw for the preview bodies, in the parts' order (nullptr: their own): a handle drag's live
   // stretch while the exact preview is computed.
   void setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs>>& arrays);
@@ -1085,6 +1097,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Handle(AIS_Shape) displayCandidate(const Candidate& c);
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
+  std::vector<std::pair<QColor, bool>> m_previewLooks;  // previewLooks
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_compareParts;  // ViewportCompare.cpp
   std::vector<char> m_compareViews;                                       // each part's `view`
   Handle(AIS_InteractiveObject) m_compareArrows;

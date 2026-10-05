@@ -33,6 +33,7 @@
 #include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "SketchSteps.hpp"
+#include "Theme.hpp"
 #include "Units.hpp"
 #include "opad/canvas.hpp"
 #include "opad/design/sketch_geom.hpp"
@@ -379,8 +380,12 @@ void DesignController::startFeature(const QString& kind) {
   m_ruleMatches.clear();
   m_newId = opad::new_uuid();
   opad::json inputs = opad::json::object();
-  for (const auto& in : spec->inputs)  // lengths offered in the document's unit ("0.5 in" for "10 mm")
+  for (const auto& in : spec->inputs) {  // lengths offered in the document's unit ("0.5 in" for "10 mm")
     if (!in.def.is_null()) inputs[in.name] = in.type == "length" && in.def.is_string() ? opad::json(units::presetText(QString::fromStdString(in.def.get<std::string>())).toStdString()) : in.def;
+    // Fusion's automatic operation where the feature offers it (the extrusion): decided by each preview from the bodies
+    // around, until another operation is chosen.
+    if (in.name == "operation" && std::find(in.choices.begin(), in.choices.end(), "auto") != in.choices.end()) inputs[in.name] = "auto";
+  }
   m_featureOn = true;
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
@@ -559,11 +564,15 @@ void DesignController::showAllCandidates() {
   m_viewport->showCandidates(all);
 }
 
-void DesignController::showCandidatesFor(const QString& typeName) {
+void DesignController::showCandidatesFor(const QString& typeName, bool planes) {
   if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
   m_nothingToPick.clear();
   const std::string type = typeName.toStdString();
   m_activeCandidates = quickCandidates(type == "plane" ? std::string() : type);  // a plane input has the plane picker
+  if (planes) {  // To face: the origin and construction planes beside the faces
+    const auto more = quickCandidates("plane");
+    m_activeCandidates.insert(m_activeCandidates.end(), more.begin(), more.end());
+  }
   const bool fromSketches = type == "profiles" || type == "points" || type == "axis" || type == "path";
   if (!fromSketches) return showAllCandidates();
   auto found = std::make_shared<std::vector<Viewport::Candidate>>(m_activeCandidates);
@@ -779,7 +788,7 @@ void DesignController::activateInput(const QString& name) {
   if (m_placer->active()) m_placer->panelPicking(true);  // the box takes the clicks: no marker meanwhile
   const Viewport::SelFilter want = filterFor(in->type);
   const bool roundFaces = in->type == "axis";  // a cylinder's, cone's or torus's face gives its axis (the guide's face click)
-  showCandidatesFor(QString::fromStdString(in->type));
+  showCandidatesFor(QString::fromStdString(in->type), in->planes);
   refreshRoute();
   if (m_viewport->selectionFilter() != want || m_viewport->roundFacesPickable() != roundFaces) {
     m_activating = true;
@@ -1162,6 +1171,10 @@ void DesignController::runPreview(bool commit) {
   auto commitReady = [this, component] {
     auto plan = m_readyPlan;
     const QString label = m_form->spec() ? i18n::t(QString::fromStdString(m_form->spec()->label)).toLower() : tr("feature");
+    // A new extrusion sketched on its start face commits as that sketch made real and the extrusion from it (one step).
+    if (const opad::json now = m_form->inputs(); m_editing.empty() && m_form->spec() && m_form->spec()->kind == "extrude" &&
+                                                 now.value("start", "") == "face" && now.value("start_shape", "") == "sketch_on_face")
+      return commitDerived(now, component, label);
     // The new bodies' name, colour and component: the rename / appearance / reparent ops of the same step (B14). No
     // reparent into the component the feature is made in: its bodies are there already.
     opad::json style = m_editing.empty() ? m_form->bodyStyle() : opad::json::object();
@@ -1201,8 +1214,11 @@ void DesignController::runPreview(bool commit) {
   const double reach = kind == "plane" || kind == "axis" ? modelReach() : 0.0;
   auto construction = std::make_shared<std::vector<Viewport::PreviewPart>>();
   auto handles = std::make_shared<opad::json>(opad::json::array());  // the value arrows (TODO 11 P2), also when the plan fails
+  // What the feature does with its tool (new, join, cut, intersect; an automatic operation as decided) and, for a cut, the
+  // tool meshed: drawn in red through the bodies it cuts.
+  auto tool = std::make_shared<std::pair<std::string, Viewport::PreviewPart>>();
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component, handles](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component, handles, tool](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
     if (kind != "extrude") *handles = feature_handles(*doc, *scene, kind, hinted);  // the extrusion's comes with its result
@@ -1246,6 +1262,18 @@ void DesignController::runPreview(bool commit) {
         (*meshes)[i] = BodyPrs::build(*c.shape, box, true);
       }
     }
+    for (const auto& t : plan->tools) {
+      if (t.op != target || !t.shape || t.shape->IsNull()) continue;
+      tool->first = t.operation;
+      if (t.operation != "cut") continue;
+      if (p.cancelled()) return;
+      const TopoDS_Shape shape = BRepBuilderAPI_Copy(*t.shape).Shape();  // its own mesh: the cut body shares faces with it
+      Bnd_Box box;
+      BRepBndLib::Add(shape, box, Standard_False);
+      const double defl = box.IsVoid() ? 0.1 : std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.02, 2.0);
+      BodyPrs::meshForDisplay(shape, defl);
+      tool->second = {std::string(), shape, BodyPrs::build(shape, box, true)};
+    }
     if (reach > 0) for (const auto& result : resultsFor(*plan, target, editResult)) {
       if (p.cancelled() || !result.is_object()) continue;
       TopoDS_Shape shape;
@@ -1277,7 +1305,7 @@ void DesignController::runPreview(bool commit) {
         }
       }
     }
-  }, [this, serial, plan, stamp, inputs, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction, handles](bool ok, const QString& error) {
+  }, [this, serial, plan, stamp, inputs, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction, handles, tool](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
@@ -1346,18 +1374,62 @@ void DesignController::runPreview(bool commit) {
     if(!hasHandle && arrow.is_object() && m_placer->arrowShown()){hasHandle=true;showHandle(arrow);}  // a primitive's height once its base is set
     if(!hasHandle)m_distanceHandle->hide();
     m_values->refresh();  // the boxes beside the pointer give way to the handle's
+    // The panel says what the automatic operation was taken as ("Automatic: Cut"), as the preview shows it.
+    if (inputs.value("operation", "") == "auto") m_form->setSuggestion("operation", QString::fromStdString(tool->first));
+    // Coloured by what the feature does (Theme's preview roles): a new body neutral, a join blue-green, an intersect yellow;
+    // a cut shows the bodies as cut (neutral) and its tool in red drawn through them: the volume it takes out.
+    const Tokens& look = theme::current();
+    const QString operation = QString::fromStdString(tool->first);
+    const QColor tint = operation == "new" || operation == "cut" ? look.previewNew : operation == "join" ? look.previewJoin : operation == "intersect" ? look.previewIntersect : QColor();
     std::vector<Viewport::PreviewPart> parts;
     std::vector<std::string> hidden;
     for (size_t i = 0; i < plan->changed.size(); ++i) {
       const auto& c = plan->changed[i];
       if (c.op != target) continue;
       if (c.removed) hidden.push_back(c.node);
-      else if (c.shape && !c.shape->IsNull()) parts.push_back({m_doc->scene.node(c.node) ? c.node : std::string(), *c.shape, i < meshes->size() ? (*meshes)[i] : nullptr});
+      else if (c.shape && !c.shape->IsNull()) parts.push_back({m_doc->scene.node(c.node) ? c.node : std::string(), *c.shape, i < meshes->size() ? (*meshes)[i] : nullptr, tint});
+    }
+    if (!tool->second.shape.IsNull()) {
+      Viewport::PreviewPart cut = tool->second;
+      cut.tint = look.previewCut;
+      cut.transparency = 0.55;
+      cut.xray = true;
+      parts.push_back(cut);
     }
     parts.insert(parts.end(), construction->begin(), construction->end());
     m_viewport->setPreviewBodies(parts, hidden);
     if (m_stretch.valid) for (const auto& part : parts) m_stretch.base.push_back(part.prs);
     if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // this plan is for an older value
+  });
+}
+
+// Start from: Face, Start at: Sketch on face (a new extrusion): the profiles projected onto the start face's plane become a
+// real sketch, on a construction plane when offset, and the extrusion goes from it: design::derived_extrude_ops on a worker,
+// then planned and committed as one step (one undo), with the New body section's name and colour.
+void DesignController::commitDerived(const opad::json& inputs, const std::string& component, const QString& label) {
+  refreshPlanCopies();
+  auto doc = m_planDoc;
+  auto scene = m_planScene;
+  const std::string name = m_form->name().toStdString();
+  opad::json style = m_form->bodyStyle();
+  if (!component.empty() && style.value("parent", opad::json()) == opad::json(component)) style.erase("parent");
+  auto ops = std::make_shared<std::vector<opad::json>>();
+  m_form->setStatus(tr("Computing…"), false);
+  m_jobs->async(tr("Sketching on the start face"), [doc, scene, inputs, name, component, ops](Progress) {
+    Reading reading;
+    *ops = derived_extrude_ops(*doc, *scene, hint_refs(*doc, *scene, inputs), name, component);
+  }, [this, ops, label, style](bool ok, const QString& error) {
+    if (!m_featureOn) return;
+    if (!ok) return m_form->setStatus(i18n::t(error), true);
+    const std::string extrude = ops->back().value("id", "");
+    m_viewport->clearPreviewBodies();
+    m_doc->setRollback({});
+    applyOps(*ops, label, [this](bool done, const QString& why) {
+      if (done) endFeature();
+      else if (m_featureOn) m_form->setStatus(i18n::t(why), true);
+    }, [extrude, style](opad::Document&, Plan& plan) {
+      if (!style.empty()) style_new_bodies(plan, extrude, style);
+    });
   });
 }
 
