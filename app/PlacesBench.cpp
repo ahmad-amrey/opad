@@ -25,12 +25,15 @@ OPAD_BENCH(OPAD_BENCH_PLACES, places) {
       {"assets.kicadSettings", "Preferences > Files"},
       {"view.cubeEdgesCorners", "Preferences > Keyboard and mouse"},
   };
+  QHash<QString, QString> other = elsewhere;
+  for (int n = 1; n <= 9; ++n)  // keys of the list's entries: the entry itself is their place, and it shows the key
+    other.insert(QString("view.named%1").arg(n), "View > Named views, the n-th entry");
   QStringList nowhere;
   QJsonArray table;
   for (const QString& id : registry.ids()) {
     const CommandInfo* c = registry.find(id);
     QAction* a = registry.action(id);
-    if (c->workspaces.isEmpty() && c->menuPath.isEmpty() && !elsewhere.contains(id)) nowhere << id;
+    if (c->workspaces.isEmpty() && c->menuPath.isEmpty() && !other.contains(id)) nowhere << id;
     QString label = a ? a->text() : c->label;
     QJsonObject row{{"id", id},
                     {"label", label.remove('&')},

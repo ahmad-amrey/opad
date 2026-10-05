@@ -112,6 +112,8 @@ OPAD_BENCH(OPAD_BENCH_BROWSER_SCROLL, browserScroll) {
   w.m_browserOverlay->reveal(true);
   QApplication::setActiveWindow(&w);
   settle([] { return false; }, 300);
+  // Under load (the full net) the browser's deferred rebuild and the box's body can come later than 300 ms.
+  settle([&] { return row(tree, parts[19]) && doc->scene.all_bodies().size() == 1; }, 15000);
   browser->expandAll();
   QTreeWidgetItem* closed[] = {row(tree, parts[4]), row(tree, parts[19])};
   for (QTreeWidgetItem* it : closed)
@@ -122,7 +124,7 @@ OPAD_BENCH(OPAD_BENCH_BROWSER_SCROLL, browserScroll) {
   auto resets = std::make_shared<int>(0);  // the rows made again (QTreeWidget::clear resets its model)
   QObject::connect(tree->model(), &QAbstractItemModel::modelReset, &w, [resets] { ++*resets; });
   if (!require(closed[0] && closed[1] && bar->maximum() > 8 && doc->scene.all_bodies().size() == 1,
-               QString("90 components and a box in the browser, two closed, it scrolls (0 to %1)").arg(bar->maximum())))
+               QString("90 components and a box in the browser, two closed, it scrolls (0 to %1; rows %2 %3, bodies %4)").arg(bar->maximum()).arg(closed[0] != nullptr).arg(closed[1] != nullptr).arg(doc->scene.all_bodies().size())))
     return finish();
   // The row in the middle of the view: a component or the box.
   auto middleRow = [tree] {
