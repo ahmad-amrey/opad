@@ -110,5 +110,47 @@ void SketchEditor::benchConstraints() {
   command->trigger();
   QCoreApplication::processEvents();
   check(showConstraints() && box->isChecked() && m_glyphHits.size() == 9 && m_coincidentDots.size() == 1 && m_joinDots.size() == 4, "the command shows them again, the check box follows");
+
+  // Badges face the viewer (the user's "constraint symbols get distorted in 3D"): an upright apart holding only a vertical, its
+  // badge laid out face-on, then the view orbited to see the sketch at a slant, with nothing laying the badges out again. On
+  // the screen the badge's pictogram (an upright bar) is still as tall as it was, beside its line where the layout put it;
+  // lying in the plane it came out half as tall.
+  begin_change();
+  const int lone = m_sk.add_line(m_sk.add_point(70, -10), m_sk.add_point(70, 10));
+  const int flat = m_sk.add_constraint(SkConstraint::Type::Vertical, {lone});
+  end_change("bench constraints");
+  m_viewport->setCameraJson({{"eye", {70, 0, 100}}, {"target", {70, 0, 0}}, {"up", {0, 1, 0}}, {"scale", 60}, {"projection", "orthographic"}, {"absolute", true}});
+  rebuild();
+  double fu = 70, fv = 0;
+  for (const auto& [id, u, v] : m_glyphHits)
+    if (id == flat) fu = u, fv = v;
+  const QPoint offset = m_viewport->widgetPoint(m_frame.to_world(fu, fv)) - m_viewport->widgetPoint(m_frame.to_world(70, 0));
+  const QColor back = m_viewport->tokens().green;
+  // The badge's pictogram on the screen: the box of the pixels of its colour about where it should be, in widget pixels.
+  auto badgeBox = [&](const QPoint& centre) {
+    const QImage image = m_viewport->grabImage();
+    const double k = m_viewport->width() > 0 ? double(image.width()) / m_viewport->width() : 1;
+    const int cx = int(centre.x() * k), cy = int(centre.y() * k), reach = int(30 * k);
+    int x0 = 1 << 30, y0 = 1 << 30, x1 = -1, y1 = -1;
+    for (int y = std::max(0, cy - reach); y < std::min(image.height(), cy + reach); ++y)
+      for (int x = std::max(0, cx - reach); x < std::min(image.width(), cx + reach); ++x) {
+        const QColor c = image.pixelColor(x, y);
+        if (std::abs(c.red() - back.red()) + std::abs(c.green() - back.green()) + std::abs(c.blue() - back.blue()) > 12) continue;
+        x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x), y1 = std::max(y1, y);
+      }
+    return x1 < 0 ? QRectF() : QRectF(x0 / k, y0 / k, (x1 - x0 + 1) / k, (y1 - y0 + 1) / k);
+  };
+  const QRectF faceOn = badgeBox(m_viewport->widgetPoint(m_frame.to_world(fu, fv)));
+  m_viewport->setCameraJson({{"eye", {70, -60, 35}}, {"target", {70, 0, 0}}, {"up", {0, 0, 1}}, {"scale", 60}, {"projection", "orthographic"}, {"absolute", true}});
+  const QRectF slanted = badgeBox(m_viewport->widgetPoint(m_frame.to_world(70, 0)) + offset);
+  m_viewport->grabImage().save(prefix + ".slanted.png");
+  const bool tall = faceOn.height() > 7 && faceOn.height() < 20;
+  check(tall && std::abs(slanted.width() - faceOn.width()) < 2 && std::abs(slanted.height() - faceOn.height()) < 2,
+        QString("a badge seen at a slant is as it is face-on, beside its line (pictogram %1 x %2 px face-on, %3 x %4 at a slant)")
+            .arg(faceOn.width()).arg(faceOn.height()).arg(slanted.width()).arg(slanted.height()));
+  double su = 70, sv = 0;
+  m_viewport->planePoint(QPointF(m_viewport->widgetPoint(m_frame.to_world(70, 0)) + offset), m_frame, su, sv);
+  sketchMove(su, sv, Qt::NoModifier, false);
+  check(m_hover.kind == Hit::Dimension && m_hover.id == flat, "at a slant the badge is hovered where it shows");
   QCoreApplication::exit(ok ? 0 : 2);
 }
