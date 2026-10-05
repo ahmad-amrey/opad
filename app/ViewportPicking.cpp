@@ -226,6 +226,13 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
     if (exposed && !std::exchange(m_topExposed, exposed)) exposedAgain();
     m_topExposed = exposed;
   }
+  // A native overlay over the view moved, changed its size or went (ViewOverlay.hpp), or the system uncovered part of the
+  // view's own window: that part is shown again, or it keeps the overlay's last image (trails of the value boxes).
+  if ((e->type() == QEvent::Move || e->type() == QEvent::Resize || e->type() == QEvent::Hide) && object != this && object->isWidgetType()) {
+    auto* overlay = static_cast<QWidget*>(object);
+    if (overlay->testAttribute(Qt::WA_NativeWindow) && !overlay->isWindow() && isAncestorOf(overlay)) overlayUncovered();
+  }
+  if (e->type() == QEvent::Expose && windowHandle() && object == windowHandle()) overlayUncovered();
   if (zoomWindowKey(object, e)) return true;
   if(e->type()==QEvent::MouseButtonPress || e->type()==QEvent::MouseButtonDblClick) {
     const auto widget=qobject_cast<QWidget*>(object);

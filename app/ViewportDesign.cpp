@@ -32,6 +32,7 @@
 
 #include "Jobs.hpp"
 #include "Motion.hpp"
+#include "ViewOverlay.hpp"
 #include "opad/geometry.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
@@ -746,6 +747,10 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
 }
 
 bool Viewport::event(QEvent* e) {
+  if (e->type() == viewoverlay::uncoveredEvent()) {
+    overlayUncovered();
+    return true;
+  }
   if (e->type() == QEvent::NativeGesture && handleNativeGesture(static_cast<QNativeGestureEvent*>(e))) return true;
   // An overlay made while the pointer is blank over the view (a toast, a value box) keeps the arrow, as the others do.
   if (e->type() == QEvent::ChildPolished && m_ownCursorShown)

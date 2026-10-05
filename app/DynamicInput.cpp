@@ -2,6 +2,7 @@
 #include "Icons.hpp"
 #include "InputKeys.hpp"
 #include "Theme.hpp"
+#include "ViewOverlay.hpp"
 #include <QAbstractSpinBox>
 #include <QAction>
 #include <QApplication>
@@ -258,7 +259,12 @@ void DynamicInput::arrange() {
     QPainterPath path;path.addRoundedRect(QRectF(r),5,5);region+=QRegion(path.toFillPolygon().toPolygon());
   }
   if(region.isEmpty())region=QRegion(0,0,1,1);  // an empty mask is none: the whole view
-  if(region!=mask())setMask(region);
+  if(region==mask())return;
+  const QRegion left=mask()-region;
+  setMask(region);
+  // Where the boxes were is the view's again, which draws only on its own frames: told, or the boxes leave a trail of
+  // themselves as they follow the pointer (ViewOverlay.hpp).
+  if(!left.isEmpty())viewoverlay::uncovered(m_view);
 }
 
 QRect DynamicInput::boxesRect() const {

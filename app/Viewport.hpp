@@ -97,6 +97,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // scene changed, so the next frame must draw everything, or the view stays black until the pointer moves over it.
   void exposedAgain();
   int exposeRedraws() const { return m_exposeRedraws; }  // benches
+  // A native overlay over the view moved, shrank, went or changed its mask, or the system uncovered part of the view
+  // (ViewOverlay.hpp): the next paint draws a whole frame (quick ones) or shows the last frame again, or the overlay's old
+  // image stays there.
+  void overlayUncovered();
+  int overlayRepairs() const { return m_overlayRepairs; }  // paints that showed an uncovered part again (benches)
+  int overlayReshows() const { return m_overlayReshows; }  // of those, the ones that drew no frame of their own (benches)
+  void benchPaint() { paintEvent(nullptr); }               // a paint as the window makes it (a hidden window never paints)
+  void benchFullFrameMs(qint64 ms) { m_fullFrameMs = ms; }  // a model whose frames are this slow (benches)
   // A press whose release went to another widget or window (an overlay's chip, a menu, a file dialog): the controller's
   // gesture (a rubber band following the pointer, whose next click selected everything in it) is dropped, nothing applied.
   int droppedGestures() const { return m_droppedGestures; }  // benches
@@ -748,6 +756,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_holdPress = false;
   Qt::MouseButtons m_viewButtons = Qt::NoButton;  // pressed on the view itself (not on an overlay, a dialog or a menu)
   int m_exposeRedraws = 0, m_droppedGestures = 0;
+  bool m_uncovered = false;   // an overlay left part of the view since the last paint (overlayUncovered)
+  bool m_frameDrawn = false;  // this paint's flush drew a frame (handleViewRedraw)
+  int m_overlayRepairs = 0, m_overlayReshows = 0;
   bool m_topExposed = false;  // the window's surface as Qt last said (an Expose to shown again draws everything)
   void dropGesture();
   void pressHeld();

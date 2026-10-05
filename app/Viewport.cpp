@@ -1431,6 +1431,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   degradeWhileNavigating();
   // Side by side: A's view is drawn after this one with its camera (the controller redraws it only when it is invalid).
   const bool full = m_side && m_view->IsInvalidated() && !m_sideView->IsInvalidated();
+  m_frameDrawn = m_frameDrawn || view->IsInvalidated() || view->IsInvalidatedImmediate() || toAskNextFrame();  // as the controller decides
   QElapsedTimer draw;
   draw.start();
   AIS_ViewController::handleViewRedraw(ctx, view);
@@ -2820,9 +2821,22 @@ void Viewport::paintEvent(QPaintEvent*) {
   syncWindowSize();
   QElapsedTimer frame;
   frame.start();
+  // A part of the view an overlay left (ViewOverlay.hpp): a whole frame, swapped onto every pixel of the view, when one is
+  // quick (as exposedAgain does); on a model whose frames are slow the last frame is shown again below instead.
+  const bool uncovered = std::exchange(m_uncovered, false);
+  if (uncovered && m_fullFrameMs < kSmoothFrameMs) m_view->Invalidate();
+  m_frameDrawn = false;
   {
     QScopedValueRollback<bool> flushing(m_flushingViewEvents, true);
     FlushViewEvents(m_ctx, m_view, Standard_True);
+  }
+  // No frame drawn for it: the last frame shown again whole, which OCCT does without drawing the scene (its immediate redraw).
+  if (uncovered) {
+    ++m_overlayRepairs;
+    if (!m_frameDrawn) {
+      ++m_overlayReshows;
+      m_view->RedrawImmediate();
+    }
   }
   if (m_repaintAfterFlush) {
     m_repaintAfterFlush = false;
@@ -3144,6 +3158,12 @@ void Viewport::dropGesture() {
   ++m_droppedGestures;
   if (trace::enabled()) trace::log(QStringLiteral("viewport: a press released elsewhere: its gesture dropped, nothing selected"));
   redrawScene();
+}
+
+void Viewport::overlayUncovered() {
+  if (!m_initialised) return;
+  m_uncovered = true;
+  requestRedraw();
 }
 
 void Viewport::exposedAgain() {
