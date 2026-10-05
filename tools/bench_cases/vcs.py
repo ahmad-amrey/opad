@@ -209,6 +209,13 @@ CASES = [
     ("version-ar", lambda root, document: versioned_with_remote(root, document, "version-ar"),
      {"OPAD_BENCH_VERSION": "{prefix}", "OPAD_BENCH_CLI": "{cli}", "GIT_CONFIG_GLOBAL": "{root}/version-ar-global", "GIT_CONFIG_NOSYSTEM": "1",
       "OPAD_LANG": "ar"}),
+    # Branch protection (Preferences > Version control): its rows, the panel asking before a commit or push to protected
+    # main, an agent's git tools through the live bridge refused there and working on a branch of its own (Agent activity,
+    # the chip and the panel following). Agent access on (OPAD_BENCH_AGENT); git's author from the environment.
+    ("version-protect", lambda root, document: versioned_with_remote(root, document, "protect"),
+     {"OPAD_BENCH_VERSION_PROTECT": "{prefix}", "OPAD_BENCH_AGENT": "{root}/protect-agent", "GIT_CONFIG_GLOBAL": "{root}/protect-global",
+      "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "Agent Bench", "GIT_AUTHOR_EMAIL": "agent@example.com", "GIT_COMMITTER_NAME": "Agent Bench",
+      "GIT_COMMITTER_EMAIL": "agent@example.com"}),
     # A read-only document: view changes kept out of "unsaved", edits ask for a copy, Save a copy, --read-only in another OPAD.
     ("read-only", read_only, {"OPAD_BENCH_READONLY": "{prefix}"}),
     ("read-only-ar", lambda root, document: read_only(root, document, "read-only-ar"), {"OPAD_BENCH_READONLY": "{prefix}", "OPAD_LANG": "ar"}),

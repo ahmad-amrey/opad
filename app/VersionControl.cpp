@@ -36,6 +36,7 @@
 #include "DesignController.hpp"
 #include "KeyText.hpp"
 #include "DiskSync.hpp"
+#include "GitAgent.hpp"
 #include "GitWatch.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -390,6 +391,7 @@ void VersionControl::done(const QString& what, bool ok, const QString& text) {
 }
 
 void VersionControl::ask(const QString& name, const QString& title, const QString& text, const std::vector<Answer>& answers) {
+  m_asked << name;
   auto* box = new QMessageBox(QMessageBox::Question, title, text, QMessageBox::Cancel, m_services.window());
   box->setObjectName(name);
   box->setAttribute(Qt::WA_DeleteOnClose);
@@ -413,6 +415,16 @@ void VersionControl::ask(const QString& name, const QString& title, const QStrin
         b->click();
         break;
       }
+}
+
+bool VersionControl::protectedAsk(bool applies, const QString& title, const QString& text, const QString& go, std::function<void()> again) {
+  if (std::exchange(m_protectAnswered, false) || !applies) return false;
+  ask("vcsProtected", title, text, {{"anyway", go, [this, again] {
+                                       m_protectAnswered = true;
+                                       again();
+                                     }},
+                                    {"branch", tr("New branch…"), [this] { newBranch(); }}});
+  return true;
 }
 
 void VersionControl::whenClean(const QString& what, std::function<void()> then, bool commitAllowed) {
@@ -463,6 +475,11 @@ void VersionControl::commit() {
     return;
   }
   const git::Repo& r = m_git->repo();
+  const gitagent::Policy policy = gitagent::Policy::read();
+  if (protectedAsk(policy.commits && policy.protects(r.status.branch), tr("Commit"),
+                   tr("%1 is a protected branch (Preferences > Version control > Branch protection). Commit to it anyway, or make a branch for this work?").arg(r.status.branch),
+                   tr("Commit to %1").arg(r.status.branch), [this] { commit(); }))
+    return;
   const QString rel = r.rel, name = QFileInfo(rel).fileName();
   const bool merging = r.merging, fresh = r.status.oid == "(initial)";
   if (merging && r.status.count('u'))  // git add would take the files as they are now: one side's version, silently
@@ -706,6 +723,11 @@ void VersionControl::push() {
   const git::Status& s = m_git->repo().status;
   if (s.branch == "(detached)") return failed(tr("Push"), tr("HEAD names no branch: switch to a branch, or make one here, to push."));
   if (s.oid == "(initial)") return failed(tr("Push"), tr("Nothing to push yet: commit first."));
+  const gitagent::Policy policy = gitagent::Policy::read();
+  if (protectedAsk(policy.pushes && policy.protects(s.branch), tr("Push"),
+                   tr("%1 is a protected branch (Preferences > Version control > Branch protection). Push it anyway?").arg(s.branch), tr("Push %1").arg(s.branch),
+                   [this] { push(); }))
+    return;
   auto list = std::make_shared<QStringList>();
   const git::Context c = m_git->context();
   ++m_running;
@@ -1026,6 +1048,13 @@ void VersionControl::showIncoming(std::shared_ptr<Incoming> in, bool pull) {
 }
 
 void VersionControl::runMerge(std::shared_ptr<Incoming> in) {
+  // A fast-forward pull of the branch's own upstream brings in only what it already follows: no merge into it.
+  const QString branch = m_git->repo().status.branch;
+  const gitagent::Policy policy = gitagent::Policy::read();
+  if (protectedAsk(policy.merges && !(in->target == "@{u}" && in->fastForward) && policy.protects(branch), tr("Merge %1").arg(in->label),
+                   tr("%1 is a protected branch (Preferences > Version control > Branch protection). Merge %2 into it anyway?").arg(branch, in->label),
+                   tr("Merge into %1").arg(branch), [this, in] { runMerge(in); }))
+    return;
   whenClean(tr("Merge %1").arg(in->label), [this, in] {
     if (m_compare && m_compare->active()) m_compare->close();  // the preview: the document changes under it
     git::RunOptions o;

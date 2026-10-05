@@ -418,8 +418,11 @@ void GitWatch::setUp() {
   auto folder = std::make_shared<QString>(fresh ? QFileInfo(m_file).absolutePath() : m_repo.top);
   auto* where = new QLabel(d);
   where->setWordWrap(true);
-  auto describe = [where, folder, fresh] {
-    where->setText((fresh ? tr("A new git repository in %1, branch main.") : tr("The git repository in %1.")).arg(QDir::toNativeSeparators(*folder)));
+  const QString branch = QSettings().value("git/initialBranch", QStringLiteral("main")).toString().trimmed();  // Preferences > Version control
+  auto describe = [where, folder, fresh, branch] {
+    where->setText(!fresh ? tr("The git repository in %1.").arg(QDir::toNativeSeparators(*folder))
+                   : branch == "main" || branch.isEmpty() ? tr("A new git repository in %1, branch main.").arg(QDir::toNativeSeparators(*folder))
+                                                          : tr("A new git repository in %1, branch %2.").arg(QDir::toNativeSeparators(*folder), branch));
   };
   describe();
   auto* top = new QHBoxLayout;
@@ -460,8 +463,9 @@ void GitWatch::setUp() {
   run->setDefault(true);
   buttons->addButton(run, QDialogButtonBox::AcceptRole);
   connect(buttons, &QDialogButtonBox::rejected, d, &QDialog::reject);
-  connect(run, &QPushButton::clicked, d, [this, d, folder, attributes, assets, ignore, driver] {
+  connect(run, &QPushButton::clicked, d, [this, d, folder, attributes, assets, ignore, driver, branch] {
     git::SetupOptions o;
+    if (git::validBranchName(branch)) o.branch = branch;
     o.attributes = attributes->isChecked();
     o.lfs = assets->isChecked();
     o.ignore = ignore->isChecked();

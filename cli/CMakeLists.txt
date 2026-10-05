@@ -11,6 +11,13 @@ find_package(Qt6 COMPONENTS Core Gui Network QUIET)  # Gui: its plugin types (pl
 if(Qt6_FOUND)
   target_link_libraries(opad-cli PRIVATE Qt6::Core Qt6::Network)
   target_compile_definitions(opad-cli PRIVATE OPAD_LIVE_MCP=1)
+  # The headless server's git tools (app/GitAgent.cpp over the Version control panel's git client, app/Git.cpp: Qt Core only).
+  target_sources(opad-cli PRIVATE ../app/Git.cpp ../app/GitAgent.cpp)
+  target_include_directories(opad-cli PRIVATE ../app)
+  target_compile_definitions(opad-cli PRIVATE OPAD_GIT_TOOLS=1)
+  if(OPAD_STATIC)
+    target_compile_definitions(opad-cli PRIVATE OPAD_SINGLE_FILE=1)  # its settings, as the single-file app's: <exe dir>/opad-data
+  endif()
   if(OPAD_STATIC)  # local sockets only: no TLS backends (OpenSSL) or network information plugins in the exe
     qt_import_plugins(opad-cli EXCLUDE_BY_TYPE tls networkinformation)
   endif()

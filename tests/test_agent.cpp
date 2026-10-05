@@ -91,7 +91,9 @@ int main(){try {
   // t4's and t5a's final merges, live 113122 and headless 74716; with t2a's final merge (measure's mode and length kind UI-144,
   // view's home UI-47) live 113583. A merge that grows a list past the limits raises them by what it measured and says so in
   // the commit.
-  CHECK(live<114300);  // the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  // The git tools (git_status ... git_tag, opad::agent::git_tools: 15 tools with their argument and refusal descriptions and
+  // the brief outputSchema each) raised it by 19.1 KB to 132668 bytes: precise enough for an agent to act on refusals.
+  CHECK(live<133400);  // 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);

@@ -27,6 +27,9 @@ namespace git {
 // inside it, so a portable copy can move), git beside OPAD (a portable git/ or PortableGit/ folder), PATH, then the
 // usual install folders. Empty when there is none.
 QString findProgram();
+// This process's program: QCoreApplication's, else the OS's (opad-cli's headless MCP server has no application object;
+// a QGuiApplication may still come there for painting). findProgram and Install::here look beside it.
+QString selfFile();
 // Whether `path` runs as git: empty, or why not. Fills `version`. Runs it: workers only.
 QString checkProgram(const QString& path, QString* version = nullptr);
 
@@ -125,6 +128,7 @@ extern const char* const kIgnored[];                        // those entries, nu
 
 struct SetupOptions {
   bool init = true, attributes = true, ignore = true, lfs = true, driver = true;
+  QString branch = QStringLiteral("main");  // a new repository's initial branch (the setting git/initialBranch)
 };
 // Init (-b main) when the folder is not in a repository, .gitattributes, .gitignore, git lfs install --local, the
 // managed driver config. Returns what it did, as sentences; throws std::runtime_error.

@@ -18,9 +18,12 @@
 #include <algorithm>
 #include <memory>
 
+#include <QSettings>
+
 #include "AppDocument.hpp"
 #include "Banner.hpp"
 #include "BenchRegistry.hpp"
+#include "GitAgent.hpp"
 #include "GitWatch.hpp"
 #include "MainWindow.hpp"
 #include "Toast.hpp"
@@ -33,6 +36,7 @@ OPAD_BENCH(OPAD_BENCH_CONFLICT, conflict) {
   if (std::exchange(started, true)) return true;
   auto* vc = w.findChild<VersionControl*>();
   if (!vc) return false;
+  QSettings().setValue(gitagent::kBranchesKey, QString());  // the merge into main: branch protection has its bench (version-protect)
   struct State {
     int step = 0;
     QElapsedTimer clock;

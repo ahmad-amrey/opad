@@ -1,4 +1,5 @@
 #include "opad/live.hpp"
+#include <array>
 #include <set>
 namespace opad::agent {
 namespace {
@@ -133,6 +134,7 @@ const json& live_tools() {
     {"parent",{{"type",{"string","null"}},{"description","Default component for every body the feature steps make (a step's own parent wins); a component id or @{step#/component_id} of an earlier component step."}}},
     {"component",{{"type",{"string","null"}},{"description","Default component for feature and sketch steps (a step's own wins)."}}}
   },{"steps","expected_revision","request_id"}));
+  for(const auto& tool:git_tools(true)){out.push_back(tool);out.back()["outputSchema"]=live_output_schema(tool["name"]);}
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);
     if(c.name=="sketch_edit")schema["properties"]["geometry"]=brief_geometry();  // the sketch tool has the full schema (B12)
@@ -151,6 +153,58 @@ const json& live_tools() {
   }
   return out;
   }();return tools;
+}
+// Git for agents (app/GitAgent.cpp runs them). Branch protection is the user's: Preferences > Version control.
+bool git_tool(const std::string& name){return name.rfind("git_",0)==0;}
+const json& git_tools(bool live) {
+  static const std::array<json,2> lists=[] {
+    json out[2];
+    for(int l=0;l<2;++l) {
+      const bool isLive=l==1;out[l]=json::array();
+      const std::string where=isLive?"the bound document's repository":"repo's repository";
+      const std::string noForce=" Force push, reset, rebase, branch or tag deletion, clean, stash drop and discarding changes are not offered: if one is truly needed, it can be done with the git CLI, but only after asking the user and getting explicit confirmation, and only when needed.";
+      const std::string follows=isLive?" The open document then follows the file (when that reloads it, as after another branch's history: live_instances and live_bind again).":"";
+      const std::string saved=isLive?" Refuses (unsaved_document) while the open document has unsaved changes: save first.":"";
+      const std::string prot=" (the user's protected branches, OPAD Preferences > Version control; code protected_branch: work on a branch from git_branch_create instead)";
+      auto text=[](const std::string& d){return json{{"type","string"},{"minLength",1},{"maxLength",250},{"description",d}};};
+      const json message={{"type","string"},{"minLength",1},{"maxLength",20000}};
+      auto add=[&](const std::string& tool,const std::string& description,json properties,json required,bool write,bool network=false) {
+        if(isLive && write){properties["request_id"]=str();required.push_back("request_id");}
+        if(!isLive){properties["repo"]={{"type","string"},{"minLength",1},{"maxLength",32767},{"description",tool=="git_init"?"Absolute path of the folder to make a repository (created when missing).":"Absolute path of a folder or file inside the repository."}};required.push_back("repo");}
+        out[l].push_back({{"name",tool},{"description",description},{"inputSchema",object(properties,required)},
+          {"annotations",{{"readOnlyHint",!write},{"destructiveHint",false},{"openWorldHint",network}}}});
+      };
+      add("git_status","Git state of "+where+": branch, head, upstream with ahead/behind, staged/unstaged (path, change), untracked and conflicted paths, merging, and protected with the policy"+prot+". Paths are relative to the repository's top."+noForce,json::object(),json::array(),false);
+      add("git_log","Commits newest first: hash, short, author, email, date, subject, parents, refs. next_skip when more follow.",
+          {{"limit",{{"type","integer"},{"minimum",1},{"maximum",200},{"default",20}}},{"skip",{{"type","integer"},{"minimum",0},{"default",0}}},
+           {"branch",text("Branch or revision to list (default HEAD).")},{"path",text("Only commits that touched this path.")}},json::array(),false);
+      add("git_branches","Local branches (current, upstream, ahead/behind, protected) and remote-tracking ones, the remotes and the protection policy.",json::object(),json::array(),false);
+      add("git_diff","What changed from from to to: per file added/deleted line counts (git diff --numstat), and for each .opad (up to 10) OPAD's semantic diff (summary, relation, changes: parameters, sketches, features, bodies). Untracked files are not listed."+std::string(isLive?" The work tree side is the file on disk: the open document's unsaved changes are not in it.":""),
+          {{"from",text("Revision (default HEAD).")},{"to",text("Revision (default: the work tree).")},{"path",text("Only this path.")}},json::array(),false);
+      add("git_fetch","Fetch remote (default: every remote) so ahead/behind are current. Changes no local branch or file; nothing is pruned.",{{"remote",text("A remote's name.")}},json::array(),true,true);
+      add("git_init","Make "+std::string(isLive?"folder (default: the open document's folder, which must hold the document)":"repo")+" a git repository as OPAD's Set up repository does: initial branch (default the user's setting, main), .gitattributes routing .opad to OPAD's merge and diff driver, .gitignore, Git LFS for assets/ when installed, and this OPAD as the driver. Refuses (already_a_repository) a folder inside a work tree. paths: commit them (with .gitattributes and .gitignore) as the first commit; refused while the initial branch is protected and commits there are refused"+prot+".",
+          isLive?json{{"folder",text("Absolute folder.")},{"branch",text("Initial branch.")},{"paths",{{"type","array"},{"items",text("Path relative to the folder.")},{"minItems",1},{"maxItems",1000}}},{"message",message}}
+                :json{{"branch",text("Initial branch.")},{"paths",{{"type","array"},{"items",text("Path relative to the folder.")},{"minItems",1},{"maxItems",1000}}},{"message",message}},json::array(),true);
+      add("git_branch_create","Create branch name at from (default HEAD) and switch to it (switch=false: only create). From HEAD uncommitted changes stay as they are; from another commit it refuses uncommitted changes."+saved+" Refuses an existing name (branch_exists) and an invalid one.",
+          {{"name",text("New branch name.")},{"from",text("Branch or revision to start at.")},{"switch",{{"type","boolean"},{"default",true}}}},{"name"},true);
+      add("git_switch","Switch to branch; a remote-tracking one (origin/x) switches to its local branch, made to follow it when missing. Refuses (uncommitted_changes, never discarding them) while tracked files have changes, and while a merge is in progress."+saved+follows,{{"branch",text("Branch to switch to.")}},{"branch"},true);
+      add("git_commit","Commit message with exactly paths (relative to the repository's top; their new, changed or deleted state), or every change with all=true (git add -A: untracked files too, ignored ones not). Refuses: nothing_to_commit, conflicts (git_resolve first), detached_head, identity_missing, protected_branch"+prot+"."+std::string(isLive?" Refuses (unsaved_document) to commit the open document with unsaved changes: save first.":"")+" During a merge it commits the merge as a whole.",
+          {{"message",message},{"paths",{{"type","array"},{"items",text("Path.")},{"minItems",1},{"maxItems",1000}}},{"all",{{"type","boolean"},{"default",false}}}},{"message"},true);
+      add("git_merge","Merge source into the current branch; .opad files merge through OPAD's record-aware driver. ff: auto (fast-forward when possible, else a merge commit), no_ff, only. preview=true changes nothing and reports the commits that come in, fast_forward, and per .opad its merged summary or the conflicts the driver would stop on (stops). State merged, up_to_date or conflicts (then git_resolve each file and git_commit, or git_merge_abort). Refuses uncommitted_changes, merge_in_progress, and merging into a protected branch"+prot+"."+saved+follows,
+          {{"source",text("Branch or revision to merge.")},{"ff",{{"type","string"},{"enum",{"auto","no_ff","only"}},{"default","auto"}}},{"preview",{{"type","boolean"},{"default",false}}},{"message",message}},{"source"},true);
+      add("git_merge_abort","Abort the merge in progress (git merge --abort): files go back to before it began; only the merge's own changes are undone. Refuses no_merge."+saved+follows,json::object(),json::array(),true);
+      add("git_resolve","Settle path, a conflicted file of a stopped merge, then git_commit. Without keep or choices it only lists: for an .opad each conflict (index, name, field, both sides' effect). keep ours|theirs: that side wins every conflict, both sides' other changes kept (another file: that side's whole version). choices (an .opad): ours|theirs per listed index. whole_file=true with keep: that side's whole .opad. The file is written and staged."+saved+follows,
+          {{"path",text("Conflicted path.")},{"keep",{{"type","string"},{"enum",{"ours","theirs"}}}},{"choices",{{"type","array"},{"items",{{"type","string"},{"enum",{"ours","theirs"}}}},{"maxItems",10000}}},{"whole_file",{{"type","boolean"},{"default",false}}}},{"path"},true);
+      add("git_pull","Fetch the current branch's upstream and bring its commits in. ff_only (default true) refuses not_fast_forward when both sides have commits; ff_only=false merges through OPAD's driver, refused into a protected branch"+prot+" (a fast-forward is allowed there). preview=true fetches and reports like git_merge's preview, changing nothing. Refuses no_upstream, uncommitted_changes, merge_in_progress."+saved+follows,
+          {{"ff_only",{{"type","boolean"},{"default",true}}},{"preview",{{"type","boolean"},{"default",false}}}},json::array(),true,true);
+      add("git_push","Push the current branch to its upstream, or with remote (default origin, else the only remote) set the upstream on a first push; tags: also push these local tags. Never forced: a rejected push (rejected) means git_pull first. Refuses protected_branch when the user's preference refuses pushes"+prot+", and large_files (over 50 MB in history, or LFS uploads over 500 MB) unless allow_large=true after asking the user."+noForce,
+          {{"remote",text("Remote's name.")},{"tags",{{"type","array"},{"items",text("Tag name.")},{"maxItems",100}}},{"allow_large",{{"type","boolean"},{"default",false}}}},json::array(),true,true);
+      add("git_tag","Tag HEAD: lightweight, or annotated with message. Never moves or replaces a tag: refuses tag_exists. git_push with tags publishes it.",
+          {{"name",text("Tag name.")},{"message",message}},{"name"},true);
+    }
+    return std::array<json,2>{out[0],out[1]};
+  }();
+  return lists[live?1:0];
 }
 json live_schema(const std::string& name){
   for(const auto& t:live_tools())if(t["name"]==name){

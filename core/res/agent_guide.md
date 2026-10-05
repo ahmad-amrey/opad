@@ -277,6 +277,27 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   `kinds` lists every group of those kinds. To delete a detail of an imported body, run the feature `remove_faces`
   with its faces (or a `recognized` rule): the faces around it are extended to close the gap.
 
+## Git
+
+- The git tools work on a repository: headless, the one `repo` names (a folder or file inside it); live, the bound
+  document's (save it first; writes need edit access and a `request_id`). Read: `git_status`, `git_log`,
+  `git_branches`, `git_diff` (line counts per file and OPAD's semantic diff of each `.opad`). Write: `git_init`,
+  `git_fetch`, `git_branch_create`, `git_switch`, `git_commit`, `git_merge`, `git_merge_abort`, `git_resolve`,
+  `git_pull`, `git_push`, `git_tag`. A refusal is `{error: {code, message, next}}`: read the message, it says what to do.
+- Protected branches are the user's (OPAD Preferences > Version control > Branch protection; default `main` and
+  `master`): commits to them and merges into them are refused (`protected_branch`), pushes of them when the user set
+  that. Do not ask to get around it: `git_branch_create` a branch of your own (it switches to it), commit there, push
+  it, and tell the user it is ready to merge. A fast-forward `git_pull` of a protected branch is allowed.
+- `git_commit` stages exactly `paths` (or everything with `all`); it refuses an empty commit. `git_switch`,
+  `git_merge` and `git_pull` refuse uncommitted changes rather than carry or discard them: commit first.
+- Merges of `.opad` files go through OPAD's record-aware driver. Preview first (`preview: true`): it lists what
+  comes in and the conflicts the driver would stop on. A stopped merge (`state: conflicts`): `git_resolve` the file
+  without `keep` or `choices` to list its conflicts, then decide them (`keep` ours|theirs, or `choices` per index),
+  then `git_commit`; or `git_merge_abort`. When both sides changed the design (`regenerate_after`), run `regenerate`.
+- Not offered: force push, reset, rebase, deleting branches or tags, clean, stash drop, discarding changes, history
+  rewrites. If one is truly needed, it can be done with the git CLI, but only after asking the user and getting
+  explicit confirmation, and only when needed.
+
 ## Checking the result
 
 - `sketch` results, and results of features that take a `plane`, include `frame`: the origin, x, y and normal the
