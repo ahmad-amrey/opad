@@ -550,10 +550,12 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   const auto localCandidates=m_geometry->query(u-grip*1.1,v-grip*1.1,u+grip*1.1,v+grip*1.1);
   Hit hit;
   double best = grip;
-  // Trim takes a piece of a curve: its points are no target (within the 12 px a point takes, UI-124, a click near a line's
-  // end hit the end and trimmed the wrong piece).
+  // Trim, extend and split take a piece of a curve: points, dimension values and constraint badges are no target. Within the
+  // 12 px a point takes (UI-124) a click near a line's end hit the end and trimmed the wrong piece; a badge on a constrained
+  // line's middle, or a dimension's value beside a short or upright one, took the click and the trim asked for a curve.
+  const bool curvesOnly = m_tool == "trim" || m_tool == "extend" || m_tool == "split";
   const std::vector<size_t> none;
-  for (size_t index : m_tool == "trim" ? none : localCandidates.points) {
+  for (size_t index : curvesOnly ? none : localCandidates.points) {
     const auto& p=m_sk.points[index];
     if (!selectable(p.id)) continue;
     const double d = std::hypot(p.x - u, p.y - v);
@@ -561,13 +563,14 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   }
   if (hit.kind != Hit::None) return hit;
   for (const auto& c : m_sk.constraints) {
+    if (curvesOnly) break;
     if (!c.is_dimension() || !selectable(c.id)) continue;
     double lu, lv;
     labelPosition(c, lu, lv);
     if (std::fabs(lu - u) < 3.5 * t && std::fabs(lv - v) < 1.4 * t) return {Hit::Dimension, c.id};
   }
   best = t;
-  for(const auto& [id,x,y]:m_glyphHits)if(selectable(id) && std::fabs(x-u)<grip && std::fabs(y-v)<grip)return {Hit::Dimension,id};
+  if(!curvesOnly)for(const auto& [id,x,y]:m_glyphHits)if(selectable(id) && std::fabs(x-u)<grip && std::fabs(y-v)<grip)return {Hit::Dimension,id};
   for (size_t index : localCandidates.entities) {
     const auto& e=m_sk.entities[index];
     if (!selectable(e.id)) continue;

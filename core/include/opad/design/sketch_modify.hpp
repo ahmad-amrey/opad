@@ -61,6 +61,36 @@ bool trim_pieces(const CurveCuts& cuts,double x,double y,std::vector<TrimPiece>&
 // curves (coincident with a line, circle or arc); the first keeps the id. Returns the pieces. Throws (the sketch as it was)
 // when the curve is not an editable spline or ellipse or is crossed once and closed.
 std::vector<int> trim_curve(Sketch& sk,int id,double x,double y);
+// The exact trim of a line, a circle or an arc (UI-28, the editor's click and fence). A circle's or an arc's round: centre,
+// radius, counter-clockwise from a0 by sweep (2 pi: a whole circle); holds: (x, y), on its circle, lies on it.
+struct TrimRound {
+  double cx=0,cy=0,r=0,a0=0,sweep=0;
+  bool holds(double x,double y) const;
+};
+TrimRound trim_round(const Sketch& sk,const SkEntity& circleOrArc);
+// Where the other curves cross `target` (a line, a circle or an arc), sorted along it: t is 0..1 along a line, the angle
+// from a0 round a circle or an arc; `other` the curve crossing there. `samples` (optional): a spline's or an ellipse's
+// polyline (a preview's), else the kernel crosses them.
+struct TrimCut { double t=0; int other=0; };
+struct TrimCrossings {
+  bool line=true;
+  double ax=0,ay=0,bx=0,by=0;  // a line's ends
+  TrimRound self;              // a circle's or an arc's
+  std::vector<TrimCut> cuts;
+};
+using TrimSamples=std::function<const std::vector<std::pair<double,double>>*(const SkEntity&)>;
+TrimCrossings trim_crossings(const Sketch& sk,const SkEntity& target,const TrimSamples& samples={});
+// Takes the piece of curve `id` about (u, v) between the curves crossing it (all of it when none does). Each new end is a
+// point held on the curve that cuts there; a line cut in its middle leaves two collinear lines, an arc two equal arcs, a
+// circle the arc round the other way. Constraints on the curve stay where they still hold on what is left (its direction,
+// a radius, a tangency, a point on it, a distance to it); what measured its whole extent goes (drop_extent_constraints), so
+// the trim is never refused for a dimension on the curve. NotACurve: not a line, a circle or an arc; CrossedOnce: a circle
+// crossed once (nothing to cut between). Either way nothing changed.
+enum class TrimOutcome { Trimmed, NotACurve, CrossedOnce };
+TrimOutcome trim_entity(Sketch& sk,int id,double u,double v);
+// What measures a curve's whole extent and means something else once it is trimmed shorter: on a line its length (a length
+// dimension, an "equal" with another line) and a point held at its middle; on an arc its length.
+void drop_extent_constraints(Sketch& sk,int id);
 void chamfer_corner(Sketch& sk,int point,double first,double second);
 void delete_curve_node(Sketch& sk,int point);
 void boolean_regions(Sketch& sk,double ax,double ay,double bx,double by,const std::string& operation);
