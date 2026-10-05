@@ -169,7 +169,11 @@ TEST(every_registered_command_has_help) {
                          "drawings.fromDatums", "drawings.fromDatums.baseline", "drawings.fromDatums.chain", "drawings.holeCallout", "drawings.holeTable",
                          "drawings.issue", "drawings.note", "drawings.ordinate", "drawings.partsList", "drawings.print", "drawings.reattach",
                          "drawings.revisionTable", "drawings.sectionView", "drawings.surface", "drawings.templateFields", "inspect.material", "kicad.clearance",
-                         "kicad.insert", "kicad.previewSync", "kicad.project", "view.hideSmallParts", "view.smallPartSize"}) {
+                         "kicad.insert", "kicad.previewSync", "kicad.project", "view.hideSmallParts", "view.smallPartSize",
+                         // and the ribbon reorganisation's (w3-ribbon): the workspaces, menus and commands it added
+                         "assembly.explodeFinish", "design.drawOnDrawing", "design.showOrigin", "design.suppress", "drawings.explodedView", "drawings.publish",
+                         "file.recover", "timeline.rollBack", "tools.agentActivity", "tools.ai", "tools.fileTypes", "vcs.compareFile", "view.namedViews",
+                         "view.panels", "view.rendering", "workspace.drafting"}) {
     const CommandHelp* h = help::find(id);
     if (!h || !clips::has(h->clip)) clipless << id;
   }

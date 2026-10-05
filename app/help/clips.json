@@ -5249,6 +5249,297 @@
     {"to": 2.7, "caption": "Re-attach it: pick what it measures"},
     {"to": 5.8, "caption": "It measures again"}
    ]
+  },
+  {
+   "id": "workspace.drafting", "duration": 3.6, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"el": "rect", "corners": [[-16, -9], [14, 7]], "color": "fg2", "width": 1.2},
+    {"el": "poly", "points": [[-2, -9], [-2, -2]], "color": "fg2", "width": 1.2},
+    {"el": "arc", "center": [-2, -2], "r": 4, "start": 90, "sweep": -90, "color": "fg2", "width": 0.9},
+    {"el": "circle", "center": [7, -1], "r": 2.5, "color": "fg2", "width": 1.2},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "View", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.2, 0.05], "text": "Inspect", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Markup", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Home", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.205, 0.05], "text": "Annotate", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.435, 0.05], "text": "View", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.595, 0.05], "text": "Output", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "key", "command": "workspace.drafting", "press": 0.9, "from": 0.6, "to": 1.4}
+   ],
+   "steps": [
+    {"to": 1, "caption": "{press:workspace.drafting}"},
+    {"to": 3.6, "caption": "The ribbon shows the 2D drawing tabs"}
+   ]
+  },
+  {
+   "id": "design.drawOnDrawing", "duration": 5.2, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"el": "rect", "corners": [[-16, -9], [14, 7]], "color": "fg2", "width": 1.2},
+    {"el": "poly", "points": [[-2, -9], [-2, -2]], "color": "fg2", "width": 1.2},
+    {"el": "arc", "center": [-2, -2], "r": 4, "start": 90, "sweep": -90, "color": "fg2", "width": 0.9},
+    {"el": "circle", "center": [7, -1], "r": 2.5, "color": "fg2", "width": 1.2},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Draw on drawing", "icon": "sketch", "from": 0.1, "to": 1.1, "fade": 0.15, "keys": [[0.6, {"hl": true}], [0.9, {"hl": false}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Sketch", "dot": "amber", "hl": true, "from": 1.1, "to": 3.9, "fade": 0.15},
+    {"el": "chip", "screen": [0.335, 0.05], "text": "Home", "from": 1.1, "to": 3.9, "fade": 0.15},
+    {"el": "chip", "screen": [0.52, 0.05], "text": "Annotate", "from": 1.1, "to": 3.9, "fade": 0.15},
+    {"el": "chip", "screen": [0.03, 0.2], "text": "Finish sketch", "icon": "finish", "from": 1.1, "to": 3.9, "fade": 0.15, "keys": [[3.5, {"hl": true}], [3.8, {"hl": false}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Home", "from": 3.9, "fade": 0.15},
+    {"el": "chip", "screen": [0.205, 0.05], "text": "Annotate", "from": 3.9, "fade": 0.15},
+    {"el": "chip", "screen": [0.435, 0.05], "text": "View", "from": 3.9, "fade": 0.15},
+    {"el": "chip", "screen": [0.595, 0.05], "text": "Output", "from": 3.9, "fade": 0.15},
+    {"el": "poly", "color": "hov", "points": [[-9, -9], "cursor"], "from": 1.8, "to": 2.6, "fade": 0},
+    {"el": "poly", "points": [[-9, -9], [-9, 7]], "dots": true, "from": 2.6, "to": 3.9, "fade": 0},
+    {"el": "poly", "points": [[-9, -9], [-9, 7]], "width": 1.4, "from": 3.9, "fade": 0},
+    {"el": "snap", "kind": "nearest", "at": [-9, -9], "from": 1.55, "to": 1.85},
+    {"el": "snap", "kind": "nearest", "at": [-9, 7], "from": 2.35, "to": 2.65},
+    {"el": "cursor", "kind": "arrow", "keys": [[0, {"screen": [0.6, 0.8], "kind": "arrow"}], [0.5, {"screen": [0.134, 0.118]}], [0.6, {"screen": [0.134, 0.118], "click": 1}], [1.5, {"pos": [-9, -9], "kind": "cross"}], [1.8, {"pos": [-9, -9], "click": 1}], [2.5, {"pos": [-9, 7]}], [2.6, {"pos": [-9, 7], "click": 1}], [3.3, {"screen": [0.134, 0.268], "kind": "arrow"}], [3.5, {"screen": [0.134, 0.268], "click": 1}], [4.4, {"screen": [0.62, 0.8]}]]}
+   ],
+   "steps": [
+    {"to": 1.1, "caption": "Click Draw on drawing in Home"},
+    {"to": 3.1, "caption": "Draw new curves on the drawing's plane"},
+    {"to": 5.2, "caption": "Finish sketch keeps them beside the drawing"}
+   ]
+  },
+  {
+   "id": "design.showOrigin", "duration": 4.6, "view": "iso", "extent": [-24, -12, 24, 18],
+   "items": [
+    {"el": "camera", "center": [-2, 0]},
+    {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [22, 22], "color": "fg2", "fillOpacity": 0.08, "from": 0.9, "fade": 0.3},
+    {"el": "plane", "plane": "xz", "center": [0, 0, 0], "size": [22, 22], "color": "fg2", "fillOpacity": 0.08, "from": 0.9, "fade": 0.3},
+    {"el": "plane", "plane": "yz", "center": [0, 0, 0], "size": [22, 22], "color": "fg2", "fillOpacity": 0.08, "from": 0.9, "fade": 0.3},
+    {"el": "solid", "profile": {"rect": [7, 5, 18, 12], "round": 2}, "holes": [{"circle": [11, 5, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0, "keys": [[2.85, {"toneAmount": 0}], [2.95, {"toneAmount": 0.45}]]},
+    {"el": "axes", "len": 13, "from": 0.9, "fade": 0.3},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Origin planes and axes", "icon": "axis", "keys": [[0.6, {"hl": true}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.85]}], [0.5, {"screen": [0.134, 0.118]}], [0.6, {"screen": [0.134, 0.118], "click": 1}], [1.3, {"screen": [0.5, 0.8]}], [2.6, {"pos": [4, 3, 6]}], [2.85, {"pos": [4, 3, 6], "click": 1}], [3.8, {"pos": [12, -8, 6]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Turn on Origin planes and axes"},
+    {"to": 2.6, "caption": "Its planes and axes show over the model"},
+    {"to": 4.6, "caption": "A click on a face behind them picks the face"}
+   ]
+  },
+  {
+   "id": "design.suppress", "duration": 5.2, "view": "iso", "extent": [-26, -11, 26, 18],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 6, "holes": [{"circle": [4, 0, 2.5]}], "to": 1.9, "fade": 0},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 6, "from": 1.9, "to": 3.7, "fade": 0},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 6, "holes": [{"circle": [4, 0, 2.5]}], "from": 3.7, "fade": 0},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "hole"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "", "sel"], "ease": "step"}], [1.9, {"states": ["", "", "sel suppressed"], "ease": "step"}], [3.7, {"states": ["", "", "sel"], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Suppress", "icon": "hide", "from": 1.1, "fade": 0.15, "keys": [[1.8, {"hl": true}], [2.1, {"hl": false}], [3.6, {"hl": true}], [3.9, {"hl": false}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.55]}], [0.8, {"screen": [0.217, 0.886]}], [0.9, {"screen": [0.217, 0.886], "click": 1}], [1.6, {"screen": [0.113, 0.118]}], [1.8, {"screen": [0.113, 0.118], "click": 1}], [2.6, {"screen": [0.6, 0.5]}], [3.4, {"screen": [0.113, 0.118]}], [3.6, {"screen": [0.113, 0.118], "click": 1}], [4.4, {"screen": [0.62, 0.55]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Click the feature on the timeline"},
+    {"to": 3.4, "caption": "Suppress: the model is computed without it"},
+    {"to": 5.2, "caption": "Suppress again brings it back"}
+   ]
+  },
+  {
+   "id": "timeline.rollBack", "duration": 5.2, "view": "iso", "extent": [-26, -11, 26, 18],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 6, "holes": [{"circle": [4, 0, 2.5]}], "to": 1.9, "fade": 0},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12]}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "from": 1.9, "to": 3.8, "fade": 0},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 6, "holes": [{"circle": [4, 0, 2.5]}], "from": 3.8, "fade": 0},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "hole", "fillet"], "states": ["", "", "", ""], "at": 4, "keys": [[0.9, {"states": ["", "", "sel", ""], "at": 4, "ease": "step"}], [1.9, {"at": 3, "ease": "step"}], [3.8, {"at": 4, "states": ["", "", "", ""], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Roll back to here", "from": 1.1, "to": 2.3, "fade": 0.15, "keys": [[1.8, {"hl": true}], [2.1, {"hl": false}]]},
+    {"el": "chip", "screen": [0.03, 0.62], "text": "Rolled back before Fillet 1 · Roll forward", "dot": "amber", "from": 2.0, "to": 3.8, "fade": 0.15, "keys": [[3.6, {"hl": true}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.55]}], [0.8, {"screen": [0.217, 0.886]}], [0.9, {"screen": [0.217, 0.886], "click": 1}], [1.6, {"screen": [0.113, 0.118]}], [1.8, {"screen": [0.113, 0.118], "click": 1}], [2.6, {"screen": [0.62, 0.45]}], [3.4, {"screen": [0.447, 0.688]}], [3.6, {"screen": [0.447, 0.688], "click": 1}], [4.4, {"screen": [0.66, 0.5]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Click a step on the timeline"},
+    {"to": 3.4, "caption": "Roll back to here: the model as it was after it"},
+    {"to": 5.2, "caption": "Click the chip to roll forward"}
+   ]
+  },
+  {
+   "id": "drawings.publish", "duration": 5.4, "extent": [-30, -14.5, 30, 14.5],
+   "items": [
+    {"use": "sheet"},
+    {"use": "sheetTitle"},
+    {"use": "plateView"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Publish PDF", "icon": "export", "from": 0.1, "to": 1.7, "fade": 0.15, "keys": [[0.6, {"hl": true}], [0.9, {"hl": false}]]},
+    {"el": "card", "screen": [0.03, 0.2], "w": 130, "title": "Publish PDF", "hl": -1, "from": 0.8, "to": 1.6, "fade": 0.15, "rows": [{"label": "BRACKET", "icon": "drawingSheet"}, {"label": "PLATE", "icon": "drawingSheet"}], "keys": [[1.3, {"hl": 0}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 160, "title": "Export drawing", "button": "Save", "press": 3.0, "rows": [{"text": "Name", "entry": "BRACKET.pdf"}], "from": 1.7, "to": 3.2, "fade": 0.15},
+    {"el": "rect", "corners": [[17.2, 1.2], [25.2, 7.2]], "color": "fg2", "width": 1, "fill": "bg", "fillOpacity": 1, "from": 3.3, "fade": 0.2},
+    {"el": "rect", "corners": [[17.8, 1.8], [24.6, 6.6]], "color": "fg3", "width": 0.6, "from": 3.3, "fade": 0.2},
+    {"el": "rect", "corners": [[21.2, 1.8], [24.6, 3.0]], "color": "fg3", "width": 0.6, "from": 3.3, "fade": 0.2},
+    {"el": "rect", "corners": [[16, 0], [24, 6]], "color": "fg2", "width": 1, "fill": "bg", "fillOpacity": 1, "from": 3.5, "fade": 0.2},
+    {"el": "rect", "corners": [[16.6, 0.6], [23.4, 5.4]], "color": "fg3", "width": 0.6, "from": 3.5, "fade": 0.2},
+    {"el": "rect", "corners": [[20, 0.6], [23.4, 1.8]], "color": "fg3", "width": 0.6, "from": 3.5, "fade": 0.2},
+    {"el": "label", "at": [20, -1.6], "value": "BRACKET.pdf", "size": 7, "color": "fg", "from": 3.5, "fade": 0.15},
+    {"el": "cursor", "keys": [[0, {"pos": [6, 4]}], [0.5, {"screen": [0.113, 0.118]}], [0.6, {"screen": [0.113, 0.118], "click": 1}], [1.2, {"screen": [0.169, 0.425]}], [1.4, {"screen": [0.169, 0.425], "click": 1}], [2.8, {"screen": [0.483, 0.439]}], [3.0, {"screen": [0.483, 0.439], "click": 1}], [3.9, {"pos": [6, -4]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Publish PDF, from any workspace"},
+    {"to": 1.7, "caption": "Several drawings: choose one"},
+    {"to": 3.2, "caption": "Choose where the PDF goes"},
+    {"to": 5.4, "caption": "One PDF, a page per sheet"}
+   ]
+  },
+  {
+   "id": "vcs.compareFile", "duration": 6.0, "view": "iso",
+   "items": [
+    {"el": "camera", "center": [-14, 0], "zoom": 0.85},
+    {"use": "isoScene", "args": {"area": [-24, -16, 24, 16]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 40, 24], "round": 2}, "height": 4, "keys": [[1.9, {"opacity": 1}], [2.3, {"opacity": 0.35}]]},
+    {"el": "solid", "profile": {"circle": [-11, 4, 4]}, "at": [0, 0, 4], "height": 7, "tone": "red", "toneAmount": 0.6, "from": 1.9, "fade": 0.4, "opacity": 0.6},
+    {"el": "solid", "profile": {"rect": [4, 5, 10, 8]}, "at": [0, 0, 4], "height": 6, "tone": "amber", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.3, {"toneAmount": 0.6}]]},
+    {"el": "solid", "profile": {"circle": [12, -5, 3.5]}, "at": [0, 0, 4], "height": 9, "tone": "green", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.3, {"toneAmount": 0.6}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 170, "title": "Compare with", "button": "Open", "press": 1.4, "from": 0.2, "to": 1.6, "fade": 0.15, "rows": [{"entry": ""}], "keys": [[0.6, {"rows": [{"entry": "Bra"}], "ease": "step"}], [0.8, {"rows": [{"entry": "Bracket-v"}], "ease": "step"}], [1.0, {"rows": [{"entry": "Bracket-v2.opad"}], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.86], "text": "Compare: Bracket-v2.opad → This session", "dot": "sel", "from": 1.7},
+    {"el": "card", "screen": [0.03, 0.05], "w": 150, "title": "Compare", "from": 1.7, "hl": -1, "rows": [{"label": "A", "value": "Bracket-v2.opad"}, {"label": "B", "value": "This session"}, {"text": "Boss 2", "value": "added", "color": "green"}, {"text": "Extrude 1", "value": "geometry changed", "color": "amber"}, {"text": "Boss 1", "value": "removed", "color": "red"}], "keys": [[3.4, {"hl": 2}], [4.4, {"hl": 3}]]},
+    {"el": "key", "command": "vcs.nextChange", "press": 3.4, "from": 3.15, "to": 3.8},
+    {"el": "key", "command": "vcs.nextChange", "press": 4.4, "from": 4.15, "to": 4.8},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.8]}], [1.2, {"screen": [0.518, 0.439]}], [1.4, {"screen": [0.518, 0.439], "click": 1}], [2.2, {"screen": [0.66, 0.8]}]]}
+   ],
+   "steps": [
+    {"to": 1.6, "caption": "Choose the other OPAD document"},
+    {"to": 3.0, "caption": "It is A, this session is B"},
+    {"to": 6.0, "caption": "Colours mark added, removed and changed"}
+   ]
+  },
+  {
+   "id": "file.recover", "duration": 5.0, "view": "iso",
+   "items": [
+    {"el": "camera", "center": [-14, 0], "zoom": 0.85},
+    {"use": "isoScene", "args": {"area": [-24, -16, 24, 16]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 40, 24], "round": 2}, "height": 4, "from": 2.9, "fade": 0.3},
+    {"el": "solid", "profile": {"rect": [4, 5, 10, 8]}, "at": [0, 0, 4], "height": 9, "from": 2.9, "fade": 0.3},
+    {"el": "solid", "profile": {"circle": [12, -5, 3.5]}, "at": [0, 0, 4], "height": 9, "from": 2.9, "fade": 0.3},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Recover documents", "button": "Restore into file", "press": 2.7, "from": 0.2, "to": 2.9, "fade": 0.15, "hl": 0, "rows": [{"label": "Bracket.opad · 10:42", "icon": "restore"}, {"text": "Extrude 1", "value": "geometry changed", "color": "amber"}, {"text": "Boss 2", "value": "added", "color": "green"}]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.85]}], [1.0, {"screen": [0.62, 0.85]}], [2.5, {"screen": [0.482, 0.681]}], [2.7, {"screen": [0.482, 0.681], "click": 1}], [3.6, {"screen": [0.7, 0.85]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Each snapshot a session left behind"},
+    {"to": 2.4, "caption": "Shown against its file as it is now"},
+    {"to": 5.0, "caption": "Restore it, merge it in, or keep it for later"}
+   ]
+  },
+  {
+   "id": "view.namedViews", "duration": 4.4, "view": "iso", "extent": [-28, -11, 28, 22],
+   "items": [
+    {"el": "camera", "center": [-12, 0], "keys": [[1.6, {"az": -45, "elev": 35.264}], [2.6, {"az": -110, "elev": 22}]]},
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"use": "bracket"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Named views", "icon": "recent", "from": 0.1, "to": 1.7, "fade": 0.15, "keys": [[0.6, {"hl": true}], [0.9, {"hl": false}]]},
+    {"el": "card", "screen": [0.03, 0.2], "w": 130, "title": "Named views", "hl": -1, "from": 0.8, "to": 1.6, "fade": 0.15, "rows": [{"label": "Front detail"}, {"text": "Exploded 1"}, {"text": "Save view…"}], "keys": [[1.3, {"hl": 0}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.8]}], [0.5, {"screen": [0.113, 0.118]}], [0.6, {"screen": [0.113, 0.118], "click": 1}], [1.2, {"screen": [0.169, 0.425]}], [1.4, {"screen": [0.169, 0.425], "click": 1}], [2.4, {"screen": [0.62, 0.8]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Open Named views"},
+    {"to": 4.4, "caption": "Choose one: the camera goes back to it"}
+   ]
+  },
+  {
+   "id": "view.panels", "duration": 4.2, "view": "iso",
+   "items": [
+    {"el": "camera", "center": [-12, 0], "zoom": 0.9},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Panels", "icon": "list", "from": 0.1, "to": 0.9, "fade": 0.15, "keys": [[0.6, {"hl": true}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Panels", "hl": -1, "from": 0.9, "to": 1.9, "fade": 0.15, "rows": [{"text": "Browser", "check": true}, {"text": "Annotations", "check": false}, {"text": "Timeline", "check": false}, {"text": "Version control", "check": false}, {"text": "Section panel", "check": false}, {"text": "Reset layout", "icon": "restore"}], "keys": [[1.4, {"hl": 2}], [1.6, {"rows": [{"text": "Browser", "check": true}, {"text": "Annotations", "check": false}, {"text": "Timeline", "check": true}, {"text": "Version control", "check": false}, {"text": "Section panel", "check": false}, {"text": "Reset layout", "icon": "restore"}], "ease": "step"}]]},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "hole"], "states": ["", "", ""], "from": 1.9, "fade": 0.3},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.8]}], [0.5, {"screen": [0.113, 0.118]}], [0.6, {"screen": [0.113, 0.118], "click": 1}], [1.4, {"screen": [0.169, 0.528]}], [1.6, {"screen": [0.169, 0.528], "click": 1}], [2.6, {"screen": [0.62, 0.6]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Open Panels"},
+    {"to": 4.2, "caption": "Tick a panel to show it, untick it to hide it"}
+   ]
+  },
+  {
+   "id": "view.rendering", "duration": 5.0, "view": "iso", "extent": [-24, -11, 24, 16],
+   "items": [
+    {"el": "camera", "dragged": true, "center": [-6, 0], "keys": [[0, {"az": -45, "elev": 35.264}], [2.2, {"az": -45}], [3.5, {"az": -80}]]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 1.5}, "height": 1.6, "tone": "green", "toneAmount": 0.65},
+    {"el": "solid", "profile": {"rect": [-12, 0, 6, 7]}, "at": [0, 0, 1.6], "height": 3, "tone": "fg3", "toneAmount": 0.3},
+    {"el": "solid", "profile": {"rect": [2, 2, 8, 8]}, "at": [0, 0, 1.6], "height": 1.2, "tone": "black", "toneAmount": 0.6},
+    {"el": "solid", "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [2.15, {"opacity": 1}], [2.2, {"opacity": 0, "ease": "step"}], [3.55, {"opacity": 0}], [3.6, {"opacity": 1, "ease": "step"}]], "profile": {"rect": [9, -4, 2, 1]}},
+    {"el": "solid", "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [2.15, {"opacity": 1}], [2.2, {"opacity": 0, "ease": "step"}], [3.55, {"opacity": 0}], [3.6, {"opacity": 1, "ease": "step"}]], "profile": {"rect": [9, -6, 2, 1]}},
+    {"el": "solid", "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [2.15, {"opacity": 1}], [2.2, {"opacity": 0, "ease": "step"}], [3.55, {"opacity": 0}], [3.6, {"opacity": 1, "ease": "step"}]], "profile": {"rect": [-3, -6, 2, 1]}},
+    {"el": "solid", "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [2.15, {"opacity": 1}], [2.2, {"opacity": 0, "ease": "step"}], [3.55, {"opacity": 0}], [3.6, {"opacity": 1, "ease": "step"}]], "profile": {"rect": [-3, 6, 2, 1]}},
+    {"el": "solid", "at": [0, 0, 1.6], "height": 0.6, "tone": "amber", "toneAmount": 0.4, "keys": [[0, {"opacity": 1}], [2.15, {"opacity": 1}], [2.2, {"opacity": 0, "ease": "step"}], [3.55, {"opacity": 0}], [3.6, {"opacity": 1, "ease": "step"}]], "profile": {"rect": [9, 6, 2, 1]}},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Rendering", "icon": "shaded", "from": 0.1, "to": 0.9, "fade": 0.15, "keys": [[0.6, {"hl": true}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Rendering", "hl": -1, "from": 0.9, "to": 1.9, "fade": 0.15, "rows": [{"text": "Hide small parts while navigating", "check": false}, {"text": "Small part size…"}, {"text": "Lower quality while navigating", "check": true}, {"text": "Animate view changes", "check": true}, {"text": "Dark theme", "check": false}], "keys": [[1.3, {"hl": 0}], [1.5, {"rows": [{"text": "Hide small parts while navigating", "check": true}, {"text": "Small part size…"}, {"text": "Lower quality while navigating", "check": true}, {"text": "Animate view changes", "check": true}, {"text": "Dark theme", "check": false}], "ease": "step"}]]},
+    {"el": "cursor", "kind": "arrow", "keys": [[0, {"screen": [0.62, 0.5]}], [0.5, {"screen": [0.113, 0.118]}], [0.6, {"screen": [0.113, 0.118], "click": 1}], [1.3, {"screen": [0.169, 0.285]}], [1.5, {"screen": [0.169, 0.285], "click": 1}], [2.1, {"screen": [0.62, 0.55], "kind": "move"}], [2.2, {"screen": [0.62, 0.55], "down": true}], [3.5, {"screen": [0.8, 0.55], "down": false}], [4.6, {"screen": [0.88, 0.8]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Open Rendering"},
+    {"to": 2.0, "caption": "Tick Hide small parts while navigating"},
+    {"to": 5.0, "caption": "Small parts hide while the view moves"}
+   ]
+  },
+  {
+   "id": "assembly.explodeFinish", "duration": 4.2, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
+    {"el": "camera", "center": [-6, 0]},
+    {"el": "solid", "profile": {"rect": [0, 0, 30, 20], "round": 2}, "height": 4},
+    {"el": "poly", "points": [[8, -5, 4], [8, -5, 12]], "dash": true, "color": "hov", "width": 1.4},
+    {"el": "solid", "profile": {"rect": [0, 0, 16, 10]}, "at": [0, 0, 12], "height": 8},
+    {"el": "poly", "points": [[11, -7, 20], [11, -7, 30]], "dash": true, "color": "hov", "width": 1.4},
+    {"el": "solid", "profile": {"rect": [0, 0, 22, 14], "round": 1.5}, "holes": [{"circle": [0, 0, 2.5]}], "at": [0, 0, 30], "height": 3},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Explode", "dot": "amber", "hl": true, "to": 1.3, "fade": 0.15},
+    {"el": "chip", "screen": [0.28, 0.05], "text": "View", "to": 1.3, "fade": 0.15},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "View", "from": 1.3, "fade": 0.15},
+    {"el": "chip", "screen": [0.19, 0.05], "text": "Inspect", "from": 1.3, "fade": 0.15},
+    {"el": "chip", "screen": [0.03, 0.2], "text": "Finish explode", "icon": "finish", "to": 1.3, "fade": 0.15, "keys": [[1.0, {"hl": true}]]},
+    {"el": "card", "screen": [0.03, 0.55], "w": 150, "title": "Explode", "rows": [{"text": "Distance", "slider": 1}, ["Level", "All levels"]], "to": 1.3, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.8]}], [0.8, {"screen": [0.134, 0.268]}], [1.0, {"screen": [0.134, 0.268], "click": 1}], [2.0, {"screen": [0.62, 0.8]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Click Finish explode"},
+    {"to": 4.2, "caption": "The tab and the panel close; the parts stay apart"}
+   ]
+  },
+  {
+   "id": "tools.fileTypes", "duration": 4.6, "view": "iso",
+   "items": [
+    {"el": "camera", "center": [-12, 0], "zoom": 0.9},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "card", "screen": [0.03, 0.06], "w": 190, "title": "File types", "button": "Open with OPAD", "press": 2.3, "hl": -1, "from": 0.2, "rows": [{"text": "STEP model (.step)", "check": true}, {"text": "STL mesh (.stl)", "check": false}, {"text": "DXF drawing (.dxf)", "check": true}], "keys": [[1.2, {"hl": 1}], [1.4, {"rows": [{"text": "STEP model (.step)", "check": true}, {"text": "STL mesh (.stl)", "check": true}, {"text": "DXF drawing (.dxf)", "check": true}], "ease": "step"}], [1.8, {"hl": -1}]]},
+    {"el": "label", "screen": [0.03, 0.85], "box": "bg2", "text": "12 file types open with OPAD.", "from": 2.5, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.8]}], [1.2, {"screen": [0.099, 0.406]}], [1.4, {"screen": [0.099, 0.406], "click": 1}], [2.1, {"screen": [0.48, 0.681]}], [2.3, {"screen": [0.48, 0.681], "click": 1}], [3.2, {"screen": [0.75, 0.8]}]]}
+   ],
+   "steps": [
+    {"to": 1.6, "caption": "Tick the file types"},
+    {"to": 4.6, "caption": "Open with OPAD registers them"}
+   ]
+  },
+  {
+   "id": "tools.ai", "duration": 5.0, "view": "iso",
+   "items": [
+    {"el": "camera", "center": [-12, 0], "zoom": 0.9},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "AI integration", "hl": -1, "from": 0.2, "to": 2.6, "fade": 0.15, "rows": [{"text": "Enable local agent access", "check": false}, {"text": "Waiting for client", "dim": true}, {"text": "Allow design edits and exports", "check": false}], "keys": [[0.8, {"hl": 0}], [1.0, {"rows": [{"text": "Enable local agent access", "check": true}, {"text": "Waiting for client", "dim": true}, {"text": "Allow design edits and exports", "check": false}], "ease": "step"}], [1.6, {"hl": 2}], [1.8, {"rows": [{"text": "Enable local agent access", "check": true}, {"text": "Waiting for client", "dim": true}, {"text": "Allow design edits and exports", "check": true}], "ease": "step"}], [2.1, {"hl": -1}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Client setup", "button": "Copy configuration", "press": 3.4, "hl": -1, "from": 2.45, "fade": 0.15, "rows": [{"label": "\"command\": \"opad-cli.exe\""}]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.8]}], [0.8, {"screen": [0.099, 0.285]}], [1.0, {"screen": [0.099, 0.285], "click": 1}], [1.6, {"screen": [0.099, 0.528]}], [1.8, {"screen": [0.099, 0.528], "click": 1}], [3.2, {"screen": [0.472, 0.439]}], [3.4, {"screen": [0.472, 0.439], "click": 1}], [4.2, {"screen": [0.75, 0.8]}]]}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "Enable local agent access"},
+    {"to": 2.6, "caption": "Allow edits, or leave it view-only"},
+    {"to": 5.0, "caption": "Copy the configuration for your AI client"}
+   ]
+  },
+  {
+   "id": "tools.agentActivity", "duration": 5.0, "view": "iso",
+   "items": [
+    {"el": "camera", "center": [-14, 0], "zoom": 0.9},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 3},
+    {"el": "solid", "profile": {"circle": [4, 0, 3]}, "at": [0, 0, 3], "height": 6, "tone": "sel", "toneAmount": 0.45, "from": 2.3, "fade": 0.3, "keys": [[2.3, {"toneAmount": 0.45}], [3.2, {"toneAmount": 0}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 210, "title": "Agent activity", "button": "Stop agent work", "press": 4.0, "hl": -1, "from": 0.2, "rows": [{"text": "Connected: Claude"}, {"text": ""}, {"text": ""}, {"text": "Follow changes", "check": true}], "keys": [[1.2, {"rows": [{"text": "Connected: Claude"}, {"text": "Agent: feature"}, {"text": ""}, {"text": "Follow changes", "check": true}], "ease": "step"}], [2.3, {"rows": [{"text": "Connected: Claude"}, {"text": "Agent: feature"}, {"text": "Applied: Extrude 1 — Undo is available"}, {"text": "Follow changes", "check": true}], "ease": "step"}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.85]}], [3.0, {"screen": [0.75, 0.85]}], [3.8, {"screen": [0.539, 0.803]}], [4.0, {"screen": [0.539, 0.803], "click": 1}], [4.7, {"screen": [0.78, 0.85]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Each request of the agent is listed"},
+    {"to": 3.2, "caption": "Follow changes shows its edits in the view"},
+    {"to": 5.0, "caption": "Stop agent work ends what it started"}
+   ]
   }
  ]
 }
