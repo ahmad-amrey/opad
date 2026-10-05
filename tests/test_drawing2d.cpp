@@ -404,8 +404,9 @@ TEST(a_plot_draws_the_visible_plotted_layers) {
   // The view isolated (Isolate layer, a layer walk): only what it shows, a frozen layer too, never one left out of plots.
   auto isolated = [&](std::initializer_list<const char*> names) {
     std::set<std::string> out;
+    auto all = byName(scene);
     for (const char* name : names)
-      for (const auto& b : byName(scene)[name].bodies) out.insert(b);
+      for (const auto& b : all[name].bodies) out.insert(b);
     return out;
   };
   CHECK_EQ(plot::collect(doc, scene, plane, {}, isolated({"Walls"})).bodies, 1);

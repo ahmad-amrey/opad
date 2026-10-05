@@ -10,6 +10,7 @@
 #include "DimensionHandle.hpp"
 #include "I18n.hpp"
 #include "InputKeys.hpp"
+#include "Jobs.hpp"
 #include "ShapeInput.hpp"
 #include "SketchCommands.hpp"
 #include "Theme.hpp"

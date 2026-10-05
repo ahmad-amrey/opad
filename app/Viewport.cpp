@@ -1968,7 +1968,11 @@ Handle(Image_PixMap) rasterPixels(const std::string& base64, const opad::json& r
   QImage image = decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(base64)), aspect != "none" ? 4096 : 8192);
   if (image.isNull()) return {};
   if (const opad::json& flip = raster.value("flip", opad::json()); flip.is_array() && (flip[0] == true || flip[1] == true))
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
     image = image.flipped((flip[0] == true ? Qt::Horizontal : Qt::Orientations()) | (flip[1] == true ? Qt::Vertical : Qt::Orientations()));
+#else
+    image = image.mirrored(flip[0] == true, flip[1] == true);
+#endif
   const auto& corners = raster.at("corners");
   auto point = [&](int i) { return gp_Pnt(corners[i][0].get<double>(), corners[i][1].get<double>(), corners[i][2].get<double>()); };
   const double ratio = point(0).Distance(point(1)) / std::max(1e-12, point(0).Distance(point(2)));

@@ -42,7 +42,7 @@ struct Files {
 };
 
 // The Qt application the painter makes on first use (a test run on its own has not painted yet).
-QImage painted(const Display& d, double dpi) {
+QImage painted(const drawing::Display& d, double dpi) {
   if (!qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
     Files f;
     install_painter();
@@ -186,7 +186,7 @@ struct Picture {
   QImage img;
   std::array<double, 4> window;
   double s = 1;
-  Picture(const Display& d, double dpi) : img(painted(d, dpi)), window(page_for(d, 2, false).window) { s = img.width() / (window[2] - window[0]); }
+  Picture(const drawing::Display& d, double dpi) : img(painted(d, dpi)), window(page_for(d, 2, false).window) { s = img.width() / (window[2] - window[0]); }
   QPoint at(double x, double y) const { return {static_cast<int>((x - window[0]) * s), static_cast<int>((window[3] - y) * s)}; }
   QColor pixel(double x, double y) const { return img.pixelColor(at(x, y)); }
   bool dark(double x, double y) const { return qGray(img.pixel(at(x, y))) < 110; }
@@ -238,7 +238,7 @@ TEST(lines_dashes_fills_and_colours_land_where_the_drawing_puts_them) {
   CHECK(dark > 400 && dark < 650);
   CHECK(blue(p.pixel(201, 1)) && blue(p.pixel(225, 3)));  // fills in their layer's colour
   CHECK(qGray(p.img.pixel(p.at(205, 5))) > 240);           // the hole in the square
-  Display overlap;  // two fills over one another: each even-odd on its own, so where they overlap stays filled
+  drawing::Display overlap;  // two fills over one another: each even-odd on its own, so where they overlap stays filled
   const int o = overlap.layer({"Fills"});
   overlap.fill(o, {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}});
   overlap.fill(o, {{{5, 5}, {15, 5}, {15, 15}, {5, 15}}});
@@ -254,7 +254,7 @@ TEST(lines_dashes_fills_and_colours_land_where_the_drawing_puts_them) {
 }
 
 TEST(text_is_as_tall_as_its_cap_height_and_aligned_as_the_writers_align_it) {
-  Display d;
+  drawing::Display d;
   const int l = d.layer({"Text"});
   d.text(l, "HEH", {0, 0}, 10, 0, 1, 0);  // centred on its baseline
   auto ink = Picture(d, 254).ink();
@@ -279,7 +279,7 @@ TEST(text_is_as_tall_as_its_cap_height_and_aligned_as_the_writers_align_it) {
 // Arial's widths (the core lays text out with them), Noto Sans Arabic for Arabic; a PDF embeds both.
 TEST(drawings_are_lettered_in_the_fonts_compiled_in) {
   const auto inked = [](const std::string& s) {  // the width of a text's ink: its advances less the outer side bearings
-    Display one;
+    drawing::Display one;
     one.layer({"Text", kInk, LineType::Continuous, 0.25});
     one.text(0, s, {10, 10}, 10);
     one.paper = {0, 0, 150, 30};  // the same window for both, wide enough
@@ -290,7 +290,7 @@ TEST(drawings_are_lettered_in_the_fonts_compiled_in) {
   CHECK(std::fabs(four - (text_width("HHHHHHHH", 10) - text_width("HHHH", 10))) < 0.01 * four);  // Arial's
   const QStringList families = drawing_font_families();
   CHECK(families.size() >= 3 && families[0] == "Liberation Sans" && families.contains("Noto Sans Arabic") && families.back() == "Arial");
-  Display d;
+  drawing::Display d;
   d.layer({"Text", kInk, LineType::Continuous, 0.25});
   d.text(0, "HHHHHHHH", {10, 10}, 10);
   Files f;
@@ -310,7 +310,7 @@ TEST(images_are_painted_on_their_corners) {
   QBuffer buf(&png);
   buf.open(QIODevice::WriteOnly);
   red2.save(&buf, "PNG");
-  Display d;
+  drawing::Display d;
   Prim image;
   image.kind = Prim::Kind::Image;
   image.layer = d.layer({"Images"});
@@ -342,7 +342,7 @@ TEST(a_pdf_is_one_vector_page_on_the_smallest_iso_sheet_that_holds_it) {
   CHECK(pdf.find("/FontFile2") != std::string::npos);            // its text with the font embedded
   CHECK(pdf.find("/Subtype /Image") == std::string::npos);       // lines, not a picture of them
   // Larger drawings: a bigger sheet at the drawing's scale, or their own size past A0.
-  Display big = sample();
+  drawing::Display big = sample();
   big.pen_scale = 5;
   big.line(0, {0, 0}, {1500, 0});
   Page page = page_for(big);
@@ -445,7 +445,7 @@ TEST(an_exploded_views_trail_lines_print_as_phantom_lines) {
   const QImage img(QString::fromStdU16String((f.dir / "apart.png").u16string()));
   CHECK(img.width() == 2000 && img.height() == 2000);  // the paper at 10 pixels a millimetre
   const Scene s = resolve(doc);
-  const Display d = sheet_display(doc, s, *s.sheet(sheet));
+  const drawing::Display d = sheet_display(doc, s, *s.sheet(sheet));
   std::vector<std::array<Vec2, 2>> pieces;
   for (const Prim& p : d.prims)
     if (p.kind == Prim::Kind::Curve && p.source == view && d.layers[size_t(p.layer)].name == "Trail") pieces.push_back({p.curve.pts.front(), p.curve.pts.back()});

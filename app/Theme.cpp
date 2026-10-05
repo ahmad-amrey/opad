@@ -2,7 +2,9 @@
 
 #include "Icons.hpp"
 
-#include <QAccessibilityHints>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+  #include <QAccessibilityHints>
+#endif
 #include <QApplication>
 #include <QFontDatabase>
 #include <QPalette>
@@ -79,7 +81,11 @@ bool systemHighContrast() {
   hc.cbSize = sizeof(hc);
   if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0)) return (hc.dwFlags & HCF_HIGHCONTRASTON) != 0;
 #endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
   return QGuiApplication::styleHints()->accessibility()->contrastPreference() == Qt::ContrastPreference::HighContrast;
+#else
+  return false;
+#endif
 }
 
 bool highContrast() {

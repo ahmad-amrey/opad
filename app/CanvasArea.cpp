@@ -803,7 +803,11 @@ void CanvasArea::trace() {
   services().jobs()->async(tr("Tracing %1").arg(QString::fromStdString(n->name)), [data, out, place, flip](Progress progress) {
     QImage image = decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(data->substr(data->find(',') + 1))), 2048).convertToFormat(QImage::Format_ARGB32);
     if (image.isNull()) throw opad::Error("the picture could not be decoded");
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
     if (flip[0] || flip[1]) image = image.flipped((flip[0] ? Qt::Horizontal : Qt::Orientations()) | (flip[1] ? Qt::Vertical : Qt::Orientations()));
+#else
+    if (flip[0] || flip[1]) image = image.mirrored(flip[0], flip[1]);
+#endif
     std::vector<unsigned char> grey(size_t(image.width()) * size_t(image.height()));
     for (int y = 0; y < image.height(); ++y)
       for (int x = 0; x < image.width(); ++x) {

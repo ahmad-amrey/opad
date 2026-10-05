@@ -6,7 +6,7 @@
 
 inline opad::drawing::Display sample() {
   using namespace opad::drawing;
-  Display d;
+  opad::drawing::Display d;
   d.title = "Sample";
   const int visible = d.layer({"Visible", kInk, LineType::Continuous, 0.5});
   const int hidden = d.layer({"Hidden", kInk, LineType::Hidden, 0.25});

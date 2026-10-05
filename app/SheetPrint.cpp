@@ -255,7 +255,11 @@ void SheetPrintDialog::resizeEvent(QResizeEvent* e) {
 }
 
 bool SheetPrintDialog::event(QEvent* e) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
   if (e->type() == QEvent::DevicePixelRatioChange) m_resized->start();  // moved to a screen of another scale
+#else
+  if (e->type() == QEvent::ScreenChangeInternal) m_resized->start();
+#endif
   return QDialog::event(e);
 }
 

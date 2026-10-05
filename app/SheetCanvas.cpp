@@ -23,7 +23,6 @@
 #include "opad/drawing/paint.hpp"
 #include "opad/drawing/tables.hpp"
 
-using opad::drawing::Display;
 using opad::drawing::Vec2;
 
 namespace {
@@ -63,7 +62,7 @@ std::optional<opad::drawing::Snap> snapNear(const opad::drawing::SnapIndex& inde
 // A part of the sheet drawn from its display list: the paper's own drawing or one view.
 class SheetPartItem : public QGraphicsItem {
  public:
-  std::shared_ptr<const Display> display;
+  std::shared_ptr<const opad::drawing::Display> display;
   double paperW = 0, paperH = 0;  // the paper the display was drawn on (paper mm, scene y = paperH - y)
   QRectF displayRect;             // local: its primitives' bounds
   // Drawn from a picture rendered on a worker at the zoom in use (painting thousands of curves and the title block's text
@@ -71,19 +70,19 @@ class SheetPartItem : public QGraphicsItem {
   QImage picture;
   QRectF pictureRect;
   double pictureScale = 0;
-  const Display* pictureOf = nullptr;  // the display the picture shows
-  const Display* askedOf = nullptr;    // a picture on its way: of what, at what scale, of which part of it
+  const opad::drawing::Display* pictureOf = nullptr;  // the display the picture shows
+  const opad::drawing::Display* askedOf = nullptr;    // a picture on its way: of what, at what scale, of which part of it
   std::shared_ptr<const opad::drawing::SnapIndex> snaps;  // of the display shown
   double askedScale = 0;
   QRectF askedRect;
-  void setPicture(QImage image, const QRectF& rect, double scale, const Display* of) {
+  void setPicture(QImage image, const QRectF& rect, double scale, const opad::drawing::Display* of) {
     prepareGeometryChange();
     picture = std::move(image), pictureRect = rect, pictureScale = scale, pictureOf = of;
     update();
   }
   bool current() const { return display && !picture.isNull() && pictureOf == display.get(); }
   // b: the display's bounds, measured on the worker (arcs and text sampled: too slow here for a big view).
-  void setDisplay(std::shared_ptr<const Display> d, double w, double h, const std::array<double, 4>& b = {0, 0, 0, 0}) {
+  void setDisplay(std::shared_ptr<const opad::drawing::Display> d, double w, double h, const std::array<double, 4>& b = {0, 0, 0, 0}) {
     prepareGeometryChange();
     display = std::move(d);
     paperW = w, paperH = h;
@@ -149,7 +148,7 @@ class SheetViewItem : public SheetPartItem {
     }
     update();
   }
-  void show(std::shared_ptr<const Display> d, const std::array<double, 4>& bounds, const QRectF& box, bool isDraft, double w, double h) {
+  void show(std::shared_ptr<const opad::drawing::Display> d, const std::array<double, 4>& bounds, const QRectF& box, bool isDraft, double w, double h) {
     prepareGeometryChange();
     pictureRect.translate(pos());  // the last picture stays where it was seen until the new one comes
     drawn = box;
@@ -188,12 +187,12 @@ class SheetGuides : public QGraphicsItem {
   QRectF ghost;
   QString label;
   std::vector<QRectF> marks;  // the selected annotations' boxes (scene)
-  std::shared_ptr<const Display> preview;  // sheet paper mm
+  std::shared_ptr<const opad::drawing::Display> preview;  // sheet paper mm
   void setMarks(std::vector<QRectF> m) {
     marks = std::move(m);
     update();
   }
-  void setPreview(std::shared_ptr<const Display> d) {
+  void setPreview(std::shared_ptr<const opad::drawing::Display> d) {
     preview = std::move(d);
     update();
   }
@@ -480,7 +479,7 @@ void SheetCanvas::start() {
               const auto pts = prim.curve.sample(0.05);
               for (size_t k = 1; k < pts.size() && hit.lines.size() < 4000; ++k) hit.lines.push_back({pts[k - 1], pts[k]});
             } else {
-              Display one;
+              opad::drawing::Display one;
               one.prims.push_back(prim);
               hit.boxes.push_back(one.bounds());
             }
@@ -496,7 +495,7 @@ void SheetCanvas::start() {
           }
           for (size_t k = from; k < skipped.size(); ++k) part.dangling.push_back({skipped[k].value("id", ""), skipped[k].value("error", "")});
         };
-        auto paper = std::make_shared<Display>();
+        auto paper = std::make_shared<opad::drawing::Display>();
         draw_paper(*paper, doc, scene, *sheet);
         draw_items(*paper, doc, scene, *sheet, frames, "", skipped);
         Part pp;
@@ -518,7 +517,7 @@ void SheetCanvas::start() {
           };
           const auto part = [&](std::shared_ptr<const ViewGeometry> projected, bool draft) {
             const auto g = shape_linework(projected, fr);  // a detail's circle, a crop, breaks
-            auto out = std::make_shared<Display>();
+            auto out = std::make_shared<opad::drawing::Display>();
             draw_view(*out, fr, *v, *g, &doc, &scene);
             const size_t from = skipped.size();
             if (!draft) draw_items(*out, doc, scene, *sheet, frames, fr.id, skipped);
@@ -1399,9 +1398,9 @@ std::pair<std::string, std::string> SheetCanvas::bodyAt(const QPointF& scene) co
   return best;
 }
 
-void SheetCanvas::setPreview(std::shared_ptr<const Display> preview) { m_guides->setPreview(std::move(preview)); }
+void SheetCanvas::setPreview(std::shared_ptr<const opad::drawing::Display> preview) { m_guides->setPreview(std::move(preview)); }
 void SheetCanvas::setGhost(const QRectF& scene, const QString& label) { m_guides->set({}, scene, label); }
-const std::shared_ptr<const Display>& SheetCanvas::preview() const { return m_guides->preview; }
+const std::shared_ptr<const opad::drawing::Display>& SheetCanvas::preview() const { return m_guides->preview; }
 
 void SheetCanvas::read(const QString& title, ReadWork work, std::function<void(bool, const QString&)> done) {
   // Waits for the sheet's own worker: it is stopped (pause) and drawn again when this one is done (resume).

@@ -412,7 +412,8 @@ TEST(remove_faces_deletes_holes_bosses_and_rounds) {
   int six = 0;
   for (const auto& h : r.all("hole")) six += std::fabs(h.params["diameter"].get<double>() - 6) < 1e-6;
   CHECK_EQ(six, 1);
-  const opad::Feature* f = resolve(doc).feature(made["feature_id"]);
+  const Scene resolved = resolve(doc);
+  const opad::Feature* f = resolved.feature(made["feature_id"]);
   CHECK(f && f->result.contains("selected"));
   // A boss and a round on a block of their own.
   Document parts = Document::create();

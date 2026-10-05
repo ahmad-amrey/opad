@@ -182,7 +182,11 @@ bool SketchEditor::applyImageTool() {
         runSketchEdit(tr("Tracing image"),[data,world,bw,bh,flip,frame,options](Sketch& sk){
           QImage image=decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(data->substr(data->find(',')+1))),4096).convertToFormat(QImage::Format_ARGB32);
           if(image.isNull())throw opad::Error("backdrop image could not be decoded");
+#if QT_VERSION>=QT_VERSION_CHECK(6,9,0)
           if(flip[0]||flip[1])image=image.flipped((flip[0]?Qt::Horizontal:Qt::Orientations())|(flip[1]?Qt::Vertical:Qt::Orientations()));
+#else
+          if(flip[0]||flip[1])image=image.mirrored(flip[0],flip[1]);
+#endif
           auto traced=trace_bitmap(greyLevels(image),image.width(),image.height(),options);const double sx=bw/image.width(),sy=bh/image.height();
           for(auto& p:traced.points){double u=0,v=0;frame.to_local(world.apply({p.x*sx,p.y*sy,0}),u,v);p.x=u;p.y=v;}
           simplify_sketch(traced,std::max(1e-6,options.tolerance*std::min(sx*columnLength(world,0),sy*columnLength(world,1))));append_reference(sk,traced,{},"project",false);

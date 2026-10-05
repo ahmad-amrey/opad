@@ -143,7 +143,7 @@ TEST(views_full_section) {
   const json bore = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", sec}, {"type", "diameter"}, {"refs", {Ref{p.body, Ref::Kind::Face, *holes.begin()}.str()}}, {"place", {0, 15}}});
   CHECK(std::fabs(bore["result"]["value"].get<double>() - 10) < 1e-6);
   {
-    const ViewFrame& fs = frame(layout(p.doc, resolve(p.doc), *resolve(p.doc).sheet(p.sheet)), sec);
+    const ViewFrame fs = frame(layout(p.doc, resolve(p.doc), *resolve(p.doc).sheet(p.sheet)), sec);
     const Scene now = resolve(p.doc);
     const json pick = pick_reference(p.doc, now, fs, {{"node", p.body}, {"face", *walls.begin()}, {"snap", "nearest"}, {"at", {fs.at[0], fs.at[1]}}});
     CHECK_EQ(pick["what"], "plane");
@@ -155,7 +155,7 @@ TEST(views_full_section) {
       return -1;
     }();
     CHECK(top >= 0);
-    const ViewFrame& ff = frame(layout(p.doc, now, *now.sheet(p.sheet)), p.front);
+    const ViewFrame ff = frame(layout(p.doc, now, *now.sheet(p.sheet)), p.front);
     CHECK_THROWS(pick_reference(p.doc, now, ff, {{"node", p.body}, {"face", top}, {"snap", "nearest"}, {"at", {ff.at[0], ff.at[1]}}}));
   }
   run(p.doc, "delete", {{"target", across["id"]}});
@@ -476,7 +476,7 @@ TEST(views_aligned_section) {
   CHECK(std::fabs(area - 440) < 2);  // (16 + 6) x 10 on either side of the centre, the inclined side revolved
   // The developed part runs along the view from -40 to 40 (its radius either side), the inclined side where the cut
   // runs on: no seam across it where the pieces meet (the joint, square to the first segment through the centre).
-  const ViewFrame& f = frame(layout(doc, s, *s.sheet(sheet)), sec);
+  const ViewFrame f = frame(layout(doc, s, *s.sheet(sheet)), sec);
   Vec3 x, y, z;
   view_axes(spec, x, y, z);
   const int along = std::fabs(x[1]) > 0.5 ? 0 : 1;  // the view axis along the cutting line's first segment (world y)
@@ -493,7 +493,8 @@ TEST(views_aligned_section) {
   run(doc, "sheet_edit", {{"target", sec}, {"set", {{"aligned", nullptr}}}});
   s = resolve(doc);
   area = 0;
-  for (const auto& r : project(doc, s, view_spec(s, *s.sheet_view(sec)), {}, false)->sections)
+  const auto offset = project(doc, s, view_spec(s, *s.sheet_view(sec)), {}, false);
+  for (const auto& r : offset->sections)
     for (const auto& l : r.loops) area += ::area(l);
   CHECK(std::fabs(area - 220) < 2);
   run(doc, "sheet_edit", {{"target", sec}, {"set", {{"aligned", true}}}});
@@ -506,7 +507,7 @@ TEST(views_aligned_section) {
     if (p.source == top && p.kind == Prim::Kind::Curve && d.layers[static_cast<size_t>(p.layer)].name == "Dimensions" && p.curve.pts.size() == 2)
       stems.push_back({p.curve.pts[0], p.curve.pts[1]});
   CHECK_EQ(stems.size(), 2u);
-  const ViewFrame& ft = frame(layout(doc, s, *s.sheet(sheet)), top);
+  const ViewFrame ft = frame(layout(doc, s, *s.sheet(sheet)), top);
   for (const auto& st : stems) {
     const Vec2 dir{st[1][0] - st[0][0], st[1][1] - st[0][1]};
     const bool last = std::hypot(st[0][0] - ft.paper({50 * c30, -50 * s30, 0})[0], st[0][1] - ft.paper({50 * c30, -50 * s30, 0})[1]) < 1;

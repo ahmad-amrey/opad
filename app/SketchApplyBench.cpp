@@ -9,6 +9,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <QApplication>
 #include <QComboBox>
 #include <QImage>
