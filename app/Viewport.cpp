@@ -166,6 +166,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   connect(&m_settleTimer, &QTimer::timeout, this, &Viewport::settleView);
   connect(doc, &AppDocument::aboutToReplace, this, [this] { m_history.clear(); });  // its views were of that document
   m_animateViews = settings.value("view/animate", true).toBool();
+  m_scrollInput = scrollinput::mode(settings.value("view/scrollInput", 0).toInt());
   m_refineTimer.setSingleShot(true);
   m_refineTimer.setInterval(350);
   connect(&m_refineTimer, &QTimer::timeout, this, &Viewport::refineVisible);
@@ -3262,11 +3263,34 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   }
 }
 
+// A wheel or a trackpad's fingers (ScrollInput.hpp): on X11 and XWayland Qt says TouchPad for the mouse wheel too.
+bool Viewport::trackpadScrollEvent(const QWheelEvent* e) const {
+  static_assert(int(scrollinput::Phase::None) == int(Qt::NoScrollPhase) && int(scrollinput::Phase::Begin) == int(Qt::ScrollBegin) &&
+                int(scrollinput::Phase::Update) == int(Qt::ScrollUpdate) && int(scrollinput::Phase::End) == int(Qt::ScrollEnd) &&
+                int(scrollinput::Phase::Momentum) == int(Qt::ScrollMomentum));
+  static const QByteArray running = QGuiApplication::platformName().toUtf8();
+  const QByteArray platform = m_scrollPlatform.isEmpty() ? running : m_scrollPlatform.toUtf8();
+  scrollinput::Scroll s;
+  s.platform = std::string_view(platform.constData(), size_t(platform.size()));
+  s.touchpadDevice = e->device() && e->device()->type() == QInputDevice::DeviceType::TouchPad;
+  s.phase = scrollinput::Phase(int(e->phase()));
+  s.pixelX = e->pixelDelta().x();
+  s.pixelY = e->pixelDelta().y();
+  s.angleX = e->angleDelta().x();
+  s.angleY = e->angleDelta().y();
+  s.continuing = m_trackpadMode != TrackpadMode::None;
+  return scrollinput::isTrackpad(s, m_scrollInput);
+}
+
+void Viewport::setScrollInput(int mode) {
+  m_scrollInput = scrollinput::mode(mode);
+  QSettings().setValue("view/scrollInput", int(m_scrollInput));
+  finishTrackpadScroll();
+}
+
 void Viewport::wheelEvent(QWheelEvent* e) {
   if (!m_initialised || m_blocked) return;
-  const bool trackpad = (e->device() && e->device()->type() == QInputDevice::DeviceType::TouchPad)
-      || (!e->pixelDelta().isNull() && e->phase() != Qt::NoScrollPhase);
-  if (trackpad) {
+  if (trackpadScrollEvent(e)) {
     if (m_nativePinching) { e->accept(); return; }
     const QPointF delta = !e->pixelDelta().isNull() ? QPointF(e->pixelDelta()) : QPointF(e->angleDelta()) / 8.0;
     if (e->modifiers() & Qt::ControlModifier) {

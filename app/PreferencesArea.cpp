@@ -77,7 +77,7 @@ class PreferencesArea : public AreaController {
     preferences::addPage({"files", tr("Files"), "open", 60, {"viewer", "read-only", "cache", "file types", "associations"}, [this] { return files(); }});
     preferences::addPage({"recovery", tr("Autosave and recovery"), "restore", 70, {"autosave", "snapshot", "crash"}, [this] { return recovery(); }});
     preferences::addPage({"vcs", tr("Version control"), "git", 80, {"git", "merge", "branch"}, [this] { return versionControl(); }});
-    preferences::addPage({"keyboard", tr("Keyboard and mouse"), "keyboard", 90, {"shortcuts", "keys", "navigation", "mouse", "orbit", "preset"}, [this] { return keyboard(); }});
+    preferences::addPage({"keyboard", tr("Keyboard and mouse"), "keyboard", 90, {"shortcuts", "keys", "navigation", "mouse", "orbit", "preset", "wheel", "scroll", "trackpad", "touchpad", "zoom", "pan"}, [this] { return keyboard(); }});
     preferences::addPage({"ai", tr("AI integration"), "agent", 100, {"agent", "mcp", "assistant"}, [window] { return ai(window); }});
   }
 
@@ -370,6 +370,13 @@ class PreferencesArea : public AreaController {
       QObject::connect(radio, &QRadioButton::toggled, a, [a](bool on) { if (on && !a->isChecked()) a->trigger(); });
       QObject::connect(a, &QAction::toggled, radio, [radio](bool on) { if (on) radio->setChecked(true); });
     }
+    // A wheel or a trackpad (ScrollInput.hpp): X11 and XWayland call a mouse a touchpad, a high-resolution wheel scrolls
+    // in fractions as fingers do; when the guess is wrong, one of them for every scroll.
+    form.choice("view/scrollInput", tr("Scroll wheel / trackpad"), {tr("Automatic"), tr("Mouse wheel zooms"), tr("Trackpad pans")}, 0,
+                [this](int mode) { services().viewport()->setScrollInput(mode); });
+    form.note(tr("Automatic tells a mouse wheel from two fingers on a trackpad by what the system reports. A wheel zooms at the pointer; "
+                 "a trackpad pans, Shift with it orbits, and a pinch or Ctrl with it zooms. When it guesses wrong, choose Mouse wheel zooms or Trackpad pans: "
+                 "every scroll is then taken for a wheel, or for a trackpad."));
     if (QAction* cube = action("view.cubeEdgesCorners")) form.option(cube, QString(cube->text()).remove('&'));
     form.section(tr("Selection"));
     form.option(action("select.through"), tr("Select through objects"));

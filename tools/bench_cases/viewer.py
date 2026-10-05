@@ -238,6 +238,12 @@ CASES = [
     # saved, kept off the named views, in 2D only along its plane, reset in one step), the turn buttons twisting in 2D.
     # <prefix>.zoom-band.png.
     ("navigate", colour_boxes, {"OPAD_BENCH_NAVIGATE": "{prefix}"}),
+    # A wheel or a trackpad (ScrollInput.hpp; on Ubuntu every wheel panned): wheel events from a device that says TouchPad,
+    # told apart as on xcb (X11, XWayland), zoom by whole notches with the direction kept and nothing panned, and pan by
+    # fractions (a notch amid them pans on, Ctrl zooms); told apart as on Windows the same device pans as before. Preferences'
+    # Scroll wheel / trackpad: Trackpad pans pans the same notch, Mouse wheel zooms zooms a touchpad's notch and a finger
+    # gesture, Automatic pans the gesture again.
+    ("wheel", "box", {"OPAD_BENCH_WHEEL": "1"}),
     # The measuring tools (UI-50, UI-144): a rod written as B-splines reads its radius (recognised as a cylinder) in the
     # Radius tool, a B-spline box face is explained in the panel and its pick taken back, the next pick clears it; a click's
     # XYZ is listed while the next pick is awaited; Distance in its three modes from the panel's buttons (minimum, centre to
