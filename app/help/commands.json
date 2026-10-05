@@ -2262,7 +2262,7 @@
    "id": "design.move",
    "title": "Move / copy",
    "summary": "Moves or copies bodies by distances and an optional turn.",
-   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z; with Grid snapping on, a drag goes in grid steps (hold {fixed:alt} to drag freely). Turn on Rotate for an axis and an angle: a ring round that axis through the bodies turns them in 5° steps, or type the angle. Make a copy leaves the original in place, and every value can be an expression.",
+   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z; with Grid snapping on, a drag goes in grid steps (hold {fixed:alt} to drag freely). Turn on Rotate for an axis and an angle: a ring round that axis through the bodies turns them in 5° steps, or type the angle. Make a copy leaves the original in place, and every value can be an expression. A part of a linked file moves the whole file as one, still linked.",
    "keywords": ["translate", "position", "transform", "copy"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },

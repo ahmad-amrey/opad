@@ -462,6 +462,20 @@ struct SceneBuilder::Impl {
         set_key(scene.nodes[nid], key, id, "feature");
         attach(nid, parent, -1);
       }
+      // Nodes the feature placed as they are (a linked file Move moved as one, by its top nodes): their local placement.
+      if (const auto placements = f.result.find("placements"); placements != f.result.end() && placements->is_array()) {
+        for (const auto& p : *placements) {
+          const std::string nid = p.value("id", "");
+          auto it = scene.nodes.find(nid);
+          if (it == scene.nodes.end()) {
+            unresolved(id, "feature", "moved node " + nid + " does not exist");
+            continue;
+          }
+          it->second.local = Mat4::from_json(p.at("transform"));
+          it->second.modified_by.push_back(id);
+        }
+        follow();
+      }
     }
     if (!f.component.empty() && (f.result.contains("plane") || f.result.contains("axis"))) {
       json made = json::object();
@@ -925,6 +939,9 @@ std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, 
       if (result && result->is_object())
         if (const auto bodies = result->find("bodies"); bodies != result->end() && bodies->is_array())
           for (const auto& b : *bodies) in = in || under(b.value("id", json()));
+      if (result && result->is_object())
+        if (const auto placed = result->find("placements"); placed != result->end() && placed->is_array())
+          for (const auto& p : *placed) in = in || under(p.value("id", json()));
     }
     if (!in && (type == "reparent" || type == "transform" || type == "appearance" || type == "rename")) in = under(d.value("target", json()));
     if (!in && type == "reparent") in = under(d.value("parent", json()));

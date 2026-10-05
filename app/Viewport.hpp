@@ -544,6 +544,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs>>& arrays);
   void clearPreviewBodies();
   size_t previewBodyCount() const { return m_previewBodies.size(); }  // bench checks: a feature preview is on screen
+  // Preview of bodies a feature moves as they are (a linked file Move moves as one): their own objects drawn moved by these
+  // world motions, picking too, nothing meshed or copied; the rest back where they are. clearPreviewBodies ends it.
+  void setPreviewMotion(const std::vector<std::pair<std::string, gp_Trsf>>& bodies);
+  // Benches: how far the preview moves a body (identity: it does not).
+  gp_Trsf previewMotion(const std::string& node) const;
+  size_t previewMovedCount() const { return m_previewMotion.size(); }
   void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   // A preview stands in for the bodies it changes (they are erased, unpickable, and it takes no picks): holding Ctrl alone
   // over the view while `gate` allows it (a feature is open) shows those bodies as they are, pickable, the preview out of
@@ -1152,6 +1158,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void maskSide(const std::string& id, const Handle(AIS_InteractiveObject)& ais);  // a session object made while side by side
   std::vector<Handle(AIS_InteractiveObject)> m_overlays;  // showOverlay's: Fit frames the finite ones (a drawing being placed)
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
+  std::unordered_map<std::string, gp_Trsf> m_previewMotion;  // setPreviewMotion: bodies drawn moved by these
+  // Where an item is drawn: its look's offset after the preview's motion after its placement (rigid; else in `located`).
+  gp_Trsf drawnAt(const std::string& id, const std::array<double, 3>& offset, bool rigid, const gp_Trsf& placement) const;
+  void placeItem(const std::string& id, Item& item);  // its object (and orbit pivot, glow) where drawnAt says
   bool m_bodiesPickable = true;
   SketchInput* m_sketchInput = nullptr;
   opad::Frame m_sketchFrame;

@@ -611,6 +611,22 @@ std::string file_sha256(const fs::path& file, bool compute) {
 
 bool network_path(const fs::path& p) { return network(p); }
 
+std::vector<std::string> linked_tops(const Scene& scene, const std::string& node) {
+  const Node* n = scene.node(node);
+  if (!n || !n->linked) return {};
+  const std::string& op = n->source_op;
+  auto top = [&](const Node& c) {
+    if (!c.linked || c.source_op != op) return false;
+    const Node* p = c.parent.empty() ? nullptr : scene.node(c.parent);
+    return !p || !p->linked || p->source_op != op;
+  };
+  std::vector<std::string> out;
+  for (const auto& [id, c] : scene.nodes)
+    if (top(c)) out.push_back(id);
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
 bool has_assets(const Document& doc) {
   for (const auto& o : doc.ops)
     if (o.type == "import" && o.data.contains("asset")) return true;

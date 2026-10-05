@@ -9,6 +9,7 @@
 #include <QMouseEvent>
 
 #include <cmath>
+#include <set>
 
 #include "DesignController.hpp"
 #include "PrimitivePlacer.hpp"
@@ -17,6 +18,7 @@
 #include "ToolValues.hpp"
 #include "TranslateTriad.hpp"
 #include "Units.hpp"
+#include "opad/assets.hpp"
 #include "opad/geometry.hpp"
 
 using namespace opad::design;
@@ -75,10 +77,24 @@ void DesignController::placeMoveTriad() {
     if (m_triad && m_pull.part < 0) m_triad->hide();
     return;
   }
-  // The middle of the picked bodies as the view has them, before the move (the timeline is rolled back while editing).
+  // The middle of the picked bodies as the view has them, before the move (the timeline is rolled back while editing); a
+  // linked file's part stands for the whole file, which moves as one.
   Bnd_Box box;
-  for (const auto& pick : picks) try {
-      const Bnd_Box b = opad::node_world_bbox(m_doc->doc, m_doc->scene, pick.value("body", ""));  // cached per key: O(1)
+  std::vector<std::string> bodies;
+  std::set<std::string> files;
+  for (const auto& pick : picks) {
+    const std::string id = pick.value("body", "");
+    const opad::Node* n = m_doc->scene.node(id);
+    if (!n || !n->linked) {
+      bodies.push_back(id);
+      continue;
+    }
+    if (files.insert(n->source_op).second)
+      for (const auto& top : opad::linked_tops(m_doc->scene, id))
+        for (const auto& b : m_doc->scene.bodies_under(top)) bodies.push_back(b);
+  }
+  for (const auto& id : bodies) try {
+      const Bnd_Box b = opad::node_world_bbox(m_doc->doc, m_doc->scene, id);  // cached per key: O(1)
       if (!b.IsVoid()) box.Add(b);
     } catch (const std::exception&) {
     }

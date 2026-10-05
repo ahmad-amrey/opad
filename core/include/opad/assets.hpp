@@ -70,6 +70,12 @@ ImportResult link_derived(Document& doc, const std::filesystem::path& file, cons
 std::filesystem::path derive_asset(const json& asset, const std::filesystem::path& source,
                                    const std::function<bool(double, const std::string&)>& progress = {});
 
+// A linked file's top nodes: those its import made that no other node of it holds (a KiCad board's one component, a STEP's
+// roots), sorted by id, for any node of the file (a part, a component in it, a top itself); empty when `node` is not part of a
+// linked file. They are where the file is placed: a top may be named, placed and moved, never its parts, and Move moves the
+// whole file through them (its result's "placements"), so the file's geometry never enters the document.
+std::vector<std::string> linked_tops(const Scene& scene, const std::string& node);
+
 // Whether the document links any file (an import op with a linked or project asset).
 bool has_assets(const Document& doc);
 // The asset object of an import op as its edits leave it; null when it is no asset.

@@ -2,6 +2,7 @@
 
 #include <QColorDialog>
 #include <QCompleter>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 #include "HelpClip.hpp"
 #include "I18n.hpp"
@@ -120,6 +122,7 @@ void PickBox::set(int count, const QString& what, bool active, bool satisfied) {
   m_what = what;
   m_active = active;
   m_satisfied = satisfied;
+  setToolTip(count > 0 ? what : QString());  // the whole of it when the box is too narrow ("… moves as one")
   update();
 }
 
@@ -429,6 +432,7 @@ void FeaturePanel::refreshVisibility() {
         else if (one.contains("feature")) what = tr("Construction");
         else what = in.type == "plane" || one.contains("face") ? tr("Face") : tr("Edge");  // an axis through a round face
       }
+      if (!rule && in.type == "bodies" && m_spec->kind == "move") what = linkedMoveText(p, what);
       it->second.pick->set(n, what, m_active == it->first, in.optional || n >= std::max(1, in.min_count) || in.min_count == 0);
       const auto note = m_notes.find(it->first);
       it->second.pick->setNote(note == m_notes.end() ? QString() : note->second);
@@ -595,6 +599,32 @@ void FeaturePanel::setValues(const std::vector<std::pair<QString, opad::json>>& 
   if (!any) return;
   if (shown) refreshVisibility();  // values alone (a primitive sized by the pointer, every move) change no row
   emit inputsChanged();
+}
+
+QString FeaturePanel::pickText(const QString& input) const {
+  const auto it = m_widgets.find(input);
+  return it != m_widgets.end() && it->second.pick ? it->second.pick->what() : QString();
+}
+
+QString FeaturePanel::linkedMoveText(const opad::json& picks, const QString& plain) const {
+  if (!picks.is_array()) return plain;
+  QStringList files;
+  std::set<std::string> imports;
+  int others = 0;
+  for (const auto& pick : picks) {
+    const opad::Node* n = pick.is_object() ? m_doc->scene.node(pick.value("body", "")) : nullptr;
+    if (!n || !n->linked) {
+      ++others;
+      continue;
+    }
+    if (!imports.insert(n->source_op).second) continue;
+    const opad::Op* op = m_doc->doc.find_op(n->source_op);
+    const std::string source = op ? op->data.value("source", "") : std::string();
+    files << (source.empty() ? QString::fromStdString(n->name) : QFileInfo(QString::fromStdString(source)).fileName());
+  }
+  if (files.isEmpty()) return plain;
+  const QString moving = files.size() == 1 ? tr("%1 moves as one").arg(files.front()) : tr("%1 linked files, each as one").arg(files.size());
+  return others > 0 ? tr("%1 selected · %2").arg(others).arg(moving) : moving;
 }
 
 void FeaturePanel::setPickNote(const QString& input, const QString& note) {
