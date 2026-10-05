@@ -44,6 +44,20 @@ void caption(QPainter* p, const QPointF& at, const QString& text, const QColor& 
   p->drawText(r, Qt::AlignCenter, text);
   p->restore();
 }
+
+// The snap under the pointer within 8 pixels (`px`: paper mm a pixel): a point (an end, a middle, a centre ...) of `kinds`,
+// unless the pointer is on a curve (3 pixels) and the point is farther than 4: then that curve's nearest point. A hole's
+// circle beside the end of a line took the end (the hole callout refused it: not a hole), an edge picked near its end its
+// end point (a dimension measured points instead of the edge).
+std::optional<opad::drawing::Snap> snapNear(const opad::drawing::SnapIndex& index, Vec2 p, double px, unsigned kinds, int curves) {
+  using opad::drawing::snap_bit;
+  using opad::drawing::SnapKind;
+  const unsigned points = kinds & ~snap_bit(SnapKind::Nearest);
+  const auto point = points ? index.find(p, 8 * px, points, curves) : std::nullopt;
+  const auto curve = kinds & snap_bit(SnapKind::Nearest) ? index.find(p, 8 * px, snap_bit(SnapKind::Nearest), curves) : std::nullopt;
+  if (curve && (!point || (curve->distance <= 3 * px && point->distance > 4 * px))) return curve;
+  return point ? point : curve;
+}
 }  // namespace
 
 // A part of the sheet drawn from its display list: the paper's own drawing or one view.
@@ -1252,12 +1266,12 @@ void SheetCanvas::setSnapKinds(unsigned kinds) {
 std::optional<opad::drawing::Snap> SheetCanvas::snapAt(const QPointF& scene) const {
   using opad::drawing::SnapKind;
   if (!m_snapKinds) return std::nullopt;
-  const double r = 8 / std::max(pixelsPerMm(), 1e-6);
+  const double px = 1 / std::max(pixelsPerMm(), 1e-6), r = 8 * px;
   std::optional<opad::drawing::Snap> best;
   const auto consider = [&](const SheetPartItem* item) {
     if (!item->snaps) return;
     const QPointF local = scene - item->pos();  // the display's paper, where the item was drawn
-    auto s = item->snaps->find({local.x(), m_paperH - local.y()}, r, m_snapKinds);
+    auto s = snapNear(*item->snaps, {local.x(), m_paperH - local.y()}, px, m_snapKinds, 0);
     if (!s) return;
     s->at = toPaper(QPointF(s->at[0], m_paperH - s->at[1]) + item->pos());
     const bool point = s->kind != SnapKind::Nearest, bestPoint = best && best->kind != SnapKind::Nearest;
@@ -1316,7 +1330,9 @@ std::string SheetCanvas::viewUnder(const QPointF& scene) const {
 
 std::optional<SheetPick> SheetCanvas::pickAt(const QPointF& scene) const {
   using opad::drawing::SnapKind;
-  const double r = 8 / std::max(pixelsPerMm(), 1e-6);
+  const double px = 1 / std::max(pixelsPerMm(), 1e-6), r = 8 * px;
+  // The snaps the sheet's Snap allows (off: the curve under the pointer), never a crossing (it is no edge of its own).
+  const unsigned kinds = (m_snapKinds & ~opad::drawing::snap_bit(SnapKind::Intersection)) | opad::drawing::snap_bit(SnapKind::Nearest);
   std::optional<SheetPick> best;
   double bestD = 1e300;
   bool bestPoint = false;
@@ -1324,7 +1340,7 @@ std::optional<SheetPick> SheetCanvas::pickAt(const QPointF& scene) const {
     if (!item->snaps || !item->geometry || !(item->frame() | item->displayRect.translated(item->pos())).adjusted(-r, -r, r, r).contains(scene)) continue;
     const QPointF local = scene - item->pos();
     const int own = static_cast<int>(item->geometry->curves.size());  // the projection's curves, not the annotations'
-    const auto s = item->snaps->find({local.x(), m_paperH - local.y()}, r, opad::drawing::kAllSnaps & ~opad::drawing::snap_bit(SnapKind::Intersection), own);
+    const auto s = snapNear(*item->snaps, {local.x(), m_paperH - local.y()}, px, kinds, own);
     if (!s || s->curve < 0 || s->curve >= own) continue;
     const opad::drawing::Curve& c = item->geometry->curves[static_cast<size_t>(s->curve)];
     if (c.body < 0 || (c.edge < 0 && c.face < 0)) continue;

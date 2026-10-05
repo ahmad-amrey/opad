@@ -262,7 +262,7 @@ class SheetCanvas : public QGraphicsView {
   SheetGuides* m_guides;
   std::map<std::string, SheetViewItem*> m_views;
   std::string m_sheet;
-  double m_paperW = 420, m_paperH = 297;
+  double m_paperW = 0, m_paperH = 0;  // setPaperSize (A3 at first): a default of A3 here skipped it, and the guides' area stayed empty
   bool m_fitted = false, m_dirty = false, m_again = false, m_space = false, m_panning = false, m_quietSelection = false;
   QPoint m_panLast;
   QPointer<Job> m_job;

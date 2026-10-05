@@ -24,6 +24,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -141,6 +142,7 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   Tool m_tool = Tool::None;
   std::string m_view, m_item, m_type;  // the picks' view; the annotation being re-attached or edited; the reading shown
   std::vector<SheetPick> m_picks;
+  std::optional<SheetPick> m_hoverPick;  // what a click would pick now (lit in the preview)
   opad::json m_plan;  // the worker's last answer for the picks shown
   bool m_pending = false, m_again = false, m_ending = false, m_filling = false;
   int m_editing = 0;  // edits of the selected annotation being planned

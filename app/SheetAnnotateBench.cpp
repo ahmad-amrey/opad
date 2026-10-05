@@ -125,6 +125,18 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
       return f ? f->paper(p) : Vec2{0, 0};
     };
     check(w.m_ribbon->tabIds().contains("drawings.annotate"), "the Drawings workspace has its Annotate tab");
+    {  // A pick by an edge's end: the edge under the pointer, unless the end is within 4 pixels; Snap off: the edge alone.
+      const double px = 1 / canvas->pixelsPerMm();
+      const Vec2 end = paper(front, {40, -25, 0});  // the top edge's right end (the plate's corner)
+      const auto along = canvas->pickAt(canvas->toScene({end[0] - 6 * px, end[1] + px}));
+      const auto atEnd = canvas->pickAt(canvas->toScene({end[0] - 2 * px, end[1]}));
+      canvas->setSnapKinds(0);
+      const auto snapOff = canvas->pickAt(canvas->toScene({end[0] - 2 * px, end[1]}));
+      canvas->setSnapKinds(opad::drawing::kAllSnaps);
+      using K = opad::drawing::SnapKind;
+      check(along && along->line && along->kind == K::Nearest && atEnd && atEnd->kind == K::End && snapOff && snapOff->line && snapOff->kind == K::Nearest,
+            "by an edge's end: 6 px off it the edge under the pointer is picked (no end 6 px away), 2 px off it the end; with Snap off the edge");
+    }
 
     // The smart dimension: the front view's top edge, read horizontally with the pointer above it.
     w.action("drawings.dimension")->trigger();
@@ -133,8 +145,27 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
     click(paper(front, {10, -25, 0}));
     check(planned() && tools->pickCount() == 1 && tools->plan().value("choices", opad::json::array()).size() == 3,
           "a click on the top edge picks it; measured on a worker: horizontal, vertical and aligned readings");
+    const auto selPixels = [&] {  // the canvas as painted: pixels in the selection colour (the picked edge, the preview)
+      const QImage img = canvas->viewport()->grab().toImage().convertToFormat(QImage::Format_RGB32);
+      const QColor sel = theme::current().sel;
+      int n = 0;
+      for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x)
+          if (const QColor c(img.pixel(x, y)); std::abs(c.red() - sel.red()) < 50 && std::abs(c.green() - sel.green()) < 50 && std::abs(c.blue() - sel.blue()) < 50) ++n;
+      return n;
+    };
     moveTo(plus(paper(front, {0, -25, 0}), {0, 12}));
     check(tools->chosenType() == "horizontal" && canvas->preview() && canvas->preview()->prims.size() > 4, "the pointer above the edge reads it horizontally; the preview follows");
+    {  // drawn, not only planned: on an A3 sheet the guides had no area, and nothing of the preview reached the screen
+      const auto shown = canvas->preview();
+      const int with = selPixels();
+      canvas->viewport()->grab().save(prefix + ".preview.png");
+      canvas->setPreview(nullptr);
+      const int without = selPixels();
+      canvas->setPreview(shown);
+      trace::log(QString("bench: annotate: selection-coloured pixels %1 with the preview, %2 without").arg(with).arg(without));
+      check(with - without > 150, "the preview is painted on the sheet: the picked edge and the dimension in the selection colour (<prefix>.preview.png)");
+    }
     const size_t ops0 = w.m_doc->doc.ops.size();
     click(plus(paper(front, {0, -25, 0}), {0, 12}));
     check(added("dimension", 1) && w.m_doc->doc.ops.size() == ops0 + 1, "a click on the paper places it: one step");

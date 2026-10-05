@@ -537,6 +537,7 @@ void SheetAnnotator::cancel() {
   const bool was = m_tool != Tool::None;
   m_tool = Tool::None;
   m_picks.clear();
+  m_hoverPick.reset();
   m_plan = nullptr;
   m_view.clear();
   m_ending = false;
@@ -901,6 +902,7 @@ void SheetAnnotator::updatePreview() {
   const uint32_t rgb = (static_cast<uint32_t>(sel.red()) << 16) | (static_cast<uint32_t>(sel.green()) << 8) | static_cast<uint32_t>(sel.blue());
   const int picked = d->layer({"Picked", opad::drawing::kInk, opad::drawing::LineType::Continuous, 0.6});
   for (const auto& p : m_picks) d->curve(picked, p.curve, rgb);
+  if (m_hoverPick) d->curve(d->layer({"Hover", opad::drawing::kInk, opad::drawing::LineType::Continuous, 0.3}), m_hoverPick->curve, rgb);
   const auto [def, measured] = current();
   const opad::Sheet* sheet = m_doc->scene.sheet(sheetId());
   if (!def.is_null() && sheet) {
@@ -1117,6 +1119,7 @@ void SheetAnnotator::clickAt(const QPointF& scene) {
     if (pick->view != view) return emit message(m_tool == Tool::Reattach ? tr("Pick on the annotation's view") : tr("Pick on the same view"));
     m_view = view;
     m_picks.push_back(*pick);
+    m_hoverPick.reset();
     clearInputs();
     if (m_tool == Tool::Dimension || m_tool == Tool::HoleCallout || m_tool == Tool::Datum || m_tool == Tool::Surface || m_tool == Tool::Note || m_tool == Tool::Frame)
       m_plan = nullptr;
@@ -1152,7 +1155,11 @@ void SheetAnnotator::clickAt(const QPointF& scene) {
 
 void SheetAnnotator::moveTo(const QPointF& scene) {
   m_mouse = scene;
-  if (placing()) updatePreview();
+  // Waiting for a pick: the curve a click would take, lit under the pointer (with Snap off nothing showed what it would be).
+  std::optional<SheetPick> hover = m_canvas && !m_pending && wantsPick() ? m_canvas->pickAt(scene) : std::nullopt;
+  const bool changed = hover.has_value() != m_hoverPick.has_value() || (hover && (hover->view != m_hoverPick->view || hover->pick != m_hoverPick->pick));
+  m_hoverPick = std::move(hover);
+  if (placing() || changed) updatePreview();
 }
 
 // ---------------------------------------------------------------- input
