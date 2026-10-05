@@ -168,7 +168,7 @@ QStringList groups(const QAction* action) {
   const QString id=action->objectName();
   if(id.startsWith("view.")) {
     if(QStringList{"view.top","view.bottom","view.left","view.right","view.front","view.back","view.iso","view.alignPlane","view.rollleft","view.rollright"}.contains(id))return {T::tr("View"),T::tr("Orientation")};
-    if(QStringList{"view.home","view.fit","view.fitall","view.saveview"}.contains(id))return {T::tr("View"),T::tr("Framing")};
+    if(QStringList{"view.home","view.fit","view.fitall","view.saveview"}.contains(id) || id.startsWith("view.named"))return {T::tr("View"),T::tr("Framing")};
     if(id.contains("grid",Qt::CaseInsensitive)||id=="view.extensions"||id=="view.tracking")return {T::tr("View"),T::tr("Grid and snapping")};
     return {T::tr("View"),T::tr("Display")};
   }

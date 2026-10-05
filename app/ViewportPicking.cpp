@@ -241,6 +241,12 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
   if((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease) && static_cast<QKeyEvent*>(e)->key()==Qt::Key_Control
       && (object==this || underMouse() || m_ctrlCenterPick))
     setCenterPicking(e->type()==QEvent::KeyPress,m_trackingCursor);
+  // Ctrl held over the view while a feature preview stands in for bodies: those bodies as they are, to pick more on them.
+  if((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease) && static_cast<QKeyEvent*>(e)->key()==Qt::Key_Control
+      && !static_cast<QKeyEvent*>(e)->isAutoRepeat()) {
+    if(e->type()==QEvent::KeyRelease) setPreviewPeek(false);
+    else if(object==this || underMouse()) setPreviewPeek(true);
+  }
   if ((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)
       && (object==this || underMouse() || m_shift.held())
       && (window()->isActiveWindow() || m_shift.held()
@@ -259,6 +265,7 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
     if (const auto* widget=qobject_cast<QWidget*>(object); widget && !widget->isWindow() && isAncestorOf(widget)) m_sketchInput->sketchLeave();
   if (e->type()==QEvent::ApplicationDeactivate) {
     setCenterPicking(false,m_trackingCursor);
+    setPreviewPeek(false);  // its release goes to another application
     m_centerLocked=false; m_shift.deactivate(); refreshCenterStyles();
   }
   return QWidget::eventFilter(object,e);

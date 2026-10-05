@@ -46,6 +46,16 @@ def strokes(root, document):
     return path
 
 
+def open_box(root, document):
+    """A 60 x 40 x 30 mm box without its top (walls 5 mm), a 16 x 8 x 3 mm pocket in its floor and a 20 x 8 mm slot through
+    its back wall from 10 to 18 mm up: the slot's upper face looks down into the box, seen from inside it only."""
+    def cut(origin, length, width, height):
+        return ("feature", "--kind", "box", "--inputs", json.dumps({"plane": {"origin": origin, "normal": [0, 0, 1]}, "length": f"{length} mm",
+                                                                  "width": f"{width} mm", "height": f"{height} mm", "operation": "cut"}))
+    return document("open-box", ("feature", "--kind", "box", "--inputs", '{"length":"60 mm","width":"40 mm","height":"30 mm"}'),
+                    cut([0, 0, 5], 50, 30, 30), cut([0, 0, 2], 16, 8, 3), cut([0, 17.5, 10], 20, 7, 8))
+
+
 def colour_boxes(root, document):
     """Three 20 x 20 x 10 mm boxes along X: grey, and two blues close to the dark and the light theme's selection colour."""
     return document("colour-boxes", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"10 mm"}'),
@@ -247,6 +257,10 @@ CASES = [
     # touchpad's pixels pan by the finger's px); told apart as on Windows the same device pans as before. Preferences'
     # Scroll wheel / trackpad: Trackpad pans pans the same notch, Mouse wheel zooms zooms a touchpad's notch and a finger
     # gesture, Automatic pans the gesture again. <prefix>.card.png; in Arabic the card is mirrored.
+    # Zoom inside a part (the report "camera zoom as I am inside the part"): the wheel at a face deep in an open box, in
+    # perspective from above (the eye goes in through the open top), from inside at the slot's upper face (seen from
+    # inside only) and orthographic: every notch gets closer, the face stays under the pointer, unclipped and pickable.
+    ("cavity-zoom", open_box, {"OPAD_BENCH_CAVITYZOOM": "{prefix}"}),
     ("wheel", "box", {"OPAD_BENCH_WHEEL": "{prefix}", "OPAD_BENCH_SCROLLASK": "1"}),
     ("wheel-ar", "box", {"OPAD_BENCH_WHEEL": "{prefix}", "OPAD_BENCH_SCROLLASK": "1", "OPAD_LANG": "ar"}),
     # The measuring tools (UI-50, UI-144): a rod written as B-splines reads its radius (recognised as a cylinder) in the

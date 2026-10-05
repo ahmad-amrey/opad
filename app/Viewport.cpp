@@ -2148,7 +2148,7 @@ void Viewport::benchDoubleClickAt(const QPointF& at, Qt::KeyboardModifiers modif
   }
 }
 
-void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) {
+void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers, bool held) {
   if (!m_initialised) return;
   m_view->Redraw();  // the picker needs a frame after a camera change
   auto send = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers held) {
@@ -2159,7 +2159,7 @@ void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) 
   send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, modifiers);
   send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton, modifiers);
   send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton, modifiers);
-  send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+  send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, held ? modifiers : Qt::NoModifier);
 }
 
 void Viewport::clearHover() {
@@ -3220,6 +3220,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;
   if(awaitingWarp && !m_warpGate.pending && e->buttons()!=Qt::NoButton) m_dragOffset=m_warpPosition-e->position();
   if(m_initialised && e->buttons()==Qt::NoButton) setCenterPicking(e->modifiers().testFlag(Qt::ControlModifier),e->position());
+  if(m_previewPeek && !e->modifiers().testFlag(Qt::ControlModifier)) setPreviewPeek(false);  // Ctrl's release went elsewhere
   if (m_hoverCycled && devicePos(e->position() + m_dragOffset) != m_cycledAt) m_hoverCycled = false;  // the pointer moved on: it picks again
   m_trackingCursor = e->position();
   m_trackingDirty = true;

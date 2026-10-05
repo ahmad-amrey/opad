@@ -61,4 +61,8 @@ CASES = [
     # edge pulled out and typed into, Move's X arrow and ring pulled and typed into, and the chamfer, thicken, plane and box
     # arrows pulled out, each preview checked while the button is held.
     ("handles", handle_parts, {"OPAD_BENCH_HANDLES": "{prefix}"}),
+    # Ctrl shows the original to pick more (the report): a fillet's preview stands in for the box, whose other edges cannot be
+    # picked; Ctrl held shows the box as it is with the picked edge selected, the prompt and the panel's hint say so; a
+    # Ctrl+click adds an edge (its preview waits), the release brings the preview of both back; a Ctrl+click takes one back.
+    ("preview-peek", handle_parts, {"OPAD_BENCH_PREVIEWPEEK": "{prefix}"}),
 ]

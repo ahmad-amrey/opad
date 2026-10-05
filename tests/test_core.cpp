@@ -379,6 +379,24 @@ TEST(home_view_is_a_view_op_with_an_optional_key) {
   CHECK(!resolve(d).views.back().home);
 }
 
+// A named view can keep what was hidden with it (display.hidden, node uuids); it round-trips, a view without it (every
+// file before it) is a camera only, and anything but an array of uuids is refused.
+TEST(named_view_keeps_what_is_hidden) {
+  Document d = Document::create();
+  const json camera{{"eye", {100, -100, 100}}, {"target", {0, 0, 0}}, {"up", {0, 0, 1}}};
+  const std::string a = new_uuid(), b = new_uuid();
+  commands::run("view", {{"name", "Plain"}, {"camera", camera}}, &d);
+  commands::run("view", {{"name", "Shown"}, {"camera", camera}, {"display", {{"hidden", {a, b}}}}}, &d);
+  CHECK_THROWS(commands::run("view", {{"name", "Bad"}, {"camera", camera}, {"display", {{"hidden", a}}}}, &d));
+  CHECK_THROWS(commands::run("view", {{"name", "Bad"}, {"camera", camera}, {"display", {{"hidden", {1, 2}}}}}, &d));
+  const std::string text = d.serialize();
+  CHECK_EQ(Document::parse(text).serialize(), text);
+  const Scene s = resolve(Document::parse(text));
+  CHECK_EQ(s.views.size(), 2u);
+  CHECK(s.views[0].display.is_null());
+  CHECK(s.views[1].display["hidden"] == json::array({a, b}));
+}
+
 TEST(missing_body_entry_is_flagged_not_dropped) {
   Document d = Document::create();
   std::string b1 = new_uuid();

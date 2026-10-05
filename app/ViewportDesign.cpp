@@ -427,24 +427,65 @@ void Viewport::setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_
   setPreviewBodies(parts, hidden);
 }
 
+void Viewport::standIn(const std::string& node) {
+  auto it = m_items.find(node);
+  if (it == m_items.end() || m_previewHidden.count(node)) return;
+  m_previewHidden.insert(node);
+  if (m_previewPeek) return;  // Ctrl held: it stays as it is, picks and all, until the release
+  m_ctx->Erase(it->second.ais, Standard_False);
+  // Its selection glow goes too: left behind, a moved body looked copied. clearPreviewBodies brings it back.
+  if (auto glow = m_bodyGlows.find(it->second.ais.get()); glow != m_bodyGlows.end()) {
+    m_ctx->Remove(glow->second, Standard_False);
+    m_bodyGlows.erase(glow);
+  }
+}
+
+void Viewport::showOriginal(const std::string& node) {
+  auto it = m_items.find(node);
+  if (it == m_items.end() || !it->second.look.visible || m_ctx->IsDisplayed(it->second.ais)) return;  // hidden by its look meanwhile (UI-121)
+  m_ctx->Display(it->second.ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);
+  activateSelection(it->second.ais);
+}
+
+void Viewport::showPreviewPart(const Handle(AIS_Shape)& ais, int mode) {
+  m_ctx->Display(ais, mode, -1, Standard_False);
+  m_previewBodies.push_back(ais);
+  m_previewModes[ais.get()] = mode;
+  if (m_previewPeek) m_ctx->Erase(ais, Standard_False);  // computed, shown on Ctrl's release
+}
+
+bool Viewport::previewShown() const {
+  return m_initialised && std::any_of(m_previewBodies.begin(), m_previewBodies.end(), [this](const Handle(AIS_Shape)& p) { return m_ctx->IsDisplayed(p); });
+}
+
+void Viewport::setPreviewPeek(bool on) {
+  if (!m_initialised || m_previewPeek == on) return;
+  if (on && (!m_peekGate || !m_peekGate() || (m_previewBodies.empty() && m_previewHidden.empty()))) return;
+  m_previewPeek = on;
+  if (on) {
+    for (const auto& p : m_previewBodies) m_ctx->Erase(p, Standard_False);
+    for (const auto& node : m_previewHidden) showOriginal(node);
+  } else {
+    const std::set<std::string> standing = std::exchange(m_previewHidden, {});
+    for (const auto& node : standing) standIn(node);
+    for (const auto& p : m_previewBodies) {
+      const auto mode = m_previewModes.find(p.get());
+      m_ctx->Display(p, mode != m_previewModes.end() ? mode->second : int(AIS_Shaded), -1, Standard_False);
+    }
+  }
+  applySelectionLayers();
+  refreshSubHighlight();
+  redrawScene();
+  emit previewPeekChanged(on);
+}
+
 void Viewport::setPreviewBodies(const std::vector<PreviewPart>& parts, const std::vector<std::string>& hidden) {
   if (!m_initialised) return;
   clearPreviewBodies();
-  auto hide = [this](const std::string& node) {
-    auto it = m_items.find(node);
-    if (it == m_items.end() || m_previewHidden.count(node)) return;
-    m_ctx->Erase(it->second.ais, Standard_False);
-    // Its selection glow goes too: left behind, a moved body looked copied. clearPreviewBodies brings it back.
-    if (auto glow = m_bodyGlows.find(it->second.ais.get()); glow != m_bodyGlows.end()) {
-      m_ctx->Remove(glow->second, Standard_False);
-      m_bodyGlows.erase(glow);
-    }
-    m_previewHidden.insert(node);
-  };
-  for (const auto& id : hidden) hide(id);
+  for (const auto& id : hidden) standIn(id);
   for (const auto& [node, shape, prs] : parts) {
     if (shape.IsNull()) continue;
-    if (!node.empty()) hide(node);
+    if (!node.empty()) standIn(node);
     Handle(AIS_Shape) ais = prs ? Handle(AIS_Shape)(new BodyShape(shape, prs)) : new AIS_Shape(shape);
     ais->Attributes()->SetAutoTriangulation(Standard_False);  // the worker meshed it
     ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
@@ -462,8 +503,7 @@ void Viewport::setPreviewBodies(const std::vector<PreviewPart>& parts, const std
     if (shape.ShapeType() == TopAbs_EDGE) ais->SetWidth(2.5);  // a construction axis
     ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
     ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
-    m_ctx->Display(ais, AIS_Shaded, -1, Standard_False);
-    m_previewBodies.push_back(ais);
+    showPreviewPart(ais, AIS_Shaded);
   }
   redrawScene();
 }
@@ -485,12 +525,8 @@ void Viewport::clearPreviewBodies() {
   if (m_previewBodies.empty() && m_previewHidden.empty()) return;
   for (const auto& p : m_previewBodies) m_ctx->Remove(p, Standard_False);
   m_previewBodies.clear();
-  for (const auto& node : m_previewHidden) {
-    auto it = m_items.find(node);
-    if (it == m_items.end() || !it->second.look.visible) continue;  // hidden by its look meanwhile (UI-121)
-    m_ctx->Display(it->second.ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);
-    activateSelection(it->second.ais);
-  }
+  m_previewModes.clear();
+  for (const auto& node : m_previewHidden) showOriginal(node);  // shown already while Ctrl is held
   const bool hadHidden = !m_previewHidden.empty();
   m_previewHidden.clear();
   if (hadHidden) applySelectionLayers();  // glows of the ones still selected
@@ -529,9 +565,9 @@ bool Viewport::hoveredEdge(TopoDS_Shape& edge) const {
 
 void Viewport::setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden) {
   if(!m_initialised)return;clearPreviewBodies();
-  for(const auto& id:hidden)if(auto it=m_items.find(id);it!=m_items.end()){m_ctx->Erase(it->second.ais,false);m_previewHidden.insert(id);}
+  for(const auto& id:hidden)standIn(id);
   Handle(AIS_Shape) ais=new BodyShape(shape,std::move(prs));ais->SetColor(occ(m_tokens.sel));ais->SetTransparency(0.25);
-  ais->Attributes()->SetFaceBoundaryDraw(true);m_ctx->Display(ais,AIS_Shaded,-1,false);m_previewBodies.push_back(ais);redrawScene();
+  ais->Attributes()->SetFaceBoundaryDraw(true);showPreviewPart(ais,AIS_Shaded);redrawScene();
 }
 
 bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {
@@ -571,9 +607,7 @@ bool Viewport::originReferenceAt(const QPointF& point,opad::Ref& ref) {
 void Viewport::setPreviewCurves(std::shared_ptr<const BodyPrs> curves,std::shared_ptr<const BodyPrs> construction,const std::vector<std::string>& hidden) {
   if(!m_initialised)return;
   clearPreviewBodies();
-  for(const auto& id:hidden)if(auto it=m_items.find(id);it!=m_items.end()) {
-    m_ctx->Erase(it->second.ais,false);m_previewHidden.insert(id);
-  }
+  for(const auto& id:hidden)standIn(id);
   // Line-only arrays: BodyShape draws them as they are (no shape behind them to walk here).
   TopoDS_Compound none;BRep_Builder().MakeCompound(none);
   for(auto* prs:{&curves,&construction}) {
@@ -581,7 +615,7 @@ void Viewport::setPreviewCurves(std::shared_ptr<const BodyPrs> curves,std::share
     Handle(AIS_Shape) ais=new BodyShape(none,std::move(*prs));
     ais->SetColor(occ(m_tokens.sel));ais->SetWidth(prs==&curves?2:1.5);
     if(prs==&construction) ais->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);
-    m_ctx->Display(ais,AIS_WireFrame,-1,false);m_previewBodies.push_back(ais);
+    showPreviewPart(ais,AIS_WireFrame);
   }
   redrawScene();
 }
