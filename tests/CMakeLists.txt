@@ -135,7 +135,7 @@ if(OPAD_BUILD_PLUGINS)
   set_tests_properties(plugin PROPERTIES FIXTURES_REQUIRED step_fixtures)
 endif()
 
-if(OPAD_BUILD_PYTHON AND Python3_Interpreter_FOUND)
+if(TARGET opad_python AND Python3_Interpreter_FOUND)  # python/ skips the module without pybind11
   add_test(NAME python COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/python/test_opad.py ${OPAD_FIXTURE_DIR})
   set_tests_properties(python PROPERTIES FIXTURES_REQUIRED step_fixtures
     ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:opad_python>;OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
