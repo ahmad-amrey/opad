@@ -327,7 +327,7 @@ TEST(canvas_rendered_with_its_picture) {
   };
   Image shot = render_scene(d, resolve(d), o);
   auto top = at(shot, 0.6, 0.3), bottom = at(shot, 0.6, 0.7), left = at(shot, 0.08, 0.5);
-  if (top[0] == top[2]) return;  // this build's OCCT reads no pictures: the canvas keeps its colour (nothing to check)
+  if (top == bottom && top == left) return;  // this build's OCCT reads no pictures (no FreeImage, not Windows): the canvas keeps its one colour
   CHECK(top[0] > 150 && top[2] < 80 && bottom[2] > 150 && bottom[0] < 80 && left[0] < 60 && left[2] < 60);
   const std::string id = only_canvas(resolve(d));
   run(d, "canvas", {{"action", "flags"}, {"target", id}, {"set", {{"flip", {true, true}}}}});
