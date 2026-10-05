@@ -732,6 +732,7 @@ struct Walk {
       for (const auto& r : out.removed) plan.changed.push_back({op_id, r, nullptr, true});
     }
     for (const auto& [k, v] : out.extra.items()) result[k] = v;
+    if (!out.tool.IsNull()) plan.tools.push_back({op_id, out.operation, std::make_shared<TopoDS_Shape>(out.tool)});
     return result;
   }
 
@@ -963,15 +964,29 @@ struct Walk {
           note_fresh(result);
         } else {
           try {
-            Out out = compute_feature(ctx, kind, inputs);
+            Ctx made_in = ctx;
+            made_in.component = component;
+            Out out = compute_feature(made_in, kind, inputs);
             check_read_only(ctx, kind, out);
             for (auto& [k, v] : notes.items()) out.extra[k] = v;
-            if (!out.used_targets.empty()) {
-              if (json* patch = patchable_inputs(id)) {
+            // What the feature decided by itself goes into the op that asked (a new op, or the edit making the change): the
+            // bodies automatic targets took, and the operation an "auto" one was taken as, so the document keeps the
+            // choice as Fusion does instead of deciding again at every regeneration.
+            if (json* patch = patchable_inputs(id)) {
+              bool patched = false;
+              if (!out.used_targets.empty()) {
                 json targets = json::array();
                 for (const auto& t : out.used_targets) targets.push_back({{"body", t}, {"kind", "body"}});
                 inputs["targets"] = targets;
                 (*patch)["targets"] = targets;
+                patched = true;
+              }
+              if (inputs.value("operation", "") == "auto" && !out.operation.empty()) {
+                inputs["operation"] = out.operation;
+                (*patch)["operation"] = out.operation;
+                patched = true;
+              }
+              if (patched) {
                 data["inputs"] = inputs;
                 fp = fingerprint();
               }

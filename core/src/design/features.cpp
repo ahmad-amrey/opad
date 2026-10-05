@@ -10,6 +10,7 @@
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -25,7 +26,11 @@
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffset_MakeOffset.hxx>
 #include <Geom2d_Line.hxx>
+#include <Geom_BSplineSurface.hxx>
+#include <Geom_ConicalSurface.hxx>
 #include <Geom_CylindricalSurface.hxx>
+#include <Geom_RectangularTrimmedSurface.hxx>
+#include <GeomLib.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
@@ -57,9 +62,14 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
+#include <sstream>
+#include <tuple>
 
 #include "engine.hpp"
+#include "opad/design/sketch_reference.hpp"
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 
@@ -100,6 +110,12 @@ InputSpec advancing(InputSpec s) {
   return s;
 }
 
+// A face input that also takes an origin or construction plane (offered in the view beside the faces).
+InputSpec with_planes(InputSpec s) {
+  s.planes = true;
+  return s;
+}
+
 void with_operation(std::vector<InputSpec>& v, const char* first = "new") {
   std::vector<std::string> ops = {"new", "join", "cut", "intersect"};
   std::rotate(ops.begin(), std::find(ops.begin(), ops.end(), first), ops.end());
@@ -130,14 +146,28 @@ std::vector<FeatureSpec> build_specs() {
       placed({in("diameter", "Base diameter", "length", "20 mm"), in("top_diameter", "Top diameter", "length", "0 mm"), in("height", "Height", "length", "20 mm")}), "new");
   add("torus", "Torus", "torus", "create", "A ring centred on a plane: the ring diameter runs through the middle of the tube.",
       placed({in("diameter", "Ring diameter", "length", "40 mm"), in("section", "Section diameter", "length", "10 mm")}), "new");
+  // The profiles hand over to the next input still empty (Up to face, Start face), so a face clicked for those is not taken
+  // as one more profile; more profiles: the Profiles box again.
   add("extrude", "Extrude", "extrude", "create", "Pull sketch profiles or planar faces along their normal. Symmetric splits the distance in half on each side; a start offset moves the start along the sketch normal.",
-      {pick("profiles", "Profiles", "profiles", 1, 0),choice("start", "Start from", {"profile", "offset", "face"}),
+      {advancing(pick("profiles", "Profiles", "profiles", 1, 0)),choice("start", "Start from", {"profile", "offset", "face"}),
        in("start_offset", "Start offset", "length", "0 mm", "start=offset"),pick("start_face", "Start face", "faces", 1, 1, "start=face"),
+       // A start face that is curved or tilted to the axis: the start follows it, or is flat at its nearest or farthest
+       // contact with the extrusion, or the profiles go onto its plane as a derived sketch (Sketch on face).
+       choice("start_shape", "Start at", {"follow_face", "nearest_contact", "farthest_contact", "sketch_on_face"}, "start=face"),
+       in("face_offset", "Offset from face", "length", "0 mm", "start=face"),
        choice("direction", "Direction", {"one", "symmetric", "two"}), choice("extent", "Extent", {"distance", "all", "to_face", "to_body"}),
-       pick("extent_face", "Up to face", "faces", 1, 1, "extent=to_face"), pick("extent_body", "Up to body", "bodies", 1, 1, "extent=to_body"),
+       with_planes(pick("extent_face", "Up to face", "faces", 1, 1, "extent=to_face")), pick("extent_body", "Up to body", "bodies", 1, 1, "extent=to_body"),
+       in("extend", "Extend the face", "bool", true, "extent=to_face"), in("extent_offset", "End offset", "length", "0 mm", "extent=to_face|to_body"),
+       // A target that is curved or tilted to the axis: the end follows it, or is flat where the extrusion first touches it
+       // or where all of it has reached it.
+       choice("extent_end", "End at", {"follow_face", "nearest_contact", "farthest_contact"}, "extent=to_face|to_body"),
        in("distance", "Distance", "length", "10 mm", "extent=distance"), in("distance2", "Distance, other side", "length", "10 mm", "direction=two"),
        in("taper", "Taper angle", "angle", "0 deg", "extent=distance"), in("flip", "Flip direction", "bool", false)},
       "new");
+  // "auto": Fusion's automatic operation, decided from the bodies around (extrude_operation) and written into the op as the
+  // operation it was taken as. Not the default of the command (agents and scripts keep "new"); the panel starts with it.
+  for (auto& i : v.back().inputs)
+    if (i.name == "operation") i.choices.push_back("auto");
   add("revolve", "Revolve", "revolve", "create", "Turn sketch profiles about an axis.",
       {pick("profiles", "Profiles", "profiles", 1, 0), in("axis", "Axis", "axis"), in("angle", "Angle", "angle", "360 deg"), in("symmetric", "Symmetric", "bool", false)}, "new");
   add("sweep", "Sweep", "sweep", "create", "Move a profile along a path.", {pick("profiles", "Profile", "profiles", 1, 1), in("path", "Path", "path")}, "new");
@@ -302,21 +332,31 @@ TopoDS_Shape boolean(BoolOp op, const TopoDS_Shape& a, const TopoDS_Shape& b) {
   if (b.ShapeType() == TopAbs_COMPOUND)
     for (TopoDS_Iterator it(b); it.More(); it.Next()) tools.Append(it.Value());
   if (tools.IsEmpty()) tools.Append(b);
-  auto run = [&](BRepAlgoAPI_BooleanOperation& algo) {
+  auto run = [&](BRepAlgoAPI_BooleanOperation& algo, double fuzzy) -> std::optional<TopoDS_Shape> {
     algo.SetArguments(args);
     algo.SetTools(tools);
-    algo.SetFuzzyValue(1e-6);
+    algo.SetFuzzyValue(fuzzy);
     algo.SetRunParallel(Standard_True);
     algo.SetNonDestructive(Standard_True);
     algo.Build();
-    if (!algo.IsDone() || algo.HasErrors()) throw Error("the boolean operation failed");
+    if (!algo.IsDone() || algo.HasErrors()) return std::nullopt;
     algo.SimplifyResult(Standard_True, Standard_True);  // coplanar faces left by the cut are merged, like any CAD user expects
     return algo.Shape();
   };
-  if (op == BoolOp::Fuse) { BRepAlgoAPI_Fuse f; return run(f); }
-  if (op == BoolOp::Cut) { BRepAlgoAPI_Cut c; return run(c); }
-  BRepAlgoAPI_Common c;
-  return run(c);
+  // Shapes that only touch or nearly coincide (a tool flush with a body's face, an extrusion ending on one, a tangent
+  // round face) can defeat the kernel at the usual tolerance: tried again with a coarser one before giving up, rather than
+  // handing the user the kernel's own message.
+  for (const double fuzzy : {1e-6, 1e-5, 1e-4}) {
+    try {
+      std::optional<TopoDS_Shape> r;
+      if (op == BoolOp::Fuse) { BRepAlgoAPI_Fuse f; r = run(f, fuzzy); }
+      else if (op == BoolOp::Cut) { BRepAlgoAPI_Cut c; r = run(c, fuzzy); }
+      else { BRepAlgoAPI_Common c; r = run(c, fuzzy); }
+      if (r && !r->IsNull()) return *r;
+    } catch (const Standard_Failure&) {
+    }
+  }
+  throw Error("the boolean operation failed");
 }
 
 Bnd_Box box_of(const TopoDS_Shape& s) {
@@ -502,27 +542,76 @@ TopoDS_Wire resolve_path(const Ctx& ctx, const json& path) {
   return mw.Wire();
 }
 
-// The shared ending of every feature that makes material: new body, or join / cut / intersect with others.
+// Bodies an automatic operation or automatic targets may change: solid, not part of a linked file (read-only), not missing,
+// not locked (UI-37), and when the feature is made in a component (Ctx::component) only those under it, as Fusion's active
+// component; of them those whose box meets `nearby` (void: all).
+std::vector<std::string> automatic_bodies(const Ctx& ctx, const Bnd_Box& nearby) {
+  std::set<std::string> under;
+  if (!ctx.component.empty())
+    for (const auto& b : ctx.scene.bodies_under(ctx.component)) under.insert(b);
+  std::vector<std::string> out;
+  for (const auto& id : ctx.scene.all_bodies()) {
+    const Node* n = ctx.scene.node(id);
+    if (!n || n->representation != "solid" || n->linked || (n->body_missing && !ctx.fresh.count(n->body_key))) continue;
+    if (ctx.scene.effectively_locked(id)) continue;
+    if (!ctx.component.empty() && !under.count(id)) continue;
+    if (nearby.IsVoid() || !box_of(ctx.node_shape(id)).IsOut(nearby)) out.push_back(id);
+  }
+  return out;
+}
+
+// The bodies an operation's automatic choice looks at: the named targets, else automatic_bodies near the tool.
+std::vector<TopoDS_Shape> operation_bodies(const Ctx& ctx, const json& inputs, const TopoDS_Shape& tool) {
+  Bnd_Box nearby = box_of(tool);
+  nearby.Enlarge(1e-4);
+  std::vector<std::string> ids = body_ids(ctx, inputs.value("targets", json::array()));
+  if (ids.empty()) ids = automatic_bodies(ctx, nearby);
+  std::vector<TopoDS_Shape> out;
+  for (const auto& id : ids) out.push_back(ctx.node_shape(id));
+  return out;
+}
+
+bool touches_any(const std::vector<TopoDS_Shape>& bodies, const TopoDS_Shape& tool) {
+  for (const auto& b : bodies) {
+    BRepExtrema_DistShapeShape d(b, tool, Extrema_ExtFlag_MIN);
+    if (d.IsDone() && d.NbSolution() > 0 && d.Value() < 1e-6) return true;
+  }
+  return false;
+}
+
+// An "auto" operation of a feature that does not decide it itself (extrude_operation): Cut when most of the tool lies in the
+// bodies, Join when it overlaps or touches one, else New body.
+std::string tool_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& tool) {
+  const std::vector<TopoDS_Shape> bodies = operation_bodies(ctx, inputs, tool);
+  if (bodies.empty()) return "new";
+  const double whole = std::fabs(volume_of(tool));
+  double inside = 0;
+  for (const auto& b : bodies) {
+    ctx.check_cancel();
+    const TopoDS_Shape common = boolean(BoolOp::Common, b, tool);
+    if (!solids_of(common).empty()) inside += std::fabs(volume_of(common));
+  }
+  if (whole > 0 && inside > 0.55 * whole) return "cut";
+  return touches_any(bodies, tool) ? "join" : "new";
+}
+
+// The shared ending of every feature that makes material: new body, or join / cut / intersect with others. "auto" takes
+// what out.operation says (decided by the feature), else tool_operation decides. Out::tool and Out::operation record it.
 void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& tool_in, Out& out) {
   const TopoDS_Shape tool = healed(tool_in);
   if (solids_of(tool).empty()) throw Error("the operation produced no solid");
-  const std::string op = inputs.value("operation", "new");
+  std::string op = inputs.value("operation", "new");
+  if (op == "auto") op = !out.operation.empty() ? out.operation : tool_operation(ctx, inputs, tool);
+  if (op != "new" && op != "join" && op != "cut" && op != "intersect") throw Error("unknown operation \"" + op + "\": new, join, cut, intersect or auto");
+  out.operation = op;
+  out.tool = tool;
   if (op == "new") {
     for (const auto& s : solids_of(tool)) out.bodies.push_back({"", outward(s)});
     return;
   }
   std::vector<std::string> targets = body_ids(ctx, inputs.value("targets", json::array()));
   const bool automatic = targets.empty();
-  if (automatic) {
-    const Bnd_Box tb = box_of(tool);
-    for (const auto& id : ctx.scene.all_bodies()) {
-      const Node* n = ctx.scene.node(id);
-      // A linked file's parts are read-only: never taken by the search (named as a target, the feature says why not).
-      if (!n || n->representation != "solid" || n->linked || (n->body_missing && !ctx.fresh.count(n->body_key))) continue;
-      if (ctx.scene.effectively_locked(id)) continue;  // left alone, as when it is named (UI-37)
-      if (!box_of(ctx.node_shape(id)).IsOut(tb)) targets.push_back(id);
-    }
-  }
+  if (automatic) targets = automatic_bodies(ctx, box_of(tool));
   if (op == "join") {
     TopoDS_Shape acc = tool;
     std::string owner;
@@ -597,116 +686,680 @@ double extrusion_start(const Ctx& ctx,const json& in,const gp_Vec& normal,const 
   const auto& refs=in.at("start_face");if(!refs.is_array()||refs.size()!=1)throw Error("pick one planar start face");
   const auto frame=ctx.plane({{"face",refs.front()}});const gp_Vec other(vec(frame.normal()));
   if(std::abs(std::abs(other.Dot(normal))-1)>1e-7)throw Error("the start face must be perpendicular to the extrusion axis");
-  return gp_Vec(center,pnt(frame.origin)).Dot(normal);
-}
-// An extrusion pulled far along `n` from `base`, cut back to end at a face or a body (TODO 10 B8): the piece that
-// starts at the profile. A face stops it at its whole surface (a plane: the unbounded plane); a body where the
-// extrusion first meets it. Part of the profile missing the target is refused rather than running on.
-TopoDS_Shape trim_up_to(const Ctx& ctx, const json& in, const TopoDS_Shape& far_prism, const TopoDS_Shape& base, const gp_Vec& n, double reach) {
-  GProp_GProps g;
-  BRepGProp::SurfaceProperties(base, g);
-  const gp_Pnt start = g.CentreOfMass().Translated(n.Normalized() * 1e-3);
-  TopoDS_Shape trimmed;
-  if (in.value("extent", "") == "to_face") {
-    const auto faces = ctx.resolve_all(in.value("extent_face", json()));
-    if (faces.size() != 1 || faces[0].sub.ShapeType() != TopAbs_FACE) throw Error("pick the face the extrusion goes up to");
-    const TopoDS_Face face = TopoDS::Face(faces[0].sub);
-    BRepAdaptor_Surface surf(face);
-    if (surf.GetType() == GeomAbs_Plane) {
-      const gp_Pln plane = surf.Plane();
-      if (plane.Distance(g.CentreOfMass()) < 1e-7) throw Error("the profile lies on that face's plane");
-      const TopoDS_Face infinite = BRepBuilderAPI_MakeFace(plane).Face();
-      const TopoDS_Solid side = BRepPrimAPI_MakeHalfSpace(infinite, g.CentreOfMass()).Solid();
-      trimmed = boolean(BoolOp::Common, far_prism, side);
-    } else {
-      BRepAlgoAPI_Splitter split;
-      TopTools_ListOfShape arguments, tools;
-      arguments.Append(far_prism);
-      tools.Append(face);
-      split.SetArguments(arguments);
-      split.SetTools(tools);
-      split.Build();
-      if (!split.IsDone()) throw Error("the extrusion cannot be cut at that face");
-      trimmed = split.Shape();
-    }
-  } else {
-    const auto bodies = ctx.resolve_all(in.value("extent_body", json()));
-    if (bodies.size() != 1) throw Error("pick the body the extrusion goes up to");
-    const TopoDS_Shape body = ctx.node_shape(bodies[0].node);
-    if (BRepClass3d_SolidClassifier(body, start, 1e-7).State() == TopAbs_IN) throw Error("the profile starts inside that body");
-    trimmed = boolean(BoolOp::Cut, far_prism, body);
-  }
-  // The piece at the profile, which must stop short of the far end everywhere.
-  TopoDS_Shape kept;
-  for (const auto& piece : solids_of(trimmed))
-    if (BRepClass3d_SolidClassifier(piece, start, 1e-7).State() == TopAbs_IN) kept = piece;
-  if (kept.IsNull()) throw Error("the extrusion does not reach that target from this profile");
-  Bnd_Box box;
-  BRepBndLib::Add(kept, box, Standard_False);
-  double x0, y0, z0, x1, y1, z1;
-  box.Get(x0, y0, z0, x1, y1, z1);
-  const gp_Dir d(n);
-  double reached = -1e300;
-  for (int i = 0; i < 8; ++i) reached = std::max(reached, gp_Vec(g.CentreOfMass(), gp_Pnt(i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0)).Dot(gp_Vec(d)));
-  if (reached > reach * 0.999) throw Error("part of the profile misses the target, so the extrusion would not stop; extrude to a distance instead");
-  return kept;
+  return gp_Vec(center,pnt(frame.origin)).Dot(normal)+(in.contains("face_offset")?ctx.length(in,"face_offset"):0.0);
 }
 
-TopoDS_Shape make_extrusion(const Ctx& ctx, const json& in, const Profiles& prof) {
+// Points inside a planar face, spread over it (a grid over its parameter box, a finer one for a thin face): where an
+// extrusion looks for material ahead and from where it is sure to start inside its own solid (a ring's centre is not).
+std::vector<gp_Pnt> face_samples(const TopoDS_Face& face) {
+  double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+  BRepTools::UVBounds(face, u0, u1, v0, v1);
+  BRepTopAdaptor_FClass2d inside(face, 1e-7);
+  BRepAdaptor_Surface surface(face);
+  std::vector<gp_Pnt> out;
+  for (int grid : {5, 17}) {
+    for (int i = 0; i < grid; ++i)
+      for (int j = 0; j < grid; ++j) {
+        const gp_Pnt2d uv(u0 + (u1 - u0) * (i + 0.5) / grid, v0 + (v1 - v0) * (j + 0.5) / grid);
+        if (inside.Perform(uv) == TopAbs_IN) out.push_back(surface.Value(uv.X(), uv.Y()));
+      }
+    if (!out.empty()) break;
+  }
+  if (out.empty()) {
+    GProp_GProps g;
+    BRepGProp::SurfaceProperties(face, g);
+    out.push_back(g.CentreOfMass());
+  }
+  return out;
+}
+
+// Classifies points against a set of solids, each loaded once.
+struct Inside {
+  std::vector<std::unique_ptr<BRepClass3d_SolidClassifier>> solids;
+  explicit Inside(const std::vector<TopoDS_Shape>& shapes) {
+    for (const auto& s : shapes)
+      for (const auto& solid : solids_of(s)) solids.push_back(std::make_unique<BRepClass3d_SolidClassifier>(solid));
+  }
+  bool operator()(const gp_Pnt& p) const {
+    for (const auto& c : solids) {
+      c->Perform(p, 1e-7);
+      if (c->State() == TopAbs_IN) return true;
+    }
+    return false;
+  }
+};
+
+// The operation an extrusion takes by itself (Fusion's automatic operation): Cut when it starts into material (points spread
+// over the profiles, just ahead of them on each side the extrusion goes, are mostly inside a body), Join when the extrusion
+// overlaps or touches a body, else New body. The bodies are the named targets, else those automatic targets may take (in the
+// component the feature is made in). Works the same for every extent and direction: the sides it goes are read off the tool.
+std::string extrude_operation(const Ctx& ctx, const json& in, const Profiles& prof, const TopoDS_Shape& tool, const std::vector<double>& starts) {
+  const std::vector<TopoDS_Shape> bodies = operation_bodies(ctx, in, tool);
+  if (bodies.empty()) return "new";
+  const Bnd_Box tb = box_of(tool);
+  const double eps = std::clamp(std::sqrt(tb.SquareExtent()) * 1e-3, 1e-5, 0.05);
+  gp_Vec n(prof.normal);
+  if (in.value("flip", false)) n.Reverse();
+  const Inside in_tool({tool}), in_material(bodies);
+  int ahead = 0, into = 0;
+  for (size_t i = 0; i < prof.faces.size(); ++i) {
+    ctx.check_cancel();
+    const TopoDS_Face& face = prof.faces[i];
+    const double start = i < starts.size() ? starts[i] : 0.0;
+    for (const gp_Pnt& on : face_samples(face)) {
+      const gp_Pnt p = on.Translated(n * start);
+      for (const double side : {1.0, -1.0}) {
+        const gp_Pnt q = p.Translated(n * (side * eps));
+        if (!in_tool(q)) continue;  // the extrusion does not go this way
+        ++ahead;
+        if (in_material(q)) ++into;
+      }
+    }
+  }
+  if (ahead > 0 && into * 2 > ahead) return "cut";
+  return touches_any(bodies, tool) ? "join" : "new";
+}
+
+// How far the material inside `path` reaches along `dir` beyond the plane through `from` (normal `dir`): the farthest
+// point of the bodies' parts within the path. Negative: no body lies in it.
+double material_reach(const Ctx& ctx, const std::vector<TopoDS_Shape>& bodies, const TopoDS_Shape& path, const gp_Pnt& from, const gp_Dir& dir) {
+  const Bnd_Box pb = box_of(path);
+  gp_Trsf local;
+  local.SetTransformation(gp_Ax3(from, dir));  // world -> a frame whose Z is the extrusion's direction
+  auto top = [&local](const TopoDS_Shape& s) {
+    Bnd_Box box;
+    BRepBndLib::AddOptimal(BRepBuilderAPI_Transform(s, local, Standard_True).Shape(), box, Standard_False, Standard_False);
+    if (box.IsVoid()) return -1.0;
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    return z1;
+  };
+  double farthest = -1;
+  for (const auto& b : bodies) {
+    ctx.check_cancel();
+    if (box_of(b).IsOut(pb)) continue;
+    try {
+      const TopoDS_Shape within = boolean(BoolOp::Common, b, path);
+      if (solids_of(within).empty()) continue;
+      farthest = std::max(farthest, top(within));
+    } catch (const Standard_Failure&) {  // the kernel cannot intersect them (faces that only touch): the whole body counts
+      farthest = std::max(farthest, top(b));
+    } catch (const Error&) {
+      farthest = std::max(farthest, top(b));
+    }
+  }
+  return farthest;
+}
+
+// To all (Fusion's All): through every body in the way, ending where the last of them ends along the extrusion, on each side
+// when it goes two ways (symmetric: the farther of the two both ways), instead of running on for twice the model's size: a
+// cut goes through all of them, a join fills up to the farthest material. The bodies are the named targets of a join, cut or
+// intersect, else every body automatic targets may take. Refused when nothing is in the way.
+std::pair<double, double> through_all(const Ctx& ctx, const json& in, const Profiles& prof, const gp_Vec& n, double reach, const std::string& direction,
+                                      const std::vector<double>& starts) {
+  std::vector<std::string> ids;
+  if (in.value("operation", "new") != "new") ids = body_ids(ctx, in.value("targets", json::array()));
+  if (ids.empty()) ids = automatic_bodies(ctx, Bnd_Box());
+  std::vector<TopoDS_Shape> bodies;
+  for (const auto& id : ids) bodies.push_back(ctx.node_shape(id));
+  const bool both = direction != "one";
+  double ahead = -1, behind = -1;
+  for (size_t i = 0; i < prof.faces.size(); ++i) {
+    ctx.check_cancel();
+    const TopoDS_Face& face = prof.faces[i];
+    GProp_GProps g;
+    BRepGProp::SurfaceProperties(face, g);
+    const double start = starts.at(i);
+    gp_Trsf to_start;
+    to_start.SetTranslation(n * start);
+    const TopoDS_Shape base = moved(face, to_start);
+    const gp_Pnt from = g.CentreOfMass().Translated(n * start);
+    ahead = std::max(ahead, material_reach(ctx, bodies, BRepPrimAPI_MakePrism(base, n * reach, Standard_True).Shape(), from, gp_Dir(n)));
+    if (both) behind = std::max(behind, material_reach(ctx, bodies, BRepPrimAPI_MakePrism(base, -n * reach, Standard_True).Shape(), from, gp_Dir(-n)));
+  }
+  if (ahead <= 1e-7 && behind <= 1e-7)
+    throw Error(both ? "nothing lies in the extrusion's way on either side: To all goes through the bodies in the way; extrude to a distance instead"
+                     : "nothing lies ahead of the profile: To all goes through the bodies in the way; flip the direction or extrude to a distance");
+  ahead = std::max(ahead, 0.0);
+  behind = std::max(behind, 0.0);
+  if (direction == "symmetric") ahead = behind = std::max(ahead, behind);
+  return {ahead, behind};
+}
+
+// A face's surface carried on past its edges (Fusion's Extend faces, for To face): round directions all the way round,
+// straight ones (a cylinder's length, an extrusion's, a cone's sides away from its apex) `by` beyond the face, a B-spline
+// patch lengthened by `by` on each open side. The face itself when its surface cannot be extended.
+TopoDS_Face extended_face(const TopoDS_Face& face, double by) {
+  Handle(Geom_Surface) surface = BRep_Tool::Surface(face);  // with the face's placement
+  if (surface.IsNull()) return face;
+  for (Handle(Geom_RectangularTrimmedSurface) t = Handle(Geom_RectangularTrimmedSurface)::DownCast(surface); !t.IsNull();
+       t = Handle(Geom_RectangularTrimmedSurface)::DownCast(surface))
+    surface = t->BasisSurface();
+  double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+  BRepTools::UVBounds(face, u0, u1, v0, v1);
+  double U0 = 0, U1 = 0, V0 = 0, V1 = 0;
+  try {
+    if (Handle(Geom_BSplineSurface) spline = Handle(Geom_BSplineSurface)::DownCast(surface); !spline.IsNull()) {
+      Handle(Geom_BoundedSurface) longer = Handle(Geom_BoundedSurface)::DownCast(spline->Copy());
+      for (const bool inU : {true, false})
+        for (const bool after : {true, false})
+          if (!(inU ? longer->IsUPeriodic() : longer->IsVPeriodic())) GeomLib::ExtendSurfByLength(longer, by, 1, inU, after);
+      surface = longer;
+      surface->Bounds(U0, U1, V0, V1);
+    } else {
+      surface->Bounds(U0, U1, V0, V1);
+      auto range = [by](bool periodic, double period, double lo, double hi, double a, double b) {
+        if (periodic) return std::make_pair(a, a + period);
+        return std::make_pair(std::max(lo, a - by), std::min(hi, b + by));
+      };
+      const auto u = range(surface->IsUPeriodic(), surface->IsUPeriodic() ? surface->UPeriod() : 0.0, U0, U1, u0, u1);
+      auto v = range(surface->IsVPeriodic(), surface->IsVPeriodic() ? surface->VPeriod() : 0.0, V0, V1, v0, v1);
+      if (Handle(Geom_ConicalSurface) cone = Handle(Geom_ConicalSurface)::DownCast(surface); !cone.IsNull()) {
+        const double apex = -cone->RefRadius() / std::sin(cone->SemiAngle());  // the cone's sides stop short of its apex
+        const double gap = std::max(1e-6, (v1 - v0) * 1e-3);
+        if (v0 >= apex) v.first = std::max(v.first, apex + gap);
+        else v.second = std::min(v.second, apex - gap);
+      }
+      U0 = u.first, U1 = u.second, V0 = v.first, V1 = v.second;
+    }
+    BRepBuilderAPI_MakeFace make(surface, U0, U1, V0, V1, 1e-7);
+    if (make.IsDone()) return make.Face();
+  } catch (const Standard_Failure&) {
+  }
+  return face;
+}
+
+// What an extrusion goes up to (TODO 10 B8, and what Fusion's To object takes): a plane (an origin or construction plane,
+// a planar face's plane when Extend is on, the plane through a vertex or a sketch point parallel to the profile), a face
+// (curved, or planar with Extend off) or a body.
+struct UpTo {
+  std::optional<gp_Pln> plane;
+  TopoDS_Shape shape;
+  bool body = false;
+  bool extended = false;  // `shape` is a face carried on past its edges
+  TopoDS_Shape wide;      // a face: its surface carried on (tried when the face itself does not cover the profile)
+};
+
+// The targets to try in turn: the face itself, then (when there is one) its surface carried on past its edges.
+std::vector<UpTo> tries_of(const UpTo& target) {
+  std::vector<UpTo> out;
+  out.reserve(2);
+  out.push_back(target);
+  if (!target.wide.IsNull()) {
+    out.push_back(target);
+    out.back().shape = target.wide;
+    out.back().wide.Nullify();
+    out.back().extended = true;
+  }
+  return out;
+}
+
+// Heights along `dir` above the plane through `from` square to it: the lowest and the highest point of a shape.
+std::pair<double, double> heights(const TopoDS_Shape& s, const gp_Pnt& from, const gp_Dir& dir) {
+  gp_Trsf local;
+  local.SetTransformation(gp_Ax3(from, dir));
+  Bnd_Box b;
+  BRepBndLib::AddOptimal(BRepBuilderAPI_Transform(s, local, Standard_True).Shape(), b, Standard_False, Standard_False);
+  if (b.IsVoid()) return {0.0, 0.0};
+  double x0, y0, z0, x1, y1, z1;
+  b.Get(x0, y0, z0, x1, y1, z1);
+  return {z0, z1};
+}
+
+// A solid split by a target surface (a plane: a square of it larger than the model) into its pieces; tried at coarser
+// tolerances as boolean() is. Empty when the kernel cannot.
+std::vector<TopoDS_Shape> split_by(const TopoDS_Shape& solid, const UpTo& surface, double reach) {
+  const TopoDS_Shape tool = surface.plane ? TopoDS_Shape(BRepBuilderAPI_MakeFace(*surface.plane, -4 * reach, 4 * reach, -4 * reach, 4 * reach).Face()) : surface.shape;
+  for (const double fuzzy : {1e-6, 1e-5, 1e-4}) {
+    try {
+      BRepAlgoAPI_Splitter split;
+      TopTools_ListOfShape arguments, tools;
+      arguments.Append(solid);
+      tools.Append(tool);
+      split.SetArguments(arguments);
+      split.SetTools(tools);
+      split.SetFuzzyValue(fuzzy);
+      split.SetNonDestructive(Standard_True);
+      split.Build();
+      if (split.IsDone() && !split.HasErrors()) return solids_of(split.Shape());
+    } catch (const Standard_Failure&) {
+    }
+  }
+  return {};
+}
+
+UpTo up_to_target(const Ctx& ctx, const json& in, const gp_Dir& normal, double reach) {
+  UpTo t;
+  if (in.value("extent", "") == "to_body") {
+    const auto bodies = ctx.resolve_all(in.value("extent_body", json()));
+    if (bodies.size() != 1) throw Error("pick the body the extrusion goes up to");
+    t.shape = ctx.node_shape(bodies[0].node);
+    t.body = true;
+    return t;
+  }
+  const json refs = in.value("extent_face", json());
+  const json one = refs.is_array() ? (refs.size() == 1 ? refs[0] : json()) : refs;
+  if (one.is_null()) throw Error("pick the face the extrusion goes up to");
+  if (one.is_object() && !one.contains("body") && (one.contains("base") || one.contains("feature") || one.contains("face") || one.contains("normal"))) {
+    const Frame f = ctx.plane(one);  // an origin plane, a construction plane, a face's plane
+    t.plane = gp_Pln(pnt(f.origin), gp_Dir(vec(f.normal())));
+    return t;
+  }
+  if (one.is_object() && one.contains("sketch") && one.contains("point")) {
+    t.plane = gp_Pln(resolve_points(ctx, json::array({one})).at.at(0), normal);
+    return t;
+  }
+  if (const auto free = free_point(one)) {
+    t.plane = gp_Pln(*free, normal);
+    return t;
+  }
+  const ResolvedRef r = ctx.resolve(one);
+  if (r.sub.ShapeType() == TopAbs_VERTEX) {
+    t.plane = gp_Pln(BRep_Tool::Pnt(TopoDS::Vertex(r.sub)), normal);
+    return t;
+  }
+  if (r.sub.ShapeType() != TopAbs_FACE) throw Error("the extrusion goes up to a face, a plane, a vertex or a body");
+  const TopoDS_Face face = TopoDS::Face(r.sub);
+  const bool extend = in.value("extend", true);
+  BRepAdaptor_Surface surface(face);
+  if (surface.GetType() == GeomAbs_Plane && extend) {
+    t.plane = surface.Plane();
+    return t;
+  }
+  t.shape = face;
+  if (extend) t.wide = extended_face(face, reach);
+  return t;
+}
+
+// The extrusion of `base` along `dir` cut back to end at the target moved `offset` along `dir`: the piece that starts at the
+// profile, which must stop short of the far end everywhere. Null, with why, when it does not get there this way. A plane
+// parallel to the profile ends a plain prism at its distance (no Boolean at all); a tilted plane keeps the half-space on the
+// profile's side; a face splits the long prism; a body is cut out of it. What the kernel cannot do (shapes that only touch
+// or run along each other) is said in words, never as the kernel's own message.
+TopoDS_Shape trim_to(const UpTo& target, const TopoDS_Shape& base, const gp_Dir& dir, double reach, double offset, const std::string& end, std::string& why) {
+  const TopoDS_Face base_face = TopoDS::Face(TopExp_Explorer(base, TopAbs_FACE).Current());
+  const gp_Pnt inside = face_samples(base_face).front();
+  double eps = 1e-3;
+  gp_Trsf shift;
+  shift.SetTranslation(gp_Vec(dir) * offset);
+  try {
+    TopoDS_Shape trimmed;
+    if (target.plane) {
+      const gp_Pln plane = target.plane->Translated(gp_Vec(dir) * offset);
+      const gp_Vec normal(plane.Axis().Direction());
+      const double along = gp_Vec(dir).Dot(normal);
+      if (std::fabs(along) < 1e-9) {
+        why = "the extrusion runs parallel to that plane and never reaches it";
+        return {};
+      }
+      // Where the plane is along the extrusion from each corner of the profile: behind it or on it, this way does not get
+      // there; ahead of some corners and behind others, it cuts through the profile.
+      double nearest = 1e300, farthest = -1e300;
+      for (TopExp_Explorer v(base, TopAbs_VERTEX); v.More(); v.Next()) {
+        const double at = gp_Vec(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())), plane.Location()).Dot(normal) / along;
+        nearest = std::min(nearest, at), farthest = std::max(farthest, at);
+      }
+      const double at = gp_Vec(inside, plane.Location()).Dot(normal) / along;
+      nearest = std::min(nearest, at), farthest = std::max(farthest, at);
+      if (farthest <= 1e-7) {
+        if (nearest > -1e-7) why = "the profile lies on that plane";
+        return {};
+      }
+      if (nearest < -1e-7) {
+        why = "that plane cuts through the profile, so the extrusion would end on both sides of it; extrude to a distance or pick a plane clear of the profile";
+        return {};
+      }
+      if (std::fabs(std::fabs(along) - 1) < 1e-9) return BRepPrimAPI_MakePrism(base, gp_Vec(dir) * at, Standard_True).Shape();  // parallel: a plain prism
+      eps = std::min(eps, std::max(at * 0.5, 1e-7));  // the start point stays short of the plane
+      const TopoDS_Shape far_prism = BRepPrimAPI_MakePrism(base, gp_Vec(dir) * reach, Standard_True).Shape();
+      // The half-space on the profile's side, told by a point behind the profile (never on the plane).
+      const gp_Pnt behind = inside.Translated(gp_Vec(dir) * -std::max(1.0, reach * 1e-3));
+      BRepPrimAPI_MakeHalfSpace side(BRepBuilderAPI_MakeFace(plane).Face(), behind);
+      if (!side.IsDone()) {
+        why = "the extrusion cannot be ended on that plane";
+        return {};
+      }
+      trimmed = boolean(BoolOp::Common, far_prism, side.Solid());
+    } else if (target.body) {
+      const TopoDS_Shape far_prism = BRepPrimAPI_MakePrism(base, gp_Vec(dir) * reach, Standard_True).Shape();
+      const TopoDS_Shape body = offset != 0 ? moved(target.shape, shift) : target.shape;
+      if (BRepClass3d_SolidClassifier(body, inside.Translated(gp_Vec(dir) * eps), 1e-7).State() == TopAbs_IN) {
+        why = "the profile starts inside that body";
+        return {};
+      }
+      trimmed = boolean(BoolOp::Cut, far_prism, body);
+    } else {
+      const TopoDS_Shape far_prism = BRepPrimAPI_MakePrism(base, gp_Vec(dir) * reach, Standard_True).Shape();
+      const TopoDS_Shape face = offset != 0 ? moved(target.shape, shift) : target.shape;
+      for (const double fuzzy : {1e-6, 1e-5, 1e-4}) {  // as boolean(): a tangent face can need a coarser tolerance
+        BRepAlgoAPI_Splitter split;
+        TopTools_ListOfShape arguments, tools;
+        arguments.Append(far_prism);
+        tools.Append(face);
+        split.SetArguments(arguments);
+        split.SetTools(tools);
+        split.SetFuzzyValue(fuzzy);
+        split.SetNonDestructive(Standard_True);
+        split.Build();
+        if (split.IsDone() && !split.HasErrors()) {
+          trimmed = split.Shape();
+          break;
+        }
+      }
+      if (trimmed.IsNull()) {
+        why = "the extrusion cannot be cut at that face (it only touches the extrusion's path, or runs along it); pick another face or extrude to a distance";
+        return {};
+      }
+    }
+    const gp_Pnt start = inside.Translated(gp_Vec(dir) * eps);
+    TopoDS_Shape kept;
+    for (const auto& piece : solids_of(trimmed))
+      if (BRepClass3d_SolidClassifier(piece, start, 1e-7).State() == TopAbs_IN) kept = piece;
+    if (kept.IsNull()) return {};
+    // Reaching the far end anywhere: part of the profile passes the target.
+    gp_Trsf local;
+    local.SetTransformation(gp_Ax3(gp_Pnt(0, 0, 0), dir));
+    Bnd_Box box;
+    BRepBndLib::Add(BRepBuilderAPI_Transform(kept, local, Standard_True).Shape(), box, Standard_False);
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    Bnd_Box from;
+    BRepBndLib::Add(BRepBuilderAPI_Transform(base, local, Standard_True).Shape(), from, Standard_False);
+    double a0, b0, c0, a1, b1, c1;
+    from.Get(a0, b0, c0, a1, b1, c1);
+    if (z1 - c0 > reach * 0.999) {
+      // The body was not met at all this way: not reached (the other way may); met only in part: it misses.
+      if (target.body && std::fabs(volume_of(kept) - volume_of(BRepPrimAPI_MakePrism(base, gp_Vec(dir) * reach, Standard_True).Shape())) < 1e-9 * std::max(1.0, volume_of(kept))) return {};
+      why = target.shape.IsNull() || target.body ? "part of the profile misses the target, so the extrusion would not stop; extrude to a distance instead"
+            : target.extended ? "part of the profile misses that face even carried on past its edges, so the extrusion would not stop; pick a larger face or extrude to a distance"
+                              : "part of the profile misses that face, so the extrusion would not stop: turn on Extend the face, or extrude to a distance";
+      return {};
+    }
+    // End at the nearest or the farthest contact: a flat end square to the axis where the extrusion first touches the target
+    // (the lowest of the end faces, those clear of the profile's plane), or where all of it has reached it (the highest point).
+    if (end == "nearest_contact" || end == "farthest_contact") {
+      const auto [k0, k1] = heights(kept, inside, dir);
+      double h = k1;
+      if (end == "nearest_contact")
+        for (TopExp_Explorer f(kept, TopAbs_FACE); f.More(); f.Next()) {
+          const double low = heights(f.Current(), inside, dir).first;
+          if (low > 1e-6 * std::max(1.0, k1)) h = std::min(h, low);
+        }
+      if (h <= 1e-7) {
+        why = "the target touches the profile, so the extrusion would have no length there; end at the farthest contact or follow the face";
+        return {};
+      }
+      return BRepPrimAPI_MakePrism(base, gp_Vec(dir) * h, Standard_True).Shape();
+    }
+    return kept;
+  } catch (const Standard_Failure&) {
+  } catch (const Error&) {  // boolean(): the kernel gave up at every tolerance
+  }
+  why = target.body ? "the extrusion cannot be stopped at that body: it only touches the extrusion's path, or runs along it; pick another target or extrude to a distance"
+                    : "the extrusion cannot be stopped at that target: it only touches the extrusion's path, or runs along it; pick another target or extrude to a distance";
+  return {};
+}
+
+// Up to the target (To face, To body), going whichever way reaches it: the extrusion's direction (Flip direction) first,
+// then the other, as Fusion's To object goes towards the object. Refused, saying why, when neither way does.
+TopoDS_Shape up_to(const Ctx& ctx, const json& in, const TopoDS_Shape& base, const gp_Vec& n, double reach) {
+  const UpTo target = up_to_target(ctx, in, gp_Dir(n), reach);
+  const double offset = in.contains("extent_offset") ? ctx.length(in, "extent_offset") : 0.0;
+  const std::string end = in.value("extent_end", "follow_face");
+  const std::vector<UpTo> tries = tries_of(target);  // the face itself, then carried on past its edges
+  std::string why;
+  for (const gp_Dir dir : {gp_Dir(n), gp_Dir(-n)}) {
+    std::string reason;
+    for (const UpTo& t : tries) {
+      reason.clear();
+      const TopoDS_Shape kept = trim_to(t, base, dir, reach, offset, end, reason);
+      if (!kept.IsNull()) return kept;
+    }
+    if (why.empty()) why = reason;
+  }
+  if (!why.empty()) throw Error(why);
+  throw Error(target.body ? "the extrusion does not reach that body from this profile" : "the extrusion does not reach that target from this profile");
+}
+
+// A point inside a face and the face's normal there (out of its body): the first of its spread samples.
+std::pair<gp_Pnt, gp_Dir> face_tangent(const TopoDS_Face& face) {
+  double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+  BRepTools::UVBounds(face, u0, u1, v0, v1);
+  BRepTopAdaptor_FClass2d inside(face, 1e-7);
+  gp_Pnt2d uv((u0 + u1) / 2, (v0 + v1) / 2);
+  if (inside.Perform(uv) != TopAbs_IN)
+    for (int i = 0; i < 25; ++i) {
+      const gp_Pnt2d q(u0 + (u1 - u0) * (i % 5 + 0.5) / 5, v0 + (v1 - v0) * (i / 5 + 0.5) / 5);
+      if (inside.Perform(q) == TopAbs_IN) {
+        uv = q;
+        break;
+      }
+    }
+  BRepAdaptor_Surface surface(face);
+  gp_Pnt p;
+  gp_Vec du, dv;
+  surface.D1(uv.X(), uv.Y(), p, du, dv);
+  gp_Vec n = du.Crossed(dv);
+  if (n.Magnitude() < 1e-12) throw Error("the start face has no normal where it is picked");
+  if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+  return {p, gp_Dir(n)};
+}
+
+TopoDS_Face picked_start_face(const Ctx& ctx, const json& in) {
+  const json& refs = in.at("start_face");
+  if (!refs.is_array() || refs.size() != 1) throw Error("pick one start face");
+  const ResolvedRef r = ctx.resolve(refs.front());
+  if (r.sub.ShapeType() != TopAbs_FACE) throw Error("the start must be a face");
+  return TopoDS::Face(r.sub);
+}
+
+// Start from: Face. A planar face square to the axis is a start distance (extrusion_start); any other face (tilted, curved) is
+// a surface the start follows or touches: a plane, or the face and its surface carried on past its edges.
+std::optional<UpTo> start_surface(const Ctx& ctx, const json& in, const gp_Vec& n, double reach) {
+  if (in.value("start", "profile") != "face") return std::nullopt;
+  const TopoDS_Face face = picked_start_face(ctx, in);
+  BRepAdaptor_Surface surface(face);
+  if (surface.GetType() == GeomAbs_Plane && std::fabs(std::fabs(surface.Plane().Axis().Direction().Dot(gp_Dir(n))) - 1) < 1e-7) return std::nullopt;
+  UpTo t;
+  if (surface.GetType() == GeomAbs_Plane) {
+    if (std::fabs(surface.Plane().Axis().Direction().Dot(gp_Dir(n))) < 1e-7) throw Error("the start face runs along the extrusion, so it is never met");
+    t.plane = surface.Plane();
+  } else {
+    t.shape = face;
+    t.wide = extended_face(face, reach);
+  }
+  return t;
+}
+
+// Where a start face meets the profile's extrusion along `dir`, as heights from the profile's plane: the nearest and the
+// farthest contact, and the part of a long prism past the face, whose near end follows the face. Coming from far behind the
+// profile, the first crossing of the face is the start (a round face may be crossed again further on). The face itself first;
+// carried on past its edges when it does not cover the profile.
+struct Contact {
+  double nearest = 0, farthest = 0;
+  TopoDS_Shape beyond;
+};
+
+Contact start_contact(const TopoDS_Face& profile, const UpTo& surface, const gp_Dir& dir, double reach) {
+  const gp_Pnt on = face_samples(profile).front();
+  gp_Trsf back;
+  back.SetTranslation(gp_Vec(dir) * -reach);
+  const TopoDS_Shape longer = BRepPrimAPI_MakePrism(moved(profile, back), gp_Vec(dir) * (2 * reach), Standard_True).Shape();
+  const gp_Pnt behind = on.Translated(gp_Vec(dir) * (-reach * 0.98));
+  const std::vector<UpTo> tries = tries_of(surface);
+  for (const UpTo& t : tries) {
+    TopoDS_Shape before;  // the piece from far behind up to the face
+    for (const auto& piece : split_by(longer, t, reach))
+      if (BRepClass3d_SolidClassifier(piece, behind, 1e-7).State() == TopAbs_IN) before = piece;
+    if (before.IsNull()) continue;
+    const auto [low, high] = heights(before, on, dir);
+    if (high > reach * 0.97) continue;  // not separated: part of the profile misses the face
+    Contact c;
+    c.farthest = c.nearest = high;
+    for (TopExp_Explorer f(before, TopAbs_FACE); f.More(); f.Next()) {
+      const double bottom = heights(f.Current(), on, dir).first;
+      if (bottom > -reach * 0.97) c.nearest = std::min(c.nearest, bottom);  // the face's part: the sides run back to the far end
+    }
+    try {
+      c.beyond = boolean(BoolOp::Cut, longer, before);
+    } catch (const Error&) {
+      continue;
+    }
+    return c;
+  }
+  throw Error("part of the profile misses the start face, even carried on past its edges, so the extrusion has no start there; pick a larger face");
+}
+
+// Start from: Face, Sketch on face: the profiles moved onto the start face's plane (a curved face's tangent plane at its middle)
+// and the face offset along its normal, as a sketch projecting them there draws them (derived_extrude_ops makes that sketch,
+// in this frame when `frame` is given); the extrusion goes along that plane's normal, on the side the profiles' own normal
+// points to.
+Profiles profiles_on_face(const Ctx& ctx, const json& in, const Profiles& prof, const Frame* frame = nullptr) {
+  const TopoDS_Face face = picked_start_face(ctx, in);
+  auto [at, normal] = face_tangent(face);
+  BRepAdaptor_Surface surface(face);
+  if (surface.GetType() == GeomAbs_Plane) {
+    normal = surface.Plane().Axis().Direction();
+    if (!surface.Plane().Position().Direct()) normal.Reverse();
+    if (face.Orientation() == TopAbs_REVERSED) normal.Reverse();
+  }
+  const double along = normal.Dot(prof.normal);
+  if (std::fabs(along) < 1e-6) throw Error("the start face is edge-on to the profile, so the profile cannot be sketched on it");
+  if (along < 0) normal.Reverse();
+  const double offset = in.contains("face_offset") ? ctx.length(in, "face_offset") : 0.0;
+  const Frame f = frame ? *frame : plane_through(at.Translated(gp_Vec(normal) * offset), gp_Vec(normal));
+  // The sources as a projecting sketch names them: a sketch whole, a body's face.
+  std::vector<json> sources;
+  for (const auto& r : in.value("profiles", json::array())) {
+    const json source = r.is_object() && r.contains("sketch") ? json{{"sketch", r["sketch"]}} : r;
+    if (std::find(sources.begin(), sources.end(), source) == sources.end()) sources.push_back(source);
+  }
+  std::vector<Region> regions;
+  for (const auto& source : sources) {
+    const Sketch projected = derive_sketch(ctx.doc, ctx.scene, f, source, "project", ctx.fresh);
+    for (auto& g : sketch_regions(projected, f)) regions.push_back(std::move(g));
+  }
+  Profiles out;
+  out.normal = normal;
+  for (const auto& p : prof.faces) {
+    const gp_Pnt sample = face_samples(p).front();
+    double u = 0, v = 0;
+    f.to_local({sample.X(), sample.Y(), sample.Z()}, u, v);
+    const int i = region_at(regions, f, u, v);
+    if (i < 0) throw Error("a profile does not come out as a region on the start face's plane (its curves overlap there)");
+    out.faces.push_back(regions[static_cast<size_t>(i)].face);
+  }
+  return out;
+}
+
+// The extrusion's solid. `starts` (when given) gets each profile's start, as a height along the extrusion from its plane.
+TopoDS_Shape make_extrusion(const Ctx& ctx, const json& in, const Profiles& prof, std::vector<double>* starts_out = nullptr) {
   const std::string direction = in.value("direction", "one");
   const std::string extent = in.value("extent", "distance");
   const bool upto = extent == "to_face" || extent == "to_body";
   if (upto && direction != "one") throw Error("up to a face or a body goes one way: set the direction to one");
-  const bool all = extent == "all" || upto;
+  if (extent != "distance" && extent != "all" && !upto) throw Error("unknown extent \"" + extent + "\": distance, all, to_face or to_body");
   gp_Vec n(prof.normal);
   if (in.value("flip", false)) n.Reverse();
-  double d1 = all ? 0 : ctx.length(in, "distance");
-  double d2 = direction == "two" ? (all ? 0 : ctx.length(in, "distance2")) : 0;
-  if (all) {
-    d1 = scene_reach(ctx, compound_of(std::vector<TopoDS_Shape>(prof.faces.begin(), prof.faces.end())));
-    d2 = direction == "one" ? 0 : d1;
-  } else if (direction == "symmetric") {
-    d1 = d2 = d1 / 2;
-  }
-  if (std::fabs(d1 + d2) < 1e-7) throw Error("the extrusion distance is zero");
-  const double taper = all ? 0.0 : (in.contains("taper") ? ctx.angle(in, "taper") : 0.0);
-  std::vector<TopoDS_Shape> solids;
+  const bool from_face = in.value("start", "profile") == "face";
+  const double reach = extent == "distance" && !from_face ? 0.0 : scene_reach(ctx, compound_of(std::vector<TopoDS_Shape>(prof.faces.begin(), prof.faces.end())));
+  // Each profile's start: a distance along the axis, or where a curved or tilted start face meets it (a flat start at the
+  // nearest or farthest contact, or one that follows the face: carved by the part of space beyond the face).
+  const std::optional<UpTo> surface = start_surface(ctx, in, n, reach);
+  const std::string start_shape = in.value("start_shape", "follow_face");
+  const bool follow = surface && start_shape == "follow_face";
+  if (follow && direction != "one") throw Error("a start that follows a face goes one way: set the direction to one, or start at the nearest or farthest contact");
+  const double face_offset = surface && in.contains("face_offset") ? ctx.length(in, "face_offset") : 0.0;
+  std::vector<double> starts, spans;
+  std::vector<TopoDS_Shape> beyonds;
   for (const auto& face : prof.faces) {
     ctx.check_cancel();
+    if (surface) {
+      const Contact c = start_contact(face, *surface, gp_Dir(n), reach);
+      starts.push_back((start_shape == "farthest_contact" ? c.farthest : c.nearest) + face_offset);
+      spans.push_back(follow ? c.farthest - c.nearest : 0.0);
+      gp_Trsf shift;
+      shift.SetTranslation(n * face_offset);
+      beyonds.push_back(follow ? moved(c.beyond, shift) : TopoDS_Shape());
+    } else {
+      GProp_GProps g;
+      BRepGProp::SurfaceProperties(face, g);
+      starts.push_back(extrusion_start(ctx, in, n, g.CentreOfMass()));
+      spans.push_back(0.0);
+      beyonds.emplace_back();
+    }
+  }
+  if (starts_out) *starts_out = starts;
+  double d1 = 0, d2 = 0;
+  if (extent == "distance") {
+    d1 = ctx.length(in, "distance");
+    d2 = direction == "two" ? ctx.length(in, "distance2") : 0;
+    if (direction == "symmetric") d1 = d2 = d1 / 2;
+    if (std::fabs(d1 + d2) < 1e-7) throw Error("the extrusion distance is zero");
+    if (follow && d1 < 0) throw Error("a start that follows a face needs a positive distance: flip the direction instead");
+  } else if (extent == "all") {
+    std::tie(d1, d2) = through_all(ctx, in, prof, n, reach, direction, starts);
+  }
+  const double taper = extent != "distance" ? 0.0 : (in.contains("taper") ? ctx.angle(in, "taper") : 0.0);
+  std::vector<TopoDS_Shape> solids;
+  for (size_t i = 0; i < prof.faces.size(); ++i) {
+    ctx.check_cancel();
+    const TopoDS_Face& face = prof.faces[i];
     TopoDS_Shape base = face;
-    GProp_GProps properties;BRepGProp::SurfaceProperties(face,properties);
-    const double start=extrusion_start(ctx,in,n,properties.CentreOfMass());
+    const double start = starts[i];
     if (std::fabs(start-d2) > 1e-12) {
       gp_Trsf back;
       back.SetTranslation(n * (start-d2));
       base = moved(face, back);
     }
-    TopoDS_Shape prism = BRepPrimAPI_MakePrism(base, n * (d1 + d2), Standard_True).Shape();
-    if (upto) prism = trim_up_to(ctx, in, prism, base, n, d1 + d2);
-    if (std::fabs(taper) > 1e-9) {
-      // Tilt every side face about the base plane; positive opens up away from the profile.
-      const gp_Dir pull(n * ((d1 + d2) < 0 ? -1.0 : 1.0));
-      gp_Pnt on;
-      {
-        GProp_GProps g;
-        BRepGProp::SurfaceProperties(base, g);
-        on = g.CentreOfMass();
+    TopoDS_Shape prism;
+    if (upto) {
+      prism = up_to(ctx, in, base, n, reach);
+    } else {
+      // Following the start face, the distance runs from it everywhere: from the nearest contact over the spread, then
+      // the part beyond the face moved on by the distance is cut away below.
+      prism = BRepPrimAPI_MakePrism(base, n * (d1 + d2 + (extent == "distance" ? spans[i] : 0.0)), Standard_True).Shape();
+      if (std::fabs(taper) > 1e-9) {
+        // Tilt every side face about the base plane; positive opens up away from the profile.
+        const gp_Dir pull(n * ((d1 + d2) < 0 ? -1.0 : 1.0));
+        gp_Pnt on;
+        {
+          GProp_GProps g;
+          BRepGProp::SurfaceProperties(base, g);
+          on = g.CentreOfMass();
+        }
+        const gp_Pln neutral(on, pull);
+        BRepOffsetAPI_DraftAngle draft(prism);
+        for (TopExp_Explorer ex(prism, TopAbs_FACE); ex.More(); ex.Next()) {
+          const TopoDS_Face f = TopoDS::Face(ex.Current());
+          BRepAdaptor_Surface s(f);
+          if (s.GetType() == GeomAbs_Plane && std::fabs(std::fabs(s.Plane().Axis().Direction().Dot(pull)) - 1.0) < 1e-9) continue;  // the caps
+          draft.Add(f, pull, -taper, neutral);
+          if (!draft.AddDone()) throw Error("that taper angle cannot be applied to this profile");
+        }
+        draft.Build();
+        if (!draft.IsDone()) throw Error("that taper angle cannot be applied to this profile");
+        prism = draft.Shape();
       }
-      const gp_Pln neutral(on, pull);
-      BRepOffsetAPI_DraftAngle draft(prism);
-      for (TopExp_Explorer ex(prism, TopAbs_FACE); ex.More(); ex.Next()) {
-        const TopoDS_Face f = TopoDS::Face(ex.Current());
-        BRepAdaptor_Surface s(f);
-        if (s.GetType() == GeomAbs_Plane && std::fabs(std::fabs(s.Plane().Axis().Direction().Dot(pull)) - 1.0) < 1e-9) continue;  // the caps
-        draft.Add(f, pull, -taper, neutral);
-        if (!draft.AddDone()) throw Error("that taper angle cannot be applied to this profile");
-      }
-      draft.Build();
-      if (!draft.IsDone()) throw Error("that taper angle cannot be applied to this profile");
-      prism = draft.Shape();
     }
-    solids.push_back(outward(prism));
+    if (!beyonds[i].IsNull()) {
+      try {
+        prism = boolean(BoolOp::Common, prism, beyonds[i]);
+        if (extent == "distance") {
+          gp_Trsf on;
+          on.SetTranslation(n * d1);
+          prism = boolean(BoolOp::Cut, prism, moved(beyonds[i], on));
+        }
+      } catch (const Error&) {
+        throw Error("the start cannot follow that face here (the kernel cannot cut the extrusion along it); start at the nearest or farthest contact instead");
+      }
+      const auto pieces = solids_of(prism);
+      if (pieces.empty()) throw Error("following the start face leaves nothing of the extrusion; check the distance and the direction");
+      prism = bundle(pieces);
+    }
+    for (const auto& s : solids_of(prism)) solids.push_back(outward(s));
   }
+  if (solids.empty()) throw Error("the extrusion produced no solid");
   // Profiles that touch become one body.
   TopoDS_Shape acc = solids.front();
   for (size_t i = 1; i < solids.size(); ++i) acc = boolean(BoolOp::Fuse, acc, solids[i]);
@@ -839,11 +1492,25 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   }
 
   if (kind == "extrude") {
-    const auto profiles=resolve_profiles(ctx,in.value("profiles",json()));
-    apply_operation(ctx, in, make_extrusion(ctx, in, profiles), out);
+    Profiles profiles=resolve_profiles(ctx,in.value("profiles",json()));
+    // Sketch on face: the profiles on the start face's plane, extruded from there (derived_extrude_ops makes that sketch).
+    json use = in;
+    if (in.value("start", "profile") == "face" && in.value("start_shape", "follow_face") == "sketch_on_face") {
+      profiles = profiles_on_face(ctx, in, profiles);
+      use["start"] = "profile";
+    }
+    std::vector<double> starts;
+    const TopoDS_Shape tool = healed(make_extrusion(ctx, use, profiles, &starts));
+    if (in.value("operation", "new") == "auto") {
+      try {
+        out.operation = extrude_operation(ctx, use, profiles, tool, starts);
+      } catch (const Standard_Failure&) {  // a point the kernel cannot classify: the tool's overlap decides (apply_operation)
+      }
+    }
+    apply_operation(ctx, in, tool, out);
     GProp_GProps properties;BRepGProp::SurfaceProperties(profiles.faces.front(),properties);
     gp_Vec axis(profiles.normal);if(in.value("flip",false))axis.Reverse();
-    const auto origin=properties.CentreOfMass().Translated(axis*extrusion_start(ctx,in,axis,properties.CentreOfMass()));
+    const auto origin=properties.CentreOfMass().Translated(axis*starts.at(0));
     if(in.value("direction","one")=="symmetric")axis*=.5;
     if(in.value("extent","distance")=="distance")out.extra["distance_handle"]={{"origin",{origin.X(),origin.Y(),origin.Z()}},{"axis",{axis.X(),axis.Y(),axis.Z()}},{"value",ctx.length(in,"distance")}};
     return out;
@@ -1505,6 +2172,85 @@ json feature_handles(const Document& doc, const Scene& scene, const std::string&
     return json::array();
   }
   return handles;
+}
+
+std::vector<json> derived_extrude_ops(const Document& doc, const Scene& scene, const json& inputs, const std::string& name, const std::string& component) {
+  std::vector<ParamDef> defs;
+  for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+  const ParamTable params(defs);
+  const std::map<std::string, TopoDS_Shape> fresh;
+  const Ctx ctx{doc, params, scene, fresh, {}};
+  if (inputs.value("start", "profile") != "face" || inputs.value("start_shape", "follow_face") != "sketch_on_face") throw Error("the extrusion does not sketch on its start face");
+  const Profiles prof = resolve_profiles(ctx, inputs.value("profiles", json()));
+  const TopoDS_Face face = picked_start_face(ctx, inputs);
+  const json picked = inputs.at("start_face").front();
+  const gp_Dir normal = profiles_on_face(ctx, inputs, prof).normal;  // the plane's side, as the extrusion takes it
+  const double offset = inputs.contains("face_offset") ? ctx.length(inputs, "face_offset") : 0.0;
+  std::vector<json> ops;
+  auto place = [&](json op) {
+    op["id"] = new_uuid();
+    if (!component.empty()) op["component"] = component;
+    ops.push_back(op);
+    return op["id"].get<std::string>();
+  };
+  std::string source_name = "Sketch";
+  for (const auto& r : inputs.value("profiles", json::array()))
+    if (r.is_object() && r.contains("sketch"))
+      if (const SketchItem* s = scene.sketch(r["sketch"].get<std::string>())) {
+        source_name = s->name;
+        break;
+      }
+  // The sketch's plane, and the frame the sketch will have on it.
+  json plane;
+  Frame frame;
+  BRepAdaptor_Surface surface(face);
+  if (surface.GetType() == GeomAbs_Plane) {
+    frame = ctx.plane({{"face", picked}});
+    const gp_Vec n(vec(frame.normal()));
+    const double distance = offset * (n.Dot(gp_Vec(normal)) < 0 ? -1.0 : 1.0);
+    if (std::fabs(distance) > 1e-12) {
+      std::ostringstream text;
+      text.precision(15);
+      text << distance << " mm";
+      const std::string id = place(make_feature_op("plane", source_name + " plane", {{"mode", "offset"}, {"plane", {{"face", picked}}}, {"distance", text.str()}}));
+      frame.origin = {frame.origin[0] + n.X() * distance, frame.origin[1] + n.Y() * distance, frame.origin[2] + n.Z() * distance};
+      plane = {{"feature", id}};
+    } else {
+      plane = {{"face", picked}};
+    }
+  } else {
+    const gp_Pnt o = face_tangent(face).first.Translated(gp_Vec(normal) * offset);
+    plane = {{"origin", {o.X(), o.Y(), o.Z()}}, {"normal", {normal.X(), normal.Y(), normal.Z()}}};
+    frame = ctx.plane(plane);
+  }
+  // The projection, linked to its sources as the sketch's Project draws it.
+  Sketch derived;
+  std::vector<json> sources;
+  for (const auto& r : inputs.value("profiles", json::array())) {
+    const json source = r.is_object() && r.contains("sketch") ? json{{"sketch", r["sketch"]}} : r;
+    if (std::find(sources.begin(), sources.end(), source) != sources.end()) continue;
+    sources.push_back(source);
+    append_reference(derived, derive_sketch(doc, scene, frame, source, "project"), source, "project", true);
+  }
+  const std::string sketch = place(make_sketch_op(source_name + " (derived)", plane, derived.to_json()));
+  // The extrusion from those regions, along the sketch's normal the way it went.
+  const std::vector<Region> regions = sketch_regions(derived, frame);
+  json profiles = json::array();
+  for (const auto& p : prof.faces) {
+    const gp_Pnt sample = face_samples(p).front();
+    double u = 0, v = 0;
+    frame.to_local({sample.X(), sample.Y(), sample.Z()}, u, v);
+    if (region_at(regions, frame, u, v) < 0) throw Error("a profile does not come out as a region on the start face's plane (its curves overlap there)");
+    profiles.push_back({{"sketch", sketch}, {"at", {u, v}}});
+  }
+  json extrude = inputs;
+  extrude["profiles"] = profiles;
+  extrude["start"] = "profile";
+  for (const char* gone : {"start_face", "start_shape", "face_offset", "start_offset"}) extrude.erase(gone);
+  const gp_Vec way = gp_Vec(normal) * (inputs.value("flip", false) ? -1.0 : 1.0);
+  extrude["flip"] = gp_Vec(vec(frame.normal())).Dot(way) < 0;
+  place(make_feature_op("extrude", name, extrude));
+  return ops;
 }
 
 }  // namespace opad::design

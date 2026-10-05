@@ -66,6 +66,9 @@ json input_schema(const design::InputSpec& in) {
   else if(in.type=="points"){  // a vertex, a sketch point, or a point in space written out (gap log #14)
     out=array({{"anyOf",{ref(),object({{"sketch",type("string")},{"point",type("integer")}},{"sketch","point"}),object({{"point",vector(3)}},{"point"}),vector(3)}}},in.min_count,in.max_count);
     out["description"]="Vertices (\"<body>/vertex/N\"), sketch points {sketch, point}, or points in space: \"point/x,y,z\", {\"point\": [x, y, z]} or [x, y, z] (mm).";}
+  else if(in.planes){  // To face: a face, a vertex or sketch point (the plane through it parallel to the profile), or a plane
+    out=array({{"anyOf",{ref(),plane(),object({{"sketch",type("string")},{"point",type("integer")}},{"sketch","point"})}}},in.min_count,in.max_count);
+    out["description"]="A face (\"<body>/face/N\"; curved too), a vertex (\"<body>/vertex/N\") or a sketch point {sketch, point} (the plane through it parallel to the profile), or a plane: {base}, {feature} (a construction plane), {face} or {origin, normal}.";}
   else out=array(ref(),in.min_count,in.max_count);
   out["title"]=in.label;
   if(!in.def.is_null())out["default"]=in.def;

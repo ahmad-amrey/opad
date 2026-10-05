@@ -4,6 +4,7 @@
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
 #include <TopoDS_Compound.hxx>
 #include <cstdio>
 #include <set>
@@ -14,6 +15,7 @@
 #include <TopoDS.hxx>
 // Design engine: expressions, parameters, sketches -> profiles, features, regeneration, history edits.
 #include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 
@@ -1354,6 +1356,434 @@ TEST(extrude_up_to_a_face_or_a_body) {
   refused = false;
   try { feature_cmd(doc, "extrude", {{"profiles", json::array({json{{"sketch", wide}, {"at", {45, 45}}}})}, {"extent", "to_body"}, {"extent_body", json::array({slab})}}); } catch (const Error& e) { refused = std::string(e.what()).find("misses the target") != std::string::npos; }
   CHECK(refused);
+}
+
+namespace {
+
+json at_height(double z) { return {{"origin", {0, 0, z}}, {"normal", {0, 0, 1}}}; }
+
+json square_profile(Document& doc, double z, double x = -5, double y = -5, double size = 10) {
+  const std::string sketch = run_id(sketch_cmd(doc, rectangle(x, y, size, size), at_height(z)));
+  return json::array({json{{"sketch", sketch}, {"at", {x + size / 2, y + size / 2}}}});
+}
+
+// The face (as "uuid/face/N") of a body that `want` picks from its description.
+std::string face_where(const Document& doc, const std::string& body, const std::function<bool(const json&)>& want) {
+  const Scene s = resolve(doc);
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(node_world_shape(doc, s, body), TopAbs_FACE, faces);
+  for (int i = 1; i <= faces.Extent(); ++i)
+    if (want(describe_entity(faces(i)))) return body + "/face/" + std::to_string(i - 1);
+  return {};
+}
+
+// The solid a planned extrusion adds or removes (Plan::tools) and the operation it was taken as.
+std::pair<std::string, double> planned_tool(const Document& doc, const json& inputs, const std::string& component = {}) {
+  json op = make_feature_op("extrude", "Probe", inputs);
+  if (!component.empty()) op["component"] = component;
+  const Plan p = plan_ops(doc, {op});
+  if (p.tools.size() != 1 || !p.tools[0].shape) return {"", 0};
+  GProp_GProps g;
+  BRepGProp::VolumeProperties(*p.tools[0].shape, g);
+  return {p.tools[0].operation, g.Mass()};
+}
+
+double top_of(const TopoDS_Shape& s) {
+  Bnd_Box b;
+  BRepBndLib::AddOptimal(s, b, Standard_False, Standard_False);
+  double x0, y0, z0, x1, y1, z1;
+  b.Get(x0, y0, z0, x1, y1, z1);
+  return z1;
+}
+
+}  // namespace
+
+// Fusion's automatic operation: an extrusion into material cuts, one away from a face it sits on (or touching a body)
+// joins, one in the clear makes a new body. "auto" is written into the op as the operation it was taken as; a feature made
+// in a component looks only at that component's bodies, for the choice and for the automatic targets.
+TEST(extrude_automatic_operation) {
+  Document doc = Document::create();
+  feature_cmd(doc, "box", {{"length", "20 mm"}, {"width", "20 mm"}, {"height", "10 mm"}});  // x, y -10..10, z 0..10
+  double v = total_volume(doc);
+  auto extrude = [&](const json& profile, json more) {
+    more["profiles"] = profile;
+    more["operation"] = "auto";
+    const json made = feature_cmd(doc, "extrude", more);
+    const Scene s = resolve(doc);
+    const Feature* f = s.feature(made["feature_id"]);
+    CHECK(f && f->error.empty());
+    return f ? f->inputs.value("operation", std::string()) : std::string();
+  };
+  // From the box's bottom (on XY) up into it: a cut, written into the op.
+  CHECK_EQ(extrude(square_profile(doc, 0), {{"distance", "4 mm"}}), std::string("cut"));
+  CHECK_EQ(resolve(doc).all_bodies().size(), 1u);
+  CHECK_NEAR(total_volume(doc), v - 400, 1e-6);
+  v = total_volume(doc);
+  // On the top face, away from it: a join; flipped, into the box: a cut.
+  CHECK_EQ(extrude(square_profile(doc, 10), {{"distance", "5 mm"}}), std::string("join"));
+  CHECK_EQ(resolve(doc).all_bodies().size(), 1u);
+  CHECK_NEAR(total_volume(doc), v + 500, 1e-6);
+  v = total_volume(doc);
+  CHECK_EQ(extrude(square_profile(doc, 10, 4, 4, 4), {{"distance", "3 mm"}, {"flip", true}}), std::string("cut"));
+  CHECK_NEAR(total_volume(doc), v - 48, 1e-6);
+  v = total_volume(doc);
+  // Half in, half out (symmetric about the top face): not mostly into material, so a join.
+  CHECK_EQ(extrude(square_profile(doc, 10, -9, -9, 3), {{"distance", "4 mm"}, {"direction", "symmetric"}}), std::string("join"));
+  CHECK_NEAR(total_volume(doc), v + 18, 1e-6);
+  // In the clear: a new body.
+  CHECK_EQ(extrude(square_profile(doc, 40), {{"distance", "5 mm"}}), std::string("new"));
+  CHECK_EQ(resolve(doc).all_bodies().size(), 2u);
+  // The plan hands the preview the tool and what it is for.
+  const auto [op, volume] = planned_tool(doc, {{"profiles", square_profile(doc, 0, -8, -8, 2)}, {"distance", "2 mm"}, {"operation", "auto"}});
+  CHECK_EQ(op, std::string("cut"));
+  CHECK_NEAR(volume, 8, 1e-6);
+  // Made in a component: the root's box is not its material. Auto makes a new body there, an explicit cut finds nothing.
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  const json low = square_profile(doc, 0, 5, 5, 3);
+  CHECK_EQ(planned_tool(doc, {{"profiles", low}, {"distance", "2 mm"}, {"operation", "auto"}}, lid).first, std::string("new"));
+  CHECK_EQ(planned_tool(doc, {{"profiles", low}, {"distance", "2 mm"}, {"operation", "auto"}}).first, std::string("cut"));
+  bool refused = false;
+  try {
+    commands::run("feature", {{"kind", "extrude"}, {"inputs", {{"profiles", low}, {"distance", "2 mm"}, {"operation", "cut"}}}, {"component", lid}}, &doc);
+  } catch (const Error& e) {
+    refused = std::string(e.what()).find("does not touch any body") != std::string::npos;
+  }
+  CHECK(refused);
+  // An op of another creation feature holding "auto" (only the extrusion offers it; written by hand, or by a newer build)
+  // is decided from its tool's overlap: a box mostly inside the first one cuts.
+  const Plan cube = plan_ops(doc, {make_feature_op("box", "Cube", {{"length", "2 mm"}, {"width", "2 mm"}, {"height", "2 mm"}, {"x", "-6 mm"}, {"y", "6 mm"}, {"operation", "auto"}})});
+  CHECK_EQ(cube.tools.size(), 1u);
+  CHECK_EQ(cube.tools[0].operation, std::string("cut"));
+  CHECK_EQ(cube.ops[0]["inputs"]["operation"], json("cut"));
+}
+
+// To all goes through every body in the way and ends where the last one ends (on each side when two-sided), for a cut and
+// for a join, instead of running on for twice the model's size; with nothing in the way it is refused.
+TEST(extrude_to_all_ends_at_the_last_body_in_the_way) {
+  Document doc = Document::create();
+  feature_cmd(doc, "box", {{"length", "20 mm"}, {"width", "20 mm"}, {"height", "10 mm"}});                           // z 0..10
+  feature_cmd(doc, "box", {{"plane", at_height(20)}, {"length", "20 mm"}, {"width", "20 mm"}, {"height", "5 mm"}});  // z 20..25
+  const json below = square_profile(doc, -5);
+  // The tool ends at z = 25 (the top of the far box), not past the model.
+  Plan p = plan_ops(doc, {make_feature_op("extrude", "All", {{"profiles", below}, {"extent", "all"}, {"operation", "cut"}})});
+  CHECK_EQ(p.tools.size(), 1u);
+  CHECK_NEAR(top_of(*p.tools[0].shape), 25, 1e-4);
+  // A join fills up to the farthest material and joins both boxes into one body.
+  {
+    Document joined = doc;
+    feature_cmd(joined, "extrude", {{"profiles", below}, {"extent", "all"}, {"operation", "join"}});
+    const Scene s = resolve(joined);
+    CHECK_EQ(s.all_bodies().size(), 1u);
+    CHECK_NEAR(total_volume(joined), 4000 + 2000 + 3000 - 1000 - 500, 1e-4);
+  }
+  // A cut goes through both.
+  const double v = total_volume(doc);
+  feature_cmd(doc, "extrude", {{"profiles", below}, {"extent", "all"}, {"operation", "cut"}});
+  CHECK_NEAR(total_volume(doc), v - 1000 - 500, 1e-4);
+  // Two ways from between the boxes: 13 mm up to the top of one, 12 mm down to the bottom of the other; symmetric: the
+  // farther both ways.
+  const json between = square_profile(doc, 12, -9, -9, 3);
+  p = plan_ops(doc, {make_feature_op("extrude", "Both", {{"profiles", between}, {"extent", "all"}, {"direction", "two"}, {"operation", "cut"}})});
+  {
+    Bnd_Box b;
+    BRepBndLib::AddOptimal(*p.tools.at(0).shape, b, Standard_False, Standard_False);
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    CHECK_NEAR(z0, 0, 1e-4);
+    CHECK_NEAR(z1, 25, 1e-4);
+  }
+  p = plan_ops(doc, {make_feature_op("extrude", "Sym", {{"profiles", between}, {"extent", "all"}, {"direction", "symmetric"}, {"operation", "cut"}})});
+  {
+    Bnd_Box b;
+    BRepBndLib::AddOptimal(*p.tools.at(0).shape, b, Standard_False, Standard_False);
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    CHECK_NEAR(z0, -1, 1e-4);
+    CHECK_NEAR(z1, 25, 1e-4);
+  }
+  // Above everything: nothing ahead (refused, saying so); flipped, down through both.
+  const json above = square_profile(doc, 40, -9, 6, 3);
+  bool refused = false;
+  try {
+    feature_cmd(doc, "extrude", {{"profiles", above}, {"extent", "all"}, {"operation", "cut"}});
+  } catch (const Error& e) {
+    refused = std::string(e.what()).find("nothing lies ahead of the profile") != std::string::npos;
+  }
+  CHECK(refused);
+  const double w = total_volume(doc);
+  feature_cmd(doc, "extrude", {{"profiles", above}, {"extent", "all"}, {"operation", "cut"}, {"flip", true}});
+  CHECK_NEAR(total_volume(doc), w - 9 * 10 - 9 * 5, 1e-4);
+}
+
+// To face as Fusion's To object: a curved face, extended past its edges unless Extend is off; an offset past or short of the
+// target; the side the target is on found by itself; a vertex, an origin plane or a construction plane as the target; a
+// plane the extrusion runs along refused.
+TEST(extrude_to_face_extends_offsets_and_finds_its_side) {
+  Document doc = Document::create();
+  // A slab z 20..25 and a short cylinder lying along X above the origin: x 0..20, axis at z 40, radius 10 (bottom at z 30).
+  const std::string slab = feature_cmd(doc, "box", {{"plane", at_height(20)}, {"length", "80 mm"}, {"width", "80 mm"}, {"height", "5 mm"}})["body_ids"][0];
+  const std::string bar = feature_cmd(doc, "cylinder", {{"plane", {{"origin", {0, 0, 40}}, {"normal", {1, 0, 0}}}}, {"diameter", "20 mm"}, {"height", "20 mm"}})["body_ids"][0];
+  const std::string round = face_where(doc, bar, [](const json& d) { return d.value("surface", "") == "cylinder"; });
+  const std::string slab_top = face_where(doc, slab, [](const json& d) { return d.contains("normal") && d["normal"][2].get<double>() > 0.99; });
+  const std::string slab_under = face_where(doc, slab, [](const json& d) { return d.contains("normal") && d["normal"][2].get<double>() < -0.99; });
+  CHECK(!round.empty() && !slab_top.empty() && !slab_under.empty());
+  // From z = 26 (above the slab) up to the round face: x -5..5 is only half under the bar, so the face is extended along it.
+  const json profile = square_profile(doc, 26);
+  const double band = 2 * (2.5 * std::sqrt(75.0) + 50 * std::asin(0.5));  // the integral of sqrt(100 - y^2) over -5..5
+  auto tool = [&](json inputs) {
+    inputs["profiles"] = inputs.value("profiles", profile);
+    return planned_tool(doc, inputs).second;
+  };
+  CHECK_NEAR(tool({{"extent", "to_face"}, {"extent_face", json::array({round})}}), 10 * (10 * 14 - band), 1e-3);
+  bool refused = false;
+  try {
+    tool({{"extent", "to_face"}, {"extent_face", json::array({round})}, {"extend", false}});
+  } catch (const Error& e) {
+    refused = std::string(e.what()).find("Extend the face") != std::string::npos;
+  }
+  CHECK(refused);
+  // An offset moves the end along the extrusion: past the target, or short of it.
+  const json under = square_profile(doc, 0);
+  CHECK_NEAR(tool({{"profiles", under}, {"extent", "to_face"}, {"extent_face", json::array({slab_under})}, {"extent_offset", "-2 mm"}}), 100 * 18, 1e-4);
+  CHECK_NEAR(tool({{"profiles", under}, {"extent", "to_body"}, {"extent_body", json::array({slab})}, {"extent_offset", "3 mm"}}), 100 * 23, 1e-4);
+  // The target behind the profile: it goes that way (from z = 26 down to the slab's top, 1 mm).
+  CHECK_NEAR(tool({{"extent", "to_face"}, {"extent_face", json::array({slab_top})}}), 100, 1e-4);
+  // A vertex (the plane through it, parallel to the profile), an origin plane, a construction plane.
+  const std::string corner = slab + "/vertex/0";
+  const double corner_z = [&] {
+    const Scene s = resolve(doc);
+    TopTools_IndexedMapOfShape vertices;
+    TopExp::MapShapes(node_world_shape(doc, s, slab), TopAbs_VERTEX, vertices);
+    return BRep_Tool::Pnt(TopoDS::Vertex(vertices(1))).Z();
+  }();
+  CHECK_NEAR(tool({{"profiles", under}, {"extent", "to_face"}, {"extent_face", json::array({corner})}}), 100 * corner_z, 1e-4);
+  CHECK_NEAR(tool({{"extent", "to_face"}, {"extent_face", json::array({{{"base", "xy"}}})}}), 100 * 26, 1e-4);
+  const std::string plane = feature_cmd(doc, "plane", {{"mode", "offset"}, {"plane", {{"base", "xy"}}}, {"distance", "12 mm"}})["feature_id"];
+  CHECK_NEAR(tool({{"profiles", under}, {"extent", "to_face"}, {"extent_face", json::array({{{"feature", plane}}})}}), 100 * 12, 1e-4);
+  refused = false;
+  try {
+    tool({{"extent", "to_face"}, {"extent_face", json::array({{{"base", "xz"}}})}});
+  } catch (const Error& e) {
+    refused = std::string(e.what()).find("parallel") != std::string::npos;
+  }
+  CHECK(refused);
+}
+
+// What used to end in the kernel's own message ("the modelling kernel failed: BRep_API: command not done") or in a wrong
+// result with To face and To all: a profile on the target's plane, a profile flush with a body's faces (coincident start and
+// side faces, through all), two-sided and symmetric To all from a face, a round target tangent to the extrusion's sides, a
+// tilted plane through the profile, a profile wider than a round target. Each either works or says why in words.
+TEST(extrude_up_to_and_through_all_with_touching_geometry) {
+  auto words = [](const std::function<void()>& f) {
+    try {
+      f();
+    } catch (const Error& e) {
+      return std::string(e.what());
+    }
+    return std::string();
+  };
+  auto plain = [](const std::string& why) { return !why.empty() && why.find("kernel") == std::string::npos && why.find("BRep") == std::string::npos; };
+  Document doc = Document::create();
+  feature_cmd(doc, "box", {{"length", "20 mm"}, {"width", "20 mm"}, {"height", "10 mm"}});  // x, y -10..10, z 0..10
+  const std::string slab = feature_cmd(doc, "box", {{"plane", at_height(20)}, {"length", "20 mm"}, {"width", "20 mm"}, {"height", "5 mm"}})["body_ids"][0];
+  const std::string under = face_where(doc, slab, [](const json& d) { return d.contains("normal") && d["normal"][2].get<double>() < -0.99; });
+  // On the target's own plane: refused in words.
+  std::string why = words([&] { feature_cmd(doc, "extrude", {{"profiles", square_profile(doc, 20)}, {"extent", "to_face"}, {"extent_face", json::array({under})}}); });
+  CHECK(plain(why) && why.find("lies on that plane") != std::string::npos);
+  // From the box's top face down through all (the tool's start face on the box's face, one side flush with its side).
+  double v = total_volume(doc);
+  feature_cmd(doc, "extrude", {{"profiles", square_profile(doc, 10, -10, -3, 6)}, {"extent", "all"}, {"flip", true}, {"operation", "cut"}});
+  CHECK_NEAR(total_volume(doc), v - 36 * 10, 1e-4);
+  // Two-sided To all from the top face: down through the box, up through the slab (z 20..25). Symmetric: the farther of
+  // the two (15 up to the slab's top) both ways.
+  v = total_volume(doc);
+  feature_cmd(doc, "extrude", {{"profiles", square_profile(doc, 10, 4, 4, 3)}, {"extent", "all"}, {"direction", "two"}, {"operation", "cut"}});
+  CHECK_NEAR(total_volume(doc), v - 9 * 10 - 9 * 5, 1e-4);
+  {
+    const Plan p = plan_ops(doc, {make_feature_op("extrude", "Sym", {{"profiles", square_profile(doc, 10, 4, -8, 3)}, {"extent", "all"}, {"direction", "symmetric"}, {"operation", "cut"}})});
+    Bnd_Box b;
+    BRepBndLib::AddOptimal(*p.tools.at(0).shape, b, Standard_False, Standard_False);
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    CHECK_NEAR(z0, -5, 1e-4);
+    CHECK_NEAR(z1, 25, 1e-4);
+  }
+  // A bar lying along X (axis z 40, radius 10) exactly as wide as the profile: its round face is tangent to the extrusion's
+  // sides. The extrusion ends under it.
+  Document round = Document::create();
+  const std::string bar = feature_cmd(round, "cylinder", {{"plane", {{"origin", {-20, 0, 40}}, {"normal", {1, 0, 0}}}}, {"diameter", "20 mm"}, {"height", "40 mm"}})["body_ids"][0];
+  const std::string face = face_where(round, bar, [](const json& d) { return d.value("surface", "") == "cylinder"; });
+  const double before = total_volume(round);
+  feature_cmd(round, "extrude", {{"profiles", square_profile(round, 26, -5, -10, 20)}, {"extent", "to_face"}, {"extent_face", json::array({face})}});
+  CHECK_NEAR(total_volume(round) - before, 20 * (14 * 20 - 50 * M_PI), 1e-2);
+  // Wider than the bar: part of it never meets the round face, extended or not.
+  why = words([&] { feature_cmd(round, "extrude", {{"profiles", square_profile(round, 26, -5, -12, 24)}, {"extent", "to_face"}, {"extent_face", json::array({face})}}); });
+  CHECK(plain(why) && why.find("misses") != std::string::npos);
+  // A tilted plane through the profile: it would end on both sides of it.
+  why = words([&] {
+    feature_cmd(round, "extrude", {{"profiles", square_profile(round, 26, -5, -5, 10)}, {"extent", "to_face"}, {"extent_face", json::array({{{"origin", {0, 0, 26}}, {"normal", {0.5, 0, 1}}}})}});
+  });
+  CHECK(plain(why) && why.find("cuts through the profile") != std::string::npos);
+  // Up to a body the profile sits on: not reached that way, starting inside it the other way.
+  why = words([&] { feature_cmd(doc, "extrude", {{"profiles", square_profile(doc, 25, -3, -3, 2)}, {"extent", "to_body"}, {"extent_body", json::array({slab})}}); });
+  CHECK(plain(why));
+}
+
+namespace {
+
+// The planned extrusion's tool: its volume and its lowest and highest point along Z.
+struct Planned {
+  std::string operation;
+  double volume = 0, low = 0, high = 0;
+};
+
+Planned plan_extrude(const Document& doc, const json& inputs) {
+  const Plan p = plan_ops(doc, {make_feature_op("extrude", "Probe", inputs)});
+  Planned out;
+  if (p.tools.size() != 1 || !p.tools[0].shape) return out;
+  out.operation = p.tools[0].operation;
+  GProp_GProps g;
+  BRepGProp::VolumeProperties(*p.tools[0].shape, g);
+  out.volume = g.Mass();
+  Bnd_Box b;
+  BRepBndLib::AddOptimal(*p.tools[0].shape, b, Standard_False, Standard_False);
+  double x0, y0, x1, y1;
+  b.Get(x0, y0, out.low, x1, y1, out.high);
+  return out;
+}
+
+// A bar lying along X (x -20..20, axis at z 40, radius 10) and a slab tilted about Y: its lower face the plane through
+// (0, 60, 30) with normal (0.5, 0, 1), clear of the bar (y 40..90).
+struct Targets {
+  Document doc = Document::create();
+  std::string bar, round, slab, tilted;
+  Targets() {
+    bar = feature_cmd(doc, "cylinder", {{"plane", {{"origin", {-20, 0, 40}}, {"normal", {1, 0, 0}}}}, {"diameter", "20 mm"}, {"height", "40 mm"}})["body_ids"][0];
+    round = face_where(doc, bar, [](const json& d) { return d.value("surface", "") == "cylinder"; });
+    slab = feature_cmd(doc, "box", {{"plane", {{"origin", {0, 65, 30}}, {"normal", {0.5, 0, 1}}}}, {"length", "60 mm"}, {"width", "50 mm"}, {"height", "5 mm"}})["body_ids"][0];
+    tilted = face_where(doc, slab, [](const json& d) { return d.contains("normal") && d["normal"][2].get<double>() < -0.8; });
+  }
+};
+
+}  // namespace
+
+// End at: a round or tilted target ends the extrusion following it, or flat where the extrusion first touches it (nearest
+// contact) or where all of it has reached it (farthest contact); for New body, Join and Cut.
+TEST(extrude_to_face_end_at_nearest_farthest_or_following) {
+  Targets t;
+  const json under = square_profile(t.doc, 26);  // x, y -5..5 under the bar
+  const double band = 2 * (2.5 * std::sqrt(75.0) + 50 * std::asin(0.5));
+  auto to = [&](const json& profile, const std::string& face, const char* end, const char* operation = "new") {
+    return plan_extrude(t.doc, {{"profiles", profile}, {"extent", "to_face"}, {"extent_face", json::array({face})}, {"extent_end", end}, {"operation", operation}});
+  };
+  CHECK_NEAR(to(under, t.round, "follow_face").volume, 10 * (10 * 14 - band), 1e-3);
+  CHECK_NEAR(to(under, t.round, "nearest_contact").volume, 100 * 4, 1e-4);                         // the bar's bottom, z 30
+  CHECK_NEAR(to(under, t.round, "farthest_contact").volume, 100 * (14 - std::sqrt(75.0)), 1e-4);  // at y = 5, z 40 - sqrt(75)
+  // The tilted plane z = 30 - 0.5 (x - 0) over y 55..65: from z 0, 27.5 to 32.5 over x -5..5.
+  const json beside = square_profile(t.doc, 0, -5, 55, 10);
+  CHECK_NEAR(to(beside, t.tilted, "follow_face").volume, 100 * 30, 1e-3);
+  CHECK_NEAR(to(beside, t.tilted, "nearest_contact").volume, 100 * 27.5, 1e-3);
+  CHECK_NEAR(to(beside, t.tilted, "farthest_contact").volume, 100 * 32.5, 1e-3);
+  // Up to a body the same way.
+  CHECK_NEAR(plan_extrude(t.doc, {{"profiles", under}, {"extent", "to_body"}, {"extent_body", json::array({t.bar})}, {"extent_end", "nearest_contact"}}).volume, 400, 1e-4);
+  // A join at the farthest contact runs into the bar and becomes part of it.
+  {
+    Document joined = t.doc;
+    feature_cmd(joined, "extrude", {{"profiles", under}, {"extent", "to_face"}, {"extent_face", json::array({t.round})}, {"extent_end", "farthest_contact"}, {"operation", "join"}});
+    const Scene s = resolve(joined);
+    CHECK(s.features.back().error.empty());
+    CHECK_EQ(s.all_bodies().size(), 2u);  // the bar (joined) and the slab
+  }
+  // A cut from inside the bar (its axis plane) up to its round face: follow it, or flat at the nearest or farthest contact.
+  const json inside = square_profile(t.doc, 40, -5, -3, 6);  // x -5..1, y -3..3
+  const double bar = M_PI * 100 * 40;
+  const double arch = 6 * (3 * std::sqrt(91.0) + 100 * std::asin(0.3));  // 6 x the integral of sqrt(100 - y^2) over -3..3
+  // (the farthest contact pokes out of the bar beside the top: it takes the same as following the face)
+  for (const auto& [end, removed] : {std::pair<const char*, double>{"follow_face", arch}, {"nearest_contact", 36 * std::sqrt(91.0)}, {"farthest_contact", arch}}) {
+    Document cut = t.doc;
+    feature_cmd(cut, "extrude", {{"profiles", inside}, {"extent", "to_face"}, {"extent_face", json::array({t.round})}, {"extent_end", end}, {"operation", "cut"}});
+    const Scene s = resolve(cut);
+    CHECK(s.features.back().error.empty());
+    CHECK_NEAR(volume_of_node(cut, s, t.bar), bar - removed, 1e-2);
+  }
+}
+
+// Start at: a round or tilted start face starts the extrusion following it (the distance runs from the face everywhere), or
+// flat at its nearest or farthest contact; a planar face square to the axis is a start distance as before.
+TEST(extrude_from_a_face_follow_nearest_farthest) {
+  Targets t;
+  const json under = square_profile(t.doc, 0);  // x, y -5..5 under the bar
+  auto from = [&](const json& profile, const std::string& face, const char* shape, const char* offset = "0 mm") {
+    return plan_extrude(t.doc, {{"profiles", profile}, {"start", "face"}, {"start_face", json::array({face})}, {"start_shape", shape}, {"face_offset", offset}, {"distance", "5 mm"}});
+  };
+  const double low = 40 - std::sqrt(75.0);  // where the bar's bottom is highest over the profile (y = 5)
+  Planned p = from(under, t.round, "nearest_contact");
+  CHECK_NEAR(p.volume, 500, 1e-4);
+  CHECK_NEAR(p.low, 30, 1e-4);
+  p = from(under, t.round, "farthest_contact");
+  CHECK_NEAR(p.low, low, 1e-4);
+  CHECK_NEAR(p.high, low + 5, 1e-4);
+  p = from(under, t.round, "follow_face");
+  CHECK_NEAR(p.volume, 500, 1e-3);  // the region swept 5 mm on from the face
+  CHECK_NEAR(p.low, 30, 1e-4);
+  CHECK_NEAR(p.high, low + 5, 1e-4);
+  p = from(under, t.round, "nearest_contact", "2 mm");
+  CHECK_NEAR(p.low, 32, 1e-4);
+  // The tilted face: 27.5 to 32.5 over the profile.
+  const json beside = square_profile(t.doc, 0, -5, 55, 10);
+  p = from(beside, t.tilted, "nearest_contact");
+  CHECK_NEAR(p.low, 27.5, 1e-4);
+  p = from(beside, t.tilted, "farthest_contact");
+  CHECK_NEAR(p.low, 32.5, 1e-4);
+  p = from(beside, t.tilted, "follow_face");
+  CHECK_NEAR(p.volume, 500, 1e-3);
+  CHECK_NEAR(p.low, 27.5, 1e-4);
+  CHECK_NEAR(p.high, 37.5, 1e-4);
+  // Following goes one way.
+  bool refused = false;
+  try {
+    feature_cmd(t.doc, "extrude", {{"profiles", under}, {"start", "face"}, {"start_face", json::array({t.round})}, {"direction", "symmetric"}});
+  } catch (const Error& e) {
+    refused = std::string(e.what()).find("goes one way") != std::string::npos;
+  }
+  CHECK(refused);
+}
+
+// Sketch on face: the profile projected onto a tilted start face's plane (offset along its normal) and extruded along that
+// normal; derived_extrude_ops makes it a real sketch ("... (derived)", linked to its source) on a construction plane, and an
+// extrusion from it giving the same solid, which follows the source sketch when that changes.
+TEST(extrude_sketch_on_a_tilted_start_face) {
+  Targets t;
+  const std::string source = run_id(sketch_cmd(t.doc, rectangle(-5, 55, 10, 10)));
+  const json profile = json::array({json{{"sketch", source}, {"at", {0, 60}}}});
+  const double cosine = 1 / std::sqrt(1.25);  // the tilted plane's normal against Z
+  json inputs = {{"profiles", profile}, {"start", "face"}, {"start_face", json::array({t.tilted})}, {"start_shape", "sketch_on_face"}, {"distance", "5 mm"}};
+  const Planned direct = plan_extrude(t.doc, inputs);
+  CHECK_NEAR(direct.volume, 100 * cosine * 5, 1e-4);
+  inputs["face_offset"] = "3 mm";
+  const Planned offset = plan_extrude(t.doc, inputs);
+  CHECK_NEAR(offset.volume, direct.volume, 1e-4);
+  CHECK_NEAR(offset.low - direct.low, 3 * cosine, 1e-4);  // moved 3 mm along the plane's normal
+  // As the panel commits it: a construction plane, the derived sketch and the extrusion from it, in one step.
+  const std::vector<json> ops = derived_extrude_ops(t.doc, resolve(t.doc), inputs, "Extrude1");
+  CHECK_EQ(ops.size(), 3u);
+  CHECK_EQ(ops[0]["kind"], json("plane"));
+  CHECK_EQ(ops[1]["op"], json("sketch"));
+  CHECK(ops[1]["name"].get<std::string>().find("(derived)") != std::string::npos);
+  CHECK_EQ(ops[2]["inputs"]["start"], json("profile"));
+  const double before = total_volume(t.doc);
+  apply_ops(t.doc, ops);
+  Scene s = resolve(t.doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_NEAR(total_volume(t.doc) - before, offset.volume, 1e-4);
+  // The source sketch made larger: the derived sketch and the extrusion follow.
+  apply_ops(t.doc, {make_edit_op(source, {{"geometry", rectangle(-6, 54, 12, 12).to_json()}})});
+  s = resolve(t.doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_NEAR(total_volume(t.doc) - before, 144 * cosine * 5, 1e-3);
+  // No offset: the sketch goes on the face itself, no construction plane.
+  inputs["face_offset"] = "0 mm";
+  CHECK_EQ(derived_extrude_ops(t.doc, resolve(t.doc), inputs, "Extrude2").size(), 2u);
 }
 
 // TODO 10 B9: several fitted views in one labelled image, each with its camera in the receipt.

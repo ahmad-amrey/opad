@@ -40,6 +40,7 @@ struct InputSpec {
   int min_count = 1;                 // selections: how many picks at least (0 with optional)
   int max_count = 0;                 // 0 = any number
   bool advance = false;              // selections: the first pick moves on to the next input (more: its box again)
+  bool planes = false;               // faces: origin and construction planes are offered beside them (To face)
 };
 
 struct FeatureSpec {
@@ -76,6 +77,15 @@ struct Plan {
     bool removed = false;
   };
   std::vector<Changed> changed;
+  // Preview: the solid each creation feature computed here adds, removes or intersects with (world coordinates) and the
+  // operation it was used for: "new", "join", "cut" or "intersect" (an "auto" operation as it was decided). The app draws
+  // a cut's tool in red over the bodies it cuts.
+  struct Tool {
+    std::string op;         // the feature op
+    std::string operation;  // new | join | cut | intersect
+    std::shared_ptr<TopoDS_Shape> shape;
+  };
+  std::vector<Tool> tools;
 };
 
 using Cancel = std::function<bool()>;
@@ -151,5 +161,12 @@ json hint_refs(const Document& doc, const Scene& scene, json inputs);
 // that turns: the angle about its axis (origin a point on the axis, axis its direction, "ring": true). The extrusion keeps
 // the distance_handle its result stores. Empty when the kind has none or what it needs does not resolve.
 json feature_handles(const Document& doc, const Scene& scene, const std::string& kind, const json& inputs);
+// An extrusion started from a face with Start at: Sketch on face, made a real sketch (as committed from the panel): its
+// profiles projected onto the start face's plane by a new sketch (named after their sketch, "Sketch1 (derived)"; it keeps the
+// projection linked, so it follows the source sketch), on a construction plane offset from a planar face by the face offset
+// (on the face itself when that is 0; a curved face: its tangent plane at its middle, fixed), then the extrusion of those
+// regions from the sketch: the same solid. The ops in order, with ids, in `component` when given: one plan_ops step.
+std::vector<json> derived_extrude_ops(const Document& doc, const Scene& scene, const json& inputs, const std::string& name,
+                                      const std::string& component = {});
 
 }  // namespace opad::design
