@@ -179,6 +179,9 @@ struct Scope {  // logs "<name>: N ms" when it goes out of scope
 // Logs whenever the UI thread fails to service the event loop for longer than OPAD_TRACE_STALL_MS (default 50; 250 and
 // stderr only without OPAD_TRACE), and keeps every such stall in a histogram that is logged when the app quits (UI-11).
 void installUiWatchdog(QObject* parent);
+// The 3D view drew a frame (its paint ended): proof the event loop ran. Frames drawn back to back (the cube's turn, Fit's
+// glide) starve the watchdog's timer; a gap full of them is an animation, not a stall (F on a house read 375 ms, 23 of CPU).
+void frameDrawn();
 struct Stalls {
   int count = 0;
   qint64 longest = 0, total = 0;  // ms, as the watchdog measured them (its tick is 16 ms while tracing)

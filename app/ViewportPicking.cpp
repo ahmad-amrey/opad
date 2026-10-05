@@ -12,6 +12,7 @@
 #include <Prs3d_PointAspect.hxx>
 #include <QApplication>
 #include <QKeyEvent>
+#include <QWindow>
 #include "Jobs.hpp"
 #include <cmath>
 #include <queue>
@@ -218,6 +219,13 @@ bool Viewport::trackingEscape(QEvent* e) {
 }
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
+  // The window's surface back after it was minimised (or covered while the screen was locked): the frame it lost is drawn
+  // again whole; nothing in the scene changed, so the next frame alone would draw nothing and the view stayed black.
+  if (e->type() == QEvent::Expose && object == window()->windowHandle()) {
+    const bool exposed = window()->windowHandle()->isExposed();
+    if (exposed && !std::exchange(m_topExposed, exposed)) exposedAgain();
+    m_topExposed = exposed;
+  }
   if (zoomWindowKey(object, e)) return true;
   if(e->type()==QEvent::MouseButtonPress || e->type()==QEvent::MouseButtonDblClick) {
     const auto widget=qobject_cast<QWidget*>(object);

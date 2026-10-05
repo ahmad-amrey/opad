@@ -4,7 +4,7 @@
 // transform op, the opposite corner fixed, undo and redo); Shift on a corner stretching it, Picture proportions; digits typed in the view landing in the panel's X (never the
 // filter shortcut) and applied with Enter; Calibrate by two clicks on the picture and a typed distance; Align to model onto two
 // vertices of the box; lock (no handles, a drag moves nothing); flip (the picture drawn mirrored), show through and
-// selectable; Trace to sketch; Replace (same node, width kept); a sketch's backdrop turned into a canvas; a picture dropped
+// selectable; opacity (at 5 % the picture drawn faded, at 100 % opaque again: <prefix>.faded.png); Trace to sketch; Replace (same node, width kept); a sketch's backdrop turned into a canvas; a picture dropped
 // onto the window with the box's top face selected (the placer on the face, centred on it). Frames:
 // <prefix>.png (handles), .panel.png, .place.png, .flipped.png.
 #include <QApplication>
@@ -22,6 +22,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QSlider>
 #include <QTimer>
 
 #include <cmath>
@@ -540,6 +541,40 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
               view->clearSelection();
               area->panel()->findChild<QCheckBox*>("canvasSelectable")->click();
               area->panel()->findChild<QCheckBox*>("canvasThrough")->click();
+              next();
+            });
+          });
+        });
+      });
+    });
+  });
+  // 7b. Opacity: the panel's slider at 5 % draws the picture faded into what is behind it (its alpha; a texture drawn as it is
+  // ignored the material's transparency, and the slider changed nothing on screen), at 100 % as it was.
+  steps.push_back([=](std::function<void()> next) {
+    area->run({{"action", "place"}, {"set", {{"angle", 0.0}}}});
+    view->lookAt(editor->place().plane, true, false);
+    QTimer::singleShot(500, area, [=] {
+      int solid = 0;
+      blueCentre(view->grabImage().convertToFormat(QImage::Format_RGB32), solid);
+      auto* slider = area->panel()->findChild<QSlider*>("canvasOpacity");
+      const int decoded = view->rastersDecoded();
+      if (slider) slider->setValue(5);
+      waitFor(area, [=] { return view->rastersDecoded() > decoded && view->showsPicture(st->canvas) && !doc->designBusy; }, 10000, [=](bool ok) {
+        QTimer::singleShot(500, area, [=] {
+          int faded = 0;
+          const QImage frame = view->grabImage().convertToFormat(QImage::Format_RGB32);
+          frame.save(prefix + ".faded.png");
+          blueCentre(frame, faded);
+          trace::log(QString("bench: canvas: blue block pixels %1 opaque, %2 at 5 %").arg(solid).arg(faded));
+          check(slider && ok && solid > 20 && faded * 10 < solid && std::abs(doc->node(st->canvas)->opacity - 0.05) < 1e-9,
+                "Opacity at 5 %: the picture is drawn faded (its blue block gone into the background), one appearance step");
+          const int again = view->rastersDecoded();
+          if (slider) slider->setValue(100);
+          waitFor(area, [=] { return view->rastersDecoded() > again && view->showsPicture(st->canvas); }, 10000, [=](bool back) {
+            QTimer::singleShot(500, area, [=] {
+              int restored = 0;
+              blueCentre(view->grabImage().convertToFormat(QImage::Format_RGB32), restored);
+              check(back && restored * 10 > solid * 9, QString("Opacity back at 100 %: the picture opaque again (%1 blue pixels)").arg(restored));
               next();
             });
           });

@@ -14,6 +14,7 @@
 // selection/suggest, selection/suggestDelay). Everything comes from the related command (provenance and rules: nothing
 // is suggested by resemblance, D4), run on a worker over a document snapshot, newest selection only.
 #include <QFrame>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QTimer>
 #include <functional>
@@ -54,6 +55,10 @@ class SmartChip : public QFrame {
  protected:
   void enterEvent(QEnterEvent* e) override;
   void leaveEvent(QEvent* e) override;
+  // Its press too (a frame lets it through): the view under it took it and, the release being the chip's, its rubber band
+  // followed the pointer and the next click selected everything in it.
+  void mousePressEvent(QMouseEvent* e) override { e->accept(); }
+  void mouseDoubleClickEvent(QMouseEvent* e) override { e->accept(); }
   void mouseReleaseEvent(QMouseEvent* e) override;
   void resizeEvent(QResizeEvent* e) override;
  private:

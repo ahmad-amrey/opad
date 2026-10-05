@@ -43,6 +43,7 @@ class BrowserOverlay : public QFrame {
     m_poll.start(); place(); snapshot(); m_browser->setVisible(m_expanded);
   }
   void setVisible(bool on) override { m_requested=on; QFrame::setVisible(on && m_scene->isVisible()); }
+  bool requested() const { return m_requested; }  // shown whenever its scene is (benches)
   // Floats over another page of the central area (an area's page shown in the viewport's place).
   void setScene(QWidget* scene) {
     if(scene==m_scene) return;
@@ -76,9 +77,11 @@ class BrowserOverlay : public QFrame {
   bool expanded() const { return m_expanded; }
  protected:
   bool eventFilter(QObject* object,QEvent* event) override {
+    // QFrame::hide() would call this class's setVisible, and a page shown in the scene's place would forget that the
+    // browser was asked for: back on the view (an .opad opened from Drafting) it stayed away, View > Browser still ticked.
     if(object==m_scene) {
-      if(event->type()==QEvent::Hide) QFrame::hide();
-      else if(event->type()==QEvent::Show && m_requested) { place(); QFrame::show(); }
+      if(event->type()==QEvent::Hide) QFrame::setVisible(false);
+      else if(event->type()==QEvent::Show && m_requested) { place(); QFrame::setVisible(true); }
       else if(event->type()==QEvent::Resize || event->type()==QEvent::Move) place();
     }
     return QFrame::eventFilter(object,event);

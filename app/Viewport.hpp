@@ -91,6 +91,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setGrid(bool on);
   void configureGrid(double spacing,double extent);
   void setSelectThrough(bool on) {m_selectThrough=on;}
+  // The window shown again (restored from the taskbar, uncovered): its native surface lost the frame and nothing in the
+  // scene changed, so the next frame must draw everything, or the view stays black until the pointer moves over it.
+  void exposedAgain();
+  int exposeRedraws() const { return m_exposeRedraws; }  // benches
+  // A press whose release went to another widget or window (an overlay's chip, a menu, a file dialog): the controller's
+  // gesture (a rubber band following the pointer, whose next click selected everything in it) is dropped, nothing applied.
+  int droppedGestures() const { return m_droppedGestures; }  // benches
+  bool gestureHeld() const;  // the controller holds a pressed button now (benches)
+  bool frameInvalidated() const;  // the next frame draws everything (benches)
   void UpdateRubberBand(const Graphic3d_Vec2i& from,const Graphic3d_Vec2i& to) override;
   // Grid snapping is one switch (F9, mirrored by the sketch panel): gridSnapChanged tells both. It does not depend on
   // the grid being shown (the snap marker shows the node); in a sketch or 2D mode the step follows the zoom.
@@ -717,6 +726,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QTimer m_holdTimer;
   QPointF m_holdAt;
   bool m_holdPress = false;
+  Qt::MouseButtons m_viewButtons = Qt::NoButton;  // pressed on the view itself (not on an overlay, a dialog or a menu)
+  int m_exposeRedraws = 0, m_droppedGestures = 0;
+  bool m_topExposed = false;  // the window's surface as Qt last said (an Expose to shown again draws everything)
+  void dropGesture();
   void pressHeld();
   QPointF m_contextAt;
   bool m_inContextMenu = false;

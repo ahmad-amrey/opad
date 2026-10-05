@@ -359,7 +359,26 @@ StallLog& stallLog() {
   return s;
 }
 constexpr std::array<qint64, 5> kEdges{100, 150, 250, 500, 1000};
+// Frames since the watchdog's last tick and the longest stretch without one (UI thread only).
+struct Frames {
+  QElapsedTimer clock;
+  qint64 last = 0, longest = 0;
+  int count = 0;
+};
+Frames& frames() {
+  static Frames f;
+  if (!f.clock.isValid()) f.clock.start();
+  return f;
+}
 }  // namespace
+
+void frameDrawn() {
+  Frames& f = frames();
+  const qint64 now = f.clock.elapsed();
+  f.longest = std::max(f.longest, now - f.last);
+  f.last = now;
+  ++f.count;
+}
 
 int stallThreshold() {
   static const int ms = [] {
@@ -418,7 +437,16 @@ void installUiWatchdog(QObject* parent) {
   QObject::connect(timer, &QTimer::timeout, parent, [last, lastCpu] {
     const qint64 gap = last->restart();
     const qint64 cpu = threadCpuMs(), work = cpu - std::exchange(*lastCpu, cpu);
+    Frames& f = frames();
+    const qint64 now = f.clock.elapsed(), quiet = std::max(f.longest, now - f.last);
+    const int drawn = std::exchange(f.count, 0);
+    f.longest = 0;
+    f.last = now;
     if (gap <= stallThreshold()) return;
+    if (drawn > 1 && quiet <= stallThreshold()) {  // frames back to back: the loop ran between them
+      log(QStringLiteral("UI thread drew %1 frames in %2 ms (%3 ms of CPU): an animation, not a stall").arg(drawn).arg(gap).arg(work));
+      return;
+    }
     StallLog& s = stallLog();
     for (Stalls* st : {&s.since, &s.all}) {
       ++st->count;

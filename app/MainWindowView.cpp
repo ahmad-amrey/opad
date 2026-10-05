@@ -15,7 +15,9 @@
 #include <QResizeEvent>
 #include <QStackedWidget>
 #include <QStyleHints>
+#include <QTimer>
 #include <QToolButton>
+#include <QWindowStateChangeEvent>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -332,6 +334,17 @@ void MainWindow::resizeEvent(QResizeEvent* e) {
 void MainWindow::moveEvent(QMoveEvent* e) {
   QMainWindow::moveEvent(e);
   positionOverlays();
+}
+
+// Minimised and restored: the 3D view's native surface lost its frame, and nothing changed in the scene, so it stayed black
+// until the pointer moved over it. Its whole frame now, and once more when the window has settled (the surface may come
+// back after the state change).
+void MainWindow::changeEvent(QEvent* e) {
+  QMainWindow::changeEvent(e);
+  if (e->type() != QEvent::WindowStateChange || !m_viewport) return;
+  if (!(static_cast<QWindowStateChangeEvent*>(e)->oldState() & Qt::WindowMinimized) || (windowState() & Qt::WindowMinimized)) return;
+  m_viewport->exposedAgain();
+  QTimer::singleShot(100, m_viewport, [view = m_viewport] { view->exposedAgain(); });
 }
 
 void MainWindow::setLoading(bool on) {

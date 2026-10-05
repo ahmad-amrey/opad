@@ -32,6 +32,7 @@
 
 #include <Aspect_Grid.hxx>
 #include <AIS_AnimationCamera.hxx>
+#include <AIS_RubberBand.hxx>
 #include <AIS_TexturedShape.hxx>
 #include <Graphic3d_AspectFillArea3d.hxx>
 #include <Graphic3d_Group.hxx>
@@ -1939,6 +1940,10 @@ const std::string* rasterHref(const opad::Node& n) {
   return href.rfind("data:image/", 0) == 0 && comma != std::string::npos && href.substr(0, comma).find(";base64") != std::string::npos ? &href : nullptr;
 }
 
+// A canvas's opacity (its panel's slider): in the picture's alpha, since a texture drawn as it is ignores the material's
+// transparency (the slider changed nothing on screen). An SVG's own picture keeps its own.
+double rasterOpacity(const opad::Node& n) { return n.canvas.is_null() ? 1.0 : std::clamp(n.opacity, 0.0, 1.0); }
+
 // A canvas's picture mirrored (its flags, opad/canvas.hpp): [left-right, upside down].
 std::array<bool, 2> rasterFlip(const opad::Node& n) { return n.canvas.is_null() ? std::array<bool, 2>{false, false} : opad::CanvasFlags::of(n.canvas).flip; }
 
@@ -1952,7 +1957,8 @@ std::string rasterKey(const opad::Node& n) {
   const auto flip = rasterFlip(n);
   return std::to_string(v.size()) + ":" + std::to_string(std::hash<std::string_view>{}(v.substr(0, edge))) + ":" +
          std::to_string(std::hash<std::string_view>{}(v.substr(v.size() - edge))) + "|" + n.raster.value("corners", opad::json()).dump() + "|" +
-         n.raster.value("preserveAspectRatio", "") + (flip[0] ? "|h" : "") + (flip[1] ? "|v" : "");
+         n.raster.value("preserveAspectRatio", "") + (flip[0] ? "|h" : "") + (flip[1] ? "|v" : "") +
+         (rasterOpacity(n) < 1 ? "|a" + std::to_string(std::lround(rasterOpacity(n) * 1000)) : std::string());
 }
 
 // Worker: the texture of a raster node, fitted into its corners' proportions as SVG's preserveAspectRatio says (at most
@@ -1977,6 +1983,14 @@ Handle(Image_PixMap) rasterPixels(const std::string& base64, const opad::json& r
     painter.end();
     image = canvas;
   }
+  if (const double opacity = raster.value("opacity", 1.0); opacity < 1) {  // a canvas's opacity, in its alpha
+    image = image.convertToFormat(QImage::Format_RGBA8888);
+    const int a = int(std::lround(std::clamp(opacity, 0.0, 1.0) * 256));
+    for (int y = 0; y < image.height(); ++y) {
+      uchar* row = image.scanLine(y);
+      for (int x = 0; x < image.width(); ++x) row[4 * x + 3] = static_cast<uchar>((row[4 * x + 3] * a) >> 8);
+    }
+  }
   return texturePixels(image);
 }
 }  // namespace
@@ -1986,7 +2000,7 @@ void Viewport::decodeRaster(const opad::Node& n, const std::string& key) {
   const std::string& href = *rasterHref(n);
   auto data = std::make_shared<const std::string>(href.substr(href.find(',') + 1));  // the scene moves on meanwhile
   const auto flip = rasterFlip(n);
-  auto fit = std::make_shared<const opad::json>(opad::json{{"corners", n.raster.at("corners")}, {"preserveAspectRatio", n.raster.value("preserveAspectRatio", "")}, {"flip", {flip[0], flip[1]}}});
+  auto fit = std::make_shared<const opad::json>(opad::json{{"corners", n.raster.at("corners")}, {"preserveAspectRatio", n.raster.value("preserveAspectRatio", "")}, {"flip", {flip[0], flip[1]}}, {"opacity", rasterOpacity(n)}});
   auto made = std::make_shared<Handle(Image_PixMap)>();
   QPointer<Viewport> guard(this);
   m_jobs->async(tr("Decoding pictures"), [data, fit, made](Progress progress) {
@@ -2813,6 +2827,7 @@ void Viewport::paintEvent(QPaintEvent*) {
   updateTracking();
   updateHover();
   updateObjectSnap();
+  trace::frameDrawn();
 }
 
 // The status text, the hovered drawing entity and the point under the mouse, after a frame's detection.
@@ -2915,6 +2930,7 @@ QRect Viewport::cubeRect() const {
 
 void Viewport::mousePressEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  m_viewButtons |= e->button();
   finishTrackpadScroll();
   m_nativePinching = false;
   setFocus();
@@ -3019,6 +3035,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   m_holdTimer.stop();
+  m_viewButtons &= e->buttons() & ~e->button();
   if (m_blocked) return;
   if (std::exchange(m_holdPress, false) && e->button() == Qt::LeftButton) {  // the held press opened the list
     e->accept();
@@ -3103,6 +3120,34 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (e->buttons() == Qt::NoButton) { m_dragOffset = {}; m_warpGate.pending=false; }
 }
 
+bool Viewport::gestureHeld() const { return m_initialised && PressedMouseButtons() != Aspect_VKeyMouse_NONE; }
+bool Viewport::frameInvalidated() const { return m_initialised && m_view->IsInvalidated(); }
+
+void Viewport::dropGesture() {
+  ResetViewInput();
+  myUI.Selection.Points.Clear();
+  myUI.Selection.ToApplyTool = false;
+  myGL.Selection.Points.Clear();
+  myGL.Selection.ToApplyTool = false;
+  if (m_ctx->IsDisplayed(myRubberBand)) m_ctx->Remove(myRubberBand, Standard_False);
+  myRubberBand->ClearPoints();
+  if (std::exchange(m_cubeGesture, false)) {  // as its release would have
+    ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_SelectRectangle);
+    ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, m_pickAccumulate ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
+  }
+  m_holdTimer.stop();
+  ++m_droppedGestures;
+  if (trace::enabled()) trace::log(QStringLiteral("viewport: a press released elsewhere: its gesture dropped, nothing selected"));
+  redrawScene();
+}
+
+void Viewport::exposedAgain() {
+  if (!m_initialised) return;
+  ++m_exposeRedraws;
+  if (trace::enabled()) trace::log(QStringLiteral("viewport: shown again: the whole frame drawn"));
+  redrawScene();
+}
+
 // Off the view (onto the ribbon, or out of the window): nothing is under the pointer any more. The controller would keep
 // detecting at the last position on every redraw (after an orbit too), and the object there stayed highlighted.
 void Viewport::leaveEvent(QEvent* e) {
@@ -3136,6 +3181,16 @@ bool Viewport::benchLeave() {
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
+  // No button held: a press the view had was released elsewhere (a menu, a dialog, an overlay's chip that took the release):
+  // whatever the controller still holds goes (its rubber band followed the pointer, and the next click selected everything
+  // in it).
+  if (e->buttons() == Qt::NoButton) {
+    m_viewButtons = Qt::NoButton;
+    if (m_trackpadMode == TrackpadMode::None && gestureHeld()) dropGesture();
+  }
+  // Buttons held since a press the view never had (a file dialog closed by a double click, a tool's own press): they start
+  // no gesture of the controller's, which takes a change of modifiers during a move for a press (Ctrl of Ctrl+O let go).
+  const bool unseen = (e->buttons() & ~m_viewButtons) != 0;
   const bool awaitingWarp=m_warpGate.pending;
   if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;
   if(awaitingWarp && !m_warpGate.pending && e->buttons()!=Qt::NoButton) m_dragOffset=m_warpPosition-e->position();
@@ -3184,7 +3239,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
     if (m_sketchDrag) return;  // not a rubber band
   }
   if (e->buttons() != Qt::NoButton) m_needFit = false;  // a drag: the user owns the camera now
-  if (m_initialised && UpdateMousePosition(devicePos(e->position() + m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
+  if (m_initialised && UpdateMousePosition(devicePos(e->position() + m_dragOffset), qt_buttons(e->buttons()), unseen ? myMouseModifiers : qt_flags(e->modifiers()), false)) requestRedraw();
   const bool navigation = myMouseActiveGesture == AIS_MouseGesture_Pan
       || myMouseActiveGesture == AIS_MouseGesture_RotateOrbit || myMouseActiveGesture == AIS_MouseGesture_RotateView
       || myMouseActiveGesture == AIS_MouseGesture_Zoom || myMouseActiveGesture == AIS_MouseGesture_ZoomVertical;

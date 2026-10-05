@@ -55,6 +55,7 @@ class MainWindow : public QMainWindow {
   bool eventFilter(QObject* o, QEvent* e) override;
   void resizeEvent(QResizeEvent* e) override;
   void moveEvent(QMoveEvent* e) override;
+  void changeEvent(QEvent* e) override;  // restored from the taskbar: the view draws its whole frame again
 
  private:
   QAction* addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn, bool checkable = false);

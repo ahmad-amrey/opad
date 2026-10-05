@@ -85,6 +85,9 @@ bool ViewportChips::eventFilter(QObject* object, QEvent* event) {
   return QWidget::eventFilter(object, event);
 }
 
+void ViewportChips::mousePressEvent(QMouseEvent* event) { event->accept(); }
+void ViewportChips::mouseDoubleClickEvent(QMouseEvent* event) { event->accept(); }
+
 void ViewportChips::setViewer(const QString& file, bool document) {
   const bool on = !file.isEmpty();
   m_viewer->setVisible(on);

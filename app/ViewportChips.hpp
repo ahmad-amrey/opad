@@ -26,6 +26,10 @@ class ViewportChips : public QWidget {
  protected:
   bool eventFilter(QObject* object, QEvent* event) override;
   bool event(QEvent* event) override;
+  // A press on a chip (a label lets it through) or between them is the row's: it never reaches the view under it, whose
+  // rubber band would follow the pointer once the chip took the release (Exploded, 2D mode, the isolation's ×).
+  void mousePressEvent(QMouseEvent* event) override;
+  void mouseDoubleClickEvent(QMouseEvent* event) override;
  private:
   void keyTexts();  // the tooltips that name keys, as bound now (keys::notifier)
   bool m_areaChips = false, m_document = false;
