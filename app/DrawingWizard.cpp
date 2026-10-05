@@ -2,14 +2,12 @@
 #include "DesignController.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "I18n.hpp"
 #include "opad/design/drawing_sketch.hpp"
 #include "opad/inspect.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/feature.hpp"
-#include <BRep_Builder.hxx>
-#include <BRepBndLib.hxx>
-#include <TopoDS_Compound.hxx>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
@@ -23,7 +21,12 @@
 #include <QPushButton>
 #include <QTimer>
 #include <QPointer>
+#include <QElapsedTimer>
 #include "DrawingPlacer.hpp"
+#include "SketchGeometryCache.hpp"
+#include "HelpClip.hpp"
+#include "HelpReference.hpp"
+#include <atomic>
 
 namespace {
 bool sameFrame(const opad::Frame& a, const opad::Frame& b) {
@@ -31,27 +34,60 @@ bool sameFrame(const opad::Frame& a, const opad::Frame& b) {
     if (std::abs(a.origin[i] - b.origin[i]) > 1e-9 || std::abs(a.x[i] - b.x[i]) > 1e-12 || std::abs(a.y[i] - b.y[i]) > 1e-12) return false;
   return true;
 }
+
+// The converted curves as a drawing layer is drawn (UI-29): segments and points from the sketch's own samples, built on
+// the worker. Edges made per curve looked every point up by scanning (n² for 30,000 lines) and were then made into a
+// pickable presentation the preview never needed.
+struct CurvePreview { std::shared_ptr<BodyPrs> curves,construction; size_t lines=0,arcs=0,splines=0,points=0; };
+CurvePreview curvePreview(const opad::design::Sketch& sk,const opad::Frame& frame,const Progress& p) {
+  using Type=opad::design::SkEntity::Type;
+  CurvePreview out; if(sk.points.empty()) return out;
+  double u0=1e300,v0=1e300,u1=-1e300,v1=-1e300;
+  for(const auto& q:sk.points) { u0=std::min(u0,q.x); v0=std::min(v0,q.y); u1=std::max(u1,q.x); v1=std::max(v1,q.y); }
+  SketchGeometryCache cache; cache.update(sk,std::max(1e-6,std::hypot(u1-u0,v1-v0)*1e-5));
+  std::vector<gp_Pnt> segments[2],points;
+  auto world=[&](const std::pair<double,double>& uv) { const auto w=frame.to_world(uv.first,uv.second); return gp_Pnt(w[0],w[1],w[2]); };
+  for(size_t i=0;i<sk.entities.size();++i) {
+    if(i%4096==0 && p.cancelled()) return {};
+    const auto& e=sk.entities[i];
+    ++(e.type==Type::Point?out.points:e.type==Type::Line?out.lines:e.type==Type::Arc || e.type==Type::Circle?out.arcs:out.splines);
+    const auto* poly=cache.samples(sk,e); if(!poly) continue;
+    if(e.type==Type::Point) { for(const auto& uv:*poly) points.push_back(world(uv)); continue; }
+    auto& to=segments[e.construction?1:0];
+    for(size_t j=1;j<poly->size();++j) { to.push_back(world((*poly)[j-1])); to.push_back(world((*poly)[j])); }
+  }
+  auto arrays=[](const std::vector<gp_Pnt>& segments,const std::vector<gp_Pnt>& points) -> std::shared_ptr<BodyPrs> {
+    if(segments.empty() && points.empty()) return nullptr;
+    auto prs=std::make_shared<BodyPrs>();
+    if(!segments.empty()) { prs->boundaries=new Graphic3d_ArrayOfSegments(int(segments.size())); for(const auto& q:segments) prs->boundaries->AddVertex(q); }
+    if(!points.empty()) { prs->loosePoints=new Graphic3d_ArrayOfPoints(int(points.size())); for(const auto& q:points) prs->loosePoints->AddVertex(q); }
+    return prs;
+  };
+  out.curves=arrays(segments[0],points); out.construction=arrays(segments[1],{});
+  return out;
+}
+std::atomic<int> runningConversions{0};  // workers still converting (the preview bench checks a cancelled one stops)
 }  // namespace
 
-void MainWindow::importDrawing(const QString& path, const QString& parent) {
+void MainWindow::importDrawing(const QString& path, const QString& parent, bool link) {
   if (!m_doc->hasDocument || m_doc->browse) return openPath(path);  // nothing to place it among: as Open
   // A planar face selected: straight onto it, nothing asked (the face's frame: its lower-left corner and axes).
   const auto refs = m_viewport->selection();
   if (refs.size() == 1 && refs.front().kind == opad::Ref::Kind::Face) {
     beginLoad([this, path] { addRecent(path); m_viewport->fitWhenReady(); });
-    m_doc->startImport(path, parent, {}, opad::json{{"face", refs.front().to_json()}});
+    m_doc->startImport(path, parent, {}, opad::json{{"face", refs.front().to_json()}}, link);
     return;
   }
   // Otherwise the plane is chosen first, then the drawing is moved on it before the import op is written.
   cancelTool();
-  m_design->pickSketchPlane([this, path, parent](opad::json, opad::Frame frame) {
-    m_drawingPlacer->placed = [this, path, parent](const opad::Mat4& placement) {
+  m_design->pickSketchPlane([this, path, parent, link](opad::json, opad::Frame frame) {
+    m_drawingPlacer->placed = [this, path, parent, link](const opad::Mat4& placement) {
       beginLoad([this, path] { addRecent(path); m_viewport->fitWhenReady(); });
-      m_doc->startImport(path, parent, placement);
+      m_doc->startImport(path, parent, placement, {}, link);
     };
-    m_drawingPlacer->back = [this, path, parent] { QTimer::singleShot(0, this, [this, path, parent] { importDrawing(path, parent); }); };
+    m_drawingPlacer->back = [this, path, parent, link] { QTimer::singleShot(0, this, [this, path, parent, link] { importDrawing(path, parent, link); }); };
     m_drawingPlacer->start(path, frame, [this](ToolPanel* panel) { openPanel(panel); });
-  }, false);
+  }, false, "file.import");
 }
 
 void MainWindow::drawingToSketch() {
@@ -83,9 +119,12 @@ void MainWindow::drawingToSketch() {
   if(!tree->topLevelItemCount()) { panel->deleteLater(); throw opad::Error("Import a 2D drawing before converting to a sketch."); }
   auto* form=new QFormLayout; auto* name=new QLineEdit(tr("Converted drawing"),dialog);
   for(int i=0;i<tree->topLevelItemCount();++i)if(tree->topLevelItem(i)->checkState(0)==Qt::Checked){const auto* n=m_doc->scene.node(tree->topLevelItem(i)->data(0,Qt::UserRole).toString().toStdString());while(n && !n->parent.empty()){const auto* parent=m_doc->scene.node(n->parent);if(!parent || parent->source_op!=n->source_op)break;n=parent;}name->setText(n?QString::fromStdString(n->name):tree->topLevelItem(i)->text(0));break;}
-  auto* tolerance=new QDoubleSpinBox(dialog); tolerance->setDecimals(4); tolerance->setRange(0.0001,10); tolerance->setValue(0.01); tolerance->setSuffix(" mm");
+  // In the shown unit (UI-123); the conversion takes mm.
+  auto* tolerance=new QDoubleSpinBox(dialog); tolerance->setDecimals(units::decimalsFor(0.0001)); tolerance->setRange(units::toDisplay(units::Kind::Length,0.0001),units::toDisplay(units::Kind::Length,10));
+  tolerance->setValue(units::toDisplay(units::Kind::Length,0.01)); tolerance->setSuffix(' '+units::symbol(units::Kind::Length));
   form->addRow(tr("Sketch name"),name); form->addRow(tr("Curve tolerance"),tolerance); layout->addLayout(form);
   auto* preview=new QCheckBox(tr("Preview converted curves"),dialog); layout->addWidget(preview);
+  auto* summary=new QLabel(dialog); summary->setObjectName("previewSummary"); summary->setWordWrap(true); summary->hide(); layout->addWidget(summary);
   auto* removeSource=new QCheckBox(tr("Remove source drawing after conversion"),dialog);layout->addWidget(removeSource);
   auto* note=new QLabel(tr("Native curves stay exact. Tolerance controls reconstruction of segmented curves. Corners and construction layers are preserved."),dialog); note->setWordWrap(true); layout->addWidget(note);
   auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,dialog); buttons->button(QDialogButtonBox::Ok)->setText(tr("Create sketch"));buttons->button(QDialogButtonBox::Ok)->setObjectName("primary"); layout->addWidget(buttons);
@@ -116,35 +155,42 @@ void MainWindow::drawingToSketch() {
   auto convert=[=,this](bool commit) {
     if(state->plane.is_null() || layers().empty() || state->applying) return;
     const int serial=++state->serial; if(state->job) state->job->cancel();
-    auto snapshot=std::make_shared<opad::Document>(m_doc->doc); auto geometry=std::make_shared<opad::design::Sketch>(); auto shape=std::make_shared<TopoDS_Compound>();
-    auto presentation=std::make_shared<std::shared_ptr<BodyPrs>>();
-    const auto chosen=layers(); const auto plane=state->plane; const auto frame=state->frame; const double tol=tolerance->value(); const auto title=name->text().trimmed().toStdString();
+    auto snapshot=std::make_shared<opad::Document>(m_doc->doc); auto geometry=std::make_shared<opad::design::Sketch>(); auto drawn=std::make_shared<CurvePreview>();
+    const auto chosen=layers(); const auto frame=state->frame; const double tol=units::fromDisplay(units::Kind::Length,tolerance->value()); const auto title=name->text().trimmed().toStdString();
+    // Conversion copies geometry. Its placement must not retain a snap reference to
+    // the drawing that can be removed now or later. Keep independent model supports.
+    auto placement=state->plane;
+    std::set<std::string> sources;for(const auto& layer:chosen)if(const auto* n=m_doc->scene.node(layer.id))sources.insert(n->source_op);
+    std::function<bool(const opad::json&)> fromSource=[&](const opad::json& value){
+      if(value.is_object() && value.contains("body") && value["body"].is_string()){const auto* n=m_doc->scene.node(value["body"].get<std::string>());if(n && sources.count(n->source_op))return true;}
+      if(value.is_structured())for(const auto& child:value)if(fromSource(child))return true;return false;
+    };
+    if(fromSource(placement))placement={{"frame",frame.to_json()}};
+    // The op is made on the worker as well: the curves' JSON and its copies held the window half a second for 30,000.
+    auto op=std::make_shared<opad::json>();
     if(commit) { state->applying=true; update(); }
     state->job=m_jobs->async(commit?tr("Converting drawing layers"):tr("Previewing curves"),[=](Progress p) {
-      *geometry=opad::design::drawing_sketch(*snapshot,opad::resolve(*snapshot),chosen,frame,tol); if(p.cancelled()) return;
-      if(!commit) { BRep_Builder b; b.MakeCompound(*shape); for(const auto& e:opad::design::sketch_edges(*geometry,frame,true)) b.Add(*shape,e);Bnd_Box bounds;BRepBndLib::Add(*shape,bounds);*presentation=BodyPrs::build(*shape,bounds); }
+      ++runningConversions; struct Running { ~Running() { --runningConversions; } } running;
+      // A preview the next change made stale stops at once (UI-29: they ran on for 45 s each, stacking up).
+      *geometry=opad::design::drawing_sketch(*snapshot,opad::resolve(*snapshot),chosen,frame,tol,[p]{return p.cancelled();}); if(p.cancelled()) return;
+      if(!commit) *drawn=curvePreview(*geometry,frame,p);
+      else *op=opad::design::make_sketch_op(title,placement,geometry->to_json());
     },[=,this](bool ok,const QString& error) {
       if(!guard || state->closed || serial!=state->serial || generation!=m_doc->generation) return;
       state->job=nullptr;
       if(!ok) { state->applying=false; note->setText(error); update(); return; }
-      if(!commit) { if(preview->isChecked()) { std::vector<std::string> hidden; for(const auto& l:chosen) hidden.push_back(l.id); m_viewport->setPreviewCurves(*shape,*presentation,hidden); } return; }
-      if(snapshot->ops.size()!=m_doc->doc.ops.size()) { state->applying=false; note->setText(tr("Document changed. Please retry.")); update(); return; }
-      // Conversion copies geometry. Its placement must not retain a snap reference to
-      // the drawing that can be removed now or later. Keep independent model supports.
-      auto placement=plane;
-      std::set<std::string> sources;for(const auto& layer:chosen)sources.insert(m_doc->scene.node(layer.id)->source_op);
-      std::function<bool(const opad::json&)> fromSource=[&](const opad::json& value){
-        if(value.is_object() && value.contains("body") && value["body"].is_string()){const auto* n=m_doc->scene.node(value["body"].get<std::string>());if(n && sources.count(n->source_op))return true;}
-        if(value.is_structured())for(const auto& child:value)if(fromSource(child))return true;return false;
-      };
-      if(fromSource(placement))placement={{"frame",frame.to_json()}};
-      auto op=opad::design::make_sketch_op(title,placement,geometry->to_json());
-      std::vector<opad::json> ops{op};
-      if(removeSource->isChecked()) {
-        std::set<std::string> sources;for(const auto& layer:chosen)sources.insert(m_doc->scene.node(layer.id)->source_op);
-        for(const auto& source:sources)ops.push_back({{"op","delete"},{"target",source}});
+      if(!commit) {
+        if(!preview->isChecked()) return;
+        std::vector<std::string> hidden; for(const auto& l:chosen) hidden.push_back(l.id);
+        m_viewport->setPreviewCurves(drawn->curves,drawn->construction,hidden);
+        summary->setText(tr("The sketch gets %L1 lines, %L2 arcs and circles, %L3 splines and %L4 points.").arg(drawn->lines).arg(drawn->arcs).arg(drawn->splines).arg(drawn->points));
+        summary->show(); return;
       }
-      m_design->applyOps(ops,tr("Convert drawing to sketch"),[=,this](bool applied,const QString& failure) {
+      if(snapshot->ops.size()!=m_doc->doc.ops.size()) { state->applying=false; note->setText(tr("Document changed. Please retry.")); update(); return; }
+      if(!m_doc->activeComponent().empty()) (*op)["component"]=m_doc->activeComponent();  // made in the active component, as Finish sketch does (UI-33)
+      std::vector<opad::json> ops; ops.push_back(std::move(*op));
+      if(removeSource->isChecked()) for(const auto& source:sources) ops.push_back({{"op","delete"},{"target",source}});
+      m_design->applyOps(std::move(ops),tr("Convert drawing to sketch"),[=,this](bool applied,const QString& failure) {
         if(!guard || state->closed) return;
         state->applying=false;
         if(applied) { panel->hide(); if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QTimer::singleShot(500,this,[this,title,state] {
@@ -161,7 +207,7 @@ void MainWindow::drawingToSketch() {
     });
   };
   connect(debounce,&QTimer::timeout,dialog,[=] { if(preview->isChecked()) convert(false); });
-  auto changed=[=,this] { ++state->serial; if(state->job) state->job->cancel(); m_viewport->clearPreviewBodies(); frameOf(); update(); if(preview->isChecked()) debounce->start(); };
+  auto changed=[=,this] { ++state->serial; if(state->job) state->job->cancel(); m_viewport->clearPreviewBodies(); summary->hide(); frameOf(); update(); if(preview->isChecked()) debounce->start(); };
   connect(tree,&QTreeWidget::itemChanged,dialog,changed); connect(tolerance,&QDoubleSpinBox::valueChanged,dialog,changed); connect(preview,&QCheckBox::toggled,dialog,changed); connect(name,&QLineEdit::textChanged,dialog,update);
   connect(buttons,&QDialogButtonBox::accepted,dialog,[=] { debounce->stop(); convert(true); });
   connect(buttons,&QDialogButtonBox::rejected,panel,&QWidget::hide);
@@ -173,12 +219,73 @@ void MainWindow::drawingToSketch() {
   });
   connect(m_doc,&AppDocument::aboutToReplace,panel,[=]{panel->hide();});
   frameOf(); openPanel(panel); update();
+  // OPAD_BENCH_WIZARD_PREVIEW=<segments> (UI-29): a big drawing's preview comes without stalling the window and draws every
+  // converted segment; a change while one is being made stops that one before the next starts (they ran on, 45 s each).
+  auto benchPreview=[=,this](const QString& png,size_t expected) {
+    struct Run { int step=0; QElapsedTimer clock,tick,since; qint64 worst=0; };
+    auto run=std::make_shared<Run>(); run->clock.start(); run->tick.start();
+    auto* timer=new QTimer(dialog); timer->setInterval(15);
+    auto end=[=,this](const QString& failure) {
+      timer->stop(); if(!failure.isEmpty()) trace::log("bench: drawing preview FAIL: "+failure);
+      panel->hide(); QCoreApplication::exit(failure.isEmpty()?0:2);
+    };
+    connect(timer,&QTimer::timeout,dialog,[=,this] {
+      run->worst=std::max(run->worst,run->tick.restart());
+      if(run->clock.elapsed()>60000) return end(QString("timed out at step %1").arg(run->step));
+      switch(run->step) {
+        case 0: preview->setChecked(true); run->since.start(); run->worst=0; run->step=1; return;
+        case 1: {
+          if(!m_viewport->previewSegments()) return;
+          const size_t shown=m_viewport->previewSegments();
+          trace::log(QString("bench: drawing preview: %1 segments %2 ms after it was asked, longest UI pause %3 ms; %4").arg(shown).arg(run->since.elapsed()).arg(run->worst).arg(summary->text()));
+          if(shown!=expected) return end(QString("the preview draws %1 segments, the drawing has %2").arg(shown).arg(expected));
+          if(!summary->isVisible() || !summary->text().contains(QLocale().toString(qulonglong(expected)))) return end("the preview does not say what the sketch gets: "+summary->text());
+          if(run->worst>=250) return end(QString("the window paused %1 ms while the preview was made").arg(run->worst));
+          if(run->since.elapsed()>5000) return end(QString("the preview took %1 ms").arg(run->since.elapsed()));
+          trace::log("bench: drawing preview of every converted segment without a stall PASS");
+          m_viewport->grabImage().save(png); run->tick.restart();  // the bench's own frame is no pause of the wizard's
+          tolerance->setValue(0.02);
+          if(m_viewport->previewSegments() || summary->isVisible()) return end("a change left the old preview shown");
+          run->step=2; return;
+        }
+        case 2:  // the debounced preview runs; a change now cancels it
+          if(runningConversions==0) return;
+          tolerance->setValue(0.03); run->since.restart(); run->step=3; return;
+        case 3:
+          if(runningConversions==0) { trace::log(QString("bench: drawing preview: the cancelled one stopped within %1 ms").arg(run->since.elapsed())); run->step=4; return; }
+          if(!debounce->isActive()) return end("a preview a newer change cancelled ran on until the next one started");
+          return;
+        case 4:
+          if(!m_viewport->previewSegments()) return;
+          if(m_viewport->previewSegments()!=expected || !summary->isVisible()) return end("the newest preview is not the whole drawing");
+          if(run->worst>=250) return end(QString("the window paused %1 ms").arg(run->worst));
+          trace::log("bench: drawing preview: a change stops the preview being made, the newest one is shown PASS");
+          return end({});
+      }
+    });
+    timer->start();
+  };
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_WIZARD");!shot.isEmpty()) QTimer::singleShot(350,dialog,[=,this] {
     // TODO 10 A12: nothing is asked; the sketch plane is the drawing's own frame.
     if(state->plane.is_null() || !panel->isVisible()){trace::log("bench: drawing frame taken from the drawing FAIL");QCoreApplication::exit(2);return;}
     trace::log("bench: drawing frame taken from the drawing PASS");
     panel->grab().save(shot);m_prompt->grab().save(shot+".prompt.png");
-    if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")){removeSource->setChecked(true);convert(true);}else{panel->hide();QCoreApplication::exit(0);}
+    if(const auto expected=qEnvironmentVariable("OPAD_BENCH_WIZARD_PREVIEW");!expected.isEmpty()) benchPreview(shot+".preview.png",expected.toULongLong());
+    else if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) {
+      // The last layer as construction only: previewed dashed beside the others (UI-29), then the sketch is created.
+      tree->topLevelItem(tree->topLevelItemCount()-1)->setCheckState(1,Qt::Checked); preview->setChecked(true);
+      auto* wait=new QTimer(dialog); wait->setInterval(50); auto ticks=std::make_shared<int>(0);
+      connect(wait,&QTimer::timeout,dialog,[=,this] {
+        if(!m_viewport->previewSegments() && ++*ticks<200) return;
+        wait->stop();
+        const bool shown=m_viewport->previewSegments()>4 && m_viewport->previewParts()==2;
+        trace::log(QString("bench: drawing preview with a construction layer: %1 segments in %2 parts %3").arg(m_viewport->previewSegments()).arg(m_viewport->previewParts()).arg(shown?"PASS":"FAIL"));
+        m_viewport->grabImage().save(shot+".preview.png");
+        if(!shown){panel->hide();QCoreApplication::exit(2);return;}
+        preview->setChecked(false); removeSource->setChecked(true); convert(true);
+      });
+      wait->start();
+    } else{panel->hide();QCoreApplication::exit(0);}
   });
 }
 
@@ -246,19 +353,62 @@ bool MainWindow::benchDrawingImport() {
         importDrawing(file, {});
         ++*phase;
         break;
-      case 4:  // no face: the plane is picked first
+      case 4: {  // no face: the plane is picked first, in a picker named for the drawing whose help is Import's
         if (!m_design->pickingPlane()) return;
+        const auto labels = m_design->planePanel()->findChildren<QLabel*>();
+        if (std::none_of(labels.begin(), labels.end(), [this](const QLabel* l) { return l->text() == tr("Choose drawing plane"); }))
+          return fail("the plane picker is not titled Choose drawing plane");
+        if (m_areaServices.activeCommand() != "file.import") return fail("the running command while its plane is picked is " + m_areaServices.activeCommand());
+        trace::log("bench: drawing import's plane picker is Choose drawing plane, its help Import's PASS");
         m_design->planePicker()->choose({{"base", "xz"}});
         ++*phase;
         break;
+      }
       case 5: {  // then moved on it: an offset, then one of its vertices snapped onto a point, then Place
         if (!m_drawingPlacer->active() || !m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->isEnabled()) return;
+        {  // TODO 11 help audit WP10: the panel plays the placing's guide at the step it waits for, its "?" and Help for
+           // this tool open Import's help with that clip
+          ToolGuide* guide = m_drawingPlacer->guide();
+          if (!guide->shown() || guide->command() != DrawingPlacer::kGuideClip || guide->view()->range() != QPair<int, int>(1, 3))
+            return fail(QString("the placing guide is not shown at move, snap, Place (%1, steps %2-%3)").arg(guide->command()).arg(guide->view()->range().first).arg(guide->view()->range().second));
+          auto* snapButton = m_drawingPlacer->panel()->findChild<QPushButton*>("placeSnap");
+          snapButton->click();
+          const QPair<int, int> snapping = guide->view()->range();
+          snapButton->click();
+          if (snapping != QPair<int, int>(2, 2) || guide->view()->range() != QPair<int, int>(1, 3)) return fail("the placing guide does not loop the snap step while snapping");
+          if (m_areaServices.activeCommand() != "file.import") return fail("the running command while placing is " + m_areaServices.activeCommand());
+          for (int way = 0; way < 2; ++way) {
+            if (way == 0) m_drawingPlacer->panel()->helpButton()->click();
+            else action("help.current")->trigger();
+            auto* reference = findChild<CommandReference*>();
+            const QString shown = reference && reference->preview()->clip() ? reference->preview()->clip()->clip() : QString();
+            if (!reference || reference->current() != "file.import" || shown != DrawingPlacer::kGuideClip)
+              return fail(QString("%1 shows %2 with the clip %3").arg(way ? "Help for this tool" : "the panel's ?", reference ? reference->current() : "nothing", shown));
+            reference->close();
+          }
+          trace::log("bench: the placer's guide loops move, snap and Place, the snap step while snapping, and its ? and Help for this tool play it PASS");
+          if (const QString shot = qEnvironmentVariable("OPAD_BENCH_PLACESHOT"); !shot.isEmpty()) m_drawingPlacer->panel()->grab().save(shot);  // the panel with its guide
+        }
+        auto* offsetX = m_drawingPlacer->panel()->findChild<QLineEdit*>("placeOffsetX");
+        offsetX->setText("1 in");  // typed with a unit, read back in the shown one (UI-123)
+        offsetX->setModified(true);
+        emit offsetX->editingFinished();
+        if (offsetX->text() != "25.4 mm") return fail("the offset box read 1 in as " + offsetX->text());
+        m_drawingPlacer->setOffset(7.123456789, 3);  // shown rounded; Enter on the box as shown keeps the value
+        const opad::Mat4 shown = m_drawingPlacer->placement();
+        emit offsetX->editingFinished();
+        if (!close(m_drawingPlacer->placement(), shown)) return fail("Enter on the offset box as shown moved the drawing");
         m_drawingPlacer->setOffset(7, 3);
+        if (offsetX->text() != "7 mm") return fail("the offset box shows " + offsetX->text());
         const opad::Vec3 from = m_drawingPlacer->placement().apply({0, 0, 0}), to{100, -20, 50};
         m_drawingPlacer->snap(from, to);  // the drawing's origin onto (100, 50) of the XZ plane; -20 is off the plane
         *expected = m_drawingPlacer->placement();
         const opad::Vec3 origin = expected->apply({0, 0, 0});
         if (std::abs(origin[0] - 100) > 1e-9 || std::abs(origin[1]) > 1e-9 || std::abs(origin[2] - 50) > 1e-9) return fail("snapping did not move the vertex onto the target");
+        // Fit frames the drawing being placed (an overlay) with the 40 mm box, where it now lies: x from 100 on.
+        const Bnd_Box fit = m_viewport->benchFitBox();
+        if (fit.IsVoid() || fit.CornerMax().X() < 100 - 1e-6 || fit.CornerMin().X() > 1e-6) return fail("Fit does not frame the drawing being placed");
+        trace::log("bench: Fit frames the drawing being placed PASS");
         m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->click();
         ++*phase;
         break;

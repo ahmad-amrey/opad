@@ -14,7 +14,10 @@
 #include <map>
 
 #include "AppDocument.hpp"
+#include "PanelFooter.hpp"
 #include "opad/design/feature.hpp"
+
+class ToolGuide;
 
 // A line edit for an expression ("width / 2 + 3 mm") with its value, or what is wrong with it, underneath.
 class ExprEdit : public QWidget {
@@ -24,6 +27,7 @@ class ExprEdit : public QWidget {
   void setText(const QString& text);
   QString text() const;
   bool valid() const { return m_valid; }
+  QString problem() const { return m_valid ? QString() : m_value->text(); }  // why it does not evaluate
   QLineEdit* lineEdit() const { return m_edit; }
  signals:
   void changed();
@@ -43,6 +47,7 @@ class PickBox : public QPushButton {
  public:
   explicit PickBox(QWidget* parent = nullptr);
   void set(int count, const QString& what, bool active, bool satisfied);
+  void setNote(const QString& note);  // what the box says instead, as if waiting (a primitive's plane: "Click in the view")
  signals:
   void cleared();
  protected:
@@ -50,7 +55,7 @@ class PickBox : public QPushButton {
   void mousePressEvent(QMouseEvent* e) override;
  private:
   int m_count = 0;
-  QString m_what;
+  QString m_what, m_note;
   bool m_active = false, m_satisfied = true;
 };
 
@@ -72,6 +77,15 @@ class FeaturePanel : public QWidget {
   QString statusText() const;
   void setEditHidden(bool hidden);
   void setValue(const QString& input, const opad::json& value);  // expression, choice or flag, as the user would type it
+  void setValues(const std::vector<std::pair<QString, opad::json>>& values);  // several at once: one inputsChanged
+  // TODO 11 P1, a primitive placed in the view: what a pick box says instead of its picks (empty: its picks), and the step
+  // the guide waits at (count 0: the picks say).
+  void setPickNote(const QString& input, const QString& note);
+  void setGuideStep(int step, int count);
+  // The values shown (lengths, angles, numbers, counts), in the form's order: what the keyboard types into (UI-122).
+  QStringList valueInputs() const;
+  QString valueText(const QString& input) const;  // as its field shows it
+  QString problem(const QString& input) const;    // why it does not evaluate; empty: it does
   void activate(const QString& input);  // empty: none
   void activateNextPick();              // the first shown pick input that still needs picks
   // TODO 10 B14: the name, colour and component of the bodies a new feature makes, shown while its operation is
@@ -84,13 +98,16 @@ class FeaturePanel : public QWidget {
   // As tall as the rows this feature shows (a fillet's two no longer sat in an extrude-sized panel), and wide enough
   // for a pick box beside "By rule…" to say "3 selected" rather than "3 selec…".
   QSize preferredSize(int width) const;
+  ToolGuide* guide() const { return m_guide; }  // UI-107: a new feature's animated guide, at the pick it waits for
+  PanelFooter* footer() const { return m_footer; }
  signals:
   void inputsChanged();                 // anything that changes the result
   void activeInputChanged(const QString& input);
   // "By rule…" on a face or edge input holding one picked entity (TODO 10 B7): the controller offers rules.
   void ruleRequested(const QString& input, QWidget* anchor);
   void accepted();
-  void cancelled();
+  void cancelled();       // Cancel
+  void escapePressed();   // Esc in the panel: one step back, as in the view
   void contentResized();  // rows were added, shown or hidden: the panel fits itself again
  protected:
   void keyPressEvent(QKeyEvent* e) override;
@@ -98,7 +115,9 @@ class FeaturePanel : public QWidget {
   void refreshVisibility();
   void refreshNewBody();
   bool makesCopies() const;
-  static bool isPick(const std::string& type);
+ public:
+  static bool isPick(const std::string& type);  // an input picked in the view (bodies, faces, edges, profiles, ...)
+ private:
   AppDocument* m_doc;
   const opad::design::FeatureSpec* m_spec = nullptr;
   bool m_editingFeature = false;
@@ -110,12 +129,15 @@ class FeaturePanel : public QWidget {
   QPushButton* m_bodyColourReset = nullptr;
   QComboBox* m_bodyParent = nullptr;
   QColor m_colour;  // invalid: automatic
+  class QScrollArea* m_scroll;
+  QWidget* m_form;  // everything above the footer, in m_scroll
   QLineEdit* m_name;
   QLabel* m_hint;
+  ToolGuide* m_guide;
   QLabel* m_status;
   QLabel* m_hiddenWarning;
   QVBoxLayout* m_rows;
-  QPushButton* m_ok;
+  PanelFooter* m_footer;
   struct Row {
     QWidget* row = nullptr;
     ExprEdit* expr = nullptr;
@@ -127,6 +149,8 @@ class FeaturePanel : public QWidget {
   std::map<QString, Row> m_widgets;
   opad::json m_values = opad::json::object();  // picks and the values of hidden inputs
   QString m_active;
+  std::map<QString, QString> m_notes;  // setPickNote
+  int m_guideStep = 0, m_guideCount = 0;  // setGuideStep
 };
 
 // Modeless "Change parameters" dialog: name, expression, value, comment; rows are edited in place.

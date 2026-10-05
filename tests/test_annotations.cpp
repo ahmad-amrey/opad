@@ -1,6 +1,7 @@
 #include "check.hpp"
 #include "opad/core.hpp"
 #include "opad/agent.hpp"
+#include "opad/geometry.hpp"
 #include "opad/live.hpp"
 #include <limits>
 
@@ -76,5 +77,38 @@ TEST(existing_operation_text_is_preserved) {
   reopened.append({{"op","annotation"},{"anchor","point/0,0,0"},{"text","New review"}});
   CHECK(reopened.serialize().find(doc.ops.back().raw+"\n")!=std::string::npos);
   CHECK_EQ(reopened.find_op(id)->raw,doc.ops.back().raw);
+}
+// UI-03: where a note is drawn, without mass properties: a body's (component's) tight box centre, a sub-shape's centre,
+// a point; it follows a moved body.
+TEST(annotation_anchors) {
+  auto doc=Document::create();
+  commands::run("feature",{{"kind","box"},{"inputs",{{"length","40 mm"},{"width","30 mm"},{"height","10 mm"}}}},&doc);
+  auto scene=resolve(doc);
+  const std::string body=scene.all_bodies().front();
+  auto near=[](const Vec3& a,const Vec3& b){return std::abs(a[0]-b[0])<1e-6 && std::abs(a[1]-b[1])<1e-6 && std::abs(a[2]-b[2])<1e-6;};
+  const auto box=bbox_to_json(node_tight_bbox(doc,scene,body));
+  const Vec3 centre=box["center"].get<Vec3>(),lo=box["min"].get<Vec3>(),hi=box["max"].get<Vec3>();
+  CHECK_NEAR(hi[0]-lo[0],40,1e-6);
+  CHECK(near(annotation_anchor(doc,scene,Ref::parse(body)),centre));
+  CHECK(near(annotation_anchor(doc,scene,Ref::parse("point/1,2,3")),Vec3{1,2,3}));
+  for(const char* kind:{"face","edge","vertex"}) {  // on the box, where inspect_ref puts it
+    const Vec3 at=annotation_anchor(doc,scene,Ref::parse(body+"/"+kind+"/0"));
+    for(int k=0;k<3;++k)CHECK(at[k]>lo[k]-1e-6 && at[k]<hi[k]+1e-6);
+    CHECK(at[0]==lo[0] || at[0]==hi[0] || at[1]==lo[1] || at[1]==hi[1] || at[2]==lo[2] || at[2]==hi[2] || std::string(kind)=="face");
+  }
+  const Vec3 face=annotation_anchor(doc,scene,Ref::parse(body+"/face/0"));
+  const auto info=inspect_ref(doc,scene,Ref::parse(body+"/face/0"));
+  CHECK(near(face,info["center"].get<Vec3>()));
+  const auto component=commands::run("component",{{"name","Group"}},&doc)["id"].get<std::string>();
+  commands::run("reparent",{{"target",body},{"parent",component}},&doc);
+  commands::run("transform",{{"target",component},{"matrix",{1,0,0,100, 0,1,0,0, 0,0,1,0, 0,0,0,1}}},&doc);
+  scene=resolve(doc);
+  CHECK(near(annotation_anchor(doc,scene,Ref::parse(component)),Vec3{centre[0]+100,centre[1],centre[2]}));
+  CHECK(near(annotation_anchor(doc,scene,Ref::parse(body)),Vec3{centre[0]+100,centre[1],centre[2]}));
+  CHECK(near(annotation_anchor(doc,scene,Ref::parse(body+"/face/0")),Vec3{face[0]+100,face[1],face[2]}));
+  const auto empty=commands::run("component",{{"name","Empty"}},&doc)["id"].get<std::string>();
+  scene=resolve(doc);
+  CHECK_THROWS(annotation_anchor(doc,scene,Ref::parse(empty)));
+  CHECK_THROWS(annotation_anchor(doc,scene,Ref::parse("00000000-0000-0000-0000-000000000000")));
 }
 int main(int argc,char** argv){return check::run_all(argc,argv);}

@@ -1,6 +1,7 @@
 #include "SketchEditor.hpp"
 #include "Jobs.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include "I18n.hpp"
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -17,22 +18,27 @@ void SketchEditor::insertSplineNode(double u,double v) {
   if(!e || e->type!=opad::design::SkEntity::Type::Spline) return emit status(tr("Alt-click inside a spline to insert a node."));
   begin_change();
   try {const int point=opad::design::insert_spline_node(m_sk,e->id,u,v);m_sel={point};end_change(tr("Insert spline node"));}
-  catch(const std::exception& error) {cancel_change();emit status(QString::fromUtf8(error.what()));}
+  catch(const std::exception& error) {cancel_change();emit status(i18n::t(QString::fromUtf8(error.what())));}
+}
+
+bool SketchEditor::loadNodeWeights(int point) {
+  for(const auto& e:m_sk.entities) if(e.type==opad::design::SkEntity::Type::Spline && e.degree && !e.fixed) {
+    const auto it=std::find(e.p.begin(),e.p.end(),point);if(it==e.p.end())continue;
+    const size_t index=size_t(it-e.p.begin());
+    auto weight=[&](size_t i){return QString::number(i<e.weights.size()?e.weights[i]:1.0,'g',12);};
+    m_options["weight"]=weight(index);
+    m_options["incoming"]=index>0?weight(index-1):QStringLiteral("1");
+    m_options["outgoing"]=index+1<e.p.size()?weight(index+1):QStringLiteral("1");
+    m_panelFieldsDirty=true;
+    return true;
+  }
+  return false;
 }
 
 void SketchEditor::editSplineNode() {
   if(!m_active || m_sel.size()!=1 || (m_tool!="select" && m_tool!="spline")) return emit status(tr("Select one spline node first."));
-  const int point=m_sel.front();int entity=0,index=-1;
-  for(const auto& e:m_sk.entities) if(e.type==opad::design::SkEntity::Type::Spline && e.degree && !e.fixed) {
-    const auto it=std::find(e.p.begin(),e.p.end(),point);if(it!=e.p.end()) {entity=e.id;index=int(it-e.p.begin());break;}
-  }
-  if(!entity) return emit status(tr("Choose a control node on an editable spline."));
-  const auto* spline=m_sk.entity(entity);
-  m_options["weight"]=QString::number(spline->weights[index],'g',12);
-  m_options["incoming"]=QString::number(index>0?spline->weights[index-1]:1,'g',12);
-  m_options["outgoing"]=QString::number(index+1<int(spline->p.size())?spline->weights[index+1]:1,'g',12);
+  if(!loadNodeWeights(m_sel.front())) return emit status(tr("Choose a control node on an editable spline."));
   setTool("node");
-
 }
 
 void SketchEditor::findOpenVertices() {

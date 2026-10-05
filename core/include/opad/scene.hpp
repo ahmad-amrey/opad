@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -19,16 +20,22 @@ struct Node {
   std::vector<std::string> children;
   std::string body_key;  // Body only
   json raster;  // embedded SVG raster reference, independent of shared geometry
+  json canvas;  // a picture's canvas (opad/canvas.hpp): its import's "canvas" object ({} when it has none); null for other bodies
   std::string representation = "solid";  // solid | mesh | drawing2d
   bool body_missing = false;  // Body whose key is not in the store (F8)
+  bool linked = false;        // part of a linked asset (assets.hpp): its geometry comes from the file, read-only
   Mat4 local;
   bool has_color = false;
   std::array<double, 3> color{0.75, 0.75, 0.78};
   double opacity = 1.0;
   bool visible = true;
-  bool locked = false;
+  bool locked = false;  // not picked and not changed, moved or removed (Scene::effectively_locked: or under a locked component)
+  json layer;  // a drawing layer as its file had it: {name, off, frozen, locked, plot, linetype, lineweight}; null otherwise
+  bool by_layer = false;  // a drawing body in its layer's colour (DXF BYLAYER): a colour given to the layer applies to it
+  json line;  // a drawing body's own {linetype, pattern, lineweight} (DXF entities that set them) over its layer's; null otherwise
   std::string source_op;  // the import op that created it
   std::vector<std::string> modified_by;  // ops that touched this node after import
+  json properties = json::object();  // part properties (properties ops): part_number, description, material, bom, ...
 };
 
 struct Annotation {
@@ -64,10 +71,22 @@ struct SectionPlane {
 struct ViewBookmark {
   std::string id, name;
   json camera;
+  json explode;  // optional exploded view (explode.hpp ExplodeSpec); null for a plain camera bookmark
+  json display;  // optional: what is shown, {"layers": {layer id: state}} (a drawing's layer state, UI-89); null otherwise
+  bool home = false;  // the document's Home (optional "home": true on the view op; the last live one wins)
 };
 
 struct Unresolved {
   std::string op_id, op_type, reason;
+};
+
+// A change refused because a node is locked (TODO 11 UI-37), with what a UI needs to say it in its own words: the
+// node's and the lock holder's names (the same when the node is locked itself), the change refused (changing, moving,
+// removing) and how many other locked items it touches.
+struct LockedError : Error {
+  std::string node, holder, change;
+  size_t more = 0;
+  LockedError(std::string node, std::string holder, std::string change, size_t more = 0);
 };
 
 // ---- design (param / sketch / feature ops). Replay never runs the kernel or the sketch solver: a sketch
@@ -87,14 +106,18 @@ struct Frame {
   Vec3 normal() const;
   Vec3 to_world(double u, double v) const;
   void to_local(const Vec3& p, double& u, double& v) const;
+  Frame transformed(const Mat4& m) const;  // moved by m (its rigid part: axes stay unit and square)
   json to_json() const;
   static Frame from_json(const json& j);
 };
 
 struct SketchItem {
   std::string id, name;
+  std::string component;  // the component it was made in (the op's optional "component"); empty = the document root
+  Mat4 placed;            // that component's world placement when the sketch was made
+  Mat4 moved;             // how far the component moved since (world now * inverse(placed)); frame includes it
   json plane;     // how the plane was chosen: {"base":"xy"} | {"face":ref} | {"feature":id}
-  Frame frame;
+  Frame frame;    // where it is now; the op keeps it as made (frame.transformed(moved.inverse()))
   json geometry;  // solved: {"points":[..],"entities":[..],"constraints":[..]} (design/sketch.hpp)
   bool visible = true;
   bool consumed = false;  // some feature uses it: hidden unless shown explicitly
@@ -104,10 +127,40 @@ struct SketchItem {
 
 struct Feature {
   std::string id, kind, name;
+  std::string component;  // where its new bodies (or its plane / axis) went; empty = the document root
   json inputs, result;
   bool suppressed = false;
   std::string suppress_if;  // an expression that suppresses it while true (gap log #9)
   std::string error;
+};
+
+// ---- technical drawings (sheet / sheet_view / sheet_item ops, TODO 11 UI-76). Replay records definitions only: views
+// are projected from the final scene when a sheet is shown or exported (drawing/projection.hpp caches them by
+// fingerprint), and a dimension carries the value it had when it was made (`result`), like a pinned measurement.
+struct Sheet {
+  std::string id, name, drawing;  // drawing: the sheets of one drawing share it
+  double width = 0, height = 0;   // paper mm
+  std::string standard = "iso", projection = "first";  // iso | asme; first | third angle
+  double scale = 1;               // paper / model, the views' default
+  json def;                       // the effective record
+  std::vector<std::string> views, items;  // ids, log order
+};
+
+struct SheetView {
+  std::string id, sheet, parent, name;
+  std::string kind;               // base | projected (later builds add more; unknown ones are kept, not drawn)
+  json def;
+  std::vector<std::string> children;  // views projected from this one
+  std::string error;              // why it cannot be drawn
+};
+
+struct SheetItem {
+  std::string id, sheet, view;    // view: empty for items placed on the sheet itself
+  std::string kind, type;         // dimension (horizontal | vertical | aligned | radius | diameter | angle) | note
+  std::vector<Ref> refs;
+  json def;
+  std::string error;
+  bool unresolved = false;        // a reference names a body that is gone
 };
 
 struct Scene {
@@ -122,19 +175,35 @@ struct Scene {
   std::vector<Param> params;
   std::vector<SketchItem> sketches;
   std::vector<Feature> features;
+  std::vector<Sheet> sheets;
+  std::vector<SheetView> sheet_views;
+  std::vector<SheetItem> sheet_items;
   std::vector<std::string> deleted_ops;  // ids of tombstoned ops
   std::unordered_map<std::string, int> instance_count;  // body key -> number of body nodes
+  // The document's own properties (title, number, owner, project, ...): `properties` ops whose target is the header's uuid.
+  json properties = json::object();
+  // What it was replayed from, for caches of things computed from it: resolve's log length, last op id and roll-back op, an
+  // issued revision's (drawing::issued_scene); empty when built otherwise (nothing cached for it).
+  std::string state;
 
   const Node* node(const std::string& id) const;
   Mat4 world(const std::string& id) const;
   bool effectively_visible(const std::string& id) const;
+  bool effectively_locked(const std::string& id) const;  // it or a component above it is locked
+  const Node* lock_holder(const std::string& id) const;   // the nearest of those that is locked (unlocking it frees id), or null
   std::vector<std::string> bodies_under(const std::string& id) const;  // depth-first
   std::vector<std::string> all_bodies() const;
+  // Hide others (UI-02): the fewest shown nodes to hide so that only the bodies under `keep` stay shown: every visible
+  // subtree with bodies but none kept, as high up as it goes. Sketches are not nodes: they stay as they are.
+  std::vector<std::string> others_to_hide(const std::vector<std::string>& keep) const;
   std::vector<std::string> path_to(const std::string& id) const;  // root..id
   json tree_json(int max_depth = -1) const;
   const SketchItem* sketch(const std::string& id) const;
   const Feature* feature(const std::string& id) const;
   const Param* param(const std::string& name) const;
+  const Sheet* sheet(const std::string& id) const;
+  const SheetView* sheet_view(const std::string& id) const;
+  const SheetItem* sheet_item(const std::string& id) const;
 };
 
 // The log as replay sees it: tombstoned ops dropped, `edit` ops merged into their targets (later edits win,
@@ -171,5 +240,12 @@ class SceneBuilder {
 
 // `until`: stop before this op (the state an earlier feature was computed in; timeline roll-back).
 Scene resolve(const Document& doc, const std::string& until = {});
+
+// The ops that touch a component and what is under it, for a timeline that dims the others while it is active (TODO 11
+// UI-33): what made its nodes, sketches and features made in it, features that change a body in it, reparent /
+// transform / appearance / rename ops on something in it or putting something into it, and notes and measurements on
+// it; tombstoned ones too (as written) and the delete ops of any of them. An empty component is the document root:
+// every op but edits and regenerations.
+std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, const std::string& component);
 
 }  // namespace opad

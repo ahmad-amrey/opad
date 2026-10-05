@@ -1,11 +1,19 @@
 #include "DrawingPlacer.hpp"
 #include "BodyShape.hpp"
+#include "I18n.hpp"
+#include "SketchBackdrop.hpp"
 #include "Theme.hpp"
+#include "ToolValues.hpp"
+#include "Units.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
+#include <AIS_TexturedShape.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <gp_Pln.hxx>
 #include <TopoDS_Edge.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -25,6 +33,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+#include "HelpClip.hpp"
 #include <cmath>
 
 namespace {
@@ -35,16 +44,19 @@ constexpr size_t kMaxVertices = 200000;  // snap candidates kept from a drawing
 DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, QWidget* window) : QObject(window), m_doc(doc), m_view(view), m_jobs(jobs) {
   auto* body = new QWidget;
   auto* layout = new QVBoxLayout(body);
-  auto* hint = new QLabel(tr("The drawing sits on the chosen plane with its own origin at the plane's. Drag it, type an offset, or snap one of its vertices onto another vertex."), body);
-  hint->setWordWrap(true);
-  layout->addWidget(hint);
-  auto* form = new QFormLayout;
+  m_hint = new QLabel(body);
+  m_hint->setWordWrap(true);
+  layout->addWidget(m_hint);
+  auto* form = m_form = new QFormLayout;
   m_u = new QLineEdit(body);
   m_v = new QLineEdit(body);
+  m_widthEdit = new QLineEdit(body);
   m_u->setObjectName("placeOffsetX");
   m_v->setObjectName("placeOffsetY");
-  form->addRow(tr("Offset X (mm)"), m_u);
-  form->addRow(tr("Offset Y (mm)"), m_v);
+  m_widthEdit->setObjectName("placeWidth");
+  form->addRow(tr("Offset X"), m_u);  // in the shown unit ("12.7 mm", "0.5 in"); a bare number is in it too
+  form->addRow(tr("Offset Y"), m_v);
+  form->addRow(tr("Width"), m_widthEdit);  // pictures only
   layout->addLayout(form);
   auto* row = new QHBoxLayout;
   m_snap = new QPushButton(tr("Snap a vertex"), body);
@@ -75,23 +87,41 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
   footer->addWidget(cancelButton);
   layout->addLayout(footer);
   m_panel = new ToolPanel("drawing-place", "drawing", &Tokens::sel, tr("Place drawing"), body, 420, window);
-  m_panel->setEscapeHandler([this] {
-    if (m_snapStage) { m_snapStage = 0; m_view->setSelectionFilter(m_oldFilter); refresh(); }
-    else cancel();
-  });
+  m_panel->setEscapeHandler([this] { escape(); });
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this](bool on) { if (!on && m_active) cancel(); });
-  auto typed = [this] {
-    try {
-      std::vector<opad::design::ParamDef> defs;
-      for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
-      const opad::design::ParamTable params(defs);
-      setOffset(params.length(m_u->text().toStdString()), params.length(m_v->text().toStdString()));
-    } catch (const std::exception& e) {
-      m_status->setText(QString::fromUtf8(e.what()));
-    }
+  auto typed = [this] {  // a box left as shown keeps its value: "0.275591 in" would move a snapped drawing by 1e-5 mm
+    if (!m_u->isModified() && !m_v->isModified()) return;
+    QString problem;
+    const auto u = m_u->isModified() ? length(m_u->text(), &problem) : m_du, v = m_v->isModified() ? length(m_v->text(), &problem) : m_dv;
+    m_u->setModified(false);
+    m_v->setModified(false);
+    if (u && v) setOffset(*u, *v);
+    else m_status->setText(problem);
   };
+  // UI-122: X and Y typed over the view or a panel (no window shortcut sees the digits), the drawing following.
+  m_values = new ToolValues(view, this);
+  m_values->fields = [this] {
+    if (!m_active || !m_loaded || m_snapStage) return QList<DynamicInput::Field>{};
+    return QList<DynamicInput::Field>{ToolValues::box("x", tr("Offset X"), units::editable(units::Kind::Length, m_du)),
+                                      ToolValues::box("y", tr("Offset Y"), units::editable(units::Kind::Length, m_dv))};
+  };
+  m_values->edited = [this](const QString& key, const QString& value) {  // or the offset before, put back by Esc
+    QString problem;
+    const auto mm = length(value, &problem);
+    m_values->input()->setProblem(key, problem);
+    if (mm) setOffset(key == "x" ? *mm : m_du, key == "y" ? *mm : m_dv);
+  };
+  m_values->commit = [this] { if (m_loaded) m_place->click(); };
+  m_values->escape = [this] { escape(); };
   connect(m_u, &QLineEdit::editingFinished, this, typed);
   connect(m_v, &QLineEdit::editingFinished, this, typed);
+  connect(m_widthEdit, &QLineEdit::editingFinished, this, [this] {
+    if (!m_widthEdit->isModified()) return;
+    m_widthEdit->setModified(false);
+    QString problem;
+    if (const auto width = length(m_widthEdit->text(), &problem)) setImageWidth(*width);
+    else m_status->setText(problem);
+  });
   connect(m_snap, &QPushButton::toggled, this, [this](bool on) {
     m_snapStage = on ? 1 : 0;
     if (!on) m_view->setSelectionFilter(m_oldFilter);
@@ -106,16 +136,30 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
     if (placed) placed(m);
   });
   connect(cancelButton, &QPushButton::clicked, this, &DrawingPlacer::cancel);
+  connect(units::notifier(), &units::Notifier::changed, this, [this] { if (m_active) refresh(); });
   view->installEventFilter(this);
+  // The guide of placing a drawing, under the hint: the tool guide's clip for this panel too (its "?", Help for this tool).
+  m_guide = new ToolGuide(body);
+  layout->insertWidget(1, m_guide);
+  connect(m_guide, &ToolGuide::resized, this, [this, body] { m_panel->setDefaultHeight(std::max(385, body->sizeHint().height())); });
 }
 
 void DrawingPlacer::start(const QString& file, const opad::Frame& plane, std::function<void(ToolPanel*)> open) {
   stop();
   m_active = true;
   m_file = file;
+  m_guide->setCommand(QStringList{"dxf", "dwg", "svg"}.contains(QFileInfo(file).suffix().toLower()) ? QString(kGuideClip) : QString());  // a drawing's clip
   m_plane = plane;
   m_du = m_dv = 0;
   m_loaded = false;
+  const QString suffix = QFileInfo(file).suffix().toLower();
+  m_image = QStringList{"png", "jpg", "jpeg", "bmp", "gif", "webp"}.contains(suffix);
+  m_imageW = m_imageH = m_width = 0;
+  m_form->setRowVisible(m_widthEdit, m_image);
+  m_panel->setHeader(m_image ? "canvas" : "drawing", m_image ? tr("Place canvas") : tr("Place drawing"));
+  m_hint->setText(m_image ? tr("The picture sits on the chosen plane, centred on its origin. Drag it, type an offset or a width, or snap a corner onto a vertex.")
+                          : tr("The drawing sits on the chosen plane with its own origin at the plane's. Drag it, type an offset, or snap one of its vertices onto another vertex."));
+  m_place->setToolTip(m_image ? tr("Import the picture here") : tr("Import the drawing here"));
   m_oldFilter = m_view->selectionFilter();
   refresh();
   open(m_panel);
@@ -125,14 +169,32 @@ void DrawingPlacer::start(const QString& file, const opad::Frame& plane, std::fu
   auto shape = std::make_shared<TopoDS_Compound>();
   auto prs = std::make_shared<std::shared_ptr<BodyPrs>>();
   auto vertices = std::make_shared<std::vector<gp_Pnt>>();
-  const std::string path = file.toStdString();
+  auto picture = std::make_shared<Handle(Image_PixMap)>();
+  auto size = std::make_shared<std::pair<double, double>>(0, 0);
+  const std::filesystem::path path(file.toStdU16String());
   m_status->setText(tr("Reading %1").arg(QFileInfo(file).fileName()));
-  m_job = m_jobs->async(tr("Reading drawing"), [shape, prs, vertices, path](Progress p) {
+  m_job = m_jobs->async(m_image ? tr("Reading picture") : tr("Reading drawing"), [shape, prs, vertices, path, picture, size](Progress p) {
     opad::Document scratch = opad::Document::create();
     opad::ImportOptions options;
     options.progress = [p](double, const std::string&) { return !p.cancelled(); };
     opad::import_file(scratch, path, options);
     const opad::Scene scene = opad::resolve(scratch);
+    for (const auto& id : scene.all_bodies())  // a picture: its rectangle, as it will look, its corners and centre to snap
+      if (const auto* n = scene.node(id); n && n->representation == "image" && n->raster.is_object()) {
+        const auto& c = n->raster.at("corners");
+        const double w = c[1][0].get<double>(), h = c[0][1].get<double>();
+        *size = {w, h};
+        TopoDS_Face face = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), 0, w, 0, h).Face();
+        BRepMesh_IncrementalMesh(face, std::max(w, h));
+        BRep_Builder builder;
+        builder.MakeCompound(*shape);
+        builder.Add(*shape, face);
+        *vertices = {gp_Pnt(0, 0, 0), gp_Pnt(w, 0, 0), gp_Pnt(w, h, 0), gp_Pnt(0, h, 0), gp_Pnt(w / 2, h / 2, 0)};
+        const std::string& href = n->raster.at("href").get_ref<const std::string&>();
+        const QImage image = decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(href.substr(href.find(',') + 1))), 1024);
+        if (!image.isNull()) *picture = texturePixels(image);
+        return;
+      }
     BRep_Builder builder;
     builder.MakeCompound(*shape);
     for (const auto& id : scene.all_bodies()) {
@@ -146,18 +208,37 @@ void DrawingPlacer::start(const QString& file, const opad::Frame& plane, std::fu
     Bnd_Box box;
     BRepBndLib::Add(*shape, box);
     *prs = BodyPrs::build(*shape, box);
-  }, [this, serial, shape, prs, vertices](bool ok, const QString& error) {
+  }, [this, serial, shape, prs, vertices, picture, size](bool ok, const QString& error) {
     if (serial != m_serial || !m_active) return;
     m_job = nullptr;
     if (!ok) { m_status->setText(error); return; }
     m_vertices = std::move(*vertices);
-    Handle(AIS_Shape) ais = new BodyShape(*shape, *prs);
-    ais->SetColor(occ(theme::current().sel));
-    ais->SetWidth(1.5);
-    m_preview = ais;
-    m_loaded = true;
-    move();
-    m_view->showOverlay(m_preview);
+    if (m_image) {
+      m_imageW = size->first, m_imageH = size->second;
+      m_width = m_imageW;
+      Handle(AIS_TexturedShape) textured = new AIS_TexturedShape(*shape);
+      if (!picture->IsNull()) {
+        textured->SetTexturePixMap(*picture);
+        textured->SetTextureMapOn();
+        textured->DisableTextureModulate();
+        textured->SetTextureRepeat(false);
+      }
+      textured->Attributes()->SetAutoTriangulation(false);  // meshed on the worker
+      textured->SetColor(occ(theme::current().sel));
+      textured->SetTransparency(0.2);
+      m_preview = textured;
+      m_loaded = true;
+      move();
+      m_view->showBackdrop(m_preview);
+    } else {
+      Handle(AIS_Shape) ais = new BodyShape(*shape, *prs);
+      ais->SetColor(occ(theme::current().sel));
+      ais->SetWidth(1.5);
+      m_preview = ais;
+      m_loaded = true;
+      move();
+      m_view->showOverlay(m_preview);
+    }
     refresh();
     emit ready();
   });
@@ -165,6 +246,7 @@ void DrawingPlacer::start(const QString& file, const opad::Frame& plane, std::fu
 
 void DrawingPlacer::stop() {
   m_active = m_dragging = false;
+  m_values->reset();
   ++m_serial;
   if (m_job) m_job->cancel();
   m_job = nullptr;
@@ -182,6 +264,25 @@ void DrawingPlacer::cancel() {
   if (!m_active) return;
   stop();
   emit cancelled();
+}
+
+void DrawingPlacer::escape() {
+  if (!m_snapStage) return cancel();
+  m_snapStage = 0;
+  { QSignalBlocker block(m_snap); m_snap->setChecked(false); }
+  m_view->setSelectionFilter(m_oldFilter);
+  refresh();
+}
+
+std::optional<double> DrawingPlacer::length(const QString& text, QString* problem) const {
+  try {
+    std::vector<opad::design::ParamDef> defs;
+    for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+    return opad::design::ParamTable(defs, units::current().length).length(text.toStdString());
+  } catch (const std::exception& e) {
+    if (problem) *problem = i18n::t(QString::fromUtf8(e.what()));
+    return std::nullopt;
+  }
 }
 
 opad::Mat4 DrawingPlacer::placement() const {
@@ -207,25 +308,42 @@ bool DrawingPlacer::snap(const opad::Vec3& from, const opad::Vec3& to) {
   return true;
 }
 
+void DrawingPlacer::setImageWidth(double mm) {
+  if (!m_image || !(mm > 0) || !std::isfinite(mm)) return;
+  m_width = mm;
+  move();
+  refresh();
+}
+
+opad::Mat4 DrawingPlacer::shown() const {
+  if (!m_image || !(m_imageW > 0)) return placement();
+  opad::Mat4 scale;
+  scale.at(0, 0) = scale.at(1, 1) = scale.at(2, 2) = m_width / m_imageW;
+  return placement() * scale * opad::Mat4::translation(-m_imageW / 2, -m_imageH / 2, 0);
+}
+
 void DrawingPlacer::move() {
   if (m_preview.IsNull()) return;
+  if (m_image) return m_view->moveOverlay(m_preview, opad::trsf_from_mat(shown()));  // no recompute: the texture stays
   m_preview->SetLocalTransformation(opad::trsf_from_mat(placement()));
   m_view->updateOverlay(m_preview);
 }
 
 void DrawingPlacer::refresh() {
-  if (!m_u->hasFocus()) m_u->setText(QString::number(m_du, 'g', 12));
-  if (!m_v->hasFocus()) m_v->setText(QString::number(m_dv, 'g', 12));
+  if (m_guide) m_guide->setWaiting(m_snapStage ? 2 : 1, 4);  // the clip's steps: plane, move, snap, Place
+  if (!m_u->hasFocus()) m_u->setText(units::editable(units::Kind::Length, m_du));
+  if (!m_v->hasFocus()) m_v->setText(units::editable(units::Kind::Length, m_dv));
+  if (!m_widthEdit->hasFocus()) m_widthEdit->setText(m_width > 0 ? units::editable(units::Kind::Length, m_width) : QString());
   m_place->setEnabled(m_loaded);
   m_snap->setEnabled(m_loaded);
   if (!m_loaded) return;
-  if (m_snapStage == 1) m_status->setText(tr("Snap: click a vertex of the drawing"));
+  if (m_snapStage == 1) m_status->setText(m_image ? tr("Snap: click a corner or the centre of the picture") : tr("Snap: click a vertex of the drawing"));
   else if (m_snapStage == 2) m_status->setText(tr("Snap: click the vertex it should land on (Esc cancels)"));
-  else m_status->setText(tr("Drag the drawing, or type the offset. Place imports it here."));
+  else m_status->setText(m_image ? tr("Drag the picture or type the offset and width.") : tr("Drag the drawing, or type the offset. Place imports it here."));
 }
 
 bool DrawingPlacer::nearestVertex(const QPointF& at, opad::Vec3& world) const {
-  const opad::Mat4 m = placement();
+  const opad::Mat4 m = shown();
   double best = 14 * 14;
   bool found = false;
   for (const auto& p : m_vertices) {
@@ -273,18 +391,26 @@ bool DrawingPlacer::eventFilter(QObject* object, QEvent* event) {
     }
     if (m_snapStage == 2) {
       opad::Ref ref;
-      if (m_view->originReferenceAt(e->position(), ref)) {
-        try {
-          const opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, ref);
+      if (m_view->originReferenceAt(e->position(), ref)) {  // where it is: inspected on a worker (UI-51, it walks the body)
+        if (m_snapJob) m_snapJob->cancel();
+        auto document = m_doc->shapesOf({ref.body});
+        auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+        auto target = std::make_shared<opad::Vec3>();
+        const int serial = m_serial;
+        QPointer<DrawingPlacer> guard(this);
+        m_snapJob = m_jobs->async(tr("Snapping"), [document, scene, ref, target](Progress) {
+          const opad::json info = opad::inspect_ref(*document, *scene, ref);
           const opad::json& p = info.contains("point") ? info["point"] : info.at("center");
-          snap(m_snapFrom, {p[0].get<double>(), p[1].get<double>(), p[2].get<double>()});
+          *target = {p[0].get<double>(), p[1].get<double>(), p[2].get<double>()};
+        }, [this, guard, serial, target](bool ok, const QString& error) {
+          if (!guard || !m_active || serial != m_serial || m_snapStage != 2) return;
+          if (!ok) return m_status->setText(i18n::t(error));
+          snap(m_snapFrom, *target);
           m_snapStage = 0;
           m_snap->setChecked(false);
           if (!m_marker.IsNull()) m_view->removeOverlay(m_marker);
           m_marker.Nullify();
-        } catch (const std::exception& error) {
-          m_status->setText(QString::fromUtf8(error.what()));
-        }
+        });
       } else m_status->setText(tr("Snap: click a vertex of a body, a drawing or a sketch"));
       return true;
     }

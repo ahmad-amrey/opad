@@ -1,7 +1,10 @@
+#include "KeyGuard.hpp"
 #include "ShortcutEditor.hpp"
 #include "check.hpp"
+#include <QDialog>
 #include <QApplication>
 #include <QKeySequenceEdit>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
@@ -43,6 +46,7 @@ TEST(prefix_and_context_conflicts) {
   CHECK(!shortcuts::overlaps("sketch.dimension","inspect.distance"));
   CHECK(!shortcuts::overlaps("sketch.trim","edit.selecttouched"));
   CHECK(shortcuts::overlaps("sketch.line","view.home"));
+  CHECK(shortcuts::scope("view.hidden")==shortcuts::OutsideSketch);CHECK(shortcuts::scope("view.hiddenEdges")==shortcuts::OutsideSketch);
 }
 TEST(migration_and_explicit_empty_bindings) {
   QSettings s;s.clear();s.setValue("shortcuts/view.ortho","O");s.setValue("shortcuts/view.top","Alt+Q");s.setValue("shortcuts/view.grid","");
@@ -60,6 +64,78 @@ TEST(annotation_shortcut_migration) {
   CHECK(draw.shortcut()==QKeySequence("Shift+N"));CHECK(show.shortcut().isEmpty());
   s.clear();s.setValue("shortcuts/annotate.show","Alt+N");s.setValue("shortcuts/annotate.draw","Ctrl+Alt+N");
   shortcuts::migrate(s);CHECK(s.value("shortcuts/annotate.show").toString()=="Alt+N");CHECK(s.value("shortcuts/annotate.draw").toString()=="Ctrl+Alt+N");s.clear();
+}
+// UI-111: Properties leaves Ctrl+P (Print's) for Alt+Enter; a Ctrl+P the old editor saved goes, a key of the user's stays.
+TEST(properties_shortcut_migration) {
+  QSettings s;s.clear();s.setValue("shortcuts/inspect.properties","Ctrl+P");
+  shortcuts::migrate(s);CHECK(!s.contains("shortcuts/inspect.properties"));CHECK(s.value("shortcuts/standardDefaultsVersion").toInt()==1);
+  QAction properties;init(properties,"inspect.properties","Alt+Return");CHECK(properties.shortcut()==QKeySequence("Alt+Return"));
+  s.clear();s.setValue("shortcuts/inspect.properties","Ctrl+Shift+O");shortcuts::migrate(s);
+  CHECK(s.value("shortcuts/inspect.properties").toString()=="Ctrl+Shift+O");
+  s.setValue("shortcuts/inspect.properties","Ctrl+P");shortcuts::migrate(s);CHECK(s.value("shortcuts/inspect.properties").toString()=="Ctrl+P");  // once only
+  s.clear();
+}
+// Redo answers to Ctrl+Shift+Z too while it keeps its default; a key of the user's replaces both; another command on
+// Ctrl+Shift+Z takes it, since Qt fires neither of two equal shortcuts.
+TEST(alternate_keys) {
+  QSettings s;s.clear();
+  QAction redo;init(redo,"edit.redo","Ctrl+Y");
+  CHECK(redo.shortcuts()==QList<QKeySequence>({QKeySequence("Ctrl+Y"),QKeySequence("Ctrl+Shift+Z")}));
+  CHECK(redo.toolTip().contains("Ctrl+Shift+Z"));
+  QAction other;init(other,"view.fit","F");
+  shortcuts::settleAlternates({&redo,&other});CHECK(redo.shortcuts().size()==2);
+  other.setShortcut(QKeySequence("Ctrl+Shift+Z"));
+  shortcuts::settleAlternates({&redo,&other});CHECK(redo.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+Y")});
+  s.setValue("shortcuts/edit.redo","Ctrl+R");QAction custom;init(custom,"edit.redo","Ctrl+Y");
+  CHECK(custom.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+R")});
+  s.clear();
+}
+// The editor's Alternate column and field: a second key of the user's stays beside the key (shortcutAlternates/<id>),
+// another command's key there is a conflict like any, taking Redo's alternate for another command clears it (saved as
+// none), Restore default brings both of Redo's keys back, and an alternate left alone becomes the key.
+TEST(editor_alternates) {
+  QSettings settings;settings.clear();QAction redo,fit,save;
+  init(redo,"edit.redo","Ctrl+Y");init(fit,"view.fit","F");init(save,"file.save","Ctrl+S");
+  QList<QAction*> actions{&redo,&fit,&save};
+  const auto text=[](const char* key){return QKeySequence(key).toString(QKeySequence::NativeText);};
+  {
+    ShortcutEditor dialog(actions);
+    auto* tree=dialog.findChild<QTreeWidget*>("shortcutTree");
+    auto* alternate=dialog.findChild<QKeySequenceEdit*>("shortcutAlternate");
+    CHECK(item(dialog,"edit.redo")->text(2)==text("Ctrl+Shift+Z"));
+    tree->setCurrentItem(item(dialog,"view.fit"));
+    alternate->setKeySequence(QKeySequence("Ctrl+Alt+F"));dialog.findChild<QPushButton*>("shortcutAssignAlternate")->click();
+    CHECK(item(dialog,"view.fit")->text(2)==text("Ctrl+Alt+F"));
+    alternate->setKeySequence(QKeySequence("Ctrl+S"));
+    bool seen=false;QTimer::singleShot(0,[&]{seen=answer("cancel");});
+    dialog.findChild<QPushButton*>("shortcutAssignAlternate")->click();CHECK(seen);
+    CHECK(item(dialog,"view.fit")->text(2)==text("Ctrl+Alt+F"));
+    alternate->setKeySequence(QKeySequence("Ctrl+Alt+F"));
+    choose(dialog,"view.fit","Ctrl+Shift+Z");assign(dialog,"shortcutReassign");
+    CHECK(item(dialog,"edit.redo")->text(2).isEmpty()&&item(dialog,"view.fit")->text(1)==text("Ctrl+Shift+Z"));
+    dialog.accept();
+  }
+  CHECK(fit.shortcuts()==QList<QKeySequence>({QKeySequence("Ctrl+Shift+Z"),QKeySequence("Ctrl+Alt+F")}));
+  CHECK(redo.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+Y")});
+  CHECK(fit.toolTip().contains(text("Ctrl+Alt+F")));
+  CHECK(settings.value("shortcutAlternates/view.fit").toString()=="Ctrl+Alt+F");
+  CHECK(settings.contains("shortcutAlternates/edit.redo")&&settings.value("shortcutAlternates/edit.redo").toString().isEmpty());
+  QAction fitAgain,redoAgain;init(fitAgain,"view.fit","F");init(redoAgain,"edit.redo","Ctrl+Y");  // the next start
+  CHECK(fitAgain.shortcuts()==fit.shortcuts()&&redoAgain.shortcuts()==redo.shortcuts());
+  {
+    ShortcutEditor dialog(actions);
+    choose(dialog,"view.fit","F");dialog.findChild<QPushButton*>("shortcutAssign")->click();
+    dialog.findChild<QTreeWidget*>("shortcutTree")->setCurrentItem(item(dialog,"edit.redo"));
+    dialog.findChild<QPushButton*>("shortcutReset")->click();
+    CHECK(item(dialog,"edit.redo")->text(1)==text("Ctrl+Y")&&item(dialog,"edit.redo")->text(2)==text("Ctrl+Shift+Z"));
+    dialog.findChild<QTreeWidget*>("shortcutTree")->setCurrentItem(item(dialog,"view.fit"));
+    choose(dialog,"view.fit","");dialog.findChild<QPushButton*>("shortcutAssign")->click();
+    dialog.accept();
+  }
+  CHECK(redo.shortcuts()==QList<QKeySequence>({QKeySequence("Ctrl+Y"),QKeySequence("Ctrl+Shift+Z")})&&!settings.contains("shortcutAlternates/edit.redo"));
+  CHECK(fit.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+Alt+F")}&&settings.value("shortcuts/view.fit").toString()=="Ctrl+Alt+F");
+  CHECK(!settings.contains("shortcutAlternates/view.fit"));
+  settings.clear();
 }
 TEST(editor_search_swap_reassign_cancel_and_persistence) {
   QSettings settings;settings.clear();QAction home,grid,sketch,measure;
@@ -94,6 +170,60 @@ TEST(editor_prefix_conflict_and_reserved_keys) {
   choose(dialog,"view.home","Return");assign(dialog,"cancel");CHECK(item(dialog,"view.home")->text(1)==QKeySequence("Ctrl+K").toString(QKeySequence::NativeText));
   dialog.reject();CHECK(b.shortcut()==QKeySequence("Ctrl+K, C"));
 }
+TEST(value_keys_display_styles_and_the_sketch) {
+  // UI-16: a running sketch tool types digits into its value boxes, so the display styles' 5, 6 and 7 (like the filters'
+  // 1 to 4) are scoped outside the sketch, let go while one is open and taken back after; a sketch command cannot have one.
+  for(const char* id:{"view.shaded","view.edges","view.wire","select.edges"})CHECK(shortcuts::scope(id)==shortcuts::OutsideSketch);
+  CHECK(!shortcuts::overlaps("view.wire","sketch.line"));CHECK(shortcuts::overlaps("view.wire","view.home"));
+  for(const char* key:{"5","0",".",",","-","+"})CHECK(shortcuts::typesValue(QKeySequence(key)));
+  CHECK(shortcuts::typesValue(QKeySequence(QKeyCombination(Qt::KeypadModifier,Qt::Key_5))));
+  for(const char* key:{"Shift+2","Ctrl+5","Alt+1","L","Esc",""})CHECK(!shortcuts::typesValue(QKeySequence(key)));
+  QSettings().clear();QAction wire,line,fit;init(wire,"view.wire","7");init(line,"sketch.line","L");init(fit,"view.fit","F");
+  shortcuts::suspendOutsideSketch({&wire,&line,&fit},true);
+  CHECK(wire.shortcut().isEmpty() && shortcuts::binding(&wire)==QKeySequence("7"));
+  CHECK(line.shortcut()==QKeySequence("L") && fit.shortcut()==QKeySequence("F"));  // the sketch's own and the everywhere ones stay
+  CHECK(wire.toolTip().contains("(7)"));
+  shortcuts::suspendOutsideSketch({&wire,&line,&fit},true);  // again: still held, not lost
+  CHECK(shortcuts::binding(&wire)==QKeySequence("7"));
+  shortcuts::bind(&wire,QKeySequence("8"));  // changed in the editor while sketching: taken back as changed
+  CHECK(wire.shortcut().isEmpty() && shortcuts::binding(&wire)==QKeySequence("8"));
+  shortcuts::suspendOutsideSketch({&wire,&line,&fit},false);
+  CHECK(wire.shortcut()==QKeySequence("8") && shortcuts::binding(&wire)==QKeySequence("8") && !wire.property("heldShortcut").isValid());
+  {
+    ShortcutEditor dialog({&wire,&line,&fit});
+    CHECK(item(dialog,"view.wire")->text(3)=="Outside sketch");  // the context after the alternate (UI-111)
+    choose(dialog,"sketch.line","5");assign(dialog,"cancel");  // refused: a running tool types 5
+    CHECK(item(dialog,"sketch.line")->text(1)=="L");
+    choose(dialog,"view.wire","5");dialog.findChild<QPushButton*>("shortcutAssign")->click();
+    CHECK(item(dialog,"view.wire")->text(1)=="5");
+    dialog.reject();
+  }
+  QSettings().clear();
+}
+TEST(value_keys_outside_the_sketch_are_explained) {
+  // UI-122: a tool that takes values (a feature, the section, a drawing being placed) types the value keys too; the defaults
+  // on them stay (no migration), the editor says when a command's key is one.
+  QSettings().clear();QAction wire,fit,line;init(wire,"view.wire","7");init(fit,"view.fit","F");init(line,"sketch.line","L");
+  ShortcutEditor dialog({&wire,&fit,&line});
+  auto* details=dialog.findChild<QLabel*>("shortcutDetails");CHECK(details);
+  const QString note="this key types into its boxes instead";
+  auto* tree=dialog.findChild<QTreeWidget*>("shortcutTree");
+  tree->setCurrentItem(item(dialog,"view.wire"));CHECK(details->text().contains(note));
+  tree->setCurrentItem(item(dialog,"view.fit"));CHECK(!details->text().contains(note));
+  choose(dialog,"view.fit","0");CHECK(details->text().contains(note));  // as a key is pressed in the binding box
+  choose(dialog,"view.fit","Ctrl+0");CHECK(!details->text().contains(note));
+  tree->setCurrentItem(item(dialog,"sketch.line"));CHECK(!details->text().contains(note));
+  dialog.reject();QSettings().clear();
+}
+TEST(value_key_migration) {
+  QSettings s;s.clear();s.setValue("shortcuts/sketch.line","5");s.setValue("shortcuts/sketch.circle","Alt+5");s.setValue("shortcuts/view.fit","0");s.setValue("shortcuts/sketch.trim",".");
+  shortcuts::migrate(s);
+  CHECK(!s.contains("shortcuts/sketch.line") && !s.contains("shortcuts/sketch.trim"));  // back to their defaults
+  CHECK(s.value("shortcuts/sketch.circle").toString()=="Alt+5" && s.value("shortcuts/view.fit").toString()=="0");
+  CHECK(s.value("shortcuts/inputDefaultsVersion").toInt()==1);
+  s.setValue("shortcuts/sketch.line","5");shortcuts::migrate(s);CHECK(s.value("shortcuts/sketch.line").toString()=="5");  // once
+  s.clear();
+}
 TEST(shift_digit_and_arrow_activation) {
   QWidget window;QAction flat(&window),ortho(&window),top(&window);
   flat.setShortcut(QKeySequence("Shift+2"));ortho.setShortcut(QKeySequence("Shift+3"));top.setShortcut(QKeySequence("Shift+Up"));
@@ -113,6 +243,55 @@ TEST(shift_digit_capture_and_lookup) {
   auto* binding=dialog.findChild<QKeySequenceEdit*>("shortcutBinding");
   QKeyEvent hash(QEvent::KeyPress,Qt::Key_NumberSign,Qt::ShiftModifier,"#");QApplication::sendEvent(binding,&hash);
   CHECK(binding->keySequence()==QKeySequence("Shift+3"));
+}
+// UI-09: one-key shortcuts are held back for a moment after a modal dialog closed, while an inline editor is open its
+// keys go there, and between hold() and release() they are kept for the editor that opens; other keys pass.
+TEST(key_guard_holds_one_key_shortcuts) {
+  QKeyEvent v(QEvent::KeyPress,Qt::Key_V,Qt::NoModifier,"v"),shiftV(QEvent::KeyPress,Qt::Key_V,Qt::ShiftModifier,"V"),ctrlV(QEvent::KeyPress,Qt::Key_V,Qt::ControlModifier),
+      del(QEvent::KeyPress,Qt::Key_Delete,Qt::NoModifier),escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier),f2(QEvent::KeyPress,Qt::Key_F2,Qt::NoModifier);
+  CHECK(KeyGuard::oneKey(&v) && KeyGuard::oneKey(&shiftV) && KeyGuard::oneKey(&del));
+  CHECK(!KeyGuard::oneKey(&ctrlV) && !KeyGuard::oneKey(&escape) && !KeyGuard::oneKey(&f2));
+  QWidget window;auto* target=new QWidget(&window);target->setFocusPolicy(Qt::StrongFocus);
+  QAction hide(&window),undo(&window);hide.setShortcut(QKeySequence("V"));undo.setShortcut(QKeySequence("Ctrl+Z"));window.addActions({&hide,&undo});
+  int hidden=0,undone=0;QObject::connect(&hide,&QAction::triggered,[&]{++hidden;});QObject::connect(&undo,&QAction::triggered,[&]{++undone;});
+  QLineEdit* editor=nullptr;
+  KeyGuard guard([&]()->QWidget*{return editor;});qApp->installEventFilter(&guard);
+  window.show();window.activateWindow();CHECK(QTest::qWaitForWindowActive(&window));target->setFocus();
+  QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,1);CHECK(!guard.quiet());
+  {QDialog dialog(&window);QTimer::singleShot(0,&dialog,&QDialog::accept);dialog.exec();}
+  window.activateWindow();CHECK(QTest::qWaitForWindowActive(&window));target->setFocus();
+  CHECK(guard.quiet());
+  QTest::keyClick(target,Qt::Key_V);QTest::keyClick(target,Qt::Key_Z,Qt::ControlModifier);
+  CHECK_EQ(hidden,1);CHECK_EQ(undone,1);  // V held back, Ctrl+Z not
+  QTest::qWait(KeyGuard::kQuietMs+50);
+  QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,2);
+  editor=new QLineEdit(&window);editor->show();  // open, but the keyboard is elsewhere
+  QTest::keyClick(target,Qt::Key_V);
+  CHECK_EQ(hidden,2);CHECK_EQ(editor->text(),QString("v"));CHECK(QApplication::focusWidget()==editor);  // it took the keyboard
+  QTest::keyClick(QApplication::focusWidget(),Qt::Key_N);CHECK_EQ(editor->text(),QString("vn"));
+  editor->setText("kept");editor->hide();editor=nullptr;  // closed: V is the shortcut again
+  QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,3);
+  // Held while a command waits to resume (Rename after Edit unsaved copy): kept, then typed into the editor it opened.
+  guard.hold();guard.hold();
+  QTest::keyClick(target,Qt::Key_V);QTest::keyClick(target,Qt::Key_A);QTest::keyClick(target,Qt::Key_Z,Qt::ControlModifier);
+  CHECK_EQ(hidden,3);CHECK_EQ(undone,2);  // V kept, Ctrl+Z not
+  auto* opened=new QLineEdit(&window);opened->setText("Body");opened->selectAll();opened->show();editor=opened;
+  guard.release();CHECK(guard.holding());CHECK_EQ(opened->text(),QString("Body"));  // nested: the outer release delivers
+  guard.release();CHECK(!guard.holding());CHECK_EQ(opened->text(),QString("va"));CHECK(QApplication::focusWidget()==opened);
+  opened->hide();editor=nullptr;target->setFocus();
+  guard.hold();QTest::keyClick(target,Qt::Key_V);guard.release();  // no editor opened: dropped, not run
+  CHECK_EQ(hidden,3);
+  QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,4);
+  guard.release();CHECK(!guard.holding());  // one too many: nothing
+  // The resumed command runs unheld: a dialog it opens takes its keys.
+  guard.hold();QString asked;
+  guard.release([&]{
+    QDialog dialog(&window);auto* field=new QLineEdit(&dialog);
+    QTimer::singleShot(0,&dialog,[&]{QTest::qWaitForWindowActive(&dialog);field->setFocus();QTest::keyClick(field,Qt::Key_V);asked=field->text();dialog.accept();});
+    dialog.exec();
+  });
+  CHECK_EQ(asked,QString("v"));CHECK_EQ(hidden,4);
+  qApp->removeEventFilter(&guard);
 }
 int main(int argc,char** argv) {
   QApplication app(argc,argv);QTemporaryDir settings;

@@ -1,4 +1,5 @@
 #include "Viewport.hpp"
+#include "Units.hpp"
 
 #include <Graphic3d_ArrayOfSegments.hxx>
 #include <Graphic3d_ArrayOfPoints.hxx>
@@ -9,6 +10,7 @@
 #include <Prs3d_ShadingAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <Precision.hxx>
+#include <gp.hxx>
 #include <QFontMetricsF>
 #include <algorithm>
 #include <cmath>
@@ -16,12 +18,13 @@
 namespace {
 Quantity_Color color(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
 gp_Pnt point(const opad::json& j) { return gp_Pnt(j[0].get<double>(), j[1].get<double>(), j[2].get<double>()); }
-QString number(double v) { return QString::number(std::abs(v) < 0.0005 ? 0.0 : v, 'f', 3); }
 bool samePoint(const gp_Pnt& a, const gp_Pnt& b) { return a.SquareDistance(b) <= 1e-14; }
-int componentCount(const gp_Pnt& a, const gp_Pnt& b) {
+gp_Vec frameDelta(const gp_Pnt& a, const gp_Pnt& b, const gp_Trsf& frame) { return gp_Vec(a, b).Transformed(frame.Inverted()); }
+int componentCount(const gp_Pnt& a, const gp_Pnt& b, const gp_Trsf& frame = gp_Trsf()) {
+  const gp_Vec d = frameDelta(a, b, frame);
   int count = 0;
   for (int axis = 1; axis <= 3; ++axis)
-    if (std::abs(b.Coord(axis) - a.Coord(axis)) > Precision::Confusion()) ++count;
+    if (std::abs(d.Coord(axis)) > Precision::Confusion()) ++count;
   return count;
 }
 
@@ -35,9 +38,21 @@ class InspectGraphic : public AIS_InteractiveObject {
   std::vector<Line> lines;
   std::vector<gp_Pnt> endpoints;
   std::vector<gp_Pnt> snapPoints;
-  QColor endpointColor, snapPointColor;
+  std::vector<std::vector<gp_Pnt>> outlines;  // closed loops (an area's boundary), one array
+  QColor endpointColor, snapPointColor, outlineColor;
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, Standard_Integer) override {
+    if (!outlines.empty()) {
+      int count = 0;
+      for (const auto& loop : outlines) count += 2 * int(loop.size());
+      auto group = prs->NewGroup();
+      Handle(Prs3d_LineAspect) style = new Prs3d_LineAspect(color(outlineColor), Aspect_TOL_SOLID, 2.5);
+      group->SetGroupPrimitivesAspect(style->Aspect());
+      Handle(Graphic3d_ArrayOfSegments) segments = new Graphic3d_ArrayOfSegments(count);
+      for (const auto& loop : outlines)
+        for (size_t i = 0; loop.size() > 1 && i < loop.size(); ++i) segments->AddVertex(loop[i]), segments->AddVertex(loop[(i + 1) % loop.size()]);
+      group->AddPrimitiveArray(segments);
+    }
     for (const auto& l : lines) {
       auto group = prs->NewGroup();
       Handle(Prs3d_LineAspect) style = new Prs3d_LineAspect(color(l.color), l.dashed ? Aspect_TOL_DASH : Aspect_TOL_SOLID, l.dashed ? 1.0 : 2.0);
@@ -96,6 +111,7 @@ void Viewport::clearDimension() {
   if (!m_initialised) return;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
   m_dimension.clear();
+  m_measureCaptions.clear();
   refreshMeasurement(true);
   redrawScene();
 }
@@ -131,10 +147,20 @@ void Viewport::setMeasurementComponents(bool on) {
   redrawScene();
 }
 
+void Viewport::setMeasurementFrame(const gp_Trsf& toWorld) {
+  const gp_Mat was = m_measureFrame.VectorialPart(), now = toWorld.VectorialPart();  // only the axes count
+  bool same = true;
+  for (int r = 1; r <= 3; ++r) for (int c = 1; c <= 3; ++c) same = same && std::abs(was(r, c) - now(r, c)) < 1e-12;
+  m_measureFrame = toWorld;
+  if (same) return;
+  refreshMeasurement(true);
+  redrawScene();
+}
+
 bool Viewport::measurementHasMultipleAxes() const {
   return !m_measurement.is_null() && m_measurement.value("kind", "distance") == "distance"
       && m_measurement.contains("point_a") && m_measurement.contains("point_b")
-      && componentCount(point(m_measurement["point_a"]), point(m_measurement["point_b"])) > 1;
+      && componentCount(point(m_measurement["point_a"]), point(m_measurement["point_b"]), m_measureFrame) > 1;
 }
 
 int Viewport::measurementAnchorAt(const QPointF& position) const {
@@ -164,6 +190,7 @@ void Viewport::refreshMeasurement(bool force) {
   m_measureSize = pixels;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
   m_dimension.clear();
+  m_measureCaptions.clear();
 
   Handle(Graphic3d_SequenceOfHClipPlane) noClip = new Graphic3d_SequenceOfHClipPlane();
   noClip->SetOverrideGlobal(Standard_True);
@@ -226,6 +253,7 @@ void Viewport::refreshMeasurement(bool force) {
     const double px = pixelAt(anchor);
     gp_Pnt at = anchor.Translated(right * ((box.center().x() - screen.x()) * px) + up * ((screen.y() - box.center().y()) * px));
     if (anchor.Distance(at) > 22 * px) graphic->lines.push_back({anchor, at, m_tokens.fg3});
+    m_measureCaptions << caption;
     Handle(AIS_TextLabel) text = new AIS_TextLabel();
     text->SetText(TCollection_ExtendedString((" " + caption + " ").toUtf8().constData(), Standard_True));
     text->SetPosition(at);
@@ -249,7 +277,9 @@ void Viewport::refreshMeasurement(bool force) {
   if (kind == "distance" || kind == "radius") {
     if (!r.contains("point_a") || !r.contains("point_b")) continue;
     const gp_Pnt a = point(r["point_a"]), b = point(r["point_b"]);
-    const int components = componentCount(a, b);
+    const gp_Trsf frame = r == m_measurement ? m_measureFrame : gp_Trsf();  // pinned ones keep world axes
+    const gp_Vec local = frameDelta(a, b, frame);
+    const int components = componentCount(a, b, frame);
     const bool aligned = kind == "distance" && components == 1;
     graphic->endpoints = {a, b};
     if (r == m_measurement) for (const auto& anchor : m_measureAnchors) {
@@ -272,26 +302,37 @@ void Viewport::refreshMeasurement(bool force) {
       if (clearance(normal) < 8 && clearance(-normal) > clearance(normal)) normal = -normal;
       arrow(a, b, m_tokens.fg, kind == "distance");
       beside(gp_Pnt((a.X()+b.X())/2, (a.Y()+b.Y())/2, (a.Z()+b.Z())/2),
-            (kind == "distance" ? tr("Distance %1 mm") : tr("R %1 mm")).arg(number(r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
+            (kind == "radius" ? tr("R %1") : r.value("mode", "") == "center" ? tr("Centre to centre %1") : r.value("mode", "") == "max" ? tr("Maximum %1") : tr("Distance %1"))
+                .arg(units::format(units::Kind::Length, r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
     }
     label(a, kind == "distance" ? (a.Distance(b) < 1e-9 ? tr("1 = 2") : tr("1")) : tr("Center"), m_tokens.fg2, -16, -19);
     if (a.Distance(b) > 1e-9) label(b, kind == "distance" ? tr("2") : tr("Radius"), m_tokens.fg2, 16, -19);
     if (kind == "distance" && (aligned || (components > 1 && m_measureComponents))) {
       gp_Pnt start = a;
       for (int i = 0; i < 3; ++i) {
-        gp_Pnt end = start;
-        end.SetCoord(i + 1, b.Coord(i + 1));
-        const double delta = b.Coord(i + 1) - a.Coord(i + 1);
+        const double delta = local.Coord(i + 1);
+        gp_Pnt end = start.Translated(gp_Vec(i == 0 ? gp::DX() : i == 1 ? gp::DY() : gp::DZ()).Transformed(frame) * delta);
+        if (i == 2) end = b;  // exactly
         // Zero components stay in the result table, without extra viewport labels.
         if (std::abs(delta) <= Precision::Confusion()) { start = end; continue; }
         arrow(start, end, axes[i]);
-        const QString value = (delta >= 0.0005 ? "+" : "") + number(delta);
+        const QString value = (delta > 0 && units::number(units::Kind::Length, delta) != units::number(units::Kind::Length, 0) ? "+" : "") + units::format(units::Kind::Length, delta);
         const QPointF normal = screenNormal(start, end);
-        beside(gp_Pnt((start.X()+end.X())/2, (start.Y()+end.Y())/2, (start.Z()+end.Z())/2),
-              tr("Δ%1 %2 mm").arg(QChar("XYZ"[i])).arg(value), axes[i], -normal, 12);
+        // Along one axis the axis label is the measurement's; one that is not the shortest says which it is (UI-144).
+        const std::string mode = r.value("mode", "");
+        const QString caption = aligned && (mode == "center" || mode == "max")
+            ? (mode == "center" ? tr("Centre to centre %1") : tr("Maximum %1")).arg(units::format(units::Kind::Length, r["value"].get<double>()))
+            : QString("Δ%1 %2").arg(QChar("XYZ"[i])).arg(value);
+        beside(gp_Pnt((start.X()+end.X())/2, (start.Y()+end.Y())/2, (start.Z()+end.Z())/2), caption, axes[i], -normal, 12);
         start = end;
       }
     }
+  } else if ((kind == "length" || kind == "area") && r.contains("point") && r.contains("value")) {  // UI-144: a label at the edge's middle or the face's centroid
+    const gp_Pnt at = point(r["point"]);
+    graphic->endpoints = {at};
+    if (kind == "length" && r.contains("start") && !r.value("closed", false)) graphic->snapPoints = {point(r["start"]), point(r["end"])};
+    label(at, (kind == "length" ? tr("L %1").arg(units::format(units::Kind::Length, r["value"].get<double>()))
+                                : tr("A %1").arg(units::format(units::Kind::Area, r["value"].get<double>()))), m_tokens.fg, 0, 26);
   } else if (kind == "bbox") {
     const gp_Pnt lo = point(r["min"]), hi = point(r["max"]);
     for (int mask = 0; mask < 8; ++mask) {
@@ -306,8 +347,20 @@ void Viewport::refreshMeasurement(bool force) {
       arrow(lo, end, axes[i], true);
       const QPointF normal = screenNormal(lo, end);
       beside(gp_Pnt((lo.X()+end.X())/2, (lo.Y()+end.Y())/2, (lo.Z()+end.Z())/2),
-            tr("%1 %2 mm").arg(QChar("XYZ"[i])).arg(number(hi.Coord(i+1)-lo.Coord(i+1))), axes[i], -normal, 12);
+            QString("%1 %2").arg(QChar("XYZ"[i])).arg(units::format(units::Kind::Length, hi.Coord(i+1)-lo.Coord(i+1))), axes[i], -normal, 12);
     }
+  } else if (kind == "area") {  // UI-90: the boundary measured (a grown loop's whole outline), its value inside it; loose ends while open
+    for (const auto& loop : r.value("boundary", opad::json::array())) {
+      std::vector<gp_Pnt> pts;
+      for (const auto& p : loop) pts.push_back(point(p));
+      if (pts.size() > 1 && r.value("closed", false)) graphic->outlines.push_back(std::move(pts));
+    }
+    graphic->outlineColor = r == m_measurement ? m_tokens.sel : m_tokens.fg2;
+    for (const auto& p : r.value("ends", opad::json::array())) graphic->endpoints.push_back(point(p));
+    graphic->endpointColor = m_tokens.red;
+    if (r.value("closed", false) && r.contains("center"))
+      label(point(r["center"]), tr("Area %1 · perimeter %2").arg(units::format(units::Kind::Area, r.value("value", 0.0)), units::format(units::Kind::Length, r.value("perimeter", 0.0))),
+            m_tokens.fg, 0, 0);
   } else if (kind == "angle" && r.contains("origin")) {
     // With a construction from the core the diagram sits on the objects: rays from the vertex where they meet,
     // along each of them, and the arc through the nearer one. Otherwise (parallel, or a line against a normal;
@@ -356,7 +409,7 @@ void Viewport::refreshMeasurement(bool force) {
       arrow(origin.Translated((a * std::cos(before) + tangent * std::sin(before)) * radius), last, m_tokens.hov);
     }
     label(origin.Translated((a * std::cos(angle / 2) + tangent * std::sin(angle / 2)) * radius),
-          tr("%1°").arg(number(r["value"].get<double>())), m_tokens.fg, 0, 24);
+          units::format(units::Kind::Angle, r["value"].get<double>()), m_tokens.fg, 0, 24);
     label(built ? point(r["point_a"]) : origin.Translated(a * radius * 1.3), tr("1"), m_tokens.sel, -15, -18);
     label(built ? point(r["point_b"]) : origin.Translated(b * radius * 1.3), tr("2"), m_tokens.amber, 15, -18);
   }

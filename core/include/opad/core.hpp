@@ -1,9 +1,11 @@
 #pragma once
+#include "assets.hpp"
 #include "cache.hpp"
 #include "commands.hpp"
 #include "diff.hpp"
 #include "document.hpp"
 #include "inspect.hpp"
+#include "merge.hpp"
 #include "mesh.hpp"
 #include "plugin_host.hpp"
 #include "render.hpp"

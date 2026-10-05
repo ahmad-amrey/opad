@@ -449,9 +449,34 @@ ParamTable::ParamTable(std::vector<ParamDef> defs,std::string unit) : m_unit(std
   const auto* u=unit_named(m_unit);if(!u||u->angle)throw Error("unsupported document length unit");
   for(size_t i=0;i<m_defs.size();++i)m_index[m_defs[i].name]=i;  // the last definition of a name wins
 }
+namespace {
+// A number with only blanks round it ("15", "-2.5", "1e3"), trimmed; empty when it is anything else.
+std::string plain_number(const std::string& s) {
+  const auto b = s.find_first_not_of(" \t"), e = s.find_last_not_of(" \t");
+  if (b == std::string::npos) return {};
+  const std::string t = s.substr(b, e - b + 1);
+  if (t.find_first_not_of("0123456789.eE+-") != std::string::npos) return {};
+  char* end = nullptr;
+  std::strtod(t.c_str(), &end);
+  return end == t.c_str() + t.size() ? t : std::string();
+}
+}  // namespace
+
+// A plain number gets the unit as a word: "15" -> "15 mm" (UI-26: it was stored as "(15) * 1 mm", which the feature panel
+// then showed), as does that older form when it is read back; other unitless expressions are multiplied by one unit.
 std::string ParamTable::explicit_length(const std::string& expression) const {
+  if (const auto open = expression.find('('), close = expression.find(')'); open != std::string::npos && close != std::string::npos && close > open &&
+      expression.find_first_not_of(" \t") == open) {
+    const std::string inside = plain_number(expression.substr(open + 1, close - open - 1));
+    std::string rest = expression.substr(close + 1);
+    rest.erase(std::remove_if(rest.begin(), rest.end(), [](char c) { return c == ' ' || c == '\t'; }), rest.end());
+    if (!inside.empty() && rest.size() > 2 && rest.compare(0, 2, "*1") == 0)
+      if (const Unit* u = unit_named(rest.substr(2)); u && !u->angle) return inside + " " + u->name;
+  }
   const auto q=eval(expression);
-  return !q.angle && q.len==0 ? "("+expression+") * 1 "+m_unit : expression;
+  if (q.angle || q.len != 0) return expression;
+  const std::string plain = plain_number(expression);
+  return plain.empty() ? "("+expression+") * 1 "+m_unit : plain+" "+m_unit;
 }
 
 const ParamDef* ParamTable::find(const std::string& name) const {

@@ -1,14 +1,18 @@
 #pragma once
+#include "DynamicInput.hpp"
 #include "Viewport.hpp"
+#include <QLine>
 #include <QLineEdit>
 #include <QHash>
+#include <QLineEdit>
 #include <QPointer>
 class JobRunner;
 class Job;
 class QLabel;
 
 // A camera-aware scalar handle shared by sketch and solid tools: a flat arrow that always faces the camera (drawn in
-// the selection colour, pulled to change the value) and a value box beside it.
+// the selection colour, pulled to change the value) and a value box beside it: a one-box DynamicInput, so the box takes
+// the same keys as the tools' boxes beside the pointer (UI-16).
 class DimensionHandle : public QWidget {
   Q_OBJECT
  public:
@@ -19,15 +23,36 @@ class DimensionHandle : public QWidget {
   void reposition();
   using Segment=std::array<opad::Vec3,2>;
   void setAnchorSegments(std::vector<Segment> segments);
-  bool interacting() const {return m_dragging || m_edit->hasFocus();}
+  bool interacting() const {return m_dragging || m_input->editing();}
+  bool grips(const QPointF& at) const;  // a press there (viewport widget pixels) pulls the arrow
+  void drawOnTop() {m_onTop=true;}  // the arrow over everything (TopOSD), also over a selected body (Topmost)
   bool dragging() const {return m_dragging;}
+  static constexpr double kHitRadius=12;  // widget px around the arrow that take a press: a 24 px wide target (UI-124)
+  QLineF arrowLine() const {return {m_arrowStart,m_arrowEnd};}  // on screen, tip to head
+  bool overArrow(const QPointF& widgetPoint) const;
   double value() const {return m_value;}  // what the drag or the arrows made of it (the box shows it rounded)
   // How far the arrow sits along the axis per unit of value: 0.5 for a symmetric extrusion, whose end moves half the
   // distance. Kept while a drag runs.
   void setScale(double scale) {if(!m_dragging)m_scale=scale;}
+  // Value keys (digits, keypad too, point, comma, sign) typed over the view or one of its tool panels start the box. A
+  // tool that routes its keys itself (the sketch, UI-16; a feature, UI-122) turns that off and calls type() and focusValue().
+  void setCapturesKeys(bool on) {m_capturesKeys=on;}
+  void type(const QString& text);       // into the box, which takes the keyboard for the keys that follow
+  void focusValue(bool back = false);   // Tab: the box (Shift+Tab: the last), its value selected
+  // More boxes after the value, Tab going round them (the extrude's taper, UI-122): option boxes showing the tool's value
+  // grey; typed into, extraEdited gives it at once, Esc the value before. Forgotten when the handle hides.
+  void setExtraFields(const QList<DynamicInput::Field>& fields);
+  void setProblem(const QString& key, const QString& problem) {m_input->setProblem(key,problem);}  // "value": the arrow's
+  DynamicInput* input() const {return m_input;}
+  // A round step for pulling at this zoom (about two pixels: 1, 2 or 5 times a power of ten in the shown unit), and a length
+  // as the feature stores what a pull made ("12.5 mm", to the step's decimals): the Move triad's arrows round the same way.
+  static double pullStep(double pixelSize);
+  static QString pulledText(double value, double step);
  signals:
   void valueChanged(const QString& expression);
-  void accepted();  // Enter in the value box: apply the operation
+  void extraEdited(const QString& key, const QString& value);
+  void accepted();  // Enter in a box: apply the operation
+  void dragFinished();  // the arrow let go after a drag
  protected:
   void showEvent(QShowEvent*) override;
   void hideEvent(QHideEvent*) override;
@@ -43,20 +68,23 @@ class DimensionHandle : public QWidget {
   void fit();
   void nudge(double steps,Qt::KeyboardModifiers modifiers);
   void setText(const QString& text,bool notify);
+  QLineEdit* box() const {return m_input->box(0);}
+  QString text() const {return box()->text();}
   JobRunner* m_jobs;
   QPointer<Job> m_indexJob;
   QHash<quint64,QVector<size_t>> m_cells;
   std::vector<std::array<QPointF,2>> m_screenSegments;
   bool m_indexReady=false;
   Viewport* m_view;
-  QLabel* m_label;
-  QLineEdit* m_edit;
+  void setFields();
+  DynamicInput* m_input;
+  QString m_label;
+  QList<DynamicInput::Field> m_extras;
   QLabel* m_result;
-  QString m_before;  // the text when the box took focus: Esc restores it
   opad::Vec3 m_origin{},m_axis{1,0,0};
   QPointF m_start,m_screenAxis;
   double m_value=0,m_startValue=0,m_scale=1;
-  bool m_dragging=false,m_drawn=false;
+  bool m_dragging=false,m_drawn=false,m_capturesKeys=true,m_onTop=false;
   QPointF m_arrowStart,m_arrowEnd;
   Handle(AIS_InteractiveObject) m_arrow;
   std::vector<Segment> m_segments;

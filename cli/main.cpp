@@ -6,6 +6,8 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <fcntl.h>
+#include <io.h>
 #endif
 #include <cstdio>
 #include <cstring>
@@ -25,9 +27,13 @@
 #include <thread>
 
 #include "opad/core.hpp"
+#include "opad/diff.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/render.hpp"
+#ifdef OPAD_PAINT
+#include "opad/drawing/paint.hpp"
+#endif
 
 
 using opad::json;
@@ -37,7 +43,7 @@ int opad_live_mcp(int argc,char** argv);
 namespace {
 
 void print_usage() {
-  std::printf("opad-cli %s - git-native STEP viewer, headless interface\n\n", opad::version_string().c_str());
+  std::printf("opad-cli %s - git-native CAD and review, headless interface\n\n", opad::version_string().c_str());
   std::printf("usage: opad-cli [--plugin <lib>]... [--compact] <command> [<doc>] [args...]\n\n");
   std::printf("  <doc> is a .opad document, or any file OPAD reads (STEP, IGES, STL, 3MF, OBJ, DXF, SVG, ...) opened read-only.\n");
   std::printf("  Arguments are --key value pairs (JSON values are parsed: numbers, true/false, [..], {..}).\n\n");
@@ -49,12 +55,24 @@ void print_usage() {
   }
   std::printf("\nshorthands:\n");
   std::printf("  new <doc>                     import <doc> <file.step>        append <doc> <op.json|->\n");
-  std::printf("  inspect <doc> <ref>...        diff <a.opad> <b.opad>          export <doc> --format stl --out f.stl\n");
+  std::printf("  inspect <doc> <ref>...        export <doc> --format stl --out f.stl\n");
+  std::printf("  diff <a> <b> [--text] [--metrics]   what changed; a side is a file or git:REV[:path], one file alone = since git:HEAD\n");
+  std::printf("  textconv <doc.opad>           the document as readable lines, for git: diff.opad.textconv \"opad-cli textconv\"\n");
+  std::printf("  merge-driver %%O %%A %%B [%%P]    git's merge driver: base, ours and theirs merged into ours (exit 0), or ours left\n");
+  std::printf("                                as it was (exit 1); merge.opad.driver \"opad-cli merge-driver %%O %%A %%B %%P\"\n");
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
+  std::printf("  project <doc> --view front --out lines.json|preview.png   hidden-line projection (drawing views)\n");
+  std::printf("  export <doc> --format dxf|svg|dwg|pdf|png --view front|top|iso|... [--hidden true] --out f.dxf   a 2D view of the model\n");
+  std::printf("  export <doc> --sheet <id|name> --format pdf|svg|dxf|dwg|png --out sheet.pdf   a drawing sheet as drawn\n");
+  std::printf("  bom <doc> [--mode parts|top|indented] [--format csv] [--out bom.csv]   bill of materials (CSV on stdout without --out)\n");
   std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");
+  std::printf("  licenses                      the third-party notices of this build (plain text)\n");
   std::printf("\nreferences: <uuid> | <uuid>/face/N | <uuid>/edge/N | <uuid>/vertex/N | point/x,y,z\n");
-  std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list)\n");
+  std::printf("linked files (import --link true): read from the document's folder or git work tree; --trust_assets true reads any\n");
+  std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list),\n");
+  std::printf("             OPAD_USE_ODA=1 (DWG through an installed ODA File Converter instead of LibreDWG; ODA's terms allow\n");
+  std::printf("             non-members non-commercial use only)\n");
 }
 
 // probe: what opening a file costs, phase by phase, without a window (viewer: the desktop's read-only fast path).
@@ -103,77 +121,12 @@ json probe(const std::string& file, bool viewer, bool mesh, bool cache) {
   out["cache"] = cached ? "hit" : "miss";
   if (viewer && cache && !cached) {
     const auto t4 = clock::now();
-    opad::viewer_cache_store(doc, opad::path_from_utf8(file), o);
+    out["cache_store"] = opad::viewer_cache_store(doc, opad::path_from_utf8(file), o, ms(t0, t1));
     out["cache_store_ms"] = ms(t4, clock::now());
   }
   return out;
 }
 
-// thumbnail: a small picture of a file for Explorer and the Open dialog (shell/thumbnails runs this). Read as the
-// viewer reads it, so the viewer cache serves a big STEP opened before; models from the iso corner, drawings from the
-// top. `.bgra` output: "OPADTHMB", width and height (uint32), then premultiplied BGRA rows top-down with a transparent
-// background, recovered from one render on white and one on black. Any other output: a PNG on white.
-json thumbnail(const std::string& file, const std::string& out, int size) {
-  const auto path = opad::path_from_utf8(file);
-  std::string ext = path.extension().string();
-  for (auto& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
-  opad::Document doc = opad::Document::create();
-  if (ext == ".opad") {
-    doc = opad::Document::load(path);
-  } else {
-    opad::ImportOptions o;
-    o.viewer = true;
-    o.center_drawing = ext == ".dxf" || ext == ".dwg" || ext == ".svg";
-    if (!opad::viewer_cache_load(doc, path, o)) opad::import_file(doc, path, o);
-  }
-  const opad::Scene scene = opad::resolve(doc);
-  bool drawing = true, any = false;
-  Bnd_Box box;
-  for (const auto& id : scene.all_bodies()) {
-    if (!scene.effectively_visible(id) || scene.node(id)->body_missing) continue;
-    any = true;
-    drawing = drawing && scene.node(id)->representation == "drawing2d";
-    box.Add(opad::node_world_bbox(doc, scene, id));
-  }
-  if (!any || box.IsVoid()) throw opad::Error("nothing to show");
-  opad::RenderOptions opt;
-  opt.width = opt.height = std::clamp(size, 16, 1024);
-  opt.camera = opad::Camera::preset(drawing ? "top" : "iso");
-  opt.edges = !drawing;
-  opt.edge_lines = drawing;  // a drawing is its lines
-  opt.smooth = true;
-  opt.tolerance = std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.005, 50.0);  // a few pixels' worth at this size
-  const bool raw = out.size() > 5 && out.compare(out.size() - 5, 5, ".bgra") == 0;
-  opt.background = {1, 1, 1};
-  const opad::Image white = opad::render_scene(doc, scene, opt);
-  if (!raw) {
-    opad::write_png(opad::path_from_utf8(out), white);
-    return {{"out", out}, {"width", white.width}, {"height", white.height}};
-  }
-  // A drawing stays on its white sheet: dark lines on a transparent background vanish in a dark Explorer.
-  opt.background = {0, 0, 0};
-  const opad::Image black = drawing ? white : opad::render_scene(doc, scene, opt);
-  std::string bytes = "OPADTHMB";
-  auto u32 = [&](uint32_t v) { for (int k = 0; k < 4; ++k) bytes += char((v >> (8 * k)) & 0xFF); };
-  u32(uint32_t(white.width));
-  u32(uint32_t(white.height));
-  bytes.reserve(bytes.size() + size_t(white.width) * size_t(white.height) * 4);
-  for (int y = 0; y < white.height; ++y)
-    for (int x = 0; x < white.width; ++x) {
-      const uint8_t* w = white.px(x, y);
-      const uint8_t* b = black.px(x, y);
-      // On white a pixel is c + (1 - a), on black c (premultiplied): a = 1 - (white - black).
-      int spread = 0;
-      for (int k = 0; k < 3; ++k) spread = std::max(spread, int(w[k]) - int(b[k]));
-      const int alpha = std::clamp(255 - spread, 0, 255);
-      for (int k = 2; k >= 0; --k) bytes += char(std::min<int>(b[k], alpha));  // BGR
-      bytes += char(alpha);
-    }
-  std::ofstream f(opad::path_from_utf8(out), std::ios::binary);
-  f.write(bytes.data(), std::streamsize(bytes.size()));
-  if (!f) throw opad::Error("cannot write the thumbnail");
-  return {{"out", out}, {"width", white.width}, {"height", white.height}, {"transparent", true}};
-}
 
 json parse_value(const std::string& s) {
   if (s == "true") return true;
@@ -223,7 +176,15 @@ int main(int argc, char** argv) {
     argv = utf8_argv.data();
   }
 #endif
+  if (argc >= 2 && std::string(argv[1]) == "merge-driver") {  // git's: merge.opad.driver "opad-cli merge-driver %O %A %B %P"
+    std::vector<std::filesystem::path> files;
+    for (int i = 2; i < argc; ++i) files.push_back(opad::path_from_utf8(argv[i]));
+    return opad::merge_driver(files);
+  }
   opad::configure_kernel_logging();
+#ifdef OPAD_PAINT
+  opad::drawing::install_painter();  // export --format pdf|png
+#endif
   if (argc >= 2 && std::string(argv[1]) == "mcp") {
     if(argc==2 || (argc==3 && std::string(argv[2])=="--headless"))return opad_mcp();
     if(std::string(argv[2])=="--live")return opad_live_mcp(argc,argv);
@@ -287,12 +248,32 @@ int main(int argc, char** argv) {
     }
     for (const auto& p : plugins) opad::load_plugin(p);
 
+    if (command == "licenses") {  // what this build carries of others' code, and under which licences (text, not JSON)
+      const std::string text = opad::third_party_notices();
+      std::fwrite(text.data(), 1, text.size(), stdout);
+      return 0;
+    }
     if (command == "thumbnail") {
       if (positional.empty() || !args.contains("out")) throw opad::Error("usage: opad-cli thumbnail <file> --out <png|bgra> [--size 256]");
-      const json out = thumbnail(positional[0], args["out"].get<std::string>(), args.value("size", 256));
+      const json out = opad::write_thumbnail(positional[0], args["out"].get<std::string>(), args.value("size", 256));
       const std::string text = out.dump();
       std::fwrite(text.data(), 1, text.size(), stdout);
       std::fputc('\n', stdout);
+      return 0;
+    }
+    if (command == "textconv") {  // git's diff driver: whatever the file holds, print something readable and succeed
+      if (positional.empty()) throw opad::Error("usage: opad-cli textconv <doc.opad>");
+      const auto path = opad::path_from_utf8(positional[0]);
+      std::string out;
+      try {
+        out = opad::document_outline(opad::Document::parse_index(opad::read_text_file(path), path));
+      } catch (const std::exception& e) {
+        out = opad::text_outline(opad::read_text_file(path), e.what());
+      }
+#ifdef _WIN32
+      _setmode(_fileno(stdout), _O_BINARY);  // LF, as git compares it
+#endif
+      std::fwrite(out.data(), 1, out.size(), stdout);
       return 0;
     }
     if (command == "probe") {
@@ -305,13 +286,13 @@ int main(int argc, char** argv) {
     }
     // Positional conventions.
     const bool docless = command == "diff" || command == "version" || command == "commands" || command == "cache" ||
-                         command == "selection";
+                         command == "selection" || command == "kicad_models";
     size_t pi = 0;
     if (!docless && pi < positional.size() && !args.contains("doc")) args["doc"] = positional[pi++];
     if (command == "diff") {
       if (pi < positional.size() && !args.contains("a")) args["a"] = positional[pi++];
       if (pi < positional.size() && !args.contains("b")) args["b"] = positional[pi++];
-    } else if (command == "import") {
+    } else if (command == "import" || command == "kicad_models" || command == "kicad_sync_preview") {
       if (pi < positional.size() && !args.contains("file")) args["file"] = positional[pi++];
     } else if (command == "append") {
       if (pi < positional.size()) {
@@ -323,13 +304,13 @@ int main(int argc, char** argv) {
       }
     } else if (command == "inspect") {
       for (; pi < positional.size(); ++pi) uuids.push_back(positional[pi]);
-    } else if (command == "measure") {
+    } else if (command == "measure" || command == "related") {
       for (; pi < positional.size(); ++pi) uuids.push_back(positional[pi]);
       if (!uuids.empty() && !args.contains("refs")) { args["refs"] = uuids; uuids.clear(); }
     } else if (command == "annotate") {
       if (pi < positional.size() && !args.contains("anchor")) args["anchor"] = positional[pi++];
       if (pi < positional.size() && !args.contains("text")) args["text"] = positional[pi++];
-    } else if (command == "render") {
+    } else if (command == "render" || command == "project") {
       if (pi < positional.size() && !args.contains("out")) args["out"] = positional[pi++];
     }
     if (!uuids.empty()) {
@@ -341,6 +322,22 @@ int main(int argc, char** argv) {
     }
 
     json out = opad::commands::run(command, args);
+    if (command == "bom" && out.contains("csv")) {  // the CSV itself, byte for byte (its byte order mark and CRLF)
+#ifdef _WIN32
+      _setmode(_fileno(stdout), _O_BINARY);
+#endif
+      const std::string csv = out["csv"].get<std::string>();
+      std::fwrite(csv.data(), 1, csv.size(), stdout);
+      return 0;
+    }
+    if (command == "diff" && args.value("text", false)) {
+#ifdef _WIN32
+      _setmode(_fileno(stdout), _O_BINARY);
+#endif
+      const std::string text = out.value("text", "");
+      std::fwrite(text.data(), 1, text.size(), stdout);
+      return 0;
+    }
     std::string text = compact ? out.dump() : out.dump(2);
     std::fwrite(text.data(), 1, text.size(), stdout);
     std::fputc('\n', stdout);

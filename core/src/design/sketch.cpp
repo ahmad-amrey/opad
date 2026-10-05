@@ -5,6 +5,8 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace opad::design {
 void shift_sketch_origin(Sketch& sk,double u,double v) {
@@ -37,21 +39,42 @@ bool has_radius(EType t) { return t == EType::Circle || t == EType::Ellipse; }
 // the user and a bare end point can be constrained the same way.
 enum class Kind { None, Point, Line, Circle, Arc, Ellipse, Spline, Constraint };
 
-Kind kind_of(const Sketch& sk, int id) {
-  if (sk.point(id)) return Kind::Point;
-  if (const SkEntity* e = sk.entity(id)) {
-    switch (e->type) {
-      case EType::Point: return Kind::Point;
-      case EType::Line: return Kind::Line;
-      case EType::Circle: return Kind::Circle;
-      case EType::Arc: return Kind::Arc;
-      case EType::Ellipse: return Kind::Ellipse;
-      case EType::Spline: return Kind::Spline;
-    }
+Kind entity_kind(EType t) {
+  switch (t) {
+    case EType::Point: return Kind::Point;
+    case EType::Line: return Kind::Line;
+    case EType::Circle: return Kind::Circle;
+    case EType::Arc: return Kind::Arc;
+    case EType::Ellipse: return Kind::Ellipse;
+    case EType::Spline: return Kind::Spline;
   }
+  return Kind::None;
+}
+
+// validate's lookups (UI-29): what each id is, which ids are points (not point entities) and the entities by id, one hash
+// lookup each instead of a scan of the lists per reference (a converted drawing of 100k curves took minutes).
+struct Index {
+  std::unordered_map<int, Kind> kinds;
+  std::unordered_set<int> points;
+  std::unordered_map<int, const SkEntity*> entities;
+};
+
+Kind kind_of(const Sketch& sk, int id, const Index* index = nullptr) {
+  if (index) {
+    const auto found = index->kinds.find(id);
+    return found == index->kinds.end() ? Kind::None : found->second;
+  }
+  if (sk.point(id)) return Kind::Point;
+  if (const SkEntity* e = sk.entity(id)) return entity_kind(e->type);
   for (const auto& c : sk.constraints)
     if (c.id == id) return Kind::Constraint;
   return Kind::None;
+}
+bool has_point(const Sketch& sk, int id, const Index* index) { return index ? index->points.count(id) > 0 : sk.point(id) != nullptr; }
+const SkEntity* entity_of(const Sketch& sk, int id, const Index* index) {
+  if (!index) return sk.entity(id);
+  const auto found = index->entities.find(id);
+  return found == index->entities.end() ? nullptr : found->second;
 }
 
 bool is_round(Kind k) { return k == Kind::Circle || k == Kind::Arc; }
@@ -71,9 +94,12 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
     case CType::Perpendicular:
     case CType::Collinear:
     case CType::Angle: return ll;
-    case CType::Tangent: return rr || (n == 2 && ((is(0, Kind::Line) && (is_round(k[1]) || is(1,Kind::Spline))) || ((is_round(k[0]) || is(0,Kind::Spline)) && is(1, Kind::Line)) || (is(0,Kind::Spline)&&is(1,Kind::Spline))));
+    case CType::Tangent: return rr || (n == 2 && ((is(0, Kind::Line) && (is_round(k[1]) || is(1,Kind::Spline))) || ((is_round(k[0]) || is(0,Kind::Spline)) && is(1, Kind::Line)) || (is(0,Kind::Spline)&&is(1,Kind::Spline)) || (is_round(k[0])&&is(1,Kind::Spline)) || (is(0,Kind::Spline)&&is_round(k[1]))));
     case CType::Smooth:
-    case CType::Curvature: return n==2 && is(0,Kind::Spline) && is(1,Kind::Spline);
+    case CType::Curvature: {  // a spline with a spline, a line, a circle or an arc (TODO 11 wave 3, P6)
+      auto joins = [&](size_t i) { return i < n && (k[i] == Kind::Spline || k[i] == Kind::Line || is_round(k[i])); };
+      return n == 2 && joins(0) && joins(1) && (is(0, Kind::Spline) || is(1, Kind::Spline));
+    }
     case CType::Equal: return ll || rr;
     case CType::Concentric: {
       auto centred = [](Kind x) { return is_round(x) || x == Kind::Ellipse; };
@@ -92,7 +118,17 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
   return false;
 }
 
-void check_entity(const Sketch& sk, const SkEntity& e) {
+// What refs_fit took before TODO 11 wave 3 refuses: Smooth or Curvature with a line, a circle or an arc, and Tangent
+// between a circle or an arc and a spline. Such a build throws on the whole sketch (and on any later edit of it, which
+// fails the document's replay), so to_json keeps these apart in "more_constraints", a key it ignores.
+bool older_readers_refuse(CType t, const std::vector<Kind>& k) {
+  if (k.size() != 2) return false;
+  if (t == CType::Smooth || t == CType::Curvature) return !(k[0] == Kind::Spline && k[1] == Kind::Spline);
+  if (t == CType::Tangent) return (is_round(k[0]) && k[1] == Kind::Spline) || (k[0] == Kind::Spline && is_round(k[1]));
+  return false;
+}
+
+void check_entity(const Sketch& sk, const SkEntity& e, const Index* index = nullptr) {
   const std::string who = std::string("sketch: ") + SkEntity::type_name(e.type) + " " + std::to_string(e.id);
   const size_t n = e.p.size();
   bool ok = false;
@@ -138,25 +174,25 @@ void check_entity(const Sketch& sk, const SkEntity& e) {
   if (e.type == EType::Spline && !e.degree && e.periodic && std::set<int>(e.p.begin(), e.p.end()).size() < 3)
     throw Error(who + ": a closed fit spline needs three points or more");
   for (int pid : e.p)
-    if (!sk.point(pid)) throw Error(who + ": point " + std::to_string(pid) + " does not exist");
+    if (!has_point(sk, pid, index)) throw Error(who + ": point " + std::to_string(pid) + " does not exist");
   if(!e.source.is_null() && (!e.source.is_object() || !e.source.contains("ref") || !e.source.at("ref").is_object() || e.source.value("slot",-1)<0 || e.source.value("count",0)<=e.source.value("slot",-1)))throw Error(who+": invalid projection source");
   if (has_radius(e.type) && !(e.r > 0 && std::isfinite(e.r))) throw Error(who + ": radius must be positive");
 }
 
-void check_constraint(const Sketch& sk, const SkConstraint& c) {
+void check_constraint(const Sketch& sk, const SkConstraint& c, const Index* index = nullptr) {
   const std::string who = std::string("sketch: ") + SkConstraint::type_name(c.type) + " constraint " + std::to_string(c.id);
   std::vector<Kind> kinds;
   for (int ref : c.refs) {
-    const Kind k = ref == c.id ? Kind::Constraint : kind_of(sk, ref);
+    const Kind k = ref == c.id ? Kind::Constraint : kind_of(sk, ref, index);
     if (k == Kind::None) throw Error(who + ": reference " + std::to_string(ref) + " does not exist");
     if (k == Kind::Constraint) throw Error(who + ": reference " + std::to_string(ref) + " is a constraint");
     kinds.push_back(k);
   }
   if (!refs_fit(c.type, kinds)) throw Error(who + ": references do not fit the constraint type");
-  for(int id:c.anchors)if(!sk.point(id))throw Error(who+": missing endpoint anchor");
+  for(int id:c.anchors)if(!has_point(sk,id,index))throw Error(who+": missing endpoint anchor");
   if(c.type==CType::Smooth || c.type==CType::Curvature || (c.type==CType::Tangent && std::find(kinds.begin(),kinds.end(),Kind::Spline)!=kinds.end())) {
     size_t splines=0;
-    for(int ref:c.refs)if(const auto* e=sk.entity(ref);e && e->type==EType::Spline) {
+    for(int ref:c.refs)if(const auto* e=entity_of(sk,ref,index);e && e->type==EType::Spline) {
       if(e->degree<2 || e->periodic || e->multiplicities.front()!=e->degree+1 || e->multiplicities.back()!=e->degree+1)throw Error(who+": use an open control-point spline of degree two or higher");
       if(splines>=c.anchors.size() || (c.anchors[splines]!=e->p.front() && c.anchors[splines]!=e->p.back()))throw Error(who+": anchor is not a spline endpoint");
       ++splines;
@@ -167,8 +203,16 @@ void check_constraint(const Sketch& sk, const SkConstraint& c) {
   if (c.is_dimension() && !std::isfinite(c.value)) throw Error(who + ": value is not a number");
 }
 
+// Ids are handed out in increasing order, so a list is nearly always sorted by them: a binary search finds the item, a scan
+// only what it misses (a list edited out of order). Scanning per lookup made a converted drawing's edges n² (UI-29).
 template <class V>
 auto find_id(V& v, int id) -> decltype(v.data()) {
+  size_t lo = 0, hi = v.size();
+  while (lo < hi) {
+    const size_t mid = lo + (hi - lo) / 2;
+    if (v[mid].id < id) lo = mid + 1; else hi = mid;
+  }
+  if (lo < v.size() && v[lo].id == id) return &v[lo];
   for (auto& it : v)
     if (it.id == id) return &it;
   return nullptr;
@@ -194,14 +238,22 @@ SkEntity* Sketch::entity(int id) { return find_id(entities, id); }
 const SkEntity* Sketch::entity(int id) const { return find_id(entities, id); }
 SkConstraint* Sketch::constraint(int id) { return find_id(constraints, id); }
 
+namespace {
+int item_id(const json& item) { return item.at("id").get<int>(); }
+template <class T> int item_id(const T& item) { return item.id; }
+}  // namespace
+
 int Sketch::next_id() const {
-  int top = id_watermark;
-  for (const auto& p : points) top = std::max(top, p.id);
-  for (const auto& e : entities) top = std::max(top, e.id);
-  for (const auto& c : constraints) top = std::max(top, c.id);
-  for (const auto& image:images)top=std::max(top,image.at("id").get<int>());
-  for (const auto& p : patterns) top = std::max(top,p.at("id").get<int>());
-  return top + 1;
+  IdScan& s = id_scan;
+  auto unchanged = [&](const auto& list, size_t k) { return list.size() >= s.n[k] && (!s.n[k] || item_id(list[s.n[k] - 1]) == s.last[k]); };
+  if (!(unchanged(points, 0) && unchanged(entities, 1) && unchanged(constraints, 2) && unchanged(images, 3) && unchanged(patterns, 4))) s = IdScan{};
+  auto read = [&](const auto& list, size_t k) {
+    for (size_t i = s.n[k]; i < list.size(); ++i) s.top = std::max(s.top, s.last[k] = item_id(list[i]));
+    s.n[k] = list.size();
+    if (s.n[k]) s.last[k] = item_id(list[s.n[k] - 1]);
+  };
+  read(points, 0); read(entities, 1); read(constraints, 2); read(images, 3); read(patterns, 4);
+  return std::max(s.top, id_watermark) + 1;
 }
 
 int Sketch::add_point(double x, double y, bool fixed) {
@@ -255,8 +307,8 @@ int Sketch::add_constraint(SkConstraint::Type t, std::vector<int> refs, double v
   c.refs = std::move(refs);
   if(t==CType::Smooth || t==CType::Curvature || t==CType::Tangent) {
     std::vector<const SkEntity*> splines;
-    const SkEntity* line=nullptr;
-    for(int ref:c.refs)if(const auto* e=entity(ref)){if(e->type==EType::Spline)splines.push_back(e);if(e->type==EType::Line)line=e;}
+    const SkEntity *line=nullptr,*round=nullptr;
+    for(int ref:c.refs)if(const auto* e=entity(ref)){if(e->type==EType::Spline)splines.push_back(e);if(e->type==EType::Line)line=e;if(e->type==EType::Circle||e->type==EType::Arc)round=e;}
     if(splines.size()==2) {
       double best=INFINITY;
       for(int a:{splines[0]->p.front(),splines[0]->p.back()})for(int b:{splines[1]->p.front(),splines[1]->p.back()}) {
@@ -265,6 +317,14 @@ int Sketch::add_constraint(SkConstraint::Type t, std::vector<int> refs, double v
     } else if(splines.size()==1 && line) {
       const auto a=*point(line->p[0]),b=*point(line->p[1]);double best=INFINITY;
       for(int id:{splines[0]->p.front(),splines[0]->p.back()}){const auto p=*point(id);const double distance=std::fabs((b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x));if(distance<best){best=distance;c.anchors={id};}}
+    } else if(splines.size()==1 && round) {
+      // The spline's end nearer the arc's ends (where it joins an arc), or nearer the circle.
+      const auto o=*point(round->p[0]);double best=INFINITY;
+      for(int id:{splines[0]->p.front(),splines[0]->p.back()}) {
+        const auto p=*point(id);double distance=std::fabs(std::hypot(p.x-o.x,p.y-o.y)-round->r);
+        if(round->type==EType::Arc){distance=INFINITY;for(int end:{round->p[1],round->p[2]})distance=std::min(distance,std::hypot(p.x-point(end)->x,p.y-point(end)->y));}
+        if(distance<best){best=distance;c.anchors={id};}
+      }
     }
   }
   if (c.is_dimension()) {
@@ -327,6 +387,11 @@ void Sketch::validate() const {
   }
   for (const auto& e : entities) claim(e.id, "entity");
   for (const auto& c : constraints) claim(c.id, "constraint");
+  Index index;
+  index.kinds.reserve(ids.size());
+  for (const auto& p : points) index.kinds[p.id] = Kind::Point, index.points.insert(p.id);
+  for (const auto& e : entities) index.kinds[e.id] = entity_kind(e.type), index.entities[e.id] = &e;
+  for (const auto& c : constraints) index.kinds[c.id] = Kind::Constraint;
   if(!images.is_array())throw Error("sketch images must be an array");
   for(const auto& image:images) {
     claim(image.at("id").get<int>(),"image");if(!image.at("data").is_string()||!image.at("position").is_array()||image.at("position").size()!=2)throw Error("invalid sketch image");
@@ -341,14 +406,14 @@ void Sketch::validate() const {
     if(!p.contains("seeds") || !p["seeds"].is_array() || p["seeds"].empty())throw Error("sketch pattern "+std::to_string(p["id"].get<int>())+" has no seeds: "+form);
     if(!p.contains("inputs") || !p["inputs"].is_object())throw Error("sketch pattern "+std::to_string(p["id"].get<int>())+" has no inputs: "+form);
     claim(p.at("id").get<int>(),"pattern");
-    for(int id:p.at("seeds").get<std::vector<int>>())if(!entity(id))throw Error("pattern seed no longer exists");
+    for(int id:p.at("seeds").get<std::vector<int>>())if(!index.entities.count(id))throw Error("pattern seed no longer exists");
     for(const auto& instance:p.value("instances",json::array()))for(const auto& pair:instance.at("map")) {
       if(!pair.is_array()||pair.size()!=2)throw Error("invalid pattern ID map");
-      for(int id:pair.get<std::vector<int>>())if(!point(id)&&!entity(id))throw Error("pattern refers to missing geometry");
+      for(int id:pair.get<std::vector<int>>())if(!index.points.count(id)&&!index.entities.count(id))throw Error("pattern refers to missing geometry");
     }
   }
-  for (const auto& e : entities) check_entity(*this, e);
-  for (const auto& c : constraints) check_constraint(*this, c);
+  for (const auto& e : entities) check_entity(*this, e, &index);
+  for (const auto& c : constraints) check_constraint(*this, c, &index);
 }
 
 json Sketch::to_json() const {
@@ -371,6 +436,8 @@ json Sketch::to_json() const {
     if(!e.source.is_null())o["source"]=e.source;
     je.push_back(std::move(o));
   }
+  json more = json::array();  // what an older build cannot read (older_readers_refuse)
+  int more_top = 0;
   for (const auto& c : constraints) {
     json o = {{"id", c.id}, {"type", SkConstraint::type_name(c.type)}, {"refs", c.refs}};
     if(!c.anchors.empty())o["anchors"]=c.anchors;
@@ -381,12 +448,24 @@ json Sketch::to_json() const {
       if (!c.expr.empty()) o["expr"] = c.expr;
       o["pos"] = json::array({c.pos[0], c.pos[1]});
     }
-    jc.push_back(std::move(o));
+    bool later = false;
+    if (c.type == CType::Smooth || c.type == CType::Curvature || c.type == CType::Tangent) {
+      std::vector<Kind> kinds;
+      for (int ref : c.refs) kinds.push_back(kind_of(*this, ref));
+      later = older_readers_refuse(c.type, kinds);
+    }
+    if (later) { more_top = std::max(more_top, c.id); more.push_back(std::move(o)); }
+    else jc.push_back(std::move(o));
   }
   auto ordered = [](json& a) { std::sort(a.begin(), a.end(), [](const json& x, const json& y) { return x.at("id").get<int>() < y.at("id").get<int>(); }); };
   ordered(jp); ordered(je); ordered(jc);
   json out{{"points", std::move(jp)}, {"entities", std::move(je)}, {"constraints", std::move(jc)}};
-  if (id_watermark) out["id_watermark"] = id_watermark;
+  // An older build that edits the sketch leaves "more_constraints" to this build (its panel's delta never names the key,
+  // its agent's says null, which apply_sketch_delta ignores; a whole geometry it writes, as its crash recovery's restore,
+  // drops them): the watermark stops it from handing their ids to what it adds (both lists would claim one id here).
+  const int watermark = std::max(id_watermark, more_top);
+  if (watermark) out["id_watermark"] = watermark;
+  if (!more.empty()) { ordered(more); out["more_constraints"] = std::move(more); }
   if(!patterns.empty())out["patterns"]=patterns;
   if(!images.empty()){out["images"]=images;ordered(out["images"]);}
   return out;
@@ -436,7 +515,7 @@ Sketch Sketch::from_json(const json& j) {
       e.fixed = o.value("fixed", false);e.source=o.value("source",json());
       sk.entities.push_back(std::move(e));
     }
-    for (const auto& o : list("constraints")) {
+    auto constraint = [](const json& o) {
       SkConstraint c;
       c.id = o.at("id").get<int>();
       c.type = SkConstraint::type_from_name(o.at("type").get<std::string>());
@@ -454,13 +533,49 @@ Sketch Sketch::from_json(const json& j) {
           c.pos[1] = pos[1];
         }
       }
-      sk.constraints.push_back(std::move(c));
+      return c;
+    };
+    for (const auto& o : list("constraints")) sk.constraints.push_back(constraint(o));
+    // The constraints to_json keeps apart for older builds, which skip the key. One of those may have edited the sketch
+    // without seeing them: a join whose curves it deleted or changed, or whose id it took, holds nothing any more and is
+    // left out, as is a record this build cannot read (a later build's), so the sketch still opens.
+    if (const json more = list("more_constraints"); !more.empty()) {
+      std::set<int> taken;
+      for (const auto& p : sk.points) taken.insert(p.id);
+      for (const auto& e : sk.entities) taken.insert(e.id);
+      for (const auto& c : sk.constraints) taken.insert(c.id);
+      for (const auto& v : sk.images) if (v.is_object() && v.contains("id") && v["id"].is_number_integer()) taken.insert(v["id"].get<int>());
+      for (const auto& v : sk.patterns) if (v.is_object() && v.contains("id") && v["id"].is_number_integer()) taken.insert(v["id"].get<int>());
+      for (const auto& o : more) {
+        SkConstraint c;
+        try {
+          c = constraint(o);
+          if (taken.count(c.id)) continue;
+          check_constraint(sk, c);
+        } catch (const std::exception&) {
+          continue;
+        }
+        taken.insert(c.id);
+        sk.constraints.push_back(std::move(c));
+      }
+      std::stable_sort(sk.constraints.begin(), sk.constraints.end(), [](const SkConstraint& a, const SkConstraint& b) { return a.id < b.id; });
     }
   } catch (const json::exception& e) {
     throw Error(std::string("sketch: malformed JSON: ") + e.what());
   }
   sk.validate();
   return sk;
+}
+
+json constraint_records(const json& geometry) {
+  json out = json::array();
+  if (!geometry.is_object()) return out;
+  for (const char* key : {"constraints", "more_constraints"})
+    if (const auto it = geometry.find(key); it != geometry.end() && it->is_array())
+      for (const auto& c : *it) out.push_back(c);
+  if (geometry.contains("more_constraints"))
+    std::stable_sort(out.begin(), out.end(), [](const json& x, const json& y) { return x.value("id", 0) < y.value("id", 0); });
+  return out;
 }
 
 }  // namespace opad::design

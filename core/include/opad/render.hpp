@@ -2,6 +2,7 @@
 // Deterministic software rasteriser used for headless screenshots (render command, N4). The GUI uses OCCT AIS.
 #include <array>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,15 @@ struct RenderItem {
   // highlight colour; face ordinals tinted with it.
   std::vector<std::vector<std::array<float, 3>>> lines, highlight_lines;
   std::vector<int> highlight_faces;
+  std::map<int, std::array<float, 3>> face_colors;  // face ordinal -> its own colour (FaceColors, UI-74)
+  // An image canvas's picture (opad/canvas.hpp, UI-70): RGB rows from the top, laid on the body's w x h rectangle (local XY,
+  // its top at y = h) and drawn as it is, unlit. Null: the item's colour (a build whose OCCT reads no pictures, too).
+  struct Picture {
+    int width = 0, height = 0;
+    std::vector<uint8_t> rgb;
+    double w = 0, h = 0;
+  };
+  std::shared_ptr<const Picture> picture;
 };
 
 struct Camera {
@@ -64,5 +74,8 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
 Image render_scene(const Document& doc, const Scene& scene, const RenderOptions& opt, json* receipt = nullptr);
 void write_png(const std::filesystem::path& path, const Image& img);
 std::string encode_png(const Image& img);
+// A picture of a file (UTF-8 paths) as `size` px square: a .png on white, or a .bgra with a transparent background
+// ("OPADTHMB", width, height, premultiplied BGRA rows). opad-cli thumbnail, Explorer's thumbnails and the start page.
+json write_thumbnail(const std::string& file, const std::string& out, int size = 256);
 
 }  // namespace opad

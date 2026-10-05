@@ -11,6 +11,7 @@
 #endif
 
 #include "drawing_common.hpp"
+#include "drawing_text.hpp"
 
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
@@ -19,9 +20,12 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Geom_BSplineCurve.hxx>
+#include <OSD_Parallel.hxx>
+#include <OSD_ThreadPool.hxx>
 #include <Standard_Failure.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <TColStd_Array1OfReal.hxx>
@@ -29,27 +33,28 @@
 #include <TColgp_HArray1OfPnt.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
 #include <gp_GTrsf.hxx>
 #include <gp_Pln.hxx>
-#ifdef OPAD_HAVE_FONT
-#include <Font_TextFormatter.hxx>
-#include <StdPrs_BRepFont.hxx>
-#include <StdPrs_BRepTextBuilder.hxx>
-#endif
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <tuple>
+#include <unordered_map>
 
 #include "opad/util.hpp"
 
@@ -160,8 +165,9 @@ std::string unicode_escapes(std::string s) {
   return out;
 }
 
-// TEXT control codes: %%d degree, %%p plus/minus, %%c diameter, %%nnn a character, %%u/%%o/%%k underline toggles, ^J.
-std::string text_codes(std::string_view s) {
+// TEXT control codes: %%d degree, %%p plus/minus, %%c diameter, %%nnn a character, %%u/%%o/%%k underline toggles, ^J;
+// ^I a space, or with `tabs` a tab (MTEXT's go to its tab stops).
+std::string text_codes(std::string_view s, bool tabs = false) {
   std::string out;
   for (size_t i = 0; i < s.size(); ++i) {
     if (s[i] == '%' && i + 2 < s.size() && s[i + 1] == '%') {
@@ -184,7 +190,7 @@ std::string text_codes(std::string_view s) {
       const char c = s[i + 1];
       if (c == ' ') { out += '^'; ++i; continue; }
       if (c == 'J') { out += '\n'; ++i; continue; }
-      if (c == 'I') { out += ' '; ++i; continue; }
+      if (c == 'I') { out += tabs ? '\t' : ' '; ++i; continue; }
       if (c >= '@' && c <= '_') { ++i; continue; }
     }
     out += s[i];
@@ -192,35 +198,24 @@ std::string text_codes(std::string_view s) {
   return out;
 }
 
-// MTEXT without its formatting: \P new paragraph, \~ hard space, \S stacked fractions as a/b, {} groups and the
-// \f font / \H height / \C colour ... codes dropped.
-std::string mtext_plain(std::string_view s) {
-  std::string out;
-  for (size_t i = 0; i < s.size(); ++i) {
-    const char c = s[i];
-    if (c == '{' || c == '}') continue;
-    if (c != '\\' || i + 1 >= s.size()) { out += c; continue; }
-    const char k = s[++i];
-    if (k == 'P' || k == 'X') out += '\n';
-    else if (k == '~') out += ' ';
-    else if (k == '\\' || k == '{' || k == '}') out += k;
-    else if (k == 'S') {
-      const size_t end = s.find(';', i + 1);
-      for (char ch : s.substr(i + 1, end == std::string_view::npos ? std::string_view::npos : end - i - 1))
-        out += (ch == '^' || ch == '#') ? '/' : ch;
-      i = end == std::string_view::npos ? s.size() : end;
-    } else if (std::string_view("ACcFfHQTWp").find(k) != std::string_view::npos) {
-      const size_t end = s.find(';', i);
-      i = end == std::string_view::npos ? s.size() : end;
-    } else if (std::string_view("LlOoKkNn").find(k) == std::string_view::npos) {
-      out += k;
+// A template's placeholder text: the name in "{name}", "{{name}}", "<name>" (or an MTEXT's escaped "\{name\}"); else empty.
+std::string placeholder(std::string_view s) {
+  s = trimmed(s);
+  const auto strip = [&](std::string_view open, std::string_view close) {
+    if (s.size() > open.size() + close.size() && s.substr(0, open.size()) == open && s.substr(s.size() - close.size()) == close) {
+      s = trimmed(s.substr(open.size(), s.size() - open.size() - close.size()));
+      return true;
     }
-  }
-  while (!out.empty() && (out.back() == '\n' || out.back() == ' ')) out.pop_back();
-  return text_codes(out);
+    return false;
+  };
+  if (!strip("{{", "}}") && !strip("\\{", "\\}") && !strip("{", "}") && !strip("<", ">")) return "";
+  if (s.empty() || s.size() > 64) return "";
+  for (char c : s)
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.' && c != ':' && c != ' ') return "";
+  return std::string(s);
 }
 
-bool blank(const std::string& s) { return s.find_first_not_of(" \t\n") == std::string::npos; }
+}  // namespace
 
 // AutoCAD Color Index -> RGB: 1-9 fixed, 10-249 24 hues x 5 shades x full/half saturation, 250-255 greys.
 uint32_t aci_rgb(int i) {
@@ -246,8 +241,172 @@ uint32_t aci_rgb(int i) {
   return byte(r + m) << 16 | byte(g + m) << 8 | byte(b + m);
 }
 
+namespace {
+
 // White and black are the drawing's foreground (ACI 7 swaps with the background): the viewer's own colour.
 uint32_t visible_color(uint32_t rgb) { return rgb == 0xFFFFFF || rgb == 0 ? kNoColor : rgb; }
+
+bool blank(const std::string& s) { return s.find_first_not_of(" \t\n") == std::string::npos; }
+
+// TEXT's %%u, %%o and %%k turn a line under, over and through it on and off: its parts in `base` with them; none
+// without them.
+std::vector<TextSpan> text_spans(std::string_view s, const TextFormat& base) {
+  std::vector<TextSpan> out;
+  TextSpan span;
+  static_cast<TextFormat&>(span) = base;
+  std::string run;
+  bool toggled = false;
+  auto flush = [&] {
+    if (!run.empty()) span.text = text_codes(run), out.push_back(span);
+    run.clear();
+  };
+  for (size_t i = 0; i < s.size(); ++i) {
+    if (s[i] == '%' && i + 2 < s.size() && s[i + 1] == '%') {
+      const char c = char(std::tolower(static_cast<unsigned char>(s[i + 2])));
+      if (c == 'u' || c == 'o' || c == 'k') {
+        flush();
+        bool& on = c == 'u' ? span.underline : c == 'o' ? span.overline : span.strike;
+        on = !on;
+        toggled = true;
+      } else {
+        run += s.substr(i, 3);  // another code, for text_codes
+      }
+      i += 2;
+      continue;
+    }
+    run += s[i];
+  }
+  flush();
+  return toggled ? out : std::vector<TextSpan>{};
+}
+
+// MTEXT in parts of their own formats, from `base` (the entity's): \P starts a paragraph (\X and \N too), \~ is a hard
+// space, a {group}'s formatting ends with it; \f a TrueType family (|b1 bold, |i1 italic) and \F a shape font, \H a height
+// (drawing units, or times the current one with x), \W a width factor, \Q an obliquing angle, \T tracking, \A an
+// alignment (0 baseline, 1 middle, 2 top), \C a colour index and \c a true colour (0 and 256: the entity's), \L \O \K
+// a line under, over and through on (lower case: off), \S a stacked pair (a/b, a#b, a^b), \p a paragraph's layout (x, then
+// i first-line indent, l left and r right indent, t tab stops, in text heights; q its alignment, c r l j or d), kept by
+// the paragraphs after it (`paragraphs`). Each part's text takes the TEXT codes (%%d ..., ^I a tab).
+std::vector<TextSpan> mtext_spans(std::string_view s, const TextFormat& base, double unit, std::vector<TextParagraph>& paragraphs) {
+  std::vector<TextSpan> out;
+  std::vector<TextFormat> groups;
+  TextFormat f = base;
+  std::string text;
+  paragraphs.assign(1, TextParagraph());
+  auto flush = [&] {
+    if (text.empty()) return;
+    TextSpan span;
+    static_cast<TextFormat&>(span) = f;
+    span.text = text_codes(text, true);
+    out.push_back(std::move(span));
+    text.clear();
+  };
+  for (size_t i = 0; i < s.size(); ++i) {
+    const char c = s[i];
+    if (c == '{' || c == '}') {
+      flush();
+      if (c == '{') groups.push_back(f);
+      else if (!groups.empty()) f = groups.back(), groups.pop_back();
+      continue;
+    }
+    if (c != '\\' || i + 1 >= s.size()) { text += c; continue; }
+    const char k = s[++i];
+    if (k == 'P' || k == 'X' || k == 'N') { text += '\n'; paragraphs.push_back(paragraphs.back()); continue; }
+    if (k == '~') { text += "\xC2\xA0"; continue; }
+    if (std::string_view("LlOoKk").find(k) != std::string_view::npos) {
+      flush();
+      (k == 'L' || k == 'l' ? f.underline : k == 'O' || k == 'o' ? f.overline : f.strike) = std::isupper(static_cast<unsigned char>(k)) != 0;
+      continue;
+    }
+    if (std::string_view("ACcFfHQTWpS").find(k) == std::string_view::npos) { text += k; continue; }  // \\ \{ \} and the rest as written
+    size_t end = i + 1;  // the value, up to its ';' (in a stack, one not escaped)
+    while (end < s.size() && s[end] != ';') end += k == 'S' && s[end] == '\\' ? 2 : 1;
+    end = std::min(end, s.size());
+    std::string_view value = s.substr(i + 1, end - i - 1);
+    i = end;
+    flush();
+    try {
+      if (k == 'f' || k == 'F') {
+        size_t at = value.find('|');
+        f.font = std::string(trimmed(value.substr(0, at)));
+        f.family.clear();
+        f.bold = f.italic = false;
+        while (at != std::string_view::npos) {
+          const size_t next = value.find('|', at + 1);
+          const auto part = value.substr(at + 1, next == std::string_view::npos ? std::string_view::npos : next - at - 1);
+          f.bold = f.bold || part == "b1";
+          f.italic = f.italic || part == "i1";
+          at = next;
+        }
+      } else if (k == 'S') {
+        std::string parts[2];
+        char kind = 0;
+        for (size_t j = 0; j < value.size(); ++j) {
+          if (value[j] == '\\' && j + 1 < value.size()) parts[kind != 0] += value[++j];
+          else if (!kind && (value[j] == '^' || value[j] == '/' || value[j] == '#')) kind = value[j];
+          else parts[kind != 0] += value[j];
+        }
+        if (!kind) { text += parts[0]; continue; }
+        TextSpan span;
+        static_cast<TextFormat&>(span) = f;
+        span.stack = kind;
+        span.text = text_codes(parts[0], true);
+        span.bottom = text_codes(parts[1], true);
+        if (!blank(span.text + span.bottom)) out.push_back(std::move(span));
+      } else if (k == 'p') {
+        TextParagraph& p = paragraphs.back();
+        bool tabs = false;  // after t: the stops, each a number (c or r before it: a centred or right one, taken as a stop)
+        for (size_t at = 0; at <= value.size();) {
+          const size_t comma = std::min(value.find(',', at), value.size());
+          std::string_view item = value.substr(at, comma - at);
+          at = comma + 1;
+          if (!item.empty() && item[0] == 'x' && !tabs) item.remove_prefix(1);
+          if (item.empty()) continue;
+          const bool stop = tabs && (std::isdigit(static_cast<unsigned char>(item[0])) || item[0] == '.' || item[0] == 'c' || item[0] == 'r');
+          const char key = stop ? 't' : item[0];
+          if (!stop) item.remove_prefix(1);
+          tabs = key == 't';
+          try {
+            if (key == 'q') {
+              const char a = item.empty() ? 0 : item[0];
+              if (a == 'c' || a == 'r' || a == 'l' || a == 'j' || a == 'd') p.justify = a == 'c' ? TextRequest::Center : a == 'r' ? TextRequest::Right : TextRequest::Left;
+            } else if (key == 't') {
+              if (!stop) p.tabs.clear();
+              if (!item.empty() && (item[0] == 'c' || item[0] == 'r')) item.remove_prefix(1);
+              if (!item.empty()) p.tabs.push_back(parse_number(item) * base.size);
+            } else if (key == 'i' || key == 'l' || key == 'r') {
+              (key == 'i' ? p.first : key == 'l' ? p.left : p.right) = parse_number(item) * base.size;
+            }
+          } catch (const Error&) {
+          }
+        }
+      } else {
+        const bool times = !value.empty() && (value.back() == 'x' || value.back() == 'X');
+        if (times) value.remove_suffix(1);
+        const double v = parse_number(value);
+        if (k == 'H' && v > 0) f.size = times ? f.size * v : v * unit;
+        else if (k == 'W' && v > 0) f.width = times ? f.width * v : v;
+        else if (k == 'T' && v > 0) f.tracking = times ? f.tracking * v : v;
+        else if (k == 'Q') f.oblique = v * kPi / 180;
+        else if (k == 'A') f.align = v == 1 ? TextFormat::Center : v == 2 ? TextFormat::Top : TextFormat::Base;
+        else if (k == 'C') f.color = v >= 1 && v <= 255 ? visible_color(aci_rgb(int(v))) : TextFormat::kInherit;
+        else if (k == 'c') {  // 0xBBGGRR
+          const auto bgr = uint32_t(int64_t(v)) & 0xFFFFFFu;
+          f.color = visible_color((bgr & 0xFF) << 16 | (bgr & 0xFF00) | bgr >> 16);
+        }
+      }
+    } catch (const Error&) {
+    }
+  }
+  flush();
+  while (!out.empty() && !out.back().stack) {  // what ends it: new paragraphs and spaces
+    auto& t = out.back().text;
+    while (!t.empty() && (t.back() == '\n' || t.back() == ' ')) t.pop_back();
+    if (!t.empty()) break;
+    out.pop_back();
+  }
+  return out;
+}
 
 // The fields of one entity (or table record): the group codes after its "0 TYPE" pair.
 struct Fields {
@@ -306,9 +465,21 @@ struct Ocs {
   gp_XYZ to_wcs(const gp_XYZ& p) const { return to_wcs(p.X(), p.Y(), p.Z()); }
 };
 
-// Geometry by (layer as written, colour key): model space, or a block's content in its own coordinates.
+// Anything in it but empty compounds (a text's placeholder stays empty when no font loads or a part in a colour of its
+// own shows nothing).
+bool drawn(const TopoDS_Shape& s) {
+  if (s.IsNull()) return false;
+  if (s.ShapeType() != TopAbs_COMPOUND) return true;
+  for (TopoDS_Iterator it(s, false, false); it.More(); it.Next())
+    if (drawn(it.Value())) return true;
+  return false;
+}
+
+// Geometry by (layer as written, colour key, linetype, lineweight, linetype scale): model space, or a block's content in
+// its own coordinates. Linetype "" and lineweight -1 are by layer, "BYBLOCK" and -2 by block.
 struct Space {
-  std::map<std::pair<std::string, uint32_t>, TopoDS_Compound> groups;
+  std::map<std::tuple<std::string, uint32_t, std::string, int, double>, TopoDS_Compound> groups;
+  int depth = 0;  // 1 + the level of the deepest copy its groups show that is still to be made (Reader::finish), 0 for none
 };
 
 // Where an entity's geometry goes and how its points map: drawing units -> mm, minus the model-space shift, z dropped.
@@ -324,11 +495,13 @@ struct PatternLine {
   std::vector<double> dashes;
 };
 
-// How a block lands: rigid (shared by location), similar (uniform scale or mirror: transformed copy) or general.
+// How a block lands: rigid (shared by location), similar (a uniform scale, then rigid: the block's copy at that scale is
+// made once and shared by location) or general (a transformed copy each time).
 struct Placement {
   enum Kind { None, Location, Similar, General } kind = None;
   gp_Trsf trsf;
   gp_GTrsf gtrsf;
+  double scale = 1;
 };
 
 Placement placement(double a11, double a12, double a21, double a22, double tx, double ty) {
@@ -337,10 +510,10 @@ Placement placement(double a11, double a12, double a21, double a22, double tx, d
   if (s1 < 1e-12 || s2 < 1e-12 || std::abs(det) < 1e-12 * s1 * s2) return p;
   if (std::abs(s1 - s2) <= 1e-9 * std::max(s1, s2) && std::abs(dot) <= 1e-9 * s1 * s2) {
     // A mirror in the plane is a half turn about an in-plane axis in 3D, so z flips with it: never a negative transform.
-    const bool unit = std::abs(s1 - 1) < 1e-9;
-    const double k = unit ? 1 / s1 : 1, z = (det > 0 ? 1 : -1) * (unit ? 1 : s1);
+    const double k = 1 / s1, z = det > 0 ? 1 : -1;
     p.trsf.SetValues(a11 * k, a12 * k, 0, tx, a21 * k, a22 * k, 0, ty, 0, 0, z, 0);
-    p.kind = unit ? Placement::Location : Placement::Similar;
+    p.kind = std::abs(s1 - 1) < 1e-9 ? Placement::Location : Placement::Similar;
+    p.scale = s1;
   } else {
     p.gtrsf.SetValue(1, 1, a11); p.gtrsf.SetValue(1, 2, a12); p.gtrsf.SetValue(1, 4, tx);
     p.gtrsf.SetValue(2, 1, a21); p.gtrsf.SetValue(2, 2, a22); p.gtrsf.SetValue(2, 4, ty);
@@ -367,18 +540,22 @@ double signed_area(const std::vector<gp_XY>& poly) {
 
 class Reader {
  public:
-  Reader(const std::filesystem::path& file, const ImportOptions& options) : m_options(options) { load(file); }
+  Reader(const std::filesystem::path& file, const ImportOptions& options) : m_options(options), m_fontFolders(font_folders(file)) { load(file); }
   Drawing read();
 
  private:
   struct Layer {
-    std::string name;
+    std::string name, linetype;
+    std::vector<double> pattern;  // its linetype's dashes from the LTYPE table, sized as acad.lin's (mm; < 0 gap, 0 dot)
     uint32_t color = kNoColor;
-    bool visible = true;
+    bool visible = true, off = false, frozen = false, locked = false, plot = true;
+    int lineweight = -3;  // 1/100 mm; negative: by layer, by block or the default
+    json info() const;    // what an import node keeps of it (Node::layer)
   };
   struct Style {
-    std::string font;
-    double height = 0, width = 1;
+    std::string font, family;  // its font file (a shape font, .shx, or a TrueType one) and its TrueType family (XDATA)
+    double height = 0, width = 1, oblique = 0;  // oblique: degrees
+    bool bold = false, italic = false;  // the family's faces (XDATA flags)
   };
   struct Block {
     size_t first = 0, last = 0;  // entity range in m_blockEntities
@@ -386,18 +563,16 @@ class Reader {
     bool xref = false;
     int state = 0;  // 0 not built, 1 building, 2 built
     Space space;
+    std::map<double, Space> scaled;  // its content at each scale it is inserted at (a plan: 1306 scaled inserts, 71 copies)
   };
   struct Out {
     Space* space;
     std::string layer;
     uint32_t color;
+    std::string linetype;  // "" by layer, "BYBLOCK", else its own (6)
+    int weight = -1;       // 1/100 mm; -1 by layer, -2 by block, -3 the default (370)
+    double scale = 1;      // its linetype's scale (48, CELTSCALE)
   };
-#ifdef OPAD_HAVE_FONT
-  struct TextFont {
-    Handle(StdPrs_BRepFont) font;
-    double cap = 0, descent = 0;  // mm at this size
-  };
-#endif
 
   void load(const std::filesystem::path& file);
   void tables(const std::vector<Entity>& section);
@@ -405,6 +580,9 @@ class Reader {
   std::string decode(std::string_view raw) const;
   const std::string& layer_name(std::string_view raw);
   uint32_t layer_color(const std::string& name) const;
+  Out out(const Fields& f, Space* space);
+  std::string layer_linetype(const std::string& name) const;
+  int layer_weight(const std::string& name) const;
   uint32_t color_of(const Fields& f) const;
   void run(const std::vector<Entity>& list, size_t first, size_t last, Place& at);
   void entity(const Entity& e, Place& at);
@@ -414,16 +592,14 @@ class Reader {
   void hatch(const Fields& f, Out& o, const Place& at);
   void text(const Fields& f, Out& o, const Place& at, bool attrib);
   void mtext(const Fields& f, Out& o, const Place& at);
-#ifdef OPAD_HAVE_FONT
-  const TextFont* text_font(std::string_view style, double height, double width);
-  std::string font_file(std::string_view style) const;
-  TopoDS_Shape text_shape(const TextFont& tf, const std::string& s, const gp_Ax3& pen, Graphic3d_HorizontalTextAlignment h,
-                          Graphic3d_VerticalTextAlignment v, double wrap) const;
-#endif
+  TextRequest text_request(std::string_view style, std::string text, double height) const;
+  void text_shape(const Out& o, const TextRequest& request, const gp_Ax3& at);
+  static std::vector<std::filesystem::path> font_folders(const std::filesystem::path& file);
+  void field(const Fields& f, const std::string& tag, const std::string& sample, bool attribute, bool mtext);  // ImportOptions::text_fields
 
   gp_Pnt pnt(const Place& at, const gp_XYZ& wcs) const { return gp_Pnt(wcs.X() * m_unit - at.sx, wcs.Y() * m_unit - at.sy, 0); }
   void add(const Out& o, const TopoDS_Shape& s) {
-    auto& c = o.space->groups[{o.layer, o.color}];
+    auto& c = o.space->groups[{o.layer, o.color, o.linetype, o.weight, o.scale}];
     if (c.IsNull()) m_builder.MakeCompound(c);
     m_builder.Add(c, s);
   }
@@ -446,10 +622,12 @@ class Reader {
   }
   bool pattern(const Out& o, const Place& at, const Ocs& ocs, double elevation, const std::vector<std::vector<gp_XY>>& loops,
                const std::vector<PatternLine>& lines);
-  TopoDS_Shape placed(const TopoDS_Shape& s, const Placement& p) const;
+  TopoDS_Compound later(const TopoDS_Shape& source, const Placement& p, int level);
+  void finish();
   void tick();
 
   const ImportOptions& m_options;
+  std::vector<std::filesystem::path> m_fontFolders;  // where a style's font file is looked for (font_folders)
   std::string m_buffer;
   std::vector<Pair> m_pairs;
   std::vector<Entity> m_model, m_blockEntities;
@@ -461,6 +639,7 @@ class Reader {
   std::map<std::string, Layer> m_layers;  // by upper-case name
   std::map<std::string, std::string> m_layerNames;  // raw name -> display name
   std::map<std::string, Style> m_styles;  // by upper-case name
+  std::map<std::string, std::vector<double>> m_linetypes;  // LTYPE: dashes by upper-case raw name (< 0 gap, 0 dot)
   std::map<std::string, Block> m_blocks;  // by upper-case raw name
   int m_depth = 0;
   BRep_Builder m_builder;
@@ -469,11 +648,27 @@ class Reader {
   int m_broken = 0, m_paper = 0, m_missing = 0, m_xrefs = 0, m_noFont = 0, m_patternOutlines = 0;
   size_t m_patternBudget = 600000;
   std::vector<std::string> m_warnings;
-#ifdef OPAD_HAVE_FONT
-  std::map<std::string, TextFont> m_fonts;
-  std::map<std::string, double> m_capRatio;  // font file -> cap height per em ('H'), < 0 when the font is unusable
-  std::string m_fontsDir;
-#endif
+  // Made once every entity is read, side by side (finish): the copies of blocks placed scaled or skewed, level by level (a
+  // copy of a block that shows another copy waits for it). Until then each is an empty compound, already placed where it
+  // shows (a 3 MB DWG's plan: 1.5 s of copies before).
+  struct CopyJob {
+    TopoDS_Shape source;
+    Placement p;
+    int level;
+    TopoDS_Compound into;
+  };
+  std::vector<CopyJob> m_copyJobs;
+  // A text laid out once per request (text_key) at the origin and placed by location: half the texts of a plan repeat one.
+  // Outlined in finish() side by side, before the copies (a copied block shows its texts); until then its placeholders
+  // are empty: the part in the text's colour, if it has one, and each part in a colour of its own (MTEXT \C).
+  struct TextJob {
+    TextRequest request;
+    TopoDS_Compound into;
+    std::map<uint32_t, TopoDS_Compound> colored;
+    int uses = 0;
+  };
+  std::vector<TextJob> m_textJobs;
+  std::unordered_map<std::string, size_t> m_texts;  // text_key -> its job
 };
 
 void Reader::load(const std::filesystem::path& file) {
@@ -520,9 +715,42 @@ const std::string& Reader::layer_name(std::string_view raw) {
   return m_layerNames.emplace(std::string(raw), name).first->second;
 }
 
+json Reader::Layer::info() const {
+  json j = {{"name", name}};
+  if (off) j["off"] = true;
+  if (frozen) j["frozen"] = true;
+  if (locked) j["locked"] = true;
+  if (!plot) j["plot"] = false;
+  if (!linetype.empty() && upper(linetype) != "CONTINUOUS") j["linetype"] = linetype;
+  if (!pattern.empty() && j.contains("linetype")) j["pattern"] = pattern;
+  if (lineweight >= 0) j["lineweight"] = lineweight / 100.0;  // mm
+  return j;
+}
+
 uint32_t Reader::layer_color(const std::string& name) const {
   const auto it = m_layers.find(upper(name));
   return it == m_layers.end() ? kNoColor : it->second.color;
+}
+
+std::string Reader::layer_linetype(const std::string& name) const {
+  const auto it = m_layers.find(upper(name));
+  return it == m_layers.end() || it->second.linetype.empty() ? "Continuous" : it->second.linetype;
+}
+
+int Reader::layer_weight(const std::string& name) const {
+  const auto it = m_layers.find(upper(name));
+  return it == m_layers.end() || it->second.lineweight < 0 ? -3 : it->second.lineweight;
+}
+
+// An entity's layer, colour, linetype and lineweight: what goes into one body with it.
+Reader::Out Reader::out(const Fields& f, Space* space) {
+  Out o{space, layer_name(f.str(8, "0")), color_of(f)};
+  const std::string type = decode(trimmed(f.str(6)));
+  if (const auto u = upper(type); !u.empty() && u != "BYLAYER") o.linetype = u == "BYBLOCK" ? "BYBLOCK" : type;
+  const int weight = f.integer(370, -1);
+  o.weight = weight >= -3 && weight <= 211 ? weight : -1;
+  if (const double scale = f.num(48, 1); scale > 0 && std::abs(scale - 1) > 1e-9) o.scale = std::round(scale * 1e6) / 1e6;
+  return o;
 }
 
 uint32_t Reader::color_of(const Fields& f) const {
@@ -540,17 +768,38 @@ void Reader::tables(const std::vector<Entity>& section) {
       Layer layer;
       // Names are decoded once the code page is known, see read().
       layer.name = std::string(trimmed(f.str(2, "0")));
-      const int aci = f.integer(62, 7);
+      const int aci = f.integer(62, 7), flags = f.integer(70);
       layer.color = f.has(420) ? visible_color(uint32_t(int64_t(f.num(420))) & 0xFFFFFFu) : visible_color(aci_rgb(std::abs(aci)));
-      layer.visible = aci >= 0 && !(f.integer(70) & 1);  // negative colour = off; flag 1 = frozen
+      layer.off = aci < 0;  // negative colour = off; flag 1 = frozen, 4 = locked
+      layer.frozen = flags & 1;
+      layer.locked = flags & 4;
+      layer.visible = !layer.off && !layer.frozen;
+      layer.plot = f.integer(290, 1) != 0;
+      layer.linetype = std::string(trimmed(f.str(6)));
+      layer.lineweight = f.integer(370, -3);
       m_layers[upper(layer.name)] = layer;
     } else if (e.type == "STYLE") {
       Style style;
-      style.font = std::string(trimmed(f.str(3)));
+      style.font = decode(trimmed(f.str(3)));
+      if (f.has(1001)) {  // ACAD's XDATA: the TrueType family and its italic (0x1000000) and bold (0x2000000) flags
+        style.family = decode(trimmed(f.str(1000)));
+        const long flags = long(f.num(1071, 0));
+        style.italic = flags & 0x1000000;
+        style.bold = flags & 0x2000000;
+      }
       style.height = f.num(40);
       style.width = f.num(41, 1);
       if (!(style.width > 0)) style.width = 1;
+      style.oblique = f.num(50);
       m_styles[upper(trimmed(f.str(2)))] = style;
+    } else if (e.type == "LTYPE") {  // the dashes (49, repeated); the shapes and text of complex linetypes are left out
+      std::vector<double> dashes;
+      for (size_t i = f.begin; i < f.end; ++i)
+        if ((*f.pairs)[i].code == 49) try {
+            dashes.push_back(parse_number((*f.pairs)[i].value));
+          } catch (const Error&) {
+          }
+      if (!dashes.empty()) m_linetypes[upper(trimmed(f.str(2)))] = dashes;
     }
   }
 }
@@ -641,13 +890,83 @@ void Reader::bulge(const Out& o, const Place& at, const Ocs& ocs, double elevati
   arc(o, at, ocs, gp_XYZ(cx, cy, elevation), chord * (1 + b * b) / (4 * std::abs(b)), start, stop, false);
 }
 
-TopoDS_Shape Reader::placed(const TopoDS_Shape& s, const Placement& p) const {
-  switch (p.kind) {
-    case Placement::Location: return s.Moved(TopLoc_Location(p.trsf));
-    case Placement::Similar: return BRepBuilderAPI_Transform(s, p.trsf, true).Shape();
-    case Placement::General: return BRepBuilderAPI_GTransform(s, p.gtrsf, true).Shape();
-    default: return {};
+TopoDS_Compound Reader::later(const TopoDS_Shape& source, const Placement& p, int level) {
+  TopoDS_Compound into;
+  m_builder.MakeCompound(into);
+  m_copyJobs.push_back({source, p, level, into});
+  return into;
+}
+
+void Reader::finish() {
+  // A placeholder takes what was made for it in place, so every place that shows it shows that.
+  auto deliver = [](TopoDS_Compound into, const TopoDS_Shape& made) {
+    BRep_Builder builder;
+    into.Free(true);
+    for (TopoDS_Iterator it(made); it.More(); it.Next()) builder.Add(into, it.Value());
+    into.Free(false);
+  };
+  std::atomic<int> broken{0}, noFont{0};
+  if (!m_textJobs.empty()) {
+    if (m_options.progress && !m_options.progress(0.99, "reading drawing")) throw Error("cancelled");
+    // In runs of about equal length, each with an outliner of its own (glyph caches and HarfBuzz buffers are not shared),
+    // texts of one font and size together so that their glyphs are outlined once.
+    auto font = [](const TextRequest& r) { return std::tie(r.font, r.family, r.bold, r.italic, r.size, r.width, r.oblique); };
+    std::vector<size_t> order(m_textJobs.size());
+    std::iota(order.begin(), order.end(), size_t(0));
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return font(m_textJobs[a].request) < font(m_textJobs[b].request); });
+    auto weight = [this](size_t job) {
+      const TextRequest& r = m_textJobs[job].request;
+      size_t w = 8 + r.text.size();
+      for (const auto& span : r.spans) w += span.text.size() + span.bottom.size();
+      return w;
+    };
+    size_t total = 0;
+    for (size_t job : order) total += weight(job);
+    const size_t runs = std::min(order.size(), size_t(std::max(1, OSD_ThreadPool::DefaultPool()->NbDefaultThreadsToLaunch())));
+    std::vector<size_t> starts{0};
+    for (size_t i = 0, sum = 0; i < order.size() && starts.size() < runs; ++i)
+      if ((sum += weight(order[i])) * runs >= total * starts.size() && i + 1 < order.size()) starts.push_back(i + 1);
+    starts.push_back(order.size());
+    OSD_Parallel::For(0, int(starts.size() - 1), [&](int run) {
+      TextOutliner outliner(m_fontFolders);
+      for (size_t i = starts[size_t(run)]; i < starts[size_t(run) + 1]; ++i) {
+        TextJob& job = m_textJobs[order[i]];
+        try {
+          std::map<uint32_t, TopoDS_Compound> colored;
+          const TopoDS_Shape made = outliner.outline(job.request, gp_Ax3(), &colored);
+          if (made.IsNull()) { noFont += job.uses; continue; }
+          if (!job.into.IsNull()) deliver(job.into, made);
+          for (auto& [color, into] : job.colored)
+            if (const auto part = colored.find(color); part != colored.end()) deliver(into, part->second);
+        } catch (...) {
+          broken += job.uses;
+        }
+      }
+    });
+    m_textJobs.clear();
+    m_texts.clear();
   }
+  int top = -1;
+  for (const auto& job : m_copyJobs) top = std::max(top, job.level);
+  for (int level = 0; level <= top; ++level) {
+    if (m_options.progress && !m_options.progress(0.99, "reading drawing")) throw Error("cancelled");
+    std::vector<const CopyJob*> now;
+    for (const auto& job : m_copyJobs)
+      if (job.level == level) now.push_back(&job);
+    OSD_Parallel::For(0, int(now.size()), [&](int i) {
+      const CopyJob& job = *now[size_t(i)];
+      if (!drawn(job.source)) return;  // texts with no font, say
+      try {
+        deliver(job.into, job.p.kind == Placement::General ? BRepBuilderAPI_GTransform(job.source, job.p.gtrsf, true).Shape()
+                                                           : BRepBuilderAPI_Transform(job.source, job.p.trsf, true).Shape());
+      } catch (...) {
+        ++broken;
+      }
+    });
+  }
+  m_copyJobs.clear();
+  m_broken += broken;
+  m_noFont += noFont;
 }
 
 const Space& Reader::build(Block& b) {
@@ -699,19 +1018,39 @@ void Reader::insert(const Fields& f, const Out& o, const Place& at, std::string_
       const double ox = c * column * columnSpacing - s * row * rowSpacing, oy = s * column * columnSpacing + c * row * rowSpacing;
       const auto p = placement(a11, a12, a21, a22, tx + m11 * ox + m12 * oy, ty + m21 * ox + m22 * oy);
       if (p.kind == Placement::None) return;
-      for (const auto& [key, shape] : content.groups) {
-        const auto& [layer, color] = key;
-        Out target{o.space, layer == "0" ? o.layer : layer, color};
-        if (color == kByBlock) target.color = o.color == kByLayer && o.layer != "0" ? layer_color(o.layer) : o.color;
-        add(target, placed(shape, p));
+      const Space* source = &content;
+      if (p.kind == Placement::Similar) {  // scaled once (a turned insert's scale may differ in the last digit), then placed rigidly
+        auto it = block.scaled.lower_bound(p.scale * (1 - 1e-9));
+        if (it == block.scaled.end() || it->first > p.scale * (1 + 1e-9)) {
+          it = block.scaled.emplace_hint(it, p.scale, Space());
+          Placement scale;
+          scale.trsf.SetScale(gp::Origin(), p.scale);
+          for (const auto& [key, shape] : content.groups) it->second.groups[key] = later(shape, scale, content.depth);
+          it->second.depth = content.depth + 1;
+        }
+        source = &it->second;
       }
+      for (const auto& [key, shape] : source->groups) {
+        const auto& [layer, color, linetype, weight, scale] = key;
+        Out target{o.space, layer == "0" ? o.layer : layer, color, linetype, weight, scale};
+        if (color == kByBlock) target.color = o.color == kByLayer && o.layer != "0" ? layer_color(o.layer) : o.color;
+        // By block: the insert's own, or by layer its layer's (named, when the content lies on a layer of its own); its
+        // dashes in the insert's scale too.
+        if (linetype == "BYBLOCK") {
+          target.linetype = o.linetype.empty() && target.layer != o.layer ? layer_linetype(o.layer) : o.linetype;
+          target.scale = std::round(scale * o.scale * 1e6) / 1e6;
+        }
+        if (weight == -2) target.weight = o.weight == -1 && target.layer != o.layer ? layer_weight(o.layer) : o.weight;
+        add(target, p.kind == Placement::General ? later(shape, p, content.depth) : shape.Moved(TopLoc_Location(p.trsf)));
+      }
+      o.space->depth = std::max(o.space->depth, p.kind == Placement::General ? content.depth + 1 : source->depth);
     }
 }
 
 void Reader::polyline(const Entity& e, const std::vector<const Entity*>& vertices, Place& at) {
   const auto& f = e.f;
   if (f.integer(60) == 1 || (at.model && f.integer(67) == 1)) return;
-  const Out o{at.space, layer_name(f.str(8, "0")), color_of(f)};
+  const Out o = out(f, at.space);
   const int flags = f.integer(70);
   if (flags & 64) {  // polyface mesh: positions, then faces naming them (negative index = invisible edge)
     std::vector<gp_Pnt> positions;
@@ -767,7 +1106,7 @@ void Reader::entity(const Entity& e, Place& at) {
   const auto& f = e.f;
   if (f.integer(60) == 1) return;  // invisible
   if (at.model && f.integer(67) == 1) { ++m_paper; return; }  // paper space (layouts)
-  Out o{at.space, layer_name(f.str(8, "0")), color_of(f)};
+  Out o = out(f, at.space);
   const auto& t = e.type;
   if (t == "LINE") {
     segment(o, pnt(at, f.xyz(10)), pnt(at, f.xyz(11)));
@@ -911,6 +1250,8 @@ void Reader::entity(const Entity& e, Place& at) {
     text(f, o, at, t == "ATTRIB");
   } else if (t == "MTEXT") {
     mtext(f, o, at);
+  } else if (t == "ATTDEF" && m_options.text_fields && at.model && !(f.integer(70) & 1)) {  // a template's field
+    field(f, decode(trimmed(f.str(2))), text_codes(decode(f.str(1))), true, false);
   } else if (t == "ATTDEF" || t == "VIEWPORT" || t == "WIPEOUT" || t == "LIGHT" || t == "SUN" || t == "SEQEND") {
     // attribute templates, layout windows, masks and lights draw nothing in model space
   } else {
@@ -1192,111 +1533,103 @@ void Reader::hatch(const Fields& f, Out& o, const Place& at) {
   }
 }
 
-#ifdef OPAD_HAVE_FONT
-std::string Reader::font_file(std::string_view styleName) const {
-  const auto style = m_styles.find(upper(trimmed(styleName)));
-  std::string file = style == m_styles.end() ? std::string() : style->second.font;
-  if (const auto slash = file.find_last_of("/\\"); slash != std::string::npos) file = file.substr(slash + 1);
-  for (auto& ch : file) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-  const auto dot = file.rfind('.');
-  const std::string ext = dot == std::string::npos ? "" : file.substr(dot);
-  if ((ext == ".ttf" || ext == ".ttc" || ext == ".otf") && !m_fontsDir.empty()) {
-    std::error_code error;
-    const auto path = std::filesystem::path(m_fontsDir) / file;
-    if (std::filesystem::exists(path, error)) return m_fontsDir + "/" + file;
-  }
-  return {};  // SHX shape fonts and missing files: a plain sans-serif stands in
-}
-
-const Reader::TextFont* Reader::text_font(std::string_view style, double height, double width) {
-  if (!(height > 1e-9)) return nullptr;
-  const std::string file = font_file(style);
-  auto init = [&](StdPrs_BRepFont& font, double size) {
-    return file.empty() ? font.FindAndInit("Arial", Font_FA_Regular, size) : font.Init(NCollection_String(file.c_str()), size, 0);
-  };
-  auto ratio = m_capRatio.find(file);
-  if (ratio == m_capRatio.end()) {
-    double cap = -1;
-    StdPrs_BRepFont probe;
-    if (init(probe, 100.0)) {
-      cap = 0.716;
-      const TopoDS_Shape h = probe.RenderGlyph('H');
-      Bnd_Box box;
-      if (!h.IsNull()) BRepBndLib::Add(h, box);
-      if (!box.IsVoid()) {
-        double x0, y0, z0, x1, y1, z1;
-        box.Get(x0, y0, z0, x1, y1, z1);
-        if (y1 - y0 > 1) cap = (y1 - y0) / 100.0;
-      }
-    }
-    ratio = m_capRatio.emplace(file, cap).first;
-  }
-  if (ratio->second < 0) return nullptr;
-  const double em = height / ratio->second;
-  std::ostringstream key;
-  key.precision(9);
-  key << file << '|' << em << '|' << width;
-  auto it = m_fonts.find(key.str());
-  if (it == m_fonts.end()) {
-    TextFont tf;
-    tf.font = new StdPrs_BRepFont();
-    if (!init(*tf.font, em)) tf.font.Nullify();
-    else {
-      if (std::abs(width - 1) > 1e-6) tf.font->SetWidthScaling(float(width));
-      tf.cap = height;
-      tf.descent = std::abs(double(tf.font->FTFont()->Descender())) * tf.font->Scale();
-    }
-    it = m_fonts.emplace(key.str(), tf).first;
-  }
-  return it->second.font.IsNull() ? nullptr : &it->second;
-}
-
-TopoDS_Shape Reader::text_shape(const TextFont& tf, const std::string& s, const gp_Ax3& pen, Graphic3d_HorizontalTextAlignment h,
-                                Graphic3d_VerticalTextAlignment v, double wrap) const {
-  Handle(Font_TextFormatter) formatter = new Font_TextFormatter();
-  formatter->SetupAlignment(h, v);
-  if (wrap > 0) formatter->SetWrapping(float(wrap / tf.font->Scale()));
-  formatter->Append(NCollection_String(s.c_str()), *tf.font->FTFont());
-  formatter->Format();
-  return StdPrs_BRepTextBuilder().Perform(*tf.font, formatter, pen);
-}
+// Text is shaped and outlined by drawing_text.cpp: the TrueType font a style names (in the Windows fonts folders or
+// beside the drawing), else its family; a shape font (.shx) or a font not found has a plain sans-serif stand in.
+std::vector<std::filesystem::path> Reader::font_folders(const std::filesystem::path& file) {
+  std::vector<std::filesystem::path> out;
+#ifdef _WIN32
+  if (const wchar_t* windows = _wgetenv(L"WINDIR"); windows && *windows) out.push_back(std::filesystem::path(windows) / "Fonts");
+  if (const wchar_t* local = _wgetenv(L"LOCALAPPDATA"); local && *local) out.push_back(std::filesystem::path(local) / "Microsoft" / "Windows" / "Fonts");
 #endif
+  if (file.has_parent_path()) out.push_back(file.parent_path());
+  return out;
+}
+
+TextRequest Reader::text_request(std::string_view styleName, std::string text, double height) const {
+  TextRequest r;
+  r.text = std::move(text);
+  r.cap = true;  // a DXF text height is its capitals'
+  const auto style = m_styles.find(upper(trimmed(styleName)));
+  if (style != m_styles.end()) {
+    r.font = style->second.font;
+    r.family = style->second.family;
+    r.bold = style->second.bold;
+    r.italic = style->second.italic;
+    r.width = style->second.width;
+    r.oblique = style->second.oblique * kPi / 180;
+  }
+  if (!(height > 0)) height = style != m_styles.end() && style->second.height > 0 ? style->second.height : 2.5;
+  r.size = height * m_unit;
+  return r;
+}
+
+// Parts in colours of their own (MTEXT \C) go into the bodies of those colours.
+void Reader::text_shape(const Out& o, const TextRequest& request, const gp_Ax3& at) {
+  auto [it, fresh] = m_texts.try_emplace(text_key(request), m_textJobs.size());
+  if (fresh) {
+    TextJob job;
+    job.request = request;
+    std::vector<const TextFormat*> parts;  // a part's own colour sends it to the placeholder of that colour
+    if (request.spans.empty()) parts.push_back(&request);
+    for (const auto& span : request.spans) parts.push_back(&span);
+    for (const TextFormat* part : parts) {
+      TopoDS_Compound& into = part->color == TextFormat::kInherit ? job.into : job.colored[part->color];
+      if (into.IsNull()) m_builder.MakeCompound(into);
+    }
+    m_textJobs.push_back(std::move(job));
+  }
+  TextJob& job = m_textJobs[it->second];
+  ++job.uses;
+  gp_Trsf place;
+  place.SetDisplacement(gp_Ax3(gp::XOY()), at);
+  const TopLoc_Location location(place);
+  if (!job.into.IsNull()) add(o, job.into.Moved(location));
+  for (const auto& [color, part] : job.colored) {
+    Out own = o;
+    own.color = color;
+    add(own, part.Moved(location));
+  }
+}
 
 void Reader::text(const Fields& f, Out& o, const Place& at, bool attrib) {
   if (attrib && (f.integer(70) & 1)) return;  // invisible attribute
-  const std::string s = text_codes(decode(f.str(1)));
+  const std::string raw = decode(f.str(1));
+  std::string s = text_codes(raw);
+  if (m_options.text_fields && at.model) {  // a template: its attributes and placeholders are fields, not drawn
+    if (attrib) return field(f, decode(trimmed(f.str(2))), s, true, false);
+    if (const std::string name = placeholder(s); !name.empty()) return field(f, name, "", false, false);
+  }
   if (blank(s)) return;
-#ifdef OPAD_HAVE_FONT
   const Ocs ocs(f.xyz(210, gp_XYZ(0, 0, 1)));
-  const auto styleName = f.str(7, "STANDARD");
-  const auto style = m_styles.find(upper(trimmed(styleName)));
-  double height = f.num(40);
-  if (!(height > 0)) height = style != m_styles.end() && style->second.height > 0 ? style->second.height : 2.5;
-  double width = f.num(41, style != m_styles.end() ? style->second.width : 1);
-  if (!(width > 0)) width = 1;
+  TextRequest r = text_request(f.str(7, "STANDARD"), std::move(s), f.num(40));
+  r.width = f.num(41, r.width);
+  if (!(r.width > 0)) r.width = 1;
+  if (f.has(51)) r.oblique = f.num(51) * kPi / 180;
+  r.spans = text_spans(raw, r);
   int ha = f.integer(72), va = f.integer(attrib ? 74 : 73);
   const gp_XYZ p1 = f.xyz(10), p2 = f.has(11) ? f.xyz(11) : p1;
   double rotation = f.num(50) * kPi / 180;
   gp_XYZ anchor = (ha == 0 && va == 0) ? p1 : p2;
-  if (ha == 3 || ha == 5) {  // aligned / fit: along p1 -> p2, from p1
+  if (ha == 3 || ha == 5) {  // aligned / fit: from p1 along p1 -> p2 and as long, larger (aligned) or wider (fit)
     anchor = p1;
-    if ((p2 - p1).Modulus() > 1e-12) rotation = std::atan2(p2.Y() - p1.Y(), p2.X() - p1.X());
+    if ((p2 - p1).Modulus() > 1e-12) {
+      rotation = std::atan2(p2.Y() - p1.Y(), p2.X() - p1.X());
+      r.fit = (p2 - p1).Modulus() * m_unit;
+      r.aligned = ha == 3;
+    }
     ha = 0;
     va = 0;
   } else if (ha == 4) {  // middle
     ha = 1;
     va = 2;
   }
-  const TextFont* tf = text_font(styleName, height * m_unit, width);
-  if (!tf) { ++m_noFont; return; }
+  r.h = ha == 1 ? TextRequest::Center : ha == 2 ? TextRequest::Right : TextRequest::Left;
+  r.v = va == 1 ? TextRequest::Descent : va == 2 ? TextRequest::Middle : va == 3 ? TextRequest::Top : TextRequest::Baseline;
   const gp_XYZ xo = ocs.ax * std::cos(rotation) + ocs.ay * std::sin(rotation), yo = ocs.ay * std::cos(rotation) - ocs.ax * std::sin(rotation);
   gp_XYZ x(xo.X(), xo.Y(), 0), y(yo.X(), yo.Y(), 0);
   if (x.Modulus() < 1e-9) return;
   x.Normalize();
   y = y.Modulus() > 1e-9 ? y.Normalized() : gp_XYZ(-x.Y(), x.X(), 0);
-  // The pen sits on the first line's baseline; the anchor is on the baseline, the bottom, the middle or the top.
-  const double dy = va == 1 ? tf->descent : va == 2 ? -tf->cap / 2 : va == 3 ? -tf->cap : 0;
-  const gp_Pnt origin = pnt(at, ocs.to_wcs(anchor)).Translated(gp_Vec(y * dy));
   gp_XYZ normal = x.Crossed(y);
   if (normal.Modulus() < 1e-9) return;
   normal.Normalize();
@@ -1305,12 +1638,7 @@ void Reader::text(const Fields& f, Out& o, const Place& at, bool attrib) {
   if ((mirror & 2) && (mirror & 4)) xd.Reverse();
   else if (mirror & 2) { d.Reverse(); xd.Reverse(); }  // backwards
   else if (mirror & 4) d.Reverse();                    // upside down
-  const auto h = ha == 1 ? Graphic3d_HTA_CENTER : ha == 2 ? Graphic3d_HTA_RIGHT : Graphic3d_HTA_LEFT;
-  add(o, text_shape(*tf, s, gp_Ax3(origin, d, xd), h, Graphic3d_VTA_TOPFIRSTLINE, 0));
-#else
-  (void)o; (void)at;
-  ++m_noFont;
-#endif
+  text_shape(o, r, gp_Ax3(pnt(at, ocs.to_wcs(anchor)), d, xd));
 }
 
 void Reader::mtext(const Fields& f, Out& o, const Place& at) {
@@ -1318,11 +1646,14 @@ void Reader::mtext(const Fields& f, Out& o, const Place& at) {
   for (size_t j = f.begin; j < f.end; ++j)
     if ((*f.pairs)[j].code == 3) raw += decode((*f.pairs)[j].value);
   raw += decode(f.str(1));
-  const std::string s = mtext_plain(raw);
-  if (blank(s)) return;
-#ifdef OPAD_HAVE_FONT
+  if (m_options.text_fields && at.model)
+    if (const std::string name = placeholder(raw); !name.empty()) return field(f, name, "", false, true);
+  TextRequest r = text_request(f.str(7, "STANDARD"), "", f.num(40));
+  r.spans = mtext_spans(raw, r, m_unit, r.paragraphs);
+  std::string all;
+  for (const auto& span : r.spans) all += span.text + span.bottom;
+  if (blank(all)) return;
   const Ocs ocs(f.xyz(210, gp_XYZ(0, 0, 1)));
-  const double height = f.num(40, 2.5), wrap = f.num(41) * m_unit;
   const int attachment = std::clamp(f.integer(71, 1), 1, 9);
   gp_XYZ x;
   if (f.has(11)) x = f.xyz(11);
@@ -1333,20 +1664,55 @@ void Reader::mtext(const Fields& f, Out& o, const Place& at) {
   x.SetZ(0);
   if (x.Modulus() < 1e-9) x = gp_XYZ(1, 0, 0);
   x.Normalize();
-  const TextFont* tf = text_font(f.str(7, "STANDARD"), height * m_unit, 1);
-  if (!tf) { ++m_noFont; return; }
-  const gp_XYZ normal(0, 0, ocs.az.Z() < 0 && ocs.planar() ? -1 : 1);
-  const gp_XYZ y = normal.Crossed(x);
+  r.wrap = f.num(41) * m_unit;
+  const double factor = f.num(44, 1);
+  // At 1.0, 5/3 of the text height from baseline to baseline (of a larger height in a line with larger text).
+  r.spacing = 5.0 / 3.0 * r.size * (factor > 0 ? factor : 1);
   const int column = (attachment - 1) % 3, row = (attachment - 1) / 3;
-  const auto h = column == 1 ? Graphic3d_HTA_CENTER : column == 2 ? Graphic3d_HTA_RIGHT : Graphic3d_HTA_LEFT;
-  // Top: the first line's capitals touch the insertion point; middle and bottom: the formatted block's centre and bottom.
-  const auto v = row == 0 ? Graphic3d_VTA_TOPFIRSTLINE : row == 1 ? Graphic3d_VTA_CENTER : Graphic3d_VTA_BOTTOM;
-  const gp_Pnt origin = pnt(at, f.xyz(10)).Translated(gp_Vec(y * (row == 0 ? -tf->cap : 0)));
-  add(o, text_shape(*tf, s, gp_Ax3(origin, gp_Dir(normal), gp_Dir(x)), h, v, wrap));
-#else
-  (void)o; (void)at;
-  ++m_noFont;
-#endif
+  r.h = column == 1 ? TextRequest::Center : column == 2 ? TextRequest::Right : TextRequest::Left;
+  // Top: the first line's capitals touch the insertion point; middle and bottom: the block's middle and last baseline.
+  r.v = row == 0 ? TextRequest::Top : row == 1 ? TextRequest::Middle : TextRequest::Bottom;
+  const gp_XYZ normal(0, 0, ocs.az.Z() < 0 && ocs.planar() ? -1 : 1);
+  text_shape(o, r, gp_Ax3(pnt(at, f.xyz(10)), gp_Dir(normal), gp_Dir(x)));
+}
+
+// Where a template field's text goes, as the text would have been drawn there: its anchor in the file's millimetres, its
+// height, alignment, direction and (fitted text, MTEXT) width.
+void Reader::field(const Fields& f, const std::string& tag, const std::string& sample, bool attribute, bool mtext) {
+  if (tag.empty()) return;
+  const Ocs ocs(f.xyz(210, gp_XYZ(0, 0, 1)));
+  double height = 0, w = 0, rotation = f.num(50) * kPi / 180;
+  int ha = 0, va = 0;
+  gp_XYZ anchor = f.xyz(10);
+  if (mtext) {
+    height = f.num(40, 2.5);
+    w = f.num(41);
+    const int attachment = std::clamp(f.integer(71, 1), 1, 9);
+    ha = (attachment - 1) % 3;
+    va = 3 - (attachment - 1) / 3;  // top, middle, bottom rows
+    if (f.has(11)) rotation = std::atan2(f.num(21), f.num(11));
+  } else {
+    const auto style = m_styles.find(upper(trimmed(f.str(7, "STANDARD"))));
+    height = f.num(40);
+    if (!(height > 0)) height = style != m_styles.end() && style->second.height > 0 ? style->second.height : 2.5;
+    ha = f.integer(72), va = f.integer(attribute ? 74 : 73);
+    const gp_XYZ p1 = f.xyz(10), p2 = f.has(11) ? f.xyz(11) : p1;
+    if (ha || va) anchor = p2;
+    if (ha == 3 || ha == 5) {  // aligned / fit: from p1 along p1 -> p2
+      anchor = p1;
+      w = (p2 - p1).Modulus();
+      if (w > 1e-12) rotation = std::atan2(p2.Y() - p1.Y(), p2.X() - p1.X());
+      ha = 0, va = 0;
+    } else if (ha == 4) {
+      ha = 1, va = 2;
+    }
+  }
+  const gp_XYZ p = ocs.to_wcs(anchor) * m_unit;
+  json j = {{"tag", tag}, {"at", {p.X(), p.Y()}}, {"height", height * m_unit}, {"halign", std::clamp(ha, 0, 2)}, {"valign", std::clamp(va, 0, 3)}};
+  if (!sample.empty()) j["sample"] = sample;
+  if (std::fabs(rotation) > 1e-9) j["angle"] = rotation;
+  if (w > 0) j["w"] = w * m_unit;
+  m_options.text_fields->push_back(std::move(j));
 }
 
 Drawing Reader::read() {
@@ -1399,20 +1765,42 @@ Drawing Reader::read() {
     }
   }
   if (sections.count("TABLES")) tables(sections["TABLES"]);
+  // Linetypes are drawn at a screen size (app Drawing2D), whatever the drawing's units and LTSCALE: their dashes as
+  // acad.lin and acadiso.lin size them. The standard names the file defines say how much larger its own are (their first
+  // dash against acad.lin's, in mm); without one, its typical dash is taken as 12.7 mm.
+  std::vector<double> sizes, dashes;
+  for (const auto& [name, d] : m_linetypes) {
+    for (double v : d)
+      if (v > 0) dashes.push_back(v);
+    if (d.empty() || !(d[0] > 0)) continue;
+    std::string base = name;
+    double factor = 1;
+    if (base.size() > 2 && base.compare(base.size() - 2, 2, "X2") == 0) factor = 2, base.resize(base.size() - 2);
+    else if (base.size() > 1 && base.back() == '2') factor = 0.5, base.pop_back();
+    static const std::map<std::string, double> first = {{"DASHED", 12.7}, {"HIDDEN", 6.35}, {"CENTER", 31.75}, {"PHANTOM", 31.75},
+                                                        {"DASHDOT", 12.7}, {"BORDER", 12.7}, {"DIVIDE", 12.7}};
+    if (const auto it = first.find(base); it != first.end()) sizes.push_back(it->second * factor / d[0]);
+  }
+  auto median = [](std::vector<double> v) {
+    std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+    return v[v.size() / 2];
+  };
+  if (!dashes.empty()) {
+    const double size = sizes.empty() ? 12.7 / median(dashes) : median(sizes);
+    for (auto& [name, d] : m_linetypes)
+      for (double& v : d) v = std::round(v * size * 1000) / 1000;
+  }
   std::map<std::string, Layer> decoded;  // keyed by the decoded name, which is what entities are looked up by
   for (auto& [key, layer] : m_layers) {
+    if (const auto it = m_linetypes.find(upper(layer.linetype)); it != m_linetypes.end()) layer.pattern = it->second;
     layer.name = decode(layer.name);
+    layer.linetype = decode(layer.linetype);
     decoded[upper(layer.name)] = layer;
   }
   m_layers = std::move(decoded);
   if (sections.count("BLOCKS")) blocks(sections["BLOCKS"]);
   m_model = sections["ENTITIES"];
   m_total = std::max<size_t>(1, m_model.size());
-#ifdef OPAD_HAVE_FONT
-#ifdef _WIN32
-  if (const char* windows = std::getenv("WINDIR"); windows && *windows) m_fontsDir = std::string(windows) + "\\Fonts";
-#endif
-#endif
 
   // A drawing far from its origin is read near (0,0): its extents' centre, or its first point, becomes the origin.
   Drawing out;
@@ -1434,13 +1822,26 @@ Drawing Reader::read() {
   Space model;
   Place at{&model, distant ? out.origin.X() : 0, distant ? out.origin.Y() : 0, true};
   run(m_model, 0, m_model.size(), at);
+  finish();
+  for (auto it = model.groups.begin(); it != model.groups.end();) it = drawn(it->second) ? std::next(it) : model.groups.erase(it);
 
+  std::map<std::string, std::vector<double>> patterns;  // by the upper-case decoded name
+  for (const auto& [name, d] : m_linetypes) patterns[upper(decode(name))] = d;
   for (const auto& [key, shape] : model.groups) {
-    const auto& [layer, color] = key;
+    const auto& [layer, color, linetype, weight, scale] = key;
     const uint32_t rgb = color == kByLayer ? layer_color(layer) : color == kByBlock ? kNoColor : color;
-    out.add(layer, shape, rgb);
+    // Its own linetype, lineweight and linetype scale (by block in model space: continuous and the default); the layer's
+    // own are by layer. The scale only where it has dashes.
+    Drawing::Pen pen{rgb, linetype == "BYBLOCK" ? "Continuous" : linetype, weight == -2 ? -3 : weight, scale};
+    if (!pen.linetype.empty() && upper(pen.linetype) == upper(layer_linetype(layer))) pen.linetype.clear();
+    if (pen.lineweight != -1 && pen.lineweight == layer_weight(layer)) pen.lineweight = -1;
+    if (upper(pen.linetype.empty() ? layer_linetype(layer) : pen.linetype) == "CONTINUOUS") pen.scale = 1;
+    if (const auto p = patterns.find(upper(pen.linetype)); !pen.linetype.empty() && p != patterns.end()) out.patterns[pen.linetype] = p->second;
+    out.add(layer, shape, pen);
+    if (color == kByLayer) out.by_layer[layer] = rgb;
     const auto it = m_layers.find(upper(layer));
     out.visible[layer] = it == m_layers.end() || it->second.visible;
+    if (it != m_layers.end()) out.layer_info[layer] = it->second.info();
   }
   out.warnings = m_warnings;
   if (!m_unsupported.empty()) {

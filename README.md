@@ -1,10 +1,10 @@
 # OPAD - git-native CAD and review
 
 OPAD views CAD models, meshes and drawings: STEP (AP203/AP214/AP242, assemblies included), IGES, BREP, STL, 3MF,
-OBJ, PLY, glTF/GLB, VRML, DXF, DWG (through the bundled LibreDWG converter) and SVG. It saves what you do with them in a single
+OBJ, PLY, glTF/GLB, VRML, DXF, DWG (through LibreDWG's converter, which the portable package includes) and SVG. It saves what you do with them in a single
 plain-text `.opad` file that diffs and merges cleanly in git, and exposes everything it can do to scripts and
-AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app follows Autodesk Fusion's navigation
-and screen layout so Fusion users feel at home.
+AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app offers mouse
+navigation presets familiar to users of other CAD tools (Fusion-style, SOLIDWORKS-style, Onshape-style, Blender-style).
 
 Both MCP servers ship an agent guide (source: `core/res/agent_guide.md`, compiled into the binaries) as the
 resource `opad://guide/agent`; live `live_diagnostics` returns it with `include_guide: true`. It covers units and
@@ -75,8 +75,8 @@ intended one.
 
 `validate` also checks interference (overlapping pairs with their volume and box, or pairs closer than a clearance;
 bounding boxes first, exact Booleans only on candidates) and 3D printing (overhangs against a build direction,
-thin walls, thin features, build-plate contact). The desktop's Review workspace has both as Interference and Print
-check, listing findings in the tool panel; clicking one highlights the bodies and their overlap, or the faces.
+thin walls, thin features, build-plate contact). The desktop's Inspect tab (Review and Design) has both as Interference
+and Print check, listing findings in the tool panel; clicking one highlights the bodies and their overlap, or the faces.
 
 Live write tools take `verbosity: "compact"` for replies that list only what that command changed.
 
@@ -127,8 +127,9 @@ file (the header carries the document's last change and the file's name, assembl
 
 An `interference` feature keeps an interference and clearance check in the timeline: its report (pairs, overlap
 volumes, distances) is stored with the design and computed again whenever its bodies change, and with `fail_on` a
-clash is the feature's error, so the edit that causes it says so. It sits in Design > Construct, next to the planes
-and axes.
+clash is the feature's error, so the edit that causes it says so. In the desktop program it is Inspect > Interference's
+Keep as check: the feature's panel in Design with the bodies and clearance just checked, stored when OK is pressed (one
+Interference command).
 
 A feature can be suppressed by an expression over the parameters (`suppress_if: "joints < 3"`): the design walk
 evaluates it, keeps the answer in the feature's result for replay, and regenerates when a parameter flips it; the
@@ -210,7 +211,8 @@ wheel continues to zoom.
 Orbiting over geometry uses the surface under the pointer. Over empty space, OPAD pivots on the
 visible geometry nearest the pointer (a surface, or a drawing's or sketch's curve), never on empty
 air. Navigation-cube dragging and orientation clicks use the visible surface nearest the viewport
-center. Hidden and clipped geometry is excluded; an empty view retains its current camera focus.
+center. Hidden and clipped geometry is excluded; an empty view retains its current camera focus. Preferences > Keyboard and mouse > View cube
+edges and corners turn the view (on by default) can make only the cube's six faces views.
 
 ## Desktop viewing and review
 
@@ -220,15 +222,33 @@ and a viewer card at the top of the view say so. Anything that edits asks to sav
 to edit) makes the file an OPAD document in place, keeping hidden layers and colours and the meshes on screen;
 "Edit unsaved copy" does the same without choosing a file yet. The file you opened is never written. Opening a
 file while another loads drops that load. A slow read (a big STEP or IGES) is remembered in the user cache with its display
-meshes, so opening the unchanged file again skips the translation (Hydrostatic: 23 s, then 1.8 s). Settings > Open
-other formats read-only turns viewer mode off (they then open as editable, unsaved documents), and Settings > File
-types registers OPAD for these formats with Windows (current user only, removable), with thumbnails of the model or
+meshes, so opening the unchanged file again skips the translation (Hydrostatic: 23 s, then 1.8 s). Preferences > Files >
+Open other formats read-only turns viewer mode off (they then open as editable, unsaved documents), and Tools > File
+types… (also on Preferences > Files) registers OPAD for these formats with Windows (current user only, removable), with thumbnails of the model or
 drawing in Explorer and the Open dialog (`opad-thumbnails.dll`, which runs `opad-cli thumbnail <file> --out x.png`).
 Viewing a DXF, DWG or SVG turns 2D mode on, whose grid follows the view without end. Import adds a file to the
 current document. Properties show a body's material as the file named it, its source file and whether it is a
 solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the build compiles from the
-`third_party/libredwg` submodule and puts beside OPAD (the free ODA File Converter is used instead when installed); the
-DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
+`third_party/libredwg` submodule and puts beside OPAD (an installed ODA File Converter is used instead only when
+Preferences > Files > Use the ODA File Converter for DWG is on, or `OPAD_USE_ODA=1`: ODA allows non-members non-commercial use only); the
+DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)); text is shaped with HarfBuzz, so Arabic joins and right-to-left lines read in order, and AutoCAD shape fonts (`.shx`: txt, romans, isocp ...) are drawn in their own strokes when DWG TrueView's or AutoCAD's are installed or the font lies beside the drawing (else in a plain sans-serif). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
+A KiCad board (`.kicad_pcb`) opens as the board itself (its Edge.Cuts outline with the drills, thickness and solder-mask
+colour) and its footprints' 3D models, placed as KiCad places them and found as KiCad finds them (`${KIPRJMOD}`, the
+`KICAD*_3DMODEL_DIR` variables from the project, the environment or KiCad's settings, KiCad's install folders, then the
+folders in Preferences > Files > KiCad boards); a model that is not found shows as a translucent box over the footprint. Importing a
+board asks what to build (components, do-not-populate parts, vias, the origin, the boxes' height); Preferences > Files > KiCad
+boards keeps those choices for opening boards too. KiCad's model libraries are
+not part of OPAD: when a board names models of KiCad's library that are not installed, OPAD offers to download them from
+the library (gitlab.com/kicad/libraries/kicad-packages3D, CC-BY-SA 4.0 with KiCad's design exception) into your user
+cache, and shows them (`opad-cli kicad_models board.kicad_pcb [--download true]` lists and fetches them). Models
+embedded in the board (KiCad 9) are read from it, and a footprint with only KiCad's VRML model shows that. After the board
+changes in KiCad, `opad-cli kicad_sync_preview doc.opad` lists what reading it again would change, per reference
+designator (moved, turned, flipped, model changed, added, removed) and for the board (thickness, drills, outline).
+With KiCad 7 or later installed, a board can instead be read through KiCad's own STEP export (Read with: KiCad's own
+STEP export in the KiCad dialog; `opad-cli import doc.opad board.kicad_pcb --kicad_cli tracks,pads --link true`): OPAD
+runs `kicad-cli pcb export step` (found in KiCad's install folders or on PATH, or set `OPAD_KICAD_CLI`) at its own origin,
+with the copper tracks, pads and silkscreen if asked (KiCad 8/9), names each part after its footprint's reference and
+links the import to the board, so the board is watched and synced and the STEP is made again where it is missing.
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth
@@ -241,21 +261,35 @@ Use Settings > 2D projection mode to lock the camera for drawings or model proje
 endpoint to acquire an extension/alignment guide; Shift locks its direction. Layers live in the
 browser, and imported mesh and drawing objects are labelled. See [tracking details](docs/drawings.md).
 
-Inspect > Select by geometry finds top/bottom perimeters, parallel or circular edges, and
-upward planar faces on a selected body. The same filters are available through the paged
-`query_entities` command, with geometric evidence and fresh checked reference tokens.
+Select similar (Inspect, Edit and the context menu) works without a dialog: on a picked face or
+edge it selects the ones like it (holes of its size, fillets of its radius, faces facing its way),
+on a body picked whole its top/bottom perimeter, edges parallel to X/Y/Z, circular edges, upward
+planar faces, all holes, fillets and chamfers; pressing it again moves to the next rule, and the
+status bar names the current and the next one. The same filters are available through the paged
+`query_entities` command (also `{"recognized":"hole","diameter":6}`), with geometric evidence and
+fresh checked reference tokens.
 
 The timeline keeps operation markers at a readable size for long histories. Scroll with the
 mouse wheel, trackpad or horizontal scrollbar; Left/Right steps through operations and
 Home/End jumps to the first/last marker. Selecting an operation scrolls it into view.
 
-Workspace shortcuts are Ctrl+1/2 (Command+1/2 on macOS); standard views use Ctrl+Alt+1 through 7.
+Workspace shortcuts are Ctrl+1 Review, Ctrl+2 Design, Ctrl+3 Drawings and Ctrl+4 Drafting (Command on macOS); standard
+views use Ctrl+Alt+1 through 7. Review looks, measures, marks up, compares and shares (View, Inspect, Markup, Compare,
+Share); Design models (Solid, Assemble, Construct, Inspect, Insert, View), and a sketch adds its Sketch tab in front of
+them until it is finished; a viewed DXF, DWG or SVG file comes into Drafting (Draw on drawing: a sketch on the drawing's
+plane with the Sketch tab first in Drafting; Drawing to sketch, layers, measuring, plot), and coming there by itself is
+not remembered for the next start. A Design command started from Review (E for Extrude, Fillet on edges picked there)
+switches to Design with those picks. Solid > History has Edit feature with Suppress and Roll back to here under its
+arrow (for the marker selected on the timeline); Construct has Origin planes and axes (shown over a model, picked only
+in New sketch's plane step); the View tabs have Named views, Rendering and Panels dropdowns. The menu bar: File, Edit,
+View, Insert (Import, Link as asset, KiCad, canvases and their submenus), Inspect (measuring, notes, Compare), Design,
+Sketch (while sketching), Version, Tools (AI integration, Agent activity, File types), Help.
 Annotations are created and edited inline, with type selection and comment threads. Set your display
 name in Settings to identify new annotations, comments and design operations.
 Drag a note's title to move its card without changing the document; the card stays attached to its
 object at that offset while you orbit and pan. The Annotations panel filters by
 type across both the panel and viewport; Delete removes a note and remains undoable.
-Review > Annotate > **Note** (N) and **Hand drawing** (Shift+N) work like the guided measuring tools: the
+Review > Markup > **Note** (N) and **Hand drawing** (Shift+N) work like the guided measuring tools: the
 prompt bar asks for a body, face, edge or vertex (1-4 changes the selection filter; a single selected
 object is taken as it is), the target is tinted in the selection blue inside a dashed outline under a
 badge, and a floating panel holds the type, the pen and the text. Hand drawing: each stroke lies on the
@@ -304,17 +338,25 @@ pybind11 (optional), Qt 6 Widgets (optional, app only).
   settings and cache in an `opad-data` folder beside itself. The build needs `pacman -S mingw-w64-x86_64-{qt6-static,rapidjson,pkgconf}`
   on top of the packages above; the first configure downloads the OCCT source and builds its toolkits statically
   into `build/windows-static/occt` (once, about 15 minutes; the OS packages ship OCCT as DLLs only). The target
-  fails if the exe imports anything but Windows' own DLLs.
+  fails if the exe imports anything but Windows' own DLLs. `THIRD-PARTY-NOTICES.txt` goes beside the exes (they also
+  carry it compiled in). The exes link Qt, OCCT and other LGPL libraries statically: read [Licence](#licence) before
+  handing them out.
 - **Single file on Linux and macOS:** `cmake --workflow --preset linux-single` builds
   `build/linux/single/OPAD-<version>-linux-x86_64.AppImage` with [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy)
   and its Qt plugin (both on PATH); `cmake --workflow --preset macos-single` builds
   `build/macos/single/OPAD-<version>-macos.dmg` with macdeployqt. Both run the OS-package build and bundle its
-  libraries; `cmake --build --preset <os>-single` runs just the packaging step.
+  libraries; `cmake --build --preset <os>-single` runs just the packaging step. `cmake/bundle_stage.cmake` then writes
+  `THIRD-PARTY-NOTICES.txt` from the bundled libraries' Debian packages or Homebrew formulae (into the bundle, where
+  Help > Third-party licences reads it, and beside it) and stops on GPL FFmpeg, codec, FreeImage or OpenVR libraries
+  as the portable target does.
 - **Windows portable folder:** `cmake --build --preset windows-portable` (or `cmake --workflow --preset
   windows-portable` for configure, build, test and package) writes `build/windows/portable/OPAD-<version>-windows-x64`
   and the same folder zipped. It holds `opad.exe`, `opad-cli.exe` and every DLL and Qt plugin they load, so it runs
   on a machine with no MSYS2, Qt or OCCT. The `opad.portable` file beside the exe makes the app keep settings and
-  cache in the folder's `data` directory instead of the registry and `%LOCALAPPDATA%`. The exe icon is the logo's
+  cache in the folder's `data` directory instead of the registry and `%LOCALAPPDATA%`. `THIRD-PARTY-NOTICES.txt` lists
+  every DLL's package, version, licence and source, with the licence files in `licenses/`. With MSYS2's own OCCT the
+  target stops, because that OCCT pulls in GPL FFmpeg (with the x264/x265/xvid encoders) and FreeImage; see
+  [Licence](#licence) (`-DOPAD_ALLOW_GPL_DLLS=ON` stages them anyway, for local use only). The exe icon is the logo's
   cube mark; `python tools/make_icon.py <opad_logo.png>` (Pillow, numpy) regenerates `app/res` when the logo changes.
 - **Linux:** other distros need the same packages under their own names. On Wayland the app runs through
   XWayland, since OCCT's viewer needs an X11 window.
@@ -336,6 +378,123 @@ language's own name) and `"@rtl"`. To add a language, copy `ar.json`, translate 
 cover yet. A file `i18n/<code>.json` next to `opad.exe` overrides the built-in one, so a translation can be tried
 without rebuilding.
 
+## Technical drawings (sheets)
+
+A drawing is a set of sheets in the document itself. `sheet`, `sheet_view` and `sheet_item` operations hold the
+definitions: paper size and standard (ISO or ASME, first or third angle projection, scale, title block values),
+views (a base view of the model or of chosen components, and views projected from it, which stay aligned with their
+parent and follow it when it moves), dimensions and notes. A `properties` operation gives bodies and components part
+properties (part number, description, material, BoM flag) for parts lists. The commands are `sheet`, `sheet_view`,
+`sheet_item`, `sheet_edit`, `sheet_info` and `part_properties` (CLI, MCP and Python):
+
+```sh
+opad-cli sheet plate.opad --size A4 --values '{"title": "Plate"}'
+opad-cli sheet_view plate.opad --sheet <sheet> --orient front --at '[100,150]'
+opad-cli sheet_view plate.opad --sheet <sheet> --parent <front view> --side bottom
+opad-cli sheet_item plate.opad --sheet <sheet> --view <top view> --type diameter --refs '["<body>/edge/9"]'
+opad-cli sheet_info plate.opad --sheet <sheet>
+opad-cli sheet_view plate.opad --sheet <sheet> --kind section --parent <front view> --cut '[[0,-10],[0,20]]'
+opad-cli sheet_view plate.opad --sheet <sheet> --kind detail --parent <front view> --center '[25,5]' --radius 8 --scale 4:1
+```
+
+Section views take a cutting line drawn on their parent (two points a full section, more an offset or half section, or
+an aligned one when a segment is inclined: each segment revolved onto the first one's line, as through a flange's holes):
+the bodies it crosses are cut where it is swept through the model and the cut faces are hatched (ISO 128-50: at 45
+degrees to each part's main outlines, parts beside each other turned apart, narrow faces filled; `hatch` or the view's
+Hatching… sets the angle, the spacing and the bodies' material symbols, after ASME Y14.2; shafts, pins and fasteners
+stay whole, by the view's `whole` list or in every section by the part property `section: false`, Part properties'
+Never cut in section views); detail views enlarge a
+circle of their parent, auxiliary views look square to a slanted edge, and any view can be cropped to a box or broken to
+shorten a long part (dimensions across a break keep their true value; break lines ruled with a zigzag or freehand). A
+broken-out section opens up a view within a smooth closed outline down to a depth picked in a view beside it (`breakouts`
+on the view): its floor hatched, a thin break line where it ends over the part. An exploded view (`--explode <view op>`,
+Drawings > Views > Exploded view) draws the parts where a saved exploded view puts them, seen from its camera, with thin
+phantom trail lines from where they sit in the assembly (left out where a part hides them); projected views, balloons,
+dimensions, hole callouts and hole tables follow it, and it follows the exploded view when that is updated. A base view
+already placed switches between assembled and a saved exploded view from its own side (its context menu's View state,
+`sheet_edit` `explode`), and Auto-balloon prefers an exploded view when none is selected.
+
+Annotations are `sheet_item` kinds measured from the model and kept with what they showed: dimensions (with precision,
+tolerances and fits), centre marks and lines, hole callouts read from the hole's own faces (depth or THRU, counterbores,
+countersinks, "4×" for equal holes) and hole tables, datum symbols, feature control frames, surface texture symbols and
+ordinate, baseline or chain dimension sets (`sheet_datum_dimensions` makes them from a view's datums). A parts list
+numbers the drawing's bill of materials and keeps the numbers settled; balloons show their part's number
+(`sheet_balloons` balloons a whole view at once, each leader to an edge of its part that the view shows, from the side
+of the view where it crosses the fewest other lines, off the title block, other views and tables). `sheet_issue` releases a revision: the values, the views' linework
+and, with `out`, a PDF and its SHA-256 are kept, the revision table and title block show it, and the sheet can later
+be exported exactly as issued; in the app Issue revision… also saves, commits and tags it in git. Print… (Ctrl+Alt+P)
+prints the sheets at actual size or fitted to the printer's paper; **Publish PDF…** (File, Review > Share) writes a
+drawing's sheets as one PDF from any workspace. In the Drawings workspace section, detail and
+auxiliary views, crops, breaks and broken-out sections are drawn with the mouse on the selected view (Views > From a view, or the view's menu); while a tool runs its value card beside the
+pointer takes the numbers by keyboard (a section's or auxiliary view's gap, a detail's radius and scale, a crop's width
+and height, a break's length, a broken-out section's depth below the part's front), Tab to the next, Enter to take them.
+A view's menu also sets a detail's own scale and a section's, detail's or auxiliary view's letter.
+
+The hidden-line linework of a view is never stored: it is a pure function of the bodies' content keys, their
+placements and the view's definition, so it is projected when a sheet is shown or exported and cached under that
+fingerprint (`opad-cli project`). Opening a document with sheets costs nothing, and a model edit adds no drawing lines
+to a diff. A dimension keeps the value it was made with, as a pinned measurement does; `sheet_info` measures it again
+and marks the ones the model has changed. Sheets, views and dimensions carry no `target`, so two people adding views and
+dimensions to one sheet merge without a conflict; part properties merge field by field.
+
+In the app the browser lists them in a Drawings folder: drawing, sheets, their views (named by the standard view they
+show when they have no name of their own) with their dimensions, and the sheet's notes; a record a newer OPAD wrote is
+marked with the reason. F2 renames a drawing, sheet or view; Del or the row's menu deletes in one step (a sheet takes its
+views and items with it, a base view the views projected from it) and Ctrl+Z brings them back; Copy id gives the id the
+commands above take. These operations are not design steps, so the timeline does not show them.
+
+Compatibility: these are new operation types and the format version is unchanged, so a document without drawings is
+exactly what it was and opens everywhere. A document with sheets or part properties opens in builds that keep
+operation types they do not know (the tolerant loader); older builds refuse it with "unknown op type: sheet".
+Within the drawing records the same rule holds one level down: a view kind, dimension type, standard or orientation
+this build does not know is kept, written back unchanged and listed among the unresolved operations as needing a
+newer OPAD.
+
+### Materials and mass
+
+`material` takes a library id or any name; `opad-cli materials` lists the library (steel, stainless steel, aluminium
+6061, brass, copper, titanium, ABS, PLA, PETG, nylon PA6 and PA12, polycarbonate, POM, FR-4 and glass) with densities
+and display colours, and `opad-cli materials --match "Aluminum 6061-T6"` shows what a name maps to. A body is made of
+the nearest material set upwards (its own, else its component's), else the material its file names (STEP, glTF and
+OBJ material names such as "Stainless Steel 316L", "SS304", "PA12" or "Plastic - ABS" map onto the library). Its mass
+is the enclosed volume times the density; a `density` property (g/cm3) overrides the library's and a `mass` property
+(g) the whole computation, for purchased parts modelled as shells. The Properties panel and `opad-cli properties` show
+`material`, `density` and `mass` (g, for a component the sum of its bodies when all of them have one).
+`part_properties --appearance true` also colours the targets as their material.
+
+```sh
+opad-cli part_properties housing.opad --target <body> --set '{"material": "PETG", "part_number": "OP-1002"}'
+```
+
+### Bill of materials
+
+`opad-cli bom` lists the parts of a document (or of one component, `--root`) with their quantities, part properties
+and masses. A part is a body, or a component marked `bom: purchased` (bought as one; what is in it is not listed).
+Parts are the same when they share a part number, or else the same shape and material: instances of one body entry,
+and also copies stored as their own geometry (design patterns, mirrors of symmetric parts, STEP files that write each
+occurrence out) when they are the same solid moved and turned. A mirror image of an asymmetric part is a part of its
+own. Assemblies are the same when they hold the same items in the same places. `bom: exclude` leaves a node out with
+everything under it; mesh and drawing bodies are left out unless `--references true`. Occurrence numbers from CAD
+exports ("Bracket:2", "Bolt<3>") and instance numbers shared by a row ("Screw 1" to "Screw 4") are dropped from the
+names.
+
+* `--mode parts` (default): every part once, its quantity in the whole product.
+* `--mode top`: the items of the assembly itself (a document with one root component is that assembly).
+* `--mode indented`: assemblies with their items below them, numbered 1, 1.2, 1.2.1, with the quantity per assembly
+  and in total.
+
+Masses are in g (`--mass_unit kg|lb`); a row whose material has no density says why (`mass_error`), and the totals say
+whether the mass is complete. `--format csv` writes RFC 4180 text in UTF-8 with a byte order mark (Excel opens it as
+such) and CRLF line ends, to `--out` or to stdout; text a spreadsheet would run as a formula (`=`, `+`, `-`, `@`) gets a
+leading `'`; `--separator ";"` for locales that use the comma as decimal point. Columns: Item, (Level,) Qty, (Total
+qty,) Part number, Name, Description, Material, Mass, Total mass, Vendor, Purchased, Source, Notes and one per custom
+property.
+
+```sh
+opad-cli bom robot.opad --mode indented --format csv --out robot-bom.csv
+opad-cli bom robot.opad --mode top --mass_unit kg
+```
+
 ## Using it in a git repository
 
 OPAD documents remain readable UTF-8 text with LF endings, append-only operations and immutable
@@ -343,22 +502,122 @@ geometry. Existing operation text is preserved on save. New sketches and hand dr
 multiline records, so use the record-aware merge driver rather than Git's union driver:
 
 ```
-*.opad text eol=lf merge=opad
+*.opad text eol=lf merge=opad diff=opad
 ```
 
-Configure the driver in each clone (use the absolute path for your machine):
+Configure the driver in each clone (git never copies it; use the absolute path for your machine). It is built into
+`opad-cli` and into the desktop program, so the portable and single-file builds need neither Python nor the CLI:
 
 ```sh
 git config merge.opad.name "OPAD append-only records"
-git config merge.opad.driver 'python "C:/path/to/opad/tools/opad_merge.py" %O %A %B'
+git config merge.opad.driver '"C:/path/to/opad-cli" merge-driver %O %A %B %P'
+# with the desktop program only:
+git config merge.opad.driver '"C:/path/to/OPAD/opad.exe" --merge-driver %O %A %B %P'
 ```
 
-The driver runs on Windows, Linux and macOS with Python 3. It merges independent records and reports
-overlapping edits, rewritten history or pruned body stores for review. A conflict leaves the ours file
-intact; inspect both branches before resolving it. Without configuration Git falls back to normal text
-merging. After merging design changes, check unresolved references and regenerate/validate dependencies.
+`tools/opad_merge.py` (Python 3: `python "C:/path/to/opad/tools/opad_merge.py" %O %A %B`) is the reference the
+built-in driver is tested against (`tests/test_git_merge.py` runs both on the same branches, cases and damaged
+files); either works the same. The driver merges independent records and reports overlapping edits, rewritten
+history or pruned body stores for review. A conflict leaves the ours file intact and prints the reason; inspect both
+branches before resolving it. Without configuration Git falls back to normal text merging. After merging design
+changes, check unresolved references and regenerate/validate dependencies.
 Large meshes and embedded images can still produce large diffs; Git LFS is optional and gives up normal
 text diffs/merges. The detailed [format guide](docs/format.md#git) explains the record layout.
+
+`diff=opad` makes `git diff`, `git log -p` and `git show` print a readable outline of each version (history,
+parameters, sketches, features, the tree, notes, one line per body) instead of BREP text:
+
+```sh
+git config diff.opad.textconv '"C:/path/to/opad-cli" textconv'   # or '"C:/path/to/OPAD/opad.exe" --textconv'
+git config diff.opad.cachetextconv true
+```
+
+The desktop program does all of this for you: the git chip in the status bar (branch, untracked / uncommitted /
+conflict, ahead and behind its upstream, "not in git", "git not found") has **Set up repository…**, which runs
+`git init -b main` when needed, writes the `.gitattributes` line above (plus `assets/**` in Git LFS when git-lfs is
+installed, with `.opad` files kept out of LFS), a `.gitignore` for temporary saves, portable data, caches and recovery
+snapshots, runs `git lfs install --local`, and points this clone's `merge.opad.driver`, `diff.opad.textconv` (with
+`diff.opad.cachetextconv`) and `difftool.opad.cmd` at the running installation (`opad.managed=true`; OPAD rewrites them
+when that installation has moved), so `git difftool -t opad` opens two versions in OPAD's Compare. A clone whose
+`.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip and a banner
+over the view with **Set up merging**. **File > Clone repository…** (also on the chip) clones an address or a folder,
+sets the copy up the same way (driver config, `git lfs install --local` and `git lfs pull` when it uses LFS) and opens
+its document, or asks which one when it holds several. The chip follows git by file events (HEAD, index, config,
+refs, the document's folder), not by polling.
+
+OPAD runs the git command line (Git for Windows, or the `git` on PATH; a portable `git/` or `PortableGit/` folder
+beside OPAD is found too, and **Locate git…** on the chip points it at any other). git never waits on a terminal:
+sign-in goes through your credential helper (Git Credential Manager) or, without one, through a small OPAD dialog
+(`opad.exe` is git's `GIT_ASKPASS`, nothing is stored); SSH runs in BatchMode unless you set `core.sshCommand`, so a
+key that needs a passphrase must be loaded into ssh-agent or Pageant. OPAD asks for your name and email before the
+first commit when git has none, offers **Trust this folder** when git refuses a repository owned by another account
+(`safe.directory`), and explains git's errors in plain words.
+
+`opad-cli diff` compares two versions semantically: parameters, sketch entities and dimensions, feature inputs
+before -> after, bodies added, removed, moved, renamed, restyled, reparented or with new geometry, notes resolved or
+answered, and how the histories relate. A side is a file or `git:REV[:path]`; one file alone is compared with `HEAD`.
+
+```sh
+opad-cli diff model.opad --text                  # what changed since the last commit
+opad-cli diff --a git:main~3 model.opad          # JSON; --metrics adds volume and area of changed bodies
+```
+
+A big STEP, mesh, drawing or KiCad board you design around without editing can be linked instead of copied:
+`opad-cli import doc.opad board.step --link true`. The import records the file's path beside the document (and its
+absolute path), its SHA-256 and how it was read; its bodies are never written into the document but read from the file
+whenever the document opens (a slow read is remembered by content in the user cache, so a clone or another branch opens
+it fast). A file outside the document's folder or its git work tree is read only once you agree (OPAD asks, and can trust
+the folder for good; `--trust_assets true` for opad-cli); a missing one leaves only its own bodies out.
+`opad-cli asset doc.opad --action status|sync|embed|pack` reports each link (ok, changed, missing, untrusted), syncs a
+changed file as one edit of its import (parts keep their ids with their renames, colours, placements and references,
+unchanged parts keep their geometry keys, and what depends on the rest is regenerated), embeds a link as ordinary,
+editable bodies, or packs the file into `assets/` beside the document. A document with links opens in OPAD builds without
+them: the linked parts are listed in the browser and their bodies shown as missing; editing and saving it there keeps the
+links.
+
+A record of a type this build does not know (written by a newer OPAD, such as a drawing sheet) is kept as it is: the
+file opens, the record is listed as needing a newer OPAD, is never applied or edited, and is saved back byte for byte.
+Builds older than this tolerant loader refuse such files with "unknown op type"; open them with a current build.
+
+### Version control in the desktop program
+
+- **Version control panel** (Alt+4, the Version menu, Review > Compare > Versions, the git chip's
+  menu): the branch against its remote, the document's state, a merge in progress (Abort, Commit the merge), and
+  History / Branches pages. **Commit…** saves first, suggests the message from what changed, asks for your name once,
+  offers to amend while the last commit is not pushed and to push after, and offers **Pack** when loose objects pile
+  up. **Push** sets the upstream (adding a remote when there is none) and warns about big files outside Git LFS.
+  **Pull** fetches, then shows the incoming commits and what the merge does to the document (conflicts, design changed
+  on both sides, **Preview in Compare**) before it merges, and offers **Regenerate** afterwards. **Fetch in the
+  background** (on by default, every 10 minutes, never asking for a sign-in) keeps the chip's ↓ count current; turn it
+  off in the Version menu or the chip's menu. Branches are switched (unsaved and uncommitted changes are asked
+  about first), created here or from a commit, merged with the same preview and deleted (unmerged ones are asked about
+  twice). A commit of the history can be compared with this session or with the commit before it, opened read-only in
+  another window, restored as new changes (one undo step) or branched from.
+- **Resolve conflicts…** (the toast after a merge that stopped, the panel's merge bar, the Version menu, the
+  chip, and the bar over the view when git wrote conflict markers into the file): lists what both sides changed, with
+  mine or theirs to pick for each, all mine, all theirs, or a whole side; the result is written, added to git and opened,
+  then Commit… finishes the merge.
+- **Compare versions…** (the Version and Inspect menus, Review > Compare, the chip; `opad --compare a.opad b.opad`,
+  `git difftool -t opad`; **Compare with a file…** under its arrow): A
+  and B picked from this session, the saved file, HEAD and the file's commits, recovery snapshots or another file;
+  B's bodies tinted added / modified / moved over A's ghosts, overlay or side by side, ] and [ step through the
+  changes.
+- **The file on disk** is watched while it is open (a pull or checkout in a terminal, another OPAD, `opad-cli`). New
+  changes there come in by themselves when nothing is unsaved; otherwise a bar over the view offers **Merge** (the
+  file's changes, then yours), **Reload…**, **Save as…** or **Overwrite…** (asked first). A rewritten history, another
+  document, conflict markers or a deleted file get their own bar, and Save never writes over a file that changed on disk.
+  The bar's buttons are reachable with Tab; Enter presses one, Esc cancels or closes it.
+- **Recovery** (File > Recover documents…, also Review > Compare and the gear menu) lists what each snapshot holds and compares it with its file as it is now: **Restore into file** (the
+  changes come back unsaved, after the file's newer ones), **Merge into current** (one undo step), **Restore as copy**,
+  **Compare** and **Discard**. **Show unsaved changes** (also **Review changes…** in the unsaved-changes question)
+  compares the session with its saved file.
+- **Read-only**: `opad --read-only model.opad`, or a write-protected file, opens without letting anything change it;
+  **Save a copy** makes an editable copy.
+- **Where files are**: File > **Open file location** (Shift+Alt+R) and **Copy path** (Shift+Alt+C), the status path's
+  menu (also **Copy relative path**), and an import's timeline marker for the file it came from.
+- **Who changed what**: in a repository the timeline's tooltips say who added each operation in which commit and who
+  edited it since; **Show in version history** on a marker or an object narrows the History page to the commits that
+  touched it.
 
 ## Python
 
@@ -375,8 +634,12 @@ d.save_as("gearbox.opad")
 ```
 
 `Document.body_brep(key)` and `Document.import_brep(text)` exchange OCCT ASCII BREP with OCP, CadQuery and
-build123d. Build the pip package with `pip install ./python` (needs OCCT on the build machine; CI repairs the
-wheel so OCCT's shared libraries ship inside it).
+build123d. Build the pip package with `pip install ./python` (needs OCCT on the build machine). The wheel carries
+THIRD-PARTY-NOTICES.txt for the libraries the module links; before handing it to other machines, repair it (delvewheel,
+auditwheel or delocate) so OCCT's shared libraries travel inside it, then check it with
+`cmake -DWHEEL=<the .whl> -P cmake/wheel_guard.cmake`. Repairing against an OCCT built with FFmpeg, FreeImage or OpenVR
+(MSYS2's, and often a distribution's) copies those GPL libraries into the wheel; the check refuses it, and such a wheel
+must not be distributed (build OCCT without them, as for the portable package).
 
 ## Status
 
@@ -395,4 +658,30 @@ shadows are best-effort, interactive drag of the section plane (slider today), c
 
 ## Licence
 
-MIT. OCCT (LGPL 2.1 with exception) and Qt 6 (LGPL 3) are linked dynamically.
+OPAD's own code is MIT ([LICENSE](LICENSE)). It is built on Open CASCADE Technology (LGPL 2.1 with the OCCT
+exception), Qt 6 (LGPL 3) and other libraries under their own licences. Every build lists them with versions, licences
+and where their source is: Help > Third-party licences, `opad-cli licenses`, and `THIRD-PARTY-NOTICES.txt` in each
+package (generated by `cmake/notices.cmake` from the link libraries or the shipped DLLs).
+
+- The `windows` build and the portable package link Qt, OCCT and the rest **dynamically**: each is a separate DLL that
+  can be replaced. MSYS2's OCCT pulls in FFmpeg (GPL 3, with the x264/x265/xvid encoders), FreeImage and OpenVR, which
+  OPAD never uses; the portable target refuses to stage them unless `-DOPAD_ALLOW_GPL_DLLS=ON`, and such a package must
+  not be distributed. An OCCT built without them (as the single-file build does) is needed before the portable zip can
+  be handed out. The AppImage and the dmg apply the same guard to the libraries they bundle (distribution OCCT
+  packages are often built with FFmpeg and FreeImage too); `cmake/wheel_guard.cmake` checks a repaired Python wheel.
+- The single-file build (`windows-static`, `opad-single`) links Qt, OCCT, FreeType, HarfBuzz, glib, libintl, graphite2
+  and the other libraries in its notices **statically**. The LGPL requires that recipients can relink such an
+  executable with modified versions of those libraries; how that is offered (OPAD's source, or its object files and
+  link command, with each release) is not decided yet, so do not distribute the single-file exes until it is.
+- LibreDWG's `dwg2dxf` / `dxf2dwg` (GPL 3 or later) are separate programs that OPAD runs and never links; the portable
+  package carries their licence, notice, source archive and build scripts in `licenses/LibreDWG/`.
+- The ODA File Converter is third-party software that OPAD runs for DWG only when switched on (see above); OPAD never
+  bundles or downloads it.
+- Drawings are lettered in Liberation Sans and Noto Sans Arabic (SIL Open Font License 1.1), compiled into the programs
+  from `third_party/fonts`, where their licences are; the portable package carries them in `licenses/`.
+
+Trademarks: Autodesk, AutoCAD, DWG, DWG TrueView, Fusion and ViewCube are trademarks of Autodesk, Inc.; SOLIDWORKS of
+Dassault Systèmes; Onshape of PTC Inc.; Blender of the Blender Foundation; KiCad of the Linux Foundation; Git of the
+Software Freedom Conservancy; Qt of The Qt Company; Open CASCADE of Open Cascade SAS; ODA and ODA File Converter of the
+Open Design Alliance; Codex and ChatGPT of OpenAI. They are named only to describe compatibility; OPAD is not
+affiliated with or endorsed by any of them.

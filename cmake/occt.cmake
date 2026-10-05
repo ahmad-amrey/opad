@@ -2,7 +2,7 @@
 # older releases split them. We accept both so MSYS2, Homebrew and apt builds all work.
 set(_opad_occt_core
   TKernel TKMath TKService TKV3d TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKFillet TKOffset TKFeat
-  TKShHealing TKMesh TKXSBase TKLCAF TKCDF TKCAF TKXCAF TKVCAF TKBinL TKBin TKBinXCAF)
+  TKShHealing TKMesh TKHLR TKXSBase TKLCAF TKCDF TKCAF TKXCAF TKVCAF TKBinL TKBin TKBinXCAF)
 set(_opad_occt_step_new TKDESTEP)
 set(_opad_occt_step_old TKSTEP TKSTEPBase TKSTEP209 TKSTEPAttr TKXDESTEP)
 

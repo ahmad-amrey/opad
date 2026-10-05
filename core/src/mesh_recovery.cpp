@@ -3,6 +3,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepGProp.hxx>
+#include <BRepMesh_Context.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepTools_Modifier.hxx>
 #include <BRep_Builder.hxx>
@@ -15,6 +16,8 @@
 #include <ShapeCustom_ConvertToRevolution.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <TColStd_Array1OfReal.hxx>
@@ -26,6 +29,17 @@
 
 namespace opad {
 namespace {
+// A face with hundreds of holes (a circuit board's drills, a perforated plate): the default triangulator grew about
+// quadratically with them (2400 drills: 12 s), Delabella stays near linear (1.3 s), so such shapes are meshed with it.
+bool many_holes(const TopoDS_Shape& shape) {
+  for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+    int wires = 0;
+    for (TopoDS_Iterator w(e.Current()); w.More(); w.Next())
+      if (++wires > 64) return true;
+  }
+  return false;
+}
+
 double triangle_area(const Handle(Poly_Triangulation)& mesh) {
   if (mesh.IsNull()) return 0;
   double area = 0;
@@ -245,8 +259,17 @@ MeshingReport mesh_shape(const TopoDS_Shape& shape, double tolerance, double ang
   MeshingReport report;
   if (shape.IsNull()) return report;
   const double angle = angular_deg * M_PI / 180.0;
-  BRepMesh_IncrementalMesh mesher(shape, tolerance, false, angle, true);
-  report.status = mesher.GetStatusFlags();
+  if (many_holes(shape)) {
+    BRepMesh_IncrementalMesh mesher;
+    mesher.SetShape(shape);
+    IMeshTools_Parameters& p = mesher.ChangeParameters();
+    p.Deflection = tolerance, p.Angle = angle, p.Relative = false, p.InParallel = true;
+    mesher.Perform(new BRepMesh_Context(IMeshTools_MeshAlgoType_Delabella));
+    report.status = mesher.GetStatusFlags();
+  } else {
+    BRepMesh_IncrementalMesh mesher(shape, tolerance, false, angle, true);
+    report.status = mesher.GetStatusFlags();
+  }
   TopTools_IndexedMapOfShape faces;
   TopExp::MapShapes(shape, TopAbs_FACE, faces);
   for (int i = 1; i <= faces.Extent(); ++i) {

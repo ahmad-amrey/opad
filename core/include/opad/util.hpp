@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -15,6 +16,12 @@ namespace opad {
 struct Error : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
+// A precondition the user meets by doing something first ("Select the objects to colour first."): the app shows it as a
+// hint that goes away by itself, not as an error box (UI-109). pick: the command waits for that selection and then runs.
+struct UserHint : Error {
+  explicit UserHint(const std::string& what, bool pick = false) : Error(what), pick(pick) {}
+  bool pick;
+};
 
 std::string new_uuid();
 // Scripted builds (gap log #15): with OPAD_DETERMINISTIC=<seed> in the environment, new_uuid() derives UUIDs from the
@@ -26,14 +33,20 @@ void set_id_context(const std::string& context);
 bool is_uuid(std::string_view s);
 std::string now_iso8601();
 std::string sha256_hex(std::string_view data);
+std::string sha256_file(const std::filesystem::path& p, const std::function<bool()>& cancelled = {});  // read in chunks
 std::string default_author();
 std::string version_string();
+// Who else's code this build carries and under which licences (TODO 11 UI-13): THIRD-PARTY-NOTICES.txt beside the
+// program when there is one (the portable package's), else the text compiled in from the link libraries.
+std::string third_party_notices();
 // Routes OCCT kernel messages to stderr (alarms only unless verbose or OPAD_VERBOSE=1) so stdout stays JSON.
 void configure_kernel_logging(bool verbose = false);
 
 // A path given as UTF-8 text (JSON, the command line): std::filesystem reads a narrow string in the ANSI code page on
 // Windows, which garbled any name outside it (Arabic, Chinese).
 std::filesystem::path path_from_utf8(std::string_view utf8);
+std::string path_to_utf8(const std::filesystem::path& p);  // as given (separators kept), for JSON and messages
+// The whole file, read at its size: a short read, or a file that grows meanwhile, throws (never a cut text).
 std::string read_text_file(const std::filesystem::path& p);
 void write_text_file(const std::filesystem::path& p, std::string_view text);
 
@@ -46,6 +59,7 @@ struct Mat4 {
   static Mat4 translation(double x, double y, double z);
   bool is_identity(double eps = 1e-12) const;
   Mat4 operator*(const Mat4& o) const;
+  Mat4 inverse() const;  // of the affine part (the last row is taken as 0 0 0 1)
   Vec3 apply(const Vec3& p) const;
   Vec3 apply_dir(const Vec3& d) const;
   json to_json() const;

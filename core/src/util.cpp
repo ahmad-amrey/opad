@@ -202,17 +202,50 @@ std::string sha256_hex(std::string_view data) {
   return s.finish();
 }
 
+std::string sha256_file(const std::filesystem::path& p, const std::function<bool()>& cancelled) {
+  std::ifstream in(p, std::ios::binary);
+  if (!in) throw Error("cannot open file: " + p.string());
+  Sha256 s;
+  std::vector<char> chunk(size_t(4) << 20);
+  while (in) {
+    if (cancelled && cancelled()) throw Error("cancelled");
+    in.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+    s.update(reinterpret_cast<const uint8_t*>(chunk.data()), static_cast<size_t>(in.gcount()));
+  }
+  return s.finish();
+}
+
 // ---------------------------------------------------------------- files
 std::filesystem::path path_from_utf8(std::string_view utf8) {
   return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(utf8.data()), utf8.size()));
 }
 
+std::string path_to_utf8(const std::filesystem::path& p) {
+  const auto u = p.u8string();
+  return std::string(reinterpret_cast<const char*>(u.data()), u.size());
+}
+
 std::string read_text_file(const std::filesystem::path& p) {
   std::ifstream in(p, std::ios::binary);
-  if (!in) throw Error("cannot open file: " + p.string());
-  std::ostringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
+  if (!in) throw Error("cannot open file: " + path_to_utf8(p));
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(p, ec)) {  // a pipe or a device has no size: to its end
+    std::string text;
+    char buf[1 << 16];
+    while (in.read(buf, sizeof buf) || in.gcount() > 0) text.append(buf, size_t(in.gcount()));
+    if (in.bad()) throw Error("cannot read file: " + path_to_utf8(p));
+    return text;
+  }
+  // In one read at its known size (a stream copied through a string stream took 0.6 s for the 334 MB Engine and peaked at
+  // 2-3x its size). Fewer bytes, or more after them, mean it changed while it was read: an error, never a cut text.
+  const auto size = std::filesystem::file_size(p, ec);
+  if (ec) throw Error("cannot read the size of " + path_to_utf8(p) + ": " + ec.message());
+  std::string text(size_t(size), '\0');
+  in.read(text.data(), std::streamsize(text.size()));
+  if (size_t(in.gcount()) != text.size())
+    throw Error("read " + std::to_string(in.gcount()) + " of " + std::to_string(size) + " bytes of " + path_to_utf8(p) + ": it changed while it was read");
+  if (in.peek() != std::ifstream::traits_type::eof()) throw Error(path_to_utf8(p) + " grew while it was read");
+  return text;
 }
 
 void write_text_file(const std::filesystem::path& p, std::string_view text) {
@@ -257,6 +290,19 @@ Mat4 Mat4::operator*(const Mat4& o) const {
       for (int k = 0; k < 4; ++k) s += at(i, k) * o.at(k, j);
       r.at(i, j) = s;
     }
+  return r;
+}
+
+Mat4 Mat4::inverse() const {
+  const double a = at(0, 0), b = at(0, 1), c = at(0, 2), d = at(1, 0), e = at(1, 1), f = at(1, 2), g = at(2, 0), h = at(2, 1), k = at(2, 2);
+  const double det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+  if (std::fabs(det) < 1e-300) throw Error("the transform cannot be inverted");
+  Mat4 r;
+  const double l[3][3] = {{e * k - f * h, c * h - b * k, b * f - c * e}, {f * g - d * k, a * k - c * g, c * d - a * f}, {d * h - e * g, b * g - a * h, a * e - b * d}};
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) r.at(i, j) = l[i][j] / det;
+    r.at(i, 3) = -(r.at(i, 0) * at(0, 3) + r.at(i, 1) * at(1, 3) + r.at(i, 2) * at(2, 3));
+  }
   return r;
 }
 

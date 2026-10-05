@@ -1,0 +1,754 @@
+// The Drawings workspace of the documentation area (TODO 11 UI-78): commands, the ribbon tab, the sheet page in the
+// viewport's place and what its canvas asks for. Every edit is one command through run(), which waits until nothing reads
+// the document (the canvas's own worker is stopped for it).
+#include <QAction>
+#include <QActionGroup>
+#include <QCursor>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QInputDialog>
+#include <QMainWindow>
+#include <QMenu>
+#include <QPointer>
+#include <QSettings>
+#include <QTimer>
+
+#include <algorithm>
+#include <filesystem>
+
+#include "AppDocument.hpp"
+#include "BrowserPanel.hpp"
+#include "Commands.hpp"
+#include "DocsArea.hpp"
+#include "DrawingsFolder.hpp"
+#include "Icons.hpp"
+#include "KeyText.hpp"
+#include "Jobs.hpp"
+#include "Ribbon.hpp"
+#include "SheetCanvas.hpp"
+#include "SheetDialogs.hpp"
+#include "SheetPage.hpp"
+#include "TemplateFields.hpp"
+#include "opad/drawing/sheet.hpp"
+
+OPAD_ICON_TABLE(sheets,
+                {"print", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8" rx="1"/><path d="M7 14h10v7H7z"/><path d="M17.5 12h1" opacity=".55"/>)"},
+                {"sheetAdd", R"(<rect x="3" y="6" width="14" height="14" rx="1"/><path d="M19.5 2.5v6M16.5 5.5h6"/>)"},
+                {"sheetProperties", R"(<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M11 20v-5.5h10M11 17.2h10"/><path d="M6 8h5M6 11h3" opacity=".55"/>)"},
+                {"templateFile", R"(<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4"/><path d="M10 21v-4.5h9"/>)"},
+                {"viewBase", R"(<rect x="3" y="4" width="18" height="16" rx="1" opacity=".5"/><rect x="7" y="8" width="8" height="6"/>)"},
+                {"viewProjected", R"(<rect x="3" y="8" width="7" height="7"/><rect x="14" y="8" width="7" height="7"/><path d="M10.5 11.5h3" stroke-dasharray="1.5 1.5"/><path d="M3 4h7M14 4h7" opacity=".55"/>)"},
+                {"viewIso", R"(<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><path d="M2 2h4M2 2v4" opacity=".55"/>)"},
+                {"hiddenLines", R"(<rect x="4" y="5" width="16" height="14"/><path d="M4 12h16" stroke-dasharray="3 2"/>)"},
+                {"tangentEdges", R"(<path d="M3 19h7a7 7 0 0 0 7-7V4"/><path d="M8.5 15.5a6 6 0 0 0 5-5" opacity=".55"/>)"},
+                {"viewsUpdate", R"(<rect x="3" y="5" width="11" height="9" rx="1"/><path d="M21 13a5 5 0 1 1-1.5-3.6M21 7.5v3h-3"/>)"},
+                {"templateFields", R"(<rect x="3" y="4" width="18" height="16" rx="1" opacity=".55"/><rect x="6" y="12" width="12" height="5" stroke-dasharray="2 1.5"/><path d="M9 13.5v2" />)"},
+                {"viewSection", R"(<rect x="3" y="7" width="12" height="10"/><path d="M3 12l3.5-5M5.5 17l7-10M10 17l5-7" opacity=".55"/><path d="M19 3v18" stroke-dasharray="3 1.5 1 1.5"/><path d="M19 3h3M19 21h3"/>)"},
+                {"viewDetail", R"(<path d="M3 15V5h12" opacity=".55"/><circle cx="10" cy="9" r="3"/><path d="M12.2 11.2l2.3 2.3"/><circle cx="18" cy="17.5" r="4"/>)"},
+                {"viewAuxiliary", R"(<rect x="3" y="11" width="8" height="8"/><path d="M14 9l4.5-4.5 3 3L17 12z"/><path d="M11 11l3-2" stroke-dasharray="1.5 1.5"/>)"},
+                {"viewCrop", R"(<path d="M6 2v16h16"/><path d="M2 6h16v16"/>)"},
+                {"viewBreak", R"(<path d="M2 8h7M2 16h7M15 8h7M15 16h7"/><path d="M10 5l-1 3 2 2-2 2 2 2-1 3M15 5l-1 3 2 2-2 2 2 2-1 3"/>)"},
+                {"viewBreakout", R"(<rect x="3" y="5" width="18" height="14"/><path d="M8 9.5c1.5-2.5 6.5-2.5 8-.5s1 5.5-1.5 6.5-6.5 1-7-1.5-.5-3 .5-4.5z"/><path d="M9.5 14.5l4-5M12 15.5l3.5-4.5" opacity=".55"/>)"});
+
+namespace {
+std::vector<std::string> nodesIn(AppDocument* doc, std::vector<std::string> ids) {  // bodies and components
+  ids.erase(std::remove_if(ids.begin(), ids.end(), [doc](const std::string& id) { return !doc->node(id); }), ids.end());
+  return ids;
+}
+std::vector<std::string> strings(const opad::json& v) {
+  std::vector<std::string> out;
+  if (v.is_array())
+    for (const auto& e : v)
+      if (e.is_string()) out.push_back(e.get<std::string>());
+  return out;
+}
+std::vector<std::pair<std::string, QString>> baseViews() {  // the Base view button's other orientations
+  return {{"top", DocsArea::tr("Base view from the top")}, {"right", DocsArea::tr("Base view from the right")}, {"left", DocsArea::tr("Base view from the left")},
+          {"back", DocsArea::tr("Base view from the back")}, {"bottom", DocsArea::tr("Base view from below")}};
+}
+}  // namespace
+
+// ---------------------------------------------------------------- commands and ribbon
+void DocsArea::buildDrawingCommands() {
+  // Asked by the window whenever it re-checks its commands, also while it goes (after this area): through a guard.
+  const QPointer<DocsArea> self(this);
+  const auto sheetShown = [self](const CommandContext& c) { return c.document && self && self->m_page && !self->m_page->sheet().empty(); };
+  const auto add = [&](const char* id, const QString& label, const char* icon, std::function<void()> fn, std::function<bool(const CommandContext&)> when,
+                       QStringList keywords = {}, bool checkable = false) {
+    CommandInfo info;
+    info.id = id;
+    info.label = label;
+    info.icon = icon;
+    info.group = tr("Drawings");
+    info.keywords = std::move(keywords);
+    info.workspaces = {"drawings"};
+    info.editsDocument = true;
+    info.checkable = checkable;
+    info.enabledWhen = std::move(when);
+    return services().addCommand(info, [self, fn] {
+      if (self) self->services().guarded(fn);
+    });
+  };
+  add("drawings.new", tr("New drawing…"), "drawingSheet", [this] { newDrawing(); }, [](const CommandContext& c) { return c.document; },
+      {"technical drawing", "sheet", "template", "title block", "projection"});
+  add("drawings.newSheet", tr("New sheet"), "sheetAdd", [this] { newSheet(); }, sheetShown, {"page"});
+  add("drawings.sheetProperties", tr("Sheet properties…"), "sheetProperties", [this] { sheetProperties(); }, sheetShown,
+      {"title block", "paper", "size", "scale", "first angle", "third angle"});
+  add("drawings.templateFile", tr("Template from DXF or DWG…"), "templateFile", [this] { templateFromFile(); }, sheetShown, {"frame", "title block", "company"});
+  add("drawings.templateFields", tr("Title block fields…"), "templateFields", [this] { templateFields(); }, sheetShown, {"template", "attributes", "placeholders"});
+  add("drawings.baseView", tr("Base view"), "viewBase", [this] { placeView("front"); }, sheetShown, {"front view", "place view"});
+  for (const auto& [orient, label] : baseViews())
+    add(("drawings.baseView." + orient).c_str(), label, "viewBase", [this, o = orient] { placeView(o); }, sheetShown);
+  add("drawings.projectedView", tr("Projected view"), "viewProjected", [this] { placeProjected(); },
+      [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedViews().size() == 1; }, {"side view", "top view", "orthographic"});
+  add("drawings.isoView", tr("Isometric view"), "viewIso", [this] { placeView("iso"); }, sheetShown, {"pictorial", "3D view"});
+  add("drawings.explodedView", tr("Exploded view"), "explodedView", [this] { placeExploded(); }, sheetShown,
+      {"explode", "assembly drawing", "trail lines", "balloons", "saved view"});
+  const auto oneView = [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedViews().size() == 1; };
+  using VT = SheetViewTool::Tool;
+  add("drawings.sectionView", tr("Section view"), "viewSection", [this] { startViewTool(VT::Section); }, oneView,
+      {"cut", "cross section", "hatch", "cutting plane", "offset section", "half section", "A-A"});
+  add("drawings.detailView", tr("Detail view"), "viewDetail", [this] { startViewTool(VT::Detail); }, oneView, {"enlarged", "zoom", "magnified", "circle"});
+  add("drawings.auxiliaryView", tr("Auxiliary view"), "viewAuxiliary", [this] { startViewTool(VT::Auxiliary); }, oneView,
+      {"inclined face", "true shape", "slanted", "square to an edge"});
+  add("drawings.cropView", tr("Crop view"), "viewCrop", [this] { startViewTool(VT::Crop); }, oneView, {"partial view", "trim", "clip"});
+  add("drawings.breakView", tr("Break view"), "viewBreak", [this] { startViewTool(VT::Break); }, oneView, {"broken view", "shorten", "long part", "interrupted"});
+  add("drawings.breakoutView", tr("Broken-out section"), "viewBreakout", [this] { startViewTool(VT::Breakout); }, oneView,
+      {"local section", "partial section", "break out", "cut away", "freehand"});
+  QAction* hidden = add("drawings.hiddenLines", tr("Hidden lines"), "hiddenLines", [] {}, sheetShown, {"dashed", "hidden edges"}, true);
+  QAction* tangent = add("drawings.tangentEdges", tr("Tangent edges"), "tangentEdges", [] {}, sheetShown, {"smooth edges"}, true);
+  const auto views = [this] {  // the selected views, else the sheet's
+    std::vector<std::string> v = m_page->canvas()->selectedViews();
+    if (v.empty())
+      if (const opad::Sheet* s = services().document()->scene.sheet(m_page->sheet())) v = s->views;
+    return v;
+  };
+  connect(hidden, &QAction::triggered, this, [this, views](bool on) { services().guarded([&] { setViewStyle(views(), {{"hidden", on}}); }); });
+  connect(tangent, &QAction::triggered, this, [this, views](bool on) { services().guarded([&] { setViewStyle(views(), {{"tangent", on ? "thin" : "hide"}}); }); });
+  add("drawings.update", tr("Update views"), "viewsUpdate", [this] { m_page->canvas()->refresh(); }, sheetShown, {"refresh", "regenerate", "rebuild"});
+  add("drawings.fit", tr("Fit sheet"), "fit", [this] { m_page->canvas()->fitSheet(); }, sheetShown, {"zoom"});
+  add("drawings.exportSheet", tr("Export sheet…"), "export", [this] { exportSheet(m_page->sheet()); }, sheetShown, {"PDF", "DXF", "DWG", "SVG", "PNG", "print"});
+  add("drawings.issue", tr("Issue revision…"), "issueRevision", [this] { issueRevision(); }, sheetShown, {"release", "revision", "freeze", "git tag", "approve"});
+  {
+    CommandInfo print;
+    print.id = "drawings.print";
+    print.label = tr("Print…");
+    print.icon = "print";
+    print.key = QKeySequence("Ctrl+Alt+P");  // Ctrl+P is Properties
+    print.group = tr("Drawings");
+    print.keywords = {"printer", "plot", "paper", "preview", "PDF"};
+    print.workspaces = {"drawings"};
+    print.enabledWhen = sheetShown;
+    services().addCommand(print, [self] {
+      if (self) self->services().guarded([&] { self->printSheets(); });
+    });
+  }
+  add("drawings.exportDrawing", tr("Export drawing as PDF…"), "export", [this] {
+        const opad::Sheet* s = services().document()->scene.sheet(m_page->sheet());
+        exportSheet(s && !s->drawing.empty() ? "drawing:" + s->drawing : m_page->sheet(), {}, true);  // PDF only, one sheet too
+      }, sheetShown, {"PDF", "pages", "all sheets"});
+  {  // Publish PDF (UI-104, Review > Share and the File menu): a drawing's sheets as the pages of one PDF, from any workspace.
+    CommandInfo publish;
+    publish.id = "drawings.publish";
+    publish.label = tr("Publish PDF…");
+    publish.icon = "export";
+    publish.group = tr("Drawings");
+    publish.keywords = {"PDF", "drawing", "sheets", "pages", "share", "send"};
+    publish.enabledWhen = [self](const CommandContext& c) { return c.document && !c.viewer && self && !self->services().document()->scene.sheets.empty(); };
+    services().addCommand(publish, [self] {
+      if (self) self->services().guarded([&] { self->publishPdf(); });
+    });
+  }
+  buildAnnotateCommands();
+}
+
+void DocsArea::publishPdf() {
+  // What the outline lists (drawing::outline): each drawing with its sheets, and a sheet of no drawing (an older file, or
+  // one made with "drawing": "") on its own, under its own name, never all of those together as a drawing called "".
+  std::vector<std::pair<std::string, QString>> drawings;  // exportSheet id, menu label
+  for (const auto& s : services().document()->scene.sheets) {
+    const std::string id = s.drawing.empty() ? s.id : "drawing:" + s.drawing;
+    if (std::none_of(drawings.begin(), drawings.end(), [&](const auto& d) { return d.first == id; }))
+      drawings.emplace_back(id, QString::fromStdString(s.drawing.empty() ? s.name : s.drawing));
+  }
+  if (drawings.empty()) throw opad::UserHint("Make a drawing first: New drawing in the Drawings workspace.");
+  const auto publish = [this](const std::string& id) { services().guarded([&] { exportSheet(id, {}, true); }); };
+  if (drawings.size() == 1) return publish(drawings.front().first);
+  QMenu menu;
+  for (const auto& [id, label] : drawings) menu.addAction(icons::themed("drawingSheet", 16), label, this, [publish, id] { publish(id); });
+  menu.exec(QCursor::pos());
+}
+
+// Sheet · Views · Annotate · Tables · Output (UI-104, Appendix A "Document"): the sheet and its template, the views
+// placed on it, what annotates them (DocsAnnotate.cpp), the tables that list the parts, and what leaves the drawing.
+void DocsArea::drawingsRibbon(RibbonLayout& layout) {
+  layout.addWorkspace("drawings", {tr("Drawings"), "drawingSheet", "Ctrl+3", tr("Technical drawings of the model: sheets with a frame and a title block, standard views, PDF, DXF and DWG."),
+                                   tr("ops: sheet · sheet_view · sheet_item · properties")});
+  using Size = RibbonLayout::Size;
+  const auto add = [&](const QString& group, const char* id, Size size = Size::Large, const QList<QAction*>& variants = {}) {
+    if (QAction* a = services().action(id)) layout.addAction(group, a, size, variants);
+  };
+  layout.addTab("drawings", "drawings.sheet", tr("Sheet"));
+  layout.addGroup("drawings.sheet", "drawings.sheet.sheet", tr("Sheet"));
+  add("drawings.sheet.sheet", "drawings.new");
+  add("drawings.sheet.sheet", "drawings.newSheet");
+  for (const char* id : {"drawings.sheetProperties", "file.documentProperties", "drawings.templateFile", "drawings.templateFields"}) add("drawings.sheet.sheet", id, Size::Small);
+  layout.addGroup("drawings.sheet", "drawings.sheet.show", tr("Show"));
+  add("drawings.sheet.show", "drawings.fit");
+  layout.addTab("drawings", "drawings.views", tr("Views"));
+  layout.addGroup("drawings.views", "drawings.views.place", tr("Place"));
+  QList<QAction*> bases;
+  for (const auto& [orient, label] : baseViews()) bases << services().action(QString::fromStdString("drawings.baseView." + orient));
+  add("drawings.views.place", "drawings.baseView", Size::Large, bases);
+  for (const char* id : {"drawings.projectedView", "drawings.isoView", "drawings.explodedView"}) add("drawings.views.place", id);
+  layout.addGroup("drawings.views", "drawings.views.derived", tr("From a view"));
+  add("drawings.views.derived", "drawings.sectionView");
+  add("drawings.views.derived", "drawings.detailView");
+  for (const char* id : {"drawings.auxiliaryView", "drawings.breakoutView", "drawings.cropView", "drawings.breakView"}) add("drawings.views.derived", id, Size::Small);
+  layout.addGroup("drawings.views", "drawings.views.style", tr("Style"));
+  add("drawings.views.style", "drawings.update");
+  add("drawings.views.style", "drawings.hiddenLines", Size::Small);
+  add("drawings.views.style", "drawings.tangentEdges", Size::Small);
+  annotateRibbon(layout);
+  layout.addTab("drawings", "drawings.output", tr("Output"));
+  layout.addGroup("drawings.output", "drawings.output.output", tr("Output"));
+  add("drawings.output.output", "drawings.print");
+  add("drawings.output.output", "drawings.exportSheet", Size::Large, {services().action("drawings.exportDrawing")});
+  add("drawings.output.output", "file.export");
+  layout.addGroup("drawings.output", "drawings.output.release", tr("Release"));
+  add("drawings.output.release", "drawings.issue");
+}
+
+// ---------------------------------------------------------------- the page
+void DocsArea::readyDrawings() {
+  m_page = new SheetPage(services().document(), services().jobs(), services().window());
+  m_page->hide();
+  SheetCanvas* canvas = m_page->canvas();
+  canvas->setRunner([self = QPointer<DocsArea>(this)](const std::string& command, const opad::json& args, std::function<void(const opad::json&)> then) {
+    if (self) self->run(command, args, std::move(then));
+  });
+  connect(m_page, &SheetPage::newDrawingRequested, this, [this] { services().guarded([&] { newDrawing(); }); });
+  connect(m_page, &SheetPage::newSheetRequested, this, [this] { services().guarded([&] { newSheet(); }); });
+  connect(m_page, &SheetPage::sheetShown, this, [this] { services().updateCommands(); });
+  connect(m_page, &SheetPage::issueRequested, this, [this] { services().guarded([&] { issueRevision(); }); });
+  connect(m_page, &SheetPage::exportIssueRequested, this, [this](const std::string& rev) { services().guarded([&] { exportSheet(m_page->sheet(), rev); }); });
+  connect(canvas, &SheetCanvas::selectionChanged, this, [this](const std::vector<std::string>& views) {
+    services().browser()->selectIds(views);  // the window's selection follows: Properties, the status bar, the commands
+    syncStyleActions();
+    services().updateCommands();
+  });
+  connect(canvas, &SheetCanvas::contextMenuRequested, this, [this](const std::vector<std::string>& views, const QPoint& at) {
+    QMenu menu;
+    if (!views.empty() && services().document()->scene.sheet_item(views[0])) itemMenu(views, menu);
+    else viewMenu(views, menu);
+    if (!menu.isEmpty()) menu.exec(at);
+  });
+  connect(canvas, &SheetCanvas::deleteRequested, this, [this](const std::vector<std::string>& views) {
+    whenFree([this, views] { services().guarded([&] { drawings::remove(services().document(), views); }); });
+  });
+  SheetViewTool* tool = m_page->viewTool();
+  tool->setRunner([self = QPointer<DocsArea>(this)](const std::string& command, const opad::json& args, std::function<void(const opad::json&)> then) {
+    if (self) self->run(command, args, std::move(then));
+  });
+  connect(tool, &SheetViewTool::message, this, [this](const QString& text) { services().toast(text); });
+  connect(tool, &SheetViewTool::toolChanged, this, [this] { services().updateCommands(); });
+  connect(tool, &SheetViewTool::added, this, [this](const std::string& id) {  // the new or changed view, selected
+    m_page->canvas()->selectViews({id});
+    services().browser()->selectIds({id});
+    services().updateCommands();
+  });
+  readyAnnotate();
+  if (services().workspace() == "drawings") workspaceChanged("drawings");  // the one the window started in
+}
+
+void DocsArea::workspaceChanged(const QString& id) {
+  if (!m_page) return;
+  if (id == "drawings") {
+    services().setCentralPage(m_page);
+    m_page->documentChanged();
+    m_page->canvas()->setFocus();
+  } else if (services().centralPage() == m_page) {
+    m_page->canvas()->cancelPlacement();
+    m_page->annotator()->cancel();
+    m_page->viewTool()->cancel();
+    services().setCentralPage(nullptr);
+  }
+  services().updateCommands();
+}
+
+void DocsArea::documentChanged(bool) {
+  if (!m_page) return;
+  m_page->documentChanged();
+  syncStyleActions();
+}
+
+void DocsArea::selectionChanged(const SelectionContext& selection) {
+  if (!m_page || !m_page->isVisible()) return;
+  std::vector<std::string> views, items;
+  const opad::Scene& s = services().document()->scene;
+  for (const auto& id : selection.ids) {
+    if (const opad::SheetView* v = s.sheet_view(id); v && v->sheet == m_page->sheet()) views.push_back(id);
+    if (const opad::SheetItem* t = s.sheet_item(id); t && t->sheet == m_page->sheet()) items.push_back(id);
+  }
+  m_page->canvas()->selectViews(views);
+  m_page->canvas()->selectItems(items);
+  m_page->annotator()->itemsSelected(items);
+  syncStyleActions();
+}
+
+void DocsArea::syncStyleActions() {
+  QAction *hidden = services().action("drawings.hiddenLines"), *tangent = services().action("drawings.tangentEdges"), *marks = services().action("drawings.centerMarks");
+  if (!m_page || !hidden || !tangent) return;
+  const opad::Scene& s = services().document()->scene;
+  std::vector<std::string> views = m_page->canvas()->selectedViews();
+  if (views.empty())
+    if (const opad::Sheet* sheet = s.sheet(m_page->sheet())) views = sheet->views;
+  bool anyHidden = false, allHidden = !views.empty(), anyTangent = false, allMarks = !views.empty();
+  for (const auto& id : views) {
+    const opad::SheetView* v = s.sheet_view(id);
+    if (!v) continue;
+    const opad::json style = v->def.value("style", opad::json::object());
+    allMarks = allMarks && style.is_object() && style.value("centermarks", false);
+    try {
+      const auto spec = opad::drawing::view_spec(s, *v);
+      anyHidden = anyHidden || spec.hidden;
+      allHidden = allHidden && spec.hidden;
+      anyTangent = anyTangent || spec.tangent;
+    } catch (const std::exception&) {
+    }
+  }
+  hidden->setChecked(allHidden && anyHidden);
+  tangent->setChecked(anyTangent);
+  if (marks) marks->setChecked(allMarks);
+}
+
+// ---------------------------------------------------------------- commands
+void DocsArea::whenFree(std::function<void()> fn) {
+  AppDocument* doc = services().document();
+  if (doc->designBusy || doc->loading || doc->snapshotBusy() || doc->converting()) {
+    SheetCanvas* canvas = m_page ? m_page->canvas() : nullptr;  // its worker stops, and none starts before fn has run
+    if (canvas) canvas->pause();
+    QTimer::singleShot(20, this, [this, fn, canvas] {
+      whenFree(fn);
+      if (canvas) canvas->resume();
+    });
+    return;
+  }
+  fn();
+}
+
+void DocsArea::run(const std::string& command, opad::json args, std::function<void(const opad::json&)> then) {
+  whenFree([this, command, args, then] {
+    opad::json out;
+    bool ok = false;
+    services().guarded([&] {
+      out = services().document()->run(command, args);
+      ok = true;
+    });
+    if (then) then(ok ? out : opad::json(nullptr));
+  });
+}
+
+void DocsArea::newDrawing(std::vector<std::string> nodes) {
+  AppDocument* doc = services().document();
+  if (!doc->hasDocument) throw opad::Error("Open or create a document first.");
+  if (!services().requireEditable([this, nodes] { services().guarded([&] { newDrawing(nodes); }); })) return;
+  if (nodes.empty()) nodes = nodesIn(doc, services().selection().ids);
+  auto* dialog = new NewDrawingDialog(doc, nodes, services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QDialog::accepted, this, [this, dialog] {
+    const opad::json args = dialog->args();
+    services().guarded([&] { createDrawing(args); });
+  });
+  dialog->open();
+}
+
+void DocsArea::createDrawing(const opad::json& args, std::function<void(const std::string&)> done) {
+  AppDocument* doc = services().document();
+  QPointer<DocsArea> self(this);
+  whenFree([this, self, doc, args, done] {
+    // The views are measured on a worker first; the command then finds their boxes measured.
+    Job* job = doc->readAsync(
+        services().jobs(), tr("Laying out the drawing"),
+        [args](const opad::Document& d, const opad::Scene& s, Progress) {
+          const std::string standard = args.value("standard", "iso");
+          opad::json sheet = {{"size", opad::drawing::paper_size(args.value("size", "A3"), args.value("orientation", "landscape") == "landscape")},
+                              {"standard", standard}, {"projection", args.value("projection", standard == "asme" ? "third" : "first")}};
+          sheet["template"] = opad::drawing::make_template(standard == "asme" ? "ansi" : "iso", sheet["size"]["w"].get<double>(), sheet["size"]["h"].get<double>());
+          opad::json source = opad::json::object();
+          if (args.contains("select")) source["nodes"] = args["select"];
+          opad::drawing::plan_views(d, s, sheet, strings(args.value("views", opad::json::array({"front"}))), source, args.value("scale", "auto"));
+        },
+        [self, args, done](bool ok, const QString& error) {
+          if (!self) return;
+          if (!ok) {
+            if (error != "cancelled") self->services().guarded([&] { throw opad::Error(error.toStdString()); });
+            return;
+          }
+          self->run("sheet", args, [self, done](const opad::json& out) {
+            if (!self || out.is_null()) return;
+            const std::string id = out.value("id", "");
+            self->services().setWorkspace("drawings");
+            self->m_page->showSheet(id);
+            self->services().showMessage(tr("Drawing created at %1").arg(QString::fromStdString(out.value("scale", ""))));
+            if (done) done(id);
+          });
+        });
+    if (!job) QTimer::singleShot(50, this, [this, args, done] { createDrawing(args, done); });
+  });
+}
+
+void DocsArea::newSheet() {
+  AppDocument* doc = services().document();
+  const opad::Sheet* s = m_page ? doc->scene.sheet(m_page->sheet()) : nullptr;
+  if (!s) return newDrawing();
+  opad::json args = {{"drawing", s->drawing}, {"standard", s->standard}, {"projection", s->projection}, {"scale", opad::drawing::scale_text(s->scale)}};
+  const opad::json size = s->def.value("size", opad::json::object());
+  if (size.contains("preset")) {
+    args["size"] = size["preset"];
+    args["orientation"] = s->width >= s->height ? "landscape" : "portrait";
+  } else {
+    args["width"] = s->width, args["height"] = s->height;
+  }
+  const opad::json t = s->def.value("template", opad::json());
+  if (!t.is_object()) args["template"] = "none";
+  else if (t.value("id", "") == "iso" || t.value("id", "") == "ansi") args["template"] = t["id"];
+  else args["template"] = t;  // a file's: the same geometry
+  if (s->def.contains("values")) args["values"] = s->def["values"];
+  run("sheet", args, [this](const opad::json& out) {
+    if (!out.is_null()) m_page->showSheet(out.value("id", ""));
+  });
+}
+
+void DocsArea::sheetProperties() {
+  const std::string id = m_page ? m_page->sheet() : std::string();
+  if (id.empty()) throw opad::Error("Open a sheet first.");
+  auto* dialog = new SheetPropertiesDialog(services().document(), id, services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QDialog::accepted, this, [this, dialog, id] {
+    services().guarded([&] {
+      const opad::json set = dialog->change();
+      if (!set.is_null()) run("sheet_edit", {{"target", id}, {"set", set}});
+    });
+  });
+  dialog->open();
+}
+
+void DocsArea::templateFromFile(const QString& given) {
+  const std::string sheet = m_page ? m_page->sheet() : std::string();
+  if (sheet.empty()) throw opad::Error("Open a sheet first.");
+  QString file = given;
+  if (file.isEmpty()) {
+    QSettings settings;
+    file = QFileDialog::getOpenFileName(services().window(), tr("Template from a drawing file"), settings.value("ui/lastDir", QDir::homePath()).toString(),
+                                        tr("Drawings (*.dxf *.dwg)"));
+    if (file.isEmpty()) return;
+    settings.setValue("ui/lastDir", QFileInfo(file).absolutePath());
+  }
+  auto brep = std::make_shared<std::string>();
+  auto t = std::make_shared<opad::json>();
+  const auto path = std::filesystem::path(file.toStdU16String());
+  QPointer<DocsArea> self(this);
+  services().jobs()->async(
+      tr("Reading the template"), [path, brep, t](Progress) { *t = opad::drawing::read_template_file(path, *brep); },
+      [self, sheet, brep, t](bool ok, const QString& error) {
+        if (!self) return;
+        if (!ok) return self->services().guarded([&] { throw opad::Error(error.toStdString()); });
+        opad::json set = {{"template", *t}, {"template_brep", *brep}};
+        if (t->contains("size")) set["size"] = (*t)["size"];  // its paper
+        const int fields = static_cast<int>(t->value("fields", opad::json::array()).size());
+        self->run("sheet_edit", {{"target", sheet}, {"set", set}}, [self, fields](const opad::json& out) {
+          if (!self || out.is_null()) return;
+          self->services().showMessage(fields ? tr("Template fields filled in from the drawing: %1").arg(fields)
+                                              : tr("The template has no fields: place them with Title block fields…"), 8000);
+        });
+      });
+}
+
+void DocsArea::templateFields() {
+  const std::string sheet = m_page ? m_page->sheet() : std::string();
+  if (sheet.empty()) throw opad::Error("Open a sheet first.");
+  auto* dialog = new TemplateFieldsDialog(services().document(), services().jobs(), sheet, services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QDialog::accepted, this, [this, dialog, sheet] {
+    const opad::json set = dialog->change();
+    if (!set.is_null()) run("sheet_edit", {{"target", sheet}, {"set", set}});
+  });
+  dialog->open();
+}
+
+void DocsArea::placeView(const std::string& orient) {
+  if (!m_page || m_page->sheet().empty()) return newDrawing();
+  services().setWorkspace("drawings");
+  m_page->canvas()->setFocus();
+  m_page->canvas()->placeBase(orient);
+}
+
+void DocsArea::placeExploded() {
+  if (!m_page || m_page->sheet().empty()) return newDrawing();
+  std::vector<const opad::ViewBookmark*> saved;
+  for (const auto& v : services().document()->scene.views)
+    if (v.explode.is_object()) saved.push_back(&v);
+  if (saved.empty())
+    throw opad::UserHint("Save an exploded view first: Exploded view in Design > Assemble, then Save exploded view in its Explode tab.", false);
+  const auto place = [this](const std::string& id) {
+    services().setWorkspace("drawings");
+    m_page->canvas()->setFocus();
+    m_page->canvas()->placeBase(id, {}, id);
+  };
+  if (saved.size() == 1) return place(saved.front()->id);
+  QMenu menu;
+  for (const opad::ViewBookmark* v : saved) menu.addAction(icons::themed("explodedView", 16), QString::fromStdString(v->name), this, [place, id = v->id] { place(id); });
+  menu.exec(QCursor::pos());
+}
+
+void DocsArea::setExplodeState(const std::vector<std::string>& views, const std::string& exploded) {
+  const opad::Scene& s = services().document()->scene;
+  opad::json ops = opad::json::array();
+  for (const auto& id : views) {
+    const opad::SheetView* v = s.sheet_view(id);
+    if (!v || v->kind != "base") continue;  // the views taken from one follow it
+    opad::json source = v->def.value("source", opad::json::object());
+    if (!source.is_object()) source = opad::json::object();
+    if (exploded.empty()) source.erase("explode");
+    else source["explode"] = {{"view", exploded}};
+    if (source == v->def.value("source", opad::json::object())) continue;
+    ops.push_back({{"op", "edit"}, {"target", id}, {"set", {{"source", source.empty() ? opad::json(nullptr) : source}}}});
+  }
+  if (!ops.empty()) run("append", {{"ops", ops}});
+}
+
+void DocsArea::placeProjected() {
+  const std::vector<std::string> views = m_page ? m_page->canvas()->selectedViews() : std::vector<std::string>{};
+  if (views.size() != 1) throw opad::Error("Select the view to project from first.");
+  m_page->canvas()->setFocus();
+  m_page->canvas()->placeProjected(views[0]);
+}
+
+void DocsArea::startViewTool(SheetViewTool::Tool tool) {
+  const std::vector<std::string> views = m_page ? m_page->canvas()->selectedViews() : std::vector<std::string>{};
+  if (views.size() != 1) throw opad::Error("Select the view to work on first.");
+  m_page->canvas()->cancelPlacement();
+  m_page->annotator()->cancel();
+  m_page->viewTool()->start(tool, views[0]);
+}
+
+void DocsArea::setViewStyle(const std::vector<std::string>& views, const opad::json& style) {
+  const opad::Scene& s = services().document()->scene;
+  opad::json ops = opad::json::array();
+  for (const auto& id : views) {
+    const opad::SheetView* v = s.sheet_view(id);
+    if (!v || !v->error.empty()) continue;
+    opad::json merged = v->def.value("style", opad::json::object());
+    if (!merged.is_object()) merged = opad::json::object();
+    merged.update(style);
+    if (merged != v->def.value("style", opad::json::object())) ops.push_back({{"op", "edit"}, {"target", id}, {"set", {{"style", merged}}}});
+  }
+  if (!ops.empty()) run("append", {{"ops", ops}});
+}
+
+void DocsArea::editHatching(const std::string& view) {
+  const opad::SheetView* v = services().document()->scene.sheet_view(view);
+  if (!v || (v->kind != "section" && !v->def.contains("breakouts"))) throw opad::Error("Hatching is a section view's or a broken-out section's.");
+  auto* dialog = new HatchDialog(v->def.value("hatch", opad::json::object()), services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QDialog::accepted, this, [this, dialog, view] {
+    services().guarded([&] {
+      const opad::json hatch = dialog->hatch();
+      if (!hatch.is_null()) run("sheet_edit", {{"target", view}, {"set", {{"hatch", hatch.empty() ? opad::json() : hatch}}}});
+    });
+  });
+  dialog->open();
+}
+
+void DocsArea::openSheet(const std::string& row) {
+  const opad::Scene& s = services().document()->scene;
+  std::string sheet, view;
+  if (row.rfind("drawing:", 0) == 0) {
+    for (const auto& x : s.sheets)
+      if (x.drawing == row.substr(8)) {
+        sheet = x.id;
+        break;
+      }
+  } else if (s.sheet(row)) {
+    sheet = row;
+  } else if (const opad::SheetView* v = s.sheet_view(row)) {
+    sheet = v->sheet, view = row;
+  } else if (const opad::SheetItem* t = s.sheet_item(row)) {
+    sheet = t->sheet, view = t->view;
+  }
+  if (sheet.empty() || !m_page) return;
+  services().setWorkspace("drawings");
+  m_page->showSheet(sheet);
+  if (!view.empty()) m_page->canvas()->selectViews({view});
+}
+
+void DocsArea::editViewLetter(const std::string& view) {
+  const opad::SheetView* v = services().document()->scene.sheet_view(view);
+  if (!v) return;
+  auto* dialog = new QInputDialog(services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->setObjectName("viewLetterDialog");
+  dialog->setWindowTitle(tr("View letter"));
+  dialog->setLabelText(v->kind == "section" ? tr("The letter of the section (A-A) and of its cutting line")
+                       : v->kind == "detail" ? tr("The letter of the detail and of its circle on the parent view")
+                                             : tr("The letter of the auxiliary view (VIEW A in ASME; empty: none)"));
+  dialog->setTextValue(QString::fromStdString(v->def.value("letter", "")));
+  connect(dialog, &QInputDialog::textValueSelected, this, [this, view, kind = v->kind](const QString& text) {
+    services().guarded([&] {
+      const QString letter = text.trimmed().toUpper();
+      if (letter.isEmpty() && kind != "auxiliary") throw opad::Error("A section or detail view keeps its letter.");
+      run("sheet_edit", {{"target", view}, {"set", {{"letter", letter.isEmpty() ? opad::json() : opad::json(letter.toStdString())}}}});
+    });
+  });
+  dialog->open();
+}
+
+void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
+  const opad::Scene& s = services().document()->scene;
+  if (views.empty()) {  // on the paper: what goes onto it
+    for (const char* id : {"drawings.baseView", "drawings.isoView", "drawings.sheetProperties", "drawings.templateFields", "drawings.newSheet", "drawings.print",
+                            "drawings.exportSheet", "drawings.issue"})
+      if (QAction* a = services().action(id)) menu.addAction(a);
+    return;
+  }
+  if (views.size() == 1) {
+    QAction* projected = menu.addAction(icons::themed("viewProjected", 16), tr("Add projected view"), this, [this] { services().guarded([&] { placeProjected(); }); });
+    projected->setObjectName("drawings.menu.projected");
+    // UI-82: views taken from it, and what it keeps of itself.
+    for (const char* id : {"drawings.sectionView", "drawings.detailView", "drawings.auxiliaryView"})
+      if (QAction* a = services().action(id)) menu.addAction(a);
+    const opad::SheetView* v = s.sheet_view(views[0]);
+    if (v && v->kind != "detail") {
+      const bool opened = v->def.contains("breakouts");
+      if (v->kind != "section")
+        if (QAction* a = services().action("drawings.breakoutView")) menu.addAction(a);
+      for (const char* id : {"drawings.cropView", "drawings.breakView"})
+        if (QAction* a = services().action(id)) menu.addAction(a);
+      const auto clear = [this, id = views[0]](const char* key) { run("sheet_edit", {{"target", id}, {"set", {{key, nullptr}}}}); };
+      if (opened) menu.addAction(tr("Remove broken-out sections"), this, [clear] { clear("breakouts"); })->setObjectName("drawings.menu.unbreakout");
+      if (v->def.contains("crop")) menu.addAction(tr("Remove crop"), this, [clear] { clear("crop"); })->setObjectName("drawings.menu.uncrop");
+      if (v->def.contains("breaks")) menu.addAction(tr("Remove breaks"), this, [clear] { clear("breaks"); })->setObjectName("drawings.menu.unbreak");
+      const opad::drawing::ViewFrame* f = m_page->canvas()->frame(views[0]);
+      if (f && (f->crop_cuts || !f->breaks.empty())) {  // its break lines: zigzag or freehand (ISO 128-2)
+        const opad::json st = v->def.value("style", opad::json::object());
+        const std::string now = st.is_object() && st.value("break", "") == "freehand" ? "freehand" : "zigzag";
+        QMenu* lines = menu.addMenu(icons::themed("viewBreak", 16), tr("Break lines"));
+        lines->setObjectName("drawings.menu.breakLines");
+        auto* group = new QActionGroup(lines);
+        for (const auto& [value, label] : std::initializer_list<std::pair<const char*, QString>>{{"zigzag", tr("Ruled, with a zigzag")}, {"freehand", tr("Freehand")}}) {
+          QAction* a = lines->addAction(label, this, [this, id = views[0], v = std::string(value)] { setViewStyle({id}, {{"break", v}}); });
+          a->setObjectName(QString("drawings.menu.break.") + value);
+          a->setCheckable(true);
+          a->setChecked(now == value);
+          group->addAction(a);
+        }
+      }
+      if (v->kind == "section" || opened) {  // shafts, fasteners: drawn whole (ISO 128-50)
+        menu.addAction(tr("Leave bodies uncut…"), this, [this, id = views[0]] {
+              m_page->annotator()->cancel();
+              m_page->viewTool()->start(SheetViewTool::Tool::Uncut, id);
+            })->setObjectName("drawings.menu.uncut");
+        if (v->def.contains("whole")) menu.addAction(tr("Cut every body"), this, [clear] { clear("whole"); })->setObjectName("drawings.menu.cutAll");
+        menu.addAction(icons::themed("viewSection", 16), tr("Hatching…"), this, [this, id = views[0]] { services().guarded([&] { editHatching(id); }); })
+            ->setObjectName("drawings.menu.hatching");
+      }
+    }
+    menu.addSeparator();
+  }
+  bool hidden = true, base = true, detail = true;
+  std::string tangent;
+  for (const auto& id : views)
+    if (const opad::SheetView* v = s.sheet_view(id)) {
+      try {
+        const auto spec = opad::drawing::view_spec(s, *v);
+        hidden = hidden && spec.hidden;
+      } catch (const std::exception&) {
+      }
+      base = base && v->kind == "base";
+      detail = detail && v->kind == "detail";
+      if (tangent.empty()) {
+        const opad::json st = v->def.value("style", opad::json::object());
+        tangent = st.is_object() && st.contains("tangent") && st["tangent"].is_string() ? st["tangent"].get<std::string>() : "thin";
+      }
+    }
+  QAction* h = menu.addAction(icons::themed("hiddenLines", 16), tr("Hidden lines"), this, [this, views, hidden] { setViewStyle(views, {{"hidden", !hidden}}); });
+  h->setCheckable(true);
+  h->setChecked(hidden);
+  h->setObjectName("drawings.menu.hidden");
+  QMenu* edges = menu.addMenu(icons::themed("tangentEdges", 16), tr("Tangent edges"));
+  auto* group = new QActionGroup(edges);
+  for (const auto& [value, label] : std::initializer_list<std::pair<const char*, QString>>{{"thin", tr("Thin")}, {"show", tr("As edges")}, {"hide", tr("Hidden")}}) {
+    QAction* a = edges->addAction(label, this, [this, views, v = std::string(value)] { setViewStyle(views, {{"tangent", v}}); });
+    a->setCheckable(true);
+    a->setChecked(tangent == value);
+    group->addAction(a);
+  }
+  if (base) {  // UI-85: drawn assembled, or with the parts where a saved exploded view puts them, from the same side
+    std::string now;  // the views' exploded view: "" assembled, "*" not the same for all
+    for (size_t i = 0; i < views.size(); ++i)
+      if (const opad::SheetView* v = s.sheet_view(views[i])) {
+        const opad::json src = v->def.value("source", opad::json::object());
+        const opad::json e = src.is_object() ? src.value("explode", opad::json()) : opad::json();
+        const std::string id = e.is_object() && e.contains("view") && e["view"].is_string() ? e["view"].get<std::string>() : std::string();
+        now = i == 0 || now == id ? id : std::string("*");
+      }
+    QMenu* state = menu.addMenu(icons::themed("explodedView", 16), tr("View state"));
+    state->setObjectName("drawings.menu.state");
+    auto* group = new QActionGroup(state);
+    const auto choice = [&](const QIcon& icon, const QString& label, const std::string& value) {
+      QAction* a = state->addAction(icon, label, this, [this, views, value] { services().guarded([&] { setExplodeState(views, value); }); });
+      a->setCheckable(true);
+      a->setChecked(now == value);
+      a->setObjectName(QString::fromStdString("drawings.menu.state." + (value.empty() ? std::string("assembled") : value)));
+      group->addAction(a);
+    };
+    choice({}, tr("Assembled"), "");
+    state->addSeparator();
+    bool saved = false;
+    for (const auto& b : s.views)
+      if (b.explode.is_object()) {
+        choice(icons::themed("explodedView", 16), QString::fromStdString(b.name), b.id);
+        saved = true;
+      }
+    if (!saved) state->addAction(tr("No exploded view saved: Save exploded view in the Explode tab"))->setEnabled(false);
+  }
+  if (base || detail) {  // a base view's scale (the views projected from it follow), a detail view's own
+    QMenu* scale = menu.addMenu(tr("View scale"));
+    scale->setObjectName("drawings.menu.scale");
+    const opad::SheetView* first = s.sheet_view(views[0]);
+    const std::string now = first ? first->def.value("scale", std::string("sheet")) : std::string();
+    auto* group = new QActionGroup(scale);
+    const auto set = [this, views](opad::json value) {
+      opad::json ops = opad::json::array();
+      for (const auto& id : views) ops.push_back({{"op", "edit"}, {"target", id}, {"set", {{"scale", value}}}});
+      run("append", {{"ops", ops}});
+    };
+    const auto choice = [&](const QString& label, const std::string& value, opad::json stored) {
+      QAction* a = scale->addAction(label, this, [set, stored] { set(stored); });
+      a->setCheckable(true);
+      a->setChecked(now == value);
+      a->setObjectName(QString::fromStdString("drawings.menu.scale." + value));
+      group->addAction(a);
+    };
+    if (base) {
+      const opad::Sheet* sheet = s.sheet(m_page->sheet());
+      choice(tr("Sheet scale (%1)").arg(sheet ? QString::fromStdString(opad::drawing::scale_text(sheet->scale)) : QString()), "sheet", "sheet");
+    } else {  // a detail: twice its parent's unless it has its own
+      const opad::drawing::ViewFrame* parent = first ? m_page->canvas()->frame(first->parent) : nullptr;
+      choice(tr("Twice its parent's (%1)").arg(parent ? QString::fromStdString(opad::drawing::scale_text(2 * parent->scale)) : QString()), "sheet", "sheet");
+    }
+    scale->addSeparator();
+    for (const char* text : {"10:1", "5:1", "4:1", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100"}) choice(QString::fromLatin1(text), text, text);
+  }
+  menu.addSeparator();
+  if (views.size() == 1)
+    menu.addAction(icons::themed("rename", 16), tr("Rename"), this, [this, id = views[0]] { services().browser()->startRename(id); });
+  if (const opad::SheetView* v = views.size() == 1 ? s.sheet_view(views[0]) : nullptr; v && (v->kind == "section" || v->kind == "detail" || v->kind == "auxiliary"))
+    menu.addAction(tr("Letter…"), this, [this, id = views[0]] { services().guarded([&] { editViewLetter(id); }); })->setObjectName("drawings.menu.letter");
+  QAction* del = menu.addAction(icons::themed("delete", 16), keys::menuText(views.size() == 1 ? tr("Delete view") : tr("Delete %1 views").arg(views.size()), QStringLiteral("edit.delete")), this, [this, views] {  // Del is edit.delete's
+    whenFree([this, views] { services().guarded([&] { drawings::remove(services().document(), views); }); });
+  });
+  del->setObjectName("drawings.menu.delete");
+}

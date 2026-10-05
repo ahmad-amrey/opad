@@ -1,8 +1,26 @@
-add_executable(opad-cli main.cpp mcp.cpp live_mcp.cpp)
+set(_opad_cli_sources main.cpp mcp.cpp live_mcp.cpp)
+if(WIN32)  # icon and version info (copyright line) in the exe's properties
+  enable_language(RC)
+  configure_file(opad-cli.rc.in ${CMAKE_CURRENT_BINARY_DIR}/opad-cli.rc @ONLY)
+  list(APPEND _opad_cli_sources ${CMAKE_CURRENT_BINARY_DIR}/opad-cli.rc)
+  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/opad-cli.rc PROPERTIES OBJECT_DEPENDS ${PROJECT_SOURCE_DIR}/app/res/opad.ico)
+endif()
+add_executable(opad-cli ${_opad_cli_sources})
 target_link_libraries(opad-cli PRIVATE opad::core)
-find_package(Qt6 COMPONENTS Core Network QUIET)
+find_package(Qt6 COMPONENTS Core Gui Network QUIET)  # Gui: its plugin types (platforms) for qt_import_plugins below
 if(Qt6_FOUND)
   target_link_libraries(opad-cli PRIVATE Qt6::Core Qt6::Network)
   target_compile_definitions(opad-cli PRIVATE OPAD_LIVE_MCP=1)
+  if(OPAD_STATIC)  # local sockets only: no TLS backends (OpenSSL) or network information plugins in the exe
+    qt_import_plugins(opad-cli EXCLUDE_BY_TYPE tls networkinformation)
+  endif()
+endif()
+if(TARGET opad_paint)  # export --format pdf|png: a QGuiApplication on the offscreen platform when it paints
+  target_link_libraries(opad-cli PRIVATE opad_paint)
+  target_compile_definitions(opad-cli PRIVATE OPAD_PAINT=1)
+  if(OPAD_STATIC)
+    find_package(Qt6 COMPONENTS Gui REQUIRED)  # registers the platforms plugin type in this directory for qt_import_plugins
+    qt_import_plugins(opad-cli INCLUDE_BY_TYPE platforms Qt6::QOffscreenIntegrationPlugin Qt6::QWindowsIntegrationPlugin EXCLUDE_BY_TYPE imageformats iconengines)
+  endif()
 endif()
 install(TARGETS opad-cli RUNTIME DESTINATION bin)

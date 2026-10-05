@@ -10,6 +10,7 @@
 //   * work is split in two so the app can keep its UI-thread rule: plan_*() only reads the document (worker
 //     thread, cancellable) and commit() applies a finished plan (owner thread, cheap).
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,12 +39,18 @@ struct InputSpec {
   bool optional = false;
   int min_count = 1;                 // selections: how many picks at least (0 with optional)
   int max_count = 0;                 // 0 = any number
+  bool advance = false;              // selections: the first pick moves on to the next input (more: its box again)
 };
 
 struct FeatureSpec {
   std::string kind, label, icon, group;  // group: create | modify | combine | pattern | construct | body
   std::vector<InputSpec> inputs;
   std::string hint;  // one line for the panel
+  // A primitive placed in the view (TODO 11 P1): a click on a plane writes its "plane", "x" and "y"; then the pointer draws
+  // the footprint: "rect" (its "length" and "width" about the click, or from it as a corner with "centered" off), "round"
+  // (its "diameter" from the click), "ring" ("diameter" to the tube's middle, then the tube's "section"). A "height" input
+  // is pulled by the arrow after. Empty: not placed so.
+  std::string footprint;
 };
 
 const std::vector<FeatureSpec>& feature_specs();
@@ -52,7 +59,7 @@ json feature_specs_json();
 
 // ---------------------------------------------------------------- plans
 struct NewBody {
-  std::string key, brep;
+  std::string key, brep;  // key = sha256_hex(brep) (commit trusts it); no brep: a linked asset's body, registered as external (assets.hpp)
   json meta;
   std::shared_ptr<TopoDS_Shape> shape;  // cached on commit so nothing is parsed back from text
 };
@@ -75,14 +82,26 @@ using Cancel = std::function<bool()>;
 
 // Appends new ops (param / sketch / feature / edit / delete ...), given without results: results of new and of
 // every affected later op are computed. `strict`: an error in one of the *new* ops throws instead of being
-// recorded, so a wrong input never reaches the document.
+// recorded, so a wrong input never reaches the document; so does a plan that changes a locked body (locked_change).
 Plan plan_ops(const Document& doc, std::vector<json> new_ops, bool strict = true, const Cancel& cancel = {});
 // Recomputes whatever is out of date (after a merge, a hand edit, a tombstone). An empty plan = up to date.
 Plan plan_regenerate(const Document& doc, bool force = false, const Cancel& cancel = {});
 json commit(Document& doc, Plan&& plan, const std::string& author = {});
 
+// Whether two shapes are the same geometry as regeneration judges it (topology counts, vertices to 1e-6 mm, volume, area,
+// centre): a recomputed body that is keeps its stored key (a linked asset's sync too).
+bool same_shapes(const TopoDS_Shape& a, const TopoDS_Shape& b);
+
 // Convenience for the command layer and tests: plan + commit.
 json apply_ops(Document& doc, std::vector<json> new_ops, const std::string& author = {});
+
+// Locks (TODO 11 UI-37): whether an op of the document locks anything (a scan of the log, no replay), and why going
+// from `before` to `after` is refused: it removes, changes or moves a body or component that is locked in `before`
+// (none: it does not; the outermost such node is named with what holds its lock, the rest counted). A locked one that
+// goes with an unlocked component above it (a drawing deleted with a locked layer) may go; one inside a component that
+// moves stays where it is in it.
+bool has_locks(const Document& doc);
+std::optional<LockedError> locked_change(const Scene& before, const Scene& after);
 
 // ---------------------------------------------------------------- helpers shared with the app
 // Op builders (no results; feed them to plan_ops).
@@ -92,6 +111,9 @@ json make_feature_op(const std::string& kind, const std::string& name, const jso
 json make_edit_op(const std::string& target, const json& set);
 // "Extrude3": the first free name for that kind/prefix in the scene.
 std::string next_name(const Scene& scene, const std::string& prefix);
+// A new feature's name prefix: its label's first word ("Extrude"), the whole label run together when another kind's label
+// starts with that word ("RemoveFaces" beside Remove's "Remove", "ConstructionPlane" beside "ConstructionAxis").
+std::string name_prefix(const FeatureSpec& spec);
 // Item n (from 1) of count named after one name: "{n}" marks where the number goes ("Board screw {n}" ->
 // "Board screw 2"); without it several items are numbered "Board screw 1", "Board screw 2", ... and a single one
 // keeps the name as it is.
@@ -108,6 +130,9 @@ std::vector<json> rename_param_ops(const Document& doc, const std::string& from,
 std::vector<std::string> param_users(const Document& doc, const std::string& name);
 // Frame of a plane input ({"base":..} | {"face":ref} | {"feature":id}) in the given state.
 Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane);
+// A plane chosen now for a sketch whose component has moved since it was made, as its op keeps it: where it was made
+// (its frame and world points and directions moved back by sketch.moved; TODO 11 UI-33). Unchanged otherwise.
+json plane_as_made(const SketchItem& sketch, json plane);
 // Whether an input is in use for these inputs (its show_if holds).
 bool input_active(const InputSpec& in, const json& inputs);
 // A frame as results report it (TODO 10 B3): origin, x, y and the normal (x cross y).
@@ -117,5 +142,14 @@ json make_ref(const Document& doc, const Scene& scene, const Ref& ref);
 // Feature inputs with a hint added to every face/edge/vertex reference that has none (the app picks plain
 // references in its click handler and leaves this geometry walk to the worker).
 json hint_refs(const Document& doc, const Scene& scene, json inputs);
+// Drag handles for a feature's values (TODO 11 P2), for the app's preview: worked out on a worker in the state before the
+// feature and never stored. Each is {input, origin, axis, value, scale}: the arrow sits at origin + axis * value * scale
+// and a pull of d along the axis changes the input by d / scale. Fillet and chamfer: the radius or distance, half way
+// along the first picked edge, pointing out between its two faces; thicken: the thickness off the first face (inwards with
+// Other side); press pull: the distance off the first face's centre along its outward normal; an offset construction
+// plane: the distance from its plane's origin; box, cylinder and cone: the height at the middle of the footprint; a move
+// that turns: the angle about its axis (origin a point on the axis, axis its direction, "ring": true). The extrusion keeps
+// the distance_handle its result stores. Empty when the kind has none or what it needs does not resolve.
+json feature_handles(const Document& doc, const Scene& scene, const std::string& kind, const json& inputs);
 
 }  // namespace opad::design

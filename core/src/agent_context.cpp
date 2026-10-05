@@ -3,9 +3,12 @@
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mass.hpp"
+#include "opad/recognize.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/design/provenance.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
+#include "opad/design/sketch_reference.hpp"
 #include <BRepCheck_Analyzer.hxx>
 #include <TopExp_Explorer.hxx>
 #include <algorithm>
@@ -35,7 +38,7 @@ bool same_signature(const json& a,const json& b) {
   return a==b;
 }
 std::string short_text(const std::string& s){if(s.size()<=512)return s;size_t end=512;while(end>0&&(static_cast<unsigned char>(s[end])&0xc0)==0x80)--end;return s.substr(0,end)+"...";}
-json sketch_summary(const SketchItem& sk){return {{"id",sk.id},{"name",short_text(sk.name)},{"plane",sk.plane},{"frame",sk.frame.to_json()},{"visible",sk.visible},{"consumed",sk.consumed},{"dof",sk.dof},{"entities",sk.geometry.contains("entities")?sk.geometry.at("entities").size():0},{"constraints",sk.geometry.contains("constraints")?sk.geometry.at("constraints").size():0},{"error",short_text(sk.error)}};}
+json sketch_summary(const SketchItem& sk){json j={{"id",sk.id},{"name",short_text(sk.name)},{"plane",sk.plane},{"frame",sk.frame.to_json()},{"visible",sk.visible},{"consumed",sk.consumed},{"dof",sk.dof},{"entities",sk.geometry.contains("entities")?sk.geometry.at("entities").size():0},{"constraints",(sk.geometry.contains("constraints")?sk.geometry.at("constraints").size():0)+(sk.geometry.contains("more_constraints")?sk.geometry.at("more_constraints").size():0)},{"error",short_text(sk.error)}};if(!sk.component.empty())j["component"]=sk.component;return j;}
 }
 json context(const Document& doc,const Scene& scene,const json& args) {
   const auto section=args.value("section","summary");json items=json::array();
@@ -51,7 +54,7 @@ json context(const Document& doc,const Scene& scene,const json& args) {
   if(section=="nodes") {
     std::vector<std::string> ids;ids.reserve(scene.nodes.size());for(const auto& [id,n]:scene.nodes)ids.push_back(id);std::sort(ids.begin(),ids.end());
     for(const auto& id:ids){const auto& n=*scene.node(id);add(n.name,[&]{auto instances=scene.instance_count.find(n.body_key);return json{{"id",id},{"name",short_text(n.name)},{"type",n.kind==Node::Kind::Body?"body":"component"},{"representation",n.representation},
-      {"parent",n.parent},{"source",n.source_op},{"visible",scene.effectively_visible(id)},{"locked",n.locked},{"instances",instances==scene.instance_count.end()?0:instances->second},{"missing",n.body_missing},
+      {"parent",n.parent},{"source",n.source_op},{"visible",scene.effectively_visible(id)},{"locked",scene.effectively_locked(id)},{"instances",instances==scene.instance_count.end()?0:instances->second},{"missing",n.body_missing},
       {"color",n.has_color?json(n.color):json(nullptr)}};});}
   } else if(section=="sketches")for(const auto& sk:scene.sketches)add(sk.name,[&]{return sketch_summary(sk);});
   else if(section=="parameters")for(const auto& p:scene.params)add(p.name,[&]{return json{{"id",p.id},{"name",short_text(p.name)},{"expr",short_text(p.expr)},{"value",p.value},{"shown",p.shown},{"error",short_text(p.error)}};});
@@ -66,6 +69,7 @@ json context(const Document& doc,const Scene& scene,const json& args) {
 json sketch_details(const Document&,const Scene& scene,const json& args) {
   const auto* sk=scene.sketch(args.at("sketch").get<std::string>());if(!sk)throw Error("Sketch no longer exists. Request context section sketches.");
   const auto section=args.value("section","summary");if(section=="summary")return sketch_summary(*sk);
+  if(section=="constraints" && sk->geometry.contains("more_constraints"))return slice(design::constraint_records(sk->geometry),args);  // both lists (Sketch::to_json)
   if(section=="points" || section=="entities" || section=="constraints")return sk->geometry.contains(section)?slice(sk->geometry.at(section),args):slice(json::array(),args);
   if(section=="profiles") {
     const auto geometry=design::Sketch::from_json(sk->geometry);auto regions=design::sketch_regions(geometry,sk->frame);design::identify_regions(geometry,regions,sk->frame);
@@ -106,14 +110,21 @@ json resolve_reference(const Document& doc,const Scene& scene,const json& token,
   if(total==1)return {{"status","resolved"},{"reference",matches[0]},{"method","unique geometric signature"}};
   return {{"status",total>1?"ambiguous":"stale"},{"candidates",matches},{"matches",total},{"action","Select the intended entity again; no unique stable match was proved."}};
 }
-json entity_details(const Document& doc,const Scene& scene,const json& args) {
+json entity_details(const Document& doc,const Scene& scene,const json& args,design::Provenance* shared) {
   if(args.contains("feature")){
     const auto* feature=scene.feature(args["feature"].get<std::string>());if(!feature)throw Error("Unknown feature");
     return {{"id",feature->id},{"kind",feature->kind},{"name",feature->name},{"inputs",feature->inputs},{"error",feature->error}};
   }
   const auto ref=Ref::from_json(args.at("ref"));auto out=inspect_ref(doc,scene,ref);
   for(const char* key:{"edges","vertices","adjacent_faces","modified_by","path"})if(out.contains(key)&&out[key].is_array())out[key]=slice(out[key],args);
-  out["reference"]=reference_token(doc,scene,ref);return out;
+  out["reference"]=reference_token(doc,scene,ref);
+  // TODO 11 UI-94: the feature that made it, so an agent can act on "the boss" (related lists its faces).
+  if(ref.kind==Ref::Kind::Face || ref.kind==Ref::Kind::Edge)try{
+    std::unique_ptr<design::Provenance> own;if(!shared)own=std::make_unique<design::Provenance>(doc);design::Provenance& provenance=shared?*shared:*own;
+    const auto& owners=ref.kind==Ref::Kind::Face?provenance.face_owners(ref.body):provenance.edge_owners(ref.body);
+    if(ref.index>=0 && size_t(ref.index)<owners.size())out["created_by"]=provenance.describe(owners[size_t(ref.index)]);
+  }catch(...){}  // optional evidence: the details stand without it
+  return out;
 }
 json query_entities(const Document& doc,const Scene& scene,const json& args,const std::function<bool()>& cancelled) {
   const auto body=args.at("body").get<std::string>();
@@ -123,14 +134,17 @@ json query_entities(const Document& doc,const Scene& scene,const json& args,cons
   const auto refKind=kind=="face"?Ref::Kind::Face:kind=="vertex"?Ref::Kind::Vertex:Ref::Kind::Edge;
   const auto shape=node_world_shape(doc,scene,body);const int entities=subshape_count(shape,refKind);
   if(entities>10000)throw Error("Body exceeds query budget of 10000 entities");
-  const auto filters=args.value("filters",json::object());
+  const auto [recognition,filters]=split_recognized(args.value("filters",json::object()));
   const double tolerance=args.value("tolerance_mm",1e-5);
+  std::vector<int> recognized;  // TODO 11 UI-97: {"recognized":"hole","diameter":6} narrows the scan to those groups' faces
+  if(!recognition.is_null()){if(refKind!=Ref::Kind::Face)throw Error("a \"recognized\" filter picks faces: give kind \"face\"");recognized=recognized_faces(shape,recognition,tolerance,cancelled);}
   if(filters.contains("radius_min") && filters.contains("radius_max") && filters["radius_min"].get<double>()>filters["radius_max"].get<double>())throw Error("radius_min exceeds radius_max");
   auto axis=[](const std::string& a){return a=="x"?0:a=="y"?1:2;};
   if(filters.contains("bounds"))for(int i=0;i<3;++i)if(filters["bounds"]["min"][i].get<double>()>filters["bounds"]["max"][i].get<double>())throw Error("Invalid bounding region");
   size_t count=0;json items=json::array();
   for(int i=0;i<entities;++i){
     if(cancelled && cancelled())throw Error("cancelled");
+    if(!recognition.is_null() && !std::binary_search(recognized.begin(),recognized.end(),i))continue;
     Ref ref;ref.body=body;ref.kind=refKind;ref.index=i;
     auto detail=inspect_ref(doc,scene,ref);
     if(!entity_matches(detail,filters,tolerance))continue;  // the same filters rule selectors use (TODO 10 B7)
@@ -202,11 +216,11 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
     {"body",{{"type","string"}}},{"kind",{{"type","string"},{"enum",{"edge","face","vertex"}},{"default","edge"}}},{"filters",filters},
     {"ambiguity",{{"type","string"},{"enum",{"all","unique"}},{"default","all"}}},{"tolerance_mm",{{"type","number"},{"minimum",1e-7},{"maximum",1},{"default",1e-5}}}
   }),false},run([](const Document& d,const Scene& s,const json& a){return agent::query_entities(d,s,a);}));
-  add({"entity_details","Exact geometry and paged adjacency with a checked reference token",bounded({{"ref",{{"type",{"string","object"}}}},{"feature",{{"type","string"}}}}),false},run(agent::entity_details));
+  add({"entity_details","Exact geometry and paged adjacency with a checked reference token",bounded({{"ref",{{"type",{"string","object"}}}},{"feature",{{"type","string"}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::entity_details(d,s,a);}));
   add({"resolve_reference","Check a reference token, optionally remap only a unique proven geometric match",{{"doc",{{"type","string"}}},{"reference",{{"type","object"},{"required",{"document","ref"}}}},{"remap",{{"type","boolean"},{"default",false}}}},false},run([](const Document& d,const Scene& s,const json& a){return agent::resolve_reference(d,s,a.at("reference"),a.value("remap",false));}));
-  add({"validate","Exact solid counts, volumes, areas and kernel validity in bounded pages. checks adds interference (overlapping pairs with their overlap volume and box; with clearance_mm, pairs closer than that; ignore lists pairs meant to overlap) and print (overhangs past overhang_deg against build_direction, walls thinner than min_wall_mm, build-plate contact, thin features)",
+  add({"validate","Exact solid counts, volumes, areas and kernel validity in bounded pages. checks adds interference (overlapping pairs with their overlap volume and box; with clearance_mm, pairs closer than that; ignore lists pairs meant to overlap; against: only pairs with one side in these, e.g. a board) and print (overhangs past overhang_deg against build_direction, walls thinner than min_wall_mm, build-plate contact, thin features)",
     bounded({{"select",{{"type","array"},{"items",{{"type","string"}}}}},{"checks",{{"type","array"},{"items",{{"type","string"},{"enum",{"solid","interference","print"}}}},{"default",{"solid"}}}},
-      {"clearance_mm",{{"type","number"},{"minimum",0}}},{"ignore",{{"type","array"},{"items",{{"type","array"},{"items",{{"type","string"}}},{"minItems",2},{"maxItems",2}}}}},
+      {"clearance_mm",{{"type","number"},{"minimum",0}}},{"against",{{"type","array"},{"items",{{"type","string"}}}}},{"ignore",{{"type","array"},{"items",{{"type","array"},{"items",{{"type","string"}}},{"minItems",2},{"maxItems",2}}}}},
       {"max_pairs",{{"type","integer"},{"minimum",1}}},{"build_direction",{{"anyOf",{{{"type","string"},{"enum",{"+x","-x","+y","-y","+z","-z"}}},{{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}}}}},
       {"overhang_deg",{{"type","number"},{"minimum",0},{"maximum",89}}},{"min_wall_mm",{{"type","number"},{"minimum",0}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::validate_design(d,s,a);}));
   add({"feature_schema","Input schema, defaults and an example for one supported feature kind",{{"kind",{{"type","string"}}}},false},[](Document*,const json& a){
@@ -234,8 +248,9 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   editInputs["properties"]["round"]={{"type","boolean"},{"default",true}};
   editInputs["properties"]["boundary"]={{"type","integer"},{"minimum",1}};
   editInputs["properties"]["at"]={{"type","array"},{"items",{{"type","number"}}},{"minItems",2},{"maxItems",2}};
-  add({"sketch_tool","Modify sketch geometry using the same offset, transform, repair and chain algorithms as the desktop. Coordinates are local mm; angle inputs accept degree expressions.",
-    {{"doc",{{"type","string"}}},{"target",{{"type","string"}}},{"tool",{{"type","string"},{"enum",{"offset","move","copy","rotate","scale","mirror","split","extend","heal","break_intersections","chamfer","delete"}}}},
+  editInputs["properties"]["source"]={{"type","object"}};editInputs["properties"]["linked"]={{"type","boolean"},{"default",true}};
+  add({"sketch_tool","Modify sketch geometry using the same offset, transform, repair and chain algorithms as the desktop. Coordinates are local mm; angle inputs accept degree expressions. project: inputs.source ({asset,kicad,node} of a KiCad board, a reference, {sketch}) as linked curves.",
+    {{"doc",{{"type","string"}}},{"target",{{"type","string"}}},{"tool",{{"type","string"},{"enum",{"offset","move","copy","rotate","scale","mirror","split","extend","heal","break_intersections","chamfer","delete","project"}}}},
      {"entities",{{"type","array"},{"items",{{"type","integer"},{"minimum",1}}},{"maxItems",10000}}},{"chain",{{"type","boolean"},{"default",false}}},{"inputs",editInputs},{"by",{{"type","string"}}}},true},
     [](Document* doc,const json& a){
       if(!doc)throw Error("Pass a document or bind a live session");
@@ -257,6 +272,10 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
       else if(tool=="break_intersections")design::break_intersections(sk,ids);
       else if(tool=="chamfer")design::chamfer_corner(sk,single(),length("first",1),length("second",1));
       else if(tool=="delete")for(int id:ids)sk.remove(id);
+      else if(tool=="project"){  // UI-134: a board's outline, holes or parts by node, kept by a sync, as the desktop projects them
+        const auto source=inputs.value("source",json());if(!source.is_object())throw Error("project: inputs.source names the geometry to project");
+        design::append_reference(sk,design::derive_sketch(*doc,scene,item->frame,source,"project"),source,"project",inputs.value("linked",true));
+      }
       else throw Error("Unsupported sketch tool: "+tool);
       sk.validate();return design::apply_ops(*doc,{design::make_edit_op(target,{{"geometry_delta",design::sketch_delta(item->geometry,sk.to_json())}})},a.value("by",""));
     });

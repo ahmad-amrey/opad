@@ -35,6 +35,7 @@
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace opad {
 
@@ -116,7 +117,8 @@ TopoDS_Shape body_shape(const Document& doc, const std::string& key) {
   }
   const BodyEntry* e = doc.body(key);
   if (!e) throw Error("body entry not found: " + key);
-  TopoDS_Shape s = shape_from_brep(e->brep);
+  if (e->external) throw Error("the linked file of body '" + e->meta.value("name", key.substr(0, 12)) + "' is not loaded");
+  TopoDS_Shape s = e->indexed.empty() ? shape_from_brep(e->brep) : shape_from_brep(std::string(e->checked_text()));
   std::lock_guard<std::mutex> lock(cache.mu);
   cache.shapes[key] = s;
   return s;
@@ -226,7 +228,11 @@ void warm_shape_cache(const Document& doc, const std::function<bool(size_t, size
 
 Bnd_Box tight_bbox(const TopoDS_Shape& shape) {
   Bnd_Box box;
-  if (!shape.IsNull()) BRepBndLib::AddOptimal(shape, box, Standard_False, Standard_False);
+  if (shape.IsNull()) return box;
+  BRepBndLib::AddOptimal(shape, box, Standard_False, Standard_False);
+  // A mesh (STL, OBJ, 3MF, glTF) has no surfaces or curves to measure: its triangles are the geometry. Without this the
+  // Bounding box measure said "bounding box is empty" and Properties showed no size for every mesh body.
+  if (box.IsVoid()) BRepBndLib::AddOptimal(shape, box, Standard_True, Standard_False);
   return box;
 }
 
@@ -256,6 +262,27 @@ void warm_tight_bboxes(const Document& doc, const std::vector<std::string>& keys
     if (done[i]) cache.tight[missing[i]] = boxes[i];
 }
 
+std::vector<std::string> missing_tight_bboxes(const Document& doc, const std::vector<std::string>& keys) {
+  auto& cache = *doc.shape_cache;
+  std::vector<std::string> out;
+  std::unordered_set<std::string> seen;
+  std::lock_guard<std::mutex> lock(cache.mu);
+  for (const auto& k : keys)
+    if (!cache.tight.count(k) && seen.insert(k).second) out.push_back(k);
+  return out;
+}
+
+Bnd_Box key_tight_bbox(const Document& doc, const std::string& key) {
+  auto& cache = *doc.shape_cache;
+  {
+    std::lock_guard<std::mutex> lock(cache.mu);
+    if (auto it = cache.tight.find(key); it != cache.tight.end()) return it->second;
+  }
+  const Bnd_Box local = tight_bbox(body_shape(doc, key));
+  std::lock_guard<std::mutex> lock(cache.mu);
+  return cache.tight[key] = local;
+}
+
 Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id, bool exact) {
   const Node* n = scene.node(node_id);
   if (!n || n->kind != Node::Kind::Body) throw Error("not a body node: " + node_id);
@@ -265,21 +292,7 @@ Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::stri
   const bool shift_only = w.m[0] == 1 && w.m[5] == 1 && w.m[10] == 1 && w.m[1] == 0 && w.m[2] == 0 && w.m[4] == 0 && w.m[6] == 0 &&
                           w.m[8] == 0 && w.m[9] == 0 && w.m[12] == 0 && w.m[13] == 0 && w.m[14] == 0 && w.m[15] == 1;
   if (!shift_only && exact) return tight_bbox(node_world_shape(doc, scene, node_id));
-  auto& cache = *doc.shape_cache;
-  Bnd_Box local;
-  bool cached = false;
-  {
-    std::lock_guard<std::mutex> lock(cache.mu);
-    if (auto it = cache.tight.find(n->body_key); it != cache.tight.end()) {
-      local = it->second;
-      cached = true;
-    }
-  }
-  if (!cached) {
-    local = tight_bbox(body_shape(doc, n->body_key));
-    std::lock_guard<std::mutex> lock(cache.mu);
-    cache.tight[n->body_key] = local;
-  }
+  const Bnd_Box local = key_tight_bbox(doc, n->body_key);
   if (local.IsVoid()) return local;
   double x0, y0, z0, x1, y1, z1;
   local.Get(x0, y0, z0, x1, y1, z1);

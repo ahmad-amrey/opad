@@ -1,0 +1,528 @@
+// Selection: viewport <-> browser, the Properties panel, selection.json for agents, the context menu.
+#include "MainWindow.hpp"
+#include "AgentBridge.hpp"
+
+#include <QColorDialog>
+#include <QCoreApplication>
+#include <QLabel>
+#include <QFile>
+#include <QMenu>
+#include <QWidgetAction>
+
+#include <algorithm>
+#include <functional>
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <set>
+
+#include <Bnd_Box.hxx>
+
+#include "Drawing2D.hpp"
+#include "I18n.hpp"
+#include "Icons.hpp"
+#include "KeyText.hpp"
+#include "SmartRules.hpp"
+#include "Theme.hpp"
+#include "opad/design/feature.hpp"
+#include "opad/geometry.hpp"
+#include "opad/inspect.hpp"
+
+OPAD_ICON_TABLE(contextmenu,
+  {"repeat", R"(<path d="M17 3l3 3-3 3"/><path d="M4 12v-2a4 4 0 0 1 4-4h12"/><path d="M7 21l-3-3 3-3"/><path d="M20 12v2a4 4 0 0 1-4 4H4"/>)"});
+namespace {
+std::mutex g_selectionWriting;  // one selection.json write at a time, and only the newest selection's
+std::atomic<unsigned> g_newestSelection{0};
+}  // namespace
+
+// ---------------------------------------------------------------- selection plumbing (F22/F25)
+std::vector<std::string> MainWindow::currentNodeIds() const {
+  if (!m_selRows.empty() && m_selRefs.empty()) return {};  // an area's rows alone: the view may still hold the last pick
+  std::vector<std::string> ids;
+  for (const auto& r : m_viewport->selection())
+    if (r.kind != opad::Ref::Kind::Point && std::find(ids.begin(), ids.end(), r.body) == ids.end()) ids.push_back(r.body);
+  if (ids.empty()) ids = m_browser->selectedIds();
+  ids.erase(std::remove_if(ids.begin(), ids.end(), [this](const std::string& id) { return m_browser->isProvided(id); }), ids.end());
+  return ids;
+}
+
+QColor MainWindow::nodeColour(const std::string& id) const {
+  const opad::Node* n = m_doc->node(id);
+  return n && n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : QColor(190, 190, 195);
+}
+
+void MainWindow::onViewportSelection() {
+  clearAnnotationCardTarget();  // a click in the view puts out what an Annotations card lit up
+  if (m_design->ownsSelection()) return m_design->viewportSelectionChanged();  // picks for a feature input or a sketch plane
+  if (m_syncing) return;
+  m_syncing = true;
+  auto refs = m_viewport->selection();
+  std::vector<std::string> ids;
+  std::set<std::string> seen;
+  for (const auto& r : refs)
+    if (seen.insert(r.body).second) ids.push_back(r.body);
+  m_browser->setSelectedIds(ids);
+  if (m_section && m_section->picking() && !refs.empty() && refs.front().kind == opad::Ref::Kind::Face) sectionFromFace(refs.front());
+  m_selRows.clear();
+  selectionMoved(refs);
+  if (!m_tool.id.isEmpty()) toolPicksChanged(refs, true);
+  if (refs.empty()) m_statusSel->clear();
+  else m_statusSel->setText(tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(m_viewport->drawingWords() ? drawing2d::kindWord(refs.front().kind) : opad::Ref::kind_name(refs.front().kind))));  // UI-118: objects and points in 2D
+  scheduleSelectionSync();
+  m_syncing = false;
+}
+
+void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
+  clearAnnotationCardTarget();
+  if (m_syncing) return;
+  m_syncing = true;
+  // An area's rows (a provided folder's) are no nodes: the view, the edit commands and the tools never see them.
+  std::vector<opad::Ref> refs;
+  std::vector<std::string> nodes;
+  m_selRows.clear();
+  for (const auto& id : ids) {
+    if (m_browser->isProvided(id)) { m_selRows.push_back(id); continue; }
+    opad::Ref r; r.body = id; refs.push_back(r); nodes.push_back(id);
+  }
+  selectionMoved(refs);
+  if (!m_tool.id.isEmpty()) toolPicksChanged(refs, false);
+  m_statusSel->setText(!refs.empty() ? (m_viewport->drawingWords() ? tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(drawing2d::nodeWord(m_doc->scene, refs.front().body))) : tr("%1 selected · body").arg(refs.size()))
+                                     : ids.empty() ? QString() : tr("%1 selected").arg(ids.size()));
+  m_syncing = false;
+  m_viewport->selectNodes(nodes);  // sliced; selectionApplied() writes selection.json when it settles
+}
+
+// The Properties panel belongs to one selection: it is opened from the context menu (or Alt+Enter), and a new
+// selection closes it. Pinned, it stays and follows the selection. Nothing is inspected while it is closed.
+void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
+  m_selRefs = refs;
+  if(auto* panel=findChild<ToolPanel*>("instanceBrowser"); panel && panel->isVisible()) {
+    const auto current=panel->property("instanceCurrent").toString().toStdString();
+    if(refs.size()!=1 || refs.front().body!=current)panel->hide();
+  }
+  if (m_areasReady) {
+    const SelectionContext selection = selectionContext();
+    for (AreaController* area : m_areas) area->selectionChanged(selection);
+  }
+  updateCommands();
+  if (!refs.empty() || !m_selRows.empty()) resumePendingPick();  // a command that asked for this selection (UI-109)
+  if (!m_propsPanel->isVisible()) return;
+  if (m_propsPanel->pinned()) showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
+  else m_propsPanel->hide();
+}
+
+void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
+  if (m_propsJob) m_propsJob->cancel();  // what is measured for the previous entity must not overwrite this one
+  if (refs.empty() && !m_selRows.empty()) {  // an area's browser row: the areas' sections alone
+    opad::Ref row;
+    row.body = m_selRows.front();
+    m_props->setSubject({{row}, {}});
+    const QString title = m_browser->rowName(row.body);
+    m_propsPanel->setContext(title);
+    m_props->showEntity(title, m_selRows.size() > 1 ? tr("  (+%1 more)").arg(m_selRows.size() - 1).trimmed() : QString(), QString(), opad::json::object());
+    return;
+  }
+  if (refs.empty()) {
+    m_propsPanel->setContext(QString());
+    m_props->clear();
+    return;
+  }
+  m_props->setSubject({refs, {}});  // for the areas' sections
+  try {
+    const opad::Ref& r = refs.front();
+    const opad::Node* node = r.kind == opad::Ref::Kind::Body ? m_doc->node(r.body) : nullptr;
+    const bool component = node && node->kind == opad::Node::Kind::Component;
+    // What walks the geometry (volume, area, the tight box; for a component every body under it) is measured on a
+    // worker and filled in afterwards.
+    const opad::Node* subject = m_doc->node(r.body);
+    const bool drawing = m_viewport->drawingWords() && subject && subject->representation == "drawing2d";  // 2D words (UI-118)
+    // A sub-shape's details walk its body (inspect_ref): the kind and the body now, the rest from a worker (UI-51).
+    const bool subShape = r.kind != opad::Ref::Kind::Body && r.kind != opad::Ref::Kind::Point;
+    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, false)
+                 : subShape ? opad::json{{"ref", r.str()}, {"type", opad::Ref::kind_name(r.kind)}, {"body", r.body}, {"body_name", m_doc->nodeName(r.body).toStdString()}, {"index", r.index}}
+                            : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
+    if (drawing) j = drawing2d::properties(std::move(j));
+    QString title, subtitle, id;
+    if (drawing && r.kind != opad::Ref::Kind::Body && (subShape || !drawing2d::entityType(j).empty())) {  // "Line", "Walls › object 3"
+      const std::string type = drawing2d::entityType(j);  // a sub-shape's comes with its details (showRefGeometry)
+      const QString word = i18n::t(drawing2d::kindWord(r.kind));
+      title = type.empty() ? word.left(1).toUpper() + word.mid(1) : Viewport::drawingWord(type);
+      subtitle = QString::fromUtf8("%1 › %2 %3").arg(m_doc->nodeName(subject->parent.empty() ? r.body : subject->parent), i18n::t(drawing2d::kindWord(r.kind))).arg(r.index);
+      id = QString::fromStdString(r.body.substr(0, 8));
+    } else if (r.kind == opad::Ref::Kind::Point) {
+      title = tr("Point");
+      subtitle = QString::fromStdString(r.str());
+    } else if (r.kind == opad::Ref::Kind::Body) {
+      const opad::Node* n = m_doc->node(r.body);
+      title = m_doc->nodeName(r.body);
+      // Where it sits: the components above it, or its kind at the top (the path ended in its own name, so a top-level
+      // body read "Loft1 / Loft1").
+      QStringList path;
+      for (const auto& p : m_doc->scene.path_to(r.body)) if (p != r.body) path << m_doc->nodeName(p);
+      subtitle = !path.isEmpty() ? path.join(QString::fromUtf8(" › ")) : n && n->kind == opad::Node::Kind::Component ? tr("Component") : tr("Body");
+      if (n && n->kind == opad::Node::Kind::Body) {
+        auto it = m_doc->scene.instance_count.find(n->body_key);
+        if (it != m_doc->scene.instance_count.end() && it->second > 1) subtitle += tr(" · %1 instances").arg(it->second);
+      }
+      id = QString::fromStdString(r.body.substr(0, 8));
+    } else {
+      QString kind = i18n::t(opad::Ref::kind_name(r.kind));
+      QString geo = QString::fromStdString(j.value("surface", j.value("curve", std::string())));
+      title = QString::fromUtf8("%1%2%3").arg(kind.left(1).toUpper() + kind.mid(1), geo.isEmpty() ? QString() : QString::fromUtf8(" · "), geo);
+      subtitle = QString::fromUtf8("%1 › %2 %3").arg(m_doc->nodeName(r.body), kind).arg(r.index);
+      id = QString::fromStdString(r.body.substr(0, 8));
+    }
+    if (refs.size() > 1) subtitle += tr("  (+%1 more)").arg(refs.size() - 1);
+    m_propsPanel->setContext(r.kind == opad::Ref::Kind::Body || r.kind == opad::Ref::Kind::Point ? title : subtitle);
+    m_props->showEntity(title, subtitle, id, j);
+    if (r.kind == opad::Ref::Kind::Body && node && !node->body_missing) showNodeGeometry(r.body, title, subtitle, id);
+    if (subShape) showRefGeometry(r, subtitle, id);
+  } catch (const std::exception& e) {
+    m_props->showEntity(tr("Error"), i18n::t(QString::fromUtf8(e.what())), QString(), opad::json::object());
+  }
+}
+
+// The live selection is published for agents (F25: opad-cli selection, opad.run("selection")) only while agent access is
+// on (UI-06): with none, a rubber band over 71,818 faces spent seconds of the UI thread inspecting them for nobody. At most
+// kPublishedRefs refs, each with what is known at once (ref, node, type, body key, the cached world box of a body); an
+// agent inspects what it needs. The JSON is built and written on a worker; a newer selection's write wins.
+void MainWindow::writeSelectionFile() {
+  if (m_selFileJob) m_selFileJob->cancel();
+  if (m_doc->browse || !m_agent || !m_agent->publishesSelection()) return;
+  constexpr size_t kPublishedRefs = 2000;
+  struct Entry {
+    std::string ref, node, type, key;
+    opad::Mat4 world;
+    Bnd_Box box;  // body-local, cached by the load worker
+  };
+  auto entries = std::make_shared<std::vector<Entry>>();
+  const size_t total = m_selRefs.size();
+  for (size_t i = 0; i < std::min(total, kPublishedRefs); ++i) {
+    const opad::Ref& r = m_selRefs[i];
+    Entry e;
+    e.ref = r.str();
+    e.node = m_doc->nodeName(r.body).toStdString();
+    e.type = opad::Ref::kind_name(r.kind);
+    if (const opad::Node* n = m_doc->node(r.body); n && r.kind == opad::Ref::Kind::Body) {
+      e.type = n->kind == opad::Node::Kind::Body ? "body" : "component";
+      if (n->kind == opad::Node::Kind::Body && !n->body_missing) {
+        e.key = n->body_key;
+        e.world = m_doc->scene.world(r.body);
+        try {
+          e.box = opad::body_bbox(m_doc->doc, n->body_key);
+        } catch (const std::exception&) {
+        }
+      }
+    } else if (r.kind == opad::Ref::Kind::Body && m_doc->scene.sketch(r.body)) {
+      e.type = "sketch";
+    }
+    entries->push_back(std::move(e));
+  }
+  opad::json head{{"pid", static_cast<long long>(QCoreApplication::applicationPid())}, {"document", m_doc->path().toStdString()},
+                  {"browse", m_doc->browse}, {"total", total}, {"truncated", total > kPublishedRefs}};
+  const unsigned mine = ++g_newestSelection;
+  m_selFileJob = m_jobs->async(tr("Publishing selection"), [entries, head, mine](Progress p) {
+    opad::json j = head;
+    j["ts"] = opad::now_iso8601();
+    opad::json& sel = j["selection"] = opad::json::array();
+    for (const Entry& e : *entries) {
+      if (p.cancelled()) return;
+      opad::json out{{"ref", e.ref}, {"node", e.node}, {"type", e.type}};
+      if (!e.key.empty()) out["key"] = e.key;
+      if (!e.box.IsVoid()) {
+        double x0, y0, z0, x1, y1, z1;
+        e.box.Get(x0, y0, z0, x1, y1, z1);
+        opad::Vec3 lo{1e300, 1e300, 1e300}, hi{-1e300, -1e300, -1e300};
+        for (int c = 0; c < 8; ++c) {
+          const opad::Vec3 q = e.world.apply({(c & 1) ? x1 : x0, (c & 2) ? y1 : y0, (c & 4) ? z1 : z0});
+          for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], q[k]), hi[k] = std::max(hi[k], q[k]);
+        }
+        out["bbox"] = {{"min", lo}, {"max", hi}, {"size", {hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}},
+                       {"center", {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2}}};
+      }
+      sel.push_back(std::move(out));
+    }
+    const std::string text = j.dump(2);
+    std::lock_guard<std::mutex> lock(g_selectionWriting);
+    if (mine == g_newestSelection) opad::write_text_file(opad::cache_dir() / "selection.json", text);
+  }, [this](bool, const QString&) { m_selFileJob = nullptr; }, JobKind::Background);
+}
+
+// Agent access went off (UI-06): the file goes, and a write under way (past its last look at the cancel) is no longer the
+// newest, so it cannot put the file back.
+void MainWindow::unpublishSelection() {
+  if (m_selFileJob) m_selFileJob->cancel();
+  std::lock_guard<std::mutex> lock(g_selectionWriting);
+  ++g_newestSelection;
+  QFile::remove(QString::fromStdU16String((opad::cache_dir() / "selection.json").u16string()));
+}
+
+void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids, bool documentRow) {
+  if(auto* instances=findChild<ToolPanel*>("instanceBrowser"))instances->hide();
+  QMenu menu(this);
+  buildContextMenu(menu, ids, documentRow);
+  menu.exec(globalPos);
+}
+
+// What the menu is about (UI-100): faces, edges or vertices picked in the view, else the objects (bodies, components,
+// sketches), else nothing. Each kind gets its own entries; Repeat of the last tool comes first in every one.
+void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& ids, bool documentRow) {
+  SelectionContext context = selectionContext();  // for the areas' entries: the objects the menu is about
+  context.ids = ids;
+  context.document = documentRow;
+  auto add = [&](const char* id) { if (QAction* a = action(id)) menu.addAction(a); };  // viewer mode: editing entries ask to save first
+  auto entry = [&](const QString& icon, const QString& text, const char* name, std::function<void()> fn) {
+    QAction* a = icon.isEmpty() ? menu.addAction(text) : menu.addAction(icons::themed(icon, 16), text);
+    a->setObjectName(name);
+    connect(a, &QAction::triggered, this, [this, fn] { guarded(fn); });
+    return a;
+  };
+  auto title = [&](const QString& text) {  // what the menu is about, drawn (a section's text is not in this style); areas insert after it
+    auto* label = new QLabel(text);
+    label->setObjectName("contextTitleLabel");
+    label->setFont(theme::ui(12, QFont::DemiBold));
+    label->setStyleSheet(QString("color: %1; padding: 5px 10px 3px 10px;").arg(theme::current().fg2.name()));
+    auto* a = new QWidgetAction(&menu);
+    a->setDefaultWidget(label);
+    a->setText(text);
+    a->setObjectName("contextTitle");
+    a->setEnabled(false);  // not an entry: the keys and the pointer pass over it
+    menu.addAction(a);
+  };
+  if (QAction* repeat = repeatAction()) {
+    menu.addAction(repeat);
+    menu.addSeparator();
+  }
+  if(m_design->sketchActive()) {
+    add("sketch.finish");  // a sketch is left from its menu too (it was only in the ribbon and the panel)
+    add("sketch.cancel");
+    menu.addSeparator();
+    if(!ids.empty()) {
+      auto* sketch=m_design->sketch();
+      menu.addAction(sketch->visible()?tr("Hide sketch"):tr("Show sketch"),this,[sketch]{sketch->setVisible(!sketch->visible());});
+      menu.addAction(action("sketch.replane"));menu.addAction(action("view.alignPlane"));
+      forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
+      return;
+    }
+    for(const char* id:{"sketch.construction","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
+    menu.addSeparator();menu.addAction(tr("Driving / reference"),m_design->sketch(),&SketchEditor::toggleReference);
+    menu.addAction(tr("Delete"),m_design->sketch(),&SketchEditor::deleteSelection);
+    forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
+    return;
+  }
+  const opad::Scene& scene = m_doc->scene;
+  auto all = [&](auto pred) { return !ids.empty() && std::all_of(ids.begin(), ids.end(), pred); };
+  auto picked = [&](opad::Ref::Kind kind) {
+    return !context.refs.empty() && std::all_of(context.refs.begin(), context.refs.end(), [kind](const opad::Ref& r) { return r.kind == kind; });
+  };
+  const bool faces = picked(opad::Ref::Kind::Face), edges = picked(opad::Ref::Kind::Edge), vertices = picked(opad::Ref::Kind::Vertex);
+  const bool sketches = !faces && !edges && !vertices && all([&](const std::string& id) { return scene.sketch(id) != nullptr; });
+  const bool components = !faces && !edges && !vertices && all([&](const std::string& id) { const opad::Node* n = scene.node(id); return n && n->kind == opad::Node::Kind::Component; });
+  const QString one = ids.size() == 1 ? m_doc->nodeName(ids.front()) : QString();
+  // The op that made the objects (one for all of them): Edit it when it is a feature or a sketch, find it on the timeline.
+  std::string source;
+  for (const auto& id : ids) {
+    const opad::Node* n = scene.node(id);
+    const std::string op = n ? n->source_op : scene.sketch(id) ? id : std::string();
+    source = source.empty() || source == op ? op : std::string("-");
+  }
+  const opad::Op* sourceOp = source.empty() || source == "-" ? nullptr : m_doc->doc.find_op(source);
+  auto history = [&] {
+    if (!sourceOp || m_doc->browse) return;
+    const QString name = m_timeline->label(*sourceOp);
+    if ((scene.feature(source) || scene.sketch(source)) && !sketches)
+      entry("rename", tr("Edit %1").arg(name), "contextEditSource", [this, source] { if (requireEditable()) m_design->editOp(source); });
+    entry("locate", tr("Find %1 in the timeline").arg(name), "contextFind", [this, source] {
+      if (!m_timelineDock->isVisible()) m_timelineDock->show();
+      m_timeline->setCurrentOp(source);
+      m_timeline->pulse(source);
+    });
+  };
+  auto others = [&] {  // one step hiding the fewest nodes (UI-02, MainWindow::hideOthers)
+    entry("hide", tr("Hide others"), "contextHideOthers", [this, ids] { hideOthers(ids); });
+  };
+  auto looks = [&] {
+    entry("dot", tr("Colour…"), "contextColour", [this, ids] {  // a view setting in viewer mode too
+      // From the object's own colour, and one step to undo for all of them (it was one per object).
+      QColor c = QColorDialog::getColor(nodeColour(ids.front()), this, tr("Colour"));
+      if (!c.isValid()) return;
+      m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
+    });
+    add("design.lock");  // Lock or Unlock, as the selection is (the Lock area)
+  };
+  // Picked faces and edges as Del does (UI-04), through smart selection; objects by what the selection covers.
+  auto remove = [&](bool picks) {
+    QString text = tr("Delete");
+    if (!picks) {
+      const smart::Deletion d = smart::routeDelete(scene, ids);
+      const QString what = sketches && ids.size() == 1 ? QString::fromStdString(scene.sketch(ids.front())->name) : !one.isEmpty() ? one : tr("%1 objects").arg(ids.size());
+      text = (d.remove.empty() ? tr("Delete %1") : tr("Remove %1")).arg(what);
+    }
+    QAction* del = entry("delete", keys::menuText(text, QStringLiteral("edit.delete")), "contextDelete", [this, ids, picks] {
+      if (!requireEditable()) return;
+      if (picks) {
+        if (!areaCommand("edit.delete")) throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Select parent ({key:edit.selectparent}), or use Remove faces.");
+        return;
+      }
+      deleteNodes(ids);
+    });
+    if (!picks && !smart::routeDelete(scene, ids).remove.empty()) del->setToolTip(tr("A Remove step at the end of the timeline takes it out; the history that made it stays"));
+  };
+  auto ofBody = [&] {  // what a pick is on
+    entry("body", ids.size() == 1 ? tr("Select %1").arg(one) : tr("Select the %1 bodies").arg(ids.size()), "contextSelectBody", [this, ids] {
+      std::vector<opad::Ref> bodies(ids.size());
+      for (size_t i = 0; i < ids.size(); ++i) bodies[i].body = ids[i];
+      m_areaServices.select(bodies);
+    });
+    add("view.isolate");
+    add("edit.hide");
+  };
+  if (faces || edges || vertices) {
+    const size_t n = context.refs.size();
+    if (faces) title(n == 1 ? tr("Face of %1").arg(m_doc->nodeName(context.refs.front().body)) : tr("%1 faces").arg(n));
+    else if (edges) title(n == 1 ? tr("Edge of %1").arg(m_doc->nodeName(context.refs.front().body)) : tr("%1 edges").arg(n));
+    else title(n == 1 ? tr("Vertex of %1").arg(m_doc->nodeName(context.refs.front().body)) : tr("%1 vertices").arg(n));
+    menu.addSeparator();
+    if (faces && n == 1) {  // a sketch on it, the view square to it (both take the picked face as their plane)
+      entry("sketch", tr("Sketch on this face"), "contextSketchOn", [this] { action("design.sketch")->trigger(); });
+      entry("plane", tr("Look at this face"), "contextLookAt", [this] { action("view.alignPlane")->trigger(); });
+    }
+    if (faces) add("design.offset_face");
+    if (edges) {
+      add("design.fillet");
+      add("design.chamfer");
+    }
+    menu.addSeparator();
+    add("inspect.distance");
+    if (!vertices) add("inspect.angle");
+    if (!vertices) add("inspect.radius");
+    add("inspect.properties");
+    add("annotate.add");
+    menu.addSeparator();
+    ofBody();
+    if (!vertices) {
+      menu.addSeparator();
+      remove(true);
+    }
+  } else if (!ids.empty() && sketches) {
+    title(ids.size() == 1 ? QString::fromStdString(scene.sketch(ids.front())->name) : tr("%1 sketches").arg(ids.size()));
+    if (ids.size() == 1 && !m_doc->browse) {
+      entry("rename", tr("Edit sketch"), "contextEditSketch", [this, id = ids.front()] { if (requireEditable()) m_design->editOp(id); });
+      entry("plane", tr("Redefine sketch plane"), "contextReplane", [this, id = ids.front()] {
+        m_design->editOp(id);
+        m_design->redefineSketchPlane();
+      });
+    }
+    history();
+    entry("export", tr("Export sketch"), "contextExportSketch", [this, ids] { exportDialog(ids); });
+    menu.addSeparator();
+    remove(false);
+  } else if (!ids.empty()) {
+    title(!one.isEmpty() ? one : components ? tr("%1 components").arg(ids.size()) : tr("%1 objects").arg(ids.size()));
+    entry("fit", tr("Fit to"), "contextFit", [this, ids] { m_viewport->fitNodes(ids, true); });
+    add("view.isolate");
+    others();
+    add("edit.hide");
+    menu.addSeparator();
+    history();
+    if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){for(const auto& body:m_doc->scene.bodies_under(id))if(m_doc->scene.node(body)->representation=="drawing2d")return true;return false;}))add("design.convertDrawing");
+    menu.addSeparator();
+    add("edit.rename");
+    looks();
+    if (!components) add("design.move");
+    if (components && ids.size() == 1) add("design.newcomponent");
+    const opad::Node* n = m_doc->node(ids.front());
+    if (n && !n->parent.empty()) add("edit.selectparent");
+    if(ids.size()==1 && n && !n->body_key.empty() && m_doc->scene.instance_count[n->body_key]>1)
+      menu.addAction(tr("Browse linked instances"),this,[this,id=ids.front()]{browseInstances(id);});
+    entry("export", tr("Export selected objects"), "contextExport", [this, ids] { exportDialog(ids); });
+    menu.addSeparator();
+    add("annotate.add");
+    add("annotate.draw");
+    add("inspect.distance");
+    if (!components) add("inspect.radius");
+    add("inspect.properties");
+    menu.addSeparator();
+    remove(false);
+  } else {
+    add("view.fit");
+    add("view.home");
+    add("view.unisolate");
+    add("edit.showall");
+    add("edit.selectall");
+    menu.addSeparator();
+    add("design.sketch");
+    add("file.import");
+  }
+  forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
+}
+
+// The last tool started (a feature, a sketch tool, a measurement, a note): offered first in the context menus as
+// "Repeat Fillet". Null when there is none, it is off now or still running.
+QAction* MainWindow::repeatAction() {
+  QAction* last = m_lastCommand.isEmpty() ? nullptr : action(m_lastCommand);
+  QAction* repeat = action("edit.repeat");
+  if (!last || !repeat || !last->isEnabled() || (last->isCheckable() && last->isChecked())) return nullptr;
+  QString label = last->text().split('\t').front();
+  label.remove('&');
+  repeat->setText(tr("Repeat %1").arg(label));
+  repeat->setIcon(last->icon());
+  return repeat;
+}
+
+// What Repeat runs again (UI-100 / UI-111): a tool, feature, check, note or edit, not a view change, a file command, a
+// toggle of the window, a selection command or the sketch's Select.
+bool MainWindow::repeatable(const QString& id) const {
+  static const QStringList never{"edit.undo", "edit.redo", "edit.repeat", "edit.selectall", "edit.invert", "edit.filter", "edit.selectparent", "edit.selecttouched",
+                                 "inspect.clear", "inspect.pin", "inspect.flip", "sketch.finish", "sketch.cancel", "sketch.panel", "annotate.show", "annotate.resolve"};
+  static const QStringList yes{"design.", "sketch.", "inspect.", "annotate.", "edit.", "select.similar", "view.isolate", "view.saveview", "file.import", "file.export", "file.screenshot"};
+  if (never.contains(id)) return false;
+  if (id.startsWith("sketch."))
+    if (const QAction* a = action(id); a && a->property("sketchTool").isValid() && a->property("sketchTool").toString() == "select") return false;
+  return std::any_of(yes.begin(), yes.end(), [&id](const QString& p) { return id.startsWith(p); });
+}
+
+// The bbox of a component walks every body under it; it is added to the panel by a sliced job.
+void MainWindow::showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid) {
+  if (m_propsJob) m_propsJob->cancel();
+  auto document = m_doc->shapesOf({id});
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  auto result = std::make_shared<opad::json>();
+  const auto generation = m_doc->generation;
+  const opad::Node* node = m_doc->node(id);
+  const bool drawing = m_viewport->drawingWords() && node && node->representation == "drawing2d";  // 2D words (UI-118)
+  m_propsJob = m_jobs->async(tr("Measuring %1").arg(title), [document, scene, id, result, drawing](Progress p) {
+    *result = opad::node_properties(*document, *scene, id, true, [p] { return p.cancelled(); });
+    if (drawing) *result = drawing2d::properties(std::move(*result));
+  }, [this, result, title, subtitle, nid, generation](bool ok, const QString&) {
+    m_propsJob = nullptr;
+    if (!ok || generation != m_doc->generation) return;
+    m_props->showEntity(title, subtitle, nid, *result);
+  });
+}
+
+void MainWindow::showRefGeometry(const opad::Ref& ref, const QString& subtitle, const QString& nid) {
+  if (m_propsJob) m_propsJob->cancel();
+  auto document = m_doc->shapesOf({ref.body});
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  auto result = std::make_shared<opad::json>();
+  const auto generation = m_doc->generation;
+  m_propsJob = m_jobs->async(tr("Inspecting %1").arg(subtitle), [document, scene, ref, result](Progress) {
+    *result = opad::inspect_ref(*document, *scene, ref);
+  }, [this, ref, result, subtitle, nid, generation](bool ok, const QString& error) {
+    m_propsJob = nullptr;
+    if (generation != m_doc->generation || error == "cancelled") return;
+    if (!ok) return m_props->showEntity(tr("Error"), i18n::t(error), QString(), opad::json::object());
+    const opad::Node* subject = m_doc->node(ref.body);
+    if (m_viewport->drawingWords() && subject && subject->representation == "drawing2d") {  // 2D words (UI-118), as showProperties
+      *result = drawing2d::properties(std::move(*result));
+      if (const std::string type = drawing2d::entityType(*result); !type.empty())
+        return m_props->showEntity(Viewport::drawingWord(type), subtitle, nid, *result);
+    }
+    const QString kind = i18n::t(opad::Ref::kind_name(ref.kind));
+    const QString geo = QString::fromStdString(result->value("surface", result->value("curve", std::string())));
+    m_props->showEntity(QString::fromUtf8("%1%2%3").arg(kind.left(1).toUpper() + kind.mid(1), geo.isEmpty() ? QString() : QString::fromUtf8(" · "), geo), subtitle, nid, *result);
+  });
+}
+
+void MainWindow::scheduleSelectionSync() { m_selFileTimer.start(); }

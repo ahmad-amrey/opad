@@ -3,6 +3,7 @@
 #include "NavCube.hpp"
 
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <StdSelect_BRepOwner.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -11,6 +12,7 @@
 #include <Prs3d_PointAspect.hxx>
 #include <QApplication>
 #include <QKeyEvent>
+#include <QWindow>
 #include "Jobs.hpp"
 #include <cmath>
 #include <queue>
@@ -28,7 +30,7 @@ Handle(AIS_Shape) Viewport::centerMarker(const opad::Ref& ref, const gp_Pnt& poi
   m_ctx->Display(marker, 0, -1, false);
   m_ctx->Load(marker, -1);
   m_ctx->Activate(marker, 0);
-  m_ctx->SetSelectionSensitivity(marker, 0, 8);
+  m_ctx->SetSelectionSensitivity(marker, 0, static_cast<int>(std::lround(12 * displayScale())));  // a 24 px target (UI-124)
   marker->GlobalSelOwner()->SetPriority(10);
   m_centers.emplace(key, CenterMarker{ref, point, marker});
   m_centerObjects[marker.get()] = key;
@@ -47,8 +49,94 @@ void Viewport::setCenterPicking(bool on,const QPointF& position) {
     }
   }
   ResetPreviousMoveTo();m_hoverOwner=nullptr;
-  const auto at=devicePos(position);m_ctx->MoveTo(at.x(),at.y(),m_view,false);
+  moveTo(devicePos(position));
   discoverCenter();redrawScene();
+}
+
+// UI-31. First one ray from the point towards the eye (nothing behind the point or behind the eye counts), then what is
+// drawn over its pixel, as box selection tests it: a part thinner than a pixel, or a gap between facets that the exact
+// ray slips through, still covers the point on screen. The pixel's pick tolerance reaches faces beside the point, far
+// nearer when seen edge-on (a cylinder's silhouette): its margin is wider and the point's own body is left to the ray.
+bool Viewport::pointVisible(const gp_Pnt& p, const std::string& own, double slackPx) const {
+  if (!m_initialised || m_selectThrough || m_navSelector.IsNull()) return true;
+  const auto camera = m_view->Camera();
+  const bool ortho = camera->IsOrthographic();
+  gp_Vec back = ortho ? gp_Vec(camera->Direction()).Reversed() : gp_Vec(p, camera->Eye());
+  const double reach = ortho ? RealLast() : back.Magnitude();
+  if (back.SquareMagnitude() < 1e-24) return true;
+  back.Normalize();
+  const gp_Vec ahead(camera->Direction());
+  const double scale = ortho ? 1.0 : std::max(1e-6, gp_Vec(camera->Eye(), p).Dot(ahead) / camera->Distance());
+  const double pixel = pixelSize() * scale, slack = slackPx * pixel;  // at the point's depth
+  auto occludes = [&](int i, bool others) {
+    const auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
+    if (node == m_navNodes.end() || (others && node->second == own)) return false;
+    const auto item = m_items.find(node->second);
+    return item != m_items.end() && !item->second.look.ghost && m_ctx->IsDisplayed(item->second.ais);  // a ghost is seen through
+  };
+  const gp_Pnt from = p.Translated(back * slack);
+  m_navSelector->Pick(gp_Ax1(from, gp_Dir(back)), m_view);
+  for (int i = 1; i <= m_navSelector->NbPicked(); ++i)
+    if (occludes(i, false) && m_navSelector->PickedPoint(i).Distance(from) < reach - slack) return false;
+  Standard_Integer x = 0, y = 0;
+  m_view->Convert(p.X(), p.Y(), p.Z(), x, y);
+  m_navSelector->Pick(x, y, m_view);
+  for (int i = 1; i <= m_navSelector->NbPicked(); ++i)
+    if (occludes(i, true) && gp_Vec(m_navSelector->PickedPoint(i), p).Dot(ahead) > std::max(slack, 8 * pixel)) return false;
+  return true;
+}
+
+bool Viewport::detectedPoint(gp_Pnt& p) const {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  const auto& selector = m_ctx->MainSelector();
+  const auto owner = m_ctx->DetectedOwner();
+  for (int i = 1; i <= selector->NbPicked(); ++i)
+    if (selector->Picked(i) == owner) { p = selector->PickedPoint(i); return true; }
+  return false;
+}
+
+// The pick tolerance reaches past what is drawn both ways: a vertex's through a thin wall, and a face's to the face of a
+// silhouette edge seen edge-on, nearer than that edge or vertex though both are in sight. So the pointer takes the first
+// owner in pick order that is not an occluder and whose point is in sight, else nothing.
+bool Viewport::dropOccluded() {
+  if (!m_initialised || !m_ctx->HasDetected() || m_hoverCycled) return false;
+  const bool subShapes = m_filter == SelFilter::Edge || m_filter == SelFilter::Vertex;
+  const auto& selector = m_ctx->MainSelector();
+  auto hidden = [&](const Handle(SelectMgr_EntityOwner)& owner) {
+    if (!Handle(OccluderOwner)::DownCast(owner).IsNull()) return true;
+    const auto body = subShapes && !Handle(StdSelect_BRepOwner)::DownCast(owner).IsNull()
+        ? m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get()) : m_nodeOf.end();
+    if (body == m_nodeOf.end()) return false;
+    for (int i = 1; i <= selector->NbPicked(); ++i)
+      if (selector->Picked(i) == owner) return !pointVisible(selector->PickedPoint(i), body->second);
+    return false;
+  };
+  const auto first = m_ctx->DetectedOwner();
+  if (!hidden(first)) return false;
+  Handle(SelectMgr_EntityOwner) take;
+  int rank = 0;
+  for (m_ctx->InitDetected(); m_ctx->MoreDetected() && rank < 16 && take.IsNull(); m_ctx->NextDetected(), ++rank)
+    if (const auto owner = m_ctx->DetectedCurrentOwner(); owner != first && !hidden(owner)) take = owner;
+  for (int i = 0; !take.IsNull() && i < 64 && m_ctx->DetectedOwner() != take; ++i) m_ctx->HilightNextDetected(m_view, Standard_False);
+  if (take.IsNull() || m_ctx->DetectedOwner() != take) m_ctx->ClearDetected(Standard_False);
+  m_view->InvalidateImmediate();
+  return !m_ctx->HasDetected();
+}
+
+void Viewport::moveTo(const Graphic3d_Vec2i& at) {
+  m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);
+  dropOccluded();
+}
+
+void Viewport::contextLazyMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const Graphic3d_Vec2i& point) {
+  // The hover chosen there (select other, UI-128) stays what the pointer is on, also for the click (the controller picks
+  // again for a click when its last pick point was reset by the press).
+  if (m_hoverCycled && point == m_cycledAt) {
+    myPrevMoveTo = point;
+    return;
+  }
+  AIS_ViewController::contextLazyMoveTo(ctx, view, point);
+  dropOccluded();
 }
 
 void Viewport::discoverCenter() {
@@ -82,9 +170,9 @@ void Viewport::refreshCenterStyles() {
     const bool selected=m_ctx->IsSelected(marker.ais);
     const bool center=key==m_activeCenter, tracking=key==m_trackingMarker;
     const bool candidate=tracking;
-    const bool locked=(center && m_centerLocked) || (tracking && m_trackingLocked);
+    const bool locked=(center && m_centerLocked) || (tracking && m_shift.locked());
     auto aspect=marker.ais->Attributes()->PointAspect();
-    aspect->SetTypeOfMarker(selected ? Aspect_TOM_O_PLUS : Aspect_TOM_O);
+    aspect->SetTypeOfMarker(selected ? Aspect_TOM_O_PLUS : tracking && m_trackingCross ? Aspect_TOM_X : Aspect_TOM_O);
     aspect->SetScale(selected ? 4.0 : locked ? 7.0 : candidate ? 5.0 : 3.0);
     marker.ais->SynchronizeAspects();
   }
@@ -92,29 +180,53 @@ void Viewport::refreshCenterStyles() {
 
 bool Viewport::inferenceKey(QKeyEvent* key) {
   if (key->key()!=Qt::Key_Shift || key->isAutoRepeat() || m_sketchInput || m_blocked || !m_initialised) return false;
+  if (!m_shiftClock.isValid()) m_shiftClock.start();
+  using R=tracking::ShiftLock::Result;
+  const int count=int(m_trackingCandidates.size());
   if (key->type()==QEvent::KeyPress) {
-    if (m_shiftHeld || QApplication::mouseButtons()!=Qt::NoButton) return false;
-    const int count=int(m_trackingCandidates.size());
-    if (!count) return false;
-    m_inferenceChoice=std::clamp(m_inferenceChoice,0,count-1);
-    m_shiftHeld=true; m_shiftClock.start();
+    if (QApplication::mouseButtons()!=Qt::NoButton) return false;
+    const R r=m_shift.press(m_shiftClock.elapsed(),count);
+    if (r==R::Ignored) return false;
     m_centerLocked=false;
-    m_trackingLocked=true;
-    m_lockedTracking=m_trackingCandidates[m_inferenceChoice];
+    if (r==R::Locked) m_lockedTracking=m_trackingCandidates[m_inferenceChoice=std::clamp(m_inferenceChoice,0,count-1)];
   } else {
-    if (!m_shiftHeld) return false;
-    const bool tap=m_shiftClock.elapsed()<250;
-    m_shiftHeld=m_centerLocked=m_trackingLocked=false;
-    const int count=int(m_trackingCandidates.size());
-    if(tap && count>1) m_inferenceChoice=(m_inferenceChoice+1)%count;
+    const auto held=m_lockedTracking;
+    const R r=m_shift.release(m_shiftClock.elapsed(),count,m_crossings);
+    if (r==R::Ignored) return false;
+    m_centerLocked=false;
+    if (r==R::StuckPrevious) m_lockedTracking=m_tapLock;  // the guide shown before the double tap's first tap
+    else if (r==R::NextCrossing) ++m_crossChoice;
+    else if (r==R::Cycled || r==R::Unlocked) {
+      m_tapLock=held; m_crossChoice=0;
+      if (r==R::Cycled) m_inferenceChoice=(m_inferenceChoice+1)%count;
+    }
   }
   m_trackingDirty=true; m_hoverOwner=nullptr;
   refreshCenterStyles();
-  emit hoverChanged(m_trackingLocked ? tr("Tracking locked - release Shift to unlock") : tr("Tap Shift to cycle tracking points; hold Shift to lock"));
   redrawScene(); return true;
 }
 
+bool Viewport::trackingEscape(QEvent* e) {
+  if (e->type()!=QEvent::ShortcutOverride && e->type()!=QEvent::KeyPress) return false;
+  auto* key=static_cast<QKeyEvent*>(e);
+  if (key->key()!=Qt::Key_Escape || (key->modifiers() & ~Qt::KeypadModifier)) return false;
+  if (e->type()==QEvent::KeyPress && std::exchange(m_eatEscape,false)) return true;  // the press after its override
+  if (!m_shift.escape()) return false;
+  m_eatEscape=e->type()==QEvent::ShortcutOverride; e->accept();
+  m_trackingDirty=true; m_hoverOwner=nullptr;
+  refreshCenterStyles(); redrawScene();
+  return true;
+}
+
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
+  // The window's surface back after it was minimised (or covered while the screen was locked): the frame it lost is drawn
+  // again whole; nothing in the scene changed, so the next frame alone would draw nothing and the view stayed black.
+  if (e->type() == QEvent::Expose && object == window()->windowHandle()) {
+    const bool exposed = window()->windowHandle()->isExposed();
+    if (exposed && !std::exchange(m_topExposed, exposed)) exposedAgain();
+    m_topExposed = exposed;
+  }
+  if (zoomWindowKey(object, e)) return true;
   if(e->type()==QEvent::MouseButtonPress || e->type()==QEvent::MouseButtonDblClick) {
     const auto widget=qobject_cast<QWidget*>(object);
     if(widget && (widget==window() || window()->isAncestorOf(widget)))resetHoverFade();
@@ -123,13 +235,24 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
       && (object==this || underMouse() || m_ctrlCenterPick))
     setCenterPicking(e->type()==QEvent::KeyPress,m_trackingCursor);
   if ((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)
-      && (object==this || underMouse() || m_shiftHeld)
-      && (window()->isActiveWindow() || m_shiftHeld
+      && (object==this || underMouse() || m_shift.held())
+      && (window()->isActiveWindow() || m_shift.held()
           || (QApplication::activeWindow() && window()->isAncestorOf(QApplication::activeWindow()))))
     if(inferenceKey(static_cast<QKeyEvent*>(e))) return true;
+  // Esc on a tracking lock beats the window's Esc (the guided tool's step back): at the override stage, its press eaten.
+  if (((e->type()==QEvent::ShortcutOverride && (object==this || underMouse())) || (e->type()==QEvent::KeyPress && m_eatEscape)) && trackingEscape(e))
+    return true;
+  // A popup menu takes the mouse: the system pointer is back over the view while it is open (looked at once it is in).
+  if ((e->type()==QEvent::Show || e->type()==QEvent::Hide) && m_ownCursorWanted)
+    if (const auto* popup=qobject_cast<QWidget*>(object); popup && popup->windowType()==Qt::Popup)
+      QTimer::singleShot(0,this,[this]{applyOwnCursor();});
+  // Onto an overlay on the view (the prompt, the chips, a value box): Qt sends the view no Leave (it is still under the
+  // pointer, as the overlay's parent), but the sketch is not under the pointer any more, nor is the drawing cursor.
+  if (e->type()==QEvent::Enter && m_sketchInput && object!=this)
+    if (const auto* widget=qobject_cast<QWidget*>(object); widget && !widget->isWindow() && isAncestorOf(widget)) m_sketchInput->sketchLeave();
   if (e->type()==QEvent::ApplicationDeactivate) {
     setCenterPicking(false,m_trackingCursor);
-    m_shiftHeld=m_centerLocked=m_trackingLocked=false; refreshCenterStyles();
+    m_centerLocked=false; m_shift.deactivate(); refreshCenterStyles();
   }
   return QWidget::eventFilter(object,e);
 }
@@ -142,7 +265,6 @@ void Viewport::clearCenters() {
   m_centerObjects.clear();
   m_activeCenter.clear();
   m_centerLocked = false;
-  m_shiftHeld = false;
   m_hoverOwner = nullptr;
 }
 
@@ -279,7 +401,9 @@ gp_Pnt Viewport::drawingPlanePoint(const QPointF& cursor,bool& found) {
   return best;
 }
 
-// The point of a drawing's or sketch's curves nearest `cursor` on screen (squared distance in widget pixels).
+// The point of a drawing's or sketch's curves nearest `cursor` on screen (squared distance in widget pixels). Run by run
+// (BodyPrs::segmentRuns), nearest box on screen first, until a box is farther than the best point found: a press over a
+// big drawing projected its every segment (UI-51).
 gp_Pnt Viewport::nearestCurvePoint(const QPointF& cursor,bool& found,double& distance) {
   found=false;distance=1e100;
   gp_Pnt best=m_view->Camera()->Center();
@@ -290,16 +414,43 @@ gp_Pnt Viewport::nearestCurvePoint(const QPointF& cursor,bool& found,double& dis
     const auto delta=pa+d*t-cursor; const double sq=QPointF::dotProduct(delta,delta);
     if (sq<distance) { found=true;distance=sq; best=a.Translated(gp_Vec(a,b)*t); }
   };
+  struct Run { double bound; const BodyPrs* prs; gp_Trsf trsf; size_t first, count; bool ordered; };
+  std::vector<Run> runs;
+  const auto camera=m_view->Camera();
+  // The squared distance from the cursor to a box's outline on screen: 0 inside it, or when a corner is behind the eye.
+  auto bound=[&](const Bnd_Box& box,const gp_Trsf& trsf) {
+    if(box.IsVoid()) return 0.0;
+    const gp_Pnt lo=box.CornerMin(),hi=box.CornerMax();
+    double x0=1e300,y0=1e300,x1=-1e300,y1=-1e300;
+    for(int c=0;c<8;++c) {
+      const gp_Pnt p=gp_Pnt(c&1?hi.X():lo.X(),c&2?hi.Y():lo.Y(),c&4?hi.Z():lo.Z()).Transformed(trsf);
+      if(!camera->IsOrthographic() && gp_Vec(camera->Eye(),p).Dot(gp_Vec(camera->Direction()))<=0) return 0.0;
+      const QPointF s=widgetPoint({p.X(),p.Y(),p.Z()});
+      x0=std::min(x0,s.x());y0=std::min(y0,s.y());x1=std::max(x1,s.x());y1=std::max(y1,s.y());
+    }
+    const double dx=cursor.x()<x0?x0-cursor.x():cursor.x()>x1?cursor.x()-x1:0, dy=cursor.y()<y0?y0-cursor.y():cursor.y()>y1?cursor.y()-y1:0;
+    return dx*dx+dy*dy;
+  };
+  auto add=[&](const BodyPrs* prs,const gp_Trsf& trsf) {
+    if(prs->drawingSegments.size()<2) return;
+    if(prs->segmentRuns.empty()) { runs.push_back({0.0,prs,trsf,0,prs->drawingSegments.size()/2,false}); return; }
+    for(const auto& run:prs->segmentRuns) runs.push_back({bound(run.box,trsf),prs,trsf,run.first,run.count,true});
+  };
   for (const auto& [id,item]:m_items) {
     if(!m_ctx->IsDisplayed(item.ais)) continue;
     auto p=m_prs.find(item.key); if(p==m_prs.end()) continue;
-    const auto& points=p->second->drawingSegments;
-    for(size_t i=0;i+1<points.size();i+=2) segment(points[i].Transformed(item.ais->Transformation()),points[i+1].Transformed(item.ais->Transformation()));
+    add(p->second.get(),item.ais->Transformation());
   }
-  for(const auto& [id,wire]:m_sketchWires) {
-    if(!m_ctx->IsDisplayed(wire.ais) || !wire.prs) continue;
-    const auto& points=wire.prs->drawingSegments;
-    for(size_t i=0;i+1<points.size();i+=2) segment(points[i],points[i+1]);
+  for(const auto& [id,wire]:m_sketchWires)
+    if(m_ctx->IsDisplayed(wire.ais) && wire.prs) add(wire.prs.get(),gp_Trsf());
+  std::sort(runs.begin(),runs.end(),[](const Run& a,const Run& b){return a.bound<b.bound;});
+  for(const auto& run:runs) {
+    if(run.bound>=distance) break;
+    const auto& points=run.prs->drawingSegments;
+    for(size_t k=run.first;k<run.first+run.count;++k) {
+      const size_t i=run.ordered?run.prs->segmentOrder[k]:k;
+      segment(points[2*i].Transformed(run.trsf),points[2*i+1].Transformed(run.trsf));
+    }
   }
   return best;
 }

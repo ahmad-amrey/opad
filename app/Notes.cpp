@@ -176,7 +176,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
             op = {{"op", "annotation"}, {"anchor", anchor}, {"text", value}, {"reply_to", note.id}};
           } else op = {{"op", "edit"}, {"target", note.id}, {"set", {{"text", value}}}};
           doc->run("append", {{"op", op}});
-        } catch (const std::exception& e) { QMessageBox::warning(nullptr, tr("Note"), QString::fromUtf8(e.what())); }
+        } catch (const std::exception& e) { QMessageBox::warning(nullptr, tr("Note"), i18n::t(QString::fromUtf8(e.what()))); }
       });
     });
   }
@@ -188,7 +188,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
     mark->setPixmap(icons::pixmap(resolved ? "check" : "warning", resolved ? t.green : t.red, 14, devicePixelRatioF()));
     row->addWidget(mark);
     auto* l = new QLabel(resolved ? tr("resolved") : tr("unresolved · target %1 no longer exists").arg(QString::fromStdString(note.body.substr(0, 8))), this);
-    l->setStyleSheet(QString("color:%1; font-size:11px;").arg((resolved ? t.green : t.red).name()));
+    l->setStyleSheet(QString("color:%1; font-size:%2px;").arg((resolved ? t.green : t.red).name()).arg(theme::px(11)));
     row->addWidget(l, 1);
     v->addLayout(row);
   }
@@ -205,7 +205,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
   if(doc && !note.measurement) {
     auto* remove=new QPushButton(tr("Delete"),this);remove->setObjectName("deleteNote");foot->addWidget(remove);
     connect(remove,&QPushButton::clicked,this,[doc,id=note.id] {
-      QTimer::singleShot(0,doc,[doc,id] {try {doc->run("delete_annotation",{{"target",id}});} catch(const std::exception& e){QMessageBox::warning(nullptr,tr("Delete note"),QString::fromUtf8(e.what()));}});
+      QTimer::singleShot(0,doc,[doc,id] {try {doc->run("delete_annotation",{{"target",id}});} catch(const std::exception& e){QMessageBox::warning(nullptr,tr("Delete note"),i18n::t(QString::fromUtf8(e.what())));}});
     });
   }
   v->addLayout(foot);

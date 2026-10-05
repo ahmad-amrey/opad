@@ -28,6 +28,8 @@
 #include "Notes.hpp"
 #include "opad/geometry.hpp"
 
+#include <algorithm>
+
 namespace {
 Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
 
@@ -41,7 +43,7 @@ class NoteGraphic : public AIS_InteractiveObject {
   struct Stroke {std::vector<gp_Pnt> points;QColor color;double width;};
   std::vector<Stroke> strokes;
   // scale: backing pixels per widget point, so a stroke is as wide on screen as its sample in the editor
-  void addDrawing(const opad::json& drawing, double scale) {
+  void addDrawing(const opad::json& drawing, double scale, const gp_Vec& offset = gp_Vec()) {
     if(drawing.is_null()) return;
     for(const auto& stroke:drawing.at("strokes")) {
       const auto frame=opad::Frame::from_json(stroke.value("plane",drawing.at("plane")));
@@ -49,7 +51,7 @@ class NoteGraphic : public AIS_InteractiveObject {
       const QColor color=notes::penColor(name);
       const auto& points=stroke.at("points");
       Stroke line{{},color,stroke.at("width").get<double>()*scale};line.points.reserve(points.size());
-      for(const auto& point:points){const auto p=frame.to_world(point[0],point[1]);line.points.emplace_back(p[0],p[1],p[2]);}
+      for(const auto& point:points){const auto p=frame.to_world(point[0],point[1]);line.points.push_back(gp_Pnt(p[0],p[1],p[2]).Translated(offset));}
       strokes.push_back(std::move(line));
     }
   }
@@ -91,34 +93,125 @@ class NoteGraphic : public AIS_InteractiveObject {
 };
 }  // namespace
 
-// Where each open note is anchored, from the scene; the cards follow through notesMoved.
+// What a note's place depends on: its reference, and the body keys and placements of what it is pinned to (every body of
+// a component; a sketch's plane and size). The same signature, the same place: nothing is measured again.
+size_t Viewport::anchorSignature(const opad::Ref& ref) const {
+  const opad::Scene& scene = m_doc->scene;
+  size_t h = std::hash<std::string>{}(ref.str());
+  auto mix = [&h](size_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+  auto body = [&](const std::string& id) {
+    const opad::Node* n = scene.node(id);
+    if (!n || n->kind != opad::Node::Kind::Body) return;
+    mix(std::hash<std::string>{}(id));
+    mix(std::hash<std::string>{}(n->body_missing ? std::string() : n->body_key));
+    for (double v : scene.world(id).m) mix(std::hash<double>{}(v));
+  };
+  if (const opad::SketchItem* s = scene.sketch(ref.body)) {
+    mix(std::hash<std::string>{}(s->frame.to_json().dump()));
+    for (const char* k : {"points", "entities"}) {
+      const auto it = s->geometry.find(k);
+      mix(it == s->geometry.end() ? 0 : it->size());
+    }
+  } else if (const opad::Node* n = scene.node(ref.body); n && n->kind == opad::Node::Kind::Component) {
+    for (const auto& b : scene.bodies_under(ref.body)) body(b);
+  } else {
+    body(ref.body);
+  }
+  return h;
+}
+
+// Where each open note is anchored, from the scene; the cards follow through notesMoved. A note pinned to a body,
+// component, sketch or sub-shape shows once its anchor has been measured on a worker (UI-03: exact mass properties here
+// held a sync of the Engine for 15 s per note); the cache keeps it until what it depends on changes.
 void Viewport::updateAnnotations() {
   if (!m_initialised) return;
+  trace::Scope scope("Viewport::updateAnnotations");
+  m_notesRevision = m_doc->revision;
   refreshMeasurement(true);
   m_notes.clear();
+  struct Measure { std::string id; opad::Ref ref; size_t signature; };
+  std::vector<Measure> measure;
+  std::set<std::string> pinned;
   for (const auto& a : m_doc->scene.annotations) {
     if (a.unresolved) continue;
     gp_Pnt at(a.anchor.point[0], a.anchor.point[1], a.anchor.point[2]);
-    if (a.drawing.is_null() && a.anchor.kind != opad::Ref::Kind::Point) {
-      try {
-        opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, a.anchor);
-        opad::json c = info.contains("center") ? info["center"] : info.contains("point") ? info["point"] : info.contains("start") ? info["start"] : info["bbox"]["center"];
-        at = gp_Pnt(c[0].get<double>(), c[1].get<double>(), c[2].get<double>());
-      } catch (const std::exception&) {
+    if (!a.drawing.is_null()) {
+      const auto& p = a.drawing.at("plane").at("origin");
+      at = gp_Pnt(p[0], p[1], p[2]);
+    } else if (a.anchor.kind != opad::Ref::Kind::Point) {
+      pinned.insert(a.id);
+      const size_t signature = anchorSignature(a.anchor);
+      auto [it, added] = m_noteAnchors.try_emplace(a.id);
+      NoteAnchor& anchor = it->second;
+      if (added || anchor.signature != signature) anchor = NoteAnchor{signature};
+      if (!anchor.ready) {
+        if (!anchor.queued) measure.push_back({a.id, a.anchor, signature});
+        anchor.queued = true;
         continue;
       }
+      if (!anchor.found) continue;
+      at = anchor.at;
     }
-    if(!a.drawing.is_null()) {const auto& p=a.drawing.at("plane").at("origin");at=gp_Pnt(p[0],p[1],p[2]);}
-    m_notes[a.id] = {at, a.style, a.drawing};
+    m_notes[a.id] = {at, a.style, a.drawing, a.anchor.body};
+  }
+  for (auto it = m_noteAnchors.begin(); it != m_noteAnchors.end();) it = pinned.count(it->first) ? std::next(it) : m_noteAnchors.erase(it);
+  if (!measure.empty()) {
+    // The worker reads a copy of the scene and a document that only shares the shape cache (a copy of the document would
+    // copy every BREP text): the shapes are cached here first, a hit for every body loaded or displayed.
+    auto document = std::make_shared<opad::Document>();
+    document->shape_cache = m_doc->doc.shape_cache;
+    const opad::Scene& scene = m_doc->scene;
+    for (const auto& m : measure)
+      for (const auto& id : scene.node(m.ref.body) ? scene.bodies_under(m.ref.body) : std::vector<std::string>{})
+        if (const opad::Node* n = scene.node(id); n && !n->body_missing) try { opad::body_shape(m_doc->doc, n->body_key); } catch (const std::exception&) {}
+    auto copy = std::make_shared<opad::Scene>(scene);
+    auto found = std::make_shared<std::vector<std::pair<bool, opad::Vec3>>>(measure.size());
+    const auto generation = m_doc->generation;
+    ++m_anchorJobs;
+    m_jobs->async(tr("Placing notes"), [document, copy, measure, found](Progress p) {
+      for (size_t i = 0; i < measure.size() && !p.cancelled(); ++i) {
+        try {
+          (*found)[i] = {true, opad::annotation_anchor(*document, *copy, measure[i].ref)};
+        } catch (const std::exception&) {
+        } catch (const Standard_Failure&) {
+        }
+      }
+    }, [this, measure, found, generation](bool ok, const QString&) {
+      --m_anchorJobs;
+      const bool replaced = generation != m_doc->generation;  // another document (the same file again: the same notes)
+      bool placed = false;
+      for (size_t i = 0; i < measure.size(); ++i) {
+        auto it = m_noteAnchors.find(measure[i].id);
+        if (it == m_noteAnchors.end() || it->second.signature != measure[i].signature) continue;  // moved on meanwhile
+        NoteAnchor& anchor = it->second;
+        anchor.queued = false;
+        placed = placed || replaced;  // measured again, in the document there is now
+        if (!ok || replaced) continue;  // cancelled: measured again after the next change
+        const auto& [hit, at] = (*found)[i];
+        anchor.ready = true;
+        anchor.found = hit;
+        anchor.at = gp_Pnt(at[0], at[1], at[2]);
+        placed = placed || hit;
+        ++m_anchorsMeasured;
+      }
+      if (placed) updateAnnotations();
+    }, JobKind::Background);
   }
   m_noteCamera.Reset();  // so the next frame lays the cards out again
   QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
 }
 
+bool Viewport::noteAnchorPoint(const std::string& id, opad::Vec3& out) const {
+  auto it = m_notes.find(id);
+  if (it == m_notes.end()) return false;
+  out = {it->second.at.X(), it->second.at.Y(), it->second.at.Z()};
+  return true;
+}
+
 bool Viewport::noteAnchor(const std::string& id, QPoint& out) const {
   auto it = m_notes.find(id);
   if (it == m_notes.end() || !m_initialised) return false;
-  const gp_Pnt& p = it->second.at;
+  const gp_Pnt p = it->second.at.Translated(lookOffset(it->second.node));
   if (!m_view->Camera()->IsOrthographic() && gp_Vec(m_view->Camera()->Eye(), p).Dot(gp_Vec(m_view->Camera()->Direction())) <= 0) return false;  // behind the eye
   out = widgetPoint({p.X(), p.Y(), p.Z()});
   return true;
@@ -135,18 +228,20 @@ void Viewport::setNoteLeaders(const std::map<std::string, QPoint>& ends, bool sh
   Handle(NoteGraphic) g = new NoteGraphic();
   for (const auto& [id, note] : m_notes) {
     if(!m_noteTypeFilter.empty() && note.style!=m_noteTypeFilter) continue;
-    g->addDrawing(note.drawing, m_cubeScale);
+    const gp_Vec offset = lookOffset(note.node);
+    const gp_Pnt at = note.at.Translated(offset);
+    g->addDrawing(note.drawing, m_cubeScale, offset);
     const notes::Style& look = notes::style(note.style);
     const QColor color = m_tokens.*look.color;
-    g->dots.push_back({note.at, color});
+    g->dots.push_back({at, color});
     auto end = ends.find(id);
     if (end == ends.end()) continue;
     // World units per widget pixel at the anchor (perspective: at its depth, not the camera target's).
     double px = pixelSize();
-    if (!camera->IsOrthographic()) px *= std::max(gp_Vec(camera->Eye(), note.at).Dot(gp_Vec(camera->Direction())), camera->Distance() * 0.01) / camera->Distance();
-    const QPoint from = widgetPoint({note.at.X(), note.at.Y(), note.at.Z()});
-    const gp_Pnt to = note.at.Translated(right * ((end->second.x() - from.x()) * px) + up * ((from.y() - end->second.y()) * px));
-    g->leaders.push_back({note.at, to, color, look.line == Qt::SolidLine ? Aspect_TOL_SOLID : look.line == Qt::DashLine ? Aspect_TOL_DASH : Aspect_TOL_DOT, look.width});
+    if (!camera->IsOrthographic()) px *= std::max(gp_Vec(camera->Eye(), at).Dot(gp_Vec(camera->Direction())), camera->Distance() * 0.01) / camera->Distance();
+    const QPoint from = widgetPoint({at.X(), at.Y(), at.Z()});
+    const gp_Pnt to = at.Translated(right * ((end->second.x() - from.x()) * px) + up * ((from.y() - end->second.y()) * px));
+    g->leaders.push_back({at, to, color, look.line == Qt::SolidLine ? Aspect_TOL_SOLID : look.line == Qt::DashLine ? Aspect_TOL_DASH : Aspect_TOL_DOT, look.width});
   }
   Handle(Graphic3d_SequenceOfHClipPlane) noClip = new Graphic3d_SequenceOfHClipPlane();
   noClip->SetOverrideGlobal(Standard_True);
@@ -266,14 +361,38 @@ bool Viewport::annotationPick(const QPointF& point, opad::Ref& target, bool& hit
 }
 
 // Cheap on purpose (it runs in a click): one sub-shape's mesh, or the arrays the body is already drawn with.
-bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre) {
-  clearAnnotationTarget();
+bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre, bool add, TargetMiss* miss) {
+  if (!add) clearAnnotationTarget();
+  TargetMiss why = TargetMiss::NotDrawn;
+  if (!miss) miss = &why;
+  *miss = TargetMiss::NotDrawn;
   if (!m_initialised) return false;
+  if (target.kind == opad::Ref::Kind::Point) {  // a point in space (a pinned measurement's end, a note an agent placed): ringed
+    Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.selected3d);
+    mark->rings.push_back(gp_Pnt(target.point[0], target.point[1], target.point[2]));
+    mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    mark->SetInfiniteState(Standard_True);
+    m_ctx->Display(mark, 0, -1, Standard_False);
+    m_annotationTargets.push_back(mark);
+    m_annotationCorners.push_back(target.point);
+    if (centre) *centre = target.point;
+    redrawScene();
+    *miss = TargetMiss::None;
+    return true;
+  }
   const auto item = m_items.find(target.body);
-  if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) return false;
+  if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) {
+    // Not drawn: hidden (its flags, an isolation without it, a look), else not here yet (meshing, the display pump) or not a body.
+    const opad::Node* n = m_doc->scene.node(target.body);
+    const bool hidden = item != m_items.end() ? !item->second.look.visible || m_previewHidden.count(target.body) > 0
+                                              : n && n->kind == opad::Node::Kind::Body && !n->body_missing &&
+                                                    (!m_isolated.empty() ? !m_isolated.count(target.body) : !m_doc->scene.effectively_visible(target.body));
+    if (hidden) *miss = TargetMiss::Hidden;
+    return false;
+  }
   const Handle(AIS_Shape)& ais = item->second.ais;
-  const bool rigid = item->second.world.is_identity() || opad::mat_is_rigid(item->second.world);  // see displayBody
-  Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.sel);
+  const bool rigid = item->second.rigid, shared = rigid && item->second.stretch == 1;  // see displayBody: a stretched canvas is its own rectangle
+  Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.selected3d);
   Bnd_Box box;  // in the body's own frame, like the arrays
   try {
     if (target.kind == opad::Ref::Kind::Body) {
@@ -282,28 +401,36 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
         std::lock_guard<std::mutex> lock(m_meshMu);
         if (auto p = m_prs.find(item->second.key); p != m_prs.end()) prs = p->second;
       }
-      if (rigid && prs && !prs->triangles.IsNull()) {
+      if (shared && prs && !prs->triangles.IsNull()) {
         mark->fills.push_back(prs->triangles);
       } else if (rigid) {  // drawn without the worker's arrays: build them there too, the tint follows
         auto shape = std::make_shared<TopoDS_Shape>(ais->Shape());
         auto built = std::make_shared<std::shared_ptr<BodyPrs>>();
-        m_targetJob = m_jobs->async(tr("Highlighting %1").arg(m_doc->nodeName(target.body)), [shape, built](Progress) {
+        auto job = std::make_shared<Job*>(nullptr);
+        *job = m_jobs->async(tr("Highlighting %1").arg(m_doc->nodeName(target.body)), [shape, built](Progress) {
           Bnd_Box bounds;
           BRepBndLib::Add(*shape, bounds, Standard_True);
           *built = BodyPrs::build(*shape, bounds);
-        }, [this, mark, built](bool ok, const QString&) {
-          if (m_annotationTarget == mark) m_targetJob = nullptr;
-          if (!ok || m_annotationTarget != mark || !*built || (*built)->triangles.IsNull()) return;
+        }, [this, mark, built, job](bool ok, const QString&) {
+          m_targetJobs.erase(std::remove(m_targetJobs.begin(), m_targetJobs.end(), *job), m_targetJobs.end());
+          const bool shown = std::find(m_annotationTargets.begin(), m_annotationTargets.end(), Handle(AIS_InteractiveObject)(mark)) != m_annotationTargets.end();
+          if (!ok || !shown || !*built || (*built)->triangles.IsNull()) return;
           mark->fills.push_back((*built)->triangles);
           m_ctx->Redisplay(mark, Standard_False);
           redrawScene();
-        });
+        }, JobKind::Background);
+        m_targetJobs.push_back(*job);
       }
-      box = rigid ? opad::body_bbox(m_doc->doc, item->second.key) : opad::node_world_bbox(m_doc->doc, m_doc->scene, target.body);
+      if (shared) box = opad::body_bbox(m_doc->doc, item->second.key);
+      else if (rigid) BRepBndLib::Add(ais->Shape(), box, Standard_True);  // one rectangle
+      else box = opad::node_world_bbox(m_doc->doc, m_doc->scene, target.body);
       boxSegments(box, mark->outline);
     } else {
       const TopoDS_Shape sub = opad::subshape(ais->Shape(), target.kind, target.index);
-      if (sub.IsNull()) return false;
+      if (sub.IsNull()) {
+        *miss = TargetMiss::Changed;
+        return false;
+      }
       BRepBndLib::Add(sub, box, Standard_True);
       if (sub.ShapeType() == TopAbs_FACE) {
         TopLoc_Location loc;
@@ -328,8 +455,10 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
       }
     }
   } catch (const Standard_Failure&) {
+    *miss = TargetMiss::Changed;
     return false;
   } catch (const std::exception&) {  // the ordinal is gone (the body changed)
+    *miss = TargetMiss::Changed;
     return false;
   }
   const gp_Trsf trsf = ais->Transformation();  // identity for a non-rigid body: its shape is already placed
@@ -340,7 +469,7 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
   m_ctx->Display(mark, 0, -1, Standard_False);
   if (trace::enabled()) trace::log(QStringLiteral("annotation target %1: %2 fills, %3 outline, %4 lines, rigid %5").arg(QString::fromStdString(target.str())).arg(mark->fills.size()).arg(mark->outline.size()).arg(mark->lines.size()).arg(rigid));
   m_ctx->ClearDetected(Standard_False);  // the pick's hover highlight
-  m_annotationTarget = mark;
+  m_annotationTargets.push_back(mark);
   if (!box.IsVoid()) {
     const gp_Pnt lo = box.CornerMin(), hi = box.CornerMax();
     for (int i = 0; i < 8; ++i) {
@@ -353,15 +482,15 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
     }
   }
   redrawScene();
+  *miss = TargetMiss::None;
   return true;
 }
 
 void Viewport::clearAnnotationTarget() {
   m_annotationCorners.clear();
-  if (Job* job = std::exchange(m_targetJob, nullptr)) job->cancel();
-  if (!m_initialised || m_annotationTarget.IsNull()) return;
-  m_ctx->Remove(m_annotationTarget, Standard_False);
-  m_annotationTarget.Nullify();
+  for (Job* job : std::exchange(m_targetJobs, {})) job->cancel();
+  if (!m_initialised || m_annotationTargets.empty()) return;
+  for (const Handle(AIS_InteractiveObject)& mark : std::exchange(m_annotationTargets, {})) m_ctx->Remove(mark, Standard_False);
   redrawScene();
 }
 

@@ -8,12 +8,14 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
+#include <Image_AlienPixMap.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <cctype>
 
+#include "opad/canvas.hpp"
 #include "opad/design/sketch_text.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
@@ -87,6 +89,54 @@ struct Basis {
   bool perspective;
   double half_w, half_h, focal;  // ortho half extents in mm, or perspective focal length in px
 };
+
+// A canvas's picture decoded (OCCT's image reader: FreeImage where OCCT has it, else on Windows the Windows Imaging Component,
+// as in the static single-file build, whose OCCT is built without FreeImage), at most 1024 pixels on a side, mirrored as its
+// flags say; null when it cannot be read (an OCCT with neither: the canvas keeps its colour).
+std::shared_ptr<const RenderItem::Picture> canvas_picture(const Node& n) {
+  const auto href = n.raster.find("href");
+  if (href == n.raster.end() || !href->is_string()) return nullptr;
+  const std::string& text = href->get_ref<const std::string&>();
+  std::string bytes;
+  bytes.reserve(text.size() * 3 / 4);
+  unsigned bits = 0;
+  int count = 0;
+  for (size_t i = text.find(',') + 1; i > 0 && i < text.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(text[i]);
+    const int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52 : c == '+' ? 62 : c == '/' ? 63 : -1;
+    if (v < 0) continue;
+    bits = (bits << 6) | static_cast<unsigned>(v);
+    if ((count += 6) >= 8) bytes += static_cast<char>((bits >> (count -= 8)) & 0xFF);
+  }
+  Image_AlienPixMap pixels;
+  try {
+    if (bytes.empty() || !pixels.Load(reinterpret_cast<const Standard_Byte*>(bytes.data()), bytes.size(), TCollection_AsciiString("canvas"))) return nullptr;
+  } catch (const Standard_Failure&) {
+    return nullptr;
+  }
+  const int sw = static_cast<int>(pixels.SizeX()), sh = static_cast<int>(pixels.SizeY());
+  if (sw <= 0 || sh <= 0) return nullptr;
+  const int step = std::max(1, (std::max(sw, sh) + 1023) / 1024);
+  const auto flip = CanvasFlags::of(n.canvas).flip;
+  auto picture = std::make_shared<RenderItem::Picture>();
+  picture->width = sw / step;
+  picture->height = sh / step;
+  picture->rgb.resize(static_cast<size_t>(picture->width) * picture->height * 3);
+  for (int y = 0; y < picture->height; ++y)
+    for (int x = 0; x < picture->width; ++x) {
+      const int sx = (flip[0] ? picture->width - 1 - x : x) * step, sy = (flip[1] ? picture->height - 1 - y : y) * step;
+      const Quantity_ColorRGBA c = pixels.PixelColor(sx, sy);
+      uint8_t* out = &picture->rgb[(static_cast<size_t>(y) * picture->width + x) * 3];
+      out[0] = static_cast<uint8_t>(std::lround(std::clamp(c.GetRGB().Red(), 0.0, 1.0) * 255));
+      out[1] = static_cast<uint8_t>(std::lround(std::clamp(c.GetRGB().Green(), 0.0, 1.0) * 255));
+      out[2] = static_cast<uint8_t>(std::lround(std::clamp(c.GetRGB().Blue(), 0.0, 1.0) * 255));
+    }
+  const json& corners = n.raster.at("corners");
+  const Vec3 tl = corners.at(0).get<Vec3>(), tr = corners.at(1).get<Vec3>(), bl = corners.at(2).get<Vec3>();
+  picture->w = std::hypot(tr[0] - tl[0], tr[1] - tl[1], tr[2] - tl[2]);
+  picture->h = std::hypot(tl[0] - bl[0], tl[1] - bl[1], tl[2] - bl[2]);
+  return picture->w > 0 && picture->h > 0 ? picture : nullptr;
+}
 
 }  // namespace
 
@@ -183,7 +233,16 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
       return true;
     };
 
-    struct Tri { double x[3], y[3], z[3]; float shade; int id; float r, g, bl, a; bool smooth = false; float s3[3] = {0, 0, 0}; };
+    struct Tri {
+      double x[3], y[3], z[3];
+      float shade;
+      int id;
+      float r, g, bl, a;
+      bool smooth = false;
+      float s3[3] = {0, 0, 0};
+      const RenderItem::Picture* pic = nullptr;  // a canvas: its picture at the vertices' local XY (lu, lv)
+      double lu[3] = {0, 0, 0}, lv[3] = {0, 0, 0};
+    };
     // Perspective divides by depth, so depth is not linear in screen space but its reciprocal is: interpolating depth
     // itself put large triangles millimetres off and let surfaces behind them show through (B16). Orthographic depth is
     // linear and keeps its exact arithmetic, so orthographic images stay byte-identical.
@@ -210,14 +269,23 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
           if (z >= zb[idx]) continue;
           float* px3 = &fb[idx * 3];
           const float shade = t.smooth ? static_cast<float>(w0 * t.s3[0] + w1 * t.s3[1] + w2 * t.s3[2]) : t.shade;
+          float cr = t.r * shade, cg = t.g * shade, cb = t.bl * shade;
+          if (t.pic) {  // the picture at this point of the canvas, unlit (perspective-correct like the depth)
+            const double a0 = b.perspective ? w0 * iz[0] : w0, a1 = b.perspective ? w1 * iz[1] : w1, a2 = b.perspective ? w2 * iz[2] : w2, s = a0 + a1 + a2;
+            const double u = (a0 * t.lu[0] + a1 * t.lu[1] + a2 * t.lu[2]) / s, v = (a0 * t.lv[0] + a1 * t.lv[1] + a2 * t.lv[2]) / s;
+            const int tx = std::clamp(static_cast<int>(u / t.pic->w * t.pic->width), 0, t.pic->width - 1);
+            const int ty = std::clamp(static_cast<int>((1 - v / t.pic->h) * t.pic->height), 0, t.pic->height - 1);
+            const uint8_t* c = &t.pic->rgb[(static_cast<size_t>(ty) * t.pic->width + tx) * 3];
+            cr = c[0] / 255.0f, cg = c[1] / 255.0f, cb = c[2] / 255.0f;
+          }
           if (t.a >= 1.0f) {
             zb[idx] = static_cast<float>(z);
             ib[idx] = t.id;
-            px3[0] = t.r * shade; px3[1] = t.g * shade; px3[2] = t.bl * shade;
+            px3[0] = cr; px3[1] = cg; px3[2] = cb;
           } else {
-            px3[0] = px3[0] * (1 - t.a) + t.r * shade * t.a;
-            px3[1] = px3[1] * (1 - t.a) + t.g * shade * t.a;
-            px3[2] = px3[2] * (1 - t.a) + t.bl * shade * t.a;
+            px3[0] = px3[0] * (1 - t.a) + cr * t.a;
+            px3[1] = px3[1] * (1 - t.a) + cg * t.a;
+            px3[2] = px3[2] * (1 - t.a) + cb * t.a;
           }
         }
       }
@@ -235,6 +303,12 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
         std::vector<std::pair<uint32_t, uint32_t>> tinted;
         for (const auto& f : it.mesh->faces)
           if (std::find(it.highlight_faces.begin(), it.highlight_faces.end(), f.face) != it.highlight_faces.end()) tinted.push_back({f.first, f.first + f.count});
+        // Faces with a colour of their own, as index ranges in order.
+        std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::array<float, 3>>> painted;
+        if (!it.face_colors.empty())
+          for (const auto& f : it.mesh->faces)
+            if (auto c = it.face_colors.find(f.face); c != it.face_colors.end()) painted.push_back({{f.first, f.first + f.count}, c->second});
+        size_t paint = 0;
         const bool smooth = opt.smooth && N.size() == P.size();
         const Mat4& m = it.world;
         for (size_t k = 0; k + 2 < I.size(); k += 3) {
@@ -245,7 +319,9 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
             size_t vi = static_cast<size_t>(I[k + c]) * 3;
             w[c] = it.world.apply({P[vi], P[vi + 1], P[vi + 2]});
             ok = project(w[c], t.x[c], t.y[c], t.z[c]);
+            t.lu[c] = P[vi], t.lv[c] = P[vi + 1];
           }
+          t.pic = it.picture.get();
           if (!ok) continue;
           V3 n = norm(cross(sub(V3{w[1][0], w[1][1], w[1][2]}, V3{w[0][0], w[0][1], w[0][2]}),
                             sub(V3{w[2][0], w[2][1], w[2][2]}, V3{w[0][0], w[0][1], w[0][2]})));
@@ -261,10 +337,12 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
             }
           }
           t.id = it.id;
-          t.r = it.color[0]; t.g = it.color[1]; t.bl = it.color[2]; t.a = it.opacity;
+          while (paint < painted.size() && painted[paint].first.second <= k) ++paint;
+          const std::array<float, 3>& color = paint < painted.size() && k >= painted[paint].first.first ? painted[paint].second : it.color;
+          t.r = color[0]; t.g = color[1]; t.bl = color[2]; t.a = it.opacity;
           for (const auto& [a, e] : tinted)
             if (k >= a && k < e) {
-              t.r = it.color[0] * 0.35f + 0.65f * 1.0f; t.g = it.color[1] * 0.35f + 0.65f * 0.55f; t.bl = it.color[2] * 0.35f + 0.65f * 0.1f;
+              t.r = color[0] * 0.35f + 0.65f * 1.0f; t.g = color[1] * 0.35f + 0.65f * 0.55f; t.bl = color[2] * 0.35f + 0.65f * 0.1f;
             }
           raster(t);
         }
@@ -460,6 +538,11 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
     it.color = {static_cast<float>(n->color[0]), static_cast<float>(n->color[1]), static_cast<float>(n->color[2])};
     it.opacity = static_cast<float>(n->opacity);
     it.id = id++;
+    if (is_canvas(*n)) it.picture = canvas_picture(*n);
+    const FaceColors faces = face_colors(doc, n->body_key);
+    for (size_t f = 0; f < faces.face.size(); ++f)
+      if (const int c = faces.face[f]; c >= 0)
+        it.face_colors[static_cast<int>(f)] = {static_cast<float>(faces.colors[size_t(c)][0]), static_cast<float>(faces.colors[size_t(c)][1]), static_cast<float>(faces.colors[size_t(c)][2])};
     // B9: edges and highlights.
     bool mine = false;
     for (const auto& h : opt.highlight) mine |= h.body == bid;

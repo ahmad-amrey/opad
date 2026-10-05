@@ -1,0 +1,3049 @@
+{
+ "@about": "Help for every command (app/CommandHelp.hpp): one record per command id. Translations by id in commands.<language>.json.",
+ "commands": [
+  {
+   "id": "file.new",
+   "title": "New document",
+   "summary": "Starts a new, empty OPAD design.",
+   "details": "The current document is closed first; if it has unsaved changes you are asked whether to save them. The new design has no file until you save it.",
+   "keywords": ["blank", "empty", "start", "create"]
+  },
+  {
+   "id": "file.open",
+   "title": "Open",
+   "summary": "Opens an OPAD document, a CAD model, a mesh or a 2D drawing.",
+   "details": "OPAD documents open for editing. STEP, IGES, STL, 3MF, OBJ, DXF, DWG, SVG and the other formats open read-only in viewer mode, which is fast; Save turns them into editable OPAD documents.",
+   "keywords": ["load", "file", "step", "stl", "dxf", "dwg", "read"]
+  },
+  {
+   "id": "file.clone",
+   "title": "Clone repository",
+   "summary": "Copies a git repository to this computer and opens its OPAD documents.",
+   "details": "Type the address, the folder it goes into and its name, then Clone. The copy is set up for OPAD's merge and difference tools, and its .opad documents are offered to open.",
+   "keywords": ["git", "clone", "repository", "download"],
+   "requires": "git must be installed; Locate git… points OPAD to it."
+  },
+  {
+   "id": "vcs.compare",
+   "title": "Compare versions",
+   "summary": "Shows two versions of the document in one view: what was added, removed, changed or moved.",
+   "details": "Pick A and B in the Compare panel: this session, the saved file, git commits, recovery snapshots or another file. The view draws B tinted by change with ghosts of A, the panel lists the changes and Next change ({key:vcs.nextChange}) steps through them; Done or {fixed:esc} ends it.",
+   "keywords": ["diff", "changes", "git", "history", "version", "revision"],
+   "requires": "Open an OPAD document; not while a sketch is open."
+  },
+  {
+   "id": "vcs.unsavedChanges",
+   "title": "Show unsaved changes",
+   "summary": "Compares the saved file with this session: what changed since the last save.",
+   "details": "It opens Compare with the saved file as A and this session as B. The unsaved-changes question offers it too, as Review changes.",
+   "keywords": ["diff", "changes", "unsaved", "modified", "review"],
+   "requires": "Only for a saved OPAD document with unsaved changes."
+  },
+  {
+   "id": "vcs.panel",
+   "title": "Version control",
+   "summary": "Opens the Version control panel: the branch and its remote, the document's state, its history and the branches.",
+   "details": "Commit, push, pull and switch branches from there; the git chip beside the path opens it too. A document that is not in a repository yet is offered one.",
+   "keywords": ["git", "history", "branch", "commit", "push", "pull"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.commit",
+   "title": "Commit",
+   "summary": "Records the document (saved first) and the files you tick in git, with a message.",
+   "details": "The message is suggested from what changed since the last commit, and the author is asked for once. You can amend the last commit while it is not pushed, and push right after.",
+   "keywords": ["git", "save", "version", "check in"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.push",
+   "title": "Push",
+   "summary": "Sends your commits to the remote repository.",
+   "details": "The first push sets up the remote branch, adding a remote when there is none, and warns about big files. Commit first: a branch with no commits has nothing to push.",
+   "keywords": ["git", "upload", "share", "remote"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.pull",
+   "title": "Pull",
+   "summary": "Fetches the remote's commits and shows what they change in the document before merging them.",
+   "details": "Conflicts and changes made on both sides are listed, with Preview in Compare and Merge. The branch must follow a remote branch; Push sets that up.",
+   "keywords": ["git", "update", "download", "remote", "merge"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.fetch",
+   "title": "Fetch",
+   "summary": "Downloads the remote's new commits without changing your files.",
+   "details": "The git chip then shows how far ahead of or behind the remote your branch is. Fetch in the background does it every 10 minutes, quietly.",
+   "keywords": ["git", "remote", "update"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.newBranch",
+   "title": "New branch",
+   "summary": "Starts a branch at the current commit to try a variant of the design.",
+   "details": "Name it in the dialog; History can also start a branch from an older commit. Commit first: a branch starts at a commit.",
+   "keywords": ["git", "branch", "create", "variant"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.history",
+   "title": "History",
+   "summary": "Lists the commits of the document in the Version control panel.",
+   "details": "Compare a commit with this session or with the commit before, open it read-only, restore it as new changes, or start a branch from it. Show in version history on a timeline marker narrows the list to the commits that touched that step.",
+   "keywords": ["git", "log", "commits", "restore", "older"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.branches",
+   "title": "Branches",
+   "summary": "Lists the branches: switch to one, create, delete or merge one into the current branch.",
+   "details": "Unsaved and uncommitted changes are asked about before a switch, and a merge shows what it brings in first. Abort merge is there while a merge stopped on conflicts.",
+   "keywords": ["git", "switch", "checkout", "merge"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.pack",
+   "title": "Pack the repository",
+   "summary": "Packs the repository's loose objects so it takes less space.",
+   "details": "It runs git's maintenance on a worker and says what it saved. After a commit it is offered when many loose objects have piled up.",
+   "keywords": ["git", "gc", "maintenance", "size", "compress"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.resolve",
+   "title": "Resolve conflicts",
+   "summary": "Settles a merge that stopped on the document, change by change.",
+   "details": "What both sides changed is listed: choose mine or theirs for each, or keep a whole side. The file is then written and added, Regenerate is offered, and you commit the merge.",
+   "keywords": ["git", "merge", "conflict", "mine", "theirs"],
+   "requires": "Save the document as an OPAD file first; a viewed file cannot be versioned."
+  },
+  {
+   "id": "vcs.backgroundFetch",
+   "title": "Fetch in the background",
+   "summary": "Fetches from the remote every 10 minutes, quietly.",
+   "details": "It never asks for a sign-in; turn it off on a metered or slow connection. Fetch does it once by hand.",
+   "keywords": ["git", "remote", "fetch", "automatic", "metered"]
+  },
+  {
+   "id": "vcs.nextChange",
+   "title": "Next change",
+   "summary": "Goes to the next change in Compare.",
+   "details": "Its row in the panel is selected and its bodies are fitted in the view. Previous change ({key:vcs.previousChange}) goes back.",
+   "keywords": ["compare", "diff", "step"],
+   "requires": "Only while Compare is open."
+  },
+  {
+   "id": "vcs.previousChange",
+   "title": "Previous change",
+   "summary": "Goes to the previous change in Compare.",
+   "details": "Its row in the panel is selected and its bodies are fitted in the view. Next change ({key:vcs.nextChange}) goes forward.",
+   "keywords": ["compare", "diff", "step"],
+   "requires": "Only while Compare is open."
+  },
+  {
+   "id": "file.import",
+   "title": "Import",
+   "summary": "Adds a CAD model, mesh or drawing file to this design.",
+   "details": "The file's parts join the open document as new bodies, under the selected component if you choose to. A 2D drawing asks where it goes: onto a selected planar face, or on a plane you pick and place. A KiCad board first asks what to build.",
+   "keywords": ["insert", "add file", "merge", "step", "dxf", "mesh"],
+   "requires": "A file in viewer mode asks you to save it as an OPAD document first."
+  },
+  {
+   "id": "file.importdoc",
+   "title": "Save as OPAD document",
+   "summary": "Saves the file open in viewer mode as an editable OPAD document.",
+   "details": "The shapes already on screen are kept, so nothing is read again. The file you opened is left as it is; from then on you edit the new .opad document.",
+   "keywords": ["convert", "make editable", "viewer"],
+   "requires": "Only for a file open in viewer mode (STEP, STL, DXF and the other formats)."
+  },
+  {
+   "id": "assets.link",
+   "title": "Link as asset",
+   "summary": "Brings a CAD model, mesh, picture or drawing into the design as a link: the document keeps a reference and reads the file whenever it opens.",
+   "details": "Choose the file; its parts come in read-only and the document stays small. OPAD watches the file, badges its state in the browser and offers its changes for syncing. A drawing is placed first, on the selected face or on a plane you pick, and a KiCad board first asks how to read it.",
+   "keywords": ["insert", "reference", "external", "xref", "linked file", "asset"]
+  },
+  {
+   "id": "assets.sync",
+   "title": "Sync linked file",
+   "summary": "Reads the selected linked files again and updates their parts in the design.",
+   "details": "Parts that changed in the file are updated, new ones are added and removed ones taken out, and the features built on them are recomputed. Each file is one step to undo, and a toast says how many parts changed. A click on the Sync badge of a changed file in the browser does the same.",
+   "keywords": ["reload", "update", "refresh", "linked file"],
+   "requires": "Select a part of a linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.syncAll",
+   "title": "Sync all linked files",
+   "summary": "Syncs every linked file that changed since its last sync.",
+   "details": "The files are read again one after the other, each as its own step to undo, and a toast says how many were synced. When a watched file changes, a toast offers the same.",
+   "keywords": ["reload", "update", "refresh", "all files"],
+   "requires": "Only when a linked file changed since its last sync."
+  },
+  {
+   "id": "assets.autoSync",
+   "title": "Sync changed files automatically",
+   "summary": "Syncs linked files as soon as OPAD sees that they changed, without asking.",
+   "details": "Each sync is still one step, and its toast offers Undo. Off, a changed file shows its Sync badge and a toast offers to sync it. A document open read-only still asks, and the choice is kept for the next session.",
+   "keywords": ["auto", "reload", "watch", "linked file"]
+  },
+  {
+   "id": "assets.replace",
+   "title": "Replace linked file",
+   "summary": "Points the selected linked file's link at another file and reads its parts from there.",
+   "details": "Choose the new file: the import is synced from it, its parts updated and the features built on them recomputed. It is one step to undo, and later changes of the new file are watched.",
+   "keywords": ["relink", "swap", "linked file"],
+   "requires": "Select a part of one linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.reveal",
+   "title": "Show linked file in folder",
+   "summary": "Opens the folder of the selected linked file in the system's file manager.",
+   "details": "On Windows the file is selected there. If the file is not found, a toast names the path that was looked for.",
+   "keywords": ["reveal", "explorer", "finder", "folder", "linked file"],
+   "requires": "Select a part of one linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.copyPath",
+   "title": "Copy linked file path",
+   "summary": "Copies the full path of the selected linked file to the clipboard.",
+   "details": "A toast shows the path that was copied. Paste it into a file dialog, a message or a terminal.",
+   "keywords": ["clipboard", "path", "linked file"],
+   "requires": "Select a part of one linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.embed",
+   "title": "Embed as editable",
+   "summary": "Stores the selected linked file's parts in the document, so they can be edited.",
+   "details": "The link ends: later changes to the file no longer reach the design, and the parts lose their read-only mark and their badge. It is one step to undo.",
+   "keywords": ["bind", "unlink", "break link", "editable"],
+   "requires": "Select a part of one linked file first; not for a file in viewer mode."
+  },
+  {
+   "id": "assets.pack",
+   "title": "Pack into project",
+   "summary": "Copies the selected linked file into the assets folder beside the document and links that copy.",
+   "details": "The project then carries the file with it, for a colleague or a git repository. In a git work tree the copy is offered to be tracked with Git LFS. The new link is one step to undo; the copied file stays.",
+   "keywords": ["copy", "collect", "lfs", "assets folder"],
+   "requires": "Select a part of one linked file, in a document saved as an OPAD file."
+  },
+  {
+   "id": "assets.settings",
+   "title": "Linked files",
+   "summary": "Sets how STEP, IGES, KiCad boards and big files come in, and which folders are trusted for linked files.",
+   "details": "Importing those files can ask each time, link them as assets or import an editable copy. Linked files outside a document's project folder are read only once you say so, unless their folder is trusted. The trusted folders are listed here, where Remove takes one off; the question's Always trust this folder adds one. OK keeps the choices.",
+   "keywords": ["trust", "trusted folders", "ask", "link or copy", "preferences"]
+  },
+  {
+   "id": "assets.kicadSettings",
+   "title": "KiCad boards",
+   "summary": "Sets how KiCad boards are read: the reader, what they include, their origin and where their 3D models are found.",
+   "details": "Read them with OPAD's board reader, or with KiCad's own STEP export when KiCad is installed, which can add copper, pads and silkscreen. Choose the footprints' 3D models, parts marked do not populate and drilled vias, the boxes shown for missing models, the model folders and whether models of KiCad's library are downloaded. Save keeps it for the next boards and checks the linked ones again.",
+   "keywords": ["kicad", "3d models", "model folders", "preferences", "pcb"]
+  },
+  {
+   "id": "kicad.insert",
+   "title": "Insert KiCad PCB",
+   "summary": "Brings a KiCad board (.kicad_pcb) into the design, linked to its file.",
+   "details": "The Import KiCad board dialog sets how it is read, what it includes and its origin. The board comes in with a component per footprint and its 3D model, plus its outline and mounting holes; the file is watched and its changes are offered for syncing. Models of KiCad's library that are not installed can be downloaded.",
+   "keywords": ["kicad", "pcb", "board", "electronics", "link", "import"],
+   "requires": "Open or create a document first; not while a sketch is open."
+  },
+  {
+   "id": "kicad.previewSync",
+   "title": "Preview KiCad sync",
+   "summary": "Lists what changed in the selected board's file since its last sync, before you sync it.",
+   "details": "The Sync preview panel lists the parts moved, flipped, changed, added and removed, the board's own changes and the sketches and features they affect. The parts that change are tinted in the view, and a row selects its part. Sync applies exactly that as one step; Cancel closes it with nothing changed.",
+   "keywords": ["kicad", "changes", "compare", "update", "pcb"],
+   "requires": "Select a part of a linked KiCad board first."
+  },
+  {
+   "id": "kicad.project",
+   "title": "Project KiCad board",
+   "summary": "Brings a board's outline, mounting holes and chosen parts' outlines into the open sketch.",
+   "details": "Tick what to project: the board outline, the mounting holes (also ones added later) and parts, found with the filter by reference or footprint. Linked, they follow the board when it is synced, so an enclosure drawn on them keeps up with the board.",
+   "keywords": ["kicad", "outline", "mounting holes", "connector", "enclosure", "pcb"],
+   "requires": "Only while a sketch is open, in a document with a KiCad board."
+  },
+  {
+   "id": "kicad.clearance",
+   "title": "Check clearance to board",
+   "summary": "Checks the gap between a KiCad board's parts and the enclosure around it.",
+   "details": "The enclosure is the selection outside the board, else every other visible solid. The Board clearance panel lists overlaps and pairs closer than the Clearance you set (1 mm at first); a click on a row selects the pair and shows its gap. The check runs on a worker, and Check runs it again.",
+   "keywords": ["kicad", "clearance", "gap", "enclosure", "interference", "fit", "pcb"],
+   "requires": "Only in a document with a KiCad board; not while a sketch is open."
+  },
+  {
+   "id": "canvas.insert",
+   "title": "Insert canvas",
+   "summary": "Places a picture on a plane in the model, as a reference to trace or compare.",
+   "details": "Choose the picture, then the plane; a planar face selected first is taken at once. The picture sits on it centred: drag it, type an offset and a width, or snap a corner onto a vertex, then Place. The Canvas panel then opens to move, size and calibrate it.",
+   "keywords": ["image", "picture", "photo", "underlay", "reference image"],
+   "requires": "Not while a sketch is open.",
+   "clip": "insert.canvas"
+  },
+  {
+   "id": "canvas.edit",
+   "title": "Edit canvas",
+   "summary": "Shows the selected canvas's handles and the Canvas panel, to move, size, turn and set it.",
+   "details": "Drag the picture to move it, a corner dot to size it ({fixed:shift} frees its proportions) and the knob above it to turn it; or type X, Y, width, height and angle in the panel. The panel also sets its opacity, flips, whether it shows through the model or takes clicks, and its lock. A double-click on a canvas does the same, and each change is one step.",
+   "keywords": ["image", "picture", "move", "scale", "rotate"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.calibrate",
+   "title": "Calibrate canvas",
+   "summary": "Scales the canvas so that two points on the picture lie a distance you know apart.",
+   "details": "Pick two points on the picture, such as the ends of an edge whose length you know, then type their real distance and press {fixed:enter} or Apply. The picture scales about the first point; {fixed:esc} takes back the last point.",
+   "keywords": ["scale", "real size", "measure picture"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.align",
+   "title": "Align canvas to model",
+   "summary": "Moves, turns and scales the canvas so that two points on the picture land on two points of the model.",
+   "details": "Pick a point on the picture, then the vertex or circle centre of the model where it belongs, then a second pair. The canvas stays in its plane: model points off it are taken square onto it, and a toast says how far off they were. {fixed:esc} takes back the last pick.",
+   "keywords": ["scale relative", "match", "fit picture"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.trace",
+   "title": "Trace canvas to sketch",
+   "summary": "Makes a new sketch on the canvas's plane with the picture's dark shapes as curves.",
+   "details": "The picture is traced on a worker at the size the canvas has in the model, so calibrate it first. The sketch is named after the canvas, and a toast says how many curves it got.",
+   "keywords": ["vectorize", "bitmap", "outline"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.replace",
+   "title": "Replace canvas picture",
+   "summary": "Shows another picture in the selected canvas's place.",
+   "details": "Choose the picture: it keeps the canvas's centre, angle and width, and its height follows the new picture's proportions. It is one step to undo; a linked picture is replaced through its link.",
+   "keywords": ["swap", "relink", "picture"],
+   "requires": "Select a canvas first, or edit one; not while a sketch is open."
+  },
+  {
+   "id": "canvas.finish",
+   "title": "Close canvas",
+   "summary": "Ends editing the canvas: its handles and the Canvas panel close.",
+   "details": "What was changed stays; each change was its own step. OK in the panel and {fixed:esc} do the same.",
+   "keywords": ["done", "finish", "leave"],
+   "requires": "Only while a canvas is being edited."
+  },
+  {
+   "id": "canvas.fromBackdrop",
+   "title": "Backdrop images to canvases",
+   "summary": "Turns the backdrop pictures of the selected sketch into canvases where they lie.",
+   "details": "Each picture becomes a canvas in the model with its place and opacity, and leaves the sketch. Canvases can then be moved, calibrated and traced without opening the sketch; it is one step to undo.",
+   "keywords": ["sketch image", "convert", "picture"],
+   "requires": "Select a sketch that has backdrop pictures; not while a sketch is open."
+  },
+  {
+   "id": "file.save",
+   "title": "Save",
+   "summary": "Saves the document; a file in viewer mode becomes an editable OPAD document.",
+   "details": "A document that has never been saved asks for a file name. Saving appends the new steps to the .opad file, which stays friendly to git and to merges.",
+   "keywords": ["store", "write", "keep"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "file.saveas",
+   "title": "Save As",
+   "summary": "Saves the document under a new file name.",
+   "details": "The document continues under the new name; the old file stays as it was last saved. Use it to start a variant of a design.",
+   "keywords": ["copy", "rename file", "duplicate"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "file.savetemplate",
+   "title": "Save as template",
+   "summary": "Keeps a copy of the document among the templates that New from template offers.",
+   "details": "The copy goes into the templates folder under the name you give, with an identity of its own. A document made from it starts as an untitled copy, so the template itself never changes.",
+   "keywords": ["template", "starting point", "default document"],
+   "requires": "Open or create a document first (a file in viewer mode cannot be a template until it is saved as OPAD)."
+  },
+  {
+   "id": "file.export",
+   "title": "Export",
+   "summary": "Writes the selection or the whole design to STEP, STL, OBJ, GLB, DXF, SVG, DWG, PDF or PNG.",
+   "details": "Choose the format and what to include in the dialog, then where the file goes. Mesh formats are tessellated from the exact shapes; the 2D formats write drawings and sketches, or a 2D view of solids with hidden lines.",
+   "keywords": ["save as step", "stl", "dxf", "svg", "write file", "output"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "file.exportBom",
+   "title": "Export bill of materials",
+   "summary": "Writes a parts list of the selection or the whole design to a CSV file.",
+   "details": "Choose the list (parts only, top level or indented), of the whole document or the selected component, whether masses are listed and in which unit, and the separator; the preview shows the table. Export CSV then asks where the file goes.",
+   "keywords": ["BoM", "parts list", "CSV", "quantities"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "file.documentProperties",
+   "title": "Document properties",
+   "summary": "Edits what every drawing's title block says: title, number, revision, status, owner, project and who designed, checked and approved it.",
+   "details": "The values are stored in the document as one step, and a sheet can still say otherwise. Add properties of your own and use them in a title block field as =doc:name.",
+   "keywords": ["title block", "company", "owner", "project", "approved", "revision"],
+   "requires": "Open an OPAD document; a viewed file is saved as OPAD first."
+  },
+  {
+   "id": "file.screenshot",
+   "title": "Save screenshot",
+   "summary": "Saves an image of the 3D view.",
+   "details": "A dialog asks where to save the PNG. The image is the 3D view as it is now, at its size on screen; panels and chips are left out.",
+   "keywords": ["image", "picture", "png", "capture", "render"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "file.reveal",
+   "title": "Open file location",
+   "summary": "Shows the open document's file in the system's file manager.",
+   "details": "For a file open in viewer mode it is the viewed file. The status bar's path and the browser's document row offer it too.",
+   "keywords": ["folder", "explorer", "finder", "show in folder"],
+   "requires": "The document must have a file: save it first."
+  },
+  {
+   "id": "file.copyPath",
+   "title": "Copy path",
+   "summary": "Copies the full path of the open document's file to the clipboard.",
+   "details": "For a file open in viewer mode it is the viewed file. The status bar's path menu also has Copy relative path.",
+   "keywords": ["clipboard", "file name", "full path", "location"],
+   "requires": "The document must have a file: save it first."
+  },
+  {
+   "id": "file.close",
+   "title": "Close document",
+   "summary": "Closes the document and returns to the start screen.",
+   "details": "If there are unsaved changes you are asked whether to save them. Recent files stay on the start screen.",
+   "keywords": ["shut", "exit document"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "file.quit",
+   "title": "Quit",
+   "summary": "Closes OPAD.",
+   "details": "You are asked about unsaved changes first. Window layout and settings are kept for the next start.",
+   "keywords": ["exit", "close app"]
+  },
+  {
+   "id": "files.useOda",
+   "title": "Use the ODA File Converter for DWG",
+   "summary": "Reads and writes DWG through an installed ODA File Converter instead of LibreDWG.",
+   "details": "The ODA File Converter is third-party software whose licence lets non-members use it for non-commercial purposes only, so turning this on first shows its terms. Off, OPAD converts DWG with LibreDWG's dwg2dxf and dxf2dwg, beside OPAD or on PATH. The choice is kept for the next start.",
+   "keywords": ["DWG", "ODA", "converter", "LibreDWG"]
+  },
+  {
+   "id": "view.fit",
+   "title": "Fit",
+   "summary": "Zooms to the selection; with nothing selected, to the active component or to everything.",
+   "details": "The camera keeps its direction and only moves and zooms. While a sketch is open it fits the sketch.",
+   "keywords": ["zoom", "frame", "zoom to selection", "zoom extents"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.fitall",
+   "title": "Fit all",
+   "summary": "Zooms so the whole model fits the view.",
+   "details": "Unlike Fit, the selection is ignored. While a sketch is open it fits the sketch.",
+   "keywords": ["zoom all", "zoom extents", "everything", "frame all"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.zoomWindow",
+   "title": "Zoom window",
+   "summary": "Zooms in on a rectangle you drag around what you want to see.",
+   "details": "Start it, then drag a box in the view, or click to zoom in around that point; {fixed:esc} cancels. The camera keeps its direction. It is under Fit's arrow, in the View menu and in the view cube's right-click menu.",
+   "keywords": ["zoom box", "zoom area", "rectangle", "magnify"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.previous",
+   "title": "Previous view",
+   "summary": "Goes back to the view you had before the last camera move.",
+   "details": "A view is remembered each time the camera comes to rest, the last 50 of them, and Next view goes forward again. When there is no earlier view the status bar says so. It is under Fit's arrow, in the View menu and in the view cube's right-click menu.",
+   "keywords": ["back", "undo view", "camera history", "last view"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.next",
+   "title": "Next view",
+   "summary": "Goes forward again through the views Previous view stepped back from.",
+   "details": "A new camera move after stepping back drops the views ahead, as a browser's history does. When there is no later view the status bar says so.",
+   "keywords": ["forward", "redo view", "camera history"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.home",
+   "title": "Home",
+   "summary": "Returns to the document's Home view, or to an isometric view with everything in sight while none is set.",
+   "details": "Set current view as Home, under the Home button's arrow, in the View menu and in the view cube's right-click menu, keeps the camera in the document. Use it when you lose your way after orbiting. The view cube's house button does the same.",
+   "keywords": ["reset view", "isometric", "default view"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.setHome",
+   "title": "Set current view as Home",
+   "summary": "Makes the current camera the document's Home view.",
+   "details": "From then on Home and the view cube's house button return to it, and it is saved with the document; Undo takes it back. It is in the View menu and in the view cube's right-click menu. A file in viewer mode is first saved as an OPAD document or edited as an unsaved copy, as you choose.",
+   "keywords": ["home view", "default view", "start view", "camera"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.resetHome",
+   "title": "Reset Home to the iso view",
+   "summary": "Drops the document's own Home view, so Home is the isometric view again.",
+   "details": "Every Home set in the document goes in one step, which Undo takes back. It is available only while the document has a Home of its own, and not in viewer mode; it is in the View menu and in the view cube's right-click menu.",
+   "keywords": ["home view", "default view", "isometric"],
+   "requires": "The document needs a Home of its own (Set current view as Home); not available in viewer mode."
+  },
+  {
+   "id": "view.alignPlane",
+   "title": "Align view to plane",
+   "summary": "Turns the camera to look straight at the sketch plane or at a plane you pick.",
+   "details": "While sketching it aligns to the sketch at once. Otherwise pick a planar face or an origin plane, and the camera turns square to it.",
+   "keywords": ["look at", "normal to", "face on", "square"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.rollleft",
+   "title": "Turn 90° left",
+   "summary": "Turns the view 90 degrees to the left about the screen's axis.",
+   "details": "The model is not moved, only the camera. Use it to stand a drawing or a face upright.",
+   "keywords": ["rotate view", "roll", "counterclockwise"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.rollright",
+   "title": "Turn 90° right",
+   "summary": "Turns the view 90 degrees to the right about the screen's axis.",
+   "details": "The model is not moved, only the camera. Use it to stand a drawing or a face upright.",
+   "keywords": ["rotate view", "roll", "clockwise"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.twist",
+   "title": "Twist view",
+   "summary": "Turns the view about its own axis by an angle you type.",
+   "details": "The angle is counter-clockwise, in the angle unit shown, and 0 untwists. Only the camera turns, never the model. It is in the View menu after the 90° turns.",
+   "keywords": ["rotate view", "roll", "angle", "twist"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.untwist",
+   "title": "Untwist view",
+   "summary": "Stands the view upright again, without any twist.",
+   "details": "Up on screen is the model's Z again (its Y when looking from above or below), or the sketch's own y while a sketch is open. Only the camera turns.",
+   "keywords": ["upright", "reset roll", "level", "twist"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.top",
+   "title": "Top view",
+   "summary": "Looks at the model from above, along -Z.",
+   "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
+   "keywords": ["standard view", "top", "orientation", "camera"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.front",
+   "title": "Front view",
+   "summary": "Looks at the model from the front, along +Y.",
+   "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
+   "keywords": ["standard view", "front", "orientation", "camera"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.right",
+   "title": "Right view",
+   "summary": "Looks at the model from the right, along -X.",
+   "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
+   "keywords": ["standard view", "right", "orientation", "camera"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.iso",
+   "title": "Isometric view",
+   "summary": "Looks at the model from a corner, at equal angles to the three axes.",
+   "details": "The camera turns smoothly and the model is fitted. The view cube's matching corner does the same while its corners turn the view. Not available in 2D mode.",
+   "keywords": ["standard view", "iso", "orientation", "camera"],
+   "requires": "Open or create a document first; not available in 2D mode."
+  },
+  {
+   "id": "view.bottom",
+   "title": "Bottom view",
+   "summary": "Looks at the model from below, along +Z.",
+   "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
+   "keywords": ["standard view", "bottom", "orientation", "camera"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.back",
+   "title": "Back view",
+   "summary": "Looks at the model from the back, along -Y.",
+   "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
+   "keywords": ["standard view", "back", "orientation", "camera"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.left",
+   "title": "Left view",
+   "summary": "Looks at the model from the left, along +X.",
+   "details": "The camera turns smoothly and the model is fitted. The matching face of the view cube does the same.",
+   "keywords": ["standard view", "left", "orientation", "camera"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.nextRegion",
+   "title": "Next region",
+   "summary": "Moves the keyboard to the next part of the window: ribbon, browser, view, timeline, then each open panel.",
+   "details": "The part reached is ringed, and its controls take the keys: arrows in the ribbon's tabs, the browser and the timeline, {fixed:tab} in a panel. After the last panel it starts again at the ribbon; a click anywhere takes the ring away.",
+   "keywords": ["keyboard", "focus", "accessibility", "panes"]
+  },
+  {
+   "id": "view.previousRegion",
+   "title": "Previous region",
+   "summary": "Moves the keyboard back to the part of the window before this one.",
+   "details": "The same round as Next region, the other way: from a panel back to the timeline, the view, the browser and the ribbon. It works from a floating panel too.",
+   "keywords": ["keyboard", "focus", "accessibility", "panes"]
+  },
+  {
+   "id": "view.2d",
+   "title": "2D mode",
+   "summary": "Locks the view to a plane for drawings: pan and zoom only.",
+   "details": "Orbiting is off and the grid lies in the viewed plane, following the view so it never ends. Opening a DXF, DWG or SVG for viewing turns it on by itself; the 2D mode chip or this command turns it off.",
+   "keywords": ["flat", "plan", "drawing", "2d view", "lock rotation"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "drawing2d.layers",
+   "title": "Layers",
+   "summary": "Opens the Layers manager of the document's 2D drawings.",
+   "details": "One row per layer: On, Freeze, Lock, Colour, Linetype, Lineweight and Plot change with a click, each one step to undo, in viewer mode too. Isolate layers, walk through them one at a time, and save layer states with a view.",
+   "keywords": ["layer manager", "freeze", "lock", "linetype", "lineweight", "layer state"],
+   "requires": "Only for a document with 2D drawings (DXF, DWG or SVG)."
+  },
+  {
+   "id": "drawing2d.layerWalk",
+   "title": "Layer walk",
+   "summary": "Shows the drawings one layer at a time.",
+   "details": "The walk starts at the current layer of the Layers manager, and its bar steps to the next or the previous layer, off and frozen ones included. Run it again, or close the panel, to see every layer again.",
+   "keywords": ["laywalk", "step through layers", "one layer at a time"],
+   "requires": "Only for a document with 2D drawings (DXF, DWG or SVG)."
+  },
+  {
+   "id": "drawing2d.isolateLayer",
+   "title": "Isolate layer",
+   "summary": "Shows only the layers of the selected drawing objects.",
+   "details": "Select objects on the layers you want, in the view or the browser, and run it. Exit isolate ({key:view.unisolate}) brings the other layers back.",
+   "keywords": ["layiso", "show only this layer"],
+   "requires": "Select drawing objects on the layers first."
+  },
+  {
+   "id": "drawing2d.objectSnap",
+   "title": "Object snap",
+   "summary": "Snaps picked points to the ends, middles, centres, intersections and other points of drawing objects.",
+   "details": "It applies while measuring and picking points; which kinds it takes are the sketch's snap settings. Its switch is in the status bar beside the other snapping switches.",
+   "keywords": ["osnap", "endpoint", "midpoint", "center", "intersection", "snap to objects"]
+  },
+  {
+   "id": "drawing2d.plot",
+   "title": "Plot",
+   "summary": "Plots the 2D drawings to a PDF file or a printer.",
+   "details": "Choose the area (the drawings' extents, what the view shows, or a window picked in the view), the paper and its orientation, fit or a 1:N scale, monochrome and lineweights. A preview shows the page as it will come out.",
+   "keywords": ["print", "pdf", "plot to pdf", "printer", "paper", "monochrome"],
+   "requires": "Only for a document with 2D drawings."
+  },
+  {
+   "id": "view.ortho",
+   "title": "Orthographic",
+   "summary": "Switches between orthographic and perspective projection.",
+   "details": "Orthographic keeps parallel edges parallel, which suits measuring and drawings. Perspective looks more natural for presenting a model.",
+   "keywords": ["perspective", "projection", "parallel"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.shaded",
+   "title": "Shaded",
+   "summary": "Draws bodies shaded, without edge lines.",
+   "details": "The cleanest look for presenting a design. Picking works as in the other styles.",
+   "keywords": ["display style", "render", "solid"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.edges",
+   "title": "Shaded + edges",
+   "summary": "Draws shaded bodies with their edges.",
+   "details": "The default style: faces and their boundaries are both easy to read. Edges are drawn in the theme's edge colour.",
+   "keywords": ["display style", "outline", "edges"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.wire",
+   "title": "Wireframe",
+   "summary": "Draws edges only; hidden edges show through.",
+   "details": "Useful to see inner features and to pick edges behind faces. Faces are not drawn, but clicks still find them.",
+   "keywords": ["display style", "lines", "see through", "x-ray"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.hidden",
+   "title": "Hidden line",
+   "summary": "Draws bodies as line drawings, leaving out the edges hidden behind faces.",
+   "details": "Faces are filled in the background's colour and their edges and outlines drawn in an ink that stands out against it, so what lies behind a face is hidden, as on a drawing. Drawings (DXF, DWG, SVG) keep their own lines. Hidden edges visible, under its arrow in the View tab, also shows the hidden ones, dashed.",
+   "keywords": ["display style", "hidden line removal", "line drawing", "technical drawing"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.hiddenEdges",
+   "title": "Hidden edges visible",
+   "summary": "Draws bodies as line drawings, with the hidden edges dashed.",
+   "details": "As in Hidden line, the faces take the background's colour and hide what is behind them; the edges behind them are drawn as well, dashed and dim, so inner features show. The dashes are built on a worker thread and follow the model as it changes. It is under Hidden line's arrow in the View tab.",
+   "keywords": ["display style", "hidden lines", "dashed", "x-ray"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.grid",
+   "title": "Grid",
+   "summary": "Shows or hides the ground grid.",
+   "details": "In 3D the grid is a patch under the model, spaced to the model's size; in 2D mode and in sketches it follows the view and its spacing follows the zoom. A fixed spacing set in Grid settings is used everywhere.",
+   "keywords": ["floor", "ground", "lines"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.gridSettings",
+   "title": "Grid settings",
+   "summary": "Sets the grid spacing, automatic or fixed, and its minimum extent.",
+   "details": "Automatic spacing follows the zoom in sketches and 2D mode and the model's size in 3D; a fixed spacing is what grid snapping jumps to. The grid is turned on while you change it.",
+   "keywords": ["spacing", "grid size", "step"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "select.through",
+   "title": "Select through objects",
+   "summary": "Lets a selection window also pick what is completely hidden behind other bodies, and a click in the Edges or Vertices filter reach edges and points behind faces.",
+   "details": "Off, a window picks whatever shows inside it, even partly. On, a window drag selects every body inside it, front or back.",
+   "keywords": ["x-ray", "behind", "hidden", "window select"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.isolate",
+   "title": "Isolate",
+   "summary": "Shows only the selection until you exit isolation.",
+   "details": "Everything else is hidden from view, not from the document, and the view frames what is isolated. Exit isolate ({key:view.unisolate}) or the × on the Isolated card in the view brings it back.",
+   "keywords": ["focus", "show only", "solo"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.unisolate",
+   "title": "Exit isolate",
+   "summary": "Brings back everything isolation hid.",
+   "details": "The camera stays where it is. Visibility you set yourself is kept. A click on the Isolated card in the view (its ×) does the same.",
+   "keywords": ["show all", "end isolate", "unisolate"],
+   "requires": "Nothing is isolated."
+  },
+  {
+   "id": "view.hideothers",
+   "title": "Hide others",
+   "summary": "Hides everything but the selection, in one step.",
+   "details": "Unlike Isolate, it hides the other objects in the document itself, as Hide does; one Undo brings them all back. Unhide all or the browser's eye shows them again.",
+   "keywords": ["show only", "hide rest", "visibility", "hide unselected"],
+   "requires": "Select the objects to keep shown first, in the view or in the browser."
+  },
+  {
+   "id": "view.saveview",
+   "title": "Save view",
+   "summary": "Saves the current camera as a named view.",
+   "details": "Named views are stored in the document and listed under View > Named views. Pick one to return to that camera. A file open in viewer mode asks to become an OPAD document first.",
+   "keywords": ["camera", "bookmark", "named view"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.dark",
+   "title": "Dark theme",
+   "summary": "Switches between the dark and the light theme.",
+   "details": "Every panel, icon and the 3D view follow the theme. The choice is kept for the next start.",
+   "keywords": ["light theme", "colours", "appearance", "night"]
+  },
+  {
+   "id": "view.extensions",
+   "title": "Extensions",
+   "summary": "Draws dashed extensions of hovered edges; the cursor snaps onto them and to where two cross.",
+   "details": "Rest on the end of a line, then move along its direction to follow the dashed line. Works in sketches and while measuring or picking points, drawings included.",
+   "keywords": ["extension lines", "inference", "snap"]
+  },
+  {
+   "id": "view.tracking",
+   "title": "Tracking",
+   "summary": "Shows alignment lines through points you hover, along X, Y and Z.",
+   "details": "Rest on a point to acquire it, then move away: a dashed line appears when the cursor lines up with it. Hold {fixed:shift} to lock onto the line; a tap keeps it locked until {fixed:esc}. With several guides or snaps in reach, a tap shows the next.",
+   "keywords": ["alignment", "object snap tracking", "guides"]
+  },
+  {
+   "id": "view.gridSnap",
+   "title": "Grid snapping",
+   "summary": "Makes placed points jump to grid intersections.",
+   "details": "Applies to points you click in sketches (hold {fixed:alt} to place one off the grid), when placing a drawing or a sketch's origin, to the point and the base of a box, cylinder or other primitive (on a face, in steps from its corner, as a sketch on that face counts them), and to the distances Move / copy's triad is dragged. Set a fixed spacing in Grid settings for predictable steps.",
+   "keywords": ["snap to grid", "step", "increment"]
+  },
+  {
+   "id": "view.orthoSnap",
+   "title": "Ortho",
+   "summary": "Keeps each new line of a sketch horizontal or vertical.",
+   "details": "The next point lines up with the last one along whichever axis is nearer the cursor. Snaps to points and curves still win; with automatic constraints on, the line gets its horizontal or vertical constraint. Right-click the switch for its settings.",
+   "keywords": ["orthogonal", "horizontal", "vertical", "right angle"]
+  },
+  {
+   "id": "view.polarSnap",
+   "title": "Polar",
+   "summary": "Turns a sketch line's direction in fixed angle steps.",
+   "details": "Near a multiple of the angle step the line snaps to it. Right-click the switch to choose the step: 5, 10, 15, 22.5, 30, 45 or 90 degrees.",
+   "keywords": ["angle increments", "polar tracking", "angle snap"]
+  },
+  {
+   "id": "view.cubeEdgesCorners",
+   "title": "View cube edges and corners turn the view",
+   "summary": "Lets a click on the view cube's edges and corners turn the view, besides its faces.",
+   "details": "On, an edge shows the view between its two faces and a corner the isometric view from its side. Off, only the six faces react, which are easier to hit on a small cube. The choice is kept for the next start.",
+   "keywords": ["view cube", "navigation cube", "corner", "edge", "faces only"]
+  },
+  {
+   "id": "view.hideSmallParts",
+   "title": "Hide small parts while navigating",
+   "summary": "Hides small parts while the view turns, pans or zooms, so that big boards and assemblies move smoothly.",
+   "details": "Bodies whose longest side is under the small part size (3 mm at first) go out as the camera moves and come back once it has been still for a moment; selected bodies stay. Nothing changes in the model, and the choice is kept for the next session.",
+   "keywords": ["performance", "fast", "orbit", "pcb", "level of detail"]
+  },
+  {
+   "id": "view.smallPartSize",
+   "title": "Small part size",
+   "summary": "Sets how small a part must be to hide while the view moves, and turns hiding on.",
+   "details": "Type the size in the length unit you use: bodies whose longest side is under it hide while you orbit, pan and zoom. Hide small parts while navigating turns it off again.",
+   "keywords": ["performance", "hide", "navigating", "threshold"]
+  },
+  {
+   "id": "panel.browser",
+   "title": "Browser",
+   "summary": "Shows or hides the browser: the document's components, bodies, sketches and drawings.",
+   "details": "Click a row to select it, use the eye to hide it, and drag rows onto a component to move them. Filter objects ({key:edit.filter}) filters it by name.",
+   "keywords": ["tree", "outline", "structure", "parts list"]
+  },
+  {
+   "id": "panel.annotations",
+   "title": "Annotations",
+   "summary": "Lists notes, hand drawings and pinned measurements.",
+   "details": "Filter by author, type and status. Click a card and what its note is pinned to lights up in the view, the face, edge, point or body itself (every pick of a pinned measurement), without changing the selection; a click in the view puts it out. Resolved notes stay in the history.",
+   "keywords": ["notes", "comments", "markup", "review"],
+   "requires": "Open an OPAD document; a file in viewer mode has no annotations."
+  },
+  {
+   "id": "panel.section",
+   "title": "Section panel",
+   "summary": "Opens the section panel: axis, offset, caps and named sections.",
+   "details": "Here you choose the cutting axis or a face, type an exact offset and save sections by name; a change made here turns the section on. Dragging the plane's edge in the view does the same.",
+   "keywords": ["cut", "clipping", "cross section"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "panel.timeline",
+   "title": "Timeline",
+   "summary": "Shows or hides the timeline: every step of the document's history.",
+   "details": "Each marker is one operation; hover it for who did what and when. Double-click a feature or sketch to edit it.",
+   "keywords": ["history", "steps", "operations", "log"]
+  },
+  {
+   "id": "timeline.names",
+   "title": "Names on the timeline",
+   "summary": "Writes each step's name beside its icon on the timeline.",
+   "details": "Off, the markers show their icons only and the names are in their tooltips. The choice is kept for the next session.",
+   "keywords": ["timeline", "history list", "feature names"]
+  },
+  {
+   "id": "timeline.designOnly",
+   "title": "Design history only",
+   "summary": "Keeps the timeline to the steps that make and place geometry.",
+   "details": "Imports, sketches, features and moves stay; renames, colours, views and sections are left off the timeline, though they stay in the document. The browser's history list follows it.",
+   "keywords": ["timeline", "filter", "hide renames and colours"]
+  },
+  {
+   "id": "timeline.rollForward",
+   "title": "Roll forward to the end",
+   "summary": "Shows the model with every step again after the timeline was rolled back.",
+   "details": "Dragging the timeline's marker back shows the model as it was before a step, and a chip over the view says so. This command, or a click on the chip, rolls forward to the end.",
+   "keywords": ["timeline", "roll back", "history marker"],
+   "requires": "Only while the timeline is rolled back."
+  },
+  {
+   "id": "timeline.historyList",
+   "title": "History list in the browser",
+   "summary": "Lists the timeline's steps in a History folder in the browser.",
+   "details": "They are listed top to bottom, with the roll-back marker among them. The choice is kept for the next session.",
+   "keywords": ["timeline", "feature list", "history tree"]
+  },
+  {
+   "id": "panel.reset",
+   "title": "Reset layout",
+   "summary": "Puts the panels and docks back where they started.",
+   "details": "Floating tool panels return to their default place and size. Use it when a panel got lost off screen.",
+   "keywords": ["restore layout", "default panels", "windows"]
+  },
+  {
+   "id": "workspace.review",
+   "title": "Review workspace",
+   "summary": "Switches the ribbon to Review: look, measure, mark up, compare and share.",
+   "details": "Its View, Inspect and Markup tabs never change geometry: measurements, notes and saved views sit beside the model. Compare's version commands do bring changes in (Pull, History's Restore as new changes, Recover documents), and Delete and Rename still work on the selection here. A Design command started here, such as Extrude, switches to Design first. The document and its timeline stay the same and only the ribbon's tabs change; finish an open sketch first.",
+   "keywords": ["viewer", "inspect", "measure"]
+  },
+  {
+   "id": "workspace.design",
+   "title": "Design workspace",
+   "summary": "Switches the ribbon to Design: sketches, features, parameters and the assembly.",
+   "details": "Design is where parts are modelled and arranged. Switching to it returns the selection filter to bodies; a Design command started in another workspace keeps the filter and the faces or edges picked for it.",
+   "keywords": ["modelling", "cad", "features"]
+  },
+  {
+   "id": "workspace.drawings",
+   "title": "Drawings workspace",
+   "summary": "Switches to the Drawings workspace: sheets with views, a frame and a title block in the 3D view's place.",
+   "details": "The sheet shown replaces the 3D view while this workspace is on, and the browser's Drawings folder lists the drawings and their sheets. The document and its timeline stay the same; only the ribbon's tabs and the page change.",
+   "keywords": ["technical drawing", "sheet", "drafting"]
+  },
+  {
+   "id": "drawings.new",
+   "title": "New drawing",
+   "summary": "Starts a technical drawing of the model: a sheet with a frame, a title block and standard views.",
+   "details": "Choose the template and paper, the projection (first or third angle), the scale, the views and their style, of the whole model or the selection; the title block's first fields can be filled in here. The views are laid out on a worker and the Drawings workspace opens on the new sheet.",
+   "keywords": ["technical drawing", "sheet", "template", "title block", "projection"],
+   "requires": "Open or create a document first; a viewed file is saved as OPAD first."
+  },
+  {
+   "id": "drawings.newSheet",
+   "title": "New sheet",
+   "summary": "Adds another sheet to the drawing shown, with its paper, template and scale.",
+   "details": "The new sheet starts empty: place views on it with Base view. The browser lists the sheets under their drawing in the Drawings folder.",
+   "keywords": ["page", "sheet"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.sheetProperties",
+   "title": "Sheet properties",
+   "summary": "Edits the sheet shown: its name, paper, template, projection, scale, dimension units and its own title block values.",
+   "details": "The change is one step. Title block fields left empty are filled in from the sheet, the part and Document properties.",
+   "keywords": ["title block", "paper", "size", "scale", "first angle", "third angle"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.templateFile",
+   "title": "Template from DXF or DWG",
+   "summary": "Takes the frame and title block of the sheet shown from a DXF or DWG file, such as a company template.",
+   "details": "The file is read on a worker; its frame replaces the sheet's template and its paper size is taken too. The change is one step.",
+   "keywords": ["frame", "title block", "company"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.templateFields",
+   "title": "Title block fields",
+   "summary": "Places the fields a sheet's template fills in, such as its title, number, scale and who drew it.",
+   "details": "Drag on the paper to add a field, drag a field to move it and its corner to size it, then choose what it shows, its text height and its alignment; {fixed:del} removes the chosen one. Apply changes the sheet as one step. A sheet without a template asks for one in Sheet properties first.",
+   "keywords": ["template", "attributes", "placeholders", "title block"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.baseView",
+   "title": "Base view",
+   "summary": "Places a front view of the model on the sheet: a frame follows the pointer and a click places it.",
+   "details": "The other orientations (from the top, right, left, back and below) are on the button's menu. The frame snaps to the other views' centres, and a view dragged later takes the views projected from it along.",
+   "keywords": ["front view", "place view"],
+   "requires": "Only while a sheet is shown in the Drawings workspace.",
+   "clip": "drawing.baseView"
+  },
+  {
+   "id": "drawings.baseView.top",
+   "title": "Base view from the top",
+   "summary": "Places a base view of the model seen from the top on the sheet.",
+   "details": "A frame of the view follows the pointer and a click places it. Base view places the front view; the others are on its menu.",
+   "keywords": ["base view", "place view", "top"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.baseView.right",
+   "title": "Base view from the right",
+   "summary": "Places a base view of the model seen from the right on the sheet.",
+   "details": "A frame of the view follows the pointer and a click places it. Base view places the front view; the others are on its menu.",
+   "keywords": ["base view", "place view", "right"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.baseView.left",
+   "title": "Base view from the left",
+   "summary": "Places a base view of the model seen from the left on the sheet.",
+   "details": "A frame of the view follows the pointer and a click places it. Base view places the front view; the others are on its menu.",
+   "keywords": ["base view", "place view", "left"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.baseView.back",
+   "title": "Base view from the back",
+   "summary": "Places a base view of the model seen from the back on the sheet.",
+   "details": "A frame of the view follows the pointer and a click places it. Base view places the front view; the others are on its menu.",
+   "keywords": ["base view", "place view", "back"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.baseView.bottom",
+   "title": "Base view from below",
+   "summary": "Places a base view of the model seen from below on the sheet.",
+   "details": "A frame of the view follows the pointer and a click places it. Base view places the front view; the others are on its menu.",
+   "keywords": ["base view", "place view", "bottom"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.projectedView",
+   "title": "Projected view",
+   "summary": "Adds a view projected from the selected one, on the side the pointer is on.",
+   "details": "Select one view on the sheet, run it and move to its right, left, top or bottom, or a corner: the new view lines up with it and a click places it. A projected view keeps to its parent's line when either is dragged.",
+   "keywords": ["side view", "top view", "orthographic"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.isoView",
+   "title": "Isometric view",
+   "summary": "Places an isometric view of the model on the sheet.",
+   "details": "A frame follows the pointer and a click places it. It is a pictorial view, not projected from the others.",
+   "keywords": ["pictorial", "3D view", "iso"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.sectionView",
+   "title": "Section view",
+   "summary": "Cuts the selected view along a line you draw and places the cut as a new, hatched view.",
+   "details": "Click the cutting line's points on the view: two for a full section, more for an offset, half or aligned section; then press {fixed:enter}. The new view follows the pointer on the side it goes, lined up with its parent, and a click places it; type its gap to set it exactly. {fixed:esc} takes back the last point, then leaves.",
+   "keywords": ["cut", "cross section", "hatch", "cutting plane", "offset section", "half section"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.detailView",
+   "title": "Detail view",
+   "summary": "Places an enlarged view of a round area of the selected view.",
+   "details": "Click the centre of the detail, then its radius, then where the detail view goes; it is drawn at twice the parent's scale, or the next standard scale up when that is not one. Type the radius, or a scale such as 5:1, to set them exactly. {fixed:esc} takes back the last step.",
+   "keywords": ["enlarged", "zoom", "magnified", "circle"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.auxiliaryView",
+   "title": "Auxiliary view",
+   "summary": "Places a view that looks square to a slanted edge of the selected view, so an inclined face shows at its true shape.",
+   "details": "Click a straight edge of the view, then move to the side the new view goes and click to place it, lined up along that edge. Type its gap to set it exactly; {fixed:esc} steps back.",
+   "keywords": ["inclined face", "true shape", "slanted", "square to an edge"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.breakoutView",
+   "title": "Broken-out section",
+   "summary": "Cuts away part of the selected view, inside an outline you draw, to show what is inside.",
+   "details": "Click points round what to open up (a smooth closed curve goes through them) and press {fixed:enter}. Then click a point in a view beside it to set how deep the cut goes, or press {fixed:enter} again for the part's middle. It works on base, projected and auxiliary views.",
+   "keywords": ["local section", "partial section", "break out", "cut away", "freehand"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.cropView",
+   "title": "Crop view",
+   "summary": "Keeps only the part of the selected view inside a box.",
+   "details": "Drag a box around the part to keep, or click its two corners; type its width and height to set them exactly. The rest of the view is left out, and the change is one step.",
+   "keywords": ["partial view", "trim", "clip"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.breakView",
+   "title": "Break view",
+   "summary": "Shortens a long view by taking out the band between two points.",
+   "details": "Click where the break starts and where it ends: the band between them is taken out in the direction they lie farther apart (sideways or up and down), and zigzag break lines mark where the halves meet. Type its length to set it exactly; the change is one step.",
+   "keywords": ["broken view", "shorten", "long part", "interrupted"],
+   "requires": "Select one view on the sheet first."
+  },
+  {
+   "id": "drawings.hiddenLines",
+   "title": "Hidden lines",
+   "summary": "Shows or hides dashed hidden lines in the selected views, or in every view of the sheet.",
+   "details": "It changes the views' style as one step. With no view selected it applies to the whole sheet.",
+   "keywords": ["dashed", "hidden edges"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.tangentEdges",
+   "title": "Tangent edges",
+   "summary": "Draws the edges where faces meet smoothly as thin lines, or leaves them out.",
+   "details": "It changes the selected views' style, or every view's when none is selected, as one step. A view's right-click menu also draws them as ordinary edges.",
+   "keywords": ["smooth edges", "tangent"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.update",
+   "title": "Update views",
+   "summary": "Projects the sheet's views again from the model as it is now.",
+   "details": "The views are projected on a worker; until each is ready its old drawing stays, marked Updating. Nothing in the document changes.",
+   "keywords": ["refresh", "regenerate", "rebuild"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fit",
+   "title": "Fit sheet",
+   "summary": "Zooms the sheet so all of it shows.",
+   "details": "It changes only how the sheet is shown, never the drawing. The wheel zooms about the pointer and a middle drag pans.",
+   "keywords": ["zoom", "whole sheet"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.exportSheet",
+   "title": "Export sheet",
+   "summary": "Writes the sheet shown to PDF, SVG, DXF, DWG or PNG.",
+   "details": "Choose the file and its type; it is written on a worker. A drawing with several sheets goes into one PDF from its row in the browser's Drawings folder.",
+   "keywords": ["PDF", "DXF", "DWG", "SVG", "PNG", "print"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.exportDrawing",
+   "title": "Export drawing as PDF",
+   "summary": "Writes every sheet of the drawing shown into one PDF, a page per sheet.",
+   "details": "Choose where the file goes; it is written on a worker. Export sheet writes the sheet shown alone, also as SVG, DXF, DWG or PNG.",
+   "keywords": ["PDF", "pages", "all sheets"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.print",
+   "title": "Print",
+   "summary": "Prints the drawing's sheets, with a preview of each page.",
+   "details": "Choose the printer, all sheets of the drawing or this one, fit to the printer's paper or actual size, black ink only and the copies. The sheets are drawn on a worker, and a toast says when they have gone to the printer.",
+   "keywords": ["printer", "plot", "paper", "preview"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.issue",
+   "title": "Issue revision",
+   "summary": "Releases the drawing as a revision: its values and views as they are now are kept, and the revision table and title block show it.",
+   "details": "Set the revision, its description and date and who issued and approved it; you can also keep the views' linework in the document, write the issued PDF and commit and tag it in git. Afterwards the chip over the sheet says when the drawing has changed since that revision.",
+   "keywords": ["release", "revision", "freeze", "git tag", "approve"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.dimension",
+   "title": "Dimension",
+   "summary": "Adds a dimension to a view: pick what to measure and click where it goes.",
+   "details": "Pick an edge, a circle or a point, and a second one for a distance or an angle; where the pointer is chooses horizontal, vertical, aligned, angle, radius or diameter. Click to place it, or type its offset, decimals or tolerance in the boxes beside the pointer and press {fixed:enter}. The bar under the sheet sets its type, precision, tolerance and text; {fixed:esc} takes back a pick, then leaves.",
+   "keywords": ["smart dimension", "length", "distance", "angle", "radius", "diameter", "tolerance", "precision"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.ordinate",
+   "title": "Ordinate dimensions",
+   "summary": "Measures several features of a view from one origin, as a row of values on extension lines.",
+   "details": "Pick the origin (a datum edge, a vertex or a centre), then the features to measure from it, then press {fixed:enter} or Done and click where the dimensions go. The side of the view the pointer is on chooses horizontal or vertical values, unless Direction in the bar says otherwise; the set is one step.",
+   "keywords": ["datum", "running dimensions", "coordinates"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.baseline",
+   "title": "Baseline dimensions",
+   "summary": "Measures several features of a view from one origin, as a stack of dimensions that all start there.",
+   "details": "Pick the origin (a datum edge, a vertex or a centre), then the features to measure from it, then press {fixed:enter} or Done and click where the dimensions go. The side of the view the pointer is on chooses horizontal or vertical values, unless Direction in the bar says otherwise; the set is one step.",
+   "keywords": ["datum", "parallel dimensions", "stacked"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.chain",
+   "title": "Chain dimensions",
+   "summary": "Measures several features of a view one after the other, each dimension starting where the last one ends.",
+   "details": "Pick the origin (a datum edge, a vertex or a centre), then the features to measure from it, then press {fixed:enter} or Done and click where the dimensions go. The side of the view the pointer is on chooses horizontal or vertical values, unless Direction in the bar says otherwise; the set is one step.",
+   "keywords": ["continuous dimensions", "chained"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fromDatums",
+   "title": "Dimension from datums",
+   "summary": "Dimensions the holes of a view from its datum symbols in one go, as ordinate dimensions.",
+   "details": "Place two datum symbols on straight edges of the view first, one upright and one level. The selected view, or the first one with datum symbols, then gets a set of ordinate dimensions per direction, measured on a worker and added as one step. The button's menu has baseline and chain dimensions instead.",
+   "keywords": ["datum A B C", "hole positions", "ordinate", "distances from edges"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fromDatums.baseline",
+   "title": "Baseline dimensions from datums",
+   "summary": "Dimensions the holes of a view from its datum symbols in one go, as baseline dimensions.",
+   "details": "Place two datum symbols on straight edges of the view first, one upright and one level. The selected view, or the first one with datum symbols, then gets a set of baseline dimensions per direction, measured on a worker and added as one step.",
+   "keywords": ["datum", "hole positions", "baseline", "stacked"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fromDatums.chain",
+   "title": "Chain dimensions from datums",
+   "summary": "Dimensions the holes of a view from its datum symbols in one go, as chain dimensions.",
+   "details": "Place two datum symbols on straight edges of the view first, one upright and one level. The selected view, or the first one with datum symbols, then gets a set of chain dimensions per direction, measured on a worker and added as one step.",
+   "keywords": ["datum", "hole positions", "chain", "continuous"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.holeCallout",
+   "title": "Hole callout",
+   "summary": "Labels a hole with its size and depth, read from the model.",
+   "details": "Pick the hole by its circle or its wall; the callout follows the pointer on a leader, and a click places it. It writes the diameter and depth (or THRU), a counterbore or countersink, and how many holes of that size the part has (2×).",
+   "keywords": ["thread", "counterbore", "countersink", "depth", "hole note"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.holeTable",
+   "title": "Hole table",
+   "summary": "Lists the holes of a view in a table: a tag for each, its X and Y position and its size.",
+   "details": "Click the view whose holes go in, then where the table's top left corner goes. Each hole gets its tag on the view, lettered by size (A1, A2, B1), and its row in the table.",
+   "keywords": ["hole chart", "tags", "positions"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.centerMark",
+   "title": "Centre mark",
+   "summary": "Marks the centre of a circle on a view with a cross.",
+   "details": "Pick a circle seen along its axis: the mark is added at once, each one a step. The tool stays on for the next circle; {fixed:esc} leaves.",
+   "keywords": ["center mark", "cross", "circle centre"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.centerLine",
+   "title": "Centre line",
+   "summary": "Draws a centre line along a cylinder seen from the side, between two circles or between two parallel edges.",
+   "details": "Pick a cylinder seen from the side and the line is added at once; or pick two circles or two parallel edges, and it is added after the second. The tool stays on for the next one; {fixed:esc} leaves.",
+   "keywords": ["center line", "axis", "symmetry"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.centerMarks",
+   "title": "Centre marks on views",
+   "summary": "Draws centre marks on every circle of the selected views, or of every view of the sheet, or takes them off.",
+   "details": "The views draw the marks themselves, so they follow the model. The change to the views' style is one step.",
+   "keywords": ["center marks", "automatic", "axes"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.note",
+   "title": "Note",
+   "summary": "Adds a text note to the sheet, with a leader to what it points at when you pick that first.",
+   "details": "Type the text in the bar under the sheet, then click where the note goes; for a leader, pick an edge, a circle or a point first. A note placed inside a view belongs to that view and moves with it.",
+   "keywords": ["text", "leader", "label"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.datum",
+   "title": "Datum",
+   "summary": "Places a datum symbol, a lettered frame on a triangle, on an edge of a view.",
+   "details": "Pick the edge the datum stands on; the frame follows the pointer and a click places it. It takes the next free letter, which the bar under the sheet can change; the datums then serve Dimension from datums and feature control frames.",
+   "keywords": ["datum feature", "GD&T", "A B C"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.fcf",
+   "title": "Feature control frame",
+   "summary": "Adds a geometric tolerance frame: the characteristic, the tolerance and its datums.",
+   "details": "Set the characteristic (position, flatness, perpendicularity and the others), the value, a diameter zone, the material modifier and the datum letters in the bar under the sheet. Pick the feature it controls and click where the frame goes, or click a view without picking for a frame without a leader.",
+   "keywords": ["GD&T", "geometric tolerance", "position", "flatness", "perpendicularity"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.surface",
+   "title": "Surface texture",
+   "summary": "Places a surface texture symbol on an edge, with its roughness value.",
+   "details": "Pick the edge of the surface, then click on the side the symbol stands, along the edge. The bar under the sheet sets the process (material removal required, any process, or no material removal) and the value, such as Ra 1.6.",
+   "keywords": ["roughness", "Ra", "finish"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.partsList",
+   "title": "Parts list",
+   "summary": "Places the drawing's parts list on the sheet: item, quantity, name, part number and material.",
+   "details": "The table follows the pointer by its bottom right corner and a click places it. The bar under the sheet lists the top level or every part once with its quantity, and can add a Mass column; balloons take their numbers from it.",
+   "keywords": ["bill of materials", "BoM table", "item list"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.balloon",
+   "title": "Balloon",
+   "summary": "Labels a part on a view with its item number from the parts list.",
+   "details": "Pick an edge of the part, then click where the balloon goes; its number comes from the parts list. Quantity in the bar under the sheet also writes how many there are (4×).",
+   "keywords": ["item number", "callout", "part number"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.autoBalloon",
+   "title": "Auto-balloon",
+   "summary": "Balloons every part a view shows that has no balloon yet, spread around the view.",
+   "details": "It takes the selected view, else an isometric view, else the first base view. The balloons are placed in columns and rows so that none overlap, and a parts list is added when the drawing has none; all of it is one step.",
+   "keywords": ["balloons", "item numbers", "parts list"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.revisionTable",
+   "title": "Revision table",
+   "summary": "Places the drawing's revision table: each issued revision with its description, date and approval.",
+   "details": "The table follows the pointer by its top right corner and a click places it. Its rows come from Issue revision, so it grows as revisions are issued.",
+   "keywords": ["revisions", "change history", "issue"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.reattach",
+   "title": "Re-attach",
+   "summary": "Gives an annotation that lost what it measures new references, picked on its view.",
+   "details": "Select the annotation, or open the sheet's dangling chip, which lists the ones that lost theirs, and choose it there. Then pick as many edges, circles or points as it had, on its own view: it measures again, and the change is one step.",
+   "keywords": ["dangling", "lost reference", "repair"],
+   "requires": "Select one annotation on the sheet first."
+  },
+  {
+   "id": "nav.fusion",
+   "title": "Navigation: Fusion-style",
+   "summary": "Uses Fusion-style mouse buttons for orbit, pan and zoom.",
+   "details": "Pick the preset your hands already know; it changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
+   "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "fusion"]
+  },
+  {
+   "id": "nav.solidworks",
+   "title": "Navigation: SOLIDWORKS-style",
+   "summary": "Uses SOLIDWORKS-style mouse buttons for orbit, pan and zoom.",
+   "details": "Pick the preset your hands already know; it changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
+   "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "solidworks"]
+  },
+  {
+   "id": "nav.onshape",
+   "title": "Navigation: Onshape-style",
+   "summary": "Uses Onshape-style mouse buttons for orbit, pan and zoom.",
+   "details": "Pick the preset your hands already know; it changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
+   "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "onshape"]
+  },
+  {
+   "id": "nav.blender",
+   "title": "Navigation: Blender-style",
+   "summary": "Uses Blender-style mouse buttons for orbit, pan and zoom.",
+   "details": "Pick the preset your hands already know; it changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
+   "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "blender"]
+  },
+  {
+   "id": "nav.cad2d",
+   "title": "Navigation: CAD 2D",
+   "summary": "Uses drafting mouse buttons: the middle button pans, the wheel zooms and nothing orbits.",
+   "details": "{fixed:ctrl} with the middle button zooms as well, and a trackpad pans instead of orbiting. It changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
+   "keywords": ["mouse", "pan", "zoom", "drafting", "2d", "navigation"]
+  },
+  {
+   "id": "view.animate",
+   "title": "Animate view changes",
+   "summary": "Turns the camera smoothly to a new view instead of jumping there.",
+   "details": "It applies to the standard views, Home, Fit, Previous and Next view, the zoom window and the turns. Off, the camera jumps straight to the new view, as it also does while Reduce motion is on in Preferences › Display. The choice is kept for the next start.",
+   "keywords": ["animation", "smooth camera", "transition", "motion"]
+  },
+  {
+   "id": "view.adaptive",
+   "title": "Lower quality while navigating",
+   "summary": "Draws a model that is slow to draw with less detail while the view moves.",
+   "details": "When a full frame takes longer than about 20 ms, shadows, outlines and extra resolution are left out while you orbit, pan or zoom, and the full image is back a moment after the view rests. Off, every frame is drawn in full, however slow. The choice is kept for the next start.",
+   "keywords": ["performance", "frame rate", "smooth", "large model", "quality"]
+  },
+  {
+   "id": "select.bodies",
+   "title": "Bodies",
+   "summary": "Makes a click pick whole bodies.",
+   "details": "The hover highlight shows what a click would pick. The default for Design; Review measures pick what the tool needs.",
+   "keywords": ["selection filter", "pick", "bodie"],
+   "requires": "Open or create a document first; while sketching, the sketch decides what a click picks."
+  },
+  {
+   "id": "select.faces",
+   "title": "Faces",
+   "summary": "Makes a click pick faces of bodies.",
+   "details": "The hover highlight shows what a click would pick. Faces are what you measure, sketch on and press-pull.",
+   "keywords": ["selection filter", "pick", "face"],
+   "requires": "Open or create a document first; while sketching, the sketch decides what a click picks."
+  },
+  {
+   "id": "select.edges",
+   "title": "Edges",
+   "summary": "Makes a click pick edges, and the lines and curves of drawings.",
+   "details": "The hover highlight shows what a click would pick. Edges are what fillets and chamfers work on.",
+   "keywords": ["selection filter", "pick", "edge"],
+   "requires": "Open or create a document first; while sketching, the sketch decides what a click picks."
+  },
+  {
+   "id": "select.vertices",
+   "title": "Vertices",
+   "summary": "Makes a click pick vertices, the corner points of bodies.",
+   "details": "The hover highlight shows what a click would pick. Vertices are handy as exact points for measuring.",
+   "keywords": ["selection filter", "pick", "vertex"],
+   "requires": "Open or create a document first; while sketching, the sketch decides what a click picks."
+  },
+  {
+   "id": "inspect.distance",
+   "title": "Distance",
+   "summary": "Measures the distance between two picks: the shortest, centre to centre or the largest.",
+   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance, its X, Y and Z parts and the measured points. Started from the Bodies filter it picks faces until it ends: select bodies first, or choose Bodies while it runs, to measure whole bodies. Minimum, Centre to centre and Maximum in the panel choose which distance. A dashed preview line follows the cursor after the first pick, and Pin ({key:inspect.pin}) keeps the result in the document.",
+   "keywords": ["measure", "length", "gap", "clearance", "dimension"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.angle",
+   "title": "Angle",
+   "summary": "Measures the angle between two faces or edges.",
+   "details": "Pick the first face or edge, then the second. The result shows the angle and its supplement.",
+   "keywords": ["measure angle", "degrees", "bevel"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.radius",
+   "title": "Radius",
+   "summary": "Measures the radius and diameter of a circular edge or a cylindrical face.",
+   "details": "Pick one round face, or a circular edge with the Edges filter. The result shows R and Ø; Pin ({key:inspect.pin}) keeps it in the document.",
+   "keywords": ["diameter", "hole size", "circle", "measure"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.bbox",
+   "title": "Bounding box",
+   "summary": "Draws the world-aligned box around the picks and reports its size.",
+   "details": "Each click adds what the selection filter picks, a body, face, edge or vertex, and the box grows to hold them all; {fixed:esc} takes the last one back. The box is measured tightly on a worker thread, so large parts do not freeze the view.",
+   "keywords": ["size", "extents", "dimensions", "overall size"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.area",
+   "title": "Area",
+   "summary": "Measures the area and perimeter enclosed by picked faces, edges or drawing objects, or by picked points.",
+   "details": "Each pick adds to the boundary: faces give their exact area, edges and objects the loops they close (a loop inside another is a hole), three points or more the polygon through them. One object that encloses nothing alone grows into the smallest area around the clicked part; while the picks enclose nothing the panel says what is still open. Pin ({key:inspect.pin}) keeps the result in the document.",
+   "keywords": ["area", "perimeter", "surface", "region", "hatch"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.length",
+   "title": "Length and area",
+   "summary": "Measures an edge's length, a face's area or a body's surface area.",
+   "details": "Pick one edge, face or body. An edge gives its length along the curve and the perimeter of each face loop it belongs to; a face its area and perimeters; a body its surface area, and its volume when it is a solid. From the Vertices filter it picks edges while it runs.",
+   "keywords": ["perimeter", "surface area", "edge length", "measure"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.interference",
+   "title": "Interference",
+   "summary": "Finds bodies that overlap or nearly touch and lists each pair.",
+   "details": "It runs as the panel opens, on the selected bodies or on all solids when nothing is selected, and again whenever the model changes; a Clearance above 0 also lists pairs closer than it. Click a row and the pair is selected: an overlap shows in red over them, a pair that is only close shows its gap as a dimension. Keep as check then opens it in Design as an Interference check feature with the same bodies and clearance; OK adds it to the history, where it runs again whenever those bodies change.",
+   "keywords": ["collision", "clash", "overlap", "clearance"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.printcheck",
+   "title": "Print check",
+   "summary": "Checks a part for 3D printing: overhangs, build-plate contact and thin walls.",
+   "details": "Works on solids and on meshes such as STL and 3MF. It runs as the panel opens and again whenever the model changes, and lists each finding; on the part overhangs turn amber and thin walls red, seen through the model like a selection, until the panel closes. A clicked finding is selected.",
+   "keywords": ["3d print", "overhang", "support", "wall thickness", "stl"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.pin",
+   "title": "Pin",
+   "summary": "Keeps the current measurement in the document as an annotation.",
+   "details": "A pinned measurement stays visible, appears in the Annotations panel and is part of the history. Remove it there when it is no longer needed.",
+   "keywords": ["keep measurement", "save measurement", "annotate"],
+   "requires": "Measure something first with Distance, Angle, Radius or Bounding box."
+  },
+  {
+   "id": "inspect.clear",
+   "title": "Clear measurement",
+   "summary": "Steps back one level: closes a popup or panel, cancels a pick, leaves a tool or clears the measurement.",
+   "details": "{fixed:esc} always undoes the most recent thing first. Press it again to keep stepping back until nothing is left.",
+   "keywords": ["escape", "cancel", "back"]
+  },
+  {
+   "id": "inspect.properties",
+   "title": "Properties",
+   "summary": "Shows the properties of the selection: name, id, volume, area and size.",
+   "details": "Names and ids show at once; volume, area and the exact box are measured in the background and fill in. Pin the panel to make it follow the selection.",
+   "keywords": ["info", "mass", "volume", "area", "inspect"],
+   "requires": "Select the objects first, in the view or in the browser."
+  },
+  {
+   "id": "inspect.partProperties",
+   "title": "Part properties",
+   "summary": "Gives the selected bodies or components a part number, description, material, density or mass, vendor and notes.",
+   "details": "The fields feed the bill of materials and the drawings' title blocks, and a material from the library gives the mass from the volume. Several objects are edited at once, as one step, and Properties shows the result in its Part section.",
+   "keywords": ["part number", "material", "vendor", "density", "mass"],
+   "requires": "Select bodies or components first."
+  },
+  {
+   "id": "inspect.material",
+   "title": "Material",
+   "summary": "Gives the selected bodies or components a material from the library.",
+   "details": "Choose it from the menu, which lists each material with its density: the mass then follows from the volume, and with Colour as the material on they take its colour too. It is one step to undo; None clears it, and Other material… opens Part properties.",
+   "keywords": ["physical material", "steel", "aluminium", "plastic", "density", "mass", "weight"],
+   "requires": "Select bodies or components first; not while a sketch is open."
+  },
+  {
+   "id": "select.similar",
+   "title": "Select similar",
+   "summary": "Selects every face or edge like the picked one: the same hole, fillet radius or direction; for a body picked whole, a rule.",
+   "details": "Pick a face or an edge of a solid, then Select similar: the matches are found on a worker and selected at once; run it again for the next rule. On a body picked whole it starts with the top perimeter, then the bottom perimeter, edges along X, Y or Z, circular edges, upward faces, holes, fillets and chamfers. Useful to pick every hole at once for a fillet.",
+   "keywords": ["similar", "select by geometry", "same radius", "all holes", "smart select"],
+   "requires": "Pick a face or an edge of a solid, or a body, first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.section",
+   "title": "Section",
+   "summary": "Cuts the view with a plane to look inside; drag the plane's edge to move it.",
+   "details": "Only the view is cut, never the model. Cut faces get caps so solids read as solid, and the Section panel holds exact offsets and named sections.",
+   "keywords": ["cut", "clip", "cross section", "inside"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "inspect.flip",
+   "title": "Flip section",
+   "summary": "Shows the other side of the section.",
+   "details": "The cutting plane stays where it is; the kept half swaps. Turn Section on first.",
+   "keywords": ["reverse", "other side", "invert"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "annotate.add",
+   "title": "Note",
+   "summary": "Pins a text note to a body, face, edge or point.",
+   "details": "Click the target (the selection filter decides whether that is a body, face, edge or point), type the note and save it with {fixed:ctrlEnter}. Notes keep their author and time, and live in the document's history.",
+   "keywords": ["comment", "markup", "review", "issue"],
+   "requires": "Open an OPAD document, and finish the sketch first."
+  },
+  {
+   "id": "annotate.draw",
+   "title": "Hand drawing",
+   "summary": "Draws freehand strokes on the model.",
+   "details": "Pick a target, then drag to draw; each stroke lies on a plane facing the camera, so it stays in place when you orbit. Save keeps the drawing as one annotation.",
+   "keywords": ["sketch markup", "pen", "redline", "scribble"],
+   "requires": "Open an OPAD document, and finish the sketch first."
+  },
+  {
+   "id": "annotate.resolve",
+   "title": "Resolve note",
+   "summary": "Marks the selected note as resolved.",
+   "details": "A resolved note leaves the view and is dimmed in the Annotations panel, where Restore brings it back; it stays in the history, so the discussion is never lost. Filter the panel by status to hide them.",
+   "keywords": ["done", "close issue", "complete"],
+   "requires": "Select a note in the Annotations panel first."
+  },
+  {
+   "id": "annotate.show",
+   "title": "Show notes",
+   "summary": "Shows or hides note cards in the 3D view.",
+   "details": "Hiding them only declutters the view. The notes stay in the document and in the Annotations panel.",
+   "keywords": ["annotations", "cards", "declutter"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "edit.undo",
+   "title": "Undo",
+   "summary": "Undoes the last change.",
+   "details": "In a sketch it undoes the last sketch edit; in the note editor the last stroke. Undo history keeps the last 50 steps by default.",
+   "keywords": ["revert", "back"],
+   "requires": "Nothing to undo."
+  },
+  {
+   "id": "edit.redo",
+   "title": "Redo",
+   "summary": "Redoes the change you just undid.",
+   "details": "Redo is available until you make a new change. In a sketch it redoes sketch edits.",
+   "keywords": ["again", "repeat"],
+   "requires": "Nothing to redo."
+  },
+  {
+   "id": "edit.cut",
+   "title": "Cut",
+   "summary": "Copies the selection and then deletes it, as Delete does.",
+   "details": "Paste ({key:edit.paste}) puts it back, here or in another OPAD window; in a sketch it cuts the selected curves. Undo brings the originals back.",
+   "keywords": ["clipboard", "move"]
+  },
+  {
+   "id": "edit.copy",
+   "title": "Copy",
+   "summary": "Copies the selected bodies and components, or in a sketch the selected curves with the constraints among them.",
+   "details": "Paste ({key:edit.paste}) then makes copies, also in another OPAD window. With nothing selected, the current timeline marker's operation id is copied instead.",
+   "keywords": ["clipboard", "duplicate", "op id"]
+  },
+  {
+   "id": "edit.paste",
+   "title": "Paste",
+   "summary": "Places what was copied: bodies as new bodies, sketch curves in the open sketch.",
+   "details": "In the document they came from, the copies start beside the originals in a Move / copy panel, and {fixed:enter} makes them; from another document they are imported as they were. In a sketch the curves follow the pointer by their base point until a click places them.",
+   "keywords": ["clipboard", "new bodies", "duplicate"]
+  },
+  {
+   "id": "edit.pastelinked",
+   "title": "Paste as linked instances",
+   "summary": "Puts the copied parts in again as instances of the same stored bodies.",
+   "details": "The instances use the bodies the originals use rather than copies of them, and the Linked instances panel lists them. It is one undo step.",
+   "keywords": ["clipboard", "instances", "linked", "repeat parts"]
+  },
+  {
+   "id": "edit.repeat",
+   "title": "Repeat",
+   "summary": "Runs the last tool, feature, check or edit again.",
+   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. {fixed:enter} in the view repeats it too while nothing runs, except Delete, Restore, Hide and Show all, which repeat only from here. View navigation, file open and save, panel toggles and plain selection commands are not repeated; Import, Export, Screenshot, Isolate, Save view and Select similar are.",
+   "keywords": ["again", "redo command", "last command", "repeat last"]
+  },
+  {
+   "id": "edit.selectall",
+   "title": "Select all",
+   "summary": "Selects every body on screen, or every curve of the sketch being edited.",
+   "details": "Hidden bodies and those outside an isolation stay out. In a face, edge or vertex filter the view goes back to bodies first; while a tool or a feature input is picking, nothing changes.",
+   "keywords": ["all", "everything"]
+  },
+  {
+   "id": "edit.invert",
+   "title": "Invert selection",
+   "summary": "Selects the bodies on screen that are not selected, and lets go of those that are.",
+   "details": "In a sketch it swaps the selected and unselected curves. Use it to pick everything but a few parts: select those, then invert.",
+   "keywords": ["inverse", "swap", "everything else", "others"]
+  },
+  {
+   "id": "edit.rename",
+   "title": "Rename",
+   "summary": "Renames the selection; several objects are numbered where {n} stands.",
+   "details": "One object is renamed in place in the browser. For several, type a name such as Leg {n} and they become Leg 1, Leg 2 and so on, in selection order.",
+   "keywords": ["name", "label"],
+   "requires": "Select the objects first, in the view or in the browser."
+  },
+  {
+   "id": "edit.hide",
+   "title": "Hide",
+   "summary": "Hides the selection.",
+   "details": "Hidden objects stay in the document; the browser's eye shows them again. Unhide all ({key:edit.showall}) brings back everything.",
+   "keywords": ["visibility", "invisible", "conceal"],
+   "requires": "Select the objects first, in the view or in the browser."
+  },
+  {
+   "id": "edit.showall",
+   "title": "Unhide all",
+   "summary": "Shows everything that is hidden.",
+   "details": "Bodies, components and sketches you hid become visible again. Isolation is separate: leave it with Exit isolate.",
+   "keywords": ["show all", "visibility", "reveal"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "edit.filter",
+   "title": "Filter objects",
+   "summary": "Opens the browser and puts the cursor in its name filter.",
+   "details": "Type part of a name to narrow the browser to matching rows. Clear the field to see everything again.",
+   "keywords": ["find", "search browser", "name"]
+  },
+  {
+   "id": "edit.selectparent",
+   "title": "Select parent",
+   "summary": "Selects the component that contains the selection.",
+   "details": "Press it again to climb further up the assembly. Useful after clicking a single body deep inside an imported model.",
+   "keywords": ["parent", "up", "assembly", "component"],
+   "requires": "Select the objects first, in the view or in the browser."
+  },
+  {
+   "id": "select.shrink",
+   "title": "Select less",
+   "summary": "Steps the selection back down what Select parent climbed.",
+   "details": "From a feature's faces back to the faces picked first, from a component to its body. Select parent ({key:edit.selectparent}) climbs up again.",
+   "keywords": ["smart selection", "shrink the selection", "back"]
+  },
+  {
+   "id": "select.related",
+   "title": "Related selections",
+   "summary": "Lists what the picked faces or edges belong to, with what can be done to it.",
+   "details": "The feature that made them, a hole, a fillet chain or a loop: pick one to select it, or delete, edit or suppress it, or find it in the timeline. The smart chip's ▾ opens the same list.",
+   "keywords": ["smart selection", "feature of a face", "find in timeline"]
+  },
+  {
+   "id": "select.suggest",
+   "title": "Suggest related selections",
+   "summary": "Shows a chip beside picked faces or edges naming what they belong to.",
+   "details": "A click on the chip, or Select parent ({key:edit.selectparent}), selects that whole feature or detail, and on such a selection the chip carries its actions. Off, the chip comes only with Select parent, Related selections or Delete.",
+   "keywords": ["smart selection", "chip", "feature"],
+   "clip": "select.smart"
+  },
+  {
+   "id": "edit.delete",
+   "title": "Delete",
+   "summary": "Removes the selection; the history keeps it restorable.",
+   "details": "In a design the bodies leave through a Remove step at the end of the timeline; a sketch, or a whole import in an imported model, is tombstoned by a delete step. Undo brings them back, and so does Restore ({key:edit.restore}) on that Remove or delete step.",
+   "keywords": ["remove", "erase"],
+   "requires": "Select the objects first, in the view or in the browser."
+  },
+  {
+   "id": "edit.restore",
+   "title": "Restore",
+   "summary": "Brings back what a delete or Remove step took out.",
+   "details": "Select the delete or Remove step on the timeline first; on a tombstoned (dashed) marker it brings that step back. The restore is a new step, so it can itself be undone.",
+   "keywords": ["undelete", "recover", "bring back"],
+   "requires": "Select a delete or Remove step on the timeline first."
+  },
+  {
+   "id": "edit.selecttouched",
+   "title": "Select what it touches",
+   "summary": "Selects the objects the current timeline step changed.",
+   "details": "Clicking a marker on the timeline already selects what the step made. Select what it touches ({key:edit.selecttouched}) then takes the whole bodies or components it changed, in the view and the browser.",
+   "keywords": ["targets", "affected", "timeline"],
+   "requires": "Click a marker on the timeline first."
+  },
+  {
+   "id": "tools.commands",
+   "title": "Search commands",
+   "summary": "Finds any command by typing part of its name.",
+   "details": "Use the arrow keys and {fixed:enter} to run the command. Every command of the menus and the ribbon is listed with its shortcut.",
+   "keywords": ["palette", "find command", "run", "quick"]
+  },
+  {
+   "id": "tools.shortcuts",
+   "title": "Keyboard shortcuts",
+   "summary": "Shows every shortcut and lets you change them.",
+   "details": "Search by name or press the keys to find what they do. Conflicts are flagged before you save, and Restore default puts a command back to its default.",
+   "keywords": ["keys", "hotkeys", "bindings", "keyboard"]
+  },
+  {
+   "id": "tools.author",
+   "title": "Annotation author",
+   "summary": "Sets the name recorded on your notes and changes.",
+   "details": "The name appears on note cards and in the timeline's tooltips. It defaults to your system user name (GIT_AUTHOR_NAME or OPAD_AUTHOR when set).",
+   "keywords": ["user name", "author", "identity"]
+  },
+  {
+   "id": "tools.undodepth",
+   "title": "Undo history",
+   "summary": "Sets how many steps Undo keeps.",
+   "details": "The default is 50, the range 1 to 1000. Older steps stay in the document's history; only undo forgets them.",
+   "keywords": ["undo levels", "history depth", "memory"]
+  },
+  {
+   "id": "tools.cache",
+   "title": "Clear tessellation cache",
+   "summary": "Deletes OPAD's user cache: display meshes and the remembered copies of slow files.",
+   "details": "The cache makes large files open faster the second time. Clearing it frees disk space; the next open is slower once.",
+   "keywords": ["cache", "disk space", "temporary files"]
+  },
+  {
+   "id": "tools.settings",
+   "title": "Settings",
+   "summary": "Opens the settings menu: Preferences, keyboard shortcuts, the theme, the navigation preset and the panels, then Recover documents and Agent activity.",
+   "details": "Everything that is set once lives in Preferences; this menu keeps the switches used every day. Every setting is kept for the next start.",
+   "keywords": ["preferences", "options", "configuration", "gear"]
+  },
+  {
+   "id": "tools.preferences",
+   "title": "Preferences",
+   "summary": "Shows every setting of OPAD in one window, with a search.",
+   "details": "Pages for display, units and precision, sketch snaps, the grid, files, autosave, version control, keyboard and mouse, and AI access. Type in the search field to keep only the pages and rows that match. Changes apply at once and are kept for the next start.",
+   "keywords": ["settings", "options", "configure", "setup", "gear"]
+  },
+  {
+   "id": "help.current",
+   "title": "Help for this tool",
+   "summary": "Opens the guide of the tool you are using: what it does, its keys and its animated steps.",
+   "details": "With no tool running it opens the tool guide where you left it. Over a ribbon button or a menu entry, its key ({key:help.current}) expands that command's card instead.",
+   "keywords": ["help", "how to", "current tool", "guide"]
+  },
+  {
+   "id": "help.reference",
+   "title": "Tool guide",
+   "summary": "The commands, each with what it does, its current keys and, for most, an animated guide; searchable.",
+   "details": "Search by name or by what you want to do; pick a command to see its card and its clip, and click a step to loop it. A command not available now says what it needs.",
+   "keywords": ["help", "reference", "manual", "documentation", "how to", "all commands", "tutorial"]
+  },
+  {
+   "id": "help.shortcuts",
+   "title": "Shortcuts cheat sheet",
+   "summary": "Lists every keyboard shortcut and mouse gesture at a glance.",
+   "details": "The keys are grouped as in the command search, with the mouse of your navigation preset and the keys every tool knows. Search by name or key; Change shortcuts opens the editor, and {fixed:esc} or the key that opened it ({key:help.shortcuts}) closes the sheet.",
+   "keywords": ["keys", "keyboard", "hotkeys", "cheat sheet", "mouse"]
+  },
+  {
+   "id": "help.start",
+   "title": "Getting started",
+   "summary": "Six short animated lessons: move around, open, measure, sketch, make a solid and find any command.",
+   "details": "Each lesson shows its clip; all but the first have a Try it button that runs the command it teaches. The navigation lesson follows your mouse preset, and every key shown is your current one.",
+   "keywords": ["tutorial", "first steps", "learn", "introduction", "basics", "onboarding"]
+  },
+  {
+   "id": "help.report",
+   "title": "Report a problem",
+   "summary": "Writes a problem report with what happened and the facts about OPAD and this computer.",
+   "details": "Nothing is sent by itself: copy the report or save it as a text file, or open the issue page and paste it there. The report names the document's kind and size, never its path or name.",
+   "keywords": ["bug", "issue", "feedback", "crash", "support", "error"]
+  },
+  {
+   "id": "help.licenses",
+   "title": "Third-party licences",
+   "summary": "Lists the libraries OPAD is built on, with their versions, sources and licence texts.",
+   "details": "OPAD itself is under the MIT licence; every library keeps its own. About Qt in the same window shows Qt's terms, and opad-cli licenses prints the same text.",
+   "keywords": ["licenses", "notices", "open source", "copyright", "GPL", "LGPL", "MIT"]
+  },
+  {
+   "id": "help.aboutqt",
+   "title": "About Qt",
+   "summary": "Shows the version of Qt that OPAD runs on and Qt's licence.",
+   "details": "OPAD's windows, menus and panels are made with Qt, used under the LGPL version 3. The other libraries are listed under Third-party licences.",
+   "keywords": ["Qt", "licence", "license", "version"]
+  },
+  {
+   "id": "help.about",
+   "title": "About OPAD",
+   "summary": "Shows the OPAD version, its licence and the libraries it is built on.",
+   "details": "OPAD is free software under the MIT licence, built on Open CASCADE Technology, Qt and other libraries, each under its own licence. It has headless twins: opad-cli on the command line and the opad Python module. Both read and write the same documents.",
+   "keywords": ["version", "licence", "license", "copyright", "trademarks", "info"]
+  },
+  {
+   "id": "design.sketch",
+   "title": "New sketch",
+   "summary": "Starts a sketch on an origin plane, a planar face or a construction plane.",
+   "details": "Click an origin plane (in the view or the corner tiles), a planar face, a construction plane or a sketch: the camera turns square to it. Place the origin or keep it and press OK; the ribbon switches to the Sketch tools. Finish sketch keeps the result as one step on the timeline.",
+   "keywords": ["draw", "2d", "profile", "start sketch"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.convertDrawing",
+   "title": "Drawing to sketch",
+   "summary": "Turns an imported 2D drawing into an editable sketch in the drawing's own plane.",
+   "details": "Choose the layers to bring in; lines, arcs and circles become sketch curves you can constrain and extrude. The drawing itself stays as it was. Tick Construction only for helper layers such as centre lines. The curves come in unconstrained.",
+   "keywords": ["dxf", "dwg", "svg", "convert", "layers"],
+   "requires": "Open or create a document with an imported drawing (DXF, DWG or SVG) first."
+  },
+  {
+   "id": "design.parameters",
+   "title": "Parameters",
+   "summary": "Named values usable in any dimension or feature field.",
+   "details": "Define width = 40 mm once and type width, or an expression such as width / 2, wherever a value is asked. Changing a parameter regenerates everything that uses it.",
+   "keywords": ["variables", "expressions", "equations", "fx"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.regenerate",
+   "title": "Regenerate",
+   "summary": "Recomputes every feature from the start of the timeline.",
+   "details": "Normally only what changed is recomputed. Use it after updating an imported file or to check that the whole history still builds.",
+   "keywords": ["rebuild", "recompute", "update"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.edit",
+   "title": "Edit feature",
+   "summary": "Edits the feature or sketch selected on the timeline.",
+   "details": "The timeline rolls back to that step, so later steps are dimmed while you edit. OK regenerates everything after it.",
+   "keywords": ["modify feature", "change", "roll back", "history"],
+   "requires": "Select a feature or a sketch on the timeline first, or double-click it."
+  },
+  {
+   "id": "design.newcomponent",
+   "title": "New component",
+   "summary": "Adds a component, named Component N, in the active component or the selected one.",
+   "details": "It becomes the active component, so what you make next goes into it (the Activate box under its name, or Activate new components, changes that), and its name is ready to type in the browser. Drag bodies onto it in the browser, or use Move to component.",
+   "keywords": ["group", "assembly", "folder", "subassembly"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.reparent",
+   "title": "Move to component",
+   "summary": "Moves the selection under another component, keeping it where it is.",
+   "details": "A list opens at the pointer with the document root and every component the selection can go to; type to narrow it, then click one or press {fixed:enter}. What moves keeps its place in the world, as one step.",
+   "keywords": ["move to component", "regroup", "assembly"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.componentFromSelection",
+   "title": "Component from selection",
+   "summary": "Puts the selected bodies and components into a new component, where they are.",
+   "details": "The new component is made in their nearest common component, in one step, and its name is ready to type in the browser. What moves into it keeps its place in the world.",
+   "keywords": ["group", "wrap", "make component", "subassembly"],
+   "requires": "Select bodies or components first; not while a sketch is open."
+  },
+  {
+   "id": "assembly.activateNew",
+   "title": "Activate new components",
+   "summary": "Makes each new component the active one as it is made.",
+   "details": "On, what you make after New component goes into it; off, the active component stays as it was. The Activate box under a new component's name changes this too.",
+   "keywords": ["active", "new component"]
+  },
+  {
+   "id": "assembly.activate",
+   "title": "Activate component",
+   "summary": "Makes a component the active one: new sketches, features, bodies and imports go into it.",
+   "details": "Select a component, or a body in it, and run it; the radio button on a browser row does the same, and so does a double-click on a ghost. The rest of the model is ghosted, and the chip over the view names the active component: a click on it activates the document root again.",
+   "keywords": ["active", "edit in place", "context"],
+   "requires": "Select a component, or a body in it, that is not active yet.",
+   "clip": "component.activate"
+  },
+  {
+   "id": "assembly.activateRoot",
+   "title": "Activate root",
+   "summary": "Makes the document root active again, so nothing is ghosted.",
+   "details": "New sketches, features and bodies then go to the top of the document. A click on the active component's chip does the same.",
+   "keywords": ["active", "deactivate", "root"],
+   "requires": "Only while a component is active."
+  },
+  {
+   "id": "assembly.activeVisibility",
+   "title": "Active component visibility",
+   "summary": "Chooses whether the rest of the model is ghosted while a component is active.",
+   "details": "On, everything outside the active component is drawn faintly and picked only as a reference; off, it is drawn and picked as it is. Inactive opacity, beside it in the Design menu and the chip's right-click menu, sets how faint the ghosts are.",
+   "keywords": ["ghost", "fade", "inactive", "transparent"]
+  },
+  {
+   "id": "assembly.activeHistory",
+   "title": "Only the active component's history",
+   "summary": "Keeps the timeline to the steps that touch the active component.",
+   "details": "Off, the other steps stay on the timeline, dimmed. It matters only while a component is active.",
+   "keywords": ["timeline", "history", "filter"]
+  },
+  {
+   "id": "assembly.explode",
+   "title": "Exploded view",
+   "summary": "Moves the parts of the assembly apart in the view, to show how it goes together.",
+   "details": "The Explode panel sets the level, the distance (a slider, with Play), the layout and what moves together; dashed lines show where each part belongs. Only the view changes, never the model, and Save exploded view keeps the arrangement as a named view.",
+   "keywords": ["explode", "exploded", "spread", "apart", "assembly"],
+   "requires": "Open or create a document first; not while a sketch is open."
+  },
+  {
+   "id": "assembly.explodePlay",
+   "title": "Play explode",
+   "summary": "Moves the parts out, or back together when they are out.",
+   "details": "It animates the exploded view's distance. {fixed:space} does the same in the Explode panel.",
+   "keywords": ["animate", "explode", "assemble"],
+   "requires": "Open or create a document first; not while a sketch is open."
+  },
+  {
+   "id": "assembly.explodeOff",
+   "title": "Collapse exploded view",
+   "summary": "Puts the parts back where the model has them.",
+   "details": "The exploded view's settings are kept, so Exploded view opens it again as it was. Saved exploded views do not change.",
+   "keywords": ["explode", "assemble", "collapse", "unexplode"],
+   "requires": "Only while the view is exploded."
+  },
+  {
+   "id": "assembly.explodeSave",
+   "title": "Save exploded view",
+   "summary": "Keeps the exploded arrangement as a named view in the document.",
+   "details": "Name it; choosing it later under View > Named views, or in the Explode panel, explodes the view again. A file open in viewer mode asks to become an OPAD document first.",
+   "keywords": ["explode", "view", "bookmark", "save"],
+   "requires": "Open or create a document first; not while a sketch is open."
+  },
+  {
+   "id": "assembly.explodeKeep",
+   "title": "Keep together",
+   "summary": "Makes the selected component move as one part in the exploded view, at any level.",
+   "details": "Use it for a subassembly that stays whole, such as a circuit board with its parts. The component's badge in the browser shows the rule, and a click on it switches the rule.",
+   "keywords": ["explode", "rigid", "subassembly", "one unit"],
+   "requires": "Only while the view is exploded, with a component selected."
+  },
+  {
+   "id": "assembly.explodeSplit",
+   "title": "Explode its parts",
+   "summary": "Moves the selected component's parts apart in the exploded view, whatever the level.",
+   "details": "Use it for a folder of screws inside a part that is kept whole. Turn it off to let the component follow the level again.",
+   "keywords": ["explode", "split", "spread", "parts"],
+   "requires": "Only while the view is exploded, with a component selected."
+  },
+  {
+   "id": "assembly.explodeGroup",
+   "title": "Group (explode as one)",
+   "summary": "Makes the selected bodies and components move as one in the exploded view.",
+   "details": "The browser marks what moves together, and a saved exploded view keeps the group. Ungroup lets them move on their own again.",
+   "keywords": ["explode", "group", "together", "one unit"],
+   "requires": "Only while the view is exploded, with two or more objects selected."
+  },
+  {
+   "id": "assembly.explodeUngroup",
+   "title": "Ungroup",
+   "summary": "Lets the selected objects of an explode group move on their own again.",
+   "details": "Only the exploded view changes. The browser stops marking them as moving together.",
+   "keywords": ["explode", "ungroup", "split"],
+   "requires": "Only while the view is exploded, with a grouped object selected."
+  },
+  {
+   "id": "design.colour",
+   "title": "Colour",
+   "summary": "Sets the colour of the selection.",
+   "details": "Pick the colour in the dialog; every selected object gets it, as one step. In viewer mode it is a view setting and is not saved.",
+   "keywords": ["color", "paint", "appearance"],
+   "requires": "Select the objects first, in the view or in the browser."
+  },
+  {
+   "id": "design.opacity",
+   "title": "Opacity",
+   "summary": "Makes the selection see-through, from 10 to 100 percent.",
+   "details": "A slider opens at the pointer (and in the right-click menu): the view follows it, and letting go keeps it as one step. Lower opacity lets you see parts inside a housing; picking still works on see-through bodies.",
+   "keywords": ["transparency", "translucent", "see through", "alpha"],
+   "requires": "Select the objects first, in the view or in the browser."
+  },
+  {
+   "id": "design.lock",
+   "title": "Lock",
+   "summary": "Locks the selection against picking and edits, or unlocks it.",
+   "details": "Locked objects stay visible but the hover no longer finds them, so you can work on what is in front or around. Use it again to unlock.",
+   "keywords": ["freeze", "protect", "unpickable"],
+   "requires": "Select the objects first, in the view or in the browser."
+  },
+  {
+   "id": "design.box",
+   "title": "Box",
+   "summary": "A box on a plane at a position, sized by length, width and height.",
+   "details": "Click a plane or a planar face where it goes, move the pointer to draw the base and click (or type its length, {fixed:tab}, its width, then {fixed:enter} or {fixed:tab}), then drag the arrow or type the height; {fixed:enter} adds it and {fixed:esc} steps back. Length runs along the plane's X, width along its Y and height along its normal (a negative height grows the other way); the base is centred on the click unless you turn that off, then the click is a corner. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["cube", "block", "primitive", "rectangular prism"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.cylinder",
+   "title": "Cylinder",
+   "summary": "A cylinder standing on a plane at a position.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click (or type it, then {fixed:enter} or {fixed:tab}), then drag the arrow or type the height; {fixed:enter} adds it and {fixed:esc} steps back. Its axis is the plane's normal; a negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["rod", "shaft", "primitive", "round"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.sphere",
+   "title": "Sphere",
+   "summary": "A sphere centred on a plane at a position.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click; {fixed:enter} adds it and {fixed:esc} steps back. The plane runs through its middle. Combine it with other bodies to round off shapes. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["ball", "primitive", "round"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.cone",
+   "title": "Cone",
+   "summary": "A cone or a truncated cone standing on a plane at a position.",
+   "details": "Click a plane or a planar face for the centre of its base, move the pointer to set the base diameter and click (or type it, then {fixed:enter} or {fixed:tab}), then drag the arrow or type the height; {fixed:tab} from the height's box reaches the top diameter, which cuts the tip off above zero. {fixed:enter} adds it and {fixed:esc} steps back. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["taper", "frustum", "primitive"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.torus",
+   "title": "Torus",
+   "summary": "A ring centred on a plane at a position.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the ring diameter (through the middle of the tube) and click (or type it, then {fixed:enter} or {fixed:tab}), then the tube's section diameter and click; {fixed:enter} adds it and {fixed:esc} steps back. The plane runs through the middle of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["ring", "donut", "o-ring", "primitive"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.extrude",
+   "title": "Extrude",
+   "summary": "Pulls sketch profiles or planar faces along their normal into a solid.",
+   "details": "Pick the profiles, then drag the arrow or type the distance. Symmetric splits the distance on both sides, and the extent can also run through all or up to a face or body. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["pull", "extrusion", "push", "pad", "boss", "cut extrude"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.revolve",
+   "title": "Revolve",
+   "summary": "Turns sketch profiles about an axis into a solid.",
+   "details": "Pick the profiles, then click the axis in the view: a sketch line, an origin axis or a construction axis (an edge or a round face through the Axis box). The preview turns them a full 360 degrees at once; type another angle to change it, and Symmetric splits it on both sides. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["lathe", "turn", "rotate profile", "axisymmetric"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.sweep",
+   "title": "Sweep",
+   "summary": "Moves a profile along a path into a solid.",
+   "details": "Pick one profile, then the path: sketch curves or edges. Keep the profile at the start of the path and smaller than its tightest bend. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["path", "rail", "tube", "trajectory"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.loft",
+   "title": "Loft",
+   "summary": "Blends through two or more profiles, in the order they are picked.",
+   "details": "Pick the profiles one after another, usually on parallel planes. Straight sides makes ruled faces between them instead of a smooth skin. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["blend", "transition", "skin"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.pipe",
+   "title": "Pipe",
+   "summary": "A round section along a path.",
+   "details": "Pick the path and set the diameter; Hollow adds a wall thickness. Good for cables, tubing and handrails. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["tube", "wire", "cable", "hose"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.coil",
+   "title": "Coil",
+   "summary": "A round or square section wound about an axis: springs and threads.",
+   "details": "Click a plane or a planar face for its axis, move the pointer to set the coil diameter (through the middle of the section) and click, then set the pitch between turns and the number of turns in the panel; {fixed:enter} adds it and {fixed:esc} steps back. Left-handed winds it the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["spring", "helix", "thread", "spiral"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.thicken",
+   "title": "Thicken",
+   "summary": "Gives faces a thickness: a solid skin over the picked faces.",
+   "details": "Pick the faces, then drag the arrow or type the thickness; Other side grows it inward. Useful to turn a surface into a part. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["skin", "offset surface", "solidify"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.hole",
+   "title": "Hole",
+   "summary": "Drills holes at sketch points, into the material behind the sketch.",
+   "details": "Pick the sketch points, then choose a simple, counterbored or countersunk hole with its diameter and depth. Each point gets one hole.",
+   "keywords": ["drill", "bore", "counterbore", "countersink", "screw hole"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.fillet",
+   "title": "Fillet",
+   "summary": "Rounds edges.",
+   "details": "Pick the edges, then drag the arrow on the first edge or type the radius; edges that meet tangentially are rounded together. By rule… in the panel, or Select similar, picks every similar edge at once.",
+   "keywords": ["round", "radius", "blend edge"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.chamfer",
+   "title": "Chamfer",
+   "summary": "Bevels edges.",
+   "details": "Pick the edges, then drag the arrow on the first edge or type the distance, or two distances (Type) for an unequal bevel. Chamfers break sharp edges and ease assembly.",
+   "keywords": ["bevel", "edge break", "angle edge"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.shell",
+   "title": "Shell",
+   "summary": "Hollows a body; the picked faces are removed and become openings.",
+   "details": "Pick the faces to open and set the wall thickness. To hollow it closed, click Bodies to hollow in the panel and pick the body.",
+   "keywords": ["hollow", "wall", "enclosure", "box"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.draft",
+   "title": "Draft",
+   "summary": "Tilts faces about a neutral plane, for moulds.",
+   "details": "Pick the faces, the neutral plane and the angle. A few degrees of draft lets a part come out of its mould.",
+   "keywords": ["taper", "mould", "mold", "angle faces"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.offset_face",
+   "title": "Press pull",
+   "summary": "Pushes planar faces in or pulls them out.",
+   "details": "Pick one or more faces and drag the arrow or type the distance; a negative value pushes into the material. The face moves straight along its normal: sides square to it extend, slanted sides do not (use Draft for those).",
+   "keywords": ["push pull", "offset face", "move face", "direct edit"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.remove_faces",
+   "title": "Remove faces",
+   "summary": "Deletes faces and closes the gap by extending the faces around them.",
+   "details": "Pick the faces of a hole, fillet, chamfer or boss and press {fixed:enter}; the neighbouring faces grow until they meet. Imported bodies can be simplified this way. It is also on Press pull's menu and on the right-click menu of a picked face.",
+   "keywords": ["delete faces", "defeature", "simplify", "close hole", "heal"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.scale",
+   "title": "Scale",
+   "summary": "Resizes bodies uniformly.",
+   "details": "Set the factor: 2 doubles, 0.5 halves. Scale about the origin or about each body's centre of mass.",
+   "keywords": ["resize", "enlarge", "shrink", "factor"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.combine",
+   "title": "Combine",
+   "summary": "Joins, cuts or intersects bodies.",
+   "details": "Pick the target body (more through the Target bodies box), then the tool bodies, and choose the operation. Keep tools leaves the tool bodies in place after the cut.",
+   "keywords": ["boolean", "union", "subtract", "intersect", "merge"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.split",
+   "title": "Split body",
+   "summary": "Cuts bodies in two along a plane.",
+   "details": "Pick the bodies, then click the splitting plane in the view: an origin or a construction plane (a planar face through the Splitting plane box). Each body becomes two bodies in place, which you can then move, hide or delete.",
+   "keywords": ["cut in half", "divide", "separate", "slice"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.mirror",
+   "title": "Mirror",
+   "summary": "Makes mirrored copies of bodies about a plane.",
+   "details": "Pick the bodies and the mirror plane. Model half of a symmetric part and mirror the rest. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["symmetry", "reflect", "flip copy"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.pattern_rect",
+   "title": "Rectangular pattern",
+   "summary": "Copies bodies in rows and columns.",
+   "details": "Pick the bodies, a direction, the count and the spacing; turn on a second direction for a grid. Changing the count later updates every copy. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["array", "grid", "linear pattern", "repeat"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.pattern_circ",
+   "title": "Circular pattern",
+   "summary": "Copies bodies about an axis.",
+   "details": "Pick the bodies: the copies go round the Z axis at once; click another axis (an origin or construction axis, a sketch line) to turn them about it. Set the count and the total angle: 360 degrees spreads the copies evenly around a full turn. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "keywords": ["polar array", "radial", "around", "repeat"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.move",
+   "title": "Move / copy",
+   "summary": "Moves or copies bodies by distances and an optional turn.",
+   "details": "Pick the bodies, then drag an arrow of the triad on them (or its middle square, in the view's plane) or type X, Y and Z; with Grid snapping on, a drag goes in grid steps (hold {fixed:alt} to drag freely). Turn on Rotate for an axis and an angle: a ring round that axis through the bodies turns them in 5° steps, or type the angle. Make a copy leaves the original in place, and every value can be an expression.",
+   "keywords": ["translate", "position", "transform", "copy"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "design.remove",
+   "title": "Remove",
+   "summary": "Takes bodies out of the design from this point on.",
+   "details": "The history keeps them: roll the timeline back before this step and they are there. Use it for tool bodies that are no longer needed.",
+   "keywords": ["delete body", "hide body", "consume"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.plane",
+   "title": "Construction plane",
+   "summary": "A plane to sketch on, or to mirror, split and draft about.",
+   "details": "Make it offset from a plane (drag its arrow or type the distance), at an angle about an axis, midway between two planes, through three points or through a point normal to an axis. It follows its references when they change.",
+   "keywords": ["work plane", "datum plane", "reference plane", "offset plane"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.axis",
+   "title": "Construction axis",
+   "summary": "An axis to revolve or pattern about.",
+   "details": "Make it along an edge or through a round face's centre. Set Type to Two points to make it through two points, or to Normal for one normal to a plane through a point. Revolve and the circular pattern can pick it.",
+   "keywords": ["work axis", "datum axis", "reference axis"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.interference",
+   "title": "Interference check",
+   "summary": "Records an interference check in the history that runs again whenever its bodies change.",
+   "details": "It opens from Inspect > Interference: after a check, Keep as check fills it with that check's bodies and clearance. Pick the bodies, or none for all solids, and an optional clearance. With Fail on set, a finding marks the step as an error on the timeline.",
+   "keywords": ["clash", "collision", "clearance", "check"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "sketch.finish",
+   "title": "Finish sketch",
+   "summary": "Ends the sketch and keeps it.",
+   "details": "The sketch becomes one step on the timeline and its closed regions turn into profiles for Extrude and Revolve. The camera and the ribbon return to where you were.",
+   "keywords": ["done", "close sketch", "exit sketch", "ok"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.cancel",
+   "title": "Cancel sketch",
+   "summary": "Leaves the sketch and discards the changes made since it opened.",
+   "details": "A new sketch is not created at all; an edited sketch goes back to how it was. If you changed the sketch, you confirm discarding first. Use Finish sketch to keep your work.",
+   "keywords": ["discard", "abort", "throw away"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.panel",
+   "title": "Sketch tools",
+   "summary": "Opens the sketch tool panel: the tool's steps and fields, precise input, constraints and snaps.",
+   "details": "Type exact coordinates there, absolute, relative or as length and angle, to place points. The other pages list the constraints and set the snaps and solver.",
+   "keywords": ["panel", "precise input", "coordinates"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.commandLine",
+   "title": "Command line",
+   "summary": "A line at the bottom left of the sketch for drafting by the keyboard: type a tool's name or a value.",
+   "details": "A word runs a tool or an editing command (its name or a short form such as LINE or REC); anything else goes into the step's value boxes, then {fixed:enter}. Up and Down recall earlier entries, and its close button hides it until this command ({key:sketch.commandLine}) opens it again.",
+   "keywords": ["type a command", "coordinates", "keyboard"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.replane",
+   "title": "Redefine sketch plane",
+   "summary": "Moves the sketch to another plane, keeping its geometry.",
+   "details": "Pick a new origin plane, planar face or construction plane, place the sketch origin on it and press OK. Features built on the sketch follow it to the new place.",
+   "keywords": ["move sketch", "change plane", "reattach"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.node",
+   "title": "Spline node weights",
+   "summary": "Edits the weights of a spline node and its handles.",
+   "details": "Select a node of a spline (or double-click it) and set the weights: the curve previews its new shape. Press {fixed:enter} or Apply to keep it. A heavier node pulls the curve closer to it.",
+   "keywords": ["spline weight", "nurbs", "handle"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.openEnds",
+   "title": "Find open ends",
+   "summary": "Marks endpoints that meet nothing, which is why a profile is not closed.",
+   "details": "Each open end gets a red ring. Close the gaps by dragging the ends together or with Heal endpoints.",
+   "keywords": ["gaps", "not closed", "open profile", "check"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.construction",
+   "title": "Construction",
+   "summary": "Turns the selected curves into construction geometry, or back.",
+   "details": "Construction curves are dashed: they guide and constrain but never form profiles. Use them for centre lines and helper circles.",
+   "keywords": ["reference geometry", "helper", "centre line", "dashed"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.copybase",
+   "title": "Copy with base point",
+   "summary": "Copies the selected sketch curves about a point you click.",
+   "details": "Select the curves, run it and click the base point; a paste then carries the copy on the pointer by that point. The constraints among the curves come along.",
+   "keywords": ["clipboard", "base point", "copy curves"],
+   "requires": "Only while a sketch is open, with curves selected."
+  },
+  {
+   "id": "sketch.showConstraints",
+   "title": "Show or hide constraints",
+   "summary": "Shows or hides the constraint badges in the sketch.",
+   "details": "Hiding them only declutters the view: the constraints keep holding. Constraints in conflict and selected ones still show.",
+   "keywords": ["constraint badges", "glyphs", "declutter"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.select",
+   "title": "Select",
+   "summary": "Selects, drags and edits sketch geometry; double-click a dimension to change it.",
+   "details": "Dragging moves geometry while the constraints keep holding. {fixed:del} deletes the selection and Construction ({key:sketch.construction}) makes it construction geometry.",
+   "keywords": ["pick", "drag", "edit", "pointer"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.line",
+   "title": "Line",
+   "summary": "Draws connected lines; click point after point.",
+   "details": "Each click ends one segment and starts the next. Close the loop on the start point, or press {fixed:enter} or double-click to stop; horizontal and vertical constraints are added as you draw.",
+   "keywords": ["polyline", "segment", "draw line"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.rect",
+   "title": "Rectangle",
+   "summary": "Draws a rectangle from two opposite corners.",
+   "details": "Click the first corner, then the opposite one. Its sides get horizontal and vertical constraints, ready to dimension.",
+   "keywords": ["box", "square", "two corner"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.crect",
+   "title": "Centre rectangle",
+   "summary": "Draws a rectangle from its centre and a corner.",
+   "details": "Click the centre, then a corner; the rectangle grows symmetrically. Handy for parts centred on the origin.",
+   "keywords": ["center rectangle", "symmetric", "square"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.rect3",
+   "title": "3-point rectangle",
+   "summary": "Draws a rotated rectangle: a corner, the base direction, then the height.",
+   "details": "The first two clicks set one side at any angle. The third sets how far the opposite side lies.",
+   "keywords": ["rotated rectangle", "angled", "three point"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "workspace.drafting",
+   "title": "Drafting workspace",
+   "summary": "Switches the ribbon to Drafting: 2D drawings (DXF, DWG, SVG) to draw on, measure, plot and turn into sketches.",
+   "details": "Viewing a drawing file comes here by itself, and the next other document goes back to where you were; arriving this way is not remembered for the next start. Draw on drawing started here opens a sketch on the drawing's own plane with its Sketch tab first in Drafting. The document and its timeline stay the same; only the ribbon's tabs change.",
+   "keywords": ["2D", "DXF", "DWG", "drafting", "layers", "plot"]
+  },
+  {
+   "id": "design.drawOnDrawing",
+   "title": "Draw on drawing",
+   "summary": "Opens a sketch on the drawing's own plane and origin, to draw new curves over it with the sketch tools.",
+   "details": "Started in Drafting, its Sketch tab comes first there while it is open; started anywhere else, it opens in Design. Finish sketch keeps the curves as a sketch in the document; the drawing's own lines stay as they are. A file open in viewer mode is saved as an OPAD document, or copied, first. With drawings in several planes, select a layer of the one to draw on.",
+   "keywords": ["sketch on drawing", "draw lines", "DXF", "DWG", "drafting", "2D"],
+   "requires": "Open a 2D drawing (DXF, DWG or SVG) first; not while a sketch is open."
+  },
+  {
+   "id": "design.suppress",
+   "title": "Suppress",
+   "summary": "Suppresses the feature selected on the timeline, or brings back one that is suppressed.",
+   "details": "A suppressed feature stays in the history but adds nothing to the model, and the steps after it are computed without it; its marker is struck through. With no marker selected the feature that made the selected body is taken, else the command waits for a click on a marker.",
+   "keywords": ["suppress feature", "disable", "unsuppress", "history", "timeline"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "timeline.rollBack",
+   "title": "Roll back to here",
+   "summary": "Shows the model as it was right after the step selected on the timeline.",
+   "details": "The playhead moves after that marker and a chip over the view says the model is rolled back; Roll forward to the end, or a click on the chip, shows every step again. A change made meanwhile is added at the end of the history. With no marker selected the command waits for a click on one.",
+   "keywords": ["timeline", "history marker", "before this step", "rollback"],
+   "requires": "Open an OPAD document; not while a sketch is open."
+  },
+  {
+   "id": "design.showOrigin",
+   "title": "Origin planes and axes",
+   "summary": "Shows the origin's XY, XZ and YZ planes and its axes in Design, also once there is a model.",
+   "details": "An empty document shows them anyway, with the grid, and there a plane picked in the view is where New sketch draws. With a model they are only shown, so clicks reach the faces; New sketch offers them to pick. The choice to show them is kept for the next start.",
+   "keywords": ["origin", "XY plane", "datum planes", "show construction", "axes"],
+   "requires": "Open an OPAD document first."
+  },
+  {
+   "id": "view.namedViews",
+   "title": "Named views",
+   "summary": "Lists the document's named views; choosing one returns to its camera.",
+   "details": "An exploded view kept with Save exploded view explodes again when chosen. Save view at the end of the list adds the current camera.",
+   "keywords": ["saved views", "camera", "bookmarks", "views"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.rendering",
+   "title": "Rendering",
+   "summary": "How the view draws: small parts and quality while it moves, view animations and the theme.",
+   "details": "Its entries are Hide small parts while navigating, Small part size, Lower quality while navigating, Animate view changes and Dark theme. Preferences has the other display settings on its Display page.",
+   "keywords": ["display", "quality", "performance", "theme", "animation"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.panels",
+   "title": "Panels",
+   "summary": "Shows or hides the window's panels: the browser, annotations, the timeline, version control and the section.",
+   "details": "Each entry is the panel's own command with its key. Reset layout puts every panel back where it started.",
+   "keywords": ["browser", "timeline", "windows", "layout", "docks"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "vcs.compareFile",
+   "title": "Compare with a file",
+   "summary": "Compares another OPAD document, such as a copy or a variant, with this session.",
+   "details": "Choose the .opad file: Compare opens with it as A and this session as B, its changes listed in the panel and drawn in the view. The panel's pickers change either side afterwards.",
+   "keywords": ["diff", "other document", "variant", "copy", "changes"],
+   "requires": "Open an OPAD document; not while a sketch is open."
+  },
+  {
+   "id": "file.recover",
+   "title": "Recover documents",
+   "summary": "Lists the snapshots an earlier session left behind, to restore, merge or compare them.",
+   "details": "Each snapshot is shown against its file as it is now, with Restore into file, Merge into current, Restore as copy, Compare, Discard snapshot and Later. With none left, the status bar says so.",
+   "keywords": ["autosave", "crash", "snapshot", "restore", "recovery"]
+  },
+  {
+   "id": "tools.ai",
+   "title": "AI integration",
+   "summary": "Sets up local AI agent access to this window: the connection, what an agent may change and its activity.",
+   "details": "Enable local agent access, choose whether an agent may make design edits and exports, and copy the MCP server configuration for your AI client. The status bar's AI chip opens the same dialog.",
+   "keywords": ["agent", "MCP", "assistant", "AI"]
+  },
+  {
+   "id": "tools.agentActivity",
+   "title": "Agent activity",
+   "summary": "Shows what a connected AI agent is doing, with a button that stops its work.",
+   "details": "The panel lists the agent's requests as they come, and Follow changes shows its edits in the view. Stop agent work ends what it started.",
+   "keywords": ["agent", "AI", "MCP", "log", "stop"]
+  },
+  {
+   "id": "tools.fileTypes",
+   "title": "File types",
+   "summary": "Chooses which file types Windows opens with OPAD.",
+   "details": "Tick the formats and press Open with OPAD; they are registered for your Windows account only, and Default apps lets you make OPAD the app for a type. Elsewhere the system declares them, and the command opens the Files page of Preferences instead.",
+   "keywords": ["associations", "open with", "default app", "Explorer", "extensions"]
+  },
+  {
+   "id": "assembly.explodeFinish",
+   "title": "Finish explode",
+   "summary": "Closes the Explode tab and its panel; the parts stay where they are.",
+   "details": "The exploded parts stay in place until Collapse exploded view brings them back. Exploded view opens the panel and the tab again.",
+   "keywords": ["done", "close explode", "exploded view"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "drawings.explodedView",
+   "title": "Exploded view",
+   "summary": "Places a view of a saved exploded view on the sheet, with the parts where that view puts them.",
+   "details": "Save an exploded view first: Exploded view, then Save exploded view in its Explode tab; with several saved, a menu lists them. A frame follows the pointer and a click places it, seen from that view's camera. Thin phantom trail lines show where the parts came from and balloons point at the parts where they are drawn; when the exploded view is updated (Update view in the Explode panel), the drawing follows. A base view already placed switches between Assembled and a saved exploded view under View state in its context menu.",
+   "keywords": ["explode", "assembly drawing", "trail lines", "balloons", "saved view"],
+   "requires": "Only while a sheet is shown in the Drawings workspace."
+  },
+  {
+   "id": "drawings.publish",
+   "title": "Publish PDF",
+   "summary": "Writes the sheets of a drawing as the pages of one PDF, from any workspace.",
+   "details": "With several drawings in the document a menu asks which one, then the file dialog asks where the PDF goes. Export sheet in Drawings > Output writes one sheet in the other formats.",
+   "keywords": ["PDF", "drawing", "sheets", "pages", "share"],
+   "requires": "Make a drawing first: New drawing in the Drawings workspace."
+  },
+  {
+   "id": "sketch.circle",
+   "title": "Circle",
+   "summary": "Draws a circle from its centre and a point on it.",
+   "details": "Click the centre, then click again to set the size. Dimension the diameter afterwards to fix it.",
+   "keywords": ["round", "centre radius", "diameter"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.circle2",
+   "title": "2-point circle",
+   "summary": "Draws a circle across a diameter: two opposite points.",
+   "details": "Click one end of the diameter, then the other. Useful when the circle must touch two existing points.",
+   "keywords": ["diameter circle", "two point"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.circle3",
+   "title": "3-point circle",
+   "summary": "Draws a circle through three points.",
+   "details": "Click three points on the circle, in any order. Snap to existing points to fit a circle through them.",
+   "keywords": ["three point", "circumcircle", "through points"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.tangent_circle",
+   "title": "Tangent circle",
+   "summary": "Draws a circle tangent to two lines with a set radius.",
+   "details": "Set the radius, pick the two lines, then click on the side where the circle should sit. It stays tangent when the lines move.",
+   "keywords": ["inscribed circle", "tangent", "between lines"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.arc3",
+   "title": "3-point arc",
+   "summary": "Draws an arc through a start, an end and a point on it.",
+   "details": "Click the start, the end, then move to bend the arc and click. The third click sets how far it bulges.",
+   "keywords": ["arc", "curve", "three point arc"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.arcc",
+   "title": "Centre arc",
+   "summary": "Draws an arc from its centre, a start and an end.",
+   "details": "Click the centre, then the start, which sets the radius, then sweep to the end and click. The arc runs the way the pointer went round, past half a turn too. A radius dimension fixes its size afterwards.",
+   "keywords": ["center arc", "radius arc", "sweep"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.tangent_arc",
+   "title": "Tangent arc",
+   "summary": "Draws an arc that continues tangentially from the end of a line.",
+   "details": "Pick the line's endpoint, then click where the arc ends. The joint stays smooth when you edit either curve.",
+   "keywords": ["continue", "smooth arc", "tangent"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.ellipse",
+   "title": "Ellipse",
+   "summary": "Draws an ellipse: centre, end of the first axis, then the second axis.",
+   "details": "The first axis can lie at any angle. The third click sets the half-width across it.",
+   "keywords": ["oval", "elliptical"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.slot",
+   "title": "Slot",
+   "summary": "Draws a straight slot: two centres, then the width.",
+   "details": "Click the centre of each round end, then move sideways to set the width and click. The slot is one closed profile.",
+   "keywords": ["obround", "keyway", "oblong"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.cslot",
+   "title": "Centre slot",
+   "summary": "Draws a slot from its centre, the centre of one end and the width.",
+   "details": "Click the slot's centre, then the centre of one end; the other end mirrors it. The third click sets the width.",
+   "keywords": ["center slot", "symmetric slot"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.arcslot",
+   "title": "Arc slot",
+   "summary": "Draws a slot that follows an arc.",
+   "details": "Click the arc's centre, then the start and the end; the slot width comes from the panel. Useful for adjustment slots.",
+   "keywords": ["curved slot", "kidney", "radial slot"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.polygon",
+   "title": "Polygon",
+   "summary": "Draws a regular polygon inscribed in a circle; set the number of sides in the panel.",
+   "details": "Click the centre, then a corner: the corners lie on the circle. The sides are kept equal by constraints.",
+   "keywords": ["hexagon", "regular polygon", "inscribed", "nut"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.polygon_outer",
+   "title": "Circumscribed polygon",
+   "summary": "Draws a regular polygon around a circle: the sides touch it.",
+   "details": "Click the centre, then the middle of a side. Use it when the size across flats matters, as for a hex nut.",
+   "keywords": ["hexagon", "across flats", "circumscribed"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.spline",
+   "title": "Spline",
+   "summary": "Draws a smooth curve through the points you click; {fixed:enter} finishes.",
+   "details": "The curve updates as you add points. {fixed:alt}-click a finished spline to insert a node, and double-click a node to edit its weights.",
+   "keywords": ["curve", "freeform", "interpolate", "bezier"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.control_spline",
+   "title": "Control-point spline",
+   "summary": "Draws a spline shaped by control points.",
+   "details": "The curve follows its thin grey control polygon without passing through its points. Set the degree in the panel; {fixed:enter} (Done) finishes.",
+   "keywords": ["nurbs", "control polygon", "bezier"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.conic",
+   "title": "Conic",
+   "summary": "Draws a conic between two ends, shaped by a tangent point and rho.",
+   "details": "Click the start and the point where the end tangents meet; the preview follows the pointer. Set rho (0 to 1, how sharp the curve is) before you click the end.",
+   "keywords": ["parabola", "hyperbola", "rho"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.point",
+   "title": "Point",
+   "summary": "Places points; holes are drilled at sketch points.",
+   "details": "Click to place a point, as many as you need. Points also serve as references for dimensions and constraints.",
+   "keywords": ["hole centre", "marker", "vertex"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.text",
+   "title": "Text outlines",
+   "summary": "Writes text as sketch curves, ready to extrude or cut.",
+   "details": "Type the text, choose the font and height in the panel, then click the insertion point. Single-stroke fonts suit engraving.",
+   "keywords": ["letters", "engrave", "font", "label"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.moreCreate",
+   "title": "More create tools",
+   "summary": "Lists every Create tool in the Sketch menu, the ones under the ribbon's arrows too.",
+   "details": "Rotated rectangles, tangent arcs, slots, conics, text and more. Search commands ({key:tools.commands}) finds any of them by name too.",
+   "keywords": ["more", "all tools", "create"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.trim",
+   "title": "Trim",
+   "summary": "Removes the piece of a curve between intersections; it lights red before you click.",
+   "details": "Hover a curve to see which piece would go, then click. Keep clicking to clean up a whole outline.",
+   "keywords": ["cut curve", "delete segment", "clean up"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.fillet",
+   "title": "Sketch fillet",
+   "summary": "Rounds the corner where two lines meet.",
+   "details": "Set the radius in the panel, then click near the corner. The arc is tangent to both lines and trims them.",
+   "keywords": ["round corner", "radius", "blend"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.chamfer",
+   "title": "Chamfer",
+   "summary": "Bevels a corner by two distances.",
+   "details": "Pick the corner and set the two distances: the bevel previews; press {fixed:enter} or Apply. Equal distances on a square corner give a 45 degree bevel.",
+   "keywords": ["bevel corner", "cut corner"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.offset",
+   "title": "Offset",
+   "summary": "Copies a connected chain of curves at a distance; drag the arrow or type it.",
+   "details": "Click one curve and the whole connected chain is taken. Drag the arrow, or type the distance, then apply; negative goes to the other side.",
+   "keywords": ["parallel copy", "wall", "inset", "outset"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.mirror",
+   "title": "Mirror",
+   "summary": "Mirrors curves about a line.",
+   "details": "Select the curves to mirror (click or drag a window), press {fixed:enter}, click the mirror line and press {fixed:enter} again. The copies get symmetric constraints, so they follow the originals.",
+   "keywords": ["symmetry", "reflect", "flip"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.move",
+   "title": "Move",
+   "summary": "Moves the selected curves by an offset.",
+   "details": "Select the curves, set the X and Y offset and apply. A preview shows the result first.",
+   "keywords": ["translate", "shift", "drag"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.rotate",
+   "title": "Rotate",
+   "summary": "Rotates the selected curves about a point.",
+   "details": "Select the curves, set the centre and the angle and apply. A preview shows the result first.",
+   "keywords": ["turn", "spin", "angle"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.scale",
+   "title": "Scale",
+   "summary": "Resizes the selected curves about a point.",
+   "details": "Select the curves, set the centre and the factor and apply. A factor of 2 doubles every length.",
+   "keywords": ["resize", "enlarge", "shrink", "factor"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.copy",
+   "title": "Copy with offset",
+   "summary": "Copies the selected curves at an offset.",
+   "details": "Select the curves, set the X and Y offset and apply. The originals stay where they are.",
+   "keywords": ["duplicate", "clone"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.rect_pattern",
+   "title": "Rectangular pattern",
+   "summary": "Copies the selected curves in rows and columns, kept as an editable pattern.",
+   "details": "Select the curves, set the counts and spacings, preview and apply. Select a copy later and open the tool again to change the pattern.",
+   "keywords": ["array", "grid", "repeat"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.polar_pattern",
+   "title": "Polar pattern",
+   "summary": "Copies the selected curves around a centre, kept as an editable pattern.",
+   "details": "Select the curves, set the centre, the count and the angle, preview and apply. Bolt circles are a typical use.",
+   "keywords": ["circular array", "radial", "bolt circle"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.split",
+   "title": "Split curve",
+   "summary": "Splits a curve in two at the point you click.",
+   "details": "Click inside the curve where it should split. Both pieces stay joined at the new point.",
+   "keywords": ["divide", "cut at point"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.extend",
+   "title": "Extend curve",
+   "summary": "Extends a curve to the next boundary curve.",
+   "details": "Pick the curve near the end to extend, then the boundary curve. The end moves until it meets the boundary.",
+   "keywords": ["lengthen", "stretch", "meet"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.break",
+   "title": "Break at intersections",
+   "summary": "Breaks the selected curves at every intersection.",
+   "details": "Each piece between crossings becomes its own curve. Useful before trimming or before deleting parts of imported drawings.",
+   "keywords": ["split all", "segment", "intersections"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.union",
+   "title": "Region union",
+   "summary": "Joins two closed loops into one outline.",
+   "details": "Click inside the first loop, then inside the second, and apply. The result replaces both loops with one clean outline.",
+   "keywords": ["boolean", "region", "union", "combine loops"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.subtract",
+   "title": "Region subtract",
+   "summary": "Cuts the second closed loop out of the first.",
+   "details": "Click inside the first loop, then inside the second, and apply. The result replaces both loops with one clean outline.",
+   "keywords": ["boolean", "region", "subtract", "combine loops"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.intersect",
+   "title": "Region intersection",
+   "summary": "Keeps only the area two closed loops share.",
+   "details": "Click inside the first loop, then inside the second, and apply. The result replaces both loops with one clean outline.",
+   "keywords": ["boolean", "region", "intersect", "combine loops"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.heal",
+   "title": "Heal endpoints",
+   "summary": "Merges endpoints closer than the gap tolerance.",
+   "details": "Set the gap tolerance and apply: nearby ends are joined so profiles close. Imported drawings often need it.",
+   "keywords": ["close gaps", "join ends", "repair"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.explode",
+   "title": "Explode pattern",
+   "summary": "Turns the copies of a pattern into independent curves.",
+   "details": "Select a patterned curve and apply. The pattern can no longer be edited as one, but each copy can be changed on its own.",
+   "keywords": ["ungroup", "unpattern", "independent"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.dimension",
+   "title": "Dimension",
+   "summary": "Adds a driving dimension: pick geometry, place the value, type it.",
+   "details": "Pick a line, a circle, an arc or two points, click where the label goes, then type a value or an expression. The geometry resizes to match; a dimension the solver cannot satisfy is refused.",
+   "keywords": ["measure", "size", "length", "driving dimension"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.horizontal",
+   "title": "Horizontal",
+   "summary": "Makes a line horizontal, or two points level.",
+   "details": "Pick a line, or two points. A level-bar badge shows the constraint; select it and press {fixed:del} to remove it.",
+   "keywords": ["level", "flat", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.vertical",
+   "title": "Vertical",
+   "summary": "Makes a line vertical, or two points one above the other.",
+   "details": "Pick a line, or two points. An upright-bar badge shows the constraint; select it and press {fixed:del} to remove it.",
+   "keywords": ["upright", "plumb", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.coincident",
+   "title": "Coincident",
+   "summary": "Joins a point to another point or onto a curve.",
+   "details": "Pick the point, then the point or curve it should lie on. Endpoints that share a point form a connected profile.",
+   "keywords": ["join", "connect", "on curve", "snap", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.collinear",
+   "title": "Collinear",
+   "summary": "Puts two lines on one straight line.",
+   "details": "Pick both lines. They may still have a gap between them.",
+   "keywords": ["in line", "aligned", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.parallel",
+   "title": "Parallel",
+   "summary": "Makes one line parallel to another.",
+   "details": "Pick the two lines; they turn parallel, each moving as little as it can, and a line held by other constraints stays put. Dimension the distance between them to fix it.",
+   "keywords": ["same direction", "align", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.perpendicular",
+   "title": "Perpendicular",
+   "summary": "Makes two lines meet at a right angle.",
+   "details": "Pick the two lines; they need not touch. A ⊥ badge shows the constraint.",
+   "keywords": ["right angle", "90 degrees", "normal", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.tangent",
+   "title": "Tangent",
+   "summary": "Makes a line and an arc, or two arcs, meet smoothly.",
+   "details": "Pick the two curves; they touch without a kink. Use it where a slot or a fillet meets straight sides.",
+   "keywords": ["smooth", "touch", "g1", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.equal",
+   "title": "Equal",
+   "summary": "Makes two lines equally long, or two arcs or circles the same size.",
+   "details": "Pick both curves. One dimension then drives both.",
+   "keywords": ["same length", "same radius", "equal size", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.smooth",
+   "title": "Smooth spline join (G2)",
+   "summary": "Joins a spline to a line, an arc or another spline with matching curvature (G2).",
+   "details": "Pick the line, circle, arc or spline, then the control-point spline that joins it, near their shared end. Stronger than Tangent: the curvature also flows on, which reflects light without a visible seam. Both curves move as little as they can; one held by other constraints, such as Fix, stays put.",
+   "keywords": ["g2", "curvature continuous", "blend", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.curvature",
+   "title": "Equal endpoint curvature",
+   "summary": "Gives a spline's end the curvature of the line, arc or spline it meets.",
+   "details": "Pick the line, circle, arc or spline, then the control-point spline. By a line the spline's end runs straight; by an arc it bends as the arc does. A curve held by other constraints, such as Fix, stays put. Use it with Tangent for smooth spline transitions.",
+   "keywords": ["curvature", "spline", "continuity", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.concentric",
+   "title": "Concentric",
+   "summary": "Gives two circles or arcs the same centre.",
+   "details": "Pick the two circles or arcs. Use it for bosses around holes and for washers.",
+   "keywords": ["same centre", "center", "ring", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.midpoint",
+   "title": "Midpoint",
+   "summary": "Puts a point in the middle of a line.",
+   "details": "Pick the point, then the line. The point stays centred when the line changes length.",
+   "keywords": ["centre of line", "middle", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.symmetric",
+   "title": "Symmetric",
+   "summary": "Makes two points symmetric about a line.",
+   "details": "Pick the two points, then the line of symmetry. Use a construction centre line for symmetric parts.",
+   "keywords": ["mirror", "symmetry", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.fix",
+   "title": "Fix",
+   "summary": "Locks points or curves where they are.",
+   "details": "Fixed geometry no longer moves when you drag or dimension other curves. Select its badge and press {fixed:del} to free it.",
+   "keywords": ["lock", "anchor", "pin", "ground", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.constraints",
+   "title": "Constraints",
+   "summary": "Lists the sketch's constraints and dimensions; select one to highlight it.",
+   "details": "Filter the list by type, switch a dimension between driving and reference, or delete it. The status bar shows how many degrees of freedom remain.",
+   "keywords": ["constraint list", "dimensions", "degrees of freedom"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.moreConstrain",
+   "title": "More constraints",
+   "summary": "Lists every constraint tool in the Sketch menu, the ones under the ribbon's arrows too.",
+   "details": "Equal, concentric, midpoint, symmetric, collinear and the spline continuity constraints are here. Search commands ({key:tools.commands}) finds any of them by name too.",
+   "keywords": ["more", "all constraints"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.moreModify",
+   "title": "More modify tools",
+   "summary": "Lists every Modify tool in the Sketch menu, the ones under the ribbon's arrows too.",
+   "details": "Move, rotate, scale, patterns, split, extend, region booleans and healing are here. Search commands ({key:tools.commands}) finds any of them by name too.",
+   "keywords": ["more", "all tools", "modify"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.project",
+   "title": "Project",
+   "summary": "Projects body edges, faces or vertices onto the sketch as reference curves.",
+   "details": "Pick edges, or faces, vertices and bodies with the panel's Pick filter, then press {fixed:enter} or Apply: they are flattened onto the sketch plane. Linked projections follow the body when it changes; an editable copy does not.",
+   "keywords": ["reference edges", "use edges", "convert entities"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.intersect_body",
+   "title": "Body-plane intersection",
+   "summary": "Adds the curves where bodies cut the sketch plane.",
+   "details": "Pick the bodies, or choose them in the panel, then press {fixed:enter} or Apply. Useful to sketch on the section of an existing part.",
+   "keywords": ["section curve", "slice", "cut outline"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.silhouette",
+   "title": "Silhouette",
+   "summary": "Adds the outline of bodies as seen along the sketch normal.",
+   "details": "Pick the bodies, then press {fixed:enter} or Apply. Handy for covers, gaskets and cut-outs that follow a part's shape.",
+   "keywords": ["outline", "shadow", "profile of body"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.include3d",
+   "title": "Include reference curves",
+   "summary": "Brings other sketches' curves and construction axes into this sketch as references.",
+   "details": "Choose the source in the panel or pick it in the view, then press {fixed:enter} or Apply: its curves come in as construction geometry flattened onto the sketch plane. Linked references follow their source when it changes.",
+   "keywords": ["reference", "other sketch", "axis"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.break_link",
+   "title": "Break projection link",
+   "summary": "Makes a linked projection editable.",
+   "details": "Select the projected curves and press {fixed:enter} or Apply: they stop following the body and become normal sketch curves. The link cannot be restored afterwards.",
+   "keywords": ["unlink", "make editable"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.moreReference",
+   "title": "More reference tools",
+   "summary": "Lists every reference tool: projections, intersections, silhouettes and included curves.",
+   "details": "Reference curves come from bodies and other sketches. Search commands ({key:tools.commands}) finds any of them by name too.",
+   "keywords": ["more", "references"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.image_insert",
+   "title": "Insert image",
+   "summary": "Places an image on the sketch plane as a backdrop to trace over.",
+   "details": "Choose the file and set the width, click the insertion point (the image's lower-left corner), then press {fixed:enter} or Apply. Calibrate image then scales it to a known distance.",
+   "keywords": ["picture", "backdrop", "canvas", "reference image"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.image_edit",
+   "title": "Transform image",
+   "summary": "Moves, scales, rotates or fades a backdrop image.",
+   "details": "Drag the image in the view to move it, or choose it and type its position, width, rotation and opacity, then press {fixed:enter} or Apply. The image is a view aid and is never part of a profile.",
+   "keywords": ["move image", "rotate image", "opacity"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.image_calibrate",
+   "title": "Calibrate image",
+   "summary": "Scales a backdrop image by a distance you know.",
+   "details": "Click two points on the image, type their real distance over the measured one, then press {fixed:enter} or Apply. Trace and dimension after calibrating so the sizes are right.",
+   "keywords": ["scale image", "known distance", "calibration"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.image_trace",
+   "title": "Trace image",
+   "summary": "Turns the dark or light areas of a backdrop image into editable curves.",
+   "details": "Set the threshold, smoothing and tolerance, preview and apply. Clean, high-contrast images trace best.",
+   "keywords": ["vectorize", "auto trace", "bitmap to vector"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.image_remove",
+   "title": "Remove image",
+   "summary": "Removes a backdrop image from the sketch.",
+   "details": "Curves traced from it stay. Undo brings the image back.",
+   "keywords": ["delete image", "clear backdrop"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.simplify",
+   "title": "Simplify curves",
+   "summary": "Replaces dense polylines with fewer lines and arcs within a tolerance.",
+   "details": "Set the curve tolerance, preview and apply. Traced images and imported meshes become much lighter to edit.",
+   "keywords": ["reduce", "fit arcs", "clean up"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.vector_import",
+   "title": "Import SVG / DXF",
+   "summary": "Imports the curves of an SVG or DXF file into the sketch.",
+   "details": "Choose the file and the curve tolerance and apply. The curves become normal sketch geometry you can constrain.",
+   "keywords": ["svg", "dxf", "load curves", "vector"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.vector_export",
+   "title": "Export SVG / DXF",
+   "summary": "Writes the sketch's curves to an SVG or DXF file.",
+   "details": "Choose the file name and apply. Use it for laser cutting, plotters and other CAD tools.",
+   "keywords": ["svg", "dxf", "laser", "save curves"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.moreFiles",
+   "title": "Images and files",
+   "summary": "Lists the image and file tools: backdrop images, tracing, simplify and SVG or DXF import and export.",
+   "details": "Start with Insert image to trace a photo or a scan. Search commands ({key:tools.commands}) finds any of them by name too.",
+   "keywords": ["images", "files", "svg", "dxf"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.snaps",
+   "title": "Snaps",
+   "summary": "Chooses which points, alignments and angles the cursor is pulled to.",
+   "details": "Endpoints, midpoints, centres, quadrants, intersections, the grid and angle steps can each be turned off. The solver's tolerance and iterations are set here too.",
+   "keywords": ["snap settings", "inference", "osnap"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.selectionOptions",
+   "title": "Selection",
+   "summary": "Selection options: filter by type, select a connected chain or all of a type.",
+   "details": "Set the filter to Arcs, for example, and a window selects only arcs. The page also holds construction, open ends and node tools.",
+   "keywords": ["filter", "chain", "select all"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  }
+ ]
+}

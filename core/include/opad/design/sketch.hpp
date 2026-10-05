@@ -56,14 +56,16 @@ struct SkConstraint {
     Parallel,       // [line, line]
     Perpendicular,  // [line, line]
     Collinear,      // [line, line]
-    Tangent,        // [line, circle|arc] or [circle|arc, circle|arc]
+    Tangent,        // [line, circle|arc] or [circle|arc, circle|arc]; a spline's end with a line, a circle, an arc or a spline
     Equal,          // [line, line] length, or [circle|arc, circle|arc] radius
     Concentric,     // [circle|arc, circle|arc]
     Midpoint,       // [point, line]
     Symmetric,      // [point, point, line]: mirror images about the line
     Fix,            // [point] or [entity]: stays where it is now
-    Smooth,         // [spline,spline]: coincident endpoints, opposite tangents and equal curvature (G2)
-    Curvature,      // [spline,spline]: equal signed endpoint curvature along the joined path
+    Smooth,         // [spline,spline]: coincident endpoints, opposite tangents and equal curvature (G2); [line|circle|arc,
+                    // spline] or the other way round: the spline's end on it, along it and bending as it does (0 by a line)
+    Curvature,      // [spline,spline]: equal signed endpoint curvature along the joined path; with a line, a circle or an
+                    // arc: the spline's end curvature that of the line (0) or the circle (1/r, towards its centre)
     // driving dimensions (value in mm or radians)
     Distance,       // [point, point], [point, line], [line] = its length, or [line, line] (parallel lines)
     HDistance,      // [point, point] along u (with `is_signed`, q.u - p.u); [point]: its u from the sketch origin
@@ -94,13 +96,19 @@ struct Sketch {
   json images = json::array(); // embedded raster backdrops, each with a stable ID
   json patterns = json::array(); // associative patterns, maps refer to stable point/entity IDs
   mutable int id_watermark = 0; // never recycle a deleted ID
+  // next_id's running maximum (TODO 11 UI-29: it read every list on every call, so building n items took n² steps): how
+  // much of each list (points, entities, constraints, images, patterns) it has read, the id it read last in each, and
+  // the largest. Only what was appended since is read; a list that shrank, or whose last read item is no longer the
+  // same, is read again. (An id changed in place before that item could only leave a gap; nothing raises one.)
+  struct IdScan { size_t n[5] = {}; int last[5] = {}; int top = 0; };
+  mutable IdScan id_scan;
 
   SkPoint* point(int id);
   const SkPoint* point(int id) const;
   SkEntity* entity(int id);
   const SkEntity* entity(int id) const;
   SkConstraint* constraint(int id);
-  int next_id() const;  // above both the live IDs and the deletion watermark
+  int next_id() const;  // above both the live IDs and the deletion watermark; amortised O(1) while the lists grow
 
   // Convenience builders (ids are allocated here). They add no constraints.
   int add_point(double x, double y, bool fixed = false);
@@ -112,14 +120,28 @@ struct Sketch {
   // left without any entity go with it.
   void remove(int id);
 
-  json to_json() const;                   // {"points":[..],"entities":[..],"constraints":[..]}
-  static Sketch from_json(const json& j); // throws Error on dangling references or unknown types
+  // {"points":[..],"entities":[..],"constraints":[..]}, plus "more_constraints":[..] for the constraints a build from before
+  // TODO 11 wave 3 refuses (Smooth or Curvature with a line, circle or arc; Tangent between a circle or arc and a spline),
+  // so that it still opens the sketch, without them.
+  json to_json() const;
+  // Throws Error on dangling references or unknown types; reads "more_constraints" too, leaving out what no longer fits.
+  static Sketch from_json(const json& j);
   void validate() const;
 };
 
-// Entity-ID deltas are append-only document edits, independent of array ordering.
+// Entity-ID deltas are append-only document edits, independent of array ordering. An image whose bytes did not change
+// goes as "image_fields": [{"id", <only the fields that changed>, a field removed as null}], so moving, scaling or fading
+// a backdrop never stores its picture again (an older build keeps that key as a sketch field and shows the image unmoved).
 json sketch_delta(const json& before, const json& after);
 json apply_sketch_delta(const json& before, const json& delta);
+// Every constraint record of a sketch's geometry JSON, "constraints" and "more_constraints" (Sketch::to_json), by id.
+json constraint_records(const json& geometry);
+// A sketch op's geometry as last solved: the regeneration's result, else what was given. A result never repeats the
+// images (the solver leaves them alone): they come from the given geometry.
+json solved_geometry(const json& sketch_op_data);
+// A sketch geometry as text to tell whether what it shows changed (the viewport compares it on every scene sync): each
+// picture by its length and samples of its bytes, never the megabytes themselves, every other field as it is.
+std::string geometry_stamp(const json& geometry);
 double dimension_value(const Sketch& sk, const SkConstraint& c);
 ParamTable sketch_parameters(const Sketch& sk, const ParamTable& params = {});
 void evaluate_dimensions(Sketch& sk, const ParamTable& params = {});

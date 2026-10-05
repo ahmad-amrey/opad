@@ -1,5 +1,6 @@
 """Tests for the `opad` Python module. usage: test_opad.py <fixtures-dir> (PYTHONPATH must contain the module)."""
 import os
+import shutil
 import sys
 import tempfile
 
@@ -57,6 +58,20 @@ assert diff["same_document"] and diff["ops"]["added"] == []
 generic = opad.run("info", doc=path)
 assert generic["ops"] == 5, generic
 assert any(c["name"] == "render" for c in opad.commands())
+
+# A linked file: never stored, read again by open (it is in the document's folder).
+linked_dir = os.path.join(tmp, "linked")
+os.makedirs(linked_dir)
+shutil.copy(os.path.join(fixtures, "assembly.step"), linked_dir)
+linked_path = os.path.join(linked_dir, "linked.opad")
+linked = opad.Document.create()
+linked.save_as(linked_path)
+r = linked.run("import", file=os.path.join(linked_dir, "assembly.step"), link=True)
+assert r["info"]["linked"] and r["new_entries"] == 0, r
+linked.save()
+assert "#body " not in open(linked_path, encoding="utf-8").read()
+reopened = opad.open(linked_path).info()
+assert reopened["bodies"] == 10 and reopened["unresolved"] == 0, reopened
 try:
     d.append({"op": "explode"})
     raise SystemExit("expected OpadError")

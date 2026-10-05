@@ -10,6 +10,22 @@
 
 namespace opad {
 
+// KiCad boards (.kicad_pcb, kicad_pcb.hpp): what to build and where footprints' 3D models are looked for after
+// ${KIPRJMOD}, the environment, KiCad's own configuration and its install folders.
+struct KicadOptions {
+  std::vector<std::filesystem::path> model_dirs;  // the user's own 3D model folders
+  bool components = true;                         // false: the bare board
+  bool dnp = true;                                // also footprints marked "do not populate"
+  bool vias = false;                              // drill the through vias too (thousands of holes on a dense board)
+  double placeholder_height = 1.0;                // mm: the box shown for a footprint whose model is not found
+  std::string origin = "auto";                    // auto (the drill/place origin when set, else the board's centre) | center | page
+  std::vector<double> origin_at;                  // [x, y] on the page: this frame whatever `origin` says (a linked board's sync)
+  // Read through KiCad's own STEP export (kicad-cli, kicad_pcb.hpp) instead: KiCad's models and placement exactly, and on
+  // request the copper tracks, pads and silkscreen (KiCad 8/9); linked, the board is what is watched and synced.
+  bool kicad_cli = false;
+  bool tracks = false, pads = false, silkscreen = false;
+};
+
 struct ImportOptions {
   bool heal = true;      // run ShapeFix on bodies that fail BRepCheck
   bool viewer = false;   // viewer mode: keep the reader's shapes live in the shape cache; no healing, no BREP
@@ -22,6 +38,17 @@ struct ImportOptions {
   // drawing's bounding-box centre to its origin (a drawing opened on its own is centred on the grid).
   Mat4 placement;
   bool center_drawing = false;
+  // Pictures (opad/canvas.hpp): the canvas's flags and "plane" (the frame its place is given in; default: the placement's),
+  // "width" (mm: scaled to it; default: the file's resolution) and "center" (its centre on the placement's origin).
+  json canvas;
+  KicadOptions kicad;
+  // The file the user chose, recorded on the import op (source_path, source_repo: UI-07) when it is not the one read (a
+  // DWG behind the DXF it was converted to, BREP text read from a file); empty: the file read.
+  std::filesystem::path source_file;
+  // DXF read as a drawing template (UI-78): model space attributes (ATTDEF, ATTRIB) and texts that are a placeholder ({title},
+  // <DWG_NO>) are returned here where they stand instead of drawn: {tag, sample, at [x, y] mm, height, halign 0-2, valign
+  // 0 baseline-3 top, angle, w}.
+  std::vector<json>* text_fields = nullptr;
 };
 
 struct ImportResult {
@@ -31,6 +58,7 @@ struct ImportResult {
   int new_entries = 0;   // body-store entries added (instances of existing keys are free)
   int healed = 0;
   std::vector<std::string> warnings;
+  json info;             // what a reader found beyond the bodies (KiCad: footprints, models, placeholders, holes)
   json to_json() const;
 };
 
@@ -50,10 +78,18 @@ struct EditableKeys {
 Document make_editable(const Document& viewer, EditableKeys* changed = nullptr, const std::function<bool(double)>& progress = {});
 
 // Viewer mode remembers slow reads (viewer_cache.cpp): the shapes of a viewer document's import, with any display meshes
-// made since, kept under the user cache and keyed by the file's path, size and time and the options that shape the read.
-// load: false when nothing usable is kept (then read the file); store: best effort, never throws for cache trouble.
+// made since, kept under the user cache and keyed by the file's content (a copy, a clone or a checkout of it finds them
+// again) and the options that shape the read. Drawings (DXF, SVG, DWG) are not kept this way: their entries were larger
+// and no faster than the file (a DWG keeps its converted DXF text instead, inside import_file). A big file of a format read
+// about as fast as it can be hashed (a mesh over 16 MB) is found only by the hash its store remembered for its path.
+// load: false when nothing usable is kept (then read the file); an entry that read back less than twice as fast as
+// `read_ms` is dropped afterwards. store: `read_ms`, how long reading the file took; the entry is kept only when it reads
+// back at least twice as fast, else the file is marked and not stored again until it changes. Best effort, never throws
+// for cache trouble; reports {"kept", "reason", "bytes", "write_ms", "cached_ms"}.
+bool viewer_cache_applies(const std::filesystem::path& file);
 bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
-void viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, const std::function<bool()>& cancelled = {});
+json viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, double read_ms,
+                        const std::function<bool()>& cancelled = {});
 
 // Imports a shape given as OCCT ASCII BREP text (the bridge for build123d/CadQuery/OCP users): solids in a
 // compound become separate bodies under a component named `name`.
@@ -67,11 +103,22 @@ struct ExportOptions {
   bool ascii = false;                 // STL text instead of binary
   bool per_body = false;              // STL: one file per body
   bool mtl = true;                    // OBJ: write a material library for colours
+  // 2D formats (dxf, svg, dwg; pdf and png where a painter is installed, drawing::can_paint): solids and meshes export as
+  // a hidden-line view (TODO 11 UI-87), described as the projection reads it ({"view": "front"} or {"dir": [..], "up": [..]},
+  // "hidden" (default false), "tangent", "quality"); drawings and sketches are left out of a view. Null: drawings and sketches
+  // as drawn, and solids as seen from the top (their XY plane, where drawings lie).
+  json view;
+  int decimals = 6;                   // 2D coordinates
+  int dpi = 300;                      // PNG
+  std::string sheet;                  // 2D: a drawing sheet (id or name) as drawn, or "drawing:<name>": its sheets (PDF pages)
+  std::string issue;                  // with sheet: as that revision was issued (its frozen linework; drawing/tables.hpp)
+  std::function<bool(double, const std::string&)> progress;  // 2D views: return false to cancel
 };
 
 struct ExportResult {
   std::vector<std::filesystem::path> files;
   int bodies = 0;
+  json details = json::object();  // 2D: entities and layers written, the view's tier
   json to_json() const;
 };
 

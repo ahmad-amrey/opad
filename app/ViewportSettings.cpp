@@ -1,4 +1,5 @@
 #include "Viewport.hpp"
+#include "Jobs.hpp"
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_RenderingParams.hxx>
 #include <Graphic3d_GraphicDriver.hxx>
@@ -6,8 +7,12 @@
 #include <AIS_AnimationCamera.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 #include <PrsMgr_PresentationManager.hxx>
+#include <Prs3d_LineAspect.hxx>
 #include <QSettings>
 #include <algorithm>
+#include <cmath>
+
+#include "Drawing2D.hpp"
 
 namespace {
 // Theme background and Studio quality are the defaults since TODO 10. Earlier builds wrote their own defaults (Studio
@@ -94,35 +99,131 @@ void Viewport::setRenderQuality(int level) {
   m_renderQuality = std::clamp(level, 0, 2);
   QSettings().setValue("view/qualityV2", m_renderQuality);
   if (!m_initialised) return;
+  m_degraded = false;
+  m_qualityTimer.stop();
   auto& p = m_view->ChangeRenderingParams();
   const bool rayTracing = m_renderQuality == 2 && m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_HasRayTracing);
   p.Method = rayTracing ? Graphic3d_RM_RAYTRACING : Graphic3d_RM_RASTERIZATION;
   p.NbMsaaSamples = rayTracing ? 0 : std::min(4, m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa));
   if (m_renderQuality == 2 && !rayTracing) emit hoverChanged(tr("Ray tracing unavailable on this driver; using Studio rendering"));
-  p.RenderResolutionScale = m_renderQuality == 1 ? 1.25f : 1.0f;
+  applyQuality();  // Studio renders at 1.25: a drawing's lines are drawn that much wider (lineWidth)
+  outlineBodies();  // put back if it was lowered
   p.ShadingModel = m_renderQuality == 0 ? Graphic3d_TypeOfShadingModel_Unlit : Graphic3d_TypeOfShadingModel_Phong;
-  p.IsShadowEnabled = m_renderQuality >= 1;
   p.IsReflectionEnabled = false;
   p.IsAntialiasingEnabled = rayTracing;
   p.IsGlobalIlluminationEnabled = false;  // bounded interactive cost; no progressive path-tracing stall
   p.RaytracingDepth = 2;
+  // Translucent things (a body's opacity, ghosts, the selection's tints) blend order-independently when rasterised
+  // (UI-39): unordered blending gave where two overlap the colour of whichever was displayed last.
+  p.TransparencyMethod = Graphic3d_RTM_BLEND_OIT;
   setShadows(m_renderQuality >= 1);
   updateDepthBias();
+  scheduleLooks();  // drawings' hairlines follow the render scale
   m_view->Invalidate();
   redrawScene();
+}
+
+// The render's size over the view's at full quality (Studio: 1.25). Lowered while navigating (UI-45) it is less for a moment;
+// the lines keep the width they were given for the full one.
+double Viewport::renderScale() const { return m_initialised && m_renderQuality == 1 ? 1.25 : 1.0; }
+
+double Viewport::lineWidth(double points) const {
+  return std::max(1.0, std::ceil(points * displayScale() * renderScale() - 0.01));  // whole pixels: 1.25 drew as 1, under a screen pixel
+}
+
+namespace {
+const QColor kGradientTop("#c7c8c9"), kGradientBottom("#66696b");
+Quantity_Color occ(const QColor& v) { return Quantity_Color(v.redF(), v.greenF(), v.blueF(), Quantity_TOC_sRGB); }
+}  // namespace
+
+void Viewport::applyQuality() {
+  auto& p = m_view->ChangeRenderingParams();
+  const bool rayTracing = p.Method == Graphic3d_RM_RAYTRACING;
+  p.RenderResolutionScale = m_degraded ? (rayTracing ? 0.5f : 1.0f) : m_renderQuality == 1 ? 1.25f : 1.0f;
+  p.IsShadowEnabled = m_renderQuality >= 1 && !m_degraded;
+}
+
+void Viewport::setAdaptiveQuality(bool on) {
+  m_adaptive = on;
+  QSettings().setValue("view/adaptive", on);
+  if (!on) restoreQuality();
+}
+
+// Moving under a gesture, the wheel, a trackpad or an animation; a camera set at once (Fit, a typed view) is a single frame.
+// Only the resolution scale and the shadows change: MSAA would reallocate the frame buffers, and the shader variants are
+// kept after the first change.
+void Viewport::degradeWhileNavigating() {
+  const auto camera = m_view->Camera()->WorldViewProjState();
+  if (camera == m_qualityCamera) return;
+  m_qualityCamera = camera;
+  if (m_degraded) return m_qualityTimer.start();
+  const bool navigating = PressedMouseButtons() != Aspect_VKeyMouse_NONE || (!myViewAnimation.IsNull() && !myViewAnimation->IsStopped()) ||
+                          m_trackpadMode != TrackpadMode::None || (m_wheelClock.isValid() && m_wheelClock.elapsed() < 300);
+  // Draft has nothing to lower but the silhouettes of Shaded + edges.
+  if (!m_adaptive || (m_renderQuality == 0 && m_style != Style::ShadedEdges) || m_fullFrameMs < kSmoothFrameMs || !navigating) return;
+  m_degraded = true;
+  applyQuality();
+  outlineBodies();
+  m_qualityTimer.start();
+  if (trace::enabled()) trace::log(QStringLiteral("quality: lowered while navigating (a full frame took %1 ms)").arg(m_fullFrameMs));
+}
+
+void Viewport::restoreQuality() {
+  m_qualityTimer.stop();
+  if (!m_degraded || !m_initialised) return;
+  m_degraded = false;
+  applyQuality();
+  outlineBodies();
+  m_view->Invalidate();
+  requestRedraw();
+  if (trace::enabled()) trace::log(QStringLiteral("quality: full again"));
 }
 
 void Viewport::setSceneBackground(int style) {
   m_sceneBackground = std::clamp(style, 0, 3);
   QSettings().setValue("view/background", m_sceneBackground);
   if (!m_initialised) return;
-  QColor c = m_sceneBackground == 2 ? QColor("#ffffff") : m_sceneBackground == 3 ? QColor("#171c24") : m_tokens.vp;
-  auto occ = [](const QColor& v) { return Quantity_Color(v.redF(), v.greenF(), v.blueF(), Quantity_TOC_sRGB); };
-  m_view->SetBackgroundColor(occ(c));
-  if (m_sceneBackground == 1)
-    m_view->SetBgGradientColors(occ(QColor("#c7c8c9")), occ(QColor("#66696b")), Aspect_GradientFillMethod_Vertical, false);
+  m_view->SetBackgroundColor(occ(sceneBackgroundColor()));
+  if (m_sceneBackground == 1) m_view->SetBgGradientColors(occ(kGradientTop), occ(kGradientBottom), Aspect_GradientFillMethod_Vertical, false);
   else m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
+  updateDrawingHighlights();
+  scheduleLooks();  // drawings without a colour take the ink of the new background (UI-10)
+  if (m_style == Style::HiddenLine || m_style == Style::HiddenEdges) setStyle(m_style);  // faces in the background's colour
   redrawScene();
+}
+
+QColor Viewport::sceneBackgroundColor() const {
+  if (m_sceneBackground == 1)  // the gradient's middle
+    return QColor((kGradientTop.red() + kGradientBottom.red()) / 2, (kGradientTop.green() + kGradientBottom.green()) / 2, (kGradientTop.blue() + kGradientBottom.blue()) / 2);
+  return m_sceneBackground == 2 ? QColor("#ffffff") : m_sceneBackground == 3 ? QColor("#171c24") : m_tokens.vp;
+}
+
+std::array<double, 3> Viewport::drawingInk() const {
+  const QColor c = sceneBackgroundColor();
+  return drawing2d::ink({c.redF(), c.greenF(), c.blueF()});
+}
+
+// Selected drawing lines in the selection hue, hovered ones in the white glow, both of the theme that suits the background:
+// on white (or in the light theme) the darker hue, and the glow turns teal instead of white on white.
+void Viewport::updateDrawingHighlights() {
+  if (m_drawingSelected.IsNull()) return;
+  const bool light = drawingInk() == drawing2d::kInkOnLight;
+  const Tokens on = theme::tokens(!light);
+  const Quantity_Color selected = occ(on.selected3d), hover = light ? occ(on.hov) : Quantity_Color(Quantity_NOC_WHITE);
+  m_drawingSelected->SetColor(selected);
+  m_drawingSelected->SetLineAspect(new Prs3d_LineAspect(selected, Aspect_TOL_SOLID, 3));
+  m_drawingSelected->SetWireAspect(new Prs3d_LineAspect(selected, Aspect_TOL_SOLID, 3));
+  m_drawingHover->SetColor(hover);
+}
+
+// The grid lies in the principal plane 2D mode looks at (a sketch keeps its own plane), in 3D on XY.
+void Viewport::alignGridPlane() {
+  if (!m_initialised || m_sketchInput) return;
+  const gp_Dir d = m_view->Camera()->Direction();
+  const double ax = std::abs(d.X()), ay = std::abs(d.Y()), az = std::abs(d.Z());
+  if (!m_twoDimensional || az >= std::max(ax, ay)) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DZ(), gp::DX()));
+  else if (ax >= ay) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DX(), gp::DY()));
+  else m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DY(), gp::DZ()));
 }
 
 void Viewport::setTwoDimensional(bool on) {
@@ -150,6 +251,12 @@ void Viewport::setTwoDimensional(bool on) {
         m_view->SetProj(d.Z() < 0 ? V3d_Zpos : V3d_Zneg);
       else if (std::abs(d.X()) >= std::abs(d.Y())) m_view->SetProj(d.X() < 0 ? V3d_Xpos : V3d_Xneg);
       else m_view->SetProj(d.Y() < 0 ? V3d_Ypos : V3d_Yneg);
+      // SetProj keeps where the world origin was on screen, so a model far from it left the view: keep the view centre.
+      if (!m_sketchInput) {
+        const gp_Pnt center = m_threeDimensionalCamera->Center();
+        const auto camera = m_view->Camera();
+        camera->SetEyeAndCenter(camera->Eye().Translated(gp_Vec(camera->Center(), center)), center);
+      }
     }
     setOrthographic(true);
     m_ctx->Deactivate(m_cube);
@@ -162,15 +269,9 @@ void Viewport::setTwoDimensional(bool on) {
     m_ctx->Display(m_cube, false);
     m_ctx->Activate(m_cube, 0);
   }
-  // The grid lies in the plane 2D mode looks at (a sketch keeps its own plane), and in 2D mode it never ends.
-  if (!m_sketchInput) {
-    const gp_Dir d = m_view->Camera()->Direction();
-    const double ax = std::abs(d.X()), ay = std::abs(d.Y()), az = std::abs(d.Z());
-    if (!on || az >= std::max(ax, ay)) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DZ(), gp::DX()));
-    else if (ax >= ay) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DX(), gp::DY()));
-    else m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DY(), gp::DZ()));
-  }
+  alignGridPlane();  // in 2D mode it never ends
   updateGridExtent();
+  applyGridColors();
   m_ctx->ClearDetected(false);
   ResetPreviousMoveTo();
   redrawScene();

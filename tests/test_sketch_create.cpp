@@ -24,6 +24,52 @@ TEST(advanced_primitives_form_exact_profiles) {
   }
 }
 
+// TODO 11 wave 3, P6: a circumscribed polygon is drawn about its circle. The circle is inside, its diameter the size across
+// the flats, every side touches it, the second pick is the middle of a side; for every count of sides it stays regular when a
+// corner is dragged (sides equal and tangent alone let an even one slide into a rhombus-like shape), and only its place, size
+// and turn are free.
+TEST(circumscribed_polygon_touches_its_circle) {
+  using CT = SkConstraint::Type;
+  for (int n = 3; n <= 8; ++n) {
+    Sketch sk;
+    const auto made = create_primitive(sk, "polygon_outer", {{5, 2}, {5, 12}}, {{"sides", n}});
+    CHECK_EQ(made.size(), size_t(n + 2));  // the sides, the circle, the apothem
+    const SkEntity* circle = sk.entity(made[size_t(n)]);
+    const SkEntity* apothem = sk.entity(made[size_t(n) + 1]);
+    CHECK(circle && circle->type == SkEntity::Type::Circle && circle->construction);
+    CHECK(apothem && apothem->type == SkEntity::Type::Line && apothem->construction);
+    CHECK_NEAR(circle->r, 10, 1e-9);
+    const SolveResult solved = solve(sk);
+    CHECK(solved.converged);
+    CHECK_EQ(solved.dof, 4);  // where, how big, how turned
+    auto regular = [&](const Sketch& s, double r) {
+      const SkPoint* o = s.point(s.entity(made[size_t(n)])->p[0]);
+      for (int i = 0; i < n; ++i) {
+        const SkEntity* side = s.entity(made[size_t(i)]);
+        const SkPoint *a = s.point(side->p[0]), *b = s.point(side->p[1]);
+        const double len = std::hypot(b->x - a->x, b->y - a->y);
+        CHECK_NEAR(std::fabs((b->x - a->x) * (o->y - a->y) - (b->y - a->y) * (o->x - a->x)) / len, r, 1e-6);  // tangent
+        CHECK_NEAR(std::hypot((a->x + b->x) / 2 - o->x, (a->y + b->y) / 2 - o->y), r, 1e-6);           // there, at its middle
+        CHECK_NEAR(len, 2 * r * std::tan(M_PI / n), 1e-6);
+      }
+    };
+    regular(sk, 10);
+    // The middle of the last side is the second pick.
+    const SkPoint* middle = sk.point(apothem->p[1]);
+    CHECK_NEAR(middle->x, 5, 1e-9);
+    CHECK_NEAR(middle->y, 12, 1e-9);
+    // Dragged by a corner it stays regular; held across the flats it only turns.
+    SolveOptions drag;
+    const int corner = sk.entity(made[0])->p[0];
+    drag.drags.push_back({corner, sk.point(corner)->x + 3, sk.point(corner)->y - 2});
+    CHECK(solve(sk, drag).converged);
+    regular(sk, sk.entity(made[size_t(n)])->r);
+    sk.add_constraint(CT::Diameter, {made[size_t(n)]}, 30);
+    CHECK(solve(sk, drag).converged);
+    regular(sk, 15);
+  }
+}
+
 TEST(control_spline_and_rational_conic_are_native_curves) {
   Sketch sk;
   auto ids=create_primitive(sk,"control_spline",{{0,0},{5,10},{15,10},{20,0}});
@@ -45,7 +91,65 @@ TEST(tangent_primitives_preserve_tangency) {
   ids=create_primitive(sk,"tangent_arc",{{20,0},{30,10}},{{"line",l1}});
   CHECK(solve(sk).converged);auto* e=sk.entity(ids[0]);CHECK(e->type==E::Arc);
   CHECK_NEAR(sk.point(e->p[0])->x,20,1e-8);CHECK_NEAR(sk.point(e->p[0])->y,10,1e-8);
+  // Smooth: the arc goes on from the line's end the way the line went, so an end behind it is reached past half a turn
+  // (counter-clockwise from (20, 0) round the centre (20, 10) to (10, 10): three quarters); without it, the shorter arc.
+  Sketch smooth=sk,shorter=sk;
+  ids=create_primitive(smooth,"tangent_arc",{{20,0},{10,10}},{{"line",l1},{"smooth",true}});
+  e=smooth.entity(ids[0]);CHECK(e->type==E::Arc && solve(smooth).converged);
+  CHECK_NEAR(smooth.point(e->p[1])->x,20,1e-8);CHECK_NEAR(smooth.point(e->p[1])->y,0,1e-8);CHECK_NEAR(smooth.point(e->p[2])->x,10,1e-8);
+  ids=create_primitive(shorter,"tangent_arc",{{20,0},{10,10}},{{"line",l1}});
+  e=shorter.entity(ids[0]);CHECK_NEAR(shorter.point(e->p[1])->x,10,1e-8);CHECK_NEAR(shorter.point(e->p[2])->x,20,1e-8);
 }
+// TODO 11 UI-21: what a pick snapped to stays. A point snapped onto becomes the primitive's own point there (no copy beside
+// it), one where the primitive makes no point is put on the curve through it, and holds constrain the new point.
+TEST(primitives_keep_what_their_picks_snapped_to) {
+  using CT = SkConstraint::Type;
+  auto has = [](const Sketch& sk, CT type, std::vector<int> refs) {
+    return std::any_of(sk.constraints.begin(), sk.constraints.end(), [&](const SkConstraint& c) { return c.type == type && c.refs == refs; });
+  };
+  Sketch sk;
+  const int a = sk.add_point(0, 0), b = sk.add_point(20, 0);
+  const size_t points = sk.points.size();
+  const opad::json first = {{"point", a}}, second = {{"point", b}};
+  auto ids = create_primitive(sk, "rect3", {{0, 0}, {20, 0}, {0, 10}}, {{"snaps", opad::json::array({first, second, nullptr})}});
+  CHECK(sk.entity(ids[0])->p == (std::vector<int>{a, b}));  // the base runs between the two existing points
+  CHECK_EQ(sk.points.size(), points + 2);                    // only the far corners are new
+  CHECK(solve(sk).converged);
+  const int next = sk.next_id();
+  // The dropped copies' ids are never handed out again.
+  for (const auto& p : sk.points) CHECK(p.id < next);
+  CHECK(sk.id_watermark >= next - 1);
+
+  // A 2-point circle through two existing points (its picks are not its points): on the circle.
+  Sketch c;
+  const int p = c.add_point(0, 0), q = c.add_point(10, 0);
+  ids = create_primitive(c, "circle2", {{0, 0}, {10, 0}}, {{"snaps", opad::json::array({{{"point", p}}, {{"point", q}}})}});
+  CHECK(has(c, CT::Coincident, {p, ids[0]}) && has(c, CT::Coincident, {q, ids[0]}));
+  CHECK(solve(c).converged);
+
+  // Holds: a control-point spline's middle pole at a line's midpoint, its last on a circle and level with a point.
+  Sketch h;
+  const int line = h.add_line(h.add_point(-10, 20), h.add_point(10, 20)), level = h.add_point(-40, 10), circle = h.add_circle(h.add_point(30, 10), 10);
+  const opad::json midpoint = {{"holds", opad::json::array({opad::json::array({"midpoint", line})})}};
+  const opad::json onCircle = {{"holds", opad::json::array({opad::json::array({"coincident", circle}), opad::json::array({"horizontal", level})})}};
+  ids = create_primitive(h, "control_spline", {{-20, 0}, {0, 20}, {20, 10}}, {{"snaps", opad::json::array({nullptr, midpoint, onCircle})}});
+  const auto& poles = h.entity(ids[0])->p;
+  CHECK(has(h, CT::Midpoint, {poles[1], line}) && has(h, CT::Coincident, {poles[2], circle}) && has(h, CT::Horizontal, {poles[2], level}));
+  CHECK(solve(h).converged);
+
+  // A tangent arc starting at its line's end: that end is the arc's, not constrained onto it again.
+  Sketch t;
+  const int end = t.add_point(20, 0), l = t.add_line(t.add_point(0, 0), end);
+  const size_t before = t.constraints.size();
+  create_primitive(t, "tangent_arc", {{20, 0}, {30, 10}}, {{"line", l}, {"snaps", opad::json::array({{{"point", end}}, nullptr})}});
+  CHECK_EQ(t.constraints.size(), before + 1);  // its tangency only
+
+  // A snapped point that does not exist is an error, and nothing is made.
+  const auto kept = sk.to_json();
+  CHECK_THROWS(create_primitive(sk, "circle2", {{50, 0}, {60, 0}}, {{"snaps", opad::json::array({{{"point", 999}}, nullptr})}}));
+  CHECK(sk.to_json() == kept);
+}
+
 // TODO 10 B4: the basic shapes form exact, solvable profiles.
 TEST(basic_shapes_form_exact_profiles) {
   auto area_of = [](const Sketch& sk) {

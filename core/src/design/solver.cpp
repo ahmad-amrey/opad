@@ -298,11 +298,29 @@ struct System {
   }
   void spline_continuity(int ci,const SkConstraint& c) {
     const auto& a=ent(c.refs[0]);const auto& b=ent(c.refs[1]);
-    if(a.type==EType::Line || b.type==EType::Line) {
-      const auto& line=a.type==EType::Line?a:b;const auto& spline=a.type==EType::Spline?a:b;
-      const Jet j=spline_jet(spline,c.anchors[0]);const P2 p=pt(line.p[0]),q=pt(line.p[1]),d=q-p;
-      const Dual length=norm(d)*norm(j.first);
-      emit(ci,sdist(j.point,p,q));emit(ci,length.v>kTiny?cross(d,j.first)/length:K(1));return;
+    if(a.type!=EType::Spline || b.type!=EType::Spline) {
+      // A spline's end with a line, a circle or an arc (TODO 11 wave 3, P6 for Smooth and Curvature): Tangent puts the end on
+      // it and along it, Curvature makes the end bend as it does (straight by a line, 1/r towards a circle's centre, the side
+      // kept from the start), Smooth (G2) both.
+      const auto& other=a.type==EType::Spline?b:a;const auto& spline=a.type==EType::Spline?a:b;
+      const Jet j=spline_jet(spline,c.anchors[0]);const Dual along=norm(j.first);
+      const bool touches=c.type!=CType::Curvature,bends=c.type!=CType::Tangent;
+      const Dual bend=along.v>kTiny?cross(j.first,j.second)/(along*along*along):K(0);  // the end's signed curvature
+      if(other.type==EType::Line) {
+        const P2 p=pt(other.p[0]),q=pt(other.p[1]),d=q-p;
+        const Dual length=norm(d)*along;
+        if(touches){emit(ci,sdist(j.point,p,q));emit(ci,length.v>kTiny?cross(d,j.first)/length:K(1));}
+        if(bends)emit(ci,along.v>kTiny?bend:K(1));
+        return;
+      }
+      const P2 o=pt(other.p[0]);const Dual r=radius(other);
+      if(touches){emit(ci,norm(j.point-o)-r);emit(ci,along.v>kTiny && r.v>kMinRadius?dot(j.first,j.point-o)/(along*r):K(1));}  // on it, square to its radius
+      if(bends) {
+        Aux& side=aux[size_t(ci)];
+        if(init)side.s=cross(j.first,o-j.point).v>=0?1.0:-1.0;  // the centre on the left of the way the spline leaves: it bends left
+        emit(ci,along.v>kTiny && r.v>kMinRadius?bend-K(side.s)/r:K(1));
+      }
+      return;
     }
     const Jet j=spline_jet(a,c.anchors[0]),k=spline_jet(b,c.anchors[1]);
     const Dual jl=norm(j.first),kl=norm(k.first);

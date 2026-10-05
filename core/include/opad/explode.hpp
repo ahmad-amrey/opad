@@ -1,0 +1,129 @@
+#pragma once
+// Exploded views (TODO 11 UI-35): which parts move together (units, by level) and where they go. Pure and deterministic
+// over the resolved scene. How deep components split (levels) and how far they have moved (t) are separate inputs, so a
+// UI shows them as separate controls, never as one slider cut into a segment per level.
+#include <Bnd_Box.hxx>
+#include <TopoDS_Shape.hxx>
+
+#include <functional>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "document.hpp"
+#include "scene.hpp"
+
+namespace opad {
+
+// The optional `explode` object of a `view` op (older builds ignore the field and see a camera bookmark).
+struct ExplodeSpec {
+  std::string root;             // component to explode; "" = the document's roots. A lone component on the way down is skipped
+  int levels = 1;               // how deep components split: 1 = the root's children move as wholes; 0 = every level
+  // radial: away from the parent's centre | axis: along +-axis | stack: piled up along axis. In radial and axis a part
+  // inside a larger sibling's box leaves it opposite to where that one goes, and no two siblings end overlapping.
+  std::string mode = "radial";
+  Vec3 axis{0, 0, 1};
+  double spacing = 1;           // times the automatic distance (stack: the gap)
+  bool attach_small = true;     // a small part moves with the larger part it touches (PCB passives, solder joints)
+  // radial: a part shaped like a screw, pin or bolt (or a unit of parallel ones) leaves along its own axis, the short way
+  // out of its parent (a tie: the way its parent goes)
+  bool fasteners = false;
+  double small_ratio = 0.05;    // small: its box diagonal under this share of its parent's
+  double small_size = 0;        // ... or under this many mm when > 0
+  double touch = 0.05;          // boxes this close (mm) touch
+  std::set<std::string> keep;   // components that move as one unit at any level (the PCB)
+  std::set<std::string> split;  // components whose children move apart beyond `levels` (the screws)
+  std::vector<std::vector<std::string>> groups;  // nodes that move as one unit; the unit's id is the first member's
+  std::map<std::string, Vec3> offsets;           // manual moves (mm) per unit id, on top of the automatic ones
+  // together: every unit over the whole of t | units: one after another, the farthest first, never before the unit
+  // holding it. No staging is keyed to the levels (a slider cut into a stretch per level, TODO 11 D4): a spec saved with
+  // "levels" reads as together.
+  std::string stages = "together";
+  double duration = 1.2;        // seconds a full play takes
+  double t = 1;                 // the saved distance: 0 = assembled, 1 = exploded
+  json to_json() const;
+  static ExplodeSpec from_json(const json& j);  // Error for a malformed spec; unknown keys are ignored
+};
+
+struct ExplodeUnit {
+  std::string id, name;               // the node (component or body; a group's first member)
+  std::vector<std::string> bodies;    // body nodes that move with it, not those of its child units
+  int parent = -1;                    // index of the enclosing unit; -1 = the explode root
+  int level = 1;                      // 1 = moves away from the root's other children
+  Vec3 lo{0, 0, 0}, hi{0, 0, 0};      // assembled box of everything under it
+  Vec3 centre{0, 0, 0}, dir{0, 0, 1};
+  double distance = 0;                // its own automatic move at t = 1 (mm), along dir
+  double t0 = 0, t1 = 1;              // the stretch of t over which it moves
+};
+
+using ExplodeBoxFn = std::function<Bnd_Box(const std::string& body)>;
+using ExplodeAxisFn = std::function<std::optional<Vec3>(const std::string& body)>;  // a body's fastener axis, world
+
+// The component the explode starts from: spec.root (or the roots), past components that are the only visible child.
+std::string explode_root(const Scene& scene, const ExplodeSpec& spec);
+// The levels the root offers (a level control's range): the deepest nesting under it, a body counting one.
+int explode_depth(const Scene& scene, const ExplodeSpec& spec);
+// The units, parents before children. box_of: a body node's world box; by default its tight box (node_tight_bbox from
+// the cached corners), which walks each shape once: workers only. axis_of (spec.fasteners): a body's fastener axis in
+// world coordinates; by default fastener_axis of its shape (once per shape), turned with the node.
+std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, const ExplodeSpec& spec, const ExplodeBoxFn& box_of = {},
+                                       const ExplodeAxisFn& axis_of = {});
+// The axis a screw, pin, bolt or rod leaves along, in the shape's frame (sign: its largest component positive): its
+// largest group of coaxial cylindrical faces, when they are about as wide as the whole part around that axis and the
+// part is at least one and a half diameters long. None for anything else (a plate with a hole, a disc, a mesh).
+std::optional<Vec3> fastener_axis(const TopoDS_Shape& shape);
+// fastener_axis of body nodes' shapes (cached shapes: workers), turned with the node, kept by shape key in `cache` (a
+// caller's across layouts; thread-safe). doc and scene must outlive the function.
+struct FastenerAxes {
+  std::mutex mu;
+  std::unordered_map<std::string, std::optional<Vec3>> by_key;
+};
+ExplodeAxisFn fastener_axes(const Document& doc, const Scene& scene, std::shared_ptr<FastenerAxes> cache = {});
+// The stretch of t each unit moves over (t0, t1) for spec.stages; explode_units ends with it. Again after manual offsets
+// change: one after another, a unit dragged out of its place takes a turn of its own, and the turns follow the moves.
+void explode_stage(std::vector<ExplodeUnit>& units, const ExplodeSpec& spec);
+// How far along its own move a unit is at t: 0 before its stretch [t0, t1], 1 after it, eased in between.
+double explode_progress(const ExplodeUnit& unit, double t);
+// Each unit's move at t: its parent's plus its own dir * distance + offsets[id], eased over [t0, t1].
+std::vector<Vec3> explode_unit_offsets(const std::vector<ExplodeUnit>& units, const ExplodeSpec& spec, double t);
+// The same per body node (world translation). Microseconds per unit: a UI calls it every frame.
+std::unordered_map<std::string, Vec3> explode_offsets(const std::vector<ExplodeUnit>& units, const ExplodeSpec& spec, double t);
+// The scene with those bodies moved, so measuring, rendering and drawings see the parts where the view shows them.
+Scene exploded_scene(const Scene& scene, const std::unordered_map<std::string, Vec3>& offsets);
+// The view op's explode (Error when there is no such view; the defaults when it has none).
+ExplodeSpec view_explode(const Scene& scene, const std::string& view_id);
+
+// ---- what an explode editor needs (UI-36); pure, microseconds per unit.
+// The trail lines at t: each moving unit's centre from where its parent units alone take it to where it is drawn.
+struct ExplodeTrail {
+  size_t unit = 0;
+  Vec3 from{0, 0, 0}, to{0, 0, 0};
+};
+std::vector<ExplodeTrail> explode_trails(const std::vector<ExplodeUnit>& units, const ExplodeSpec& spec, double t);
+// The unit that moves a node: the unit holding a body, the unit with a component's id (a group's is its first member's),
+// or for another component the one unit holding all of its shown bodies. -1 when none (hidden, outside the root, split
+// among units). body_units: explode_body_units, kept by a caller asking for many nodes.
+std::unordered_map<std::string, int> explode_body_units(const std::vector<ExplodeUnit>& units);
+int explode_unit_of(const Scene& scene, const std::vector<ExplodeUnit>& units, const std::string& id, const std::unordered_map<std::string, int>* body_units = nullptr);
+// A unit's own move at t = 1 (automatic plus manual) along a unit axis, and the manual offset that makes it `travel`
+// there, keeping the move across the axis. A manual offset that comes out zero is dropped.
+double explode_travel(const ExplodeUnit& unit, const ExplodeSpec& spec, const Vec3& axis);
+void set_explode_travel(ExplodeSpec& spec, const ExplodeUnit& unit, const Vec3& axis, double travel);
+// Per component: follow the level setting, keep together (one unit at any level) or explode its parts (split).
+enum class ExplodeRule { Level, Keep, Split };
+ExplodeRule explode_rule(const ExplodeSpec& spec, const std::string& component);
+void set_explode_rule(ExplodeSpec& spec, const std::string& component, ExplodeRule rule);
+// Groups of nodes that move as one: grouping takes the ids out of the groups they were in (a group left with one
+// member goes) and drops their manual offsets but the first's; ungrouping removes the group holding id and its offset.
+int explode_group_of(const ExplodeSpec& spec, const std::string& id);  // index into spec.groups, -1 none
+void explode_group(ExplodeSpec& spec, const std::vector<std::string>& ids);
+bool explode_ungroup(ExplodeSpec& spec, const std::string& id);
+// An `explode` argument (a view op id or a spec object) applied at the spec's t.
+Scene exploded_scene(const Document& doc, const Scene& scene, const json& explode);
+
+}  // namespace opad

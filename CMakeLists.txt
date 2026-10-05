@@ -25,6 +25,7 @@ if(MSVC)
 else()
   add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
+include(cmake/toolchain_speed.cmake)  # ccache launcher and MinGW LLD when installed (OPAD_CCACHE, OPAD_LLD)
 
 # Put every runtime artefact side by side so DLL lookup works out of the box on Windows.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -44,8 +45,12 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 include(cmake/occt.cmake)
 find_package(ZLIB REQUIRED)  # 3MF parts are deflated zip entries (core) and its tests write some
+find_package(zstd CONFIG QUIET)  # optional: models embedded in KiCad boards are zstd-compressed (core)
 
 add_subdirectory(core)
+if(OPAD_BUILD_CLI OR OPAD_BUILD_APP)
+  add_subdirectory(paint)  # PDF and PNG drawings (Qt Gui), for opad-cli and the app
+endif()
 if(OPAD_BUILD_CLI)
   add_subdirectory(cli)
 endif()

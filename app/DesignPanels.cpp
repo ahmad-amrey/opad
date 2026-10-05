@@ -6,13 +6,19 @@
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QResizeEvent>
+#include <QScrollArea>
 #include <QPainter>
 #include <QSettings>
 #include <QStringListModel>
 
+#include <algorithm>
+#include <cmath>
+
+#include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 
 namespace {
 
@@ -43,6 +49,7 @@ ExprEdit::ExprEdit(AppDocument* doc, opad::design::Dim dim, QWidget* parent) : Q
   m_value = new QLabel(this);
   m_value->setObjectName("tertiary");
   m_value->setFont(theme::mono(11));
+  m_value->setFixedHeight(14);  // a row of its own under the box, never on its border
   v->addWidget(m_edit);
   v->addWidget(m_value);
   QStringList names;
@@ -74,7 +81,23 @@ void ExprEdit::evaluate() {
     const std::string text = m_edit->text().trimmed().toStdString();
     const double v = table.as(m_dim, text);
     opad::design::Quantity q{v, m_dim == opad::design::Dim::Length ? 1 : 0, m_dim == opad::design::Dim::Angle};
-    m_value->setText(QString::fromUtf8("= ") + QString::fromStdString(opad::design::format_quantity(q)));
+    // Lengths and angles in the shown unit and precision (UI-123), anything else as the expression engine says it.
+    const QString shown = m_dim == opad::design::Dim::Length  ? units::format(units::Kind::Length, v)
+                          : m_dim == opad::design::Dim::Angle ? units::format(units::Kind::Angle, v * 180 / M_PI)
+                                                              : QString::fromStdString(opad::design::format_quantity(q));
+    // A number as the box would start it ("10 mm", or a bare 10 in the shown unit) says nothing the echo would add: the
+    // echo stays empty, its row kept so the panel does not jump while typing.
+    const QString typed = m_edit->text().trimmed();
+    bool bare = false;
+    const double number = typed.toDouble(&bare);
+    const double expected = m_dim == opad::design::Dim::Length  ? units::toDisplay(units::Kind::Length, v)
+                            : m_dim == opad::design::Dim::Angle ? units::toDisplay(units::Kind::Angle, v * 180 / M_PI)
+                                                                : v;
+    const auto squeezed = [](QString s) { return s.remove(' '); };
+    const bool same = (bare && std::fabs(number - expected) <= 1e-9 * std::max(1.0, std::fabs(expected))) || squeezed(typed) == squeezed(shown) ||
+                      (m_dim == opad::design::Dim::Length && squeezed(typed) == squeezed(units::editable(units::Kind::Length, v))) ||
+                      (m_dim == opad::design::Dim::Angle && squeezed(typed) == squeezed(units::editable(units::Kind::Angle, v * 180 / M_PI)));
+    m_value->setText(same ? QString() : QString::fromUtf8("= ") + shown);
     m_value->setStyleSheet(QString("color: %1;").arg(theme::css(t.fg3)));
     m_valid = true;
   } catch (const std::exception& e) {
@@ -99,6 +122,12 @@ void PickBox::set(int count, const QString& what, bool active, bool satisfied) {
   update();
 }
 
+void PickBox::setNote(const QString& note) {
+  if (m_note == note) return;
+  m_note = note;
+  update();
+}
+
 void PickBox::paintEvent(QPaintEvent*) {
   const Tokens& t = theme::current();
   QPainter p(this);
@@ -110,21 +139,41 @@ void PickBox::paintEvent(QPaintEvent*) {
   p.drawPixmap(8, 6, icons::pixmap("cursor", m_active ? t.sel : t.fg2, 16, devicePixelRatioF()));
   p.setFont(theme::ui(12));
   p.setPen(m_count > 0 ? t.fg : m_satisfied ? t.fg3 : (m_active ? t.sel : t.fg2));
-  const QString text = m_count > 0 ? (m_what.isEmpty() ? tr("%1 selected").arg(m_count) : m_what) : m_active ? tr("Pick in the view…") : m_satisfied ? tr("Optional") : tr("Select");
-  const int room = width() - 30 - (m_count > 0 ? 26 : 8);  // the clear button's place only when there is something to clear
+  QString text = m_count > 0 ? (m_what.isEmpty() ? tr("%1 selected").arg(m_count) : m_what) : m_active ? tr("Pick in the view…") : m_satisfied ? tr("Optional") : tr("Select");
+  if (!m_note.isEmpty()) {
+    text = m_note;
+    p.setPen(t.sel);
+  }
+  const bool clears = m_count > 0 && m_note.isEmpty();
+  const int room = width() - 30 - (clears ? 26 : 8);  // the clear button's place only when there is something to clear
   p.drawText(QRect(30, 0, room, height()), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(text, Qt::ElideRight, room));
-  if (m_count > 0) p.drawPixmap(width() - 22, 6, icons::pixmap("close", t.fg2, 16, devicePixelRatioF()));
+  if (clears) p.drawPixmap(width() - 22, 6, icons::pixmap("close", t.fg2, 16, devicePixelRatioF()));
 }
 
 void PickBox::mousePressEvent(QMouseEvent* e) {
-  if (m_count > 0 && e->pos().x() > width() - 26) return emit cleared();
+  if (m_count > 0 && m_note.isEmpty() && e->pos().x() > width() - 26) return emit cleared();
   QPushButton::mousePressEvent(e);
 }
 
 // ---------------------------------------------------------------- FeaturePanel
 FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
-  auto* v = new QVBoxLayout(this);
-  v->setContentsMargins(12, 10, 12, 0);
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  outer->setSpacing(0);
+  // The form scrolls when the panel is shorter than it (a small view, the guide open): squeezed, its rows overlapped
+  // (the value echo sat on its box's border, UI-116).
+  m_scroll = new QScrollArea(this);
+  m_scroll->setFrameShape(QFrame::NoFrame);
+  m_scroll->setWidgetResizable(true);
+  m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_scroll->setMinimumSize(0, 0);
+  auto* form = m_form = new QWidget(m_scroll);
+  form->setAutoFillBackground(false);
+  m_scroll->setWidget(form);
+  m_scroll->viewport()->setAutoFillBackground(false);
+  outer->addWidget(m_scroll, 1);
+  auto* v = new QVBoxLayout(form);
+  v->setContentsMargins(12, 10, 12, 8);
   v->setSpacing(6);
   m_name = new QLineEdit(this);
   m_hint = new QLabel(this);
@@ -132,7 +181,10 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_hint->setWordWrap(true);
   v->addWidget(m_name);
   v->addWidget(m_hint);
-  m_hiddenWarning=new QLabel(tr("The object being edited is hidden. Show it in the browser to see the result."),this);m_hiddenWarning->setWordWrap(true);m_hiddenWarning->setStyleSheet("color: #b07820");m_hiddenWarning->hide();v->addWidget(m_hiddenWarning);
+  m_guide = new ToolGuide(this);
+  v->addWidget(m_guide);
+  connect(m_guide, &ToolGuide::resized, this, &FeaturePanel::contentResized);
+  m_hiddenWarning=new QLabel(tr("The object being edited is hidden. Show it in the browser to see the result."),this);m_hiddenWarning->setWordWrap(true);m_hiddenWarning->hide();v->addWidget(m_hiddenWarning);
   auto* body = new QWidget(this);
   m_rows = new QVBoxLayout(body);
   m_rows->setContentsMargins(0, 4, 0, 0);
@@ -189,20 +241,16 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_status->setObjectName("tertiary");
   m_status->setWordWrap(true);
   v->addWidget(m_status);
-  auto* footer = new QHBoxLayout();
-  footer->setContentsMargins(0, 6, 0, 10);
-  auto* cancel = new QPushButton(tr("Cancel   Esc"), this);
-  m_ok = new QPushButton(tr("OK   Enter"), this);
-  m_ok->setObjectName("primary");
-  footer->addStretch(1);
-  footer->addWidget(cancel);
-  footer->addWidget(m_ok);
-  v->addLayout(footer);
-  connect(cancel, &QPushButton::clicked, this, &FeaturePanel::cancelled);
-  connect(m_ok, &QPushButton::clicked, this, &FeaturePanel::accepted);
+  m_footer = new PanelFooter(this);  // Cancel (Esc) and OK (Enter): it commits and closes the panel
+  outer->addWidget(m_footer);
+  connect(m_footer, &PanelFooter::cancelled, this, &FeaturePanel::cancelled);
+  connect(m_footer, &PanelFooter::accepted, this, &FeaturePanel::accepted);
 }
 
-void FeaturePanel::setEditHidden(bool hidden){m_hiddenWarning->setVisible(hidden);}
+void FeaturePanel::setEditHidden(bool hidden){
+  m_hiddenWarning->setStyleSheet(QString("color: %1;").arg(theme::css(theme::current().warning)));  // the theme's warning, as it is now
+  m_hiddenWarning->setVisible(hidden);
+}
 
 bool FeaturePanel::isPick(const std::string& type) {
   return type == "bodies" || type == "faces" || type == "edges" || type == "profiles" || type == "points" || type == "plane" || type == "axis" || type == "path";
@@ -220,6 +268,8 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
   m_values = inputs.is_object() ? inputs : opad::json::object();
   m_active.clear();
   m_widgets.clear();
+  m_notes.clear();
+  m_guideStep = m_guideCount = 0;
   while (QLayoutItem* it = m_rows->takeAt(0)) {
     delete it->widget();
     delete it;
@@ -245,7 +295,8 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
     m_bodyParent->setCurrentIndex(0);
   }
   m_hint->setText(i18n::t(QString::fromStdString(spec.hint)));
-  m_ok->setText(tr("OK   Enter"));setEditHidden(false);
+  m_guide->setCommand(editing ? QString() : "design." + QString::fromStdString(spec.kind));
+  m_footer->setPrimary(PanelFooter::Primary::Close);setEditHidden(false);
   setStatus(QString(), false);
   for (const auto& in : spec.inputs) {
     const QString key = QString::fromStdString(in.name);
@@ -353,11 +404,24 @@ void FeaturePanel::refreshVisibility() {
         if (one.contains("base")) what = (in.type == "plane" ? tr("%1 plane") : tr("%1 axis")).arg(QString::fromStdString(one["base"].get<std::string>()).toUpper());
         else if (one.contains("sketch")) what = tr("Sketch");
         else if (one.contains("feature")) what = tr("Construction");
-        else what = in.type == "plane" ? tr("Face") : tr("Edge");
+        else what = in.type == "plane" || one.contains("face") ? tr("Face") : tr("Edge");  // an axis through a round face
       }
       it->second.pick->set(n, what, m_active == it->first, in.optional || n >= std::max(1, in.min_count) || in.min_count == 0);
+      const auto note = m_notes.find(it->first);
+      it->second.pick->setNote(note == m_notes.end() ? QString() : note->second);
     }
   }
+  // The guide's steps: the shown picks the feature needs, in order, then its values; it waits at the first one missing.
+  int needed = 0, waiting = -1;
+  for (const auto& in : m_spec->inputs) {
+    auto it = m_widgets.find(QString::fromStdString(in.name));
+    if (it == m_widgets.end() || !it->second.pick || it->second.row->isHidden() || in.optional || (in.min_count < 1 && !singlePick(in.type))) continue;
+    const opad::json p = picks(it->first);
+    if (waiting < 0 && (p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1) < std::max(1, in.min_count)) waiting = needed;
+    ++needed;
+  }
+  if (m_guideCount > 0) m_guide->setWaiting(m_guideStep, m_guideCount);  // a primitive being placed: its stage
+  else m_guide->setWaiting(waiting < 0 ? needed : waiting, needed + 1);
   refreshNewBody();
 }
 
@@ -482,12 +546,67 @@ void FeaturePanel::setValue(const QString& name, const opad::json& value) {
   emit inputsChanged();
 }
 
+void FeaturePanel::setValues(const std::vector<std::pair<QString, opad::json>>& values) {
+  bool any = false, shown = false;  // shown: a choice or a flag changed, which can show or hide rows
+  for (const auto& [name, value] : values) {
+    auto it = m_widgets.find(name);
+    if (it == m_widgets.end()) continue;
+    const QSignalBlocker quiet(this);  // the one inputsChanged below
+    if (it->second.expr && value.is_string()) {
+      if (it->second.expr->lineEdit()->text() == QString::fromStdString(value.get<std::string>())) continue;
+      it->second.expr->setText(QString::fromStdString(value.get<std::string>()));
+    } else if (it->second.combo && value.is_string()) {
+      it->second.combo->setCurrentIndex(std::max(0, it->second.combo->findData(QString::fromStdString(value.get<std::string>()))));
+      shown = true;
+    } else if (it->second.check && value.is_boolean()) {
+      it->second.check->setChecked(value.get<bool>());
+      shown = true;
+    }
+    any = true;
+  }
+  if (!any) return;
+  if (shown) refreshVisibility();  // values alone (a primitive sized by the pointer, every move) change no row
+  emit inputsChanged();
+}
+
+void FeaturePanel::setPickNote(const QString& input, const QString& note) {
+  if (note.isEmpty()) m_notes.erase(input);
+  else m_notes[input] = note;
+  refreshVisibility();
+}
+
+void FeaturePanel::setGuideStep(int step, int count) {
+  m_guideStep = step;
+  m_guideCount = count;
+  refreshVisibility();
+}
+
+QStringList FeaturePanel::valueInputs() const {
+  QStringList out;
+  if (!m_spec) return out;
+  for (const auto& in : m_spec->inputs) {
+    const auto it = m_widgets.find(QString::fromStdString(in.name));
+    if (it != m_widgets.end() && it->second.expr && !it->second.row->isHidden()) out << it->first;
+  }
+  return out;
+}
+
+QString FeaturePanel::valueText(const QString& input) const {
+  const auto it = m_widgets.find(input);
+  return it != m_widgets.end() && it->second.expr ? it->second.expr->lineEdit()->text() : QString();
+}
+
+QString FeaturePanel::problem(const QString& input) const {
+  const auto it = m_widgets.find(input);
+  return it != m_widgets.end() && it->second.expr ? it->second.expr->problem() : QString();
+}
+
 QString FeaturePanel::statusText() const { return m_status->text(); }
 
 void FeaturePanel::setStatus(const QString& text, bool error) {
   const Tokens& t = theme::current();
   m_status->setText(text);
-  m_status->setStyleSheet(QString("color: %1;").arg(theme::css(error ? t.red : t.fg3)));
+  m_status->setStyleSheet(QString("color: %1;").arg(theme::css(error ? t.error : t.fg3)));
 }
 
 void FeaturePanel::activate(const QString& name) {
@@ -517,11 +636,14 @@ void FeaturePanel::activateNextPick() {
 
 QSize FeaturePanel::preferredSize(int width) const {
   const int w = width > 0 ? width : 372;
-  return QSize(372, layout()->hasHeightForWidth() ? layout()->heightForWidth(w) : layout()->sizeHint().height());
+  QLayout* form = m_form->layout();
+  form->activate();
+  const int height = std::max(form->totalMinimumSize().height(), form->hasHeightForWidth() ? form->totalHeightForWidth(w) : form->totalSizeHint().height());
+  return QSize(372, height + m_footer->sizeHint().height());
 }
 
 void FeaturePanel::keyPressEvent(QKeyEvent* e) {
-  if (e->key() == Qt::Key_Escape) return emit cancelled();
+  if (e->key() == Qt::Key_Escape) return emit escapePressed();
   if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) return emit accepted();
   QWidget::keyPressEvent(e);
 }

@@ -24,9 +24,11 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
+#include "KeyText.hpp"
 #include "Notes.hpp"
 #include "Panels.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "Viewport.hpp"
 
 namespace {
@@ -190,6 +192,7 @@ AnnotationEditor::AnnotationEditor(AppDocument* doc, Viewport* viewport, ToolPan
   connect(doc, &AppDocument::changed, this, &AnnotationEditor::cancel);
   connect(doc, &AppDocument::aboutToReplace, this, &AnnotationEditor::cancel);
   connect(viewport, &Viewport::filterApplied, this, [this] { refreshPrompt(); });
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { refreshPrompt(); });  // the filters' keys
   connect(viewport, &Viewport::notesMoved, this, &AnnotationEditor::positionOverlays);  // every camera move
   qApp->installEventFilter(this);
   chooseType("note");
@@ -349,8 +352,9 @@ void AnnotationEditor::build() {
     m_count->setObjectName("annotationStrokeCount");
     m_count->setProperty("annotationRole", "section");
     head->addWidget(m_count, 1);
-    m_undoButton = flatButton(m_sections, "annotationUndo", "rollLeft", tr("Undo stroke (Ctrl+Z)"));
-    m_redoButton = flatButton(m_sections, "annotationRedo", "rollRight", tr("Redo stroke (Ctrl+Shift+Z)"));
+    // The editor's own keys are the platform's Undo and Redo (keyPress: QKeySequence::Undo/Redo), named its way.
+    m_undoButton = flatButton(m_sections, "annotationUndo", "rollLeft", tr("Undo stroke (%1)").arg(keys::fixedText("undo")));
+    m_redoButton = flatButton(m_sections, "annotationRedo", "rollRight", tr("Redo stroke (%1)").arg(keys::fixedText("redo")));
     m_clearButton = flatButton(m_sections, "annotationClear", "delete", tr("Clear strokes"));
     for (QToolButton* b : {m_undoButton, m_redoButton, m_clearButton}) head->addWidget(b);
     list->addLayout(head);
@@ -565,7 +569,8 @@ void AnnotationEditor::refreshPrompt() {
                          : filter == Viewport::SelFilter::Edge ? tr("Select an edge")
                                                                : tr("Select a vertex");
   const QString next = !m_drawingMode ? tr("Write the note") : m_eraser ? tr("Erase strokes") : tr("Draw strokes");
-  const QString hints = !m_anchored    ? tr("Esc cancel · 1–4 change filter")
+  const QString filters = keys::span({"select.bodies", "select.faces", "select.edges", "select.vertices"}), cancel = tr("%1 cancel").arg(keys::fixedText("esc"));
+  const QString hints = !m_anchored    ? (filters.isEmpty() ? cancel : cancel + QStringLiteral(" · ") + tr("%1 change filter").arg(filters))
                         : m_drawingMode ? tr("Orbit for a new plane · B pen · E eraser · 1–4 colour · [ ] width")
                                         : tr("Click another object to move the note · Esc cancel");
   m_prompt->set(m_drawingMode ? "pen" : "annotate", m_drawingMode ? tr("Hand drawing") : tr("Note"),
@@ -620,7 +625,7 @@ void AnnotationEditor::refreshStrokes() {
     const QColor tint = pen->color;
     mark->setPixmap(painted(QSize(18, 10), dpr, [tint, width](QPainter& p) { sample(p, QPointF(3, 5), QPointF(15, 5), std::min(width, 4), tint); }));
     auto* label = new QLabel(tr("Pen · %1 · %2 px").arg(i18n::t(pen->label)).arg(width), row);
-    auto* size = new QLabel(length < 10 ? tr("%1 mm").arg(length, 0, 'f', 1) : tr("%1 mm").arg(qRound(length)), row);
+    auto* size = new QLabel(units::format(units::Kind::Length, length, units::toDisplay(units::Kind::Length, length) < 10 ? 1 : 0), row);
     size->setProperty("annotationRole", "value");
     auto* remove = flatButton(row, "annotationRemoveStroke", "close", tr("Delete stroke %1").arg(i + 1), 20);
     remove->setProperty("strokeIndex", int(i));
@@ -736,8 +741,22 @@ void AnnotationEditor::eraseAt(const QPointF& point) {
 void AnnotationEditor::finish() {
   if (!m_active || m_dragging || !m_save->isEnabled()) return;
   const QString text = m_text->toPlainText().trimmed();
-  opad::json args = {{"anchor", m_anchor.to_json()}, {"text", (text.isEmpty() ? tr("Hand drawing") : text).toStdString()}, {"style", m_type}};
-  if (m_drawingMode) args["drawing"] = m_drawing;
+  // Drawn on a part an exploded view has moved: stored where the part is in the model (the view adds its offset back).
+  const opad::Vec3 moved = m_anchor.body.empty() ? opad::Vec3{0, 0, 0} : m_viewport->shownOffset(m_anchor.body);
+  auto back = [&moved](opad::Vec3 p) { return opad::Vec3{p[0] - moved[0], p[1] - moved[1], p[2] - moved[2]}; };
+  opad::Ref anchor = m_anchor;
+  opad::json drawing = m_drawing;
+  if (moved != opad::Vec3{0, 0, 0}) {
+    anchor.point = back(anchor.point);
+    if (m_drawingMode && drawing.is_object()) {
+      if (drawing.contains("plane") && drawing["plane"].contains("origin")) drawing["plane"]["origin"] = back(drawing["plane"]["origin"].get<opad::Vec3>());
+      if (drawing.contains("strokes"))
+        for (auto& stroke : drawing["strokes"])
+          if (stroke.contains("plane") && stroke["plane"].contains("origin")) stroke["plane"]["origin"] = back(stroke["plane"]["origin"].get<opad::Vec3>());
+    }
+  }
+  opad::json args = {{"anchor", anchor.to_json()}, {"text", (text.isEmpty() ? tr("Hand drawing") : text).toStdString()}, {"style", m_type}};
+  if (m_drawingMode) args["drawing"] = drawing;
   try {
     m_doc->run("annotate", args);  // one op, one Undo step; the document's change ends this editor
     cancel();

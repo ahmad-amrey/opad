@@ -11,7 +11,10 @@
 #include <RWGltf_CafReader.hxx>
 #include <RWObj_CafReader.hxx>
 #include <Standard_Failure.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <VrmlAPI_CafReader.hxx>
 #include <XCAFApp_Application.hxx>
 #include <zlib.h>
@@ -24,12 +27,16 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 
 #include "import_common.hpp"
+#include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
+#include "opad/mesh.hpp"
 
 namespace opad::detail {
 namespace {
@@ -102,16 +109,18 @@ bool next_number(const char*& p, const char* end, double& out) {
 ImportResult append_import(Document& doc, const std::filesystem::path& file, const ImportOptions& opt, json children, ImportResult result) {
   json root = {{"type", "component"}, {"id", new_uuid()}, {"name", file.stem().string()}, {"children", std::move(children)}};
   json op = {{"op", "import"}, {"source", file.filename().string()}, {"units", "mm"}, {"nodes", json::array({root})}};
+  stamp_source(op, file, opt);
   if (!opt.parent.empty()) op["parent"] = opt.parent;
   result.op_id = doc.append(op, opt.author).id;
   ++result.components;
   return result;
 }
 
-json mesh_body(Document& doc, const TopoDS_Face& face, const std::string& name, const std::filesystem::path& file, const ImportOptions& opt,
-               ImportResult& result, const std::array<double, 3>* color = nullptr) {
+json mesh_body(Document& doc, const TopoDS_Shape& face, const std::string& name, const std::filesystem::path& file, const ImportOptions& opt,
+               ImportResult& result, const std::array<double, 3>* color = nullptr, const json& faceColors = {}) {
   json meta = {{"name", name}, {"units", "mm"}, {"source", file.filename().string()}, {"representation", "mesh"}};
   if (color) meta["color"] = {(*color)[0], (*color)[1], (*color)[2]};
+  if (!faceColors.is_null()) meta["face_colors"] = faceColors;
   json body = {{"type", "body"}, {"id", new_uuid()}, {"name", name}, {"representation", "mesh"}};
   body["key"] = store_body(doc, face, meta, opt, true, &result);
   if (color) body["color"] = meta["color"];
@@ -322,29 +331,72 @@ struct Model3mf {
     std::vector<float> xyz;
     std::vector<uint32_t> triangles;
     std::vector<Component> components;
-    bool has_color = false;
+    bool has_color = false;  // the object's own material (pid, pindex)
     std::array<double, 3> color{};
     double opacity = 1;
+    std::vector<int> paint;  // per triangle: one of `colors` (its material, a slicer's painting), -1 none; empty when none has one
   };
   std::map<std::string, Object> objects;
   std::vector<Component> build;
+  std::vector<std::pair<std::array<double, 3>, double>> colors;  // colour, opacity
 };
 
-Model3mf parse_3mf_model(std::string_view text, const ImportOptions& opt, double& scale) {
+// The filament a slicer painted a triangle with, by area: PrusaSlicer's mmu_segmentation and Bambu Studio's paint_color are
+// the same bitstream (TriangleSelector), in hex, last digit first. A digit's low two bits count the sides a triangle was split
+// at (its children follow), else its high two bits are the state (3: the next digit + 3). State n > 0 is extruder n.
+int painted_state(std::string_view hex) {
+  std::vector<int> digits;
+  for (auto it = hex.rbegin(); it != hex.rend(); ++it) {
+    const char c = *it;
+    const int d = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+    if (d < 0) return 0;
+    digits.push_back(d);
+  }
+  std::map<int, double> area;
+  std::vector<double> open{1.0};  // shares of the triangles still to read, depth first (siblings share alike)
+  for (size_t at = 0; at < digits.size() && !open.empty();) {
+    const double share = open.back();
+    open.pop_back();
+    const int code = digits[at++], split = code & 3;
+    if (split) {
+      open.insert(open.end(), size_t(split + 1), share / (split + 1));
+      continue;
+    }
+    int state = code >> 2;
+    if (state == 3 && at < digits.size()) state = 3 + digits[at++];
+    area[state] += share;
+  }
+  int best = 0;
+  double most = 0;
+  for (const auto& [state, share] : area)
+    if (share > most + 1e-12) { best = state; most = share; }
+  return best;
+}
+
+Model3mf parse_3mf_model(std::string_view text, const ImportOptions& opt, double& scale, const std::vector<std::array<double, 3>>& filaments) {
   Model3mf model;
   std::map<std::string, std::vector<std::pair<std::array<double, 3>, double>>> palettes;  // basematerials / colorgroup id -> colours
   std::string palette;
   Model3mf::Object* object = nullptr;
-  std::string objectPid, objectIndex, firstTrianglePid, firstTriangleIndex;
+  std::string objectPid, objectIndex;
+  auto intern = [&](const std::array<double, 3>& rgb, double opacity) {
+    for (size_t i = 0; i < model.colors.size(); ++i)
+      if (model.colors[i].first == rgb && model.colors[i].second == opacity) return static_cast<int>(i);
+    model.colors.push_back({rgb, opacity});
+    return static_cast<int>(model.colors.size() - 1);
+  };
+  auto material = [&](std::string_view pid, std::string_view index) -> const std::pair<std::array<double, 3>, double>* {
+    auto it = palettes.find(std::string(pid));
+    size_t i = 0;
+    if (!index.empty()) std::from_chars(index.data(), index.data() + index.size(), i);
+    return it != palettes.end() && i < it->second.size() ? &it->second[i] : nullptr;
+  };
   auto finishObject = [&] {
     if (!object) return;
-    std::string pid = objectPid.empty() ? firstTrianglePid : objectPid;
-    std::string index = objectPid.empty() ? firstTriangleIndex : objectIndex;
-    if (index.empty()) index = "0";
-    if (auto it = palettes.find(pid); it != palettes.end()) {
-      size_t i = 0;
-      std::from_chars(index.data(), index.data() + index.size(), i);
-      if (i < it->second.size()) { object->has_color = true; object->color = it->second[i].first; object->opacity = it->second[i].second; }
+    if (const auto* own = objectPid.empty() ? nullptr : material(objectPid, objectIndex)) {
+      object->has_color = true;
+      object->color = own->first;
+      object->opacity = own->second;
     }
     object = nullptr;
   };
@@ -368,9 +420,17 @@ Model3mf parse_3mf_model(std::string_view text, const ImportOptions& opt, double
       const double a = attr_number(tag, "v1", -1), b = attr_number(tag, "v2", -1), c = attr_number(tag, "v3", -1);
       if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) throw Error("3MF triangle refers to a missing vertex");
       object->triangles.insert(object->triangles.end(), {static_cast<uint32_t>(a), static_cast<uint32_t>(b), static_cast<uint32_t>(c)});
-      if (firstTrianglePid.empty() && !tag.attr("pid").empty()) {
-        firstTrianglePid = std::string(tag.attr("pid"));
-        firstTriangleIndex = std::string(tag.attr("p1"));
+      // Its own material (pid, p1; either falls back to the object's), or the filament a slicer painted it with.
+      int colour = -1;
+      if (std::string_view painted = tag.attr("paint_color").empty() ? tag.attr("mmu_segmentation") : tag.attr("paint_color"); !painted.empty()) {
+        if (const int state = painted_state(painted); state > 0 && size_t(state) <= filaments.size()) colour = intern(filaments[size_t(state - 1)], 1);
+      } else if (!tag.attr("pid").empty() || !tag.attr("p1").empty()) {
+        const std::string_view pid = tag.attr("pid").empty() ? std::string_view(objectPid) : tag.attr("pid");
+        if (const auto* m = material(pid, tag.attr("p1").empty() ? std::string_view(objectIndex) : tag.attr("p1"))) colour = intern(m->first, m->second);
+      }
+      if (colour >= 0 || !object->paint.empty()) {
+        object->paint.resize(object->triangles.size() / 3 - 1, -1);
+        object->paint.push_back(colour);
       }
     } else if (name == "model") {
       const std::string_view unit = tag.attr("unit");
@@ -389,8 +449,6 @@ Model3mf parse_3mf_model(std::string_view text, const ImportOptions& opt, double
       object->name = xml_unescape(tag.attr("name"));
       objectPid = std::string(tag.attr("pid"));
       objectIndex = std::string(tag.attr("pindex"));
-      firstTrianglePid.clear();
-      firstTriangleIndex.clear();
       if (tag.empty) finishObject();
     } else if (name == "component" && object) {
       object->components.push_back({std::string(tag.attr("objectid")), std::string(tag.attr("path")), parse_3mf_transform(tag.attr("transform"), scale)});
@@ -406,6 +464,11 @@ Model3mf parse_3mf_model(std::string_view text, const ImportOptions& opt, double
 
 // ---------------------------------------------------------------- triangle meshes
 TopoDS_Face mesh_face(const std::vector<float>& xyz, const std::vector<uint32_t>& triangles, bool weld) {
+  return TopoDS::Face(mesh_faces(xyz, triangles, weld, {}, {}));
+}
+
+TopoDS_Shape mesh_faces(const std::vector<float>& xyz, const std::vector<uint32_t>& triangles, bool weld, const std::vector<int>& colour,
+                        const std::vector<std::array<double, 3>>& colours, json* meta) {
   const size_t nt = triangles.size() / 3;
   std::vector<float> welded;
   std::vector<uint32_t> weldedTriangles;
@@ -495,17 +558,55 @@ TopoDS_Face mesh_face(const std::vector<float>& xyz, const std::vector<uint32_t>
   }
   const int nodeCount = static_cast<int>(nodes.size() / 3);
   if (nodeCount == 0 || nt == 0) throw Error("the mesh has no triangles");
-  Handle(Poly_Triangulation) mesh = new Poly_Triangulation(nodeCount, static_cast<int>(nt), Standard_False, Standard_True);
-  for (int i = 0; i < nodeCount; ++i) {
-    mesh->SetNode(i + 1, gp_Pnt(nodes[i * 3], nodes[i * 3 + 1], nodes[i * 3 + 2]));
-    mesh->SetNormal(i + 1, gp_Vec3f(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]));
+  // One face per colour, the body's own first, shaded as one mesh (the normals above saw every triangle), so no seam shows
+  // where the colour changes.
+  std::vector<std::vector<uint32_t>> parts;  // triangles by colour + 1
+  if (colour.size() == nt) {
+    parts.resize(colours.size() + 1);
+    for (size_t t = 0; t < nt; ++t) parts[colour[t] >= 0 && size_t(colour[t]) < colours.size() ? size_t(colour[t]) + 1 : 0].push_back(uint32_t(t));
+    if (parts[0].size() == nt) parts.clear();
   }
-  for (size_t t = 0; t < nt; ++t)
-    mesh->SetTriangle(static_cast<int>(t + 1), Poly_Triangle(static_cast<int>(cornerNode[t * 3] + 1), static_cast<int>(cornerNode[t * 3 + 1] + 1),
-                                                               static_cast<int>(cornerNode[t * 3 + 2] + 1)));
-  TopoDS_Face face;
-  BRep_Builder().MakeFace(face, mesh);
-  return face;
+  BRep_Builder builder;
+  auto face = [&](const std::vector<uint32_t>* only) {  // every triangle when null
+    const int count = only ? static_cast<int>(only->size()) : static_cast<int>(nt);
+    std::vector<int> local;
+    if (only) {
+      local.assign(size_t(nodeCount), 0);
+      for (uint32_t t : *only)
+        for (int k = 0; k < 3; ++k) local[cornerNode[t * 3 + k]] = 1;
+      int next = 0;
+      for (int& l : local) l = l ? ++next : 0;
+    }
+    const int used = only ? (local.empty() ? 0 : *std::max_element(local.begin(), local.end())) : nodeCount;
+    Handle(Poly_Triangulation) mesh = new Poly_Triangulation(used, count, Standard_False, Standard_True);
+    for (int i = 0; i < nodeCount; ++i) {
+      const int at = only ? local[size_t(i)] : i + 1;
+      if (at == 0) continue;
+      mesh->SetNode(at, gp_Pnt(nodes[i * 3], nodes[i * 3 + 1], nodes[i * 3 + 2]));
+      mesh->SetNormal(at, gp_Vec3f(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]));
+    }
+    auto node = [&](uint32_t corner) { return only ? local[cornerNode[corner]] : static_cast<int>(cornerNode[corner]) + 1; };
+    for (int i = 0; i < count; ++i) {
+      const uint32_t t = only ? (*only)[size_t(i)] : uint32_t(i);
+      mesh->SetTriangle(i + 1, Poly_Triangle(node(t * 3), node(t * 3 + 1), node(t * 3 + 2)));
+    }
+    TopoDS_Face f;
+    builder.MakeFace(f, mesh);
+    return f;
+  };
+  if (parts.empty()) return face(nullptr);
+  TopoDS_Compound all;
+  builder.MakeCompound(all);
+  FaceColors painted;
+  painted.colors = colours;
+  for (size_t c = 0; c < parts.size(); ++c) {
+    if (parts[c].empty()) continue;
+    builder.Add(all, face(&parts[c]));
+    painted.face.push_back(static_cast<int>(c) - 1);
+  }
+  if (meta)
+    if (json j = painted.to_json(); !j.is_null()) (*meta)["face_colors"] = std::move(j);
+  return painted.face.size() == 1 ? TopoDS_Iterator(all).Value() : TopoDS_Shape(all);
 }
 
 ImportResult import_stl(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
@@ -628,12 +729,18 @@ ImportResult import_ply(Document& doc, const std::filesystem::path& file, const 
   };
   std::vector<float> xyz;
   std::vector<uint32_t> triangles;
-  double colorSum[3] = {0, 0, 0};
-  size_t colored = 0;
+  constexpr uint32_t kNone = 0xFFFFFFFFu;
+  std::vector<uint32_t> vertexRgb, triangleRgb;  // 0xRRGGBB (0-255 per channel) or kNone
+  auto packed = [](const double* rgb) {
+    if (rgb[0] < 0 || rgb[1] < 0 || rgb[2] < 0) return kNone;
+    auto byte = [](double x) { return uint32_t(std::clamp(std::lround(x), 0l, 255l)); };
+    return byte(rgb[0]) << 16 | byte(rgb[1]) << 8 | byte(rgb[2]);
+  };
   for (const Element& e : elements) {
     const bool vertex = e.name == "vertex", face = e.name == "face";
     for (size_t i = 0; i < e.count; ++i) {
       double v[3] = {0, 0, 0}, rgb[3] = {-1, -1, -1};
+      const size_t firstTriangle = triangles.size() / 3;
       for (const Prop& prop : e.props) {
         if (prop.list) {
           const size_t n = static_cast<size_t>(value(prop.countType));
@@ -651,29 +758,71 @@ ImportResult import_ply(Document& doc, const std::filesystem::path& file, const 
           continue;
         }
         const double x = value(prop.type);
-        if (!vertex) continue;
+        if (!vertex && !face) continue;
+        // Colours as bytes; float ones (0-1) are scaled.
+        const double c = prop.type == "float" || prop.type == "float32" || prop.type == "double" || prop.type == "float64" ? x * 255 : x;
         if (prop.name == "x") v[0] = x;
         else if (prop.name == "y") v[1] = x;
         else if (prop.name == "z") v[2] = x;
-        else if (prop.name == "red" || prop.name == "diffuse_red") rgb[0] = x;
-        else if (prop.name == "green" || prop.name == "diffuse_green") rgb[1] = x;
-        else if (prop.name == "blue" || prop.name == "diffuse_blue") rgb[2] = x;
+        else if (prop.name == "red" || prop.name == "diffuse_red") rgb[0] = c;
+        else if (prop.name == "green" || prop.name == "diffuse_green") rgb[1] = c;
+        else if (prop.name == "blue" || prop.name == "diffuse_blue") rgb[2] = c;
       }
       if (vertex) {
         if (!std::isfinite(v[0] + v[1] + v[2]) || std::max({std::abs(v[0]), std::abs(v[1]), std::abs(v[2])}) > 1e12) throw Error("invalid PLY vertex");
         xyz.insert(xyz.end(), {static_cast<float>(v[0]), static_cast<float>(v[1]), static_cast<float>(v[2])});
-        if (rgb[0] >= 0 && rgb[1] >= 0 && rgb[2] >= 0) { for (int k = 0; k < 3; ++k) colorSum[k] += rgb[k]; ++colored; }
+        vertexRgb.push_back(packed(rgb));
+      } else if (face) {
+        triangleRgb.resize(triangles.size() / 3, kNone);
+        if (const uint32_t own = packed(rgb); own != kNone) std::fill(triangleRgb.begin() + std::ptrdiff_t(firstTriangle), triangleRgb.end(), own);
       }
       if ((i & 0x3FFFF) == 0x3FFFF) report(opt, double(p - data.data()) / data.size(), "translating " + e.name + "s");
     }
   }
   if (triangles.empty()) throw Error("the PLY file has no faces (point clouds are not shown)");
   report(opt, 0.0, "building");
+  // A triangle's colour: its face's, else the one most of its corners have. A few colours (a part coloured by region) become
+  // the body's (the commonest) and faces of their own; a scan's colours, which vary point by point, their average.
+  const size_t nt = triangles.size() / 3;
+  triangleRgb.resize(nt, kNone);
+  std::map<uint32_t, size_t> counts;
+  for (size_t t = 0; t < nt; ++t) {
+    uint32_t& own = triangleRgb[t];
+    if (own == kNone) {
+      const uint32_t a = vertexRgb[triangles[t * 3]], b = vertexRgb[triangles[t * 3 + 1]], c = vertexRgb[triangles[t * 3 + 2]];
+      own = b == c ? b : a;
+    }
+    if (own != kNone) ++counts[own];
+  }
+  auto unpack = [](uint32_t c) { return std::array<double, 3>{((c >> 16) & 255) / 255.0, ((c >> 8) & 255) / 255.0, (c & 255) / 255.0}; };
   ImportResult result;
   std::array<double, 3> color{};
-  if (colored) for (int k = 0; k < 3; ++k) color[k] = std::clamp(colorSum[k] / colored / 255.0, 0.0, 1.0);
-  json children = json::array({mesh_body(doc, mesh_face(xyz, triangles, false), "Mesh", file, opt, result, colored ? &color : nullptr)});
-  return append_import(doc, file, opt, std::move(children), result);
+  bool colored = !counts.empty();
+  std::vector<int> colour;
+  std::vector<std::array<double, 3>> colours;
+  json meta = json::object();
+  if (counts.size() > 64) {
+    double sum[3] = {0, 0, 0};
+    size_t n = 0;
+    for (const auto& [c, count] : counts) {
+      const auto rgb = unpack(c);
+      for (int k = 0; k < 3; ++k) sum[k] += rgb[size_t(k)] * double(count);
+      n += count;
+    }
+    for (int k = 0; k < 3; ++k) color[size_t(k)] = sum[k] / double(n);
+  } else if (colored) {
+    const uint32_t common = std::max_element(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.second < b.second; })->first;
+    color = unpack(common);
+    std::map<uint32_t, int> index;
+    for (const auto& [c, count] : counts)
+      if (c != common) { index[c] = static_cast<int>(colours.size()); colours.push_back(unpack(c)); }
+    colour.resize(nt, -1);
+    for (size_t t = 0; t < nt; ++t)
+      if (auto it = index.find(triangleRgb[t]); it != index.end()) colour[t] = it->second;
+  }
+  const TopoDS_Shape shape = mesh_faces(xyz, triangles, false, colour, colours, &meta);
+  json mesh = mesh_body(doc, shape, "Mesh", file, opt, result, colored ? &color : nullptr, meta.value("face_colors", json()));
+  return append_import(doc, file, opt, json::array({mesh}), result);
 }
 
 // ---------------------------------------------------------------- 3MF
@@ -690,14 +839,18 @@ ImportResult import_3mf(Document& doc, const std::filesystem::path& file, const 
         root = std::string(tag.attr("Target"));
   }
   if (!root.empty() && root.front() == '/') root.erase(0, 1);
-  // Object names that slicers keep apart from the model (Bambu Studio, PrusaSlicer, OrcaSlicer).
+  // What slicers keep apart from the model (Bambu Studio, PrusaSlicer, OrcaSlicer): object names, the extruder of each object,
+  // of a Bambu object's parts (its components) and of a Prusa object's volumes (triangle ranges of its mesh), and the
+  // project's filament colours, which show each part and painted triangle as the slicer does.
   std::map<std::string, std::string> settingNames;
+  struct Extruders { int own = 0; std::map<std::string, int> parts; std::vector<std::array<int, 3>> volumes; };  // volumes: first, last, extruder
+  std::map<std::string, Extruders> extruders;  // by root object id
   for (const char* config : {"Metadata/model_settings.config", "Metadata/Slic3r_PE_model.config"}) {
     if (!zip.has(config)) continue;
     const std::string text = zip.read(config);
     XmlScanner scan(text);
     XmlTag tag;
-    std::string object;
+    std::string object, part;
     int depth = 0;
     while (scan.next(tag)) {
       if (tag.name == "object") {
@@ -705,9 +858,48 @@ ImportResult import_3mf(Document& doc, const std::filesystem::path& file, const 
         else { object = std::string(tag.attr("id")); depth = 0; }
       } else if (tag.name == "part" || tag.name == "volume") {
         depth += tag.closing ? -1 : (tag.empty ? 0 : 1);
+        if (tag.closing || object.empty()) continue;
+        part = std::string(tag.attr("id"));
+        if (tag.name == "volume") extruders[object].volumes.push_back({int(attr_number(tag, "firstid", -1)), int(attr_number(tag, "lastid", -2)), 0});
+      } else if (tag.name == "metadata" && !object.empty() && tag.attr("key") == "extruder") {
+        const int extruder = int(attr_number(tag, "value"));
+        auto& e = extruders[object];
+        if (depth == 0) e.own = extruder;
+        else if (tag.attr("type") == "volume" && !e.volumes.empty()) e.volumes.back()[2] = extruder;
+        else if (!part.empty()) e.parts[part] = extruder;
       } else if (tag.name == "metadata" && !object.empty() && depth == 0 && tag.attr("key") == "name" && !settingNames.count(object)) {
         settingNames[object] = xml_unescape(tag.attr("value"));
       }
+    }
+  }
+  std::vector<std::array<double, 3>> filaments;
+  if (zip.has("Metadata/project_settings.config")) {  // Bambu Studio, OrcaSlicer: JSON
+    try {
+      const json settings = json::parse(zip.read("Metadata/project_settings.config"));
+      for (const auto& c : settings.value("filament_colour", json::array())) {
+        std::array<double, 3> rgb{0.75, 0.75, 0.78};
+        if (c.is_string()) parse_hex_color(c.get<std::string>(), rgb);
+        filaments.push_back(rgb);
+      }
+    } catch (const std::exception&) {
+    }
+  } else if (zip.has("Metadata/Slic3r_PE.config")) {  // PrusaSlicer: "; key = value" lines, an extruder's colour before its filament's
+    std::map<std::string, std::vector<std::string>> lists;
+    std::istringstream lines(zip.read("Metadata/Slic3r_PE.config"));
+    for (std::string line; std::getline(lines, line);)
+      for (const char* key : {"extruder_colour", "filament_colour"})
+        if (line.rfind(std::string("; ") + key + " = ", 0) == 0) {
+          std::istringstream values(line.substr(std::strlen(key) + 5));
+          for (std::string v; std::getline(values, v, ';');) {
+            v.erase(std::remove_if(v.begin(), v.end(), [](char ch) { return ch == '"' || std::isspace(static_cast<unsigned char>(ch)); }), v.end());
+            lists[key].push_back(v);
+          }
+        }
+    for (size_t i = 0; i < std::max(lists["extruder_colour"].size(), lists["filament_colour"].size()); ++i) {
+      std::array<double, 3> rgb{0.75, 0.75, 0.78};
+      if (i >= lists["extruder_colour"].size() || !parse_hex_color(lists["extruder_colour"][i], rgb))
+        if (i < lists["filament_colour"].size()) parse_hex_color(lists["filament_colour"][i], rgb);
+      filaments.push_back(rgb);
     }
   }
   std::map<std::string, Model3mf> models;
@@ -718,16 +910,18 @@ ImportResult import_3mf(Document& doc, const std::filesystem::path& file, const 
     auto it = models.find(path);
     if (it != models.end()) return it->second;
     double scale = scales.count(root) ? scales[root] : 1.0;
-    Model3mf parsed = parse_3mf_model(zip.read(path), opt, scale);
+    Model3mf parsed = parse_3mf_model(zip.read(path), opt, scale, filaments);
     scales[path] = scale;
     return models.emplace(path, std::move(parsed)).first->second;
   };
   model(root);
   ImportResult result;
-  std::map<std::pair<std::string, std::string>, std::string> keys;  // (part, object id) -> body key: shared meshes are instances
+  // (part, object id, extruder) -> body key, with its colour: shared meshes are instances.
+  std::map<std::tuple<std::string, std::string, int>, std::pair<std::string, json>> keys;
   int depthGuard = 0;
-  std::function<json(const std::string&, const std::string&, const Mat4&, const std::string&)> node =
-      [&](const std::string& path, const std::string& id, const Mat4& transform, const std::string& fallback) -> json {
+  // `extruder`: the slicer's for this object or part (0: none); `owner`: the root object it belongs to.
+  std::function<json(const std::string&, const std::string&, const Mat4&, const std::string&, int, const std::string&)> node =
+      [&](const std::string& path, const std::string& id, const Mat4& transform, const std::string& fallback, int extruder, const std::string& owner) -> json {
     const Model3mf& m = model(path);
     auto it = m.objects.find(id);
     if (it == m.objects.end()) throw Error("3MF build refers to a missing object " + id);
@@ -737,16 +931,48 @@ ImportResult import_3mf(Document& doc, const std::filesystem::path& file, const 
     if (name.empty()) name = fallback;
     json n;
     if (!o.triangles.empty()) {
-      auto& key = keys[{path, id}];
+      auto& [key, look] = keys[{path, id, extruder}];
       if (key.empty()) {
         report(opt, -1, "building");
+        // The body's colour: its own material, else its filament, else the commonest of its triangles'. The triangles
+        // coloured otherwise are faces of their own.
+        const size_t nt = o.triangles.size() / 3;
+        std::vector<std::pair<std::array<double, 3>, double>> colours;
+        std::vector<int> colour(nt, -1);
+        auto local = [&](const std::pair<std::array<double, 3>, double>& c) {
+          const auto at = std::find(colours.begin(), colours.end(), c);
+          if (at != colours.end()) return static_cast<int>(at - colours.begin());
+          colours.push_back(c);
+          return static_cast<int>(colours.size() - 1);
+        };
+        for (size_t t = 0; t < o.paint.size() && t < nt; ++t)
+          if (o.paint[t] >= 0) colour[t] = local(m.colors[size_t(o.paint[t])]);
+        if (owner == id && extruders.count(id))
+          for (const auto& [first, last, e] : extruders[id].volumes)
+            for (int t = std::max(first, 0); e > 0 && size_t(e) <= filaments.size() && t <= last && size_t(t) < nt; ++t)
+              if (colour[size_t(t)] < 0) colour[size_t(t)] = local({filaments[size_t(e - 1)], 1.0});
+        std::optional<std::pair<std::array<double, 3>, double>> own;
+        if (o.has_color) own = {o.color, o.opacity};
+        else if (extruder > 0 && size_t(extruder) <= filaments.size()) own = {filaments[size_t(extruder - 1)], 1.0};
+        else if (!colours.empty()) {
+          std::vector<size_t> count(colours.size() + 1, 0);
+          for (int c : colour) ++count[size_t(c + 1)];
+          const size_t best = size_t(std::max_element(count.begin() + 1, count.end()) - count.begin());
+          if (count[best] >= count[0]) own = colours[best - 1];
+        }
+        std::vector<std::array<double, 3>> rgb;
+        for (const auto& c : colours) rgb.push_back(c.first);
+        for (int& c : colour)
+          if (c >= 0 && own && colours[size_t(c)].first == own->first) c = -1;
         json meta = {{"name", name}, {"units", "mm"}, {"source", file.filename().string()}, {"representation", "mesh"}};
-        if (o.has_color) meta["color"] = {o.color[0], o.color[1], o.color[2]};
-        key = store_body(doc, mesh_face(o.xyz, o.triangles, false), meta, opt, true, &result);
+        look = json::object();
+        if (own) meta["color"] = look["color"] = {own->first[0], own->first[1], own->first[2]};
+        if (own && own->second < 1.0) look["opacity"] = own->second;
+        const TopoDS_Shape shape = mesh_faces(o.xyz, o.triangles, false, colour, rgb, &meta);
+        key = store_body(doc, shape, meta, opt, true, &result);
       }
       n = {{"type", "body"}, {"id", new_uuid()}, {"name", name}, {"key", key}, {"representation", "mesh"}};
-      if (o.has_color) n["color"] = {o.color[0], o.color[1], o.color[2]};
-      if (o.opacity < 1.0) n["opacity"] = o.opacity;
+      for (const auto& [field, value] : look.items()) n[field] = value;
       ++result.bodies;
     } else {
       if (++depthGuard > 64) throw Error("3MF components nest too deeply");
@@ -754,7 +980,10 @@ ImportResult import_3mf(Document& doc, const std::filesystem::path& file, const 
       int i = 0;
       for (const auto& c : o.components) {
         ++i;
-        children.push_back(node(c.path.empty() ? path : c.path, c.object, c.transform, name + "." + std::to_string(i)));
+        int part = extruder;  // a Bambu part's own filament (its id is the component's object id)
+        if (auto e = extruders.find(owner); e != extruders.end())
+          if (auto p = e->second.parts.find(c.object); p != e->second.parts.end() && p->second > 0) part = p->second;
+        children.push_back(node(c.path.empty() ? path : c.path, c.object, c.transform, name + "." + std::to_string(i), part, owner));
       }
       --depthGuard;
       n = {{"type", "component"}, {"id", new_uuid()}, {"name", name}, {"children", children}};
@@ -765,7 +994,11 @@ ImportResult import_3mf(Document& doc, const std::filesystem::path& file, const 
   };
   json children = json::array();
   int item = 0;
-  for (const auto& b : model(root).build) children.push_back(node(b.path.empty() ? root : b.path, b.object, b.transform, "Object " + std::to_string(++item)));
+  for (const auto& b : model(root).build) {
+    int extruder = 0;  // a slicer project's object prints in its extruder's filament, the first unless it says
+    if (!filaments.empty()) extruder = extruders.count(b.object) && extruders[b.object].own > 0 ? extruders[b.object].own : 1;
+    children.push_back(node(b.path.empty() ? root : b.path, b.object, b.transform, "Object " + std::to_string(++item), extruder, b.object));
+  }
   if (children.empty()) throw Error("the 3MF file has nothing to build");
   return append_import(doc, file, opt, std::move(children), result);
 }
@@ -797,7 +1030,7 @@ ImportResult import_iges(Document& doc, const std::filesystem::path& file, const
   return import_xcaf(doc, xdoc, file, opt, false);
 }
 
-ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
+ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file, const ImportOptions& opt, bool kicad_vrml) {
   report(opt, -1, "reading");
   const std::string ext = lower_extension(file);
   Handle(RWMesh_CafReader) reader;
@@ -818,6 +1051,7 @@ ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file,
     reader = obj;
   } else {
     reader = new VrmlAPI_CafReader();  // VRML is in metres, Y up; this reader converts neither (see below)
+    reader->SetFileLengthUnit(1.0);    // it scales points by this, which is -1 (unknown) unless set: everything came mirrored
   }
   reader->SetSystemLengthUnit(0.001);
   reader->SetSystemCoordinateSystem(RWMesh_CoordinateSystem_Zup);
@@ -833,6 +1067,7 @@ ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file,
   }
   if (progress->cancelled) throw Error("import cancelled");
   if (!ok) throw Error("cannot read " + file.filename().string() + " (damaged, or a variant OPAD does not read)");
+  if (kicad_vrml) return import_xcaf(doc, xdoc, file, opt, true, 2.54);
   if (ext == ".wrl" || ext == ".vrml") {
     Mat4 yUp;  // file Y -> Z, file Z -> -Y
     yUp.at(1, 1) = 0; yUp.at(1, 2) = -1; yUp.at(2, 1) = 1; yUp.at(2, 2) = 0;
@@ -843,7 +1078,20 @@ ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file,
 
 ImportResult import_brep_file(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
   report(opt, -1, "reading");
-  return import_brep(doc, read_text_file(file), file.stem().string(), opt);
+  ImportOptions o = opt;
+  if (o.source_file.empty()) o.source_file = file;  // import_brep reads text: it records this file
+  return import_brep(doc, read_text_file(file), file.stem().string(), o);
+}
+
+void stamp_source(json& op, const std::filesystem::path& file, const ImportOptions& opt) {
+  std::error_code ec;
+  const std::filesystem::path chosen = opt.source_file.empty() ? file : opt.source_file;
+  if (chosen.empty()) return;
+  const std::filesystem::path full = std::filesystem::absolute(chosen, ec).lexically_normal();
+  if (ec) return;
+  auto utf8 = [](const std::u8string& s) { return std::string(reinterpret_cast<const char*>(s.data()), s.size()); };
+  op["source_path"] = utf8(full.generic_u8string());
+  if (const auto top = repo_top(full); !top.empty()) op["source_repo"] = utf8(full.lexically_relative(top).generic_u8string());
 }
 
 }  // namespace opad::detail

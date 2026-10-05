@@ -115,17 +115,23 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(properties.contains("doc")){if(live)properties.erase("doc");else required.push_back("doc");}
   if(command.mutates)properties["save"]={{"type","boolean"},{"default",true}};
   const std::map<std::string,std::vector<std::string>> needed={
-    {"properties",{"node"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"a","b"}},
+    {"properties",{"node"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"b"}},
     {"annotate",{"anchor","text"}},{"delete_annotation",{"target"}},{"delete",{"target"}},{"rename",{"name"}},{"transform",{"target","matrix"}},{"section",{"origin","normal"}},{"view",{"camera"}},{"param",{"name"}},{"param_delete",{"name"}},
     {"sketch_edit",{"target"}},{"feature",{"kind"}},{"feature_edit",{"target"}},{"drawing_to_sketch",{"layers"}},
-    {"query_entities",{"body"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}}
+    {"query_entities",{"body"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}},
+    {"sheet_view",{"sheet"}},{"sheet_item",{"sheet"}},{"sheet_edit",{"target","set"}},{"part_properties",{"set"}},{"related",{"refs"}}
   };
   if(auto it=needed.find(name);it!=needed.end())for(const auto& key:it->second)required.push_back(key);
   if(properties.contains("ref"))properties["ref"]=ref();
   if(properties.contains("refs"))properties["refs"]=array(ref(),1,100);
   if(name=="measure"){  // several measurements in one call (gap log #4)
-    properties["kind"]=choice({"distance","angle","radius","diameter","bbox"});
-    properties["queries"]=array(object({{"kind",choice({"distance","angle","radius","diameter","bbox"})},{"refs",array(ref(),1,100)}},{"refs"}),1,200);
+    properties["kind"]=choice({"distance","angle","radius","diameter","bbox","area","length"});
+    properties["mode"]=choice({"min","center","max"});
+    properties["mode"]["description"]="distance only: the shortest (default), between the centres, or the largest";
+    properties["at"]=vector(3);
+    properties["at"]["description"]="area: where one drawing object was clicked; its cell is measured on that part of it";
+    properties["queries"]=array(object({{"kind",choice({"distance","angle","radius","diameter","bbox","area","length"})},{"refs",array(ref(),1,100)},
+                                        {"mode",choice({"min","center","max"})},{"at",vector(3)}},{"refs"}),1,200);
     properties["queries"]["description"]="Several measurements, answered in order as results; a failed one carries error. Instead of kind and refs.";
   }
   if(properties.contains("anchor"))properties["anchor"]=ref();
@@ -148,11 +154,21 @@ json command_schema(const commands::CommandInfo& command,bool live) {
     properties["kind"]=choice(kinds);properties["inputs"]={{"type","object"},{"description","Request feature_schema for this kind before supplying inputs. Unknown input names are rejected."}};
   }
   if(name=="export")properties["format"]=choice(commands::exporter_formats());
+  if(name.starts_with("sheet")){for(const char* key:{"at","place"})if(properties.contains(key)){auto d=properties[key]["description"];properties[key]=vector(2);properties[key]["description"]=d;}
+    if(properties.contains("aspects"))properties["aspects"]=array(choice({"start","end","mid","center"}));
+    if(name=="sheet_item")properties["refs"]={{"type","array"},{"items",{{"type",{"string","object"}}}},{"maxItems",2},{"description",command.args.at("refs")}};}
   if(name=="import_brep")properties["brep"]=type("string");
   if(name=="drawing_to_sketch")properties["layers"]=array(object({{"id",type("string")},{"construction",{{"type","boolean"},{"default",false}}}},{"id"}),1);
   if(name=="param")properties["expr"]={{"type","string"},{"description","A dimension expression such as 20 mm or width/2. Explicit units are recommended."}};
   if(name=="render" || name=="view")properties["camera"]=object({{"eye",vector(3)},{"target",vector(3)},{"up",vector(3)},
     {"projection",choice({"orthographic","perspective"})},{"scale",type("number")},{"fov_deg",type("number")},{"view",type("string")},{"absolute",type("boolean")}},{});
+  if((name=="measure" || name=="render") && properties.contains("explode"))
+    properties["explode"]={{"anyOf",{type("string"),type("object")}},{"description",command.args.at("explode")}};
+  if(name=="explode"){
+    properties["groups"]=array(array(type("string"),1));properties["groups"]["description"]=command.args.at("groups");
+    properties["offsets"]={{"type","object"},{"additionalProperties",vector(3)},{"description",command.args.at("offsets")}};
+    properties["levels"]["minimum"]=0;properties["t"]["minimum"]=0;properties["t"]["maximum"]=1;
+  }
   if(name=="render"){
     properties["fit"]=type("boolean");properties["ignore_visibility"]=type("boolean");properties["supersample"]={{"type","integer"},{"minimum",1},{"maximum",4}};
     for(const char* key:{"width","height"})properties[key]={{"type","integer"},{"minimum",16},{"maximum",4096}};
@@ -160,9 +176,10 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(live)properties.erase("save");
   auto out=object(properties,required);
   if(name=="entity_details")out["anyOf"]={{{"required",{"ref"}}},{{"required",{"feature"}}}};
-  if(name=="rename" || name=="appearance" || name=="reparent"){
+  if(name=="rename" || name=="appearance" || name=="reparent" || name=="part_properties"){
     auto targets=array(type("string"),1,1000);targets["description"]=command.args.at("targets");
     out["properties"]["targets"]=targets;out["anyOf"]={{{"required",{"target"}}},{{"required",{"targets"}}}};
+    if(name=="part_properties")out["anyOf"].push_back({{"required",{"document"}}});
   }
   if(name=="inspect" || name=="append" || name=="import_brep"){
     const auto keys=name=="inspect"?std::vector<std::string>{"ref","refs"}:name=="append"?std::vector<std::string>{"op","ops"}:std::vector<std::string>{"brep","file"};
@@ -207,6 +224,7 @@ void validate_input(const json& schema,const json& value,const std::string& path
     for(const auto& [key,item]:value.items()){
       if(properties.contains(key))validate_input(properties.at(key),item,path+"."+key);
       else if(schema.contains("additionalProperties")&&schema["additionalProperties"]==false)fail("unknown field "+key);
+      else if(schema.contains("additionalProperties")&&schema["additionalProperties"].is_object())validate_input(schema["additionalProperties"],item,path+"."+key);
     }
   }
 }

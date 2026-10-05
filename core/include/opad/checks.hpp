@@ -15,7 +15,9 @@ namespace opad {
 
 // Pairs of solid bodies that overlap (the overlap's volume and box) and, with clearance_mm, pairs closer than that.
 // args: select (bodies/components; default every visible solid), clearance_mm, ignore ([[a, b], ...] pairs meant
-// to overlap; components stand for their bodies), max_pairs (default 20000), offset/limit over the findings.
+// to overlap; components stand for their bodies), against (bodies/components, hidden ones too: only pairs of one of them and
+// one of the rest, theirs second as "b": a board against its enclosure, UI-134), max_pairs (default 20000), offset/limit over
+// the findings.
 // Candidate pairs come from bounding boxes; only those get the exact common / distance. Touching is not overlap.
 json check_interference(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled = {});
 // The same over given bodies, their shapes and boxes from the caller: a design plan has shapes the document has not

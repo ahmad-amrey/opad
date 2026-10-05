@@ -65,6 +65,7 @@ void AgentBridge::setAccess(bool enabled,bool edit){
   if(!m_enabled){m_server.close();const auto sessions=m_sessions;for(auto& session:sessions)if(session->socket)session->socket->disconnectFromServer();}
   publish();
 }
+bool AgentBridge::publishesSelection()const{return m_enabled || std::any_of(m_sessions.begin(),m_sessions.end(),[](const auto& s){return s->bound;});}
 bool AgentBridge::editorBusy()const{return m_doc->loading || m_doc->designBusy || m_doc->annotationEditing || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane();}
 json AgentBridge::editingState()const {
   const std::string edit=m_doc->annotationEditing?"annotation":m_design->sketchActive()?"sketch":m_design->featureActive()?"feature":m_design->pickingPlane()?"plane":"none";
@@ -104,6 +105,8 @@ json AgentBridge::liveState()const{
   out["profile_selection"]=json::array();const auto profiles=m_viewport->selectedCandidates();
   for(size_t i=0;i<std::min(size_t(100),profiles.size());++i){auto profile=json::parse(profiles[i],nullptr,false);out["profile_selection"].push_back(profile.is_discarded()?json(profiles[i]):profile);}
   if(m_design->sketchActive())out["active_sketch"]=m_design->sketch()->agentContext();
+  // The component the user activated (UI-33): what they work in; pass it as a feature's or sketch's component to follow them.
+  if(const auto& active=m_doc->activeComponent();!active.empty())out["active_component"]={{"id",active},{"name",m_doc->nodeName(active).toStdString()}};
   if(m_prepared)out["prepared"]={{"id",m_prepared->id},{"base_revision",m_prepared->snapshot->revision}};
   return out;
 }
@@ -123,15 +126,17 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
   if(session->receiving || !session->input.contains('\n'))return;
   const auto end=session->input.indexOf('\n');auto line=session->input.left(end);session->input.remove(0,end+1);session->receiving=true;session->requestTimer.start();
   struct Parsed{json request;std::string hash;};auto parsed=std::make_shared<Parsed>();
+  m_jobs->backgroundNext();
   m_jobs->async(tr("Reading agent request"),[line,parsed](Progress){
     parsed->request=json::parse(line.toStdString());const auto name=parsed->request.at("name").get<std::string>();
     validate_input(live_schema(name),parsed->request.value("arguments",json::object()));
     parsed->hash=QCryptographicHash::hash(QByteArray::fromStdString(parsed->request.dump()),QCryptographicHash::Sha256).toHex().toStdString();
-  },[this,session,parsed](bool ok,const QString& error){if(!session->socket)return;if(!ok){fail(session,"invalid_arguments",error);return;}dispatch(session,std::move(parsed->request),std::move(parsed->hash));});
+  },[this,session,parsed](bool ok,const QString& error){if(!session->socket)return;if(!ok){fail(session,"invalid_arguments",error);return;}dispatch(session,std::move(parsed->request),std::move(parsed->hash));},JobKind::Background);
 }
 void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,const std::string& receipt){
   if(!result["structuredContent"].contains("elapsed_ms") && session->requestTimer.isValid())result["structuredContent"]["elapsed_ms"]=session->requestTimer.elapsed();
   auto bytes=std::make_shared<QByteArray>();auto given=std::make_shared<std::vector<std::pair<std::string,Known>>>();
+  m_jobs->backgroundNext();
   m_jobs->async(tr("Sending agent result"),[bytes,given,result=std::move(result)](Progress)mutable{
     // Remember the sub-shape references this reply hands out (TODO 10 B6).
     std::function<void(const json&)> tokens=[&](const json& v){
@@ -159,7 +164,7 @@ void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,cons
     if(!receipt.empty())m_receipts[receipt].response=output;
     if(session->socket && session->socket->state()==QLocalSocket::ConnectedState)session->socket->write(output);
     session->receiving=false;if(session->socket)read(session);
-  });
+  },JobKind::Background);
 }
 void AgentBridge::fail(const std::shared_ptr<Session>& s,const std::string& code,const QString& message,const std::string& receipt){
   if(!receipt.empty())m_receipts[receipt].state=code=="cancelled"?"cancelled":"failed";
@@ -182,6 +187,7 @@ void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Rec
   }
   if(receipt.response.isEmpty()){reply(session,live_result({{"state",receipt.state}}));return;}
   auto bytes=std::make_shared<QByteArray>();
+  m_jobs->backgroundNext();
   m_jobs->async(tr("Sending agent result"),[bytes,receipt](Progress){
     auto result=json::parse(receipt.response.toStdString());result["structuredContent"]["state"]=receipt.state;
     if(receipt.revision)result["structuredContent"]["revision"]=receipt.revision;
@@ -190,7 +196,7 @@ void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Rec
   },[this,session,bytes](bool ok,const QString& error){
     if(!ok){fail(session,"response_cancelled",error);return;}
     if(session->socket)session->socket->write(*bytes);session->receiving=false;if(session->socket)read(session);
-  });
+  },JobKind::Background);
 }
 void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::string hash){
   const auto name=request.at("name").get<std::string>();auto args=request.value("arguments",json::object());

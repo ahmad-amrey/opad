@@ -1,0 +1,245 @@
+"""gui_benches cases of version control (T3); the benches are in app/VcsBench.cpp (DiskSync::bench, GitWatch::bench,
+CompareMode::bench), app/VersionBench.cpp (VersionControl::bench) and app/RecoveryBench.cpp."""
+import json
+import os
+import shutil
+import stat
+import subprocess
+import uuid
+
+
+def external(root, document):
+    """Changed on disk while open (UI-56): a document of its own, since the bench appends to it and rewrites it."""
+    return document("external", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+
+
+def versioned(root, document):
+    """Git (UI-61, UI-136): a document in a folder of its own, outside any repository."""
+    (root / "git").mkdir(exist_ok=True)
+    return document("git/model")
+
+
+def compared(root, document, name="compare"):
+    """Compare (UI-58): <name>/model.opad with four parts, committed when git is there and copied to first.opad; the
+    bench makes Box1 longer, adds Sphere1 and saves, then moves Box2 and deletes Box3 without saving."""
+    folder = root / name
+    folder.mkdir(exist_ok=True)
+    box = lambda x, y, size: ("feature", "--kind", "box", "--inputs", json.dumps({"x": f"{x} mm", "y": f"{y} mm", "length": f"{size} mm", "width": "20 mm", "height": "10 mm"}))
+    doc = document(f"{name}/model", box(0, 0, 30), box(50, 0, 20), ("feature", "--kind", "cylinder", "--inputs", '{"x":"100 mm","diameter":"20 mm","height":"10 mm"}'),
+                   box(0, 50, 10))
+    shutil.copy(doc, folder / "first.opad")
+    git = shutil.which("git")
+    if git:
+        quiet = dict(cwd=folder, check=True, capture_output=True)
+        subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+        subprocess.run([git, "add", "model.opad"], **quiet)
+        subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "-m", "four parts"], **quiet)
+    return doc
+
+
+def recovered(root, document, name="recovery"):
+    """Recovery with diff (UI-59): <name>/model.opad with three boxes, saved; the bench changes, snapshots, restores and saves
+    it."""
+    (root / name).mkdir(exist_ok=True)
+    box = lambda x, size: ("feature", "--kind", "box", "--inputs", json.dumps({"x": f"{x} mm", "length": f"{size} mm", "width": "20 mm", "height": "10 mm"}))
+    return document(f"{name}/model", box(0, 30), box(50, 20), box(100, 10))
+
+
+def versioned_with_remote(root, document, name="version"):
+    """Version control (UI-62): <name>/model.opad (one box) committed on main with .gitattributes asking for OPAD's driver,
+    the bare remote <name>-remote.git added as origin and not pushed yet (<name>-other: the bench's other clone). The bench
+    commits, pushes, branches, merges, pulls what the other clone pushed, compares, restores, opens read-only and aborts a
+    conflicting merge."""
+    folder = root / name
+    folder.mkdir(exist_ok=True)
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"5 mm","width":"5 mm","height":"5 mm"}'))
+    git = shutil.which("git")
+    if not git:
+        return folder / "no-git.opad"  # skipped: the case needs git
+    (folder / ".gitattributes").write_bytes(b"*.opad text eol=lf merge=opad diff=opad\n")
+    quiet = dict(cwd=folder, check=True, capture_output=True)
+    subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+    subprocess.run([git, "add", "-A"], **quiet)
+    subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "-m", "first"], **quiet)
+    subprocess.run([git, "init", "-q", "--bare", "-b", "main", str(root / f"{name}-remote.git")], **quiet)
+    subprocess.run([git, "remote", "add", "origin", str(root / f"{name}-remote.git")], **quiet)
+    return doc
+
+
+def read_only(root, document, name="read-only"):
+    """A version opened read-only (UI-62): <name>/model.opad (one box, and <name>/part.step linked beside it, so a copy saved
+    elsewhere moves its path) write-protected, as the history writes a version's copy, and <name>/writable.opad, the same
+    left writable, which the bench opens with --read-only."""
+    (root / name).mkdir(exist_ok=True)
+    part = root / name / "part.step"
+    document(f"{name}/part", ("feature", "--kind", "box", "--inputs", '{"x":"40 mm","length":"10 mm","width":"10 mm","height":"10 mm"}'),
+             ("export", "--format", "step", "--out", str(part)))
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'),
+                   ("import", str(part), "--link", "true"))
+    shutil.copy(doc, root / name / "writable.opad")
+    os.chmod(doc, stat.S_IREAD)
+    return doc
+
+
+def long_path(root, document, name="status-row"):
+    """The status row (UI-08): a document two long folder names down, committed when git is there (the chip shows its branch)."""
+    deep = f"{name}/a folder with a rather long name for the path/and another level below that one"
+    (root / deep).mkdir(parents=True, exist_ok=True)
+    doc = document(f"{deep}/model with a long name", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    git = shutil.which("git")
+    if not git:
+        return root / name / "no-git.opad"  # skipped: the chip needs git
+    quiet = dict(cwd=root / name, check=True, capture_output=True)
+    subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+    subprocess.run([git, "add", "-A"], **quiet)
+    subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "-m", "first"], **quiet)
+    return doc
+
+
+def located(root, document, name="paths"):
+    """Open file location and Copy path (UI-07): <name>/doc/model.opad in a git work tree (a real repository when git is
+    there) with <name>/parts/bracket.stl imported, so the op records its source absolute and inside the tree."""
+    folder = root / name
+    (folder / "parts").mkdir(parents=True, exist_ok=True)
+    (folder / "doc").mkdir(exist_ok=True)
+    git = shutil.which("git")
+    if git:
+        subprocess.run([git, "init", "-q", "-b", "main"], cwd=folder, check=True, capture_output=True)
+    else:
+        (folder / ".git").mkdir(exist_ok=True)
+    stl = folder / "parts" / "bracket.stl"
+    corners = ((0, 0, 0), (0, 10, 0), (10, 0, 0)), ((0, 0, 0), (10, 0, 0), (0, 0, 10)), ((0, 0, 0), (0, 0, 10), (0, 10, 0)), ((10, 0, 0), (0, 10, 0), (0, 0, 10))
+    facets = "".join("facet normal 0 0 0\nouter loop\n" + "".join("vertex %d %d %d\n" % v for v in f) + "endloop\nendfacet\n" for f in corners)
+    stl.write_text("solid t\n" + facets + "endsolid t\n", encoding="ascii")
+    return document(f"{name}/doc/model", ("import", "--file", str(stl)))
+
+
+def provenance(root, document, name="provenance", moved=None):
+    """Who added which op (UI-64): <name>/model.opad with a box committed by Alice, a rename of its body by Bob and an edit of
+    the box's name by Carol (records appended as a later OPAD writes them). With `moved` Alice committed the document under
+    that name and Bob's commit also renamed the file to model.opad (git mv)."""
+    (root / name).mkdir(exist_ok=True)
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    git = shutil.which("git")
+    if not git:
+        return root / name / "no-git.opad"  # skipped: the case needs git
+    folder = root / name
+    quiet = dict(cwd=folder, check=True, capture_output=True)
+    subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+
+    def commit(author, message, record=None, path="model.opad"):
+        if record:
+            text = doc.read_text(encoding="utf-8")
+            at = text.index("#bodies\n")
+            doc.write_text(text[:at] + json.dumps(record, separators=(",", ":")) + "\n" + text[at:], encoding="utf-8", newline="\n")
+        subprocess.run([git, "add", path], **quiet)
+        subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "--author", author, "-m", message], **quiet)
+
+    ops = [json.loads(line) for line in doc.read_text(encoding="utf-8").split("#ops\n")[1].split("#bodies")[0].splitlines() if line.startswith('{"op"')]
+    feature = next(op for op in ops if op["op"] == "feature")
+    body = feature["result"]["bodies"][0]["id"]
+    if moved:
+        (folder / moved).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(doc, folder / moved)
+        commit("Alice <alice@example.com>", "a box", path=moved)
+        subprocess.run([git, "mv", moved, "model.opad"], **quiet)
+    else:
+        commit("Alice <alice@example.com>", "a box")
+    stamp = dict(ts="2026-10-03T12:00:00Z")
+    commit("Bob <bob@example.com>", "renamed", dict(op="rename", id=str(uuid.uuid4()), **stamp, by="bob", target=body, name="Block"))
+    commit("Carol <carol@example.com>", "the box renamed", dict(op="edit", id=str(uuid.uuid4()), **stamp, by="carol", target=feature["id"], set={"name": "Big box"}))
+    return doc
+
+
+def conflicted(root, document, name="conflict"):
+    """A merge that stops on the document (UI-63): <name>/model.opad (a box) committed on main with .gitattributes asking for
+    OPAD's driver; the branch theirs renames the box "Theirs", colours it red, locks it and adds a note; main renames it
+    "Ours", colours it blue, locks it and adds a parameter (records appended as OPAD writes them). main is checked out."""
+    (root / name).mkdir(exist_ok=True)
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    git = shutil.which("git")
+    if not git:
+        return root / name / "no-git.opad"  # skipped: the case needs git
+    folder = root / name
+    (folder / ".gitattributes").write_bytes(b"*.opad text eol=lf merge=opad diff=opad\n")
+    quiet = dict(cwd=folder, check=True, capture_output=True)
+    commit = lambda message: subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "-am", message], **quiet)
+    subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+    for key, value in (("user.name", "Bench"), ("user.email", "bench@example.com")):  # the merge commit's author: never asked
+        subprocess.run([git, "config", key, value], **quiet)
+    subprocess.run([git, "add", "-A"], **quiet)
+    commit("a box")
+    ops = [json.loads(line) for line in doc.read_text(encoding="utf-8").split("#ops\n")[1].split("#bodies")[0].splitlines() if line.startswith('{"op"')]
+    body = next(op for op in ops if op["op"] == "feature")["result"]["bodies"][0]["id"]
+
+    def append(*records):
+        text = doc.read_text(encoding="utf-8")
+        at = text.index("#bodies\n")
+        lines = "".join(json.dumps(dict(op=r[0], id=str(uuid.uuid4()), ts="2026-10-03T12:00:00Z", by=r[1], **r[2]), separators=(",", ":")) + "\n" for r in records)
+        doc.write_text(text[:at] + lines + text[at:], encoding="utf-8", newline="\n")
+
+    subprocess.run([git, "switch", "-q", "-c", "theirs"], **quiet)
+    append(("rename", "them", dict(target=body, name="Theirs")), ("appearance", "them", dict(target=body, color=[1, 0, 0], locked=True)),
+           ("annotation", "them", dict(anchor={"kind": "point", "point": [1, 2, 3]}, text="from theirs")))
+    commit("theirs")
+    subprocess.run([git, "switch", "-q", "main"], **quiet)
+    append(("rename", "me", dict(target=body, name="Ours")), ("appearance", "me", dict(target=body, color=[0, 0, 1], locked=True)),
+           ("param", "me", dict(name="wall", expr="3 mm")))
+    commit("ours")
+    return doc
+
+
+CASES = [
+    ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
+    # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
+    ("git", versioned, {"OPAD_BENCH_GIT": "{prefix}", "OPAD_BENCH_CLI": "{cli}", "GIT_CONFIG_GLOBAL": "{root}/git-global",
+                        "GIT_CONFIG_NOSYSTEM": "1"}),
+    # Compare: OPAD_BENCH_COMPARE_GIT says whether the case could commit (git on PATH); the bench then expects HEAD as A.
+    ("compare", compared, {"OPAD_BENCH_COMPARE": "{prefix}", "OPAD_BENCH_COMPARE_GIT": "1" if shutil.which("git") else "0",
+                           "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    # The same right to left: the legend chips, the slider and the table mirrored, the texts translated.
+    ("compare-ar", lambda root, document: compared(root, document, "compare-ar"),
+     {"OPAD_BENCH_COMPARE": "{prefix}", "OPAD_BENCH_COMPARE_GIT": "1" if shutil.which("git") else "0", "GIT_CONFIG_GLOBAL": "{root}/git-global",
+      "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
+    # Recovery with diff: the offer's detail pane, Restore into file, Merge into current, Review changes…, Discard; also in Arabic.
+    # Version control: commit, push, branch, merge, pull, history; git's global config the run's own (the author is asked).
+    ("version", versioned_with_remote, {"OPAD_BENCH_VERSION": "{prefix}", "OPAD_BENCH_CLI": "{cli}", "GIT_CONFIG_GLOBAL": "{root}/version-global",
+                                        "GIT_CONFIG_NOSYSTEM": "1"}),
+    # The same right to left: the panel, the dialogs and the toasts translated.
+    ("version-ar", lambda root, document: versioned_with_remote(root, document, "version-ar"),
+     {"OPAD_BENCH_VERSION": "{prefix}", "OPAD_BENCH_CLI": "{cli}", "GIT_CONFIG_GLOBAL": "{root}/version-ar-global", "GIT_CONFIG_NOSYSTEM": "1",
+      "OPAD_LANG": "ar"}),
+    # A read-only document: view changes kept out of "unsaved", edits ask for a copy, Save a copy, --read-only in another OPAD.
+    ("read-only", read_only, {"OPAD_BENCH_READONLY": "{prefix}"}),
+    ("read-only-ar", lambda root, document: read_only(root, document, "read-only-ar"), {"OPAD_BENCH_READONLY": "{prefix}", "OPAD_LANG": "ar"}),
+    # The toasts commands end with, on the Engine with its bodies on screen (skipped where the Engine is not beside the tree).
+    ("toast-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TOASTPERF": "6"}),
+    ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
+    # A merge stopped on the document, resolved here: per conflict, the rest of both sides merged, the merge committed.
+    ("conflict", conflicted, {"OPAD_BENCH_CONFLICT": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    # A clone without OPAD's driver: git writes conflict markers into the file; the index stages still resolve it.
+    ("conflict-markers", lambda root, document: conflicted(root, document, "conflict-markers"),
+     {"OPAD_BENCH_CONFLICT": "{prefix}", "OPAD_BENCH_CONFLICT_MARKERS": "1", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("conflict-ar", lambda root, document: conflicted(root, document, "conflict-ar"),
+     {"OPAD_BENCH_CONFLICT": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
+    # Who added which op, from git: the timeline's tooltips, Show in version history on a marker and on a body, a new commit
+    # read alone; also right to left.
+    ("provenance", provenance, {"OPAD_BENCH_PROVENANCE": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("provenance-ar", lambda root, document: provenance(root, document, "provenance-ar"),
+     {"OPAD_BENCH_PROVENANCE": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
+    # The same history with the document committed first as draft/box.opad and renamed by Bob: Alice still added the box.
+    ("provenance-moved", lambda root, document: provenance(root, document, "provenance-moved", "draft/box.opad"),
+     {"OPAD_BENCH_PROVENANCE": "{prefix}", "OPAD_BENCH_PROVENANCE_MOVED": "draft/box.opad", "GIT_CONFIG_GLOBAL": "{root}/git-global",
+      "GIT_CONFIG_NOSYSTEM": "1"}),
+    # Open file location and Copy path from File, the status path, the browser's document row, an import's marker and the
+    # recent files' menus (the file manager never starts: the bench records what would run); also right to left.
+    ("paths", located, {"OPAD_BENCH_PATHS": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("paths-ar", lambda root, document: located(root, document, "paths-ar"),
+     {"OPAD_BENCH_PATHS": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
+    # The status row: the path and the git chip at 1600 and 1280 px, under a long hover text, a message and the strip; also
+    # right to left (the row at the right end).
+    ("status-row", long_path, {"OPAD_BENCH_STATUSROW": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("status-row-ar", lambda root, document: long_path(root, document, "status-row-ar"),
+     {"OPAD_BENCH_STATUSROW": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
+    ("recovery-diff-ar", lambda root, document: recovered(root, document, "recovery-ar"), {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}", "OPAD_LANG": "ar"}),
+]

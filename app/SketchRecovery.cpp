@@ -17,11 +17,13 @@ void SketchEditor::captureRecovery(std::function<void(opad::json,const QString&)
   auto copy=std::make_shared<opad::design::Sketch>();
   auto state=std::make_shared<opad::json>(opad::json{{"type","sketch"},{"id",m_id},{"name",m_name.toStdString()},
     {"plane",m_plane},{"frame",m_frame.to_json()},{"visible",m_visible},{"modified",m_modified}});
+  if(m_id.empty() && !m_doc->activeComponent().empty())(*state)["component"]=m_doc->activeComponent();  // a new sketch goes there on Finish (UI-33)
   auto index=std::make_shared<size_t>(0);auto valid=std::make_shared<bool>(true);
   const auto points=m_sk.points.size(),entities=m_sk.entities.size(),constraints=m_sk.constraints.size(),images=m_sk.images.size(),patterns=m_sk.patterns.size();
   const auto total=points+entities+constraints+images+patterns;
   copy->points.reserve(points);copy->entities.reserve(entities);copy->constraints.reserve(constraints);copy->id_watermark=m_sk.id_watermark;
   QPointer<SketchEditor> self(this);
+  m_jobs->backgroundNext();
   m_jobs->sliced(tr("Capturing sketch"),[=,this](Job& job){
     if(!m_active || session!=m_session || revision!=m_modelRevision || busy() || m_dragging || m_inChange){*valid=false;return false;}
     if(*index>=total)return false;
@@ -36,6 +38,7 @@ void SketchEditor::captureRecovery(std::function<void(opad::json,const QString&)
   },[=,this](bool ok){
     if(!self)return;
     if(!ok || !*valid || session!=m_session || revision!=m_modelRevision){done({},tr("Sketch changed during capture; retrying later."));return;}
+    m_jobs->backgroundNext();
     m_jobs->async(tr("Preparing sketch recovery"),[copy,state](Progress){(*state)["geometry"]=copy->to_json();},
       [self,state,done](bool complete,const QString& error){if(self)done(complete?std::move(*state):opad::json{},error);});
   });

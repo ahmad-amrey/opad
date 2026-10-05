@@ -19,6 +19,7 @@ V unit(V a){double n=length(a);if(n<1e-9)throw Error("the picked points must be 
 std::vector<int> create_primitive(Sketch& sketch,const std::string& kind,const std::vector<V>& picks,const json& given) {
   const json options=given.is_object()?given:json::object();  // null (no options) reads as none
   Sketch sk=sketch; // the whole creation, including validation, is atomic
+  const int first=sketch.next_id();  // ids from here on are this primitive's
   const bool construction=options.value("construction",false);
   std::vector<int> made;
   auto at=[&](size_t i){if(i>=picks.size())throw Error("more points are needed");const auto p=picks[i];if(!std::isfinite(p.first)||!std::isfinite(p.second))throw Error("invalid point");return p;};
@@ -175,13 +176,22 @@ std::vector<int> create_primitive(Sketch& sketch,const std::string& kind,const s
     V a=at(0),b=at(1);double radius=length(b-a)/2;if(radius<1e-9)throw Error("circle needs two different points");
     made.push_back(sk.add_circle(point((a+b)*0.5),radius,construction));
   } else if(kind=="polygon_outer") {
+    // Circumscribed about its construction circle (TODO 11 wave 3, P6): the circle is inside, every side tangent to it, so
+    // its diameter is the size across the flats; the second pick is the middle of a side, where the side touches it. Made:
+    // the sides (the last one through the second pick), the circle, then the apothem, a construction line from the centre
+    // to that side's middle, square to it: with the sides equal and tangent that keeps an even polygon regular (alone,
+    // its touch points could slide along alternate sides, a rhombus for a square), and it carries the polygon's turn.
     const int count=options.value("sides",6);if(count<3||count>256)throw Error("polygon needs 3 to 256 sides");
-    V o=at(0),p=at(1);const double r=length(p-o)/std::cos(M_PI/count),start=std::atan2(p.second-o.second,p.first-o.first)+M_PI/count;
+    V o=at(0),p=at(1);const double apothem=length(p-o),r=apothem/std::cos(M_PI/count),start=std::atan2(p.second-o.second,p.first-o.first)+M_PI/count;
+    if(apothem<1e-9)throw Error("the picked points must be different");
     std::vector<int> ids;for(int i=0;i<count;++i){double a=start+2*M_PI*i/count;ids.push_back(point(o+V{std::cos(a),std::sin(a)}*r));}
     std::vector<int> lines;for(int i=0;i<count;++i)lines.push_back(line(ids[i],ids[(i+1)%count]));
-    const int circle=sk.add_circle(point(o),r,true);made.push_back(circle);
-    for(int p:ids)sk.add_constraint(SkConstraint::Type::Coincident,{p,circle});
+    const int centre=point(o),circle=sk.add_circle(centre,apothem,true);made.push_back(circle);
+    for(int side:lines)sk.add_constraint(SkConstraint::Type::Tangent,{side,circle});
     for(int i=1;i<count;++i)sk.add_constraint(SkConstraint::Type::Equal,{lines[0],lines[i]});
+    const int middle=point(p),radial=sk.add_line(centre,middle,true);made.push_back(radial);
+    sk.add_constraint(SkConstraint::Type::Midpoint,{middle,lines.back()});
+    sk.add_constraint(SkConstraint::Type::Perpendicular,{radial,lines.back()});
   } else if(kind=="cslot") {
     V o=at(0),end=at(1),start=o*2-end,n=normal(unit(end-start));double r=std::fabs(dot(at(2)-end,n));if(r<1e-9)throw Error("slot width must be positive");
     int c1=point(start),c2=point(end),a=point(start+n*r),b=point(end+n*r),c=point(end-n*r),d=point(start-n*r);
@@ -223,9 +233,43 @@ std::vector<int> create_primitive(Sketch& sketch,const std::string& kind,const s
     const V a=get(end),b=at(1),n=normal(unit(get(e->p[1])-get(e->p[0]))),d=b-a;
     const double denominator=2*dot(d,n);if(std::fabs(denominator)<1e-9)throw Error("arc endpoint must lie off the tangent line");
     const V center=a+n*(dot(d,d)/denominator);int o=point(center),last=point(b);
-    const int madeArc=cross(a-center,b-center)>=0?arc(o,end,last):arc(o,last,end);
+    // "smooth": the arc that goes on from the line's end the way the line went, past half a turn too; else the shorter one.
+    const bool ccw=options.value("smooth",false)?cross(a-center,a-get(e->p[e->p[0]==end?1:0]))>0:cross(a-center,b-center)>=0;
+    const int madeArc=ccw?arc(o,end,last):arc(o,last,end);
     sk.add_constraint(SkConstraint::Type::Tangent,{id,madeArc});
   } else throw Error("unknown sketch primitive: "+kind);
+  // options.snaps[i]: what pick i snapped to (UI-21). {"point": id}: the new point at the pick is that existing point (its
+  // references move to it); {"holds": [[type, ref], ...]}: the new point there gets those constraints with ref. Where no
+  // new point lies at the pick (a circle's rim, a side's middle) an existing point is put on the new curve through it.
+  if(const json snaps=options.value("snaps",json::array());snaps.is_array())for(size_t i=0;i<snaps.size() && i<picks.size();++i) {
+    const json& snap=snaps[i];
+    if(!snap.is_object())continue;
+    const V at=picks[i];const double near=1e-9*(1+std::fabs(at.first)+std::fabs(at.second));
+    int fresh=0;
+    for(const auto& p:sk.points)if(p.id>=first && length(V{p.x,p.y}-at)<near){fresh=p.id;break;}
+    const int existing=snap.value("point",0);
+    if(existing && !sk.point(existing))throw Error("snapped point "+std::to_string(existing)+" does not exist");
+    if(fresh && existing) {
+      for(auto& e:sk.entities)std::replace(e.p.begin(),e.p.end(),fresh,existing);
+      for(auto& c:sk.constraints)std::replace(c.refs.begin(),c.refs.end(),fresh,existing);
+      sk.id_watermark=std::max(sk.id_watermark,sk.next_id()-1);  // never recycled
+      sk.points.erase(std::remove_if(sk.points.begin(),sk.points.end(),[&](const SkPoint& p){return p.id==fresh;}),sk.points.end());
+    } else if(fresh) {
+      for(const auto& hold:snap.value("holds",json::array())) {
+        const int ref=hold.at(1).get<int>();
+        if(!sk.point(ref) && !sk.entity(ref))throw Error("snapped to "+std::to_string(ref)+", which does not exist");
+        constrain(SkConstraint::type_from_name(hold.at(0).get<std::string>()),{fresh,ref});
+      }
+    } else if(existing) {
+      for(const int id:made)if(const auto* e=sk.entity(id);e && std::find(e->p.begin(),e->p.end(),existing)==e->p.end()) {
+        double off=1;
+        if(e->type==SkEntity::Type::Line){const V a=get(e->p[0]),d=get(e->p[1])-a;const double l=length(d);if(l>1e-12)off=std::fabs(cross(d,at-a))/l;}
+        else if(e->type==SkEntity::Type::Circle)off=std::fabs(length(at-get(e->p[0]))-e->r);
+        else if(e->type==SkEntity::Type::Arc)off=std::fabs(length(at-get(e->p[0]))-length(get(e->p[1])-get(e->p[0])));
+        if(off<near*1e3){constrain(SkConstraint::Type::Coincident,{existing,id});break;}
+      }
+    }
+  }
   sk.validate();sketch=std::move(sk);return made;
 }
 }

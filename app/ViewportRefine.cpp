@@ -28,7 +28,8 @@ void Viewport::scheduleRefinement() {
 }
 
 void Viewport::refineVisible() {
-  if (!m_initialised || m_refineJob || m_items.empty() || m_doc->loading) return;
+  // Not in the wireframe (UI-48): the refinement meshes faces finer, and a wireframe draws no face.
+  if (!m_initialised || m_refineJob || m_items.empty() || m_doc->loading || m_style == Style::Wireframe) return;
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
   if (w <= 0 || h <= 0) return;
@@ -42,6 +43,7 @@ void Viewport::refineVisible() {
     double deflection, area, triangles;
     TopoDS_Shape shape;
     Bnd_Box box;
+    std::shared_ptr<const opad::FaceColors> colors;
   };
   std::map<std::string, Want> wants;
   for (const auto& [id, item] : m_items) {
@@ -75,7 +77,7 @@ void Viewport::refineVisible() {
     const double deflection = std::max({pixel * 0.5, 1e-4, base->deflection * triangles / kBodyTriangles});
     if (deflection >= current * 0.7) continue;  // not worth a re-mesh
     auto& want = wants[item.key];
-    if (want.key.empty()) want = {item.key, deflection, 0, triangles * base->deflection / deflection, opad::body_shape(m_doc->doc, item.key), base->box};
+    if (want.key.empty()) want = {item.key, deflection, 0, triangles * base->deflection / deflection, opad::body_shape(m_doc->doc, item.key), base->box, base->faceColors};
     want.area += area;
   }
   if (wants.empty()) return;
@@ -94,6 +96,7 @@ void Viewport::refineVisible() {
   if (trace::enabled()) trace::log(QStringLiteral("refine: %1 bodies at %2 mm (pixel %3 mm)").arg(pass->size()).arg(pass->front().deflection).arg(pixel));
   QElapsedTimer started;
   started.start();
+  m_jobs->backgroundNext();
   m_refineJob = m_jobs->async(tr("Refining the view"), [pass, results](Progress p) {
     for (size_t i = 0; i < pass->size(); ++i) {
       if (p.cancelled()) return;
@@ -101,7 +104,7 @@ void Viewport::refineVisible() {
       // A copy: the cached shape keeps the base triangulation that picking and highlights are built on.
       TopoDS_Shape copy = BRepBuilderAPI_Copy(want.shape, Standard_True, Standard_False).Shape();
       BodyPrs::meshForDisplay(copy, want.deflection);
-      auto prs = BodyPrs::build(copy, want.box, true);
+      auto prs = BodyPrs::build(copy, want.box, true, want.colors);
       prs->deflection = want.deflection;
       (*results)[i] = std::move(prs);
     }
@@ -112,8 +115,9 @@ void Viewport::refineVisible() {
     applying.start();
     size_t triangles = 0;
     // A selected body's glow is made from the arrays it is drawn with: when those change it is made again.
-    bool glowsStale = false;
-    auto dropGlow = [this, &glowsStale](const Handle(AIS_InteractiveObject)& ais) {
+    bool glowsStale = false, swapped = false;
+    auto dropGlow = [this, &glowsStale, &swapped](const Handle(AIS_InteractiveObject)& ais) {
+      swapped = true;
       if (auto glow = m_bodyGlows.find(ais.get()); glow != m_bodyGlows.end()) {
         m_ctx->Remove(glow->second, Standard_False);
         m_bodyGlows.erase(glow);
@@ -142,9 +146,10 @@ void Viewport::refineVisible() {
       m_refined.erase(oldest);
     }
     if (glowsStale) applySelectionLayers();
+    if (swapped && m_style == Style::HiddenEdges) scheduleEdgeOverlay();  // its rims are the arrays drawn
     redrawScene();
     if (trace::enabled())
       trace::log(QStringLiteral("refine: done in %1 ms (%2 triangles, applied in %3 ms, %4 bodies kept)").arg(started.elapsed()).arg(triangles).arg(applying.elapsed()).arg(m_refined.size()));
     m_refineTimer.start();  // the next candidates, if any are left
-  });
+  }, JobKind::Background);
 }

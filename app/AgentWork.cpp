@@ -7,6 +7,7 @@
 #include "opad/render.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mass.hpp"
+#include "opad/design/provenance.hpp"
 #include <QLocalSocket>
 #include <QUuid>
 #include <QThread>
@@ -117,7 +118,7 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     }else if(value.is_array() || value.is_object())for(const auto& child:value)preflightRefs(child);
   };
   // A batch-level parent is where every body its feature steps make goes, unless a step names its own (TODO 10 B14).
-  const json batchParent=args.contains("parent")?args["parent"]:json();
+  const json batchParent=args.contains("parent")?args["parent"]:json(),batchComponent=args.contains("component")?args["component"]:json();
   // Validate every command and dependency before computing any geometry.
   for(const auto& step:args.at("steps")){
     const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
@@ -129,6 +130,10 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     if(command=="feature" && !input.contains("parent") && batchParent.is_string()){
       const auto [ref,path]=symbol(batchParent.get<std::string>());
       if(!ref.empty() && !earlier.count(ref) && !older(ref))throw opad::Error("The batch parent "+batchParent.get<std::string>()+" names step '"+ref+"', which does not come before feature step '"+id+"'; put that component step first.");
+    }
+    if((command=="feature" || command=="sketch") && !input.contains("component") && batchComponent.is_string()){
+      const auto [ref,path]=symbol(batchComponent.get<std::string>());
+      if(!ref.empty() && !earlier.count(ref) && !older(ref))throw opad::Error("The batch component "+batchComponent.get<std::string>()+" names step '"+ref+"', which does not come before "+command+" step '"+id+"'; put that component step first.");
     }
     earlier.insert(id);
   }
@@ -156,6 +161,7 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     if(progress.cancelled())throw opad::Error("cancelled");
     auto input=step.at("arguments");
     if(command=="feature" && !input.contains("parent") && !batchParent.is_null())input["parent"]=batchParent;
+    if((command=="feature" || command=="sketch") && !input.contains("component") && !batchComponent.is_null())input["component"]=batchComponent;
     expand(input);validate_input(schemas.at(command),input);
     auto checked=input;checked["references"]=step.value("references",json::array());expand(checked["references"]);
     checkReferences(doc,opad::resolve(doc),checked,known);
@@ -198,13 +204,14 @@ void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)
   if(!m_doc->captureSnapshot(m_jobs,[self,revision,generation,done](std::shared_ptr<opad::Document> copy,const QString& error){
     if(!self)return;if(!copy){done({},error);return;}
     auto value=std::make_shared<Snapshot>();value->doc=std::move(copy);value->revision=revision;
+    self->m_jobs->backgroundNext();  // agent traffic: no busy cursor, no completion toast
     self->m_jobs->async(tr("Preparing agent context"),[value](Progress p){value->scene=opad::resolve(*value->doc);if(p.cancelled())throw opad::Error("cancelled");},
       [self,value,done,generation](bool ok,const QString& error){
         if(!self)return;if(!ok){done({},error);return;}
         if(generation!=self->m_doc->generation || value->revision!=self->m_doc->revision){done({},tr("Document changed while preparing context. Retry."));return;}
         self->m_cache=value;done(value,{});
       });
-  }))done({},tr("Document is busy. Retry after the current operation."));
+  },true))done({},tr("Document is busy. Retry after the current operation."));
 }
 void AgentBridge::save(const std::shared_ptr<Session>& session,const json& args,const std::string& receipt){
   if(m_prepared){fail(session,"prepared_active",tr("Commit or cancel the current transaction first."),receipt);return;}
@@ -249,6 +256,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     }
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
     const auto baseline=!transaction.empty() && m_cache?m_cache:source;
+    m_jobs->backgroundNext();
     auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,known,steps,delay=m_benchDelay](Progress p)mutable{
       p.setPhase(tr("Inspecting inputs"));
       if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args,known.get());
@@ -259,8 +267,11 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       if(p.cancelled())throw opad::Error("cancelled");
       p.setPhase(tr("Computing geometry and context"));
       if(name=="live_state"){
-        result->output=state;auto& refs=result->output["selection"];for(auto& r:refs){
-          auto ref=opad::Ref::from_json(r);if(source->scene.node(ref.body))r=entity_details(*source->doc,source->scene,{{"ref",r},{"limit",10}});
+        result->output=state;auto& refs=result->output["selection"];
+        opad::design::Provenance provenance(*source->doc,[p]{return p.cancelled();});  // created_by: once per body, not per pick
+        for(auto& r:refs){
+          if(p.cancelled())throw opad::Error("cancelled");
+          auto ref=opad::Ref::from_json(r);if(source->scene.node(ref.body))r=entity_details(*source->doc,source->scene,{{"ref",r},{"limit",10}},&provenance);
         }
       }else if(name=="context")result->output=context(*source->doc,source->scene,args);
       else if(name=="sketch_details")result->output=sketch_details(*source->doc,source->scene,args);

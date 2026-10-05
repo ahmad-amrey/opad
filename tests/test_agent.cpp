@@ -80,8 +80,19 @@ int main(){try {
   const size_t live=agent::live_tools().dump().size();
   size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
-  CHECK(live<105000);
-  CHECK(headless<50000);
+  // TODO 11: the tracks raised these from 105000 / 50000 each on its own. Live: +2.5 KB explode (UI-35) and +0.5 KB component
+  // on feature, sketch and batches (UI-33) on t2b, +2 KB related (UI-94: its refs carry the reference schema) on t6, +0.1 KB
+  // KiCad (UI-134) on t4. Headless: +14.95 KB the drawing commands on t5a (project UI-77, sheets UI-76, materials UI-140, bom
+  // UI-83, export views UI-87, templates and document properties UI-78; 8.4 KB at the wave-3 merge, +6.55 KB at its final merge:
+  // annotations UI-79..81, section, detail and broken views UI-82, parts lists, balloons and issued revisions UI-84), +2 KB explode and component on t2b, +2.7 KB the KiCad
+  // commands, linked assets, the image canvas (UI-70) and sketch_tool's project on t4 (1.2 KB at the wave-3 merge, +1.5 KB at its
+  // final merge), +1.5 KB related on t6. Merged, what the tracks added within their own budgets adds up
+  // as well: measured at the wave-3 merge, live 112671 bytes (2.6 KB past the raises) and headless 66678 (3.6 KB past); after
+  // t4's and t5a's final merges, live 113122 and headless 74716; with t2a's final merge (measure's mode and length kind UI-144,
+  // view's home UI-47) live 113583. A merge that grows a list past the limits raises them by what it measured and says so in
+  // the commit.
+  CHECK(live<114300);  // the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});
@@ -94,8 +105,14 @@ int main(){try {
   CHECK(agent::live_mutation("save"));
   // Gap log #4: measure is a read unless pinned; then it needs the revision and a request id like any write.
   CHECK(!agent::live_mutation("measure",{{"kind","bbox"}}) && agent::live_mutation("measure",{{"pin",true}}));
+  // An exploded view is a read unless it is saved (TODO 11 UI-35).
+  CHECK(!agent::live_mutation("explode",{{"levels",2}}) && agent::live_mutation("explode",{{"name","Exploded"}}) && agent::live_mutation("explode",{{"update",true}}));
+  agent::validate_input(agent::live_schema("explode"),{{"levels",2},{"groups",json::array({json::array({"a","b"})})},{"offsets",{{"a",{0,0,5}}}}});
+  CHECK_THROWS(agent::validate_input(agent::live_schema("explode"),{{"offsets",{{"a",{0,5}}}}}));
+  CHECK_THROWS(agent::validate_input(agent::live_schema("explode"),{{"t",2}}));
   agent::validate_input(agent::live_schema("measure"),{{"kind","bbox"},{"refs",{"a"}}});
   agent::validate_input(agent::live_schema("measure"),{{"queries",{{{"kind","distance"},{"refs",{"a","b"}}}}}});
+  agent::validate_input(agent::live_schema("measure"),{{"kind","area"},{"refs",{"a"}},{"at",{1.0,2.0,0.0}}});  // UI-90: the Area tool's measure, where the object was clicked
   agent::validate_input(agent::live_schema("save"),{{"expected_revision",3},{"request_id","save-1"}});
   agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"},{"overwrite",true},{"expected_revision",3},{"request_id","save-2"}});
   CHECK_THROWS(agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"}}));

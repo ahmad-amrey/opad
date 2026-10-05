@@ -70,6 +70,12 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         assert len(ids) == 1, tree
         props = call("properties", doc=doc, node=ids[0])
         assert abs(props["volume"] - (24000 - math.pi * 250)) < 1e-5, props
+        # TODO 11 UI-94: the hole's wall is the cut's, and a round cut is a hole.
+        assert tools["related"]["annotations"]["readOnlyHint"] and tools["related"]["inputSchema"]["required"] == ["doc", "refs"]
+        wall = call("query_entities", doc=doc, body=ids[0], kind="face", filters={"surface": "cylinder"})["items"][0]["reference"]["ref"]
+        related = call("related", doc=doc, refs=[wall])
+        assert related["candidates"][0]["name"] == "Through hole" and related["candidates"][0]["category"] == "hole", related
+        assert call("entity_details", doc=doc, ref=wall)["created_by"]["name"] == "Through hole"
         assert call("context", doc=doc)["bodies"] == 1
         assert "ai_agent" in tools["annotate"]["inputSchema"]["properties"]["style"]["enum"]
         drawing = {"plane": {"origin": [0, 0, 15], "x": [1, 0, 0], "y": [0, 1, 0]},
@@ -93,6 +99,27 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         output = str(pathlib.Path(folder) / "plate.step")
         call("export", doc=doc, format="step", out=output)
         assert pathlib.Path(output).stat().st_size > 100
+        # TODO 11 UI-76: an A4 first-angle sheet of the plate, the top view below the front one, the hole dimensioned
+        # there; in the front view, where it is foreshortened, the same pick is refused.
+        sheet = call("sheet", doc=doc, size="A4", values={"title": "Drilled plate"})["id"]
+        front = call("sheet_view", doc=doc, sheet=sheet, orient="front", at=[100, 150])["id"]
+        top = call("sheet_view", doc=doc, sheet=sheet, parent=front, side="bottom")
+        assert top["frame"]["dir"] == [0, 0, 1], top
+        circles = call("query_entities", doc=doc, body=ids[0], kind="edge", filters={"curve": "circle"})["items"]
+        rim = max(circles, key=lambda e: e["bbox"]["center"][2])["index"]
+        hole = call("sheet_item", doc=doc, sheet=sheet, view=top["id"], type="diameter", refs=[f"{ids[0]}/edge/{rim}"])
+        assert hole["result"]["shown"] == "⌀10", hole
+        foreshortened = request("tools/call", {"name": "sheet_item", "arguments": {"doc": doc, "sheet": sheet, "view": front, "type": "diameter", "refs": [f"{ids[0]}/edge/{rim}"]}})
+        assert foreshortened["isError"] and "foreshortened" in foreshortened["structuredContent"]["error"]["message"], foreshortened
+        call("part_properties", doc=doc, target=ids[0], set={"part_number": "OP-0012", "material": "PA12"})
+        info = call("sheet_info", doc=doc, sheet=sheet)
+        assert [v["kind"] for v in info["views"]] == ["base", "projected"] and info["items"][0]["current"]["value"] == 10, info
+        assert call("properties", doc=doc, node=ids[0])["part"]["part_number"] == "OP-0012"
+        # TODO 11 UI-35: an exploded view through the same tools (one body: one unit, moved by hand), saved as a view.
+        assert tools["explode"]["inputSchema"]["properties"]["groups"]["items"]["type"] == "array"
+        exploded = call("explode", doc=doc, levels=0, mode="stack", axis=[0, 0, 1], groups=[[ids[0]]], offsets={ids[0]: [0, 0, 5]}, name="Exploded")
+        assert exploded["units"][0]["id"] == ids[0] and exploded["offsets"][ids[0]] == [0, 0, 5], exploded
+        assert call("annotations", doc=doc)["views"][-1]["explode"]["offsets"] == {ids[0]: [0, 0, 5]}
         # TODO 10 B4: a phone frame outline (a rounded rectangle and its inner offset) and a text label, as shapes.
         framed = call("sketch", doc=doc, name="Frame", plane={"base": "xy"}, geometry={"shapes": [
             {"kind": "rounded_rect", "picks": [[100, 0], [170, 150]], "options": {"radius": 8}},

@@ -57,7 +57,7 @@ TEST(body_section_silhouette_and_vertex_projection) {
 }
 TEST(sketch_backdrop_round_trip_and_id_delta) {
   Sketch sk;sk.images.push_back({{"id",1},{"data","test"},{"position",{2,3}},{"width",10},{"height",5},{"opacity",.5}});CHECK(sk.next_id()>1);
-  const auto before=sk.to_json();sk.images[0]["width"]=20;const auto after=sk.to_json();const auto delta=sketch_delta(before,after);CHECK_EQ(delta["images"].size(),size_t(1));CHECK(apply_sketch_delta(before,delta)==after);
+  const auto before=sk.to_json();sk.images[0]["width"]=20;const auto after=sk.to_json();const auto delta=sketch_delta(before,after);CHECK(!delta.contains("images"));CHECK(delta["image_fields"]==opad::json::parse(R"([{"id":1,"width":20}])"));CHECK(apply_sketch_delta(before,delta)==after);
   CHECK(Sketch::from_json(after).to_json()==after);sk.images[0]["width"]=-1;CHECK_THROWS(sk.validate());
 }
 CHECK_MAIN()

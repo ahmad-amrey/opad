@@ -1,6 +1,9 @@
 #include "SketchEditor.hpp"
+#include "SketchGeometryCache.hpp"
+#include "opad/canvas.hpp"
 #include "DimensionHandle.hpp"
 #include "SketchPanel.hpp"
+#include "SketchSteps.hpp"
 #include <QPointer>
 #include <QKeyEvent>
 #include <QSettings>
@@ -23,73 +26,101 @@ using namespace opad::design;
 
 SolveOptions SketchEditor::solveOptions() const {
   SolveOptions out;
-  out.tolerance=QSettings().value("sketch/tolerance",1e-8).toDouble();
-  out.max_iterations=QSettings().value("sketch/iterations",100).toInt();
+  out.tolerance=m_settings.tolerance;
+  out.max_iterations=m_settings.iterations;
   return out;
 }
 
+// The tool's steps (SketchSteps.hpp), and what each done one took, in place of "Ready" (UI-25): where a click went (in the
+// document's unit), the point or curve picked, how many curves are selected, the value set.
 QList<ToolStep> SketchEditor::toolSteps() const {
-  QStringList labels;
-  const bool transform=QStringList{"move","rotate","scale","copy","rect_pattern","polar_pattern","break","explode"}.contains(m_tool);
-  if(transform)labels={tr("Select seed curves"),tr("Set parameters and apply")};
-  else if(m_tool=="heal")labels={tr("Set gap tolerance"),tr("Apply to merge nearby endpoints")};
-  else if(m_tool=="chamfer")labels={tr("Pick a corner"),tr("Set distances and apply")};
-  else if(m_tool=="split")labels={tr("Pick inside the curve to split")};
-  else if(m_tool=="extend")labels={tr("Pick the curve near its end"),tr("Pick the boundary curve")};
-  else if(m_tool=="union"||m_tool=="subtract"||m_tool=="intersect")labels={tr("Pick inside the first loop"),tr("Pick inside the second loop"),tr("Apply to combine the loops")};
-  else if(m_tool=="tangent_circle")labels={tr("Pick first line"),tr("Pick second line"),tr("Choose circle side")};
-  else if(m_tool=="tangent_arc")labels={tr("Pick line endpoint"),tr("Pick arc endpoint")};
-  else if(m_tool=="text")labels={tr("Set text, font and height"),tr("Pick insertion point")};
-  else if(m_tool=="conic")labels={tr("Pick start point"),tr("Pick tangent intersection"),tr("Pick end point")};
-  else if(m_tool=="rect3")labels={tr("Pick first corner"),tr("Pick base direction"),tr("Set rectangle height")};
-  else if(m_tool=="arcslot")labels={tr("Pick arc centre"),tr("Pick start point"),tr("Pick end point")};
-  else if(m_tool=="cslot")labels={tr("Pick slot centre"),tr("Pick cap centre"),tr("Set slot width")};
-  else if(m_tool=="control_spline")labels={tr("Pick control points"),tr("Apply to finish the chain")};
-  else if(m_tool=="select")labels={tr("Select geometry"),tr("Drag, constrain or modify")};
-  else if(m_tool=="dimension")labels={tr("Pick geometry to measure"),tr("Place the label"),tr("Set expression and apply")};
-  else if(m_tool.startsWith("c:"))labels={tr("Pick first geometry"),tr("Pick related geometry")};
-  else if(m_tool=="offset")labels={tr("Select a connected chain"),tr("Set distance and apply")};
-  else if(m_tool=="mirror")labels={tr("Select curves"),tr("Pick mirror line")};
-  else if(m_tool=="fillet")labels={tr("Set radius"),tr("Pick a corner")};
-  else if(m_tool=="node")labels={tr("Select a spline node"),tr("Set weights and apply")};
-  else if(m_tool=="trim")labels={tr("Pick the segment to remove")};
-  else if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")labels={tr("Pick source geometry"),tr("Choose link behavior and apply")};
-  else if(m_tool=="image_insert")labels={tr("Choose an image file"),tr("Pick insertion point"),tr("Set image size and apply")};
-  else if(m_tool=="image_calibrate")labels={tr("Pick first calibration point"),tr("Pick second calibration point"),tr("Enter known distance and apply")};
-  else if(m_tool=="image_trace")labels={tr("Choose the backdrop image"),tr("Adjust tracing parameters"),tr("Apply to create editable curves")};
-  else if(m_tool.startsWith("image_")||m_tool=="vector_import"||m_tool=="vector_export"||m_tool=="simplify")labels={tr("Choose source and parameters"),tr("Apply")};
-  else if(m_tool=="line" || m_tool=="spline")labels={tr("Pick start point"),tr("Add points"),tr("Apply to finish the chain")};
-  else if(m_tool=="point")labels={tr("Place point")};
-  else if(m_tool=="circle3" || m_tool=="arc3" || m_tool=="arcc" || m_tool=="ellipse" || m_tool=="slot")labels={tr("Pick first point"),tr("Pick second point"),tr("Pick third point")};
-  else labels={tr("Pick first point"),tr("Pick second point")};
-  int count=int(m_clicks.size());
-  if(transform || m_tool=="chamfer")count=m_sel.empty()?0:1;
-  if(m_tool=="extend")count=int(m_picked.size());
-  if(m_tool=="tangent_circle")count=int(m_picked.size());
-  if(m_tool=="text")count=1;
-  if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")count=option("projectionSource").isEmpty()?0:1;
-  if(m_tool=="control_spline")count=m_clicks.size()>=2?1:0;
-  if(m_tool=="line" || m_tool=="spline") count=m_chain.empty()?0:m_chain.size()==1?1:2;
-  if(m_tool.startsWith("c:"))count=int(m_picked.size());
-  if(m_tool=="dimension")count=m_dimEditing?2:m_placingDim?1:0;
-  if(m_tool=="select" || m_tool=="offset" || m_tool=="node")count=m_sel.empty()?0:1;
-  if(m_tool=="mirror")count=option("mirrorAxis","picked")!="picked"?(m_sel.empty()?0:2):option("mirrorStage","seed")!="axis"?0:m_picked.empty()?1:2;
-  if(m_tool=="fillet")count=1;
-  QList<ToolStep> result;
-  for(int i=0;i<labels.size();++i)result.push_back({labels[i],i<count?tr("Ready"):QString()});
-  return result;
+  QList<ToolStep> out;
+  const auto* entry = sketchsteps::find(m_tool.toStdString());
+  if (!entry) return {{tr("Choose a tool"), {}}};  // never: every tool has its steps (sketch-steps test, sketch-steps bench)
+  for (const char* step : entry->steps) out.push_back({i18n::t(step), {}});
+  const QString& t = m_tool;
+  const double unit = unitLength();
+  auto number = [&](double mm) {
+    QString s = QString::number(mm / unit, 'f', 3);
+    while (s.contains('.') && (s.endsWith('0') || s.endsWith('.'))) s.chop(1);
+    return s == "-0" ? QStringLiteral("0") : s;
+  };
+  auto at = [&](double u, double v) { return number(u) + ", " + number(v); };
+  auto name = [&](int id) {
+    if (m_sk.point(id)) return tr("Point %1").arg(id);
+    const SkEntity* e = m_sk.entity(id);
+    if (!e) return QString::number(id);
+    switch (e->type) {
+      case SkEntity::Type::Line: return tr("Line %1").arg(id);
+      case SkEntity::Type::Circle: return tr("Circle %1").arg(id);
+      case SkEntity::Type::Arc: return tr("Arc %1").arg(id);
+      case SkEntity::Type::Ellipse: return tr("Ellipse %1").arg(id);
+      case SkEntity::Type::Spline: return tr("Spline %1").arg(id);
+      case SkEntity::Type::Point: break;
+    }
+    return tr("Point %1").arg(id);
+  };
+  auto names = [&](const std::vector<int>& ids) { QStringList n; for (int id : ids) n << name(id); return n.join(", "); };
+  auto selection = [&] {
+    int curves = 0;
+    for (int id : m_sel) curves += (m_geometry ? m_geometry->entity(m_sk, id) : m_sk.entity(id)) != nullptr;  // indexed: a box may select 30,000
+    if (curves != int(m_sel.size())) return tr("%1 selected").arg(m_sel.size());
+    return curves == 1 ? tr("1 curve") : tr("%1 curves").arg(curves);
+  };
+  auto done = [&](int i, const QString& value) { if (i >= 0 && i < out.size() && !value.isEmpty()) out[i].picked = value; };
+  auto file = [&](const char* key) { return QFileInfo(option(key)).fileName(); };
+  static const QStringList selecting = {"select", "move", "rotate", "scale", "copy", "rect_pattern", "polar_pattern", "break", "explode", "break_link", "offset", "copybase"};
+  if (selecting.contains(t)) {
+    if (!m_sel.empty()) done(0, selection());
+  } else if (t == "chamfer" || t == "node") {
+    if (!m_sel.empty()) done(0, name(m_sel.front()));
+  } else if (t == "fillet") done(0, option("radius", "2 mm"));
+  else if (t == "heal") done(0, option("healTolerance", "0.05 mm"));
+  else if (t == "simplify") done(0, option("curveTolerance"));
+  else if (t == "text") done(0, option("text", "OPAD"));
+  else if (t == "extend" || t == "tangent_circle" || t.startsWith("c:")) {
+    for (size_t i = 0; i < m_picked.size(); ++i) done(int(i), name(m_picked[i]));
+  } else if (t == "tangent_arc") {
+    if (!m_picked.empty() && !m_clicks.empty()) done(0, name(m_picked.front()));
+  } else if (t == "mirror") {
+    const bool picked = option("mirrorAxis", "picked") == "picked";
+    if (!m_sel.empty() && (!picked || option("mirrorStage", "seed") == "axis")) done(0, selection());
+    if (!picked) done(1, option("mirrorAxis") == "x" ? tr("X axis") : tr("Y axis"));
+    else if (!m_picked.empty()) done(1, name(m_picked.front()));
+  } else if (t == "dimension") {
+    const auto edited = std::find_if(m_sk.constraints.begin(), m_sk.constraints.end(), [&](const SkConstraint& c) { return m_dimEditing && c.id == m_dimEditing; });
+    if (const SkConstraint* c = edited == m_sk.constraints.end() ? nullptr : &*edited) {
+      done(0, names(c->refs));
+      done(1, dimensionText(*c));
+    } else if (m_placingDim) done(0, names(m_pendingDim.refs));
+  } else if (t == "line" || t == "spline") {
+    if (const SkPoint* p = m_chain.empty() ? nullptr : pointOf(m_chain.front())) done(0, at(p->x, p->y));
+    if (m_chain.size() >= 2) done(1, m_chain.size() == 2 ? tr("1 more point") : tr("%1 more points").arg(m_chain.size() - 1));
+  } else if (t == "control_spline") {
+    if (m_clicks.size() >= 2) done(0, tr("%1 points").arg(m_clicks.size()));
+  } else if (sketchkeys::referenceTool(t.toStdString())) {
+    if (!m_sources.isEmpty()) done(0, m_sources.size() == 1 ? tr("1 source") : tr("%1 sources").arg(m_sources.size()));
+  } else if (t == "image_edit" || t == "image_trace" || t == "image_remove") {
+    if (!m_sk.images.empty()) done(0, tr("Image %1").arg(option("imageId", QString::number(m_sk.images.back().at("id").get<int>()))));
+  } else if (t == "vector_import" || t == "vector_export") done(0, file("vectorFile"));
+  else {  // shapes, points of an image, loops: where each click went (an image's place after its file)
+    const int from = t == "image_insert" ? 1 : 0;
+    if (from) done(0, file("imageFile"));
+    for (size_t i = 0; i < m_clicks.size(); ++i) done(from + int(i), at(m_clicks[i].u, m_clicks[i].v));
+  }
+  return out;
 }
 
 void SketchEditor::applyTool() {
   if(!m_active)return;
+  if(!m_previewRequested)dropPreviewJob();  // Apply (or Enter) right after a value changed: not lost to the preview being computed
   if(m_editJob)return;
   if(!m_previewRequested)m_toolPreviewTimer.stop();
   if(!m_previewRequested && m_toolPreview) {
     ++m_modelRevision;
     m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
     m_undo.push_back({m_sk,m_plane,m_frame});m_redo.clear();m_sk=*m_toolPreview;m_solved=m_previewSolved;m_toolPreview.reset();m_modified=true;m_panelFieldsDirty=true;
-    m_clicks.clear();m_picked.clear();m_sel.clear();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();
-    if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d"){m_options.remove("projectionSource");emit workflowChanged();}  // next source
+    m_clicks.clear();m_picked.clear();m_sel.clear();applied();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();
     emit changed();return;
   }
   if(applyReference()||applyImageTool())return;
@@ -106,15 +137,20 @@ void SketchEditor::applyTool() {
     for(const auto& e:m_sk.entities)if(e.degree && !e.fixed) {
       auto it=std::find(e.p.begin(),e.p.end(),m_sel.front());if(it!=e.p.end()){entity=e.id;index=int(it-e.p.begin());break;}
     }
-    if(!entity)return;
-    begin_change();
+    if(!entity){if(!m_previewRequested)emit status(tr("Choose a control node on an editable spline."));return;}
     try {
-      auto* e=m_sk.entity(entity);
-      auto weight=[&](int at,const QString& key){bool ok=false;const double v=option(key,"1").toDouble(&ok);if(!ok || !std::isfinite(v) || v<=0)throw opad::Error("spline weights must be positive");e->weights[size_t(at)]=v;};
-      weight(index,"weight");
-      if(index%3==0 && e->degree==3){if(index>0)weight(index-1,"incoming");if(index+1<int(e->p.size()))weight(index+1,"outgoing");}
-      end_change(tr("Spline node weights"));
-    } catch(const std::exception& e){cancel_change();emit status(QString::fromUtf8(e.what()));}
+      const auto* e=m_sk.entity(entity);
+      auto weight=[&](const QString& key){bool ok=false;const double v=option(key,"1").toDouble(&ok);if(!ok || !std::isfinite(v) || v<=0)throw opad::Error("spline weights must be positive");return v;};
+      std::vector<std::pair<size_t,double>> weights{{size_t(index),weight("weight")}};
+      if(index%3==0 && e->degree==3){if(index>0)weights.push_back({size_t(index-1),weight("incoming")});if(index+1<int(e->p.size()))weights.push_back({size_t(index+1),weight("outgoing")});}
+      // As the other Apply tools (TODO 11 wave 3, P4): the curve previews its new shape while the weights change, Enter or
+      // Apply keeps it.
+      runSketchEdit(tr("Spline node weights"),[entity,weights](Sketch& sk){
+        auto* spline=sk.entity(entity);if(!spline)throw opad::Error("the spline no longer exists");
+        if(spline->weights.size()<spline->p.size())spline->weights.resize(spline->p.size(),1.0);
+        for(const auto& [at,w]:weights)if(at<spline->weights.size())spline->weights[at]=w;
+      });
+    } catch(const std::exception& e){if(!m_previewRequested)emit status(i18n::t(QString::fromUtf8(e.what())));}
     return;
   }
   toolPrompt();
@@ -154,20 +190,37 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     // never kept for Apply. Otherwise the newer run replaces it.
     const bool stale=preview && previewRevision!=m_previewRevision;
     if(stale && !m_dimensionHandle->dragging())return;
-    if(!ok){if(!stale){if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}emit status(error);}return;}
+    if(!ok){
+      if(stale)return;
+      if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}
+      // A source that gives nothing here (an edge square to the plane, a body the plane misses): that pick is not kept, the
+      // others stay and preview again. The worker named the ones that failed (applyReference); a failure of them all
+      // together (the solver's) drops the one the last pick added, else only says why.
+      if(preview && sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()) {
+        QStringList drop;
+        if(m_sourcesFailed)for(const auto& source:*m_sourcesFailed)if(m_sources.contains(source))drop<<source;
+        if(drop.isEmpty() && !m_sourceAdded.isEmpty() && m_sources.contains(m_sourceAdded))drop<<m_sourceAdded;
+        m_sourcesFailed.reset();
+        if(drop.isEmpty()){emit status(i18n::t(error));return;}
+        for(const auto& source:drop)m_sources.removeOne(source);
+        if(drop.contains(m_sourceAdded))m_sourceAdded.clear();
+        emit status(tr("Not added: %1").arg(i18n::t(error)));rebuild();emit changed();emit workflowChanged();scheduleToolPreview();return;
+      }
+      emit status(i18n::t(error));return;
+    }
     if(m_modelRevision!=modelRevision)return;
     if(preview){
       if(!stale){m_toolPreview=after;m_previewSolved=*solved;}
       m_viewport->removeOverlay(m_toolPreviewOverlay);
-      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());m_toolPreviewOverlay=overlay;if(m_visible)m_viewport->showOverlay(m_toolPreviewOverlay);
-      if(!stale)emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
+      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());overlay->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);  // dashed: what Enter would add, apart from the amber references (as the guides draw it)
+      m_toolPreviewOverlay=overlay;if(m_visible)showToolPreview();
+      if(!stale)emit status(tr("Preview ready. Press Enter or Apply to keep it, or change the values."));return;}
     ++m_modelRevision;m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
-    m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
-    if(m_tool=="mirror")m_options["mirrorStage"]="seed";
+    m_clicks.clear();m_picked.clear();m_sel.clear();applied();rebuild();scheduleFill();toolPrompt();emit changed();
   });
 }
 
-void SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
+bool SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
   try {
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
     const auto table=sketch_parameters(m_sk,ParamTable(defs,m_doc->scene.units));
@@ -177,18 +230,124 @@ void SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
       if(!m_chain.empty()){const auto* p=m_sk.point(m_chain.back());x+=p->x;y+=p->y;}
       else if(!m_clicks.empty()){x+=m_clicks.back().u;y+=m_clicks.back().v;}
     }
-    if(m_tool=="select")return emit status(tr("Choose a drawing tool first."));
+    if(m_tool=="select"){emit status(tr("Choose a drawing tool first."));return false;}
     click(Snap{x,y},Qt::AltModifier); // exact coordinates: no inferred constraints or grid snapping
-  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
+    return true;
+  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));return false;}
 }
 
-void SketchEditor::stepBack() {
-  invalidatePreview();
-  if(!m_clicks.empty())m_clicks.pop_back();
-  else if(!m_picked.empty()){m_picked.pop_back();m_placingDim=false;}
-  else if(!m_chain.empty()){undo();}
-  else setTool("select");
-  toolPrompt();rebuild();emit changed();
+// ---------------------------------------------------------------- Undo point, Done, Esc (UI-20)
+// "Back" used to undo a whole step and leave the tool (undo() ends it), "Cancel tool" kept everything and the prompt
+// promised that Esc steps back: three meanings. Now one model (SketchKeys.hpp) for the keys, the panel and the prompt.
+sketchkeys::State SketchEditor::keyState() const {
+  sketchkeys::State s;
+  s.tool=m_tool.toStdString();s.chain=m_chain.size();s.clicks=m_clicks.size();s.picks=m_picked.size()+(sketchkeys::referenceTool(s.tool)?size_t(m_sources.size()):0);
+  s.boxSelecting=m_boxSelecting || m_fencing;s.selection=!m_sel.empty();
+  s.mirrorAxis=m_tool=="mirror" && option("mirrorStage","seed")=="axis";
+  s.mirrorSeeds=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && !s.mirrorAxis;
+  s.typed=m_input && m_input->typed();s.applies=appliesOnEnter();s.locked=m_lock && m_lock->sticky;
+  if(s.locked && m_pointer.kind==Snap::Kind::Locked)s.stops=size_t(std::max(0,m_pointer.stops-(m_pointer.stop>=0?1:0)));
+  s.guide=!m_lock && m_inView && placing() && m_pointer.onLine;
+  s.snaps=!m_lock && m_inView && placing() && m_pointer.choices>1?size_t(m_pointer.choices-1):0;
+  return s;
+}
+
+bool SketchEditor::undoPoint() {
+  if(!m_active || m_editJob)return false;
+  using sketchkeys::Back;
+  const Back back=sketchkeys::backspace(keyState());
+  if(back==Back::None)return false;
+  if(back==Back::Delete){deleteSelection();return true;}
+  invalidatePreview();unlock();
+  if(!m_chain.empty()) {
+    // Chain-local: back to before the last point, drawing goes on from the one before. Each point of a chain is one
+    // undo step until the chain ends (finishChain folds them into one), so the newest step holds the sketch to go back
+    // to. undo() would also have ended the chain and the tool.
+    if(m_undo.size()<=m_chainUndoStart){emit status(tr("That point is older than the undo history."));return false;}
+    m_chain.pop_back();
+    m_sk=m_undo.back().geometry;m_undo.pop_back();
+    m_tracked.erase(std::remove_if(m_tracked.begin(),m_tracked.end(),[this](int id){return !m_sk.point(id);}),m_tracked.end());
+    m_conflicts.clear();analyseSketch();scheduleFill();
+  } else if(!m_clicks.empty()) {
+    m_clicks.pop_back();
+    if(m_clicks.empty() && (m_tool=="tangent_arc" || m_tool=="extend"))m_picked.clear();  // picked with that click
+  } else if(sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()) {
+    m_sources.removeLast();emit workflowChanged();  // the last source picked
+  } else {
+    m_picked.pop_back();m_placingDim=false;
+    if(m_tool=="dimension" && !m_picked.empty()) {  // what the pick left measures alone (a line) waits to be placed again
+      const int keep=m_picked.front();m_picked.clear();dimensionClick({m_sk.point(keep)?Hit::Point:Hit::Entity,keep},0,0);
+    }
+  }
+  toolPrompt();rebuild();emit changed();scheduleToolPreview();
+  return true;
+}
+
+bool SketchEditor::done() {
+  dropPreviewJob();
+  if(!m_active || m_editJob)return false;
+  switch(sketchkeys::enter(keyState())) {
+    case sketchkeys::Enter::None:return false;
+    case sketchkeys::Enter::UseTyped:return useTyped();
+    case sketchkeys::Enter::EndChain:if(m_tool=="control_spline")finishPrimitive();else finishChain();break;
+    case sketchkeys::Enter::PickMirrorLine:m_options["mirrorStage"]="axis";toolPrompt();break;  // the curves are chosen: now the line
+    case sketchkeys::Enter::Apply:applyTool();break;
+  }
+  rebuild();emit changed();return true;
+}
+
+bool SketchEditor::escape() {
+  if(!m_active || m_editJob)return false;
+  using sketchkeys::Esc;
+  switch(sketchkeys::escape(keyState())) {
+    case Esc::None:return false;
+    case Esc::CancelBox:m_boxSelecting=m_fencing=false;break;
+    case Esc::DropTyped:m_input->dropTyped();break;  // option values go back to what they were
+    case Esc::Unlock:unlock();resnap();break;  // the step goes on
+    case Esc::BackToCurves:m_options["mirrorStage"]="seed";toolPrompt();break;
+    case Esc::EndChain:  // as Enter, and over for sure (a control-point spline with too few points is dropped); tracking starts afresh
+      if(m_tool=="control_spline"){finishPrimitive();m_clicks.clear();toolPrompt();}else finishChain();
+      m_tracked.clear();
+      break;
+    case Esc::CancelStep:cancel_change();m_clicks.clear();m_picked.clear();m_sources.clear();m_placingDim=false;m_tracked.clear();scheduleToolPreview();toolPrompt();break;
+    case Esc::CloseTool:setTool("select");break;
+    case Esc::ClearSelection:m_sel.clear();break;
+  }
+  rebuild();emit changed();return true;
+}
+
+void SketchEditor::closeTool() {
+  for(int rung=0;rung<6 && m_tool!="select" && escape();++rung){}
+}
+
+QString SketchEditor::keyHints() const {
+  using namespace sketchkeys;
+  const State s=keyState();QStringList out;
+  const Back back=sketchkeys::backspace(s);
+  if(back==Back::UndoPoint)out<<tr("⌫ undo point");
+  else if(back==Back::UndoPick)out<<tr("⌫ undo pick");
+  else if(back==Back::Delete)out<<tr("Del/⌫ delete");
+  const Esc esc=sketchkeys::escape(s);
+  if(sketchkeys::enter(s)==Enter::UseTyped)out<<tr("Enter use typed values");
+  if(esc==Esc::DropTyped)out<<tr("Esc drop typed values");
+  else if(esc==Esc::Unlock)out<<tr("Esc release lock");
+  else if(esc==Esc::EndChain)  // Enter does the same; only a second Esc goes on to close the tool
+    out<<(m_tool!="line" && std::max(s.chain,s.clicks)>1?tr("Enter/Esc finish spline"):tr("Enter/Esc end chain"));
+  else if(sketchkeys::enter(s)==Enter::PickMirrorLine)out<<tr("Enter pick mirror line");
+  else if(sketchkeys::enter(s)==Enter::Apply)out<<tr("Enter apply");
+  if(esc==Esc::BackToCurves)out<<tr("Esc back to curves");
+  else if(esc==Esc::CancelStep)out<<(back==Back::UndoPick?tr("Esc clear picks"):tr("Esc cancel shape"));
+  else if(esc==Esc::CloseTool)out<<tr("Esc close tool");
+  else if(esc==Esc::ClearSelection)out<<tr("Esc clear selection");
+  const Shift shift=sketchkeys::shift(s);  // last: it comes and goes with the guides under the pointer
+  if(shift==Shift::Lock)out<<tr("Shift lock");
+  else if(shift==Shift::NextStop)out<<tr("Shift next stop");
+  else if(shift==Shift::NextSnap)out<<tr("Shift next snap");
+  return out.join(QStringLiteral(" · "));
+}
+
+void SketchEditor::noteHints() {
+  if(const auto shift=sketchkeys::shift(keyState());shift!=m_shiftHint){m_shiftHint=shift;emit hintsChanged();}
 }
 
 void SketchEditor::toggleReference() {
@@ -202,8 +361,8 @@ void SketchEditor::toggleReference() {
 
 bool SketchEditor::selectable(int id) const {
   if(m_tool!="select" || m_selectionFilter=="all")return true;
-  if(m_sk.point(id))return m_selectionFilter=="point";
-  if(const auto* e=m_sk.entity(id)) {
+  if(m_geometry?m_geometry->point(m_sk,id)!=nullptr:m_sk.point(id)!=nullptr)return m_selectionFilter=="point";
+  if(const auto* e=m_geometry?m_geometry->entity(m_sk,id):m_sk.entity(id)) {
     if(m_selectionFilter=="construction")return e->construction;
     if(m_selectionFilter=="arc")return e->type==SkEntity::Type::Circle || e->type==SkEntity::Type::Arc;
     return m_selectionFilter==SkEntity::type_name(e->type);
@@ -222,6 +381,13 @@ void SketchEditor::selectType() {
   const auto type=seed?seed->type:SkEntity::Type::Point;
   m_sel.clear();for(const auto& e:m_sk.entities)if(seed?e.type==type:selectable(e.id))m_sel.push_back(e.id);
   rebuild();emit changed();
+}
+
+void SketchEditor::selectAll(bool invert) {
+  invalidatePreview();
+  std::vector<int> picked;
+  for(const auto& e:m_sk.entities)if(selectable(e.id) && (!invert || std::find(m_sel.begin(),m_sel.end(),e.id)==m_sel.end()))picked.push_back(e.id);
+  m_sel=std::move(picked);rebuild();emit changed();
 }
 
 void SketchEditor::redefinePlane(const opad::json& plane,const opad::Frame& frame) {
@@ -247,7 +413,7 @@ void SketchEditor::benchWorkflow() {
         case 0:setTool("image_insert");m_options["imageFile"]=prefix+".source.png";m_options["imageWidth"]="32 mm";placePrecise("0","0",0);applyTool();break;
         case 1:require(m_sk.images.size()==1 && m_imagePrs.size()==1,"embedded backdrop");setTool("image_calibrate");m_options["knownDistance"]="16 mm";placePrecise("0","0",0);placePrecise("32","0",0);applyTool();break;
         case 2:require(std::fabs(m_sk.images[0]["width"].get<double>()-16)<1e-8,"image calibration");setTool("image_trace");m_options["smoothing"]="0";m_options["noise"]="2";m_options["cornerAngle"]="180";previewTool();break;
-        case 3:if(m_toolPreview){require(m_sk.entities.empty() && m_undo.size()==2,"preview does not modify the sketch");fitSketch();m_viewport->grabImage().save(prefix+".preview.png");applyTool();--*phase;break;}require(m_sk.entities.size()==8,"editable trace with hole");setTool("project");m_options["projectionSource"]="{\"base\":\"x\"}";applyTool();break;
+        case 3:if(m_toolPreview){require(m_sk.entities.empty() && m_undo.size()==2,"preview does not modify the sketch");fitSketch();m_viewport->grabImage().save(prefix+".preview.png");applyTool();--*phase;break;}require(m_sk.entities.size()==8,"editable trace with hole");setTool("project");toggleSource("{\"base\":\"x\"}");applyTool();break;
         case 4:require(m_sk.entities.size()==9 && !m_sk.entities.back().source.is_null(),"linked work geometry");m_sel={m_sk.entities.back().id};setTool("break_link");applyTool();break;
         case 5:require(m_sk.entities.back().source.is_null()&&!m_sk.entities.back().fixed,"break reference link");setTool("vector_export");m_options["vectorFile"]=prefix+".svg";applyTool();break;
         case 6:require(QFileInfo(prefix+".svg").size()>0,"SVG export");setTool("vector_import");applyTool();break;
@@ -255,7 +421,7 @@ void SketchEditor::benchWorkflow() {
         case 8:{require(std::fabs(m_sk.images[0]["angle"].get<double>()-M_PI/6)<1e-8,"image rotation");auto camera=m_viewport->cameraJson();camera["scale"]=48;camera["target"]={8,8,0};camera["eye"]={8,8,100};m_viewport->setCameraJson(camera);m_viewport->grabImage().save(prefix+".viewport.png");for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())panel->grab().save(prefix+".panel.png");setTool("image_remove");applyTool();break;}
         case 9:require(m_sk.images.empty()&&m_imagePrs.empty(),"remove backdrop");undo();require(m_sk.images.size()==1,"image undo");break;
         case 10:for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())QMetaObject::invokeMethod(panel,"finishRequested");break;
-        case 11:if(m_active||m_doc->designBusy){--*phase;break;}require(m_imagePrs.empty()&&!m_imageJob,"image cleanup on sketch exit");require(!m_doc->scene.sketches.empty()&&!m_doc->scene.sketches.back().geometry.at("images").empty(),"backdrop committed to document");break;
+        case 11:if(m_active||m_doc->designBusy){--*phase;break;}require(m_imagePrs.empty()&&!m_imageJob,"image cleanup on sketch exit");require(!m_doc->scene.sketches.empty()&&m_doc->scene.sketches.back().geometry.value("images",opad::json::array()).empty(),"no picture record left in the sketch");{bool canvas=false;for(const auto& id:m_doc->scene.all_bodies())canvas=canvas||opad::is_canvas(*m_doc->scene.node(id));require(canvas,"backdrop committed to document as an image canvas on the sketch's plane");}break;
         case 12:case 13:case 14:case 15:case 16:case 17:case 18:case 19:break;
         default:{auto camera=m_viewport->cameraJson();camera["scale"]=48;camera["target"]={8,8,0};camera["eye"]={8,8,100};m_viewport->setCameraJson(camera);m_viewport->grabImage().save(prefix+".saved.png");timer->stop();trace::log("bench: sketch projection, image and vector workflow PASS");QCoreApplication::exit(0);break;}
       }
@@ -344,19 +510,34 @@ void SketchEditor::previewTool() {
   // The shown preview stays until this one replaces it (or fails): no blank frame between two previews.
   if(!m_active||m_editJob)return;invalidatePreview(true);m_previewRequested=true;applyTool();m_previewRequested=false;
 }
+void SketchEditor::dropPreviewJob() {
+  if(m_editJob && m_previewComputing){m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
+}
 void SketchEditor::invalidatePreview(bool keepOverlay) {
   ++m_previewRevision;
   if(!keepOverlay){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}
   if(!m_toolPreview)return;m_toolPreview.reset();rebuild();
 }
+void SketchEditor::applied() {
+  if(m_tool=="mirror")m_options["mirrorStage"]="seed";  // the next curves to mirror, then their line
+  if(m_tool=="image_calibrate"){m_options.remove("knownDistance");m_calibrateShown.clear();}  // the next two clicks show their own distance
+  if(sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()){m_sources.clear();emit workflowChanged();}  // the next sources
+}
+void SketchEditor::showToolPreview() {
+  if(m_toolPreviewOverlay.IsNull())return;
+  m_viewport->showOverlay(m_toolPreviewOverlay);
+  m_toolPreviewOverlay->SetZLayer(Graphic3d_ZLayerId_TopOSD);  // no depth test there (as the offset's arrow over its body)
+}
 void SketchEditor::scheduleToolPreview() {
   // While the offset arrow is dragged the preview follows as fast as it is computed (throttled, the shown one stays
   // until the next replaces it); otherwise it waits for the value to rest. Restarting the timer on every move meant
-  // no preview until the button was let go.
+  // no preview until the button was let go. The reference tools preview their sources as they are picked (TODO 11
+  // wave 3, P4: the guides show each pick's projection before Enter).
   const bool live=m_dimensionHandle->dragging();
-  invalidatePreview(live);updateDimensionHandle();
-  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect"};
-  if(m_active && tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) {
+  invalidatePreview(live);updateDimensionHandle();updateInput();
+  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect","node"};
+  const bool reference=sketchkeys::referenceTool(m_tool.toStdString());
+  if(m_active && ((tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) || (reference && !m_sources.isEmpty()))) {
     if(!live)m_toolPreviewTimer.start(120);
     else if(!m_toolPreviewTimer.isActive())m_toolPreviewTimer.start(16);
   }

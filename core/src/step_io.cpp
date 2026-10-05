@@ -22,9 +22,12 @@
 #include <TDF_LabelSequence.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Shell.hxx>
 #include <XCAFApp_Application.hxx>
 #include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
@@ -48,10 +51,13 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
 #include <set>
+#include <unordered_map>
+#include <utility>
 
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
@@ -67,6 +73,7 @@ json ImportResult::to_json() const {
   j["new_entries"] = new_entries;
   j["healed"] = healed;
   j["warnings"] = warnings;
+  if (!info.is_null()) j["info"] = info;
   return j;
 }
 
@@ -76,6 +83,7 @@ json ExportResult::to_json() const {
   for (const auto& p : files) f.push_back(p.string());
   j["files"] = f;
   j["bodies"] = bodies;
+  for (const auto& [k, v] : details.items()) j[k] = v;
   return j;
 }
 
@@ -109,6 +117,46 @@ class CallbackProgress : public Message_ProgressIndicator {
     if (!cb(std::min(frac, 1.0), what)) cancelled = true;
   }
   Standard_Boolean UserBreak() override { return cancelled; }
+};
+
+// The file as OCCT's STEP reader takes it, a megabyte at a time (UI-40): the reader has no progress of its own, so its
+// scan is reported by the bytes taken, and a cancel ends the stream there (the parse then stops with an error). Once
+// every byte is in, `report(-1)`: the records are then made into entities, with nothing to measure (a 45 MB file: 0.4 s
+// scanning, 2.2 s after).
+class CountingBuffer : public std::streambuf {
+ public:
+  CountingBuffer(const std::filesystem::path& path, std::function<bool(double)> report) : m_report(std::move(report)), m_chunk(1 << 20) {
+    m_file.open(path, std::ios::in | std::ios::binary);
+    std::error_code ec;
+    m_size = std::filesystem::file_size(path, ec);
+  }
+  bool is_open() const { return m_file.is_open(); }
+  bool cancelled() const { return m_cancelled; }
+  size_t taken() const { return m_taken; }
+
+ protected:
+  int_type underflow() override {
+    if (m_cancelled) return traits_type::eof();
+    const std::streamsize n = m_file.sgetn(m_chunk.data(), static_cast<std::streamsize>(m_chunk.size()));
+    if (n <= 0) {
+      if (!std::exchange(m_ended, true) && m_report && !m_report(-1)) m_cancelled = true;
+      return traits_type::eof();
+    }
+    m_taken += static_cast<size_t>(n);
+    if (m_report && m_size && !m_report(std::min(1.0, static_cast<double>(m_taken) / static_cast<double>(m_size)))) {
+      m_cancelled = true;
+      return traits_type::eof();
+    }
+    setg(m_chunk.data(), m_chunk.data(), m_chunk.data() + n);
+    return traits_type::to_int_type(m_chunk.front());
+  }
+
+ private:
+  std::filebuf m_file;
+  std::function<bool(double)> m_report;
+  std::vector<char> m_chunk;
+  size_t m_size = 0, m_taken = 0;
+  bool m_cancelled = false, m_ended = false;
 };
 
 std::string label_name(const TDF_Label& l) {
@@ -157,6 +205,8 @@ struct Importer {
   bool mesh = false;                   // the shapes are triangulations (glTF, OBJ, VRML), not B-reps
   double scale = 1.0;                  // file units -> mm, for readers that do not convert (VRML)
   std::map<const void*, TopoDS_Shape> meshes = {};  // product shape -> its plain, scaled triangulation (once per product)
+  std::unordered_map<const void*, const void*> plain_source = {};  // plain_mesh face -> the reader's face it copies
+  using FaceTable = std::unordered_map<const void*, Quantity_Color>;  // a face (its TShape) -> the colour the file gave it
 
   json placement(const TopLoc_Location& loc) const {
     Mat4 m = mat_from_trsf(loc.Transformation());
@@ -200,6 +250,7 @@ struct Importer {
       TopoDS_Face plain;
       builder.MakeFace(plain, copy);
       builder.Add(all, plain);
+      plain_source[plain.TShape().get()] = face.TShape().get();
       last = plain;
       ++count;
     }
@@ -208,6 +259,8 @@ struct Importer {
     return out;
   }
 
+  // OPAD keeps colours as they are shown (sRGB): a STEP or VRML colour as the file writes it, a material's (glTF, OBJ),
+  // which OCCT holds linear, converted back (taken linear, an OBJ's Kd 0.439 came out 0.162 and the model nearly black).
   bool label_color(const TDF_Label& l, Quantity_Color& c) {
     if (l.IsNull()) return false;
     if (!ct.IsNull() && (ct->GetColor(l, XCAFDoc_ColorSurf, c) || ct->GetColor(l, XCAFDoc_ColorGen, c) ||
@@ -215,8 +268,74 @@ struct Importer {
       return true;
     const Handle(XCAFDoc_VisMaterial) m = material(l);
     if (m.IsNull()) return false;
-    c = m->BaseColor().GetRGB();
+    const NCollection_Vec3<float> shown = Quantity_Color::Convert_LinearRGB_To_sRGB(m->BaseColor().GetRGB().Rgb());
+    c = Quantity_Color(shown.r(), shown.g(), shown.b(), Quantity_TOC_RGB);
     return true;
+  }
+  // The colours of a part's faces (and of its solids and shells, which their faces take unless coloured themselves);
+  // `first` gets the first coloured sub-shape's label.
+  FaceTable face_table(const TDF_Label& ref, TDF_Label& first) {
+    FaceTable table;
+    if (ct.IsNull() && vt.IsNull()) return table;
+    TDF_LabelSequence subs;
+    st->GetSubShapes(ref, subs);
+    std::vector<std::pair<const void*, Quantity_Color>> faces;
+    for (int i = 1; i <= subs.Length(); ++i) {
+      Quantity_Color c;
+      if (!label_color(subs.Value(i), c)) continue;
+      const TopoDS_Shape s = st->GetShape(subs.Value(i));
+      if (s.IsNull()) continue;
+      if (first.IsNull()) first = subs.Value(i);
+      if (s.ShapeType() == TopAbs_FACE) faces.push_back({s.TShape().get(), c});
+      else for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) table.emplace(e.Current().TShape().get(), c);
+    }
+    for (const auto& [face, c] : faces) table[face] = c;
+    return table;
+  }
+  const Quantity_Color* face_color(const FaceTable& table, const TopoDS_Shape& face) const {
+    const void* ts = face.TShape().get();
+    if (auto source = plain_source.find(ts); source != plain_source.end()) ts = source->second;
+    auto it = table.find(ts);
+    return it == table.end() ? nullptr : &it->second;
+  }
+  static bool same_color(const Quantity_Color& a, const Quantity_Color& b) {
+    return std::abs(a.Red() - b.Red()) < 1e-4 && std::abs(a.Green() - b.Green()) < 1e-4 && std::abs(a.Blue() - b.Blue()) < 1e-4;
+  }
+  // A part whose file colours only its faces: when every face has a colour, the most common one is the part's (a mesh
+  // reader's single material, a CAD file that styles each face); otherwise the uncoloured faces keep the default.
+  bool common_color(const TopoDS_Shape& shape, const FaceTable& table, Quantity_Color& c) const {
+    std::vector<std::pair<Quantity_Color, int>> counts;
+    for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+      const Quantity_Color* own = face_color(table, e.Current());
+      if (!own) return false;
+      auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& k) { return same_color(k.first, *own); });
+      if (it == counts.end()) counts.push_back({*own, 1});
+      else ++it->second;
+    }
+    if (counts.empty()) return false;
+    c = std::max_element(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.second < b.second; })->first;
+    return true;
+  }
+  // A prototype's "face_colors" (body meta): its faces whose colour is not the body's own.
+  json face_colors_of(const TopoDS_Shape& proto, const FaceTable* table, const Quantity_Color* body) const {
+    if (!table || table->empty()) return nullptr;
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(proto, TopAbs_FACE, faces);
+    FaceColors out;
+    out.face.assign(static_cast<size_t>(faces.Extent()), -1);
+    std::vector<Quantity_Color> palette;
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      const Quantity_Color* c = face_color(*table, faces(i));
+      if (!c || (body && same_color(*c, *body))) continue;
+      auto it = std::find_if(palette.begin(), palette.end(), [&](const Quantity_Color& p) { return same_color(p, *c); });
+      if (it == palette.end()) {
+        palette.push_back(*c);
+        out.colors.push_back({c->Red(), c->Green(), c->Blue()});
+        it = palette.end() - 1;
+      }
+      out.face[static_cast<size_t>(i - 1)] = static_cast<int>(it - palette.begin());
+    }
+    return out.to_json();
   }
   Handle(XCAFDoc_VisMaterial) material(const TDF_Label& l) const {
     if (vt.IsNull() || l.IsNull()) return {};
@@ -236,13 +355,14 @@ struct Importer {
   }
   double fraction() const { return total > 0 ? std::min(0.99, static_cast<double>(visited) / total) : -1.0; }
 
-  std::string store(TopoDS_Shape proto, const std::string& name, const Quantity_Color* color, const std::string& material) {
+  std::string store(TopoDS_Shape proto, const std::string& name, const Quantity_Color* color, const std::string& material, const FaceTable* faces) {
     const void* ts = proto.TShape().get();
     auto it = key_by_tshape.find(ts);
     if (it != key_by_tshape.end() && proto.Location().IsIdentity()) return it->second;
     json meta;
     meta["name"] = name;
     if (color) meta["color"] = {color->Red(), color->Green(), color->Blue()};
+    if (json own = face_colors_of(proto, faces, color); !own.is_null()) meta["face_colors"] = std::move(own);
     if (!material.empty()) meta["material"] = material;
     meta["units"] = "mm";
     meta["source"] = source;
@@ -253,14 +373,14 @@ struct Importer {
   }
 
   json body_node(const TopoDS_Shape& placed, const std::string& name, const Quantity_Color* color,
-                 const TopLoc_Location& outer, const std::string& material = {}, double opacity = 1.0) {
+                 const TopLoc_Location& outer, const std::string& material = {}, double opacity = 1.0, const FaceTable* faces = nullptr) {
     TopLoc_Location loc = outer * placed.Location();
     TopoDS_Shape proto = placed.Located(TopLoc_Location());
     json n;
     n["type"] = "body";
     n["id"] = new_uuid();
     n["name"] = name;
-    n["key"] = store(proto, name, color, material);
+    n["key"] = store(proto, name, color, material, faces);
     if (mesh) n["representation"] = "mesh";
     if (!loc.IsIdentity()) n["transform"] = placement(loc);
     if (color) n["color"] = {color->Red(), color->Green(), color->Blue()};
@@ -291,15 +411,6 @@ struct Importer {
     std::string material;
     double opacity = 1.0;
     label_look(label, ref, material, opacity);
-    if (!has_col && !st->IsAssembly(ref)) {  // mesh readers often colour the part's faces, not the part
-      TDF_LabelSequence subs;
-      st->GetSubShapes(ref, subs);
-      for (int i = 1; i <= subs.Length() && !has_col; ++i)
-        if (label_color(subs.Value(i), col)) {
-          has_col = true;
-          if (material.empty()) label_look(subs.Value(i), subs.Value(i), material, opacity);
-        }
-    }
 
     if (st->IsAssembly(ref)) {
       json node;
@@ -319,6 +430,12 @@ struct Importer {
 
     TopoDS_Shape shape = st->GetShape(ref);
     if (mesh) shape = plain_mesh(shape);
+    TDF_Label first;
+    const FaceTable faces = face_table(ref, first);
+    if (!has_col && !first.IsNull()) {  // mesh readers and many CAD files colour the part's faces, not the part
+      if (material.empty()) label_look(first, first, material, opacity);
+      has_col = common_color(shape, faces, col);
+    }
     std::vector<TopoDS_Shape> parts = split_bodies(shape);
     if (parts.empty()) {
       res.warnings.push_back("'" + name + "' contains no solids, shells or faces; skipped");
@@ -329,7 +446,7 @@ struct Importer {
       node["children"] = json::array();
       return node;
     }
-    if (parts.size() == 1) return body_node(parts[0], name, has_col ? &col : nullptr, loc, material, opacity);
+    if (parts.size() == 1) return body_node(parts[0], name, has_col ? &col : nullptr, loc, material, opacity, &faces);
 
     json node;
     node["type"] = "component";
@@ -345,7 +462,7 @@ struct Importer {
       if (st->FindSubShape(ref, p, sub) && label_color(sub, pc)) pcol = &pc;
       std::string pname = name + "[" + std::to_string(i++) + "]";
       if (!sub.IsNull() && !label_name(sub).empty()) pname = label_name(sub);
-      children.push_back(body_node(p, pname, pcol, TopLoc_Location(), material, opacity));
+      children.push_back(body_node(p, pname, pcol, TopLoc_Location(), material, opacity, &faces));
     }
     node["children"] = children;
     ++res.components;
@@ -369,12 +486,17 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
 
   if (opt.progress && !opt.progress(-1, "reading")) throw Error("import cancelled");
   IFSelect_ReturnStatus status;
+  CountingBuffer file(step, opt.progress ? std::function<bool(double)>([&opt](double f) { return opt.progress(f, f < 0 ? "parsing" : "reading"); }) : nullptr);
+  if (!file.is_open()) throw Error("STEP file could not be opened: " + step.string());
   try {
-    const auto utf8 = step.u8string();  // OCCT widens UTF-8 on Windows; the ANSI form failed for non-Latin file names
-    status = reader.ReadFile(std::string(utf8.begin(), utf8.end()).c_str());
+    std::istream in(&file);
+    const auto utf8 = step.filename().u8string();  // a name for OCCT's messages; the stream is the file
+    status = reader.ReadStream(std::string(utf8.begin(), utf8.end()).c_str(), in);
   } catch (const Standard_Failure& e) {
+    if (file.cancelled()) throw Error("import cancelled");
     throw Error(std::string("STEP read failed: ") + e.GetMessageString());
   }
+  if (file.cancelled()) throw Error("import cancelled");
   if (status != IFSelect_RetDone) throw Error("STEP read failed (not a STEP file or unsupported schema): " + step.string());
 
   Handle(TDocStd_Document) xdoc;
@@ -389,6 +511,36 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
   if (!ok) throw Error("STEP transfer produced no shapes: " + step.string());
   return detail::import_xcaf(doc, xdoc, step, opt, false);
 }
+
+namespace {
+// Healing rebuilds the faces it touches (and the ones above edges it fixed): the body's face colours follow each face to
+// the one made of it, found by the face itself or else by its surface, which the rebuilt face keeps.
+void follow_face_colors(json& meta, const TopoDS_Shape& before, const TopoDS_Shape& after) {
+  if (!meta.contains("face_colors")) return;
+  const FaceColors old = FaceColors::from_json(meta["face_colors"]);
+  TopTools_IndexedMapOfShape was, now;
+  TopExp::MapShapes(before, TopAbs_FACE, was);
+  TopExp::MapShapes(after, TopAbs_FACE, now);
+  auto surface = [](const TopoDS_Shape& f) {
+    TopLoc_Location loc;
+    return static_cast<const void*>(BRep_Tool::Surface(TopoDS::Face(f), loc).get());
+  };
+  std::unordered_map<const void*, int> by_face, by_surface;
+  for (int i = 1; i <= was.Extent(); ++i) {
+    by_face[was(i).TShape().get()] = old.at(i - 1);
+    if (const void* s = surface(was(i))) by_surface.emplace(s, old.at(i - 1));
+  }
+  FaceColors fresh;
+  fresh.colors = old.colors;
+  fresh.face.assign(static_cast<size_t>(now.Extent()), -1);
+  for (int i = 1; i <= now.Extent(); ++i) {
+    if (auto f = by_face.find(now(i).TShape().get()); f != by_face.end()) fresh.face[static_cast<size_t>(i - 1)] = f->second;
+    else if (auto s = by_surface.find(surface(now(i))); s != by_surface.end() && s->first) fresh.face[static_cast<size_t>(i - 1)] = s->second;
+  }
+  if (json j = fresh.to_json(); j.is_null()) meta.erase("face_colors");
+  else meta["face_colors"] = std::move(j);
+}
+}  // namespace
 
 namespace detail {
 
@@ -417,6 +569,7 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
         if (!ana.IsValid()) {
           ShapeFix_Shape fix(shape);
           fix.Perform();
+          follow_face_colors(meta, shape, fix.Shape());
           shape = fix.Shape();
           if (res) ++res->healed;
           BRepCheck_Analyzer again(shape);
@@ -430,6 +583,31 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
   if (res && doc.body_count() > before) ++res->new_entries;
   cache_shape(doc, key, shape);  // retain the translated/healed geometry; do not parse our own BREP again
   return key;
+}
+
+std::string persist_body(TopoDS_Shape& shape, json& meta, bool& healed) {
+  const std::string representation = meta.value("representation", "solid");
+  if (representation == "mesh") {  // the triangulation is the geometry
+    std::ostringstream ss;
+    ss.precision(17);
+    BRepTools::Write(shape, ss, Standard_True, Standard_False, TopTools_FormatVersion_VERSION_1);
+    std::string brep;
+    for (char c : ss.str())
+      if (c != '\r') brep.push_back(c);
+    if (brep.empty() || brep.back() != '\n') brep.push_back('\n');
+    return brep;
+  }
+  if (representation == "solid") {
+    BRepCheck_Analyzer ana(shape);
+    if (!ana.IsValid()) {
+      ShapeFix_Shape fix(shape);
+      fix.Perform();
+      follow_face_colors(meta, shape, fix.Shape());
+      shape = fix.Shape();
+      healed = true;
+    }
+  }
+  return brep_from_shape(shape);
 }
 
 ImportResult import_xcaf(Document& doc, const Handle(TDocStd_Document)& xdoc, const std::filesystem::path& step, const ImportOptions& opt, bool mesh,
@@ -459,6 +637,7 @@ ImportResult import_xcaf(Document& doc, const Handle(TDocStd_Document)& xdoc, co
   op["op"] = "import";
   op["source"] = step.filename().string();
   op["units"] = "mm";
+  stamp_source(op, step, opt);
   if (!opt.parent.empty()) op["parent"] = opt.parent;
   op["nodes"] = nodes;
   const Op& o = doc.append(op, opt.author);
@@ -502,6 +681,7 @@ ImportResult import_brep(Document& doc, const std::string& brep, const std::stri
   op["op"] = "import";
   op["source"] = name + ".brep";
   op["units"] = "mm";
+  if (!opt.source_file.empty()) detail::stamp_source(op, {}, opt);  // the text came from a file (import_brep_file)
   if (!opt.parent.empty()) op["parent"] = opt.parent;
   op["nodes"] = nodes;
   imp.res.op_id = doc.append(op, opt.author).id;
@@ -524,37 +704,19 @@ void rename_keys(json& nodes, const std::map<std::string, std::string>& keys) {
 Document make_editable(const Document& viewer, EditableKeys* changed, const std::function<bool(double)>& progress) {
   const auto& bodies = viewer.bodies();
   // Per live body: its BREP text (healed like a full import), side by side; the kernel work is independent per shape.
-  struct Work { TopoDS_Shape shape; std::string brep; bool healed = false; std::string error; };
+  struct Work { TopoDS_Shape shape; json meta; std::string brep; bool healed = false; std::string error; };
   std::vector<Work> work(bodies.size());
   std::atomic<size_t> done{0};
   std::atomic<bool> cancelled{false};
   OSD_Parallel::For(0, static_cast<int>(bodies.size()), [&](int i) {
     if (cancelled) return;
     const BodyEntry& b = bodies[static_cast<size_t>(i)];
-    if (!b.brep.empty()) return;
+    if (!b.text().empty()) return;
     Work& w = work[static_cast<size_t>(i)];
     try {
+      w.meta = b.meta;
       w.shape = body_shape(viewer, b.key);
-      const std::string representation = b.meta.value("representation", "solid");
-      if (representation == "mesh") {
-        std::ostringstream ss;
-        ss.precision(17);
-        BRepTools::Write(w.shape, ss, Standard_True, Standard_False, TopTools_FormatVersion_VERSION_1);
-        for (char c : ss.str())
-          if (c != '\r') w.brep.push_back(c);
-        if (w.brep.empty() || w.brep.back() != '\n') w.brep.push_back('\n');
-      } else {
-        if (representation == "solid") {
-          BRepCheck_Analyzer ana(w.shape);
-          if (!ana.IsValid()) {
-            ShapeFix_Shape fix(w.shape);
-            fix.Perform();
-            w.shape = fix.Shape();
-            w.healed = true;
-          }
-        }
-        w.brep = brep_from_shape(w.shape);
-      }
+      w.brep = detail::persist_body(w.shape, w.meta, w.healed);
     } catch (const Standard_Failure& e) {
       w.error = e.GetMessageString();
     } catch (const std::exception& e) {
@@ -573,8 +735,9 @@ Document make_editable(const Document& viewer, EditableKeys* changed, const std:
   for (size_t i = 0; i < bodies.size(); ++i) {
     const BodyEntry& b = bodies[i];
     if (!b.brep.empty()) { rebuilt.add_body(b.brep, b.meta); continue; }
+    if (!b.indexed.empty()) { rebuilt.add_body(std::string(b.checked_text()), b.meta); continue; }
     if (!work[i].error.empty()) throw Error("body '" + b.meta.value("name", b.key.substr(0, 12)) + "' cannot be saved: " + work[i].error);
-    const std::string key = rebuilt.add_body(work[i].brep, b.meta);
+    const std::string key = rebuilt.add_body(work[i].brep, work[i].meta);
     cache_shape(rebuilt, key, work[i].shape);
     keys[b.key] = key;
     if (changed) {
@@ -617,6 +780,7 @@ struct PlacedMesh {
   Mesh mesh;   // in world coordinates
   std::array<double, 3> color;
   bool has_color;
+  FaceColors faces;  // the body's own face colours (by face ordinal, as mesh.faces)
 };
 
 std::vector<PlacedMesh> gather_meshes(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies,
@@ -625,7 +789,7 @@ std::vector<PlacedMesh> gather_meshes(const Document& doc, const Scene& scene, c
   for (const auto& id : bodies) {
     const Node* n = scene.node(id);
     if (!n || n->body_missing) continue;
-    PlacedMesh pm{id, n->name, tessellate_body(doc, n->body_key, tol), n->color, n->has_color};
+    PlacedMesh pm{id, n->name, tessellate_body(doc, n->body_key, tol), n->color, n->has_color, face_colors(doc, n->body_key)};
     Mat4 w = scene.world(id);
     if (!w.is_identity()) {
       for (size_t i = 0; i + 2 < pm.mesh.positions.size(); i += 3) {
@@ -665,11 +829,28 @@ void write_obj(const std::filesystem::path& out, const std::vector<PlacedMesh>& 
       std::snprintf(buf, sizeof buf, "vn %.4f %.4f %.4f\n", pm.mesh.normals[i], pm.mesh.normals[i + 1], pm.mesh.normals[i + 2]);
       f << buf;
     }
-    if (with_mtl) f << "usemtl m" << mi++ << "\n";
-    for (size_t i = 0; i + 2 < pm.mesh.indices.size(); i += 3) {
-      size_t a = offset + pm.mesh.indices[i], b = offset + pm.mesh.indices[i + 1], c = offset + pm.mesh.indices[i + 2];
-      f << "f " << a << "//" << a << " " << b << "//" << b << " " << c << "//" << c << "\n";
+    auto triangles = [&](size_t first, size_t end) {
+      for (size_t i = first; i + 2 < end; i += 3) {
+        size_t a = offset + pm.mesh.indices[i], b = offset + pm.mesh.indices[i + 1], c = offset + pm.mesh.indices[i + 2];
+        f << "f " << a << "//" << a << " " << b << "//" << b << " " << c << "//" << c << "\n";
+      }
+    };
+    if (pm.faces.empty()) {
+      if (with_mtl) f << "usemtl m" << mi << "\n";
+      triangles(0, pm.mesh.indices.size());
+    } else {
+      // One group per colour: the body's own (m<i>), then each face colour (m<i>_<c>).
+      for (int group = -1; group < static_cast<int>(pm.faces.colors.size()); ++group) {
+        bool any = false;
+        for (const auto& range : pm.mesh.faces) {
+          if (pm.faces.at(range.face) != group) continue;
+          if (!any && with_mtl) f << "usemtl m" << mi << (group < 0 ? std::string() : "_" + std::to_string(group)) << "\n";
+          any = true;
+          triangles(range.first, range.first + range.count);
+        }
+      }
     }
+    ++mi;
     offset += pm.mesh.positions.size() / 3;
   }
   res.files.push_back(out);
@@ -677,9 +858,15 @@ void write_obj(const std::filesystem::path& out, const std::vector<PlacedMesh>& 
     std::ofstream m(mtl, std::ios::binary);
     int i = 0;
     for (const auto& pm : meshes) {
-      m << "newmtl m" << i++ << "\n";
+      m << "newmtl m" << i << "\n";
       std::snprintf(buf, sizeof buf, "Kd %.4f %.4f %.4f\n", pm.color[0], pm.color[1], pm.color[2]);
       m << buf << "Ka 0.1 0.1 0.1\nKs 0.2 0.2 0.2\nNs 20\n\n";
+      for (size_t c = 0; c < pm.faces.colors.size(); ++c) {
+        m << "newmtl m" << i << "_" << c << "\n";
+        std::snprintf(buf, sizeof buf, "Kd %.4f %.4f %.4f\n", pm.faces.colors[c][0], pm.faces.colors[c][1], pm.faces.colors[c][2]);
+        m << buf << "Ka 0.1 0.1 0.1\nKs 0.2 0.2 0.2\nNs 20\n\n";
+      }
+      ++i;
     }
     res.files.push_back(mtl);
   }
@@ -740,7 +927,9 @@ void write_stl_file(const std::filesystem::path& out, const std::vector<const Pl
     }
 }
 
-// Builds an XCAF document mirroring the selected part of the scene (names, colours, placements).
+// Builds an XCAF document mirroring the selected part of the scene (names, colours and face colours, placements).
+// `with_mesh` (glTF): the bodies meshed, and colours handed over as sRGB, which the writer stores linear as glTF wants;
+// STEP keeps OPAD's values as they are, which is how STEP files hold colours.
 Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies,
                                     bool with_mesh, double tol) {
   std::set<std::string> wanted(bodies.begin(), bodies.end());
@@ -757,6 +946,7 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
   struct Built { TopoDS_Shape placed; TopoDS_Shape proto; const Node* node; };
   std::vector<Built> built;
   BRep_Builder bb;
+  std::map<std::string, TopoDS_Shape> shells;  // a mesh body of several faces (one per colour) as one part: a shell, per body key
 
   std::function<TopoDS_Shape(const std::string&)> build = [&](const std::string& id) -> TopoDS_Shape {
     const Node* n = scene.node(id);
@@ -766,6 +956,17 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
       if (n->body_missing) return TopoDS_Shape();
       proto = body_shape(doc, n->body_key);
       if (with_mesh) mesh_shape(proto, tol);
+      // A compound would become an assembly, each face a node of its own (glTF): its faces go into a shell, one part.
+      if (with_mesh && n->representation == "mesh" && proto.ShapeType() == TopAbs_COMPOUND) {
+        auto& shell = shells[n->body_key];
+        if (shell.IsNull()) {
+          TopoDS_Shell faces;
+          bb.MakeShell(faces);
+          for (TopExp_Explorer f(proto, TopAbs_FACE); f.More(); f.Next()) bb.Add(faces, f.Current());
+          shell = faces;
+        }
+        proto = shell;
+      }
     } else {
       TopoDS_Compound comp;
       bb.MakeCompound(comp);
@@ -790,13 +991,25 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
     st->AddShape(s, Standard_True);
   }
   st->UpdateAssemblies();
+  const auto color = [with_mesh](const std::array<double, 3>& c) { return Quantity_Color(c[0], c[1], c[2], with_mesh ? Quantity_TOC_sRGB : Quantity_TOC_RGB); };
+  std::set<std::string> faced;  // body keys whose face colours are set (on the prototype, shared by its instances)
   for (const auto& b : built) {
     TDF_Label proto_label, inst_label;
     if (st->FindShape(b.proto, proto_label, Standard_False) && !proto_label.IsNull()) {
       TDataStd_Name::Set(proto_label, b.node->name.c_str());
-      if (b.node->kind == Node::Kind::Body && b.node->has_color)
-        ct->SetColor(proto_label, Quantity_Color(b.node->color[0], b.node->color[1], b.node->color[2], Quantity_TOC_RGB),
-                     XCAFDoc_ColorSurf);
+      if (b.node->kind == Node::Kind::Body && b.node->has_color) ct->SetColor(proto_label, color(b.node->color), XCAFDoc_ColorSurf);
+      const bool body = b.node->kind == Node::Kind::Body && faced.insert(b.node->body_key).second;
+      if (const FaceColors faces = body ? face_colors(doc, b.node->body_key) : FaceColors{}; !faces.empty()) {
+        TopTools_IndexedMapOfShape map;
+        TopExp::MapShapes(b.proto, TopAbs_FACE, map);
+        for (int i = 1; i <= map.Extent(); ++i) {
+          if (faces.at(i - 1) < 0) continue;
+          // A face is a sub-shape of its part (a solid, a mesh body's shell), or a part of its own.
+          TDF_Label at;
+          if (!st->FindShape(map(i), at, Standard_False) || at.IsNull()) at = st->AddSubShape(proto_label, map(i));
+          if (!at.IsNull()) ct->SetColor(at, color(faces.colors[static_cast<size_t>(faces.at(i - 1))]), XCAFDoc_ColorSurf);
+        }
+      }
     }
     if (st->FindShape(b.placed, inst_label, Standard_True) && !inst_label.IsNull() && inst_label != proto_label)
       TDataStd_Name::Set(inst_label, b.node->name.c_str());

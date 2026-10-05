@@ -121,6 +121,18 @@ TEST(expressions) {
 TEST(document_units_are_undoable_and_do_not_resize_stored_features) {
   ParamTable inches({},"in");CHECK_NEAR(inches.length("2"),50.8,1e-10);CHECK_NEAR(inches.length("2 mm"),2,1e-10);
   CHECK_NEAR(ParamTable().length(inches.explicit_length("2+1")),76.2,1e-10);
+  // UI-26: a plain number is stored with its unit as a word, not as "(15) * 1 mm" (which panels then showed), and that
+  // older form reads back the same way; expressions keep their form.
+  CHECK_EQ(ParamTable().explicit_length("15"),std::string("15 mm"));
+  CHECK_EQ(inches.explicit_length(" -2.5 "),std::string("-2.5 in"));
+  CHECK_EQ(inches.explicit_length("1e1"),std::string("1e1 in"));
+  CHECK_EQ(ParamTable().explicit_length("(15) * 1 mm"),std::string("15 mm"));
+  CHECK_EQ(inches.explicit_length("(0.5)*1 in"),std::string("0.5 in"));
+  CHECK_EQ(inches.explicit_length("(15) * 1 mm"),std::string("15 mm"));  // the unit it was stored with
+  CHECK_EQ(inches.explicit_length("2+1"),std::string("(2+1) * 1 in"));
+  CHECK_EQ(ParamTable().explicit_length("(15) * 1 mm + 2 mm"),std::string("(15) * 1 mm + 2 mm"));
+  CHECK_EQ(ParamTable().explicit_length("15 cm"),std::string("15 cm"));
+  CHECK_EQ(ParamTable({{"w","w","4 mm",""}}).explicit_length("w"),std::string("w"));
   Document doc=Document::create();auto sketch=rectangle(0,0,10,10);
   const auto id=run_id(sketch_cmd(doc,sketch));const auto regions=sketch_regions(sketch,{});
   feature_cmd(doc,"extrude",{{"profiles",json::array({{{"sketch",id},{"at",{5,5}},{"boundary",regions[0].boundary}}})},{"distance","10 mm"},{"operation","new"}});
@@ -536,6 +548,77 @@ TEST(open_endpoint_detection_handles_t_junctions_and_construction) {
   Sketch circle;circle.add_circle(circle.add_point(0,0),10);CHECK(dangling_vertices(circle).empty());
 }
 
+// UI-71: moving, scaling or fading a backdrop stores only the fields that changed (a nudge stored the whole picture again),
+// a regeneration's result leaves the pictures out, and replay brings them back from the sketch as given.
+TEST(sketch_backdrop_edits_never_store_the_picture_again) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "width"}, {"expr", "40 mm"}}, &doc);
+  Sketch sk = rectangle(0, 0, 40, 20, "width");
+  const std::string picture(200000, 'A');  // a photo's base64 (never decoded here)
+  sk.images.push_back({{"id", sk.next_id()}, {"name", "photo.jpg"}, {"data", picture}, {"position", {0, 0}}, {"width", 50}, {"height", 25}, {"opacity", 0.5}});
+  const std::string id = run_id(sketch_cmd(doc, sk));
+  auto grown = [&, size = doc.serialize().size()]() mutable { const size_t now = doc.serialize().size(), by = now - size; size = now; return by; };
+  auto nudge = [&](double x, double y) {
+    const json before = resolve(doc).sketch(id)->geometry;
+    json after = before;
+    after["images"][0]["position"] = {x, y};
+    after["images"][0]["opacity"] = 0.7;
+    after["images"][0].erase("name");
+    const json delta = sketch_delta(before, after);
+    CHECK(!delta.contains("images"));
+    CHECK_EQ(delta["image_fields"].size(), size_t(1));
+    CHECK(!delta["image_fields"][0].contains("data") && !delta["image_fields"][0].contains("width"));
+    CHECK(!before["images"][0].contains("name") || delta["image_fields"][0].at("name").is_null());
+    CHECK(apply_sketch_delta(before, delta) == after);
+    design::apply_ops(doc, {make_edit_op(id, {{"geometry_delta", delta}})});
+  };
+  nudge(5, 2);
+  CHECK(grown() < 1024);  // was the whole picture again
+  json shown = resolve(doc).sketch(id)->geometry;
+  CHECK(shown["images"][0]["data"] == picture);
+  CHECK(shown["images"][0]["position"] == json({5, 2}));
+  // A parameter re-solves the sketch: its result has the new points, never the pictures.
+  commands::run("param", {{"name", "width"}, {"expr", "60 mm"}}, &doc);
+  CHECK(grown() < 8192);
+  const Op& regen = doc.ops.back();
+  CHECK_EQ(regen.type, std::string("regen"));
+  CHECK(regen.data["results"][id].contains("geometry") && !regen.data["results"][id]["geometry"].contains("images"));
+  shown = resolve(doc).sketch(id)->geometry;
+  CHECK(shown["images"][0]["data"] == picture);
+  CHECK_NEAR(shown["points"][1]["x"].get<double>(), 60, 1e-9);
+  // Moved again after the regeneration: the solved points stay, the picture is still stored once.
+  nudge(-3, 1);
+  CHECK(grown() < 1024);
+  shown = resolve(Document::parse(doc.serialize())).sketch(id)->geometry;
+  CHECK(shown["images"][0]["position"] == json({-3, 1}));
+  CHECK_NEAR(shown["points"][1]["x"].get<double>(), 60, 1e-9);
+  size_t copies = 0;
+  for (size_t at = 0; (at = doc.serialize().find(picture, at)) != std::string::npos; at += picture.size()) ++copies;
+  CHECK_EQ(copies, size_t(1));
+  // Another picture is a whole record; what an older build kept of field changes (a sketch key) is dropped on replay.
+  json before = shown, after = shown;
+  after["images"][0]["data"] = std::string(1000, 'B');
+  CHECK_EQ(sketch_delta(before, after)["images"].size(), size_t(1));
+  CHECK(!sketch_delta(before, after).contains("image_fields"));
+  before["image_fields"] = json::array({{{"id", 99}, {"width", 1}}});
+  CHECK(!apply_sketch_delta(before, json::object()).contains("image_fields"));
+  CHECK_THROWS(apply_sketch_delta(shown, {{"image_fields", json::array({{{"id", 99}, {"width", 1}}})}}));
+  // What the viewport compares on every sync: the picture by its samples, never its bytes; a move, a fade or another picture
+  // of the same length (bytes in the middle) changes it.
+  const std::string stamp = geometry_stamp(shown);
+  CHECK(stamp.size() < 2048 && stamp.find(std::string(64, 'A')) == std::string::npos);
+  CHECK(geometry_stamp(shown) == stamp);
+  json moved = shown, faded = shown, other = shown;
+  moved["images"][0]["position"] = {-3, 2};
+  faded["images"][0]["opacity"] = 0.2;
+  std::string middle = picture;
+  middle[picture.size() / 2] = 'B';
+  other["images"][0]["data"] = middle;
+  CHECK(geometry_stamp(moved) != stamp && geometry_stamp(faded) != stamp && geometry_stamp(other) != stamp);
+  shown["points"][1]["x"] = 61;
+  CHECK(geometry_stamp(shown) != stamp);
+}
+
 TEST(sketch_record_format_and_incremental_replay) {
   Document doc=Document::create();
   Sketch sk; int a=sk.add_point(0,0),b=sk.add_point(10,0); sk.add_line(a,b);
@@ -576,6 +659,69 @@ TEST(extrude_start_offset_face_and_invalid_axis) {
   CHECK_NEAR(result->result.at("distance_handle").at("origin")[2].get<double>(),16,1e-6);
   CHECK_NEAR(total_volume(doc),1600,1e-5);
   const auto count=doc.ops.size();CHECK_THROWS(feature_cmd(doc,"extrude",{{"profiles",profiles},{"distance","3 mm"},{"start","face"},{"start_face",json::array({side})}}));CHECK_EQ(doc.ops.size(),count);
+}
+// TODO 11 P2: the arrows a feature's panel shows, where the help guides draw them.
+TEST(feature_handles_sit_where_the_guides_draw_them) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "r"}, {"expr", "3 mm"}}, &doc);
+  feature_cmd(doc, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "20 mm"}, {"centered", false}});
+  const Scene s = resolve(doc);
+  const std::string body = s.all_bodies().front();
+  const TopoDS_Shape shape = node_world_shape(doc, s, body);
+  // The top edge along X at y = 0, z = 20, and the top face.
+  int edge = -1, top = -1;
+  TopTools_IndexedMapOfShape edges, faces;
+  TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+  TopExp::MapShapes(shape, TopAbs_FACE, faces);
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
+    const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+    if (std::abs(a.Y()) < 1e-9 && std::abs(b.Y()) < 1e-9 && std::abs(a.Z() - 20) < 1e-9 && std::abs(b.Z() - 20) < 1e-9) edge = i - 1;
+  }
+  for (int i = 1; i <= faces.Extent(); ++i) {
+    BRepAdaptor_Surface f(TopoDS::Face(faces(i)));
+    if (f.GetType() == GeomAbs_Plane && std::abs(f.Plane().Location().Z() - 20) < 1e-9 && std::abs(f.Plane().Axis().Direction().Z()) > 0.99) top = i - 1;
+  }
+  CHECK(edge >= 0);
+  CHECK(top >= 0);
+  const json edgeRef = {{"body", body}, {"kind", "edge"}, {"index", edge}}, faceRef = {{"body", body}, {"kind", "face"}, {"index", top}};
+  auto close = [](const json& v, double x, double y, double z) {
+    return std::abs(v[0].get<double>() - x) < 1e-6 && std::abs(v[1].get<double>() - y) < 1e-6 && std::abs(v[2].get<double>() - z) < 1e-6;
+  };
+  // Fillet: half way along the edge, out between the top and the front face, the radius as its expression evaluates.
+  json h = feature_handles(doc, s, "fillet", {{"edges", json::array({edgeRef})}, {"radius", "r"}});
+  CHECK_EQ(h.size(), size_t(1));
+  CHECK_EQ(h[0]["input"].get<std::string>(), std::string("radius"));
+  CHECK(close(h[0]["origin"], 20, 0, 20));
+  CHECK(close(h[0]["axis"], 0, -std::sqrt(0.5), std::sqrt(0.5)));
+  CHECK_NEAR(h[0]["value"].get<double>(), 3, 1e-9);
+  h = feature_handles(doc, s, "chamfer", {{"edges", json::array({edgeRef})}, {"type", "equal"}, {"distance", "2 mm"}});
+  CHECK(h.size() == 1 && h[0]["input"] == "distance" && close(h[0]["axis"], 0, -std::sqrt(0.5), std::sqrt(0.5)));
+  // Press pull: the top face's centre, up; thicken: up, down with Other side.
+  h = feature_handles(doc, s, "offset_face", {{"faces", json::array({faceRef})}, {"distance", "-4 mm"}});
+  CHECK(h.size() == 1 && close(h[0]["origin"], 20, 15, 20) && close(h[0]["axis"], 0, 0, 1));
+  CHECK_NEAR(h[0]["value"].get<double>(), -4, 1e-9);
+  h = feature_handles(doc, s, "thicken", {{"faces", json::array({faceRef})}, {"thickness", "2 mm"}, {"flip", true}});
+  CHECK(h.size() == 1 && h[0]["input"] == "thickness" && close(h[0]["origin"], 20, 15, 20) && close(h[0]["axis"], 0, 0, -1));
+  // An offset plane from XY; a cone's height on XZ at x 5; a box made corner to corner.
+  h = feature_handles(doc, s, "plane", {{"mode", "offset"}, {"plane", {{"base", "xy"}}}, {"distance", "10 mm"}});
+  CHECK(h.size() == 1 && close(h[0]["origin"], 0, 0, 0) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == 10.0);
+  CHECK(feature_handles(doc, s, "plane", {{"mode", "angle"}, {"plane", {{"base", "xy"}}}}).empty());
+  // From the top face: off its middle (the guide's arrow), not off the corner its frame starts at.
+  h = feature_handles(doc, s, "plane", {{"mode", "offset"}, {"plane", {{"face", faceRef}}}, {"distance", "8 mm"}});
+  CHECK(h.size() == 1 && close(h[0]["origin"], 20, 15, 20) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == 8.0);
+  h = feature_handles(doc, s, "box", {{"plane", {{"base", "xy"}}}, {"x", "5 mm"}, {"y", "0 mm"}, {"length", "10 mm"}, {"width", "6 mm"}, {"height", "-8 mm"}, {"centered", false}});
+  CHECK(h.size() == 1 && h[0]["input"] == "height" && close(h[0]["origin"], 10, 3, 0) && close(h[0]["axis"], 0, 0, 1) && h[0]["value"] == -8.0);
+  // A move that turns: the ring's axis (the edge's line here) and the angle; none without Rotate.
+  h = feature_handles(doc, s, "move", {{"bodies", json::array({{{"body", body}, {"kind", "body"}}})}, {"rotate", true}, {"axis", {{"edge", edgeRef}}}, {"angle", "30 deg"}});
+  CHECK(h.size() == 1 && h[0]["input"] == "angle" && h[0].value("ring", false) && std::abs(std::abs(h[0]["axis"][0].get<double>()) - 1) < 1e-9);
+  CHECK(std::abs(h[0]["origin"][1].get<double>()) < 1e-9 && std::abs(h[0]["origin"][2].get<double>() - 20) < 1e-9);
+  CHECK_NEAR(h[0]["value"].get<double>(), M_PI / 6, 1e-9);
+  CHECK(feature_handles(doc, s, "move", {{"bodies", json::array({{{"body", body}, {"kind", "body"}}})}, {"rotate", false}, {"axis", {{"base", "z"}}}}).empty());
+  // Nothing to show: no pick yet, a stale pick, a kind without a handle.
+  CHECK(feature_handles(doc, s, "fillet", {{"edges", json::array()}, {"radius", "2 mm"}}).empty());
+  CHECK(feature_handles(doc, s, "fillet", {{"edges", json::array({{{"body", "nobody"}, {"kind", "edge"}, {"index", 0}}})}, {"radius", "2 mm"}}).empty());
+  CHECK(feature_handles(doc, s, "shell", {{"faces", json::array({faceRef})}, {"thickness", "1 mm"}}).empty());
 }
 TEST(sketch_origin_support_regenerates_and_roundtrips) {
   Document doc=Document::create();
@@ -1733,4 +1879,413 @@ TEST(features_suppressed_by_an_expression) {
   commands::run("feature_edit", {{"target", third}, {"suppress_if", ""}}, &doc);
   CHECK(state() == std::make_pair(false, size_t(2)));
   CHECK_THROWS(commands::run("feature_edit", {{"target", third}, {"suppress_if", "joints <"}}, &doc));
+}
+
+// TODO 11 UI-33: a sketch or feature made in a component says so ("component" on its op). The feature's new bodies go
+// into that component, kept in its frame, and stay there when it regenerates; copies still follow their source. An
+// older build ignores the key: the bodies are in the component all the same (the result's parent), the sketch is not.
+TEST(features_and_sketches_made_in_a_component) {
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 40).to_json()}}, &doc);
+  const std::string sketch = commands::run("sketch", {{"plane", {{"base", "xy"}}}, {"geometry", rectangle(0, 0, 20, 10).to_json()}, {"component", lid}}, &doc)["sketch_id"];
+  Scene s = resolve(doc);
+  CHECK_EQ(s.sketch(sketch)->component, lid);
+  CHECK(s.sketch(sketch)->placed.to_json() == Mat4::translation(0, 0, 40).to_json());
+  auto z_range = [&](const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, s, id), b);
+    return std::make_pair(b.CornerMin().Z(), b.CornerMax().Z());
+  };
+  const json pad = commands::run("feature", {{"kind", "extrude"}, {"inputs", {{"profiles", json::array({{{"sketch", sketch}, {"at", {5, 5}}}})}, {"distance", "5 mm"}}}, {"component", lid}}, &doc);
+  const std::string plate = pad["body_ids"][0];
+  s = resolve(doc);
+  CHECK_EQ(s.node(plate)->parent, lid);
+  CHECK_EQ(s.feature(pad["feature_id"])->component, lid);
+  CHECK_EQ(s.feature(pad["feature_id"])->result["bodies"][0]["parent"], lid);
+  CHECK_NEAR(z_range(plate).first, 0, 1e-6);  // where the sketch is; stored in the lid's frame
+  CHECK_NEAR(z_range(plate).second, 5, 1e-6);
+  CHECK(s.unresolved.empty());
+  // A regeneration keeps the body where it was made: the same node, in the lid.
+  commands::run("feature_edit", {{"target", pad["feature_id"]}, {"inputs", {{"distance", "8 mm"}}}}, &doc);
+  s = resolve(doc);
+  CHECK_EQ(s.node(plate)->parent, lid);
+  CHECK_NEAR(z_range(plate).second, 8, 1e-6);
+  // A copy follows its source (into the lid), a body from scratch without a component goes to the root, and so does
+  // one whose component is null.
+  const json row = commands::run("feature", {{"kind", "pattern_rect"}, {"inputs", {{"bodies", json::array({plate})}, {"count", "2"}, {"spacing", "30 mm"}, {"axis", {{"base", "x"}}}}}}, &doc);
+  const std::string loose = feature_cmd(doc, "box", {{"x", "100 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}})["body_ids"][0];
+  const std::string rooted = commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "120 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}}}, {"component", nullptr}}, &doc)["body_ids"][0];
+  s = resolve(doc);
+  CHECK_EQ(s.node(row["body_ids"][0])->parent, lid);
+  CHECK(s.node(loose)->parent.empty() && s.node(rooted)->parent.empty());
+  // A construction plane made in the lid records it; features lists where each item was made.
+  const json plane = commands::run("feature", {{"kind", "plane"}, {"inputs", {{"mode", "offset"}, {"plane", {{"base", "xy"}}}, {"distance", "30 mm"}}}, {"component", lid}}, &doc);
+  CHECK_EQ(resolve(doc).feature(plane["feature_id"])->component, lid);
+  size_t listed = 0;
+  for (const auto& item : commands::run("features", json::object(), &doc)) listed += item.value("component", "") == lid;
+  CHECK_EQ(listed, 3u);
+  // A body or an unknown id is not a component: refused before anything is computed.
+  const size_t ops = doc.ops.size();
+  CHECK_THROWS(commands::run("feature", {{"kind", "box"}, {"inputs", json::object()}, {"component", plate}}, &doc));
+  CHECK_THROWS(commands::run("sketch", {{"geometry", rectangle(0, 0, 1, 1).to_json()}, {"component", new_uuid()}}, &doc));
+  CHECK_EQ(doc.ops.size(), ops);
+  CHECK_THROWS(Document::validate_op({{"op", "sketch"}, {"name", "S"}, {"plane", json::object()}, {"geometry", json::object()}, {"component", "lid"}}));
+  // The file round-trips; an older build (which ignores the key) still finds the bodies in the lid.
+  const Document back = Document::parse(doc.serialize());
+  CHECK_EQ(resolve(back).sketch(sketch)->component, lid);
+  Document older = back;
+  for (auto& op : older.ops) op.data.erase("component");
+  const Scene o = resolve(older);
+  CHECK_EQ(o.node(plate)->parent, lid);
+  CHECK(o.sketch(sketch)->component.empty());
+  CHECK(o.unresolved.empty());
+  // Without the lid (tombstoned), the sketch and the plane belong to the root, as the lid's bodies do: where they were,
+  // not moved by the lid's placement gone. Back (the delete deleted), they are in it again, still where they were.
+  const std::string removal = commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc)["id"];
+  s = resolve(doc);
+  CHECK(s.sketch(sketch)->component.empty() && s.feature(plane["feature_id"])->component.empty());
+  CHECK(s.node(plate)->parent.empty());
+  CHECK_NEAR(z_range(plate).first, 0, 1e-6);
+  CHECK_NEAR(z_range(plate).second, 8, 1e-6);
+  commands::run("delete", {{"target", removal}}, &doc);
+  s = resolve(doc);
+  CHECK_EQ(s.node(plate)->parent, lid);
+  CHECK_EQ(s.sketch(sketch)->component, lid);
+  CHECK_NEAR(z_range(plate).first, 0, 1e-6);
+  CHECK_NEAR(z_range(plate).second, 8, 1e-6);
+  CHECK(s.unresolved.empty());
+}
+
+// TODO 11 UI-33 phase 2: a sketch, construction plane or axis made in a component moves with it when the component
+// moves later, as its bodies do, and features read the sketch where it is now: a body extruded from it after the move
+// lands on it. The op keeps where it was made (replay before the move and older builds see that); a plane chosen again
+// for the sketch goes in as made, so the sketch ends up where it was chosen.
+TEST(sketches_and_planes_follow_their_component) {
+  CHECK(Mat4::translation(1, 2, 3).inverse().to_json() == Mat4::translation(-1, -2, -3).to_json());
+  Mat4 turn;  // a quarter turn about z, then up 5
+  turn.at(0, 0) = 0, turn.at(0, 1) = -1, turn.at(1, 0) = 1, turn.at(1, 1) = 0, turn.at(2, 3) = 5;
+  CHECK((turn * turn.inverse()).is_identity(1e-12) && (turn.inverse() * turn).is_identity(1e-12));
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  const std::string sketch = commands::run("sketch", {{"plane", {{"base", "xy"}}}, {"geometry", rectangle(0, 0, 20, 10).to_json()}, {"component", lid}}, &doc)["sketch_id"];
+  const std::string plane = commands::run("feature", {{"kind", "plane"}, {"inputs", {{"mode", "offset"}, {"plane", {{"base", "xy"}}}, {"distance", "30 mm"}}}, {"component", lid}}, &doc)["feature_id"];
+  const std::string axis = commands::run("feature", {{"kind", "axis"}, {"inputs", {{"mode", "two_points"}, {"points", {{5, 5, 0}, {5, 5, 10}}}}}, {"component", lid}}, &doc)["feature_id"];
+  auto extrude = [&](double distance, const json& component) {
+    json a = {{"kind", "extrude"}, {"inputs", {{"profiles", json::array({{{"sketch", sketch}, {"at", {5, 5}}}})}, {"distance", distance}, {"operation", "new"}}}};
+    if (!component.is_null()) a["component"] = component;
+    return commands::run("feature", a, &doc)["body_ids"][0].get<std::string>();
+  };
+  const std::string first = extrude(5, lid);
+  Scene s = resolve(doc);
+  auto box = [&](const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, s, id), b);
+    return b;
+  };
+  auto origin = [&](const std::string& id) { return s.sketch(id)->frame.origin; };
+  auto plane_at = [&] { return Frame::from_json(s.feature(plane)->result["plane"]).origin; };
+  CHECK(s.sketch(sketch)->moved.is_identity());
+  // The lid goes up 40: its sketch, plane, axis and body with it; the op still has the sketch where it was made.
+  commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 40).to_json()}}, &doc);
+  s = resolve(doc);
+  CHECK_NEAR(origin(sketch)[2], 40, 1e-9);
+  CHECK(s.sketch(sketch)->moved.to_json() == Mat4::translation(0, 0, 40).to_json());
+  CHECK_NEAR(plane_at()[2], 70, 1e-9);
+  CHECK_NEAR(s.feature(axis)->result["axis"]["origin"][2].get<double>(), 40, 1e-9);
+  CHECK_NEAR(s.feature(axis)->result["axis"]["dir"][2].get<double>(), 1, 1e-9);
+  CHECK_NEAR(box(first).CornerMin().Z(), 40, 1e-6);
+  CHECK_NEAR(doc.find_op(sketch)->data["plane"]["frame"]["origin"][2].get<double>(), 0, 1e-9);
+  // Made from it now, in the lid or at the root, and sketched on the plane: where they are now.
+  const std::string second = extrude(3, lid), loose = extrude(2, json());
+  const std::string on_plane = commands::run("sketch", {{"plane", {{"feature", plane}}}, {"geometry", rectangle(0, 0, 4, 4).to_json()}}, &doc)["sketch_id"];
+  s = resolve(doc);
+  CHECK_NEAR(box(second).CornerMin().Z(), 40, 1e-6);
+  CHECK_NEAR(box(second).CornerMax().Z(), 43, 1e-6);
+  CHECK_NEAR(box(loose).CornerMin().Z(), 40, 1e-6);
+  CHECK_NEAR(box(loose).CornerMax().Z(), 42, 1e-6);
+  CHECK_NEAR(origin(on_plane)[2], 70, 1e-9);
+  CHECK(s.unresolved.empty());
+  // Put into a moved assembly (a reparent), the lid takes what is in it along; the root's stay.
+  const std::string frame = commands::run("component", {{"name", "Frame"}}, &doc)["component_id"];
+  commands::run("transform", {{"target", frame}, {"matrix", Mat4::translation(100, 0, 0).to_json()}}, &doc);
+  commands::run("reparent", {{"target", lid}, {"parent", frame}}, &doc);
+  s = resolve(doc);
+  CHECK_NEAR(origin(sketch)[0], 100, 1e-9);
+  CHECK_NEAR(origin(sketch)[2], 40, 1e-9);
+  CHECK_NEAR(plane_at()[0], 100, 1e-9);
+  CHECK_NEAR(box(second).CornerMin().X(), 100, 1e-6);
+  CHECK_NEAR(box(loose).CornerMin().X(), 0, 1e-6);
+  CHECK_NEAR(origin(on_plane)[0], 0, 1e-9);
+  // Recomputing everything reads the same frames the features were made from: no new bodies.
+  CHECK(plan_regenerate(doc, true).bodies.empty());
+  // A plane chosen again for the moved sketch: it is where it was chosen, and the op has it where the lid was then.
+  const json edited = commands::run("sketch_edit", {{"target", sketch}, {"plane", {{"base", "xz"}}}}, &doc);
+  s = resolve(doc);
+  CHECK(s.sketch(sketch)->frame.to_json() == Frame::from_json(edited["frame"]).to_json());
+  CHECK_NEAR(origin(sketch)[0], 0, 1e-9);
+  CHECK_NEAR(origin(sketch)[2], 0, 1e-9);
+  CHECK_NEAR(s.sketch(sketch)->frame.y[2], 1, 1e-9);
+  json stored;
+  for (const auto& op : doc.ops)
+    if (op.type == "edit" && op.data.value("target", "") == sketch) stored = op.data["set"]["plane"]["frame"]["origin"];
+  CHECK_NEAR(stored[0].get<double>(), -100, 1e-9);
+  CHECK_NEAR(stored[2].get<double>(), -40, 1e-9);
+  for (const auto& body : {first, second}) {  // the lid's bodies regenerated on it, there
+    CHECK_NEAR(box(body).CornerMin().X(), 0, 1e-6);
+    CHECK_NEAR(box(body).CornerMin().Z(), 0, 1e-6);
+    CHECK_NEAR(box(body).CornerMax().Z(), 10, 1e-6);
+    CHECK_NEAR(box(body).CornerMax().Y(), 0, 1e-6);
+  }
+  CHECK(s.unresolved.empty());
+  // A plane through a picked point on a world plane, as the app's plane picker gives it: there too.
+  const json picked = commands::run("sketch_edit", {{"target", sketch}, {"plane", {{"support", {{"base", "xy"}}}, {"origin", {{"world", {5, 6, 0}}}}}}}, &doc);
+  s = resolve(doc);
+  CHECK(s.sketch(sketch)->frame.to_json() == Frame::from_json(picked["frame"]).to_json());
+  CHECK_NEAR(origin(sketch)[0], 5, 1e-9);
+  CHECK_NEAR(origin(sketch)[1], 6, 1e-9);
+  CHECK_NEAR(origin(sketch)[2], 0, 1e-9);
+  CHECK_NEAR(box(first).CornerMin().Z(), 0, 1e-6);
+  CHECK_NEAR(box(first).CornerMax().Z(), 5, 1e-6);
+  // The file round-trips; an older build (no component keys) shows them where they were made.
+  const Document back = Document::parse(doc.serialize());
+  CHECK(resolve(back).sketch(sketch)->frame.to_json() == s.sketch(sketch)->frame.to_json());
+  Document older = back;
+  for (auto& op : older.ops) op.data.erase("component");
+  const Scene o = resolve(older);
+  CHECK(o.sketch(sketch)->moved.is_identity());
+  CHECK_NEAR(o.sketch(sketch)->frame.origin[0], -95, 1e-9);
+  CHECK_NEAR(o.sketch(sketch)->frame.origin[2], -40, 1e-9);
+  CHECK_NEAR(Frame::from_json(o.feature(plane)->result["plane"]).origin[2], 30, 1e-9);
+  // Without the lid (tombstoned), the sketch and the bodies made from it are back where they were made, together.
+  commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc);
+  s = resolve(doc);
+  CHECK(s.sketch(sketch)->component.empty() && s.sketch(sketch)->moved.is_identity());
+  CHECK_NEAR(origin(sketch)[0], -95, 1e-9);
+  CHECK_NEAR(box(first).CornerMin().X(), -95, 1e-6);
+  CHECK_NEAR(box(first).CornerMin().Z(), -40, 1e-6);
+  CHECK_NEAR(plane_at()[2], 30, 1e-9);
+}
+
+// TODO 11 UI-33: while a component is active the timeline dims the ops that do not touch it; ops_in_component says
+// which do: what made what is in it (also a body moved into it later), what was made in it, changes to a body in it,
+// its moves and anything put into it. A body elsewhere, its name and a parameter do not.
+TEST(ops_that_touch_a_component) {
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  const std::string lid_op = resolve(doc).node(lid)->source_op;
+  const std::string sketch = commands::run("sketch", {{"geometry", rectangle(0, 0, 20, 10).to_json()}, {"component", lid}}, &doc)["sketch_id"];
+  const json pad = commands::run("feature", {{"kind", "extrude"}, {"inputs", {{"profiles", json::array({{{"sketch", sketch}, {"at", {5, 5}}}})}, {"distance", "5 mm"}}}, {"component", lid}}, &doc);
+  const std::string plate = pad["body_ids"][0];
+  const json loose = feature_cmd(doc, "box", {{"x", "50 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}});
+  const json pin = feature_cmd(doc, "box", {{"x", "80 mm"}, {"length", "2 mm"}, {"width", "2 mm"}, {"height", "8 mm"}});
+  const std::string moved = commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 10).to_json()}}, &doc)["id"];
+  const std::string renamed = commands::run("rename", {{"target", loose["body_ids"][0]}, {"name", "Loose"}}, &doc)["id"];
+  const std::string into = commands::run("reparent", {{"target", pin["body_ids"][0]}, {"parent", lid}}, &doc)["id"];
+  const std::string round = feature_cmd(doc, "fillet", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}})["feature_id"];
+  const std::string note = commands::run("annotate", {{"anchor", plate + "/face/0"}, {"text", "check"}}, &doc)["id"];
+  const std::string param = commands::run("param", {{"name", "gap"}, {"expr", "2 mm"}}, &doc)["ids"][0];
+  const Scene s = resolve(doc);
+  const std::set<std::string> in = ops_in_component(doc, s, lid);
+  for (const std::string op : {lid_op, sketch, pad["feature_id"].get<std::string>(), pin["feature_id"].get<std::string>(), moved, into, round, note}) CHECK(in.count(op));
+  for (const std::string op : {loose["feature_id"].get<std::string>(), renamed, param}) CHECK(!in.count(op));
+  CHECK_EQ(in.size(), 8u);
+  CHECK_EQ(ops_in_component(doc, s, "").size(), effective_ops(doc).size());
+  // A feature made in it and tombstoned still touches it, as do its tombstone and the restore of it.
+  const std::string box = commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "30 mm"}, {"length", "2 mm"}, {"width", "2 mm"}, {"height", "2 mm"}}}, {"component", lid}}, &doc)["feature_id"];
+  const std::string gone = commands::run("delete", {{"target", box}}, &doc)["id"];
+  const std::string other = commands::run("delete", {{"target", loose["feature_id"]}}, &doc)["id"];
+  std::set<std::string> now = ops_in_component(doc, resolve(doc), lid);
+  CHECK(now.count(box) && now.count(gone) && !now.count(other) && !now.count(loose["feature_id"].get<std::string>()));
+  const std::string back = commands::run("delete", {{"target", gone}}, &doc)["id"];
+  now = ops_in_component(doc, resolve(doc), lid);
+  CHECK(now.count(box) && now.count(gone) && now.count(back));
+  size_t listed = 0;
+  for (const auto& op : doc.ops) listed += op.type != "edit" && op.type != "regen";
+  CHECK_EQ(ops_in_component(doc, resolve(doc), "").size(), listed);
+}
+
+// TODO 11 UI-37: a locked body, or one under a locked component, is not changed, moved or removed: the change is
+// refused naming it and the document stays as it was. It is still a reference (a sketch on its face) and a source (a
+// copy of it), automatic join / cut targets leave it out, its colour and name still change, a component above it still
+// moves (it with it), and an unlocked component that goes with it (a drawing deleted with a locked layer) still goes.
+TEST(locked_bodies_are_left_alone) {
+  Document doc = Document::create();
+  const json made = feature_cmd(doc, "box", {{"length", "40 mm"}, {"width", "40 mm"}, {"height", "5 mm"}});
+  const std::string plate = made["body_ids"][0], plate_op = made["feature_id"];
+  const std::string block = feature_cmd(doc, "box", {{"x", "60 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}})["body_ids"][0];
+  CHECK(!has_locks(doc));
+  commands::run("appearance", {{"target", plate}, {"locked", true}}, &doc);
+  Scene s = resolve(doc);
+  CHECK(has_locks(doc) && s.effectively_locked(plate) && !s.effectively_locked(block));
+  const std::string plate_key = s.node(plate)->body_key, block_key = s.node(block)->body_key;
+  auto refusal = [&](const std::string& command, const json& args) {
+    const size_t ops = doc.ops.size();
+    std::string why;
+    try {
+      commands::run(command, args, &doc);
+    } catch (const Error& e) {
+      why = e.what();
+    }
+    CHECK_EQ(doc.ops.size(), ops);
+    return why;
+  };
+  auto locked = [&](const std::string& name, const char* verb) { return "\"" + name + "\" is locked: unlock it before " + verb + " it"; };
+  auto held = [&](const std::string& name, const std::string& holder, const char* verb) {  // locked with a component above it: that is unlocked
+    return "\"" + name + "\" is locked with \"" + holder + "\": unlock \"" + holder + "\" before " + verb + " it";
+  };
+  const std::string name = s.node(plate)->name;
+  CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}}}}), locked(name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "box"}, {"inputs", {{"length", "4 mm"}, {"width", "4 mm"}, {"height", "20 mm"}, {"operation", "cut"}, {"targets", json::array({body_ref(plate)})}}}}),
+           locked(name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "move"}, {"inputs", {{"bodies", json::array({plate})}, {"dz", "5 mm"}}}}), locked(name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "remove"}, {"inputs", {{"bodies", json::array({plate})}}}}), locked(name, "removing"));
+  CHECK_EQ(refusal("feature_edit", {{"target", plate_op}, {"inputs", {{"height", "6 mm"}}}}), locked(name, "changing"));
+  CHECK_EQ(refusal("delete", {{"target", plate_op}}), locked(name, "removing"));
+  CHECK_EQ(refusal("transform", {{"target", plate}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked(name, "moving"));
+  const std::string shelf = commands::run("component", {{"name", "Shelf"}}, &doc)["component_id"];
+  CHECK_EQ(refusal("reparent", {{"targets", json::array({block, plate})}, {"parent", shelf}}), locked(name, "moving"));
+  // Still a reference and a source; its look and name are not edits.
+  commands::run("sketch", {{"plane", {{"face", plate + "/face/0"}}}, {"geometry", rectangle(0, 0, 4, 4).to_json()}}, &doc);
+  CHECK_EQ(feature_cmd(doc, "move", {{"bodies", json::array({plate})}, {"dx", "100 mm"}, {"copy", true}})["body_ids"].size(), 1u);
+  commands::run("appearance", {{"target", plate}, {"color", json::array({0.2, 0.2, 0.2})}}, &doc);
+  commands::run("rename", {{"target", plate}, {"name", "Base plate"}}, &doc);
+  // An automatic cut through the plate and the block cuts the block alone, and says so in its targets.
+  const json cut = feature_cmd(doc, "box", {{"x", "37.5 mm"}, {"length", "40 mm"}, {"width", "4 mm"}, {"height", "20 mm"}, {"operation", "cut"}});
+  s = resolve(doc);
+  CHECK_EQ(s.node(plate)->body_key, plate_key);
+  CHECK(s.node(block)->body_key != block_key);
+  CHECK_EQ(s.feature(cut["feature_id"])->inputs["targets"].size(), 1u);
+  CHECK_EQ(s.feature(cut["feature_id"])->inputs["targets"][0]["body"], block);
+  // A locked component locks what is in it; the component above it still moves, and it moves along.
+  const std::string outer = commands::run("component", {{"name", "Outer"}}, &doc)["component_id"];
+  const std::string inner = commands::run("component", {{"name", "Inner"}, {"parent", outer}}, &doc)["component_id"];
+  const std::string pin = commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "200 mm"}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "10 mm"}}}, {"component", inner}}, &doc)["body_ids"][0];
+  commands::run("appearance", {{"target", inner}, {"locked", true}}, &doc);
+  s = resolve(doc);
+  CHECK(s.effectively_locked(pin) && !s.node(pin)->locked);
+  CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({pin + "/edge/0"})}, {"radius", "0.5 mm"}}}}), held(s.node(pin)->name, "Inner", "changing"));
+  CHECK_EQ(refusal("transform", {{"target", inner}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked("Inner", "moving"));
+  CHECK_EQ(refusal("reparent", {{"target", pin}, {"parent", nullptr}}), held(s.node(pin)->name, "Inner", "moving"));
+  try {  // what a UI words in its own language
+    commands::run("transform", {{"target", pin}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}, &doc);
+    CHECK(false);
+  } catch (const LockedError& e) {
+    CHECK(e.node == s.node(pin)->name && e.holder == "Inner" && e.change == "moving" && e.more == 0);
+  }
+  CHECK_EQ(refusal("reparent", {{"target", inner}, {"parent", shelf}}), locked("Inner", "moving"));
+  commands::run("reparent", {{"target", outer}, {"parent", shelf}}, &doc);  // the component above it may, it along
+  commands::run("reparent", {{"target", outer}, {"parent", nullptr}}, &doc);
+  CHECK_EQ(refusal("delete", {{"target", s.node(inner)->source_op}}), locked("Inner", "removing"));
+  commands::run("transform", {{"target", outer}, {"matrix", Mat4::translation(0, 0, 10).to_json()}}, &doc);
+  CHECK_NEAR(resolve(doc).world(pin).at(2, 3), 10, 1e-12);
+  // Several at once: the first is named and the rest counted.
+  s = resolve(doc);
+  Scene gone = s;
+  gone.nodes.erase(plate);
+  gone.nodes.erase(pin);
+  const auto two = locked_change(s, gone);
+  CHECK(two && two->more == 1 && two->change == "removing" && std::string(two->what()).find(" before removing it (and 1 more locked)") != std::string::npos);
+  CHECK(!locked_change(s, s));
+  // A drawing whose layer is locked (an import node's "locked"): the layer's body alone is not removed, the drawing is.
+  const json line = {{"type", "body"}, {"id", new_uuid()}, {"name", "Walls"}, {"key", block_key}};
+  const json walls = {{"type", "component"}, {"id", new_uuid()}, {"name", "Walls"}, {"locked", true}, {"layer", {{"name", "Walls"}, {"locked", true}}}, {"children", json::array({line})}};
+  const json drawing = {{"op", "import"}, {"source", "walls.dxf"}, {"nodes", json::array({{{"type", "component"}, {"id", new_uuid()}, {"name", "walls"}, {"children", json::array({walls})}}})}};
+  const std::string drawing_op = commands::run("append", {{"op", drawing}}, &doc)["appended"][0];
+  s = resolve(doc);
+  CHECK(s.effectively_locked(line["id"]) && s.node(walls["id"])->layer["locked"] == true);
+  CHECK_EQ(refusal("feature", {{"kind", "remove"}, {"inputs", {{"bodies", json::array({line["id"]})}}}}), locked("Walls", "removing"));
+  commands::run("delete", {{"target", drawing_op}}, &doc);
+  CHECK(!resolve(doc).node(line["id"]));
+  // A regeneration is a repair, never refused; unlocked, the plate changes again.
+  commands::run("regenerate", {{"force", true}}, &doc);
+  commands::run("appearance", {{"target", plate}, {"locked", false}}, &doc);
+  feature_cmd(doc, "fillet", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}});
+  CHECK(resolve(doc).node(plate)->body_key != plate_key);
+}
+
+// TODO 11 UI-34: reparent with keep_place (the browser's drop, Move to component…, Component from selection) leaves what
+// moves where it is in the world: a transform follows each node whose new parent is placed elsewhere, none for a reorder
+// or a cycle (not replayed); without it a node goes with its new parent's placement.
+TEST(reparent_keeps_place) {
+  Document doc = Document::create();
+  auto box = [&](const char* x) { return feature_cmd(doc, "box", {{"x", x}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "4 mm"}})["body_ids"][0].get<std::string>(); };
+  const std::string a = box("10 mm"), b = box("20 mm"), c = box("30 mm");
+  const std::string frame = commands::run("component", {{"name", "Frame"}}, &doc)["component_id"];
+  const std::string inner = commands::run("component", {{"name", "Inner"}, {"parent", frame}}, &doc)["component_id"];
+  Mat4 turned;  // a quarter turn about Z, raised
+  turned.m = {0, -1, 0, 5, 1, 0, 0, 0, 0, 0, 1, 50, 0, 0, 0, 1};
+  commands::run("transform", {{"target", frame}, {"matrix", turned.to_json()}}, &doc);
+  Scene s = resolve(doc);
+  const Mat4 wa = s.world(a), wb = s.world(b), wc = s.world(c);
+  auto same = [](const Mat4& x, const Mat4& y) { return (x * y.inverse()).is_identity(1e-9); };
+  size_t ops = doc.ops.size();
+  const json moved = commands::run("reparent", {{"targets", json::array({a, b})}, {"parent", inner}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 4);
+  CHECK_EQ(moved.value("transformed", 0), 2);
+  CHECK_EQ(moved["ids"].size(), 2u);
+  s = resolve(doc);
+  CHECK(s.node(a)->parent == inner && s.node(b)->parent == inner);
+  CHECK(same(s.world(a), wa) && same(s.world(b), wb) && !same(s.node(a)->local, wa));
+  ops = doc.ops.size();
+  commands::run("reparent", {{"target", b}, {"parent", inner}, {"index", 0}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 1);
+  CHECK_EQ(resolve(doc).node(inner)->children.front(), b);
+  commands::run("reparent", {{"target", a}, {"parent", nullptr}, {"keep_place", true}}, &doc);
+  s = resolve(doc);
+  CHECK(s.node(a)->parent.empty() && same(s.world(a), wa) && same(s.node(a)->local, wa));
+  ops = doc.ops.size();
+  commands::run("reparent", {{"target", frame}, {"parent", inner}, {"keep_place", true}}, &doc);
+  CHECK_EQ(doc.ops.size(), ops + 1);
+  CHECK(resolve(doc).node(frame)->parent.empty());
+  commands::run("reparent", {{"target", c}, {"parent", inner}}, &doc);
+  CHECK(!same(resolve(doc).world(c), wc));
+}
+
+// A body made in a placed component and moved out of it keeping its place (a transform counting on the frame it was
+// made in) stays put when the component is deleted, as one moved into another component does; one left in it stays
+// put too (it is made again in world coordinates).
+TEST(bodies_moved_out_of_a_deleted_component_stay) {
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  const std::string shelf = commands::run("component", {{"name", "Shelf"}}, &doc)["component_id"];
+  commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 40).to_json()}}, &doc);
+  commands::run("transform", {{"target", shelf}, {"matrix", Mat4::translation(10, 0, 0).to_json()}}, &doc);
+  auto box = [&](const char* x) {
+    return commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", x}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "3 mm"}}}, {"component", lid}}, &doc)["body_ids"][0].get<std::string>();
+  };
+  const std::string out = box("0 mm"), moved = box("10 mm"), stays = box("20 mm");
+  auto where = [&](const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, resolve(doc), id), b);
+    return std::array<double, 2>{b.CornerMin().X(), b.CornerMin().Z()};
+  };
+  const auto out0 = where(out), moved0 = where(moved), stays0 = where(stays);
+  commands::run("reparent", {{"target", out}, {"parent", nullptr}, {"keep_place", true}}, &doc);
+  commands::run("reparent", {{"target", moved}, {"parent", shelf}, {"keep_place", true}}, &doc);
+  auto unchanged = [&](const std::string& id, const std::array<double, 2>& at) {
+    const auto now = where(id);
+    CHECK_NEAR(now[0], at[0], 1e-6);
+    CHECK_NEAR(now[1], at[1], 1e-6);
+  };
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  const std::string removal = commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc)["id"];
+  Scene s = resolve(doc);
+  CHECK(!s.node(lid) && s.node(out)->parent.empty() && s.node(moved)->parent == shelf && s.node(stays)->parent.empty());
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  unchanged(stays, stays0);
+  CHECK(design::plan_regenerate(doc).ops.empty());
+  commands::run("delete", {{"target", removal}}, &doc);  // the lid back: each where it was, the last one in it again
+  s = resolve(doc);
+  CHECK(s.node(out)->parent.empty() && s.node(moved)->parent == shelf && s.node(stays)->parent == lid);
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  unchanged(stays, stays0);
+  // Moved back into the lid, a body counts as left in it again.
+  commands::run("reparent", {{"target", out}, {"parent", lid}, {"keep_place", true}}, &doc);
+  commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc);
+  unchanged(out, out0);
+  for (const auto& u : resolve(doc).unresolved) CHECK(u.op_type == "transform" || u.op_type == "reparent");  // of the lid, into the lid
 }

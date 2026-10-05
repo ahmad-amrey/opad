@@ -1,12 +1,14 @@
 #include "DesignController.hpp"
 #include "opad/inspect.hpp"
 #include "DimensionHandle.hpp"
+#include "PrimitivePlacer.hpp"
+#include "ToolValues.hpp"
+#include "TranslateTriad.hpp"
 #include "CurveSamples.hpp"
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <QMenu>
-#include <QRegularExpression>
 #include <TopoDS.hxx>
 
 #include <BRepBndLib.hxx>
@@ -28,7 +30,11 @@
 #include <QMouseEvent>
 #include <atomic>
 
+#include "CommandHelp.hpp"
 #include "I18n.hpp"
+#include "SketchSteps.hpp"
+#include "Units.hpp"
+#include "opad/canvas.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
@@ -58,8 +64,6 @@ Viewport::SelFilter filterFor(const std::string& type) {
   if (type == "points") return Viewport::SelFilter::Vertex;
   return Viewport::SelFilter::Body;
 }
-
-QString titleCase(const std::string& label) { return QString::fromStdString(label).section(' ', 0, 0); }
 
 gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 
@@ -129,8 +133,67 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
     : QObject(window), m_doc(doc), m_viewport(viewport), m_jobs(jobs), m_window(window) {
   m_form = new FeaturePanel(doc, window);
   m_distanceHandle=new DimensionHandle(viewport,jobs);
-  connect(m_distanceHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){if(m_featureOn)m_form->setValue("distance",text.toStdString());});
+  connect(m_distanceHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){
+    if(!m_featureOn || !m_form->input(m_handleInput))return;
+    m_form->setValue(m_handleInput,text.toStdString());m_distanceHandle->setProblem("value",m_form->problem(m_handleInput));
+  });
+  connect(m_distanceHandle,&DimensionHandle::extraEdited,this,&DesignController::typeValue);  // the taper and the others by the arrow
   connect(m_distanceHandle,&DimensionHandle::accepted,this,[this]{if(m_featureOn)runPreview(true);});  // Enter in the box: OK
+  // Typed values (UI-122): while a feature with values is open, digits and Tab over the view or a panel are its, never the
+  // filters' or the display styles' keys; the boxes beside the pointer, or by the extrude's arrow while it shows.
+  m_values = new ToolValues(viewport, this);
+  m_values->setHandle(m_distanceHandle);
+  m_distanceHandle->setCapturesKeys(false);
+  m_values->fields = [this] {
+    if (!m_featureOn || m_pickPlane || m_sketch->active()) return QList<DynamicInput::Field>{};
+    // A primitive being sized by the pointer (TODO 11 P1): its sizes, the pointer's values grey until typed.
+    const DynamicInput* typing = m_values->input();
+    if (m_placer->active()) {
+      if (auto sizes = m_placer->fields(); !sizes.isEmpty()) return sizes;
+      // Its height before the arrow shows (its plan is on the way after Enter or Tab), or while these are typed into: the
+      // height and what Tab reaches from the arrow, never the panel's first value (Position X took a quickly typed height).
+      if (m_placer->stage() == PrimitivePlacer::Stage::Height && m_form->input("height") &&
+          (!m_distanceHandle->isVisible() || typing->typed() || typing->editing()))
+        return QList<DynamicInput::Field>{ToolValues::box("height", i18n::t(QString::fromStdString(m_form->input("height")->label)), m_form->valueText("height"))} +
+               handleExtras("height");
+    }
+    // The arrow's boxes take over once it shows, unless these are being typed into (keys typed before the preview came).
+    return m_distanceHandle->isVisible() && !typing->typed() && !typing->editing() ? QList<DynamicInput::Field>{} : valueFields();
+  };
+  m_values->edited = [this](const QString& key, const QString& value) {
+    typeValue(key, value);
+    if (m_placer->active()) m_placer->typed(key);  // a typed size holds while the pointer sets the others
+  };
+  // Enter: OK; a primitive's typed footprint goes on to its height first, as a click does (and Tab from its last box).
+  m_values->commit = [this] { if (m_featureOn && !m_placer->keyboardNext()) runPreview(true); };
+  m_values->input()->setTabOut([this] { return m_featureOn && m_placer->active() && m_placer->tabOut(); });
+  m_values->escape = [this] { escape(); };
+  m_placer = new PrimitivePlacer(doc, viewport, jobs, m_form, m_values, this);
+  m_placer->planes = [this] {
+    // As the plane input shows them, but XZ and YZ standing on XY, the floor the grid draws: pointing at the grid just past
+    // the XY square used to land on their halves under it (a box on XZ where the grid was clicked).
+    std::vector<Viewport::Candidate> planes = quickCandidates("plane");
+    const double size = std::max(10.0, m_viewport->pixelSize() * 70);
+    for (auto& c : planes)
+      if (const opad::json id = opad::json::parse(c.id, nullptr, false); id.is_object() && (id.value("base", "") == "xz" || id.value("base", "") == "yz"))
+        c.shape = BRepBuilderAPI_MakeFace(frame_plane(base_frame(id.value("base", ""))), -size, size, 0, size).Face();
+    return planes;
+  };
+  m_placer->copies = [this] {
+    refreshPlanCopies();
+    return std::make_pair(m_planDoc, m_planScene);
+  };
+  connect(m_placer, &PrimitivePlacer::status, this, &DesignController::status);
+  connect(m_placer, &PrimitivePlacer::stageChanged, this, [this] {
+    if (!m_featureOn) return;
+    if (!m_placer->arrowShown() && !m_distanceHandle->dragging()) m_distanceHandle->hide();
+    if (!m_placer->previewShown()) {
+      m_readyPlan.reset();
+      m_viewport->clearPreviewBodies();
+    }
+    m_values->refresh();
+    schedulePreview();
+  });
   m_sketch = new SketchEditor(doc, viewport, jobs, this);
   m_planePicker=new PlanePicker(doc,viewport,jobs,window);
   m_planePicker->accepted=[this](const opad::json& plane,const opad::Frame& frame){
@@ -157,23 +220,31 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   m_previewTimer.setSingleShot(true);
   m_previewTimer.setInterval(280);
   connect(&m_previewTimer, &QTimer::timeout, this, [this] { runPreview(false); });
+  connect(m_form, &FeaturePanel::inputsChanged, this, [this] { m_placer->inputsChanged(); });  // a size typed in the panel holds
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::schedulePreview);
+  connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::refreshValues);
+  connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::inputsSettled);
+  connect(viewport, &Viewport::notesMoved, this, [this] { if (m_triad && m_triad->shown()) placeMoveTriad(); });  // every camera move
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
   connect(m_form, &FeaturePanel::accepted, this, [this] { runPreview(true); });
   connect(m_form, &FeaturePanel::cancelled, this, &DesignController::endFeature);
+  connect(m_form, &FeaturePanel::escapePressed, this, [this] { escape(); });  // one step back, as in the view
   connect(m_sketch, &SketchEditor::status, this, &DesignController::status);
   connect(m_sketch, &SketchEditor::changed, this, &DesignController::stateChanged);
   connect(m_sketch, &SketchEditor::toolChanged, this, &DesignController::stateChanged);
   m_viewport->installEventFilter(this);
 }
 
+DesignController::~DesignController() = default;
+
 bool DesignController::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == m_viewport && m_triad && triadEvent(event)) return true;  // Move's triad pulled
   // The panel says "OK Enter", but after a pick in the view the view has the keyboard: Enter there accepts too.
   if (watched == m_viewport && event->type() == QEvent::KeyPress && m_featureOn && !m_pickPlane && !m_sketch->active()) {
     auto* key = static_cast<QKeyEvent*>(event);
     if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && key->modifiers() == Qt::NoModifier) {
-      runPreview(true);
+      if (!m_placer->keyboardNext()) runPreview(true);
       return true;
     }
   }
@@ -189,21 +260,29 @@ void DesignController::setPanel(ToolPanel* panel, std::function<void(ToolPanel*)
 }
 
 // ---------------------------------------------------------------- applying changes
-void DesignController::applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done) {
+void DesignController::applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done,
+                                std::function<void(opad::Document&, opad::design::Plan&)> extend) {
   if (!m_doc->hasDocument || m_doc->browse) return;
   auto report = [this, done](bool ok, const QString& error) {
     if (done) done(ok, error);
     else if (!ok) emit failed(error);
     emit stateChanged();
   };
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, ops = std::move(ops), label, done, extend] { applyOps(ops, label, done, extend); });  // a copy being taken
   if (m_doc->designBusy) return report(false, tr("The design is still being recomputed; try again in a moment."));
   m_doc->designBusy = true;
   const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
   auto doc = std::make_shared<opad::Document>(m_doc->doc);
-  m_jobs->async(tr("Updating the design"), [doc, ops, plan](Progress p) {
+  auto list = std::make_shared<std::vector<opad::json>>(std::move(ops));  // not copied with the job (a converted drawing's curves)
+  m_jobs->async(tr("Updating the design"), [doc, list, plan, extend](Progress p) {
     Reading reading;
-    *plan = plan_ops(*doc, ops, true, [p] { return p.cancelled(); });
+    try {
+      *plan = plan_ops(*doc, std::move(*list), true, [p] { return p.cancelled(); });
+      if (extend) extend(*doc, *plan);
+    } catch (const opad::LockedError& e) {
+      throw opad::Error(AppDocument::lockedMessage(e).toStdString());
+    }
   }, [this, plan, label, report, generation](bool ok, const QString& error) {
     whenNobodyReads(this, [this, plan, label, report, ok, error, generation] {
       if (generation != m_doc->generation) return;
@@ -212,12 +291,37 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
       try {
         const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
         const size_t errors = rep.value("errors", opad::json::array()).size();
-        if (errors > 0) emit status(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
+        if (errors > 0) emit notice(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
         report(true, {});
       } catch (const std::exception& e) {
         report(false, QString::fromUtf8(e.what()));
       }
     });
+  });
+}
+
+void DesignController::commitPlanned(std::shared_ptr<Plan> plan, const QString& label, std::function<void(bool, const QString&)> done) {
+  if (!m_doc->hasDocument || m_doc->browse) return;
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, plan, label, done] { commitPlanned(plan, label, done); });
+  auto report = [this, done](bool ok, const QString& error) {
+    if (done) done(ok, error);
+    else if (!ok) emit failed(error);
+    emit stateChanged();
+  };
+  if (m_doc->designBusy) return report(false, tr("The design is still being recomputed; try again in a moment."));
+  m_doc->designBusy = true;
+  const auto generation = m_doc->generation;
+  whenNobodyReads(this, [this, plan, label, report, generation] {
+    if (generation != m_doc->generation) return;
+    m_doc->designBusy = false;
+    try {
+      const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
+      const size_t errors = rep.value("errors", opad::json::array()).size();
+      if (errors > 0) emit status(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
+      report(true, {});
+    } catch (const std::exception& e) {
+      report(false, QString::fromUtf8(e.what()));
+    }
   });
 }
 
@@ -237,7 +341,7 @@ void DesignController::regenerate(bool force) {
       if (!ok) return emit failed(error);
       const bool nothing = plan->ops.empty();
       m_doc->commitPlan(std::move(*plan), tr("regenerate"));
-      emit status(nothing ? tr("The design is up to date.") : tr("Design regenerated."));
+      emit notice(nothing ? tr("The design is up to date.") : tr("Design regenerated."));
     });
   });
 }
@@ -275,12 +379,13 @@ void DesignController::startFeature(const QString& kind) {
   m_ruleMatches.clear();
   m_newId = opad::new_uuid();
   opad::json inputs = opad::json::object();
-  for (const auto& in : spec->inputs)
-    if (!in.def.is_null()) inputs[in.name] = in.def;
+  for (const auto& in : spec->inputs)  // lengths offered in the document's unit ("0.5 in" for "10 mm")
+    if (!in.def.is_null()) inputs[in.name] = in.type == "length" && in.def.is_string() ? opad::json(units::presetText(QString::fromStdString(in.def.get<std::string>())).toStdString()) : in.def;
   m_featureOn = true;
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
-  m_form->begin(*spec, inputs, QString::fromStdString(next_name(m_doc->scene, titleCase(spec->label).toStdString())), false);
+  resetRouting();
+  m_form->begin(*spec, inputs, QString::fromStdString(next_name(m_doc->scene, name_prefix(*spec))), false);
   if (m_currentComponent) m_form->setBodyDefaults(m_currentComponent());
   if (m_panel) {
     m_panel->setHeader(QString::fromStdString(spec->icon), i18n::t(QString::fromStdString(spec->label)));
@@ -295,17 +400,37 @@ void DesignController::startFeature(const QString& kind) {
     if (in && (in->type == "bodies" || in->type == "faces" || in->type == "edges") && want == m_filterBefore && bodies == (in->type == "bodies")) {
       opad::json picks = opad::json::array();
       for (const auto& r : before) picks.push_back(pickToJson(r));
-      m_form->setPicks(m_form->activeInput(), picks);
-      activateInput(m_form->activeInput());
+      const QString active = m_form->activeInput();
+      m_form->setPicks(active, picks);
+      if (in->advance) m_form->activateNextPick();  // Combine: the selection is the target, the tools come next
+      if (m_form->activeInput() == active) activateInput(active);
     }
+  }
+  if (m_form->activeInput().isEmpty()) activateInput(QString());  // nothing to pick first: a plane input takes a click
+  if (!spec->footprint.empty()) {  // a primitive: placed in the view by a click, sized by the pointer
+    m_placer->start(*spec);
+    // The copies its face clicks and previews are planned on, made now as a first preview made them (131 ms on the Engine,
+    // which a click on a face then waited for), once the panel is up.
+    QTimer::singleShot(0, this, [this] { if (m_placer->active()) refreshPlanCopies(); });
   }
   schedulePreview();
   emit stateChanged();
 }
 
+void DesignController::startFeature(const QString& kind, const std::vector<std::pair<QString, opad::json>>& given) {
+  startFeature(kind);
+  if (!m_featureOn || !m_form->spec() || m_form->spec()->kind != kind.toStdString()) return;
+  m_placer->stop();  // what is given places it
+  for (const auto& [name, value] : given)
+    if (m_form->input(name)) value.is_array() ? m_form->setPicks(name, value) : m_form->setValue(name, value);
+  activateInput(m_form->activeInput());  // the view shows the given picks
+  schedulePreview();
+}
+
 void DesignController::editOp(const std::string& opId) {
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, op = opId] { editOp(op); });  // a copy being taken: shortly
   if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy) return;
-  if (m_sketch->active() || m_featureOn) return emit status(tr("Finish what is open first."));
+  if (m_sketch->active() || m_featureOn) return emit notice(tr("Finish what is open first."));
   if (const opad::SketchItem* s = m_doc->scene.sketch(opId)) {
     const opad::SketchItem sketch = *s;
     // Keep current visibility and the edited sketch in the browser. The editor
@@ -324,7 +449,9 @@ void DesignController::editOp(const std::string& opId) {
   m_featureOn = true;
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
+  resetRouting();
   m_form->begin(*spec, feature.inputs, QString::fromStdString(feature.name), true);m_form->setEditHidden(hidden);
+  if (m_form->activeInput().isEmpty()) activateInput(QString());
   // Rules show what they matched when the feature was last computed (its result records it, TODO 10 B7).
   m_ruleMatches.clear();
   for (const auto& sel : feature.result.value("selected", opad::json::array()))
@@ -349,13 +476,22 @@ void DesignController::editOp(const std::string& opId) {
 }
 
 void DesignController::endFeature() {
+  m_placer->stop();
   m_distanceHandle->hide();
+  m_values->reset();
+  m_moveAxis = {};
+  if (m_triad) {
+    m_pull = {};
+    m_triad->end();
+    m_triad->hide();
+  }
   if (!m_featureOn) return;
   m_featureOn = false;
   ++m_planSerial;
   m_previewTimer.stop();
   if (Job* j = std::exchange(m_planJob, nullptr)) j->cancel();
   if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
+  resetRouting();
   m_readyPlan.reset();
   m_stretch = {};
   m_planDoc.reset();
@@ -366,7 +502,7 @@ void DesignController::endFeature() {
   m_viewport->setBodiesPickable(true);
   m_activating = true;  // the clean-up below is not a pick
   m_viewport->clearSelection();
-  if (m_viewport->selectionFilter() != m_filterBefore) m_viewport->setSelectionFilter(m_filterBefore);
+  if (m_viewport->selectionFilter() != m_filterBefore || m_viewport->roundFacesPickable()) m_viewport->setSelectionFilter(m_filterBefore);
   m_activating = false;
   m_form->activate(QString());
   m_editing.clear();
@@ -392,13 +528,12 @@ double DesignController::modelReach() const {
   return reach;
 }
 
-void DesignController::showCandidatesFor(const QString& typeName) {
-  if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
-  m_nothingToPick.clear();
-  const std::string type = typeName.toStdString();
+// The origin axes and construction axes for an axis, the origin planes and construction planes for a plane: shapes made here
+// (a few edges and squares), nothing from the bodies.
+std::vector<Viewport::Candidate> DesignController::quickCandidates(const std::string& type) const {
   std::vector<Viewport::Candidate> quick;
-  const double reach = modelReach();  // size of axis candidates
   if (type == "axis") {
+    const double reach = modelReach();  // size of axis candidates
     for (const auto& [base, dir] : {std::pair{"x", gp_Dir(1, 0, 0)}, std::pair{"y", gp_Dir(0, 1, 0)}, std::pair{"z", gp_Dir(0, 0, 1)}})
       quick.push_back({opad::json{{"base", base}}.dump(), BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0).Translated(gp_Vec(dir) * -reach), gp_Pnt(0, 0, 0).Translated(gp_Vec(dir) * reach)).Edge(), false});
     for (const auto& f : m_doc->scene.features)
@@ -408,17 +543,52 @@ void DesignController::showCandidatesFor(const QString& typeName) {
         const gp_Vec d(a["dir"][0], a["dir"][1], a["dir"][2]);
         quick.push_back({opad::json{{"feature", f.id}}.dump(), BRepBuilderAPI_MakeEdge(o.Translated(d * -reach), o.Translated(d * reach)).Edge(), true});
       }
+  } else if (type == "plane") {  // as the plane picker shows them: faint origin planes, construction planes more solid
+    const double size = std::max(10.0, m_viewport->pixelSize() * 70);
+    quick = PlanePicker::originPlanes(size);
+    for (const auto& f : m_doc->scene.features)
+      if (!f.suppressed && f.result.contains("plane"))
+        quick.push_back({opad::json{{"feature", f.id}}.dump(), BRepBuilderAPI_MakeFace(frame_plane(opad::Frame::from_json(f.result["plane"])), -size, size, -size, size).Face(), true});
   }
-  const bool fromSketches = type == "profiles" || type == "points" || type == "axis" || type == "path";
-  if (!fromSketches) return m_viewport->showCandidates(quick);
+  return quick;
+}
 
+void DesignController::showAllCandidates() {
+  std::vector<Viewport::Candidate> all = m_activeCandidates;
+  all.insert(all.end(), m_routeCandidates.begin(), m_routeCandidates.end());
+  m_viewport->showCandidates(all);
+}
+
+void DesignController::showCandidatesFor(const QString& typeName) {
+  if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
+  m_nothingToPick.clear();
+  const std::string type = typeName.toStdString();
+  m_activeCandidates = quickCandidates(type == "plane" ? std::string() : type);  // a plane input has the plane picker
+  const bool fromSketches = type == "profiles" || type == "points" || type == "axis" || type == "path";
+  if (!fromSketches) return showAllCandidates();
+  auto found = std::make_shared<std::vector<Viewport::Candidate>>(m_activeCandidates);
+  m_candidateJob = sketchCandidates(type, found, [this, found, type](bool ok) {
+    m_candidateJob = nullptr;
+    if (!ok || !m_featureOn) return;
+    m_activeCandidates = *found;
+    showAllCandidates();
+    syncSelectionToInput();
+    if (found->empty() && (type == "points" || type == "profiles")) {  // else the input waits for a pick that cannot come
+      m_nothingToPick = type == "points" ? tr("No sketch points yet: sketch points first (or pick vertices).")
+                                         : tr("No sketch profiles yet: draw a closed shape in a sketch first (or pick a planar face).");
+      if (!m_form->complete()) m_form->setStatus(m_nothingToPick, false);
+    }
+  });
+  showAllCandidates();
+}
+
+Job* DesignController::sketchCandidates(const std::string& type, std::shared_ptr<std::vector<Viewport::Candidate>> found, std::function<void(bool)> done) {
   // Sketch regions, points, lines and whole sketches: kernel work, so on a worker from copies of the sketches.
   struct Source { std::string id; opad::json geometry; opad::Frame frame; };
   auto sources = std::make_shared<std::vector<Source>>();
   for (const auto& s : m_doc->scene.sketches)
     if (s.visible || !s.consumed) sources->push_back({s.id, s.geometry, s.frame});
-  auto found = std::make_shared<std::vector<Viewport::Candidate>>(quick);
-  m_candidateJob = m_jobs->async(tr("Finding what can be picked"), [sources, found, type](Progress p) {
+  return m_jobs->async(tr("Finding what can be picked"), [sources, found, type](Progress p) {
     for (const auto& src : *sources) {
       if (p.cancelled()) return;
       const Sketch sk = Sketch::from_json(src.geometry);
@@ -451,24 +621,13 @@ void DesignController::showCandidatesFor(const QString& typeName) {
         if (any) found->push_back({opad::json{{"sketch", src.id}}.dump(), comp, false});
       }
     }
-  }, [this, found, type](bool ok, const QString&) {
-    m_candidateJob = nullptr;
-    if (!ok || !m_featureOn) return;
-    m_viewport->showCandidates(*found);
-    syncSelectionToInput();
-    if (found->empty() && (type == "points" || type == "profiles")) {  // else the input waits for a pick that cannot come
-      m_nothingToPick = type == "points" ? tr("No sketch points yet: sketch points first (or pick vertices).")
-                                         : tr("No sketch profiles yet: draw a closed shape in a sketch first (or pick a planar face).");
-      if (!m_form->complete()) m_form->setStatus(m_nothingToPick, false);
-    }
-  });
-  m_viewport->showCandidates(quick);
+  }, [done](bool ok, const QString&) { done(ok); });
 }
 
 // Makes the viewport's selection show the active input's picks (after switching inputs, or when candidates
 // arrive).
 void DesignController::syncSelectionToInput() {
-  const QString name = m_form->activeInput();
+  const QString name = !m_form->activeInput().isEmpty() ? m_form->activeInput() : m_idlePlane;  // or the plane a click fills
   if (name.isEmpty()) return;
   opad::json picks = m_form->picks(name);
   if (picks.is_object()) picks = opad::json::array({picks});
@@ -494,9 +653,12 @@ void DesignController::syncSelectionToInput() {
         candidates.push_back(key.dump());
       }
     }
-  m_activating = true;
+  // The routed input's axis or plane stays marked (the default Z of a circular pattern too): a click on it takes it back.
+  if (!m_routeInput.isEmpty())
+    if (const opad::json routed = m_form->picks(m_routeInput); routed.is_object() && m_routeIds.count(routed.dump())) candidates.push_back(routed.dump());
+  const bool was = std::exchange(m_activating, true);  // also while a filter switch is pending: that one re-applies later
   m_viewport->selectRefs(refs, candidates);
-  m_activating = false;
+  m_activating = was;
 }
 
 // "By rule…" (TODO 10 B7): rules that the picked face or edge suggests, each with how many it matches on the body, counted
@@ -516,26 +678,26 @@ void DesignController::offerRules(const QString& input, QWidget* anchor) {
   auto doc = std::make_shared<opad::Document>(m_doc->doc);
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   const QPointer<QWidget> where(anchor);
-  m_jobs->async(tr("Finding matching entities"), [doc, scene, picked, rules](Progress p) {
+  m_jobs->async(tr("Finding matching entities"), [doc, scene, picked, rules, shown = units::current()](Progress p) {
     Reading reading;
     const TopoDS_Shape body = opad::node_world_shape(*doc, *scene, picked.body);
     TopTools_IndexedMapOfShape map;
     TopExp::MapShapes(body, picked.kind == opad::Ref::Kind::Face ? TopAbs_FACE : TopAbs_EDGE, map);
     if (picked.index < 0 || picked.index >= map.Extent()) return;
     const opad::json d = opad::describe_entity(map(picked.index + 1));
-    auto fixed = [](double v) { return QString::number(v, 'f', 3).remove(QRegularExpression("\\.?0+$")); };
+    auto fixed = [&shown](double v) { return units::format(units::Kind::Length, v, -1, shown); };
     if (picked.kind == opad::Ref::Kind::Edge) {
       if (d.contains("direction")) rules->push_back({tr("Straight edges parallel to this one"), {{"curve", "line"}, {"parallel_to", d["direction"]}}, {}});
       if (d.contains("radius") && d.value("curve", "") == "circle") {
         const double r = d["radius"];
-        rules->push_back({tr("Circular edges of radius %1 mm").arg(fixed(r)), {{"curve", "circle"}, {"radius_min", r}, {"radius_max", r}}, {}});
+        rules->push_back({tr("Circular edges of radius %1").arg(fixed(r)), {{"curve", "circle"}, {"radius_min", r}, {"radius_max", r}}, {}});
       }
       rules->push_back({tr("All %1 edges").arg(QString::fromStdString(d.value("curve", ""))), {{"curve", d.value("curve", "")}}, {}});
     } else {
       if (d.contains("normal")) rules->push_back({tr("Faces with this normal"), {{"normal", d["normal"]}}, {}});
       if (d.contains("radius") && d.value("surface", "") == "cylinder") {
         const double r = d["radius"];
-        rules->push_back({tr("Cylindrical faces of radius %1 mm").arg(fixed(r)), {{"surface", "cylinder"}, {"radius_min", r}, {"radius_max", r}}, {}});
+        rules->push_back({tr("Cylindrical faces of radius %1").arg(fixed(r)), {{"surface", "cylinder"}, {"radius_min", r}, {"radius_max", r}}, {}});
       }
       rules->push_back({tr("All %1 faces").arg(QString::fromStdString(d.value("surface", ""))), {{"surface", d.value("surface", "")}}, {}});
     }
@@ -573,21 +735,53 @@ void DesignController::offerRules(const QString& input, QWidget* anchor) {
 void DesignController::activateInput(const QString& name) {
   if (!m_featureOn) return;
   const InputSpec* in = m_form->input(name);
+  if (in && in->type == "plane" && m_placer->active()) m_placer->stop();  // the Plane box clicked: the plane picker, then the panel
   if (!in) {
-    m_viewport->clearCandidates();
+    if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
+    m_activeCandidates.clear();
+    refreshRoute();  // nothing routed without an active input
+    if (m_placer->active()) {  // a pick box let go: the faces to click (not the box's whole bodies), the planes, the prompt
+      m_placer->panelPicking(false);
+      if (m_placer->stage() == PrimitivePlacer::Stage::Place) return;
+    }
+    // A construction plane's From plane (or any plane input) takes a click on a planar face, an origin plane or a
+    // construction plane while nothing else is being picked (TODO 11 P3): the guide's face click.
+    m_idlePlane = idlePlaneInput();
+    if (m_idlePlane.isEmpty()) return showAllCandidates();
+    m_activeCandidates = quickCandidates("plane");
+    showAllCandidates();
+    if (m_viewport->selectionFilter() != Viewport::SelFilter::Face || m_viewport->roundFacesPickable()) {
+      m_activating = true;
+      auto once = std::make_shared<QMetaObject::Connection>();
+      *once = connect(m_viewport, &Viewport::filterApplied, this, [this, once] {
+        disconnect(*once);
+        m_activating = false;
+        syncSelectionToInput();
+      });
+      m_viewport->setSelectionFilter(Viewport::SelFilter::Face);
+    } else {
+      syncSelectionToInput();
+    }
+    if (const InputSpec* plane = m_form->input(m_idlePlane)) emit status(tr("%1: click a plane or a planar face in the view").arg(i18n::t(QString::fromStdString(plane->label))));
     return;
   }
+  m_idlePlane.clear();
+  if (Job* j = std::exchange(m_idleJob, nullptr)) j->cancel();
   if(in->type=="plane") {
     m_pickPlane=true;m_activating=false;
     m_planePicked=[this,name](opad::json plane,opad::Frame){
       // The plane input lets go once it has its plane, so a click on it opens the picker again (not deactivates it).
       if(!m_featureOn)return;m_form->setPicks(name,plane);schedulePreview();m_openPanel(m_panel);m_form->activate(QString());m_form->activateNextPick();
     };
-    emit stateChanged();QTimer::singleShot(0,this,[this]{if(m_pickPlane&&m_featureOn){m_planePicker->panel()->setHeader("plane",tr("Choose plane"));m_planePicker->start(false,m_openPanel);}});return;
+    // Not the selection: that is the feature's other picks (a single draft face became its own neutral plane).
+    emit stateChanged();QTimer::singleShot(0,this,[this]{if(m_pickPlane&&m_featureOn){m_planePicker->panel()->setHeader("plane",tr("Choose plane"));m_planePicker->start(false,m_openPanel,false);}});return;
   }
+  if (m_placer->active()) m_placer->panelPicking(true);  // the box takes the clicks: no marker meanwhile
   const Viewport::SelFilter want = filterFor(in->type);
+  const bool roundFaces = in->type == "axis";  // a cylinder's, cone's or torus's face gives its axis (the guide's face click)
   showCandidatesFor(QString::fromStdString(in->type));
-  if (m_viewport->selectionFilter() != want) {
+  refreshRoute();
+  if (m_viewport->selectionFilter() != want || m_viewport->roundFacesPickable() != roundFaces) {
     m_activating = true;
     auto once = std::make_shared<QMetaObject::Connection>();
     *once = connect(m_viewport, &Viewport::filterApplied, this, [this, once] {
@@ -595,11 +789,206 @@ void DesignController::activateInput(const QString& name) {
       m_activating = false;
       syncSelectionToInput();
     });
-    m_viewport->setSelectionFilter(want);  // sliced; the old picks are re-applied once every body is in the new mode
+    m_viewport->setSelectionFilter(want, roundFaces);  // sliced; the old picks are re-applied once every body is in the new mode
   } else {
     syncSelectionToInput();
   }
-  emit status(tr("%1: pick in the view").arg(i18n::t(QString::fromStdString(in->label))));
+  pickStatus();
+}
+
+void DesignController::pickStatus() {
+  const InputSpec* active = m_form->input(m_form->activeInput());
+  if (!active) return;
+  const QString label = i18n::t(QString::fromStdString(active->label));
+  if (const InputSpec* routed = m_form->input(m_routeInput))
+    return emit status(tr("%1: pick in the view · %2: click one in the view").arg(label, i18n::t(QString::fromStdString(routed->label))));
+  emit status(tr("%1: pick in the view").arg(label));
+}
+
+bool DesignController::placedPlane(const InputSpec& in) const { return in.type == "plane" && m_form->input("x") && m_form->input("y"); }
+
+QString DesignController::routeTarget() const {
+  if (!m_featureOn || !m_form->spec()) return {};
+  const QString active = m_form->activeInput();
+  const InputSpec* in = m_form->input(active);
+  const bool many = in && (in->type == "bodies" || in->type == "faces" || in->type == "edges" || in->type == "profiles" || in->type == "points") && in->max_count != 1;
+  if (!many) return {};
+  const opad::json picks = m_form->picks(active);
+  if (!picks.is_array() || picks.empty()) return {};
+  const opad::json inputs = m_form->inputs();
+  for (const auto& other : m_form->spec()->inputs) {
+    if ((other.type != "axis" && other.type != "plane") || other.optional || other.name == in->name || placedPlane(other) || !input_active(other, inputs)) continue;
+    const QString name = QString::fromStdString(other.name);
+    const opad::json value = m_form->picks(name);
+    if (value.is_null() || value == other.def || m_routed.count(name)) return name;
+  }
+  return {};
+}
+
+void DesignController::refreshRoute() {
+  const QString target = routeTarget();
+  if (target == m_routeInput) return;
+  m_routeInput = target;
+  ++m_routeSerial;
+  if (Job* j = std::exchange(m_routeJob, nullptr)) j->cancel();
+  m_routeCandidates.clear();
+  m_routeIds.clear();
+  const InputSpec* in = m_form->input(target);
+  if (in) {
+    m_routeCandidates = quickCandidates(in->type);
+    for (const auto& c : m_routeCandidates) m_routeIds.insert(c.id);
+    if (in->type == "axis") {  // and the sketches' lines, from a worker
+      auto found = std::make_shared<std::vector<Viewport::Candidate>>();
+      const int serial = m_routeSerial;
+      m_routeJob = sketchCandidates("axis", found, [this, found, serial](bool ok) {
+        if (serial != m_routeSerial) return;
+        m_routeJob = nullptr;
+        if (!ok || !m_featureOn || found->empty()) return;
+        // Put on screen a few at a time (a drawing turned into a sketch has thousands of lines, each a pickable object), the
+        // view's clicks routed to them as they come; nothing shown before is displayed again.
+        auto next = std::make_shared<size_t>(0);
+        m_routeJob = m_jobs->sliced(tr("Showing the sketch lines"), [this, found, next, serial](Job&) {
+          if (serial != m_routeSerial || !m_featureOn) return false;
+          const size_t end = std::min(found->size(), *next + 8);
+          const std::vector<Viewport::Candidate> slice(found->begin() + long(*next), found->begin() + long(end));
+          for (const auto& c : slice) m_routeIds.insert(c.id);
+          m_routeCandidates.insert(m_routeCandidates.end(), slice.begin(), slice.end());
+          m_viewport->addCandidates(slice);
+          *next = end;
+          return end < found->size();
+        }, [this, serial](bool) {
+          if (serial != m_routeSerial) return;
+          m_routeJob = nullptr;
+          if (m_featureOn) syncSelectionToInput();
+        });
+      });
+    }
+  }
+  showAllCandidates();
+  syncSelectionToInput();
+  pickStatus();
+}
+
+bool DesignController::routeClick() {
+  const InputSpec* target = m_form->input(m_routeInput);
+  if (!target) return false;
+  const opad::json value = m_form->picks(m_routeInput);
+  const std::string current = value.is_object() ? value.dump() : std::string();
+  std::vector<std::string> routed;
+  for (const auto& c : m_viewport->selectedCandidates())
+    if (m_routeIds.count(c)) routed.push_back(c);
+  std::string chosen;
+  for (const auto& c : routed)
+    if (c != current) chosen = c;
+  if (!chosen.empty()) {
+    m_form->setPicks(m_routeInput, opad::json::parse(chosen));
+    m_routed.insert(m_routeInput);
+  } else if (routed.empty() && m_routeIds.count(current) && m_viewport->lastClickHit()) {
+    m_form->setPicks(m_routeInput, target->def);  // its marked axis or plane clicked again: back to the default, or none
+  } else {
+    return false;  // the click was for the active input
+  }
+  syncSelectionToInput();
+  schedulePreview();
+  return true;
+}
+
+// Only for a feature that picks nothing but planes and axes (a construction plane): where bodies, faces or profiles are
+// picked too (Draft, Mirror), a click with nothing active is not taken for the plane, and the routing above serves.
+QString DesignController::idlePlaneInput() const {
+  if (!m_featureOn || !m_form->spec() || !m_form->activeInput().isEmpty()) return {};
+  const opad::json inputs = m_form->inputs();
+  for (const auto& in : m_form->spec()->inputs)
+    if (FeaturePanel::isPick(in.type) && in.type != "plane" && in.type != "axis" && input_active(in, inputs)) return {};
+  QString first;
+  for (const auto& in : m_form->spec()->inputs) {
+    if (in.type != "plane" || placedPlane(in) || !input_active(in, inputs)) continue;
+    const QString name = QString::fromStdString(in.name);
+    if (!in.optional && m_form->picks(name).is_null()) return name;  // an empty one first (a midplane's second plane)
+    if (first.isEmpty()) first = name;
+  }
+  return first;
+}
+
+void DesignController::idlePlaneClick() {
+  const auto refs = m_viewport->selection();
+  const auto candidates = m_viewport->selectedCandidates();
+  if (refs.empty() && candidates.empty() && !m_viewport->lastClickHit()) return syncSelectionToInput();  // empty space
+  opad::json current = m_form->picks(m_idlePlane);
+  if (current.is_object()) current.erase("frame");
+  // What the click added beside the plane shown (picks accumulate): a candidate or a face that is not the current one. A
+  // click on the current one keeps it: a plane input always has a plane.
+  opad::json chosen;
+  for (const auto& c : candidates)
+    if (opad::json::parse(c) != current) chosen = opad::json::parse(c);
+  for (const auto& r : refs) {
+    if (r.kind != opad::Ref::Kind::Face) continue;
+    const bool same = current.contains("face") && current["face"].value("body", "") == r.body && current["face"].value("index", -1) == r.index;
+    if (!same) chosen = opad::json{{"face", pickToJson(r)}};
+  }
+  if (chosen.is_null()) return syncSelectionToInput();
+  pickIdlePlane(m_idlePlane, chosen);
+}
+
+void DesignController::pickIdlePlane(const QString& input, opad::json support) {
+  const int serial = ++m_idleSerial;
+  if (Job* j = std::exchange(m_idleJob, nullptr)) j->cancel();
+  if (!support.contains("face")) {  // an origin or a construction plane: as it is
+    m_form->setPicks(input, support);
+    syncSelectionToInput();
+    schedulePreview();
+    return;
+  }
+  // A face: planar? Its reference with the hint that finds it again. On a worker, as the plane picker resolves its face.
+  refreshPlanCopies();
+  auto doc = m_planDoc;
+  auto scene = m_planScene;
+  auto plane = std::make_shared<opad::json>(std::move(support));
+  m_idleJob = m_jobs->async(tr("Resolving the plane"), [doc, scene, plane](Progress p) {
+    Reading reading;
+    if (p.cancelled()) return;
+    resolve_plane(*doc, *scene, *plane);
+    (*plane)["face"] = make_ref(*doc, *scene, opad::Ref::from_json(plane->at("face")));
+  }, [this, serial, input, plane](bool ok, const QString& error) {
+    if (serial != m_idleSerial || !m_featureOn) return;
+    m_idleJob = nullptr;
+    if (!ok) {
+      if (error != "cancelled") m_form->setStatus(i18n::t(error), true);
+      return syncSelectionToInput();
+    }
+    m_form->setPicks(input, *plane);
+    syncSelectionToInput();
+    schedulePreview();
+  });
+}
+
+void DesignController::inputsSettled() {
+  if (!m_featureOn) return;
+  if (!m_form->activeInput().isEmpty()) return refreshRoute();  // Rotate ticked on a move: its axis can be clicked
+  if (idlePlaneInput() != m_idlePlane) activateInput(QString());  // the Type changed which plane a click fills
+}
+
+void DesignController::resetRouting() {
+  ++m_routeSerial;
+  ++m_idleSerial;
+  if (Job* j = std::exchange(m_routeJob, nullptr)) j->cancel();
+  if (Job* j = std::exchange(m_idleJob, nullptr)) j->cancel();
+  m_routeInput.clear();
+  m_routeIds.clear();
+  m_routeCandidates.clear();
+  m_activeCandidates.clear();
+  m_routed.clear();
+  m_idlePlane.clear();
+}
+
+void DesignController::refreshPlanCopies() {
+  // The rolled-back state the picks were made in. Copied once per document state, not once per plan.
+  const auto stamp_now = std::make_tuple(m_doc->generation, m_doc->revision, m_doc->doc.ops.size());
+  if (!m_planDoc || !m_planScene || m_planStamp != stamp_now) {
+    m_planDoc = std::make_shared<const opad::Document>(m_doc->doc);
+    m_planScene = std::make_shared<const opad::Scene>(m_doc->scene);
+    m_planStamp = stamp_now;
+  }
 }
 
 void DesignController::viewportSelectionChanged() {
@@ -607,6 +996,7 @@ void DesignController::viewportSelectionChanged() {
   if (m_pickPlane) {m_planePicker->selectionChanged();return;}
   if (!m_featureOn) return;
   const QString name = m_form->activeInput();
+  if (name.isEmpty() && !m_idlePlane.isEmpty()) return idlePlaneClick();
   const InputSpec* in = m_form->input(name);
   if (!in) return;
   // A plane comes from the plane picker only. Its clearing the selection on the way out used to arrive here late and
@@ -619,14 +1009,23 @@ void DesignController::viewportSelectionChanged() {
     syncSelectionToInput();
     return;
   }
+  if (!m_routeInput.isEmpty() && routeClick()) return;  // the next input's axis or plane, clicked
   // The viewport selection is the pick list: bodies and sub-shapes by reference, everything else by candidate.
   opad::json picks = opad::json::array();
   for (const auto& r : m_viewport->selection()) {
+    // A sketch's own curves, drawn and picked like a body's edges (a click on the path a sweep or a pipe follows): the
+    // sketch for a path, as its candidate gives it; for another input not a body reference (it said "a referenced body no
+    // longer exists"), its candidates give what it takes there.
+    if (m_doc->scene.sketch(r.body)) {
+      if (in->type == "path") picks.push_back(opad::json{{"sketch", r.body}});
+      continue;
+    }
     if (in->type == "plane") picks.push_back(opad::json{{"face", pickToJson(r)}});
     else if (in->type == "axis") picks.push_back(opad::json{{r.kind == opad::Ref::Kind::Face ? "face" : "edge", pickToJson(r)}});  // faces: after 2 (Faces)
     else picks.push_back(pickToJson(r));
   }
-  for (const auto& c : m_viewport->selectedCandidates()) picks.push_back(opad::json::parse(c));
+  for (const auto& c : m_viewport->selectedCandidates())
+    if (!m_routeIds.count(c)) picks.push_back(opad::json::parse(c));
   const bool single = in->type == "plane" || in->type == "axis" || in->type == "path" || in->max_count == 1;
   if (single && picks.size() > 1) {
     m_activating = true;
@@ -640,20 +1039,82 @@ void DesignController::viewportSelectionChanged() {
     m_activating = false;
     return;
   }
+  const opad::json had = m_form->picks(name);
+  const bool first = had.is_null() || (had.is_array() && had.empty());
   m_form->setPicks(name, picks);
   if (!picks.empty()) m_nothingToPick.clear();  // a vertex or a face did it
   schedulePreview();
   if (single && !picks.empty()) m_form->activateNextPick();
   else if (in->max_count > 0 && static_cast<int>(picks.size()) == in->max_count) m_form->activateNextPick();
+  else if (in->advance && first && !picks.empty()) m_form->activateNextPick();  // Combine: the target, then the tools
+  refreshRoute();  // the first pick shows the next input's axes or planes
+}
+
+DimensionHandle* DesignController::distanceHandle() const { return m_distanceHandle; }
+QString DesignController::handleInput() const { return m_featureOn && m_distanceHandle && m_distanceHandle->isVisible() ? m_handleInput : QString(); }
+
+// A value arrow the core placed (feature_handles, TODO 11 P2): a fillet's radius on its first edge, a press pull's distance
+// off its face, ... Pulled, it sets that input and the preview follows as the extrusion's does; its box takes typed values.
+void DesignController::showHandle(const opad::json& handle) {
+  const QString input = QString::fromStdString(handle.value("input", ""));
+  const InputSpec* in = m_form->input(input);
+  if (!in) return m_distanceHandle->hide();
+  m_handleInput = input;
+  m_distanceHandle->setScale(handle.value("scale", 1.0));
+  m_distanceHandle->setAnchorSegments({});
+  m_distanceHandle->setLabel(i18n::t(QString::fromStdString(in->label)));
+  m_distanceHandle->setExtraFields(handleExtras(input));
+  m_distanceHandle->configure(handle.at("origin").get<opad::Vec3>(), handle.at("axis").get<opad::Vec3>(), handle.at("value").get<double>(), m_form->valueText(input));
+}
+
+// Tab from the arrow's box goes round the panel's other values; a primitive being placed: its other sizes (a cone's top
+// diameter first, as its guide's card has it).
+QList<DynamicInput::Field> DesignController::handleExtras(const QString& input) const {
+  if (!m_placer->active()) return valueFields(input);
+  QList<DynamicInput::Field> out;
+  for (const QString& name : m_placer->arrowExtras())
+    if (const InputSpec* in = m_form->input(name); in && name != input) out << ToolValues::box(name, i18n::t(QString::fromStdString(in->label)), m_form->valueText(name));
+  return out;
+}
+
+// The panel's values that show, in its order (UI-122): one box each, grey with what the panel holds until typed into.
+QList<DynamicInput::Field> DesignController::valueFields(const QString& except) const {
+  QList<DynamicInput::Field> out;
+  for (const QString& name : m_form->valueInputs()) {
+    const InputSpec* in = m_form->input(name);
+    if (name != except && in) out << ToolValues::box(name, i18n::t(QString::fromStdString(in->label)), m_form->valueText(name));
+  }
+  return out;
+}
+
+// What is typed goes into the panel at once (the preview follows as for a value typed there); a bare number in an angle's
+// box is in the shown unit (UI-123). A box whose text does not evaluate turns red and says why.
+void DesignController::typeValue(const QString& key, QString value) {
+  const InputSpec* in = m_featureOn ? m_form->input(key) : nullptr;
+  if (!in) return;
+  bool plain = false;
+  value.trimmed().toDouble(&plain);
+  if (plain && in->type == "angle") value = value.trimmed() + (units::current().radians ? " rad" : " deg");
+  m_form->setValue(key, value.toStdString());
+  const QString problem = m_form->problem(key);
+  m_values->input()->setProblem(key, problem);
+  m_distanceHandle->setProblem(key, problem);
+}
+
+void DesignController::refreshValues() {
+  if (!m_featureOn) return;
+  m_values->refresh();
+  if (m_distanceHandle->isVisible()) m_distanceHandle->setExtraFields(handleExtras(m_handleInput));
 }
 
 void DesignController::schedulePreview() {
   if (!m_featureOn) return;
+  placeMoveTriad();  // every pick and value change comes here: Move's triad follows them
   m_readyPlan.reset();
   // While the handle is pulled, preview as fast as plans come back (the latest value wins) instead of waiting for
   // the pointer to rest: the body follows the drag as if its face were dragged. Otherwise inputs settle first.
-  if (m_distanceHandle && m_distanceHandle->dragging()) {
-    stretchPreview(m_distanceHandle->value());  // at once: plans take 15 ms here, 150 ms on a large model
+  if (pulling()) {
+    if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // at once: plans take 15 ms here, 150 ms on a large model
     m_previewTimer.stop();
     if (m_planJob) m_previewPending = true;
     else runPreview(false);
@@ -677,6 +1138,15 @@ void DesignController::stretchPreview(double value) {
 void DesignController::runPreview(bool commit) {
   if (!m_featureOn) return;
   m_previewTimer.stop();
+  // A primitive whose plane is being picked (or whose size the pointer has not given yet) has nothing to show: the
+  // defaults at the origin are what Enter adds, not what the click will place.
+  if (!commit && !m_placer->previewShown()) {
+    m_readyPlan.reset();
+    if (!m_distanceHandle->interacting()) m_distanceHandle->hide();
+    m_viewport->clearPreviewBodies();
+    m_form->setStatus(QString(), false);
+    return;
+  }
   QString missing;
   if (!m_form->complete(&missing)) {
     if(!m_distanceHandle->interacting())m_distanceHandle->hide();
@@ -686,12 +1156,16 @@ void DesignController::runPreview(bool commit) {
   }
   const opad::json inputs = m_form->inputs();
   const std::string name = m_form->name().toStdString();
-  const std::string stamp = inputs.dump() + "|" + name;
-  auto commitReady = [this] {
+  // A new feature is made in the active component (UI-33): its new bodies, plane or axis go there, in its frame.
+  const std::string component = m_editing.empty() ? m_doc->activeComponent() : std::string();
+  const std::string stamp = inputs.dump() + "|" + name + "|" + component;
+  auto commitReady = [this, component] {
     auto plan = m_readyPlan;
     const QString label = m_form->spec() ? i18n::t(QString::fromStdString(m_form->spec()->label)).toLower() : tr("feature");
-    // The new bodies' name, colour and component: the rename / appearance / reparent ops of the same step (B14).
-    const opad::json style = m_editing.empty() ? m_form->bodyStyle() : opad::json::object();
+    // The new bodies' name, colour and component: the rename / appearance / reparent ops of the same step (B14). No
+    // reparent into the component the feature is made in: its bodies are there already.
+    opad::json style = m_editing.empty() ? m_form->bodyStyle() : opad::json::object();
+    if (!component.empty() && style.value("parent", opad::json()) == opad::json(component)) style.erase("parent");
     const std::string op = m_newId;
     whenNobodyReads(this, [this, plan, label, style, op] {
       try {
@@ -701,7 +1175,7 @@ void DesignController::runPreview(bool commit) {
         const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
         const size_t errors = rep.value("errors", opad::json::array()).size();
         endFeature();
-        if (errors > 0) emit status(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
+        if (errors > 0) emit notice(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
       } catch (const std::exception& e) {
         m_form->setStatus(i18n::t(QString::fromUtf8(e.what())), true);
       }
@@ -717,13 +1191,7 @@ void DesignController::runPreview(bool commit) {
   auto plan = std::make_shared<Plan>();
   auto anchors=std::make_shared<std::vector<DimensionHandle::Segment>>();
   auto meshes = std::make_shared<std::vector<std::shared_ptr<const BodyPrs>>>();  // per plan->changed entry
-  // The rolled-back state the picks were made in. Copied once per document state, not once per plan.
-  const auto stamp_now = std::make_tuple(m_doc->generation, m_doc->revision, m_doc->doc.ops.size());
-  if (!m_planDoc || !m_planScene || m_planStamp != stamp_now) {
-    m_planDoc = std::make_shared<const opad::Document>(m_doc->doc);
-    m_planScene = std::make_shared<const opad::Scene>(m_doc->scene);
-    m_planStamp = stamp_now;
-  }
+  refreshPlanCopies();
   auto scene = m_planScene;
   auto doc = m_planDoc;
   const bool symmetric = inputs.value("direction", "") == "symmetric";
@@ -732,13 +1200,20 @@ void DesignController::runPreview(bool commit) {
   // line, else nothing showed where it would go.
   const double reach = kind == "plane" || kind == "axis" ? modelReach() : 0.0;
   auto construction = std::make_shared<std::vector<Viewport::PreviewPart>>();
+  auto handles = std::make_shared<opad::json>(opad::json::array());  // the value arrows (TODO 11 P2), also when the plan fails
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component, handles](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
+    if (kind != "extrude") *handles = feature_handles(*doc, *scene, kind, hinted);  // the extrusion's comes with its result
     opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
     if (!editing) op["id"] = target;
-    *plan = plan_ops(*doc, {op}, true, [p] { return p.cancelled(); });
+    if (!component.empty()) op["component"] = component;
+    try {
+      *plan = plan_ops(*doc, {op}, true, [p] { return p.cancelled(); });
+    } catch (const opad::LockedError& e) {
+      throw opad::Error(AppDocument::lockedMessage(e).toStdString());
+    }
     // An edit that changes nothing is not recomputed (its fingerprint matches), so the plan has nothing to show and the
     // rolled-back view was empty while the feature was open: show what it makes now. Copies are meshed, not the cached
     // prototypes the view draws.
@@ -802,13 +1277,20 @@ void DesignController::runPreview(bool commit) {
         }
       }
     }
-  }, [this, serial, plan, stamp, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction](bool ok, const QString& error) {
+  }, [this, serial, plan, stamp, inputs, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction, handles](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
     if (std::exchange(m_previewPending, false) && !commit) QTimer::singleShot(0, this, [this] { if (m_featureOn && !m_planJob) runPreview(false); });
+    moveAxisResolved(*handles, inputs);  // Move's ring round an edge's or a construction axis's line
+    // The value arrow, not Move's ring (the triad draws that).
+    opad::json arrow;
+    for (const auto& h : *handles)
+      if (!h.value("ring", false)) { arrow = h; break; }
     if (!ok) {
-      if(!m_distanceHandle->interacting())m_distanceHandle->hide();
+      // A value that does not work (a radius too big for the edge) keeps its arrow, to be pulled back.
+      if (arrow.is_object() && error != "cancelled" && m_placer->arrowShown()) showHandle(arrow);
+      else if(!m_distanceHandle->interacting())m_distanceHandle->hide();
       m_readyPlan.reset();
       m_viewport->clearPreviewBodies();
       // Before anything is picked a refusal is the guidance (a shell: "pick faces to remove, or a body to hollow"),
@@ -825,6 +1307,7 @@ void DesignController::runPreview(bool commit) {
     }
     m_readyPlan = plan;
     m_readyInputs = stamp;
+    m_readyValues = inputs;
     m_readyOps = m_doc->doc.ops.size();
     m_form->setStatus(QString(), false);
     if (commit) return commitReady();
@@ -852,12 +1335,17 @@ void DesignController::runPreview(bool commit) {
             m_stretch.footprint=true;m_stretch.u0=u0-margin;m_stretch.u1=u1+margin;m_stretch.v0=v0-margin;m_stretch.v1=v1+margin;
           }
         }
+        m_handleInput="distance";
         m_distanceHandle->setScale(symmetric?0.5:1.0);  // a symmetric extrusion's end moves half the distance: so does the arrow
         m_distanceHandle->setAnchorSegments(std::move(*anchors));
+        m_distanceHandle->setLabel(i18n::t("Distance"));
+        m_distanceHandle->setExtraFields(valueFields("distance"));  // Tab goes on to the taper (UI-122)
         m_distanceHandle->configure(origin,axis,value,QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
       }
     }
+    if(!hasHandle && arrow.is_object() && m_placer->arrowShown()){hasHandle=true;showHandle(arrow);}  // a primitive's height once its base is set
     if(!hasHandle)m_distanceHandle->hide();
+    m_values->refresh();  // the boxes beside the pointer give way to the handle's
     std::vector<Viewport::PreviewPart> parts;
     std::vector<std::string> hidden;
     for (size_t i = 0; i < plan->changed.size(); ++i) {
@@ -883,7 +1371,7 @@ void DesignController::restoreRecovery(const opad::json& state) {
   if(state.value("type","")=="sketch")m_sketch->restoreRecovery(state);
   else if(state.value("type","")=="feature") {
     const auto id=state.value("id",std::string());
-    if(id.empty())startFeature(QString::fromStdString(state.at("kind").get<std::string>()));else editOp(id);
+    if(id.empty()){startFeature(QString::fromStdString(state.at("kind").get<std::string>()));m_placer->stop();}else editOp(id);  // restored values place it
     if(featureActive())for(const auto& [key,value]:state.at("inputs").items()){
       if(value.is_array() || value.is_object())m_form->setPicks(QString::fromStdString(key),value);
       else m_form->setValue(QString::fromStdString(key),value);
@@ -891,17 +1379,19 @@ void DesignController::restoreRecovery(const opad::json& state) {
   }
   emit stateChanged();
 }
-void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin) {
+void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin,const QString& command) {
   m_positionOrigin=positionOrigin;
   if(!m_doc->hasDocument || m_sketch->active()) return;
   if(m_pickPlane) escape();
   m_planePicked=std::move(done);
+  m_planeCommand=command;
   beginPlanePick();
 }
 
 void DesignController::startSketch() {
   m_positionOrigin=true;
   m_planePicked={};
+  m_planeCommand="design.sketch";
   if (!m_doc->hasDocument || m_doc->browse) return;
   if (m_sketch->active()) return;
   beginPlanePick();
@@ -917,7 +1407,12 @@ void DesignController::showSketchPanel(const QString& page) {
   if(m_sketch->active() && m_sketchPanel && m_openPanel){
     // A page (Constraints, Snaps, Selection) is named in the header: it read "Select", the tool, above the constraint list.
     if(!page.isEmpty())m_sketchPanel->setHeader("sketch",page);
-    else for(const auto& tool:SketchPanel::tools())if(tool.id==m_sketch->tool()){m_sketchPanel->setHeader("sketch",tool.label);break;}
+    else {  // a tool outside the panel's registry (paste, copy with base point) by its steps' name
+      const auto& registry=SketchPanel::tools();
+      const auto tool=std::find_if(registry.begin(),registry.end(),[this](const SketchPanel::Tool& t){return t.id==m_sketch->tool();});
+      const auto* steps=sketchsteps::find(m_sketch->tool().toStdString());
+      if(tool!=registry.end())m_sketchPanel->setHeader("sketch",tool->label);else if(steps)m_sketchPanel->setHeader("sketch",i18n::t(steps->name));
+    }
     m_openPanel(m_sketchPanel);
   }
 }
@@ -927,13 +1422,62 @@ void DesignController::redefineSketchPlane() {
   m_planePicked=[this](opad::json plane,opad::Frame frame){m_sketch->redefinePlane(plane,frame);};
   beginPlanePick();
 }
+void DesignController::startSketchOn(const opad::json& plane, const opad::Frame& frame) {
+  if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy || m_sketch->active()) return;
+  if (m_featureOn) endFeature();
+  if (m_pickPlane) m_planePicker->cancel();  // a plane pick under way gives way
+  enterSketch({}, QString::fromStdString(next_name(m_doc->scene, "Sketch")), plane, frame, opad::json::object());
+}
 
 void DesignController::beginPlanePick() {
   if(m_featureOn)endFeature();
   m_pickPlane=true;m_activating=false;
   emit stateChanged();
-  m_planePicker->panel()->setHeader("plane",tr("Choose sketch plane"));
+  // Named for what the plane is for: Align view to plane and Import's drawing pick one too.
+  const QString command=planeCommand();
+  m_planePicker->panel()->setHeader("plane",command=="view.alignPlane"?tr("Choose plane to look at"):command=="file.import"?tr("Choose drawing plane"):tr("Choose sketch plane"));
   m_planePicker->start(m_positionOrigin,m_openPanel);
+}
+
+// Ctrl+Z while a feature's panel is open (UI-116): the last pick goes, from the input being picked or, when that has none
+// (a one-pick input hands over to the next as soon as it is filled), from the last input before it that has picks. The
+// document's own undo waits until the panel is closed. A plane is picked again with its picker, not taken back.
+bool DesignController::undoPick() {
+  if (!m_featureOn || !m_form->spec() || m_doc->designBusy) return false;
+  auto listed = [this](const QString& name) {
+    opad::json picks = m_form->picks(name);
+    if (picks.is_object()) picks = opad::json::array({picks});
+    return picks.is_array() ? picks : opad::json::array();
+  };
+  QString name = m_form->activeInput();
+  const InputSpec* in = m_form->input(name);
+  if (!in || listed(name).empty()) {
+    in = nullptr;
+    const opad::json inputs = m_form->inputs();
+    for (const InputSpec& spec : m_form->spec()->inputs) {
+      if (QString::fromStdString(spec.name) == name) break;
+      if (spec.type != "plane" && FeaturePanel::isPick(spec.type) && opad::design::input_active(spec, inputs) && !listed(QString::fromStdString(spec.name)).empty()) in = &spec;
+    }
+    if (!in) {
+      emit status(tr("No pick to take back · Esc closes the feature"));
+      return false;
+    }
+    name = QString::fromStdString(in->name);
+    m_form->activate(name);  // its picks become the selection again
+  }
+  if (in->type == "plane") {
+    emit status(tr("Pick the plane again to change it"));
+    return false;
+  }
+  opad::json picks = listed(name);
+  picks.erase(picks.end() - 1);
+  m_form->setPicks(name, picks);
+  m_ruleMatches.erase(name);
+  syncSelectionToInput();
+  refreshRoute();  // its last pick gone: the next input's axes or planes go too
+  schedulePreview();
+  emit status(help::expand(tr("Took back the last pick of %1 · Undo ({key:edit.undo}) again takes the one before").arg(i18n::t(QString::fromStdString(in->label)))));
+  return true;
 }
 
 bool DesignController::escape() {
@@ -943,6 +1487,7 @@ bool DesignController::escape() {
     return true;
   }
   if (m_featureOn) {
+    if (m_placer->escape()) return true;  // a primitive being placed: one stage back
     endFeature();
     return true;
   }
@@ -965,7 +1510,7 @@ void DesignController::enterSketch(const std::string& sketchId, const QString& n
 }
 
 void DesignController::finishSketch(std::function<void()> then) {
-  if(m_sketch->busy())return emit status(tr("Wait for the sketch operation to finish."));
+  if(m_sketch->busy())return emit notice(tr("Wait for the sketch operation to finish."));
   if (!m_sketch->active()) return;
   auto leave = [this, then] {
     m_sketch->end();
@@ -976,13 +1521,51 @@ void DesignController::finishSketch(std::function<void()> then) {
   };
   if (m_sketch->sketchId().empty() && m_sketch->empty()) return leave();  // nothing was drawn: no op
   if (!m_sketch->sketchId().empty() && !m_sketch->modified()) return leave();
-  opad::json op;
-  if (m_sketch->sketchId().empty()) op = make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), m_sketch->geometry());
-  else op = make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", m_sketch->geometryDelta()}, {"plane", m_sketch->plane()}});
-  applyOps({op}, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave](bool ok, const QString& error) {
+  // The pictures inserted while it was open become image canvases on its plane in the same step (UI-70: bytes stored once,
+  // moved by transform ops), never records of the sketch; the ones it already had stay (Backdrop images to canvases).
+  Sketch sk = Sketch::from_json(m_sketch->geometry());
+  std::set<int> had;
+  for (const auto& image : m_sketch->initialGeometry().value("images", opad::json::array())) had.insert(image.value("id", -1));
+  opad::json pictures = opad::json::array(), kept = opad::json::array();
+  for (const auto& image : sk.images) (had.count(image.value("id", -1)) ? kept : pictures).push_back(image);
+  if (!pictures.empty()) {
+    sk.id_watermark = std::max(sk.id_watermark, sk.next_id() - 1);  // their ids are never given again
+    sk.images = kept;
+  }
+  const opad::json geometry = sk.to_json();
+  std::vector<opad::json> ops;
+  if (m_sketch->sketchId().empty()) {
+    if (pictures.empty() || !sk.entities.empty() || !sk.images.empty() || !sk.points.empty()) {
+      opad::json op = make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), geometry);
+      if (!m_doc->activeComponent().empty()) op["component"] = m_doc->activeComponent();  // made in the active component (UI-33)
+      ops.push_back(std::move(op));
+    }
+  } else {
+    opad::json plane = m_sketch->plane();  // a plane picked now goes in where the sketch's component was when it was made
+    if (const opad::SketchItem* s = m_doc->scene.sketch(m_sketch->sketchId()); s && plane != s->plane) plane = plane_as_made(*s, std::move(plane));
+    ops.push_back(make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", sketch_delta(m_sketch->initialGeometry(), geometry)}, {"plane", plane}}));
+  }
+  std::function<void(opad::Document&, Plan&)> canvases;
+  if (!pictures.empty()) {
+    // Into the component the sketch is made in (UI-33): the active one for a new sketch, the sketch's own when edited.
+    std::string into = m_doc->activeComponent();
+    if (const opad::SketchItem* s = m_doc->scene.sketch(m_sketch->sketchId())) into = s->component;
+    const opad::Node* in = m_doc->scene.node(into);
+    if (!in || in->kind != opad::Node::Kind::Component) into.clear();
+    const opad::Mat4 world = into.empty() ? opad::Mat4() : m_doc->scene.world(into);
+    canvases = [pictures, frame = m_sketch->frame(), into, world](opad::Document& doc, Plan& plan) {
+      opad::CanvasImports made = opad::canvas_imports(doc, pictures, frame, into, world);
+      plan.ops.insert(plan.ops.end(), made.ops.begin(), made.ops.end());
+      plan.bodies.insert(plan.bodies.end(), made.bodies.begin(), made.bodies.end());
+      plan.report["canvases"] = made.canvases;
+    };
+  }
+  const int placed = int(pictures.size());
+  applyOps(ops, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave, placed](bool ok, const QString& error) {
     if (!ok) return emit failed(error);  // stay in the sketch so nothing drawn is lost
     leave();
-  });
+    if (placed > 0) emit status(tr("%n picture(s) placed as image canvases on the sketch's plane", nullptr, placed));
+  }, canvases);
 }
 
 void DesignController::cancelSketch() {
@@ -995,13 +1578,19 @@ void DesignController::cancelSketch() {
 }
 
 // ---------------------------------------------------------------- bench
-// OPAD_BENCH_DESIGN: a sketch drawn through the editor's tools, extruded through the feature panel's plan and
-// commit path, then a parameter-driven edit. No mouse or keyboard driving.
-void DesignController::bench() {
+// Sketch1 on XY in a new document if there is none, then `run` once the look-at animation has ended (pick distances are
+// in pixels). OPAD_BENCH_DESIGN and the registered sketch benches (SketchBench.cpp) start here.
+void DesignController::benchSketch(std::function<void()> run) {
   if (!m_doc->hasDocument) m_doc->newDocument();
   const opad::Frame frame = base_frame("xy");
   enterSketch({}, "Sketch1", opad::json{{"base", "xy"}, {"frame", frame.to_json()}}, frame, opad::json::object());
-  QTimer::singleShot(700, this, [this] {  // the look-at animation has ended: pick distances are in pixels
+  QTimer::singleShot(700, this, std::move(run));
+}
+
+// OPAD_BENCH_DESIGN: a sketch drawn through the editor's tools, extruded through the feature panel's plan and
+// commit path, then a parameter-driven edit. No mouse or keyboard driving.
+void DesignController::bench() {
+  benchSketch([this] {
   m_sketch->bench({});
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_HANDLES"))return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG") || qEnvironmentVariableIsSet("OPAD_BENCH_SPLINE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY")) return;
@@ -1033,8 +1622,31 @@ void DesignController::bench() {
           }
           QMouseEvent release(QEvent::MouseButtonRelease,local+QPointF(25,-35),global+QPointF(25,-35),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&release);
           if(m_form->inputs().at("distance")==before)throw opad::Error("extrude drag did not change distance");++*phase;
-        }else if(*phase==1){if(!m_readyPlan)throw opad::Error("extrude drag preview missing");runPreview(true);++*phase;}
-        else {if(m_featureOn)return;if(m_doc->scene.features.empty() || m_distanceHandle->isVisible())throw opad::Error("extrude handle commit/cleanup");timer->stop();trace::log("bench: extrusion start offset, drag, preview and commit PASS");QCoreApplication::exit(0);}
+        }else if(*phase==1){
+          if(!m_readyPlan)throw opad::Error("extrude drag preview missing");
+          // UI-16: the box by the arrow takes the tools' keys: digits typed over the view (keypad too) replace the value, Up
+          // steps it, Enter is OK.
+          QApplication::setActiveWindow(m_viewport->window());m_viewport->setFocus();
+          auto key=[this](int code,Qt::KeyboardModifiers mods,const QString& text){
+            QWidget* to=QApplication::focusWidget();QKeyEvent press(QEvent::KeyPress,code,mods,text);QApplication::sendEvent(to?to:static_cast<QWidget*>(m_viewport),&press);};
+          key(Qt::Key_2,Qt::KeypadModifier,"2");key(Qt::Key_5,Qt::NoModifier,"5");
+          auto* box=m_distanceHandle->findChild<QLineEdit*>();
+          auto distance=[this]{return m_form->inputs().at("distance").dump();};
+          if(!box || box->text()!="25" || distance().find("25")==std::string::npos)throw opad::Error("digits typed over the view did not replace the extrude distance: "+distance());
+          // UI-26: a plain number typed is stored with its unit as a word (it was "(25) * 1 mm", shown so when edited again).
+          if(m_form->inputs().at("distance")!="25 mm")throw opad::Error("a typed 25 is stored as "+distance()+", not \"25 mm\"");
+          trace::log("bench: extrude box: a typed 25 is stored as \"25 mm\" PASS");
+          if(QApplication::focusWidget()!=box)throw opad::Error("the extrude box did not take the keyboard");
+          key(Qt::Key_Up,Qt::NoModifier,{});
+          if(box->text()!="26 mm" || distance().find("26")==std::string::npos)throw opad::Error("Up did not step the extrude distance: "+distance());
+          trace::log("bench: extrude box: keypad 2 and 5 typed over the view replace the distance, Up steps it to 26 mm PASS");
+          ++*phase;
+        }else if(*phase==2){
+          if(QApplication::focusWidget()!=m_distanceHandle->findChild<QLineEdit*>())throw opad::Error("the extrude box lost the keyboard");
+          QKeyEvent enter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier);QApplication::sendEvent(QApplication::focusWidget(),&enter);
+          ++*phase;
+        }
+        else {if(m_featureOn)return;if(m_doc->scene.features.empty() || m_distanceHandle->isVisible())throw opad::Error("extrude handle commit/cleanup");timer->stop();trace::log("bench: extrusion start offset, drag, typed value, preview and commit by Enter PASS");QCoreApplication::exit(0);}
       }catch(const std::exception& e){timer->stop();trace::log(QString("bench: extrude handle FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return;
     }
     // TODO 10 B14: the panel's New body section names and colours the body in the same step.

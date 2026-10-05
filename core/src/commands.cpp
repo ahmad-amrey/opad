@@ -1,14 +1,19 @@
 #include "opad/commands.hpp"
 
+#include <OSD_Parallel.hxx>
 #include <Standard_Failure.hxx>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <mutex>
 #include <set>
 
+#include "opad/assets.hpp"
 #include "opad/cache.hpp"
+#include "opad/canvas.hpp"
 #include "opad/diff.hpp"
+#include "opad/explode.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mesh.hpp"
 #include "opad/render.hpp"
@@ -16,11 +21,16 @@
 #include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/drawing/display.hpp"
+#include "opad/drawing/projection.hpp"
+#include "opad/drawing/sheet.hpp"
+#include "opad/kicad_pcb.hpp"
 
 namespace opad::commands {
 
 void register_design_commands(const std::function<void(const CommandInfo&, Handler)>& add);  // design/commands_design.cpp
 void register_agent_commands(const std::function<void(const CommandInfo&, Handler)>& add);
+void register_sheet_commands(const std::function<void(const CommandInfo&, Handler)>& add);  // drawing/sheet_commands.cpp
 
 namespace {
 
@@ -148,6 +158,25 @@ std::vector<json> targets_of(const std::string& command, const json& a) {
   return out;
 }
 
+// A drawing layer's fields (appearance `layer`, an entry of a view's display.layers) as the readers take them: each of its
+// own type or null (removes it); keys of a newer build pass. Checked where they come in, not on load, so a file stays open.
+void check_layer_fields(const json& f, const std::string& what) {
+  if (!f.is_object()) throw Error(what + " must be an object");
+  auto numbers = [](const json& v, size_t n) {
+    return v.is_array() && (!n || v.size() == n) && std::all_of(v.begin(), v.end(), [](const json& x) { return x.is_number(); });
+  };
+  for (const auto& [key, v] : f.items()) {
+    if (v.is_null()) continue;
+    const bool ok = key == "on" || key == "off" || key == "frozen" || key == "locked" || key == "plot" ? v.is_boolean()
+                    : key == "lineweight" || key == "scale" ? v.is_number()
+                    : key == "linetype" || key == "name"    ? v.is_string()
+                    : key == "pattern"                      ? numbers(v, 0)
+                    : key == "color"                        ? numbers(v, 3)
+                                                            : true;
+    if (!ok) throw Error(what + ": " + key + " has the wrong type (" + v.dump() + ")");
+  }
+}
+
 // Appends one op per target: `make(target, index, count)` builds it. The result keeps "id" (the first op) and lists
 // every op in "ids" when there are several.
 json append_per_target(Document& doc, const std::string& command, const json& a, const std::function<json(const json&, size_t, size_t)>& make) {
@@ -164,6 +193,47 @@ json append_per_target(Document& doc, const std::string& command, const json& a,
   if (a.contains("targets")) j["ids"] = ids;
   return j;
 }
+
+// TODO 11 UI-37: a locked node, or one under a locked component, is not moved (a transform, a reparent): refused naming
+// it and what holds the lock before anything is appended.
+void refuse_locked(const Document& doc, const std::vector<json>& targets, const char* what) {
+  if (!design::has_locks(doc)) return;
+  const Scene s = resolve(doc);
+  for (const auto& t : targets)
+    if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr)
+      if (const Node* holder = s.lock_holder(n->id)) throw LockedError(n->name, holder->name, what);
+}
+
+KicadOptions kicad_options(const json& a) {
+  KicadOptions o;
+  for (const auto& dir : str_list(a.value("model_dirs", json()))) o.model_dirs.push_back(path_from_utf8(dir));
+  o.components = a.value("components", true);
+  o.dnp = a.value("dnp", true);
+  o.vias = a.value("vias", false);
+  o.placeholder_height = a.value("placeholder_height", 1.0);
+  o.origin = a.value("origin", "auto");
+  if (o.origin != "auto" && o.origin != "center" && o.origin != "page") throw Error("origin is auto, center or page");
+  if (a.contains("kicad_cli")) {  // KiCad's own export, with what it is asked to add
+    o.kicad_cli = true;
+    for (const auto& x : str_list(a["kicad_cli"]))
+      if (x == "tracks") o.tracks = true;
+      else if (x == "pads") o.pads = true;
+      else if (x == "silkscreen") o.silkscreen = true;
+      else if (x != "none") throw Error("kicad_cli takes tracks, pads, silkscreen or none");
+  }
+  return o;
+}
+
+// Linked assets as the CLI reads them: the document's project, or every path with trust_assets.
+AssetOptions asset_options(const json& a) {
+  AssetOptions o;
+  o.trust_all = a.value("trust_assets", false);
+  o.kicad.model_dirs = kicad_options(a).model_dirs;
+  o.derive = derive_asset;  // a board read through kicad-cli: its STEP made again when missing or synced
+  return o;
+}
+
+std::string import_arg(const json& a) { return a.value("import", ""); }
 
 void register_builtins() {
   auto& r = raw_registry();
@@ -280,7 +350,12 @@ void register_builtins() {
         }
         for (const auto& p : s.sections)
           sec.push_back({{"id", p.id}, {"name", p.name}, {"origin", {p.origin[0], p.origin[1], p.origin[2]}}, {"normal", {p.normal[0], p.normal[1], p.normal[2]}}, {"enabled", p.enabled}});
-        for (const auto& v : s.views) views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
+        for (const auto& v : s.views) {
+          views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
+          if (!v.explode.is_null()) views.back()["explode"] = v.explode;
+          if (!v.display.is_null()) views.back()["display"] = v.display;
+          if (v.home) views.back()["home"] = true;
+        }
         json j;
         j["annotations"] = ann;
         j["total"]=total;
@@ -291,20 +366,29 @@ void register_builtins() {
         return j;
       });
 
-  reg("measure", "Distance, angle, radius or bbox between references; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
-      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox"}, {"refs", "array - references"},
-       {"queries", "array - several measurements [{kind, refs}], answered in order as results (a failed one carries error)"},
-       {"pin", "bool - append a measurement op (each, with queries)"}, {"by", "string"}},
+  reg("measure", "Distance (minimum, centre to centre or maximum), angle, radius, bbox, area, or an edge's length / a face's area and perimeter; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
+      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox|area|length"}, {"refs", "array - references"},
+       {"mode", "min|center|max - distance only: the shortest (default), between the centres, or the largest"},
+       {"at", "[x,y,z] - area: where one drawing object was clicked (the part of it whose cell is measured)"},
+       {"queries", "array - several measurements [{kind, refs, mode, at}], answered in order as results (a failed one carries error)"},
+       {"pin", "bool - append a measurement op (each, with queries)"}, {"explode", "uuid|object - measure in an exploded view: a view op id or an explode spec"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
         Scene s = resolve(doc);  // once for every query (gap log #4)
-        auto one = [&](const std::string& kind, const json& refArgs) {
+        if (a.contains("explode")) {
+          if (a.value("pin", false)) throw Error("measure: pinned measurements use the assembled model; pin without explode");
+          s = exploded_scene(doc, s, a["explode"]);
+        }
+        auto one = [&](const std::string& kind, const json& refArgs, const std::string& mode, const json& at) {
           std::vector<Ref> refs;
           for (const auto& r : str_list(refArgs)) refs.push_back(Ref::parse(r));
           json res;
           if (kind == "distance") {
             if (refs.size() != 2) throw Error("distance needs exactly two refs");
-            res = measure_distance(doc, s, refs[0], refs[1]);
+            if (mode == "center") res = measure_center_distance(doc, s, refs[0], refs[1]);
+            else if (mode == "max") res = measure_max_distance(doc, s, refs[0], refs[1]);
+            else if (mode == "min" || mode.empty()) res = measure_distance(doc, s, refs[0], refs[1]);
+            else throw Error("unknown distance mode: " + mode + " (min, center, max)");
           } else if (kind == "angle") {
             if (refs.size() != 2) throw Error("angle needs exactly two refs");
             res = measure_angle(doc, s, refs[0], refs[1]);
@@ -313,6 +397,11 @@ void register_builtins() {
             res = measure_radius(doc, s, refs[0]);
           } else if (kind == "bbox") {
             res = measure_bbox(doc, s, refs);
+          } else if (kind == "area") {
+            res = measure_area(doc, s, refs, {}, at.is_array() ? std::optional(at.get<Vec3>()) : std::nullopt);
+          } else if (kind == "length") {
+            if (refs.size() != 1) throw Error("length needs exactly one ref");
+            res = measure_length(doc, s, refs[0]);
           } else {
             throw Error("unknown measurement kind: " + kind);
           }
@@ -330,13 +419,13 @@ void register_builtins() {
         };
         if (!a.contains("queries")) {
           if (!a.contains("refs")) throw Error("measure: pass refs (with kind) or queries");
-          return one(a.value("kind", "distance"), a["refs"]);
+          return one(a.value("kind", "distance"), a["refs"], a.value("mode", ""), a.value("at", json()));
         }
         json results = json::array();
         for (const auto& q : a["queries"]) {
           const std::string kind = q.value("kind", "distance");
           try {
-            results.push_back(one(kind, q.value("refs", json())));
+            results.push_back(one(kind, q.value("refs", json()), q.value("mode", a.value("mode", "")), q.value("at", json())));
           } catch (const Standard_Failure& e) {
             results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", std::string("the modelling kernel failed: ") + e.GetMessageString()}});
           } catch (const std::exception& e) {
@@ -358,15 +447,21 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter) or SVG into the document",
-      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
-       {"placement", "[16] - drawings: where the drawing's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
-       {"center", "bool - drawings: centre the drawing on its origin (default false)"}},
+  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG, a KiCad board or a picture into the document",
+      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb/.png/.jpg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+       {"placement", "[16] - drawings and boards: where the file's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
+       {"center", "bool - drawings: centre the drawing on its origin (default false)"},
+       {"width", "number - pictures: mm"},
+       {"model_dirs", "string|array - KiCad: model folders"}, {"components", "bool - KiCad: models (default true)"}, {"dnp", "bool - KiCad: do-not-populate parts"},
+       {"vias", "bool - KiCad (default false)"}, {"placeholder_height", "number - KiCad: missing-model box, mm"}, {"origin", "auto|center|page - KiCad"},
+       {"kicad_cli", "string|array - KiCad: via kicad-cli, adding tracks,pads,silkscreen or none"},
+       {"link", "bool - link the file (read from it on open, never stored; see asset)"}},
       true, [](Document* d, const json& a) {
         ImportOptions o;
         o.author = a.value("by", "");
         o.parent = a.value("parent", "");
         o.heal = a.value("heal", true);
+        o.kicad = kicad_options(a);
         if (a.contains("placement")) o.placement = Mat4::from_json(a["placement"]);
         if (a.contains("plane")) {  // resolved now, stored as the placement: replay never needs the plane again
           const Frame f = design::resolve_plane(need(d), resolve(need(d)), a["plane"]);
@@ -374,9 +469,57 @@ void register_builtins() {
           Mat4 m;
           for (int r = 0; r < 3; ++r) { m.at(r, 0) = f.x[r]; m.at(r, 1) = f.y[r]; m.at(r, 2) = n[r]; m.at(r, 3) = f.origin[r]; }
           o.placement = m * o.placement;
+          o.canvas["plane"] = f.to_json();  // a picture's place is given in it
         }
+        if (a.contains("width")) o.canvas["width"] = a["width"].get<double>();
         o.center_drawing = a.value("center", false);
-        return import_file(need(d), path_from_utf8(a.at("file").get<std::string>()), o).to_json();
+        const auto file = path_from_utf8(a.at("file").get<std::string>());
+        return (a.value("link", false) ? link_file(need(d), file, o) : import_file(need(d), file, o)).to_json();
+      });
+
+  reg("asset", "Linked files (import link=true): status, or sync (read the changed file), embed (editable copy), pack (copy into assets/), git recover or lfs track",
+      {{"doc", "path"}, {"action", "status|sync|embed|pack|recover|lfs"}, {"import", "uuid - its import (default: the only one)"}, {"file", "path - sync: the moved file"},
+       {"by", "string"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        const std::string action = a.value("action", "status");
+        const AssetOptions o = asset_options(a);
+        if (action == "status") {
+          json out = json::array();
+          for (const auto& s : asset_status(doc, o)) out.push_back(s.to_json());
+          return json{{"assets", out}};
+        }
+        if (action == "pack") return pack_asset(doc, import_arg(a), a.value("by", ""));
+        if (action == "recover") {
+          const auto file = recover_asset(doc, import_arg(a)).generic_u8string();
+          return json{{"file", std::string(file.begin(), file.end())}};
+        }
+        if (action == "lfs") return track_asset_lfs(doc, import_arg(a));
+        design::Plan plan = action == "sync" ? plan_asset_sync(doc, import_arg(a), o, a.contains("file") ? path_from_utf8(a["file"].get<std::string>()) : std::filesystem::path())
+                          : action == "embed" ? plan_asset_embed(doc, import_arg(a))
+                                              : throw Error("action is status, sync, embed, pack, recover or lfs");
+        json report = plan.report;
+        design::commit(doc, std::move(plan), a.value("by", ""));
+        return report;
+      });
+
+  reg("kicad_models", "A KiCad board's 3D models, where each was found; download fetches missing KiCad library ones (CC-BY-SA) to the cache",
+      {{"file", "path - .kicad_pcb"}, {"model_dirs", "string|array"}, {"dnp", "bool"}, {"download", "bool"}},
+      false, [](Document*, const json& a) {
+        const auto board = path_from_utf8(a.at("file").get<std::string>());
+        const KicadOptions o = kicad_options(a);
+        if (!a.value("download", false)) return kicad_models(board, o);
+        const json fetched = kicad_download_models(board, o);
+        json j = kicad_models(board, o);
+        j["downloaded"] = fetched["downloaded"];
+        j["failed"] = fetched["failed"];
+        return j;
+      });
+
+  reg("kicad_sync_preview", "What re-reading a KiCad board changes in its import, per reference designator",
+      {{"doc", "path"}, {"import", "uuid - default: the only one"}, {"file", "path - default: source beside doc"}},
+      false, [](Document* d, const json& a) {
+        return kicad_sync_preview(need(d), a.value("import", ""), a.contains("file") ? path_from_utf8(a["file"].get<std::string>()) : std::filesystem::path());
       });
 
   reg("import_brep", "Import a shape given as OCCT ASCII BREP text (build123d/CadQuery/OCP bridge)",
@@ -391,36 +534,25 @@ void register_builtins() {
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
 
-  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg or a plugin format",
-      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
-       {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"}},
+  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg|pdf|png or a plugin format (2D of solids: a hidden-line view)",
+      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|pdf|png|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
+       {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"},
+       {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}, {"dpi", "int - PNG"}, {"sheet", "uuid|name|drawing:<name> - 2D: a sheet, or a drawing's"}, {"issue", "string - with sheet: as issued"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
-        std::string fmt = a.value("format", "step");
-        if (has_exporter(fmt)) return run_exporter(fmt, doc, a);
-        ExportOptions o;
-        o.format = fmt;
-        o.select = str_list(a.value("select", json()));
-        o.step_schema = a.value("schema", "AP214");
-        o.tolerance = a.value("tolerance", 0.1);
-        o.ascii = a.value("ascii", false);
-        o.per_body = a.value("per_body", false);
-        o.mtl = a.value("mtl", true);
-        std::string out = a.value("out", "");
-        if (out.empty()) throw Error("export: \"out\" path required");
-        if (fmt == "svg" || fmt == "dxf" || fmt == "dwg") return export_drawing(doc, resolve(doc), path_from_utf8(out), o).to_json();
-        return export_selection(doc, resolve(doc), path_from_utf8(out), o).to_json();
+        if (has_exporter(a.value("format", "step"))) return run_exporter(a.value("format", "step"), doc, a);
+        return export_document(doc, resolve(doc), a);
       });
 
   reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals",
       {{"doc", "path"}, {"out", "path - .png"}, {"view", "iso|top|bottom|front|back|left|right"}, {"camera", "object - {eye,target,up,projection,scale}"},
        {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool - silhouette outlines (default true)"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"},
        {"views", "array|csv - e.g. iso,front,top,right: one labelled grid"}, {"edge_lines", "bool - the model's edges as lines"}, {"highlight", "array - face/edge references to tint"},
-       {"shading", "flat|smooth"}},
+       {"shading", "flat|smooth"}, {"explode", "uuid|object - an exploded view: a view op id or an explode spec"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
         RenderOptions o = render_options(a);
-        Image img = render_scene(doc, resolve(doc), o);
+        Image img = render_scene(doc, a.contains("explode") ? exploded_scene(doc, resolve(doc), a["explode"]) : resolve(doc), o);
         std::string out = a.value("out", "");
         if (out.empty()) throw Error("render: \"out\" path required");
         write_png(path_from_utf8(out), img);
@@ -431,12 +563,66 @@ void register_builtins() {
         return j;
       });
 
-  reg("diff", "Added/removed/changed ops between two documents, optionally with a geometric diff image",
-      {{"a", "path"}, {"b", "path"}, {"image", "path - optional .png"}, {"view", "string"}, {"width", "int"}, {"height", "int"}}, false,
+  reg("project", "Hidden-line projection: typed 2D curves with source edge or face, kind and hidden flag; out .json (all curves) or .png",
+      {{"doc", "path"}, {"view", "front|top|right|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"select", "array|csv - node uuids"},
+       {"hide", "array|csv"}, {"quality", "auto|exact|draft|hybrid"}, {"hidden", "bool"}, {"tangent", "bool"}, {"silhouettes", "bool"},
+       {"resolution", "int"}, {"tolerance", "number"}, {"curves", "bool"}, {"bezier", "bool"}, {"out", "path"}, {"width", "int"}, {"cache", "bool"}},
+      false, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        json spec = a;
+        spec["nodes"] = str_list(a.value("select", json()));
+        spec["hide"] = str_list(a.value("hide", json()));
+        const auto view = drawing::ViewSpec::from_json(spec);
+        const auto g = drawing::project(doc, resolve(doc), view, {}, a.value("cache", true));
+        const double bezier = a.value("bezier", false) ? view.tolerance : 0;  // arcs, ellipses, splines as cubics too
+        json j = g->to_json(a.value("curves", false), bezier);
+        if (const std::string out = a.value("out", ""); !out.empty()) {
+          const auto path = path_from_utf8(out);
+          std::string ext = path.extension().string();
+          std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+          const int width = std::clamp(a.value("width", 1600), 16, 8192);  // the height follows the view
+          const double w = g->bounds[2] - g->bounds[0], h = g->bounds[3] - g->bounds[1];
+          if (ext == ".png") write_png(path, drawing::preview_image(*g, width, std::clamp(static_cast<int>(width * (w > 0 ? h / w : 0.75)), 16, 8192)));
+          else write_text_file(path, g->to_json(true, bezier).dump());
+          j["out"] = out;
+        }
+        return j;
+      });
+
+  reg("diff", "What changed between two versions of a document: parameters, sketches (entities, constraints, dimensions), feature inputs "
+      "before -> after, bodies added/removed/moved/geometry/renamed/appearance/reparented, notes, assets, how the histories relate, and the "
+      "op-level lists; optionally a geometric diff image. A side is a file or git:REV[:path]; one side alone is compared with git:HEAD",
+      {{"a", "path | git:REV | git:REV:path - the earlier version"}, {"b", "path | git:REV | git:REV:path - the later version"},
+       {"metrics", "bool - volume, area and size of each body whose geometry changed"}, {"text", "bool - also the diff as text"},
+       {"image", "path - optional .png"}, {"view", "string"}, {"width", "int"}, {"height", "int"}}, false,
       [](Document*, const json& a) {
-        Document da = Document::load(path_from_utf8(a.at("a").get<std::string>()));
-        Document db = Document::load(path_from_utf8(a.at("b").get<std::string>()));
-        json j = diff_documents(da, db);
+        std::string as = a.value("a", ""), bs = a.value("b", "");
+        if (bs.empty()) std::swap(as, bs);
+        if (bs.empty()) throw Error("diff: name a version: a and b, or one document to compare with git:HEAD");
+        if (as.empty()) as = "git:HEAD";
+        // Both at once, in index mode: only bodies something looks at (metrics, the image) are ever parsed, nothing is hashed.
+        Document versions[2];
+        std::exception_ptr failed[2];
+        OSD_Parallel::For(0, 2, [&](int i) {
+          const std::string& spec = i ? bs : as;
+          const std::string& other = i ? as : bs;
+          try {
+            std::filesystem::path file;
+            std::string text = version_text(spec, other.rfind("git:", 0) == 0 ? std::filesystem::path() : path_from_utf8(other), &file);
+            versions[i] = Document::parse_index(std::move(text), file);
+          } catch (...) {
+            failed[i] = std::current_exception();
+          }
+        });
+        for (const auto& f : failed)
+          if (f) std::rethrow_exception(f);
+        const Document &da = versions[0], &db = versions[1];
+        DiffOptions opt;
+        opt.metrics = a.value("metrics", false);
+        json j = semantic_diff(da, db, opt);
+        j["a"] = as;
+        j["b"] = bs;
+        if (a.value("text", false)) j["text"] = diff_text(j);
         if (a.contains("image") && a["image"].is_string()) {
           RenderOptions o = render_options(a);
           write_png(a["image"].get<std::string>(), render_diff(da, db, o));
@@ -510,10 +696,15 @@ void register_builtins() {
   reg("delete", "Tombstone an earlier op (annotation resolved, rename undone, import removed...)",
       {{"doc", "path"}, {"target", "uuid - op id"}, {"by", "string"}}, true, [](Document* d, const json& a) {
         // Through the design engine: tombstoning (or restoring) a sketch or feature changes what the later
-        // features produce, and that is recomputed in the same step.
+        // features produce, and that is recomputed in the same step. Drawing records and part properties (and
+        // edits of them) are never read by the features: no walk for those (the app deletes them on the UI thread).
         json op = op_with_target("delete", a);
+        Document& doc = need(d);
+        const Op* t = op["target"].is_string() ? doc.find_op(op["target"].get<std::string>()) : nullptr;
+        while (t && (t->type == "delete" || t->type == "edit")) t = doc.find_op(t->data.value("target", ""));
+        if (t && drawing::is_drawing_op(t->type)) return json{{"id", doc.append(op, a.value("by", "")).id}};
         op["id"] = new_uuid();
-        json j = design::apply_ops(need(d), {op}, a.value("by", ""));
+        json j = design::apply_ops(doc, {op}, a.value("by", ""));
         j["id"] = op["id"];
         return j;
       });
@@ -527,11 +718,22 @@ void register_builtins() {
   });
 
   reg("appearance", "Set colour/opacity/visibility/lock of a node, or of several (targets)",
-      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"color", "[r,g,b]"}, {"opacity", "number"}, {"visible", "bool"}, {"locked", "bool"}}, true,
+      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"color", "[r,g,b]"}, {"opacity", "number"}, {"visible", "bool"}, {"locked", "bool"},
+       {"layer", "object - drawing layer fields: off, frozen, plot, linetype, lineweight (mm); null removes one"},
+       {"default_color", "bool - back to the imported colour (a drawing: none)"}}, true,
       [](Document* d, const json& a) {
-        return append_per_target(need(d), "appearance", a, [&](const json&, size_t, size_t) {
+        // Earlier builds read an appearance op only with one of their four fields: a change of the others alone carries
+        // visible as it is.
+        if (a.contains("layer")) check_layer_fields(a["layer"], "appearance: layer");
+        const bool alone = (a.contains("layer") || a.contains("default_color")) && !a.contains("color") && !a.contains("opacity") && !a.contains("visible") && !a.contains("locked");
+        const Scene shown = alone ? resolve(need(d)) : Scene{};
+        return append_per_target(need(d), "appearance", a, [&](const json& target, size_t, size_t) {
           json op = json::object();
-          for (const char* k : {"color", "opacity", "visible", "locked"}) if (a.contains(k)) op[k] = a[k];
+          for (const char* k : {"default_color", "color", "opacity", "visible", "locked", "layer"}) if (a.contains(k)) op[k] = a[k];
+          if (alone) {
+            const Node* n = shown.node(target.is_string() ? target.get<std::string>() : "");
+            op["visible"] = n ? n->visible : true;
+          }
           return op;
         });
       });
@@ -540,19 +742,116 @@ void register_builtins() {
       [](Document* d, const json& a) {
         json op = op_with_target("transform", a);
         op["matrix"] = Mat4::from_json(a.at("matrix")).to_json();
+        refuse_locked(need(d), {op["target"]}, "moving");
         json j;
         j["id"] = need(d).append(op, a.value("by", "")).id;
         return j;
       });
 
+  reg("canvas", "Image canvas: info; place (set: x y its centre in its plane, width|height (both: stretched), angle deg); calibrate (points [a,b], distance); align "
+      "(points [a,a_to,b,b_to]); flags (set: selectable display_through flip); replace (file); from_backdrop (sketch, images)",
+      {{"doc", "path"}, {"action", "info|place|calibrate|align|flags|replace|from_backdrop"}, {"target", "uuid"}, {"set", "object"},
+       {"points", {{"type", "array"}, {"items", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}}}}}, {"distance", "number"},
+       {"file", "path"}, {"sketch", "uuid"}, {"images", {{"type", "array"}, {"items", {{"type", "integer"}}}}}, {"by", "string"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        const std::string action = a.value("action", "info"), by = a.value("by", "");
+        auto describe = [](const Scene& s, const std::string& id) {
+          const Node& n = canvas_node(s, id);
+          const CanvasPlace p = canvas_place(s, id);
+          const CanvasFlags f = CanvasFlags::of(n.canvas);
+          json j = {{"canvas", id}, {"import", n.source_op}, {"name", n.name}, {"x", p.x}, {"y", p.y}, {"width", p.width}, {"height", p.height},
+                    {"angle", p.angle * 180 / M_PI}, {"plane", p.plane.to_json()}, {"on_plane", p.on_plane}, {"body", {p.body_w, p.body_h}},
+                    {"selectable", f.selectable}, {"display_through", f.through}, {"flip", {f.flip[0], f.flip[1]}}, {"opacity", n.opacity},
+                    {"visible", n.visible}, {"locked", n.locked}};
+          if (n.raster.contains("px")) j["px"] = n.raster["px"];
+          if (p.stretched()) j["stretched"] = true;
+          if (n.linked) j["linked"] = true;
+          return j;
+        };
+        if (action == "from_backdrop") {
+          std::vector<int> images;
+          for (const auto& i : a.value("images", json::array())) images.push_back(i.get<int>());
+          return design::commit(doc, plan_canvas_from_backdrop(doc, a.at("sketch").get<std::string>(), images), by);
+        }
+        const std::string id = a.at("target").get<std::string>();
+        const Scene scene = resolve(doc);
+        const Node& n = canvas_node(scene, id);
+        if (action == "info") return describe(scene, id);
+        if (action == "replace") {
+          json report = design::commit(doc, plan_canvas_replace(doc, id, path_from_utf8(a.at("file").get<std::string>())), by);
+          return report.update(describe(resolve(doc), id)), report;
+        }
+        const json set = a.value("set", json::object());
+        auto point = [&](size_t i) { return a.at("points").at(i).get<Vec3>(); };
+        if (action == "flags") {
+          CanvasFlags f = CanvasFlags::of(n.canvas);
+          if (set.contains("selectable")) f.selectable = set["selectable"].get<bool>();
+          if (set.contains("display_through")) f.through = set["display_through"].get<bool>();
+          if (set.contains("flip")) f.flip = {set["flip"].at(0).get<bool>(), set["flip"].at(1).get<bool>()};
+          if (!f.plane.is_object()) f.plane = canvas_place(scene, id).plane.to_json();
+          json j = describe(scene, id);
+          j["id"] = doc.append(design::make_edit_op(n.source_op, {{"canvas", f.to_json()}}), by).id;
+          return j.update(describe(resolve(doc), id)), j;
+        }
+        if (const Node* holder = scene.lock_holder(id)) throw LockedError(n.name, holder->name, "moving");  // or under a locked component (UI-37)
+        Mat4 world;
+        double residual = 0;
+        if (action == "place") {
+          CanvasPlace p = canvas_place(scene, id);
+          if (set.contains("x")) p.x = set["x"].get<double>();
+          if (set.contains("y")) p.y = set["y"].get<double>();
+          if (set.contains("angle")) p.angle = set["angle"].get<double>() * M_PI / 180;
+          const double ratio = p.height / p.width;  // alone, width or height keeps its proportions (a stretched canvas stays so)
+          if (set.contains("width")) p.width = set["width"].get<double>(), p.height = set.contains("height") ? set["height"].get<double>() : p.width * ratio;
+          else if (set.contains("height")) p.height = set["height"].get<double>(), p.width = p.height / ratio;
+          world = canvas_world(p);
+        } else if (action == "calibrate") {
+          world = canvas_calibrate(scene.world(id), point(0), point(1), a.at("distance").get<double>());
+        } else if (action == "align") {
+          world = canvas_align(scene.world(id), point(0), point(1), point(2), point(3), &residual);
+        } else {
+          throw Error("action is info, place, calibrate, align, flags, replace or from_backdrop");
+        }
+        json j;
+        j["id"] = doc.append(canvas_transform_op(scene, id, world), by).id;
+        j.update(describe(resolve(doc), id));
+        if (action == "align") j["residual"] = residual;
+        return j;
+      });
+
   reg("reparent", "Move a node, or several (targets, kept in that order), under another component (null = root)",
-      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"parent", "uuid|null"}, {"index", "int"}}, true,
+      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"parent", "uuid|null"}, {"index", "int"},
+       {"keep_place", "bool - stay put in the world (adds transforms)"}}, true,
       [](Document* d, const json& a) {
-        return append_per_target(need(d), "reparent", a, [&](const json&, size_t i, size_t) {
-          json op = {{"parent", a.contains("parent") ? a["parent"] : json(nullptr)}};
+        Document& doc = need(d);
+        const std::vector<json> targets = targets_of("reparent", a);
+        refuse_locked(doc, targets, "moving");
+        const json parent = a.contains("parent") ? a["parent"] : json(nullptr);
+        std::vector<std::pair<std::string, Mat4>> kept;  // node -> its local under the new parent, from the scene before
+        if (a.value("keep_place", false)) {
+          const Scene s = resolve(doc);
+          const std::string into = parent.is_string() ? parent.get<std::string>() : std::string();
+          const Node* p = into.empty() ? nullptr : s.node(into);
+          if (into.empty() || (p && p->kind == Node::Kind::Component)) {
+            const std::vector<std::string> above = into.empty() ? std::vector<std::string>() : s.path_to(into);
+            const Mat4 back = p ? s.world(into).inverse() : Mat4{};
+            for (const auto& t : targets)
+              if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr;
+                  n && std::find(above.begin(), above.end(), n->id) == above.end()) {  // a cycle is not replayed: nothing moves
+                const Mat4 local = back * s.world(n->id);
+                if (!(local * n->local.inverse()).is_identity(1e-9)) kept.emplace_back(n->id, local);
+              }
+          }
+        }
+        json j = append_per_target(doc, "reparent", a, [&](const json&, size_t i, size_t) {
+          json op = {{"parent", parent}};
           if (a.contains("index")) op["index"] = a["index"].get<int>() < 0 ? a["index"].get<int>() : a["index"].get<int>() + static_cast<int>(i);
           return op;
         });
+        for (const auto& [id, local] : kept) doc.append({{"op", "transform"}, {"target", id}, {"matrix", local.to_json()}}, a.value("by", ""));
+        if (!kept.empty()) j["transformed"] = kept.size();
+        return j;
       });
 
   reg("section", "Add a named section plane", {{"doc", "path"}, {"name", "string"}, {"origin", "[x,y,z]"}, {"normal", "[x,y,z]"}}, true,
@@ -567,15 +866,93 @@ void register_builtins() {
         return j;
       });
 
-  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}}, true, [](Document* d, const json& a) {
+  reg("view", "Add a named camera bookmark",
+      {{"doc", "path"}, {"name", "string"}, {"camera", "object"}, {"explode", "object - an exploded view (see the explode command)"},
+       {"display", "object - layers: {layer id: state} restored with it"}, {"home", "bool - optional: the document's Home view (H)"}},
+      true, [](Document* d, const json& a) {
     json op;
     op["op"] = "view";
-    op["name"] = a.at("name");
+    const bool home = a.value("home", false);
+    op["name"] = home ? json(a.value("name", "Home")) : a.at("name");
     op["camera"] = a.contains("camera") ? a["camera"] : Camera::preset(a.value("preset", "iso")).to_json();
+    if (a.contains("explode")) op["explode"] = ExplodeSpec::from_json(a["explode"]).to_json();
+    if (a.contains("display")) {
+      const json& display = a["display"];
+      if (display.is_object() && display.contains("layers")) {
+        if (!display["layers"].is_object()) throw Error("view: display.layers must be an object of layer states");
+        for (const auto& [id, state] : display["layers"].items()) check_layer_fields(state, "view: display.layers." + id);
+      }
+      op["display"] = display;
+    }
+    if (home) op["home"] = true;  // an optional key: an older build reads it as a view named Home
     json j;
     j["id"] = need(d).append(op, a.value("by", "")).id;
     return j;
   });
+
+  reg("explode", "Exploded view: what moves together (units, by level) and where, at t. view: start from a view's explode; name: save as a new view; update: save into view",
+      {{"doc", "path"}, {"view", "uuid - a view op"}, {"root", "uuid - component (default all)"}, {"levels", "int - split depth: 1 = the root's children whole, 0 = all"},
+       {"mode", "radial|axis|stack"}, {"axis", "[x,y,z] - for axis and stack (default +Z)"}, {"spacing", "number - distance factor"},
+       {"keep", "array|csv - components moving as one unit"}, {"split", "array|csv - components whose parts split beyond levels"},
+       {"groups", "array - node id lists, each moving as one unit"}, {"offsets", "object - manual moves {unit id: [x,y,z]}"},
+       {"attach_small", "bool - small parts ride on what they touch"}, {"fasteners", "bool - radial: screws, pins and bolts leave along their axis"},
+       {"small_ratio", "number - small: diagonal share of the parent (0.05)"},
+       {"small_size", "number - small: diagonal in mm"}, {"stages", "together|units (one after another)"}, {"t", "number - 0 assembled .. 1 exploded"},
+       {"name", "string - save as a new view"}, {"camera", "object - the new view's camera"}, {"update", "bool - save into view"}, {"by", "string"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        const Scene s = resolve(doc);
+        const std::string view = a.value("view", "");
+        json spec_json = view.empty() ? ExplodeSpec{}.to_json() : view_explode(s, view).to_json();
+        for (const char* k : {"root", "levels", "mode", "axis", "spacing", "groups", "offsets", "attach_small", "fasteners", "small_ratio", "small_size", "stages", "t"})
+          if (a.contains(k)) spec_json[k] = a[k];
+        for (const char* k : {"keep", "split"})
+          if (a.contains(k)) spec_json[k] = str_list(a[k]);
+        const ExplodeSpec spec = ExplodeSpec::from_json(spec_json);
+        if (const Node* r = s.node(spec.root); !spec.root.empty() && (!r || r->kind != Node::Kind::Component))
+          throw Error("explode: root " + spec.root + " is not a component of the document");
+        if (a.contains("name") && a.value("update", false)) throw Error("explode: name saves a new view, update saves into view: give one");
+        json warnings = json::array();
+        if (a.value("stages", json()) == "levels") warnings.push_back("stages levels is read as together: the parts no longer move level by level");
+        auto known = [&](const std::string& id, const std::string& what) {
+          if (!s.node(id)) warnings.push_back(what + " " + id + " is not in the document");
+        };
+        for (const auto& id : spec.keep) known(id, "keep");
+        for (const auto& id : spec.split) known(id, "split");
+        for (const auto& g : spec.groups)
+          for (const auto& id : g) known(id, "group member");
+        const std::vector<ExplodeUnit> units = explode_units(doc, s, spec);
+        const std::vector<Vec3> moves = explode_unit_offsets(units, spec, spec.t);
+        json list = json::array(), offsets = json::object();
+        int deepest = 0;
+        for (size_t i = 0; i < units.size(); ++i) {
+          const ExplodeUnit& u = units[i];
+          deepest = std::max(deepest, u.level);
+          list.push_back({{"id", u.id}, {"name", u.name}, {"level", u.level}, {"parent", u.parent < 0 ? json(nullptr) : json(units[static_cast<size_t>(u.parent)].id)},
+                          {"bodies", u.bodies}, {"centre", u.centre}, {"dir", u.dir}, {"distance", u.distance}, {"t0", u.t0}, {"t1", u.t1}, {"offset", moves[i]}});
+          if (moves[i] != Vec3{0, 0, 0})
+            for (const auto& b : u.bodies) offsets[b] = moves[i];
+        }
+        for (const auto& [id, v] : spec.offsets)
+          if (std::none_of(units.begin(), units.end(), [&](const ExplodeUnit& u) { return u.id == id; })) warnings.push_back("offset " + id + " moves no unit");
+        const std::string root = explode_root(s, spec);
+        json j;
+        j["root"] = root.empty() ? json(nullptr) : json(root);
+        j["depth"] = explode_depth(s, spec);
+        j["deepest_level"] = deepest;
+        j["explode"] = spec.to_json();
+        j["units"] = list;
+        j["offsets"] = offsets;
+        if (!warnings.empty()) j["warnings"] = warnings;
+        if (a.contains("name")) {
+          const json op = {{"op", "view"}, {"name", a["name"]}, {"camera", a.contains("camera") ? a["camera"] : Camera::preset("iso").to_json()}, {"explode", spec.to_json()}};
+          j["id"] = doc.append(op, a.value("by", "")).id;
+        } else if (a.value("update", false)) {
+          if (view.empty()) throw Error("explode: update saves into view: pass view");
+          j["id"] = doc.append({{"op", "edit"}, {"target", view}, {"set", {{"explode", spec.to_json()}}}}, a.value("by", "")).id;
+        }
+        return j;
+      });
 
   reg("cache", "Inspect or clear the user cache", {{"action", "info|clear"}}, false, [](Document*, const json& a) {
     json j;
@@ -585,8 +962,9 @@ void register_builtins() {
     return j;
   });
 
-  // F25: the running app publishes its selection to <cache>/selection.json; agents read it here.
-  reg("selection", "Current GUI selection (uuids + descriptors) as published by the running app", json::object(), false,
+  // F25: the running app publishes its selection to <cache>/selection.json while agent access is on (UI-06); agents read
+  // it here.
+  reg("selection", "Current GUI selection (refs, node names, types, body keys and boxes; at most 2,000, with the total) as published by the running app while its agent access is on", json::object(), false,
       [](Document*, const json&) {
         json j;
         std::filesystem::path p = cache_dir() / "selection.json";
@@ -608,6 +986,10 @@ void register_builtins() {
     r.handlers[info.name] = std::move(h);
   });
   register_agent_commands([&](const CommandInfo& info,Handler h){r.infos.push_back(info);r.handlers[info.name]=std::move(h);});
+  register_sheet_commands([&](const CommandInfo& info, Handler h) {
+    r.infos.push_back(info);
+    r.handlers[info.name] = std::move(h);
+  });
 }
 
 }  // namespace
@@ -664,6 +1046,7 @@ json run(const std::string& name, const json& args, Document* live) {
       transient = true;
     } else {
       loaded = Document::load(p);
+      if (has_assets(loaded)) load_assets(loaded, asset_options(args));  // linked files: read where they are
       save_after = info.mutates && args.value("save", true);
     }
     doc = &loaded;
@@ -705,8 +1088,36 @@ json run_exporter(const std::string& format, const Document& doc, const json& ar
   return fn(doc, args);
 }
 
+json export_document(const Document& doc, const Scene& scene, const json& a, const std::function<bool(double, const std::string&)>& progress) {
+  const std::string fmt = a.value("format", "step");
+  if (has_exporter(fmt)) return run_exporter(fmt, doc, a);
+  ExportOptions o;
+  o.format = fmt;
+  o.select = str_list(a.value("select", json()));
+  o.step_schema = a.value("schema", "AP214");
+  o.tolerance = a.value("tolerance", 0.1);
+  o.ascii = a.value("ascii", false);
+  o.per_body = a.value("per_body", false);
+  o.mtl = a.value("mtl", true);
+  if (a.contains("view") || a.contains("dir")) {
+    o.view = json::object();
+    for (const char* k : {"view", "dir", "up", "hidden", "tangent", "quality"})
+      if (a.contains(k)) o.view[k] = a[k];
+  }
+  o.decimals = std::clamp(a.value("decimals", 6), 0, 12);
+  o.dpi = std::clamp(a.value("dpi", 300), 10, 2400);
+  o.sheet = a.value("sheet", "");
+  o.issue = a.value("issue", "");
+  o.progress = progress;
+  const std::string out = a.value("out", "");
+  if (out.empty()) throw Error("export: \"out\" path required");
+  if (fmt == "svg" || fmt == "dxf" || fmt == "dwg" || fmt == "pdf" || fmt == "png") return export_drawing(doc, scene, path_from_utf8(out), o).to_json();
+  return export_selection(doc, scene, path_from_utf8(out), o).to_json();
+}
+
 std::vector<std::string> exporter_formats() {
   std::vector<std::string> out = {"step", "obj", "stl", "glb", "dxf", "svg", "dwg"};
+  if (drawing::can_paint()) out.insert(out.end(), {"pdf", "png"});
   auto& r = registry();
   std::lock_guard<std::recursive_mutex> lock(r.mu);
   for (const auto& [k, v] : r.exporters) out.push_back(k);

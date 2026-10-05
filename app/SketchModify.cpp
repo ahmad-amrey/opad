@@ -1,5 +1,6 @@
 #include "SketchEditor.hpp"
 #include "DimensionHandle.hpp"
+#include "ShapeInput.hpp"
 #include <QApplication>
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -8,6 +9,7 @@
 #include "opad/design/sketch_modify.hpp"
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include "I18n.hpp"
 #include <cmath>
 #include <set>
 
@@ -50,29 +52,57 @@ void SketchEditor::benchHandles() {
   }catch(const std::exception& e){timer->stop();trace::log(QString("bench: handles FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();
 }
 namespace {
+// The distance along the corner's second line (chamfer_corner's order) of a cut `first` along its first line at `angle` to it.
+double chamferAt(const Sketch& sk,int point,double first,double angle) {
+  std::vector<double> directions;const SkPoint* corner=sk.point(point);
+  for(const auto& e:sk.entities)if(corner && e.type==SkEntity::Type::Line && std::find(e.p.begin(),e.p.end(),point)!=e.p.end()) {
+    const SkPoint* end=sk.point(e.p[e.p[0]==point?1:0]);directions.push_back(std::atan2(end->y-corner->y,end->x-corner->x));
+  }
+  if(directions.size()!=2)throw opad::Error("pick a corner joining exactly two lines");
+  const double second=shapeinput::chamferSecond(first,angle,shapeinput::between(directions[1]-directions[0]));
+  if(second<=0)throw opad::Error("at that angle the chamfer never meets the other line");
+  return second;
+}
 const QStringList tools={"move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","split","extend","break","chamfer","union","subtract","intersect","heal","explode"};
 }
+bool SketchEditor::chainOnClick() const { return option("chain:"+m_tool,m_tool=="offset"?"1":"0")=="1"; }
+void SketchEditor::pickCurve(int id) {
+  const bool picked=std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end();
+  std::vector<int> ids{id};
+  if(chainOnClick())for(int e:connected_entities(m_sk,{id}))if(e!=id && m_sk.entity(e))ids.push_back(e);
+  if(picked) {  // a picked curve again drops it (its chain with it: re-adding the chain kept it selected for good)
+    const std::set<int> drop(ids.begin(),ids.end());
+    m_sel.erase(std::remove_if(m_sel.begin(),m_sel.end(),[&](int s){return drop.count(s)>0;}),m_sel.end());
+  } else for(int e:ids)if(std::find(m_sel.begin(),m_sel.end(),e)==m_sel.end())m_sel.push_back(e);
+}
 bool SketchEditor::modifyClick(double u,double v) {
+  if(m_tool=="break_link") {  // a click picks a linked curve, a window several (TODO 11 wave 3, P4); Enter or Apply unlinks them
+    const auto hit=hitTest(u,v);
+    const auto* e=hit.kind==Hit::Entity?m_sk.entity(hit.id):nullptr;
+    if(!e || e->source.is_null())emit status(tr("Pick a linked curve: they are drawn amber."));
+    else pickCurve(e->id);
+    rebuild();toolPrompt();emit changed();return true;
+  }
   if(!tools.contains(m_tool))return false;
   const auto hit=hitTest(u,v);
   if(m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")=="axis") {
+    // The line, then its mirror image as a preview (TODO 11 wave 3, P4): Enter or Apply keeps it.
     if(const auto* e=m_sk.entity(hit.id);e && e->type==SkEntity::Type::Line)m_picked={e->id};
     else emit status(tr("Pick mirror line"));
-    rebuild();toolPrompt();emit changed();return true;
+    rebuild();toolPrompt();emit changed();scheduleToolPreview();return true;
   }
   if(m_tool=="split") {
     if(hit.kind!=Hit::Entity){emit status(tr("Pick inside a curve to split it."));return true;}
     const int id=hit.id;runSketchEdit(tr("Split curve"),[id,u,v](Sketch& sk){split_entity(sk,id,u,v);});return true;
   }
-  if(m_tool=="extend") {
-    if(hit.kind!=Hit::Entity){emit status(tr("Pick a curve, then its extension boundary."));return true;}
-    if(m_picked.empty()){m_picked.push_back(hit.id);m_clicks={{u,v}};}
-    else if(hit.id!=m_picked.front()){const int id=m_picked.front(),boundary=hit.id;const auto at=m_clicks.front();runSketchEdit(tr("Extend curve"),[id,boundary,at](Sketch& sk){extend_entity(sk,id,boundary,at.u,at.v);});}
+  if(m_tool=="extend") {  // one click (UI-28): the end nearer it runs on to the nearest curve it meets
+    if(hit.kind!=Hit::Entity){emit status(tr("Pick a line or an arc near the end to extend."));return true;}
+    const int id=hit.id;runSketchEdit(tr("Extend curve"),[id,u,v](Sketch& sk){extend_entity(sk,id,u,v);});
   } else if(m_tool=="union" || m_tool=="subtract" || m_tool=="intersect") {
     m_clicks.push_back({u,v});if(m_clicks.size()>2)m_clicks.erase(m_clicks.begin());
   } else if(hit.kind!=Hit::None) {
     if(m_tool=="chamfer" && hit.kind==Hit::Point)m_sel={hit.id};
-    else if(hit.kind==Hit::Entity){auto at=std::find(m_sel.begin(),m_sel.end(),hit.id);if(at==m_sel.end())m_sel.push_back(hit.id);else m_sel.erase(at);if(option("chain","0")=="1")selectConnected();}
+    else if(hit.kind==Hit::Entity)pickCurve(hit.id);
   }
   rebuild();toolPrompt();emit changed();scheduleToolPreview();return true;
 }
@@ -85,10 +115,12 @@ bool SketchEditor::applyModify() {
     auto length=[&](const char* key,const char* fallback){return table.length(option(key,fallback).toStdString());};
     std::vector<int> ids;for(int id:m_sel)if(m_sk.entity(id))ids.push_back(id);
     if(m_tool=="mirror") {
-      if(ids.empty())throw opad::Error("select curves to mirror first");
+      if(ids.empty()){if(m_previewRequested)return true;throw opad::Error("select curves to mirror first");}
       if(option("mirrorAxis","picked")!="picked")mirrorSelection(0);
       else if(!m_picked.empty())mirrorSelection(m_picked.front());
-      else {m_options["mirrorStage"]="axis";toolPrompt();}
+      // Apply with the curves chosen and no line yet: now the line. Never from the preview, which runs 120 ms after each
+      // curve picked: that moved the tool on to the line after the first curve, and the next click became the line.
+      else if(!m_previewRequested){m_options["mirrorStage"]="axis";toolPrompt();}
     } else if(m_tool=="heal") {
       const double tolerance=length("healTolerance","0.05 mm");
       runSketchEdit(tr("Heal endpoints"),[tolerance](Sketch& sk){heal_endpoints(sk,tolerance);heal_to_curves(sk,tolerance);});
@@ -106,21 +138,27 @@ bool SketchEditor::applyModify() {
       runSketchEdit(tr("Explode pattern"),[patterns](Sketch& sk){for(int id:patterns)remove_pattern(sk,id,true);});
     } else if(m_tool=="chamfer") {
       if(m_sel.size()!=1 || !m_sk.point(m_sel.front()))throw opad::Error("pick a corner point");
-      const int id=m_sel.front();const double a=length("first","2 mm"),b=length("second","2 mm");
-      runSketchEdit(tr("Chamfer"),[id,a,b](Sketch& sk){chamfer_corner(sk,id,a,b);});
+      // By two distances, or by the first and its angle to the first line (the second distance where the cut meets the other).
+      const int id=m_sel.front();const double a=length("first","2 mm");const bool angled=option("chamferMode","distance")=="angle";
+      const double b=angled?table.angle(option("chamferAngle","45 deg").toStdString()):length("second","2 mm");
+      runSketchEdit(tr("Chamfer"),[id,a,b,angled](Sketch& sk){chamfer_corner(sk,id,a,angled?chamferAt(sk,id,a,b):b);});
     } else if(m_tool=="union" || m_tool=="subtract" || m_tool=="intersect") {
       if(m_clicks.size()!=2)throw opad::Error("pick inside two closed loops first");
       const auto a=m_clicks[0],b=m_clicks[1];const auto operation=m_tool.toStdString();
       runSketchEdit(tr("Combine regions"),[a,b,operation](Sketch& sk){boolean_regions(sk,a.u,a.v,b.u,b.v,operation);});
     } else if(m_tool!="split" && m_tool!="extend") {
       SketchTransform transform;const bool copy=m_tool=="copy";
-      if(m_tool=="move"||copy){transform.x=length("dx","10 mm");transform.y=length("dy","0 mm");}
+      if((m_tool=="move"||copy) && option("moveMode","xy")=="polar") {
+        const double d=length("moveDistance","10 mm"),a=table.angle(option("moveAngle","0 deg").toStdString());transform.x=d*std::cos(a);transform.y=d*std::sin(a);
+      } else if(m_tool=="move"||copy){transform.x=length("dx","10 mm");transform.y=length("dy","0 mm");}
       if(m_tool=="rotate"||m_tool=="scale"){transform.cx=length("cx","0 mm");transform.cy=length("cy","0 mm");}
       if(m_tool=="rotate")transform.angle=table.angle(option("angle","45 deg").toStdString());
       if(m_tool=="scale")transform.scale=table.number(option("scale","2").toStdString());
-      runSketchEdit(tr("Transform geometry"),[ids,transform,copy](Sketch& sk){transform_entities(sk,ids,transform,copy);});
+      const int copies=copy?table.count(option("copies","1").toStdString()):1;  // a copy's count: one after the other
+      if(copies<1 || copies>1000)throw opad::Error("the count of copies must be 1 to 1000");
+      runSketchEdit(tr("Transform geometry"),[ids,transform,copy,copies](Sketch& sk){for(int i=1;i<=copies;++i){auto step=transform;step.x*=i;step.y*=i;transform_entities(sk,ids,step,copy);}});
     }
-  }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
+  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
   return true;
 }
 

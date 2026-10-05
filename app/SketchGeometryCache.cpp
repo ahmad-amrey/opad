@@ -18,6 +18,18 @@ const SkPoint* SketchGeometryCache::point(const Sketch& sk,int id) const {
   if(found!=m_pointIndex.end()&&found->second<sk.points.size()&&sk.points[found->second].id==id)return &sk.points[found->second];
   return sk.point(id);
 }
+const SkEntity* SketchGeometryCache::entity(const Sketch& sk,int id) const {
+  auto found=m_entityIndex.find(id);
+  if(found!=m_entityIndex.end()&&found->second<sk.entities.size()&&sk.entities[found->second].id==id)return &sk.entities[found->second];
+  // A point's id is no entity's (one id space): no scan for it (counting a box selection of 60,000 points took seconds).
+  if(auto point=m_pointIndex.find(id);point!=m_pointIndex.end()&&point->second<sk.points.size()&&sk.points[point->second].id==id)return nullptr;
+  return sk.entity(id);
+}
+const std::vector<size_t>& SketchGeometryCache::curvesAt(int point) const {
+  static const std::vector<size_t> none;
+  const auto found=m_pointCurves.find(point);
+  return found==m_pointCurves.end()?none:found->second;
+}
 std::vector<double> SketchGeometryCache::signature(const Sketch& sk,const SkEntity& e)const {
   std::vector<double> out{double(e.type),e.r,double(e.degree),double(e.periodic),double(e.p.size()),double(e.knots.size())};
   for(int id:e.p){const auto* p=point(sk,id);if(!p)throw opad::Error("missing sketch control point");out.insert(out.end(),{double(id),p->x,p->y});}
@@ -40,11 +52,14 @@ void SketchGeometryCache::update(const Sketch& sk,double deflection) {
   deflection=std::max(1e-7,deflection);
   const bool finer=m_deflection<=0||deflection<m_deflection*.75;
   if(finer)m_deflection=deflection;
-  m_points=sk.points;m_entities=sk.entities;m_pointIndex.clear();m_entries.clear();m_tree.clear();
+  m_points=sk.points;m_entities=sk.entities;m_pointIndex.clear();m_entityIndex.clear();m_centres.clear();m_pointCurves.clear();m_entries.clear();m_tree.clear();
   for(size_t i=0;i<sk.points.size();++i){const auto& p=sk.points[i];m_pointIndex[p.id]=i;Box box;box.add(p.x,p.y);m_entries.push_back({box,i,true});}
   std::unordered_map<int,Curve> curves;
   for(size_t i=0;i<sk.entities.size();++i) {
     const auto& e=sk.entities[i];auto key=signature(sk,e);auto old=m_curves.find(e.id);Curve curve;
+    m_entityIndex[e.id]=i;
+    if((e.type==SkEntity::Type::Circle||e.type==SkEntity::Type::Arc||e.type==SkEntity::Type::Ellipse)&&!e.p.empty())m_centres.insert(e.p[0]);
+    for(int id:e.p){auto& at=m_pointCurves[id];if(at.empty()||at.back()!=i)at.push_back(i);}
     if(!finer&&old!=m_curves.end()&&old->second.signature==key)curve=std::move(old->second);
     else {
       ++builds;curve.signature=std::move(key);

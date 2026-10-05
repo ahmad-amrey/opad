@@ -19,11 +19,13 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <optional>
 #include <set>
 
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+#include "opad/recognize.hpp"
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/design/sketch_curve.hpp"
 
@@ -205,10 +207,19 @@ std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
   if (map.Extent() > 20000) throw Error("a rule selector scans at most 20000 entities; this body has " + std::to_string(map.Extent()));
   const json& filters = j.at("select");
   const double tolerance = j.value("tolerance_mm", 1e-5);
+  // TODO 11 UI-97: {"recognized":"hole","diameter":6}: the faces of the matching recognised groups, then the filters.
+  const auto [recognition, rest] = split_recognized(filters);
+  std::vector<int> candidates;
+  if (!recognition.is_null()) {
+    if (kind != Ref::Kind::Face) throw Error("a \"recognized\" rule picks faces: give kind \"face\"");
+    candidates = recognized_faces(shape, recognition, tolerance, ctx.cancel);
+  } else {
+    for (int i = 0; i < map.Extent(); ++i) candidates.push_back(i);
+  }
   std::vector<ResolvedRef> out;
-  for (int i = 1; i <= map.Extent(); ++i) {
+  for (int i : candidates) {
     ctx.check_cancel();
-    if (entity_matches(describe_entity(map(i)), filters, tolerance)) out.push_back({body, map(i), i - 1});
+    if (entity_matches(describe_entity(map(i + 1)), rest, tolerance)) out.push_back({body, map(i + 1), i});
   }
   const std::string what = std::string(Ref::kind_name(kind)) + (out.size() == 1 ? "" : "s");
   if (out.empty()) throw Error("the rule " + filters.dump() + " matches no " + Ref::kind_name(kind) + " of the body");
@@ -393,6 +404,9 @@ Frame Ctx::plane(const json& in) const {
   if (in.contains("face")) {
     const ResolvedRef r = resolve(in["face"]);
     if (r.sub.IsNull() || r.sub.ShapeType() != TopAbs_FACE) throw Error("the plane must be a planar face");
+    // New face sketches and placed primitives start at the lower-left real vertex in the plane axes (face_frame: what the
+    // primitive placer's grid steps from while the pointer is over the face). Existing sketches retain their persisted frame.
+    if (!in.contains("frame")) return face_frame(TopoDS::Face(r.sub));
     BRepAdaptor_Surface surf(TopoDS::Face(r.sub));
     if (surf.GetType() != GeomAbs_Plane) throw Error("that face is not planar");
     gp_Ax3 ax = surf.Plane().Position();
@@ -407,17 +421,7 @@ Frame Ctx::plane(const json& in) const {
     for (const gp_Dir& cand : {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)})
       if (std::fabs(cand.Dot(n)) < 1e-6) { xd = cand; break; }
     Frame f = frame_from_ax3(gp_Ax3(g.CentreOfMass(), n, xd));
-    // New face sketches start at the lower-left real vertex in the plane axes.
-    // Existing sketches retain their persisted frame below during regeneration.
-    if(!in.contains("frame")) {
-      bool have=false;double bestU=0,bestV=0;Vec3 corner=f.origin;
-      for(TopExp_Explorer vertices(r.sub,TopAbs_VERTEX);vertices.More();vertices.Next()) {
-        const auto p=BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current()));double u,v;f.to_local({p.X(),p.Y(),p.Z()},u,v);
-        if(!have || v<bestV-1e-7 || (std::abs(v-bestV)<=1e-7 && u<bestU)){have=true;bestU=u;bestV=v;corner={p.X(),p.Y(),p.Z()};}
-      }
-      if(have)f.origin=corner;
-    }
-    if (in.contains("frame")) {  // keep the sketch where it was on the face: project the old origin and x
+    {  // keep the sketch where it was on the face: project the old origin and x
       const Frame old = Frame::from_json(in["frame"]);
       const gp_Pln pl(g.CentreOfMass(), n);
       const gp_Pnt o(old.origin[0], old.origin[1], old.origin[2]);
@@ -507,19 +511,9 @@ struct Walk {
     return id + ":" + n->body_key + ":" + scene.world(id).to_json().dump() + ";";
   }
 
-  std::string feature_fingerprint(const Scene& scene, const ParamTable& params, const std::string& kind, const json& inputs) const {
-    std::string s = "feature|" + kind + "|" + inputs.dump() + "|";
-    if (const FeatureSpec* spec = feature_spec(kind))
-      for (const auto& in : spec->inputs) {
-        if (!inputs.contains(in.name) || !input_shown(in, inputs)) continue;
-        if (in.type != "length" && in.type != "angle" && in.type != "number" && in.type != "count") continue;
-        try {
-          s += in.name + "=" + json(eval_input(params, inputs[in.name], dim_of(in.type))).dump() + ";";
-        } catch (const std::exception& e) {
-          s += in.name + "!" + e.what() + ";";
-        }
-      }
-    std::set<std::string> nodes, sketches, features;
+  // The nodes, sketches and features a feature's inputs depend on.
+  void feature_refs(const Scene& scene, const std::string& kind, const json& inputs, std::set<std::string>& nodes, std::set<std::string>& sketches,
+                    std::set<std::string>& features) const {
     collect_refs(inputs, nodes, sketches, features);
     // Plain-string references count too (agents and the CLI write "uuid" and "uuid/edge/3"): without them a fillet
     // or a pattern did not regenerate when its body changed. A component stands for the bodies under it, as
@@ -542,6 +536,33 @@ struct Walk {
     const bool every = kind == "interference" && (!inputs.contains("bodies") || inputs["bodies"].empty());
     if (automatic || every)
       for (const auto& b : scene.all_bodies()) nodes.insert(b);
+  }
+
+  // Whether a feature depends on a linked file's part that is not loaded (missing, not trusted yet).
+  bool unloaded_inputs(const Scene& scene, const std::string& kind, const json& inputs) const {
+    std::set<std::string> nodes, sketches, features;
+    feature_refs(scene, kind, inputs, nodes, sketches, features);
+    return std::any_of(nodes.begin(), nodes.end(), [&](const std::string& id) { const Node* n = scene.node(id); return n && n->linked && n->body_missing; });
+  }
+
+  bool edited(const std::string& id) const {  // a new op of the plan edits it (the user's change of it)
+    return std::any_of(new_ops.begin(), new_ops.end(), [&](const json& op) { return op.value("op", "") == "edit" && op.value("target", "") == id; });
+  }
+
+  std::string feature_fingerprint(const Scene& scene, const ParamTable& params, const std::string& kind, const json& inputs) const {
+    std::string s = "feature|" + kind + "|" + inputs.dump() + "|";
+    if (const FeatureSpec* spec = feature_spec(kind))
+      for (const auto& in : spec->inputs) {
+        if (!inputs.contains(in.name) || !input_shown(in, inputs)) continue;
+        if (in.type != "length" && in.type != "angle" && in.type != "number" && in.type != "count") continue;
+        try {
+          s += in.name + "=" + json(eval_input(params, inputs[in.name], dim_of(in.type))).dump() + ";";
+        } catch (const std::exception& e) {
+          s += in.name + "!" + e.what() + ";";
+        }
+      }
+    std::set<std::string> nodes, sketches, features;
+    feature_refs(scene, kind, inputs, nodes, sketches, features);
     for (const auto& n : nodes) s += node_state(scene, n);
     for (const auto& id : sketches)
       if (const SketchItem* sk = scene.sketch(id)) s += id + ":" + sk->geometry.dump() + sk->frame.to_json().dump() + ";";
@@ -595,11 +616,39 @@ struct Walk {
     }
   }
 
+  // Whether a body a feature made in `component` is in it at the end of the history (no later reparent took it
+  // elsewhere), or the stored result has none there.
+  bool left_in(const json& stored, const std::string& component) const {
+    std::map<std::string, std::string> last;  // body made there -> the parent its last reparent gave it
+    if (const auto bodies = stored.find("bodies"); bodies != stored.end())
+      for (const auto& b : *bodies)
+        if (b.value("new", false) && b.value("parent", "") == component) last[b.value("id", "")] = component;
+    if (last.empty() || !timeline) return true;
+    for (const auto& e : *timeline)
+      if (e.op->type == "reparent")
+        if (const auto it = last.find(e.data().value("target", "")); it != last.end())
+          it->second = e.data().value("parent", json()).is_string() ? e.data()["parent"].get<std::string>() : "";
+    return std::any_of(last.begin(), last.end(), [&](const auto& kv) { return kv.second == component; });
+  }
+
   // New bodies are named, placed and coloured when they are first made, and the entry keeps it: a regeneration never
   // renames or moves them, and replay only reads what is stored (TODO 10 B14, C2). A body made from scratch takes
-  // the feature's name (numbered when the feature makes several); a copy or a piece takes its source's name, the
-  // component its source is in and its source's colour.
-  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name) {
+  // the feature's name (numbered when the feature makes several) and goes into the feature's component (UI-33); a copy
+  // or a piece takes its source's name, the component its source is in and its source's colour.
+  // A linked file's parts (assets.hpp) are read-only, references and tools only: changing, moving or copying one would store
+  // the file's geometry in the document, so the file is embedded first. A combine does not consume one either (the board an
+  // enclosure was cut with would leave the design); Remove takes one out explicitly.
+  static void check_read_only(const Ctx& ctx, const std::string& kind, const Out& out) {
+    auto refuse = [&](const std::string& node, const std::string& what) {
+      if (const Node* n = ctx.scene.node(node); n && n->linked) throw Error("'" + n->name + "' is part of a linked file and cannot be " + what);
+    };
+    for (const auto& b : out.bodies) refuse(b.node.empty() ? b.source : b.node, b.node.empty() ? "copied: embed the file first" : "changed: embed the file first");
+    if (kind != "remove")
+      for (const auto& r : out.removed) refuse(r, "consumed: keep it as a tool, or embed the file first");
+  }
+
+  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name,
+                   const std::string& component) {
     json result = json::object();
     json bodies = json::array();
     std::vector<json> prev_new;
@@ -626,9 +675,12 @@ struct Walk {
         if (prev) {
           for (const char* k : {"parent", "color"})
             if (prev->contains(k)) entry[k] = (*prev)[k];
+          if (!prev->contains("parent") && b.source.empty() && !component.empty()) entry["parent"] = component;  // back in it
         } else if (const Node* s = b.source.empty() ? nullptr : ctx.scene.node(b.source)) {
           if (!s->parent.empty()) entry["parent"] = s->parent;
           if (s->has_color) entry["color"] = s->color;
+        } else if (b.source.empty() && !component.empty()) {
+          entry["parent"] = component;
         }
         // The body is kept in its component's frame, as replay places it there.
         const std::string parent = entry.value("parent", "");
@@ -683,14 +735,49 @@ struct Walk {
     return result;
   }
 
+  // The curves a reference gave the sketch when it was last computed (`last`: its solved geometry, else as given), as
+  // derive_sketch hands them: by slot, each point once in the order the sketch has them.
+  static Sketch last_projection(const json& last, const json& ref, const std::string& mode, const std::string& why) {
+    const Sketch was = Sketch::from_json(last);
+    std::vector<const SkEntity*> mine;
+    for (const auto& e : was.entities)
+      if (!e.source.is_null() && e.source.at("ref") == ref && e.source.value("mode", "project") == mode) mine.push_back(&e);
+    if (mine.empty()) throw Error(why);
+    std::sort(mine.begin(), mine.end(), [](const SkEntity* a, const SkEntity* b) { return a->source.value("slot", 0) < b->source.value("slot", 0); });
+    std::set<int> used;
+    for (const auto* e : mine) used.insert(e->p.begin(), e->p.end());
+    Sketch out;
+    std::map<int, int> points;
+    for (const auto& p : was.points)
+      if (used.count(p.id)) points[p.id] = out.add_point(p.x, p.y, true);
+    for (const auto* e : mine) {
+      SkEntity c = *e;
+      c.id = out.next_id();
+      c.source = nullptr;
+      for (int& p : c.p) p = points.at(p);
+      out.entities.push_back(std::move(c));
+    }
+    return out;
+  }
+
   json compute_sketch(const Ctx& ctx, const json& data, std::string& fp) {
     const json& geometry = data.at("geometry");
     const json& plane = data.at("plane");
     Sketch sk = Sketch::from_json(geometry);
     std::string s = "sketch|" + geometry.dump() + "|" + plane.dump() + "|";
     std::string error;
+    const json stored = data.value("result", json::object());
     try {
-      refresh_references(sk,[&](const json& ref,const std::string& mode){return derive_sketch(ctx.doc,ctx.scene,ctx.plane(plane),ref,mode,ctx.fresh);});
+      refresh_references(sk,[&](const json& ref,const std::string& mode){
+        try {
+          return derive_sketch(ctx.doc,ctx.scene,ctx.plane(plane),ref,mode,ctx.fresh);
+        } catch (const std::exception& e) {
+          // A linked file not loaded here (missing, not trusted yet): its projection as last computed stays, so an unrelated
+          // edit neither saves an error into the sketch nor drops what a sync projected.
+          if (!unloaded_link(ctx.scene, ref)) throw;
+          return last_projection(stored.contains("geometry") ? stored["geometry"] : geometry, ref, mode, e.what());
+        }
+      });
       s+=sk.to_json().dump();
       evaluate_patterns(sk,ctx.params);
       s += sk.patterns.dump();
@@ -713,7 +800,6 @@ struct Walk {
         if (const Feature* f = ctx.scene.feature(id)) s += id + ":" + f->result.value("plane", json()).dump() + ";";
     }
     fp = sha256_hex(s).substr(0, 24);
-    const json stored = data.value("result", json::object());
     if (!force && stored.value("in", "") == fp) return stored;
 
     json result = json::object();
@@ -738,7 +824,10 @@ struct Walk {
     result["dof"] = solved.dof;
     // Whether the solved sketch differs from what was given is asked only here, when it is recomputed (gap log #3: a
     // parse and two serialisations per sketch per walk, 1 MB each for the arm's discs).
-    if (solved.converged && sk.to_json() != Sketch::from_json(geometry).to_json()) result["geometry"] = sk.to_json();
+    if (solved.converged && sk.to_json() != Sketch::from_json(geometry).to_json()) {
+      result["geometry"] = sk.to_json();
+      result["geometry"].erase("images");  // as given (solved_geometry): a picture is never stored again per regeneration
+    }
     if (frame_moved) result["frame"] = frame.to_json();
     if (!error.empty()) result["error"] = error;
     return result;
@@ -769,6 +858,9 @@ struct Walk {
       if (e.op->type == "param") defs.push_back({e.op->id, e.data().value("name", ""), e.data().value("expr", ""), e.data().value("comment", "")});
     const ParamTable params(defs);
     if (strict) check_params(params, ops);
+    // What is locked now stays as it is (TODO 11 UI-37); the replay to compare with only when something is locked.
+    std::optional<Scene> locked_before;
+    if (strict && has_locks(doc)) locked_before = resolve(doc);
 
     json errors = json::array();
     // Parameters this change stops from evaluating (a check such as sqrt(margin / 1 mm) on a negative margin),
@@ -853,13 +945,26 @@ struct Walk {
       } else {
         const std::string kind = data.value("kind", "");
         json inputs = data.value("inputs", json::object());
-        std::string fp = feature_fingerprint(builder.scene(), params, kind, inputs);
+        // Made in a component (UI-33): whether it is there counts too, so a body made from scratch is put back in world
+        // coordinates when the component goes and into it again when it comes back. Not when every body it made has
+        // been moved out of it since: a move that kept its place (reparent keep_place) is a transform counting on the
+        // frame the body was made in. Others keep their fingerprints.
+        const std::string named = data.contains("component") && data["component"].is_string() ? data["component"].get<std::string>() : "";
+        const Node* in_component = named.empty() ? nullptr : builder.scene().node(named);
+        const std::string component = in_component && in_component->kind == Node::Kind::Component ? named : "";
+        const bool gone = !named.empty() && component.empty() && left_in(stored, named);
+        auto fingerprint = [&] {
+          const std::string f = feature_fingerprint(builder.scene(), params, kind, inputs);
+          return named.empty() ? f : sha256_hex(f + "|component:" + (gone ? "gone" : named)).substr(0, 24);
+        };
+        std::string fp = fingerprint();
         if (!force && stored.value("in", "") == fp) {
           result = stored;
           note_fresh(result);
         } else {
           try {
             Out out = compute_feature(ctx, kind, inputs);
+            check_read_only(ctx, kind, out);
             for (auto& [k, v] : notes.items()) out.extra[k] = v;
             if (!out.used_targets.empty()) {
               if (json* patch = patchable_inputs(id)) {
@@ -868,17 +973,20 @@ struct Walk {
                 inputs["targets"] = targets;
                 (*patch)["targets"] = targets;
                 data["inputs"] = inputs;
-                fp = feature_fingerprint(builder.scene(), params, kind, inputs);
+                fp = fingerprint();
               }
             }
-            result = materialize(ctx, out, stored, id, data.value("name", ""));
+            result = materialize(ctx, out, stored, id, data.value("name", ""), component);
           } catch (const Standard_Failure& ex) {
             result = {{"error", std::string("the modelling kernel failed: ") + ex.GetMessageString()}};
           } catch (const std::exception& ex) {
             if (std::string(ex.what()) == "cancelled") throw;
             result = {{"error", ex.what()}};
           }
-          result["in"] = fp;
+          // Recomputed only because something upstream changed, but it needs a linked file that is not loaded: what it last
+          // made stays, under its old fingerprint, so it is computed again once the file is back (no error saved meanwhile).
+          if (result.contains("error") && stored.contains("in") && !is_new(id) && !edited(id) && unloaded_inputs(builder.scene(), kind, inputs)) result = stored;
+          else result["in"] = fp;
         }
         if (conditional) result["suppressed"] = false;
       }
@@ -910,6 +1018,8 @@ struct Walk {
       }
       for (const auto& err : errors)
         if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
+      if (locked_before)
+        if (const auto why = locked_change(*locked_before, builder.scene())) throw *why;
     }
 
     plan.ops = new_ops;
@@ -956,6 +1066,8 @@ struct Walk {
 
 }  // namespace
 
+bool same_shapes(const TopoDS_Shape& a, const TopoDS_Shape& b) { return same_geometry(a, b); }
+
 Plan plan_ops(const Document& doc, std::vector<json> new_ops, bool strict, const Cancel& cancel) {
   Walk w{doc, new_ops, false, cancel, {}, {}, {}, json::object(), {}};
   return w.run(strict);
@@ -969,14 +1081,51 @@ Plan plan_regenerate(const Document& doc, bool force, const Cancel& cancel) {
 
 json commit(Document& doc, Plan&& plan, const std::string& author) {
   for (auto& b : plan.bodies) {
-    doc.add_body(b.brep, b.meta);
+    if (b.brep.empty()) doc.add_external_body(b.key, b.meta);  // a linked asset's body (asset sync)
+    else doc.add_body(b.key, std::move(b.brep), std::move(b.meta));  // its key is its text's hash, made by the planner
     if (b.shape) cache_shape(doc, b.key, *b.shape);
   }
-  for (auto& op : plan.ops) doc.append(op, author);
+  for (auto& op : plan.ops) doc.append(std::move(op), author);  // not copied: a converted drawing's curves are big
   return plan.report;
 }
 
 json apply_ops(Document& doc, std::vector<json> new_ops, const std::string& author) { return commit(doc, plan_ops(doc, std::move(new_ops)), author); }
+
+bool has_locks(const Document& doc) {
+  auto locks = [](const std::string& t) { return t.find("\"locked\":true") != std::string::npos || t.find("\"locked\": true") != std::string::npos; };
+  for (const auto& o : doc.ops)
+    if (o.raw.empty() ? locks(o.data.dump()) : locks(o.raw)) return true;
+  return false;
+}
+
+std::optional<LockedError> locked_change(const Scene& before, const Scene& after) {
+  std::optional<LockedError> first;
+  size_t count = 0;
+  std::function<void(const std::string&)> visit = [&](const std::string& id) {  // in tree order: the outermost is named
+    const Node* n = before.node(id);
+    if (!n) return;
+    const Node* now = after.node(id);
+    const char* what = nullptr;
+    if (!before.effectively_locked(id)) {
+    } else if (!now) {
+      // Only the outermost node that goes is weighed: with an unlocked component above it, it may go.
+      const Node* parent = n->parent.empty() ? nullptr : before.node(n->parent);
+      if (!parent || after.node(parent->id)) what = "removing";
+    } else if (now->body_key != n->body_key) {
+      what = "changing";
+    } else if (now->local.m != n->local.m) {
+      what = "moving";
+    }
+    if (what && ++count == 1) first.emplace(n->name, before.lock_holder(id)->name, what);
+    for (const auto& c : n->children) visit(c);
+  };
+  for (const auto& r : before.roots) visit(r);
+  if (count > 1) {
+    const LockedError one = *first;
+    first.emplace(one.node, one.holder, one.change, count - 1);
+  }
+  return first;
+}
 
 // ---------------------------------------------------------------- helpers
 json make_param_op(const std::string& name, const std::string& expr, const std::string& comment) {
@@ -1024,6 +1173,24 @@ size_t style_new_bodies(Plan& plan, const std::string& feature_op, const json& s
   return ids.size();
 }
 
+std::string name_prefix(const FeatureSpec& spec) {
+  auto first = [](const std::string& label) { return label.substr(0, label.find(' ')); };
+  const std::string word = first(spec.label);
+  const auto& specs = feature_specs();
+  const bool shared = std::any_of(specs.begin(), specs.end(), [&](const FeatureSpec& o) { return o.kind != spec.kind && first(o.label) == word; });
+  std::string out;
+  bool upper = true;
+  for (const char c : shared ? spec.label : word) {
+    if (!std::isalnum(static_cast<unsigned char>(c))) {
+      upper = true;
+      continue;
+    }
+    out += upper ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : c;
+    upper = false;
+  }
+  return out;
+}
+
 std::string next_name(const Scene& scene, const std::string& prefix) {
   std::set<std::string> used;
   for (const auto& f : scene.features) used.insert(f.name);
@@ -1054,7 +1221,7 @@ json map_expressions(const std::string& type, const json& data, const std::funct
         }
     if (changed) set["inputs"] = inputs;
   } else if (type == "sketch") {
-    const json original = data.value("result",json::object()).value("geometry",data.value("geometry",json::object()));
+    const json original = solved_geometry(data);
     json geometry = original;
     bool changed = false;
     if (geometry.contains("constraints"))
@@ -1100,6 +1267,31 @@ Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane) 
   const std::map<std::string, TopoDS_Shape> fresh;
   const Ctx ctx{doc, params, scene, fresh, {}};
   return ctx.plane(plane);
+}
+
+json plane_as_made(const SketchItem& sketch, json plane) {
+  if (sketch.moved.is_identity(1e-12) || !plane.is_object()) return plane;
+  const Mat4 back = sketch.moved.inverse();
+  auto point = [&](json& p) { if (p.is_array() && p.size() == 3) p = back.apply(p.get<Vec3>()); };
+  auto dir = [&](json& d) { if (d.is_array() && d.size() == 3) d = back.apply_dir(d.get<Vec3>()); };
+  std::function<void(json&)> place = [&](json& p) {
+    if (!p.is_object()) return;
+    if (p.contains("frame")) p["frame"] = Frame::from_json(p["frame"]).transformed(back).to_json();
+    if (p.contains("normal")) {
+      dir(p["normal"]);
+      if (p.contains("origin")) point(p["origin"]);
+      if (p.contains("x")) dir(p["x"]);
+    }
+    if (p.contains("origin") && p["origin"].is_object() && p["origin"].contains("world")) point(p["origin"]["world"]);
+    if (!p.contains("support")) return;
+    json& support = p["support"];  // resolved again where the sketch is made: a world plane goes in as the frame picked
+    if (support.is_object() && support.contains("base") && support["base"].is_string())
+      support = {{"frame", base_frame(support["base"].get<std::string>()).transformed(back).to_json()}};
+    else
+      place(support);
+  };
+  place(plane);
+  return plane;
 }
 
 json make_ref(const Document& doc, const Scene& scene, const Ref& ref) {

@@ -6,6 +6,8 @@
 #include <QTimer>
 #include <QVariantAnimation>
 #include <QCursor>
+#include "Motion.hpp"
+#include <functional>
 #include "Theme.hpp"
 
 // Attached to the scene but composited by the OS, just like the measurement
@@ -36,11 +38,18 @@ class BrowserOverlay : public QFrame {
       if (QApplication::mouseButtons()!=Qt::NoButton) return;
       QWidget* focus=QApplication::focusWidget();
       const bool active=rect().contains(mapFromGlobal(QCursor::pos())) || (isActiveWindow() && focus && isAncestorOf(focus));
-      expand(!m_auto || active || (isActiveWindow() && QApplication::activePopupWidget()));
+      expand(!m_auto || active || (isActiveWindow() && QApplication::activePopupWidget()) || (m_hold && m_hold()));
     });
     m_poll.start(); place(); snapshot(); m_browser->setVisible(m_expanded);
   }
   void setVisible(bool on) override { m_requested=on; QFrame::setVisible(on && m_scene->isVisible()); }
+  bool requested() const { return m_requested; }  // shown whenever its scene is (benches)
+  // Floats over another page of the central area (an area's page shown in the viewport's place).
+  void setScene(QWidget* scene) {
+    if(scene==m_scene) return;
+    m_scene->removeEventFilter(this); m_scene=scene; m_scene->installEventFilter(this);
+    place(); QFrame::setVisible(m_requested && m_scene->isVisible());
+  }
   void setAutoHide(bool on) { m_auto=on; QSettings().setValue("ui/browserAutoHide",on); expand(!on); }
   void place() {
     const int h=std::max(60,std::min(520,m_scene->height()-64));
@@ -51,14 +60,28 @@ class BrowserOverlay : public QFrame {
     m_browser->setGeometry(0,0,w,h);
     if(changed && !m_expanded) snapshot();
   }
-  void reveal() { setVisible(true); expand(true); raise(); }
+  // now: expanded at once, without the animation (which hides the tree while it runs), e.g. for a row's name editor.
+  void reveal(bool now = false) {
+    setVisible(true);
+    expand(true);
+    raise();
+    if (!now) return;
+    m_animation.stop();
+    m_progress = 1.0;
+    resize(width(), currentHeight());
+    m_browser->show();
+    update();
+  }
+  void setHold(std::function<bool()> hold) { m_hold = std::move(hold); }  // kept expanded while it says so (renaming)
   void refresh() { snapshot(); update(); }
   bool expanded() const { return m_expanded; }
  protected:
   bool eventFilter(QObject* object,QEvent* event) override {
+    // QFrame::hide() would call this class's setVisible, and a page shown in the scene's place would forget that the
+    // browser was asked for: back on the view (an .opad opened from Drafting) it stayed away, View > Browser still ticked.
     if(object==m_scene) {
-      if(event->type()==QEvent::Hide) QFrame::hide();
-      else if(event->type()==QEvent::Show && m_requested) { place(); QFrame::show(); }
+      if(event->type()==QEvent::Hide) QFrame::setVisible(false);
+      else if(event->type()==QEvent::Show && m_requested) { place(); QFrame::setVisible(true); }
       else if(event->type()==QEvent::Resize || event->type()==QEvent::Move) place();
     }
     return QFrame::eventFilter(object,event);
@@ -85,12 +108,13 @@ class BrowserOverlay : public QFrame {
   void expand(bool on) {
     if(on==m_expanded) return;
     snapshot(); m_browser->hide(); m_expanded=on;
-    m_animation.stop(); m_animation.setStartValue(m_progress); m_animation.setEndValue(on?1.0:0.0); m_animation.start();
+    m_animation.stop(); m_animation.setDuration(motion::milliseconds(180)); m_animation.setStartValue(m_progress); m_animation.setEndValue(on?1.0:0.0); m_animation.start();
   }
   QWidget *m_browser, *m_scene;
   QPixmap m_snapshot;
   QVariantAnimation m_animation;
   QTimer m_poll;
+  std::function<bool()> m_hold;
   bool m_auto=true, m_expanded=false, m_requested=true;
   int m_expandedHeight=520;
   qreal m_progress=0;

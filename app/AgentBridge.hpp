@@ -27,8 +27,11 @@ class AgentBridge : public QObject {
   void setAccess(bool enabled,bool edit);
   QString discoveryPath() const {return m_directory;}
   bool busy() const {return m_busy;}
+  // Agent access is on, or a session is bound (UI-06): only then is the GUI selection published (selection.json).
+  bool publishesSelection() const;
   QString statusSummary() const {return stateText();}
   opad::json descriptor() const;
+  opad::json liveState() const;  // what live_state answers (benches read it too)
   // Used only by the isolated application acceptance harness.
   void bench();
  signals:
@@ -65,7 +68,6 @@ class AgentBridge : public QObject {
   void activity(const QString&);
   QString target() const;
   QString stateText() const;
-  json liveState() const;
   bool editorBusy() const;
   json editingState() const;
   void waitForIdle(const std::shared_ptr<Session>&,int,unsigned long long,std::shared_ptr<QElapsedTimer>);

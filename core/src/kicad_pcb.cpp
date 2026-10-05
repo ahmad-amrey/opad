@@ -1,0 +1,2215 @@
+// KiCad boards from the published s-expression format (dev-docs.kicad.org, "File formats"); no KiCad code is used.
+// The page has Y down and OPAD has Y up: a page point (x, y) lands at (x - ox, oy - y) for the chosen origin. Angles are
+// degrees, counter-clockwise as seen on the page. A footprint's pads and graphics are stored in its own frame (pads'
+// angles include the footprint's), already mirrored when it sits on the bottom. The board is one prism of its Edge.Cuts
+// outline with the drills as holes (no booleans unless a hole crosses an edge or another hole); every footprint with a
+// 3D model is a component; each model file is read once (through import_file) and its bodies are shared by every
+// footprint using it.
+#include "opad/kicad_pcb.hpp"
+
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepBuilderAPI_GTransform.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <BRep_Builder.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+#include <Geom_BezierCurve.hxx>
+#include <Standard_Failure.hxx>
+#include <TColgp_Array1OfPnt.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <TopLoc_Location.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <TopoDS_Wire.hxx>
+#include <gp_Circ.hxx>
+#include <gp_GTrsf.hxx>
+#include <gp_Pln.hxx>
+
+#include <algorithm>
+#include <array>
+#include <charconv>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <functional>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <set>
+#include <string_view>
+
+#ifdef OPAD_HAVE_ZSTD
+#include <zstd.h>
+#endif
+
+#include "import_common.hpp"
+#include "opad/assets.hpp"
+#include "opad/cache.hpp"
+#include "opad/drawing_io.hpp"
+#include "opad/geometry.hpp"
+#include "opad/scene.hpp"
+
+namespace opad {
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kLift = 0.01;
+constexpr size_t kMaxCut = 200;  // drills cut by a boolean (across an edge or another drill)
+
+// ---------------------------------------------------------------- s-expressions
+struct Sx {
+  std::string atom;
+  std::vector<Sx> items;  // a list: items[0] names it
+  bool list = false;
+  const std::string& name() const {
+    static const std::string none;
+    return list && !items.empty() && !items[0].list ? items[0].atom : none;
+  }
+  const Sx* child(std::string_view n) const {
+    for (const auto& i : items)
+      if (i.list && i.name() == n) return &i;
+    return nullptr;
+  }
+  template <class F>
+  void each(std::string_view n, F&& f) const {
+    for (const auto& i : items)
+      if (i.list && i.name() == n) f(i);
+  }
+  bool has(std::string_view a) const {
+    for (size_t k = 1; k < items.size(); ++k)
+      if (!items[k].list && items[k].atom == a) return true;
+    return false;
+  }
+  const std::string& text(size_t k) const {
+    static const std::string none;
+    return k < items.size() && !items[k].list ? items[k].atom : none;
+  }
+  double num(size_t k, double fallback = 0) const {
+    const std::string& t = text(k);
+    double v = 0;
+    const char* first = t.data() + (!t.empty() && t[0] == '+');
+    const auto r = std::from_chars(first, t.data() + t.size(), v);
+    return r.ec == std::errc() && std::isfinite(v) ? v : fallback;
+  }
+};
+
+// Top-level records nothing here needs (copper, zones, text, embedded fonts and files): skipped unparsed.
+const std::set<std::string, std::less<>> kSkipped = {"net",      "segment",        "arc",   "zone",   "gr_text", "gr_text_box", "dimension", "group",
+                                                     "generated", "embedded_fonts", "embedded_files", "image", "target", "title_block", "property", "layers"};
+
+class Parser {
+ public:
+  explicit Parser(std::string_view text) : s(text) {}
+  size_t embedded = std::string::npos;  // where the board's (skipped) embedded files start
+  Sx board() {
+    space();
+    if (at >= s.size() || s[at] != '(') throw Error("not a KiCad board (no s-expression)");
+    Sx root = list(0);
+    if (root.name() != "kicad_pcb") throw Error("not a KiCad board: the file holds a '" + root.name() + "'");
+    return root;
+  }
+  Sx record(size_t from) {  // one list, read in full
+    at = from;
+    return list(1);
+  }
+
+ private:
+  std::string_view s;
+  size_t at = 0;
+  void space() {
+    while (at < s.size() && (s[at] == ' ' || s[at] == '\t' || s[at] == '\r' || s[at] == '\n')) ++at;
+  }
+  std::string atom() {
+    std::string out;
+    if (s[at] == '"') {
+      for (++at; at < s.size() && s[at] != '"'; ++at) {
+        if (s[at] == '\\' && at + 1 < s.size()) {
+          ++at;
+          out += s[at] == 'n' ? '\n' : s[at];
+        } else {
+          out += s[at];
+        }
+      }
+      if (at >= s.size()) throw Error("KiCad board: a quoted text does not end");
+      ++at;
+      return out;
+    }
+    const size_t from = at;
+    while (at < s.size() && s[at] != ' ' && s[at] != '\t' && s[at] != '\r' && s[at] != '\n' && s[at] != '(' && s[at] != ')') ++at;
+    return std::string(s.substr(from, at - from));
+  }
+  void skip() {  // past the ')' that closes the list whose name was just read
+    for (int depth = 1; at < s.size() && depth > 0;) {
+      const char c = s[at++];
+      if (c == '"') {
+        while (at < s.size() && s[at] != '"') at += s[at] == '\\' ? 2 : 1;
+        ++at;
+      } else if (c == '(') {
+        ++depth;
+      } else if (c == ')') {
+        --depth;
+      }
+    }
+  }
+  Sx list(int depth) {
+    if (depth > 200) throw Error("KiCad board: lists nest too deeply");
+    ++at;
+    Sx node;
+    node.list = true;
+    for (;;) {
+      space();
+      if (at >= s.size()) throw Error("KiCad board: the file ends inside a list");
+      if (s[at] == ')') {
+        ++at;
+        return node;
+      }
+      if (s[at] != '(') {
+        node.items.emplace_back().atom = atom();
+        continue;
+      }
+      if (depth == 0) {  // a record of the board: read its name first, skip what is not needed
+        const size_t mark = at++;
+        space();
+        if (at < s.size() && s[at] != '(' && s[at] != ')') {
+          const std::string name = atom();
+          if (name == "embedded_files" && embedded == std::string::npos) embedded = mark;
+          if (kSkipped.count(name)) {
+            skip();
+            continue;
+          }
+        }
+        at = mark;
+      }
+      node.items.push_back(list(depth + 1));
+    }
+  }
+};
+
+// ---------------------------------------------------------------- 2D pieces
+using P2 = std::array<double, 2>;
+
+double dist(P2 a, P2 b) { return std::hypot(a[0] - b[0], a[1] - b[1]); }
+P2 at2(const Sx* n) { return n ? P2{n->num(1), n->num(2)} : P2{0, 0}; }
+
+// A footprint's place on the page: maps its own (unturned) coordinates to the page's.
+struct Place {
+  double x = 0, y = 0, angle = 0;
+  P2 operator()(P2 p) const {
+    const double a = angle * kPi / 180, c = std::cos(a), s = std::sin(a);
+    return {x + p[0] * c + p[1] * s, y - p[0] * s + p[1] * c};
+  }
+};
+P2 turn(P2 p, P2 about, double angle) { return Place{about[0], about[1], angle}({p[0] - about[0], p[1] - about[1]}); }
+
+// A line (2 points), an arc (start, mid, end), a cubic curve (4 poles) or a circle (centre, a point on it).
+struct Seg {
+  enum Kind { Line, Arc, Curve, Circle } kind = Line;
+  std::vector<P2> p;
+};
+using Loop = std::vector<Seg>;  // closed: each piece starts where the one before ends
+
+struct Shapes {
+  std::vector<Seg> open;   // lines, arcs and curves, chained into loops later
+  std::vector<Loop> loops; // circles, rectangles, polygons
+};
+
+bool on_layer(const Sx& n, std::string_view layer) {
+  const Sx* l = n.child("layer");
+  return l && l->text(1) == layer;
+}
+
+// A graphic item (gr_* on the board, fp_* in a footprint and then mapped through `place`).
+void shape_item(const Sx& n, const Place* place, Shapes& out) {
+  const std::string kind = n.name().substr(3);
+  auto pt = [&](P2 p) { return place ? (*place)(p) : p; };
+  auto point = [&](const char* key) { return pt(at2(n.child(key))); };
+  if (kind == "line") {
+    const P2 a = point("start"), b = point("end");
+    if (dist(a, b) > 1e-6) out.open.push_back({Seg::Line, {a, b}});
+  } else if (kind == "arc") {
+    if (n.child("mid")) {
+      out.open.push_back({Seg::Arc, {point("start"), point("mid"), point("end")}});
+    } else {  // before KiCad 6: the centre, where the arc starts and its angle, clockwise on the page
+      const P2 c = at2(n.child("start")), s = at2(n.child("end"));
+      const double a = n.child("angle") ? n.child("angle")->num(1) : 0;
+      if (std::abs(a) >= 359.999) out.loops.push_back({{Seg::Circle, {pt(c), pt(s)}}});
+      else if (std::abs(a) > 1e-9) out.open.push_back({Seg::Arc, {pt(s), pt(turn(s, c, -a / 2)), pt(turn(s, c, -a))}});
+    }
+  } else if (kind == "circle") {
+    const P2 c = point("center"), e = point("end");
+    if (dist(c, e) > 1e-6) out.loops.push_back({{Seg::Circle, {c, e}}});
+  } else if (kind == "rect") {
+    const P2 a = at2(n.child("start")), b = at2(n.child("end"));
+    if (std::abs(a[0] - b[0]) < 1e-6 || std::abs(a[1] - b[1]) < 1e-6) return;
+    const P2 c[4] = {pt(a), pt({b[0], a[1]}), pt(b), pt({a[0], b[1]})};
+    Loop l;
+    for (int i = 0; i < 4; ++i) l.push_back({Seg::Line, {c[i], c[(i + 1) % 4]}});
+    out.loops.push_back(std::move(l));
+  } else if (kind == "poly") {
+    const Sx* pts = n.child("pts");
+    if (!pts) return;
+    Loop l;
+    std::vector<P2> ends;  // first, last
+    auto to = [&](P2 p) {
+      if (!ends.empty() && dist(ends.back(), p) > 1e-6) l.push_back({Seg::Line, {ends.back(), p}});
+      if (ends.empty()) ends.push_back(p);
+      if (ends.size() < 2) ends.push_back(p);
+      ends.back() = p;
+    };
+    for (size_t k = 1; k < pts->items.size(); ++k) {
+      const Sx& e = pts->items[k];
+      if (e.name() == "xy") {
+        to(pt(at2(&e)));
+      } else if (e.name() == "arc") {
+        const P2 s = pt(at2(e.child("start"))), m = pt(at2(e.child("mid"))), en = pt(at2(e.child("end")));
+        to(s);
+        l.push_back({Seg::Arc, {s, m, en}});
+        ends.back() = en;
+      }
+    }
+    if (ends.size() == 2 && dist(ends.back(), ends.front()) > 1e-6) l.push_back({Seg::Line, {ends.back(), ends.front()}});
+    if (l.size() >= 2) out.loops.push_back(std::move(l));
+  } else if (kind == "curve") {
+    std::vector<P2> poles;
+    if (const Sx* pts = n.child("pts")) pts->each("xy", [&](const Sx& xy) { poles.push_back(pt(at2(&xy))); });
+    if (poles.size() == 4 && dist(poles[0], poles[3]) > 1e-6) out.open.push_back({Seg::Curve, poles});
+  }
+}
+
+// Open pieces chained into closed loops: an end within 10 um of the next piece's start or end is joined to it (exactly,
+// at the earlier piece's end). Pieces that never close are counted in `unclosed`.
+std::vector<Loop> chain(const std::vector<Seg>& open, int& unclosed) {
+  constexpr double tol = 0.01;
+  struct End {
+    double x, y;
+    size_t piece;
+    bool last;
+  };
+  std::vector<End> index;
+  for (size_t i = 0; i < open.size(); ++i) {
+    index.push_back({open[i].p.front()[0], open[i].p.front()[1], i, false});
+    index.push_back({open[i].p.back()[0], open[i].p.back()[1], i, true});
+  }
+  std::sort(index.begin(), index.end(), [](const End& a, const End& b) { return a.x < b.x; });
+  std::vector<bool> used(open.size());
+  auto nearest = [&](P2 q) -> const End* {
+    const End* best = nullptr;
+    double bestDistance = tol;
+    for (auto it = std::lower_bound(index.begin(), index.end(), q[0] - tol, [](const End& e, double x) { return e.x < x; });
+         it != index.end() && it->x <= q[0] + tol; ++it)
+      if (!used[it->piece]) {
+        const double d = std::hypot(it->x - q[0], it->y - q[1]);
+        if (d <= bestDistance) bestDistance = d, best = &*it;
+      }
+    return best;
+  };
+  std::vector<Loop> loops;
+  for (size_t i = 0; i < open.size(); ++i) {
+    if (used[i]) continue;
+    used[i] = true;
+    Loop loop{open[i]};
+    bool closed = false;
+    for (;;) {
+      const P2 end = loop.back().p.back();
+      if (loop.size() > 1 && dist(end, loop.front().p.front()) <= tol) {
+        loop.back().p.back() = loop.front().p.front();
+        closed = true;
+        break;
+      }
+      const End* next = nearest(end);
+      if (!next) break;
+      used[next->piece] = true;
+      Seg s = open[next->piece];
+      if (next->last) std::reverse(s.p.begin(), s.p.end());
+      s.p.front() = end;
+      if (s.kind != Seg::Line || dist(s.p.front(), s.p.back()) > 1e-6) loop.push_back(std::move(s));
+    }
+    if (closed && loop.size() >= 2) loops.push_back(std::move(loop));
+    else ++unclosed;
+  }
+  return loops;
+}
+
+// The circle through three points; false when they lie on a line.
+bool circle3(P2 a, P2 b, P2 c, P2& centre, double& r) {
+  const double d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (std::abs(d) <= 1e-9 * dist(a, b) * dist(b, c)) return false;
+  const double a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+  centre = {(a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d, (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d};
+  r = dist(centre, a);
+  return true;
+}
+
+// Points along a loop (arcs every 2 degrees, curves in 24 steps), for areas, nesting and distances.
+std::vector<P2> polygon(const Loop& loop) {
+  std::vector<P2> out;
+  for (const Seg& s : loop) {
+    if (s.kind == Seg::Circle) {
+      const double r = dist(s.p[0], s.p[1]);
+      for (int i = 0; i < 180; ++i) out.push_back({s.p[0][0] + r * std::cos(i * kPi / 90), s.p[0][1] + r * std::sin(i * kPi / 90)});
+      continue;
+    }
+    out.push_back(s.p.front());
+    P2 c;
+    double r;
+    if (s.kind == Seg::Arc && circle3(s.p[0], s.p[1], s.p[2], c, r)) {
+      auto angle = [&](P2 p) { return std::atan2(p[1] - c[1], p[0] - c[0]); };
+      auto wrap = [](double a) { return a < 0 ? a + 2 * kPi : a; };
+      const double a0 = angle(s.p[0]), m = wrap(angle(s.p[1]) - a0), e = wrap(angle(s.p[2]) - a0), sweep = m < e ? e : e - 2 * kPi;
+      const int n = std::max(2, static_cast<int>(std::ceil(std::abs(sweep) / (kPi / 90))));
+      for (int i = 1; i < n; ++i) out.push_back({c[0] + r * std::cos(a0 + sweep * i / n), c[1] + r * std::sin(a0 + sweep * i / n)});
+    } else if (s.kind == Seg::Curve) {
+      for (int i = 1; i < 24; ++i) {
+        const double t = i / 24.0, u = 1 - t, w[4] = {u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t};
+        out.push_back({w[0] * s.p[0][0] + w[1] * s.p[1][0] + w[2] * s.p[2][0] + w[3] * s.p[3][0], w[0] * s.p[0][1] + w[1] * s.p[1][1] + w[2] * s.p[2][1] + w[3] * s.p[3][1]});
+      }
+    }
+  }
+  return out;
+}
+
+double area(const std::vector<P2>& poly) {  // counter-clockwise positive (Y up)
+  double a = 0;
+  for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) a += poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
+  return a / 2;
+}
+bool inside(const std::vector<P2>& poly, P2 q) {
+  bool in = false;
+  for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+    if ((poly[i][1] > q[1]) != (poly[j][1] > q[1]) && q[0] < (poly[j][0] - poly[i][0]) * (q[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0])
+      in = !in;
+  return in;
+}
+double to_edges(const std::vector<P2>& poly, P2 q) {
+  double best = 1e300;
+  for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+    const double dx = poly[i][0] - poly[j][0], dy = poly[i][1] - poly[j][1], len2 = dx * dx + dy * dy;
+    const double t = len2 > 0 ? std::clamp(((q[0] - poly[j][0]) * dx + (q[1] - poly[j][1]) * dy) / len2, 0.0, 1.0) : 0.0;
+    best = std::min(best, std::hypot(poly[j][0] + t * dx - q[0], poly[j][1] + t * dy - q[1]));
+  }
+  return best;
+}
+
+// A drill: centre, size along its own x and y, and its angle.
+struct Hole {
+  P2 c;
+  double w, h, angle;
+  double reach() const { return std::max(w, h) / 2; }
+};
+
+Loop hole_loop(const Hole& h) {  // counter-clockwise
+  if (std::abs(h.w - h.h) < 1e-6) return {{Seg::Circle, {h.c, {h.c[0] + h.w / 2, h.c[1]}}}};
+  const double r = std::min(h.w, h.h) / 2, l = std::abs(h.w - h.h) / 2, a = (h.angle + (h.w > h.h ? 0 : 90)) * kPi / 180;
+  const double c = std::cos(a), s = std::sin(a);
+  auto p = [&](double x, double y) { return P2{h.c[0] + x * c - y * s, h.c[1] + x * s + y * c}; };
+  return {{Seg::Line, {p(-l, -r), p(l, -r)}}, {Seg::Arc, {p(l, -r), p(l + r, 0), p(l, r)}}, {Seg::Line, {p(l, r), p(-l, r)}}, {Seg::Arc, {p(-l, r), p(-l - r, 0), p(-l, -r)}}};
+}
+
+// ---------------------------------------------------------------- OCCT
+gp_Pnt pnt(P2 p, double z = 0) { return gp_Pnt(p[0], p[1], z); }
+
+TopoDS_Edge edge(const Seg& s, const TopoDS_Vertex& a, const TopoDS_Vertex& b) {
+  if (s.kind == Seg::Arc) {
+    GC_MakeArcOfCircle arc(pnt(s.p[0]), pnt(s.p[1]), pnt(s.p[2]));
+    if (arc.IsDone()) return BRepBuilderAPI_MakeEdge(arc.Value(), a, b);
+  } else if (s.kind == Seg::Curve) {
+    TColgp_Array1OfPnt poles(1, 4);
+    for (int i = 0; i < 4; ++i) poles.SetValue(i + 1, pnt(s.p[i]));
+    const Handle(Geom_Curve) curve = new Geom_BezierCurve(poles);
+    return BRepBuilderAPI_MakeEdge(curve, a, b);
+  }
+  return BRepBuilderAPI_MakeEdge(a, b);
+}
+TopoDS_Edge circle_edge(const Seg& s, double z) { return BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(pnt(s.p[0], z), gp::DZ()), dist(s.p[0], s.p[1]))); }
+
+TopoDS_Wire wire(const Loop& loop) {
+  BRepBuilderAPI_MakeWire w;
+  if (loop.size() == 1 && loop[0].kind == Seg::Circle) {
+    w.Add(circle_edge(loop[0], 0));
+    return w.Wire();
+  }
+  std::vector<TopoDS_Vertex> v;
+  for (const auto& s : loop) v.push_back(BRepBuilderAPI_MakeVertex(pnt(s.p.front())));
+  for (size_t i = 0; i < loop.size(); ++i) w.Add(edge(loop[i], v[i], v[(i + 1) % loop.size()]));
+  if (!w.IsDone()) throw Error("the board outline does not form a wire");
+  return w.Wire();
+}
+
+// Edges of loose pieces, for the 2D layers.
+void add_edges(BRep_Builder& b, TopoDS_Compound& c, const std::vector<Seg>& pieces) {
+  for (const Seg& s : pieces) {
+    try {
+      if (s.kind == Seg::Circle) b.Add(c, circle_edge(s, 0));
+      else b.Add(c, edge(s, BRepBuilderAPI_MakeVertex(pnt(s.p.front())), BRepBuilderAPI_MakeVertex(pnt(s.p.back()))));
+    } catch (const Standard_Failure&) {
+    }
+  }
+}
+
+Mat4 rotation(int axis, double degrees) {
+  const double a = degrees * kPi / 180;
+  auto snap = [](double v) { return std::abs(v) < 1e-12 ? 0.0 : std::abs(v - 1) < 1e-12 ? 1.0 : std::abs(v + 1) < 1e-12 ? -1.0 : v; };
+  const double c = snap(std::cos(a)), s = snap(std::sin(a));
+  Mat4 m;
+  const int i = (axis + 1) % 3, j = (axis + 2) % 3;
+  m.at(i, i) = c, m.at(i, j) = -s, m.at(j, i) = s, m.at(j, j) = c;
+  return m;
+}
+
+std::string stable_id(const std::string& op, const std::string& what) {
+  std::string h = sha256_hex("opad-kicad|" + op + "|" + what);
+  h[12] = '5';
+  h[16] = "89ab"[std::stoi(h.substr(16, 1), nullptr, 16) & 3];
+  return h.substr(0, 8) + "-" + h.substr(8, 4) + "-" + h.substr(12, 4) + "-" + h.substr(16, 4) + "-" + h.substr(20, 12);
+}
+
+std::string utf8(const std::filesystem::path& p) {
+  const auto u = p.u8string();
+  return std::string(u.begin(), u.end());
+}
+
+std::string lower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return s;
+}
+
+// "R2" before "R10".
+bool natural_less(const std::string& a, const std::string& b) {
+  size_t i = 0, j = 0;
+  while (i < a.size() && j < b.size()) {
+    if (std::isdigit(static_cast<unsigned char>(a[i])) && std::isdigit(static_cast<unsigned char>(b[j]))) {
+      size_t i2 = i, j2 = j;
+      while (i2 < a.size() && std::isdigit(static_cast<unsigned char>(a[i2]))) ++i2;
+      while (j2 < b.size() && std::isdigit(static_cast<unsigned char>(b[j2]))) ++j2;
+      const auto x = a.substr(i, i2 - i), y = b.substr(j, j2 - j);
+      const auto xs = x.find_first_not_of('0'), ys = y.find_first_not_of('0');
+      const std::string xn = xs == std::string::npos ? "" : x.substr(xs), yn = ys == std::string::npos ? "" : y.substr(ys);
+      if (xn.size() != yn.size()) return xn.size() < yn.size();
+      if (xn != yn) return xn < yn;
+      i = i2, j = j2;
+    } else {
+      if (a[i] != b[j]) return a[i] < b[j];
+      ++i, ++j;
+    }
+  }
+  return a.size() - i < b.size() - j;
+}
+
+// The solder mask's colour by its name in the stackup ("Green", "Matte Black", "#1A5C2BFF").
+std::array<double, 3> mask_color(const std::string& name) {
+  if (name.size() >= 7 && name[0] == '#') {
+    std::array<double, 3> rgb{};
+    for (int i = 0; i < 3; ++i) rgb[static_cast<size_t>(i)] = std::strtol(name.substr(1 + 2 * i, 2).c_str(), nullptr, 16) / 255.0;
+    return rgb;
+  }
+  static const std::pair<const char*, std::array<double, 3>> table[] = {
+      {"green", {0.07, 0.30, 0.15}}, {"red", {0.60, 0.08, 0.08}},   {"blue", {0.06, 0.20, 0.52}},  {"black", {0.07, 0.07, 0.07}},
+      {"white", {0.90, 0.90, 0.88}}, {"yellow", {0.78, 0.72, 0.12}}, {"purple", {0.30, 0.10, 0.40}}, {"orange", {0.85, 0.42, 0.10}}};
+  const std::string n = lower(name);
+  for (const auto& [key, rgb] : table)
+    if (n.find(key) != std::string::npos) return rgb;
+  return table[0].second;
+}
+
+// ---------------------------------------------------------------- model lookup
+std::string env(const std::string& name) {
+#ifdef _WIN32
+  const std::wstring w(name.begin(), name.end());
+  const wchar_t* v = _wgetenv(w.c_str());
+  return v && *v ? utf8(std::filesystem::path(v)) : std::string();
+#else
+  const char* v = std::getenv(name.c_str());
+  return v ? v : "";
+#endif
+}
+
+// KiCad's configuration folders, newest version first.
+std::vector<std::filesystem::path> config_dirs() {
+  std::filesystem::path root;
+#ifdef _WIN32
+  if (const auto a = env("APPDATA"); !a.empty()) root = path_from_utf8(a) / "kicad";
+#elif defined(__APPLE__)
+  if (const auto h = env("HOME"); !h.empty()) root = path_from_utf8(h) / "Library/Preferences/kicad";
+#else
+  if (const auto x = env("XDG_CONFIG_HOME"); !x.empty()) root = path_from_utf8(x) / "kicad";
+  else if (const auto h = env("HOME"); !h.empty()) root = path_from_utf8(h) / ".config/kicad";
+#endif
+  std::vector<std::pair<double, std::filesystem::path>> found;
+  std::error_code e;
+  if (!root.empty())
+    for (const auto& d : std::filesystem::directory_iterator(root, e))
+      if (d.is_directory(e)) {
+        const double v = std::atof(d.path().filename().string().c_str());
+        if (v > 0) found.push_back({v, d.path()});
+      }
+  std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+  std::vector<std::filesystem::path> out;
+  for (const auto& f : found) out.push_back(f.second);
+  return out;
+}
+
+// KiCad's own 3D model folders as installed, the given major version first.
+std::vector<std::filesystem::path> install_dirs(int major) {
+  std::vector<std::filesystem::path> out;
+#ifdef _WIN32
+  std::vector<std::filesystem::path> bases;
+  if (const auto p = env("ProgramFiles"); !p.empty()) bases.push_back(path_from_utf8(p) / "KiCad");
+  bases.push_back("C:/Program Files/KiCad");
+  std::vector<std::pair<double, std::filesystem::path>> found;
+  std::error_code e;
+  for (const auto& base : bases)
+    for (const auto& d : std::filesystem::directory_iterator(base, e))
+      if (d.is_directory(e)) {
+        double v = std::atof(d.path().filename().string().c_str());
+        if (static_cast<int>(v) == major) v += 1000;
+        found.push_back({v, d.path() / "share/kicad/3dmodels"});
+      }
+  std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+  for (const auto& f : found) out.push_back(f.second);
+  for (const auto& base : bases) out.push_back(base / "share/kicad/modules/packages3d");  // KiCad 5
+#elif defined(__APPLE__)
+  (void)major;
+  out = {"/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels", "/Library/Application Support/kicad/3dmodels"};
+#else
+  (void)major;
+  out = {"/usr/share/kicad/3dmodels", "/usr/local/share/kicad/3dmodels", "/usr/share/kicad/modules/packages3d"};
+#endif
+  return out;
+}
+
+// The KiCad version a 3D model variable belongs to (KICAD9_3DMODEL_DIR: 9, KISYS3DMOD: 5), else 0.
+int variable_version(const std::string& var) {
+  if (var == "KISYS3DMOD") return 5;
+  if (var.rfind("KICAD", 0) == 0 && var.size() > 17 && var.compare(var.size() - 12, 12, "_3DMODEL_DIR") == 0) return std::atoi(var.c_str() + 5);
+  return 0;
+}
+
+// Where a path variable may point, in the order KiCad itself takes them: the project's text variables, the environment,
+// KiCad's configuration, then (3D model variables) its install folders.
+std::vector<std::filesystem::path> variable_dirs(const std::string& var, const std::map<std::string, std::string>& project) {
+  std::vector<std::filesystem::path> out;
+  if (const auto it = project.find(var); it != project.end()) out.push_back(path_from_utf8(it->second));
+  if (const auto v = env(var); !v.empty()) out.push_back(path_from_utf8(v));
+  for (const auto& dir : config_dirs()) {
+    std::error_code e;
+    const auto file = dir / "kicad_common.json";
+    if (!std::filesystem::is_regular_file(file, e)) continue;
+    try {
+      const json j = json::parse(read_text_file(file), nullptr, false);
+      if (j.is_discarded() || !j.contains("environment") || !j["environment"].is_object()) continue;
+      const json& vars = j["environment"].value("vars", json());
+      if (vars.is_object() && vars.contains(var) && vars[var].is_string() && !vars[var].get<std::string>().empty())
+        out.push_back(path_from_utf8(vars[var].get<std::string>()));
+    } catch (const std::exception&) {
+    }
+  }
+  if (const int major = variable_version(var))
+    for (const auto& d : install_dirs(major)) out.push_back(d);
+  return out;
+}
+
+// The leading variable of a model name ("${KICAD9_3DMODEL_DIR}/x.step" -> KICAD9_3DMODEL_DIR, "x.step"); empty without one.
+std::string leading_variable(const std::string& name, std::string& rest) {
+  if (name.size() < 4 || name[0] != '$' || (name[1] != '{' && name[1] != '(')) return {};
+  const size_t close = name.find(name[1] == '{' ? '}' : ')');
+  if (close == std::string::npos) return {};
+  rest = name.substr(close + 1);
+  while (!rest.empty() && rest.front() == '/') rest.erase(0, 1);
+  return name.substr(2, close - 2);
+}
+
+bool is_vrml(const std::filesystem::path& p) {
+  const std::string ext = lower(p.extension().string());
+  return ext == ".wrl" || ext == ".vrml";
+}
+
+// The STEP file for a candidate (a VRML name finds the STEP beside it), or with `vrml` the VRML file itself.
+std::filesystem::path existing(std::filesystem::path p, bool vrml) {
+  std::error_code e;
+  if (vrml || !is_vrml(p)) return (vrml == is_vrml(p)) && std::filesystem::is_regular_file(p, e) ? p : std::filesystem::path();
+  for (const char* alt : {".step", ".stp", ".STEP", ".STP"}) {
+    p.replace_extension(alt);
+    if (std::filesystem::is_regular_file(p, e)) return p;
+  }
+  return {};
+}
+
+// A model of KiCad's own library: "<library>.3dshapes/<file>" right below a 3D model variable, plain names only, as the
+// library publishes it (STEP).
+std::string library_path(const std::string& var, const std::string& rest) {
+  const size_t slash = rest.find('/');
+  if (!variable_version(var) || slash == std::string::npos || rest.find('/', slash + 1) != std::string::npos) return {};
+  const std::string lib = rest.substr(0, slash);
+  std::string file = rest.substr(slash + 1);
+  auto plain = [](const std::string& s, const char* extra) {
+    return !s.empty() && s[0] != '.' && std::all_of(s.begin(), s.end(), [&](unsigned char c) { return std::isalnum(c) || (c && std::strchr(extra, c)); });
+  };
+  if (lib.size() <= 9 || lib.compare(lib.size() - 9, 9, ".3dshapes") != 0 || !plain(lib, "_.+-") || !plain(file, "_.+-,()")) return {};
+  const std::string ext = lower(path_from_utf8(file).extension().string());
+  if (ext == ".wrl" || ext == ".vrml") file = file.substr(0, file.size() - ext.size()) + ".step";
+  else if (ext != ".step" && ext != ".stp") return {};
+  return lib + "/" + file;
+}
+
+// The library's release for a KiCad version (its models move and get renamed between them).
+std::string library_tag(int version) { return version <= 0 ? "master" : version == 5 ? "5.1.12" : std::to_string(version) + ".0.0"; }
+
+// Whether `p` lies in `root`, as written (nothing on disk is touched).
+bool lies_in(const std::filesystem::path& p, const std::filesystem::path& root) {
+  if (root.empty()) return false;
+  const std::filesystem::path a = p.lexically_normal(), r = root.lexically_normal();
+  auto ai = a.begin();
+  for (auto ri = r.begin(); ri != r.end(); ++ri, ++ai) {
+    if (ri->empty()) continue;  // a trailing separator
+    if (ai == a.end() || lower(utf8(*ai)) != lower(utf8(*ri))) return false;
+  }
+  return true;
+}
+
+// Footprints' 3D model files for one board (kicad_model_file). A model on a network share is looked for only where the user
+// put it (the board's own folder, the model folders, KiCad's variables as the user's environment and KiCad's settings give
+// them): a board or its project naming \\server\share must not make OPAD hand that server the user's credentials.
+class Resolver {
+ public:
+  struct Found {
+    std::filesystem::path file;  // empty: not found
+    std::string library;         // a model of KiCad's library: "<library>.3dshapes/<file>.step"
+    int version = 0;             // the KiCad version its variable names
+  };
+  Resolver(const std::filesystem::path& board, std::vector<std::filesystem::path> dirs) : dir(board.parent_path()), user(std::move(dirs)) {
+    std::filesystem::path pro = board;
+    pro.replace_extension(".kicad_pro");
+    std::error_code e;
+    if (!std::filesystem::is_regular_file(pro, e)) return;
+    try {  // the project's text variables, which may name ${KIPRJMOD}
+      const json j = json::parse(read_text_file(pro), nullptr, false);
+      if (!j.is_object() || !j.contains("text_variables") || !j["text_variables"].is_object()) return;
+      for (const auto& [k, v] : j["text_variables"].items()) {
+        if (!v.is_string() || v.get<std::string>().empty()) continue;
+        std::string value = v.get<std::string>();
+        for (size_t at; (at = value.find("${KIPRJMOD}")) != std::string::npos;) value.replace(at, 11, utf8(dir));
+        project[k] = value;
+      }
+    } catch (const std::exception&) {
+    }
+  }
+  Found find(const std::string& name) {
+    Found out;
+    std::string text = name;
+    std::replace(text.begin(), text.end(), '\\', '/');
+    if (text.empty() || text.rfind("kicad-embed://", 0) == 0) return out;
+    std::vector<std::filesystem::path> candidates;
+    std::string rest;
+    const std::string var = leading_variable(text, rest);
+    if (var == "KIPRJMOD") {
+      candidates.push_back(dir / path_from_utf8(rest));
+    } else if (!var.empty()) {
+      auto it = vars.find(var);
+      if (it == vars.end()) it = vars.emplace(var, variable_dirs(var, project)).first;
+      for (const auto& d : it->second) candidates.push_back(d / path_from_utf8(rest));
+      out.library = library_path(var, rest);
+      out.version = variable_version(var);
+    } else {
+      rest = text;
+      const auto p = path_from_utf8(text);
+      candidates.push_back(p.is_absolute() ? p : dir / p);
+    }
+    for (const auto& d : user) {
+      candidates.push_back(d / path_from_utf8(rest));
+      candidates.push_back(d / path_from_utf8(rest).filename());
+    }
+    if (!out.library.empty()) candidates.push_back(kicad_download_dir() / path_from_utf8(out.library));
+    auto allowed = [&](const std::filesystem::path& c) {
+      if (!network_path(c) || lies_in(c, dir)) return true;
+      if (std::any_of(user.begin(), user.end(), [&](const auto& d) { return lies_in(c, d); })) return true;
+      if (var.empty() || var == "KIPRJMOD") return false;
+      auto it = own.find(var);
+      if (it == own.end()) it = own.emplace(var, variable_dirs(var, {})).first;  // the project's text variables left out
+      return std::any_of(it->second.begin(), it->second.end(), [&](const auto& d) { return lies_in(c, d); });
+    };
+    for (const bool vrml : {false, true})  // a STEP anywhere before a VRML
+      for (const auto& c : candidates)
+        // As written on a share: libstdc++ knows no UNC root and lexically_normal makes \\server\share a folder of this drive.
+        if (auto f = allowed(c) ? existing(network_path(c) ? c : c.lexically_normal(), vrml) : std::filesystem::path(); !f.empty()) {
+          out.file = f;
+          return out;
+        }
+    return out;
+  }
+
+ private:
+  std::filesystem::path dir;
+  std::vector<std::filesystem::path> user;
+  std::map<std::string, std::string> project;
+  std::map<std::string, std::vector<std::filesystem::path>> vars, own;
+};
+
+}  // namespace
+
+std::filesystem::path kicad_download_dir() { return cache_dir() / "kicad-models"; }
+
+std::filesystem::path kicad_model_file(const std::string& name, const std::filesystem::path& board, const std::vector<std::filesystem::path>& model_dirs) {
+  return Resolver(board, model_dirs).find(name).file;
+}
+
+namespace {
+
+// ---------------------------------------------------------------- embedded files (kicad-embed://)
+// An (embedded_files (file (name ..) (type ..) (data |base64...|) (checksum ..)) ..) record: name -> its data as written.
+void embedded_files(const Sx& n, std::map<std::string, std::string>& out) {
+  n.each("file", [&](const Sx& f) {
+    const Sx* name = f.child("name");
+    const Sx* data = f.child("data");
+    if (!name || !data) return;
+    std::string text;
+    for (size_t k = 1; k < data->items.size(); ++k)
+      if (!data->items[k].list)
+        for (const char c : data->items[k].atom)
+          if (c != '|') text += c;
+    out[name->text(1)] = std::move(text);
+  });
+}
+
+std::string base64(const std::string& text) {
+  std::string out;
+  out.reserve(text.size() * 3 / 4);
+  unsigned bits = 0;
+  int count = 0;
+  for (const unsigned char c : text) {
+    int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52 : c == '+' ? 62 : c == '/' ? 63 : -1;
+    if (v < 0) continue;  // padding, line breaks
+    bits = (bits << 6) | static_cast<unsigned>(v);
+    if ((count += 6) >= 8) out += static_cast<char>((bits >> (count -= 8)) & 0xFF);
+  }
+  return out;
+}
+
+// KiCad stores embedded files zstd-compressed, then base64: the file, written once into the user cache under its content
+// hash (its own name kept, which says its format); empty with `error` set when it cannot be.
+std::filesystem::path extract_embedded(const std::string& name, const std::string& data, const std::string& hash, std::string& error) {
+  std::string leaf = utf8(path_from_utf8(name).filename());
+  for (char& c : leaf)
+    if (!std::isalnum(static_cast<unsigned char>(c)) && !std::strchr("._-+(),", c)) c = '_';
+  if (leaf.empty() || leaf[0] == '.') leaf = "model" + leaf;
+  const auto target = cache_dir() / "kicad-embed" / hash.substr(0, 24) / path_from_utf8(leaf);
+  std::error_code e;
+  if (std::filesystem::is_regular_file(target, e)) return target;
+  std::string raw = base64(data);
+  if (raw.size() >= 4 && static_cast<unsigned char>(raw[0]) == 0x28 && static_cast<unsigned char>(raw[1]) == 0xB5 && static_cast<unsigned char>(raw[2]) == 0x2F &&
+      static_cast<unsigned char>(raw[3]) == 0xFD) {
+#ifdef OPAD_HAVE_ZSTD
+    ZSTD_DStream* stream = ZSTD_createDStream();
+    ZSTD_initDStream(stream);
+    ZSTD_inBuffer in{raw.data(), raw.size(), 0};
+    std::string out;
+    std::vector<char> buffer(ZSTD_DStreamOutSize());
+    for (;;) {
+      ZSTD_outBuffer o{buffer.data(), buffer.size(), 0};
+      const size_t r = ZSTD_decompressStream(stream, &o, &in);
+      if (ZSTD_isError(r)) {
+        error = std::string("damaged (") + ZSTD_getErrorName(r) + ")";
+        break;
+      }
+      out.append(buffer.data(), o.pos);
+      if (out.size() > (size_t(1) << 30)) error = "larger than 1 GB";
+      if (!error.empty() || (in.pos >= in.size && o.pos < o.size)) break;
+    }
+    ZSTD_freeDStream(stream);
+    if (!error.empty()) return {};
+    raw = std::move(out);
+#else
+    error = "this build reads no zstd-compressed data";
+    return {};
+#endif
+  }
+  if (raw.empty()) {
+    error = "empty";
+    return {};
+  }
+  write_text_file(target, raw);
+  return target;
+}
+
+// ---------------------------------------------------------------- the board
+struct Model {
+  std::string name;
+  Vec3 offset{0, 0, 0}, scale{1, 1, 1}, rotate{0, 0, 0};
+  double opacity = 1.0;
+};
+
+struct Footprint {
+  std::string ref, name, uuid;
+  Place place;
+  bool bottom = false, dnp = false;
+  double height = 0;  // the footprint's "Height" property (mm), 0 when it has none
+  std::vector<Model> models;
+  std::map<std::string, std::string> embedded;  // its own embedded files (kicad-embed://name)
+  std::array<std::vector<P2>, 3> outline;  // own coordinates: courtyard, fabrication outline, pads
+  std::vector<Seg> courtyard;              // on the page
+  std::vector<Hole> drills;                // on the page
+  int pads = 0, npth = 0;                  // its pads, those unplated holes
+  // A mounting hole (UI-134): KiCad's MountingHole library, or a footprint of unplated holes only; its largest drill is it.
+  bool mounting() const { return !drills.empty() && (lower(name).find("mountinghole") != std::string::npos || pads == npth); }
+};
+
+double height_property(const std::string& value) {
+  const char* first = value.c_str();
+  char* last = nullptr;
+  const double v = std::strtod(first, &last);
+  if (last == first || !std::isfinite(v) || v <= 0) return 0;
+  const std::string unit = lower(std::string(last));
+  return std::min(v * (unit.find("mil") != std::string::npos ? 0.0254 : unit.find("in") != std::string::npos ? 25.4 : 1.0), 200.0);
+}
+
+Vec3 xyz(const Sx* n, Vec3 fallback) {
+  const Sx* v = n ? n->child("xyz") : nullptr;
+  return v ? Vec3{v->num(1, fallback[0]), v->num(2, fallback[1]), v->num(3, fallback[2])} : fallback;
+}
+
+void points_of(const Shapes& s, std::vector<P2>& out) {
+  for (const auto& seg : s.open) {
+    const auto pts = polygon(Loop{seg});
+    out.insert(out.end(), pts.begin(), pts.end());
+    out.push_back(seg.p.back());
+  }
+  for (const auto& loop : s.loops) {
+    const auto pts = polygon(loop);
+    out.insert(out.end(), pts.begin(), pts.end());
+  }
+}
+
+struct Part {
+  std::string key, name, representation;
+  Mat4 at;
+  bool has_color = false;
+  std::array<double, 3> color{};
+  double opacity = 1.0;
+};
+
+// Models read as the viewer reads them (a linked board) stay in memory for the process, per file, size, time and scale:
+// reading the board again (a sync after footprints moved or one model changed) translates only the models that changed, each
+// footprint's parts are its model's live shapes again (UI-134). The least recently used go past kMemoModels.
+struct ModelMemo {
+  std::vector<Part> parts;
+  std::vector<TopoDS_Shape> shapes;
+  std::vector<json> metas;
+  std::uint64_t used = 0, bytes = 0;  // its file's size: what it holds in memory is about that much
+};
+constexpr size_t kMemoModels = 256;
+constexpr std::uint64_t kMemoBytes = 256ull << 20;
+std::mutex memo_mu;
+std::map<std::string, ModelMemo>& memo = *new std::map<std::string, ModelMemo>;  // never destroyed: its shapes freed after OCCT's own statics at exit could fault
+std::uint64_t memo_clock = 0;
+
+class Builder {
+ public:
+  Builder(Document& d, const std::filesystem::path& f, const ImportOptions& o) : doc(d), file(f), opt(o), made(o), resolver(f, o.kicad.model_dirs) { made.heal = false; }
+
+  ImportResult run() {
+    report(-1, "reading");
+    read(parse());
+    report(0, "building");
+    const std::string op_id = new_uuid();
+    json children = json::array();
+    const auto boards = board(op_id);
+    for (const auto& b : boards) children.push_back(b);
+    if (opt.kicad.components) components(op_id, children);
+    if (json layers = layers2d(op_id); !layers.is_null()) children.push_back(layers);
+    // An exploded view keeps a board and its parts together unless told otherwise (explode_keep_defaults).
+    json root_node = {{"type", "component"}, {"id", stable_id(op_id, "root")}, {"name", utf8(file.stem())}, {"explode", "keep"}, {"children", children}};
+    if (!opt.placement.is_identity()) root_node["transform"] = opt.placement.to_json();
+    json op = {{"op", "import"}, {"id", op_id}, {"source", utf8(file.filename())}, {"units", "mm"}, {"nodes", json::array({root_node})},
+               {"kicad", {{"origin", {origin[0], origin[1]}}, {"thickness", thickness}, {"holes", holes.size()}, {"outline", outline()},
+                          {"options", {{"components", opt.kicad.components}, {"dnp", opt.kicad.dnp}, {"vias", opt.kicad.vias}}}}}};
+    if (!opt.parent.empty()) op["parent"] = opt.parent;
+    res.components += 1;
+    res.op_id = doc.append(op, opt.author).id;
+    if (!missing.empty()) {
+      std::string list;
+      for (size_t i = 0; i < missing.size() && i < 8; ++i) list += (i ? ", " : "") + missing[i];
+      if (missing.size() > 8) list += ", ...";
+      res.warnings.push_back("footprint 3D models not found, shown as boxes: " + list);
+    }
+    res.info = {{"footprints", footprints.size()}, {"components", placed}, {"models", models.size()}, {"models_read", models_read}, {"placeholders", placeholders},
+                {"missing_models", missing}, {"downloadable", downloadable.size()}, {"holes", holes.size()}, {"thickness", thickness},
+                {"outlines", loops.size()}};
+    return res;
+  }
+
+  // The models the footprints that would be placed show: where each was found, which footprints use it, and for one of
+  // KiCad's library, its place there.
+  json model_list() {
+    read(parse());
+    std::map<std::string, std::vector<std::string>> refs;
+    std::vector<std::pair<std::string, Resolver::Found>> order;
+    for (const auto& f : footprints)
+      if (opt.kicad.dnp || !f.dnp)
+        for (const auto& m : f.models) {
+          auto& r = refs[m.name];
+          if (r.empty()) order.push_back({m.name, locate(f, m)});
+          r.push_back(f.ref);
+        }
+    json list = json::array();
+    int present = 0, absent = 0, library = 0;
+    for (const auto& [name, f] : order) {
+      json m = {{"name", name}, {"refs", refs[name]}};
+      if (!f.file.empty()) m["file"] = utf8(f.file);
+      if (!f.library.empty()) m["library"] = f.library, m["tag"] = library_tag(f.version);
+      present += !f.file.empty();
+      absent += f.file.empty();
+      library += f.file.empty() && !f.library.empty();
+      list.push_back(m);
+    }
+    return {{"models", list}, {"found", present}, {"missing", absent}, {"downloadable", library}, {"download_dir", utf8(kicad_download_dir())}};
+  }
+
+  // The board as reading it would build it, without the geometry: the footprints that would be components (where, which
+  // side, which models) and the board's thickness, drills and outline. `page_origin` is the frame (page coordinates).
+  json summary(P2 page_origin) {
+    read(parse());
+    json parts = json::array();
+    if (opt.kicad.components)
+      for (const auto& f : footprints)
+        if (!f.models.empty() && (opt.kicad.dnp || !f.dnp))
+          parts.push_back({{"ref", f.ref}, {"uuid", f.uuid}, {"footprint", f.name}, {"side", f.bottom ? "bottom" : "top"}, {"models", model_names(f)},
+                           {"at", {f.place.x - page_origin[0], page_origin[1] - f.place.y, f.place.angle}}});
+    json holes_at = json::array();
+    for (const auto& [f, h] : mounting_holes(page_origin))
+      holes_at.push_back({{"ref", f->ref}, {"uuid", f->uuid}, {"footprint", f->name}, {"at", {h.c[0], h.c[1], 0.0}}, {"size", {h.w, h.h}}});
+    return {{"components", parts}, {"mounting", holes_at}, {"thickness", thickness}, {"holes", holes.size()}, {"outline", outline()}};
+  }
+
+  // The hidden 2D layers alone, in the frame `opt` chooses (a board read through KiCad's own export gets its outline and
+  // mounting holes from here, so sketches project them as they do from OPAD's reader: UI-134).
+  json layers(const std::string& op_id) {
+    read(parse());
+    return layers2d(op_id);
+  }
+
+  // The page point the board's frame starts at, as reading it chooses it (a Builder reads its board once).
+  P2 frame() {
+    read(parse());
+    return origin;
+  }
+
+ private:
+  Document& doc;
+  std::filesystem::path file;
+  const ImportOptions& opt;
+  ImportOptions made;  // for the shapes built here, valid by construction: checking a board with thousands of drills took minutes
+  ImportResult res;
+  double thickness = 1.6;
+  std::array<double, 3> color{0.07, 0.30, 0.15};
+  P2 origin{0, 0};
+  Shapes edges;              // Edge.Cuts on the page
+  std::vector<Loop> loops;   // closed outlines, board coordinates
+  std::vector<Hole> holes;   // board coordinates
+  std::vector<Footprint> footprints;
+  std::map<std::string, std::vector<Part>> models;  // model file + scale -> its bodies (empty: could not be read)
+  Resolver resolver;
+  std::map<std::string, Resolver::Found> found;        // model name (or embedded content) -> its file (empty: not found)
+  std::string text;                                    // the board file
+  size_t embedded_at = std::string::npos;              // its embedded files, read when a model names one
+  std::optional<std::map<std::string, std::string>> board_files;
+  std::map<const std::string*, std::string> hashes;    // embedded data -> its hash
+  std::map<std::string, std::string> boxes;            // placeholder size -> body key
+  std::vector<std::string> missing;
+  std::set<std::string> downloadable;  // missing models of KiCad's library
+  double outline_area = 0;
+  std::array<double, 4> outline_box{0, 0, 0, 0};
+  int placed = 0, placeholders = 0, models_read = 0;
+
+  void report(double fraction, const std::string& what) {
+    if (opt.progress && !opt.progress(fraction, what)) throw Error("import cancelled");
+  }
+  json outline() const { return {{"area", std::round(outline_area * 1e4) / 1e4}, {"box", outline_box}}; }
+  static json model_names(const Footprint& f) {
+    json names = json::array();
+    for (const auto& m : f.models) names.push_back(m.name);
+    return names;
+  }
+  Sx parse() {
+    text = read_text_file(file);
+    Parser p(text);
+    Sx root = p.board();
+    embedded_at = p.embedded;
+    return root;
+  }
+
+  // Where a footprint's model is: a file found as KiCad finds it, or an embedded one (the footprint's own, else the
+  // board's) written out to the cache.
+  const Resolver::Found& locate(const Footprint& f, const Model& m) {
+    static const std::string scheme = "kicad-embed://";
+    if (m.name.rfind(scheme, 0) != 0) {
+      auto it = found.find(m.name);
+      if (it == found.end()) it = found.emplace(m.name, resolver.find(m.name)).first;
+      return it->second;
+    }
+    const std::string name = m.name.substr(scheme.size());
+    const std::string* data = nullptr;
+    if (const auto it = f.embedded.find(name); it != f.embedded.end()) data = &it->second;
+    if (!data) {
+      if (!board_files) {
+        board_files.emplace();
+        if (embedded_at != std::string::npos) embedded_files(Parser(text).record(embedded_at), *board_files);
+      }
+      if (const auto it = board_files->find(name); it != board_files->end()) data = &it->second;
+    }
+    std::string& hash = hashes[data];
+    if (data && hash.empty()) hash = sha256_hex(*data);
+    const std::string key = data ? "kicad-embed|" + hash + "|" + name : m.name;
+    auto it = found.find(key);
+    if (it != found.end()) return it->second;
+    Resolver::Found where;
+    std::string error = data ? "" : "not in the board";
+    if (data) where.file = extract_embedded(name, *data, hash, error);
+    if (!error.empty()) res.warnings.push_back("embedded 3D model " + name + ": " + error);
+    return found.emplace(key, where).first->second;
+  }
+  P2 board_xy(P2 p) const { return {p[0] - origin[0], origin[1] - p[1]}; }
+  void to_board(Seg& s) const {
+    for (auto& p : s.p) p = board_xy(p);
+  }
+
+  void read(const Sx& root) {
+    if (const Sx* g = root.child("general"); g && g->child("thickness")) thickness = g->child("thickness")->num(1, 1.6);
+    std::optional<P2> aux;
+    if (const Sx* setup = root.child("setup")) {
+      if (const Sx* a = setup->child("aux_axis_origin"); a && (a->num(1) != 0 || a->num(2) != 0)) aux = at2(a);
+      if (const Sx* stack = setup->child("stackup")) {
+        double sum = 0;
+        std::string mask;
+        stack->each("layer", [&](const Sx& l) {
+          if (const Sx* t = l.child("thickness")) sum += t->num(1);
+          if (const Sx* c = l.child("color"); c && (mask.empty() || l.text(1) == "F.Mask") && (l.text(1) == "F.Mask" || l.text(1) == "B.Mask")) mask = c->text(1);
+        });
+        if (!root.child("general") || !root.child("general")->child("thickness")) thickness = sum > 0 ? sum : thickness;
+        if (!mask.empty()) color = mask_color(mask);
+      }
+    }
+    if (thickness <= 0) thickness = 1.6;
+    std::vector<Hole> page_holes;
+    for (const auto& n : root.items) {
+      if (!n.list) continue;
+      const std::string& kind = n.name();
+      if (kind.rfind("gr_", 0) == 0 && on_layer(n, "Edge.Cuts")) shape_item(n, nullptr, edges);
+      else if (kind == "footprint" || kind == "module") footprint(n, page_holes);
+      else if (kind == "via" && opt.kicad.vias && !n.has("blind") && !n.has("micro") && !(n.child("type") && n.child("type")->text(1) != "through") && n.child("drill"))
+        page_holes.push_back({at2(n.child("at")), n.child("drill")->num(1), n.child("drill")->num(1), 0});
+    }
+    int unclosed = 0;
+    std::vector<Loop> page_loops = chain(edges.open, unclosed);
+    page_loops.insert(page_loops.end(), edges.loops.begin(), edges.loops.end());
+    if (unclosed) res.warnings.push_back("Edge.Cuts pieces that do not close into an outline: " + std::to_string(unclosed) + "; the board may be incomplete");
+    // The origin: the drill/place origin when the board sets one, else the outline's centre (else the footprints').
+    double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+    auto grow = [&](P2 p) { x0 = std::min(x0, p[0]), y0 = std::min(y0, p[1]), x1 = std::max(x1, p[0]), y1 = std::max(y1, p[1]); };
+    for (const auto& l : page_loops)
+      for (const auto& p : polygon(l)) grow(p);
+    if (x0 > x1)
+      for (const auto& f : footprints) grow({f.place.x, f.place.y});
+    if (opt.kicad.origin_at.size() == 2) origin = {opt.kicad.origin_at[0], opt.kicad.origin_at[1]};
+    else if (opt.kicad.origin == "page") origin = {0, 0};
+    else if (aux && opt.kicad.origin != "center") origin = *aux;
+    else if (x0 <= x1) origin = {(x0 + x1) / 2, (y0 + y1) / 2};
+    std::vector<std::vector<P2>> polys;  // the outline's area (cutouts taken off) and box on the page, for sync previews
+    for (const auto& l : page_loops) polys.push_back(polygon(l));
+    for (size_t i = 0; i < polys.size(); ++i) {
+      int depth = 0;
+      for (size_t j = 0; j < polys.size(); ++j) depth += i != j && std::abs(area(polys[j])) > std::abs(area(polys[i])) && inside(polys[j], polys[i][0]);
+      outline_area += (depth % 2 ? -1 : 1) * std::abs(area(polys[i]));
+    }
+    if (x0 <= x1 && !page_loops.empty()) outline_box = {x0, y0, x1, y1};
+    for (auto& l : page_loops) {
+      for (auto& s : l) to_board(s);
+      loops.push_back(std::move(l));
+    }
+    for (const auto& h : page_holes)
+      if (h.w > 0) holes.push_back({board_xy(h.c), h.w, h.h > 0 ? h.h : h.w, h.angle});
+    if (loops.empty()) res.warnings.push_back("the board has no outline on Edge.Cuts; only its components are shown");
+  }
+
+  void footprint(const Sx& n, std::vector<Hole>& page_holes) {
+    Footprint f;
+    f.name = n.text(1);
+    if (const Sx* at = n.child("at")) f.place = {at->num(1), at->num(2), at->num(3)};
+    f.bottom = n.child("layer") && n.child("layer")->text(1).rfind("B.", 0) == 0;
+    if (const Sx* u = n.child("uuid")) f.uuid = u->text(1);
+    else if (const Sx* t = n.child("tstamp")) f.uuid = t->text(1);
+    if (const Sx* a = n.child("attr"); a && a->has("dnp")) f.dnp = true;
+    if (const Sx* d = n.child("dnp"); d && d->text(1) != "no") f.dnp = true;
+    for (const auto& c : n.items) {
+      if (!c.list) continue;
+      const std::string& kind = c.name();
+      if (kind == "property") {
+        const std::string key = lower(c.text(1));
+        if (key == "reference") f.ref = c.text(2);
+        else if (key == "height") f.height = height_property(c.text(2));
+      } else if (kind == "fp_text" && c.text(1) == "reference") {
+        f.ref = c.text(2);
+      } else if (kind == "model" && !c.has("hide") && !(c.child("hide") && c.child("hide")->text(1) != "no")) {
+        Model m;
+        m.name = c.text(1);
+        if (const Sx* off = c.child("offset")) m.offset = xyz(off, m.offset);
+        else if (const Sx* at = c.child("at")) {  // before KiCad 6: inches
+          m.offset = xyz(at, m.offset);
+          for (auto& v : m.offset) v *= 25.4;
+        }
+        m.scale = xyz(c.child("scale"), m.scale);
+        m.rotate = xyz(c.child("rotate"), m.rotate);
+        if (const Sx* o = c.child("opacity")) m.opacity = std::clamp(o->num(1, 1), 0.05, 1.0);
+        f.models.push_back(m);
+      } else if (kind == "embedded_files") {
+        embedded_files(c, f.embedded);
+      } else if (kind == "pad") {
+        pad(c, f, page_holes);
+      } else if (kind.rfind("fp_", 0) == 0 && kind != "fp_text") {
+        const Sx* l = c.child("layer");
+        const std::string layer = l ? l->text(1) : "";
+        if (layer == "Edge.Cuts") {
+          shape_item(c, &f.place, edges);
+        } else if (layer == "F.CrtYd" || layer == "B.CrtYd" || layer == "F.Fab" || layer == "B.Fab") {
+          Shapes local;
+          shape_item(c, nullptr, local);
+          points_of(local, f.outline[layer.find("CrtYd") != std::string::npos ? 0 : 1]);
+          if (layer.find("CrtYd") != std::string::npos) {
+            Shapes page;
+            shape_item(c, &f.place, page);
+            f.courtyard.insert(f.courtyard.end(), page.open.begin(), page.open.end());
+            for (const auto& loop : page.loops) f.courtyard.insert(f.courtyard.end(), loop.begin(), loop.end());
+          }
+        }
+      }
+    }
+    footprints.push_back(std::move(f));
+  }
+
+  void pad(const Sx& c, Footprint& f, std::vector<Hole>& page_holes) {
+    const Sx* at = c.child("at");
+    const P2 local = at2(at);
+    const double angle = at ? at->num(3) : 0;  // the pad's own angle, the footprint's included
+    if (const Sx* size = c.child("size")) {
+      const double r = std::max(size->num(1), size->num(2, size->num(1))) / 2;
+      for (const P2 d : {P2{-r, -r}, P2{r, r}}) f.outline[2].push_back({local[0] + d[0], local[1] + d[1]});
+    }
+    const std::string& type = c.text(2);
+    ++f.pads;
+    f.npth += type == "np_thru_hole";
+    const Sx* drill = c.child("drill");
+    if ((type != "thru_hole" && type != "np_thru_hole") || !drill) return;
+    const bool oval = drill->text(1) == "oval";
+    const size_t k = oval ? 2 : 1;
+    const double w = drill->num(k), h = oval && k + 1 < drill->items.size() && !drill->items[k + 1].list ? drill->num(k + 1, w) : w;
+    if (w <= 0) return;
+    const P2 centre = f.place(local);
+    const P2 offset = drill->child("offset") ? at2(drill->child("offset")) : P2{0, 0};
+    page_holes.push_back({Place{centre[0], centre[1], angle}(offset), w, h, angle});
+    f.drills.push_back(page_holes.back());
+  }
+
+  // The mounting holes (Footprint::mounting), each with its footprint, in the frame starting at the page point `frame`.
+  std::vector<std::pair<const Footprint*, Hole>> mounting_holes(P2 frame) const {
+    std::vector<std::pair<const Footprint*, Hole>> out;
+    for (const auto& f : footprints) {
+      if (!f.mounting() || (!opt.kicad.dnp && f.dnp)) continue;
+      const Hole& h = *std::max_element(f.drills.begin(), f.drills.end(), [](const Hole& a, const Hole& b) { return a.w * a.h < b.w * b.h; });
+      out.push_back({&f, {{h.c[0] - frame[0], frame[1] - h.c[1]}, h.w, h.h > 0 ? h.h : h.w, h.angle}});
+    }
+    return out;
+  }
+
+  // The board: one prism per outer outline, its cutouts and the drills inside it as holes. A drill that crosses an
+  // outline or another drill is cut afterwards (one boolean), one outside every board is left out.
+  std::vector<json> board(const std::string& op_id) {
+    std::vector<json> out;
+    if (loops.empty()) return out;
+    std::vector<std::vector<P2>> polys;
+    std::vector<double> areas;
+    for (const auto& l : loops) polys.push_back(polygon(l)), areas.push_back(std::abs(area(polys.back())));
+    std::vector<int> depth(loops.size(), 0), parent(loops.size(), -1);
+    for (size_t i = 0; i < loops.size(); ++i)
+      for (size_t j = 0; j < loops.size(); ++j)
+        if (i != j && areas[j] > areas[i] && inside(polys[j], polys[i][0])) {
+          ++depth[i];
+          if (parent[i] < 0 || areas[j] < areas[static_cast<size_t>(parent[i])]) parent[i] = static_cast<int>(j);
+        }
+    struct Region {
+      size_t outer;
+      std::vector<size_t> cutouts;
+      std::vector<Hole> holes;
+    };
+    std::vector<Region> regions;
+    std::map<size_t, size_t> region_of;
+    for (size_t i = 0; i < loops.size(); ++i)
+      if (depth[i] % 2 == 0 && areas[i] > 1e-6) region_of[i] = regions.size(), regions.push_back({i, {}, {}});
+    for (size_t i = 0; i < loops.size(); ++i)
+      if (depth[i] % 2 == 1 && parent[i] >= 0 && region_of.count(static_cast<size_t>(parent[i]))) regions[region_of[static_cast<size_t>(parent[i])]].cutouts.push_back(i);
+    // Drills: inside a region with room around them, else cut by a boolean when they touch material.
+    std::vector<Hole> crossing;
+    std::vector<std::pair<Hole, size_t>> simple;
+    int outside = 0;
+    for (const Hole& h : holes) {
+      bool placed_in = false, touches = false;
+      for (size_t r = 0; r < regions.size() && !placed_in; ++r) {
+        const Region& g = regions[r];
+        double room = to_edges(polys[g.outer], h.c);
+        bool in = inside(polys[g.outer], h.c);
+        for (size_t c : g.cutouts) {
+          room = std::min(room, to_edges(polys[c], h.c));
+          in = in && !inside(polys[c], h.c);
+        }
+        if (in && room > h.reach() + 0.01) simple.push_back({h, r}), placed_in = true;
+        else if (room <= h.reach() + 0.01 || in) touches = true;
+      }
+      if (!placed_in) {
+        if (touches) crossing.push_back(h);
+        else ++outside;
+      }
+    }
+    std::sort(simple.begin(), simple.end(), [](const auto& a, const auto& b) { return a.first.c[0] < b.first.c[0]; });
+    double reach = 0;
+    for (const auto& s : simple) reach = std::max(reach, s.first.reach());
+    std::vector<int> state(simple.size(), 0);  // 0 simple, 1 crossing another, 2 a duplicate
+    for (size_t i = 0; i < simple.size(); ++i) {
+      if (state[i]) continue;
+      const Hole& a = simple[i].first;
+      for (size_t j = i + 1; j < simple.size() && simple[j].first.c[0] - a.c[0] <= a.reach() + reach + 0.01; ++j) {
+        if (state[j]) continue;
+        const Hole& b = simple[j].first;
+        const double d = dist(a.c, b.c);
+        if (d < 1e-6 && std::abs(a.w - b.w) < 1e-6 && std::abs(a.h - b.h) < 1e-6) state[j] = 2;
+        else if (d < a.reach() + b.reach() + 0.01) state[j] = 1;
+      }
+    }
+    for (size_t i = 0; i < simple.size(); ++i)
+      if (state[i] == 0) regions[simple[i].second].holes.push_back(simple[i].first);
+      else if (state[i] == 1) crossing.push_back(simple[i].first);
+    if (outside) res.warnings.push_back("drills outside the board outline, left out: " + std::to_string(outside));
+    if (crossing.size() > kMaxCut) {  // a board that breaks its own design rules; one cut of thousands took minutes
+      res.warnings.push_back("drills overlapping other drills or the board's edge, left out: " + std::to_string(crossing.size() - kMaxCut));
+      crossing.resize(kMaxCut);
+    }
+    BRep_Builder bb;
+    TopoDS_Compound tools;
+    bb.MakeCompound(tools);
+    for (const Hole& h : crossing) {
+      const TopoDS_Face face = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), wire(hole_loop(h)), Standard_True);
+      gp_Trsf down;
+      down.SetTranslation(gp_Vec(0, 0, -1));
+      bb.Add(tools, BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, thickness + 2)).Shape().Moved(TopLoc_Location(down)));
+    }
+    int index = 0;
+    for (const Region& g : regions) {
+      report(-1, "building");
+      TopoDS_Wire outer = wire(loops[g.outer]);
+      if (area(polys[g.outer]) < 0) outer.Reverse();
+      BRepBuilderAPI_MakeFace mf(gp_Pln(gp::XOY()), outer, Standard_True);
+      for (size_t c : g.cutouts) {
+        TopoDS_Wire w = wire(loops[c]);
+        if (area(polys[c]) > 0) w.Reverse();
+        mf.Add(w);
+      }
+      for (const Hole& h : g.holes) {
+        TopoDS_Wire w = wire(hole_loop(h));
+        w.Reverse();
+        mf.Add(w);
+      }
+      if (!mf.IsDone()) {
+        res.warnings.push_back("a board outline could not be made into a face");
+        continue;
+      }
+      TopoDS_Shape solid = BRepPrimAPI_MakePrism(mf.Face(), gp_Vec(0, 0, thickness)).Shape();
+      if (!crossing.empty()) {
+        BRepAlgoAPI_Cut cut(solid, tools);
+        if (cut.IsDone() && !cut.Shape().IsNull()) solid = cut.Shape();
+        else res.warnings.push_back("drills across the board's edge could not be cut");
+      }
+      const std::string name = regions.size() == 1 ? "Board" : "Board " + std::to_string(index + 1);
+      json meta = {{"name", name}, {"units", "mm"}, {"source", utf8(file.filename())}, {"color", color}};
+      json body = {{"type", "body"}, {"id", stable_id(op_id, "board/" + std::to_string(index))}, {"name", name}, {"color", color}};
+      body["key"] = detail::store_body(doc, solid, meta, made, false, &res);
+      ++res.bodies;
+      ++index;
+      out.push_back(body);
+    }
+    return out;
+  }
+
+  // A model file's bodies, read once per file and scale: the scale is built into copies of the shapes (KiCad applies
+  // it last, inside the model's own frame), so the placements stay rigid.
+  const std::vector<Part>& model(const std::filesystem::path& path, const Vec3& scale, size_t done, size_t total) {
+    const std::string id = utf8(path) + "|" + json(scale).dump();
+    if (auto it = models.find(id); it != models.end()) return it->second;
+    auto& parts = models[id];
+    std::string remembered;  // the memo's key: viewer reads only (their bodies are live shapes)
+    std::uintmax_t size = 0;
+    if (opt.viewer) {
+      std::error_code error;
+      size = std::filesystem::file_size(path, error);
+      const auto time = std::filesystem::last_write_time(path, error);
+      // A file written moments ago may be written again within one tick of the clock that stamps it: never taken as known.
+      const bool settled = !error && std::filesystem::file_time_type::clock::now() - time > std::chrono::seconds(2);
+      if (settled) remembered = id + "|" + std::to_string(size) + "|" + std::to_string(time.time_since_epoch().count()) + (opt.heal ? "|heal" : "");
+    }
+    if (!remembered.empty()) {
+      std::lock_guard<std::mutex> lock(memo_mu);
+      if (auto it = memo.find(remembered); it != memo.end()) {
+        it->second.used = ++memo_clock;
+        for (size_t i = 0; i < it->second.parts.size(); ++i) {
+          const Part& p = it->second.parts[i];
+          if (!doc.has_body(p.key)) {
+            doc.add_live_body(p.key, it->second.metas[i]);
+            ++res.new_entries;
+          }
+          cache_shape(doc, p.key, it->second.shapes[i]);
+        }
+        return parts = it->second.parts;
+      }
+    }
+    ++models_read;
+    const std::string phase = "translating 3D models " + std::to_string(done + 1) + "/" + std::to_string(total);
+    report(total ? double(done) / double(total) : -1, phase);
+    Document part_doc = Document::create();
+    ImportOptions o;
+    o.viewer = opt.viewer;
+    o.heal = opt.heal;
+    o.progress = [this, phase](double, const std::string&) { return !opt.progress || opt.progress(-1, phase); };
+    try {
+      // Read as the viewer reads (a linked board): a slow model is remembered per file, so reading the board again after a
+      // change (a sync) translates only the models that changed.
+      const bool remember = opt.viewer && !is_vrml(path);
+      const auto start = std::chrono::steady_clock::now();
+      if (is_vrml(path)) {
+        detail::import_mesh_scene(part_doc, path, o, true);  // KiCad's own VRML: 0.1 inch units, Z up
+      } else if (!remember || !viewer_cache_load(part_doc, path, o)) {
+        import_file(part_doc, path, o);
+        if (const double took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(); remember && took > 100)
+          viewer_cache_store(part_doc, path, o, took);
+      }
+    } catch (const std::exception& e) {
+      if (std::string(e.what()) == "import cancelled") throw;
+      res.warnings.push_back("3D model " + utf8(path.filename()) + " could not be read: " + e.what());
+      return parts;
+    }
+    const Scene s = resolve(part_doc);
+    const bool scaled = std::abs(scale[0] - 1) > 1e-9 || std::abs(scale[1] - 1) > 1e-9 || std::abs(scale[2] - 1) > 1e-9;
+    for (const auto& id_ : s.all_bodies()) {
+      const Node* n = s.node(id_);
+      const BodyEntry* entry = part_doc.body(n->body_key);
+      if (!n->visible || n->body_missing || !entry) continue;
+      Part p{n->body_key, n->name, n->representation, s.world(id_), n->has_color, n->color, n->opacity};
+      TopoDS_Shape shape = body_shape(part_doc, n->body_key);
+      if (scaled && n->representation != "mesh") {
+        shape = shape.Moved(TopLoc_Location(trsf_from_mat(p.at)));
+        if (std::abs(scale[0] - scale[1]) < 1e-9 && std::abs(scale[1] - scale[2]) < 1e-9) {
+          gp_Trsf t;
+          t.SetScale(gp::Origin(), scale[0]);
+          shape = BRepBuilderAPI_Transform(shape, t, true).Shape();
+        } else {
+          gp_GTrsf g;
+          g.SetValue(1, 1, scale[0]), g.SetValue(2, 2, scale[1]), g.SetValue(3, 3, scale[2]);
+          shape = BRepBuilderAPI_GTransform(shape, g, true).Shape();
+        }
+        p.key = detail::store_body(doc, shape, entry->meta, opt, false, &res);
+        p.at = Mat4{};
+      } else {
+        if (scaled) res.warnings.push_back("3D model " + utf8(path.filename()) + " is a mesh: its scale was left out");
+        if (!doc.has_body(p.key)) {
+          if (opt.viewer) doc.add_live_body(p.key, entry->meta);
+          else doc.add_body(entry->brep, entry->meta);
+          ++res.new_entries;
+        }
+        cache_shape(doc, p.key, shape);
+      }
+      parts.push_back(std::move(p));
+    }
+    if (!remembered.empty()) {
+      ModelMemo m;
+      for (const Part& p : parts) {
+        m.parts.push_back(p);
+        m.shapes.push_back(body_shape(doc, p.key));
+        m.metas.push_back(doc.body(p.key) ? doc.body(p.key)->meta : json::object());
+      }
+      std::lock_guard<std::mutex> lock(memo_mu);
+      m.used = ++memo_clock;
+      m.bytes = size;
+      memo[remembered] = std::move(m);
+      auto total = [] {
+        std::uint64_t n = 0;
+        for (const auto& [k, e] : memo) n += e.bytes;
+        return n;
+      };
+      while (memo.size() > 1 && (memo.size() > kMemoModels || total() > kMemoBytes))
+        memo.erase(std::min_element(memo.begin(), memo.end(), [](const auto& a, const auto& b) { return a.second.used < b.second.used; }));
+    }
+    return parts;
+  }
+
+  // Every footprint with a visible 3D model, placed as KiCad places models: the footprint's position and rotation, on
+  // the bottom turned over (about X), then the model's offset (on top of the board, or under it), its rotation (Z, Y,
+  // X, each negated) and scale. A footprint whose models are all missing gets a translucent box instead.
+  void components(const std::string& op_id, json& children) {
+    std::vector<const Footprint*> order;
+    for (const auto& f : footprints)
+      if (!f.models.empty() && (opt.kicad.dnp || !f.dnp)) order.push_back(&f);
+    std::stable_sort(order.begin(), order.end(), [](const Footprint* a, const Footprint* b) { return natural_less(a->ref, b->ref); });
+    std::set<std::string> files;
+    for (const Footprint* f : order)
+      for (const auto& m : f->models) {
+        if (const auto& where = locate(*f, m); !where.file.empty()) files.insert(utf8(where.file) + "|" + json(m.scale).dump());
+      }
+    std::set<std::string> ids;
+    auto unique_id = [&](const std::string& what) {
+      std::string id = stable_id(op_id, what);
+      if (!ids.insert(id).second) ids.insert(id = new_uuid());
+      return id;
+    };
+    for (const Footprint* f : order) {
+      const std::string key = f->uuid.empty() ? f->ref : f->uuid;
+      const P2 at = board_xy({f->place.x, f->place.y});
+      json bodies = json::array();
+      std::vector<std::string> absent;
+      for (size_t mi = 0; mi < f->models.size(); ++mi) {
+        const Model& m = f->models[mi];
+        const auto& where = locate(*f, m);
+        const auto& path = where.file;
+        if (path.empty()) {
+          absent.push_back(m.name);
+          if (!where.library.empty()) downloadable.insert(where.library);
+          continue;
+        }
+        const size_t done = std::min(models.size(), files.size());
+        const auto& parts = model(path, m.scale, done, files.size());
+        if (parts.empty()) {
+          absent.push_back(m.name);
+          continue;
+        }
+        Mat4 place = f->bottom ? rotation(0, 180) * Mat4::translation(m.offset[0], m.offset[1], m.offset[2])
+                               : Mat4::translation(m.offset[0], m.offset[1], m.offset[2] + thickness);
+        place = place * rotation(2, -m.rotate[2]) * rotation(1, -m.rotate[1]) * rotation(0, -m.rotate[0]);
+        for (size_t pi = 0; pi < parts.size(); ++pi) {
+          const Part& p = parts[pi];
+          const std::string stem = utf8(path_from_utf8(m.name).stem());
+          json body = {{"type", "body"}, {"id", unique_id(key + "/" + std::to_string(mi) + "/" + std::to_string(pi))},
+                       {"name", parts.size() == 1 || p.name.empty() ? stem : p.name}, {"key", p.key}};
+          if (p.representation != "solid") body["representation"] = p.representation;
+          if (const Mat4 t = place * p.at; !t.is_identity()) body["transform"] = t.to_json();
+          if (p.has_color) body["color"] = p.color;
+          if (const double o = std::min(p.opacity, m.opacity); o < 1) body["opacity"] = o;
+          bodies.push_back(body);
+          ++res.bodies;
+        }
+      }
+      if (bodies.empty()) {
+        bodies.push_back(placeholder(*f, unique_id(key + "/placeholder")));
+        for (const auto& a : absent) missing.push_back((f->ref.empty() ? f->name : f->ref) + " (" + utf8(path_from_utf8(a).filename()) + ")");
+      }
+      const std::string short_name = f->name.substr(f->name.find(':') == std::string::npos ? 0 : f->name.find(':') + 1);
+      json node = {{"type", "component"}, {"id", unique_id(key)}, {"name", f->ref.empty() ? short_name : f->ref + " " + short_name},
+                   {"children", bodies}, {"kicad", {{"ref", f->ref}, {"footprint", f->name}, {"side", f->bottom ? "bottom" : "top"}, {"models", model_names(*f)}}}};
+      if (!f->uuid.empty()) node["kicad"]["uuid"] = f->uuid;
+      if (f->dnp) node["kicad"]["dnp"] = true;
+      if (!absent.empty()) node["kicad"]["missing"] = absent;
+      const Mat4 frame = Mat4::translation(at[0], at[1], 0) * rotation(2, f->place.angle);
+      if (!frame.is_identity()) node["transform"] = frame.to_json();
+      children.push_back(node);
+      ++res.components;
+      ++placed;
+    }
+  }
+
+  // A box over the footprint's courtyard (else its fabrication outline, else its pads), as tall as its "Height" property
+  // or the placeholder height, on its side of the board (10 um off it, so the faces do not fight). Boxes of one size
+  // share their body.
+  json placeholder(const Footprint& f, const std::string& id) {
+    double x0 = -0.5, y0 = -0.5, x1 = 0.5, y1 = 0.5;
+    for (const auto& pts : f.outline)
+      if (!pts.empty()) {
+        x0 = y0 = 1e300, x1 = y1 = -1e300;
+        for (const auto& p : pts) x0 = std::min(x0, p[0]), x1 = std::max(x1, p[0]), y0 = std::min(y0, -p[1]), y1 = std::max(y1, -p[1]);
+        break;
+      }
+    const double h = f.height > 0 ? f.height : std::max(opt.kicad.placeholder_height, 0.01), dx = std::max(x1 - x0, 0.01), dy = std::max(y1 - y0, 0.01);
+    auto round = [](double v) { return std::to_string(std::llround(v * 1000)); };
+    std::string& key = boxes[round(dx) + "x" + round(dy) + "x" + round(h) + (f.bottom ? "b" : "t")];
+    const std::array<double, 3> amber{1.0, 0.68, 0.18};
+    if (key.empty()) {
+      const TopoDS_Shape box = BRepPrimAPI_MakeBox(gp_Pnt(-dx / 2, -dy / 2, f.bottom ? -h : 0), dx, dy, h).Shape();
+      key = detail::store_body(doc, box, {{"name", "Placeholder"}, {"units", "mm"}, {"source", utf8(file.filename())}, {"color", amber}}, made, false, &res);
+    }
+    ++placeholders;
+    ++res.bodies;
+    const std::string stem = f.models.empty() ? "Placeholder" : utf8(path_from_utf8(f.models.front().name).stem());
+    return {{"type", "body"}, {"id", id}, {"name", stem}, {"key", key}, {"color", amber}, {"opacity", 0.55}, {"placeholder", true},
+            {"transform", Mat4::translation((x0 + x1) / 2, (y0 + y1) / 2, f.bottom ? -kLift : thickness + kLift).to_json()}};
+  }
+
+  // Hidden 2D layers for sketches: the outline with the drills (at the board's bottom), the outline alone, the courtyards on
+  // each side, and each mounting hole as a body of its own named after its footprint (sketches project them by node: UI-134).
+  json layers2d(const std::string& op_id) {
+    BRep_Builder b;
+    json bodies = json::array();
+    auto layer = [&](const std::string& name, const TopoDS_Compound& c, double z) {
+      json meta = {{"representation", "drawing2d"}, {"layer", name}, {"source", utf8(file.filename())}};
+      json body = {{"type", "body"}, {"id", stable_id(op_id, "layer/" + name)}, {"name", name}, {"representation", "drawing2d"},
+                   {"key", detail::store_body(doc, c, meta, made, false, &res)}};
+      if (z != 0) body["transform"] = Mat4::translation(0, 0, z).to_json();
+      bodies.push_back(body);
+      ++res.bodies;
+    };
+    if (!loops.empty() || !holes.empty()) {
+      TopoDS_Compound cuts;
+      b.MakeCompound(cuts);
+      for (const auto& l : loops) add_edges(b, cuts, l);
+      for (const auto& h : holes) add_edges(b, cuts, hole_loop(h));
+      layer("Edge.Cuts", cuts, 0);
+    }
+    if (!loops.empty()) {
+      TopoDS_Compound outline;
+      b.MakeCompound(outline);
+      for (const auto& l : loops) add_edges(b, outline, l);
+      layer("Outline", outline, 0);
+    }
+    for (const bool bottom : {false, true}) {
+      TopoDS_Compound c;
+      b.MakeCompound(c);
+      bool any = false;
+      for (const auto& f : footprints) {
+        if (f.bottom != bottom || f.courtyard.empty() || (!opt.kicad.dnp && f.dnp)) continue;
+        std::vector<Seg> pieces = f.courtyard;
+        for (auto& s : pieces) to_board(s);
+        add_edges(b, c, pieces);
+        any = true;
+      }
+      if (any) layer(bottom ? "B.Courtyard" : "F.Courtyard", c, bottom ? 0 : thickness);
+    }
+    // Each hole drawn about its own centre and placed there: holes of one size share their body, a moved hole keeps its key.
+    json mounts = json::array();
+    std::map<std::string, std::string> shared;
+    int unnamed = 0;
+    for (const auto& [f, h] : mounting_holes(origin)) {
+      Hole at = h;
+      at.c = {0, 0};
+      std::string& key = shared[json({h.w, h.h, h.angle}).dump()];
+      if (key.empty()) {
+        TopoDS_Compound c;
+        b.MakeCompound(c);
+        add_edges(b, c, hole_loop(at));
+        key = detail::store_body(doc, c, {{"representation", "drawing2d"}, {"layer", "Mounting holes"}, {"source", utf8(file.filename())}}, made, false, &res);
+      }
+      const std::string name = f->ref.empty() ? "Hole " + std::to_string(++unnamed) : f->ref;
+      json kicad = {{"ref", f->ref}, {"footprint", f->name}, {"hole", true}};
+      if (!f->uuid.empty()) kicad["uuid"] = f->uuid;
+      mounts.push_back({{"type", "body"}, {"id", stable_id(op_id, "hole/" + (f->uuid.empty() ? name : f->uuid))}, {"name", name}, {"representation", "drawing2d"},
+                        {"key", key}, {"transform", Mat4::translation(h.c[0], h.c[1], 0).to_json()}, {"kicad", kicad}});
+      ++res.bodies;
+    }
+    if (!mounts.empty()) {
+      bodies.push_back({{"type", "component"}, {"id", stable_id(op_id, "layer/Mounting holes")}, {"name", "Mounting holes"}, {"children", mounts}});
+      ++res.components;
+    }
+    if (bodies.empty()) return json();
+    ++res.components;
+    return {{"type", "component"}, {"id", stable_id(op_id, "layers")}, {"name", "Layers"}, {"visible", false}, {"children", bodies}};
+  }
+};
+
+}  // namespace
+
+json kicad_models(const std::filesystem::path& board, const KicadOptions& opt) {
+  Document scratch = Document::create();
+  ImportOptions o;
+  o.kicad = opt;
+  try {
+    return Builder(scratch, board, o).model_list();
+  } catch (const Standard_Failure& e) {
+    throw Error("cannot read " + utf8(board.filename()) + ": " + e.GetMessageString());
+  }
+}
+
+json kicad_download_models(const std::filesystem::path& board, const KicadOptions& opt, const std::function<bool(double, const std::string&)>& progress) {
+  const json list = kicad_models(board, opt);
+  std::vector<std::pair<std::string, std::string>> wanted;  // library path, tag
+  std::set<std::string> seen;
+  for (const auto& m : list["models"])
+    if (!m.contains("file") && m.contains("library") && seen.insert(m["library"].get<std::string>()).second) wanted.push_back({m["library"], m["tag"]});
+  json out = {{"downloaded", json::array()}, {"failed", json::array()}, {"dir", utf8(kicad_download_dir())}};
+  if (wanted.empty()) return out;
+  std::string base = env("OPAD_KICAD_MODELS_URL");
+  if (base.empty()) base = "https://gitlab.com/kicad/libraries/kicad-packages3D/-/raw";
+  while (!base.empty() && base.back() == '/') base.pop_back();
+  std::filesystem::path curl = "curl";
+#ifdef _WIN32
+  curl = "curl.exe";
+  std::error_code e;
+  if (const auto root = env("SystemRoot"); !root.empty() && std::filesystem::is_regular_file(path_from_utf8(root) / "System32" / "curl.exe", e))
+    curl = path_from_utf8(root) / "System32" / "curl.exe";
+#endif
+  const auto dir = kicad_download_dir();
+  std::error_code e2;
+  std::filesystem::create_directories(dir, e2);
+  if (!std::filesystem::exists(dir / "README.txt", e2))
+    write_text_file(dir / "README.txt",
+                    "3D models from the KiCad library (https://gitlab.com/kicad/libraries/kicad-packages3D), downloaded by OPAD when asked to.\n"
+                    "Licence: CC-BY-SA 4.0 with the KiCad libraries exception (https://www.kicad.org/libraries/license/): free to use in your\n"
+                    "own designs; redistributing the models as a collection is bound by CC-BY-SA. OPAD does not ship them.\n");
+  for (size_t i = 0; i < wanted.size(); ++i) {
+    const auto& [library, tag] = wanted[i];
+    if (progress && !progress(double(i) / double(wanted.size()), "downloading 3D models " + std::to_string(i + 1) + "/" + std::to_string(wanted.size())))
+      throw Error("download cancelled");
+    const auto target = dir / path_from_utf8(library);
+    auto part = target;
+    part += ".part";
+    std::filesystem::create_directories(target.parent_path(), e2);
+    std::string error = "not in the library";
+    for (const std::string& release : {tag, std::string("master")}) {
+      std::filesystem::remove(part, e2);
+      const int status = detail::run_program(curl, {"-sS", "-f", "-L", "--max-time", "100", "-o", part, base + "/" + release + "/" + library});
+      if (status < 0) {
+        error = "curl could not be started";
+        break;
+      }
+      std::string head(64, '\0');
+      std::ifstream(part, std::ios::binary).read(head.data(), 64);
+      if (status == 0 && head.rfind("ISO-10303-21", 0) == 0) {
+        std::filesystem::rename(part, target, e2);
+        error = e2 ? e2.message() : "";
+        break;
+      }
+      if (status != 22) error = "curl failed (" + std::to_string(status) + ")";  // 22: the server said no (404)
+      if (tag == "master") break;
+    }
+    std::filesystem::remove(part, e2);
+    if (error.empty()) out["downloaded"].push_back(library);
+    else out["failed"].push_back({{"model", library}, {"error", error}});
+  }
+  return out;
+}
+
+json kicad_sync_preview(const Document& doc, const std::string& import_id, const std::filesystem::path& board) {
+  const std::vector<EffectiveOp> ops = effective_ops(doc);  // as synced since (an asset's edits)
+  const EffectiveOp* op = nullptr;
+  for (const auto& e : ops)
+    if (e.op->type == "import" && e.data().contains("kicad") && (import_id.empty() || e.op->id == import_id)) {
+      if (op && import_id.empty()) throw Error("the document holds several KiCad boards: name the import");
+      op = &e;
+    }
+  if (!op) throw Error(import_id.empty() ? "the document holds no KiCad board" : "no KiCad board import " + import_id);
+  const json& data = op->data();
+  std::filesystem::path file = board;
+  if (file.empty() && data.contains("asset")) file = locate_asset(doc, data["asset"]);
+  if (file.empty()) file = doc.path.parent_path() / path_from_utf8(data.value("source", ""));
+  return kicad_sync_preview(data, op->op->id, file);
+}
+
+json kicad_sync_preview(const json& data, const std::string& import_id, const std::filesystem::path& file) {
+  if (!data.contains("kicad")) throw Error("not a KiCad board import");
+  const json& was = data["kicad"];
+  ImportOptions o;
+  const json options = was.value("options", json::object());
+  o.kicad.components = options.value("components", true);
+  o.kicad.dnp = options.value("dnp", true);
+  o.kicad.vias = options.value("vias", false);
+  Document scratch = Document::create();
+  const json origin = was.value("origin", json::array({0.0, 0.0}));
+  json now;
+  try {
+    now = Builder(scratch, file, o).summary({origin[0].get<double>(), origin[1].get<double>()});
+  } catch (const Standard_Failure& e) {
+    throw Error("cannot read " + utf8(file.filename()) + ": " + e.GetMessageString());
+  }
+  // The components as imported: their carrier and placement; the mounting holes apart (UI-134: an older import has none).
+  std::vector<json> before, holes_before;
+  std::function<void(const json&)> walk = [&](const json& nodes) {
+    for (const auto& n : nodes) {
+      if (n.contains("kicad") && n["kicad"].is_object()) {
+        const Mat4 m = n.contains("transform") ? Mat4::from_json(n["transform"]) : Mat4{};
+        json c = n["kicad"];
+        c["at"] = {m.at(0, 3), m.at(1, 3), std::atan2(m.at(1, 0), m.at(0, 0)) * 180 / kPi};
+        (c.value("hole", false) ? holes_before : before).push_back(c);
+      }
+      if (n.contains("children")) walk(n["children"]);
+    }
+  };
+  walk(data.value("nodes", json::array()));
+  json out = {{"import", import_id}, {"board", utf8(file)}, {"moved", json::array()}, {"flipped", json::array()}, {"models_changed", json::array()},
+              {"footprint_changed", json::array()}, {"added", json::array()}, {"removed", json::array()}, {"unchanged", 0}};
+  auto rounded = [](double v) { return std::round(v * 1e4) / 1e4; };
+  std::vector<bool> matched(before.size());
+  auto find = [&](const json& c) -> int {
+    const std::string uuid = c.value("uuid", ""), ref = c.value("ref", "");
+    for (size_t i = 0; i < before.size(); ++i)
+      if (!matched[i] && !uuid.empty() && before[i].value("uuid", "") == uuid) return static_cast<int>(i);
+    for (size_t i = 0; i < before.size(); ++i)
+      if (!matched[i] && !ref.empty() && before[i].value("ref", "") == ref && (uuid.empty() || before[i].value("uuid", "").empty())) return static_cast<int>(i);
+    return -1;
+  };
+  std::set<std::string> unplaced;  // KiCad's export had no part for them (no model found): there before, not new
+  for (const auto& r : was.value("refdes", json::object()).value("unplaced", json::array())) unplaced.insert(r.get<std::string>());
+  for (const auto& c : now["components"]) {
+    const int i = find(c);
+    const std::string ref = c.value("ref", "");
+    if (i < 0 && unplaced.count(ref)) {
+      out["unchanged"] = out["unchanged"].get<int>() + 1;
+      continue;
+    }
+    if (i < 0) {
+      out["added"].push_back({{"ref", ref}, {"footprint", c["footprint"]}});
+      continue;
+    }
+    matched[static_cast<size_t>(i)] = true;
+    const json& b = before[static_cast<size_t>(i)];
+    bool same = true;
+    const double dx = c["at"][0].get<double>() - b["at"][0].get<double>(), dy = c["at"][1].get<double>() - b["at"][1].get<double>();
+    double turn = std::fmod(c["at"][2].get<double>() - b["at"][2].get<double>(), 360.0);
+    if (turn > 180) turn -= 360;
+    if (turn <= -180) turn += 360;
+    if (std::hypot(dx, dy) > 1e-4 || std::abs(turn) > 1e-3) out["moved"].push_back({{"ref", ref}, {"dx", rounded(dx)}, {"dy", rounded(dy)}, {"drot", rounded(turn)}}), same = false;
+    if (b.value("side", "top") != c.value("side", "top")) out["flipped"].push_back({{"ref", ref}, {"side", c["side"]}}), same = false;
+    if (b.contains("models") && b["models"] != c["models"]) out["models_changed"].push_back({{"ref", ref}, {"before", b["models"]}, {"after", c["models"]}}), same = false;
+    if (b.value("footprint", "") != c.value("footprint", "")) out["footprint_changed"].push_back({{"ref", ref}, {"before", b["footprint"]}, {"after", c["footprint"]}}), same = false;
+    out["unchanged"] = out["unchanged"].get<int>() + same;
+  }
+  for (size_t i = 0; i < before.size(); ++i)
+    if (!matched[i]) out["removed"].push_back({{"ref", before[i].value("ref", "")}, {"footprint", before[i].value("footprint", "")}});
+  if (!holes_before.empty()) {  // matched by footprint uuid, else reference; each listed with "hole"
+    std::vector<bool> taken(holes_before.size());
+    for (const auto& h : now.value("mounting", json::array())) {
+      int i = -1;
+      for (size_t k = 0; k < holes_before.size() && i < 0; ++k)
+        if (!taken[k] && !h.value("uuid", "").empty() && holes_before[k].value("uuid", "") == h.value("uuid", "")) i = static_cast<int>(k);
+      for (size_t k = 0; k < holes_before.size() && i < 0; ++k)
+        if (!taken[k] && !h.value("ref", "").empty() && holes_before[k].value("ref", "") == h.value("ref", "")) i = static_cast<int>(k);
+      for (size_t k = 0; k < holes_before.size() && i < 0; ++k)  // neither: the same footprint where it was
+        if (!taken[k] && holes_before[k].value("footprint", "") == h.value("footprint", "") &&
+            std::hypot(holes_before[k]["at"][0].get<double>() - h["at"][0].get<double>(), holes_before[k]["at"][1].get<double>() - h["at"][1].get<double>()) < 1e-4)
+          i = static_cast<int>(k);
+      if (i < 0) {
+        out["added"].push_back({{"ref", h["ref"]}, {"footprint", h["footprint"]}, {"hole", true}});
+        continue;
+      }
+      taken[static_cast<size_t>(i)] = true;
+      const json& b = holes_before[static_cast<size_t>(i)];
+      const double dx = h["at"][0].get<double>() - b["at"][0].get<double>(), dy = h["at"][1].get<double>() - b["at"][1].get<double>();
+      if (std::hypot(dx, dy) > 1e-4) out["moved"].push_back({{"ref", h["ref"]}, {"dx", rounded(dx)}, {"dy", rounded(dy)}, {"drot", 0.0}, {"hole", true}});
+    }
+    for (size_t k = 0; k < holes_before.size(); ++k)
+      if (!taken[k]) out["removed"].push_back({{"ref", holes_before[k].value("ref", "")}, {"footprint", holes_before[k].value("footprint", "")}, {"hole", true}});
+  }
+  if (std::abs(was.value("thickness", 0.0) - now["thickness"].get<double>()) > 1e-6) out["thickness"] = {{"before", was["thickness"]}, {"after", now["thickness"]}};
+  if (was.contains("holes") && was["holes"] != now["holes"]) out["holes"] = {{"before", was["holes"]}, {"after", now["holes"]}};
+  if (was.contains("outline") && was["outline"] != now["outline"]) out["outline"] = {{"before", was["outline"]}, {"after", now["outline"]}};
+  out["changed"] = !out["moved"].empty() || !out["flipped"].empty() || !out["models_changed"].empty() || !out["footprint_changed"].empty() ||
+                   !out["added"].empty() || !out["removed"].empty() || out.contains("thickness") || out.contains("holes") || out.contains("outline");
+  return out;
+}
+
+std::vector<std::string> explode_keep_defaults(const Document& doc) {
+  std::vector<std::string> out;
+  std::function<void(const json&)> walk = [&](const json& nodes) {
+    for (const auto& n : nodes) {
+      if (n.value("explode", "") == "keep" && n.contains("id")) out.push_back(n["id"].get<std::string>());
+      if (n.contains("children")) walk(n["children"]);
+    }
+  };
+  for (const auto& e : effective_ops(doc))
+    if (e.op->type == "import") walk(e.data().value("nodes", json::array()));
+  return out;
+}
+
+json kicad_board(const std::filesystem::path& board, const KicadOptions& opt) {
+  ImportOptions o;
+  o.kicad = opt;
+  o.kicad.vias = false;
+  try {
+    Document scratch = Document::create();
+    const P2 origin = Builder(scratch, board, o).frame();
+    json out = Builder(scratch, board, o).summary(origin);
+    out["origin"] = {origin[0], origin[1]};
+    return out;
+  } catch (const Standard_Failure& e) {
+    throw Error("cannot read " + utf8(board.filename()) + ": " + e.GetMessageString());
+  }
+}
+
+// ---------------------------------------------------------------- kicad-cli (KiCad's own STEP export, UI-73)
+namespace {
+// "9.0.1" in a version text ("9.0.1", "KiCad 8.0.4-1", an install folder "9.0"), else empty.
+std::string version_in(const std::string& text) {
+  for (size_t i = 0; i < text.size(); ++i) {
+    if (!std::isdigit(static_cast<unsigned char>(text[i])) || (i && std::isalnum(static_cast<unsigned char>(text[i - 1])))) continue;
+    size_t j = i;
+    while (j < text.size() && (std::isdigit(static_cast<unsigned char>(text[j])) || text[j] == '.')) ++j;
+    std::string v = text.substr(i, j - i);
+    while (!v.empty() && v.back() == '.') v.pop_back();
+    if (v.find('.') != std::string::npos) return v;
+    i = j;
+  }
+  return {};
+}
+
+std::filesystem::path on_path(const std::string& name) {
+#ifdef _WIN32
+  const char separator = ';';
+  const std::string file = name + ".exe";
+#else
+  const char separator = ':';
+  const std::string& file = name;
+#endif
+  const std::string path = env("PATH");
+  std::error_code e;
+  for (size_t at = 0; at <= path.size();) {
+    size_t end = path.find(separator, at);
+    if (end == std::string::npos) end = path.size();
+    if (end > at)
+      if (const auto f = path_from_utf8(path.substr(at, end - at)) / file; std::filesystem::is_regular_file(f, e)) return f;
+    at = end + 1;
+  }
+  return {};
+}
+
+Mat4 transform_of(const json& n) { return n.contains("transform") ? Mat4::from_json(n["transform"]) : Mat4{}; }
+void set_transform(json& n, const Mat4& m) {
+  if (m.is_identity()) n.erase("transform");
+  else n["transform"] = m.to_json();
+}
+
+// A node's bodies' box in the frame `at` places it in.
+void node_box(const json& n, const Mat4& at, const Document& shapes, Bnd_Box& box) {
+  if (n.value("type", "") == "body") {
+    if (n.value("representation", "") == "drawing2d" || !shapes.has_body(n.value("key", ""))) return;
+    const Bnd_Box b = body_bbox(shapes, n.value("key", ""));
+    if (b.IsVoid()) return;
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    for (int c = 0; c < 8; ++c) {
+      const Vec3 p = at.apply({c & 1 ? x1 : x0, c & 2 ? y1 : y0, c & 4 ? z1 : z0});
+      box.Update(p[0], p[1], p[2]);
+    }
+    return;
+  }
+  for (const auto& c : n.value("children", json::array())) node_box(c, at * transform_of(c), shapes, box);
+}
+
+// A part KiCad's export makes of the board itself, never a footprint's, by the names its exporter gives them (KiCad's
+// sources, 7.0 to 10.0; `stem` is the board's file name without its extension): "<stem> PCB", "<stem> PCB2" (7);
+// "<stem>_PCB", "<stem>_track_12", "<stem>_pad_3", "<stem>_zone" (8: one per shape); "<stem>_PCB", "<stem>_copper",
+// "<stem>_pad", "<stem>_via", "<stem>_silkscreen", "<stem>_soldermask" (9 and 10). A footprint's part is named by its
+// reference alone ("R1"): a board called "J1" makes "J1_PCB", which is not J1's.
+bool board_part(const std::string& name, const std::string& stem) {
+  if (name.size() <= stem.size() + 1 || name.compare(0, stem.size(), stem) != 0 || (name[stem.size()] != '_' && name[stem.size()] != ' ')) return false;
+  const std::string rest = name.substr(stem.size() + 1);
+  for (const std::string kind : {"PCB", "track", "zone", "pad", "via", "copper", "silkscreen", "soldermask"})
+    if (rest.compare(0, kind.size(), kind) == 0 && (rest.size() == kind.size() || rest[kind.size()] == '_' || std::isdigit(static_cast<unsigned char>(rest[kind.size()]))))
+      return true;
+  return false;
+}
+}  // namespace
+
+int KicadCli::major() const { return std::atoi(version.c_str()); }
+
+KicadCli kicad_cli(bool ask) {
+  KicadCli out;
+  std::error_code e;
+  if (const auto v = env("OPAD_KICAD_CLI"); !v.empty()) {
+    if (std::filesystem::is_regular_file(path_from_utf8(v), e)) out.program = path_from_utf8(v);
+  } else {
+#ifdef _WIN32
+    std::vector<std::filesystem::path> bases;
+    for (const char* var : {"ProgramFiles", "ProgramW6432"})
+      if (const auto p = env(var); !p.empty()) bases.push_back(path_from_utf8(p) / "KiCad");
+    bases.push_back("C:/Program Files/KiCad");
+    if (const auto p = env("LOCALAPPDATA"); !p.empty()) bases.push_back(path_from_utf8(p) / "Programs" / "KiCad");  // installed for one user
+    double newest = -1;
+    for (const auto& base : bases)
+      for (const auto& d : std::filesystem::directory_iterator(base, e)) {
+        const auto exe = d.path() / "bin" / "kicad-cli.exe";
+        const double v = std::atof(d.path().filename().string().c_str());
+        if (v > newest && std::filesystem::is_regular_file(exe, e)) newest = v, out.program = exe, out.version = version_in(d.path().filename().string());
+      }
+#elif defined(__APPLE__)
+    for (const char* c : {"/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli", "/Applications/KiCad.app/Contents/MacOS/kicad-cli"})
+      if (out.program.empty() && std::filesystem::is_regular_file(c, e)) out.program = c;
+#else
+    for (const char* c : {"/usr/bin/kicad-cli", "/usr/local/bin/kicad-cli"})
+      if (out.program.empty() && std::filesystem::is_regular_file(c, e)) out.program = c;
+#endif
+    if (out.program.empty()) out.program = on_path("kicad-cli");
+  }
+  if (out.program.empty() || !out.version.empty() || !ask) return out;
+  // Asked once per program and its time on disk.
+  static std::mutex lock;
+  static std::map<std::string, std::string> asked;
+  const auto stamp = std::filesystem::last_write_time(out.program, e);
+  const std::string key = utf8(out.program) + "|" + std::to_string(stamp.time_since_epoch().count());
+  {
+    std::lock_guard<std::mutex> hold(lock);
+    if (const auto it = asked.find(key); it != asked.end()) return out.version = it->second, out;
+  }
+  const auto said = cache_dir() / "kicad-cli" / ("version-" + new_uuid() + ".txt");
+  std::filesystem::create_directories(said.parent_path(), e);
+  detail::RunOptions run;
+  run.output = said;
+  run.timeout_ms = 30000;
+  if (detail::run_program(out.program, {"version"}, {}, run) == 0) out.version = version_in(read_text_file(said));
+  std::filesystem::remove(said, e);
+  std::lock_guard<std::mutex> hold(lock);
+  asked[key] = out.version;
+  return out;
+}
+
+json kicad_export_options(const std::filesystem::path& board, const KicadOptions& opt) {
+  return {{"components", opt.components}, {"dnp", opt.dnp}, {"tracks", opt.tracks}, {"pads", opt.pads},
+          {"silkscreen", opt.silkscreen}, {"origin_at", kicad_board(board, opt)["origin"]}};
+}
+
+std::filesystem::path kicad_cli_export(const std::filesystem::path& board, const json& options, const std::function<bool(double, const std::string&)>& progress) {
+  const KicadCli cli = kicad_cli(true);
+  if (cli.program.empty()) throw Error("KiCad's own export needs kicad-cli (KiCad 7 or later): install KiCad, or set OPAD_KICAD_CLI to its kicad-cli");
+  const int major = cli.major();  // 0: not known, taken as the newest
+  auto need = [&](int at_least, const std::string& what) {
+    if (major && major < at_least) throw Error(what + " in KiCad's export need KiCad " + std::to_string(at_least) + " or later; this is KiCad " + cli.version);
+  };
+  // The switches as KiCad's sources spell them: 7 has --board-only and no --no-dnp; 8 adds --no-dnp and --include-tracks,
+  // which brings the pads along; 9 and 10 add --no-components, --include-pads and --include-silkscreen.
+  std::vector<std::filesystem::path> args = {"pcb", "export", "step", "--subst-models", "--force"};
+  const bool tracks = options.value("tracks", false);
+  if (!options.value("components", true)) args.push_back(major && major < 9 ? "--board-only" : "--no-components");
+  if (!options.value("dnp", true) && (!major || major >= 8)) args.push_back("--no-dnp");
+  if (tracks) need(8, "Tracks"), args.push_back("--include-tracks");
+  if (options.value("pads", false) && !(major == 8 && tracks)) need(9, "Pads without the tracks"), args.push_back("--include-pads");
+  if (options.value("silkscreen", false)) need(9, "Silkscreen"), args.push_back("--include-silkscreen");
+  if (const json at = options.value("origin_at", json()); at.is_array() && at.size() == 2 && at[0].is_number() && at[1].is_number()) {
+    char text[96];
+    std::snprintf(text, sizeof text, "%.6fx%.6fmm", at[0].get<double>(), at[1].get<double>());
+    args.push_back("--user-origin");
+    args.push_back(text);
+  }
+  std::error_code e;
+  const auto abs = std::filesystem::absolute(board).lexically_normal();
+  if (!std::filesystem::is_regular_file(abs, e)) throw Error("file not found: " + utf8(board.filename()));
+  const auto dir = cache_dir() / "kicad-cli";
+  std::filesystem::create_directories(dir, e);
+  const std::string name = utf8(abs.stem()) + "-" + sha256_hex(utf8(abs) + "|" + options.dump()).substr(0, 16);
+  const auto out = dir / path_from_utf8(name + ".step"), part = dir / path_from_utf8(name + ".part.step"), log = dir / path_from_utf8(name + ".log");
+  args.push_back("-o");
+  args.push_back(part);
+  args.push_back(abs);
+  std::filesystem::remove(part, e);
+  bool stopped = false;
+  detail::RunOptions run;
+  run.output = log;
+  run.timeout_ms = 30 * 60 * 1000;  // a big board with every model: minutes
+  run.cancelled = [&] { return stopped = progress && !progress(-1, "exporting with KiCad " + cli.version); };
+  const int status = detail::run_program(cli.program, args, abs.parent_path(), run);
+  if (stopped) {
+    std::filesystem::remove(part, e);
+    throw Error("import cancelled");
+  }
+  if (status != 0 || !std::filesystem::is_regular_file(part, e)) {
+    std::string said;  // KiCad's last words
+    try {
+      said = read_text_file(log);
+    } catch (const std::exception&) {
+    }
+    while (!said.empty() && std::isspace(static_cast<unsigned char>(said.back()))) said.pop_back();
+    if (said.size() > 300) said = "..." + said.substr(said.size() - 300);
+    std::filesystem::remove(part, e);
+    throw Error("KiCad could not export " + utf8(board.filename()) + (status < 0 ? " (kicad-cli did not finish)" : "") + (said.empty() ? "" : ": " + said));
+  }
+  std::filesystem::remove(out, e);
+  std::filesystem::rename(part, out);
+  std::filesystem::remove(log, e);
+  return out;
+}
+
+json kicad_label_export(json& data, Document& shapes, const std::filesystem::path& board, const json& options) {
+  KicadOptions ko;
+  ko.components = options.value("components", true);
+  ko.dnp = options.value("dnp", true);
+  if (const json at = options.value("origin_at", json()); at.is_array() && at.size() == 2) ko.origin_at = {at[0].get<double>(), at[1].get<double>()};
+  const json b = kicad_board(board, ko);
+  const json& fps = b["components"];
+  const std::string stem = utf8(board.stem());
+  std::map<std::string, std::vector<size_t>> by_ref;  // a panel repeats its references
+  for (size_t i = 0; i < fps.size(); ++i)
+    if (const std::string ref = fps[i].value("ref", ""); !ref.empty()) by_ref[ref].push_back(i);
+  // "R1", or "R1" followed by a separator ("R1_2", "R1 (R_0603)"), the longest reference that fits.
+  auto footprints_of = [&](const std::string& name) -> const std::vector<size_t>* {
+    if (const auto it = by_ref.find(name); it != by_ref.end()) return &it->second;
+    const std::vector<size_t>* found = nullptr;
+    size_t length = 0;
+    for (const auto& [ref, list] : by_ref)
+      if (ref.size() > length && name.size() > ref.size() && name.compare(0, ref.size(), ref) == 0 && !std::isalnum(static_cast<unsigned char>(name[ref.size()])))
+        found = &list, length = ref.size();
+    return found;
+  };
+  json& nodes = data["nodes"];
+  if (!nodes.is_array() || nodes.size() != 1 || nodes[0].value("type", "") != "component")
+    nodes = json::array({{{"type", "component"}, {"id", new_uuid()}, {"children", nodes.is_array() ? nodes : json::array()}}});
+  json& root = nodes[0];
+  root["name"] = stem;
+  struct Claim {
+    json node;
+    Mat4 above;  // where what held it put it, in the root's frame
+  };
+  std::map<size_t, std::vector<Claim>> claims;
+  std::set<std::string> taken;  // node ids
+  std::function<void(const json&, const Mat4&)> named = [&](const json& list, const Mat4& above) {
+    for (const auto& n : list) {
+      const std::string name = n.value("name", "");
+      if (board_part(name, stem)) continue;
+      if (const auto* refs = footprints_of(name)) {
+        size_t i = refs->front();
+        if (refs->size() > 1) {  // the nearest footprint of that reference
+          Bnd_Box bb;
+          node_box(n, above * transform_of(n), shapes, bb);
+          double x0 = 0, y0 = 0, z0, x1 = 0, y1 = 0, z1;
+          if (!bb.IsVoid()) bb.Get(x0, y0, z0, x1, y1, z1);
+          double best = 1e300;
+          for (const size_t j : *refs)
+            if (const double d = std::hypot(fps[j]["at"][0].get<double>() - (x0 + x1) / 2, fps[j]["at"][1].get<double>() - (y0 + y1) / 2); d < best) best = d, i = j;
+        }
+        claims[i].push_back({n, above});
+        taken.insert(n.value("id", ""));
+      } else if (n.contains("children")) {
+        named(n["children"], above * transform_of(n));
+      }
+    }
+  };
+  named(root["children"], Mat4{});
+  const size_t by_name = claims.size();
+  // Parts not named after a footprint (KiCad 7 to 10 name every one by its reference; the board's own parts are left alone):
+  // the nearest footprint without a part on their side, within their own size (5 mm at least: a model's offset); anything as
+  // large as half the board is looked into instead.
+  const json box = b.value("outline", json::object()).value("box", json::array({0, 0, 0, 0}));
+  const double board_size = std::hypot(box[2].get<double>() - box[0].get<double>(), box[3].get<double>() - box[1].get<double>());
+  const double thickness = b.value("thickness", 1.6);
+  struct Loose {
+    Claim claim;
+    double x, y, size;
+    bool bottom;
+  };
+  std::vector<Loose> loose;
+  std::function<void(const json&, const Mat4&)> collect = [&](const json& list, const Mat4& above) {
+    for (const auto& n : list) {
+      if (taken.count(n.value("id", "")) || board_part(n.value("name", ""), stem)) continue;
+      Bnd_Box bb;
+      node_box(n, above * transform_of(n), shapes, bb);
+      if (bb.IsVoid()) continue;
+      double x0, y0, z0, x1, y1, z1;
+      bb.Get(x0, y0, z0, x1, y1, z1);
+      const double size = std::hypot(x1 - x0, y1 - y0);
+      if (board_size > 0 && size > 0.5 * board_size) {
+        if (n.contains("children")) collect(n["children"], above * transform_of(n));
+        continue;
+      }
+      loose.push_back({{n, above}, (x0 + x1) / 2, (y0 + y1) / 2, size, (z0 + z1) / 2 < thickness / 2});
+    }
+  };
+  collect(root["children"], Mat4{});
+  std::vector<std::tuple<double, size_t, size_t>> pairs;  // distance, loose part, footprint
+  for (size_t c = 0; c < loose.size(); ++c)
+    for (size_t i = 0; i < fps.size(); ++i) {
+      if (claims.count(i) || (fps[i].value("side", "top") == "bottom") != loose[c].bottom) continue;
+      const double d = std::hypot(fps[i]["at"][0].get<double>() - loose[c].x, fps[i]["at"][1].get<double>() - loose[c].y);
+      if (d <= std::max(5.0, loose[c].size)) pairs.push_back({d, c, i});
+    }
+  std::sort(pairs.begin(), pairs.end());
+  std::vector<bool> used(loose.size());
+  for (const auto& [d, c, i] : pairs)
+    if (!used[c] && !claims.count(i)) {
+      used[c] = true;
+      claims[i].push_back(loose[c].claim);
+      taken.insert(loose[c].claim.node.value("id", ""));
+    }
+  std::function<void(json&)> prune = [&](json& list) {
+    json kept = json::array();
+    for (auto& n : list) {
+      if (taken.count(n.value("id", ""))) continue;
+      if (n.contains("children")) prune(n["children"]);
+      kept.push_back(std::move(n));
+    }
+    list = std::move(kept);
+  };
+  prune(root["children"]);
+  // One component per footprint at its place, as the reader makes them, in reference order.
+  std::vector<size_t> order;
+  for (const auto& [i, c] : claims) order.push_back(i);
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t c) { return natural_less(fps[a].value("ref", ""), fps[c].value("ref", "")); });
+  for (const size_t i : order) {
+    const json& f = fps[i];
+    const auto& parts = claims[i];
+    const double x = f["at"][0].get<double>(), y = f["at"][1].get<double>(), angle = f["at"][2].get<double>();
+    const Mat4 back = rotation(2, -angle) * Mat4::translation(-x, -y, 0);  // the footprint's place undone
+    json group;
+    if (parts.size() == 1 && parts[0].node.value("type", "") == "component") {
+      group = parts[0].node;
+      const Mat4 inner = back * parts[0].above * transform_of(group);
+      for (auto& c : group["children"]) set_transform(c, inner * transform_of(c));
+    } else {
+      group = {{"type", "component"}, {"id", new_uuid()}, {"children", json::array()}};
+      const json models = f.value("models", json::array());
+      for (const auto& p : parts) {
+        json n = p.node;
+        set_transform(n, back * p.above * transform_of(n));
+        if (parts.size() == 1 && !models.empty()) n["name"] = utf8(path_from_utf8(models[0].get<std::string>()).stem());
+        group["children"].push_back(std::move(n));
+      }
+    }
+    const std::string ref = f.value("ref", ""), footprint = f.value("footprint", "");
+    const std::string short_name = footprint.substr(footprint.find(':') == std::string::npos ? 0 : footprint.find(':') + 1);
+    group["name"] = ref.empty() ? short_name : ref + " " + short_name;
+    group["kicad"] = {{"ref", ref}, {"footprint", footprint}, {"side", f.value("side", "top")}, {"models", f.value("models", json::array())}};
+    if (const std::string uuid = f.value("uuid", ""); !uuid.empty()) group["kicad"]["uuid"] = uuid;
+    set_transform(group, Mat4::translation(x, y, 0) * rotation(2, angle));
+    root["children"].push_back(std::move(group));
+  }
+  json unplaced = json::array();
+  for (size_t i = 0; i < fps.size(); ++i)
+    if (!claims.count(i) && unplaced.size() < 64) unplaced.push_back(fps[i].value("ref", ""));
+  const json report = {{"by_name", by_name}, {"by_place", claims.size() - by_name}, {"unplaced", unplaced}};
+  {  // OPAD's own hidden 2D layers (outline, mounting holes, courtyards), stored as the export's parts are (live in a viewer read)
+    ImportOptions o;
+    o.kicad = ko;
+    o.viewer = shapes.has_live_bodies();
+    if (json layers = Builder(shapes, board, o).layers(data.value("id", new_uuid())); !layers.is_null()) root["children"].push_back(std::move(layers));
+  }
+  data["source"] = utf8(board.filename());
+  data["kicad"] = {{"origin", b["origin"]}, {"thickness", b["thickness"]}, {"holes", b["holes"]}, {"outline", b["outline"]},
+                   {"options", {{"components", ko.components}, {"dnp", ko.dnp}, {"vias", false}}}, {"reader", "kicad-cli"}, {"refdes", report}};
+  return report;
+}
+
+ImportResult import_kicad_export(Document& doc, const std::filesystem::path& board, const ImportOptions& opt) {
+  const json options = kicad_export_options(board, opt.kicad);
+  const std::filesystem::path step = kicad_cli_export(board, options, opt.progress);
+  ImportOptions o = opt;
+  o.kicad.kicad_cli = false;
+  Document staged = doc;
+  ImportResult res = import_file(staged, step, o);
+  json data = staged.truncate_ops(staged.ops.size() - 1).at(0).data;  // appended again named after the footprints
+  res.info = kicad_label_export(data, staged, board, options);
+  res.op_id = staged.append(data, opt.author).id;
+  doc = std::move(staged);
+  return res;
+}
+
+ImportResult import_kicad_pcb(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
+  try {
+    return Builder(doc, file, opt).run();
+  } catch (const Standard_Failure& e) {
+    throw Error("cannot build " + utf8(file.filename()) + ": " + e.GetMessageString());
+  }
+}
+
+}  // namespace opad

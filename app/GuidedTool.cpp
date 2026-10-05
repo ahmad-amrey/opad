@@ -5,13 +5,16 @@
 #include <QHeaderView>
 #include <QPainter>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QClipboard>
+#include <QToolButton>
 #include <QSignalBlocker>
 #include <QTextLayout>
 #include <QScrollBar>
 #include <QStyle>
 #include <algorithm>
 
+#include "HelpClip.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 
@@ -49,6 +52,14 @@ void PromptBar::set(const QString& icon, const QString& title, const QList<ToolS
   m_title = title;
   m_steps = steps;
   m_hints = hints;
+  m_text.clear();
+  resize(sizeHint());
+  update();
+}
+
+void PromptBar::setText(const QString& icon, const QString& title, const QString& text) {
+  set(icon, title, {}, {});
+  m_text = text;
   resize(sizeHint());
   update();
 }
@@ -57,6 +68,7 @@ QList<PromptBar::Piece> PromptBar::pieces() const {
   QFontMetrics title(theme::ui(13, QFont::Medium)), text(theme::ui(13)), hint(theme::mono(11));
   QList<Piece> out;
   out << Piece{Piece::Icon, {}, {}, 0, 16} << Piece{Piece::Title, m_title, {}, 0, title.horizontalAdvance(m_title)} << Piece{Piece::Rule, {}, {}, 0, 1};
+  if (!m_text.isEmpty()) return out << Piece{Piece::Text, m_text, StepState::Waiting, 0, text.horizontalAdvance(m_text)};
   bool waitingSeen = false;
   for (int i = 0; i < m_steps.size(); ++i) {
     const ToolStep& s = m_steps[i];
@@ -110,10 +122,12 @@ void PromptBar::paintEvent(QPaintEvent*) {
         p.setPen(t.fg3);
         p.drawText(at, baseline, rtl ? QString::fromUtf8("‹") : piece.text);
         break;
-      case Piece::Hint:
+      case Piece::Hint:  // "<key> <verb> · ...": a right-to-left sentence in Arabic, the keys isolated in it (keys::text)
         p.setFont(theme::mono(11));
         p.setPen(t.fg3);
+        p.setLayoutDirection(rtl ? Qt::RightToLeft : Qt::LeftToRight);  // the paragraph's direction; `at` stays its left edge
         p.drawText(at, baseline, piece.text);
+        p.setLayoutDirection(Qt::LeftToRight);
         break;
     }
     x += piece.width + 8;
@@ -215,6 +229,13 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   m_subtitle->setWordWrap(true);
   sl->addWidget(m_subtitle);
   layout->addWidget(summary);
+  m_error = new QLabel(this);
+  m_error->setObjectName("toolError");
+  m_error->setWordWrap(true);
+  m_error->setTextFormat(Qt::PlainText);
+  m_error->setContentsMargins(12, 0, 12, 8);
+  m_error->hide();
+  layout->addWidget(m_error);
 
   m_anchorRow = new QWidget(this);
   auto* anchorLayout = new QHBoxLayout(m_anchorRow);
@@ -231,9 +252,36 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   m_anchorRow->hide();
   connect(m_anchors, qOverload<int>(&QComboBox::currentIndexChanged), this, &ToolStepsPanel::anchorChanged);
 
+  m_modeRow = new QWidget(this);
+  m_modeRow->setObjectName("toolModes");
+  auto* modeLayout = new QHBoxLayout(m_modeRow);
+  modeLayout->setContentsMargins(12, 4, 12, 4);
+  modeLayout->setSpacing(4);
+  m_modes = new QButtonGroup(this);
+  m_modes->setExclusive(true);
+  connect(m_modes, &QButtonGroup::idClicked, this, &ToolStepsPanel::modeChanged);
+  layout->addWidget(m_modeRow);
+  m_modeRow->hide();
+
+  m_frameRow = new QWidget(this);
+  auto* frameLayout = new QHBoxLayout(m_frameRow);
+  frameLayout->setContentsMargins(12, 4, 12, 4);
+  frameLayout->setSpacing(8);
+  auto* frameLabel = new QLabel(tr("Coordinates"), m_frameRow);
+  frameLabel->setObjectName("secondary");
+  m_frames = new QComboBox(m_frameRow);
+  m_frames->setObjectName("toolFrame");
+  m_frames->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  m_frames->setToolTip(tr("Give the measured points and Δ in world axes, or in the axes of the component the first pick lies in."));
+  frameLayout->addWidget(frameLabel);
+  frameLayout->addWidget(m_frames, 1);
+  layout->addWidget(m_frameRow);
+  m_frameRow->hide();
+  connect(m_frames, qOverload<int>(&QComboBox::currentIndexChanged), this, &ToolStepsPanel::frameChanged);
+
   m_components = new QCheckBox(tr("Show ΔX, ΔY, ΔZ arrows"), this);
   m_components->setChecked(true);
-  m_components->setToolTip(tr("Signed world-axis components from point 1 to point 2. Red X, green Y, blue Z."));
+  m_components->setToolTip(tr("Signed components from point 1 to point 2 along the X, Y and Z axes: the world's, or the component's when its coordinates are chosen. Red X, green Y, blue Z."));
   m_components->hide();
   auto* componentRow = new QHBoxLayout();
   componentRow->setContentsMargins(12, 4, 12, 4);
@@ -253,32 +301,51 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   m_grid->setRootIsDecorated(false);
   m_grid->setSelectionMode(QAbstractItemView::NoSelection);
   m_grid->setFocusPolicy(Qt::NoFocus);
+  m_grid->hide();  // until there is a result (setResult): its empty frame took 6 px under the steps
   auto* gridRow = new QHBoxLayout();  // the grid lines stop 12 px short of the panel's edges, like the summary text
   gridRow->setContentsMargins(12, 0, 12, 0);
   gridRow->addWidget(m_grid);
   layout->addLayout(gridRow);
+
+  // Earlier results of the session (UI-144): title, value, Copy and Pin.
+  m_historyBox = new QWidget(this);
+  auto* historyLayout = new QVBoxLayout(m_historyBox);
+  historyLayout->setContentsMargins(12, 10, 12, 4);
+  historyLayout->setSpacing(4);
+  auto* historyTitle = new QLabel(tr("Earlier results"), m_historyBox);
+  historyTitle->setObjectName("secondary");
+  historyLayout->addWidget(historyTitle);
+  m_history = new QTreeWidget(m_historyBox);
+  m_history->setObjectName("toolHistory");
+  m_history->setColumnCount(3);
+  m_history->setHeaderHidden(true);
+  m_history->setIndentation(0);
+  m_history->setRootIsDecorated(false);
+  m_history->setSelectionMode(QAbstractItemView::NoSelection);
+  m_history->setFocusPolicy(Qt::NoFocus);
+  m_history->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  m_history->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_history->header()->setStretchLastSection(false);
+  m_history->header()->setSectionResizeMode(0, QHeaderView::Fixed);
+  m_history->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+  m_history->header()->setSectionResizeMode(2, QHeaderView::Fixed);
+  m_history->setColumnWidth(2, 60);
+  historyLayout->addWidget(m_history);
+  layout->addWidget(m_historyBox);
+  m_historyBox->hide();
   layout->addStretch(1);
 
-  m_footer = new QWidget(this);
-  m_footer->setFixedHeight(40);
-  m_footer->setObjectName("toolFooter");
-  auto* fl = new QHBoxLayout(m_footer);
-  fl->setContentsMargins(12, 0, 12, 0);
-  fl->setSpacing(8);
-  m_copy = new QPushButton(tr("Copy"), m_footer);
+  // Copy on the leading side; Clear (Esc: measure again) and Pin to document (P), which keeps the panel open.
+  m_footer = new PanelFooter(this);
+  m_copy = m_footer->addSecondary(tr("Copy"));
   m_copy->setToolTip(tr("Copy measurement values"));
-  auto* clear = new QPushButton(tr("Clear   Esc"), m_footer);
-  m_pin = new QPushButton(tr("Pin to document   P"), m_footer);
-  m_pin->setObjectName("primary");
-  for (QPushButton* b : {clear, m_pin}) b->setFocusPolicy(Qt::NoFocus);  // Esc / P / Enter stay with the main window
-  fl->addWidget(m_copy);
-  fl->addStretch(1);
-  fl->addWidget(clear);
-  fl->addWidget(m_pin);
+  m_footer->setCancel(tr("Clear"));
+  m_footer->setPrimary(tr("Pin to document"), QStringLiteral("inspect.pin"));  // Pin's key now
+  m_footer->setKeysStayWithWindow(true);  // Esc / P / Enter stay with the main window
   outer->addWidget(m_footer);
   m_footer->hide();
-  connect(clear, &QPushButton::clicked, this, &ToolStepsPanel::clearRequested);
-  connect(m_pin, &QPushButton::clicked, this, &ToolStepsPanel::pinRequested);
+  connect(m_footer, &PanelFooter::cancelled, this, &ToolStepsPanel::clearRequested);
+  connect(m_footer, &PanelFooter::accepted, this, &ToolStepsPanel::pinRequested);
   connect(m_copy, &QPushButton::clicked, this, [this] {
     QStringList lines;
     for (int i = 0; i < m_grid->topLevelItemCount(); ++i) {
@@ -293,8 +360,12 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   auto restyle = [this, rule] {
     const Tokens& t = theme::current();
     rule->setStyleSheet(QString("background: %1;").arg(theme::css(t.line)));
+    m_error->setStyleSheet(QString("color: %1;").arg(theme::css(t.error)));
+    m_modeRow->setStyleSheet(QString("QPushButton { border: 1px solid %1; border-radius: 3px; padding: 3px 8px; background: %2; color: %3; }"
+                                     "QPushButton:hover { background: %4; } QPushButton:checked { background: %5; border-color: %6; color: %7; }")
+                                 .arg(theme::css(t.line), theme::css(t.bg2), theme::css(t.fg2), theme::css(t.bg3), theme::css(t.selbg), theme::css(t.sel), theme::css(t.fg)));
+    m_history->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(t.line)));
     m_grid->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(t.line)));
-    m_footer->setStyleSheet(QString("QWidget#toolFooter { border-top: 1px solid %1; }").arg(theme::css(t.line)));
     QList<QPair<QString, QString>> rows;
     for (int i = 0; i < m_grid->topLevelItemCount(); ++i) {
       auto* row = m_grid->topLevelItem(i);
@@ -303,6 +374,7 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
       rows << qMakePair(row->text(0), value);
     }
     setResult(rows);
+    if (!m_historyRows.isEmpty()) setHistory(QList<ToolHistoryRow>(m_historyRows), m_historyPin);
   };
   restyle();
   connect(theme::notifier(), &theme::Notifier::changed, this, restyle);
@@ -348,8 +420,28 @@ void ToolStepsPanel::setSteps(const QList<ToolStep>& steps, const QString& hover
     l->addWidget(ring, 0, Qt::AlignTop);
     l->addLayout(text, 1);
     m_stepRows->addWidget(row);
+    for (QWidget* w : {static_cast<QWidget*>(ring), static_cast<QWidget*>(label), static_cast<QWidget*>(row)}) w->show();  // counted by stepsHeight() at once
+    row->ensurePolished();  // its style sheet's border too
   }
+  if (m_guide) m_guide->setWaiting(int(std::find_if(steps.begin(), steps.end(), [](const ToolStep& s) { return s.picked.isEmpty(); }) - steps.begin()), int(steps.size()));
   emit contentSizeChanged();
+}
+
+// The rows as they lay out at `width` (UI-25): a new row is hidden for the layout until Qt shows it a turn later, so a height
+// guessed from the labels cut the last row off under the fields below it (the sketch panel's dimension tool).
+int ToolStepsPanel::stepsHeight(int width) const {
+  m_body->layout()->invalidate();
+  return m_body->layout()->totalHeightForWidth(std::max(1, width));
+}
+
+void ToolStepsPanel::setGuide(const QString& command) {
+  if (!m_guide) {
+    m_guide = new ToolGuide(m_body);
+    m_guide->setContentsMargins(8, 0, 8, 0);
+    static_cast<QVBoxLayout*>(m_body->layout())->insertWidget(0, m_guide);
+    connect(m_guide, &ToolGuide::resized, this, &ToolStepsPanel::contentSizeChanged);
+  }
+  m_guide->setCommand(command);
 }
 
 void ToolStepsPanel::setSummary(const QString& title, const QString& subtitle, const QString& state) {
@@ -359,6 +451,18 @@ void ToolStepsPanel::setSummary(const QString& title, const QString& subtitle, c
   const bool visible=!title.isEmpty()||!subtitle.isEmpty()||!state.isEmpty();
   m_title->parentWidget()->setVisible(visible);
   if(auto* rule=findChild<QFrame*>("toolRule"))rule->setVisible(visible);
+  emit contentSizeChanged();
+}
+
+QStringList ToolStepsPanel::summary() const {
+  if (m_title->parentWidget()->isHidden()) return {};
+  return {m_title->text(), m_subtitle->text(), m_state->text()};
+}
+
+void ToolStepsPanel::setError(const QString& text) {
+  if (m_error->text() == text && m_error->isVisibleTo(this) == !text.isEmpty()) return;
+  m_error->setText(text);
+  m_error->setVisible(!text.isEmpty());
   emit contentSizeChanged();
 }
 
@@ -398,7 +502,7 @@ void ToolStepsPanel::setResult(const QList<QPair<QString, QString>>& rows) {
 
 void ToolStepsPanel::setFooter(bool visible, bool canPin) {
   m_footer->setVisible(visible);
-  m_pin->setEnabled(canPin);
+  m_footer->setPrimaryEnabled(canPin);
   emit contentSizeChanged();
 }
 
@@ -415,6 +519,87 @@ void ToolStepsPanel::setAnchorOptions(const QStringList& labels, int current) {
   m_anchors->addItems(labels);
   if (!labels.isEmpty()) m_anchors->setCurrentIndex(std::clamp(current, 0, static_cast<int>(labels.size()) - 1));
   m_anchorRow->setVisible(labels.size() > 1);
+  emit contentSizeChanged();
+}
+
+void ToolStepsPanel::setModeOptions(const QStringList& labels, int current) {
+  if (labels != m_modeLabels) {
+    for (QAbstractButton* b : m_modes->buttons()) {
+      m_modes->removeButton(b);
+      delete b;
+    }
+    m_modeLabels = labels;
+    for (int i = 0; i < labels.size(); ++i) {
+      auto* b = new QPushButton(labels[i], m_modeRow);
+      b->setCheckable(true);
+      b->setFocusPolicy(Qt::NoFocus);
+      b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+      m_modes->addButton(b, i);
+      m_modeRow->layout()->addWidget(b);
+    }
+  }
+  if (QAbstractButton* b = m_modes->button(current)) {
+    const QSignalBlocker blocker(m_modes);
+    b->setChecked(true);
+  }
+  m_modeRow->setVisible(!labels.isEmpty());
+  emit contentSizeChanged();
+}
+
+void ToolStepsPanel::setFrameOptions(const QStringList& labels, int current) {
+  const QSignalBlocker blocker(m_frames);
+  QStringList now;
+  for (int i = 0; i < m_frames->count(); ++i) now << m_frames->itemText(i);
+  if (now != labels) {
+    m_frames->clear();
+    m_frames->addItems(labels);
+  }
+  if (!labels.isEmpty()) m_frames->setCurrentIndex(std::clamp(current, 0, static_cast<int>(labels.size()) - 1));
+  m_frameRow->setVisible(labels.size() > 1);
+  emit contentSizeChanged();
+}
+
+void ToolStepsPanel::setHistory(const QList<ToolHistoryRow>& rows, bool canPin) {
+  const Tokens& t = theme::current();
+  m_historyRows = rows;
+  m_historyPin = canPin;
+  m_history->clear();
+  int titleWidth = 48;
+  for (int i = 0; i < rows.size(); ++i) {
+    titleWidth = std::max(titleWidth, QFontMetrics(m_history->font()).horizontalAdvance(rows[i].title) + 16);
+    auto* item = new QTreeWidgetItem(m_history);
+    item->setText(0, rows[i].title);
+    item->setForeground(0, t.fg2);
+    item->setText(1, QChar(0x202A) + rows[i].value + QChar(0x202C));
+    item->setToolTip(1, rows[i].value);
+    item->setFont(1, theme::mono(11));
+    item->setSizeHint(0, QSize(0, 26));
+    auto* actions = new QWidget(m_history);
+    auto* box = new QHBoxLayout(actions);
+    box->setContentsMargins(0, 0, 0, 0);
+    box->setSpacing(2);
+    auto button = [&](const QString& icon, const QString& tip, bool enabled) {
+      auto* b = new QToolButton(actions);
+      b->setIcon(icons::themed(icon, 16));
+      b->setToolTip(tip);
+      b->setAutoRaise(true);
+      b->setEnabled(enabled);
+      b->setFocusPolicy(Qt::NoFocus);
+      box->addWidget(b);
+      return b;
+    };
+    QToolButton* copy = button("copy", tr("Copy this result"), true);
+    QToolButton* pin = button("pin", rows[i].pinned ? tr("Pinned to the document") : tr("Pin this result to the document"), canPin && !rows[i].pinned);
+    copy->setObjectName("historyCopy");
+    pin->setObjectName("historyPin");
+    connect(copy, &QToolButton::clicked, this, [this, i] { emit historyCopyRequested(i); });
+    connect(pin, &QToolButton::clicked, this, [this, i] { emit historyPinRequested(i); });
+    m_history->setItemWidget(item, 2, actions);
+  }
+  m_history->setColumnWidth(0, std::min(titleWidth, 180));
+  const int shown = std::min<int>(rows.size(), 5);
+  m_history->setFixedHeight(shown * std::max(26, rows.isEmpty() ? 0 : m_history->sizeHintForRow(0)) + 2 * m_history->frameWidth() + 2);
+  m_historyBox->setVisible(!rows.isEmpty());
   emit contentSizeChanged();
 }
 

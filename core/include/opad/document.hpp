@@ -1,8 +1,11 @@
 #pragma once
+#include <atomic>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -37,7 +40,23 @@ struct BodyEntry {
   std::string key;
   json meta;         // name, color, units, source, ...
   std::string brep;  // OCCT ASCII BREP, LF line endings, trailing newline
+  // Index mode (Document::parse_index): the entry's lines in the text the document was read from, neither copied nor
+  // verified when read; `brep` stays empty. text() is the BREP either way, as stored (sizes, saving, outlines).
+  std::string_view indexed;
+  std::string_view text() const { return indexed.empty() ? std::string_view(brep) : indexed; }
+  // The BREP for using it (a shape, a copy into another store): an index-mode entry is hashed against its key on the
+  // first call only (any thread) and throws on this and every later call when it does not match. Other entries were
+  // verified when read.
+  std::string_view checked_text() const;
+  struct Check {  // 0 not hashed yet, 1 matches the key, 2 does not
+    mutable std::atomic<unsigned char> state{0};
+    Check() = default;
+    Check(const Check& o) noexcept : state(o.state.load()) {}  // noexcept: vector growth moves entries, never copies their BREP
+    Check& operator=(const Check& o) noexcept { state = o.state.load(); return *this; }
+  } check;
+  bool external = false;  // a linked asset's body (assets.hpp): its shape comes from the file, never from the store
 };
+static_assert(std::is_nothrow_move_constructible_v<BodyEntry> && std::is_nothrow_move_assignable_v<BodyEntry>);
 
 struct ShapeCache;  // opaque; defined in geometry.cpp
 std::shared_ptr<ShapeCache> make_shape_cache();
@@ -46,8 +65,21 @@ class Document {
  public:
   Document();
   static Document create(const std::string& units = "mm");
-  static Document load(const std::filesystem::path& path);
-  static Document parse(const std::string& text, const std::filesystem::path& origin = {});
+  // `skip_body(key)` true leaves that body entry out, unread and unverified (a version compared with one already
+  // in memory needs only the bodies it does not have).
+  using BodyFilter = std::function<bool(const std::string& key)>;
+  // `progress` (optional) gets the fraction read and parsed, by bytes, and returns false to cancel (Error "cancelled").
+  using Progress = std::function<bool(double)>;
+  static Document load(const std::filesystem::path& path, const BodyFilter& skip_body = {}, const Progress& progress = {});
+  static Document parse(const std::string& text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {},
+                        const Progress& progress = {});
+  // Index mode, for reading a version rather than editing it (diff, compare, textconv, history): body entries are
+  // listed with their meta but their BREP is neither copied nor hashed (git or the session that wrote it verified it).
+  // The document keeps the text; a body's BREP is read from there when it is asked for and hashed the first time it is
+  // used (BodyEntry::checked_text: a shape, a move into another store). Saves byte-identically.
+  static Document load_index(const std::filesystem::path& path, const BodyFilter& skip_body = {});
+  static Document parse_index(std::string text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
+  bool indexed() const { return source_ != nullptr; }
 
   std::string serialize() const;
   void save();                                     // to `path`
@@ -57,15 +89,28 @@ class Document {
   const Op& append(json op, const std::string& author = {});
   // Adds a body entry (no-op when the key already exists). Returns the key.
   std::string add_body(const std::string& brep, json meta);
+  // The same with the key the caller computed (sha256_hex(brep), on a worker) and the text moved in: nothing hashed or
+  // copied here, so a commit on the UI thread stays cheap however big the bodies (an embedded Engine: 2 s of hashing).
+  std::string add_body(const std::string& key, std::string&& brep, json meta);
   // Viewer mode: a body that exists only as a live shape in the shape cache, with no BREP text. A document
   // holding such bodies cannot be serialised (see has_live_bodies).
   std::string add_live_body(const std::string& key, json meta);
   bool has_live_bodies() const;
+  // A linked asset's body (assets.hpp): registered when the asset is read, never written by serialize(), so a saved
+  // document refers to it by key only (an older build shows such a body as missing).
+  std::string add_external_body(const std::string& key, json meta);
+  // Ops already in the file (save writes them back verbatim); later ones may still be rewritten (rebase_asset_paths).
+  size_t persisted_ops() const { return persisted_ops_; }
+  void rewrite_op(size_t index, json data);  // an op not saved yet, same id and type; validated, its text made anew
   const BodyEntry* body(const std::string& key) const;
   bool has_body(const std::string& key) const { return bodies_index_.count(key) > 0; }
   std::vector<std::string> body_keys() const;
   size_t body_count() const { return bodies_.size(); }
   const std::vector<BodyEntry>& bodies() const { return bodies_; }
+  // Rebuilds the body store as `keys` in that order, each kept from this store or moved out of `from` (verified when
+  // that was parsed; an index-mode entry not checked yet is hashed here), then this store's other entries when
+  // `keep_others`. Throws, changing nothing, when a key is in neither or a moved entry does not match its key.
+  void arrange_bodies(const std::vector<std::string>& keys, Document& from, bool keep_others);
 
   // Removes body entries that no live (non-tombstoned) op references. Returns removed keys.
   std::vector<std::string> gc();
@@ -86,11 +131,17 @@ class Document {
 
   static void validate_op(const json& op);
   static const std::vector<std::string>& op_types();
+  // False for an op type of a newer build. Such an op loads as an opaque record (UI-65): saved back byte for byte,
+  // reported unresolved and never applied by replay, refused as an edit target; gc keeps the body keys it mentions.
+  static bool known_type(const std::string& type);
 
  private:
+  static Document parse_text(std::string_view text, const std::filesystem::path& origin, const BodyFilter& skip_body, bool index,
+                             const Progress& progress = {});
   std::vector<BodyEntry> bodies_;
   std::unordered_map<std::string, size_t> bodies_index_;
   size_t persisted_ops_ = 0;
+  std::shared_ptr<const std::string> source_;  // index mode: the text the entries' views point into
 };
 
 }  // namespace opad

@@ -3,32 +3,55 @@
 #include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "Drawing2D.hpp"
+#include "CommandHelp.hpp"
+#include "I18n.hpp"
+#include "Motion.hpp"
+#include "Highlight.hpp"
+#include "Units.hpp"
 #include "opad/mesh.hpp"
+#include <V3d.hxx>
 #include <V3d_DirectionalLight.hxx>
+#include <V3d_AmbientLight.hxx>
 #include "DepthBias.hpp"
+#include "CurveSamples.hpp"
 #include "CursorWrap.hpp"
+#include "SketchSnap.hpp"
 #include <QScreen>
 #include <QApplication>
+#include <QMenu>
 
 #include <functional>
 
 #include <QElapsedTimer>
 #include <QScopedValueRollback>
+#include <QStyleHints>
 #include <QThread>
 #include <QTimer>
 #include <QWindow>
 
+#include <Aspect_Grid.hxx>
 #include <AIS_AnimationCamera.hxx>
+#include <AIS_RubberBand.hxx>
 #include <AIS_TexturedShape.hxx>
+#include <Graphic3d_AspectFillArea3d.hxx>
+#include <Graphic3d_Group.hxx>
+#include <PrsMgr_Presentation.hxx>
 #include <QPainter>
+#include <QPointer>
 #include <cstring>
 #include <AIS_ViewCube.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <Aspect_ScrollDelta.hxx>
 #include <Aspect_VKeyFlags.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
+#include <Bnd_Box2d.hxx>
+#include <gp_Pnt2d.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRep_Tool.hxx>
@@ -36,6 +59,8 @@
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Bnd_Box.hxx>
+#include <Graphic3d_Structure.hxx>
+#include <Graphic3d_StructureManager.hxx>
 #include <Graphic3d_TransformPers.hxx>
 #include <Image_PixMap.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -69,10 +94,12 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #include <cmath>
 #include <thread>
 
+#include "opad/canvas.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "Jobs.hpp"
 #include "NavCube.hpp"
+#include "SketchBackdrop.hpp"
 #include <TColStd_ListOfInteger.hxx>
 #include <Prs3d_DatumAspect.hxx>
 #include <Prs3d_ShadingAspect.hxx>
@@ -127,15 +154,36 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   setMinimumSize(200, 150);
   connect(doc, &AppDocument::changed, this, &Viewport::resetHoverFade);
   connect(doc, &AppDocument::changed, this, &Viewport::sync);
+  const QSettings settings;
+  m_gridSpacing = std::max(0.0, settings.value("view/gridSpacing", 0.0).toDouble());
+  m_gridExtentSetting = std::max(1.0, settings.value("view/gridExtent", 100.0).toDouble());
+  connect(units::notifier(), &units::Notifier::changed, this, [this] { refreshMeasurement(true); });  // labels in the shown unit
   m_syncTimer.setSingleShot(true);
   m_syncTimer.setInterval(50);
   connect(&m_syncTimer, &QTimer::timeout, this, &Viewport::sync);
+  m_settleTimer.setSingleShot(true);
+  m_settleTimer.setInterval(500);
+  connect(&m_settleTimer, &QTimer::timeout, this, &Viewport::settleView);
+  connect(doc, &AppDocument::aboutToReplace, this, [this] { m_history.clear(); });  // its views were of that document
+  m_animateViews = settings.value("view/animate", true).toBool();
   m_refineTimer.setSingleShot(true);
   m_refineTimer.setInterval(350);
   connect(&m_refineTimer, &QTimer::timeout, this, &Viewport::refineVisible);
+  m_adaptive = settings.value("view/adaptive", true).toBool();
+  m_qualityTimer.setSingleShot(true);
+  m_qualityTimer.setInterval(350);
+  connect(&m_qualityTimer, &QTimer::timeout, this, &Viewport::restoreQuality);
+  m_edgeTimer.setSingleShot(true);
+  m_edgeTimer.setInterval(100);
+  connect(&m_edgeTimer, &QTimer::timeout, this, &Viewport::buildEdgeOverlay);
   m_timer.setInterval(16);
   connect(&m_timer, &QTimer::timeout, this, [this] {
     if (!m_initialised) return;
+    if (m_glide && !myViewAnimation.IsNull() && !myViewAnimation->IsStopped()) {  // on time also where no frame is drawn
+      myViewAnimation->UpdateTimer();
+      m_view->Invalidate();
+    }
+    m_glide = m_glide && !myViewAnimation.IsNull() && !myViewAnimation->IsStopped();
     if (!myViewAnimation.IsNull() && !myViewAnimation->IsStopped()) requestRedraw();
     else if (toAskNextFrame()) requestRedraw();
   });
@@ -143,12 +191,23 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   m_trackpadEndTimer.setSingleShot(true);
   m_trackpadEndTimer.setInterval(180);  // platforms without ScrollEnd still need to release the virtual drag
   connect(&m_trackpadEndTimer, &QTimer::timeout, this, &Viewport::finishTrackpadScroll);
+  m_dwellTimer.setSingleShot(true);  // the pointer rests: no event would run the tracker again
+  connect(&m_dwellTimer, &QTimer::timeout, this, [this] { m_trackingDirty = true; requestRedraw(); });
+  m_holdTimer.setSingleShot(true);
+  connect(&m_holdTimer, &QTimer::timeout, this, &Viewport::pressHeld);
+  m_selectOtherTimer.setSingleShot(true);
+  connect(&m_selectOtherTimer, &QTimer::timeout, this, [this] {
+    if (QMenu* menu = selectOtherMenu(m_selectOtherAt)) menu->popup(m_selectOtherGlobal);
+  });
 #if !defined(__APPLE__)
   grabGesture(Qt::PinchGesture);  // fallback for touch devices without native pinch events
 #endif
 }
 
-Viewport::~Viewport() { if(m_bodyGlowJob) m_bodyGlowJob->cancel(); *m_alive = false; }
+Viewport::~Viewport() {
+  if(m_bodyGlowJob) m_bodyGlowJob->cancel(); if(m_lookJob) m_lookJob->cancel(); *m_alive = false;
+  if (m_side) { m_sideView->Remove(); delete sideWidget(); }  // the view goes before its window
+}
 
 void Viewport::setBlocked(bool on) {
   if (on) {
@@ -156,6 +215,7 @@ void Viewport::setBlocked(bool on) {
     m_nativePinching = false;
   }
   m_blocked = on;
+  applyOwnCursor();
 }
 
 void Viewport::benchShot(const QString& path) {
@@ -169,7 +229,7 @@ void Viewport::benchShot(const QString& path) {
   if (trace::enabled()) trace::log(QStringLiteral("bench: shot with %1 selected, layer of selected style %2").arg(m_ctx->NbSelected()).arg(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->ZLayer()));
   if (const QByteArray view = qgetenv("OPAD_BENCH_VIEW"); !view.isEmpty()) {  // an unanimated camera for the frame dump
     m_view->SetProj(view == "bottom" ? V3d_Zneg : view == "top" ? V3d_Zpos : V3d_XposYnegZpos);
-    m_view->FitAll(0.02, Standard_False);
+    m_view->FitAll(fitBounds(), 0.02, Standard_False);
     m_view->Redraw();
     emit notesMoved();  // the note cards follow the camera through a queued signal; the dump wants them placed now
   }
@@ -190,6 +250,27 @@ void Viewport::benchShot(const QString& path) {
   grabImage().save(path);
 }
 
+QString Viewport::benchCubePart(int dx, int dy) {
+  if (!m_initialised) return {};
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  m_view->Redraw();  // the picker's camera range
+  m_ctx->MoveTo(w - qRound(kCubeOffsetX * m_cubeScale) + qRound(dx * m_cubeScale), qRound((kCubeOffsetY + dy) * m_cubeScale), m_view, Standard_False);
+  const auto* owner = m_ctx->HasDetected() ? dynamic_cast<const AIS_ViewCubeOwner*>(m_ctx->DetectedOwner().get()) : nullptr;
+  const QString part = !owner ? QString() : AIS_ViewCube::IsBoxCorner(owner->MainOrientation()) ? "corner" : AIS_ViewCube::IsBoxEdge(owner->MainOrientation()) ? "edge" : "side";
+  m_ctx->ClearDetected(Standard_False);
+  return part;
+}
+
+void Viewport::setCubeEdgesCorners(bool on) {
+  const Handle(NavCube) cube = Handle(NavCube)::DownCast(m_cube);
+  if (cube.IsNull() || cube->edgesAndCorners() == on) return;
+  cube->setEdgesAndCorners(on);
+  m_ctx->ClearDetected(Standard_False);
+  m_ctx->RecomputeSelectionOnly(m_cube);
+  redrawScene();
+}
+
 // The displayed body with the most faces: where sub-shape picking is at its most expensive.
 std::string Viewport::benchHeaviest() const {
   std::string best;
@@ -206,7 +287,7 @@ std::string Viewport::benchHeaviest() const {
 // A rubber band over the whole view in the current mode: the mass sub-shape selection case.
 void Viewport::benchBand() {
   if (!m_initialised) return;
-  m_view->FitAll(0.02, Standard_False);
+  m_view->FitAll(fitBounds(), 0.02, Standard_False);
   m_view->Redraw();
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
@@ -225,7 +306,7 @@ void Viewport::benchSubShot(const QString& path) {
   Standard_Real x = 0, y = 0, z = 0;
   m_view->Proj(x, y, z);
   m_view->SetProj(-x, -y, -z);
-  m_view->FitAll(0.02, Standard_False);
+  m_view->FitAll(fitBounds(), 0.02, Standard_False);
   m_view->Redraw();
   grabImage().save(path);
 }
@@ -238,11 +319,23 @@ void Viewport::initViewer() {
   driver->ChangeOptions().buffersNoSwap = Standard_False;
   driver->ChangeOptions().ffpEnable = Standard_False;
   m_viewer = new V3d_Viewer(driver);
-  m_viewer->SetDefaultLights();
-  m_viewer->SetLightOn();
+  // The overhead light first (UI-45): it alone casts shadows, and OCCT's shaders draw nothing in Studio when a light that
+  // casts none comes before the one that does. Then the defaults (a headlight, the ambient light).
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
-  overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
+  overhead->SetIntensity(0.75f);
+  Handle(V3d_DirectionalLight) headlight=new V3d_DirectionalLight(V3d_Zneg,Quantity_NOC_WHITE,true);
+  headlight->SetName("headlight");
+  Handle(V3d_AmbientLight) ambient=new V3d_AmbientLight(Quantity_NOC_WHITE);
+  for(const Handle(V3d_Light)& light:{Handle(V3d_Light)(overhead),Handle(V3d_Light)(headlight),Handle(V3d_Light)(ambient)}) {m_viewer->AddLight(light);m_viewer->SetLightOn(light);}
   m_ctx = new AIS_InteractiveContext(m_viewer);
+  // Drawings are highlighted as lines, not tinted: shared drawers whose colours follow the background (updateDrawingHighlights).
+  m_drawingSelected = new Prs3d_Drawer();
+  m_drawingSelected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
+  m_drawingSelected->SetDisplayMode(AIS_WireFrame);
+  m_drawingHover = new Prs3d_Drawer();
+  m_drawingHover->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic));
+  m_drawingHover->SetDisplayMode(AIS_WireFrame);
+  m_viewer->SetGridEcho(Standard_False);  // OCCT's star on the grid node nearest the pointer: no click takes that node
   {  // TopOSD (notes, the drawing being made, measurement labels) has no depth test, but it kept the depth, so what is
      // translucent in Topmost (a note target's tint) was drawn after it, over it: red strokes came out pink. Clearing
      // the depth draws what is pending first.
@@ -250,12 +343,36 @@ void Viewport::initViewer() {
     osd.SetClearDepth(Standard_True);
     m_viewer->SetZLayerSettings(Graphic3d_ZLayerId_TopOSD, osd);
   }
+  {  // A canvas shown through the model: drawn after it with no depth test and writing no depth, so the model never hides
+     // it and it hides nothing drawn later (hover in Top, a selected body's X-ray in Topmost, which owns its depth buffer
+     // and where the canvas itself went before and covered selected bodies behind it).
+    Graphic3d_ZLayerSettings through;
+    through.SetName("canvas through");
+    through.SetEnableDepthTest(Standard_False);
+    through.SetEnableDepthWrite(Standard_False);
+    through.SetClearDepth(Standard_False);
+    if (!m_viewer->InsertLayerBefore(m_throughLayer, through, Graphic3d_ZLayerId_Top)) m_throughLayer = Graphic3d_ZLayerId_Topmost;
+  }
   m_hoverFadeEnabled=QSettings().value("view/hoverFade",true).toBool();
   m_hoverFadeSeconds=std::clamp(QSettings().value("view/hoverFadeSeconds",5.0).toDouble(),.1,60.0);
   m_hoverFadeTimer.setSingleShot(true);connect(&m_hoverFadeTimer,&QTimer::timeout,this,&Viewport::requestRedraw);
   m_ctx->SetPixelTolerance(4);
   m_ctx->AddFilter(new OwnerFilter([this](const Handle(SelectMgr_EntityOwner)& owner) {
     if(!Handle(CircleOwner)::DownCast(owner).IsNull()) return m_ctrlCenterPick;
+    // An axis input picks round faces beside the edges (setSelectionFilter(Edge, true)): a face with an axis, never a flat
+    // one (its "axis" is wherever its plane happens to start) nor a mesh's.
+    if(m_roundFaces && m_filter==SelFilter::Edge)
+      if(const auto sub=Handle(SubShapeOwner)::DownCast(owner);!sub.IsNull() && sub->kind()==opad::Ref::Kind::Face) {
+        if(!sub->HasShape() || sub->Shape().ShapeType()!=TopAbs_FACE) return false;
+        const auto type=BRepAdaptor_Surface(TopoDS::Face(sub->Shape()),Standard_False).GetType();
+        return type==GeomAbs_Cylinder || type==GeomAbs_Cone || type==GeomAbs_Torus;
+      }
+    if(!Handle(OccluderOwner)::DownCast(owner).IsNull()) {  // selecting through objects, or a ghost's faces: what is behind is reached
+      if(m_selectThrough) return false;
+      const auto node=m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
+      const auto item=node==m_nodeOf.end()?m_items.end():m_items.find(node->second);
+      return item==m_items.end() || !item->second.look.ghost;
+    }
     const auto center=m_centerObjects.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
     return center==m_centerObjects.end() || m_centers.at(center->second).ref.kind!=opad::Ref::Kind::Center || m_ctrlCenterPick;
   }));
@@ -290,7 +407,9 @@ void Viewport::initViewer() {
   m_navSelector->SetPickClosest(true);
   m_navSelector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_Uniform, 0.0);
   m_navSelection = new SelectMgr_SelectionManager(m_navSelector);
-  m_cube = new NavCube();  // a plain cube whose edges and corners are still hover/click targets
+  Handle(NavCube) cube = new NavCube();  // a plain cube whose edges and corners are still hover/click targets
+  cube->setEdgesAndCorners(QSettings().value("view/cubeEdgesCorners", true).toBool());
+  m_cube = cube;
   m_cubeScale = viewScale().x();
   m_cube->SetSize(58 * m_cubeScale);
   m_cube->SetFontHeight(11 * m_cubeScale);
@@ -304,7 +423,7 @@ void Viewport::initViewer() {
   m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
       Graphic3d_Vec2i(qRound(kCubeOffsetX * m_cubeScale), qRound(kCubeOffsetY * m_cubeScale))));
   SetViewAnimation(new OrbitCameraAnimation(m_view));
-  myViewAnimation->SetOwnDuration(0.5);
+  myViewAnimation->SetOwnDuration(motion::seconds(0.5));
   m_cube->SetViewAnimation(myViewAnimation);
   m_cube->SetFixedAnimationLoop(Standard_False);
   m_cube->SetAutoStartAnimation(Standard_True);
@@ -328,15 +447,17 @@ void Viewport::initViewer() {
   applyTokens();
   setRenderQuality(savedRenderQuality());
   setSceneBackground(m_sceneBackground);
-  setGrid(m_grid);
+  showGrid();
   setTwoDimensional(m_twoDimensional);
   sync();
+  if (std::exchange(m_originGuide, false)) setOriginGuide(true, m_originGrid);  // asked for before the viewer existed
 }
 
 // ---------------------------------------------------------------- tokens
 void Viewport::setTokens(const Tokens& t) {
   m_tokens = t;
   if (m_initialised) applyTokens();
+  if (layered()) scheduleLooks();  // ghosts take the theme's ghost colour and alpha
 }
 
 void Viewport::applyTokens() {
@@ -346,37 +467,57 @@ void Viewport::applyTokens() {
   m_view->SetBackgroundColor(occ(t.vp));
   m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
   setSceneBackground(m_sceneBackground);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(Quantity_NOC_WHITE);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(Quantity_NOC_WHITE);
+  // The roles (UI-38, Highlight.hpp): the hover glows white, the selection is hued. OCCT's selected styles draw only
+  // what has no glow of ours (a body shown through the stock path, a drawing layer's lines); ours are SubHighlights.
+  const Quantity_Color hover = occ(t.hover), selected = occ(t.selected3d);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(hover);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(hover);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetTransparency(0.35f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetTransparency(0.35f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetDisplayMode(AIS_Shaded);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetFaceBoundaryDraw(false);
   m_ctx->SetToHilightSelected(true);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(selectionTint());
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(selectionTint());
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.82f);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.82f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(selected);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(selected);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.6f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.6f);
   // X-ray selection: the highlight is drawn in the Topmost layer, which has its own depth buffer,
   // so a selected object shows through whatever is in front of it.
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  const double edge = highlight::kHoverEdgeWidth;
   for(auto kind:{Prs3d_TypeOfHighlight_Dynamic,Prs3d_TypeOfHighlight_LocalDynamic}) {
     auto drawer=m_ctx->HighlightStyle(kind);
     drawer->SetZLayer(Graphic3d_ZLayerId_Topmost);
     drawer->SetShadingAspect(new Prs3d_ShadingAspect());
-    drawer->ShadingAspect()->SetColor(Quantity_NOC_WHITE);
+    drawer->ShadingAspect()->SetColor(hover);
     drawer->ShadingAspect()->SetTransparency(0.55f);
     drawer->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
     drawer->SetFaceBoundaryDraw(true);
-    drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
-    drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL,Quantity_NOC_WHITE,5));
-    drawer->PointAspect()->Aspect()->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.65f));
+    drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
+    drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL,hover,5));
+    drawer->PointAspect()->Aspect()->SetInteriorColor(Quantity_ColorRGBA(hover,0.65f));
     drawer->PointAspect()->Aspect()->SetAlphaMode(Graphic3d_AlphaMode_Blend);
-    drawer->SetLineAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
-    drawer->SetWireAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
+    drawer->SetLineAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
+    drawer->SetWireAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
+  }
+  // A curve body hovered whole: lines as wide as a hovered edge; on the light theme a darker rim under hovered lines.
+  HoverLines& lines = HoverLines::current();
+  lines.coreWidth = float(edge);
+  lines.rim.Nullify();
+  if (const QColor rim = highlight::hoverRim(t); rim.isValid()) {
+    lines.rim = new Prs3d_Drawer();
+    lines.rim->SetLink(m_ctx->DefaultDrawer());  // the rest (deflection, the other aspects) as everything else
+    lines.rim->SetColor(occ(rim));
+    lines.rim->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    lines.rim->SetDisplayMode(0);
+    lines.rim->SetWireAspect(new Prs3d_LineAspect(occ(rim), Aspect_TOL_SOLID, highlight::kHoverRimWidth));
+    lines.rim->SetLineAspect(new Prs3d_LineAspect(occ(rim), Aspect_TOL_SOLID, highlight::kHoverRimWidth));
   }
   if (!m_subHl.IsNull()) refreshSubHighlight();  // drawn by us in the selection colour
+  applyGridColors();
+  for (const auto& [ais, glow] : m_bodyGlows) m_ctx->Remove(glow, Standard_False);  // made again in the new colours
+  if (!m_bodyGlows.empty()) { m_bodyGlows.clear(); applySelectionLayers(); }
   // View cube per the design: flat three-tone box with dark labels, thin X/Y/Z axes in red/green/blue along
   // the lower edges, and the hovered face/edge/corner filled with the hover accent to show where a click goes.
   m_cube->SetBoxColor(occ(t.mtop));
@@ -410,8 +551,9 @@ void Viewport::applyTokens() {
   }
   // The cube draws its hover fill with the dynamic-highlight drawer's shading aspect (not its colour), so
   // recolour the aspect OCCT set up rather than replacing the drawer.
-  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetColor(occ(t.hov));
-  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetTransparency(0.3f);
+  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetColor(occ(t.hover));  // the hover's white glow (UI-38)
+  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetTransparency(0.25f);
+  Handle(NavCube)::DownCast(m_cube)->setCurrentColor(occ(t.selected3d));  // the side looked at: the selection's role
   // Edge and corner fills lie in the face planes (NavCube); pull the fill a hair towards the eye so it wins
   // the depth test instead of fighting the face.
   m_cube->DynamicHilightAttributes()->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -1.0f);
@@ -433,6 +575,9 @@ void Viewport::setNavPreset(NavPreset p) {
   map.Bind(L, AIS_MouseGesture_SelectRectangle);
   map.Bind(L | CTRL, AIS_MouseGesture_SelectRectangle);
   map.Bind(L | SHIFT, AIS_MouseGesture_SelectRectangle);
+  // Ctrl+click adds to the selection or takes a picked item out, as Shift+click does (UI-09: it selected nothing); a
+  // circle centre under Ctrl+hover is still taken first (mousePressEvent, m_ctrlCenterPick).
+  ChangeMouseSelectionSchemes().Bind(L | CTRL, AIS_SelectionScheme_XOR);
   switch (p) {
     case NavPreset::Fusion:
       map.Bind(M, AIS_MouseGesture_Pan);
@@ -454,10 +599,15 @@ void Viewport::setNavPreset(NavPreset p) {
       map.Bind(M | SHIFT, AIS_MouseGesture_Pan);
       map.Bind(M | CTRL, AIS_MouseGesture_Zoom);
       break;
+    case NavPreset::Cad2D:  // drafting: the middle button pans, the wheel (or Ctrl+middle) zooms, nothing orbits
+      map.Bind(M, AIS_MouseGesture_Pan);
+      map.Bind(M | SHIFT, AIS_MouseGesture_Pan);
+      map.Bind(M | CTRL, AIS_MouseGesture_Zoom);
+      break;
   }
   // Meta is reserved for synthetic trackpad drags; qt_flags() does not pass it from physical mouse events.
   map.Bind(M | Aspect_VKeyFlags_META, AIS_MouseGesture_Pan);
-  map.Bind(M | Aspect_VKeyFlags_META | SHIFT, AIS_MouseGesture_RotateOrbit);
+  map.Bind(M | Aspect_VKeyFlags_META | SHIFT, p == NavPreset::Cad2D ? AIS_MouseGesture_Pan : AIS_MouseGesture_RotateOrbit);
   if (m_twoDimensional)
     for (AIS_MouseGestureMap::Iterator it(map); it.More(); it.Next())
       if (it.Value() == AIS_MouseGesture_RotateOrbit || it.Value() == AIS_MouseGesture_RotateView)
@@ -468,12 +618,13 @@ bool Viewport::orbitGesture(unsigned gesture) const {
   const unsigned L = Aspect_VKeyMouse_LeftButton, M = Aspect_VKeyMouse_MiddleButton, R = Aspect_VKeyMouse_RightButton;
   const unsigned SHIFT = Aspect_VKeyFlags_SHIFT;
   (void)L;
-  if (gesture == (M | Aspect_VKeyFlags_META | SHIFT)) return true;  // Shift + two-finger drag
+  if (gesture == (M | Aspect_VKeyFlags_META | SHIFT)) return m_preset != NavPreset::Cad2D;  // Shift + two-finger drag
   switch (m_preset) {
     case NavPreset::Fusion: return gesture == (M | SHIFT);
     case NavPreset::SolidWorks: return gesture == M;
     case NavPreset::Onshape: return gesture == R;
     case NavPreset::Blender: return gesture == M;
+    case NavPreset::Cad2D: return false;
   }
   return false;
 }
@@ -482,92 +633,314 @@ void Viewport::twoDimensionalHint(const QPoint& global) {
   const qint64 now = QDateTime::currentMSecsSinceEpoch();
   if (now - m_twoDHintShown < 1500) return;  // once per attempt, not per trackpad event
   m_twoDHintShown = now;
-  const QString text = tr("2D mode is on: turn it off (Shift+2) to orbit");
+  const QString text = help::expand(tr("2D mode is on: turn 2D mode ({key:view.2d}) off to orbit"));
   QToolTip::showText(global + QPoint(14, 18), text, this, QRect(), 2500);
   emit hoverChanged(text);
 }
 
 // ---------------------------------------------------------------- display styles (F19)
-void Viewport::applyStyle(const Handle(AIS_Shape)& ais) {
+namespace {
+// Silhouettes (UI-48): a closed body outlined in its edges' colour where it turns away from the eye, where no edge lies
+// (OCCT's outline pass: its back faces drawn again a pixel further out). The flag is read as each frame is drawn, so turning
+// it on or off recomputes nothing. Translucent and clipped bodies are drawn without culling, so never outlined.
+bool outline(const Handle(AIS_Shape)& ais, bool on, const Quantity_Color* edge) {
+  const Handle(Prs3d_Drawer)& d = ais->Attributes();
+  if (!d->HasOwnShadingAspect()) return false;  // the context's default, shared by every body that has none
+  const Handle(Graphic3d_AspectFillArea3d)& aspect = d->ShadingAspect()->Aspect();
+  const bool changed = bool(aspect->ToDrawSilhouette()) != on || (edge && !aspect->EdgeColor().IsEqual(*edge));
+  aspect->SetDrawSilhouette(on);
+  if (edge) {
+    aspect->SetEdgeColor(*edge);
+    aspect->SetEdgeWidth(d->FaceBoundaryAspect()->Aspect()->Width());  // as wide as the edges
+  }
+  return changed;
+}
+bool outline(const Handle(AIS_Shape)& ais, bool on, const Quantity_Color& edge) { return outline(ais, on, &edge); }
+}  // namespace
+
+void Viewport::outlineBodies() {
+  const bool on = m_style == Style::ShadedEdges && !m_degraded;
+  for (const auto& [id, item] : m_items) outline(item.ais, on, nullptr);
+}
+
+int Viewport::outlinedBodies() const {
+  return int(std::count_if(m_items.begin(), m_items.end(), [](const auto& item) {
+    const Handle(Prs3d_Drawer)& d = item.second.ais->Attributes();
+    return d->HasOwnShadingAspect() && d->ShadingAspect()->Aspect()->ToDrawSilhouette();
+  }));
+}
+
+bool Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   Handle(Prs3d_Drawer) d = ais->Attributes();
-  d->SetFaceBoundaryDraw(m_style == Style::ShadedEdges);
-  d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.medge), Aspect_TOL_SOLID, 1.0));
-  m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
+  // A drawing has nothing behind its lines. In Hidden edges visible the edges are the overlay's (ViewportEdges.cpp), save a
+  // body drawn without the worker's arrays.
+  const bool drawing = drawingLayer(ais), hidden = (m_style == Style::HiddenLine || m_style == Style::HiddenEdges) && !drawing;
+  const auto shaped = Handle(BodyShape)::DownCast(ais);
+  const bool overlaid = m_style == Style::HiddenEdges && !drawing && !shaped.IsNull() && shaped->prs() && !shaped->prs()->triangles.IsNull();
+  const bool edges = m_style == Style::ShadedEdges || m_style == Style::HiddenLine || (m_style == Style::HiddenEdges && !overlaid);
+  bool changed = bool(d->FaceBoundaryDraw()) != edges;
+  d->SetFaceBoundaryDraw(edges);
+  // Line aspects ignore alpha here: a ghost's edges are blended towards the background instead. The body's own aspect
+  // is changed in place, so the drawn groups (which share it) follow SynchronizeAspects as well as a recompute.
+  // Hidden line's edges in the ink of the scene's background (UI-10, as drawings take it): dark on white, light on the dark
+  // ones (the theme's text colour on its own background).
+  const auto ink = drawingInk();
+  QColor edge = hidden ? QColor::fromRgbF(ink[0], ink[1], ink[2]) : m_tokens.medge;
+  if (look && look->ghost) {
+    const double t = 1 - look->opacity;
+    edge = QColor::fromRgbF(edge.redF() + (m_tokens.vp.redF() - edge.redF()) * t, edge.greenF() + (m_tokens.vp.greenF() - edge.greenF()) * t,
+                            edge.blueF() + (m_tokens.vp.blueF() - edge.blueF()) * t);
+  }
+  if (look && look->lineWidth > 0) edge = QColor::fromRgbF(look->color[0], look->color[1], look->color[2]);  // a drawing's glyph and hatch outlines
+  if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
+  else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
+  if (look && look->lineWidth > 0) {  // a drawing's lines: hairlines times the display scale (UI-10), its layer's weight and type
+    for (const auto& [own, line] : {std::pair{d->HasOwnWireAspect(), d->WireAspect()}, {d->HasOwnLineAspect(), d->LineAspect()},
+                                    {d->HasOwnFreeBoundaryAspect(), d->FreeBoundaryAspect()}})
+      if (own) {
+        line->SetWidth(look->lineWidth);
+        line->Aspect()->SetLinePattern(look->linePattern);
+        line->Aspect()->SetLineStippleFactor(look->lineFactor);
+      }
+    d->FaceBoundaryAspect()->SetWidth(lineWidth());  // outlines of fills and text stay hairlines
+  }
+  if (const auto body = Handle(BodyShape)::DownCast(ais); !body.IsNull()) changed = body->setHiddenLine(hidden, occ(sceneBackgroundColor()), occ(edge)) || changed;
+  if (outline(ais, m_style == Style::ShadedEdges && !m_degraded, occ(edge))) ais->SynchronizeAspects();
+  const int shadedMode = Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? AIS_Shaded : 3;  // an SVG's image: textured
+  if (changed) ais->SetToUpdate(shadedMode);
+  m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : shadedMode, Standard_False);
+  return changed;
 }
 
 void Viewport::setStyle(Style s) {
   m_style = s;
   if (!m_initialised) return;
-  bool selected = false;
-  for (auto& [id, it] : m_items) {
-    applyStyle(it.ais);
-    m_ctx->RecomputePrsOnly(it.ais, Standard_False, Standard_True);  // not Redisplay: that dropped the body from the selection
-    selected = selected || m_ctx->IsSelected(it.ais);
+  if (m_styleJob) m_styleJob->cancel();
+  auto bodies = std::make_shared<std::vector<std::string>>();
+  for (const auto& [id, it] : m_items) bodies->push_back(id);
+  auto next = std::make_shared<size_t>(0);
+  auto selected = std::make_shared<bool>(false);
+  auto step = [this, bodies, next, selected] {
+    if (*next >= bodies->size()) return false;
+    if (const auto it = m_items.find((*bodies)[(*next)++]); it != m_items.end()) {
+      // Not Redisplay: that dropped the body from the selection. The mode shown only, and only when it changed.
+      if (applyStyle(it->second.ais, &it->second.look) && it->second.ais->DisplayMode() != AIS_WireFrame)
+        m_ctx->RecomputePrsOnly(it->second.ais, Standard_False, Standard_False);
+      *selected = *selected || m_ctx->IsSelected(it->second.ais);
+    }
+    return *next < bodies->size();
+  };
+  auto done = [this, selected](bool) {
+    m_styleJob = nullptr;
+    if (*selected) m_ctx->HilightSelected(Standard_False);
+    scheduleEdgeOverlay();
+    redrawScene();
+  };
+  if (!m_jobs || bodies->size() <= 16) {
+    while (step()) {}
+    return done(true);
   }
-  if (selected) m_ctx->HilightSelected(Standard_False);
-  redrawScene();
+  m_styleJob = m_jobs->sliced(tr("Changing the display style"), [step](Job&) { return step(); }, done, JobKind::Background);
 }
 
 void Viewport::setGrid(bool on) {
-  m_grid = on;
+  (m_sketchInput ? m_sketchGrid : m_grid) = on;
+  showGrid();
+}
+
+void Viewport::showGrid() {
   if (!m_initialised) return;
   updateGridExtent();
-  if (on) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
+  applyGridColors();
+  if (gridDrawn()) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
   else m_viewer->DeactivateGrid();
   redrawScene();
+  emit gridShownChanged(gridShown());
+}
+
+// In a sketch every snap step is a line (24 to 60 px apart), so they are faint and every tenth one a little less: the
+// theme's viewport colour with a share of its text colour. In 3D and 2D mode (a tenth of the view apart), OCCT's greys.
+void Viewport::applyGridColors() {
+  if (!m_initialised) return;
+  const Handle(Aspect_Grid) grid = m_viewer->Grid(Aspect_GT_Rectangular);
+  if (grid.IsNull()) return;
+  if (!m_sketchInput) return grid->SetColors(Quantity_NOC_GRAY50, Quantity_NOC_GRAY70);
+  auto mix = [&](double share) {
+    const QColor& a = m_tokens.vp;
+    const QColor& b = m_tokens.fg;
+    return Quantity_Color(a.redF() + (b.redF() - a.redF()) * share, a.greenF() + (b.greenF() - a.greenF()) * share, a.blueF() + (b.blueF() - a.blueF()) * share, Quantity_TOC_sRGB);
+  };
+  grid->SetColors(mix(m_tokens.dark ? 0.09 : 0.11), mix(m_tokens.dark ? 0.22 : 0.26));
+}
+
+void Viewport::setGridSnap(bool on) {
+  if (m_gridSnap == on) return;
+  m_gridSnap = on;
+  emit gridSnapChanged(on);
+}
+
+// What updateInfiniteGrid lays out for the current zoom, without waiting for the redraw that lays it out.
+double Viewport::gridStep() const {
+  if (!m_initialised || !(m_twoDimensional || m_sketchInput)) return m_gridStep;
+  const double step = layoutStep();
+  return step > 0 ? step : m_gridStep;
+}
+
+// The step the sketch or 2D grid takes at this zoom (0: none). In a sketch every line is a snap step: sketchsnap::gridStep,
+// 24 to 60 px at the plane's own scale, in the shown length unit; a set spacing up to a quarter of the view (then its
+// fractions). In 2D mode (the drawing viewer, its placer) a tenth of the view rounded down to a power of ten, or the set
+// spacing while that draws at most 400 lines.
+double Viewport::layoutStep() const {
+  if (m_sketchInput) {
+    const double pixel = planePixel(), unit = 1 / units::toDisplay(units::Kind::Length, 1.0);
+    return pixel > 0 && std::isfinite(pixel) ? sketchsnap::gridStep(pixel, m_gridSpacing, std::isfinite(unit) ? unit : 1, std::min(width(), height()) / 4.0) : 0;
+  }
+  const gp_XYZ size = m_view->Camera()->ViewDimensions();
+  const double span = std::max(size.X(), size.Y());
+  if (!(span > 1e-9) || !std::isfinite(span)) return 0;
+  return m_gridSpacing > 0 && span / m_gridSpacing <= 400 ? m_gridSpacing : std::pow(10.0, std::floor(std::log10(span / 10.0)));
+}
+
+// World units per widget pixel on the sketch's plane at the view's centre, along the screen direction where they are
+// longest: on a plane tilted away from the screen a step is shorter on the screen along the tilt (by the tilt's cosine),
+// so the grid is laid out for that direction (up to ten times the flat size: a plane seen nearly edge on).
+double Viewport::planePixel() const {
+  const double flat = pixelSize();
+  if (!m_sketchInput || !m_initialised) return flat;
+  const QPointF c(width() / 2.0, height() / 2.0);
+  double u0, v0, u1, v1, u2, v2;
+  if (!planePoint(c, m_sketchFrame, u0, v0) || !planePoint(c + QPointF(100, 0), m_sketchFrame, u1, v1) || !planePoint(c + QPointF(0, 100), m_sketchFrame, u2, v2)) return flat;
+  const double along = std::max(std::hypot(u1 - u0, v1 - v0), std::hypot(u2 - u0, v2 - v0)) / 100;
+  if (!std::isfinite(along) || along < flat * 1.02) return flat;  // facing the screen (to rounding)
+  return std::min(along, 10 * flat);
+}
+
+QPointF Viewport::pixelAlign(const opad::Vec3& world, int width) const {
+  if (!m_initialised || m_view->Window().IsNull()) return {};
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  const gp_Pnt ndc = m_view->Camera()->Project(gp_Pnt(world[0], world[1], world[2]));
+  const double x = (ndc.X() + 1) * 0.5 * w, y = (1 - ndc.Y()) * 0.5 * h;  // device pixels from the top left, continuous
+  auto onPixels = [&](double c) { return width % 2 ? std::floor(c) + 0.5 : std::round(c); };
+  const QPointF scale = viewScale();
+  if (!std::isfinite(x) || !std::isfinite(y) || !(scale.x() > 0) || !(scale.y() > 0)) return {};
+  return {(onPixels(x) - x) / scale.x(), (onPixels(y) - y) / scale.y()};
+}
+
+// ---------------------------------------------------------------- the sketch's own cursor
+void Viewport::setOwnCursor(bool on) {
+  m_ownCursorWanted = on;
+  applyOwnCursor();
+}
+
+void Viewport::applyOwnCursor() {
+  const bool hide = m_ownCursorWanted && m_sketchInput && m_initialised && !m_blocked && !m_ownCursorAside && !QApplication::activePopupWidget();
+  // Asked for, it is blank again also when another part of the view set or reset the widget's cursor meanwhile (the
+  // section plane's handle, a measurement anchor, clearing a dimension).
+  const bool blank = testAttribute(Qt::WA_SetCursor) && cursor().shape() == Qt::BlankCursor;
+  if (hide == m_ownCursorShown && (!hide || blank)) return;
+  const bool changed = hide != m_ownCursorShown;
+  m_ownCursorShown = hide;
+  if (hide) {
+    // The overlays on the view (value boxes, prompt, chips) would inherit the blank cursor: they keep the arrow (one made
+    // later gets it when it is polished, Viewport::event).
+    for (QWidget* child : findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
+      if (!child->testAttribute(Qt::WA_SetCursor)) child->setCursor(Qt::ArrowCursor);
+    setCursor(Qt::BlankCursor);
+  } else unsetCursor();
+  if (changed) emit ownCursorChanged(hide);
 }
 
 void Viewport::updateGridExtent() {
   if (!m_initialised) return;
   m_gridSpacing=QSettings().value("view/gridSpacing",0.0).toDouble();
-  if (m_twoDimensional) { updateInfiniteGrid(true); return; }
-  Bnd_Box bounds;
-  for (const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
-  for (const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
-  double extent=100;
+  if (m_twoDimensional || m_sketchInput) { updateInfiniteGrid(true); return; }
+  // In 3D the grid is a patch under the model, in the grid plane: around the plane's origin while that square would be
+  // at most four times the model's own (most parts), else around the model's footprint. A house 600 m out (an OBJ keeping
+  // its site coordinates) got a 1.4 km sheet around (0,0,0), which also pulled box-less fits to the origin.
+  const gp_Ax3 plane=m_viewer->PrivilegedPlane();
+  const Bnd_Box bounds=fitBounds(false);
+  const double minimum=std::max(100.0,m_gridExtentSetting);
+  double cx=0,cy=0,half=0;
   if (!bounds.IsVoid()) {
     const auto lo=bounds.CornerMin(), hi=bounds.CornerMax();
-    extent=std::max({extent,std::abs(lo.X()),std::abs(lo.Y()),std::abs(lo.Z()),std::abs(hi.X()),std::abs(hi.Y()),std::abs(hi.Z())})*1.1;
+    Bnd_Box2d footprint;
+    for (int i=0;i<8;++i) {
+      const gp_Vec rel(plane.Location(),gp_Pnt(i&1?hi.X():lo.X(),i&2?hi.Y():lo.Y(),i&4?hi.Z():lo.Z()));
+      footprint.Add(gp_Pnt2d(rel.Dot(gp_Vec(plane.XDirection())),rel.Dot(gp_Vec(plane.YDirection()))));
+    }
+    double u0,v0,u1,v1;
+    footprint.Get(u0,v0,u1,v1);
+    half=std::max(u1-u0,v1-v0)/2*1.1;
+    const double around=std::max({-u0,u1,-v0,v1})*1.1;  // the square around the origin that holds the model
+    if (around>std::max(minimum,4*half)) cx=(u0+u1)/2,cy=(v0+v1)/2;
+    else half=around;
   }
-  extent=std::max(extent,QSettings().value("view/gridExtent",100.0).toDouble());
-  const double custom=QSettings().value("view/gridSpacing",0.0).toDouble();
-  const double step=custom>0?custom:std::pow(10.0,std::floor(std::log10(extent/10.0)));
+  double extent=std::max(half,minimum);
+  const double step=m_gridSpacing>0?m_gridSpacing:std::pow(10.0,std::floor(std::log10(extent/10.0)));
+  // Every tenth line stays on a world multiple of ten steps (and snapping on multiples of the step).
+  const double major=10*step,ox=std::round(cx/major)*major,oy=std::round(cy/major)*major;
+  extent+=std::max(std::abs(ox-cx),std::abs(oy-cy));
   m_gridStep=step;
   m_gridShownStep=0;
-  m_viewer->SetRectangularGridValues(0,0,step,step,0);
+  placeGrid(ox,oy,step,extent);
+  if (trace::enabled()) trace::log(QStringLiteral("3D grid: spacing %1 around (%2, %3), %4 each way").arg(step).arg(ox).arg(oy).arg(extent));
+}
+
+// The grid centred on (u, v) of the privileged plane. V3d_RectangularGrid draws its lines around (-XOrigin, -YOrigin)
+// (UpdateDisplay translates by minus the origin) while Aspect_RectangularGrid::Compute snaps around (+XOrigin, +YOrigin);
+// OPAD snaps by itself, so the origin is handed over negated and the lines lie where they are meant to.
+void Viewport::placeGrid(double u, double v, double step, double extent) {
+  m_viewer->SetRectangularGridValues(-u,-v,step,step,0);
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
 }
 
-// OCCT's grid is a finite patch. In 2D mode it is laid out again around what the view shows whenever the view gets
-// near its edge or the zoom asks for another spacing (lines a tenth of the view apart, or the set spacing while that
-// gives at most 400 lines); its lines stay on world multiples of the spacing. Called from every redraw, so the test
-// whether anything changed comes first and is cheap.
+bool Viewport::benchGridEcho() const { return m_initialised && m_viewer->GridEcho(); }
+
+Bnd_Box Viewport::benchGridBox() const {
+  Bnd_Box box;
+  if (!m_initialised) return box;
+  Graphic3d_MapOfStructure displayed;
+  m_viewer->StructureManager()->DisplayedStructures(displayed);
+  for (Graphic3d_MapOfStructure::Iterator it(displayed); it.More(); it.Next())
+    if (it.Key()->IsInfinite() && it.Key()->TransformPersistence().IsNull()) box.Add(it.Key()->MinMaxValues(Standard_True));
+  return box;
+}
+
+// OCCT's grid is a finite patch. In 2D mode and while sketching (in the sketch's plane) it is laid out again around
+// what the view shows whenever the view gets near its edge or the zoom asks for another spacing (layoutStep: in a sketch
+// 1, 2 or 5 times a power of ten, 24 to 60 px apart, every line a snap step, so grid snapping lands on what is drawn).
+// Its origin is on a multiple of ten steps: OCCT draws every tenth line from it darker, so those stay on round values
+// (50, 100 mm) through the sketch's axes and do not move with a pan. Called from every redraw, so the test whether
+// anything changed comes first.
 void Viewport::updateInfiniteGrid(bool force) {
-  if (!m_initialised || !m_grid) return;
+  if (!m_initialised || !gridDrawn()) return;
   const auto camera = m_view->Camera();
   const gp_XYZ size = camera->ViewDimensions();
-  const double span = std::max(size.X(), size.Y());
-  if (!(span > 1e-9) || !std::isfinite(span)) return;
+  const double pixel = pixelSize(), step = layoutStep();
+  // What the view shows of the plane: longer along a tilt (planePixel), as the step is.
+  const double span = std::max(size.X(), size.Y()) * (m_sketchInput && pixel > 0 ? planePixel() / pixel : 1.0);
+  if (!(span > 1e-9) || !std::isfinite(span) || !(step > 0) || !std::isfinite(step)) return;
   const gp_Ax3 plane = m_viewer->PrivilegedPlane();
   const gp_Vec rel(plane.Location(), camera->Center());
   const double cx = rel.Dot(gp_Vec(plane.XDirection())), cy = rel.Dot(gp_Vec(plane.YDirection()));
-  const double step = m_gridSpacing > 0 && span / m_gridSpacing <= 400 ? m_gridSpacing : std::pow(10.0, std::floor(std::log10(span / 10.0)));
   const double off = std::hypot(cx - m_gridShownX, cy - m_gridShownY);
   if (!force && step == m_gridShownStep && off + span / 2 <= m_gridShownExtent * 0.9 && m_gridShownExtent <= span * 3) return;
-  const double ox = std::round(cx / step) * step, oy = std::round(cy / step) * step, extent = std::ceil(span * 1.5 / step) * step;
+  const double major = 10 * step, ox = std::round(cx / major) * major, oy = std::round(cy / major) * major;
+  const double extent = std::ceil((span * 1.5 + std::max(std::abs(ox - cx), std::abs(oy - cy))) / step) * step;
   m_gridStep = m_gridShownStep = step;
   m_gridShownX = ox;
   m_gridShownY = oy;
   m_gridShownExtent = extent;
-  m_viewer->SetRectangularGridValues(ox, oy, step, step, 0);
-  m_viewer->SetRectangularGridGraphicValues(extent, extent, 0);
+  placeGrid(ox, oy, step, extent);
   if (trace::enabled()) trace::log(QStringLiteral("2D grid: spacing %1 around (%2, %3), %4 each way").arg(step).arg(ox).arg(oy).arg(extent));
 }
 
 void Viewport::setShadows(bool on) {
   if (!m_initialised) return;
+  // The overhead light only (UI-45): the headlight's shadows fall behind what casts them, out of sight, and cost a pass.
   for (V3d_ListOfLightIterator it = m_viewer->ActiveLightIterator(); it.More(); it.Next())
-    if (it.Value()->Type() == Graphic3d_TypeOfLightSource_Directional) it.Value()->SetCastShadows(on);
+    if (it.Value()->Type() == Graphic3d_TypeOfLightSource_Directional) it.Value()->SetCastShadows(on && !it.Value()->IsHeadlight());
   m_view->ChangeRenderingParams().ShadowMapResolution = on ? 2048 : 1024;
   redrawScene();
 }
@@ -589,6 +962,10 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
   m_ctx->Load(ais, -1);  // register with the selection manager (picking BVH); Display() with mode -1 does not
   m_ctx->Deactivate(ais);
   if (!m_bodiesPickable) return;  // sketching, or a feature input that only takes sketch regions / planes
+  if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end()) {  // a ghost, a locked or a hidden body (its look)
+    if (const auto item = m_items.find(node->second); item != m_items.end() && !item->second.look.shownPickable()) return;
+    if (const auto wire = m_sketchWires.find(node->second); wire != m_sketchWires.end() && !wire->second.look.shownPickable()) return;
+  }
   TopAbs_ShapeEnum t = TopAbs_SHAPE;
   switch (m_filter) {
     case SelFilter::Body: t = TopAbs_SHAPE; break;
@@ -596,16 +973,31 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
     case SelFilter::Edge: t = TopAbs_EDGE; break;
     case SelFilter::Vertex: t = TopAbs_VERTEX; break;
   }
+  // A drawing has no faces to pick (UI-42): its text and hatches are a layer's, which the Face filter picks whole. OCCT
+  // built a sensitive per glyph and hatch face on the UI thread there (a DWG's text layer: 0.1-0.2 s, 2.3-2.7 s in all).
+  if (t == TopAbs_FACE && drawingLayer(ais)) t = TopAbs_SHAPE;
   m_ctx->Activate(ais, AIS_Shape::SelectionMode(t));
+  // An axis input's round faces: the bodies' faces too (the owner filter keeps the round ones). An edge on such a face is
+  // nearer the pointer and of a higher priority, so a rim still picks the rim.
+  if (m_roundFaces && m_filter == SelFilter::Edge)
+    if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end() && m_items.count(node->second)) m_ctx->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE));
 }
 
-void Viewport::setSelectionFilter(SelFilter f) {
+bool Viewport::drawingLayer(const Handle(AIS_InteractiveObject)& ais) const {
+  const auto node = m_nodeOf.find(ais.get());
+  const opad::Node* n = node == m_nodeOf.end() ? nullptr : m_doc->scene.node(node->second);
+  return n && n->representation == "drawing2d";
+}
+
+void Viewport::setSelectionFilter(SelFilter f, bool roundFaces) {
+  roundFaces = roundFaces && f == SelFilter::Edge;
   // The same filter again changes nothing: every body was activated in it as it was displayed (re-activating a big
   // drawing layer's thousands of edges costs OCCT a few hundred ms per layer). Who waits for filterApplied still gets it.
-  if (f == m_filter && !m_filterJob && m_initialised) {
+  if (f == m_filter && roundFaces == m_roundFaces && !m_filterJob && m_initialised) {
     QTimer::singleShot(0, this, [this] { emit filterApplied(); });
     return;
   }
+  m_roundFaces = roundFaces;
   applySelectionFilter(f);
 }
 
@@ -624,7 +1016,8 @@ void Viewport::applySelectionFilter(SelFilter f) {
   auto i = std::make_shared<size_t>(0);
   m_filterJob = m_jobs->sliced(tr("Switching selection mode"), [this, items, i](Job&) {
     if (*i >= items->size()) return false;
-    activateSelection((*items)[(*i)++]);
+    // One removed meanwhile (a sync, another document) stays out: Load would put it back in the context, pickable unseen.
+    if (const Handle(AIS_Shape)& ais = (*items)[(*i)++]; m_ctx->DisplayStatus(ais) != PrsMgr_DisplayStatus_None) activateSelection(ais);
     return *i < items->size();
   }, [this](bool completed) {
     m_filterJob = nullptr;
@@ -646,7 +1039,7 @@ std::vector<opad::Ref> Viewport::selection() const {
     Handle(AIS_InteractiveObject) obj = m_ctx->SelectedInteractive();
     auto center = m_centerObjects.find(obj.get());
     if (center != m_centerObjects.end()) { out.push_back(m_centers.at(center->second).ref); continue; }
-    if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) continue;
+    if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull() || !Handle(OccluderOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) continue;
     auto it = m_nodeOf.find(obj.get());
     if (it == m_nodeOf.end()) continue;
     opad::Ref r;
@@ -780,7 +1173,17 @@ void Viewport::refreshSubHighlight() {
     if (!o.IsNull() && Handle(CircleOwner)::DownCast(o).IsNull()) st->owners.push_back(o);
   }
   if (st->owners.empty()) return;
-  st->hl = new SubHighlight(selectionTint());
+  QColor body;  // the selection's look over the first body close to its colour, else any (UI-38: an outline on a blue part)
+  std::unordered_set<const void*> bodies;  // the colour is the body's: each one looked at once, not per selected face
+  for (const auto& o : st->owners) {
+    if (!bodies.insert(o->Selectable().get()).second) continue;
+    if (const auto node = m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(o->Selectable()).get()); node != m_nodeOf.end()) {
+      const QColor colour = shownColor(node->second);
+      if (!body.isValid() || highlight::closeToSelection(m_tokens, colour)) body = colour;
+      if (highlight::closeToSelection(m_tokens, body)) break;
+    }
+  }
+  st->hl = new SubHighlight(glowStyle(body, false));
   constexpr size_t kChunk = 200000;  // nodes per primitive array: turning a chunk into an array stays a small step
   auto flush = [st](bool all) {
     if (!st->tv.empty() && (all || st->tv.size() >= kChunk)) {
@@ -816,25 +1219,10 @@ void Viewport::refreshSubHighlight() {
       flush(false);return true;
     }
     auto appendEdge=[&](const TopoDS_Edge& e) {
-      TopLoc_Location loc;
-      std::vector<gp_Pnt> line;
-      Handle(Poly_PolygonOnTriangulation) poly;
-      Handle(Poly_Triangulation) t;
-      BRep_Tool::PolygonOnTriangulation(e, poly, t, loc);
-      if (!poly.IsNull() && !t.IsNull()) {
-        for (int n = 1; n <= poly->NbNodes(); ++n) line.push_back(t->Node(poly->Node(n)));
-      } else if (Handle(Poly_Polygon3D) p3 = BRep_Tool::Polygon3D(e, loc); !p3.IsNull()) {
-        for (int n = 1; n <= p3->NbNodes(); ++n) line.push_back(p3->Nodes().Value(n));
-      } else if (!BRep_Tool::Degenerated(e)) {  // unmeshed: a coarse sampling of the curve
-        loc = TopLoc_Location();
-        BRepAdaptor_Curve c(e);
-        constexpr int kSamples = 24;
-        for (int n = 0; n <= kSamples; ++n) line.push_back(c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * n / kSamples));
-      }
-      const gp_Trsf w = body * loc.Transformation();
+      const std::vector<gp_Pnt> line = edgePolyline(e);
       for (size_t n = 1; n < line.size(); ++n) {
-        st->sv.push_back(line[n - 1].Transformed(w));
-        st->sv.push_back(line[n].Transformed(w));
+        st->sv.push_back(line[n - 1].Transformed(body));
+        st->sv.push_back(line[n].Transformed(body));
       }
     };
     TopLoc_Location loc;
@@ -864,7 +1252,7 @@ void Viewport::refreshSubHighlight() {
     if (!completed) return;  // superseded by a newer selection
     flush(true);
     m_subHl = st->hl;
-    m_subHl->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_subHl->SetZLayer(m_selectionXray ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top);
     m_ctx->Display(m_subHl, 0, -1, Standard_False);  // selection mode -1: never pickable
     redrawScene();
     emit subHighlightApplied();
@@ -877,8 +1265,32 @@ void Viewport::refreshSubHighlight() {
   m_subJob = m_jobs->sliced(tr("Highlighting %1 selected").arg(st->owners.size()), [step](Job&) { return step(); }, done);
 }
 
-// Retain original materials under a translucent tint, with white surface and
-// boundary glow. Share worker-built arrays and slice large selections.
+QColor Viewport::shownColor(const std::string& node) const {
+  std::array<double, 3> c;
+  if (const auto item = m_items.find(node); item != m_items.end()) c = item->second.look.color;
+  else if (const auto wire = m_sketchWires.find(node); wire != m_sketchWires.end()) c = wire->second.look.color;
+  else return {};
+  return QColor::fromRgbF(std::clamp(c[0], 0.0, 1.0), std::clamp(c[1], 0.0, 1.0), std::clamp(c[2], 0.0, 1.0));
+}
+
+GlowStyle Viewport::glowStyle(const QColor& body, bool wholeBody) const {
+  const highlight::Selection s = highlight::selection(m_tokens, body, wholeBody);
+  const float scale = float(viewScale().x());  // device pixels: the same width at 100 % and 150 %
+  GlowStyle g;
+  g.fill = occ(s.fill);
+  g.edge = occ(s.edge);
+  g.halo = occ(s.halo);
+  g.fillAlpha = float(s.fillAlpha);
+  g.haloAlpha = float(s.haloAlpha);
+  g.edgeWidth = float(s.edgeWidth) * scale;
+  g.haloWidth = float(s.haloWidth) * scale;
+  g.point = float(s.point) * scale;
+  g.pointHalo = float(s.pointHalo) * scale;
+  return g;
+}
+
+// Selected bodies over their own materials: a tint of the selection colour and its edges in a halo (UI-38), from the
+// worker-built arrays, large selections sliced.
 void Viewport::applySelectionLayers() {
   if(m_bodyGlowJob) m_bodyGlowJob->cancel();
   markPickedPoints();
@@ -889,13 +1301,25 @@ void Viewport::applySelectionLayers() {
     size_t i=0,removed=0;
   };
   auto state=std::make_shared<State>();
-  for(auto& [id,it]:m_items) {auto prs=m_prs.find(it.key);state->targets.push_back({it.ais,prs==m_prs.end()?nullptr:prs->second});}
-  for(auto& [id,wire]:m_sketchWires) state->targets.push_back({wire.ais,wire.prs});
-  for(const auto& [ais,prs]:state->targets) if(m_ctx->IsSelected(ais) && prs) state->keep.insert(ais.get());
+  // Only what has to change (UI-40): selected objects (Topmost, their glow) and those still in a layer they no longer
+  // belong to. With nothing selected that is nothing, and no job: a load made one per batch of bodies, 70 on the Engine.
+  auto target=[&](const Handle(AIS_Shape)& ais,const std::shared_ptr<BodyPrs>& prs,Graphic3d_ZLayerId rest) {
+    const bool selected=m_ctx->IsSelected(ais);
+    if(!selected && ais->ZLayer()==rest) return;
+    state->targets.push_back({ais,prs});
+    if(selected && prs) state->keep.insert(ais.get());
+  };
+  // A stretched canvas: no arrays of that aspect.
+  for(auto& [id,it]:m_items) {auto prs=m_prs.find(it.key);target(it.ais,prs==m_prs.end()||it.stretch!=1?nullptr:prs->second,it.look.layer);}
+  for(auto& [id,wire]:m_sketchWires) target(wire.ais,wire.prs,Graphic3d_ZLayerId_Default);
   for(const auto& [ais,glow]:m_bodyGlows) if(!state->keep.count(ais)) state->stale.push_back(ais);
+  if(state->targets.empty() && state->stale.empty()) return;
   auto update=[this](const Handle(AIS_Shape)& ais,const std::shared_ptr<BodyPrs>& prs) {
     const bool selected=m_ctx->IsSelected(ais);
-    const auto want=selected?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Default;
+    Graphic3d_ZLayerId rest=Graphic3d_ZLayerId_Default;  // where its look puts it (UI-121); selected: Topmost, the X-ray, last
+    if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end()) if(const auto item=m_items.find(node->second);item!=m_items.end()) rest=item->second.look.layer;
+    const auto selectedLayer=m_selectionXray?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Top;
+    const auto want=selected?selectedLayer:rest;
     if(ais->ZLayer()!=want) m_ctx->SetZLayer(ais,want);
     if(!selected || !prs) return;
     // A body a feature preview stands in for (moved, joined, cut) shows no glow where it was: it read as a copy left behind.
@@ -906,14 +1330,22 @@ void Viewport::applySelectionLayers() {
       // on curved faces (dark blotches all over a selected loft).
       std::shared_ptr<const BodyPrs> shown=prs;
       if(const auto body=Handle(BodyShape)::DownCast(ais);!body.IsNull() && body->displayPrs() && !body->displayPrs()->triangles.IsNull()) shown=body->displayPrs();
-      glow=new SubHighlight(selectionTint());
-      if(!shown->triangles.IsNull()) glow->m_triangles.push_back(shown->triangles);
+      // Faces: a tint and thin boundaries, outlined when the body is the selection's colour. Only curves (a sketch, a drawing
+      // layer): drawn as picked edges, thick in a halo; outlined they would read white, the hover's colour. A picture: its
+      // outline only, never a tint over it.
+      const bool faces=!shown->triangles.IsNull();
+      const auto node=m_nodeOf.find(ais.get());
+      const opad::Node* body=node==m_nodeOf.end()?nullptr:m_doc->scene.node(node->second);
+      glow=new SubHighlight(glowStyle(faces?shownColor(node==m_nodeOf.end()?std::string():node->second):QColor(),faces));
+      if(faces && !(body && opad::is_canvas(*body))) glow->m_triangles.push_back(shown->triangles);
       if(!shown->boundaries.IsNull()) glow->m_segments.push_back(shown->boundaries);
       if(!shown->loosePoints.IsNull()) glow->m_points.push_back(shown->loosePoints);
-      glow->SetZLayer(Graphic3d_ZLayerId_Topmost);
+      glow->SetZLayer(selectedLayer);
       glow->SetClipPlanes(ais->ClipPlanes());
       m_ctx->Display(glow,0,-1,false);
+      if(m_side) if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end()) maskSide(node->second,glow);
     }
+    else if(glow->ZLayer()!=selectedLayer) m_ctx->SetZLayer(glow,selectedLayer);
     glow->SetLocalTransformation(ais->Transformation());
   };
   auto step=[this,state,update](Job*) {
@@ -926,7 +1358,7 @@ void Viewport::applySelectionLayers() {
     const auto& [ais,prs]=state->targets[state->i++];update(ais,prs);return true;
   };
   if(state->targets.size()+state->stale.size()<=64) {while(step(nullptr)) {} return;}
-  m_bodyGlowJob=m_jobs->sliced(tr("Highlighting %1 selected").arg(state->keep.size()),[step](Job& job){return step(&job);},[this](bool){m_bodyGlowJob=nullptr;redrawScene();});
+  m_bodyGlowJob=m_jobs->sliced(tr("Highlighting %1 selected").arg(state->keep.size()),[step](Job& job){return step(&job);},[this](bool){m_bodyGlowJob=nullptr;redrawScene();},JobKind::Background);
 }
 
 // One translucent box per selected node, covering its bodies; a stand-in for per-object highlighting.
@@ -948,11 +1380,11 @@ void Viewport::showShade(const std::vector<std::string>& ids) {
     const double diag = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0));
     const double pad = std::max(1e-3, diag * 0.002);
     Handle(AIS_Shape) s = new AIS_Shape(BRepPrimAPI_MakeBox(gp_Pnt(x0 - pad, y0 - pad, z0 - pad), gp_Pnt(x1 + pad, y1 + pad, z1 + pad)).Shape());
-    s->SetColor(selectionTint());
+    s->SetColor(occ(m_tokens.selected3d));
     s->SetTransparency(0.7f);
     s->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     s->Attributes()->SetFaceBoundaryDraw(Standard_True);
-    s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE, Aspect_TOL_SOLID, 2.5));
+    s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.selected3d), Aspect_TOL_SOLID, 2.5));
     s->SetZLayer(Graphic3d_ZLayerId_Topmost);  // same X-ray treatment as per-object highlights
     m_ctx->Display(s, AIS_Shaded, -1, Standard_False);  // selection mode -1: never pickable
     m_shade.push_back(s);
@@ -985,11 +1417,35 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   clock.start();
   refreshMeasurement();
   noteCameraMoved();
+  pruneTracking();
   scheduleRefinement();
+  smallPartsCameraMoved();  // the small-part filter
   trackHoverFade();
-  if (m_twoDimensional) updateInfiniteGrid(false);
+  if (m_twoDimensional || m_sketchInput) updateInfiniteGrid(false);
+  updateCubeSide();
+  if (const auto camera = m_view->Camera()->WorldViewProjState(); camera != m_settleCamera) {  // moved: recorded once it rests
+    m_settleCamera = camera;
+    m_settleTimer.start();
+  }
+  degradeWhileNavigating();
+  // Side by side: A's view is drawn after this one with its camera (the controller redraws it only when it is invalid).
+  const bool full = m_side && m_view->IsInvalidated() && !m_sideView->IsInvalidated();
+  QElapsedTimer draw;
+  draw.start();
   AIS_ViewController::handleViewRedraw(ctx, view);
+  if (m_side) drawSide(full);
+  if (!m_degraded && draw.elapsed() >= 2) m_fullFrameMs = draw.elapsed();  // a hover alone redraws in under 2 ms
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
+}
+
+// The cube side the view looks straight at, drawn as selected (UI-38): only when it changes, a recompute of the cube alone.
+void Viewport::updateCubeSide() {
+  if (m_twoDimensional) return;
+  const gp_Dir toEye = m_view->Camera()->Direction().Reversed();
+  int side = -1;
+  for (const V3d_TypeOfOrientation o : {V3d_Xpos, V3d_Ypos, V3d_Zpos, V3d_Xneg, V3d_Yneg, V3d_Zneg})
+    if (V3d::GetProjAxis(o).IsEqual(toEye, 1e-4)) side = o;
+  if (Handle(NavCube)::DownCast(m_cube)->setCurrentSide(side)) m_ctx->RecomputePrsOnly(m_cube, Standard_False);
 }
 
 void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
@@ -1001,10 +1457,13 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
     if (trace::enabled()) trace::log(QStringLiteral("3D click: on the view cube, %1 stay selected").arg(m_ctx->NbSelected()));
     return;
   }
-  // Arc discovery targets must never become edge picks through a rubber band.
-  std::vector<Handle(SelectMgr_EntityOwner)> discovery;
+  // Arc discovery targets must never become edge picks through a rubber band, and a face standing in front (UI-31) is
+  // never a pick at all.
+  std::vector<Handle(SelectMgr_EntityOwner)> discovery, occluders;
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected())
     if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) discovery.push_back(m_ctx->SelectedOwner());
+    else if (!Handle(OccluderOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) occluders.push_back(m_ctx->SelectedOwner());
+  for (const auto& owner : occluders) m_ctx->AddOrRemoveSelected(owner, false);
   for (const auto& owner : discovery) {
     const auto circle=Handle(CircleOwner)::DownCast(owner);
     auto node=m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
@@ -1016,9 +1475,9 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
     }
   }
   if (m_selJob) m_selJob->cancel();
-  m_hasLastPick = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0;  // guided tools mark where the click landed
+  gp_Pnt p;
+  m_hasLastPick = detectedPoint(p);  // guided tools mark where the click landed
   if (m_hasLastPick) {
-    gp_Pnt p = m_ctx->MainSelector()->PickedPoint(1);
     const auto circle=Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
     if(!circle.IsNull()) p=circle->center.Transformed(m_ctx->DetectedInteractive()->Transformation());
     m_lastPick = {p.X(), p.Y(), p.Z()};
@@ -1048,26 +1507,86 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
   emit selectionChanged();
 }
 
-void Viewport::isolate(const std::vector<std::string>& ids) {
+void Viewport::isolate(const std::vector<std::string>& ids, bool fit) {
+  if (ids.empty() && m_isolated.empty()) return;  // not isolated (every document replacement asks): no full sync
   m_isolated.clear();
   for (const auto& id : ids)
     {if(m_doc->scene.sketch(id))m_isolated.insert(id);for (const auto& b : m_doc->scene.bodies_under(id)) m_isolated.insert(b);}
-  m_needFit = !m_isolated.empty();
+  m_needFit = fit && !m_isolated.empty();
   sync();
-  if (!m_isolated.empty()) fitAll();
+  if (fit && !m_isolated.empty()) fitAll();
   emit isolationChanged();
 }
 
 // ---------------------------------------------------------------- camera (F17/F18)
-void Viewport::fitAll() {
+// What Fit frames: the model as drawn (bodies, sketches and their images, a feature preview, finite overlays such as a
+// drawing being placed), never the grid, gizmos or annotations (infinite). V3d_View::FitAll(margin) boxes every
+// structure in the view, and OCCT 7.9 adds the centre of any *infinite* structure more than 500 m across
+// (Graphic3d_Layer::BoundingBox, centerOfinfiniteBndBox). The grid is one, and it used to reach from the world origin to
+// the farthest coordinate: a house 600 m out (an OBJ keeping its site coordinates) was framed together with (0,0,0), 9x
+// too small, in the corner under the cube.
+Bnd_Box Viewport::fitBounds(bool fallback) const {
+  Bnd_Box bounds;
+  auto add = [&](const Handle(AIS_InteractiveObject)& object) {
+    if (object.IsNull() || !m_ctx->IsDisplayed(object)) return;  // erased under a feature preview: the preview counts
+    Bnd_Box box;
+    object->BoundingBox(box);
+    bounds.Add(box);
+  };
+  for (const auto& [id, item] : m_items) add(item.ais);
+  for (const auto& [id, wire] : m_sketchWires) {
+    add(wire.ais);
+    for (const auto& image : wire.backdrops) add(image);
+  }
+  for (const auto& preview : m_previewBodies) add(preview);
+  for (const auto& [id, part] : m_compareParts) add(part);  // null: not drawable
+  for (const auto& overlay : m_overlays) if (!overlay->IsInfinite() && overlay->TransformPersistence().IsNull()) add(overlay);
+  if (fallback && bounds.IsVoid()) {  // nothing to frame: the default grid, as Home does
+    const double extent = std::max(1.0, m_gridExtentSetting);
+    bounds.Add(gp_Pnt(-extent, -extent, 0));
+    bounds.Add(gp_Pnt(extent, extent, 0));
+  }
+  return bounds;
+}
+
+void Viewport::fitAll(bool animate) {
   if (!m_initialised) return;
-  m_view->FitAll(0.02, Standard_False);
-  // A flat wire can make OCCT put an orthographic eye exactly on its target.
-  // Keep a usable picking ray without changing the fitted on-screen scale.
-  const auto camera=m_view->Camera();
-  if(camera->IsOrthographic() && camera->Distance()<1.0){camera->SetDistance(std::max(1.0,camera->Scale()));m_view->ZFitAll();}
-  m_view->Invalidate();
+  moveCamera(animate, 0.35, [this] {
+    m_view->FitAll(fitBounds(), 0.02, Standard_False);
+    // A flat wire can make OCCT put an orthographic eye exactly on its target.
+    // Keep a usable picking ray without changing the fitted on-screen scale.
+    const auto camera=m_view->Camera();
+    if(camera->IsOrthographic() && camera->Distance()<1.0){camera->SetDistance(std::max(1.0,camera->Scale()));m_view->ZFitAll();}
+  });
+}
+
+void Viewport::animateFitAll(double seconds) {
+  if (!m_initialised) return;
+  myViewAnimation->Stop();
+  m_needFit = false;
+  Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*m_view->Camera());
+  fitAll();
+  Handle(Graphic3d_Camera) end = new Graphic3d_Camera(*m_view->Camera());
+  m_view->Camera()->Copy(start);
+  myViewAnimation->SetView(m_view);
+  myViewAnimation->SetCameraStart(start);
+  myViewAnimation->SetCameraEnd(end);
+  myViewAnimation->SetOwnDuration(seconds);
+  myViewAnimation->StartTimer(0.0, 1.0, Standard_True);
+  m_glide = true;  // the 16 ms timer moves the camera
   requestRedraw();
+}
+
+bool Viewport::cameraMoving() const { return !myViewAnimation.IsNull() && !myViewAnimation->IsStopped(); }
+
+bool Viewport::showsAll() const {
+  const Bnd_Box box = fitBounds(false);
+  if (!m_initialised || box.IsVoid()) return true;
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  for (int c = 0; c < 8; ++c)
+    if (!rect().contains(widgetPoint({(c & 1) ? x1 : x0, (c & 2) ? y1 : y0, (c & 4) ? z1 : z0}))) return false;
+  return true;
 }
 
 void Viewport::fitWhenReady() {
@@ -1083,6 +1602,14 @@ void Viewport::fitNodesWhenReady(std::vector<std::string> ids) {
 void Viewport::cancelMeshing() {
   *m_meshCancel = true;
   m_meshCancel = std::make_shared<std::atomic<bool>>(false);
+  // What was still to come stays out (UI-40), until resetMeshing: the bodies waiting for a mesh and those queued for display.
+  std::lock_guard<std::mutex> lock(m_meshMu);
+  for (const auto& [key, nodes] : m_waiting) m_meshSkipped.insert(key);
+  for (const auto& id : m_displayQueue)
+    if (const opad::Node* n = m_doc->scene.node(id)) m_meshSkipped.insert(n->body_key);
+  m_waiting.clear();
+  m_waitingNodes = 0;
+  m_displayQueue.clear();
 }
 
 void Viewport::resetMeshing() {
@@ -1090,7 +1617,7 @@ void Viewport::resetMeshing() {
   m_meshSkipped.clear();
 }
 
-void Viewport::fitNodes(const std::vector<std::string>& ids) {
+void Viewport::fitNodes(const std::vector<std::string>& ids, bool animate) {
   if (!m_initialised) return;
   m_needFit = false;
   Bnd_Box box;
@@ -1100,13 +1627,11 @@ void Viewport::fitNodes(const std::vector<std::string>& ids) {
       if (m_items.count(b)) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, b));
   }
   if (trace::enabled()) { double a, b, c, d, e, f; if (!box.IsVoid()) box.Get(a, b, c, d, e, f); trace::log(QStringLiteral("fitNodes: box void=%1 [%2 %3 %4]-[%5 %6 %7]").arg(box.IsVoid()).arg(a).arg(b).arg(c).arg(d).arg(e).arg(f)); }
-  if (box.IsVoid()) return fitAll();
-  m_view->FitAll(box, 0.02, Standard_False);
-  m_view->Invalidate();
-  requestRedraw();
+  if (box.IsVoid()) return fitAll(animate);
+  moveCamera(animate, 0.35, [this, &box] { m_view->FitAll(box, 0.02, Standard_False); });
 }
 
-void Viewport::fitSelection() {
+void Viewport::fitSelection(bool animate) {
   if (!m_initialised) return;
   m_needFit = false;
   Bnd_Box box;
@@ -1115,7 +1640,7 @@ void Viewport::fitSelection() {
     Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->SelectedOwner());
     auto it = m_nodeOf.find(m_ctx->SelectedInteractive().get());
     if(const auto sub=Handle(SubShapeOwner)::DownCast(owner);!sub.IsNull()) sub->prepare();
-    if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
+    if (!owner.IsNull() && owner->HasShape() && owner->ComesFromDecomposition() && m_filter != SelFilter::Body) {  // not a drawing layer picked whole
       TopoDS_Shape sub = owner->Shape();
       Handle(AIS_InteractiveObject) obj = m_ctx->SelectedInteractive();
       if (!obj.IsNull() && obj->HasTransformation()) sub = sub.Moved(TopLoc_Location(obj->LocalTransformation()));
@@ -1124,13 +1649,11 @@ void Viewport::fitSelection() {
     else if (it != m_nodeOf.end()) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, it->second));
   }
   if (trace::enabled()) { double a = 0, b = 0, c = 0, d = 0, e = 0, f = 0; if (!box.IsVoid()) box.Get(a, b, c, d, e, f); trace::log(QStringLiteral("fitSelection: box void=%1 [%2 %3 %4]-[%5 %6 %7]").arg(box.IsVoid()).arg(a).arg(b).arg(c).arg(d).arg(e).arg(f)); }
-  if (box.IsVoid()) return fitAll();
-  m_view->FitAll(box, 0.02, Standard_False);
-  m_view->Invalidate();
-  requestRedraw();
+  if (box.IsVoid()) return fitAll(animate);
+  moveCamera(animate, 0.35, [this, &box] { m_view->FitAll(box, 0.02, Standard_False); });
 }
 
-void Viewport::standardView(const QString& name) {
+void Viewport::standardView(const QString& name, bool animate) {
   if (m_twoDimensional && name.startsWith("iso")) return;
   if (!m_initialised) return;
   m_needFit = false;
@@ -1144,46 +1667,42 @@ void Viewport::standardView(const QString& name) {
   else if (name == "right") o = V3d_Xpos;
   else if (name == "left") o = V3d_Xneg;
   else if (name == "iso-back") o = V3d_XnegYposZpos;
-  m_view->SetProj(o);
-  fitAll();
+  moveCamera(animate, 0.4, [this, o] {
+    m_view->SetProj(o);
+    fitAll();
+    if (m_twoDimensional) alignGridPlane();  // a plan, an elevation or a side in 2D mode: the grid in the plane it ends on
+  });
+  if (m_twoDimensional) updateGridExtent();
 }
 
-void Viewport::home() {
+void Viewport::home(bool animate) {
   if(!m_initialised) return;
   myViewAnimation->Stop();m_needFit=false;
-  if(!m_twoDimensional) m_view->SetProj(V3d_XposYnegZpos);
-  Bnd_Box bounds;
-  for(const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
-  for(const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
-  if(bounds.IsVoid()) {
-    const double extent=std::max(1.0,QSettings().value("view/gridExtent",100.0).toDouble());
-    bounds.Add(gp_Pnt(-extent,-extent,0)); bounds.Add(gp_Pnt(extent,extent,0));
-  }
-  const gp_Pnt center((bounds.CornerMin().XYZ()+bounds.CornerMax().XYZ())*.5);
-  const auto camera=m_view->Camera();const gp_Vec shift(camera->Center(),center);
-  camera->SetEyeAndCenter(camera->Eye().Translated(shift),center);
-  m_view->FitAll(bounds,0.02,Standard_False);
-  m_view->Invalidate();requestRedraw();
+  moveCamera(animate,0.4,[this] {
+    if(applyHomeCamera()) return;  // the document's own Home (UI-47), as it was set
+    if(!m_twoDimensional) m_view->SetProj(V3d_XposYnegZpos);  // else the iso view, fitted; 2D mode keeps its plane
+    const Bnd_Box bounds=fitBounds();
+    const gp_Pnt center((bounds.CornerMin().XYZ()+bounds.CornerMax().XYZ())*.5);
+    const auto camera=m_view->Camera();const gp_Vec shift(camera->Center(),center);
+    camera->SetEyeAndCenter(camera->Eye().Translated(shift),center);
+    m_view->FitAll(bounds,0.02,Standard_False);
+  });
 }
 void Viewport::configureGrid(double spacing,double extent) {
-  QSettings().setValue("view/gridSpacing",std::max(0.0,spacing));QSettings().setValue("view/gridExtent",std::max(1.0,extent));
+  QSettings().setValue("view/gridSpacing",m_gridSpacing=std::max(0.0,spacing));QSettings().setValue("view/gridExtent",m_gridExtentSetting=std::max(1.0,extent));
   updateGridExtent();redrawScene();
 }
 
 void Viewport::rollView(double degrees) {
-  if (!m_initialised || m_twoDimensional) return;
+  if (!m_initialised) return;
+  finishAnimation();  // a turn while one runs adds to where that one ends
   m_needFit = false;
   Handle(Graphic3d_Camera) cam = m_view->Camera();
-  Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*cam), end = new Graphic3d_Camera(*cam);
+  Handle(Graphic3d_Camera) end = new Graphic3d_Camera(*cam);
   gp_Dir up = cam->Up();
   up.Rotate(gp_Ax1(gp::Origin(), cam->Direction()), degrees * M_PI / 180.0);  // about the axis into the screen
   end->SetUp(up);
-  myViewAnimation->SetView(m_view);
-  myViewAnimation->SetCameraStart(start);
-  myViewAnimation->SetCameraEnd(end);
-  myViewAnimation->SetOwnDuration(0.25);
-  myViewAnimation->StartTimer(0.0, 1.0, Standard_True);  // the 16 ms timer redraws while it runs
-  requestRedraw();
+  animateCamera(end, 0.25);  // the 16 ms timer redraws while it runs; reduced motion (UI-124): the camera jumps
 }
 
 opad::json Viewport::cameraJson() const {
@@ -1225,6 +1744,7 @@ void Viewport::setCameraJson(const opad::json& j) {
 
 QImage Viewport::grabImage() {
   if (!m_initialised) return QImage();
+  if (m_twoDimensional || m_sketchInput) updateInfiniteGrid(false);  // the grid the next redraw lays out (a hidden view has none)
   Image_PixMap pix;
   V3d_ImageDumpOptions o;
   o.Width = static_cast<int>(width() * devicePixelRatioF());
@@ -1243,6 +1763,32 @@ QImage Viewport::grabImage() {
     }
   }
   return img;
+}
+
+std::vector<std::array<double, 3>> Viewport::drawnColors(const std::string& nodeId) const {
+  std::vector<std::array<double, 3>> out;
+  const auto it = m_items.find(nodeId);
+  if (it == m_items.end()) return out;
+  for (const auto& p : it->second.ais->Presentations()) {
+    if (p->Mode() != AIS_Shaded) continue;
+    for (const auto& g : p->Groups())
+      if (const auto fill = Handle(Graphic3d_AspectFillArea3d)::DownCast(g->Aspects()); !fill.IsNull()) {
+        double r, gr, b;
+        fill->InteriorColor().Values(r, gr, b, Quantity_TOC_sRGB);
+        out.push_back({r, gr, b});
+      }
+  }
+  return out;
+}
+
+std::vector<double> Viewport::drawnTransparencies(const std::string& nodeId) const {
+  std::vector<double> out;
+  if (const auto it = m_items.find(nodeId); it != m_items.end())
+    for (const auto& p : it->second.ais->Presentations())
+      if (p->Mode() == AIS_Shaded)
+        for (const auto& g : p->Groups())
+          if (const auto fill = Handle(Graphic3d_AspectFillArea3d)::DownCast(g->Aspects()); !fill.IsNull()) out.push_back(fill->FrontMaterial().Transparency());
+  return out;
 }
 
 // ---------------------------------------------------------------- section (F20)
@@ -1280,7 +1826,9 @@ void Viewport::updateClipPlanes() {
 // ---------------------------------------------------------------- guided-tool picking
 void Viewport::setPickAccumulate(bool on, bool retainPicks) {
   if(m_pickAccumulate!=on || m_retainToolPicks!=(on && retainPicks))resetHoverFade();
+  const bool references = ghostsPickable();
   m_pickAccumulate = on;
+  referencesChanged(references);  // a tool's or a feature input's picks may be on ghosts (UI-33)
   m_retainToolPicks = on && retainPicks;
   ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, on ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
   if (!on) {
@@ -1381,24 +1929,115 @@ double deflectionForBox(const Bnd_Box& box) {
   }
   return d;
 }
+
+// A raster node's picture as a base64 data: URI, or null.
+const std::string* rasterHref(const opad::Node& n) {
+  if (!n.raster.is_object()) return nullptr;
+  const auto it = n.raster.find("href");
+  if (it == n.raster.end() || !it->is_string()) return nullptr;
+  const std::string& href = it->get_ref<const std::string&>();
+  const size_t comma = href.find(',');
+  return href.rfind("data:image/", 0) == 0 && comma != std::string::npos && href.substr(0, comma).find(";base64") != std::string::npos ? &href : nullptr;
+}
+
+// A canvas's opacity (its panel's slider): in the picture's alpha, since a texture drawn as it is ignores the material's
+// transparency (the slider changed nothing on screen). An SVG's own picture keeps its own.
+double rasterOpacity(const opad::Node& n) { return n.canvas.is_null() ? 1.0 : std::clamp(n.opacity, 0.0, 1.0); }
+
+// A canvas's picture mirrored (its flags, opad/canvas.hpp): [left-right, upside down].
+std::array<bool, 2> rasterFlip(const opad::Node& n) { return n.canvas.is_null() ? std::array<bool, 2>{false, false} : opad::CanvasFlags::of(n.canvas).flip; }
+
+// Which picture a raster node shows and how it is fitted, without reading all of it (the scene is synced often and a
+// picture is megabytes): its length, its first and last 4 KB, the corners, the fitting and a canvas's mirroring.
+std::string rasterKey(const opad::Node& n) {
+  const std::string* href = rasterHref(n);
+  if (!href) return {};
+  const std::string_view v(*href);
+  const size_t edge = std::min<size_t>(v.size(), 4096);
+  const auto flip = rasterFlip(n);
+  return std::to_string(v.size()) + ":" + std::to_string(std::hash<std::string_view>{}(v.substr(0, edge))) + ":" +
+         std::to_string(std::hash<std::string_view>{}(v.substr(v.size() - edge))) + "|" + n.raster.value("corners", opad::json()).dump() + "|" +
+         n.raster.value("preserveAspectRatio", "") + (flip[0] ? "|h" : "") + (flip[1] ? "|v" : "") +
+         (rasterOpacity(n) < 1 ? "|a" + std::to_string(std::lround(rasterOpacity(n) * 1000)) : std::string());
+}
+
+// Worker: the texture of a raster node, fitted into its corners' proportions as SVG's preserveAspectRatio says (at most
+// 4096 x 2048), else at most 8192 on its longer side; null when the picture cannot be decoded.
+Handle(Image_PixMap) rasterPixels(const std::string& base64, const opad::json& raster) {
+  const std::string aspect = raster.value("preserveAspectRatio", "");
+  QImage image = decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(base64)), aspect != "none" ? 4096 : 8192);
+  if (image.isNull()) return {};
+  if (const opad::json& flip = raster.value("flip", opad::json()); flip.is_array() && (flip[0] == true || flip[1] == true))
+    image = image.flipped((flip[0] == true ? Qt::Horizontal : Qt::Orientations()) | (flip[1] == true ? Qt::Vertical : Qt::Orientations()));
+  const auto& corners = raster.at("corners");
+  auto point = [&](int i) { return gp_Pnt(corners[i][0].get<double>(), corners[i][1].get<double>(), corners[i][2].get<double>()); };
+  const double ratio = point(0).Distance(point(1)) / std::max(1e-12, point(0).Distance(point(2)));
+  if (aspect != "none") {
+    const int h = int(std::clamp(std::max(double(image.height()), image.width() / ratio), 1.0, 2048.0));
+    const int w = int(std::clamp(h * ratio, 1.0, 4096.0));
+    QImage canvas(w, h, QImage::Format_RGBA8888);
+    canvas.fill(Qt::transparent);
+    const auto scaled = image.scaled(w, h, aspect.find("slice") != std::string::npos ? Qt::KeepAspectRatioByExpanding : Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QPainter painter(&canvas);
+    painter.drawImage((w - scaled.width()) / 2, (h - scaled.height()) / 2, scaled);
+    painter.end();
+    image = canvas;
+  }
+  if (const double opacity = raster.value("opacity", 1.0); opacity < 1) {  // a canvas's opacity, in its alpha
+    image = image.convertToFormat(QImage::Format_RGBA8888);
+    const int a = int(std::lround(std::clamp(opacity, 0.0, 1.0) * 256));
+    for (int y = 0; y < image.height(); ++y) {
+      uchar* row = image.scanLine(y);
+      for (int x = 0; x < image.width(); ++x) row[4 * x + 3] = static_cast<uchar>((row[4 * x + 3] * a) >> 8);
+    }
+  }
+  return texturePixels(image);
+}
 }  // namespace
+
+void Viewport::decodeRaster(const opad::Node& n, const std::string& key) {
+  if (!m_rasterDecoding.insert(key).second) return;
+  const std::string& href = *rasterHref(n);
+  auto data = std::make_shared<const std::string>(href.substr(href.find(',') + 1));  // the scene moves on meanwhile
+  const auto flip = rasterFlip(n);
+  auto fit = std::make_shared<const opad::json>(opad::json{{"corners", n.raster.at("corners")}, {"preserveAspectRatio", n.raster.value("preserveAspectRatio", "")}, {"flip", {flip[0], flip[1]}}, {"opacity", rasterOpacity(n)}});
+  auto made = std::make_shared<Handle(Image_PixMap)>();
+  QPointer<Viewport> guard(this);
+  m_jobs->async(tr("Decoding pictures"), [data, fit, made](Progress progress) {
+    if (!progress.cancelled()) *made = rasterPixels(*data, *fit);
+  }, [this, guard, key, made](bool, const QString&) {
+    if (!guard) return;
+    m_rasterDecoding.erase(key);
+    m_rasters[key] = *made;  // null: the frame is shown
+    ++m_rastersDecoded;
+    if (trace::enabled() && !made->IsNull()) trace::log(QStringLiteral("picture decoded on a worker: %1 x %2").arg((*made)->SizeX()).arg((*made)->SizeY()));
+    requestSync();
+  });
+}
+
+bool Viewport::showsPicture(const std::string& nodeId) const {
+  const auto it = m_items.find(nodeId);
+  return it != m_items.end() && !Handle(AIS_TexturedShape)::DownCast(it->second.ais).IsNull();
+}
 
 double Viewport::deflectionFor(const std::string& key) { return deflectionForBox(opad::body_bbox(m_doc->doc, key)); }
 
 // Tessellation runs off the UI thread (F21); bodies appear once their mesh is ready.
 void Viewport::startMeshing(std::vector<std::string> keys) {
-  struct MeshJob { TopoDS_Shape shape; std::string key; };
+  struct MeshJob { TopoDS_Shape shape; std::string key; std::shared_ptr<const opad::FaceColors> colors; bool drawing; };
   std::vector<MeshJob> jobs;
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
     for (const auto& k : keys) {
       if (m_meshed.count(k) || m_meshing.count(k) || m_meshSkipped.count(k)) continue;
       m_meshing.insert(k);
-      jobs.push_back({opad::body_shape(m_doc->doc, k), k});
+      auto colors = std::make_shared<const opad::FaceColors>(opad::face_colors(m_doc->doc, k));
+      const auto waiting = m_waiting.find(k);  // a drawing layer's edges are picked in groups (UI-42)
+      const opad::Node* n = waiting == m_waiting.end() || waiting->second.empty() ? nullptr : m_doc->scene.node(waiting->second.front());
+      jobs.push_back({opad::body_shape(m_doc->doc, k), k, colors->empty() ? nullptr : colors, n && n->representation == "drawing2d"});
     }
   }
   if (jobs.empty()) return;
-  emit meshingProgress(static_cast<int>(m_meshing.size()));
   auto alive = m_alive;
   auto cancel = m_meshCancel;
   auto cache = m_doc->doc.shape_cache;  // the worker fills the bbox cache too, so later UI queries are O(1)
@@ -1416,8 +2055,10 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
         if (!*alive) return;
         std::lock_guard<std::mutex> lock(m_meshMu);
         m_meshing.erase(j.key);
-        if (m_activeCache == cache.get()) m_meshSkipped.insert(j.key);
-        QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
+        if (m_activeCache == cache.get()) {
+          m_meshSkipped.insert(j.key);
+          handOver(j.key);
+        }
         continue;
       }
       std::shared_ptr<BodyPrs> prs;
@@ -1428,20 +2069,19 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
           trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4").arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones));
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
         // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
-        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape));  // so Display() on the UI thread is cheap
+        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape), false, j.drawing, j.colors);  // so Display() on the UI thread is cheap
         prs->deflection = deflectionForBox(box);
       } catch (...) {
       }
       if (!*alive) return;
-      {
-        std::lock_guard<std::mutex> lock(m_meshMu);
-        m_meshing.erase(j.key);
-        if (m_activeCache == cache.get()) {  // a newer document owns the bookkeeping otherwise
-          m_meshed.insert(j.key);
-          if (prs) m_prs[j.key] = std::move(prs);
-        }
+      std::lock_guard<std::mutex> lock(m_meshMu);
+      m_meshing.erase(j.key);
+      if (m_activeCache == cache.get()) {  // a newer document owns the bookkeeping otherwise
+        ++m_meshCount;
+        m_meshed.insert(j.key);
+        if (prs) m_prs[j.key] = std::move(prs);
+        handOver(j.key);
       }
-      QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
     }
    });
    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
@@ -1483,6 +2123,46 @@ void Viewport::benchClick(double fx, double fy) {
   trace::log(QStringLiteral("bench: mouse click posted at %1,%2").arg(pt.x()).arg(pt.y()));
 }
 
+void Viewport::benchFlush() {
+  if (!m_initialised || m_flushingViewEvents) return;
+  m_view->Redraw();  // see benchPick: the picker needs a frame after a camera change
+  QScopedValueRollback<bool> flushing(m_flushingViewEvents, true);
+  FlushViewEvents(m_ctx, m_view, Standard_True);
+}
+
+void Viewport::benchDoubleClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) {
+  if (!m_initialised) return;
+  m_view->Redraw();
+  using Step = std::pair<QEvent::Type, Qt::MouseButtons>;
+  for (const auto& [type, buttons] : {Step{QEvent::MouseButtonPress, Qt::LeftButton}, Step{QEvent::MouseButtonRelease, Qt::NoButton},
+                                      Step{QEvent::MouseButtonDblClick, Qt::LeftButton}, Step{QEvent::MouseButtonRelease, Qt::NoButton}}) {
+    QMouseEvent e(type, at, mapToGlobal(at), Qt::LeftButton, buttons, modifiers);
+    QCoreApplication::sendEvent(this, &e);
+    paintEvent(nullptr);
+  }
+}
+
+void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) {
+  if (!m_initialised) return;
+  m_view->Redraw();  // the picker needs a frame after a camera change
+  auto send = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers held) {
+    QMouseEvent e(type, at, mapToGlobal(at), button, buttons, held);
+    QCoreApplication::sendEvent(this, &e);
+    paintEvent(nullptr);
+  };
+  send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, modifiers);
+  send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton, modifiers);
+  send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton, modifiers);
+  send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+}
+
+void Viewport::clearHover() {
+  m_hoverOwner = nullptr;  // the next frame labels what is under the pointer again
+  if (m_hover.isEmpty()) return;
+  m_hover.clear();
+  emit hoverChanged(m_hover);
+}
+
 void Viewport::benchPick() {
   if (!m_initialised) return;
   m_view->Redraw();  // a frame first: the picker clips to the camera z range, which only Redraw (AutoZFit) updates
@@ -1508,21 +2188,117 @@ void Viewport::benchPick() {
   trace::log(QStringLiteral("bench: pick at view centre detected %1; click selected %2 (hover %3 ms, next hover %4 ms, click %5 ms)").arg(hit).arg(m_ctx->NbSelected()).arg(firstMs).arg(nextMs).arg(clock.elapsed()));
 }
 
-// Creates the OpenGL viewer ahead of the first document (about 0.7 s) so that opening a file does not pay
-// for it. The native child window exists while hidden, which is all OCCT needs.
+// Mesh worker, m_meshMu held: the key goes to the display pump, with one queued pumpMeshed() per batch.
+void Viewport::handOver(const std::string& key) {
+  m_newlyMeshed.push_back(key);
+  if (std::exchange(m_pumpPosted, true)) return;
+  QMetaObject::invokeMethod(this, [this] { pumpMeshed(); }, Qt::QueuedConnection);
+}
+
+// The keys the workers finished (or skipped, cancelled): the bodies that waited for them join the display queue. A
+// picture's body (an image canvas, an SVG's image) whose picture is not decoded yet waits for that instead, as in sync:
+// displayed now it would stay a bare frame, since the sync after the decode keeps an item already showing its raster.
+void Viewport::pumpMeshed() {
+  std::vector<std::string> keys, pictures;
+  {
+    std::lock_guard<std::mutex> lock(m_meshMu);
+    keys.swap(m_newlyMeshed);
+    m_pumpPosted = false;
+    bool moved = false;
+    for (const auto& key : keys) {
+      auto it = m_waiting.find(key);
+      if (it == m_waiting.end()) continue;
+      m_waitingNodes -= it->second.size();
+      if (m_meshed.count(key))
+        for (auto& id : it->second) {
+          const opad::Node* n = m_doc->scene.node(id);
+          if (const std::string raster = n ? rasterKey(*n) : std::string(); !raster.empty() && !m_rasters.count(raster)) pictures.push_back(std::move(id));
+          else m_displayQueue.push_back(std::move(id));
+        }
+      m_waiting.erase(it);
+      moved = true;
+    }
+    if (!moved) return;
+  }
+  for (const auto& id : pictures)  // the decode's sync displays it (decodeRaster: one job per picture)
+    if (const opad::Node* n = m_doc->scene.node(id)) decodeRaster(*n, rasterKey(*n));
+  if (!m_displayQueue.empty()) emit meshingProgress(remainingBodies());
+  runPump();
+}
+
+// One long-lived sliced job displays the queued bodies (UI-40). While the queue is dry and meshes are still on their way
+// it pauses, and the next batch resumes it; it ends once nothing is queued or waiting. It is a child of the job that
+// reports the stream (a load, Displaying bodies), else Background. Neither a job nor a queue: the stream has settled.
+void Viewport::runPump() {
+  if (m_displayJob) return m_jobs->resume(m_displayJob);
+  if (m_displayQueue.empty() || !m_jobs) return streamSettled();
+  ++m_pumpRuns;
+  m_displayJob = m_jobs->sliced(tr("Displaying bodies"), [this](Job& job) {
+    if (m_doc->loading) return false;
+    if (m_displayQueue.empty()) {
+      if (m_waitingNodes == 0) return false;
+      streamSettled();
+      job.pause();
+      return true;
+    }
+    const std::string id = std::move(m_displayQueue.front());
+    m_displayQueue.pop_front();
+    const size_t before = m_items.size();
+    displayBody(id);
+    m_streamAdded = m_streamAdded || m_items.size() > before;
+    if ((++m_pumpSteps & 15) == 0) {
+      emit meshingProgress(remainingBodies());
+      m_view->Invalidate();
+      requestRedraw();  // bodies appear as they are added
+    }
+    return true;
+  }, [this](bool completed) {
+    m_displayJob = nullptr;
+    if (!completed) m_displayQueue.clear();  // cancelled with the stream: what is meshed shows on the next change
+    streamSettled();
+  }, m_streamJob ? JobKind::Child : JobKind::Background, m_streamJob);
+}
+
+// The display queue ran dry: progress, the view fitted while a load streams in (at most every 250 ms), and once no body
+// waits for its mesh either, what depends on the whole scene (finishSync: depth bias, grid, refinement, a fit of nodes).
+void Viewport::streamSettled() {
+  emit meshingProgress(remainingBodies());
+  if (m_waitingNodes == 0) return finishSync(0, std::exchange(m_streamAdded, false));
+  if (m_streamAdded && m_needFit && m_fitNodesOnSync.empty() && (!m_streamFit.isValid() || m_streamFit.elapsed() > 250)) {
+    m_view->FitAll(fitBounds(), 0.02, Standard_False);
+    m_streamFit.start();
+  }
+  m_view->Invalidate();
+  requestRedraw();
+}
+
+void Viewport::setStreamJob(Job* job) { m_streamJob = job; }
+
+// Creates the OpenGL viewer ahead of the first document (0.2-0.8 s) so that opening a file does not pay for it. The native
+// child window exists while hidden, which is all OCCT needs.
 void Viewport::warmUp() {
+  m_warmed = true;
   if (m_initialised) return;
   try {
     initViewer();
-    m_view->Redraw();  // first frame compiles the shaders (~0.3 s); better here than when the document appears
   } catch (const Standard_Failure&) {  // no context yet: paintEvent will try again once visible
   }
+}
+
+void Viewport::firstFrame() {
+  if (m_initialised) m_view->Redraw();  // compiles the shaders (0.2-0.4 s); better here than when the document appears
 }
 
 void Viewport::renameBodyKeys(const std::map<std::string, std::string>& keys) {
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
+    for (auto& key : m_newlyMeshed)
+      if (auto it = keys.find(key); it != keys.end()) key = it->second;
     for (const auto& [from, to] : keys) {
+      if (auto it = m_waiting.find(from); it != m_waiting.end()) {
+        m_waiting[to] = std::move(it->second);
+        m_waiting.erase(from);
+      }
       if (m_meshed.erase(from)) m_meshed.insert(to);
       if (m_meshSkipped.erase(from)) m_meshSkipped.insert(to);
       if (auto it = m_prs.find(from); it != m_prs.end()) {
@@ -1543,26 +2319,42 @@ void Viewport::requestSync() {
   if (!m_syncTimer.isActive()) m_syncTimer.start();
 }
 
-// Reconciles the context with the scene. Removals and attribute changes are applied at once (cheap);
-// bodies to display are added by a sliced job because computing a body's presentation and selection
-// entities is the expensive part and must not block the UI (see Jobs.hpp).
+// Reconciles the context with the scene, on document changes only. Removals and attribute changes are applied at once
+// (cheap); the bodies to display go to the display pump's queue (runPump: computing a body's presentation and selection
+// entities is the expensive part and must not block the UI, see Jobs.hpp), those without a mesh wait for it (m_waiting)
+// and join the queue as the mesh workers finish them (pumpMeshed), with no sync per batch (UI-40). A change that only
+// re-applied some nodes' appearance, placement, name or parent (AppDocument::lastChange: a hide, its undo and redo) looks
+// at the bodies under them alone; anything else, or a sync for another reason (isolation, picking), at every body.
 void Viewport::sync() {
   if (!m_initialised || m_doc->loading) return;
   trace::Scope scope("Viewport::sync");
+  QElapsedTimer clock;
+  clock.start();
+  const qint64 cpu = trace::threadCpuMs();
   const opad::Scene& scene = m_doc->scene;
+  bool fresh = false;
   {
     // Mesh bookkeeping is per shape cache: a new document means new TopoDS_Shapes without triangulation.
     std::lock_guard<std::mutex> lock(m_meshMu);
     const void* cache = m_doc->doc.shape_cache.get();
     if (cache != m_activeCache) {
+      fresh = true;
       m_activeCache = cache;
       m_meshed.clear();
       m_meshSkipped.clear();
+      m_newlyMeshed.clear();
+      // The last document's display arrays are freed on a worker (UI-41): the Engine's are hundreds of MB in many blocks.
+      disposeLater(std::make_shared<std::pair<decltype(m_prs), decltype(m_refined)>>(std::move(m_prs), std::move(m_refined)));
       m_prs.clear();
       m_refined.clear();
+      m_partSizes.clear();
     }
   }
-  if (!m_isolated.empty()) {  // the mode ends by itself once every isolated object is gone (deleted)
+  pruneSnapIndexes();
+  const AppDocument::Change& change = m_doc->lastChange();
+  const bool partial = !fresh && !change.whole && m_doc->revision == m_syncedRevision + 1;
+  m_syncedRevision = m_doc->revision;
+  if (!partial && !m_isolated.empty()) {  // the mode ends by itself once every isolated object is gone (deleted)
     bool any = false;
     for (const auto& id : m_isolated) {
       const opad::Node* n = scene.node(id);
@@ -1573,87 +2365,243 @@ void Viewport::sync() {
       emit isolationChanged();
     }
   }
-  std::set<std::string> keep, replace;
-  std::vector<std::string> pending, toAdd;
-  bool recoloredSelected = false;
-  for (const auto& id : scene.all_bodies()) {
+  std::vector<std::string> bodies, pending;
+  if (partial) {
+    std::unordered_set<std::string> seen;
+    for (const auto& id : change.nodes)
+      for (auto& body : scene.bodies_under(id))
+        if (seen.insert(body).second) bodies.push_back(std::move(body));
+    // What waited or was queued for these is decided again below.
+    m_displayQueue.erase(std::remove_if(m_displayQueue.begin(), m_displayQueue.end(), [&seen](const std::string& id) { return seen.count(id) > 0; }),
+                         m_displayQueue.end());
+    for (const auto& id : bodies)
+      if (const opad::Node* n = scene.node(id))
+        if (auto w = m_waiting.find(n->body_key); w != m_waiting.end()) {
+          auto& nodes = w->second;
+          const size_t before = nodes.size();
+          nodes.erase(std::remove(nodes.begin(), nodes.end(), id), nodes.end());
+          m_waitingNodes -= before - nodes.size();
+        }
+  } else {
+    bodies = scene.all_bodies();
+    m_waiting.clear();
+    m_waitingNodes = 0;
+    m_displayQueue.clear();
+  }
+  std::set<std::string> rasters;  // the pictures the bodies looked at show (a whole sync forgets the others)
+  bool recoloredSelected = false, moved = false;
+  // One body: true when its displayed object stays as it is (attributes applied in place, or moved where it is); otherwise
+  // it is queued for display, waits for its mesh or its picture, or is not shown, and an object it had goes.
+  auto place = [&](const std::string& id) {
     const opad::Node* n = scene.node(id);
-    if (!n || n->body_missing) continue;
+    if (!n || n->body_missing) return false;
     // Isolate mode shows exactly the isolated set and ignores visibility flags; otherwise the flags rule.
-    if (!m_isolated.empty() ? !m_isolated.count(id) : !scene.effectively_visible(id)) continue;
+    if (!m_isolated.empty() ? !m_isolated.count(id) : !scene.effectively_visible(id)) return false;
     auto it = m_items.find(id);
-    if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m) {
-      keep.insert(id);
+    const std::string raster = rasterKey(*n);
+    if (!raster.empty()) rasters.insert(raster);
+    if (const opad::Mat4 world = scene.world(id); it != m_items.end() && it->second.key == n->body_key && it->second.raster == raster && it->second.rigid &&
+                                                  it->second.world.m != world.m && relocate(it->second, *n, world)) {
+      // Only moved (a transform op: a canvas let go, a part placed): its location, as a look's offset is; nothing is
+      // displayed again, so it never blinks out for a frame.
+      it->second.world = world;
+      moved = true;
+      ++m_relocateCount;
+    }
+    if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m && it->second.raster == raster) {
       Item& item = it->second;
-      if (item.color != n->color || item.opacity != n->opacity) {
+      if (item.color != n->color || item.opacity != n->opacity || (!n->canvas.is_null() && !(composeLook(*n) == item.look))) {  // a canvas's flags too
         item.color = n->color;
         item.opacity = n->opacity;
-        item.ais->SetColor(qcolor(n->color));
-        item.ais->SetTransparency(1.0 - n->opacity);
+        applyLook(id, item, composeLook(*n));  // the new appearance under the layers of looks (UI-121)
         // The presentation only: Redisplay also rebuilt the selection owners, which dropped the body from the selection
         // (a colour picked for the selection left it unselected, though the status bar still counted it).
         m_ctx->RecomputePrsOnly(item.ais, Standard_False);
         recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
+      } else if (n->representation == "drawing2d") {  // its layer's line weight or type may have changed (UI-89)
+        if (const BodyLook look = composeLook(*n); !(look == item.look)) {
+          applyLook(id, item, look);
+          recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
+        }
       }
-      continue;
+      return true;
     }
-    bool meshed;
+    bool meshed, skipped;
     {
       std::lock_guard<std::mutex> lock(m_meshMu);
       meshed = m_meshed.count(n->body_key) > 0;
+      skipped = m_meshSkipped.count(n->body_key) > 0;
     }
+    if (skipped) return false;  // its meshing (or display) was cancelled: reopening the file shows it
     if (!meshed) {
-      pending.push_back(n->body_key);
-      continue;
+      auto& nodes = m_waiting[n->body_key];
+      if (nodes.empty()) pending.push_back(n->body_key);
+      nodes.push_back(id);
+      ++m_waitingNodes;
+      return false;
     }
-    keep.insert(id);
-    if (it != m_items.end()) replace.insert(id);
-    toAdd.push_back(id);
-  }
+    if (!raster.empty() && !m_rasters.count(raster)) {  // shown once its picture is decoded; what is shown until then stays
+      decodeRaster(*n, raster);
+      return it != m_items.end();
+    }
+    m_displayQueue.push_back(id);
+    return false;
+  };
   bool removed = false;
-  for (auto it = m_items.begin(); it != m_items.end();) {
-    if (keep.count(it->first) && !replace.count(it->first)) { ++it; continue; }
-    clearCenters();  // topology, placement or visibility changed: no stale source circles
-    if (!it->second.navigation.IsNull()) {
-      m_navNodes.erase(it->second.navigation.get());
-      m_navSelection->Remove(it->second.navigation);
-    }
-    m_ctx->Remove(it->second.ais, Standard_False);
+  auto drop = [&](std::map<std::string, Item>::iterator it) {
+    if (!std::exchange(removed, true)) clearCenters();  // topology, placement or visibility changed: no stale source circles
+    retire(it->second);
     m_nodeOf.erase(it->second.ais.get());
-    it = m_items.erase(it);
-    removed = true;
+    return m_items.erase(it);
+  };
+  if (partial) {
+    for (const auto& id : bodies)
+      if (!place(id))
+        if (auto it = m_items.find(id); it != m_items.end()) drop(it);
+  } else {
+    std::unordered_set<std::string> kept;
+    for (const auto& id : bodies)
+      if (place(id)) kept.insert(id);
+    for (auto it = m_items.begin(); it != m_items.end();) it = kept.count(it->first) ? std::next(it) : drop(it);
+  }
+  if (!partial)
+    for (auto it = m_rasters.begin(); it != m_rasters.end();) it = rasters.count(it->first) ? std::next(it) : m_rasters.erase(it);
+  if (removed) removeRetired();
+  if (moved) {
+    clearCenters();  // found where the bodies were
+    if (!m_subHl.IsNull() || m_subJob) refreshSubHighlight();
+    if (!m_notes.empty()) {  // notes pinned to them follow
+      m_noteCamera.Reset();
+      QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
+    }
+    recoloredSelected = true;  // the highlight follows the new location
   }
   if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
-  if(removed) applySelectionLayers();
-  if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
+  if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // the retired bodies' selected sub-shapes went with them
   if (!pending.empty()) startMeshing(pending);
-  syncSketches();
+  // The print check's colours lie on the bodies drawn: made again once the view settles when those change (isolation); a
+  // document change runs the check again instead (MainWindow::recheck).
+  if (!m_tintWanted.empty() && (removed || moved || !pending.empty() || !m_displayQueue.empty())) m_tintAgain = true;
+  if (layered()) scheduleLooks();  // the hierarchy under a layer's components may have changed
+  syncSketches(partial);
   applySelectionLayers();
-  updateAnnotations();
+  if (m_notesRevision != m_doc->revision) updateAnnotations();  // a document change, not a batch of meshes
   updateClipPlanes();
-  if (m_displayJob) m_displayJob->cancel();
-  const int pendingCount = static_cast<int>(pending.size());
-  if (toAdd.empty()) {
-    finishSync(pendingCount, false);
-    return;
+  ++(partial ? m_partialSyncs : m_syncs);
+  m_syncMs += clock.elapsed();
+  m_syncCpuMs += trace::threadCpuMs() - cpu;
+  if (!m_displayQueue.empty()) emit meshingProgress(remainingBodies());  // first: the window may make a job to report the stream (the pump's parent)
+  runPump();
+  if (m_style == Style::HiddenEdges) scheduleEdgeOverlay();
+}
+
+// A displayed body that goes (UI-41): erased at once, which only hides it and turns its picking off, and removed from the
+// context later by removeRetired. Removing frees its presentation and selection structures, ~2 ms a body on the Engine:
+// one by one in sync, a new document waited 2.6 s for the old one's 1,295 bodies.
+void Viewport::retire(const Item& item) {
+  m_ctx->Erase(item.ais, Standard_False);
+  if (!item.navigation.IsNull()) {
+    m_navNodes.erase(item.navigation.get());
+    m_navSelection->Deactivate(item.navigation);
   }
-  emit meshingProgress(pendingCount + static_cast<int>(toAdd.size()));
-  auto ids = std::make_shared<std::vector<std::string>>(std::move(toAdd));
-  auto i = std::make_shared<size_t>(0);
-  m_displayJob = m_jobs->sliced(tr("Displaying %1 bodies").arg(ids->size()), [this, ids, i, pendingCount](Job& j) {
-    if (*i >= ids->size() || m_doc->loading) return false;
-    displayBody((*ids)[*i]);
-    if ((++*i & 15) == 0) {
-      j.setPhase(tr("Displaying %1 bodies").arg(ids->size()), static_cast<int>(*i * 100 / ids->size()));
-      emit meshingProgress(pendingCount + static_cast<int>(ids->size() - *i));
-      m_view->Invalidate();
-      requestRedraw();  // bodies appear as they are added
+  m_retired.push_back({item.ais, item.navigation});
+}
+
+void Viewport::removeRetired() {
+  if (m_retireJob || m_retired.empty() || !m_jobs) return;
+  // What the objects alone still hold (their shapes with the meshes, their arrays and picking structures) is freed on a
+  // worker, a batch at a time: freeing one big body took up to 400 ms here.
+  struct Batch { std::vector<TopoDS_Shape> shapes; std::vector<std::shared_ptr<const BodyPrs>> prs; };
+  auto batch = std::make_shared<std::shared_ptr<Batch>>(std::make_shared<Batch>());
+  auto flush = [batch] {
+    if ((*batch)->shapes.empty()) return;
+    disposeLater(std::move(*batch));
+    *batch = std::make_shared<Batch>();
+  };
+  m_retireJob = m_jobs->sliced(tr("Clearing the view"), [this, batch, flush](Job&) {
+    if (m_retired.empty()) return false;
+    Retired r = std::move(m_retired.front());
+    m_retired.pop_front();
+    if (!r.navigation.IsNull()) m_navSelection->Remove(r.navigation);
+    m_ctx->Remove(r.ais, Standard_False);
+    (*batch)->shapes.push_back(r.ais->Shape());
+    if (const auto body = Handle(BodyShape)::DownCast(r.ais); !body.IsNull()) {
+      (*batch)->prs.push_back(body->prs());
+      (*batch)->prs.push_back(body->displayPrs());
     }
-    return *i < ids->size();
-  }, [this, pendingCount](bool completed) {
-    m_displayJob = nullptr;
-    if (completed) finishSync(pendingCount, true);
-  });
+    r = {};
+    if ((*batch)->shapes.size() >= 64) flush();
+    return !m_retired.empty();
+  }, [this, flush](bool) {
+    flush();
+    m_retireJob = nullptr;
+    if (!m_retired.empty()) QTimer::singleShot(0, this, &Viewport::removeRetired);  // cancelled: the rest later
+  }, JobKind::Background);
+}
+
+namespace {
+// A canvas's picture rectangle `stretch` times as tall (free aspect), as image_io builds it (the texture spans its UV range):
+// one face, meshed here (two triangles).
+TopoDS_Shape stretchedCanvas(const opad::Node& n, double stretch) {
+  double w = 0, h = 0;
+  opad::canvas_body_size(n, w, h);
+  const TopoDS_Face face = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), 0, w, 0, h * stretch).Face();
+  BRepMesh_IncrementalMesh(face, std::max(w, h * stretch) / 50);
+  return face;
+}
+}  // namespace
+
+bool Viewport::rigidPlacement(const opad::Node& n, const opad::Mat4& world, gp_Trsf& placement, double& stretch) {
+  placement = gp_Trsf();
+  stretch = 1;
+  if (world.is_identity()) return true;
+  if (opad::mat_is_rigid(world)) return placement = opad::trsf_from_mat(world), true;
+  if (!opad::is_canvas(n)) return false;
+  // A stretched canvas: its axes square to each other, y (and z) scaled apart from x. Its similarity has them all as x.
+  double len[3];
+  for (int c = 0; c < 3; ++c) len[c] = std::sqrt(world.at(0, c) * world.at(0, c) + world.at(1, c) * world.at(1, c) + world.at(2, c) * world.at(2, c));
+  if (!(len[0] > 1e-12) || !(len[1] > 1e-12) || !(len[2] > 1e-12)) return false;
+  opad::Mat4 similar = world;
+  for (int r = 0; r < 3; ++r) similar.at(r, 1) *= len[0] / len[1], similar.at(r, 2) *= len[0] / len[2];
+  if (!opad::mat_is_rigid(similar)) return false;
+  placement = opad::trsf_from_mat(similar);
+  stretch = len[1] / len[0];
+  return true;
+}
+
+bool Viewport::relocate(Item& item, const opad::Node& n, const opad::Mat4& world) {
+  gp_Trsf placement;
+  double stretch = 1;
+  if (!item.rigid || !rigidPlacement(n, world, placement, stretch)) return false;
+  if (std::fabs(stretch - item.stretch) > 1e-12 * stretch) {  // a canvas stretched otherwise: its rectangle at the new aspect, in place
+    const auto textured = Handle(AIS_TexturedShape)::DownCast(item.ais);
+    if (textured.IsNull()) return false;  // its picture is not shown (yet): displayed again
+    item.located = stretch == 1 ? opad::body_shape(m_doc->doc, item.key) : stretchedCanvas(n, stretch);
+    item.stretch = stretch;
+    textured->SetShape(item.located);
+    m_ctx->RecomputePrsOnly(textured, Standard_False);
+    m_ctx->RecomputeSelectionOnly(textured);
+    if (!item.navigation.IsNull()) {  // the orbit pivot's copy of the picture's own rectangle no longer fits it
+      m_navNodes.erase(item.navigation.get());
+      m_navSelection->Remove(item.navigation);
+      item.navigation.Nullify();
+    }
+    if (const auto glow = m_bodyGlows.find(item.ais.get()); glow != m_bodyGlows.end()) {  // its outline: the next selection pass, at this aspect
+      m_ctx->Remove(glow->second, Standard_False);
+      m_bodyGlows.erase(glow);
+    }
+  }
+  item.placement = placement;
+  gp_Trsf placed;
+  if (item.look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(item.look.offset[0], item.look.offset[1], item.look.offset[2]));
+  placed.Multiply(placement);
+  m_ctx->SetLocation(item.ais, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
+  if (!item.navigation.IsNull()) {
+    item.navigation->SetLocalTransformation(placed);
+    m_navSelection->Update(item.navigation, Standard_False);
+  }
+  if (const auto glow = m_bodyGlows.find(item.ais.get()); glow != m_bodyGlows.end()) glow->second->SetLocalTransformation(item.ais->Transformation());
+  return true;
 }
 
 // Adds one body to the context: presentation + selection entities are computed here.
@@ -1663,6 +2611,7 @@ void Viewport::displayBody(const std::string& id) {
   if (!n || n->body_missing || m_items.count(id)) return;  // the scene moved on since this was queued
   QElapsedTimer t;
   t.start();
+  const qint64 cpu = trace::threadCpuMs();
   opad::Mat4 world = scene.world(id);
   TopoDS_Shape proto = opad::body_shape(m_doc->doc, n->body_key);
   std::shared_ptr<BodyPrs> prs;
@@ -1671,45 +2620,42 @@ void Viewport::displayBody(const std::string& id) {
     auto p = m_prs.find(n->body_key);
     if (p != m_prs.end()) prs = p->second;
   }
+  const BodyLook look = composeLook(*n);  // the document's appearance under the layers of looks (UI-121)
   // Rigid placements go on the object as a local transformation, so the prototype's precomputed arrays
-  // (and sub-shape ordinals) are shared by every instance; anything else gets a transformed copy.
+  // (and sub-shape ordinals) are shared by every instance; anything else gets a transformed copy, but for a canvas stretched
+  // out of its proportions, which is its own rectangle at that aspect.
   TopoDS_Shape located = proto;
-  const bool rigid = world.is_identity() || opad::mat_is_rigid(world);
+  gp_Trsf placement;
+  double stretch = 1;
+  const bool rigid = rigidPlacement(*n, world, placement, stretch);
   if (!rigid) {
     located = opad::node_world_shape(m_doc->doc, scene, id);
     prs.reset();
+  } else if (stretch != 1) {
+    located = stretchedCanvas(*n, stretch);
+    prs.reset();
   }
   Handle(AIS_Shape) ais = new BodyShape(located, prs);
-  if (auto refined = m_refined.find(n->body_key); rigid && refined != m_refined.end())
+  if (!rigid)
+    if (auto colors = std::make_shared<const opad::FaceColors>(opad::face_colors(m_doc->doc, n->body_key)); !colors->empty())
+      Handle(BodyShape)::DownCast(ais)->setFaceColors(colors);
+  if (auto refined = m_refined.find(n->body_key); rigid && stretch == 1 && refined != m_refined.end())
     Handle(BodyShape)::DownCast(ais)->setDisplayPrs(refined->second.prs);  // zoomed in before: draw it fine at once
-  if(!n->raster.is_null()) {
-    const std::string href=n->raster.value("href","");
-    const auto comma=href.find(',');
-    if(href.rfind("data:image/",0)==0 && comma!=std::string::npos && href.substr(0,comma).find(";base64")!=std::string::npos) {
-      QImage image=QImage::fromData(QByteArray::fromBase64(QByteArray::fromStdString(href.substr(comma+1))));
-      if(!image.isNull()) {
-        const auto& corners=n->raster.at("corners");
-        auto point=[&](int i) { return gp_Pnt(corners[i][0].get<double>(),corners[i][1].get<double>(),corners[i][2].get<double>()); };
-        const double ratio=point(0).Distance(point(1))/std::max(1e-12,point(0).Distance(point(2)));
-        const auto aspect=n->raster.value("preserveAspectRatio","");
-        if(aspect!="none") {
-          const int h=int(std::clamp(std::max(double(image.height()),image.width()/ratio),1.0,2048.0));
-          const int w=int(std::clamp(h*ratio,1.0,4096.0));
-          QImage canvas(w,h,QImage::Format_RGBA8888); canvas.fill(Qt::transparent);
-          const auto scaled=image.scaled(w,h,aspect.find("slice")!=std::string::npos?Qt::KeepAspectRatioByExpanding:Qt::KeepAspectRatio,Qt::SmoothTransformation);
-          QPainter painter(&canvas); painter.drawImage((w-scaled.width())/2,(h-scaled.height())/2,scaled); painter.end(); image=canvas;
-        }
-        image=image.convertToFormat(QImage::Format_RGBA8888);
-        Handle(Image_PixMap) pixels=new Image_PixMap();
-        pixels->InitTrash(Image_Format_RGBA,image.width(),image.height()); pixels->SetTopDown(false);
-        for(int row=0;row<image.height();++row) std::memcpy(pixels->ChangeRow(row),image.constScanLine(row),image.width()*4);
-        Handle(AIS_TexturedShape) textured=new AIS_TexturedShape(located);
-        textured->SetTexturePixMap(pixels); textured->SetTextureMapOn(); textured->DisableTextureModulate(); textured->SetTextureRepeat(false);
-        ais=textured;
-      } else emit hoverChanged(tr("Embedded image could not be decoded; showing its frame"));
-    }
+  const std::string raster = rasterKey(*n);
+  if (const auto r = m_rasters.find(raster); r != m_rasters.end() && !r->second.IsNull()) {  // decoded on a worker (decodeRaster)
+    Handle(AIS_TexturedShape) textured = new AIS_TexturedShape(located);
+    textured->SetTexturePixMap(r->second);
+    textured->SetTextureMapOn();
+    textured->DisableTextureModulate();
+    textured->SetTextureRepeat(false);
+    ais = textured;
+  } else if (r != m_rasters.end()) {
+    emit hoverChanged(tr("Embedded image could not be decoded; showing its frame"));
   }
-  if (rigid && !world.is_identity()) ais->SetLocalTransformation(opad::trsf_from_mat(world));
+  gp_Trsf placed;
+  if (look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));  // an explode offset, after the placement
+  if (rigid) placed.Multiply(placement);
+  if (placed.Form() != gp_Identity) ais->SetLocalTransformation(placed);
   ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
   ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));
   ais->Attributes()->SetDeviationAngle(20.0 * M_PI / 180.0);
@@ -1718,29 +2664,32 @@ void Viewport::displayBody(const std::string& id) {
   // minutes on big bodies. Meshing happens once, on the worker; unmeshed faces get box sensitives.
   ais->Attributes()->SetAutoTriangulation(Standard_False);
   ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
-  ais->SetColor(qcolor(n->color));
-  if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
-  applyStyle(ais);
-  if(n->representation=="drawing2d" && n->raster.is_null()) {
-    Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
-    selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(selectionTint());
-    selected->SetLineAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
-    selected->SetWireAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
-    ais->SetHilightAttributes(selected);
-    Handle(Prs3d_Drawer) hover=new Prs3d_Drawer();hover->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic));
-    hover->SetDisplayMode(AIS_WireFrame);hover->SetColor(Quantity_NOC_WHITE);ais->SetDynamicHilightAttributes(hover);
+  ais->SetColor(qcolor(look.color));
+  if (look.opacity < 1.0) ais->SetTransparency(1.0 - look.opacity);
+  if (look.layer != Graphic3d_ZLayerId_Default) ais->SetZLayer(look.layer);
+  m_nodeOf[ais.get()] = id;  // applyStyle asks whether it is a drawing's
+  if((n->representation=="drawing2d" && n->raster.is_null()) || opad::is_canvas(*n)) {  // outlined when selected: never a tint over a picture
+    if(!opad::is_canvas(*n)) ais->Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // fills and text in their colour, unlit
+    ais->SetHilightAttributes(m_drawingSelected);  // shared: their colours follow the background (updateDrawingHighlights)
+    ais->SetDynamicHilightAttributes(m_drawingHover);
   }
+  applyStyle(ais, &look);
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
+  if (!look.visible) m_ctx->Erase(ais, Standard_False);
+  if (m_side) maskSide(id, ais);  // side by side: one of B's changes stays out of A's view
   const qint64 displayMs = t.elapsed();
-  activateSelection(ais);
-  if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
-  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}};
+  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, raster, look, rigid, stretch, placement};
   m_nodeOf[ais.get()] = id;
+  ++m_displayCount;
+  activateSelection(ais);  // after m_items: its look may say not pickable
+  if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
+  m_longestDisplay = std::max(m_longestDisplay, t.elapsed());
+  m_longestDisplayCpu = std::max(m_longestDisplayCpu, trace::threadCpuMs() - cpu);
   if (prs && !prs->navigation.IsNull()) {
     Handle(NavigationShape) nav = new NavigationShape(prs->navigation);
-    if (rigid && !world.is_identity()) nav->SetLocalTransformation(opad::trsf_from_mat(world));
+    if (placed.Form() != gp_Identity) nav->SetLocalTransformation(placed);
     m_navSelection->Load(nav, -1);
-    m_navSelection->Activate(nav, 0);
+    if (look.visible) m_navSelection->Activate(nav, 0);
     m_items[id].navigation = nav;
     m_navNodes[nav.get()] = id;
   }
@@ -1772,6 +2721,7 @@ void Viewport::updateDepthBias() {
 }
 
 void Viewport::finishSync(int pendingCount, bool added) {
+  if (added && m_style == Style::HiddenEdges) scheduleEdgeOverlay();
   if (added) updateDepthBias();
   if (added) m_refineTimer.start();  // bodies that arrived in a zoomed-in view
   updateGridExtent();
@@ -1780,10 +2730,12 @@ void Viewport::finishSync(int pendingCount, bool added) {
   // every fit, orbit or zoom of theirs clears m_needFit so a later batch never snaps the view back.
   if(m_needFit && !m_fitNodesOnSync.empty()) {
     if(pendingCount==0){auto ids=std::move(m_fitNodesOnSync);m_fitNodesOnSync.clear();fitNodes(ids);}
-  }else if (added && m_needFit) m_view->FitAll(0.02, Standard_False);
+  }else if (added && m_needFit) m_view->FitAll(fitBounds(), 0.02, Standard_False);
   if(!m_needFit)m_fitNodesOnSync.clear();
   if (pendingCount == 0) m_needFit = false;
   if (m_sectionEnabled) updateSectionGizmo();  // the model's extent may have changed
+  if (m_tintAgain && pendingCount == 0) buildCheckTints();
+  placeOverlap();  // its pair isolated away, or back
   m_view->Invalidate();
   requestRedraw();
 }
@@ -1806,7 +2758,7 @@ void Viewport::showEvent(QShowEvent* e) {
   QWidget::showEvent(e);
   if (!m_initialised) {
     m_needFit = true;
-    initViewer();
+    if (m_warmed) initViewer();  // else the startup makes it once the window has been painted (warmUp)
   }
   // The stacked layout may resize us after the native window was created; re-check once shown.
   QTimer::singleShot(0, this, [this] { syncWindowSize(); requestRedraw(); });
@@ -1836,6 +2788,7 @@ void Viewport::syncWindowSize() {
     m_cube->SetAxesConeRadius(1.2 * m_cubeScale);
     m_cube->SetAxesSphereRadius(1.0 * m_cubeScale);
     m_ctx->Redisplay(m_cube, Standard_False);
+    scheduleLooks();  // drawings' hairlines follow the display scale
   }
   if (trace::enabled()) {
     Standard_Integer viewW = 0, viewH = 0;
@@ -1855,7 +2808,10 @@ void Viewport::paintEvent(QPaintEvent*) {
     m_repaintAfterFlush = true;
     return;
   }
-  if (!m_initialised) initViewer();
+  if (!m_initialised) {
+    if (!m_warmed) return;  // the startup has not made the viewer yet (warmUp)
+    initViewer();
+  }
   syncWindowSize();
   QElapsedTimer frame;
   frame.start();
@@ -1869,28 +2825,52 @@ void Viewport::paintEvent(QPaintEvent*) {
   }
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
   updateTracking();
+  updateHover();
+  updateObjectSnap();
+  trace::frameDrawn();
+}
+
+// The status text, the hovered drawing entity and the point under the mouse, after a frame's detection.
+void Viewport::updateHover() {
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;
   m_hoverOwner = hoverOwner;
   discoverCenter();
   QString hover;
+  opad::json drawingInfo;
   if (m_ctx->HasDetected()) {
     Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();
     auto it = m_nodeOf.find(obj.get());
-    if (it != m_nodeOf.end()) {
-      hover = m_doc->nodeName(it->second);
+    const opad::Node* node = it != m_nodeOf.end() ? m_doc->scene.node(it->second) : nullptr;
+    if (node && m_drawingWords && node->representation == "drawing2d" && node->raster.is_null()) {  // 2D words (UI-118)
       Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
-      if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
+      Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
+      const QString layer = m_doc->nodeName(node->parent.empty() ? node->id : node->parent);
+      // The whole layer under its own owner (the Bodies filter, and the Face filter, which picks a drawing layer whole: UI-42)
+      // is a group; an object of it is named by its kind.
+      const bool whole = owner.IsNull() || !owner->HasShape() || !owner->ComesFromDecomposition() || m_filter == SelFilter::Body;
+      drawingInfo = whole ? opad::json{{"type", "group"}} : drawing2d::entityInfo(owner->Shape());
+      if (!drawingInfo.contains("type") || !drawingInfo["type"].is_string()) drawingInfo["type"] = "group";
+      drawingInfo["body"] = node->id;
+      if (!mine.IsNull()) drawingInfo["index"] = mine->index();
+      hover = drawingInfo["type"] == "group" ? tr("Group on %1").arg(layer) : tr("%1 on %2").arg(drawingWord(drawingInfo["type"].get<std::string>()), layer);
+      if (drawingInfo.contains("radius")) hover += QStringLiteral(" · R ") + units::format(units::Kind::Length, drawingInfo["radius"].get<double>());
+      else if (drawingInfo.contains("length")) hover += QStringLiteral(" · ") + units::format(units::Kind::Length, drawingInfo["length"].get<double>());
+      else if (drawingInfo.contains("area")) hover += QStringLiteral(" · ") + units::format(units::Kind::Area, drawingInfo["area"].get<double>());
+    } else if (it != m_nodeOf.end()) {
+      hover = hoverName(it->second);
+      Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+      if (!owner.IsNull() && owner->HasShape() && owner->ComesFromDecomposition() && m_filter != SelFilter::Body) {
         const TopoDS_Shape& sub = owner->Shape();
         const char* kind = sub.ShapeType() == TopAbs_FACE ? "face" : sub.ShapeType() == TopAbs_EDGE ? "edge" : "vertex";
         Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
-        hover += QString::fromUtf8(" › %1 %2").arg(kind).arg(mine.IsNull() ? opad::subshape_index(Handle(AIS_Shape)::DownCast(obj)->Shape(), sub) : mine->index());
+        hover += QString::fromUtf8(" › %1 %2").arg(i18n::t(kind)).arg(mine.IsNull() ? opad::subshape_index(Handle(AIS_Shape)::DownCast(obj)->Shape(), sub) : mine->index());
         if(!mine.IsNull()) {
           opad::Ref ref; ref.body=it->second; ref.kind=Handle(CircleOwner)::DownCast(mine).IsNull()?opad::Ref::Kind::Edge:opad::Ref::Kind::Center; ref.index=mine->index();
           if(sub.ShapeType()==TopAbs_EDGE || ref.kind==opad::Ref::Kind::Center) {
             const auto info=circleInfo(ref);
-            if(info.contains("diameter")) hover+=tr(" | Diameter %1 mm").arg(info["diameter"].get<double>(),0,'f',3);
+            if(info.contains("diameter")) hover+=tr(" | Diameter %1").arg(units::format(units::Kind::Length,info["diameter"].get<double>()));
             if(info.contains("segments")) hover+=tr(" | %1 segments (approximate)").arg(info["segments"].get<int>());
           }
         }
@@ -1907,9 +2887,13 @@ void Viewport::paintEvent(QPaintEvent*) {
     m_hover = hover;
     emit hoverChanged(hover);
   }
-  const bool onGeometry = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0
+  if (drawingInfo != m_hoverInfo) {
+    m_hoverInfo = drawingInfo;
+    emit hoverInfo(drawingInfo);
+  }
+  gp_Pnt hp;
+  const bool onGeometry = detectedPoint(hp)
       && (m_nodeOf.count(m_ctx->DetectedInteractive().get()) || m_centerObjects.count(m_ctx->DetectedInteractive().get()));
-  gp_Pnt hp = onGeometry ? m_ctx->MainSelector()->PickedPoint(1) : gp_Pnt();
   if (onGeometry) {
     auto center = m_centerObjects.find(m_ctx->DetectedInteractive().get());
     Handle(CircleOwner) circle = Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
@@ -1927,6 +2911,8 @@ void Viewport::resizeEvent(QResizeEvent*) {
   requestRedraw();
 }
 
+QPointF Viewport::cubeCentre() const { return QPointF(width() - kCubeOffsetX, kCubeOffsetY); }
+
 // Same test as a press below: the hover is refreshed near the cube only, so a click on the model costs no extra pick.
 bool Viewport::cubeAt(const QPointF& point) {
   if (!m_initialised || m_blocked || m_twoDimensional) return false;
@@ -1937,8 +2923,14 @@ bool Viewport::cubeAt(const QPointF& point) {
   return m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube;
 }
 
+QRect Viewport::cubeRect() const {
+  if (!m_initialised || m_twoDimensional) return {};
+  return QRect(width() - kCubeOffsetX - 48, kCubeOffsetY - 48, 96, 96);
+}
+
 void Viewport::mousePressEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  m_viewButtons |= e->button();
   finishTrackpadScroll();
   m_nativePinching = false;
   setFocus();
@@ -1947,21 +2939,39 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   m_pressPos = (e->position()+m_dragOffset).toPoint();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
+  if (m_sketchInput && e->button() != Qt::LeftButton && !m_ownCursorAside) {  // a camera gesture or the context menu: the pointer
+    m_ownCursorAside = true;
+    applyOwnCursor();
+  }
+  m_holdTimer.stop();
+  m_holdPress = false;
+  const bool listPending = m_selectOtherTimer.isActive();  // an Alt+click's list waits out the double-click time
+  m_selectOtherTimer.stop();
+  // The zoom window takes the left drag (UI-47); a right click leaves it.
+  if (m_zoomWindow && e->button() == Qt::LeftButton) { m_zoomDrag = true; m_zoomFrom = m_zoomTo = e->position(); return; }
+  if (m_zoomWindow && e->button() == Qt::RightButton) { m_rightPress = false; cancelZoomWindow(); return; }
+  m_cubeMenu = m_rightPress && cubeAt(e->position());  // a right click on the cube opens its menu
   if (sectionMousePress(e)) return;  // a press on the section plane's handle strip starts a drag, never a selection
+  // Alt+click lists everything under the pointer (UI-128): the press and its release are not the controller's. The second
+  // click of an Alt+double-click is (a click, smart selection's tangent chain): it opens no list.
+  if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::AltModifier && !m_sketchInput && !cubeAt(e->position())
+      && !(listPending && e->type() == QEvent::MouseButtonDblClick)) {
+    m_selectOtherPress = true;
+    e->accept();
+    return;
+  }
   // A press can arrive without a preceding hover. Refresh only near the cube (or when the old hover was
   // the cube) so the gesture below uses this press's owner without an extra scene pick on every model click.
   const QPointF cubeCenter(width() - kCubeOffsetX, kCubeOffsetY);
   const bool nearCube = qAbs(e->position().x() - cubeCenter.x()) <= 96
       && qAbs(e->position().y() - cubeCenter.y()) <= 96;
   if (m_initialised && e->button() == Qt::LeftButton
-      && (nearCube || (m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube))) {
-    const Graphic3d_Vec2i at = devicePos(e->position());
-    m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);
-  }
+      && (nearCube || (m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube)))
+    moveTo(devicePos(e->position()));
   if(m_initialised && e->button()==Qt::LeftButton && !m_sketchInput)
     setCenterPicking(e->modifiers().testFlag(Qt::ControlModifier),e->position());
   if(m_ctrlCenterPick && e->button()==Qt::LeftButton && !m_sketchInput && m_filter==SelFilter::Vertex && !m_measureSelectionLocked) {
-    const auto at=devicePos(e->position());m_ctx->MoveTo(at.x(),at.y(),m_view,false);discoverCenter();
+    moveTo(devicePos(e->position()));discoverCenter();
     if(m_ctx->HasDetected()) {
       const auto circle=Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
       auto marker=m_centerObjects.find(m_ctx->DetectedInteractive().get());
@@ -1986,13 +2996,16 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     focusCube();
     m_cubeGesture = true;
     m_cubeClick = true;
+    myViewAnimation->SetOwnDuration(motion::seconds(0.5));  // the turn to the clicked side (roll and align set their own)
     m_needFit = false;
     // Only the Replace scheme hands a click to the cube (HandleMouseClick); a guided tool's XOR would toggle it as a pick.
     ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, AIS_SelectionScheme_Replace);
   }
+  if (m_initialised && !m_cubeGesture && objectSnapPress(e)) return;
   if (!m_cubeGesture && e->button()==Qt::LeftButton && m_initialised && m_pickAccumulate && !m_measureSelectionLocked) {
+    // A locked guide's point is taken wherever the click lands (a cross lock's crossing can be far from the pointer).
     auto tracked=m_centers.find(m_trackingMarker);
-    if(tracked!=m_centers.end() && (!m_ctx->HasDetected() || m_ctx->DetectedInteractive()==tracked->second.ais) && (QPointF(widgetPoint(tracked->second.ref.point))-e->position()).manhattanLength()<16) {
+    if(tracked!=m_centers.end() && (m_shift.locked() || ((!m_ctx->HasDetected() || m_ctx->DetectedInteractive()==tracked->second.ais) && (QPointF(widgetPoint(tracked->second.ref.point))-e->position()).manhattanLength()<16))) {
       m_snapClick=m_trackingMarker; e->accept(); return;
     }
   }
@@ -2013,12 +3026,38 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
       if(std::abs(direction.Z())>1-1e-8){const auto up=camera->Up();camera->SetDirection(gp_Dir(direction.X()+up.X()*1e-4,direction.Y()+up.Y()*1e-4,direction.Z()));}
     }
   }
+  if (m_initialised && e->button() == Qt::LeftButton && e->buttons() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && !m_cubeGesture) {
+    m_holdAt = e->position();
+    m_holdTimer.start(QGuiApplication::styleHints()->mousePressAndHoldInterval());
+  }
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()+m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
+  m_holdTimer.stop();
+  m_viewButtons &= e->buttons() & ~e->button();
   if (m_blocked) return;
+  if (std::exchange(m_holdPress, false) && e->button() == Qt::LeftButton) {  // the held press opened the list
+    e->accept();
+    return;
+  }
+  if (m_zoomDrag && e->button() == Qt::LeftButton) {
+    m_zoomDrag = false;
+    m_zoomTo = e->position();
+    finishZoomWindow();
+    return;
+  }
   if (sectionMouseRelease(e)) return;
+  if (m_selectOtherPress && e->button() == Qt::LeftButton) {
+    m_selectOtherPress = false;
+    if ((e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
+      m_selectOtherAt = e->position();
+      m_selectOtherGlobal = e->globalPosition().toPoint();
+      m_selectOtherTimer.start(QGuiApplication::styleHints()->mouseDoubleClickInterval());
+    }
+    e->accept();
+    return;
+  }
   if (!m_snapClick.empty() && e->button()==Qt::LeftButton) {
     const auto key=m_snapClick;
     auto marker=m_centers.find(key);
@@ -2026,6 +3065,8 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
       const auto ref=marker->second.ref; m_ctx->AddOrRemoveSelected(marker->second.ais,false);
       // Retain the exact acquired point rather than a stale selector hit.
       OnSelectionChanged(m_ctx,m_view);
+      m_shift.clicked();  // the pick ends a sticky lock
+      m_trackingDirty=true;
     }
     m_snapClick.clear(); e->accept(); return;
   }
@@ -2045,6 +3086,10 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
     m_sketchDrag = false;
     double u, v;
     if (m_sketchInput && planePoint(e->position(), m_sketchFrame, u, v)) m_sketchInput->sketchRelease(u, v, e->modifiers());
+    if (m_sketchInput && m_ownCursorAside && !rect().contains(e->position().toPoint())) {  // dropped off the view
+      m_ownCursorAside = false;
+      applyOwnCursor();
+    }
     return;
   }
   QPointF releasePosition=e->position();
@@ -2057,9 +3102,50 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   }
   if (m_rightPress && e->button() == Qt::RightButton && (e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;
-    emit contextMenuRequested(e->globalPosition().toPoint());
+    if (std::exchange(m_cubeMenu, false)) emit cubeMenuRequested(e->globalPosition().toPoint());
+    else {
+      contextPick(e->position());
+      m_contextAt = e->position();  // while the menu is open: where it was asked for (Select other, UI-128)
+      m_inContextMenu = true;
+      emit contextMenuRequested(e->globalPosition().toPoint());
+      m_inContextMenu = false;
+    }
+  }
+  // A camera gesture is over: the sketch's own cursor again at once (ownCursorChanged: the editor snaps where the pointer is
+  // now), so a click right after it without a move goes where the cursor is drawn.
+  if (m_sketchInput && m_ownCursorAside && e->buttons() == Qt::NoButton) {
+    m_ownCursorAside = m_ownCursorWanted && rect().contains(e->position().toPoint()) && cubeAt(e->position());
+    applyOwnCursor();
   }
   if (e->buttons() == Qt::NoButton) { m_dragOffset = {}; m_warpGate.pending=false; }
+}
+
+bool Viewport::gestureHeld() const { return m_initialised && PressedMouseButtons() != Aspect_VKeyMouse_NONE; }
+bool Viewport::frameInvalidated() const { return m_initialised && m_view->IsInvalidated(); }
+
+void Viewport::dropGesture() {
+  ResetViewInput();
+  myUI.Selection.Points.Clear();
+  myUI.Selection.ToApplyTool = false;
+  myGL.Selection.Points.Clear();
+  myGL.Selection.ToApplyTool = false;
+  if (m_ctx->IsDisplayed(myRubberBand)) m_ctx->Remove(myRubberBand, Standard_False);
+  myRubberBand->ClearPoints();
+  if (std::exchange(m_cubeGesture, false)) {  // as its release would have
+    ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_SelectRectangle);
+    ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, m_pickAccumulate ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
+  }
+  m_holdTimer.stop();
+  ++m_droppedGestures;
+  if (trace::enabled()) trace::log(QStringLiteral("viewport: a press released elsewhere: its gesture dropped, nothing selected"));
+  redrawScene();
+}
+
+void Viewport::exposedAgain() {
+  if (!m_initialised) return;
+  ++m_exposeRedraws;
+  if (trace::enabled()) trace::log(QStringLiteral("viewport: shown again: the whole frame drawn"));
+  redrawScene();
 }
 
 // Off the view (onto the ribbon, or out of the window): nothing is under the pointer any more. The controller would keep
@@ -2068,6 +3154,7 @@ void Viewport::leaveEvent(QEvent* e) {
   QWidget::leaveEvent(e);
   if (!m_initialised) return;
   if (m_sketchInput) m_sketchInput->sketchLeave();
+  m_hoverCycled = false;
   ResetPreviousMoveTo();
   m_hoverFadeTimer.stop();
   if (m_ctx->HasDetected()) {
@@ -2094,13 +3181,32 @@ bool Viewport::benchLeave() {
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
+  // No button held: a press the view had was released elsewhere (a menu, a dialog, an overlay's chip that took the release):
+  // whatever the controller still holds goes (its rubber band followed the pointer, and the next click selected everything
+  // in it).
+  if (e->buttons() == Qt::NoButton) {
+    m_viewButtons = Qt::NoButton;
+    if (m_trackpadMode == TrackpadMode::None && gestureHeld()) dropGesture();
+  }
+  // Buttons held since a press the view never had (a file dialog closed by a double click, a tool's own press): they start
+  // no gesture of the controller's, which takes a change of modifiers during a move for a press (Ctrl of Ctrl+O let go).
+  const bool unseen = (e->buttons() & ~m_viewButtons) != 0;
   const bool awaitingWarp=m_warpGate.pending;
   if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;
   if(awaitingWarp && !m_warpGate.pending && e->buttons()!=Qt::NoButton) m_dragOffset=m_warpPosition-e->position();
   if(m_initialised && e->buttons()==Qt::NoButton) setCenterPicking(e->modifiers().testFlag(Qt::ControlModifier),e->position());
+  if (m_hoverCycled && devicePos(e->position() + m_dragOffset) != m_cycledAt) m_hoverCycled = false;  // the pointer moved on: it picks again
   m_trackingCursor = e->position();
   m_trackingDirty = true;
+  if (m_holdTimer.isActive() && (e->position() - m_holdAt).manhattanLength() >= 4) m_holdTimer.stop();  // a drag, not a hold
   if (m_blocked) return;
+  if (m_holdPress) {  // the list is open over the held press, whose release the list may take instead of the view
+    if (e->buttons() & Qt::LeftButton) return;
+    m_holdPress = false;
+  }
+  if (m_zoomDrag) { m_zoomTo = e->position(); showZoomBand(); return; }
+  if (m_zoomWindow && e->buttons() == Qt::NoButton) return;  // nothing hovered or glowing: the prompt stays in the status
+  if (m_selectOtherPress) return;  // an Alt+press drags nothing
   if (m_trackpadMode != TrackpadMode::None && e->buttons() == Qt::NoButton) finishTrackpadScroll();
   if (m_measureAnchorPress) return;
   if (sectionMouseMove(e)) return;  // dragging the section plane
@@ -2114,6 +3220,18 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
       setToolTip(QString());
     }
   }
+  // The sketch's own cursor gives way to the pointer over the view cube, the section plane's handle and during a camera
+  // gesture (it comes back with the first move after it), and while a drag goes off the view (the press holds the mouse,
+  // so the view's blank cursor would stay over the ribbon and panels, and nothing would show where the pointer is).
+  if (m_sketchInput) {
+    const bool off = m_sketchDrag && !rect().contains(e->position().toPoint());
+    const bool aside = (e->buttons() != Qt::NoButton && !m_sketchDrag) || off
+        || (m_ownCursorWanted && e->buttons() == Qt::NoButton && (m_sectionHover >= 0 || cubeAt(e->position())));
+    if (aside != m_ownCursorAside) {
+      m_ownCursorAside = aside;
+      applyOwnCursor();
+    }
+  }
   // Camera gestures do not need sketch hover, snapping, or geometry updates.
   if (m_sketchInput && (m_sketchDrag || e->buttons()==Qt::NoButton)) {
     double u, v;
@@ -2121,7 +3239,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
     if (m_sketchDrag) return;  // not a rubber band
   }
   if (e->buttons() != Qt::NoButton) m_needFit = false;  // a drag: the user owns the camera now
-  if (m_initialised && UpdateMousePosition(devicePos(e->position() + m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
+  if (m_initialised && UpdateMousePosition(devicePos(e->position() + m_dragOffset), qt_buttons(e->buttons()), unseen ? myMouseModifiers : qt_flags(e->modifiers()), false)) requestRedraw();
   const bool navigation = myMouseActiveGesture == AIS_MouseGesture_Pan
       || myMouseActiveGesture == AIS_MouseGesture_RotateOrbit || myMouseActiveGesture == AIS_MouseGesture_RotateView
       || myMouseActiveGesture == AIS_MouseGesture_Zoom || myMouseActiveGesture == AIS_MouseGesture_ZoomVertical;
@@ -2167,13 +3285,14 @@ void Viewport::wheelEvent(QWheelEvent* e) {
   }
   finishTrackpadScroll();
   m_needFit = false;
+  m_wheelClock.start();
   const double delta = e->angleDelta().y() / 8.0;
   if (UpdateZoom(Aspect_ScrollDelta(devicePos(e->position()), delta))) requestRedraw();
 }
 
 void Viewport::trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit) {
   if (orbit && m_twoDimensional) twoDimensionalHint(mapToGlobal(position).toPoint());
-  orbit = orbit && !m_twoDimensional;
+  orbit = orbit && !m_twoDimensional && m_preset != NavPreset::Cad2D;
   if (delta.isNull()) return;
   const TrackpadMode mode = orbit ? TrackpadMode::Orbit : TrackpadMode::Pan;
   if (mode != m_trackpadMode) {

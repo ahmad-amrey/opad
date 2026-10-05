@@ -1,4 +1,9 @@
 #include "opad/drawing_io.hpp"
+#include "opad/drawing/display.hpp"
+#include "opad/drawing/sheet.hpp"
+#include "opad/drawing/tables.hpp"
+#include <functional>
+#include "opad/kicad_pcb.hpp"
 #include <set>
 #include "opad/design/sketch_geom.hpp"
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -6,13 +11,10 @@
 #include "opad/geometry.hpp"
 #include "import_common.hpp"
 #include "drawing_common.hpp"
+#include "drawing_text.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <gp_Pln.hxx>
-#ifdef OPAD_HAVE_FONT
-#include <StdPrs_BRepTextBuilder.hxx>
-#include <StdPrs_BRepFont.hxx>
-#endif
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBndLib.hxx>
@@ -35,10 +37,16 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS.hxx>
 #include <TopExp_Explorer.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <TopoDS_Iterator.hxx>
+#include <functional>
+#include <unordered_map>
 #include <Standard_Failure.hxx>
 #include <gp_Circ.hxx>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -55,15 +63,16 @@
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 extern char** environ;
 #endif
 
 namespace opad {
 namespace detail {
-void Drawing::add(const std::string& layer, const TopoDS_Shape& s, uint32_t color) {
+void Drawing::add(const std::string& layer, const TopoDS_Shape& s, const Pen& pen) {
   if (layers.size() >= 10000 && !layers.count(layer)) throw Error("drawing exceeds 10000 layers");
-  auto& c = layers[layer][color]; if (c.IsNull()) builder.MakeCompound(c);
+  auto& c = layers[layer][pen]; if (c.IsNull()) builder.MakeCompound(c);
   if(transform.is_identity()) builder.Add(c,s);
   else if(mat_is_rigid(transform)) builder.Add(c,BRepBuilderAPI_Transform(s,trsf_from_mat(transform),true).Shape());
   else {
@@ -90,10 +99,15 @@ struct Conversion {
   Conversion() { std::filesystem::create_directory(directory); }
   ~Conversion() { std::error_code error; std::filesystem::remove_all(directory, error); }
 };
-// Runs a converter and waits for it (two minutes at most); its exit status, or -1 when it did not start. Arguments go as
-// wide strings on Windows, so a drawing named in Arabic reaches the converter intact.
-int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd = {}) {
+}  // namespace
+namespace detail {
+int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd, const RunOptions& run) {
   int status = -1;
+  const auto started = std::chrono::steady_clock::now();
+  auto overdue = [&] {
+    return (run.cancelled && run.cancelled()) ||
+           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count() > run.timeout_ms;
+  };
 #ifdef _WIN32
   std::wstring command;
   auto quote = [&](const std::wstring& a) {
@@ -108,16 +122,20 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
   for (const auto& a : args) quote(a.wstring());
   STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;
   startup.wShowWindow=0;  // SW_HIDE (the OCCT headers leave winuser.h out): converters with a window (ODA) stay out of sight
-  // Converters report progress on stdout and stderr, which nobody reads: both go to NUL.
+  // Converters report progress on stdout and stderr: to NUL, or to the output file when the caller reads it.
   SECURITY_ATTRIBUTES inherit{sizeof(inherit),nullptr,TRUE};
   HANDLE nul=CreateFileW(L"NUL",GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,OPEN_EXISTING,0,nullptr);
-  startup.hStdInput=startup.hStdOutput=startup.hStdError=nul;
+  HANDLE out=run.output.empty()?INVALID_HANDLE_VALUE:CreateFileW(run.output.c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,CREATE_ALWAYS,0,nullptr);
+  startup.hStdInput=nul; startup.hStdOutput=startup.hStdError=out!=INVALID_HANDLE_VALUE?out:nul;
   PROCESS_INFORMATION process{};
   if(CreateProcessW(nullptr,command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW,nullptr,cwd.empty()?nullptr:cwd.c_str(),&startup,&process)) {
-    if(WaitForSingleObject(process.hProcess,120000)==WAIT_OBJECT_0) { DWORD code; if(GetExitCodeProcess(process.hProcess,&code)) status=int(code); }
+    DWORD wait;
+    while((wait=WaitForSingleObject(process.hProcess,100))==WAIT_TIMEOUT && !overdue()) {}
+    if(wait==WAIT_OBJECT_0) { DWORD code; if(GetExitCodeProcess(process.hProcess,&code)) status=int(code); }
     else { TerminateProcess(process.hProcess,1); WaitForSingleObject(process.hProcess,5000); }
     CloseHandle(process.hThread); CloseHandle(process.hProcess);
   }
+  if(out!=INVALID_HANDLE_VALUE) CloseHandle(out);
   if(nul!=INVALID_HANDLE_VALUE) CloseHandle(nul);
 #else
   (void)cwd;  // callers pass absolute paths here
@@ -126,14 +144,24 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
   std::vector<char*> ptrs; for (auto& a : text) ptrs.push_back(a.data()); ptrs.push_back(nullptr);
   pid_t pid;
   posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions);
-  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);  // converter chatter: nobody reads it
-  posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+  const std::string sink = run.output.empty() ? std::string("/dev/null") : run.output.string();
+  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, sink.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
   const int error = posix_spawnp(&pid, text[0].c_str(), &actions, nullptr, ptrs.data(), environ);
   posix_spawn_file_actions_destroy(&actions);
-  if (!error) { int code=0; while(waitpid(pid,&code,0)<0 && errno==EINTR) {} if(WIFEXITED(code)) status=WEXITSTATUS(code); }
+  if (!error) {
+    int code = 0;
+    pid_t done = 0;
+    while ((done = waitpid(pid, &code, WNOHANG)) == 0 && !overdue()) usleep(100000);
+    if (done == 0) { kill(pid, SIGKILL); while (waitpid(pid, &code, 0) < 0 && errno == EINTR) {} }
+    else if (done > 0 && WIFEXITED(code)) status = WEXITSTATUS(code);
+  }
 #endif
   return status;
 }
+}  // namespace detail
+namespace {
+using detail::run_program;
 
 std::filesystem::path executable_dir() {
 #ifdef _WIN32
@@ -148,6 +176,8 @@ std::filesystem::path executable_dir() {
   return error ? std::filesystem::path() : self.parent_path();
 #endif
 }
+
+std::atomic<bool> g_use_oda{false};
 
 // The free ODA File Converter, where its installers put it (the newest version when several are installed).
 std::filesystem::path oda_converter() {
@@ -172,8 +202,8 @@ std::filesystem::path oda_converter() {
 }
 
 // DWG <-> DXF through an external converter (DWG is a closed format): OPAD_DWG2DXF / OPAD_DXF2DWG when set, else the
-// ODA File Converter when installed (it reads every DWG version faithfully), else LibreDWG's dwg2dxf / dxf2dwg, which
-// the build puts beside the program (third_party/libredwg), else on PATH.
+// ODA File Converter when switched on (use_oda) and installed (it reads every DWG version faithfully), else LibreDWG's
+// dwg2dxf / dxf2dwg, which the build puts beside the program (third_party/libredwg), else on PATH.
 void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& out, bool toDwg) {
   const std::string name = toDwg ? "dxf2dwg" : "dwg2dxf";
   const char* override = std::getenv(toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF");
@@ -192,8 +222,10 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
     std::filesystem::copy_file(work.directory / target, out, std::filesystem::copy_options::overwrite_existing);
     return true;
   };
-  if (override && *override && libre(path_from_utf8(override))) return;
-  if (const auto oda = oda_converter(); !oda.empty() && !(override && *override)) {
+  const bool overridden = override && *override;
+  if (overridden && libre(path_from_utf8(override))) return;
+  const auto oda = overridden || !use_oda() ? std::filesystem::path() : oda_converter();
+  if (!oda.empty()) {
     // ODA converts folders: the drawing alone in one, the result in another.
     Conversion work;
     const auto from = work.directory / "in", to = work.directory / "out";
@@ -208,8 +240,8 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
       return;
     }
   }
-  bool tried = (override && *override) || !oda_converter().empty();
-  if (!(override && *override)) {
+  bool tried = overridden || !oda.empty();
+  if (!overridden) {
     std::error_code error;
 #ifdef _WIN32
     const auto beside = executable_dir() / (name + ".exe");
@@ -222,13 +254,38 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
     }
     if (libre(name)) return;  // on PATH
   }
+  // The ODA File Converter is third-party software whose terms allow non-members non-commercial use only: never used
+  // unless switched on, only pointed to.
+  const std::string oda_hint = !overridden && oda.empty() && !oda_converter().empty()
+      ? " The ODA File Converter is installed but not switched on (Settings > Use the ODA File Converter for DWG, if its"
+        " licence covers your use)."
+      : "";
   if (tried)
     throw Error(std::string(toDwg ? "Writing DWG failed" : "Reading DWG failed") +
-                ": the converter could not handle this drawing (it may be damaged, or saved by a newer AutoCAD)");
+                ": the converter could not handle this drawing (it may be damaged, or saved by a newer AutoCAD)." + oda_hint);
   throw Error(std::string(toDwg ? "Writing DWG" : "Reading DWG") + " needs a converter: put LibreDWG's " + name +
               " beside OPAD or on PATH (or set " + (toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF") +
-              " to it), or install the free ODA File Converter. Saving the drawing as DXF works without one.");
+              " to it). Saving the drawing as DXF works without one." + oda_hint);
 }
+
+}  // namespace
+
+namespace detail {
+// Which converter convert_dwg would read a DWG with: a kept conversion is only good for the same one. ODA only while it is
+// switched on (use_oda), as convert_dwg takes it.
+std::string dwg_converter() {
+  if (const char* override = std::getenv("OPAD_DWG2DXF"); override && *override) return std::string("override:") + override;
+  if (use_oda())
+    if (const auto oda = oda_converter(); !oda.empty()) {
+      const auto u8 = oda.u8string();
+      return "oda:" + std::string(u8.begin(), u8.end());
+    }
+  return "libredwg";
+}
+}  // namespace detail
+
+namespace {
+
 std::string extension(const std::filesystem::path& file) {
   std::string e = file.extension().string();
   std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -344,6 +401,7 @@ Drawing read_svg(const std::filesystem::path& file) {
   auto local=[](std::string tag) { const auto colon=tag.find(':'); return colon==std::string::npos?tag:tag.substr(colon+1); };
   if(local(root.getTagName().GetString())!="svg") throw Error("expected SVG root");
   Drawing out;
+  detail::TextOutliner outliner({file.parent_path()});  // shaped text (UI-92): font-family's fonts, else a sans-serif
   std::map<std::string,LDOM_Element> ids;
   std::function<void(const LDOM_Element&,int)> index;
   index=[&](const LDOM_Element& e,int depth) {
@@ -444,19 +502,12 @@ Drawing read_svg(const std::filesystem::path& file) {
       };
       content(e);
       if(!value.empty()) {
-#ifdef OPAD_HAVE_FONT
-        StdPrs_BRepFont font;
-        const double size=length(property("font-size","16"));
-        const auto family=property("font-family","sans-serif");
-        if(size>0&&font.FindAndInit(family.c_str(),Font_FA_Regular,size)) {
-          const auto align=property("text-anchor","");
-          const auto h=align=="middle"?Graphic3d_HTA_CENTER:align=="end"?Graphic3d_HTA_RIGHT:Graphic3d_HTA_LEFT;
-          const auto shape=StdPrs_BRepTextBuilder().Perform(font,NCollection_String(value.c_str()),gp_Ax3(gp_Pnt(num("x"),-num("y"),0),gp::DZ()),h,Graphic3d_VTA_BOTTOM);
-          out.add(layer,shape);
-        } else out.warnings.push_back("SVG text font unavailable; text retained in source");
-#else
-        out.warnings.push_back("SVG text outlines need OCCT font support; text retained in source");
-#endif
+        detail::TextRequest request; request.text=value; request.font=property("font-family","sans-serif"); request.size=length(property("font-size","16"));
+        const auto align=property("text-anchor","");
+        request.h=align=="middle"?detail::TextRequest::Center:align=="end"?detail::TextRequest::Right:detail::TextRequest::Left;
+        const auto shape=request.size>0?outliner.outline(request,gp_Ax3(gp_Pnt(num("x"),-num("y"),0),gp::DZ())):TopoDS_Shape();
+        if(!shape.IsNull()) { if(shape.NbChildren()>0) out.add(layer,shape); }
+        else out.warnings.push_back("SVG text font unavailable; text retained in source");
       }
     } else if(tag!="svg"&&tag!="g"&&tag!="symbol"&&tag!="a"&&tag!="switch") {
       out.warnings.push_back("SVG element retained in source: "+full);
@@ -481,14 +532,108 @@ Drawing read_svg(const std::filesystem::path& file) {
   return out;
 }
 
-std::string xml(const std::string& in) { std::string out; for(char c:in) { if(c=='&')out+="&amp;"; else if(c=='<')out+="&lt;"; else if(c=='\"')out+="&quot;"; else out+=c; } return out; }
+}
+
+void set_use_oda(bool on) { g_use_oda = on; }
+bool use_oda() {
+  const char* env = std::getenv("OPAD_USE_ODA");
+  return g_use_oda || (env && *env && std::strcmp(env, "0") != 0);
+}
+std::filesystem::path oda_file_converter() { return oda_converter(); }
+std::string dwg_reader() {
+  const char* override = std::getenv("OPAD_DWG2DXF");
+  if (override && *override) return std::string("override:") + override;
+  return use_oda() && !oda_converter().empty() ? "oda" : "libredwg";
 }
 
 const std::vector<std::string>& importable_extensions() {
   static const std::vector<std::string> list = {".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".stl", ".obj", ".3mf", ".ply",
-                                                ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg"};
+                                                ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg", ".kicad_pcb"};
   return list;
 }
+
+std::filesystem::path repo_top(const std::filesystem::path& path) {
+  std::error_code ec;
+  std::filesystem::path dir = std::filesystem::absolute(path, ec).lexically_normal();
+  if (ec) return {};
+  if (!std::filesystem::is_directory(dir, ec)) dir = dir.parent_path();
+  for (; !dir.empty(); dir = dir.parent_path()) {
+    if (std::filesystem::exists(dir / ".git", ec)) return dir;
+    if (dir == dir.parent_path()) break;
+  }
+  return {};
+}
+
+std::filesystem::path import_source(const json& op, const std::filesystem::path& document, bool* exists) {
+  std::error_code ec;
+  auto there = [&](const std::filesystem::path& p) { return !p.empty() && std::filesystem::is_regular_file(p, ec); };
+  auto found = [&](const std::filesystem::path& p) {
+    if (exists) *exists = true;
+    return p.lexically_normal().make_preferred();
+  };
+  const std::string repo = op.value("source_repo", ""), full = op.value("source_path", ""), name = op.value("source", "");
+  if (!document.empty() && !repo.empty())
+    if (const auto top = repo_top(document); !top.empty())
+      if (const auto p = top / path_from_utf8(repo); there(p)) return found(p);
+  std::filesystem::path guess = full.empty() ? std::filesystem::path() : path_from_utf8(full);
+  if (there(guess)) return found(guess);
+  if (!document.empty() && !name.empty() && name.find_first_of("/\\") == std::string::npos) {
+    const auto p = document.parent_path() / path_from_utf8(name);
+    if (there(p)) return found(p);
+    if (guess.empty()) guess = p;
+  }
+  if (exists) *exists = false;
+  return guess.empty() ? guess : guess.lexically_normal().make_preferred();
+}
+
+namespace {
+ImportResult import_drawing(Document& doc, const std::filesystem::path& file, const std::filesystem::path& shown, const ImportOptions& options);
+}
+
+namespace {
+// Bodies share no sub-shapes: the view meshes them side by side on several threads, and a viewer keeps the reader's
+// shapes as they are. What a group holds that an earlier group holds too (a glyph, or a block placed on two layers) is
+// copied for it, once per group whatever its number of placements; sharing within one body stays.
+void unshare(Drawing& drawing) {
+  std::unordered_map<const TopoDS_TShape*, int> owner;  // the first group holding it
+  std::function<void(const TopoDS_Shape&, int)> mark = [&](const TopoDS_Shape& s, int group) {
+    if (!owner.emplace(s.TShape().get(), group).second) return;  // its children are marked
+    for (TopoDS_Iterator i(s, false, false); i.More(); i.Next()) mark(i.Value(), group);
+  };
+  std::vector<TopoDS_Compound*> groups;
+  for (auto& [name, byPen] : drawing.layers)
+    for (auto& [pen, shape] : byPen) mark(shape, int(groups.size())), groups.push_back(&shape);
+  BRep_Builder builder;
+  for (int group = 1; group < int(groups.size()); ++group) {
+    std::unordered_map<const TopoDS_TShape*, TopoDS_Shape> done;  // its own one of each, unlocated
+    std::function<TopoDS_Shape(const TopoDS_Shape&)> own = [&](const TopoDS_Shape& s) {
+      const TopoDS_TShape* t = s.TShape().get();
+      auto found = done.find(t);
+      if (found == done.end()) {
+        const TopoDS_Shape base = s.Located(TopLoc_Location()).Oriented(TopAbs_FORWARD);
+        TopoDS_Shape result = base;
+        const bool foreign = owner[t] != group;
+        if (base.ShapeType() == TopAbs_COMPOUND) {  // a foreign one rebuilt too: what it shares with others is copied once
+          TopoDS_Compound rebuilt;                  // (a text the reader placed in several groups, its glyphs in other texts)
+          builder.MakeCompound(rebuilt);
+          bool changed = foreign;
+          for (TopoDS_Iterator i(base, false, false); i.More(); i.Next()) {
+            const TopoDS_Shape child = own(i.Value());
+            changed = changed || child.TShape() != i.Value().TShape();
+            builder.Add(rebuilt, child);
+          }
+          if (changed) result = rebuilt;
+        } else if (foreign) {
+          result = BRepBuilderAPI_Copy(base, false, false).Shape();
+        }
+        found = done.emplace(t, result).first;
+      }
+      return found->second.Located(s.Location()).Oriented(s.Orientation());
+    };
+    *groups[size_t(group)] = TopoDS::Compound(own(*groups[size_t(group)]));
+  }
+}
+}  // namespace
 
 ImportResult import_file(Document& doc, const std::filesystem::path& file, const ImportOptions& options) {
   const auto ext=extension(file);
@@ -501,12 +646,32 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     if(ext==".ply") return detail::import_ply(doc,file,options);
     if(ext==".3mf") return detail::import_3mf(doc,file,options);
     if(ext==".obj" || ext==".gltf" || ext==".glb" || ext==".wrl" || ext==".vrml") return detail::import_mesh_scene(doc,file,options);
+    if(ext==".kicad_pcb") return options.kicad.kicad_cli?import_kicad_export(doc,file,options):import_kicad_pcb(doc,file,options);
+    if(ext==".png" || ext==".jpg" || ext==".jpeg" || ext==".bmp" || ext==".gif" || ext==".webp") return detail::import_image(doc,file,options);
   } catch(const Standard_Failure& e) { throw Error("cannot read "+file.filename().string()+": "+e.GetMessageString()); }
   if(ext==".dwg") {
-    Conversion work; auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
+    // Converting is what is slow about a DWG: the DXF text it made is kept by the DWG's content (viewer_cache.cpp).
+    auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
+    const std::string converter=detail::dwg_converter();
+    ImportOptions o=options; if(o.source_file.empty()) o.source_file=file;  // the op names the DWG, not the DXF read
+    if(const auto kept=detail::dwg_cache_find(file,converter);!kept.empty()) return import_drawing(doc,kept,name,o);
+    Conversion work;
+    const auto start=std::chrono::steady_clock::now();
     convert_dwg(file,work.directory/name,false);
-    return import_file(doc,work.directory/name,options);
+    const auto converted=std::chrono::steady_clock::now();
+    ImportResult result=import_drawing(doc,work.directory/name,name,o);
+    const auto ms=[](auto a,auto b){return std::chrono::duration<double,std::milli>(b-a).count();};
+    detail::dwg_cache_keep(file,converter,work.directory/name,ms(start,converted),ms(converted,std::chrono::steady_clock::now()));
+    return result;
   }
+  if(ext==".dxf" || ext==".svg") return import_drawing(doc,file,file,options);
+  throw Error("unsupported file format: " + ext);
+}
+
+namespace {
+// A DXF or SVG read from `file`, named as `shown` (a converted DWG's DXF: the drawing's own name).
+ImportResult import_drawing(Document& doc, const std::filesystem::path& file, const std::filesystem::path& shown, const ImportOptions& options) {
+  const auto ext=extension(file);
   try {
     Drawing drawing;
     if(ext==".dxf") drawing=detail::read_dxf(file,options);
@@ -514,22 +679,38 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     else throw Error("unsupported file format: " + ext);
     ImportResult result; result.warnings=drawing.warnings; json children=json::array();
     // Parse fully before touching the document. Stage stores and op so cancellation is atomic.
+    unshare(drawing);
     Document staged=doc;
     for(const auto& [name, groups]:drawing.layers) {
       if(options.progress && !options.progress(double(children.size())/drawing.layers.size(),"building")) throw Error("cancelled");
       json bodies=json::array();
-      for(const auto& [color, shape]:groups) {  // one body per colour the layer's entities are drawn in
-        json meta={{"representation","drawing2d"},{"layer",name},{"source",file.filename().string()}};
+      for(const auto& [pen, shape]:groups) {  // one body per colour (and own linetype or lineweight) the layer's entities are drawn in
+        const uint32_t color=pen.color;
+        json meta={{"representation","drawing2d"},{"layer",name},{"source",shown.filename().string()}};
         json body={{"type","body"},{"id",new_uuid()},{"name",name},{"representation","drawing2d"}};
         if(color!=Drawing::kNoColor) meta["color"]=body["color"]={((color>>16)&255)/255.0,((color>>8)&255)/255.0,(color&255)/255.0};
+        if(const auto by=drawing.by_layer.find(name);by!=drawing.by_layer.end() && by->second==color) body["by_layer"]=true;  // older builds ignore it
+        json line=json::object();  // its own linetype, lineweight and dash scale over its layer's (UI-92; older builds ignore it)
+        if(!pen.linetype.empty()) {
+          line["linetype"]=pen.linetype;
+          if(const auto p=drawing.patterns.find(pen.linetype);p!=drawing.patterns.end() && !p->second.empty()) line["pattern"]=p->second;
+        }
+        if(pen.lineweight!=-1) line["lineweight"]=pen.lineweight>=0?pen.lineweight/100.0:-1.0;
+        if(pen.scale!=1) line["scale"]=pen.scale;
+        if(!line.empty()) body["line"]=line;
         body["key"]=detail::store_body(staged,shape,meta,options,false);
         if(bodies.empty() && drawing.images.count(name)) body["raster"]=drawing.images.at(name);
         bodies.push_back(std::move(body));
         ++result.bodies;
       }
-      children.push_back({{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",bodies}});
+      json layer={{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",bodies}};
+      if(const auto info=drawing.layer_info.find(name);info!=drawing.layer_info.end()) {  // older builds ignore both (UI-37)
+        layer["layer"]=info->second;
+        if(info->second.value("locked",false)) layer["locked"]=true;
+      }
+      children.push_back(std::move(layer));
     }
-    json root={{"type","component"},{"id",new_uuid()},{"name",file.stem().string()},{"children",children}};
+    json root={{"type","component"},{"id",new_uuid()},{"name",shown.stem().string()},{"children",children}};
     Mat4 placement=options.placement;
     if(options.center_drawing) {
       Bnd_Box box;for(const auto& [name,groups]:drawing.layers)for(const auto& [color,shape]:groups)BRepBndLib::Add(shape,box);
@@ -538,7 +719,11 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       placement=placement*Mat4::translation(drawing.origin.X(),drawing.origin.Y(),drawing.origin.Z());  // read near (0,0), back in place
     }
     if(!placement.is_identity())root["transform"]=placement.to_json();
-    json op={{"op","import"},{"source",file.filename().string()},{"nodes",json::array({root})}};
+    // Read near (0,0): the drawing's own coordinates are the root's local ones plus this (the cursor readout's, UI-90; older
+    // builds ignore it).
+    if(drawing.origin.Modulus()>0) root["drawing_origin"]={drawing.origin.X(),drawing.origin.Y(),drawing.origin.Z()};
+    json op={{"op","import"},{"source",shown.filename().string()},{"nodes",json::array({root})}};
+    detail::stamp_source(op,file,options);  // a converted DWG: options.source_file, the DWG
     // The source keeps what the drawing could not show; a viewer never writes it back, so it skips the copy.
     if(ext==".svg" && !drawing.warnings.empty() && !options.viewer) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
     if(!options.parent.empty()) op["parent"]=options.parent;
@@ -546,91 +731,173 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     result.new_entries=int(staged.body_count()-doc.body_count()); doc=std::move(staged); return result;
   } catch(const Standard_Failure& e) { throw Error(std::string("cannot import geometry: ")+e.GetMessageString()); }
 }
+}  // namespace
 
-ExportResult export_drawing(const Document& doc,const Scene& scene,const std::filesystem::path& file,const ExportOptions& options) {
-  if (options.format == "dwg") {
-    Conversion work; auto intermediate=work.directory/"drawing.dxf", converted=work.directory/"drawing.dwg";
-    ExportOptions dxf=options; dxf.format="dxf";
-    auto result=export_drawing(doc,scene,intermediate,dxf);
-    convert_dwg(intermediate,converted,true);
-    std::filesystem::copy_file(converted,file,std::filesystem::copy_options::overwrite_existing);
-    result.files={file}; return result;
-  }
-  const bool svg=options.format=="svg"; std::ostringstream body; body.precision(17);
-  double xmin=0,ymin=0,xmax=1,ymax=1; int bodies=0;
-  auto line=[&](const std::string& layer,const gp_Pnt& a,const gp_Pnt& b) {
-    for(const auto& p:{a,b}) { xmin=std::min(xmin,p.X()); xmax=std::max(xmax,p.X()); ymin=std::min(ymin,-p.Y()); ymax=std::max(ymax,-p.Y()); }
-    if(svg) body<<"<line x1=\""<<a.X()<<"\" y1=\""<<-a.Y()<<"\" x2=\""<<b.X()<<"\" y2=\""<<-b.Y()<<"\"/>\n";
-    else body<<"0\nLINE\n8\n"<<layer<<"\n10\n"<<a.X()<<"\n20\n"<<a.Y()<<"\n11\n"<<b.X()<<"\n21\n"<<b.Y()<<'\n';
-  };
+namespace {
+// The selection (or the document) as drawn: solids and meshes as a view, drawings and sketches as they lie.
+drawing::Display objects_display(const Document& doc,const Scene& scene,const ExportOptions& options,const std::string& title,json& details,int& bodies) {
+  const bool painted=options.format=="pdf" || options.format=="png";
   std::vector<std::string> nodes, sketches;
   for(const auto& id:options.select) { if(scene.sketch(id)) sketches.push_back(id); else nodes.push_back(id); }
   std::vector<std::string> objects;
   if(options.select.empty() || !nodes.empty()) objects=select_bodies(scene,nodes);
   if(options.select.empty()) for(const auto& sk:scene.sketches) if(sk.visible) sketches.push_back(sk.id);
-  objects.insert(objects.end(),sketches.begin(),sketches.end());
+  std::vector<std::string> drawn, modelled;  // as drawn (drawings, sketches, images) / seen in a view (solids, meshes)
   std::set<std::string> seen;
   for(const auto& id:objects) {
     if(!seen.insert(id).second) continue;
+    const Node* n=scene.node(id);
+    if(n->body_missing || (options.select.empty() && !scene.effectively_visible(id))) continue;
+    (n->representation=="drawing2d" || !n->raster.is_null()?drawn:modelled).push_back(id);
+  }
+  for(const auto& id:sketches) if(seen.insert(id).second) drawn.push_back(id);
+  drawing::Display d; d.title=title;
+  // Solids and meshes: a hidden-line view; solids without one asked for as seen from the top, in XY with the drawings.
+  if(options.view.is_null())
+    for(const auto& id:modelled) if(scene.node(id)->representation=="mesh") throw Error("mesh reference objects require STL, OBJ or GLB export, or a 2D view");
+  if(!modelled.empty()) {
+    json spec=options.view.is_object()?options.view:json{{"view","top"}};
+    if(!spec.contains("hidden")) spec["hidden"]=false;
+    spec["nodes"]=modelled;
+    const auto view=drawing::ViewSpec::from_json(spec);
+    const auto g=drawing::project(doc,scene,view,options.progress);
+    d=drawing::view_display(*g,title);
+    details["view"]={{"dir",view.dir},{"up",view.up},{"hidden",view.hidden},{"tier",drawing::quality_name(g->tier)},{"ms",g->stats.value("ms",0)}};
+    bodies+=int(g->bodies.size());
+  }
+  if(!options.view.is_null()) {
+    if(modelled.empty()) throw Error("Nothing to project: a 2D view shows solids and meshes");
+    if(!drawn.empty()) details["skipped"]=drawn.size();  // drawings and sketches lie in their own planes, not in the view
+    drawn.clear();
+  }
+  for(const auto& id:drawn) {
     const auto* sketch=scene.sketch(id);
-    if(options.select.empty() && !sketch && !scene.effectively_visible(id)) continue;
-    Node sketchNode; if(sketch) {sketchNode.name=sketch->name;sketchNode.representation="drawing2d";}
-    const Node* n=sketch?&sketchNode:scene.node(id);
-    if (n->representation == "mesh") throw Error("mesh reference objects require STL, OBJ or GLB export");
-    std::string layer=n->name;
-    std::replace(layer.begin(),layer.end(),'\n','_'); std::replace(layer.begin(),layer.end(),'\r','_');
-    if(svg) body<<"<g id=\""<<xml(layer)<<"\">\n";
-    if(!n->raster.is_null()) {
-      if(!svg) throw Error("Raster images require SVG export; DXF raster references are not supported");
+    const Node* n=sketch?nullptr:scene.node(id);
+    std::string name=sketch?sketch->name:n->name;
+    std::replace(name.begin(),name.end(),'\n','_'); std::replace(name.begin(),name.end(),'\r','_');
+    const uint32_t rgb=n && n->has_color?uint32_t(std::lround(std::clamp(n->color[0],0.0,1.0)*255))<<16|uint32_t(std::lround(std::clamp(n->color[1],0.0,1.0)*255))<<8|uint32_t(std::lround(std::clamp(n->color[2],0.0,1.0)*255)):drawing::kInk;
+    drawing::Layer pen{name,rgb,drawing::LineType::Continuous,0.25};
+    const int layer=d.layer(pen);
+    const uint32_t own=d.layers[size_t(layer)].rgb==rgb?drawing::kByLayer:rgb;
+    if(n && !n->raster.is_null()) {
+      if(options.format!="svg" && !painted) throw Error("Raster images require SVG, PDF or PNG export; DXF raster references are not supported");
       const auto world=scene.world(id);
-      std::array<Vec3,3> p;
-      for(int i=0;i<3;++i) p[i]=world.apply(n->raster.at("corners").at(i).get<Vec3>());
-      for(int i=0;i<4;++i) {
-        Vec3 q=i<3?p[i]:Vec3{p[1][0]+p[2][0]-p[0][0],p[1][1]+p[2][1]-p[0][1],0};
-        xmin=std::min(xmin,q[0]);xmax=std::max(xmax,q[0]);ymin=std::min(ymin,-q[1]);ymax=std::max(ymax,-q[1]);
-      }
-      body<<"<image width=\"1\" height=\"1\" preserveAspectRatio=\""<<xml(n->raster.value("preserveAspectRatio",""))
-          <<"\" transform=\"matrix("<<p[1][0]-p[0][0]<<' '<<-(p[1][1]-p[0][1])<<' '
-          <<p[2][0]-p[0][0]<<' '<<-(p[2][1]-p[0][1])<<' '<<p[0][0]<<' '<<-p[0][1]
-          <<")\" href=\""<<xml(n->raster.value("href",""))<<"\"/>\n</g>\n";
-      ++bodies; continue;
+      drawing::Prim image; image.kind=drawing::Prim::Kind::Image; image.layer=layer;
+      for(size_t i=0;i<3;++i) { const auto p=world.apply(n->raster.at("corners").at(i).get<Vec3>()); image.corners[i]={p[0],p[1]}; }
+      image.text=n->raster.value("href",""); image.fit=n->raster.value("preserveAspectRatio","");
+      d.prims.push_back(std::move(image)); ++bodies; continue;
     }
-    auto shape=node_world_shape(doc,scene,id);
     if(sketch) {
       // A sketch exports in its own 2D coordinates, independent of its world plane.
       TopoDS_Compound local; BRep_Builder builder; builder.MakeCompound(local);
       for(const auto& edge:design::sketch_edges(design::Sketch::from_json(sketch->geometry),Frame{},true)) builder.Add(local,edge);
-      shape=local;
-    }
-    TopTools_IndexedMapOfShape edges; TopExp::MapShapes(shape,TopAbs_EDGE,edges);
-    for(int edgeIndex=1;edgeIndex<=edges.Extent();++edgeIndex) {
-      BRepAdaptor_Curve c(TopoDS::Edge(edges(edgeIndex)));
-      if(c.GetType()==GeomAbs_Circle && std::abs(c.Circle().Axis().Direction().Z())>1-1e-9) {
-        const auto circle=c.Circle(); const auto center=circle.Location(); const double r=circle.Radius();
-        const bool full=std::abs(c.LastParameter()-c.FirstParameter())>=2*M_PI-1e-8;
-        xmin=std::min(xmin,center.X()-r); xmax=std::max(xmax,center.X()+r); ymin=std::min(ymin,-center.Y()-r); ymax=std::max(ymax,-center.Y()+r);
-        if(svg && full) { body<<"<circle cx=\""<<center.X()<<"\" cy=\""<<-center.Y()<<"\" r=\""<<r<<"\"/>\n"; continue; }
-        if(!svg) {
-          body<<"0\n"<<(full?"CIRCLE":"ARC")<<"\n8\n"<<layer<<"\n10\n"<<center.X()<<"\n20\n"<<center.Y()<<"\n40\n"<<r<<'\n';
-          if(!full) {
-            auto a=c.Value(c.FirstParameter()),b=c.Value(c.LastParameter()); if(circle.Axis().Direction().Z()<0)std::swap(a,b);
-            auto angle=[&](const gp_Pnt& p){double value=std::atan2(p.Y()-center.Y(),p.X()-center.X())*180/M_PI;return value<0?value+360:value;};
-            body<<"50\n"<<angle(a)<<"\n51\n"<<angle(b)<<'\n';
-          }
-          continue;
-        }
-      }
-      const int segments=c.GetType()==GeomAbs_Line?1:128;
-      for(int i=0;i<segments;++i) line(layer,c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*i/segments),c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*(i+1)/segments));
-    }
-    if(svg) body<<"</g>\n";
+      drawing::add_shape(d,layer,local,0.01,own);
+    } else drawing::add_shape(d,layer,node_world_shape(doc,scene,id),0.01,own);
     ++bodies;
   }
-  std::ostringstream out; out.precision(17);
-  if(svg) out<<"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\""<<xmax-xmin+2<<"mm\" height=\""<<ymax-ymin+2<<"mm\" viewBox=\""<<xmin-1<<' '<<ymin-1<<' '<<xmax-xmin+2<<' '<<ymax-ymin+2<<"\" fill=\"none\" stroke=\"black\" stroke-width=\"0.2\">\n"<<body.str()<<"</svg>\n";
-  else out<<"0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n"<<body.str()<<"0\nENDSEC\n0\nEOF\n";
   if(!bodies) throw Error("No drawing objects selected for export");
-  if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
-  write_text_file(file,out.str()); return {{file},bodies};
+  return d;
+}
+}
+
+ExportResult export_drawing(const Document& doc,const Scene& scene,const std::filesystem::path& file,const ExportOptions& options) {
+  const bool painted=options.format=="pdf" || options.format=="png";
+  if(options.format!="dxf" && options.format!="svg" && options.format!="dwg" && !painted) throw Error("2D formats are dxf, svg, dwg, pdf and png, not "+options.format);
+  if(painted && !drawing::can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
+  const auto stem=doc.path.stem().u8string();
+  const std::string title=doc.path.empty()?std::string("OPAD drawing"):std::string(stem.begin(),stem.end());
+  std::vector<drawing::Display> pages(1); json details=json::object(); int bodies=0;
+  if(options.sheet.empty()) pages[0]=objects_display(doc,scene,options,title,details,bodies);
+  else {  // drawing sheets as drawn (UI-86): one by id or name, or every sheet of "drawing:<name>" (a PDF page each)
+    std::vector<const Sheet*> sheets;
+    if(options.sheet.rfind("drawing:",0)==0) {
+      for(const auto& s:scene.sheets) if(s.drawing==options.sheet.substr(8)) sheets.push_back(&s);
+      if(sheets.empty()) throw Error("drawing "+options.sheet.substr(8)+" has no sheets (sheet_info lists the sheets)");
+    } else {
+      const Sheet* sheet=scene.sheet(options.sheet);
+      for(const auto& s:scene.sheets) if(!sheet && s.name==options.sheet) sheet=&s;
+      if(!sheet) throw Error("sheet "+options.sheet+" does not exist (sheet_info lists the sheets)");
+      sheets.push_back(sheet);
+    }
+    Scene then;
+    const SheetItem* issue=nullptr;
+    if(!options.issue.empty()) {  // as issued: the sheets as they stood then (the drawing's that it issued), their frozen linework
+      issue=drawing::find_issue(scene,*sheets[0],options.issue);
+      if(!issue) throw Error("revision "+options.issue+" was never issued (sheet_info lists the issues)");
+      then=drawing::issued_scene(doc,*issue);
+      issue=then.sheet_item(issue->id);
+      std::vector<const Sheet*> issued;
+      for(const auto& id:issue->def.value("sheets",json::array()))
+        if(const Sheet* s=then.sheet(id.get<std::string>()); s && (options.sheet.rfind("drawing:",0)==0 || s->id==sheets[0]->id)) issued.push_back(s);
+      if(issued.empty()) throw Error("sheet "+sheets[0]->name+" was not part of revision "+options.issue);
+      sheets=issued;
+      details["issue"]=issue->def.value("rev","");
+    }
+    if(sheets.size()>1 && options.format!="pdf") throw Error("several sheets go into one PDF (a page each), or one sheet at a time into "+options.format);
+    pages.resize(sheets.size());
+    json drawn=json::array(), skipped=json::array();
+    for(size_t i=0;i<sheets.size();++i) {
+      json report;
+      const double n=double(sheets.size());
+      const auto progress=[&](double f,const std::string& phase){ return !options.progress || options.progress(f<0?-1:(double(i)+f)/n,phase); };
+      if(issue) pages[i]=drawing::issued_display(doc,then,*sheets[i],*issue,progress,&report);
+      else pages[i]=drawing::sheet_display(doc,scene,*sheets[i],progress,&report);
+      drawn.push_back({{"id",sheets[i]->id},{"name",sheets[i]->name},{"views",report["views"]},{"items",report["items"]}});
+      for(const auto& s:report["skipped"]) skipped.push_back(s);
+      bodies+=report["bodies"].get<int>();
+    }
+    if(drawn.size()==1) details["sheet"]=drawn[0]; else details["sheets"]=drawn;
+    if(!skipped.empty()) details["skipped"]=skipped;
+  }
+  const drawing::Display& d=pages[0];
+  if(options.format=="dwg") {  // DXF R2000 through the converter; text of several lines as one TEXT a line, dimensions as their geometry
+    Conversion work; const auto intermediate=work.directory/"drawing.dxf", converted=work.directory/"drawing.dwg";
+    write_text_file(intermediate,drawing::dxf_text(d,options.decimals,false,false));
+    convert_dwg(intermediate,converted,true);
+    if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
+    std::filesystem::copy_file(converted,file,std::filesystem::copy_options::overwrite_existing);
+  } else {
+    std::vector<const drawing::Display*> list;
+    for(const auto& p:pages) list.push_back(&p);
+    const json wrote=drawing::write_pages(list,file,options.format,options.decimals,{{"dpi",options.dpi}});
+    for(const auto& [k,v]:wrote.items()) details[k]=v;
+  }
+  ExportResult result{{file},bodies,details};
+  // What was written, the pages together.
+  std::function<void(json&,const json&)> add=[&](json& to,const json& from){
+    for(const auto& [k,v]:from.items()) {
+      if(!v.is_object()) to[k]=to.value(k,0)+v.get<int>();
+      else { if(!to.contains(k)) to[k]=json::object(); add(to[k],v); }
+    }
+  };
+  json counts=json::object();
+  for(const auto& p:pages) add(counts,p.counts());
+  for(const auto& [k,v]:counts.items()) result.details[k]=v;
+  return result;
+}
+
+bool dwg_converter(bool toDwg) {
+  std::error_code error;
+  const char* override=std::getenv(toDwg?"OPAD_DXF2DWG":"OPAD_DWG2DXF");
+  if(override && *override) return std::filesystem::is_regular_file(path_from_utf8(override),error);
+  if(use_oda() && !oda_converter().empty()) return true;  // opt-in, as convert_dwg takes it
+#ifdef _WIN32
+  const std::wstring name=toDwg?L"dxf2dwg.exe":L"dwg2dxf.exe";
+  const wchar_t* path=_wgetenv(L"PATH");
+  const wchar_t separator=L';';
+  std::wstring dirs=path?path:L"";
+#else
+  const std::string name=toDwg?"dxf2dwg":"dwg2dxf";
+  const char* path=std::getenv("PATH");
+  const char separator=':';
+  std::string dirs=path?path:"";
+#endif
+  if(!executable_dir().empty() && std::filesystem::is_regular_file(executable_dir()/name,error)) return true;
+  for(size_t at=0;at<=dirs.size();) {  // on PATH
+    const size_t end=std::min(dirs.find(separator,at),dirs.size());
+    if(end>at && std::filesystem::is_regular_file(std::filesystem::path(dirs.substr(at,end-at))/name,error)) return true;
+    at=end+1;
+  }
+  return false;
 }
 }

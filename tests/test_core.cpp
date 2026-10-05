@@ -1,7 +1,9 @@
 // Headless tests for the document model and .opad format (no OCCT geometry involved).
+#include <algorithm>
 #include <set>
 
 #include "check.hpp"
+#include "opad/commands.hpp"
 #include "opad/document.hpp"
 #include "opad/scene.hpp"
 #include "opad/util.hpp"
@@ -33,6 +35,15 @@ TEST(sha256_known_vectors) {
   CHECK_EQ(sha256_hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   std::string million(1000000, 'a');
   CHECK_EQ(sha256_hex(million), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+}
+
+// Third-party notices (TODO 11 UI-13): generated at build time from the link lines, compiled in.
+TEST(third_party_notices_are_compiled_in) {
+  const std::string text = third_party_notices();
+  CHECK(text.rfind("OPAD " + version_string(), 0) == 0 && text.find("third-party notices") != std::string::npos);
+  CHECK(text.find("MIT licence") != std::string::npos && text.find("Trademarks") != std::string::npos);
+  if (text.find("packages.msys2.org") != std::string::npos)  // MSYS2 build: packages, versions and licence texts
+    CHECK(text.find("* opencascade ") != std::string::npos && text.find("Licence texts") != std::string::npos);
 }
 
 TEST(uuid_format_and_uniqueness) {
@@ -149,6 +160,37 @@ TEST(document_roundtrip_is_byte_stable) {
   CHECK_EQ(std::count(text2.begin(), text2.end(), '\n'), std::count(text1.begin(), text1.end(), '\n') + 1);
 }
 
+// UI-40: a load reports how far through the file it is (read, then parsed, by bytes), only forwards, and stops when told.
+TEST(document_load_reports_progress_by_bytes) {
+  Document d = Document::create();
+  json nodes = json::array();
+  for (int i = 0; i < 400; ++i) {
+    const std::string brep = kFakeBrep + "# body " + std::to_string(i) + "\n";
+    nodes.push_back(body_node(d.add_body(brep, json{{"name", "Part"}}), "Part " + std::to_string(i)));
+  }
+  json imp;
+  imp["op"] = "import";
+  imp["source"] = "many.step";
+  imp["nodes"] = nodes;
+  d.append(imp);
+  for (int i = 0; i < 300; ++i) d.append(json{{"op", "rename"}, {"target", nodes[i]["id"]}, {"name", "Renamed " + std::to_string(i)}});
+  const auto path = std::filesystem::temp_directory_path() / ("opad-progress-" + new_uuid() + ".opad");
+  d.save_as(path);
+  std::vector<double> seen;
+  Document loaded = Document::load(path, {}, [&](double f) { seen.push_back(f); return true; });
+  CHECK_EQ(loaded.body_count(), 400u);
+  CHECK_EQ(loaded.ops.size(), 301u);
+  CHECK_EQ(loaded.serialize(), d.serialize());
+  CHECK(seen.size() >= 20);
+  CHECK(std::is_sorted(seen.begin(), seen.end()));
+  CHECK(seen.front() > 0 && seen.front() <= 0.2 + 1e-9);  // the read: the first fifth
+  CHECK(seen.back() > 0.95 && seen.back() <= 1.0);
+  CHECK(std::any_of(seen.begin(), seen.end(), [](double f) { return f > 0.3 && f < 0.6; }));  // the parse in between
+  size_t calls = 0;
+  CHECK_THROWS(Document::load(path, {}, [&](double) { return ++calls < 5; }));  // cancelled
+  std::filesystem::remove(path);
+}
+
 TEST(document_parse_rejects_corruption) {
   Document d = Document::create();
   std::string key = d.add_body(kFakeBrep, json::object());
@@ -246,6 +288,34 @@ TEST(resolve_hierarchy_and_edits) {
   CHECK_EQ(resolve(d).annotations[2].style, "ok");
 }
 
+// Hide others (UI-02): the fewest nodes, each subtree without a kept body as high up as it goes; hidden or empty
+// subtrees are left alone.
+TEST(others_to_hide_is_the_fewest_nodes) {
+  Document d = Document::create();
+  std::string key = d.add_body(kFakeBrep, json{{"name", "Fake"}});
+  std::string engine = new_uuid(), head = new_uuid(), block = new_uuid(), empty = new_uuid(), gone = new_uuid();
+  std::string valve = new_uuid(), spring = new_uuid(), bolt = new_uuid(), crank = new_uuid(), pin = new_uuid(), loose = new_uuid();
+  json imp;
+  imp["op"] = "import";
+  imp["nodes"] = json::array({component("Engine", json::array({component("Head", json::array({body_node(key, "Valve", valve), body_node(key, "Spring", spring),
+                                                                                              body_node(key, "Bolt", bolt)}), head),
+                                                                component("Block", json::array({body_node(key, "Crank", crank)}), block),
+                                                                component("Empty", json::array(), empty),
+                                                                component("Gone", json::array({body_node(key, "Pin", pin)}), gone)}), engine),
+                              body_node(key, "Loose", loose)});
+  d.append(imp);
+  d.append(json{{"op", "appearance"}, {"target", gone}, {"visible", false}});
+  Scene s = resolve(d);
+  auto sorted = [](std::vector<std::string> v) { std::sort(v.begin(), v.end()); return v; };
+  CHECK(sorted(s.others_to_hide({valve})) == sorted({spring, bolt, block, loose}));  // not Crank one by one, not Empty or Gone
+  CHECK(sorted(s.others_to_hide({head})) == sorted({block, loose}));
+  CHECK(sorted(s.others_to_hide({valve, crank})) == sorted({spring, bolt, loose}));
+  CHECK(s.others_to_hide({engine}) == std::vector<std::string>{loose});
+  CHECK(sorted(s.others_to_hide({})) == sorted({engine, loose}));
+  d.append(json{{"op", "appearance"}, {"target", spring}, {"visible", false}});
+  CHECK(sorted(resolve(d).others_to_hide({valve})) == sorted({bolt, block, loose}));  // already hidden: nothing to do
+}
+
 TEST(tombstones_and_gc) {
   Document d = Document::create();
   std::string key = d.add_body(kFakeBrep, json::object());
@@ -279,6 +349,34 @@ TEST(tombstones_and_gc) {
   CHECK_EQ(d.gc().size(), 1u);
   CHECK_EQ(d.body_count(), 0u);
   CHECK_EQ(d.ops.size(), 5u);  // history untouched
+}
+
+// The document's Home (UI-47) is a view op with an optional "home": true; an older build reads it as a view named Home.
+TEST(home_view_is_a_view_op_with_an_optional_key) {
+  Document d = Document::create();
+  const json camera{{"eye", {100, -100, 100}}, {"target", {0, 0, 0}}, {"up", {0, 0, 1}}, {"projection", "orthographic"}, {"scale", 80}, {"absolute", true}};
+  commands::run("view", {{"name", "Front"}, {"camera", camera}}, &d);
+  const std::string first = commands::run("view", {{"home", true}, {"camera", camera}}, &d)["id"];
+  json later = camera;
+  later["scale"] = 40;
+  const std::string second = commands::run("view", {{"home", true}, {"camera", later}}, &d)["id"];
+  const json op = d.find_op(first)->data;
+  CHECK(op["name"] == "Home" && op["home"] == true && !d.find_op(d.ops.front().id)->data.contains("home"));
+  Scene s = resolve(d);
+  CHECK_EQ(s.views.size(), 3u);
+  CHECK(!s.views[0].home && s.views[1].home && s.views[2].home && s.views[2].camera["scale"] == 40);
+  const std::string text = d.serialize();
+  CHECK_EQ(Document::parse(text).serialize(), text);
+  CHECK(resolve(Document::parse(text)).views[1].home);
+  // Reset: tombstones; the named view stays.
+  d.append(json{{"op", "delete"}, {"target", first}});
+  d.append(json{{"op", "delete"}, {"target", second}});
+  s = resolve(d);
+  CHECK(s.views.size() == 1u && !s.views[0].home && s.views[0].name == "Front");
+  // A view op without the key (every file before it) is a plain bookmark; a non-boolean value is not a Home.
+  json odd{{"op", "view"}, {"name", "Odd"}, {"camera", camera}, {"home", "yes"}};
+  d.append(odd);
+  CHECK(!resolve(d).views.back().home);
 }
 
 TEST(missing_body_entry_is_flagged_not_dropped) {
@@ -332,6 +430,30 @@ TEST(pinned_measurement_comments_remove_restore_roundtrip) {
   d.append({{"op","delete"},{"target",removed}});
   scene=resolve(Document::parse(d.serialize()));
   CHECK_EQ(scene.measurements.size(),1u); CHECK_EQ(scene.measurements[0].comments.size(),1u);
+}
+
+// UI-12: the whole file at its size, byte for byte (CR and NUL kept), also under a name outside the ANSI code page; a
+// missing file throws with its name in UTF-8.
+TEST(read_text_file_reads_exactly) {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-read-" + new_uuid());
+  std::filesystem::create_directories(dir);
+  std::string text;
+  for (int i = 0; i < 300000; ++i) text += "line " + std::to_string(i) + (i % 7 ? "\n" : "\r\n");
+  text += std::string("\0tail", 5);
+  const auto file = dir / path_from_utf8("\xd9\x86\xd9\x85\xd9\x88\xd8\xb0\xd8\xac.opad");  // نموذج
+  write_text_file(file, text);
+  CHECK_EQ(read_text_file(file).size(), text.size());
+  CHECK(read_text_file(file) == text);
+  write_text_file(dir / "empty.txt", "");
+  CHECK(read_text_file(dir / "empty.txt").empty());
+  try {
+    read_text_file(dir / path_from_utf8("\xd9\x84\xd8\xa7.opad"));  // لا
+    CHECK(false);
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()).find("\xd9\x84\xd8\xa7.opad") != std::string::npos);
+  }
+  CHECK_EQ(path_to_utf8(path_from_utf8("a/\xd9\x86.opad")), "a/\xd9\x86.opad");
+  std::filesystem::remove_all(dir);
 }
 
 CHECK_MAIN()

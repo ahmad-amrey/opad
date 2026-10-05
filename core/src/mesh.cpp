@@ -20,6 +20,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <gp_Trsf.hxx>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <sstream>
@@ -175,6 +176,47 @@ Mesh tessellate_body(const Document& doc, const std::string& key, double linear_
   Mesh m = tessellate(body_shape(doc, key), linear_tol);
   cache_put("mesh", cache_key, m.serialize());
   return m;
+}
+
+bool FaceColors::empty() const { return std::none_of(face.begin(), face.end(), [](int c) { return c >= 0; }); }
+
+json FaceColors::to_json() const {
+  if (empty()) return nullptr;
+  size_t last = face.size();
+  while (last > 0 && face[last - 1] < 0) --last;  // faces past the runs are the body's colour
+  json runs = json::array(), list = json::array();
+  for (size_t i = 0; i < last;) {
+    size_t j = i;
+    while (j < last && face[j] == face[i]) ++j;
+    runs.push_back(j - i);
+    runs.push_back(face[i]);
+    i = j;
+  }
+  for (const auto& c : colors) list.push_back({std::round(c[0] * 1e6) / 1e6, std::round(c[1] * 1e6) / 1e6, std::round(c[2] * 1e6) / 1e6});
+  return {{"colors", list}, {"runs", runs}};
+}
+
+FaceColors FaceColors::from_json(const json& j) {
+  FaceColors out;
+  try {
+    if (!j.is_object()) return {};
+    for (const auto& c : j.at("colors")) out.colors.push_back({c.at(0).get<double>(), c.at(1).get<double>(), c.at(2).get<double>()});
+    const json& runs = j.at("runs");
+    for (size_t i = 0; i + 1 < runs.size(); i += 2) {
+      const int64_t count = runs[i].get<int64_t>();
+      const int64_t color = runs[i + 1].get<int64_t>();
+      if (count < 0 || color >= static_cast<int64_t>(out.colors.size()) || out.face.size() + static_cast<size_t>(count) > (size_t(1) << 26)) return {};
+      out.face.insert(out.face.end(), static_cast<size_t>(count), color < 0 ? -1 : static_cast<int>(color));
+    }
+  } catch (const std::exception&) {
+    return {};
+  }
+  return out;
+}
+
+FaceColors face_colors(const Document& doc, const std::string& key) {
+  const BodyEntry* body = doc.body(key);
+  return body && body->meta.contains("face_colors") ? FaceColors::from_json(body->meta["face_colors"]) : FaceColors{};
 }
 
 }  // namespace opad
