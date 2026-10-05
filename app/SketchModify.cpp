@@ -55,8 +55,8 @@ namespace {
 // The distance along the corner's second line (chamfer_corner's order) of a cut `first` along its first line at `angle` to it.
 double chamferAt(const Sketch& sk,int point,double first,double angle) {
   std::vector<double> directions;const SkPoint* corner=sk.point(point);
-  for(const auto& e:sk.entities)if(corner && e.type==SkEntity::Type::Line && std::find(e.p.begin(),e.p.end(),point)!=e.p.end()) {
-    const SkPoint* end=sk.point(e.p[e.p[0]==point?1:0]);directions.push_back(std::atan2(end->y-corner->y,end->x-corner->x));
+  for(const int id:corner?corner_lines(sk,point):std::vector<int>{}) {  // chamfer_corner's two lines, in its order
+    const SkEntity& e=*sk.entity(id);const SkPoint* end=sk.point(e.p[e.p[0]==point?1:0]);directions.push_back(std::atan2(end->y-corner->y,end->x-corner->x));
   }
   if(directions.size()!=2)throw opad::Error("pick a corner joining exactly two lines");
   const double second=shapeinput::chamferSecond(first,angle,shapeinput::between(directions[1]-directions[0]));

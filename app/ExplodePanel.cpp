@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QToolButton>
@@ -58,7 +59,15 @@ ExplodePanel::ExplodePanel(QWidget* parent) : QWidget(parent) {
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
   outer->setSpacing(0);
-  auto* body = new QWidget(this);
+  // The body scrolls: a short window clamps the panel below its content, and a squeezed layout drew its rows over
+  // each other.
+  auto* scroll = new QScrollArea(this);
+  scroll->setFrameShape(QFrame::NoFrame);
+  scroll->setWidgetResizable(true);
+  scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  scroll->setMinimumSize(0, 0);
+  auto* body = new QWidget(scroll);
+  body->setAutoFillBackground(false);
   auto* layout = new QVBoxLayout(body);
   layout->setContentsMargins(12, 8, 12, 8);
   layout->setSpacing(6);
@@ -183,7 +192,9 @@ ExplodePanel::ExplodePanel(QWidget* parent) : QWidget(parent) {
   m_views->setToolTip(tr("Exploded views saved in the document; choosing one shows it"));
   layout->addWidget(m_views);
   layout->addStretch(1);
-  outer->addWidget(body, 1);
+  scroll->setWidget(body);
+  scroll->viewport()->setAutoFillBackground(false);
+  outer->addWidget(scroll, 1);
 
   m_footer = new PanelFooter(this);
   m_update = m_footer->addSecondary(tr("Update view"));

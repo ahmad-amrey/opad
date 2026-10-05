@@ -26,6 +26,9 @@ CASES = [
     ("sketch-grid", "empty", {"OPAD_BENCH_SKETCH_GRID": "{prefix}"}),  # grid snapping, the sketch's own grid (UI-18)
     # With grid snapping the drawing cursor jumps between the nodes: drawn there, the pointer hidden, the clicks on them.
     ("sketch-gridcursor", "empty", {"OPAD_BENCH_SKETCH_GRIDCURSOR": "{prefix}"}),
+    # No trail of the value boxes over the view (app/OverlayTrailBench.cpp): every paint after a native overlay left part of
+    # the view shows that part again, with a frame of its own or the last one shown again (in 3D and in a sketch).
+    ("overlay-trail", "empty", {"OPAD_BENCH_OVERLAY_TRAIL": "1"}),
     ("sketch-ladder", "empty", {"OPAD_BENCH_SKETCH_LADDER": "{prefix}"}),  # Backspace / Enter / Esc (UI-20)
     ("sketch-keys", "empty", {"OPAD_BENCH_SKETCH_KEYS": "{prefix}"}),  # typed values beside the pointer (UI-16)
     ("sketch-shapes", "empty", {"OPAD_BENCH_SKETCH_SHAPES": "{prefix}"}),  # a shape's own sizes typed (UI-17)

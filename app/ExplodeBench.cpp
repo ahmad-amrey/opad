@@ -10,6 +10,8 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSlider>
 #include <QTimer>
@@ -706,6 +708,19 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                             "Save as view: one view op with the explode (level 1, the PCB kept, the Screws split, the lid's drag): " + QString::fromStdString(e.dump()).left(160));
                     w.m_chips->grab().save(prefix + ".chips.png");
                     area->panel()->grab().save(prefix + ".panel.png");
+                    {  // A short panel (a 1280 x 800 window) scrolls its body instead of squeezing the rows over each other
+                      const QSize was = area->panel()->size();
+                      area->panel()->resize(was.width(), 300);
+                      QCoreApplication::processEvents();
+                      QScrollArea* scroll = form->findChild<QScrollArea*>();
+                      QWidget* body = scroll ? scroll->widget() : nullptr;
+                      require(body && body->height() >= body->minimumSizeHint().height() && scroll->verticalScrollBar()->maximum() > 0,
+                              QString("A short Explode panel scrolls: body %1 px for a %2 px minimum, scroll range %3")
+                                  .arg(body ? body->height() : -1).arg(body ? body->minimumSizeHint().height() : -1).arg(scroll ? scroll->verticalScrollBar()->maximum() : -1));
+                      area->panel()->grab().save(prefix + ".panel-short.png");
+                      area->panel()->resize(was);
+                      QCoreApplication::processEvents();
+                    }
                     w.setWorkspace("design");
                     w.m_ribbon->setCurrentTab(int(w.m_ribbon->tabIds().indexOf("design.assemble")));
                     auto buttons = [&w](const QString& tab, const QStringList& ids) {

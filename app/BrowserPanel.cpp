@@ -12,7 +12,9 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScrollBar>
 #include <QSettings>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -350,7 +352,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     if (index >= 0) op["index"] = index;
     try { m_doc->run("reparent", op); } catch (const std::exception& e) { emit m_doc->message(i18n::t(QString::fromUtf8(e.what()))); }
   });
-  connect(doc, &AppDocument::changed, this, &BrowserPanel::rebuild);
+  connect(doc, &AppDocument::changed, this, &BrowserPanel::documentChanged);
   connect(doc, &AppDocument::activeComponentChanged, this, &BrowserPanel::updateBreadcrumb);
   rebuild();
 }
@@ -387,6 +389,13 @@ void BrowserPanel::setEditedSketch(const std::string& id,const QString& name,boo
   m_editedSketch=id;m_editedName=name;m_editedVisible=visible;rebuild();
 }
 
+// What the eye, the lock and the swatch show, for screen readers (UI-124): the row is painted, its state is not text.
+QString BrowserPanel::stateText(const opad::Node& n) {
+  QStringList state{n.kind == opad::Node::Kind::Body ? tr("Body") : tr("Component"), n.visible ? tr("shown") : tr("hidden")};
+  if (n.locked) state << tr("locked");
+  return state.join(", ");
+}
+
 QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* parent, std::set<std::string>& expanded) {
   const opad::Node* n = m_doc->node(id);
   if (!n) return nullptr;
@@ -399,10 +408,7 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
   item->setData(0, Qt::UserRole, n->kind == opad::Node::Kind::Body ? "body" : "component");
   item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | (n->kind == opad::Node::Kind::Component ? Qt::ItemIsDropEnabled : Qt::NoItemFlags));
   item->setToolTip(0, QString("%1\n%2").arg(name, QString::fromStdString(id)));
-  // What the eye, the lock and the swatch show, for screen readers (UI-124): the row is painted, its state is not text.
-  QStringList state{n->kind == opad::Node::Kind::Body ? tr("Body") : tr("Component"), n->visible ? tr("shown") : tr("hidden")};
-  if (n->locked) state << tr("locked");
-  item->setData(0, Qt::AccessibleDescriptionRole, state.join(", "));
+  item->setData(0, Qt::AccessibleDescriptionRole, stateText(*n));
   for (const auto& c : n->children) build(c, item, expanded);
   QString category=QString::fromStdString(n->representation);
   if(n->kind!=opad::Node::Kind::Body) {
@@ -416,9 +422,15 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
 
 void BrowserPanel::rebuild() {
   trace::Scope scope("BrowserPanel::rebuild");
+  m_syncedRevision = m_doc->revision;
+  m_syncedGeneration = m_doc->generation;
+  const ViewState view = viewState();  // the rows are made again: the view stays where it was (it jumped to the top)
   m_updating = true;
   std::set<std::string> expanded, known;  // known: every row there was, so rows that are new open
   std::vector<std::string> selected = selectedIds();
+  std::map<std::string, std::string> selectedIn;  // the row each selected row was under: one that moved or is new is revealed
+  for (const auto& id : selected)
+    if (const QTreeWidgetItem* it = itemFor(id)) selectedIn[id] = it->parent() ? rowKey(it->parent()) : std::string();
   std::function<void(QTreeWidgetItem*)> collect = [&](QTreeWidgetItem* it) {
     const std::string key = it->data(0, Qt::UserRole).toString() == "folder" ? folderKey(it) : it->data(0, kIdRole).toString().toStdString();
     known.insert(key);
@@ -507,23 +519,7 @@ void BrowserPanel::rebuild() {
       folder->setData(0, browser::kFolderRole, f.id);
       folder->setData(0, browser::kIconRole, f.icon);
       folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
-      std::function<void(QTreeWidgetItem*, const browser::Item&)> add = [&](QTreeWidgetItem* parent, const browser::Item& item) {
-        auto* it = new QTreeWidgetItem(parent);
-        const QString id = QString::fromStdString(item.id);
-        it->setText(0, item.name);
-        it->setData(0, kIdRole, id);
-        it->setData(0, kNameRole, item.name);
-        it->setData(0, Qt::UserRole, "provided");
-        it->setData(0, browser::kFolderRole, f.id);
-        it->setData(0, browser::kIconRole, item.icon);
-        it->setData(0, browser::kErrorRole, item.error);
-        it->setToolTip(0, item.tooltip);
-        it->setFlags((it->flags() | (item.editable && f.rename ? Qt::ItemIsEditable : Qt::NoItemFlags)) & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
-        m_index[item.id] = it;
-        for (const browser::Item& child : item.children) add(it, child);
-        it->setExpanded(expanded.count(item.id) > 0 || !known.count(item.id));  // a new row opens
-      };
-      for (const browser::Item& item : items) add(folder, item);
+      fillFolder(folder, f, items, expanded, known);
       const std::string key = "folder:" + f.id.toStdString();
       folder->setExpanded(expanded.count(key) > 0 || !known.count(key));
     }
@@ -533,7 +529,25 @@ void BrowserPanel::rebuild() {
   m_tree->setVisible(!empty);
   m_empty->setVisible(empty);
   applyFilter();
-  setSelectedIds(selected);
+  setSelectedIds(selected, false);  // closed rows stay closed
+  // A selected row that moved (dropped into a closed component) or is new is shown; the others stay as they were.
+  QTreeWidgetItem* moved = nullptr;
+  for (const auto& id : selected) {
+    QTreeWidgetItem* it = itemFor(id);
+    if (!it) continue;
+    const auto was = selectedIn.find(id);
+    if (was != selectedIn.end() && was->second == (it->parent() ? rowKey(it->parent()) : std::string())) continue;
+    for (QTreeWidgetItem* p = it->parent(); p && !p->isExpanded(); p = p->parent()) p->setExpanded(true);
+    if (!moved) moved = it;
+  }
+  restoreCurrent(wasId, wasKind, wasFolder);
+  restoreView(view);
+  if (moved) m_tree->scrollToItem(moved);
+  m_updating = false;
+  updateBreadcrumb();
+}
+
+void BrowserPanel::restoreCurrent(const std::string& wasId, const QString& wasKind, const QString& wasFolder) {
   QTreeWidgetItem* now = wasId.empty() ? nullptr : itemFor(wasId);
   if (!now && (wasKind == "document" || wasKind == "folder") && m_tree->topLevelItemCount()) {
     QTreeWidgetItem* root = now = m_tree->topLevelItem(0);
@@ -542,9 +556,195 @@ void BrowserPanel::rebuild() {
   }
   for (QTreeWidgetItem* p = now ? now->parent() : nullptr; p; p = p->parent())
     if (!p->isExpanded()) now = p;  // in a closed folder: the folder (going to the row would open it)
-  if (now) m_tree->selectionModel()->setCurrentIndex(m_tree->indexFromItem(now), QItemSelectionModel::NoUpdate);
+  if (now && now != m_tree->currentItem()) m_tree->selectionModel()->setCurrentIndex(m_tree->indexFromItem(now), QItemSelectionModel::NoUpdate);
+}
+
+void BrowserPanel::fillFolder(QTreeWidgetItem* folder, const browser::Folder& f, const std::vector<browser::Item>& items, const std::set<std::string>& expanded,
+                              const std::set<std::string>& known) {
+  std::function<void(QTreeWidgetItem*, const browser::Item&)> add = [&](QTreeWidgetItem* parent, const browser::Item& item) {
+    auto* it = new QTreeWidgetItem(parent);
+    const QString id = QString::fromStdString(item.id);
+    it->setText(0, item.name);
+    it->setData(0, kIdRole, id);
+    it->setData(0, kNameRole, item.name);
+    it->setData(0, Qt::UserRole, "provided");
+    it->setData(0, browser::kFolderRole, f.id);
+    it->setData(0, browser::kIconRole, item.icon);
+    it->setData(0, browser::kErrorRole, item.error);
+    it->setToolTip(0, item.tooltip);
+    it->setFlags((it->flags() | (item.editable && f.rename ? Qt::ItemIsEditable : Qt::NoItemFlags)) & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
+    m_index[item.id] = it;
+    for (const browser::Item& child : item.children) add(it, child);
+    it->setExpanded(expanded.count(item.id) > 0 || !known.count(item.id));  // a new row opens
+  };
+  for (const browser::Item& item : items) add(folder, item);
+}
+
+void BrowserPanel::documentChanged() {
+  // Only looks, names or places of these nodes changed (UI-40: a row's eye, its undo): the rows stay and are updated in
+  // place, so nothing moves under the pointer. Making every row again put the view back at the top.
+  const AppDocument::Change& change = m_doc->lastChange();
+  const bool partial = !change.whole && m_doc->revision == m_syncedRevision + 1 && m_doc->generation == m_syncedGeneration;
+  if (partial && updateRows(change.nodes)) {
+    m_syncedRevision = m_doc->revision;
+    return;
+  }
+  rebuild();
+}
+
+bool BrowserPanel::updateRows(const std::vector<std::string>& ids) {
+  if (!m_doc->hasDocument || m_tree->topLevelItemCount() != 1) return false;
+  QTreeWidgetItem* root = m_tree->topLevelItem(0);
+  // First whether the tree still has the document's shape where these rows are: each a row of its kind under its parent,
+  // the parent's node rows in the document's order (a reparent moves one); a sketch's row in place.
+  std::set<const QTreeWidgetItem*> checked;
+  for (const auto& id : ids) {
+    const QTreeWidgetItem* it = itemFor(id);
+    if (!it) return false;
+    const QString kind = it->data(0, Qt::UserRole).toString();
+    if (const opad::Node* n = m_doc->node(id)) {
+      const opad::Node* parentNode = n->parent.empty() ? nullptr : m_doc->node(n->parent);
+      const QTreeWidgetItem* parent = n->parent.empty() ? root : itemFor(n->parent);
+      if (kind != (n->kind == opad::Node::Kind::Body ? "body" : "component") || !parent || it->parent() != parent || (!n->parent.empty() && !parentNode)) return false;
+      if (!checked.insert(parent).second) continue;
+      const std::vector<std::string>& order = parentNode ? parentNode->children : m_doc->scene.roots;
+      size_t at = 0;
+      for (int i = 0; i < parent->childCount(); ++i) {
+        const QString k = parent->child(i)->data(0, Qt::UserRole).toString();
+        if (k != "body" && k != "component") continue;
+        while (at < order.size() && !m_doc->node(order[at])) ++at;  // build() makes no row for a node that is not there
+        if (at >= order.size() || order[at] != parent->child(i)->data(0, kIdRole).toString().toStdString()) return false;
+        ++at;
+      }
+      while (at < order.size() && !m_doc->node(order[at])) ++at;
+      if (at != order.size()) return false;
+    } else if (m_doc->scene.sketch(id)) {
+      if (kind != "sketch") return false;
+    } else {
+      return false;
+    }
+  }
+  // The areas' folders: the same ones (a folder that comes or goes is a rebuild); a folder whose rows changed (the History
+  // list's new step) gets its rows again, the others are left alone.
+  std::vector<std::pair<QTreeWidgetItem*, std::vector<browser::Item>>> refill;
+  for (const browser::Folder& f : m_folders) {
+    std::vector<browser::Item> items = f.items ? f.items() : std::vector<browser::Item>();
+    QTreeWidgetItem* folder = nullptr;
+    for (int i = 0; i < root->childCount() && !folder; ++i)
+      if (root->child(i)->data(0, Qt::UserRole).toString() == "folder" && root->child(i)->data(0, browser::kFolderRole).toString() == f.id) folder = root->child(i);
+    if (!folder != items.empty()) return false;
+    if (!folder) continue;
+    std::function<bool(const QTreeWidgetItem*, const std::vector<browser::Item>&)> same = [&](const QTreeWidgetItem* parent, const std::vector<browser::Item>& rows) {
+      if (parent->childCount() != int(rows.size())) return false;
+      for (int i = 0; i < parent->childCount(); ++i) {
+        const QTreeWidgetItem* it = parent->child(i);
+        const browser::Item& item = rows[size_t(i)];
+        if (it->data(0, kIdRole).toString().toStdString() != item.id || it->data(0, kNameRole).toString() != item.name || it->data(0, browser::kIconRole).toString() != item.icon
+            || it->toolTip(0) != item.tooltip || it->data(0, browser::kErrorRole).toBool() != item.error
+            || bool(it->flags() & Qt::ItemIsEditable) != (item.editable && f.rename) || !same(it, item.children))
+          return false;
+      }
+      return true;
+    };
+    if (!same(folder, items)) refill.emplace_back(folder, std::move(items));
+  }
+  const ViewState view = viewState();
+  m_updating = true;
+  for (const auto& id : ids) {
+    QTreeWidgetItem* it = itemFor(id);
+    QString name;
+    if (const opad::Node* n = m_doc->node(id)) {
+      name = QString::fromStdString(n->name);
+      const QString state = stateText(*n);
+      if (it->data(0, Qt::AccessibleDescriptionRole).toString() != state) it->setData(0, Qt::AccessibleDescriptionRole, state);
+      if (it->text(0) != name) it->setToolTip(0, QString("%1\n%2").arg(name, QString::fromStdString(id)));
+    } else if (id == m_editedSketch) {
+      continue;  // its row says "(editing)" (setEditedSketch)
+    } else if (const opad::SketchItem* sketch = m_doc->scene.sketch(id)) {
+      name = QString::fromStdString(sketch->name);
+      if (it->text(0) != name) it->setToolTip(0, sketch->error.empty() ? tr("%1\nDouble-click to edit").arg(name) : QString::fromStdString(sketch->error));
+    }
+    if (it->text(0) != name) {
+      it->setText(0, name);
+      it->setData(0, kNameRole, name);
+    }
+  }
+  const QString docName = m_doc->doc.path.empty() ? (m_doc->browse ? tr("Viewer") : tr("Untitled")) : QString::fromStdString(m_doc->doc.path.filename().string());
+  if (root->text(0) != docName) {
+    root->setText(0, docName);
+    root->setData(0, kNameRole, docName);
+  }
+  if (!refill.empty()) {
+    const std::vector<std::string> selected = selectedIds();
+    const QTreeWidgetItem* was = m_tree->currentItem();
+    const QString wasKind = was ? was->data(0, Qt::UserRole).toString() : QString(), wasFolder = was ? was->data(0, browser::kFolderRole).toString() : QString();
+    const std::string wasId = was ? was->data(0, kIdRole).toString().toStdString() : std::string();
+    for (auto& [folder, items] : refill) {
+      std::set<std::string> expanded, known;
+      std::function<void(QTreeWidgetItem*)> forget = [&](QTreeWidgetItem* it) {
+        const std::string id = it->data(0, kIdRole).toString().toStdString();
+        known.insert(id);
+        if (it->isExpanded()) expanded.insert(id);
+        m_index.erase(id);
+        for (int i = 0; i < it->childCount(); ++i) forget(it->child(i));
+      };
+      for (int i = 0; i < folder->childCount(); ++i) forget(folder->child(i));
+      qDeleteAll(folder->takeChildren());
+      const QString id = folder->data(0, browser::kFolderRole).toString();
+      for (const browser::Folder& f : m_folders)
+        if (f.id == id) fillFolder(folder, f, items, expanded, known);
+    }
+    setSelectedIds(selected, false);
+    restoreCurrent(wasId, wasKind, wasFolder);
+  }
+  if (!m_filter->text().trimmed().isEmpty() || !refill.empty()) applyFilter();
+  if (!refill.empty()) restoreView(view);  // rows above the view came or went (the History list): the same row stays on top
   m_updating = false;
+  m_tree->viewport()->update();  // the eyes, the greyed rows under a hidden component, the badges: painted from the document
   updateBreadcrumb();
+  return true;
+}
+
+// The row at the view's top, by what it shows (rows are made again), and how far it is scrolled past.
+BrowserPanel::ViewState BrowserPanel::viewState() const {
+  ViewState state;
+  state.vertical = m_tree->verticalScrollBar()->value();
+  state.horizontal = m_tree->horizontalScrollBar()->value();
+  if (const QTreeWidgetItem* top = m_tree->itemAt(QPoint(m_tree->viewport()->width() / 2, 0))) {
+    state.anchor = rowKey(top);
+    state.anchorTop = m_tree->visualItemRect(top).top();
+  }
+  return state;
+}
+
+void BrowserPanel::restoreView(const ViewState& state) {
+  m_tree->doItemsLayout();  // the rows' layout now: the scroll range is theirs
+  QScrollBar* bar = m_tree->verticalScrollBar();
+  QTreeWidgetItem* anchor = state.anchor.empty() || state.vertical == 0 ? nullptr : itemForKey(state.anchor);
+  bool shown = anchor && !anchor->isHidden();
+  for (const QTreeWidgetItem* p = anchor ? anchor->parent() : nullptr; shown && p; p = p->parent()) shown = p->isExpanded() && !p->isHidden();
+  if (!shown) {
+    bar->setValue(state.vertical);  // at the top (or the row is gone): the same value
+  } else {
+    m_tree->scrollToItem(anchor, QAbstractItemView::PositionAtTop);
+    if (m_tree->verticalScrollMode() == QAbstractItemView::ScrollPerPixel) bar->setValue(bar->value() + m_tree->visualItemRect(anchor).top() - state.anchorTop);
+  }
+  m_tree->horizontalScrollBar()->setValue(state.horizontal);
+}
+
+std::string BrowserPanel::rowKey(const QTreeWidgetItem* item) const {
+  const QString kind = item->data(0, Qt::UserRole).toString();
+  if (kind == "document") return "document";
+  if (kind == "folder") return folderKey(item);
+  return item->data(0, kIdRole).toString().toStdString();
+}
+
+QTreeWidgetItem* BrowserPanel::itemForKey(const std::string& key) const {
+  if (key == "document") return m_tree->topLevelItemCount() ? m_tree->topLevelItem(0) : nullptr;
+  if (key.rfind("folder:", 0) != 0) return itemFor(key);
+  for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
+    if ((*it)->data(0, Qt::UserRole).toString() == "folder" && folderKey(*it) == key) return *it;
+  return nullptr;
 }
 
 void BrowserPanel::applyFilter() {
@@ -614,7 +814,11 @@ std::vector<std::string> BrowserPanel::selectedIds() const {
   return ids;
 }
 
-void BrowserPanel::setSelectedIds(const std::vector<std::string>& ids) {
+void BrowserPanel::setSelectedIds(const std::vector<std::string>& ids, bool reveal) {
+  if (const auto now = selectedIds(); std::set<std::string>(ids.begin(), ids.end()) == std::set<std::string>(now.begin(), now.end())) {
+    updateBreadcrumb();
+    return;  // the same rows (the view picked again what the browser shows): the view stays where it was scrolled
+  }
   bool was = m_updating;
   m_updating = true;
   m_tree->clearSelection();
@@ -622,13 +826,14 @@ void BrowserPanel::setSelectedIds(const std::vector<std::string>& ids) {
   QTreeWidgetItem* first = nullptr;
   for (const auto& id : ids)
     if (auto* it = itemFor(id)) {
-      for (QTreeWidgetItem* p = it->parent(); p && !p->isExpanded(); p = p->parent()) p->setExpanded(true);
+      if (reveal)
+        for (QTreeWidgetItem* p = it->parent(); p && !p->isExpanded(); p = p->parent()) p->setExpanded(true);
       const QModelIndex idx = m_tree->indexFromItem(it);
       sel.select(idx, idx);
       if (!first) first = it;
     }
   if (!sel.isEmpty()) m_tree->selectionModel()->select(sel, QItemSelectionModel::Select | QItemSelectionModel::Rows);
-  if (first) m_tree->scrollToItem(first);
+  if (first && reveal) m_tree->scrollToItem(first);
   m_updating = was;
   updateBreadcrumb();
 }

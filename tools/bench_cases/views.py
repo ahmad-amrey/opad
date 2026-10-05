@@ -41,6 +41,10 @@ CASES = [
     # P7: the seven standard views animate to their axes; in 2D mode Isometric is off and a standard view takes the grid to
     # its plane; Isolate's card with its × ends the isolation. <prefix>.top-partway.png, <prefix>.chip.png.
     ("views", three_boxes, {"OPAD_BENCH_VIEWS": "{prefix}"}, GRID),
+    # Named view 1-9 by key (Shift+Alt+1..9) and Save view's offer to keep what is hidden and shown (remembered): recalled,
+    # a view turns the camera and hides what it kept hidden, shows the rest, in one step undo takes back; a camera-only view
+    # leaves what is shown; the list shows each key (remapped too); read back, the view keeps what it hid.
+    ("named-views", three_boxes, {"OPAD_BENCH_NAMEDVIEWS": "{prefix}"}),
     # P7 on a drawing in 2D mode: Turn 90° left twists it in an animation, the direction and the grid's plane stay.
     # <prefix>.roll-partway.png, <prefix>.roll.png.
     ("views-2d", plan, {"OPAD_BENCH_VIEWS": "{prefix}"}, GRID),

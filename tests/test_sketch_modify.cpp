@@ -231,3 +231,134 @@ TEST(trim_cuts_splines_and_ellipses_at_any_curve) {
   CHECK_THROWS(trim_curve(once,e2.id,-10,0));CHECK(once.to_json()==json);
   CHECK_THROWS(trim_curve(once,once.entities.back().id,5,0));  // a line is the editor's to trim
 }
+
+// Fillets on lines that carry constraints (the user's "lines with constraints can't be filleted"): a rectangle as the tool
+// makes it (horizontals and verticals, its corner on the fixed origin), its width and height dimensioned, a construction
+// diagonal from one corner to the other with a point held at its middle, and more on its sides (a perpendicular, an angle,
+// a point-to-line distance). Every corner rounds, one after the other, and the sketch still solves: the first fillet leaves
+// its sides' lengths on construction lines ending at the next corners, which took them for a third and a fourth curve
+// there ("no fillet fits"). What measured a side keeps its value on the virtual sharp; the corners stay where they were.
+TEST(fillets_round_every_corner_of_a_constrained_rectangle) {
+  using T=SkConstraint::Type;
+  Sketch sk;
+  const int a=sk.add_point(0,0,true),b=sk.add_point(40,0),c=sk.add_point(40,20),d=sk.add_point(0,20);
+  const int l0=sk.add_line(a,b),l1=sk.add_line(b,c),l2=sk.add_line(c,d),l3=sk.add_line(d,a);
+  sk.add_constraint(T::Horizontal,{l0});sk.add_constraint(T::Horizontal,{l2});sk.add_constraint(T::Vertical,{l1});sk.add_constraint(T::Vertical,{l3});
+  const int width=sk.add_constraint(T::Distance,{l0},40),height=sk.add_constraint(T::Distance,{l1},20);
+  const int diagonal=sk.add_line(a,c,true),middle=sk.add_point(20,10);sk.add_constraint(T::Midpoint,{middle,diagonal});
+  sk.add_constraint(T::Perpendicular,{l2,l3});sk.add_constraint(T::Angle,{l0,l1},M_PI/2);sk.add_constraint(T::Distance,{d,l1},40);
+  CHECK(solve(sk).converged);
+  for(const int corner:{b,a,c,d}) {
+    FilletCorner f;
+    CHECK(fillet_geometry(sk,corner,3,f));
+    const int round=fillet_corner(sk,corner,3);
+    CHECK(sk.entity(round) && sk.entity(round)->type==E::Arc);
+    const auto solved=solve(sk);CHECK(solved.converged);
+    sk.validate();
+  }
+  CHECK_EQ(std::count_if(sk.entities.begin(),sk.entities.end(),[](const SkEntity& e){return e.type==E::Arc;}),4);
+  // The corners stay as virtual sharps where they were; the width and height still measure 40 and 20 there.
+  CHECK_NEAR(sk.point(c)->x,40,1e-7);CHECK_NEAR(sk.point(c)->y,20,1e-7);CHECK_NEAR(sk.point(a)->x,0,1e-9);
+  for(const int dimension:{width,height}) {
+    const SkConstraint* k=sk.constraint(dimension);CHECK(k && k->refs.size()==1);
+    const SkEntity* whole=sk.entity(k->refs[0]);CHECK(whole && whole->construction);
+    CHECK_NEAR(std::hypot(sk.point(whole->p[1])->x-sk.point(whole->p[0])->x,sk.point(whole->p[1])->y-sk.point(whole->p[0])->y),k->value,1e-7);
+  }
+  // The sides are shorter by the radius at each end.
+  CHECK_NEAR(std::abs(sk.point(sk.entity(l0)->p[1])->x-sk.point(sk.entity(l0)->p[0])->x),34,1e-7);
+  // Three curves that are not construction ending on one point: still no fillet there.
+  Sketch three;const int o=three.add_point(0,0);
+  for(const auto& [x,y]:std::vector<std::pair<double,double>>{{10,0},{0,10},{-10,-10}})three.add_line(o,three.add_point(x,y));
+  FilletCorner f;CHECK(!fillet_geometry(three,o,1,f));
+}
+
+// Trim on lines and arcs that carry dimensions and constraints (the user's "trim fails on lines with dim constraints"): a
+// dimensioned rectangle whose bottom also equals its top, holds a point at its middle (placed by a dimension) and is crossed by
+// an upright at x = 25; a fully dimensioned arc crossed by a line. Each trim goes through and the sketch still solves without
+// anything moving: what measured the trimmed curve's whole extent goes (its length, the equal, the midpoint, the arc's
+// length), what still holds stays (horizontal, the width on the top, the distance to the side, the radius).
+TEST(trim_keeps_what_still_holds_and_drops_what_measured_the_whole_curve) {
+  using T=SkConstraint::Type;
+  Sketch sk;
+  const int a=sk.add_point(0,0,true),b=sk.add_point(40,0),c=sk.add_point(40,20),d=sk.add_point(0,20);
+  const int l0=sk.add_line(a,b),l1=sk.add_line(b,c),l2=sk.add_line(c,d),l3=sk.add_line(d,a);
+  sk.add_constraint(T::Horizontal,{l0});sk.add_constraint(T::Horizontal,{l2});sk.add_constraint(T::Vertical,{l1});sk.add_constraint(T::Vertical,{l3});
+  const int length=sk.add_constraint(T::Distance,{l0},40),height=sk.add_constraint(T::Distance,{l1},20);
+  const int top=sk.add_constraint(T::Distance,{l2},40),equal=sk.add_constraint(T::Equal,{l0,l2});
+  const int middle=sk.add_point(20,0);const int held=sk.add_constraint(T::Midpoint,{middle,l0});sk.add_constraint(T::HDistance,{middle},20);
+  const int toSide=sk.add_constraint(T::Distance,{c,l3},40);
+  const int upright=sk.add_line(sk.add_point(25,-5),sk.add_point(25,25));
+  sk.add_constraint(T::Vertical,{upright});sk.add_constraint(T::HDistance,{sk.entity(upright)->p[0]},25);sk.add_constraint(T::VDistance,{sk.entity(upright)->p[0]},-5);
+  sk.add_constraint(T::Distance,{upright},30);
+  CHECK(solve(sk).converged);
+  const auto json=sk.to_json();
+  // The bottom's right piece, past the upright.
+  CHECK(trim_entity(sk,l0,32,0)==TrimOutcome::Trimmed);
+  CHECK(!sk.constraint(length) && !sk.constraint(equal) && !sk.constraint(held));
+  CHECK(sk.constraint(height) && sk.constraint(top) && sk.constraint(toSide));
+  CHECK(std::any_of(sk.constraints.begin(),sk.constraints.end(),[&](const SkConstraint& k){return k.type==T::Horizontal && k.refs==std::vector<int>{l0};}));
+  CHECK(sk.point(b));  // the corner the right side still ends on
+  auto r=solve(sk);CHECK(r.converged);sk.validate();
+  CHECK_NEAR(sk.point(sk.entity(l0)->p[1])->x,25,1e-7);CHECK_NEAR(sk.point(c)->x,40,1e-7);CHECK_NEAR(sk.point(c)->y,20,1e-7);
+  // The top's middle, between the upright and nothing: its left piece goes, the length on it with it; the upright's cut ends
+  // it at x = 25.
+  CHECK(trim_entity(sk,l2,10,20)==TrimOutcome::Trimmed);
+  CHECK(!sk.constraint(top));CHECK(solve(sk).converged);
+  CHECK_NEAR(sk.point(sk.entity(l2)->p[1])->x,25,1e-7);
+  // Cut in its middle a line leaves two collinear pieces; the dimensioned upright between the bottom and top.
+  Sketch mid=Sketch::from_json(json);
+  const int cross=mid.add_line(mid.add_point(10,-5),mid.add_point(10,25));mid.add_constraint(T::Vertical,{cross});
+  CHECK(trim_entity(mid,l0,18,0)==TrimOutcome::Trimmed);
+  CHECK(!mid.constraint(length) && !mid.constraint(equal) && !mid.constraint(held));
+  CHECK(std::count_if(mid.constraints.begin(),mid.constraints.end(),[](const SkConstraint& k){return k.type==T::Collinear;})==1);
+  CHECK(solve(mid).converged);mid.validate();
+  // An arc with its radius and length dimensioned, crossed by a line: its radius stays, its length goes.
+  Sketch round;const int centre=round.add_point(0,0,true);
+  const int arc=round.add_arc(centre,round.add_point(10,0),round.add_point(0,10));
+  const int radius=round.add_constraint(T::Radius,{arc},10),arcLength=round.add_constraint(T::ArcLength,{arc},10*M_PI/2);
+  round.add_constraint(T::HDistance,{round.entity(arc)->p[1]},10);round.add_constraint(T::VDistance,{round.entity(arc)->p[1]},0);
+  round.add_line(round.add_point(0,0),round.add_point(20,20));
+  CHECK(solve(round).converged);
+  CHECK(trim_entity(round,arc,1,9.9)==TrimOutcome::Trimmed);
+  CHECK(round.constraint(radius) && !round.constraint(arcLength));CHECK(solve(round).converged);round.validate();
+  // Nothing to trim: not a line, a circle or an arc; a circle crossed once.
+  Sketch once;const int circle=once.add_circle(once.add_point(0,0),5);once.add_line(once.add_point(0,0),once.add_point(10,0));
+  const auto before=once.to_json();
+  CHECK(trim_entity(once,circle,-5,0)==TrimOutcome::CrossedOnce);CHECK(trim_entity(once,once.points.front().id,0,0)==TrimOutcome::NotACurve);
+  CHECK(once.to_json()==before);
+}
+
+// Chamfers on lines that carry constraints, as the fillets above: every corner of the dimensioned rectangle with its
+// construction diagonal (a third line at two corners: "pick a corner joining exactly two lines") is cut, one after the
+// other, and the sketch still solves with nothing moving. What measured a side (its length, a point at its middle) stays on
+// a construction line along the old side to the corner, kept as a virtual sharp on both sides.
+TEST(chamfers_cut_every_corner_of_a_constrained_rectangle) {
+  using T=SkConstraint::Type;
+  Sketch sk;
+  const int a=sk.add_point(0,0,true),b=sk.add_point(40,0),c=sk.add_point(40,20),d=sk.add_point(0,20);
+  const int l0=sk.add_line(a,b),l1=sk.add_line(b,c),l2=sk.add_line(c,d),l3=sk.add_line(d,a);
+  sk.add_constraint(T::Horizontal,{l0});sk.add_constraint(T::Horizontal,{l2});sk.add_constraint(T::Vertical,{l1});sk.add_constraint(T::Vertical,{l3});
+  const int width=sk.add_constraint(T::Distance,{l0},40),height=sk.add_constraint(T::Distance,{l1},20);
+  const int diagonal=sk.add_line(a,c,true),middle=sk.add_point(20,10);sk.add_constraint(T::Midpoint,{middle,diagonal});
+  const int half=sk.add_point(20,20);sk.add_constraint(T::Midpoint,{half,l2});
+  sk.add_constraint(T::Perpendicular,{l2,l3});sk.add_constraint(T::Distance,{d,l1},40);
+  CHECK(solve(sk).converged);
+  for(const int corner:{b,a,c,d}) {
+    chamfer_corner(sk,corner,3,2);
+    CHECK(solve(sk).converged);
+    sk.validate();
+  }
+  // Four cuts, the corners where they were, the width and height still 40 and 20 on the virtual sharps.
+  CHECK_EQ(std::count_if(sk.entities.begin(),sk.entities.end(),[](const SkEntity& e){return e.type==E::Line && !e.construction;}),8);
+  CHECK_NEAR(sk.point(c)->x,40,1e-7);CHECK_NEAR(sk.point(c)->y,20,1e-7);CHECK_NEAR(sk.point(b)->x,40,1e-7);CHECK_NEAR(sk.point(b)->y,0,1e-7);
+  CHECK_NEAR(sk.point(half)->x,20,1e-7);
+  for(const int dimension:{width,height}) {
+    const SkConstraint* k=sk.constraint(dimension);CHECK(k && k->refs.size()==1);
+    const SkEntity* whole=sk.entity(k->refs[0]);CHECK(whole && whole->construction);
+    CHECK_NEAR(std::hypot(sk.point(whole->p[1])->x-sk.point(whole->p[0])->x,sk.point(whole->p[1])->y-sk.point(whole->p[0])->y),k->value,1e-7);
+  }
+  // Three lines that are not construction ending on one point: still refused, nothing changed.
+  Sketch three;const int o=three.add_point(0,0);
+  for(const auto& [x,y]:std::vector<std::pair<double,double>>{{10,0},{0,10},{-10,-10}})three.add_line(o,three.add_point(x,y));
+  const auto before=three.to_json();CHECK_THROWS(chamfer_corner(three,o,1,1));CHECK(three.to_json()==before);
+}

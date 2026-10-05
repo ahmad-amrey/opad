@@ -99,7 +99,7 @@ class DesignController : public QObject {
   void beginPlanePick();
   void endFeature();
   void activateInput(const QString& name);
-  void showCandidatesFor(const QString& type);
+  void showCandidatesFor(const QString& type, bool planes = false);
   std::vector<Viewport::Candidate> quickCandidates(const std::string& type) const;  // origin and construction axes or planes
   // Sketch regions, points, lines or paths of the scene's sketches, on a worker, added to `found`; then `done(ok)`.
   Job* sketchCandidates(const std::string& type, std::shared_ptr<std::vector<Viewport::Candidate>> found, std::function<void(bool)> done);
@@ -123,6 +123,7 @@ class DesignController : public QObject {
   void syncSelectionToInput();
   void schedulePreview();
   void runPreview(bool commit);
+  void commitDerived(const opad::json& inputs, const std::string& component, const QString& label);  // Sketch on face
   QList<DynamicInput::Field> valueFields(const QString& except = {}) const;  // the panel's values shown, as boxes
   void typeValue(const QString& key, QString value);  // typed into a box: into the panel (the preview follows)
   void refreshValues();                                // the boxes follow the panel

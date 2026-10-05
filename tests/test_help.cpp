@@ -87,6 +87,7 @@ std::set<QString> registeredIds() {
   for (const auto& m : QRegularExpression(R"re(QObject::tr\("[^"]+"\),"([a-z0-9_:]+)")re").globalMatch(source("app/SketchPanel.cpp")))
     ids.insert("sketch." + m.captured(1).replace(':', '.'));
   for (const char* v : {"top", "front", "right", "iso", "bottom", "back", "left"}) ids.insert(QString("view.") + v);
+  for (int n = 1; n <= 9; ++n) ids.insert(QString("view.named%1").arg(n));  // MainWindowView.cpp's loop: Named view 1-9
   for (const char* v : {"fusion", "solidworks", "onshape", "blender"}) ids.insert(QString("nav.") + v);
   // The view navigation staples (ViewNavigation.cpp, UI-47): its add("...") helper and one CommandInfo of its own.
   for (const auto& m : QRegularExpression(R"re(\b(?:add\(|CommandInfo\s+\w+\s*\{)"([a-z0-9]+\.[A-Za-z0-9_.]+)")re").globalMatch(source("app/ViewNavigation.cpp")))

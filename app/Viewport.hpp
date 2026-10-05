@@ -97,6 +97,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // scene changed, so the next frame must draw everything, or the view stays black until the pointer moves over it.
   void exposedAgain();
   int exposeRedraws() const { return m_exposeRedraws; }  // benches
+  // A native overlay over the view moved, shrank, went or changed its mask, or the system uncovered part of the view
+  // (ViewOverlay.hpp): the next paint draws a whole frame (quick ones) or shows the last frame again, or the overlay's old
+  // image stays there.
+  void overlayUncovered();
+  int overlayRepairs() const { return m_overlayRepairs; }  // paints that showed an uncovered part again (benches)
+  int overlayReshows() const { return m_overlayReshows; }  // of those, the ones that drew no frame of their own (benches)
+  void benchPaint() { paintEvent(nullptr); }               // a paint as the window makes it (a hidden window never paints)
+  void benchFullFrameMs(qint64 ms) { m_fullFrameMs = ms; }  // a model whose frames are this slow (benches)
   // A press whose release went to another widget or window (an overlay's chip, a menu, a file dialog): the controller's
   // gesture (a rubber band following the pointer, whose next click selected everything in it) is dropped, nothing applied.
   int droppedGestures() const { return m_droppedGestures; }  // benches
@@ -257,6 +265,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // overrides both ways; prefix (if any): <prefix>.card.png
   bool benchWheel(const std::function<bool(int)>& choose, const std::function<QList<Toast*>()>& cards, const std::function<void()>& other,
                   const QString& prefix);
+  // OPAD_BENCH_CAVITYZOOM (ViewportZoomBench.cpp): wheel zoom at a face deep in an open box, in perspective and orthographic:
+  // every notch gets closer, the face under the pointer stays there, unclipped and pickable, and perspective reaches inside
+  bool benchCavityZoom(const QString& prefix);
   // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
   // displayed last, in the rasterised qualities (UI-39)
   bool benchTransparency(const QString& prefix);
@@ -278,8 +289,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   qint64 longestDisplayCpu() const { return m_longestDisplayCpu; }
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   // Benches: a left click at a widget point as the mouse handlers deliver it (move, press, release and the frames that
-  // handle them), with these modifiers held; then a plain move there.
-  void benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+  // handle them), with these modifiers held; then a plain move there (`held`: a move with them still held).
+  void benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier, bool held = false);
   void benchDoubleClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers);  // press, release, double-click, release
   void benchHoverAt(const QPointF& at);  // a plain move there and the frame that handles it (the hover text follows)
   // The document changed: what the status said is under the pointer may be gone or renamed. Cleared; the next frame
@@ -514,14 +525,35 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
   void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
   // The same, with arrays built on the worker (BodyPrs::build): displaying them walks no triangulation here.
-  struct PreviewPart { std::string node; TopoDS_Shape shape; std::shared_ptr<const BodyPrs> prs; };
+  // `tint`: the operation's colour (Theme's preview roles; invalid: the selection colour), a changed body's own colour mixed
+  // in; `transparency` (negative: the default); `xray`: drawn in the Topmost layer, through the bodies in front of it (a
+  // cut's tool, the volume it removes).
+  struct PreviewPart {
+    std::string node;
+    TopoDS_Shape shape;
+    std::shared_ptr<const BodyPrs> prs;
+    QColor tint = QColor();
+    double transparency = -1;
+    bool xray = false;
+  };
   void setPreviewBodies(const std::vector<PreviewPart>& parts, const std::vector<std::string>& hidden);
+  // Benches: the colour each preview body is drawn in and whether it is drawn through the model, in the parts' order.
+  std::vector<std::pair<QColor, bool>> previewLooks() const { return m_previewLooks; }
   // Other arrays to draw for the preview bodies, in the parts' order (nullptr: their own): a handle drag's live
   // stretch while the exact preview is computed.
   void setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs>>& arrays);
   void clearPreviewBodies();
   size_t previewBodyCount() const { return m_previewBodies.size(); }  // bench checks: a feature preview is on screen
   void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
+  // A preview stands in for the bodies it changes (they are erased, unpickable, and it takes no picks): holding Ctrl alone
+  // over the view while `gate` allows it (a feature is open) shows those bodies as they are, pickable, the preview out of
+  // the way, until Ctrl is released (the report "Ctrl shows the original to allow selecting more"). A Ctrl+click there
+  // adds or takes back a pick, as everywhere. Previews made meanwhile wait for the release.
+  void setPreviewPeekGate(std::function<bool()> gate) { m_peekGate = std::move(gate); }
+  void setPreviewPeek(bool on);
+  bool previewPeek() const { return m_previewPeek; }
+  bool previewStandsIn(const std::string& node) const { return m_previewHidden.count(node) > 0; }  // benches
+  bool previewShown() const;  // benches: a preview body is on screen
   // Sketch editing.
   void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);
   void endSketchInput();
@@ -630,6 +662,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void ownCursorChanged(bool shown);  // the system pointer went blank (the editor draws its cursor) or came back
   void looksApplied();  // a setLookLayer (or a scene change under one) has reached every displayed body
   void zoomWindowChanged(bool active);
+  void previewPeekChanged(bool on);  // Ctrl shows the bodies a preview stands in for (on), or the preview again
   void fitRequested();  // a double click of the middle button: the window fits everything (its Fit all)
   void cubeMenuRequested(const QPoint& globalPos);  // a right click on the view cube
   // The first scroll while Scroll wheel / trackpad was never chosen (Windows, Linux) has zoomed: ask once whether it was a
@@ -663,6 +696,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,const Handle(V3d_View)& view) override;
   void handleMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
+  // Perspective zoom at the pointer (ViewportZoom.cpp): the wheel, a pinch, Ctrl+scroll and the zoom drag fly along the
+  // pointer's ray towards what is drawn under it, whatever picks; the rest is OCCT's.
+  void handleCameraActions(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const AIS_WalkDelta& walk) override;
   // Every hover and click pick of the controller: what lies behind a face is taken for nothing (dropOccluded).
   void contextLazyMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const Graphic3d_Vec2i& point) override;
 
@@ -748,6 +784,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_holdPress = false;
   Qt::MouseButtons m_viewButtons = Qt::NoButton;  // pressed on the view itself (not on an overlay, a dialog or a menu)
   int m_exposeRedraws = 0, m_droppedGestures = 0;
+  bool m_uncovered = false;   // an overlay left part of the view since the last paint (overlayUncovered)
+  bool m_frameDrawn = false;  // this paint's flush drew a frame (handleViewRedraw)
+  int m_overlayRepairs = 0, m_overlayReshows = 0;
   bool m_topExposed = false;  // the window's surface as Qt last said (an Expose to shown again draws everything)
   void dropGesture();
   void pressHeld();
@@ -833,6 +872,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void discoverCenter();
   void clearCenters();
   bool navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point);
+  // One perspective zoom step at a device pixel (ViewportZoom.cpp): the eye moves along the pixel's ray by a share of the
+  // distance to what is drawn there (a body whatever the filter, a sketch's or a drawing's plane; nothing: the model's
+  // middle), never less than a floor that keeps that surface in front of the near plane, so it never stalls and goes on
+  // through an opening or past a surface reached.
+  void zoomAlongRay(const Handle(V3d_View)& view, const Graphic3d_Vec2i& pixel, double delta);
   gp_Pnt centralOrbitPoint();
   bool nearestSurface(int x, int y, gp_Pnt& point);
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
@@ -1085,6 +1129,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Handle(AIS_Shape) displayCandidate(const Candidate& c);
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
+  std::map<const AIS_InteractiveObject*, int> m_previewModes;  // each preview's display mode, to show it again after a peek
+  bool m_previewPeek = false;
+  std::function<bool()> m_peekGate;
+  void standIn(const std::string& node);  // a preview stands in for it: erased (not while peeking), its glow gone
+  void showOriginal(const std::string& node);  // as it is: displayed and pickable again
+  void showPreviewPart(const Handle(AIS_Shape)& ais, int mode);  // displayed, or kept back while peeking
+  std::vector<std::pair<QColor, bool>> m_previewLooks;  // previewLooks
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_compareParts;  // ViewportCompare.cpp
   std::vector<char> m_compareViews;                                       // each part's `view`
   Handle(AIS_InteractiveObject) m_compareArrows;

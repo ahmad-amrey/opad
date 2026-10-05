@@ -18,6 +18,9 @@ struct Tokens {
   // deuteranopia and protanopia (tests/test_ui_contracts).
   QColor selected3d, hover, candidate, ghost, locked, error, warning;
   QColor diffAdded, diffRemoved, diffModified, diffMoved, assetLinked, assetStale, assetMissing;
+  // What a creation feature's preview does (an extrusion's operation): a new body (neutral), material joined to a body, the
+  // volume a cut removes (drawn through the bodies it cuts), what an intersect keeps. Apart under deuteranopia too.
+  QColor previewNew, previewJoin, previewCut, previewIntersect;
 };
 
 namespace theme {

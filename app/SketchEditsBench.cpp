@@ -85,6 +85,49 @@ void SketchEditor::benchEdits() {
   const SkEntity* barNow = m_sk.entity(bar);
   check(barNow && equal(std::max(m_sk.point(barNow->p[0])->x, m_sk.point(barNow->p[1])->x), 70), "a click still trims one piece (the bar past the last upright)");
 
+  // Trim on constrained lines (the user's "trim fails on lines with dim constraints"): a rail held horizontal with its length
+  // dimensioned, its middle between two uprights under its horizontal's badge; a post held vertical with its length
+  // dimensioned, the value beside it. A click on either takes the piece there, never the badge or the value (they took the
+  // click and the trim asked for a curve); the length goes, the horizontal and the vertical stay, one undo step each.
+  using CT = SkConstraint::Type;
+  begin_change();
+  const int held = m_sk.add_line(m_sk.add_point(45, -20), m_sk.add_point(85, -20));
+  const int level = m_sk.add_constraint(CT::Horizontal, {held}), heldLength = m_sk.add_constraint(CT::Distance, {held}, 40);
+  for (double x : {55.0, 75.0}) m_sk.add_line(m_sk.add_point(x, -25), m_sk.add_point(x, -15));
+  const int post = m_sk.add_line(m_sk.add_point(100, -40), m_sk.add_point(100, -20));
+  const int upright = m_sk.add_constraint(CT::Vertical, {post}), postLength = m_sk.add_constraint(CT::Distance, {post}, 20);
+  for (double y : {-35.0, -25.0}) m_sk.add_line(m_sk.add_point(95, y), m_sk.add_point(105, y));
+  end_change(QStringLiteral("Bench"));
+  rebuild();
+  setTool("trim");
+  // Where the horizontal's badge (laid out just off the rail's middle) and the rail's own reach overlap.
+  const double grip = kHandlePixels * m_viewport->pixelSize();
+  double cu = 65, cv = -20;
+  for (const auto& g : m_glyphHits)
+    if (std::get<0>(g) == level) cu = std::get<1>(g), cv = std::get<2>(g) - (std::get<2>(g) > -20 ? 1 : -1) * 0.8 * grip;
+  const bool underBadge = cu > 55 && cu < 75 && std::abs(cv + 20) < 0.8 * tol() && cv != -20;
+  sketchMove(cu, cv, Qt::NoModifier, false);
+  check(underBadge && m_hover.kind == Hit::Entity && m_hover.id == held && transientSolid(t.red) >= 1,
+        QString("on a constrained line by its badge the trim hovers the line: its piece between the uprights shows red [at %1, %2, hover %3/%4, red %5]")
+            .arg(cu).arg(cv).arg(int(m_hover.kind)).arg(m_hover.id).arg(transientSolid(t.red)));
+  steps = m_undo.size();
+  sketchPress(cu, cv, Qt::NoModifier);
+  sketchRelease(cu, cv, Qt::NoModifier);
+  const SkEntity* heldNow = m_sk.entity(held);
+  check(heldNow && equal(std::max(m_sk.point(heldNow->p[0])->x, m_sk.point(heldNow->p[1])->x), 55) && !m_sk.constraint(heldLength) && m_sk.constraint(level) &&
+            m_undo.size() == steps + 1 && m_solved.converged,
+        "a click there takes that piece: its length dimension goes, the horizontal stays, one undo step");
+  double lu = 0, lv = 0;
+  labelPosition(*m_sk.constraint(postLength), lu, lv);
+  const bool overValue = std::abs(lu - 100) < 3.5 * tol() && std::abs(lv + 30) < 1.4 * tol();
+  sketchMove(100, -30, Qt::NoModifier, false);
+  check(overValue && m_hover.kind == Hit::Entity && m_hover.id == post, "over an upright's length value the trim hovers the line");
+  steps = m_undo.size();
+  sketchPress(100, -30, Qt::NoModifier);
+  sketchRelease(100, -30, Qt::NoModifier);
+  check(m_sk.entity(post) && equal(endY(post), -35) && !m_sk.constraint(postLength) && m_sk.constraint(upright) && m_undo.size() == steps + 1 && m_solved.converged,
+        "a click there takes its piece between the crossing lines: the length goes, the vertical stays, one undo step");
+
   // One-click extend.
   setTool("extend");
   sketchMove(100, 0.1, Qt::NoModifier, false);

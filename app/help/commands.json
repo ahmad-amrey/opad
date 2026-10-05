@@ -754,9 +754,89 @@
    "id": "view.saveview",
    "title": "Save view",
    "summary": "Saves the current camera as a named view.",
-   "details": "Named views are stored in the document and listed under View > Named views. Pick one to return to that camera. A file open in viewer mode asks to become an OPAD document first.",
-   "keywords": ["camera", "bookmark", "named view"],
+   "details": "Named views are stored in the document and listed under View > Named views, the first nine with their keys. Tick Also keep which objects are hidden and shown to hide what is hidden now again whenever the view is chosen (everything else is shown); the choice is remembered. A file open in viewer mode asks to become an OPAD document first.",
+   "keywords": ["camera", "bookmark", "named view", "hidden", "visibility"],
    "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.named1",
+   "title": "Named view 1",
+   "summary": "Returns to the first named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "view.named2",
+   "title": "Named view 2",
+   "summary": "Returns to the second named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first.",
+   "clip": "view.named1"
+  },
+  {
+   "id": "view.named3",
+   "title": "Named view 3",
+   "summary": "Returns to the third named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first.",
+   "clip": "view.named1"
+  },
+  {
+   "id": "view.named4",
+   "title": "Named view 4",
+   "summary": "Returns to the fourth named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first.",
+   "clip": "view.named1"
+  },
+  {
+   "id": "view.named5",
+   "title": "Named view 5",
+   "summary": "Returns to the fifth named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first.",
+   "clip": "view.named1"
+  },
+  {
+   "id": "view.named6",
+   "title": "Named view 6",
+   "summary": "Returns to the sixth named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first.",
+   "clip": "view.named1"
+  },
+  {
+   "id": "view.named7",
+   "title": "Named view 7",
+   "summary": "Returns to the seventh named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first.",
+   "clip": "view.named1"
+  },
+  {
+   "id": "view.named8",
+   "title": "Named view 8",
+   "summary": "Returns to the eighth named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first.",
+   "clip": "view.named1"
+  },
+  {
+   "id": "view.named9",
+   "title": "Named view 9",
+   "summary": "Returns to the ninth named view in the Named views list.",
+   "details": "The list numbers the named views in the order they were saved and shows each one's key. A view saved with what was hidden hides that again and shows everything else, in one step that Undo takes back. Without such a view the status bar says how to save one.",
+   "keywords": ["named view", "saved view", "camera", "bookmark", "recall", "shortcut"],
+   "requires": "Open or create a document first.",
+   "clip": "view.named1"
   },
   {
    "id": "view.dark",
@@ -2022,7 +2102,7 @@
    "id": "design.extrude",
    "title": "Extrude",
    "summary": "Pulls sketch profiles or planar faces along their normal into a solid.",
-   "details": "Pick the profiles, then drag the arrow or type the distance. Symmetric splits the distance on both sides, and the extent can also run through all or up to a face or body. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Pick the profiles, then drag the arrow or type the distance; Symmetric splits it on both sides. All runs through every body in the way and ends at the last one, and To face stops at a face (extended past its edges), a plane or a vertex, with an end offset. The operation starts as Automatic: it cuts when the profile goes into material (the removed volume shows in red), joins when it touches a body and otherwise makes a new body, until you choose another. A curved or tilted start or end face can be followed or met flat at its nearest or farthest contact, and Sketch on face moves the profile onto the start face as a derived sketch.",
    "keywords": ["pull", "extrusion", "push", "pad", "boss", "cut extrude"],
    "requires": "Open or create a document first."
   },

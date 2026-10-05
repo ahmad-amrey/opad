@@ -926,11 +926,6 @@ std::vector<std::pair<double, double>> SketchEditor::filletPreview(int id) const
 
 // ---------------------------------------------------------------- trim
 namespace {
-struct Cut {
-  double t;   // parameter on the trimmed curve: 0..1 along a line, angle for circles and arcs
-  int other;  // the curve that cuts it
-};
-
 // Points where a line a->b meets a circle (c, r): parameters along the line.
 std::vector<double> line_circle(double ax, double ay, double bx, double by, double cx, double cy, double r) {
   const double dx = bx - ax, dy = by - ay, fx = ax - cx, fy = ay - cy;
@@ -945,111 +940,10 @@ struct Arc2 { double cx, cy, r, a0, sweep; };  // sweep 2 pi = full circle
 
 bool on_round(const Arc2& k, double x, double y) { return k.sweep >= 2 * M_PI - 1e-12 || norm_angle(std::atan2(y - k.cy, x - k.cx) - k.a0) <= k.sweep + 1e-9; }
 
-// Where the other curves cross `target`, sorted along it. A trim at a point removes the span between the cuts on
-// either side of it (or the whole curve when nothing crosses it); the hover shows that span before the click.
-struct Crossings {
-  bool line = true;
-  double ax = 0, ay = 0, bx = 0, by = 0;  // a line's ends
-  Arc2 self{};                           // a circle's or an arc's
-  std::vector<Cut> cuts;
-};
-// `samples`: a preview's, a spline's or an ellipse's polyline (nullptr: the kernel's crossings, as a trim asks).
-using Samples = std::function<const std::vector<std::pair<double, double>>*(const SkEntity&)>;
-Crossings crossings(const Sketch& sk, const SkEntity& target, const Samples& samples = {}) {
-  auto P = [&](int id) { return sk.point(id); };
-  auto round_of = [&](const SkEntity& e) {
-    Arc2 k{P(e.p[0])->x, P(e.p[0])->y, e.r, 0, 2 * M_PI};
-    if (e.type == ET::Arc) {
-      k.r = std::hypot(P(e.p[1])->x - k.cx, P(e.p[1])->y - k.cy);
-      k.a0 = std::atan2(P(e.p[1])->y - k.cy, P(e.p[1])->x - k.cx);
-      k.sweep = norm_angle(std::atan2(P(e.p[2])->y - k.cy, P(e.p[2])->x - k.cx) - k.a0);
-      if (k.sweep < 1e-12) k.sweep = 2 * M_PI;
-    }
-    return k;
-  };
-  const double eps = 1e-7;
-  Crossings out;
-  out.line = target.type == ET::Line;
-  if (out.line) {
-    out.ax = P(target.p[0])->x, out.ay = P(target.p[0])->y, out.bx = P(target.p[1])->x, out.by = P(target.p[1])->y;
-  } else {
-    out.self = round_of(target);
-  }
-  const bool isLine = out.line;
-  const Arc2& self = out.self;
-  const double ax = out.ax, ay = out.ay, bx = out.bx, by = out.by;
-  std::vector<Cut>& cuts = out.cuts;
-  for (const auto& o : sk.entities) {
-    if (o.id == target.id) continue;
-    std::vector<std::pair<double, double>> hits;  // intersection points
-    if (o.type == ET::Line) {
-      const double cx = P(o.p[0])->x, cy = P(o.p[0])->y, dx = P(o.p[1])->x, dy = P(o.p[1])->y;
-      if (isLine) {
-        const double den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
-        if (std::fabs(den) < 1e-14) continue;
-        const double t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den, s = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / den;
-        if (s >= -eps && s <= 1 + eps) hits.push_back({ax + t * (bx - ax), ay + t * (by - ay)});
-      } else {
-        for (double s : line_circle(cx, cy, dx, dy, self.cx, self.cy, self.r))
-          if (s >= -eps && s <= 1 + eps) hits.push_back({cx + s * (dx - cx), cy + s * (dy - cy)});
-      }
-    } else if (o.type == ET::Circle || o.type == ET::Arc) {
-      const Arc2 k = round_of(o);
-      if (isLine) {
-        for (double t : line_circle(ax, ay, bx, by, k.cx, k.cy, k.r)) {
-          const double x = ax + t * (bx - ax), y = ay + t * (by - ay);
-          if (on_round(k, x, y)) hits.push_back({x, y});
-        }
-      } else {
-        const double d = std::hypot(k.cx - self.cx, k.cy - self.cy);
-        if (d < 1e-12 || d > self.r + k.r || d < std::fabs(self.r - k.r)) continue;
-        const double a = (self.r * self.r - k.r * k.r + d * d) / (2 * d), hh = std::sqrt(std::max(0.0, self.r * self.r - a * a));
-        const double mx = self.cx + a * (k.cx - self.cx) / d, my = self.cy + a * (k.cy - self.cy) / d;
-        for (double sgn : {1.0, -1.0}) {
-          const double x = mx + sgn * hh * (k.cy - self.cy) / d, y = my - sgn * hh * (k.cx - self.cx) / d;
-          if (on_round(k, x, y)) hits.push_back({x, y});
-        }
-      }
-    } else if (o.type == ET::Ellipse || o.type == ET::Spline) {  // the kernel's crossings (UI-28), a preview's on the samples
-      if (const auto* poly = samples ? samples(o) : nullptr) {
-        auto within = [&](double s, size_t i) { return s >= -1e-9 && (s < 1 - 1e-9 || (i + 1 == poly->size() && s <= 1 + 1e-9)); };  // a vertex once, the ends too
-        for (size_t i = 1; i < poly->size(); ++i) {
-          const double cx = (*poly)[i - 1].first, cy = (*poly)[i - 1].second, dx = (*poly)[i].first, dy = (*poly)[i].second;
-          if (isLine) {
-            const double den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
-            if (std::fabs(den) < 1e-14) continue;
-            const double t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den, s = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / den;
-            if (within(s, i)) hits.push_back({ax + t * (bx - ax), ay + t * (by - ay)});
-          } else
-            for (double s : line_circle(cx, cy, dx, dy, self.cx, self.cy, self.r))
-              if (within(s, i)) hits.push_back({cx + s * (dx - cx), cy + s * (dy - cy)});
-        }
-      } else
-        try {
-          for (const auto& [x, y] : curve_crossings(sk, target, o)) hits.push_back({x, y});
-        } catch (...) {
-        }
-    } else {
-      continue;
-    }
-    for (const auto& [x, y] : hits) {
-      if (isLine) {
-        const double len2 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
-        const double t = ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / len2;
-        if (t > eps && t < 1 - eps) cuts.push_back({t, o.id});
-      } else if (on_round(self, x, y)) {
-        const double t = norm_angle(std::atan2(y - self.cy, x - self.cx) - self.a0);
-        if (self.sweep >= 2 * M_PI - 1e-12 || (t > eps && t < self.sweep - eps)) cuts.push_back({t, o.id});
-      }
-    }
-  }
-  std::sort(cuts.begin(), cuts.end(), [](const Cut& a, const Cut& b) { return a.t < b.t; });
-  return out;
-}
 }  // namespace
 
 struct SketchEditor::TrimCrossings {
-  Crossings c;
+  opad::design::TrimCrossings c;  // where the other curves cross a line, a circle or an arc (core trim_crossings)
 };
 
 // Whether the samples of two curves come near each other (UI-28: only those go to the kernel; a spline's box from its points
@@ -1100,8 +994,8 @@ std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double 
   }
   if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return piece;
   auto& cached = m_trimCrossings[id];
-  if (!cached) cached = std::make_shared<const TrimCrossings>(TrimCrossings{crossings(m_sk, *target, [this](const SkEntity& o) { return m_geometry ? m_geometry->samples(m_sk, o) : nullptr; })});
-  const Crossings& c = cached->c;
+  if (!cached) cached = std::make_shared<const TrimCrossings>(TrimCrossings{trim_crossings(m_sk, *target, [this](const SkEntity& o) { return m_geometry ? m_geometry->samples(m_sk, o) : nullptr; })});
+  const opad::design::TrimCrossings& c = cached->c;
   if (c.line) {
     const double len2 = (c.bx - c.ax) * (c.bx - c.ax) + (c.by - c.ay) * (c.by - c.ay);
     if (len2 < 1e-18) return piece;
@@ -1114,7 +1008,7 @@ std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double 
     piece = {{c.ax + lo * (c.bx - c.ax), c.ay + lo * (c.by - c.ay)}, {c.ax + hi * (c.bx - c.ax), c.ay + hi * (c.by - c.ay)}};
     return piece;
   }
-  const Arc2& k = c.self;
+  const TrimRound& k = c.self;
   const bool full = target->type == ET::Circle;
   if (full && c.cuts.size() < 2) return piece;  // trimAt refuses: crossed once at most
   const double tc = norm_angle(std::atan2(v - k.cy, u - k.cx) - k.a0);
@@ -1164,102 +1058,12 @@ bool SketchEditor::trimPiece(int id, double u, double v, QString& why) {
     }
     return false;
   }
-  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) {
-    why = tr("Trim: click a curve");
-    return false;
+  switch (trim_entity(m_sk, id, u, v)) {
+    case TrimOutcome::Trimmed: return true;
+    case TrimOutcome::NotACurve: why = tr("Trim: click a curve"); return false;
+    case TrimOutcome::CrossedOnce: why = tr("Trim: the circle is crossed only once; nothing to cut between"); return false;
   }
-  const Crossings found = crossings(m_sk, *target);
-  const bool isLine = found.line;
-  const Arc2 self = found.self;
-  const double ax = found.ax, ay = found.ay, bx = found.bx, by = found.by;
-  const std::vector<Cut>& cuts = found.cuts;
-  if (target->type == ET::Circle && cuts.size() == 1) {
-    why = tr("Trim: the circle is crossed only once; nothing to cut between");
-    return false;
-  }
-  // A length dimension on the trimmed curve would now mean something else.
-  std::vector<int> stale;
-  for (const auto& c : m_sk.constraints)
-    if (c.is_dimension() && c.type == CT::Distance && c.refs.size() == 1 && c.refs[0] == id) stale.push_back(c.id);
-  for (int c : stale) m_sk.remove(c);
-  auto cut_point = [&](double x, double y, int other) {  // on the cutting curve (a point can be held on a line, a circle or an arc)
-    const int p = m_sk.add_point(x, y);
-    if (const SkEntity* by = m_sk.entity(other); by && (by->type == ET::Line || by->type == ET::Circle || by->type == ET::Arc)) m_sk.add_constraint(CT::Coincident, {p, other});
-    return p;
-  };
-  if (cuts.empty()) {
-    m_sk.remove(id);
-    return true;
-  }
-  if (isLine) {
-    const double len2 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
-    const double tc = ((u - ax) * (bx - ax) + (v - ay) * (by - ay)) / len2;
-    const Cut *lo = nullptr, *hi = nullptr;
-    for (const auto& c : cuts) {
-      if (c.t < tc) lo = &c;
-      else if (!hi) hi = &c;
-    }
-    const int oldStart = target->p[0], oldEnd = target->p[1];
-    const bool construction = target->construction;
-    if (lo && hi) {
-      const int p1 = cut_point(ax + lo->t * (bx - ax), ay + lo->t * (by - ay), lo->other), p2 = cut_point(ax + hi->t * (bx - ax), ay + hi->t * (by - ay), hi->other);
-      m_sk.entity(id)->p[1] = p1;
-      const int rest = m_sk.add_line(p2, oldEnd, construction);
-      m_sk.add_constraint(CT::Collinear, {id, rest});
-    } else if (lo) {
-      m_sk.entity(id)->p[1] = cut_point(ax + lo->t * (bx - ax), ay + lo->t * (by - ay), lo->other);
-      m_sk.remove(oldEnd);
-    } else {
-      m_sk.entity(id)->p[0] = cut_point(ax + hi->t * (bx - ax), ay + hi->t * (by - ay), hi->other);
-      m_sk.remove(oldStart);
-    }
-    return true;
-  }
-  const double tc = norm_angle(std::atan2(v - self.cy, u - self.cx) - self.a0);
-  auto at = [&](double t, double& x, double& y) { x = self.cx + self.r * std::cos(self.a0 + t); y = self.cy + self.r * std::sin(self.a0 + t); };
-  if (target->type == ET::Circle) {
-    // The clicked span lies between two neighbouring cuts; what is left runs the other way round.
-    size_t hi = 0;
-    while (hi < cuts.size() && cuts[hi].t < tc) ++hi;
-    const Cut& end = cuts[(hi + cuts.size() - 1) % cuts.size()];  // the span starts here ...
-    const Cut& start = cuts[hi % cuts.size()];                    // ... and ends here: the arc kept starts here
-    double x, y;
-    at(start.t, x, y);
-    const int ps = cut_point(x, y, start.other);
-    at(end.t, x, y);
-    const int pe = cut_point(x, y, end.other);
-    SkEntity* e = m_sk.entity(id);
-    e->type = ET::Arc;
-    e->p = {e->p[0], ps, pe};
-    e->r = 0;
-    return true;
-  }
-  const Cut *lo = nullptr, *hi = nullptr;
-  for (const auto& c : cuts) {
-    if (c.t < tc) lo = &c;
-    else if (!hi) hi = &c;
-  }
-  const int centre = target->p[0], oldStart = target->p[1], oldEnd = target->p[2];
-  const bool construction = target->construction;
-  double x, y;
-  if (lo && hi) {
-    at(lo->t, x, y);
-    const int p1 = cut_point(x, y, lo->other);
-    at(hi->t, x, y);
-    const int p2 = cut_point(x, y, hi->other);
-    m_sk.entity(id)->p[2] = p1;
-    const int rest = m_sk.add_arc(centre, p2, oldEnd, construction);
-    m_sk.add_constraint(CT::Equal, {id, rest});
-  } else if (lo) {
-    at(lo->t, x, y);
-    m_sk.entity(id)->p[2] = cut_point(x, y, lo->other);
-    m_sk.remove(oldEnd);
-  } else {
-    at(hi->t, x, y);
-    m_sk.entity(id)->p[1] = cut_point(x, y, hi->other);
-    m_sk.remove(oldStart);
-  }
-  return true;
+  return false;
 }
 
 // Where the fence from (au, av) to (bu, bv) crosses the curves near it (UI-28), in order along it.

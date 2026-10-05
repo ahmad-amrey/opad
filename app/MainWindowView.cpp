@@ -7,15 +7,18 @@
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMoveEvent>
 #include <QResizeEvent>
 #include <QStackedWidget>
+#include <QStatusBar>
 #include <QStyleHints>
 #include <QTimer>
 #include <QToolButton>
@@ -24,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -33,6 +37,7 @@
 #include "I18n.hpp"
 #include "PlanePicker.hpp"
 #include "Icons.hpp"
+#include "KeyText.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
 
@@ -113,7 +118,13 @@ void MainWindow::buildViewActions() {
   addAction("view.hideothers", tr("Hide others"), "hide", QKeySequence(), [this] { hideOthers(currentNodeIds()); });  // one step (UI-02)
   // macOS treats any action starting with "Exit" as Quit unless its menu role is explicit.
   addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); })->setMenuRole(QAction::NoRole);
-  addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });
+  addAction("view.saveview", tr("Save view…"), "home", QKeySequence("Shift+Alt+V"), [this] { saveNamedView(); });
+  // The Named views list's first nine by key, in its order (the list shows each one's key).
+  for (int n = 1; n <= 9; ++n) {
+    const QString id = QString("view.named%1").arg(n);
+    addAction(id, tr("Named view %1").arg(n), "home", QKeySequence(QString("Shift+Alt+%1").arg(n)), [this, n] { recallNamedView(n); });
+  }
+  connect(keys::notifier(), &keys::Notifier::changed, this, [this] { rebuildViewsMenu(); });  // the keys it lists, rebound
   m_darkAction = addAction("view.dark", tr("&Dark theme"), "", QKeySequence(), [this] {}, true);
   // Panel toggles: always enabled, so a closed dock can be reopened even with no document.
   // Ctrl+1/2/3 belong to the workspaces (handoff), so the panels use Alt.
@@ -392,30 +403,93 @@ bool MainWindow::repeatOnEnter(const QKeyEvent* key) {
 
 // ---------------------------------------------------------------- named views (view op)
 void MainWindow::saveNamedView() {
-  bool ok = false;
   const auto named = std::count_if(m_doc->scene.views.begin(), m_doc->scene.views.end(), [](const opad::ViewBookmark& v) { return !v.home; });
-  QString name = QInputDialog::getText(this, tr("Save view"), tr("Name:"), QLineEdit::Normal, tr("View %1").arg(named + 1), &ok);
-  if (!ok || name.isEmpty()) return;
-  m_doc->run("view", opad::json{{"name", name.toStdString()}, {"camera", m_viewport->cameraJson()}});
+  QDialog dialog(this);
+  dialog.setObjectName("saveViewDialog");
+  dialog.setWindowTitle(tr("Save view"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* form = new QFormLayout;
+  auto* name = new QLineEdit(tr("View %1").arg(named + 1));
+  name->setObjectName("saveViewName");
+  name->selectAll();
+  form->addRow(tr("Name:"), name);
+  layout->addLayout(form);
+  // Off at first; the choice is remembered for the next view saved.
+  auto* visibility = new QCheckBox(tr("Also keep which objects are hidden and shown"));
+  visibility->setObjectName("saveViewVisibility");
+  visibility->setToolTip(tr("Choosing the view later hides what is hidden now and shows everything else, in one step you can undo."));
+  visibility->setChecked(m_settings.value("view/namedViewVisibility", false).toBool());
+  layout->addWidget(visibility);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  layout->addWidget(buttons);
+  if (dialog.exec() != QDialog::Accepted || name->text().trimmed().isEmpty()) return;
+  m_settings.setValue("view/namedViewVisibility", visibility->isChecked());
+  saveNamedView(name->text().trimmed(), visibility->isChecked());
+}
+
+void MainWindow::saveNamedView(const QString& name, bool visibility) {
+  opad::json args{{"name", name.toStdString()}, {"camera", m_viewport->cameraJson()}};
+  if (visibility) {  // the nodes hidden now (components and bodies); an older build reads the view as a camera only
+    std::vector<std::string> hidden;
+    for (const auto& [id, n] : m_doc->scene.nodes)
+      if (!n.visible) hidden.push_back(id);
+    std::sort(hidden.begin(), hidden.end());
+    args["display"] = opad::json{{"hidden", hidden}};
+  }
+  m_doc->run("view", args);
 }
 
 void MainWindow::restoreNamedView(const std::string& id) {
   for (const auto& v : m_doc->scene.views)
     if (v.id == id) {
       m_viewport->setCameraJson(v.camera);
-      std::vector<std::pair<std::string, opad::json>> layers;  // a layer state saved with it (UI-89): one step
-      for (auto& args : drawing2d::restoreState(m_doc->scene, v.display)) layers.push_back({"appearance", std::move(args)});
-      if (!layers.empty()) guarded([&] { m_doc->runAll(layers, tr("restore layer state")); });
+      std::vector<std::pair<std::string, opad::json>> ops;  // a layer state saved with it (UI-89) and what it hid: one step
+      for (auto& args : drawing2d::restoreState(m_doc->scene, v.display)) ops.push_back({"appearance", std::move(args)});
+      bool visibility = false;
+      if (v.display.is_object() && v.display.contains("hidden") && v.display["hidden"].is_array()) {
+        std::set<std::string> hidden;
+        for (const auto& h : v.display["hidden"])
+          if (h.is_string()) hidden.insert(h.get<std::string>());
+        std::vector<std::string> hide, show;  // only what differs: the nodes saved hidden, everything else shown
+        for (const auto& [nid, n] : m_doc->scene.nodes)
+          if (n.visible == bool(hidden.count(nid))) (n.visible ? hide : show).push_back(nid);
+        std::sort(hide.begin(), hide.end());
+        std::sort(show.begin(), show.end());
+        if (!hide.empty()) ops.push_back({"appearance", opad::json{{"targets", hide}, {"visible", false}}});
+        if (!show.empty()) ops.push_back({"appearance", opad::json{{"targets", show}, {"visible", true}}});
+        visibility = !hide.empty() || !show.empty();
+      }
+      if (!ops.empty()) guarded([&] { m_doc->runAll(ops, visibility ? tr("restore view") : tr("restore layer state")); });
       return;
     }
+}
+
+void MainWindow::recallNamedView(int n) {
+  int seen = 0;
+  for (const auto& v : m_doc->scene.views) {
+    if (v.home || ++seen < n) continue;
+    // As a click on its entry in Named views: what listens there runs too (an exploded view explodes again, ExplodeArea).
+    if (m_viewsMenu)
+      for (QAction* a : m_viewsMenu->actions())
+        if (a->data().toString().toStdString() == v.id) return a->trigger();
+    return restoreNamedView(v.id);
+  }
+  const QString key = keys::text("view.saveview");
+  statusBar()->showMessage(key.isEmpty() ? tr("There is no named view %1 yet: Save view keeps the current one.").arg(n)
+                                         : tr("There is no named view %1 yet: Save view (%2) keeps the current one.").arg(n).arg(key), 6000);
 }
 
 void MainWindow::rebuildViewsMenu() {
   if (!m_viewsMenu) return;
   m_viewsMenu->clear();
+  int n = 0;
   for (const auto& v : m_doc->scene.views) {
     if (v.home) continue;  // the document's Home (H), not a bookmark
-    QAction* a = m_viewsMenu->addAction(icons::themed(v.explode.is_object() ? "explodedView" : "home", 16), QString::fromStdString(v.name));
+    ++n;  // the first nine with their key (Named view 1-9), in the menu's key column
+    const QString text = n <= 9 ? keys::menuText(QString::fromStdString(v.name), QString("view.named%1").arg(n)) : QString::fromStdString(v.name);
+    QAction* a = m_viewsMenu->addAction(icons::themed(v.explode.is_object() ? "explodedView" : "home", 16), text);
     a->setData(QString::fromStdString(v.id));  // areas show more of a view (an exploded one: Explode, ExplodeArea.cpp)
     connect(a, &QAction::triggered, this, [this, id = v.id] { restoreNamedView(id); });
   }

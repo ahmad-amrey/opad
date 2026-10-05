@@ -1431,6 +1431,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   degradeWhileNavigating();
   // Side by side: A's view is drawn after this one with its camera (the controller redraws it only when it is invalid).
   const bool full = m_side && m_view->IsInvalidated() && !m_sideView->IsInvalidated();
+  m_frameDrawn = m_frameDrawn || view->IsInvalidated() || view->IsInvalidatedImmediate() || toAskNextFrame();  // as the controller decides
   QElapsedTimer draw;
   draw.start();
   AIS_ViewController::handleViewRedraw(ctx, view);
@@ -2147,7 +2148,7 @@ void Viewport::benchDoubleClickAt(const QPointF& at, Qt::KeyboardModifiers modif
   }
 }
 
-void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) {
+void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers, bool held) {
   if (!m_initialised) return;
   m_view->Redraw();  // the picker needs a frame after a camera change
   auto send = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers held) {
@@ -2158,7 +2159,7 @@ void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) 
   send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, modifiers);
   send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton, modifiers);
   send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton, modifiers);
-  send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+  send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, held ? modifiers : Qt::NoModifier);
 }
 
 void Viewport::clearHover() {
@@ -2820,9 +2821,22 @@ void Viewport::paintEvent(QPaintEvent*) {
   syncWindowSize();
   QElapsedTimer frame;
   frame.start();
+  // A part of the view an overlay left (ViewOverlay.hpp): a whole frame, swapped onto every pixel of the view, when one is
+  // quick (as exposedAgain does); on a model whose frames are slow the last frame is shown again below instead.
+  const bool uncovered = std::exchange(m_uncovered, false);
+  if (uncovered && m_fullFrameMs < kSmoothFrameMs) m_view->Invalidate();
+  m_frameDrawn = false;
   {
     QScopedValueRollback<bool> flushing(m_flushingViewEvents, true);
     FlushViewEvents(m_ctx, m_view, Standard_True);
+  }
+  // No frame drawn for it: the last frame shown again whole, which OCCT does without drawing the scene (its immediate redraw).
+  if (uncovered) {
+    ++m_overlayRepairs;
+    if (!m_frameDrawn) {
+      ++m_overlayReshows;
+      m_view->RedrawImmediate();
+    }
   }
   if (m_repaintAfterFlush) {
     m_repaintAfterFlush = false;
@@ -3146,6 +3160,12 @@ void Viewport::dropGesture() {
   redrawScene();
 }
 
+void Viewport::overlayUncovered() {
+  if (!m_initialised) return;
+  m_uncovered = true;
+  requestRedraw();
+}
+
 void Viewport::exposedAgain() {
   if (!m_initialised) return;
   ++m_exposeRedraws;
@@ -3200,6 +3220,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;
   if(awaitingWarp && !m_warpGate.pending && e->buttons()!=Qt::NoButton) m_dragOffset=m_warpPosition-e->position();
   if(m_initialised && e->buttons()==Qt::NoButton) setCenterPicking(e->modifiers().testFlag(Qt::ControlModifier),e->position());
+  if(m_previewPeek && !e->modifiers().testFlag(Qt::ControlModifier)) setPreviewPeek(false);  // Ctrl's release went elsewhere
   if (m_hoverCycled && devicePos(e->position() + m_dragOffset) != m_cycledAt) m_hoverCycled = false;  // the pointer moved on: it picks again
   m_trackingCursor = e->position();
   m_trackingDirty = true;

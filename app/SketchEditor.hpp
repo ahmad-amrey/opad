@@ -153,6 +153,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchEdits();
   void benchApply();
   void benchPointer();
+  void benchTrail();  // OPAD_BENCH_OVERLAY_TRAIL's sketch part (OverlayTrailBench.cpp)
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   size_t settingsReads() const { return m_settingsReads; }  // benches: once per change, never per mouse move
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
@@ -458,7 +459,13 @@ class SketchEditor : public QObject, public SketchInput {
   opad::design::SolveResult m_previewSolved;
   QString m_selectionFilter = "all",m_constraintFilter;
   std::set<int> m_conflicts;
-  std::vector<std::tuple<int,double,double>> m_glyphHits;  // each constraint badge: its constraint and centre (picking, hover)
+  std::vector<std::tuple<int,double,double>> m_glyphHits;  // each constraint badge: its constraint and centre (as last laid out)
+  // Where each badge hangs (same order): the point it is about and its centre off it on the screen, pixels x right, y up.
+  // Badges face the viewer (sprites), so picking and the hover test them on the screen, wherever the camera went since.
+  struct GlyphAnchor { double u, v, dx, dy; };
+  std::vector<GlyphAnchor> m_glyphAnchors;
+  opad::Vec3 m_layoutLook{0, 0, 0};  // the view direction the badges were laid out for
+  QTimer m_relayoutTimer;            // the camera turned: lay them out again once it rests
   std::vector<std::tuple<int,double,double>> m_coincidentDots;  // each coincidence drawn: its constraint and point
   std::vector<int> m_joinDots;  // points two curves end on (a coincidence they share, no constraint): drawn as its dot; sorted
   bool m_showConstraints = true;
