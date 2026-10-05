@@ -483,13 +483,16 @@ void Viewport::setPreviewBodies(const std::vector<PreviewPart>& parts, const std
   if (!m_initialised) return;
   clearPreviewBodies();
   for (const auto& id : hidden) standIn(id);
-  for (const auto& [node, shape, prs] : parts) {
+  for (const auto& part : parts) {
+    const std::string& node = part.node;
+    const TopoDS_Shape& shape = part.shape;
     if (shape.IsNull()) continue;
     if (!node.empty()) standIn(node);
-    Handle(AIS_Shape) ais = prs ? Handle(AIS_Shape)(new BodyShape(shape, prs)) : new AIS_Shape(shape);
+    Handle(AIS_Shape) ais = part.prs ? Handle(AIS_Shape)(new BodyShape(shape, part.prs)) : new AIS_Shape(shape);
     ais->Attributes()->SetAutoTriangulation(Standard_False);  // the worker meshed it
     ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
-    QColor tint = m_tokens.sel;
+    const QColor role = part.tint.isValid() ? part.tint : m_tokens.sel;
+    QColor tint = role;
     if (!node.empty()) {  // a changed body keeps its colour, leaning towards the preview tint
       auto it = m_items.find(node);
       if (it != m_items.end()) {
@@ -499,11 +502,15 @@ void Viewport::setPreviewBodies(const std::vector<PreviewPart>& parts, const std
     }
     ais->SetColor(occ(tint));
     // A lone face is a construction plane's sheet: see-through, it must not hide the model it cuts through.
-    ais->SetTransparency(shape.ShapeType() == TopAbs_FACE ? 0.78 : 0.25);
+    ais->SetTransparency(part.transparency >= 0 ? part.transparency : shape.ShapeType() == TopAbs_FACE ? 0.78 : 0.25);
     if (shape.ShapeType() == TopAbs_EDGE) ais->SetWidth(2.5);  // a construction axis
     ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
-    ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
+    ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(role), Aspect_TOL_SOLID, 1.0));
+    // A cut's tool shows the volume it takes out through the body it is in: its own depth buffer (Topmost), as selected
+    // bodies show through (`_Top` would share the depth and hide inside).
+    if (part.xray) ais->SetZLayer(Graphic3d_ZLayerId_Topmost);
     showPreviewPart(ais, AIS_Shaded);
+    m_previewLooks.push_back({tint, part.xray});
   }
   redrawScene();
 }
@@ -526,6 +533,7 @@ void Viewport::clearPreviewBodies() {
   for (const auto& p : m_previewBodies) m_ctx->Remove(p, Standard_False);
   m_previewBodies.clear();
   m_previewModes.clear();
+  m_previewLooks.clear();
   for (const auto& node : m_previewHidden) showOriginal(node);  // shown already while Ctrl is held
   const bool hadHidden = !m_previewHidden.empty();
   m_previewHidden.clear();
@@ -567,7 +575,7 @@ void Viewport::setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<cons
   if(!m_initialised)return;clearPreviewBodies();
   for(const auto& id:hidden)standIn(id);
   Handle(AIS_Shape) ais=new BodyShape(shape,std::move(prs));ais->SetColor(occ(m_tokens.sel));ais->SetTransparency(0.25);
-  ais->Attributes()->SetFaceBoundaryDraw(true);showPreviewPart(ais,AIS_Shaded);redrawScene();
+  ais->Attributes()->SetFaceBoundaryDraw(true);showPreviewPart(ais,AIS_Shaded);m_previewLooks.push_back({m_tokens.sel,false});redrawScene();
 }
 
 bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {

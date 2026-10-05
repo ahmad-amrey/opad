@@ -2102,7 +2102,7 @@
    "id": "design.extrude",
    "title": "Extrude",
    "summary": "Pulls sketch profiles or planar faces along their normal into a solid.",
-   "details": "Pick the profiles, then drag the arrow or type the distance. Symmetric splits the distance on both sides, and the extent can also run through all or up to a face or body. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Pick the profiles, then drag the arrow or type the distance; Symmetric splits it on both sides. All runs through every body in the way and ends at the last one, and To face stops at a face (extended past its edges), a plane or a vertex, with an end offset. The operation starts as Automatic: it cuts when the profile goes into material (the removed volume shows in red), joins when it touches a body and otherwise makes a new body, until you choose another. A curved or tilted start or end face can be followed or met flat at its nearest or farthest contact, and Sketch on face moves the profile onto the start face as a derived sketch.",
    "keywords": ["pull", "extrusion", "push", "pad", "boss", "cut extrude"],
    "requires": "Open or create a document first."
   },

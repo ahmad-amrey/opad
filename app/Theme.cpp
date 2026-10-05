@@ -70,6 +70,12 @@ Tokens tokens(bool dark) {
   t.assetLinked = t.diffMoved;
   t.assetStale = t.diffModified;
   t.assetMissing = t.diffRemoved;
+  // Operation previews: a cut in the removed red, a join in the added blue-green, an intersect in the modified yellow, a new
+  // body a neutral grey darker than both (so it stays apart from the join without the red-green difference).
+  t.previewCut = t.diffRemoved;
+  t.previewJoin = t.diffAdded;
+  t.previewIntersect = t.diffModified;
+  t.previewNew = dark ? QColor("#686d75") : QColor("#474c54");
   return t;
 }
 

@@ -17,5 +17,16 @@
   "Origin on: %1": "الأصل على: %1",
   "Length and width typed · Tab: the next box · Enter goes on to the height": "الطول والعرض مكتوبان · Tab: المربع التالي · ينتقل Enter إلى الارتفاع",
   "%1 typed · Enter or Tab goes on to the height": "%1 مكتوب · ينتقل Enter أو Tab إلى الارتفاع",
-  "%1 typed · Enter or Tab goes on to the section": "%1 مكتوب · ينتقل Enter أو Tab إلى قطر المقطع"
+  "%1 typed · Enter or Tab goes on to the section": "%1 مكتوب · ينتقل Enter أو Tab إلى قطر المقطع",
+  "Automatic: %1": "تلقائي: %1",
+  "Extend the face": "مدّ الوجه",
+  "End offset": "إزاحة النهاية",
+  "Start at": "البدء عند",
+  "End at": "الانتهاء عند",
+  "Follow face": "مطابقة الوجه",
+  "Nearest contact": "أقرب تلامس",
+  "Farthest contact": "أبعد تلامس",
+  "Sketch on face": "رسم على الوجه",
+  "Offset from face": "الإزاحة عن الوجه",
+  "Sketching on the start face": "الرسم على وجه البداية"
 }

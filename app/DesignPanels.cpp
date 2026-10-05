@@ -270,6 +270,7 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
   m_active.clear();
   m_widgets.clear();
   m_notes.clear();
+  m_suggested.clear();
   m_guideStep = m_guideCount = 0;
   while (QLayoutItem* it = m_rows->takeAt(0)) {
     delete it->widget();
@@ -326,16 +327,31 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
       h->addWidget(w.expr, 1);
     } else if (in.type == "choice") {
       w.combo = new QComboBox(w.row);
-      for (const auto& c : in.choices) w.combo->addItem(choiceLabel(c), QString::fromStdString(c));
+      // "auto" (the extrusion's automatic operation) heads the list, saying what it was taken as (setSuggestion).
+      std::vector<std::string> order = in.choices;
+      if (const auto a = std::find(order.begin(), order.end(), "auto"); a != order.end()) std::rotate(order.begin(), a, a + 1);
+      for (const auto& c : order) w.combo->addItem(c == "auto" ? tr("Automatic") : choiceLabel(c), QString::fromStdString(c));
       const int at = w.combo->findData(value.is_string() ? QString::fromStdString(value.get<std::string>()) : QString());
       w.combo->setCurrentIndex(std::max(0, at));
-      connect(w.combo, &QComboBox::currentIndexChanged, this, [this] { refreshVisibility(); emit inputsChanged(); });
+      connect(w.combo, &QComboBox::currentIndexChanged, this, [this] {
+        const auto shown = shownPicks();
+        const QString was = m_active;
+        refreshVisibility();
+        focusRevealed(shown, was);
+        emit inputsChanged();
+      });
       h->addWidget(label);
       h->addWidget(w.combo, 1);
     } else if (in.type == "bool") {
       w.check = new QCheckBox(i18n::t(QString::fromStdString(in.label)), w.row);
       w.check->setChecked(value.is_boolean() && value.get<bool>());
-      connect(w.check, &QCheckBox::toggled, this, [this] { refreshVisibility(); emit inputsChanged(); });
+      connect(w.check, &QCheckBox::toggled, this, [this] {
+        const auto shown = shownPicks();
+        const QString was = m_active;
+        refreshVisibility();
+        focusRevealed(shown, was);
+        emit inputsChanged();
+      });
       label->setText(QString());
       h->addWidget(label);
       h->addWidget(w.check, 1);
@@ -403,6 +419,9 @@ void FeaturePanel::refreshVisibility() {
         what = tr("%1 by rule").arg(count);
       }
       if (it->second.rule) it->second.rule->setEnabled(plain_one && !rule);
+      // A face input that takes planes too (To face): an origin or construction plane says so.
+      if (!rule && n == 1 && !singlePick(in.type) && p.is_array() && p[0].is_object() && (p[0].contains("base") || p[0].contains("feature")))
+        what = p[0].contains("base") ? tr("%1 plane").arg(QString::fromStdString(p[0]["base"].get<std::string>()).toUpper()) : tr("Construction");
       if (!rule && n == 1 && singlePick(in.type)) {
         const opad::json& one = p;
         if (one.contains("base")) what = (in.type == "plane" ? tr("%1 plane") : tr("%1 axis")).arg(QString::fromStdString(one["base"].get<std::string>()).toUpper());
@@ -455,7 +474,12 @@ void FeaturePanel::refreshNewBody() {
   bool shown = false;
   if (m_spec && !m_editingFeature)
     for (const auto& in : m_spec->inputs)
-      if (in.name == "operation") shown = inputs().value("operation", "") == "new";
+      if (in.name == "operation") {
+        // Automatic: while it makes a new body (or before the preview has said what it makes).
+        const std::string op = inputs().value("operation", "");
+        const QString decided = suggestion("operation");
+        shown = op == "new" || (op == "auto" && (decided.isEmpty() || decided == "new"));
+      }
   m_newBody->setVisible(shown);
   const bool open = m_newBodyToggle->isChecked();
   m_newBodyRows->setVisible(open);
@@ -618,6 +642,53 @@ void FeaturePanel::activate(const QString& name) {
   m_active = name;
   refreshVisibility();
   emit activeInputChanged(m_active);
+}
+
+std::set<QString> FeaturePanel::shownPicks() const {
+  std::set<QString> out;
+  for (const auto& [name, w] : m_widgets)
+    if (w.pick && !w.row->isHidden()) out.insert(name);
+  return out;
+}
+
+void FeaturePanel::focusRevealed(const std::set<QString>& before, const QString& wasActive) {
+  if (!m_spec || signalsBlocked()) return;  // several values set at once (setValues): no input changes hands unannounced
+  auto needs = [this](const opad::design::InputSpec& in) {
+    const opad::json p = picks(QString::fromStdString(in.name));
+    const int n = p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1;
+    return !in.optional && n < std::max(1, in.min_count);
+  };
+  const opad::design::InputSpec* active = input(m_active);
+  if (!active || !needs(*active))
+    for (const auto& in : m_spec->inputs) {
+      const QString key = QString::fromStdString(in.name);
+      const auto it = m_widgets.find(key);
+      if (it == m_widgets.end() || !it->second.pick || it->second.row->isHidden() || before.count(key) || !needs(in)) continue;
+      return activate(key);
+    }
+  if (m_active.isEmpty() && !wasActive.isEmpty()) activateNextPick();
+}
+
+void FeaturePanel::setSuggestion(const QString& name, const QString& value) {
+  if (suggestion(name) == value) return;
+  if (value.isEmpty()) m_suggested.erase(name);
+  else m_suggested[name] = value;
+  const auto it = m_widgets.find(name);
+  if (it != m_widgets.end() && it->second.combo) {
+    const int at = it->second.combo->findData(QString("auto"));
+    if (at >= 0) it->second.combo->setItemText(at, value.isEmpty() ? tr("Automatic") : tr("Automatic: %1").arg(choiceLabel(value.toStdString())));
+  }
+  refreshNewBody();
+}
+
+QString FeaturePanel::suggestion(const QString& name) const {
+  const auto it = m_suggested.find(name);
+  return it == m_suggested.end() ? QString() : it->second;
+}
+
+QString FeaturePanel::choiceText(const QString& name) const {
+  const auto it = m_widgets.find(name);
+  return it != m_widgets.end() && it->second.combo ? it->second.combo->currentText() : QString();
 }
 
 void FeaturePanel::activateNextPick() {

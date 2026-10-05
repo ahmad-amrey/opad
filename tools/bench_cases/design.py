@@ -43,6 +43,20 @@ def primitive_parts(root, document):
                     ("sketch", "--name", "Marks", "--plane", '{"base":"xy"}', "--geometry", '{"shapes":[{"kind":"circle","picks":[[25,18],[30,18]]}]}'))
 
 
+def extrude_parts(root, document):
+    """A 30 x 20 x 10 box centred on the origin (z 0..10) and a sketch "Low" on XY under it: a 10 x 8 rectangle about the
+    origin, extruded into the box, out of it, up to its top face and through all by the extrude case; a 5 mm slab tilted about
+    Y beside it (its lower face the plane through (60, 0, 30) with normal (0.5, 0, 1)) and a sketch "Side" under that (x 55..65,
+    y -5..5): started from the slab's top face and extruded up to it."""
+    path = root / "extrude-parts.opad"
+    if path.exists():
+        return path
+    return document("extrude-parts", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'),
+                    ("sketch", "--name", "Low", "--plane", '{"base":"xy"}', "--geometry", '{"shapes":[{"kind":"rect2","picks":[[-5,-4],[5,4]]}]}'),
+                    ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[60,0,30],"normal":[0.5,0,1]},"length":"40 mm","width":"30 mm","height":"5 mm"}'),
+                    ("sketch", "--name", "Side", "--plane", '{"base":"xy"}', "--geometry", '{"shapes":[{"kind":"rect2","picks":[[55,-5],[65,5]]}]}'))
+
+
 CASES = [
     # P1: a cone, a box (grid snapping, Esc back from the footprint and the height), a sphere (pressed on a face and dragged),
     # a torus (ring, then section) placed by the pointer, each preview checked while the pointer moves or the arrow is held,
@@ -68,4 +82,8 @@ CASES = [
     # New sketch on the box's top face starts its origin at the face's own (lower-left) corner, the origin set there is the
     # sketch's in the editor and once committed, and New sketch on that sketch's plane starts at that sketch's origin.
     ("sketch-origin", "box", {"OPAD_BENCH_SKETCH_ORIGIN": "1"}),
+    # The extrusion's automatic operation (a cut into the box drawn red through it, a join out of it, an explicit New that
+    # sticks), Extent To face handing the clicks to Up to face at once (the face is not taken as a profile) and To all ending
+    # at the last body in the way; Enter commits the cut, written as "cut".
+    ("extrude", extrude_parts, {"OPAD_BENCH_EXTRUDE": "{prefix}"}),
 ]

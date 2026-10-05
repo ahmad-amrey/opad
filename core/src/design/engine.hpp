@@ -31,6 +31,9 @@ struct Ctx {
   // What the references resolved to that the result should record (TODO 10 B7): "selected" (rule selectors and
   // what they matched) and "rehinted" (references taken by the nearest-hint fallback). Null: not recorded.
   json* notes = nullptr;
+  // The component the feature is made in (its op's "component", UI-33; empty: the document root). An automatic operation
+  // and automatic targets look only at the bodies under it, as Fusion's do in the active component.
+  std::string component;
 
   void check_cancel() const;
   TopoDS_Shape key_shape(const std::string& key) const;
@@ -60,6 +63,10 @@ struct Out {
   std::vector<Body> bodies;
   std::vector<std::string> removed;
   std::vector<std::string> used_targets;  // creation features with automatic targets: who took part
+  // Creation features (apply_operation): the solid they add, remove or intersect with, in world coordinates, and the
+  // operation it was used for ("new", "join", "cut", "intersect"; an "auto" input says here what it was taken as).
+  TopoDS_Shape tool;
+  std::string operation;
   json extra = json::object();            // construction geometry: {"plane":frame} / {"axis":{origin,dir}}
 };
 

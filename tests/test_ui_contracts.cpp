@@ -83,7 +83,8 @@ TEST(semantic_tokens) {
     CHECK(t.hover == QColor("#ffffff") && t.candidate == t.amber && t.warning == t.amber && t.error == t.red);
     CHECK(t.selected3d.isValid() && t.selected3d != t.hover && t.ghost.alpha() < 128 && t.locked.isValid());
     // Each family stays apart for normal vision and under deuteranopia and protanopia (CIE76 >= 20 after simulation).
-    const QList<QList<QColor>> families = {{t.diffAdded, t.diffRemoved, t.diffModified, t.diffMoved}, {t.assetLinked, t.assetStale, t.assetMissing}};
+    const QList<QList<QColor>> families = {{t.diffAdded, t.diffRemoved, t.diffModified, t.diffMoved}, {t.assetLinked, t.assetStale, t.assetMissing},
+                                           {t.previewNew, t.previewJoin, t.previewCut, t.previewIntersect}};
     for (const auto& family : families)
       for (const theme::Vision v : {theme::Vision::Normal, theme::Vision::Deuteranopia, theme::Vision::Protanopia})
         for (int i = 0; i < family.size(); ++i)
