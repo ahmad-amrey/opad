@@ -62,7 +62,9 @@ OPAD_BENCH(OPAD_BENCH_STANDARDKEYS, standardkeys) {
         if ((*it)->toolTip(0) == "edit.repeat") row = *it;
         if ((*it)->toolTip(0) == "edit.redo") redo = *it;
       }
-      check(row && redo && redo->text(2) == QKeySequence("Ctrl+Shift+Z").toString(QKeySequence::NativeText), "the editor shows Redo's alternate");
+      const QKeySequence redoAlternate = shortcuts::alternates("edit.redo").value(0);  // Ctrl+Shift+Z on Windows, Ctrl+Y where that is Redo's key
+      check(row && redo && !redoAlternate.isEmpty() && redoAlternate != QKeySequence(QKeySequence::Redo) && redo->text(2) == redoAlternate.toString(QKeySequence::NativeText),
+            "the editor shows Redo's alternate");
       if (row) {
         tree->setCurrentItem(row);
         editor.findChild<QKeySequenceEdit*>("shortcutAlternate")->setKeySequence(second);

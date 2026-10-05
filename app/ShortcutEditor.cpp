@@ -111,8 +111,11 @@ void updateTooltip(QAction* a) {
   a->setToolTip(text);
 }
 QList<QKeySequence> alternates(const QString& id) {
-  static const QHash<QString,QList<QKeySequence>> table{{"edit.redo",{QKeySequence("Ctrl+Shift+Z")}}};
-  return table.value(id);
+  // Redo answers to Ctrl+Y and Ctrl+Shift+Z: its standard key is one of them (Ctrl+Y on Windows, Ctrl+Shift+Z on Linux and
+  // macOS), the alternate the other. The standard key again as its alternate clashed with itself in the editor.
+  if(id!="edit.redo")return {};
+  const QKeySequence y("Ctrl+Y"),z("Ctrl+Shift+Z");
+  return {QKeySequence(QKeySequence::Redo)==z?y:z};
 }
 bool fixedKey(const QAction* a) {return a->property("fixedShortcut").toBool();}
 void initialize(QAction* a,const QKeySequence& key,QSettings& settings) {
