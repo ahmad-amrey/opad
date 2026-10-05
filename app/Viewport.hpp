@@ -49,6 +49,7 @@ class QMenu;
 class QKeyEvent;
 struct ObjectSnapState;
 class QNativeGestureEvent;
+class Toast;
 
 // Sketch editing (SketchEditor) takes the left mouse button and the keyboard while it is active; positions
 // arrive in sketch-plane coordinates. Navigation (middle/right button, wheel, view cube) stays with the view.
@@ -209,6 +210,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void benchAnimate(bool on) { m_forceAnimate = on; }  // benches: camera moves animate in a hidden window as on screen
   // Setting view/scrollInput (Preferences > Keyboard and mouse > Scroll wheel / trackpad): Automatic tells a wheel (zoom)
   // from a trackpad's fingers (pan, Shift orbits) by what the event carries (ScrollInput.hpp), or every scroll is one.
+  // Never saved, it is the platform's assumption (a wheel on Windows and Linux, Automatic on macOS) and the first scroll
+  // asks once (scrollInputQuestion). setScrollInput saves the choice.
   void setScrollInput(int mode);
   scrollinput::Mode scrollInput() const { return m_scrollInput; }
   // Benches: scrolls are told apart as on this platform ("xcb", "windows", ...; empty: the running one).
@@ -247,10 +250,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_ORBITPIVOT (ViewportOrbitBench.cpp): the pivot of a press away from a big drawing is found run by run, fast,
   // and is the point a scan of every segment finds (UI-51)
   bool benchOrbitPivot(const QString& prefix);
-  // OPAD_BENCH_WHEEL (ViewportWheelBench.cpp): wheel notches and a high-resolution wheel's eighths of one from a device that
-  // says TouchPad zoom on xcb (X11, XWayland) and pan elsewhere as before, fractions pan, and the setting, chosen through
-  // `choose` (Preferences), overrides both ways
-  bool benchWheel(const std::function<bool(int)>& choose);
+  // OPAD_BENCH_WHEEL (ViewportWheelBench.cpp): nothing chosen, every scroll zooms (Windows, Linux) and the first one asks
+  // once through a card (`cards`: the ones showing); Automatic: wheel notches and a high-resolution wheel's
+  // eighths of one from a device that says TouchPad zoom on xcb (X11, XWayland) and pan elsewhere as before, fractions pan;
+  // and the setting, chosen through `choose` (Preferences), overrides both ways; prefix (if any): <prefix>.card.png
+  bool benchWheel(const std::function<bool(int)>& choose, const std::function<QList<Toast*>()>& cards, const QString& prefix);
   // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
   // displayed last, in the rasterised qualities (UI-39)
   bool benchTransparency(const QString& prefix);
@@ -626,6 +630,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void zoomWindowChanged(bool active);
   void fitRequested();  // a double click of the middle button: the window fits everything (its Fit all)
   void cubeMenuRequested(const QPoint& globalPos);  // a right click on the view cube
+  // The first scroll while Scroll wheel / trackpad was never chosen (Windows, Linux) has zoomed: ask once whether it was a
+  // trackpad (PreferencesArea's card). Emitted once per start at most, never in a bench unless OPAD_BENCH_SCROLLASK is set.
+  void scrollInputQuestion();
 
  public slots:
   void sync();
@@ -1105,7 +1112,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QPointF m_trackpadCursor, m_trackpadAnchor;
   bool m_nativePinching = false;
   scrollinput::Mode m_scrollInput = scrollinput::Mode::Automatic;
+  bool m_scrollAsk = false;
   QByteArray m_scrollPlatform;  // benches
+  QByteArray scrollPlatform() const;  // the running one, or the bench's
+  void readScrollInput();  // m_scrollInput and m_scrollAsk from the settings
   scrollinput::Scroll scrollOf(const QWheelEvent* e) const;  // what isTrackpad and panStep look at
   QString m_hover;
   void trackHoverFade();

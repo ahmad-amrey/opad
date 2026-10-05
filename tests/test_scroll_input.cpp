@@ -1,5 +1,6 @@
 // A scroll in the 3D view: a mouse wheel that zooms or a trackpad's fingers that pan (app/ScrollInput.hpp). On xcb Qt says
 // TouchPad for XWayland's wheel too: there steps in eighths of a notch zoom; elsewhere the classification is as before.
+// Nothing chosen, Windows and Linux assume a wheel and the first scroll asks once; macOS keeps that classification (Automatic).
 #include "check.hpp"
 #include "ScrollInput.hpp"
 using namespace scrollinput;
@@ -133,6 +134,43 @@ TEST(the_setting_overrides_detection) {
   CHECK(mode(1) == Mode::Wheel);
   CHECK(mode(2) == Mode::Trackpad);
   CHECK(mode(-1) == Mode::Automatic && mode(7) == Mode::Automatic);
+}
+
+TEST(nothing_chosen_is_the_platforms_assumption) {
+  // Windows and Linux (xcb, wayland, and anything else) take every scroll for a mouse wheel until the user chooses; macOS
+  // keeps Automatic.
+  for (std::string_view platform : {"windows", "xcb", "wayland", "offscreen"}) {
+    CHECK(defaultMode(platform) == Mode::Wheel);
+    CHECK(modeFor(platform, unset) == Mode::Wheel);
+  }
+  CHECK(defaultMode("cocoa") == Mode::Automatic);
+  CHECK(modeFor("cocoa", unset) == Mode::Automatic);
+  // A saved choice is kept on every platform, Automatic included.
+  for (std::string_view platform : {"windows", "xcb", "wayland", "cocoa"}) {
+    CHECK(modeFor(platform, 0) == Mode::Automatic);
+    CHECK(modeFor(platform, 1) == Mode::Wheel);
+    CHECK(modeFor(platform, 2) == Mode::Trackpad);
+    CHECK(modeFor(platform, 9) == Mode::Automatic);  // an unknown index saved
+  }
+  // The assumed wheel zooms a touchpad's fractions and a finger gesture as Mouse wheel zooms does.
+  CHECK(!isTrackpad(wheel("xcb", true, 37), modeFor("xcb", unset)));
+  CHECK(!isTrackpad(fingers("windows", true, Phase::Update, 0, 15), modeFor("windows", unset)));
+  CHECK(isTrackpad(fingers("cocoa", false, Phase::Update, 4, 9), modeFor("cocoa", unset)));
+}
+
+TEST(the_first_scroll_asks_once) {
+  // Asked while nothing is chosen and it was never asked, where the wheel is an assumption.
+  CHECK(asks("windows", unset, false));
+  CHECK(asks("xcb", unset, false));
+  CHECK(asks("wayland", unset, false));
+  CHECK(!asks("windows", unset, true));  // answered or dismissed before
+  CHECK(!asks("xcb", unset, true));
+  for (int saved : {0, 1, 2}) {  // chosen (in Preferences or on the card)
+    CHECK(!asks("windows", saved, false));
+    CHECK(!asks("xcb", saved, false));
+  }
+  CHECK(!asks("cocoa", unset, false));  // macOS tells them apart: nothing to ask
+  CHECK(!asks("cocoa", 2, false));
 }
 
 CHECK_MAIN()

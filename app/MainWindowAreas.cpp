@@ -82,6 +82,7 @@ Toast* AreaServices::toast(const QString& text, const QString& actionText, std::
   return m_window->m_toasts->toast(text, actionText, std::move(callback), ms);
 }
 Toast* AreaServices::undoToast(const QString& text, int ms) { return m_window->undoToast(text, ms); }
+ToastStack* AreaServices::toasts() const { return m_window->m_toasts; }
 SelectionContext AreaServices::selection() const { return m_window->selectionContext(); }
 
 void AreaServices::select(const std::vector<opad::Ref>& refs) {

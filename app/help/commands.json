@@ -1297,35 +1297,35 @@
    "id": "nav.fusion",
    "title": "Navigation: Fusion-style",
    "summary": "Uses Fusion-style mouse buttons for orbit, pan and zoom.",
-   "details": "Pick the preset your hands already know; it changes only the mouse buttons, not the keyboard shortcuts. In every preset a wheel zooms and a trackpad pans ({fixed:shift} with it orbits); Scroll wheel / trackpad in Preferences › Keyboard and mouse says which a scroll is. The choice is kept for the next start.",
+   "details": "Pick the preset your hands already know; it changes only the mouse buttons, not the keyboard shortcuts. In every preset scrolling zooms at the pointer as a mouse wheel does; on a trackpad, answer Trackpad pans when the first scroll asks (or choose it in Preferences › Keyboard and mouse › Scroll wheel / trackpad) and two fingers pan, {fixed:shift} with them orbits. On macOS a trackpad pans without asking. The choice is kept for the next start.",
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "fusion"]
   },
   {
    "id": "nav.solidworks",
    "title": "Navigation: SOLIDWORKS-style",
    "summary": "Uses SOLIDWORKS-style mouse buttons for orbit, pan and zoom.",
-   "details": "Pick the preset your hands already know; it changes only the mouse buttons, not the keyboard shortcuts. In every preset a wheel zooms and a trackpad pans ({fixed:shift} with it orbits); Scroll wheel / trackpad in Preferences › Keyboard and mouse says which a scroll is. The choice is kept for the next start.",
+   "details": "Pick the preset your hands already know; it changes only the mouse buttons, not the keyboard shortcuts. In every preset scrolling zooms at the pointer as a mouse wheel does; on a trackpad, answer Trackpad pans when the first scroll asks (or choose it in Preferences › Keyboard and mouse › Scroll wheel / trackpad) and two fingers pan, {fixed:shift} with them orbits. On macOS a trackpad pans without asking. The choice is kept for the next start.",
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "solidworks"]
   },
   {
    "id": "nav.onshape",
    "title": "Navigation: Onshape-style",
    "summary": "Uses Onshape-style mouse buttons for orbit, pan and zoom.",
-   "details": "Pick the preset your hands already know; it changes only the mouse buttons, not the keyboard shortcuts. In every preset a wheel zooms and a trackpad pans ({fixed:shift} with it orbits); Scroll wheel / trackpad in Preferences › Keyboard and mouse says which a scroll is. The choice is kept for the next start.",
+   "details": "Pick the preset your hands already know; it changes only the mouse buttons, not the keyboard shortcuts. In every preset scrolling zooms at the pointer as a mouse wheel does; on a trackpad, answer Trackpad pans when the first scroll asks (or choose it in Preferences › Keyboard and mouse › Scroll wheel / trackpad) and two fingers pan, {fixed:shift} with them orbits. On macOS a trackpad pans without asking. The choice is kept for the next start.",
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "onshape"]
   },
   {
    "id": "nav.blender",
    "title": "Navigation: Blender-style",
    "summary": "Uses Blender-style mouse buttons for orbit, pan and zoom.",
-   "details": "Pick the preset your hands already know; it changes only the mouse buttons, not the keyboard shortcuts. In every preset a wheel zooms and a trackpad pans ({fixed:shift} with it orbits); Scroll wheel / trackpad in Preferences › Keyboard and mouse says which a scroll is. The choice is kept for the next start.",
+   "details": "Pick the preset your hands already know; it changes only the mouse buttons, not the keyboard shortcuts. In every preset scrolling zooms at the pointer as a mouse wheel does; on a trackpad, answer Trackpad pans when the first scroll asks (or choose it in Preferences › Keyboard and mouse › Scroll wheel / trackpad) and two fingers pan, {fixed:shift} with them orbits. On macOS a trackpad pans without asking. The choice is kept for the next start.",
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "blender"]
   },
   {
    "id": "nav.cad2d",
    "title": "Navigation: CAD 2D",
    "summary": "Uses drafting mouse buttons: the middle button pans, the wheel zooms and nothing orbits.",
-   "details": "{fixed:ctrl} with the middle button zooms as well, and {fixed:shift} with a trackpad pans instead of orbiting. It changes only the mouse, not the keyboard shortcuts; Scroll wheel / trackpad in Preferences › Keyboard and mouse says whether a scroll zooms as a wheel or pans as a trackpad. The choice is kept for the next start.",
+   "details": "{fixed:ctrl} with the middle button zooms as well, and {fixed:shift} with a trackpad pans instead of orbiting. It changes only the mouse, not the keyboard shortcuts. Scrolling zooms as a mouse wheel does until Trackpad pans is chosen (the first scroll asks; Preferences › Keyboard and mouse › Scroll wheel / trackpad changes it); on macOS a trackpad pans without asking. The choice is kept for the next start.",
    "keywords": ["mouse", "pan", "zoom", "drafting", "2d", "navigation"]
   },
   {

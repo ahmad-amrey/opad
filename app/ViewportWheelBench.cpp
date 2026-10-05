@@ -1,16 +1,21 @@
-// OPAD_BENCH_WHEEL=1 (a document with a box; case in tools/bench_cases/viewer.py): a scroll zooms as a wheel or pans as a
-// trackpad (ScrollInput.hpp). The Ubuntu report: "scroll to zoom acts as panning, like it is scrolling a page" - on a
-// Wayland desktop OPAD runs through XWayland, whose relative pointer Qt's xcb plugin calls a TouchPad. Synthetic wheel events
+// OPAD_BENCH_WHEEL=<prefix> or 1 (a document with a box; case in tools/bench_cases/viewer.py, with OPAD_BENCH_SCROLLASK so that the
+// question is asked in a bench): a scroll zooms as a wheel or pans as a trackpad (ScrollInput.hpp). The Ubuntu report:
+// "scroll to zoom acts as panning, like it is scrolling a page". First nothing is chosen: as on xcb and Windows a mouse
+// wheel is assumed (Automatic on macOS, nothing asked there), so a touchpad's fraction of a notch zooms and the first
+// scroll asks once ("Using a trackpad?" card, not again on the next scroll); Trackpad pans on it is saved and the next
+// fraction pans; Keep zoom saves the wheel; closing it keeps the assumption unsaved and asks no more. Then Automatic - on
+// a Wayland desktop OPAD runs through XWayland, whose relative pointer Qt's xcb plugin calls a TouchPad. Synthetic wheel events
 // from such a device, told apart as on xcb: whole notches zoom (in, out, two notches more than one) with the view's direction
 // kept and nothing panned, a high-resolution wheel's eighths of a notch zoom (eight of them about as much as a notch, out by
 // 45), fractions pan by an eighth of their angle, a notch amid a finger scroll pans on, an Xorg touchpad's pixels (8 x the
 // finger) pan by the finger's own px, Ctrl with fingers zooms; as on Windows the same device pans as before and a mouse
 // zooms. Then the setting, chosen in Preferences: Trackpad pans pans the same notch (and a mouse's), Mouse wheel zooms zooms
-// a touchpad's notch and a finger gesture; Automatic again.
+// a touchpad's notch and a finger gesture; Automatic again. OPAD_BENCH_WHEEL=<prefix> saves <prefix>.card.png.
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QLabel>
 #include <QPointingDevice>
 #include <QSettings>
 #include <QTimer>
@@ -25,8 +30,9 @@
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "Preferences.hpp"
+#include "Toast.hpp"
 
-bool Viewport::benchWheel(const std::function<bool(int)>& choose) {
+bool Viewport::benchWheel(const std::function<bool(int)>& choose, const std::function<QList<Toast*>()>& cards, const QString& prefix) {
   bool all = true;
   auto require = [&all](bool ok, const QString& what) {
     trace::log(QString("bench: wheel: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
@@ -34,7 +40,6 @@ bool Viewport::benchWheel(const std::function<bool(int)>& choose) {
   };
   if (!m_initialised) return false;
   const scrollinput::Mode saved = m_scrollInput;
-  m_scrollInput = scrollinput::Mode::Automatic;
   fitAll();
   m_view->Redraw();
   const Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*m_view->Camera());
@@ -65,6 +70,92 @@ bool Viewport::benchWheel(const std::function<bool(int)>& choose) {
   auto panned = [&](double dy) { return std::abs(ratio() - 1) < 1e-6 && !turned() && std::abs(shift().x()) <= 2 && std::abs(shift().y() - dy) <= 3; };
   auto state = [&] { return QString("(scale x%1, centre moved %2,%3 px%4)").arg(ratio(), 0, 'f', 3).arg(shift().x()).arg(shift().y()).arg(turned() ? ", turned" : ""); };
 
+  // Nothing chosen (the bench's settings are fresh): Windows and Linux assume a mouse wheel and the first scroll asks.
+  QSettings settings;
+  auto unchosen = [&] {
+    settings.remove("view/scrollInput");
+    settings.remove("view/scrollAsked");
+  };
+  require(!settings.contains("view/scrollInput") && !settings.contains("view/scrollAsked") && m_scrollInput == scrollinput::Mode::Wheel && m_scrollAsk,
+          "nothing chosen at the start: a mouse wheel is assumed here and the first scroll will ask");
+  for (const char* platform : {"xcb", "wayland", "cocoa"}) {
+    benchScrollPlatform(platform);
+    readScrollInput();
+    const bool mac = QByteArray(platform) == "cocoa";
+    require(m_scrollInput == (mac ? scrollinput::Mode::Automatic : scrollinput::Mode::Wheel) && m_scrollAsk == !mac,
+            QString("%1: nothing chosen: %2").arg(platform, mac ? "Automatic, nothing asked" : "a mouse wheel, asked at the first scroll"));
+  }
+  auto question = [&]() -> Toast* {
+    const QList<Toast*> shown = cards();
+    return shown.size() == 1 ? shown.first() : nullptr;
+  };
+  benchScrollPlatform("xcb");
+  readScrollInput();
+  send(touchpad, {}, {0, 37});
+  require(zoomed(true), "xcb, nothing chosen: a touchpad's fraction of a notch zooms as a wheel's " + state());
+  Toast* card = question();
+  require(card && card->text() == QObject::tr("Scrolling zooms the view. Using a trackpad?") && !card->detail().isEmpty() && card->actionButton(0) &&
+              card->actionButton(1) && !card->actionButton(2) && card->actionButton(0)->text() == QObject::tr("Trackpad pans") &&
+              card->actionButton(1)->text() == QObject::tr("Keep zoom") && card->parentWidget() == this && !m_scrollAsk,
+          "the first scroll asks once: a card over the view, Trackpad pans and Keep zoom");
+  if (card) {
+    // Its rows: the question with × at the top, the detail under it, the answers below at the end of their row (mirrored
+    // right to left); bottom centre of the view, inside it.
+    const bool rtl = card->layoutDirection() == Qt::RightToLeft;
+    const QRect text = card->findChild<QLabel*>("toastText")->geometry(), keep = card->actionButton(1)->geometry(),
+                pans = card->actionButton(0)->geometry(), close = card->closeButton()->geometry();
+    const QRect detail = card->findChild<QLabel*>("toastDetail") ? card->findChild<QLabel*>("toastDetail")->geometry() : QRect();
+    const bool rows = text.bottom() < detail.top() && detail.bottom() < pans.top() && pans.top() == keep.top() && close.top() < detail.top();
+    const bool ends = rtl ? keep.left() < pans.left() && keep.left() - card->rect().left() <= 16 && close.left() < text.left()
+                          : keep.right() > pans.right() && card->rect().right() - keep.right() <= 16 && close.right() > text.right();
+    const bool placed = rect().contains(card->geometry()) && std::abs(card->geometry().center().x() - rect().center().x()) <= 1;
+    require(rows && ends && placed, QString("the card's rows: question and ×, detail, answers at the end (%1)").arg(rtl ? "rtl" : "ltr"));
+    if (!prefix.isEmpty()) {
+      const QRect area = card->geometry().adjusted(-24, -24, 24, 24);
+      require(window()->grab(QRect(mapTo(window(), area.topLeft()), area.size())).save(prefix + ".card.png"), "screenshot " + prefix + ".card.png");
+    }
+  }
+  reset();
+  send(touchpad, {}, {0, 37});
+  require(zoomed(true) && cards().size() == 1 && question() == card, "the next scroll zooms too and asks nothing more " + state());
+  reset();
+  if (card) card->actionButton(0)->click();  // Trackpad pans
+  require(m_scrollInput == scrollinput::Mode::Trackpad && settings.value("view/scrollInput").toInt() == 2 && settings.value("view/scrollAsked").toBool() &&
+              cards().isEmpty(),
+          "Trackpad pans on the card: chosen and saved, asked, the card gone");
+  send(touchpad, {}, {0, 37});
+  require(panned(37 / 8.0), "after Trackpad pans the next fraction pans " + state());
+  reset();
+  readScrollInput();
+  require(m_scrollInput == scrollinput::Mode::Trackpad && !m_scrollAsk, "the next start: Trackpad pans, nothing asked");
+  unchosen();
+  benchScrollPlatform("windows");
+  readScrollInput();
+  send(touchpad, {}, {0, 120});
+  require(zoomed(true), "windows, nothing chosen: a notch from a device that says TouchPad zooms " + state());
+  reset();
+  card = question();
+  if (card) card->actionButton(1)->click();  // Keep zoom
+  require(card && m_scrollInput == scrollinput::Mode::Wheel && settings.value("view/scrollInput").toInt() == 1 && settings.value("view/scrollAsked").toBool() &&
+              cards().isEmpty(),
+          "Keep zoom on the card: the wheel saved, asked");
+  unchosen();
+  readScrollInput();
+  send(mouse, {}, {0, 120});
+  reset();
+  card = question();
+  if (card) card->closeButton()->click();
+  require(card && cards().isEmpty() && !settings.contains("view/scrollInput") && settings.value("view/scrollAsked").toBool() &&
+              m_scrollInput == scrollinput::Mode::Wheel,
+          "closed: the assumption stays unsaved, the question remembered");
+  send(mouse, {}, {0, 120});
+  require(zoomed(true) && cards().isEmpty(), "a scroll after it zooms and asks nothing " + state());
+  reset();
+  readScrollInput();
+  require(m_scrollInput == scrollinput::Mode::Wheel && !m_scrollAsk, "the next start: still the wheel, nothing asked");
+
+  // Automatic: told apart by what the scroll carries.
+  m_scrollInput = scrollinput::Mode::Automatic;
   benchScrollPlatform("xcb");
   send(touchpad, {}, {0, 120});
   require(zoomed(true), "xcb: a wheel notch from a device that says TouchPad zooms in, the view's direction kept and nothing panned " + state());
@@ -171,7 +262,14 @@ OPAD_BENCH(OPAD_BENCH_WHEEL, wheel) {
     dialog->close();
     return box->currentIndex() == index;
   };
-  const bool ok = shown && v->benchWheel(choose);
+  // The "Using a trackpad?" cards showing (PreferencesArea::askScrollInput).
+  auto cards = [&w] {
+    QList<Toast*> out;
+    for (Toast* t : w.m_toasts->toasts())
+      if (t->property("question").toString() == "view/scrollInput") out << t;
+    return out;
+  };
+  const bool ok = shown && v->benchWheel(choose, cards, value == "1" ? QString() : value);
   trace::log(QString("bench: wheel: %1").arg(ok ? "PASS" : "FAIL"));
   QCoreApplication::exit(ok ? 0 : 2);
   return true;

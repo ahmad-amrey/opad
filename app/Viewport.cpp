@@ -166,7 +166,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   connect(&m_settleTimer, &QTimer::timeout, this, &Viewport::settleView);
   connect(doc, &AppDocument::aboutToReplace, this, [this] { m_history.clear(); });  // its views were of that document
   m_animateViews = settings.value("view/animate", true).toBool();
-  m_scrollInput = scrollinput::mode(settings.value("view/scrollInput", 0).toInt());
+  readScrollInput();
   m_refineTimer.setSingleShot(true);
   m_refineTimer.setInterval(350);
   connect(&m_refineTimer, &QTimer::timeout, this, &Viewport::refineVisible);
@@ -3282,8 +3282,28 @@ scrollinput::Scroll Viewport::scrollOf(const QWheelEvent* e) const {
   return s;
 }
 
+QByteArray Viewport::scrollPlatform() const {
+  return m_scrollPlatform.isEmpty() ? QGuiApplication::platformName().toUtf8() : m_scrollPlatform;
+}
+
+// The saved choice, or while there is none the platform's assumption (ScrollInput.hpp: a wheel on Windows and Linux,
+// Automatic on macOS) and whether the first scroll asks about it. Benches run on isolated settings with nothing chosen:
+// they are taken as asked, unless OPAD_BENCH_SCROLLASK wants the question.
+void Viewport::readScrollInput() {
+  const QSettings settings;
+  const QVariant saved = settings.value("view/scrollInput");
+  const QByteArray platform = scrollPlatform();
+  const std::string_view name(platform.constData(), size_t(platform.size()));
+  const int value = saved.isValid() ? saved.toInt() : scrollinput::unset;
+  m_scrollInput = scrollinput::modeFor(name, value);
+  static const bool bench = (qEnvironmentVariableIsSet("OPAD_BENCH_SETTINGS") || QCoreApplication::arguments().contains("--bench-select")) &&
+                            !qEnvironmentVariableIsSet("OPAD_BENCH_SCROLLASK");
+  m_scrollAsk = !bench && scrollinput::asks(name, value, settings.value("view/scrollAsked", false).toBool());
+}
+
 void Viewport::setScrollInput(int mode) {
   m_scrollInput = scrollinput::mode(mode);
+  m_scrollAsk = false;  // chosen
   QSettings().setValue("view/scrollInput", int(m_scrollInput));
   finishTrackpadScroll();
 }
@@ -3314,6 +3334,8 @@ void Viewport::wheelEvent(QWheelEvent* e) {
   m_wheelClock.start();
   const double delta = e->angleDelta().y() / 8.0;
   if (UpdateZoom(Aspect_ScrollDelta(devicePos(e->position()), delta))) requestRedraw();
+  // Asked only while every scroll zooms by the platform's assumption (a choice clears it): this one has zoomed already.
+  if (std::exchange(m_scrollAsk, false)) emit scrollInputQuestion();
 }
 
 void Viewport::trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit) {

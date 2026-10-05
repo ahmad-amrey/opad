@@ -20,13 +20,28 @@
 //  - wayland: a wheel has no pixel delta and no phase; fingers have both.
 //  - cocoa: a trackpad has a pixel delta and phases (momentum too); a mouse wheel neither.
 //  - windows: precision touchpads arrive as plain wheel events (fractions of 120) and zoom.
-// Outside xcb a device that says TouchPad is taken at its word, as before.
+// Outside xcb a device that says TouchPad is taken at its word, as before. All of this is Automatic, which is the default
+// on macOS only (defaultMode below).
 #include <string_view>
 
 namespace scrollinput {
 // The setting view/scrollInput (Preferences > Keyboard and mouse > Scroll wheel / trackpad), by its index.
 enum class Mode { Automatic = 0, Wheel = 1, Trackpad = 2 };
 inline Mode mode(int setting) { return setting == 1 ? Mode::Wheel : setting == 2 ? Mode::Trackpad : Mode::Automatic; }
+
+// While the user has not chosen (nothing saved): an assumption, and one question at the first scroll. Windows and Linux
+// assume a mouse wheel, every scroll zooms: there a trackpad's scroll and a wheel's look alike too often (a precision
+// touchpad sends fractions of a notch, XWayland calls the wheel a touchpad), so a guess per scroll would pan some wheels
+// and zoom some trackpads. macOS keeps Automatic, which tells them apart reliably (a trackpad's pixels come with scroll
+// phases), and asks nothing. Viewport::readScrollInput; the question is PreferencesArea's card.
+constexpr int unset = -1;  // no view/scrollInput saved
+inline Mode defaultMode(std::string_view platform) { return platform == "cocoa" ? Mode::Automatic : Mode::Wheel; }
+inline Mode modeFor(std::string_view platform, int saved) { return saved == unset ? defaultMode(platform) : mode(saved); }
+// The first scroll asks "Using a trackpad?" once: nothing chosen, never asked (view/scrollAsked), and the default is the
+// wheel's assumption.
+inline bool asks(std::string_view platform, int saved, bool asked) {
+  return saved == unset && !asked && defaultMode(platform) == Mode::Wheel;
+}
 
 // Qt::ScrollPhase's values.
 enum class Phase { None = 0, Begin = 1, Update = 2, End = 3, Momentum = 4 };

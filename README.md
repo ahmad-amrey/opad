@@ -204,14 +204,25 @@ git add review.opad && git commit -m "review gearbox"
 
 ## Trackpad navigation
 
-In the 3D viewport, drag with two fingers to pan, hold Shift while dragging with two fingers to orbit, and pinch
-to zoom around the pointer (Ctrl with two fingers zooms too). These gestures work independently of the selected mouse
-navigation preset. A mouse wheel continues to zoom. OPAD tells a wheel from a trackpad by what the system reports. On
-Linux OPAD runs on X11, through XWayland on a Wayland desktop, and Qt reports XWayland's pointer (and mice on the old evdev
-driver) as a touchpad; there wheel steps (whole notches, or eighths of one from a high-resolution wheel) zoom and other
-steps pan. When the guess is wrong (a wheel whose steps are other fractions of a notch, or the first step of a two-finger
-scroll taken for a wheel's), Preferences > Keyboard and mouse > Scroll wheel / trackpad makes every scroll a wheel's (Mouse
-wheel zooms) or a trackpad's (Trackpad pans).
+Preferences > Keyboard and mouse > Scroll wheel / trackpad says what a scroll in the 3D viewport does:
+
+- **Mouse wheel zooms**: every scroll zooms around the pointer.
+- **Trackpad pans**: drag with two fingers to pan, hold Shift while dragging with two fingers to orbit, and pinch to
+  zoom around the pointer (Ctrl with two fingers zooms too).
+- **Automatic**: guesses from each scroll, for people who switch between a mouse and a trackpad: a wheel zooms and two
+  fingers pan.
+
+Until you choose, Windows and Linux take every scroll for a mouse wheel, and the first scroll in the view asks once
+("Scrolling zooms the view. Using a trackpad?"): Trackpad pans or Keep zoom saves the answer, and closing the card (or
+leaving it until it goes, after 30 seconds) keeps the zoom without saving it; either way it is not asked again. macOS
+uses Automatic and asks nothing, since a trackpad's scroll comes with scroll phases there and is told from a wheel
+reliably. The choice works the same in every mouse navigation preset.
+
+Automatic tells a wheel from a trackpad by what the system reports, which is where a guess can go wrong. On Linux OPAD
+runs on X11, through XWayland on a Wayland desktop, and Qt reports XWayland's pointer (and mice on the old evdev driver)
+as a touchpad; there wheel steps (whole notches, or eighths of one from a high-resolution wheel) zoom and other steps pan,
+so the first step of a two-finger scroll can be taken for a wheel's. On Windows a precision touchpad's scroll usually
+arrives as a wheel's and zooms.
 
 Orbiting over geometry uses the surface under the pointer. Over empty space, OPAD pivots on the
 visible geometry nearest the pointer (a surface, or a drawing's or sketch's curve), never on empty

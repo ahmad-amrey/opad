@@ -305,6 +305,7 @@ QString stylesheet(const Tokens& t) {
                "QToolButton#toastAction:hover, QToolButton#toastClose:hover { background: %5; }\n"
                "QToolButton#toastClose { background: transparent; border: none; border-radius: 3px; padding: 0; }\n").arg(bg3, line, fg, css(t.dark ? t.sel.lighter(130) : t.sel), bg4);
   s += QString("QFrame#toast[kind=\"error\"] { border-color: %1; }\n").arg(css(t.error));  // a change that failed (MainWindow::failedToast)
+  s += QString("QFrame#toast QLabel#toastDetail { background: transparent; color: %1; font-size: 11px; }\n").arg(fg2);  // a question's line of detail
   s += QString("QToolButton#vpButton { background: %1; border: 1px solid %2; border-radius: 4px; padding: 0; }\n"
                "QToolButton#vpButton:hover { background: %3; }\n").arg(bg2, line, bg3);
   // The button in the viewport's chip row (viewer mode: Save to edit).
