@@ -81,7 +81,7 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES_PERF, primitives_perf) {
     if (st->phase == 1) {
       QElapsedTimer t;
       t.start();
-      view->grabImage();  // a frame: the picker's depth range
+      view->benchFlush();  // a real frame: the picker's depth range (grabImage renders on a copy of the camera and keeps none)
       const qint64 frame = t.restart();
       design->startFeature("pipe");  // for comparison: a feature that is not placed (its panel, its guide)
       const qint64 pipe = t.restart();
