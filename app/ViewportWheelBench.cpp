@@ -32,7 +32,8 @@
 #include "Preferences.hpp"
 #include "Toast.hpp"
 
-bool Viewport::benchWheel(const std::function<bool(int)>& choose, const std::function<QList<Toast*>()>& cards, const QString& prefix) {
+bool Viewport::benchWheel(const std::function<bool(int)>& choose, const std::function<QList<Toast*>()>& cards, const std::function<void()>& other,
+                          const QString& prefix) {
   bool all = true;
   auto require = [&all](bool ok, const QString& what) {
     trace::log(QString("bench: wheel: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
@@ -118,6 +119,8 @@ bool Viewport::benchWheel(const std::function<bool(int)>& choose, const std::fun
   reset();
   send(touchpad, {}, {0, 37});
   require(zoomed(true) && cards().size() == 1 && question() == card, "the next scroll zooms too and asks nothing more " + state());
+  for (int i = 0; i < 4; ++i) other();  // undo toasts and the like, more than the stack shows
+  require(card && question() == card && !settings.contains("view/scrollAsked"), "other toasts do not push the unanswered card out");
   reset();
   if (card) card->actionButton(0)->click();  // Trackpad pans
   require(m_scrollInput == scrollinput::Mode::Trackpad && settings.value("view/scrollInput").toInt() == 2 && settings.value("view/scrollAsked").toBool() &&
@@ -153,6 +156,31 @@ bool Viewport::benchWheel(const std::function<bool(int)>& choose, const std::fun
   reset();
   readScrollInput();
   require(m_scrollInput == scrollinput::Mode::Wheel && !m_scrollAsk, "the next start: still the wheel, nothing asked");
+  // Left until it goes (its timeout dismisses it): nothing saved, the next start asks again.
+  unchosen();
+  readScrollInput();
+  send(mouse, {}, {0, 120});
+  reset();
+  card = question();
+  if (card) card->dismiss();
+  readScrollInput();
+  require(card && cards().isEmpty() && !settings.contains("view/scrollInput") && !settings.contains("view/scrollAsked") && m_scrollAsk,
+          "timed out unanswered: nothing saved, the next start asks again");
+  // Chosen in Preferences while the card shows: the card goes, so a late click on it cannot undo the choice.
+  send(mouse, {}, {0, 120});
+  reset();
+  card = question();
+  require(card && choose(0) && cards().isEmpty() && m_scrollInput == scrollinput::Mode::Automatic && settings.value("view/scrollInput").toInt() == 0,
+          "Automatic chosen in Preferences while the card shows: saved, the card gone");
+  // Answered in another OPAD window after this one started: its first scroll reads that instead of asking.
+  unchosen();
+  readScrollInput();
+  settings.setValue("view/scrollInput", 2);
+  benchScrollPlatform("xcb");
+  send(touchpad, {}, {0, 37});
+  require(panned(37 / 8.0) && cards().isEmpty() && !m_scrollAsk && m_scrollInput == scrollinput::Mode::Trackpad,
+          "Trackpad pans saved by another window: the first scroll pans and asks nothing " + state());
+  reset();
 
   // Automatic: told apart by what the scroll carries.
   m_scrollInput = scrollinput::Mode::Automatic;
@@ -269,7 +297,8 @@ OPAD_BENCH(OPAD_BENCH_WHEEL, wheel) {
       if (t->property("question").toString() == "view/scrollInput") out << t;
     return out;
   };
-  const bool ok = shown && v->benchWheel(choose, cards, value == "1" ? QString() : value);
+  auto other = [&w] { w.m_toasts->toast(QStringLiteral("bench toast")); };
+  const bool ok = shown && v->benchWheel(choose, cards, other, value == "1" ? QString() : value);
   trace::log(QString("bench: wheel: %1").arg(ok ? "PASS" : "FAIL"));
   QCoreApplication::exit(ok ? 0 : 2);
   return true;

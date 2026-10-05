@@ -251,10 +251,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // and is the point a scan of every segment finds (UI-51)
   bool benchOrbitPivot(const QString& prefix);
   // OPAD_BENCH_WHEEL (ViewportWheelBench.cpp): nothing chosen, every scroll zooms (Windows, Linux) and the first one asks
-  // once through a card (`cards`: the ones showing); Automatic: wheel notches and a high-resolution wheel's
-  // eighths of one from a device that says TouchPad zoom on xcb (X11, XWayland) and pan elsewhere as before, fractions pan;
-  // and the setting, chosen through `choose` (Preferences), overrides both ways; prefix (if any): <prefix>.card.png
-  bool benchWheel(const std::function<bool(int)>& choose, const std::function<QList<Toast*>()>& cards, const QString& prefix);
+  // once through a card (`cards`: the ones showing; `other` shows an unrelated toast, which never pushes it out);
+  // Automatic: wheel notches and a high-resolution wheel's eighths of one from a device that says TouchPad zoom on xcb
+  // (X11, XWayland) and pan elsewhere as before, fractions pan; and the setting, chosen through `choose` (Preferences),
+  // overrides both ways; prefix (if any): <prefix>.card.png
+  bool benchWheel(const std::function<bool(int)>& choose, const std::function<QList<Toast*>()>& cards, const std::function<void()>& other,
+                  const QString& prefix);
   // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
   // displayed last, in the rasterised qualities (UI-39)
   bool benchTransparency(const QString& prefix);

@@ -213,8 +213,9 @@ Preferences > Keyboard and mouse > Scroll wheel / trackpad says what a scroll in
   fingers pan.
 
 Until you choose, Windows and Linux take every scroll for a mouse wheel, and the first scroll in the view asks once
-("Scrolling zooms the view. Using a trackpad?"): Trackpad pans or Keep zoom saves the answer, and closing the card (or
-leaving it until it goes, after 30 seconds) keeps the zoom without saving it; either way it is not asked again. macOS
+("Scrolling zooms the view. Using a trackpad?"): Trackpad pans or Keep zoom saves the answer, and closing the card with
+× keeps the zoom without saving it and does not ask again. A card left unanswered goes after 30 seconds and asks again
+at the next start; other messages never push it out, and a choice made in Preferences meanwhile closes it. macOS
 uses Automatic and asks nothing, since a trackpad's scroll comes with scroll phases there and is told from a wheel
 reliably. The choice works the same in every mouse navigation preset.
 

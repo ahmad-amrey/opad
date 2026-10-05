@@ -51,7 +51,11 @@ Toast::Toast(const QString& text, const QString& detail, const QList<Action>& ac
   m_close->setFixedSize(20, 20);
   m_close->setIconSize(QSize(12, 12));
   m_close->setFocusPolicy(Qt::NoFocus);
-  connect(m_close, &QToolButton::clicked, this, &Toast::dismiss);
+  connect(m_close, &QToolButton::clicked, this, [this] {
+    if (property("dismissed").toBool()) return;
+    emit closed();
+    dismiss();
+  });
   if (!m_stacked) {  // one row: text, the action, ×
     auto* row = new QHBoxLayout(this);
     row->setContentsMargins(12, 6, 6, 6);
@@ -144,7 +148,9 @@ Toast* ToastStack::toast(const QString& text, const QString& actionText, std::fu
 }
 
 Toast* ToastStack::ask(const QString& text, const QString& detail, const QList<Toast::Action>& answers, int ms) {
-  return add(new Toast(text, detail, answers, ms, m_host));
+  auto* t = new Toast(text, detail, answers, ms, m_host);
+  t->m_question = true;
+  return add(t);
 }
 
 Toast* ToastStack::add(Toast* t) {
@@ -161,7 +167,10 @@ Toast* ToastStack::add(Toast* t) {
   });
   m_toasts.removeAll(nullptr);
   m_toasts << t;
-  while (m_toasts.size() > kMax) m_toasts.first()->dismiss();  // dismissed() takes it off the list
+  while (m_toasts.size() > kMax) {  // the oldest that is not a question goes (dismissed() takes it off the list)
+    auto it = std::find_if(m_toasts.begin(), m_toasts.end(), [](const QPointer<Toast>& o) { return o && !o->isQuestion(); });
+    (it != m_toasts.end() ? *it : m_toasts.first())->dismiss();
+  }
   t->show();
   place();
   return t;

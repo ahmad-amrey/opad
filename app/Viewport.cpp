@@ -3310,6 +3310,9 @@ void Viewport::setScrollInput(int mode) {
 
 void Viewport::wheelEvent(QWheelEvent* e) {
   if (!m_initialised || m_blocked) return;
+  // Still to ask: another OPAD window may have been answered since this one started, so the settings are read again
+  // (once: the first zooming scroll asks or finds it chosen).
+  if (m_scrollAsk) readScrollInput();
   const scrollinput::Scroll scroll = scrollOf(e);
   if (scrollinput::isTrackpad(scroll, m_scrollInput)) {
     if (m_nativePinching) { e->accept(); return; }
