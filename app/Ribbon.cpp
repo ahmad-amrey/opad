@@ -8,6 +8,8 @@
 #include <QPainter>
 #include <QStyle>
 #include <QStyleOptionButton>
+#include <QTimer>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -300,60 +302,76 @@ void WorkspaceChip::paintEvent(QPaintEvent*) {
 }
 
 // ---------------------------------------------------------------- workspace list (dropdown under the chip)
-// 372 px, bg3, 4 px padding: one row per workspace (icon, name 500, mono key, description 12 px, op types 11 px,
-// check on the active one, which is filled sel).
+// bg3, 4 px padding: one row per workspace (icon, name 500, mono key, check on the active one, which is filled sel).
+// Names only: what a workspace is for (its description and tools) is the row's hint, shown beside it after a moment.
 namespace {
+constexpr int kWorkspaceHintMs = 350;
+
 class WorkspaceRow : public QFrame {
  public:
   WorkspaceRow(const Workspace& w, bool active, std::function<void()> chosen, QWidget* parent) : QFrame(parent), m_chosen(std::move(chosen)) {
     const Tokens& t = theme::current();
     setObjectName("wsRow");
     setCursor(Qt::PointingHandCursor);
-    const QString fg = theme::css(active ? t.onsel : t.fg), sub = theme::css(active ? t.onsel : t.fg2), key = theme::css(active ? t.onsel : t.fg3);
+    setAccessibleName(w.name);
+    setAccessibleDescription(w.description);
+    m_hint = w.ops.isEmpty() ? w.description : w.description + '\n' + w.ops;
+    m_timer.setSingleShot(true);
+    m_timer.setInterval(kWorkspaceHintMs);
+    QObject::connect(&m_timer, &QTimer::timeout, this, [this] { showHint(); });
+    const QString fg = theme::css(active ? t.onsel : t.fg), key = theme::css(active ? t.onsel : t.fg3);
     setStyleSheet(QString("QFrame#wsRow { background: %1; border-radius: 2px; } QFrame#wsRow:hover { background: %2; } QLabel { background: transparent; }")
                       .arg(active ? theme::css(t.sel) : "transparent", theme::css(active ? t.sel : t.bg4)));
     auto* row = new QHBoxLayout(this);
-    row->setContentsMargins(8, 8, 8, 8);
+    row->setContentsMargins(8, 6, 8, 6);
     row->setSpacing(10);
     auto* icon = new QLabel(this);
     icon->setPixmap(icons::pixmap(w.icon, active ? t.onsel : t.fg2, 16, devicePixelRatioF()));
-    row->addWidget(icon, 0, Qt::AlignTop);
-    auto* col = new QVBoxLayout();
-    col->setSpacing(3);
-    auto* head = new QHBoxLayout();
+    row->addWidget(icon);
     auto* name = new QLabel(w.name, this);
     name->setStyleSheet(QString("color: %1; font-weight: 500;").arg(fg));
+    row->addWidget(name, 1);
     auto* k = new QLabel(shownKey(w), this);
     k->setFont(theme::mono(11));
     k->setStyleSheet(QString("color: %1;").arg(key));
-    head->addWidget(name, 1);
-    head->addWidget(k);
-    col->addLayout(head);
-    // Wrapped labels in a popup sized by adjustSize() report one line's height, so give them their width and height.
-    auto wrapped = [&](const QString& text, int px) {
-      auto* l = new QLabel(text, this);
-      l->setWordWrap(true);
-      l->setFont(theme::ui(px));
-      l->setStyleSheet(QString("color: %1; font-size: %2px;").arg(sub).arg(theme::px(px)));
-      const int width = 372 - 10 - 16 - 16 - 10 - 10 - 12;  // popup minus padding, row padding, icon, gaps, check
-      l->setFixedWidth(width);
-      l->setFixedHeight(QFontMetrics(theme::ui(px)).boundingRect(QRect(0, 0, width, 1000), Qt::TextWordWrap, text).height() + 2);
-      col->addWidget(l);
-    };
-    wrapped(w.description, 12);
-    wrapped(w.ops, 11);
-    row->addLayout(col, 1);
+    row->addWidget(k);
     auto* check = new QLabel(this);
     check->setFixedWidth(12);
     if (active) check->setPixmap(icons::pixmap("check", t.onsel, 12, devicePixelRatioF()));
-    row->addWidget(check, 0, Qt::AlignTop);
+    row->addWidget(check);
   }
  protected:
+  void enterEvent(QEnterEvent*) override {
+    m_hovered = true;
+    m_timer.start();
+  }
+  void leaveEvent(QEvent*) override {
+    m_hovered = false;
+    m_timer.stop();
+    QToolTip::hideText();
+  }
+  void hideEvent(QHideEvent*) override { m_timer.stop(); }
   void mouseReleaseEvent(QMouseEvent* e) override {
-    if (e->button() == Qt::LeftButton && rect().contains(e->position().toPoint())) m_chosen();
+    if (e->button() == Qt::LeftButton && rect().contains(e->position().toPoint())) {
+      m_timer.stop();
+      QToolTip::hideText();
+      m_chosen();
+    }
   }
  private:
+  // Beside the list (left of it right to left), level with the row, so it covers neither the other names nor the ribbon.
+  void showHint() {
+    if (!m_hovered || m_hint.isEmpty()) return;
+    const QWidget* list = window();
+    const bool rtl = layoutDirection() == Qt::RightToLeft;
+    const QPoint rowTop = mapTo(list, QPoint(0, 0));
+    const QPoint at = list->mapToGlobal(QPoint(rtl ? -8 : list->width() + 8, rowTop.y()));
+    QToolTip::showText(at, m_hint, this, rect());
+  }
   std::function<void()> m_chosen;
+  QString m_hint;
+  QTimer m_timer;
+  bool m_hovered = false;
 };
 }  // namespace
 
@@ -363,7 +381,7 @@ void RibbonBar::showWorkspaceMenu() {
   menu->setAttribute(Qt::WA_DeleteOnClose);
   menu->setObjectName("wsMenu");
   menu->setStyleSheet(QString("QFrame#wsMenu { background: %1; border: 1px solid %2; border-radius: 3px; }").arg(theme::css(t.bg3), theme::css(t.line)));
-  menu->setFixedWidth(372);
+  menu->setMinimumWidth(220);
   auto* col = new QVBoxLayout(menu);
   col->setContentsMargins(5, 5, 5, 5);  // 4 px padding + the border
   col->setSpacing(2);

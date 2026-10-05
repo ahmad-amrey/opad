@@ -40,6 +40,9 @@ CASES = [
     # (UI-102/104, app/PlacesBench.cpp). <prefix>.json lists them: id, label, group, menu path, workspaces, help id;
     # <prefix>.<workspace>.png shows the window in each workspace.
     ("places", "box", {"OPAD_BENCH_PLACES": "{prefix}.json", "OPAD_BENCH_UISHOT": "{prefix}"}),
+    # The workspace list under the chip: one line per workspace, no description; a row's hint after a moment of hovering.
+    ("workspace-menu", "box", {"OPAD_BENCH_WORKSPACE_MENU": "{prefix}"}),
+    ("workspace-menu-rtl", "box", {"OPAD_BENCH_WORKSPACE_MENU": "{prefix}", "OPAD_LANG": "ar"}),
     # The workspaces' promises (UI-104, app/WorkspacesBench.cpp): Extrude and New sketch from Review switch to Design; the
     # Sketch tab first with Finish sketch primary, Design kept while sketching, back where it started; Interference's Keep
     # as check opens the stored check in Design; a viewed drawing comes into Drafting and the next document goes back.
