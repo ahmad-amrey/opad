@@ -31,6 +31,7 @@ class MainWindow;
 class PathChip;
 class PropertiesPanel;
 class Toast;
+class ToastStack;
 class QAction;
 class QKeySequence;
 class QMainWindow;
@@ -107,6 +108,7 @@ class AreaServices {
   Toast* toast(const QString& text, const QString& actionText = QString(), std::function<void()> callback = {}, int ms = 4000);
   // The toast of a change just made: its Undo takes back the document's last step, unless another came after it.
   Toast* undoToast(const QString& text, int ms = 8000);
+  ToastStack* toasts() const;  // the stack itself, for a question with several answers (ToastStack::ask); from ribbon on
   SelectionContext selection() const;                       // the current one
   // Makes these the selection as if they were picked and tells the window and the areas (selectionChanged): faces, edges
   // and vertices in the view (its filter must be picking them), bodies and components as from the browser.

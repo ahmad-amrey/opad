@@ -104,9 +104,10 @@ def main():
             (folder / "b-layers.svg").write_bytes(drawing.read_bytes())
             cases.append(("viewer", folder / "a-screw.step", {"OPAD_BENCH_VIEWER": str(folder / "a-screw.opad")}))
         # Settings before the start. These open a STEP or a drawing and then edit it: viewer mode off. The fits load with
-        # the grid on; fit-wide's 1 km minimum grid lies around the origin and would pull a box-less FitAll there.
+        # the grid on; fit-wide's 1 km minimum grid lies around the origin and would pull a box-less FitAll there. Picking's
+        # trackpad gestures need Scroll wheel / trackpad on Automatic (nothing chosen, Windows takes every scroll for a wheel).
         editing, grid = "[files]\nviewerMode=false\n", "[view]\ngrid=true\n"
-        settings = {"drawing-to-sketch": editing, "picking": editing, "fit-far": grid, "fit-near": grid, "fit-wide": grid + "gridExtent=1000000\n"}
+        settings = {"drawing-to-sketch": editing, "picking": editing + "[view]\nscrollInput=0\n", "fit-far": grid, "fit-near": grid, "fit-wide": grid + "gridExtent=1000000\n"}
         fixtures = {"empty": empty, "box": box, "cylinder": round_part, "drawing": drawing, "overlap": overlapping,
                     "overhang": overhang, "screw": screw, "far": far}
         known = {case[0] for case in cases}

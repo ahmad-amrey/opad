@@ -37,6 +37,7 @@
 #include "Jobs.hpp"
 #include "Preferences.hpp"
 #include "RecoveryManager.hpp"
+#include "Toast.hpp"
 #include "Units.hpp"
 #include "Viewport.hpp"
 #include "opad/commands.hpp"
@@ -77,12 +78,37 @@ class PreferencesArea : public AreaController {
     preferences::addPage({"files", tr("Files"), "open", 60, {"viewer", "read-only", "cache", "file types", "associations"}, [this] { return files(); }});
     preferences::addPage({"recovery", tr("Autosave and recovery"), "restore", 70, {"autosave", "snapshot", "crash"}, [this] { return recovery(); }});
     preferences::addPage({"vcs", tr("Version control"), "git", 80, {"git", "merge", "branch"}, [this] { return versionControl(); }});
-    preferences::addPage({"keyboard", tr("Keyboard and mouse"), "keyboard", 90, {"shortcuts", "keys", "navigation", "mouse", "orbit", "preset"}, [this] { return keyboard(); }});
+    preferences::addPage({"keyboard", tr("Keyboard and mouse"), "keyboard", 90, {"shortcuts", "keys", "navigation", "mouse", "orbit", "preset", "wheel", "scroll", "trackpad", "touchpad", "zoom", "pan"}, [this] { return keyboard(); }});
     preferences::addPage({"ai", tr("AI integration"), "agent", 100, {"agent", "mcp", "assistant"}, [window] { return ai(window); }});
+    connect(services().viewport(), &Viewport::scrollInputQuestion, this, [this] { askScrollInput(); });
   }
 
  private:
   QAction* action(const char* id) const { return services().action(id); }
+
+  // The first scroll in the view while Scroll wheel / trackpad was never chosen has zoomed (Windows and Linux assume a
+  // mouse wheel, ScrollInput.hpp): a card asks once whether that is a trackpad. An answer is saved as the choice; closed
+  // (×), the assumption stays and is not asked again (view/scrollAsked). Left until it times out, nothing is saved and the
+  // next start asks again. Other toasts never push it out (ToastStack::add); a choice in Preferences closes it.
+  void askScrollInput() {
+    Viewport* view = services().viewport();
+    auto choose = [view](scrollinput::Mode mode) {
+      view->setScrollInput(int(mode));
+      QSettings().setValue("view/scrollAsked", true);
+      preferences::changed("view/scrollInput");  // an open Preferences page follows
+    };
+    Toast* card = services().toasts()->ask(tr("Scrolling zooms the view. Using a trackpad?"), tr("Preferences › Keyboard and mouse changes it later."),
+                                          {{tr("Trackpad pans"), [choose] { choose(scrollinput::Mode::Trackpad); }},
+                                           {tr("Keep zoom"), [choose] { choose(scrollinput::Mode::Wheel); }}},
+                                          30000);
+    card->setProperty("question", "view/scrollInput");
+    connect(card, &Toast::closed, this, [] { QSettings().setValue("view/scrollAsked", true); });
+  }
+  // Chosen in Preferences while the card shows: that is the answer, and a later click on the card must not undo it.
+  void closeScrollQuestion() const {
+    for (Toast* t : services().toasts()->toasts())
+      if (t->property("question").toString() == "view/scrollInput") t->dismiss();
+  }
 
   QWidget* general() {
     auto* page = new QWidget;
@@ -370,6 +396,16 @@ class PreferencesArea : public AreaController {
       QObject::connect(radio, &QRadioButton::toggled, a, [a](bool on) { if (on && !a->isChecked()) a->trigger(); });
       QObject::connect(a, &QAction::toggled, radio, [radio](bool on) { if (on) radio->setChecked(true); });
     }
+    // A wheel or a trackpad (ScrollInput.hpp). Never chosen, the row shows the platform's assumption (a wheel on Windows
+    // and Linux, Automatic on macOS), which the first scroll's card asks about.
+    form.choice("view/scrollInput", tr("Scroll wheel / trackpad"), {tr("Automatic"), tr("Mouse wheel zooms"), tr("Trackpad pans")},
+                int(services().viewport()->scrollInput()), [this](int mode) {
+                  services().viewport()->setScrollInput(mode);
+                  closeScrollQuestion();
+                });
+    form.note(tr("Mouse wheel zooms: every scroll zooms at the pointer. Trackpad pans: every scroll pans, Shift with it orbits, and a pinch or Ctrl "
+                 "with it zooms. Automatic guesses from each scroll (for people who switch between a mouse and a trackpad). Until you choose, "
+                 "Windows and Linux take every scroll for a mouse wheel and the first one asks; macOS uses Automatic."));
     if (QAction* cube = action("view.cubeEdgesCorners")) form.option(cube, QString(cube->text()).remove('&'));
     form.section(tr("Selection"));
     form.option(action("select.through"), tr("Select through objects"));

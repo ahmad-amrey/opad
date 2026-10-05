@@ -166,6 +166,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   connect(&m_settleTimer, &QTimer::timeout, this, &Viewport::settleView);
   connect(doc, &AppDocument::aboutToReplace, this, [this] { m_history.clear(); });  // its views were of that document
   m_animateViews = settings.value("view/animate", true).toBool();
+  readScrollInput();
   m_refineTimer.setSingleShot(true);
   m_refineTimer.setInterval(350);
   connect(&m_refineTimer, &QTimer::timeout, this, &Viewport::refineVisible);
@@ -3266,13 +3267,61 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   }
 }
 
+// A wheel or a trackpad's fingers (ScrollInput.hpp): on xcb (X11, XWayland) Qt says TouchPad for XWayland's wheel too.
+scrollinput::Scroll Viewport::scrollOf(const QWheelEvent* e) const {
+  static_assert(int(scrollinput::Phase::None) == int(Qt::NoScrollPhase) && int(scrollinput::Phase::Begin) == int(Qt::ScrollBegin) &&
+                int(scrollinput::Phase::Update) == int(Qt::ScrollUpdate) && int(scrollinput::Phase::End) == int(Qt::ScrollEnd) &&
+                int(scrollinput::Phase::Momentum) == int(Qt::ScrollMomentum));
+  static const QByteArray running = QGuiApplication::platformName().toUtf8();
+  const QByteArray& platform = m_scrollPlatform.isEmpty() ? running : m_scrollPlatform;  // both outlive the Scroll's use
+  scrollinput::Scroll s;
+  s.platform = std::string_view(platform.constData(), size_t(platform.size()));
+  s.touchpadDevice = e->device() && e->device()->type() == QInputDevice::DeviceType::TouchPad;
+  s.phase = scrollinput::Phase(int(e->phase()));
+  s.pixelX = e->pixelDelta().x();
+  s.pixelY = e->pixelDelta().y();
+  s.angleX = e->angleDelta().x();
+  s.angleY = e->angleDelta().y();
+  s.continuing = m_trackpadMode != TrackpadMode::None;
+  return s;
+}
+
+QByteArray Viewport::scrollPlatform() const {
+  return m_scrollPlatform.isEmpty() ? QGuiApplication::platformName().toUtf8() : m_scrollPlatform;
+}
+
+// The saved choice, or while there is none the platform's assumption (ScrollInput.hpp: a wheel on Windows and Linux,
+// Automatic on macOS) and whether the first scroll asks about it. Benches run on isolated settings with nothing chosen:
+// they are taken as asked, unless OPAD_BENCH_SCROLLASK wants the question.
+void Viewport::readScrollInput() {
+  const QSettings settings;
+  const QVariant saved = settings.value("view/scrollInput");
+  const QByteArray platform = scrollPlatform();
+  const std::string_view name(platform.constData(), size_t(platform.size()));
+  const int value = saved.isValid() ? saved.toInt() : scrollinput::unset;
+  m_scrollInput = scrollinput::modeFor(name, value);
+  static const bool bench = (qEnvironmentVariableIsSet("OPAD_BENCH_SETTINGS") || QCoreApplication::arguments().contains("--bench-select")) &&
+                            !qEnvironmentVariableIsSet("OPAD_BENCH_SCROLLASK");
+  m_scrollAsk = !bench && scrollinput::asks(name, value, settings.value("view/scrollAsked", false).toBool());
+}
+
+void Viewport::setScrollInput(int mode) {
+  m_scrollInput = scrollinput::mode(mode);
+  m_scrollAsk = false;  // chosen
+  QSettings().setValue("view/scrollInput", int(m_scrollInput));
+  finishTrackpadScroll();
+}
+
 void Viewport::wheelEvent(QWheelEvent* e) {
   if (!m_initialised || m_blocked) return;
-  const bool trackpad = (e->device() && e->device()->type() == QInputDevice::DeviceType::TouchPad)
-      || (!e->pixelDelta().isNull() && e->phase() != Qt::NoScrollPhase);
-  if (trackpad) {
+  // Still to ask: another OPAD window may have been answered since this one started, so the settings are read again
+  // (once: the first zooming scroll asks or finds it chosen).
+  if (m_scrollAsk) readScrollInput();
+  const scrollinput::Scroll scroll = scrollOf(e);
+  if (scrollinput::isTrackpad(scroll, m_scrollInput)) {
     if (m_nativePinching) { e->accept(); return; }
-    const QPointF delta = !e->pixelDelta().isNull() ? QPointF(e->pixelDelta()) : QPointF(e->angleDelta()) / 8.0;
+    const scrollinput::Pan pan = scrollinput::panStep(scroll);
+    const QPointF delta(pan.x, pan.y);
     if (e->modifiers() & Qt::ControlModifier) {
       finishTrackpadScroll();
       if (delta.y() != 0.0) {
@@ -3292,6 +3341,8 @@ void Viewport::wheelEvent(QWheelEvent* e) {
   m_wheelClock.start();
   const double delta = e->angleDelta().y() / 8.0;
   if (UpdateZoom(Aspect_ScrollDelta(devicePos(e->position()), delta))) requestRedraw();
+  // Asked only while every scroll zooms by the platform's assumption (a choice clears it): this one has zoomed already.
+  if (std::exchange(m_scrollAsk, false)) emit scrollInputQuestion();
 }
 
 void Viewport::trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit) {
