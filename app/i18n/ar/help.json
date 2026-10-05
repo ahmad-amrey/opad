@@ -1064,5 +1064,8 @@
  "Finish sketch keeps them beside the drawing": "«إنهاء الرسم التخطيطي» يُبقيها بجانب الرسم",
  "Its planes and axes show over the model": "تظهر مستوياته ومحاوره فوق النموذج",
  "Open with OPAD registers them": "«الفتح باستخدام OPAD» يسجّلها",
- "Compare: Bracket-v2.opad → This session": "مقارنة: Bracket-v2.opad ← هذه الجلسة"
+ "Compare: Bracket-v2.opad → This session": "مقارنة: Bracket-v2.opad ← هذه الجلسة",
+ "The first named view in the list": "أول منظر مسمّى في القائمة",
+ "{press:view.named1}": "{press:view.named1}",
+ "The camera goes back to it": "تعود الكاميرا إليه"
 }

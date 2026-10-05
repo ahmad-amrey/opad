@@ -868,7 +868,7 @@ void register_builtins() {
 
   reg("view", "Add a named camera bookmark",
       {{"doc", "path"}, {"name", "string"}, {"camera", "object"}, {"explode", "object - an exploded view (see the explode command)"},
-       {"display", "object - layers: {layer id: state} restored with it"}, {"home", "bool - optional: the document's Home view (H)"}},
+       {"display", "object - layers: {layer id: state} restored with it; hidden: [node uuid] hidden with it, every other node shown"}, {"home", "bool - optional: the document's Home view (H)"}},
       true, [](Document* d, const json& a) {
     json op;
     op["op"] = "view";
@@ -882,6 +882,9 @@ void register_builtins() {
         if (!display["layers"].is_object()) throw Error("view: display.layers must be an object of layer states");
         for (const auto& [id, state] : display["layers"].items()) check_layer_fields(state, "view: display.layers." + id);
       }
+      if (display.is_object() && display.contains("hidden"))  // what the view hides (an older build ignores it)
+        if (!display["hidden"].is_array() || !std::all_of(display["hidden"].begin(), display["hidden"].end(), [](const json& h) { return h.is_string(); }))
+          throw Error("view: display.hidden must be an array of node uuids");
       op["display"] = display;
     }
     if (home) op["home"] = true;  // an optional key: an older build reads it as a view named Home

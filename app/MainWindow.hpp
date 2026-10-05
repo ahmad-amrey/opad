@@ -229,8 +229,12 @@ class MainWindow : public QMainWindow {
   void drawingToSketch();
   void browseInstances(const std::string& id);
   void screenshot();
-  void saveNamedView();
+  void saveNamedView();  // asks for the name and whether to keep what is hidden and shown (remembered)
+  // A view op of the current camera; `visibility`: also the nodes hidden now (display.hidden), shown again when it is
+  // recalled, everything else shown.
+  void saveNamedView(const QString& name, bool visibility);
   void restoreNamedView(const std::string& id);
+  void recallNamedView(int n);  // Named view 1-9 (view.named<n>): the Named views list's n-th entry, as a click on it
   void rebuildViewsMenu();
   void selectOpTargets(const std::string& opId);
   void deleteOp(const std::string& opId);

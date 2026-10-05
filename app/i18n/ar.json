@@ -1614,5 +1614,11 @@
   "%1: wall %2 mm thin over %3 triangles": "%1: جدار بسماكة %2 مم على %3 مثلثات",
   "%1: %2 smaller findings not listed": "%1: %2 ملاحظات أصغر غير مدرجة",
   "%1 change filter": "%1 تغيير التصفية",
-  "Click a body, or pick faces, edges and vertices with the Select filter.": "انقر جسمًا، أو اختر الأوجه والحواف والرؤوس بمرشّح التحديد."
+  "Click a body, or pick faces, edges and vertices with the Select filter.": "انقر جسمًا، أو اختر الأوجه والحواف والرؤوس بمرشّح التحديد.",
+  "Named view %1": "المنظر المسمّى %1",
+  "Also keep which objects are hidden and shown": "احتفظ أيضًا بالكائنات المخفية والظاهرة",
+  "Choosing the view later hides what is hidden now and shows everything else, in one step you can undo.": "اختيار المنظر لاحقًا يخفي ما هو مخفي الآن ويُظهر كل ما سواه، في خطوة واحدة يمكن التراجع عنها.",
+  "There is no named view %1 yet: Save view keeps the current one.": "لا يوجد منظر مسمّى %1 بعد: «حفظ المنظر» يحفظ المنظر الحالي.",
+  "There is no named view %1 yet: Save view (%2) keeps the current one.": "لا يوجد منظر مسمّى %1 بعد: «حفظ المنظر» (%2) يحفظ المنظر الحالي.",
+  "restore view": "استعادة المنظر"
 }
