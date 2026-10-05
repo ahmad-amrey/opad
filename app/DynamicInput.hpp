@@ -57,6 +57,12 @@ class DynamicInput : public QWidget {
   QString problem(const QString& key) const;
   // A key about to be typed into box `index`: true when the tool took it (a prefix that switches its boxes).
   void setKeyHook(std::function<bool(int index, QChar c)> hook) { m_keyHook = std::move(hook); }
+  // Tab past the last box (or from the only one): true when the tool went on to its next step (a primitive's height after
+  // its base), else Tab goes round the boxes.
+  void setTabOut(std::function<bool()> hook) { m_tabOut = std::move(hook); }
+  // A click elsewhere (a panel's button, the view): the next key typed starts the box being typed again, as after leaving
+  // it: a value it holds is replaced, not added to (10, a click on Preview, then 45 made 1045).
+  void clickedElsewhere();
   // Where a box sits: off `at` (view coordinates) the way `out` points, its label left out (the place says what it is).
   struct Anchor {
     bool on = false;
@@ -113,6 +119,7 @@ class DynamicInput : public QWidget {
   QPoint m_cursor;
   int m_gap = 20;
   std::function<bool(int, QChar)> m_keyHook;
+  std::function<bool()> m_tabOut;
   QWidget* m_view;
   bool m_embedded;
 };

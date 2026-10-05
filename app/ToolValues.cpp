@@ -61,7 +61,9 @@ bool ToolValues::eventFilter(QObject* target, QEvent* event) {
 void ToolValues::type(const QKeyEvent* key) {
   const bool tab = key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab;
   const bool back = key->key() == Qt::Key_Backtab || key->modifiers().testFlag(Qt::ShiftModifier);
-  if (m_handle && m_handle->isVisible()) {  // the boxes by the arrow
+  // The boxes by the arrow, unless those beside the pointer are being typed into (a primitive's height typed before its
+  // arrow came): the rest goes on there, never half into one and half into the other.
+  if (m_handle && m_handle->isVisible() && !(m_input && m_input->isVisible() && m_input->typed())) {
     if (tab) m_handle->focusValue(back);
     else m_handle->type(key->text());
     return;

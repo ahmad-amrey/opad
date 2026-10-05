@@ -147,17 +147,26 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   m_values->fields = [this] {
     if (!m_featureOn || m_pickPlane || m_sketch->active()) return QList<DynamicInput::Field>{};
     // A primitive being sized by the pointer (TODO 11 P1): its sizes, the pointer's values grey until typed.
-    if (m_placer->active())
-      if (auto sizes = m_placer->fields(); !sizes.isEmpty()) return sizes;
-    // The arrow's boxes take over once it shows, unless these are being typed into (keys typed before the preview came).
     const DynamicInput* typing = m_values->input();
+    if (m_placer->active()) {
+      if (auto sizes = m_placer->fields(); !sizes.isEmpty()) return sizes;
+      // Its height before the arrow shows (its plan is on the way after Enter or Tab), or while these are typed into: the
+      // height and what Tab reaches from the arrow, never the panel's first value (Position X took a quickly typed height).
+      if (m_placer->stage() == PrimitivePlacer::Stage::Height && m_form->input("height") &&
+          (!m_distanceHandle->isVisible() || typing->typed() || typing->editing()))
+        return QList<DynamicInput::Field>{ToolValues::box("height", i18n::t(QString::fromStdString(m_form->input("height")->label)), m_form->valueText("height"))} +
+               handleExtras("height");
+    }
+    // The arrow's boxes take over once it shows, unless these are being typed into (keys typed before the preview came).
     return m_distanceHandle->isVisible() && !typing->typed() && !typing->editing() ? QList<DynamicInput::Field>{} : valueFields();
   };
   m_values->edited = [this](const QString& key, const QString& value) {
     typeValue(key, value);
     if (m_placer->active()) m_placer->typed(key);  // a typed size holds while the pointer sets the others
   };
-  m_values->commit = [this] { if (m_featureOn) runPreview(true); };
+  // Enter: OK; a primitive's typed footprint goes on to its height first, as a click does (and Tab from its last box).
+  m_values->commit = [this] { if (m_featureOn && !m_placer->keyboardNext()) runPreview(true); };
+  m_values->input()->setTabOut([this] { return m_featureOn && m_placer->active() && m_placer->tabOut(); });
   m_values->escape = [this] { escape(); };
   m_placer = new PrimitivePlacer(doc, viewport, jobs, m_form, m_values, this);
   m_placer->planes = [this] {
@@ -235,7 +244,7 @@ bool DesignController::eventFilter(QObject* watched, QEvent* event) {
   if (watched == m_viewport && event->type() == QEvent::KeyPress && m_featureOn && !m_pickPlane && !m_sketch->active()) {
     auto* key = static_cast<QKeyEvent*>(event);
     if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && key->modifiers() == Qt::NoModifier) {
-      runPreview(true);
+      if (!m_placer->keyboardNext()) runPreview(true);
       return true;
     }
   }

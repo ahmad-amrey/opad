@@ -64,6 +64,10 @@ class PrimitivePlacer : public QObject {
   QList<DynamicInput::Field> fields() const;  // the boxes beside the pointer while it sizes (empty: the panel's)
   QStringList arrowExtras() const;            // the inputs Tab reaches from the arrow's box, in order
   void typed(const QString& key);             // a box typed into or emptied: that size holds, or follows the pointer again
+  // The keyboard's way on, as in the sketch tools: Enter after a typed footprint (or section) fixes it as a click does and goes
+  // on to the height (or the section); Tab from its last box does the same. False where nothing follows (Enter adds it).
+  bool keyboardNext();
+  bool tabOut();
   void inputsChanged();                       // the panel changed: a size typed there holds
   QString prompt() const;                     // what it waits for (the status bar)
   int guideStep() const;                      // the guide's step for the stage, of guideCount()
@@ -109,6 +113,8 @@ class PrimitivePlacer : public QObject {
   double parsed(const QString& text, double fallback) const;
   QString sizeText(double mm, bool exact) const;
   QStringList sizeKeys() const;  // what the pointer sets in this stage
+  Stage nextStage() const;       // after the footprint or the section; Done when nothing more is set in the view
+  bool typedSizes() const;       // one of this stage's sizes typed (beside the pointer or in the panel)
   bool ring() const;
   bool hasHeight() const;
   void write(const std::vector<std::pair<QString, opad::json>>& values);

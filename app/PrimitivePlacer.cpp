@@ -54,6 +54,28 @@ bool PrimitivePlacer::ring() const { return m_spec && m_spec->footprint == "ring
 
 bool PrimitivePlacer::hasHeight() const { return m_form->input("height") != nullptr; }
 
+PrimitivePlacer::Stage PrimitivePlacer::nextStage() const {
+  if (m_stage == Stage::Size) return ring() ? Stage::Section : hasHeight() ? Stage::Height : Stage::Done;
+  return Stage::Done;
+}
+
+bool PrimitivePlacer::typedSizes() const {
+  const QStringList keys = sizeKeys();
+  return std::any_of(keys.begin(), keys.end(), [this](const QString& key) { return m_locked.count(key) > 0; });
+}
+
+bool PrimitivePlacer::keyboardNext() {
+  if ((m_stage != Stage::Size && m_stage != Stage::Section) || nextStage() == Stage::Done || !typedSizes()) return false;
+  fixSize();
+  return true;
+}
+
+bool PrimitivePlacer::tabOut() {
+  if ((m_stage != Stage::Size && m_stage != Stage::Section) || nextStage() == Stage::Done) return false;
+  fixSize();
+  return true;
+}
+
 QStringList PrimitivePlacer::sizeKeys() const {
   if (!m_spec) return {};
   if (m_spec->footprint == "rect") return {"length", "width"};
@@ -173,6 +195,11 @@ QString PrimitivePlacer::prompt() const {
     case Stage::Place: return tr("Click a plane or a planar face to place the %1 · Enter adds it where the panel says").arg(what);
     // Tab goes on to the next box only where there are two (a box's length and width); a round base or a tube has one.
     case Stage::Size:
+      // Typed, with more to set: Enter (or Tab from the last box) goes on to it, as a click does.
+      if (typedSizes() && nextStage() == Stage::Height)
+        return m_spec->footprint == "rect" ? tr("Length and width typed · Tab: the next box · Enter goes on to the height")
+                                            : tr("%1 typed · Enter or Tab goes on to the height").arg(label("diameter"));
+      if (typedSizes() && nextStage() == Stage::Section) return tr("%1 typed · Enter or Tab goes on to the section").arg(label("diameter"));
       if (m_spec->footprint == "rect") return tr("%1: move the pointer and click, or type it (Tab: the next box) · Enter adds the %2").arg(tr("Length and width"), what);
       return tr("%1: move the pointer and click, or type it · Enter adds the %2").arg(label("diameter"), what);
     case Stage::Section: return tr("%1: move the pointer and click, or type it · Enter adds the %2").arg(label("section"), what);
@@ -219,6 +246,7 @@ void PrimitivePlacer::typed(const QString& key) {
   else m_locked.erase(key);
   m_written[key] = m_form->valueText(key);
   drawOutline();
+  setStatus(prompt());  // typed: Enter goes on now
 }
 
 void PrimitivePlacer::inputsChanged() {

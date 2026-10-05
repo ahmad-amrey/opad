@@ -182,7 +182,16 @@ void DynamicInput::type(const QString& text) {
 }
 
 void DynamicInput::cycle(bool back) {
+  if(!back && m_tabOut && count()>0 && (m_current==count()-1 || count()==1) && m_tabOut())return;
   makeCurrent(inputkeys::cycle(m_current,count(),back),true);
+}
+
+void DynamicInput::clickedElsewhere() {
+  if(m_current<0 || m_current>=count() || !m_boxes[m_current].field.valued)return;
+  auto* edit=m_boxes[m_current].edit;
+  m_current=-1;  // as FocusOut leaves it: the first key typed replaces the value
+  if(edit->hasFocus())edit->selectAll();  // still the keyboard's (a tool panel takes no focus): typing replaces it there too
+  restyle();
 }
 
 bool DynamicInput::backspace() {

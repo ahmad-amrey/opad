@@ -59,6 +59,9 @@
 //   Box, a 1.25 mm grid, Centred off: the node's place (3.75, -1.25) and the sizes from it (3.75 x 1.25) are written exactly,
 //   not to the decimals of the zoom's pull step.
 //   Cylinder: Enter before any click adds the panel's defaults at the XY origin (the keyboard's way).
+//   Cone from the keyboard (as the sketch tools take values): 12 typed and Enter fix the base and go on to the height (the
+//   prompt says so); 15, Tab and 4 typed at once, before the arrow comes, are the height and the top diameter (not Position
+//   X); the arrow's coming keeps them; Enter adds it. Cylinder: 6, Tab (from its one base box: on to the height), 25, Enter.
 // Along the way the panel's guide loops the clip's step for the stage (placing, sizing, then the arrow and Enter).
 // Shots: <prefix>.<step>.png (the view: marker, outline, preview and arrow are drawn in it), <prefix>.panel.png.
 OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
@@ -790,6 +793,81 @@ OPAD_BENCH(OPAD_BENCH_PRIMITIVES, primitives) {
         if (!waitFor(committed("cylinder"), "Enter before any click did not commit the cylinder")) return false;
         require(stored("x") == 0 && stored("y") == 0 && stored("diameter") == 20 && stored("height") == 20, "Enter before any click did not add the defaults at the origin");
         pass("cylinder: Enter before any click adds the panel's defaults at the XY origin");
+        undo();
+        return true;
+      },
+      // ---- Cone from the keyboard, as in the sketch tools: 12 and Enter fix the base and go on to the height (it added the
+      // cone at its default height); 15, Tab and 4 typed at once, before the arrow comes, are its height and top diameter.
+      [=] {
+        start("cone");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the cone does not wait for a plane")) return false;
+        moveTo(front());
+        clickAt(front());
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Size, "the click did not place the cone")) return false;
+        view->setFocus();
+        key(Qt::Key_1, "1");
+        key(Qt::Key_2, "2");
+        require(placer->prompt() == QCoreApplication::translate("PrimitivePlacer", "%1 typed · Enter or Tab goes on to the height").arg(i18n::t("Base diameter")),
+                "the prompt after a typed base does not say Enter goes on: " + placer->prompt().toStdString());
+        key(Qt::Key_Return, {});
+        require(placer->stage() == Stage::Height && design->featureActive() && about(mm("diameter"), 12, 1e-9),
+                "12 and Enter did not fix the base and go on to the height: stage " + std::to_string(int(placer->stage())) + ", diameter " + form->valueText("diameter").toStdString());
+        key(Qt::Key_1, "1");
+        key(Qt::Key_5, "5");
+        key(Qt::Key_Tab, "	");
+        key(Qt::Key_4, "4");
+        require(about(mm("height"), 15, 1e-9) && about(mm("top_diameter"), 4, 1e-9) && about(mm("x"), front()[0], pullStep()),
+                "15, Tab, 4 typed before the arrow came did not set the height and the top diameter: " + form->valueText("height").toStdString() + ", " +
+                    form->valueText("top_diameter").toStdString() + " (Position X " + form->valueText("x").toStdString() + ")");
+        return true;
+      },
+      [=] {
+        if (!waitFor(design->handleInput() == "height" && previewFor({"height"}), "the cone shows no height arrow after Enter")) return false;
+        require(about(mm("height"), 15, 1e-9) && about(mm("top_diameter"), 4, 1e-9), "the arrow's coming changed what was typed: " + form->valueText("height").toStdString());
+        key(Qt::Key_Return, {});
+        return true;
+      },
+      [=] {
+        if (!waitFor(committed("cone"), "Enter after the height did not commit the cone")) return false;
+        require(about(stored("diameter"), 12, 1e-9) && about(stored("height"), 15, 1e-9) && about(stored("top_diameter"), 4, 1e-9),
+                "the cone typed is not the one added: " + win->m_doc->scene.features.back().inputs.dump());
+        pass("cone from the keyboard: 12 Enter fixes the base and goes on to the height; 15 Tab 4 typed at once are the height and the top; Enter adds it");
+        undo();
+        return true;
+      },
+      // ---- Cylinder: Tab from its one base box goes on to the height (6 Tab 25 made a 625 mm base).
+      [=] {
+        start("cylinder");
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Place && !view->cameraMoving(), "the cylinder does not wait for a plane")) return false;
+        moveTo(front());
+        clickAt(front());
+        return true;
+      },
+      [=] {
+        if (!waitFor(placer->stage() == Stage::Size, "the click did not place the cylinder")) return false;
+        view->setFocus();
+        key(Qt::Key_6, "6");
+        key(Qt::Key_Tab, "	");
+        key(Qt::Key_2, "2");
+        key(Qt::Key_5, "5");
+        require(placer->stage() == Stage::Height && about(mm("diameter"), 6, 1e-9) && about(mm("height"), 25, 1e-9),
+                "6 Tab 25: stage " + std::to_string(int(placer->stage())) + ", diameter " + form->valueText("diameter").toStdString() + ", height " + form->valueText("height").toStdString());
+        key(Qt::Key_Return, {});
+        return true;
+      },
+      [=] {
+        if (!waitFor(committed("cylinder"), "Enter did not commit the typed cylinder")) return false;
+        require(about(stored("diameter"), 6, 1e-9) && about(stored("height"), 25, 1e-9), "the cylinder typed is not the one added: " + win->m_doc->scene.features.back().inputs.dump());
+        pass("cylinder from the keyboard: 6 Tab 25 Enter is a 6 mm cylinder 25 mm tall");
         return true;
       },
   };

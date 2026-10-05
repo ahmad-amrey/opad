@@ -243,6 +243,9 @@ void DimensionHandle::nudge(double steps,Qt::KeyboardModifiers modifiers) {
 void DimensionHandle::type(const QString& text) {m_input->type(text);}  // the first key replaces the value, the next go on
 void DimensionHandle::focusValue(bool back) {m_input->cycle(back);}    // the box, its value selected
 bool DimensionHandle::eventFilter(QObject* target,QEvent* event) {
+  // A click anywhere but here (the panel's Preview, the view): what is typed next replaces the value (10, Preview, 45: 45).
+  if(event->type()==QEvent::MouseButtonPress && !isHidden())
+    if(auto* w=qobject_cast<QWidget*>(target);w && w!=this && !isAncestorOf(w))m_input->clickedElsewhere();
   if(!isVisible())return false;
   if(auto* edit=qobject_cast<QLineEdit*>(target);edit && m_input->isAncestorOf(edit)) {  // its keys are DynamicInput's; the frame lights up while one has the keyboard
     if(event->type()==QEvent::FocusIn || event->type()==QEvent::FocusOut)restyle();

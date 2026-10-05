@@ -1982,7 +1982,7 @@
    "id": "design.box",
    "title": "Box",
    "summary": "A box on a plane at a position, sized by length, width and height.",
-   "details": "Click a plane or a planar face where it goes, move the pointer to draw the base and click, then drag the arrow or type the height; {fixed:enter} adds it and {fixed:esc} steps back. Length runs along the plane's X, width along its Y and height along its normal (a negative height grows the other way); the base is centred on the click unless you turn that off, then the click is a corner. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face where it goes, move the pointer to draw the base and click (or type its length, {fixed:tab}, its width, then {fixed:enter} or {fixed:tab}), then drag the arrow or type the height; {fixed:enter} adds it and {fixed:esc} steps back. Length runs along the plane's X, width along its Y and height along its normal (a negative height grows the other way); the base is centred on the click unless you turn that off, then the click is a corner. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["cube", "block", "primitive", "rectangular prism"],
    "requires": "Open or create a document first."
   },
@@ -1990,7 +1990,7 @@
    "id": "design.cylinder",
    "title": "Cylinder",
    "summary": "A cylinder standing on a plane at a position.",
-   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click, then drag the arrow or type the height; {fixed:enter} adds it and {fixed:esc} steps back. Its axis is the plane's normal; a negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the diameter and click (or type it, then {fixed:enter} or {fixed:tab}), then drag the arrow or type the height; {fixed:enter} adds it and {fixed:esc} steps back. Its axis is the plane's normal; a negative height grows the other way. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["rod", "shaft", "primitive", "round"],
    "requires": "Open or create a document first."
   },
@@ -2006,7 +2006,7 @@
    "id": "design.cone",
    "title": "Cone",
    "summary": "A cone or a truncated cone standing on a plane at a position.",
-   "details": "Click a plane or a planar face for the centre of its base, move the pointer to set the base diameter and click, then drag the arrow or type the height; {fixed:tab} from the height's box reaches the top diameter, which cuts the tip off above zero. {fixed:enter} adds it and {fixed:esc} steps back. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for the centre of its base, move the pointer to set the base diameter and click (or type it, then {fixed:enter} or {fixed:tab}), then drag the arrow or type the height; {fixed:tab} from the height's box reaches the top diameter, which cuts the tip off above zero. {fixed:enter} adds it and {fixed:esc} steps back. Its axis is the plane's normal. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["taper", "frustum", "primitive"],
    "requires": "Open or create a document first."
   },
@@ -2014,7 +2014,7 @@
    "id": "design.torus",
    "title": "Torus",
    "summary": "A ring centred on a plane at a position.",
-   "details": "Click a plane or a planar face for its centre, move the pointer to set the ring diameter (through the middle of the tube) and click, then the tube's section diameter and click; {fixed:enter} adds it and {fixed:esc} steps back. The plane runs through the middle of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
+   "details": "Click a plane or a planar face for its centre, move the pointer to set the ring diameter (through the middle of the tube) and click (or type it, then {fixed:enter} or {fixed:tab}), then the tube's section diameter and click; {fixed:enter} adds it and {fixed:esc} steps back. The plane runs through the middle of the tube. Useful for O-rings and handles. The Operation field makes a new body or joins, cuts or intersects existing ones.",
    "keywords": ["ring", "donut", "o-ring", "primitive"],
    "requires": "Open or create a document first."
   },
