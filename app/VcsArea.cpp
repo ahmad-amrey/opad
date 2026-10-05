@@ -1,8 +1,9 @@
 // Version control as an area of the window (AreaController.hpp): the open file kept in step with the disk (DiskSync,
 // UI-56) and its repository (GitWatch, UI-61 / UI-136): the status chip beside the path, File > Clone repository…;
-// Compare (CompareMode, UI-58): File > Compare versions…, Inspect > Versions, the git chip's Compare with the last commit,
-// the Recovery offer's Compare…; Show unsaved changes (UI-59), also the unsaved-changes question's Review changes…;
-// the Version control panel and its commands (VersionControl, UI-62): File > Version control, Alt+4, the chip's menu;
+// Compare (CompareMode, UI-58): Review > Compare, the Version and Inspect menus (the last commit or save, another file),
+// the git chip's Compare with the last commit, the Recovery offer's Compare…; Show unsaved changes (UI-59), also the
+// unsaved-changes question's Review changes…; the Version control panel and its commands (VersionControl, UI-62): the
+// Version menu, Review > Compare, Alt+4, the chip's menu;
 // who added each op in which commit (OpProvenance, UI-64): the timeline's tooltips, and Show in version history on a
 // marker or an object (the History page narrowed to the commits that touched it).
 #include <QAction>
@@ -55,6 +56,14 @@ class Vcs : public AreaController {
       return c.document && !c.viewer && !c.sketching && d && d->isDirty() && !d->doc.path.empty();
     };
     services().addCommand(unsaved, [this] { if (m_compare) m_compare->showUnsaved(); });
+    CommandInfo withFile;  // Compare with ▾: the last save, a commit (the panel's pickers) or another document
+    withFile.id = "vcs.compareFile";
+    withFile.label = tr("Compare with a file…");
+    withFile.icon = "compare";
+    withFile.group = group;
+    withFile.keywords = {"diff", "changes", "other document", "copy", "variant", "version"};
+    withFile.enabledWhen = compare.enabledWhen;
+    services().addCommand(withFile, [this] { if (m_compare) m_compare->openWithFile(); });
     // Version control (UI-62): the panel and its commands, for a saved OPAD document; they say why when git cannot.
     auto saved = [this](const CommandContext& c) {
       const AppDocument* d = services().document();
@@ -98,6 +107,7 @@ class Vcs : public AreaController {
       CommandInfo step;
       step.id = id;
       step.label = label;
+      step.icon = delta > 0 ? "chevronDown" : "chevronUp";  // Review > Compare shows them small
       step.key = QKeySequence(QString::fromLatin1(key));
       step.scope = shortcuts::OutsideSketch;
       step.group = group;
@@ -106,30 +116,29 @@ class Vcs : public AreaController {
       services().addCommand(step, [this, delta = delta] { if (m_compare) m_compare->step(delta); });
     }
   }
-  void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {  // File: after Open…, Clone repository…, Compare versions…, Show unsaved changes
+  // File: Clone repository… after Open…. The Version menu (Appendix A §4): the panel, the git commands, then Compare with
+  // the last commit or save, another file or the unsaved changes; Inspect lists the comparisons too. Without a Version menu
+  // (an embedder's menu bar) they go into File as a submenu.
+  void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
     QMenu* file = menus.value("file");
     if (!file) return;
     const QList<QAction*> items = file->actions();
     const qsizetype open = items.indexOf(services().action("file.open"));
     QAction* before = open >= 0 && open + 1 < items.size() ? items[open + 1] : nullptr;
     file->insertAction(before, services().action("file.clone"));
-    file->insertAction(before, services().action("vcs.compare"));
-    file->insertAction(before, services().action("vcs.unsavedChanges"));
-    auto* version = new QMenu(tr("Version control"), file);
-    version->setObjectName("versionMenu");
-    for (const char* id : {"vcs.panel", "vcs.commit", "vcs.pull", "vcs.push", "vcs.fetch", "vcs.backgroundFetch", "-", "vcs.history", "vcs.branches", "vcs.newBranch", "-",
-                           "vcs.resolve", "vcs.pack"})
+    QMenu* version = menus.value("version");
+    if (!version) {
+      version = new QMenu(tr("Version control"), file);
+      version->setObjectName("versionMenu");
+      file->insertMenu(before, version);
+    }
+    for (const char* id : {"vcs.panel", "-", "vcs.commit", "vcs.pull", "vcs.push", "vcs.fetch", "vcs.backgroundFetch", "-", "vcs.history", "vcs.branches", "vcs.newBranch", "-",
+                           "vcs.compare", "vcs.compareFile", "vcs.unsavedChanges", "-", "vcs.resolve", "vcs.pack"})
       if (QString::fromLatin1(id) == "-") version->addSeparator();
       else version->addAction(services().action(QString::fromLatin1(id)));
-    file->insertMenu(before, version);
-  }
-  void ribbon(RibbonLayout& layout) override {
-    layout.addGroup("review.inspect", "review.inspect.versions", tr("Versions"));
-    layout.addAction("review.inspect.versions", services().action("vcs.compare"));
-    layout.addAction("design.construct.history", services().action("vcs.compare"));
-    for (const char* group : {"review.inspect.versions", "design.construct.history"}) {
-      layout.addAction(QString::fromLatin1(group), services().action("vcs.panel"));
-      layout.addAction(QString::fromLatin1(group), services().action("vcs.commit"));
+    if (QMenu* inspect = menus.value("inspect")) {
+      inspect->addSeparator();
+      inspect->addActions({services().action("vcs.compare"), services().action("vcs.compareFile"), services().action("vcs.unsavedChanges")});
     }
   }
   void statusWidgets(QStatusBar*) override {  // the chip beside the document's path, in the row that never collapses (UI-08)

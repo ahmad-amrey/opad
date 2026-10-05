@@ -210,15 +210,17 @@ QString group(const QString& id) {
   if (area == "file" || area == "files") return QCoreApplication::translate("help", "File");
   if (area == "edit") return QCoreApplication::translate("help", "Edit");
   if (area == "select") return QCoreApplication::translate("help", "Select");
-  // The areas' commands go where their menus have them: version control in File, the timeline's and the 2D drawings'
-  // switches in View, components and exploded views in Design; the Drawings workspace's commands have a group of their own.
-  if (area == "vcs") return QCoreApplication::translate("help", "File");
+  // The areas' commands go where their menus have them: version control in Version (the menu's own title, its mnemonic
+  // dropped), the timeline's and the 2D drawings' switches in View, components and exploded views in Design; the Drawings
+  // workspace's commands have a group of their own.
+  if (area == "vcs") return QCoreApplication::translate("MainWindow", "Ve&rsion").remove('&');
   if (area == "view" || area == "nav" || area == "panel" || area == "workspace" || area == "timeline" || area == "drawing2d")
     return QCoreApplication::translate("help", "View");
   if (area == "inspect") return QCoreApplication::translate("help", "Inspect");
   if (area == "annotate") return QCoreApplication::translate("help", "Annotate");
-  // Linked files, canvases and KiCad boards are on the Design menu (and their ribbon buttons beside Import).
-  if (area == "design" || area == "assembly" || area == "assets" || area == "canvas" || area == "kicad") return QCoreApplication::translate("help", "Design");
+  // Linked files, canvases and KiCad boards are the Insert menu's (its inserts, then a submenu each): Insert, as the menu names it.
+  if (area == "assets" || area == "canvas" || area == "kicad") return QCoreApplication::translate("MainWindow", "I&nsert").remove('&');
+  if (area == "design" || area == "assembly") return QCoreApplication::translate("help", "Design");
   if (area == "drawings") return QCoreApplication::translate("help", "Drawings");
   if (id.startsWith("sketch.c.") || id == "sketch.dimension" || id == "sketch.constraints" || id == "sketch.moreConstrain")
     return QCoreApplication::translate("help", "Sketch constraints");
@@ -229,7 +231,8 @@ QString group(const QString& id) {
 
 QStringList areas() {
   QStringList out;
-  for (const char* id : {"file.", "edit.", "select.", "view.", "inspect.", "annotate.", "design.", "drawings.", "sketch.", "sketch.c.", "tools.", "x."}) out << group(id);
+  for (const char* id : {"file.", "edit.", "select.", "view.", "assets.", "inspect.", "annotate.", "design.", "drawings.", "sketch.", "sketch.c.", "vcs.", "tools.", "x."})
+    out << group(id);
   return out;
 }
 

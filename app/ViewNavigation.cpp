@@ -94,19 +94,8 @@ class ViewNavigation : public AreaController {
     }
   }
 
-  // Under Fit's arrow in both View tabs, and Hidden edges visible under Hidden line's (UI-48): the tabs keep their width
-  // (every group of Review and Design large at 1600 px).
-  void ribbon(RibbonLayout& layout) override {
-    for (const QString id : {"review.view.navigate", "design.view.navigate"})
-      if (RibbonLayout::Group* group = layout.group(id))
-        for (RibbonLayout::Item& item : group->items)
-          if (item.action && item.action->objectName() == "view.fit")
-            for (const QString variant : {"view.fitall", "view.zoomWindow", "view.previous", "view.next"}) item.variants << services().action(variant);
-    for (const QString id : {"review.view.display", "design.view.display"})
-      if (RibbonLayout::Group* group = layout.group(id))
-        for (RibbonLayout::Item& item : group->items)
-          if (item.action && item.action->objectName() == "view.hidden") item.variants << services().action("view.hiddenEdges");
-  }
+  // Zoom window, Previous and Next view are under Fit's arrow, Set current view as Home and Reset Home under Home's, Hidden
+  // edges visible under Hidden line's (UI-48), in the View tabs (MainWindowRibbonTable.cpp): the tabs keep their width.
 
   void ready() override {
     Viewport* v = services().viewport();

@@ -275,9 +275,6 @@ class SketchCommandLine : public AreaController {
     info.editsDocument = true;  // a sketch command, as the built-in ones (MainWindow::isEditAction)
     services().addCommand(info, [this] { open(); });
   }
-  void ribbon(RibbonLayout& layout) override {
-    if (QAction* a = services().action("sketch.commandLine")) layout.addAction("sketch.reference.sketch", a, RibbonLayout::Size::Small);
-  }
   void ready() override {
     m_line = new CommandLine(services().viewport());
     SketchEditor* sketch = services().design()->sketch();

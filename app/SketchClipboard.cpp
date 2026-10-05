@@ -253,12 +253,6 @@ class ClipboardArea : public AreaController {
     edit->insertActions(after, {m_cut, m_copy, m_paste, m_linked});
     edit->insertSeparator(after);
   }
-  void ribbon(RibbonLayout& layout) override {
-    if (layout.addGroup("sketch.modify", "sketch.modify.clipboard", tr("Clipboard")))
-      for (QAction* a : {m_copy, m_cut, m_paste, m_base}) layout.addAction("sketch.modify.clipboard", a, RibbonLayout::Size::Small);
-    if (layout.addGroup("design.assemble", "design.assemble.clipboard", tr("Clipboard")))
-      for (QAction* a : {m_copy, m_paste, m_linked}) layout.addAction("design.assemble.clipboard", a, RibbonLayout::Size::Small);
-  }
 
  private:
   void copy(bool cut) {

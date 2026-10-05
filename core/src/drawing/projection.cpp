@@ -3,6 +3,7 @@
 #include "opad/drawing/projection.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRep_Tool.hxx>
@@ -25,6 +26,7 @@
 #include <HLRBRep_FaceIterator.hxx>
 #include <HLRBRep_PolyAlgo.hxx>
 #include <HLRBRep_ShapeBounds.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <NCollection_DataMap.hxx>
 #include <OSD_Parallel.hxx>
 #include <Standard_Failure.hxx>
@@ -39,16 +41,19 @@
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
 #include <gp_GTrsf.hxx>
+#include <gp_Lin.hxx>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <deque>
 #include <list>
+#include <memory>
 #include <set>
 #include <unordered_map>
 
 #include "opad/cache.hpp"
+#include "opad/explode.hpp"
 #include "opad/geometry.hpp"
 #include "projection_internal.hpp"
 
@@ -341,6 +346,9 @@ std::string fingerprint_of(const std::vector<Source>& sources, const ViewSpec& s
     bodies.push_back({s.node, s.key, m});
   }
   j["bodies"] = bodies;
+  for (const auto& [from, to] : spec.trails)  // an exploded view's trail lines (its offsets are in the bodies' placements)
+    j["trails"].push_back({rounded(from[0]), rounded(from[1]), rounded(from[2]), rounded(to[0]), rounded(to[1]), rounded(to[2])});
+  if (!spec.trails.empty()) j["trails_version"] = 3;  // 2: the parts of them behind bodies left out; 3: pieces on one line merged
   return sha256_hex(j.dump());
 }
 
@@ -955,6 +963,7 @@ json ViewSpec::to_json() const {
   }
   if (parts_whole) j["parts_whole"] = true;
   if (!sectioned.empty()) j["sectioned"] = sectioned;
+  if (!explode.is_null()) j["explode"] = explode;
   for (const auto& b : breakouts) {
     json outline = json::array();
     for (const auto& p : b.outline) outline.push_back({p[0], p[1]});
@@ -981,6 +990,8 @@ ViewSpec ViewSpec::from_json(const json& j) {
   if (j.contains("hide") && j["hide"].is_array()) s.hide = j["hide"].get<std::vector<std::string>>();
   if (j.contains("offsets") && j["offsets"].is_object())
     for (const auto& [node, shift] : j["offsets"].items()) s.offsets[node] = vec_of(shift, {0, 0, 0});
+  if (j.contains("explode") && (j["explode"].is_object() || j["explode"].is_string()))
+    s.explode = j["explode"].is_string() ? json{{"view", j["explode"]}} : j["explode"];
   if (const json c = j.value("cut", json()); c.is_object()) {
     for (const auto& p : c.value("line", json::array()))
       if (p.is_array() && p.size() == 2) s.cut.push_back({p[0].get<double>(), p[1].get<double>()});
@@ -1019,6 +1030,7 @@ const char* Curve::kind_name(Kind k) {
     case Kind::Seam: return "seam";
     case Kind::Silhouette: return "silhouette";
     case Kind::Break: return "break";
+    case Kind::Trail: return "trail";
     default: return "sharp";
   }
 }
@@ -1355,7 +1367,137 @@ std::shared_ptr<const ViewGeometry> cached(const std::string& fp) {
 }
 }  // namespace
 
-std::shared_ptr<const ViewGeometry> cached_projection(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+void resolve_explode(const Document& doc, const Scene& scene, ViewSpec& spec) {
+  if (spec.explode_resolved || spec.explode.is_null()) return;
+  const ExplodeSpec e = spec.explode.is_object() && spec.explode.contains("view") ? view_explode(scene, spec.explode["view"].get<std::string>())
+                                                                                  : ExplodeSpec::from_json(spec.explode);
+  const auto units = explode_units(doc, scene, e);
+  for (const auto& [node, shift] : explode_offsets(units, e, e.t)) spec.offsets[node] = shift;
+  for (const auto& t : explode_trails(units, e, e.t)) spec.trails.push_back({t.from, t.to});
+  spec.explode_resolved = true;
+}
+
+namespace {
+// The parts of an exploded view's trail lines (UI-85) that no body hides: a point of a trail is hidden when a ray from it
+// towards the viewer meets a face of a body (one it lies in, or one in front). Each trail is sampled about every
+// millimetre, at most 64 times, and every change between two samples found by halving to a hundredth of a step. Only the
+// bodies whose box the ray passes are asked, each loaded once; meshes hide nothing (no faces to meet). A worker's.
+class TrailHiders {
+ public:
+  TrailHiders(const std::vector<Source>& sources, const View& v) : m_dir(v.z) {
+    for (const auto& s : sources) {
+      if (s.mesh || s.placed.IsNull()) continue;
+      Bnd_Box box;
+      BRepBndLib::Add(s.placed, box);
+      if (box.IsVoid()) continue;
+      box.Enlarge(1e-6);
+      m_bodies.push_back({&s.placed, box, nullptr});
+    }
+  }
+  bool hidden(const gp_Pnt& p) {
+    const gp_Lin ray(p, m_dir);
+    for (auto& b : m_bodies) {
+      if (b.box.IsOut(ray)) continue;
+      if (!b.rays) {
+        b.rays = std::make_unique<IntCurvesFace_ShapeIntersector>();
+        b.rays->Load(*b.shape, 1e-7);
+      }
+      b.rays->Perform(ray, 1e-6, 1e100);
+      if (b.rays->IsDone() && b.rays->NbPnt() > 0) return true;
+    }
+    return false;
+  }
+  // The visible stretches of a -> b, as pairs of points along it.
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> visible(const gp_Pnt& a, const gp_Pnt& b) {
+    std::vector<std::pair<gp_Pnt, gp_Pnt>> out;
+    const double length = a.Distance(b);
+    const int n = std::clamp(static_cast<int>(std::ceil(length)), 8, 64);
+    auto at = [&](double t) { return gp_Pnt(a.XYZ() + (b.XYZ() - a.XYZ()) * t); };
+    auto edge = [&](double lo, double hi, bool loHidden) {  // where hidden turns to shown (or back) between two samples
+      for (int i = 0; i < 7; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        (hidden(at(mid)) == loHidden ? lo : hi) = mid;
+      }
+      return 0.5 * (lo + hi);
+    };
+    bool was = hidden(a);
+    double start = 0;
+    for (int i = 1; i <= n; ++i) {
+      const double t = static_cast<double>(i) / n;
+      const bool now = hidden(at(t));
+      if (now != was) {
+        const double cut = edge(static_cast<double>(i - 1) / n, t, was);
+        if (!was && cut > start) out.push_back({at(start), at(cut)});
+        start = cut;
+        was = now;
+      }
+    }
+    if (!was && start < 1) out.push_back({at(start), b});
+    return out;
+  }
+
+ private:
+  struct Body {
+    const TopoDS_Shape* shape;
+    Bnd_Box box;
+    std::unique_ptr<IntCurvesFace_ShapeIntersector> rays;
+  };
+  gp_Dir m_dir;
+  std::vector<Body> m_bodies;
+};
+
+// Trail pieces that lie on one line in the view (parts stacked on one axis: a bolt, its washers and nut) drawn as one
+// line over the stretches any of them covers: overlapping pieces would each start their own dashes and dots, and two
+// phantom lines out of step print as one solid line. Within `tol` of a common line; each merged piece keeps the
+// nearest depth.
+std::vector<Curve> merge_trails(std::vector<Curve> pieces, double tol) {
+  struct Line {
+    Vec2 o, d;
+    std::vector<std::array<double, 3>> spans;  // along d from o: from, to, depth
+  };
+  std::vector<Line> lines;
+  for (const Curve& k : pieces) {
+    Vec2 d = k.pts[1] - k.pts[0];
+    const double l = norm(d);
+    if (l <= tol) continue;
+    d = d * (1 / l);
+    if (d[0] < -1e-12 || (std::fabs(d[0]) <= 1e-12 && d[1] < 0)) d = d * -1.0;  // one sense per direction
+    auto on = std::find_if(lines.begin(), lines.end(), [&](const Line& L) {
+      const auto off = [&](Vec2 p) { const Vec2 r = p - L.o; return std::fabs(r[0] * L.d[1] - r[1] * L.d[0]); };
+      return std::fabs(d[0] * L.d[1] - d[1] * L.d[0]) * l <= tol && off(k.pts[0]) <= tol && off(k.pts[1]) <= tol;
+    });
+    if (on == lines.end()) on = lines.insert(lines.end(), Line{k.pts[0], d, {}});
+    const double a = dot(k.pts[0] - on->o, on->d), b = dot(k.pts[1] - on->o, on->d);
+    on->spans.push_back({std::min(a, b), std::max(a, b), k.z});
+  }
+  std::vector<Curve> out;
+  for (auto& L : lines) {
+    std::sort(L.spans.begin(), L.spans.end());
+    for (size_t i = 0; i < L.spans.size();) {
+      std::array<double, 3> s = L.spans[i];
+      for (++i; i < L.spans.size() && L.spans[i][0] <= s[1] + tol; ++i) s = {s[0], std::max(s[1], L.spans[i][1]), std::max(s[2], L.spans[i][2])};
+      Curve k;
+      k.kind = Curve::Kind::Trail;
+      k.pts = {L.o + L.d * s[0], L.o + L.d * s[1]};
+      k.z = s[2];
+      out.push_back(std::move(k));
+    }
+  }
+  return out;
+}
+
+// The spec with its explode laid out: itself when there is none (or it was done), else `copy` filled from it.
+const ViewSpec& exploded(const Document& doc, const Scene& scene, const ViewSpec& spec, ViewSpec& copy) {
+  if (spec.explode_resolved || spec.explode.is_null()) return spec;
+  copy = spec;
+  resolve_explode(doc, scene, copy);
+  return copy;
+}
+}  // namespace
+
+std::shared_ptr<const ViewGeometry> cached_projection(const Document& doc, const Scene& scene, const ViewSpec& in) {
+  ViewSpec copy;
+  const ViewSpec& spec = exploded(doc, scene, in, copy);
   auto sources = gather(scene, spec);
   return cached(fingerprint_of(sources, spec, auto_tier(doc, sources, spec)));
 }
@@ -1366,17 +1508,23 @@ std::vector<std::pair<std::string, Mat4>> view_bodies(const Scene& scene, const 
   return out;
 }
 
-Quality choose_tier(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+Quality choose_tier(const Document& doc, const Scene& scene, const ViewSpec& in) {
+  ViewSpec copy;
+  const ViewSpec& spec = exploded(doc, scene, in, copy);
   auto sources = gather(scene, spec);
   return auto_tier(doc, sources, spec);
 }
 
-std::string projection_fingerprint(const Document& doc, const Scene& scene, const ViewSpec& spec, Quality tier) {
+std::string projection_fingerprint(const Document& doc, const Scene& scene, const ViewSpec& in, Quality tier) {
+  ViewSpec copy;
+  const ViewSpec& spec = exploded(doc, scene, in, copy);
   auto sources = gather(scene, spec);
   return fingerprint_of(sources, spec, tier == Quality::Auto ? auto_tier(doc, sources, spec) : tier);
 }
 
-std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& scene, const ViewSpec& spec, const ProjectionProgress& progress, bool use_cache) {
+std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& scene, const ViewSpec& in, const ProjectionProgress& progress, bool use_cache) {
+  ViewSpec copy;
+  const ViewSpec& spec = exploded(doc, scene, in, copy);
   Run run(progress);
   const auto start = std::chrono::steady_clock::now();
   auto sources = gather(scene, spec);
@@ -1421,6 +1569,23 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
   run.check();
   const auto finish = std::chrono::steady_clock::now();
   g->stats["overlaps"] = drop_overlaps(g->curves, 0.1 * spec.tolerance);  // closer than a tenth of the tolerance: one line
+  if (!spec.trails.empty()) {  // an exploded view's trail lines: thin, where no body hides them (UI-85)
+    TrailHiders hiders(sources, v);
+    std::vector<Curve> pieces;
+    for (const auto& [from, to] : spec.trails) {
+      const gp_Pnt a(from[0], from[1], from[2]), b(to[0], to[1], to[2]);
+      if (norm(v.at(b) - v.at(a)) <= spec.tolerance) continue;  // seen end on: nothing to draw
+      for (const auto& [p, q] : hiders.visible(a, b)) {
+        Curve k;
+        k.kind = Curve::Kind::Trail;
+        k.pts = {v.at(p), v.at(q)};
+        k.z = std::max(v.depth(p), v.depth(q));
+        if (norm(k.pts[1] - k.pts[0]) > spec.tolerance) pieces.push_back(std::move(k));
+      }
+      run.check();
+    }
+    for (Curve& k : merge_trails(std::move(pieces), spec.tolerance)) g->curves.push_back(std::move(k));
+  }
   bool any = false;
   std::array<double, 4> box{1e300, 1e300, -1e300, -1e300};
   for (const auto& k : g->curves) {
@@ -1469,7 +1634,7 @@ Image preview_image(const ViewGeometry& g, int width, int height) {
   };
   for (int pass = 0; pass < 3; ++pass)  // hidden under tangent under visible
     for (const auto& k : g.curves) {
-      const int mine = k.hidden ? 0 : k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam || k.kind == Curve::Kind::Break ? 1 : 2;
+      const int mine = k.hidden ? 0 : k.kind == Curve::Kind::Tangent || k.kind == Curve::Kind::Seam || k.kind == Curve::Kind::Break || k.kind == Curve::Kind::Trail ? 1 : 2;
       if (mine != pass) continue;
       const uint8_t shade = pass == 0 ? 185 : pass == 1 ? 140 : 0;
       const auto pts = k.sample(0.25 / scale);

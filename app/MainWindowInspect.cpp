@@ -768,6 +768,20 @@ void MainWindow::showFinding(const opad::json& f) {
   m_viewport->setSelectionFilter(Viewport::SelFilter::Face);
 }
 
+// One Interference command (UI-104): the check runs from Inspect, and Keep as check stores it as the design's
+// Interference check feature, run again whenever its bodies change, with the same bodies and clearance.
+void MainWindow::keepCheck() {
+  if (!requireEditable([this] { keepCheck(); })) return;  // viewer mode: saved as OPAD first, then kept
+  opad::json picks = opad::json::array();
+  for (const auto& id : m_checkSelect)
+    if (m_doc->scene.node(id)) picks.push_back(opad::Ref{id}.to_json());
+  std::vector<std::pair<QString, opad::json>> given;
+  if (!picks.empty()) given.emplace_back("bodies", picks);
+  given.emplace_back("clearance", units::editable(units::Kind::Length, m_checks->options().value("clearance_mm", 0.0)).toStdString());
+  setWorkspace("design");  // its panel and the timeline step are Design's
+  guarded([&] { m_design->startFeature("interference", given); });
+}
+
 void MainWindow::endCheck() {
   if (Job* old = std::exchange(m_checkJob, nullptr)) old->cancel();
   clearCheckOverlays();

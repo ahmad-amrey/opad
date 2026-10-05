@@ -248,7 +248,11 @@ void AssetsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
       if (entries[i]->objectName() == "file.import") before = entries.value(i + 1);
     file->insertAction(before, services().action("assets.link"));
   }
-  if (QMenu* design = menus.value("design")) {
+  // Insert (Appendix A §4): Link as asset… with the other inserts, then every linked-file command in its submenu; the
+  // Design menu where there is no Insert menu.
+  QMenu* insert = menus.value("insert");
+  if (insert) insert->insertAction(areas::firstSeparator(insert), services().action("assets.link"));
+  if (QMenu* design = insert ? insert : menus.value("design")) {
     QMenu* sub = design->addMenu(tr("Linked files"));
     sub->setObjectName("assets");
     for (const char* id : {"assets.link", "assets.sync", "assets.syncAll", "assets.autoSync", "assets.replace", "assets.reveal", "assets.copyPath", "assets.embed",
@@ -259,18 +263,6 @@ void AssetsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   }
 }
 
-void AssetsArea::ribbon(RibbonLayout& layout) {
-  QAction* link = services().action("assets.link");
-  for (const char* id : {"design.assemble.components", "design.export.file", "review.export.file"})  // beside Import
-    if (RibbonLayout::Group* g = layout.group(id)) {
-      int at = 0;
-      while (at < g->items.size() && g->items[at].action != services().action("file.import")) ++at;
-      RibbonLayout::Item item;
-      item.action = link;
-      g->items.insert(std::min(at + 1, int(g->items.size())), item);
-    }
-  // Sync and the rest are where the files are: their badges, the context menu, Properties, Design > Linked files, the toast.
-}
 
 void AssetsArea::ready() {
   m_monitor = new AssetMonitor(services().document(), services().jobs(), this);

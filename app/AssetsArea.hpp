@@ -71,7 +71,6 @@ class AssetsArea : public AreaController {
   explicit AssetsArea(AreaServices& services);
   void buildActions() override;
   void menus(QMenuBar* bar, const QMap<QString, QMenu*>& menus) override;
-  void ribbon(RibbonLayout& layout) override;
   void ready() override;
   void contextMenu(const SelectionContext& selection, QMenu& menu) override;
   void documentChanged(bool replaced) override;

@@ -42,6 +42,8 @@ class DesignController : public QObject {
   void setCurrentComponent(std::function<std::string()> current) { m_currentComponent = std::move(current); }
   void showSketchPanel(const QString& page = {});  // page: the title of the page shown instead of the tool
   void redefineSketchPlane();
+  // A new sketch on a plane known already (Drafting's Draw on drawing: the drawing's own frame), without picking one.
+  void startSketchOn(const opad::json& plane, const opad::Frame& frame);
 
   void startFeature(const QString& kind);
   // A new feature with inputs given (picks as their JSON array, values and flags as typed): Paste's Move / copy (UI-129).

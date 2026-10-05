@@ -110,6 +110,7 @@ void DocsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
     insertAfter(file, services().action("file.export"), services().action("file.exportBom"));
     insertAfter(file, services().action("file.exportBom"), services().action("file.documentProperties"));
     insertAfter(file, services().action("file.exportBom"), services().action("drawings.print"));  // a drawing's sheets (UI-86)
+    insertAfter(file, services().action("drawings.print"), services().action("drawings.publish"));  // and as one PDF (UI-104)
   }
   if (QMenu* inspect = menus.value("inspect")) {
     insertAfter(inspect, services().action("inspect.properties"), services().action("inspect.partProperties"));
@@ -117,24 +118,9 @@ void DocsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   }
 }
 
-void DocsArea::ribbon(RibbonLayout& layout) {
-  const auto after = [&](const QString& group, const char* anchor, const char* id) {
-    RibbonLayout::Group* g = layout.group(group);
-    if (!g) return;
-    qsizetype at = g->items.size();
-    for (qsizetype i = 0; i < g->items.size(); ++i)
-      if (g->items[i].action == services().action(anchor)) at = i + 1;
-    RibbonLayout::Item item;
-    item.action = services().action(id);
-    g->items.insert(at, item);
-  };
-  after("review.inspect.results", "inspect.properties", "inspect.partProperties");
-  after("review.inspect.results", "inspect.partProperties", "inspect.material");
-  after("design.assemble.appearance", "design.colour", "inspect.material");  // what it is made of, beside how it looks
-  after("review.export.export", "file.export", "file.exportBom");
-  after("design.export.export", "file.export", "file.exportBom");
-  drawingsRibbon(layout);
-}
+// Part properties, materials and the bill of materials have their places in the window's ribbon table; the Drawings
+// workspace is this area's own.
+void DocsArea::ribbon(RibbonLayout& layout) { drawingsRibbon(layout); }
 
 void DocsArea::ready() {
   AppDocument* doc = services().document();
@@ -301,12 +287,12 @@ void DocsArea::exportBom(std::vector<std::string> ids) {
   dialog->open();
 }
 
-void DocsArea::exportSheet(const std::string& id, const std::string& issue, bool pdf) {
+void DocsArea::exportSheet(const std::string& id, const std::string& issue, bool pdfOnly) {
   AppDocument* doc = services().document();
   QString stem;
   int sheets = 0;
   if (id.rfind("drawing:", 0) == 0) {
-    pdf = true;  // the drawing's sheets as the pages of one PDF, also when it has one sheet
+    pdfOnly = true;  // the drawing's sheets as the pages of one PDF, also when it has one sheet
     for (const auto& s : doc->scene.sheets) sheets += s.drawing == id.substr(8);
     stem = QString::fromStdString(id.substr(8));
   } else if (const opad::Sheet* sheet = doc->scene.sheet(id)) {
@@ -317,8 +303,9 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue, bool
   if (!issue.empty()) stem += tr(" rev %1 as issued").arg(QString::fromStdString(issue));
   for (const QChar c : QString("<>:\"/\\|?*")) stem.replace(c, '_');
   QSettings settings;
-  const auto types = sheetExportTypes(pdf || sheets > 1);
-  QString last = pdf ? QString("pdf") : settings.value("export/sheetFormat", "pdf").toString();
+  const bool onlyPdf = sheets > 1 || pdfOnly;  // Publish PDF, a drawing of several sheets: a PDF whatever name is typed
+  const auto types = sheetExportTypes(onlyPdf);
+  QString last = onlyPdf ? QString("pdf") : settings.value("export/sheetFormat", "pdf").toString();
   if (std::none_of(types.begin(), types.end(), [&](const auto& t) { return t.first == last; })) last = "pdf";
   QString out = qEnvironmentVariable("OPAD_BENCH_EXPORT_OUT");  // benches: no file dialog
   if (out.isEmpty()) {
@@ -328,14 +315,15 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue, bool
       filters << label;
       if (f == last) chosen = label;
     }
-    out = QFileDialog::getSaveFileName(services().window(), pdf || sheets > 1 ? tr("Export drawing") : tr("Export sheet"),
+    out = QFileDialog::getSaveFileName(services().window(), pdfOnly || sheets > 1 ? tr("Export drawing") : tr("Export sheet"),
                                        QDir(settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(stem + "." + last), filters.join(";;"), &chosen);
     if (out.isEmpty()) return;
   }
   QString format = QFileInfo(out).suffix().toLower();
-  if (pdf ? format != "pdf" : format != "svg" && format != "dxf" && format != "dwg" && format != "png" && format != "pdf") out += "." + (format = last);
+  const bool known = onlyPdf ? format == "pdf" : format == "pdf" || format == "svg" || format == "dxf" || format == "dwg" || format == "png";
+  if (!known) out += "." + (format = last);  // last is pdf when only a PDF is offered
   settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
-  if (!pdf && sheets == 1) settings.setValue("export/sheetFormat", format);
+  if (!onlyPdf) settings.setValue("export/sheetFormat", format);  // Export sheet's own choice, never Publish PDF's
   QPointer<DocsArea> self(this);
   opad::json args = {{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}};
   if (!issue.empty()) args["issue"] = issue;

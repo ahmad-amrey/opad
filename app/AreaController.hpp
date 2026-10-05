@@ -116,10 +116,10 @@ class AreaServices {
   // ("design.sketch"); empty when none.
   QString activeCommand() const;
   void positionOverlays();  // lay the overlays out again (the areas' positionOverlays too)
-  // The workspace shown, by RibbonLayout id: "review", "design", "sketch" (contextual, while a sketch is open) or an
-  // area's; from statusWidgets on. setWorkspace("drawings") is what its command "workspace.drawings" does: an unknown id or
-  // "sketch" changes nothing, and while a sketch is open the ribbon stays on it. An area's contextual workspace is
-  // entered and left this way too (it is not remembered at exit).
+  // The workspace shown, by RibbonLayout id: "review", "design", "drafting" or an area's; from statusWidgets on.
+  // setWorkspace("drawings") is what its command "workspace.drawings" does: an unknown id changes nothing, and while a
+  // sketch is open the ribbon stays in Design (its Sketch tab first). An area's contextual workspace is entered and left
+  // this way too (it is not remembered at exit).
   QString workspace() const;
   void setWorkspace(const QString& id);
   // Shows a contextual tab the area added (RibbonLayout::addContextualTab) first in its workspace's row, current, in its
@@ -141,9 +141,12 @@ class AreaController : public QObject {
 
   // Construction.
   virtual void buildActions() {}  // add commands (services().addAction); after the built-in ones, in area order
-  // Add entries to the menu bar's menus ("file", "edit", "view", "inspect", "design", "tools", "help"), or menus of its own.
+  // Add entries to the menu bar's menus ("file", "edit", "view", "insert", "inspect", "design", "sketch", "version", "tools",
+  // "help"), or menus of its own. Insert: an area's one-click inserts go before its first separator, their submenus after.
   virtual void menus(QMenuBar* bar, const QMap<QString, QMenu*>& menus) {}
-  virtual void ribbon(RibbonLayout& layout) {}  // add workspaces, tabs or groups before the ribbon is built (Ribbon.hpp)
+  // Add a workspace of the area's own or the contextual tabs it shows (Ribbon.hpp), before the ribbon is built. Where its
+  // commands go on the built-in tabs is the window's ribbon table (MainWindowRibbonTable.cpp), by command id.
+  virtual void ribbon(RibbonLayout& layout) {}
   virtual void statusWidgets(QStatusBar* bar) {}  // after the built-in widgets (addPermanentWidget keeps them on the right)
   virtual void ready() {}  // the window is built: panels, browser decorations and folders, property sections, connections
 
@@ -176,6 +179,7 @@ bool add(const char* name, Factory factory);                  // static registra
 QStringList names();                                          // registered, sorted
 QStringList clashes();                                        // names registered twice (the first one keeps it)
 std::vector<AreaController*> create(AreaServices& services);  // one of each, by name; the caller owns them
+QAction* firstSeparator(const QMenu* menu);                   // where an entry goes before the menu's first group ends; null: the end
 }  // namespace areas
 
 #define OPAD_AREA(Class) \

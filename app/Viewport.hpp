@@ -447,7 +447,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // The origin guide (UI-51, an empty design document): the origin's axes (X red, Y green, Z blue, labelled, never
   // picked), its XY, XZ and YZ planes as candidates ({"base":"xy"}, ...) whenever nothing else shows
   // candidates, and the grid whatever its setting says.
-  void setOriginGuide(bool on);
+  // grid: the grid too, whatever its setting (an empty document's ground); without (a model, Origin planes and axes), the
+  // axes and planes alone, the planes shown but never picked: a face behind or on one would lose its clicks to it (New
+  // sketch's plane step offers them as its own candidates).
+  void setOriginGuide(bool on, bool grid = true);
   bool originGuide() const { return m_originGuide; }
   std::string hoveredCandidate() const;
   std::vector<std::string> selectedCandidates() const;  // in pick order
@@ -663,13 +666,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void alignGridPlane();  // the grid's plane: the principal plane 2D mode looks at (a standard view there changes it), else XY
   void showGrid();  // gridDrawn() on screen
   // Drawn: the G setting in force (gridShown) or the origin guide of an empty Design document (UI-51), whatever the setting.
-  bool gridDrawn() const { return gridShown() || m_originGuide; }
+  bool gridDrawn() const { return gridShown() || (m_originGuide && m_originGrid); }
   void applyGridColors();  // faint lines from the theme in a sketch and 2D mode, OCCT's greys in 3D
   void applyOwnCursor();   // the system pointer blank or back, as setOwnCursor asked and what is under it allows
   double layoutStep() const;  // the sketch / 2D grid's step at this zoom (0: none)
   double planePixel() const;  // world units per pixel on the sketch's plane, the longer screen direction (a tilt)
   void showOriginPlanes();
   bool m_originGuide = false, m_originPlanes = false;  // m_originPlanes: the candidates shown are the origin's
+  bool m_originGrid = true;  // the origin guide draws the grid too (setOriginGuide)
   std::vector<Handle(AIS_InteractiveObject)> m_originAxes;
   void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
   // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images, a feature preview, Compare's parts

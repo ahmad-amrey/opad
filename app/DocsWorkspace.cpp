@@ -3,6 +3,7 @@
 // the document (the canvas's own worker is stopped for it).
 #include <QAction>
 #include <QActionGroup>
+#include <QCursor>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -102,6 +103,8 @@ void DocsArea::buildDrawingCommands() {
   add("drawings.projectedView", tr("Projected view"), "viewProjected", [this] { placeProjected(); },
       [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedViews().size() == 1; }, {"side view", "top view", "orthographic"});
   add("drawings.isoView", tr("Isometric view"), "viewIso", [this] { placeView("iso"); }, sheetShown, {"pictorial", "3D view"});
+  add("drawings.explodedView", tr("Exploded view"), "explodedView", [this] { placeExploded(); }, sheetShown,
+      {"explode", "assembly drawing", "trail lines", "balloons", "saved view"});
   const auto oneView = [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedViews().size() == 1; };
   using VT = SheetViewTool::Tool;
   add("drawings.sectionView", tr("Section view"), "viewSection", [this] { startViewTool(VT::Section); }, oneView,
@@ -145,33 +148,71 @@ void DocsArea::buildDrawingCommands() {
         const opad::Sheet* s = services().document()->scene.sheet(m_page->sheet());
         exportSheet(s && !s->drawing.empty() ? "drawing:" + s->drawing : m_page->sheet(), {}, true);  // PDF only, one sheet too
       }, sheetShown, {"PDF", "pages", "all sheets"});
+  {  // Publish PDF (UI-104, Review > Share and the File menu): a drawing's sheets as the pages of one PDF, from any workspace.
+    CommandInfo publish;
+    publish.id = "drawings.publish";
+    publish.label = tr("Publish PDF…");
+    publish.icon = "export";
+    publish.group = tr("Drawings");
+    publish.keywords = {"PDF", "drawing", "sheets", "pages", "share", "send"};
+    publish.enabledWhen = [self](const CommandContext& c) { return c.document && !c.viewer && self && !self->services().document()->scene.sheets.empty(); };
+    services().addCommand(publish, [self] {
+      if (self) self->services().guarded([&] { self->publishPdf(); });
+    });
+  }
   buildAnnotateCommands();
 }
 
+void DocsArea::publishPdf() {
+  std::vector<std::string> drawings;
+  for (const auto& s : services().document()->scene.sheets)
+    if (std::find(drawings.begin(), drawings.end(), s.drawing) == drawings.end()) drawings.push_back(s.drawing);
+  if (drawings.empty()) throw opad::UserHint("Make a drawing first: New drawing in the Drawings workspace.");
+  const auto publish = [this](const std::string& drawing) { services().guarded([&] { exportSheet("drawing:" + drawing, {}, true); }); };
+  if (drawings.size() == 1) return publish(drawings.front());
+  QMenu menu;
+  for (const std::string& d : drawings) menu.addAction(icons::themed("drawingSheet", 16), QString::fromStdString(d), this, [publish, d] { publish(d); });
+  menu.exec(QCursor::pos());
+}
+
+// Sheet · Views · Annotate · Tables · Output (UI-104, Appendix A "Document"): the sheet and its template, the views
+// placed on it, what annotates them (DocsAnnotate.cpp), the tables that list the parts, and what leaves the drawing.
 void DocsArea::drawingsRibbon(RibbonLayout& layout) {
   layout.addWorkspace("drawings", {tr("Drawings"), "drawingSheet", "Ctrl+3", tr("Technical drawings of the model: sheets with a frame and a title block, standard views, PDF, DXF and DWG."),
                                    tr("ops: sheet · sheet_view · sheet_item · properties")});
-  layout.addTab("drawings", "drawings.drawing", tr("Drawing"));
-  const auto group = [&](const char* name, const QString& title, std::initializer_list<const char*> ids) {
-    const QString id = QString("drawings.drawing.") + name;
-    layout.addGroup("drawings.drawing", id, title);
-    for (const char* a : ids) layout.addAction(id, services().action(a));
+  using Size = RibbonLayout::Size;
+  const auto add = [&](const QString& group, const char* id, Size size = Size::Large, const QList<QAction*>& variants = {}) {
+    if (QAction* a = services().action(id)) layout.addAction(group, a, size, variants);
   };
-  group("sheet", tr("Sheet"), {"drawings.new", "drawings.newSheet", "drawings.sheetProperties", "file.documentProperties", "drawings.templateFile", "drawings.templateFields"});
-  layout.addGroup("drawings.drawing", "drawings.drawing.views", tr("Views"));
+  layout.addTab("drawings", "drawings.sheet", tr("Sheet"));
+  layout.addGroup("drawings.sheet", "drawings.sheet.sheet", tr("Sheet"));
+  add("drawings.sheet.sheet", "drawings.new");
+  add("drawings.sheet.sheet", "drawings.newSheet");
+  for (const char* id : {"drawings.sheetProperties", "file.documentProperties", "drawings.templateFile", "drawings.templateFields"}) add("drawings.sheet.sheet", id, Size::Small);
+  layout.addGroup("drawings.sheet", "drawings.sheet.show", tr("Show"));
+  add("drawings.sheet.show", "drawings.fit");
+  layout.addTab("drawings", "drawings.views", tr("Views"));
+  layout.addGroup("drawings.views", "drawings.views.place", tr("Place"));
   QList<QAction*> bases;
   for (const auto& [orient, label] : baseViews()) bases << services().action(QString::fromStdString("drawings.baseView." + orient));
-  layout.addAction("drawings.drawing.views", services().action("drawings.baseView"), RibbonLayout::Size::Large, bases);
-  layout.addAction("drawings.drawing.views", services().action("drawings.projectedView"));
-  layout.addAction("drawings.drawing.views", services().action("drawings.isoView"));
-  for (const char* id : {"drawings.sectionView", "drawings.detailView", "drawings.auxiliaryView", "drawings.breakoutView", "drawings.cropView", "drawings.breakView"})
-    layout.addAction("drawings.drawing.views", services().action(id));
-  group("style", tr("Style"), {"drawings.hiddenLines", "drawings.tangentEdges", "drawings.update"});
-  layout.addGroup("drawings.drawing", "drawings.drawing.output", tr("Output"));
-  layout.addAction("drawings.drawing.output", services().action("drawings.print"));
-  layout.addAction("drawings.drawing.output", services().action("drawings.exportSheet"), RibbonLayout::Size::Large, {services().action("drawings.exportDrawing")});
-  for (const char* id : {"drawings.issue", "file.export", "file.exportBom", "drawings.fit"}) layout.addAction("drawings.drawing.output", services().action(id));
+  add("drawings.views.place", "drawings.baseView", Size::Large, bases);
+  for (const char* id : {"drawings.projectedView", "drawings.isoView", "drawings.explodedView"}) add("drawings.views.place", id);
+  layout.addGroup("drawings.views", "drawings.views.derived", tr("From a view"));
+  add("drawings.views.derived", "drawings.sectionView");
+  add("drawings.views.derived", "drawings.detailView");
+  for (const char* id : {"drawings.auxiliaryView", "drawings.breakoutView", "drawings.cropView", "drawings.breakView"}) add("drawings.views.derived", id, Size::Small);
+  layout.addGroup("drawings.views", "drawings.views.style", tr("Style"));
+  add("drawings.views.style", "drawings.update");
+  add("drawings.views.style", "drawings.hiddenLines", Size::Small);
+  add("drawings.views.style", "drawings.tangentEdges", Size::Small);
   annotateRibbon(layout);
+  layout.addTab("drawings", "drawings.output", tr("Output"));
+  layout.addGroup("drawings.output", "drawings.output.output", tr("Output"));
+  add("drawings.output.output", "drawings.print");
+  add("drawings.output.output", "drawings.exportSheet", Size::Large, {services().action("drawings.exportDrawing")});
+  add("drawings.output.output", "file.export");
+  layout.addGroup("drawings.output", "drawings.output.release", tr("Release"));
+  add("drawings.output.release", "drawings.issue");
 }
 
 // ---------------------------------------------------------------- the page
@@ -439,6 +480,40 @@ void DocsArea::placeView(const std::string& orient) {
   m_page->canvas()->placeBase(orient);
 }
 
+void DocsArea::placeExploded() {
+  if (!m_page || m_page->sheet().empty()) return newDrawing();
+  std::vector<const opad::ViewBookmark*> saved;
+  for (const auto& v : services().document()->scene.views)
+    if (v.explode.is_object()) saved.push_back(&v);
+  if (saved.empty())
+    throw opad::UserHint("Save an exploded view first: Exploded view in Design > Assemble, then Save exploded view in its Explode tab.", false);
+  const auto place = [this](const std::string& id) {
+    services().setWorkspace("drawings");
+    m_page->canvas()->setFocus();
+    m_page->canvas()->placeBase(id, {}, id);
+  };
+  if (saved.size() == 1) return place(saved.front()->id);
+  QMenu menu;
+  for (const opad::ViewBookmark* v : saved) menu.addAction(icons::themed("explodedView", 16), QString::fromStdString(v->name), this, [place, id = v->id] { place(id); });
+  menu.exec(QCursor::pos());
+}
+
+void DocsArea::setExplodeState(const std::vector<std::string>& views, const std::string& exploded) {
+  const opad::Scene& s = services().document()->scene;
+  opad::json ops = opad::json::array();
+  for (const auto& id : views) {
+    const opad::SheetView* v = s.sheet_view(id);
+    if (!v || v->kind != "base") continue;  // the views taken from one follow it
+    opad::json source = v->def.value("source", opad::json::object());
+    if (!source.is_object()) source = opad::json::object();
+    if (exploded.empty()) source.erase("explode");
+    else source["explode"] = {{"view", exploded}};
+    if (source == v->def.value("source", opad::json::object())) continue;
+    ops.push_back({{"op", "edit"}, {"target", id}, {"set", {{"source", source.empty() ? opad::json(nullptr) : source}}}});
+  }
+  if (!ops.empty()) run("append", {{"ops", ops}});
+}
+
 void DocsArea::placeProjected() {
   const std::vector<std::string> views = m_page ? m_page->canvas()->selectedViews() : std::vector<std::string>{};
   if (views.size() != 1) throw opad::Error("Select the view to project from first.");
@@ -604,6 +679,35 @@ void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
     a->setCheckable(true);
     a->setChecked(tangent == value);
     group->addAction(a);
+  }
+  if (base) {  // UI-85: drawn assembled, or with the parts where a saved exploded view puts them, from the same side
+    std::string now;  // the views' exploded view: "" assembled, "*" not the same for all
+    for (size_t i = 0; i < views.size(); ++i)
+      if (const opad::SheetView* v = s.sheet_view(views[i])) {
+        const opad::json src = v->def.value("source", opad::json::object());
+        const opad::json e = src.is_object() ? src.value("explode", opad::json()) : opad::json();
+        const std::string id = e.is_object() && e.contains("view") && e["view"].is_string() ? e["view"].get<std::string>() : std::string();
+        now = i == 0 || now == id ? id : std::string("*");
+      }
+    QMenu* state = menu.addMenu(icons::themed("explodedView", 16), tr("View state"));
+    state->setObjectName("drawings.menu.state");
+    auto* group = new QActionGroup(state);
+    const auto choice = [&](const QIcon& icon, const QString& label, const std::string& value) {
+      QAction* a = state->addAction(icon, label, this, [this, views, value] { services().guarded([&] { setExplodeState(views, value); }); });
+      a->setCheckable(true);
+      a->setChecked(now == value);
+      a->setObjectName(QString::fromStdString("drawings.menu.state." + (value.empty() ? std::string("assembled") : value)));
+      group->addAction(a);
+    };
+    choice({}, tr("Assembled"), "");
+    state->addSeparator();
+    bool saved = false;
+    for (const auto& b : s.views)
+      if (b.explode.is_object()) {
+        choice(icons::themed("explodedView", 16), QString::fromStdString(b.name), b.id);
+        saved = true;
+      }
+    if (!saved) state->addAction(tr("No exploded view saved: Save exploded view in the Explode tab"))->setEnabled(false);
   }
   if (base || detail) {  // a base view's scale (the views projected from it follow), a detail view's own
     QMenu* scale = menu.addMenu(tr("View scale"));

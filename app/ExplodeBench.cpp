@@ -715,11 +715,24 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                           n += b->defaultAction() && ids.contains(b->defaultAction()->objectName());
                       return n;
                     };
-                    const int assemble = buttons("design.assemble", {"assembly.explode"});
+                    const int assemble = buttons("design.assemble", {"assembly.explode", "assembly.explodePlay", "assembly.explodeOff"});
                     w.m_ribbon->grab().save(prefix + ".ribbon.png");
-                    w.m_ribbon->setCurrentTab(int(w.m_ribbon->tabIds().indexOf("design.view")));
-                    const int viewTab = buttons("design.view", {"assembly.explode", "assembly.explodePlay", "assembly.explodeOff"});
-                    require(assemble == 1 && viewTab == 3, QString("Design > Assemble has Exploded view (%1), Design > View its group with Play and Collapse (%2)").arg(assemble).arg(viewTab));
+                    const int viewTab = buttons("design.view", {"assembly.explode"});
+                    // The panel open: its Explode tab comes first in Design, current, with Finish at its end (UI-104); Finish closes both.
+                    w.openPanel(area->panel());
+                    QCoreApplication::processEvents();
+                    const QStringList tabs = w.m_ribbon->tabIds();
+                    const bool current = w.m_ribbon->currentPage() == w.m_ribbon->page("design.explode");
+                    const int explodeTab = buttons("design.explode", {"assembly.explodePlay", "assembly.explodeOff", "assembly.explodeKeep", "assembly.explodeSplit",
+                                                                      "assembly.explodeGroup", "assembly.explodeUngroup", "assembly.explodeSave", "assembly.explodeFinish"});
+                    w.m_ribbon->grab().save(prefix + ".explodeTab.png");
+                    w.action("assembly.explodeFinish")->trigger();
+                    QCoreApplication::processEvents();
+                    const bool finished = !area->panel()->isVisible() && !w.m_ribbon->tabIds().contains("design.explode") && area->isOn();
+                    require(assemble == 3 && viewTab == 1 && explodeTab == 8 && tabs.value(0) == "design.explode" && current && finished,
+                            QString("Design > Assemble has Exploded view with Play and Collapse (%1), Design > View Exploded view (%2); with the panel open the "
+                                    "Explode tab first and current (%3) with its eight commands (%4); Finish explode closes both, the parts stay apart (%5)")
+                                .arg(assemble).arg(viewTab).arg(tabs.join(' ')).arg(explodeTab).arg(finished));
                     w.action("assembly.explodeOff")->trigger();
                   }});
   list.push_back({[=] { return !area->isOn() && !area->playing() && !v->looksPending(); }, [=, &w](bool off) {

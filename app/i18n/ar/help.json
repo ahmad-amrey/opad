@@ -977,7 +977,7 @@
  "Note: type its text in the bar under the sheet": "ملاحظة: اكتب نصها في الشريط تحت اللوحة",
  "Pick what it points at, click where it goes": "اختر ما تشير إليه، وانقر حيث توضع",
  "The note with its leader": "الملاحظة بخط إشارتها",
- "Options": "الخيارات",
+ "Options": "خيارات",
  "Datum: pick the edge it stands on": "مرجع: اختر الحافة التي يقوم عليها",
  "Click where its frame goes": "انقر حيث يوضع إطاره",
  "It takes the next free letter": "يأخذ الحرف التالي غير المستخدم",
@@ -1004,5 +1004,11 @@
  "Re-attach ⌀3.2": "إعادة ربط ⌀3.2",
  "Pick reference 1 of 1 for the annotation": "اختر المرجع 1 من 1 للتعليق التوضيحي",
  "Importing STEP, IGES, boards, big files:": "استيراد STEP وIGES واللوحات والملفات الكبيرة:",
- "Trusted folders (read without asking):": "المجلدات الموثوقة (تُقرأ دون سؤال):"
+ "Trusted folders (read without asking):": "المجلدات الموثوقة (تُقرأ دون سؤال):",
+ "Click Exploded view and pick a saved one": "انقر «عرض مفكَّك» واختر عرضًا محفوظًا",
+ "A frame follows the pointer: click to place it": "يتبع إطارٌ المؤشر: انقر لوضعه",
+ "Trail lines show where the parts came from": "خطوط الأثر تُظهر من أين جاءت الأجزاء",
+ "Auto-balloon numbers the parts as drawn": "«ترقيم تلقائي بالبالونات» يرقّم الأجزاء كما تُرسم",
+ "Exploded 1": "مفكَّك 1",
+ "Exploded 2": "مفكَّك 2"
 }

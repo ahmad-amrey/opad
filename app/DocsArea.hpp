@@ -3,7 +3,7 @@
 // (AreaController.hpp): File > Export bill of materials and Inspect > Part properties with their menu, ribbon and context
 // menu places, the browser's Drawings folder (DrawingsFolder.hpp: rename in place, Del, the rows' menu with Export
 // sheet… / Export drawing…), the Properties panel's PART section with its link, and the dialogs and jobs they start.
-// The Drawings workspace (Ctrl+3, DocsWorkspace.cpp, UI-78): its ribbon tab (temporary until the ribbon is reorganised),
+// The Drawings workspace (Ctrl+3, DocsWorkspace.cpp, UI-78): its ribbon tabs (Sheet, Views, Annotate, Tables, Output),
 // the sheet page in the viewport's place (SheetPage, SheetCanvas), New drawing from a template, new sheets, sheet
 // properties, a template from a DXF or DWG file, base, projected and isometric views placed with the mouse, view styles.
 // Its Annotate tab (DocsAnnotate.cpp, UI-79 to UI-81): dimensions, hole callouts and tables, centre marks and lines, notes,
@@ -47,9 +47,11 @@ class DocsArea : public AreaController {
   void documentProperties();
   // A sheet as PDF, SVG, DXF, DWG or PNG, a drawing ("drawing:<name>") as the PDF pages of its sheets (UI-86): the file's
   // type is the format, the views projected on a worker (ExportJob.hpp); OPAD_BENCH_EXPORT_OUT skips the file dialog.
-  // issue: a revision of it as it was issued (its frozen linework, drawing::issued_display). A drawing, or pdf (Export
-  // drawing as PDF on a sheet outside any drawing), is written as PDF only, however many sheets it has.
-  void exportSheet(const std::string& id, const std::string& issue = {}, bool pdf = false);
+  // issue: a revision of it as it was issued (its frozen linework, drawing::issued_display).
+  // pdfOnly: a PDF whatever the last format was or name is typed (Publish PDF, Export drawing as PDF on a sheet outside
+  // any drawing); a drawing of several sheets is always one PDF.
+  void exportSheet(const std::string& id, const std::string& issue = {}, bool pdfOnly = false);
+  void publishPdf();  // drawings.publish: a drawing's sheets as one PDF, from any workspace (a menu when there are several)
   // Its file types, (format, filter): several sheets only PDF, DWG only while a converter is found (opad::dwg_converter).
   static std::vector<std::pair<QString, QString>> sheetExportTypes(bool several);
   void rowMenu(const std::string& id, QMenu& menu);  // the Drawings folder's menu of a row
@@ -64,6 +66,12 @@ class DocsArea : public AreaController {
   void templateFromFile(const QString& file = {});  // read on a worker; the sheet takes its frame, title block and paper
   void templateFields();   // the shown sheet's template fields placed with the mouse (TemplateFields.hpp), one sheet_edit
   void placeView(const std::string& orient);  // a base view placed with the mouse (front, top, ..., iso)
+  // An exploded view (UI-85): a view of a saved exploded view, its parts apart with trail lines, placed with the mouse;
+  // with several saved, a menu at the pointer chooses. Says how to save one when there is none.
+  void placeExploded();
+  // A base view's state (UI-85): drawn assembled ("") or with its parts where a saved exploded view puts them, from the same
+  // side; the views taken from it follow. One step for every base view given.
+  void setExplodeState(const std::vector<std::string>& views, const std::string& exploded);
   void placeProjected();                      // a view projected from the selected one, placed with the mouse
   // Section, detail or auxiliary view of the selected view, or crop or break it, with the mouse (SheetViewTool, UI-82).
   void startViewTool(SheetViewTool::Tool tool);
@@ -77,8 +85,8 @@ class DocsArea : public AreaController {
   void reattachSelected();                          // the selected annotation's references picked again
   void dimensionFromDatums(const std::string& type);  // ordinate | baseline | chain sets from the view's datums, planned on a worker
   void itemMenu(const std::vector<std::string>& items, QMenu& menu);  // right-click on annotations
-  // A balloon on every parts-list row the selected view (else the sheet's pictorial view, else its first) shows, planned on
-  // a worker; one step (a parts list comes with it when the drawing has none).
+  // A balloon on every parts-list row the selected view (else the sheet's exploded view, else its pictorial view, else its
+  // first) shows, planned on a worker; one step (a parts list comes with it when the drawing has none).
   void autoBalloon();
   void renumberList(const std::string& list);  // 1, 2, ... again in the BoM's order, worked out on a worker; one sheet_edit
   // Issue revision (IssueRevision.cpp): the dialog; then the plan, the PDF (as the drawing will show the revision) and its

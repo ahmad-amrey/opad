@@ -323,6 +323,7 @@ list (a live agent saves, and the drawing is made on the file).
   `orientation`, `standard` iso|asme, `projection` first|third angle (default by standard), the views' `scale`
   ("1:2") and title block `values`. Paper coordinates are mm from the sheet's bottom-left corner, y up.
 - `sheet_view` adds a base view (`orient` front, top, right, iso, ... or `dir`/`up`; `select` nodes, default all;
+  `explode` a saved exploded view's op id: its parts drawn apart with trail lines, from its camera unless orient/dir;
   `at` its centre on the paper; `scale` "sheet", "1:5" or "auto") or one projected from `parent` (`side` left, right,
   top, bottom or a corner such as top-right; `gap` mm between the frames, default 20). First angle: the view right of
   the front view shows the left side and the one below it the top; third angle the other way round. Projected views
@@ -366,8 +367,10 @@ list (a live agent saves, and the drawing is made on the file).
   part_number, description, material, mass, vendor; `at`, `width`) numbers its rows 1, 2, ... and keeps them settled
   in `numbers`, so a row keeps its number while parts come and go (`sheet_edit` `renumber: true` numbers them again);
   `balloon` (`refs` one face, edge or vertex of a part, `list`, `qty`) shows its part's row number; `sheet_balloons`
-  balloons the parts a view shows that have none yet in one step (`view`; `all` every row again; `qty`), placed around
-  the view without crossing leaders,
+  balloons the parts a view shows that have none yet in one step (`view`; `all` every row again; `qty`), each beside
+  the view on the side whose leader reaches an edge of its part that the view shows across the fewest other
+  lines (another part's least of all; in an exploded view the parts where it draws them), inside the frame and off
+  the title block, other views, tables and balloons, spread so none overlap,
   creating the parts list when the drawing has none. `revision_table` lists the drawing's issues.
 - `sheet_issue` issues the next revision of a sheet's drawing (`rev`, default the next letter, I O Q S X Z skipped;
   `description`, `approved`, `date`): the record keeps every item's value and the views' fingerprints and frames,
@@ -377,7 +380,10 @@ list (a live agent saves, and the drawing is made on the file).
   revision… commits and tags in git, the command does not. `sheet_info` lists each issue with what changed since.
 - In the app, Print… (Ctrl+Alt+P) prints the drawing's sheets at actual size or fitted, in black ink or colour.
 - `sheet_edit` changes a sheet, view or item (`set`; null removes a field); moving a base view moves the views
-  projected from it. `delete` removes one; a deleted sheet takes its views and items with it.
+  projected from it. A base view's `explode` (a saved exploded view's op id; null draws it assembled) keeps its side
+  and draws the parts apart with trail lines; the views taken from it follow, and an update of that exploded view
+  (`explode --view <id> --update`) moves the drawn parts with it. `delete` removes one; a deleted sheet takes its views
+  and items with it.
 - `part_properties` sets part properties on bodies or components (`part_number`, `description`, `material`, `density`
   g/cm3, `mass` g, `vendor`, `notes`, `bom` include|exclude|purchased, any other field); `properties` reports them as
   `part`, plus the `material` in force (the nearest one set upwards, else the file's), `density` and `mass` (g).

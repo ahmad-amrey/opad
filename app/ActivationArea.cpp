@@ -143,11 +143,6 @@ class Activation : public AreaController {
     design->insertActions(at >= 0 && at + 1 < items.size() ? items[at + 1] : nullptr, {m_activate, m_root, m_visibility, m_opacity->menuAction(), m_history});  // after New component
   }
 
-  void ribbon(RibbonLayout& layout) override {
-    layout.addAction("design.assemble.components", m_activate);
-    layout.addAction("design.assemble.components", m_root, RibbonLayout::Size::Small);
-    layout.addAction("design.assemble.components", m_visibility, RibbonLayout::Size::Small);
-  }
 
   void ready() override {
     AppDocument* doc = services().document();

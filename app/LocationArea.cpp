@@ -76,10 +76,6 @@ class Locations : public AreaController {
     file->insertAction(before, services().action("file.reveal"));
     file->insertAction(before, services().action("file.copyPath"));
   }
-  void ribbon(RibbonLayout& layout) override {  // each workspace's Export tab, its File group (the Share tab to be)
-    for (const char* group : {"review.export.file", "design.export.file"})
-      for (const char* id : {"file.reveal", "file.copyPath"}) layout.addAction(QString::fromLatin1(group), services().action(id));
-  }
   void ready() override {
     connect(services().pathChip(), &PathChip::menuRequested, this, [this](QMenu* menu) {
       location::addEntries(menu, services().pathChip()->file(), [this](const QString& text) { told(text); });

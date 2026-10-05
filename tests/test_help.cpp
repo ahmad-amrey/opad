@@ -63,7 +63,8 @@ std::set<QString> registeredIds() {
   for (const auto& m : QRegularExpression(R"(\b(?:addAction|help)\(")" + name + "\"").globalMatch(main)) ids.insert(m.captured(1));
   const QRegularExpression info(R"(\.id\s*=\s*")" + name + "\""), braced(R"(\bCommandInfo\s+\w+\s*\{\s*")" + name + "\""),
       workspace(R"re(\baddWorkspace\("([a-z]+)")re");
-  const QHash<QString, QRegularExpression> helpers{{"DocsWorkspace.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
+  // DocsWorkspace's add("<id>", tr("<label>"), ...) makes a command; its ribbon's add("<group>", "<id>") only places one.
+  const QHash<QString, QRegularExpression> helpers{{"DocsWorkspace.cpp", QRegularExpression(R"(\badd\(")" + name + R"(",\s*tr\()")},
                                                    {"VcsArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
                                                    {"LocationArea.cpp", QRegularExpression(R"(\bfileCommand\(")" + name + "\"")},
                                                    {"SketchClipboard.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
@@ -149,7 +150,8 @@ TEST(every_registered_command_has_help) {
   const auto ids = registeredIds();
   CHECK(ids.size() > 300 && ids.count("help.reference") && ids.count("drawings.baseView.top") && ids.count("vcs.push") && ids.count("edit.copy") &&
         ids.count("drawing2d.layers") && ids.count("file.reveal") && ids.count("workspace.drawings") && ids.count("sketch.commandLine") &&
-        ids.count("assets.link") && ids.count("canvas.insert") && ids.count("kicad.insert") && ids.count("drawings.dimension"));
+        ids.count("assets.link") && ids.count("canvas.insert") && ids.count("kicad.insert") && ids.count("drawings.dimension") &&
+        ids.count("workspace.drafting") && ids.count("drawings.explodedView") && ids.count("view.namedViews") && ids.count("design.drawOnDrawing"));
   // No command waits for its help: a command a track adds comes with its record (and its clip) or this fails.
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id)) missing << id;
@@ -850,7 +852,7 @@ TEST(clips_load_cleanly) {
   for (const char* id : {"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.slot", "sketch.polygon", "sketch.offset", "sketch.trim", "sketch.fillet",
                          "sketch.dimension", "sketch.c.horizontal", "sketch.c.coincident", "design.extrude", "design.revolve", "design.fillet", "design.chamfer", "design.shell",
                          "design.hole", "design.pattern_rect", "design.mirror", "inspect.section", "inspect.distance", "inspect.angle", "inspect.radius", "assembly.explode",
-                         "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView"})
+                         "component.activate", "select.smart", "vcs.compare", "vcs.commit", "insert.canvas", "drawing.baseView", "drawings.explodedView"})
     if (!clips::has(id)) throw check::Failure(std::string("no clip ") + id);
   for (const QString& id : clips::ids()) {
     const auto steps = clips::steps(id);
@@ -1378,12 +1380,13 @@ TEST(command_areas) {
   CHECK(help::group("sketch.c.horizontal") == "Sketch constraints" && help::group("sketch.dimension") == "Sketch constraints");
   CHECK(help::group("view.fit") == "View" && help::group("nav.fusion") == "View" && help::group("help.about") == "Tools and help");
   CHECK(help::group("files.useOda") == "File" && help::group("help.licenses") == "Tools and help");
-  CHECK(help::group("vcs.commit") == "File" && help::group("timeline.names") == "View" && help::group("drawing2d.layers") == "View" &&
+  CHECK(help::group("vcs.commit") == "Version" && help::group("timeline.names") == "View" && help::group("drawing2d.layers") == "View" &&
         help::group("assembly.explode") == "Design" && help::group("drawings.baseView.top") == "Drawings");
-  CHECK(help::group("assets.link") == "Design" && help::group("canvas.insert") == "Design" && help::group("kicad.insert") == "Design" &&
+  // Linked files, canvases and KiCad boards: the Insert menu's.
+  CHECK(help::group("assets.link") == "Insert" && help::group("canvas.insert") == "Insert" && help::group("kicad.insert") == "Insert" &&
         help::group("inspect.material") == "Inspect" && help::group("view.hideSmallParts") == "View" && help::group("drawings.dimension") == "Drawings");
   QStringList areas = help::areas();
-  CHECK(areas.size() == 12 && areas.removeDuplicates() == 0);
+  CHECK(areas.size() == 14 && areas.removeDuplicates() == 0);
   for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");
 }
 

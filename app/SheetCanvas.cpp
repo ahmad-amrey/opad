@@ -1051,7 +1051,7 @@ void SheetCanvas::keyReleaseEvent(QKeyEvent* e) {
 }
 
 // ---------------------------------------------------------------- placing a new view
-void SheetCanvas::placeBase(const std::string& orient, std::function<void(bool)> done) {
+void SheetCanvas::placeBase(const std::string& orient, std::function<void(bool)> done, const std::string& explode) {
   cancelPlacement();
   const opad::Sheet* s = m_doc->scene.sheet(m_sheet);
   if (!s) {
@@ -1060,6 +1060,7 @@ void SheetCanvas::placeBase(const std::string& orient, std::function<void(bool)>
   }
   m_place.active = true;
   m_place.orient = orient;
+  m_place.explode = explode;
   m_place.done = std::move(done);
   m_place.sizes[""] = {40, 30};
   // Drawn from what the sheet's first base view draws, at the sheet's scale.
@@ -1069,25 +1070,37 @@ void SheetCanvas::placeBase(const std::string& orient, std::function<void(bool)>
       if (source.is_null() && v->def.contains("source")) source = v->def["source"];
       if (id == s->views.front()) m_place.marks = v->def.value("style", opad::json::object()).value("centermarks", false);
     }
+  // What it shows (select, hide), never another view's exploded state: an exploded view is placed with its own (below), and
+  // an ordinary one was measured as the exploded parts, a frame much bigger than the view it then placed.
+  if (source.is_object()) source.erase("explode");
+  if (source.is_object() && source.empty()) source = nullptr;
   const double scale = s->scale;
   auto size = std::make_shared<std::array<double, 2>>(std::array<double, 2>{40, 30});
   QPointer<SheetCanvas> self(this);
-  m_place.job = m_doc->readAsync(
-      m_jobs, tr("Measuring the view"),
-      [orient, source, scale, size](const opad::Document& doc, const opad::Scene& scene, Progress) {
-        opad::SheetView probe;
-        probe.kind = "base";
-        probe.def = {{"kind", "base"}, {"orient", {{"preset", orient}}}};
-        if (!source.is_null()) probe.def["source"] = source;
-        const auto e = opad::drawing::view_extent(doc, scene, opad::drawing::view_spec(scene, probe));
-        *size = {std::max(5.0, (e[2] - e[0]) * scale), std::max(5.0, (e[3] - e[1]) * scale)};
-      },
-      [self, size](bool ok, const QString&) {
-        if (!self || !self->m_place.active) return;
-        if (ok) self->m_place.sizes[""] = *size;
-        self->m_place.sized = true;
-        self->updatePlacement(self->mapToScene(self->mapFromGlobal(QCursor::pos())));
-      });
+  // Measured on a worker; while the document is busy (a change being written, the sheet read) it asks again shortly.
+  auto measure = std::make_shared<std::function<void()>>();
+  *measure = [self, weak = std::weak_ptr<std::function<void()>>(measure), orient, source, scale, size, explode] {
+    if (!self || !self->m_place.active || self->m_place.sized || self->m_place.orient != orient || self->m_place.explode != explode) return;
+    self->m_place.job = self->m_doc->readAsync(
+        self->m_jobs, tr("Measuring the view"),
+        [orient, source, scale, size, explode](const opad::Document& doc, const opad::Scene& scene, Progress) {
+          opad::SheetView probe;
+          probe.kind = "base";
+          probe.def = {{"kind", "base"}, {"orient", explode.empty() ? opad::json{{"preset", orient}} : opad::json{{"view", explode}}}};
+          if (!source.is_null()) probe.def["source"] = source;
+          if (!explode.empty()) probe.def["source"]["explode"] = {{"view", explode}};
+          const auto e = opad::drawing::view_extent(doc, scene, opad::drawing::view_spec(scene, probe));
+          *size = {std::max(5.0, (e[2] - e[0]) * scale), std::max(5.0, (e[3] - e[1]) * scale)};
+        },
+        [self, size](bool ok, const QString&) {
+          if (!self || !self->m_place.active) return;
+          if (ok) self->m_place.sizes[""] = *size;
+          self->m_place.sized = true;
+          self->updatePlacement(self->mapToScene(self->mapFromGlobal(QCursor::pos())));
+        });
+    if (!self->m_place.job) QTimer::singleShot(100, self, [again = weak.lock()] { (*again)(); });  // it keeps itself until then
+  };
+  (*measure)();
   m_place.source = source;
   emit promptChanged(tr("Click on the sheet to place the view · Esc cancels"));
   updatePlacement(mapToScene(mapFromGlobal(QCursor::pos())));
@@ -1189,6 +1202,7 @@ void SheetCanvas::placeAt(Vec2 paper) {
     const Vec2 at = toPaper(m_place.ghost.center());
     args["kind"] = "base";
     args["orient"] = m_place.orient;
+    if (!m_place.explode.empty()) args["explode"] = m_place.explode;
     args["at"] = {r2(at[0]), r2(at[1])};
     if (m_place.source.is_object()) {
       if (m_place.source.contains("nodes")) args["select"] = m_place.source["nodes"];

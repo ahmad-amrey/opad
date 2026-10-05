@@ -101,30 +101,31 @@ void DocsArea::buildAnnotateCommands() {
 
 void DocsArea::annotateRibbon(RibbonLayout& layout) {
   layout.addTab("drawings", "drawings.annotate", tr("Annotate"));
-  const auto group = [&](const char* name, const QString& title) {
-    const QString id = QString("drawings.annotate.") + name;
-    layout.addGroup("drawings.annotate", id, title);
+  const auto group = [&](const char* tab, const char* name, const QString& title) {
+    const QString id = QString(tab) + "." + name;
+    layout.addGroup(tab, id, title);
     return id;
   };
-  const QString dims = group("dimensions", tr("Dimensions"));
+  const QString dims = group("drawings.annotate", "dimensions", tr("Dimensions"));
   layout.addAction(dims, services().action("drawings.dimension"));
   layout.addAction(dims, services().action("drawings.ordinate"), RibbonLayout::Size::Large,
                    {services().action("drawings.baseline"), services().action("drawings.chain")});
   layout.addAction(dims, services().action("drawings.fromDatums"), RibbonLayout::Size::Large,
                    {services().action("drawings.fromDatums.baseline"), services().action("drawings.fromDatums.chain")});
-  const QString holes = group("holes", tr("Holes"));
-  layout.addAction(holes, services().action("drawings.holeCallout"));
-  layout.addAction(holes, services().action("drawings.holeTable"));
-  const QString centres = group("centres", tr("Centre lines"));
+  layout.addAction(group("drawings.annotate", "holes", tr("Holes")), services().action("drawings.holeCallout"));
+  const QString centres = group("drawings.annotate", "centres", tr("Centre lines"));
   for (const char* id : {"drawings.centerMark", "drawings.centerLine", "drawings.centerMarks"}) layout.addAction(centres, services().action(id), RibbonLayout::Size::Small);
-  const QString symbols = group("symbols", tr("Notes and symbols"));
+  const QString symbols = group("drawings.annotate", "symbols", tr("Notes and symbols"));
   for (const char* id : {"drawings.note", "drawings.datum", "drawings.fcf", "drawings.surface"}) layout.addAction(symbols, services().action(id));
-  const QString tables = group("tables", tr("Tables and balloons"));
-  layout.addAction(tables, services().action("drawings.partsList"));
-  layout.addAction(tables, services().action("drawings.balloon"));
-  layout.addAction(tables, services().action("drawings.autoBalloon"));
-  layout.addAction(tables, services().action("drawings.revisionTable"));
-  layout.addAction(group("check", tr("Check")), services().action("drawings.reattach"));
+  layout.addAction(group("drawings.annotate", "check", tr("Check")), services().action("drawings.reattach"));
+  // Tables: what lists the parts and the holes, and the balloons that number them on the views (UI-84).
+  layout.addTab("drawings", "drawings.tables", tr("Tables"));
+  const QString parts = group("drawings.tables", "parts", tr("Parts"));
+  for (const char* id : {"drawings.partsList", "drawings.balloon", "drawings.autoBalloon"}) layout.addAction(parts, services().action(id));
+  if (QAction* bom = services().action("file.exportBom")) layout.addAction(parts, bom, RibbonLayout::Size::Small);
+  const QString other = group("drawings.tables", "other", tr("Other tables"));
+  layout.addAction(other, services().action("drawings.holeTable"));
+  layout.addAction(other, services().action("drawings.revisionTable"));
 }
 
 void DocsArea::readyAnnotate() {
@@ -192,10 +193,14 @@ void DocsArea::autoBalloon() {
   if (!sheet) return;
   std::string view;
   if (const auto selected = m_page->canvas()->selectedViews(); selected.size() == 1) view = selected[0];
-  for (const char* want : {"iso", "iso-back", ""})  // a pictorial view shows every part, else the first base view
+  const auto exploded = [](const opad::SheetView& v) {  // UI-85: an assembly drawing balloons its parts where they are apart
+    const opad::json src = v.def.value("source", opad::json::object());
+    return src.is_object() && src.value("explode", opad::json()).is_object();
+  };
+  for (const char* want : {"exploded", "iso", "iso-back", ""})  // an exploded or pictorial view shows every part, else the first base view
     for (const auto& id : sheet->views)
       if (const opad::SheetView* v = s.sheet_view(id); view.empty() && v && v->error.empty() && v->kind == "base" &&
-                                                       (!*want || opad::drawing::view_orientation(s, *v) == want))
+                                                       (std::string(want) == "exploded" ? exploded(*v) : !*want || opad::drawing::view_orientation(s, *v) == want))
         view = id;
   if (view.empty()) throw opad::Error("Place a view first, then balloon its parts.");
   const opad::json args = {{"sheet", sheet->id}, {"view", view}};

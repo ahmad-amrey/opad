@@ -127,7 +127,9 @@ void CanvasArea::buildActions() {
 }
 
 void CanvasArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
-  if (QMenu* design = menus.value("design")) {
+  QMenu* insert = menus.value("insert");  // Insert canvas… with the other inserts, the canvas commands in a submenu after them
+  if (insert) insert->insertAction(areas::firstSeparator(insert), services().action("canvas.insert"));
+  if (QMenu* design = insert ? insert : menus.value("design")) {
     QMenu* sub = design->addMenu(tr("Canvas"));
     sub->setObjectName("canvas");
     for (const char* id : {"canvas.insert", "canvas.edit", "canvas.calibrate", "canvas.align", "canvas.trace", "canvas.replace", "canvas.fromBackdrop"})

@@ -300,6 +300,23 @@ void CompareMode::open() {
   compare(a, {Kind::Session, QString(), tr("This session"), QString()});
 }
 
+// Compare with ▾ > A file… (Review > Compare, the Version menu): another .opad document (a copy, a variant) against this
+// session, as the panel's Other file… does once it is open.
+void CompareMode::openWithFile() {
+  AppDocument* doc = m_services.document();
+  if (!doc->hasDocument || doc->browse || doc->loading) {
+    m_services.showMessage(tr("Compare works on OPAD documents: save the file as one first."));
+    return;
+  }
+  if (DesignController* d = m_services.design(); d && (d->sketchActive() || d->featureActive())) {
+    m_services.showMessage(tr("Finish the sketch or the feature first."));
+    return;
+  }
+  const QString file = QFileDialog::getOpenFileName(m_services.window(), tr("Compare with"), doc->doc.path.empty() ? QString() : QFileInfo(doc->path()).absolutePath(),
+                                                    tr("OPAD documents (*.opad)"));
+  if (!file.isEmpty()) compare(parseVersion(file), {Kind::Session, QString(), tr("This session"), QString()});
+}
+
 void CompareMode::showUnsaved() {
   AppDocument* doc = m_services.document();
   const QString file = doc->hasDocument && !doc->browse && !doc->doc.path.empty() ? doc->path() : QString();

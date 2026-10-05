@@ -145,6 +145,17 @@ void apply_source(const Scene& scene, ViewSpec& s, const json& src) {
         (std::string(key) == "nodes" ? s.nodes : s.hide).push_back(n.get<std::string>());
       }
   s.visible_only = src.value("visible_only", false);
+  // An exploded view (UI-85): a saved exploded view by its view op, or an explode spec; laid out where the parts are
+  // measured or projected (resolve_explode, workers).
+  if (const json& e = src.value("explode", json()); e.is_object()) {
+    if (e.contains("view")) {
+      const std::string id = e["view"].is_string() ? e["view"].get<std::string>() : std::string();
+      const auto it = std::find_if(scene.views.begin(), scene.views.end(), [&](const ViewBookmark& b) { return b.id == id; });
+      if (it == scene.views.end()) throw Error("its exploded view " + id + " does not exist");
+      if (!it->explode.is_object()) throw Error("its view " + id + " has no explode");
+    }
+    s.explode = e;
+  }
 }
 
 }  // namespace
@@ -535,7 +546,9 @@ json ViewFrame::to_json() const {
   return j;
 }
 
-std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const ViewSpec& in) {
+  ViewSpec spec = in;
+  resolve_explode(doc, scene, spec);  // an exploded view: its parts where they are drawn
   // Bodies square to the view: the corners of their tight boxes (moved by their explode offsets), which is exact. Bodies
   // seen turned (pictorial views, turned parts) of a part the exact tier draws: measured in the view's axes, where the
   // turned corners of their own boxes would come out up to a quarter too big (cached by key and turn); of a bigger model
@@ -635,7 +648,9 @@ std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const
   return e;
 }
 
-std::array<double, 2> view_depth(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+std::array<double, 2> view_depth(const Document& doc, const Scene& scene, const ViewSpec& in) {
+  ViewSpec spec = in;
+  resolve_explode(doc, scene, spec);
   Vec3 x, y, z;
   view_axes(spec, x, y, z);
   const auto bodies = view_bodies(scene, spec);

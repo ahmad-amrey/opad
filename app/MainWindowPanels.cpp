@@ -39,6 +39,8 @@ void MainWindow::buildDocks() {
   connect(m_checks, &CheckPanel::runRequested, this, &MainWindow::runCheck);
   connect(m_checks, &CheckPanel::findingActivated, this, &MainWindow::showFinding);
   connect(m_doc, &AppDocument::changed, this, &MainWindow::recheck);
+  m_checks->setKeepable(true);
+  connect(m_checks, &CheckPanel::keepRequested, this, &MainWindow::keepCheck);
   connect(m_toolSteps, &ToolStepsPanel::contentSizeChanged, m_toolPanel, &ToolPanel::requestContentFit);
   connect(m_checks, &CheckPanel::contentResized, m_toolPanel, &ToolPanel::requestContentFit);
   m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};

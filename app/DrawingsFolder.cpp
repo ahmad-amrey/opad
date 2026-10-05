@@ -39,17 +39,28 @@ QString orientation(const std::string& o) {
   return tr("View");
 }
 
-// A section, detail or auxiliary view by its letter (UI-82), else by what it shows.
-QString kindName(const opad::SheetView& v, const std::string& orient) {
+// The saved exploded view a base view draws its parts as (UI-85), else null.
+const opad::ViewBookmark* explodedAs(const opad::Scene& s, const opad::SheetView& v) {
+  const opad::json src = v.kind == "base" ? v.def.value("source", opad::json::object()) : opad::json();
+  const opad::json e = src.is_object() ? src.value("explode", opad::json()) : opad::json();
+  if (!e.is_object() || !e.contains("view") || !e["view"].is_string()) return nullptr;
+  for (const auto& b : s.views)
+    if (b.id == e["view"].get<std::string>()) return &b;
+  return nullptr;
+}
+
+// A section, detail or auxiliary view by its letter (UI-82), else by what it shows (and the exploded view it shows it as).
+QString kindName(const opad::Scene& s, const opad::SheetView& v, const std::string& orient) {
   const QString letter = qs(v.def.value("letter", ""));
   if (v.kind == "section") return letter.isEmpty() ? tr("Section view") : tr("Section %1-%1").arg(letter);
   if (v.kind == "detail") return letter.isEmpty() ? tr("Detail view") : tr("Detail %1").arg(letter);
   if (v.kind == "auxiliary") return letter.isEmpty() ? tr("Auxiliary view") : tr("Auxiliary view %1").arg(letter);
+  if (const opad::ViewBookmark* b = explodedAs(s, v)) return QString("%1 (%2)").arg(orientation(orient), qs(b->name));
   return orientation(orient);
 }
 
 QString viewName(const opad::Scene& s, const opad::SheetView& v) {
-  return v.name.empty() ? kindName(v, opad::drawing::view_orientation(s, v)) : qs(v.name);
+  return v.name.empty() ? kindName(s, v, opad::drawing::view_orientation(s, v)) : qs(v.name);
 }
 
 QString itemType(const opad::SheetItem& t) {
@@ -114,10 +125,12 @@ Row make(const opad::Scene& s, const Index& ix, const opad::drawing::OutlineRow&
     tip << r.name << QString::fromUtf8("%1 · %2 · %3 · %4").arg(size.contains("preset") ? qs(size.value("preset", "")) + QString::fromUtf8(" · ") + paper : paper,
                                                                qs(sheet->standard).toUpper(), projection(sheet->projection), qs(opad::drawing::scale_text(sheet->scale)));
   } else if (const opad::SheetView* view = o.kind == "view" ? Index::get(ix.views, o.id) : nullptr) {
-    r.name = o.name.empty() ? kindName(*view, o.orient) : qs(o.name);
-    r.icon = view->kind == "section" ? "viewSection" : view->kind == "detail" ? "viewDetail" : view->kind == "auxiliary" ? "viewAuxiliary" : "ortho";
+    const opad::ViewBookmark* exploded = explodedAs(s, *view);
+    r.name = o.name.empty() ? kindName(s, *view, o.orient) : qs(o.name);
+    r.icon = view->kind == "section" ? "viewSection" : view->kind == "detail" ? "viewDetail" : view->kind == "auxiliary" ? "viewAuxiliary" : exploded ? "explodedView" : "ortho";
     r.editable = true;
     tip << r.name;
+    if (exploded) tip << tr("Its parts where the exploded view %1 puts them, with trail lines").arg(qs(exploded->name));
     if (const opad::SheetView* parent = view->kind == "section" || view->kind == "detail" || view->kind == "auxiliary" ? Index::get(ix.views, view->parent) : nullptr)
       tip << (view->kind == "section" ? tr("Section of %1") : view->kind == "detail" ? tr("Detail of %1") : tr("Auxiliary view of %1")).arg(viewName(s, *parent));
     if (view->def.contains("crop")) tip << tr("Cropped");

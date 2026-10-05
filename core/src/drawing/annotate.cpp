@@ -8,11 +8,16 @@
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <Standard_Failure.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Cylinder.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -82,7 +87,19 @@ struct Resolver {
   std::map<std::string, TopoDS_Shape> fresh;
   json notes = json::object();
   design::Ctx ctx;
-  Resolver(const Document& doc, const Scene& scene) : params(defs_of(scene)), ctx{doc, params, scene, fresh, {}, &notes} {}
+  std::map<std::string, Vec3> shift;  // an exploded view's (UI-85): body -> where it is drawn from where it is
+  // In `view` (a frame's id): its picks where an exploded view draws their parts.
+  Resolver(const Document& doc, const Scene& scene, const std::string& view = {}) : params(defs_of(scene)), ctx{doc, params, scene, fresh, {}, &notes} {
+    if (const SheetView* v = view.empty() ? nullptr : scene.sheet_view(view); v && v->error.empty()) {
+      try {
+        ViewSpec spec = view_spec(scene, *v);
+        if (spec.explode.is_null()) return;
+        resolve_explode(doc, scene, spec);
+        shift = spec.offsets;
+      } catch (const std::exception&) {  // a view that cannot be drawn says so where it is drawn
+      }
+    }
+  }
 };
 
 // What a reference gives an annotation: a point (its aspect), and the line, circle, cylinder or plane it lies on.
@@ -94,7 +111,31 @@ struct Pick {
   TopoDS_Shape sub;
 };
 
+Pick pick_of_model(const Resolver& R, json r);
+
+// Where an exploded view draws a point of a part (UI-85): moved by the part's offset there; elsewhere where it is.
+Vec3 drawn_at(const Resolver& R, const std::string& node, const Vec3& p) {
+  const auto it = R.shift.find(node);
+  return it == R.shift.end() ? p : plus3(p, it->second);
+}
+
+// A reference's pick, moved with its part in an exploded view.
 Pick pick_of(const Resolver& R, json r) {
+  Pick k = pick_of_model(R, r);
+  if (R.shift.empty() || k.node.empty()) return k;
+  const auto it = R.shift.find(k.node);
+  if (it == R.shift.end()) return k;
+  const Vec3 d = it->second;
+  for (Vec3* p : {&k.p, &k.a, &k.b, &k.centre}) *p = plus3(*p, d);
+  if (!k.sub.IsNull()) {
+    gp_Trsf t;
+    t.SetTranslation(gp_Vec(d[0], d[1], d[2]));
+    k.sub = k.sub.Moved(TopLoc_Location(t));
+  }
+  return k;
+}
+
+Pick pick_of_model(const Resolver& R, json r) {
   Pick k;
   if (r.is_string()) r = Ref::parse(r.get<std::string>()).to_json();
   std::string aspect = r.value("aspect", "");
@@ -168,6 +209,26 @@ struct Paper {
   bool along(const Vec3& axis) const { return std::fabs(dot3(unit3(axis), f.dir)) >= 0.9999; }
   bool across(const Vec3& axis) const { return std::fabs(dot3(unit3(axis), f.dir)) <= 1e-4; }
 };
+
+// Where a balloon's leader ends on what it points at (a circle seen along its axis: on it, facing the balloon; another
+// circle: its start; else the reference's point), where the frame's view draws it.
+BalloonAnchor balloon_anchor(const Resolver& R, const ViewFrame& frame, const json& ref) {
+  const Pick k = pick_of(R, ref);
+  const Paper paper{frame};
+  BalloonAnchor a;
+  a.node = k.node;
+  a.tip = paper(k.p);
+  a.dot = k.plane || k.cylinder || (!k.edge && !k.point);
+  if (k.circle && !k.point && paper.along(k.axis)) {
+    a.round = true;
+    a.centre = paper(k.centre);
+    a.r = k.r * frame.scale;
+    a.tip = a.toward(a.centre);
+  } else if (k.circle && !k.point) {
+    a.tip = paper(k.a);
+  }
+  return a;
+}
 
 // A flat face seen edge on (a section's outline names the faces its edges lie on): the line it shows, its ends where the
 // face reaches furthest along it, so it measures as a straight edge does.
@@ -283,6 +344,24 @@ void feature_values(const Resolver& R, const std::string& node, Hole& h) {
 
 json item_references(const Document& doc, const Scene& scene, const json& refs, const json& aspects) { return references(doc, scene, refs, aspects); }
 
+Vec2 BalloonAnchor::toward(Vec2 place) const { return round ? add(centre, mul(unit(sub(place, centre), {1, 1}), r)) : tip; }
+
+std::vector<std::optional<BalloonAnchor>> balloon_anchors(const Document& doc, const Scene& scene, const ViewFrame& frame, const std::vector<json>& refs) {
+  std::vector<std::optional<BalloonAnchor>> out;
+  if (!frame.error.empty()) return std::vector<std::optional<BalloonAnchor>>(refs.size());
+  const Resolver R(doc, scene, frame.id);
+  for (const json& ref : refs) {
+    try {
+      out.emplace_back(balloon_anchor(R, frame, ref));
+    } catch (const Error&) {
+      out.emplace_back();
+    } catch (const Standard_Failure&) {
+      out.emplace_back();
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- values
 std::string format_number(double value, int precision, const Sheet* sheet) {
   precision = std::clamp(precision, 0, 8);
@@ -342,7 +421,7 @@ void check_tolerance(const json& t) {
 json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& item, const ViewFrame& frame) {
   if (item.kind != "dimension") throw Error("only dimensions have a value");
   if (!frame.error.empty()) throw Error("its view cannot be drawn: " + frame.error);
-  const Resolver R(doc, scene);
+  const Resolver R(doc, scene, frame.id);
   std::vector<Pick> picks;
   for (const auto& r : item.def.value("refs", json::array())) picks.push_back(pick_of(R, r));
   for (auto& k : picks) edge_on(k, frame);
@@ -466,7 +545,7 @@ json pick_reference(const Document& doc, const Scene& scene, const ViewFrame& fr
   const std::string snap = pick.value("snap", "nearest");
   const Vec2 at = sub(vec2(pick.value("at", json())), frame.at);
   json ref = design::make_ref(doc, scene, Ref{node, edge >= 0 ? Ref::Kind::Edge : Ref::Kind::Face, edge >= 0 ? edge : face});
-  const Resolver R(doc, scene);
+  const Resolver R(doc, scene, frame.id);
   const Paper paper{frame};
   Pick k = pick_of(R, ref);
   if (k.plane && !paper.across(k.axis)) throw Error("that face is seen at a slant in this view: pick one of its edges");  // a section's outline
@@ -508,7 +587,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     json m = json::object();
     if (!refs.empty()) {
       if (!frame || !frame->error.empty()) throw Error("its view cannot be drawn");
-      const Resolver R(doc, scene);
+      const Resolver R(doc, scene, frame->id);
       const Pick k = pick_of(R, refs[0]);
       const Paper paper{*frame};
       Vec2 tip = paper(k.p);
@@ -536,29 +615,22 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
   if (kind == "balloon") {  // its leader on the part, its number from the parts list's row of that part
     if (refs.size() != 1) throw Error("a balloon points at one part");
     if (!frame->error.empty()) throw Error("its view cannot be drawn: " + frame->error);
-    const Resolver R(doc, scene);
-    const Pick k = pick_of(R, refs[0]);
-    if (k.node.empty()) throw Error("a balloon points at a part of the model");
-    const Paper paper{*frame};
-    Vec2 tip = paper(k.p);
-    if (k.circle && !k.point && paper.along(k.axis)) {  // onto the circle, on the balloon's side
-      const Vec2 c = paper(k.centre);
-      tip = add(c, mul(unit(sub(vec2(d.value("place", json::object()).value("text", json()), c), c), {1, 1}), k.r * frame->scale));
-    } else if (k.circle && !k.point) {
-      tip = paper(k.a);
-    }
+    const Resolver R(doc, scene, frame->id);  // on the part where an exploded view draws it
+    const BalloonAnchor a = balloon_anchor(R, *frame, refs[0]);
+    if (a.node.empty()) throw Error("a balloon points at a part of the model");
+    const Vec2 tip = a.toward(vec2(d.value("place", json::object()).value("text", json()), a.centre));
     const SheetItem* list = parts_list_of(scene, sheet, d.value("list", ""));
     const Sheet* listed = list ? scene.sheet(list->sheet) : &sheet;
     const json rows = parts_rows(doc, scene, listed ? *listed : sheet, list ? list->def : json::object());
-    const json* row = row_of(scene, rows["rows"], k.node);
+    const json* row = row_of(scene, rows["rows"], a.node);
     if (!row) throw Error(list ? "that part is not in the parts list" : "that part is not in the bill of materials");
-    json m = {{"tip", js(tip)}, {"number", std::to_string(row->value("number", 0))}, {"qty", row->value("qty", 1)}, {"dot", k.plane || k.cylinder || (!k.edge && !k.point)}};
+    json m = {{"tip", js(tip)}, {"number", std::to_string(row->value("number", 0))}, {"qty", row->value("qty", 1)}, {"dot", a.dot}};
     if (list && !row->value("settled", false)) m["settle"] = {{"list", list->id}, {"numbers", rows["numbers"]}};
     if (R.notes.contains("rehinted")) m["rehinted"] = R.notes["rehinted"];
     return m;
   }
   if (!frame->error.empty()) throw Error("its view cannot be drawn: " + frame->error);
-  const Resolver R(doc, scene);
+  const Resolver R(doc, scene, frame->id);
   const Paper paper{*frame};
   const double units = per_mm(sheet);
   const Vec2 place = vec2(d.value("place", json::object()).value("text", json()));
@@ -607,8 +679,16 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     need(1, 1, "one hole");
     const design::ResolvedRef rr = R.ctx.resolve(refs[0].is_string() ? Ref::parse(refs[0].get<std::string>()).to_json() : refs[0]);
     const TopoDS_Shape body = R.ctx.node_shape(rr.node);
+    // The pick as a sub-shape of this copy of the body: a part placed by a transform is moved afresh on every call, and a
+    // sub-shape of another copy is not the same shape to this one (a callout on a placed part found no hole).
+    TopoDS_Shape picked = rr.sub;
+    if (rr.index >= 0 && !picked.IsNull()) {
+      TopTools_IndexedMapOfShape map;
+      TopExp::MapShapes(body, picked.ShapeType(), map);
+      if (rr.index < map.Extent()) picked = map(rr.index + 1);
+    }
     const auto holes = find_holes(body);
-    const int i = hole_of(holes, body, rr.sub);
+    const int i = hole_of(holes, body, picked);
     if (i < 0) throw Error("that is not a hole: pick its wall or one of its circles");
     Hole h = holes[static_cast<size_t>(i)];
     int count = 0;
@@ -616,7 +696,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     feature_values(R, rr.node, h);
     const int precision = d.value("precision", 2);
     const std::string shown = hole_callout(h, count, sheet.standard, units, [&](double v) { return format_number(v, precision, &sheet); });
-    const Vec2 c = paper(h.entry);
+    const Vec2 c = paper(drawn_at(R, rr.node, h.entry));  // on the part where an exploded view draws it
     json m = {{"shown", shown}, {"hole", h.to_json()}, {"count", count}, {"centre", js(c)}, {"r", 0}};
     if (paper.along(h.dir)) {
       m["r"] = h.outer() / 2 * frame->scale;
@@ -650,7 +730,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
       for (auto& h : find_holes(body)) {
         if (!paper.along(h.dir)) continue;
         feature_values(R, node, h);
-        found.push_back({h, frame->view(h.entry)});
+        found.push_back({h, frame->view(drawn_at(R, node, h.entry))});  // an exploded view: where its part is drawn
       }
     }
     // A letter per size (smallest first), a number per hole (top to bottom, left to right).
@@ -1206,7 +1286,7 @@ json datum_dimensions(const Document& doc, const Scene& scene, const json& args)
   if (type != "ordinate" && type != "baseline" && type != "chain") throw Error("type is ordinate, baseline or chain");
   const auto frames = layout(doc, scene, *sheet);
   const ViewFrame& frame = frame_of(frames, viewId);
-  const Resolver R(doc, scene);
+  const Resolver R(doc, scene, frame.id);
   const Paper paper{frame};
   // The view's datums: an upright edge measures across (horizontal values), a level one up and down.
   std::vector<std::string> wanted;
@@ -1271,7 +1351,9 @@ json datum_dimensions(const Document& doc, const Scene& scene, const json& args)
   return {{"ops", ops}};
 }
 
-std::vector<std::array<Vec2, 2>> cylinder_axes(const Document& doc, const Scene& scene, const ViewFrame& f, const ViewSpec& spec) {
+std::vector<std::array<Vec2, 2>> cylinder_axes(const Document& doc, const Scene& scene, const ViewFrame& f, const ViewSpec& in) {
+  ViewSpec spec = in;
+  resolve_explode(doc, scene, spec);  // an exploded view's marks on its parts where they are drawn
   struct Axis {
     Vec3 p, d;
     double r, lo, hi, turn;

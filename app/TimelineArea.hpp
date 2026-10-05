@@ -32,6 +32,7 @@ class TimelineArea : public AreaController {
   bool command(const QString& id, const SelectionContext& selection) override;
   // Before `op` (empty: the end), unless an editor is open or the design is busy (then said in the status bar): false.
   bool rollTo(const std::string& op);
+  void rollBackHere();  // timeline.rollBack: right after the marker selected on the timeline
   QToolButton* chip() const { return m_chip; }
   // The History folder's rows (benches): ids "history:<op id>", and kRollRow for the roll-back marker.
   static constexpr const char* kRollRow = "history:@rollback";
@@ -43,7 +44,7 @@ class TimelineArea : public AreaController {
  private:
   void refresh();
   void decorate(const browser::Row& row, browser::Decoration& out) const;
-  QAction *m_names = nullptr, *m_designOnly = nullptr, *m_forward = nullptr, *m_list = nullptr;
+  QAction *m_names = nullptr, *m_designOnly = nullptr, *m_forward = nullptr, *m_back = nullptr, *m_list = nullptr;
   QToolButton* m_chip = nullptr;
   std::set<std::string> m_beyond, m_tombstoned, m_suppressed;  // rows' states as of the last historyRows()
   std::map<std::string, QString> m_failing;                     // row -> its feature's error

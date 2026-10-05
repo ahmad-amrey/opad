@@ -16,7 +16,7 @@
 // OPAD_BENCH_SMART=<prefix> (TODO 11 UI-97, SmartArea; cases in tools/bench_cases/smart.py), on an imported plate with
 // four through holes Ø6 and a blind Ø6: Select similar from one hole wall selects the four walls, again the next rule
 // (every inside R3 face, the blind one too); the area's places (Remove faces under Offset face's arrow, Select similar in
-// Inspect > Results, the Edit menu and the context menu of the picks); Remove faces started on the four shows its preview
+// Inspect > Properties, the Edit menu and the context menu of the picks); Remove faces started on the four shows its preview
 // and commits through the panel path (Enter in the view) as one feature op that takes the holes away; Undo brings them
 // back. Then the body picked whole: Select similar selects its top perimeter (the view switches to edges), again the
 // bottom one, on to the upward faces (back to faces) and all holes: the modal Select by geometry's rules without the
@@ -73,10 +73,10 @@ OPAD_BENCH(OPAD_BENCH_SMART, smart) {
         require(w.statusBar()->currentMessage().startsWith(SmartArea::tr("%1 · %2 selected").arg(SmartArea::tr("Holes Ø%1 through").arg(units::compact(units::Kind::Length,6))).arg(4)),
                 "the status bar says what was selected, in the shown units: "+w.statusBar()->currentMessage().toStdString());
         trace::log("bench: smart: Select similar from one wall selected the four through holes, status \""+w.statusBar()->currentMessage()+"\" PASS");
-        w.m_ribbon->setCurrentTab(1);w.grab().save(prefix+".similar.png");  // Design > Modify, with Remove faces
+        w.m_ribbon->setCurrentTab(int(w.m_ribbon->tabIds().indexOf("design.solid")));w.grab().save(prefix+".similar.png");  // Design > Solid, with Remove faces
         {
           QAction* similar=w.action("select.similar");QToolButton* offset=nullptr;bool results=false,edit=false;
-          if(RibbonPage* page=w.m_ribbon->page("design.modify"))
+          if(RibbonPage* page=w.m_ribbon->page("design.solid"))
             for(RibbonGroup* g:page->groups())for(QToolButton* b:g->buttons())if(b->defaultAction()==w.action("design.offset_face"))offset=b;
           require(offset && offset->popupMode()==QToolButton::MenuButtonPopup && offset->menu() && offset->menu()->actions()==QList<QAction*>{w.action("design.remove_faces")},
                   "Remove faces is under Offset face's arrow");
@@ -85,11 +85,11 @@ OPAD_BENCH(OPAD_BENCH_SMART, smart) {
               const auto a=g->menu()->actions();const int at=a.indexOf(w.action("inspect.properties"));
               results=results || (at>=0 && a.indexOf(similar)>at);
             }
-          require(results,"Select similar follows Properties in Inspect > Results");
+          require(results,"Select similar follows Properties in Inspect > Properties");
           for(QMenu* m:w.menuBar()->findChildren<QMenu*>()){const auto a=m->actions();const int at=a.indexOf(w.action("edit.selecttouched"));edit=edit || (at>=0 && a.value(at+1)==similar);}
           require(edit,"Select similar follows Select touched in the Edit menu");
           require(contextEntries(w.m_viewport->selection())==QList<QAction*>({similar,w.action("design.remove_faces")}),"the context menu of picked faces offers Select similar and Remove faces after Properties");
-          trace::log("bench: smart: Remove faces under Offset face's arrow, Select similar in Inspect > Results, the Edit menu and the context menu PASS");
+          trace::log("bench: smart: Remove faces under Offset face's arrow, Select similar in Inspect > Properties, the Edit menu and the context menu PASS");
         }
         w.action("select.similar")->trigger();  // again: the next rule
         break;

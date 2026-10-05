@@ -192,6 +192,9 @@ QString stylesheet(const Tokens& t) {
                "QToolButton#ribbonTool::menu-indicator { image: none; width: 0px; }\n"
                "QToolButton#ribbonTool::menu-button { border: none; border-top-right-radius: 3px; border-bottom-right-radius: 3px; background: transparent; width: 14px; }\n"
                "QToolButton#ribbonTool::menu-button:hover { background: %4; }\n"
+               "QToolButton#ribbonTool[ribbonPrimary=\"true\"] { background: %7; border-color: %7; color: %8; font-weight: 500; }\n"
+               "QToolButton#ribbonTool[ribbonPrimary=\"true\"]:hover { background: %9; border-color: %9; }\n"
+               "QToolButton#ribbonTool[ribbonPrimary=\"true\"]:disabled { background: %10; border-color: transparent; color: %8; }\n"
                "QToolButton#ribbonGroupTitle { border: none; border-radius: 2px; background: transparent; color: %5; font-size: 10px; padding: 0 4px; }\n"
                "QToolButton#ribbonGroupTitle:hover { background: %4; color: %6; }\n"
                "QToolButton#ribbonSettings { border: 1px solid transparent; border-radius: 3px; background: transparent; }\n"
@@ -204,7 +207,9 @@ QString stylesheet(const Tokens& t) {
                "QToolButton#ribbonSelect { border: 1px solid transparent; border-radius: 3px; background: transparent; color: %6; font-size: 12px; padding: 0 6px; height: 26px; }\n"
                "QToolButton#ribbonSelect:hover, QToolButton#ribbonSelect:pressed { background: %4; color: %3; }\n"
                "QToolButton#ribbonSelect::menu-indicator { image: none; width: 0px; }\n"
-               "QFrame#ribbonSep { background: %2; max-width: 1px; min-width: 1px; margin: 12px 4px; }\n").arg(bg2, line, fg, bg3, fg3, fg2);
+               "QFrame#ribbonSep { background: %2; max-width: 1px; min-width: 1px; margin: 12px 4px; }\n")
+           .arg(bg2, line, fg, bg3, fg3, fg2, sel, onsel, css(t.sel.lighter(115)))
+           .arg(css(QColor(t.sel.red(), t.sel.green(), t.sel.blue(), 110)));
   s += QString("QWidget#segmented { border: 1px solid %1; border-radius: 3px; background: %2; }\n"
                "QToolButton#segment { height: 26px; padding: 0 10px; border: none; border-radius: 2px; color: %3; background: transparent; }\n"
                "QToolButton#segment:hover { background: %4; }\n"

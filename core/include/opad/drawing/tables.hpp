@@ -48,10 +48,12 @@ const json& parts_list_columns();
 json plan_revision_table(const Scene& scene, const json& args);
 
 // Auto-balloon (args: sheet, view, list, qty, all): a balloon for every row of the parts list that the view shows and that
-// has none there yet (all: every row again), on the longest edge of the part that the view shows whole, placed in columns
-// and rows around the view, spread so that none overlap and their leaders do not cross. {"ops": balloon records, "list":
-// its id, "create": a parts list record when the drawing has none (the balloons then number from it), "numbers": the list's
-// settled numbers when they changed}. Projects the view: workers.
+// has none there yet (all: every row again), on one of the part's longest edges the view shows, beside the view on one of
+// its sides: the edge and side whose leader ends where the view shows the edge and runs across the fewest lines (another
+// part's above all, an exploded view's parts are where it draws them) and sits inside the frame, off the title block, the
+// other views, the tables and the balloons there, then the shortest; spread along each side so that none overlap.
+// {"ops": balloon records, "list": its id, "create": a parts list record when the drawing has none (the balloons then
+// number from it), "numbers": the list's settled numbers when they changed}. Projects the view: workers.
 json plan_balloons(const Document& doc, const Scene& scene, const json& args);
 
 // The issues of the sheet's drawing (the sheet's own when it has no drawing), oldest first.
@@ -70,9 +72,12 @@ design::Plan issue_commit_plan(const Scene& scene, json op, const json& edits, s
 // The scene as it will be once `op` (an issue planned above) is appended: title blocks and revision tables show it, so the
 // PDF written before the op is what the drawing then shows.
 Scene with_issue(const Scene& scene, const json& op);
-// A view's linework as a 2D BREP compound in view coordinates (model mm): visible, tangent and hidden edges, each a compound.
+// A view's linework as a 2D BREP compound in view coordinates (model mm): visible, thin and hidden edges, each a compound,
+// then a section's cut faces if it has any. The thin compound holds the tangent and seam edges themselves, followed by
+// two compounds of its own: an exploded view's trail lines, then the visible break lines (a build that reads every edge
+// of it as tangent still draws them all).
 std::string linework_brep(const ViewGeometry& g);
-// That linework back as the view's curves (sharp, tangent, hidden; a polyline comes back as its segments).
+// That linework back as the view's curves (sharp, tangent, trail, break, hidden; a polyline comes back as its segments).
 ViewGeometry frozen_geometry(const TopoDS_Shape& lines);
 // What issuing the sheet's drawing with frozen linework adds to the body store, in bytes: the linework of every view that
 // the store does not hold yet (a view unchanged since the last issue adds nothing). Projects every view (cached): workers.

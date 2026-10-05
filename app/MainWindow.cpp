@@ -49,6 +49,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   createAreas();
   buildMenus();
   buildCentral();
+  buildSnapCommands();
   buildRibbon();
   buildDocks();
   buildStatusBar();
@@ -92,6 +93,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     // view of that document; a drawing viewed next keeps it, loadFinished turns it on for one), what the status said was
     // under the pointer (the next frame says it again).
     if (replaced && action("view.2d")->isChecked() && !viewingDrawing()) setAutoTwoD(false);
+    if (replaced && !m_doc->loading && !viewingDrawing()) followDrawing(false);  // Ctrl+N or a close: out of Drafting
     if (replaced && m_autoEdges && !m_loadJob) {  // Ctrl+N or a close (a file opened sets its own in openPath)
       m_autoEdges = false;
       m_viewport->setSelectionFilter(Viewport::SelFilter::Body);
@@ -118,6 +120,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     }
     const bool viewing = drawing && m_doc->browse;
     if (viewing && !action("view.2d")->isChecked()) setAutoTwoD(true);
+    followDrawing(viewing);  // a drawing file viewed: Drafting (UI-104); anything else: back from it
   });
   connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, [this] { m_viewport->home(); });
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
@@ -425,6 +428,10 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
         forward->trigger();
         statusBar()->showMessage(tr("Rolled forward to the end of the timeline: the change is added there."), 6000);
       }
+    }
+    if (switchesToDesign(id)) {  // E in Review: its tools and panel are Design's (UI-104), with what was picked for it
+      QScopedValueRollback<bool> command(m_commandSwitch, true);
+      setWorkspace("design");
     }
     QScopedValueRollback<QString> running(m_runningCommand, id);
     guarded(fn);

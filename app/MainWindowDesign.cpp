@@ -6,15 +6,19 @@
 #include <QMap>
 #include <QMenu>
 #include <QMessageBox>
+#include <QScopedValueRollback>
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "KeyText.hpp"
+#include "opad/design/drawing_sketch.hpp"
 #include "opad/design/feature.hpp"
 
 // ---------------------------------------------------------------- design workspace
@@ -22,6 +26,14 @@
 // only live while a sketch is open, when the ribbon shows the contextual Sketch tab set.
 void MainWindow::buildDesignActions() {
   addAction("design.convertDrawing",tr("Drawing to sketch"),"drawing",QKeySequence(),[this] { drawingToSketch(); });
+  {
+    CommandInfo draw{"design.drawOnDrawing", tr("Draw on drawing"), "sketch"};  // Drafting > Home > Draw (UI-104)
+    draw.keywords = {tr("sketch on drawing"), tr("draw lines"), "DXF", "DWG", tr("drafting")};
+    draw.group = tr("Drafting");
+    draw.editsDocument = isEditAction(draw.id);  // a viewed drawing file asks to be saved as an OPAD document (or an unsaved copy) first
+    draw.enabledWhen = [](const CommandContext& c) { return c.document && !c.sketching; };
+    addCommand(draw, [this] { drawOnDrawing(); });
+  }
   addAction("design.sketch", tr("New sketch"), "sketch", QKeySequence(), [this] { m_design->startSketch(); });
   static const std::map<std::string, const char*> kKeys = {{"extrude", "E"}, {"offset_face", "Q"}, {"move", "M"}};
   for (const auto& spec : opad::design::feature_specs()) {
@@ -39,6 +51,21 @@ void MainWindow::buildDesignActions() {
     const opad::Op* op = id.empty() ? nullptr : m_doc->doc.find_op(id);
     if (!op || (op->type != "feature" && op->type != "sketch")) throw opad::UserHint("Select a feature or a sketch on the timeline first (or double-click it).", true);
     m_design->editOp(id);
+  });
+  // Solid > History (UI-104): the marker menu's Suppress as a command, for the feature selected on the timeline, else the
+  // one that made the selected body; a suppressed one is brought back.
+  addAction("design.suppress", tr("Suppress"), "hide", QKeySequence(), [this] {
+    std::string id = m_timeline->currentOp();
+    if (!m_doc->scene.feature(id)) {
+      const auto ids = currentNodeIds();
+      const opad::Node* n = ids.size() == 1 ? m_doc->node(ids.front()) : nullptr;
+      id = n && n->kind == opad::Node::Kind::Body ? n->source_op : std::string();
+    }
+    const opad::Feature* f = m_doc->scene.feature(id);
+    if (!f || std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), id) != m_doc->scene.deleted_ops.end())
+      throw opad::UserHint("Select a feature on the timeline first, or a body it made.", true);
+    if (m_design->busy()) return;
+    m_design->setSuppressed(id, !f->suppressed);
   });
   addAction("design.colour", tr("Colour"), "shaded", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
@@ -92,10 +119,15 @@ void MainWindow::buildDesignActions() {
     auto* a=addAction(id,tool.label,icon,QKeySequence(keys.value(tool.id)),[this,id=tool.id]{m_design->sketch()->setTool(id);},true);
     a->setProperty("sketchTool",tool.id);tools->addAction(a);
   }
-  for(const auto& group:QList<QPair<QString,QString>>{{"Create",tr("Create")},{"Modify",tr("Modify")},{"Constrain",tr("Constrain")},{"Reference",tr("Reference")},{"Files",tr("Images and files")}}) {
-    auto* a=addAction("sketch.more"+group.first,group.first=="Files"?group.second:tr("More tools"),group.first=="Files"?"image":"more",{},[]{});
-    auto* menu=new QMenu(this);for(const auto& tool:registry)if(tool.group==group.second)menu->addAction(action("sketch."+QString(tool.id).replace(':','.')));
-    a->setMenu(menu);
+  // Every tool of a group, in the menu bar's Sketch menu (the ribbon's Sketch tab has them in its groups' menus); run by
+  // name (the palette, a key of one's own) the list opens at the pointer.
+  for(const auto& [id,group,label]:std::vector<std::tuple<QString,QString,QString>>{{"Create",tr("Create"),tr("More create tools")},{"Modify",tr("Modify"),tr("More modify tools")},
+        {"Constrain",tr("Constrain"),tr("More constraints")},{"Reference",tr("Reference"),tr("More reference tools")},{"Files",tr("Images and files"),tr("Images and files")}}) {
+    auto* menu=new QMenu(this);menu->setObjectName(id.toLower());
+    for(const auto& tool:registry)if(tool.group==group)menu->addAction(action("sketch."+QString(tool.id).replace(':','.')));
+    CommandInfo info{"sketch.more"+id,label,id=="Files"?QString("image"):QString("more")};
+    info.editsDocument=isEditAction(info.id);
+    menuCommand(info,menu);
   }
   int page=1;
   const QMap<QString,QString> pageIcons{{"selectionOptions","cursor"},{"constraints","list"},{"snaps","magnet"}};
@@ -171,17 +203,56 @@ void MainWindow::buildDesign() {
   updateDesignState();
 }
 
-// Sketch mode swaps the ribbon to its own tab set and back; tool buttons follow the editor's tool.
+// Draw on drawing (Drafting > Home, UI-104 phase 1): a new sketch on the drawing's own plane and origin (the layers' frame,
+// design::drawing_frame, as Drawing to sketch takes it), drawn with the sketch tools over the drawing; the Sketch tab comes
+// first in Drafting. The selected drawing's, else the one drawing there is; drawings in several planes ask for a pick.
+void MainWindow::drawOnDrawing() {
+  if (!m_doc->hasDocument || m_doc->browse || m_design->busy() || m_design->sketchActive()) return;
+  std::set<std::string> chosen;  // the drawings (import ops) of what is selected
+  for (const auto& id : currentNodeIds())
+    for (const auto& body : m_doc->scene.bodies_under(id))
+      if (const opad::Node* n = m_doc->scene.node(body); n && n->representation == "drawing2d") chosen.insert(n->source_op);
+  std::vector<opad::design::DrawingLayer> layers;
+  for (const auto& id : m_doc->scene.all_bodies()) {
+    const opad::Node* n = m_doc->scene.node(id);
+    if (n && n->representation == "drawing2d" && n->raster.is_null() && (chosen.empty() || chosen.count(n->source_op))) layers.push_back({id, false});
+  }
+  if (layers.empty()) throw opad::UserHint("Open or import a 2D drawing first: the sketch is drawn on its plane.");
+  opad::Frame frame;
+  try {
+    frame = opad::design::drawing_frame(m_doc->scene, layers);
+  } catch (const std::exception&) {
+    throw opad::UserHint("The drawings here lie in different planes: select a layer of the one to draw on.", true);
+  }
+  cancelTool();
+  m_design->startSketchOn(opad::json{{"frame", frame.to_json()}}, frame);
+}
+
+// Sketch mode puts its Sketch tab first in Design (UI-104: the Design tabs stay beside it) and takes it away again, back in
+// the workspace the sketch was started from; in Drafting (Draw on drawing, a drawing's sketch edited there) the tab comes
+// first in Drafting instead. Tool buttons follow the editor's tool.
 void MainWindow::updateDesignState() {
   const bool sketching = m_design->sketchActive();
   const bool has = m_doc->hasDocument;  // viewer mode too: the tools say that the file has to be saved first
   m_timeline->setEditingOp(m_design->editingOp());
-  if (sketching && m_ribbon->workspace() != m_sketchWorkspace) {
-    m_workspaceBeforeSketch = m_ribbon->workspace();
-    m_ribbon->setWorkspace(m_sketchWorkspace);
-  } else if (!sketching && m_ribbon->workspace() == m_sketchWorkspace) {
-    m_ribbon->setWorkspace(m_workspaceBeforeSketch);
+  if (sketching && m_sketchTab.isEmpty()) {
+    const bool drafting = m_workspaceId == "drafting" && m_ribbon->contextualTabs(int(m_workspaceIds.indexOf("drafting"))).contains("drafting.sketch");
+    m_sketchTab = drafting ? "drafting.sketch" : "design.sketch";
+    m_workspaceBeforeSketch = m_workspaceId;
+    if (!drafting) {
+      QScopedValueRollback<bool> automatic(m_automaticSwitch, true);  // not where the next start opens
+      setWorkspace("design");
+    }
+    m_ribbon->setContextualTab(m_sketchTab, true);
+  } else if (!sketching && !m_sketchTab.isEmpty()) {
+    m_ribbon->setContextualTab(std::exchange(m_sketchTab, QString()), false);
+    if (!m_workspaceBeforeSketch.isEmpty() && m_workspaceBeforeSketch != m_workspaceId) {
+      QScopedValueRollback<bool> automatic(m_automaticSwitch, true);
+      setWorkspace(m_workspaceBeforeSketch);
+    }
+    m_workspaceBeforeSketch.clear();
   }
+  if (m_sketchMenu) m_sketchMenu->menuAction()->setVisible(sketching);
   const QString tool = sketching ? m_design->sketch()->tool() : QString();
   shortcuts::suspendOutsideSketch(m_actions, sketching);  // 5/6/7 and the filters' digits never act in a sketch (UI-16)
   for (QAction* a : m_actions) {

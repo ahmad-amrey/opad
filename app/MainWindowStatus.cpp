@@ -13,6 +13,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <memory>
+#include <vector>
 
 #include "CoordinateReadout.hpp"
 #include "I18n.hpp"
@@ -50,6 +51,46 @@ class StatusText : public QLabel {
 // Left to right: the path and the git chip, then the prompt (what the running tool waits for, or a message for its
 // seconds), the hover readout (what is under the mouse), the progress strip, the drafting toggles, the cursor's
 // coordinates, the selection, the units chip. The prompt and the hover keep their room while a job runs (UI-109).
+// The drafting toggles (UI-112 adds Ortho and Polar, the sketch's line directions): each a command with its key and its
+// setting, made before the ribbon so Drafting's Snap group and View > Snapping hold them; buildStatusBar adds their buttons.
+const std::vector<MainWindow::SnapToggle>& MainWindow::snapToggles() {
+  static const std::vector<SnapToggle> toggles{{"view.orthoSnap", QT_TR_NOOP("Ortho"), "orthoLines", "F8", "view/orthoSnap", false},
+                                               {"view.polarSnap", QT_TR_NOOP("Polar"), "polar", "F10", "sketch/snap/angle", true},
+                                               {"view.extensions", QT_TR_NOOP("Extensions"), "extensions", "F11", "view/extensions", true},
+                                               {"view.tracking", QT_TR_NOOP("Tracking"), "tracking", "F12", "view/tracking", true},
+                                               {"view.gridSnap", QT_TR_NOOP("Grid snapping"), "grid", "F9", "view/gridSnap", false}};
+  return toggles;
+}
+
+void MainWindow::buildSnapCommands() {
+  for(const SnapToggle& spec : snapToggles()) {
+    CommandInfo info{spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key)};info.checkable=true;
+    if(info.id=="view.orthoSnap")info.keywords={tr("orthogonal"),tr("horizontal vertical lock")};
+    auto* a=addCommand(info,[] {});
+    a->setChecked(m_settings.value(spec.setting,spec.defaultOn).toBool());
+    auto following=std::make_shared<bool>(false);  // set from another face, which has said so already
+    auto apply=[this,spec,following](bool on) {
+      m_settings.setValue(spec.setting,on);
+      if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
+      else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
+      else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);
+      // Its other faces (Preferences, the sketch panel's snaps) and the open sketch, which reads them again on it (UI-27).
+      if(!*following) preferences::changed(spec.setting);
+    };
+    connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
+    connect(preferences::notifier(),&preferences::Notifier::changed,a,[a,spec,following](const QString& key) {  // set from one of them
+      if(!(key.isEmpty() || key==spec.setting)) return;
+      *following=true;
+      a->setChecked(QSettings().value(spec.setting,spec.defaultOn).toBool());
+      *following=false;
+    });
+    if (m_snappingMenu) {  // View > Snapping: after Object snap (F3)
+      m_snappingMenu->addAction(a);
+      m_commands.setMenuPath(spec.id, "view/snapping");
+    }
+  }
+}
+
 void MainWindow::buildStatusBar() {
   setStatusBar(new StatusBar(this));  // made before anything asks for statusBar(): it paints no message (the prompt shows it)
   const Tokens& t = theme::current();
@@ -89,34 +130,9 @@ void MainWindow::buildStatusBar() {
     m_activityDot->setAccessibleName(m_activityDot->toolTip());
   });
   statusBar()->addPermanentWidget(m_activityDot);
-  // The drafting toggles (UI-112 adds Ortho and Polar, the sketch's line directions): each a command with its key, its
-  // setting, and a right-click menu of its quick settings (toggleMenu).
-  struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };
-  for(const auto& spec : {Toggle{"view.orthoSnap","Ortho","orthoLines","F8","view/orthoSnap",false},
-      Toggle{"view.polarSnap","Polar","polar","F10","sketch/snap/angle",true},
-      Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
-      Toggle{"view.tracking","Tracking","tracking","F12","view/tracking",true},
-      Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false}}) {
-    CommandInfo info{spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key)};info.checkable=true;
-    if(info.id=="view.orthoSnap")info.keywords={tr("orthogonal"),tr("horizontal vertical lock")};
-    auto* a=addCommand(info,[] {});
-    a->setChecked(m_settings.value(spec.setting,spec.defaultOn).toBool());
-    auto following=std::make_shared<bool>(false);  // set from another face, which has said so already
-    auto apply=[this,spec,following](bool on) {
-      m_settings.setValue(spec.setting,on);
-      if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
-      else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
-      else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);
-      // Its other faces (Preferences, the sketch panel's snaps) and the open sketch, which reads them again on it (UI-27).
-      if(!*following) preferences::changed(spec.setting);
-    };
-    connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
-    connect(preferences::notifier(),&preferences::Notifier::changed,a,[a,spec,following](const QString& key) {  // set from one of them
-      if(!(key.isEmpty() || key==spec.setting)) return;
-      *following=true;
-      a->setChecked(QSettings().value(spec.setting,spec.defaultOn).toBool());
-      *following=false;
-    });
+  // The drafting toggles' buttons (their commands: buildSnapCommands), each with a right-click menu of its quick settings.
+  for (const SnapToggle& spec : snapToggles()) {
+    QAction* a = action(spec.id);
     auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setAccessibleName(tr(spec.label)); button->setIconSize({18,18}); button->setFixedSize(30,26);
     auto paint=[button,a,spec] {

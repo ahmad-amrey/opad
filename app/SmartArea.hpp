@@ -26,7 +26,6 @@ class SmartArea : public AreaController {
 
   void buildActions() override;
   void menus(QMenuBar* bar, const QMap<QString, QMenu*>& menus) override;
-  void ribbon(RibbonLayout& layout) override;
   void contextMenu(const SelectionContext& selection, QMenu& menu) override;
 
  private:

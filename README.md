@@ -75,8 +75,8 @@ intended one.
 
 `validate` also checks interference (overlapping pairs with their volume and box, or pairs closer than a clearance;
 bounding boxes first, exact Booleans only on candidates) and 3D printing (overhangs against a build direction,
-thin walls, thin features, build-plate contact). The desktop's Review workspace has both as Interference and Print
-check, listing findings in the tool panel; clicking one highlights the bodies and their overlap, or the faces.
+thin walls, thin features, build-plate contact). The desktop's Inspect tab (Review and Design) has both as Interference
+and Print check, listing findings in the tool panel; clicking one highlights the bodies and their overlap, or the faces.
 
 Live write tools take `verbosity: "compact"` for replies that list only what that command changed.
 
@@ -127,8 +127,9 @@ file (the header carries the document's last change and the file's name, assembl
 
 An `interference` feature keeps an interference and clearance check in the timeline: its report (pairs, overlap
 volumes, distances) is stored with the design and computed again whenever its bodies change, and with `fail_on` a
-clash is the feature's error, so the edit that causes it says so. It sits in Design > Construct, next to the planes
-and axes.
+clash is the feature's error, so the edit that causes it says so. In the desktop program it is Inspect > Interference's
+Keep as check: the feature's panel in Design with the bodies and clearance just checked, stored when OK is pressed (one
+Interference command).
 
 A feature can be suppressed by an expression over the parameters (`suppress_if: "joints < 3"`): the design walk
 evaluates it, keeps the answer in the feature's result for replay, and regenerates when a parameter flips it; the
@@ -272,13 +273,23 @@ The timeline keeps operation markers at a readable size for long histories. Scro
 mouse wheel, trackpad or horizontal scrollbar; Left/Right steps through operations and
 Home/End jumps to the first/last marker. Selecting an operation scrolls it into view.
 
-Workspace shortcuts are Ctrl+1/2 (Command+1/2 on macOS); standard views use Ctrl+Alt+1 through 7.
+Workspace shortcuts are Ctrl+1 Review, Ctrl+2 Design, Ctrl+3 Drawings and Ctrl+4 Drafting (Command on macOS); standard
+views use Ctrl+Alt+1 through 7. Review looks, measures, marks up, compares and shares (View, Inspect, Markup, Compare,
+Share); Design models (Solid, Assemble, Construct, Inspect, Insert, View), and a sketch adds its Sketch tab in front of
+them until it is finished; a viewed DXF, DWG or SVG file comes into Drafting (Draw on drawing: a sketch on the drawing's
+plane with the Sketch tab first in Drafting; Drawing to sketch, layers, measuring, plot), and coming there by itself is
+not remembered for the next start. A Design command started from Review (E for Extrude, Fillet on edges picked there)
+switches to Design with those picks. Solid > History has Edit feature with Suppress and Roll back to here under its
+arrow (for the marker selected on the timeline); Construct has Origin planes and axes (shown over a model, picked only
+in New sketch's plane step); the View tabs have Named views, Rendering and Panels dropdowns. The menu bar: File, Edit,
+View, Insert (Import, Link as asset, KiCad, canvases and their submenus), Inspect (measuring, notes, Compare), Design,
+Sketch (while sketching), Version, Tools (AI integration, Agent activity, File types), Help.
 Annotations are created and edited inline, with type selection and comment threads. Set your display
 name in Settings to identify new annotations, comments and design operations.
 Drag a note's title to move its card without changing the document; the card stays attached to its
 object at that offset while you orbit and pan. The Annotations panel filters by
 type across both the panel and viewport; Delete removes a note and remains undoable.
-Review > Annotate > **Note** (N) and **Hand drawing** (Shift+N) work like the guided measuring tools: the
+Review > Markup > **Note** (N) and **Hand drawing** (Shift+N) work like the guided measuring tools: the
 prompt bar asks for a body, face, edge or vertex (1-4 changes the selection filter; a single selected
 object is taken as it is), the target is tinted in the selection blue inside a dashed outline under a
 badge, and a floating panel holds the type, the pen and the text. Hand drawing: each stroke lies on the
@@ -396,17 +407,24 @@ Never cut in section views); detail views enlarge a
 circle of their parent, auxiliary views look square to a slanted edge, and any view can be cropped to a box or broken to
 shorten a long part (dimensions across a break keep their true value; break lines ruled with a zigzag or freehand). A
 broken-out section opens up a view within a smooth closed outline down to a depth picked in a view beside it (`breakouts`
-on the view): its floor hatched, a thin break line where it ends over the part.
+on the view): its floor hatched, a thin break line where it ends over the part. An exploded view (`--explode <view op>`,
+Drawings > Views > Exploded view) draws the parts where a saved exploded view puts them, seen from its camera, with thin
+phantom trail lines from where they sit in the assembly (left out where a part hides them); projected views, balloons,
+dimensions, hole callouts and hole tables follow it, and it follows the exploded view when that is updated. A base view
+already placed switches between assembled and a saved exploded view from its own side (its context menu's View state,
+`sheet_edit` `explode`), and Auto-balloon prefers an exploded view when none is selected.
 
 Annotations are `sheet_item` kinds measured from the model and kept with what they showed: dimensions (with precision,
 tolerances and fits), centre marks and lines, hole callouts read from the hole's own faces (depth or THRU, counterbores,
 countersinks, "4×" for equal holes) and hole tables, datum symbols, feature control frames, surface texture symbols and
 ordinate, baseline or chain dimension sets (`sheet_datum_dimensions` makes them from a view's datums). A parts list
 numbers the drawing's bill of materials and keeps the numbers settled; balloons show their part's number
-(`sheet_balloons` balloons a whole view at once). `sheet_issue` releases a revision: the values, the views' linework
+(`sheet_balloons` balloons a whole view at once, each leader to an edge of its part that the view shows, from the side
+of the view where it crosses the fewest other lines, off the title block, other views and tables). `sheet_issue` releases a revision: the values, the views' linework
 and, with `out`, a PDF and its SHA-256 are kept, the revision table and title block show it, and the sheet can later
 be exported exactly as issued; in the app Issue revision… also saves, commits and tags it in git. Print… (Ctrl+Alt+P)
-prints the sheets at actual size or fitted to the printer's paper. In the Drawings workspace section, detail and
+prints the sheets at actual size or fitted to the printer's paper; **Publish PDF…** (File, Review > Share) writes a
+drawing's sheets as one PDF from any workspace. In the Drawings workspace section, detail and
 auxiliary views, crops, breaks and broken-out sections are drawn with the mouse on the selected view (Views group, or the view's menu); while a tool runs its value card beside the
 pointer takes the numbers by keyboard (a section's or auxiliary view's gap, a detail's radius and scale, a crop's width
 and height, a break's length, a broken-out section's depth below the part's front), Tab to the next, Enter to take them.
@@ -563,7 +581,7 @@ Builds older than this tolerant loader refuse such files with "unknown op type";
 
 ### Version control in the desktop program
 
-- **Version control panel** (Alt+4, File > Version control, the ribbon's Versions and History groups, the git chip's
+- **Version control panel** (Alt+4, the Version menu, Review > Compare > Versions, the git chip's
   menu): the branch against its remote, the document's state, a merge in progress (Abort, Commit the merge), and
   History / Branches pages. **Commit…** saves first, suggests the message from what changed, asks for your name once,
   offers to amend while the last commit is not pushed and to push after, and offers **Pack** when loose objects pile
@@ -571,15 +589,16 @@ Builds older than this tolerant loader refuse such files with "unknown op type";
   **Pull** fetches, then shows the incoming commits and what the merge does to the document (conflicts, design changed
   on both sides, **Preview in Compare**) before it merges, and offers **Regenerate** afterwards. **Fetch in the
   background** (on by default, every 10 minutes, never asking for a sign-in) keeps the chip's ↓ count current; turn it
-  off in File > Version control or the chip's menu. Branches are switched (unsaved and uncommitted changes are asked
+  off in the Version menu or the chip's menu. Branches are switched (unsaved and uncommitted changes are asked
   about first), created here or from a commit, merged with the same preview and deleted (unmerged ones are asked about
   twice). A commit of the history can be compared with this session or with the commit before it, opened read-only in
   another window, restored as new changes (one undo step) or branched from.
-- **Resolve conflicts…** (the toast after a merge that stopped, the panel's merge bar, File > Version control, the
+- **Resolve conflicts…** (the toast after a merge that stopped, the panel's merge bar, the Version menu, the
   chip, and the bar over the view when git wrote conflict markers into the file): lists what both sides changed, with
   mine or theirs to pick for each, all mine, all theirs, or a whole side; the result is written, added to git and opened,
   then Commit… finishes the merge.
-- **Compare versions…** (File, Inspect > Versions, the chip; `opad --compare a.opad b.opad`, `git difftool -t opad`): A
+- **Compare versions…** (the Version and Inspect menus, Review > Compare, the chip; `opad --compare a.opad b.opad`,
+  `git difftool -t opad`; **Compare with a file…** under its arrow): A
   and B picked from this session, the saved file, HEAD and the file's commits, recovery snapshots or another file;
   B's bodies tinted added / modified / moved over A's ghosts, overlay or side by side, ] and [ step through the
   changes.
@@ -588,7 +607,7 @@ Builds older than this tolerant loader refuse such files with "unknown op type";
   file's changes, then yours), **Reload…**, **Save as…** or **Overwrite…** (asked first). A rewritten history, another
   document, conflict markers or a deleted file get their own bar, and Save never writes over a file that changed on disk.
   The bar's buttons are reachable with Tab; Enter presses one, Esc cancels or closes it.
-- **Recovery** lists what each snapshot holds and compares it with its file as it is now: **Restore into file** (the
+- **Recovery** (File > Recover documents…, also Review > Compare and the gear menu) lists what each snapshot holds and compares it with its file as it is now: **Restore into file** (the
   changes come back unsaved, after the file's newer ones), **Merge into current** (one undo step), **Restore as copy**,
   **Compare** and **Discard**. **Show unsaved changes** (also **Review changes…** in the unsaved-changes question)
   compares the session with its saved file.

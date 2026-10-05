@@ -3,7 +3,8 @@
 // merge driver never takes two people's sheets, views or dimensions for one change:
 //   sheet       name, drawing, size {preset, w, h} (paper mm), standard iso|asme, projection first|third, scale "1:2",
 //               units, values (title block fields), template (embedded, its geometry a body key)
-//   sheet_view  sheet, name, kind base|projected|section|detail|auxiliary; base: source {nodes|"all", hide}, orient
+//   sheet_view  sheet, name, kind base|projected|section|detail|auxiliary; base: source {nodes|"all", hide, explode {view:
+//               a view op with an explode} (UI-85: the parts drawn where it puts them, with trail lines)}, orient
 //               {preset} | {dir, up} | {view: bookmark op}, at [x, y] (paper mm of the view's centre), scale "sheet"|"1:5",
 //               style {hidden, tangent show|thin|hide, silhouettes, quality}; projected: parent, side (left right top
 //               bottom or a corner), gap (paper mm between the frames), align false + at to break the alignment;

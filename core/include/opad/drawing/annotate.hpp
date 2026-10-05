@@ -18,6 +18,7 @@
 //                 result {values, shown}
 //   parts_list, balloon, revision_table, issue: tables.hpp (UI-84)
 // Places are paper mm from the item's view's centre. A build that does not know a kind keeps the record and reports it.
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -56,6 +57,18 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
 void draw_item(Display& d, const Sheet& sheet, const json& def, const json& measured, Vec2 origin, const DimStyle& style = {});
 // The result an item keeps (what it showed when it was made), from its measure; null for kinds without one.
 json item_result(const json& def, const json& measured);
+// Where a balloon on a part's face, edge or vertex ends its leader, as measure_item draws it (paper mm from the view's
+// centre, where the frame's view draws the part: an exploded view's apart): the reference's point (a circle's start
+// when it is not seen along its axis), or on a circle seen along its axis the point facing the balloon (round).
+struct BalloonAnchor {
+  Vec2 tip{0, 0}, centre{0, 0};  // centre, r: the circle of a round one
+  double r = 0;
+  bool round = false, dot = false;  // dot: on a surface (a dot ends the leader, not an arrow)
+  std::string node;
+  Vec2 toward(Vec2 place) const;  // the leader's end for a balloon at place
+};
+// One per reference, resolved once for them all; empty where one cannot be resolved. Workers: resolves references.
+std::vector<std::optional<BalloonAnchor>> balloon_anchors(const Document& doc, const Scene& scene, const ViewFrame& frame, const std::vector<json>& refs);
 
 // References as a sheet item keeps them (with hints; a centre reference as its circle with the aspect "center"); aspects:
 // per reference, start | end | mid | center. Throws for a body that does not exist.
