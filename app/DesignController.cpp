@@ -28,7 +28,9 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <algorithm>
 #include <atomic>
+#include <functional>
 
 #include "CommandHelp.hpp"
 #include "I18n.hpp"
@@ -1011,6 +1013,42 @@ void DesignController::refreshPlanCopies() {
     m_planScene = std::make_shared<const opad::Scene>(m_doc->scene);
     m_planStamp = stamp_now;
   }
+}
+
+bool DesignController::browserPicked(const std::vector<std::string>& ids) {
+  if (m_pickPlane || !featureActive() || ids.empty()) return false;
+  const QString name = m_form->activeInput();
+  const InputSpec* in = m_form->input(name);
+  if (!in || in->type != "bodies") return false;
+  std::vector<std::string> bodies;
+  std::function<void(const std::string&)> collect = [&](const std::string& id) {
+    const opad::Node* n = m_doc->node(id);
+    if (!n) return;
+    if (n->kind == opad::Node::Kind::Body) {
+      if (std::find(bodies.begin(), bodies.end(), id) == bodies.end()) bodies.push_back(id);
+      return;
+    }
+    for (const auto& child : n->children) collect(child);
+  };
+  for (const auto& id : ids) collect(id);
+  if (bodies.empty()) return false;  // a sketch or an area's row: not a body pick
+  if (in->max_count > 0 && static_cast<int>(bodies.size()) > in->max_count) bodies.resize(size_t(in->max_count));
+  opad::json picks = opad::json::array();
+  for (const auto& body : bodies) {
+    opad::Ref r;
+    r.body = body;
+    picks.push_back(pickToJson(r));
+  }
+  const opad::json had = m_form->picks(name);
+  const bool first = had.is_null() || (had.is_array() && had.empty());
+  m_form->setPicks(name, picks);
+  m_nothingToPick.clear();
+  syncSelectionToInput();  // the view shows the picks
+  schedulePreview();
+  if (in->max_count > 0 && static_cast<int>(picks.size()) == in->max_count) m_form->activateNextPick();
+  else if (in->advance && first) m_form->activateNextPick();
+  refreshRoute();
+  return true;
 }
 
 void DesignController::viewportSelectionChanged() {

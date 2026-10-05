@@ -101,4 +101,7 @@ CASES = [
     # at the top, the open rows, the selection and the current row unchanged; a rebuild keeps them too; with the History
     # list on (a row added above on each change) the row at the top stays.
     ("browser-scroll", "empty", {"OPAD_BENCH_BROWSER_SCROLL": "1"}),
+    # The browser to pick and rename: a component renamed in its row shows its name, Rename on a component chosen there
+    # renames it (not its bodies), Move's Bodies input takes a component row (every body under it) or a body row.
+    ("browser-pick", "empty", {"OPAD_BENCH_BROWSER_PICK": "1"}),
 ]

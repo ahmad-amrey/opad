@@ -657,14 +657,15 @@ bool BrowserPanel::updateRows(const std::vector<std::string>& ids) {
       name = QString::fromStdString(n->name);
       const QString state = stateText(*n);
       if (it->data(0, Qt::AccessibleDescriptionRole).toString() != state) it->setData(0, Qt::AccessibleDescriptionRole, state);
-      if (it->text(0) != name) it->setToolTip(0, QString("%1\n%2").arg(name, QString::fromStdString(id)));
+      if (it->data(0, kNameRole).toString() != name) it->setToolTip(0, QString("%1\n%2").arg(name, QString::fromStdString(id)));
     } else if (id == m_editedSketch) {
       continue;  // its row says "(editing)" (setEditedSketch)
     } else if (const opad::SketchItem* sketch = m_doc->scene.sketch(id)) {
       name = QString::fromStdString(sketch->name);
-      if (it->text(0) != name) it->setToolTip(0, sketch->error.empty() ? tr("%1\nDouble-click to edit").arg(name) : QString::fromStdString(sketch->error));
+      if (it->data(0, kNameRole).toString() != name) it->setToolTip(0, sketch->error.empty() ? tr("%1\nDouble-click to edit").arg(name) : QString::fromStdString(sketch->error));
     }
-    if (it->text(0) != name) {
+    // The name drawn is kNameRole: a rename typed into the row already changed its text, not what is drawn.
+    if (it->text(0) != name || it->data(0, kNameRole).toString() != name) {
       it->setText(0, name);
       it->setData(0, kNameRole, name);
     }

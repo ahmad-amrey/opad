@@ -79,6 +79,10 @@ class DesignController : public QObject {
   bool previewing() const { return m_planJob || m_previewTimer.isActive() || m_previewPending; }  // a preview being planned (benches: wait for it)
   bool ownsSelection() const { return featureActive() || m_pickPlane; }  // the viewport's picks belong to a design input
   void viewportSelectionChanged();
+  // Rows clicked in the browser while a feature's bodies input takes picks: those bodies, a component's every body under it
+  // (its rows select in the view without a click there, so viewportSelectionChanged never sees them). False: not for an
+  // input, the browser selects as usual.
+  bool browserPicked(const std::vector<std::string>& ids);
   bool escape();  // Esc: leaves the plane pick or the feature; false when there was nothing to leave
   bool undoPick();  // Ctrl+Z in a feature's panel: takes back the last pick; false (and says why) when there is none
   void bench();   // OPAD_BENCH_DESIGN

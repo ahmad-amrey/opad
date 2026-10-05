@@ -41,6 +41,18 @@ std::vector<std::string> MainWindow::currentNodeIds() const {
   std::vector<std::string> ids;
   for (const auto& r : m_viewport->selection())
     if (r.kind != opad::Ref::Kind::Point && std::find(ids.begin(), ids.end(), r.body) == ids.end()) ids.push_back(r.body);
+  // A component chosen in the browser shows as its bodies selected in the view: Rename, Hide, Delete ... are for the
+  // component, not for the bodies under it (renaming it renamed its parts, numbered).
+  const std::vector<std::string> rows = m_browser->selectedIds();
+  auto under = [this, &rows](std::string id) {
+    for (int depth = 0; !id.empty() && depth < 256; ++depth) {
+      if (std::find(rows.begin(), rows.end(), id) != rows.end()) return true;
+      const opad::Node* n = m_doc->node(id);
+      id = n ? n->parent : std::string();
+    }
+    return false;
+  };
+  if (!rows.empty() && std::all_of(ids.begin(), ids.end(), under)) ids = rows;
   if (ids.empty()) ids = m_browser->selectedIds();
   ids.erase(std::remove_if(ids.begin(), ids.end(), [this](const std::string& id) { return m_browser->isProvided(id); }), ids.end());
   return ids;
@@ -75,6 +87,7 @@ void MainWindow::onViewportSelection() {
 void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   clearAnnotationCardTarget();
   if (m_syncing) return;
+  if (m_design->ownsSelection() && m_design->browserPicked(ids)) return;  // a feature's bodies input takes the rows
   m_syncing = true;
   // An area's rows (a provided folder's) are no nodes: the view, the edit commands and the tools never see them.
   std::vector<opad::Ref> refs;
