@@ -485,6 +485,8 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
   steps.push_back([=](std::function<void()> next) {
     area->run({{"action", "place"}, {"set", {{"angle", 0.0}}}});  // upright in its plane, the plane's x to the right on screen
     view->lookAt(editor->place().plane, true, false);
+    QEvent leave(QEvent::Leave);  // nothing hovered: where frames are drawn (Xvfb) the last drag left the pointer on the canvas
+    QApplication::sendEvent(view, &leave);
     QTimer::singleShot(500, area, [=] {
       int dark = 0;
       const QImage straight = view->grabImage().convertToFormat(QImage::Format_RGB32);

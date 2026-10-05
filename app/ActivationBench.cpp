@@ -379,8 +379,10 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     require(named && hint.contains(doc->nodeName(s->boxA)), "resting on the Housing's ghost, the status names it and its component: " + hint);
                     mouse(QEvent::MouseMove, s->bx, s->by, Qt::NoButton);
                   }, 3000});
-  list.push_back({[=, &w] { return w.m_statusHover->text().isEmpty(); }, [=, &w](bool cleared) {
-                    require(cleared, "on the Lid's box (no ghost) the hint goes");
+  // The hint gives the status back to the view's own hover text: none in a hidden window (no frame labels what is under
+  // the pointer), the Lid's box where the window is on screen (Xvfb).
+  list.push_back({[=, &w] { return w.m_statusHover->text() == v->hoverText() && !w.m_statusHover->text().contains("Housing"); }, [=, &w](bool cleared) {
+                    require(cleared, "on the Lid's box (no ghost) the hint goes: " + w.m_statusHover->text());
                     QStringList entries;
                     QAction* housing = nullptr;
                     {
@@ -420,8 +422,10 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                   }});
   list.push_back({[=] { return !v->ghostsPickable() && !v->looksPending(); }, [=, &w](bool) {
                     require(v->benchPickAt(s->ax, s->ay) != s->boxA, "the tool closed: the ghost is not picked again");
-                    // F with nothing selected frames the active component.
+                    // F with nothing selected frames the active component (animated where the window is on screen: Xvfb).
                     w.action("view.fit")->trigger();
+                  }});
+  list.push_back({[=] { return !v->cameraMoving(); }, [=](bool) {
                     const QPoint middle = v->rect().center(), lid = centre(s->boxB), housing = centre(s->boxA);
                     require((lid - middle).manhattanLength() < v->width() / 10 && (housing - middle).manhattanLength() > (lid - middle).manhattanLength() + v->width() / 10,
                             QString("F frames the Lid: its box at (%1, %2), the middle (%3, %4)").arg(lid.x()).arg(lid.y()).arg(middle.x()).arg(middle.y()));

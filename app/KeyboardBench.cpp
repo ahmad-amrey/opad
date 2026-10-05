@@ -209,6 +209,8 @@ OPAD_BENCH(OPAD_BENCH_KEYBOARD, keyboard) {
     check(names.size() == 6 && names.contains(QCoreApplication::translate("MainWindow", "Top view")) && front, "the view cube's six faces are buttons named as the views (" + names.join(", ") + ")");
     check(facing == 3, QString("three of them face the iso camera (%1)").arg(facing));
     if (front && front->actionInterface()) front->actionInterface()->doAction(QAccessibleActionInterface::pressAction());
+  }, idle);
+  add(50, [=, &w] {  // the turn is animated where the window is on screen (Xvfb): read the camera once it stops
     const opad::json camera = w.m_viewport->cameraJson();
     const QVector3D eye(camera["eye"][0].get<float>(), camera["eye"][1].get<float>(), camera["eye"][2].get<float>()),
         target(camera["target"][0].get<float>(), camera["target"][1].get<float>(), camera["target"][2].get<float>());
@@ -217,7 +219,7 @@ OPAD_BENCH(OPAD_BENCH_KEYBOARD, keyboard) {
     w.m_timeline->grab().save(value + ".timeline.png");
     trace::log(QString("bench: keyboard: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
-  }, idle);
+  }, [=, &w] { return idle() && !w.m_viewport->cameraMoving(); });
 
   auto next = std::make_shared<std::function<void(size_t, int)>>();
   *next = [&w, steps, next, check](size_t i, int waited) {
