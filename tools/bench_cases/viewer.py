@@ -239,8 +239,9 @@ CASES = [
     # <prefix>.zoom-band.png.
     ("navigate", colour_boxes, {"OPAD_BENCH_NAVIGATE": "{prefix}"}),
     # A wheel or a trackpad (ScrollInput.hpp; on Ubuntu every wheel panned): wheel events from a device that says TouchPad,
-    # told apart as on xcb (X11, XWayland), zoom by whole notches with the direction kept and nothing panned, and pan by
-    # fractions (a notch amid them pans on, Ctrl zooms); told apart as on Windows the same device pans as before. Preferences'
+    # told apart as on xcb (X11, XWayland), zoom by whole notches and by a high-resolution wheel's eighths of one with the
+    # direction kept and nothing panned, and pan by fractions (a notch amid them pans on, Ctrl zooms; an Xorg touchpad's
+    # pixels pan by the finger's px); told apart as on Windows the same device pans as before. Preferences'
     # Scroll wheel / trackpad: Trackpad pans pans the same notch, Mouse wheel zooms zooms a touchpad's notch and a finger
     # gesture, Automatic pans the gesture again.
     ("wheel", "box", {"OPAD_BENCH_WHEEL": "1"}),

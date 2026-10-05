@@ -1,8 +1,10 @@
 // OPAD_BENCH_WHEEL=1 (a document with a box; case in tools/bench_cases/viewer.py): a scroll zooms as a wheel or pans as a
-// trackpad (ScrollInput.hpp). The Ubuntu report: "scroll to zoom acts as panning, like it is scrolling a page" - under X11
-// and XWayland Qt hands the mouse wheel over as a TouchPad. Synthetic wheel events from such a device, told apart as on xcb:
-// whole notches zoom (in, out, two notches more than one) with the view's direction kept and nothing panned, fractions pan,
-// a notch amid a finger scroll pans on, Ctrl with fingers zooms; as on Windows the same device pans as before and a mouse
+// trackpad (ScrollInput.hpp). The Ubuntu report: "scroll to zoom acts as panning, like it is scrolling a page" - on a
+// Wayland desktop OPAD runs through XWayland, whose relative pointer Qt's xcb plugin calls a TouchPad. Synthetic wheel events
+// from such a device, told apart as on xcb: whole notches zoom (in, out, two notches more than one) with the view's direction
+// kept and nothing panned, a high-resolution wheel's eighths of a notch zoom (eight of them about as much as a notch, out by
+// 45), fractions pan by an eighth of their angle, a notch amid a finger scroll pans on, an Xorg touchpad's pixels (8 x the
+// finger) pan by the finger's own px, Ctrl with fingers zooms; as on Windows the same device pans as before and a mouse
 // zooms. Then the setting, chosen in Preferences: Trackpad pans pans the same notch (and a mouse's), Mouse wheel zooms zooms
 // a touchpad's notch and a finger gesture; Automatic again.
 #include <QComboBox>
@@ -39,8 +41,8 @@ bool Viewport::benchWheel(const std::function<bool(int)>& choose) {
   const QPointF at(width() * 0.5, height() * 0.5);
   const opad::Vec3 centre{start->Center().X(), start->Center().Y(), start->Center().Z()};
   const QPoint centreShown = widgetPoint(centre);
-  // XWayland's one pointer as Qt's xcb plugin describes it, and a pointer that says Mouse.
-  QPointingDevice touchpad("xwayland-pointer:13", 21, QInputDevice::DeviceType::TouchPad, QPointingDevice::PointerType::Generic,
+  // XWayland's relative pointer as Qt's xcb plugin describes it, and a pointer that says Mouse.
+  QPointingDevice touchpad("xwayland-relative-pointer:13", 21, QInputDevice::DeviceType::TouchPad, QPointingDevice::PointerType::Generic,
                            QInputDevice::Capability::Position | QInputDevice::Capability::Scroll, 1, 3);
   QPointingDevice mouse("bench mouse", 22, QInputDevice::DeviceType::Mouse, QPointingDevice::PointerType::Generic,
                         QInputDevice::Capability::Position | QInputDevice::Capability::Scroll, 1, 3);
@@ -74,10 +76,21 @@ bool Viewport::benchWheel(const std::function<bool(int)>& choose) {
   send(touchpad, {}, {0, 240});
   require(zoomed(true) && ratio() < oneNotch - 0.01, QString("xcb: two notches zoom in more than one (x%1)").arg(oneNotch, 0, 'f', 3) + ' ' + state());
   reset();
+  for (int i = 0; i < 8; ++i) send(touchpad, {}, {0, 15});
+  const double asNotch = std::log(ratio()) / std::log(oneNotch);
+  require(zoomed(true) && asNotch > 0.85 && asNotch < 1.15,
+          QString("xcb: eight steps of a high-resolution wheel (15 each) zoom in about as much as a notch (%1 of one)").arg(asNotch, 0, 'f', 2) + ' ' + state());
+  reset();
+  send(touchpad, {}, {0, -45});
+  require(zoomed(false), "xcb: a faster step of it back (-45) zooms out " + state());
+  reset();
   for (int i = 0; i < 3; ++i) send(touchpad, {}, {0, 37});
   require(panned(3 * 37 / 8.0), "xcb: fractions of a notch (two fingers) pan by an eighth of their angle " + state());
   send(touchpad, {}, {0, 120});
   require(panned(3 * 37 / 8.0 + 15), "xcb: a notch amid that finger scroll pans on instead of jumping the zoom " + state());
+  reset();
+  send(touchpad, {0, 160}, {0, 160});
+  require(panned(20), "xcb: an Xorg touchpad's 20 px of finger (pixel and angle deltas 160) pan 20 px, not 160 " + state());
   reset();
   send(touchpad, {}, {0, 37}, Qt::NoScrollPhase, Qt::ControlModifier);
   require(zoomed(true), "xcb: Ctrl with two fingers zooms " + state());

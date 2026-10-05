@@ -4,10 +4,19 @@
 // No Qt here.
 //
 // What the platforms send (Qt 6.4 to 6.10):
-//  - xcb (X11, and XWayland on a Wayland desktop: main() picks xcb on Linux): Qt's XI2 code takes every pointer of unknown
-//    type that scrolls with relative valuators for a TouchPad (XWayland's one pointer is such a device), sends no scroll
-//    phase, an angle delta of valuator delta / increment * 120 and a pixel delta only when the increment exceeds 15. A
-//    wheel notch is a whole 120 there, fingers move by fractions of it: the device's word alone made every wheel pan.
+//  - xcb (X11, and XWayland on a Wayland desktop: main() picks xcb on Linux). Qt's XI2 code (populateTouchDevices) calls a
+//    pointer a TouchPad when it has relative X/Y and an axis labelled "Rel Vert/Horiz Wheel", or an XI 2.4 gesture class.
+//    That is XWayland's "xwayland-relative-pointer:N" (the device every scroll comes from when the compositor offers relative
+//    pointers, as mutter and KWin do), an evdev-driver mouse, and an Xorg touchpad with gestures; a mouse through
+//    xf86-input-libinput labels its axes "Rel Vert Scroll" and is a Mouse, which zooms whatever it sends. No scroll phase
+//    on xcb; the angle delta is valuator delta / increment * 120 and the pixel delta the raw valuator delta, only when the
+//    increment exceeds 15.
+//      XWayland (increment 1): a wheel sends its v120 value, 120 a notch and 15 a step of a high-resolution wheel (an
+//      eighth of a notch, Logitech MX and most hidpp mice; faster spins 30, 45, ...); fingers send trunc(12 x px), which
+//      lands on a multiple of 15 about once in ten steps.
+//      Xorg touchpad, xf86-input-libinput 1.2 or later (increment 120): pixel and angle deltas are both 8 x the finger's px.
+//    So a step in multiples of 15 zooms and anything else pans; a scroll under way (`continuing`) keeps panning, so only
+//    the first step of a finger scroll can be taken for a wheel (one zoom step of an eighth of a notch or so).
 //  - wayland: a wheel has no pixel delta and no phase; fingers have both.
 //  - cocoa: a trackpad has a pixel delta and phases (momentum too); a mouse wheel neither.
 //  - windows: precision touchpads arrive as plain wheel events (fractions of 120) and zoom.
@@ -31,8 +40,11 @@ struct Scroll {
   bool continuing = false;     // a trackpad scroll is under way (its last step came moments ago)
 };
 
-// A step of whole wheel notches (one or more on an axis, none on the other); no step at all is none.
-inline bool wholeNotches(int angleX, int angleY) { return (angleX != 0 || angleY != 0) && angleX % 120 == 0 && angleY % 120 == 0; }
+// The steps a wheel takes through XWayland: v120 in eighths of a notch (15), whole notches included; no step is none.
+constexpr int wheelStep = 15;
+inline bool wheelSteps(int angleX, int angleY) {
+  return (angleX != 0 || angleY != 0) && angleX % wheelStep == 0 && angleY % wheelStep == 0;
+}
 
 // True: pan or orbit as a trackpad; false: zoom as a wheel. The setting decides when it is not Automatic.
 inline bool isTrackpad(const Scroll& s, Mode m = Mode::Automatic) {
@@ -42,8 +54,20 @@ inline bool isTrackpad(const Scroll& s, Mode m = Mode::Automatic) {
   if (pixels && s.phase != Phase::None) return true;  // fingers on a surface: the system says where a gesture starts and ends
   if (!s.touchpadDevice) return false;
   if (s.platform != "xcb") return true;
-  // xcb calls the wheel a TouchPad too: whole notches zoom, unless they come amid a finger scroll (a step that happened to
-  // land on 120 there must not jump the zoom).
-  return pixels || !wholeNotches(s.angleX, s.angleY) || s.continuing;
+  // xcb calls the wheel a TouchPad too: steps of a wheel zoom, unless they come amid a finger scroll (a finger step that
+  // happened to land on a multiple of 15 there must not jump the zoom). Pixels are an Xorg touchpad's (increment 120).
+  return pixels || !wheelSteps(s.angleX, s.angleY) || s.continuing;
+}
+
+// How far a trackpad's scroll moves the view, in pixels. An eighth of the angle on xcb: there the pixel delta is the
+// driver's raw valuator delta, 8 x the finger's px on Xorg with xf86-input-libinput 1.2 or later (ScrollPixelDistance 15
+// scaled into its increment of 120), while the angle's eighth is 15 px per increment, about the finger's own px on Xorg
+// and 1.5 x on XWayland. Elsewhere the pixel delta when there is one.
+struct Pan {
+  double x = 0, y = 0;
+};
+inline Pan panStep(const Scroll& s) {
+  if (s.platform == "xcb" || (s.pixelX == 0 && s.pixelY == 0)) return {s.angleX / 8.0, s.angleY / 8.0};
+  return {double(s.pixelX), double(s.pixelY)};
 }
 }  // namespace scrollinput

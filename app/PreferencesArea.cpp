@@ -370,8 +370,8 @@ class PreferencesArea : public AreaController {
       QObject::connect(radio, &QRadioButton::toggled, a, [a](bool on) { if (on && !a->isChecked()) a->trigger(); });
       QObject::connect(a, &QAction::toggled, radio, [radio](bool on) { if (on) radio->setChecked(true); });
     }
-    // A wheel or a trackpad (ScrollInput.hpp): X11 and XWayland call a mouse a touchpad, a high-resolution wheel scrolls
-    // in fractions as fingers do; when the guess is wrong, one of them for every scroll.
+    // A wheel or a trackpad (ScrollInput.hpp): on xcb Qt calls XWayland's pointer (and evdev mice) a touchpad, told apart
+    // by their steps there; when the guess is wrong (a wheel with odd fractions of a notch), one of them for every scroll.
     form.choice("view/scrollInput", tr("Scroll wheel / trackpad"), {tr("Automatic"), tr("Mouse wheel zooms"), tr("Trackpad pans")}, 0,
                 [this](int mode) { services().viewport()->setScrollInput(mode); });
     form.note(tr("Automatic tells a mouse wheel from two fingers on a trackpad by what the system reports. A wheel zooms at the pointer; "

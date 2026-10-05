@@ -3263,13 +3263,13 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   }
 }
 
-// A wheel or a trackpad's fingers (ScrollInput.hpp): on X11 and XWayland Qt says TouchPad for the mouse wheel too.
-bool Viewport::trackpadScrollEvent(const QWheelEvent* e) const {
+// A wheel or a trackpad's fingers (ScrollInput.hpp): on xcb (X11, XWayland) Qt says TouchPad for XWayland's wheel too.
+scrollinput::Scroll Viewport::scrollOf(const QWheelEvent* e) const {
   static_assert(int(scrollinput::Phase::None) == int(Qt::NoScrollPhase) && int(scrollinput::Phase::Begin) == int(Qt::ScrollBegin) &&
                 int(scrollinput::Phase::Update) == int(Qt::ScrollUpdate) && int(scrollinput::Phase::End) == int(Qt::ScrollEnd) &&
                 int(scrollinput::Phase::Momentum) == int(Qt::ScrollMomentum));
   static const QByteArray running = QGuiApplication::platformName().toUtf8();
-  const QByteArray platform = m_scrollPlatform.isEmpty() ? running : m_scrollPlatform.toUtf8();
+  const QByteArray& platform = m_scrollPlatform.isEmpty() ? running : m_scrollPlatform;  // both outlive the Scroll's use
   scrollinput::Scroll s;
   s.platform = std::string_view(platform.constData(), size_t(platform.size()));
   s.touchpadDevice = e->device() && e->device()->type() == QInputDevice::DeviceType::TouchPad;
@@ -3279,7 +3279,7 @@ bool Viewport::trackpadScrollEvent(const QWheelEvent* e) const {
   s.angleX = e->angleDelta().x();
   s.angleY = e->angleDelta().y();
   s.continuing = m_trackpadMode != TrackpadMode::None;
-  return scrollinput::isTrackpad(s, m_scrollInput);
+  return s;
 }
 
 void Viewport::setScrollInput(int mode) {
@@ -3290,9 +3290,11 @@ void Viewport::setScrollInput(int mode) {
 
 void Viewport::wheelEvent(QWheelEvent* e) {
   if (!m_initialised || m_blocked) return;
-  if (trackpadScrollEvent(e)) {
+  const scrollinput::Scroll scroll = scrollOf(e);
+  if (scrollinput::isTrackpad(scroll, m_scrollInput)) {
     if (m_nativePinching) { e->accept(); return; }
-    const QPointF delta = !e->pixelDelta().isNull() ? QPointF(e->pixelDelta()) : QPointF(e->angleDelta()) / 8.0;
+    const scrollinput::Pan pan = scrollinput::panStep(scroll);
+    const QPointF delta(pan.x, pan.y);
     if (e->modifiers() & Qt::ControlModifier) {
       finishTrackpadScroll();
       if (delta.y() != 0.0) {

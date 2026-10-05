@@ -1,5 +1,5 @@
-// A scroll in the 3D view: a mouse wheel that zooms or a trackpad's fingers that pan (app/ScrollInput.hpp). On X11 and
-// XWayland Qt says TouchPad for the mouse wheel too: there whole notches zoom; elsewhere the classification is as before.
+// A scroll in the 3D view: a mouse wheel that zooms or a trackpad's fingers that pan (app/ScrollInput.hpp). On xcb Qt says
+// TouchPad for XWayland's wheel too: there steps in eighths of a notch zoom; elsewhere the classification is as before.
 #include "check.hpp"
 #include "ScrollInput.hpp"
 using namespace scrollinput;
@@ -27,27 +27,45 @@ Scroll fingers(std::string_view platform, bool touchpad, Phase phase, int pixelX
 }  // namespace
 
 TEST(xcb_wheel_notches_from_a_touchpad_device_zoom) {
-  // XWayland's pointer (and X11 mice through libinput) arrive as a TouchPad, no phase, no pixels, 120 a notch.
+  // XWayland's relative pointer (and evdev-driver mice) arrive as a TouchPad, no phase, no pixels, 120 a notch.
   for (int notch : {120, -120, 240, -360}) {
     CHECK(!isTrackpad(wheel("xcb", true, notch)));
     CHECK(!isTrackpad(wheel("xcb", true, 0, notch)));  // a tilted wheel
   }
-  CHECK(!isTrackpad(wheel("xcb", false, 120)));
+  CHECK(!isTrackpad(wheel("xcb", false, 120)));  // a mouse through xf86-input-libinput on Xorg says Mouse
+}
+
+TEST(xcb_high_resolution_wheel_steps_zoom) {
+  // A high-resolution wheel through XWayland (mutter's v120, an eighth of a notch a step): 15 a step, more when it spins.
+  for (int step : {15, -15, 30, -45, 60, 105, 180})
+    CHECK(!isTrackpad(wheel("xcb", true, step)));
+  CHECK(!isTrackpad(wheel("xcb", true, 0, 15)));  // its tilt
+  // A burst of them zooms throughout: no step makes a scroll under way (only a trackpad step does).
+  int zoomed = 0;
+  for (int i = 0; i < 8; ++i) zoomed += isTrackpad(wheel("xcb", true, 15)) ? 0 : 1;
+  CHECK(zoomed == 8);
+  CHECK(wheelSteps(0, 15) && wheelSteps(-30, 0) && wheelSteps(15, 120));
 }
 
 TEST(xcb_fractions_pan) {
-  // Two fingers move the valuators by fractions of an increment.
+  // Two fingers move the valuators by fractions of a step: trunc(12 x px) through XWayland, 8 x px with pixels on Xorg.
   CHECK(isTrackpad(wheel("xcb", true, 37)));
   CHECK(isTrackpad(wheel("xcb", true, -37)));
+  CHECK(isTrackpad(wheel("xcb", true, 12)));   // a finger's 1 px through XWayland
+  CHECK(isTrackpad(wheel("xcb", true, -24)));  // 2 px
+  CHECK(isTrackpad(wheel("xcb", true, 100)));
   CHECK(isTrackpad(wheel("xcb", true, 120, 37)));  // one axis whole, the other a fraction
-  CHECK(isTrackpad(wheel("xcb", true, 180)));
-  // A driver with a large increment sends pixels too (no phase on xcb).
+  CHECK(isTrackpad(wheel("xcb", true, 15, 7)));
+  // A finger's step that lands on a multiple of 15 amid its scroll pans on.
+  for (int step : {15, -45, 120}) {
+    Scroll s = wheel("xcb", true, step);
+    s.continuing = true;
+    CHECK(isTrackpad(s));
+  }
+  // An Xorg touchpad with gestures (xf86-input-libinput 1.2+, increment 120) sends pixels too, whatever its angle (no phase
+  // on xcb).
   Scroll s = wheel("xcb", true, 120);
   s.pixelY = 120;
-  CHECK(isTrackpad(s));
-  // A notch amid a finger scroll continues it (no zoom jump in the middle of a pan).
-  s = wheel("xcb", true, 120);
-  s.continuing = true;
   CHECK(isTrackpad(s));
   // A mouse that says Mouse is a wheel whatever its steps.
   CHECK(!isTrackpad(wheel("xcb", false, 37)));
@@ -57,9 +75,23 @@ TEST(xcb_no_step_is_no_notch) {
   // A device that says TouchPad sending no step at all (a phase's begin or end elsewhere): the trackpad's path, which
   // moves nothing and ends a scroll under way.
   CHECK(isTrackpad(wheel("xcb", true, 0)));
-  CHECK(!wholeNotches(0, 0));
-  CHECK(wholeNotches(0, 120) && wholeNotches(-240, 0) && wholeNotches(120, -120));
-  CHECK(!wholeNotches(0, 119) && !wholeNotches(15, 0) && !wholeNotches(120, 60));
+  CHECK(!wheelSteps(0, 0));
+  CHECK(wheelSteps(0, 120) && wheelSteps(-240, 0) && wheelSteps(120, -120));
+  CHECK(!wheelSteps(0, 119) && !wheelSteps(14, 0) && !wheelSteps(120, 61) && !wheelSteps(0, 7));
+}
+
+TEST(pan_step) {
+  // xcb: an eighth of the angle. An Xorg touchpad (xf86-input-libinput 1.2+, increment 120) sends 8 x the finger's px as
+  // both pixel and angle delta: 20 px of finger pan 20, not 160.
+  Scroll s = wheel("xcb", true, 160);
+  s.pixelY = 160;
+  CHECK(panStep(s).y == 20.0 && panStep(s).x == 0.0);
+  CHECK(panStep(wheel("xcb", true, 37)).y == 37 / 8.0);    // XWayland: no pixels
+  CHECK(panStep(wheel("xcb", true, 0, -24)).x == -3.0);    // sideways, the sign kept
+  // Elsewhere the pixel delta when there is one, else an eighth of the angle (as before).
+  CHECK(panStep(fingers("cocoa", false, Phase::Update, 4, 9)).x == 4.0 && panStep(fingers("cocoa", false, Phase::Update, 4, 9)).y == 9.0);
+  CHECK(panStep(fingers("wayland", false, Phase::Update, 0, 7)).y == 7.0);
+  CHECK(panStep(wheel("windows", true, 120)).y == 15.0);
 }
 
 TEST(wayland_tells_them_by_pixels_and_phase) {

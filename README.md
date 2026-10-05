@@ -206,10 +206,12 @@ git add review.opad && git commit -m "review gearbox"
 
 In the 3D viewport, drag with two fingers to pan, hold Shift while dragging with two fingers to orbit, and pinch
 to zoom around the pointer (Ctrl with two fingers zooms too). These gestures work independently of the selected mouse
-navigation preset. A mouse wheel continues to zoom. OPAD tells a wheel from a trackpad by what the system reports; on
-X11 and XWayland (Linux), where Qt reports the mouse as a touchpad too, whole wheel notches zoom and fractional steps pan.
-When the guess is wrong (a high-resolution wheel scrolls in fractions), Preferences > Keyboard and mouse > Scroll wheel /
-trackpad makes every scroll a wheel's (Mouse wheel zooms) or a trackpad's (Trackpad pans).
+navigation preset. A mouse wheel continues to zoom. OPAD tells a wheel from a trackpad by what the system reports. On
+Linux OPAD runs on X11, through XWayland on a Wayland desktop, and Qt reports XWayland's pointer (and mice on the old evdev
+driver) as a touchpad; there wheel steps (whole notches, or eighths of one from a high-resolution wheel) zoom and other
+steps pan. When the guess is wrong (a wheel whose steps are other fractions of a notch, or the first step of a two-finger
+scroll taken for a wheel's), Preferences > Keyboard and mouse > Scroll wheel / trackpad makes every scroll a wheel's (Mouse
+wheel zooms) or a trackpad's (Trackpad pans).
 
 Orbiting over geometry uses the surface under the pointer. Over empty space, OPAD pivots on the
 visible geometry nearest the pointer (a surface, or a drawing's or sketch's curve), never on empty

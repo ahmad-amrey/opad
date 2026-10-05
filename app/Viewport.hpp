@@ -212,7 +212,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setScrollInput(int mode);
   scrollinput::Mode scrollInput() const { return m_scrollInput; }
   // Benches: scrolls are told apart as on this platform ("xcb", "windows", ...; empty: the running one).
-  void benchScrollPlatform(const QString& platform) { m_scrollPlatform = platform; }
+  void benchScrollPlatform(const QString& platform) { m_scrollPlatform = platform.toUtf8(); }
 
   // Startup (StartUp.hpp, UI-44): the OpenGL viewer is made by warmUp(), which the window calls once its shell has been
   // painted, and its first frame (the shaders) drawn by firstFrame() on a later turn; a show or paint of the view before
@@ -247,8 +247,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_ORBITPIVOT (ViewportOrbitBench.cpp): the pivot of a press away from a big drawing is found run by run, fast,
   // and is the point a scan of every segment finds (UI-51)
   bool benchOrbitPivot(const QString& prefix);
-  // OPAD_BENCH_WHEEL (ViewportWheelBench.cpp): wheel notches from a device that says TouchPad zoom on xcb (X11, XWayland)
-  // and pan elsewhere as before, fractions pan, and the setting, chosen through `choose` (Preferences), overrides both ways
+  // OPAD_BENCH_WHEEL (ViewportWheelBench.cpp): wheel notches and a high-resolution wheel's eighths of one from a device that
+  // says TouchPad zoom on xcb (X11, XWayland) and pan elsewhere as before, fractions pan, and the setting, chosen through
+  // `choose` (Preferences), overrides both ways
   bool benchWheel(const std::function<bool(int)>& choose);
   // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
   // displayed last, in the rasterised qualities (UI-39)
@@ -1104,8 +1105,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QPointF m_trackpadCursor, m_trackpadAnchor;
   bool m_nativePinching = false;
   scrollinput::Mode m_scrollInput = scrollinput::Mode::Automatic;
-  QString m_scrollPlatform;  // benches
-  bool trackpadScrollEvent(const QWheelEvent* e) const;  // this scroll pans or orbits as a trackpad (else it zooms)
+  QByteArray m_scrollPlatform;  // benches
+  scrollinput::Scroll scrollOf(const QWheelEvent* e) const;  // what isTrackpad and panStep look at
   QString m_hover;
   void trackHoverFade();
   void updateHoverFade();
