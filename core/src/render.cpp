@@ -241,6 +241,7 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
       bool smooth = false;
       float s3[3] = {0, 0, 0};
       const RenderItem::Picture* pic = nullptr;  // a canvas: its picture at the vertices' local XY (lu, lv)
+      const float* vc[3] = {nullptr, nullptr, nullptr};  // a result map: each vertex's colour
       double lu[3] = {0, 0, 0}, lv[3] = {0, 0, 0};
     };
     // Perspective divides by depth, so depth is not linear in screen space but its reciprocal is: interpolating depth
@@ -270,6 +271,11 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
           float* px3 = &fb[idx * 3];
           const float shade = t.smooth ? static_cast<float>(w0 * t.s3[0] + w1 * t.s3[1] + w2 * t.s3[2]) : t.shade;
           float cr = t.r * shade, cg = t.g * shade, cb = t.bl * shade;
+          if (t.vc[0]) {  // a result map, lit like the rest
+            cr = static_cast<float>(w0 * t.vc[0][0] + w1 * t.vc[1][0] + w2 * t.vc[2][0]) * shade;
+            cg = static_cast<float>(w0 * t.vc[0][1] + w1 * t.vc[1][1] + w2 * t.vc[2][1]) * shade;
+            cb = static_cast<float>(w0 * t.vc[0][2] + w1 * t.vc[1][2] + w2 * t.vc[2][2]) * shade;
+          }
           if (t.pic) {  // the picture at this point of the canvas, unlit (perspective-correct like the depth)
             const double a0 = b.perspective ? w0 * iz[0] : w0, a1 = b.perspective ? w1 * iz[1] : w1, a2 = b.perspective ? w2 * iz[2] : w2, s = a0 + a1 + a2;
             const double u = (a0 * t.lu[0] + a1 * t.lu[1] + a2 * t.lu[2]) / s, v = (a0 * t.lv[0] + a1 * t.lv[1] + a2 * t.lv[2]) / s;
@@ -323,6 +329,8 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
           }
           t.pic = it.picture.get();
           if (!ok) continue;
+          if (it.vertex_colors.size() == P.size())
+            for (int c = 0; c < 3; ++c) t.vc[c] = &it.vertex_colors[static_cast<size_t>(I[k + c]) * 3];
           V3 n = norm(cross(sub(V3{w[1][0], w[1][1], w[1][2]}, V3{w[0][0], w[0][1], w[0][2]}),
                             sub(V3{w[2][0], w[2][1], w[2][2]}, V3{w[0][0], w[0][1], w[0][2]})));
           double lam = std::fabs(dot(n, light));
@@ -528,6 +536,7 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
   for (const auto& bid : bodies) {
     const Node* n = scene.node(bid);
     if (!n || n->body_missing) continue;
+    if (std::find(opt.hide.begin(), opt.hide.end(), bid) != opt.hide.end()) continue;
     if (!opt.ignore_visibility && !scene.effectively_visible(bid)) continue;
     if(n->opacity<=0)continue;
     if(receipt)(*receipt)["visible_ids"].push_back(bid);
@@ -558,7 +567,45 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
     }
     items.push_back(it);
   }
+  for (const auto& e : opt.extra) {
+    items.push_back(e);
+    items.back().id = id++;
+  }
   return render_items(items, opt, receipt);
+}
+
+std::array<float, 3> result_color(double t) {
+  t = std::clamp(t, 0.0, 1.0);
+  static const float stops[5][3] = {{0.10f, 0.25f, 0.85f}, {0.10f, 0.75f, 0.90f}, {0.20f, 0.80f, 0.25f}, {0.95f, 0.85f, 0.15f}, {0.85f, 0.15f, 0.10f}};
+  const double x = t * 4;
+  const int i = std::min(3, static_cast<int>(x));
+  const double f = x - i;
+  return {static_cast<float>(stops[i][0] + (stops[i + 1][0] - stops[i][0]) * f), static_cast<float>(stops[i][1] + (stops[i + 1][1] - stops[i][1]) * f),
+          static_cast<float>(stops[i][2] + (stops[i + 1][2] - stops[i][2]) * f)};
+}
+
+void draw_legend(Image& img, const std::string& title, double lo, double hi, const std::string& unit) {
+  const int h = std::max(120, img.height / 2), w = std::max(14, img.width / 60);
+  const int x0 = img.width - w - std::max(90, img.width / 9), y0 = (img.height - h) / 2;
+  for (int y = 0; y < h; ++y) {
+    const auto c = result_color(1.0 - double(y) / (h - 1));
+    for (int x = 0; x < w; ++x) {
+      if (x0 + x < 0 || y0 + y < 0 || x0 + x >= img.width || y0 + y >= img.height) continue;
+      uint8_t* p = img.px(x0 + x, y0 + y);
+      for (int k = 0; k < 3; ++k) p[k] = static_cast<uint8_t>(std::lround(c[size_t(k)] * 255));
+    }
+  }
+  auto text = [&](double v) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), std::fabs(v) >= 1000 || (std::fabs(v) < 0.01 && v != 0) ? "%.3G" : "%.4G", v);
+    return std::string(buf);
+  };
+  const int th = std::max(9, img.height / 60);
+  draw_label(img, title, x0 - w, y0 - 3 * th, th);
+  for (int k = 0; k <= 4; ++k) {
+    const double v = hi - (hi - lo) * k / 4;
+    draw_label(img, text(v) + " " + unit, x0 + w + 6, y0 + (h - 1) * k / 4 - th / 2, th);
+  }
 }
 
 // ---------------------------------------------------------------- PNG (zlib deflate with fixed Huffman codes)

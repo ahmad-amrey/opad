@@ -98,6 +98,13 @@ void validate_joint_op(const json& op) {
     for (const char* key : {"ratio", "radius", "lead"})
       if (op.contains(key) && !(op[key].is_number() && std::isfinite(op[key].get<double>())))
         throw Error(std::string("joint: '") + key + "' must be a number");
+    if (op.contains("carrier")) {
+      if (!op["carrier"].is_string() || !is_uuid(op["carrier"].get<std::string>())) throw Error("joint: 'carrier' must be a node id");
+      const json& cf = op.value("carrier_frames", json());
+      if (!cf.is_array() || cf.size() != 2) throw Error("joint: a relation with a carrier keeps 'carrier_frames': the two joints' frames in it");
+      check_frame(cf[0], "joint");
+      check_frame(cf[1], "joint");
+    }
     return;
   }
   if (!op.contains("part") || !op["part"].is_string() || !is_uuid(op["part"].get<std::string>()))

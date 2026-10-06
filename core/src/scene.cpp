@@ -529,6 +529,8 @@ struct SceneBuilder::Impl {
         if (!o) fail("joint " + other + " does not exist");
         else if (sim::is_relation(o->kind)) fail("a relation couples joints, not relations");
       }
+      if (d.contains("carrier") && d["carrier"].is_string() && !scene.nodes.count(d["carrier"].get<std::string>()))
+        fail("carrier " + d["carrier"].get<std::string>() + " does not exist");
       if (j.error.empty()) {
         const auto [c1, c2] = sim::relation_coords(j.kind);
         const Joint* a = scene.joint(j.joints[0]);

@@ -10,6 +10,7 @@
 #include "opad/sim/study.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <set>
@@ -36,6 +37,7 @@
 #include "chrono/physics/ChSystemNSC.h"
 #include "chrono/solver/ChConstraintNgeneric.h"
 #include "chrono/solver/ChDirectSolverLS.h"
+#include "chrono/solver/ChIterativeSolverLS.h"
 #include "chrono/solver/ChSolverAPGD.h"
 #include "chrono/solver/ChSystemDescriptor.h"
 #include "chrono/timestepper/ChTimestepperHHT.h"
@@ -90,6 +92,45 @@ Mat4 mat_of_frame(const Frame& f) {
     m.at(i, 3) = f.origin[size_t(i)];
   }
   return m;
+}
+
+// Consistent accelerations and multipliers at the start. HHT takes the system's accelerations as its first old ones, and
+// zeros there ring through the multipliers for hundreds of steps (a speed-driven crank's torque swung to six times its
+// steady range). Solves M a = F + Cq' L, Cq a = -gamma, where gamma, the constraints' second derivative along the free
+// motion (X + V t, no acceleration), comes from a central difference.
+void consistent_start(ChSystem& sys) {
+  ChState X, Xp, Xm;
+  ChStateDelta V, A;
+  double T = 0;
+  sys.StateSetup(X, V, A);
+  sys.StateSetup(Xp, V, A);
+  sys.StateSetup(Xm, V, A);
+  sys.StateGather(X, V, T);
+  const unsigned nc = sys.GetNumConstraints();
+  const double vmax = V.size() ? V.lpNorm<Eigen::Infinity>() : 0;
+  const double d = std::min(1e-4, 0.005 / (vmax + 1e-12));  // s: under 5 mrad or 5 mm of motion
+  auto C_at = [&](const ChState& x, double t) {
+    ChVectorDynamic<> q(nc);
+    q.setZero();
+    sys.StateScatter(x, V, t, true);
+    sys.LoadConstraint_C(q, 1.0, false);
+    return q;
+  };
+  ChStateDelta Dx = V * d;
+  sys.StateIncrementX(Xp, X, Dx);
+  Dx = V * -d;
+  sys.StateIncrementX(Xm, X, Dx);
+  const ChVectorDynamic<> cp = C_at(Xp, T + d), cm = C_at(Xm, T - d), c0 = C_at(X, T);
+  const ChVectorDynamic<> Qc = (cp - 2 * c0 + cm) / (d * d);
+  sys.StateScatter(X, V, T, true);
+  ChVectorDynamic<> R(sys.GetNumCoordsVelLevel()), L(nc);
+  R.setZero();
+  L.setZero();
+  sys.LoadResidual_F(R, 1.0);
+  if (!sys.StateSolveCorrection(A, L, R, Qc, 1.0, 0, 0, X, V, T, false, false, true)) return;
+  if (!A.allFinite() || !L.allFinite()) return;
+  sys.StateScatterAcceleration(A);
+  sys.StateScatterReactions(L);
 }
 
 // A body's reference frame (the part's placement) in mm, as the kinematic definitions take it.
@@ -246,6 +287,10 @@ struct JointModel {
   std::function<double(double)> drive;      // t -> value (deg, mm, N.mm... per mode, OPAD units)
   json spring;                              // {"coordinate", "stiffness", "damping", "rest"}
   double friction = 0;
+  // Limits as one-sided springs on the coordinate (rad, mm; NaN: none), stiff for the part they stop and nearly
+  // critically damped: Chrono's own ChLinkLock limits need its iterative solver and started the part off its value.
+  std::vector<std::pair<double, double>> limits;
+  std::vector<double> limit_k, limit_c;
 };
 
 ChBodyAuxRef* body_at(std::vector<PartBody>& parts, ChBodyAuxRef* ground, int i) { return i < 0 ? ground : parts[size_t(i)].body.get(); }
@@ -301,7 +346,18 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
   if (!(duration > 0) || duration > 3600) throw Error("a dynamic study's duration is a positive number of seconds (at most an hour)");
   int frames = std::clamp(st.value("frames", 101), 2, 20001);
   double step = st.value("step", 0.0);
-  if (step <= 0) step = std::min(1e-3, duration / 2000);
+  if (step <= 0) {
+    // At most 1 ms, 1/2000 of the study, and a hundredth of a radian per step at the fastest speed drive.
+    step = std::min(1e-3, duration / 2000);
+    auto fastest = [&](const json& d) {
+      if (!d.is_object() || d.value("mode", d.contains("speed") ? "speed" : "position") != "speed") return;
+      const double v = std::fabs(d.value("value", d.value("speed", 0.0)));  // deg/s or mm/s
+      if (v > 0) step = std::min(step, 0.01 / (v * kPi / 180));
+    };
+    for (const auto& j : scene0.joints) fastest(j.def.value("drive", json()));
+    for (const auto& d : st.value("drivers", json::array())) fastest(d);
+    step = std::max(step, 1e-6);
+  }
   const int sub = std::max(1, int(std::ceil(duration / (frames - 1) / step)));
   step = duration / (frames - 1) / sub;
   if ((frames - 1) * sub > 20000000) throw Error("a dynamic study takes at most 20 million steps: lengthen the step or shorten the duration");
@@ -311,6 +367,7 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
   for (const auto& p : mech.problems()) run.warnings.push_back(p);
   if (const auto r = mech.settle(); !r.ok) throw Error("the joints are not met at the start and cannot be: " + r.error);
   const Scene scene = mech.posed(scene0);
+  const int redundant = mech.analysis().value("redundant", 0);
 
   ChSystemNSC sys;
   const json g = st.value("gravity", json(true));
@@ -401,26 +458,6 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
       if (link) {
         link->Initialize(parts[size_t(m.part)].body, m.base < 0 ? std::static_pointer_cast<ChBody>(ground) : std::static_pointer_cast<ChBody>(parts[size_t(m.base)].body), false,
                          frame_m(wb), frame_m(wa));
-        // Limits on the free coordinates, in the link's own measures (marker 1 relative to marker 2).
-        if (const auto lim = j.def.find("limits"); lim != j.def.end() && lim->is_object() && j.kind != "rigid" && !j.def.value("locked", false)) {
-          for (const auto& [c, v] : lim->items()) {
-            if (!v.is_array() || v.size() != 2) continue;
-            const int ci = coord_index(*k, c);
-            if (ci < 0) continue;
-            const bool angle = k->coords[size_t(ci)].angle;
-            const double unit = angle ? kPi / 180 : kMm;
-            ChLinkLimit* l = nullptr;
-            if (c == "rotation") l = &link->LimitRz();
-            else if (c == "translation") l = j.kind == "pin_slot" ? &link->LimitX() : &link->LimitZ();
-            else if (c == "x") l = &link->LimitX();
-            else if (c == "y") l = &link->LimitY();
-            if (!l) continue;
-            l->SetActive(true);
-            l->SetMin(v[0].get<double>() * unit);
-            l->SetMax(v[1].get<double>() * unit);
-            unilateral = true;
-          }
-        }
         sys.AddLink(link);
         m.link = link;
       }
@@ -533,6 +570,33 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
                                    [target](double t) { return -(target(t + 1e-6) - target(t - 1e-6)) / 2e-6; });
       }
     }
+    if (const auto lim = j.def.find("limits"); lim != j.def.end() && lim->is_object() && !j.def.value("locked", false) && j.kind != "rigid") {
+      m.limits.assign(k->coords.size(), {NAN, NAN});
+      m.limit_k.assign(k->coords.size(), 0.0);
+      m.limit_c.assign(k->coords.size(), 0.0);
+      // What the limit stops: the part's mass, or its inertia about the joint's axis (kg, kg.m2).
+      const PartMass& pm = parts[size_t(m.part)].mass;
+      const Mat4 wa = ref_mm(body_at(parts, ground.get(), m.base)) * m.fa;
+      const Vec3 ax{wa.at(0, 2), wa.at(1, 2), wa.at(2, 2)}, o{wa.at(0, 3), wa.at(1, 3), wa.at(2, 3)};
+      double Iaxis = 0;
+      for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) Iaxis += ax[size_t(r)] * pm.inertia[size_t(r * 3 + c)] * ax[size_t(c)];
+      Vec3 dvec{pm.centre[0] - o[0], pm.centre[1] - o[1], pm.centre[2] - o[2]};
+      const double along = dvec[0] * ax[0] + dvec[1] * ax[1] + dvec[2] * ax[2];
+      const double d2 = dvec[0] * dvec[0] + dvec[1] * dvec[1] + dvec[2] * dvec[2] - along * along;
+      Iaxis = (Iaxis + pm.mass * d2) * 1e-6;  // kg.m2
+      const double w = 0.5 / step;           // the stop's own frequency: stiff, and stable at this step
+      for (const auto& [cname, v] : lim->items()) {
+        const int ci = coord_index(*k, cname);
+        if (ci < 0 || !v.is_array() || v.size() != 2) continue;
+        const bool ang = k->coords[size_t(ci)].angle;
+        const double unit = ang ? kPi / 180 : 1.0;  // the coordinates come in rad and mm
+        m.limits[size_t(ci)] = {v[0].get<double>() * unit, v[1].get<double>() * unit};
+        const double inertia = ang ? std::max(Iaxis, 1e-12) : std::max(pm.mass, 1e-9) * 1e-3;  // per rad: kg.m2; per mm: kg.m/mm
+        m.limit_k[size_t(ci)] = inertia * w * w;
+        m.limit_c[size_t(ci)] = 1.8 * inertia * w;
+      }
+    }
     if (j.def.contains("spring") && j.def["spring"].is_object()) m.spring = j.def["spring"];
     m.friction = j.def.value("friction", 0.0);
     joint_at[j.id] = joints.size();
@@ -546,6 +610,7 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
     bool angular;
   };
   std::vector<RelationModel> relations;
+  std::vector<std::function<void()>> carrier_updates;  // unwrap references of carrier-relative relations, moved every step
   for (const auto& j : scene.joints) {
     if (!is_relation(j.kind) || !j.error.empty() || j.joints.size() != 2) continue;
     if (!joint_at.count(j.joints[0]) || !joint_at.count(j.joints[1])) continue;
@@ -571,6 +636,17 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
     ChBodyAuxRef* b_part = parts[size_t(b.part)].body.get();
     ChBodyAuxRef* b_base = body_at(parts, ground.get(), b.base);
     for (auto* x : {a_part, a_base, b_part, b_base}) add(x);
+    // A carrier (planet gears): each joint's part frame is read against where it sat in the carrier.
+    ChBodyAuxRef* carrier = nullptr;
+    Mat4 fc1, fc2;
+    if (j.def.contains("carrier") && j.def["carrier"].is_string()) {
+      const auto it = part_at.find(j.def["carrier"].get<std::string>());
+      if (it == part_at.end()) throw Error("\"" + j.name + "\": its carrier is not a part of the study");
+      carrier = parts[size_t(it->second)].body.get();
+      add(carrier);
+      const json cf = j.def.value("carrier_frames", json::array());
+      if (cf.size() == 2) fc1 = mat_of_frame(Frame::from_json(cf[0])), fc2 = mat_of_frame(Frame::from_json(cf[1]));
+    }
     c->bodies = bs;
     auto index = [bs](ChBodyAuxRef* x) { return int(std::find(bs.begin(), bs.end(), x) - bs.begin()); };
     const int ia = index(a_part), iab = index(a_base), ib = index(b_part), ibb = index(b_base);
@@ -581,12 +657,30 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
     auto refb = b.ref;
     const bool angular = b.k->coords[c2].angle;
     const double w = angular ? 1.0 : kMm;
+    const int icar = carrier ? index(carrier) : -1;
+    const bool ang1 = a.k->coords[c1].angle, ang2 = b.k->coords[c2].angle;
+    auto cref = std::make_shared<std::array<double, 2>>(std::array<double, 2>{0, 0});
+    // The carrier-relative coordinate of side 0 or 1 (radians or mm), unwrapped about cref.
+    auto carried = [=](const std::vector<Mat4>& fr, int side) {
+      auto at = [&](int i) { return i < int(fr.size()) ? fr[size_t(i)] : ground_ref; };
+      const Mat4 P = side == 0 ? at(ia) * fb1 : at(ib) * fb2;
+      const Mat4 C = at(icar) * (side == 0 ? fc1 : fc2);
+      const Mat4 R = C.inverse() * P;
+      if (!(side == 0 ? ang1 : ang2)) return R.at(2, 3);
+      const double m = std::atan2(R.at(1, 0), R.at(0, 0)), r = (*cref)[size_t(side)];
+      return r + std::remainder(m - r, 2 * kPi);
+    };
     c->residual = [=](const std::vector<Mat4>& fr, double) {
       auto at = [&](int i) { return i < int(fr.size()) ? fr[size_t(i)] : ground_ref; };
-      const double q1 = joint_coordinates(ka, at(iab) * fa1, at(ia) * fb1, *refa)[c1];
-      const double q2 = joint_coordinates(kb, at(ibb) * fa2, at(ib) * fb2, *refb)[c2];
+      const double q1 = icar >= 0 ? carried(fr, 0) : joint_coordinates(ka, at(iab) * fa1, at(ia) * fb1, *refa)[c1];
+      const double q2 = icar >= 0 ? carried(fr, 1) : joint_coordinates(kb, at(ibb) * fa2, at(ib) * fb2, *refb)[c2];
       return (q2 - q2c - ratio * (q1 - q1c)) * w;
     };
+    if (icar >= 0) carrier_updates.push_back([c, carried, cref] {
+        std::vector<Mat4> fr;
+        for (auto* b : c->bodies) fr.push_back(ref_mm(b));
+        *cref = {carried(fr, 0), carried(fr, 1)};
+      });
     c->Setup();
     sys.AddLink(c);
     relations.push_back({&j, c, angular});
@@ -668,7 +762,21 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
     sys.SetSolver(solver);
     sys.SetMaxPenetrationRecoverySpeed(st.value("recovery_speed", 0.05));
   } else {
-    auto solver = chrono_types::make_shared<ChSolverSparseQR>();
+    // A mechanism with redundant equations (a planar loop of spatial joints) makes a rank-deficient system: a direct QR
+    // returned garbage multipliers for it (an engine's motor torque 1000 times too large), MINRES gives the least-norm
+    // ones, so every well-determined force (a motor's, a load's) comes out right and the indeterminate ones evenly shared.
+    std::shared_ptr<ChSolver> solver;
+    if (redundant > 0) {
+      auto minres = chrono_types::make_shared<ChSolverMINRES>();
+      minres->SetMaxIterations(st.value("iterations", 1000));
+      minres->SetTolerance(1e-12);
+      minres->EnableDiagonalPreconditioner(true);
+      minres->EnableWarmStart(true);
+      solver = minres;
+      run.warnings.push_back(std::to_string(redundant) + " redundant joint equation(s): the reactions they share are statically indeterminate (least-norm shares reported)");
+    } else {
+      solver = chrono_types::make_shared<ChSolverSparseQR>();
+    }
     sys.SetSolver(solver);
     sys.SetTimestepperType(ChTimestepper::Type::HHT);
     if (auto hht = std::dynamic_pointer_cast<ChTimestepperHHT>(sys.GetTimestepper())) {
@@ -678,6 +786,41 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
       hht->SetMaxIters(30);
       hht->SetAbsTolerances(1e-10, 1e-10);
       hht->SetStepControl(false);
+    }
+  }
+
+  // ---- start velocities: the drives' rates at t = 0 carried through the mechanism by the kinematic solver (a short
+  // look-ahead), so a speed-driven crank starts with its rod and piston moving too (Chrono's velocity assembly left them
+  // still and the first step was an impulse).
+  {
+    Values ahead;
+    const double h = 1e-5;
+    for (const auto& jm : joints) {
+      if (!jm.drive || (jm.drive_mode != "speed" && jm.drive_mode != "position")) continue;
+      const double rate = jm.drive_mode == "speed" ? jm.drive(0) : (jm.drive(h) - jm.drive(0)) / h;  // deg/s or mm/s
+      if (rate == 0) continue;
+      std::vector<double> v(jm.src->values.size(), NAN);
+      v[jm.drive_coord] = jm.src->values[jm.drive_coord] + rate * h;
+      ahead[jm.src->id] = v;
+    }
+    if (!ahead.empty()) {
+      Mechanism later(scene);
+      if (later.drive(ahead).ok)
+        for (auto& p : parts) {
+          if (p.fixed || !later.has_part(p.node)) continue;
+          const Mat4 a = scene.world(p.node), b = later.part_world(p.node);
+          const Vec3 c0 = a.apply(a.inverse().apply(p.mass.centre)), c1 = b.apply(a.inverse().apply(p.mass.centre));
+          p.body->SetPosDt(ChVector3d((c1[0] - c0[0]) / h * kMm, (c1[1] - c0[1]) / h * kMm, (c1[2] - c0[2]) / h * kMm));
+          // Angular velocity from the turn between the two placements (R1 R0^T), small: its axial vector over h.
+          ChMatrix33<> R;
+          for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) {
+              double v = 0;
+              for (int k = 0; k < 3; ++k) v += b.at(r, k) * a.at(c, k);
+              R(r, c) = v;
+            }
+          p.body->SetAngVelParent(ChVector3d(R(2, 1) - R(1, 2), R(0, 2) - R(2, 0), R(1, 0) - R(0, 1)) / (2 * h));
+        }
     }
   }
 
@@ -711,7 +854,7 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
   auto joint_forces = [&](double t, std::vector<CoordForces::Wrench>& out) {
     for (auto& jm : joints) {
       const bool torque_drive = jm.drive && (jm.drive_mode == "torque" || jm.drive_mode == "force");
-      if (!torque_drive && !jm.spring.is_object() && jm.friction == 0) continue;
+      if (!torque_drive && !jm.spring.is_object() && jm.friction == 0 && jm.limits.empty()) continue;
       ChBodyAuxRef* pb = parts[size_t(jm.part)].body.get();
       ChBodyAuxRef* bb = body_at(parts, ground.get(), jm.base);
       const Mat4 a = ref_mm(bb) * jm.fa, b = ref_mm(pb) * jm.fb;
@@ -746,6 +889,15 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
         const double k = jm.spring.value("stiffness", 0.0) * (ang ? 180 / kPi * kMm : 1.0);       // N/mm (per mm of q) | N.m/rad
         const double cd = jm.spring.value("damping", 0.0) * (ang ? 180 / kPi * kMm : 1.0);
         Q[c] += -k * (q[c] - rest) - cd * qd[c];
+      }
+      for (size_t c = 0; c < jm.limits.size() && c < q.size(); ++c) {
+        const auto [lo, hi] = jm.limits[c];
+        const double over = !std::isnan(hi) && q[c] > hi ? q[c] - hi : !std::isnan(lo) && q[c] < lo ? q[c] - lo : 0.0;
+        if (over == 0) continue;
+        // A stop pushes out and damps both ways while the coordinate is past it (it does not bounce), never pulling it in.
+        double f = -jm.limit_k[c] * over - jm.limit_c[c] * qd[c];
+        if (f * over > 0) f = 0;
+        Q[c] += f;
       }
       if (jm.friction > 0)
         for (size_t c = 0; c < q.size(); ++c) {
@@ -825,7 +977,11 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
   auto forces = chrono_types::make_shared<CoordForces>();
   forces->eval = joint_forces;
   sys.AddOtherPhysicsItem(forces);
-  sys.DoAssembly(AssemblyLevel::FULL);
+  // Positions meet the joints at the start; velocities are the kinematic look-ahead's above (Chrono's velocity assembly
+  // halved them); accelerations and forces solve the equations of motion there (Chrono's are finite differences, their
+  // multipliers impulses). With contacts the first step finds them.
+  sys.DoAssembly(AssemblyLevel::POSITION);
+  if (touching.empty()) consistent_start(sys);
   record(0);
   const int total = (frames - 1) * sub;
   int done = 0;
@@ -839,6 +995,7 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
         ChBodyAuxRef* bb = body_at(parts, ground.get(), jm.base);
         *jm.ref = joint_coordinates(jm.k->kind, ref_mm(bb) * jm.fa, ref_mm(pb) * jm.fb, *jm.ref);
       }
+      for (auto& u : carrier_updates) u();
       if (progress && done % 200 == 0 && !progress(double(done) / total, "Simulating")) throw Error("cancelled");
     }
     record(sys.GetChTime());
@@ -850,6 +1007,9 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
 
   // Speeds of the joint values, and power of the motors.
   for (auto& s : templ) s.v = rec[s.name];
+  // Forces at t = 0 come from the first step (the start has positions and velocities, no solved accelerations).
+  for (auto& s : templ)
+    if ((s.group == "reaction" || s.group == "motor") && s.v.size() > 1) s.v[0] = s.v[1];
   std::vector<Series> extra;
   for (const auto& s : templ) {
     if (s.group != "value") continue;
@@ -892,7 +1052,7 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
   json masses = json::object();
   for (const auto& p : parts) {
     const Node* n = scene.node(p.node);
-    if (!p.fixed) masses[n ? n->name : p.node] = {{"mass_kg", p.mass.mass}, {"centre", p.mass.centre}};
+    if (!p.fixed) masses[n ? n->name : p.node] = {{"mass_kg", p.mass.mass}, {"centre", p.mass.centre}, {"inertia_kg_mm2", p.mass.inertia}};
   }
   run.summary["parts"] = masses;
   for (const auto& s : run.series)

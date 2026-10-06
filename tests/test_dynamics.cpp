@@ -172,6 +172,46 @@ TEST(inertia_through_a_gear_pair) {
   CHECK_NEAR(tq->back(), I2 * alpha / 2 * 1000, 5e-3 * I2 * alpha / 2 * 1000);  // N.mm
 }
 
+TEST(planetary_reduction_torque) {
+  if (!engines_ok()) return;
+  // Sun driven at 3.6 turns/s, carrier loaded with 3600 N.mm: at steady speed the sun's motor gives 3600 / 3.6 = 1000 N.mm.
+  Document doc = Document::create();
+  const std::string carrier = disc(doc, {0, 0, -10}, 50, 4, "Carrier");
+  const std::string sun = disc(doc, {0, 0, 0}, 20, 4, "Sun");
+  const std::string ring = disc(doc, {0, 0, 10}, 60, 4, "Ring");
+  const json jc = joint(doc, {{"kind", "revolute"}, {"part", carrier}, {"at", axis({0, 0, 0})}, {"drive", {{"mode", "torque"}, {"value", -3600}}}});
+  const json js = joint(doc, {{"kind", "revolute"}, {"part", sun}, {"at", axis({0, 0, 0})}, {"drive", {{"mode", "speed"}, {"value", 3.6 * 360}}}});
+  const json jr = joint(doc, {{"kind", "revolute"}, {"part", ring}, {"at", axis({0, 0, 0})}, {"locked", true}});
+  for (int i = 0; i < 3; ++i) {
+    const double a = 2 * kPi * i / 3, x = 18 * std::cos(a), y = 18 * std::sin(a);
+    const std::string planet = disc(doc, {x, y, 0}, 16, 4, "Planet");
+    const json jp = joint(doc, {{"kind", "revolute"}, {"base", carrier}, {"part", planet}, {"at", axis({x, y, 0})}});
+    joint(doc, {{"kind", "gear"}, {"joints", {js["id"], jp["id"]}}, {"teeth", {20, 16}}, {"carrier", carrier}});
+    joint(doc, {{"kind", "gear"}, {"joints", {jr["id"], jp["id"]}}, {"teeth", {52, 16}}, {"internal", true}, {"carrier", carrier}});
+  }
+  const sim::StudyRun run = dynamic(doc, {{"duration", 0.5}, {"frames", 51}, {"gravity", false}, {"step", 2.5e-4}});
+  const auto* tq = series(run, "Revolute 2 motor torque");
+  CHECK(tq);
+  CHECK_NEAR(tq->at(40), 1000, 10);  // 1% (the start-up transient long gone)
+  const auto* c = series(run, "Revolute 1 rotation");
+  CHECK_NEAR(c->back(), 0.5 * 360, 0.5);  // the carrier turns once per 3.6 sun turns
+}
+
+TEST(a_limit_stops_a_door) {
+  if (!engines_ok()) return;
+  // A 500 x 20 x 300 door hinged on Z, pushed by 20 N.m against its 90 degree stop: it rests there (the stop's give is a
+  // fraction of a degree) and the hinge's stop pushes back with the 20 N.m.
+  Document doc = Document::create();
+  const std::string door = box(doc, {250, 0, 0}, 500, 20, 300, "Door");
+  joint(doc, {{"kind", "revolute"}, {"part", door}, {"at", axis({0, 0, 0})}, {"limits", {{"rotation", {0, 90}}}}, {"drive", {{"mode", "torque"}, {"value", 20000}}}});
+  const sim::StudyRun run = dynamic(doc, {{"duration", 2.0}, {"frames", 201}, {"gravity", false}});
+  const auto* th = series(run, "Revolute 1 rotation");
+  double peak = 0;
+  for (double v : *th) peak = std::max(peak, v);
+  CHECK_NEAR(th->back(), 90, 0.5);
+  CHECK(peak < 92);
+}
+
 TEST(spring_mass_oscillator) {
   if (!engines_ok()) return;
   Document doc = Document::create();

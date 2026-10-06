@@ -25,6 +25,7 @@
 #include "opad/drawing/projection.hpp"
 #include "opad/drawing/sheet.hpp"
 #include "opad/kicad_pcb.hpp"
+#include "opad/sim/picture.hpp"
 
 namespace opad::commands {
 
@@ -599,11 +600,20 @@ void register_builtins() {
       {{"doc", "path"}, {"out", "path - .png"}, {"view", "iso|top|bottom|front|back|left|right"}, {"camera", "object - {eye,target,up,projection,scale}"},
        {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool - silhouette outlines (default true)"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"},
        {"views", "array|csv - e.g. iso,front,top,right: one labelled grid"}, {"edge_lines", "bool - the model's edges as lines"}, {"highlight", "array - face/edge references to tint"},
-       {"shading", "flat|smooth"}, {"explode", "uuid|object - an exploded view: a view op id or an explode spec"}},
+       {"shading", "flat|smooth"}, {"explode", "uuid|object - an exploded view: a view op id or an explode spec"},
+       {"joints", "object - {joint: value}: the mechanism there"}, {"study", "object - {id, t | frame | mode, field, scale}: a study's frame or result map"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
         RenderOptions o = render_options(a);
-        Image img = render_scene(doc, a.contains("explode") ? exploded_scene(doc, resolve(doc), a["explode"]) : resolve(doc), o);
+        Scene scene = a.contains("explode") ? exploded_scene(doc, resolve(doc), a["explode"]) : resolve(doc);
+        sim::Picture pic;
+        const bool posed = a.contains("joints") || a.contains("study");
+        if (posed) {
+          pic = sim::picture(doc, std::move(scene), a, o);
+          scene = std::move(pic.scene);
+        }
+        Image img = render_scene(doc, scene, o);
+        if (pic.legend) draw_legend(img, pic.title, pic.lo, pic.hi, pic.unit);
         std::string out = a.value("out", "");
         if (out.empty()) throw Error("render: \"out\" path required");
         write_png(path_from_utf8(out), img);
@@ -611,6 +621,7 @@ void register_builtins() {
         j["out"] = out;
         j["width"] = img.width;
         j["height"] = img.height;
+        if (posed && !pic.info.empty()) j["shown"] = pic.info;
         return j;
       });
 

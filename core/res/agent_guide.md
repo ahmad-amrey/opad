@@ -324,7 +324,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   face, `at_part` the rim of the knob's shaft end, `offset: -depth` to sink it in. Check the result's `frame` and `values`.
 - Relations couple two joints' coordinates, counted from where they are when made: `gear` (`teeth: [t1, t2]`, ratio
   -t1/t2; `internal: true` +t1/t2; or `ratio`), `rack_pinion` (`radius` = pinion pitch radius: mm per radian), and
-  `lead_screw` (`lead` mm per turn of the first). `joints: [first, second]`.
+  `lead_screw` (`lead` mm per turn of the first). `joints: [first, second]`. Planet gears: `carrier: <arm part>` counts
+  both joints' turns relative to the carrier arm (sun-planet and planet-ring pairs of a planetary set).
 - `limits: {"rotation": [-90, 90]}` bounds a coordinate (driving past a limit stops there and says so); `locked: true`
   holds a joint at its values. `joint` with `id` changes name, limits, lock, drive, spring, friction, pitch or ratio.
 - `joint_set` drives joints (`values: {joint: 30}` or `[rotation, translation]`, null leaves one free) or drags a part

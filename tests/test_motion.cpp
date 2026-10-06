@@ -158,6 +158,33 @@ TEST(gear_rack_and_lead_screw_ratios) {
   CHECK_NEAR(s2.world(bolt).at(2, 3), 0, 1e-12);
 }
 
+// A planetary set: sun 20, three planets 16, ring 52 held still, carrier driven. Willis: (sun - carrier) / (ring - carrier)
+// = -52 / 20, so with the ring still the sun turns 1 + 52/20 = 3.6 times per carrier turn. The gears' rotations are read
+// against the carrier, which holds every planet's axis.
+TEST(planetary_gear_set) {
+  Document doc = Document::create();
+  const std::string carrier = box(doc, {0, 0, -10}, 50, 8, 4, "Carrier");
+  const std::string sun = box(doc, {0, 0, 0}, 6, 6, 4, "Sun");
+  const std::string ring = box(doc, {40, 0, 0}, 6, 6, 4, "Ring");
+  const std::string jc = joint(doc, {{"kind", "revolute"}, {"part", carrier}, {"at", axis_z({0, 0, 0})}})["id"];
+  const std::string js = joint(doc, {{"kind", "revolute"}, {"part", sun}, {"at", axis_z({0, 0, 0})}})["id"];
+  const std::string jr = joint(doc, {{"kind", "revolute"}, {"part", ring}, {"at", axis_z({0, 0, 0})}, {"locked", true}})["id"];
+  for (int i = 0; i < 3; ++i) {
+    const double a = 2 * kPi * i / 3, x = 18 * std::cos(a), y = 18 * std::sin(a);
+    const std::string planet = box(doc, {x, y, 0}, 4, 4, 4, "Planet " + std::to_string(i + 1));
+    const std::string jp = joint(doc, {{"kind", "revolute"}, {"base", carrier}, {"part", planet}, {"at", axis_z({x, y, 0})}})["id"];
+    joint(doc, {{"kind", "gear"}, {"joints", {js, jp}}, {"teeth", {20, 16}}, {"carrier", carrier}});
+    joint(doc, {{"kind", "gear"}, {"joints", {jr, jp}}, {"teeth", {52, 16}}, {"internal", true}, {"carrier", carrier}});
+  }
+  CHECK_EQ(commands::run("mechanism", json::object(), &doc)["dof"].get<int>(), 1);
+  set(doc, jc, 360);
+  CHECK_NEAR(value(doc, js), 3.6 * 360, 1e-6);
+  CHECK_NEAR(value(doc, jr), 0, 1e-9);
+  // Each planet turns on its pin by -52/16 of the carrier: -3.25 turns.
+  for (const auto& j : resolve(doc).joints)
+    if (j.name.rfind("Revolute", 0) == 0 && j.base == carrier) CHECK_NEAR(j.values[0], -3.25 * 360, 1e-6);
+}
+
 TEST(snap_puts_a_knob_in_its_hole) {
   Document doc = Document::create();
   // A 60 x 40 x 5 panel with a 6 mm hole at (10, 5), and a knob (a 6 mm shaft under a 20 mm cap) made somewhere else.

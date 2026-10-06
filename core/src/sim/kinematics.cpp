@@ -3,6 +3,7 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <numeric>
@@ -109,6 +110,10 @@ struct Mechanism::Impl {
     // relations
     int j1 = -1, j2 = -1, c1 = -1, c2 = -1;
     double ratio = 0, q1c = 0, q2c = 0;
+    // A relation measured against a carrier (planet gears): each joint's part frame against where it sat in the carrier.
+    int carrier = -1;
+    Rigid fc1, fc2;
+    std::array<double, 2> cref{0, 0};
   };
   // A block of equations and the parts they depend on.
   struct Group {
@@ -154,6 +159,21 @@ struct Mechanism::Impl {
       out.push_back(v);
     }
     return out;
+  }
+
+  // The coordinate a relation reads of its joint `side` (0, 1): the joint's own, or with a carrier the joint's part frame
+  // against where it sat in the carrier (a rotation about its z, a translation along it).
+  double relation_coord(const Jt& j, int side) const {
+    const Jt& jt = joints[size_t(side == 0 ? j.j1 : j.j2)];
+    const int c = side == 0 ? j.c1 : j.c2;
+    if (j.carrier < 0) return measure(jt)[size_t(c)];
+    const Rigid P = placed(jt.b) * jt.fb;
+    const Rigid C = placed(j.carrier) * (side == 0 ? j.fc1 : j.fc2);
+    const Rigid R = C.inverse() * P;
+    if (!jt.k->coords[size_t(c)].angle) return R.p(2);
+    const double m = std::atan2(R.R(1, 0), R.R(0, 0));
+    const double r = j.cref[size_t(side)];
+    return r + wrap(m - r);
   }
 
   // The scale an angle residual is weighed at, so a radian counts as much as the mechanism's size in mm.
@@ -208,6 +228,7 @@ struct Mechanism::Impl {
     };
     if (j.j1 >= 0) {
       for (int jj : {j.j1, j.j2}) add(joints[size_t(jj)].a), add(joints[size_t(jj)].b);
+      add(j.carrier);
     } else {
       add(j.a), add(j.b);
     }
@@ -291,6 +312,17 @@ struct Mechanism::Impl {
       if (j.kind == "gear") j.ratio = d.value("ratio", -1.0);
       else if (j.kind == "rack_pinion") j.ratio = d.value("radius", 0.0) * (d.value("reverse", false) ? -1.0 : 1.0);  // mm per rad
       else j.ratio = d.value("lead", 0.0) / (2 * kPi);  // lead_screw: mm per rad
+      if (d.contains("carrier") && d["carrier"].is_string()) {
+        try {
+          j.carrier = part_index(d["carrier"].get<std::string>());
+        } catch (const std::exception& e) {
+          problems.push_back(j.name + ": " + e.what());
+          j.k = nullptr;
+          continue;
+        }
+        const json cf = d.value("carrier_frames", json::array());
+        if (cf.size() == 2) j.fc1 = rigid_of(Frame::from_json(cf[0])), j.fc2 = rigid_of(Frame::from_json(cf[1]));
+      }
       const json values = d.value("values", json::array());
       const double u1 = joints[size_t(j.j1)].k->coords[size_t(j.c1)].angle ? kDeg : 1.0;
       const double u2 = joints[size_t(j.j2)].k->coords[size_t(j.c2)].angle ? kDeg : 1.0;
@@ -380,8 +412,9 @@ struct Mechanism::Impl {
         const bool angular = j2.k->coords[size_t(j.c2)].angle;
         g.rows = 1;
         g.f = [this, &j, &j1, &j2, angular](double* out) {
-          const double q1 = measure(j1)[size_t(j.c1)], q2 = measure(j2)[size_t(j.c2)];
+          const double q1 = relation_coord(j, 0), q2 = relation_coord(j, 1);
           out[0] = (q2 - j.q2c - j.ratio * (q1 - j.q1c)) * (angular ? L : 1.0);
+          (void)j1, (void)j2;
         };
       } else {
         g.rows = constraint_rows(j);
@@ -548,6 +581,8 @@ struct Mechanism::Impl {
   void commit_values() {
     for (auto& j : joints)
       if (!j.k->relation) j.q = measure(j), j.ref = j.q;
+    for (auto& j : joints)
+      if (j.k->relation && j.carrier >= 0) j.cref = {relation_coord(j, 0), relation_coord(j, 1)};
   }
 
   // Parts under a part that moved, which did not move themselves, are carried along and the joints met again.

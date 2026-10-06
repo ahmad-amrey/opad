@@ -167,6 +167,7 @@ json joint_args() {
           {"radius", "number - rack_pinion: pitch radius mm"},
           {"lead", "number - lead_screw: mm per turn"},
           {"reverse", "bool - rack_pinion: other way"},
+          {"carrier", "string - relations: the body both axes ride in (planet carrier)"},
           {"drive", drive},
           {"spring", spring},
           {"friction", "number - N.mm or N"},
@@ -232,6 +233,19 @@ void register_sim_commands(const std::function<void(const CommandInfo&, Handler)
             at.push_back(j->values[size_t(c)]);
           }
           json op = {{"op", "joint"}, {"name", name}, {"kind", kind}, {"joints", js}, {"values", values_json(at)}};
+          if (a.contains("carrier") && !a["carrier"].is_null()) {
+            // Planet gears: each joint's rotation is read against the carrier holding both axes, from where it is now.
+            const std::string carrier = node_of(s, a["carrier"], "joint carrier");
+            const Mat4 to_carrier = s.world(carrier).inverse();
+            json frames = json::array();
+            for (size_t i = 0; i < 2; ++i) {
+              const Joint* j = s.joint(js[i].get<std::string>());
+              frames.push_back(j->at_part.transformed(to_carrier * s.world(j->part)).to_json());
+            }
+            op["carrier"] = carrier;
+            op["carrier_frames"] = frames;
+            op["values"] = json::array({0, 0});
+          }
           if (kind == "gear") {
             double ratio = a.value("ratio", 0.0);
             if (a.contains("teeth")) {
