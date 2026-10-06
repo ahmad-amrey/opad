@@ -814,9 +814,20 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   std::filesystem::create_directories(dir.p);
   if (const char* k = std::getenv("OPAD_KEEP_CCX"); k && *k) dir.keep = true;
   write_text_file(dir.p / "job.inp", inp.str());
-#ifndef _WIN32
-  setenv("OMP_NUM_THREADS", std::to_string(std::max(1u, std::thread::hardware_concurrency())).c_str(), 0);
+  // One thread for the solver unless asked: CalculiX 2.21's threaded SPOOLES factorisation (Ubuntu's ccx) races and now and
+  // then returns wrong displacements for the same input (seen on a cantilever: 3.04 mm three runs out of five, 5.44 mm or
+  // 1.82 mm the others); single-threaded it is exact and repeatable. OPAD_CCX_THREADS=n for a ccx known to be safe.
+  {
+    const char* asked = std::getenv("OPAD_CCX_THREADS");
+    const std::string threads = asked && *asked ? asked : "1";
+#ifdef _WIN32
+    _putenv_s("OMP_NUM_THREADS", threads.c_str());
+    _putenv_s("CCX_NPROC_EQUATION_SOLVER", threads.c_str());
+#else
+    setenv("OMP_NUM_THREADS", threads.c_str(), 1);
+    setenv("CCX_NPROC_EQUATION_SOLVER", threads.c_str(), 1);
 #endif
+  }
   detail::RunOptions ro;
   ro.output = dir.p / "ccx.log";
   ro.timeout_ms = int(st.value("timeout", 1800.0) * 1000);

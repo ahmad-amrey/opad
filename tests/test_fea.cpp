@@ -35,8 +35,8 @@ TEST(cantilever_deflection_and_stress) {
   const double L = 400, b = 10, h = 10, P = 25;  // slender (L/h = 40): the clamped root's 3D effect stays under 0.5%
   const std::string beam = box(doc, {0, 0, 0}, L, b, h, "Beam");
   commands::run("part_properties", {{"target", beam}, {"set", {{"material", "steel"}}}}, &doc);
-  commands::run("load", {{"kind", "fixed"}, {"refs", {face_at(beam, "x", 0)}}}, &doc);
-  commands::run("load", {{"kind", "force"}, {"refs", {face_at(beam, "x", L)}}, {"vector", {0, 0, -P}}}, &doc);
+  commands::run("load", {{"kind", "fixed"}, {"on", {face_at(beam, "x", 0)}}}, &doc);
+  commands::run("load", {{"kind", "force"}, {"on", {face_at(beam, "x", L)}}, {"vector", {0, 0, -P}}}, &doc);
   const sim::StudyRun run = sim::run_study(doc, resolve(doc), {{"kind", "static"}, {"settings", {{"mesh_size", 3}}}});
   const sim::FeaResult& r = *run.fea;
   const double I = b * h * h * h / 12;
@@ -59,8 +59,8 @@ TEST(bar_in_tension) {
   Document doc = Document::create();
   const double L = 200, a = 10, F = 2000;
   const std::string bar = box(doc, {0, 0, 0}, L, a, a, "Bar");
-  commands::run("load", {{"kind", "fixed"}, {"refs", {face_at(bar, "x", 0)}}}, &doc);
-  commands::run("load", {{"kind", "pressure"}, {"refs", {face_at(bar, "x", L)}}, {"value", -F / (a * a)}}, &doc);  // a pull: negative pressure
+  commands::run("load", {{"kind", "fixed"}, {"on", {face_at(bar, "x", 0)}}}, &doc);
+  commands::run("load", {{"kind", "pressure"}, {"on", {face_at(bar, "x", L)}}, {"value", -F / (a * a)}}, &doc);  // a pull: negative pressure
   const sim::StudyRun run = sim::run_study(doc, resolve(doc), {{"kind", "static"}, {"settings", {{"mesh_size", 4}}}});
   const sim::FeaResult& r = *run.fea;
   CHECK_NEAR(sim::probe(r, {L / 2, a / 2, a / 2}, "sxx"), F / (a * a), 0.005 * F / (a * a));
@@ -74,7 +74,7 @@ TEST(cantilever_first_frequency) {
   Document doc = Document::create();
   const double L = 200, a = 10;
   const std::string beam = box(doc, {0, 0, 0}, L, a, a, "Beam");
-  commands::run("load", {{"kind", "fixed"}, {"refs", {face_at(beam, "x", 0)}}}, &doc);
+  commands::run("load", {{"kind", "fixed"}, {"on", {face_at(beam, "x", 0)}}}, &doc);
   const sim::StudyRun run = sim::run_study(doc, resolve(doc), {{"kind", "modal"}, {"settings", {{"mesh_size", 3}, {"modes", 4}}}});
   const auto& f = run.fea->frequencies;
   const double I = a * a * a * a / 12, A = a * a;
@@ -100,7 +100,7 @@ TEST(bolt_preload_stresses_the_shank) {
   const std::string sleeve = cyl({0, 0, 0}, 24, 20, "Sleeve");
   commands::run("feature", {{"kind", "cylinder"}, {"inputs", {{"plane", {{"origin", {0, 0, -1}}, {"normal", {0, 0, 1}}}}, {"diameter", 10.4}, {"height", 22}, {"operation", "cut"}, {"targets", {sleeve}}}}}, &doc);
   const double F = 10000;
-  commands::run("load", {{"kind", "bolt_preload"}, {"refs", {bolt}}, {"value", F}}, &doc);
+  commands::run("load", {{"kind", "bolt_preload"}, {"on", {bolt}}, {"value", F}}, &doc);
   const sim::StudyRun run = sim::run_study(doc, resolve(doc), {{"kind", "static"}, {"settings", {{"bodies", {bolt, sleeve}}, {"mesh_size", 1.5}}}});
   const json b = run.summary["bolts"][0];
   const double A = kPi * 25;

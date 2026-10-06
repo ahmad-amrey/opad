@@ -59,10 +59,10 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
       {{"doc", "path"},
        {"kind", "motion|dynamic|static|modal"},
        {"name", "string"},
-       {"settings", "object - see the agent guide (Motion and simulation)"},
+       {"settings", {{"type", "object"}, {"description", "see the agent guide, Motion and simulation"}}},
        {"id", "string - an existing study: run it again (with settings: changed first)"},
        {"run", "bool - run it now (default true)"},
-       {"series", "bool - also return series (or a list of names / groups)"},
+       {"series", {{"anyOf", {{{"type", "boolean"}}, {{"type", "array"}, {"items", {{"type", "string"}}}}}}, {"description", "also return sampled series: true, or names / groups"}}},
        {"samples", "int - points per series (default 21)"},
        {"pose_at", "number - s: also write a pose of the parts at that time (motion, dynamic)"},
        {"by", "string"}},
@@ -154,10 +154,10 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
        {"kind", "fixed|force|pressure|moment|bolt_preload|gravity|displacement"},
        {"name", "string"},
        {"case", "string - load case (default \"Load case 1\")"},
-       {"refs", "array - faces (fixed, force, pressure, moment, displacement) or the bolt body (bolt_preload)"},
+       {"on", {{"type", "array"}, {"items", {{"anyOf", {{{"type", "string"}}, {{"type", "object"}}}}}}, {"description", "face refs or rules (the bolt body for bolt_preload)"}}},
        {"vector", "[x,y,z] - force N, moment N.mm, gravity mm/s2, displacement mm"},
        {"value", "number - pressure MPa (positive pushes into the face), preload N"},
-       {"axis", "object - bolt_preload: the bolt's axis (default: its longest cylinder)"},
+       {"axis", "object - bolt_preload: the bolt's axis (default: its largest cylinder)"},
        {"id", "string - an existing load to change"},
        {"by", "string"}},
       true, [](Document* d, const json& a) {
@@ -169,8 +169,9 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           const Load* l = s.load(a["id"].get<std::string>());
           if (!l) throw Error("no load " + a["id"].get<std::string>());
           json set = json::object();
-          for (const char* k : {"name", "case", "refs", "vector", "value", "axis"})
+          for (const char* k : {"name", "case", "vector", "value", "axis"})
             if (a.contains(k)) set[k] = a[k];
+          if (a.contains("on")) set["refs"] = a["on"];
           if (set.empty()) throw Error("load: nothing to change");
           json effective = l->def;
           for (const auto& [k, v] : set.items()) effective[k] = v;
@@ -182,10 +183,10 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
         const auto& kinds = sim::load_kinds();
         if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end())
           throw Error("load: kind is fixed, force, pressure, moment, bolt_preload, gravity or displacement");
-        json refs = a.value("refs", json::array());
+        json refs = a.value("on", a.value("refs", json::array()));
         if (!refs.is_array()) refs = json::array({refs});
         for (const auto& r : refs) Ref::from_json(r.is_object() && r.contains("select") ? json(r["body"]) : r);
-        if (kind != "gravity" && refs.empty()) throw Error("load: a " + kind + " acts on faces (or a bolt body): give refs");
+        if (kind != "gravity" && refs.empty()) throw Error("load: a " + kind + " acts on faces (or a bolt body): give on");
         if ((kind == "force" || kind == "moment" || kind == "gravity" || kind == "displacement") && !a.contains("vector"))
           throw Error("load: a " + kind + " needs its vector [x, y, z]");
         if ((kind == "pressure" || kind == "bolt_preload") && !a.contains("value"))
@@ -200,8 +201,6 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
         return json{{"id", id}, {"name", op["name"]}, {"kind", kind}, {"case", op["case"]}};
       });
 
-  reg("sim_engines", "Which simulation engines this build and machine have: Chrono (dynamic), Netgen and CalculiX (static, modal)", json::object(), false,
-      [](Document*, const json&) { return sim::engines(); });
 }
 
 }  // namespace opad::commands

@@ -306,6 +306,59 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   rewrites. If one is truly needed, it can be done with the git CLI, but only after asking the user and getting
   explicit confirmation, and only when needed.
 
+## Motion and simulation
+
+- Parts are bodies or components; everything under a part moves with it. `joint` joins two parts: `kind`, `part` (what
+  moves), `base` (what it moves on; omitted: the node `at` is on, else the world), `at` (the joint's frame). A frame is a
+  face, edge or vertex reference (a circular edge: its centre and axis, the axis pointing out of the flat face it borders;
+  a cylinder or cone face: its axis at the face's middle; a planar face: its centre and outward normal), an axis
+  (`{"base": "z"}`, `{"direction", "origin"}`) or `{"origin": [..], "z": [..], "x": [..]}`; `flip`, `offset` (mm along
+  z) and `x` adjust it. z is the joint's axis.
+- Kinds and their coordinates (degrees and mm): `revolute` (rotation about z), `slider` (translation along z),
+  `cylindrical` (rotation, translation), `pin_slot` (rotation about z, translation along x), `planar` (x, y, rotation in
+  the plane normal to z), `ball` (none tracked), `screw` (rotation; advances `pitch` mm per turn), `rigid` (none),
+  `ground` (fixes `part` where it is). A part joined to nothing that holds it keeps still while its mechanism moves
+  around it; ground one part of every mechanism.
+- `at_part` snaps: the part moves so its own frame meets `at`, turned against it (faces meet; `mate: false` keeps them
+  the same way), at `angle` (deg) and `offset` (mm). A knob into a panel's hole: `at` the hole's rim edge on the panel's
+  face, `at_part` the rim of the knob's shaft end, `offset: -depth` to sink it in. Check the result's `frame` and `values`.
+- Relations couple two joints' coordinates, counted from where they are when made: `gear` (`teeth: [t1, t2]`, ratio
+  -t1/t2; `internal: true` +t1/t2; or `ratio`), `rack_pinion` (`radius` = pinion pitch radius: mm per radian), and
+  `lead_screw` (`lead` mm per turn of the first). `joints: [first, second]`.
+- `limits: {"rotation": [-90, 90]}` bounds a coordinate (driving past a limit stops there and says so); `locked: true`
+  holds a joint at its values. `joint` with `id` changes name, limits, lock, drive, spring, friction, pitch or ratio.
+- `joint_set` drives joints (`values: {joint: 30}` or `[rotation, translation]`, null leaves one free) or drags a part
+  (`part` + world `matrix`); every other part follows through the joints and one pose op is written (`preview: true` only
+  reports). A position the joints cannot reach is refused with the joints that cannot all be met.
+- `mechanism` lists joints, values, which coordinates are free, degrees of freedom and redundant equations.
+- Gears for mechanisms: `feature kind=gear` (`type` spur | internal | rack, `module`, `teeth`, `width`, `bore`,
+  `phase`). Pitch diameter = module x teeth; two spur gears mesh with their centres the sum of their pitch radii apart
+  (an internal pair: the difference) and the second's `phase` = 180 + 180/teeth deg when it sits on the first's +X side.
+- `study` runs and records an analysis (`kind`, `settings`; `id` runs one again; `series: true` returns sampled curves,
+  `pose_at: t` writes the parts' pose at that time):
+  - `motion` (kinematic): `duration` s, `frames`, `drivers: [{"joint", "coordinate"?, "to": 360 (from its value now;
+    `profile`: linear | smooth | cycloidal) | "speed": deg/s or mm/s | "expr": "360 deg * t" | "table": [[t, v], ...]}]`,
+    `traces: [{"part", "point": [x, y, z] now, "name"}]`. Without drivers, joints with a position or speed `drive` run.
+    Returns each coordinate's range, speed and acceleration, and the traced paths.
+  - `dynamic` (Project Chrono): masses and inertias from the solids and their materials (steel when none, said in
+    warnings), `gravity` (true: 9.81 m/s2 down -Z; false; or [x, y, z] mm/s2), joints with their `drive` (`mode`
+    position deg|mm, speed deg/s|mm/s, torque N.mm, force N; `value`, `expr` of t, or `to`), `spring` (stiffness N/mm or
+    N.mm/deg, damping, `rest`), `friction` (N.mm or N), `contacts` (true or [parts]: their meshes collide; jointed pairs
+    and the ground's bodies are kept apart where joined), `friction`/`restitution` of contacts, `free: [nodes]` (bodies
+    with no joint that fall freely), `step` s. Outputs joint values, reaction forces and torques, motor torque and power,
+    relation tooth forces, kinetic/potential/total energy, contact count and traces. Bodies in no joint stay put (ground).
+  - `static` and `modal` (Netgen + CalculiX's ccx): `case` (load case, default the first), `bodies` (default the bodies
+    the loads name; bodies touching along faces are bonded), `mesh_size` mm, `modes` (modal), `materials` overrides
+    (`{"all" | body: {"E", "nu", "density", "yield"}}`). Static returns max von Mises and displacement with where, per
+    body safety factor against yield, support reactions and bolt stresses; modal the natural frequencies (Hz).
+- `load` adds to a case (`case`, default "Load case 1") on faces (`on`: references or rules): `fixed` and `displacement` (`vector` mm), `force`
+  (`vector` N, spread by area), `pressure` (`value` MPa into the face; negative pulls), `moment` (`vector` N.mm about the
+  faces' centre), `gravity` (`vector` mm/s2) and `bolt_preload` (`on: [bolt body]`, `value` N; the shank is cut at its
+  middle and the cut pulled together). Units are mm, N, MPa throughout. `mechanism` reports which engines this machine has (`engines`).
+- Typical: ground the frame, joint the parts, `mechanism` to check the degrees of freedom, `joint_set` to try a
+  position, a `motion` study for the travel, a `dynamic` study for forces, then `load` + `static` on the most loaded
+  part with the reaction forces as its loads.
+
 ## Checking the result
 
 - `sketch` results, and results of features that take a `plane`, include `frame`: the origin, x, y and normal the

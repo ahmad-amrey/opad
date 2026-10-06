@@ -132,40 +132,56 @@ json joint_summary(const Scene& s, const Joint& j) {
   return e;
 }
 
+// The joint command's arguments as JSON Schema: frames and parts may be references (strings) or objects.
+json joint_args() {
+  const json frame = {{"anyOf", {{{"type", "string"}}, {{"type", "object"}}}},
+                      {"description", "face/edge/vertex ref or rule, axis ({base} | {direction, origin}), {point} or {origin, z, x}; flip, offset, x"}};
+  const json node = {{"type", {"string", "null"}}};
+  const json coord = {{"type", "string"}, {"enum", {"rotation", "translation", "x", "y"}}};
+  json drive = {{"type", "object"},
+                {"properties", {{"coordinate", coord}, {"mode", {{"type", "string"}, {"enum", {"position", "speed", "torque", "force"}}}}, {"value", {{"type", "number"}}},
+                                {"expr", {{"type", "string"}}}, {"to", {{"type", "number"}}}, {"table", {{"type", "array"}}}}},
+                {"description", "position deg|mm, speed deg/s|mm/s, torque N.mm, force N; expr of t"}};
+  json spring = {{"type", "object"},
+                 {"properties", {{"coordinate", coord}, {"stiffness", {{"type", "number"}}}, {"damping", {{"type", "number"}}}, {"rest", {{"type", "number"}}}}},
+                 {"description", "N/mm, N.s/mm or N.mm/deg, N.mm.s/deg"}};
+  return {{"doc", "path"},
+          {"kind", {{"type", "string"}, {"enum", {"revolute", "slider", "cylindrical", "pin_slot", "planar", "ball", "screw", "rigid", "ground", "gear", "rack_pinion", "lead_screw"}}}},
+          {"name", "string"},
+          {"part", node},
+          {"base", node},
+          {"at", frame},
+          {"at_part", frame},
+          {"mate", "bool - snap faces against each other (default true)"},
+          {"angle", "number - deg, snapping"},
+          {"offset", "number - mm along z, snapping"},
+          {"limits", {{"type", "object"},
+                      {"additionalProperties", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 2}, {"maxItems", 2}}},
+                      {"description", "{coordinate: [min, max]} deg / mm"}}},
+          {"locked", "bool - held at its values"},
+          {"pitch", "number - screw: mm per turn (negative: left hand)"},
+          {"joints", {{"type", "array"}, {"items", {{"type", "string"}}}, {"minItems", 2}, {"maxItems", 2}, {"description", "relations: the two joints"}}},
+          {"ratio", "number - gear: 2nd turns per 1st turn (signed)"},
+          {"teeth", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 2}, {"maxItems", 2}, {"description", "gear: [1st, 2nd]; ratio = -t1/t2"}}},
+          {"internal", "bool - gear: ring pair (+t1/t2)"},
+          {"radius", "number - rack_pinion: pitch radius mm"},
+          {"lead", "number - lead_screw: mm per turn"},
+          {"reverse", "bool - rack_pinion: other way"},
+          {"drive", drive},
+          {"spring", spring},
+          {"friction", "number - N.mm or N"},
+          {"id", "string - a joint to change"},
+          {"by", "string"}};
+}
+
 }  // namespace
 
 void register_sim_commands(const std::function<void(const CommandInfo&, Handler)>& add) {
   auto reg = [&](const char* name, const char* desc, json args, bool mutates, Handler h) { add({name, desc, std::move(args), mutates}, std::move(h)); };
 
   reg("joint",
-      "Join two parts so they move as a joint allows (revolute, slider, cylindrical, pin_slot, planar, ball, screw, rigid, "
-      "ground), or couple two joints (gear, rack_pinion, lead_screw). With at_part the part is moved onto the joint. With id: "
-      "change a joint's name, limits, lock, drive, spring, friction or ratio",
-      {{"doc", "path"},
-       {"kind", "string - revolute|slider|cylindrical|pin_slot|planar|ball|screw|rigid|ground|gear|rack_pinion|lead_screw"},
-       {"name", "string"},
-       {"part", "string - the node that moves (or a reference on it)"},
-       {"base", "string - the node it moves on; null or absent: the node `at` is on, else the world"},
-       {"at", "object - the joint's frame: a face/edge/vertex ref, an axis, or {origin, z, x}; flip, offset, x"},
-       {"at_part", "object - a frame on the part: the part is moved so it meets `at` (snap)"},
-       {"mate", "bool - snapping turns the part's z against at's (faces meet; default true)"},
-       {"angle", "number - deg, with at_part: the starting rotation"},
-       {"offset", "number - mm along the axis, with at_part"},
-       {"limits", "object - {coordinate: [min, max]} in deg / mm"},
-       {"locked", "bool - held at its values"},
-       {"pitch", "number - screw: mm per turn (negative: left hand)"},
-       {"joints", "array - relations: [joint, joint]"},
-       {"ratio", "number - gear: turns of the 2nd joint per turn of the 1st (negative: opposite way)"},
-       {"teeth", "array - gear: [teeth on 1st, teeth on 2nd]; ratio = -t1/t2 (internal: +)"},
-       {"internal", "bool - gear: an internal (ring) gear pair"},
-       {"radius", "number - rack_pinion: pitch radius mm"},
-       {"lead", "number - lead_screw: mm the 2nd joint moves per turn of the 1st"},
-       {"reverse", "bool - rack_pinion: the rack moves the other way"},
-       {"drive", "object - for studies: {coordinate, mode: position|speed|torque|force, value | expr (of t, s)}"},
-       {"spring", "object - {coordinate, stiffness (N/mm | N.mm/deg), damping, rest}"},
-       {"friction", "number - joint friction (coefficient)"},
-       {"id", "string - an existing joint to change"},
-       {"by", "string"}},
+      "Join two parts as a joint allows, or couple two joints (gear, rack_pinion, lead_screw); at_part snaps the part onto it; id changes one",
+      joint_args(),
       true, [](Document* d, const json& a) {
         Document& doc = need_doc(d);
         const Scene s = resolve(doc);
@@ -336,10 +352,10 @@ void register_sim_commands(const std::function<void(const CommandInfo&, Handler)
       });
 
   reg("joint_set",
-      "Move a mechanism: drive joints to values (deg / mm) or place a part, and the other parts follow through the joints. "
-      "Writes a pose (one undo step); preview: only report",
+      "Drive joints to values (deg / mm) or place a part; the rest follow through the joints. Writes a pose; preview only reports",
       {{"doc", "path"},
-       {"values", "object - {joint id: value or [values, null = free]}"},
+       {"values", {{"type", "object"}, {"additionalProperties", {{"anyOf", {{{"type", "number"}}, {{"type", "array"}, {"items", {{"type", {"number", "null"}}}}}}}}},
+                   {"description", "{joint id: value (deg or mm) or [values, null leaves one free]}"}}},
        {"part", "string - a part to place instead (drag)"},
        {"matrix", "[16] row-major world placement for part"},
        {"anchor", "string - the part to keep still when nothing else holds the mechanism"},
@@ -406,6 +422,7 @@ void register_sim_commands(const std::function<void(const CommandInfo&, Handler)
         json loads = json::array();
         for (const auto& l : s.loads) loads.push_back({{"id", l.id}, {"name", l.name}, {"kind", l.kind}, {"case", l.load_case}});
         if (!loads.empty()) out["loads"] = loads;
+        out["engines"] = sim::engines();
         return out;
       });
 
