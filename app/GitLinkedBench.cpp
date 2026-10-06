@@ -10,7 +10,7 @@
 // live_state and context tell an agent that the user's trust is needed, which it cannot give), then read from its badge.
 // The trust question is answered through assets::setTrustAnswer. The connection, bound once, stays bound through every
 // reload of the same document (a notice in the next reply says so); another document opened in the window needs an explicit
-// live_bind (target_changed). On every tick the window never shows the "replaced on disk" card for the agent's own git
+// live_bind (target_changed). On every tick the collapsed browser shows its rows as they are once they hold still; and the window never shows the "replaced on disk" card for the agent's own git
 // commands, nor the start page over the open document; a change made outside (a reset of the file) brings the card, and an
 // agent's save then refuses (disk_changed, ask the user) and writes nothing until the user has answered it (Reload).
 // Pictures at <prefix>.<step>.png.
@@ -30,6 +30,7 @@
 #include "Banner.hpp"
 #include "BenchRegistry.hpp"
 #include "BrowserDelegate.hpp"
+#include "BrowserOverlay.hpp"
 #include "BrowserPanel.hpp"
 #include "Jobs.hpp"
 #include "EmptyState.hpp"
@@ -82,6 +83,7 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
     bool waiting = false;
     size_t asks = 0;
     std::string third, target;
+    int overlayChecks = 0;  // ticks the collapsed browser's picture was compared with the browser
     bool external = false;  // the file changed outside on purpose: its card is expected
     AppDocument::DiskStat stamp;
   };
@@ -154,7 +156,16 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
   };
   // On every tick: a linked file whose parts are not all loaded never shows the in-sync check; the agent's own git commands
   // never bring the "replaced on disk" card; the start page never covers the open document.
-  auto invariant = [linked, badge, names, card, st, win, doc] {
+  auto browserShot = std::make_shared<QImage>();
+  auto invariant = [linked, badge, names, card, st, win, doc, browserShot] {
+    // The collapsed browser shows its rows as they are once they hold still (a reload rebuilds and decorates them).
+    if (const QImage now = win->m_browser->grab().toImage(); now == *browserShot) {
+      if (win->m_browserOverlay->isVisible() && !win->m_browserOverlay->expanded() && win->m_browserOverlay->preview().toImage() != now)
+        throw std::runtime_error("the collapsed browser shows its rows as they were before, not as they are");
+      if (win->m_browserOverlay->isVisible() && !win->m_browserOverlay->expanded()) ++st->overlayChecks;
+    } else {
+      *browserShot = now;
+    }
     if (Banner* b = card(); b && !st->external)
       throw std::runtime_error("the card \"" + b->property("state").toString().toStdString() + "\" about the file came up for the agent's own git command");
     if (doc->hasDocument && (win->m_stack->currentWidget() == win->m_empty || win->m_empty->isVisible()))
@@ -380,6 +391,8 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
     try {
       if (st->step >= steps.size()) {
         timer->stop();
+        if (st->overlayChecks < 20) throw std::runtime_error("the collapsed browser was compared on too few ticks: " + std::to_string(st->overlayChecks));
+        trace::log(QStringLiteral("bench: git-linked: the collapsed browser showed its rows as they are on all %1 ticks they held still, through every reload PASS").arg(st->overlayChecks));
         if (st->socket) st->socket->abort();
         QCoreApplication::exit(0);
         return;

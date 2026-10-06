@@ -110,9 +110,11 @@ class BrowserOverlay : public QFrame {
     if(m_snapshot.isNull()) snapshot();
     QImage faded=m_snapshot.toImage();
     QPainter mask(&faded); mask.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+    // Collapsed: its first rows as they are (at 65% and less they read as greyed out, disabled, until hovered), faded out
+    // only towards the bottom edge, which says there is more.
     QLinearGradient gradient(0,0,0,std::min(160,m_expandedHeight));
-    gradient.setColorAt(0,QColor::fromRgbF(1,1,1,0.65+0.35*m_progress));
-    gradient.setColorAt(0.3,QColor::fromRgbF(1,1,1,0.55+0.45*m_progress));
+    gradient.setColorAt(0,QColor::fromRgbF(1,1,1,1));
+    gradient.setColorAt(0.75,QColor::fromRgbF(1,1,1,1));
     gradient.setColorAt(1,QColor::fromRgbF(1,1,1,m_progress));
     mask.fillRect(faded.rect(),gradient); mask.end(); p.drawImage(QPoint(0,0),faded);
   }
