@@ -54,8 +54,10 @@ bool Policy::protects(const QString& branch) const {
       if (pattern == branch) return true;
       continue;
     }
-    const QString re = QRegularExpression::wildcardToRegularExpression(pattern, QRegularExpression::NonPathWildcardConversion);
-    if (QRegularExpression(re).match(branch).hasMatch()) return true;
+    // `*` is the only wildcard (any characters, "/" too). By hand: NonPathWildcardConversion is Qt 6.6+ (Ubuntu has 6.4).
+    QString re = QRegularExpression::escape(pattern);
+    re.replace(QStringLiteral("\\*"), QStringLiteral(".*"));
+    if (QRegularExpression(QRegularExpression::anchoredPattern(re)).match(branch).hasMatch()) return true;
   }
   return false;
 }
