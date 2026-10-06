@@ -1,5 +1,9 @@
 // The built-in benches (--bench-select); benches in their own files register through BenchRegistry.hpp.
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "MainWindow.hpp"
+#include <QWindow>
 #include "BenchRegistry.hpp"
 #include "CheckPanel.hpp"
 #include "Drawing2DBench.hpp"
@@ -58,6 +62,28 @@ class BenchQuiet : public QObject {
 void MainWindow::setBenchSelect(bool on) {
   m_benchSelect = on;
   if (on) qApp->installEventFilter(new BenchQuiet(this, this));
+  // OPAD_BENCH_OFFSCREEN (Windows): this bench's window drawn as a user's is (shown, exposed, painted), but off the screen,
+  // never activated and without a taskbar entry; set before the window is first shown, so the startup goes on at its first
+  // expose as a launch does. A hidden bench window is never exposed and never paints. The process starts hidden
+  // (STARTUPINFO), which only the first ShowWindow takes: a throwaway window takes it here.
+  if (on && qEnvironmentVariableIsSet("OPAD_BENCH_OFFSCREEN")) {
+#ifdef _WIN32
+    if (HWND dummy = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"", WS_POPUP, -6000, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr)) {
+      ShowWindow(dummy, SW_SHOWNORMAL);
+      DestroyWindow(dummy);
+    }
+    HWND h = reinterpret_cast<HWND>(winId());
+    SetWindowLongPtrW(h, GWL_EXSTYLE, GetWindowLongPtrW(h, GWL_EXSTYLE) | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+#endif
+    setAttribute(Qt::WA_ShowWithoutActivating);
+    setGeometry(-6000, 100, 1600, 1000);
+    QTimer::singleShot(0, this, [this] {  // in case the start still took the first show: shown again by Qt
+      if (windowHandle() && windowHandle()->isExposed()) return;
+      if (trace::enabled()) trace::log("bench: offscreen window shown again (not exposed at its first show)");
+      hide();
+      show();
+    });
+  }
 }
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.

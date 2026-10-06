@@ -367,12 +367,21 @@ void MainWindow::setLoading(bool on) {
   showCentral();  // the viewport (dimmed, spinner) rather than the start page while loading
   m_viewport->setBlocked(on);
   m_loadShade->setVisible(on);
+  if (trace::traceFrames()) trace::log(QStringLiteral("frames: load shade %1; view: %2").arg(on ? "shown" : "hidden", m_viewport->frameState()));
   for (QWidget* w : std::initializer_list<QWidget*>{m_browser, m_timeline, m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel, m_featurePanel}) w->setEnabled(!on);
   if (on) positionOverlays();
 }
 
+QString MainWindow::centralName(const QWidget* page) const {
+  return page == m_empty ? QStringLiteral("start page") : page == m_viewport ? QStringLiteral("3D view") : page ? QStringLiteral("area page") : QStringLiteral("none");
+}
+
 void MainWindow::showCentral() {
   QWidget* page = m_loadShown ? m_viewport : !m_doc->hasDocument ? static_cast<QWidget*>(m_empty) : m_centralPage ? m_centralPage : m_viewport;
+  if (trace::traceFrames() && m_stack->currentWidget() != page)
+    trace::log(QStringLiteral("frames: central page %1 -> %2 (document %3, loading %4); view: %5")
+                   .arg(centralName(m_stack->currentWidget()), centralName(page))
+                   .arg(m_doc->hasDocument).arg(m_loadShown).arg(m_viewport->frameState()));
   m_stack->setCurrentWidget(page);
   if (m_browserOverlay) m_browserOverlay->setScene(page == m_empty ? m_viewport : page);
   if (m_toasts) m_toasts->setHost(page);  // over whatever is shown (the sheet canvas too)

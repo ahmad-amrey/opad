@@ -72,4 +72,10 @@ CASES = [
     # The start page never left where the 3D view is: the window drawn off the screen (never activated), opened again from
     # the start page: the view exposed and drawing in its place (Windows).
     ("start-cover", "box", {"OPAD_BENCH_START_COVER": "1"}),
+    # Launched with a file while the start page is current, its window drawn off the screen from the first turn (the startup
+    # going on at the first expose), then reloaded and merged from disk as git switches leave the file: the view exposed and
+    # painting each time (OPAD_TRACE_FRAMES logs every frame, show, hide, expose and native paint message; no pixels read).
+    ("launch-frames", lambda root, document: document("launch-frames", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"10 mm","height":"10 mm"}'),
+                                                      ("feature", "--kind", "cylinder", "--inputs", '{"x":"30 mm","diameter":"8 mm","height":"8 mm"}')),
+     {"OPAD_BENCH_LAUNCH_FRAMES": "1", "OPAD_BENCH_OFFSCREEN": "1", "OPAD_TRACE_FRAMES": "1"}),
 ]

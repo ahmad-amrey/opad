@@ -97,6 +97,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // scene changed, so the next frame must draw everything, or the view stays black until the pointer moves over it.
   void exposedAgain();
   int exposeRedraws() const { return m_exposeRedraws; }  // benches
+  int framesPainted() const { return m_framesPainted; }   // paint events that drew or showed a frame (benches, trace::traceFrames)
+  QString frameState() const;  // shown, exposed, native window visible, blocked, size: for trace::traceFrames and benches
   // A native overlay over the view moved, shrank, went or changed its mask, or the system uncovered part of the view
   // (ViewOverlay.hpp): the next paint draws a whole frame (quick ones) or shows the last frame again, or the overlay's old
   // image stays there.
@@ -683,6 +685,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void paintEvent(QPaintEvent*) override;
   void resizeEvent(QResizeEvent*) override;
   void showEvent(QShowEvent*) override;
+  void hideEvent(QHideEvent*) override;
+  bool nativeEvent(const QByteArray& type, void* message, qintptr* result) override;  // trace::traceFrames: the native paint messages
   void mousePressEvent(QMouseEvent*) override;
   void mouseReleaseEvent(QMouseEvent*) override;
   void mouseMoveEvent(QMouseEvent*) override;
@@ -789,7 +793,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QPointF m_holdAt;
   bool m_holdPress = false;
   Qt::MouseButtons m_viewButtons = Qt::NoButton;  // pressed on the view itself (not on an overlay, a dialog or a menu)
-  int m_exposeRedraws = 0, m_droppedGestures = 0;
+  int m_exposeRedraws = 0, m_droppedGestures = 0, m_framesPainted = 0;
   bool m_uncovered = false;   // an overlay left part of the view since the last paint (overlayUncovered)
   bool m_frameDrawn = false;  // this paint's flush drew a frame (handleViewRedraw)
   int m_overlayRepairs = 0, m_overlayReshows = 0;

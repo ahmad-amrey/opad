@@ -151,6 +151,7 @@ class MainWindow : public QMainWindow {
   // Cancel and, while the file is on disk, Review changes… (UI-59: Compare, the saved file against this session).
   QMessageBox* unsavedPrompt();
   void showDocument(bool has);
+  QString centralName(const QWidget* page) const;  // trace::traceFrames
   void showCentral();  // the start page, the viewport (also while loading) or an area's page; the browser floats over it
   // title: the job's and the shade's ("Opening box.step"); done: the completion toast, %1 = the bodies loaded.
   void beginLoad(std::function<void()> after, const QString& title = QString(), const QString& done = QString());

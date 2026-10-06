@@ -372,6 +372,11 @@ Frames& frames() {
 }
 }  // namespace
 
+bool traceFrames() {
+  static const bool on = enabled() && qEnvironmentVariableIsSet("OPAD_TRACE_FRAMES");
+  return on;
+}
+
 void frameDrawn() {
   Frames& f = frames();
   const qint64 now = f.clock.elapsed();

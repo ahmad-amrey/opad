@@ -232,7 +232,10 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
     auto* overlay = static_cast<QWidget*>(object);
     if (overlay->testAttribute(Qt::WA_NativeWindow) && !overlay->isWindow() && isAncestorOf(overlay)) overlayUncovered();
   }
-  if (e->type() == QEvent::Expose && windowHandle() && object == windowHandle()) overlayUncovered();
+  if (e->type() == QEvent::Expose && windowHandle() && object == windowHandle()) {
+    if (trace::traceFrames()) trace::log("frames: view expose: " + frameState());
+    overlayUncovered();
+  }
   if (zoomWindowKey(object, e)) return true;
   if(e->type()==QEvent::MouseButtonPress || e->type()==QEvent::MouseButtonDblClick) {
     const auto widget=qobject_cast<QWidget*>(object);

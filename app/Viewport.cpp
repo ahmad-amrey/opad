@@ -2768,12 +2768,39 @@ Graphic3d_Vec2i Viewport::devicePos(const QPointF& p) const {
   return Graphic3d_Vec2i(qRound(p.x() * scale.x()), qRound(p.y() * scale.y()));
 }
 
-namespace native {
-bool invalidate(QWidget* w);  // NativeExpose.cpp
+
+namespace native {  // NativeExpose.cpp
+bool invalidate(QWidget* w);
+QString styleText(WId window);
+QString messageText(const QByteArray& type, void* message);
+}  // namespace native
+
+QString Viewport::frameState() const {
+  // internalWinId: never creates the native window (this is also called while it is being made).
+  const WId id = internalWinId();
+  QWindow* native = id ? windowHandle() : nullptr;
+  QString out = QStringLiteral("shown %1, exposed %2, native %3, blocked %4, initialised %5, %6x%7")
+                    .arg(isVisible()).arg(native && native->isExposed()).arg(id ? QString::number(quintptr(id), 16) : QStringLiteral("none"))
+                    .arg(m_blocked).arg(m_initialised).arg(width()).arg(height());
+  if (id) out += native::styleText(id);
+  if (const QWindow* top = window()->windowHandle()) out += QStringLiteral(", window exposed %1 at %2,%3").arg(top->isExposed()).arg(top->x()).arg(top->y());
+  return out;
+}
+
+void Viewport::hideEvent(QHideEvent* e) {
+  QWidget::hideEvent(e);
+  if (trace::traceFrames()) trace::log("frames: view hidden: " + frameState());
+}
+
+bool Viewport::nativeEvent(const QByteArray& type, void* message, qintptr* result) {
+  if (trace::traceFrames())
+    if (const QString what = native::messageText(type, message); !what.isEmpty()) trace::log("frames: view " + what);
+  return QWidget::nativeEvent(type, message, result);
 }
 
 void Viewport::showEvent(QShowEvent* e) {
   QWidget::showEvent(e);
+  if (trace::traceFrames()) trace::log("frames: view shown: " + frameState());
   if (!m_initialised) {
     m_needFit = true;
     if (m_warmed) initViewer();  // else the startup makes it once the window has been painted (warmUp)
@@ -2854,6 +2881,8 @@ void Viewport::paintEvent(QPaintEvent*) {
     FlushViewEvents(m_ctx, m_view, Standard_True);
   }
   // No frame drawn for it: the last frame shown again whole, which OCCT does without drawing the scene (its immediate redraw).
+  if (m_frameDrawn || uncovered) ++m_framesPainted;
+  if (trace::traceFrames()) trace::log(QStringLiteral("frames: paint #%1: %2, %3").arg(m_framesPainted).arg(m_frameDrawn ? "drawn" : "nothing to draw").arg(frameState()));
   if (uncovered) {
     ++m_overlayRepairs;
     if (!m_frameDrawn) {

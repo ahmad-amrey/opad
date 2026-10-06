@@ -182,6 +182,9 @@ void installUiWatchdog(QObject* parent);
 // The 3D view drew a frame (its paint ended): proof the event loop ran. Frames drawn back to back (the cube's turn, Fit's
 // glide) starve the watchdog's timer; a gap full of them is an animation, not a stall (F on a house read 375 ms, 23 of CPU).
 void frameDrawn();
+// OPAD_TRACE_FRAMES (with OPAD_TRACE): every frame of the 3D view, its show, hide, expose and native paint messages, the
+// central area's page switches and the load shade, as "frames: ..." lines. Reads no pixels.
+bool traceFrames();
 struct Stalls {
   int count = 0;
   qint64 longest = 0, total = 0;  // ms, as the watchdog measured them (its tick is 16 ms while tracing)
