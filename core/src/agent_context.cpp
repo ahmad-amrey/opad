@@ -157,6 +157,14 @@ json query_entities(const Document& doc,const Scene& scene,const json& args,cons
   auto out=page(std::move(items),count,args);out["body"]=body;out["coordinates"]="world mm";out["scanned"]=entities;
   out["status"]=count==0?"no_match":args.value("ambiguity","all")=="unique" && count!=1?"ambiguous":"matched";
   out["selection_allowed"]=count>0 && (args.value("ambiguity","all")=="all" || count==1);
+  // What it matched as a ready rule reference (mcp-eval 2026-10-06): index references broke when a parameter renumbered the
+  // edges, rule ones survived. A face/edge input takes it as it is and matches again whenever the feature is computed.
+  if(count>0 && args.contains("filters") && args["filters"].is_object() && !args["filters"].empty()){
+    json rule={{"body",body},{"kind",kind},{"select",args["filters"]},{"expect",count}};
+    if(args.contains("tolerance_mm"))rule["tolerance_mm"]=args["tolerance_mm"];
+    out["rule"]=rule;
+    out["rule_use"]="Pass rule as one item of a face/edge input (e.g. fillet edges: [rule]): it picks these by geometry each time the feature is computed and fails when the count is no longer expect; prefer it to index references, which a topology change renumbers.";
+  }
   return out;
 }
 json validate_design(const Document& doc,const Scene& scene,const json& args,const std::function<bool()>& cancelled) {

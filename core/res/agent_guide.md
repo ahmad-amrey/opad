@@ -153,7 +153,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   {min, max}) when the feature is computed or regenerated. A different count than `expect` (or than one with
   `ambiguity: "unique"`) fails the feature instead of guessing. The result's `selected` records what each rule
   matched. Example: the four top edges of a box of height 20: `{"curve": "line", "at_plane": {"axis": "z", "value":
-  20}}` with `"expect": 4`.
+  20}}` with `"expect": 4`. `query_entities` returns what it matched as such a `rule`, ready to pass as an input; a
+  feature given face/edge indices answers with a warning that points to it.
 - Recognised details as a rule (faces only): `"select": {"recognized": "hole", "diameter": 6, "through": true}` is
   every face of the body's holes of that size; also `fillet` (`radius`), `chamfer` (`distance`), `wall`
   (`thickness`), `boss`, `pocket`; hole `type` simple|counterbore|countersink, `depth`, `cb_diameter`,

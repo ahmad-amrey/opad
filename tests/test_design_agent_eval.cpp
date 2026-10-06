@@ -312,4 +312,31 @@ TEST(point_pattern) {
   agent::validate_input(agent::feature_schema("pattern_points"), {{"bodies", json::array({pin})}, {"points", json::array({json::array({1, 2, 3})})}, {"from", "origin"}});
 }
 
+// 8. Index references broke on a topology change while rule ones survived: query_entities returns a ready rule for what it
+// matched, and a feature given face/edge indices warns and points to it.
+TEST(rule_references_are_offered) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "h"}, {"expr", "10 mm"}}, &doc);
+  const std::string body = feature(doc, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "h"}})["body_ids"][0];
+  const json found = agent::query_entities(doc, resolve(doc), {{"body", body}, {"kind", "edge"}, {"filters", {{"at_plane", {{"axis", "z"}, {"value", 10}}}}}});
+  CHECK(found.contains("rule"));
+  const json rule = found["rule"];
+  CHECK_EQ(rule["expect"], 4);
+  CHECK_EQ(rule["kind"], "edge");
+  CHECK_EQ(rule["select"], json({{"at_plane", {{"axis", "z"}, {"value", 10}}}}));
+  // The rule as an input: no warning; index references: a warning naming the input and the rule.
+  Document byRule = doc, byIndex = doc;
+  const json ruled = feature(byRule, "fillet", {{"edges", json::array({rule})}, {"radius", "1 mm"}});
+  CHECK(!ruled.contains("warnings"));
+  json indexed = json::array();
+  for (const auto& item : found["items"]) indexed.push_back(item["reference"]["ref"]);
+  const json warned = feature(byIndex, "fillet", {{"edges", indexed}, {"radius", "1 mm"}});
+  CHECK(warned.contains("warnings"));
+  CHECK(has(warned["warnings"][0].get<std::string>(), "inputs.edges: 4 edges given by index"));
+  CHECK(has(warned["warnings"][0].get<std::string>(), "query_entities"));
+  // Without filters there is nothing to make a rule of.
+  CHECK(!agent::query_entities(doc, resolve(doc), {{"body", body}})["items"].empty());
+  CHECK(!agent::query_entities(doc, resolve(doc), {{"body", body}}).contains("rule"));
+}
+
 CHECK_MAIN()

@@ -100,6 +100,26 @@ json plane_frame(const Document& doc, const Scene& scene, const design::FeatureS
   return nullptr;
 }
 
+// Soft warnings for face and edge inputs given by index ("<body>/edge/7", {body, kind, index}) rather than by rule
+// (mcp-eval 2026-10-06: a parameter change renumbered the edges a fillet named by index; rule references survived).
+json index_reference_warnings(const design::FeatureSpec& spec, const json& inputs) {
+  json warnings = json::array();
+  for (const auto& in : spec.inputs) {
+    if ((in.type != "edges" && in.type != "faces") || !inputs.contains(in.name) || !inputs[in.name].is_array()) continue;
+    const std::string kind = in.type == "edges" ? "edge" : "face";
+    size_t indexed = 0;
+    for (const auto& r : inputs[in.name]) {
+      if (r.is_string()) indexed += r.get<std::string>().find("/" + kind + "/") != std::string::npos;
+      else if (r.is_object() && !r.contains("select") && r.contains("index") && r.value("kind", "") == kind) ++indexed;
+    }
+    if (indexed)
+      warnings.push_back("inputs." + in.name + ": " + std::to_string(indexed) + " " + kind + (indexed == 1 ? "" : "s") +
+                         " given by index; a change that renumbers the body's " + kind + "s (a parameter, an earlier feature) can make it pick others or fail. "
+                         "Prefer a rule {body, kind, select, expect}: query_entities returns one for what it matched (rule).");
+  }
+  return warnings;
+}
+
 // Body references -> distinct body ids (a component stands for the bodies under it), as the features read them.
 json picked_bodies(const Scene& scene, const json& refs) {
   json out = json::array();
@@ -308,7 +328,9 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         }
         if (!styling.empty()) out["style_ids"] = styling;
         if (!frame.is_null()) out["frame"] = frame;
-        if (styled && made == 0) out["warnings"] = json::array({"body_name, color and parent apply to the bodies a feature makes; this one made none (it changed existing bodies), so they were not used"});
+        json warnings = index_reference_warnings(spec, inputs);
+        if (styled && made == 0) warnings.push_back("body_name, color and parent apply to the bodies a feature makes; this one made none (it changed existing bodies), so they were not used");
+        if (!warnings.empty()) out["warnings"] = warnings;
         return out;
       });
 
