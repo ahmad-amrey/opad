@@ -6,6 +6,7 @@
 #include "opad/drawing_io.hpp"
 #include "Jobs.hpp"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QSettings>
@@ -131,6 +132,24 @@ opad::AssetOptions AppDocument::assetOptions() {
   o.kicad = kicadOptions();
   o.derive = opad::derive_asset;  // a board read through kicad-cli: its STEP made again when missing here or synced
   return o;
+}
+
+std::vector<AppDocument::Untrusted> AppDocument::untrustedFiles() const {
+  std::set<std::string> unread;  // imports with parts not loaded
+  for (const auto& [id, n] : scene.nodes)
+    if (n.linked && n.body_missing) unread.insert(n.source_op);
+  std::vector<Untrusted> out;
+  if (unread.empty()) return out;
+  const QString dir = doc.path.empty() ? QString() : QFileInfo(path()).absolutePath();
+  for (const auto& s : assetStates) {
+    const std::string import = s.value("import", "");
+    if (s.value("state", "") != "untrusted" || !unread.count(import)) continue;
+    QString file = QString::fromStdString(s.value("file", s.value("path", std::string())));
+    if (QFileInfo(file).isRelative() && !dir.isEmpty()) file = dir + "/" + file;  // as recorded: beside the document
+    file = QDir::cleanPath(file);
+    out.push_back({import, file, QFileInfo(file).absolutePath()});
+  }
+  return out;
 }
 
 QString AppDocument::assetSummary(const opad::json& states) {

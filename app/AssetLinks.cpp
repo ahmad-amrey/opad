@@ -27,7 +27,7 @@
 
 // The question about the linked files outside the document's project after a load (assets::askTrust, AssetsArea.cpp).
 bool MainWindow::offerAssetTrust() {
-  return assets::askTrust(this, m_doc, m_jobs, [this](const QString& error) { statusBar()->showMessage(error, 6000); });
+  return assets::askTrust(this, m_doc, m_jobs, [this](const QString& error) { statusBar()->showMessage(error, 6000); }, {}, true);
 }
 
 bool MainWindow::trustAfterLoad() const { return !m_doc->lastLoad.contains("op"); }  // an import's report names its op

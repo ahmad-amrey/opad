@@ -41,8 +41,16 @@ constexpr qint64 kSuggestBytes = 20 * 1024 * 1024;
 bool suggestLink(const QString& path);
 Mode askImport(QWidget* parent, const QString& path);
 // The question before reading linked files outside the document's project (read them once, trust their folders for good:
-// setting assets/trusted, or not now), for `imports` or every untrusted one; false when there was nothing to ask about.
-bool askTrust(QWidget* parent, AppDocument* doc, JobRunner* jobs, std::function<void(const QString&)> failed, const std::vector<std::string>& imports = {});
+// setting assets/trusted, or not now): one question naming every folder of the files left unread for want of trust
+// (AppDocument::untrustedFiles; `imports`: those only), Always trust covering them all. False when there was nothing to ask
+// about. `automatic`: asked by itself after an open, a reload or a merge, not by the user's click: not asked again about the
+// same folders of the same document once the user said Not now in this session.
+bool askTrust(QWidget* parent, AppDocument* doc, JobRunner* jobs, std::function<void(const QString&)> failed, const std::vector<std::string>& imports = {},
+              bool automatic = false);
+// Benches: the trust question answered by `answer` (given its folders: 0 Not now, 1 Read them, 2 Always trust) instead of the
+// dialog, so that it is asked in a bench's hidden window too.
+void setTrustAnswer(std::function<int(const QStringList& folders)> answer);
+bool trustAnswered();
 // The question before models of KiCad's library are downloaded (`count`; their licence; setting kicad/download: ask, always or
 // never, which the answer may set): true to download. Not asked when the setting says always; refused when it says never,
 // unless the user asked for the download himself (`requested`).

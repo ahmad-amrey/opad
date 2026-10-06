@@ -5,10 +5,16 @@
 // merge of the file), git_switch feature/third (a third board comes in), back to feature/boards (a reload keeping the boards),
 // then feature/alt (another history linking base again: a reload that reads it). After each one every linked file's parts are
 // read again, as an open reads them; on every tick, no linked file's row shows the in-sync check while parts of it are not
-// loaded. Pictures at <prefix>.<step>.png.
+// loaded. Nothing is trusted at first: the open asks by itself, once for both boards' folders (Always trust takes both); later
+// switches read them silently; the third board's folder is asked about by itself after the switch that brings it (Not now:
+// live_state and context tell an agent that the user's trust is needed, which it cannot give), then read from its badge.
+// The trust question is answered through assets::setTrustAnswer. Pictures at <prefix>.<step>.png.
 #include <QCoreApplication>
+#include <QDir>
 #include <QLocalSocket>
+#include <QSettings>
 #include <QTimer>
+#include <deque>
 #include <memory>
 
 #include "AgentBridge.hpp"
@@ -21,6 +27,31 @@
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "opad/live.hpp"
+
+namespace {
+// The trust question's answers (0 Not now, 1 Read them, 2 Always trust), in order, and the folders each question named.
+struct TrustAnswers {
+  std::deque<int> next{2};  // the open's question: Always trust
+  std::vector<QStringList> asked;
+};
+TrustAnswers& trustAnswers() {
+  static TrustAnswers t;
+  return t;
+}
+// Before the window exists: the open asks once the document is loaded, before the bench runs.
+[[maybe_unused]] const bool trustHooked = [] {
+  if (qEnvironmentVariableIsSet("OPAD_BENCH_GIT_LINKED"))
+    assets::setTrustAnswer([](const QStringList& folders) {
+      TrustAnswers& t = trustAnswers();
+      t.asked.push_back(folders);
+      const int answer = t.next.empty() ? 0 : t.next.front();
+      if (!t.next.empty()) t.next.pop_front();
+      trace::log(QStringLiteral("bench: git-linked: asked about %1, answered %2").arg(folders.join(", ")).arg(answer));
+      return answer;
+    });
+  return true;
+}();
+}  // namespace
 
 OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
   static bool started = false;
@@ -40,6 +71,8 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
     QByteArray input;
     json reply;
     bool waiting = false;
+    size_t asks = 0;
+    std::string third;
   };
   auto st = std::make_shared<State>();
   auto require = [](bool ok, const QString& why) {
@@ -108,12 +141,15 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
         throw std::runtime_error(QStringLiteral("%1 shows the in-sync check with %2 of %3 parts not loaded (%4)")
                                      .arg(QString::fromStdString(name)).arg(l.missing).arg(l.bodies).arg(names(linked())).toStdString());
   };
-  // One agent git command, then the document as the branch has it: `boards` linked and loaded.
+  auto asked = [] { return trustAnswers().asked.size(); };
+  auto folder = [](const QString& path) { return QDir::fromNativeSeparators(path).section('/', -1); };
+  // One agent git command, then the document as the branch has it: `boards` linked and loaded, no question asked.
   auto gitStep = [=](const std::string& name, json args, std::initializer_list<const char*> boards, const QString& what) {
     std::vector<const char*> want(boards);
     return std::vector<std::function<bool()>>{
         [=] {
           if (!settled()) return false;
+          st->asks = asked();
           tool(name, args, true);
           return true;
         },
@@ -124,6 +160,7 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
         },
         [=] {
           const auto l = linked();
+          require(asked() == st->asks, what + ": no question (the folders are trusted)");
           if (!settled() || l.size() != want.size()) return false;
           for (const char* b : want)
             if (!l.count(b) || l.at(b).missing > 0) return false;
@@ -142,10 +179,15 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
   };
   require(agent && area && area->monitor(), "the agent bridge and the linked files area");
   std::vector<std::function<bool()>> steps{
-      [=] {  // opened: both boards read (their folder is trusted), each in sync
-        if (!settled() || !loaded({"base.kicad_pcb", "screen.kicad_pcb"})) return false;
+      [=] {  // opened: asked by itself once about both folders, Always trust: both boards read, each in sync
+        if (!settled() || asked() < 1 || !loaded({"base.kicad_pcb", "screen.kicad_pcb"})) return false;
+        const QStringList first = trustAnswers().asked.front();
+        require(asked() == 1 && first.size() == 2 && folder(first[0]) == "base" && folder(first[1]) == "screen",
+                "one question naming both folders: " + first.join(", "));
+        const QStringList trusted = QSettings().value("assets/trusted").toStringList();
+        require(trusted.size() == 2 && trusted.contains(first[0]) && trusted.contains(first[1]), "Always trust took both folders: " + trusted.join(", "));
         for (const auto& [name, l] : linked()) require(badge(l.root).icon == "check", QString::fromStdString(name) + ": in sync when opened");
-        pass("opened: " + names(linked()));
+        pass("opened: asked by itself once, naming both folders; Always trust took both: " + names(linked()));
         st->socket = new QLocalSocket(win);
         QObject::connect(st->socket, &QLocalSocket::readyRead, win, [st] {
           st->input += st->socket->readAll();
@@ -169,8 +211,73 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
   auto add = [&steps](std::vector<std::function<bool()>> more) { steps.insert(steps.end(), more.begin(), more.end()); };
   add(gitStep("git_switch", {{"branch", "develop"}}, {}, "git_switch develop (a reload): no board"));
   add(gitStep("git_merge", {{"source", "feature/boards"}}, {"base.kicad_pcb", "screen.kicad_pcb"}, "git_merge feature/boards (a merge of the file): both boards read"));
-  add(gitStep("git_switch", {{"branch", "feature/third"}}, {"base.kicad_pcb", "screen.kicad_pcb", "third.kicad_pcb"},
-              "git_switch feature/third (a merge of the file): the third board read"));
+  add({
+      [=] {  // the third board's folder is not trusted: asked by itself once its import came in; Not now
+        if (!settled()) return false;
+        st->asks = asked();
+        trustAnswers().next = {0};
+        tool("git_switch", {{"branch", "feature/third"}}, true);
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        require(!failed(), "git_switch feature/third: " + dump());
+        return true;
+      },
+      [=] {
+        const auto l = linked();
+        if (!settled() || asked() == st->asks || !l.count("third.kicad_pcb")) return false;
+        require(asked() == st->asks + 1 && trustAnswers().asked.back().size() == 1 && folder(trustAnswers().asked.back().front()) == "third",
+                "one question naming the third board's folder: " + trustAnswers().asked.back().join(", "));
+        require(l.at("base.kicad_pcb").missing == 0 && l.at("screen.kicad_pcb").missing == 0 && l.at("third.kicad_pcb").missing == l.at("third.kicad_pcb").bodies,
+                "Not now: the third board unread, the others read: " + names(l));
+        st->third = l.at("third.kicad_pcb").import;
+        require(badge(l.at("third.kicad_pcb").root).text == "not read", "the third board's badge: not read");
+        win->grab().save(prefix + ".untrusted.png");
+        pass("git_switch feature/third: asked by itself about the third board's folder alone; Not now leaves it unread (badge: not read)");
+        bind();  // a reload of the document unbinds: bind its new generation
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        require(!failed(), "bound again: " + dump());
+        tool("live_state");
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        const json& r = st->reply["structuredContent"]["result"];
+        require(!failed() && r.contains("linked_files"), "live_state says what is unread: " + dump());
+        const json& l = r["linked_files"];
+        require(l.value("state", "") == "needs_user_trust" && l.value("next", "") == "ask_user" && l["folders"].size() == 1 &&
+                    folder(QString::fromStdString(l["folders"][0].get<std::string>())) == "third" && l.value("parts_not_loaded", 0) > 0 &&
+                    QString::fromStdString(l.value("message", "")).startsWith("Linked files need the user's trust: "),
+                "live_state's linked_files: " + QString::fromStdString(l.dump()));
+        tool("context", {{"section", "errors"}});
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        const json& r = st->reply["structuredContent"]["result"];
+        require(!failed() && r.contains("linked_files") && r["linked_files"].value("next", "") == "ask_user", "context's errors say why: " + dump());
+        pass("an agent is told plainly: live_state and context name the folder, the parts not loaded and next = ask_user");
+        trustAnswers().next = {1};
+        area->trust(st->third);  // the badge's click: Read them
+        return true;
+      },
+      [=] {
+        if (!settled() || !loaded({"base.kicad_pcb", "screen.kicad_pcb", "third.kicad_pcb"})) return false;
+        require(asked() == st->asks + 2, "the badge asks again");
+        tool("live_state");
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        require(!failed() && !st->reply["structuredContent"]["result"].contains("linked_files"), "read: nothing left to ask the user: " + dump());
+        pass("Read them from the badge: the third board read, live_state clear");
+        return true;
+      },
+  });
   add(gitStep("git_switch", {{"branch", "feature/boards"}}, {"base.kicad_pcb", "screen.kicad_pcb"}, "git_switch feature/boards (a reload): the boards loaded"));
   add(gitStep("git_switch", {{"branch", "feature/alt"}}, {"base.kicad_pcb"}, "git_switch feature/alt (a reload, another history): base read again"));
   auto* timer = new QTimer(&w);

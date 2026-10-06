@@ -96,6 +96,19 @@ QString AgentBridge::stateText()const {
   for(const auto& s:m_sessions)if(s->bound && s->socket && s->socket->state()==QLocalSocket::ConnectedState)return tr("Connected: %1").arg(s->agent);
   return m_seenClient?tr("Disconnected"):tr("Waiting for client");
 }
+json AgentBridge::linkedFiles()const{
+  const auto unread=m_doc->untrustedFiles();if(unread.empty())return nullptr;
+  json folders=json::array(),files=json::array();QStringList names;
+  for(const auto& u:unread){
+    files.push_back(QDir::toNativeSeparators(u.file).toStdString());
+    const auto folder=QDir::toNativeSeparators(u.folder);if(!names.contains(folder)){names<<folder;folders.push_back(folder.toStdString());}
+  }
+  size_t parts=0;for(const auto& [id,n]:m_doc->scene.nodes)if(n.linked && n.body_missing)++parts;
+  return {{"state","needs_user_trust"},{"folders",folders},{"files",files},{"parts_not_loaded",parts},
+    {"message","Linked files need the user's trust: "+names.join("; ").toStdString()+". OPAD reads linked files outside the document's project folder only once the user agrees, so their parts are not loaded: the errors \"linked file ... is not loaded\" in context follow from this alone."},
+    {"next","ask_user"},
+    {"ask_user","Ask the user to answer OPAD's Linked files question (or to click the file's \"not read\" badge in the browser) with Read them or Always trust. Agents cannot grant this trust. Then read live_state again: linked_files is gone once the files are read."}};
+}
 json AgentBridge::liveState()const{
   auto out=descriptor();out["editing"]=editingState();out["revision"]=m_doc->revision;out["dirty"]=m_doc->isDirty();out["busy"]=m_busy;
   out["edit_session"]=out["editing"]["edit_session"];
@@ -108,6 +121,7 @@ json AgentBridge::liveState()const{
   // The component the user activated (UI-33): what they work in; pass it as a feature's or sketch's component to follow them.
   if(const auto& active=m_doc->activeComponent();!active.empty())out["active_component"]={{"id",active},{"name",m_doc->nodeName(active).toStdString()}};
   if(m_prepared)out["prepared"]={{"id",m_prepared->id},{"base_revision",m_prepared->snapshot->revision}};
+  if(auto linked=linkedFiles();!linked.is_null())out["linked_files"]=std::move(linked);
   return out;
 }
 void AgentBridge::accept(){while(m_server.hasPendingConnections()){
@@ -225,6 +239,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     json out={{"connection","bound"},{"instance",m_instance.toStdString()},{"target",target().toStdString()},
       {"permissions",{{"enabled",m_enabled},{"edit",m_edit}}},{"revision",m_doc->revision},{"units",m_doc->scene.units},
       {"geometry_units","mm"},{"busy",m_busy},{"editor_busy",editorBusy()},{"transaction_state",transaction},{"next_calls",next}};
+    if(auto linked=linkedFiles();!linked.is_null())out["linked_files"]=std::move(linked);
     if(args.value("include_example",false))out["guide"]=live_guide();if(args.value("include_guide",false))out["agent_guide"]=guide();reply(s,live_result(out));return;
   }
   if(!s->bound || s->target!=target()){

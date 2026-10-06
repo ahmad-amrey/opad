@@ -243,10 +243,10 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
   }
   if(write && transaction.empty() && m_prepared && m_prepared->transaction){fail(session,"transaction_active",tr("Commit or cancel the current transaction first."),receipt);return;}
   if(name=="export" && preview){fail(session,"invalid_export",tr("Export a transaction's staged state, or the document; a preview cannot be exported."),receipt);return;}
-  const auto state=liveState();
+  const auto state=liveState();const auto linked=name=="context"?linkedFiles():json();  // read here, on the UI thread
   m_busy=true;m_owner=session->socket;const auto epoch=++m_epoch,revision=m_doc->revision;
   const auto started=std::make_shared<QElapsedTimer>();started->start();activity(tr("Agent: %1").arg(QString::fromStdString(name)));
-  auto ready=[this,session,name,args=std::move(args),receipt,write,preview,transaction,epoch,revision,state,started,known=session->known,steps=session->steps](std::shared_ptr<Snapshot> source,const QString& error){
+  auto ready=[this,session,name,args=std::move(args),receipt,write,preview,transaction,epoch,revision,state,linked,started,known=session->known,steps=session->steps](std::shared_ptr<Snapshot> source,const QString& error){
     if(epoch!=m_epoch || !session->socket || !session->bound){fail(session,"cancelled",tr("Agent operation cancelled."),receipt);return;}
     if(!source){m_busy=false;fail(session,"snapshot_failed",error,receipt);return;}
     if(name=="transaction_begin"){
@@ -257,7 +257,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
     const auto baseline=!transaction.empty() && m_cache?m_cache:source;
     m_jobs->backgroundNext();
-    auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,known,steps,delay=m_benchDelay](Progress p)mutable{
+    auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,linked,known,steps,delay=m_benchDelay](Progress p)mutable{
       p.setPhase(tr("Inspecting inputs"));
       if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args,known.get());
       const bool compact=args.value("verbosity","full")=="compact";  // TODO 10 B11
@@ -273,7 +273,10 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           if(p.cancelled())throw opad::Error("cancelled");
           auto ref=opad::Ref::from_json(r);if(source->scene.node(ref.body))r=entity_details(*source->doc,source->scene,{{"ref",r},{"limit",10}},&provenance);
         }
-      }else if(name=="context")result->output=context(*source->doc,source->scene,args);
+      }else if(name=="context"){
+        result->output=context(*source->doc,source->scene,args);
+        if(!linked.is_null())result->output["linked_files"]=linked;  // why parts are missing, and that only the user can help
+      }
       else if(name=="sketch_details")result->output=sketch_details(*source->doc,source->scene,args);
       else if(name=="query_entities")result->output=query_entities(*source->doc,source->scene,args,[p]{return p.cancelled();});
       else if(name=="entity_details")result->output=entity_details(*source->doc,source->scene,args);

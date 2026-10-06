@@ -235,7 +235,7 @@ def git_linked(root, document, name="git-linked"):
     link("base")
     run("commit", "-q", "-am", "another history with the base board")
     run("switch", "-q", "feature/boards")
-    return doc, cache, f"[assets]\ntrusted={boards.as_posix()}\n"
+    return doc, cache
 
 
 CASES = [

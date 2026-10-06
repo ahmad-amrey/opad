@@ -74,6 +74,9 @@ class AgentBridge : public QObject {
   QString stateText() const;
   bool editorBusy() const;
   json editingState() const;
+  // Linked files outside the project left unread for want of the user's trust (AppDocument::untrustedFiles), said plainly with
+  // what to do (ask the user: agents cannot grant it); null when there are none. In live_state, live_diagnostics and context.
+  json linkedFiles() const;
   void waitForIdle(const std::shared_ptr<Session>&,int,unsigned long long,std::shared_ptr<QElapsedTimer>);
   void gitTool(const std::shared_ptr<Session>&,const std::string& name,json args,const std::string& receipt,const std::string& hash);  // AgentGit.cpp
   AppDocument* m_doc;DesignController* m_design;Viewport* m_viewport;JobRunner* m_jobs;QWidget* m_window;

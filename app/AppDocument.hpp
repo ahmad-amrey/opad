@@ -57,6 +57,13 @@ class AppDocument : public QObject {
   // pull, a recovery into the file): the linked files area reads them as an open does (AssetsArea::followLinked), which
   // clears it. A reload of the same document keeps the parts of linked files whose import and asset did not change.
   bool linkedUnread = false;
+  // Linked files outside the document's project left unread for want of the user's trust (state "untrusted", parts not
+  // loaded), in the log's order: what the trust question asks about and what agents are told (they cannot grant it).
+  struct Untrusted {
+    std::string import;
+    QString file, folder;
+  };
+  std::vector<Untrusted> untrustedFiles() const;
 
   void newDocument();
   // The document becomes an untitled copy with an identity of its own (New from template): Save asks where to put it.
