@@ -60,7 +60,11 @@ struct Call {
   std::function<void(const QString&)> progress;
 };
 
-bool writes(const std::string& name);        // changes the repository (live: edit permission, a request_id)
+// Changes the repository (live: edit permission). A merge preview and a git_resolve that only lists change nothing: reads.
+bool writes(const std::string& name, const opad::json& args = opad::json::object());
+// A write that needs a request_id (live; request_status finds its receipt): every write but a pull preview, which only
+// fetches.
+bool receipted(const std::string& name, const opad::json& args = opad::json::object());
 bool changesFiles(const std::string& name);  // may rewrite files of the work tree (live: the document follows)
 // Runs one tool; throws Refused (or std::exception for anything else).
 opad::json run(const std::string& name, const opad::json& args, const Call& call);

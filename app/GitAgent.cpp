@@ -80,10 +80,15 @@ void useAppSettings(const QString& programDir, bool singleFile) {
 
 Refused::Refused(std::string c, const QString& message, std::string n) : std::runtime_error(message.toStdString()), code(std::move(c)), next(std::move(n)) {}
 
-bool writes(const std::string& name) {
+bool writes(const std::string& name, const json& args) {
   static const std::set<std::string> reads{"git_status", "git_log", "git_branches", "git_diff"};
-  return !reads.count(name);
+  if (reads.count(name)) return false;
+  if (name == "git_merge" && args.value("preview", false)) return false;
+  if (name == "git_resolve" && !args.contains("keep") && !args.contains("choices")) return false;  // only lists
+  return true;
 }
+
+bool receipted(const std::string& name, const json& args) { return writes(name, args) && !(name == "git_pull" && args.value("preview", false)); }
 
 bool changesFiles(const std::string& name) {
   static const std::set<std::string> files{"git_switch", "git_merge", "git_merge_abort", "git_resolve", "git_pull", "git_branch_create"};

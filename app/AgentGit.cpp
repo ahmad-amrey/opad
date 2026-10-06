@@ -1,6 +1,7 @@
 // Live agents' git tools (git_status ... git_push, GitAgent.hpp) on the bound document's repository. git runs on a
 // worker (an agent's write shows in the status strip with Cancel, as the panel's commands do); reads need agent access,
-// writes edit permission and a request_id (request_status finds their receipt). What rewrites the file (a switch, a
+// writes edit permission and a request_id (request_status finds their receipt). A merge preview and a resolve that only
+// lists are reads; a pull preview fetches (edit permission) but needs no request_id. What rewrites the file (a switch, a
 // merge, a pull, a resolve, an abort) refuses while the document has unsaved changes, a transaction or preview is
 // staged, or a sketch or feature is open; afterwards gitChanged lets the Version control area refresh the chip and the
 // panel and take the file in (DiskSync::adopt). Each action is a line in Agent activity.
@@ -26,7 +27,7 @@ QStringList AgentBridge::activityLines() const {
 }
 
 void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& name, json args, const std::string& receipt, const std::string& hash) {
-  const bool write = gitagent::writes(name), files = gitagent::changesFiles(name);
+  const bool write = gitagent::writes(name, args), files = gitagent::changesFiles(name), receipted = gitagent::receipted(name, args);
   auto refuse = [this, s](const std::string& code, const QString& message, const std::string& receiptKey = {}, const std::string& next = {}) {
     if (!receiptKey.empty()) m_receipts[receiptKey].state = "failed";
     auto error = live_error(code, message.toStdString());
@@ -35,8 +36,10 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
     activity(tr("Agent git: %1").arg(message));
     reply(s, std::move(error), receiptKey);
   };
+  if (receipted && !args.contains("request_id"))
+    return fail(s, "invalid_arguments", tr("%1 changes the repository: pass a request_id (previews and listings need none).").arg(QString::fromStdString(name)));
   if (write) {
-    if (auto found = m_receipts.find(receipt); found != m_receipts.end()) {
+    if (auto found = m_receipts.find(receipt); receipted && found != m_receipts.end()) {
       if (found->second.hash != hash) return fail(s, "request_id_reused", tr("This request ID already belongs to different arguments."));
       return replyReceipt(s, found->second);
     }
@@ -56,7 +59,7 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
   args.erase("request_id");
   args.erase("folder");
   if (write) {
-    m_receipts.emplace(receipt, Receipt{hash});
+    if (receipted) m_receipts.emplace(receipt, Receipt{hash});
     m_busy = true;
     m_owner = s->socket;
   }
@@ -83,7 +86,7 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
       out->code = "git_failed";
       out->message = e.what();
     }
-  }, [this, s, out, name, write, files, receipt, epoch, started, refuse](bool ok, const QString& error) {
+  }, [this, s, out, name, write, files, receipt = receipted ? receipt : std::string(), epoch, started, refuse](bool ok, const QString& error) {
     if (write && epoch == m_epoch) {
       m_busy = false;
       m_owner.clear();
@@ -94,17 +97,17 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
       out->message = error.toStdString();
     }
     if (!out->code.empty()) {
-      refuse(out->code, QString::fromStdString(out->message), write ? receipt : std::string(), out->next);
+      refuse(out->code, QString::fromStdString(out->message), receipt, out->next);
       if (write) emit gitChanged(files);  // a refused or failed command may still have run git (a stopped merge)
       emit statusChanged();
       return;
     }
     const json& r = out->result;
-    if (write) {
+    if (!receipt.empty()) {
       m_receipts[receipt].state = "committed";
       m_receipts[receipt].revision = m_doc->revision;
     }
-    reply(s, live_result({{"state", write ? "committed" : "read"}, {"revision", m_doc->revision}, {"result", r}, {"elapsed_ms", started->elapsed()}}), write ? receipt : std::string());
+    reply(s, live_result({{"state", !receipt.empty() ? "committed" : "read"}, {"revision", m_doc->revision}, {"result", r}, {"elapsed_ms", started->elapsed()}}), receipt);
     const QString state = field(r, "state"), branch = field(r, "branch");
     QString line;
     if (name == "git_commit") line = tr("Agent committed %1 on %2: %3").arg(field(r, "short"), branch, field(r, "subject"));

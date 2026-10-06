@@ -169,7 +169,9 @@ const json& git_tools(bool live) {
       auto text=[](const std::string& d){return json{{"type","string"},{"minLength",1},{"maxLength",250},{"description",d}};};
       const json message={{"type","string"},{"minLength",1},{"maxLength",20000}};
       auto add=[&](const std::string& tool,const std::string& description,json properties,json required,bool write,bool network=false) {
-        if(isLive && write){properties["request_id"]=str();required.push_back("request_id");}
+        // A merge or pull preview and a resolve that only lists change nothing: their request_id is optional (needed otherwise).
+        const bool previews=tool=="git_merge" || tool=="git_pull" || tool=="git_resolve";
+        if(isLive && write){properties["request_id"]=str();if(previews)properties["request_id"]["description"]=tool=="git_resolve"?"Needed with keep or choices.":"Needed unless preview.";else required.push_back("request_id");}
         if(!isLive){properties["repo"]={{"type","string"},{"minLength",1},{"maxLength",32767},{"description",tool=="git_init"?"Absolute path of the folder to make a repository (created when missing).":"Absolute path of a folder or file inside the repository."}};required.push_back("repo");}
         out[l].push_back({{"name",tool},{"description",description},{"inputSchema",object(properties,required)},
           {"annotations",{{"readOnlyHint",!write},{"destructiveHint",false},{"openWorldHint",network}}}});

@@ -14,6 +14,7 @@
 #include <QTemporaryDir>
 
 #include "Git.hpp"
+#include "GitAgent.hpp"
 #include "check.hpp"
 #include "opad/core.hpp"
 #include "opad/live.hpp"
@@ -162,6 +163,17 @@ TEST(tools_listed_none_destructive) {
   CHECK(live == expected);
   CHECK(opad::agent::live_schema("git_commit")["required"].dump().find("request_id") != std::string::npos);
   CHECK(opad::agent::live_schema("git_status")["required"].empty());
+  // A merge or pull preview and a resolve that only lists change nothing: no request_id needed (live), and a merge preview
+  // or a listing is a read (no edit permission, no receipt); a pull preview still fetches.
+  for (const char* name : {"git_merge", "git_pull", "git_resolve"}) CHECK(opad::agent::live_schema(name)["required"].dump().find("request_id") == std::string::npos);
+  opad::agent::validate_input(opad::agent::live_schema("git_merge"), {{"source", "develop"}, {"preview", true}});
+  opad::agent::validate_input(opad::agent::live_schema("git_pull"), {{"preview", true}});
+  opad::agent::validate_input(opad::agent::live_schema("git_resolve"), {{"path", "model.opad"}});
+  CHECK(!gitagent::writes("git_merge", {{"source", "develop"}, {"preview", true}}) && gitagent::receipted("git_merge", {{"source", "develop"}}));
+  CHECK(!gitagent::writes("git_resolve", {{"path", "model.opad"}}) && gitagent::receipted("git_resolve", {{"path", "model.opad"}, {"keep", "ours"}}));
+  CHECK(gitagent::writes("git_pull", {{"preview", true}}) && !gitagent::receipted("git_pull", {{"preview", true}}) && gitagent::receipted("git_pull"));
+  for (const char* name : {"git_commit", "git_switch", "git_branch_create", "git_tag", "git_fetch", "git_push", "git_merge_abort", "git_init"})
+    CHECK(opad::agent::live_schema(name)["required"].dump().find("request_id") != std::string::npos && gitagent::receipted(name));
   // The instructions and the push tool say what is not offered and how it may still happen.
   CHECK(mcp().instructions().find("explicit confirmation") != std::string::npos);
   for (const auto& t : tools)
