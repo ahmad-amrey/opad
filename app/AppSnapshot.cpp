@@ -206,6 +206,12 @@ void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const 
 }
 
 void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done, const std::vector<std::string>& only) {
+  opad::AssetOptions options = assetOptions();
+  options.trust_all = trustAll;
+  loadAssets(jobs, std::move(options), std::move(done), only);
+}
+
+void AppDocument::loadAssets(JobRunner* jobs, opad::AssetOptions options, std::function<void(bool, const QString&)> done, const std::vector<std::string>& only) {
   if (!hasDocument || browse || loading || designBusy) {
     if (done) done(false, tr("The document is busy; try again in a moment."));
     return;
@@ -236,8 +242,6 @@ void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(
     if (done) done(false, QString::fromUtf8(e.what()));
     return;
   }
-  opad::AssetOptions options = assetOptions();
-  options.trust_all = trustAll;
   auto states = std::make_shared<opad::json>(opad::json::array());
   const auto identity = generation;
   jobs->async(tr("Reading linked files"), [probe, options, states](Progress p) mutable {
@@ -251,9 +255,12 @@ void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(
     }
     for (const auto& b : probe->bodies())
       if (b.external) doc.add_external_body(b.key, b.meta);
-    for (const auto& s : *states)  // the states of the files read again
-      for (auto& known : assetStates)
-        if (known.value("import", "") == s.value("import", "")) known = s;
+    for (const auto& s : *states) {  // the states of the files read again; a file the document did not link before joins them
+      bool known = false;
+      for (auto& state : assetStates)
+        if (state.value("import", "") == s.value("import", "")) state = s, known = true;
+      if (!known) assetStates.push_back(s);
+    }
     refresh();
     if (const QString linked = assetSummary(assetStates); !linked.isEmpty()) emit message(linked);
     if (done) done(true, {});

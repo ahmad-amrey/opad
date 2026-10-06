@@ -290,6 +290,55 @@ void AssetsArea::documentChanged(bool replaced) {
     m_opened.clear();
     for (const auto& [import, a] : m_monitor->assets()) m_opened.insert(import);
   }
+  if (services().document()->linkedUnread && !std::exchange(m_following, true))  // once the change is through
+    QTimer::singleShot(0, this, [this] { followLinked(); });
+}
+
+// A reload or merge from disk brought linked imports whose parts are not loaded: they are read as an open reads them, files
+// outside the project only with the trust already given (the settings' folders, what this session read).
+void AssetsArea::followLinked(int tries) {
+  m_following = false;
+  AppDocument* doc = services().document();
+  if (!doc->linkedUnread || !m_monitor) return;
+  if (!doc->hasDocument || doc->browse) {
+    doc->linkedUnread = false;
+    return;
+  }
+  if (doc->loading || doc->designBusy || doc->snapshotBusy()) {  // a load reads them itself; anything else: when it is over
+    if (doc->loading || tries > 600) return void(doc->linkedUnread = false);
+    m_following = true;
+    QTimer::singleShot(200, this, [this, tries] { followLinked(tries + 1); });
+    return;
+  }
+  doc->linkedUnread = false;
+  readLinked();
+}
+
+void AssetsArea::readLinked(const std::vector<std::string>& only) {
+  AppDocument* doc = services().document();
+  std::vector<std::string> wanted;
+  for (const auto& [import, a] : m_monitor->assets())
+    if (a.missing > 0 && a.asset.value("storage", "linked") != "embedded" && !m_reading.count(import) &&
+        (only.empty() || std::find(only.begin(), only.end(), import) != only.end()))
+      wanted.push_back(import);
+  if (wanted.empty()) return;
+  m_reading.insert(wanted.begin(), wanted.end());
+  services().browser()->refreshDecorations();
+  if (trace::enabled()) trace::log(QStringLiteral("assets: reading %1 linked files again").arg(wanted.size()));
+  QPointer<AssetsArea> self(this);
+  const auto generation = doc->generation;
+  doc->loadAssets(services().jobs(), AssetMonitor::options(doc), [self, wanted, generation](bool ok, const QString& error) {
+    if (!self) return;
+    for (const auto& import : wanted) self->m_reading.erase(import);
+    AppDocument* doc = self->services().document();
+    if (!ok && trace::enabled()) trace::log("assets: linked files not read: " + error);
+    if (!ok && generation == doc->generation && !doc->linkedUnread) {  // busy meanwhile: again once it is not
+      doc->linkedUnread = true;
+      QTimer::singleShot(200, self, [self] { if (self) self->followLinked(1); });
+    }
+    self->services().browser()->refreshDecorations();
+    if (self->m_monitor) self->m_monitor->check(0);  // what the files are now (sizes, LFS), and the badges with them
+  }, wanted);
 }
 
 std::vector<std::string> AssetsArea::imports(const SelectionContext& selection) const {
@@ -339,7 +388,21 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
   badge.fill = nullptr;
   // Each state with its own icon and word, not only its colour (theme::cue).
   auto later = [this](std::function<void()> fn) { return [this, fn] { QTimer::singleShot(0, this, fn); }; };  // the press may rebuild the row
-  if (state == "changed") {
+  const int missing = a ? a->missing : 0;
+  if (m_reading.count(import)) {  // read again after a reload or merge from disk
+    badge.icon = "regen";
+    badge.text = tr("reading…");
+    badge.color = &Tokens::fg3;
+    badge.tooltip = tr("Reading %1").arg(file);
+    badge.spin = true;
+  } else if (missing > 0 && (state == "ok" || state.empty())) {  // trusted and found, but its parts are not loaded: never "in sync"
+    badge.icon = "warning";
+    badge.text = tr("not loaded");
+    badge.color = &Tokens::warning;
+    badge.fill = &Tokens::bg4;
+    badge.tooltip = tr("%1 of %2 parts of %3 are not loaded: click to read the file").arg(missing).arg(a->bodies).arg(file);
+    badge.clicked = later([this, import] { readLinked({import}); });
+  } else if (state == "changed") {
     badge.icon = "regen";
     badge.text = tr("Sync");
     badge.color = &Tokens::assetStale;
@@ -385,6 +448,7 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
   }
   QStringList tip{tr("Linked file: %1").arg(file)};
   if (state == "untrusted" || state == "missing" || state == "changed" || state == "error") tip << stateText(import);  // why its badge shows
+  else if (missing > 0 && !m_reading.count(import)) tip << tr("Parts not loaded: %1 of %2").arg(missing).arg(a->bodies);
   if (a) {
     QStringList facts;
     if (const std::string sha = a->asset.value("sha256", ""); !sha.empty()) facts << "SHA-256 " + QString::fromStdString(sha.substr(0, 12));

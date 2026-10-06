@@ -91,6 +91,9 @@ class AssetsArea : public AreaController {
   void reveal(const std::string& import);
   void copyPath(const std::string& import);
   void trust(const std::string& import);
+  // The parts of linked files not loaded while their file is trusted (a reload or merge of the document from disk left them
+  // out, AppDocument::linkedUnread): read on a worker as an open reads them, with this session's trust (AssetMonitor::options).
+  void readLinked(const std::vector<std::string>& imports = {});
   // Assets in git (UI-69, the local git command): a file gone from its work tree written back from the last commit that has
   // it, then looked at again; Track with Git LFS (git lfs track), offered once a file is packed into a work tree outside LFS.
   void recover(const std::string& import);
@@ -123,6 +126,7 @@ class AssetsArea : public AreaController {
                std::function<opad::design::Plan(opad::Document&, const Progress&)> plan,
                std::function<void(bool, const QString&, const opad::json&)> then, int waited = 0);
   void nextSync();
+  void followLinked(int tries = 0);  // AppDocument::linkedUnread: reads what is not loaded (readLinked)
   void syncDone(const std::string& import, bool ok, const QString& error, const opad::json& report);  // its toast, the next one
   void filesChanged(const std::vector<std::string>& imports);
   void notify(const QString& text, bool undo = false, int ms = 6000);  // a toast (with Undo), replacing the last one
@@ -146,4 +150,6 @@ class AssetsArea : public AreaController {
   std::set<std::string> m_opened, m_lfsOffered;  // imports the document opened with; those offered Git LFS
   QPointer<Job> m_download;
   std::function<void(const std::string&)> m_previewer;
+  std::set<std::string> m_reading;  // linked imports being read again (readLinked): their badge turns meanwhile
+  bool m_following = false;         // followLinked is due
 };

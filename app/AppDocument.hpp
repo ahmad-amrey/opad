@@ -53,6 +53,10 @@ class AppDocument : public QObject {
       if (!m_trustedNow.contains(f)) m_trustedNow << f;
   }
   QStringList trustedForNow() const { return m_trustedGeneration == generation ? m_trustedNow : QStringList(); }
+  // Linked imports came in without their files being read (the file reloaded or merged from disk: a git switch, merge or
+  // pull, a recovery into the file): the linked files area reads them as an open does (AssetsArea::followLinked), which
+  // clears it. A reload of the same document keeps the parts of linked files whose import and asset did not change.
+  bool linkedUnread = false;
 
   void newDocument();
   // The document becomes an untitled copy with an identity of its own (New from template): Save asks where to put it.
@@ -114,6 +118,8 @@ class AppDocument : public QObject {
   // Reads the linked files whose bodies are not loaded (missing then, or not trusted) on a worker; `trustAll` for files the
   // user has just agreed to. The bodies join the document on the UI thread; assetStates is updated. `only`: those imports.
   void loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done = {}, const std::vector<std::string>& only = {});
+  // The same with the trust given (AssetMonitor::options: the settings' folders and what this session read).
+  void loadAssets(JobRunner* jobs, opad::AssetOptions options, std::function<void(bool, const QString&)> done, const std::vector<std::string>& only = {});
   // Linked files: the folders trusted in the settings (assets/trusted) and this machine's KiCad options.
   static opad::AssetOptions assetOptions();
   static QString assetSummary(const opad::json& states);  // "Linked files: 1 changed since the last sync, ..." or empty
