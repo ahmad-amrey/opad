@@ -1,7 +1,8 @@
 // A merge git stopped on, resolved here (UI-63; VersionControl.hpp). The document's three index stages (base, ours,
 // theirs) are read and merged anyway on a worker (opad::merge_files keeping the conflicts: ours as written, then theirs'
 // new ops, so theirs win as they stand), and what both sides changed is listed to decide one by one, all mine or all
-// theirs; Resolve appends the deciding records (opad::resolve_merge), writes the file, adds it to git and takes it in
+// theirs (only what was changed: results recomputed from those changes, opad::derived_conflict, are counted and follow
+// the decisions when the design is regenerated, as git_resolve does for agents); Resolve appends the deciding records (opad::resolve_merge), writes the file, adds it to git and takes it in
 // (DiskSync::adopt), then offers Regenerate when both sides changed the design, and Commit the merge. The stages are read,
 // not the file: it works whether OPAD's driver stopped (the file is ours) or a clone without it wrote conflict markers.
 // When the two cannot be merged at all (a rewritten history, a changed header), one side's whole file can be kept.
@@ -30,7 +31,8 @@
 
 struct VersionControl::Conflicts {
   std::string ours, theirs, merged;  // stages 2 and 3, and the merge as it stands (theirs win every conflict)
-  std::vector<opad::MergeConflict> list;
+  std::vector<opad::MergeConflict> list;  // the decisions: derived conflicts are left out (regenerated instead)
+  size_t derived = 0;
   QStringList what, mine, theirsText;  // as shown
   QString error;                       // why the two cannot be merged: only a whole side can be kept
   bool design = false;                 // both sides changed the design: regenerate after
@@ -98,7 +100,7 @@ void VersionControl::resolveConflicts() {
       return;
     }
     c->merged = m.text();
-    c->list = std::move(m.conflicts);
+    c->list = opad::source_conflicts(m.conflicts, ours, theirs, &c->derived);
     const opad::Scene scene = opad::resolve(ours);
     for (const auto& x : c->list) {
       c->what << conflictText(x, scene);
@@ -128,6 +130,7 @@ void VersionControl::showConflicts(std::shared_ptr<Conflicts> c) {
   intro->setObjectName("resolveIntro");
   intro->setWordWrap(true);
   intro->setText(!c->error.isEmpty() ? tr("The two versions cannot be merged (%1): keep one of them whole.").arg(c->error)
+                 : c->list.empty() && c->derived ? tr("Only recomputed results collide: Resolve takes both sides' changes, and regenerating the design afterwards brings the results in line.")
                  : c->list.empty() ? tr("Nothing collides: both sides' changes merge as they are (OPAD's merging was not set up when git merged). Resolve takes both.")
                                    : tr("Both sides changed these. Choose whose change to keep for each; everything else of both sides is merged."));
   col->addWidget(intro);
@@ -154,6 +157,12 @@ void VersionControl::showConflicts(std::shared_ptr<Conflicts> c) {
     keeps->push_back(keep);
   }
   col->addWidget(list, 1);
+  if (c->derived && c->error.isEmpty()) {
+    auto* derived = new QLabel(tr("%n recomputed result(s) follow from these changes: they are not chosen here, regenerating the design after resolving brings them in line.", nullptr, int(c->derived)), d);
+    derived->setObjectName("resolveDerived");
+    derived->setWordWrap(true);
+    col->addWidget(derived);
+  }
   if (c->design && c->error.isEmpty()) {
     auto* regen = new QLabel(tr("Both sides changed the design: once resolved, OPAD offers to regenerate it, so that each side's results follow the other's changes."), d);
     regen->setObjectName("resolveDesign");

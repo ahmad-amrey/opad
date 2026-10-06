@@ -697,5 +697,7 @@
  "anchor": "المرساة",
  "units": "الوحدات",
  "inputs": "المدخلات",
- "plane": "المستوى"
+ "plane": "المستوى",
+ "%n recomputed result(s) follow from these changes: they are not chosen here, regenerating the design after resolving brings them in line.": "تنتج عن هذه التغييرات %n نتيجة أعيد حسابها: لا تُختار هنا، وإعادة توليد التصميم بعد الحلّ تجعلها متوافقة معها.",
+ "Only recomputed results collide: Resolve takes both sides' changes, and regenerating the design afterwards brings the results in line.": "لا تتعارض إلا نتائج أعيد حسابها: يأخذ «حلّ» تغييرات الطرفين، وإعادة توليد التصميم بعده تجعل النتائج متوافقة."
 }

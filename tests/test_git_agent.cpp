@@ -323,6 +323,42 @@ TEST(conflicts_listed_aborted_resolved) {
   std::printf("a stopped merge listed, aborted, resolved for theirs and committed PASS\n");
 }
 
+// One parameter changed on two branches, a box made from it: the driver stops on the parameter and on the box's recomputed
+// result (derived), but the preview and git_resolve list the one decision only, count the derived one, and resolving
+// regenerates the file so the box follows the value kept.
+TEST(derived_conflicts_regenerate) {
+  defaults();
+  setPref("git/protectedBranches", "release/*");
+  const QString repo = repository("derived"), doc = repo + "/model.opad";
+  auto volume = [&] { return mcp().call("validate", {{"doc", s(doc)}})["items"][0]["volume_mm3"].get<double>(); };
+  mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "5 mm"}});
+  mcp().call("feature", {{"doc", s(doc)}, {"kind", "box"}, {"inputs", {{"length", "w"}, {"width", "5 mm"}, {"height", "5 mm"}}}});
+  mcp().call("git_commit", {{"repo", s(repo)}, {"message", "base"}, {"all", true}});
+  mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "theirs"}});
+  mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "20 mm"}});
+  mcp().call("git_commit", {{"repo", s(repo)}, {"message", "w 20"}, {"all", true}});
+  mcp().call("git_switch", {{"repo", s(repo)}, {"branch", "main"}});
+  mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "10 mm"}});
+  CHECK(std::abs(volume() - 250) < 1e-6);
+  mcp().call("git_commit", {{"repo", s(repo)}, {"message", "w 10"}, {"all", true}});
+  const json preview = mcp().call("git_merge", {{"repo", s(repo)}, {"source", "theirs"}, {"preview", true}});
+  const json& d = preview["documents"][0];
+  if (!(preview["stops"] == true && d["conflicts"].size() == 1 && d["conflicts"][0]["name"] == "w" && d["derived_conflicts"].get<int>() >= 1 && d["will_regenerate"] == true))
+    throw check::Failure("the preview lists the one decision, the derived ones counted: " + preview.dump());
+  CHECK(mcp().call("git_merge", {{"repo", s(repo)}, {"source", "theirs"}})["state"] == "conflicts");
+  const json listed = mcp().call("git_resolve", {{"repo", s(repo)}, {"path", "model.opad"}});
+  if (!(listed["conflicts"].size() == 1 && listed["conflicts_total"] == 1 && listed["derived_conflicts"].get<int>() >= 1 && listed["will_regenerate"] == true))
+    throw check::Failure("git_resolve lists the one decision: " + listed.dump());
+  // Ours (10 mm) for the parameter: the box regenerated to it, though theirs' recomputed result came later in the merge.
+  const json r = mcp().call("git_resolve", {{"repo", s(repo)}, {"path", "model.opad"}, {"choices", {"ours"}}});
+  CHECK(r["state"] == "resolved" && r["regeneration"]["regenerated"].get<int>() >= 1 && r["regeneration"]["errors"].empty());
+  CHECK(mcp().call("params", {{"doc", s(doc)}}).dump().find("10 mm") != std::string::npos);
+  if (std::abs(volume() - 250) > 1e-6) throw check::Failure("the box follows the kept value: " + std::to_string(volume()));
+  CHECK(mcp().call("git_commit", {{"repo", s(repo)}, {"message", "merge theirs, w 10"}, {"all", true}})["state"] == "committed");
+  CHECK(mcp().call("git_status", {{"repo", s(repo)}})["clean"] == true);  // the regenerated file is what was committed
+  std::printf("a parameter changed on both sides: one decision listed, the derived results counted and regenerated PASS\n");
+}
+
 TEST(protected_branch_never_created) {
   defaults();
   const QString repo = repository("creates");

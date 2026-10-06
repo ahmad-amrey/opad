@@ -12,6 +12,7 @@
 #include <set>
 
 #include "Git.hpp"
+#include "opad/commands.hpp"
 #include "opad/diff.hpp"
 #include "opad/document.hpp"
 #include "opad/merge.hpp"
@@ -357,6 +358,12 @@ json conflictJson(const opad::MergeConflict& c, const opad::Scene& scene) {
   return {{"target", c.target}, {"field", c.field}, {"name", str(nameIn(scene, c.target))}, {"ours_op", c.ours}, {"theirs_op", c.theirs}};
 }
 
+// Conflicts as an agent decides them: the derived ones (recomputed results that follow from a change, opad::derived_conflict)
+// are counted and regenerated after the decisions, never listed as decisions of their own.
+const char* const kDerivedNote =
+    "derived_conflicts are recomputed results (regen) that follow from the changes listed (a parameter changed on both sides recomputes every "
+    "feature that uses it): they are no decisions; the file will regenerate after the listed conflicts are decided.";
+
 // What merging `target` into HEAD brings (as the panel's incoming preview, VersionControl.cpp): the commits, and each
 // .opad they change as OPAD's driver would merge it.
 json incoming(const Repo& r, const QString& target, const QString& label, const Call& call) {
@@ -415,10 +422,18 @@ json incoming(const Repo& r, const QString& target, const QString& label, const 
         stops = true;
         d["stops"] = m.error;
         const opad::Scene scene = opad::resolve(oursDoc);
+        size_t derived = 0;
+        const auto decide = opad::source_conflicts(m.conflicts, oursDoc, theirsDoc, &derived);
         json conflicts = json::array();
-        for (const auto& c : m.conflicts)
+        for (const auto& c : decide)
           if (conflicts.size() < 100) conflicts.push_back(conflictJson(c, scene));
         d["conflicts"] = conflicts;
+        if (decide.size() > conflicts.size()) d["conflicts_total"] = decide.size();
+        if (derived) {
+          d["derived_conflicts"] = derived;
+          d["will_regenerate"] = true;
+          d["derived_note"] = kDerivedNote;
+        }
       } else {
         merged = m.text();
       }
@@ -746,6 +761,7 @@ json resolve(const json& args, const Call& call) {
   std::string base = blob(r, ":1", rel), ours = blob(r, ":2", rel), theirs = blob(r, ":3", rel);
   const bool document = rel.endsWith(".opad", Qt::CaseInsensitive) && !base.empty() && !ours.empty() && !theirs.empty();
   std::string written;
+  bool regenerate = false;  // both sides changed the design (derived conflicts among them): recomputed once decided
   if (document && !whole) {
     if (call.progress) call.progress(QStringLiteral("Merging %1").arg(QFileInfo(rel).fileName()));
     opad::FileMerge m = opad::merge_files(base, ours, theirs, true);
@@ -755,31 +771,40 @@ json resolve(const json& args, const Call& call) {
       refuse("not_mergeable", QStringLiteral("The two versions of %1 cannot be merged (%2): keep one side's whole file (keep with whole_file=true).").arg(rel, QString::fromStdString(m.error)));
     }
     const auto origin = fsPath(QDir(r.top).filePath(rel));
+    const opad::Document oursDoc = opad::Document::parse_index(ours, origin), theirsDoc = opad::Document::parse_index(theirs, origin), baseDoc = opad::Document::parse_index(base, origin);
+    size_t derived = 0;
+    const std::vector<opad::MergeConflict> decide = opad::source_conflicts(m.conflicts, oursDoc, theirsDoc, &derived);
+    regenerate = derived > 0 || (opad::changes_design(baseDoc, oursDoc) && opad::changes_design(baseDoc, theirsDoc));
     if (listing) {
-      const opad::Document oursDoc = opad::Document::parse_index(ours, origin), theirsDoc = opad::Document::parse_index(theirs, origin), baseDoc = opad::Document::parse_index(base, origin);
       const opad::Scene scene = opad::resolve(oursDoc);
       json list = json::array();
-      for (size_t i = 0; i < m.conflicts.size() && i < 1000; ++i) {
-        const auto& c = m.conflicts[i];
+      for (size_t i = 0; i < decide.size() && i < 1000; ++i) {
+        const auto& c = decide[i];
         json item = conflictJson(c, scene);
         item["index"] = i;
         if (const opad::Op* op = oursDoc.find_op(c.ours)) item["ours"] = {{"type", op->type}, {"by", op->data.value("by", "")}, {"effect", opad::op_effect(op->data, c.target, c.field)}};
         if (const opad::Op* op = theirsDoc.find_op(c.theirs)) item["theirs"] = {{"type", op->type}, {"by", op->data.value("by", "")}, {"effect", opad::op_effect(op->data, c.target, c.field)}};
         list.push_back(item);
       }
-      return {{"path", str(rel)}, {"mergeable", true}, {"conflicts", list}, {"conflicts_total", m.conflicts.size()},
-              {"regenerate_after", opad::changes_design(baseDoc, oursDoc) && opad::changes_design(baseDoc, theirsDoc)},
-              {"next", "git_resolve with keep (ours|theirs for every conflict) or choices (one per index); both sides' other changes are kept."}};
+      json out = {{"path", str(rel)}, {"mergeable", true}, {"conflicts", list}, {"conflicts_total", decide.size()}, {"derived_conflicts", derived},
+                  {"regenerate_after", regenerate},
+                  {"next", decide.empty() ? "Nothing to decide: git_resolve with keep (either side) settles it and regenerates the file."
+                                          : "git_resolve with keep (ours|theirs for every listed conflict) or choices (one per index); both sides' other changes are kept."}};
+      if (derived) {
+        out["will_regenerate"] = true;
+        out["derived_note"] = kDerivedNote;
+      }
+      return out;
     }
     std::vector<bool> mine;
     if (hasChoices) {
-      if (args["choices"].size() != m.conflicts.size())
-        refuse("invalid_arguments", QStringLiteral("choices has %1 entries for %2 conflicts (list them: git_resolve without keep or choices).").arg(args["choices"].size()).arg(m.conflicts.size()));
+      if (args["choices"].size() != decide.size())
+        refuse("invalid_arguments", QStringLiteral("choices has %1 entries for %2 conflicts (list them: git_resolve without keep or choices).").arg(args["choices"].size()).arg(decide.size()));
       for (const auto& c : args["choices"]) mine.push_back(c == "ours");
     } else {
-      mine.assign(m.conflicts.size(), keep == "ours");
+      mine.assign(decide.size(), keep == "ours");
     }
-    written = m.conflicts.empty() ? m.text() : opad::resolve_merge(m.text(), m.conflicts, mine, "Agent");
+    written = decide.empty() ? m.text() : opad::resolve_merge(m.text(), decide, mine, "Agent");
   } else {
     if (listing)
       return {{"path", str(rel)}, {"mergeable", false}, {"ours_exists", !ours.empty()}, {"theirs_exists", !theirs.empty()},
@@ -790,12 +815,24 @@ json resolve(const json& args, const Call& call) {
       refuse("side_deleted", QStringLiteral("The %1 side deleted %2: settling that is the user's call (the Version control panel, or the git CLI after asking).").arg(keep, rel));
   }
   writeFile(r, rel, written);
+  json regenerated = nullptr;
+  if (regenerate) {  // what each side computed without the other's changes, and the derived results, follow the decisions
+    if (call.progress) call.progress(QStringLiteral("Regenerating %1").arg(QFileInfo(rel).fileName()));
+    try {
+      const json done = opad::commands::run("regenerate", {{"doc", str(QDir(r.top).filePath(rel))}, {"by", "Agent"}});
+      regenerated = {{"regenerated", done.value("regenerated", json::array()).size()}, {"errors", done.value("errors", json::array())}};
+    } catch (const std::exception& e) {
+      regenerated = {{"failed", e.what()}, {"next", "The decided file is written and staged; run regenerate on the document, save it, then git_commit."}};
+    }
+  }
   must(r, {"add", "--", rel});
   readStatus(r);
   json left = json::array();
   for (const QString& p : r.conflicts()) left.push_back(str(p));
-  return {{"state", "resolved"}, {"path", str(rel)}, {"kept", keep.isEmpty() ? "choices" : str(keep)}, {"remaining_conflicts", left},
-          {"next", left.empty() ? "git_commit (it commits the merge as a whole)." : "git_resolve the remaining files."}};
+  json out = {{"state", "resolved"}, {"path", str(rel)}, {"kept", keep.isEmpty() ? "choices" : str(keep)}, {"remaining_conflicts", left},
+              {"next", left.empty() ? "git_commit (it commits the merge as a whole)." : "git_resolve the remaining files."}};
+  if (!regenerated.is_null()) out["regeneration"] = regenerated;
+  return out;
 }
 
 json pull(const json& args, const Call& call) {

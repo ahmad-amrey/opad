@@ -39,6 +39,13 @@ struct MergeConflict {
   std::string ours, theirs;   // the op ids
   json to_json() const;
 };
+// A conflict that only follows from others: one of its two ops is a regen, the results recomputed after a change (one
+// parameter changed on both sides is one conflict of its own plus one per result it recomputed on each side). It is no
+// decision of its own: regenerating after the decisions settles it. Ours' op is looked up in `ours`, theirs' in `theirs`.
+bool derived_conflict(const MergeConflict& c, const Document& ours, const Document& theirs);
+// The conflicts to decide (the derived ones left out), in order; `derived` (when given) counts those left out. Resolving
+// only these (resolve_merge) and regenerating afterwards is the whole decision: a derived one is never given its own.
+std::vector<MergeConflict> source_conflicts(const std::vector<MergeConflict>& conflicts, const Document& ours, const Document& theirs, size_t* derived = nullptr);
 
 // Ours (an open session: the base plus its unsaved ops) and theirs (the file now) both continue the base. Merged, the
 // log is theirs and then ours' unsaved ops: the file is only appended to, and where both change the same thing ours,

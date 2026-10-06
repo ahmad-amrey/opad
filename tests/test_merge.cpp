@@ -363,6 +363,35 @@ TEST(stopped_merge_resolved_per_conflict) {
   CHECK(plan_merge(v.base, left, read_skipping(right.serialize(), v.base, keys)).conflicts.empty());
 }
 
+// One parameter changed on both sides is one decision: the regen results that follow from it on each side conflict too
+// (as the driver keys them), but they are derived, so only the parameter is listed and decided; resolving it alone adds
+// one record (the regeneration afterwards settles the results).
+TEST(derived_conflicts_follow_their_source) {
+  Document base = Document::create();
+  base.append(json{{"op", "param"}, {"name", "w"}, {"expr", "5 mm"}});
+  const std::string param = base.ops.back().id;
+  base.append(json{{"op", "feature"}, {"kind", "box"}, {"name", "Box"}, {"inputs", {{"length", "w"}}}});
+  const std::string feature = base.ops.back().id, base_text = base.serialize();
+  auto side = [&](const char* expr, int result) {
+    Document d = Document::parse(base_text);
+    d.append(json{{"op", "edit"}, {"target", param}, {"set", {{"expr", expr}}}});
+    d.append(json{{"op", "regen"}, {"results", {{feature, {{"bodies", json::array()}, {"in", result}}}}}});
+    return d;
+  };
+  const Document ours = side("10 mm", 10), theirs = side("20 mm", 20);
+  const FileMerge m = merge_files(base_text, ours.serialize(), theirs.serialize(), true);
+  CHECK(m.error.empty());
+  CHECK_EQ(m.conflicts.size(), 2u);  // the parameter and its feature's recomputed result
+  size_t derived = 0;
+  const std::vector<MergeConflict> decide = source_conflicts(m.conflicts, ours, theirs, &derived);
+  CHECK(decide.size() == 1 && decide[0].target == param && derived == 1);
+  CHECK(!derived_conflict(decide[0], ours, theirs));
+  for (const auto& c : m.conflicts) CHECK(derived_conflict(c, ours, theirs) == (c.target == feature));
+  const Document mine = Document::parse(resolve_merge(m.text(), decide, {true}, "me"));
+  CHECK_EQ(mine.ops.size(), Document::parse(m.text()).ops.size() + 1);  // ours' expression again; no regen copied
+  CHECK(mine.ops.back().type == "edit" && mine.ops.back().data["set"]["expr"] == "10 mm");
+}
+
 // UI-84 with UI-63: a parts list's numbers settled on both sides merge number by number; numbers that do not merge (one
 // item changed on both sides, one part under two numbers) stop the driver, and the merge kept for review lists the two
 // edits as an ordinary numbers conflict instead of failing as a whole.
