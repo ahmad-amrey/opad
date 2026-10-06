@@ -8,6 +8,8 @@ a refused merge into a protected branch); a pull preview needs none either.
 sizes: replies stay small on a linked board of many parts: import and model_batch with verbosity compact give counts, the
 import's root and one line per linked file (a Move of the board), viewport_image counts the visible bodies unless asked
 for their ids, tree pages.
+open: from a window's start page an agent makes a new document (new_document) and opens others (open_document, a STEP in
+viewer mode), bound to each in turn; unsaved changes refuse both (nothing discarded), an existing path refuses new_document.
 """
 import json
 import argparse
@@ -162,6 +164,45 @@ def check_sizes(app, cli, root):
         desktop.close()
 
 
+def check_open(app, cli, root):
+    root.mkdir(parents=True)
+    other = cli_document(cli, root / "other.opad", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
+                         ("export", "--format", "step", "--out", str(root / "part.step")))
+    desktop = Desktop(app, cli, root / "desktop", empty=True)
+    client = None
+    try:
+        assert desktop.descriptor["target"].startswith("start:"), desktop.descriptor
+        client = desktop.bind(cli)  # a window with no document is a target too
+        none = client.raw("context")
+        assert none["isError"] and none["structuredContent"]["error"]["code"] == "no_document", none
+        made = root / "made" / "new.opad"
+        created = client.call("new_document", path=str(made), request_id=rid())
+        assert created["state"] == "committed" and created["result"]["created"] and made.exists(), created
+        assert created["result"]["path"].replace("\\", "/").lower() == str(made).replace("\\", "/").lower(), created
+        target = created["result"]["target"]
+        assert client.state()["target"] == target  # bound to it: no live_bind needed
+        client.write("param", name="w", expr="5 mm")
+        exists = client.raw("new_document", path=str(other), request_id=rid())
+        assert exists["isError"] and exists["structuredContent"]["error"]["code"] == "file_exists", exists
+        unsaved = client.raw("open_document", path=str(other), request_id=rid())
+        assert unsaved["isError"] and unsaved["structuredContent"]["error"]["code"] == "unsaved_changes", unsaved
+        assert unsaved["structuredContent"]["error"]["next"] == ["save"], unsaved
+        assert client.state()["target"] == target and client.state()["dirty"], "the unsaved document stays as it was"
+        client.write("save")
+        opened = client.call("open_document", path=str(other), request_id=rid())
+        assert opened["result"]["target"] != target and not opened["result"]["viewer"] and opened["result"]["bodies"] == 1, opened
+        assert client.call("context")["result"]["bodies"] == 1
+        viewed = client.call("open_document", path=str(root / "part.step"), request_id=rid())
+        assert viewed["result"]["viewer"] and viewed["result"]["bodies"] == 1, viewed
+        missing = client.raw("open_document", path=str(root / "nowhere.opad"), request_id=rid())
+        assert missing["isError"] and missing["structuredContent"]["error"]["code"] == "not_found", missing
+        print("open: new_document from the start page, open_document of an .opad and a STEP (viewer), unsaved changes and existing paths refused: PASS", flush=True)
+    finally:
+        if client:
+            client.close()
+        desktop.close()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("app", type=Path)
@@ -173,7 +214,7 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="opad-agent-ergonomics-"))  # outside any repository: the git checks make their own
     only = set(filter(None, args.only.split(",")))
     try:
-        for name, check in [("git", check_git), ("sizes", check_sizes)]:
+        for name, check in [("git", check_git), ("sizes", check_sizes), ("open", check_open)]:
             if not only or name in only:
                 check(app, cli, root / name)
     finally:

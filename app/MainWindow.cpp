@@ -56,6 +56,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildDesign();
   m_recovery=new RecoveryManager(m_doc,m_design,m_jobs,this);
   m_agent=new AgentBridge(m_doc,m_design,m_viewport,m_jobs,this);
+  connect(m_agent,&AgentBridge::openRequested,this,[this](const QString& path){openPath(path);});  // open_document / new_document
   m_agent->bench();
   auto* agentStatus=new QToolButton(this);
   statusBar()->addPermanentWidget(agentStatus);

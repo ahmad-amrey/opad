@@ -94,8 +94,9 @@ int main(){try {
   // The git tools (git_status ... git_tag, opad::agent::git_tools: 15 tools with their argument and refusal descriptions and
   // the brief outputSchema each) raised it by 19.1 KB to 132668 bytes: precise enough for an agent to act on refusals.
   // An agent's evaluation (smartknob): git tools' refusals and previews said more (+0.66 KB, to 133329), tree paging and
-  // viewport_image's opt-in visible_ids (+0.28 KB): replies they shrink by tens of KB.
-  CHECK(live<133800);  // 133400 before the agent ergonomics fixes; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  // viewport_image's opt-in visible_ids (+0.28 KB): replies they shrink by tens of KB; open_document and new_document
+  // (+1.6 KB with their output schemas), so an agent starts without a person or the CLI.
+  CHECK(live<135400);  // 133400 before the agent ergonomics fixes; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
@@ -137,6 +138,11 @@ int main(){try {
   CHECK_THROWS(commands::run("tree",{{"node",inside["roots"][0]["id"]}},&many));  // a body has no children
   agent::validate_input(agent::live_schema("tree"),{{"node",holder},{"offset",2},{"limit",10}});
   CHECK(agent::live_mutation("model_batch"));
+  // An agent opens or makes a document itself (a window's start page included): writes with a request_id, no revision.
+  CHECK(agent::live_mutation("open_document") && agent::live_mutation("new_document"));
+  agent::validate_input(agent::live_schema("new_document"),{{"path","C:/work/new.opad"},{"request_id","new-1"}});
+  CHECK_THROWS(agent::validate_input(agent::live_schema("open_document"),{{"path","C:/work/a.opad"}}));
+  CHECK(!agent::live_schema("open_document")["properties"].contains("expected_revision"));
   const json batchStep={{"id","box"},{"command","feature"},{"arguments",{{"kind","box"}}}};
   agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array({batchStep})},{"expected_revision",0},{"request_id","batch"}});
   CHECK_THROWS(agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array()},{"expected_revision",0},{"request_id","batch"}}));

@@ -19,7 +19,7 @@ json brief_geometry(){return {{"type","object"},{"description","Sketch geometry 
 json verbosity(){return {{"type","string"},{"enum",{"full","compact"}},{"default","full"},{"description","compact: this command's own changes as counts (ids up to 20, else created_roots; a line per linked file), result lists over 20 as <key>_count, no signatures."}};}
 }
 bool live_mutation(const std::string& name) {
-  if(name=="model_batch" || name=="save" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit" || name=="undo" || name=="redo")return true;
+  if(name=="model_batch" || name=="save" || name=="open_document" || name=="new_document" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit" || name=="undo" || name=="redo")return true;
   for(const auto& c:commands::list())if(c.name==name)return c.mutates || name=="export";
   return false;
 }
@@ -86,6 +86,10 @@ const json& live_tools() {
   add("live_state","Current revision, camera, selection, edit session and bounded recent changes.",object());
   add("wait_for_idle","Wait without blocking the UI, up to 10 seconds, for this connection to be ready. Human editors return immediately with idle=false. Does not cancel work or reserve an edit lock; check revision before writing.",object({{"timeout_ms",{{"type","integer"},{"minimum",0},{"maximum",10000},{"default",2000}}}}));
   add("save","Save the committed live document to disk without a dialog. Omit path to save to its current file; an unsaved document needs an absolute .opad path. Saving to another existing file requires overwrite=true. Finish active editors and commit/cancel previews or transactions first. Requires edit access. Does not add an Undo step or change revision. Reuse request_id only to retrieve the same save receipt.",object({{"path",{{"type","string"},{"minLength",1},{"maxLength",32767}}},{"overwrite",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()}},{"expected_revision","request_id"}));
+  // An agent starts without a person or the CLI: a document opened or made in the bound window (also from its start page).
+  const json file={{"type","string"},{"minLength",1},{"maxLength",32767}};
+  add("open_document","Open a file in the bound window as File > Open does (.opad; STEP, STL, DXF, ... in viewer mode, read-only). Refuses unsaved_changes (nothing is discarded: save first or ask the user). Binds this connection to it.",object({{"path",file},{"request_id",str()}},{"path","request_id"}));
+  add("new_document","Make an empty .opad at path (absolute, new) and open it as open_document does.",object({{"path",file},{"request_id",str()}},{"path","request_id"}));
   add("live_select","Select up to 25 bodies or subshapes of the same kind in the viewport. Selection is applied asynchronously; inspect live_state afterwards. Does not edit geometry.",object({{"refs",{{"type","array"},{"items",{{"type",{"string","object"}}}},{"minItems",1},{"maxItems",25}}},{"expected_revision",revision()}},{"refs","expected_revision"}));
   add("request_status","Find an earlier request's committed, failed, cancelled or pending receipt after reconnecting.",object({{"request_id",str()}},{"request_id"}));
   add("stop","Cancel unfinished agent work and remove temporary previews. Completed edits remain undoable.",object());
