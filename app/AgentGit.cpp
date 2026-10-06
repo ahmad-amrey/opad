@@ -62,6 +62,7 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
     if (receipted) m_receipts.emplace(receipt, Receipt{hash});
     m_busy = true;
     m_owner = s->socket;
+    if (files && !args.value("preview", false)) emit gitStarting();  // gitChanged(true) follows whatever happens
   }
   activity(tr("Agent: %1").arg(QString::fromStdString(name)));
   struct Out {

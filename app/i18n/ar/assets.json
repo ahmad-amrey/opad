@@ -41,7 +41,8 @@
   "Linked files: %1": "الملفات المرتبطة: %1",
   ", ": "، ",
   "Linked files": "الملفات المرتبطة",
-  "This document links files outside its project folder:\n\n%1\n\nRead them?": "يرتبط هذا المستند بملفات خارج مجلد مشروعه:\n\n%1\n\nأتُقرأ؟",
+  "This document links files from folders outside its project folder:\n\n%1\n\nRead them?": "يرتبط هذا المستند بملفات من مجلدات خارج مجلد مشروعه:\n\n%1\n\nأتُقرأ؟",
+  "%1 (%2 files)": "%1 (%2 ملفات)",
   "Read them": "اقرأها",
   "Always trust this folder": "الثقة بهذا المجلد دائما",
   "Always trust these folders": "الثقة بهذه المجلدات دائما",
@@ -383,5 +384,9 @@
   "git has no version of the linked file": "لا يملك git أي نسخة من الملف المرتبط",
   "git could not restore the linked file": "تعذّر على git استعادة الملف المرتبط",
   "git did not run": "لم يعمل git",
-  "Git LFS did not track the linked file": "لم يتتبّع Git LFS الملف المرتبط"
+  "Git LFS did not track the linked file": "لم يتتبّع Git LFS الملف المرتبط",
+  "reading…": "جارٍ القراءة…",
+  "not loaded": "غير محمّل",
+  "%1 of %2 parts of %3 are not loaded: click to read the file": "%1 من %2 من أجزاء %3 غير محمّلة: انقر لقراءة الملف",
+  "Parts not loaded: %1 of %2": "أجزاء غير محمّلة: %1 من %2"
 }

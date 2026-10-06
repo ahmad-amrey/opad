@@ -30,6 +30,13 @@ class DiskSync : public QObject {
   // A command of the window changed the file (a branch switch, a merge, a pull: UI-62): what it is now comes in without a
   // question while nothing is unsaved here, new ops merged and another history reloaded. Asked again when unsaved.
   void adopt();
+  // The same, announced before the command runs (an agent's git_switch / git_merge, the panel's switch, merge, abort): what
+  // it writes meanwhile is neither asked about (never the "replaced on disk" card) nor taken in half done; adopt() at its
+  // end takes in what it left.
+  void expect();
+  // The banner's question about the file while one is up (merge, replaced, unreadable, deleted, confirm), else empty: an
+  // agent's save refuses meanwhile instead of writing over what changed there.
+  QString asking() const;
   // Whether git holds the document in a stopped merge (UI-63): its conflict markers are then resolved (vcs.resolve), not
   // overwritten. gitChanged: git's view moved on (the banner follows).
   void setConflicted(std::function<bool()> conflicted) { m_conflicted = std::move(conflicted); }
@@ -63,7 +70,8 @@ class DiskSync : public QObject {
   bool m_decided = false;    // the banner (or nothing) for m_read is up
   bool m_saveAfter = false;  // the window's Save was refused: it runs once the file turns out unchanged (until the path changes)
   bool m_reloadAfter = false;
-  bool m_adopt = false;      // the next change is the window's own (adopt)
+  bool m_adopt = false;      // the next change is the window's own (adopt), until it came in
+  bool m_expecting = false;  // a command of the window is changing the file (expect): nothing decided until adopt()
   std::function<bool()> m_conflicted;
   std::optional<AppDocument::DiskStat> m_dismissed;  // the banner was closed for this state of the file
   int m_reads = 0;

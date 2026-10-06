@@ -189,6 +189,58 @@ def conflicted(root, document, name="conflict"):
     return doc
 
 
+def git_linked(root, document, name="git-linked"):
+    """Linked files across an agent's git switches and merges: <name>/project/model.opad in its own repository (OPAD's
+    attributes), linking KiCad boards from <name>/boards/<board>/, outside the project. develop holds a box; feature/boards
+    adds base and screen (each its own folder); feature/third adds a third board from a third folder; feature/alt, from
+    develop, a cylinder and base linked again (another history). feature/boards is checked out; post-checkout and post-merge
+    hooks keep git busy 2 s after it wrote the file. <name>/other.opad is another document (a bound agent must bind it
+    explicitly)."""
+    folder = root / name
+    project, boards = folder / "project", folder / "boards"
+    project.mkdir(parents=True)
+    git = shutil.which("git")
+    if not git:
+        return folder / "no-git.opad"  # skipped: the case needs git
+    cache = {"OPAD_CACHE_DIR": str(root / f"{name}-cache")}
+    for board, x, size in (("base", 0, 4), ("screen", 50, 5), ("third", 100, 6)):  # each its own parts and outline: keys come from geometry
+        (boards / board).mkdir(parents=True)
+        document(f"{name}/{board}-part", ("feature", "--kind", "box", "--inputs", json.dumps({"length": f"{size} mm", "width": "2 mm", "height": "1.5 mm"})),
+                 ("export", "--format", "step", "--out", str(boards / board / "part.step")))
+        (boards / board / f"{board}.kicad_pcb").write_text(
+            f'(kicad_pcb (version 20241229) (general (thickness 1.6))\n(gr_rect (start {100 + x} 100) (end {126 + x + size} 120) (layer "Edge.Cuts"))\n'
+            + "".join(f'(footprint "Bench:Part" (layer "F.Cu") (at {at}) (property "Reference" "R{i}")\n'
+                      f'  (model "${{KIPRJMOD}}/part.step" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0))))\n'
+                      for i, at in ((1, f"{108 + x} 106"), (2, f"{120 + x} 112"))) + ")\n", encoding="utf-8")
+    doc = document(f"{name}/project/model", ("feature", "--kind", "box", "--inputs", '{"x":"-40 mm","length":"10 mm","width":"10 mm","height":"10 mm"}'))
+    document(f"{name}/other", ("feature", "--kind", "cylinder", "--inputs", '{"diameter":"10 mm","height":"10 mm"}'))
+    (project / ".gitattributes").write_bytes(b"*.opad text eol=lf merge=opad diff=opad\n")
+    quiet = dict(cwd=project, check=True, capture_output=True)
+    run = lambda *args: subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", *args], **quiet)
+    link = lambda board: subprocess.run([str(document.cli), "import", str(doc), str(boards / board / f"{board}.kicad_pcb"), "--link", "true"],
+                                        check=True, capture_output=True, env={**os.environ, **cache})
+    run("init", "-q", "-b", "develop")
+    run("add", "-A")
+    run("commit", "-q", "-m", "a box")
+    run("switch", "-q", "-c", "feature/boards")
+    link("base")
+    link("screen")
+    run("commit", "-q", "-am", "the boards")
+    run("switch", "-q", "-c", "feature/third")
+    link("third")
+    run("commit", "-q", "-am", "a third board")
+    run("switch", "-q", "develop")
+    run("switch", "-q", "-c", "feature/alt")
+    subprocess.run([str(document.cli), "feature", str(doc), "--kind", "cylinder", "--inputs", '{"x":"-80 mm","diameter":"8 mm","height":"8 mm"}'],
+                   check=True, capture_output=True)
+    link("base")
+    run("commit", "-q", "-am", "another history with the base board")
+    run("switch", "-q", "feature/boards")
+    for hook in ("post-checkout", "post-merge"):  # git still busy after writing the file (hooks, LFS): the window sees it first
+        (project / ".git" / "hooks" / hook).write_bytes(b"#!/bin/sh\nsleep 2\n")
+    return doc, cache
+
+
 CASES = [
     ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
@@ -214,6 +266,12 @@ CASES = [
     # the chip and the panel following). Agent access on (OPAD_BENCH_AGENT); git's author from the environment.
     ("version-protect", lambda root, document: versioned_with_remote(root, document, "protect"),
      {"OPAD_BENCH_VERSION_PROTECT": "{prefix}", "OPAD_BENCH_AGENT": "{root}/protect-agent", "GIT_CONFIG_GLOBAL": "{root}/protect-global",
+      "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "Agent Bench", "GIT_AUTHOR_EMAIL": "agent@example.com", "GIT_COMMITTER_NAME": "Agent Bench",
+      "GIT_COMMITTER_EMAIL": "agent@example.com"}),
+    # Linked files outside the project through an agent's git_switch / git_merge (live bridge): read again after every reload
+    # and merge as an open reads them, the badges saying what is loaded (app/GitLinkedBench.cpp).
+    ("git-linked", git_linked,
+     {"OPAD_BENCH_GIT_LINKED": "{prefix}", "OPAD_BENCH_AGENT": "{root}/git-linked-agent", "GIT_CONFIG_GLOBAL": "{root}/git-linked-global",
       "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "Agent Bench", "GIT_AUTHOR_EMAIL": "agent@example.com", "GIT_COMMITTER_NAME": "Agent Bench",
       "GIT_COMMITTER_EMAIL": "agent@example.com"}),
     # A read-only document: view changes kept out of "unsaved", edits ask for a copy, Save a copy, --read-only in another OPAD.

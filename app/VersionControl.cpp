@@ -1060,6 +1060,7 @@ void VersionControl::runMerge(std::shared_ptr<Incoming> in) {
     git::RunOptions o;
     o.timeoutMs = 0;  // the driver on a big document
     ++m_running;
+    m_disk->expect();  // what git writes meanwhile is this merge's: no card about it
     m_git->command(tr("Merging %1").arg(in->label), {"merge", "--no-edit", in->target}, [this, in](const git::Result& r) {
       --m_running;
       m_disk->adopt();  // the file as git left it comes in
@@ -1087,6 +1088,7 @@ void VersionControl::abortMerge() {
   if (!m_git->repo().merging) return;
   ask("vcsAbortMerge", tr("Abort merge"), tr("Abort the merge? The files go back to how they were before it began."), {{"abort", tr("Abort merge"), [this] {
         ++m_running;
+        m_disk->expect();
         m_git->command(tr("Aborting the merge"), {"merge", "--abort"}, [this](const git::Result& r) {
           --m_running;
           m_disk->adopt();
@@ -1100,6 +1102,7 @@ void VersionControl::abortMerge() {
 // ---------------------------------------------------------------- branches
 void VersionControl::runSwitch(const QStringList& args, const QString& name) {
   ++m_running;
+  m_disk->expect();
   m_git->command(tr("Switching to %1").arg(name), args, [this, name](const git::Result& r) {
     --m_running;
     m_disk->adopt();  // the branch's version of the document comes in

@@ -20,6 +20,7 @@ void MainWindow::buildDocks() {
   m_browserOverlay = new BrowserOverlay(m_browser, m_viewport);
   connect(m_browser,&BrowserPanel::autoHideChanged,m_browserOverlay,[this](bool on){m_browserOverlay->setAutoHide(on);});
   connect(m_doc,&AppDocument::changed,m_browserOverlay,[this] { m_browserOverlay->refresh(); });
+  connect(m_browser,&BrowserPanel::decorationsChanged,m_browserOverlay,[this] { m_browserOverlay->refresh(); });
   m_browserOverlay->place();
 
 

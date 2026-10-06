@@ -12,7 +12,10 @@
 
 // Attached to the scene but composited by the OS, just like the measurement
 // overlay: native OpenGL child windows cannot alpha-blend QWidget children.
-// Collapsing physically shrinks the input window to the search/tree preview.
+// Collapsing physically shrinks the input window to the search/tree preview. That preview is a picture of the browser,
+// taken again once a change has had all its handlers (the rows rebuilt, then decorated by the areas: an open restores the
+// component last worked in and dims the rows outside it) and whenever the rows' look alone changes, or the browser comes back
+// enabled after a load: never the rows as they were, until a hover.
 class BrowserOverlay : public QFrame {
  public:
   BrowserOverlay(QWidget* browser, QWidget* scene)
@@ -26,6 +29,7 @@ class BrowserOverlay : public QFrame {
     m_auto=QSettings().value("ui/browserAutoHide",true).toBool();
     m_expanded=!m_auto; m_progress=m_expanded?1.0:0.0;
     m_scene->installEventFilter(this);
+    m_browser->installEventFilter(this);  // enabled again after a load: its picture again
     m_animation.setDuration(180); m_animation.setEasingCurve(QEasingCurve::OutCubic);
     connect(&m_animation,&QVariantAnimation::valueChanged,this,[this](const QVariant& value) {
       m_progress=value.toReal(); resize(width(),currentHeight()); update();
@@ -73,8 +77,17 @@ class BrowserOverlay : public QFrame {
     update();
   }
   void setHold(std::function<bool()> hold) { m_hold = std::move(hold); }  // kept expanded while it says so (renaming)
-  void refresh() { snapshot(); update(); }
+  // Coalesced, on the next turn of the event loop: after every handler of the change that asked for it.
+  void refresh() {
+    if (std::exchange(m_refreshDue, true)) return;
+    QTimer::singleShot(0, this, [this] {
+      m_refreshDue = false;
+      snapshot();
+      update();
+    });
+  }
   bool expanded() const { return m_expanded; }
+  QPixmap preview() const { return m_snapshot; }  // what it shows of the browser while collapsed (benches)
  protected:
   bool eventFilter(QObject* object,QEvent* event) override {
     // QFrame::hide() would call this class's setVisible, and a page shown in the scene's place would forget that the
@@ -84,6 +97,7 @@ class BrowserOverlay : public QFrame {
       else if(event->type()==QEvent::Show && m_requested) { place(); QFrame::setVisible(true); }
       else if(event->type()==QEvent::Resize || event->type()==QEvent::Move) place();
     }
+    if(object==m_browser && event->type()==QEvent::EnabledChange) refresh();
     return QFrame::eventFilter(object,event);
   }
   void paintEvent(QPaintEvent*) override {
@@ -115,7 +129,7 @@ class BrowserOverlay : public QFrame {
   QVariantAnimation m_animation;
   QTimer m_poll;
   std::function<bool()> m_hold;
-  bool m_auto=true, m_expanded=false, m_requested=true;
+  bool m_auto=true, m_expanded=false, m_requested=true, m_refreshDue=false;
   int m_expandedHeight=520;
   qreal m_progress=0;
 };

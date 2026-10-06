@@ -6,6 +6,7 @@
 #include "opad/drawing_io.hpp"
 #include "Jobs.hpp"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QSettings>
@@ -77,6 +78,27 @@ std::pair<int, int> phaseSpan(const std::string& what, bool opad) {
   if (what == "preparing") return {80, 5};
   return {10, 60};  // translating, reading a drawing
 }
+// The linked imports of a document as its edits leave them: each one's asset object and the body keys its nodes name.
+struct LinkedImport {
+  opad::json asset;
+  std::vector<std::string> keys;
+};
+std::map<std::string, LinkedImport> linkedImports(const opad::Document& doc) {
+  std::map<std::string, LinkedImport> out;
+  for (const auto& e : opad::effective_ops(doc)) {
+    if (e.op->type != "import" || !e.data().contains("asset") || !e.data()["asset"].is_object()) continue;
+    LinkedImport& l = out[e.op->id];
+    l.asset = e.data()["asset"];
+    std::function<void(const opad::json&)> walk = [&](const opad::json& nodes) {
+      for (const auto& n : nodes) {
+        if (n.value("type", "") == "body") l.keys.push_back(n.value("key", ""));
+        if (n.contains("children")) walk(n["children"]);
+      }
+    };
+    walk(e.data().value("nodes", opad::json::array()));
+  }
+  return out;
+}
 }  // namespace
 
 AppDocument::AppDocument(QObject* parent) : QObject(parent), m_storage(std::make_shared<opad::Document>()), doc(*m_storage), m_alive(std::make_shared<std::atomic<bool>>(true)) {
@@ -110,6 +132,24 @@ opad::AssetOptions AppDocument::assetOptions() {
   o.kicad = kicadOptions();
   o.derive = opad::derive_asset;  // a board read through kicad-cli: its STEP made again when missing here or synced
   return o;
+}
+
+std::vector<AppDocument::Untrusted> AppDocument::untrustedFiles() const {
+  std::set<std::string> unread;  // imports with parts not loaded
+  for (const auto& [id, n] : scene.nodes)
+    if (n.linked && n.body_missing) unread.insert(n.source_op);
+  std::vector<Untrusted> out;
+  if (unread.empty()) return out;
+  const QString dir = doc.path.empty() ? QString() : QFileInfo(path()).absolutePath();
+  for (const auto& s : assetStates) {
+    const std::string import = s.value("import", "");
+    if (s.value("state", "") != "untrusted" || !unread.count(import)) continue;
+    QString file = QString::fromStdString(s.value("file", s.value("path", std::string())));
+    if (QFileInfo(file).isRelative() && !dir.isEmpty()) file = dir + "/" + file;  // as recorded: beside the document
+    file = QDir::cleanPath(file);
+    out.push_back({import, file, QFileInfo(file).absolutePath()});
+  }
+  return out;
 }
 
 QString AppDocument::assetSummary(const opad::json& states) {
@@ -239,6 +279,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
         return;
       }
       assetStates = report.is_object() ? report.value("assets", opad::json::array()) : opad::json::array();
+      linkedUnread = false;  // read on the worker
       emit aboutToReplace();
       ++generation;
       dropRollback();
@@ -366,6 +407,7 @@ void AppDocument::newDocument() {
   disposeOld();
   doc = opad::Document::create();
   assetStates = opad::json::array();
+  linkedUnread = false;
   browse = readOnly = false;
   hasDocument = true;
   clearHistory();
@@ -392,6 +434,7 @@ void AppDocument::closeDocument() {
   disposeOld();
   doc = opad::Document();
   assetStates = opad::json::array();
+  linkedUnread = false;
   browse = readOnly = false;
   hasDocument = false;
   clearHistory();
@@ -414,7 +457,7 @@ void AppDocument::open(const QString& path) {
     emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
   } else {
     next = opad::Document::load(fsPath(path));
-    assetStates = opad::json::array();  // synchronous: linked files stay unread (loadAssets reads them on a worker)
+    assetStates = opad::json::array();  // synchronous: linked files stay unread (the linked files area reads them on a worker)
     emit message(tr("Opened %1").arg(path));
   }
   emit aboutToReplace();
@@ -426,6 +469,7 @@ void AppDocument::open(const QString& path) {
   hasDocument = true;
   clearHistory();
   markSaved();
+  linkedUnread = ext == "opad" && opad::has_assets(doc);
   if (ext != "opad") m_savedIds.clear();
   if (ext != "opad") setDisk({}, {}, {});
   else setDisk(QFileInfo(path).absoluteFilePath(), stat, std::make_shared<opad::Manifest>(opad::Manifest::of(doc)));
@@ -675,6 +719,7 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved,const
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
   emit aboutToReplace();++generation;++revision;dropRollback();m_change={};disposeOld();
   doc=std::move(document);scene=std::move(resolved);
+  linkedUnread=opad::has_assets(doc);  // a snapshot holds no linked file's parts: read as an open reads them
   browse=readOnly=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
   if(into.file.isEmpty()){doc.path.clear();doc.dirty=true;setDisk({},{},{});}
   else {
@@ -955,6 +1000,7 @@ opad::MergePlan AppDocument::mergeDisk(DiskRead&& read, const QString& label) {
   for (size_t i = 0; i + mine < doc.ops.size(); ++i) m_savedIds.push_back(doc.ops[i].id);
   m_savedBodies = read.bodies.size();
   setDisk(read.file, read.stat, read.manifest);
+  linkedUnread = opad::has_assets(doc);  // the file's ops may link files, or other versions of them: read as an open reads them
   refresh();
   emit undoChanged();
   return plan;
@@ -965,13 +1011,35 @@ void AppDocument::reloadDisk(DiskRead&& read) {
   if (!read.doc) throw opad::Error(read.error.isEmpty() ? std::string("the file could not be read") : read.error.toStdString());
   for (const auto& key : read.bodies)
     if (!doc.has_body(key) && !read.doc->has_body(key)) throw opad::Error("body entry missing: " + key);
+  // The same document (a git switch, merge or pull of its file): the parts of a linked file whose import and asset are as they
+  // were stay (their keys come from the file's geometry), the others are read again as an open reads them (linkedUnread),
+  // and the trust given while it was open still holds. Another document starts from nothing.
+  const bool same = read.doc->header.uuid == doc.header.uuid;
+  std::map<std::string, opad::json> parts;  // external entries that may stay: key -> meta
+  std::map<std::string, LinkedImport> before;
+  if (same) {
+    before = linkedImports(doc);
+    for (const auto& b : doc.bodies())
+      if (b.external) parts.emplace(b.key, b.meta);
+  }
+  const bool trusted = m_trustedGeneration == generation;
   emit aboutToReplace();
   ++generation;
+  if (same && trusted) m_trustedGeneration = generation;
+  if (!same) {
+    assetStates = opad::json::array();
+    m_trustedNow.clear();
+  }
   m_rollback.clear();
   doc.arrange_bodies(read.bodies, *read.doc, false);
   doc.ops = std::move(read.doc->ops);
   doc.header = read.doc->header;
   doc.path = fsPath(read.file);
+  for (const auto& [import, now] : parts.empty() ? std::map<std::string, LinkedImport>() : linkedImports(doc))
+    if (const auto was = before.find(import); was != before.end() && was->second.asset == now.asset)
+      for (const auto& key : now.keys)
+        if (const auto part = parts.find(key); part != parts.end() && !doc.has_body(key)) doc.add_external_body(key, part->second);
+  linkedUnread = opad::has_assets(doc);
   clearHistory();
   markSaved();
   m_savedBodies = doc.body_count();

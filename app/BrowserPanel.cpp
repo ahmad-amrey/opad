@@ -771,7 +771,10 @@ void BrowserPanel::addFolder(browser::Folder folder) {
   rebuild();
 }
 
-void BrowserPanel::refreshDecorations() { m_tree->viewport()->update(); }
+void BrowserPanel::refreshDecorations() {
+  m_tree->viewport()->update();
+  emit decorationsChanged();
+}
 
 bool BrowserPanel::removeRows(const std::vector<std::string>& ids) {
   bool taken = false;

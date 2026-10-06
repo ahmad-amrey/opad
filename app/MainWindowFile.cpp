@@ -421,6 +421,7 @@ void MainWindow::beginLoad(std::function<void()> after, const QString& title, co
     if(ok) {
       m_doc->storeViewerCache(m_jobs);  // a slow viewer read, now meshed: the next open of the file skips it
       if(!m_benchSelect) QTimer::singleShot(0, this, [this] { offerKicadModels(); if(trustAfterLoad()) offerAssetTrust(); });  // library models, linked files (benches call them)
+      else if(assets::trustAnswered() && trustAfterLoad()) QTimer::singleShot(0, this, [this] { offerAssetTrust(); });  // a bench answering the question
       if (deferred) QTimer::singleShot(0, deferred, &QAction::trigger);  // the edit asked for while the bodies streamed in
     }
     if (int skipped = m_viewport->skippedCount()) m_toasts->toast(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), QString(), {}, 8000);

@@ -79,6 +79,7 @@ class BrowserPanel : public QWidget {
   void documentMenuRequested(const QPoint& globalPos);  // the document row: the menu is about the document (SelectionContext::document)
   void fitRequested(const std::vector<std::string>& ids);
   void autoHideChanged(bool on);
+  void decorationsChanged();  // refreshDecorations: rows look otherwise now (the collapsed browser's picture follows)
   void sketchActivated(const std::string& sketchId);  // double-click on a sketch row: edit it
   void editedSketchVisibilityRequested();
   void commandRequested(const QString& id);  // the window's command (edit.rename, edit.delete) on the selection

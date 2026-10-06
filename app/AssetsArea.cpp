@@ -21,6 +21,8 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QPushButton>
+#include <QMap>
+#include <QSet>
 #include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -115,40 +117,63 @@ assets::Mode assets::askImport(QWidget* parent, const QString& path) {
   return mode;
 }
 
+namespace {
+std::function<int(const QStringList&)>& trustAnswer() {
+  static std::function<int(const QStringList&)> answer;
+  return answer;
+}
+}  // namespace
+
+void assets::setTrustAnswer(std::function<int(const QStringList& folders)> answer) { trustAnswer() = std::move(answer); }
+bool assets::trustAnswered() { return bool(trustAnswer()); }
+
 // A document from elsewhere must not make OPAD open files of its choosing (a network share hands over the user's
 // credentials): the linked files outside its project are read only once the user says so, here or for good (settings).
-bool assets::askTrust(QWidget* parent, AppDocument* doc, JobRunner* jobs, std::function<void(const QString&)> failed, const std::vector<std::string>& imports) {
-  QStringList files, folders;
+bool assets::askTrust(QWidget* parent, AppDocument* doc, JobRunner* jobs, std::function<void(const QString&)> failed, const std::vector<std::string>& imports,
+                      bool automatic) {
+  QStringList folders;
+  QMap<QString, int> count;  // files per folder
   std::vector<std::string> asked;
-  for (const auto& s : doc->assetStates) {
-    if (s.value("state", "") != "untrusted") continue;
-    const std::string import = s.value("import", "");
-    if (!imports.empty() && std::find(imports.begin(), imports.end(), import) == imports.end()) continue;
-    const QString file = QString::fromStdString(s.value("file", s.value("path", std::string())));
-    files << QDir::toNativeSeparators(file);
-    asked.push_back(import);
-    if (const QString folder = QFileInfo(file).absolutePath(); !folders.contains(folder)) folders << folder;
+  for (const auto& u : doc->untrustedFiles()) {
+    if (!imports.empty() && std::find(imports.begin(), imports.end(), u.import) == imports.end()) continue;
+    asked.push_back(u.import);
+    if (!folders.contains(u.folder)) folders << u.folder;
+    ++count[u.folder];
   }
-  if (files.isEmpty()) return false;
-  QMessageBox box(QMessageBox::Question, AssetsArea::tr("Linked files"),
-                  AssetsArea::tr("This document links files outside its project folder:\n\n%1\n\nRead them?").arg(files.mid(0, 6).join('\n') + (files.size() > 6 ? "\n…" : "")),
-                  QMessageBox::NoButton, parent);
-  auto* once = box.addButton(AssetsArea::tr("Read them"), QMessageBox::AcceptRole);
-  auto* always = box.addButton(folders.size() == 1 ? AssetsArea::tr("Always trust this folder") : AssetsArea::tr("Always trust these folders"), QMessageBox::AcceptRole);
-  box.addButton(AssetsArea::tr("Not now"), QMessageBox::RejectRole);
-  box.exec();
-  if (box.clickedButton() == always) {
+  if (folders.isEmpty()) return false;
+  static QSet<QString> declined;  // document and folders the user said Not now to: not asked again by itself
+  const QString key = QString::fromStdString(doc->doc.header.uuid) + '|' + QStringList(folders).join('|');
+  if (automatic && declined.contains(key)) return false;
+  int answer = 0;
+  if (trustAnswer()) {
+    answer = trustAnswer()(folders);
+  } else {
+    QStringList lines;
+    for (const QString& f : folders) lines << (count[f] > 1 ? AssetsArea::tr("%1 (%2 files)").arg(native(f)).arg(count[f]) : native(f));
+    QMessageBox box(QMessageBox::Question, AssetsArea::tr("Linked files"),
+                    AssetsArea::tr("This document links files from folders outside its project folder:\n\n%1\n\nRead them?").arg(lines.join('\n')),
+                    QMessageBox::NoButton, parent);
+    box.setObjectName("linkedTrust");
+    auto* once = box.addButton(AssetsArea::tr("Read them"), QMessageBox::AcceptRole);
+    auto* always = box.addButton(folders.size() == 1 ? AssetsArea::tr("Always trust this folder") : AssetsArea::tr("Always trust these folders"), QMessageBox::AcceptRole);
+    box.addButton(AssetsArea::tr("Not now"), QMessageBox::RejectRole);
+    box.exec();
+    answer = box.clickedButton() == once ? 1 : box.clickedButton() == always ? 2 : 0;
+  }
+  if (answer == 2) {
     QSettings settings;
     QStringList trusted = settings.value("assets/trusted").toStringList();
     for (const QString& f : folders)
       if (!trusted.contains(f)) trusted << f;
     settings.setValue("assets/trusted", trusted);
-  } else if (box.clickedButton() != once) {
+  } else if (answer != 1) {
+    declined.insert(key);
     return true;
   } else {
     doc->trustForNow(folders);  // read and watched until another document is opened; the badge clears at the next look
   }
-  doc->loadAssets(jobs, box.clickedButton() == once, [failed](bool ok, const QString& error) {
+  declined.remove(key);
+  doc->loadAssets(jobs, answer == 1, [failed](bool ok, const QString& error) {
     if (!ok && failed) failed(error);
   }, asked);
   return true;
@@ -290,6 +315,60 @@ void AssetsArea::documentChanged(bool replaced) {
     m_opened.clear();
     for (const auto& [import, a] : m_monitor->assets()) m_opened.insert(import);
   }
+  if (services().document()->linkedUnread && !std::exchange(m_following, true))  // once the change is through
+    QTimer::singleShot(0, this, [this] { followLinked(); });
+}
+
+// A reload or merge from disk brought linked imports whose parts are not loaded: they are read as an open reads them, files
+// outside the project only with the trust already given (the settings' folders, what this session read).
+void AssetsArea::followLinked(int tries) {
+  m_following = false;
+  AppDocument* doc = services().document();
+  if (!doc->linkedUnread || !m_monitor) return;
+  if (!doc->hasDocument || doc->browse) {
+    doc->linkedUnread = false;
+    return;
+  }
+  if (doc->loading || doc->designBusy || doc->snapshotBusy()) {  // a load reads them itself; anything else: when it is over
+    if (doc->loading || tries > 600) return void(doc->linkedUnread = false);
+    m_following = true;
+    QTimer::singleShot(200, this, [this, tries] { followLinked(tries + 1); });
+    return;
+  }
+  doc->linkedUnread = false;
+  readLinked();
+}
+
+void AssetsArea::readLinked(const std::vector<std::string>& only) {
+  AppDocument* doc = services().document();
+  std::vector<std::string> wanted;
+  for (const auto& [import, a] : m_monitor->assets())
+    if (a.missing > 0 && a.asset.value("storage", "linked") != "embedded" && !m_reading.count(import) &&
+        (only.empty() || std::find(only.begin(), only.end(), import) != only.end()))
+      wanted.push_back(import);
+  if (wanted.empty()) return;
+  m_reading.insert(wanted.begin(), wanted.end());
+  services().browser()->refreshDecorations();
+  if (trace::enabled()) trace::log(QStringLiteral("assets: reading %1 linked files again").arg(wanted.size()));
+  QPointer<AssetsArea> self(this);
+  const auto generation = doc->generation;
+  doc->loadAssets(services().jobs(), AssetMonitor::options(doc), [self, wanted, generation](bool ok, const QString& error) {
+    if (!self) return;
+    for (const auto& import : wanted) self->m_reading.erase(import);
+    AppDocument* doc = self->services().document();
+    if (!ok && trace::enabled()) trace::log("assets: linked files not read: " + error);
+    if (!ok && generation == doc->generation && !doc->linkedUnread) {  // busy meanwhile: again once it is not
+      doc->linkedUnread = true;
+      QTimer::singleShot(200, self, [self] { if (self) self->followLinked(1); });
+    }
+    self->services().browser()->refreshDecorations();
+    if (self->m_monitor) self->m_monitor->check(0);  // what the files are now (sizes, LFS), and the badges with them
+    if (ok && generation == doc->generation && !doc->untrustedFiles().empty())  // outside the project and not trusted: asked by itself
+      QTimer::singleShot(0, self, [self] {
+        if (self) assets::askTrust(self->services().window(), self->services().document(), self->services().jobs(),
+                                   [self](const QString& error) { if (self) self->notify(reasonText(error.toStdString()), false, 8000); }, {}, true);
+      });
+  }, wanted);
 }
 
 std::vector<std::string> AssetsArea::imports(const SelectionContext& selection) const {
@@ -339,7 +418,21 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
   badge.fill = nullptr;
   // Each state with its own icon and word, not only its colour (theme::cue).
   auto later = [this](std::function<void()> fn) { return [this, fn] { QTimer::singleShot(0, this, fn); }; };  // the press may rebuild the row
-  if (state == "changed") {
+  const int missing = a ? a->missing : 0;
+  if (m_reading.count(import)) {  // read again after a reload or merge from disk
+    badge.icon = "regen";
+    badge.text = tr("reading…");
+    badge.color = &Tokens::fg3;
+    badge.tooltip = tr("Reading %1").arg(file);
+    badge.spin = true;
+  } else if (missing > 0 && (state == "ok" || state.empty())) {  // trusted and found, but its parts are not loaded: never "in sync"
+    badge.icon = "warning";
+    badge.text = tr("not loaded");
+    badge.color = &Tokens::warning;
+    badge.fill = &Tokens::bg4;
+    badge.tooltip = tr("%1 of %2 parts of %3 are not loaded: click to read the file").arg(missing).arg(a->bodies).arg(file);
+    badge.clicked = later([this, import] { readLinked({import}); });
+  } else if (state == "changed") {
     badge.icon = "regen";
     badge.text = tr("Sync");
     badge.color = &Tokens::assetStale;
@@ -385,6 +478,7 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
   }
   QStringList tip{tr("Linked file: %1").arg(file)};
   if (state == "untrusted" || state == "missing" || state == "changed" || state == "error") tip << stateText(import);  // why its badge shows
+  else if (missing > 0 && !m_reading.count(import)) tip << tr("Parts not loaded: %1 of %2").arg(missing).arg(a->bodies);
   if (a) {
     QStringList facts;
     if (const std::string sha = a->asset.value("sha256", ""); !sha.empty()) facts << "SHA-256 " + QString::fromStdString(sha.substr(0, 12));
@@ -781,10 +875,11 @@ void AssetsArea::copyPath(const std::string& import) {
   notify(tr("Copied %1").arg(file), false, 3000);
 }
 
-void AssetsArea::trust(const std::string& import) {
+void AssetsArea::trust(const std::string&) {
   // Read them: the files not read yet are read on a worker; one already read (linked in this session) is only looked at
   // again, which says it is fine now (the badge stayed when only unread files were read).
-  if (assets::askTrust(services().window(), services().document(), services().jobs(), [this](const QString& error) { notify(reasonText(error.toStdString()), false, 8000); }, {import}) && m_monitor)
+  // One question for every file left unread for want of trust, this one among them (each folder once, Always covering all).
+  if (assets::askTrust(services().window(), services().document(), services().jobs(), [this](const QString& error) { notify(reasonText(error.toStdString()), false, 8000); }) && m_monitor)
     m_monitor->check();
 }
 

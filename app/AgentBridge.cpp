@@ -32,8 +32,12 @@ AgentBridge::AgentBridge(AppDocument* doc,DesignController* design,Viewport* vie
   m_follow=settings.value("agent/follow",false).toBool();
   m_server.setSocketOptions(QLocalServer::UserAccessOption);
   connect(&m_server,&QLocalServer::newConnection,this,&AgentBridge::accept);
-  connect(doc,&AppDocument::aboutToReplace,this,[this]{stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();for(auto& s:m_sessions)s->bound=false;});
-  connect(doc,&AppDocument::changed,this,[this]{if(!m_committing)clearPrepared();if(m_cache)dispose(std::move(m_cache));publish();});
+  // Another state of the document: unfinished work stops; whether bound connections follow is known once it is in (changed).
+  connect(doc,&AppDocument::aboutToReplace,this,[this]{
+    stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();
+    if(!m_replacing.pending)m_replacing={m_doc->hasDocument?m_doc->doc.header.uuid:std::string(),m_doc->path(),m_doc->hasDocument && !m_doc->browse,true};
+  });
+  connect(doc,&AppDocument::changed,this,[this]{if(m_replacing.pending)followReplace();if(!m_committing)clearPrepared();if(m_cache)dispose(std::move(m_cache));publish();});
   connect(doc,&AppDocument::pathChanged,this,&AgentBridge::publish);
   connect(design,&DesignController::stateChanged,this,[this]{if(editorBusy() && !m_doc->snapshotBusy())clearPrepared();emit statusChanged();});
   setAccess(settings.value("agent/enabled",false).toBool(),settings.value("agent/edit",false).toBool());
@@ -50,7 +54,16 @@ AgentBridge::~AgentBridge(){
 }
 // A window with no document (its start page) is a target too, "start:<generation>": an agent binds to it and opens or makes
 // one there (open_document, new_document); every other tool says no_document.
-QString AgentBridge::target()const{return m_doc->hasDocument?QString::fromStdString(m_doc->doc.header.uuid)+":"+QString::number(m_doc->generation):"start:"+QString::number(m_doc->generation);}
+// A document is its uuid and its identity (m_identity: the same document reloaded from its file keeps it, followReplace).
+QString AgentBridge::target()const{return m_doc->hasDocument?QString::fromStdString(m_doc->doc.header.uuid)+":"+QString::number(m_identity):"start:"+QString::number(m_doc->generation);}
+void AgentBridge::followReplace(){
+  m_replacing.pending=false;
+  const bool same=m_replacing.open && m_doc->hasDocument && !m_doc->browse && !m_replacing.uuid.empty() && m_doc->doc.header.uuid==m_replacing.uuid &&
+    !m_replacing.path.isEmpty() && QFileInfo(m_doc->path())==QFileInfo(m_replacing.path);
+  if(!same){++m_identity;for(auto& s:m_sessions)s->bound=false;return;}  // another document: bound explicitly, never followed
+  bool any=false;for(auto& s:m_sessions)if(s->bound){s->reloaded=true;any=true;}
+  if(any)activity(tr("The document was reloaded from its file; bound agents follow it"));
+}
 json AgentBridge::descriptor()const{return {{"instance",m_instance.toStdString()},{"endpoint",m_endpoint.toStdString()},{"target",target().toStdString()},{"document",m_doc->hasDocument?m_doc->doc.header.uuid:""},{"title",m_doc->title().toStdString()},{"path",m_doc->path().toStdString()},{"pid",QCoreApplication::applicationPid()},{"enabled",m_enabled},{"edit",m_edit},{"version",opad::version_string()}};}
 void AgentBridge::publish(){
   // Fixed-size descriptor; serialize/write on a worker. Serialize publishes under one mutex
@@ -98,6 +111,19 @@ QString AgentBridge::stateText()const {
   for(const auto& s:m_sessions)if(s->bound && s->socket && s->socket->state()==QLocalSocket::ConnectedState)return tr("Connected: %1").arg(s->agent);
   return m_seenClient?tr("Disconnected"):tr("Waiting for client");
 }
+json AgentBridge::linkedFiles()const{
+  const auto unread=m_doc->untrustedFiles();if(unread.empty())return nullptr;
+  json folders=json::array(),files=json::array();QStringList names;
+  for(const auto& u:unread){
+    files.push_back(QDir::toNativeSeparators(u.file).toStdString());
+    const auto folder=QDir::toNativeSeparators(u.folder);if(!names.contains(folder)){names<<folder;folders.push_back(folder.toStdString());}
+  }
+  size_t parts=0;for(const auto& [id,n]:m_doc->scene.nodes)if(n.linked && n.body_missing)++parts;
+  return {{"state","needs_user_trust"},{"folders",folders},{"files",files},{"parts_not_loaded",parts},
+    {"message","Linked files need the user's trust: "+names.join("; ").toStdString()+". OPAD reads linked files outside the document's project folder only once the user agrees, so their parts are not loaded: the errors \"linked file ... is not loaded\" in context follow from this alone."},
+    {"next","ask_user"},
+    {"ask_user","Ask the user to answer OPAD's Linked files question (or to click the file's \"not read\" badge in the browser) with Read them or Always trust. Agents cannot grant this trust. Then read live_state again: linked_files is gone once the files are read."}};
+}
 json AgentBridge::liveState()const{
   auto out=descriptor();out["editing"]=editingState();out["revision"]=m_doc->revision;out["dirty"]=m_doc->isDirty();out["busy"]=m_busy;
   out["edit_session"]=out["editing"]["edit_session"];
@@ -110,6 +136,7 @@ json AgentBridge::liveState()const{
   // The component the user activated (UI-33): what they work in; pass it as a feature's or sketch's component to follow them.
   if(const auto& active=m_doc->activeComponent();!active.empty())out["active_component"]={{"id",active},{"name",m_doc->nodeName(active).toStdString()}};
   if(m_prepared)out["prepared"]={{"id",m_prepared->id},{"base_revision",m_prepared->snapshot->revision}};
+  if(auto linked=linkedFiles();!linked.is_null())out["linked_files"]=std::move(linked);
   return out;
 }
 void AgentBridge::accept(){while(m_server.hasPendingConnections()){
@@ -136,6 +163,11 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
   },[this,session,parsed](bool ok,const QString& error){if(!session->socket)return;if(!ok){fail(session,"invalid_arguments",error);return;}dispatch(session,std::move(parsed->request),std::move(parsed->hash));},JobKind::Background);
 }
 void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,const std::string& receipt){
+  if(session->reloaded && result.contains("structuredContent")){  // once, in the first reply after the reload
+    session->reloaded=false;
+    result["structuredContent"]["notice"]={{"document_reloaded",true},{"target",target().toStdString()},{"revision",m_doc->revision},
+      {"message","The bound document was reloaded from its file (a git switch, merge or pull, or a change on disk); this connection still follows it under the same target. Staged previews and transactions were discarded. Read live_state or context again before editing."}};
+  }
   if(!result["structuredContent"].contains("elapsed_ms") && session->requestTimer.isValid())result["structuredContent"]["elapsed_ms"]=session->requestTimer.elapsed();
   auto bytes=std::make_shared<QByteArray>();auto given=std::make_shared<std::vector<std::pair<std::string,Known>>>();
   m_jobs->backgroundNext();
@@ -227,6 +259,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     json out={{"connection","bound"},{"instance",m_instance.toStdString()},{"target",target().toStdString()},
       {"permissions",{{"enabled",m_enabled},{"edit",m_edit}}},{"revision",m_doc->revision},{"units",m_doc->scene.units},
       {"geometry_units","mm"},{"busy",m_busy},{"editor_busy",editorBusy()},{"transaction_state",transaction},{"next_calls",next}};
+    if(auto linked=linkedFiles();!linked.is_null())out["linked_files"]=std::move(linked);
     if(args.value("include_example",false))out["guide"]=live_guide();if(args.value("include_guide",false))out["agent_guide"]=guide();reply(s,live_result(out));return;
   }
   if(!s->bound || s->target!=target()){
