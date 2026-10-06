@@ -130,4 +130,25 @@ TEST(hole_at_points_in_space) {
   agent::validate_input(schema, {{"points", json::array({json::array({0, 0, 0})})}, {"direction", {{"direction", {0, 0, -1}}}}});
 }
 
+// 3. A sketch's points, entities, constraints, images and patterns share one id space; only the refusal said so. Now the
+// sketch tool's description, every id's schema and the brief geometry of model_batch steps say it.
+TEST(sketch_id_space_is_described) {
+  const auto described = [](const std::string& text) { return has(text, "one id space") && has(text, "point 1 and entity 1 collide"); };
+  for (const auto& c : commands::list())
+    if (c.name == "sketch") CHECK(described(c.description));
+  json sketchTool, batch;
+  for (const auto& tool : agent::live_tools()) {
+    if (tool["name"] == "sketch") sketchTool = tool;
+    if (tool["name"] == "model_batch") batch = tool;
+  }
+  CHECK(described(sketchTool["description"].get<std::string>()));
+  const json geometry = agent::live_schema("sketch")["properties"]["geometry"];
+  for (const char* list : {"points", "entities", "constraints"})
+    CHECK(has(geometry["properties"][list]["items"]["properties"]["id"].value("description", ""), "one id space"));
+  bool brief = false;  // the sketch step of a batch names the geometry briefly
+  for (const auto& step : batch["inputSchema"]["properties"]["steps"]["items"]["anyOf"])
+    if (step["properties"]["command"]["enum"][0] == "sketch") brief = described(step["properties"]["arguments"]["properties"]["geometry"].value("description", ""));
+  CHECK(brief);
+}
+
 CHECK_MAIN()

@@ -70,7 +70,7 @@ int opad_mcp() {
         for (const auto& c : opad::commands::list()) {
           json schema = opad::agent::command_schema(c);
           // The full sketch geometry schema is on the sketch tool; sketch_edit names it (the server checks it in full).
-          if (c.name == "sketch_edit") schema["properties"]["geometry"] = {{"type", "object"}, {"description", "Sketch geometry as the sketch tool's schema gives it: points, entities, constraints and shapes, all ids in one id space across the sketch; checked in full by the server."}};
+          if (c.name == "sketch_edit") schema["properties"]["geometry"] = {{"type", "object"}, {"description", "Sketch geometry as the sketch tool's schema gives it: points, entities, constraints and shapes; points, entities, constraints, images and patterns share one id space (point 1 and entity 1 collide); checked in full by the server."}};
           list.push_back({{"name", c.name}, {"description", c.description},
                           {"inputSchema", schema},
                           {"annotations",{{"readOnlyHint",!c.mutates && c.name!="export" && c.name!="render" && c.name!="project" && c.name!="cache"},{"destructiveHint",c.mutates},{"openWorldHint",false}}}});

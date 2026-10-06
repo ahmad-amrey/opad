@@ -93,7 +93,9 @@ int main(){try {
   // the commit.
   // The git tools (git_status ... git_tag, opad::agent::git_tools: 15 tools with their argument and refusal descriptions and
   // the brief outputSchema each) raised it by 19.1 KB to 132668 bytes: precise enough for an agent to act on refusals.
-  CHECK(live<133400);  // 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  // mcp-eval 2026-10-06: the sketch's one id space said in its description, the ids' schema and the brief geometry of
+  // sketch_edit and batch steps (+0.94 KB, measured 133607).
+  CHECK(live<133900);  // 133400 before the sketch id space; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);

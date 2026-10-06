@@ -15,7 +15,7 @@ json object(json properties={},json required=json::array()) {
 }
 json str(){return {{"type","string"},{"minLength",1},{"maxLength",200}};}
 json revision(){return {{"type","integer"},{"minimum",0}};}
-json brief_geometry(){return {{"type","object"},{"description","Sketch geometry as the sketch tool's schema gives it: points, entities, constraints and shapes, all ids in one id space across the sketch; checked in full by the server."}};}
+json brief_geometry(){return {{"type","object"},{"description","Sketch geometry as the sketch tool's schema gives it: points, entities, constraints and shapes; points, entities, constraints, images and patterns share one id space (point 1 and entity 1 collide); checked in full by the server."}};}
 json verbosity(){return {{"type","string"},{"enum",{"full","compact"}},{"default","full"},{"description","compact: this command's own created/modified/deleted ids and counts (not the transaction's cumulative lists), references without signatures, no batch-wide operation_ids."}};}
 }
 bool live_mutation(const std::string& name) {

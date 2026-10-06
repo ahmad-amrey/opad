@@ -200,7 +200,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
     return out;
   });
 
-  reg("sketch", "Create a sketch on a plane from its geometry: points, entities, constraints and high-level shapes (rectangles, rounded rectangles, arcs by three points or a radius, paths with fillets and tangent arcs, slots, offsets, text), which become ordinary curves; the result's id_map lists what each shape made. The agent guide (MCP resource opad://guide/agent) describes the format",
+  reg("sketch", "Create a sketch on a plane from its geometry: points, entities, constraints and high-level shapes (rectangles, rounded rectangles, arcs by three points or a radius, paths with fillets and tangent arcs, slots, offsets, text), which become ordinary curves; the result's id_map lists what each shape made. Points, entities, constraints, images and patterns share one id space: point 1 and entity 1 collide, so number them apart (points 1-99, entities 100-199, constraints 200+). The agent guide (MCP resource opad://guide/agent) describes the format",
       {{"doc", "path"}, {"name", "string"}, {"plane", "object - {\"base\":\"xy|xz|yz\"} | {\"face\":ref} | {\"feature\":plane id}"}, {"geometry", "object"},
        {"component", "uuid|null - component it is made in"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {
@@ -233,7 +233,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
     out["sketch_id"]=out["ids"][0];out["frame"]=design::frame_result(frame);return out;
   });
 
-  reg("sketch_edit", "Replace a sketch's geometry (and optionally its name); features built on it are regenerated",
+  reg("sketch_edit", "Replace a sketch's geometry (and optionally its name); features built on it are regenerated. Ids: one space for points, entities, constraints, images and patterns, as in sketch",
       {{"doc", "path"}, {"target", "uuid - sketch op id"}, {"geometry", "object"}, {"plane", "object"}, {"name", "string"}, {"by", "string"}}, true, [](Document* d, const json& a) {
         Document& doc = need(d);
         json set = json::object();

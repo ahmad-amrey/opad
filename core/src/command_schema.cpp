@@ -35,7 +35,8 @@ json plane() {
   return p;
 }
 json sketch_geometry() {
-  auto id=json{{"type","integer"},{"minimum",1}};
+  // One id space for points, entities, constraints, images and patterns (mcp-eval 2026-10-06: only the refusal said so).
+  auto id=json{{"type","integer"},{"minimum",1},{"description","Unique across all of the sketch's items (one id space)."}};
   auto point=object({{"id",id},{"x",type("number")},{"y",type("number")},{"fixed",type("boolean")}},{"x","y"});
   auto entity=object({{"id",id},{"type",choice({"point","line","circle","arc","ellipse","spline"})},{"p",array(id,1)},{"r",{{"type","number"},{"exclusiveMinimum",0}}},
     {"construction",type("boolean")},{"fixed",type("boolean")},{"degree",type("integer")},{"knots",array(type("number"))},{"multiplicities",array(type("integer"))},
