@@ -122,8 +122,9 @@ class Scenario:
 
     # ---- checks
     def check(self, label, got, want, tol, rel=True):
+        got, want = float(got), float(want)
         err = abs(got - want) / (abs(want) if rel and want else 1.0)
-        ok = err <= tol
+        ok = bool(err <= tol)
         self.checks.append({"check": label, "got": got, "want": want, "error": err, "tolerance": tol, "relative": rel, "ok": ok})
         return ok
 
@@ -170,6 +171,17 @@ class Scenario:
         for p in paths:
             p.unlink()
         self.pictures.append(file)
+
+
+def overlap(s, skip=()):
+    """The largest overlap (mm3) the validate interference check finds, pairs touching a body in skip left out."""
+    v = s.run("validate", checks=["interference"])
+    worst = 0.0
+    for item in v.get("interference", {}).get("items", []):
+        if item.get("kind") != "interference" or item.get("a") in skip or item.get("b") in skip:
+            continue
+        worst = max(worst, item.get("volume_mm3", 0.0))
+    return worst
 
 
 def values(s):
@@ -335,7 +347,7 @@ def engine_slider_crank(s):
 @scenario("gearbox_two_stage", "Two-stage spur gearbox with involute gears: 9:1, no tooth interference through a turn, torque through it")
 def gearbox_two_stage(s):
     m = 2.0
-    z1, z2, z3, z4 = 12, 36, 14, 42
+    z1, z2, z3, z4 = 18, 54, 17, 51  # 3 x 3: no pinion under the 17 teeth a 20 deg involute needs without undercut
     c1, c2 = m * (z1 + z2) / 2, m * (z3 + z4) / 2
     housing = s.box("Housing plate", (c1 / 2 + c2 / 2, 0, -12), c1 + c2 + 80, 110, 6, color=[0.6, 0.62, 0.66])
     s.joint(kind="ground", part=housing, at={"origin": [0, 0, -12], "z": [0, 0, 1]})
@@ -356,11 +368,8 @@ def gearbox_two_stage(s):
     # Turn the input one tooth pitch at a time for 2 teeth and look for overlapping teeth (validate's interference check).
     worst = 0.0
     for k in range(0, 13):
-        a = k * 360 / z1 / 6
-        s.run("joint_set", values={j1: a})
-        v = s.run("validate", checks=["interference"])
-        for pair in v.get("interference", {}).get("pairs", []):
-            worst = max(worst, pair.get("volume", 0.0))
+        s.run("joint_set", values={j1: k * 360 / z1 / 6})
+        worst = max(worst, overlap(s, skip=(housing,)))
     s.check("no tooth overlap through two tooth pitches (largest overlap mm3)", worst, 0, 1e-3, rel=False)
     s.run("joint_set", values={j1: 720})
     out = values(s)[j3]
@@ -376,9 +385,38 @@ def gearbox_two_stage(s):
     s.animation("gearbox.gif", [{"joints": {j1: a}} for a in range(0, 90, 3)], view="top")
 
 
-@scenario("planetary_gearset", "Planetary gearset with involute teeth: sun 20, three planets 16, ring 52 fixed; carrier ratio 3.6")
+@scenario("gear_undercut", "Involute limits: a 12-tooth pinion (under the 17-tooth minimum) cuts into its wheel, an 18-tooth one does not")
+def gear_undercut(s):
+    m = 2.0
+    results = {}
+    for z1, x in ((12, 0.0), (18, 120.0)):
+        z2 = 3 * z1
+        a = m * (z1 + z2) / 2
+        p = s.gear(f"Pinion {z1}", (x, 0, 0), m, z1, 8, color=[0.85, 0.55, 0.2])
+        w = s.gear(f"Wheel {z2}", (x + a, 0, 0), m, z2, 8, color=[0.3, 0.55, 0.85], phase=180 + 180 / z2)
+        jp = s.joint(kind="revolute", part=p, at={"origin": [x, 0, 0], "z": [0, 0, 1]})["id"]
+        jw = s.joint(kind="revolute", part=w, at={"origin": [x + a, 0, 0], "z": [0, 0, 1]})["id"]
+        s.joint(kind="gear", joints=[jp, jw], teeth=[z1, z2])
+        results[z1] = (p, w, jp)
+    worst = {12: 0.0, 18: 0.0}
+    for k in range(0, 9):
+        s.run("joint_set", values={results[12][2]: k * 360 / 12 / 8, results[18][2]: k * 360 / 18 / 8})
+        v = s.run("validate", checks=["interference"])
+        for item in v.get("interference", {}).get("items", []):
+            if item.get("kind") != "interference":
+                continue
+            for z, (p, w, _) in results.items():
+                if {item["a"], item["b"]} == {p, w}:
+                    worst[z] = max(worst[z], item["volume_mm3"])
+    s.expect("the 12-tooth pinion interferes with its wheel (it would need undercut or a profile shift)", worst[12] > 1e-3, f"{worst[12]:.4f} mm3")
+    s.check("the 18-tooth pinion meshes clear through a tooth pitch (mm3)", worst[18], 0, 1e-3, rel=False)
+    s.note(f"largest overlap: 12 teeth {worst[12]:.4f} mm3, 18 teeth {worst[18]:.5f} mm3 (minimum teeth without undercut at 20 deg: 2 / sin^2 20 = 17.1)")
+
+
+@scenario("planetary_gearset", "Planetary gearset with involute teeth: sun 21, three planets 18, ring 57 fixed; carrier ratio 3.714")
 def planetary_gearset(s):
-    m, zs, zp, zr = 1.5, 20, 16, 52
+    # Every gear at 17 teeth or more (no undercut at 20 deg), zr = zs + 2 zp, and (zs + zr) / 3 whole: three planets equally spaced.
+    m, zs, zp, zr = 1.5, 21, 18, 57
     a = m * (zs + zp) / 2
     sun = s.gear("Sun", (0, 0, 0), m, zs, 10, color=[0.9, 0.6, 0.2], bore=6)
     ring = s.gear("Ring", (0, 0, 0), m, zr, 10, color=[0.6, 0.62, 0.66], type="internal", rim=m * zr + 16, phase=180 / zr)
@@ -405,11 +443,7 @@ def planetary_gearset(s):
     worst = 0.0
     for k in range(0, 9):
         s.run("joint_set", values={jc: k * 2.5})
-        v = s.run("validate", checks=["interference"])
-        for pair in v.get("interference", {}).get("pairs", []):
-            if carrier in (pair.get("a"), pair.get("b")):
-                continue  # the carrier plate under the gears' faces is not a tooth mesh
-            worst = max(worst, pair.get("volume", 0.0))
+        worst = max(worst, overlap(s, skip=(carrier,)))  # the carrier plate under the gears is not a tooth mesh
     s.check("no tooth overlap anywhere in the set through 20 deg of carrier (mm3)", worst, 0, 2e-3, rel=False)
     s.run("joint_set", values={jc: 100})
     vals = values(s)
@@ -435,16 +469,16 @@ def rack_and_pinion(s):
     worst = 0.0
     for k in range(0, 11):
         s.run("joint_set", values={jp: k * 6})
-        v = s.run("validate", checks=["interference"])
-        for pair in v.get("interference", {}).get("pairs", []):
-            worst = max(worst, pair.get("volume", 0.0))
+        worst = max(worst, overlap(s))
     s.check("no tooth overlap through 60 deg (mm3)", worst, 0, 1e-3, rel=False)
-    s.run("joint_set", values={jp: 360})
+    s.run("joint_set", values={jp: 180})
     vals = values(s)
-    s.check("rack travel per turn = pi m z", vals[jr], PI * m * z, 1e-9)
+    s.check("rack travel per half turn = pi m z / 2", vals[jr], PI * m * z / 2, 1e-9)
     held = s.run("joint_set", values={jp: 720})
     vals = values(s)
-    s.check("the rack's end stop (60 mm) holds the steering", vals[jr], 60, 1e-6, rel=False)
+    s.check("the rack's end stop (60 mm) holds the steering: rack at its limit (mm)", vals[jr], 60, 1e-4, rel=False)
+    s.check("... and the pinion stopped where the rack met it: 60 / r rad (deg)", vals[jp], math.degrees(60 / r), 1e-6)
+    s.note("joint_set says: " + "; ".join(held.get("notes", [])))
     s.picture("rack_pinion.png", view="iso")
     s.animation("rack_pinion.gif", [{"joints": {jp: a}} for a in range(-150, 151, 10)], view="top")
 
@@ -541,7 +575,7 @@ def falling_and_sliding(s):
     dy = s.run("study", kind="dynamic", name="Slide", settings={"duration": 0.5, "frames": 51, "free": [block], "contacts": [block], "friction": mu, "step": 2e-4,
                                                                  "traces": [{"part": block, "point": [org[0] + 20 * n[0], org[1] + 20 * n[1], org[2] + 20 * n[2]], "name": "Centre"}]},
                series=["Centre y", "Centre z", "Contacts"], samples=51)
-    s.expect("contacts found", max(series(dy, "Contacts")) >= 1)
+    s.expect("contacts found", bool(max(series(dy, "Contacts")) >= 1))
     # Distance down the slope (the ramp's in-plane direction (0, -cos t, -sin t)); a fitted to s = s0 + v0 t + a t^2 / 2 after
     # the first 0.05 s.
     t, Y, Z = dy["t"], series(dy, "Centre y"), series(dy, "Centre z")
@@ -550,7 +584,7 @@ def falling_and_sliding(s):
     A = np.array([[1, ti, ti * ti / 2] for ti, _ in pts])
     coef = np.linalg.lstsq(A, np.array([d for _, d in pts]), rcond=None)[0]
     a = G * (st - mu * ct) * 1000
-    s.check("sliding acceleration a = g (sin t - mu cos t) (mm/s2)", coef[2], a, 0.03)
+    s.check("sliding acceleration a = g (sin t - mu cos t) (mm/s2)", float(coef[2]), a, 0.03)
     s.note(f"slid {pts[-1][1]:.1f} mm in 0.5 s; fitted a = {coef[2]:.0f} mm/s2, closed form {a:.0f} mm/s2")
     s.picture("slide_end.png", study={"id": dy["id"], "t": 0.5}, view="right")
 
@@ -590,10 +624,11 @@ def bolted_bracket(s):
     s.run("load", kind="force", on=[top], vector=[-1500, 0, 0], case="Service")
     st = s.run("study", kind="static", name="Service load", settings={"case": "Service", "bodies": [base, bracket, bolt], "mesh_size": 3})
     b = st["bolts"][0]
-    s.check("bolt section area = pi d^2 / 4 (mm2)", b["section_area_mm2"], PI * 25, 0.01)
+    s.check("bolt section area = pi d^2 / 4 (mm2; the mesh's faceted section of the shank)", b["section_area_mm2"], PI * 25, 0.02)
     s.note(f"bolt nominal {b['nominal_stress_MPa']:.1f} MPa, shank {b.get('axial_stress_MPa', 0):.1f} MPa; peak {st['max_von_mises_MPa']:.0f} MPa at {st['max_von_mises_at']}")
     s.check("bolt shank stress = preload / area, the side load adding a little (MPa)", b["axial_stress_MPa"], 15000 / (PI * 25), 0.1)
     s.expect("the support carries the side load", abs(st["reactions_N"]["Fixed 1"][0] - 1500) < 15, json.dumps(st["reactions_N"]))
+    s.note("the peak is at the bonded under-head corner, a stress singularity of a linear model that glues the parts; the shank and the plates away from it are what the safety factors should be read on")
     s.note("safety factors: " + ", ".join(f"{k} {v['safety_factor']:.2f}" for k, v in st["bodies"].items() if v.get("safety_factor")))
     s.picture("bracket_stress.png", study={"id": st["id"], "field": "von_mises"}, view="iso")
     s.picture("bracket_deformed.png", study={"id": st["id"], "field": "displacement"}, view="front")

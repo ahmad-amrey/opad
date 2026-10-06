@@ -339,6 +339,15 @@ struct Mechanism::Impl {
         j.j1 = joint_at.at(src->joints[0]);
         j.j2 = joint_at.at(src->joints[1]);
       }
+    // Relations read against a carrier: their coordinates unwrapped from the last pose (stored as the relation's values),
+    // so a planet three turns round its pin is not read as a fraction of one.
+    for (auto& j : joints)
+      if (j.k->relation && j.carrier >= 0)
+        if (const Joint* src = scene.joint(j.id); src && src->values.size() == 2) {
+          const double u1 = joints[size_t(j.j1)].k->coords[size_t(j.c1)].angle ? kDeg : 1.0;
+          const double u2 = joints[size_t(j.j2)].k->coords[size_t(j.c2)].angle ? kDeg : 1.0;
+          j.cref = {src->values[0] * u1, src->values[1] * u2};
+        }
     // Carriers: a part under another part's node moves with it.
     for (auto& p : parts) {
       const auto path = scene.path_to(p.node);
@@ -578,6 +587,22 @@ struct Mechanism::Impl {
     return res;
   }
 
+  // A limit passed by a coordinate no target drives (by more than a hair).
+  bool past_limit(const std::vector<Target>& targets) const {
+    for (size_t ji = 0; ji < joints.size(); ++ji) {
+      const Jt& j = joints[ji];
+      if (j.k->relation) continue;
+      const auto q = measure(j);
+      for (size_t c = 0; c < q.size(); ++c) {
+        if (std::any_of(targets.begin(), targets.end(), [&](const Target& t) { return t.joint == int(ji) && t.coord == int(c); })) continue;
+        const auto [lo, hi] = j.limits[c];
+        const double eps = j.k->coords[c].angle ? 1e-7 : 1e-7 * L;
+        if ((!std::isnan(lo) && q[c] < lo - eps) || (!std::isnan(hi) && q[c] > hi + eps)) return true;
+      }
+    }
+    return false;
+  }
+
   void commit_values() {
     for (auto& j : joints)
       if (!j.k->relation) j.q = measure(j), j.ref = j.q;
@@ -649,6 +674,30 @@ struct Mechanism::Impl {
       for (auto& n : r.notes)
         if (std::find(res.notes.begin(), res.notes.end(), n) == res.notes.end()) res.notes.push_back(n);
       if (!r.ok) {
+        // A limit reached through the joints the drive moves (a rack's end stop through its pinion's relation): the
+        // drive and that limit cannot both hold, so the drive stops where the limit is met (the largest part of this
+        // step that keeps every limit), as a drive stops at its own limit.
+        auto at = [&](double f) {
+          for (size_t i = 0; i < parts.size(); ++i) parts[i].T = good[i];
+          std::vector<Target> part_step = goal;
+          for (size_t i = 0; i < part_step.size(); ++i) part_step[i].value = from[i] + (goal[i].value - from[i]) * (s - 1 + f) / steps;
+          return std::make_pair(newton(groups(part_step, {}), hold).ok, part_step);
+        };
+        const auto [free_ok, full] = at(1.0);
+        if (free_ok && past_limit(full)) {
+          double lo = 0, hi = 1;
+          for (int it = 0; it < 40; ++it) {
+            const double mid = 0.5 * (lo + hi);
+            const auto [ok, t] = at(mid);
+            if (ok && !past_limit(t)) lo = mid;
+            else hi = mid;
+          }
+          at(lo);
+          commit_values();
+          res.reached = (s - 1 + lo) / steps;
+          res.notes.push_back("stopped where a joint it moves reaches its limit (" + std::to_string(int(std::lround(100 * res.reached))) + "% of the way)");
+          break;
+        }
         for (size_t i = 0; i < parts.size(); ++i) parts[i].T = good[i];
         res.ok = false;
         res.error = r.error;
@@ -687,6 +736,17 @@ Mechanism::Result Mechanism::place(const std::string& part, const Mat4& world, c
   if (!r.ok) p.T = keep;
   m->commit_values();
   return r;
+}
+
+Values Mechanism::carrier_values() const {
+  Values out;
+  for (const auto& j : m->joints) {
+    if (!j.k->relation || j.carrier < 0) continue;
+    const double u1 = m->joints[size_t(j.j1)].k->coords[size_t(j.c1)].angle ? kDeg : 1.0;
+    const double u2 = m->joints[size_t(j.j2)].k->coords[size_t(j.c2)].angle ? kDeg : 1.0;
+    out[j.id] = {j.cref[0] / u1, j.cref[1] / u2};
+  }
+  return out;
 }
 
 Values Mechanism::values() const {
@@ -859,7 +919,9 @@ json pose_op(const Scene& before, const Mechanism& mech, const std::string& name
   for (const auto& [id, local] : mech.placements(before)) placements.push_back({{"target", id}, {"matrix", local.to_json()}});
   json values = json::object();
   bool changed = !placements.empty();
-  for (const auto& [id, v] : mech.values()) {
+  Values all = mech.values();
+  for (const auto& [id, v] : mech.carrier_values()) all[id] = v;
+  for (const auto& [id, v] : all) {
     json a = json::array();
     for (double x : v) a.push_back(std::round(x * 1e9) / 1e9);
     values[id] = a;

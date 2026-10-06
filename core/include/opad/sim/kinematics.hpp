@@ -47,6 +47,7 @@ class Mechanism {
   Result place(const std::string& part, const Mat4& world, const std::string& anchor = {});
 
   Values values() const;                          // every joint's coordinates now
+  Values carrier_values() const;  // relations read against a carrier: their two coordinates, unwrapped (deg or mm)
   std::map<std::string, Mat4> part_worlds() const;  // each part's world placement now
   Mat4 part_world(const std::string& part) const;
   const std::vector<std::string>& parts() const;

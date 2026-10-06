@@ -20,6 +20,7 @@ struct VolumeMesh {
   std::vector<std::array<int, 6>> tris;     // surface elements
   std::vector<int> tri_face;                // the face each is on: index into `faces` (0-based)
   TopTools_IndexedMapOfShape faces, solids;  // the shape's, as the mesh numbers them
+  int straightened = 0;                      // elements whose curved mid-side nodes folded them: straight-sided instead
 };
 
 // maxh: the largest element edge (mm); grading 0..1; second_order: curved quadratic elements. Throws Error when Netgen

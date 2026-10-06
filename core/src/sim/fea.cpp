@@ -454,6 +454,8 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   run.summary["mesh_size"] = maxh;
   report(0.1, "Meshing");
   const VolumeMesh mesh = mesh_solids(solids, maxh, st.value("grading", 0.3), st.value("second_order", true), [&] { return progress && !progress(0.1, "Meshing"); });
+  if (mesh.straightened)
+    run.warnings.push_back(std::to_string(mesh.straightened) + " element(s) curved inside out on a tight curve were made straight-sided (a finer mesh_size there keeps them curved)");
   const int tn = mesh.tet_nodes;
   // Solids of the mesh -> bodies.
   std::vector<int> solid_body(size_t(mesh.solids.Extent()), -1);

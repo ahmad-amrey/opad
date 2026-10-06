@@ -538,6 +538,12 @@ struct SceneBuilder::Impl {
         if (sim::coord_index(*sim::joint_kind(a->kind), c1) < 0) fail("\"" + a->name + "\" has no " + c1 + " to couple");
         if (sim::coord_index(*sim::joint_kind(b->kind), c2) < 0) fail("\"" + b->name + "\" has no " + c2 + " to couple");
       }
+      // Read against a carrier: the two coordinates as they stand (a pose keeps them unwrapped, sim/kinematics.cpp).
+      if (d.contains("carrier")) {
+        j.values.assign(2, 0.0);
+        const json values = d.value("values", json::array());
+        for (size_t i = 0; i < 2 && i < values.size(); ++i) j.values[i] = values[i].get<double>();
+      }
     } else {
       j.part = d.value("part", "");
       if (d.contains("base") && d["base"].is_string()) j.base = d["base"].get<std::string>();

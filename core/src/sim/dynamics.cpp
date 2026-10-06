@@ -94,45 +94,6 @@ Mat4 mat_of_frame(const Frame& f) {
   return m;
 }
 
-// Consistent accelerations and multipliers at the start. HHT takes the system's accelerations as its first old ones, and
-// zeros there ring through the multipliers for hundreds of steps (a speed-driven crank's torque swung to six times its
-// steady range). Solves M a = F + Cq' L, Cq a = -gamma, where gamma, the constraints' second derivative along the free
-// motion (X + V t, no acceleration), comes from a central difference.
-void consistent_start(ChSystem& sys) {
-  ChState X, Xp, Xm;
-  ChStateDelta V, A;
-  double T = 0;
-  sys.StateSetup(X, V, A);
-  sys.StateSetup(Xp, V, A);
-  sys.StateSetup(Xm, V, A);
-  sys.StateGather(X, V, T);
-  const unsigned nc = sys.GetNumConstraints();
-  const double vmax = V.size() ? V.lpNorm<Eigen::Infinity>() : 0;
-  const double d = std::min(1e-4, 0.005 / (vmax + 1e-12));  // s: under 5 mrad or 5 mm of motion
-  auto C_at = [&](const ChState& x, double t) {
-    ChVectorDynamic<> q(nc);
-    q.setZero();
-    sys.StateScatter(x, V, t, true);
-    sys.LoadConstraint_C(q, 1.0, false);
-    return q;
-  };
-  ChStateDelta Dx = V * d;
-  sys.StateIncrementX(Xp, X, Dx);
-  Dx = V * -d;
-  sys.StateIncrementX(Xm, X, Dx);
-  const ChVectorDynamic<> cp = C_at(Xp, T + d), cm = C_at(Xm, T - d), c0 = C_at(X, T);
-  const ChVectorDynamic<> Qc = (cp - 2 * c0 + cm) / (d * d);
-  sys.StateScatter(X, V, T, true);
-  ChVectorDynamic<> R(sys.GetNumCoordsVelLevel()), L(nc);
-  R.setZero();
-  L.setZero();
-  sys.LoadResidual_F(R, 1.0);
-  if (!sys.StateSolveCorrection(A, L, R, Qc, 1.0, 0, 0, X, V, T, false, false, true)) return;
-  if (!A.allFinite() || !L.allFinite()) return;
-  sys.StateScatterAcceleration(A);
-  sys.StateScatterReactions(L);
-}
-
 // A body's reference frame (the part's placement) in mm, as the kinematic definitions take it.
 Mat4 ref_mm(const ChBodyAuxRef* b) { return mat_mm(b->GetFrameRefToAbs()); }
 
@@ -243,6 +204,131 @@ class CoordConstraint : public ChLinkBase {
 
 // Forces on joint coordinates (springs, dampers, friction, torque and force drives), worked out from the state the
 // integrator is trying, at each of its iterations: stiff springs stay stable where a force held over the step would not.
+// Reaches ChLinkLock's protected BuildLink(x, y, z, e0, e1, e2, e3) to switch single equations of a joint off.
+struct LockAccess : ChLinkLock {
+  static void keep(ChLinkLock& l, const std::array<bool, 7>& on) {
+    auto build = static_cast<void (ChLinkLock::*)(bool, bool, bool, bool, bool, bool, bool)>(&LockAccess::BuildLink);
+    (l.*build)(on[0], on[1], on[2], on[3], on[4], on[5], on[6]);
+  }
+};
+
+// Leaves out the joint equations that repeat others (a planar loop of spatial joints). With them the system is
+// rank-deficient: a direct QR returned garbage multipliers, and under MINRES the shared ones drifted along the null space
+// (an engine's main bearing at 1e9 N, its motor torque ringing for hundreds of steps). Rows are taken greedily from a
+// numerical Jacobian at the start, relations and drives first, then the joints' own: one that adds nothing to the span
+// of those before it goes. Returns how many went.
+int drop_redundant(ChSystem& sys) {
+  sys.Setup();
+  sys.Update(false);
+  ChState X, Xk;
+  ChStateDelta V, A;
+  double T = 0;
+  sys.StateSetup(X, V, A);
+  sys.StateSetup(Xk, V, A);
+  sys.StateGather(X, V, T);
+  const int nc = int(sys.GetNumConstraints()), nv = int(sys.GetNumCoordsVelLevel());
+  if (nc == 0 || nv == 0) return 0;
+  Eigen::MatrixXd J(nc, nv);
+  const double h = 1e-7;
+  for (int j = 0; j < nv; ++j) {
+    ChVectorDynamic<> cp(nc), cm(nc);
+    cp.setZero();
+    cm.setZero();
+    ChStateDelta Dx(nv, &sys);
+    Dx.setZero(nv, &sys);
+    Dx(j) = h;
+    sys.StateIncrementX(Xk, X, Dx);
+    sys.StateScatter(Xk, V, T, true);
+    sys.LoadConstraint_C(cp, 1.0, false);
+    Dx(j) = -h;
+    sys.StateIncrementX(Xk, X, Dx);
+    sys.StateScatter(Xk, V, T, true);
+    sys.LoadConstraint_C(cm, 1.0, false);
+    J.col(j) = (cp - cm) / (2 * h);
+  }
+  sys.StateScatter(X, V, T, true);
+  struct Row {
+    ChLinkBase* link;
+    int index;  // the link's k-th active equation
+  };
+  std::vector<Row> order;
+  for (int pass = 0; pass < 2; ++pass)
+    for (const auto& l : sys.GetLinks()) {
+      const bool relation = bool(std::dynamic_pointer_cast<CoordConstraint>(l));
+      if ((pass == 0) != relation || !l->IsActive()) continue;
+      for (unsigned k = 0; k < l->GetNumConstraints(); ++k) order.push_back({l.get(), int(k)});
+    }
+  std::vector<Eigen::VectorXd> basis;
+  std::map<ChLinkBase*, std::set<int>> dropped;
+  int count = 0;
+  for (const auto& r : order) {
+    const Eigen::VectorXd row = J.row(int(r.link->GetOffset_L()) + r.index).transpose();
+    Eigen::VectorXd w = row;
+    for (int it = 0; it < 2; ++it)
+      for (const auto& q : basis) w -= q.dot(w) * q;
+    if (w.norm() > 1e-6 * std::max(row.norm(), 1e-12)) {
+      basis.push_back(w / w.norm());
+    } else {
+      dropped[r.link].insert(r.index);
+      ++count;
+    }
+  }
+  for (const auto& [link, rows] : dropped) {
+    if (auto lock = dynamic_cast<ChLinkLock*>(link)) {
+      std::array<bool, 7> on{};
+      int active = 0;
+      for (unsigned i = 0; i < 7; ++i) {
+        const bool locked = lock->GetMask().GetConstraint(i).GetMode() == ChConstraint::Mode::LOCK;
+        on[i] = locked && !rows.count(active);
+        if (locked) ++active;
+      }
+      LockAccess::keep(*lock, on);
+    } else {
+      link->SetDisabled(true);  // a relation repeating others (a closed loop of gears)
+    }
+  }
+  if (count) {
+    sys.Setup();
+    sys.Update(false);
+  }
+  return count;
+}
+
+// Consistent accelerations and multipliers at the start. HHT takes the system's accelerations as its first old ones, and
+// zeros there ring through the multipliers for hundreds of steps (a speed-driven crank's torque swung to six times its
+// steady range). Solves M a = F + Cq' L, Cq a = -gamma, where gamma, the constraints' second derivative along the free
+// motion (X + V t, no acceleration), comes from a central difference.
+void consistent_start(ChSystem& sys) {
+  ChState X, Xk;
+  ChStateDelta V, A;
+  double T = 0;
+  sys.StateSetup(X, V, A);
+  sys.StateSetup(Xk, V, A);
+  sys.StateGather(X, V, T);
+  const unsigned nc = sys.GetNumConstraints();
+  const double vmax = V.size() ? V.lpNorm<Eigen::Infinity>() : 0;
+  const double d = std::min(1e-4, 0.005 / (vmax + 1e-12));  // s: under 5 mrad or 5 mm of motion a step
+  // Forward points only (drives hold their start before t = 0): C'' = (2 C0 - 5 C1 + 4 C2 - C3) / d^2 + O(d^2).
+  ChVectorDynamic<> Qc(nc);
+  Qc.setZero();
+  const double w[4] = {2, -5, 4, -1};
+  for (int k = 0; k < 4; ++k) {
+    ChStateDelta Dx = V * (k * d);
+    sys.StateIncrementX(Xk, X, Dx);
+    sys.StateScatter(Xk, V, T + k * d, true);
+    sys.LoadConstraint_C(Qc, w[k] / (d * d), false);
+  }
+  sys.StateScatter(X, V, T, true);
+  ChVectorDynamic<> R(sys.GetNumCoordsVelLevel()), L(nc);
+  R.setZero();
+  L.setZero();
+  sys.LoadResidual_F(R, 1.0);
+  if (!sys.StateSolveCorrection(A, L, R, Qc, 1.0, 0, 0, X, V, T, false, false, true)) return;
+  if (!A.allFinite() || !L.allFinite()) return;
+  sys.StateScatterAcceleration(A);
+  sys.StateScatterReactions(L);
+}
+
 class CoordForces : public ChPhysicsItem {
  public:
   struct Wrench {
@@ -567,7 +653,12 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
         }
         const double ue = angle ? 1.0 : kMm;  // coordinates come in rad and mm
         m.motor = coord_constraint([ci, target, ue](const std::vector<double>& q, double t) { return q[ci] * ue - target(t); },
-                                   [target](double t) { return -(target(t + 1e-6) - target(t - 1e-6)) / 2e-6; });
+                                   [target](double t) {
+                                     // One-sided at the start: the target holds still before t = 0 (a central difference
+                                     // there gave half the speed, and Chrono's velocity assembly halved the start).
+                                     const double a = std::max(t - 1e-6, 0.0), b = t + 1e-6;
+                                     return -(target(b) - target(a)) / (b - a);
+                                   });
       }
     }
     if (const auto lim = j.def.find("limits"); lim != j.def.end() && lim->is_object() && !j.def.value("locked", false) && j.kind != "rigid") {
@@ -793,7 +884,9 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
   // look-ahead), so a speed-driven crank starts with its rod and piston moving too (Chrono's velocity assembly left them
   // still and the first step was an impulse).
   {
-    Values ahead;
+    // Central differences (h either side): a forward one was off by a h / 2, at an engine's top dead centre enough to
+    // ring through the first hundreds of steps.
+    Values ahead, behind;
     const double h = 1e-5;
     for (const auto& jm : joints) {
       if (!jm.drive || (jm.drive_mode != "speed" && jm.drive_mode != "position")) continue;
@@ -802,24 +895,27 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
       std::vector<double> v(jm.src->values.size(), NAN);
       v[jm.drive_coord] = jm.src->values[jm.drive_coord] + rate * h;
       ahead[jm.src->id] = v;
+      v[jm.drive_coord] = jm.src->values[jm.drive_coord] - rate * h;
+      behind[jm.src->id] = v;
     }
     if (!ahead.empty()) {
-      Mechanism later(scene);
-      if (later.drive(ahead).ok)
+      Mechanism later(scene), earlier(scene);
+      if (later.drive(ahead).ok && earlier.drive(behind).ok)
         for (auto& p : parts) {
           if (p.fixed || !later.has_part(p.node)) continue;
-          const Mat4 a = scene.world(p.node), b = later.part_world(p.node);
-          const Vec3 c0 = a.apply(a.inverse().apply(p.mass.centre)), c1 = b.apply(a.inverse().apply(p.mass.centre));
-          p.body->SetPosDt(ChVector3d((c1[0] - c0[0]) / h * kMm, (c1[1] - c0[1]) / h * kMm, (c1[2] - c0[2]) / h * kMm));
-          // Angular velocity from the turn between the two placements (R1 R0^T), small: its axial vector over h.
+          const Mat4 a = scene.world(p.node), b = later.part_world(p.node), e = earlier.part_world(p.node);
+          const Vec3 local = a.inverse().apply(p.mass.centre);
+          const Vec3 c1 = b.apply(local), cm = e.apply(local);
+          p.body->SetPosDt(ChVector3d((c1[0] - cm[0]) / (2 * h) * kMm, (c1[1] - cm[1]) / (2 * h) * kMm, (c1[2] - cm[2]) / (2 * h) * kMm));
+          // Angular velocity from the turn between the two placements (R+ R-^T), small: its axial vector over 2h.
           ChMatrix33<> R;
           for (int r = 0; r < 3; ++r)
             for (int c = 0; c < 3; ++c) {
               double v = 0;
-              for (int k = 0; k < 3; ++k) v += b.at(r, k) * a.at(c, k);
+              for (int k = 0; k < 3; ++k) v += b.at(r, k) * e.at(c, k);
               R(r, c) = v;
             }
-          p.body->SetAngVelParent(ChVector3d(R(2, 1) - R(1, 2), R(0, 2) - R(2, 0), R(1, 0) - R(0, 1)) / (2 * h));
+          p.body->SetAngVelParent(ChVector3d(R(2, 1) - R(1, 2), R(0, 2) - R(2, 0), R(1, 0) - R(0, 1)) / (4 * h));
         }
     }
   }
@@ -977,11 +1073,25 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
   auto forces = chrono_types::make_shared<CoordForces>();
   forces->eval = joint_forces;
   sys.AddOtherPhysicsItem(forces);
-  // Positions meet the joints at the start; velocities are the kinematic look-ahead's above (Chrono's velocity assembly
-  // halved them); accelerations and forces solve the equations of motion there (Chrono's are finite differences, their
+  // Positions meet the joints at the start; velocities start from the kinematic look-ahead's above, projected onto the
+  // joints; accelerations and forces solve the equations of motion there (Chrono's are finite differences, their
   // multipliers impulses). With contacts the first step finds them.
-  sys.DoAssembly(AssemblyLevel::POSITION);
-  if (touching.empty()) consistent_start(sys);
+  sys.DoAssembly(AssemblyLevel::POSITION | AssemblyLevel::VELOCITY);
+  if (redundant > 0 && touching.empty()) {
+    if (const int dropped = drop_redundant(sys)) {
+      sys.SetSolver(chrono_types::make_shared<ChSolverSparseQR>());
+      for (auto& w : run.warnings)
+        if (w.find("redundant joint equation") != std::string::npos)
+          w = std::to_string(dropped) + " redundant joint equation(s) left out: the reactions they would share are statically "
+                                        "indeterminate (the other joints carry them)";
+    }
+  }
+  if (touching.empty()) {
+    consistent_start(sys);
+    // HHT carries this constraint's multiplier as force / (1 + alpha) (see CoordConstraint::scale).
+    for (const auto& link : sys.GetLinks())
+      if (auto c = std::dynamic_pointer_cast<CoordConstraint>(link)) c->reaction /= c->scale;
+  }
   record(0);
   const int total = (frames - 1) * sub;
   int done = 0;
@@ -1007,9 +1117,10 @@ StudyRun run_dynamic(const Document& doc, const Scene& scene0, const json& st, c
 
   // Speeds of the joint values, and power of the motors.
   for (auto& s : templ) s.v = rec[s.name];
-  // Forces at t = 0 come from the first step (the start has positions and velocities, no solved accelerations).
-  for (auto& s : templ)
-    if ((s.group == "reaction" || s.group == "motor") && s.v.size() > 1) s.v[0] = s.v[1];
+  // With contacts the start has no solved forces: those at t = 0 come from the first step.
+  if (!touching.empty())
+    for (auto& s : templ)
+      if ((s.group == "reaction" || s.group == "motor") && s.v.size() > 1) s.v[0] = s.v[1];
   std::vector<Series> extra;
   for (const auto& s : templ) {
     if (s.group != "value") continue;

@@ -183,6 +183,26 @@ TEST(planetary_gear_set) {
   // Each planet turns on its pin by -52/16 of the carrier: -3.25 turns.
   for (const auto& j : resolve(doc).joints)
     if (j.name.rfind("Revolute", 0) == 0 && j.base == carrier) CHECK_NEAR(j.values[0], -3.25 * 360, 1e-6);
+  // Each set builds the mechanism again from the document, as a reload does: the planets' turns against the carrier are
+  // read unwrapped from the last pose (-1170 deg, not its remainder -90), so the set drives back.
+  set(doc, jc, 100);
+  CHECK_NEAR(value(doc, js), 360, 1e-6);
+  set(doc, jc, 0);
+  CHECK_NEAR(value(doc, js), 0, 1e-6);
+}
+
+TEST(a_limit_reached_through_a_relation_stops_the_drive) {
+  Document doc = Document::create();
+  const std::string pinion = box(doc, {0, 0, 0}, 10, 10, 4, "Pinion");
+  const std::string rack = box(doc, {0, -20, 0}, 200, 6, 4, "Rack");
+  const std::string jp = joint(doc, {{"kind", "revolute"}, {"part", pinion}, {"at", axis_z({0, 0, 0})}})["id"];
+  const std::string jr = joint(doc, {{"kind", "slider"}, {"part", rack}, {"at", {{"origin", {0, -20, 0}}, {"z", {1, 0, 0}}}}, {"limits", {{"translation", {-50, 50}}}}})["id"];
+  joint(doc, {{"kind", "rack_pinion"}, {"joints", {jp, jr}}, {"radius", 20}});
+  // A turn would move the rack 125.7 mm: it stops at its 50 mm end, and the pinion where the rack met it (50 / 20 rad).
+  const json r = commands::run("joint_set", {{"values", {{jp, 360}}}}, &doc);
+  CHECK_NEAR(value(doc, jr), 50, 1e-4);
+  CHECK_NEAR(value(doc, jp), 50.0 / 20 * 180 / kPi, 1e-4);
+  CHECK(r.value("notes", json::array()).dump().find("limit") != std::string::npos);
 }
 
 TEST(snap_puts_a_knob_in_its_hole) {
