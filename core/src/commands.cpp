@@ -299,11 +299,34 @@ void register_builtins() {
         return out;
       });
 
-  reg("tree", "Component/body hierarchy", {{"doc", "path"}, {"depth", "int - max depth (default unlimited)"}}, false,
-      [](Document* d, const json& a) {
+  // Paged (an agent's reply stays small on a 76-part board): node lists that component's children instead of the roots,
+  // offset/limit take a page of them; total and next_offset say what is left. Without them, the whole hierarchy as before.
+  reg("tree", "Component/body hierarchy. Large assemblies: page it with limit (and offset; next_offset when more follow) and drill into a component with node; depth limits nesting (children_count below it)",
+      {{"doc", "path"}, {"depth", "int - max depth (default unlimited)"}, {"node", "uuid - list this component's children instead of the roots"},
+       {"offset", "int - first item of the page (default 0)"}, {"limit", "int - items per page (default all)"}},
+      false, [](Document* d, const json& a) {
         Scene s = resolve(need(d));
         json j;
-        j["roots"] = s.tree_json(a.value("depth", -1));
+        std::vector<std::string> level = s.roots;
+        if (a.contains("node")) {
+          const Node* n = s.node(a.at("node").get<std::string>());
+          if (!n) throw Error("tree: no node " + a.at("node").get<std::string>());
+          if (n->kind != Node::Kind::Component) throw Error("tree: " + n->name + " is a body, not a component: it has no children");
+          level = n->children;
+          j["node"] = n->id;
+        }
+        const bool paged = a.contains("offset") || a.contains("limit") || a.contains("node");
+        if (!paged) {
+          j["roots"] = s.tree_json(a.value("depth", -1));
+        } else {
+          const size_t offset = std::min(level.size(), size_t(std::max(0, a.value("offset", 0))));
+          const size_t limit = a.contains("limit") ? size_t(std::max(1, a["limit"].get<int>())) : level.size();
+          const std::vector<std::string> page(level.begin() + long(offset), level.begin() + long(std::min(level.size(), offset + limit)));
+          j["roots"] = s.tree_json(a.value("depth", -1), &page);
+          j["offset"] = offset;
+          j["total"] = level.size();
+          j["next_offset"] = offset + page.size() < level.size() ? json(offset + page.size()) : json(nullptr);
+        }
         json unresolved = json::array();
         for (const auto& u : s.unresolved) unresolved.push_back({{"op", u.op_id}, {"type", u.op_type}, {"reason", u.reason}});
         j["unresolved"] = unresolved;

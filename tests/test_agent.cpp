@@ -93,7 +93,9 @@ int main(){try {
   // the commit.
   // The git tools (git_status ... git_tag, opad::agent::git_tools: 15 tools with their argument and refusal descriptions and
   // the brief outputSchema each) raised it by 19.1 KB to 132668 bytes: precise enough for an agent to act on refusals.
-  CHECK(live<133400);  // 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  // An agent's evaluation (smartknob): git tools' refusals and previews said more (+0.66 KB, to 133329), tree paging and
+  // viewport_image's opt-in visible_ids (+0.28 KB): replies they shrink by tens of KB.
+  CHECK(live<133800);  // 133400 before the agent ergonomics fixes; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
@@ -123,6 +125,17 @@ int main(){try {
   Document typed=Document::create();const auto component=commands::run("component",{{"name","Typed component"}},&typed);
   CHECK_EQ(component["component_id"],component["id"]);CHECK_EQ(component["operation_ids"].size(),1u);
   agent::validate_input(agent::live_output_schema("component"),{{"result",component}});
+  // Tree paging: an agent's reply on a big assembly stays small (pages of the roots, or of one component's children).
+  Document many=Document::create();std::string holder;
+  for(int i=0;i<5;++i){const auto c=commands::run("component",{{"name","C"+std::to_string(i)}},&many);if(!i)holder=c["component_id"];}
+  for(int i=0;i<3;++i)commands::run("feature",{{"kind","box"},{"parent",holder},{"inputs",{{"length",1},{"width",1},{"height",1}}}},&many);
+  const auto page=commands::run("tree",{{"limit",2}},&many);CHECK_EQ(page["roots"].size(),2u);CHECK_EQ(page["total"],5);CHECK_EQ(page["next_offset"],2);
+  const auto last=commands::run("tree",{{"offset",4},{"limit",2}},&many);CHECK_EQ(last["roots"].size(),1u);CHECK(last["next_offset"].is_null());
+  const auto inside=commands::run("tree",{{"node",holder},{"limit",2},{"depth",1}},&many);
+  CHECK_EQ(inside["total"],3);CHECK_EQ(inside["roots"].size(),2u);CHECK_EQ(inside["roots"][0]["type"],"body");CHECK_EQ(inside["next_offset"],2);
+  CHECK_EQ(commands::run("tree",json::object(),&many)["roots"].size(),5u);CHECK(!commands::run("tree",json::object(),&many).contains("total"));  // unpaged as before
+  CHECK_THROWS(commands::run("tree",{{"node",inside["roots"][0]["id"]}},&many));  // a body has no children
+  agent::validate_input(agent::live_schema("tree"),{{"node",holder},{"offset",2},{"limit",10}});
   CHECK(agent::live_mutation("model_batch"));
   const json batchStep={{"id","box"},{"command","feature"},{"arguments",{{"kind","box"}}}};
   agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array({batchStep})},{"expected_revision",0},{"request_id","batch"}});

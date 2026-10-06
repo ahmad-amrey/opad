@@ -190,6 +190,73 @@ json changes(const opad::Scene& before,const opad::Scene& after){
   for(const auto& [id,n]:after.nodes)if(n.kind==opad::Node::Kind::Body && out["geometry"].size()<100){const auto* p=before.node(id);if(!p || n.body_key!=p->body_key || before.world(id).to_json()!=after.world(id).to_json())out["geometry"].push_back(id);}
   out["parameters"]=after.params.size();out["features"]=after.features.size();return out;
 }
+// Compact replies (TODO 10 B11; an agent's evaluation: a Move of two linked boards answered with 84 KB, an import of one
+// board listed 217 ids): counts, the roots of what was made and one line per linked file, never a list per node. Lists
+// up to kCompactList ids stay as they are, so small edits read as before.
+constexpr size_t kCompactList=20,kCompactBodies=10;
+// The outermost linked node holding `id` (a linked file's top), or empty when it is not part of one.
+std::string linkedTop(const opad::Scene& s,const std::string& id){
+  std::string top;
+  for(const auto* n=s.node(id);n && n->linked;n=n->parent.empty()?nullptr:s.node(n->parent))top=n->id;
+  return top;
+}
+json compactChanges(const opad::Scene& before,const opad::Scene& after,const json& full){
+  std::vector<std::string> created,modified,deleted;
+  struct File {size_t nodes=0,bodies=0;std::string change,name;};std::map<std::string,File> files;  // a linked file's top -> what this did to it
+  size_t counts[3]={0,0,0};
+  auto note=[&](int kind,const opad::Scene& s,const std::string& id){
+    ++counts[kind];
+    static const char* const words[]={"created","modified","deleted"};
+    if(const auto top=linkedTop(s,id);!top.empty()){
+      auto& f=files[top];++f.nodes;if(f.change.empty() || id==top)f.change=words[kind];
+      if(const auto* n=s.node(top)){f.name=n->name;f.bodies=s.bodies_under(top).size();}
+      return;
+    }
+    (kind==0?created:kind==1?modified:deleted).push_back(id);
+  };
+  for(const auto& [id,n]:after.nodes){const auto* p=before.node(id);if(!p)note(0,after,id);else if(n.body_key!=p->body_key || n.name!=p->name || n.visible!=p->visible || n.local.to_json()!=p->local.to_json() || n.modified_by!=p->modified_by)note(1,after,id);}
+  for(const auto& [id,n]:before.nodes)if(!after.node(id))note(2,before,id);
+  for(const auto& s:after.sketches){const auto* prior=before.sketch(s.id);if(!prior)note(0,after,s.id);else if(s.geometry!=prior->geometry || s.frame.to_json()!=prior->frame.to_json())note(1,after,s.id);}
+  for(const auto& s:before.sketches)if(!after.sketch(s.id))note(2,before,s.id);
+  json out={{"scope","command"},{"total",counts[0]+counts[1]+counts[2]},{"counts",{{"created",counts[0]},{"modified",counts[1]},{"deleted",counts[2]}}}};
+  const char* const keys[]={"created","modified","deleted"};const std::vector<std::string>* lists[]={&created,&modified,&deleted};
+  for(int k=0;k<3;++k)if(lists[k]->size()<=kCompactList)out[keys[k]]=*lists[k];
+  if(created.size()>kCompactList){  // what was made, by its tops: the rest is under them
+    const std::set<std::string> made(created.begin(),created.end());json roots=json::array();size_t total=0;
+    for(const auto& id:created){const auto* n=after.node(id);if(n && made.count(n->parent))continue;if(++total<=kCompactList)roots.push_back(id);}
+    out["created_roots"]=roots;if(total>kCompactList)out["created_roots_total"]=total;
+  }
+  if(!files.empty()){
+    json lines=json::array();
+    for(const auto& [top,f]:files)if(lines.size()<kCompactList)lines.push_back({{"id",top},{"name",f.name},{"change",f.change},{"bodies",f.bodies},{"nodes_changed",f.nodes}});
+    out["linked_files"]=lines;
+  }
+  const json bodies=full.value("bodies",json::array());
+  if(bodies.size()<=kCompactBodies && !full.contains("bodies_total"))out["bodies"]=bodies;
+  else {
+    out["bodies_total"]=full.value("bodies_total",bodies.size());json invalid=json::array();
+    for(const auto& b:bodies)if(!b.value("valid",true))invalid.push_back(b.at("id"));
+    out["invalid_bodies"]=invalid;
+  }
+  if(full.contains("validation"))out["validation"]=full["validation"];
+  return out;
+}
+// A command's or batch step's own result, compact: lists over kCompactList become <key>_count (a later batch still refers
+// to every item: the connection keeps the full results), and a linked file moved as one is one line.
+json compactResult(const json& r,const opad::Scene& scene,int depth=0){
+  if(!r.is_object())return r;
+  json out=json::object();
+  for(const auto& [key,value]:r.items()){
+    if(key=="placed_ids" && value.is_array()){
+      json placed=json::array();
+      for(const auto& id:value){const auto* n=id.is_string()?scene.node(id.get<std::string>()):nullptr;placed.push_back({{"id",id},{"name",n?n->name:std::string()},{"bodies",n?scene.bodies_under(n->id).size():0}});}
+      out["placed"]=placed;continue;
+    }
+    if(value.is_array() && value.size()>kCompactList){out[key+"_count"]=value.size();continue;}
+    out[key]=value.is_object() && depth<3?compactResult(value,scene,depth+1):value;
+  }
+  return out;
+}
 }
 void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)> done,int waited){
   if(m_cache && m_cache->revision==m_doc->revision){done(m_cache,{});return;}
@@ -254,7 +321,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       m_prepared->receipts.push_back(receipt);
       m_busy=false;m_receipts[receipt].state="staged";reply(session,live_result({{"state","staged"},{"transaction",m_prepared->id},{"base_revision",revision},{"revision",revision},{"lifetime",transaction_policy()}}),receipt);return;
     }
-    struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
+    struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta,steps;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
     const auto baseline=!transaction.empty() && m_cache?m_cache:source;
     m_jobs->backgroundNext();
     auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,known,steps,delay=m_benchDelay](Progress p)mutable{
@@ -315,9 +382,11 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         }
         json metadata;QElapsedTimer renderTimer;renderTimer.start();
         const auto png=opad::encode_png(opad::render_scene(*source->doc,renderingScene,options,&metadata));
-        result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",metadata["camera"]},{"visible_ids",metadata["visible_ids"]},
+        const json visible=metadata.value("visible_ids",json::array());
+        result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",metadata["camera"]},{"visible_count",visible.size()},
           {"selection",state["selection"]},{"preview_id",args.value("preview_id","")},{"transaction",transaction},{"render_ms",renderTimer.elapsed()},
-          {"rendering","software geometry view; visible_ids lists submitted visible bodies (including occluded bodies); UI overlays are not included"}};
+          {"rendering","software geometry view; visible_count counts submitted visible bodies (including occluded ones), visible_ids=true lists them; UI overlays are not included"}};
+        if(args.value("visible_ids",false))result->output["visible_ids"]=visible;  // opt-in: 140 ids on a board
         if(metadata.contains("views"))result->output["views"]=metadata["views"];
       }else if(name=="model_batch")modelBatch(*working->doc,args,p,result->output,known.get(),steps.get());
       else result->output=opad::commands::run(name,args,working->doc.get());
@@ -366,21 +435,6 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           }
         }
         if(any){Bnd_Box box;BRepBndLib::Add(compound,box);result->preview=compound;result->prs=BodyPrs::build(compound,box);}
-        if(compact) {
-          // TODO 10 B11: this command's own ids and counts (not the transaction's cumulative lists), references without
-          // signatures, and no batch-wide operation_ids (every step receipt has its own).
-          auto own=changes(source->scene,working->scene);
-          json slim={{"scope","command"},{"created",own["created"]},{"modified",own["modified"]},{"deleted",own["deleted"]},{"total",own["total"]},
-                     {"counts",{{"created",own["created"].size()},{"modified",own["modified"].size()},{"deleted",own["deleted"].size()}}}};
-          for(const char* key:{"bodies","bodies_total","validation"})if(result->delta.contains(key))slim[key]=result->delta[key];
-          result->delta=std::move(slim);
-          if(name=="model_batch" && result->output.is_object())result->output.erase("operation_ids");
-          std::function<void(json&)> unsign=[&](json& v){
-            if(v.is_object()){if(v.contains("ref") && v.contains("geometry"))v.erase("signature");for(auto& [k,c]:v.items())unsign(c);}
-            else if(v.is_array())for(auto& c:v)unsign(c);
-          };
-          unsign(result->output);
-        }
         result->delta["validation"]={{"changed_solid_bodies_checked",checkedSolids},{"valid",true},{"unresolved",working->scene.unresolved.size()}};
         // What this command (not the whole transaction) did to each body it made, changed or moved (TODO 10 B3): a tight
         // box, the volume and validity, so an agent needs no info + validate round trip after every step.
@@ -403,6 +457,22 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         }
         result->delta["bodies"]=bodies;
         if(changedBodies>bodies.size())result->delta["bodies_total"]=changedBodies;
+        if(compact) {
+          // TODO 10 B11: this command's own changes (not the transaction's cumulative lists) as counts and tops, references
+          // without signatures, no batch-wide operation_ids (every step receipt has its own), step results compact.
+          result->delta=compactChanges(source->scene,working->scene,result->delta);
+          if(result->output.is_object()){
+            if(name=="model_batch"){
+              result->output.erase("operation_ids");result->steps=result->output.value("steps",json::array());
+              for(auto& step:result->output["steps"])if(step.contains("result"))step["result"]=compactResult(step["result"],working->scene);
+            }else result->output=compactResult(result->output,working->scene);
+          }
+          std::function<void(json&)> unsign=[&](json& v){
+            if(v.is_object()){if(v.contains("ref") && v.contains("geometry"))v.erase("signature");for(auto& [k,c]:v.items())unsign(c);}
+            else if(v.is_array())for(auto& c:v)unsign(c);
+          };
+          unsign(result->output);
+        }
       }
       // The isolated acceptance harness can emulate an uninterruptible kernel tail.
       // Its result must never commit after Stop, disconnect, access revocation or a manual edit.
@@ -425,7 +495,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         auto prepared=std::make_shared<Prepared>();prepared->snapshot=result->snapshot;prepared->id=newId();prepared->label=QString::fromStdString(name);prepared->owner=session->socket;prepared->transaction=!transaction.empty();prepared->result=std::move(result->output);prepared->changes=std::move(result->delta);
         if(name=="model_batch"){  // later batches on this connection may refer to these steps
           auto next=std::make_shared<BatchSteps>(session->steps?*session->steps:BatchSteps{});
-          for(const auto& step:prepared->result.value("steps",json::array()))(*next)[step.at("id").get<std::string>()]=step.value("result",json::object());
+          for(const auto& step:result->steps.is_array()?result->steps:prepared->result.value("steps",json::array()))(*next)[step.at("id").get<std::string>()]=step.value("result",json::object());
           session->steps=next;
         }
         if(prepared->transaction){prepared->id=m_prepared->id;prepared->label=m_prepared->label;prepared->receipts=m_prepared->receipts;}

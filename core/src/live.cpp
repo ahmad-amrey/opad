@@ -16,7 +16,7 @@ json object(json properties={},json required=json::array()) {
 json str(){return {{"type","string"},{"minLength",1},{"maxLength",200}};}
 json revision(){return {{"type","integer"},{"minimum",0}};}
 json brief_geometry(){return {{"type","object"},{"description","Sketch geometry as the sketch tool's schema gives it: points, entities, constraints and shapes, all ids in one id space across the sketch; checked in full by the server."}};}
-json verbosity(){return {{"type","string"},{"enum",{"full","compact"}},{"default","full"},{"description","compact: this command's own created/modified/deleted ids and counts (not the transaction's cumulative lists), references without signatures, no batch-wide operation_ids."}};}
+json verbosity(){return {{"type","string"},{"enum",{"full","compact"}},{"default","full"},{"description","compact: this command's own changes as counts (ids up to 20, else created_roots; a line per linked file), result lists over 20 as <key>_count, no signatures."}};}
 }
 bool live_mutation(const std::string& name) {
   if(name=="model_batch" || name=="save" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit" || name=="undo" || name=="redo")return true;
@@ -115,6 +115,7 @@ const json& live_tools() {
   render["edge_lines"]={{"type","boolean"},{"default",false},{"description","Draw the model's edges as dark lines, hidden behind nearer surfaces."}};
   render["highlight"]={{"type","array"},{"items",{{"type","string"}}},{"maxItems",200},{"description","Face and edge references to tint in orange, e.g. [\"<body>/face/3\", \"<body>/edge/7\"]."}};
   render["shading"]={{"type","string"},{"enum",{"flat","smooth"}},{"default","flat"},{"description","smooth shades with vertex normals, so curved surfaces look curved."}};
+  render["visible_ids"]={{"type","boolean"},{"default",false},{"description","List the rendered bodies' ids (result.visible_ids); by default only visible_count."}};
   json batchSteps=json::array();
   const std::set<std::string> batchCommands={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
   for(const auto& command:commands::list())if(batchCommands.count(command.name)){
