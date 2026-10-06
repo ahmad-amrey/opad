@@ -31,6 +31,16 @@ def coach(root, document):
 REMAPPED = ("[shortcuts]\nview.fit=Ctrl+Alt+F\ninspect.pin=Ctrl+Alt+J\nhelp.current=Ctrl+F1\nhelp.shortcuts=Ctrl+Shift+K\n"
             "tools.commands=Ctrl+Space\nselect.faces=Ctrl+Alt+2\nview.home=\nview.unisolate=\ninspect.clear=Q\n")
 
+def recent_paths(root, document):
+    """recent-paths.opad (a box) and recent-other.opad beside it, the settings listing the first with forward slashes (as an
+    agent recorded it) and the second three times: forward slashes, native separators, another letter case."""
+    doc = document("recent-paths", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'))
+    other = document("recent-other")
+    native = str(other).replace("\\", "\\\\")  # an INI value: a backslash written twice
+    listed = [doc.as_posix(), other.as_posix(), native, other.as_posix().upper()]
+    return doc, {}, "[ui]\nrecent=" + ", ".join(listed) + "\n"
+
+
 CASES = [
     # UI-106: help for every command, the rich hover card on ribbon buttons (English, then Arabic right to left).
     ("richtip", "box", {"OPAD_BENCH_RICHTIP": "{prefix}"}),
@@ -64,6 +74,9 @@ CASES = [
     # UI-113: the start page: recent files as cards with pictures (opad-cli on a worker, then the cache), their menu (open,
     # file location, copy path, remove), missing files, templates (built in, saved, new from one), Learn, a dropped file.
     ("start-page", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}"}),
+    # Recent files one per file whatever the spelling (forward slashes from an agent, native from the command line, letter
+    # case): at startup, after the open, after adding and removing other spellings.
+    ("recent-paths", recent_paths, {"OPAD_BENCH_RECENT_PATHS": "1"}),
     ("start-page-ar", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}", "OPAD_LANG": "ar"}),
     # UI-113: the same with the app itself rendering the pictures (opad --thumbnail), as the single-file exe does.
     ("start-page-self", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}", "OPAD_THUMBNAILS": "self"}),

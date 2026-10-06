@@ -259,24 +259,54 @@ void MainWindow::screenshot() {
 }
 
 // ---------------------------------------------------------------- recent files
-QStringList MainWindow::recent() const { return m_settings.value("ui/recent").toStringList(); }
+// One spelling per file: absolute, cleaned, the system's separators (a path from the command line has backslashes, one an
+// agent or a dialog gave has forward slashes), the file's own letter case when it exists. Two spellings of one file are the
+// same entry (case-insensitively where the file system is).
+namespace {
+QString recentForm(const QString& path) {
+  const QFileInfo info(path);
+  const QString canonical = info.canonicalFilePath();
+  return QDir::toNativeSeparators(QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical));
+}
+bool sameRecent(const QString& a, const QString& b) {
+#ifdef _WIN32
+  return a.compare(b, Qt::CaseInsensitive) == 0;
+#else
+  return a == b;
+#endif
+}
+QStringList recentList(const QStringList& paths) {
+  QStringList out;
+  for (const QString& p : paths) {
+    if (p.trimmed().isEmpty()) continue;
+    const QString form = recentForm(p);
+    if (std::none_of(out.begin(), out.end(), [&](const QString& o) { return sameRecent(o, form); })) out << form;
+  }
+  return out;
+}
+}  // namespace
 
-void MainWindow::addRecent(const QString& path) {
-  QStringList list = recent();
-  list.removeAll(path);
-  list.prepend(path);
+QStringList MainWindow::recent() const { return recentList(m_settings.value("ui/recent").toStringList()); }
+
+void MainWindow::setRecentList(QStringList list) {
+  list = recentList(list);
   while (list.size() > 8) list.removeLast();
   m_settings.setValue("ui/recent", list);
   m_empty->setRecent(list);
   rebuildRecentMenu();
 }
 
-void MainWindow::removeRecent(const QString& path) {
+void MainWindow::addRecent(const QString& path) {
   QStringList list = recent();
-  list.removeAll(path);
-  m_settings.setValue("ui/recent", list);
-  m_empty->setRecent(list);
-  rebuildRecentMenu();
+  list.prepend(recentForm(path));  // its other spellings go as the list is made one per file
+  setRecentList(list);
+}
+
+void MainWindow::removeRecent(const QString& path) {
+  const QString form = recentForm(path);
+  QStringList list = recent();
+  list.erase(std::remove_if(list.begin(), list.end(), [&](const QString& p) { return sameRecent(p, form); }), list.end());
+  setRecentList(list);
 }
 
 QMenu* MainWindow::recentMenu(const QString& path, QWidget* parent) {

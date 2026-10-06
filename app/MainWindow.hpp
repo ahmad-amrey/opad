@@ -251,6 +251,7 @@ class MainWindow : public QMainWindow {
   void positionOverlays();
   void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends
   void addRecent(const QString& path);
+  void setRecentList(QStringList list);  // stored one spelling per file (absolute, native separators), eight at most
   void removeRecent(const QString& path);
   QMenu* recentMenu(const QString& path, QWidget* parent);  // a recent file's context menu (File > Recent, the start page)
   void tell(const QString& text);  // a result: a toast over the view, the status bar while no document shows

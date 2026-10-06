@@ -331,8 +331,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_empty, &EmptyState::recentChosen, this, [this](const QString& path) { openPath(path); });
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
   connect(m_empty, &EmptyState::recentChanged, this, [this](const QStringList& paths) {  // removed or located on the start page
-    m_settings.setValue("ui/recent", paths);
-    rebuildRecentMenu();
+    setRecentList(paths);  // one spelling per file (a located file as the dialog spelt it)
   });
   connect(m_empty, &EmptyState::templateChosen, this, [this](const QString& id) { guarded([&] { newFromTemplate(id); }); });
   m_empty->setCommands([this](const QString& id) { return action(id); });

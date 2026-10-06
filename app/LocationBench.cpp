@@ -159,7 +159,7 @@ OPAD_BENCH(OPAD_BENCH_PATHS, paths) {
           w.addRecent(stl + ".moved");
           w.addRecent(doc);
           const QList<RecentCard*> cards = w.m_empty->cards();
-          require(cards.size() >= 2 && cards.front()->path() == doc, "the start page lists no recent files");
+          require(cards.size() >= 2 && QFileInfo(cards.front()->path()) == QFileInfo(doc), "the start page lists no recent files");  // as the system spells it
           {
             QMenu* m = w.m_empty->cardMenu(cards.front());  // what a right click on the card shows
             seen = names(m);
@@ -169,7 +169,7 @@ OPAD_BENCH(OPAD_BENCH_PATHS, paths) {
           require(seen == QStringList({"recent.open", "location.reveal", "location.copy", "location.copyRelative", "recent.remove"}), "start page menu: " + seen.join(' '));
           QMenu* recent = w.m_recentMenu;
           QAction* entry = recent->actions().value(1);
-          require(entry && entry->data().toString() == stl + ".moved", "File > Recent entries carry their paths");
+          require(entry && QFileInfo(entry->data().toString()) == QFileInfo(stl + ".moved"), "File > Recent entries carry their paths");
           bool opened = false;
           QObject::connect(entry, &QAction::triggered, &w, [&opened] { opened = true; });
           recent->popup(QPoint(0, 0));
@@ -187,8 +187,9 @@ OPAD_BENCH(OPAD_BENCH_PATHS, paths) {
                       if (QAction* a = named(m, "recent.remove")) a->trigger();
                     });
           QCoreApplication::processEvents();
-          require(!opened && seen.contains("location.copy") && !w.recent().contains(stl + ".moved") && !recent->isVisible(),
-                  QStringLiteral("File > Recent right click: opened %1, menu %2, still listed %3").arg(opened).arg(seen.join(' ')).arg(w.recent().contains(stl + ".moved")));
+          const bool listed = w.recent().contains(QDir::toNativeSeparators(stl + ".moved"), Qt::CaseInsensitive);
+          require(!opened && seen.contains("location.copy") && !listed && !recent->isVisible(),
+                  QStringLiteral("File > Recent right click: opened %1, menu %2, still listed %3").arg(opened).arg(seen.join(' ')).arg(listed));
           require(w.m_empty->cards().size() == w.recent().size(), "the start page follows Remove from list");
           pass("recent files: the start page's and File > Recent's menus (a right click never opens the entry), Remove from list");
           QFile::rename(stl + ".moved", stl);
