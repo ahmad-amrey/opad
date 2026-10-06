@@ -2259,6 +2259,14 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "design.pattern_points",
+   "title": "Point pattern",
+   "summary": "Copies bodies to a list of points.",
+   "details": "Pick the bodies, then the points: sketch points, vertices or points typed in. The bodies stand at the first point and a copy goes to every other one; set Bodies stand at to Origin when they were modelled at the origin, and every point gets a copy. Moving a point later moves its copy. The Operation field makes new bodies or joins, cuts or intersects existing ones, so one boss or hole can go to all the points at once.",
+   "keywords": ["array", "copy to points", "repeat", "bosses", "point array"],
+   "requires": "Open or create a document first."
+  },
+  {
    "id": "design.move",
    "title": "Move / copy",
    "summary": "Moves or copies bodies by distances and an optional turn.",

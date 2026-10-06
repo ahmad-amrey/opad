@@ -218,6 +218,10 @@ std::vector<FeatureSpec> build_specs() {
       "new");
   add("pattern_circ", "Circular pattern", "patternCirc", "pattern", "Copies of bodies about an axis.",
       {pick("bodies", "Bodies", "bodies", 1, 0), in("axis", "Axis", "axis", json{{"base", "z"}}), in("count", "Count", "count", "6"), in("angle", "Total angle", "angle", "360 deg")}, "new");
+  // mcp-eval 2026-10-06: the same boss at eight points took eight near-identical steps.
+  add("pattern_points", "Point pattern", "patternPoints", "pattern",
+      "Copies of bodies at points (sketch points, vertices or points in space): the bodies stand at the first point, or at the origin (Bodies stand at: Origin), and a copy goes to every other point.",
+      {pick("bodies", "Bodies", "bodies", 1, 0), pick("points", "Points", "points", 1, 0), choice("from", "Bodies stand at", {"first_point", "origin"})}, "new");
   add("move", "Move / copy", "move", "body", "Move bodies by distances and an optional turn; the values can be expressions.",
       {pick("bodies", "Bodies", "bodies", 1, 0), in("dx", "X", "length", "0 mm"), in("dy", "Y", "length", "0 mm"), in("dz", "Z", "length", "0 mm"), in("rotate", "Rotate", "bool", false),
        in("axis", "Axis", "axis", json{{"base", "z"}}, "rotate=true"), in("angle", "Angle", "angle", "90 deg", "rotate=true"), in("copy", "Make a copy", "bool", false)});
@@ -2114,7 +2118,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   }
 
   // ---- copies
-  if (kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ") {
+  if (kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ" || kind == "pattern_points") {
     std::vector<std::string> ids;
     const auto bodies = world_bodies(ctx, in.value("bodies", json()), &ids);
     std::vector<gp_Trsf> places;
@@ -2140,6 +2144,21 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
           t.SetTranslation(gp_Vec(d1) * (s1 * i) + gp_Vec(d2) * (s2 * k));
           places.push_back(t);
         }
+    } else if (kind == "pattern_points") {
+      // Each copy moves the bodies from where they stand (the first point, or the origin) to one of the other points.
+      const Points pts = resolve_points(ctx, in.value("points", json()));
+      if (pts.at.empty()) throw Error("pick the points to copy to");
+      const bool origin = in.value("from", "first_point") == "origin";
+      const gp_Pnt base = origin ? gp_Pnt(0, 0, 0) : pts.at.front();
+      for (size_t i = origin ? 0 : 1; i < pts.at.size(); ++i) {
+        const gp_Vec v(base, pts.at[i]);
+        if (v.Magnitude() < 1e-9) continue;
+        gp_Trsf t;
+        t.SetTranslation(v);
+        places.push_back(t);
+      }
+      if (places.empty()) throw Error(origin ? "the points are all at the origin, where the bodies stand" : "a point pattern needs a point besides the first, where the bodies stand");
+      if (places.size() > 2000) throw Error("that is more than 2000 instances");
     } else {
       const gp_Ax1 axis = ctx.axis(in.value("axis", json()));
       const int n = ctx.count(in, "count");

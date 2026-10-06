@@ -277,7 +277,7 @@ std::vector<std::string> bodies_of(const Scene& s, const json& refs) {
 }
 
 bool copies(const std::string& kind, const json& in) {
-  if (kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ") return in.value("operation", "new") == "new";
+  if (kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ" || kind == "pattern_points") return in.value("operation", "new") == "new";
   return kind == "move" && in.value("copy", false);
 }
 
@@ -648,7 +648,8 @@ std::string feature_category(const std::string& op_type, const json& data) {
     return op == "join" ? "boss" : op == "cut" ? (kind == "revolve" ? "groove" : "pocket") : op == "intersect" ? "intersect" : "body";
   }
   static const std::map<std::string, std::string> named = {{"offset_face", "press_pull"}, {"move", "transform"}, {"scale", "transform"},
-                                                           {"pattern_rect", "pattern"}, {"pattern_circ", "pattern"}};
+                                                           {"pattern_rect", "pattern"}, {"pattern_circ", "pattern"},
+                                                           {"pattern_points", "pattern"}};
   if (auto it = named.find(kind); it != named.end()) return it->second;
   return kind;
 }

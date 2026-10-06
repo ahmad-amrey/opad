@@ -31,8 +31,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     extrude of three separate profiles gives three;
   - with `operation: join | cut | intersect`: the target bodies that changed;
   - modifying features (fillet, chamfer, shell, draft, press pull, scale, move without copy): the bodies they changed;
-  - mirror, pattern_rect, pattern_circ: only the new copies (a count of 3 gives 2); `all_body_ids` adds the picked
-    bodies first;
+  - mirror, pattern_rect, pattern_circ, pattern_points: only the new copies (a count of 3 gives 2); `all_body_ids`
+    adds the picked bodies first;
   - move with `copy: true`: the copies; split: every piece, the original body first;
   - combine: the target; removed bodies (tools, remove) are not listed.
 
@@ -193,6 +193,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   optionally a second direction), `pattern_circ` spreads the copies evenly over `angle` about `axis`. With
   `operation: join` the copies join the targets instead of becoming bodies; `targets: [<the original>]` makes the
   original and its copies one body (without targets only bodies the copies touch take them).
+- `pattern_points` copies `bodies` to `points` (sketch points, vertices or points in space): the bodies stand at the
+  first point and a copy goes to every other one; `from: "origin"` when they were modelled at the origin (then every
+  point gets a copy). One boss or hole tool and a points-only sketch replace a step per point.
 - `combine`: `target` may list several bodies: `cut` and `intersect` work on each of them, `join` makes the first one
   body with the others and the tools.
 - Construction `axis` in `mode: "two_points"` (and `point` in `mode: "normal"`) take vertices, sketch points

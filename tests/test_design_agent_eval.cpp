@@ -278,4 +278,38 @@ TEST(clearance_tool) {
   CHECK(check.contains("feature_id"));
 }
 
+// 7. The same boss at several points took one step per point. pattern_points copies bodies to points: sketch points, vertices
+// or points in space, joined, cut or as new bodies; from the first point or from the origin.
+TEST(point_pattern) {
+  Document doc = Document::create();
+  const std::string plate = feature(doc, "box", {{"length", "60 mm"}, {"width", "40 mm"}, {"height", "4 mm"}})["body_ids"][0];
+  const json top = {{"origin", {0, 0, 4}}, {"normal", {0, 0, 1}}};
+  const std::string boss = feature(doc, "cylinder", {{"diameter", "6 mm"}, {"height", "8 mm"}, {"x", -20}, {"y", -10}, {"plane", top}})["body_ids"][0];
+  json geometry = {{"points", json::array({{{"id", 1}, {"x", -20}, {"y", -10}}, {{"id", 2}, {"x", 20}, {"y", -10}}, {{"id", 3}, {"x", 20}, {"y", 10}}, {{"id", 4}, {"x", -20}, {"y", 10}}})}};
+  const std::string sketch = commands::run("sketch", {{"plane", top}, {"geometry", geometry}}, &doc)["sketch_id"];
+  json points = json::array();
+  for (int id = 1; id <= 4; ++id) points.push_back({{"sketch", sketch}, {"point", id}});
+  const auto volume = [&](const std::string& id) { return volume_properties(node_world_shape(doc, resolve(doc), id)).mass; };
+  const double plateBefore = volume(plate), bossVolume = volume(boss);
+  const json made = feature(doc, "pattern_points", {{"bodies", json::array({boss})}, {"points", points}, {"operation", "join"}, {"targets", json::array({plate})}});
+  CHECK_EQ(made["body_ids"].size(), 1u);
+  CHECK_EQ(made["body_ids"][0], plate);
+  CHECK_NEAR(volume(plate) - plateBefore, 3 * bossVolume, 1e-3);
+  // New bodies at points in space, the bodies modelled at the origin: one copy at every point.
+  Document free = Document::create();
+  const std::string pin = feature(free, "cylinder", {{"diameter", "2 mm"}, {"height", "5 mm"}})["body_ids"][0];
+  const json copies = feature(free, "pattern_points", {{"bodies", json::array({pin})}, {"points", json::array({json::array({10, 0, 0}), "point/0,10,0", {{"point", {5, 5, 2}}}})}, {"from", "origin"}});
+  CHECK_EQ(copies["body_ids"].size(), 3u);
+  CHECK_EQ(copies["all_body_ids"].size(), 4u);
+  const Scene s = resolve(free);
+  const Bnd_Box box = node_tight_bbox(free, s, copies["body_ids"][2].get<std::string>());
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  CHECK_NEAR((x0 + x1) / 2, 5, 1e-3);
+  CHECK_NEAR(z0, 2, 1e-3);
+  // Nothing to copy to.
+  CHECK(has(error_of([&] { feature(free, "pattern_points", {{"bodies", json::array({pin})}, {"points", json::array({json::array({0, 0, 0})})}}); }), "point besides the first"));
+  agent::validate_input(agent::feature_schema("pattern_points"), {{"bodies", json::array({pin})}, {"points", json::array({json::array({1, 2, 3})})}, {"from", "origin"}});
+}
+
 CHECK_MAIN()

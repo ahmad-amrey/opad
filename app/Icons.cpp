@@ -117,6 +117,7 @@ QHash<QString, QString>& table() {
       {"mirror", R"(<path d="M12 2v20" stroke-dasharray="3 2"/><path d="M9 6L3 18h6z"/><path d="M15 6l6 12h-6z" opacity=".55"/>)"},
       {"patternRect", R"(<rect x="3" y="3" width="6" height="6"/><rect x="15" y="3" width="6" height="6" opacity=".55"/><rect x="3" y="15" width="6" height="6" opacity=".55"/><rect x="15" y="15" width="6" height="6" opacity=".55"/>)"},
       {"patternCirc", R"(<circle cx="12" cy="12" r="8" stroke-dasharray="2 3" opacity=".5"/><circle cx="12" cy="4" r="2.2"/><circle cx="19" cy="16" r="2.2" opacity=".55"/><circle cx="5" cy="16" r="2.2" opacity=".55"/>)"},
+      {"patternPoints", R"(<circle cx="6" cy="7" r="2.6"/><circle cx="17" cy="5" r="2.6" opacity=".55"/><circle cx="18" cy="17" r="2.6" opacity=".55"/><circle cx="8" cy="18" r="2.6" opacity=".55"/><path d="M6 7l11-2M6 7l12 10M6 7l2 11" stroke-dasharray="1.5 2" stroke-width="1" opacity=".5"/>)"},
       {"plane", R"(<path d="M3 15l8-9h10l-8 9z" fill="currentColor" fill-opacity=".25"/><path d="M12 10.5V3M10 5l2-2 2 2"/>)"},
       {"axis", R"(<path d="M3 21L21 3" stroke-dasharray="5 2 1 2"/><circle cx="12" cy="12" r="2"/>)"},
       {"fx", R"(<path d="M10 4c-3 0-3 2-3 5v7c0 3-1 4-3 4M4 11h7"/><path d="M13 12l7 8M20 12l-7 8"/>)"},

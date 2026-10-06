@@ -64,6 +64,7 @@
  "Press {fixed:enter} to drill the holes": "اضغط {fixed:enter} لحفر الثقوب",
  "Through all": "نافذ بالكامل",
  "Select what to copy": "حدّد ما تريد نسخه",
+ "Click the points: a copy goes to each": "انقر النقاط: تذهب نسخة إلى كل منها",
  "Press {fixed:enter} to place the copies": "اضغط {fixed:enter} لوضع النسخ",
  "Copies go round Z, or click an axis": "تدور النسخ حول Z، أو انقر محورًا",
  "Set the count and the angle": "حدّد العدد والزاوية",

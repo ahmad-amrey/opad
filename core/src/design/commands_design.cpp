@@ -273,7 +273,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const json inputs = with_defaults(spec, parse_if_text(a.value("inputs", json::object())));
         agent::validate_input(agent::feature_schema(kind),inputs,"inputs");
         const bool styled = a.contains("body_name") || a.contains("color") || a.contains("parent");
-        const bool copies = kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ";
+        const bool copies = kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ" || kind == "pattern_points";
         const Scene scene_before = resolve(doc);
         const Scene* scene = &scene_before;
         const json frame = plane_frame(doc, *scene, spec, inputs);

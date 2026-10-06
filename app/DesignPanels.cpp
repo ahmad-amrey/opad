@@ -454,7 +454,7 @@ void FeaturePanel::refreshVisibility() {
 }
 
 bool FeaturePanel::makesCopies() const {
-  return m_spec && (m_spec->kind == "mirror" || m_spec->kind == "pattern_rect" || m_spec->kind == "pattern_circ");
+  return m_spec && (m_spec->kind == "mirror" || m_spec->kind == "pattern_rect" || m_spec->kind == "pattern_circ" || m_spec->kind == "pattern_points");
 }
 
 void FeaturePanel::setBodyDefaults(const std::string& component) {
