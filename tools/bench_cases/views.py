@@ -69,4 +69,7 @@ CASES = [
     # areas left the rows (the ones outside it dimmed), not as they were before (until hovered). <prefix>.collapsed.png,
     # <prefix>.browser.png.
     ("browser-dim", browser_dim, {"OPAD_BENCH_BROWSER_DIM": "{prefix}"}),
+    # The start page never left where the 3D view is: the window drawn off the screen (never activated), opened again from
+    # the start page: the view exposed and drawing in its place (Windows).
+    ("start-cover", "box", {"OPAD_BENCH_START_COVER": "1"}),
 ]

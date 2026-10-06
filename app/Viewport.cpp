@@ -2768,14 +2768,29 @@ Graphic3d_Vec2i Viewport::devicePos(const QPointF& p) const {
   return Graphic3d_Vec2i(qRound(p.x() * scale.x()), qRound(p.y() * scale.y()));
 }
 
+namespace native {
+bool invalidate(QWidget* w);  // NativeExpose.cpp
+}
+
 void Viewport::showEvent(QShowEvent* e) {
   QWidget::showEvent(e);
   if (!m_initialised) {
     m_needFit = true;
     if (m_warmed) initViewer();  // else the startup makes it once the window has been painted (warmUp)
   }
-  // The stacked layout may resize us after the native window was created; re-check once shown.
-  QTimer::singleShot(0, this, [this] { syncWindowSize(); requestRedraw(); });
+  // The stacked layout may resize us after the native window was created; re-check once shown. Then the whole frame: shown
+  // again in the start page's place (a document opened from it), nothing in the scene was invalidated, so the next frame
+  // alone drew nothing and the window's surface kept the start page where the view is.
+  QTimer::singleShot(0, this, [this] {
+    syncWindowSize();
+    exposedAgain();
+    // Qt paints a native view only once the system has exposed its window, which a window shown again may not get (no
+    // part of it invalid): its window invalidated, the system paints it and Qt exposes it.
+    if (m_initialised && isVisible() && windowHandle() && !windowHandle()->isExposed()) {
+      const bool asked = native::invalidate(this);
+      if (trace::enabled()) trace::log(QStringLiteral("viewport: shown again but not exposed: its window invalidated (%1), exposed now %2").arg(asked).arg(windowHandle()->isExposed()));
+    }
+  });
 }
 
 // Keeps the OCCT window in step with the widget. A native child that was created while hidden can keep
