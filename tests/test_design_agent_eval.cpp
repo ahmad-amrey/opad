@@ -199,4 +199,43 @@ TEST(linked_files_in_headless_reads) {
   fs::remove_all(root, ec);
 }
 
+namespace {
+// A component "Board" of two 10 x 10 x 2 boxes centred at x = 0 and x = 20, and an enclosure box beside them, `gap` mm past
+// the second one's +X face (x = 25).
+struct Assembly {
+  Document doc = Document::create();
+  std::string board, enclosure;
+  explicit Assembly(double gap) {
+    board = commands::run("component", {{"name", "Board"}}, &doc)["component_id"];
+    for (const double x : {0.0, 20.0})
+      commands::run("feature", {{"kind", "box"}, {"inputs", {{"length", "10 mm"}, {"width", "10 mm"}, {"height", "2 mm"}, {"x", x}}}, {"parent", board}}, &doc);
+    enclosure = feature(doc, "box", {{"length", "10 mm"}, {"width", "10 mm"}, {"height", "2 mm"}, {"x", 30 + gap}})["body_ids"][0];
+  }
+};
+}  // namespace
+
+// 5. measure distance refused components ("use its bodies") while bbox took them, and 0 mm could not tell touching from
+// overlapping. Components now stand for their bodies, and bodies 0 mm apart say touching or intersecting, with the volume.
+TEST(measure_distance_components_and_contact) {
+  {
+    Assembly a(4);
+    const json d = commands::run("measure", {{"kind", "distance"}, {"refs", {a.board, a.enclosure}}}, &a.doc);
+    CHECK_NEAR(d["value"].get<double>(), 4, 1e-6);
+    CHECK(!d.contains("contact"));
+  }
+  {
+    Assembly a(0);  // face to face
+    const json d = commands::run("measure", {{"kind", "distance"}, {"refs", {a.enclosure, a.board}}}, &a.doc);
+    CHECK_NEAR(d["value"].get<double>(), 0, 1e-6);
+    CHECK_EQ(d["contact"], "touching");
+  }
+  {
+    Assembly a(-3);  // 3 mm into the second box: 3 x 10 x 2
+    const json d = commands::run("measure", {{"kind", "distance"}, {"refs", {a.board, a.enclosure}}}, &a.doc);
+    CHECK_EQ(d["contact"], "intersecting");
+    CHECK_NEAR(d["overlap_volume_mm3"].get<double>(), 60, 1e-3);
+    CHECK_EQ(d["overlaps"].size(), 1u);
+  }
+}
+
 CHECK_MAIN()

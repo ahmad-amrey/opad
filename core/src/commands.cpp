@@ -393,7 +393,7 @@ void register_builtins() {
         return j;
       });
 
-  reg("measure", "Distance (minimum, centre to centre or maximum), angle, radius, bbox, area, or an edge's length / a face's area and perimeter; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
+  reg("measure", "Distance (minimum, centre to centre or maximum), angle, radius, bbox, area, or an edge's length / a face's area and perimeter; optionally pinned as a measurement op. A read unless pinned; queries measures several at once. A component stands for all its bodies; bodies 0 mm apart say contact: touching or intersecting (overlap_volume_mm3)",
       {{"doc", "path"}, {"kind", "distance|angle|radius|bbox|area|length"}, {"refs", "array - references"},
        {"mode", "min|center|max - distance only: the shortest (default), between the centres, or the largest"},
        {"at", "[x,y,z] - area: where one drawing object was clicked (the part of it whose cell is measured)"},

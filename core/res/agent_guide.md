@@ -318,8 +318,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   by span of every spline, so a profile made of a long spline reads its true area.
 - `measure` is a read: no `expected_revision`, `request_id` or revision spent, unless `pin: true` (then it appends
   a measurement op like any write). `queries: [{kind, refs}, ...]` measures several at once and answers `results`
-  in order (a failed one carries `error`). A distance is between the surfaces of what it names: a body inside
-  another reports the gap between their surfaces (overlaps are `validate` with `checks: ["interference"]`).
+  in order (a failed one carries `error`). A distance is between the surfaces of what it names (a component: all its
+  bodies): a body inside another reports the gap between their surfaces. Bodies 0 mm apart add `contact`:
+  `touching`, or `intersecting` with `overlap_volume_mm3` and the `overlaps`.
   `approximate: true` with `tolerance_mm` means the exact search failed and the meshes' distance is given;
   `warnings` names a shape the kernel does not hold as valid when a distance comes out as 0.
 - `validate` with `checks: ["interference"]` lists pairs of bodies that overlap (volume, box) and, with

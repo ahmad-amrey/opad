@@ -25,6 +25,12 @@ json check_interference(const Document& doc, const Scene& scene, const json& arg
 json interference_of(const Scene& scene, const std::vector<std::string>& bodies, const json& args, const std::function<TopoDS_Shape(const std::string&)>& shape_of,
                      const std::function<Bnd_Box(const std::string&)>& box_of, const std::function<bool()>& cancelled = {});
 
+// Contact between two groups of solid bodies (mcp-eval 2026-10-06), every pair across, nearest boxes first: the smallest
+// distance (min_distance_mm; closest: the pair and its points) and findings worst first: pairs that intersect (overlap volume
+// and box), touch (distance 0, no volume) or come closer than clearance; their counts, the total overlap volume and a status
+// (intersecting, touching, too_close or clear). Only pairs whose boxes are within reach get the exact Boolean or distance.
+json contact_of(const Document& doc, const Scene& scene, const std::vector<std::string>& a, const std::vector<std::string>& b, double clearance = 0,
+                const std::function<bool()>& cancelled = {});
 // 3D-print checks per solid body (TODO 10 B13): faces overhanging more than overhang_deg from vertical (default 45)
 // against build_direction ("+z" default, or [x, y, z]), the contact area on the build plate, walls thinner than
 // min_wall_mm (default 0.8) where sampled rays cross the body, and thin features (faces narrower than min_wall_mm).

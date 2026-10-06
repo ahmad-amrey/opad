@@ -50,6 +50,7 @@
 #include <set>
 
 #include "opad/assets.hpp"
+#include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/mass.hpp"
@@ -160,7 +161,18 @@ TopoDS_Shape ref_shape(const Document& doc, const Scene& scene, const Ref& ref) 
   if (!n) throw Error("unknown node: " + ref.body);
   if (n->kind != Node::Kind::Body) {
     if (ref.kind != Ref::Kind::Body) throw Error("sub-shape references need a body node: " + ref.str());
-    throw Error("node is a component, not a body: " + ref.body + " (use its bodies)");
+    // A component stands for all its bodies, as bbox takes it (mcp-eval 2026-10-06: distance refused it).
+    TopoDS_Compound all;
+    BRep_Builder builder;
+    builder.MakeCompound(all);
+    size_t loaded = 0;
+    for (const auto& body : scene.bodies_under(ref.body))
+      if (const Node* b = scene.node(body); b && b->kind == Node::Kind::Body && !b->body_missing) {
+        builder.Add(all, node_world_shape(doc, scene, body));
+        ++loaded;
+      }
+    if (!loaded) throw Error("component " + n->name + " has no body that is loaded");
+    return all;
   }
   if (n->body_missing) throw Error("body entry missing for node " + ref.body);
   TopoDS_Shape world = node_world_shape(doc, scene, ref.body);
@@ -985,6 +997,28 @@ json measure_distance(const Document& doc, const Scene& scene, const Ref& a, con
   j["refs"] = {a.str(), b.str()};
   // Touching, or read off a shape the kernel does not hold as valid (a self-intersecting profile): say which.
   if (j["value"].get<double>() < 1e-6) {
+    // Bodies and components at 0 mm: touching or intersecting, and by how much (mcp-eval 2026-10-06).
+    auto solids = [&](const Ref& r) {
+      std::vector<std::string> out;
+      if (r.kind != Ref::Kind::Body || !scene.node(r.body)) return out;
+      for (const auto& body : scene.bodies_under(r.body))
+        if (const Node* n = scene.node(body); n && n->kind == Node::Kind::Body && !n->body_missing && n->representation == "solid") out.push_back(body);
+      return out;
+    };
+    const std::vector<std::string> sa = solids(a), sb = solids(b);
+    if (!sa.empty() && !sb.empty()) {
+      const json contact = contact_of(doc, scene, sa, sb, 0, cancelled);
+      if (contact["intersecting"].get<size_t>() > 0) {
+        j["contact"] = "intersecting";
+        j["overlap_volume_mm3"] = contact["overlap_volume_mm3"];
+        json pairs = json::array();
+        for (const auto& f : contact["findings"])
+          if (f["kind"] == "intersecting" && pairs.size() < 10) pairs.push_back({{"a", f["a"]}, {"b", f["b"]}, {"volume_mm3", f["volume_mm3"]}, {"bbox", f["bbox"]}});
+        j["overlaps"] = pairs;
+      } else if (contact["touching"].get<size_t>() > 0) {
+        j["contact"] = "touching";
+      }
+    }
     json warnings = json::array();
     for (const auto& [ref, shape] : {std::make_pair(&a, &s1), std::make_pair(&b, &s2)})
       if (!BRepCheck_Analyzer(*shape).IsValid()) warnings.push_back(ref->str() + " is not a valid shape (the kernel's check fails): a distance to it may be wrong");

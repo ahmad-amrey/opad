@@ -16,6 +16,7 @@
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <Standard_Failure.hxx>
 #include <TopoDS.hxx>
 #include <gp_Lin.hxx>
 
@@ -23,6 +24,7 @@
 #include <cmath>
 #include <array>
 #include <functional>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -388,6 +390,101 @@ json interference_of(const Scene& scene, const std::vector<std::string>& bodies,
   if (args.contains("against")) out["against"] = against.size();
   if (truncated) out["truncated"] = "more candidate pairs than max_pairs; check a smaller selection";
   if (offset + page.size() < findings.size()) out["next_offset"] = offset + page.size();
+  return out;
+}
+
+json contact_of(const Document& doc, const Scene& scene, const std::vector<std::string>& a, const std::vector<std::string>& b, double clearance,
+                const std::function<bool()>& cancelled) {
+  if (!(clearance >= 0) || !std::isfinite(clearance)) throw Error("clearance_mm must be zero or more");
+  const double touch = 1e-6;
+  // Every pair across, nearest boxes first (the fast view boxes, never smaller than the bodies): the exact work stops
+  // where the boxes are farther than the closest pair found and than the clearance.
+  struct Pair {
+    double gap;
+    std::string a, b;
+  };
+  std::map<std::string, Bnd_Box> boxes;
+  for (const auto* side : {&a, &b})
+    for (const auto& id : *side)
+      if (!boxes.count(id)) boxes[id] = node_world_bbox(doc, scene, id);
+  std::vector<Pair> pairs;
+  for (const auto& x : a)
+    for (const auto& y : b) {
+      if (x == y || boxes[x].IsVoid() || boxes[y].IsVoid()) continue;
+      pairs.push_back({boxes[x].Distance(boxes[y]), x, y});
+      if (pairs.size() > 200000) throw Error("more than 200000 pairs of bodies: check smaller groups");
+    }
+  std::stable_sort(pairs.begin(), pairs.end(), [](const Pair& p, const Pair& q) { return p.gap < q.gap; });
+  double best = std::numeric_limits<double>::max();
+  json closest, findings = json::array();
+  size_t intersecting = 0, touching = 0, close = 0, exact = 0;
+  double overlapTotal = 0;
+  std::map<std::string, double> volumes;
+  auto volume = [&](const std::string& id, const TopoDS_Shape& s) {
+    auto it = volumes.find(id);
+    return it != volumes.end() ? it->second : (volumes[id] = volume_of(s));
+  };
+  for (const auto& pair : pairs) {
+    if (cancelled && cancelled()) throw Error("cancelled");
+    const bool within = pair.gap <= std::max(clearance, touch);
+    if (!within && pair.gap > best) break;
+    ++exact;
+    const TopoDS_Shape sa = node_world_shape(doc, scene, pair.a), sb = node_world_shape(doc, scene, pair.b);
+    json entry = {{"a", pair.a}, {"b", pair.b}, {"a_name", scene.node(pair.a)->name}, {"b_name", scene.node(pair.b)->name}};
+    if (pair.gap <= touch) {  // boxes that meet: the common solid first
+      double overlap = 0;
+      TopoDS_Shape region;
+      try {
+        BRepAlgoAPI_Common common(sa, sb);
+        if (common.IsDone()) {
+          region = common.Shape();
+          if (TopExp_Explorer(region, TopAbs_SOLID).More()) overlap = volume_of(region);
+        }
+      } catch (const Standard_Failure&) {
+      }
+      // Touching faces leave no volume; a sliver below a millionth of the smaller body is the kernel's rounding.
+      if (overlap > std::max(1e-9, 1e-6 * std::min(volume(pair.a, sa), volume(pair.b, sb)))) {
+        entry["kind"] = "intersecting";
+        entry["volume_mm3"] = overlap;
+        entry["distance_mm"] = 0.0;
+        entry["bbox"] = bbox_to_json(tight_bbox(region));
+        findings.push_back(entry);
+        ++intersecting;
+        overlapTotal += overlap;
+        if (best > 0) {
+          best = 0;
+          closest = {{"a", pair.a}, {"b", pair.b}, {"distance_mm", 0.0}};
+        }
+        continue;
+      }
+    }
+    const json d = shape_distance(sa, sb, cancelled);
+    const double distance = d.value("value", std::numeric_limits<double>::max());
+    if (distance < best) {
+      best = distance;
+      closest = {{"a", pair.a}, {"b", pair.b}, {"distance_mm", distance}, {"point_a", d["point_a"]}, {"point_b", d["point_b"]}};
+      if (d.value("approximate", false)) closest["tolerance_mm"] = d["tolerance_mm"];
+    }
+    if (distance <= touch || distance < clearance) {
+      entry["kind"] = distance <= touch ? "touching" : "too_close";
+      entry["distance_mm"] = distance;
+      for (const char* k : {"point_a", "point_b"})
+        if (d.contains(k)) entry[k] = d[k];
+      findings.push_back(entry);
+      ++(distance <= touch ? touching : close);
+    }
+  }
+  // Worst first: the largest overlaps, then touching, then the smallest gaps.
+  std::stable_sort(findings.begin(), findings.end(), [](const json& x, const json& y) {
+    auto rank = [](const json& f) { return f["kind"] == "intersecting" ? 0 : f["kind"] == "touching" ? 1 : 2; };
+    if (rank(x) != rank(y)) return rank(x) < rank(y);
+    return rank(x) == 0 ? x["volume_mm3"].get<double>() > y["volume_mm3"].get<double>() : x["distance_mm"].get<double>() < y["distance_mm"].get<double>();
+  });
+  json out = {{"pairs", pairs.size()}, {"exact_pairs", exact}, {"intersecting", intersecting}, {"touching", touching}, {"too_close", close},
+              {"overlap_volume_mm3", overlapTotal}, {"clearance_mm", clearance}, {"findings", findings},
+              {"status", intersecting ? "intersecting" : touching ? "touching" : close ? "too_close" : "clear"}};
+  out["min_distance_mm"] = closest.is_null() ? json(nullptr) : json(best);
+  if (!closest.is_null()) out["closest"] = closest;
   return out;
 }
 
