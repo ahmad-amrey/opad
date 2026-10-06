@@ -151,4 +151,52 @@ TEST(sketch_id_space_is_described) {
   CHECK(brief);
 }
 
+// 4. Headless reads of a document with linked files failed ("body entry not found" for a linked body, which by design is not
+// stored). A linked file found where its relative path puts it is read; one that is not there is reported as not loaded and
+// the rest is validated.
+TEST(linked_files_in_headless_reads) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / ("opad-eval-linked-" + new_uuid().substr(0, 8));
+  fs::create_directories(root / "stand");
+  fs::create_directories(root / "boards");
+  Document board = Document::create();
+  feature(board, "box", {{"length", "30 mm"}, {"width", "20 mm"}, {"height", "1.6 mm"}});
+  commands::run("export", {{"format", "step"}, {"out", (root / "boards" / "board.step").string()}}, &board);
+  const fs::path file = root / "stand" / "stand.opad";
+  {
+    Document doc = Document::create();
+    doc.save_as(file);
+    commands::run("import", {{"file", (root / "boards" / "board.step").string()}, {"link", true}}, &doc);
+    feature(doc, "box", {{"length", "40 mm"}, {"width", "40 mm"}, {"height", "5 mm"}, {"plane", {{"origin", {0, 0, 10}}, {"normal", {0, 0, 1}}}}});
+    doc.save();
+  }
+  const json args = {{"doc", file.string()}};
+  // Beside the document, one folder up: read, so everything validates.
+  json v = commands::run("validate", args);
+  CHECK_EQ(v["total"], 2);
+  CHECK(v["valid_page"].get<bool>());
+  CHECK(!v.contains("not_loaded"));
+  // The board file gone: reported, the rest validated, and the other reads work.
+  fs::rename(root / "boards" / "board.step", root / "boards" / "moved.step");
+  v = commands::run("validate", args);
+  std::printf("%s\n", v.dump().substr(0, 600).c_str());
+  CHECK_EQ(v["total"], 2);
+  CHECK_EQ(v["not_loaded"]["bodies"], 1);
+  CHECK_EQ(v["not_loaded"]["files"].size(), 1u);
+  CHECK_EQ(v["not_loaded"]["files"][0]["state"], "missing");
+  int validated = 0, unloaded = 0;
+  for (const auto& item : v["items"]) {
+    if (item.value("loaded", true)) validated += item["valid"].get<bool>();
+    else ++unloaded;
+  }
+  CHECK_EQ(validated, 1);
+  CHECK_EQ(unloaded, 1);
+  CHECK(v["valid_page"].get<bool>());  // what could be checked is valid
+  CHECK(commands::run("info", args)["bodies"].get<int>() == 2);
+  CHECK(!commands::run("features", args).empty());
+  CHECK(commands::run("context", {{"doc", file.string()}, {"section", "nodes"}})["total"].get<int>() >= 2);
+  std::error_code ec;
+  fs::remove_all(root, ec);
+}
+
 CHECK_MAIN()

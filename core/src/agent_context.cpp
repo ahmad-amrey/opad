@@ -1,4 +1,5 @@
 #include "opad/agent.hpp"
+#include "opad/assets.hpp"
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
@@ -168,10 +169,20 @@ json validate_design(const Document& doc,const Scene& scene,const json& args,con
   if(wants("print"))extra["print"]=check_print(doc,scene,args,cancelled);
   if(!wants("solid")){extra["checks"]=checks;return extra;}
   auto bodies=args.contains("select")?args["select"].get<std::vector<std::string>>():scene.all_bodies();
-  json items=json::array();bool valid=scene.unresolved.empty();
+  // A linked file that is not loaded (missing, untrusted, unreadable) leaves its parts without geometry: they are reported
+  // as not loaded and the rest is validated (mcp-eval 2026-10-06: "body entry not found" failed the whole command).
+  size_t unloaded=0;for(const auto& id:scene.all_bodies())if(const auto* n=scene.node(id);n && n->body_missing && n->linked)++unloaded;
+  size_t otherUnresolved=0;for(const auto& u:scene.unresolved)if(u.reason.rfind("linked file ",0)!=0)++otherUnresolved;
+  json items=json::array();bool valid=otherUnresolved==0;
   for(size_t i=offset(args);i<bodies.size()&&items.size()<limit(args);++i){
     if(cancelled && cancelled())throw Error("cancelled");
     const auto* node=scene.node(bodies[i]);if(!node)throw Error("Unknown validation body: "+bodies[i]);
+    if(node->body_missing){
+      items.push_back({{"id",bodies[i]},{"name",node->name},{"valid",nullptr},{"loaded",false},{"representation",node->representation},
+        {"reason",node->linked?"part of a linked file that is not loaded: not validated":"its body entry is missing from the document"}});
+      if(!node->linked)valid=false;
+      continue;
+    }
     auto shape=node_world_shape(doc,scene,bodies[i]);const bool ok=!shape.IsNull()&&BRepCheck_Analyzer(shape).IsValid();valid=valid&&ok;
     int solids=0;for(TopExp_Explorer ex(shape,TopAbs_SOLID);ex.More();ex.Next())++solids;
     json volume,area,error;  // span by span (gap log #4); a body the kernel cannot walk is reported, not fatal
@@ -180,6 +191,11 @@ json validate_design(const Document& doc,const Scene& scene,const json& args,con
     if(!error.is_null()){items.back()["error"]=error;valid=false;}
   }
   auto out=page(std::move(items),bodies.size(),args);out["valid_page"]=valid;out["unresolved"]=scene.unresolved.size();out["scope"]="Geometry validity and exact measurements; not a manufacturing assessment.";
+  if(unloaded){
+    json files=json::array();
+    try{for(const auto& a:asset_status(doc))if(a.state!="ok" && a.state!="embedded")files.push_back({{"import",a.import_id},{"name",a.name},{"path",a.path},{"state",a.state},{"reason",a.reason}});}catch(const std::exception&){}
+    out["not_loaded"]={{"bodies",unloaded},{"files",files},{"note","Linked parts not loaded are listed with loaded=false and not validated; the rest is."}};
+  }
   for(auto& [k,v]:extra.items())out[k]=v;
   return out;
 }

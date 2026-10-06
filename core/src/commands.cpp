@@ -242,6 +242,26 @@ AssetOptions asset_options(const json& a) {
 
 std::string import_arg(const json& a) { return a.value("import", ""); }
 
+// The folders of the document's linked files found where their relative paths put them (beside the document as recorded,
+// never a network path): what a read-only command may read without asking.
+std::vector<std::filesystem::path> relative_asset_folders(const Document& doc) {
+  std::vector<std::filesystem::path> out;
+  if (doc.path.empty()) return out;
+  try {
+    for (const auto& a : asset_status(doc)) {
+      if (a.state != "untrusted" || a.file.empty() || a.path.empty()) continue;
+      const std::filesystem::path recorded = path_from_utf8(a.path);
+      if (recorded.is_absolute() || network_path(a.file)) continue;
+      std::error_code ec;
+      const auto expected = std::filesystem::weakly_canonical(doc.path.parent_path() / recorded, ec);
+      if (ec || !std::filesystem::equivalent(expected, a.file, ec) || ec) continue;
+      out.push_back(a.file.parent_path());
+    }
+  } catch (const std::exception&) {
+  }
+  return out;
+}
+
 void register_builtins() {
   auto& r = raw_registry();
   auto reg = [&](const char* name, const char* desc, json args, bool mutates, Handler h) {
@@ -1056,7 +1076,14 @@ json run(const std::string& name, const json& args, Document* live) {
       transient = true;
     } else {
       loaded = Document::load(p);
-      if (has_assets(loaded)) load_assets(loaded, asset_options(args));  // linked files: read where they are
+      if (has_assets(loaded)) {  // linked files: read where they are
+        AssetOptions o = asset_options(args);
+        // A read (info, validate, features, inspect...) also reads a linked file outside the document's project when it is
+        // where the document's relative path puts it, on this machine; anything else stays not loaded and is reported
+        // (mcp-eval 2026-10-06: validate failed on every document with linked files).
+        if (!info.mutates) o.trusted = relative_asset_folders(loaded);
+        load_assets(loaded, o);
+      }
       save_after = info.mutates && args.value("save", true);
     }
     doc = &loaded;
