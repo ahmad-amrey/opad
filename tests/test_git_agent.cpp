@@ -386,6 +386,10 @@ TEST(init_tag_diff) {
   defaults();
   // A new repository as Set up repository makes it: the initial branch, OPAD's attributes and ignore file, this OPAD as the driver.
   const QString fresh = root() + "/fresh/project";
+  QDir().mkpath(fresh);  // outside a repository git_status points at git_init (agents may make one)
+  const json none = mcp().refused("git_status", {{"repo", s(fresh)}}, "not_a_repository");
+  CHECK(none["next"] == "git_init" && none["message"].get<std::string>().find("git_init") != std::string::npos);
+  CHECK(none["message"].get<std::string>().find("user's call") == std::string::npos);
   const json made = mcp().call("git_init", {{"repo", s(fresh)}});
   CHECK(made["state"] == "initialized" && made["branch"] == "main" && made["attributes"] == true && made["ignore"] == true && made["protected"] == true);
   CHECK(made["driver"].get<std::string>().find("merge-driver") != std::string::npos);

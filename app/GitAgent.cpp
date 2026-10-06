@@ -167,8 +167,10 @@ Repo open(const Call& call) {
   if (!where.ok()) {
     const QString err = QString::fromUtf8(where.err);
     if (err.contains("not a git repository"))
-      refuse("not_a_repository", QStringLiteral("%1 is not in a git repository. Setting one up is the user's call (OPAD's Version control panel > Set up repository).")
-                                     .arg(QDir::toNativeSeparators(dir)));
+      refuse("not_a_repository",
+             QStringLiteral("%1 is not in a git repository. git_init makes one there as OPAD's Set up repository does (OPAD's merge and diff driver, .gitignore, Git LFS for assets/).")
+                 .arg(QDir::toNativeSeparators(dir)),
+             "git_init");
     refuse("git_failed", where.error());
   }
   const QStringList lines = QString::fromUtf8(where.out).split('\n', Qt::SkipEmptyParts);
