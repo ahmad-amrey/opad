@@ -105,7 +105,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
         {{"design.offset_face", L, {"design.remove_faces"}}, {"design.fillet"}, {"design.chamfer", S}, {"design.shell", S}, {"design.draft", S}, {"design.scale", S},
          {"design.move", S}});
   group("design.solid", "combine", tr("Combine"), {{"design.combine", S}, {"design.split", S}, {"design.remove", S}});
-  group("design.solid", "pattern", tr("Pattern"), {{"design.mirror", S}, {"design.pattern_rect", S}, {"design.pattern_circ", S}, {"design.pattern_points", S}});
+  group("design.solid", "pattern", tr("Pattern"), {{"design.mirror", S}, {"design.pattern_rect", S}, {"design.pattern_circ", S, {"design.pattern_points"}}});  // Point pattern under Circular's arrow: one column keeps the tab large at 1600 px
   // What the marker selected on the timeline can do: edit it, or from Edit feature's arrow suppress it or roll back to it
   // (one column: the tab keeps every group large at 1600 px).
   group("design.solid", "history", tr("History"),

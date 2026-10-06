@@ -100,8 +100,8 @@ CASES = [
     # middle; a row's eye clicked and undone updates the rows in place (no model reset) with the scroll position, the row
     # at the top, the open rows, the selection and the current row unchanged; a rebuild keeps them too; with the History
     # list on (a row added above on each change) the row at the top stays.
-    ("browser-scroll", "empty", {"OPAD_BENCH_BROWSER_SCROLL": "1"}),
+    ("browser-scroll", lambda root, document: document("browser-scroll"), {"OPAD_BENCH_BROWSER_SCROLL": "1"}),  # its own: benches save "empty"
     # The browser to pick and rename: a component renamed in its row shows its name, Rename on a component chosen there
     # renames it (not its bodies), Move's Bodies input takes a component row (every body under it) or a body row.
-    ("browser-pick", "empty", {"OPAD_BENCH_BROWSER_PICK": "1"}),
+    ("browser-pick", lambda root, document: document("browser-pick"), {"OPAD_BENCH_BROWSER_PICK": "1"}),  # its own: benches save "empty"
 ]
