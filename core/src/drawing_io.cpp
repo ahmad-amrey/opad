@@ -138,7 +138,6 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
   if(out!=INVALID_HANDLE_VALUE) CloseHandle(out);
   if(nul!=INVALID_HANDLE_VALUE) CloseHandle(nul);
 #else
-  (void)cwd;  // callers pass absolute paths here
   std::vector<std::string> text = {program.string()};
   for (const auto& a : args) text.push_back(a.string());
   std::vector<char*> ptrs; for (auto& a : text) ptrs.push_back(a.data()); ptrs.push_back(nullptr);
@@ -147,6 +146,8 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
   const std::string sink = run.output.empty() ? std::string("/dev/null") : run.output.string();
   posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, sink.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
   posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
+  const std::string dir = cwd.string();
+  if (!dir.empty()) posix_spawn_file_actions_addchdir_np(&actions, dir.c_str());  // the program runs there (CalculiX writes beside its input)
   const int error = posix_spawnp(&pid, text[0].c_str(), &actions, nullptr, ptrs.data(), environ);
   posix_spawn_file_actions_destroy(&actions);
   if (!error) {

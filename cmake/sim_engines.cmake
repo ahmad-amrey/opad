@@ -101,12 +101,15 @@ endif()
 
 set(OPAD_HAVE_NETGEN OFF)
 if(OPAD_NETGEN)
+  # Netgen links OCCT and sets its own install RPATH ($ORIGIN): the directories of what it links are added to it, so an OCCT
+  # built in this tree is found where it was built (a bundle has them side by side).
+  set(_opad_netgen_rpath -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON)
   opad_engine_from_source(netgen v${OPAD_NETGEN_VERSION} ${OPAD_NETGEN_GIT} ${OPAD_NETGEN_COMMIT} include/nglib.h
-    -DUSE_SUPERBUILD=OFF -DUSE_GUI=OFF -DUSE_PYTHON=OFF -DUSE_MPI=OFF -DUSE_OCC=ON -DUSE_CSG=OFF -DUSE_GEOM2D=OFF
+    -DUSE_SUPERBUILD=OFF -DUSE_GUI=OFF -DUSE_PYTHON=OFF -DUSE_MPI=OFF -DUSE_OCC=ON
     -DUSE_NATIVE_ARCH=OFF -DUSE_JPEG=OFF -DUSE_MPEG=OFF -DUSE_CGNS=OFF -DENABLE_UNIT_TESTS=OFF -DBUILD_STUB_FILES=OFF
     -DUSE_INTERNAL_TCL=OFF -DINSTALL_PROFILES=OFF -DNG_INSTALL_DIR_LIB=lib -DNG_INSTALL_DIR_BIN=bin -DNG_INSTALL_DIR_INCLUDE=include
     -DNG_INSTALL_DIR_CMAKE=lib/cmake/netgen -DNG_INSTALL_DIR_RES=share -DNG_INSTALL_DIR_PYTHON=lib/python
-    "-DOpenCascade_ROOT=${OpenCASCADE_DIR}" "-DOpenCASCADE_DIR=${OpenCASCADE_DIR}" ${_opad_engine_rpath})
+    "-DOpenCascade_ROOT=${OpenCASCADE_DIR}" "-DOpenCASCADE_DIR=${OpenCASCADE_DIR}" ${_opad_netgen_rpath})
   add_library(opad_netgen INTERFACE IMPORTED GLOBAL)
   add_library(opad::netgen ALIAS opad_netgen)
   if(WIN32)
