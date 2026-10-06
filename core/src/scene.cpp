@@ -10,6 +10,7 @@
 #include "opad/design/sketch.hpp"
 #include "opad/drawing/annotate.hpp"
 #include "opad/drawing/sheet.hpp"
+#include "opad/sim/joints.hpp"
 
 namespace opad {
 
@@ -140,6 +141,24 @@ const SheetView* Scene::sheet_view(const std::string& id) const {
 const SheetItem* Scene::sheet_item(const std::string& id) const {
   for (const auto& t : sheet_items)
     if (t.id == id) return &t;
+  return nullptr;
+}
+
+const Joint* Scene::joint(const std::string& id) const {
+  for (const auto& j : joints)
+    if (j.id == id) return &j;
+  return nullptr;
+}
+
+const Load* Scene::load(const std::string& id) const {
+  for (const auto& l : loads)
+    if (l.id == id) return &l;
+  return nullptr;
+}
+
+const Study* Scene::study(const std::string& id) const {
+  for (const auto& s : studies)
+    if (s.id == id) return &s;
   return nullptr;
 }
 
@@ -486,6 +505,57 @@ struct SceneBuilder::Impl {
     scene.features.push_back(std::move(f));
   }
 
+  // A joint keeps its frames in its parts' own coordinates; a relation names the joints it couples, which must come first.
+  void apply_joint(const std::string& id, const json& d) {
+    Joint j;
+    j.id = id;
+    j.name = d.value("name", "");
+    j.kind = d.value("kind", "");
+    j.def = d;
+    const sim::JointKind* kind = sim::joint_kind(j.kind);
+    auto fail = [&](const std::string& why) {
+      if (j.error.empty()) j.error = why;
+      unresolved(id, "joint", j.name + ": " + why);
+    };
+    if (!kind) {
+      fail("needs a newer OPAD (joint kind '" + j.kind + "')");
+      scene.joints.push_back(std::move(j));
+      return;
+    }
+    if (kind->relation) {
+      for (const auto& x : d.value("joints", json::array())) j.joints.push_back(x.get<std::string>());
+      for (const auto& other : j.joints) {
+        const Joint* o = scene.joint(other);
+        if (!o) fail("joint " + other + " does not exist");
+        else if (sim::is_relation(o->kind)) fail("a relation couples joints, not relations");
+      }
+      if (j.error.empty()) {
+        const auto [c1, c2] = sim::relation_coords(j.kind);
+        const Joint* a = scene.joint(j.joints[0]);
+        const Joint* b = scene.joint(j.joints[1]);
+        if (sim::coord_index(*sim::joint_kind(a->kind), c1) < 0) fail("\"" + a->name + "\" has no " + c1 + " to couple");
+        if (sim::coord_index(*sim::joint_kind(b->kind), c2) < 0) fail("\"" + b->name + "\" has no " + c2 + " to couple");
+      }
+    } else {
+      j.part = d.value("part", "");
+      if (d.contains("base") && d["base"].is_string()) j.base = d["base"].get<std::string>();
+      for (const std::string* n : {&j.base, &j.part}) {
+        if (n->empty()) continue;
+        auto it = scene.nodes.find(*n);
+        if (it == scene.nodes.end()) fail("part " + *n + " does not exist");
+      }
+      const json frames = d.value("frames", json::array());
+      if (frames.size() == 2) {
+        j.at_base = Frame::from_json(frames[0]);
+        j.at_part = Frame::from_json(frames[1]);
+      }
+      j.values.assign(kind->coords.size(), 0.0);
+      const json values = d.value("values", json::array());
+      for (size_t i = 0; i < j.values.size() && i < values.size(); ++i) j.values[i] = values[i].get<double>();
+    }
+    scene.joints.push_back(std::move(j));
+  }
+
   void apply(const std::string& id, const std::string& type, const json& d) {
     if(type=="units") {scene.units=d.at("length").get<std::string>();
     } else if (type == "import") {
@@ -678,6 +748,60 @@ struct SceneBuilder::Impl {
         if (v.is_null()) n->properties.erase(k);
         else n->properties[k] = v;
       }
+    } else if (type == "joint") {
+      apply_joint(id, d);
+    } else if (type == "pose") {
+      for (const auto& p : d.value("placements", json::array())) {
+        const std::string nid = p.value("target", "");
+        auto it = scene.nodes.find(nid);
+        if (it == scene.nodes.end()) {
+          unresolved(id, type, "posed node " + nid + " does not exist");
+          continue;
+        }
+        it->second.local = Mat4::from_json(p.at("matrix"));
+        it->second.modified_by.push_back(id);
+      }
+      follow();
+      if (const auto values = d.find("values"); values != d.end() && values->is_object())
+        for (auto& j : scene.joints)
+          if (const auto v = values->find(j.id); v != values->end() && v->is_array() && v->size() == j.values.size())
+            for (size_t i = 0; i < j.values.size(); ++i) j.values[i] = (*v)[i].get<double>();
+    } else if (type == "load") {
+      Load l;
+      l.id = id;
+      l.name = d.value("name", "");
+      l.kind = d.value("kind", "");
+      l.load_case = d.value("case", "Load case 1");
+      l.def = d;
+      for (const auto& r : d.value("refs", json::array())) {
+        try {
+          l.refs.push_back(Ref::from_json(r));
+        } catch (const std::exception& e) {
+          l.error = e.what();
+        }
+      }
+      const auto& kinds = sim::load_kinds();
+      if (std::find(kinds.begin(), kinds.end(), l.kind) == kinds.end()) l.error = "needs a newer OPAD (load kind '" + l.kind + "')";
+      for (const auto& r : l.refs)
+        if (!ref_ok(r)) {
+          l.unresolved = true;
+          l.error = "reference body " + r.body + " does not exist";
+        }
+      if (!l.error.empty()) unresolved(id, type, l.name + ": " + l.error);
+      scene.loads.push_back(std::move(l));
+    } else if (type == "study") {
+      Study s;
+      s.id = id;
+      s.name = d.value("name", "");
+      s.kind = d.value("kind", "");
+      s.def = d;
+      s.result = d.value("result", json::object());
+      const auto& kinds = sim::study_kinds();
+      if (std::find(kinds.begin(), kinds.end(), s.kind) == kinds.end()) {
+        s.error = "needs a newer OPAD (study kind '" + s.kind + "')";
+        unresolved(id, type, s.name + ": " + s.error);
+      }
+      scene.studies.push_back(std::move(s));
     } else if (!Document::known_type(type)) {
       unresolved(id, type, "needs a newer OPAD (op '" + type + "')");
     }
@@ -955,6 +1079,11 @@ std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, 
     };
     if (!in && type == "annotation" && d.contains("anchor")) in = ref_under(d["anchor"]);
     if (!in && type == "measurement")
+      for (const auto& r : d.value("refs", json::array())) in = in || ref_under(r);
+    if (!in && type == "joint") in = under(d.value("base", json())) || under(d.value("part", json()));
+    if (!in && type == "pose")
+      for (const auto& p : d.value("placements", json::array())) in = in || under(p.value("target", json()));
+    if (!in && type == "load")
       for (const auto& r : d.value("refs", json::array())) in = in || ref_under(r);
     if (in) out.insert(op.id);
   }

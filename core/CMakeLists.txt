@@ -90,6 +90,15 @@ target_link_libraries(opad_core
   PUBLIC ${OPAD_OCCT_LIBS} nlohmann_json::nlohmann_json
   PRIVATE ${CMAKE_DL_LIBS} ZLIB::ZLIB)
 target_compile_definitions(opad_core PUBLIC _USE_MATH_DEFINES)
+target_link_libraries(opad_core PRIVATE Eigen3::Eigen)
+if(OPAD_HAVE_CHRONO)
+  target_link_libraries(opad_core PRIVATE opad::chrono)
+  target_compile_definitions(opad_core PRIVATE OPAD_HAVE_CHRONO=1)
+endif()
+if(OPAD_HAVE_NETGEN)
+  target_link_libraries(opad_core PRIVATE opad::netgen)
+  target_compile_definitions(opad_core PRIVATE OPAD_HAVE_NETGEN=1)
+endif()
 if(TARGET TKV3d AND TARGET TKService)
   target_compile_definitions(opad_core PRIVATE OPAD_HAVE_FONT=1)
   # Drawing text is shaped with HarfBuzz (Arabic and other complex scripts, src/drawing_text.cpp; glyph outlines through

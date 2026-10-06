@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <mutex>
 #include <unordered_map>
 
@@ -91,6 +92,19 @@ const std::vector<Material>& materials() {
       {"fr4", "FR-4", 1.85, {0.12, 0.42, 0.22}, 1, {"fr4", "fr 4", "pcb", "glass epoxy", "epoxy glass"}},
       {"glass", "Glass", 2.50, {0.82, 0.91, 0.95}, 0.3, {"glass", "soda lime", "borosilicate"}}};
   return list;
+}
+
+const Mechanical* mechanical(const std::string& id) {
+  // Typical room-temperature values (MatWeb, manufacturers' sheets): steel S235-S355, 304 stainless, 6061-T6, CW614N brass,
+  // annealed copper, Ti-6Al-4V, injection-moulded or printed polymers along the print; FR-4 in its plane.
+  static const std::map<std::string, Mechanical> table = {
+      {"steel", {210000, 0.30, 250}},        {"stainless", {193000, 0.29, 215}}, {"aluminium-6061", {69000, 0.33, 276}},
+      {"brass", {100000, 0.34, 200}},        {"copper", {117000, 0.34, 70}},     {"titanium", {114000, 0.34, 880}},
+      {"abs", {2300, 0.35, 40}},             {"pla", {3500, 0.36, 50}},          {"petg", {2100, 0.38, 50}},
+      {"nylon", {2700, 0.39, 70}},           {"nylon-12", {1600, 0.40, 45}},     {"polycarbonate", {2400, 0.37, 62}},
+      {"pom", {2900, 0.35, 65}},             {"fr4", {22000, 0.12, 300}},        {"glass", {70000, 0.22, 33}}};
+  const auto it = table.find(id);
+  return it == table.end() ? nullptr : &it->second;
 }
 
 const Material* material(const std::string& id) {

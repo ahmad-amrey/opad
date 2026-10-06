@@ -822,6 +822,9 @@ json semantic_diff(const Document& a, const Scene& sa, const Document& b, const 
   diff_notes(d, changes);
   diff_named("section", sa.sections, sb.sections, [](const SectionPlane& x, const SectionPlane& y) { return x.origin == y.origin && x.normal == y.normal && x.enabled == y.enabled; }, changes);
   diff_named("view", sa.views, sb.views, [](const ViewBookmark& x, const ViewBookmark& y) { return x.camera == y.camera; }, changes);
+  diff_named("joint", sa.joints, sb.joints, [](const Joint& x, const Joint& y) { return x.def == y.def && x.values == y.values; }, changes);
+  diff_named("load", sa.loads, sb.loads, [](const Load& x, const Load& y) { return x.def == y.def; }, changes);
+  diff_named("study", sa.studies, sb.studies, [](const Study& x, const Study& y) { return x.def == y.def; }, changes);
   if (opt.metrics && !geometry.empty()) {
     std::vector<json> before(geometry.size()), after(geometry.size());
     OSD_Parallel::For(0, int(geometry.size()), [&](int i) {
@@ -952,7 +955,8 @@ std::string diff_text(const json& d) {
   if (changes.empty()) out += "No changes.\n";
   static const std::vector<std::pair<const char*, std::vector<std::string>>> groups = {
       {"Document", {"units"}}, {"Parameters", {"param"}}, {"Sketches", {"sketch"}}, {"Features", {"feature"}}, {"Assets", {"asset"}},
-      {"Bodies", {"component", "body"}}, {"Notes", {"annotation", "measurement"}}, {"Sections", {"section"}}, {"Views", {"view"}}};
+      {"Bodies", {"component", "body"}}, {"Notes", {"annotation", "measurement"}}, {"Sections", {"section"}}, {"Views", {"view"}},
+      {"Joints", {"joint"}}, {"Loads", {"load"}}, {"Studies", {"study"}}};
   for (const auto& [title, kinds] : groups) {
     std::string lines;
     for (const auto& c : changes)
@@ -1008,6 +1012,8 @@ std::string document_outline(const Document& doc) {
     else if (o.type == "annotation") detail = (d.contains("reply_to") ? "reply " : "") + quoted(str(d, "text")) + " on " + ref_text(d.value("anchor", json()), s);
     else if (o.type == "measurement") detail = str(d, "kind") + " on " + refs_text(d.value("refs", json::array()), s);
     else if (o.type == "section" || o.type == "view" || o.type == "sketch") detail = clip(str(d, "name"));
+    else if (o.type == "joint" || o.type == "load" || o.type == "study") detail = clip(str(d, "name")) + " (" + str(d, "kind") + ")";
+    else if (o.type == "pose") detail = std::to_string(d.value("placements", json::array()).size()) + " parts placed";
     else if (o.type == "delete") detail = op_label(target);
     else if (o.type == "param") detail = str(d, "name") + " = " + str(d, "expr");
     else if (o.type == "feature") detail = clip(str(d, "name")) + " (" + str(d, "kind") + ")";
@@ -1106,6 +1112,17 @@ std::string document_outline(const Document& doc) {
     out += "\n## Sections and views\n";
     for (const auto& x : s.sections) out += "section " + x.name + " at " + vec_text(x.origin) + " normal " + vec_text(x.normal) + (x.enabled ? "" : " off") + "\n";
     for (const auto& v : s.views) out += "view " + v.name + "\n";
+  }
+  if (!s.joints.empty() || !s.loads.empty() || !s.studies.empty()) {
+    out += "\n## Motion and simulation\n";
+    for (const auto& j : s.joints) {
+      std::vector<std::string> values;
+      for (double v : j.values) values.push_back(num(v));
+      out += "joint " + j.name + " (" + j.kind + ")" + (j.joints.empty() ? " " + (j.base.empty() ? std::string("world") : name_of(s, j.base)) + " - " + name_of(s, j.part) : "") +
+             (values.empty() ? "" : " at " + join(values, ", ")) + (j.error.empty() ? "" : "  error: " + clip(j.error, 100)) + "\n";
+    }
+    for (const auto& l : s.loads) out += "load " + l.name + " (" + l.kind + ", " + l.load_case + ")\n";
+    for (const auto& st : s.studies) out += "study " + st.name + " (" + st.kind + ")\n";
   }
   if (!s.unresolved.empty()) {
     out += "\n## Unresolved\n";

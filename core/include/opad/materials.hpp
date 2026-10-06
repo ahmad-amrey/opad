@@ -23,6 +23,13 @@ struct Material {
   json to_json() const;            // id, name, density, color, opacity
 };
 const std::vector<Material>& materials();
+// Elastic properties for structural studies (sim/fea.hpp): typical values for the library grade; null for an id it has none for.
+struct Mechanical {
+  double youngs = 0;   // MPa
+  double poisson = 0;
+  double yield = 0;    // MPa (tensile strength for brittle materials)
+};
+const Mechanical* mechanical(const std::string& material_id);
 const Material* material(const std::string& id);
 // The library material a name stands for: an id, a library name, or what files and tools write ("Aluminum 6061-T6",
 // "SS304", "1.4301", "PA12", "Glass-filled nylon", "Plastic - ABS"). Null when nothing fits.
