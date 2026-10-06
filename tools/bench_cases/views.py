@@ -79,3 +79,20 @@ CASES = [
                                                       ("feature", "--kind", "cylinder", "--inputs", '{"x":"30 mm","diameter":"8 mm","height":"8 mm"}')),
      {"OPAD_BENCH_LAUNCH_FRAMES": "1", "OPAD_BENCH_OFFSCREEN": "1", "OPAD_TRACE_FRAMES": "1"}),
 ]
+
+
+def boxes_in_a_row(root, document):
+    """Three 20 x 20 x 10 mm boxes along X: in the right view each hides the one behind it."""
+    return document("highlight-boxes", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"10 mm"}'),
+                    ("feature", "--kind", "box", "--inputs", '{"x":"40 mm","length":"20 mm","width":"20 mm","height":"10 mm"}'),
+                    ("feature", "--kind", "box", "--inputs", '{"x":"80 mm","length":"20 mm","width":"20 mm","height":"10 mm"}'))
+
+
+CASES += [
+    # The highlight switches (X-ray highlight Ctrl+/, Hover highlight /) and the cheat sheet's ? (HighlightKeysBench.cpp):
+    # the selected back box, its glow and its faces in Topmost over the front box, in Top (hidden) with X-ray off, the hover
+    # styles with them; a reference tool's override composing with the setting; hover off: detected, labelled, clickable,
+    # nothing drawn, no fade; the keys through the window's shortcut path, and / and ? typed in text fields, the command
+    # search and a sketch value. <prefix>.xray-on.png, .xray-off.png, .hover-on.png, .hover-off.png.
+    ("highlight-keys", boxes_in_a_row, {"OPAD_BENCH_HIGHLIGHT_KEYS": "{prefix}"}),
+]

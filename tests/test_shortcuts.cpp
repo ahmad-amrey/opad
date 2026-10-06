@@ -1,8 +1,10 @@
 #include "KeyGuard.hpp"
+#include "KeyText.hpp"
 #include "ShortcutEditor.hpp"
 #include "check.hpp"
 #include <QDialog>
 #include <QApplication>
+#include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
@@ -295,6 +297,50 @@ TEST(key_guard_holds_one_key_shortcuts) {
   });
   CHECK_EQ(asked,QString("v"));CHECK_EQ(hidden,4);
   qApp->removeEventFilter(&guard);
+}
+// The highlight switches: Ctrl+/ (X-ray) was the cheat sheet's, which moved to ? (Shift+/); / is Hover highlight's. A
+// Ctrl+/ the old editor saved for the sheet goes; a key the user gave another command stays theirs and the new command
+// starts without one; a key of the user's for the sheet stays; once only.
+TEST(highlight_keys_migration) {
+  QSettings s;s.clear();s.setValue("shortcuts/help.shortcuts","Ctrl+/");
+  shortcuts::migrate(s);CHECK(!s.contains("shortcuts/help.shortcuts"));CHECK(s.value("shortcuts/highlightDefaultsVersion").toInt()==1);
+  CHECK(!s.contains("shortcuts/view.xrayHighlight") && !s.contains("shortcuts/view.hoverHighlight"));
+  QAction sheet,xray,hover;init(sheet,"help.shortcuts","?");init(xray,"view.xrayHighlight","Ctrl+/");init(hover,"view.hoverHighlight","/");
+  CHECK(sheet.shortcut()==QKeySequence("?") && xray.shortcut()==QKeySequence("Ctrl+/") && hover.shortcut()==QKeySequence("/"));
+  s.clear();s.setValue("shortcuts/help.shortcuts","Ctrl+Shift+K");s.setValue("shortcuts/view.fit","/");s.setValue("shortcutAlternates/edit.redo","Ctrl+/");
+  shortcuts::migrate(s);
+  CHECK(s.value("shortcuts/help.shortcuts").toString()=="Ctrl+Shift+K" && s.value("shortcuts/view.fit").toString()=="/");
+  CHECK(s.contains("shortcuts/view.hoverHighlight") && s.value("shortcuts/view.hoverHighlight").toString().isEmpty());
+  CHECK(s.contains("shortcuts/view.xrayHighlight") && s.value("shortcuts/view.xrayHighlight").toString().isEmpty());
+  QAction hover2;init(hover2,"view.hoverHighlight","/");CHECK(hover2.shortcut().isEmpty());
+  s.remove("shortcuts/view.hoverHighlight");s.setValue("shortcuts/help.shortcuts","Ctrl+/");shortcuts::migrate(s);
+  CHECK(!s.contains("shortcuts/view.hoverHighlight") && s.value("shortcuts/help.shortcuts").toString()=="Ctrl+/");  // once
+  s.clear();
+}
+// / and Ctrl+/ fire in the window and ? (what Shift+/ types; Qt's key map takes the press for it) opens the sheet, while
+// a text field types / and ? as text; a symbol typed with Shift is bound without it, also beside Ctrl.
+TEST(highlight_keys_and_typing) {
+  QSettings().clear();
+  QWidget window;auto* view=new QWidget(&window);view->setFocusPolicy(Qt::StrongFocus);auto* field=new QLineEdit(&window);
+  QAction hover(&window),xray(&window),sheet(&window);
+  init(hover,"view.hoverHighlight","/");init(xray,"view.xrayHighlight","Ctrl+/");init(sheet,"help.shortcuts","?");
+  window.addActions({&hover,&xray,&sheet});int hovers=0,xrays=0,sheets=0;
+  QObject::connect(&hover,&QAction::triggered,[&]{++hovers;});QObject::connect(&xray,&QAction::triggered,[&]{++xrays;});QObject::connect(&sheet,&QAction::triggered,[&]{++sheets;});
+  window.show();window.activateWindow();CHECK(QTest::qWaitForWindowActive(&window));view->setFocus();
+  QTest::keyClick(view,Qt::Key_Slash);CHECK_EQ(hovers,1);
+  QTest::keyClick(view,Qt::Key_Slash,Qt::ControlModifier);CHECK_EQ(xrays,1);CHECK_EQ(hovers,1);
+  QTest::keyClick(view,'?');CHECK_EQ(sheets,1);
+  field->setFocus();QTest::keyClick(field,'/');QTest::keyClick(field,'?');
+  CHECK_EQ(field->text(),QString("/?"));CHECK_EQ(hovers,1);CHECK_EQ(sheets,1);
+  QKeyEvent shiftSlash(QEvent::KeyPress,Qt::Key_Question,Qt::ShiftModifier,"?"),plain(QEvent::KeyPress,Qt::Key_Slash,Qt::NoModifier,"/"),
+      ctrlSlash(QEvent::KeyPress,Qt::Key_Slash,Qt::ControlModifier);
+  CHECK(keys::pressedBy(QKeySequence("?"),&shiftSlash) && !keys::pressedBy(QKeySequence("/"),&shiftSlash));
+  CHECK(keys::pressedBy(QKeySequence("/"),&plain) && !keys::pressedBy(QKeySequence("Ctrl+/"),&plain) && keys::pressedBy(QKeySequence("Ctrl+/"),&ctrlSlash));
+  ShortcutEditor dialog({&hover,&xray,&sheet});dialog.show();
+  auto* binding=dialog.findChild<QKeySequenceEdit*>("shortcutBinding");
+  QApplication::sendEvent(binding,&shiftSlash);CHECK(binding->keySequence()==QKeySequence("?"));
+  binding->clear();QKeyEvent ctrlShift(QEvent::KeyPress,Qt::Key_Question,Qt::ControlModifier|Qt::ShiftModifier);QApplication::sendEvent(binding,&ctrlShift);
+  CHECK(binding->keySequence()==QKeySequence("Ctrl+?"));
 }
 int main(int argc,char** argv) {
   QApplication app(argc,argv);QTemporaryDir settings;

@@ -42,7 +42,7 @@ QString plain(QString s) { return s.remove(QChar(0x2066)).remove(QChar(0x2069));
 // guide; the palette's key and search by key ("ctrl+alt+f" finds Fit); the Tool guide's key column and card; the cheat
 // sheet's rows, Help for this tool's row and its closing key; the lessons and the coach card's steps; a clip's key element
 // (the command's key, its name without one, a fixed key) and caption. Esc stays Clear measurement's (fixed). Then the
-// shortcut editor puts Fit on F and the cheat sheet on Ctrl+/ again: every open surface follows without reopening. Right
+// shortcut editor puts Fit on F and the cheat sheet on Ctrl+Alt+K: every open surface follows without reopening. Right
 // to left (OPAD_LANG=ar) the caps read Ctrl ... F left to right and the key text is isolated. Saved as
 // <prefix>.card/.palette/.guide/.sheet/.start/.clip-*.png and <prefix>.after-*.png.
 OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
@@ -236,7 +236,7 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
     for (const QString& r : rows) homeListed = homeListed || r.startsWith(home + ' ');
     check(rows.contains(fit + " Ctrl+Alt+F") && !homeListed, "the cheat sheet: Fit Ctrl+Alt+F, Home not listed (no key)");
     check(rows.contains(QCoreApplication::translate("help", "Guide of the tool you are using") + " Ctrl+F1"), "its Help for this tool row is Ctrl+F1");
-    check(sheet->closeKey() == QKeySequence("Ctrl+Shift+K"), "it closes on Ctrl+Shift+K (the key that opened it), not on Ctrl+/");
+    check(sheet->closeKey() == QKeySequence("Ctrl+Shift+K"), "it closes on Ctrl+Shift+K (the key that opened it), not on ?");
     sheet->setFilter("ctrl+alt+f");
     check(sheet->shown() == QStringList({fit + " Ctrl+Alt+F"}), "searching the key finds Fit");
     sheet->setFilter(QString());
@@ -246,7 +246,7 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
     if (!start) return check(false, "Getting started");
     const QString move = plain(GettingStarted::lessons("fusion")[0].text), find = plain(GettingStarted::lessons("fusion")[5].text);
     check(move.contains("(Ctrl+Alt+F)") && !move.contains("()") && !move.contains(home + " ("), "lesson 1 names Fit's Ctrl+Alt+F and Home without a key");
-    check(find.contains("Ctrl+Space") && find.contains("Ctrl+F1") && find.contains("Ctrl+Shift+K") && !find.contains("Ctrl+/"), "lesson 6: Ctrl+Space, Ctrl+F1, Ctrl+Shift+K");
+    check(find.contains("Ctrl+Space") && find.contains("Ctrl+F1") && find.contains("Ctrl+Shift+K") && !find.contains("(?)"), "lesson 6: Ctrl+Space, Ctrl+F1, Ctrl+Shift+K");
     auto* coach = w.m_viewport->findChild<CoachCard*>();
     check(coach && plain(coach->steps()).contains("(" + keys::plain(keys::binding("sketch.line")) + ")") && plain(coach->steps()).contains("(" + keys::plain(keys::binding("design.extrude")) + ")"),
           "the coach card's steps name the tools' keys (" + (coach ? plain(coach->steps()) : QString()) + ")");
@@ -254,7 +254,7 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
   add(400, [=, &w] {
     w.findChild<ShortcutSheet*>()->grab().save(prefix + ".sheet.png");
     w.findChild<GettingStarted*>()->grab().save(prefix + ".start.png");
-    // Leave them open, the card up: the editor changes Fit to F and the cheat sheet back to Ctrl+/.
+    // Leave them open, the card up: the editor changes Fit to F and the cheat sheet to Ctrl+Alt+K.
     auto* reference = w.findChild<CommandReference*>();
     if (!reference) return check(false, "the Tool guide still there");
     reference->open("view.fit");
@@ -269,11 +269,11 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
     };
     bool free = true;  // the editor would ask about a clash (a modal dialog): only keys nothing has
     for (QAction* a : w.m_actions)
-      for (const char* key : {"F", "Ctrl+/", "Ctrl+Alt+Q", "2", "Ctrl+Shift+Space"}) free = free && a->shortcut() != QKeySequence(key);
-    check(free, "F, Ctrl+/, Ctrl+Alt+Q, 2 and Ctrl+Shift+Space are free to give");
+      for (const char* key : {"F", "Ctrl+Alt+K", "Ctrl+Alt+Q", "2", "Ctrl+Shift+Space"}) free = free && a->shortcut() != QKeySequence(key);
+    check(free, "F, Ctrl+Alt+K, Ctrl+Alt+Q, 2 and Ctrl+Shift+Space are free to give");
     if (!free) return;
     assign("view.fit", QKeySequence("F"));
-    assign("help.shortcuts", QKeySequence("Ctrl+/"));
+    assign("help.shortcuts", QKeySequence("Ctrl+Alt+K"));
     assign("inspect.pin", QKeySequence("Ctrl+Alt+Q"));
     assign("select.faces", QKeySequence("2"));
     assign("tools.commands", QKeySequence("Ctrl+Shift+Space"));
@@ -297,7 +297,7 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
       if ((*it)->data(0, Qt::UserRole).toString() == "view.fit") fitRow = *it;
     check(fitRow && plain(fitRow->text(1)) == "F" && reference->preview()->keyCaps() == QStringList({"F"}) && reference->current() == "view.fit",
           "the open Tool guide follows: F in its column and card, still at Fit");
-    check(sheet && sheet->isVisible() && sheet->shown().contains(fit + " F") && sheet->closeKey() == QKeySequence("Ctrl+/"), "the open cheat sheet follows: Fit F, closing on Ctrl+/");
+    check(sheet && sheet->isVisible() && sheet->shown().contains(fit + " F") && sheet->closeKey() == QKeySequence("Ctrl+Alt+K"), "the open cheat sheet follows: Fit F, closing on Ctrl+Alt+K");
     check(start && plain(start->findChild<QLabel*>("secondary")->text()).contains("(F)"), "the open lesson follows: Fit (F)");
     // The window's own surfaces: Distance's footer and prompt (the tool still runs), the ribbon's filters and search badge.
     PanelFooter* footer = w.m_toolSteps ? w.m_toolSteps->footer() : nullptr;

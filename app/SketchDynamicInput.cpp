@@ -264,6 +264,9 @@ bool SketchEditor::typingKey(const QKeyEvent* e) const {
   const QString text = e->text();
   if (text.size() != 1 || m_tool == "select") return false;
   if (m_tool == "text" && text.front().isPrint()) return true;  // the text box takes every printable key
+  // A value being typed goes on with the operators of an expression ("10/4"): '/' is the window's Hover highlight key, which
+  // must not take the key from a value typed over the view (its box without the keyboard).
+  if ((text == QLatin1String("/") || text == QLatin1String("*") || text == QLatin1String(")")) && m_input && m_input->typed()) return true;
   return inputkeys::valueChar(text.front().unicode()) || (inputkeys::entryChar(text.front().unicode()) && (kPointTools.contains(m_tool) || (kAngled.contains(m_tool) && text == "<")));
 }
 

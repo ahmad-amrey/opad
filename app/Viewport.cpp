@@ -354,6 +354,8 @@ void Viewport::initViewer() {
     through.SetClearDepth(Standard_False);
     if (!m_viewer->InsertLayerBefore(m_throughLayer, through, Graphic3d_ZLayerId_Top)) m_throughLayer = Graphic3d_ZLayerId_Topmost;
   }
+  m_xrayHighlight=QSettings().value("view/xrayHighlight",true).toBool();
+  m_hoverHighlight=QSettings().value("view/hoverHighlight",true).toBool();
   m_hoverFadeEnabled=QSettings().value("view/hoverFade",true).toBool();
   m_hoverFadeSeconds=std::clamp(QSettings().value("view/hoverFadeSeconds",5.0).toDouble(),.1,60.0);
   m_hoverFadeTimer.setSingleShot(true);connect(&m_hoverFadeTimer,&QTimer::timeout,this,&Viewport::requestRedraw);
@@ -482,18 +484,16 @@ void Viewport::applyTokens() {
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(selected);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.6f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.6f);
-  // X-ray selection: the highlight is drawn in the Topmost layer, which has its own depth buffer,
-  // so a selected object shows through whatever is in front of it.
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  // The highlight styles' layers (X-ray in Topmost, or depth-tested in Top) are applyHighlightLayers' below.
   const double edge = highlight::kHoverEdgeWidth;
   for(auto kind:{Prs3d_TypeOfHighlight_Dynamic,Prs3d_TypeOfHighlight_LocalDynamic}) {
     auto drawer=m_ctx->HighlightStyle(kind);
-    drawer->SetZLayer(Graphic3d_ZLayerId_Topmost);
     drawer->SetShadingAspect(new Prs3d_ShadingAspect());
     drawer->ShadingAspect()->SetColor(hover);
     drawer->ShadingAspect()->SetTransparency(0.55f);
     drawer->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    // A hair towards the eye: depth-tested (X-ray off), a hovered face lies on the body's own face, pushed back already.
+    drawer->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -1.0f);
     drawer->SetFaceBoundaryDraw(true);
     drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
     drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL,hover,5));
@@ -510,11 +510,11 @@ void Viewport::applyTokens() {
     lines.rim = new Prs3d_Drawer();
     lines.rim->SetLink(m_ctx->DefaultDrawer());  // the rest (deflection, the other aspects) as everything else
     lines.rim->SetColor(occ(rim));
-    lines.rim->SetZLayer(Graphic3d_ZLayerId_Topmost);
     lines.rim->SetDisplayMode(0);
     lines.rim->SetWireAspect(new Prs3d_LineAspect(occ(rim), Aspect_TOL_SOLID, highlight::kHoverRimWidth));
     lines.rim->SetLineAspect(new Prs3d_LineAspect(occ(rim), Aspect_TOL_SOLID, highlight::kHoverRimWidth));
   }
+  applyHighlightLayers();
   if (!m_subHl.IsNull()) refreshSubHighlight();  // drawn by us in the selection colour
   applyGridColors();
   for (const auto& [ais, glow] : m_bodyGlows) m_ctx->Remove(glow, Standard_False);  // made again in the new colours
@@ -1253,7 +1253,7 @@ void Viewport::refreshSubHighlight() {
     if (!completed) return;  // superseded by a newer selection
     flush(true);
     m_subHl = st->hl;
-    m_subHl->SetZLayer(m_selectionXray ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top);
+    m_subHl->SetZLayer(selectionXray() ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top);
     m_ctx->Display(m_subHl, 0, -1, Standard_False);  // selection mode -1: never pickable
     redrawScene();
     emit subHighlightApplied();
@@ -1319,7 +1319,7 @@ void Viewport::applySelectionLayers() {
     const bool selected=m_ctx->IsSelected(ais);
     Graphic3d_ZLayerId rest=Graphic3d_ZLayerId_Default;  // where its look puts it (UI-121); selected: Topmost, the X-ray, last
     if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end()) if(const auto item=m_items.find(node->second);item!=m_items.end()) rest=item->second.look.layer;
-    const auto selectedLayer=m_selectionXray?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Top;
+    const auto selectedLayer=selectionXray()?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Top;
     const auto want=selected?selectedLayer:rest;
     if(ais->ZLayer()!=want) m_ctx->SetZLayer(ais,want);
     if(!selected || !prs) return;
@@ -1386,7 +1386,7 @@ void Viewport::showShade(const std::vector<std::string>& ids) {
     s->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     s->Attributes()->SetFaceBoundaryDraw(Standard_True);
     s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.selected3d), Aspect_TOL_SOLID, 2.5));
-    s->SetZLayer(Graphic3d_ZLayerId_Topmost);  // same X-ray treatment as per-object highlights
+    s->SetZLayer(selectionXray() ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top);  // the same layer as per-object highlights
     m_ctx->Display(s, AIS_Shaded, -1, Standard_False);  // selection mode -1: never pickable
     m_shade.push_back(s);
   }

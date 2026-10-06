@@ -8,6 +8,8 @@
 #include <Prs3d_ShadingAspect.hxx>
 #include <PrsMgr_PresentationManager.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <Prs3d_Drawer.hxx>
+#include "BodyShape.hpp"
 #include <QSettings>
 #include <algorithm>
 #include <cmath>
@@ -53,7 +55,70 @@ void Viewport::resetHoverFade() {
   m_hoverFadeRestorePending=true;
   if(m_initialised){ResetPreviousMoveTo();requestRedraw();}
 }
+// X-ray highlight (view.xrayHighlight): the selection and the hover in Topmost, which has its own depth buffer, so they show
+// through whatever is in front of them; off, in Top, which shares the depth of the scene: what is in front hides them.
+void Viewport::applyHighlightLayers() {
+  const Graphic3d_ZLayerId selected = selectionXray() ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
+  const Graphic3d_ZLayerId hover = m_xrayHighlight ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetZLayer(selected);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetZLayer(selected);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetZLayer(hover);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetZLayer(hover);
+  if (const auto& rim = HoverLines::current().rim; !rim.IsNull()) rim->SetZLayer(hover);  // drawn in the hover's layer anyway
+}
+
+void Viewport::setXrayHighlight(bool on) {
+  QSettings().setValue("view/xrayHighlight", on);
+  if (m_xrayHighlight == on) return;
+  m_xrayHighlight = on;
+  if (!m_initialised) return;
+  applyHighlightLayers();
+  // What is highlighted now moves too: the selected bodies themselves and their glows (applySelectionLayers: OCCT recolours
+  // a selected body's own structure, in the body's layer), the selected sub-shapes' one object, the stand-in boxes of a
+  // large selection, and the hover (drawn again in the new layer).
+  const Graphic3d_ZLayerId selected = selectionXray() ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
+  if (!m_subHl.IsNull() && m_subHl->ZLayer() != selected) m_ctx->SetZLayer(m_subHl, selected);
+  for (const auto& s : m_shade) m_ctx->SetZLayer(s, selected);
+  applySelectionLayers();
+  if (m_ctx->HasDetected()) {  // its shadow was made in the old layer: hovered again where the pointer is
+    m_ctx->ClearDetected(Standard_False);
+    moveTo(LastMousePosition());
+  }
+  resetHoverFade();
+  redrawScene();
+}
+
+// Hover highlight off (view.hoverHighlight): the model's hover is taken out of the frame as the hover fade does (here,
+// before the controller draws, so OCCT's MoveTo highlight never reaches a visible frame), and the detection stays.
+bool Viewport::hoverSuppressed(const Handle(AIS_InteractiveObject)& object) const {
+  if (m_hoverHighlight || object.IsNull() || object == m_cube) return false;
+  if (m_nodeOf.count(object.get()) || m_centerObjects.count(object.get())) return true;
+  return std::any_of(m_candidates.begin(), m_candidates.end(), [&](const auto& c) { return c.second == object; });
+}
+
+void Viewport::setHoverHighlight(bool on) {
+  QSettings().setValue("view/hoverHighlight", on);
+  if (m_hoverHighlight == on) return;
+  m_hoverHighlight = on;
+  m_hoverHidden = false;
+  resetHoverFade();  // drawn again (on) or taken out (off) in the next frame, the pointer still
+}
+
+bool Viewport::hoverDrawn() const {
+  return m_initialised && m_ctx->HasDetected() && !hoverSuppressed(m_ctx->DetectedInteractive()) && !m_hoverHidden;
+}
+
 void Viewport::trackHoverFade() {
+  if (m_initialised && !m_hoverHighlight && m_ctx->HasDetected() && hoverSuppressed(m_ctx->DetectedInteractive())) {
+    m_hoverFadeTimer.stop();
+    m_hoverFadeObject = m_ctx->DetectedInteractive();
+    m_hoverFadeRestorePending = false;
+    m_ctx->MainPrsMgr()->ClearImmediateDraw();
+    m_view->InvalidateImmediate();
+    m_hoverHidden = true;
+    return;
+  }
+  m_hoverHidden = false;
   if(!m_initialised || !m_ctx->HasDetected()){m_hoverFadeTimer.stop();return;}
   const auto object=m_ctx->DetectedInteractive();
   // Visiting another object (including helpers) releases the old suppression.

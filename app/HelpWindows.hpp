@@ -58,6 +58,7 @@ class ShortcutSheet : public QWidget {
 
  protected:
   void keyPressEvent(QKeyEvent* e) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;  // the closing key in the empty search field
 
  private:
   struct Row {

@@ -16,6 +16,7 @@
 #include <functional>
 
 class QAction;
+class QKeyEvent;
 
 namespace keys {
 enum class Style { Native, Pc, Mac };  // Native: Mac on macOS, Pc elsewhere
@@ -38,6 +39,9 @@ QList<QKeySequence> bindings(const QAction* a);  // the key, then its alternates
 // A key someone can press: not empty and no Key_Exit (Qt's standard Quit on Windows), which no keyboard has; the
 // bindings above leave such keys out, so Quit shows no key rather than "Exit".
 bool pressable(const QKeySequence& key);
+// This key event presses that one-chord key: the same key and modifiers, or a symbol bound without the Shift that typed it
+// ("?" by Shift+/), as the window's shortcuts take it.
+bool pressedBy(const QKeySequence& key, const QKeyEvent* event);
 
 inline const QString kThen = QStringLiteral(",");  // between the chords of a multi-chord sequence in caps()
 // One cap per modifier and key, every chord in order with kThen between chords; empty for the empty sequence.

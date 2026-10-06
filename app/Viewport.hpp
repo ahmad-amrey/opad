@@ -495,11 +495,25 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::string> selectedCandidates() const;  // in pick order
   // Makes the context selection exactly these (bodies, faces/edges/vertices by ordinal, candidates).
   void selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates = {});
-  // Off: the selection is drawn in the Top layer (hidden by what is in front of it, under the overlays) instead of the X-ray
-  // Topmost one, so the sketch drawn in Topmost stays over a reference tool's picked body or face. Takes effect at the next
+  // X-ray highlight (view.xrayHighlight, setting view/xrayHighlight, on by default): the selection (bodies, their glows,
+  // the selected sub-shapes) and the hover are drawn in the Topmost layer, through whatever is in front of them; off, in
+  // the Top layer, hidden by what is in front (depth-tested). Applies at once (ViewportSettings.cpp).
+  void setXrayHighlight(bool on);
+  bool xrayHighlight() const { return m_xrayHighlight; }
+  // A temporary override over the setting: the selection in Top while on, so the sketch drawn in Topmost stays over a
+  // reference tool's picked body or face (SketchReference). Off again, the user's choice is back. Takes effect at the next
   // selection change (selectRefs).
-  void setSelectionXray(bool on) { m_selectionXray = on; }
-  bool selectionXray() const { return m_selectionXray; }
+  void suppressSelectionXray(bool on) { m_xraySuppressed = on; }
+  bool selectionXray() const { return m_xrayHighlight && !m_xraySuppressed; }
+  // Hover highlight (view.hoverHighlight, setting view/hoverHighlight, on by default): off, bodies, faces, edges, vertices
+  // and design candidates are never drawn hovered; the hover is still detected (clicks, labels, hoverPoint, tracking) and
+  // the selection is drawn as ever. The view cube and handles keep theirs.
+  void setHoverHighlight(bool on);
+  bool hoverHighlight() const { return m_hoverHighlight; }
+  bool hoverDrawn() const;  // benches: a hover highlight of the model is in the frame now
+  // OPAD_BENCH_HIGHLIGHT_KEYS (HighlightKeysBench.cpp): bodies one behind the other along the view; the switches run by
+  // `trigger` (the window's commands): layers, frames and detection, logged as "bench: highlight keys: ..." lines.
+  bool benchHighlightSwitches(const QString& prefix, const std::function<void(const QString&)>& trigger);
   void setBodiesPickable(bool on);  // off: only candidates can be picked (choosing a sketch plane, a profile)
   // Smart selection's candidate (UI-95, ViewportCandidates.cpp): what a click on its chip would select, in the candidate
   // amber, on top like the selection. Faces and edges are one object copied from the bodies' meshes (a sliced job when
@@ -1085,7 +1099,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
   Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer
-  bool m_selectionXray = true;                    // the selection in Topmost (else Top: setSelectionXray)
+  bool m_xrayHighlight = true;                    // the selection and the hover in Topmost (else Top: setXrayHighlight)
+  bool m_xraySuppressed = false;                  // suppressSelectionXray: the selection in Top for now, whatever the setting
+  bool m_hoverHighlight = true;                   // setHoverHighlight
+  bool m_hoverHidden = false;                     // the model's hover highlight was taken out of the frame (hover off)
+  bool hoverSuppressed(const Handle(AIS_InteractiveObject)& object) const;  // hover off and object one of the model's
+  void applyHighlightLayers();                    // the highlight styles' layers as setXrayHighlight wants them
   Handle(SubHighlight) m_candidateHl;             // showCandidateRefs' faces and edges
   Job* m_candidateJob = nullptr;
   Handle(SubHighlight) m_checkTints[2];           // showCheckTints: overhangs, thin walls
