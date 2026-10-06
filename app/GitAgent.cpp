@@ -549,6 +549,18 @@ json branchCreate(const json& args, const Call& call) {
   const QString name = text(args, "name");
   if (!git::validBranchName(name)) refuse("invalid_arguments", git::explain("is not a valid branch name") + " (\"" + name + "\")");
   if (!git::revParse(r.c, "refs/heads/" + name).isEmpty()) refuse("branch_exists", QStringLiteral("A branch %1 exists already: git_switch to it, or choose another name.").arg(name), "git_switch");
+  // Making a protected branch at a commit of the agent's choosing puts commits on it as a commit or merge would: refused
+  // while either protection is on. Starting a branch from a protected one (from: main) is fine.
+  if ((call.policy.commits || call.policy.merges) && call.policy.protects(name)) {
+    const bool commits = call.policy.commits;
+    refuse("protected_branch",
+           QStringLiteral("Refused: %1 is a protected branch and the user's OPAD preference \"%2\" is on (Preferences > Version control > Branch protection; setting %3), so "
+                          "agents may not create it: a protected branch made at a commit of the agent's choosing would hold commits no commit or merge put there. "
+                          "Nothing was changed. Choose another name (git_branch_create makes a branch from %1 too: from: %1), or ask the user to create it.")
+               .arg(name, commits ? QStringLiteral("Refuse commits to a protected branch") : QStringLiteral("Refuse merges into a protected branch"),
+                    QString::fromLatin1(commits ? kCommitsKey : kMergesKey)),
+           "git_branch_create");
+  }
   const bool go = args.value("switch", true);
   QString from = text(args, "from"), at;
   if (!from.isEmpty()) {

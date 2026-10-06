@@ -266,7 +266,12 @@ TEST(conflicts_listed_aborted_resolved) {
   setPref("git/protectedBranches", "release/*");  // main is not protected here; patterns are
   mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "5 mm"}});
   mcp().call("git_commit", {{"repo", s(repo)}, {"message", "base"}, {"all", true}});
+  mcp().refused("git_branch_create", {{"repo", s(repo)}, {"name", "release/1"}, {"switch", false}}, "protected_branch");  // a protected name
+  setPref("git/protectCommits", false);
+  setPref("git/protectMerges", false);
   mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "release/1"}, {"switch", false}});
+  setPref("git/protectCommits", true);
+  setPref("git/protectMerges", true);
   CHECK(mcp().call("git_branches", {{"repo", s(repo)}})["branches"][1]["protected"] == true);
   mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "theirs"}});
   mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "20 mm"}});
@@ -295,6 +300,33 @@ TEST(conflicts_listed_aborted_resolved) {
   const json params = mcp().call("params", {{"doc", s(doc)}});
   CHECK(params.dump().find("20 mm") != std::string::npos);
   std::printf("a stopped merge listed, aborted, resolved for theirs and committed PASS\n");
+}
+
+TEST(protected_branch_never_created) {
+  defaults();
+  const QString repo = repository("creates");
+  setPref("git/protectCommits", false);
+  mcp().call("git_commit", {{"repo", s(repo)}, {"message", "base"}, {"all", true}});
+  setPref("git/protectCommits", true);
+  mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "develop"}});
+  // A protected name made by an agent at a commit of its choosing would hold its commits: refused while commits or merges
+  // into protected branches are, nothing made, the preference named.
+  const json no = mcp().refused("git_branch_create", {{"repo", s(repo)}, {"name", "master"}, {"from", "develop"}}, "protected_branch");
+  CHECK(no["message"].get<std::string>().find("Refuse commits to a protected branch") != std::string::npos && no["next"] == "git_branch_create");
+  CHECK(QString::fromUtf8(gitIn(repo, {"branch", "--list", "master"})).trimmed().isEmpty());
+  CHECK(mcp().call("git_status", {{"repo", s(repo)}})["branch"] == "develop");
+  setPref("git/protectedBranches", "main, master, release/*");
+  setPref("git/protectCommits", false);  // merges into them still refused: still no creating them
+  const json merges = mcp().refused("git_branch_create", {{"repo", s(repo)}, {"name", "release/2"}, {"switch", false}}, "protected_branch");
+  CHECK(merges["message"].get<std::string>().find("Refuse merges into a protected branch") != std::string::npos);
+  // A branch from a protected one is fine.
+  const json from = mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "feature/x"}, {"from", "main"}});
+  CHECK(from["branch"] == "feature/x" && from["protected"] == false);
+  // Both preferences off: the user allows it.
+  setPref("git/protectMerges", false);
+  CHECK(mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "master"}, {"switch", false}})["created"] == "master");
+  defaults();
+  std::printf("protected branches never created by an agent while protected, branching from them allowed PASS\n");
 }
 
 TEST(push_pull_never_forced) {
