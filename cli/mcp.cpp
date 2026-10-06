@@ -116,8 +116,10 @@ int opad_mcp() {
           if(!found)throw opad::Error("Unsupported tool: "+name+". Request tools/list.");
           const json output = opad::commands::run(name, args);
           result = {{"content", json::array({{{"type", "text"}, {"text", output.dump()}}})}, {"isError", false},{"structuredContent",output.is_object()?output:json{{"result",output}}}};
-        } catch (const Standard_Failure& e) {
-          result = {{"content", json::array({{{"type", "text"}, {"text", e.GetMessageString()}}})}, {"isError", true}};
+        } catch (const Standard_Failure&) {  // commands::run words its own; this is the last net, never the kernel's text
+          const json failure = {{"code", "kernel_failed"}, {"message", "The modelling kernel could not compute this for these references or values."},
+                                {"next", "Check the references are current (entity_details), then try other picks or sizes. The connection remains available."}};
+          result = {{"content", json::array({{{"type", "text"}, {"text", failure.dump()}}})}, {"isError", true}, {"structuredContent", {{"error", failure}}}};
         } catch (const std::exception& e) {
           const json failure={{"code","invalid_operation"},{"message",e.what()},{"next","Inspect the referenced entities and feature_schema, correct the failed inputs, then retry. The connection remains available."}};
           result = {{"content", json::array({{{"type", "text"}, {"text",failure.dump()}}})}, {"isError", true},{"structuredContent",{{"error",failure}}}};

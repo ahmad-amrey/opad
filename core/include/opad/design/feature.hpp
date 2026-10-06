@@ -133,6 +133,9 @@ std::string next_name(const Scene& scene, const std::string& prefix);
 // A new feature's name prefix: its label's first word ("Extrude"), the whole label run together when another kind's label
 // starts with that word ("RemoveFaces" beside Remove's "Remove", "ConstructionPlane" beside "ConstructionAxis").
 std::string name_prefix(const FeatureSpec& spec);
+// What a feature's error says when the modelling kernel threw while computing it (mcp-eval 2026-10-06): the feature by its
+// label and name, and what to change for that kind, never the kernel's own text ("TopOpeBRepDS_DataStructure::Point").
+std::string kernel_failure_text(const std::string& kind, const std::string& name);
 // Item n (from 1) of count named after one name: "{n}" marks where the number goes ("Board screw {n}" ->
 // "Board screw 2"); without it several items are numbered "Board screw 1", "Board screw 2", ... and a single one
 // keeps the name as it is.

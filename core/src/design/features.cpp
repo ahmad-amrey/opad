@@ -250,6 +250,28 @@ const FeatureSpec* feature_spec(const std::string& kind) {
   return nullptr;
 }
 
+std::string kernel_failure_text(const std::string& kind, const std::string& name) {
+  const FeatureSpec* spec = feature_spec(kind);
+  const std::string label = spec ? spec->label : kind;
+  const std::string title = name.empty() ? label : label + " \"" + name + "\"";
+  std::string hint;
+  if (kind == "fillet" || kind == "chamfer")
+    hint = std::string("the ") + (kind == "fillet" ? "radius" : "distance") + " is too large for these edges or the faces around them; try a smaller one, or " + kind + " the edges in separate features";
+  else if (kind == "shell" || kind == "thicken" || kind == "offset_face")
+    hint = "the thickness or distance is too large for the body's smallest details, or a face cannot be offset; try a smaller value, other faces, or do it before filleting";
+  else if (kind == "draft")
+    hint = "a face cannot be tilted about that plane; try a smaller angle or fewer faces";
+  else if (kind == "sweep" || kind == "pipe" || kind == "loft" || kind == "coil")
+    hint = "the section cannot follow the path or profiles (too large for a bend, or it runs into itself); try a smaller section or a smoother path";
+  else if (kind == "remove_faces")
+    hint = "the faces around them do not close the gap when extended; pick the whole detail, or fewer faces";
+  else if (kind == "plane" || kind == "axis")
+    hint = "its references do not define it (parallel or coincident picks); pick other references";
+  else
+    hint = "the shapes it combines only touch, run along each other or meet at a sliver; overlap them a little more, move them apart, or change the sizes";
+  return title + ": the modelling kernel could not compute it with these inputs - " + hint;
+}
+
 json feature_specs_json() {
   json out = json::array();
   for (const auto& s : feature_specs()) {
@@ -1445,6 +1467,99 @@ TopoDS_Shape make_hole_tool(const Ctx& ctx, const json& in, const gp_Pnt& at, co
   return tool;
 }
 
+// "Fillet \"Web edges\"" (the label alone for an unnamed feature): how errors name the feature that failed.
+std::string feature_title(const std::string& kind, const std::string& name) {
+  const FeatureSpec* spec = feature_spec(kind);
+  const std::string label = spec ? spec->label : kind;
+  return name.empty() ? label : label + " \"" + name + "\"";
+}
+
+// A length as errors write it: 12, 2.5, 0.25 (mm, at most two decimals).
+std::string mm_text(double v) {
+  std::ostringstream s;
+  s.precision(2);
+  s << std::fixed << v;
+  std::string t = s.str();
+  while (!t.empty() && t.back() == '0') t.pop_back();
+  if (!t.empty() && t.back() == '.') t.pop_back();
+  return t;
+}
+
+// One fillet or chamfer of a body's edges (mcp-eval 2026-10-06). Empty when the kernel cannot: it throws (the
+// TopOpeBRepDS_DataStructure::Point a too large concave blend gave), says it is not done, or leaves no solid. `follow`: other
+// edges of `body` to carry over into the result (each one's images), for the next blend of a sequence.
+struct Blend {
+  bool fillet = true;
+  bool two = false;  // chamfer with two distances
+  double r = 0, r2 = 0;
+};
+std::optional<TopoDS_Shape> blend_edges(const TopoDS_Shape& body, const std::vector<TopoDS_Edge>& edges, const Blend& how, double scale = 1,
+                                        std::vector<std::vector<TopoDS_Edge>>* follow = nullptr) {
+  try {
+    std::unique_ptr<BRepFilletAPI_MakeFillet> fillet;
+    std::unique_ptr<BRepFilletAPI_MakeChamfer> chamfer;
+    BRepBuilderAPI_MakeShape* mk = nullptr;
+    if (how.fillet) {
+      fillet = std::make_unique<BRepFilletAPI_MakeFillet>(body);
+      for (const auto& e : edges) fillet->Add(how.r * scale, e);
+      mk = fillet.get();
+    } else {
+      chamfer = std::make_unique<BRepFilletAPI_MakeChamfer>(body);
+      TopTools_IndexedDataMapOfShapeListOfShape faces;
+      if (how.two) TopExp::MapShapesAndAncestors(body, TopAbs_EDGE, TopAbs_FACE, faces);
+      for (const auto& e : edges) {
+        if (!how.two) {
+          chamfer->Add(how.r * scale, e);
+          continue;
+        }
+        if (!faces.Contains(e) || faces.FindFromKey(e).IsEmpty()) throw Error("an edge to chamfer has no face");
+        chamfer->Add(how.r * scale, how.r2 * scale, e, TopoDS::Face(faces.FindFromKey(e).First()));
+      }
+      mk = chamfer.get();
+    }
+    mk->Build();
+    if (!mk->IsDone()) return std::nullopt;
+    const TopoDS_Shape result = mk->Shape();
+    if (solids_of(result).empty()) return std::nullopt;
+    if (follow)
+      for (auto& group : *follow) {
+        std::vector<TopoDS_Edge> carried;
+        for (const auto& e : group) {
+          if (mk->IsDeleted(e)) continue;
+          const TopTools_ListOfShape& images = mk->Modified(e);
+          if (images.IsEmpty()) carried.push_back(e);
+          for (TopTools_ListIteratorOfListOfShape it(images); it.More(); it.Next())
+            if (it.Value().ShapeType() == TopAbs_EDGE) carried.push_back(TopoDS::Edge(it.Value()));
+        }
+        group = std::move(carried);
+      }
+    return result;
+  } catch (const Standard_Failure&) {
+    return std::nullopt;
+  }
+}
+
+// The same edges blended one at a time, each on the result of the last: what a fillet of several edges together cannot
+// always do (one blend running into the next). Empty when one of them fails; `failed` then says which (index into edges).
+std::optional<TopoDS_Shape> blend_one_by_one(const Ctx& ctx, const TopoDS_Shape& body, const std::vector<TopoDS_Edge>& edges, const Blend& how, size_t* failed = nullptr) {
+  TopoDS_Shape current = body;
+  std::vector<std::vector<TopoDS_Edge>> pending;
+  for (const auto& e : edges) pending.push_back({e});
+  for (size_t i = 0; i < pending.size(); ++i) {
+    ctx.check_cancel();
+    if (pending[i].empty()) continue;  // an earlier blend took it in
+    std::vector<std::vector<TopoDS_Edge>> later(pending.begin() + long(i) + 1, pending.end());
+    const auto next = blend_edges(current, pending[i], how, 1, &later);
+    if (!next) {
+      if (failed) *failed = i;
+      return std::nullopt;
+    }
+    std::copy(later.begin(), later.end(), pending.begin() + long(i) + 1);
+    current = *next;
+  }
+  return current;
+}
+
 std::vector<TopoDS_Shape> world_bodies(const Ctx& ctx, const json& refs, std::vector<std::string>* ids = nullptr) {
   std::vector<TopoDS_Shape> out;
   const std::vector<std::string> nodes = body_ids(ctx, refs);
@@ -1642,38 +1757,80 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
 
   // ---- modify
   if (kind == "fillet" || kind == "chamfer") {
-    const double r = ctx.length(in, kind == "fillet" ? "radius" : "distance");
-    if (r <= 0) throw Error(kind == "fillet" ? "the radius must be positive" : "the distance must be positive");
-    for (const auto& [node, edges] : by_body(ctx, in.value("edges", json()), TopAbs_EDGE, "edges")) {
+    const bool isFillet = kind == "fillet";
+    const double r = ctx.length(in, isFillet ? "radius" : "distance");
+    if (r <= 0) throw Error(isFillet ? "the radius must be positive" : "the distance must be positive");
+    Blend how;
+    how.fillet = isFillet;
+    how.r = how.r2 = r;
+    if (!isFillet && in.value("type", "equal") == "two") {
+      how.two = true;
+      how.r2 = ctx.length(in, "distance2");
+      if (how.r2 <= 0) throw Error("the distance must be positive");
+    }
+    // The edges per body, in pick order, each with the reference it is now ("<body>/edge/N") for the errors.
+    std::vector<std::pair<std::string, std::vector<std::pair<TopoDS_Shape, int>>>> groups;
+    for (const ResolvedRef& ref : ctx.resolve_all(in.value("edges", json()))) {
+      if (ref.sub.ShapeType() != TopAbs_EDGE) throw Error("pick edges");
+      auto it = std::find_if(groups.begin(), groups.end(), [&](const auto& g) { return g.first == ref.node; });
+      if (it == groups.end()) it = groups.insert(groups.end(), {ref.node, {}});
+      it->second.push_back({ref.sub, ref.index});
+    }
+    if (groups.empty()) throw Error("pick edges");
+    const std::string size = isFillet ? "R" + mm_text(r) : mm_text(r) + " mm" + (how.two ? " x " + mm_text(how.r2) + " mm" : std::string());
+    for (const auto& [node, picked] : groups) {
       ctx.check_cancel();
       const TopoDS_Shape body = ctx.node_shape(node);
-      TopoDS_Shape result;
-      if (kind == "fillet") {
-        BRepFilletAPI_MakeFillet mk(body);
-        for (const auto& e : edges) mk.Add(r, TopoDS::Edge(same_in(body, e)));
-        mk.Build();
-        if (!mk.IsDone()) throw Error("that radius does not fit these edges");
-        result = mk.Shape();
-      } else {
-        BRepFilletAPI_MakeChamfer mk(body);
-        const bool two = in.value("type", "equal") == "two";
-        const double r2 = two ? ctx.length(in, "distance2") : r;
-        if (r2 <= 0) throw Error("the distance must be positive");
-        TopTools_IndexedDataMapOfShapeListOfShape faces;
-        TopExp::MapShapesAndAncestors(body, TopAbs_EDGE, TopAbs_FACE, faces);
-        for (const auto& e : edges) {
-          const TopoDS_Edge edge = TopoDS::Edge(same_in(body, e));
-          if (!two) { mk.Add(r, edge); continue; }
-          if (!faces.Contains(edge) || faces.FindFromKey(edge).IsEmpty()) throw Error("an edge to chamfer has no face");
-          mk.Add(r, r2, edge, TopoDS::Face(faces.FindFromKey(edge).First()));
-        }
-        mk.Build();
-        if (!mk.IsDone()) throw Error("that distance does not fit these edges");
-        result = mk.Shape();
+      std::vector<TopoDS_Edge> edges;
+      for (const auto& p : picked) edges.push_back(TopoDS::Edge(same_in(body, p.first)));
+      auto name_of = [&](size_t i) { return std::to_string(picked[i].second); };
+      std::optional<TopoDS_Shape> result = blend_edges(body, edges, how);
+      // Together the blends can run into each other where one alone fits: one edge at a time on the last result.
+      if (!result && edges.size() > 1) {
+        result = blend_one_by_one(ctx, body, edges, how);
+        if (result) out.extra["note"] = std::string(isFillet ? "filleted" : "chamfered") + " one edge at a time: the edges together did not blend";
       }
-      const auto pieces = solids_of(result);
+      if (!result) {
+        // Say where and what would: the edges that do not take this size alone, and the largest size all of them take.
+        std::vector<std::string> misfits;
+        if (edges.size() <= 16)
+          for (size_t i = 0; i < edges.size(); ++i) {
+            ctx.check_cancel();
+            if (edges.size() == 1 || !blend_edges(body, {edges[i]}, how)) misfits.push_back(name_of(i));
+          }
+        double fits = 0, misses = 1;  // a fraction of the size asked for
+        for (int step = 0; step < 6; ++step) {
+          ctx.check_cancel();
+          const double mid = (fits + misses) / 2;
+          (blend_edges(body, edges, how, mid) ? fits : misses) = mid;
+        }
+        // What the kernel takes is not always monotonic in the size: say a size that was tried and works.
+        double largest = std::floor(r * fits * 10) / 10;
+        if (largest > 0 && largest < r * fits && !blend_edges(body, edges, how, largest / r)) largest = std::floor(r * fits * 100) / 100;
+        const std::string verb = isFillet ? "fillet" : "chamfer";
+        std::string where;
+        if (misfits.empty() && edges.size() > 16)
+          where = "the " + std::to_string(edges.size()) + " edges do not take it together or one after another";
+        else if (misfits.empty())
+          where = "each of the " + std::to_string(edges.size()) + " edges takes it alone, but not together or one after another";
+        else {
+          where = std::string("it does not fit at edge") + (misfits.size() == 1 ? " " : "s ");
+          for (size_t i = 0; i < misfits.size() && i < 12; ++i) where += (i ? ", " : "") + misfits[i];
+          if (misfits.size() > 12) where += " and " + std::to_string(misfits.size() - 12) + " more";
+          where += " of body " + node + " (references " + node + "/edge/<N>; the blend would run past the faces next to " + std::string(misfits.size() == 1 ? "it" : "them") + ")";
+        }
+        std::string hint;
+        if (largest > 0)
+          hint = "try up to " + (isFillet ? "R" + mm_text(largest) : mm_text(largest) + " mm") +
+                 (misfits.empty() ? ", or " + verb + " these edges in separate features"
+                  : misfits.size() < edges.size() ? ", or " + verb + " the other edges with " + size + " and these separately with a smaller size" : "");
+        else
+          hint = std::string("no smaller ") + (isFillet ? "radius" : "distance") + " tried works either: check the edges (an edge between faces that meet tangentially cannot be blended), or " + (isFillet ? "fillet" : "chamfer") + " them in separate features";
+        throw Error(feature_title(kind, ctx.name) + ": " + size + " is too large for these edges - " + where + "; " + hint);
+      }
+      const auto pieces = solids_of(*result);
       if (pieces.empty()) throw Error("the result is not a solid");
-      out.bodies.push_back({node, healed(pieces.size() == 1 ? pieces.front() : result)});
+      out.bodies.push_back({node, healed(pieces.size() == 1 ? pieces.front() : *result)});
     }
     return out;
   }

@@ -34,6 +34,8 @@ struct Ctx {
   // The component the feature is made in (its op's "component", UI-33; empty: the document root). An automatic operation
   // and automatic targets look only at the bodies under it, as Fusion's do in the active component.
   std::string component;
+  // The feature's name, for errors that say which feature failed ("Fillet \"Web edges\": ...").
+  std::string name;
 
   void check_cancel() const;
   TopoDS_Shape key_shape(const std::string& key) const;

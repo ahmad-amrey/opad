@@ -34,6 +34,13 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
 
 namespace {
 
+// A kernel exception that reached a command, in words (mcp-eval 2026-10-06): what failed and what to try, not the kernel's
+// own text ("TopOpeBRepDS_DataStructure::Point").
+std::string kernel_text(const std::string& what) {
+  return what + ": the modelling kernel could not compute this for these references or values (shapes that only touch, run along "
+                "each other, or a size too large for the geometry); check the references are current and try other picks or sizes";
+}
+
 struct Registry {
   std::vector<CommandInfo> infos;
   std::map<std::string, Handler> handlers;
@@ -426,8 +433,8 @@ void register_builtins() {
           const std::string kind = q.value("kind", "distance");
           try {
             results.push_back(one(kind, q.value("refs", json()), q.value("mode", a.value("mode", "")), q.value("at", json())));
-          } catch (const Standard_Failure& e) {
-            results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", std::string("the modelling kernel failed: ") + e.GetMessageString()}});
+          } catch (const Standard_Failure&) {
+            results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", kernel_text(kind + " measurement")}});
           } catch (const std::exception& e) {
             results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", e.what()}});
           }
@@ -1058,9 +1065,10 @@ json run(const std::string& name, const json& args, Document* live) {
   json out;
   try {
     out = h(doc, args);
-  } catch (const Standard_Failure& e) {
-    // A kernel exception is not a std::exception: the CLI died on one ("terminate called", gap log #4).
-    throw Error(std::string("the modelling kernel failed: ") + e.GetMessageString());
+  } catch (const Standard_Failure&) {
+    // A kernel exception is not a std::exception: the CLI died on one ("terminate called", gap log #4). Worded, never the
+    // kernel's own text (mcp-eval 2026-10-06).
+    throw Error(kernel_text(name));
   }
   if (save_after && doc->dirty) doc->save();
   if (transient && info.mutates && out.is_object()) out["transient"] = true;

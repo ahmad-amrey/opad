@@ -991,6 +991,7 @@ struct Walk {
           try {
             Ctx made_in = ctx;
             made_in.component = component;
+            made_in.name = data.value("name", "");
             Out out = compute_feature(made_in, kind, inputs);
             check_read_only(ctx, kind, out);
             for (auto& [k, v] : notes.items()) out.extra[k] = v;
@@ -1017,8 +1018,8 @@ struct Walk {
               }
             }
             result = materialize(ctx, out, stored, id, data.value("name", ""), component);
-          } catch (const Standard_Failure& ex) {
-            result = {{"error", std::string("the modelling kernel failed: ") + ex.GetMessageString()}};
+          } catch (const Standard_Failure&) {  // worded per kind: the kernel's own text helps nobody (mcp-eval 2026-10-06)
+            result = {{"error", kernel_failure_text(kind, data.value("name", ""))}};
           } catch (const std::exception& ex) {
             if (std::string(ex.what()) == "cancelled") throw;
             result = {{"error", ex.what()}};
