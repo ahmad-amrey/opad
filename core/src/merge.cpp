@@ -56,6 +56,23 @@ Relation relation(const Manifest& base, const Document& version) {
 
 json MergeConflict::to_json() const { return {{"target", target}, {"field", field}, {"ours", ours}, {"theirs", theirs}}; }
 
+bool derived_conflict(const MergeConflict& c, const Document& ours, const Document& theirs) {
+  const Op* o = ours.find_op(c.ours);
+  const Op* t = theirs.find_op(c.theirs);
+  return (o && o->type == "regen") || (t && t->type == "regen");
+}
+
+std::vector<MergeConflict> source_conflicts(const std::vector<MergeConflict>& conflicts, const Document& ours, const Document& theirs, size_t* derived) {
+  std::vector<MergeConflict> out;
+  size_t left = 0;
+  for (const auto& c : conflicts) {
+    if (derived_conflict(c, ours, theirs)) ++left;
+    else out.push_back(c);
+  }
+  if (derived) *derived = left;
+  return out;
+}
+
 std::vector<std::pair<std::string, std::string>> op_effects(const json& op) {
   std::vector<std::pair<std::string, std::string>> out;
   const std::string kind = op.contains("op") && op["op"].is_string() ? op["op"].get<std::string>() : std::string();

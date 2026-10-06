@@ -314,7 +314,7 @@ TEST(fresh_repository_set_up) {
   CHECK_EQ(r.textconv, install.textconv());
   CHECK_EQ(r.difftool, install.difftool());  // git difftool -t opad: Compare
   CHECK(r.difftool.startsWith('"' + QDir::fromNativeSeparators(install.app) + "\" --compare \"$LOCAL\" \"$REMOTE\""));
-  CHECK_EQ(QString::fromUtf8(git_(dir, {"config", "--get", "diff.opad.cachetextconv"})).trimmed(), QStringLiteral("true"));
+  CHECK(!git::run(in(dir), {"config", "--get", "diff.opad.cachetextconv"}).ok());  // no textconv cache: its notes ref showed in git log --all
   CHECK(r.driver.startsWith('"' + QDir::fromNativeSeparators(install.cli) + "\" merge-driver"));
   const QString attributes = read(dir + "/.gitattributes");
   CHECK(attributes.contains("*.opad text eol=lf merge=opad diff=opad"));

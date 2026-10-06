@@ -56,7 +56,7 @@ def main():
         query = client.call("query_entities", body=bodies[-1], filters={"at_plane": {"axis": "z", "value": 3}})["result"]
         assert query["total"] == 4
         before = client.state()
-        rendered = client.raw("viewport_image", select=[bodies[-1]], hide=[bodies[0]], view="top", width=320, height=240)
+        rendered = client.raw("viewport_image", select=[bodies[-1]], hide=[bodies[0]], view="top", width=320, height=240, visible_ids=True)
         assert not rendered.get("isError"), rendered
         meta = rendered["structuredContent"]
         assert meta["revision"] == before["revision"] and meta["result"]["visible_ids"] == [bodies[-1]]
@@ -67,7 +67,7 @@ def main():
         replay_png = next(item["data"] for item in replay["content"] if item["type"] == "image")
         assert original_png == replay_png
         hidden = client.call("viewport_image", select=[bodies[-1]], hide=[bodies[-1]], ignore_visibility=True, width=64, height=64)
-        assert hidden["result"]["visible_ids"] == []
+        assert hidden["result"]["visible_count"] == 0 and "visible_ids" not in hidden["result"]
         after = client.state()
         assert before["camera"] == after["camera"] and before["revision"] == after["revision"]
         client.call("live_select", refs=[bodies[-1]], expected_revision=after["revision"])

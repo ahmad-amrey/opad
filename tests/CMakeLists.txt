@@ -122,8 +122,9 @@ if(TARGET opad AND Python3_Interpreter_FOUND AND OPAD_BUILD_CLI)
   add_test(NAME gui COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gui_benches.py $<TARGET_FILE:opad> $<TARGET_FILE:opad-cli>
            --output ${CMAKE_BINARY_DIR}/gui-benches)
   set_tests_properties(gui PROPERTIES LABELS gui TIMEOUT 900)
-  # TODO 10 B18: agents' acceptance builds through the live bridge (a Benchy-style boat, a phone-style assembly).
-  foreach(build benchy assembly)
+  # TODO 10 B18: agents' acceptance builds through the live bridge (a Benchy-style boat, a phone-style assembly); the
+  # ergonomics a real agent's session asked for (git previews, reply sizes, opening documents).
+  foreach(build benchy assembly ergonomics)
     add_test(NAME agent-${build} COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/test_agent_${build}.py $<TARGET_FILE:opad> $<TARGET_FILE:opad-cli>
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(agent-${build} PROPERTIES LABELS gui TIMEOUT 300)

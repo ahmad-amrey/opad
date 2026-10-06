@@ -48,7 +48,9 @@ AgentBridge::~AgentBridge(){
   connect(thread,&QThread::finished,thread,&QObject::deleteLater);thread->start();
   if(m_cache)dispose(std::move(m_cache));
 }
-QString AgentBridge::target()const{return m_doc->hasDocument?QString::fromStdString(m_doc->doc.header.uuid)+":"+QString::number(m_doc->generation):QString();}
+// A window with no document (its start page) is a target too, "start:<generation>": an agent binds to it and opens or makes
+// one there (open_document, new_document); every other tool says no_document.
+QString AgentBridge::target()const{return m_doc->hasDocument?QString::fromStdString(m_doc->doc.header.uuid)+":"+QString::number(m_doc->generation):"start:"+QString::number(m_doc->generation);}
 json AgentBridge::descriptor()const{return {{"instance",m_instance.toStdString()},{"endpoint",m_endpoint.toStdString()},{"target",target().toStdString()},{"document",m_doc->hasDocument?m_doc->doc.header.uuid:""},{"title",m_doc->title().toStdString()},{"path",m_doc->path().toStdString()},{"pid",QCoreApplication::applicationPid()},{"enabled",m_enabled},{"edit",m_edit},{"version",opad::version_string()}};}
 void AgentBridge::publish(){
   // Fixed-size descriptor; serialize/write on a worker. Serialize publishes under one mutex
@@ -232,15 +234,19 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     else fail(s,"target_changed",tr("The document changed. Use live_instances and explicitly bind again."));
     return;
   }
+  const auto key=(s->target+"/").toStdString()+args.value("request_id","");
+  if(name=="open_document" || name=="new_document"){openDocument(s,name,args,key,hash);return;}  // AgentOpen.cpp
+  if(!m_doc->hasDocument && name!="wait_for_idle" && name!="stop" && name!="live_state" && name!="request_status"){
+    fail(s,"no_document",tr("No document is open in this window: open_document opens a file, new_document makes an empty .opad."));return;
+  }
   if(name=="wait_for_idle"){auto timer=std::make_shared<QElapsedTimer>();timer->start();waitForIdle(s,args.value("timeout_ms",2000),m_epoch,timer);return;}
   if(name=="stop"){stop();reply(s,live_result({{"stopped",true}}));return;}
   if(name=="live_state"){
-    if(m_busy)reply(s,live_result({{"state","read"},{"revision",m_doc->revision},{"result",liveState()}}));
+    if(m_busy || !m_doc->hasDocument)reply(s,live_result({{"state","read"},{"revision",m_doc->revision},{"result",liveState()}}));
     else execute(s,name,args,{});
     return;
   }
   if(name=="live_select" && (editorBusy() || args.at("expected_revision").get<unsigned long long>()!=m_doc->revision)){fail(s,"selection_busy_or_stale",tr("Finish the active sketch or feature operation before agent edits."));return;}
-  const auto key=(s->target+"/").toStdString()+args.value("request_id","");
   if(name=="request_status"){
     auto it=m_receipts.find(key);if(it==m_receipts.end())reply(s,live_result({{"state","unknown"},{"request_id",args["request_id"]}}));
     else replyReceipt(s,it->second);return;

@@ -14,6 +14,7 @@
 #include <QTemporaryDir>
 
 #include "Git.hpp"
+#include "GitAgent.hpp"
 #include "check.hpp"
 #include "opad/core.hpp"
 #include "opad/live.hpp"
@@ -162,6 +163,17 @@ TEST(tools_listed_none_destructive) {
   CHECK(live == expected);
   CHECK(opad::agent::live_schema("git_commit")["required"].dump().find("request_id") != std::string::npos);
   CHECK(opad::agent::live_schema("git_status")["required"].empty());
+  // A merge or pull preview and a resolve that only lists change nothing: no request_id needed (live), and a merge preview
+  // or a listing is a read (no edit permission, no receipt); a pull preview still fetches.
+  for (const char* name : {"git_merge", "git_pull", "git_resolve"}) CHECK(opad::agent::live_schema(name)["required"].dump().find("request_id") == std::string::npos);
+  opad::agent::validate_input(opad::agent::live_schema("git_merge"), {{"source", "develop"}, {"preview", true}});
+  opad::agent::validate_input(opad::agent::live_schema("git_pull"), {{"preview", true}});
+  opad::agent::validate_input(opad::agent::live_schema("git_resolve"), {{"path", "model.opad"}});
+  CHECK(!gitagent::writes("git_merge", {{"source", "develop"}, {"preview", true}}) && gitagent::receipted("git_merge", {{"source", "develop"}}));
+  CHECK(!gitagent::writes("git_resolve", {{"path", "model.opad"}}) && gitagent::receipted("git_resolve", {{"path", "model.opad"}, {"keep", "ours"}}));
+  CHECK(gitagent::writes("git_pull", {{"preview", true}}) && !gitagent::receipted("git_pull", {{"preview", true}}) && gitagent::receipted("git_pull"));
+  for (const char* name : {"git_commit", "git_switch", "git_branch_create", "git_tag", "git_fetch", "git_push", "git_merge_abort", "git_init"})
+    CHECK(opad::agent::live_schema(name)["required"].dump().find("request_id") != std::string::npos && gitagent::receipted(name));
   // The instructions and the push tool say what is not offered and how it may still happen.
   CHECK(mcp().instructions().find("explicit confirmation") != std::string::npos);
   for (const auto& t : tools)
@@ -217,6 +229,10 @@ TEST(status_commit_and_protection) {
   mcp().call("git_commit", {{"repo", s(repo)}, {"message", "Second box"}, {"paths", {"model.opad"}}});
   const json sw = mcp().call("git_switch", {{"repo", s(repo)}, {"branch", "main"}});
   CHECK(sw["state"] == "switched" && sw["branch"] == "main" && sw["files_changed"]["documents"] == json({"model.opad"}) && ops(doc, "feature") == 0);
+  // agent/box has commits main lacks: not merged, nothing to tidy.
+  const json unmerged = mcp().call("git_branches", {{"repo", s(repo)}});
+  CHECK(unmerged["merged_into_current"].empty());
+  for (const auto& x : unmerged["branches"]) CHECK(x["merged"] == false);
   std::printf("status, branches, commits refused on main and allowed off it or with the preference off PASS\n");
 }
 
@@ -257,6 +273,11 @@ TEST(merge_protection_and_driver) {
   const json ff = mcp().call("git_merge", {{"repo", s(repo)}, {"source", "left"}});
   CHECK(ff["state"] == "merged" && ff["fast_forward"] == true && ops(doc, "feature") == 2);
   setPref("git/protectMerges", true);
+  // Branch hygiene without deleting: left and right are in main now, reported as merged (main itself is the current one).
+  const json tidy = mcp().call("git_branches", {{"repo", s(repo)}});
+  if (tidy["merged_into_current"] != json({"left", "right"})) throw check::Failure("merged branches: " + tidy.dump());
+  for (const auto& x : tidy["branches"])
+    if (x["remote"] == false) CHECK(x["merged"] == (x["name"] != "main"));
   std::printf("merges into main refused and allowed by the preference, both branches' boxes merged by the driver PASS\n");
 }
 
@@ -266,7 +287,12 @@ TEST(conflicts_listed_aborted_resolved) {
   setPref("git/protectedBranches", "release/*");  // main is not protected here; patterns are
   mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "5 mm"}});
   mcp().call("git_commit", {{"repo", s(repo)}, {"message", "base"}, {"all", true}});
+  mcp().refused("git_branch_create", {{"repo", s(repo)}, {"name", "release/1"}, {"switch", false}}, "protected_branch");  // a protected name
+  setPref("git/protectCommits", false);
+  setPref("git/protectMerges", false);
   mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "release/1"}, {"switch", false}});
+  setPref("git/protectCommits", true);
+  setPref("git/protectMerges", true);
   CHECK(mcp().call("git_branches", {{"repo", s(repo)}})["branches"][1]["protected"] == true);
   mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "theirs"}});
   mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "20 mm"}});
@@ -295,6 +321,69 @@ TEST(conflicts_listed_aborted_resolved) {
   const json params = mcp().call("params", {{"doc", s(doc)}});
   CHECK(params.dump().find("20 mm") != std::string::npos);
   std::printf("a stopped merge listed, aborted, resolved for theirs and committed PASS\n");
+}
+
+// One parameter changed on two branches, a box made from it: the driver stops on the parameter and on the box's recomputed
+// result (derived), but the preview and git_resolve list the one decision only, count the derived one, and resolving
+// regenerates the file so the box follows the value kept.
+TEST(derived_conflicts_regenerate) {
+  defaults();
+  setPref("git/protectedBranches", "release/*");
+  const QString repo = repository("derived"), doc = repo + "/model.opad";
+  auto volume = [&] { return mcp().call("validate", {{"doc", s(doc)}})["items"][0]["volume_mm3"].get<double>(); };
+  mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "5 mm"}});
+  mcp().call("feature", {{"doc", s(doc)}, {"kind", "box"}, {"inputs", {{"length", "w"}, {"width", "5 mm"}, {"height", "5 mm"}}}});
+  mcp().call("git_commit", {{"repo", s(repo)}, {"message", "base"}, {"all", true}});
+  mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "theirs"}});
+  mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "20 mm"}});
+  mcp().call("git_commit", {{"repo", s(repo)}, {"message", "w 20"}, {"all", true}});
+  mcp().call("git_switch", {{"repo", s(repo)}, {"branch", "main"}});
+  mcp().call("param", {{"doc", s(doc)}, {"name", "w"}, {"expr", "10 mm"}});
+  CHECK(std::abs(volume() - 250) < 1e-6);
+  mcp().call("git_commit", {{"repo", s(repo)}, {"message", "w 10"}, {"all", true}});
+  const json preview = mcp().call("git_merge", {{"repo", s(repo)}, {"source", "theirs"}, {"preview", true}});
+  const json& d = preview["documents"][0];
+  if (!(preview["stops"] == true && d["conflicts"].size() == 1 && d["conflicts"][0]["name"] == "w" && d["derived_conflicts"].get<int>() >= 1 && d["will_regenerate"] == true))
+    throw check::Failure("the preview lists the one decision, the derived ones counted: " + preview.dump());
+  CHECK(mcp().call("git_merge", {{"repo", s(repo)}, {"source", "theirs"}})["state"] == "conflicts");
+  const json listed = mcp().call("git_resolve", {{"repo", s(repo)}, {"path", "model.opad"}});
+  if (!(listed["conflicts"].size() == 1 && listed["conflicts_total"] == 1 && listed["derived_conflicts"].get<int>() >= 1 && listed["will_regenerate"] == true))
+    throw check::Failure("git_resolve lists the one decision: " + listed.dump());
+  // Ours (10 mm) for the parameter: the box regenerated to it, though theirs' recomputed result came later in the merge.
+  const json r = mcp().call("git_resolve", {{"repo", s(repo)}, {"path", "model.opad"}, {"choices", {"ours"}}});
+  CHECK(r["state"] == "resolved" && r["regeneration"]["regenerated"].get<int>() >= 1 && r["regeneration"]["errors"].empty());
+  CHECK(mcp().call("params", {{"doc", s(doc)}}).dump().find("10 mm") != std::string::npos);
+  if (std::abs(volume() - 250) > 1e-6) throw check::Failure("the box follows the kept value: " + std::to_string(volume()));
+  CHECK(mcp().call("git_commit", {{"repo", s(repo)}, {"message", "merge theirs, w 10"}, {"all", true}})["state"] == "committed");
+  CHECK(mcp().call("git_status", {{"repo", s(repo)}})["clean"] == true);  // the regenerated file is what was committed
+  std::printf("a parameter changed on both sides: one decision listed, the derived results counted and regenerated PASS\n");
+}
+
+TEST(protected_branch_never_created) {
+  defaults();
+  const QString repo = repository("creates");
+  setPref("git/protectCommits", false);
+  mcp().call("git_commit", {{"repo", s(repo)}, {"message", "base"}, {"all", true}});
+  setPref("git/protectCommits", true);
+  mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "develop"}});
+  // A protected name made by an agent at a commit of its choosing would hold its commits: refused while commits or merges
+  // into protected branches are, nothing made, the preference named.
+  const json no = mcp().refused("git_branch_create", {{"repo", s(repo)}, {"name", "master"}, {"from", "develop"}}, "protected_branch");
+  CHECK(no["message"].get<std::string>().find("Refuse commits to a protected branch") != std::string::npos && no["next"] == "git_branch_create");
+  CHECK(QString::fromUtf8(gitIn(repo, {"branch", "--list", "master"})).trimmed().isEmpty());
+  CHECK(mcp().call("git_status", {{"repo", s(repo)}})["branch"] == "develop");
+  setPref("git/protectedBranches", "main, master, release/*");
+  setPref("git/protectCommits", false);  // merges into them still refused: still no creating them
+  const json merges = mcp().refused("git_branch_create", {{"repo", s(repo)}, {"name", "release/2"}, {"switch", false}}, "protected_branch");
+  CHECK(merges["message"].get<std::string>().find("Refuse merges into a protected branch") != std::string::npos);
+  // A branch from a protected one is fine.
+  const json from = mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "feature/x"}, {"from", "main"}});
+  CHECK(from["branch"] == "feature/x" && from["protected"] == false);
+  // Both preferences off: the user allows it.
+  setPref("git/protectMerges", false);
+  CHECK(mcp().call("git_branch_create", {{"repo", s(repo)}, {"name", "master"}, {"switch", false}})["created"] == "master");
+  defaults();
+  std::printf("protected branches never created by an agent while protected, branching from them allowed PASS\n");
 }
 
 TEST(push_pull_never_forced) {
@@ -354,9 +443,20 @@ TEST(init_tag_diff) {
   defaults();
   // A new repository as Set up repository makes it: the initial branch, OPAD's attributes and ignore file, this OPAD as the driver.
   const QString fresh = root() + "/fresh/project";
+  QDir().mkpath(fresh);  // outside a repository git_status points at git_init (agents may make one)
+  const json none = mcp().refused("git_status", {{"repo", s(fresh)}}, "not_a_repository");
+  CHECK(none["next"] == "git_init" && none["message"].get<std::string>().find("git_init") != std::string::npos);
+  CHECK(none["message"].get<std::string>().find("user's call") == std::string::npos);
   const json made = mcp().call("git_init", {{"repo", s(fresh)}});
   CHECK(made["state"] == "initialized" && made["branch"] == "main" && made["attributes"] == true && made["ignore"] == true && made["protected"] == true);
   CHECK(made["driver"].get<std::string>().find("merge-driver") != std::string::npos);
+  {  // the diff driver is set up without git's textconv cache (its notes ref shows in git log --all as a commit)
+    git::Context c;
+    c.program = git::findProgram();
+    c.dir = fresh;
+    CHECK(git::run(c, {"config", "--local", "--get", "diff.opad.textconv"}).ok());
+    CHECK(!git::run(c, {"config", "--local", "--get", "diff.opad.cachetextconv"}).ok());
+  }
   QFile attributes(fresh + "/.gitattributes");
   CHECK(attributes.open(QIODevice::ReadOnly) && attributes.readAll().contains("*.opad text eol=lf merge=opad diff=opad"));
   mcp().refused("git_init", {{"repo", s(fresh)}}, "already_a_repository");

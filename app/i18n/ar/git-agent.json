@@ -34,5 +34,22 @@
  "%1 is a protected branch (Preferences > Version control > Branch protection). Push it anyway?": "%1 فرع محمي (التفضيلات > التحكم في الإصدارات > حماية الفروع). أتدفعه على أي حال؟",
  "Push %1": "دفع %1",
  "%1 is a protected branch (Preferences > Version control > Branch protection). Merge %2 into it anyway?": "%1 فرع محمي (التفضيلات > التحكم في الإصدارات > حماية الفروع). أتدمج %2 فيه على أي حال؟",
- "Merge into %1": "دمج في %1"
+ "Merge into %1": "دمج في %1",
+ "%1 changes the repository: pass a request_id (previews and listings need none).": "يغيّر %1 المستودع: مرّر request_id (لا تحتاجه المعاينات والقوائم).",
+ "Agent access is view-only. Opening or creating a document needs editing permission (Settings > AI integration).": "وصول الوكيل للعرض فقط. فتح مستند أو إنشاؤه يحتاج إلى إذن التحرير (الإعدادات > تكامل الذكاء الاصطناعي).",
+ "path must be an absolute path.": "يجب أن يكون path مسارًا مطلقًا.",
+ "A new document is an .opad file: end the path with .opad.": "المستند الجديد ملف ‎.opad: اجعل المسار ينتهي بـ ‎.opad.",
+ "%1 exists already: open_document opens it, or choose another path. Nothing was changed.": "%1 موجود من قبل: يفتحه open_document، أو اختر مسارًا آخر. لم يتغيّر شيء.",
+ "%1 does not exist.": "%1 غير موجود.",
+ "The open document": "المستند المفتوح",
+ "%1 has unsaved changes, and opening another document would discard them: nothing was changed. Save it first (save), or ask the user what to do with them.": "في %1 تغييرات غير محفوظة، وفتح مستند آخر سيُسقطها: لم يتغيّر شيء. احفظه أولًا (save)، أو اسأل المستخدم ماذا يفعل بها.",
+ "Agent: new document %1": "الوكيل: مستند جديد %1",
+ "Agent: open %1": "الوكيل: فتح %1",
+ "OPAD could not open %1: %2": "تعذّر على OPAD فتح %1: %2",
+ "Agent made and opened %1": "أنشأ الوكيل %1 وفتحه",
+ "Agent opened %1": "فتح الوكيل %1",
+ "OPAD did not open %1: the window has unfinished work that keeps the current document. Ask the user.": "لم يفتح OPAD ‏%1: في النافذة عمل غير منتهٍ يُبقي المستند الحالي. اسأل المستخدم.",
+ "Agent: new document": "الوكيل: مستند جديد",
+ "Could not create the document: %1": "تعذّر إنشاء المستند: %1",
+ "No document is open in this window: open_document opens a file, new_document makes an empty .opad.": "لا مستند مفتوح في هذه النافذة: يفتح open_document ملفًا، وينشئ new_document ملف ‎.opad فارغًا."
 }

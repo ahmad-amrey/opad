@@ -197,7 +197,8 @@ struct Scene {
   // subtree with bodies but none kept, as high up as it goes. Sketches are not nodes: they stay as they are.
   std::vector<std::string> others_to_hide(const std::vector<std::string>& keep) const;
   std::vector<std::string> path_to(const std::string& id) const;  // root..id
-  json tree_json(int max_depth = -1) const;
+  // The hierarchy from the roots, or from `start` (those nodes, in that order) when given; depth counts from them.
+  json tree_json(int max_depth = -1, const std::vector<std::string>* start = nullptr) const;
   const SketchItem* sketch(const std::string& id) const;
   const Feature* feature(const std::string& id) const;
   const Param* param(const std::string& name) const;

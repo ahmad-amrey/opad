@@ -12,6 +12,7 @@
 #include <set>
 
 #include "Git.hpp"
+#include "opad/commands.hpp"
 #include "opad/diff.hpp"
 #include "opad/document.hpp"
 #include "opad/merge.hpp"
@@ -80,10 +81,15 @@ void useAppSettings(const QString& programDir, bool singleFile) {
 
 Refused::Refused(std::string c, const QString& message, std::string n) : std::runtime_error(message.toStdString()), code(std::move(c)), next(std::move(n)) {}
 
-bool writes(const std::string& name) {
+bool writes(const std::string& name, const json& args) {
   static const std::set<std::string> reads{"git_status", "git_log", "git_branches", "git_diff"};
-  return !reads.count(name);
+  if (reads.count(name)) return false;
+  if (name == "git_merge" && args.value("preview", false)) return false;
+  if (name == "git_resolve" && !args.contains("keep") && !args.contains("choices")) return false;  // only lists
+  return true;
 }
+
+bool receipted(const std::string& name, const json& args) { return writes(name, args) && !(name == "git_pull" && args.value("preview", false)); }
 
 bool changesFiles(const std::string& name) {
   static const std::set<std::string> files{"git_switch", "git_merge", "git_merge_abort", "git_resolve", "git_pull", "git_branch_create"};
@@ -167,8 +173,10 @@ Repo open(const Call& call) {
   if (!where.ok()) {
     const QString err = QString::fromUtf8(where.err);
     if (err.contains("not a git repository"))
-      refuse("not_a_repository", QStringLiteral("%1 is not in a git repository. Setting one up is the user's call (OPAD's Version control panel > Set up repository).")
-                                     .arg(QDir::toNativeSeparators(dir)));
+      refuse("not_a_repository",
+             QStringLiteral("%1 is not in a git repository. git_init makes one there as OPAD's Set up repository does (OPAD's merge and diff driver, .gitignore, Git LFS for assets/).")
+                 .arg(QDir::toNativeSeparators(dir)),
+             "git_init");
     refuse("git_failed", where.error());
   }
   const QStringList lines = QString::fromUtf8(where.out).split('\n', Qt::SkipEmptyParts);
@@ -350,6 +358,12 @@ json conflictJson(const opad::MergeConflict& c, const opad::Scene& scene) {
   return {{"target", c.target}, {"field", c.field}, {"name", str(nameIn(scene, c.target))}, {"ours_op", c.ours}, {"theirs_op", c.theirs}};
 }
 
+// Conflicts as an agent decides them: the derived ones (recomputed results that follow from a change, opad::derived_conflict)
+// are counted and regenerated after the decisions, never listed as decisions of their own.
+const char* const kDerivedNote =
+    "derived_conflicts are recomputed results (regen) that follow from the changes listed (a parameter changed on both sides recomputes every "
+    "feature that uses it): they are no decisions; the file will regenerate after the listed conflicts are decided.";
+
 // What merging `target` into HEAD brings (as the panel's incoming preview, VersionControl.cpp): the commits, and each
 // .opad they change as OPAD's driver would merge it.
 json incoming(const Repo& r, const QString& target, const QString& label, const Call& call) {
@@ -408,10 +422,18 @@ json incoming(const Repo& r, const QString& target, const QString& label, const 
         stops = true;
         d["stops"] = m.error;
         const opad::Scene scene = opad::resolve(oursDoc);
+        size_t derived = 0;
+        const auto decide = opad::source_conflicts(m.conflicts, oursDoc, theirsDoc, &derived);
         json conflicts = json::array();
-        for (const auto& c : m.conflicts)
+        for (const auto& c : decide)
           if (conflicts.size() < 100) conflicts.push_back(conflictJson(c, scene));
         d["conflicts"] = conflicts;
+        if (decide.size() > conflicts.size()) d["conflicts_total"] = decide.size();
+        if (derived) {
+          d["derived_conflicts"] = derived;
+          d["will_regenerate"] = true;
+          d["derived_note"] = kDerivedNote;
+        }
       } else {
         merged = m.text();
       }
@@ -491,10 +513,18 @@ json log(const json& args, const Call& call) {
 
 json branches(const Call& call) {
   Repo r = open(call);
-  json list = json::array();
+  // Local branches whose every commit HEAD has (git branch --merged): clutter an agent can report; deleting them is the
+  // user's (no tool deletes a branch).
+  QStringList merged;
+  if (!r.unborn())
+    if (const git::Result m = git::run(r.c, {"branch", "--merged", "HEAD", "--format=%(refname:short)"}, quick()); m.ok())
+      for (const QString& line : QString::fromUtf8(m.out).split('\n', Qt::SkipEmptyParts)) merged << line.trimmed();
+  json list = json::array(), mergedHere = json::array();
   for (const git::Branch& b : git::branches(r.c)) {
     json item = {{"name", str(b.name)}, {"remote", b.remote}, {"current", b.head}, {"head", str(b.oid.left(12))}, {"subject", str(b.subject)}, {"date", str(b.date)}};
     if (!b.remote) {
+      item["merged"] = !b.head && merged.contains(b.name);
+      if (!b.head && merged.contains(b.name)) mergedHere.push_back(str(b.name));
       item["protected"] = call.policy.protects(b.name);
       if (!b.upstream.isEmpty()) {
         item["upstream"] = str(b.upstream);
@@ -505,7 +535,7 @@ json branches(const Call& call) {
     }
     list.push_back(item);
   }
-  return {{"current", r.branch().isEmpty() ? json(nullptr) : json(str(r.branch()))}, {"branches", list}, {"remotes", [&] {
+  return {{"current", r.branch().isEmpty() ? json(nullptr) : json(str(r.branch()))}, {"branches", list}, {"merged_into_current", mergedHere}, {"remotes", [&] {
              json remotes = json::array();
              for (const QString& name : git::remotes(r.c)) remotes.push_back(str(name));
              return remotes;
@@ -549,6 +579,18 @@ json branchCreate(const json& args, const Call& call) {
   const QString name = text(args, "name");
   if (!git::validBranchName(name)) refuse("invalid_arguments", git::explain("is not a valid branch name") + " (\"" + name + "\")");
   if (!git::revParse(r.c, "refs/heads/" + name).isEmpty()) refuse("branch_exists", QStringLiteral("A branch %1 exists already: git_switch to it, or choose another name.").arg(name), "git_switch");
+  // Making a protected branch at a commit of the agent's choosing puts commits on it as a commit or merge would: refused
+  // while either protection is on. Starting a branch from a protected one (from: main) is fine.
+  if ((call.policy.commits || call.policy.merges) && call.policy.protects(name)) {
+    const bool commits = call.policy.commits;
+    refuse("protected_branch",
+           QStringLiteral("Refused: %1 is a protected branch and the user's OPAD preference \"%2\" is on (Preferences > Version control > Branch protection; setting %3), so "
+                          "agents may not create it: a protected branch made at a commit of the agent's choosing would hold commits no commit or merge put there. "
+                          "Nothing was changed. Choose another name (git_branch_create makes a branch from %1 too: from: %1), or ask the user to create it.")
+               .arg(name, commits ? QStringLiteral("Refuse commits to a protected branch") : QStringLiteral("Refuse merges into a protected branch"),
+                    QString::fromLatin1(commits ? kCommitsKey : kMergesKey)),
+           "git_branch_create");
+  }
   const bool go = args.value("switch", true);
   QString from = text(args, "from"), at;
   if (!from.isEmpty()) {
@@ -719,6 +761,7 @@ json resolve(const json& args, const Call& call) {
   std::string base = blob(r, ":1", rel), ours = blob(r, ":2", rel), theirs = blob(r, ":3", rel);
   const bool document = rel.endsWith(".opad", Qt::CaseInsensitive) && !base.empty() && !ours.empty() && !theirs.empty();
   std::string written;
+  bool regenerate = false;  // both sides changed the design (derived conflicts among them): recomputed once decided
   if (document && !whole) {
     if (call.progress) call.progress(QStringLiteral("Merging %1").arg(QFileInfo(rel).fileName()));
     opad::FileMerge m = opad::merge_files(base, ours, theirs, true);
@@ -728,31 +771,40 @@ json resolve(const json& args, const Call& call) {
       refuse("not_mergeable", QStringLiteral("The two versions of %1 cannot be merged (%2): keep one side's whole file (keep with whole_file=true).").arg(rel, QString::fromStdString(m.error)));
     }
     const auto origin = fsPath(QDir(r.top).filePath(rel));
+    const opad::Document oursDoc = opad::Document::parse_index(ours, origin), theirsDoc = opad::Document::parse_index(theirs, origin), baseDoc = opad::Document::parse_index(base, origin);
+    size_t derived = 0;
+    const std::vector<opad::MergeConflict> decide = opad::source_conflicts(m.conflicts, oursDoc, theirsDoc, &derived);
+    regenerate = derived > 0 || (opad::changes_design(baseDoc, oursDoc) && opad::changes_design(baseDoc, theirsDoc));
     if (listing) {
-      const opad::Document oursDoc = opad::Document::parse_index(ours, origin), theirsDoc = opad::Document::parse_index(theirs, origin), baseDoc = opad::Document::parse_index(base, origin);
       const opad::Scene scene = opad::resolve(oursDoc);
       json list = json::array();
-      for (size_t i = 0; i < m.conflicts.size() && i < 1000; ++i) {
-        const auto& c = m.conflicts[i];
+      for (size_t i = 0; i < decide.size() && i < 1000; ++i) {
+        const auto& c = decide[i];
         json item = conflictJson(c, scene);
         item["index"] = i;
         if (const opad::Op* op = oursDoc.find_op(c.ours)) item["ours"] = {{"type", op->type}, {"by", op->data.value("by", "")}, {"effect", opad::op_effect(op->data, c.target, c.field)}};
         if (const opad::Op* op = theirsDoc.find_op(c.theirs)) item["theirs"] = {{"type", op->type}, {"by", op->data.value("by", "")}, {"effect", opad::op_effect(op->data, c.target, c.field)}};
         list.push_back(item);
       }
-      return {{"path", str(rel)}, {"mergeable", true}, {"conflicts", list}, {"conflicts_total", m.conflicts.size()},
-              {"regenerate_after", opad::changes_design(baseDoc, oursDoc) && opad::changes_design(baseDoc, theirsDoc)},
-              {"next", "git_resolve with keep (ours|theirs for every conflict) or choices (one per index); both sides' other changes are kept."}};
+      json out = {{"path", str(rel)}, {"mergeable", true}, {"conflicts", list}, {"conflicts_total", decide.size()}, {"derived_conflicts", derived},
+                  {"regenerate_after", regenerate},
+                  {"next", decide.empty() ? "Nothing to decide: git_resolve with keep (either side) settles it and regenerates the file."
+                                          : "git_resolve with keep (ours|theirs for every listed conflict) or choices (one per index); both sides' other changes are kept."}};
+      if (derived) {
+        out["will_regenerate"] = true;
+        out["derived_note"] = kDerivedNote;
+      }
+      return out;
     }
     std::vector<bool> mine;
     if (hasChoices) {
-      if (args["choices"].size() != m.conflicts.size())
-        refuse("invalid_arguments", QStringLiteral("choices has %1 entries for %2 conflicts (list them: git_resolve without keep or choices).").arg(args["choices"].size()).arg(m.conflicts.size()));
+      if (args["choices"].size() != decide.size())
+        refuse("invalid_arguments", QStringLiteral("choices has %1 entries for %2 conflicts (list them: git_resolve without keep or choices).").arg(args["choices"].size()).arg(decide.size()));
       for (const auto& c : args["choices"]) mine.push_back(c == "ours");
     } else {
-      mine.assign(m.conflicts.size(), keep == "ours");
+      mine.assign(decide.size(), keep == "ours");
     }
-    written = m.conflicts.empty() ? m.text() : opad::resolve_merge(m.text(), m.conflicts, mine, "Agent");
+    written = decide.empty() ? m.text() : opad::resolve_merge(m.text(), decide, mine, "Agent");
   } else {
     if (listing)
       return {{"path", str(rel)}, {"mergeable", false}, {"ours_exists", !ours.empty()}, {"theirs_exists", !theirs.empty()},
@@ -763,12 +815,24 @@ json resolve(const json& args, const Call& call) {
       refuse("side_deleted", QStringLiteral("The %1 side deleted %2: settling that is the user's call (the Version control panel, or the git CLI after asking).").arg(keep, rel));
   }
   writeFile(r, rel, written);
+  json regenerated = nullptr;
+  if (regenerate) {  // what each side computed without the other's changes, and the derived results, follow the decisions
+    if (call.progress) call.progress(QStringLiteral("Regenerating %1").arg(QFileInfo(rel).fileName()));
+    try {
+      const json done = opad::commands::run("regenerate", {{"doc", str(QDir(r.top).filePath(rel))}, {"by", "Agent"}});
+      regenerated = {{"regenerated", done.value("regenerated", json::array()).size()}, {"errors", done.value("errors", json::array())}};
+    } catch (const std::exception& e) {
+      regenerated = {{"failed", e.what()}, {"next", "The decided file is written and staged; run regenerate on the document, save it, then git_commit."}};
+    }
+  }
   must(r, {"add", "--", rel});
   readStatus(r);
   json left = json::array();
   for (const QString& p : r.conflicts()) left.push_back(str(p));
-  return {{"state", "resolved"}, {"path", str(rel)}, {"kept", keep.isEmpty() ? "choices" : str(keep)}, {"remaining_conflicts", left},
-          {"next", left.empty() ? "git_commit (it commits the merge as a whole)." : "git_resolve the remaining files."}};
+  json out = {{"state", "resolved"}, {"path", str(rel)}, {"kept", keep.isEmpty() ? "choices" : str(keep)}, {"remaining_conflicts", left},
+              {"next", left.empty() ? "git_commit (it commits the merge as a whole)." : "git_resolve the remaining files."}};
+  if (!regenerated.is_null()) out["regeneration"] = regenerated;
+  return out;
 }
 
 json pull(const json& args, const Call& call) {

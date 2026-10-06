@@ -66,14 +66,15 @@ class Client:
 
 
 class Desktop:
-    def __init__(self, app, cli, root, document=None, settings=None, environment=None):
+    def __init__(self, app, cli, root, document=None, settings=None, environment=None, empty=False):
+        """empty: the window starts on its start page, with no document."""
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
         self.settings = settings or root / "settings"
         self.control = root / "control"
         self.control.mkdir(exist_ok=True)
-        document = document or root / "source.opad"
-        if not document.exists():
+        document = None if empty else document or root / "source.opad"
+        if document and not document.exists():
             subprocess.run([str(cli), "new", str(document)], check=True, capture_output=True)
         env = dict(os.environ, OPAD_LANG="en", OPAD_BENCH_SETTINGS=str(self.settings),
                    OPAD_BENCH_AGENT=str(self.control), OPAD_TRACE=str(root / "trace.log"))
@@ -84,7 +85,7 @@ class Desktop:
             startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startup.wShowWindow = 0
         self.log = (root / "stderr.log").open("w", encoding="utf-8")
-        self.process = subprocess.Popen([str(app), str(document)], env=env, startupinfo=startup,
+        self.process = subprocess.Popen([str(app)] + ([str(document)] if document else []), env=env, startupinfo=startup,
                                         stdout=self.log, stderr=self.log)
         start = time.monotonic()
         while time.monotonic() - start < 90:
@@ -93,7 +94,8 @@ class Desktop:
             for file in files:
                 try:
                     data = json.loads(file.read_text(encoding="utf-8"))
-                    if data.get("target") and data.get("pid") == self.process.pid:
+                    # A window advertises its start page ("start:<n>") until the document it was given is loaded.
+                    if data.get("document" if document else "target") and data.get("enabled") and data.get("pid") == self.process.pid:
                         self.discovery = file.parent
                         self.descriptor = data
                         break

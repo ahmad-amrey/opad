@@ -186,7 +186,7 @@ Frame Frame::from_json(const json& j) {
   return f;
 }
 
-json Scene::tree_json(int max_depth) const {
+json Scene::tree_json(int max_depth, const std::vector<std::string>* start) const {
   std::function<json(const std::string&, int)> rec = [&](const std::string& id, int depth) {
     const Node* n = node(id);
     json j;
@@ -226,7 +226,7 @@ json Scene::tree_json(int max_depth) const {
     return j;
   };
   json out = json::array();
-  for (const auto& r : roots) out.push_back(rec(r, 1));
+  for (const auto& r : start ? *start : roots) out.push_back(rec(r, 1));
   return out;
 }
 
