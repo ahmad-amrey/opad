@@ -5,8 +5,8 @@
 // bridge's own socket (as opad-cli mcp --live talks to it): git_status sees main protected, git_commit is refused there,
 // git_branch_create makes and switches to a branch of its own (the chip and the panel follow), git_commit refuses the
 // unsaved document and commits it once saved (the panel's history shows it), git_switch back to main (the document
-// follows the file), git_merge into main refused, previewed; every action a line in Agent activity. Pictures at
-// <prefix>.<step>.png.
+// follows the file, the connection still bound), git_merge into main refused, previewed; every action a line in Agent
+// activity. Pictures at <prefix>.<step>.png.
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDialog>
@@ -240,11 +240,13 @@ bool VersionControl::benchProtect(const QString& prefix) {
         require(!st->reply.value("isError", false), "switched: " + QString::fromStdString(st->reply.dump()));
         require(activity(tr("Agent switched to %1").arg("main")), "in Agent activity");
         pass("git_switch to main: the document followed the file");
-        bind();  // a reload of the document unbinds: bind its new generation
+        tool("live_state");  // the same document reloaded: still bound, no live_bind
         return true;
       },
       [=] {
         if (!answered()) return false;
+        require(!st->reply.value("isError", false) && result().contains("notice"), "still bound after the reload, told once: " + QString::fromStdString(st->reply.dump()).left(400));
+        pass("git_switch: the connection still bound to the reloaded document (a notice says so)");
         tool("git_merge", {{"source", "agent/work"}}, true);
         return true;
       },

@@ -52,6 +52,7 @@ class AgentBridge : public QObject {
   struct Session {
     QPointer<QLocalSocket> socket;QByteArray input;QString target,agent;std::string clientId;
     QElapsedTimer requestTimer;bool bound=false,receiving=false;
+    bool reloaded=false;  // the document was reloaded from its file since the last reply: the next one says so (notice)
     std::shared_ptr<const KnownRefs> known;  // replaced, never changed in place: running jobs keep their copy
     std::shared_ptr<const BatchSteps> steps;  // earlier batches' step results, for @{step#/...} (gap log #14); likewise
   };
@@ -88,6 +89,12 @@ class AgentBridge : public QObject {
   bool m_enabled=false,m_edit=false,m_follow=false,m_busy=false,m_committing=false,m_seenClient=false;
   int m_benchDelay=0;
   unsigned long long m_epoch=0;
+  // The target is the document's identity, not its generation (UI-06): a reload of the same document (same uuid, same file:
+  // a git switch, merge or pull, a change on disk, Reload) keeps it, so a bound connection follows it with a notice; any other
+  // document (a new one, another file, a copy with a new uuid) is a new target that needs an explicit live_bind.
+  unsigned long long m_identity=0;
+  struct Replacing {std::string uuid;QString path;bool open=false,pending=false;} m_replacing;
+  void followReplace();  // after aboutToReplace: the same document again, or another one
   QPointer<Job> m_job;
   std::shared_ptr<Snapshot> m_cache;
   std::shared_ptr<Prepared> m_prepared;

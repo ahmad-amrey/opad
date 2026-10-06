@@ -34,5 +34,6 @@
  "%1 is a protected branch (Preferences > Version control > Branch protection). Push it anyway?": "%1 فرع محمي (التفضيلات > التحكم في الإصدارات > حماية الفروع). أتدفعه على أي حال؟",
  "Push %1": "دفع %1",
  "%1 is a protected branch (Preferences > Version control > Branch protection). Merge %2 into it anyway?": "%1 فرع محمي (التفضيلات > التحكم في الإصدارات > حماية الفروع). أتدمج %2 فيه على أي حال؟",
- "Merge into %1": "دمج في %1"
+ "Merge into %1": "دمج في %1",
+ "The document was reloaded from its file; bound agents follow it": "أُعيد تحميل المستند من ملفه؛ الوكلاء المرتبطون يتابعونه"
 }

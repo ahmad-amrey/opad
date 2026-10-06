@@ -32,8 +32,12 @@ AgentBridge::AgentBridge(AppDocument* doc,DesignController* design,Viewport* vie
   m_follow=settings.value("agent/follow",false).toBool();
   m_server.setSocketOptions(QLocalServer::UserAccessOption);
   connect(&m_server,&QLocalServer::newConnection,this,&AgentBridge::accept);
-  connect(doc,&AppDocument::aboutToReplace,this,[this]{stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();for(auto& s:m_sessions)s->bound=false;});
-  connect(doc,&AppDocument::changed,this,[this]{if(!m_committing)clearPrepared();if(m_cache)dispose(std::move(m_cache));publish();});
+  // Another state of the document: unfinished work stops; whether bound connections follow is known once it is in (changed).
+  connect(doc,&AppDocument::aboutToReplace,this,[this]{
+    stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();
+    if(!m_replacing.pending)m_replacing={m_doc->hasDocument?m_doc->doc.header.uuid:std::string(),m_doc->path(),m_doc->hasDocument && !m_doc->browse,true};
+  });
+  connect(doc,&AppDocument::changed,this,[this]{if(m_replacing.pending)followReplace();if(!m_committing)clearPrepared();if(m_cache)dispose(std::move(m_cache));publish();});
   connect(doc,&AppDocument::pathChanged,this,&AgentBridge::publish);
   connect(design,&DesignController::stateChanged,this,[this]{if(editorBusy() && !m_doc->snapshotBusy())clearPrepared();emit statusChanged();});
   setAccess(settings.value("agent/enabled",false).toBool(),settings.value("agent/edit",false).toBool());
@@ -48,7 +52,15 @@ AgentBridge::~AgentBridge(){
   connect(thread,&QThread::finished,thread,&QObject::deleteLater);thread->start();
   if(m_cache)dispose(std::move(m_cache));
 }
-QString AgentBridge::target()const{return m_doc->hasDocument?QString::fromStdString(m_doc->doc.header.uuid)+":"+QString::number(m_doc->generation):QString();}
+QString AgentBridge::target()const{return m_doc->hasDocument?QString::fromStdString(m_doc->doc.header.uuid)+":"+QString::number(m_identity):QString();}
+void AgentBridge::followReplace(){
+  m_replacing.pending=false;
+  const bool same=m_replacing.open && m_doc->hasDocument && !m_doc->browse && !m_replacing.uuid.empty() && m_doc->doc.header.uuid==m_replacing.uuid &&
+    !m_replacing.path.isEmpty() && QFileInfo(m_doc->path())==QFileInfo(m_replacing.path);
+  if(!same){++m_identity;for(auto& s:m_sessions)s->bound=false;return;}  // another document: bound explicitly, never followed
+  bool any=false;for(auto& s:m_sessions)if(s->bound){s->reloaded=true;any=true;}
+  if(any)activity(tr("The document was reloaded from its file; bound agents follow it"));
+}
 json AgentBridge::descriptor()const{return {{"instance",m_instance.toStdString()},{"endpoint",m_endpoint.toStdString()},{"target",target().toStdString()},{"document",m_doc->hasDocument?m_doc->doc.header.uuid:""},{"title",m_doc->title().toStdString()},{"path",m_doc->path().toStdString()},{"pid",QCoreApplication::applicationPid()},{"enabled",m_enabled},{"edit",m_edit},{"version",opad::version_string()}};}
 void AgentBridge::publish(){
   // Fixed-size descriptor; serialize/write on a worker. Serialize publishes under one mutex
@@ -148,6 +160,11 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
   },[this,session,parsed](bool ok,const QString& error){if(!session->socket)return;if(!ok){fail(session,"invalid_arguments",error);return;}dispatch(session,std::move(parsed->request),std::move(parsed->hash));},JobKind::Background);
 }
 void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,const std::string& receipt){
+  if(session->reloaded && result.contains("structuredContent")){  // once, in the first reply after the reload
+    session->reloaded=false;
+    result["structuredContent"]["notice"]={{"document_reloaded",true},{"target",target().toStdString()},{"revision",m_doc->revision},
+      {"message","The bound document was reloaded from its file (a git switch, merge or pull, or a change on disk); this connection still follows it under the same target. Staged previews and transactions were discarded. Read live_state or context again before editing."}};
+  }
   if(!result["structuredContent"].contains("elapsed_ms") && session->requestTimer.isValid())result["structuredContent"]["elapsed_ms"]=session->requestTimer.elapsed();
   auto bytes=std::make_shared<QByteArray>();auto given=std::make_shared<std::vector<std::pair<std::string,Known>>>();
   m_jobs->backgroundNext();

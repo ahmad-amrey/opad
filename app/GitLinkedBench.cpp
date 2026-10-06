@@ -8,9 +8,12 @@
 // loaded. Nothing is trusted at first: the open asks by itself, once for both boards' folders (Always trust takes both); later
 // switches read them silently; the third board's folder is asked about by itself after the switch that brings it (Not now:
 // live_state and context tell an agent that the user's trust is needed, which it cannot give), then read from its badge.
-// The trust question is answered through assets::setTrustAnswer. Pictures at <prefix>.<step>.png.
+// The trust question is answered through assets::setTrustAnswer. The connection, bound once, stays bound through every
+// reload of the same document (a notice in the next reply says so); another document opened in the window needs an explicit
+// live_bind (target_changed). Pictures at <prefix>.<step>.png.
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QLocalSocket>
 #include <QSettings>
 #include <QTimer>
@@ -72,7 +75,7 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
     json reply;
     bool waiting = false;
     size_t asks = 0;
-    std::string third;
+    std::string third, target;
   };
   auto st = std::make_shared<State>();
   auto require = [](bool ok, const QString& why) {
@@ -144,7 +147,15 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
   auto asked = [] { return trustAnswers().asked.size(); };
   auto folder = [](const QString& path) { return QDir::fromNativeSeparators(path).section('/', -1); };
   // One agent git command, then the document as the branch has it: `boards` linked and loaded, no question asked.
-  auto gitStep = [=](const std::string& name, json args, std::initializer_list<const char*> boards, const QString& what) {
+  // The reply to live_state, still bound to the target bound at first; with a notice once after a reload (not a merge).
+  auto stillBound = [=](bool reload, const QString& what) {
+    const json& r = st->reply["structuredContent"];
+    require(!failed() && r["result"].value("target", "") == st->target && agent->descriptor()["target"] == st->target,
+            what + ": still bound to " + QString::fromStdString(st->target) + ": " + dump());
+    require(r.contains("notice") == reload && (!reload || r["notice"].value("document_reloaded", false)),
+            what + (reload ? ": the reload is said in a notice" : ": no notice for a merge") + ": " + dump());
+  };
+  auto gitStep = [=](const std::string& name, json args, std::initializer_list<const char*> boards, const QString& what, bool reload) {
     std::vector<const char*> want(boards);
     return std::vector<std::function<bool()>>{
         [=] {
@@ -167,12 +178,13 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
           for (const char* b : want) require(badge(l.at(b).root).icon == "check", QString("%1: in sync after %2").arg(b, what));
           win->grab().save(prefix + "." + QString::fromStdString(name) + ".png");
           pass(what + ": " + names(l));
-          bind();  // a reload of the document unbinds: bind its new generation
+          tool("live_state");  // no live_bind: the same document under the same target
           return true;
         },
         [=] {
           if (!answered()) return false;
-          require(!failed(), "bound again: " + dump());
+          stillBound(reload, what);
+          pass(what + (reload ? ": still bound, the reload said once" : ": still bound"));
           return true;
         },
     };
@@ -205,12 +217,13 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
       [=] {
         if (!answered()) return false;
         require(!failed(), "bound: " + dump());
+        st->target = agent->descriptor()["target"].get<std::string>();
         return true;
       },
   };
   auto add = [&steps](std::vector<std::function<bool()>> more) { steps.insert(steps.end(), more.begin(), more.end()); };
-  add(gitStep("git_switch", {{"branch", "develop"}}, {}, "git_switch develop (a reload): no board"));
-  add(gitStep("git_merge", {{"source", "feature/boards"}}, {"base.kicad_pcb", "screen.kicad_pcb"}, "git_merge feature/boards (a merge of the file): both boards read"));
+  add(gitStep("git_switch", {{"branch", "develop"}}, {}, "git_switch develop (a reload): no board", true));
+  add(gitStep("git_merge", {{"source", "feature/boards"}}, {"base.kicad_pcb", "screen.kicad_pcb"}, "git_merge feature/boards (a merge of the file): both boards read", false));
   add({
       [=] {  // the third board's folder is not trusted: asked by itself once its import came in; Not now
         if (!settled()) return false;
@@ -235,17 +248,12 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
         require(badge(l.at("third.kicad_pcb").root).text == "not read", "the third board's badge: not read");
         win->grab().save(prefix + ".untrusted.png");
         pass("git_switch feature/third: asked by itself about the third board's folder alone; Not now leaves it unread (badge: not read)");
-        bind();  // a reload of the document unbinds: bind its new generation
-        return true;
-      },
-      [=] {
-        if (!answered()) return false;
-        require(!failed(), "bound again: " + dump());
         tool("live_state");
         return true;
       },
       [=] {
         if (!answered()) return false;
+        stillBound(false, "git_switch feature/third (a merge of the file)");
         const json& r = st->reply["structuredContent"]["result"];
         require(!failed() && r.contains("linked_files"), "live_state says what is unread: " + dump());
         const json& l = r["linked_files"];
@@ -278,8 +286,34 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
         return true;
       },
   });
-  add(gitStep("git_switch", {{"branch", "feature/boards"}}, {"base.kicad_pcb", "screen.kicad_pcb"}, "git_switch feature/boards (a reload): the boards loaded"));
-  add(gitStep("git_switch", {{"branch", "feature/alt"}}, {"base.kicad_pcb"}, "git_switch feature/alt (a reload, another history): base read again"));
+  add(gitStep("git_switch", {{"branch", "feature/boards"}}, {"base.kicad_pcb", "screen.kicad_pcb"}, "git_switch feature/boards (a reload): the boards loaded", true));
+  add(gitStep("git_switch", {{"branch", "feature/alt"}}, {"base.kicad_pcb"}, "git_switch feature/alt (a reload, another history): base read again", true));
+  const QString other = QDir::cleanPath(QFileInfo(doc->path()).absolutePath() + "/../other.opad");
+  add({
+      [=] {  // another document in the same window: a new target, never followed
+        if (!settled()) return false;
+        win->openPath(other);
+        return true;
+      },
+      [=] {
+        if (!settled() || !doc->hasDocument || QFileInfo(doc->path()) != QFileInfo(other)) return false;
+        tool("live_state");
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        require(failed() && st->reply["structuredContent"]["error"].value("code", "") == "target_changed" && agent->descriptor()["target"] != st->target,
+                "another document: target_changed: " + dump());
+        bind();
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        require(!failed(), "bound explicitly to the other document: " + dump());
+        pass("another document opened in the window: target_changed until bound explicitly");
+        return true;
+      },
+  });
   auto* timer = new QTimer(&w);
   timer->setInterval(150);
   QObject::connect(timer, &QTimer::timeout, &w, [st, steps, timer, invariant, linked, names] {
