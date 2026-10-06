@@ -151,7 +151,7 @@ print at actual size, and **Issue revision** freezes a sheet as issued.
 ### Help that shows the real tool
 
 Hover a ribbon button and its card plays an animated clip of what the tool does, with your current keys. F1 opens the
-guide of the tool you are using, S searches every command (with the reason when one is not available now), Ctrl+/
+guide of the tool you are using, S searches every command (with the reason when one is not available now), ?
 shows the cheat sheet, and Help > Getting started has short animated lessons.
 
 ![The Extrude and Fillet cards with their clips, then the command search for "fil"](docs/media/help.gif)
@@ -288,16 +288,16 @@ the ribbon; there is one document and one timeline.
 
 ### Keybindings
 
-The defaults, all changeable in **Keyboard shortcuts** (Ctrl+K). Ctrl+/ shows this sheet in the program, with your
+The defaults, all changeable in **Keyboard shortcuts** (Ctrl+K). ? (Shift+/) shows this sheet in the program, with your
 own bindings:
 
 ![The shortcut cheat sheet: file, design, inspect, view, selection, panels and sketch keys](docs/media/keys.png)
 
 | | |
 |---|---|
-| **S** search commands | **F1** help for the tool in use · **Ctrl+/** cheat sheet |
+| **S** search commands | **F1** help for the tool in use · **?** cheat sheet |
 | **F** fit · **Shift+F** fit all · **H** home | **Shift+H** isometric · **Shift+arrows**, **Shift+PgUp/PgDn** standard views |
-| **1** / **2** / **3** / **4** pick bodies / faces / edges / vertices | **5**-**9** display styles · **G** grid |
+| **1** / **2** / **3** / **4** pick bodies / faces / edges / vertices | **5**-**9** display styles · **G** grid · **/** hover highlight · **Ctrl+/** X-ray highlight |
 | **I** isolate · **V** hide · **Shift+V** unhide all | **X** section · **Shift+E** exploded view |
 | **D** distance · **A** angle · **R** radius · **B** box | **N** note · **Shift+N** hand drawing · **P** pin |
 | **E** extrude · **Q** press pull · **M** move/copy | sketch: **L** line, **R** rectangle, **C** circle, **D** dimension, **U** slot, **N** polygon, **T** trim, **O** offset |

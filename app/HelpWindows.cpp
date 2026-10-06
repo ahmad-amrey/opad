@@ -137,6 +137,7 @@ ShortcutSheet::ShortcutSheet(QWidget* parent) : QWidget(parent, Qt::Window) {
   scroll->setWidget(m_page);
   v->addWidget(scroll, 1);
   connect(m_search, &QLineEdit::textChanged, this, &ShortcutSheet::setFilter);
+  m_search->installEventFilter(this);
   connect(edit, &QPushButton::clicked, this, &ShortcutSheet::editRequested);
   m_again = new QShortcut(this);  // the key that opened it closes it, as Esc does: help.shortcuts', whatever the user bound
   connect(m_again, &QShortcut::activated, this, &QWidget::close);
@@ -155,6 +156,17 @@ QKeySequence ShortcutSheet::closeKey() const { return m_again->isEnabled() ? m_a
 void ShortcutSheet::keyPressEvent(QKeyEvent* e) {
   if (e->key() == Qt::Key_Escape) close();
   else QWidget::keyPressEvent(e);
+}
+
+// The key that opened it can be one that types ('?' by default): in the search field it closes the sheet while nothing is
+// typed there, and is typed into the search after that.
+bool ShortcutSheet::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == m_search && event->type() == QEvent::ShortcutOverride && m_search->text().isEmpty() &&
+      keys::pressedBy(closeKey(), static_cast<QKeyEvent*>(event))) {
+    event->ignore();  // not the field's: the shortcut map takes it
+    return true;
+  }
+  return QWidget::eventFilter(watched, event);
 }
 
 void ShortcutSheet::setGroups(const QList<help::KeyGroup>& groups) {

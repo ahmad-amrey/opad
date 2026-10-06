@@ -93,6 +93,8 @@ QHash<QString, QString>& table() {
       {"offset", R"(<rect x="7" y="7" width="10" height="10"/><rect x="3" y="3" width="18" height="18" rx="2" opacity=".55"/>)"},
       {"project", R"(<path d="M4 17l8-3 8 3-8 3z"/><path d="M8 5h8v5H8z" opacity=".6"/><path d="M12 10v5M10.5 13.5L12 15l1.5-1.5"/>)"},
       {"cursor", R"(<path d="M6 3l12 9-5.5 1.2L15.5 20l-2.6 1.1-3-6.7L6 18z"/>)"},
+      {"xrayHighlight", R"(<rect x="10" y="3" width="11" height="11" fill="currentColor" fill-opacity=".35"/><rect x="3" y="10" width="11" height="11"/><path d="M10 10h4v4h-4z" stroke-dasharray="2 1.5"/>)"},
+      {"hoverHighlight", R"(<path d="M3 8l7-4 7 4v7l-7 4-7-4z" fill="currentColor" fill-opacity=".3"/><path d="M14 11l7 5.2-3 .6 1.7 3.4-1.5.7-1.7-3.4L14 20z"/>)"},
       {"sketch", R"(<path d="M3 17l9-5 9 5-9 4z" opacity=".5"/><path d="M6 13V5h8l4 4v4" /><path d="M9 9h5"/>)"},
       {"finish", R"(<circle cx="12" cy="12" r="9"/><path d="M7.5 12.5l3 3 6-7"/>)"},
       {"extrude", R"(<path d="M4 16l8-3 8 3-8 3z"/><path d="M4 16V9l8-3 8 3v7M12 6v7" opacity=".55"/><path d="M12 1v4M10 3l2-2 2 2"/>)"},

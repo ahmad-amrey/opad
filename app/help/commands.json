@@ -727,6 +727,20 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "view.xrayHighlight",
+   "title": "X-ray highlight",
+   "summary": "Shows the selection and the hover through the bodies in front of them, or lets those bodies hide them.",
+   "details": "On, as by default, a selected body, face, edge or point and whatever the pointer is over are drawn over everything, so a pick behind another body stays in sight. Off, what is in front hides them, as it hides the bodies themselves. The switch ({key:view.xrayHighlight}) is in the View menu and under the ribbon's Rendering, and Preferences › Display has it too.",
+   "keywords": ["x-ray", "see through", "show through", "behind", "hidden selection", "highlight"]
+  },
+  {
+   "id": "view.hoverHighlight",
+   "title": "Hover highlight",
+   "summary": "Turns the highlight of what the pointer is over on or off.",
+   "details": "Off, bodies, faces, edges and points no longer light up under the pointer, while a click still picks what is there and the selection is highlighted as before. The view cube and the handles keep their own hover. The switch ({key:view.hoverHighlight}) is in the View menu and under the ribbon's Rendering, and Preferences › Display has it too.",
+   "keywords": ["hover", "pre-selection", "preselection", "mouse over", "glow", "highlight"]
+  },
+  {
    "id": "view.isolate",
    "title": "Isolate",
    "summary": "Shows only the selection until you exit isolation.",
@@ -1830,7 +1844,7 @@
    "id": "help.shortcuts",
    "title": "Shortcuts cheat sheet",
    "summary": "Lists every keyboard shortcut and mouse gesture at a glance.",
-   "details": "The keys are grouped as in the command search, with the mouse of your navigation preset and the keys every tool knows. Search by name or key; Change shortcuts opens the editor, and {fixed:esc} or the key that opened it ({key:help.shortcuts}) closes the sheet.",
+   "details": "The keys are grouped as in the command search, with the mouse of your navigation preset and the keys every tool knows. Search by name or key; Change shortcuts opens the editor, and {fixed:esc}, or the key that opened it ({key:help.shortcuts}) while nothing is typed in the search, closes the sheet.",
    "keywords": ["keys", "keyboard", "hotkeys", "cheat sheet", "mouse"]
   },
   {

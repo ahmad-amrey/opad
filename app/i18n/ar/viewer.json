@@ -148,5 +148,13 @@
  "What this note is pinned to is not shown in the view (hidden or isolated away).": "ما ثُبّتت عليه هذه الملاحظة غير ظاهر في العرض (مخفي أو خارج العزل).",
  "What this note was pinned to is no longer in its body: the body has changed since.": "ما ثُبّتت عليه هذه الملاحظة لم يعد في جسمه: فقد تغيّر الجسم منذ ذلك الحين.",
  "What this note is pinned to is not drawn in the view.": "ما ثُبّتت عليه هذه الملاحظة غير مرسوم في العرض.",
- "Only part of what this note is pinned to lights up. %1": "لا يُضاء إلا جزء مما ثُبّتت عليه هذه الملاحظة. %1"
+ "Only part of what this note is pinned to lights up. %1": "لا يُضاء إلا جزء مما ثُبّتت عليه هذه الملاحظة. %1",
+ "X-ray highlight": "التمييز عبر الأجسام",
+ "X-ray highlight: on": "التمييز عبر الأجسام: مفعّل",
+ "X-ray highlight: off": "التمييز عبر الأجسام: متوقف",
+ "Hover highlight": "تمييز ما تحت المؤشر",
+ "Hover highlight: on": "تمييز ما تحت المؤشر: مفعّل",
+ "Hover highlight: off": "تمييز ما تحت المؤشر: متوقف",
+ "X-ray highlight: the selection and the hover show through what is in front": "التمييز عبر الأجسام: يظهر التحديد وما تحت المؤشر من خلال ما أمامهما",
+ "Highlight what the pointer is over": "تمييز ما يمر فوقه المؤشر"
 }

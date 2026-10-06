@@ -860,12 +860,12 @@ def help_scene(d, s):
     d.key("down")
     d.wait(1.8)
     d.key("esc")
-    d.wait(1.0)  # the cheat sheet (Ctrl+/) is its own picture: the keys scene
+    d.wait(1.0)  # the cheat sheet (?) is its own picture: the keys scene
 
 
 @scene("keys", still=True, width=1000, crop=[0, 0, 1000, 680])
 def keys(d, s):
-    """The shortcuts cheat sheet (Ctrl+/) of a fresh install: every default binding, as a still."""
+    """The shortcuts cheat sheet (?) of a fresh install: every default binding, as a still."""
     doc = s.work / "empty.opad"
     s.cli("new", doc)
     opened(d, s, doc)

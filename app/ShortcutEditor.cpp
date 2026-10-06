@@ -84,6 +84,26 @@ void migrate(QSettings& settings) {
     settings.remove("shortcuts/inspect.clear");settings.remove("shortcutAlternates/inspect.clear");
     settings.setValue("shortcuts/escapeDefaultsVersion",1);
   }
+  if(settings.value("shortcuts/highlightDefaultsVersion",0).toInt()<1) {
+    // The highlight switches: Ctrl+/ was the cheat sheet's and is X-ray highlight's now, / is Hover highlight's, and the
+    // cheat sheet moved to ? (Shift+/). A Ctrl+/ the old editor saved for the sheet goes (it gets ?); a key of the user's
+    // stays: a command of theirs already on one of the new keys keeps it, and the new command starts without a key.
+    const QKeySequence sheetOld("Ctrl+/");
+    if(QKeySequence(settings.value("shortcuts/help.shortcuts").toString(),QKeySequence::PortableText)==sheetOld)settings.remove("shortcuts/help.shortcuts");
+    QList<QPair<QString,QKeySequence>> taken;
+    for(const char* group:{"shortcuts","shortcutAlternates"}) {
+      settings.beginGroup(group);
+      for(const auto& id:settings.childKeys())taken.append({id,QKeySequence(settings.value(id).toString(),QKeySequence::PortableText)});
+      settings.endGroup();
+    }
+    for(const auto& [id,key]:QList<QPair<QString,QKeySequence>>{{"view.xrayHighlight",QKeySequence("Ctrl+/")},{"view.hoverHighlight",QKeySequence("/")},
+                                                                 {"help.shortcuts",QKeySequence("?")}}) {
+      if(settings.contains("shortcuts/"+id))continue;  // chosen by the user already
+      const bool used=std::any_of(taken.begin(),taken.end(),[&](const auto& other){return other.first!=id && conflicts(other.second,key);});
+      if(used)settings.setValue("shortcuts/"+id,QString());
+    }
+    settings.setValue("shortcuts/highlightDefaultsVersion",1);
+  }
   if(settings.value("shortcuts/viewDefaultsVersion",0).toInt()>=1)return;
   // The old editor saved every row, including untouched defaults. Keep actual custom bindings.
   const QList<QPair<QString,QString>> old{{"view.top","Ctrl+Alt+1"},{"view.front","Ctrl+Alt+2"},
@@ -157,6 +177,14 @@ class ShortcutCapture : public QKeySequenceEdit {
       const int digit=symbols.indexOf(QChar(event->key()));
       if(digit>=0) {
         QKeyEvent normalized(event->type(),Qt::Key_0+digit,event->modifiers(),event->nativeScanCode(),event->nativeVirtualKey(),event->nativeModifiers(),QString::number(digit),event->isAutoRepeat(),event->count());
+        QKeySequenceEdit::keyPressEvent(&normalized);emit keySequenceChanged(keySequence());return;
+      }
+      // Any other symbol Shift makes (?, :, <, +, ...) is that symbol without Shift, also with Ctrl or Alt: Qt drops the
+      // Shift only when the key types its symbol, so Ctrl+Shift+/ was "Ctrl+Shift+?", which no key press matches, while
+      // "Ctrl+?" (like "?" for Shift+/) fires wherever the layout puts '?'.
+      const int key=event->key();
+      if(key>Qt::Key_Space && key<=Qt::Key_AsciiTilde && !(key>=Qt::Key_A && key<=Qt::Key_Z) && !(key>=Qt::Key_0 && key<=Qt::Key_9)) {
+        QKeyEvent normalized(event->type(),key,event->modifiers()&~Qt::ShiftModifier,event->nativeScanCode(),event->nativeVirtualKey(),event->nativeModifiers(),event->text(),event->isAutoRepeat(),event->count());
         QKeySequenceEdit::keyPressEvent(&normalized);emit keySequenceChanged(keySequence());return;
       }
     }

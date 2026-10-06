@@ -72,7 +72,7 @@ class PreferencesArea : public AreaController {
     using preferences::Form;
     QWidget* window = services().window();
     preferences::addPage({"general", tr("General"), "settings", 10, {"language", "theme", "author", "undo", "help", "tips"}, [this] { return general(); }});
-    preferences::addPage({"display", tr("Display"), "shaded", 20, {"rendering", "background", "hover", "quality", "panels"}, [this] { return display(); }});
+    preferences::addPage({"display", tr("Display"), "shaded", 20, {"rendering", "background", "hover", "highlight", "x-ray", "xray", "quality", "panels"}, [this] { return display(); }});
     preferences::addPage({"units", tr("Units and precision"), "dimension", 30, {"mm", "inch", "decimals", "radians", "fractions"}, [this] { return unitsPage(); }});
     preferences::addPage({"sketch", tr("Sketch and snaps"), "magnet", 40, {"snap", "inference", "solver", "ortho", "polar", "tracking"}, [this] { return sketch(); }});
     preferences::addPage({"grid", tr("Grid"), "grid", 50, {"spacing", "extent", "snap"}, [this] { return grid(); }});
@@ -156,6 +156,9 @@ class PreferencesArea : public AreaController {
     form.choice("view/background", tr("Scene background"), {tr("Theme"), tr("Studio gradient"), tr("White"), tr("Dark slate")}, Viewport::savedSceneBackground(),
                 [view](int i) { view->setSceneBackground(i); });
     form.section(tr("Highlighting"));
+    // The commands themselves (View menu, Rendering ▾, their keys): one switch wherever it is changed.
+    if (QAction* xray = action("view.xrayHighlight")) form.option(xray, tr("X-ray highlight: the selection and the hover show through what is in front"));
+    if (QAction* hover = action("view.hoverHighlight")) form.option(hover, tr("Highlight what the pointer is over"));
     QCheckBox* fade = form.check("view/hoverFade", tr("Fade hover highlight"), true);
     QDoubleSpinBox* seconds = form.number("view/hoverFadeSeconds", tr("Fade after"), 5, 0.1, 60, 1, tr(" seconds"));
     auto apply = [view, fade, seconds] { view->setHoverFade(fade->isChecked(), seconds->value()); };

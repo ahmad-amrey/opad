@@ -108,6 +108,35 @@ void MainWindow::buildViewActions() {
   auto* through=addAction("select.through",tr("Select through objects"),"wireframe",QKeySequence("Alt+X"),[this]{},true);
   through->setChecked(m_settings.value("view/selectThrough",false).toBool());
   connect(through,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/selectThrough",on);m_viewport->setSelectThrough(on);});
+  // The highlight switches (Viewport::setXrayHighlight / setHoverHighlight). X-ray: the selection and the hover show through
+  // what is in front of them; off, what is in front hides them. Hover: off, nothing on the model lights up under the
+  // pointer, while picking and the selection's highlight stay as they are.
+  CommandInfo xrayInfo;
+  xrayInfo.id = "view.xrayHighlight";
+  xrayInfo.label = tr("X-ray highlight");
+  xrayInfo.icon = "xrayHighlight";
+  xrayInfo.key = QKeySequence("Ctrl+/");
+  xrayInfo.checkable = true;
+  xrayInfo.keywords = {"xray", "x-ray", "see through", "highlight through", "show through", "occluded", "hidden selection"};
+  QAction* xray = addCommand(xrayInfo, [] {});
+  xray->setChecked(m_settings.value("view/xrayHighlight", true).toBool());
+  connect(xray, &QAction::toggled, this, [this](bool on) {
+    m_viewport->setXrayHighlight(on);
+    m_toasts->toast(on ? tr("X-ray highlight: on") : tr("X-ray highlight: off"), QString(), {}, 2500);
+  });
+  CommandInfo hoverInfo;
+  hoverInfo.id = "view.hoverHighlight";
+  hoverInfo.label = tr("Hover highlight");
+  hoverInfo.icon = "hoverHighlight";
+  hoverInfo.key = QKeySequence("/");
+  hoverInfo.checkable = true;
+  hoverInfo.keywords = {"hover", "pre-selection", "preselection", "highlight under the pointer", "mouse over", "glow"};
+  QAction* hover = addCommand(hoverInfo, [] {});
+  hover->setChecked(m_settings.value("view/hoverHighlight", true).toBool());
+  connect(hover, &QAction::toggled, this, [this](bool on) {
+    m_viewport->setHoverHighlight(on);
+    m_toasts->toast(on ? tr("Hover highlight: on") : tr("Hover highlight: off"), QString(), {}, 2500);
+  });
   CommandInfo cubeInfo;  // off: faces only (UI-54)
   cubeInfo.id="view.cubeEdgesCorners";cubeInfo.label=tr("View cube edges and corners turn the view");cubeInfo.checkable=true;
   cubeInfo.keywords={"view cube","navigation cube","corner","edge","faces only"};

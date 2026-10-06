@@ -3,6 +3,7 @@
 #include "ShortcutEditor.hpp"
 
 #include <QAction>
+#include <QKeyEvent>
 #include <QHash>
 #include <QRegularExpression>
 
@@ -90,6 +91,15 @@ bool pressable(const QKeySequence& key) {
   for (int i = 0; i < key.count(); ++i)
     if (key[i].key() == Qt::Key_Exit) return false;
   return !key.isEmpty();
+}
+
+bool pressedBy(const QKeySequence& key, const QKeyEvent* event) {
+  if (key.count() != 1 || !event) return false;
+  const QKeyCombination want = key[0];
+  const Qt::KeyboardModifiers held = event->modifiers() & ~Qt::KeypadModifier;
+  if (want.key() != event->key()) return false;
+  // A symbol Shift types ('?' on Shift+/) is bound without Shift; Qt's shortcut map matches it so too (possibleKeys).
+  return want.keyboardModifiers() == held || (held.testFlag(Qt::ShiftModifier) && want.keyboardModifiers() == (held & ~Qt::ShiftModifier));
 }
 
 QList<QKeySequence> bindings(const QAction* a) {

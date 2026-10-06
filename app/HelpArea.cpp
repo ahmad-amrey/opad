@@ -2,7 +2,7 @@
 // (RichTip) with the command's animated clip (ClipView). The tool, feature and sketch panels play their own guides
 // (ToolGuide), and the "?" of every tool panel opens the tool guide at its command; the command palette previews the
 // current command. The Help menu: Help for this tool (F1 by default, at the command running now), Tool guide, Shortcuts
-// cheat sheet (Ctrl+/ by default), Getting started, Report a problem, above the window's own entries (licences, About).
+// cheat sheet (? by default), Getting started, Report a problem, above the window's own entries (licences, About).
 // An empty document shows the coach card: how a design starts, with buttons for the first step. Every key the help shows
 // is the user's key now (keys::, its lookup installed here) and follows a change in the shortcut editor.
 #include <QDir>
@@ -86,7 +86,7 @@ class HelpArea : public AreaController {
     sheet.id = "help.shortcuts";
     sheet.label = tr("Shortcuts cheat sheet");
     sheet.icon = "keyboard";
-    sheet.key = QKeySequence("Ctrl+/");
+    sheet.key = QKeySequence("?");  // Shift+/ on most layouts; Ctrl+/ is X-ray highlight's, / Hover highlight's (MainWindowView)
     sheet.keywords = {"keys", "keyboard", "hotkeys", "mouse"};
     services().addCommand(sheet, [this] { openSheet(); });
     CommandInfo start;

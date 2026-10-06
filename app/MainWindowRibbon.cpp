@@ -89,7 +89,7 @@ void MainWindow::buildMenus() {
   add(edit, {"edit.undo", "edit.redo", "edit.repeat", "-", "edit.selectall", "edit.invert", "edit.selectparent", "edit.selecttouched", "-", "edit.rename", "edit.delete",
              "edit.restore", "-", "edit.filter"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
-  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.hidden", "view.hiddenEdges", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "view.hideothers", "edit.hide", "edit.showall", "annotate.show", "-", "view.saveview"});
+  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.hidden", "view.hiddenEdges", "view.grid", "view.gridSettings", "select.through", "view.xrayHighlight", "view.hoverHighlight", "-", "view.isolate", "view.unisolate", "view.hideothers", "edit.hide", "edit.showall", "annotate.show", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   m_viewsMenu->setObjectName("views");
   view->addSeparator();
@@ -210,10 +210,10 @@ void MainWindow::buildRibbonMenus() {
   connect(views, &QMenu::triggered, m_viewsMenu, &QMenu::triggered);
   const CommandInfo named{"view.namedViews", tr("Named views"), "recent"};
   menuCommand(named, views);
-  // Rendering ▾: how the view draws while it moves and in which theme; Preferences > Display has the rest.
+  // Rendering ▾: how the view highlights, draws while it moves and in which theme; Preferences > Display has the rest.
   auto* rendering = new QMenu(this);
   rendering->setObjectName("ribbonRendering");
-  for (const char* id : {"view.hideSmallParts", "view.smallPartSize", "view.adaptive", "view.animate", "-", "view.dark"})
+  for (const char* id : {"view.xrayHighlight", "view.hoverHighlight", "-", "view.hideSmallParts", "view.smallPartSize", "view.adaptive", "view.animate", "-", "view.dark"})
     if (QString(id) == "-") rendering->addSeparator();
     else if (QAction* a = action(id)) rendering->addAction(a);
   const CommandInfo look{"view.rendering", tr("Rendering"), "shaded"};

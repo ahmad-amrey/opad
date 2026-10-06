@@ -18,7 +18,7 @@
 #include <QSettings>
 
 // OPAD_BENCH_HELPMENU=<prefix> (a document with a box, saved as box.opad): the Help menu (UI-108). Its own entries come
-// first: Help for this tool (F1), Tool guide, Shortcuts cheat sheet (Ctrl+/), Getting started, then Report a problem;
+// first: Help for this tool (F1), Tool guide, Shortcuts cheat sheet (?), Getting started, then Report a problem;
 // the window's (Third-party licences and About Qt where the build has them, About OPAD last) follow. The cheat sheet lists the keys by group with the preset's mouse and the keys of every tool, finds a key, follows the
 // navigation preset and closes on Esc; Getting started plays each lesson's clip, its Try it runs the command it teaches
 // (Measure starts Distance, Sketch switches to Design and asks for a plane) and says what an unavailable one needs;
@@ -50,7 +50,7 @@ OPAD_BENCH(OPAD_BENCH_HELPMENU, helpmenu) {
     for (const QString& id : ids.mid(7)) helped = helped && (id == "-" || help::find(id));
     check(ids.mid(0, 7) == QStringList({"help.current", "help.reference", "help.shortcuts", "help.start", "-", "help.report", "-"}) && ids.size() > 7 && ids.last() == "help.about" && helped,
           "the Help menu: its own entries first, the window's after, About last, all with help (" + ids.join(' ') + ")");
-    check(w.action("help.current")->shortcut() == QKeySequence("F1") && w.action("help.shortcuts")->shortcut() == QKeySequence("Ctrl+/"), "F1 and Ctrl+/");
+    check(w.action("help.current")->shortcut() == QKeySequence("F1") && w.action("help.shortcuts")->shortcut() == QKeySequence("?"), "F1 and ?");
     // The cheat sheet.
     w.action("help.shortcuts")->trigger();
     auto* sheet = w.findChild<ShortcutSheet*>();
@@ -64,8 +64,8 @@ OPAD_BENCH(OPAD_BENCH_HELPMENU, helpmenu) {
     check(rows.contains(help::find("view.fit")->title + " F") && rows.contains(orbit), "with Fit on F and the preset's orbit (" + orbit + ")");
     if (!sheet) return;
     sheet->grab().save(prefix + ".sheet.png");
-    sheet->setFilter("Ctrl+/");
-    check(sheet->shown() == QStringList({help::find("help.shortcuts")->title + " Ctrl+/"}) && sheet->titles().size() == 1, "searching a key finds its command (" + sheet->shown().join(" | ") + ")");
+    sheet->setFilter("Ctrl+/");  // X-ray highlight's since the cheat sheet moved to ?
+    check(sheet->shown() == QStringList({help::find("view.xrayHighlight")->title + " Ctrl+/"}) && sheet->titles().size() == 1, "searching a key finds its command (" + sheet->shown().join(" | ") + ")");
     sheet->setFilter(QString());
     escape(sheet);
     check(!sheet->isVisible(), "Esc closes it");

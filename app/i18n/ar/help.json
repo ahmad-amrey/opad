@@ -1068,5 +1068,13 @@
  "Compare: Bracket-v2.opad → This session": "مقارنة: Bracket-v2.opad ← هذه الجلسة",
  "The first named view in the list": "أول منظر مسمّى في القائمة",
  "{press:view.named1}": "{press:view.named1}",
- "The camera goes back to it": "تعود الكاميرا إليه"
+ "The camera goes back to it": "تعود الكاميرا إليه",
+ "The selected block shows through the one in front": "تظهر الكتلة المحددة عبر الكتلة التي أمامها",
+ "{press:view.xrayHighlight} to turn X-ray highlight off": "{press:view.xrayHighlight} لإيقاف التمييز عبر الأجسام",
+ "What is in front hides the selection": "ما أمام التحديد يخفيه",
+ "{press:view.xrayHighlight} again: it shows through": "{press:view.xrayHighlight} مجددًا: يظهر عبرها",
+ "What the pointer is over lights up": "يضيء ما يمر فوقه المؤشر",
+ "{press:view.hoverHighlight} to turn the hover highlight off": "{press:view.hoverHighlight} لإيقاف تمييز ما تحت المؤشر",
+ "Nothing lights up under the pointer": "لا يضيء شيء تحت المؤشر",
+ "A click still selects it": "وما زالت النقرة تحدده"
 }

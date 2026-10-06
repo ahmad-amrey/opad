@@ -31,8 +31,8 @@ void SketchEditor::referenceHover() {
 void SketchEditor::showSources() {
   const QStringList shown=m_active && m_visible && sketchkeys::referenceTool(m_tool.toStdString())?m_sources:QStringList();  // a hidden sketch: none
   // Under the sketch, not X-ray: in Topmost a picked body or face was depth-tested against the sketch drawn there and hid
-  // its curves inside the pick's outline until the tool let it go. Back to X-ray as soon as none is shown.
-  m_viewport->setSelectionXray(shown.isEmpty());
+  // its curves inside the pick's outline until the tool let it go. Back to the user's X-ray setting as soon as none is shown.
+  m_viewport->suppressSelectionXray(!shown.isEmpty());
   if(shown==m_sourcesShown)return;
   m_sourcesShown=shown;
   std::vector<opad::Ref> refs;
