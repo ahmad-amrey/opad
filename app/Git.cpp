@@ -588,7 +588,6 @@ void configureDriver(const Context& c, const Install& in) {
   const std::pair<const char*, QString> config[] = {{"merge.opad.name", QStringLiteral("OPAD record-aware merge")},
                                                      {"merge.opad.driver", in.mergeDriver()},
                                                      {"diff.opad.textconv", in.textconv()},
-                                                     {"diff.opad.cachetextconv", QStringLiteral("true")},
                                                      {"difftool.opad.cmd", in.difftool()},
                                                      {"opad.managed", QStringLiteral("true")}};
   for (const auto& [key, value] : config)

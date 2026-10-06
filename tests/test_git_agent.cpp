@@ -393,6 +393,13 @@ TEST(init_tag_diff) {
   const json made = mcp().call("git_init", {{"repo", s(fresh)}});
   CHECK(made["state"] == "initialized" && made["branch"] == "main" && made["attributes"] == true && made["ignore"] == true && made["protected"] == true);
   CHECK(made["driver"].get<std::string>().find("merge-driver") != std::string::npos);
+  {  // the diff driver is set up without git's textconv cache (its notes ref shows in git log --all as a commit)
+    git::Context c;
+    c.program = git::findProgram();
+    c.dir = fresh;
+    CHECK(git::run(c, {"config", "--local", "--get", "diff.opad.textconv"}).ok());
+    CHECK(!git::run(c, {"config", "--local", "--get", "diff.opad.cachetextconv"}).ok());
+  }
   QFile attributes(fresh + "/.gitattributes");
   CHECK(attributes.open(QIODevice::ReadOnly) && attributes.readAll().contains("*.opad text eol=lf merge=opad diff=opad"));
   mcp().refused("git_init", {{"repo", s(fresh)}}, "already_a_repository");

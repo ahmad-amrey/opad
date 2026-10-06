@@ -133,8 +133,9 @@ struct SetupOptions {
 // Init (-b main) when the folder is not in a repository, .gitattributes, .gitignore, git lfs install --local, the
 // managed driver config. Returns what it did, as sentences; throws std::runtime_error.
 QStringList setUp(const Context& c, const QString& folder, const Install& in, const SetupOptions& o, const RunOptions& ro = {});
-// merge.opad.*, diff.opad.textconv and cachetextconv (git log -p converts each version once), difftool.opad.cmd,
-// opad.managed (local)
+// merge.opad.*, diff.opad.textconv, difftool.opad.cmd, opad.managed (local). No cachetextconv: git keeps that cache
+// under a notes ref, which git log --all shows as a commit named after the textconv command. Repositories set up
+// before keep what they have.
 void configureDriver(const Context& c, const Install& in);
 
 // git clone --progress (idle timeout 2 min, no overall limit).
