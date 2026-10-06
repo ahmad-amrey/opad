@@ -217,6 +217,10 @@ TEST(status_commit_and_protection) {
   mcp().call("git_commit", {{"repo", s(repo)}, {"message", "Second box"}, {"paths", {"model.opad"}}});
   const json sw = mcp().call("git_switch", {{"repo", s(repo)}, {"branch", "main"}});
   CHECK(sw["state"] == "switched" && sw["branch"] == "main" && sw["files_changed"]["documents"] == json({"model.opad"}) && ops(doc, "feature") == 0);
+  // agent/box has commits main lacks: not merged, nothing to tidy.
+  const json unmerged = mcp().call("git_branches", {{"repo", s(repo)}});
+  CHECK(unmerged["merged_into_current"].empty());
+  for (const auto& x : unmerged["branches"]) CHECK(x["merged"] == false);
   std::printf("status, branches, commits refused on main and allowed off it or with the preference off PASS\n");
 }
 
@@ -257,6 +261,11 @@ TEST(merge_protection_and_driver) {
   const json ff = mcp().call("git_merge", {{"repo", s(repo)}, {"source", "left"}});
   CHECK(ff["state"] == "merged" && ff["fast_forward"] == true && ops(doc, "feature") == 2);
   setPref("git/protectMerges", true);
+  // Branch hygiene without deleting: left and right are in main now, reported as merged (main itself is the current one).
+  const json tidy = mcp().call("git_branches", {{"repo", s(repo)}});
+  if (tidy["merged_into_current"] != json({"left", "right"})) throw check::Failure("merged branches: " + tidy.dump());
+  for (const auto& x : tidy["branches"])
+    if (x["remote"] == false) CHECK(x["merged"] == (x["name"] != "main"));
   std::printf("merges into main refused and allowed by the preference, both branches' boxes merged by the driver PASS\n");
 }
 

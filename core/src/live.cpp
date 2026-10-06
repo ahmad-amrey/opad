@@ -178,7 +178,7 @@ const json& git_tools(bool live) {
       add("git_log","Commits newest first: hash, short, author, email, date, subject, parents, refs. next_skip when more follow.",
           {{"limit",{{"type","integer"},{"minimum",1},{"maximum",200},{"default",20}}},{"skip",{{"type","integer"},{"minimum",0},{"default",0}}},
            {"branch",text("Branch or revision to list (default HEAD).")},{"path",text("Only commits that touched this path.")}},json::array(),false);
-      add("git_branches","Local branches (current, upstream, ahead/behind, protected) and remote-tracking ones, the remotes and the protection policy.",json::object(),json::array(),false);
+      add("git_branches","Local branches (current, upstream, ahead/behind, protected, merged: every commit already in the current branch) and remote-tracking ones, merged_into_current (branches that could be tidied away: report them, deleting is the user's), the remotes and the protection policy.",json::object(),json::array(),false);
       add("git_diff","What changed from from to to: per file added/deleted line counts (git diff --numstat), and for each .opad (up to 10) OPAD's semantic diff (summary, relation, changes: parameters, sketches, features, bodies). Untracked files are not listed."+std::string(isLive?" The work tree side is the file on disk: the open document's unsaved changes are not in it.":""),
           {{"from",text("Revision (default HEAD).")},{"to",text("Revision (default: the work tree).")},{"path",text("Only this path.")}},json::array(),false);
       add("git_fetch","Fetch remote (default: every remote) so ahead/behind are current. Changes no local branch or file; nothing is pruned.",{{"remote",text("A remote's name.")}},json::array(),true,true);

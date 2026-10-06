@@ -493,10 +493,18 @@ json log(const json& args, const Call& call) {
 
 json branches(const Call& call) {
   Repo r = open(call);
-  json list = json::array();
+  // Local branches whose every commit HEAD has (git branch --merged): clutter an agent can report; deleting them is the
+  // user's (no tool deletes a branch).
+  QStringList merged;
+  if (!r.unborn())
+    if (const git::Result m = git::run(r.c, {"branch", "--merged", "HEAD", "--format=%(refname:short)"}, quick()); m.ok())
+      for (const QString& line : QString::fromUtf8(m.out).split('\n', Qt::SkipEmptyParts)) merged << line.trimmed();
+  json list = json::array(), mergedHere = json::array();
   for (const git::Branch& b : git::branches(r.c)) {
     json item = {{"name", str(b.name)}, {"remote", b.remote}, {"current", b.head}, {"head", str(b.oid.left(12))}, {"subject", str(b.subject)}, {"date", str(b.date)}};
     if (!b.remote) {
+      item["merged"] = !b.head && merged.contains(b.name);
+      if (!b.head && merged.contains(b.name)) mergedHere.push_back(str(b.name));
       item["protected"] = call.policy.protects(b.name);
       if (!b.upstream.isEmpty()) {
         item["upstream"] = str(b.upstream);
@@ -507,7 +515,7 @@ json branches(const Call& call) {
     }
     list.push_back(item);
   }
-  return {{"current", r.branch().isEmpty() ? json(nullptr) : json(str(r.branch()))}, {"branches", list}, {"remotes", [&] {
+  return {{"current", r.branch().isEmpty() ? json(nullptr) : json(str(r.branch()))}, {"branches", list}, {"merged_into_current", mergedHere}, {"remotes", [&] {
              json remotes = json::array();
              for (const QString& name : git::remotes(r.c)) remotes.push_back(str(name));
              return remotes;
