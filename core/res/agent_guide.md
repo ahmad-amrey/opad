@@ -165,7 +165,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   that changed since makes the reference stale: ask for it again.
 - Axes: `{"base": "x"}`, `{"edge": ref}` (a straight edge's line or a circular edge's centre axis), `{"face": ref}`
   (a cylinder's, cone's or torus's axis, or a planar face's normal), `{"sketch": id, "entity": line id}` or
-  `{"feature": construction axis id}`.
+  `{"feature": construction axis id}`, or written out: `{"direction": [x, y, z], "origin": [x, y, z]}` (origin
+  optional).
 - The construction `plane` feature's `mode: "point_normal"` goes through `point` square to `normal` (any axis form).
 
 ## Feature conventions
@@ -196,6 +197,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   body with the others and the tools.
 - Construction `axis` in `mode: "two_points"` (and `point` in `mode: "normal"`) take vertices, sketch points
   `{sketch, point}` or points in space: `"point/x,y,z"`, `{"point": [x, y, z]}` or `[x, y, z]`.
+- `hole` takes the same points. A sketch point drills into the material behind its sketch; a vertex or a point in
+  space drills into the nearest body's face along its inward normal (`targets` narrows the bodies), or along
+  `direction` when given (any axis form, e.g. `{"direction": [0, 0, -1]}`); `flip` reverses either.
 - Sketch `patterns`: `{"id", "seeds": [entity ids], "inputs": {"count", "rows", "dx", "dy"}}` repeats the seed curves in
   rows and columns, `{"polar": true, "count", "angle", "cx", "cy"}` about a centre; inputs may be expressions (a
   parameter for the count). The copies are made when the sketch is computed; its `id` shares the sketch's id space.

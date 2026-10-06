@@ -21,6 +21,9 @@
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <BRepGProp_Face.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepLib.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
@@ -61,6 +64,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -182,12 +186,14 @@ std::vector<FeatureSpec> build_specs() {
       "new");
   add("thicken", "Thicken", "thicken", "create", "Give faces a thickness: a solid skin over the picked faces.",
       {pick("faces", "Faces", "faces", 1, 0), in("thickness", "Thickness", "length", "2 mm"), in("flip", "Other side", "bool", false)}, "new");
-  add("hole", "Hole", "hole", "create", "Drill at sketch points, into the material behind the sketch.",
-      {pick("points", "Sketch points", "points", 1, 0), choice("type", "Type", {"simple", "counterbore", "countersink"}), in("diameter", "Diameter", "length", "5 mm"),
+  add("hole", "Hole", "hole", "create",
+      "Drill at points: sketch points drill into the material behind the sketch; vertices and points in space into the nearest body's face (its inward normal), or along Direction when given.",
+      {pick("points", "Points", "points", 1, 0), choice("type", "Type", {"simple", "counterbore", "countersink"}), in("diameter", "Diameter", "length", "5 mm"),
        choice("extent", "Extent", {"distance", "all"}), in("depth", "Depth", "length", "10 mm", "extent=distance"), choice("tip", "Bottom", {"flat", "angled"}, "extent=distance"),
        in("tip_angle", "Tip angle", "angle", "118 deg", "tip=angled"), in("cb_diameter", "Counterbore diameter", "length", "9 mm", "type=counterbore"),
        in("cb_depth", "Counterbore depth", "length", "3 mm", "type=counterbore"), in("cs_diameter", "Countersink diameter", "length", "10 mm", "type=countersink"),
-       in("cs_angle", "Countersink angle", "angle", "90 deg", "type=countersink"), in("flip", "Flip direction", "bool", false), pick("targets", "Bodies to drill", "bodies", 0, 0)});
+       in("cs_angle", "Countersink angle", "angle", "90 deg", "type=countersink"), in("direction", "Direction (default: into the material)", "axis", nullptr, "", true),
+       in("flip", "Flip direction", "bool", false), pick("targets", "Bodies to drill", "bodies", 0, 0)});
   add("fillet", "Fillet", "fillet", "modify", "Round edges.", {pick("edges", "Edges", "edges", 1, 0), in("radius", "Radius", "length", "2 mm")});
   add("chamfer", "Chamfer", "chamfer", "modify", "Bevel edges.",
       {pick("edges", "Edges", "edges", 1, 0), choice("type", "Type", {"equal", "two"}), in("distance", "Distance", "length", "2 mm"), in("distance2", "Second distance", "length", "2 mm", "type=two")});
@@ -502,6 +508,7 @@ struct Points {
   std::vector<gp_Pnt> at;
   gp_Dir normal{0, 0, 1};
   bool from_sketch = false;
+  std::vector<std::optional<gp_Dir>> normals;  // per point: its sketch's normal; none for a vertex or a point in space
 };
 
 // A point in space written out, in any of the forms references take elsewhere: "point/x,y,z", {"point": [x, y, z]}
@@ -528,6 +535,8 @@ Points resolve_points(const Ctx& ctx, const json& refs) {
       out.at.push_back(pnt(frame.to_world(p->x, p->y)));
       out.normal = gp_Dir(vec(frame.normal()));
       out.from_sketch = true;
+      out.normals.push_back(out.normal);
+      continue;
     } else if (r.is_object() && r.contains("kind") && r["kind"] == "point") {
       const Ref p = Ref::from_json(r);
       out.at.push_back(pnt(p.point));
@@ -538,6 +547,7 @@ Points resolve_points(const Ctx& ctx, const json& refs) {
       if (v.sub.ShapeType() != TopAbs_VERTEX) throw Error("pick sketch points or vertices");
       out.at.push_back(BRep_Tool::Pnt(TopoDS::Vertex(v.sub)));
     }
+    out.normals.push_back(std::nullopt);
   }
   return out;
 }
@@ -1485,6 +1495,71 @@ std::string mm_text(double v) {
   return t;
 }
 
+// Into the material at p (a hole at a point in space or a vertex): the inward normal of the nearest face of these bodies
+// where p meets it, or where p projects onto it. Bodies are tried nearest box first. Empty when there is no body.
+std::optional<gp_Dir> inward_normal(const Ctx& ctx, const std::vector<std::string>& bodies, const gp_Pnt& p) {
+  Bnd_Box at;
+  at.Add(p);
+  std::vector<std::pair<double, TopoDS_Shape>> order;
+  for (const auto& id : bodies) {
+    const TopoDS_Shape shape = ctx.node_shape(id);
+    if (shape.IsNull() || solids_of(shape).empty()) continue;
+    const Bnd_Box b = box_of(shape);
+    if (!b.IsVoid()) order.push_back({b.Distance(at), shape});
+  }
+  std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+  const TopoDS_Vertex vertex = BRepBuilderAPI_MakeVertex(p);
+  double best = std::numeric_limits<double>::max();
+  std::optional<gp_Dir> found;
+  // The outward normal of a face at the point of it nearest p, and how far that is.
+  auto normal_on = [&](const TopoDS_Face& face) -> std::optional<std::pair<double, gp_Vec>> {
+    BRepExtrema_DistShapeShape d(vertex, face, Extrema_ExtFlag_MIN);
+    if (!d.IsDone() || d.NbSolution() < 1) return std::nullopt;
+    Standard_Real u = 0, v = 0;
+    if (d.SupportTypeShape2(1) == BRepExtrema_IsInFace) d.ParOnFaceS2(1, u, v);
+    else {
+      BRepAdaptor_Surface s(face);
+      u = (s.FirstUParameter() + s.LastUParameter()) / 2, v = (s.FirstVParameter() + s.LastVParameter()) / 2;
+      GeomAPI_ProjectPointOnSurf project(d.PointOnShape2(1), BRep_Tool::Surface(face));
+      if (project.NbPoints() > 0) project.LowerDistanceParameters(u, v);
+    }
+    gp_Pnt q;
+    gp_Vec n;
+    BRepGProp_Face(face).Normal(u, v, q, n);
+    if (n.Magnitude() < 1e-12) return std::nullopt;
+    return std::make_pair(d.Value(), n.Normalized());
+  };
+  for (const auto& [boxDistance, shape] : order) {
+    if (boxDistance > best + 1e-9) break;
+    ctx.check_cancel();
+    BRepExtrema_DistShapeShape d(vertex, shape, Extrema_ExtFlag_MIN);
+    if (!d.IsDone() || d.NbSolution() < 1 || d.Value() > best + 1e-9) continue;
+    best = d.Value();
+    // The face it lies on, or the faces of the edge or vertex it is nearest: the one facing p most.
+    std::vector<TopoDS_Face> faces;
+    const TopoDS_Shape support = d.SupportOnShape2(1);
+    if (d.SupportTypeShape2(1) == BRepExtrema_IsInFace) faces.push_back(TopoDS::Face(support));
+    else {
+      TopTools_IndexedDataMapOfShapeListOfShape owners;
+      TopExp::MapShapesAndAncestors(shape, support.ShapeType(), TopAbs_FACE, owners);
+      if (owners.Contains(support))
+        for (TopTools_ListIteratorOfListOfShape it(owners.FindFromKey(support)); it.More(); it.Next()) faces.push_back(TopoDS::Face(it.Value()));
+    }
+    const gp_Vec away(d.PointOnShape2(1), p);
+    double facing = -std::numeric_limits<double>::max();
+    for (const auto& face : faces) {
+      const auto n = normal_on(face);
+      if (!n) continue;
+      const double score = away.Magnitude() > 1e-9 ? n->second.Dot(away.Normalized()) : 0.0;
+      if (!found || score > facing + 1e-9) {
+        facing = score;
+        found = gp_Dir(n->second.Reversed());
+      }
+    }
+  }
+  return found;
+}
+
 // One fillet or chamfer of a body's edges (mcp-eval 2026-10-06). Empty when the kernel cannot: it throws (the
 // TopOpeBRepDS_DataStructure::Point a too large concave blend gave), says it is not done, or leaves no solid. `follow`: other
 // edges of `body` to carry over into the result (each one's images), for the next blend of a sequence.
@@ -1742,13 +1817,30 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   }
   if (kind == "hole") {
     const Points pts = resolve_points(ctx, in.value("points", json()));
-    if (pts.at.empty()) throw Error("pick at least one sketch point");
-    if (!pts.from_sketch) throw Error("holes are placed at sketch points (the sketch gives the drilling direction)");
-    gp_Dir into = pts.normal.Reversed();
-    if (in.value("flip", false)) into.Reverse();
+    if (pts.at.empty()) throw Error("pick at least one point");
+    // The drilling direction: the direction input; else a sketch point's sketch (into the material behind it); else, at a
+    // vertex or a point in space, into the material of the nearest face (mcp-eval 2026-10-06: the schema offered points in
+    // space, the feature refused them).
+    std::optional<gp_Dir> given;
+    if (const json& d = in.value("direction", json()); d.is_object() && !d.empty()) given = ctx.axis(d).Direction();
+    std::vector<std::string> drilled = body_ids(ctx, in.value("targets", json::array()));
     std::vector<TopoDS_Shape> tools;
     const double reach = scene_reach(ctx, TopoDS_Shape());
-    for (const auto& p : pts.at) tools.push_back(make_hole_tool(ctx, in, p, into, reach));
+    for (size_t i = 0; i < pts.at.size(); ++i) {
+      const gp_Pnt& p = pts.at[i];
+      gp_Dir into;
+      if (given) into = *given;
+      else if (pts.normals[i]) into = pts.normals[i]->Reversed();
+      else {
+        const auto found = inward_normal(ctx, drilled.empty() ? automatic_bodies(ctx, Bnd_Box()) : drilled, p);
+        if (!found)
+          throw Error("a hole at a point in space or a vertex drills into the nearest body's face, and there is no body to drill near (" + mm_text(p.X()) + ", " + mm_text(p.Y()) + ", " +
+                      mm_text(p.Z()) + "): give direction (an axis such as {\"direction\": [0, 0, -1]}) or targets");
+        into = *found;
+      }
+      if (in.value("flip", false)) into.Reverse();
+      tools.push_back(make_hole_tool(ctx, in, p, into, reach));
+    }
     json cut = in;
     cut["operation"] = "cut";
     apply_operation(ctx, cut, compound_of(tools), out);

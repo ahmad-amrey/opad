@@ -91,4 +91,43 @@ TEST(fillet_failure_is_worded) {
   CHECK(has(design::kernel_failure_text("combine", ""), "Combine: "));
 }
 
+// 2. hole's schema offered points in space ({point:[x,y,z]}, [x,y,z], "point/x,y,z") and the feature refused them ("holes are
+// placed at sketch points"). Now such a point (or a vertex) drills into the nearest body's face, or along direction.
+TEST(hole_at_points_in_space) {
+  Document doc = Document::create();
+  const std::string block = feature(doc, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "20 mm"}})["body_ids"][0];
+  const double full = volume_properties(node_world_shape(doc, resolve(doc), block)).mass;
+  // On the top face, no direction: straight down into it, 6 mm deep, at two points written two ways.
+  const json made = feature(doc, "hole", {{"points", json::array({{{"point", {-10, 0, 20}}}, json::array({10, 0, 20})})}, {"diameter", "4 mm"}, {"depth", "6 mm"}});
+  CHECK_EQ(made["body_ids"][0], block);
+  Scene scene = resolve(doc);
+  const double drilled = volume_properties(node_world_shape(doc, scene, block)).mass;
+  CHECK_NEAR(full - drilled, 2 * M_PI * 4 * 6, 0.5);
+  json walls = agent::query_entities(doc, scene, {{"body", block}, {"kind", "face"}, {"filters", {{"surface", "cylinder"}}}});
+  CHECK_EQ(walls["total"], 2);
+  for (const auto& w : walls["items"]) CHECK_NEAR(w["bbox"]["min"][2].get<double>(), 14, 1e-6);
+  // A point beside the body, off its surface: into the nearest face (the +X side), here 5 mm deep.
+  feature(doc, "hole", {{"points", json::array({"point/25,0,10"})}, {"diameter", "4 mm"}, {"depth", "10 mm"}});
+  scene = resolve(doc);
+  walls = agent::query_entities(doc, scene, {{"body", block}, {"kind", "face"}, {"filters", {{"surface", "cylinder"}, {"bounds", {{"min", {14, -3, 7}}, {"max", {20.1, 3, 13}}}}}}});
+  CHECK_EQ(walls["total"], 1);
+  // Along a given direction: through the block along -Y from its front.
+  const double before = volume_properties(node_world_shape(doc, scene, block)).mass;
+  feature(doc, "hole", {{"points", json::array({json::array({0, -15, 10})})}, {"direction", {{"direction", {0, 1, 0}}}}, {"diameter", "2 mm"}, {"extent", "all"}});
+  scene = resolve(doc);
+  CHECK_NEAR(before - volume_properties(node_world_shape(doc, scene, block)).mass, M_PI * 1 * 30, 0.5);
+  // A vertex: into the face it lies on that faces it most (any of three here; a hole is made).
+  const size_t ops = doc.ops.size();
+  feature(doc, "hole", {{"points", json::array({block + "/vertex/0"})}, {"diameter", "2 mm"}, {"depth", "3 mm"}});
+  CHECK_EQ(doc.ops.size(), ops + 1);
+  // Nowhere to drill: said so, with what to give.
+  Document empty = Document::create();
+  const std::string why = error_of([&] { feature(empty, "hole", {{"points", json::array({json::array({0, 0, 0})})}}); });
+  CHECK(has(why, "no body to drill") && has(why, "direction"));
+  // The schema says what the feature does.
+  const json schema = agent::feature_schema("hole");
+  CHECK(schema["properties"].contains("direction"));
+  agent::validate_input(schema, {{"points", json::array({json::array({0, 0, 0})})}, {"direction", {{"direction", {0, 0, -1}}}}});
+}
+
 CHECK_MAIN()

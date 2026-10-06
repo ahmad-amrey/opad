@@ -439,6 +439,14 @@ Frame Ctx::plane(const json& in) const {
 
 gp_Ax1 Ctx::axis(const json& in) const {
   if (!in.is_object()) throw Error("no axis was chosen");
+  if (in.contains("direction")) {  // written out: {"direction": [x, y, z], "origin": [x, y, z]} (mcp-eval 2026-10-06, a hole's direction)
+    const json& d = in["direction"];
+    const json o = in.value("origin", json::array({0, 0, 0}));
+    if (!d.is_array() || d.size() != 3 || !o.is_array() || o.size() != 3) throw Error("an axis direction is [x, y, z] (origin too)");
+    const gp_Vec v(d[0].get<double>(), d[1].get<double>(), d[2].get<double>());
+    if (v.Magnitude() < 1e-12) throw Error("the axis direction must not be zero");
+    return gp_Ax1(gp_Pnt(o[0].get<double>(), o[1].get<double>(), o[2].get<double>()), gp_Dir(v));
+  }
   if (in.contains("base")) {
     const std::string b = in["base"].get<std::string>();
     return gp_Ax1(gp_Pnt(0, 0, 0), b == "x" ? gp_Dir(1, 0, 0) : b == "y" ? gp_Dir(0, 1, 0) : gp_Dir(0, 0, 1));

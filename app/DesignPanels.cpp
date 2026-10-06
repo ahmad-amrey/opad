@@ -430,6 +430,7 @@ void FeaturePanel::refreshVisibility() {
         if (one.contains("base")) what = (in.type == "plane" ? tr("%1 plane") : tr("%1 axis")).arg(QString::fromStdString(one["base"].get<std::string>()).toUpper());
         else if (one.contains("sketch")) what = tr("Sketch");
         else if (one.contains("feature")) what = tr("Construction");
+        else if (one.contains("direction")) what = tr("Direction");
         else what = in.type == "plane" || one.contains("face") ? tr("Face") : tr("Edge");  // an axis through a round face
       }
       if (!rule && in.type == "bodies" && m_spec->kind == "move") what = linkedMoveText(p, what);
