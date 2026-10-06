@@ -37,6 +37,12 @@ def thin_fin(root, document):
 
 GRID ="[view]\ngrid=true\n"
 
+def browser_dim(root, document):
+    """A box and an empty component "Holder" (worked in, the box is outside it)."""
+    return document("browser-dim", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
+                    ("component", "--name", "Holder"))
+
+
 CASES = [
     # P7: the seven standard views animate to their axes; in 2D mode Isometric is off and a standard view takes the grid to
     # its plane; Isolate's card with its × ends the isolation. <prefix>.top-partway.png, <prefix>.chip.png.
@@ -59,4 +65,8 @@ CASES = [
     # point) and selects nothing; a selection, a click in the view, Esc and a note being written put it out; Reset layout
     # brings the browser and the timeline back with their commands ticked. <prefix>.face.png.
     ("panels", "box", {"OPAD_BENCH_PANELS": "{prefix}"}),
+    # The collapsed browser's picture of its rows after an open and an open again in the component last worked in: as the
+    # areas left the rows (the ones outside it dimmed), not as they were before (until hovered). <prefix>.collapsed.png,
+    # <prefix>.browser.png.
+    ("browser-dim", browser_dim, {"OPAD_BENCH_BROWSER_DIM": "{prefix}"}),
 ]
