@@ -238,4 +238,44 @@ TEST(measure_distance_components_and_contact) {
   }
 }
 
+// 6. The live server's feature kinds have interference like the core (a stale tool list in the eval; kept here as a check),
+// and a read-only clearance tool on both servers: body/component against body/component.
+TEST(clearance_tool) {
+  bool live = false, headless = false;
+  for (const auto& tool : agent::live_tools())
+    if (tool["name"] == "clearance") live = tool["annotations"]["readOnlyHint"].get<bool>();
+  for (const auto& c : commands::list())
+    if (c.name == "clearance") headless = !c.mutates;
+  CHECK(live && headless);
+  const json kinds = agent::live_schema("feature")["properties"]["kind"]["enum"];
+  CHECK(std::find(kinds.begin(), kinds.end(), "interference") != kinds.end());
+  agent::validate_input(agent::live_schema("clearance"), {{"a", "x"}, {"b", json::array({"y", "z"})}, {"clearance_mm", 1}, {"limit", 1}});
+  CHECK_THROWS(agent::validate_input(agent::live_schema("clearance"), {{"a", "x"}}));
+
+  Assembly a(-3);
+  json r = commands::run("clearance", {{"a", a.board}, {"b", a.enclosure}, {"clearance_mm", 20}}, &a.doc);
+  std::printf("%s\n", r.dump().substr(0, 700).c_str());
+  CHECK_EQ(r["status"], "intersecting");
+  CHECK_EQ(r["bodies_a"], 2);
+  CHECK_EQ(r["intersecting"], 1);
+  CHECK_EQ(r["too_close"], 1);  // the far board box, 17 mm off
+  CHECK_NEAR(r["overlap_volume_mm3"].get<double>(), 60, 1e-3);
+  CHECK_EQ(r["min_distance_mm"], 0.0);
+  CHECK_EQ(r["items"][0]["kind"], "intersecting");
+  CHECK_NEAR(r["items"][1]["distance_mm"].get<double>(), 17, 1e-6);
+  // Paged.
+  r = commands::run("clearance", {{"a", a.board}, {"b", a.enclosure}, {"clearance_mm", 20}, {"limit", 1}}, &a.doc);
+  CHECK_EQ(r["items"].size(), 1u);
+  CHECK_EQ(r["next_offset"], 1);
+  // Apart: the gap, clear.
+  Assembly apart(4);
+  r = commands::run("clearance", {{"a", apart.enclosure}, {"b", apart.board}}, &apart.doc);
+  CHECK_EQ(r["status"], "clear");
+  CHECK_NEAR(r["min_distance_mm"].get<double>(), 4, 1e-6);
+  CHECK_EQ(r["total"], 0);
+  // The interference feature through the command layer, as the live server runs it.
+  const json check = feature(a.doc, "interference", {{"bodies", json::array({a.board, a.enclosure})}});
+  CHECK(check.contains("feature_id"));
+}
+
 CHECK_MAIN()

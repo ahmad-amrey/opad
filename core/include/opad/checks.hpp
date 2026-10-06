@@ -31,6 +31,11 @@ json interference_of(const Scene& scene, const std::vector<std::string>& bodies,
 // (intersecting, touching, too_close or clear). Only pairs whose boxes are within reach get the exact Boolean or distance.
 json contact_of(const Document& doc, const Scene& scene, const std::vector<std::string>& a, const std::vector<std::string>& b, double clearance = 0,
                 const std::function<bool()>& cancelled = {});
+// The clearance command: args a and b (body or component ids, components standing for all their bodies), clearance_mm,
+// offset/limit over the findings; what contact_of says, paged, with the bodies of a linked file that is not loaded listed
+// apart (not_loaded) rather than failing.
+json check_clearance(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled = {});
+
 // 3D-print checks per solid body (TODO 10 B13): faces overhanging more than overhang_deg from vertical (default 45)
 // against build_direction ("+z" default, or [x, y, z]), the contact area on the build plate, walls thinner than
 // min_wall_mm (default 0.8) where sampled rays cross the body, and thin features (faces narrower than min_wall_mm).

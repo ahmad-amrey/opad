@@ -488,6 +488,51 @@ json contact_of(const Document& doc, const Scene& scene, const std::vector<std::
   return out;
 }
 
+json check_clearance(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled) {
+  // Each side: bodies and components (all their bodies, hidden ones too: they are named); bodies not loaded (a linked file
+  // that is not read) are listed apart, not measured.
+  json skipped = json::array();
+  auto side = [&](const char* key) {
+    if (!args.contains(key)) throw Error(std::string("clearance: pass ") + key + " (body or component ids)");
+    const json ids = args[key].is_string() ? json::array({args[key]}) : args[key];
+    if (!ids.is_array() || ids.empty()) throw Error(std::string(key) + " takes body or component ids");
+    std::vector<std::string> out;
+    for (const auto& id : ids) {
+      if (!id.is_string() || !scene.node(id.get<std::string>())) throw Error("unknown node " + id.dump());
+      for (const auto& body : scene.bodies_under(id.get<std::string>())) {
+        const Node* n = scene.node(body);
+        if (!n || n->kind != Node::Kind::Body || std::find(out.begin(), out.end(), body) != out.end()) continue;
+        if (n->body_missing) {
+          skipped.push_back({{"id", body}, {"name", n->name}, {"reason", n->linked ? "its linked file is not loaded" : "its body entry is missing"}});
+          continue;
+        }
+        if (n->representation == "solid") out.push_back(body);
+      }
+    }
+    return out;
+  };
+  const std::vector<std::string> a = side("a"), b = side("b");
+  for (const auto& id : a)
+    if (std::find(b.begin(), b.end(), id) != b.end()) throw Error("body " + id + " is on both sides; give two separate groups");
+  if (a.empty() || b.empty()) throw Error(std::string("side ") + (a.empty() ? "a" : "b") + " has no solid body that is loaded");
+  json out = contact_of(doc, scene, a, b, args.value("clearance_mm", 0.0), cancelled);
+  const json findings = out["findings"];
+  out.erase("findings");
+  const size_t offset = arg_size(args, "offset", 0, 1u << 30), limit = arg_size(args, "limit", 25, 100);
+  json page = json::array();
+  for (size_t i = offset; i < findings.size() && page.size() < limit; ++i) page.push_back(findings[i]);
+  out["check"] = "clearance";
+  out["bodies_a"] = a.size();
+  out["bodies_b"] = b.size();
+  out["total"] = findings.size();
+  out["offset"] = offset;
+  out["items"] = page;
+  out["next_offset"] = offset + page.size() < findings.size() ? json(offset + page.size()) : json(nullptr);
+  if (!skipped.empty()) out["not_loaded"] = skipped;
+  out["coordinates"] = "world mm";
+  return out;
+}
+
 json check_print(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled) {
   // The build direction: which way layers stack.
   gp_Vec up(0, 0, 1);

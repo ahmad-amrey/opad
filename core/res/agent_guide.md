@@ -328,6 +328,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   body, faces overhanging more than `overhang_deg` (default 45, from vertical) against `build_direction` ("+z"),
   the build-plate contact area, walls thinner than `min_wall_mm` (0.8) and thin features. Add "solid" for the usual
   validity page.
+- `clearance` (read-only) between two groups `a` and `b` (bodies or components): `min_distance_mm` and the closest
+  pair, then the pairs across that intersect (overlap volume and box), touch, or come closer than `clearance_mm`,
+  worst first and paged; `status` intersecting|touching|too_close|clear. An enclosure against a board assembly.
 - The `interference` feature keeps such a check in the timeline: `bodies` (all solids so far if none), `clearance`,
   `fail_on` (`nothing`, `interference` or `clearance`). Its result's `check` holds the report (status, pairs, overlap
   volumes, distances) and is computed again whenever those bodies change; with `fail_on`, a finding is the

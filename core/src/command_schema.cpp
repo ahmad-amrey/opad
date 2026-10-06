@@ -122,7 +122,7 @@ json command_schema(const commands::CommandInfo& command,bool live) {
     {"properties",{"node"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"b"}},
     {"annotate",{"anchor","text"}},{"delete_annotation",{"target"}},{"delete",{"target"}},{"rename",{"name"}},{"transform",{"target","matrix"}},{"section",{"origin","normal"}},{"view",{"camera"}},{"param",{"name"}},{"param_delete",{"name"}},
     {"sketch_edit",{"target"}},{"feature",{"kind"}},{"feature_edit",{"target"}},{"drawing_to_sketch",{"layers"}},
-    {"query_entities",{"body"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}},
+    {"query_entities",{"body"}},{"clearance",{"a","b"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}},
     {"sheet_view",{"sheet"}},{"sheet_item",{"sheet"}},{"sheet_edit",{"target","set"}},{"part_properties",{"set"}},{"related",{"refs"}}
   };
   if(auto it=needed.find(name);it!=needed.end())for(const auto& key:it->second)required.push_back(key);

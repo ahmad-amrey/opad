@@ -239,6 +239,12 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
       {"clearance_mm",{{"type","number"},{"minimum",0}}},{"against",{{"type","array"},{"items",{{"type","string"}}}}},{"ignore",{{"type","array"},{"items",{{"type","array"},{"items",{{"type","string"}}},{"minItems",2},{"maxItems",2}}}}},
       {"max_pairs",{{"type","integer"},{"minimum",1}}},{"build_direction",{{"anyOf",{{{"type","string"},{"enum",{"+x","-x","+y","-y","+z","-z"}}},{{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}}}}},
       {"overhang_deg",{{"type","number"},{"minimum",0},{"maximum",89}}},{"min_wall_mm",{{"type","number"},{"minimum",0}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::validate_design(d,s,a);}));
+  // mcp-eval 2026-10-06: an enclosure against a board assembly, body or component on either side, with the overlap volumes.
+  json group=json::object();
+  group["anyOf"]=json::array({{{"type","string"}},{{"type","array"},{"items",{{"type","string"}}},{"minItems",1},{"maxItems",1000}}});
+  group["description"]="Body or component ids; a component stands for all its bodies.";
+  add({"clearance","Read-only clearance between two groups (a, b): the smallest distance (min_distance_mm, closest pair and points) and, worst first and paged, the pairs across that intersect (overlap volume and box), touch (0 mm, no volume) or come closer than clearance_mm; status intersecting|touching|too_close|clear. Bodies of linked files not loaded are listed in not_loaded.",
+    bounded({{"a",group},{"b",group},{"clearance_mm",{{"type","number"},{"minimum",0},{"default",0}}}}),false},run([](const Document& d,const Scene& s,const json& a){return check_clearance(d,s,a);}));
   add({"feature_schema","Input schema, defaults and an example for one supported feature kind",{{"kind",{{"type","string"}}}},false},[](Document*,const json& a){
     const auto kind=a.at("kind").get<std::string>();const auto schema=agent::feature_schema(kind);json example=json::object();
     for(const auto& input:design::feature_spec(kind)->inputs){
