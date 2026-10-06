@@ -40,6 +40,9 @@ class AgentBridge : public QObject {
   // An agent's git tool changed the repository (AgentGit.cpp); `files`: the work tree may have changed too (a switch,
   // a merge, a pull, a resolve), so the open document follows the file. The Version control area refreshes on it.
   void gitChanged(bool files);
+  // An agent's git command that may rewrite the document's file is about to run (gitChanged follows, always): the file's
+  // states meanwhile are the agent's own change, taken in without a question (DiskSync::expect).
+  void gitStarting();
  public:
   // The sub-shape references a connection was given (entity_details, query_entities, selection, change lists), by
   // normalised ref, with the body key and placement they were given for (TODO 10 B6). Transport only.

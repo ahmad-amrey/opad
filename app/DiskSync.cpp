@@ -117,8 +117,19 @@ void DiskSync::check() {
   read();
 }
 
+void DiskSync::expect() {
+  m_expecting = true;
+  m_dismissed.reset();
+}
+
+QString DiskSync::asking() const {
+  const QString state = m_banner->state();
+  return state == "merge" || state == "replaced" || state == "unreadable" || state == "deleted" || state == "confirm" ? state : QString();
+}
+
 void DiskSync::adopt() {
   m_adopt = true;
+  m_expecting = false;
   m_decided = false;
   m_dismissed.reset();
   check();
@@ -152,11 +163,19 @@ void DiskSync::read(bool everyBody) {
 
 void DiskSync::decide() {
   const auto& r = *m_read;
+  if (m_expecting) return;  // a command of the window is still writing it: what it leaves comes in at its end (adopt)
   if (std::exchange(m_reloadAfter, false) && r.doc) return reload(true);
-  const bool adopt = std::exchange(m_adopt, false) && !m_doc->isDirty();
+  // The window's own change (adopt) comes in without a question while nothing is unsaved here; it stays the window's
+  // until it came in (a reload that finds the file moved on reads it again, still adopting it).
+  const bool adopt = m_adopt && !m_doc->isDirty();
+  if (m_doc->isDirty()) m_adopt = false;  // asked about instead
   m_decided = true;
-  if (!r.doc) return showUnreadable();
+  if (!r.doc) {
+    m_adopt = false;
+    return showUnreadable();
+  }
   if (r.relation == opad::Relation::same) {  // touched, or written back alike
+    m_adopt = false;
     m_doc->acceptDisk(r);
     m_read.reset();
     m_decided = false;
@@ -278,6 +297,7 @@ void DiskSync::merge() {
   try {
     const auto plan = m_doc->mergeDisk(std::move(*taken), clean ? tr("changes from disk") : tr("merge with disk"));
     m_saveAfter = false;
+    m_adopt = false;
     if (clean) status(tr("%1 changed on disk: %2 new changes brought in").arg(name()).arg(plan.incoming));
     else status(tr("Merged %1 changes from disk; save to write the result").arg(plan.incoming));
     if (plan.design) {  // results each side computed did not see the other's changes
@@ -287,6 +307,7 @@ void DiskSync::merge() {
     } else if (!m_banner->state().isEmpty()) m_banner->dismiss();
   } catch (const std::exception& e) {
     status(tr("Could not merge %1: %2").arg(name(), QString::fromUtf8(e.what())));
+    if (m_doc->diskStat() == taken->stat && asking() == "merge") m_banner->dismiss();  // it came in; only what followed failed
     schedule(2000);
   }
 }
@@ -299,7 +320,11 @@ void DiskSync::reload(bool asked) {
     m_decided = false;
     return check();
   }
-  if (!idle()) return status(tr("The document is busy; try again in a moment."));
+  if (!idle()) {
+    if (!m_adopt) return status(tr("The document is busy; try again in a moment."));
+    m_decided = false;  // the window's own change: once the document is free
+    return schedule(500);
+  }
   for (const auto& key : m_read->bodies)
     if (!m_read->doc->has_body(key) && !m_doc->doc.has_body(key)) {
       m_reloadAfter = true;
@@ -312,9 +337,16 @@ void DiskSync::reload(bool asked) {
   try {
     m_doc->reloadDisk(std::move(*taken));
     m_saveAfter = false;
+    m_adopt = false;
     m_banner->dismiss();
   } catch (const std::exception& e) {
     status(tr("Could not reload %1: %2").arg(name(), QString::fromUtf8(e.what())));
+    // The file came in and only what followed failed: the card no longer stands for anything (a save would then have
+    // gone through under it).
+    if (m_doc->diskStat() == taken->stat) {
+      m_adopt = false;
+      m_banner->dismiss();
+    }
   }
 }
 

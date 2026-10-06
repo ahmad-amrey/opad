@@ -165,6 +165,7 @@ class Vcs : public AreaController {
         if (files) disk->adopt();
         m_git->refresh(true);
       });
+    if (auto* agent = services().window()->findChild<AgentBridge*>()) connect(agent, &AgentBridge::gitStarting, disk, &DiskSync::expect);
     services().timeline()->addTipProvider([this](const opad::Op& op) { return m_version->provenance()->tip(op); });
     if (auto* recovery = services().window()->findChild<RecoveryManager*>())  // the Recovery offer's Compare…: the file, then the snapshot
       connect(recovery, &RecoveryManager::compareRequested, this, [this](const QString& source, const QString& snapshot, const QString& time) {

@@ -1,4 +1,6 @@
 #include "AgentBridge.hpp"
+#include "DiskSync.hpp"
+#include <QFileInfo>
 #include "DesignController.hpp"
 #include "Viewport.hpp"
 #include "opad/live.hpp"
@@ -215,6 +217,17 @@ void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)
 }
 void AgentBridge::save(const std::shared_ptr<Session>& session,const json& args,const std::string& receipt){
   if(m_prepared){fail(session,"prepared_active",tr("Commit or cancel the current transaction first."),receipt);return;}
+  // The window asks the user about the file (it changed on disk: Merge / Reload / Save as / Overwrite): a save now would
+  // decide that question behind the user's back, whatever the file's time stamp says.
+  if(const auto* disk=m_window->findChild<DiskSync*>();disk && !disk->asking().isEmpty() && args.value("path","").empty()){
+    m_receipts[receipt].state="failed";
+    auto error=live_error("disk_changed",tr("%1 changed on disk and OPAD is asking the user what to do with it (Reload, Merge, Save as or Overwrite). Nothing was saved: saving now could write over what changed there.").arg(QFileInfo(m_doc->path()).fileName()).toStdString());
+    error["structuredContent"]["state"]="failed";
+    error["structuredContent"]["error"]["banner"]=disk->asking().toStdString();
+    error["structuredContent"]["error"]["next"]="ask_user";
+    error["structuredContent"]["error"]["ask_user"]="Ask the user to answer OPAD's card about the file at the top of the 3D view, then read live_state again before saving.";
+    activity(tr("Agent save refused: the file changed on disk and the user is being asked"));reply(session,std::move(error),receipt);return;
+  }
   const auto revision=m_doc->revision,epoch=++m_epoch;
   m_busy=true;m_owner=session->socket;activity(tr("Agent: %1").arg("save"));
   try {

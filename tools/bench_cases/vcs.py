@@ -193,8 +193,9 @@ def git_linked(root, document, name="git-linked"):
     """Linked files across an agent's git switches and merges: <name>/project/model.opad in its own repository (OPAD's
     attributes), linking KiCad boards from <name>/boards/<board>/, outside the project. develop holds a box; feature/boards
     adds base and screen (each its own folder); feature/third adds a third board from a third folder; feature/alt, from
-    develop, a cylinder and base linked again (another history). feature/boards is checked out. <name>/other.opad is another
-    document (a bound agent must bind it explicitly)."""
+    develop, a cylinder and base linked again (another history). feature/boards is checked out; post-checkout and post-merge
+    hooks keep git busy 2 s after it wrote the file. <name>/other.opad is another document (a bound agent must bind it
+    explicitly)."""
     folder = root / name
     project, boards = folder / "project", folder / "boards"
     project.mkdir(parents=True)
@@ -235,6 +236,8 @@ def git_linked(root, document, name="git-linked"):
     link("base")
     run("commit", "-q", "-am", "another history with the base board")
     run("switch", "-q", "feature/boards")
+    for hook in ("post-checkout", "post-merge"):  # git still busy after writing the file (hooks, LFS): the window sees it first
+        (project / ".git" / "hooks" / hook).write_bytes(b"#!/bin/sh\nsleep 2\n")
     return doc, cache
 
 

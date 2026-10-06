@@ -10,7 +10,10 @@
 // live_state and context tell an agent that the user's trust is needed, which it cannot give), then read from its badge.
 // The trust question is answered through assets::setTrustAnswer. The connection, bound once, stays bound through every
 // reload of the same document (a notice in the next reply says so); another document opened in the window needs an explicit
-// live_bind (target_changed). Pictures at <prefix>.<step>.png.
+// live_bind (target_changed). On every tick the window never shows the "replaced on disk" card for the agent's own git
+// commands, nor the start page over the open document; a change made outside (a reset of the file) brings the card, and an
+// agent's save then refuses (disk_changed, ask the user) and writes nothing until the user has answered it (Reload).
+// Pictures at <prefix>.<step>.png.
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -24,12 +27,15 @@
 #include "AppDocument.hpp"
 #include "AssetMonitor.hpp"
 #include "AssetsArea.hpp"
+#include "Banner.hpp"
 #include "BenchRegistry.hpp"
 #include "BrowserDelegate.hpp"
 #include "BrowserPanel.hpp"
 #include "Jobs.hpp"
+#include "EmptyState.hpp"
 #include "MainWindow.hpp"
 #include "opad/live.hpp"
+#include "opad/util.hpp"
 
 namespace {
 // The trust question's answers (0 Not now, 1 Read them, 2 Always trust), in order, and the folders each question named.
@@ -76,6 +82,8 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
     bool waiting = false;
     size_t asks = 0;
     std::string third, target;
+    bool external = false;  // the file changed outside on purpose: its card is expected
+    AppDocument::DiskStat stamp;
   };
   auto st = std::make_shared<State>();
   auto require = [](bool ok, const QString& why) {
@@ -137,8 +145,20 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
     if (const opad::Node* n = doc->node(root)) area->decorate({root, "component", {}, n}, d);
     return d.badges.isEmpty() ? browser::Badge{} : d.badges.front();
   };
-  // On every tick: a linked file whose parts are not all loaded never shows the in-sync check.
-  auto invariant = [linked, badge, names] {
+  // The card DiskSync shows about the file (its state), else empty.
+  auto card = [win] {
+    for (Banner* b : win->m_viewport->findChildren<Banner*>())
+      if (const QString state = b->property("state").toString(); b->isVisibleTo(win) && (state == "merge" || state == "replaced" || state == "unreadable" || state == "deleted"))
+        return b;
+    return static_cast<Banner*>(nullptr);
+  };
+  // On every tick: a linked file whose parts are not all loaded never shows the in-sync check; the agent's own git commands
+  // never bring the "replaced on disk" card; the start page never covers the open document.
+  auto invariant = [linked, badge, names, card, st, win, doc] {
+    if (Banner* b = card(); b && !st->external)
+      throw std::runtime_error("the card \"" + b->property("state").toString().toStdString() + "\" about the file came up for the agent's own git command");
+    if (doc->hasDocument && (win->m_stack->currentWidget() == win->m_empty || win->m_empty->isVisible()))
+      throw std::runtime_error("the start page shows over the open document");
     for (const auto& [name, l] : linked())
       if (l.missing > 0 && badge(l.root).icon == "check")
         throw std::runtime_error(QStringLiteral("%1 shows the in-sync check with %2 of %3 parts not loaded (%4)")
@@ -288,6 +308,46 @@ OPAD_BENCH(OPAD_BENCH_GIT_LINKED, gitLinked) {
   });
   add(gitStep("git_switch", {{"branch", "feature/boards"}}, {"base.kicad_pcb", "screen.kicad_pcb"}, "git_switch feature/boards (a reload): the boards loaded", true));
   add(gitStep("git_switch", {{"branch", "feature/alt"}}, {"base.kicad_pcb"}, "git_switch feature/alt (a reload, another history): base read again", true));
+  add({
+      [=] {  // changed outside (as `git reset --hard HEAD~1` leaves it): the card, which an agent's save must not decide
+        if (!settled()) return false;
+        st->external = true;
+        const std::filesystem::path file(doc->path().toStdU16String());
+        opad::Document d = opad::Document::load(file);
+        d.truncate_ops(d.ops.size() - 1);
+        opad::write_text_file(file, d.serialize());
+        return true;
+      },
+      [=] {
+        Banner* b = card();
+        if (!b || b->property("state").toString() != "replaced") return false;
+        st->stamp = AppDocument::statFile(doc->path());
+        win->grab().save(prefix + ".replaced.png");
+        tool("save", {{"expected_revision", doc->revision}}, true);
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        const json& e = st->reply["structuredContent"]["error"];
+        require(failed() && e.value("code", "") == "disk_changed" && e.value("next", "") == "ask_user", "the agent's save refused while the card asks the user: " + dump());
+        require(AppDocument::statFile(doc->path()) == st->stamp && card() && card()->property("state").toString() == "replaced", "nothing written, the card still up");
+        pass("an agent's save while the card about the file is up: refused (disk_changed, ask the user), nothing written");
+        card()->button("diskReload")->click();  // the user's answer
+        return true;
+      },
+      [=] {
+        if (card() || !settled()) return false;
+        tool("save", {{"expected_revision", doc->revision}}, true);
+        return true;
+      },
+      [=] {
+        if (!answered()) return false;
+        require(!failed(), "saved once the user reloaded: " + dump());
+        st->external = false;
+        pass("the user's Reload answered the card: the agent's save goes through");
+        return true;
+      },
+  });
   const QString other = QDir::cleanPath(QFileInfo(doc->path()).absolutePath() + "/../other.opad");
   add({
       [=] {  // another document in the same window: a new target, never followed

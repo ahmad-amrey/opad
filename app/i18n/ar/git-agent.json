@@ -35,5 +35,7 @@
  "Push %1": "دفع %1",
  "%1 is a protected branch (Preferences > Version control > Branch protection). Merge %2 into it anyway?": "%1 فرع محمي (التفضيلات > التحكم في الإصدارات > حماية الفروع). أتدمج %2 فيه على أي حال؟",
  "Merge into %1": "دمج في %1",
- "The document was reloaded from its file; bound agents follow it": "أُعيد تحميل المستند من ملفه؛ الوكلاء المرتبطون يتابعونه"
+ "The document was reloaded from its file; bound agents follow it": "أُعيد تحميل المستند من ملفه؛ الوكلاء المرتبطون يتابعونه",
+ "%1 changed on disk and OPAD is asking the user what to do with it (Reload, Merge, Save as or Overwrite). Nothing was saved: saving now could write over what changed there.": "تغيّر %1 على القرص ويسأل OPAD المستخدم عمّا يفعله به (إعادة التحميل أو الدمج أو الحفظ باسم أو الكتابة فوقه). لم يُحفظ شيء: الحفظ الآن قد يكتب فوق ما تغيّر هناك.",
+ "Agent save refused: the file changed on disk and the user is being asked": "رُفض حفظ الوكيل: تغيّر الملف على القرص والمستخدم يُسأل عنه"
 }
