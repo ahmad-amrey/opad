@@ -863,12 +863,12 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     std::vector<double> cell_mm;  // each air cell's size
     for (size_t c = 0; c < air_cells.centre.size(); ++c)
       at_mm.push_back(mul(air_cells.centre[c], 1e3)), cell_mm.push_back(std::cbrt(std::max(0.0, air_cells.volume[c])) * 1e3);
-    const Nearest near(at_mm, coarse);
+    const Nearest nearest(at_mm, coarse);
     double mean_speed = 0;
     for (size_t c = 0; c < at_mm.size(); ++c) mean_speed += norm({Uc[3 * c], Uc[3 * c + 1], Uc[3 * c + 2]});
     mean_speed /= std::max<size_t>(1, at_mm.size());
     auto velocity = [&](const V& p, size_t& cell) {
-      cell = near(p);
+      cell = nearest(p);
       if (norm(sub(at_mm[cell], p)) > 1.2 * cell_mm[cell]) return V{0, 0, 0};  // inside a part
       return V{Uc[3 * cell], Uc[3 * cell + 1], Uc[3 * cell + 2]};
     };
@@ -1504,12 +1504,12 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     const auto T = read_internal(read_text_file(cas / last / r / "T"), cells.centre.size(), 1);
     std::vector<V> centres_mm;
     for (const auto& c : cells.centre) centres_mm.push_back(mul(c, 1e3));
-    const Nearest near(centres_mm, 2 * fine);
+    const Nearest nearest(centres_mm, 2 * fine);
     // The surface, one node per triangle corner.
     const int base = int(res->nodes.size());
     for (size_t k = 0; k < tri_pts[i].size(); ++k) {
       res->nodes.push_back(tri_pts[i][k]);
-      res->temperature.push_back(T[near(tri_pts[i][k])] - 273.15);
+      res->temperature.push_back(T[nearest(tri_pts[i][k])] - 273.15);
     }
     for (size_t k = 0; k + 2 < tri_pts[i].size(); k += 3) {
       res->skin.push_back({base + int(k), base + int(k + 1), base + int(k + 2)});
