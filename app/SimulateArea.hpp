@@ -68,6 +68,7 @@ class Simulate : public AreaController {
   void pause();
   void tick();
   void addLoad(const QString& kind);
+  opad::Vec3 askVector(const QString& title, const QString& label, bool* ok);  // "x, y, z" from a dialog
   [[noreturn]] void wantPicks(const char* filter, const char* hint);
   void showResults(bool on);
   void clearMotion();

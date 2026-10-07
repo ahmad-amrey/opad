@@ -308,7 +308,8 @@ json study_report(const StudyRun& run, const json& options) {
     if (at.empty() || at.back() != k) at.push_back(k);
   }
   auto picked = [&](const Series& s) {
-    if (want == true) return s.group == "value" || s.group == "trace" || s.group == "motor" || s.group == "energy" || s.group == "reaction";
+    if (want == true)
+      return s.group == "value" || s.group == "trace" || s.group == "motor" || s.group == "energy" || s.group == "reaction" || s.group == "temperature";
     for (const auto& w : want)
       if (w.is_string() && (w.get<std::string>() == s.name || w.get<std::string>() == s.group || w.get<std::string>() == s.id)) return true;
     return false;

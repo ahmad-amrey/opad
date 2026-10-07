@@ -497,6 +497,17 @@ reference node; the shank's axial stress is reported). Results: displacements, s
 reactions per support, a safety factor per body against its material's yield strength, natural frequencies and mode
 shapes. `render` draws any study frame, field or mode with a colour legend.
 
+**Heat.** Thermal studies mesh the same way and solve heat transfer with CalculiX, steady or over time: heat sources (W
+into parts or through faces), fixed temperatures, convection, radiation and fans, with conductivity, specific heat and
+emissivity from the material library. The air comes from heat-transfer correlations rather than a flow solution: natural
+convection per face from its tilt, size and the gap to the face it looks at (Churchill-Chu, Lloyd-Moran,
+Raithby-Hollands, Bar-Cohen-Rohsenow between fins), forced convection over plates, and fans: a plate-fin heatsink's fins
+are found in its shape, the fan's curve (typical fans by size and speed, or its datasheet's) meets the fins' pressure drop
+(developing flow in the channels with entrance and exit losses) for the operating point, the channels' heat transfer
+follows (Teertstra-Yovanovich-Culham), and the air warms along the fins. Convection that depends on the temperatures is
+solved again until they settle. Results: temperatures per part, where the heat goes, each fan's flow, pressure and air
+rise, the heatsink's resistance; temperature maps, and warm-up curves over time.
+
 **Printed parts.** A static or modal study's bodies can be 3D printed (FFF/FDM): the Printed part dialog (or
 `settings.print`) takes the filament, build direction, layer height, line width, walls, top and bottom layers, infill
 density, pattern and angle and flow, typed in or read from a slicer's own file (PrusaSlicer .ini, OrcaSlicer and Bambu
@@ -513,7 +524,7 @@ ones would mix a stiff skin's stress into the soft infill beside it), with what 
 between layers or shear, and in which region. The summary gives the regions' volumes, stiffness and strength, the
 printed mass, the safety factor and where it fails first (height and layer); the result map adds the failure index.
 
-**Checked against textbook cases** (tests/test_motion.cpp, test_dynamics.cpp, test_fea.cpp, test_gear.cpp, test_print.cpp):
+**Checked against textbook cases** (tests/test_motion.cpp, test_dynamics.cpp, test_fea.cpp, test_gear.cpp, test_print.cpp, test_thermal.cpp):
 
 | Case | OPAD | Reference |
 |---|---|---|
@@ -533,13 +544,18 @@ printed mass, the safety factor and where it fails first (height and layer); the
 | Printed bar pulled along its layers / across them | < 3 % | (σ / φ X)², (σ / φ Z)²; stretch σ L / φ E, σ L / φ k_z E |
 | Grid infill, averaged out, against its walls modelled one by one | 3.9 % | explicit coupon, same plastic |
 | Infill region of a box and a cylinder | 1e-3 mm³ | (L − 2 t_w)(W − 2 t_w)(H − t_t − t_b) |
+| Conduction along a bar / a slab generating heat | 1e-3 / 0.5 % | q L / k A, q‴ L² / 8 k |
+| Fin with a convective tip: tip temperature, heat shed | < 1 % | the fin equation (Incropera) |
+| Copper block warming up / radiating alone | < 1 % | lumped capacitance, Stefan-Boltzmann |
+| Fan-cooled heatsink, base temperature | < 4 % | the one-dimensional fin-array model with fin efficiency |
+| Heatsink warming up: its time constant | 3 % | m c R |
 
 `tools/sim_eval.py <opad-cli>` builds mechanisms through the MCP server the way an agent does (a single-cylinder
 engine, a two-stage gearbox and a planetary set with involute teeth, rack-and-pinion steering, a screw jack, a
 four-bar linkage, knobs snapped into a panel, a block sliding on a ramp, a plate with a hole, a bolted bracket, a
-3D-printed bracket from a PrusaSlicer profile in two build directions), checks each against its closed form and writes
-a report with pictures and animations. The GUI bench `OPAD_BENCH_SIMULATE` does the same through the Simulate
-workspace's ribbon and panel.
+3D-printed bracket from a PrusaSlicer profile in two build directions, a 30 W chip on a heatsink in still air and with
+two fans), checks each against its closed form and writes a report with pictures and animations. The GUI bench
+`OPAD_BENCH_SIMULATE` does the same through the Simulate workspace's ribbon and panel.
 
 **In the app.** The Simulate workspace's Mechanism tab makes joints from the picked edge or face (the panel's kind), runs
 motion and dynamic studies and plays them back (a frame slider, play, and a chart of any series); its Structure tab puts

@@ -689,6 +689,65 @@ def printed_bracket(s):
              f"{stand['min_safety_factor']:.2f} against {25 * phi / (M * c / I):.2f}")
 
 
+@scenario("heatsink_fan", "A 30 W chip on a finned aluminium heatsink: still air, a 60 mm fan and an 80 mm fan; warming up over time")
+def heatsink_fan(s):
+    # 60 x 60 x 5 mm base, ten 1.5 mm fins 30 mm tall along X; a 20 x 20 mm chip under it giving 30 W.
+    hs = s.box("Heatsink", (0, 0, 0), 60, 60, 5, centered=False, color=[0.75, 0.77, 0.8])
+    gap = (60 - 10 * 1.5) / 9
+    for i in range(10):
+        s.run("feature", kind="box", inputs={"plane": {"origin": [0, i * (1.5 + gap), 5], "normal": [0, 0, 1]}, "length": 60, "width": 1.5, "height": 30,
+                                             "centered": False, "operation": "join", "targets": [hs]})
+    chip = s.box("Chip", (20, 20, -2), 20, 20, 2, centered=False, color=[0.15, 0.15, 0.17])
+    s.material([hs], "aluminium-6061")
+    s.run("load", kind="heat", on=[chip], value=30, case="Fan")
+    s.run("load", kind="fan", on=[hs], fan="60x15", vector=[1, 0, 0], case="Fan")
+    s.run("load", kind="heat", on=[chip], value=30, case="Bigger fan")
+    s.run("load", kind="fan", on=[hs], fan="80x25", vector=[1, 0, 0], case="Bigger fan")
+    s.run("load", kind="heat", on=[chip], value=5, case="Still air")
+    s.run("load", kind="convection", on=[hs], h="natural", case="Still air")
+    settings = {"mesh_size": 3, "bodies": [hs, chip], "materials": {chip: {"k": 150, "cp": 700, "density": 2.33, "name": "Silicon"}}}
+    runs = {}
+    for case in ("Fan", "Bigger fan", "Still air"):
+        st = s.run("study", kind="thermal", name=case, settings=dict(settings, case=case))
+        runs[case] = st
+        s.check(f"{case}: the heat reaches the air (W)", st["to_air_W"], st["heat_W"], 0.005)
+        s.picture(f"heatsink_{case.lower().replace(' ', '_')}.png", study={"id": st["id"]}, view="iso")
+    fan, big = runs["Fan"]["fans"][0], runs["Bigger fan"]["fans"][0]
+    s.expect("the heatsink's fins are found: 10 of 1.5 mm, 5 mm apart, 30 mm tall", fan["fins"]["fins"] == 10 and abs(fan["fins"]["gap_mm"] - 5) < 0.01
+             and abs(fan["fins"]["fin_height_mm"] - 30) < 0.5, json.dumps(fan["fins"]))
+    # The operating point is on the fan's curve: a straight line from shut-off to free flow.
+    for f in (fan, big):
+        on_curve = f["fan"]["shut_off_Pa"] * (1 - f["flow_m3h"] / f["fan"]["free_flow_m3h"])
+        s.check(f"{f['fan']['name']}: the fins' pressure drop is the fan's pressure at its flow (Pa)", f["pressure_Pa"], on_curve, 0.01)
+        rho, cp = 101325 / (287.05 * 298.15), 1006.0
+        s.check(f"{f['fan']['name']}: the air warms by Q / (rho V cp) (degC)", f["air_rise_C"], f["heat_W"] / (rho * f["flow_m3h"] / 3600 * cp), 0.02)
+    s.expect("the bigger fan moves more air and cools better", big["flow_m3h"] > fan["flow_m3h"] and big["thermal_resistance_C_W"] < fan["thermal_resistance_C_W"],
+             f"{fan['flow_m3h']:.1f} -> {big['flow_m3h']:.1f} m3/h, {fan['thermal_resistance_C_W']:.2f} -> {big['thermal_resistance_C_W']:.2f} degC/W")
+    still = runs["Still air"]
+    r_still = (still["bodies"]["Heatsink"]["max_temperature_C"] - 25) / still["heat_W"]
+    s.expect("in still air the heatsink holds 3 to 8 degC/W (a 60 mm heatsink's catalogue range)", 3 < r_still < 8, f"{r_still:.2f} degC/W")
+    s.note(f"60 mm fan: {fan['flow_m3h']:.1f} m3/h at {fan['pressure_Pa']:.1f} Pa, {fan['channel_velocity_m_s']:.2f} m/s between the fins, h {fan['h_W_m2K']:.0f} W/m2K, "
+           f"chip {runs['Fan']['bodies']['Chip']['max_temperature_C']:.1f} degC, heatsink {fan['thermal_resistance_C_W']:.2f} degC/W")
+    s.note(f"80 mm fan: {big['flow_m3h']:.1f} m3/h at {big['pressure_Pa']:.1f} Pa, chip {runs['Bigger fan']['bodies']['Chip']['max_temperature_C']:.1f} degC, "
+           f"heatsink {big['thermal_resistance_C_W']:.2f} degC/W")
+    s.note(f"still air, 5 W: chip {still['bodies']['Chip']['max_temperature_C']:.1f} degC, heatsink {r_still:.2f} degC/W after {still['solves']} solves")
+    # Warming up with the 60 mm fan: after the chip's quick first rise (its heat spreading into the base), the whole heatsink
+    # warms as one body would: what is left of the rise decays as exp(-t / tau), tau = m c R.
+    warm = s.run("study", kind="thermal", name="Warm-up", settings=dict(settings, case="Fan", duration=300, frames=61), series=True, samples=61)
+    curve = next(x for x in warm["series"] if x["name"].startswith("Chip"))
+    T, t = curve["v"], warm["t"]
+    final = runs["Fan"]["bodies"]["Chip"]["max_temperature_C"]
+    i1, i2 = t.index(min(t, key=lambda x: abs(x - 150))), len(t) - 1
+    tau = (t[i2] - t[i1]) / math.log((final - T[i1]) / (final - T[i2]))
+    m = 2.7e3 * (60 * 60 * 5 + 10 * 1.5 * 30 * 60) * 1e-9  # kg of aluminium
+    # R as the slow mode sees it: the heatsink's mean temperature over the air's mean, per watt.
+    R_mean = (runs["Fan"]["bodies"]["Heatsink"]["mean_temperature_C"] - 25 - fan["air_rise_C"] / 2) / fan["heat_W"]
+    tau_lumped = m * 896 * R_mean
+    s.check("warm-up: the heatsink's time constant against the lumped m c R, R from its mean temperature (s)", tau, tau_lumped, 0.1)
+    s.note(f"warm-up: {T[-1]:.1f} degC after {t[-1]:.0f} s of {final:.1f}; late time constant {tau:.0f} s, m c R = {tau_lumped:.0f} s")
+    s.picture("heatsink_warmup_30s.png", study={"id": warm["id"], "t": 30}, view="iso")
+
+
 # ======================================================================================================== runner
 def write_markdown(report, out):
     """report.md from a report (as report.json keeps it): a table per scenario, its notes and pictures."""

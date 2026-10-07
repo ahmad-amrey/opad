@@ -41,6 +41,7 @@
 #include "Viewport.hpp"
 #include "opad/geometry.hpp"
 #include "opad/render.hpp"
+#include "opad/sim/airflow.hpp"
 #include "opad/sim/fea.hpp"
 #include "opad/sim/joints.hpp"
 
@@ -50,6 +51,12 @@ OPAD_ICON_TABLE(simulate,
                 {"simGear", R"(<circle cx="8" cy="12" r="4"/><circle cx="17.5" cy="12" r="3"/><path d="M8 5.5v2M8 16.5v2M1.5 12h2M12.5 12h.5M17.5 7.5v1.5M17.5 15v1.5M21.5 12H21" />)"},
                 {"simMotion", R"(<path d="M3 18c4 0 5-12 9-12s5 12 9 12"/><circle cx="12" cy="6" r="1.5" fill="currentColor"/>)"},
                 {"simPrint", R"(<path d="M8 3h8v5l-2.5 3h-3L8 8z"/><path d="M12 11v3"/><path d="M5 17h14M3 21h18" opacity=".55"/>)"},
+                {"simHeat", R"(<path d="M12 3c1 3 4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-5 0-8z"/><path d="M5 21h14" opacity=".55"/>)"},
+                {"simTemperature", R"(<path d="M10 4a2 2 0 0 1 4 0v10a4 4 0 1 1-4 0z"/><path d="M12 9v7"/><path d="M17 6h3M17 10h3" opacity=".55"/>)"},
+                {"simConvection", R"(<path d="M4 9c2-2 4-2 6 0s4 2 6 0 3-1 4 0"/><path d="M4 15c2-2 4-2 6 0s4 2 6 0 3-1 4 0"/><path d="M4 20h16" opacity=".55"/>)"},
+                {"simRadiation", R"(<circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>)"},
+                {"simFan", R"(<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5"/><path d="M12 10.5c0-3 1-5 3-5s1.5 3-1.5 5M13.5 12c3 0 5 1 5 3s-3 1.5-5-1.5M12 13.5c0 3-1 5-3 5s-1.5-3 1.5-5M10.5 12c-3 0-5-1-5-3s3-1.5 5 1.5"/>)"},
+                {"simThermal", R"(<path d="M6 4a2 2 0 0 1 4 0v9a4 4 0 1 1-4 0z"/><path d="M8 8v7"/><path d="M14 18l2.5-4 2 2 2.5-5" />)"},
                 {"simGuide", R"(<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/><path d="M8 8h7M8 12h5"/>)"},
                 {"simDynamic", R"(<rect x="8" y="3" width="8" height="8" rx="1"/><path d="M12 11v9M8.5 16.5L12 20l3.5-3.5"/><path d="M4 21h16" opacity=".55"/>)"},
                 {"simStatic", R"(<path d="M3 17h15v-4H3z"/><path d="M3 21V9" /><path d="M19 4v7M16.5 8.5L19 11l2.5-2.5"/>)"},
@@ -111,6 +118,7 @@ QString kindLabel(const std::string& kind) {
   if (kind == "dynamic") return Simulate::tr("Dynamic");
   if (kind == "static") return Simulate::tr("Static stress");
   if (kind == "modal") return Simulate::tr("Vibration modes");
+  if (kind == "thermal") return Simulate::tr("Thermal");
   return QString::fromStdString(kind);
 }
 
@@ -120,6 +128,7 @@ QString iconForStudy(const std::string& kind) {
   if (kind == "motion") return "simMotion";
   if (kind == "dynamic") return "simDynamic";
   if (kind == "modal") return "simModal";
+  if (kind == "thermal") return "simThermal";
   return "simStatic";
 }
 
@@ -128,6 +137,11 @@ QString iconForLoad(const std::string& kind) {
   if (kind == "pressure") return "simPressure";
   if (kind == "bolt_preload") return "simBolt";
   if (kind == "gravity") return "simGravity";
+  if (kind == "heat") return "simHeat";
+  if (kind == "temperature") return "simTemperature";
+  if (kind == "convection") return "simConvection";
+  if (kind == "radiation") return "simRadiation";
+  if (kind == "fan") return "simFan";
   return "simForce";
 }
 
@@ -157,12 +171,24 @@ QString summaryText(const json& s) {
     if (v.is_number()) lines << label + " " + number(v.get<double>()) + (unit.isEmpty() ? "" : " " + unit);
   };
   add(Simulate::tr("Peak von Mises"), s.value("max_von_mises_MPa", json()), "MPa");
+  add(Simulate::tr("Hottest"), s.value("max_temperature_C", json()), "°C");
+  if (s.contains("heat_W") && s.contains("to_air_W"))
+    lines << Simulate::tr("Heat %1 W, %2 W of it to the air").arg(number(s["heat_W"].get<double>()), number(s["to_air_W"].get<double>()));
+  if (const json f = s.value("fans", json()); f.is_array())
+    for (const auto& v : f)
+      lines << Simulate::tr("%1: %2 m³/h at %3 Pa, air +%4 °C, heatsink %5 °C/W")
+                   .arg(QString::fromStdString(v.value("name", "")), number(v.value("flow_m3h", 0.0)), number(v.value("pressure_Pa", 0.0)),
+                        number(v.value("air_rise_C", 0.0)), number(v.value("thermal_resistance_C_W", 0.0)));
   add(Simulate::tr("Largest displacement"), s.value("max_displacement_mm", json()), "mm");
   if (const json f = s.value("frequencies_Hz", json()); f.is_array() && !f.empty()) {
     QStringList fs;
     for (const auto& x : f) fs << number(x.get<double>());
     lines << Simulate::tr("Frequencies %1 Hz").arg(fs.join(", "));
   }
+  if (const json b = s.value("bodies", json()); b.is_object())
+    for (const auto& [name, v] : b.items())
+      if (v.is_object() && v.contains("max_temperature_C"))
+        lines << Simulate::tr("%1: up to %2 °C").arg(QString::fromStdString(name), number(v["max_temperature_C"].get<double>()));
   if (const json b = s.value("bodies", json()); b.is_object())
     for (const auto& [name, v] : b.items())
       if (v.is_object() && v.contains("safety_factor") && v["safety_factor"].is_number())
@@ -305,13 +331,21 @@ void Simulate::buildActions() {
   add("simulate.run", tr("Run study"), "simRun", [this] { runStudy(); },
       [self, doc](const CommandContext& c) { return doc(c) && self && !self->m_study.empty() && !self->m_job; }, {"solve", "compute", "simulate"});
   add("simulate.play", tr("Play"), "explodePlay", [this] { play(); },
-      [self](const CommandContext& c) { return c.document && self && self->m_run && self->m_run->t.size() > 1 && !self->m_run->fea; },
+      [self](const CommandContext& c) { return c.document && self && self->m_run && self->m_run->t.size() > 1 && (!self->m_run->fea || self->m_run->kind == "thermal"); },
       {"animate", "playback", "pause"});
   add("simulate.fixed", tr("Fixed support"), "simFixed", [this] { addLoad("fixed"); }, doc, {"restraint", "clamp", "boundary condition", "support"});
   add("simulate.force", tr("Force"), "simForce", [this] { addLoad("force"); }, doc, {"load", "newton", "push"});
   add("simulate.pressure", tr("Pressure"), "simPressure", [this] { addLoad("pressure"); }, doc, {"load", "MPa", "distributed"});
   add("simulate.boltPreload", tr("Bolt preload"), "simBolt", [this] { addLoad("bolt_preload"); }, doc, {"pretension", "fastener", "tightening", "clamp force"});
   add("simulate.gravity", tr("Gravity load"), "simGravity", [this] { addLoad("gravity"); }, doc, {"self weight", "acceleration", "weight"});
+  add("simulate.heat", tr("Heat source"), "simHeat", [this] { addLoad("heat"); }, doc, {"power", "watts", "dissipation", "chip", "CPU", "LED", "thermal load"});
+  add("simulate.temperature", tr("Fixed temperature"), "simTemperature", [this] { addLoad("temperature"); }, doc, {"held at", "boundary temperature", "cold plate"});
+  add("simulate.convection", tr("Convection"), "simConvection", [this] { addLoad("convection"); }, doc,
+      {"air", "cooling", "natural convection", "forced convection", "film coefficient", "heat transfer coefficient"});
+  add("simulate.radiation", tr("Radiation"), "simRadiation", [this] { addLoad("radiation"); }, doc, {"emissivity", "infrared", "black body"});
+  add("simulate.fan", tr("Fan"), "simFan", [this] { addLoad("fan"); }, doc, {"heatsink", "airflow", "CFM", "cooling fan", "blower", "fins"});
+  add("simulate.thermal", tr("Thermal study"), "simThermal", [this] { newStudy("thermal"); }, doc,
+      {"temperature", "heat transfer", "heatsink", "cooling", "warm up", "transient", "steady state"});
   add("simulate.results", tr("Result map"), "simResults", [this] { showResults(!resultShown()); },
       [self](const CommandContext& c) { return c.document && self && self->m_run && self->m_run->fea; }, {"contour", "stress map", "colour map", "deformed"}, true);
 }
@@ -350,6 +384,20 @@ void Simulate::ribbon(RibbonLayout& layout) {
   add("simulate.structure.results", "simulate.results");
   layout.addGroup("simulate.structure", "simulate.structure.help", tr("Help"));
   add("simulate.structure.help", "simulate.guide");
+  layout.addTab("simulate", "simulate.thermal", tr("Thermal"));
+  layout.addGroup("simulate.thermal", "simulate.thermal.loads", tr("Heat and cooling"));
+  add("simulate.thermal.loads", "simulate.heat");
+  add("simulate.thermal.loads", "simulate.fan");
+  add("simulate.thermal.loads", "simulate.convection");
+  for (const char* id : {"simulate.temperature", "simulate.radiation"}) add("simulate.thermal.loads", id, Size::Small);
+  layout.addGroup("simulate.thermal", "simulate.thermal.studies", tr("Studies"));
+  add("simulate.thermal.studies", "simulate.thermal");
+  layout.addGroup("simulate.thermal", "simulate.thermal.results", tr("Results"));
+  add("simulate.thermal.results", "simulate.run");
+  add("simulate.thermal.results", "simulate.results");
+  add("simulate.thermal.results", "simulate.play", Size::Small);
+  layout.addGroup("simulate.thermal", "simulate.thermal.help", tr("Help"));
+  add("simulate.thermal.help", "simulate.guide");
 }
 
 void Simulate::ready() {
@@ -632,9 +680,27 @@ void Simulate::newStudy(const QString& kind) {
     settings = {{"duration", 2.0}, {"frames", 121}, {"drivers", {{{"joint", m_joint}, {"to", (j->values.empty() ? 0.0 : j->values[0]) + (angle ? 360.0 : 50.0)}}}}};
   } else if (k == "dynamic") {
     settings = {{"duration", 1.0}, {"frames", 101}, {"gravity", true}};
+  } else if (k == "thermal") {
+    const auto heat = std::find_if(s.loads.begin(), s.loads.end(), [](const opad::Load& l) { return l.kind == "heat" || l.kind == "temperature"; });
+    if (heat == s.loads.end())
+      throw opad::UserHint("A thermal study needs heat: add a Heat source on the part that warms up, and a way for the heat to leave (Convection, Fan, Radiation or Fixed temperature).");
+    settings = {{"case", heat->load_case}};
+    bool ok = true;
+    const QStringList ways = {tr("Steady: where the temperatures settle"), tr("Over time: how fast it warms up")};
+    const QString way = QInputDialog::getItem(services().window(), tr("Thermal study"), tr("What to find:"), ways, 0, false, &ok);
+    if (!ok) return;
+    if (way == ways[1]) {
+      const double seconds = QInputDialog::getDouble(services().window(), tr("Thermal study"), tr("How long, in seconds:"), 600, 1, 1e7, 0, &ok);
+      if (!ok) return;
+      settings["duration"] = seconds;
+      settings["frames"] = 61;
+    }
   } else {
-    if (s.loads.empty()) throw opad::UserHint("A structural study needs a load case: add a Fixed support and a Force or Pressure on faces first.");
-    settings = {{"case", s.loads.front().load_case}};
+    const auto mech = std::find_if(s.loads.begin(), s.loads.end(), [](const opad::Load& l) {
+      return l.kind != "heat" && l.kind != "temperature" && l.kind != "convection" && l.kind != "radiation" && l.kind != "fan";
+    });
+    if (mech == s.loads.end()) throw opad::UserHint("A structural study needs a load case: add a Fixed support and a Force or Pressure on faces first.");
+    settings = {{"case", mech->load_case}};
   }
   const json out = write("study", {{"kind", k}, {"settings", settings}, {"run", false}}, tr("New study"));
   m_study = out.value("id", "");
@@ -764,10 +830,13 @@ void Simulate::showRun() {
   json summary = m_run->summary;
   if (!m_run->warnings.empty()) summary["warnings"] = m_run->warnings;
   const bool structural = bool(m_run->fea);
-  m_form->setRun(summaryText(summary), int(m_run->t.size()), structural);
+  const bool overTime = structural && m_run->kind == "thermal" && m_run->t.size() > 1;  // a warm-up: the map plays too
+  m_form->setRun(summaryText(summary), structural && !overTime ? 1 : int(m_run->t.size()), structural);
   if (structural) {
     SimulatePanel::Entries fields;
-    if (m_run->kind == "static") {
+    if (m_run->kind == "thermal") {
+      fields = {{"temperature", tr("Temperature (°C)")}};
+    } else if (m_run->kind == "static") {
       fields = {{"von_mises", tr("von Mises stress (MPa)")}, {"displacement", tr("Displacement (mm)")}};
       if (!m_run->fea->failure_index.empty()) fields.push_back({"failure_index", tr("Failure index, printed (1 fails)")});
     } else {
@@ -777,7 +846,8 @@ void Simulate::showRun() {
     if (std::none_of(fields.begin(), fields.end(), [&](const auto& f) { return f.first == m_field; }) && !fields.empty()) m_field = fields.front().first;
     m_form->setFields(fields, m_field);
     m_form->setResultsShown(resultShown());
-    return;
+    if (!overTime) return;
+    m_frame = int(m_run->t.size()) - 1;
   }
   QStringList names;
   for (const auto& s : m_run->series) names << QString::fromStdString(s.name) + (s.unit.empty() ? "" : " (" + QString::fromStdString(s.unit) + ")");
@@ -796,7 +866,14 @@ void Simulate::showSeries(int index) {
 }
 
 void Simulate::showFrame(int frame) {
-  if (!m_run || m_run->t.empty() || m_run->fea) return;
+  if (!m_run || m_run->t.empty()) return;
+  if (m_run->fea) {  // a thermal study over time: its temperatures at that frame
+    if (m_run->kind != "thermal" || m_run->fea->temperature_frames.empty()) return;
+    m_frame = std::clamp(frame, 0, int(m_run->t.size()) - 1);
+    m_form->setFrame(m_frame, QString::number(m_run->t[size_t(m_frame)], 'f', 1) + " s");
+    if (resultShown()) showResults(true);
+    return;
+  }
   m_frame = std::clamp(frame, 0, int(m_run->t.size()) - 1);
   m_form->setFrame(m_frame, QString::number(m_run->t[size_t(m_frame)], 'f', 3) + " s");
   if (stateOf(services().document()) != m_runState || size_t(m_frame) >= m_run->poses.size()) return;
@@ -820,7 +897,7 @@ void Simulate::clearMotion() {
 
 void Simulate::play() {
   if (playing()) return pause();
-  if (!m_run || m_run->t.size() < 2 || m_run->fea) return;
+  if (!m_run || m_run->t.size() < 2 || (m_run->fea && m_run->kind != "thermal")) return;
   if (m_frame >= int(m_run->t.size()) - 1) m_frame = 0;
   m_playFrom = m_run->t[size_t(m_frame)];
   m_clock.start();
@@ -837,7 +914,7 @@ void Simulate::tick() {
   if (!m_run || m_run->t.size() < 2) return pause();
   // Real time for a study of a second or more; a short one (an engine's two turns in 40 ms) is stretched to 3 s.
   const double span = m_run->t.back() - m_run->t.front();
-  const double rate = span >= 1 ? 1.0 : span / 3.0;
+  const double rate = m_run->fea ? span / 8.0 : span >= 1 ? 1.0 : span / 3.0;  // a warm-up plays in 8 s
   const double t = m_playFrom + rate * m_clock.elapsed() / 1000.0;
   const auto it = std::lower_bound(m_run->t.begin(), m_run->t.end(), t);
   const int frame = int(std::min<size_t>(size_t(it - m_run->t.begin()), m_run->t.size() - 1));
@@ -852,13 +929,22 @@ void Simulate::addLoad(const QString& kind) {
   const std::string k = kind.toStdString();
   json on = json::array();
   const SelectionContext sel = services().selection();
+  // Bodies (a bolt, a fan's heatsink; heat, convection and radiation take whole bodies too) or faces.
+  const bool bodies = k == "bolt_preload" || k == "fan";
+  const bool either = k == "heat" || k == "convection" || k == "radiation";
   for (const auto& r : sel.refs) {
     if (r.body.empty()) continue;
-    if (k == "bolt_preload") on.push_back(r.body);
-    else if (r.kind == opad::Ref::Kind::Face) on.push_back(r.to_json());
+    if (bodies || (either && r.kind == opad::Ref::Kind::Body)) {
+      if (std::find(on.begin(), on.end(), json(r.body)) == on.end()) on.push_back(r.body);
+    } else if (r.kind == opad::Ref::Kind::Face) {
+      on.push_back(r.to_json());
+    }
   }
   if (k != "gravity" && on.empty()) {
     if (k == "bolt_preload") wantPicks("select.bodies", "Click the bolt (the Bodies filter is on now), then Bolt preload again.");
+    if (k == "fan") wantPicks("select.bodies", "Click the heatsink the fan blows through (the Bodies filter is on now), then Fan again.");
+    if (k == "heat") wantPicks("select.bodies", "Click the part that makes the heat (the Bodies filter is on now; or faces it comes through), then Heat source again.");
+    if (either) wantPicks("select.bodies", "Click the parts the air cools (the Bodies filter is on now; or their faces), then choose it again.");
     wantPicks("select.faces", "Click the faces it acts on (the Faces filter is on now), then choose it again.");
   }
   json args = {{"kind", k}, {"on", on}};
@@ -876,6 +962,43 @@ void Simulate::addLoad(const QString& kind) {
     args["value"] = QInputDialog::getDouble(services().window(), tr("Bolt preload"), tr("Preload in N:"), 10000, 0, 1e7, 0, &ok);
   } else if (k == "gravity") {
     args["vector"] = {0, 0, -9806.65};
+  } else if (k == "heat") {
+    args["value"] = QInputDialog::getDouble(services().window(), tr("Heat source"), tr("Power it gives off, in W:"), 10, 0, 1e6, 2, &ok);
+  } else if (k == "temperature") {
+    args["value"] = QInputDialog::getDouble(services().window(), tr("Fixed temperature"), tr("Temperature the faces are held at, in °C:"), 25, -273, 5000, 1, &ok);
+  } else if (k == "convection") {
+    const QStringList ways = {tr("Natural: still air (from the faces' size and tilt)"), tr("Forced: air moving along them"), tr("A film coefficient I know")};
+    const QString way = QInputDialog::getItem(services().window(), tr("Convection"), tr("How the air takes the heat:"), ways, 0, false, &ok);
+    if (!ok) return;
+    if (way == ways[0]) {
+      args["h"] = "natural";
+    } else if (way == ways[1]) {
+      args["h"] = "forced";
+      args["velocity"] = QInputDialog::getDouble(services().window(), tr("Convection"), tr("Air speed in m/s:"), 2, 0.01, 200, 2, &ok);
+      if (!ok) return;
+      args["vector"] = askVector(tr("Convection"), tr("The way the air moves (x, y, z):"), &ok);
+    } else {
+      args["h"] = QInputDialog::getDouble(services().window(), tr("Convection"), tr("Film coefficient in W/m²K (still air 5-10, a fan 20-100):"), 10, 0.01, 1e6, 2, &ok);
+    }
+  } else if (k == "radiation") {
+    args["emissivity"] = QInputDialog::getDouble(services().window(), tr("Radiation"), tr("Emissivity, 0 to 1 (bare aluminium 0.1, anodised or painted 0.85):"), 0.85, 0, 1, 2, &ok);
+  } else if (k == "fan") {
+    QStringList names;
+    for (const auto& f : opad::sim::air::fans()) names << QString::fromStdString(f.name);
+    names << tr("Another fan: its flow and pressure");
+    const QString pick = QInputDialog::getItem(services().window(), tr("Fan"), tr("The fan:"), names, 3, false, &ok);
+    if (!ok) return;
+    const int at = int(names.indexOf(pick));
+    if (at >= 0 && at < int(opad::sim::air::fans().size())) {
+      args["fan"] = opad::sim::air::fans()[size_t(at)].id;
+    } else {
+      const double flow = QInputDialog::getDouble(services().window(), tr("Fan"), tr("Free flow in m³/h (CFM × 1.7):"), 50, 0.1, 1e5, 1, &ok);
+      if (!ok) return;
+      const double pressure = QInputDialog::getDouble(services().window(), tr("Fan"), tr("Shut-off pressure in Pa (mmH₂O × 9.8):"), 25, 0.1, 1e5, 1, &ok);
+      if (!ok) return;
+      args["fan"] = {{"flow", flow}, {"pressure", pressure}};
+    }
+    args["vector"] = askVector(tr("Fan"), tr("The way the air goes along the fins (x, y, z):"), &ok);
   }
   if (!ok) return;
   json out;
@@ -886,6 +1009,14 @@ void Simulate::addLoad(const QString& kind) {
     throw;
   }
   services().toast(tr("%1 added to %2").arg(QString::fromStdString(out.value("name", "")), QString::fromStdString(out.value("case", ""))));
+}
+
+opad::Vec3 Simulate::askVector(const QString& title, const QString& label, bool* ok) {
+  const QString text = QInputDialog::getText(services().window(), title, label, QLineEdit::Normal, "1, 0, 0", ok);
+  if (!*ok) return {0, 0, 0};
+  const QStringList parts = text.split(QRegularExpression("[,;\\s]+"), Qt::SkipEmptyParts);
+  if (parts.size() != 3) throw opad::UserHint("Type the direction as three numbers: x, y, z.");
+  return {parts[0].toDouble(), parts[1].toDouble(), parts[2].toDouble()};
 }
 
 void Simulate::showResults(bool on) {
@@ -907,6 +1038,7 @@ void Simulate::showResults(bool on) {
   }
   const opad::sim::FeaResult& r = *m_run->fea;
   const size_t n = r.nodes.size();
+  if (!services().selection().refs.empty()) services().select({});  // a picked part's highlight would cover its colours
   std::vector<double> value(n, 0.0);
   std::vector<opad::Vec3> shape(n, opad::Vec3{0, 0, 0});
   QString title, unit;
@@ -923,6 +1055,11 @@ void Simulate::showResults(bool on) {
       for (size_t i = 0; i < n; ++i) value[i] = std::sqrt(shape[i][0] * shape[i][0] + shape[i][1] * shape[i][1] + shape[i][2] * shape[i][2]);
       title = tr("Displacement");
       unit = "mm";
+    } else if (m_field == "temperature" && r.temperature.size() == n) {
+      const bool frames = !r.temperature_frames.empty() && m_frame >= 0 && size_t(m_frame) < r.temperature_frames.size();
+      value = frames ? r.temperature_frames[size_t(m_frame)] : r.temperature;
+      title = tr("Temperature");
+      unit = "°C";
     } else if (m_field == "failure_index" && r.failure_index.size() == n) {
       value = r.failure_index;
       title = tr("Failure index (Tsai-Hill)");
@@ -944,11 +1081,14 @@ void Simulate::showResults(bool on) {
   const double scale = umax > 0 ? 0.05 * size / umax : 0;
   double vlo = 1e300, vhi = -1e300;
   for (double v : value) vlo = std::min(vlo, v), vhi = std::max(vhi, v);
+  if (m_field == "temperature")  // over time: one scale for every frame, so that the colours compare
+    for (const auto& f : r.temperature_frames)
+      for (double v : f) vlo = std::min(vlo, v), vhi = std::max(vhi, v);
   if (!(vhi > vlo)) vhi = vlo + 1;
   // A stress singularity (bonded parts' re-entrant corner) would leave the rest in the bottom colour: the scale stops at
   // the 99.5th percentile when the peak is far above it, and the legend gives the peak.
   const double peak = vhi;
-  if (mode < 0 && m_field != "displacement" && value.size() > 10) {
+  if (mode < 0 && m_field != "displacement" && m_field != "temperature" && value.size() > 10) {
     std::vector<double> sorted = value;
     const size_t at = size_t(0.995 * double(sorted.size() - 1));
     std::nth_element(sorted.begin(), sorted.begin() + long(at), sorted.end());

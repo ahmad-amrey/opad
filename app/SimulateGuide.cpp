@@ -103,6 +103,21 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
        {"simulate.static", "simulate.print", "simulate.results"},
        tr("The filament values are typical printed-test-bar data; your printer's differ, most between layers. An agent can set the values you "
           "measured.")},
+      {tr("Keep a part cool (thermal study)"),
+       tr("How hot a chip, a motor or an LED gets on its heatsink: in still air, with a fan, or warming up over time."),
+       {tr("Give each part its material (Material, {key:inspect.material}): an aluminium heatsink conducts 3 times better than steel."),
+        tr("On the Thermal tab, pick the part that makes the heat (the Bodies filter, {key:select.bodies}) and press Heat source; type its power "
+           "in W."),
+        tr("Say how the heat leaves. With a fan: pick the heatsink, press Fan, choose the fan (or type its flow and pressure) and the way the "
+           "air goes along the fins. In still air: pick the heatsink and press Convection, Natural. Radiation and Fixed temperature work the same "
+           "way."),
+        tr("Press Thermal study and choose Steady (where it settles) or Over time (how fast it warms up)."),
+        tr("The panel gives the hottest temperature of each part, where the heat went and, for a fan, its air flow, the pressure it works "
+           "against, how much the air warms and the heatsink's resistance in °C/W. The Result map shows the temperatures; over time, Play "
+           "shows it warming.")},
+       {"inspect.material", "select.bodies", "simulate.heat", "simulate.fan", "simulate.convection", "simulate.thermal", "simulate.results"},
+       tr("The fins are found in the heatsink's shape: straight plate fins along the air. The fan's air is taken to go through the fins, as in a "
+          "duct or with a shroud; air that goes round them cools less.")},
   };
   for (UseCase& u : list) {
     for (QString& s : u.steps) s = x(s);

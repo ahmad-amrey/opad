@@ -4,7 +4,8 @@
 // then a cantilever's fixed support and end force on picked faces, its static study's result map with its legend
 // (tip deflection against F L^3 / 3 E I) and its vibration modes (first one against the cantilever formula); then the
 // beam as a printed part from the Printed part dialog, flat on the bed and standing on its end (the layers across the
-// bending stress: weaker, failing between layers), its failure-index map.
+// bending stress: weaker, failing between layers), its failure-index map; a chip on a heatsink with a fan from the
+// Thermal tab, its temperatures.
 // Screenshots of the view and the panel at <prefix>.*.png.
 #include <BRepGProp.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -174,7 +175,7 @@ OPAD_BENCH(OPAD_BENCH_SIMULATE, simulate) {
                     require(open != nullptr, "the panel has its Step-by-step guides button");
                     if (open) open->click();
                     auto* guide = w.findChild<SimulateGuide*>();
-                    require(guide && guide->isVisible() && guide->current() == 0 && guide->count() == 8, "the Simulation guide opens at its first use case, of eight");
+                    require(guide && guide->isVisible() && guide->current() == 0 && guide->count() == 9, "the Simulation guide opens at its first use case, of nine");
                     if (!guide) return;
                     bool keysOk = true, toolsOk = true;
                     for (const auto& u : SimulateGuide::useCases()) {
@@ -423,6 +424,63 @@ OPAD_BENCH(OPAD_BENCH_SIMULATE, simulate) {
                     require(ok, "the failure-index map shows with its legend");
                     area->open();
                     shot("printed");
+                  }});
+  // ---- thermal: a 30 W chip on a 60 x 60 mm finned heatsink with a fan, from the Thermal tab's tools and their dialogs
+  auto answering = std::make_shared<QPointer<QTimer>>();
+  list.push_back({nullptr, [=, &w](bool) {
+                    for (const auto& b : doc->scene.all_bodies()) doc->run("appearance", {{"target", b}, {"visible", false}});
+                    auto boxAt = [&](const char* name, opad::Vec3 at, double l, double wd, double h, const std::string& join = {}) {
+                      opad::json in = {{"plane", {{"origin", at}, {"normal", {0, 0, 1}}}}, {"length", l}, {"width", wd}, {"height", h}, {"centered", false}};
+                      if (!join.empty()) in["operation"] = "join", in["targets"] = {join};
+                      const opad::json r = doc->run("feature", {{"kind", "box"}, {"name", name}, {"inputs", in}});
+                      return join.empty() ? r["body_ids"][0].get<std::string>() : join;
+                    };
+                    const std::string hs = boxAt("Heatsink", {600, 0, 0}, 60, 60, 5);
+                    for (int i = 0; i < 10; ++i) boxAt("Fin", {600, i * 6.5, 5}, 60, 1.5, 30, hs);
+                    (*state)["heatsink"] = hs;
+                    (*state)["chip"] = boxAt("Chip", {620, 20, -2}, 20, 20, 2);
+                    doc->run("part_properties", {{"targets", {hs}}, {"set", {{"material", "aluminium-6061"}}}});
+                    // Every dialog the tools open answered: 30 W for the heat, the fan list's default (80 mm), the air along +X, steady.
+                    auto* t = new QTimer(&w);
+                    *answering = t;
+                    QObject::connect(t, &QTimer::timeout, t, [] {
+                      if (auto* d = qobject_cast<QInputDialog*>(QApplication::activeModalWidget()); d && d->isVisible()) {
+                        if (d->windowTitle() == QCoreApplication::translate("Simulate", "Heat source")) d->setDoubleValue(30);
+                        trace::log("bench: simulate: answered " + d->labelText());
+                        d->accept();
+                      }
+                    });
+                    t->start(100);
+                  }});
+  list.push_back({idle, [=, &w](bool) {
+                    if (QAction* fit = action("view.fit")) fit->trigger();
+                    pickRefs({opad::Ref{(*state)["chip"], opad::Ref::Kind::Body, 0, {0, 0, 0}}});
+                    action("simulate.heat")->trigger();
+                    pickRefs({opad::Ref{(*state)["heatsink"], opad::Ref::Kind::Body, 0, {0, 0, 0}}});
+                    action("simulate.fan")->trigger();
+                    QStringList kinds;
+                    for (const auto& l : doc->scene.loads) kinds << QString::fromStdString(l.kind);
+                    require(kinds.contains("heat") && kinds.contains("fan"), "Heat source and Fan are added on the picked parts (" + kinds.join(", ") + ")");
+                    action("simulate.thermal")->trigger();
+                  }});
+  list.push_back({[area] { return area->shownRun() && !area->running() && area->shownRun()->kind == "thermal" && area->resultShown(); },
+                  [=](bool ok) {
+                    if (*answering) (*answering)->deleteLater();
+                    require(ok, "the thermal study runs and shows its temperatures");
+                    if (!ok) return;
+                    const opad::json s = area->shownRun()->summary;
+                    const bool fan = s.contains("fans") && s["fans"][0]["fins"]["fins"] == 10 && s["fans"][0]["fan"]["id"] == "80x25";
+                    require(fan, "the fan blows through the heatsink's 10 fins it found");
+                    const double hot = s.value("max_temperature_C", 0.0), air = s.value("to_air_W", 0.0);
+                    require(hot > 30 && hot < 90 && std::fabs(air - 30) < 0.5, QString("30 W reach the air, the chip at %1 degC").arg(hot));
+                    trace::log(QString("bench: simulate: thermal: %1").arg(QString::fromStdString(s["fans"][0].dump())));
+                    area->open();
+                    if (QAction* fit = action("view.fit")) fit->trigger();
+                  },
+                  600000});
+  list.push_back({idle, [=](bool) {
+                    require(services->selection().refs.empty(), "the result map clears the picks whose highlight would cover it");
+                    shot("thermal");
                   }});
   runSteps(&w, steps, 0, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   return true;
