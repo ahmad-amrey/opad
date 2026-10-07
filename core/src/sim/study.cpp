@@ -270,8 +270,8 @@ StudyRun run_study(const Document& doc, const Scene& scene, const json& study, c
   const json settings = study.value("settings", json::object());
   if (kind == "motion") return run_motion(doc, scene, settings, progress);
   if (kind == "dynamic") return run_dynamic(doc, scene, settings, progress);
-  if (kind == "static" || kind == "modal") return run_structural(doc, scene, kind, settings, progress);
-  throw Error("unknown study kind \"" + kind + "\" (motion, dynamic, static, modal)");
+  if (kind == "static" || kind == "modal" || kind == "thermal") return run_structural(doc, scene, kind, settings, progress);
+  throw Error("unknown study kind \"" + kind + "\" (motion, dynamic, static, modal, thermal)");
 }
 
 std::shared_ptr<const StudyRun> run_study_cached(const Document& doc, const Scene& scene, const json& study, const Progress& progress) {

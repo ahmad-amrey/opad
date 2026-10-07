@@ -48,12 +48,13 @@ std::pair<std::string, std::string> relation_coords(const std::string& kind) {
 }
 
 const std::vector<std::string>& load_kinds() {
-  static const std::vector<std::string> kinds = {"fixed", "force", "pressure", "moment", "bolt_preload", "gravity", "displacement"};
+  static const std::vector<std::string> kinds = {"fixed", "force", "pressure", "moment", "bolt_preload", "gravity", "displacement",
+                                                 "heat", "temperature", "convection", "radiation", "fan"};
   return kinds;
 }
 
 const std::vector<std::string>& study_kinds() {
-  static const std::vector<std::string> kinds = {"motion", "dynamic", "static", "modal"};
+  static const std::vector<std::string> kinds = {"motion", "dynamic", "static", "modal", "thermal"};
   return kinds;
 }
 
@@ -158,9 +159,18 @@ void validate_load_op(const json& op) {
   if (op.contains("refs") && !op["refs"].is_array()) throw Error("load: 'refs' must be a list of references");
   for (const char* key : {"vector", "direction"})
     if (op.contains(key) && !numbers(op[key], 3)) throw Error(std::string("load: '") + key + "' must be [x, y, z]");
-  for (const char* key : {"value", "magnitude"})
+  for (const char* key : {"value", "magnitude", "ambient", "velocity"})
     if (op.contains(key) && !(op[key].is_number() && std::isfinite(op[key].get<double>())))
       throw Error(std::string("load: '") + key + "' must be a number");
+  // Thermal loads (sim/fea.hpp): a film coefficient or how to find it, an emissivity, fans.
+  if (op.contains("h")) {
+    const json& h = op["h"];
+    const bool ok = (h.is_number() && h.get<double>() > 0) || (h.is_string() && (h == "natural" || h == "forced"));
+    if (!ok) throw Error("load: 'h' is a film coefficient in W/m2K, \"natural\" or \"forced\"");
+  }
+  if (op.contains("emissivity") && !(op["emissivity"].is_number() && op["emissivity"].get<double>() >= 0 && op["emissivity"].get<double>() <= 1))
+    throw Error("load: 'emissivity' is 0 to 1");
+  if (op.contains("count") && !(op["count"].is_number_integer() && op["count"].get<int>() >= 1)) throw Error("load: 'count' is a whole number, 1 or more");
 }
 
 void validate_study_op(const json& op) {

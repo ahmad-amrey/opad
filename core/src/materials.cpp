@@ -107,6 +107,19 @@ const Mechanical* mechanical(const std::string& id) {
   return it == table.end() ? nullptr : &it->second;
 }
 
+const Thermal* thermal(const std::string& id) {
+  // Typical room-temperature values (Incropera's tables, manufacturers' sheets); FR-4 through its thickness, polymers
+  // unfilled. Emissivity of the bare surface: machined metal, the polymer's own.
+  static const std::map<std::string, Thermal> table = {
+      {"steel", {50, 490, 0.3}},        {"stainless", {16, 500, 0.3}},   {"aluminium-6061", {167, 896, 0.1}},
+      {"brass", {109, 380, 0.1}},       {"copper", {390, 385, 0.05}},    {"titanium", {6.7, 526, 0.3}},
+      {"abs", {0.17, 1400, 0.9}},       {"pla", {0.13, 1800, 0.9}},      {"petg", {0.2, 1200, 0.9}},
+      {"nylon", {0.25, 1700, 0.9}},     {"nylon-12", {0.22, 1700, 0.9}}, {"polycarbonate", {0.2, 1200, 0.9}},
+      {"pom", {0.31, 1460, 0.9}},       {"fr4", {0.3, 1100, 0.9}},       {"glass", {1.0, 840, 0.9}}};
+  const auto it = table.find(id);
+  return it == table.end() ? nullptr : &it->second;
+}
+
 const Material* material(const std::string& id) {
   for (const auto& m : materials())
     if (m.id == id) return &m;

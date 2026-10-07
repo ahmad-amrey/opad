@@ -47,8 +47,8 @@ OPAD_BENCH(OPAD_BENCH_HELPMENU, helpmenu) {
     QStringList ids;
     for (QAction* a : menu ? menu->actions() : QList<QAction*>()) ids << (a->isSeparator() ? QString("-") : a->objectName());
     bool helped = true;  // the window's entries after them (licences, About Qt, About OPAD) have their help too
-    for (const QString& id : ids.mid(7)) helped = helped && (id == "-" || help::find(id));
-    check(ids.mid(0, 7) == QStringList({"help.current", "help.reference", "help.shortcuts", "help.start", "-", "help.report", "-"}) && ids.size() > 7 && ids.last() == "help.about" && helped,
+    for (const QString& id : ids.mid(8)) helped = helped && (id == "-" || help::find(id));
+    check(ids.mid(0, 8) == QStringList({"help.current", "help.reference", "help.shortcuts", "help.start", "simulate.guide", "-", "help.report", "-"}) && ids.size() > 8 && ids.last() == "help.about" && helped,
           "the Help menu: its own entries first, the window's after, About last, all with help (" + ids.join(' ') + ")");
     check(w.action("help.current")->shortcut() == QKeySequence("F1") && w.action("help.shortcuts")->shortcut() == QKeySequence("?"), "F1 and ?");
     // The cheat sheet.

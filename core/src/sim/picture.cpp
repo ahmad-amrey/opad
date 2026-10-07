@@ -34,9 +34,19 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
     out.info["study"] = s->name;
     if (run->fea) {
       const FeaResult& r = *run->fea;
-      const std::string field = st.value("field", r.kind == "modal" ? "mode" : "von_mises");
+      const std::string field = st.value("field", r.kind == "modal" ? "mode" : r.kind == "thermal" ? "temperature" : "von_mises");
+      // A thermal study over time: the frame asked for (t or frame), else its last.
+      const std::vector<double>* temps = &r.temperature;
+      if (r.kind == "thermal" && !r.temperature_frames.empty() && (st.contains("t") || st.contains("frame"))) {
+        size_t f = st.contains("frame") ? size_t(std::max(0, st["frame"].get<int>())) : 0;
+        if (st.contains("t"))
+          for (size_t i = 0; i < run->t.size(); ++i)
+            if (std::fabs(run->t[i] - st["t"].get<double>()) < std::fabs(run->t[f] - st["t"].get<double>())) f = i;
+        temps = &r.temperature_frames[std::min(f, r.temperature_frames.size() - 1)];
+      }
       const int mode = st.value("mode", 1) - 1;
       if (r.kind == "modal" && (mode < 0 || size_t(mode) >= r.modes.size())) throw Error("render: mode is 1 to " + std::to_string(r.modes.size()));
+      if (field == "temperature" && r.temperature.empty()) throw Error("render: temperature is for a thermal study");
       if (field == "failure_index" && r.failure_index.empty()) throw Error("render: failure_index is for a static study of printed bodies (settings.print)");
       const std::vector<Vec3>* disp = r.kind == "modal" ? &r.modes[size_t(mode)] : &r.displacement;
       std::vector<double> value(r.nodes.size(), 0.0);
@@ -44,6 +54,7 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
         const Vec3& d = (*disp)[i];
         value[i] = field == "von_mises" && !r.von_mises.empty()          ? r.von_mises[i]
                    : field == "failure_index" && !r.failure_index.empty() ? r.failure_index[i]
+                   : field == "temperature" && !temps->empty()           ? (*temps)[i]
                                                                            : std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
       }
       // The range over the nodes the skin shows.
@@ -95,8 +106,9 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
       o.extra.push_back(std::move(item));
       for (const auto& body : r.bodies) o.hide.push_back(body);
       out.legend = true;
-      out.title = field == "von_mises" ? "VON MISES" : field == "failure_index" ? "FAILURE INDEX" : r.kind == "modal" ? "MODE " + std::to_string(mode + 1) : "DISPLACEMENT";
-      out.unit = field == "von_mises" ? "MPa" : field == "failure_index" ? "" : "mm";
+      out.title = field == "von_mises" ? "VON MISES" : field == "failure_index" ? "FAILURE INDEX" : field == "temperature" ? "TEMPERATURE"
+                  : r.kind == "modal" ? "MODE " + std::to_string(mode + 1) : "DISPLACEMENT";
+      out.unit = field == "von_mises" ? "MPa" : field == "failure_index" ? "" : field == "temperature" ? "C" : "mm";
       if (r.kind == "modal") out.unit = "", out.title += " " + std::to_string(int(std::lround(r.frequencies[size_t(mode)]))) + " HZ";
       if (capped) {
         std::ostringstream pk;

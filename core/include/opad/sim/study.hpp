@@ -7,7 +7,9 @@
 //            (position, speed, torque or force), springs, friction and contacts between parts; reactions, motor torques
 //            and power, energies (sim/dynamics.hpp);
 //   static   Netgen mesh + CalculiX: displacements and stresses for a load case (sim/fea.hpp);
-//   modal    the same: natural frequencies and mode shapes with the case's supports.
+//   modal    the same: natural frequencies and mode shapes with the case's supports;
+//   thermal  the same mesh, heat transfer: temperatures from heat sources, convection (natural, forced, fans through
+//            heatsinks: sim/airflow.hpp) and radiation, steady or over time.
 //
 // A study op keeps its settings and the summary of its last run; the full results (every frame, every node) are
 // recomputed on demand and kept in memory for the process (run_study_cached).

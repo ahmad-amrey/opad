@@ -365,10 +365,24 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     `fails` (along the roads | across the roads | between layers | in compression | shear, and the region), `weakest_at`,
     `weakest_layer`; `render` with `study: {id, field: "failure_index"}` maps it (1 fails). Flat versus standing up is
     the usual question: run both build directions.
+  - `thermal` (Netgen + CalculiX heat transfer): the case's thermal loads; `ambient` degC (25), `gravity` [x, y, z] (down,
+    for natural convection; default -Z), `mesh_size`, `materials` (`{"all" | body: {"k" W/m.K, "cp" J/kg.K,
+    "emissivity"}}`); `duration` s and `frames` make it transient, from the ambient temperature. Returns
+    `max_temperature_C` (and where), per body max and mean, `heat_W`, `to_air_W`, `radiated_W`, `natural_convection`
+    (h per face) and `fans` (fan, flow m3/h and CFM, pressure Pa, channel speed, Reynolds, h, air rise, the heatsink's
+    fins and thermal resistance degC/W). Convection that depends on the temperatures is solved again until they
+    settle (`solves`). `render` maps `field: "temperature"` (`t` or `frame` over time).
 - `load` adds to a case (`case`, default "Load case 1") on faces (`on`: references or rules): `fixed` and `displacement` (`vector` mm), `force`
   (`vector` N, spread by area), `pressure` (`value` MPa into the face; negative pulls), `moment` (`vector` N.mm about the
   faces' centre), `gravity` (`vector` mm/s2) and `bolt_preload` (`on: [bolt body]`, `value` N; the shank is cut at its
-  middle and the cut pulled together). Units are mm, N, MPa throughout. `mechanism` reports which engines this machine has (`engines`).
+  middle and the cut pulled together). Units are mm, N, MPa throughout. Thermal loads, in the same cases (each study
+  takes its own kind): `heat` (`value` W into bodies `on: [body]` or through faces), `temperature` (`value` degC on
+  faces), `convection` (`h` W/m2K, `"natural"` (from each face's tilt, size and the gap to the face it looks at), or
+  `"forced"` with `velocity` m/s along `vector`; `ambient`), `radiation` (`emissivity`, default the material's;
+  `ambient`) and `fan` (`on: [heatsink body]`, `fan`: an id (40x10, 40x28-server, 60x15, 80x25, 92x25, 120x25,
+  120x25-high, 140x25) or `{"flow" m3/h | "cfm", "pressure" Pa | "mmH2O", "curve": [[m3/h, Pa], ...]}`, `vector` the
+  air's way along the fins, `count`, `ambient` inlet degC): its plate fins are found in the geometry, the fan's curve
+  meets the fins' pressure drop, and the air warms along them; the air is taken as ducted through the fins. `mechanism` reports which engines this machine has (`engines`).
 - Typical: ground the frame, joint the parts, `mechanism` to check the degrees of freedom, `joint_set` to try a
   position, a `motion` study for the travel, a `dynamic` study for forces, then `load` + `static` on the most loaded
   part with the reaction forces as its loads.

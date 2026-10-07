@@ -7,6 +7,7 @@
 #include "opad/scene.hpp"
 #include "opad/sim/joints.hpp"
 #include "opad/sim/kinematics.hpp"
+#include "opad/sim/airflow.hpp"
 #include "opad/sim/study.hpp"
 
 namespace opad::commands {
@@ -54,10 +55,10 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
   auto reg = [&](const char* name, const char* desc, json args, bool mutates, Handler h) { add({name, desc, std::move(args), mutates}, std::move(h)); };
 
   reg("study",
-      "Define and run a study: motion (joints driven over time), dynamic (Chrono: gravity, contacts, motors, springs), static "
-      "or modal (Netgen + CalculiX on a load case). Returns its summary (and sampled series); id: run or change one",
+      "Define and run a study: motion (joints driven over time), dynamic (Chrono: gravity, contacts, motors, springs), static, "
+      "modal or thermal (Netgen + CalculiX on a load case; thermal: heat, convection, fans). Returns its summary (and sampled series); id: run or change one",
       {{"doc", "path"},
-       {"kind", "motion|dynamic|static|modal"},
+       {"kind", "motion|dynamic|static|modal|thermal"},
        {"name", "string"},
        {"settings", {{"type", "object"}, {"description", "see the agent guide, Motion and simulation"}}},
        {"id", "string - an existing study: run it again (with settings: changed first)"},
@@ -148,15 +149,21 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
       });
 
   reg("load",
-      "Add a structural load or support to a load case (static and modal studies): fixed, force, pressure, moment, "
-      "bolt_preload, gravity, displacement. With id: change one",
+      "Add a load or support to a load case: structural (fixed, force, pressure, moment, bolt_preload, gravity, displacement) "
+      "or thermal (heat, temperature, convection, radiation, fan). With id: change one",
       {{"doc", "path"},
-       {"kind", "fixed|force|pressure|moment|bolt_preload|gravity|displacement"},
+       {"kind", "fixed|force|pressure|moment|bolt_preload|gravity|displacement|heat|temperature|convection|radiation|fan"},
        {"name", "string"},
        {"case", "string - load case (default \"Load case 1\")"},
        {"on", {{"type", "array"}, {"items", {{"anyOf", {{{"type", "string"}}, {{"type", "object"}}}}}}, {"description", "face refs or rules (the bolt body for bolt_preload)"}}},
        {"vector", "[x,y,z] - force N, moment N.mm, gravity mm/s2, displacement mm"},
-       {"value", "number - pressure MPa (positive pushes into the face), preload N"},
+       {"value", "number - pressure MPa (positive pushes into the face), preload N, heat W, temperature degC"},
+       {"h", {{"anyOf", {{{"type", "number"}}, {{"type", "string"}, {"enum", {"natural", "forced"}}}}}, {"description", "convection: W/m2K, natural or forced"}}},
+       {"ambient", "number degC - convection, radiation; fan: inlet air"},
+       {"velocity", "number m/s - forced convection (vector: its way)"},
+       {"emissivity", "number 0..1 - radiation"},
+       {"fan", {{"anyOf", {{{"type", "string"}}, {{"type", "object"}}}}, {"description", "library id or {flow m3/h, pressure Pa, curve}; vector: the air's way"}}},
+       {"count", "int - fans side by side"},
        {"axis", "object - bolt_preload: the bolt's axis (default: its largest cylinder)"},
        {"id", "string - an existing load to change"},
        {"by", "string"}},
@@ -169,7 +176,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           const Load* l = s.load(a["id"].get<std::string>());
           if (!l) throw Error("no load " + a["id"].get<std::string>());
           json set = json::object();
-          for (const char* k : {"name", "case", "vector", "value", "axis"})
+          for (const char* k : {"name", "case", "vector", "value", "axis", "h", "ambient", "velocity", "emissivity", "fan", "count"})
             if (a.contains(k)) set[k] = a[k];
           if (a.contains("on")) set["refs"] = a["on"];
           if (set.empty()) throw Error("load: nothing to change");
@@ -182,7 +189,8 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
         const std::string kind = a.at("kind").get<std::string>();
         const auto& kinds = sim::load_kinds();
         if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end())
-          throw Error("load: kind is fixed, force, pressure, moment, bolt_preload, gravity or displacement");
+          throw Error("load: kind is fixed, force, pressure, moment, bolt_preload, gravity, displacement (structural), or heat, temperature, "
+                      "convection, radiation, fan (thermal)");
         json refs = a.value("on", a.value("refs", json::array()));
         if (!refs.is_array()) refs = json::array({refs});
         for (const auto& r : refs) Ref::from_json(r.is_object() && r.contains("select") ? json(r["body"]) : r);
@@ -191,11 +199,19 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           throw Error("load: a " + kind + " needs its vector [x, y, z]");
         if ((kind == "pressure" || kind == "bolt_preload") && !a.contains("value"))
           throw Error(std::string("load: a ") + kind + " needs its value (" + (kind == "pressure" ? "MPa" : "N") + ")");
+        if (kind == "heat" && !a.contains("value")) throw Error("load: a heat source needs its value: the power in W");
+        if (kind == "temperature" && !a.contains("value")) throw Error("load: a temperature needs its value in degC");
+        if (kind == "convection" && !a.contains("h")) throw Error("load: a convection needs h: a film coefficient in W/m2K, \"natural\" or \"forced\"");
+        if (kind == "convection" && a.value("h", json()) == "forced" && !a.contains("velocity"))
+          throw Error("load: forced convection needs the air's velocity (m/s) and its direction (vector)");
+        if (kind == "fan" && (!a.contains("fan") || !a.contains("vector")))
+          throw Error("load: a fan needs fan (a library id or {flow, pressure}) and vector, the way the air goes through the heatsink it is on");
+        if (kind == "fan") sim::air::fan_from(a["fan"]);  // refused here rather than at the study
         std::vector<std::string> taken;
         for (const auto& l : s.loads) taken.push_back(l.name);
         json op = {{"op", "load"}, {"name", a.value("name", free_name(taken, capital(kind) + " "))}, {"kind", kind},
                    {"case", a.value("case", std::string("Load case 1"))}, {"refs", refs}};
-        for (const char* k : {"vector", "value", "axis"})
+        for (const char* k : {"vector", "value", "axis", "h", "ambient", "velocity", "emissivity", "fan", "count"})
           if (a.contains(k)) op[k] = a[k];
         const std::string id = doc.append(op, by).id;
         return json{{"id", id}, {"name", op["name"]}, {"kind", kind}, {"case", op["case"]}};
