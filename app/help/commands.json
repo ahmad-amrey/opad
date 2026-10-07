@@ -3246,7 +3246,7 @@
    "id": "simulate.fan",
    "title": "Fan",
    "summary": "Puts a fan on a heatsink: its air flows along the fins and carries their heat away.",
-   "details": "Pick the heatsink, choose a fan (typical fans by size and speed, or type its free flow and shut-off pressure) and the way the air goes along the fins. The study finds the fins in the heatsink's shape, where the fan's curve meets the fins' pressure drop, the heat transfer in the channels and how much the air warms.",
+   "details": "Pick the heatsink, choose a fan (typical fans by size and speed, or type its free flow and shut-off pressure) and the way the air goes along the fins. The study finds the fins in the heatsink's shape, where the fan's curve meets the fins' pressure drop, the heat transfer in the channels and how much the air warms. Inside a vented box, with the air solved, pick instead a block that stands for the fan: the fan blows from its middle.",
    "keywords": ["heatsink", "airflow", "CFM", "cooling fan", "fins"],
    "requires": "Open or create a document first."
   },

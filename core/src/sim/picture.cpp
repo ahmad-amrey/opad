@@ -100,12 +100,33 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
       }
       const double size = std::sqrt(std::pow(b[0] - a[0], 2) + std::pow(b[1] - a[1], 2) + std::pow(b[2] - a[2], 2));
       const double scale = st.contains("scale") ? st["scale"].get<double>() : dmax > 0 ? 0.05 * size / dmax : 0.0;
-      out.meshes = std::make_shared<std::vector<Mesh>>(1);
+      // hide: bodies left out of the map; ghost: drawn see-through (an enclosure over what it holds).
+      auto listed = [&](const char* key, size_t body) {
+        for (const auto& id : st.value(key, json::array()))
+          if (id.is_string() && body < r.bodies.size() && r.bodies[body] == id.get<std::string>()) return true;
+        return false;
+      };
+      out.meshes = std::make_shared<std::vector<Mesh>>(2);
       Mesh& m = out.meshes->front();
-      std::vector<int> index(r.nodes.size(), -1);
-      std::vector<float> colors;
-      for (const auto& t : r.skin)
-        for (int k : t) {
+      Mesh& gm = out.meshes->back();
+      std::vector<int> index(r.nodes.size(), -1), gindex(r.nodes.size(), -1);
+      std::vector<float> colors, gcolors;
+      for (size_t ti = 0; ti < r.skin.size(); ++ti) {
+        const size_t body = ti < r.skin_body.size() ? size_t(r.skin_body[ti]) : 0;
+        if (listed("hide", body)) continue;
+        if (listed("ghost", body)) {
+          for (int k : r.skin[ti]) {
+            if (gindex[size_t(k)] < 0) {
+              gindex[size_t(k)] = int(gm.positions.size() / 3);
+              for (int c = 0; c < 3; ++c) gm.positions.push_back(float(r.nodes[size_t(k)][size_t(c)]));
+              const auto col = result_color(std::clamp((value[size_t(k)] - lo) / (hi - lo), 0.0, 1.0));
+              gcolors.insert(gcolors.end(), col.begin(), col.end());
+            }
+            gm.indices.push_back(uint32_t(gindex[size_t(k)]));
+          }
+          continue;
+        }
+        for (int k : r.skin[ti]) {
           if (index[size_t(k)] < 0) {
             index[size_t(k)] = int(m.positions.size() / 3);
             for (int c = 0; c < 3; ++c) m.positions.push_back(float(r.nodes[size_t(k)][size_t(c)] + scale * (*disp)[size_t(k)][size_t(c)]));
@@ -115,6 +136,14 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
           }
           m.indices.push_back(uint32_t(index[size_t(k)]));
         }
+      }
+      if (!gm.indices.empty()) {
+        RenderItem ghost;
+        ghost.mesh = &gm;
+        ghost.vertex_colors = std::move(gcolors);
+        ghost.opacity = 0.25f;
+        o.extra.push_back(std::move(ghost));
+      }
       RenderItem item;
       item.mesh = &m;
       item.vertex_colors = std::move(colors);

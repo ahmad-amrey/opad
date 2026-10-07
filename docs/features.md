@@ -513,7 +513,10 @@ air around the parts (blockMesh), the parts cut out of it as regions of their ow
 the flow (simpleFoam, laminar, the fan as a pressure inlet from its curve), then conjugate heat transfer on that flow
 (chtMultiRegionSimpleFoam) until the parts' temperatures stop moving. Results: the parts' surface temperatures, the
 fan's flow and the pressure against it, the air leaving and the heat it carries, and streamlines from the inlet coloured
-by temperature or speed, drawn over the map in the app and in `render`.
+by temperature or speed, drawn over the map in the app and in `render`. An enclosure (a vented box around a board) is
+found by itself: the air inside it and a margin of the room are meshed, its vents are its holes, each fan is a disk
+with its curve as the pressure jump (anywhere in the box, any number of them), and the heat goes back and forth between
+CalculiX (the parts as one bonded mesh) and OpenFOAM (the air's temperature on the solved flow) until it settles.
 
 **Printed parts.** A static or modal study's bodies can be 3D printed (FFF/FDM): the Printed part dialog (or
 `settings.print`) takes the filament, build direction, layer height, line width, walls, top and bottom layers, infill

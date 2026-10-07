@@ -60,6 +60,14 @@ struct FinArray {
 // has fewer than three parallel fins across the flow.
 std::optional<FinArray> fin_array(const TopoDS_Shape& body, const Vec3& flow);
 
+// How thin a body gets (mm, its own units): from the middle of each face, the distance through the solid to its other side
+// (a wall's thickness) and through the air in front of it to the next face (a slot's or a gap's width; 0 when none). The
+// CFD sizes its cells by them, so that a board, an enclosure's wall or a vent keeps cells across.
+struct Thinness {
+  double wall = 0, gap = 0;
+};
+Thinness thinness(const TopoDS_Shape& body);
+
 // The channels of a heatsink with Q (m3/s) through them, the air at T: the speed in the channels, their Reynolds number,
 // the average heat transfer coefficient of their walls and the pressure drop across the heatsink.
 struct Channel {

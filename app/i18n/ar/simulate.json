@@ -232,5 +232,7 @@
  "Air speed (m/s)": "سرعة الهواء (م/ث)",
  "Air speed": "سرعة الهواء",
  "Steady, with the air solved (CFD, OpenFOAM): slower, sees where the air goes": "مستقرة، مع حلّ الهواء (CFD، OpenFOAM): أبطأ، وترى أين يذهب الهواء",
- "Air solved (OpenFOAM): %1 cells, %2 streamlines": "الهواء محلول (OpenFOAM): %1 خلية، %2 خط انسياب"
+ "Air solved (OpenFOAM): %1 cells, %2 streamlines": "الهواء محلول (OpenFOAM): %1 خلية، %2 خط انسياب",
+ "%1: %2 m³/h at %3 Pa": "%1: %2 م³/ساعة عند %3 باسكال",
+ "Air through %1: %2 m³/h, leaving at %3 °C": "الهواء عبر %1: %2 م³/ساعة، يخرج عند %3 °م"
 }

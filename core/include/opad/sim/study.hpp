@@ -59,8 +59,12 @@ Scene posed_at(const Scene& scene, const StudyRun& run, size_t frame);
 json engines();
 
 // ---- internal, one per engine (sim/dynamics.cpp, sim/fea.cpp)
+struct AirFace;
 StudyRun run_motion(const Document& doc, const Scene& scene, const json& settings, const Progress& progress);
 StudyRun run_dynamic(const Document& doc, const Scene& scene, const json& settings, const Progress& progress);
-StudyRun run_structural(const Document& doc, const Scene& scene, const std::string& kind, const json& settings, const Progress& progress);
+// air: a thermal study's films from the air solved around the parts (sim/fea.hpp, AirFilms); its convection, radiation and
+// fan loads are then left out.
+StudyRun run_structural(const Document& doc, const Scene& scene, const std::string& kind, const json& settings, const Progress& progress,
+                        const std::function<void(std::vector<AirFace>&, int)>* air = nullptr);
 
 }  // namespace opad::sim

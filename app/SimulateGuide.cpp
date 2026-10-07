@@ -119,6 +119,20 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
        tr("The fins are found in the heatsink's shape: straight plate fins along the air. The fan's air is taken to go through the fins, as in a "
           "duct or with a shroud; air that goes round them cools less. With OpenFOAM installed, Steady, with the air solved works out where the "
           "air really goes and draws its streamlines (minutes rather than seconds).")},
+      {tr("Cool a board in a vented box (air solved)"),
+       tr("How hot a single-board computer gets in its case, with a fan blowing in and vents letting the air out; where to put the vents."),
+       {tr("Model the box as one solid with its walls, the fan's opening and the vents cut through them; the board, its chips and the heatsink "
+           "inside it as their own bodies; and a block where the fan sits, as big as the fan."),
+        tr("Give each part its material (Material, {key:inspect.material}): the box ABS or aluminium, the heatsink aluminium."),
+        tr("On the Thermal tab, pick each chip and press Heat source with its power in W."),
+        tr("Pick the fan's block, press Fan, choose the fan (or type its flow and pressure) and the way it blows: into the box."),
+        tr("Press Thermal study and choose Steady, with the air solved. It takes minutes: the box is found by itself, the air around it is the "
+           "room's."),
+        tr("Hide the box in the browser to see inside: the parts' temperatures and the air's streamlines. Choose Air speed to see where it moves "
+           "fast and where it stands still. Move the vents and run it again to compare.")},
+       {"inspect.material", "simulate.heat", "simulate.fan", "simulate.thermal", "simulate.results"},
+       tr("The panel gives each fan's flow and the pressure it works against, the air through the box and how warm it leaves. Still air in a box "
+          "(warm air rising) is not solved yet: it needs a fan.")},
   };
   for (UseCase& u : list) {
     for (QString& s : u.steps) s = x(s);

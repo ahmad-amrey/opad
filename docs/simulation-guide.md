@@ -17,7 +17,7 @@ them.
 | The frequencies a part rings at | Vibration modes study | Netgen mesh + CalculiX |
 | How a 3D-printed part fails: which layer, which way | Printed part + static study | as above, with printed materials |
 | How hot a part gets: heatsinks, fans, still air, warm-up | Thermal study | Netgen mesh + CalculiX, the air from correlations |
-| Where a fan's air goes, and how hot the parts get in it | Thermal study, *with the air solved* | OpenFOAM (snappyHexMesh, simpleFoam, chtMultiRegionSimpleFoam) |
+| Where a fan's air goes, and how hot the parts get in it; a board in a vented box | Thermal study, *with the air solved* | OpenFOAM (snappyHexMesh, simpleFoam, chtMultiRegionSimpleFoam) |
 
 Static and modal studies need CalculiX's `ccx` on the PATH (or beside OPAD, or `OPAD_CCX`); the dynamic study needs a
 build with Project Chrono; the air solved needs OpenFOAM (Ubuntu: `apt install openfoam`; or `OPAD_OPENFOAM` set to
@@ -257,6 +257,34 @@ them, dead corners, a part downstream in another's warm air. A study that has no
 (`cfd.cell_size` mm) cost time but sharpen thin fins. Only one fan (or one stream), heat sources in whole parts, and
 the parts' heat leaves only by the moving air.
 
+## 10. Cool a board in a vented box (air solved)
+
+*How hot a single-board computer gets in its case, with a fan blowing in and vents letting the air out; where to put the
+vents.* Needs OpenFOAM.
+
+1. Model the box as one solid: its walls, the fan's opening and the vents cut through them. Model the board, its chips
+   and the heatsink inside it as bodies of their own, and a block where the fan sits, as big as the fan.
+2. Give each part its material (**Material**, {key:inspect.material}): the box ABS or aluminium, the heatsink aluminium.
+3. On the **Thermal** tab, pick each chip and press **Heat source** with its power in W.
+4. Pick the fan's block, press **Fan**, choose the fan (or type its free flow and shut-off pressure) and the way it
+   blows: into the box. A fan on a heatsink is a fan load on the heatsink itself.
+5. Press **Thermal study** and choose **Steady, with the air solved**. It takes minutes. The box is found by itself (the
+   smallest body that holds the others), and the air around it is the room's, at the ambient temperature.
+6. Hide the box in the browser to see inside: the parts' temperatures and the air's streamlines from the fan. Choose
+   **Air speed** to see where the air moves fast and where it stands still. Move the vents and run it again to compare.
+
+**What you should see**: the panel gives each fan's flow and the pressure it works against (a point on its curve), the
+air through the box and how warm it leaves.
+
+**How it is worked out**: the air in the box and a margin of the room around it are meshed around every part in it
+(the cells fine enough for each part's walls, fins and vents); each fan is a disk across which its curve sets the
+pressure jump, so it finds its own operating point against the box's resistance. The flow is solved once. The heat goes
+back and forth: the parts in CalculiX as one bonded mesh (touching parts conduct as one), the air's temperature in
+OpenFOAM on that flow with the parts' surfaces as its walls; the heat each face gives the air is its film for the next
+CalculiX solve, until the temperatures settle (a few passes). The air is laminar and does not rise when warm, and the
+board conducts the same every way (give it about 15 W/m·K with copper planes, through `materials`). Still air in a box
+needs warm air rising, which is not solved yet.
+
 ## Settings the panel does not show
 
 Everything above is stored in each study's `settings`. Some settings have no control in the panel yet; an AI agent (MCP)
@@ -273,7 +301,7 @@ or ask an agent: *"Run the motion study for 5 seconds with the crank turning at 
 | Motion | `duration` s, `frames`, `drivers: [{joint, to \| speed \| expr \| table, profile}]`, `traces: [{part, point, name}]` |
 | Dynamic | `duration`, `frames`, `step`, `gravity` (true, false or [x, y, z] mm/s²), `contacts`, `friction`, `restitution`, `free`; on joints: `drive` (position, speed, torque, force), `spring`, `friction`, `limits` |
 | Static, modal | `case`, `bodies`, `mesh_size` mm, `modes`, `materials: {"all" \| body: {E, nu, density, yield}}` |
-| Thermal | `ambient` °C, `gravity` (down, for natural convection), `duration` s and `frames` (over time), `mesh_size`, `materials: {"all" \| body: {k, cp, emissivity}}`; on loads: `fan` (an id or `{flow, pressure, curve}`), `vector`, `count`, `ambient`; `air: "cfd"` with `cfd: {cell_size, upstream, downstream, padding, flow_iterations, heat_iterations, streamlines}` |
+| Thermal | `ambient` °C, `gravity` (down, for natural convection), `duration` s and `frames` (over time), `mesh_size`, `materials: {"all" \| body: {k, cp, emissivity}}`; on loads: `fan` (an id or `{flow, pressure, curve}`), `vector`, `count`, `ambient`; `air: "cfd"` with `cfd: {enclosure (a body id, or false), cell_size, upstream, downstream, padding, flow_iterations, heat_iterations, streamlines}` |
 | Printed part | `print: {profile, material (or {base, E, nu, kt, kz, X, Y, Z, S, C, density}), build_direction, layer_height, line_width, walls, top_layers, bottom_layers, infill, pattern, infill_angle, flow, bodies}` |
 
 The full reference is the agent guide's *Motion and simulation* section (`core/res/agent_guide.md`), which agents read

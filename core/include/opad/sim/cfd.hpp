@@ -13,6 +13,15 @@
 //                  air's enthalpy too: linearUpwind left air colder than the inlet behind the fins (8 K on a 2 mm
 //                  mesh) and the parts 4 K hotter; limitedLinear agrees with upwind to 0.2 K.
 //
+// An enclosure (cfd.enclosure, or the smallest shown body holding the loads' bodies): the air in it and a margin of the room
+// around it, open on every side, every shown body inside taking part; its vents are its holes, each fan load a disk of
+// baffles with the fan's curve as the pressure jump across it (on a heatsink: against its upstream side; on a body that
+// stands for the fan: its middle, the body itself air). Only the air is meshed; the flow is solved once, then the heat goes
+// back and forth: the parts in CalculiX as one bonded mesh (sim/fea.cpp, AirFilms), the air's temperature in OpenFOAM on
+// the frozen flow (scalarTransportFoam) with the parts' surfaces as its walls, each face's heat into the air its film for
+// the next solve. (OpenFOAM's own conjugate solver, region by region a step behind, crawled or diverged on touching chips,
+// heatsinks and boards.)
+//
 // Results: the parts' temperatures on their surfaces (the solid cells nearest each point), the air's way through the parts
 // as streamlines, and the summary (temperatures, the fan's flow and pressure, the air's temperature at the outlet).
 // OpenFOAM: OPAD_OPENFOAM (its project directory), else its programs on the PATH with WM_PROJECT_DIR or a known install.

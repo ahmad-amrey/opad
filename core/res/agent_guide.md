@@ -375,7 +375,12 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     instead (OpenFOAM, `engines.cfd`; steady, one fan or one forced convection, heat in whole bodies; minutes, not
     seconds): `cfd: {cell_size mm, upstream, downstream, padding, flow_iterations, heat_iterations, streamlines}`; the
     summary adds the fan's `flow_m3h`, `inlet_static_Pa`, `outlet_air_C`, `heat_to_air_W`, `cells`, and `render` draws
-    the streamlines (`field: "air_speed"` colours them by speed; `streamlines: false` hides them).
+    the streamlines (`field: "air_speed"` colours them by speed; `streamlines: false` hides them; `hide`/`ghost`: body
+    ids left out or see-through). An enclosure (`cfd.enclosure` id, or found: the smallest shown body holding the
+    loads' bodies; `false` turns it off) is solved inside with a margin of room, every body in it taking part: its
+    vents are its holes, and each `fan` load is a disk with its curve (on a heatsink or heated body: against its
+    upstream side, the fan's size; on any other body, e.g. a block standing for the fan: its middle, and that body is
+    air); summary `enclosure`, `fans` (flow, pressure_Pa, disk), `vents` (air_in/out_m3h, outlet_air_C, heat_to_air_W).
 - `load` adds to a case (`case`, default "Load case 1") on faces (`on`: references or rules): `fixed` and `displacement` (`vector` mm), `force`
   (`vector` N, spread by area), `pressure` (`value` MPa into the face; negative pulls), `moment` (`vector` N.mm about the
   faces' centre), `gravity` (`vector` mm/s2) and `bolt_preload` (`on: [bolt body]`, `value` N; the shank is cut at its

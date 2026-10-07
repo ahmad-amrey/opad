@@ -85,6 +85,8 @@ class Simulate : public AreaController {
   std::shared_ptr<const opad::sim::StudyRun> m_run;
   std::string m_runState;  // the document state the run was for
   int m_frame = 0;
+  std::vector<std::string> m_mapHidden;  // result bodies the user has hidden: left out of the map (an enclosure, to see inside)
+  std::vector<std::string> hiddenResultBodies() const;
   int m_seriesIndex = 0;
   QString m_field = "von_mises";
   QPointer<Job> m_job;

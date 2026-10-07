@@ -482,7 +482,7 @@ json engines() {
   return out;
 }
 
-StudyRun run_structural(const Document& doc, const Scene& scene, const std::string& kind, const json& st, const Progress& progress) {
+StudyRun run_structural(const Document& doc, const Scene& scene, const std::string& kind, const json& st, const Progress& progress, const AirFilms* air_films) {
   StudyRun run;
   run.kind = kind;
   auto report = [&](double f, const std::string& phase) {
@@ -500,7 +500,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   const bool thermal_study = kind == "thermal";
   std::vector<const Load*> loads;
   for (const auto& l : scene.loads)
-    if (l.load_case == load_case && thermal_load(l.kind) == thermal_study) {
+    if (l.load_case == load_case && thermal_load(l.kind) == thermal_study && !(air_films && (l.kind == "convection" || l.kind == "radiation" || l.kind == "fan"))) {
       if (!l.error.empty()) throw Error("load \"" + l.name + "\": " + l.error);
       loads.push_back(&l);
     }
@@ -1284,6 +1284,10 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
         fan_runs.push_back(fr);
       }
     }
+    // The air solved around the parts: a film on every outer face, from it.
+    if (air_films)
+      for (size_t t = 0; t < mesh.tris.size(); ++t)
+        if (const auto f = skin_face(t)) films.push_back({*f, 10.0, ambient, -1});
     if (films.empty() && rads.empty() && fixed_temps.str().empty())
       throw Error("the heat has nowhere to go: add a convection, a radiation, a fan or a fixed temperature");
 
@@ -1347,7 +1351,16 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       return s / 3;
     };
     // The films from the temperatures: natural convection per plate, each fan's operating point, channels and air.
+    int air_pass = 0;
     auto update = [&](const std::vector<double>& T) {
+      if (air_films) {
+        std::vector<AirFace> faces;
+        faces.reserve(films.size());
+        for (const auto& fl : films) faces.push_back({fl.f.centre, fl.f.normal, fl.f.area, fl.f.body, face_temp(fl.f, T), fl.h, fl.sink});
+        (*air_films)(faces, air_pass++);
+        for (size_t i = 0; i < films.size(); ++i) films[i].h = faces[i].h, films[i].sink = faces[i].sink;
+        return;
+      }
       for (size_t p = 0; p < plates.size(); ++p) {
         const Plate& pl = plates[p];
         double A = 0, Ts = 0;
@@ -1382,11 +1395,12 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     };
     report(0.3, "Solving (CalculiX)");
     std::vector<double> T(mesh.nodes.size(), ambient + 20);  // a first guess for the films that depend on it
-    const bool coupled = !plates.empty() || !fan_runs.empty();
+    const bool coupled = !plates.empty() || !fan_runs.empty() || air_films;
     int iterations = 0;
     double change = 0;
-    if (coupled) update(T), update(T);  // the second pass spreads the guessed heat along the fans' air
-    for (int it = 0; it < (coupled ? 12 : 1); ++it) {
+    if (air_films) update(T);
+    else if (coupled) update(T), update(T);  // the second pass spreads the guessed heat along the fans' air
+    for (int it = 0; it < (coupled ? (air_films ? st.value("cfd", json::object()).value("passes", 30) : 12) : 1); ++it) {
       const Frd frd = run_ccx(input(true), 0.3 + 0.05 * std::min(it, 10));
       const std::vector<double> next = temps_of(frd, nullptr, nullptr);
       change = 0;
@@ -1454,7 +1468,8 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     for (const auto& f : films) {
       const double q = f.h * f.f.area * 1e-6 * (face_temp(f.f, T) - f.sink);
       to_air += q;
-      by_load[loads[size_t(f.load)]->name] = by_load.value(loads[size_t(f.load)]->name, 0.0) + q;
+      const std::string by = f.load < 0 ? std::string("the air") : loads[size_t(f.load)]->name;
+      by_load[by] = by_load.value(by, 0.0) + q;
     }
     for (const auto& r : rads) {
       const double Ts = face_temp(r.f, T) + 273.15, Ta = r.sink + 273.15;

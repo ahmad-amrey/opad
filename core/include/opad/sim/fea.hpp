@@ -20,6 +20,7 @@
 // come from the bodies (materials.hpp thermal()). Units inside: mm, s, t, mW; W/m.K conductivity is the same number.
 #include <array>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,17 @@ struct FeaResult {
   double mesh_size = 0;
   size_t elements = 0;
 };
+
+// The air around a thermal study's parts, worked out elsewhere (sim/cfd.cpp, the air solved around them): every outer face of
+// the parts takes its film from it, given again after each solve from the temperatures, until they settle.
+struct AirFace {
+  Vec3 centre, normal;     // mm, outward
+  double area = 0;         // mm2
+  int body = 0;            // index into the study's bodies
+  double T = 0;            // degC, as last solved
+  double h = 0, sink = 0;  // to give: W/m2K, degC
+};
+using AirFilms = std::function<void(std::vector<AirFace>& faces, int pass)>;
 
 // Where CalculiX's solver is: OPAD_CCX, beside the program, else ccx (or ccx_2.21, ...) on the PATH. Empty when none.
 std::filesystem::path ccx_program();

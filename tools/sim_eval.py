@@ -782,6 +782,56 @@ def heatsink_cfd(s):
     s.picture("heatsink_cfd_air_speed.png", study={"id": cfd["id"], "field": "air_speed"}, view="iso")
 
 
+@scenario("sbc_enclosure", "A single-board computer in a vented ABS box: a 30 mm intake fan, exhaust slots, a finned heatsink on the SoC (OpenFOAM)")
+def sbc_enclosure(s):
+    if not s.run("mechanism").get("engines", {}).get("cfd"):
+        s.note("OpenFOAM is not installed: the air solved is skipped")
+        return
+    # The box: 110 x 80 x 40 mm outside, 2.5 mm walls; a 28 mm opening for the fan in the -X wall, five 3 mm slots in the +X wall.
+    box = s.box("Enclosure", (0, 0, 0), 110, 80, 40, centered=False, color=[0.2, 0.22, 0.25])
+    s.run("feature", kind="box", inputs={"plane": {"origin": [2.5, 2.5, 2.5], "normal": [0, 0, 1]}, "length": 105, "width": 75, "height": 35,
+                                         "centered": False, "operation": "cut", "targets": [box]})
+    s.run("feature", kind="box", inputs={"plane": {"origin": [-1, 26, 6], "normal": [0, 0, 1]}, "length": 5, "width": 28, "height": 28,
+                                         "centered": False, "operation": "cut", "targets": [box]})
+    for z in (9, 15, 21, 27, 33):
+        s.run("feature", kind="box", inputs={"plane": {"origin": [106, 15, z - 1.5], "normal": [0, 0, 1]}, "length": 5, "width": 50, "height": 3,
+                                             "centered": False, "operation": "cut", "targets": [box]})
+    s.material([box], "abs")
+    fan = s.box("Fan", (2.5, 25, 5), 10, 30, 30, centered=False, color=[0.1, 0.1, 0.1])
+    board = s.box("Board", (15, 12, 10), 85, 56, 1.6, centered=False, color=[0.1, 0.45, 0.2])
+    soc = s.box("SoC", (50, 33, 11.6), 14, 14, 1.2, centered=False, color=[0.15, 0.15, 0.17])
+    pmic = s.box("PMIC", (25, 20, 11.6), 6, 6, 1, centered=False, color=[0.15, 0.15, 0.17])
+    hs = s.box("Heatsink", (47, 30, 12.8), 20, 20, 2, centered=False, color=[0.75, 0.77, 0.8])
+    gap = (20 - 5 * 1.5) / 4
+    for i in range(5):
+        s.run("feature", kind="box", inputs={"plane": {"origin": [47, 30 + i * (1.5 + gap), 14.8], "normal": [0, 0, 1]}, "length": 20, "width": 1.5,
+                                             "height": 10, "centered": False, "operation": "join", "targets": [hs]})
+    s.material([hs], "aluminium-6061")
+    s.run("load", kind="heat", on=[soc], value=4, case="Fan")
+    s.run("load", kind="heat", on=[pmic], value=0.5, case="Fan")
+    s.run("load", kind="fan", on=[fan], fan={"flow": 8, "pressure": 25}, vector=[1, 0, 0], case="Fan")
+    # The board isotropic at 15 W/m.K (copper planes along it; through it is far less), the SoC silicon.
+    settings = {"case": "Fan", "ambient": 25, "air": "cfd",
+                "materials": {board: {"k": 15, "cp": 1100, "density": 1.85}, soc: {"k": 150, "cp": 700, "density": 2.33}, pmic: {"k": 150, "cp": 700, "density": 2.33}}}
+    st = s.run("study", kind="thermal", name="Fan-cooled box", settings=settings)
+    s.expect("the enclosure is found", st.get("enclosure") == "Enclosure", str(st.get("enclosure")))
+    f, v = st["fans"][0], st["vents"]
+    s.check("the heat put in leaves with the air (W)", v["heat_to_air_W"], 4.5, 0.05)
+    s.check("as much air leaves the box as comes in (m3/h)", v["air_out_m3h"], v["air_in_m3h"], 0.01)
+    on_curve = 25 * (1 - f["flow_m3h"] / 8)
+    s.check("the fan works on its curve: its pressure rise at its flow (Pa)", f["pressure_Pa"], on_curve, 0.03)
+    s.expect("the fan blows inward and moves air", f["flow_m3h"] > 0.5, f"{f['flow_m3h']:.2f} m3/h")
+    s.expect("streamlines from the fan", st.get("streamlines", 0) > 10, str(st.get("streamlines")))
+    b = st["bodies"]
+    s.note(f"fan {f['flow_m3h']:.2f} m3/h at {f['pressure_Pa']:.1f} Pa; air through the box {v['air_out_m3h']:.2f} m3/h, leaving at {v['outlet_air_C']:.1f} degC; "
+           f"SoC {b['SoC']['max_temperature_C']:.1f} degC, heatsink {b['Heatsink']['max_temperature_C']:.1f}, PMIC {b['PMIC']['max_temperature_C']:.1f}, "
+           f"board {b['Board']['max_temperature_C']:.1f}, box {b['Enclosure']['max_temperature_C']:.1f}; {st['cells']} air cells, {st['air_passes']} passes between the air and CalculiX")
+    for w in st.get("warnings", []):
+        s.note("CFD: " + w)
+    s.picture("sbc_temperature.png", study={"id": st["id"], "ghost": [box]}, view="iso")
+    s.picture("sbc_air_speed.png", study={"id": st["id"], "field": "air_speed", "ghost": [box]}, view="iso")
+
+
 # ======================================================================================================== runner
 def write_markdown(report, out):
     """report.md from a report (as report.json keeps it): a table per scenario, its notes and pictures."""

@@ -1,6 +1,8 @@
 // Thermal studies with the air solved (sim/cfd.cpp, settings.air cfd) against the correlations of the engineering model
 // (sim/airflow.cpp) and conservation: a fan-cooled heatsink's flow and temperatures, the heat the air carries off against the
-// heat put in, and the streamlines through the fins. Skipped when OpenFOAM (or CalculiX, for the comparison) is missing.
+// heat put in, and the streamlines through the fins; a vented box with a fan inside it: the box found, the fan on its curve,
+// as much air out of the box as into it, the heat leaving with it. Skipped when OpenFOAM (or CalculiX, for the comparison)
+// is missing.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +35,31 @@ Document heatsink(std::string& hs) {
   for (int i = 0; i < 6; ++i) box(doc, {0, i * (t + gap), 5}, 60, t, 25, "Fin", hs);
   commands::run("load", {{"kind", "heat"}, {"on", {hs}}, {"value", 20}}, &doc);
   commands::run("load", {{"kind", "fan"}, {"on", {hs}}, {"fan", "80x25"}, {"vector", {1, 0, 0}}}, &doc);
+  return doc;
+}
+
+std::string cut(Document& doc, const std::string& target, Vec3 at, double l, double w, double h) {
+  commands::run("feature", {{"kind", "box"},
+                            {"inputs", {{"plane", {{"origin", at}, {"normal", {0, 0, 1}}}}, {"length", l}, {"width", w}, {"height", h}, {"centered", false},
+                                        {"operation", "cut"}, {"targets", {target}}}}},
+                &doc);
+  return target;
+}
+
+// A 90 x 60 x 40 mm box with 3 mm walls, a 30 mm opening in the -X wall with a fan (a 10 x 34 x 34 mm block standing for
+// it) blowing in, three 4 mm slots in the +X wall, and a 30 x 30 x 10 mm aluminium block on the floor making 5 W.
+Document vented_box(std::string& enclosure, std::string& fan, std::string& block) {
+  Document doc = Document::create();
+  enclosure = box(doc, {0, 0, 0}, 90, 60, 40, "Enclosure");
+  cut(doc, enclosure, {3, 3, 3}, 84, 54, 34);
+  cut(doc, enclosure, {-1, 15, 5}, 5, 30, 30);
+  for (double z : {10.0, 18.0, 26.0}) cut(doc, enclosure, {86, 10, z}, 5, 40, 4);
+  fan = box(doc, {3, 13, 3}, 10, 34, 34, "Fan");
+  block = box(doc, {40, 15, 3}, 30, 30, 10, "Block");
+  commands::run("part_properties", {{"target", block}, {"set", {{"material", "aluminium-6061"}}}}, &doc);
+  commands::run("part_properties", {{"target", enclosure}, {"set", {{"material", "abs"}}}}, &doc);
+  commands::run("load", {{"kind", "heat"}, {"on", {block}}, {"value", 5}}, &doc);
+  commands::run("load", {{"kind", "fan"}, {"on", {fan}}, {"fan", {{"flow", 15}, {"pressure", 30}}}, {"vector", {1, 0, 0}}}, &doc);
   return doc;
 }
 
@@ -97,6 +124,42 @@ TEST(cfd_heatsink_against_the_correlations) {
   if (std::getenv("OPAD_TEST_VERBOSE")) std::printf("model: %g m3/h, rise %g; cfd: %g m3/h, rise %g\n", mf["flow_m3h"].get<double>(), rise_model, flow, rise_cfd);
   CHECK(flow > mf["flow_m3h"].get<double>() && flow < 1.3 * mf["flow_m3h"].get<double>());
   CHECK_NEAR(rise_cfd, rise_model, 0.15 * rise_model);
+}
+
+TEST(cfd_fan_cooled_enclosure) {
+  if (!sim::openfoam().found()) return;
+  std::string enclosure, fan, block;
+  Document doc = vented_box(enclosure, fan, block);
+  const sim::StudyRun run = thermal(doc, {{"air", "cfd"}, {"ambient", 25}, {"cfd", {{"cell_size", 2.5}}}});
+  const json& s = run.summary;
+  if (std::getenv("OPAD_TEST_VERBOSE")) std::printf("%s\n", s.dump(1).c_str());
+  CHECK_EQ(s["enclosure"].get<std::string>(), "Enclosure");
+  // The fan's block is air (its disk in the middle), the box and the block are solids.
+  CHECK(s["bodies"].contains("Block") && s["bodies"].contains("Enclosure") && !s["bodies"].contains("Fan"));
+  const json& f = s["fans"][0];
+  const json& v = s["vents"];
+  const double Q = f["flow_m3h"].get<double>();
+  CHECK(Q > 1);
+  // On the fan's curve: its pressure rise at its flow (a straight line from 30 Pa shut off to 15 m3/h free).
+  CHECK_NEAR(f["pressure_Pa"].get<double>(), 30 * (1 - Q / 15), 0.03 * 30 * (1 - Q / 15));
+  // Mass and energy: the box breathes out what it breathes in, and the air carries off the heat put in.
+  CHECK_NEAR(v["air_out_m3h"].get<double>(), v["air_in_m3h"].get<double>(), 0.01 * v["air_in_m3h"].get<double>());
+  CHECK_NEAR(v["heat_to_air_W"].get<double>(), 5, 0.05 * 5);
+  // The block is warmer than the air that leaves, and that air warmer than the room.
+  CHECK(s["bodies"]["Block"]["max_temperature_C"].get<double>() > v["outlet_air_C"].get<double>());
+  CHECK(v["outlet_air_C"].get<double>() > 25);
+  CHECK(!run.fea->streamlines.empty());
+}
+
+// Without a fan, the air in a box is still: refused (a forced stream does not move the air inside a box).
+TEST(cfd_enclosure_needs_a_fan) {
+  if (!sim::openfoam().found()) return;
+  std::string enclosure, fan, block;
+  Document doc = vented_box(enclosure, fan, block);
+  for (const auto& l : resolve(doc).loads)
+    if (l.kind == "fan") commands::run("delete", {{"target", l.id}}, &doc);
+  commands::run("load", {{"kind", "convection"}, {"on", {block}}, {"h", "forced"}, {"velocity", 2}, {"vector", {1, 0, 0}}}, &doc);
+  CHECK_THROWS(thermal(doc, {{"air", "cfd"}}));
 }
 
 CHECK_MAIN()

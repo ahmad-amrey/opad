@@ -1,8 +1,14 @@
 #include "opad/sim/airflow.hpp"
 
 #include <BRepBndLib.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
 #include <gp_Lin.hxx>
 
 #include <algorithm>
@@ -193,6 +199,49 @@ std::optional<FinArray> fin_array(const TopoDS_Shape& body, const Vec3& flow_in)
   for (double* v : {&f.t, &f.gap, &f.height, &f.length, &f.width, &f.base}) *v *= 1e-3;
   if (f.gap <= 0 || f.length <= 0) return std::nullopt;
   return f;
+}
+
+Thinness thinness(const TopoDS_Shape& body) {
+  Bnd_Box box;
+  BRepBndLib::AddOptimal(body, box, false, false);
+  if (box.IsVoid()) return {};
+  const double reach = std::sqrt(box.SquareExtent());
+  BRepMesh_IncrementalMesh(body, std::max(0.01, reach / 200), false, 0.5, true);
+  IntCurvesFace_ShapeIntersector hit;
+  hit.Load(body, 1e-7);
+  // The nearest crossing beyond a point along a direction.
+  auto next = [&](const gp_Pnt& p, const gp_Dir& d) {
+    hit.Perform(gp_Lin(p, d), 1e-6 * reach, reach);
+    double best = 0;
+    for (int i = 1; hit.IsDone() && i <= hit.NbPnt(); ++i)
+      if (const double w = hit.WParameter(i); w > 1e-4 * reach && (best == 0 || w < best)) best = w;
+    return best;
+  };
+  Thinness out;
+  for (TopExp_Explorer e(body, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face face = TopoDS::Face(e.Current());
+    TopLoc_Location loc;
+    const Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+    if (tri.IsNull() || tri->NbTriangles() == 0) continue;
+    // The face's largest triangle: its centre lies on the face and its normal is the face's there.
+    double area = 0;
+    gp_Pnt at;
+    gp_Vec n;
+    for (int t = 1; t <= tri->NbTriangles(); ++t) {
+      int k[3];
+      tri->Triangle(t).Get(k[0], k[1], k[2]);
+      const gp_Pnt a = tri->Node(k[0]).Transformed(loc.Transformation()), b = tri->Node(k[1]).Transformed(loc.Transformation()),
+                   c = tri->Node(k[2]).Transformed(loc.Transformation());
+      const gp_Vec cr = gp_Vec(a, b).Crossed(gp_Vec(a, c));
+      if (cr.Magnitude() > area) area = cr.Magnitude(), n = cr, at = gp_Pnt((a.XYZ() + b.XYZ() + c.XYZ()) / 3);
+    }
+    if (area <= 0) continue;
+    if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+    const gp_Dir out_dir(n);
+    if (const double w = next(at, out_dir.Reversed()); w > 0 && (out.wall == 0 || w < out.wall)) out.wall = w;
+    if (const double g = next(at, out_dir); g > 0 && (out.gap == 0 || g < out.gap)) out.gap = g;
+  }
+  return out;
 }
 
 Channel channel(const FinArray& f, double Q, double T) {

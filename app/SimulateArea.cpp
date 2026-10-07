@@ -197,9 +197,16 @@ QString summaryText(const json& s) {
     lines << Simulate::tr("Heat %1 W, %2 W of it to the air").arg(number(s["heat_W"].get<double>()), number(s["to_air_W"].get<double>()));
   if (const json f = s.value("fans", json()); f.is_array())
     for (const auto& v : f)
-      lines << Simulate::tr("%1: %2 m³/h at %3 Pa, air +%4 °C, heatsink %5 °C/W")
-                   .arg(QString::fromStdString(v.value("name", "")), number(v.value("flow_m3h", 0.0)), number(v.value("pressure_Pa", 0.0)),
-                        number(v.value("air_rise_C", 0.0)), number(v.value("thermal_resistance_C_W", 0.0)));
+      if (v.contains("disk"))  // a fan inside an enclosure (the air solved)
+        lines << Simulate::tr("%1: %2 m³/h at %3 Pa").arg(QString::fromStdString(v.value("name", "")), number(v.value("flow_m3h", 0.0)),
+                                                          number(v.value("pressure_Pa", 0.0)));
+      else
+        lines << Simulate::tr("%1: %2 m³/h at %3 Pa, air +%4 °C, heatsink %5 °C/W")
+                     .arg(QString::fromStdString(v.value("name", "")), number(v.value("flow_m3h", 0.0)), number(v.value("pressure_Pa", 0.0)),
+                          number(v.value("air_rise_C", 0.0)), number(v.value("thermal_resistance_C_W", 0.0)));
+  if (const json v = s.value("vents", json()); v.is_object())
+    lines << Simulate::tr("Air through %1: %2 m³/h, leaving at %3 °C")
+                 .arg(QString::fromStdString(s.value("enclosure", "")), number(v.value("air_out_m3h", 0.0)), number(v.value("outlet_air_C", 0.0)));
   if (s.value("air", "") == "cfd")
     lines << Simulate::tr("Air solved (OpenFOAM): %1 cells, %2 streamlines").arg(number(s.value("cells", 0.0)), number(s.value("streamlines", 0.0)));
   add(Simulate::tr("Largest displacement"), s.value("max_displacement_mm", json()), "mm");
@@ -531,7 +538,17 @@ void Simulate::documentChanged(bool replaced) {
     pause();
     clearMotion();
   }
+  if (resultShown() && hiddenResultBodies() != m_mapHidden) showResults(true);
   if (m_panel && m_panel->isVisible()) refresh();
+}
+
+std::vector<std::string> Simulate::hiddenResultBodies() const {
+  std::vector<std::string> out;
+  if (!m_run || !m_run->fea) return out;
+  const opad::Scene& s = services().document()->scene;
+  for (const auto& b : m_run->fea->bodies)
+    if (s.node(b) && !s.effectively_visible(b)) out.push_back(b);
+  return out;
 }
 
 // A write waits for what reads the document now (a recovery snapshot, a design being recomputed: a few hundred ms)
@@ -1142,7 +1159,13 @@ void Simulate::showResults(bool on) {
     for (int c = 0; c < 3; ++c) map->points[i][size_t(c)] = r.nodes[i][size_t(c)] + scale * shape[i][size_t(c)];
     map->colours[i] = airSpeed ? std::array<float, 3>{0.72f, 0.72f, 0.75f} : opad::result_color(std::clamp((value[i] - vlo) / (vhi - vlo), 0.0, 1.0));
   }
-  map->triangles = r.skin;
+  // A body the user hid (an enclosure, to see what it holds and the air in it) is left out of the map.
+  m_mapHidden = hiddenResultBodies();
+  for (size_t t = 0; t < r.skin.size(); ++t) {
+    const size_t body = t < r.skin_body.size() ? size_t(r.skin_body[t]) : 0;
+    if (body >= r.bodies.size() || std::find(m_mapHidden.begin(), m_mapHidden.end(), r.bodies[body]) == m_mapHidden.end())
+      map->triangles.push_back(r.skin[t]);
+  }
   if (m_field == "temperature" || airSpeed)
     for (size_t l = 0; l < r.streamlines.size(); ++l) {
       const auto& field = airSpeed ? r.streamline_speed[l] : r.streamline_temperature[l];
