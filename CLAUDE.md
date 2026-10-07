@@ -179,6 +179,21 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   the panel's plan/commit path, edits the extrude rolled back, fillets, saves, quits; trace lines `bench: design:` /
   `bench: sketch:`. Core coverage: `ctest -R "design|sketch"`.
 
+## Mesh to solid (`core/src/meshsolid/`, `core/src/design/mesh_solid.cpp`, `app/MeshSolidWizard.cpp`)
+
+`design.mesh_solid` is the feature kind's action, overridden to open its own panel (`MainWindow::meshToSolid`), which
+previews `design::convert_mesh` (worker) and commits that plan (`commitPlanned`): the body committed is the one measured.
+`convert_mesh` tries `mesh_profiles` (extrusion: caps + upright walls with one outline; revolution: vertices collapse to
+one (r, z) profile, caps that only have rim vertices reach the axis) -> sketch op + extrude/revolve, kept only when
+`mesh_deviation` passes (vertices within 1.5 tol, back distance within 2 tol + 1.5 sagitta, volume 10%); else a
+`mesh_solid` feature whose compute is `mesh_to_brep` (fitted regions -> edges -> ShapeFix_Face per face -> sewing; then
+planar facets; then one face per triangle). `Ctx::node_shape` refuses meshes, so that compute reads the body's shape
+itself. Traps met: a fit checked on vertices only is ambiguous when vertices sit on rims (two rings of a cylinder lie on
+a sphere): candidates are chosen by the facets' middles too (`centre_error`); vertex-only arc fits swallow long straight
+sides (chord sagitta limited by `mesh_sagitta`); arcs need their centre on the ends' bisector or the sketch's wire does
+not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused. `ctest -R mesh_solid`; bench
+`mesh-to-solid` (OPAD_BENCH_MESHSOLID).
+
 ## Guided tools (`app/GuidedTool.hpp`, flow in `MainWindow` "guided tools")
 
 Distance, Angle, Radius, Bounding box, Note and the section's "Pick face" are started first and then ask for their

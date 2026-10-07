@@ -77,6 +77,7 @@
 #include "opad/design/sketch_reference.hpp"
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
+#include "opad/mesh_solid.hpp"
 
 namespace opad::design {
 
@@ -196,6 +197,13 @@ std::vector<FeatureSpec> build_specs() {
       "new");
   add("thicken", "Thicken", "thicken", "create", "Give faces a thickness: a solid skin over the picked faces.",
       {pick("faces", "Faces", "faces", 1, 0), in("thickness", "Thickness", "length", "2 mm"), in("flip", "Other side", "bool", false)}, "new");
+  // A mesh body (STL, OBJ, 3MF ...) rebuilt as a solid: fitted planes, cylinders, cones, spheres and tori sewn along their
+  // borders (opad/mesh_solid.hpp). Tolerance 0: 1/2000 of the mesh's size. The Mesh to solid command writes this when the mesh
+  // is no extrusion or revolution (those become a sketch and that feature instead).
+  add("mesh_solid", "Mesh to solid", "mesh", "create",
+      "Rebuild mesh bodies as solids: regions of facets become planes, cylinders, cones, spheres and tori; the rest stays flat facets. A tolerance of 0 is automatic.",
+      {pick("bodies", "Mesh", "bodies", 1, 0), in("tolerance", "Tolerance", "length", "0 mm"), in("angle", "Facet angle", "angle", "35 deg")},
+      "new");
   add("hole", "Hole", "hole", "create",
       "Drill at points: sketch points drill into the material behind the sketch; vertices and points in space into the nearest body's face (its inward normal), or along Direction when given.",
       {pick("points", "Points", "points", 1, 0), choice("type", "Type", {"simple", "counterbore", "countersink"}), in("diameter", "Diameter", "length", "5 mm"),
@@ -1846,6 +1854,28 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     }
     if (skins.empty()) throw Error("these faces cannot be thickened by that much");
     apply_operation(ctx, in, compound_of(skins), out);
+    return out;
+  }
+  if (kind == "mesh_solid") {
+    // The mesh's own triangles, not node_shape (which refuses meshes: they cannot be modelled on, only rebuilt).
+    const double tolerance = ctx.length(in, "tolerance");
+    const double angle = ctx.angle(in, "angle") * 180 / M_PI;
+    std::vector<TopoDS_Shape> solids;
+    const json refs = in.value("bodies", json());
+    if (!refs.is_array() || refs.empty()) throw Error("pick at least one mesh body");
+    for (const auto& r : refs) {
+      ctx.check_cancel();
+      const std::string id = Ref::from_json(r).body;
+      const Node* n = ctx.scene.node(id);
+      if (!n || n->kind != Node::Kind::Body) throw Error("a referenced body no longer exists");
+      TopoDS_Shape shape = ctx.key_shape(n->body_key);
+      if (n->representation != "mesh" && !is_mesh_shape(shape)) throw Error("Mesh to solid takes mesh bodies; " + n->name + " is already a solid");
+      const gp_Trsf t = ctx.node_trsf(id);
+      if (t.Form() != gp_Identity) shape = shape.Moved(TopLoc_Location(t));
+      const MeshBrep rebuilt = mesh_to_brep(mesh_of_shape(shape), {tolerance, angle}, [&] { return ctx.cancel && ctx.cancel(); });
+      solids.push_back(rebuilt.shape);
+    }
+    apply_operation(ctx, in, compound_of(solids), out);
     return out;
   }
   if (kind == "hole") {

@@ -8,6 +8,7 @@ The [README](../README.md) is the overview; [building.md](building.md) covers bu
 - [Agents, MCP and the CLI](#agents-mcp-and-the-cli)
 - [Trackpad navigation](#trackpad-navigation)
 - [Desktop viewing and review](#desktop-viewing-and-review)
+- [Mesh to solid](#mesh-to-solid)
 - [Languages](#languages)
 - [Technical drawings (sheets)](#technical-drawings-sheets)
 - [Motion and simulation](#motion-and-simulation)
@@ -326,6 +327,41 @@ text; **AI agent notes** also need the request in words. MCP clients should revi
 stroke's plane, and inspect current anchor references before editing.
 `annotate` accepts typed `drawing` data and `reply_to` comments; `delete_annotation` removes a note
 from review lists while retaining Undo/history. `delete` resolves a completed request.
+
+## Mesh to solid
+
+Design > Solid > Mesh to solid (also on a mesh body's context menu; `mesh_to_solid` for agents and the CLI) rebuilds a
+mesh body (STL, OBJ, 3MF, PLY, glTF) as a B-rep solid:
+
+- **Extrusions and revolutions become history.** When every facet of the mesh is either on two caps square to a
+  direction or upright between them, and both caps have the same outline, the bottom outline becomes a sketch and an
+  Extrude feature. When every vertex falls on one profile turned about an axis, that profile becomes a sketch and a
+  Revolve. The outlines are fitted with lines, arcs, circles and splines: corners are where the outline turns by more
+  than the facet angle, and a run of facets becomes an arc only when its chords cut inside it no deeper than the mesh's
+  own facets do (so a long straight side is never taken for a large arc). A faceted cylinder becomes one circle
+  extruded; a plate with holes becomes four lines and its circles; a turned shaft a profile revolved. When both fit, the
+  sketch with fewer curves wins (an extrusion on a tie).
+- **Anything else becomes fitted faces.** The mesh is split into regions that one plane, cylinder, cone, sphere or
+  torus fits within the tolerance (planes from coplanar facets; curved surfaces grown from patches of facets at small
+  angles, the largest first; between surfaces that fit the same vertices, the one the facets' middles also lie on). The
+  borders between regions become edges (the two surfaces' intersection curve when they have one, else a line, an arc
+  or a spline through the border), corners settle where their surfaces meet, and the faces are sewn into a solid. If
+  that solid is not valid, coplanar facets merged into planar faces are used, and as a last resort one face per
+  triangle, so a closed mesh always gives a closed solid. This result is a `mesh_solid` feature: editing it changes
+  its tolerance or facet angle later.
+- **How close it is.** Every result is measured against the mesh before it is offered: the distance of each mesh
+  vertex to the solid's surface (largest, mean, RMS and the share within the tolerance; a mesh's vertices lie on the
+  true surface), the distance of the solid's surface back to the mesh (on curved faces up to the facets' chord error,
+  which is estimated from the mesh and shown beside it), and the change in volume and area. The match is the share of
+  the mesh within the tolerance, reduced when the solid has material farther from the mesh than its facets explain.
+  An extrusion or revolution is only used when every vertex is within 1.5 times the tolerance and the volume within
+  10%.
+
+Options: the tolerance (Automatic: 1/2000 of the mesh's size), the facet angle (35 degrees: the largest angle between
+neighbouring facets of one curved surface), Sketch and feature when possible or Fitted solid only, the body's name and
+Remove the mesh after conversion (a Remove feature, so the history keeps it). The conversion and its measuring run on a
+worker; the preview replaces the mesh in the view, and Create solid commits what was previewed as one undo step. A mesh
+opened for viewing asks to be saved as an OPAD document first.
 
 ## Languages
 
