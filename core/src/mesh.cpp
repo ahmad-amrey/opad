@@ -165,7 +165,7 @@ Mesh Mesh::deserialize(const std::string& blob) {
 Mesh tessellate_body(const Document& doc, const std::string& key, double linear_tol) {
   char tol[32];
   std::snprintf(tol, sizeof tol, "%.6g", linear_tol);
-  std::string cache_key = key + "-recovery1-" + tol;
+  std::string cache_key = key + "-recovery2-" + tol;  // 2: drilled shapes keep their extruded faces (mesh_shape)
   if (auto blob = cache_get("mesh", cache_key)) {
     try {
       return Mesh::deserialize(*blob);

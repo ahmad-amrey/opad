@@ -4,7 +4,10 @@
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepGProp.hxx>
 #include <BRepMesh_Context.hxx>
+#include <BRepMesh_DelabellaMeshAlgoFactory.hxx>
+#include <BRepMesh_FaceDiscret.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepMesh_MeshAlgoFactory.hxx>
 #include <BRepTools_Modifier.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
@@ -31,6 +34,18 @@ namespace opad {
 namespace {
 // A face with hundreds of holes (a circuit board's drills, a perforated plate): the default triangulator grew about
 // quadratically with them (2400 drills: 12 s), Delabella stays near linear (1.3 s), so such shapes are meshed with it.
+// Only their planes, though: Delabella leaves linear extrusions empty (a handset's walls beside its speaker grille
+// vanished), and the drilled faces are planar, so the other faces keep the default triangulator.
+class PlanesByDelabella : public IMeshTools_MeshAlgoFactory {
+ public:
+  Handle(IMeshTools_MeshAlgo) GetAlgo(const GeomAbs_SurfaceType type, const IMeshTools_Parameters& parameters) const override {
+    return (type == GeomAbs_Plane ? m_delabella : m_default)->GetAlgo(type, parameters);
+  }
+
+ private:
+  Handle(IMeshTools_MeshAlgoFactory) m_delabella = new BRepMesh_DelabellaMeshAlgoFactory, m_default = new BRepMesh_MeshAlgoFactory;
+};
+
 bool many_holes(const TopoDS_Shape& shape) {
   for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
     int wires = 0;
@@ -264,7 +279,9 @@ MeshingReport mesh_shape(const TopoDS_Shape& shape, double tolerance, double ang
     mesher.SetShape(shape);
     IMeshTools_Parameters& p = mesher.ChangeParameters();
     p.Deflection = tolerance, p.Angle = angle, p.Relative = false, p.InParallel = true;
-    mesher.Perform(new BRepMesh_Context(IMeshTools_MeshAlgoType_Delabella));
+    Handle(BRepMesh_Context) context = new BRepMesh_Context();
+    context->SetFaceDiscret(new BRepMesh_FaceDiscret(new PlanesByDelabella));
+    mesher.Perform(context);
     report.status = mesher.GetStatusFlags();
   } else {
     BRepMesh_IncrementalMesh mesher(shape, tolerance, false, angle, true);

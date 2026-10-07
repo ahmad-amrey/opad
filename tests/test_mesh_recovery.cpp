@@ -259,6 +259,40 @@ TEST(extruded_walls_become_upright_strips) {
   CHECK(projected_wall_area(slot, gp::DZ()) > 1e-6);
 }
 
+TEST(drilled_faces_keep_their_extruded_walls) {
+  // Over 64 holes in a face sends the shape to Delabella, which left linear extrusions without triangles (the report:
+  // a handset's side walls vanished next to its speaker grille). A plate with a spline side has such a wall.
+  Handle(TColgp_HArray1OfPnt) points = new TColgp_HArray1OfPnt(1, 5);
+  for (int i = 0; i < 5; ++i) points->SetValue(i + 1, gp_Pnt(20 - 5 * i, 10 + std::sin(i * 1.3), 0));
+  GeomAPI_Interpolate fit(points, Standard_False, 1e-9);
+  fit.Perform();
+  BRepBuilderAPI_MakeWire outline;
+  outline.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(20, 0, 0)).Edge());
+  outline.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(20, 0, 0), fit.Curve()->StartPoint()).Edge());
+  outline.Add(BRepBuilderAPI_MakeEdge(fit.Curve()).Edge());
+  outline.Add(BRepBuilderAPI_MakeEdge(fit.Curve()->EndPoint(), gp_Pnt(0, 0, 0)).Edge());
+  BRepBuilderAPI_MakeFace face(outline.Wire(), Standard_True);
+  for (int k = 0; k < 100; ++k) {
+    const gp_Circ hole(gp_Ax2(gp_Pnt(2 + (k % 10) * 1.8, 1 + (k / 10) * 0.8, 0), gp_Dir(0, 0, -1)), 0.25);
+    face.Add(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(hole).Edge()).Wire());
+  }
+  const TopoDS_Shape plate = BRepPrimAPI_MakePrism(face.Face(), gp_Vec(0, 0, 2)).Shape();
+  opad::mesh_shape(plate, 0.05);
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(plate, TopAbs_FACE, faces);
+  int extrusions = 0;
+  for (int i = 1; i <= faces.Extent(); ++i) {
+    const TopoDS_Face f = TopoDS::Face(faces(i));
+    extrusions += BRepAdaptor_Surface(f).GetType() == GeomAbs_SurfaceOfExtrusion;
+    TopLoc_Location loc;
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(f, props);
+    CHECK(area(BRep_Tool::Triangulation(f, loc)) > std::abs(props.Mass()) * 0.9);
+  }
+  CHECK_EQ(faces.Extent(), 106);  // 4 sides, top, bottom, 100 hole walls
+  CHECK_EQ(extrusions, 1);
+}
+
 TEST(straightening_keeps_faces_it_cannot_match) {
   // A cone is ruled but not along one direction; a sphere is not ruled: both keep BRepMesh's triangles.
   TopoDS_Shape cone = BRepPrimAPI_MakeCone(4, 1, 6).Shape(), sphere = BRepPrimAPI_MakeSphere(5).Shape();
