@@ -45,7 +45,7 @@ if(NOT WIN32)
   endif()
   set(_single_stage ${CMAKE_COMMAND} "-DOPAD_SOURCE_DIR=${PROJECT_SOURCE_DIR}" "-DOPAD_VERSION=${PROJECT_VERSION}"
     "-DOPAD_ALLOW_GPL_DLLS=${OPAD_ALLOW_GPL_DLLS}" "-DOPAD_QT_LIBS=${_single_qt_libs}" "-DOPAD_QT_PLUGINS=${_single_qt_plugins}"
-    "-DOPAD_LIB_DIRS=${_single_lib_dirs}" "-DOPAD_NOTICES_HEADERS=${_single_headers}" "-DNOTICES_OCCT=${_single_occt}")
+    "-DOPAD_LIB_DIRS=${_single_lib_dirs}" "-DOPAD_NOTICES_HEADERS=${_single_headers}" "-DNOTICES_OCCT=${_single_occt}" "-DNOTICES_BUILT=${OPAD_NOTICES_BUILT}")
 endif()
 
 if(WIN32)

@@ -45,12 +45,20 @@ foreach(_dir IN LISTS _opad_json_dirs)
   endif()
 endforeach()
 
+# The simulation engines' DLLs (cmake/sim_engines.cmake) are staged from their install folders like the others.
+set(_opad_engine_bins "")
+foreach(_engine CHRONO NETGEN)
+  if(OPAD_HAVE_${_engine})
+    string(APPEND _opad_engine_bins "|${${_engine}_INSTALL_DIR}/bin")
+  endif()
+endforeach()
+
 add_custom_target(opad-portable
   COMMAND ${CMAKE_COMMAND}
     "-DOPAD_EXES=${_opad_portable_exes}"
     "-DOPAD_STAGE=${CMAKE_BINARY_DIR}/portable/OPAD-${PROJECT_VERSION}-windows-x64"
     "-DOPAD_WINDEPLOYQT=${OPAD_WINDEPLOYQT}"
-    "-DOPAD_DLL_DIRS=${_opad_cxx_bin}|${_opad_qt_bin}|${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+    "-DOPAD_DLL_DIRS=${_opad_cxx_bin}|${_opad_qt_bin}|${CMAKE_RUNTIME_OUTPUT_DIRECTORY}${_opad_engine_bins}"
     "-DOPAD_OBJDUMP=${CMAKE_OBJDUMP}"
     "-DOPAD_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
     "-DOPAD_DWG_PROGRAMS=${_opad_portable_dwg}"
@@ -60,6 +68,7 @@ add_custom_target(opad-portable
     "-DOPAD_PACMAN=${OPAD_PACMAN}"
     "-DOPAD_QT_PLUGINS=${_opad_qt_plugins}"
     "-DOPAD_NOTICES_HEADERS=${_opad_portable_headers}"
+    "-DNOTICES_BUILT=${OPAD_NOTICES_BUILT}"
     -P "${PROJECT_SOURCE_DIR}/cmake/portable_stage.cmake"
   DEPENDS ${_opad_portable_deps}
   COMMENT "Staging the portable package"
