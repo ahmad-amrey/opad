@@ -140,7 +140,7 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
                                          "taken as silicon."));
     m_heat = new QTableWidget(0, 4, this);
     m_heat->setObjectName("coolingHeat");
-    m_heat->setHorizontalHeaderLabels({tr("Part"), tr("Power (W)"), tr("Board"), tr("Copper layers")});
+    m_heat->setHorizontalHeaderLabels({tr("Part"), tr("Power, watts"), tr("Board"), tr("Copper layers")});
     m_heat->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_heat->verticalHeader()->hide();
     v->addWidget(m_heat, 1);

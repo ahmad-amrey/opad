@@ -810,13 +810,13 @@ def sbc_enclosure(s):
     s.run("load", kind="heat", on=[soc], value=4, case="Fan")
     s.run("load", kind="heat", on=[pmic], value=0.5, case="Fan")
     s.run("load", kind="fan", on=[fan], fan={"flow": 8, "pressure": 25}, vector=[1, 0, 0], case="Fan")
-    # The board isotropic at 15 W/m.K (copper planes along it; through it is far less), the SoC silicon.
+    # The board a 4-layer PCB (its copper along it, FR-4 across), the chips silicon.
     settings = {"case": "Fan", "ambient": 25, "air": "cfd",
-                "materials": {board: {"k": 15, "cp": 1100, "density": 1.85}, soc: {"k": 150, "cp": 700, "density": 2.33}, pmic: {"k": 150, "cp": 700, "density": 2.33}}}
+                "materials": {board: {"pcb": {"layers": 4}}, soc: {"k": 150, "cp": 700, "density": 2.33}, pmic: {"k": 150, "cp": 700, "density": 2.33}}}
     st = s.run("study", kind="thermal", name="Fan-cooled box", settings=settings)
     s.expect("the enclosure is found", st.get("enclosure") == "Enclosure", str(st.get("enclosure")))
     f, v = st["fans"][0], st["vents"]
-    s.check("the heat put in leaves with the air (W)", v["heat_to_air_W"], 4.5, 0.05)
+    s.check("the heat put in leaves with the air and by radiation (W)", v["heat_to_air_W"] + st.get("radiated_W", 0), 4.5, 0.05)
     s.check("as much air leaves the box as comes in (m3/h)", v["air_out_m3h"], v["air_in_m3h"], 0.01)
     on_curve = 25 * (1 - f["flow_m3h"] / 8)
     s.check("the fan works on its curve: its pressure rise at its flow (Pa)", f["pressure_Pa"], on_curve, 0.03)
@@ -830,6 +830,56 @@ def sbc_enclosure(s):
         s.note("CFD: " + w)
     s.picture("sbc_temperature.png", study={"id": st["id"], "ghost": [box]}, view="iso")
     s.picture("sbc_air_speed.png", study={"id": st["id"], "field": "air_speed", "ghost": [box]}, view="iso")
+
+
+@scenario("sbc_vent_sweep", "The Cooling assistant's example: the exhaust slots' height swept for the coolest SoC (screened at Quick, the best confirmed)")
+def sbc_vent_sweep(s):
+    if not s.run("mechanism").get("engines", {}).get("cfd"):
+        s.note("OpenFOAM is not installed: the sweep is skipped")
+        return
+    # As the assistant's example builds it: vent_z the middle of three 3 mm slots in the +X wall.
+    s.run("param", name="vent_z", expr="21 mm")
+    encl = s.box("Enclosure", (0, 0, 0), 110, 80, 40, centered=False, color=[0.2, 0.22, 0.25])
+    s.run("feature", kind="box", inputs={"plane": {"origin": [2.5, 2.5, 2.5], "normal": [0, 0, 1]}, "length": 105, "width": 75, "height": 35,
+                                         "centered": False, "operation": "cut", "targets": [encl]})
+    s.run("feature", kind="box", inputs={"plane": {"origin": [-1, 26, 6], "normal": [0, 0, 1]}, "length": 5, "width": 28, "height": 28,
+                                         "centered": False, "operation": "cut", "targets": [encl]})
+    for dz in ("vent_z - 6 mm", "vent_z", "vent_z + 6 mm"):
+        s.run("feature", kind="box", inputs={"plane": {"origin": [106, 0, 0], "normal": [1, 0, 0]}, "x": 40, "y": dz, "length": 50, "width": 3,
+                                             "height": 5, "centered": True, "operation": "cut", "targets": [encl]})
+    s.material([encl], "abs")
+    fan = s.box("Fan", (2.5, 25, 5), 10, 30, 30, centered=False, color=[0.1, 0.1, 0.1])
+    board = s.box("Board", (15, 12, 10), 85, 56, 1.6, centered=False, color=[0.1, 0.45, 0.2])
+    soc = s.box("SoC", (50, 33, 11.6), 14, 14, 1.2, centered=False, color=[0.15, 0.15, 0.17])
+    pmic = s.box("PMIC", (25, 20, 11.6), 6, 6, 1, centered=False, color=[0.15, 0.15, 0.17])
+    hs = s.box("Heatsink", (47, 30, 12.8), 20, 20, 2, centered=False, color=[0.75, 0.77, 0.8])
+    gap = (20 - 5 * 1.5) / 4
+    for i in range(5):
+        s.run("feature", kind="box", inputs={"plane": {"origin": [47, 30 + i * (1.5 + gap), 14.8], "normal": [0, 0, 1]}, "length": 20, "width": 1.5,
+                                             "height": 10, "centered": False, "operation": "join", "targets": [hs]})
+    s.material([hs], "aluminium-6061")
+    s.run("load", kind="heat", on=[soc], value=4, case="Cooling")
+    s.run("load", kind="heat", on=[pmic], value=0.5, case="Cooling")
+    s.run("load", kind="fan", on=[fan], fan={"flow": 8, "pressure": 25}, vector=[1, 0, 0], case="Cooling")
+    silicon = {"k": 150, "cp": 700, "density": 2.33, "name": "Silicon"}
+    st = s.run("study", kind="thermal", name="Cooling (air solved)", run=False,
+               settings={"case": "Cooling", "ambient": 25, "air": "cfd", "cfd": {"enclosure": encl, "quality": "normal"},
+                         "materials": {board: {"pcb": {"layers": 4}}, soc: silicon, pmic: silicon}})
+    sw = s.run("study", kind="sweep", name="Vent sweep",
+               settings={"study": st["id"], "params": [{"name": "vent_z", "from": 12, "to": 28, "steps": 4}], "refine": 1,
+                         "objective": {"of": "max_temperature_C", "bodies": [soc]},
+                         "screening": {"cfd": {"quality": "quick"}}, "confirm": True})
+    pts = sw["points"]
+    s.expect("every value ran", all("objective" in p for p in pts), json.dumps([p.get("error") for p in pts if "error" in p]))
+    best = sw["best"]
+    s.expect("the best is the coolest SoC of the points",
+             best["objective"] == min(p["objective"] for p in pts if "objective" in p), json.dumps(best["params"]))
+    s.expect("the best is run again at Normal quality", "confirmed" in best, str(best.get("confirmed")))
+    for p in sorted(pts, key=lambda p: p["params"]["vent_z"]):
+        s.note(f"vent_z {p['params']['vent_z']:.2f} mm: SoC {p.get('objective', float('nan')):.2f} degC")
+    s.note(f"best vent_z {best['params']['vent_z']:.2f} mm: SoC {best['objective']:.2f} degC at Quick, {best.get('confirmed', float('nan')):.2f} at Normal")
+    s.run("param", name="vent_z", expr=f"{best['params']['vent_z']:.2f} mm")
+    s.picture("sbc_sweep_best.png", study={"id": sw["id"], "ghost": [encl]}, view="iso")
 
 
 # ======================================================================================================== runner

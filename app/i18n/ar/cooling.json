@@ -20,7 +20,7 @@
  "A 110 x 80 x 40 mm ABS box with a 30 mm intake fan, three exhaust slots at the height vent_z, a board, a 4 W chip under a finned heatsink and a 0.5 W power chip: everything set up to run and to sweep.": "صندوق ABS مقاسه 110 × 80 × 40 مم مع مروحة سحب 30 مم، وثلاث فتحات عادم عند الارتفاع vent_z، ولوحة، ورقاقة 4 واط تحت مشتت حرارة ذي زعانف، ورقاقة طاقة 0.5 واط: كل شيء معدّ للتشغيل وللمسح.",
  "Heat": "الحرارة",
  "Tick each part that makes heat and type its power. Tick Board for a printed circuit board: its copper spreads heat along it far better than through it (give its copper layers). A chip with no material is taken as silicon.": "علّم كل جزء يولّد حرارة واكتب قدرته. علّم «لوحة» للوحة الدوائر المطبوعة: نحاسها ينشر الحرارة على امتدادها أفضل بكثير من عبرها (أعطِ عدد طبقات النحاس). الرقاقة التي لا مادة لها تُعدّ سيليكونًا.",
- "Power (W)": "القدرة (واط)",
+ "Power, watts": "القدرة، واط",
  "Copper layers": "طبقات النحاس",
  "Air": "الهواء",
  "A fan is a block where it sits, as big as it, or the heatsink it blows on. Choose the fan (or Custom, with its free flow and shut-off pressure from its datasheet) and the way it blows. Without fans the air moves only by rising where it is warm: put vents low and high.": "المروحة كتلة في مكانها بحجمها، أو مشتت الحرارة الذي تنفخ عليه. اختر المروحة (أو «مخصّصة» مع تدفقها الحر وضغط الإغلاق من نشرتها) واتجاه نفخها. دون مراوح يتحرك الهواء فقط بصعوده حيث يدفأ: ضع فتحات منخفضة وأخرى مرتفعة.",

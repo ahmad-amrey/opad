@@ -3254,7 +3254,7 @@
    "id": "simulate.cooling",
    "title": "Cooling assistant",
    "summary": "Takes a board, its chips and a heatsink in a vented box step by step: the heat, the fans or the vents, the run with the air solved, and the best place for the vents.",
-   "details": "The box is found by itself: the smallest body that holds the parts making heat. Tick the parts that make heat with their power, the board (its copper layers spread the heat), and the fans (a block where each sits, or the heatsink it blows on) or vents only (warm air rising). Run solves the air in the box and around it with OpenFOAM and the parts with CalculiX; the result shows each part's temperature, the fans' flow and the air through the box, with streamlines. Best vents runs a parameter (a vent's height, a fan's place) over a range and finds the coolest design. On an empty document it builds an example.",
+   "details": "The box is found by itself (the smallest body holding the parts that make heat), and on an empty document the assistant builds an example. Tick the parts that make heat with their power, the board (its copper layers spread the heat), and the fans (a block where each sits, or the heatsink it blows on) or vents only (warm air rising). Run solves the air in the box and around it with OpenFOAM and the parts with CalculiX: each part's temperature, the fans' flow and the air through the box, with streamlines. Best vents runs a parameter (a vent's height, a fan's place) over a range and finds the coolest design.",
    "keywords": ["enclosure", "vents", "fan", "CFD", "electronics cooling", "single-board computer", "optimise", "sweep", "heatsink"],
    "requires": "Open or create a document first."
   },
