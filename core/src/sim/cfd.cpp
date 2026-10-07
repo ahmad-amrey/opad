@@ -464,6 +464,11 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       if (!cfd.contains(k)) cfd[k] = v;
   }
 
+  // How the air carries heat between cells: upwind (first order, bounded) unless asked (e.g. "limitedLinear 1").
+  const std::string heat_scheme = cfd.value("heat_scheme", std::string("upwind"));
+  for (char c : heat_scheme)
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != ' ' && c != '.') throw Error("cfd.heat_scheme: an OpenFOAM scheme such as upwind or \"limitedLinear 1\"");
+
   // ---- the case's thermal loads: heat sources in bodies; fans (one at a duct's inlet, any number placed in an enclosure) or
   // one forced stream
   std::string load_case = st.value("case", std::string());
@@ -1019,9 +1024,8 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         "interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
     put(flow / "system" / "fvSolution", "dictionary", "fvSolution",
         "solvers { p { solver GAMG; smoother GaussSeidel; tolerance 1e-8; relTol 0.01; } U { solver smoothSolver; smoother GaussSeidel; "
-        "tolerance 1e-8; relTol 0.1; } }\nSIMPLE { nNonOrthogonalCorrectors 1; consistent " +
-            std::string(cfd.value("simplec", false) ? "yes" : "no") + "; residualControl { p 1e-4; U 1e-5; } }\n" +
-            (cfd.value("simplec", false) ? "relaxationFactors { fields { p 1; } equations { U 0.9; } }\n" : "relaxationFactors { fields { p 0.5; } equations { U 0.7; } }\n"));
+        "tolerance 1e-8; relTol 0.1; } }\nSIMPLE { nNonOrthogonalCorrectors 1; consistent no; residualControl { p 1e-4; U 1e-5; } }\n"
+        "relaxationFactors { fields { p 0.5; } equations { U 0.7; } }\n");
     put(flow / "constant" / "transportProperties", "dictionary", "transportProperties", "transportModel Newtonian; nu " + num(a.nu) + ";\n");
     put(flow / "constant" / "turbulenceProperties", "dictionary", "turbulenceProperties", "simulationType laminar;\n");
     std::string u_bc, p_bc;
@@ -1144,7 +1148,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
             "application scalarTransportFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; "
             "writeInterval 1; writeFormat ascii; writePrecision 10; timeFormat general; runTimeModifiable false;\n");
         put(heat / "system" / "fvSchemes", "dictionary", "fvSchemes",
-            "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,T) bounded Gauss upwind; } "
+            "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,T) bounded Gauss " + heat_scheme + "; } "
             "laplacianSchemes { default Gauss linear corrected; } interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
         put(heat / "system" / "fvSolution", "dictionary", "fvSolution",
             "solvers { T { solver PBiCGStab; preconditioner DILU; tolerance 1e-10; relTol 0; } }\nSIMPLE { nNonOrthogonalCorrectors 1; }\n");
@@ -1156,7 +1160,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
             "transportModel Newtonian; nu " + num(a.nu) + "; beta " + num(a.beta) + "; TRef " + num(T0) + "; Pr " + num(a.Pr) + "; Prt 0.85;\n");
         put(flow / "system" / "fvSchemes", "dictionary", "fvSchemes",
             "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,U) bounded Gauss upwind; "
-            "div(phi,T) bounded Gauss upwind; div((nuEff*dev2(T(grad(U))))) Gauss linear; } laplacianSchemes { default Gauss linear corrected; } "
+            "div(phi,T) bounded Gauss " + heat_scheme + "; div((nuEff*dev2(T(grad(U))))) Gauss linear; } laplacianSchemes { default Gauss linear corrected; } "
             "interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
         put(flow / "system" / "fvSolution", "dictionary", "fvSolution",
             "solvers { p_rgh { solver GAMG; smoother GaussSeidel; tolerance 1e-8; relTol 0.01; } \"(U|T)\" { solver PBiCGStab; preconditioner DILU; "
@@ -1516,7 +1520,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   put(cas / "constant" / fluid / "radiationProperties", "dictionary", "radiationProperties", "radiation off; radiationModel none;\n");
   put(cas / "system" / fluid / "fvSchemes", "dictionary", "fvSchemes",
       "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,U) bounded Gauss upwind; "
-      "div(phi,K) bounded Gauss upwind; div(phi,h) bounded Gauss upwind; div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear; } "
+      "div(phi,K) bounded Gauss upwind; div(phi,h) bounded Gauss " + heat_scheme + "; div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear; } "
       "laplacianSchemes { default Gauss linear corrected; } interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
   put(cas / "system" / fluid / "fvSolution", "dictionary", "fvSolution",
       "solvers { \"rho.*\" { solver PCG; preconditioner DIC; tolerance 0; relTol 0; } p_rgh { solver GAMG; smoother GaussSeidel; tolerance 1e-7; "

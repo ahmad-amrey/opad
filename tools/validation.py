@@ -2,7 +2,7 @@
 """OPAD's simulations against published reference solutions (benchmarks), each built and run through OPAD's MCP server as
 an agent would, its numbers compared with the reference and the error reported.
 
-    python3 tools/validation.py build/linux/bin/opad-cli [--out DIR] [--only NAME[,NAME]] [--list]
+    python3 tools/validation.py build/linux/bin/opad-cli [--out DIR] [--only NAME[,NAME]] [--cfd JSON] [--list]
 
 Cases (each skipped when its engine is missing):
 
@@ -32,6 +32,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import sim_eval as se  # noqa: E402  the MCP client and the scenario helpers
 
 CASES = []
+CFD_EXTRA = {}  # --cfd: settings merged into every case's cfd (a sensitivity check: a finer cell_size, another heat_scheme)
+
+
+def cfd(**settings):
+    return {**settings, **CFD_EXTRA}
 
 
 def case(name, title, reference):
@@ -97,7 +102,7 @@ def flat_plate(s):
     s.run("load", kind="heat", on=[plate], value=P, case="Plate")
     s.run("load", kind="convection", on=[plate], h="forced", velocity=U, vector=[1, 0, 0], case="Plate")
     st = s.run("study", kind="thermal", name="Plate", settings={"case": "Plate", "air": "cfd", "ambient": 25,
-                                                                "cfd": {"cell_size": 1.0, "padding": 25, "upstream": 30, "downstream": 60}})
+                                                                "cfd": cfd(cell_size=1.0, padding=25, upstream=30, downstream=60)})
     T = st["bodies"]["Plate"]["mean_temperature_C"]
     a = air(25 + (T - 25) / 2)
     Re = U * L * 1e-3 / a["nu"]
@@ -128,8 +133,8 @@ def cavity(s, Ra, Nu_ref):
     s.run("load", kind="temperature", on=[se.face_rule(cold, "x", L + t)], value=Tm - dT / 2, case="Cavity")
     st = s.run("study", kind="thermal", name=f"Cavity Ra {Ra:g}",
                settings={"case": "Cavity", "air": "cfd", "ambient": Tm, "materials": {frame: {"k": 0.01, "name": "insulation"}},
-                         "cfd": {"enclosure": frame, "sealed": True, "buoyancy": True, "radiation": False, "quality": "normal",
-                                 "buoyant_first": 1500, "buoyant_pass": 500}})
+                         "cfd": cfd(enclosure=frame, sealed=True, buoyancy=True, radiation=False, quality="normal",
+                                           buoyant_first=1500, buoyant_pass=500)})
     Q = st["bodies"]["Hot"].get("to_air_W", float("nan"))
     Qc = st["bodies"]["Cold"].get("to_air_W", float("nan"))
     Nu = Q * L * 1e-3 / (a["k"] * dT * (L * 1e-3) ** 2)
@@ -171,7 +176,7 @@ def radiation_box(s):
     for model in ("calculix", True):
         st = s.run("study", kind="thermal", name=f"Radiation {model}",
                    settings={"case": "Rad", "air": "cfd", "ambient": 25, "materials": {box: {"emissivity": 0.9}, block: {"emissivity": 0.9}},
-                             "cfd": {"enclosure": box, "sealed": True, "buoyancy": False, "radiation": model, "quality": "quick"}})
+                             "cfd": cfd(enclosure=box, sealed=True, buoyancy=False, radiation=model, quality="quick")})
         got[str(model)] = st
         s.note(f"{'rays' if model is True else model}: block {st['bodies']['Block']['max_temperature_C']:.2f} degC, radiated "
                f"{st.get('radiated_W', 0):.3f} W, to the air {st.get('to_air_W', 0):.3f} W; {json.dumps(st.get('seconds'))}")
@@ -209,7 +214,9 @@ def main():
     p.add_argument("--out", default="build/validation")
     p.add_argument("--only", default="")
     p.add_argument("--list", action="store_true")
+    p.add_argument("--cfd", default="{}", help="JSON merged into every case's cfd settings")
     args = p.parse_args()
+    CFD_EXTRA.update(json.loads(args.cfd))
     if args.list:
         for name, title, _, _ in CASES:
             print(f"{name:14} {title}")
