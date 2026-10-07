@@ -9,7 +9,6 @@ dist/
 .vscode/
 *.user
 compile_commands.json
-CLAUDE.md
 .claude/
 !/docs/
 /docs/*

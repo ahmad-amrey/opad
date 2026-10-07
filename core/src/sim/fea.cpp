@@ -1642,18 +1642,18 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   // Nothing held: the least that keeps it still (3-2-1 on three far nodes), which carries no load when the loads balance.
   if (!supported) {
     size_t a = 0, b = 0, c = 0;
-    double far = 0;
+    double farthest = 0;
     for (size_t i = 0; i < mesh.nodes.size(); ++i)
-      if (norm(sub(mesh.nodes[i], mesh.nodes[0])) > far) far = norm(sub(mesh.nodes[i], mesh.nodes[0])), a = i;
-    far = 0;
+      if (norm(sub(mesh.nodes[i], mesh.nodes[0])) > farthest) farthest = norm(sub(mesh.nodes[i], mesh.nodes[0])), a = i;
+    farthest = 0;
     for (size_t i = 0; i < mesh.nodes.size(); ++i)
-      if (norm(sub(mesh.nodes[i], mesh.nodes[a])) > far) far = norm(sub(mesh.nodes[i], mesh.nodes[a])), b = i;
-    far = 0;
+      if (norm(sub(mesh.nodes[i], mesh.nodes[a])) > farthest) farthest = norm(sub(mesh.nodes[i], mesh.nodes[a])), b = i;
+    farthest = 0;
     const V ab = unit(sub(mesh.nodes[b], mesh.nodes[a]));
     for (size_t i = 0; i < mesh.nodes.size(); ++i) {
       V r = sub(mesh.nodes[i], mesh.nodes[a]);
       r = sub(r, mul(ab, dot(r, ab)));
-      if (norm(r) > far) far = norm(r), c = i;
+      if (norm(r) > farthest) farthest = norm(r), c = i;
     }
     // a: all three; b: the two across ab; c: the one out of the abc plane.
     const V n = unit(cross(ab, sub(mesh.nodes[c], mesh.nodes[a])));
