@@ -62,6 +62,7 @@ struct AirFace {
   int body = 0;            // index into the study's bodies
   double T = 0;            // degC, as last solved
   double h = 0, sink = 0;  // to give: W/m2K, degC
+  double q_air = 0;        // given back: what the air took from the face at T (W/m2), to check the films against
 };
 using AirFilms = std::function<void(std::vector<AirFace>& faces, int pass)>;
 

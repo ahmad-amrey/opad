@@ -271,8 +271,11 @@ class Nearest {
   Nearest(const std::vector<V>& pts, double cell) : m_pts(pts), m_cell(std::max(cell, 1e-6)) {
     for (size_t i = 0; i < pts.size(); ++i) m_grid[key(pts[i])].push_back(i);
   }
-  size_t operator()(const V& p) const {
-    size_t best = 0;
+  size_t operator()(const V& p) const { return (*this)(p, nullptr); }
+  // The nearest that `ok` accepts (npos when none is within 64 buckets).
+  static constexpr size_t npos = size_t(-1);
+  size_t operator()(const V& p, const std::function<bool(size_t)>& ok) const {
+    size_t best = ok ? npos : 0;
     double bd = 1e300;
     for (int r = 0; r < 64 && (bd == 1e300 || double(r - 1) * m_cell < std::sqrt(bd)); ++r) {
       const auto k = key(p);
@@ -283,7 +286,7 @@ class Nearest {
             const auto it = m_grid.find({k[0] + i, k[1] + j, k[2] + l});
             if (it == m_grid.end()) continue;
             for (size_t n : it->second)
-              if (const double d = dot(sub(m_pts[n], p), sub(m_pts[n], p)); d < bd) bd = d, best = n;
+              if (const double d = dot(sub(m_pts[n], p), sub(m_pts[n], p)); d < bd && (!ok || ok(n))) bd = d, best = n;
           }
     }
     return best;
@@ -705,7 +708,16 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   const double pad = enclosure.empty() ? cfd.value("padding", fine) : margin;
   const double off = 0.37 * coarse;
   const double d0 = lo[0] - up - off, d1 = hi[0] + down + off;
-  const double a0 = lo[1] - pad - off, a1 = hi[1] + pad + off, b0 = lo[2] - pad - off, b1 = hi[2] + pad + off;
+  double a0 = lo[1] - pad - off, a1 = hi[1] + pad + off, b0 = lo[2] - pad - off, b1 = hi[2] + pad + off;
+  // cfd.span (mm, a stream only): the box's width across the parts' wider side, centred on them; narrower than a part,
+  // the part crosses the box wall to wall and, the walls slipping, the air is two-dimensional (a plate of endless span).
+  if (const double span = cfd.value("span", 0.0); span > 0 && enclosure.empty()) {
+    if (!stream) throw Error("cfd.span is for a stream (forced convection), not a fan's duct");
+    double& s0 = hi[1] - lo[1] >= hi[2] - lo[2] ? a0 : b0;
+    double& s1 = &s0 == &a0 ? a1 : b1;
+    const double mid = &s0 == &a0 ? 0.5 * (lo[1] + hi[1]) : 0.5 * (lo[2] + hi[2]);
+    s0 = mid - 0.5 * span, s1 = mid + 0.5 * span;
+  }
   const int nx = std::max(4, int(std::ceil((d1 - d0) / coarse))), ny = std::max(2, int(std::ceil((a1 - a0) / coarse))),
             nz = std::max(2, int(std::ceil((b1 - b0) / coarse)));
   if (double(nx) * ny * nz > cfd.value("max_cells", 3e6)) throw Error("cfd: the air's box would take too many cells at this cell size: set cfd.cell_size larger");
@@ -823,7 +835,8 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     sh << "castellatedMesh true; snap " << (buoyant ? "false" : "true") << "; addLayers false;\ngeometry {\n";
     for (const auto& r : region)
       if (!r.empty()) sh << "  " << r << " { type triSurfaceMesh; file \"" << r << ".stl\"; }\n";
-    for (size_t g = 0; g < gap_boxes.size(); ++g) sh << "  gap" << g << " { type searchableBox; min " << vec(gap_boxes[g].lo) << "; max " << vec(gap_boxes[g].hi) << "; }\n";
+    for (size_t g = 0; g < gap_boxes.size(); ++g) sh << "  gap" << g << " { type searchableBox; min " << vec(mul(gap_boxes[g].lo, 1e-3)) << "; max " << vec(mul(gap_boxes[g].hi, 1e-3))
+                                                     << "; }\n";  // m, as the mesh
     sh << "}\ncastellatedMeshControls {\n  maxLocalCells 6000000; maxGlobalCells 12000000; minRefinementCells 0; maxLoadUnbalance 0.1; nCellsBetweenLevels 2;\n"
        << "  features ();\n  refinementSurfaces {\n";
     // In a duct, each part a region of the mesh (its cells kept, conjugate heat in OpenFOAM); in an enclosure only the air is
@@ -1065,8 +1078,10 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
              "  outlet { type fixedValue; value uniform 0; }";
       fan_json = {{"name", fan_load->name}, {"fan", fan.to_json()}, {"fans", count}};
     } else {
+      // A stream is open air: the box's sides slip (no-slip sides grew their own layers and sped up the air past the part).
       const double U = stream->def.value("velocity", 1.0);
-      u_bc = "inlet { type fixedValue; value uniform " + vec(mul(way, U)) + "; }\n  outlet { type inletOutlet; inletValue uniform (0 0 0); value uniform (0 0 0); }";
+      u_bc = "inlet { type fixedValue; value uniform " + vec(mul(way, U)) + "; }\n  outlet { type inletOutlet; inletValue uniform (0 0 0); value uniform (0 0 0); }"
+             "\n  walls { type slip; }";
       p_bc = "inlet { type zeroGradient; }\n  outlet { type fixedValue; value uniform 0; }";
     }
     put(flow / "0" / "U", "volVectorField", "U",
@@ -1208,6 +1223,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         V centre;  // mm
         double area, k_d;  // m2, W/m2K: the air's conductance from the face to the cell behind it
         size_t cell;
+        V normal;  // out of the air, into the part
       };
       std::vector<std::pair<std::string, std::vector<size_t>>> wall_patches;  // patch -> indices into walls
       std::vector<Wall> walls;
@@ -1227,7 +1243,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
           const size_t cell = size_t(own[f]);
           const double d = A > 0 ? std::fabs(dot(sub(c, air_cells.centre[cell]), mul(area, 1 / A))) : 0;
           wall_patches.back().second.push_back(walls.size());
-          walls.push_back({body, mul(c, 1e3), A, a.k / std::max(d, 1e-6), cell});
+          walls.push_back({body, mul(c, 1e3), A, a.k / std::max(d, 1e-6), cell, A > 0 ? mul(area, 1 / A) : V{0, 0, 1}});
         }
       }
       if (walls.empty()) throw Error("cfd: the air's mesh has no walls on the parts");
@@ -1239,6 +1255,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       std::vector<std::vector<size_t>> face_ids;  // per body: indices into the faces CalculiX gives
       std::vector<std::vector<V>> face_centres;
       std::vector<std::unique_ptr<Nearest>> near_wall;
+      std::vector<size_t> wall_face, face_wall;  // each air wall face's part face, and each part face's air wall face (or npos)
       std::vector<std::vector<V>> wall_centres;
       std::vector<std::vector<size_t>> wall_ids;
       int passes = 0, buoyant_done = 0;
@@ -1258,7 +1275,15 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       };
       std::vector<double> h0;  // each face's film once settled on (W/m2K)
       std::vector<double> target, last_r;  // the temperature each film should work against; the last pass's residual
-      double omega = 0.7;
+      std::vector<double> last_xt;              // robin: the last pass's targets
+      std::vector<std::vector<double>> dR, dX;  // robin: the passes' changes of residual and target (IQN-ILS)
+      // cfd.coupling: "robin" (each face's film the conductance to the air cell beside it, against that cell's temperature:
+      // what the air takes at that wall, so the two agree as the temperatures settle; stable), or "film" (a film fixed after
+      // two passes against the room, its sink moved: fast past a fan, but it swung and never agreed in enclosed air).
+      const std::string coupling = cfd.value("coupling", std::string("robin"));
+      if (coupling != "robin" && coupling != "film") throw Error("cfd.coupling is robin or film");
+      const bool robin = coupling == "robin";
+      double omega = robin ? 1.0 : 0.7;
       const AirFilms films = [&](std::vector<AirFace>& faces, int pass) {
         if (pass == 0) {
           h0.assign(faces.size(), 0.0), target.assign(faces.size(), 0.0);
@@ -1269,6 +1294,24 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
           for (size_t b = 0; b < fea_bodies.size(); ++b) {
             near_face.push_back(std::make_unique<Nearest>(face_centres[b], coarse));
             near_wall.push_back(std::make_unique<Nearest>(wall_centres[b], coarse));
+          }
+          // Each wall face of the air to the nearest face of its part that looks at the air there, and back: by nearness
+          // alone a thin wall's (a 1 mm frame, a board) other side, insulated or warmer, was taken as often as not, and the
+          // films gave the air several times what it took.
+          wall_face.assign(walls.size(), Nearest::npos);
+          face_wall.assign(faces.size(), Nearest::npos);
+          for (size_t w = 0; w < walls.size(); ++w) {
+            const size_t b = size_t(walls[w].body);
+            if (face_ids[b].empty()) continue;
+            size_t i = (*near_face[b])(walls[w].centre, [&](size_t n) { return dot(faces[face_ids[b][n]].normal, walls[w].normal) < -0.3; });
+            if (i == Nearest::npos) i = (*near_face[b])(walls[w].centre);
+            wall_face[w] = face_ids[b][i];
+          }
+          for (size_t k = 0; k < faces.size(); ++k) {
+            const size_t b = size_t(faces[k].body);
+            if (wall_ids[b].empty()) continue;
+            const size_t i = (*near_wall[b])(faces[k].centre, [&](size_t n) { return dot(faces[k].normal, walls[wall_ids[b][n]].normal) < -0.3; });
+            if (i != Nearest::npos) face_wall[k] = wall_ids[b][i];
           }
         }
         ++passes;
@@ -1282,7 +1325,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         // The walls at the parts' temperatures: each wall face the nearest face CalculiX solved.
         for (size_t w = 0; w < walls.size(); ++w) {
           const size_t b = size_t(walls[w].body);
-          Twall[w] = face_ids[b].empty() ? ambient : faces[face_ids[b][(*near_face[b])(walls[w].centre)]].T;
+          Twall[w] = wall_face[w] == Nearest::npos ? ambient : faces[wall_face[w]].T;
         }
         std::ostringstream bc;
         bc.precision(10);
@@ -1332,31 +1375,37 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         for (size_t w = 0; w < walls.size(); ++w) {
           const size_t b = size_t(walls[w].body);
           if (face_ids[b].empty()) continue;
-          const size_t k = face_ids[b][(*near_face[b])(walls[w].centre)];
+          const size_t k = wall_face[w];
+          if (k == Nearest::npos) continue;
           const double Tc = Tair[walls[w].cell] - 273.15;
           qA[k] += walls[w].k_d * (Twall[w] - Tc) * walls[w].area;
-          A[k] += walls[w].area, kdA[k] += walls[w].k_d * walls[w].area, TcA[k] += Tc * walls[w].area;
+          A[k] += walls[w].area, kdA[k] += walls[w].k_d * walls[w].area, TcA[k] += walls[w].k_d * Tc * walls[w].area;
         }
         for (size_t k = 0; k < faces.size(); ++k) {
           AirFace& f = faces[k];
           double q, kd, Tc;
           if (A[k] > 0) {
-            q = qA[k] / A[k], kd = kdA[k] / A[k], Tc = TcA[k] / A[k];
+            // Tc weighted by each wall face's conductance: kd (T - Tc) is then exactly the heat those faces give the air.
+            q = qA[k] / A[k], kd = kdA[k] / A[k], Tc = TcA[k] / kdA[k];
           } else {  // smaller than the air's cells there: the nearest wall face's, if the air is there at all
-            const size_t b = size_t(f.body);
-            const size_t w = wall_ids[b].empty() ? 0 : wall_ids[b][(*near_wall[b])(f.centre)];
-            if (wall_ids[b].empty() || norm(sub(walls[w].centre, f.centre)) > 1.5 * coarse) {
+            const size_t w = face_wall[k];
+            if (w == Nearest::npos || norm(sub(walls[w].centre, f.centre)) > 1.5 * coarse) {
               // No air beside it (a sealed box's outside, a gap too narrow for the cells): insulated.
-              f.h = 0, f.sink = ambient;
+              f.h = 0, f.sink = ambient, f.q_air = 0;
               continue;
             }
             Tc = Tair[walls[w].cell] - 273.15, kd = walls[w].k_d, q = kd * (Twall[w] - Tc);
           }
+          f.q_air = q;
           // The first passes: the face's film against the room's temperature (against the air next to it where that is the
           // warmer). Then that film stays and only the temperature it works against moves (relaxed), so that the film gives
           // the heat the air took: switching faces between the two, or the films chasing the temperatures, kept the
           // passes from settling (a degree up and down after thirty).
-          if (pass < 2 || h0[k] <= 0) {
+          if (robin) {
+            f.h = h0[k] = std::clamp(kd, 1.0, 1e6);
+            target[k] = Tc;
+            if (pass == 0) f.sink = Tc;
+          } else if (pass < 2 || h0[k] <= 0) {
             if (f.T - ambient > 0.2 && q > 0) f.h = std::clamp(q / (f.T - ambient), 1.0, 1e4), f.sink = ambient;
             else f.h = std::clamp(kd, 1.0, 1e4), f.sink = Tc;
             if (pass == 1) h0[k] = f.h;
@@ -1366,13 +1415,68 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
           }
         }
         // The temperatures the films work against, relaxed by Aitken's factor from the last two passes' residuals.
-        if (pass >= 2) {
+        if (robin && pass >= 1) {
+          // Interface quasi-Newton (IQN-ILS, Degroote et al. 2009): from the passes so far, how the air's temperatures beside
+          // the walls answer the sinks given, least squares; the next sinks where that says they agree. One factor for all
+          // (Aitken) left a near-adiabatic wall (an insulating frame) creeping a little each pass.
+          std::vector<double> x(faces.size()), xt(faces.size()), r(faces.size());
+          for (size_t k = 0; k < faces.size(); ++k) x[k] = faces[k].sink, xt[k] = h0[k] > 0 ? target[k] : x[k], r[k] = xt[k] - x[k];
+          if (!last_r.empty()) {
+            dR.push_back(r), dX.push_back(xt);
+            for (size_t k = 0; k < r.size(); ++k) dR.back()[k] -= last_r[k], dX.back()[k] -= last_xt[k];
+            if (dR.size() > 20) dR.erase(dR.begin()), dX.erase(dX.begin());
+          }
+          last_r = r, last_xt = xt;
+          std::vector<double> next = xt;
+          const size_t m = dR.size();
+          if (m > 0) {
+            // (V'V + eps) c = -V'r
+            std::vector<double> M(m * m), b(m), c(m);
+            double tr = 0;
+            for (size_t i = 0; i < m; ++i) {
+              for (size_t j = 0; j <= i; ++j) {
+                double sum = 0;
+                for (size_t k = 0; k < r.size(); ++k) sum += dR[i][k] * dR[j][k];
+                M[i * m + j] = M[j * m + i] = sum;
+              }
+              tr += M[i * m + i];
+              double sum = 0;
+              for (size_t k = 0; k < r.size(); ++k) sum += dR[i][k] * r[k];
+              b[i] = -sum;
+            }
+            for (size_t i = 0; i < m; ++i) M[i * m + i] += 1e-10 * tr + 1e-300;
+            // Gaussian elimination with partial pivoting.
+            for (size_t col = 0; col < m; ++col) {
+              size_t piv = col;
+              for (size_t i = col + 1; i < m; ++i)
+                if (std::fabs(M[i * m + col]) > std::fabs(M[piv * m + col])) piv = i;
+              if (piv != col) {
+                for (size_t j = 0; j < m; ++j) std::swap(M[col * m + j], M[piv * m + j]);
+                std::swap(b[col], b[piv]);
+              }
+              for (size_t i = col + 1; i < m; ++i) {
+                const double f = M[i * m + col] / M[col * m + col];
+                for (size_t j = col; j < m; ++j) M[i * m + j] -= f * M[col * m + j];
+                b[i] -= f * b[col];
+              }
+            }
+            for (size_t i = m; i-- > 0;) {
+              double sum = b[i];
+              for (size_t j = i + 1; j < m; ++j) sum -= M[i * m + j] * c[j];
+              c[i] = sum / M[i * m + i];
+            }
+            for (size_t i = 0; i < m; ++i)
+              for (size_t k = 0; k < next.size(); ++k) next[k] += dX[i][k] * c[i];
+          }
+          for (size_t k = 0; k < faces.size(); ++k)
+            if (h0[k] > 0) faces[k].sink = next[k];
+        } else if (pass >= 2) {
           std::vector<double> r(faces.size());
           for (size_t k = 0; k < faces.size(); ++k) r[k] = h0[k] > 0 ? target[k] - faces[k].sink : 0.0;
           if (!last_r.empty()) {
             double num = 0, den = 0;
             for (size_t k = 0; k < r.size(); ++k) num += last_r[k] * (r[k] - last_r[k]), den += (r[k] - last_r[k]) * (r[k] - last_r[k]);
-            if (den > 0) omega = std::clamp(-omega * num / den, 0.1, 1.5);
+            if (den > 0) omega = std::clamp(-omega * num / den, 0.1, robin ? 4.0 : 1.5);
           }
           for (size_t k = 0; k < faces.size(); ++k)
             if (h0[k] > 0) faces[k].sink += omega * r[k];

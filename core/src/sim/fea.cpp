@@ -1440,6 +1440,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     };
     // The films from the temperatures: natural convection per plate, each fan's operating point, channels and air.
     int air_pass = 0;
+    double film_mismatch = 0;  // with the air solved: the films against what the air took, as a share of it
     auto update = [&](const std::vector<double>& T) {
       if (by_rays) {
         std::vector<double> Ts(rads.size());
@@ -1452,6 +1453,16 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
         faces.reserve(films.size());
         for (const auto& fl : films) faces.push_back({fl.f.centre, fl.f.normal, fl.f.area, fl.f.body, face_temp(fl.f, T), fl.h, fl.sink});
         (*air_films)(faces, air_pass++);
+        // How far the films just solved with were from what the air took at those temperatures: the passes are done only
+        // when they agree (walls held at a temperature never move, so the temperatures alone settled at once while the
+        // films gave the air two and a half times what it took).
+        double off = 0, took = 0;
+        for (size_t i = 0; i < films.size(); ++i) {
+          const double A = films[i].f.area * 1e-6;
+          off += A * std::fabs(films[i].h * (faces[i].T - films[i].sink) - faces[i].q_air);
+          took += A * std::fabs(faces[i].q_air);
+        }
+        film_mismatch = took > 0 ? off / took : 0;
         for (size_t i = 0; i < films.size(); ++i) films[i].h = faces[i].h, films[i].sink = faces[i].sink;
         return;
       }
@@ -1495,6 +1506,11 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     json changes = json::array();
     if (air_films) update(T);
     else if (coupled) update(T), update(T);  // the second pass spreads the guessed heat along the fans' air
+    const double settle = air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05;
+    // With the air solved, the films must also give the air what it takes (cfd.agree, a share of the heat).
+    const double agree = st.value("cfd", json::object()).value("agree", 0.02);
+    json mismatches = json::array();
+    bool settled = !coupled;
     for (int it = 0; it < (coupled ? (air_films ? st.value("cfd", json::object()).value("passes", 30) : 12) : 1); ++it) {
       const Frd frd = run_ccx(input(true), 0.3 + 0.05 * std::min(it, 10));
       const std::vector<double> next = temps_of(frd, nullptr, nullptr);
@@ -1503,10 +1519,23 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       T = next;
       ++iterations;
       changes.push_back(change);
-      if (!coupled || change < (air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05)) break;
+      if (!coupled) break;
+      if (!air_films && change < settle) {
+        settled = true;
+        break;
+      }
       update(T);
+      if (air_films) {
+        mismatches.push_back(film_mismatch);
+        if (change < settle && film_mismatch < agree) {
+          settled = true;
+          break;
+        }
+      }
     }
-    if (coupled && change >= (air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05)) run.warnings.push_back("the temperatures were still moving by " + std::to_string(change) + " degC after " + std::to_string(iterations) + " solves");
+    if (!settled && change >= settle) run.warnings.push_back("the temperatures were still moving by " + std::to_string(change) + " degC after " + std::to_string(iterations) + " solves");
+    else if (!settled) run.warnings.push_back("the parts and the air still disagreed by " + std::to_string(int(std::lround(100 * film_mismatch))) +
+                                              " % of the heat after " + std::to_string(iterations) + " solves (cfd.passes)");
     // Over time: the films of the steady state, from the ambient temperature.
     std::vector<std::vector<double>> frames;
     std::vector<double> times;
@@ -1615,6 +1644,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     summary["solves"] = iterations;
     summary["ccx_seconds"] = ccx_seconds;
     if (changes.size() > 1) summary["solve_changes_C"] = changes;
+    if (!mismatches.empty()) summary["air_disagreement"] = mismatches;  // per pass: the films against what the air took
     summary["nodes"] = mesh.nodes.size();
     summary["elements"] = mesh.tets.size();
     if (transient) {
