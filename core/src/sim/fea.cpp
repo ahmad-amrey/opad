@@ -33,6 +33,7 @@
 #include "../design/engine.hpp"
 #include "../import_common.hpp"
 #include "fea_mesh.hpp"
+#include "radiation.hpp"
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/sim/joints.hpp"
@@ -1046,13 +1047,17 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     {
       const char* asked = std::getenv("OPAD_CCX_THREADS");
       const std::string threads = asked && *asked ? asked : "1";
+      // Cavity radiation's view factors (cfd.radiation "calculix") have no such race: every core.
+      const std::string view_threads = std::to_string(std::max(1u, std::thread::hardware_concurrency()));
 #ifdef _WIN32
       _putenv_s("OMP_NUM_THREADS", threads.c_str());
       _putenv_s("CCX_NPROC_EQUATION_SOLVER", threads.c_str());
+      _putenv_s("CCX_NPROC_VIEWFACTOR", view_threads.c_str());
 #else
       // Only when it changes: sweep points run at once (sim/sweep.cpp), and setenv beside getenv is a race.
       for (const char* name : {"OMP_NUM_THREADS", "CCX_NPROC_EQUATION_SOLVER"})
         if (const char* now = std::getenv(name); !now || threads != now) setenv(name, threads.c_str(), 1);
+      if (const char* now = std::getenv("CCX_NPROC_VIEWFACTOR"); !now || view_threads != now) setenv("CCX_NPROC_VIEWFACTOR", view_threads.c_str(), 1);
 #endif
     }
     detail::RunOptions ro;
@@ -1322,14 +1327,41 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       }
     }
     // The air solved around the parts: a film on every outer face, from it.
-    // With the air solved, radiation (cfd.radiation, default on) between every outer face and to the room.
-    const bool cavity = air_films && st.value("cfd", json::object()).value("radiation", true);
+    // With the air solved, radiation (cfd.radiation, default on) between every outer face and to the room: by rays
+    // (sim/radiation.hpp, each face's sink from the others' temperatures, per solve), or "calculix" for CalculiX's own cavity
+    // radiation (its view factors and the dense system they make solved inside every solve: minutes for a few thousand faces).
+    const json rad_mode = air_films ? st.value("cfd", json::object()).value("radiation", json(true)) : json(false);
+    const bool cavity = rad_mode.is_string() && rad_mode.get<std::string>() == "calculix";
+    const bool by_rays = !cavity && (rad_mode.is_boolean() ? rad_mode.get<bool>() : rad_mode.is_string() && rad_mode.get<std::string>() == "rays");
+    if (rad_mode.is_string() && !cavity && !by_rays) throw Error("cfd.radiation: true, false, \"rays\" or \"calculix\"");
+    std::vector<radiation::Surface> surfaces;  // by rays: one per entry of rads, in its order
     if (air_films)
       for (size_t t = 0; t < mesh.tris.size(); ++t)
         if (const auto f = skin_face(t)) {
           films.push_back({*f, 10.0, ambient, -1});
-          if (cavity) rads.push_back({*f, mats[size_t(f->body)].emissivity, ambient, true});
+          if (cavity || by_rays) rads.push_back({*f, mats[size_t(f->body)].emissivity, ambient, cavity});
+          if (by_rays) {
+            radiation::Surface s;
+            for (int k = 0; k < 3; ++k) s.corners[size_t(k)] = mesh.nodes[size_t(mesh.tris[t][size_t(k)])];
+            // The corners counter-clockwise seen along the outward normal.
+            if (dot(cross(sub(s.corners[1], s.corners[0]), sub(s.corners[2], s.corners[0])), f->normal) < 0) std::swap(s.corners[1], s.corners[2]);
+            s.normal = f->normal;
+            s.area = f->area;
+            s.emissivity = mats[size_t(f->body)].emissivity;
+            surfaces.push_back(s);
+          }
         }
+    radiation::ViewFactors views;
+    json radiation_info;
+    if (by_rays) {
+      report(0.28, "Radiation: view factors");
+      const auto started = std::chrono::steady_clock::now();
+      views = radiation::view_factors(surfaces, st.value("cfd", json::object()).value("radiation_rays", 512));
+      radiation_info = {{"model", "rays"}, {"surfaces", surfaces.size()}, {"rays", views.rays},
+                              {"seconds", std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()}};
+    } else if (cavity) {
+      radiation_info = {{"model", "calculix"}, {"surfaces", rads.size()}};
+    }
     if (films.empty() && rads.empty() && fixed_temps.str().empty())
       throw Error("the heat has nowhere to go: add a convection, a radiation, a fan or a fixed temperature");
 
@@ -1409,6 +1441,12 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     // The films from the temperatures: natural convection per plate, each fan's operating point, channels and air.
     int air_pass = 0;
     auto update = [&](const std::vector<double>& T) {
+      if (by_rays) {
+        std::vector<double> Ts(rads.size());
+        for (size_t i = 0; i < rads.size(); ++i) Ts[i] = face_temp(rads[i].f, T);
+        const std::vector<double> sink = radiation::sinks(views, surfaces, Ts, ambient);
+        for (size_t i = 0; i < rads.size(); ++i) rads[i].sink = sink[i];
+      }
       if (air_films) {
         std::vector<AirFace> faces;
         faces.reserve(films.size());
@@ -1542,6 +1580,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     summary["heat_W"] = heat_in;
     summary["to_air_W"] = to_air;
     if (!rads.empty()) summary["radiated_W"] = radiated;
+    if (!radiation_info.is_null()) summary["radiation"] = radiation_info;
     if (!fixed_temps.str().empty() && !transient) summary["to_fixed_temperatures_W"] = heat_in - to_air - radiated;
     summary["loads_W"] = by_load;
     json conv = json::array();

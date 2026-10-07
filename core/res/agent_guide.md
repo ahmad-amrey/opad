@@ -382,7 +382,7 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     upstream side, the fan's size; on any other body, e.g. a block standing for the fan: its middle, and that body is
     air); summary `enclosure`, `fans` (flow, pressure_Pa, disk), `vents` (air_in/out_m3h, outlet_air_C, heat_to_air_W).
     There the parts are CalculiX's (heat on faces too) coupled to the air's temperature (`air_passes`, `solve_changes_C`);
-    no fans (or `cfd.buoyancy`): warm air rising; `cfd.radiation` (default on): view factors, `radiated_W`;
+    no fans (or `cfd.buoyancy`): warm air rising; `cfd.radiation` (default on: view factors by rays; `"calculix"`: CalculiX's cavity, slow), `radiated_W`;
     `cfd.quality` quick | normal | fine. Boards: `materials: {id: {"pcb": {layers, copper_oz, coverage, thickness}}}` or
     `{"k": along, "k_through": across, "normal": [..]}` (default: its thinnest way).
   - `sweep`: another study (`study`: id or name) again over parameter values on copies of the document: `params:

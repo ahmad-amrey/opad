@@ -285,7 +285,7 @@ Needs OpenFOAM.
 (fine enough for each part's walls, fins and vents). Each fan is a disk across which its curve sets the pressure jump,
 so it finds its own operating point against the box's resistance. The heat goes back and forth: the parts in CalculiX
 as one bonded mesh (touching parts conduct as one, the board along and across its layers, radiation between the parts
-and to the room by view factors), the air's temperature in OpenFOAM with the parts' surfaces as its walls; the heat each
+and to the room by view factors cast as rays once, each face's sink temperature from the others' at every pass), the air's temperature in OpenFOAM with the parts' surfaces as its walls; the heat each
 face gives the air is its film for the next CalculiX solve, until the temperatures settle. With fans the flow is solved
 once (laminar); with vents only, the flow and the air's temperature are solved together under gravity at each pass
 (Boussinesq), the walls stepped to the cells. Warm air rising never settles fully in a steady solution: the summary's
@@ -332,7 +332,7 @@ or ask an agent: *"Run the motion study for 5 seconds with the crank turning at 
 | Motion | `duration` s, `frames`, `drivers: [{joint, to \| speed \| expr \| table, profile}]`, `traces: [{part, point, name}]` |
 | Dynamic | `duration`, `frames`, `step`, `gravity` (true, false or [x, y, z] mm/s²), `contacts`, `friction`, `restitution`, `free`; on joints: `drive` (position, speed, torque, force), `spring`, `friction`, `limits` |
 | Static, modal | `case`, `bodies`, `mesh_size` mm, `modes`, `materials: {"all" \| body: {E, nu, density, yield}}` |
-| Thermal | `ambient` °C, `gravity` (down, for natural convection), `duration` s and `frames` (over time), `mesh_size`, `materials: {"all" \| body: {k, cp, emissivity}}`; on loads: `fan` (an id or `{flow, pressure, curve}`), `vector`, `count`, `ambient`; `materials: {body: {k, k_through, normal} or {pcb: {layers, copper_oz, coverage, thickness}}}`; `air: "cfd"` with `cfd: {enclosure (a body id, or false), quality (quick, normal, fine), buoyancy, radiation, cell_size, upstream, downstream, padding, flow_iterations, heat_iterations, passes, settle, streamlines}` |
+| Thermal | `ambient` °C, `gravity` (down, for natural convection), `duration` s and `frames` (over time), `mesh_size`, `materials: {"all" \| body: {k, cp, emissivity}}`; on loads: `fan` (an id or `{flow, pressure, curve}`), `vector`, `count`, `ambient`; `materials: {body: {k, k_through, normal} or {pcb: {layers, copper_oz, coverage, thickness}}}`; `air: "cfd"` with `cfd: {enclosure (a body id, or false), quality (quick, normal, fine), buoyancy, radiation (true: by rays, `"calculix"`: CalculiX's cavity radiation, minutes per solve; false), radiation_rays (512 per face), cell_size, upstream, downstream, padding, flow_iterations, heat_iterations, passes, settle, streamlines}` |
 | Sweep | `study` (id or name), `params: [{name, values} or {name, from, to, steps}]`, `objective: {of, bodies, goal}`, `refine`, `screening` (settings merged into the study's for the points), `confirm`, `max_points` |
 | Printed part | `print: {profile, material (or {base, E, nu, kt, kz, X, Y, Z, S, C, density}), build_direction, layer_height, line_width, walls, top_layers, bottom_layers, infill, pattern, infill_angle, flow, bodies}` |
 

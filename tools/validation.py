@@ -14,6 +14,8 @@ Cases (each skipped when its engine is missing):
   cavity_1e5     the hot wall's mean Nusselt number against Fusegi, Hyun, Kuwahara and Farouk (1991), Int. J. Heat Mass Transfer
                  34(6): 2.100 at Ra 1e4, 4.361 at Ra 1e5 (de Vahl Davis's square cavity, 1983, gives 2.243 and 4.519 in two
                  dimensions). A sealed enclosure with warm air rising: OpenFOAM and CalculiX.
+  radiation_box  A heated block in a closed box in still air: radiation by rays (OPAD's view factors, the default) against
+                 CalculiX's own cavity radiation on the same mesh (the view factors alone against exact ones: test_radiation).
 
 report.json and report.md in the output folder: per case, each quantity with the reference, OPAD's value, the error and
 the tolerance it is held to, and where the reference comes from.
@@ -137,6 +139,35 @@ def cavity_1e4(s):
       "Fusegi, Hyun, Kuwahara, Farouk (1991), Int. J. Heat Mass Transfer 34(6) 1543-1557: mean Nu on the hot wall 4.361")
 def cavity_1e5(s):
     cavity(s, 1e5, 4.361)
+
+
+@case("radiation_box", "Radiation between a heated block and its closed box (rays against CalculiX's cavity radiation)",
+      "CalculiX 2.21 cavity radiation (*RADIATE ... CR: its own view factors, the dense radiosity system) on the same mesh; "
+      "the view factors themselves against Incropera table 13.2 in tests/test_radiation.cpp")
+def radiation_box(s):
+    if not engines(s).get("cfd"):
+        s.note("OpenFOAM is not installed: skipped")
+        return
+    # A 20 mm copper block making 1 W in the middle of a closed 60 mm ABS box (3 mm walls) in still air, no gravity: the
+    # air only conducts, so radiation (emissivity 0.9 both) carries most of the heat from the block to the box.
+    box = s.box("Box", (0, 0, 0), 60, 60, 60, centered=False)
+    s.run("feature", kind="box", inputs={"plane": {"origin": [3, 3, 3], "normal": [0, 0, 1]}, "length": 54, "width": 54, "height": 54,
+                                         "centered": False, "operation": "cut", "targets": [box]})
+    s.material([box], "abs")
+    block = s.box("Block", (20, 20, 20), 20, 20, 20, centered=False)
+    s.material([block], "copper")
+    s.run("load", kind="heat", on=[block], value=1.0, case="Rad")
+    got = {}
+    for model in ("calculix", True):
+        st = s.run("study", kind="thermal", name=f"Radiation {model}",
+                   settings={"case": "Rad", "air": "cfd", "ambient": 25, "materials": {box: {"emissivity": 0.9}, block: {"emissivity": 0.9}},
+                             "cfd": {"enclosure": box, "sealed": True, "buoyancy": False, "radiation": model, "quality": "quick"}})
+        got[str(model)] = st
+        s.note(f"{'rays' if model is True else model}: block {st['bodies']['Block']['max_temperature_C']:.2f} degC, radiated "
+               f"{st.get('radiated_W', 0):.3f} W, to the air {st.get('to_air_W', 0):.3f} W; {json.dumps(st.get('seconds'))}")
+    ref, rays = got["calculix"], got["True"]
+    s.check("block's rise over the room (K)", rays["bodies"]["Block"]["max_temperature_C"] - 25, ref["bodies"]["Block"]["max_temperature_C"] - 25, 0.03)
+    s.check("box's rise over the room (K)", rays["bodies"]["Box"]["mean_temperature_C"] - 25, ref["bodies"]["Box"]["mean_temperature_C"] - 25, 0.05)
 
 
 # ---------------------------------------------------------------------------------------------------------------- runner

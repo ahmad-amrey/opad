@@ -611,8 +611,8 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   for (size_t i = 0; i < bodies.size(); ++i) {
     const air::Thinness t = air::thinness(world[i]);
     double want = enclosure.empty() ? 1e300 : given > 0 ? given : (fin_want[i] > 0 ? fin_want[i] : 1e300);
-    if (t.wall > 0) want = std::min(want, t.wall / 1.25);
-    if (t.gap > 0 && t.gap < 0.5 * size) want = std::min(want, t.gap / (bodies[i] == enclosure ? 2 : 3));
+    if (t.wall > 0) want = std::min(want, t.wall / cfd.value("wall_cells", 1.25));
+    if (t.gap > 0 && t.gap < 0.5 * size) want = std::min(want, t.gap / (bodies[i] == enclosure ? 2 : cfd.value("gap_cells", 3.0)));
     if (want < 1e300) level[i] = std::clamp(int(std::ceil(std::log2(coarse / want) - 0.2)), 1, 4);
     deepest = std::max(deepest, level[i]);
   }
@@ -978,8 +978,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         "interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
     put(flow / "system" / "fvSolution", "dictionary", "fvSolution",
         "solvers { p { solver GAMG; smoother GaussSeidel; tolerance 1e-8; relTol 0.01; } U { solver smoothSolver; smoother GaussSeidel; "
-        "tolerance 1e-8; relTol 0.1; } }\nSIMPLE { nNonOrthogonalCorrectors 1; consistent no; residualControl { p 1e-4; U 1e-5; } }\n"
-        "relaxationFactors { fields { p 0.5; } equations { U 0.7; } }\n");
+        "tolerance 1e-8; relTol 0.1; } }\nSIMPLE { nNonOrthogonalCorrectors 1; consistent " +
+            std::string(cfd.value("simplec", false) ? "yes" : "no") + "; residualControl { p 1e-4; U 1e-5; } }\n" +
+            (cfd.value("simplec", false) ? "relaxationFactors { fields { p 1; } equations { U 0.9; } }\n" : "relaxationFactors { fields { p 0.5; } equations { U 0.7; } }\n"));
     put(flow / "constant" / "transportProperties", "dictionary", "transportProperties", "transportModel Newtonian; nu " + num(a.nu) + ";\n");
     put(flow / "constant" / "turbulenceProperties", "dictionary", "turbulenceProperties", "simulationType laminar;\n");
     std::string u_bc, p_bc;
