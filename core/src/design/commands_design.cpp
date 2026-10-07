@@ -254,7 +254,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
     out["sketch_id"]=out["ids"][0];out["frame"]=design::frame_result(frame);return out;
   });
 
-  reg("mesh_to_solid", "Rebuild a mesh body (STL, OBJ, 3MF) as a solid: a sketch and an extrusion or revolution when the mesh is one, else fitted planes, cylinders, cones, spheres and tori; reports its deviation from the mesh",
+  reg("mesh_to_solid", "Rebuild a mesh body as a solid: a sketch with an extrusion or revolution when it is one, else fitted planes, cylinders, cones, spheres and tori; reports the deviation from the mesh",
       {{"doc", "path"}, {"body", "uuid - a mesh body"}, {"tolerance", "number, mm - default 1/2000 of the mesh's size"},
        {"angle", "number, deg - largest angle between facets of one surface; default 35"}, {"mode", "auto|solid"},
        {"name", "string - the new body's name"}, {"remove_source", "bool"}, {"by", "string"}},
