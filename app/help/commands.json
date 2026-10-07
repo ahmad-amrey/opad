@@ -3146,6 +3146,133 @@
    "details": "Set the filter to Arcs, for example, and a window selects only arcs. The page also holds construction, open ends and node tools.",
    "keywords": ["filter", "chain", "select all"],
    "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "workspace.simulate",
+   "title": "Simulate workspace",
+   "summary": "Switches to the Simulate workspace: joints, mechanisms, motion and dynamic studies, loads and structural studies.",
+   "details": "Its Mechanism tab joins parts with joints and runs motion and dynamic studies (Project Chrono); its Structure tab puts loads and supports on faces and runs static stress and vibration studies (Netgen and CalculiX). The browser's Simulation folder lists the joints, the load cases and the studies, and the Simulation panel moves the mechanism and plays the results.",
+   "keywords": ["physics", "mechanism", "FEA", "simulation"]
+  },
+  {
+   "id": "design.gear",
+   "title": "Gear",
+   "summary": "Makes an involute gear: a spur gear, an internal ring gear or a rack, with standard teeth of the module you give.",
+   "details": "The pitch diameter is the module times the teeth, and two gears mesh with their centres the sum of their pitch radii apart (an internal pair: the difference). Phase turns the teeth so a second gear meets the first's gaps, and Bore or Rim add the hole or the outer ring. Gear relations in the Simulate workspace then turn the gears together.",
+   "keywords": ["involute", "spur gear", "ring gear", "rack", "module", "teeth"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.panel",
+   "title": "Simulation panel",
+   "summary": "Opens the Simulation panel: the mechanism's joints on a slider, new joints and relations, and the studies with their results.",
+   "details": "Drag the slider to move the mechanism through the chosen joint; it is written to the document when you let go. Choose a study and press Run, then play its frames, step through them or click the chart. A structural study's result map colours the parts by stress, displacement or mode shape.",
+   "keywords": ["mechanism", "joints", "studies", "playback", "plot"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.joint",
+   "title": "Joint",
+   "summary": "Joins the picked part to the part it moves in, or to the world, with the joint kind chosen in the Simulation panel.",
+   "details": "Pick a circular edge, a cylindrical or flat face or a vertex of the moving part first: it sets the joint's axis and origin, and a second pick on another part makes that part the base. Revolute turns about the axis, slider moves along it, and ball, planar, cylindrical, screw, rigid and ground joints are there too. Gear, rack and pinion and lead screw relations couple two joints picked in the Simulation folder.",
+   "keywords": ["revolute", "hinge", "slider", "prismatic", "constraint", "mate"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.motion",
+   "title": "Motion study",
+   "summary": "Makes and runs a kinematic study that drives the chosen joint a full turn (or 50 mm) in two seconds.",
+   "details": "The parts follow through the joints and relations at every frame, with each joint's value, speed and acceleration recorded. Play the frames in the view or plot any series in the Simulation panel. The study keeps its settings, so an agent or Run again repeats it on the changed model.",
+   "keywords": ["kinematics", "animate", "drive", "trace"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.dynamic",
+   "title": "Dynamic study",
+   "summary": "Makes and runs a dynamic study with Project Chrono: one second under gravity with the joints' drives, springs and friction.",
+   "details": "Masses and inertias come from the bodies' volumes and materials, and joints with a drive turn as their motors make them. Reactions, motor torques and power, energies and the joints' values are recorded for the chart. Contacts between parts and other settings are set through the study's settings.",
+   "keywords": ["physics", "gravity", "torque", "chrono", "motor"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.static",
+   "title": "Static stress study",
+   "summary": "Makes and runs a static stress study of the first load case with Netgen and CalculiX.",
+   "details": "The bodies are meshed with quadratic tetrahedra, the case's supports, forces, pressures and bolt preloads are applied, and CalculiX solves for displacements and stresses. The result map shows von Mises stress or displacement over the deformed parts, and the summary gives each body's safety factor against its material's yield strength.",
+   "keywords": ["FEA", "finite element", "von Mises", "deflection", "calculix"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.modal",
+   "title": "Vibration modes study",
+   "summary": "Makes and runs a study of the natural frequencies and mode shapes of the first load case's supported bodies.",
+   "details": "Only the case's supports count: the bodies vibrate freely about them. Each mode is listed with its frequency, and the result map shows its shape on the parts. Resonance is likely where a running speed or a forcing frequency is near one of them.",
+   "keywords": ["frequency", "eigen", "resonance", "modal analysis"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.run",
+   "title": "Run study",
+   "summary": "Runs the chosen study on the model as it is now and shows its results.",
+   "details": "Motion and dynamic studies play their frames when they finish, and a static or modal study shows its result map. The study's summary is kept in the document so the timeline, the diff and an agent can read it. A run of an unchanged model and study is answered from memory at once.",
+   "keywords": ["solve", "compute", "simulate"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.play",
+   "title": "Play",
+   "summary": "Plays the frames of the motion or dynamic study shown, or pauses them.",
+   "details": "A study of a second or more plays in real time, and a shorter one is stretched to three seconds. The parts are only shown moved: the document keeps them where they are. Drag the frame slider or click the chart to stop at a moment.",
+   "keywords": ["animate", "playback", "pause"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.fixed",
+   "title": "Fixed support",
+   "summary": "Holds the picked faces still in the load case: a wall the parts are fixed to.",
+   "details": "Static and modal studies need the parts held, by a fixed support or by balanced loads. Pick the faces first, then the command adds the support to the last load case. It is listed in the browser's Simulation folder under its case.",
+   "keywords": ["restraint", "clamp", "boundary condition"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.force",
+   "title": "Force",
+   "summary": "Puts a force on the picked faces, spread over them, in the load case.",
+   "details": "Type the force as x, y and z in newtons: it is shared over the faces by their areas. Pick the faces first, then the command asks for the vector. Static studies of the case take it.",
+   "keywords": ["load", "newton", "push"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.pressure",
+   "title": "Pressure",
+   "summary": "Puts a pressure on the picked faces in the load case.",
+   "details": "Type the pressure in MPa: a positive one pushes into the faces, a negative one pulls them out. It acts square to each face, curved ones too. Static studies of the case take it.",
+   "keywords": ["load", "MPa", "distributed"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.boltPreload",
+   "title": "Bolt preload",
+   "summary": "Pretensions the picked bolt in the load case: its shank is cut and pulled together with the force you give.",
+   "details": "Pick the bolt's body: its largest cylinder is taken as the shank. The static study reports the shank's axial stress against preload over area, and the clamped parts feel the bolt's grip. Add the service loads to the same case to see what they add.",
+   "keywords": ["pretension", "fastener", "tightening", "clamp force"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.gravity",
+   "title": "Gravity load",
+   "summary": "Adds the parts' own weight to the load case, at standard gravity down the Z axis.",
+   "details": "Every element is loaded by its mass from the body's material. Pick nothing for it: it acts on all the bodies of the study. Combine it with supports and other loads in the same case.",
+   "keywords": ["self weight", "acceleration", "weight"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.results",
+   "title": "Result map",
+   "summary": "Shows the structural study's result as colours over the deformed parts, with a legend, or hides it.",
+   "details": "Choose the field in the Simulation panel: von Mises stress or displacement for a static study, a mode for a modal one. The deformation is scaled up so it can be seen, and the legend says by how much. The bodies under the map are hidden while it shows.",
+   "keywords": ["contour", "stress map", "colour map", "deformed"],
+   "requires": "Open or create a document first."
   }
  ]
 }

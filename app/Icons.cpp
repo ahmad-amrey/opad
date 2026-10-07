@@ -89,6 +89,7 @@ QHash<QString, QString>& table() {
       {"filterEdges", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z" opacity=".35"/><path d="M4 8l8 4"/>)"},
       {"filterVertices", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4zM4 8l8 4 8-4M12 12v8" opacity=".35"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>)"},
       {"coil", R"(<path d="M5 6c0-2 14-2 14 0s-14 2.5-14 4.5 14 2 14 0M5 10.5c0 2 14 2.5 14 4.5s-14 2-14 0M19 15c0 2-14 2.5-14 4.5"/>)"},
+      {"gear", R"(<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/><path d="M12 2.5v3.5M12 18v3.5M2.5 12H6M18 12h3.5M5.3 5.3l2.4 2.4M16.3 16.3l2.4 2.4M5.3 18.7l2.4-2.4M16.3 7.7l2.4-2.4"/>)"},
       {"thicken", R"(<path d="M3 15c5-7 13-7 18 0"/><path d="M3 19c5-7 13-7 18 0" opacity=".55"/><path d="M12 10v4M10.5 12.5L12 14l1.5-1.5"/>)"},
       {"offset", R"(<rect x="7" y="7" width="10" height="10"/><rect x="3" y="3" width="18" height="18" rx="2" opacity=".55"/>)"},
       {"project", R"(<path d="M4 17l8-3 8 3-8 3z"/><path d="M8 5h8v5H8z" opacity=".6"/><path d="M12 10v5M10.5 13.5L12 15l1.5-1.5"/>)"},

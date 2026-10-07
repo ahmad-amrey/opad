@@ -71,7 +71,8 @@ std::set<QString> registeredIds() {
                                                    {"DocsAnnotate.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
                                                    {"AssetsArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
                                                    {"CanvasArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
-                                                   {"KicadArea.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")}};
+                                                   {"KicadArea.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
+                                                   {"SimulateArea.cpp", QRegularExpression(R"(\badd\(")" + name + R"(",\s*tr\()")}};
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*.cpp"}, QDir::Files, QDir::Name)) {
     if (file.contains("Bench")) continue;
     const QString text = source("app/" + file);
@@ -1389,7 +1390,7 @@ TEST(command_areas) {
   CHECK(help::group("assets.link") == "Insert" && help::group("canvas.insert") == "Insert" && help::group("kicad.insert") == "Insert" &&
         help::group("inspect.material") == "Inspect" && help::group("view.hideSmallParts") == "View" && help::group("drawings.dimension") == "Drawings");
   QStringList areas = help::areas();
-  CHECK(areas.size() == 14 && areas.removeDuplicates() == 0);
+  CHECK(areas.size() == 15 && areas.removeDuplicates() == 0);
   for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");
 }
 

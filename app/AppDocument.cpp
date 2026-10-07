@@ -918,6 +918,10 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
          : action == "replace" ? tr("replace picture") : action == "from_backdrop" ? tr("backdrop to canvas") : tr("move canvas");
   }
   if (command == "component") return tr("new component");
+  if (command == "joint") return args.contains("id") ? tr("change joint") : tr("add joint");
+  if (command == "joint_set") return tr("move mechanism");
+  if (command == "load") return args.contains("id") ? tr("change load") : tr("add load");
+  if (command == "study") return args.contains("id") ? tr("run study") : tr("new study");
   return QString::fromStdString(command);
 }
 

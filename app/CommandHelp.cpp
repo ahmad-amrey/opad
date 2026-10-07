@@ -222,6 +222,7 @@ QString group(const QString& id) {
   if (area == "assets" || area == "canvas" || area == "kicad") return QCoreApplication::translate("MainWindow", "I&nsert").remove('&');
   if (area == "design" || area == "assembly") return QCoreApplication::translate("help", "Design");
   if (area == "drawings") return QCoreApplication::translate("help", "Drawings");
+  if (area == "simulate") return QCoreApplication::translate("help", "Simulate");
   if (id.startsWith("sketch.c.") || id == "sketch.dimension" || id == "sketch.constraints" || id == "sketch.moreConstrain")
     return QCoreApplication::translate("help", "Sketch constraints");
   if (area == "sketch") return QCoreApplication::translate("help", "Sketch");
@@ -231,7 +232,7 @@ QString group(const QString& id) {
 
 QStringList areas() {
   QStringList out;
-  for (const char* id : {"file.", "edit.", "select.", "view.", "assets.", "inspect.", "annotate.", "design.", "drawings.", "sketch.", "sketch.c.", "vcs.", "tools.", "x."})
+  for (const char* id : {"file.", "edit.", "select.", "view.", "assets.", "inspect.", "annotate.", "design.", "drawings.", "simulate.", "sketch.", "sketch.c.", "vcs.", "tools.", "x."})
     out << group(id);
   return out;
 }
