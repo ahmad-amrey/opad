@@ -32,6 +32,7 @@
 #include "Ribbon.hpp"
 #include "SimPlot.hpp"
 #include "SimulatePanel.hpp"
+#include "SimulatePrint.hpp"
 #include "Theme.hpp"
 #include "ToolPanel.hpp"
 #include "Tracking.hpp"
@@ -47,6 +48,7 @@ OPAD_ICON_TABLE(simulate,
                 {"simJoint", R"(<circle cx="12" cy="12" r="3"/><path d="M4 12h5M15 12h5"/><path d="M12 3a9 9 0 0 1 8 5" stroke-dasharray="2 2"/><path d="M20 8l.5-3.5M20 8l-3.5-.5"/>)"},
                 {"simGear", R"(<circle cx="8" cy="12" r="4"/><circle cx="17.5" cy="12" r="3"/><path d="M8 5.5v2M8 16.5v2M1.5 12h2M12.5 12h.5M17.5 7.5v1.5M17.5 15v1.5M21.5 12H21" />)"},
                 {"simMotion", R"(<path d="M3 18c4 0 5-12 9-12s5 12 9 12"/><circle cx="12" cy="6" r="1.5" fill="currentColor"/>)"},
+                {"simPrint", R"(<path d="M8 3h8v5l-2.5 3h-3L8 8z"/><path d="M12 11v3"/><path d="M5 17h14M3 21h18" opacity=".55"/>)"},
                 {"simDynamic", R"(<rect x="8" y="3" width="8" height="8" rx="1"/><path d="M12 11v9M8.5 16.5L12 20l3.5-3.5"/><path d="M4 21h16" opacity=".55"/>)"},
                 {"simStatic", R"(<path d="M3 17h15v-4H3z"/><path d="M3 21V9" /><path d="M19 4v7M16.5 8.5L19 11l2.5-2.5"/>)"},
                 {"simModal", R"(<path d="M3 12c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/><path d="M3 12h18" opacity=".45" stroke-dasharray="2 2"/>)"},
@@ -127,6 +129,23 @@ QString iconForLoad(const std::string& kind) {
   return "simForce";
 }
 
+// How a printed body fails ("between layers (wall)", sim/printing.hpp) in the user's words.
+QString failsText(const std::string& fails) {
+  static const std::map<std::string, const char*> words = {
+      {"along the roads", QT_TRANSLATE_NOOP("Simulate", "along the roads")}, {"across the roads", QT_TRANSLATE_NOOP("Simulate", "across the roads")},
+      {"between layers", QT_TRANSLATE_NOOP("Simulate", "between layers")},   {"shear", QT_TRANSLATE_NOOP("Simulate", "in shear")},
+      {"in compression", QT_TRANSLATE_NOOP("Simulate", "in compression")},
+      {"wall", QT_TRANSLATE_NOOP("Simulate", "walls")},                       {"top/bottom", QT_TRANSLATE_NOOP("Simulate", "top/bottom skin")},
+      {"infill", QT_TRANSLATE_NOOP("Simulate", "infill")}};
+  auto word = [&](const std::string& w) {
+    const auto it = words.find(w);
+    return it == words.end() ? QString::fromStdString(w) : Simulate::tr(it->second);
+  };
+  const size_t open = fails.find(" (");
+  if (open == std::string::npos || fails.back() != ')') return word(fails);
+  return Simulate::tr("%1, in the %2").arg(word(fails.substr(0, open)), word(fails.substr(open + 2, fails.size() - open - 3)));
+}
+
 std::string stateOf(const AppDocument* doc) { return std::to_string(doc->doc.ops.size()) + (doc->doc.ops.empty() ? "" : doc->doc.ops.back().id); }
 
 // A study's summary in a few lines for the panel.
@@ -146,6 +165,14 @@ QString summaryText(const json& s) {
     for (const auto& [name, v] : b.items())
       if (v.is_object() && v.contains("safety_factor") && v["safety_factor"].is_number())
         lines << Simulate::tr("%1: safety factor %2").arg(QString::fromStdString(name), number(v["safety_factor"].get<double>()));
+  if (const json p = s.value("print", json()); p.is_object())
+    for (const auto& [name, v] : p.items()) {
+      if (!v.is_object()) continue;
+      QString line = Simulate::tr("%1 printed: %2 g of plastic").arg(QString::fromStdString(name), number(v.value("printed_mass_g", 0.0)));
+      if (v.contains("fails") && v["fails"].is_string())
+        line += "; " + Simulate::tr("weakest %1, layer %2").arg(failsText(v["fails"].get<std::string>())).arg(v.value("weakest_layer", 0));
+      lines << line;
+    }
   if (const json o = s.value("outputs", json()); o.is_object()) {
     int n = 0;
     for (const auto& [name, v] : o.items()) {
@@ -255,6 +282,8 @@ void Simulate::buildActions() {
       {"FEA", "finite element", "von Mises", "stress", "deflection", "calculix", "safety factor"});
   add("simulate.modal", tr("Vibration modes study"), "simModal", [this] { newStudy("modal"); }, doc,
       {"frequency", "natural frequency", "eigen", "resonance", "modal analysis"});
+  add("simulate.print", tr("Printed part"), "simPrint", [this] { printSettings(); }, [self, doc](const CommandContext& c) { return doc(c) && self && !self->m_job; },
+      {"3D print", "FDM", "FFF", "infill", "layers", "walls", "slicer", "filament", "PLA", "PETG", "anisotropic"});
   add("simulate.run", tr("Run study"), "simRun", [this] { runStudy(); },
       [self, doc](const CommandContext& c) { return doc(c) && self && !self->m_study.empty() && !self->m_job; }, {"solve", "compute", "simulate"});
   add("simulate.play", tr("Play"), "explodePlay", [this] { play(); },
@@ -295,6 +324,7 @@ void Simulate::ribbon(RibbonLayout& layout) {
   layout.addGroup("simulate.structure", "simulate.structure.studies", tr("Studies"));
   add("simulate.structure.studies", "simulate.static");
   add("simulate.structure.studies", "simulate.modal");
+  add("simulate.structure.studies", "simulate.print");
   layout.addGroup("simulate.structure", "simulate.structure.results", tr("Results"));
   add("simulate.structure.results", "simulate.run");
   add("simulate.structure.results", "simulate.results");
@@ -586,6 +616,31 @@ void Simulate::newStudy(const QString& kind) {
   runStudy();
 }
 
+void Simulate::printSettings() {
+  if (!services().requireEditable()) return;
+  AppDocument* doc = services().document();
+  const opad::Study* st = doc->scene.study(m_study);
+  if (!st || (st->kind != "static" && st->kind != "modal")) {
+    st = nullptr;
+    for (const auto& x : doc->scene.studies)
+      if (x.kind == "static" || x.kind == "modal") st = &x;
+  }
+  if (!st) throw opad::UserHint("Printed part settings belong to a structural study: make a Static stress or Vibration modes study first.");
+  const std::string id = st->id;
+  json settings = st->def.value("settings", json::object());
+  PrintDialog dialog(settings.value("print", json()), services().window());
+  if (dialog.exec() != QDialog::Accepted) return;
+  const json print = dialog.print();
+  if (print.is_null()) settings.erase("print");
+  else settings["print"] = print;
+  if (settings == st->def.value("settings", json::object())) return;
+  write("study", {{"id", id}, {"settings", settings}, {"run", false}}, tr("Printed part"));
+  if (m_study != id) chooseStudy(id);
+  m_run.reset();
+  refresh();
+  runStudy();
+}
+
 void Simulate::chooseStudy(const std::string& id) {
   if (id == m_study) return;
   pause();
@@ -663,6 +718,7 @@ void Simulate::showRun() {
     SimulatePanel::Entries fields;
     if (m_run->kind == "static") {
       fields = {{"von_mises", tr("von Mises stress (MPa)")}, {"displacement", tr("Displacement (mm)")}};
+      if (!m_run->fea->failure_index.empty()) fields.push_back({"failure_index", tr("Failure index, printed (1 fails)")});
     } else {
       for (size_t i = 0; i < m_run->fea->frequencies.size(); ++i)
         fields.push_back({QString("mode:%1").arg(i), tr("Mode %1: %2 Hz").arg(i + 1).arg(number(m_run->fea->frequencies[i]))});
@@ -814,6 +870,10 @@ void Simulate::showResults(bool on) {
       for (size_t i = 0; i < n; ++i) value[i] = std::sqrt(shape[i][0] * shape[i][0] + shape[i][1] * shape[i][1] + shape[i][2] * shape[i][2]);
       title = tr("Displacement");
       unit = "mm";
+    } else if (m_field == "failure_index" && r.failure_index.size() == n) {
+      value = r.failure_index;
+      title = tr("Failure index (Tsai-Hill)");
+      unit = "";
     } else {
       value = r.von_mises;
       value.resize(n, 0.0);
@@ -916,6 +976,15 @@ void Simulate::folderMenu(const std::string& id, QMenu& menu) {
         runStudy();
       });
     });
+    const opad::Study* study = services().document()->scene.study(st);
+    if (study && (study->kind == "static" || study->kind == "modal"))
+      menu.addAction(icons::themed("simPrint", 16), tr("Printed part…"), this, [this, st] {
+        services().guarded([&] {
+          open();
+          chooseStudy(st);
+          printSettings();
+        });
+      });
   } else if (id.rfind("sim:j:", 0) == 0) {
     const std::string j = id.substr(6);
     const opad::Joint* joint = services().document()->scene.joint(j);

@@ -1238,7 +1238,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       const int b = solid_body[size_t(mesh.tet_solid[e])];
       for (int k = 0; k < tn; ++k) body_peak[size_t(b)] = std::max(body_peak[size_t(b)], res->von_mises[size_t(mesh.tets[e][size_t(k)])]);
     }
-    // Printed bodies: Hill's criterion in each element's road axes at its nodes, the worst per body with what governs.
+    // Printed bodies: each element's failure index in its road axes (failure()), the worst per body and what governs.
     std::vector<double> body_fi(bodies.size(), 0.0);
     std::vector<std::string> body_mode(bodies.size());
     std::vector<size_t> body_fi_at(bodies.size(), 0);
@@ -1276,7 +1276,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     for (size_t i = 0; i < bodies.size(); ++i) {
       if (printed[i]) {
         const double sf = body_fi[i] > 0 ? 1 / std::sqrt(body_fi[i]) : 1e300;
-        per_body[scene.node(bodies[i])->name] = {{"max_von_mises_MPa", body_peak[i]}, {"material", mats[i].name}, {"criterion", "Hill (printed roads and layers)"},
+        per_body[scene.node(bodies[i])->name] = {{"max_von_mises_MPa", body_peak[i]}, {"material", mats[i].name}, {"criterion", "Tsai-Hill in the layer, quadratic between layers (printed)"},
                                                  {"safety_factor", sf < 1e299 ? json(sf) : json(nullptr)}, {"fails", body_mode[i]},
                                                  {"weakest_at", res->nodes[body_fi_at[i]]}};
         worst_sf = std::min(worst_sf, sf);

@@ -25,6 +25,7 @@ namespace opad::sim {
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kSqrt3 = 1.7320508075688772;
 
 std::string lower(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
@@ -65,20 +66,20 @@ bool number(const std::string& s, double& out) {
 }  // namespace
 
 // ---------------------------------------------------------------- filaments
-// Typical values of printed specimens (along-road and between-layer tensile tests in manufacturers' data sheets and the
-// literature); a printer's own differ, especially between layers: override them from your test bars.
+// Typical values of printed specimens (along-road and between-layer tensile tests, compression tests, in manufacturers'
+// data sheets and the literature); a printer's own differ, especially between layers: override them from your test bars.
 const std::vector<Filament>& filaments() {
   static const std::vector<Filament> list = {
-      {"pla", "PLA", 3000, 0.35, 0.90, 0.85, 55, 42, 32, 30, 1.24, ""},
-      {"petg", "PETG", 2000, 0.38, 0.90, 0.85, 45, 35, 25, 25, 1.27, ""},
-      {"abs", "ABS", 2100, 0.35, 0.85, 0.80, 38, 30, 20, 22, 1.04, "bonds between layers weakly when cooled fast"},
-      {"asa", "ASA", 2000, 0.35, 0.85, 0.80, 40, 32, 22, 24, 1.07, ""},
-      {"pc", "PC", 2300, 0.37, 0.90, 0.85, 60, 45, 35, 32, 1.20, ""},
-      {"pa", "PA (nylon, dry)", 1600, 0.40, 0.90, 0.85, 50, 40, 30, 28, 1.12, "absorbs moisture: wet nylon is up to half as stiff"},
-      {"pla-cf", "PLA-CF", 5000, 0.33, 0.60, 0.50, 60, 38, 25, 26, 1.29, "fibres lie along the roads"},
-      {"petg-cf", "PETG-CF", 4500, 0.35, 0.60, 0.50, 55, 35, 22, 25, 1.30, "fibres lie along the roads"},
-      {"pa-cf", "PA-CF", 7000, 0.35, 0.45, 0.35, 95, 45, 30, 30, 1.18, "fibres lie along the roads; dry"},
-      {"tpu", "TPU 95A", 26, 0.45, 0.95, 0.90, 30, 25, 20, 15, 1.21, "rubbery: linear only for small strains"},
+      {"pla", "PLA", 3000, 0.35, 0.90, 0.85, 55, 42, 32, 30, 70, 1.24, ""},
+      {"petg", "PETG", 2000, 0.38, 0.90, 0.85, 45, 35, 25, 25, 55, 1.27, ""},
+      {"abs", "ABS", 2100, 0.35, 0.85, 0.80, 38, 30, 20, 22, 50, 1.04, "bonds between layers weakly when cooled fast"},
+      {"asa", "ASA", 2000, 0.35, 0.85, 0.80, 40, 32, 22, 24, 50, 1.07, ""},
+      {"pc", "PC", 2300, 0.37, 0.90, 0.85, 60, 45, 35, 32, 75, 1.20, ""},
+      {"pa", "PA (nylon, dry)", 1600, 0.40, 0.90, 0.85, 50, 40, 30, 28, 55, 1.12, "absorbs moisture: wet nylon is up to half as stiff"},
+      {"pla-cf", "PLA-CF", 5000, 0.33, 0.60, 0.50, 60, 38, 25, 26, 70, 1.29, "fibres lie along the roads"},
+      {"petg-cf", "PETG-CF", 4500, 0.35, 0.60, 0.50, 55, 35, 22, 25, 60, 1.30, "fibres lie along the roads"},
+      {"pa-cf", "PA-CF", 7000, 0.35, 0.45, 0.35, 95, 45, 30, 30, 90, 1.18, "fibres lie along the roads; dry"},
+      {"tpu", "TPU 95A", 26, 0.45, 0.95, 0.90, 30, 25, 20, 15, 30, 1.21, "rubbery: linear only for small strains"},
   };
   return list;
 }
@@ -245,7 +246,7 @@ PrintSettings print_settings(const json& print) {
   if (m.is_object()) {
     Filament& x = s.material;
     for (auto [key, field] : std::initializer_list<std::pair<const char*, double*>>{
-             {"E", &x.E}, {"nu", &x.nu}, {"kt", &x.kt}, {"kz", &x.kz}, {"X", &x.X}, {"Y", &x.Y}, {"Z", &x.Z}, {"S", &x.S}, {"density", &x.density}})
+             {"E", &x.E}, {"nu", &x.nu}, {"kt", &x.kt}, {"kz", &x.kz}, {"X", &x.X}, {"Y", &x.Y}, {"Z", &x.Z}, {"S", &x.S}, {"C", &x.C}, {"density", &x.density}})
       if (m.contains(key)) *field = m[key].get<double>();
     if (m.contains("name")) x.name = m["name"].get<std::string>();
     else x.name += " (adjusted)";
@@ -310,14 +311,14 @@ M3 inverse(const M3& m) {
 }
 
 struct Road {  // the deposited plastic in a road's axes (scaled by its fill)
-  double E1, E2, E3, nu, G12, G13, G23, X, Y, Z, S;
+  double E1, E2, E3, nu, G12, G13, G23, X, Y, Z, S, C;
 };
 
 Road road(const PrintSettings& s) {
   const Filament& f = s.material;
   const double phi = s.fill(), G = f.E / (2 * (1 + f.nu));
   return {phi * f.E, phi * f.kt * f.E, phi * f.kz * f.E, f.nu, phi * f.kt * G, phi * f.kz * G, phi * std::min(f.kt, f.kz) * G,
-          phi * f.X, phi * f.Y, phi * f.Z, phi * f.S};
+          phi * f.X, phi * f.Y, phi * f.Z, phi * f.S, phi * f.C};
 }
 
 // Layers of roads alternating at theta and theta + 90 deg (top and bottom skins, solid infill): classical lamination
@@ -352,6 +353,7 @@ Ortho laminate(const Road& r, double theta, double density) {
   o.G12 = 1 / a[2][2], o.G13 = o.G23 = 0.5 * (r.G13 + r.G23);
   o.X = strength({1, 0, 0}), o.Y = strength({0, 1, 0}), o.Z = r.Z;
   o.S12 = strength({0, 0, 1}), o.S13 = o.S23 = std::min(r.S, r.Z);
+  o.Xc = std::max(o.X, o.X * r.C / r.X), o.Yc = std::max(o.Y, o.Y * r.C / r.X), o.Zc = std::max(r.Z, r.C);  // layers pressed together hold
   o.density = density;
   return o;
 }
@@ -368,6 +370,7 @@ Ortho region_material(const PrintSettings& s, Region region) {
   const double rho_plastic = s.material.density;
   if (region == Region::Wall) {
     Ortho o{r.E1, r.E2, r.E3, r.nu, r.nu, r.nu, r.G12, r.G13, r.G23, r.X, r.Y, r.Z, r.S, std::min(r.S, r.Z), std::min(r.S, r.Z), s.fill() * rho_plastic};
+    o.Xc = std::max(r.X, r.C), o.Yc = std::max(r.Y, r.C), o.Zc = std::max(r.Z, r.C);  // pressed together, roads and layers hold
     admissible(o);
     return o;
   }
@@ -395,15 +398,15 @@ Ortho region_material(const PrintSettings& s, Region region) {
     const double w = 1 - std::sqrt(1 - rho);
     o = {w * E, w * E, rho * kz * E, 0.05, 0.05, 0.05, w * w * w * E / 2, rho / 2 * kz * G, rho / 2 * kz * G, w * X, w * X, rho * Z, 0.2 * r2 * S, rho / 2 * SZ, rho / 2 * SZ, o.density};
   } else if (fam == "triangles") {
-    o = {rho / 3 * E, rho / 3 * E, rho * kz * E, 1.0 / 3, 0.1, 0.1, rho / 8 * E, rho / 2 * kz * G, rho / 2 * kz * G, rho / 3 * X, rho / 3 * X, rho * Z, rho / 4 * S, rho / 2 * SZ, rho / 2 * SZ, o.density};
+    o = {rho / 3 * E, rho / 3 * E, rho * kz * E, 1.0 / 3, 0.1, 0.1, rho / 8 * E, rho / 2 * kz * G, rho / 2 * kz * G, rho / 3 * X, rho / 3 * X, rho * Z, rho / 3 * X / kSqrt3, rho / 2 * SZ, rho / 2 * SZ, o.density};
   } else if (fam == "honeycomb") {
-    o = {1.5 * r3 * E, 1.5 * r3 * E, rho * kz * E, 0.9, 0.1, 0.1, 0.37 * r3 * E, 0.5 * rho * kz * G, 0.5 * rho * kz * G, 0.5 * r2 * X, 0.5 * r2 * X, rho * Z, 0.3 * r2 * S, 0.5 * rho * SZ, 0.5 * rho * SZ, o.density};
+    o = {1.5 * r3 * E, 1.5 * r3 * E, rho * kz * E, 0.9, 0.1, 0.1, 0.37 * r3 * E, 0.5 * rho * kz * G, 0.5 * rho * kz * G, 0.5 * r2 * X, 0.5 * r2 * X, rho * Z, 0.5 * r2 * X / kSqrt3, 0.5 * rho * SZ, 0.5 * rho * SZ, o.density};
   } else if (fam == "cubic") {
     const double e = 0.25 * rho * E;
-    o = {e, e, e * std::sqrt(kz), 0.25, 0.25, 0.25, 0.4 * e, 0.4 * e * std::sqrt(kz), 0.4 * e * std::sqrt(kz), 0.25 * rho * X, 0.25 * rho * X, 0.25 * rho * Z, 0.2 * rho * S, 0.2 * rho * SZ, 0.2 * rho * SZ, o.density};
-  } else if (fam == "gyroid") {
+    o = {e, e, e * std::sqrt(kz), 0.25, 0.25, 0.25, 0.4 * e, 0.4 * e * std::sqrt(kz), 0.4 * e * std::sqrt(kz), 0.25 * rho * X, 0.25 * rho * X, 0.25 * rho * Z, 0.25 * rho * X / kSqrt3, 0.2 * rho * SZ, 0.2 * rho * SZ, o.density};
+  } else if (fam == "gyroid") {  // printed gyroid compression tests: E about 0.45 rho^1.5 E, strength about rho^1.5 of the plastic's
     const double e = 0.45 * r15 * E;
-    o = {e, e, e * kz, 0.3, 0.3, 0.3, e / 2.6, e * kz / 2.6, e * kz / 2.6, 0.4 * r15 * X, 0.4 * r15 * X, 0.4 * r15 * Z, 0.3 * r15 * S, 0.3 * r15 * SZ, 0.3 * r15 * SZ, o.density};
+    o = {e, e, e * kz, 0.3, 0.3, 0.3, e / 2.6, e * kz / 2.6, e * kz / 2.6, r15 * X, r15 * X, r15 * Z, r15 * X / kSqrt3, 0.6 * r15 * SZ, 0.6 * r15 * SZ, o.density};
   } else if (fam == "lightning") {
     const double e = 0.01 * rho * E;
     o = {e, e, e, 0.1, 0.1, 0.1, 0.4 * e, 0.4 * e, 0.4 * e, 0.01 * rho * X, 0.01 * rho * X, 0.01 * rho * Z, 0.01 * rho * S, 0.01 * rho * SZ, 0.01 * rho * SZ, o.density};
@@ -412,9 +415,12 @@ Ortho region_material(const PrintSettings& s, Region region) {
   } else {
     throw Error("print: no infill model for \"" + fam + "\"");
   }
+  // (Infills the same every way in their layer, triangles, honeycomb, cubic, gyroid, have the in-plane shear strength
+  // that keeps Tsai-Hill so: X / sqrt 3.)
   // Floors: an empty-ish infill keeps a stiffness the solver can take (a millionth of the plastic's).
   for (double* v : {&o.E1, &o.E2, &o.E3, &o.G12, &o.G13, &o.G23}) *v = std::max(*v, 1e-6 * E);
   for (double* v : {&o.X, &o.Y, &o.Z, &o.S12, &o.S13, &o.S23}) *v = std::max(*v, 1e-6 * X);
+  o.Xc = o.X, o.Yc = o.Y, o.Zc = o.Z;  // a lattice: its walls bend or buckle about as soon either way
   admissible(o);
   return o;
 }
@@ -432,15 +438,21 @@ Failure failure(const std::array<double, 6>& st, const Vec3& a1, const Vec3& a2,
       l[i][j] = v;
     }
   const double s1 = l[0][0], s2 = l[1][1], s3 = l[2][2], t12 = l[0][1], t13 = l[0][2], t23 = l[1][2];
-  const double iX = 1 / (m.X * m.X), iY = 1 / (m.Y * m.Y), iZ = 1 / (m.Z * m.Z);
+  // In the layer: Tsai-Hill, each normal stress against its strength in tension or in compression. Between layers: a
+  // quadratic criterion of the stress across them and the shears along them (layers pressed together hold up to the
+  // compressive strength). The worse of the two; kept apart, the weak bond between layers does not leak into the layer's
+  // own strength (as it would in 3D Hill).
+  const double X = s1 < 0 && m.Xc > 0 ? m.Xc : m.X, Y = s2 < 0 && m.Yc > 0 ? m.Yc : m.Y, Z = s3 < 0 && m.Zc > 0 ? m.Zc : m.Z;
+  const double q1 = s1 * s1 / (X * X), q2 = s2 * s2 / (Y * Y), q12 = t12 * t12 / (m.S12 * m.S12);
+  const double layer = std::max(0.0, q1 - s1 * s2 / (X * X) + q2 + q12);
+  const double b3 = s3 * s3 / (Z * Z), bs = t13 * t13 / (m.S13 * m.S13) + t23 * t23 / (m.S23 * m.S23);
+  const double between = b3 + bs;
   Failure f;
-  f.index = s1 * s1 * iX + s2 * s2 * iY + s3 * s3 * iZ - s1 * s2 * (iX + iY - iZ) - s1 * s3 * (iX + iZ - iY) - s2 * s3 * (iY + iZ - iX) +
-            t12 * t12 / (m.S12 * m.S12) + t13 * t13 / (m.S13 * m.S13) + t23 * t23 / (m.S23 * m.S23);
-  f.index = std::max(f.index, 0.0);
-  const double parts[4] = {std::fabs(s1) / m.X, std::fabs(s2) / m.Y, std::fabs(s3) / m.Z,
-                           std::max({std::fabs(t12) / m.S12, std::fabs(t13) / m.S13, std::fabs(t23) / m.S23})};
-  static const char* names[4] = {"along the roads", "across the roads", "between layers", "shear"};
-  f.mode = names[std::max_element(parts, parts + 4) - parts];
+  f.index = std::max(layer, between);
+  if (between > layer) f.mode = b3 >= bs ? (s3 < 0 ? "in compression" : "between layers") : "shear";
+  else if (q12 >= q1 && q12 >= q2) f.mode = "shear";
+  else if (q1 >= q2) f.mode = s1 < 0 ? "in compression" : "along the roads";
+  else f.mode = s2 < 0 ? "in compression" : "across the roads";
   return f;
 }
 

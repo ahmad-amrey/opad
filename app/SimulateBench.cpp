@@ -2,7 +2,9 @@
 // made from a picked circular edge with the panel's Add, the slider moving the mechanism, a dynamic study from the
 // ribbon played back and checked against the pendulum it is (it swings to the other side: energy kept), a motion study,
 // then a cantilever's fixed support and end force on picked faces, its static study's result map with its legend
-// (tip deflection against F L^3 / 3 E I) and its vibration modes (first one against the cantilever formula).
+// (tip deflection against F L^3 / 3 E I) and its vibration modes (first one against the cantilever formula); then the
+// beam as a printed part from the Printed part dialog, flat on the bed and standing on its end (the layers across the
+// bending stress: weaker, failing between layers), its failure-index map.
 // Screenshots of the view and the panel at <prefix>.*.png.
 #include <BRepGProp.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -12,9 +14,13 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
 #include <QElapsedTimer>
 #include <QInputDialog>
+#include <QLabel>
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
@@ -33,6 +39,7 @@
 #include "SimPlot.hpp"
 #include "SimulateArea.hpp"
 #include "SimulatePanel.hpp"
+#include "SimulatePrint.hpp"
 #include "ToolPanel.hpp"
 #include "Tracking.hpp"
 #include "Viewport.hpp"
@@ -314,6 +321,81 @@ OPAD_BENCH(OPAD_BENCH_SIMULATE, simulate) {
                     shot("modal");
                   },
                   600000});
+  auto flatSf = std::make_shared<double>(0);
+  // ---- the beam printed: the static study chosen in the panel, the Printed part dialog filled in as a user would
+  auto printed = [=, &w](int direction, const QString& shotName) {
+    auto* answer = new QTimer(&w);
+    QObject::connect(answer, &QTimer::timeout, answer, [=] {
+      auto* d = qobject_cast<PrintDialog*>(QApplication::activeModalWidget());
+      if (!d || !d->isVisible()) return;
+      answer->deleteLater();
+      d->findChild<QCheckBox*>("printEnabled")->setChecked(true);
+      auto* material = d->findChild<QComboBox*>("printMaterial");
+      material->setCurrentIndex(material->findData("petg"));
+      d->findChild<QComboBox*>("printDirection")->setCurrentIndex(direction);
+      d->findChild<QSpinBox*>("printWalls")->setValue(3);
+      d->findChild<QDoubleSpinBox*>("printInfill")->setValue(25);
+      auto* pattern = d->findChild<QComboBox*>("printPattern");
+      pattern->setCurrentIndex(pattern->findData("gyroid"));
+      QApplication::processEvents();
+      if (!shotName.isEmpty()) d->grab().save(prefix + "." + shotName + ".png");
+      trace::log("bench: simulate: the Printed part dialog says " + d->findChild<QLabel*>("printNote")->text());
+      d->accept();
+    });
+    answer->start(100);
+    action("simulate.print")->trigger();
+  };
+  auto printedRun = [area](const std::string& up) {
+    return [area, up] {
+      if (!area->shownRun() || area->running() || area->shownRun()->kind != "static" || area->shownRun()->fea->failure_index.empty()) return false;
+      const opad::json p = area->shownRun()->summary.value("print", opad::json());
+      return p.contains("Cantilever") && p["Cantilever"]["build_direction"] == opad::json::parse(up);
+    };
+  };
+  list.push_back({nullptr, [=](bool) {
+                    auto* studies = area->form()->findChild<QComboBox*>("simStudies");
+                    for (int i = 0; studies && i < studies->count(); ++i) {
+                      const opad::Study* st = doc->scene.study(studies->itemData(i).toString().toStdString());
+                      if (st && st->kind == "static") studies->setCurrentIndex(i);
+                    }
+                    require(doc->scene.study(area->study()) && doc->scene.study(area->study())->kind == "static", "the static study is chosen in the panel");
+                    printed(0, "print-dialog");
+                  }});
+  list.push_back({printedRun("[0.0,0.0,1.0]"),
+                  [=](bool ok) {
+                    require(ok, "the printed beam's study runs again, flat on the bed");
+                    if (!ok) return;
+                    const opad::json p = area->shownRun()->summary["print"]["Cantilever"];
+                    *flatSf = 1 / std::sqrt(opad::sim::probe(*area->shownRun()->fea, {200, 100, 20}, "failure_index"));
+                    require(p["material"] == "PETG" && p["walls"] == 3 && p["pattern"] == "gyroid", "the dialog's settings reach the study");
+                    trace::log(QString("bench: simulate: printed flat: %1 g, safety factor %2, %3").arg(p.value("printed_mass_g", 0.0)).arg(p.value("min_safety_factor", 0.0)).arg(QString::fromStdString(p.value("fails", ""))));
+                    printed(4, "");  // standing on its end: layers across the beam
+                  },
+                  600000});
+  list.push_back({printedRun("[1.0,0.0,0.0]"),
+                  [=](bool ok) {
+                    require(ok, "the printed beam's study runs again, standing on its end");
+                    if (!ok) return;
+                    const opad::json p = area->shownRun()->summary["print"]["Cantilever"];
+                    // Half way along, on top: along the skin's roads when flat, pulling the layers apart standing up.
+                    const double flat = *flatSf, upright = 1 / std::sqrt(opad::sim::probe(*area->shownRun()->fea, {200, 100, 20}, "failure_index"));
+                    require(upright < 0.8 * flat, QString("standing on its end it is weaker half way along: safety factor %1 against %2 flat").arg(upright).arg(flat));
+                    require(p.value("fails", "").rfind("between layers", 0) == 0, "and it fails between layers (" + QString::fromStdString(p.value("fails", "")) + ")");
+                    auto* fields = area->form()->findChild<QComboBox*>("simField");
+                    const int fi = fields ? fields->findData("failure_index") : -1;
+                    require(fi >= 0, "the result map offers the failure index");
+                    if (fi >= 0) fields->setCurrentIndex(fi);
+                  },
+                  600000});
+  list.push_back({[area, v] {
+                    auto* legend = v->findChild<QWidget*>("simLegend");
+                    return area->resultShown() && legend && legend->isVisible();
+                  },
+                  [=](bool ok) {
+                    require(ok, "the failure-index map shows with its legend");
+                    area->open();
+                    shot("printed");
+                  }});
   runSteps(&w, steps, 0, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   return true;
 }

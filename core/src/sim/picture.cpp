@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 
 #include "opad/sim/fea.hpp"
 #include "opad/sim/kinematics.hpp"
@@ -36,11 +37,14 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
       const std::string field = st.value("field", r.kind == "modal" ? "mode" : "von_mises");
       const int mode = st.value("mode", 1) - 1;
       if (r.kind == "modal" && (mode < 0 || size_t(mode) >= r.modes.size())) throw Error("render: mode is 1 to " + std::to_string(r.modes.size()));
+      if (field == "failure_index" && r.failure_index.empty()) throw Error("render: failure_index is for a static study of printed bodies (settings.print)");
       const std::vector<Vec3>* disp = r.kind == "modal" ? &r.modes[size_t(mode)] : &r.displacement;
       std::vector<double> value(r.nodes.size(), 0.0);
       for (size_t i = 0; i < r.nodes.size(); ++i) {
         const Vec3& d = (*disp)[i];
-        value[i] = field == "von_mises" && !r.von_mises.empty() ? r.von_mises[i] : std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        value[i] = field == "von_mises" && !r.von_mises.empty()          ? r.von_mises[i]
+                   : field == "failure_index" && !r.failure_index.empty() ? r.failure_index[i]
+                                                                           : std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
       }
       // The range over the nodes the skin shows.
       double lo = 1e300, hi = -1e300, dmax = 0;
@@ -61,7 +65,7 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
       if (st.contains("max")) {
         hi = std::max(lo + 1e-12, st["max"].get<double>());
         capped = peak > hi;
-      } else if (field == "von_mises") {
+      } else if (field == "von_mises" || field == "failure_index") {
         std::vector<double> shown;
         for (const auto& t : r.skin)
           for (int k : t) shown.push_back(value[size_t(k)]);
@@ -91,10 +95,15 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
       o.extra.push_back(std::move(item));
       for (const auto& body : r.bodies) o.hide.push_back(body);
       out.legend = true;
-      out.title = field == "von_mises" ? "VON MISES" : r.kind == "modal" ? "MODE " + std::to_string(mode + 1) : "DISPLACEMENT";
-      out.unit = field == "von_mises" ? "MPa" : "mm";
+      out.title = field == "von_mises" ? "VON MISES" : field == "failure_index" ? "FAILURE INDEX" : r.kind == "modal" ? "MODE " + std::to_string(mode + 1) : "DISPLACEMENT";
+      out.unit = field == "von_mises" ? "MPa" : field == "failure_index" ? "" : "mm";
       if (r.kind == "modal") out.unit = "", out.title += " " + std::to_string(int(std::lround(r.frequencies[size_t(mode)]))) + " HZ";
-      if (capped) out.title += " (PEAK " + std::to_string(int(std::lround(peak))) + " ABOVE)";
+      if (capped) {
+        std::ostringstream pk;
+        pk.precision(peak >= 10 ? 0 : 2);
+        pk << std::fixed << peak;
+        out.title += " (PEAK " + pk.str() + " ABOVE)";
+      }
       out.lo = lo, out.hi = hi;
       out.info["field"] = field;
       out.info["range"] = {lo, hi};

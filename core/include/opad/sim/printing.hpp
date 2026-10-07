@@ -14,8 +14,9 @@
 //
 // Every road is a stadium (a rectangle with rounded sides) line_width wide and layer_height high: it fills
 // 1 - (1 - pi/4) h / w of its box (times the flow), which scales stiffness, strength and mass, and its flat contact with
-// the next layer is what the build-direction properties stand for. Failure is Hill's criterion in those axes with the
-// tensile strengths along the roads, across them and between layers (failure()), which also says which governs.
+// the next layer is what the build-direction properties stand for. Failure (failure()) is Tsai-Hill in the layer and a
+// quadratic criterion between layers, with the tensile strengths along the roads, across them and between layers and the
+// compressive ones; it also says which governs.
 //
 // The filament values are typical printed-specimen data (along-road and between-layer tensile tests) and vary with the
 // printer, temperature and cooling: `material` overrides any of them, from your own test bars.
@@ -36,6 +37,7 @@ struct Filament {
   double nu = 0.35;
   double kt = 0.9, kz = 0.85;  // stiffness across a road (in the layer) and between layers, as fractions of E
   double X = 55, Y = 40, Z = 30, S = 30;  // tensile strength along a road, across roads, between layers; shear (MPa)
+  double C = 70;            // compressive strength (MPa): roads and layers pressed together do not come apart
   double density = 1.24;    // g/cm3, the solid plastic
   std::string note;
 };
@@ -75,14 +77,17 @@ const char* region_name(Region r);
 // shear strengths, and the density of what is printed there.
 struct Ortho {
   double E1, E2, E3, nu12, nu13, nu23, G12, G13, G23;  // MPa
-  double X, Y, Z, S12, S13, S23;                         // MPa
+  double X, Y, Z, S12, S13, S23;                         // MPa: tensile and shear strengths
   double density;                                         // g/cm3
+  double Xc = 0, Yc = 0, Zc = 0;                         // MPa: compressive strengths
 };
 Ortho region_material(const PrintSettings& s, Region r);
 
-// Hill's criterion for a stress (xx yy zz xy yz zx, MPa, world axes) in a region whose axes are a1, a2, a3 (unit, world):
-// index >= 1 fails; the safety factor is 1 / sqrt(index). mode: what governs ("along the roads", "across the roads",
-// "between layers", "shear").
+// Failure of a stress (xx yy zz xy yz zx, MPa, world axes) in a region whose axes are a1, a2, a3 (unit, world): in the
+// layer, Tsai-Hill with each normal stress against its tensile or compressive strength; between layers, the stress
+// across them and the shears along them, quadratically; the worse of the two. index >= 1 fails; the safety factor is
+// 1 / sqrt(index). mode: what governs ("along the roads", "across the roads", "between layers" (pulled apart),
+// "in compression", "shear").
 struct Failure {
   double index = 0;
   std::string mode;

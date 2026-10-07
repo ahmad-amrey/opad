@@ -352,6 +352,19 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     the loads name; bodies touching along faces are bonded), `mesh_size` mm, `modes` (modal), `materials` overrides
     (`{"all" | body: {"E", "nu", "density", "yield"}}`). Static returns max von Mises and displacement with where, per
     body safety factor against yield, support reactions and bolt stresses; modal the natural frequencies (Hz).
+  - Printed parts (FFF/FDM), `static` and `modal`: `print` makes the bodies printed: `material` (pla, petg, abs, asa,
+    pc, pa, pla-cf, petg-cf, pa-cf, tpu, or `{"base", "E", "nu", "kt", "kz", "X", "Y", "Z", "S", "C", "density"}` from
+    your own test bars: E along a road; kt, kz its share across a road and between layers; X, Y, Z tensile strengths
+    along, across, between layers; S shear; C compressive), `build_direction` [x, y, z] (up from the bed), `layer_height`, `line_width`,
+    `walls`, `top_layers`, `bottom_layers`, `infill` %, `pattern` (a slicer's name: grid, rectilinear, triangles,
+    honeycomb, cubic, gyroid, lightning, concentric...), `infill_angle`, `flow`; or `profile`: a slicer's file
+    (PrusaSlicer .ini, OrcaSlicer/Bambu .json, Cura .cfg, .3mf project, G-code) whose settings the keys given override.
+    `print.bodies: {id: {...} | false}` overrides per body (with only `bodies`, only those are printed). Each body is
+    split into walls, top/bottom skins and infill, each orthotropic in its own axes. The summary's `print` gives per body
+    the regions' volume, stiffness and strength, `printed_mass_g`, and (static) `min_safety_factor` (Tsai-Hill in the layer, quadratic between layers),
+    `fails` (along the roads | across the roads | between layers | in compression | shear, and the region), `weakest_at`,
+    `weakest_layer`; `render` with `study: {id, field: "failure_index"}` maps it (1 fails). Flat versus standing up is
+    the usual question: run both build directions.
 - `load` adds to a case (`case`, default "Load case 1") on faces (`on`: references or rules): `fixed` and `displacement` (`vector` mm), `force`
   (`vector` N, spread by area), `pressure` (`value` MPa into the face; negative pulls), `moment` (`vector` N.mm about the
   faces' centre), `gravity` (`vector` mm/s2) and `bolt_preload` (`on: [bolt body]`, `value` N; the shank is cut at its

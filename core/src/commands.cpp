@@ -601,7 +601,7 @@ void register_builtins() {
        {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool - silhouette outlines (default true)"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"},
        {"views", "array|csv - e.g. iso,front,top,right: one labelled grid"}, {"edge_lines", "bool - the model's edges as lines"}, {"highlight", "array - face/edge references to tint"},
        {"shading", "flat|smooth"}, {"explode", "uuid|object - an exploded view: a view op id or an explode spec"},
-       {"joints", "object - {joint: value}: the mechanism there"}, {"study", "object - {id, t | frame | mode, field, scale}: a study's frame or result map"}},
+       {"joints", "object - {joint: value}: the mechanism there"}, {"study", "object - {id, t | frame | mode, field (von_mises | displacement | failure_index), scale, max}: a study's frame or result map"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
         RenderOptions o = render_options(a);

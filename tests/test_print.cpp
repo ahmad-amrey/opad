@@ -1,5 +1,5 @@
 // Printed parts (sim/printing.cpp and their structural studies) against theory: slicer profiles read from each slicer's
-// files, the road's fill, the skins' laminate (classical lamination theory), Hill's criterion in a region's axes, the
+// files, the road's fill, the skins' laminate (classical lamination theory), the failure criterion in a region's axes, the
 // infill region's volume, and studies of printed bodies: a cantilever's tip deflection, top-skin stress and first
 // frequency against composite beam theory with the infill along and across it, its printed mass, a bar pulled along its
 // layers and across them, and the averaged-out grid infill against an explicit grid of walls. Studies are skipped when
@@ -209,6 +209,7 @@ TEST(road_fill_and_wall_material) {
   CHECK_NEAR(w.E3, phi * f.kz * f.E, 1e-9);
   CHECK_NEAR(w.X, phi * f.X, 1e-9);
   CHECK_NEAR(w.Z, phi * f.Z, 1e-9);
+  CHECK_NEAR(w.Zc, phi * f.C, 1e-9);
   CHECK_NEAR(w.density, phi * f.density, 1e-12);
 }
 
@@ -259,7 +260,7 @@ TEST(infill_models) {
   }
 }
 
-TEST(hill_criterion_in_region_axes) {
+TEST(failure_criterion_in_region_axes) {
   const sim::Ortho m = sim::region_material(sim::print_settings(json::object()), sim::Region::Wall);
   const Vec3 x{1, 0, 0}, y{0, 1, 0}, z{0, 0, 1};
   // Uniaxial at each strength: index 1, and the mode that names it.
@@ -275,6 +276,13 @@ TEST(hill_criterion_in_region_axes) {
   f = sim::failure({0, 0, 0, 0, 0.5 * m.S23, 0}, x, y, z, m);
   CHECK_NEAR(f.index, 0.25, 1e-12);
   CHECK_EQ(f.mode, std::string("shear"));
+  // Pressed together the layers hold: compression across them against the plastic's compressive strength.
+  CHECK(m.Zc > m.Z);
+  f = sim::failure({0, 0, -m.Z, 0, 0, 0}, x, y, z, m);
+  CHECK_NEAR(f.index, std::pow(m.Z / m.Zc, 2), 1e-12);
+  f = sim::failure({0, 0, -m.Zc, 0, 0, 0}, x, y, z, m);
+  CHECK_NEAR(f.index, 1, 1e-12);
+  CHECK_EQ(f.mode, std::string("in compression"));
   // Half the strength: a quarter of the index (safety factor 2).
   CHECK_NEAR(sim::failure({0, 0, 0.5 * m.Z, 0, 0, 0}, x, y, z, m).index, 0.25, 1e-12);
   // Roads at 30 deg in the plane: a pull along them in world axes is a pull along the roads.
@@ -283,6 +291,13 @@ TEST(hill_criterion_in_region_axes) {
   f = sim::failure({m.X * c * c, m.X * s * s, 0, m.X * c * s, 0, 0}, a1, a2, z, m);
   CHECK_NEAR(f.index, 1, 1e-9);
   CHECK_EQ(f.mode, std::string("along the roads"));
+  // An infill the same every way in its layer (gyroid) fails under the same in-plane pull along its axes or at 45 deg to
+  // them, however weak it is between layers (that bond stays out of the layer's own criterion).
+  const sim::Ortho g = sim::region_material(sim::print_settings({{"pattern", "gyroid"}, {"infill", 30}}), sim::Region::Core);
+  const double r2 = std::sqrt(0.5), p = 0.8 * g.X;
+  const double along = sim::failure({p, 0, 0, 0, 0, 0}, x, y, z, g).index, diagonal = sim::failure({p, 0, 0, 0, 0, 0}, {r2, r2, 0}, {-r2, r2, 0}, z, g).index;
+  CHECK_NEAR(diagonal, along, 1e-9);
+  CHECK_NEAR(along, 0.64, 1e-9);
   // Built on its side (layers stacked along world x): a pull along x is a pull between layers.
   f = sim::failure({m.Z, 0, 0, 0, 0, 0}, y, z, x, m);
   CHECK_NEAR(f.index, 1, 1e-12);
@@ -394,11 +409,11 @@ TEST(bar_pulled_along_and_across_its_layers) {
   if (!engines_ok()) return;
   const sim::PrintSettings s = sim::print_settings({{"material", "pla"}});
   const double sigma = 10, phi = s.fill();
-  // Flat: the pull runs along the roads; Hill's index (sigma / X)^2.
+  // Flat: the pull runs along the roads; its index (sigma / X)^2.
   std::string bar;
   sim::StudyRun flat = pulled_bar({0, 0, 1}, bar);
   const double along = std::pow(sigma / (phi * s.material.X), 2);
-  CHECK_NEAR(sim::probe(*flat.fea, {20, 5, 5}, "failure_index"), along, 0.03 * along);
+  CHECK_NEAR(sim::probe(*flat.fea, {20, 5, 5}, "failure_index"), along, 0.05 * along);
   CHECK_NEAR(sim::probe(*flat.fea, {20, 5, 5}, "sxx"), sigma, 0.02 * sigma);
   const double e_along = sim::probe(*flat.fea, {30, 5, 5}, "dx") - sim::probe(*flat.fea, {10, 5, 5}, "dx");
   CHECK_NEAR(e_along, sigma * 20 / (phi * s.material.E), 0.02 * sigma * 20 / (phi * s.material.E));
@@ -407,7 +422,7 @@ TEST(bar_pulled_along_and_across_its_layers) {
   // Standing on its end: the same pull opens the layers; (sigma / Z)^2, and it stretches by the between-layer stiffness.
   sim::StudyRun upright = pulled_bar({1, 0, 0}, bar);
   const double across = std::pow(sigma / (phi * s.material.Z), 2);
-  CHECK_NEAR(sim::probe(*upright.fea, {20, 5, 5}, "failure_index"), across, 0.03 * across);
+  CHECK_NEAR(sim::probe(*upright.fea, {20, 5, 5}, "failure_index"), across, 0.05 * across);  // an index: 2.5 % in stress (the worst element at the node)
   const double e_across = sim::probe(*upright.fea, {30, 5, 5}, "dx") - sim::probe(*upright.fea, {10, 5, 5}, "dx");
   const double kz = s.material.kz;
   CHECK_NEAR(e_across, sigma * 20 / (phi * kz * s.material.E), 0.02 * sigma * 20 / (phi * kz * s.material.E));
