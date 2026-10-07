@@ -104,10 +104,12 @@ int main(){try {
   // snapping, its frames as references or axes), joint_set, mechanism (with the engines), study (motion, dynamic, static,
   // modal), load, the gear feature kind, and joint steps in model_batch; joint_set and load stay out of batches and a load's
   // faces take a light schema (on) to keep it there.
-  // Mesh to solid (+2.06 KB live, measured 154946; +1.24 KB headless, measured 87191): the mesh_to_solid command and the
-  // mesh_solid feature kind.
-  CHECK(live<155500);  // 153400 before mesh to solid; 138400 before motion and simulation; both mcp-eval fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
-  CHECK(headless<87800);  // 86500 before mesh to solid; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
+  // Thermal studies (+1.0 KB live, measured 153916; +1.2 KB headless, measured 87126): the thermal load kinds and their
+  // fields (h, ambient, velocity, emissivity, fan, count) and the thermal study kind.
+  // Mesh to solid (+2.06 KB live, measured 154946 before thermal; +1.24 KB headless, measured 87191 before thermal): the
+  // mesh_to_solid command and the mesh_solid feature kind. Both merged: 155874 live, 88205 headless.
+  CHECK(live<156400);  // 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both mcp-eval fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  CHECK(headless<88700);  // 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

@@ -50,7 +50,9 @@ class Simulate : public AreaController {
   void open();
   void runStudy();
   void showFrame(int frame);
+  void openGuide(int useCase);  // the Simulation guide, at that use case
   void printSettings();  // the Printed part dialog for the structural study shown (or the last one)
+  void openCooling(int step = -1);  // the Cooling assistant
 
  private:
   opad::json write(const std::string& command, const opad::json& args, const QString& label);  // doc->run once it is free
@@ -67,6 +69,8 @@ class Simulate : public AreaController {
   void pause();
   void tick();
   void addLoad(const QString& kind);
+  opad::Vec3 askVector(const QString& title, const QString& label, bool* ok);  // "x, y, z" from a dialog
+  [[noreturn]] void wantPicks(const char* filter, const char* hint);
   void showResults(bool on);
   void clearMotion();
   std::vector<browser::Item> folderItems() const;
@@ -82,6 +86,8 @@ class Simulate : public AreaController {
   std::shared_ptr<const opad::sim::StudyRun> m_run;
   std::string m_runState;  // the document state the run was for
   int m_frame = 0;
+  std::vector<std::string> m_mapHidden;  // result bodies the user has hidden: left out of the map (an enclosure, to see inside)
+  std::vector<std::string> hiddenResultBodies() const;
   int m_seriesIndex = 0;
   QString m_field = "von_mises";
   QPointer<Job> m_job;

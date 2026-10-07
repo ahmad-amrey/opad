@@ -30,6 +30,13 @@ struct Mechanical {
   double yield = 0;    // MPa (tensile strength for brittle materials)
 };
 const Mechanical* mechanical(const std::string& material_id);
+// Thermal properties for thermal studies: typical room-temperature values; null for an id it has none for.
+struct Thermal {
+  double conductivity = 0;   // W/m.K
+  double specific_heat = 0;  // J/kg.K
+  double emissivity = 0;     // of a plain surface (bare metal low, painted or anodised high: set it on the radiation load)
+};
+const Thermal* thermal(const std::string& material_id);
 const Material* material(const std::string& id);
 // The library material a name stands for: an id, a library name, or what files and tools write ("Aluminum 6061-T6",
 // "SS304", "1.4301", "PA12", "Glass-filled nylon", "Plastic - ABS"). Null when nothing fits.

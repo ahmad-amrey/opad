@@ -65,6 +65,14 @@ SimulatePanel::SimulatePanel(QWidget* parent) : QWidget(parent) {
   layout->setContentsMargins(12, 8, 12, 8);
   layout->setSpacing(6);
 
+  // ---- how to start
+  auto* guide = new QPushButton(tr("Step-by-step guides…"), body);
+  guide->setObjectName("simGuide");
+  guide->setToolTip(tr("Use cases taken step by step: a hinge, a mechanism's travel, gears, a falling part, a loaded bracket, a bolted joint, "
+                       "vibration, a 3D-printed part, a part kept cool"));
+  connect(guide, &QPushButton::clicked, this, &SimulatePanel::guideRequested);
+  layout->addWidget(guide);
+
   // ---- the mechanism and its joints
   layout->addWidget(header(tr("MECHANISM"), body));
   m_mechanism = note(body);
@@ -138,6 +146,7 @@ SimulatePanel::SimulatePanel(QWidget* parent) : QWidget(parent) {
   m_newKind->addItem(tr("Dynamic (gravity, motors, contacts)"), "dynamic");
   m_newKind->addItem(tr("Static stress"), "static");
   m_newKind->addItem(tr("Vibration modes"), "modal");
+  m_newKind->addItem(tr("Thermal (heat, fans, air)"), "thermal");
   m_new = new QPushButton(tr("New study"), body);
   m_new->setObjectName("simNewStudy");
   newRow->addWidget(m_newKind, 1);
@@ -281,7 +290,7 @@ void SimulatePanel::setStudies(const Entries& studies, const QString& current) {
 
 void SimulatePanel::setRun(const QString& summary, int frames, bool structural) {
   m_summary->setText(summary.isEmpty() ? tr("No results yet: Run computes them.") : summary);
-  m_motionRows->setVisible(frames > 1 && !structural);
+  m_motionRows->setVisible(frames > 1);  // a structural run passes 1, a thermal one over time its frames
   m_resultRows->setVisible(structural);
   const QSignalBlocker block(m_frames);
   m_frames->setRange(0, std::max(0, frames - 1));

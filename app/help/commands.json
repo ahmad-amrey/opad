@@ -3219,6 +3219,69 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "simulate.heat",
+   "title": "Heat source",
+   "summary": "Adds the heat a part gives off, in W, to the thermal load case.",
+   "details": "Pick the part (it warms through its whole volume, like a chip or a coil) or the faces the heat comes through, then type the power. A thermal study needs at least one heat source or fixed temperature.",
+   "keywords": ["power", "watts", "dissipation", "chip", "CPU", "LED"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.temperature",
+   "title": "Fixed temperature",
+   "summary": "Holds the picked faces at a temperature, in °C.",
+   "details": "For a face on a cold plate, in water or against a part kept at a known temperature. The heat that flows into it is reported.",
+   "keywords": ["boundary temperature", "cold plate", "held at"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.convection",
+   "title": "Convection",
+   "summary": "Lets the air carry heat away from the picked parts or faces.",
+   "details": "Natural: still air, its film coefficient found for each face from its size, its tilt and the gap to the face it looks at (fins), solved with the temperatures. Forced: air moving along the faces at a speed you give. Or a film coefficient you know, in W/m²K.",
+   "keywords": ["air", "cooling", "natural convection", "forced convection", "film coefficient"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.radiation",
+   "title": "Radiation",
+   "summary": "Lets the picked parts or faces radiate heat to their surroundings.",
+   "details": "Type the surface's emissivity: bare aluminium about 0.1, anodised or painted about 0.85. It matters most for hot parts in still air.",
+   "keywords": ["emissivity", "infrared", "black body"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.fan",
+   "title": "Fan",
+   "summary": "Puts a fan on a heatsink: its air flows along the fins and carries their heat away.",
+   "details": "Pick the heatsink, choose a fan (typical fans by size and speed, or type its free flow and shut-off pressure) and the way the air goes along the fins. The study finds the fins in the heatsink's shape, where the fan's curve meets the fins' pressure drop, the heat transfer in the channels and how much the air warms. Inside a vented box, with the air solved, pick instead a block that stands for the fan: the fan blows from its middle.",
+   "keywords": ["heatsink", "airflow", "CFM", "cooling fan", "fins"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.cooling",
+   "title": "Cooling assistant",
+   "summary": "Takes a board, its chips and a heatsink in a vented box step by step: the heat, the fans or the vents, the run with the air solved, and the best place for the vents.",
+   "details": "The box is found by itself (the smallest body holding the parts that make heat), and on an empty document the assistant builds an example. Tick the parts that make heat with their power, the board (its copper layers spread the heat), and the fans (a block where each sits, or the heatsink it blows on) or vents only (warm air rising). Run solves the air in the box and around it with OpenFOAM and the parts with CalculiX: each part's temperature, the fans' flow and the air through the box, with streamlines. Best vents runs a parameter (a vent's height, a fan's place) over a range and finds the coolest design.",
+   "keywords": ["enclosure", "vents", "fan", "CFD", "electronics cooling", "single-board computer", "optimise", "sweep", "heatsink"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.thermal",
+   "title": "Thermal study",
+   "summary": "Makes and runs a thermal study: the temperatures of the parts from their heat sources and cooling.",
+   "details": "Steady finds where the temperatures settle; Over time shows how fast the parts warm up, from the room's temperature. The panel gives each part's hottest temperature, where the heat goes and each fan's flow, pressure and air temperature rise; the result map colours the parts by temperature.",
+   "keywords": ["temperature", "heat transfer", "heatsink", "cooling", "warm up", "transient"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.guide",
+   "title": "Simulation guide",
+   "summary": "Opens step-by-step use cases of the Simulate tools, each with buttons that start the tools it uses.",
+   "details": "Eleven use cases: a hinged part moved with the slider, a mechanism's travel in a motion study, gears and lead screws, a part swinging or falling under gravity, whether a part holds under a load, a bolted joint, natural frequencies, a 3D-printed part, a part kept cool, a board in a vented box and the best place for its vents. Each says what you get, the steps with your keys, and a tip. The Simulation panel's Step-by-step guides button opens the one for where your document is.",
+   "keywords": ["how to", "tutorial", "step by step", "use cases", "learn", "simulation", "FEA", "mechanism"]
+  },
+  {
    "id": "simulate.print",
    "title": "Printed part",
    "summary": "Sets a structural study's bodies as 3D printed: filament, layers, walls, skins and infill, typed in or read from a slicer's profile.",

@@ -365,10 +365,43 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     `fails` (along the roads | across the roads | between layers | in compression | shear, and the region), `weakest_at`,
     `weakest_layer`; `render` with `study: {id, field: "failure_index"}` maps it (1 fails). Flat versus standing up is
     the usual question: run both build directions.
+  - `thermal` (Netgen + CalculiX heat transfer): the case's thermal loads; `ambient` degC (25), `gravity` [x, y, z] (down,
+    for natural convection; default -Z), `mesh_size`, `materials` (`{"all" | body: {"k" W/m.K, "cp" J/kg.K,
+    "emissivity"}}`); `duration` s and `frames` make it transient, from the ambient temperature. Returns
+    `max_temperature_C` (and where), per body max and mean, `heat_W`, `to_air_W`, `radiated_W`, `natural_convection`
+    (h per face) and `fans` (fan, flow m3/h and CFM, pressure Pa, channel speed, Reynolds, h, air rise, the heatsink's
+    fins and thermal resistance degC/W). Convection that depends on the temperatures is solved again until they
+    settle (`solves`). `render` maps `field: "temperature"` (`t` or `frame` over time). `air: "cfd"` solves the air
+    instead (OpenFOAM, `engines.cfd`; steady, one fan or one forced convection, heat in whole bodies; minutes, not
+    seconds): `cfd: {cell_size mm, upstream, downstream, padding, flow_iterations, heat_iterations, streamlines}`; the
+    summary adds the fan's `flow_m3h`, `inlet_static_Pa`, `outlet_air_C`, `heat_to_air_W`, `cells`, and `render` draws
+    the streamlines (`field: "air_speed"` colours them by speed; `streamlines: false` hides them; `hide`/`ghost`: body
+    ids left out or see-through). An enclosure (`cfd.enclosure` id, or found: the smallest shown body holding the
+    loads' bodies; `false` turns it off) is solved inside with a margin of room, every body in it taking part: its
+    vents are its holes, and each `fan` load is a disk with its curve (on a heatsink or heated body: against its
+    upstream side, the fan's size; on any other body, e.g. a block standing for the fan: its middle, and that body is
+    air); summary `enclosure`, `fans` (flow, pressure_Pa, disk), `vents` (air_in/out_m3h, outlet_air_C, heat_to_air_W).
+    There the parts are CalculiX's (heat on faces too) coupled to the air's temperature (`air_passes`, `solve_changes_C`);
+    no fans (or `cfd.buoyancy`): warm air rising; `cfd.radiation` (default on): view factors, `radiated_W`;
+    `cfd.quality` quick | normal | fine. Boards: `materials: {id: {"pcb": {layers, copper_oz, coverage, thickness}}}` or
+    `{"k": along, "k_through": across, "normal": [..]}` (default: its thinnest way).
+  - `sweep`: another study (`study`: id or name) again over parameter values on copies of the document: `params:
+    [{name, values: [numbers in its unit or expressions]} | {name, from, to, steps}]` (several: a grid), `objective:
+    {of: summary key (max_temperature_C default), bodies: [ids] (their worst), goal: min | max}`, `refine` (one
+    parameter: golden-section points), `screening` (settings merged in for the points, e.g. `{"cfd": {"quality":
+    "quick"}}`) and `confirm` (the best again without it). Returns `points`, `best` (`params`, `objective`,
+    `confirmed`); apply it with `param`. Make what to vary a parameter first (a box's `x`/`y`/sizes take expressions).
 - `load` adds to a case (`case`, default "Load case 1") on faces (`on`: references or rules): `fixed` and `displacement` (`vector` mm), `force`
   (`vector` N, spread by area), `pressure` (`value` MPa into the face; negative pulls), `moment` (`vector` N.mm about the
   faces' centre), `gravity` (`vector` mm/s2) and `bolt_preload` (`on: [bolt body]`, `value` N; the shank is cut at its
-  middle and the cut pulled together). Units are mm, N, MPa throughout. `mechanism` reports which engines this machine has (`engines`).
+  middle and the cut pulled together). Units are mm, N, MPa throughout. Thermal loads, in the same cases (each study
+  takes its own kind): `heat` (`value` W into bodies `on: [body]` or through faces), `temperature` (`value` degC on
+  faces), `convection` (`h` W/m2K, `"natural"` (from each face's tilt, size and the gap to the face it looks at), or
+  `"forced"` with `velocity` m/s along `vector`; `ambient`), `radiation` (`emissivity`, default the material's;
+  `ambient`) and `fan` (`on: [heatsink body]`, `fan`: an id (40x10, 40x28-server, 60x15, 80x25, 92x25, 120x25,
+  120x25-high, 140x25) or `{"flow" m3/h | "cfm", "pressure" Pa | "mmH2O", "curve": [[m3/h, Pa], ...]}`, `vector` the
+  air's way along the fins, `count`, `ambient` inlet degC): its plate fins are found in the geometry, the fan's curve
+  meets the fins' pressure drop, and the air warms along them; the air is taken as ducted through the fins. `mechanism` reports which engines this machine has (`engines`).
 - Typical: ground the frame, joint the parts, `mechanism` to check the degrees of freedom, `joint_set` to try a
   position, a `motion` study for the travel, a `dynamic` study for forces, then `load` + `static` on the most loaded
   part with the reaction forces as its loads.

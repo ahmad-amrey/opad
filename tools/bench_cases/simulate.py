@@ -6,4 +6,7 @@ bench is app/SimulateBench.cpp."""
 CASES = [
     ("simulate", "empty", {"OPAD_BENCH_SIMULATE": "{prefix}"}),
     ("simulate-rtl", "empty", {"OPAD_BENCH_SIMULATE": "{prefix}", "OPAD_LANG": "ar"}),
+    # The Cooling assistant: its example built, the pages filled, the case written (app/CoolingBench.cpp).
+    ("cooling", "empty", {"OPAD_BENCH_COOLING": "{prefix}"}),
+    ("cooling-rtl", "empty", {"OPAD_BENCH_COOLING": "{prefix}", "OPAD_LANG": "ar"}),
 ]

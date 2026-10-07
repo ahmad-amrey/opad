@@ -48,6 +48,7 @@ class SimulatePanel : public QWidget {
   void studyChosen(const QString& id);
   void newStudyRequested(const QString& kind);
   void runRequested();
+  void guideRequested();
   void playRequested();
   void frameChosen(int frame);
   void seriesChosen(int index);
