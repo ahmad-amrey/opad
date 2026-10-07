@@ -516,7 +516,15 @@ fan's flow and the pressure against it, the air leaving and the heat it carries,
 by temperature or speed, drawn over the map in the app and in `render`. An enclosure (a vented box around a board) is
 found by itself: the air inside it and a margin of the room are meshed, its vents are its holes, each fan is a disk
 with its curve as the pressure jump (anywhere in the box, any number of them), and the heat goes back and forth between
-CalculiX (the parts as one bonded mesh) and OpenFOAM (the air's temperature on the solved flow) until it settles.
+CalculiX (the parts as one bonded mesh) and OpenFOAM (the air's temperature on the solved flow) until it settles; without
+fans the air rises where it is warm (Boussinesq, solved again at each pass), and the parts radiate to each other and to
+the room (CalculiX's view factors). Boards conduct along and across their layers (`pcb`: layers, copper weight). The
+**Cooling assistant** takes it step by step (the box found, heat per part, fans or vents only, the run, the results with
+streamlines) and builds an example on an empty document.
+
+**Design sweeps.** A `sweep` study runs another study again over values of the design's parameters (a grid, then
+golden-section refinement for one), each on a copy of the document, optionally screened at a coarser setting with the best
+confirmed; it reports every point and the best, and the Cooling assistant's Best vents page drives it for a vent's place.
 
 **Printed parts.** A static or modal study's bodies can be 3D printed (FFF/FDM): the Printed part dialog (or
 `settings.print`) takes the filament, build direction, layer height, line width, walls, top and bottom layers, infill

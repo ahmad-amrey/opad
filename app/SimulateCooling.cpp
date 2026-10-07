@@ -289,7 +289,9 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
     m_best->setEnabled(false);
     v->addWidget(m_best, 0, Qt::AlignLeft);
     connect(m_param, &QComboBox::currentIndexChanged, this, [this] {
-      // A range around the value it has now.
+      // A range around the value it has now (once per parameter chosen: a range typed in stays).
+      if (m_param->currentText() == m_rangeFor) return;
+      m_rangeFor = m_param->currentText();
       const AppDocument* d = m_hooks.document();
       const opad::Param* p = d ? d->scene.param(m_param->currentText().toStdString()) : nullptr;
       if (!p) return;
@@ -498,7 +500,7 @@ void CoolingAssistant::addFanRow(const std::string& body, const json& fan, const
   auto* blows = new QComboBox(m_fans);
   int at = 0;
   for (size_t i = 0; i < ways().size(); ++i) {
-    blows->addItem(ways()[i].first);
+    blows->addItem(QString(QChar(0x202A)) + ways()[i].first + QChar(0x202C));  // kept left to right in Arabic
     const opad::Vec3& w = ways()[i].second;
     if (w[0] * way[0] + w[1] * way[1] + w[2] * way[2] > 0.9) at = int(i);
   }
@@ -747,6 +749,7 @@ void CoolingAssistant::buildExample() {
   reload();
   if (m_param->findText("vent_z") >= 0) {
     m_param->setCurrentText("vent_z");
+    m_rangeFor = "vent_z";
     m_from->setValue(11), m_to->setValue(29);
   }
   m_status->setText(tr("The example is ready: look through the pages, then Run."));

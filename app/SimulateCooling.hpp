@@ -105,6 +105,7 @@ class CoolingAssistant : public QWidget {
   QTableWidget* m_points = nullptr;
   QPushButton* m_best = nullptr;
   opad::json m_bestParams;
+  QString m_rangeFor;  // the parameter the range was last set for
   std::vector<std::string> m_candidates;  // the box choice's bodies
   std::vector<std::string> m_parts;       // the parts inside the box chosen
 };

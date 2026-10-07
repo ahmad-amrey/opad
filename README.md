@@ -148,7 +148,9 @@ kinematic solver, and every study is an op on the timeline:
 - **Thermal**: heat sources, fixed temperatures, convection (still air, moving air, or a known coefficient), radiation
   and fans through finned heatsinks, steady or over time: temperatures, where the heat goes, each fan's operating
   point and air temperature rise, the heatsink's °C/W; or, with OpenFOAM, the air itself solved around the parts
-  (conjugate heat transfer) with streamlines.
+  (conjugate heat transfer) with streamlines: a board in a vented box with fans or warm air rising, taken step by
+  step by the **Cooling assistant**.
+- **Design sweeps**: any study run again over parameter values (a vent's place, a fin count) to find the best design.
 
 Each engine is checked against textbook cases: a pendulum's period, a slider-crank's energy balance, a screw jack's
 torque, a planetary set's Willis ratio, a cantilever's deflection and first frequency, a plate with a hole's stress
