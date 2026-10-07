@@ -23,6 +23,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <sstream>
 #include <thread>
 
@@ -32,6 +33,7 @@
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/sim/joints.hpp"
+#include "opad/sim/printing.hpp"
 
 namespace opad::sim {
 
@@ -234,6 +236,129 @@ std::map<std::string, V> read_reactions(const std::filesystem::path& dat) {
   return out;
 }
 
+// Stresses at each element's integration points (*EL PRINT, S): element number -> xx yy zz xy yz zx per point, in the
+// element's *ORIENTATION axes when it has one. The .dat lists sxx syy szz sxy sxz syz.
+std::unordered_map<int, std::vector<std::array<double, 6>>> read_point_stresses(const std::filesystem::path& dat) {
+  std::ifstream in(dat);
+  std::unordered_map<int, std::vector<std::array<double, 6>>> out;
+  std::string line;
+  bool in_block = false;
+  while (std::getline(in, line)) {
+    if (line.find("stresses (elem, integ.pnt.") != std::string::npos) {
+      in_block = true;
+      continue;
+    }
+    if (!in_block) continue;
+    std::istringstream ss(line);
+    int e = 0, ip = 0;
+    double v[6];
+    if (ss >> e >> ip >> v[0] >> v[1] >> v[2] >> v[3] >> v[4] >> v[5]) {
+      out[e].push_back({v[0], v[1], v[2], v[3], v[5], v[4]});
+    } else if (line.find_first_not_of(" \t\r") != std::string::npos) {
+      in_block = false;  // the next block's heading
+    }
+  }
+  return out;
+}
+
+// A printed body's outer surface as triangles, to place each element in its skin: the distance straight up and straight
+// down (along the build direction) to the surface, and the nearest side face (its normal sets the walls' road
+// direction). Two hashed grids keep both to a few triangles per query.
+class PrintSurface {
+ public:
+  struct T {
+    V a, b, c, n;  // corners, outward unit normal
+  };
+  PrintSurface(std::vector<T> tris, const V& up, const V& ex, const V& ey, double cell) : m_tris(std::move(tris)), m_up(up), m_ex(ex), m_ey(ey), m_cell(cell) {
+    for (size_t t = 0; t < m_tris.size(); ++t) {
+      const T& x = m_tris[t];
+      double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+      for (const V* p : {&x.a, &x.b, &x.c}) {
+        const double q[3] = {dot(*p, m_ex), dot(*p, m_ey), dot(*p, m_up)};
+        for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], q[k]), hi[k] = std::max(hi[k], q[k]);
+      }
+      for (long i = cellOf(lo[0]); i <= cellOf(hi[0]); ++i)
+        for (long j = cellOf(lo[1]); j <= cellOf(hi[1]); ++j) {
+          m_columns[key(i, j, 0)].push_back(int(t));
+          if (std::fabs(dot(x.n, m_up)) < 0.9)
+            for (long k = cellOf(lo[2]); k <= cellOf(hi[2]); ++k) m_sides[key(i, j, k)].push_back(int(t));
+        }
+    }
+  }
+  // Distance from p along +up (dir 1) or -up (dir -1) to the first surface triangle; 1e300 when none.
+  double ray(const V& p, double dir) const {
+    const auto it = m_columns.find(key(cellOf(dot(p, m_ex)), cellOf(dot(p, m_ey)), 0));
+    if (it == m_columns.end()) return 1e300;
+    const V d = mul(m_up, dir);
+    double best = 1e300;
+    for (int t : it->second) {  // Moller-Trumbore
+      const T& x = m_tris[size_t(t)];
+      const V e1 = sub(x.b, x.a), e2 = sub(x.c, x.a), h = cross(d, e2);
+      const double det = dot(e1, h);
+      if (std::fabs(det) < 1e-14) continue;
+      const V s = sub(p, x.a);
+      const double u = dot(s, h) / det;
+      if (u < -1e-9 || u > 1 + 1e-9) continue;
+      const V q = cross(s, e1);
+      const double v = dot(d, q) / det;
+      if (v < -1e-9 || u + v > 1 + 1e-9) continue;
+      const double tt = dot(e2, q) / det;
+      if (tt > 1e-9) best = std::min(best, tt);
+    }
+    return best;
+  }
+  // The nearest side triangle (not facing up or down): null when none within reach.
+  const T* nearestSide(const V& p) const {
+    const long ci = cellOf(dot(p, m_ex)), cj = cellOf(dot(p, m_ey)), ck = cellOf(dot(p, m_up));
+    const T* best = nullptr;
+    double bestD = 1e300;
+    for (long r = 0; r < 64; ++r) {
+      for (long i = ci - r; i <= ci + r; ++i)
+        for (long j = cj - r; j <= cj + r; ++j)
+          for (long k = ck - r; k <= ck + r; ++k) {
+            if (std::max({std::labs(i - ci), std::labs(j - cj), std::labs(k - ck)}) != r) continue;  // the shell at r only
+            const auto it = m_sides.find(key(i, j, k));
+            if (it == m_sides.end()) continue;
+            for (int t : it->second) {
+              const double dd = distance(p, m_tris[size_t(t)]);
+              if (dd < bestD) bestD = dd, best = &m_tris[size_t(t)];
+            }
+          }
+      if (best && bestD <= r * m_cell) break;
+    }
+    return best;
+  }
+
+ private:
+  long cellOf(double x) const { return long(std::floor(x / m_cell)); }
+  static long long key(long i, long j, long k) { return ((long long)(i + (1 << 20)) << 42) | ((long long)(j + (1 << 20)) << 21) | (long long)(k + (1 << 20)); }
+  // Distance from p to triangle x (Ericson's closest point).
+  static double distance(const V& p, const T& x) {
+    const V ab = sub(x.b, x.a), ac = sub(x.c, x.a), ap = sub(p, x.a);
+    const double d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0 && d2 <= 0) return norm(ap);
+    const V bp = sub(p, x.b);
+    const double d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0 && d4 <= d3) return norm(bp);
+    const double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) return norm(sub(p, add(x.a, mul(ab, d1 / (d1 - d3)))));
+    const V cp = sub(p, x.c);
+    const double d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0 && d5 <= d6) return norm(cp);
+    const double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) return norm(sub(p, add(x.a, mul(ac, d2 / (d2 - d6)))));
+    const double va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0)
+      return norm(sub(p, add(x.b, mul(sub(x.c, x.b), (d4 - d3) / ((d4 - d3) + (d5 - d6))))));
+    const double den = 1 / (va + vb + vc);
+    return norm(sub(p, add(x.a, add(mul(ab, vb * den), mul(ac, vc * den)))));
+  }
+  std::vector<T> m_tris;
+  V m_up, m_ex, m_ey;
+  double m_cell;
+  std::unordered_map<long long, std::vector<int>> m_columns, m_sides;
+};
+
 }  // namespace
 
 std::filesystem::path ccx_program() {
@@ -283,7 +408,11 @@ double probe(const FeaResult& r, const Vec3& at, const std::string& field, int m
     if (field == "syz") return r.stress.at(i)[4];
     if (field == "szx") return r.stress.at(i)[5];
     if (field == "mode") return norm(r.modes.at(size_t(mode)).at(i));
-    throw Error("probe: unknown field " + field + " (von_mises, displacement, dx, dy, dz, sxx, syy, szz, sxy, syz, szx, mode)");
+    if (field == "failure_index") {
+      if (r.failure_index.empty()) throw Error("probe: failure_index is for printed bodies in a static study");
+      return r.failure_index.at(i);
+    }
+    throw Error("probe: unknown field " + field + " (von_mises, displacement, dx, dy, dz, sxx, syy, szz, sxy, syz, szx, mode, failure_index)");
   };
   // Inside an element: its corner values weighed by the point's barycentric coordinates (the best element when the point
   // is on the surface or a hair outside it).
@@ -415,6 +544,58 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     cut[i] = sp->Shape();
     splits[i] = std::move(sp);
   }
+  // ---- printed bodies (sim/printing.hpp): each one's settings, and its infill split off from its walls and skins so that
+  // the mesh follows the boundary between them. settings.print applies to every body; print.bodies: {id: {...}} adds to
+  // it per body, {id: false} leaves a body solid; with print.bodies alone only the bodies it names are printed.
+  std::vector<std::optional<PrintSettings>> printed(bodies.size());
+  if (const json pj = st.value("print", json()); pj.is_object()) {
+    const json per = pj.value("bodies", json::object());
+    bool defaults = false;
+    for (const auto& [k, v] : pj.items()) defaults = defaults || k != "bodies";
+    for (size_t i = 0; i < bodies.size(); ++i) {
+      const json o = per.is_object() && per.contains(bodies[i]) ? per[bodies[i]] : json();
+      if (o.is_boolean() && !o.get<bool>()) continue;
+      if (!defaults && !o.is_object()) continue;
+      json b = pj;
+      b.erase("bodies");
+      if (o.is_object())
+        for (const auto& [k, v] : o.items()) b[k] = v;
+      printed[i] = print_settings(b);
+    }
+  }
+  std::vector<std::unique_ptr<BRepAlgoAPI_BuilderAlgo>> parts(bodies.size());
+  // Each printed body split into its infill (core_pieces), the walls between its skins (band_pieces) and, when it has
+  // skins (split_skins), the top and bottom skins: the rest.
+  std::vector<std::vector<TopoDS_Shape>> core_pieces(bodies.size()), band_pieces(bodies.size());
+  std::vector<char> split_skins(bodies.size(), 0);
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    if (!printed[i]) continue;
+    report(0.04, "Finding the infill of \"" + scene.node(bodies[i])->name + "\"");
+    if (printed[i]->wall_thickness() <= 0 && printed[i]->top_thickness() <= 0 && printed[i]->bottom_thickness() <= 0) {
+      for (TopExp_Explorer e(cut[i], TopAbs_SOLID); e.More(); e.Next()) core_pieces[i].push_back(e.Current());  // all infill
+      continue;
+    }
+    const PrintRegions pr = print_regions(world[i], *printed[i]);
+    if (pr.core.IsNull()) run.warnings.push_back("\"" + scene.node(bodies[i])->name + "\" is no thicker than its walls and skins: it prints solid");
+    split_skins[i] = pr.skins;
+    if (pr.core.IsNull() && pr.middle.IsNull()) continue;  // all walls, or all skin
+    auto part = std::make_unique<BRepAlgoAPI_BuilderAlgo>();
+    TopTools_ListOfShape args;
+    args.Append(cut[i]);
+    if (!pr.middle.IsNull()) args.Append(pr.middle);
+    if (!pr.core.IsNull()) args.Append(pr.core);
+    part->SetArguments(args);
+    part->SetNonDestructive(true);
+    part->Build();
+    if (!part->IsDone()) throw Error("the infill of \"" + scene.node(bodies[i])->name + "\" could not be split from its walls");
+    for (TopExp_Explorer e(pr.core, TopAbs_SOLID); !pr.core.IsNull() && e.More(); e.Next())
+      for (const auto& f : after(*part, e.Current())) core_pieces[i].push_back(f);
+    for (TopExp_Explorer e(pr.middle, TopAbs_SOLID); !pr.middle.IsNull() && e.More(); e.Next())
+      for (const auto& f : after(*part, e.Current()))
+        if (std::none_of(core_pieces[i].begin(), core_pieces[i].end(), [&](const TopoDS_Shape& c) { return c.IsSame(f); })) band_pieces[i].push_back(f);
+    cut[i] = part->Shape();
+    parts[i] = std::move(part);
+  }
   report(0.05, "Joining the bodies");
   // ---- join: one shape whose touching faces are shared
   // A single body needs no joining: its shapes stand for themselves.
@@ -465,6 +646,13 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
         if (s.IsSame(mesh.solids(k))) solid_body[size_t(k - 1)] = int(i);
   for (size_t k = 0; k < solid_body.size(); ++k)
     if (solid_body[k] < 0) throw Error("a meshed solid belongs to no body (the join changed it)");
+  std::vector<char> solid_region(size_t(mesh.solids.Extent()), 0);  // a printed body's infill (1), walls between its skins (2)
+  for (size_t i = 0; i < bodies.size(); ++i)
+    for (const auto* pieces : {&core_pieces[i], &band_pieces[i]})
+      for (const auto& piece : *pieces)
+        for (const auto& f : after(fuse, piece))
+          for (int k = 1; k <= mesh.solids.Extent(); ++k)
+            if (f.IsSame(mesh.solids(k))) solid_region[size_t(k - 1)] = pieces == &core_pieces[i] ? 1 : 2;
 
   // Tet faces by their sorted corners, to find the element under a surface triangle (CalculiX face numbers S1..S4 of
   // C3D10/C3D4 in Abaqus order: 1-2-3, 1-4-2, 2-4-3, 3-4-1).
@@ -503,6 +691,12 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
           std::vector<TopoDS_Shape> next;
           for (const auto& f : now)
             for (const auto& g : after(*splits[i], f)) next.push_back(g);
+          now = next;
+        }
+        if (parts[i]) {  // a printed body's split into walls and infill
+          std::vector<TopoDS_Shape> next;
+          for (const auto& f : now)
+            for (const auto& g : after(*parts[i], f)) next.push_back(g);
           now = next;
         }
         std::vector<TopoDS_Shape> fin;
@@ -658,6 +852,91 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   }
   for (size_t b = 0; b < bolts.size(); ++b) cload << bolt_node0 + int(b) << ", 1, " << bolts[b].preload << "\n";
 
+  // ---- printed bodies: each element's region (wall, top/bottom skin, infill) and its axes (1 along the roads or the
+  // infill's direction, 2 across in the layer, 3 the build direction). A skin element is in a top or bottom skin when the
+  // surface straight above it is within top_thickness (below: bottom_thickness), else in a wall, whose roads follow the
+  // nearest side face. Walls (and concentric infill) are grouped by road direction in 5 degree steps.
+  struct PrintedElement {
+    int region = -1;  // Region, -1: not printed
+    int bin = 0;      // road direction step (walls, concentric infill)
+  };
+  std::vector<PrintedElement> pel(mesh.tets.size());
+  std::vector<std::array<V, 3>> paxes(mesh.tets.size());
+  constexpr int kBins = 36;
+  auto layer_axes = [](const V& up) {  // the layer plane's x (the world X, else Y, as the slicer's bed has it) and y
+    V ex = sub(V{1, 0, 0}, mul(up, up[0]));
+    if (norm(ex) < 0.3) ex = sub(V{0, 1, 0}, mul(up, up[1]));
+    ex = mul(ex, 1 / norm(ex));
+    return std::array<V, 2>{ex, cross(up, ex)};
+  };
+  auto in_plane = [](const std::array<V, 2>& xy, double deg) {
+    const double a = deg * 3.14159265358979323846 / 180;
+    return add(mul(xy[0], std::cos(a)), mul(xy[1], std::sin(a)));
+  };
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    if (!printed[i]) continue;
+    const PrintSettings& ps = *printed[i];
+    const V up = ps.up;
+    const auto xy = layer_axes(up);
+    // The body's outer surface: faces of its elements that no other of its elements shares, facing out.
+    std::map<std::array<int, 3>, std::pair<int, int>> faces;  // sorted corners -> (count, element * 4 + face)
+    static const int fc[4][4] = {{0, 1, 2, 3}, {0, 1, 3, 2}, {0, 2, 3, 1}, {1, 2, 3, 0}};  // three corners, then the fourth
+    for (size_t e = 0; e < mesh.tets.size(); ++e) {
+      if (solid_body[size_t(mesh.tet_solid[e])] != int(i)) continue;
+      for (int f = 0; f < 4; ++f) {
+        std::array<int, 3> k = {mesh.tets[e][size_t(fc[f][0])], mesh.tets[e][size_t(fc[f][1])], mesh.tets[e][size_t(fc[f][2])]};
+        std::sort(k.begin(), k.end());
+        auto& slot = faces[k];
+        ++slot.first;
+        slot.second = int(e) * 4 + f;
+      }
+    }
+    std::vector<PrintSurface::T> tris;
+    for (const auto& [k, slot] : faces) {
+      if (slot.first != 1) continue;
+      const auto& t = mesh.tets[size_t(slot.second / 4)];
+      const int* c = fc[slot.second % 4];
+      const V a = mesh.nodes[size_t(t[size_t(c[0])])], b = mesh.nodes[size_t(t[size_t(c[1])])], cc = mesh.nodes[size_t(t[size_t(c[2])])];
+      const V d = mesh.nodes[size_t(t[size_t(c[3])])];
+      V n = cross(sub(b, a), sub(cc, a));
+      if (dot(n, sub(d, a)) > 0) n = mul(n, -1);
+      const double ln = norm(n);
+      if (ln < 1e-15) continue;
+      tris.push_back({a, b, cc, mul(n, 1 / ln)});
+    }
+    const PrintSurface surf(std::move(tris), up, xy[0], xy[1], std::max(maxh, 2 * ps.wall_thickness()));
+    const double tt = ps.top_thickness(), tb = ps.bottom_thickness();
+    auto road_bin = [&](const V& p) {
+      const PrintSurface::T* side = surf.nearestSide(p);
+      if (!side) return 0;
+      const V t = cross(up, side->n);  // along the contour
+      double a = std::atan2(dot(t, xy[1]), dot(t, xy[0]));
+      if (a < 0) a += 3.14159265358979323846;
+      return std::min(kBins - 1, int(a / 3.14159265358979323846 * kBins));
+    };
+    for (size_t e = 0; e < mesh.tets.size(); ++e) {
+      if (solid_body[size_t(mesh.tet_solid[e])] != int(i)) continue;
+      V p{0, 0, 0};
+      for (int k = 0; k < 4; ++k) p = add(p, mesh.nodes[size_t(mesh.tets[e][size_t(k)])]);
+      p = mul(p, 0.25);
+      PrintedElement& pe = pel[e];
+      const char sr = solid_region[size_t(mesh.tet_solid[e])];
+      if (sr == 1) {
+        pe.region = int(Region::Core);
+        if (ps.family == "concentric") pe.bin = road_bin(p);
+      } else if (sr != 2 && (split_skins[i] || (tt > 0 && surf.ray(p, 1) <= tt) || (tb > 0 && surf.ray(p, -1) <= tb))) {
+        pe.region = int(Region::TopBottom);
+      } else {
+        pe.region = int(Region::Wall);
+        pe.bin = road_bin(p);
+      }
+      const bool contour = pe.region == int(Region::Wall) || (pe.region == int(Region::Core) && ps.family == "concentric");
+      const double deg = contour ? (pe.bin + 0.5) * 180.0 / kBins : pe.region == int(Region::Core) ? ps.angle : 0.0;
+      const V a1 = in_plane(xy, deg);
+      paxes[e] = {a1, cross(up, a1), up};
+    }
+  }
+
   // ---- the input file
   report(0.3, "Writing the CalculiX input");
   std::ostringstream inp;
@@ -668,6 +947,10 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   std::vector<Mat> mats;
   for (size_t i = 0; i < bodies.size(); ++i) {
     mats.push_back(material_for(doc, scene, bodies[i], st.value("materials", json())));
+    if (printed[i]) {  // the filament's, printed (its regions' materials are written below)
+      const Filament& f = printed[i]->material;
+      mats.back().E = f.E, mats.back().nu = f.nu, mats.back().rho = f.density, mats.back().yield = f.X, mats.back().assumed = false;
+    }
     if (mats.back().assumed) run.warnings.push_back("\"" + scene.node(bodies[i])->name + "\" has no material with elastic properties: steel assumed");
   }
   for (size_t i = 0; i < bodies.size(); ++i) {
@@ -681,9 +964,34 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   }
   inp << "*ELSET, ELSET=EALL\n";
   for (size_t i = 0; i < bodies.size(); ++i) inp << "B" << i + 1 << "\n";
+  // Printed bodies: an orthotropic material per region, a section per region and road direction with its axes.
+  std::vector<std::array<Ortho, 3>> pmats(bodies.size());
   for (size_t i = 0; i < bodies.size(); ++i) {
-    inp << "*MATERIAL, NAME=M" << i + 1 << "\n*ELASTIC\n" << mats[i].E << ", " << mats[i].nu << "\n*DENSITY\n" << mats[i].rho * 1e-9 << "\n";
-    inp << "*SOLID SECTION, ELSET=B" << i + 1 << ", MATERIAL=M" << i + 1 << "\n";
+    if (!printed[i]) {
+      inp << "*MATERIAL, NAME=M" << i + 1 << "\n*ELASTIC\n" << mats[i].E << ", " << mats[i].nu << "\n*DENSITY\n" << mats[i].rho * 1e-9 << "\n";
+      inp << "*SOLID SECTION, ELSET=B" << i + 1 << ", MATERIAL=M" << i + 1 << "\n";
+      continue;
+    }
+    mats[i].name = printed[i]->material.name + " (printed)";
+    mats[i].assumed = false;
+    std::map<std::pair<int, int>, std::vector<size_t>> groups;  // (region, bin) -> elements
+    for (size_t e = 0; e < mesh.tets.size(); ++e)
+      if (solid_body[size_t(mesh.tet_solid[e])] == int(i)) groups[{pel[e].region, pel[e].bin}].push_back(e);
+    for (int r = 0; r < 3; ++r) {
+      const Ortho m = region_material(*printed[i], Region(r));
+      pmats[i][size_t(r)] = m;
+      inp << "*MATERIAL, NAME=P" << i + 1 << "R" << r << "\n*ELASTIC, TYPE=ENGINEERING CONSTANTS\n" << m.E1 << ", " << m.E2 << ", " << m.E3 << ", "
+          << m.nu12 << ", " << m.nu13 << ", " << m.nu23 << ", " << m.G12 << ", " << m.G13 << "\n" << m.G23 << "\n*DENSITY\n" << m.density * 1e-9 << "\n";
+    }
+    for (const auto& [key, elems] : groups) {
+      const std::string set = "P" + std::to_string(i + 1) + "R" + std::to_string(key.first) + "D" + std::to_string(key.second);
+      inp << "*ELSET, ELSET=" << set << "\n";
+      for (size_t n = 0; n < elems.size(); ++n) inp << elems[n] + 1 << ((n + 1) % 16 == 0 || n + 1 == elems.size() ? "\n" : ", ");
+      const auto& ax = paxes[elems.front()];
+      inp << "*ORIENTATION, NAME=O" << set << ", SYSTEM=RECTANGULAR\n" << ax[0][0] << ", " << ax[0][1] << ", " << ax[0][2] << ", " << ax[1][0] << ", "
+          << ax[1][1] << ", " << ax[1][2] << "\n";
+      inp << "*SOLID SECTION, ELSET=" << set << ", MATERIAL=P" << i + 1 << "R" << key.first << ", ORIENTATION=O" << set << "\n";
+    }
   }
   // Supports.
   std::ostringstream boundary, dload;
@@ -796,6 +1104,8 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     if (!dload.str().empty()) inp << "*DLOAD\n" << dload.str();
     inp << "*NODE FILE\nU\n*EL FILE\nS\n";
     for (const auto& s : fixed_sets) inp << "*NODE PRINT, NSET=" << s << ", TOTALS=ONLY\nRF\n";
+    for (size_t i = 0; i < bodies.size(); ++i)  // printed bodies: each element's own stresses for its strength
+      if (printed[i]) inp << "*EL PRINT, ELSET=B" << i + 1 << "\nS\n";
     inp << "*END STEP\n";
   } else {
     const int modes = std::clamp(st.value("modes", 6), 1, 100);
@@ -928,9 +1238,50 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       const int b = solid_body[size_t(mesh.tet_solid[e])];
       for (int k = 0; k < tn; ++k) body_peak[size_t(b)] = std::max(body_peak[size_t(b)], res->von_mises[size_t(mesh.tets[e][size_t(k)])]);
     }
+    // Printed bodies: Hill's criterion in each element's road axes at its nodes, the worst per body with what governs.
+    std::vector<double> body_fi(bodies.size(), 0.0);
+    std::vector<std::string> body_mode(bodies.size());
+    std::vector<size_t> body_fi_at(bodies.size(), 0);
+    if (std::any_of(printed.begin(), printed.end(), [](const auto& p) { return p.has_value(); })) {
+      // Each element's index from its own stresses at its integration points (node-averaged stresses would mix a stiff
+      // skin's into the infill next to it); at a node, the worst of the elements around it.
+      res->failure_index.assign(nn, 0.0);
+      const auto points = read_point_stresses(dir.p / "job.dat");
+      for (size_t e = 0; e < mesh.tets.size(); ++e) {
+        if (pel[e].region < 0) continue;
+        const size_t b = size_t(solid_body[size_t(mesh.tet_solid[e])]);
+        const Ortho& m = pmats[b][size_t(pel[e].region)];
+        Failure worst;
+        if (const auto it = points.find(int(e) + 1); it != points.end()) {
+          for (const auto& st : it->second)  // in the element's orientation: its region's axes already
+            if (const Failure f = failure(st, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, m); f.index > worst.index) worst = f;
+        } else {
+          for (int k = 0; k < tn; ++k)
+            if (const Failure f = failure(res->stress[size_t(mesh.tets[e][size_t(k)])], paxes[e][0], paxes[e][1], paxes[e][2], m); f.index > worst.index) worst = f;
+        }
+        size_t at = size_t(mesh.tets[e][0]);
+        for (int k = 0; k < tn; ++k) {
+          const size_t node = size_t(mesh.tets[e][size_t(k)]);
+          res->failure_index[node] = std::max(res->failure_index[node], worst.index);
+          if (res->von_mises[node] > res->von_mises[at]) at = node;
+        }
+        if (worst.index > body_fi[b]) {
+          body_fi[b] = worst.index, body_fi_at[b] = at;
+          body_mode[b] = worst.mode + " (" + region_name(Region(pel[e].region)) + ")";
+        }
+      }
+    }
     json per_body = json::object();
     double worst_sf = 1e300;
     for (size_t i = 0; i < bodies.size(); ++i) {
+      if (printed[i]) {
+        const double sf = body_fi[i] > 0 ? 1 / std::sqrt(body_fi[i]) : 1e300;
+        per_body[scene.node(bodies[i])->name] = {{"max_von_mises_MPa", body_peak[i]}, {"material", mats[i].name}, {"criterion", "Hill (printed roads and layers)"},
+                                                 {"safety_factor", sf < 1e299 ? json(sf) : json(nullptr)}, {"fails", body_mode[i]},
+                                                 {"weakest_at", res->nodes[body_fi_at[i]]}};
+        worst_sf = std::min(worst_sf, sf);
+        continue;
+      }
       const double sf = body_peak[i] > 0 ? mats[i].yield / body_peak[i] : 1e300;
       per_body[scene.node(bodies[i])->name] = {{"max_von_mises_MPa", body_peak[i]}, {"material", mats[i].name}, {"yield_MPa", mats[i].yield},
                                                {"safety_factor", sf < 1e299 ? json(sf) : json(nullptr)}};
@@ -981,6 +1332,47 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     summary["frequencies_Hz"] = res->frequencies;
     if (!supported) summary["note"] = "free: the first six modes are the rigid-body motions (about 0 Hz)";
   }
+  // Printed bodies: the settings used, each region's volume, material and the plastic it takes, and where it is weakest.
+  json print_json = json::object();
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    if (!printed[i]) continue;
+    double vol[3] = {0, 0, 0}, lowest = 1e300, highest = -1e300;
+    for (size_t e = 0; e < mesh.tets.size(); ++e) {
+      if (solid_body[size_t(mesh.tet_solid[e])] != int(i) || pel[e].region < 0) continue;
+      const V a = mesh.nodes[size_t(mesh.tets[e][0])], b = mesh.nodes[size_t(mesh.tets[e][1])], c = mesh.nodes[size_t(mesh.tets[e][2])],
+              d = mesh.nodes[size_t(mesh.tets[e][3])];
+      vol[pel[e].region] += std::fabs(dot(sub(b, a), cross(sub(c, a), sub(d, a)))) / 6;
+      for (const V* q : {&a, &b, &c, &d}) lowest = std::min(lowest, dot(*q, printed[i]->up)), highest = std::max(highest, dot(*q, printed[i]->up));
+    }
+    json regions = json::object();
+    double mass = 0;
+    for (int r = 0; r < 3; ++r) {
+      const Ortho& m = pmats[i][size_t(r)];
+      mass += vol[r] * m.density / 1000;  // mm3 * g/cm3 -> g
+      regions[region_name(Region(r))] = {{"volume_mm3", vol[r]}, {"E_MPa", {m.E1, m.E2, m.E3}}, {"strength_MPa", {m.X, m.Y, m.Z}}, {"density", m.density}};
+    }
+    json pj = printed[i]->to_json();
+    pj["regions"] = regions;
+    pj["printed_mass_g"] = mass;
+    if (kind == "static" && !res->failure_index.empty()) {
+      double fi = 0;
+      size_t at = 0;
+      for (size_t e = 0; e < mesh.tets.size(); ++e)
+        if (solid_body[size_t(mesh.tet_solid[e])] == int(i))
+          for (int k = 0; k < tn; ++k)
+            if (res->failure_index[size_t(mesh.tets[e][size_t(k)])] > fi) fi = res->failure_index[size_t(mesh.tets[e][size_t(k)])], at = size_t(mesh.tets[e][size_t(k)]);
+      if (fi > 0) {
+        pj["min_safety_factor"] = 1 / std::sqrt(fi);
+        pj["weakest_at"] = res->nodes[at];
+        pj["weakest_height_mm"] = dot(res->nodes[at], printed[i]->up) - lowest;  // above the bed (the body's lowest point)
+        const int layers = std::max(1, int(std::ceil((highest - lowest) / printed[i]->layer - 1e-6)));
+        pj["weakest_layer"] = std::clamp(int((dot(res->nodes[at], printed[i]->up) - lowest) / printed[i]->layer) + 1, 1, layers);
+        if (summary.contains("bodies") && summary["bodies"].contains(scene.node(bodies[i])->name)) pj["fails"] = summary["bodies"][scene.node(bodies[i])->name]["fails"];
+      }
+    }
+    print_json[scene.node(bodies[i])->name] = pj;
+  }
+  if (!print_json.empty()) summary["print"] = print_json;
   summary["nodes"] = nn;
   summary["elements"] = mesh.tets.size();
   summary["element_type"] = tn == 10 ? "C3D10 (quadratic tetrahedra)" : "C3D4 (linear tetrahedra)";
