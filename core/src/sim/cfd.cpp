@@ -832,7 +832,11 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
                              : "  open { type patch; faces ((0 4 7 3) (1 2 6 5) (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7)); }\n);\n");
     put(cas / "system" / "blockMeshDict", "dictionary", "blockMeshDict", bm.str());
     std::ostringstream sh;
-    sh << "castellatedMesh true; snap " << (buoyant ? "false" : "true") << "; addLayers false;\ngeometry {\n";
+    // Layers of thin cells along the parts' walls (an air-only, snapped mesh: an enclosure with fans): the air's boundary
+    // layers need ten cells across where two or three were (a plate's film came out half as large again as Blasius'
+    // layer gives). cfd.layers: how many, 0 for none.
+    const int layers = !enclosure.empty() && !buoyant ? cfd.value("layers", 5) : 0;
+    sh << "castellatedMesh true; snap " << (buoyant ? "false" : "true") << "; addLayers " << (layers > 0 ? "true" : "false") << ";\ngeometry {\n";
     for (const auto& r : region)
       if (!r.empty()) sh << "  " << r << " { type triSurfaceMesh; file \"" << r << ".stl\"; }\n";
     for (size_t g = 0; g < gap_boxes.size(); ++g) sh << "  gap" << g << " { type searchableBox; min " << vec(mul(gap_boxes[g].lo, 1e-3)) << "; max " << vec(mul(gap_boxes[g].hi, 1e-3))
@@ -874,10 +878,17 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     const V inside_air = mul(seed, 1e-3);
     sh << "  }\n  resolveFeatureAngle 30;\n  refinementRegions {";
     for (size_t g = 0; g < gap_boxes.size(); ++g) sh << " gap" << g << " { mode inside; levels ((1e15 " << gap_boxes[g].level << ")); }";
+    // cfd.near_wall {distance, cell} (mm): every cell that near a part that small, for the air's boundary layers.
+    if (const json nw = cfd.value("near_wall", json()); nw.is_object()) {
+      const int L = std::clamp(int(std::ceil(std::log2(coarse / std::max(1e-3, nw.value("cell", fine))) - 0.01)), 0, 8);
+      for (const auto& r : region)
+        if (!r.empty()) sh << " " << r << " { mode distance; levels ((" << num(nw.value("distance", 2 * fine) * 1e-3) << " " << L << ")); }";
+    }
     sh << " }\n  locationInMesh " << vec(inside_air) << ";\n  allowFreeStandingZoneFaces false;\n}\n"
        << "snapControls { nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; "
           "multiRegionFeatureSnap true; }\n"
-       << "addLayersControls { relativeSizes true; layers {} expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; "
+       << "addLayersControls { relativeSizes true; layers {" << (layers > 0 ? " \"s[0-9]+.*\" { nSurfaceLayers " + std::to_string(layers) + "; }" : std::string())
+       << " } expansionRatio 1.25; finalLayerThickness 0.5; minThickness 0.02; nGrow 0; featureAngle 130; "
           "nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; "
           "minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }\n"
        << "meshQualityControls { maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-18; minTetQuality 1e-15; "
