@@ -288,7 +288,10 @@ as one bonded mesh (touching parts conduct as one, the board along and across it
 and to the room by view factors), the air's temperature in OpenFOAM with the parts' surfaces as its walls; the heat each
 face gives the air is its film for the next CalculiX solve, until the temperatures settle. With fans the flow is solved
 once (laminar); with vents only, the flow and the air's temperature are solved together under gravity at each pass
-(Boussinesq), the walls stepped to the cells. The assistant writes ordinary loads (case *Cooling*) and a study, which
+(Boussinesq), the walls stepped to the cells. Warm air rising never settles fully in a steady solution: the summary's
+`air_balance` (what the parts give the air against what leaves) says how well it closed; in the tests the whole heat
+balance closes to about 15 % with vents only and to about 1 % with fans. Vents-only runs also take longer (tens of
+minutes at Normal). The assistant writes ordinary loads (case *Cooling*) and a study, which
 the Simulation panel and an agent can change afterwards.
 
 ## 11. Find the best place for the vents (design sweep)

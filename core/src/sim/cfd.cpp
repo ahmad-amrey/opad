@@ -1294,6 +1294,13 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       for (size_t k = 0; k < mass.size() && k < open_cell.size(); ++k)
         if (mass[k] > 0) mdot += mass[k], mt += mass[k] * Tair[open_cell[k]];
       const double carried = air_leaving(phi, Tair);
+      // How well the air's heat balances: what the walls give it against what leaves the room's margin.
+      double given = 0;
+      for (size_t w = 0; w < walls.size(); ++w) given += walls[w].k_d * (Twall[w] + 273.15 - Tair[walls[w].cell]) * walls[w].area;
+      const double imbalance = std::fabs(given) > 1e-6 ? std::fabs(carried - given) / std::fabs(given) : 0.0;
+      if (imbalance > 0.1)
+        run.warnings.push_back("the air's heat balance closes to " + std::to_string(int(std::lround(100 * imbalance))) + " %" +
+                               (buoyant ? " (warm air rising does not settle fully: a Fine run checks it)" : ""));
       fan_json["vents"]["outlet_air_C"] = mdot > 0 ? mt / mdot - 273.15 : ambient;
       fan_json["vents"]["air_rise_C"] = (mdot > 0 ? mt / mdot - 273.15 : ambient) - ambient;
       fan_json["vents"]["heat_to_air_W"] = carried;
@@ -1308,6 +1315,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       summary["vents"] = fan_json["vents"];
       summary["flow_iterations"] = fan_json["iterations"];
       summary["air_passes"] = passes;
+      summary["air_balance"] = {{"from_parts_W", given}, {"leaving_W", carried}};
       summary["air_cells"] = air_cells.centre.size();
       summary["cells"] = air_cells.centre.size();
       summary["cell_size_mm"] = fine;
