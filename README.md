@@ -267,6 +267,9 @@ text with HarfBuzz, and the help clips and cards are translated too. A language 
   face and select its whole feature, hole or fillet), Select similar, interference and 3D-print checks.
 - **2D files**: DXF/DWG/SVG open in 2D mode with layers, linetypes, shaped text and SHX fonts; Draw on drawing and
   Drawing to sketch take them into a design; Plot to PDF.
+- **Mesh to solid**: an STL, OBJ, 3MF or PLY mesh rebuilt as a solid: a sketch (lines, arcs, circles, splines) with an
+  Extrude or Revolve when the mesh is one (a faceted cylinder becomes one circle extruded), else fitted planes,
+  cylinders, cones, spheres and tori; the panel shows how closely the result matches the mesh before it is created.
 - **KiCad**: a `.kicad_pcb` opens as the board with its footprints' 3D models, linked and synced when the board
   changes.
 - **Image canvases**: place a picture on a plane, calibrate it, trace it into a sketch.

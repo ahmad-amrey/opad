@@ -439,6 +439,7 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
     menu.addSeparator();
     history();
     if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){for(const auto& body:m_doc->scene.bodies_under(id))if(m_doc->scene.node(body)->representation=="drawing2d")return true;return false;}))add("design.convertDrawing");
+    if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){for(const auto& body:m_doc->scene.bodies_under(id))if(m_doc->scene.node(body)->representation=="mesh")return true;return false;}))add("design.mesh_solid");
     menu.addSeparator();
     add("edit.rename");
     looks();

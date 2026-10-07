@@ -40,7 +40,10 @@ void MainWindow::buildDesignActions() {
     const QString kind = QString::fromStdString(spec.kind);
     const auto key = kKeys.find(spec.kind);
     QAction* a = addAction("design." + kind, i18n::t(QString::fromStdString(spec.label)), QString::fromStdString(spec.icon), key == kKeys.end() ? QKeySequence() : QKeySequence(key->second),
-                           [this, kind] { m_design->startFeature(kind); });
+                           [this, kind] {
+                             if (kind == "mesh_solid") meshToSolid();  // its own panel: the preview measured against the mesh
+                             else m_design->startFeature(kind);
+                           });
     a->setProperty("shortcutHint",i18n::t(QString::fromStdString(spec.hint)));
     shortcuts::updateTooltip(a);
   }
