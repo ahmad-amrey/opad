@@ -15,6 +15,9 @@ vcpkg and cross builds were dropped on 2026-09-19; a new target is a preset inhe
 (cache or env, empty = off), `-fuse-ld=` in the linker flags or `CMAKE_LINKER_TYPE` wins; `OPAD_STATIC` keeps GNU ld (its
 FreeType group relies on archive order). ccache `base_dir` is the repo root, so `__FILE__` is relative: tests read sources
 via `OPAD_SOURCE_DIR`. A stuck exe in `bin/` (e.g. `opad-cli.exe.locked-<pid>`) is renamed aside, never killed.
+Simulation engines (`cmake/sim_engines.cmake`): Eigen 3.4.1 fetched into `build/<preset>/eigen` (MSYS2 has only Eigen 5,
+which Chrono 9 rejects); Chrono and Netgen are built at the first configure (~15 min) with MinGW patches
+(`opad_patch_chrono/netgen`), their DLLs copied into bin/. Windows headers `#define far`/`near`: never name a variable so.
 
 Git for Windows ships its own libstdc++-6.dll (newer GCC, no `__emutls_v._ZSt11__once_call` export) and Git Bash /
 the VS Code terminal put it first on PATH, which gives "Entry Point Not Found" at launch. `cmake/mingw.cmake` (target `opad-runtime`) copies the

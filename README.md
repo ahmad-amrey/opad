@@ -279,7 +279,7 @@ cmake --workflow --preset windows            # configure, build and test; progra
 # Ubuntu 24.04 (the first configure builds Open CASCADE 7.9.2, about 15 minutes, once):
 sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev \
   libfreetype-dev libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev \
-  libxext-dev libxi-dev rapidjson-dev pybind11-dev python3-dev xvfb
+  libxext-dev libxi-dev rapidjson-dev pybind11-dev python3-dev libeigen3-dev xvfb
 cmake --workflow --preset linux              # programs in build/linux/bin
 ```
 

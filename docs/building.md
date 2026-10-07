@@ -7,7 +7,7 @@ minute and a half; `-DOPAD_DWG=OFF` skips it).
 
 | Host and target | Install | Build |
 |---|---|---|
-| Windows | [MSYS2](https://www.msys2.org), then in its shell: `pacman -S mingw-w64-x86_64-{cmake,ninja,gcc,opencascade,qt6-base,nlohmann-json,pybind11,python,eigen3}` | `cmake --workflow --preset windows` |
+| Windows | [MSYS2](https://www.msys2.org), then in its shell: `pacman -S mingw-w64-x86_64-{cmake,ninja,gcc,opencascade,qt6-base,nlohmann-json,pybind11,python}` | `cmake --workflow --preset windows` |
 | Linux (Ubuntu 24.04) | `sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev rapidjson-dev pybind11-dev python3-dev libeigen3-dev calculix-ccx`, plus `xvfb` for the GUI benches; no OCCT package (see [Linux](#linux)) | `cmake --workflow --preset linux` |
 | macOS | `xcode-select --install`, then `brew install cmake ninja opencascade qt nlohmann-json pybind11 python` | `cmake --workflow --preset macos` |
 
@@ -22,7 +22,7 @@ refinement...). It needs a desktop session with OpenGL, so the default presets l
 `tests/fixtures.cpp` generates the STEP fixtures used by the tests.
 
 Requirements: CMake 3.25+, a C++20 compiler, Open CASCADE Technology 7.8+ (on Linux the build compiles 7.9.2 itself
-when the system has none or an older one), nlohmann-json, pybind11 (optional), Qt 6.4+ Widgets (optional, app only).
+when the system has none or an older one), nlohmann-json, Eigen 3 (Ubuntu's libeigen3-dev; without one the build fetches 3.4.1, as on MSYS2, which ships only Eigen 5), pybind11 (optional), Qt 6.4+ Widgets (optional, app only).
 
 ## Windows
 

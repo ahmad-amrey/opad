@@ -392,8 +392,8 @@ def licenses():
     os.makedirs(alone)
     cli = os.path.join(alone, os.path.basename(CLI))
     shutil.copy2(CLI, cli)
-    for name in os.listdir(os.path.dirname(CLI)):  # the toolchain runtime the build copies beside its programs
-        if name.lower().startswith(("libstdc++", "libgcc", "libwinpthread")):
+    for name in os.listdir(os.path.dirname(CLI)):  # the toolchain runtime and the engines the build copies beside its programs
+        if name.lower().startswith(("libstdc++", "libgcc", "libwinpthread", "libchronoengine", "libngcore", "libnglib")):
             shutil.copy2(os.path.join(os.path.dirname(CLI), name), alone)
     beside = os.path.join(alone, "THIRD-PARTY-NOTICES.txt")
     with open(beside, "w", encoding="utf-8") as f:
