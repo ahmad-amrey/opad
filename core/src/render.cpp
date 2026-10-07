@@ -406,11 +406,20 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
     };
     const float dark[3] = {0.12f, 0.12f, 0.14f}, orange[3] = {1.0f, 0.5f, 0.05f};
     for (int pass = 0; pass < 2; ++pass)
-      for (const auto& it : items)
-        for (const auto& poly : pass == 0 ? it.lines : it.highlight_lines)
-          for (size_t k = 1; k < poly.size(); ++k)
+      for (const auto& it : items) {
+        const auto& polys = pass == 0 ? it.lines : it.highlight_lines;
+        for (size_t l = 0; l < polys.size(); ++l) {
+          const auto& poly = polys[l];
+          const bool coloured = pass == 0 && l < it.line_colors.size() && it.line_colors[l].size() == poly.size();
+          for (size_t k = 1; k < poly.size(); ++k) {
+            float mid[3];
+            if (coloured)
+              for (int c = 0; c < 3; ++c) mid[c] = 0.5f * (it.line_colors[l][k - 1][size_t(c)] + it.line_colors[l][k][size_t(c)]);
             line(it.world.apply({poly[k - 1][0], poly[k - 1][1], poly[k - 1][2]}), it.world.apply({poly[k][0], poly[k][1], poly[k][2]}),
-                 pass == 0 ? dark : orange, pass == 0 ? ss : 2 * ss);
+                 coloured ? mid : pass == 0 ? dark : orange, pass == 0 ? ss : 2 * ss);
+          }
+        }
+      }
   }
 
   // Downsample.

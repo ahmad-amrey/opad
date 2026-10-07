@@ -1,6 +1,7 @@
 #include "opad/sim/fea.hpp"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepAlgoAPI_BuilderAlgo.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -9,6 +10,7 @@
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
 #include <GProp_GProps.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -33,6 +35,8 @@
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/sim/joints.hpp"
+#include "opad/sim/airflow.hpp"
+#include "opad/sim/cfd.hpp"
 #include "opad/sim/printing.hpp"
 
 namespace opad::sim {
@@ -68,6 +72,11 @@ double von_mises(const std::array<double, 6>& s) {
 
 struct Mat {
   double E = 210000, nu = 0.3, rho = 7.85, yield = 250;  // MPa, -, g/cm3, MPa
+  double k = 50, cp = 490, emissivity = 0.3;              // W/m.K, J/kg.K: steel's
+  // A board: k along it, k_through across it (0: the same every way), across along normal (zero: its thinnest way).
+  double k_through = 0;
+  Vec3 normal{0, 0, 0};
+  bool thermal_assumed = true;
   std::string name = "Steel";
   bool assumed = true;
 };
@@ -80,12 +89,32 @@ Mat material_for(const Document& doc, const Scene& scene, const std::string& bod
       m.E = mech->youngs, m.nu = mech->poisson, m.yield = mech->yield, m.assumed = false;
       m.name = c.shown();
     }
+  if (!c.id.empty())
+    if (const Thermal* th = thermal(c.id)) {
+      m.k = th->conductivity, m.cp = th->specific_heat, m.emissivity = th->emissivity, m.thermal_assumed = false;
+      m.name = c.shown();
+    }
   if (c.density > 0) m.rho = c.density;
   if (overrides.is_object()) {
     const json o = overrides.contains(body) ? overrides[body] : overrides.value("all", json());
     if (o.is_object()) {
       m.E = o.value("E", m.E), m.nu = o.value("nu", m.nu), m.rho = o.value("density", m.rho), m.yield = o.value("yield", m.yield);
+      m.k = o.value("k", m.k), m.cp = o.value("cp", m.cp), m.emissivity = o.value("emissivity", m.emissivity);
+      m.k_through = o.value("k_through", m.k_through);
+      if (o.contains("normal")) m.normal = o["normal"].get<Vec3>();
+      // A printed circuit board from its make-up: copper layers (35 um an ounce, covering part of each layer) in FR-4,
+      // the copper in parallel along it and in series across it.
+      if (o.contains("pcb")) {
+        const json b = o["pcb"].is_object() ? o["pcb"] : json::object();
+        const double t = b.value("thickness", 1.6), layers = b.value("layers", 4), oz = b.value("copper_oz", 1.0), cover = b.value("coverage", 0.7);
+        const double cu = std::min(0.9 * t, layers * 0.035 * oz * cover), k_cu = 390, k_fr4 = 0.3;
+        m.k = (cu * k_cu + (t - cu) * k_fr4) / t;
+        m.k_through = t / (cu / k_cu + (t - cu) / k_fr4);
+        m.cp = o.value("cp", 1100.0), m.rho = o.value("density", 1.9);
+        if (!o.contains("name")) m.name = "PCB, " + std::to_string(int(layers)) + " layers";
+      }
       m.assumed = false;
+      m.thermal_assumed = m.thermal_assumed && !o.contains("k") && !o.contains("pcb");
       if (o.contains("name")) m.name = o["name"].get<std::string>();
     }
   }
@@ -408,14 +437,24 @@ double probe(const FeaResult& r, const Vec3& at, const std::string& field, int m
     if (field == "syz") return r.stress.at(i)[4];
     if (field == "szx") return r.stress.at(i)[5];
     if (field == "mode") return norm(r.modes.at(size_t(mode)).at(i));
+    if (field == "temperature") {
+      if (r.temperature.empty()) throw Error("probe: temperature is for thermal studies");
+      return r.temperature.at(i);
+    }
     if (field == "failure_index") {
       if (r.failure_index.empty()) throw Error("probe: failure_index is for printed bodies in a static study");
       return r.failure_index.at(i);
     }
-    throw Error("probe: unknown field " + field + " (von_mises, displacement, dx, dy, dz, sxx, syy, szz, sxy, syz, szx, mode, failure_index)");
+    throw Error("probe: unknown field " + field + " (von_mises, displacement, dx, dy, dz, sxx, syy, szz, sxy, syz, szx, mode, failure_index, temperature)");
   };
   // Inside an element: its corner values weighed by the point's barycentric coordinates (the best element when the point
   // is on the surface or a hair outside it).
+  if (r.tets.empty()) {  // a surface only (the CFD air's results): the nearest node
+    size_t best = 0;
+    for (size_t i = 0; i < r.nodes.size(); ++i)
+      if (norm(sub(r.nodes[i], at)) < norm(sub(r.nodes[best], at))) best = i;
+    return value(best);
+  }
   double best_out = 1e300;
   double best_value = 0;
   for (const auto& t : r.tets) {
@@ -449,15 +488,18 @@ json engines() {
 #endif
   const auto ccx = ccx_program();
   const bool fea = netgen_available() && !ccx.empty();
-  json out = {{"motion", true}, {"dynamic", chrono}, {"static", fea}, {"modal", fea}, {"netgen", netgen_available()}};
+  json out = {{"motion", true}, {"dynamic", chrono}, {"static", fea}, {"modal", fea}, {"thermal", fea}, {"netgen", netgen_available()}};
+  const OpenFoam foam = openfoam();
+  out["cfd"] = foam.found();  // thermal studies with the air solved (settings.air = "cfd")
+  if (foam.found()) out["openfoam"] = path_to_utf8(foam.wrapper.empty() ? foam.bin : foam.wrapper);
   out["ccx"] = ccx.empty() ? json(nullptr) : json(path_to_utf8(ccx));
   if (!fea)
-    out["note"] = ccx.empty() ? "static and modal studies need CalculiX's ccx: install it (Ubuntu: apt install calculix-ccx; Windows: put ccx.exe beside OPAD) or set OPAD_CCX"
+    out["note"] = ccx.empty() ? "static, modal and thermal studies need CalculiX's ccx: install it (Ubuntu: apt install calculix-ccx; Windows: put ccx.exe beside OPAD) or set OPAD_CCX"
                               : "this build has no Netgen";
   return out;
 }
 
-StudyRun run_structural(const Document& doc, const Scene& scene, const std::string& kind, const json& st, const Progress& progress) {
+StudyRun run_structural(const Document& doc, const Scene& scene, const std::string& kind, const json& st, const Progress& progress, const AirFilms* air_films) {
   StudyRun run;
   run.kind = kind;
   auto report = [&](double f, const std::string& phase) {
@@ -470,13 +512,18 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   // ---- the case and its loads
   std::string load_case = st.value("case", std::string());
   if (load_case.empty()) load_case = scene.loads.empty() ? std::string("Load case 1") : scene.loads.front().load_case;
+  // Thermal studies take the case's thermal loads, static and modal ones its structural loads.
+  auto thermal_load = [](const std::string& k) { return k == "heat" || k == "temperature" || k == "convection" || k == "radiation" || k == "fan"; };
+  const bool thermal_study = kind == "thermal";
   std::vector<const Load*> loads;
   for (const auto& l : scene.loads)
-    if (l.load_case == load_case) {
+    if (l.load_case == load_case && thermal_load(l.kind) == thermal_study && !(air_films && (l.kind == "convection" || l.kind == "radiation" || l.kind == "fan"))) {
       if (!l.error.empty()) throw Error("load \"" + l.name + "\": " + l.error);
       loads.push_back(&l);
     }
   if (kind == "static" && loads.empty()) throw Error("load case \"" + load_case + "\" has no loads: add some with the load command");
+  if (thermal_study && std::none_of(loads.begin(), loads.end(), [](const Load* l) { return l->kind == "heat" || l->kind == "temperature"; }))
+    throw Error("load case \"" + load_case + "\" has no heat: add a heat source (load kind heat, W) or a fixed temperature");
 
   // ---- bodies: as given, else every body a load names
   std::vector<std::string> bodies;
@@ -548,7 +595,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   // the mesh follows the boundary between them. settings.print applies to every body; print.bodies: {id: {...}} adds to
   // it per body, {id: false} leaves a body solid; with print.bodies alone only the bodies it names are printed.
   std::vector<std::optional<PrintSettings>> printed(bodies.size());
-  if (const json pj = st.value("print", json()); pj.is_object()) {
+  if (const json pj = st.value("print", json()); pj.is_object() && !thermal_study) {
     const json per = pj.value("bodies", json::object());
     bool defaults = false;
     for (const auto& [k, v] : pj.items()) defaults = defaults || k != "bodies";
@@ -937,6 +984,612 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     }
   }
 
+  // The outer skin: triangles with one element behind them, quadratic ones split in four.
+  auto build_skin = [&](FeaResult& out) {
+    for (size_t t = 0; t < mesh.tris.size(); ++t) {
+      const auto it = tet_face.find(corners(t));
+      if (it == tet_face.end() || it->second.size() != 1) continue;
+      const int body = solid_body[size_t(mesh.tet_solid[size_t(it->second.front().first)])];
+      const auto& tri = mesh.tris[t];
+      if (mesh.tri_nodes == 6) {
+        // Which mid-side node sits on which edge: the nearest edge middle.
+        int mid[3] = {-1, -1, -1};  // edge 01, 12, 20
+        for (int k = 3; k < 6; ++k) {
+          const V p = mesh.nodes[size_t(tri[size_t(k)])];
+          double best = 1e300;
+          int e = 0;
+          for (int j = 0; j < 3; ++j) {
+            const V m = mul(add(mesh.nodes[size_t(tri[size_t(j)])], mesh.nodes[size_t(tri[size_t((j + 1) % 3)])]), 0.5);
+            if (norm(sub(m, p)) < best) best = norm(sub(m, p)), e = j;
+          }
+          mid[e] = tri[size_t(k)];
+        }
+        if (mid[0] >= 0 && mid[1] >= 0 && mid[2] >= 0) {
+          for (const auto& s : {std::array<int, 3>{tri[0], mid[0], mid[2]}, {mid[0], tri[1], mid[1]}, {mid[2], mid[1], tri[2]}, {mid[0], mid[1], mid[2]}}) {
+            out.skin.push_back(s);
+            out.skin_body.push_back(body);
+          }
+          continue;
+        }
+      }
+      out.skin.push_back({tri[0], tri[1], tri[2]});
+      out.skin_body.push_back(body);
+    }
+  };
+
+  // ---- CalculiX: one input in the job folder, its results read back (thermal studies run it more than once).
+  struct Dir {
+    std::filesystem::path p;
+    bool keep = false;
+    ~Dir() {
+      std::error_code e;
+      if (!keep && !p.empty()) std::filesystem::remove_all(p, e);
+    }
+  } dir;
+  dir.p = std::filesystem::temp_directory_path() / ("opad-ccx-" + new_uuid().substr(0, 12));
+  std::filesystem::create_directories(dir.p);
+  if (const char* k = std::getenv("OPAD_KEEP_CCX"); k && *k) dir.keep = true;
+  auto run_ccx = [&](const std::string& input, double at) {
+    report(at, "Solving (CalculiX)");
+    write_text_file(dir.p / "job.inp", input);
+    // One thread for the solver unless asked: CalculiX 2.21's threaded SPOOLES factorisation (Ubuntu's ccx) races and now and
+    // then returns wrong displacements for the same input (seen on a cantilever: 3.04 mm three runs out of five, 5.44 mm or
+    // 1.82 mm the others); single-threaded it is exact and repeatable. OPAD_CCX_THREADS=n for a ccx known to be safe.
+    {
+      const char* asked = std::getenv("OPAD_CCX_THREADS");
+      const std::string threads = asked && *asked ? asked : "1";
+#ifdef _WIN32
+      _putenv_s("OMP_NUM_THREADS", threads.c_str());
+      _putenv_s("CCX_NPROC_EQUATION_SOLVER", threads.c_str());
+#else
+      setenv("OMP_NUM_THREADS", threads.c_str(), 1);
+      setenv("CCX_NPROC_EQUATION_SOLVER", threads.c_str(), 1);
+#endif
+    }
+    detail::RunOptions ro;
+    ro.output = dir.p / "ccx.log";
+    ro.timeout_ms = int(st.value("timeout", 1800.0) * 1000);
+    ro.cancelled = [&] { return progress && !progress(at, "Solving (CalculiX)"); };
+    const int status = detail::run_program(ccx, {"-i", "job"}, dir.p, ro);
+    std::string log;
+    try {
+      log = read_text_file(dir.p / "ccx.log");
+    } catch (...) {
+    }
+    if (status != 0 || log.find("*ERROR") != std::string::npos) {
+      const auto pos = log.find("*ERROR");
+      std::string why = pos == std::string::npos ? "it stopped with status " + std::to_string(status) : log.substr(pos, std::min<size_t>(400, log.size() - pos));
+      throw Error("CalculiX failed: " + why);
+    }
+    return read_frd(dir.p / "job.frd");
+  };
+
+  // ---- thermal: heat sources, fixed temperatures, convection (given, or from the air: sim/airflow.hpp), radiation and
+  // fans through heatsinks; steady, or over time from the ambient temperature. Convection that depends on the temperatures
+  // (natural, a fan's air warming along the fins) is found by solving again until the temperatures settle.
+  if (thermal_study) {
+    namespace air = sim::air;
+    const double ambient = st.value("ambient", 25.0);
+    V up = unit(mul(st.value("gravity", V{0, 0, -1}), -1));
+    if (norm(up) < 0.5) up = {0, 0, 1};
+    const bool transient = st.contains("duration");
+    std::vector<Mat> mats;
+    for (size_t i = 0; i < bodies.size(); ++i) {
+      mats.push_back(material_for(doc, scene, bodies[i], st.value("materials", json())));
+      if (mats.back().thermal_assumed) run.warnings.push_back("\"" + scene.node(bodies[i])->name + "\" has no material with thermal properties: steel assumed");
+      // A board's across: its thinnest way of the world's axes when not given.
+      if (mats.back().k_through > 0 && norm(mats.back().normal) < 1e-9) {
+        Bnd_Box b;
+        BRepBndLib::Add(world[i], b);
+        double c[6];
+        b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+        const double ext[3] = {c[3] - c[0], c[4] - c[1], c[5] - c[2]};
+        const int thin = int(std::min_element(ext, ext + 3) - ext);
+        mats.back().normal = {thin == 0 ? 1.0 : 0.0, thin == 1 ? 1.0 : 0.0, thin == 2 ? 1.0 : 0.0};
+      }
+    }
+    // Elements and the skin: each outer triangle's element face, area, outward normal and centre.
+    auto tet_volume = [&](size_t e) {
+      const V a = mesh.nodes[size_t(mesh.tets[e][0])], b = mesh.nodes[size_t(mesh.tets[e][1])], c = mesh.nodes[size_t(mesh.tets[e][2])],
+              d = mesh.nodes[size_t(mesh.tets[e][3])];
+      return std::fabs(dot(sub(b, a), cross(sub(c, a), sub(d, a)))) / 6;
+    };
+    std::vector<double> body_volume(bodies.size(), 0.0);
+    for (size_t e = 0; e < mesh.tets.size(); ++e) body_volume[size_t(solid_body[size_t(mesh.tet_solid[e])])] += tet_volume(e);
+    struct Face {
+      size_t tri;
+      int elem, face, body;
+      double area;
+      V normal, centre;
+    };
+    auto skin_face = [&](size_t t) -> std::optional<Face> {
+      const auto it = tet_face.find(corners(t));
+      if (it == tet_face.end() || it->second.size() != 1) return std::nullopt;  // inside: two bodies bonded there
+      Face f;
+      f.tri = t;
+      f.elem = it->second.front().first;
+      f.face = it->second.front().second;
+      f.body = solid_body[size_t(mesh.tet_solid[size_t(f.elem)])];
+      f.area = tri_area(t);
+      f.normal = tri_info(t).normal;
+      V c{0, 0, 0};
+      for (int k = 0; k < 3; ++k) c = add(c, mesh.nodes[size_t(mesh.tris[t][size_t(k)])]);
+      f.centre = mul(c, 1.0 / 3);
+      return f;
+    };
+    // A load's outer triangles: its faces', or every outer triangle of the bodies it names.
+    auto load_faces = [&](const Load& l, bool bodies_ok) {
+      std::vector<Face> out;
+      const bool on_bodies = !l.refs.empty() && std::all_of(l.refs.begin(), l.refs.end(), [](const Ref& r) { return r.kind == Ref::Kind::Body; });
+      if (on_bodies) {
+        if (!bodies_ok) throw Error("load \"" + l.name + "\" acts on faces: pick faces, not bodies");
+        std::set<int> wanted;
+        for (const auto& r : l.refs) wanted.insert(int(std::find(bodies.begin(), bodies.end(), r.body) - bodies.begin()));
+        for (size_t t = 0; t < mesh.tris.size(); ++t)
+          if (const auto f = skin_face(t); f && wanted.count(f->body)) out.push_back(*f);
+        return out;
+      }
+      for (size_t t : triangles_of(l))
+        if (const auto f = skin_face(t)) out.push_back(*f);
+      if (out.empty()) throw Error("load \"" + l.name + "\": its faces are inside, where bodies touch: pick outer faces");
+      return out;
+    };
+    auto body_of = [&](const Load& l) {
+      if (l.refs.empty()) throw Error("load \"" + l.name + "\" names no body");
+      const size_t i = size_t(std::find(bodies.begin(), bodies.end(), l.refs.front().body) - bodies.begin());
+      if (i >= bodies.size()) throw Error("load \"" + l.name + "\" acts on a body outside the study");
+      return i;
+    };
+    // Something to look at along a face's normal: the gap to the nearest solid (mm), 0 when nothing is there.
+    IntCurvesFace_ShapeIntersector rays;
+    rays.Load(solids, 1e-7);
+    auto gap_along = [&](const V& from, const V& n, double reach) {
+      const gp_Lin line(gp_Pnt(from[0], from[1], from[2]), gp_Dir(n[0], n[1], n[2]));
+      rays.Perform(line, 1e-3 * reach, reach);
+      double best = 0;
+      for (int i = 1; rays.IsDone() && i <= rays.NbPnt(); ++i)
+        if (const double w = rays.WParameter(i); w > 1e-3 && (best == 0 || w < best)) best = w;
+      return best;
+    };
+
+    // Films (convection) and radiation on element faces; their h and sink temperature are set per solve.
+    struct Film {
+      Face f;
+      double h = 0, sink = 0;  // W/m2K, degC
+      int load = 0;            // index into loads
+    };
+    struct Rad {
+      Face f;
+      double eps = 0, sink = 0;
+      bool cavity = false;  // the faces see each other (CalculiX's view factors), the rest of their view the room
+    };
+    std::vector<Film> films;
+    std::vector<Rad> rads;
+    std::ostringstream fixed_temps, fluxes;
+    double heat_in = 0;
+    json applied = json::array();
+    // Natural convection: each OCC face of the load as one plate, its triangles grouped.
+    struct Plate {
+      std::vector<size_t> films;  // indices into films
+      double up = 0, L = 0, gap = 0;
+    };
+    std::vector<Plate> plates;
+    std::vector<size_t> plate_load;  // the load of each plate
+    // Fans: a heatsink each, its fins, the fan, the films it sets.
+    struct FanRun {
+      size_t load;
+      air::Fan fan;
+      int count = 1;
+      air::FinArray fins;
+      double inlet = 0, Q = 0;
+      air::Channel ch{};
+      std::vector<size_t> films;
+      double heat = 0, rise = 0;
+    };
+    std::vector<FanRun> fan_runs;
+    for (size_t li = 0; li < loads.size(); ++li) {
+      const Load& l = *loads[li];
+      const json& d = l.def;
+      if (l.kind == "heat") {
+        const double P = d.value("value", 0.0);
+        heat_in += P;
+        const bool on_bodies = !l.refs.empty() && std::all_of(l.refs.begin(), l.refs.end(), [](const Ref& r) { return r.kind == Ref::Kind::Body; });
+        if (on_bodies) {
+          double V_total = 0;
+          std::set<int> wanted;
+          for (const auto& r : l.refs) wanted.insert(int(std::find(bodies.begin(), bodies.end(), r.body) - bodies.begin()));
+          for (int b : wanted) V_total += body_volume[size_t(b)];
+          const double q = 1000 * P / V_total;  // mW/mm3
+          for (size_t e = 0; e < mesh.tets.size(); ++e)
+            if (wanted.count(solid_body[size_t(mesh.tet_solid[e])])) fluxes << e + 1 << ", BF, " << q << "\n";
+          applied.push_back({{"name", l.name}, {"kind", "heat"}, {"W", P}, {"in", "volume"}, {"volume_mm3", V_total}});
+        } else {
+          const auto fs = load_faces(l, false);
+          double A = 0;
+          for (const auto& f : fs) A += f.area;
+          const double q = 1000 * P / A;  // mW/mm2
+          for (const auto& f : fs) fluxes << f.elem + 1 << ", S" << f.face << ", " << q << "\n";
+          applied.push_back({{"name", l.name}, {"kind", "heat"}, {"W", P}, {"in", "faces"}, {"area_mm2", A}});
+        }
+      } else if (l.kind == "temperature") {
+        const auto fs = load_faces(l, false);
+        std::set<int> nodes;
+        for (const auto& f : fs)
+          for (int k = 0; k < mesh.tri_nodes; ++k) nodes.insert(mesh.tris[f.tri][size_t(k)]);
+        for (int n : nodes) fixed_temps << n + 1 << ", 11, 11, " << d.value("value", ambient) << "\n";
+        applied.push_back({{"name", l.name}, {"kind", "temperature"}, {"C", d.value("value", ambient)}, {"nodes", nodes.size()}});
+      } else if (l.kind == "convection") {
+        const auto fs = load_faces(l, true);
+        const double sink = d.value("ambient", ambient);
+        const json h = d.value("h", json(10.0));
+        if (h.is_number()) {
+          for (const auto& f : fs) films.push_back({f, h.get<double>(), sink, int(li)});
+        } else if (h == "natural") {
+          std::map<int, std::vector<Face>> by_face;  // OCC face -> its triangles
+          for (const auto& f : fs) by_face[mesh.tri_face[f.tri]].push_back(f);
+          for (const auto& [face, tris] : by_face) {
+            Plate p;
+            double A = 0;
+            V n{0, 0, 0}, c{0, 0, 0};
+            for (const auto& f : tris) A += f.area, n = add(n, mul(f.normal, f.area)), c = add(c, mul(f.centre, f.area));
+            c = mul(c, 1 / A);
+            const bool flat = norm(n) > 0.5 * A;  // a curved face (a cylinder all round) has no one way it looks
+            n = flat ? unit(n) : up;
+            // Its height along up (a tilted face), or its area over its perimeter (a level one).
+            V u1 = sub(up, mul(n, dot(up, n)));
+            if (norm(u1) < 1e-6) u1 = std::fabs(n[0]) < 0.9 ? cross(n, V{1, 0, 0}) : cross(n, V{0, 1, 0});
+            u1 = unit(u1);
+            const V u2 = cross(n, u1);
+            double lo1 = 1e300, hi1 = -1e300, lo2 = 1e300, hi2 = -1e300, loz = 1e300, hiz = -1e300;
+            for (const auto& f : tris)
+              for (int k = 0; k < 3; ++k) {
+                const V q = mesh.nodes[size_t(mesh.tris[f.tri][size_t(k)])];
+                lo1 = std::min(lo1, dot(q, u1)), hi1 = std::max(hi1, dot(q, u1));
+                lo2 = std::min(lo2, dot(q, u2)), hi2 = std::max(hi2, dot(q, u2));
+                loz = std::min(loz, dot(q, up)), hiz = std::max(hiz, dot(q, up));
+              }
+            p.up = flat ? dot(n, up) : 0;
+            const bool level = std::fabs(p.up) > 0.7072;
+            p.L = level ? A / std::max(1e-9, 2 * ((hi1 - lo1) + (hi2 - lo2))) : std::max(hiz - loz, 1e-3);
+            if (!level && flat) {
+              const double g = gap_along(add(c, mul(n, 1e-3)), n, std::max(p.L, 1.0));
+              if (g > 0 && g < p.L) p.gap = g;
+            }
+            for (const auto& f : tris) {
+              p.films.push_back(films.size());
+              films.push_back({f, 5.0, sink, int(li)});
+            }
+            plates.push_back(p);
+            plate_load.push_back(li);
+          }
+        } else {  // forced: a stream along the faces at velocity, the way of vector
+          const double U = d.value("velocity", 0.0);
+          const V way = unit(d.value("vector", V{1, 0, 0}));
+          std::map<int, std::vector<Face>> by_face;
+          for (const auto& f : fs) by_face[mesh.tri_face[f.tri]].push_back(f);
+          for (const auto& [face, tris] : by_face) {
+            double lo = 1e300, hi = -1e300;
+            for (const auto& f : tris)
+              for (int k = 0; k < 3; ++k) {
+                const double x = dot(mesh.nodes[size_t(mesh.tris[f.tri][size_t(k)])], way);
+                lo = std::min(lo, x), hi = std::max(hi, x);
+              }
+            const double hf = air::forced_plate_h(U, std::max(hi - lo, 1.0) * 1e-3, sink);
+            for (const auto& f : tris) films.push_back({f, hf, sink, int(li)});
+          }
+        }
+        applied.push_back({{"name", l.name}, {"kind", "convection"}, {"h", h}, {"ambient_C", sink}, {"faces_area_mm2", [&] {
+                             double A = 0;
+                             for (const auto& f : fs) A += f.area;
+                             return A;
+                           }()}});
+      } else if (l.kind == "radiation") {
+        const auto fs = load_faces(l, true);
+        for (const auto& f : fs) rads.push_back({f, d.value("emissivity", mats[size_t(f.body)].emissivity), d.value("ambient", ambient)});
+        applied.push_back({{"name", l.name}, {"kind", "radiation"}});
+      } else if (l.kind == "fan") {
+        FanRun fr;
+        fr.load = li;
+        fr.fan = air::fan_from(d.value("fan", json("80x25")));
+        fr.count = d.value("count", 1);
+        fr.inlet = d.value("ambient", ambient);
+        const size_t b = body_of(l);
+        const V way = unit(d.value("vector", V{1, 0, 0}));
+        const auto fins = air::fin_array(world[b], way);
+        if (!fins)
+          throw Error("fan \"" + l.name + "\": \"" + scene.node(bodies[b])->name +
+                      "\" has no plate fins along the air's way (vector): give a convection with h forced and the air's velocity instead");
+        fr.fins = *fins;
+        const air::FinArray fa = fr.fins;
+        fr.Q = air::operating_point(fr.fan, [&](double Q) { return air::channel(fa, Q, fr.inlet).dp; }, fr.count);
+        if (fr.Q <= 0) throw Error("fan \"" + l.name + "\" cannot push air through the heatsink's fins");
+        // The heatsink's outer faces the air washes: all but those facing back from the fins (the base's underside).
+        for (size_t t = 0; t < mesh.tris.size(); ++t)
+          if (const auto f = skin_face(t); f && f->body == int(b) && dot(f->normal, fa.up) > -0.5) {
+            fr.films.push_back(films.size());
+            films.push_back({*f, 10.0, fr.inlet, int(li)});
+          }
+        fan_runs.push_back(fr);
+      }
+    }
+    // The air solved around the parts: a film on every outer face, from it.
+    // With the air solved, radiation (cfd.radiation, default on) between every outer face and to the room.
+    const bool cavity = air_films && st.value("cfd", json::object()).value("radiation", true);
+    if (air_films)
+      for (size_t t = 0; t < mesh.tris.size(); ++t)
+        if (const auto f = skin_face(t)) {
+          films.push_back({*f, 10.0, ambient, -1});
+          if (cavity) rads.push_back({*f, mats[size_t(f->body)].emissivity, ambient, true});
+        }
+    if (films.empty() && rads.empty() && fixed_temps.str().empty())
+      throw Error("the heat has nowhere to go: add a convection, a radiation, a fan or a fixed temperature");
+
+    // One solve: the input with the films as they are now, the nodal temperatures back (the last frame).
+    auto input = [&](bool steady) {
+      std::ostringstream in;
+      in.precision(10);
+      in << "*HEADING\nOPAD thermal study, case " << load_case << "\n*NODE, NSET=NALL\n";
+      for (size_t i = 0; i < mesh.nodes.size(); ++i) in << i + 1 << ", " << mesh.nodes[i][0] << ", " << mesh.nodes[i][1] << ", " << mesh.nodes[i][2] << "\n";
+      for (size_t i = 0; i < bodies.size(); ++i) {
+        in << "*ELEMENT, TYPE=" << (tn == 10 ? "C3D10" : "C3D4") << ", ELSET=B" << i + 1 << "\n";
+        for (size_t e = 0; e < mesh.tets.size(); ++e) {
+          if (solid_body[size_t(mesh.tet_solid[e])] != int(i)) continue;
+          in << e + 1;
+          for (int k = 0; k < tn; ++k) in << ", " << mesh.tets[e][size_t(k)] + 1;
+          in << "\n";
+        }
+      }
+      // mm, s, t, N: conductivity W/m.K as it is, specific heat J/kg.K x 1e6, density t/mm3.
+      for (size_t i = 0; i < bodies.size(); ++i) {
+        in << "*MATERIAL, NAME=M" << i + 1;
+        if (mats[i].k_through > 0) {
+          // Along the board in its local x and y, across it in z (the orientation below).
+          in << "\n*CONDUCTIVITY, TYPE=ORTHO\n" << mats[i].k << ", " << mats[i].k << ", " << mats[i].k_through << "\n";
+        } else {
+          in << "\n*CONDUCTIVITY\n" << mats[i].k << "\n";
+        }
+        in << "*SPECIFIC HEAT\n" << mats[i].cp * 1e6 << "\n*DENSITY\n" << mats[i].rho * 1e-9 << "\n";
+        if (mats[i].k_through > 0) {
+          const V n = unit(mats[i].normal);
+          const V a = unit(cross(n, std::fabs(n[0]) < 0.9 ? V{1, 0, 0} : V{0, 1, 0})), b = cross(n, a);
+          in << "*ORIENTATION, NAME=OB" << i + 1 << ", SYSTEM=RECTANGULAR\n" << a[0] << ", " << a[1] << ", " << a[2] << ", " << b[0] << ", " << b[1] << ", " << b[2] << "\n";
+          in << "*SOLID SECTION, ELSET=B" << i + 1 << ", MATERIAL=M" << i + 1 << ", ORIENTATION=OB" << i + 1 << "\n";
+        } else {
+          in << "*SOLID SECTION, ELSET=B" << i + 1 << ", MATERIAL=M" << i + 1 << "\n";
+        }
+      }
+      if (!rads.empty()) in << "*PHYSICAL CONSTANTS, ABSOLUTE ZERO=-273.15, STEFAN BOLTZMANN=5.670E-11\n";
+      in << "*INITIAL CONDITIONS, TYPE=TEMPERATURE\nNALL, " << ambient << "\n";
+      if (steady) {
+        in << "*STEP, INC=1000\n*HEAT TRANSFER, STEADY STATE\n1., 1.\n";
+      } else {
+        const double duration = st.value("duration", 60.0);
+        const int frames = std::clamp(st.value("frames", 61), 2, 2000) - 1;
+        in << "*STEP, INC=100000\n*HEAT TRANSFER, DIRECT\n" << duration / frames << ", " << duration << "\n";
+      }
+      if (!fixed_temps.str().empty()) in << "*BOUNDARY\n" << fixed_temps.str();
+      if (!fluxes.str().empty()) in << "*DFLUX\n" << fluxes.str();
+      if (!films.empty()) {
+        in << "*FILM\n";
+        for (const auto& f : films) in << f.f.elem + 1 << ", F" << f.f.face << ", " << f.sink << ", " << f.h * 1e-3 << "\n";  // W/m2K -> mW/mm2K
+      }
+      if (!rads.empty()) {
+        in << "*RADIATE\n";
+        for (const auto& r : rads) in << r.f.elem + 1 << ", R" << r.f.face << (r.cavity ? "CR" : "") << ", " << r.sink << ", " << r.eps << "\n";
+      }
+      in << "*NODE FILE\nNT\n*END STEP\n";
+      return in.str();
+    };
+    auto temps_of = [&](const Frd& frd, std::vector<std::vector<double>>* frames, std::vector<double>* times) {
+      std::vector<double> T(mesh.nodes.size(), ambient);
+      for (const auto& b : frd.blocks) {
+        if (b.name != "NDTEMP") continue;
+        std::vector<double> t(mesh.nodes.size(), ambient);
+        for (const auto& [node, v] : b.values)
+          if (node >= 1 && size_t(node) <= t.size() && !v.empty()) t[size_t(node - 1)] = v[0];
+        if (frames) frames->push_back(t), times->push_back(b.value);
+        T = std::move(t);
+      }
+      return T;
+    };
+    auto face_temp = [&](const Face& f, const std::vector<double>& T) {
+      double s = 0;
+      for (int k = 0; k < 3; ++k) s += T[size_t(mesh.tris[f.tri][size_t(k)])];
+      return s / 3;
+    };
+    // The films from the temperatures: natural convection per plate, each fan's operating point, channels and air.
+    int air_pass = 0;
+    auto update = [&](const std::vector<double>& T) {
+      if (air_films) {
+        std::vector<AirFace> faces;
+        faces.reserve(films.size());
+        for (const auto& fl : films) faces.push_back({fl.f.centre, fl.f.normal, fl.f.area, fl.f.body, face_temp(fl.f, T), fl.h, fl.sink});
+        (*air_films)(faces, air_pass++);
+        for (size_t i = 0; i < films.size(); ++i) films[i].h = faces[i].h, films[i].sink = faces[i].sink;
+        return;
+      }
+      for (size_t p = 0; p < plates.size(); ++p) {
+        const Plate& pl = plates[p];
+        double A = 0, Ts = 0;
+        for (size_t i : pl.films) A += films[i].f.area, Ts += films[i].f.area * face_temp(films[i].f, T);
+        Ts /= A;
+        const double sink = films[pl.films.front()].sink;
+        const double h = air::natural_h(pl.up, pl.L * 1e-3, Ts, sink, pl.gap * 1e-3);
+        for (size_t i : pl.films) films[i].h = h;
+      }
+      for (auto& fr : fan_runs) {
+        // Heat the air took last time, upstream of each face, warms it on the way: the sink there.
+        const V way = fr.fins.flow;
+        const air::Air a0 = air::properties(fr.inlet);
+        const double mdot_cp = a0.rho * fr.Q * a0.cp;
+        double mean_air = fr.inlet + 0.5 * fr.rise;
+        fr.ch = air::channel(fr.fins, fr.Q, mean_air);
+        std::vector<std::pair<double, size_t>> order;
+        for (size_t i : fr.films) order.push_back({dot(films[i].f.centre, way), i});
+        std::sort(order.begin(), order.end());
+        double upstream = 0;
+        fr.heat = 0;
+        for (const auto& [x, i] : order) {
+          Film& f = films[i];
+          const double q = f.h * f.f.area * 1e-6 * (face_temp(f.f, T) - f.sink);  // W, as last solved
+          f.h = fr.ch.h;
+          f.sink = fr.inlet + (upstream + 0.5 * std::max(0.0, q)) / mdot_cp;
+          upstream += std::max(0.0, q);
+        }
+        fr.heat = upstream;
+        fr.rise = upstream / mdot_cp;
+      }
+    };
+    report(0.3, "Solving (CalculiX)");
+    std::vector<double> T(mesh.nodes.size(), ambient + 20);  // a first guess for the films that depend on it
+    const bool coupled = !plates.empty() || !fan_runs.empty() || air_films;
+    int iterations = 0;
+    double change = 0;
+    json changes = json::array();
+    if (air_films) update(T);
+    else if (coupled) update(T), update(T);  // the second pass spreads the guessed heat along the fans' air
+    for (int it = 0; it < (coupled ? (air_films ? st.value("cfd", json::object()).value("passes", 30) : 12) : 1); ++it) {
+      const Frd frd = run_ccx(input(true), 0.3 + 0.05 * std::min(it, 10));
+      const std::vector<double> next = temps_of(frd, nullptr, nullptr);
+      change = 0;
+      for (size_t i = 0; i < next.size(); ++i) change = std::max(change, std::fabs(next[i] - T[i]));
+      T = next;
+      ++iterations;
+      changes.push_back(change);
+      if (!coupled || change < (air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05)) break;
+      update(T);
+    }
+    if (coupled && change >= (air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05)) run.warnings.push_back("the temperatures were still moving by " + std::to_string(change) + " degC after " + std::to_string(iterations) + " solves");
+    // Over time: the films of the steady state, from the ambient temperature.
+    std::vector<std::vector<double>> frames;
+    std::vector<double> times;
+    if (transient) {
+      report(0.85, "Solving over time (CalculiX)");
+      T = temps_of(run_ccx(input(false), 0.85), &frames, &times);
+    }
+
+    // ---- results
+    report(0.95, "Reading the results");
+    auto res = std::make_shared<FeaResult>();
+    res->kind = kind;
+    res->nodes = mesh.nodes;
+    res->bodies = bodies;
+    res->mesh_size = maxh;
+    res->elements = mesh.tets.size();
+    for (const auto& t : mesh.tets) res->tets.push_back({t[0], t[1], t[2], t[3]});
+    build_skin(*res);
+    res->temperature = T;
+    res->temperature_frames = frames;
+    res->displacement.assign(mesh.nodes.size(), V{0, 0, 0});
+    json summary;
+    summary["case"] = load_case;
+    summary["mesh_size"] = maxh;
+    summary["ambient_C"] = ambient;
+    size_t hot = 0, cold = 0;
+    for (size_t i = 0; i < T.size(); ++i) {
+      if (T[i] > T[hot]) hot = i;
+      if (T[i] < T[cold]) cold = i;
+    }
+    summary["max_temperature_C"] = T[hot];
+    summary["max_temperature_at"] = mesh.nodes[hot];
+    summary["min_temperature_C"] = T[cold];
+    // Per body: its hottest point and its mean (by volume).
+    json per_body = json::object();
+    {
+      std::vector<double> peak(bodies.size(), -1e300), sum(bodies.size(), 0.0);
+      std::vector<size_t> at(bodies.size(), 0);
+      for (size_t e = 0; e < mesh.tets.size(); ++e) {
+        const size_t b = size_t(solid_body[size_t(mesh.tet_solid[e])]);
+        double m = 0;
+        for (int k = 0; k < 4; ++k) m += T[size_t(mesh.tets[e][size_t(k)])] / 4;
+        sum[b] += m * tet_volume(e);
+        for (int k = 0; k < tn; ++k)
+          if (const size_t n = size_t(mesh.tets[e][size_t(k)]); T[n] > peak[b]) peak[b] = T[n], at[b] = n;
+      }
+      for (size_t b = 0; b < bodies.size(); ++b) {
+        per_body[scene.node(bodies[b])->name] = {{"max_temperature_C", peak[b]}, {"mean_temperature_C", sum[b] / body_volume[b]}, {"at", mesh.nodes[at[b]]},
+                                                 {"material", mats[b].name}, {"conductivity_W_mK", mats[b].k}};
+        if (mats[b].k_through > 0) per_body[scene.node(bodies[b])->name]["conductivity_through_W_mK"] = mats[b].k_through;
+      }
+    }
+    summary["bodies"] = per_body;
+    // Where the heat goes: each convection and radiation, the rest into the fixed temperatures.
+    double to_air = 0, radiated = 0;
+    json by_load = json::object();
+    for (const auto& f : films) {
+      const double q = f.h * f.f.area * 1e-6 * (face_temp(f.f, T) - f.sink);
+      to_air += q;
+      const std::string by = f.load < 0 ? std::string("the air") : loads[size_t(f.load)]->name;
+      by_load[by] = by_load.value(by, 0.0) + q;
+    }
+    for (const auto& r : rads) {
+      const double Ts = face_temp(r.f, T) + 273.15, Ta = r.sink + 273.15;
+      radiated += r.eps * 5.670e-8 * r.f.area * 1e-6 * (Ts * Ts * Ts * Ts - Ta * Ta * Ta * Ta);
+    }
+    // Faces that see each other trade most of what they radiate: what leaves for the room is the rest of the heat (steady).
+    if (cavity && fixed_temps.str().empty() && !transient) radiated = heat_in - to_air;
+    summary["heat_W"] = heat_in;
+    summary["to_air_W"] = to_air;
+    if (!rads.empty()) summary["radiated_W"] = radiated;
+    if (!fixed_temps.str().empty() && !transient) summary["to_fixed_temperatures_W"] = heat_in - to_air - radiated;
+    summary["loads_W"] = by_load;
+    json conv = json::array();
+    for (size_t p = 0; p < plates.size(); ++p) {
+      const Plate& pl = plates[p];
+      conv.push_back({{"load", loads[plate_load[p]]->name}, {"h_W_m2K", films[pl.films.front()].h}, {"length_mm", pl.L}, {"facing_up", pl.up},
+                      {"gap_mm", pl.gap}});
+    }
+    if (!conv.empty()) summary["natural_convection"] = conv;
+    json fans_json = json::array();
+    for (const auto& fr : fan_runs) {
+      const Load& l = *loads[fr.load];
+      const double peak = per_body[scene.node(l.refs.front().body)->name]["max_temperature_C"].get<double>();
+      fans_json.push_back({{"name", l.name},
+                           {"fan", fr.fan.to_json()},
+                           {"fans", fr.count},
+                           {"heatsink", scene.node(l.refs.front().body)->name},
+                           {"fins", fr.fins.to_json()},
+                           {"flow_m3h", fr.Q * 3600},
+                           {"flow_cfm", fr.Q / 4.719474e-4},
+                           {"pressure_Pa", air::channel(fr.fins, fr.Q, fr.inlet).dp},
+                           {"channel_velocity_m_s", fr.ch.V},
+                           {"reynolds", fr.ch.Re},
+                           {"h_W_m2K", fr.ch.h},
+                           {"inlet_C", fr.inlet},
+                           {"air_rise_C", fr.rise},
+                           {"heat_W", fr.heat},
+                           {"thermal_resistance_C_W", fr.heat > 0 ? (peak - fr.inlet) / fr.heat : 0.0}});
+    }
+    if (!fans_json.empty()) summary["fans"] = fans_json;
+    summary["loads"] = applied;
+    summary["solves"] = iterations;
+    if (changes.size() > 1) summary["solve_changes_C"] = changes;
+    summary["nodes"] = mesh.nodes.size();
+    summary["elements"] = mesh.tets.size();
+    if (transient) {
+      run.t = times;
+      // Each body's hottest point over time.
+      for (size_t b = 0; b < bodies.size(); ++b) {
+        Series s{bodies[b], scene.node(bodies[b])->name + " max temperature", "degC", "temperature", {}};
+        for (const auto& fr : frames) {
+          double m = -1e300;
+          for (size_t e = 0; e < mesh.tets.size(); ++e)
+            if (solid_body[size_t(mesh.tet_solid[e])] == int(b))
+              for (int k = 0; k < tn; ++k) m = std::max(m, fr[size_t(mesh.tets[e][size_t(k)])]);
+          s.v.push_back(m);
+        }
+        run.series.push_back(std::move(s));
+      }
+      summary["duration_s"] = times.empty() ? 0.0 : times.back();
+    } else {
+      run.t = {0.0};
+    }
+    summary["warnings"] = run.warnings;
+    run.summary = summary;
+    run.fea = res;
+    return run;
+  }
+
   // ---- the input file
   report(0.3, "Writing the CalculiX input");
   std::ostringstream inp;
@@ -1113,50 +1766,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   }
 
   // ---- run
-  report(0.35, "Solving (CalculiX)");
-  struct Dir {
-    std::filesystem::path p;
-    bool keep = false;
-    ~Dir() {
-      std::error_code e;
-      if (!keep && !p.empty()) std::filesystem::remove_all(p, e);
-    }
-  } dir;
-  dir.p = std::filesystem::temp_directory_path() / ("opad-ccx-" + new_uuid().substr(0, 12));
-  std::filesystem::create_directories(dir.p);
-  if (const char* k = std::getenv("OPAD_KEEP_CCX"); k && *k) dir.keep = true;
-  write_text_file(dir.p / "job.inp", inp.str());
-  // One thread for the solver unless asked: CalculiX 2.21's threaded SPOOLES factorisation (Ubuntu's ccx) races and now and
-  // then returns wrong displacements for the same input (seen on a cantilever: 3.04 mm three runs out of five, 5.44 mm or
-  // 1.82 mm the others); single-threaded it is exact and repeatable. OPAD_CCX_THREADS=n for a ccx known to be safe.
-  {
-    const char* asked = std::getenv("OPAD_CCX_THREADS");
-    const std::string threads = asked && *asked ? asked : "1";
-#ifdef _WIN32
-    _putenv_s("OMP_NUM_THREADS", threads.c_str());
-    _putenv_s("CCX_NPROC_EQUATION_SOLVER", threads.c_str());
-#else
-    setenv("OMP_NUM_THREADS", threads.c_str(), 1);
-    setenv("CCX_NPROC_EQUATION_SOLVER", threads.c_str(), 1);
-#endif
-  }
-  detail::RunOptions ro;
-  ro.output = dir.p / "ccx.log";
-  ro.timeout_ms = int(st.value("timeout", 1800.0) * 1000);
-  ro.cancelled = [&] { return progress && !progress(0.5, "Solving (CalculiX)"); };
-  const int status = detail::run_program(ccx, {"-i", "job"}, dir.p, ro);
-  std::string log;
-  try {
-    log = read_text_file(dir.p / "ccx.log");
-  } catch (...) {
-  }
-  if (status != 0 || log.find("*ERROR") != std::string::npos) {
-    const auto at = log.find("*ERROR");
-    std::string why = at == std::string::npos ? "it stopped with status " + std::to_string(status) : log.substr(at, std::min<size_t>(400, log.size() - at));
-    throw Error("CalculiX failed: " + why);
-  }
-  report(0.9, "Reading the results");
-  const Frd frd = read_frd(dir.p / "job.frd");
+  const Frd frd = run_ccx(inp.str(), 0.35);
 
   // ---- results
   auto res = std::make_shared<FeaResult>();
@@ -1166,36 +1776,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   res->mesh_size = maxh;
   res->elements = mesh.tets.size();
   for (const auto& t : mesh.tets) res->tets.push_back({t[0], t[1], t[2], t[3]});
-  // The outer skin: triangles with one element behind them, quadratic ones split in four.
-  for (size_t t = 0; t < mesh.tris.size(); ++t) {
-    const auto it = tet_face.find(corners(t));
-    if (it == tet_face.end() || it->second.size() != 1) continue;
-    const int body = solid_body[size_t(mesh.tet_solid[size_t(it->second.front().first)])];
-    const auto& tri = mesh.tris[t];
-    if (mesh.tri_nodes == 6) {
-      // Which mid-side node sits on which edge: the nearest edge middle.
-      int mid[3] = {-1, -1, -1};  // edge 01, 12, 20
-      for (int k = 3; k < 6; ++k) {
-        const V p = mesh.nodes[size_t(tri[size_t(k)])];
-        double best = 1e300;
-        int e = 0;
-        for (int j = 0; j < 3; ++j) {
-          const V m = mul(add(mesh.nodes[size_t(tri[size_t(j)])], mesh.nodes[size_t(tri[size_t((j + 1) % 3)])]), 0.5);
-          if (norm(sub(m, p)) < best) best = norm(sub(m, p)), e = j;
-        }
-        mid[e] = tri[size_t(k)];
-      }
-      if (mid[0] >= 0 && mid[1] >= 0 && mid[2] >= 0) {
-        for (const auto& s : {std::array<int, 3>{tri[0], mid[0], mid[2]}, {mid[0], tri[1], mid[1]}, {mid[2], mid[1], tri[2]}, {mid[0], mid[1], mid[2]}}) {
-          res->skin.push_back(s);
-          res->skin_body.push_back(body);
-        }
-        continue;
-      }
-    }
-    res->skin.push_back({tri[0], tri[1], tri[2]});
-    res->skin_body.push_back(body);
-  }
+  build_skin(*res);
   const size_t nn = mesh.nodes.size();
   auto field = [&](const Frd::Block& blk, size_t width) {
     std::vector<std::vector<double>> out(nn, std::vector<double>(width, 0.0));

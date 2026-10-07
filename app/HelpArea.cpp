@@ -113,7 +113,8 @@ class HelpArea : public AreaController {
     QMenu* help = menus.value("help");
     if (!help) return;
     QAction* first = help->actions().value(0);
-    for (const char* id : {"help.current", "help.reference", "help.shortcuts", "help.start"}) help->insertAction(first, services().action(id));
+    for (const char* id : {"help.current", "help.reference", "help.shortcuts", "help.start", "simulate.guide"})
+      if (QAction* a = services().action(id)) help->insertAction(first, a);
     help->insertSeparator(first);
     help->insertAction(first, services().action("help.report"));
     help->insertSeparator(first);

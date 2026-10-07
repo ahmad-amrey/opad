@@ -1,4 +1,5 @@
 #include "opad/sim/study.hpp"
+#include "opad/sim/cfd.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -270,8 +271,10 @@ StudyRun run_study(const Document& doc, const Scene& scene, const json& study, c
   const json settings = study.value("settings", json::object());
   if (kind == "motion") return run_motion(doc, scene, settings, progress);
   if (kind == "dynamic") return run_dynamic(doc, scene, settings, progress);
-  if (kind == "static" || kind == "modal") return run_structural(doc, scene, kind, settings, progress);
-  throw Error("unknown study kind \"" + kind + "\" (motion, dynamic, static, modal)");
+  if (kind == "sweep") return run_sweep(doc, scene, settings, progress);
+  if (kind == "thermal" && settings.value("air", std::string()) == "cfd") return run_cfd(doc, scene, settings, progress);
+  if (kind == "static" || kind == "modal" || kind == "thermal") return run_structural(doc, scene, kind, settings, progress);
+  throw Error("unknown study kind \"" + kind + "\" (motion, dynamic, static, modal, thermal, sweep)");
 }
 
 std::shared_ptr<const StudyRun> run_study_cached(const Document& doc, const Scene& scene, const json& study, const Progress& progress) {
@@ -308,7 +311,8 @@ json study_report(const StudyRun& run, const json& options) {
     if (at.empty() || at.back() != k) at.push_back(k);
   }
   auto picked = [&](const Series& s) {
-    if (want == true) return s.group == "value" || s.group == "trace" || s.group == "motor" || s.group == "energy" || s.group == "reaction";
+    if (want == true)
+      return s.group == "value" || s.group == "trace" || s.group == "motor" || s.group == "energy" || s.group == "reaction" || s.group == "temperature";
     for (const auto& w : want)
       if (w.is_string() && (w.get<std::string>() == s.name || w.get<std::string>() == s.group || w.get<std::string>() == s.id)) return true;
     return false;
