@@ -3211,6 +3211,13 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "simulate.guide",
+   "title": "Simulation guide",
+   "summary": "Opens step-by-step use cases of the Simulate tools, each with buttons that start the tools it uses.",
+   "details": "Eight use cases: a hinged part moved with the slider, a mechanism's travel in a motion study, gears and lead screws, a part swinging or falling under gravity, whether a part holds under a load, a bolted joint, natural frequencies and a 3D-printed part. Each says what you get, the steps with your keys, and a tip. The Simulation panel's Step-by-step guides button opens the one for where your document is.",
+   "keywords": ["how to", "tutorial", "step by step", "use cases", "learn", "simulation", "FEA", "mechanism"]
+  },
+  {
    "id": "simulate.print",
    "title": "Printed part",
    "summary": "Sets a structural study's bodies as 3D printed: filament, layers, walls, skins and infill, typed in or read from a slicer's profile.",

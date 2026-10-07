@@ -38,6 +38,7 @@
 #include "MainWindow.hpp"
 #include "SimPlot.hpp"
 #include "SimulateArea.hpp"
+#include "SimulateGuide.hpp"
 #include "SimulatePanel.hpp"
 #include "SimulatePrint.hpp"
 #include "ToolPanel.hpp"
@@ -167,6 +168,33 @@ OPAD_BENCH(OPAD_BENCH_SIMULATE, simulate) {
                                                                            {"operation", "cut"}, {"targets", {(*state)["arm"]}}}}});
                     action("simulate.panel")->trigger();
                     require(area->panel()->isVisible(), "Simulation panel opens");
+                    // The guide from the panel's button: the hinge use case first in an empty mechanism, every step with the
+                    // user's keys, every tool a button of a real command; the last one (a printed part) shot too.
+                    auto* open = area->form()->findChild<QPushButton*>("simGuide");
+                    require(open != nullptr, "the panel has its Step-by-step guides button");
+                    if (open) open->click();
+                    auto* guide = w.findChild<SimulateGuide*>();
+                    require(guide && guide->isVisible() && guide->current() == 0 && guide->count() == 8, "the Simulation guide opens at its first use case, of eight");
+                    if (!guide) return;
+                    bool keysOk = true, toolsOk = true;
+                    for (const auto& u : SimulateGuide::useCases()) {
+                      for (const QString& s : u.steps) keysOk = keysOk && !s.contains('{') && !s.isEmpty();
+                      for (const QString& id : u.commands) toolsOk = toolsOk && action(id.toUtf8().constData()) != nullptr;
+                    }
+                    require(keysOk, "every step names the keys as they are (no tokens left)");
+                    require(toolsOk, "every tool a use case lists is a command");
+                    require(guide->toolButtons().size() == SimulateGuide::useCases()[0].commands.size(), "the use case's tools are buttons");
+                    guide->grab().save(prefix + ".guide-hinge.png");
+                    guide->open(7);
+                    QApplication::processEvents();
+                    guide->grab().save(prefix + ".guide-printed.png");
+                    guide->close();
+                    // A load with nothing picked: the Faces filter comes on and the hint says what to click.
+                    action("select.bodies")->trigger();
+                    services->select({});
+                    action("simulate.fixed")->trigger();
+                    require(action("select.faces")->isChecked() && doc->scene.loads.empty(), "Fixed support with nothing picked turns the Faces filter on");
+                    action("select.bodies")->trigger();
                   }});
   // ---- a revolute joint from the pivot hole's rim, picked, with the panel's Add
   list.push_back({idle, [=, &w](bool) {

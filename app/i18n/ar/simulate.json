@@ -188,5 +188,6 @@
  "top/bottom skin": "القشرة العليا/السفلى",
  "walls": "الجدران",
  "weakest %1, layer %2": "الأضعف %1، الطبقة %2",
- "in compression": "بالانضغاط"
+ "in compression": "بالانضغاط",
+ "%1: shank stress %2 MPa (preload / area %3 MPa)": "%1: إجهاد الساق %2 ميغاباسكال (الشد ÷ المساحة %3 ميغاباسكال)"
 }

@@ -65,6 +65,14 @@ SimulatePanel::SimulatePanel(QWidget* parent) : QWidget(parent) {
   layout->setContentsMargins(12, 8, 12, 8);
   layout->setSpacing(6);
 
+  // ---- how to start
+  auto* guide = new QPushButton(tr("Step-by-step guides…"), body);
+  guide->setObjectName("simGuide");
+  guide->setToolTip(tr("Use cases taken step by step: a hinge, a mechanism's travel, gears, a falling part, a loaded bracket, a bolted joint, "
+                       "vibration, a 3D-printed part"));
+  connect(guide, &QPushButton::clicked, this, &SimulatePanel::guideRequested);
+  layout->addWidget(guide);
+
   // ---- the mechanism and its joints
   layout->addWidget(header(tr("MECHANISM"), body));
   m_mechanism = note(body);

@@ -149,7 +149,9 @@ kinematic solver, and every study is an op on the timeline:
 Each engine is checked against textbook cases: a pendulum's period, a slider-crank's energy balance, a screw jack's
 torque, a planetary set's Willis ratio, a cantilever's deflection and first frequency, a plate with a hole's stress
 concentration, a bolt's preload stress, and a printed cantilever against composite beam theory. `tools/sim_eval.py` builds a dozen such mechanisms through MCP and reports
-them; [docs/features.md](docs/features.md#motion-and-simulation) has the details.
+them; [docs/features.md](docs/features.md#motion-and-simulation) has the details. New to it? The
+[simulation guide](docs/simulation-guide.md) takes eight use cases step by step, and **Simulation guide** in the app
+(Simulate ribbon, Help menu, the panel's Step-by-step guides) does the same with buttons for each tool.
 
 ### Notes and hand drawing
 

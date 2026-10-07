@@ -50,6 +50,7 @@ class Simulate : public AreaController {
   void open();
   void runStudy();
   void showFrame(int frame);
+  void openGuide(int useCase);  // the Simulation guide, at that use case
   void printSettings();  // the Printed part dialog for the structural study shown (or the last one)
 
  private:
@@ -67,6 +68,7 @@ class Simulate : public AreaController {
   void pause();
   void tick();
   void addLoad(const QString& kind);
+  [[noreturn]] void wantPicks(const char* filter, const char* hint);
   void showResults(bool on);
   void clearMotion();
   std::vector<browser::Item> folderItems() const;

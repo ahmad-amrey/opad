@@ -31,6 +31,7 @@
 #include "PanelFooter.hpp"
 #include "Ribbon.hpp"
 #include "SimPlot.hpp"
+#include "SimulateGuide.hpp"
 #include "SimulatePanel.hpp"
 #include "SimulatePrint.hpp"
 #include "Theme.hpp"
@@ -49,6 +50,7 @@ OPAD_ICON_TABLE(simulate,
                 {"simGear", R"(<circle cx="8" cy="12" r="4"/><circle cx="17.5" cy="12" r="3"/><path d="M8 5.5v2M8 16.5v2M1.5 12h2M12.5 12h.5M17.5 7.5v1.5M17.5 15v1.5M21.5 12H21" />)"},
                 {"simMotion", R"(<path d="M3 18c4 0 5-12 9-12s5 12 9 12"/><circle cx="12" cy="6" r="1.5" fill="currentColor"/>)"},
                 {"simPrint", R"(<path d="M8 3h8v5l-2.5 3h-3L8 8z"/><path d="M12 11v3"/><path d="M5 17h14M3 21h18" opacity=".55"/>)"},
+                {"simGuide", R"(<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/><path d="M8 8h7M8 12h5"/>)"},
                 {"simDynamic", R"(<rect x="8" y="3" width="8" height="8" rx="1"/><path d="M12 11v9M8.5 16.5L12 20l3.5-3.5"/><path d="M4 21h16" opacity=".55"/>)"},
                 {"simStatic", R"(<path d="M3 17h15v-4H3z"/><path d="M3 21V9" /><path d="M19 4v7M16.5 8.5L19 11l2.5-2.5"/>)"},
                 {"simModal", R"(<path d="M3 12c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/><path d="M3 12h18" opacity=".45" stroke-dasharray="2 2"/>)"},
@@ -165,6 +167,11 @@ QString summaryText(const json& s) {
     for (const auto& [name, v] : b.items())
       if (v.is_object() && v.contains("safety_factor") && v["safety_factor"].is_number())
         lines << Simulate::tr("%1: safety factor %2").arg(QString::fromStdString(name), number(v["safety_factor"].get<double>()));
+  if (const json b = s.value("bolts", json()); b.is_array())
+    for (const auto& v : b)
+      if (v.is_object() && v.contains("axial_stress_MPa"))
+        lines << Simulate::tr("%1: shank stress %2 MPa (preload / area %3 MPa)")
+                     .arg(QString::fromStdString(v.value("bolt", "")), number(v["axial_stress_MPa"].get<double>()), number(v.value("nominal_stress_MPa", 0.0)));
   if (const json p = s.value("print", json()); p.is_object())
     for (const auto& [name, v] : p.items()) {
       if (!v.is_object()) continue;
@@ -270,6 +277,17 @@ void Simulate::buildActions() {
     });
   };
   add("simulate.panel", tr("Simulation panel"), "simulate", [this] { open(); }, doc, {"mechanism", "joints", "studies", "physics"});
+  {
+    CommandInfo info;  // any time, any workspace: it is how to start
+    info.id = "simulate.guide";
+    info.label = tr("Simulation guide");
+    info.icon = "simGuide";
+    info.group = tr("Simulate");
+    info.keywords = {"how to", "tutorial", "step by step", "use cases", "learn", "simulation", "FEA", "mechanism"};
+    services().addCommand(info, [self] {
+      if (self) self->openGuide(0);
+    });
+  }
   add("simulate.joint", tr("Joint"), "simJoint", [this] {
         open();
         addJoint(m_form->jointKind());
@@ -316,6 +334,8 @@ void Simulate::ribbon(RibbonLayout& layout) {
   layout.addGroup("simulate.mechanism", "simulate.mechanism.results", tr("Results"));
   add("simulate.mechanism.results", "simulate.run");
   add("simulate.mechanism.results", "simulate.play");
+  layout.addGroup("simulate.mechanism", "simulate.mechanism.help", tr("Help"));
+  add("simulate.mechanism.help", "simulate.guide");
   layout.addTab("simulate", "simulate.structure", tr("Structure"));
   layout.addGroup("simulate.structure", "simulate.structure.loads", tr("Loads and supports"));
   add("simulate.structure.loads", "simulate.fixed");
@@ -328,6 +348,8 @@ void Simulate::ribbon(RibbonLayout& layout) {
   layout.addGroup("simulate.structure", "simulate.structure.results", tr("Results"));
   add("simulate.structure.results", "simulate.run");
   add("simulate.structure.results", "simulate.results");
+  layout.addGroup("simulate.structure", "simulate.structure.help", tr("Help"));
+  add("simulate.structure.help", "simulate.guide");
 }
 
 void Simulate::ready() {
@@ -357,6 +379,11 @@ void Simulate::ready() {
   connect(m_form, &SimulatePanel::studyChosen, this, [this](const QString& id) { chooseStudy(id.toStdString()); });
   connect(m_form, &SimulatePanel::newStudyRequested, this, [this](const QString& kind) { services().guarded([&] { newStudy(kind); }); });
   connect(m_form, &SimulatePanel::runRequested, this, [this] { services().guarded([&] { runStudy(); }); });
+  connect(m_form, &SimulatePanel::guideRequested, this, [this] {
+    // Where the document is: nothing yet, the hinge; joints, their motion; loads, the stress study.
+    const opad::Scene& s = services().document()->scene;
+    openGuide(!s.loads.empty() ? 4 : !s.joints.empty() ? 1 : 0);
+  });
   connect(m_form, &SimulatePanel::playRequested, this, &Simulate::play);
   connect(m_form, &SimulatePanel::frameChosen, this, [this](int f) {
     pause();
@@ -576,7 +603,7 @@ void Simulate::addJoint(const QString& kind) {
     for (const auto& r : sel.refs)
       if (!r.body.empty()) refs.push_back(r);
     if (refs.empty())
-      throw opad::UserHint("Pick where the joint is: a circular edge, a cylindrical or flat face, or a vertex of the part that moves.");
+      wantPicks("select.edges", "Click where the joint is (the Edges filter is on now): a circular edge of the part that moves, then the part it is fixed to, and Add again.");
     args["part"] = refs[0].body;
     args["at"] = refs[0].kind == opad::Ref::Kind::Body ? json{{"origin", {0, 0, 0}}, {"z", {0, 0, 1}}} : refs[0].to_json();
     if (k != "ground" && refs.size() > 1 && refs[1].body != refs[0].body) args["base"] = refs[1].body;
@@ -614,6 +641,30 @@ void Simulate::newStudy(const QString& kind) {
   m_run.reset();
   refresh();
   runStudy();
+}
+
+void Simulate::openGuide(int useCase) {
+  QWidget* window = services().window();
+  auto* guide = window->findChild<SimulateGuide*>();
+  if (!guide)
+    guide = new SimulateGuide([this](const QString& id) { return services().action(id); },
+                              [this](const QString& id) {
+                                QAction* a = services().action(id);
+                                if (!a || !a->isEnabled()) return;
+                                // A tool of Simulate (or the selection filter it asks for) in Simulate; Gear in Design.
+                                if (id == "design.gear") services().setWorkspace("design");
+                                else if (services().workspace() != "simulate" && id != "inspect.material") services().setWorkspace("simulate");
+                                services().window()->activateWindow();
+                                a->trigger();
+                              },
+                              window);
+  guide->open(useCase);
+}
+
+// Nothing picked for a tool that needs picks: the selection filter it wants is turned on, and the hint says what to click.
+void Simulate::wantPicks(const char* filter, const char* hint) {
+  if (QAction* f = services().action(filter); f && !f->isChecked()) f->trigger();
+  throw opad::UserHint(hint);
 }
 
 void Simulate::printSettings() {
@@ -806,8 +857,10 @@ void Simulate::addLoad(const QString& kind) {
     if (k == "bolt_preload") on.push_back(r.body);
     else if (r.kind == opad::Ref::Kind::Face) on.push_back(r.to_json());
   }
-  if (k != "gravity" && on.empty())
-    throw opad::UserHint(k == "bolt_preload" ? "Pick the bolt (a body with its shank) first." : "Pick the faces it acts on first.");
+  if (k != "gravity" && on.empty()) {
+    if (k == "bolt_preload") wantPicks("select.bodies", "Click the bolt (the Bodies filter is on now), then Bolt preload again.");
+    wantPicks("select.faces", "Click the faces it acts on (the Faces filter is on now), then choose it again.");
+  }
   json args = {{"kind", k}, {"on", on}};
   if (!doc->scene.loads.empty()) args["case"] = doc->scene.loads.back().load_case;
   bool ok = true;

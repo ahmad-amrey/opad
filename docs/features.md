@@ -486,6 +486,9 @@ onto the joints, accelerations and forces solved from the equations of motion (a
 smooth instead of ringing). Contacts between listed parts use Bullet meshes with Coulomb friction. Series: every joint's
 values, speeds and accelerations, reactions, motor torques and power, kinetic and potential energy and traced points.
 
+Step by step, with a use case for each tool: [simulation-guide.md](simulation-guide.md), and Simulation guide in the
+app.
+
 **Structures.** Static and modal studies mesh the bodies of a load case with Netgen (second-order tetrahedra; an
 element a curved mid-side node folds is made straight-sided) and solve them with CalculiX `ccx` (from the PATH, beside
 the program, or `OPAD_CCX`). Loads: `fixed`, `displacement`, `force` (shared over the faces by area), `pressure`,
