@@ -29,7 +29,9 @@
         "OPAD_STATIC_PREFIX": "C:/msys64/mingw64",
         "CMAKE_PREFIX_PATH": "C:/msys64/mingw64/qt6-static;C:/msys64/mingw64",
         "OPAD_BUILD_PYTHON": "OFF",
-        "OPAD_BUILD_PLUGINS": "OFF"
+        "OPAD_BUILD_PLUGINS": "OFF",
+        "OPAD_CHRONO": "OFF",
+        "OPAD_NETGEN": "OFF"
       }
     },
     {

@@ -10,6 +10,7 @@ The [README](../README.md) is the overview; [building.md](building.md) covers bu
 - [Desktop viewing and review](#desktop-viewing-and-review)
 - [Languages](#languages)
 - [Technical drawings (sheets)](#technical-drawings-sheets)
+- [Motion and simulation](#motion-and-simulation)
 - [Using it in a git repository](#using-it-in-a-git-repository)
 - [Python](#python)
 - [Source layout](#source-layout)
@@ -453,6 +454,73 @@ property.
 opad-cli bom robot.opad --mode indented --format csv --out robot-bom.csv
 opad-cli bom robot.opad --mode top --mass_unit kg
 ```
+
+## Motion and simulation
+
+Four op types carry it: `joint` (a joint between two parts, or a relation between two joints), `pose` (where the
+parts and the joints' values are after a move), `load` (a support or a load in a named load case) and `study` (its
+settings and the summary of its last run). They replay, diff and merge like every other op; full results (every frame,
+every node) are recomputed on demand and kept in memory per document state.
+
+**Joints.** `rigid`, `ground`, `revolute`, `slider`, `cylindrical`, `pin_slot`, `planar`, `ball` and `screw` (its
+`pitch`) join a part to a base part or to the world at a frame taken from a picked circular edge, cylindrical or flat
+face, vertex or axis; `at_part` snaps the part onto it (a knob into its hole: rim to rim, `offset` to sink it). Each
+coordinate can have `limits` and the joint can be `locked`. Relations couple two joints from where they are when made:
+`gear` (`teeth`, `internal`, or a `ratio`), `rack_pinion` (the pitch `radius`) and `lead_screw` (the `lead`); with a
+`carrier` both joints are read against the arm that holds them, which is how a planetary set's sun-planet and
+ring-planet meshes are written.
+
+**Kinematics.** A damped minimum-norm Newton solver on the joints' equations (numerical Jacobians, at most 10° or a tenth
+of the mechanism's size per sub-step) places the parts; the mechanism's degrees of freedom and redundant equations come
+from an SVD. Driving into a limit stops there and says so, also when the limit is reached through a relation (a rack's
+end stop stops the steering wheel). `joint_set` writes a pose; `mechanism` reports DOF, redundancy, problems and which
+engines this build has.
+
+**Dynamics** run on Project Chrono 9 (built from source with OPAD). Masses, centres and inertias come from the solids
+and their materials. Joints are Chrono lock links, with relations, screw threads and position or speed drives as
+constraints of their own; torque and force drives, springs, dampers, friction and end stops (inelastic penalty limits)
+are forces in the integrator's residual. The integrator is HHT with a direct sparse solver; the joint equations that
+repeat others (a planar loop of spatial joints) are left out from a numerical Jacobian at the start, so every reaction
+is determinate and the solver stays direct. The start is consistent: velocities from the kinematic look-ahead projected
+onto the joints, accelerations and forces solved from the equations of motion (a speed-driven engine's torque starts
+smooth instead of ringing). Contacts between listed parts use Bullet meshes with Coulomb friction. Series: every joint's
+values, speeds and accelerations, reactions, motor torques and power, kinetic and potential energy and traced points.
+
+**Structures.** Static and modal studies mesh the bodies of a load case with Netgen (second-order tetrahedra; an
+element a curved mid-side node folds is made straight-sided) and solve them with CalculiX `ccx` (from the PATH, beside
+the program, or `OPAD_CCX`). Loads: `fixed`, `displacement`, `force` (shared over the faces by area), `pressure`,
+`moment`, `gravity` and `bolt_preload` (the bolt's shank is cut and pulled together with the preload through a
+reference node; the shank's axial stress is reported). Results: displacements, stresses and von Mises at the nodes,
+reactions per support, a safety factor per body against its material's yield strength, natural frequencies and mode
+shapes. `render` draws any study frame, field or mode with a colour legend.
+
+**Checked against textbook cases** (tests/test_motion.cpp, test_dynamics.cpp, test_fea.cpp, test_gear.cpp):
+
+| Case | OPAD | Reference |
+|---|---|---|
+| Slider-crank piston path | 6e-7 mm off | x = r cos θ + √(l² − r² sin² θ) |
+| Four-bar coupler curve, rocker swing | 7e-7 mm, 59.5009° | closed form |
+| Planetary set (ring held) | 3.714 × carrier | Willis: 1 + Zr/Zs |
+| Compound pendulum period | < 0.5 % | 2π √(I / m g d) (and the elliptic integral at 90°) |
+| Engine at 3000 rpm: motor work against kinetic energy | 0.13 % | energy balance |
+| Screw jack lifting torque | 1e-8 | m g L / 2π |
+| Gearbox 9:1 input torque under load | 1e-8 | T_out / 9 |
+| Block sliding on a 25° ramp, μ = 0.2 | 2e-8 | g (sin θ − μ cos θ) |
+| Cantilever deflection / first frequency | 1 % / 1.5 % | F L³ / 3 E I (+ shear) / 1.875² / 2π √(E I / ρ A L⁴) |
+| Plate with a hole in tension | 0.3 % | Heywood's Kt (net section) |
+| Bolt preload shank stress | 2–3 % | F / A |
+
+`tools/sim_eval.py <opad-cli>` builds mechanisms through the MCP server the way an agent does (a single-cylinder engine,
+a two-stage gearbox and a planetary set with involute teeth, rack-and-pinion steering, a screw jack, a four-bar
+linkage, knobs snapped into a panel, a block sliding on a ramp, a plate with a hole, a bolted bracket), checks each
+against its closed form and writes a report with pictures and animations. The GUI bench `OPAD_BENCH_SIMULATE` does the
+same through the Simulate workspace's ribbon and panel.
+
+**In the app.** The Simulate workspace's Mechanism tab makes joints from the picked edge or face (the panel's kind), runs
+motion and dynamic studies and plays them back (a frame slider, play, and a chart of any series); its Structure tab puts
+supports and loads on picked faces and shows a static or modal study as a colour map over the deformed parts, with a
+legend. The browser's Simulation folder lists the joints, load cases and studies. Studies run on a worker with progress
+and cancel.
 
 ## Using it in a git repository
 

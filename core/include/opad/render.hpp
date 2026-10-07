@@ -38,6 +38,8 @@ struct RenderItem {
     double w = 0, h = 0;
   };
   std::shared_ptr<const Picture> picture;
+  // A result map (sim/fea.hpp): RGB per mesh vertex, blended across each triangle; empty: the item's colour.
+  std::vector<float> vertex_colors;
 };
 
 struct Camera {
@@ -68,11 +70,18 @@ struct RenderOptions {
   bool smooth = false;              // shading from per-vertex normals instead of flat facets
   std::vector<Ref> highlight;       // faces and edges tinted in orange
   std::vector<std::string> views;   // several fitted preset views ("iso", "front", ...) in one labelled grid
+  // Drawn besides the scene's bodies (a result map's surface; the caller keeps their meshes), and bodies left out.
+  std::vector<RenderItem> extra;
+  std::vector<std::string> hide;
 };
 
 Image render_items(const std::vector<RenderItem>& items, const RenderOptions& opt, json* receipt = nullptr);
 Image render_scene(const Document& doc, const Scene& scene, const RenderOptions& opt, json* receipt = nullptr);
 void write_png(const std::filesystem::path& path, const Image& img);
+// Result maps: the colour of a value at t in 0..1 (blue, cyan, green, yellow, red, as engineering result plots use), and a
+// legend bar with its range drawn at the right of an image.
+std::array<float, 3> result_color(double t);
+void draw_legend(Image& img, const std::string& title, double lo, double hi, const std::string& unit);
 std::string encode_png(const Image& img);
 // A picture of a file (UTF-8 paths) as `size` px square: a .png on white, or a .bgra with a transparent background
 // ("OPADTHMB", width, height, premultiplied BGRA rows). opad-cli thumbnail, Explorer's thumbnails and the start page.

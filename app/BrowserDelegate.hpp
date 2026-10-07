@@ -73,6 +73,7 @@ struct Folder {
   std::function<void(const std::string& id, QMenu& menu)> contextMenu;  // right-click on a row (its id) or the folder (empty id)
   std::function<void(const std::string& id)> activated;                 // double-click on a row
   std::function<void(const std::string& id, const QString& name)> rename;  // an editable row renamed in place; throws to refuse
+  bool startsClosed = false;  // closed the first time it shows (a long list would push the model's rows out of the collapsed browser)
   std::function<bool(const std::vector<std::string>& ids)> remove;  // Del (edit.delete) on its selected rows: true when it took them
 };
 // Its rows are selected like nodes: BrowserPanel::selectionChanged (and the areas' selectionChanged) carry their ids.

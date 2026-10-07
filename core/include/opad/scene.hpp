@@ -163,6 +163,35 @@ struct SheetItem {
   bool unresolved = false;        // a reference names a body that is gone
 };
 
+// ---- motion and simulation (joint / pose / load / study ops, opad/sim/*.hpp). Replay never runs a solver: a joint keeps
+// its frames in each part's own coordinates and a `pose` op the placements the kinematic solver found, so a document opens
+// in the same state everywhere.
+struct Joint {
+  std::string id, name, kind;       // sim::joint_kinds(): revolute, slider, ... and the relations gear, rack_pinion, lead_screw
+  std::string base, part;           // the nodes it joins (base empty: the world); relations: empty
+  Frame at_base, at_part;           // the joint's frame in the base's and in the part's own coordinates (the world's for no base)
+  std::vector<std::string> joints;  // relations: the two joints they couple
+  std::vector<double> values;       // its coordinates now (deg, mm), from its op or the latest pose that set them
+  json def;                         // the effective record: limits, locked, drive, spring, friction, pitch, ratio, ...
+  std::string error;
+};
+
+// A structural load or support on faces, edges or bodies, in a load case (sim/fea.hpp).
+struct Load {
+  std::string id, name, kind, load_case;  // kind: fixed | force | pressure | moment | bolt_preload | gravity | displacement
+  std::vector<Ref> refs;
+  json def;
+  std::string error;
+  bool unresolved = false;
+};
+
+// An analysis definition and what its last run reported (sim/study.hpp): motion (kinematic), dynamic, static, modal.
+struct Study {
+  std::string id, name, kind;
+  json def, result;
+  std::string error;
+};
+
 struct Scene {
   std::string units="mm"; // document input/display unit; stored geometry remains millimetres
   std::vector<std::string> roots;
@@ -178,6 +207,9 @@ struct Scene {
   std::vector<Sheet> sheets;
   std::vector<SheetView> sheet_views;
   std::vector<SheetItem> sheet_items;
+  std::vector<Joint> joints;
+  std::vector<Load> loads;
+  std::vector<Study> studies;
   std::vector<std::string> deleted_ops;  // ids of tombstoned ops
   std::unordered_map<std::string, int> instance_count;  // body key -> number of body nodes
   // The document's own properties (title, number, owner, project, ...): `properties` ops whose target is the header's uuid.
@@ -205,6 +237,9 @@ struct Scene {
   const Sheet* sheet(const std::string& id) const;
   const SheetView* sheet_view(const std::string& id) const;
   const SheetItem* sheet_item(const std::string& id) const;
+  const Joint* joint(const std::string& id) const;
+  const Load* load(const std::string& id) const;
+  const Study* study(const std::string& id) const;
 };
 
 // The log as replay sees it: tombstoned ops dropped, `edit` ops merged into their targets (later edits win,

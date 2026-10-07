@@ -184,6 +184,16 @@ std::vector<FeatureSpec> build_specs() {
       placed({in("diameter", "Coil diameter", "length", "20 mm"), in("pitch", "Pitch", "length", "5 mm"), in("turns", "Turns", "number", "5"),
               choice("section", "Section", {"circle", "square"}), in("size", "Section size", "length", "2 mm"), in("left", "Left-handed", "bool", false)}),
       "new");
+  add("gear", "Gear", "gear", "create",
+      "An involute gear on a plane at the position, its axis the plane's normal: a spur gear (tooth 0 along the plane's X), an internal ring gear "
+      "(gap 0 along X, so a pinion meshes inside it) or a rack (teeth along X from the position, pitch line through it). Standard teeth: "
+      "addendum one module, dedendum 1.25. Pitch diameter = module x teeth; two gears mesh at the sum (internal: the difference) of their pitch radii.",
+      placed({choice("type", "Type", {"spur", "internal", "rack"}), in("module", "Module", "length", "2 mm"), in("teeth", "Teeth", "count", "20"),
+              in("pressure_angle", "Pressure angle", "angle", "20 deg"), in("width", "Face width", "length", "10 mm"),
+              in("bore", "Bore diameter", "length", "0 mm", "type=spur"), in("rim", "Rim diameter", "length", "0 mm", "type=internal"),
+              in("height", "Rack height below the roots", "length", "5 mm", "type=rack"), in("phase", "Phase (turns the teeth)", "angle", "0 deg"),
+              in("backlash", "Backlash", "length", "0 mm")}),
+      "new");
   add("thicken", "Thicken", "thicken", "create", "Give faces a thickness: a solid skin over the picked faces.",
       {pick("faces", "Faces", "faces", 1, 0), in("thickness", "Thickness", "length", "2 mm"), in("flip", "Other side", "bool", false)}, "new");
   add("hole", "Hole", "hole", "create",
@@ -1650,6 +1660,9 @@ std::vector<TopoDS_Shape> world_bodies(const Ctx& ctx, const json& refs, std::ve
 
 }  // namespace
 
+TopoDS_Shape make_gear(const std::string& type, int z, double m, double alpha, double width, double bore, double rim, double backlash, double phase,
+                       double rack_height);  // gear.cpp
+
 Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   const FeatureSpec* spec = feature_spec(kind);
   if (!spec) throw Error("unknown feature kind: " + kind);
@@ -1797,6 +1810,22 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     mk.Build();
     if (!mk.IsDone() || !mk.MakeSolid()) throw Error("the coil could not be built (section too large for the pitch?)");
     apply_operation(ctx, in, moved(outward(mk.Shape()), place), out);
+    return out;
+  }
+  if (kind == "gear") {
+    const Frame frame = ctx.plane(in.value("plane", json{{"base", "xy"}}));
+    const gp_Trsf place = placement(frame, in.contains("x") ? ctx.length(in, "x") : 0.0, in.contains("y") ? ctx.length(in, "y") : 0.0);
+    const std::string type = in.value("type", "spur");
+    const int z = ctx.count(in, "teeth");
+    const double m = ctx.length(in, "module"), alpha = in.contains("pressure_angle") ? ctx.angle(in, "pressure_angle") : 20 * M_PI / 180;
+    const double width = ctx.length(in, "width");
+    auto opt = [&](const char* k) { return in.contains(k) ? ctx.length(in, k) : 0.0; };
+    const double phase = in.contains("phase") ? ctx.angle(in, "phase") : 0.0;
+    const TopoDS_Shape s = make_gear(type, z, m, alpha, width, opt("bore"), opt("rim"), opt("backlash"), phase, in.contains("height") ? ctx.length(in, "height") : 5.0);
+    out.extra["gear"] = {{"pitch_diameter", m * z}, {"tip_diameter", type == "internal" ? m * z - 2 * m : m * z + 2 * m},
+                         {"root_diameter", type == "internal" ? m * z + 2.5 * m : m * z - 2.5 * m}, {"base_diameter", m * z * std::cos(alpha)},
+                         {"circular_pitch", M_PI * m}};
+    apply_operation(ctx, in, moved(s, place), out);
     return out;
   }
   if (kind == "thicken") {

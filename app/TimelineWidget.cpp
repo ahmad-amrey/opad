@@ -72,6 +72,10 @@ QString opTypeIcon(const std::string& type) {
   if (type == "delete") return "delete";
   if (type == "sketch") return "sketch";
   if (type == "feature") return "box";
+  if (type == "joint") return "simJoint";  // the Simulate workspace's (SimulateArea.cpp)
+  if (type == "pose") return "move";
+  if (type == "load") return "simLoad";
+  if (type == "study") return "simStudy";
   return "dot";
 }
 
@@ -480,6 +484,13 @@ QString TimelineWidget::describe(const opad::Op& op) const {
              (f->error.empty() ? QString() : QString::fromUtf8(" — ") + i18n::t(QString::fromStdString(f->error)));
     return QString::fromStdString(d.value("name", op.type));
   }
+  if (op.type == "joint" || op.type == "load" || op.type == "study") {  // the name an edit may have changed
+    if (const opad::Joint* j = m_doc->scene.joint(op.id)) return tr("Joint %1").arg(QString::fromStdString(j->name));
+    if (const opad::Load* l = m_doc->scene.load(op.id)) return tr("%1 in %2").arg(QString::fromStdString(l->name), QString::fromStdString(l->load_case));
+    if (const opad::Study* st = m_doc->scene.study(op.id)) return tr("Study %1").arg(QString::fromStdString(st->name));
+    return QString::fromStdString(d.value("name", op.type));
+  }
+  if (op.type == "pose") return tr("Pose %1").arg(QString::fromStdString(d.value("name", "")));
   if (op.type == "appearance") return tr("Appearance %1").arg(target);
   if (op.type == "transform") return tr("Transform %1").arg(target);
   if (op.type == "reparent") return tr("Reparent %1").arg(target);

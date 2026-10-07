@@ -100,8 +100,12 @@ int main(){try {
   // An agent's evaluation (smartknob): git tools' refusals and previews said more (+0.66 KB, to 133329), tree paging and
   // viewport_image's opt-in visible_ids (+0.28 KB): replies they shrink by tens of KB; open_document and new_document
   // (+1.6 KB with their output schemas), so an agent starts without a person or the CLI.
-  CHECK(live<138400);  // both mcp-eval fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
-  CHECK(headless<79100);  // 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
+  // Motion and simulation (+15.0 KB live, measured 152886; +6.9 KB headless, measured 85949): joint (joints, relations and
+  // snapping, its frames as references or axes), joint_set, mechanism (with the engines), study (motion, dynamic, static,
+  // modal), load, the gear feature kind, and joint steps in model_batch; joint_set and load stay out of batches and a load's
+  // faces take a light schema (on) to keep it there.
+  CHECK(live<153400);  // 138400 before motion and simulation; both mcp-eval fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  CHECK(headless<86500);  // 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

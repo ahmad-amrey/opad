@@ -10,6 +10,7 @@
 #include "opad/drawing/sheet.hpp"
 #include "opad/assets.hpp"
 #include "opad/scene.hpp"
+#include "opad/sim/joints.hpp"
 
 namespace opad {
 namespace {
@@ -64,7 +65,7 @@ const std::vector<std::string>& Document::op_types() {
   static const std::vector<std::string> t = {"import",     "reparent",    "transform", "appearance", "rename", "annotation",
                                              "measurement", "section",    "view",      "delete",     "param",  "sketch",
                                              "feature",    "edit",        "regen", "units",      "sheet",  "sheet_view",
-                                             "sheet_item", "properties"};
+                                             "sheet_item", "properties", "joint", "pose", "load", "study"};
   return t;
 }
 
@@ -214,6 +215,14 @@ void Document::validate_op(const json& op) {
     if (!op.contains("results") || !op["results"].is_object()) throw Error("regen: 'results' must be an object");
   } else if (drawing::is_sheet_record(type)) {
     drawing::validate_record(op);
+  } else if (type == "joint") {
+    sim::validate_joint_op(op);
+  } else if (type == "pose") {
+    sim::validate_pose_op(op);
+  } else if (type == "load") {
+    sim::validate_load_op(op);
+  } else if (type == "study") {
+    sim::validate_study_op(op);
   } else if (type == "properties") {
     require(op, "target", "uuid");
     if (!op.contains("set") || !op["set"].is_object() || op["set"].empty()) throw Error("properties: 'set' must be a non-empty object");

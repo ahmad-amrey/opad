@@ -26,7 +26,8 @@
 
 // Edit: an appearance being edited and not written yet (the opacity slider while it is dragged), over the document's.
 // Navigation: parts hidden while the view moves (Viewport::setSmallPartFilter), over everything else.
-enum class LookSource { Edit, Asset, Lock, Activation, Compare, Explode, Candidate, Navigation, Count };
+// Simulate: bodies hidden under a structural study's result map (SimulateArea).
+enum class LookSource { Edit, Asset, Lock, Activation, Compare, Explode, Candidate, Navigation, Simulate, Count };
 constexpr std::size_t kLookSources = static_cast<std::size_t>(LookSource::Count);
 
 struct LookDelta {
