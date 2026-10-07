@@ -371,7 +371,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     `max_temperature_C` (and where), per body max and mean, `heat_W`, `to_air_W`, `radiated_W`, `natural_convection`
     (h per face) and `fans` (fan, flow m3/h and CFM, pressure Pa, channel speed, Reynolds, h, air rise, the heatsink's
     fins and thermal resistance degC/W). Convection that depends on the temperatures is solved again until they
-    settle (`solves`). `render` maps `field: "temperature"` (`t` or `frame` over time).
+    settle (`solves`). `render` maps `field: "temperature"` (`t` or `frame` over time). `air: "cfd"` solves the air
+    instead (OpenFOAM, `engines.cfd`; steady, one fan or one forced convection, heat in whole bodies; minutes, not
+    seconds): `cfd: {cell_size mm, upstream, downstream, padding, flow_iterations, heat_iterations, streamlines}`; the
+    summary adds the fan's `flow_m3h`, `inlet_static_Pa`, `outlet_air_C`, `heat_to_air_W`, `cells`, and `render` draws
+    the streamlines (`field: "air_speed"` colours them by speed; `streamlines: false` hides them).
 - `load` adds to a case (`case`, default "Load case 1") on faces (`on`: references or rules): `fixed` and `displacement` (`vector` mm), `force`
   (`vector` N, spread by area), `pressure` (`value` MPa into the face; negative pulls), `moment` (`vector` N.mm about the
   faces' centre), `gravity` (`vector` mm/s2) and `bolt_preload` (`on: [bolt body]`, `value` N; the shank is cut at its

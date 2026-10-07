@@ -17,9 +17,11 @@ them.
 | The frequencies a part rings at | Vibration modes study | Netgen mesh + CalculiX |
 | How a 3D-printed part fails: which layer, which way | Printed part + static study | as above, with printed materials |
 | How hot a part gets: heatsinks, fans, still air, warm-up | Thermal study | Netgen mesh + CalculiX, the air from correlations |
+| Where a fan's air goes, and how hot the parts get in it | Thermal study, *with the air solved* | OpenFOAM (snappyHexMesh, simpleFoam, chtMultiRegionSimpleFoam) |
 
 Static and modal studies need CalculiX's `ccx` on the PATH (or beside OPAD, or `OPAD_CCX`); the dynamic study needs a
-build with Project Chrono. A study that needs an engine this machine lacks says so; `opad-cli mechanism` lists them.
+build with Project Chrono; the air solved needs OpenFOAM (Ubuntu: `apt install openfoam`; or `OPAD_OPENFOAM` set to
+its directory). A study that needs an engine this machine lacks says so; `opad-cli mechanism` lists them.
 
 ## The workspace in two minutes
 
@@ -231,7 +233,8 @@ or `opad-cli` (below). Very thin parts, where walls meet, print solid: the study
    - **Radiation** (emissivity: bare aluminium 0.1, anodised or painted 0.85) and **Fixed temperature** (a face on a
      cold plate) work the same way.
 4. Press **Thermal study** and choose **Steady** (where the temperatures settle) or **Over time** (how fast it warms up,
-   from the room's 25 °C).
+   from the room's 25 °C). With a fan or forced convection, and OpenFOAM installed, **Steady, with the air solved**
+   solves the air itself (see below).
 5. The panel gives the hottest temperature of each part, the heat that reached the air and, for a fan, its air flow, the
    pressure it works against, how much the air warms and the heatsink's resistance in °C/W. The **Result map** shows the
    temperatures; over time, **Play** shows them rising.
@@ -244,6 +247,15 @@ curve meets the pressure the fins take to push air through them, which sets the 
 between the fins follows from it, and the air warms along the fins as it takes their heat. Still air uses the textbook
 correlations for plates and for fins facing each other. Each is solved again with the temperatures until they settle.
 The fan's air is taken to go through the fins, as in a duct or under a shroud; air that goes round them cools less.
+
+**With the air solved (CFD)**: the parts sit in a duct of air a little longer than them; OpenFOAM meshes the air and the
+parts together, solves the fan's flow through and around the fins (the fan finds its own operating point against
+them), then the heat: conduction in the parts and the air carrying it away, all at once. It takes minutes rather than
+seconds. The **Result map** draws the air's streamlines over the parts' temperatures; choose **Air speed** to colour
+them by how fast the air moves. It shows what the correlations cannot: air slipping round the fins instead of through
+them, dead corners, a part downstream in another's warm air. A study that has not settled says so; finer cells
+(`cfd.cell_size` mm) cost time but sharpen thin fins. Only one fan (or one stream), heat sources in whole parts, and
+the parts' heat leaves only by the moving air.
 
 ## Settings the panel does not show
 
@@ -261,7 +273,7 @@ or ask an agent: *"Run the motion study for 5 seconds with the crank turning at 
 | Motion | `duration` s, `frames`, `drivers: [{joint, to \| speed \| expr \| table, profile}]`, `traces: [{part, point, name}]` |
 | Dynamic | `duration`, `frames`, `step`, `gravity` (true, false or [x, y, z] mm/s²), `contacts`, `friction`, `restitution`, `free`; on joints: `drive` (position, speed, torque, force), `spring`, `friction`, `limits` |
 | Static, modal | `case`, `bodies`, `mesh_size` mm, `modes`, `materials: {"all" \| body: {E, nu, density, yield}}` |
-| Thermal | `ambient` °C, `gravity` (down, for natural convection), `duration` s and `frames` (over time), `mesh_size`, `materials: {"all" \| body: {k, cp, emissivity}}`; on loads: `fan` (an id or `{flow, pressure, curve}`), `vector`, `count`, `ambient` |
+| Thermal | `ambient` °C, `gravity` (down, for natural convection), `duration` s and `frames` (over time), `mesh_size`, `materials: {"all" \| body: {k, cp, emissivity}}`; on loads: `fan` (an id or `{flow, pressure, curve}`), `vector`, `count`, `ambient`; `air: "cfd"` with `cfd: {cell_size, upstream, downstream, padding, flow_iterations, heat_iterations, streamlines}` |
 | Printed part | `print: {profile, material (or {base, E, nu, kt, kz, X, Y, Z, S, C, density}), build_direction, layer_height, line_width, walls, top_layers, bottom_layers, infill, pattern, infill_angle, flow, bodies}` |
 
 The full reference is the agent guide's *Motion and simulation* section (`core/res/agent_guide.md`), which agents read

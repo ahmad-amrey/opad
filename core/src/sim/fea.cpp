@@ -35,6 +35,7 @@
 #include "opad/materials.hpp"
 #include "opad/sim/joints.hpp"
 #include "opad/sim/airflow.hpp"
+#include "opad/sim/cfd.hpp"
 #include "opad/sim/printing.hpp"
 
 namespace opad::sim {
@@ -431,6 +432,12 @@ double probe(const FeaResult& r, const Vec3& at, const std::string& field, int m
   };
   // Inside an element: its corner values weighed by the point's barycentric coordinates (the best element when the point
   // is on the surface or a hair outside it).
+  if (r.tets.empty()) {  // a surface only (the CFD air's results): the nearest node
+    size_t best = 0;
+    for (size_t i = 0; i < r.nodes.size(); ++i)
+      if (norm(sub(r.nodes[i], at)) < norm(sub(r.nodes[best], at))) best = i;
+    return value(best);
+  }
   double best_out = 1e300;
   double best_value = 0;
   for (const auto& t : r.tets) {
@@ -465,6 +472,9 @@ json engines() {
   const auto ccx = ccx_program();
   const bool fea = netgen_available() && !ccx.empty();
   json out = {{"motion", true}, {"dynamic", chrono}, {"static", fea}, {"modal", fea}, {"thermal", fea}, {"netgen", netgen_available()}};
+  const OpenFoam foam = openfoam();
+  out["cfd"] = foam.found();  // thermal studies with the air solved (settings.air = "cfd")
+  if (foam.found()) out["openfoam"] = path_to_utf8(foam.wrapper.empty() ? foam.bin : foam.wrapper);
   out["ccx"] = ccx.empty() ? json(nullptr) : json(path_to_utf8(ccx));
   if (!fea)
     out["note"] = ccx.empty() ? "static, modal and thermal studies need CalculiX's ccx: install it (Ubuntu: apt install calculix-ccx; Windows: put ccx.exe beside OPAD) or set OPAD_CCX"

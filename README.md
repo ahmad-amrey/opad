@@ -147,7 +147,8 @@ kinematic solver, and every study is an op on the timeline:
   the study says where the part fails first, how (along the roads, across them, between layers) and on which layer;
 - **Thermal**: heat sources, fixed temperatures, convection (still air, moving air, or a known coefficient), radiation
   and fans through finned heatsinks, steady or over time: temperatures, where the heat goes, each fan's operating
-  point and air temperature rise, the heatsink's °C/W.
+  point and air temperature rise, the heatsink's °C/W; or, with OpenFOAM, the air itself solved around the parts
+  (conjugate heat transfer) with streamlines.
 
 Each engine is checked against textbook cases: a pendulum's period, a slider-crank's energy balance, a screw jack's
 torque, a planetary set's Willis ratio, a cantilever's deflection and first frequency, a plate with a hole's stress

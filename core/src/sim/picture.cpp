@@ -34,7 +34,13 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
     out.info["study"] = s->name;
     if (run->fea) {
       const FeaResult& r = *run->fea;
-      const std::string field = st.value("field", r.kind == "modal" ? "mode" : r.kind == "thermal" ? "temperature" : "von_mises");
+      std::string field = st.value("field", r.kind == "modal" ? "mode" : r.kind == "thermal" ? "temperature" : "von_mises");
+      // The CFD air's streamlines (sim/cfd.hpp): coloured on the temperature scale with the parts, or by the air's speed
+      // (field air_speed: the parts plain); streamlines false hides them.
+      const bool air_speed = field == "air_speed";
+      if (air_speed && r.streamlines.empty()) throw Error("render: air_speed is for a thermal study with the CFD air (settings.air cfd)");
+      if (air_speed) field = "temperature";
+      const bool lines = !r.streamlines.empty() && st.value("streamlines", true) && (field == "temperature");
       // A thermal study over time: the frame asked for (t or frame), else its last.
       const std::vector<double>* temps = &r.temperature;
       if (r.kind == "thermal" && !r.temperature_frames.empty() && (st.contains("t") || st.contains("frame"))) {
@@ -67,6 +73,14 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
           dmax = std::max(dmax, std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
           for (int c = 0; c < 3; ++c) a[size_t(c)] = std::min(a[size_t(c)], r.nodes[size_t(k)][size_t(c)]), b[size_t(c)] = std::max(b[size_t(c)], r.nodes[size_t(k)][size_t(c)]);
         }
+      if (field == "temperature" && lines && !air_speed)
+        for (const auto& l : r.streamline_temperature)
+          for (double v : l) lo = std::min(lo, v), hi = std::max(hi, v);
+      if (air_speed) {
+        lo = 0, hi = -1e300;
+        for (const auto& l : r.streamline_speed)
+          for (double v : l) hi = std::max(hi, v);
+      }
       if (hi <= lo) hi = lo + 1e-12;
       // A stress singularity (a re-entrant corner where bonded parts meet, a point load) would paint the whole part in the
       // scale's bottom colour: the scale stops at the 99.5th percentile when the peak is far above it (or at `max`), and
@@ -96,19 +110,33 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
             index[size_t(k)] = int(m.positions.size() / 3);
             for (int c = 0; c < 3; ++c) m.positions.push_back(float(r.nodes[size_t(k)][size_t(c)] + scale * (*disp)[size_t(k)][size_t(c)]));
             const auto col = result_color(std::clamp((value[size_t(k)] - lo) / (hi - lo), 0.0, 1.0));
-            colors.insert(colors.end(), col.begin(), col.end());
+            if (air_speed) colors.insert(colors.end(), {0.72f, 0.72f, 0.75f});
+            else colors.insert(colors.end(), col.begin(), col.end());
           }
           m.indices.push_back(uint32_t(index[size_t(k)]));
         }
       RenderItem item;
       item.mesh = &m;
       item.vertex_colors = std::move(colors);
+      if (lines)
+        for (size_t l = 0; l < r.streamlines.size(); ++l) {
+          std::vector<std::array<float, 3>> poly, col;
+          for (size_t k = 0; k < r.streamlines[l].size(); ++k) {
+            const auto& q = r.streamlines[l][k];
+            poly.push_back({float(q[0]), float(q[1]), float(q[2])});
+            const double v = air_speed ? r.streamline_speed[l][k] : r.streamline_temperature[l][k];
+            const auto c = result_color(std::clamp((v - lo) / (hi - lo), 0.0, 1.0));
+            col.push_back({c[0], c[1], c[2]});
+          }
+          item.lines.push_back(std::move(poly));
+          item.line_colors.push_back(std::move(col));
+        }
       o.extra.push_back(std::move(item));
       for (const auto& body : r.bodies) o.hide.push_back(body);
       out.legend = true;
-      out.title = field == "von_mises" ? "VON MISES" : field == "failure_index" ? "FAILURE INDEX" : field == "temperature" ? "TEMPERATURE"
+      out.title = air_speed ? "AIR SPEED" : field == "von_mises" ? "VON MISES" : field == "failure_index" ? "FAILURE INDEX" : field == "temperature" ? "TEMPERATURE"
                   : r.kind == "modal" ? "MODE " + std::to_string(mode + 1) : "DISPLACEMENT";
-      out.unit = field == "von_mises" ? "MPa" : field == "failure_index" ? "" : field == "temperature" ? "C" : "mm";
+      out.unit = air_speed ? "m/s" : field == "von_mises" ? "MPa" : field == "failure_index" ? "" : field == "temperature" ? "C" : "mm";
       if (r.kind == "modal") out.unit = "", out.title += " " + std::to_string(int(std::lround(r.frequencies[size_t(mode)]))) + " HZ";
       if (capped) {
         std::ostringstream pk;
@@ -117,7 +145,8 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
         out.title += " (PEAK " + pk.str() + " ABOVE)";
       }
       out.lo = lo, out.hi = hi;
-      out.info["field"] = field;
+      out.info["field"] = air_speed ? "air_speed" : field;
+      if (lines) out.info["streamlines"] = r.streamlines.size();
       out.info["range"] = {lo, hi};
       if (capped) out.info["peak"] = peak, out.info["scale_capped"] = true;
       out.info["deformation_scale"] = scale;

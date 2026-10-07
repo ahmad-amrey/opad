@@ -117,7 +117,8 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
            "shows it warming.")},
        {"inspect.material", "select.bodies", "simulate.heat", "simulate.fan", "simulate.convection", "simulate.thermal", "simulate.results"},
        tr("The fins are found in the heatsink's shape: straight plate fins along the air. The fan's air is taken to go through the fins, as in a "
-          "duct or with a shroud; air that goes round them cools less.")},
+          "duct or with a shroud; air that goes round them cools less. With OpenFOAM installed, Steady, with the air solved works out where the "
+          "air really goes and draws its streamlines (minutes rather than seconds).")},
   };
   for (UseCase& u : list) {
     for (QString& s : u.steps) s = x(s);

@@ -42,6 +42,10 @@ struct FeaResult {
   // thermal
   std::vector<double> temperature;             // degC, steady or the last frame
   std::vector<std::vector<double>> temperature_frames;  // [frame][node] over time (StudyRun::t)
+  // the CFD air (sim/cfd.hpp): the air's way through the parts from points across the inlet, with its speed (m/s) and
+  // temperature (degC) at each point
+  std::vector<std::vector<Vec3>> streamlines;
+  std::vector<std::vector<double>> streamline_speed, streamline_temperature;
   // modal
   std::vector<double> frequencies;             // Hz
   std::vector<std::vector<Vec3>> modes;        // shape of each mode at each node (mass normalised, as ccx gives them)

@@ -508,6 +508,13 @@ follows (Teertstra-Yovanovich-Culham), and the air warms along the fins. Convect
 solved again until they settle. Results: temperatures per part, where the heat goes, each fan's flow, pressure and air
 rise, the heatsink's resistance; temperature maps, and warm-up curves over time.
 
+**The air solved.** With a fan or a forced stream, `air: "cfd"` hands the whole problem to OpenFOAM instead: a duct of
+air around the parts (blockMesh), the parts cut out of it as regions of their own (snappyHexMesh, splitMeshRegions),
+the flow (simpleFoam, laminar, the fan as a pressure inlet from its curve), then conjugate heat transfer on that flow
+(chtMultiRegionSimpleFoam) until the parts' temperatures stop moving. Results: the parts' surface temperatures, the
+fan's flow and the pressure against it, the air leaving and the heat it carries, and streamlines from the inlet coloured
+by temperature or speed, drawn over the map in the app and in `render`.
+
 **Printed parts.** A static or modal study's bodies can be 3D printed (FFF/FDM): the Printed part dialog (or
 `settings.print`) takes the filament, build direction, layer height, line width, walls, top and bottom layers, infill
 density, pattern and angle and flow, typed in or read from a slicer's own file (PrusaSlicer .ini, OrcaSlicer and Bambu
@@ -524,7 +531,7 @@ ones would mix a stiff skin's stress into the soft infill beside it), with what 
 between layers or shear, and in which region. The summary gives the regions' volumes, stiffness and strength, the
 printed mass, the safety factor and where it fails first (height and layer); the result map adds the failure index.
 
-**Checked against textbook cases** (tests/test_motion.cpp, test_dynamics.cpp, test_fea.cpp, test_gear.cpp, test_print.cpp, test_thermal.cpp):
+**Checked against textbook cases** (tests/test_motion.cpp, test_dynamics.cpp, test_fea.cpp, test_gear.cpp, test_print.cpp, test_thermal.cpp, test_cfd.cpp):
 
 | Case | OPAD | Reference |
 |---|---|---|

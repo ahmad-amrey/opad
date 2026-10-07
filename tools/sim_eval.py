@@ -748,6 +748,40 @@ def heatsink_fan(s):
     s.picture("heatsink_warmup_30s.png", study={"id": warm["id"], "t": 30}, view="iso")
 
 
+@scenario("heatsink_cfd", "The 80 mm fan on the finned heatsink with the air solved (OpenFOAM) against the correlations; streamlines")
+def heatsink_cfd(s):
+    if not s.run("mechanism").get("engines", {}).get("cfd"):
+        s.note("OpenFOAM is not installed: the air solved is skipped")
+        return
+    hs = s.box("Heatsink", (0, 0, 0), 60, 60, 5, centered=False, color=[0.75, 0.77, 0.8])
+    gap = (60 - 10 * 1.5) / 9
+    for i in range(10):
+        s.run("feature", kind="box", inputs={"plane": {"origin": [0, i * (1.5 + gap), 5], "normal": [0, 0, 1]}, "length": 60, "width": 1.5, "height": 30,
+                                             "centered": False, "operation": "join", "targets": [hs]})
+    chip = s.box("Chip", (20, 20, -2), 20, 20, 2, centered=False, color=[0.15, 0.15, 0.17])
+    s.material([hs], "aluminium-6061")
+    s.run("load", kind="heat", on=[chip], value=30, case="Fan")
+    s.run("load", kind="fan", on=[hs], fan="80x25", vector=[1, 0, 0], case="Fan")
+    settings = {"case": "Fan", "ambient": 25, "bodies": [hs, chip], "materials": {chip: {"k": 150, "cp": 700, "density": 2.33, "name": "Silicon"}}}
+    model = s.run("study", kind="thermal", name="Correlations", settings=dict(settings, mesh_size=3))
+    cfd = s.run("study", kind="thermal", name="Air solved", settings=dict(settings, air="cfd"))
+    mf, cf = model["fans"][0], cfd["fans"][0]
+    s.check("the heat put in leaves with the air (W)", cf["heat_to_air_W"], 30, 0.05)
+    rho, cp = 101325 / (287.05 * 298.15), 1006.0
+    s.check("the air warms by Q / (rho V cp) (degC)", cf["air_rise_C"], 30 / (rho * cf["flow_m3h"] / 3600 * cp), 0.05)
+    s.check("the fan's flow against the correlations' operating point (m3/h)", cf["flow_m3h"], mf["flow_m3h"], 0.2)
+    s.check("the chip's rise over the air against the correlations (degC)", cfd["bodies"]["Chip"]["max_temperature_C"] - 25,
+            model["bodies"]["Chip"]["max_temperature_C"] - 25, 0.2)
+    s.expect("streamlines from the inlet", cfd.get("streamlines", 0) > 10, str(cfd.get("streamlines")))
+    s.note(f"correlations: {mf['flow_m3h']:.1f} m3/h, chip {model['bodies']['Chip']['max_temperature_C']:.1f} degC; "
+           f"CFD: {cf['flow_m3h']:.1f} m3/h at {cf['inlet_static_Pa']:.1f} Pa, chip {cfd['bodies']['Chip']['max_temperature_C']:.1f} degC, "
+           f"outlet air {cf['outlet_air_C']:.2f} degC, {cfd['cells']} cells, {cfd['heat_iterations']} heat iterations")
+    for w in cfd.get("warnings", []):
+        s.note("CFD: " + w)
+    s.picture("heatsink_cfd_temperature.png", study={"id": cfd["id"]}, view="iso")
+    s.picture("heatsink_cfd_air_speed.png", study={"id": cfd["id"], "field": "air_speed"}, view="iso")
+
+
 # ======================================================================================================== runner
 def write_markdown(report, out):
     """report.md from a report (as report.json keeps it): a table per scenario, its notes and pictures."""

@@ -1,7 +1,9 @@
 #include "SimulateArea.hpp"
 
+#include <Graphic3d_ArrayOfPolylines.hxx>
 #include <Graphic3d_ArrayOfTriangles.hxx>
 #include <Graphic3d_AspectFillArea3d.hxx>
+#include <Graphic3d_AspectLine3d.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Prs3d_Presentation.hxx>
 #include <PrsMgr_PresentationManager.hxx>
@@ -42,6 +44,7 @@
 #include "opad/geometry.hpp"
 #include "opad/render.hpp"
 #include "opad/sim/airflow.hpp"
+#include "opad/sim/cfd.hpp"
 #include "opad/sim/fea.hpp"
 #include "opad/sim/joints.hpp"
 
@@ -83,10 +86,28 @@ class ResultMap : public AIS_InteractiveObject {
   std::vector<opad::Vec3> points;              // deformed node positions
   std::vector<std::array<float, 3>> colours;   // per node
   std::vector<std::array<int, 3>> triangles;
+  // The CFD air's streamlines (sim/cfd.hpp), a colour per point.
+  std::vector<std::vector<opad::Vec3>> lines;
+  std::vector<std::vector<std::array<float, 3>>> lineColours;
 
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, Standard_Integer) override {
     if (triangles.empty()) return;
+    if (!lines.empty()) {
+      int vertices = 0;
+      for (const auto& l : lines) vertices += int(l.size());
+      Handle(Graphic3d_ArrayOfPolylines) polys = new Graphic3d_ArrayOfPolylines(vertices, int(lines.size()), 0, Graphic3d_ArrayFlags_VertexColor);
+      for (size_t l = 0; l < lines.size(); ++l) {
+        polys->AddBound(int(lines[l].size()));
+        for (size_t k = 0; k < lines[l].size(); ++k) {
+          const auto& c = lineColours[l][k];
+          polys->AddVertex(gp_Pnt(lines[l][k][0], lines[l][k][1], lines[l][k][2]), Quantity_Color(c[0], c[1], c[2], Quantity_TOC_sRGB));
+        }
+      }
+      const Handle(Graphic3d_Group) group = prs->NewGroup();
+      group->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(Quantity_NOC_WHITE, Aspect_TOL_SOLID, 2.0));
+      group->AddPrimitiveArray(polys);
+    }
     Handle(Graphic3d_ArrayOfTriangles) tris =
         new Graphic3d_ArrayOfTriangles(int(3 * triangles.size()), 0, Graphic3d_ArrayFlags_VertexNormal | Graphic3d_ArrayFlags_VertexColor);
     for (const auto& t : triangles) {
@@ -179,6 +200,8 @@ QString summaryText(const json& s) {
       lines << Simulate::tr("%1: %2 m³/h at %3 Pa, air +%4 °C, heatsink %5 °C/W")
                    .arg(QString::fromStdString(v.value("name", "")), number(v.value("flow_m3h", 0.0)), number(v.value("pressure_Pa", 0.0)),
                         number(v.value("air_rise_C", 0.0)), number(v.value("thermal_resistance_C_W", 0.0)));
+  if (s.value("air", "") == "cfd")
+    lines << Simulate::tr("Air solved (OpenFOAM): %1 cells, %2 streamlines").arg(number(s.value("cells", 0.0)), number(s.value("streamlines", 0.0)));
   add(Simulate::tr("Largest displacement"), s.value("max_displacement_mm", json()), "mm");
   if (const json f = s.value("frequencies_Hz", json()); f.is_array() && !f.empty()) {
     QStringList fs;
@@ -686,9 +709,15 @@ void Simulate::newStudy(const QString& kind) {
       throw opad::UserHint("A thermal study needs heat: add a Heat source on the part that warms up, and a way for the heat to leave (Convection, Fan, Radiation or Fixed temperature).");
     settings = {{"case", heat->load_case}};
     bool ok = true;
-    const QStringList ways = {tr("Steady: where the temperatures settle"), tr("Over time: how fast it warms up")};
+    QStringList ways = {tr("Steady: where the temperatures settle"), tr("Over time: how fast it warms up")};
+    // The air solved (sim/cfd.hpp): for a fan or a stream, when OpenFOAM is installed.
+    const bool moving = std::any_of(s.loads.begin(), s.loads.end(), [&](const opad::Load& l) {
+      return l.load_case == heat->load_case && (l.kind == "fan" || (l.kind == "convection" && l.def.value("h", json()) == "forced"));
+    });
+    if (moving && opad::sim::openfoam().found()) ways << tr("Steady, with the air solved (CFD, OpenFOAM): slower, sees where the air goes");
     const QString way = QInputDialog::getItem(services().window(), tr("Thermal study"), tr("What to find:"), ways, 0, false, &ok);
     if (!ok) return;
+    if (ways.size() > 2 && way == ways[2]) settings["air"] = "cfd";
     if (way == ways[1]) {
       const double seconds = QInputDialog::getDouble(services().window(), tr("Thermal study"), tr("How long, in seconds:"), 600, 1, 1e7, 0, &ok);
       if (!ok) return;
@@ -836,6 +865,7 @@ void Simulate::showRun() {
     SimulatePanel::Entries fields;
     if (m_run->kind == "thermal") {
       fields = {{"temperature", tr("Temperature (°C)")}};
+      if (!m_run->fea->streamlines.empty()) fields.push_back({"air_speed", tr("Air speed (m/s)")});
     } else if (m_run->kind == "static") {
       fields = {{"von_mises", tr("von Mises stress (MPa)")}, {"displacement", tr("Displacement (mm)")}};
       if (!m_run->fea->failure_index.empty()) fields.push_back({"failure_index", tr("Failure index, printed (1 fails)")});
@@ -1055,7 +1085,7 @@ void Simulate::showResults(bool on) {
       for (size_t i = 0; i < n; ++i) value[i] = std::sqrt(shape[i][0] * shape[i][0] + shape[i][1] * shape[i][1] + shape[i][2] * shape[i][2]);
       title = tr("Displacement");
       unit = "mm";
-    } else if (m_field == "temperature" && r.temperature.size() == n) {
+    } else if ((m_field == "temperature" || m_field == "air_speed") && r.temperature.size() == n) {
       const bool frames = !r.temperature_frames.empty() && m_frame >= 0 && size_t(m_frame) < r.temperature_frames.size();
       value = frames ? r.temperature_frames[size_t(m_frame)] : r.temperature;
       title = tr("Temperature");
@@ -1081,14 +1111,25 @@ void Simulate::showResults(bool on) {
   const double scale = umax > 0 ? 0.05 * size / umax : 0;
   double vlo = 1e300, vhi = -1e300;
   for (double v : value) vlo = std::min(vlo, v), vhi = std::max(vhi, v);
-  if (m_field == "temperature")  // over time: one scale for every frame, so that the colours compare
+  if (m_field == "temperature") {  // over time: one scale for every frame, so that the colours compare
     for (const auto& f : r.temperature_frames)
       for (double v : f) vlo = std::min(vlo, v), vhi = std::max(vhi, v);
+    for (const auto& l : r.streamline_temperature)  // the air on the parts' scale
+      for (double v : l) vlo = std::min(vlo, v), vhi = std::max(vhi, v);
+  }
+  const bool airSpeed = m_field == "air_speed";
+  if (airSpeed) {  // the streamlines by the air's speed, the parts plain
+    vlo = 0, vhi = 0;
+    for (const auto& l : r.streamline_speed)
+      for (double v : l) vhi = std::max(vhi, v);
+    title = tr("Air speed");
+    unit = "m/s";
+  }
   if (!(vhi > vlo)) vhi = vlo + 1;
   // A stress singularity (bonded parts' re-entrant corner) would leave the rest in the bottom colour: the scale stops at
   // the 99.5th percentile when the peak is far above it, and the legend gives the peak.
   const double peak = vhi;
-  if (mode < 0 && m_field != "displacement" && m_field != "temperature" && value.size() > 10) {
+  if (mode < 0 && m_field != "displacement" && m_field != "temperature" && !airSpeed && value.size() > 10) {
     std::vector<double> sorted = value;
     const size_t at = size_t(0.995 * double(sorted.size() - 1));
     std::nth_element(sorted.begin(), sorted.begin() + long(at), sorted.end());
@@ -1099,9 +1140,16 @@ void Simulate::showResults(bool on) {
   map->colours.resize(n);
   for (size_t i = 0; i < n; ++i) {
     for (int c = 0; c < 3; ++c) map->points[i][size_t(c)] = r.nodes[i][size_t(c)] + scale * shape[i][size_t(c)];
-    map->colours[i] = opad::result_color(std::clamp((value[i] - vlo) / (vhi - vlo), 0.0, 1.0));
+    map->colours[i] = airSpeed ? std::array<float, 3>{0.72f, 0.72f, 0.75f} : opad::result_color(std::clamp((value[i] - vlo) / (vhi - vlo), 0.0, 1.0));
   }
   map->triangles = r.skin;
+  if (m_field == "temperature" || airSpeed)
+    for (size_t l = 0; l < r.streamlines.size(); ++l) {
+      const auto& field = airSpeed ? r.streamline_speed[l] : r.streamline_temperature[l];
+      map->lines.push_back(r.streamlines[l]);
+      map->lineColours.emplace_back();
+      for (double v : field) map->lineColours.back().push_back(opad::result_color(std::clamp((v - vlo) / (vhi - vlo), 0.0, 1.0)));
+    }
   m_map = map;
   std::map<std::string, LookDelta> hide;
   for (const auto& b : r.bodies) {

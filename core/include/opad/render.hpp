@@ -28,6 +28,7 @@ struct RenderItem {
   // TODO 10 B9: polylines (local coordinates) drawn over the shading: the model's edges, and highlighted edges in the
   // highlight colour; face ordinals tinted with it.
   std::vector<std::vector<std::array<float, 3>>> lines, highlight_lines;
+  std::vector<std::vector<std::array<float, 3>>> line_colors;  // RGB per point of `lines` (streamlines); empty: the edges' dark
   std::vector<int> highlight_faces;
   std::map<int, std::array<float, 3>> face_colors;  // face ordinal -> its own colour (FaceColors, UI-74)
   // An image canvas's picture (opad/canvas.hpp, UI-70): RGB rows from the top, laid on the body's w x h rectangle (local XY,
