@@ -6,6 +6,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/drawing_sketch.hpp"
+#include "opad/design/mesh_solid.hpp"
 #include "opad/design/provenance.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_shapes.hpp"
@@ -252,6 +253,27 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
     json out=design::apply_ops(doc,{design::make_sketch_op(a.value("name","Converted drawing"),plane,sketch.to_json())},a.value("by",""));
     out["sketch_id"]=out["ids"][0];out["frame"]=design::frame_result(frame);return out;
   });
+
+  reg("mesh_to_solid", "Rebuild a mesh body (STL, OBJ, 3MF) as a solid: a sketch and an extrusion or revolution when the mesh is one, else fitted planes, cylinders, cones, spheres and tori; reports its deviation from the mesh",
+      {{"doc", "path"}, {"body", "uuid - a mesh body"}, {"tolerance", "number, mm - default 1/2000 of the mesh's size"},
+       {"angle", "number, deg - largest angle between facets of one surface; default 35"}, {"mode", "auto|solid"},
+       {"name", "string - the new body's name"}, {"remove_source", "bool"}, {"by", "string"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        const Scene scene = resolve(doc);
+        design::MeshConversionOptions o;
+        o.solid.tolerance = a.value("tolerance", 0.0);
+        o.solid.angle = a.value("angle", 35.0);
+        o.mode = a.value("mode", "auto");
+        if (o.mode != "auto" && o.mode != "solid") throw Error("mode is auto or solid");
+        o.name = a.value("name", "");
+        o.remove_source = a.value("remove_source", false);
+        auto conversion = design::convert_mesh(doc, scene, a.at("body").get<std::string>(), o);
+        json out = conversion.report;
+        const json committed = design::commit(doc, std::move(conversion.plan), a.value("by", ""));
+        if (committed.contains("ids")) out["ids"] = committed["ids"];
+        return out;
+      });
 
   reg("sketch_edit", "Replace a sketch's geometry (and optionally its name); features built on it are regenerated. Ids: one space for points, entities, constraints, images and patterns, as in sketch",
       {{"doc", "path"}, {"target", "uuid - sketch op id"}, {"geometry", "object"}, {"plane", "object"}, {"name", "string"}, {"by", "string"}}, true, [](Document* d, const json& a) {

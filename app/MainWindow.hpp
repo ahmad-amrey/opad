@@ -228,6 +228,7 @@ class MainWindow : public QMainWindow {
   void exportDialog(std::vector<std::string> ids = {});
   void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker (ExportJob.hpp), the result in m_lastExport
   void drawingToSketch();
+  void meshToSolid();  // MeshSolidWizard.cpp: design.mesh_solid's panel
   void browseInstances(const std::string& id);
   void screenshot();
   void saveNamedView();  // asks for the name and whether to keep what is hidden and shown (remembered)

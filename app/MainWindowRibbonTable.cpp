@@ -100,7 +100,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
   group("design.solid", "sketch", tr("Sketch"), {{"design.sketch"}});
   group("design.solid", "create", tr("Create"),
         {{"design.extrude"}, {"design.revolve"}, {"design.hole"}, {"design.sweep", S}, {"design.loft", S}, {"design.pipe", S}, {"design.coil", S},
-         {"design.thicken", S}, {"design.box", S, {"design.cylinder", "design.sphere", "design.cone", "design.torus", "design.gear"}}});
+         {"design.thicken", S}, {"design.mesh_solid", S}, {"design.box", S, {"design.cylinder", "design.sphere", "design.cone", "design.torus", "design.gear"}}});
   group("design.solid", "modify", tr("Modify"),
         {{"design.offset_face", L, {"design.remove_faces"}}, {"design.fillet"}, {"design.chamfer", S}, {"design.shell", S}, {"design.draft", S}, {"design.scale", S},
          {"design.move", S}});

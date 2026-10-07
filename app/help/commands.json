@@ -2169,6 +2169,14 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "design.mesh_solid",
+   "title": "Mesh to solid",
+   "summary": "Rebuilds a mesh body (STL, OBJ, 3MF or PLY) as a solid with smooth faces, and says how closely it follows the mesh.",
+   "details": "A mesh that is an extrusion or a revolution becomes a sketch of lines, arcs, circles and splines with an Extrude or Revolve feature, so a faceted cylinder becomes one circle extruded. Any other mesh becomes fitted planes, cylinders, cones, spheres and tori sewn into one solid. The panel previews the result with its match: the largest and mean deviation from the mesh, the share of the mesh within the tolerance, and the change in volume and area. Create solid adds it as one undo step, optionally removing the mesh.",
+   "keywords": ["stl", "obj", "3mf", "reverse engineering", "convert mesh", "faceted", "brep"],
+   "requires": "Open or import a mesh first; a mesh opened for viewing is saved as an OPAD document first."
+  },
+  {
    "id": "design.hole",
    "title": "Hole",
    "summary": "Drills holes at sketch points, into the material behind the sketch.",
