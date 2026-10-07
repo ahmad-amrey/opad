@@ -120,7 +120,8 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
               gindex[size_t(k)] = int(gm.positions.size() / 3);
               for (int c = 0; c < 3; ++c) gm.positions.push_back(float(r.nodes[size_t(k)][size_t(c)]));
               const auto col = result_color(std::clamp((value[size_t(k)] - lo) / (hi - lo), 0.0, 1.0));
-              gcolors.insert(gcolors.end(), col.begin(), col.end());
+              if (air_speed) gcolors.insert(gcolors.end(), {0.72f, 0.72f, 0.75f});
+              else gcolors.insert(gcolors.end(), col.begin(), col.end());
             }
             gm.indices.push_back(uint32_t(gindex[size_t(k)]));
           }

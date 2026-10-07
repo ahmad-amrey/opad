@@ -1,6 +1,7 @@
 #include "opad/sim/fea.hpp"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepAlgoAPI_BuilderAlgo.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -72,6 +73,9 @@ double von_mises(const std::array<double, 6>& s) {
 struct Mat {
   double E = 210000, nu = 0.3, rho = 7.85, yield = 250;  // MPa, -, g/cm3, MPa
   double k = 50, cp = 490, emissivity = 0.3;              // W/m.K, J/kg.K: steel's
+  // A board: k along it, k_through across it (0: the same every way), across along normal (zero: its thinnest way).
+  double k_through = 0;
+  Vec3 normal{0, 0, 0};
   bool thermal_assumed = true;
   std::string name = "Steel";
   bool assumed = true;
@@ -96,8 +100,21 @@ Mat material_for(const Document& doc, const Scene& scene, const std::string& bod
     if (o.is_object()) {
       m.E = o.value("E", m.E), m.nu = o.value("nu", m.nu), m.rho = o.value("density", m.rho), m.yield = o.value("yield", m.yield);
       m.k = o.value("k", m.k), m.cp = o.value("cp", m.cp), m.emissivity = o.value("emissivity", m.emissivity);
+      m.k_through = o.value("k_through", m.k_through);
+      if (o.contains("normal")) m.normal = o["normal"].get<Vec3>();
+      // A printed circuit board from its make-up: copper layers (35 um an ounce, covering part of each layer) in FR-4,
+      // the copper in parallel along it and in series across it.
+      if (o.contains("pcb")) {
+        const json b = o["pcb"].is_object() ? o["pcb"] : json::object();
+        const double t = b.value("thickness", 1.6), layers = b.value("layers", 4), oz = b.value("copper_oz", 1.0), cover = b.value("coverage", 0.7);
+        const double cu = std::min(0.9 * t, layers * 0.035 * oz * cover), k_cu = 390, k_fr4 = 0.3;
+        m.k = (cu * k_cu + (t - cu) * k_fr4) / t;
+        m.k_through = t / (cu / k_cu + (t - cu) / k_fr4);
+        m.cp = o.value("cp", 1100.0), m.rho = o.value("density", 1.9);
+        if (!o.contains("name")) m.name = "PCB, " + std::to_string(int(layers)) + " layers";
+      }
       m.assumed = false;
-      m.thermal_assumed = m.thermal_assumed && !o.contains("k");
+      m.thermal_assumed = m.thermal_assumed && !o.contains("k") && !o.contains("pcb");
       if (o.contains("name")) m.name = o["name"].get<std::string>();
     }
   }
@@ -1060,6 +1077,16 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     for (size_t i = 0; i < bodies.size(); ++i) {
       mats.push_back(material_for(doc, scene, bodies[i], st.value("materials", json())));
       if (mats.back().thermal_assumed) run.warnings.push_back("\"" + scene.node(bodies[i])->name + "\" has no material with thermal properties: steel assumed");
+      // A board's across: its thinnest way of the world's axes when not given.
+      if (mats.back().k_through > 0 && norm(mats.back().normal) < 1e-9) {
+        Bnd_Box b;
+        BRepBndLib::Add(world[i], b);
+        double c[6];
+        b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+        const double ext[3] = {c[3] - c[0], c[4] - c[1], c[5] - c[2]};
+        const int thin = int(std::min_element(ext, ext + 3) - ext);
+        mats.back().normal = {thin == 0 ? 1.0 : 0.0, thin == 1 ? 1.0 : 0.0, thin == 2 ? 1.0 : 0.0};
+      }
     }
     // Elements and the skin: each outer triangle's element face, area, outward normal and centre.
     auto tet_volume = [&](size_t e) {
@@ -1308,8 +1335,22 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       }
       // mm, s, t, N: conductivity W/m.K as it is, specific heat J/kg.K x 1e6, density t/mm3.
       for (size_t i = 0; i < bodies.size(); ++i) {
-        in << "*MATERIAL, NAME=M" << i + 1 << "\n*CONDUCTIVITY\n" << mats[i].k << "\n*SPECIFIC HEAT\n" << mats[i].cp * 1e6 << "\n*DENSITY\n" << mats[i].rho * 1e-9 << "\n";
-        in << "*SOLID SECTION, ELSET=B" << i + 1 << ", MATERIAL=M" << i + 1 << "\n";
+        in << "*MATERIAL, NAME=M" << i + 1;
+        if (mats[i].k_through > 0) {
+          // Along the board in its local x and y, across it in z (the orientation below).
+          in << "\n*CONDUCTIVITY, TYPE=ORTHO\n" << mats[i].k << ", " << mats[i].k << ", " << mats[i].k_through << "\n";
+        } else {
+          in << "\n*CONDUCTIVITY\n" << mats[i].k << "\n";
+        }
+        in << "*SPECIFIC HEAT\n" << mats[i].cp * 1e6 << "\n*DENSITY\n" << mats[i].rho * 1e-9 << "\n";
+        if (mats[i].k_through > 0) {
+          const V n = unit(mats[i].normal);
+          const V a = unit(cross(n, std::fabs(n[0]) < 0.9 ? V{1, 0, 0} : V{0, 1, 0})), b = cross(n, a);
+          in << "*ORIENTATION, NAME=OB" << i + 1 << ", SYSTEM=RECTANGULAR\n" << a[0] << ", " << a[1] << ", " << a[2] << ", " << b[0] << ", " << b[1] << ", " << b[2] << "\n";
+          in << "*SOLID SECTION, ELSET=B" << i + 1 << ", MATERIAL=M" << i + 1 << ", ORIENTATION=OB" << i + 1 << "\n";
+        } else {
+          in << "*SOLID SECTION, ELSET=B" << i + 1 << ", MATERIAL=M" << i + 1 << "\n";
+        }
       }
       if (!rads.empty()) in << "*PHYSICAL CONSTANTS, ABSOLUTE ZERO=-273.15, STEFAN BOLTZMANN=5.670E-11\n";
       in << "*INITIAL CONDITIONS, TYPE=TEMPERATURE\nNALL, " << ambient << "\n";
@@ -1398,6 +1439,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     const bool coupled = !plates.empty() || !fan_runs.empty() || air_films;
     int iterations = 0;
     double change = 0;
+    json changes = json::array();
     if (air_films) update(T);
     else if (coupled) update(T), update(T);  // the second pass spreads the guessed heat along the fans' air
     for (int it = 0; it < (coupled ? (air_films ? st.value("cfd", json::object()).value("passes", 30) : 12) : 1); ++it) {
@@ -1407,10 +1449,11 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       for (size_t i = 0; i < next.size(); ++i) change = std::max(change, std::fabs(next[i] - T[i]));
       T = next;
       ++iterations;
-      if (!coupled || change < 0.05) break;
+      changes.push_back(change);
+      if (!coupled || change < (air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05)) break;
       update(T);
     }
-    if (coupled && change >= 0.05) run.warnings.push_back("the temperatures were still moving by " + std::to_string(change) + " degC after " + std::to_string(iterations) + " solves");
+    if (coupled && change >= (air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05)) run.warnings.push_back("the temperatures were still moving by " + std::to_string(change) + " degC after " + std::to_string(iterations) + " solves");
     // Over time: the films of the steady state, from the ambient temperature.
     std::vector<std::vector<double>> frames;
     std::vector<double> times;
@@ -1457,9 +1500,11 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
         for (int k = 0; k < tn; ++k)
           if (const size_t n = size_t(mesh.tets[e][size_t(k)]); T[n] > peak[b]) peak[b] = T[n], at[b] = n;
       }
-      for (size_t b = 0; b < bodies.size(); ++b)
+      for (size_t b = 0; b < bodies.size(); ++b) {
         per_body[scene.node(bodies[b])->name] = {{"max_temperature_C", peak[b]}, {"mean_temperature_C", sum[b] / body_volume[b]}, {"at", mesh.nodes[at[b]]},
                                                  {"material", mats[b].name}, {"conductivity_W_mK", mats[b].k}};
+        if (mats[b].k_through > 0) per_body[scene.node(bodies[b])->name]["conductivity_through_W_mK"] = mats[b].k_through;
+      }
     }
     summary["bodies"] = per_body;
     // Where the heat goes: each convection and radiation, the rest into the fixed temperatures.
@@ -1510,6 +1555,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     if (!fans_json.empty()) summary["fans"] = fans_json;
     summary["loads"] = applied;
     summary["solves"] = iterations;
+    if (changes.size() > 1) summary["solve_changes_C"] = changes;
     summary["nodes"] = mesh.nodes.size();
     summary["elements"] = mesh.tets.size();
     if (transient) {

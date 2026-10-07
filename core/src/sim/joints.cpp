@@ -54,7 +54,7 @@ const std::vector<std::string>& load_kinds() {
 }
 
 const std::vector<std::string>& study_kinds() {
-  static const std::vector<std::string> kinds = {"motion", "dynamic", "static", "modal", "thermal"};
+  static const std::vector<std::string> kinds = {"motion", "dynamic", "static", "modal", "thermal", "sweep"};
   return kinds;
 }
 

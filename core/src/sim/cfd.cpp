@@ -446,9 +446,6 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     if (stream)
       for (const auto& r : stream->refs) add_body(r.body);
   }
-  for (const Load* l : heats)
-    for (const auto& r : l->refs)
-      if (r.kind != Ref::Kind::Body) throw Error("heat \"" + l->name + "\": the CFD air takes heat sources in whole bodies, not on faces");
 
   // An enclosure (cfd.enclosure, or the smallest shown body whose box holds every body the loads name): then the air inside
   // it and a margin of the room around it are solved, its vents open to the room, its fans placed inside, and every shown
@@ -499,6 +496,11 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     if (fan_loads.empty() && !stream)
       throw Error("the CFD air needs a fan, or a convection with h forced (its velocity and way): still air stays with the correlations");
   }
+  // In a duct the parts' heat is OpenFOAM's (whole bodies); in an enclosure CalculiX's, which takes heat on faces too.
+  if (enclosure.empty())
+    for (const Load* l : heats)
+      for (const auto& r : l->refs)
+        if (r.kind != Ref::Kind::Body) throw Error("heat \"" + l->name + "\": the CFD air in a duct takes heat sources in whole bodies, not on faces");
   const Load* fan_load = enclosure.empty() && !fan_loads.empty() ? fan_loads.front() : nullptr;
   // The frame: along the duct's air; an enclosure's is the world's.
   const V way = !enclosure.empty() ? V{1, 0, 0} : unit((fan_load ? fan_load : stream)->def.value("vector", V{1, 0, 0}));
@@ -1065,8 +1067,12 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       std::vector<std::vector<V>> wall_centres;
       std::vector<std::vector<size_t>> wall_ids;
       int passes = 0;
+      std::vector<double> h0;  // each face's film once settled on (W/m2K)
+      std::vector<double> target, last_r;  // the temperature each film should work against; the last pass's residual
+      double omega = 0.7;
       const AirFilms films = [&](std::vector<AirFace>& faces, int pass) {
         if (pass == 0) {
+          h0.assign(faces.size(), 0.0), target.assign(faces.size(), 0.0);
           face_ids.assign(fea_bodies.size(), {}), face_centres.assign(fea_bodies.size(), {});
           wall_ids.assign(fea_bodies.size(), {}), wall_centres.assign(fea_bodies.size(), {});
           for (size_t k = 0; k < faces.size(); ++k) face_ids[size_t(faces[k].body)].push_back(k), face_centres[size_t(faces[k].body)].push_back(faces[k].centre);
@@ -1118,8 +1124,31 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
             const size_t w = wall_ids[b][(*near_wall[b])(f.centre)];
             Tc = Tair[walls[w].cell] - 273.15, kd = walls[w].k_d, q = kd * (Twall[w] - Tc);
           }
-          if (f.T - ambient > 0.2 && q > 0) f.h = std::min(q / (f.T - ambient), 1e4), f.sink = ambient;
-          else f.h = kd, f.sink = Tc;
+          // The first passes: the face's film against the room's temperature (against the air next to it where that is the
+          // warmer). Then that film stays and only the temperature it works against moves (relaxed), so that the film gives
+          // the heat the air took: switching faces between the two, or the films chasing the temperatures, kept the
+          // passes from settling (a degree up and down after thirty).
+          if (pass < 2 || h0[k] <= 0) {
+            if (f.T - ambient > 0.2 && q > 0) f.h = std::clamp(q / (f.T - ambient), 1.0, 1e4), f.sink = ambient;
+            else f.h = std::clamp(kd, 1.0, 1e4), f.sink = Tc;
+            if (pass == 1) h0[k] = f.h;
+          } else {
+            f.h = h0[k];
+            target[k] = f.T - q / h0[k];
+          }
+        }
+        // The temperatures the films work against, relaxed by Aitken's factor from the last two passes' residuals.
+        if (pass >= 2) {
+          std::vector<double> r(faces.size());
+          for (size_t k = 0; k < faces.size(); ++k) r[k] = h0[k] > 0 ? target[k] - faces[k].sink : 0.0;
+          if (!last_r.empty()) {
+            double num = 0, den = 0;
+            for (size_t k = 0; k < r.size(); ++k) num += last_r[k] * (r[k] - last_r[k]), den += (r[k] - last_r[k]) * (r[k] - last_r[k]);
+            if (den > 0) omega = std::clamp(-omega * num / den, 0.1, 1.5);
+          }
+          for (size_t k = 0; k < faces.size(); ++k)
+            if (h0[k] > 0) faces[k].sink += omega * r[k];
+          last_r = std::move(r);
         }
       };
       json fst = st;

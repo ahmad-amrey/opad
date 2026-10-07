@@ -56,9 +56,10 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
 
   reg("study",
       "Define and run a study: motion (joints driven over time), dynamic (Chrono: gravity, contacts, motors, springs), static, "
-      "modal or thermal (Netgen + CalculiX on a load case; thermal: heat, convection, fans). Returns its summary (and sampled series); id: run or change one",
+      "modal or thermal (Netgen + CalculiX on a load case; thermal: heat, convection, fans; the air solved with OpenFOAM), or sweep (one of "
+      "those again over parameter values: the best design). Returns its summary (and sampled series); id: run or change one",
       {{"doc", "path"},
-       {"kind", "motion|dynamic|static|modal|thermal"},
+       {"kind", "motion|dynamic|static|modal|thermal|sweep"},
        {"name", "string"},
        {"settings", {{"type", "object"}, {"description", "see the agent guide, Motion and simulation"}}},
        {"id", "string - an existing study: run it again (with settings: changed first)"},
@@ -91,7 +92,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
         } else {
           const std::string kind = a.at("kind").get<std::string>();
           const auto& kinds = sim::study_kinds();
-          if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end()) throw Error("study: kind is motion, dynamic, static or modal");
+          if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end()) throw Error("study: kind is motion, dynamic, static, modal, thermal or sweep");
           std::vector<std::string> taken;
           for (const auto& st : s.studies) taken.push_back(st.name);
           def = {{"op", "study"}, {"name", a.value("name", free_name(taken, capital(kind) + " study "))}, {"kind", kind},

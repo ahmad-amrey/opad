@@ -228,4 +228,27 @@ TEST(fan_cooled_heatsink_against_the_fin_array_model) {
   CHECK_NEAR(rise, 40 / (a.rho * fan["flow_m3h"].get<double>() / 3600 * a.cp), 0.02 * rise);
 }
 
+TEST(orthotropic_board_along_and_across) {
+  if (!engines_ok()) return;
+  // A 40 x 40 x 2 mm board, 20 W/m.K along it and 0.5 across. Across: 2 W into its top, its bottom held at 25 degC, the sides
+  // insulated: the top at 25 + q t / k_across = 25 + 1250 W/m2 x 2 mm / 0.5 = 30 degC. Along: 1 W into one end, the other held:
+  // 25 + P L / (k_along A) = 25 + 1 x 0.04 / (20 x 40 x 2e-6) = 50 degC.
+  Document doc = Document::create();
+  const std::string b = box(doc, {0, 0, 0}, 40, 40, 2, "Board");
+  commands::run("load", {{"kind", "heat"}, {"case", "Across"}, {"on", {face_at(b, "z", 2)}}, {"value", 2}}, &doc);
+  commands::run("load", {{"kind", "temperature"}, {"case", "Across"}, {"on", {face_at(b, "z", 0)}}, {"value", 25}}, &doc);
+  commands::run("load", {{"kind", "heat"}, {"case", "Along"}, {"on", {face_at(b, "x", 40)}}, {"value", 1}}, &doc);
+  commands::run("load", {{"kind", "temperature"}, {"case", "Along"}, {"on", {face_at(b, "x", 0)}}, {"value", 25}}, &doc);
+  const json mats = {{"all", {{"k", 20}, {"k_through", 0.5}}}};
+  const sim::StudyRun across = thermal(doc, {{"case", "Across"}, {"mesh_size", 4}, {"materials", mats}});
+  CHECK_NEAR(sim::probe(*across.fea, {20, 20, 2}, "temperature"), 30, 0.1);
+  const sim::StudyRun along = thermal(doc, {{"case", "Along"}, {"mesh_size", 4}, {"materials", mats}});
+  CHECK_NEAR(sim::probe(*along.fea, {40, 20, 1}, "temperature"), 50, 0.3);
+  CHECK_NEAR(along.summary["bodies"]["Board"]["conductivity_through_W_mK"].get<double>(), 0.5, 1e-9);
+  // A 4-layer board of 1 oz copper covering 70 %: about 24 W/m.K along, FR-4's 0.3 across.
+  const sim::StudyRun pcb = thermal(doc, {{"case", "Along"}, {"mesh_size", 4}, {"materials", {{"all", {{"pcb", {{"layers", 4}}}}}}}});
+  CHECK_NEAR(pcb.summary["bodies"]["Board"]["conductivity_W_mK"].get<double>(), 24.2, 0.3);
+  CHECK_NEAR(pcb.summary["bodies"]["Board"]["conductivity_through_W_mK"].get<double>(), 0.32, 0.01);
+}
+
 CHECK_MAIN()
