@@ -645,6 +645,33 @@ def bolted_bracket(s):
 
 
 # ======================================================================================================== runner
+def write_markdown(report, out):
+    """report.md from a report (as report.json keeps it): a table per scenario, its notes and pictures."""
+    def short(detail):
+        detail = str(detail).replace("|", "/").replace("\n", " ")
+        return detail if len(detail) <= 90 else detail[:87] + "..."
+    lines = ["# Simulation evaluation", "", "Built and run through `opad-cli mcp` as an AI agent would, each number checked against its textbook value.", ""]
+    for e in report["scenarios"]:
+        ok = sum(c["ok"] for c in e["checks"])
+        lines.append(f"## {e['title']}")
+        lines.append("")
+        lines.append(f"`{e['document']}`: {ok}/{len(e['checks'])} checks passed, {e['mcp_calls']} MCP calls, {e['seconds']} s" + (f"; **error**: {e['error']}" if e["error"] else ""))
+        lines.append("")
+        lines.append("| Check | Expected | Got | Error |")
+        lines.append("|---|---|---|---|")
+        for c in e["checks"]:
+            if "got" in c:
+                lines.append(f"| {'✅' if c['ok'] else '❌'} {c['check']} | {c['want']:.6g} | {c['got']:.6g} | {c['error']:.2e} |")
+            else:
+                lines.append(f"| {'✅' if c['ok'] else '❌'} {c['check']} | | | {short(c.get('detail', ''))} |")
+        for n in e["notes"]:
+            lines.append(f"\n- {n}")
+        for p in e["pictures"]:
+            lines.append(f"\n![{p}]({p})")
+        lines.append("")
+    (out / "report.md").write_text("\n".join(lines))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cli")
@@ -652,10 +679,15 @@ def main():
     ap.add_argument("--only", default="")
     ap.add_argument("--no-images", action="store_true")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--markdown", action="store_true", help="only write report.md again from OUT/report.json")
     args = ap.parse_args()
     if args.list:
         for name, title, _ in SCENARIOS:
             print(f"{name:24} {title}")
+        return 0
+    if args.markdown:
+        out = pathlib.Path(args.out)
+        write_markdown(json.loads((out / "report.json").read_text()), out)
         return 0
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -693,26 +725,7 @@ def main():
         report["scenarios"].append(entry)
     mcp.close()
     (out / "report.json").write_text(json.dumps(report, indent=1))
-    lines = ["# Simulation evaluation", "", "Built and run through `opad-cli mcp` as an AI agent would, each number checked against its textbook value.", ""]
-    for e in report["scenarios"]:
-        ok = sum(c["ok"] for c in e["checks"])
-        lines.append(f"## {e['title']}")
-        lines.append("")
-        lines.append(f"`{e['document']}`: {ok}/{len(e['checks'])} checks passed, {e['mcp_calls']} MCP calls, {e['seconds']} s" + (f"; **error**: {e['error']}" if e["error"] else ""))
-        lines.append("")
-        lines.append("| Check | Expected | Got | Error |")
-        lines.append("|---|---|---|---|")
-        for c in e["checks"]:
-            if "got" in c:
-                lines.append(f"| {'✅' if c['ok'] else '❌'} {c['check']} | {c['want']:.6g} | {c['got']:.6g} | {c['error']:.2e} |")
-            else:
-                lines.append(f"| {'✅' if c['ok'] else '❌'} {c['check']} | | | {c.get('detail', '')} |")
-        for n in e["notes"]:
-            lines.append(f"\n- {n}")
-        for p in e["pictures"]:
-            lines.append(f"\n![{p}]({p})")
-        lines.append("")
-    (out / "report.md").write_text("\n".join(lines))
+    write_markdown(report, out)
     print(f"\n{sum(len(e['checks']) for e in report['scenarios']) - failed} checks passed, {failed} failed; report in {out}")
     return 1 if failed else 0
 
