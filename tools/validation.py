@@ -81,8 +81,18 @@ def flat_plate(s):
         s.note("OpenFOAM is not installed: skipped")
         return
     # A 60 mm (along the stream) x 60 mm x 3 mm aluminium plate making 1 W in air at 1 m/s: nearly one temperature (Bi ~ 1e-4).
+    # Its leading and trailing edges are bevelled to a 0.2 mm nose over 8 mm (Pohlhausen's plate has no thickness: a blunt
+    # 3 mm nose stagnates the stream and alone gave ~15 % of the heat, measured against a plate that has none).
     L, W, t, U, P = 60.0, 60.0, 3.0, 1.0, 1.0
     plate = s.box("Plate", (0, 0, 0), L, W, t, centered=False)
+    for x in (0, L):
+        for z in (0, t):
+            edge = {"body": plate, "kind": "edge", "select": {"curve": "line", "bounds": {"min": [x - 0.1, -1, z - 0.1], "max": [x + 0.1, W + 1, z + 0.1]}},
+                    "expect": 1}
+            try:  # 1.4 mm down the end face, 8 mm along the plate; which distance is which follows the edge's faces
+                s.run("feature", kind="chamfer", inputs={"edges": [edge], "type": "two", "distance": "1.4 mm", "distance2": "8 mm"})
+            except se.McpError:
+                s.run("feature", kind="chamfer", inputs={"edges": [edge], "type": "two", "distance": "8 mm", "distance2": "1.4 mm"})
     s.material([plate], "aluminium-6061")
     s.run("load", kind="heat", on=[plate], value=P, case="Plate")
     s.run("load", kind="convection", on=[plate], h="forced", velocity=U, vector=[1, 0, 0], case="Plate")
@@ -92,9 +102,9 @@ def flat_plate(s):
     a = air(25 + (T - 25) / 2)
     Re = U * L * 1e-3 / a["nu"]
     h_ref = 0.664 * math.sqrt(Re) * a["Pr"] ** (1 / 3) * a["k"] / (L * 1e-3)
-    A = (2 * L * W + 2 * (L + W) * t) * 1e-6  # both faces and the edges (taken at the faces' mean film)
+    A = s.run("properties", node=plate)["area"] * 1e-6  # every face, the narrow sides taken at the faces' mean film
     h = P / (A * (T - 25))
-    s.note(f"Re {Re:.0f}, plate at {T:.2f} degC, {st.get('cells')} cells; edges counted at the faces' film")
+    s.note(f"Re {Re:.0f}, plate at {T:.2f} degC, {st.get('cells')} cells, area {A * 1e6:.0f} mm2")
     s.check("mean film coefficient (W/m2K)", h, h_ref, 0.15)
 
 

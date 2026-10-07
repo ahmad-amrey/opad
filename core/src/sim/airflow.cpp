@@ -239,7 +239,16 @@ Thinness thinness(const TopoDS_Shape& body) {
     if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
     const gp_Dir out_dir(n);
     if (const double w = next(at, out_dir.Reversed()); w > 0 && (out.wall == 0 || w < out.wall)) out.wall = w;
-    if (const double g = next(at, out_dir); g > 0 && (out.gap == 0 || g < out.gap)) out.gap = g;
+    if (const double g = next(at, out_dir); g > 0) {
+      if (out.gap == 0 || g < out.gap) out.gap = g;
+      Bnd_Box fb;
+      BRepBndLib::Add(face, fb, false);
+      // Out to where the ray met the other side: the gap's whole width, whichever way the face points.
+      fb.Add(at.Translated(gp_Vec(out_dir) * g));
+      double c[6];
+      fb.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+      out.gaps.push_back({{c[0], c[1], c[2]}, {c[3], c[4], c[5]}, g});
+    }
   }
   return out;
 }

@@ -62,9 +62,15 @@ std::optional<FinArray> fin_array(const TopoDS_Shape& body, const Vec3& flow);
 
 // How thin a body gets (mm, its own units): from the middle of each face, the distance through the solid to its other side
 // (a wall's thickness) and through the air in front of it to the next face (a slot's or a gap's width; 0 when none). The
-// CFD sizes its cells by them, so that a board, an enclosure's wall or a vent keeps cells across.
+// CFD sizes its cells by them, so that a board, an enclosure's wall or a vent keeps cells across; `gaps`: each face that
+// looks across air at another, its box and that width, so that only there the cells need to be as small as the gap asks.
 struct Thinness {
   double wall = 0, gap = 0;
+  struct Gap {
+    Vec3 lo, hi;
+    double width;
+  };
+  std::vector<Gap> gaps;
 };
 Thinness thinness(const TopoDS_Shape& body);
 

@@ -521,8 +521,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     }
   }
   if (!enclosure.empty()) {
-    if (fan_loads.empty() && !cfd.value("buoyancy", true))
-      throw Error("the CFD air in an enclosure moves by fans (load kind fan) or by warm air rising (cfd.buoyancy): with neither it stands still");
+    if (fan_loads.empty() && !cfd.value("buoyancy", true) && !cfd.value("sealed", false))
+      throw Error("the CFD air in an enclosure moves by fans (load kind fan) or by warm air rising (cfd.buoyancy): with neither it stands still "
+                  "(only a sealed box's air may: cfd.sealed)");
     if (stream) run.warnings.push_back("\"" + stream->name + "\" is left out: in an enclosure the fans move the air");
     stream = nullptr;
   } else {
@@ -608,13 +609,50 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   // to its fins' cells, at most four levels below the box's cells.
   std::vector<int> level(bodies.size(), 1);
   int deepest = 1;
+  json refinement = json::object();  // per body: its level and what set it (summary "refinement")
+  // In an enclosure a gap's cells are refined only in a box around it (the faces that look across it): refining all of a box's
+  // surface, outside too, for its 3 mm slots made three quarters of a fan-cooled box's 320k cells.
+  struct GapBox {
+    V lo, hi;
+    int level;
+  };
+  std::vector<GapBox> gap_boxes;
+  auto level_for = [&](double want) { return std::clamp(int(std::ceil(std::log2(coarse / want) - 0.2)), 1, 4); };
   for (size_t i = 0; i < bodies.size(); ++i) {
     const air::Thinness t = air::thinness(world[i]);
     double want = enclosure.empty() ? 1e300 : given > 0 ? given : (fin_want[i] > 0 ? fin_want[i] : 1e300);
     if (t.wall > 0) want = std::min(want, t.wall / cfd.value("wall_cells", 1.25));
-    if (t.gap > 0 && t.gap < 0.5 * size) want = std::min(want, t.gap / (bodies[i] == enclosure ? 2 : cfd.value("gap_cells", 3.0)));
-    if (want < 1e300) level[i] = std::clamp(int(std::ceil(std::log2(coarse / want) - 0.2)), 1, 4);
-    deepest = std::max(deepest, level[i]);
+    const double across = bodies[i] == enclosure ? 2 : cfd.value("gap_cells", 3.0);
+    if (enclosure.empty() && t.gap > 0 && t.gap < 0.5 * size) want = std::min(want, t.gap / across);
+    if (want < 1e300) level[i] = level_for(want);
+    int gap_level = 0;
+    if (!enclosure.empty() && given <= 0)
+      for (const auto& g : t.gaps) {
+        if (g.width >= 0.5 * size) continue;
+        const int L = level_for(g.width / across);
+        if (L <= level[i]) continue;
+        const double pad = coarse / std::pow(2.0, L);
+        gap_boxes.push_back({{g.lo[0] - pad, g.lo[1] - pad, g.lo[2] - pad}, {g.hi[0] + pad, g.hi[1] + pad, g.hi[2] + pad}, L});
+        gap_level = std::max(gap_level, L);
+      }
+    deepest = std::max({deepest, level[i], gap_level});
+    refinement[scene.node(bodies[i])->name] = {{"level", level[i]}, {"cell_mm", coarse / std::pow(2.0, level[i])}, {"wall_mm", t.wall}, {"gap_mm", t.gap}};
+    if (gap_level > 0) refinement[scene.node(bodies[i])->name]["gap_level"] = gap_level;
+  }
+  // Boxes of one level that overlap made one.
+  for (bool merged = true; merged;) {
+    merged = false;
+    for (size_t a = 0; a < gap_boxes.size() && !merged; ++a)
+      for (size_t b = a + 1; b < gap_boxes.size() && !merged; ++b) {
+        GapBox &x = gap_boxes[a], &y = gap_boxes[b];
+        if (x.level != y.level) continue;
+        bool overlap = true;
+        for (int k = 0; k < 3; ++k) overlap = overlap && x.lo[k] <= y.hi[k] && y.lo[k] <= x.hi[k];
+        if (!overlap) continue;
+        for (int k = 0; k < 3; ++k) x.lo[k] = std::min(x.lo[k], y.lo[k]), x.hi[k] = std::max(x.hi[k], y.hi[k]);
+        gap_boxes.erase(gap_boxes.begin() + long(b));
+        merged = true;
+      }
   }
   fine = coarse / std::pow(2.0, deepest);  // the finest cell
   // Fans in an enclosure: each a disk of air whose two sides the fan's curve sets apart in pressure. On a body that makes
@@ -780,6 +818,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     sh << "castellatedMesh true; snap " << (buoyant ? "false" : "true") << "; addLayers false;\ngeometry {\n";
     for (const auto& r : region)
       if (!r.empty()) sh << "  " << r << " { type triSurfaceMesh; file \"" << r << ".stl\"; }\n";
+    for (size_t g = 0; g < gap_boxes.size(); ++g) sh << "  gap" << g << " { type searchableBox; min " << vec(gap_boxes[g].lo) << "; max " << vec(gap_boxes[g].hi) << "; }\n";
     sh << "}\ncastellatedMeshControls {\n  maxLocalCells 6000000; maxGlobalCells 12000000; minRefinementCells 0; maxLoadUnbalance 0.1; nCellsBetweenLevels 2;\n"
        << "  features ();\n  refinementSurfaces {\n";
     // In a duct, each part a region of the mesh (its cells kept, conjugate heat in OpenFOAM); in an enclosure only the air is
@@ -815,7 +854,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       if (!found) throw Error("cfd.sealed: no air found inside the enclosure (is it hollow?)");
     }
     const V inside_air = mul(seed, 1e-3);
-    sh << "  }\n  resolveFeatureAngle 30;\n  refinementRegions {}\n  locationInMesh " << vec(inside_air) << ";\n  allowFreeStandingZoneFaces false;\n}\n"
+    sh << "  }\n  resolveFeatureAngle 30;\n  refinementRegions {";
+    for (size_t g = 0; g < gap_boxes.size(); ++g) sh << " gap" << g << " { mode inside; levels ((1e15 " << gap_boxes[g].level << ")); }";
+    sh << " }\n  locationInMesh " << vec(inside_air) << ";\n  allowFreeStandingZoneFaces false;\n}\n"
        << "snapControls { nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; "
           "multiRegionFeatureSnap true; }\n"
        << "addLayersControls { relativeSizes true; layers {} expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; "
@@ -1064,7 +1105,12 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     };
     std::string last, phi, p;
     const auto t_flow = std::chrono::steady_clock::now();
-    if (!buoyant) {
+    // A sealed box with no fans and no gravity: its air stands still and only conducts.
+    const bool still = sealed && disks.empty() && !buoyant;
+    if (still) {
+      phi = "FoamFile { version 2.0; format ascii; class surfaceScalarField; object phi; }\ndimensions [0 3 -1 0 0 0 0];\n"
+            "internalField uniform 0;\nboundaryField\n{\n  \".*\" { type calculated; value uniform 0; }\n}\n";
+    } else if (!buoyant) {
       report(0.32, "Solving the air's flow (simpleFoam)");
       const std::string log = foam_run("simpleFoam", {}, flow, 0.32);
       last = latest_time(flow);
@@ -1085,7 +1131,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       if (!buoyant) {
         fs::create_directories(heat / "constant");
         fs::copy(air_mesh, heat / "constant" / "polyMesh", fs::copy_options::recursive);
-        U = read_text_file(flow / last / "U");
+        U = still ? "FoamFile { version 2.0; format ascii; class volVectorField; object U; }\ndimensions [0 1 -1 0 0 0 0];\n"
+                    "internalField uniform (0 0 0);\nboundaryField\n{\n  \".*\" { type fixedValue; value uniform (0 0 0); }\n}\n"
+                  : read_text_file(flow / last / "U");
         for (const char* from : {"pressureInletOutletVelocity"})
           for (size_t at = U.find(from); at != std::string::npos; at = U.find(from)) U.replace(at, std::strlen(from), "fixedValue");
         fs::create_directories(heat / "0");
@@ -1374,6 +1422,8 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       summary["air_cells"] = air_cells.centre.size();
       summary["cells"] = air_cells.centre.size();
       summary["cell_size_mm"] = fine;
+      summary["refinement"] = refinement;
+      summary["gap_boxes"] = gap_boxes.size();
       summary["streamlines"] = solid.fea->streamlines.size();
       summary["room_mm"] = {{"size", {d1 - d0, a1 - a0, b1 - b0}}, {"margin", margin}};
       summary["case_dir"] = run.summary["case_dir"];
