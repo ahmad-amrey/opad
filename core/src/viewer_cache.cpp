@@ -30,8 +30,8 @@ constexpr std::uintmax_t kBudget = 2ull << 30;  // all viewer entries together; 
 // Bumped when a reader writes something new into its import op, so entries cached before it are read again (2: the
 // DXF layer table's off / frozen / locked / plot / linetype / lineweight, TODO 11 UI-37; 3: by_layer, 4: a layer's linetype pattern, UI-89;
 // 5: a far drawing's drawing_origin, UI-90; 6: shaped text, 7: a body's own linetype and lineweight, 8: shape fonts, 9: MTEXT formatting, 10: bold and italic styles, 11: MTEXT parts and obliquing, 12: a body's own linetype scale, 13: explicit bidi embeddings and isolates, 14: MTEXT indents and tabs, UI-92; 15: the display meshes of drilled shapes
-// keep their extruded faces, mesh_shape).
-constexpr const char* kReaders = "15";
+// keep their extruded faces, 17: faces BRepMesh refuses are triangulated from their boundary, mesh_shape).
+constexpr const char* kReaders = "17";
 
 using Clock = std::chrono::steady_clock;
 double since(Clock::time_point start) { return std::chrono::duration<double, std::milli>(Clock::now() - start).count(); }

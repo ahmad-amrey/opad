@@ -1,5 +1,7 @@
 #include "opad/mesh.hpp"
 
+#include "mesh_fallback.hpp"
+
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepGProp.hxx>
@@ -291,7 +293,13 @@ MeshingReport mesh_shape(const TopoDS_Shape& shape, double tolerance, double ang
   TopExp::MapShapes(shape, TopAbs_FACE, faces);
   for (int i = 1; i <= faces.Extent(); ++i) {
     const auto face = TopoDS::Face(faces(i));
-    if (BRep_Tool::Surface(face).IsNull() || BRepAdaptor_Surface(face).GetType() != GeomAbs_Cone) continue;
+    if (BRep_Tool::Surface(face).IsNull()) continue;
+    TopLoc_Location meshed;
+    if (const auto mesh = BRep_Tool::Triangulation(face, meshed); mesh.IsNull() || mesh->NbTriangles() == 0) {
+      if (detail::triangulate_from_boundary(face, tolerance, angle)) ++report.boundary_faces;
+      continue;
+    }
+    if (BRepAdaptor_Surface(face).GetType() != GeomAbs_Cone) continue;
     try {
       GProp_GProps properties;
       BRepGProp::SurfaceProperties(face, properties);
