@@ -33,6 +33,7 @@ struct FeaResult {
   std::vector<Vec3> displacement;              // mm
   std::vector<std::array<double, 6>> stress;   // MPa: xx yy zz xy yz zx
   std::vector<double> von_mises;               // MPa
+  std::vector<double> failure_index;           // printed bodies (sim/printing.hpp): Hill's index at each node (>= 1 fails), 0 elsewhere
   // modal
   std::vector<double> frequencies;             // Hz
   std::vector<std::vector<Vec3>> modes;        // shape of each mode at each node (mass normalised, as ccx gives them)

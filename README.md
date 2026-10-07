@@ -140,11 +140,15 @@ kinematic solver, and every study is an op on the timeline:
 - **Dynamic** (Project Chrono): masses from the materials, gravity, motors (position, speed, torque), springs,
   friction, end stops and contacts, with reactions, motor torque and power and energies plotted;
 - **Static** and **Vibration modes** (Netgen meshes, CalculiX): fixed supports, forces, pressures, gravity and bolt
-  preload in load cases, then von Mises stress, displacement, safety factors and mode shapes as colour maps.
+  preload in load cases, then von Mises stress, displacement, safety factors and mode shapes as colour maps;
+- **Printed parts**: a structural study's bodies as 3D printed, from the filament and the slicer's settings (typed in,
+  or read from a PrusaSlicer, OrcaSlicer, Bambu Studio or Cura profile, a .3mf project or a G-code file): walls, top and
+  bottom skins and infill each get the stiffness and strength of printed roads along, across and between layers, and
+  the study says where the part fails first, how (along the roads, across them, between layers) and on which layer.
 
 Each engine is checked against textbook cases: a pendulum's period, a slider-crank's energy balance, a screw jack's
 torque, a planetary set's Willis ratio, a cantilever's deflection and first frequency, a plate with a hole's stress
-concentration and a bolt's preload stress. `tools/sim_eval.py` builds a dozen such mechanisms through MCP and reports
+concentration, a bolt's preload stress, and a printed cantilever against composite beam theory. `tools/sim_eval.py` builds a dozen such mechanisms through MCP and reports
 them; [docs/features.md](docs/features.md#motion-and-simulation) has the details.
 
 ### Notes and hand drawing

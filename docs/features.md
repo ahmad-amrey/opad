@@ -494,7 +494,23 @@ reference node; the shank's axial stress is reported). Results: displacements, s
 reactions per support, a safety factor per body against its material's yield strength, natural frequencies and mode
 shapes. `render` draws any study frame, field or mode with a colour legend.
 
-**Checked against textbook cases** (tests/test_motion.cpp, test_dynamics.cpp, test_fea.cpp, test_gear.cpp):
+**Printed parts.** A static or modal study's bodies can be 3D printed (FFF/FDM): the Printed part dialog (or
+`settings.print`) takes the filament, build direction, layer height, line width, walls, top and bottom layers, infill
+density, pattern and angle and flow, typed in or read from a slicer's own file (PrusaSlicer .ini, OrcaSlicer and Bambu
+Studio .json, Cura .cfg, a .3mf project, or the settings a slicer appends to its G-code). Each printed body is split in
+the geometry into its walls, its top and bottom skins and its infill, so the mesh follows their boundaries, and every
+element gets its region's orthotropic material in its own axes: walls along the part's contour; skins as a cross-ply
+laminate of roads at the infill angle and 90° from it (classical lamination theory, first-ply strengths); infill per
+pattern from its density (walls along a load stretch, others bend: a square grid's walls along an axis are
+1 − √(1 − ρ) of it, its in-plane shear goes with their bending). A road is a stadium a line wide and a layer high,
+filling 1 − (1 − π/4) h / w of its box. The filament table holds printed-specimen values (stiffness and strength along a
+road, across it and between layers) for PLA, PETG, ABS, ASA, PC, nylon, the carbon-filled grades and TPU, adjustable from
+your own test bars. Failure is Tsai-Hill in the layer and a quadratic criterion between layers (kept apart, so the weak bond between layers does not leak into the layer's own strength), with tensile and compressive strengths, on each element's own stresses at its integration points (node-averaged
+ones would mix a stiff skin's stress into the soft infill beside it), with what governs: along the roads, across them,
+between layers or shear, and in which region. The summary gives the regions' volumes, stiffness and strength, the
+printed mass, the safety factor and where it fails first (height and layer); the result map adds the failure index.
+
+**Checked against textbook cases** (tests/test_motion.cpp, test_dynamics.cpp, test_fea.cpp, test_gear.cpp, test_print.cpp):
 
 | Case | OPAD | Reference |
 |---|---|---|
@@ -509,12 +525,18 @@ shapes. `render` draws any study frame, field or mode with a colour legend.
 | Cantilever deflection / first frequency | 1 % / 1.5 % | F L³ / 3 E I (+ shear) / 1.875² / 2π √(E I / ρ A L⁴) |
 | Plate with a hole in tension | 0.3 % | Heywood's Kt (net section) |
 | Bolt preload shank stress | 2–3 % | F / A |
+| Printed cantilever (PLA, 20 % grid along / at 45°): tip, top skin stress | 1.2 % / 2.0 %, < 4 % | composite beam theory over walls, skins, infill |
+| Printed cantilever first frequency | 0.2 % | 1.875² / 2π √(Σ E I / μ L⁴), μ from the printed mass |
+| Printed bar pulled along its layers / across them | < 3 % | (σ / φ X)², (σ / φ Z)²; stretch σ L / φ E, σ L / φ k_z E |
+| Grid infill, averaged out, against its walls modelled one by one | 3.9 % | explicit coupon, same plastic |
+| Infill region of a box and a cylinder | 1e-3 mm³ | (L − 2 t_w)(W − 2 t_w)(H − t_t − t_b) |
 
-`tools/sim_eval.py <opad-cli>` builds mechanisms through the MCP server the way an agent does (a single-cylinder engine,
-a two-stage gearbox and a planetary set with involute teeth, rack-and-pinion steering, a screw jack, a four-bar
-linkage, knobs snapped into a panel, a block sliding on a ramp, a plate with a hole, a bolted bracket), checks each
-against its closed form and writes a report with pictures and animations. The GUI bench `OPAD_BENCH_SIMULATE` does the
-same through the Simulate workspace's ribbon and panel.
+`tools/sim_eval.py <opad-cli>` builds mechanisms through the MCP server the way an agent does (a single-cylinder
+engine, a two-stage gearbox and a planetary set with involute teeth, rack-and-pinion steering, a screw jack, a
+four-bar linkage, knobs snapped into a panel, a block sliding on a ramp, a plate with a hole, a bolted bracket, a
+3D-printed bracket from a PrusaSlicer profile in two build directions), checks each against its closed form and writes
+a report with pictures and animations. The GUI bench `OPAD_BENCH_SIMULATE` does the same through the Simulate
+workspace's ribbon and panel.
 
 **In the app.** The Simulate workspace's Mechanism tab makes joints from the picked edge or face (the panel's kind), runs
 motion and dynamic studies and plays them back (a frame slider, play, and a chart of any series); its Structure tab puts

@@ -3211,6 +3211,14 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "simulate.print",
+   "title": "Printed part",
+   "summary": "Sets a structural study's bodies as 3D printed: filament, layers, walls, skins and infill, typed in or read from a slicer's profile.",
+   "details": "Each printed body is split into its walls, its top and bottom skins and its infill, and each gets the stiffness and strength of printed roads: along a road, across it and between layers. Import slicer profile reads PrusaSlicer .ini, OrcaSlicer and Bambu Studio .json, Cura .cfg, a .3mf project or the settings a slicer appended to its G-code. The summary gives the printed mass and how and on which layer the part fails first; the result map adds the failure index (Tsai-Hill in the layer, a quadratic criterion between layers: 1 fails). The filament values are typical printed-specimen data: adjust them from your own test bars through the study's settings.",
+   "keywords": ["3D print", "FDM", "FFF", "infill", "layers", "slicer", "PrusaSlicer", "Cura", "OrcaSlicer", "Bambu Studio", "filament", "anisotropic"],
+   "requires": "Open or create a document first."
+  },
+  {
    "id": "simulate.run",
    "title": "Run study",
    "summary": "Runs the chosen study on the model as it is now and shows its results.",

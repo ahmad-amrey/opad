@@ -50,6 +50,7 @@ class Simulate : public AreaController {
   void open();
   void runStudy();
   void showFrame(int frame);
+  void printSettings();  // the Printed part dialog for the structural study shown (or the last one)
 
  private:
   opad::json write(const std::string& command, const opad::json& args, const QString& label);  // doc->run once it is free
