@@ -3,7 +3,6 @@
  "Rebuild mesh bodies as solids: regions of facets become planes, cylinders, cones, spheres and tori; the rest stays flat facets. A tolerance of 0 is automatic.": "أعد بناء أجسام الشبكات مجسماتٍ: تصبح مناطق الأوجه المثلثية مستويات وأسطوانات ومخاريط وكرات وحلقات، ويبقى الباقي أوجهًا مسطحة. التفاوت 0 يعني تلقائيًا.",
  "Facet angle": "زاوية الأوجه",
  "Rebuilds the mesh as a solid: a sketch and an extrusion or revolution when the mesh is one, otherwise fitted planes, cylinders, cones, spheres and tori.": "يعيد بناء الشبكة مجسمًا: رسمًا تخطيطيًا مع بثق أو دوران حين تكون الشبكة كذلك، وإلا فمستويات وأسطوانات ومخاريط وكرات وحلقات مُلاءَمة.",
- "Sketch and feature when possible": "رسم تخطيطي وميزة حين يمكن",
  "Fitted solid only": "مجسم مُلاءَم فقط",
  "The largest angle between neighbouring facets of one curved surface; more is a sharp edge.": "أكبر زاوية بين وجهين متجاورين من سطح منحنٍ واحد؛ وما زاد عليها حافة حادة.",
  "Result": "النتيجة",
@@ -21,7 +20,7 @@
  "cylinders": "أسطوانات",
  "cones": "مخاريط",
  "spheres": "كرات",
- "tori": "حلقات",
+ "tori": "طارات",
  "spline surfaces": "أسطح منحنية حرة",
  "revolved surfaces": "أسطح دوران",
  "extruded surfaces": "أسطح بثق",
@@ -35,5 +34,13 @@
  "Open or import a mesh (STL, OBJ, 3MF or PLY) before converting it to a solid.": "افتح شبكة (STL أو OBJ أو 3MF أو PLY) أو استوردها قبل تحويلها إلى مجسم.",
  "Select the mesh": "اختر الشبكة",
  "Check the match, then Create solid": "تحقق من التطابق ثم أنشئ المجسم",
- "Facets become smooth faces: one circle, extruded": "تصبح الأوجه المثلثية أوجهًا ناعمة: دائرة واحدة مبثوقة"
+ "Sketch and feature": "رسم تخطيطي وميزة",
+ "Sketch and feature: a sketch with an extrusion or revolution when the mesh is one, else fitted surfaces.": "رسم تخطيطي وميزة: رسم تخطيطي مع بثق أو دوران حين تكون الشبكة كذلك، وإلا فأسطح مُلاءَمة.",
+ "A sketch of one curve, extruded": "رسم تخطيطي من منحنى واحد، مبثوق",
+ "A sketch of one curve, revolved": "رسم تخطيطي من منحنى واحد، مُدار",
+ "spline surface": "سطح منحنٍ حر",
+ "revolved surface": "سطح دوران",
+ "extruded surface": "سطح بثق",
+ "other surface": "سطح آخر",
+ "Smooth faces: one circle, extruded": "أوجه ناعمة: دائرة واحدة مبثوقة"
 }

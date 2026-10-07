@@ -51,7 +51,7 @@ OPAD_BENCH(OPAD_BENCH_MESHSOLID, meshsolid) {
       case 0:  // the preview and its report
         if (!panel || !report || !create) return fail("the panel did not open");
         if (!create->isEnabled()) return;
-        if (!report->text().contains("100.0%") || !report->text().contains(MainWindow::tr("A sketch of %L1 curves, extruded").arg(1)))
+        if (!report->text().contains("100.0%") || !report->text().contains(MainWindow::tr("A sketch of one curve, extruded")))
           return fail("the report does not say a one-curve extrusion matching the mesh: " + report->text());
         if (win->m_viewport->previewBodyCount() == 0) return fail("no preview is shown");
         trace::log("bench: mesh to solid: preview and report " + report->text().left(160));

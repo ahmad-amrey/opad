@@ -40,17 +40,25 @@ QString reportText(const opad::design::MeshConversion& c) {
   const auto& d = c.deviation;
   QStringList lines;
   const int curves = r.value("curves", 0);
-  if (c.method == "extrude") lines << MainWindow::tr("A sketch of %L1 curves, extruded").arg(curves);
-  else if (c.method == "revolve") lines << MainWindow::tr("A sketch of %L1 curves, revolved").arg(curves);
+  if (c.method == "extrude") lines << (curves == 1 ? MainWindow::tr("A sketch of one curve, extruded") : MainWindow::tr("A sketch of %L1 curves, extruded").arg(curves));
+  else if (c.method == "revolve") lines << (curves == 1 ? MainWindow::tr("A sketch of one curve, revolved") : MainWindow::tr("A sketch of %L1 curves, revolved").arg(curves));
   else lines << MainWindow::tr("A solid of fitted surfaces (the mesh is neither an extrusion nor a revolution)");
   QStringList kinds;
-  const std::pair<const char*, QString> names[] = {{"plane", MainWindow::tr("planes")},      {"cylinder", MainWindow::tr("cylinders")},
-                                                   {"cone", MainWindow::tr("cones")},        {"sphere", MainWindow::tr("spheres")},
-                                                   {"torus", MainWindow::tr("tori")},         {"spline", MainWindow::tr("spline surfaces")},
-                                                   {"revolution", MainWindow::tr("revolved surfaces")}, {"extrusion", MainWindow::tr("extruded surfaces")},
-                                                   {"other", MainWindow::tr("other surfaces")}};
-  for (const auto& [key, name] : names)
-    if (const int n = r.at("faces").value(key, 0); n > 0) kinds << QStringLiteral("%L1 %2").arg(n).arg(name);
+  struct Kind {
+    const char* key;
+    QString one, many;
+  };
+  const Kind names[] = {{"plane", MainWindow::tr("plane"), MainWindow::tr("planes")},
+                        {"cylinder", MainWindow::tr("cylinder"), MainWindow::tr("cylinders")},
+                        {"cone", MainWindow::tr("cone"), MainWindow::tr("cones")},
+                        {"sphere", MainWindow::tr("sphere"), MainWindow::tr("spheres")},
+                        {"torus", MainWindow::tr("torus"), MainWindow::tr("tori")},
+                        {"spline", MainWindow::tr("spline surface"), MainWindow::tr("spline surfaces")},
+                        {"revolution", MainWindow::tr("revolved surface"), MainWindow::tr("revolved surfaces")},
+                        {"extrusion", MainWindow::tr("extruded surface"), MainWindow::tr("extruded surfaces")},
+                        {"other", MainWindow::tr("other surface"), MainWindow::tr("other surfaces")}};
+  for (const auto& k : names)
+    if (const int n = r.at("faces").value(k.key, 0); n > 0) kinds << QStringLiteral("%L1 %2").arg(n).arg(n == 1 ? k.one : k.many);
   lines << MainWindow::tr("%L1 faces (%2) from %L3 triangles").arg(d.shape_faces).arg(kinds.join(QStringLiteral(", "))).arg(d.mesh_triangles);
   lines << MainWindow::tr("Deviation from the mesh: largest %1, mean %2").arg(units::format(units::Kind::Length, d.max), units::format(units::Kind::Length, d.mean));
   lines << MainWindow::tr("Within the tolerance (%1): %2 of the mesh's vertices")
@@ -107,7 +115,7 @@ void MainWindow::meshToSolid() {
     if (id == chosen) source->setCurrentIndex(source->count() - 1);
   }
   auto* mode = new QComboBox(dialog);
-  mode->addItem(tr("Sketch and feature when possible"), "auto");
+  mode->addItem(tr("Sketch and feature"), "auto");
   mode->addItem(tr("Fitted solid only"), "solid");
   // In the shown unit (UI-123); the conversion takes mm. 0: 1/2000 of the mesh's size.
   auto* tolerance = new QDoubleSpinBox(dialog);
@@ -123,6 +131,7 @@ void MainWindow::meshToSolid() {
   angle->setValue(35);
   angle->setSuffix(QStringLiteral(" °"));
   angle->setToolTip(tr("The largest angle between neighbouring facets of one curved surface; more is a sharp edge."));
+  mode->setToolTip(tr("Sketch and feature: a sketch with an extrusion or revolution when the mesh is one, else fitted surfaces."));
   auto* name = new QLineEdit(source->currentText(), dialog);
   form->addRow(tr("Mesh"), source);
   form->addRow(tr("Result"), mode);
