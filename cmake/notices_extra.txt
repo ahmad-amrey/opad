@@ -5,6 +5,21 @@
   where the dynamic studies are built in). OPAD's own code is built with EIGEN_MPL2_ONLY, so none of Eigen's few LGPL
   parts are used. Source: https://gitlab.com/libeigen/eigen; licence: https://www.mozilla.org/MPL/2.0/
 
+* earcut.hpp 2.2.4 (ISC): the polygon triangulator compiled, unmodified, into OPAD's meshing, for faces the OCCT mesher
+  refuses (third_party/earcut). Source: https://github.com/mapbox/earcut.hpp
+
+  ISC License
+  Copyright (c) 2015, Mapbox
+
+  Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby
+  granted, provided that the above copyright notice and this permission notice appear in all copies.
+
+  THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+  INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+  ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
+  OF THIS SOFTWARE.
+
 * CalculiX (GPL-2.0): ccx, where it is installed, is a separate program that OPAD runs for static and modal studies,
   exchanging files with it; OPAD neither links nor ships it. http://www.calculix.de
 
