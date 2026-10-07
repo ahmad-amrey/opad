@@ -343,6 +343,7 @@ void Simulate::ready() {
   folder.id = "simulation";
   folder.title = tr("Simulation");
   folder.icon = "simulate";
+  folder.startsClosed = true;  // the parts stay the browser's first rows
   folder.items = [this] { return folderItems(); };
   folder.contextMenu = [this](const std::string& id, QMenu& menu) { folderMenu(id, menu); };
   folder.activated = [this](const std::string& id) {
@@ -831,12 +832,21 @@ void Simulate::showResults(bool on) {
   double vlo = 1e300, vhi = -1e300;
   for (double v : value) vlo = std::min(vlo, v), vhi = std::max(vhi, v);
   if (!(vhi > vlo)) vhi = vlo + 1;
+  // A stress singularity (bonded parts' re-entrant corner) would leave the rest in the bottom colour: the scale stops at
+  // the 99.5th percentile when the peak is far above it, and the legend gives the peak.
+  const double peak = vhi;
+  if (mode < 0 && m_field != "displacement" && value.size() > 10) {
+    std::vector<double> sorted = value;
+    const size_t at = size_t(0.995 * double(sorted.size() - 1));
+    std::nth_element(sorted.begin(), sorted.begin() + long(at), sorted.end());
+    if (peak > 1.5 * sorted[at] && sorted[at] > vlo) vhi = sorted[at];
+  }
   Handle(ResultMap) map = new ResultMap();
   map->points.resize(n);
   map->colours.resize(n);
   for (size_t i = 0; i < n; ++i) {
     for (int c = 0; c < 3; ++c) map->points[i][size_t(c)] = r.nodes[i][size_t(c)] + scale * shape[i][size_t(c)];
-    map->colours[i] = opad::result_color((value[i] - vlo) / (vhi - vlo));
+    map->colours[i] = opad::result_color(std::clamp((value[i] - vlo) / (vhi - vlo), 0.0, 1.0));
   }
   map->triangles = r.skin;
   m_map = map;
@@ -850,7 +860,9 @@ void Simulate::showResults(bool on) {
   view->showOverlay(m_map);
   m_map->SetZLayer(Graphic3d_ZLayerId_Default);  // parts in front hide it, as they would the bodies
   view->updateOverlay(m_map);
-  m_legend->setScale(title, vlo, vhi, unit, scale > 0 ? tr("deformation × %1").arg(number(scale)) : QString());
+  QString note = scale > 0 ? tr("deformation × %1").arg(number(scale)) : QString();
+  if (peak > vhi) note = tr("peak %1 %2 above the scale").arg(number(peak), unit);
+  m_legend->setScale(title, vlo, vhi, unit, note);
   m_legend->show();
   positionOverlays({});
   if (m_form) m_form->setResultsShown(true);

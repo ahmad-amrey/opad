@@ -340,6 +340,7 @@ def engine_slider_crank(s):
     tq = series(dy, "Main bearing motor torque")
     s.note(f"motor torque to keep 3000 rpm swings between {min(tq) / 1000:.2f} and {max(tq) / 1000:.2f} N.m (the reciprocating masses)")
     s.note(f"kinetic energy swings {min(KE):.3f}-{max(KE):.3f} J")
+    s.run("appearance", target=block, opacity=0.3)  # the crank, rod and piston seen through the block
     s.picture("engine.png", view="iso")
     s.animation("engine.gif", [{"joints": {jc: a}} for a in range(0, 360, 10)], view="top")
 

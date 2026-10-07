@@ -601,7 +601,13 @@ void draw_legend(Image& img, const std::string& title, double lo, double hi, con
     return std::string(buf);
   };
   const int th = std::max(9, img.height / 60);
-  draw_label(img, title, x0 - w, y0 - 3 * th, th);
+  // A long title ("VON MISES (PEAK 935 ABOVE)") on two lines, the part in brackets under the first.
+  if (const size_t cut = title.find(" ("); cut != std::string::npos) {
+    draw_label(img, title.substr(0, cut), x0 - w, y0 - 5 * th, th);
+    draw_label(img, title.substr(cut + 1), x0 - w, y0 - 3 * th, th);
+  } else {
+    draw_label(img, title, x0 - w, y0 - 3 * th, th);
+  }
   for (int k = 0; k <= 4; ++k) {
     const double v = hi - (hi - lo) * k / 4;
     draw_label(img, text(v) + " " + unit, x0 + w + 6, y0 + (h - 1) * k / 4 - th / 2, th);

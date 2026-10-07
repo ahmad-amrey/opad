@@ -8,7 +8,7 @@ minute and a half; `-DOPAD_DWG=OFF` skips it).
 | Host and target | Install | Build |
 |---|---|---|
 | Windows | [MSYS2](https://www.msys2.org), then in its shell: `pacman -S mingw-w64-x86_64-{cmake,ninja,gcc,opencascade,qt6-base,nlohmann-json,pybind11,python}` | `cmake --workflow --preset windows` |
-| Linux (Ubuntu 24.04) | `sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev rapidjson-dev pybind11-dev python3-dev`, plus `xvfb` for the GUI benches; no OCCT package (see [Linux](#linux)) | `cmake --workflow --preset linux` |
+| Linux (Ubuntu 24.04) | `sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev rapidjson-dev pybind11-dev python3-dev libeigen3-dev calculix-ccx`, plus `xvfb` for the GUI benches; no OCCT package (see [Linux](#linux)) | `cmake --workflow --preset linux` |
 | macOS | `xcode-select --install`, then `brew install cmake ninja opencascade qt nlohmann-json pybind11 python` | `cmake --workflow --preset macos` |
 
 The macOS preset is written but has not been run yet; Windows and Ubuntu 24.04 are the platforms that are built and
@@ -104,6 +104,16 @@ converters.
 **Adding a target** (another toolchain, architecture or package source): add a configure preset in
 `CMakePresets.json` that inherits `base` and sets what differs (compiler, `CMAKE_PREFIX_PATH`, toolchain file), plus
 matching build, test and workflow entries. It gets its own `build/<preset>` tree automatically.
+
+## Simulation engines
+
+Dynamic studies use Project Chrono 9.0.1 and structural studies Netgen 6.2 meshes (`cmake/sim_engines.cmake`). Both are
+cloned at a pinned commit and built into the build tree the first time CMake configures (about 10 minutes together),
+against the same OCCT and Eigen; `OPAD_CHRONO_SOURCE_DIR` / `OPAD_NETGEN_SOURCE_DIR` point at a checkout instead for an
+offline build, and `-DOPAD_CHRONO=OFF` / `-DOPAD_NETGEN=OFF` leave one out (its studies then say it is not in this
+build). Eigen 3.3+ is required for the kinematic solver. CalculiX's `ccx` runs as a separate program: from `OPAD_CCX`,
+beside the OPAD executables, or on the PATH (`calculix-ccx` on Ubuntu); `OPAD_CCX_THREADS` sets its solver threads
+(default 1: the threaded SPOOLES solve was not repeatable). `mechanism` reports which engines a build has.
 
 ## Python module
 

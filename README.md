@@ -129,6 +129,24 @@ feature can be suppressed, rolled back to, or suppressed by an expression over t
 
 ![Four top edges picked and filleted, then the extrude edited from 25 to 40 mm on the timeline](docs/media/parametric.gif)
 
+### Motion and simulation
+
+The Simulate workspace (Ctrl+5) turns an assembly into a mechanism. Joints (revolute, slider, cylindrical, ball, planar,
+pin-in-slot, screw, rigid, ground) go on a picked edge or face, with limits and locks; gear, rack-and-pinion and
+lead-screw relations couple joints, also inside a planetary carrier. A joint's slider moves the mechanism through the
+kinematic solver, and every study is an op on the timeline:
+
+- **Motion**: joints driven over time, traced points, values, speeds and accelerations;
+- **Dynamic** (Project Chrono): masses from the materials, gravity, motors (position, speed, torque), springs,
+  friction, end stops and contacts, with reactions, motor torque and power and energies plotted;
+- **Static** and **Vibration modes** (Netgen meshes, CalculiX): fixed supports, forces, pressures, gravity and bolt
+  preload in load cases, then von Mises stress, displacement, safety factors and mode shapes as colour maps.
+
+Each engine is checked against textbook cases: a pendulum's period, a slider-crank's energy balance, a screw jack's
+torque, a planetary set's Willis ratio, a cantilever's deflection and first frequency, a plate with a hole's stress
+concentration and a bolt's preload stress. `tools/sim_eval.py` builds a dozen such mechanisms through MCP and reports
+them; [docs/features.md](docs/features.md#motion-and-simulation) has the details.
+
 ### Notes and hand drawing
 
 Note (N) and Hand drawing (Shift+N) ask for their target like the measuring tools, then pin to it. Each stroke lies on
@@ -282,9 +300,10 @@ opad --compare old.opad design.opad   # compare a version (a file or git:REV) wi
 opad-cli <command> [doc] [--key value ...]   # the same commands, headless, JSON out
 ```
 
-The window has four workspaces: **Review** (Ctrl+1: view, inspect, mark up, compare, share), **Design** (Ctrl+2:
-sketches, features, assembly), **Drawings** (Ctrl+3: sheets) and **Drafting** (Ctrl+4: 2D files). Workspaces only swap
-the ribbon; there is one document and one timeline.
+The window has five workspaces: **Review** (Ctrl+1: view, inspect, mark up, compare, share), **Design** (Ctrl+2:
+sketches, features, assembly), **Drawings** (Ctrl+3: sheets), **Drafting** (Ctrl+4: 2D files) and **Simulate**
+(Ctrl+5: joints, motion, dynamics, stress and vibration). Workspaces only swap the ribbon; there is one document and one
+timeline.
 
 ### Keybindings
 
@@ -352,7 +371,7 @@ It is developed against a 1,295-body engine assembly (374 MB of STEP); everythin
 rule above.
 
 **What is it not (yet)?**
-There are no joints or mates, no 3D annotations (PMI), no paper-space layouts as sheets and no installers yet; DXF
+There are no 3D annotations (PMI), no paper-space layouts as sheets and no installers yet; DXF
 and DWG open read-only (edit them through Draw on drawing or Drawing to sketch); the embedded Python console is not
 there; macOS has not been built.
 

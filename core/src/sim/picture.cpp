@@ -53,6 +53,22 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
           for (int c = 0; c < 3; ++c) a[size_t(c)] = std::min(a[size_t(c)], r.nodes[size_t(k)][size_t(c)]), b[size_t(c)] = std::max(b[size_t(c)], r.nodes[size_t(k)][size_t(c)]);
         }
       if (hi <= lo) hi = lo + 1e-12;
+      // A stress singularity (a re-entrant corner where bonded parts meet, a point load) would paint the whole part in the
+      // scale's bottom colour: the scale stops at the 99.5th percentile when the peak is far above it (or at `max`), and
+      // the legend says so; the peak is reported.
+      const double peak = hi;
+      bool capped = false;
+      if (st.contains("max")) {
+        hi = std::max(lo + 1e-12, st["max"].get<double>());
+        capped = peak > hi;
+      } else if (field == "von_mises") {
+        std::vector<double> shown;
+        for (const auto& t : r.skin)
+          for (int k : t) shown.push_back(value[size_t(k)]);
+        std::nth_element(shown.begin(), shown.begin() + long(0.995 * double(shown.size() - 1)), shown.end());
+        const double p995 = shown[size_t(0.995 * double(shown.size() - 1))];
+        if (peak > 1.5 * p995 && p995 > lo) hi = p995, capped = true;
+      }
       const double size = std::sqrt(std::pow(b[0] - a[0], 2) + std::pow(b[1] - a[1], 2) + std::pow(b[2] - a[2], 2));
       const double scale = st.contains("scale") ? st["scale"].get<double>() : dmax > 0 ? 0.05 * size / dmax : 0.0;
       out.meshes = std::make_shared<std::vector<Mesh>>(1);
@@ -64,7 +80,7 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
           if (index[size_t(k)] < 0) {
             index[size_t(k)] = int(m.positions.size() / 3);
             for (int c = 0; c < 3; ++c) m.positions.push_back(float(r.nodes[size_t(k)][size_t(c)] + scale * (*disp)[size_t(k)][size_t(c)]));
-            const auto col = result_color((value[size_t(k)] - lo) / (hi - lo));
+            const auto col = result_color(std::clamp((value[size_t(k)] - lo) / (hi - lo), 0.0, 1.0));
             colors.insert(colors.end(), col.begin(), col.end());
           }
           m.indices.push_back(uint32_t(index[size_t(k)]));
@@ -78,9 +94,11 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
       out.title = field == "von_mises" ? "VON MISES" : r.kind == "modal" ? "MODE " + std::to_string(mode + 1) : "DISPLACEMENT";
       out.unit = field == "von_mises" ? "MPa" : "mm";
       if (r.kind == "modal") out.unit = "", out.title += " " + std::to_string(int(std::lround(r.frequencies[size_t(mode)]))) + " HZ";
+      if (capped) out.title += " (PEAK " + std::to_string(int(std::lround(peak))) + " ABOVE)";
       out.lo = lo, out.hi = hi;
       out.info["field"] = field;
       out.info["range"] = {lo, hi};
+      if (capped) out.info["peak"] = peak, out.info["scale_capped"] = true;
       out.info["deformation_scale"] = scale;
       if (r.kind == "modal") out.info["frequency_Hz"] = r.frequencies[size_t(mode)];
     } else {

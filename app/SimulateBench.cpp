@@ -21,6 +21,7 @@
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
+#include <QTreeWidget>
 
 #include <cmath>
 #include <functional>
@@ -161,7 +162,7 @@ OPAD_BENCH(OPAD_BENCH_SIMULATE, simulate) {
                     require(area->panel()->isVisible(), "Simulation panel opens");
                   }});
   // ---- a revolute joint from the pivot hole's rim, picked, with the panel's Add
-  list.push_back({idle, [=](bool) {
+  list.push_back({idle, [=, &w](bool) {
                     const auto rim = pick(doc, (*state)["arm"], opad::Ref::Kind::Edge, [](const TopoDS_Shape& e) {
                       BRepAdaptor_Curve c(TopoDS::Edge(e));
                       return c.GetType() == GeomAbs_Circle && std::fabs(c.Circle().Radius() - 3) < 1e-6 && c.Circle().Location().Y() > 5;
@@ -175,8 +176,23 @@ OPAD_BENCH(OPAD_BENCH_SIMULATE, simulate) {
                     kind->setCurrentIndex(kind->findData("revolute"));
                     area->form()->findChild<QPushButton*>("simAddJoint")->click();
                     const auto& joints = doc->scene.joints;
+                    QCoreApplication::processEvents();
                     require(joints.size() == 1 && joints[0].kind == "revolute" && joints[0].part == (*state)["arm"] && joints[0].base.empty(),
                             "Add makes a revolute joint of the arm to the world at the picked rim");
+                    if (auto* tree = w.m_browser->findChild<QTreeWidget*>()) {  // the browser lists the bodies and the folder
+                      QStringList rows;
+                      std::function<void(QTreeWidgetItem*, int)> dump = [&](QTreeWidgetItem* it, int depth) {
+                        rows << QString(depth * 2, ' ') + it->text(0) + (it->isHidden() ? " (hidden)" : "");
+                        for (int i = 0; i < it->childCount(); ++i) dump(it->child(i), depth + 1);
+                      };
+                      for (int i = 0; i < tree->topLevelItemCount(); ++i) dump(tree->topLevelItem(i), 0);
+                      trace::log("bench: simulate: browser rows: " + rows.join(" | "));
+                      require(rows.join("|").contains("Pendulum") && rows.join("|").contains(Simulate::tr("Simulation")), "the browser lists the arm and the Simulation folder");
+                      for (int i = 0; i < tree->topLevelItemCount(); ++i)
+                        for (int k = 0; k < tree->topLevelItem(i)->childCount(); ++k)
+                          if (tree->topLevelItem(i)->child(k)->text(0) == "Simulation" || tree->topLevelItem(i)->child(k)->text(0) == Simulate::tr("Simulation"))
+                            require(!tree->topLevelItem(i)->child(k)->isExpanded(), "the Simulation folder starts closed: the parts stay the first rows");
+                    }
                     if (!joints.empty()) {
                       (*state)["joint"] = joints[0].id;
                       const opad::Frame& f = joints[0].at_part;

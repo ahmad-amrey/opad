@@ -521,7 +521,7 @@ void BrowserPanel::rebuild() {
       folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
       fillFolder(folder, f, items, expanded, known);
       const std::string key = "folder:" + f.id.toStdString();
-      folder->setExpanded(expanded.count(key) > 0 || !known.count(key));
+      folder->setExpanded(expanded.count(key) > 0 || (!known.count(key) && !f.startsClosed));
     }
     root->setExpanded(true);
   }
