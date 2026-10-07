@@ -20,6 +20,7 @@
 #include <gp_Pln.hxx>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -1029,8 +1030,15 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   dir.p = std::filesystem::temp_directory_path() / ("opad-ccx-" + new_uuid().substr(0, 12));
   std::filesystem::create_directories(dir.p);
   if (const char* k = std::getenv("OPAD_KEEP_CCX"); k && *k) dir.keep = true;
+  double ccx_seconds = 0;
   auto run_ccx = [&](const std::string& input, double at) {
     report(at, "Solving (CalculiX)");
+    const auto started = std::chrono::steady_clock::now();
+    struct Clock {
+      std::chrono::steady_clock::time_point t;
+      double& sum;
+      ~Clock() { sum += std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count(); }
+    } clock{started, ccx_seconds};
     write_text_file(dir.p / "job.inp", input);
     // One thread for the solver unless asked: CalculiX 2.21's threaded SPOOLES factorisation (Ubuntu's ccx) races and now and
     // then returns wrong displacements for the same input (seen on a cantilever: 3.04 mm three runs out of five, 5.44 mm or
@@ -1042,8 +1050,9 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       _putenv_s("OMP_NUM_THREADS", threads.c_str());
       _putenv_s("CCX_NPROC_EQUATION_SOLVER", threads.c_str());
 #else
-      setenv("OMP_NUM_THREADS", threads.c_str(), 1);
-      setenv("CCX_NPROC_EQUATION_SOLVER", threads.c_str(), 1);
+      // Only when it changes: sweep points run at once (sim/sweep.cpp), and setenv beside getenv is a race.
+      for (const char* name : {"OMP_NUM_THREADS", "CCX_NPROC_EQUATION_SOLVER"})
+        if (const char* now = std::getenv(name); !now || threads != now) setenv(name, threads.c_str(), 1);
 #endif
     }
     detail::RunOptions ro;
@@ -1521,6 +1530,8 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       to_air += q;
       const std::string by = f.load < 0 ? std::string("the air") : loads[size_t(f.load)]->name;
       by_load[by] = by_load.value(by, 0.0) + q;
+      json& b = summary["bodies"][scene.node(bodies[size_t(f.f.body)])->name];  // each part's share
+      b["to_air_W"] = b.value("to_air_W", 0.0) + q;
     }
     for (const auto& r : rads) {
       const double Ts = face_temp(r.f, T) + 273.15, Ta = r.sink + 273.15;
@@ -1563,6 +1574,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     if (!fans_json.empty()) summary["fans"] = fans_json;
     summary["loads"] = applied;
     summary["solves"] = iterations;
+    summary["ccx_seconds"] = ccx_seconds;
     if (changes.size() > 1) summary["solve_changes_C"] = changes;
     summary["nodes"] = mesh.nodes.size();
     summary["elements"] = mesh.tets.size();

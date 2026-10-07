@@ -13,13 +13,18 @@
 //   settings.screening  settings merged into the study's for the sweep's points (coarser cells: quicker), and
 //   settings.confirm    then the best point run again with the study's own settings (default true when screening)
 //   settings.max_points the grid's limit (default 60)
+//   settings.parallel   grid points run at once (default: half the processor's threads, at most 4; OpenFOAM and CalculiX
+//                       each run on one), each on its own copy; refining is one after another
 //
 // Results: every point (its parameter values, the objective, the study's warnings or the reason it failed), the best, the
 // objective against the parameter as a series (one parameter) or against the point's number, and the best point's result
 // map. Apply the best with the param command.
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <mutex>
 #include <sstream>
+#include <thread>
 
 #include "opad/design/feature.hpp"
 #include "opad/sim/fea.hpp"
@@ -140,10 +145,16 @@ StudyRun run_sweep(const Document& doc, const Scene& scene, const json& st, cons
   const json screening = st.value("screening", json::object());
   std::vector<Point> points;
   int evaluations = 0;
+  std::mutex mu;  // evaluations, progress
+  std::atomic<bool> stop{false};
   auto evaluate = [&](const std::vector<Value>& values, bool screened, double f0, double f1) {
     Point pt;
     pt.values = values;
-    ++evaluations;
+    int number;
+    {
+      std::lock_guard<std::mutex> lock(mu);
+      number = ++evaluations;
+    }
     try {
       Document d = doc;
       std::vector<json> ops;
@@ -157,10 +168,14 @@ StudyRun run_sweep(const Document& doc, const Scene& scene, const json& st, cons
       json settings = def.value("settings", json::object());
       if (screened && !screening.empty()) settings.merge_patch(screening);
       def["settings"] = settings;
-      const Progress inner_progress = [&](double f, const std::string& phase) {
+      const Progress inner_progress = [&, number](double f, const std::string& phase) {
+        if (stop) return false;
         std::ostringstream label;
-        label << "Point " << evaluations << ": " << phase;
-        return !progress || progress(f0 + (f1 - f0) * f, label.str());
+        label << "Point " << number << ": " << phase;
+        std::lock_guard<std::mutex> lock(mu);
+        const bool go = !progress || progress(f0 + (f1 - f0) * f, label.str());
+        if (!go) stop = true;
+        return go;
       };
       const StudyRun r = run_study(d, s, def, inner_progress);
       pt.summary = r.summary;
@@ -176,16 +191,32 @@ StudyRun run_sweep(const Document& doc, const Scene& scene, const json& st, cons
   const int refine = swept.size() == 1 && !std::isnan(swept[0].from) ? std::max(0, st.value("refine", 0)) : 0;
   const bool confirm = st.value("confirm", screened);
   const double total = double(grid + size_t(refine) + (confirm ? 1 : 0));
-  // The grid: every combination, the first parameter changing slowest.
-  for (size_t i = 0; i < grid; ++i) {
-    std::vector<Value> values;
-    size_t rest = i;
-    for (size_t k = swept.size(); k-- > 0;) {
-      values.insert(values.begin(), swept[k].values[rest % swept[k].values.size()]);
-      rest /= swept[k].values.size();
-    }
-    report(double(i) / total, "Point " + std::to_string(i + 1) + " of " + std::to_string(grid));
-    points.push_back(evaluate(values, screened, double(i) / total, double(i + 1) / total));
+  // The grid: every combination, the first parameter changing slowest; several at once.
+  points.resize(grid);
+  {
+    const unsigned hw = std::max(2u, std::thread::hardware_concurrency());
+    const size_t at_once = size_t(std::clamp(st.value("parallel", int(std::min(4u, hw / 2))), 1, 16));
+    std::atomic<size_t> next{0};
+    auto worker = [&] {
+      for (size_t i = next++; i < grid && !stop; i = next++) {
+        std::vector<Value> values;
+        size_t rest = i;
+        for (size_t k = swept.size(); k-- > 0;) {
+          values.insert(values.begin(), swept[k].values[rest % swept[k].values.size()]);
+          rest /= swept[k].values.size();
+        }
+        try {
+          points[i] = evaluate(values, screened, double(i) / total, double(i + 1) / total);
+        } catch (const std::exception&) {
+          stop = true;  // cancelled
+        }
+      }
+    };
+    std::vector<std::thread> pool;
+    for (size_t t = 1; t < std::min(at_once, grid); ++t) pool.emplace_back(worker);
+    worker();
+    for (auto& t : pool) t.join();
+    if (stop) throw Error("cancelled");
   }
   auto best_of = [&] {
     size_t b = points.size();
