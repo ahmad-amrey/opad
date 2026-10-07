@@ -209,8 +209,10 @@ Cells read_cells(const fs::path& poly) {
   const auto F = read_faces(read_text_file(poly / "faces"));
   const auto own = read_labels(read_text_file(poly / "owner"));
   const auto nei = read_labels(read_text_file(poly / "neighbour"));
+  // A cell may own no face (the last, when all its faces are inner ones with lower neighbours): count both lists.
   int nc = 0;
   for (int o : own) nc = std::max(nc, o + 1);
+  for (int n : nei) nc = std::max(nc, n + 1);
   // Face centres and area vectors from a fan of triangles about the points' mean; a cell's volume by the divergence
   // theorem, its centre as the volume-weighted centre of the pyramids on its faces.
   std::vector<V> fc(F.size()), fa(F.size());
@@ -441,7 +443,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         const double c[3] = {dot(p, way), dot(p, e1), dot(p, e2)};
         for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], c[k]), hi[k] = std::max(hi[k], c[k]);
       }
-  // The finest cell: a third of the thinnest fin or gap when the fan's body has fins, else a 40th of the parts' size.
+  // The finest cell: two thirds of a fin's thickness and a sixth of the gap between fins (the gap's boundary layers want
+  // six cells across: on six 3 mm fins 8.4 mm apart, cells of 2, 1.5 and 1 mm gave the parts' rise as 129, 106 and 89 %
+  // of the correlations' and the flow as 135, 120 and 103 %), else a 40th of the parts' size.
   double fine = cfd.value("cell_size", 0.0);
   json fins_json;
   if (fine <= 0) {
@@ -451,7 +455,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       const size_t i = size_t(std::find(bodies.begin(), bodies.end(), fan_load->refs.front().body) - bodies.begin());
       if (i < world.size())
         if (const auto f = air::fin_array(world[i], way)) {
-          fine = std::max(0.2, std::min(f->t, f->gap) * 1e3 / 1.5);
+          fine = std::max(0.2, std::min(f->t / 1.5, f->gap / 6) * 1e3);
           fins_json = f->to_json();
         }
     }
@@ -753,7 +757,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   put(cas / "constant" / fluid / "radiationProperties", "dictionary", "radiationProperties", "radiation off; radiationModel none;\n");
   put(cas / "system" / fluid / "fvSchemes", "dictionary", "fvSchemes",
       "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,U) bounded Gauss upwind; "
-      "div(phi,K) bounded Gauss upwind; div(phi,h) bounded Gauss linearUpwind grad(h); div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear; } "
+      "div(phi,K) bounded Gauss upwind; div(phi,h) bounded Gauss upwind; div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear; } "
       "laplacianSchemes { default Gauss linear corrected; } interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
   put(cas / "system" / fluid / "fvSolution", "dictionary", "fvSolution",
       "solvers { \"rho.*\" { solver PCG; preconditioner DIC; tolerance 0; relTol 0; } p_rgh { solver GAMG; smoother GaussSeidel; tolerance 1e-7; "

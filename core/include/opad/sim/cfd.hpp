@@ -9,7 +9,9 @@
 //                  solution of higher order would not settle): a fan as the inlet's pressure from its curve (it finds its own
 //                  operating point against the parts' resistance), or a stream at the velocity of a forced convection;
 //   the heat       chtMultiRegionSimpleFoam on that flow, frozen: heat sources in the parts, conduction through them and
-//                  into the air, the air carrying it out; the parts' faces on the duct are adiabatic.
+//                  into the air, the air carrying it out; the parts' faces on the duct are adiabatic. Upwind for the
+//                  air's enthalpy too: linearUpwind left air colder than the inlet behind the fins (8 K on a 2 mm
+//                  mesh) and the parts 4 K hotter; limitedLinear agrees with upwind to 0.2 K.
 //
 // Results: the parts' temperatures on their surfaces (the solid cells nearest each point), the air's way through the parts
 // as streamlines, and the summary (temperatures, the fan's flow and pressure, the air's temperature at the outlet).

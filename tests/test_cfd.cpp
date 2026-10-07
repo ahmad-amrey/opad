@@ -2,6 +2,8 @@
 // (sim/airflow.cpp) and conservation: a fan-cooled heatsink's flow and temperatures, the heat the air carries off against the
 // heat put in, and the streamlines through the fins. Skipped when OpenFOAM (or CalculiX, for the comparison) is missing.
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "check.hpp"
@@ -59,7 +61,7 @@ TEST(cfd_heatsink_against_the_correlations) {
   if (!sim::openfoam().found()) return;
   std::string hs;
   Document doc = heatsink(hs);
-  const sim::StudyRun cfd = thermal(doc, {{"air", "cfd"}, {"ambient", 25}, {"cfd", {{"cell_size", 2}}}});
+  const sim::StudyRun cfd = thermal(doc, {{"air", "cfd"}, {"ambient", 25}, {"cfd", {{"cell_size", 1.5}}}});
   const json& s = cfd.summary;
   CHECK_EQ(s["air"].get<std::string>(), "cfd");
   const json& fan = s["fans"][0];
@@ -71,18 +73,30 @@ TEST(cfd_heatsink_against_the_correlations) {
   CHECK_NEAR(fan["air_rise_C"].get<double>(), 20 / (a.rho * flow / 3600 * a.cp), 0.05 * fan["air_rise_C"].get<double>());
   // Streamlines: from the inlet, inside the duct, the air no colder than it came in.
   CHECK(!cfd.fea->streamlines.empty());
+  if (std::getenv("OPAD_TEST_VERBOSE")) {
+    double lo = 1e9, hi = -1e9;
+    for (const auto& l : cfd.fea->streamline_temperature)
+      for (double T : l) lo = std::min(lo, T), hi = std::max(hi, T);
+    std::printf("%s\nstreamline T %g .. %g\n", s.dump(1).c_str(), lo, hi);
+  }
   for (size_t l = 0; l < cfd.fea->streamlines.size(); ++l) {
     CHECK_EQ(cfd.fea->streamlines[l].size(), cfd.fea->streamline_temperature[l].size());
-    for (double T : cfd.fea->streamline_temperature[l]) CHECK(T > 25 - 0.2);
+    for (double T : cfd.fea->streamline_temperature[l]) CHECK(T > 25 - 0.5);  // upwind: bounded to the solver's tolerance
   }
-  // Against the engineering model: the fan's operating point and the heatsink's temperature rise. A bypass around the fins
-  // (the duct is a cell wider than them) and the developing flow the correlations average keep these to within a fifth.
+  // The fan's operating point is on its curve: the inlet's static plus dynamic pressure is the fan's rise at that flow.
+  const air::Fan f80 = air::fan_from(json("80x25"));
+  const double V = fan["inlet_velocity_m_s"].get<double>();
+  CHECK_NEAR(fan["inlet_static_Pa"].get<double>() + 0.5 * a.rho * V * V, f80.pressure(flow / 3600), 0.02 * f80.pressure(flow / 3600));
+  // Against the engineering model, which sends all the air through the fins: the duct here leaves a cell or two around
+  // them, so some air goes round and the fan, seeing less resistance, moves more. At 1.5 mm cells (2 mm: the rise 29 %
+  // over the model's; 1 mm: 11 % under) the flow is 20 % over and the rise 6 % over.
   if (!sim::engines().value("thermal", false)) return;
   const sim::StudyRun model = thermal(doc, {{"mesh_size", 3}, {"ambient", 25}});
   const json& mf = model.summary["fans"][0];
-  CHECK_NEAR(flow, mf["flow_m3h"].get<double>(), 0.2 * mf["flow_m3h"].get<double>());
   const double rise_cfd = s["max_temperature_C"].get<double>() - 25, rise_model = model.summary["max_temperature_C"].get<double>() - 25;
-  CHECK_NEAR(rise_cfd, rise_model, 0.2 * rise_model);
+  if (std::getenv("OPAD_TEST_VERBOSE")) std::printf("model: %g m3/h, rise %g; cfd: %g m3/h, rise %g\n", mf["flow_m3h"].get<double>(), rise_model, flow, rise_cfd);
+  CHECK(flow > mf["flow_m3h"].get<double>() && flow < 1.3 * mf["flow_m3h"].get<double>());
+  CHECK_NEAR(rise_cfd, rise_model, 0.15 * rise_model);
 }
 
 CHECK_MAIN()
