@@ -8,6 +8,7 @@
 #include "opad/sim/joints.hpp"
 #include "opad/sim/kinematics.hpp"
 #include "opad/sim/airflow.hpp"
+#include "opad/sim/fea.hpp"
 #include "opad/sim/study.hpp"
 
 namespace opad::commands {
@@ -66,6 +67,8 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
        {"run", "bool - run it now (default true)"},
        {"series", {{"anyOf", {{{"type", "boolean"}}, {{"type", "array"}, {"items", {{"type", "string"}}}}}}, {"description", "also return sampled series: true, or names / groups"}}},
        {"samples", "int - points per series (default 21)"},
+       {"probes", {{"type", "array"}, {"items", {{"type", "array"}, {"items", {{"type", "number"}}}}},
+                   {"description", "[[x, y, z], ...] mm - also return the result fields at those points (the nearest node: static, modal, thermal)"}}},
        {"pose_at", "number - s: also write a pose of the parts at that time (motion, dynamic)"},
        {"by", "string"}},
       true, [](Document* d, const json& a) {
@@ -116,6 +119,18 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
         out["id"] = id;
         json report = sim::study_report(*run, a);
         for (const auto& [k, v] : report.items()) out[k] = v;
+        if (a.contains("probes") && run->fea) {
+          const sim::FeaResult& r = *run->fea;
+          json probes = json::array();
+          for (const auto& p : a["probes"]) {
+            const Vec3 at = p.get<Vec3>();
+            json o = {{"at", at}};
+            if (!r.temperature.empty()) o["temperature_C"] = sim::probe(r, at, "temperature");
+            if (!r.von_mises.empty()) o["von_mises_MPa"] = sim::probe(r, at, "von_mises"), o["displacement_mm"] = sim::probe(r, at, "displacement");
+            probes.push_back(o);
+          }
+          out["probes"] = probes;
+        }
         if (a.contains("pose_at") && !run->t.empty()) {
           const double t = a["pose_at"].get<double>();
           size_t best = 0;

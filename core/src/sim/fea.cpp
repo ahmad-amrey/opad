@@ -20,6 +20,7 @@
 #include <gp_Pln.hxx>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -32,6 +33,7 @@
 #include "../design/engine.hpp"
 #include "../import_common.hpp"
 #include "fea_mesh.hpp"
+#include "radiation.hpp"
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/sim/joints.hpp"
@@ -1029,8 +1031,15 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
   dir.p = std::filesystem::temp_directory_path() / ("opad-ccx-" + new_uuid().substr(0, 12));
   std::filesystem::create_directories(dir.p);
   if (const char* k = std::getenv("OPAD_KEEP_CCX"); k && *k) dir.keep = true;
+  double ccx_seconds = 0;
   auto run_ccx = [&](const std::string& input, double at) {
     report(at, "Solving (CalculiX)");
+    const auto started = std::chrono::steady_clock::now();
+    struct Clock {
+      std::chrono::steady_clock::time_point t;
+      double& sum;
+      ~Clock() { sum += std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count(); }
+    } clock{started, ccx_seconds};
     write_text_file(dir.p / "job.inp", input);
     // One thread for the solver unless asked: CalculiX 2.21's threaded SPOOLES factorisation (Ubuntu's ccx) races and now and
     // then returns wrong displacements for the same input (seen on a cantilever: 3.04 mm three runs out of five, 5.44 mm or
@@ -1038,12 +1047,17 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     {
       const char* asked = std::getenv("OPAD_CCX_THREADS");
       const std::string threads = asked && *asked ? asked : "1";
+      // Cavity radiation's view factors (cfd.radiation "calculix") have no such race: every core.
+      const std::string view_threads = std::to_string(std::max(1u, std::thread::hardware_concurrency()));
 #ifdef _WIN32
       _putenv_s("OMP_NUM_THREADS", threads.c_str());
       _putenv_s("CCX_NPROC_EQUATION_SOLVER", threads.c_str());
+      _putenv_s("CCX_NPROC_VIEWFACTOR", view_threads.c_str());
 #else
-      setenv("OMP_NUM_THREADS", threads.c_str(), 1);
-      setenv("CCX_NPROC_EQUATION_SOLVER", threads.c_str(), 1);
+      // Only when it changes: sweep points run at once (sim/sweep.cpp), and setenv beside getenv is a race.
+      for (const char* name : {"OMP_NUM_THREADS", "CCX_NPROC_EQUATION_SOLVER"})
+        if (const char* now = std::getenv(name); !now || threads != now) setenv(name, threads.c_str(), 1);
+      if (const char* now = std::getenv("CCX_NPROC_VIEWFACTOR"); !now || view_threads != now) setenv("CCX_NPROC_VIEWFACTOR", view_threads.c_str(), 1);
 #endif
     }
     detail::RunOptions ro;
@@ -1313,14 +1327,41 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       }
     }
     // The air solved around the parts: a film on every outer face, from it.
-    // With the air solved, radiation (cfd.radiation, default on) between every outer face and to the room.
-    const bool cavity = air_films && st.value("cfd", json::object()).value("radiation", true);
+    // With the air solved, radiation (cfd.radiation, default on) between every outer face and to the room: by rays
+    // (sim/radiation.hpp, each face's sink from the others' temperatures, per solve), or "calculix" for CalculiX's own cavity
+    // radiation (its view factors and the dense system they make solved inside every solve: minutes for a few thousand faces).
+    const json rad_mode = air_films ? st.value("cfd", json::object()).value("radiation", json(true)) : json(false);
+    const bool cavity = rad_mode.is_string() && rad_mode.get<std::string>() == "calculix";
+    const bool by_rays = !cavity && (rad_mode.is_boolean() ? rad_mode.get<bool>() : rad_mode.is_string() && rad_mode.get<std::string>() == "rays");
+    if (rad_mode.is_string() && !cavity && !by_rays) throw Error("cfd.radiation: true, false, \"rays\" or \"calculix\"");
+    std::vector<radiation::Surface> surfaces;  // by rays: one per entry of rads, in its order
     if (air_films)
       for (size_t t = 0; t < mesh.tris.size(); ++t)
         if (const auto f = skin_face(t)) {
           films.push_back({*f, 10.0, ambient, -1});
-          if (cavity) rads.push_back({*f, mats[size_t(f->body)].emissivity, ambient, true});
+          if (cavity || by_rays) rads.push_back({*f, mats[size_t(f->body)].emissivity, ambient, cavity});
+          if (by_rays) {
+            radiation::Surface s;
+            for (int k = 0; k < 3; ++k) s.corners[size_t(k)] = mesh.nodes[size_t(mesh.tris[t][size_t(k)])];
+            // The corners counter-clockwise seen along the outward normal.
+            if (dot(cross(sub(s.corners[1], s.corners[0]), sub(s.corners[2], s.corners[0])), f->normal) < 0) std::swap(s.corners[1], s.corners[2]);
+            s.normal = f->normal;
+            s.area = f->area;
+            s.emissivity = mats[size_t(f->body)].emissivity;
+            surfaces.push_back(s);
+          }
         }
+    radiation::ViewFactors views;
+    json radiation_info;
+    if (by_rays) {
+      report(0.28, "Radiation: view factors");
+      const auto started = std::chrono::steady_clock::now();
+      views = radiation::view_factors(surfaces, st.value("cfd", json::object()).value("radiation_rays", 512));
+      radiation_info = {{"model", "rays"}, {"surfaces", surfaces.size()}, {"rays", views.rays},
+                              {"seconds", std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()}};
+    } else if (cavity) {
+      radiation_info = {{"model", "calculix"}, {"surfaces", rads.size()}};
+    }
     if (films.empty() && rads.empty() && fixed_temps.str().empty())
       throw Error("the heat has nowhere to go: add a convection, a radiation, a fan or a fixed temperature");
 
@@ -1399,12 +1440,29 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     };
     // The films from the temperatures: natural convection per plate, each fan's operating point, channels and air.
     int air_pass = 0;
+    double film_mismatch = 0;  // with the air solved: the films against what the air took, as a share of it
     auto update = [&](const std::vector<double>& T) {
+      if (by_rays) {
+        std::vector<double> Ts(rads.size());
+        for (size_t i = 0; i < rads.size(); ++i) Ts[i] = face_temp(rads[i].f, T);
+        const std::vector<double> sink = radiation::sinks(views, surfaces, Ts, ambient);
+        for (size_t i = 0; i < rads.size(); ++i) rads[i].sink = sink[i];
+      }
       if (air_films) {
         std::vector<AirFace> faces;
         faces.reserve(films.size());
         for (const auto& fl : films) faces.push_back({fl.f.centre, fl.f.normal, fl.f.area, fl.f.body, face_temp(fl.f, T), fl.h, fl.sink});
         (*air_films)(faces, air_pass++);
+        // How far the films just solved with were from what the air took at those temperatures: the passes are done only
+        // when they agree (walls held at a temperature never move, so the temperatures alone settled at once while the
+        // films gave the air two and a half times what it took).
+        double off = 0, took = 0;
+        for (size_t i = 0; i < films.size(); ++i) {
+          const double A = films[i].f.area * 1e-6;
+          off += A * std::fabs(films[i].h * (faces[i].T - films[i].sink) - faces[i].q_air);
+          took += A * std::fabs(faces[i].q_air);
+        }
+        film_mismatch = took > 0 ? off / took : 0;
         for (size_t i = 0; i < films.size(); ++i) films[i].h = faces[i].h, films[i].sink = faces[i].sink;
         return;
       }
@@ -1448,6 +1506,11 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     json changes = json::array();
     if (air_films) update(T);
     else if (coupled) update(T), update(T);  // the second pass spreads the guessed heat along the fans' air
+    const double settle = air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05;
+    // With the air solved, the films must also give the air what it takes (cfd.agree, a share of the heat).
+    const double agree = st.value("cfd", json::object()).value("agree", 0.02);
+    json mismatches = json::array();
+    bool settled = !coupled;
     for (int it = 0; it < (coupled ? (air_films ? st.value("cfd", json::object()).value("passes", 30) : 12) : 1); ++it) {
       const Frd frd = run_ccx(input(true), 0.3 + 0.05 * std::min(it, 10));
       const std::vector<double> next = temps_of(frd, nullptr, nullptr);
@@ -1456,10 +1519,23 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       T = next;
       ++iterations;
       changes.push_back(change);
-      if (!coupled || change < (air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05)) break;
+      if (!coupled) break;
+      if (!air_films && change < settle) {
+        settled = true;
+        break;
+      }
       update(T);
+      if (air_films) {
+        mismatches.push_back(film_mismatch);
+        if (change < settle && film_mismatch < agree) {
+          settled = true;
+          break;
+        }
+      }
     }
-    if (coupled && change >= (air_films ? st.value("cfd", json::object()).value("settle", 0.1) : 0.05)) run.warnings.push_back("the temperatures were still moving by " + std::to_string(change) + " degC after " + std::to_string(iterations) + " solves");
+    if (!settled && change >= settle) run.warnings.push_back("the temperatures were still moving by " + std::to_string(change) + " degC after " + std::to_string(iterations) + " solves");
+    else if (!settled) run.warnings.push_back("the parts and the air still disagreed by " + std::to_string(int(std::lround(100 * film_mismatch))) +
+                                              " % of the heat after " + std::to_string(iterations) + " solves (cfd.passes)");
     // Over time: the films of the steady state, from the ambient temperature.
     std::vector<std::vector<double>> frames;
     std::vector<double> times;
@@ -1521,6 +1597,8 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       to_air += q;
       const std::string by = f.load < 0 ? std::string("the air") : loads[size_t(f.load)]->name;
       by_load[by] = by_load.value(by, 0.0) + q;
+      json& b = summary["bodies"][scene.node(bodies[size_t(f.f.body)])->name];  // each part's share
+      b["to_air_W"] = b.value("to_air_W", 0.0) + q;
     }
     for (const auto& r : rads) {
       const double Ts = face_temp(r.f, T) + 273.15, Ta = r.sink + 273.15;
@@ -1531,6 +1609,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     summary["heat_W"] = heat_in;
     summary["to_air_W"] = to_air;
     if (!rads.empty()) summary["radiated_W"] = radiated;
+    if (!radiation_info.is_null()) summary["radiation"] = radiation_info;
     if (!fixed_temps.str().empty() && !transient) summary["to_fixed_temperatures_W"] = heat_in - to_air - radiated;
     summary["loads_W"] = by_load;
     json conv = json::array();
@@ -1563,7 +1642,9 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     if (!fans_json.empty()) summary["fans"] = fans_json;
     summary["loads"] = applied;
     summary["solves"] = iterations;
+    summary["ccx_seconds"] = ccx_seconds;
     if (changes.size() > 1) summary["solve_changes_C"] = changes;
+    if (!mismatches.empty()) summary["air_disagreement"] = mismatches;  // per pass: the films against what the air took
     summary["nodes"] = mesh.nodes.size();
     summary["elements"] = mesh.tets.size();
     if (transient) {

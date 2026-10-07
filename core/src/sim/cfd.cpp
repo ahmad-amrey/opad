@@ -1,6 +1,9 @@
 #include "opad/sim/cfd.hpp"
 
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
@@ -9,6 +12,7 @@
 #include <TopoDS.hxx>
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -267,8 +271,11 @@ class Nearest {
   Nearest(const std::vector<V>& pts, double cell) : m_pts(pts), m_cell(std::max(cell, 1e-6)) {
     for (size_t i = 0; i < pts.size(); ++i) m_grid[key(pts[i])].push_back(i);
   }
-  size_t operator()(const V& p) const {
-    size_t best = 0;
+  size_t operator()(const V& p) const { return (*this)(p, nullptr); }
+  // The nearest that `ok` accepts (npos when none is within 64 buckets).
+  static constexpr size_t npos = size_t(-1);
+  size_t operator()(const V& p, const std::function<bool(size_t)>& ok) const {
+    size_t best = ok ? npos : 0;
     double bd = 1e300;
     for (int r = 0; r < 64 && (bd == 1e300 || double(r - 1) * m_cell < std::sqrt(bd)); ++r) {
       const auto k = key(p);
@@ -279,7 +286,7 @@ class Nearest {
             const auto it = m_grid.find({k[0] + i, k[1] + j, k[2] + l});
             if (it == m_grid.end()) continue;
             for (size_t n : it->second)
-              if (const double d = dot(sub(m_pts[n], p), sub(m_pts[n], p)); d < bd) bd = d, best = n;
+              if (const double d = dot(sub(m_pts[n], p), sub(m_pts[n], p)); d < bd && (!ok || ok(n))) bd = d, best = n;
           }
     }
     return best;
@@ -434,6 +441,9 @@ Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vec
 }
 
 StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const Progress& progress) {
+  const auto t_start = std::chrono::steady_clock::now();
+  auto seconds_since = [](std::chrono::steady_clock::time_point t) { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count(); };
+  json timing = json::object();
   StudyRun run;
   run.kind = "thermal";
   auto report = [&](double f, const std::string& phase) {
@@ -457,6 +467,11 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       if (!cfd.contains(k)) cfd[k] = v;
   }
 
+  // How the air carries heat between cells: upwind (first order, bounded) unless asked (e.g. "limitedLinear 1").
+  const std::string heat_scheme = cfd.value("heat_scheme", std::string("upwind"));
+  for (char c : heat_scheme)
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != ' ' && c != '.') throw Error("cfd.heat_scheme: an OpenFOAM scheme such as upwind or \"limitedLinear 1\"");
+
   // ---- the case's thermal loads: heat sources in bodies; fans (one at a duct's inlet, any number placed in an enclosure) or
   // one forced stream
   std::string load_case = st.value("case", std::string());
@@ -466,18 +481,19 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         load_case = l.load_case;
         break;
       }
-  std::vector<const Load*> heats, fan_loads;
+  std::vector<const Load*> heats, fan_loads, held;  // held: fixed temperatures
   const Load* stream = nullptr;
   for (const auto& l : scene.loads) {
     if (l.load_case != load_case) continue;
     if (!l.error.empty()) throw Error("load \"" + l.name + "\": " + l.error);
     if (l.kind == "heat") heats.push_back(&l);
+    else if (l.kind == "temperature") held.push_back(&l);
     else if (l.kind == "fan") fan_loads.push_back(&l);
     else if (l.kind == "convection" && l.def.value("h", json()) == "forced") stream = &l;
-    else if (l.kind == "convection" || l.kind == "radiation" || l.kind == "temperature")
+    else if (l.kind == "convection" || l.kind == "radiation")
       run.warnings.push_back("\"" + l.name + "\" is left out: with the CFD air, the parts lose heat only to the air the fan or the stream moves");
   }
-  if (heats.empty()) throw Error("load case \"" + load_case + "\" has no heat source: add one (load kind heat, W, on a body)");
+  if (heats.empty() && held.empty()) throw Error("load case \"" + load_case + "\" has no heat source: add one (load kind heat, W, on a body)");
   std::vector<std::string> bodies;
   auto add_body = [&](const std::string& id) {
     const Node* n = scene.node(id);
@@ -489,6 +505,8 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   const bool listed = !bodies.empty();
   if (!listed) {
     for (const Load* l : heats)
+      for (const auto& r : l->refs) add_body(r.body);
+    for (const Load* l : held)
       for (const auto& r : l->refs) add_body(r.body);
     for (const Load* l : fan_loads)
       for (const auto& r : l->refs) add_body(r.body);
@@ -511,8 +529,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     }
   }
   if (!enclosure.empty()) {
-    if (fan_loads.empty() && !cfd.value("buoyancy", true))
-      throw Error("the CFD air in an enclosure moves by fans (load kind fan) or by warm air rising (cfd.buoyancy): with neither it stands still");
+    if (fan_loads.empty() && !cfd.value("buoyancy", true) && !cfd.value("sealed", false))
+      throw Error("the CFD air in an enclosure moves by fans (load kind fan) or by warm air rising (cfd.buoyancy): with neither it stands still "
+                  "(only a sealed box's air may: cfd.sealed)");
     if (stream) run.warnings.push_back("\"" + stream->name + "\" is left out: in an enclosure the fans move the air");
     stream = nullptr;
   } else {
@@ -525,6 +544,10 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     for (const Load* l : heats)
       for (const auto& r : l->refs)
         if (r.kind != Ref::Kind::Body) throw Error("heat \"" + l->name + "\": the CFD air in a duct takes heat sources in whole bodies, not on faces");
+  if (enclosure.empty() && !held.empty()) {
+    if (heats.empty()) throw Error("the CFD air in a duct takes heat sources (load kind heat); fixed temperatures only in an enclosure");
+    for (const Load* l : held) run.warnings.push_back("\"" + l->name + "\" is left out: fixed temperatures are taken in an enclosure, not in a duct");
+  }
   const Load* fan_load = enclosure.empty() && !fan_loads.empty() ? fan_loads.front() : nullptr;
   // The frame: along the duct's air; an enclosure's is the world's.
   const V way = !enclosure.empty() ? V{1, 0, 0} : unit((fan_load ? fan_load : stream)->def.value("vector", V{1, 0, 0}));
@@ -594,13 +617,50 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   // to its fins' cells, at most four levels below the box's cells.
   std::vector<int> level(bodies.size(), 1);
   int deepest = 1;
+  json refinement = json::object();  // per body: its level and what set it (summary "refinement")
+  // In an enclosure a gap's cells are refined only in a box around it (the faces that look across it): refining all of a box's
+  // surface, outside too, for its 3 mm slots made three quarters of a fan-cooled box's 320k cells.
+  struct GapBox {
+    V lo, hi;
+    int level;
+  };
+  std::vector<GapBox> gap_boxes;
+  auto level_for = [&](double want) { return std::clamp(int(std::ceil(std::log2(coarse / want) - 0.2)), 1, 4); };
   for (size_t i = 0; i < bodies.size(); ++i) {
     const air::Thinness t = air::thinness(world[i]);
     double want = enclosure.empty() ? 1e300 : given > 0 ? given : (fin_want[i] > 0 ? fin_want[i] : 1e300);
-    if (t.wall > 0) want = std::min(want, t.wall / 1.25);
-    if (t.gap > 0 && t.gap < 0.5 * size) want = std::min(want, t.gap / (bodies[i] == enclosure ? 2 : 3));
-    if (want < 1e300) level[i] = std::clamp(int(std::ceil(std::log2(coarse / want) - 0.2)), 1, 4);
-    deepest = std::max(deepest, level[i]);
+    if (t.wall > 0) want = std::min(want, t.wall / cfd.value("wall_cells", 1.25));
+    const double across = bodies[i] == enclosure ? 2 : cfd.value("gap_cells", 3.0);
+    if (enclosure.empty() && t.gap > 0 && t.gap < 0.5 * size) want = std::min(want, t.gap / across);
+    if (want < 1e300) level[i] = level_for(want);
+    int gap_level = 0;
+    if (!enclosure.empty() && given <= 0)
+      for (const auto& g : t.gaps) {
+        if (g.width >= 0.5 * size) continue;
+        const int L = level_for(g.width / across);
+        if (L <= level[i]) continue;
+        const double pad = coarse / std::pow(2.0, L);
+        gap_boxes.push_back({{g.lo[0] - pad, g.lo[1] - pad, g.lo[2] - pad}, {g.hi[0] + pad, g.hi[1] + pad, g.hi[2] + pad}, L});
+        gap_level = std::max(gap_level, L);
+      }
+    deepest = std::max({deepest, level[i], gap_level});
+    refinement[scene.node(bodies[i])->name] = {{"level", level[i]}, {"cell_mm", coarse / std::pow(2.0, level[i])}, {"wall_mm", t.wall}, {"gap_mm", t.gap}};
+    if (gap_level > 0) refinement[scene.node(bodies[i])->name]["gap_level"] = gap_level;
+  }
+  // Boxes of one level that overlap made one.
+  for (bool merged = true; merged;) {
+    merged = false;
+    for (size_t a = 0; a < gap_boxes.size() && !merged; ++a)
+      for (size_t b = a + 1; b < gap_boxes.size() && !merged; ++b) {
+        GapBox &x = gap_boxes[a], &y = gap_boxes[b];
+        if (x.level != y.level) continue;
+        bool overlap = true;
+        for (int k = 0; k < 3; ++k) overlap = overlap && x.lo[k] <= y.hi[k] && y.lo[k] <= x.hi[k];
+        if (!overlap) continue;
+        for (int k = 0; k < 3; ++k) x.lo[k] = std::min(x.lo[k], y.lo[k]), x.hi[k] = std::max(x.hi[k], y.hi[k]);
+        gap_boxes.erase(gap_boxes.begin() + long(b));
+        merged = true;
+      }
   }
   fine = coarse / std::pow(2.0, deepest);  // the finest cell
   // Fans in an enclosure: each a disk of air whose two sides the fan's curve sets apart in pressure. On a body that makes
@@ -648,7 +708,16 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   const double pad = enclosure.empty() ? cfd.value("padding", fine) : margin;
   const double off = 0.37 * coarse;
   const double d0 = lo[0] - up - off, d1 = hi[0] + down + off;
-  const double a0 = lo[1] - pad - off, a1 = hi[1] + pad + off, b0 = lo[2] - pad - off, b1 = hi[2] + pad + off;
+  double a0 = lo[1] - pad - off, a1 = hi[1] + pad + off, b0 = lo[2] - pad - off, b1 = hi[2] + pad + off;
+  // cfd.span (mm, a stream only): the box's width across the parts' wider side, centred on them; narrower than a part,
+  // the part crosses the box wall to wall and, the walls slipping, the air is two-dimensional (a plate of endless span).
+  if (const double span = cfd.value("span", 0.0); span > 0 && enclosure.empty()) {
+    if (!stream) throw Error("cfd.span is for a stream (forced convection), not a fan's duct");
+    double& s0 = hi[1] - lo[1] >= hi[2] - lo[2] ? a0 : b0;
+    double& s1 = &s0 == &a0 ? a1 : b1;
+    const double mid = &s0 == &a0 ? 0.5 * (lo[1] + hi[1]) : 0.5 * (lo[2] + hi[2]);
+    s0 = mid - 0.5 * span, s1 = mid + 0.5 * span;
+  }
   const int nx = std::max(4, int(std::ceil((d1 - d0) / coarse))), ny = std::max(2, int(std::ceil((a1 - a0) / coarse))),
             nz = std::max(2, int(std::ceil((b1 - b0) / coarse)));
   if (double(nx) * ny * nz > cfd.value("max_cells", 3e6)) throw Error("cfd: the air's box would take too many cells at this cell size: set cfd.cell_size larger");
@@ -676,7 +745,8 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
 #ifdef _WIN32
       _putenv_s("WM_PROJECT_DIR", path_to_utf8(foam.project).c_str());
 #else
-      setenv("WM_PROJECT_DIR", path_to_utf8(foam.project).c_str(), 1);
+      const std::string project = path_to_utf8(foam.project);  // only when it changes: sweep points run at once
+      if (const char* now = std::getenv("WM_PROJECT_DIR"); !now || project != now) setenv("WM_PROJECT_DIR", project.c_str(), 1);
 #endif
     }
     detail::RunOptions ro;
@@ -745,6 +815,8 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   // snapping to the parts (their faces stepped to the cells): on snapped cells the solvers under gravity (Boussinesq or
   // compressible, steady or not) blew up from rounding alone, still air at one temperature included.
   const bool buoyant = !enclosure.empty() && cfd.value("buoyancy", disks.empty());
+  // Sealed (cfd.sealed): only the air inside the enclosure, none of the room's; nothing goes in or out.
+  const bool sealed = !enclosure.empty() && cfd.value("sealed", false);
 
   // ---- mesh: the duct, the parts cut out of it as cell zones, then one region each
   report(0.03, "Writing the OpenFOAM case");
@@ -763,6 +835,8 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     sh << "castellatedMesh true; snap " << (buoyant ? "false" : "true") << "; addLayers false;\ngeometry {\n";
     for (const auto& r : region)
       if (!r.empty()) sh << "  " << r << " { type triSurfaceMesh; file \"" << r << ".stl\"; }\n";
+    for (size_t g = 0; g < gap_boxes.size(); ++g) sh << "  gap" << g << " { type searchableBox; min " << vec(mul(gap_boxes[g].lo, 1e-3)) << "; max " << vec(mul(gap_boxes[g].hi, 1e-3))
+                                                     << "; }\n";  // m, as the mesh
     sh << "}\ncastellatedMeshControls {\n  maxLocalCells 6000000; maxGlobalCells 12000000; minRefinementCells 0; maxLoadUnbalance 0.1; nCellsBetweenLevels 2;\n"
        << "  features ();\n  refinementSurfaces {\n";
     // In a duct, each part a region of the mesh (its cells kept, conjugate heat in OpenFOAM); in an enclosure only the air is
@@ -773,11 +847,34 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         if (enclosure.empty()) sh << " faceZone " << region[i] << "; cellZone " << region[i] << "; cellZoneInside inside;";
         sh << " }\n";
       }
-    // A point in the air: upstream in a duct, in the room's margin by a corner of an enclosure.
-    const V inside_air = mul(enclosure.empty() ? corner(d0 + 0.5 * (up + off), 0.5 * (a0 + a1), 0.5 * (b0 + b1))
-                                               : corner(d0 + 0.5 * margin, a0 + 0.5 * margin, b0 + 0.5 * margin),
-                             1e-3);
-    sh << "  }\n  resolveFeatureAngle 30;\n  refinementRegions {}\n  locationInMesh " << vec(inside_air) << ";\n  allowFreeStandingZoneFaces false;\n}\n"
+    // A point in the air: upstream in a duct, in the room's margin by a corner of an enclosure; in a sealed one, in its air.
+    V seed = enclosure.empty() ? corner(d0 + 0.5 * (up + off), 0.5 * (a0 + a1), 0.5 * (b0 + b1)) : corner(d0 + 0.5 * margin, a0 + 0.5 * margin, b0 + 0.5 * margin);
+    if (sealed) {
+      // The first point of a grid over the enclosure's box that no part holds, a cell clear of their faces.
+      Bnd_Box eb;
+      BRepBndLib::Add(world[index_of(enclosure)], eb);
+      double c[6];
+      eb.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+      bool found = false;
+      for (int i = 1; i < 12 && !found; ++i)
+        for (int j = 1; j < 12 && !found; ++j)
+          for (int k = 1; k < 12 && !found; ++k) {
+            const gp_Pnt q(c[0] + (c[3] - c[0]) * (i + 0.13) / 12, c[1] + (c[4] - c[1]) * (j + 0.17) / 12, c[2] + (c[5] - c[2]) * (k + 0.19) / 12);
+            bool free = true;
+            for (size_t b = 0; b < world.size() && free; ++b) {
+              if (is_air[b]) continue;
+              BRepClass3d_SolidClassifier in(world[b], q, 1e-6);
+              if (in.State() != TopAbs_OUT) free = false;
+              else if (BRepExtrema_DistShapeShape(world[b], BRepBuilderAPI_MakeVertex(q).Vertex()).Value() < coarse) free = false;
+            }
+            if (free) seed = {q.X(), q.Y(), q.Z()}, found = true;
+          }
+      if (!found) throw Error("cfd.sealed: no air found inside the enclosure (is it hollow?)");
+    }
+    const V inside_air = mul(seed, 1e-3);
+    sh << "  }\n  resolveFeatureAngle 30;\n  refinementRegions {";
+    for (size_t g = 0; g < gap_boxes.size(); ++g) sh << " gap" << g << " { mode inside; levels ((1e15 " << gap_boxes[g].level << ")); }";
+    sh << " }\n  locationInMesh " << vec(inside_air) << ";\n  allowFreeStandingZoneFaces false;\n}\n"
        << "snapControls { nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; "
           "multiRegionFeatureSnap true; }\n"
        << "addLayersControls { relativeSizes true; layers {} expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; "
@@ -796,6 +893,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         "linear corrected; } interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
     put(cas / "system" / "fvSolution", "dictionary", "fvSolution", "\n");
   }
+  const auto t_mesh = std::chrono::steady_clock::now();
   foam_run("blockMesh", {}, cas, 0.05);
   report(0.08, "Meshing the air around the parts (snappyHexMesh)");
   foam_run("snappyHexMesh", {"-overwrite"}, cas, 0.08);
@@ -811,6 +909,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       else run.warnings.push_back("\"" + scene.node(bodies[i])->name + "\" was too thin for the cell size and is left out: set cfd.cell_size smaller");
   }
   const fs::path air_mesh = enclosure.empty() ? cas / "constant" / fluid / "polyMesh" : cas / "constant" / "polyMesh";
+  timing["mesh"] = seconds_since(t_mesh);
   // The fans: a face zone of the air's faces each disk crosses, made a pair of baffles the fan's pressure jumps across.
   std::vector<size_t> disk_faces;
   if (!disks.empty()) {
@@ -979,8 +1078,10 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
              "  outlet { type fixedValue; value uniform 0; }";
       fan_json = {{"name", fan_load->name}, {"fan", fan.to_json()}, {"fans", count}};
     } else {
+      // A stream is open air: the box's sides slip (no-slip sides grew their own layers and sped up the air past the part).
       const double U = stream->def.value("velocity", 1.0);
-      u_bc = "inlet { type fixedValue; value uniform " + vec(mul(way, U)) + "; }\n  outlet { type inletOutlet; inletValue uniform (0 0 0); value uniform (0 0 0); }";
+      u_bc = "inlet { type fixedValue; value uniform " + vec(mul(way, U)) + "; }\n  outlet { type inletOutlet; inletValue uniform (0 0 0); value uniform (0 0 0); }"
+             "\n  walls { type slip; }";
       p_bc = "inlet { type zeroGradient; }\n  outlet { type fixedValue; value uniform 0; }";
     }
     put(flow / "0" / "U", "volVectorField", "U",
@@ -1022,7 +1123,13 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       }
     };
     std::string last, phi, p;
-    if (!buoyant) {
+    const auto t_flow = std::chrono::steady_clock::now();
+    // A sealed box with no fans and no gravity: its air stands still and only conducts.
+    const bool still = sealed && disks.empty() && !buoyant;
+    if (still) {
+      phi = "FoamFile { version 2.0; format ascii; class surfaceScalarField; object phi; }\ndimensions [0 3 -1 0 0 0 0];\n"
+            "internalField uniform 0;\nboundaryField\n{\n  \".*\" { type calculated; value uniform 0; }\n}\n";
+    } else if (!buoyant) {
       report(0.32, "Solving the air's flow (simpleFoam)");
       const std::string log = foam_run("simpleFoam", {}, flow, 0.32);
       last = latest_time(flow);
@@ -1032,6 +1139,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       phi = read_text_file(flow / last / "phi"), p = read_text_file(flow / last / "p");
       flow_report(phi, p, std::stoi(last), converged);
     }
+    timing["flow"] = seconds_since(t_flow);
     if (!enclosure.empty()) {
       // ---- the heat in an enclosure: the parts in CalculiX (sim/fea.cpp, one bonded mesh: touching parts conduct as one),
       // the air's temperature in OpenFOAM on the frozen flow (scalarTransportFoam, one linear solve), back and forth: the
@@ -1042,7 +1150,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       if (!buoyant) {
         fs::create_directories(heat / "constant");
         fs::copy(air_mesh, heat / "constant" / "polyMesh", fs::copy_options::recursive);
-        U = read_text_file(flow / last / "U");
+        U = still ? "FoamFile { version 2.0; format ascii; class volVectorField; object U; }\ndimensions [0 1 -1 0 0 0 0];\n"
+                    "internalField uniform (0 0 0);\nboundaryField\n{\n  \".*\" { type fixedValue; value uniform (0 0 0); }\n}\n"
+                  : read_text_file(flow / last / "U");
         for (const char* from : {"pressureInletOutletVelocity"})
           for (size_t at = U.find(from); at != std::string::npos; at = U.find(from)) U.replace(at, std::strlen(from), "fixedValue");
         fs::create_directories(heat / "0");
@@ -1053,7 +1163,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
             "application scalarTransportFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; "
             "writeInterval 1; writeFormat ascii; writePrecision 10; timeFormat general; runTimeModifiable false;\n");
         put(heat / "system" / "fvSchemes", "dictionary", "fvSchemes",
-            "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,T) bounded Gauss upwind; } "
+            "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,T) bounded Gauss " + heat_scheme + "; } "
             "laplacianSchemes { default Gauss linear corrected; } interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
         put(heat / "system" / "fvSolution", "dictionary", "fvSolution",
             "solvers { T { solver PBiCGStab; preconditioner DILU; tolerance 1e-10; relTol 0; } }\nSIMPLE { nNonOrthogonalCorrectors 1; }\n");
@@ -1065,7 +1175,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
             "transportModel Newtonian; nu " + num(a.nu) + "; beta " + num(a.beta) + "; TRef " + num(T0) + "; Pr " + num(a.Pr) + "; Prt 0.85;\n");
         put(flow / "system" / "fvSchemes", "dictionary", "fvSchemes",
             "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,U) bounded Gauss upwind; "
-            "div(phi,T) bounded Gauss upwind; div((nuEff*dev2(T(grad(U))))) Gauss linear; } laplacianSchemes { default Gauss linear corrected; } "
+            "div(phi,T) bounded Gauss " + heat_scheme + "; div((nuEff*dev2(T(grad(U))))) Gauss linear; } laplacianSchemes { default Gauss linear corrected; } "
             "interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
         put(flow / "system" / "fvSolution", "dictionary", "fvSolution",
             "solvers { p_rgh { solver GAMG; smoother GaussSeidel; tolerance 1e-8; relTol 0.01; } \"(U|T)\" { solver PBiCGStab; preconditioner DILU; "
@@ -1113,6 +1223,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         V centre;  // mm
         double area, k_d;  // m2, W/m2K: the air's conductance from the face to the cell behind it
         size_t cell;
+        V normal;  // out of the air, into the part
       };
       std::vector<std::pair<std::string, std::vector<size_t>>> wall_patches;  // patch -> indices into walls
       std::vector<Wall> walls;
@@ -1132,7 +1243,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
           const size_t cell = size_t(own[f]);
           const double d = A > 0 ? std::fabs(dot(sub(c, air_cells.centre[cell]), mul(area, 1 / A))) : 0;
           wall_patches.back().second.push_back(walls.size());
-          walls.push_back({body, mul(c, 1e3), A, a.k / std::max(d, 1e-6), cell});
+          walls.push_back({body, mul(c, 1e3), A, a.k / std::max(d, 1e-6), cell, A > 0 ? mul(area, 1 / A) : V{0, 0, 1}});
         }
       }
       if (walls.empty()) throw Error("cfd: the air's mesh has no walls on the parts");
@@ -1144,9 +1255,11 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       std::vector<std::vector<size_t>> face_ids;  // per body: indices into the faces CalculiX gives
       std::vector<std::vector<V>> face_centres;
       std::vector<std::unique_ptr<Nearest>> near_wall;
+      std::vector<size_t> wall_face, face_wall;  // each air wall face's part face, and each part face's air wall face (or npos)
       std::vector<std::vector<V>> wall_centres;
       std::vector<std::vector<size_t>> wall_ids;
       int passes = 0, buoyant_done = 0;
+      double air_seconds = 0;
       // The heat the air carries out of the room's margin (W): out where it flows out, at the temperature of the cell it
       // leaves (upwind; where it flows in it is the room's).
       std::vector<size_t> open_cell;
@@ -1162,7 +1275,15 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       };
       std::vector<double> h0;  // each face's film once settled on (W/m2K)
       std::vector<double> target, last_r;  // the temperature each film should work against; the last pass's residual
-      double omega = 0.7;
+      std::vector<double> last_xt;              // robin: the last pass's targets
+      std::vector<std::vector<double>> dR, dX;  // robin: the passes' changes of residual and target (IQN-ILS)
+      // cfd.coupling: "robin" (each face's film the conductance to the air cell beside it, against that cell's temperature:
+      // what the air takes at that wall, so the two agree as the temperatures settle; stable), or "film" (a film fixed after
+      // two passes against the room, its sink moved: fast past a fan, but it swung and never agreed in enclosed air).
+      const std::string coupling = cfd.value("coupling", std::string("robin"));
+      if (coupling != "robin" && coupling != "film") throw Error("cfd.coupling is robin or film");
+      const bool robin = coupling == "robin";
+      double omega = robin ? 1.0 : 0.7;
       const AirFilms films = [&](std::vector<AirFace>& faces, int pass) {
         if (pass == 0) {
           h0.assign(faces.size(), 0.0), target.assign(faces.size(), 0.0);
@@ -1174,13 +1295,37 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
             near_face.push_back(std::make_unique<Nearest>(face_centres[b], coarse));
             near_wall.push_back(std::make_unique<Nearest>(wall_centres[b], coarse));
           }
+          // Each wall face of the air to the nearest face of its part that looks at the air there, and back: by nearness
+          // alone a thin wall's (a 1 mm frame, a board) other side, insulated or warmer, was taken as often as not, and the
+          // films gave the air several times what it took.
+          wall_face.assign(walls.size(), Nearest::npos);
+          face_wall.assign(faces.size(), Nearest::npos);
+          for (size_t w = 0; w < walls.size(); ++w) {
+            const size_t b = size_t(walls[w].body);
+            if (face_ids[b].empty()) continue;
+            size_t i = (*near_face[b])(walls[w].centre, [&](size_t n) { return dot(faces[face_ids[b][n]].normal, walls[w].normal) < -0.3; });
+            if (i == Nearest::npos) i = (*near_face[b])(walls[w].centre);
+            wall_face[w] = face_ids[b][i];
+          }
+          for (size_t k = 0; k < faces.size(); ++k) {
+            const size_t b = size_t(faces[k].body);
+            if (wall_ids[b].empty()) continue;
+            const size_t i = (*near_wall[b])(faces[k].centre, [&](size_t n) { return dot(faces[k].normal, walls[wall_ids[b][n]].normal) < -0.3; });
+            if (i != Nearest::npos) face_wall[k] = wall_ids[b][i];
+          }
         }
         ++passes;
+        const auto t_pass = std::chrono::steady_clock::now();
+        struct Clock {
+          std::chrono::steady_clock::time_point t;
+          double& sum;
+          ~Clock() { sum += std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count(); }
+        } clock{t_pass, air_seconds};
         report(std::min(0.9, 0.45 + 0.02 * pass), "The air's temperature, pass " + std::to_string(pass + 1));
         // The walls at the parts' temperatures: each wall face the nearest face CalculiX solved.
         for (size_t w = 0; w < walls.size(); ++w) {
           const size_t b = size_t(walls[w].body);
-          Twall[w] = face_ids[b].empty() ? ambient : faces[face_ids[b][(*near_face[b])(walls[w].centre)]].T;
+          Twall[w] = wall_face[w] == Nearest::npos ? ambient : faces[wall_face[w]].T;
         }
         std::ostringstream bc;
         bc.precision(10);
@@ -1209,7 +1354,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
           put(flow / now / "T", "volScalarField", "T", "dimensions [0 0 0 1 0 0 0];\ninternalField " + internal.str() + ";\nboundaryField\n{\n" + bc.str() + "}\n");
           // In chunks until the heat the walls give the air leaves the room's margin (within 5 %): before that, the warm air
           // is still filling the box and the films would be the box's warming up, not its steady state.
-          for (int chunk = 0; chunk < cfd.value("buoyant_chunks", 12); ++chunk) {
+          for (int chunk = 0; chunk < (sealed ? 1 : cfd.value("buoyant_chunks", 12)); ++chunk) {
             const int more = pass == 0 && chunk == 0 ? cfd.value("buoyant_first", 600) : cfd.value("buoyant_pass", 200);
             buoyant_done += more;
             put(flow / "system" / "controlDict", "dictionary", "controlDict",
@@ -1230,30 +1375,37 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         for (size_t w = 0; w < walls.size(); ++w) {
           const size_t b = size_t(walls[w].body);
           if (face_ids[b].empty()) continue;
-          const size_t k = face_ids[b][(*near_face[b])(walls[w].centre)];
+          const size_t k = wall_face[w];
+          if (k == Nearest::npos) continue;
           const double Tc = Tair[walls[w].cell] - 273.15;
           qA[k] += walls[w].k_d * (Twall[w] - Tc) * walls[w].area;
-          A[k] += walls[w].area, kdA[k] += walls[w].k_d * walls[w].area, TcA[k] += Tc * walls[w].area;
+          A[k] += walls[w].area, kdA[k] += walls[w].k_d * walls[w].area, TcA[k] += walls[w].k_d * Tc * walls[w].area;
         }
         for (size_t k = 0; k < faces.size(); ++k) {
           AirFace& f = faces[k];
           double q, kd, Tc;
           if (A[k] > 0) {
-            q = qA[k] / A[k], kd = kdA[k] / A[k], Tc = TcA[k] / A[k];
-          } else {  // smaller than the air's cells there: the nearest wall face's
-            const size_t b = size_t(f.body);
-            if (wall_ids[b].empty()) {
-              f.h = 0, f.sink = ambient;
+            // Tc weighted by each wall face's conductance: kd (T - Tc) is then exactly the heat those faces give the air.
+            q = qA[k] / A[k], kd = kdA[k] / A[k], Tc = TcA[k] / kdA[k];
+          } else {  // smaller than the air's cells there: the nearest wall face's, if the air is there at all
+            const size_t w = face_wall[k];
+            if (w == Nearest::npos || norm(sub(walls[w].centre, f.centre)) > 1.5 * coarse) {
+              // No air beside it (a sealed box's outside, a gap too narrow for the cells): insulated.
+              f.h = 0, f.sink = ambient, f.q_air = 0;
               continue;
             }
-            const size_t w = wall_ids[b][(*near_wall[b])(f.centre)];
             Tc = Tair[walls[w].cell] - 273.15, kd = walls[w].k_d, q = kd * (Twall[w] - Tc);
           }
+          f.q_air = q;
           // The first passes: the face's film against the room's temperature (against the air next to it where that is the
           // warmer). Then that film stays and only the temperature it works against moves (relaxed), so that the film gives
           // the heat the air took: switching faces between the two, or the films chasing the temperatures, kept the
           // passes from settling (a degree up and down after thirty).
-          if (pass < 2 || h0[k] <= 0) {
+          if (robin) {
+            f.h = h0[k] = std::clamp(kd, 1.0, 1e6);
+            target[k] = Tc;
+            if (pass == 0) f.sink = Tc;
+          } else if (pass < 2 || h0[k] <= 0) {
             if (f.T - ambient > 0.2 && q > 0) f.h = std::clamp(q / (f.T - ambient), 1.0, 1e4), f.sink = ambient;
             else f.h = std::clamp(kd, 1.0, 1e4), f.sink = Tc;
             if (pass == 1) h0[k] = f.h;
@@ -1263,13 +1415,68 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
           }
         }
         // The temperatures the films work against, relaxed by Aitken's factor from the last two passes' residuals.
-        if (pass >= 2) {
+        if (robin && pass >= 1) {
+          // Interface quasi-Newton (IQN-ILS, Degroote et al. 2009): from the passes so far, how the air's temperatures beside
+          // the walls answer the sinks given, least squares; the next sinks where that says they agree. One factor for all
+          // (Aitken) left a near-adiabatic wall (an insulating frame) creeping a little each pass.
+          std::vector<double> x(faces.size()), xt(faces.size()), r(faces.size());
+          for (size_t k = 0; k < faces.size(); ++k) x[k] = faces[k].sink, xt[k] = h0[k] > 0 ? target[k] : x[k], r[k] = xt[k] - x[k];
+          if (!last_r.empty()) {
+            dR.push_back(r), dX.push_back(xt);
+            for (size_t k = 0; k < r.size(); ++k) dR.back()[k] -= last_r[k], dX.back()[k] -= last_xt[k];
+            if (dR.size() > 20) dR.erase(dR.begin()), dX.erase(dX.begin());
+          }
+          last_r = r, last_xt = xt;
+          std::vector<double> next = xt;
+          const size_t m = dR.size();
+          if (m > 0) {
+            // (V'V + eps) c = -V'r
+            std::vector<double> M(m * m), b(m), c(m);
+            double tr = 0;
+            for (size_t i = 0; i < m; ++i) {
+              for (size_t j = 0; j <= i; ++j) {
+                double sum = 0;
+                for (size_t k = 0; k < r.size(); ++k) sum += dR[i][k] * dR[j][k];
+                M[i * m + j] = M[j * m + i] = sum;
+              }
+              tr += M[i * m + i];
+              double sum = 0;
+              for (size_t k = 0; k < r.size(); ++k) sum += dR[i][k] * r[k];
+              b[i] = -sum;
+            }
+            for (size_t i = 0; i < m; ++i) M[i * m + i] += 1e-10 * tr + 1e-300;
+            // Gaussian elimination with partial pivoting.
+            for (size_t col = 0; col < m; ++col) {
+              size_t piv = col;
+              for (size_t i = col + 1; i < m; ++i)
+                if (std::fabs(M[i * m + col]) > std::fabs(M[piv * m + col])) piv = i;
+              if (piv != col) {
+                for (size_t j = 0; j < m; ++j) std::swap(M[col * m + j], M[piv * m + j]);
+                std::swap(b[col], b[piv]);
+              }
+              for (size_t i = col + 1; i < m; ++i) {
+                const double f = M[i * m + col] / M[col * m + col];
+                for (size_t j = col; j < m; ++j) M[i * m + j] -= f * M[col * m + j];
+                b[i] -= f * b[col];
+              }
+            }
+            for (size_t i = m; i-- > 0;) {
+              double sum = b[i];
+              for (size_t j = i + 1; j < m; ++j) sum -= M[i * m + j] * c[j];
+              c[i] = sum / M[i * m + i];
+            }
+            for (size_t i = 0; i < m; ++i)
+              for (size_t k = 0; k < next.size(); ++k) next[k] += dX[i][k] * c[i];
+          }
+          for (size_t k = 0; k < faces.size(); ++k)
+            if (h0[k] > 0) faces[k].sink = next[k];
+        } else if (pass >= 2) {
           std::vector<double> r(faces.size());
           for (size_t k = 0; k < faces.size(); ++k) r[k] = h0[k] > 0 ? target[k] - faces[k].sink : 0.0;
           if (!last_r.empty()) {
             double num = 0, den = 0;
             for (size_t k = 0; k < r.size(); ++k) num += last_r[k] * (r[k] - last_r[k]), den += (r[k] - last_r[k]) * (r[k] - last_r[k]);
-            if (den > 0) omega = std::clamp(-omega * num / den, 0.1, 1.5);
+            if (den > 0) omega = std::clamp(-omega * num / den, 0.1, robin ? 4.0 : 1.5);
           }
           for (size_t k = 0; k < faces.size(); ++k)
             if (h0[k] > 0) faces[k].sink += omega * r[k];
@@ -1315,10 +1522,16 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       summary["vents"] = fan_json["vents"];
       summary["flow_iterations"] = fan_json["iterations"];
       summary["air_passes"] = passes;
+      timing["air_passes"] = air_seconds;
+      timing["calculix"] = solid.summary.value("ccx_seconds", 0.0);
+      timing["total"] = seconds_since(t_start);
+      summary["seconds"] = timing;
       summary["air_balance"] = {{"from_parts_W", given}, {"leaving_W", carried}};
       summary["air_cells"] = air_cells.centre.size();
       summary["cells"] = air_cells.centre.size();
       summary["cell_size_mm"] = fine;
+      summary["refinement"] = refinement;
+      summary["gap_boxes"] = gap_boxes.size();
       summary["streamlines"] = solid.fea->streamlines.size();
       summary["room_mm"] = {{"size", {d1 - d0, a1 - a0, b1 - b0}}, {"margin", margin}};
       summary["case_dir"] = run.summary["case_dir"];
@@ -1411,7 +1624,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   put(cas / "constant" / fluid / "radiationProperties", "dictionary", "radiationProperties", "radiation off; radiationModel none;\n");
   put(cas / "system" / fluid / "fvSchemes", "dictionary", "fvSchemes",
       "ddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; div(phi,U) bounded Gauss upwind; "
-      "div(phi,K) bounded Gauss upwind; div(phi,h) bounded Gauss upwind; div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear; } "
+      "div(phi,K) bounded Gauss upwind; div(phi,h) bounded Gauss " + heat_scheme + "; div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear; } "
       "laplacianSchemes { default Gauss linear corrected; } interpolationSchemes { default linear; } snGradSchemes { default corrected; }\n");
   put(cas / "system" / fluid / "fvSolution", "dictionary", "fvSolution",
       "solvers { \"rho.*\" { solver PCG; preconditioner DIC; tolerance 0; relTol 0; } p_rgh { solver GAMG; smoother GaussSeidel; tolerance 1e-7; "
