@@ -1161,6 +1161,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     struct Rad {
       Face f;
       double eps = 0, sink = 0;
+      bool cavity = false;  // the faces see each other (CalculiX's view factors), the rest of their view the room
     };
     std::vector<Film> films;
     std::vector<Rad> rads;
@@ -1312,9 +1313,14 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       }
     }
     // The air solved around the parts: a film on every outer face, from it.
+    // With the air solved, radiation (cfd.radiation, default on) between every outer face and to the room.
+    const bool cavity = air_films && st.value("cfd", json::object()).value("radiation", true);
     if (air_films)
       for (size_t t = 0; t < mesh.tris.size(); ++t)
-        if (const auto f = skin_face(t)) films.push_back({*f, 10.0, ambient, -1});
+        if (const auto f = skin_face(t)) {
+          films.push_back({*f, 10.0, ambient, -1});
+          if (cavity) rads.push_back({*f, mats[size_t(f->body)].emissivity, ambient, true});
+        }
     if (films.empty() && rads.empty() && fixed_temps.str().empty())
       throw Error("the heat has nowhere to go: add a convection, a radiation, a fan or a fixed temperature");
 
@@ -1369,7 +1375,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       }
       if (!rads.empty()) {
         in << "*RADIATE\n";
-        for (const auto& r : rads) in << r.f.elem + 1 << ", R" << r.f.face << ", " << r.sink << ", " << r.eps << "\n";
+        for (const auto& r : rads) in << r.f.elem + 1 << ", R" << r.f.face << (r.cavity ? "CR" : "") << ", " << r.sink << ", " << r.eps << "\n";
       }
       in << "*NODE FILE\nNT\n*END STEP\n";
       return in.str();
@@ -1520,6 +1526,8 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       const double Ts = face_temp(r.f, T) + 273.15, Ta = r.sink + 273.15;
       radiated += r.eps * 5.670e-8 * r.f.area * 1e-6 * (Ts * Ts * Ts * Ts - Ta * Ta * Ta * Ta);
     }
+    // Faces that see each other trade most of what they radiate: what leaves for the room is the rest of the heat (steady).
+    if (cavity && fixed_temps.str().empty() && !transient) radiated = heat_in - to_air;
     summary["heat_W"] = heat_in;
     summary["to_air_W"] = to_air;
     if (!rads.empty()) summary["radiated_W"] = radiated;

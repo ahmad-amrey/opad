@@ -144,22 +144,50 @@ TEST(cfd_fan_cooled_enclosure) {
   CHECK_NEAR(f["pressure_Pa"].get<double>(), 30 * (1 - Q / 15), 0.03 * 30 * (1 - Q / 15));
   // Mass and energy: the box breathes out what it breathes in, and the air carries off the heat put in.
   CHECK_NEAR(v["air_out_m3h"].get<double>(), v["air_in_m3h"].get<double>(), 0.01 * v["air_in_m3h"].get<double>());
-  CHECK_NEAR(v["heat_to_air_W"].get<double>(), 5, 0.05 * 5);
+  // What the air carries off and what the parts radiate to the room (CalculiX's view factors) make the 5 W.
+  CHECK_NEAR(v["heat_to_air_W"].get<double>() + s.value("radiated_W", 0.0), 5, 0.05 * 5);
+  CHECK(s.value("radiated_W", 0.0) > 0);
   // The block is warmer than the air that leaves, and that air warmer than the room.
   CHECK(s["bodies"]["Block"]["max_temperature_C"].get<double>() > v["outlet_air_C"].get<double>());
   CHECK(v["outlet_air_C"].get<double>() > 25);
   CHECK(!run.fea->streamlines.empty());
 }
 
-// Without a fan, the air in a box is still: refused (a forced stream does not move the air inside a box).
-TEST(cfd_enclosure_needs_a_fan) {
+// A box with vents low on one side and high on the other, a 5 W block on its floor, no fan: warm air rising draws the
+// room's air in low and out high.
+TEST(cfd_passive_enclosure) {
+  if (!sim::openfoam().found()) return;
+  Document doc = Document::create();
+  const std::string enclosure = box(doc, {0, 0, 0}, 90, 60, 40, "Enclosure");
+  cut(doc, enclosure, {3, 3, 3}, 84, 54, 34);
+  for (double y : {10.0, 26.0, 42.0}) cut(doc, enclosure, {-1, y, 5}, 5, 8, 5);   // low, in the -X wall
+  for (double y : {10.0, 26.0, 42.0}) cut(doc, enclosure, {86, y, 30}, 5, 8, 5);  // high, in the +X wall
+  const std::string block = box(doc, {30, 15, 3}, 30, 30, 10, "Block");
+  commands::run("part_properties", {{"target", block}, {"set", {{"material", "aluminium-6061"}}}}, &doc);
+  commands::run("part_properties", {{"target", enclosure}, {"set", {{"material", "abs"}}}}, &doc);
+  commands::run("load", {{"kind", "heat"}, {"on", {block}}, {"value", 5}}, &doc);
+  const sim::StudyRun run =
+      thermal(doc, {{"air", "cfd"}, {"ambient", 25}, {"cfd", {{"cell_size", 2.5}, {"buoyant_first", 300}, {"buoyant_pass", 100}, {"settle", 0.3}}}});
+  const json& s = run.summary;
+  if (std::getenv("OPAD_TEST_VERBOSE")) std::printf("%s\n", s.dump(1).c_str());
+  CHECK_EQ(s["enclosure"].get<std::string>(), "Enclosure");
+  CHECK(s["fans"].empty());
+  const json& v = s["vents"];
+  CHECK(v["air_out_m3h"].get<double>() > 0.05);
+  CHECK_NEAR(v["air_out_m3h"].get<double>(), v["air_in_m3h"].get<double>(), 0.02 * v["air_in_m3h"].get<double>());
+  CHECK_NEAR(v["heat_to_air_W"].get<double>() + s.value("radiated_W", 0.0), 5, 0.1 * 5);
+  CHECK(v["outlet_air_C"].get<double>() > 25);
+  CHECK(s["bodies"]["Block"]["max_temperature_C"].get<double>() > v["outlet_air_C"].get<double>());
+}
+
+// Without a fan and without warm air rising, the air in a box stands still: refused.
+TEST(cfd_enclosure_needs_moving_air) {
   if (!sim::openfoam().found()) return;
   std::string enclosure, fan, block;
   Document doc = vented_box(enclosure, fan, block);
   for (const auto& l : resolve(doc).loads)
     if (l.kind == "fan") commands::run("delete", {{"target", l.id}}, &doc);
-  commands::run("load", {{"kind", "convection"}, {"on", {block}}, {"h", "forced"}, {"velocity", 2}, {"vector", {1, 0, 0}}}, &doc);
-  CHECK_THROWS(thermal(doc, {{"air", "cfd"}}));
+  CHECK_THROWS(thermal(doc, {{"air", "cfd"}, {"cfd", {{"buoyancy", false}}}}));
 }
 
 CHECK_MAIN()

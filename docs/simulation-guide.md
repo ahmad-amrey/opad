@@ -17,7 +17,8 @@ them.
 | The frequencies a part rings at | Vibration modes study | Netgen mesh + CalculiX |
 | How a 3D-printed part fails: which layer, which way | Printed part + static study | as above, with printed materials |
 | How hot a part gets: heatsinks, fans, still air, warm-up | Thermal study | Netgen mesh + CalculiX, the air from correlations |
-| Where a fan's air goes, and how hot the parts get in it; a board in a vented box | Thermal study, *with the air solved* | OpenFOAM (snappyHexMesh, simpleFoam, chtMultiRegionSimpleFoam) |
+| Where a fan's air goes, and how hot the parts get in it; a board in a vented box | Thermal study, *with the air solved*, or the Cooling assistant | OpenFOAM (snappyHexMesh, simpleFoam, buoyantBoussinesqSimpleFoam) and CalculiX |
+| Which design is best: a vent's place, a fin count, a wall thickness | Design sweep (Cooling assistant's Best vents, or an agent) | any of the above, once per value |
 
 Static and modal studies need CalculiX's `ccx` on the PATH (or beside OPAD, or `OPAD_CCX`); the dynamic study needs a
 build with Project Chrono; the air solved needs OpenFOAM (Ubuntu: `apt install openfoam`; or `OPAD_OPENFOAM` set to
@@ -259,31 +260,58 @@ the parts' heat leaves only by the moving air.
 
 ## 10. Cool a board in a vented box (air solved)
 
-*How hot a single-board computer gets in its case, with a fan blowing in and vents letting the air out; where to put the
-vents.* Needs OpenFOAM.
+*How hot a single-board computer gets in its case: with a fan blowing in, or with vents only and warm air rising.*
+Needs OpenFOAM.
 
-1. Model the box as one solid: its walls, the fan's opening and the vents cut through them. Model the board, its chips
-   and the heatsink inside it as bodies of their own, and a block where the fan sits, as big as the fan.
-2. Give each part its material (**Material**, {key:inspect.material}): the box ABS or aluminium, the heatsink aluminium.
-3. On the **Thermal** tab, pick each chip and press **Heat source** with its power in W.
-4. Pick the fan's block, press **Fan**, choose the fan (or type its free flow and shut-off pressure) and the way it
-   blows: into the box. A fan on a heatsink is a fan load on the heatsink itself.
-5. Press **Thermal study** and choose **Steady, with the air solved**. It takes minutes. The box is found by itself (the
-   smallest body that holds the others), and the air around it is the room's, at the ambient temperature.
-6. Hide the box in the browser to see inside: the parts' temperatures and the air's streamlines from the fan. Choose
-   **Air speed** to see where the air moves fast and where it stands still. Move the vents and run it again to compare.
-
-**What you should see**: the panel gives each fan's flow and the pressure it works against (a point on its curve), the
-air through the box and how warm it leaves.
+1. Model the box as one solid: its walls and the openings cut through them. Model the board, its chips and the
+   heatsink inside it as bodies of their own, and a block where each fan sits, as big as the fan. (On an empty
+   document the assistant's first page builds an example: a board, a 4 W chip under a finned heatsink and a 0.5 W power
+   chip in a 110 × 80 × 40 mm ABS box with a 30 mm fan and three exhaust slots.)
+2. Press **Cooling assistant** on the **Thermal** tab. Its first page shows the box it found (the smallest body that holds
+   the parts making heat) and what is inside it.
+3. **Heat**: tick each part that makes heat and type its power. Tick **Board** for the circuit board and give its copper
+   layers: copper spreads heat along a board about eighty times better than through it. A chip with no material is
+   taken as silicon.
+4. **Air**: for each fan, the block that stands for it (or the heatsink it blows on), the fan (typical fans by size, or
+   **Custom** with its datasheet's free flow and shut-off pressure) and the way it blows. Untick **Fans move the air**
+   for a box with vents only: the air then moves by rising where it is warm, so put vents low and high.
+5. **Run**: the room's temperature and the quality: **Quick** to compare designs, **Normal** for the answer, **Fine** to
+   check it. It takes minutes; the status bar shows how far it is and you can keep working.
+6. The page lists each part's temperature (hottest first), each fan's flow and pressure, the air through the box and
+   how warm it leaves, and how much went out as radiation. **See inside the box** hides the box; **Temperatures** and
+   **Air speed** colour the map and the streamlines.
 
 **How it is worked out**: the air in the box and a margin of the room around it are meshed around every part in it
-(the cells fine enough for each part's walls, fins and vents); each fan is a disk across which its curve sets the
-pressure jump, so it finds its own operating point against the box's resistance. The flow is solved once. The heat goes
-back and forth: the parts in CalculiX as one bonded mesh (touching parts conduct as one), the air's temperature in
-OpenFOAM on that flow with the parts' surfaces as its walls; the heat each face gives the air is its film for the next
-CalculiX solve, until the temperatures settle (a few passes). The air is laminar and does not rise when warm, and the
-board conducts the same every way (give it about 15 W/m·K with copper planes, through `materials`). Still air in a box
-needs warm air rising, which is not solved yet.
+(fine enough for each part's walls, fins and vents). Each fan is a disk across which its curve sets the pressure jump,
+so it finds its own operating point against the box's resistance. The heat goes back and forth: the parts in CalculiX
+as one bonded mesh (touching parts conduct as one, the board along and across its layers, radiation between the parts
+and to the room by view factors), the air's temperature in OpenFOAM with the parts' surfaces as its walls; the heat each
+face gives the air is its film for the next CalculiX solve, until the temperatures settle. With fans the flow is solved
+once (laminar); with vents only, the flow and the air's temperature are solved together under gravity at each pass
+(Boussinesq), the walls stepped to the cells. The assistant writes ordinary loads (case *Cooling*) and a study, which
+the Simulation panel and an agent can change afterwards.
+
+## 11. Find the best place for the vents (design sweep)
+
+*Which vent height, slot count or fan position keeps the hottest part coolest: each candidate run and compared.*
+
+1. Make what you want to vary a parameter: edit the feature that cuts the vent (double-click it in the timeline) and
+   type a parameter's name, such as `vent_z`, instead of its position. **Parameters** on the Design ribbon lists them.
+   (The example of use case 10 has `vent_z`, the exhaust slots' height.)
+2. Set the case up in the **Cooling assistant** and run it once.
+3. On its **Best vents** page choose the parameter, the range (**From**, **To**) and how many **Values**; **Then closer
+   in** adds runs between the best value's neighbours (golden section). **Keep cool**: the hottest part, or one part.
+4. Keep **Compare at Quick quality** ticked: every value runs on coarse cells, then the best runs again at full
+   quality.
+5. Press **Find the best**. The table fills with each value's hottest temperature and marks the best; **Use the best**
+   sets the parameter to it (one undo step). Run the case again for the best design's full result.
+
+**What you should see**: the hottest temperature for each value, the best marked; the Simulation panel shows the best
+design's map. A value that breaks the model (a slot cut through nothing) is listed as failed and the rest go on. Each value is a whole run: five values and
+two refinements at Quick take about as long as two Normal runs. The sweep works on copies of the document.
+
+An agent sweeps any study the same way: a `sweep` study with `study`, `params` (`values`, or `from`, `to`, `steps`),
+`objective` (`of`, `bodies`, `goal`), `refine`, `screening` and `confirm` (see the agent guide).
 
 ## Settings the panel does not show
 
@@ -301,7 +329,8 @@ or ask an agent: *"Run the motion study for 5 seconds with the crank turning at 
 | Motion | `duration` s, `frames`, `drivers: [{joint, to \| speed \| expr \| table, profile}]`, `traces: [{part, point, name}]` |
 | Dynamic | `duration`, `frames`, `step`, `gravity` (true, false or [x, y, z] mm/s²), `contacts`, `friction`, `restitution`, `free`; on joints: `drive` (position, speed, torque, force), `spring`, `friction`, `limits` |
 | Static, modal | `case`, `bodies`, `mesh_size` mm, `modes`, `materials: {"all" \| body: {E, nu, density, yield}}` |
-| Thermal | `ambient` °C, `gravity` (down, for natural convection), `duration` s and `frames` (over time), `mesh_size`, `materials: {"all" \| body: {k, cp, emissivity}}`; on loads: `fan` (an id or `{flow, pressure, curve}`), `vector`, `count`, `ambient`; `air: "cfd"` with `cfd: {enclosure (a body id, or false), cell_size, upstream, downstream, padding, flow_iterations, heat_iterations, streamlines}` |
+| Thermal | `ambient` °C, `gravity` (down, for natural convection), `duration` s and `frames` (over time), `mesh_size`, `materials: {"all" \| body: {k, cp, emissivity}}`; on loads: `fan` (an id or `{flow, pressure, curve}`), `vector`, `count`, `ambient`; `materials: {body: {k, k_through, normal} or {pcb: {layers, copper_oz, coverage, thickness}}}`; `air: "cfd"` with `cfd: {enclosure (a body id, or false), quality (quick, normal, fine), buoyancy, radiation, cell_size, upstream, downstream, padding, flow_iterations, heat_iterations, passes, settle, streamlines}` |
+| Sweep | `study` (id or name), `params: [{name, values} or {name, from, to, steps}]`, `objective: {of, bodies, goal}`, `refine`, `screening` (settings merged into the study's for the points), `confirm`, `max_points` |
 | Printed part | `print: {profile, material (or {base, E, nu, kt, kz, X, Y, Z, S, C, density}), build_direction, layer_height, line_width, walls, top_layers, bottom_layers, infill, pattern, infill_angle, flow, bodies}` |
 
 The full reference is the agent guide's *Motion and simulation* section (`core/res/agent_guide.md`), which agents read

@@ -33,6 +33,7 @@
 #include "PanelFooter.hpp"
 #include "Ribbon.hpp"
 #include "SimPlot.hpp"
+#include "SimulateCooling.hpp"
 #include "SimulateGuide.hpp"
 #include "SimulatePanel.hpp"
 #include "SimulatePrint.hpp"
@@ -59,6 +60,8 @@ OPAD_ICON_TABLE(simulate,
                 {"simConvection", R"(<path d="M4 9c2-2 4-2 6 0s4 2 6 0 3-1 4 0"/><path d="M4 15c2-2 4-2 6 0s4 2 6 0 3-1 4 0"/><path d="M4 20h16" opacity=".55"/>)"},
                 {"simRadiation", R"(<circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>)"},
                 {"simFan", R"(<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5"/><path d="M12 10.5c0-3 1-5 3-5s1.5 3-1.5 5M13.5 12c3 0 5 1 5 3s-3 1.5-5-1.5M12 13.5c0 3-1 5-3 5s-1.5-3 1.5-5M10.5 12c-3 0-5-1-5-3s3-1.5 5 1.5"/>)"},
+                {"simCooling", R"(<rect x="3" y="5" width="18" height="14" rx="1.5"/><circle cx="8.5" cy="12" r="3"/><path d="M8.5 9v6M5.5 12h6"/><path d="M15 9.5h3.5M15 12h3.5M15 14.5h3.5" />)"},
+                {"simSweep", R"(<path d="M3 20h18M3 20V4"/><circle cx="7" cy="9" r="1.3"/><circle cx="11" cy="14" r="1.3"/><circle cx="15" cy="15.5" r="1.3" fill="currentColor"/><circle cx="19" cy="11" r="1.3"/><path d="M7 9l4 5 4 1.5 4-4.5" opacity=".55"/>)"},
                 {"simThermal", R"(<path d="M6 4a2 2 0 0 1 4 0v9a4 4 0 1 1-4 0z"/><path d="M8 8v7"/><path d="M14 18l2.5-4 2 2 2.5-5" />)"},
                 {"simGuide", R"(<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/><path d="M8 8h7M8 12h5"/>)"},
                 {"simDynamic", R"(<rect x="8" y="3" width="8" height="8" rx="1"/><path d="M12 11v9M8.5 16.5L12 20l3.5-3.5"/><path d="M4 21h16" opacity=".55"/>)"},
@@ -140,6 +143,7 @@ QString kindLabel(const std::string& kind) {
   if (kind == "static") return Simulate::tr("Static stress");
   if (kind == "modal") return Simulate::tr("Vibration modes");
   if (kind == "thermal") return Simulate::tr("Thermal");
+  if (kind == "sweep") return Simulate::tr("Design sweep");
   return QString::fromStdString(kind);
 }
 
@@ -150,6 +154,7 @@ QString iconForStudy(const std::string& kind) {
   if (kind == "dynamic") return "simDynamic";
   if (kind == "modal") return "simModal";
   if (kind == "thermal") return "simThermal";
+  if (kind == "sweep") return "simSweep";
   return "simStatic";
 }
 
@@ -191,6 +196,12 @@ QString summaryText(const json& s) {
   auto add = [&](const QString& label, const json& v, const QString& unit) {
     if (v.is_number()) lines << label + " " + number(v.get<double>()) + (unit.isEmpty() ? "" : " " + unit);
   };
+  if (const json b = s.value("best", json()); b.is_object() && b.contains("params")) {
+    QStringList ps;
+    for (const auto& [k, v] : b["params"].items()) ps << QString::fromStdString(k) + " = " + (v.is_number() ? number(v.get<double>()) : QString::fromStdString(v.dump()));
+    const double o = b.contains("confirmed") ? b["confirmed"].get<double>() : b.value("objective", 0.0);
+    lines << Simulate::tr("Best of %1 designs: %2, %3 %4").arg(number(s.value("evaluations", 0.0)), ps.join(", "), QString::fromStdString(s["objective"].value("of", "")), number(o));
+  }
   add(Simulate::tr("Peak von Mises"), s.value("max_von_mises_MPa", json()), "MPa");
   add(Simulate::tr("Hottest"), s.value("max_temperature_C", json()), "°C");
   if (s.contains("heat_W") && s.contains("to_air_W"))
@@ -374,6 +385,8 @@ void Simulate::buildActions() {
       {"air", "cooling", "natural convection", "forced convection", "film coefficient", "heat transfer coefficient"});
   add("simulate.radiation", tr("Radiation"), "simRadiation", [this] { addLoad("radiation"); }, doc, {"emissivity", "infrared", "black body"});
   add("simulate.fan", tr("Fan"), "simFan", [this] { addLoad("fan"); }, doc, {"heatsink", "airflow", "CFM", "cooling fan", "blower", "fins"});
+  add("simulate.cooling", tr("Cooling assistant"), "simCooling", [this] { openCooling(); }, doc,
+      {"enclosure", "box", "vents", "fan", "airflow", "CFD", "single-board computer", "electronics cooling", "optimise", "sweep"});
   add("simulate.thermal", tr("Thermal study"), "simThermal", [this] { newStudy("thermal"); }, doc,
       {"temperature", "heat transfer", "heatsink", "cooling", "warm up", "transient", "steady state"});
   add("simulate.results", tr("Result map"), "simResults", [this] { showResults(!resultShown()); },
@@ -421,6 +434,7 @@ void Simulate::ribbon(RibbonLayout& layout) {
   add("simulate.thermal.loads", "simulate.convection");
   for (const char* id : {"simulate.temperature", "simulate.radiation"}) add("simulate.thermal.loads", id, Size::Small);
   layout.addGroup("simulate.thermal", "simulate.thermal.studies", tr("Studies"));
+  add("simulate.thermal.studies", "simulate.cooling");
   add("simulate.thermal.studies", "simulate.thermal");
   layout.addGroup("simulate.thermal", "simulate.thermal.results", tr("Results"));
   add("simulate.thermal.results", "simulate.run");
@@ -755,6 +769,40 @@ void Simulate::newStudy(const QString& kind) {
   runStudy();
 }
 
+void Simulate::openCooling(int step) {
+  QWidget* window = services().window();
+  auto* assistant = window->findChild<CoolingAssistant*>();
+  if (!assistant) {
+    CoolingAssistant::Hooks hooks;
+    hooks.document = [this] { return services().document(); };
+    hooks.write = [this](const std::string& command, const json& args, const QString& label) {
+      json out;
+      services().guarded([&] { out = write(command, args, label); });
+      return out;
+    };
+    hooks.run = [this](const std::string& id) {
+      services().guarded([&] {
+        if (services().workspace() != "simulate") services().setWorkspace("simulate");
+        open();
+        chooseStudy(id);
+        runStudy();
+      });
+    };
+    hooks.busy = [this] { return bool(m_job); };
+    hooks.showField = [this](const QString& field) {
+      if (!m_run || !m_run->fea) return;
+      m_field = field;
+      showRun();
+      showResults(true);
+    };
+    hooks.setVisible = [this](const std::string& id, bool on) {
+      services().guarded([&] { write("appearance", {{"target", id}, {"visible", on}}, on ? tr("Show the box") : tr("See inside the box")); });
+    };
+    assistant = new CoolingAssistant(std::move(hooks), window);
+  }
+  assistant->open(step);
+}
+
 void Simulate::openGuide(int useCase) {
   QWidget* window = services().window();
   auto* guide = window->findChild<SimulateGuide*>();
@@ -844,9 +892,11 @@ void Simulate::runStudy() {
         if (!self) return;
         m_job = nullptr;
         services().updateCommands();
+        auto* cooling = services().window()->findChild<CoolingAssistant*>();
         if (!ok || !error->empty() || !*result) {
           const QString text = !error->empty() ? QString::fromStdString(*error) : why;
           if (!text.isEmpty()) services().toast(tr("The study did not run: %1").arg(i18n::t(text)), {}, {}, 8000);
+          if (cooling) cooling->runFinished(id, nullptr, text.isEmpty() ? tr("cancelled") : i18n::t(text));
           return;
         }
         // The run's summary into the study op (the cache answers at once).
@@ -858,6 +908,7 @@ void Simulate::runStudy() {
         refresh();
         if (m_run->fea) showResults(true);
         else play();
+        if (cooling) cooling->runFinished(id, m_run, {});
       });
   if (!m_job) services().toast(tr("The document is busy: try again in a moment"));
   services().updateCommands();
@@ -880,10 +931,11 @@ void Simulate::showRun() {
   m_form->setRun(summaryText(summary), structural && !overTime ? 1 : int(m_run->t.size()), structural);
   if (structural) {
     SimulatePanel::Entries fields;
-    if (m_run->kind == "thermal") {
+    const std::string shownKind = m_run->kind == "sweep" ? m_run->summary.value("study_kind", std::string()) : m_run->kind;  // a sweep: its best design's map
+    if (shownKind == "thermal") {
       fields = {{"temperature", tr("Temperature (°C)")}};
       if (!m_run->fea->streamlines.empty()) fields.push_back({"air_speed", tr("Air speed (m/s)")});
-    } else if (m_run->kind == "static") {
+    } else if (shownKind == "static") {
       fields = {{"von_mises", tr("von Mises stress (MPa)")}, {"displacement", tr("Displacement (mm)")}};
       if (!m_run->fea->failure_index.empty()) fields.push_back({"failure_index", tr("Failure index, printed (1 fails)")});
     } else {

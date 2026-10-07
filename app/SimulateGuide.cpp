@@ -120,19 +120,29 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
           "duct or with a shroud; air that goes round them cools less. With OpenFOAM installed, Steady, with the air solved works out where the "
           "air really goes and draws its streamlines (minutes rather than seconds).")},
       {tr("Cool a board in a vented box (air solved)"),
-       tr("How hot a single-board computer gets in its case, with a fan blowing in and vents letting the air out; where to put the vents."),
-       {tr("Model the box as one solid with its walls, the fan's opening and the vents cut through them; the board, its chips and the heatsink "
-           "inside it as their own bodies; and a block where the fan sits, as big as the fan."),
-        tr("Give each part its material (Material, {key:inspect.material}): the box ABS or aluminium, the heatsink aluminium."),
-        tr("On the Thermal tab, pick each chip and press Heat source with its power in W."),
-        tr("Pick the fan's block, press Fan, choose the fan (or type its flow and pressure) and the way it blows: into the box."),
-        tr("Press Thermal study and choose Steady, with the air solved. It takes minutes: the box is found by itself, the air around it is the "
-           "room's."),
-        tr("Hide the box in the browser to see inside: the parts' temperatures and the air's streamlines. Choose Air speed to see where it moves "
-           "fast and where it stands still. Move the vents and run it again to compare.")},
-       {"inspect.material", "simulate.heat", "simulate.fan", "simulate.thermal", "simulate.results"},
-       tr("The panel gives each fan's flow and the pressure it works against, the air through the box and how warm it leaves. Still air in a box "
-          "(warm air rising) is not solved yet: it needs a fan.")},
+       tr("How hot a single-board computer gets in its case, with a fan blowing in, or with vents only and warm air rising."),
+       {tr("Model the box as one solid with its walls and the openings cut through them; the board, its chips and the heatsink inside it as "
+           "their own bodies; and a block where each fan sits, as big as the fan. On an empty document the assistant builds an example."),
+        tr("Press Cooling assistant on the Thermal tab. The box is found by itself: check it on its first page."),
+        tr("Heat: tick each chip that makes heat with its power in W, and tick Board for the circuit board with its copper layers."),
+        tr("Air: for each fan, the block it is (or the heatsink it blows on), the fan and the way it blows. Untick the fans for vents only."),
+        tr("Run: Quick to compare, Normal for the answer. It takes minutes; the status bar shows how far it is."),
+        tr("The page lists each part's temperature, the fans' flow and the air through the box. See inside the box hides it to show the "
+           "temperatures and the streamlines; Air speed colours them by how fast the air goes.")},
+       {"simulate.cooling", "inspect.material", "simulate.results"},
+       tr("A block standing for a fan is air with the fan's disk in its middle; a fan load on a heatsink sits against the side the air comes "
+          "from. The board's copper matters: a 4-layer board spreads heat about eighty times better along it than plain FR-4.")},
+      {tr("Find the best place for the vents (design sweep)"),
+       tr("Which vent height, slot count or fan position keeps the hottest part coolest: each candidate run and compared."),
+       {tr("Make what you want to vary a parameter: edit the feature that cuts the vent (double-click it in the timeline) and type a name "
+           "such as vent_z instead of its position; Parameters on the Design ribbon lists them."),
+        tr("Set the case up in the Cooling assistant and run it once to check it."),
+        tr("On its Best vents page choose the parameter, the range and how many values, and the part to keep cool (or the hottest)."),
+        tr("Keep Compare at Quick quality ticked: every value runs on coarse cells, then the best runs again at full quality."),
+        tr("Press Find the best. The table fills with each value's hottest temperature; Use the best sets the parameter to it.")},
+       {"simulate.cooling", "simulate.run"},
+       tr("Each value is a whole run: five values and two refinements at Quick take about as long as two Normal runs. The sweep works on copies; "
+          "the model changes only when you press Use the best.")},
   };
   for (UseCase& u : list) {
     for (QString& s : u.steps) s = x(s);

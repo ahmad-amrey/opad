@@ -52,6 +52,7 @@ class Simulate : public AreaController {
   void showFrame(int frame);
   void openGuide(int useCase);  // the Simulation guide, at that use case
   void printSettings();  // the Printed part dialog for the structural study shown (or the last one)
+  void openCooling(int step = -1);  // the Cooling assistant
 
  private:
   opad::json write(const std::string& command, const opad::json& args, const QString& label);  // doc->run once it is free

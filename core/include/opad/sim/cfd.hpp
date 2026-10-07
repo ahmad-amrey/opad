@@ -27,6 +27,7 @@
 // OpenFOAM: OPAD_OPENFOAM (its project directory), else its programs on the PATH with WM_PROJECT_DIR or a known install.
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "study.hpp"
 
@@ -38,6 +39,14 @@ struct OpenFoam {
   bool found() const { return !bin.empty() || !wrapper.empty(); }
 };
 OpenFoam openfoam();
+
+// The enclosure a thermal study's air would be solved in: `named` (a body id), else the smallest shown solid whose box holds
+// all of `bodies` (none when no body does); and every other shown solid within its box.
+struct Enclosure {
+  std::string enclosure;
+  std::vector<std::string> inside;
+};
+Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, const std::string& named = {});
 
 StudyRun run_cfd(const Document& doc, const Scene& scene, const json& settings, const Progress& progress);
 
