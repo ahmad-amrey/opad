@@ -5,7 +5,11 @@
   </picture>
   <br>
   <br>
-  <b>Open anything CAD, measure it, mark it up, model it, and keep it all in one text file that git can merge.</b>
+  <b>Open-source parametric CAD whose files git can diff and merge.</b>
+  <br>
+  <br>
+
+  **English** · [العربية](README.ar.md)
   <br>
   <br>
 
@@ -18,270 +22,337 @@
 </div>
 
 <p align="center">
-  <img src="docs/media/hero.gif" alt="OPAD opening a STEP assembly in viewer mode: hovering parts, orbiting, exploding the assembly and putting it back together" width="1000">
+  <img src="docs/media/hero.gif" alt="OPAD opening a STEP assembly: hovering parts, orbiting, exploding the assembly and putting it back together" width="1000">
 </p>
 
-## Elevator pitch
+**OPAD** (**O**pen-source **P**arametric C**AD**) is a 3D parametric CAD program for every level, from someone drawing
+their first sketch to an engineer working on a thousand-part assembly. It opens 2D drawings, 3D models and meshes,
+takes you from a 2D sketch to a solid with an editable history, and keeps the whole design in one plain-text file
+that **git can diff and merge**. AI agents can work on the model in the same window you are using, and every command
+also runs from the command line.
 
-CAD files are usually locked inside one program, one cloud account or one binary format. You wait for them to open,
-you cannot see what changed between two versions, and a colleague (or an AI agent) who wants to look at a part has to
-install the same thing you did.
-
-OPAD is a desktop CAD program built the other way round. It opens STEP, IGES, meshes, DXF/DWG drawings and KiCad
-boards in a fast read-only viewer, lets you measure, section, explode and annotate them, and when you want to change
-something it turns the file into an `.opad` document: one plain UTF-8 file whose history is a readable log of
-operations and whose geometry is content-addressed text, so `git diff` shows what changed and `git merge` merges it.
-On top of that it is a parametric modeller (sketch, extrude, fillet, edit the history), a technical-drawing tool
-(sheets, views, dimensions, PDF) and a scriptable kernel that the same commands drive from the CLI, Python or an AI
-agent over MCP.
-
-It runs locally, needs no account and no server, and is built on Open CASCADE and Qt.
-
-### What OPAD tries to be
-
-These come from how the code is built, not from a wish list:
-
-- **The window never freezes.** Anything whose cost grows with the model (reading, meshing, measuring, selecting
-  thousands of edges) runs on a worker or in small slices between events. Every long job goes through one runner that
-  shows progress after half a second and has a Cancel button, and a watchdog reports any stall of the UI thread.
-- **Open anything, fast.** Opening a non-OPAD file is *viewer mode*: no healing, no hashing, no conversion until you
-  ask to edit. Slow files are remembered with their display meshes, so the second open of an unchanged big STEP skips
-  the translation (a 45 MB transmission: 23 s, then 1.8 s).
-- **One document, one timeline, one readable file.** Everything you do is an operation appended to the document's
-  log; undo, redo and saving never rewrite earlier lines. Bodies are stored once, keyed by the SHA-256 of their BREP
-  text, so an unchanged part never shows up in a diff. A record-aware merge driver and a semantic `diff` ship with it.
-- **Keyboard first, and your keys everywhere.** Every command is in one registry that drives the menus, the ribbon,
-  the command search and the shortcut editor. Every binding can be changed, and every place that shows a key (help
-  cards, clips, prompts, the cheat sheet) shows *your* binding.
-- **Help that is true to the tool.** All 389 commands have a help card and 281 have an animated clip; tests fail when a
-  command has no help, when a clip's steps disagree with the tool's, or when a help text names a key literally.
-- **Made to be driven by programs.** The desktop, `opad-cli`, the Python module, C plugins and the MCP servers all go
-  through the same command layer, and a live MCP bridge lets an agent work in the window you are looking at.
-- **Offline and portable.** A single-file Windows executable and a portable folder build exist; settings, cache and
-  data stay on your machine.
+It runs on your own computer, with no account and no server, and is built on Open CASCADE and Qt.
 
 ## Contents
 
 - [Features](#features)
-  - [Viewer mode: open anything](#viewer-mode-open-anything)
-  - [Guided measuring](#guided-measuring)
-  - [Parametric design](#parametric-design)
-  - [Edit the history](#edit-the-history)
-  - [Notes and hand drawing](#notes-and-hand-drawing)
+  - [Git version control](#git-version-control)
+  - [Opening files](#opening-files)
+  - [From 2D to 3D](#from-2d-to-3d)
   - [Technical drawings](#technical-drawings)
-  - [Help that shows the real tool](#help-that-shows-the-real-tool)
-  - [AI agents over MCP](#ai-agents-over-mcp)
-  - [Git-native documents](#git-native-documents)
-  - [Command line and Python](#command-line-and-python)
-  - [Arabic and right-to-left](#arabic-and-right-to-left)
-  - [And also](#and-also)
-- [Installation](#installation)
-- [Usage](#usage)
-  - [Keybindings](#keybindings)
-- [Configuration](#configuration)
-- [Contributing](#contributing)
-- [FAQ](#faq)
-- [Alternatives](#alternatives)
-- [Licence](#licence)
+  - [Notes, annotations and hand drawing](#notes-annotations-and-hand-drawing)
+  - [KiCad integration](#kicad-integration)
+  - [Motion and simulation (beta)](#motion-and-simulation-beta)
+  - [Performance on big models and drawings](#performance-on-big-models-and-drawings)
+- [Integration: AI agents, CLI and Python](#integration-ai-agents-cli-and-python)
+- [Languages](#languages)
+- [Supported platforms](#supported-platforms)
+- [Installation](#installation) · [Usage](#usage) · [Contributing](#contributing) · [FAQ](#faq) · [Licence](#licence)
 
 ## Features
 
-### Viewer mode: open anything
+### Git version control
 
-Open a STEP (AP203/AP214/AP242, assemblies included), IGES, BREP, STL, 3MF, OBJ, PLY, glTF/GLB, VRML, DXF, DWG, SVG or
-KiCad board and it comes up read-only and fast, with its names, colours and assembly structure. Hover, isolate,
-hide, section, explode and measure freely; the file you opened is never written. Anything that edits asks to save
-first: **Save to edit** turns it into an OPAD document in place, keeping what you hid and coloured and the meshes
-already on screen. Opening another file while one loads drops the first load, and a translucent shade with a spinner
-covers the view while anything loads. DWG is read through LibreDWG's converter, built from a submodule and shipped
-beside OPAD.
+Most CAD files are binary: git stores them, but it cannot tell you what changed between two versions, and two people
+who edit the same part cannot merge their work. OPAD's file format was designed so that git *can* do both.
 
-The picture at the top of this page is viewer mode on the STEPcode AS1 test assembly: hover, orbit (Fusion-style
-mouse by default; SOLIDWORKS-, Onshape-, Blender-style and a 2D drafting preset are in the settings) and the
-exploded view (Shift+E).
+#### A file git can read
 
-### Guided measuring
-
-Distance (D), Angle (A), Radius (R), Bounding box (B), Length and area (Shift+L) and Area start first and then ask for
-their picks: a prompt at the top of the view names each step, the tool panel lists them, a click on something already
-picked un-picks it, and Esc steps back one level at a time. Distances are exact (minimum, centre to centre or maximum)
-with their ΔX/ΔY/ΔZ; Radius recognises a B-spline face that is really a cylinder. The measurement runs on a worker, so
-picking stays instant on big assemblies. **Pin** (P) keeps a measurement in the document.
-
-![Distance between two bracket walls, then the radius of a bolt head, with the prompt bar and tool panel](docs/media/measure.gif)
-
-### Parametric design
-
-The Design workspace (Ctrl+2) is a history-based modeller. Sketches have a constraint solver, driving dimensions,
-snaps that become constraints and value boxes beside the pointer: start Rectangle (R), type the corner (X, Tab, Y,
-Enter) and the size (width, Tab, height, Enter), and the dimensions are there. Features cover extrude, revolve, sweep, loft, pipe, coil, hole, fillet,
-chamfer, shell, draft, press pull, remove faces, thicken, combine, split, mirror, patterns, move/copy, primitives and
-construction planes and axes, all with drag arrows and typed values. Parameters are named expressions usable in any
-field.
-
-![A sketch typed by keyboard (rectangle and circle), finished, then extruded by dragging the arrow and typing 25](docs/media/design.gif)
-
-### Edit the history
-
-Every feature stays editable on the timeline. Double-click a marker, change a value, and everything after it is
-regenerated: the fillets below follow the taller extrude. References to faces and edges survive regeneration, and a
-feature can be suppressed, rolled back to, or suppressed by an expression over the parameters.
-
-![Four top edges picked and filleted, then the extrude edited from 25 to 40 mm on the timeline](docs/media/parametric.gif)
-
-### Motion and simulation
-
-The Simulate workspace (Ctrl+5) turns an assembly into a mechanism. Joints (revolute, slider, cylindrical, ball, planar,
-pin-in-slot, screw, rigid, ground) go on a picked edge or face, with limits and locks; gear, rack-and-pinion and
-lead-screw relations couple joints, also inside a planetary carrier. A joint's slider moves the mechanism through the
-kinematic solver, and every study is an op on the timeline:
-
-- **Motion**: joints driven over time, traced points, values, speeds and accelerations;
-- **Dynamic** (Project Chrono): masses from the materials, gravity, motors (position, speed, torque), springs,
-  friction, end stops and contacts, with reactions, motor torque and power and energies plotted;
-- **Static** and **Vibration modes** (Netgen meshes, CalculiX): fixed supports, forces, pressures, gravity and bolt
-  preload in load cases, then von Mises stress, displacement, safety factors and mode shapes as colour maps;
-- **Printed parts**: a structural study's bodies as 3D printed, from the filament and the slicer's settings (typed in,
-  or read from a PrusaSlicer, OrcaSlicer, Bambu Studio or Cura profile, a .3mf project or a G-code file): walls, top and
-  bottom skins and infill each get the stiffness and strength of printed roads along, across and between layers, and
-  the study says where the part fails first, how (along the roads, across them, between layers) and on which layer;
-- **Thermal**: heat sources, fixed temperatures, convection (still air, moving air, or a known coefficient), radiation
-  and fans through finned heatsinks, steady or over time: temperatures, where the heat goes, each fan's operating
-  point and air temperature rise, the heatsink's °C/W; or, with OpenFOAM, the air itself solved around the parts
-  (conjugate heat transfer) with streamlines: a board in a vented box with fans or warm air rising, taken step by
-  step by the **Cooling assistant**.
-- **Design sweeps**: any study run again over parameter values (a vent's place, a fin count) to find the best design.
-
-Each engine is checked against textbook cases: a pendulum's period, a slider-crank's energy balance, a screw jack's
-torque, a planetary set's Willis ratio, a cantilever's deflection and first frequency, a plate with a hole's stress
-concentration, a bolt's preload stress, and a printed cantilever against composite beam theory. `tools/sim_eval.py` builds a dozen such mechanisms through MCP and reports
-them; [docs/features.md](docs/features.md#motion-and-simulation) has the details. New to it? The
-[simulation guide](docs/simulation-guide.md) takes eleven use cases step by step, and **Simulation guide** in the app
-(Simulate ribbon, Help menu, the panel's Step-by-step guides) does the same with buttons for each tool.
-
-### Notes and hand drawing
-
-Note (N) and Hand drawing (Shift+N) ask for their target like the measuring tools, then pin to it. Each stroke lies on
-a plane that faces the camera when you start it, so orbiting between strokes builds a 2.5D sketch around the part.
-Notes have types (OK, Warning, Issue, Note, and **AI agent notes**: requests an agent picks up over MCP), comment
-threads, and are one undo step each.
-
-![A red ring around the bracket's bolts, an orbit, a blue arrow at the rod, then an AI agent note pinned to the rod's end](docs/media/notes.gif)
-
-### Technical drawings
-
-The Drawings workspace (Ctrl+3) makes sheets from the model: ISO or ANSI templates (or your own DXF/DWG title block),
-base, projected, isometric, section, detail, auxiliary, broken-out, cropped and broken views, drawn by a hidden-line
-engine on workers. Dimensions with tolerances and fits, centre marks, hole callouts and tables, datums, feature control
-frames, surface texture, parts lists with balloons and a revision table. Sheets export to PDF, SVG, DXF, DWG or PNG,
-print at actual size, and **Issue revision** freezes a sheet as issued.
-
-![New drawing lays out four views of the part designed above; three dimensions are picked on the views](docs/media/drawings.gif)
-
-### Help that shows the real tool
-
-Hover a ribbon button and its card plays an animated clip of what the tool does, with your current keys. F1 opens the
-guide of the tool you are using, S searches every command (with the reason when one is not available now), ?
-shows the cheat sheet, and Help > Getting started has short animated lessons.
-
-![The Extrude and Fillet cards with their clips, then the command search for "fil"](docs/media/help.gif)
-
-### AI agents over MCP
-
-`opad-cli mcp` is a headless stdio MCP server over the whole command layer. With **Tools > AI integration** turned on,
-`opad-cli mcp --live` connects an agent to the running window instead: it lists open windows, binds to one, and every
-write is checked against the document's revision, can be staged in a transaction or previewed, and is one undo step
-for you. Both servers ship an agent guide (`opad://guide/agent`) with the modelling conventions. The setup page
-registers OPAD with Codex, or gives MCP JSON for other local clients and VS Code; **Agent activity** shows what a
-connected agent is doing and stops it.
-
-![An agent builds a small boat through the live bridge in four batched calls; Agent activity lists each call](docs/media/agent.gif)
-
-This is `tools/test_agent_benchy.py`, one of the acceptance tests, run against a visible window with a pause after
-each write.
-
-### Git-native documents
-
-An `.opad` file is a header, an append-only log of JSON operation records and a store of BREP bodies keyed by their
-SHA-256. Saving appends; existing lines are written back byte for byte.
+An `.opad` file is UTF-8 text with two parts: a **log of operations** (one JSON record per sketch, feature, note,
+rename...) and a **store of bodies**, each saved once as BREP text under the SHA-256 of its content. Saving appends new
+records and never rewrites the old ones, and a body that did not change keeps its key. A diff therefore shows only what
+you did, never a reshuffled file.
 
 ```text
 #opad 2
 {"uuid":"7c1c...","units":"mm","created":"2026-09-15T14:10:40Z","generator":"opad/0.1.0"}
 #ops
-{"op":"import","id":"6dda...","ts":"...","by":"alice","source":"gearbox.step","units":"mm","nodes":[...]}
-{"op":"annotation","id":"1ffe...","ts":"...","by":"alice","anchor":{"body":"9dc9...","kind":"face","index":12},"text":"deburr"}
+{"op":"import","id":"6dda...","by":"alice","source":"gearbox.step","units":"mm","nodes":[...]}
+{"op":"annotation","id":"1ffe...","by":"alice","anchor":{"body":"9dc9...","kind":"face","index":12},"text":"deburr"}
 #bodies
 #body a0d6fc12...058d 310 {"name":"Housing","color":[0.2,0.5,0.8],"units":"mm","source":"gearbox.step"}
 ...OCCT ASCII BREP...
 ```
 
-- A record-aware **merge driver** (built into `opad-cli` and the desktop program) merges independent records and stops
-  on real conflicts; `textconv` makes `git diff` and `git log -p` print a readable outline instead of BREP text.
-- `opad-cli diff` compares two versions semantically: parameters, sketches, feature inputs before and after, bodies
-  added, removed, moved or changed.
-- In the desktop program: **Set up repository**, a Version control panel (commit, push, pull with a preview of what the
-  merge does, branches, history), **Resolve conflicts** change by change, **Compare versions** with the changes tinted
-  over the old version's ghosts, recovery snapshots, linked assets (big files read from beside the document instead of
-  copied in) and a save guard that never writes over a file that changed on disk.
+The format is also safe across versions: records a build does not know are kept, listed as needing a newer OPAD and
+saved back unchanged. [docs/format.md](docs/format.md) describes it.
 
-### Command line and Python
+#### Readable differences
+
+`opad-cli diff` compares two versions (two files, or a file and any git revision) in design terms. Here Bob changed
+the `height` parameter of Alice's bracket:
+
+```text
+$ opad-cli diff --a git:HEAD~1 bracket.opad --text
+b continues a: 2 ops in common, 2 new.
+Parameters
+  ~ height: 25 mm -> 40 mm
+Features
+  ~ Bracket: regenerated
+Bodies
+  ~ Bracket: geometry changed (b6b0f6452a39 -> 6cd23d2ec334)
+```
+
+With OPAD's `textconv` set up, plain `git diff`, `git log -p` and `git show` print the same kind of outline (history,
+parameters, sketches, features, the tree, one line per body) instead of BREP text.
+
+#### Merging
+
+A merge driver that understands OPAD's records (built into `opad-cli` and the desktop program) merges independent
+changes from two branches and stops only on real conflicts, such as both sides editing the same feature.
+
+#### In the desktop program
+
+You never need a terminal:
+
+- **Set up repository** creates the repository, `.gitattributes`, `.gitignore` and the merge and diff settings
+  (Git LFS for big assets, when installed). **Clone repository** does the same for an existing project.
+- The **Version control** panel commits (with a suggested message), pushes, pulls, switches and merges branches, and
+  shows the history. Before a pull merges anything, it shows what the merge will do to the design.
+- **Resolve conflicts** goes through a stopped merge change by change: mine, theirs, or all of one side.
+- **Compare versions** shows two versions in one view: added, changed and moved parts tinted, a slider that fades
+  between the two, and the list of changes with each value before and after, stepped through with `]` and `[`. Compare
+  any two of: this session, the saved file, any commit, a recovery snapshot or another file.
+- The timeline's tooltips say who added each step and in which commit.
+- **Issue revision** freezes a drawing sheet as issued, keeps its PDF with its SHA-256, and commits and tags it.
+
+![The Version control panel's history, then Compare between the first commit and now: the thicker plate and raised upright tinted as modified, the new pin as added, the slider fading to the first commit and back, and the changes stepped through](docs/media/compare.gif)
+
+[docs/features.md](docs/features.md#using-it-in-a-git-repository) covers the git setup in detail.
+
+### Opening files
+
+#### Supported formats
+
+| Kind | Open and import | Export |
+|---|---|---|
+| **3D solids and parametric models** | `.opad` (full history), STEP AP203/214/242 (assemblies, names, colours, materials), IGES, BREP | `.opad`, STEP |
+| **3D meshes** | STL, 3MF, OBJ, PLY, glTF/GLB, VRML | STL, OBJ, GLB |
+| **2D drawings** | DXF, DWG, SVG | DXF, DWG, SVG, PDF, PNG |
+| **Electronics** | KiCad boards (`.kicad_pcb`) | |
+
+DWG is read through LibreDWG, which is built with OPAD; the ODA File Converter can be used instead when it is
+installed.
+
+#### Viewer mode
+
+Any file other than `.opad` opens in **viewer mode**: read-only and fast, because nothing is converted until you want
+to edit. You can hide, colour, section, explode and measure freely, and the file you opened is never written.
+**Save to edit** turns it into an OPAD document, keeping what you hid and coloured.
+
+![The AS1 test assembly exploded at every level: brackets, rod, nuts and bolts move apart along their own directions, then the view orbits](docs/media/explode.gif)
+
+#### Mesh to solid
+
+A mesh can become a real solid: **Mesh to solid** rebuilds an STL, OBJ, 3MF or PLY as a sketch with an extrusion or
+revolution when the mesh is one, and as fitted planes, cylinders, cones, spheres and tori otherwise. Before creating
+it, it tells you how closely the result matches the mesh.
+
+### From 2D to 3D
+
+OPAD is a sketch-based modeller: you start in 2D and go into 3D.
+
+#### Where the 2D comes from
+
+- **A drawing you already have.** Open a DXF, DWG or SVG, place it on a plane or on the face of a part (drag it, type
+  an offset or snap it to a point), then **Draw on drawing** (a sketch on its plane, to trace over it) or **Drawing
+  to sketch** (its layers become an editable sketch).
+- **A picture.** Place a photo or a scan on a plane, calibrate it with a distance you know, and trace it into a sketch.
+- **A blank sketch.** A constraint solver, driving dimensions and snaps that become constraints. Inside a tool you
+  type values straight into boxes beside the pointer: start Rectangle, type the width, Tab, the height, Enter.
+
+![A sketch typed by keyboard (rectangle and circle), finished, then extruded by dragging the arrow and typing 25](docs/media/design.gif)
+
+#### Solids from the sketch
+
+Extrude, revolve, sweep, loft, pipe, coil, hole, fillet, chamfer, shell, draft, press pull, combine, split, mirror,
+patterns, involute gears and more, each with drag arrows and typed values. Parameters are named expressions you can
+use in any field.
+
+#### An editable history
+
+Double-click a step on the timeline, change a value, and everything after it is rebuilt: the fillets below follow the
+taller extrude. Steps can be suppressed (also by a condition on the parameters), and the timeline can be rolled back
+to any point.
+
+![Four top edges picked and filleted, then the extrude edited from 25 to 40 mm on the timeline](docs/media/parametric.gif)
+
+### Technical drawings
+
+The **Drawings** workspace (Ctrl+3) turns the model back into 2D: sheets with views, dimensions and a title block,
+kept in the same `.opad` file.
+
+- **Sheets**: ISO or ASME, first or third angle projection, built-in templates or your own DXF/DWG frame and title
+  block, with title block fields filled from the document.
+- **Views**: base, projected, isometric, section (full, offset, half, aligned), detail, auxiliary, broken-out, cropped,
+  broken and exploded views, drawn by a hidden-line engine. Section views are hatched to ISO 128-50, and shafts and
+  fasteners can stay uncut.
+- **Annotations**: dimensions with tolerances and fits; ordinate, baseline and chain sets; hole callouts read from the
+  model (counterbores, countersinks, "4×"); centre marks and lines, datums, feature control frames, surface texture.
+- **Tables**: a parts list with balloons (auto-balloon places them around a view), a hole table and a revision table.
+- **Output**: PDF (one page per sheet), SVG, DXF, DWG or PNG, and printing at actual size.
+- **Issue revision** freezes a sheet as issued: its values and views are kept, the revision table and title block show
+  it, and the PDF is stored with its SHA-256.
+- **Made for git**: the views' lines are never stored, only how each view is defined, so a model edit adds no drawing
+  noise to a diff, and two people adding views and dimensions to one sheet merge without a conflict. A dimension keeps
+  the value it was made with, and OPAD marks the ones the model has changed since.
+
+![New drawing lays out four views of the part; three dimensions are picked on the views](docs/media/drawings.gif)
+
+[docs/drawings.md](docs/drawings.md) has the details.
+
+### Notes, annotations and hand drawing
+
+- **Notes** (N) pin to a body, face, edge or point and stay attached while you orbit. Each note has a type (OK,
+  Warning, Issue, Note, or **AI agent note**: a request that an AI agent picks up), a comment thread, and can be
+  resolved.
+- **Hand drawing** (Shift+N) works in 2.5D: each stroke lies on a plane facing the camera when you start it, so
+  orbiting between strokes builds a sketch around the part. Pens come in four colours and widths, with an eraser.
+- **Pinned measurements** keep a distance, angle or radius in the document.
+- The **Annotations** panel lists them all and filters by type. Every note is saved in the `.opad` file, so a review
+  travels with the design and shows up in its diff.
+
+![A red ring around the bracket's bolts, an orbit, a blue arrow at the rod, then an AI agent note pinned to the rod's end](docs/media/notes.gif)
+
+### KiCad integration
+
+#### The board in 3D
+
+A `.kicad_pcb` opens as the board (outline, drill holes, thickness, solder-mask colour) with its footprints' 3D models,
+placed and found the way KiCad finds them. Models from KiCad's library that are not installed are downloaded on
+request into your user cache; until then a box stands in for each. With KiCad 7 or later installed, a board can
+instead be read through KiCad's own STEP export (with KiCad 8 or 9, also its copper tracks, pads and silkscreen).
+
+![KiCad's pic_programmer demo board opened: its library models downloaded on request and shown on the board, then the view orbits](docs/media/kicad.gif)
+
+#### Linked and synced
+
+A board imported into a document stays **linked** to its file. When it changes in KiCad, **Preview KiCad sync** lists
+what changed per reference designator (moved, turned, flipped, model changed, added, removed) and shows it on the
+board before you sync.
+
+![The board linked into a document; a socket moved 15 mm in the board file; Preview KiCad sync lists P3 as moved, shows it, and Sync moves it](docs/media/kicad-sync.gif)
+
+#### Designing the enclosure
+
+**Project KiCad board** brings the outline, mounting holes and chosen parts into a sketch, and **Check clearance to
+board** measures the gap between the parts and the case around them.
+
+### Motion and simulation (beta)
+
+> This part is still being tested. Expect rough edges, and check results that matter by hand.
+
+The **Simulate** workspace (Ctrl+5) turns an assembly into a mechanism and studies it. Every model in these pictures
+was built through OPAD's MCP server by [tools/sim_eval.py](tools/sim_eval.py), which also checks each result against
+its textbook formula.
+
+#### Mechanisms
+
+- **Joints**: revolute, slider, cylindrical, ball, planar, pin-in-slot, screw, rigid and ground, with limits.
+  Gear, rack-and-pinion and lead-screw relations couple joints. Drag a joint's slider and the mechanism follows.
+- **Motion studies**: joints driven over time, with traced points, speeds and accelerations.
+- **Dynamics** (Project Chrono): gravity, motors, springs, friction, end stops and contacts, with forces, torque, power
+  and energy plotted.
+
+![A single-cylinder engine run at 3000 rpm with Project Chrono: crank, rod and piston played back while the chart follows the kinetic energy, then the motor torque](docs/media/motion.gif)
+
+![A planetary gear set with involute teeth, driven by the carrier's joint slider: the planets roll round the fixed ring and the sun turns 3.7 times as fast](docs/media/gears.gif)
+
+#### Structures
+
+**Stress and vibration** studies (Netgen meshes, CalculiX solver) take fixed supports, forces, pressures, gravity and
+bolt preload, and show stress, displacement, safety factors and mode shapes as colour maps.
+
+#### Heat
+
+Heat sources, convection, radiation and fans on heatsinks, steady or over time; with OpenFOAM, the air flow around the
+parts is solved too. The **Cooling assistant** takes you through cooling a board in a vented box step by step.
+
+![A 30 W chip on a finned heatsink with a fan: the warm-up study run with CalculiX, then played back over 300 s as the heatsink heats up and the chart follows its temperature](docs/media/thermal.gif)
+
+#### 3D-printed parts
+
+A study can treat a body as printed, with settings read from a PrusaSlicer, OrcaSlicer, Bambu Studio or Cura profile,
+and says where and how the part would fail.
+
+Each engine is checked against textbook cases (a pendulum's period, a cantilever's deflection, a plate with a hole,
+a planetary gear set and others). The [simulation guide](docs/simulation-guide.md) walks through eleven use cases, and
+the same guide is in the program.
+
+### Performance on big models and drawings
+
+OPAD is developed against a real engine assembly: 1,295 bodies, 374 MB of STEP. Anything slow on that model is
+treated as a bug.
+
+- **Second opens are fast.** A slow STEP or IGES read is remembered together with its display meshes, so opening the
+  unchanged file again skips the translation: a 45 MB transmission takes 23 s the first time and 1.8 s after that.
+- **Smooth navigation on heavy scenes.** Small parts can be hidden, and detail lowered, while the view moves, so big
+  boards and assemblies turn smoothly.
+- **Sharp up close.** When you zoom in, the parts in view get a finer mesh, so curved outlines keep following the exact
+  geometry.
+- **Big drawings.** A drawing layer of 100,000 lines opens without stalling the window, and a click still picks a
+  single line exactly.
+- **Fast measuring.** Distances are exact and measured on several cores: face to face on the engine takes about a
+  tenth of a second.
+
+## Integration: AI agents, CLI and Python
+
+The desktop program, the command line, the Python module and the AI servers all go through the same command layer,
+so anything one of them can do, the others can too.
+
+### AI agents over MCP
+
+`opad-cli mcp` is an MCP server that works on files. With **Tools > AI integration** on, `opad-cli mcp --live` connects
+an agent to the window you have open instead: you watch it work, every change it makes is one undo step for you, and
+**Agent activity** shows what it is doing, with a Stop button. Changes can be previewed or grouped in a transaction,
+and agents can render pictures of the model. The setup page registers OPAD with Codex and gives the MCP JSON for other
+local clients and VS Code.
+
+![An agent builds a small boat through the live bridge in four batched calls; Agent activity lists each call](docs/media/agent.gif)
+
+### Command line
+
+`opad-cli` runs 75 commands without a window and prints JSON, for scripts and CI:
 
 ```sh
 opad-cli new review.opad
 opad-cli import review.opad gearbox.step --by alice
 opad-cli tree review.opad                       # component/body hierarchy as JSON
-opad-cli inspect review.opad <body-uuid>/face/12
 opad-cli annotate review.opad <body-uuid> "check wall thickness here" --by alice
 opad-cli export review.opad --format stl --out housing.stl --select <component-uuid>
 opad-cli render review.opad --view iso --out shot.png
-git add review.opad && git commit -m "review gearbox"
+opad-cli bom review.opad --format csv --out bom.csv
 ```
 
-Every command prints JSON; `opad-cli commands` lists them with their argument schemas, and they are the same commands
-the MCP servers expose. `OPAD_DETERMINISTIC=<seed>` makes a scripted build write the same bytes every time. The
-`opad` Python module (pybind11) runs the same commands and exchanges OCCT BREP with OCP, CadQuery and build123d:
+`opad-cli commands` lists every command with its arguments. With `OPAD_DETERMINISTIC=<seed>`, running the same script
+again writes the same bytes.
 
-```python
-import opad
-d = opad.Document.create()
-d.import_step("gearbox.step", by="agent")
-plate = d.tree()["roots"][0]["children"][0]["id"]
-print(d.properties(plate)["bbox"])
-d.save_as("gearbox.opad")
-```
+### Python and plugins
 
-### Arabic and right-to-left
+The `opad` Python module runs the same commands and exchanges BREP with OCP, CadQuery and build123d. A C plugin
+interface adds export formats (a PLY exporter is the sample).
 
-The desktop program ships English and Arabic. In Arabic the whole window runs right to left, drawings shape Arabic
-text with HarfBuzz, and the help clips and cards are translated too. A language is one JSON file
+## Languages
+
+OPAD ships in **English** and **Arabic**. In Arabic the whole window is laid out right to left, the help cards and
+their animated clips are translated, and Arabic text in drawings is shaped correctly. A new language is one JSON file
 (`app/i18n/<code>.json`), and `python tools/i18n_check.py` lists what a translation does not cover yet.
 
 ![The Design workspace in Arabic, right to left, with the Extrude card open](docs/media/arabic.png)
 
-### And also
+## Supported platforms
 
-- **Compare and recovery**: two versions side by side or overlaid, `]` and `[` to step through the changes;
-  recovery snapshots shown as a diff against the file.
-- **Assemblies**: activate a component (new work goes into it, the rest is ghosted), lock, smart selection (pick a
-  face and select its whole feature, hole or fillet), Select similar, interference and 3D-print checks.
-- **2D files**: DXF/DWG/SVG open in 2D mode with layers, linetypes, shaped text and SHX fonts; Draw on drawing and
-  Drawing to sketch take them into a design; Plot to PDF.
-- **Mesh to solid**: an STL, OBJ, 3MF or PLY mesh rebuilt as a solid: a sketch (lines, arcs, circles, splines) with an
-  Extrude or Revolve when the mesh is one (a faceted cylinder becomes one circle extruded), else fitted planes,
-  cylinders, cones, spheres and tori; the panel shows how closely the result matches the mesh before it is created.
-- **KiCad**: a `.kicad_pcb` opens as the board with its footprints' 3D models, linked and synced when the board
-  changes.
-- **Image canvases**: place a picture on a plane, calibrate it, trace it into a sketch.
-- **Bills of materials** with part properties, a material library and masses; CSV export.
-- **Windows integration**: file associations and Explorer thumbnails of models and drawings.
+| Platform | Status |
+|---|---|
+| **Windows** (x64) | Built and tested. MSYS2 / MinGW-w64 toolchain. |
+| **Ubuntu 24.04** (also under WSL) | Built and tested. Wayland desktops run through XWayland. |
+| **macOS** | A build preset exists, but it has not been built yet. |
 
-[docs/features.md](docs/features.md) describes most of these, and everything above, in more detail.
+There are no published binaries yet: OPAD is built from source (see [Installation](#installation)). Besides the normal
+build there is a portable Windows folder (settings and cache kept beside the program) and a single-file Windows
+executable. AppImage and dmg packaging recipes exist but have not been run yet.
 
 ## Installation
-
-There are no published binaries yet; OPAD is built from source. Windows (MSYS2, MinGW-w64) and Ubuntu 24.04 are built
-and tested; a macOS preset exists but has not been run.
 
 ```sh
 git clone --recurse-submodules <this repository>
@@ -298,11 +369,9 @@ sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev libqt6opengl6-dev
 cmake --workflow --preset linux              # programs in build/linux/bin
 ```
 
-The other packagings are one preset each: `cmake --workflow --preset windows-single` (one self-contained exe),
-`cmake --build --preset windows-portable` (a folder with every DLL, plus a zip), `linux-single` (AppImage) and
-`macos-single` (dmg; not run yet). [docs/building.md](docs/building.md) has the details: requirements, options,
-the Linux OCCT build, the portable and single-file packages, the Python wheel, the GUI test benches and how the
-pictures on this page are made.
+Other packages are one preset each: `cmake --workflow --preset windows-single` (one self-contained exe) and
+`cmake --build --preset windows-portable` (a folder with every DLL, plus a zip). [docs/building.md](docs/building.md)
+covers requirements, options, the Python wheel and the test benches.
 
 ## Usage
 
@@ -315,42 +384,14 @@ opad --compare old.opad design.opad   # compare a version (a file or git:REV) wi
 opad-cli <command> [doc] [--key value ...]   # the same commands, headless, JSON out
 ```
 
-The window has five workspaces: **Review** (Ctrl+1: view, inspect, mark up, compare, share), **Design** (Ctrl+2:
-sketches, features, assembly), **Drawings** (Ctrl+3: sheets), **Drafting** (Ctrl+4: 2D files) and **Simulate**
-(Ctrl+5: joints, motion, dynamics, stress and vibration). Workspaces only swap the ribbon; there is one document and one
-timeline.
+The window has five workspaces that share one document and one timeline: **Review** (Ctrl+1: view, measure, mark up,
+compare), **Design** (Ctrl+2: sketches, features, assemblies), **Drawings** (Ctrl+3: sheets), **Drafting** (Ctrl+4:
+2D files) and **Simulate** (Ctrl+5).
 
-### Keybindings
-
-The defaults, all changeable in **Keyboard shortcuts** (Ctrl+K). ? (Shift+/) shows this sheet in the program, with your
-own bindings:
+Press **S** to search for any command and **?** for the shortcut sheet below, which always shows your own bindings
+(change them in **Keyboard shortcuts**, Ctrl+K). Settings are in **Preferences** (Ctrl+,), which has a search.
 
 ![The shortcut cheat sheet: file, design, inspect, view, selection, panels and sketch keys](docs/media/keys.png)
-
-| | |
-|---|---|
-| **S** search commands | **F1** help for the tool in use · **?** cheat sheet |
-| **F** fit · **Shift+F** fit all · **H** home | **Shift+H** isometric · **Shift+arrows**, **Shift+PgUp/PgDn** standard views |
-| **1** / **2** / **3** / **4** pick bodies / faces / edges / vertices | **5**-**9** display styles · **G** grid · **/** hover highlight · **Ctrl+/** X-ray highlight |
-| **I** isolate · **V** hide · **Shift+V** unhide all | **X** section · **Shift+E** exploded view |
-| **D** distance · **A** angle · **R** radius · **B** box | **N** note · **Shift+N** hand drawing · **P** pin |
-| **E** extrude · **Q** press pull · **M** move/copy | sketch: **L** line, **R** rectangle, **C** circle, **D** dimension, **U** slot, **N** polygon, **T** trim, **O** offset |
-| **Ctrl+Enter** finish sketch / save a note | **Esc** steps back one level · **Shift+Enter** repeat |
-
-Inside a tool, digits go into the value boxes beside the pointer: type a value, Tab to the next, Enter to apply.
-A tap of Alt shows key tips on the ribbon; F6 moves between the ribbon, browser, view, timeline and panels.
-
-## Configuration
-
-Everything is in **Preferences** (the gear, or Ctrl+,), with a search: navigation preset, what a scroll does (mouse
-wheel or trackpad), rendering presets and backgrounds, the theme, the display name recorded on notes and history, the
-language, undo depth, viewer mode, file types, linked-file trust, KiCad model folders, version control and AI access.
-
-- Settings live in the usual per-user place (the registry on Windows, `~/.config/opad` on Linux) and the cache in
-  `%LOCALAPPDATA%\opad\cache` or `$XDG_CACHE_HOME/opad` (`OPAD_CACHE_DIR` moves it). The portable folder (with its
-  `opad.portable` file) and the single-file exe keep both beside the program instead.
-- `OPAD_AUTHOR` sets the author name recorded on operations and notes (else the git or system user name); `OPAD_LANG=ar` runs the program in Arabic once;
-  `OPAD_TRACE=<file>` logs job timings and UI stalls.
 
 ## Contributing
 
@@ -374,33 +415,18 @@ including a background fetch every 10 minutes in a repository that has one, whic
 accept its offer to download KiCad library models for a board.
 
 **Can other CAD programs read my work?**
-Export to STEP (AP203/214/242), STL, OBJ, GLB, and drawings to PDF, DXF, DWG, SVG and PNG. The `.opad` format itself
-is plain text: the body store is OCCT ASCII BREP and the history is JSON.
-
-**Will a newer OPAD's file open in an older one?**
-Record types a build does not know are kept as they are, listed as needing a newer OPAD and saved back unchanged.
-Builds older than that tolerant loader refuse such files.
-
-**How big a model can it take?**
-It is developed against a 1,295-body engine assembly (374 MB of STEP); everything slow on that model is a bug, by the
-rule above.
+Yes: export to STEP, STL, OBJ or GLB, and drawings to PDF, DXF, DWG, SVG or PNG. The `.opad` format itself is plain
+text: JSON for the history and OCCT ASCII BREP for the bodies.
 
 **What is it not (yet)?**
-There are no 3D annotations (PMI), no paper-space layouts as sheets and no installers yet; DXF
-and DWG open read-only (edit them through Draw on drawing or Drawing to sketch); the embedded Python console is not
-there; macOS has not been built.
+There are no 3D annotations (PMI), no paper-space layouts as sheets and no installers yet. DXF and DWG open read-only
+(edit them through Draw on drawing or Drawing to sketch), and macOS has not been built.
 
-## Alternatives
-
-- **FreeCAD**: the established open-source parametric modeller, with far more workbenches. OPAD is younger and
-  narrower, but it is built around a viewer that opens big files fast, a UI that never blocks, and a text format meant
-  for git.
-- **Fusion, SOLIDWORKS, Onshape**: mature commercial modellers. Onshape has real version control, on its servers;
-  OPAD does it locally with git.
-- **CadQuery and build123d**: CAD as Python code. OPAD exchanges BREP with them and can be scripted, but its document
-  is a history of operations, not a program.
-- **eDrawings, DWG TrueView and other viewers**: view and measure; OPAD views, measures, marks up and keeps the review
-  in a diffable file.
+**How does it compare with other tools?**
+FreeCAD is the established open-source modeller, with far more workbenches; OPAD is younger and narrower, built around
+fast viewing and a git-friendly format. Fusion, SOLIDWORKS and Onshape are mature commercial modellers; Onshape has real
+version control on its own servers, while OPAD does it locally with git. CadQuery and build123d are CAD as Python code;
+OPAD exchanges BREP with them, but its document is a history of operations, not a program.
 
 ## Licence
 
@@ -433,7 +459,9 @@ package (generated by `cmake/notices.cmake` from the link libraries or the shipp
   OPAD never bundles or downloads it.
 - Drawings are lettered in Liberation Sans and Noto Sans Arabic (SIL Open Font License 1.1), compiled into the programs
   from `third_party/fonts`, where their licences are; the portable package carries them in `licenses/`.
-- The models in the pictures on this page are the STEPcode AP214 AS1 test assembly (BSD) and parts made in OPAD.
+- The models in the pictures on this page are the STEPcode AP214 AS1 test assembly (BSD), parts and mechanisms made in
+  OPAD, and KiCad's pic_programmer demo board (from KiCad's source repository) with models from KiCad's library
+  (CC-BY-SA 4.0 with KiCad's design exception).
 
 Trademarks: Autodesk, AutoCAD, DWG, DWG TrueView, Fusion and ViewCube are trademarks of Autodesk, Inc.; SOLIDWORKS and
 eDrawings of Dassault Systèmes; Onshape of PTC Inc.; Blender of the Blender Foundation; KiCad of the Linux Foundation;

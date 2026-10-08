@@ -141,4 +141,6 @@ python3 tools/make_readme_media.py assemble                     # anywhere with 
 ```
 
 `record --only <scene>` redoes one picture; `drawings` and `arabic` use the part the `design` scene saves, so record
-`design` first.
+`design` first. `kicad` downloads KiCad's pic_programmer demo board and its library models (network), `motion`, `gears`
+and `thermal` build their mechanisms with `tools/sim_eval.py`, and `thermal` needs CalculiX (`OPAD_CCX` or `ccx` on
+PATH).
