@@ -402,6 +402,150 @@ OpenFoam openfoam() {
   return f;
 }
 
+namespace {
+// An enclosure of several bodies around `bodies` when no one body holds them (a base and its lid, a frame and its panels):
+// the smallest group, of two or three, whose boxes together hold them and that every other shown solid either lies within or
+// stays clear of. That rule tells the box's halves from a heatsink and the board it sits on (the halves would stick through
+// their box) and leaves out the desk it stands on (touching is clear). Empty when no group does.
+std::vector<std::string> enclosure_group(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies) {
+  struct Item {
+    std::string id;
+    double c[6];
+  };
+  std::vector<Item> all;
+  for (const auto& id : scene.all_bodies()) {
+    const Node* n = scene.node(id);
+    if (!n || n->kind != Node::Kind::Body || n->body_missing || n->representation != "solid" || !scene.effectively_visible(id)) continue;
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, scene, id), b);
+    if (b.IsVoid()) continue;
+    Item it{id, {}};
+    b.Get(it.c[0], it.c[1], it.c[2], it.c[3], it.c[4], it.c[5]);
+    all.push_back(it);
+  }
+  double want[6] = {1e300, 1e300, 1e300, -1e300, -1e300, -1e300};
+  for (const auto& it : all)
+    if (std::find(bodies.begin(), bodies.end(), it.id) != bodies.end())
+      for (int k = 0; k < 3; ++k) want[k] = std::min(want[k], it.c[k]), want[k + 3] = std::max(want[k + 3], it.c[k + 3]);
+  if (want[0] > want[3]) return {};
+  double size = 0;
+  for (const auto& it : all)
+    for (int k = 0; k < 3; ++k) size = std::max(size, it.c[k + 3] - it.c[k]);
+  const double tol = 1e-4 * std::max(size, 1.0);
+  auto holds = [&](const double* o, const double* i) {
+    for (int k = 0; k < 3; ++k)
+      if (i[k] < o[k] - tol || i[k + 3] > o[k + 3] + tol) return false;
+    return true;
+  };
+  auto overlaps = [&](const double* x, const double* y) {  // by more than a touch
+    for (int k = 0; k < 3; ++k)
+      if (std::min(x[k + 3], y[k + 3]) - std::max(x[k], y[k]) <= tol) return false;
+    return true;
+  };
+  // Walls reach out past the parts (a body within the parts' own box is one of them, a chip or a connector).
+  std::vector<size_t> walls;
+  for (size_t i = 0; i < all.size(); ++i)
+    if (std::find(bodies.begin(), bodies.end(), all[i].id) == bodies.end() && !holds(want, all[i].c)) walls.push_back(i);
+  std::vector<size_t> best;
+  double bestExtent = 1e300;
+  auto consider = [&](const std::vector<size_t>& group) {
+    double u[6] = {1e300, 1e300, 1e300, -1e300, -1e300, -1e300};
+    for (size_t g : group)
+      for (int k = 0; k < 3; ++k) u[k] = std::min(u[k], all[g].c[k]), u[k + 3] = std::max(u[k + 3], all[g].c[k + 3]);
+    if (!holds(u, want)) return;
+    double extent = 0;
+    for (int k = 0; k < 3; ++k) extent += (u[k + 3] - u[k]) * (u[k + 3] - u[k]);
+    if (extent >= bestExtent) return;
+    for (size_t i = 0; i < all.size(); ++i)
+      if (std::find(group.begin(), group.end(), i) == group.end() && !holds(u, all[i].c) && overlaps(u, all[i].c)) return;
+    // Each one a wall: none inside the others' box (that one is a part in the box, not a side of it).
+    for (size_t g : group) {
+      double rest[6] = {1e300, 1e300, 1e300, -1e300, -1e300, -1e300};
+      for (size_t h : group)
+        if (h != g)
+          for (int k = 0; k < 3; ++k) rest[k] = std::min(rest[k], all[h].c[k]), rest[k + 3] = std::max(rest[k + 3], all[h].c[k + 3]);
+      if (holds(rest, all[g].c)) return;
+    }
+    best = group, bestExtent = extent;
+  };
+  const size_t n = walls.size();
+  for (size_t a = 0; a < n; ++a)
+    for (size_t b = a + 1; b < n; ++b) consider({walls[a], walls[b]});
+  if (best.empty() && n <= 40)
+    for (size_t a = 0; a < n; ++a)
+      for (size_t b = a + 1; b < n; ++b)
+        for (size_t c = b + 1; c < n; ++c) consider({walls[a], walls[b], walls[c]});
+  std::vector<std::string> out;
+  for (size_t g : best) out.push_back(all[g].id);
+  return out;
+}
+
+// The bodies that close a box found by itself: a lid on a base, a panel on a frame. Each touches or overlaps the walls' box,
+// is not within it, and lies within its outline across at least two axes (a desk under the box is wider than it). Grows
+// until none is left; `bodies` (the parts the loads name) never are walls.
+std::vector<std::string> closing_walls(const Document& doc, const Scene& scene, std::vector<std::string> walls, const std::vector<std::string>& bodies) {
+  auto box_of = [&](const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, scene, id), b);
+    double c[6] = {0, 0, 0, 0, 0, 0};
+    if (!b.IsVoid()) b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+    return std::array<double, 6>{c[0], c[1], c[2], c[3], c[4], c[5]};
+  };
+  std::vector<std::pair<std::string, std::array<double, 6>>> others;
+  for (const auto& id : scene.all_bodies()) {
+    const Node* n = scene.node(id);
+    if (!n || n->kind != Node::Kind::Body || n->body_missing || n->representation != "solid" || !scene.effectively_visible(id)) continue;
+    if (std::find(walls.begin(), walls.end(), id) != walls.end() || std::find(bodies.begin(), bodies.end(), id) != bodies.end()) continue;
+    others.push_back({id, box_of(id)});
+  }
+  std::array<double, 6> u{1e300, 1e300, 1e300, -1e300, -1e300, -1e300};
+  for (const auto& w : walls) {
+    const auto c = box_of(w);
+    for (int k = 0; k < 3; ++k) u[k] = std::min(u[k], c[k]), u[k + 3] = std::max(u[k + 3], c[k + 3]);
+  }
+  if (u[0] > u[3]) return walls;
+  const double tol = 1e-4 * std::max({u[3] - u[0], u[4] - u[1], u[5] - u[2], 1.0});
+  using Box = std::array<double, 6>;
+  auto held_by = [&](const Box& o, const Box& c) {
+    for (int k = 0; k < 3; ++k)
+      if (c[k] < o[k] - tol || c[k + 3] > o[k + 3] + tol) return false;
+    return true;
+  };
+  auto grow = [](Box& o, const Box& c) {
+    for (int k = 0; k < 3; ++k) o[k] = std::min(o[k], c[k]), o[k + 3] = std::max(o[k + 3], c[k + 3]);
+  };
+  for (;;) {
+    // What caps the box as it is ...
+    std::vector<size_t> caps;
+    for (size_t i = 0; i < others.size(); ++i) {
+      const Box& c = others[i].second;
+      bool touches = true;
+      int within = 0;
+      for (int k = 0; k < 3; ++k) {
+        touches = touches && c[k] <= u[k + 3] + tol && c[k + 3] >= u[k] - tol;
+        within += c[k] >= u[k] - tol && c[k + 3] <= u[k + 3] + tol;
+      }
+      if (touches && within >= 2 && !held_by(u, c)) caps.push_back(i);
+    }
+    // ... but not what lies inside the box with the other caps on it (a heatsink standing up past a base's rim, under the lid).
+    std::vector<size_t> walls_now;
+    for (size_t i : caps) {
+      Box rest = u;
+      for (size_t j : caps)
+        if (j != i) grow(rest, others[j].second);
+      if (!held_by(rest, others[i].second)) walls_now.push_back(i);
+    }
+    if (walls_now.empty()) break;
+    for (auto it = walls_now.rbegin(); it != walls_now.rend(); ++it) {
+      walls.push_back(others[*it].first);
+      grow(u, others[*it].second);
+      others.erase(others.begin() + long(*it));
+    }
+  }
+  return walls;
+}
+}  // namespace
+
 Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, const std::string& named) {
   auto box_of = [&](const std::string& id) {
     Bnd_Box b;
@@ -432,11 +576,53 @@ Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vec
       const Bnd_Box e = box_of(id);
       if (holds(e, want) && e.SquareExtent() < best) best = e.SquareExtent(), out.enclosure = id;
     }
+    // One body, or a group of them; then whatever closes it (a lid on a base) is a wall too.
+    const std::vector<std::string> found = out.enclosure.empty() ? enclosure_group(doc, scene, bodies) : std::vector<std::string>{out.enclosure};
+    if (found.empty()) return out;
+    const std::vector<std::string> walls = closing_walls(doc, scene, found, bodies);
+    if (walls.size() > 1) return find_enclosure(doc, scene, bodies, walls);
   }
   if (out.enclosure.empty()) return out;
+  out.walls = {out.enclosure};
   const Bnd_Box e = box_of(out.enclosure);
   for (const auto& id : scene.all_bodies())
     if (id != out.enclosure && solid_shown(id) && holds(e, box_of(id))) out.inside.push_back(id);
+  return out;
+}
+
+Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, const std::vector<std::string>& named) {
+  if (named.size() == 1) return find_enclosure(doc, scene, bodies, named.front());
+  Enclosure out;
+  if (named.empty()) return out;
+  Bnd_Box e;
+  for (const auto& id : named) {
+    const Node* n = scene.node(id);
+    if (!n || n->kind != Node::Kind::Body || n->body_missing || n->representation != "solid" || !scene.effectively_visible(id))
+      throw Error("cfd.enclosure: " + id + " is not a shown solid body");
+    if (std::find(out.walls.begin(), out.walls.end(), id) == out.walls.end()) out.walls.push_back(id);
+    BRepBndLib::Add(node_world_shape(doc, scene, id), e);
+  }
+  out.enclosure = out.walls.front();
+  const double tol = 1e-6 * std::sqrt(e.SquareExtent());
+  double a[6];
+  e.Get(a[0], a[1], a[2], a[3], a[4], a[5]);
+  for (const auto& id : scene.all_bodies()) {
+    if (std::find(out.walls.begin(), out.walls.end(), id) != out.walls.end()) continue;
+    const Node* n = scene.node(id);
+    if (!n || n->kind != Node::Kind::Body || n->body_missing || n->representation != "solid" || !scene.effectively_visible(id)) continue;
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, scene, id), b);
+    double c[6];
+    b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+    if (c[0] >= a[0] - tol && c[1] >= a[1] - tol && c[2] >= a[2] - tol && c[3] <= a[3] + tol && c[4] <= a[4] + tol && c[5] <= a[5] + tol) out.inside.push_back(id);
+  }
+  return out;
+}
+
+std::string enclosure_name(const Scene& scene, const std::vector<std::string>& walls) {
+  std::string out;
+  for (const auto& id : walls)
+    if (const Node* n = scene.node(id)) out += (out.empty() ? "" : " + ") + n->name;
   return out;
 }
 
@@ -517,17 +703,24 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   // An enclosure (cfd.enclosure, or the smallest shown body whose box holds every body the loads name): then the air inside
   // it and a margin of the room around it are solved, its vents open to the room, its fans placed inside, and every shown
   // body within it (the board, connectors) takes part.
+  // cfd.enclosure: a body, or a list of them (a base and its lid, a frame and its panels: its walls together).
   const json named = cfd.value("enclosure", json());
   std::string enclosure;
-  if (named.is_string() || (!listed && named != json(false))) {
-    const Enclosure found = find_enclosure(doc, scene, bodies, named.is_string() ? named.get<std::string>() : std::string());
+  std::vector<std::string> box_walls;
+  if (named.is_string() || named.is_array() || (!listed && named != json(false))) {
+    std::vector<std::string> list;
+    if (named.is_array())
+      for (const auto& v : named)
+        if (v.is_string()) list.push_back(v.get<std::string>());
+    const Enclosure found = named.is_array() ? find_enclosure(doc, scene, bodies, list)
+                                             : find_enclosure(doc, scene, bodies, named.is_string() ? named.get<std::string>() : std::string());
     enclosure = found.enclosure;
-    if (!enclosure.empty()) {
-      add_body(enclosure);
-      if (!listed)
-        for (const auto& id : found.inside) add_body(id);
-    }
+    box_walls = found.walls;
+    for (const auto& w : box_walls) add_body(w);
+    if (!enclosure.empty() && !listed)
+      for (const auto& id : found.inside) add_body(id);
   }
+  auto is_wall = [&](const std::string& id) { return std::find(box_walls.begin(), box_walls.end(), id) != box_walls.end(); };
   if (!enclosure.empty()) {
     if (fan_loads.empty() && !cfd.value("buoyancy", true) && !cfd.value("sealed", false))
       throw Error("the CFD air in an enclosure moves by fans (load kind fan) or by warm air rising (cfd.buoyancy): with neither it stands still "
@@ -636,7 +829,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     const air::Thinness t = air::thinness(world[i]);
     double want = enclosure.empty() ? 1e300 : given > 0 ? given : (fin_want[i] > 0 ? fin_want[i] : 1e300);
     if (t.wall > 0) want = std::min(want, t.wall / cfd.value("wall_cells", 1.25));
-    const double across = bodies[i] == enclosure ? 2 : cfd.value("gap_cells", 3.0);
+    const double across = is_wall(bodies[i]) ? 2 : cfd.value("gap_cells", 3.0);
     if (enclosure.empty() && t.gap > 0 && t.gap < 0.5 * size) want = std::min(want, t.gap / across);
     if (want < 1e300) level[i] = level_for(want);
     int gap_level = 0;
@@ -695,7 +888,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       bool heated = false;
       for (const Load* h : heats)
         for (const auto& r : h->refs) heated = heated || r.body == bodies[i];
-      const bool model = !heated && !finned[i] && bodies[i] != enclosure;
+      const bool model = !heated && !finned[i] && !is_wall(bodies[i]);
       const double along = model ? 0.5 * (n0 + n1) : n0 - std::max(1.0, 1.5 * coarse / std::pow(2.0, level[i]));
       d.centre = add(add(mul(d.normal, along), mul(u1, 0.5 * (p0 + p1))), mul(u2, 0.5 * (q0 + q1)));
       d.radius = model || d.fan.size <= 0 ? 0.47 * std::min(p1 - p0, q1 - q0) : 0.47 * d.fan.size;
@@ -862,9 +1055,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     // A point in the air: upstream in a duct, in the room's margin by a corner of an enclosure; in a sealed one, in its air.
     V seed = enclosure.empty() ? corner(d0 + 0.5 * (up + off), 0.5 * (a0 + a1), 0.5 * (b0 + b1)) : corner(d0 + 0.5 * margin, a0 + 0.5 * margin, b0 + 0.5 * margin);
     if (sealed) {
-      // The first point of a grid over the enclosure's box that no part holds, a cell clear of their faces.
+      // The first point of a grid over the enclosure's box (all its walls') that no part holds, a cell clear of their faces.
       Bnd_Box eb;
-      BRepBndLib::Add(world[index_of(enclosure)], eb);
+      for (const auto& w : box_walls) BRepBndLib::Add(world[index_of(w)], eb);
       double c[6];
       eb.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
       bool found = false;
@@ -1552,7 +1745,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       summary["engine"] = "OpenFOAM (snappyHexMesh, simpleFoam, scalarTransportFoam) and CalculiX";
       if (!fins_json.is_null()) fan_json["fins"] = fins_json;
       if (!enclosure.empty()) {
-        summary["enclosure"] = scene.node(enclosure)->name;
+        summary["enclosure"] = enclosure_name(scene, box_walls);
         summary["fans"] = fan_json["fans"];
         summary["vents"] = fan_json["vents"];
         summary["flow_iterations"] = fan_json["iterations"];
@@ -1824,7 +2017,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   summary["heat_iterations"] = done;
   if (!fins_json.is_null()) fan_json["fins"] = fins_json;
   if (!enclosure.empty()) {
-    summary["enclosure"] = scene.node(enclosure)->name;
+    summary["enclosure"] = enclosure_name(scene, box_walls);
     summary["fans"] = fan_json["fans"];
     summary["vents"] = fan_json["vents"];
     summary["flow_iterations"] = fan_json["iterations"];

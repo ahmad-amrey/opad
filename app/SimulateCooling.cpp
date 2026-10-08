@@ -17,6 +17,8 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include <Bnd_Box.hxx>
+
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -24,6 +26,7 @@
 #include "AppDocument.hpp"
 #include "I18n.hpp"
 #include "Theme.hpp"
+#include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/sim/airflow.hpp"
 #include "opad/sim/cfd.hpp"
@@ -113,7 +116,8 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
   // ---- 1. the box
   {
     QVBoxLayout* v = page(tr("The box"), tr("The air is solved inside the box and in a margin of the room around it: its holes are the vents. The box is "
-                                            "the smallest body that holds the parts that make heat; pick another if it is not the one."));
+                                            "the smallest body that holds the parts that make heat, with what closes it (a lid, a cover, the other half); "
+                                            "pick another if it is not the one."));
     m_engine = text(QString(), this);
     v->addWidget(m_engine);
     auto* row = new QHBoxLayout();
@@ -122,6 +126,13 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
     m_box->setObjectName("coolingBox");
     row->addWidget(m_box, 1);
     v->addLayout(row);
+    // A box of several bodies: the bodies against the one chosen, those that close it ticked.
+    v->addWidget(text(tr("Also walls of the box (a lid, a cover, panels):"), this, "sectionHeader"));
+    m_walls = new QListWidget(this);
+    m_walls->setObjectName("coolingWalls");
+    m_walls->setMaximumHeight(110);
+    v->addWidget(m_walls);
+    connect(m_walls, &QListWidget::itemChanged, this, [this] { wallsChanged(); });
     v->addWidget(text(tr("Inside it, taking part (the board, chips, heatsink, connectors):"), this, "sectionHeader"));
     m_inside = new QListWidget(this);
     v->addWidget(m_inside, 1);
@@ -228,8 +239,7 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
     connect(temps, &QPushButton::clicked, this, [this] { m_hooks.showField("temperature"); });
     connect(speed, &QPushButton::clicked, this, [this] { m_hooks.showField("air_speed"); });
     connect(inside, &QPushButton::toggled, this, [this](bool on) {
-      const std::string box = m_box->currentData().toString().toStdString();
-      if (!box.empty()) m_hooks.setVisible(box, !on);
+      for (const auto& wall : walls()) m_hooks.setVisible(wall, !on);  // every wall of it: the lid too
     });
   }
   // ---- 5. the best vents
@@ -350,9 +360,18 @@ void CoolingAssistant::reload() {
   m_candidates.clear();
   if (!d || !d->hasDocument) return;
   const opad::Scene& s = d->scene;
-  // The box: the cooling study's, else the one the heat sources (or every other body) are found in.
+  // The box: the cooling study's (a body, or a list: its walls), else the one the heat sources (or every other body) are found
+  // in, with what closes it (a lid, a cover, the other half).
   std::string box;
-  if (const opad::Study* st = s.study(studyId())) box = st->def.value("settings", json::object()).value("cfd", json::object()).value("enclosure", std::string());
+  m_wantWalls.clear();
+  m_wallsGiven = false;
+  if (const opad::Study* st = s.study(studyId())) {
+    const json e = st->def.value("settings", json::object()).value("cfd", json::object()).value("enclosure", json());
+    if (e.is_string()) box = e.get<std::string>();
+    for (const auto& w : e.is_array() ? e : json::array())
+      if (w.is_string()) (box.empty() ? box : m_wantWalls.emplace_back()) = w.get<std::string>();
+    m_wallsGiven = !box.empty();
+  }
   std::vector<std::string> heated;
   for (const auto& l : s.loads)
     if (l.kind == "heat")
@@ -361,8 +380,13 @@ void CoolingAssistant::reload() {
   for (const auto& id : s.all_bodies())
     if (const opad::Node* n = s.node(id); n && !n->body_missing && n->representation == "solid" && s.effectively_visible(id)) solids.push_back(id);
   try {
-    if (box.empty() && !heated.empty()) box = opad::sim::find_enclosure(d->doc, s, heated).enclosure;
-    if (box.empty()) {  // the body that holds the most others
+    if (box.empty() && !heated.empty()) {
+      const opad::sim::Enclosure found = opad::sim::find_enclosure(d->doc, s, heated);
+      box = found.enclosure;
+      if (found.walls.size() > 1) m_wantWalls.assign(found.walls.begin() + 1, found.walls.end());
+      m_wallsGiven = !box.empty();
+    }
+    if (box.empty()) {  // the body that holds the most others (boxChanged finds what closes it)
       size_t most = 0;
       for (const auto& id : solids)
         if (const size_t n = opad::sim::find_enclosure(d->doc, s, {}, id).inside.size(); n > most) most = n, box = id;
@@ -391,7 +415,63 @@ void CoolingAssistant::reload() {
   if (const opad::Study* sw = s.study(sweepId()); sw && sw->result.is_object() && !sw->result.empty()) showSweep(sw->result);
 }
 
+// The box chosen: the bodies against it offered as its other walls, those that close it ticked (given with it, or found:
+// what the enclosure of the parts it holds has besides it).
 void CoolingAssistant::boxChanged() {
+  AppDocument* d = m_hooks.document();
+  {
+    const QSignalBlocker quiet(m_walls);
+    m_walls->clear();
+    if (d && d->hasDocument && m_box->currentIndex() >= 0) {
+      const opad::Scene& s = d->scene;
+      const std::string box = m_box->currentData().toString().toStdString();
+      std::vector<std::string> tick = m_wallsGiven ? m_wantWalls : std::vector<std::string>();
+      try {
+        if (!m_wallsGiven)
+          if (const auto inside = opad::sim::find_enclosure(d->doc, s, {}, box).inside; !inside.empty())
+            if (const opad::sim::Enclosure found = opad::sim::find_enclosure(d->doc, s, inside); found.enclosure == box && found.walls.size() > 1)
+              tick.assign(found.walls.begin() + 1, found.walls.end());
+        // Offered: what touches or overlaps the box and is not inside it, and anything to be ticked.
+        const Bnd_Box b = opad::node_world_bbox(d->doc, s, box);
+        double a[6];
+        b.Get(a[0], a[1], a[2], a[3], a[4], a[5]);
+        const double tol = 1e-3 * std::sqrt(b.SquareExtent());
+        for (const auto& id : m_candidates) {
+          if (id == box) continue;
+          double c[6];
+          opad::node_world_bbox(d->doc, s, id).Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+          bool touches = true, held = true;
+          for (int k = 0; k < 3; ++k) {
+            touches = touches && c[k] <= a[k + 3] + tol && c[k + 3] >= a[k] - tol;
+            held = held && c[k] >= a[k] - tol && c[k + 3] <= a[k + 3] + tol;
+          }
+          const bool ticked = std::find(tick.begin(), tick.end(), id) != tick.end();
+          if (!ticked && (!touches || held)) continue;
+          auto* item = new QListWidgetItem(nameOf(s, id), m_walls);
+          item->setData(Qt::UserRole, QString::fromStdString(id));
+          item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+          item->setCheckState(ticked ? Qt::Checked : Qt::Unchecked);
+        }
+      } catch (const std::exception&) {
+      }
+    }
+    m_wantWalls.clear();
+    m_wallsGiven = false;
+    m_walls->setVisible(m_walls->count() > 0);
+  }
+  wallsChanged();
+}
+
+std::vector<std::string> CoolingAssistant::walls() const {
+  std::vector<std::string> out;
+  if (m_box->currentIndex() < 0) return out;
+  out.push_back(m_box->currentData().toString().toStdString());
+  for (int i = 0; i < m_walls->count(); ++i)
+    if (m_walls->item(i)->checkState() == Qt::Checked) out.push_back(m_walls->item(i)->data(Qt::UserRole).toString().toStdString());
+  return out;
+}
+
+void CoolingAssistant::wallsChanged() {
   AppDocument* d = m_hooks.document();
   m_parts.clear();
   m_inside->clear();
@@ -399,9 +479,8 @@ void CoolingAssistant::boxChanged() {
   m_fans->setRowCount(0);
   if (!d || !d->hasDocument || m_box->currentIndex() < 0) return;
   const opad::Scene& s = d->scene;
-  const std::string box = m_box->currentData().toString().toStdString();
   try {
-    m_parts = opad::sim::find_enclosure(d->doc, s, {}, box).inside;
+    m_parts = opad::sim::find_enclosure(d->doc, s, {}, walls()).inside;
   } catch (const std::exception&) {
   }
   // What the cooling study set, to show it again: heat per body, boards, fans.
@@ -528,7 +607,7 @@ std::string CoolingAssistant::sweepId() const {
 bool CoolingAssistant::apply() {
   AppDocument* d = m_hooks.document();
   if (!d || !d->hasDocument) return false;
-  const std::string box = m_box->currentIndex() >= 0 ? m_box->currentData().toString().toStdString() : std::string();
+  const std::vector<std::string> box = walls();
   if (box.empty()) {
     m_status->setText(tr("Choose the box on the first page."));
     return false;
@@ -572,7 +651,7 @@ bool CoolingAssistant::apply() {
   json settings = {{"case", kCase},
                    {"air", "cfd"},
                    {"ambient", m_ambient->value()},
-                   {"cfd", {{"enclosure", box}, {"quality", m_quality->currentData().toString().toStdString()}, {"radiation", m_radiation->isChecked()},
+                   {"cfd", {{"enclosure", box.size() == 1 ? json(box.front()) : json(box)}, {"quality", m_quality->currentData().toString().toStdString()}, {"radiation", m_radiation->isChecked()},
                             {"buoyancy", !fans}}}};
   if (!materials.empty()) settings["materials"] = materials;
   const std::string id = studyId();

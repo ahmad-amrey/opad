@@ -41,12 +41,19 @@ struct OpenFoam {
 OpenFoam openfoam();
 
 // The enclosure a thermal study's air would be solved in: `named` (a body id), else the smallest shown solid whose box holds
-// all of `bodies` (none when no body does); and every other shown solid within its box.
+// all of `bodies`; when none does, the smallest group of shown solids around them whose boxes together do (a base and its
+// lid, a frame and its panels: each reaching out past the parts, none a part of them). `walls`: its bodies (`enclosure`
+// the first); `inside`: every other shown solid within their box. Both empty when nothing encloses them.
 struct Enclosure {
   std::string enclosure;
+  std::vector<std::string> walls;
   std::vector<std::string> inside;
 };
 Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, const std::string& named = {});
+// The same with the enclosure's bodies named (cfd.enclosure as a list): every one a shown solid.
+Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, const std::vector<std::string>& named);
+// A group of walls as the summary names it: "Base + Lid".
+std::string enclosure_name(const Scene& scene, const std::vector<std::string>& walls);
 
 StudyRun run_cfd(const Document& doc, const Scene& scene, const json& settings, const Progress& progress);
 

@@ -9,4 +9,5 @@ CASES = [
     # The Cooling assistant: its example built, the pages filled, the case written (app/CoolingBench.cpp).
     ("cooling", "empty", {"OPAD_BENCH_COOLING": "{prefix}"}),
     ("cooling-rtl", "empty", {"OPAD_BENCH_COOLING": "{prefix}", "OPAD_LANG": "ar"}),
+    ("cooling-walls", "empty", {"OPAD_BENCH_COOLING_WALLS": "{prefix}"}),  # a tray and its cover: an enclosure of two bodies
 ]

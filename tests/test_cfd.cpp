@@ -3,6 +3,7 @@
 // heat put in, and the streamlines through the fins; a vented box with a fan inside it: the box found, the fan on its curve,
 // as much air out of the box as into it, the heat leaving with it. Skipped when OpenFOAM (or CalculiX, for the comparison)
 // is missing.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -192,6 +193,53 @@ TEST(cfd_enclosure_needs_moving_air) {
   for (const auto& l : resolve(doc).loads)
     if (l.kind == "fan") commands::run("delete", {{"target", l.id}}, &doc);
   CHECK_THROWS(thermal(doc, {{"air", "cfd"}, {"cfd", {{"buoyancy", false}}}}));
+}
+
+namespace {
+bool has(const std::vector<std::string>& v, const std::string& id) { return std::find(v.begin(), v.end(), id) != v.end(); }
+}  // namespace
+
+// Enclosures of several bodies (no OpenFOAM needed): a tray with a cover on it, its board, chip and a heatsink standing up past
+// the tray's rim, on a desk: the tray holds the chip, the cover closes it (a wall too), the heatsink is inside, the desk stays out.
+TEST(enclosure_of_a_tray_and_its_cover) {
+  Document doc = Document::create();
+  const std::string tray = cut(doc, box(doc, {0, 0, 0}, 100, 80, 25, "Tray"), {3, 3, 3}, 94, 74, 25);
+  const std::string cover = cut(doc, box(doc, {0, 0, 25}, 100, 80, 15, "Cover"), {3, 3, 24}, 94, 74, 13);
+  const std::string board = box(doc, {10, 10, 8}, 60, 50, 1.6, "Board");
+  const std::string chip = box(doc, {30, 30, 9.6}, 10, 10, 2, "Chip");
+  const std::string sink = box(doc, {28, 28, 11.6}, 14, 14, 20, "Heatsink");  // up to z 31.6: past the tray's rim, under the cover
+  const std::string desk = box(doc, {-50, -50, -10}, 200, 180, 10, "Desk");
+  box(doc, {300, 0, 0}, 10, 10, 10, "Elsewhere");
+  const Scene s = resolve(doc);
+  const sim::Enclosure e = sim::find_enclosure(doc, s, {chip});
+  CHECK_EQ(e.enclosure, tray);
+  CHECK_EQ(e.walls.size(), 2u);
+  CHECK(has(e.walls, tray) && has(e.walls, cover));
+  CHECK(has(e.inside, board) && has(e.inside, sink) && !has(e.inside, desk) && !has(e.walls, desk) && !has(e.walls, sink));
+  CHECK_EQ(sim::enclosure_name(s, e.walls), "Tray + Cover");
+}
+
+// A box split down the middle into two halves: neither holds the chip that straddles them, the two together do. The board
+// under the chip and the heatsink on it hold it too, but the halves stick through their box: not an enclosure.
+TEST(enclosure_of_two_halves) {
+  Document doc = Document::create();
+  const std::string left = cut(doc, box(doc, {0, 0, 0}, 50, 80, 40, "Left"), {3, 3, 3}, 50, 74, 34);
+  const std::string right = cut(doc, box(doc, {50, 0, 0}, 50, 80, 40, "Right"), {47, 3, 3}, 50, 74, 34);
+  const std::string board = box(doc, {35, 20, 3}, 30, 40, 2, "Board");
+  const std::string chip = box(doc, {45, 30, 5}, 10, 10, 2, "Chip");
+  const std::string sink = box(doc, {43, 28, 7}, 14, 14, 15, "Heatsink");
+  const Scene s = resolve(doc);
+  const sim::Enclosure e = sim::find_enclosure(doc, s, {chip});
+  CHECK_EQ(e.walls.size(), 2u);
+  CHECK(has(e.walls, left) && has(e.walls, right));
+  CHECK(has(e.inside, board) && has(e.inside, sink));
+  // Named as a list (cfd.enclosure: [ids]): the same walls, what they hold inside.
+  const sim::Enclosure named = sim::find_enclosure(doc, s, {}, std::vector<std::string>{left, right});
+  CHECK_EQ(named.walls.size(), 2u);
+  CHECK(has(named.inside, chip) && has(named.inside, board) && has(named.inside, sink));
+  CHECK_THROWS(sim::find_enclosure(doc, s, {}, std::vector<std::string>{left, "not-a-body"}));
+  // One body named: as before, alone.
+  CHECK_EQ(sim::find_enclosure(doc, s, {}, left).walls.size(), 1u);
 }
 
 CHECK_MAIN()

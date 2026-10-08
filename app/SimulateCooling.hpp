@@ -51,6 +51,7 @@ class CoolingAssistant : public QWidget {
 
   // For benches.
   QComboBox* boxChoice() const { return m_box; }
+  QListWidget* wallChoice() const { return m_walls; }  // the box's other walls, ticked
   QTableWidget* heatTable() const { return m_heat; }
   QTableWidget* fanTable() const { return m_fans; }
   QComboBox* paramChoice() const { return m_param; }
@@ -73,6 +74,8 @@ class CoolingAssistant : public QWidget {
   void showStep(int i);
   void showSweep(const opad::json& summary);
   void addFanRow(const std::string& body, const opad::json& fan, const opad::Vec3& way);
+  std::vector<std::string> walls() const;  // the box chosen and its other walls ticked
+  void wallsChanged();                     // what is inside them, and the heat and fan tables for it
   std::string studyId() const;
   std::string sweepId() const;
 
@@ -81,6 +84,9 @@ class CoolingAssistant : public QWidget {
   QStackedWidget* m_pages = nullptr;
   QLabel* m_engine = nullptr;
   QComboBox* m_box = nullptr;
+  QListWidget* m_walls = nullptr;  // the box's other walls (a lid, a cover, panels), ticked
+  std::vector<std::string> m_wantWalls;  // the walls to tick when the box choice is filled next (the study's, the detected)
+  bool m_wallsGiven = false;             // m_wantWalls came with the box: not detected again for it
   QListWidget* m_inside = nullptr;
   QPushButton* m_example = nullptr;
   QTableWidget* m_heat = nullptr;
