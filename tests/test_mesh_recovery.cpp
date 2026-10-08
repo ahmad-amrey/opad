@@ -1,6 +1,7 @@
 #include "check.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
+#include "../core/src/mesh_fallback.hpp"
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepGProp.hxx>
@@ -257,6 +258,115 @@ TEST(extruded_walls_become_upright_strips) {
   const auto slot = spline_slot(10);
   opad::mesh_shape(slot, 0.05);
   CHECK(projected_wall_area(slot, gp::DZ()) > 1e-6);
+}
+
+TEST(drilled_faces_keep_their_extruded_walls) {
+  // Over 64 holes in a face sends the shape to Delabella, which left linear extrusions without triangles (the report:
+  // a handset's side walls vanished next to its speaker grille). A plate with a spline side has such a wall.
+  Handle(TColgp_HArray1OfPnt) points = new TColgp_HArray1OfPnt(1, 5);
+  for (int i = 0; i < 5; ++i) points->SetValue(i + 1, gp_Pnt(20 - 5 * i, 10 + std::sin(i * 1.3), 0));
+  GeomAPI_Interpolate fit(points, Standard_False, 1e-9);
+  fit.Perform();
+  BRepBuilderAPI_MakeWire outline;
+  outline.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(20, 0, 0)).Edge());
+  outline.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(20, 0, 0), fit.Curve()->StartPoint()).Edge());
+  outline.Add(BRepBuilderAPI_MakeEdge(fit.Curve()).Edge());
+  outline.Add(BRepBuilderAPI_MakeEdge(fit.Curve()->EndPoint(), gp_Pnt(0, 0, 0)).Edge());
+  BRepBuilderAPI_MakeFace face(outline.Wire(), Standard_True);
+  for (int k = 0; k < 100; ++k) {
+    const gp_Circ hole(gp_Ax2(gp_Pnt(2 + (k % 10) * 1.8, 1 + (k / 10) * 0.8, 0), gp_Dir(0, 0, -1)), 0.25);
+    face.Add(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(hole).Edge()).Wire());
+  }
+  const TopoDS_Shape plate = BRepPrimAPI_MakePrism(face.Face(), gp_Vec(0, 0, 2)).Shape();
+  opad::mesh_shape(plate, 0.05);
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(plate, TopAbs_FACE, faces);
+  int extrusions = 0;
+  for (int i = 1; i <= faces.Extent(); ++i) {
+    const TopoDS_Face f = TopoDS::Face(faces(i));
+    extrusions += BRepAdaptor_Surface(f).GetType() == GeomAbs_SurfaceOfExtrusion;
+    TopLoc_Location loc;
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(f, props);
+    CHECK(area(BRep_Tool::Triangulation(f, loc)) > std::abs(props.Mass()) * 0.9);
+  }
+  CHECK_EQ(faces.Extent(), 106);  // 4 sides, top, bottom, 100 hole walls
+  CHECK_EQ(extrusions, 1);
+}
+
+// The triangles' winding against the surface's own normal (as the display draws them): how many face the wrong way.
+int wrong_way(const TopoDS_Face& face) {
+  TopLoc_Location loc;
+  const auto mesh = BRep_Tool::Triangulation(face, loc);
+  BRepAdaptor_Surface surface(face, false);
+  int wrong = 0;
+  for (int i = 1; i <= mesh->NbTriangles(); ++i) {
+    int a, b, c;
+    mesh->Triangle(i).Get(a, b, c);
+    const gp_Vec n = gp_Vec(mesh->Node(a), mesh->Node(b)).Crossed(gp_Vec(mesh->Node(a), mesh->Node(c)));
+    const gp_XY uv = (mesh->UVNode(a).XY() + mesh->UVNode(b).XY() + mesh->UVNode(c).XY()) / 3;
+    gp_Pnt p;
+    gp_Vec du, dv;
+    surface.D1(uv.X(), uv.Y(), p, du, dv);
+    if (n.Magnitude() > 1e-12 && n.Dot(du.Crossed(dv)) < 0) ++wrong;
+  }
+  return wrong;
+}
+
+TEST(faces_with_crossing_wires_are_triangulated_from_their_boundary) {
+  // Two squares meeting at a corner, the loop crossing itself 0.003 mm past it (the report: a cover's rib floor round a
+  // pocket, back to the same corner 0.006 mm off). BRepMesh refuses such a face, which then vanished from the view.
+  const std::vector<gp_Pnt> corners = {{0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {20, 10, 0}, {20, 20, 0}, {10, 20, 0}, {10.003, 9.997, 0}, {0, 10, 0}};
+  BRepBuilderAPI_MakeWire wire;
+  for (size_t i = 0; i < corners.size(); ++i) wire.Add(BRepBuilderAPI_MakeEdge(corners[i], corners[(i + 1) % corners.size()]).Edge());
+  const TopoDS_Face face = BRepBuilderAPI_MakeFace(gp_Pln(), wire.Wire(), Standard_True).Face();
+  const auto report = opad::mesh_shape(face, 0.05);
+  CHECK_EQ(report.boundary_faces, 1);
+  TopLoc_Location loc;
+  const auto mesh = BRep_Tool::Triangulation(face, loc);
+  CHECK(!mesh.IsNull() && mesh->HasUVNodes());
+  std::printf("crossing loop: %d triangles, area %.4f mm2 (two 10 mm squares)\n", mesh->NbTriangles(), area(mesh));
+  CHECK(std::abs(area(mesh) - 200) < 0.1);
+  CHECK_EQ(wrong_way(face), 0);
+  CHECK(opad::tessellate(face, 0.05).triangle_count() == size_t(mesh->NbTriangles()));  // renders and exports see it too
+
+  // An outline that runs clockwise round a pocket from a point on itself, 0.002 mm off: the pocket is a hole touching
+  // the outline (the report's rib floor had two; dropped as slivers they were filled, the face six times too big).
+  const std::vector<gp_Pnt> pocketed = {{0, 0, 0}, {10, 0, 0}, {8, 4, 0}, {12, 4, 0}, {10.002, 0, 0}, {20, 0, 0}, {20, 20, 0}, {0, 20, 0}};
+  BRepBuilderAPI_MakeWire outline;
+  for (size_t i = 0; i < pocketed.size(); ++i) outline.Add(BRepBuilderAPI_MakeEdge(pocketed[i], pocketed[(i + 1) % pocketed.size()]).Edge());
+  const TopoDS_Face square = BRepBuilderAPI_MakeFace(gp_Pln(), outline.Wire(), Standard_True).Face();
+  CHECK(opad::detail::triangulate_from_boundary(square, 0.05, 0.35));
+  const auto pocket = BRep_Tool::Triangulation(square, loc);
+  std::printf("outline round a pocket: %d triangles, area %.4f mm2 (400 less the 8 mm2 pocket)\n", pocket->NbTriangles(), area(pocket));
+  CHECK(std::abs(area(pocket) - 392) < 0.1);
+  CHECK_EQ(wrong_way(square), 0);
+}
+
+TEST(boundary_triangulation_follows_curved_faces_and_holes) {
+  // Straight to the fallback: a cylinder's wall (seam, curved) and a plate with holes, each within the deflection.
+  const TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(5, 12).Shape();
+  for (TopExp_Explorer e(cylinder, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face face = TopoDS::Face(e.Current());
+    if (BRepAdaptor_Surface(face).GetType() != GeomAbs_Cylinder) continue;
+    CHECK(opad::detail::triangulate_from_boundary(face, 0.01, 0.35));
+    TopLoc_Location loc;
+    const double meshed = area(BRep_Tool::Triangulation(face, loc)), exact = 2 * M_PI * 5 * 12;
+    std::printf("cylinder wall from its boundary: %d triangles, area %.3f of %.3f\n", BRep_Tool::Triangulation(face, loc)->NbTriangles(), meshed, exact);
+    CHECK(std::abs(meshed - exact) < exact * 0.01);
+    CHECK_EQ(wrong_way(face), 0);
+  }
+  BRepBuilderAPI_MakeFace plate(gp_Pln(), -10, 10, -10, 10);
+  for (int k = 0; k < 4; ++k)
+    plate.Add(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(k % 2 ? 5 : -5, k / 2 ? 5 : -5, 0), gp_Dir(0, 0, -1)), 2)).Edge()).Wire());
+  const TopoDS_Face holes = plate.Face();
+  CHECK(opad::detail::triangulate_from_boundary(holes, 0.01, 0.35));
+  TopLoc_Location loc;
+  GProp_GProps props;
+  BRepGProp::SurfaceProperties(holes, props);
+  std::printf("plate with four holes from its boundary: area %.3f of %.3f\n", area(BRep_Tool::Triangulation(holes, loc)), props.Mass());
+  CHECK(std::abs(area(BRep_Tool::Triangulation(holes, loc)) - props.Mass()) < props.Mass() * 0.01);
+  CHECK_EQ(wrong_way(holes), 0);
 }
 
 TEST(straightening_keeps_faces_it_cannot_match) {

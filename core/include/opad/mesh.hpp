@@ -40,9 +40,11 @@ struct MeshingReport {
   int status = 0;
   int recovered_faces = 0;
   int incomplete_cones = 0;
+  int boundary_faces = 0;  // faces BRepMesh refused (wires touching themselves), triangulated from their boundary
 };
 // Worker-only: prepare triangulations, recovering incomplete conical faces without
-// changing the B-rep, subshape identities or analytic geometry.
+// changing the B-rep, subshape identities or analytic geometry. A face BRepMesh refuses outright is triangulated from
+// its boundary, so no face is left out of the view, renders or exports.
 MeshingReport mesh_shape(const TopoDS_Shape& s, double linear_tol, double angular_deg = 20.0);
 // Worker-only, after mesh_shape: re-triangulates cylinders and extrusions of any curve as upright strips between their
 // two rims, so seen along their direction they have no area (BRepMesh's leaning triangles showed as slivers past the
