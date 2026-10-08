@@ -1433,9 +1433,12 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       }
       return T;
     };
+    // A face's mean temperature: on a quadratic (6-node) triangle the mean of its mid-side nodes, which is exact for the
+    // quadratic field (the corners weigh nothing); the corners' mean put a box's 5 W at 5.5 W summed over its faces.
     auto face_temp = [&](const Face& f, const std::vector<double>& T) {
       double s = 0;
-      for (int k = 0; k < 3; ++k) s += T[size_t(mesh.tris[f.tri][size_t(k)])];
+      const int first = mesh.tri_nodes == 6 ? 3 : 0;
+      for (int k = first; k < first + 3; ++k) s += T[size_t(mesh.tris[f.tri][size_t(k)])];
       return s / 3;
     };
     // The films from the temperatures: natural convection per plate, each fan's operating point, channels and air.
@@ -1510,6 +1513,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     // With the air solved, the films must also give the air what it takes (cfd.agree, a share of the heat).
     const double agree = st.value("cfd", json::object()).value("agree", 0.02);
     json mismatches = json::array();
+    double solved_films = 0, solved_rads = 0;
     bool settled = !coupled;
     for (int it = 0; it < (coupled ? (air_films ? st.value("cfd", json::object()).value("passes", 30) : 12) : 1); ++it) {
       const Frd frd = run_ccx(input(true), 0.3 + 0.05 * std::min(it, 10));
@@ -1519,6 +1523,13 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
       T = next;
       ++iterations;
       changes.push_back(change);
+      // The heat as this solve had it (its own films and sinks): what goes to the air and what is radiated.
+      solved_films = solved_rads = 0;
+      for (const auto& f : films) solved_films += f.h * f.f.area * 1e-6 * (face_temp(f.f, T) - f.sink);
+      for (const auto& r : rads) {
+        const double Ts = face_temp(r.f, T) + 273.15, Ta = r.sink + 273.15;
+        solved_rads += r.eps * 5.670e-8 * r.f.area * 1e-6 * (Ts * Ts * Ts * Ts - Ta * Ta * Ta * Ta);
+      }
       if (!coupled) break;
       if (!air_films && change < settle) {
         settled = true;
@@ -1610,6 +1621,7 @@ StudyRun run_structural(const Document& doc, const Scene& scene, const std::stri
     summary["to_air_W"] = to_air;
     if (!rads.empty()) summary["radiated_W"] = radiated;
     if (!radiation_info.is_null()) summary["radiation"] = radiation_info;
+    if (air_films) summary["solved_balance_W"] = {{"heat", heat_in}, {"to_air", solved_films}, {"radiated", solved_rads}};
     if (!fixed_temps.str().empty() && !transient) summary["to_fixed_temperatures_W"] = heat_in - to_air - radiated;
     summary["loads_W"] = by_load;
     json conv = json::array();
