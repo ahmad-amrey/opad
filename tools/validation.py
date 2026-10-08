@@ -12,7 +12,7 @@ Cases (each skipped when its engine is missing):
                  against Pohlhausen's isothermal plate, Nu = 0.664 Re^1/2 Pr^1/3 on both faces. OpenFOAM.
   conduction_gap Still air between a hot and a cold wall: Q = k A dT / L (Nu = 1), the parts-to-air coupling alone.
   cavity_1e4     Natural convection in a cubic cavity, two opposite walls held at different temperatures, the rest insulated:
-  cavity_1e5     the hot wall's mean Nusselt number against Fusegi, Hyun, Kuwahara and Farouk (1991), Int. J. Heat Mass Transfer
+  cavity_1e5     the walls' mean Nusselt number against Fusegi, Hyun, Kuwahara and Farouk (1991), Int. J. Heat Mass Transfer
                  34(6): 2.100 at Ra 1e4, 4.361 at Ra 1e5 (de Vahl Davis's square cavity, 1983, gives 2.243 and 4.519 in two
                  dimensions). A sealed enclosure with warm air rising: OpenFOAM and CalculiX.
   radiation_box  A heated block in a closed box in still air: radiation by rays (OPAD's view factors, the default) against
@@ -86,13 +86,17 @@ def flat_plate(s):
     if not engines(s).get("cfd"):
         s.note("OpenFOAM is not installed: skipped")
         return
-    # A 60 mm (along the stream) x 60 mm x 3 mm aluminium plate making 1 W in air at 1 m/s: nearly one temperature (Bi ~ 1e-4).
+    # A 120 mm (along the stream) x 80 mm x 3 mm aluminium plate making 1 W in air at 1 m/s: nearly one temperature (Bi ~ 1e-4).
     # Its leading and trailing edges are bevelled to a 0.2 mm nose over 8 mm (Pohlhausen's plate has no thickness: a blunt
     # 3 mm nose stagnates the stream and alone gave ~15 % of the heat, measured against a plate that has none).
     # The plate is wider (80 mm) than the air's box (cfd.span 60 mm, its walls slipping): it crosses the box wall to wall, so
     # the air is two-dimensional, as Pohlhausen's plate of endless span (60 mm wide alone, the heat going round its sides
     # made a third more).
-    L, W, t, U, P, span = 60.0, 80.0, 3.0, 1.0, 1.0, 60.0
+    # 75 mm of air above and below: the plate and its growing boundary layers in a 53 mm duct sped the stream up by 15 % by
+    # the trailing edge (the film grew from 5 % to 16 % above Pohlhausen's along the plate); Pohlhausen's stream is unbounded.
+    # 120 mm along the stream (Re ~7600, laminar): the bevelled ends, which a plate of no thickness has not, then a smaller
+    # share of it (at 60 mm the flat middle matched Pohlhausen's local film within 5-11 %, the ends 30-70 % above).
+    L, W, t, U, P, span = 120.0, 80.0, 3.0, 1.0, 1.0, 60.0
     plate = s.box("Plate", (0, 0, 0), L, W, t, centered=False)
     for x in (0, L):
         for z in (0, t):
@@ -106,7 +110,7 @@ def flat_plate(s):
     s.run("load", kind="heat", on=[plate], value=P, case="Plate")
     s.run("load", kind="convection", on=[plate], h="forced", velocity=U, vector=[1, 0, 0], case="Plate")
     st = s.run("study", kind="thermal", name="Plate", settings={"case": "Plate", "air": "cfd", "ambient": 25,
-                                                                "cfd": cfd(cell_size=1.0, padding=25, upstream=30, downstream=60, span=span)})
+                                                                "cfd": cfd(cell_size=1.0, padding=75, upstream=30, downstream=60, span=span, radiation=False)})
     T = st["bodies"]["Plate"]["mean_temperature_C"]
     a = air(25 + (T - 25) / 2)
     Re = U * L * 1e-3 / a["nu"]
@@ -135,9 +139,11 @@ def cavity_box(s, L, dT, Tm, buoyancy):
                          "cfd": cfd(enclosure=frame, sealed=True, buoyancy=buoyancy, radiation=False, quality="normal",
                                     buoyant_first=1500, buoyant_pass=500)})
     Q, Qc = st["bodies"]["Hot"].get("to_air_W", float("nan")), st["bodies"]["Cold"].get("to_air_W", float("nan"))
-    s.note(f"dT {dT:.2f} K: the hot wall gives the air {Q:.4f} W, the cold one takes {-Qc:.4f} W (the rest through the frame's corners, "
-           f"where the stepped cells meet it); {st.get('cells')} air cells, {st.get('air_passes')} passes, parts and air agreeing to "
+    s.note(f"dT {dT:.2f} K: the hot wall gives the air {Q:.4f} W, the cold one takes {-Qc:.4f} W; "
+           f"{st.get('cells')} air cells, {st.get('air_passes')} passes, parts and air agreeing to "
            f"{100 * (st.get('air_disagreement') or [0])[-1]:.1f} %; {json.dumps(st.get('seconds'))}")
+    agree = (st.get("air_disagreement") or [0])[-1]
+    s.check("the parts and the air agree on the heat (share apart)", agree, 0.0, 0.05, rel=False)
     return 0.5 * (Q - Qc), st
 
 

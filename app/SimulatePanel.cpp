@@ -18,6 +18,7 @@
 #include "Icons.hpp"
 #include "PanelFooter.hpp"
 #include "SimPlot.hpp"
+#include "Theme.hpp"
 
 namespace {
 QLabel* header(const QString& text, QWidget* parent) {
@@ -64,6 +65,16 @@ SimulatePanel::SimulatePanel(QWidget* parent) : QWidget(parent) {
   auto* layout = new QVBoxLayout(body);
   layout->setContentsMargins(12, 8, 12, 8);
   layout->setSpacing(6);
+
+  // ---- beta: nothing here has been checked against real parts yet, and the user is told so where they work
+  auto* beta = note(body);
+  beta->setObjectName("simBeta");
+  beta->setText(tr("<b>Beta.</b> The simulations are checked against published benchmarks, not yet against measurements on real parts. "
+                   "Confirm a design that matters with a test."));
+  auto tint = [beta] { beta->setStyleSheet(QString("color: %1;").arg(theme::css(theme::current().warning))); };
+  tint();
+  connect(theme::notifier(), &theme::Notifier::changed, beta, tint);
+  layout->addWidget(beta);
 
   // ---- how to start
   auto* guide = new QPushButton(tr("Step-by-step guides…"), body);
