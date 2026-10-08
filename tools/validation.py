@@ -86,13 +86,15 @@ def flat_plate(s):
     if not engines(s).get("cfd"):
         s.note("OpenFOAM is not installed: skipped")
         return
-    # A 60 mm (along the stream) x 60 mm x 3 mm aluminium plate making 1 W in air at 1 m/s: nearly one temperature (Bi ~ 1e-4).
+    # A 120 mm (along the stream) x 80 mm x 3 mm aluminium plate making 1 W in air at 1 m/s: nearly one temperature (Bi ~ 1e-4).
     # Its leading and trailing edges are bevelled to a 0.2 mm nose over 8 mm (Pohlhausen's plate has no thickness: a blunt
     # 3 mm nose stagnates the stream and alone gave ~15 % of the heat, measured against a plate that has none).
     # The plate is wider (80 mm) than the air's box (cfd.span 60 mm, its walls slipping): it crosses the box wall to wall, so
     # the air is two-dimensional, as Pohlhausen's plate of endless span (60 mm wide alone, the heat going round its sides
     # made a third more).
-    L, W, t, U, P, span = 60.0, 80.0, 3.0, 1.0, 1.0, 60.0
+    # 120 mm along the stream (Re ~7600, laminar): the bevelled ends, which a plate of no thickness has not, then a smaller
+    # share of it (at 60 mm the flat middle matched Pohlhausen's local film within 5-11 %, the ends 30-70 % above).
+    L, W, t, U, P, span = 120.0, 80.0, 3.0, 1.0, 1.0, 60.0
     plate = s.box("Plate", (0, 0, 0), L, W, t, centered=False)
     for x in (0, L):
         for z in (0, t):
