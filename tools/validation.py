@@ -106,7 +106,7 @@ def flat_plate(s):
     s.run("load", kind="heat", on=[plate], value=P, case="Plate")
     s.run("load", kind="convection", on=[plate], h="forced", velocity=U, vector=[1, 0, 0], case="Plate")
     st = s.run("study", kind="thermal", name="Plate", settings={"case": "Plate", "air": "cfd", "ambient": 25,
-                                                                "cfd": cfd(cell_size=1.0, padding=25, upstream=30, downstream=60, span=span)})
+                                                                "cfd": cfd(cell_size=1.0, padding=25, upstream=30, downstream=60, span=span, radiation=False)})
     T = st["bodies"]["Plate"]["mean_temperature_C"]
     a = air(25 + (T - 25) / 2)
     Re = U * L * 1e-3 / a["nu"]
