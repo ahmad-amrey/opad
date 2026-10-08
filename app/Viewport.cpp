@@ -1227,10 +1227,10 @@ void Viewport::refreshSubHighlight() {
         st->sv.push_back(line[n].Transformed(body));
       }
     };
-    // A zoom-refined body: the face or edge from the mesh it is drawn with (depth-tested, the base mesh's chords cut in and
-    // out of the finer surface: stripes, a dashed edge).
+    // The face or edge from the arrays the body is drawn with (zoom-refined or not): depth-tested, any other mesh of it (the
+    // base one under a refined body, one meshed again in place) cut in and out of the face drawn: stripes, a dashed edge.
     const Handle(BodyShape) shape = Handle(BodyShape)::DownCast(o->Selectable());
-    const BodyPrs* refined = !shape.IsNull() && shape->displayPrs() && shape->displayPrs()->indexed() ? shape->displayPrs().get() : nullptr;
+    const BodyPrs* refined = shape.IsNull() ? nullptr : shape->drawnIndex();
     if (refined && (sub.ShapeType() == TopAbs_FACE || sub.ShapeType() == TopAbs_EDGE)) {
       auto appendLine = [&](const std::shared_ptr<const std::vector<gp_Pnt>>& line) {
         if (!line) return;
@@ -2107,6 +2107,9 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
         // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
         prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape), false, j.drawing, j.colors);  // so Display() on the UI thread is cheap
+        // Its faces and edges as drawn: a highlight from these stays on the face drawn even when the shape is meshed again
+        // later in place (not a drawing layer's lines: tens of thousands of edges, no faces).
+        if (!j.drawing) prs->indexSubShapes(j.shape);
         prs->deflection = deflectionForBox(box);
       } catch (...) {
       }

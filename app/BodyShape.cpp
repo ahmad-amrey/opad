@@ -372,9 +372,9 @@ void hoverAlike(const Handle(PrsMgr_PresentationManager)& pm, const Handle(PrsMg
 void SubShapeOwner::HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) {
   if(pm->IsImmediateModeOn()) {
     if(curve && curve->size()>1 && myPrsSh.IsNull()) myPrsSh=new CurvePresentation(myShape,curve);
-    // A zoom-refined body: the hover from the mesh it is drawn with (made again when that mesh changes).
+    // The hover from the arrays the body is drawn with (made again when they change: the zoom refinement's).
     const auto body=Handle(BodyShape)::DownCast(Selectable());
-    const BodyPrs* refined=!body.IsNull() && body->displayPrs() && body->displayPrs()->indexed() ? body->displayPrs().get() : nullptr;
+    const BodyPrs* refined=body.IsNull() ? nullptr : body->drawnIndex();
     if(!curve && !myShape.IsNull() && refined!=m_hoverFrom && (refined || !myPrsSh.IsNull())) {
       if(!myPrsSh.IsNull()) pm->Erase(myPrsSh,mode);
       myPrsSh.Nullify();

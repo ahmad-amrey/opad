@@ -1,5 +1,6 @@
 #include "check.hpp"
 #include "opad/geometry.hpp"
+#include "opad/document.hpp"
 #include "opad/mesh.hpp"
 #include "../core/src/mesh_fallback.hpp"
 #include <BRepAdaptor_Curve.hxx>
@@ -451,3 +452,24 @@ int main(int argc,char**argv) {
   return check::run_all(argc,argv);
 }
 
+
+// A body's mesh for a render or an export (tessellate_body) is made on a copy: the cached shape keeps the triangulation the
+// view drew and highlights its faces from (meshed again in place, a selected face's highlight cut in and out of it).
+TEST(body_meshes_leave_the_cached_shape_as_drawn) {
+  opad::Document doc = opad::Document::create();
+  const std::string key = doc.add_body(opad::brep_from_shape(BRepPrimAPI_MakeCylinder(5, 12).Shape()), opad::json::object());
+  const TopoDS_Shape cached = opad::body_shape(doc, key);
+  opad::mesh_shape(cached, 0.05);  // as the view meshed it
+  std::vector<Handle(Poly_Triangulation)> drawn;
+  for (TopExp_Explorer e(cached, TopAbs_FACE); e.More(); e.Next()) {
+    TopLoc_Location loc;
+    drawn.push_back(BRep_Tool::Triangulation(TopoDS::Face(e.Current()), loc));
+  }
+  const opad::Mesh fine = opad::tessellate_body(doc, key, 0.002);
+  CHECK(fine.triangle_count() > 0);
+  size_t i = 0;
+  for (TopExp_Explorer e(opad::body_shape(doc, key), TopAbs_FACE); e.More(); e.Next(), ++i) {
+    TopLoc_Location loc;
+    CHECK(BRep_Tool::Triangulation(TopoDS::Face(e.Current()), loc) == drawn[i]);
+  }
+}

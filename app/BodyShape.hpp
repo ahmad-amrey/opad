@@ -153,6 +153,12 @@ class BodyShape : public AIS_Shape {
   bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.clear(); SetToUpdate(); return true; }
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
   const std::shared_ptr<const BodyPrs>& prs() const { return m_prs; }
+  // The arrays it is drawn with when they know their faces and edges (the zoom refinement's, else the base mesh's): what a
+  // face's or edge's highlight is drawn from. Null: the shape's own triangulation (drawn through the stock path).
+  const BodyPrs* drawnIndex() const {
+    if (m_display && m_display->indexed()) return m_display.get();
+    return m_prs && m_prs->indexed() && !m_display ? m_prs.get() : nullptr;
+  }
   bool curveOnly() const { return m_prs && m_prs->triangles.IsNull() && !m_prs->boundaries.IsNull(); }  // a wire or drawing layer
   // Hidden line (UI-48): the faces in `face` (the background), unlit, outlined in `edge` where they turn away from the eye
   // (OCCT's silhouette), under the edges. True when that changes the shaded presentation (the caller has it computed again).
