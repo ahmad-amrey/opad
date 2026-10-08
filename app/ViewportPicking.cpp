@@ -285,14 +285,28 @@ void Viewport::clearCenters() {
   m_hoverOwner = nullptr;
 }
 
+Handle(AIS_InteractiveObject) Viewport::navDrawn(const SelectMgr_SelectableObject* picked, const Handle(V3d_View)& view, Bnd_Box* box) const {
+  Handle(AIS_InteractiveObject) shown;
+  if (const auto node = m_navNodes.find(picked); node != m_navNodes.end()) {
+    const auto item = m_items.find(node->second);
+    if (item == m_items.end()) return nullptr;
+    shown = item->second.ais;
+    if (box)
+      if (const auto prs = m_prs.find(item->second.key); prs != m_prs.end() && prs->second) *box = prs->second->box;
+  } else if (const auto extra = m_navExtras.find(picked); extra != m_navExtras.end()) {
+    shown = extra->second.shown;
+    if (box) *box = extra->second.box;
+  }
+  if (shown.IsNull() || !m_ctx->IsDisplayed(shown)) return nullptr;
+  return view.IsNull() || shown->ViewAffinity()->IsVisible(view->View()->Identification()) ? shown : nullptr;
+}
+
 bool Viewport::navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point) {
   if (m_navSelector.IsNull()) return false;
-  m_navSelector->Pick(cursor.x(), cursor.y(), m_view);
+  const Handle(V3d_View) view = navView();
+  m_navSelector->Pick(cursor.x(), cursor.y(), view);
   for (int i = 1; i <= m_navSelector->NbPicked(); ++i) {
-    auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
-    if (node == m_navNodes.end()) continue;
-    auto item = m_items.find(node->second);
-    if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) continue;
+    if (navDrawn(m_navSelector->Picked(i)->Selectable().get(), view).IsNull()) continue;
     point = m_navSelector->PickedPoint(i);
     return true;
   }
@@ -366,14 +380,10 @@ bool Viewport::nearestSurface(int cx, int cy, gp_Pnt& point) {
       if (pick((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)) return true;
       continue;
     }
-    m_navSelector->Pick(r.x0, r.y0, r.x1, r.y1, m_view);
+    const Handle(V3d_View) view = navView();
+    m_navSelector->Pick(r.x0, r.y0, r.x1, r.y1, view);
     bool occupied = false;
-    for (int i = 1; i <= m_navSelector->NbPicked(); ++i) {
-      auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
-      if (node == m_navNodes.end()) continue;
-      auto item = m_items.find(node->second);
-      if (item != m_items.end() && m_ctx->IsDisplayed(item->second.ais)) { occupied = true; break; }
-    }
+    for (int i = 1; i <= m_navSelector->NbPicked() && !occupied; ++i) occupied = !navDrawn(m_navSelector->Picked(i)->Selectable().get(), view).IsNull();
     if (!occupied) continue;
     if (r.x1 - r.x0 >= r.y1 - r.y0) {
       const int mid = (r.x0 + r.x1) / 2;

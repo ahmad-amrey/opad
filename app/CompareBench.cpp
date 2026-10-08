@@ -86,6 +86,16 @@ bool CompareMode::bench(const QString& prefix) {
       if (p.value("id", "") == id) return p;
     return opad::json::object();
   };
+  // Whether a press over the middle of A's ghost of `id` orbits about that ghost (side: a press over A's view).
+  auto pivotsOn = [this, vp](const std::string& id, bool side) {
+    Bnd_Box box = boxInA(id);
+    if (box.IsVoid()) return false;
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    const opad::Vec3 p = vp->benchOrbitPivot({(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2}, side);
+    box.Enlarge(1e-3 * std::sqrt(box.SquareExtent()));
+    return !box.IsOut(gp_Pnt(p[0], p[1], p[2]));
+  };
   auto change = [this](const std::string& kind, const std::string& what, const std::string& name) {
     const opad::json changes = this->changes();
     for (size_t i = 0; i < changes.size(); ++i)
@@ -274,6 +284,7 @@ bool CompareMode::bench(const QString& prefix) {
                       "Box1's lost ends, translucent in the removed colour: " + QString::fromStdString(p.dump()));
           }
           require(box1Parts == 2, "Box1 drawn twice from A: whole and its lost faces");
+          require(pivotsOn(st->body["Box3"], false), "a press over Box3's ghost orbits about it (A's parts are navigated about)");
           vp->grabImage().save(prefix + ".faces.png");
           require(m_chip && m_chip->isVisible(), "the Compare chip over the view");
           pass("A " + m_versions[size_t(m_a)].label + " vs this session: counts " + counts() + ", tints, 3 ghosts, 1 arrow");
@@ -380,6 +391,7 @@ bool CompareMode::bench(const QString& prefix) {
             require(bodies[st->body[name]].value("main", false) && !bodies[st->body[name]].value("side", true), QString("B's %1 only in B's view").arg(name));
           require(bodies[st->body["Cylinder1"]].value("main", false) && bodies[st->body["Cylinder1"]].value("side", false), "Cylinder1 (unchanged) in both");
           require(std::abs(partOf(st->body["Box3"])["transparency"].get<double>()) < 0.02 && !m_panel->slider()->isVisibleTo(m_panel), "A whole (opaque), no emphasis");
+          require(pivotsOn(st->body["Box3"], true) && !pivotsOn(st->body["Box3"], false), "Box3 (only in A) is the orbit pivot over A's view, not over B's");
           m_tool->grab().save(prefix + ".side.panel.png");
           vp->grabSide().save(prefix + ".side-a.png");
           vp->grabImage().save(prefix + ".side-b.png");

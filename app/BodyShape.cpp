@@ -457,6 +457,15 @@ opad::MeshingReport BodyPrs::meshForDisplay(const TopoDS_Shape& shape, double de
   return report;
 }
 
+void BodyPrs::buildNavigation() {
+  if (triangles.IsNull() || !navigation.IsNull()) return;
+  Handle(Select3D_SensitivePrimitiveArray) set = new NavigationTriangles();
+  if (set->InitTriangulation(triangles->Attributes(), triangles->Indices(), TopLoc_Location())) {
+    set->BVH();
+    navigation = set;
+  }
+}
+
 size_t BodyPrs::triangleCount() const {
   if (triangles.IsNull()) return 0;
   return size_t(triangles->EdgeNumber() > 0 ? triangles->EdgeNumber() : triangles->VertexNumber()) / 3;
@@ -498,13 +507,7 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     if (meshedProto.ShapeType() > TopAbs_SHELL) p->closed = false;
     return p;
   }
-  if (!p->triangles.IsNull()) {
-    Handle(Select3D_SensitivePrimitiveArray) triangles = new NavigationTriangles();
-    if (triangles->InitTriangulation(p->triangles->Attributes(), p->triangles->Indices(), TopLoc_Location())) {
-      triangles->BVH();
-      p->navigation = triangles;
-    }
-  }
+  p->buildNavigation();
   TopTools_IndexedMapOfShape edges;
   TopExp::MapShapes(meshedProto, TopAbs_EDGE, edges);
   // A big body (a drawing layer of text and lines: thousands of faces and edges) gets its picking built here as well:

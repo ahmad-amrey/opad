@@ -85,6 +85,7 @@ class Viewport::SideView : public QWidget {
     if (!m_forward && e->button() == Qt::LeftButton && !m_vp->cubeAt(e->position())) return;
     m_forward = true;
     m_vp->mousePressEvent(e);
+    m_vp->m_navSide = true;  // its orbit pivot is found among what A's view draws
   }
   void mouseDoubleClickEvent(QMouseEvent* e) override { mousePressEvent(e); }
   void mouseMoveEvent(QMouseEvent* e) override {
@@ -95,7 +96,10 @@ class Viewport::SideView : public QWidget {
     m_vp->mouseReleaseEvent(e);
     if (e->buttons() == Qt::NoButton) m_forward = false;
   }
-  void wheelEvent(QWheelEvent* e) override { m_vp->wheelEvent(e); }
+  void wheelEvent(QWheelEvent* e) override {
+    m_vp->wheelEvent(e);
+    m_vp->m_navSide = true;  // it zooms towards what A's view draws under the pointer
+  }
   bool eventFilter(QObject* object, QEvent* e) override {
     if (object == parentWidget() && e->type() == QEvent::Resize) m_vp->layoutSide();
     return QWidget::eventFilter(object, e);
@@ -179,6 +183,15 @@ void Viewport::setCompare(const std::vector<ComparePart>& parts, const std::vect
         if (placed.Form() != gp_Identity) ais->SetLocalTransformation(placed);
         styleComparePart(ais, part);
         if (part.visible) m_ctx->Display(ais, AIS_Shaded, -1, Standard_False);  // mode -1: never picked
+        // Never selected, but navigated about: the orbit pivot and the zoom point land on it while it is drawn.
+        if (part.prs && !part.prs->navigation.IsNull()) {
+          Handle(NavigationShape) nav = new NavigationShape(part.prs->navigation);
+          if (placed.Form() != gp_Identity) nav->SetLocalTransformation(placed);
+          m_navSelection->Load(nav, -1);
+          m_navSelection->Activate(nav, 0);
+          m_navExtras[nav.get()] = {ais, part.prs->box};
+          m_compareNav.push_back(nav);
+        }
       } catch (const std::exception&) {
         ais.Nullify();
       }
@@ -221,6 +234,11 @@ void Viewport::restyleCompare(const std::vector<ComparePart>& parts, const std::
 
 void Viewport::clearCompare() {
   if (!m_initialised || (m_compareParts.empty() && m_compareArrows.IsNull())) return;
+  for (const auto& nav : m_compareNav) {
+    m_navExtras.erase(nav.get());
+    m_navSelection->Remove(nav);
+  }
+  m_compareNav.clear();
   for (const auto& [id, ais] : m_compareParts)
     if (!ais.IsNull()) m_ctx->Remove(ais, Standard_False);  // Remove resets the view affinity
   m_compareParts.clear();
@@ -426,6 +444,8 @@ void Viewport::setSideCaption(const QString& caption) {
 
 QWidget* Viewport::sideWidget() const { return m_side; }
 
+Handle(V3d_View) Viewport::navView() const { return m_side && m_navSide && !m_sideView.IsNull() ? m_sideView : m_view; }
+
 // The parent's left half is A's, the right one this view's (the parent's layout keeps us in its contents rectangle), with
 // a two-pixel gap between them.
 void Viewport::layoutSide() {
@@ -540,6 +560,18 @@ QImage Viewport::grabSide() {
     }
   }
   return img;
+}
+
+opad::Vec3 Viewport::benchOrbitPivot(const opad::Vec3& at, bool side) {
+  if (!m_initialised) return at;
+  FlushViewEvents(m_ctx, m_view, Standard_True);  // the z range the picker clips to (a hidden window paints no frame)
+  if (side) drawSide(true);
+  Standard_Integer x = 0, y = 0;
+  m_view->Convert(at[0], at[1], at[2], x, y);
+  const bool was = std::exchange(m_navSide, side);
+  const gp_Pnt p = orbitPoint(Graphic3d_Vec2i(x, y));
+  m_navSide = was;
+  return {p.X(), p.Y(), p.Z()};
 }
 
 opad::json Viewport::benchSideState() {

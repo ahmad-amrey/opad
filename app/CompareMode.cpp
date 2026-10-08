@@ -764,7 +764,9 @@ void CompareMode::buildParts() {
         BRepBndLib::Add(shape, box, Standard_False);
         BodyPrs::meshForDisplay(shape, deflection(box));
         out->shapes[i] = shape;
-        out->prs[i] = BodyPrs::build(shape, box, true, n.colors);
+        auto prs = BodyPrs::build(shape, box, true, n.colors);
+        prs->buildNavigation();  // the orbit pivot lands on it
+        out->prs[i] = std::move(prs);
         if (rigid && plain) meshed[{n.doc.get(), n.key}] = i;
       } catch (const std::exception&) {  // unreadable: listed, not drawn
       }
@@ -923,5 +925,10 @@ bool CompareMode::settled() const {
 }
 opad::json CompareMode::changes() const { return m_run ? m_run->diff["changes"] : opad::json::array(); }
 std::string CompareMode::relation() const { return m_run ? m_run->diff.value("relation", "") : std::string(); }
+
+Bnd_Box CompareMode::boxInA(const std::string& body) const {
+  const auto it = m_run ? m_run->at.find(body) : std::unordered_map<std::string, size_t>::const_iterator();
+  return m_run && it != m_run->at.end() && it->second < m_run->boxA.size() ? m_run->boxA[it->second] : Bnd_Box();
+}
 
 std::string CompareMode::summary() const { return m_run ? m_run->diff.value("summary", "") : std::string(); }
