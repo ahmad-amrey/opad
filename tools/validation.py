@@ -92,6 +92,8 @@ def flat_plate(s):
     # The plate is wider (80 mm) than the air's box (cfd.span 60 mm, its walls slipping): it crosses the box wall to wall, so
     # the air is two-dimensional, as Pohlhausen's plate of endless span (60 mm wide alone, the heat going round its sides
     # made a third more).
+    # 75 mm of air above and below: the plate and its growing boundary layers in a 53 mm duct sped the stream up by 15 % by
+    # the trailing edge (the film grew from 5 % to 16 % above Pohlhausen's along the plate); Pohlhausen's stream is unbounded.
     # 120 mm along the stream (Re ~7600, laminar): the bevelled ends, which a plate of no thickness has not, then a smaller
     # share of it (at 60 mm the flat middle matched Pohlhausen's local film within 5-11 %, the ends 30-70 % above).
     L, W, t, U, P, span = 120.0, 80.0, 3.0, 1.0, 1.0, 60.0
@@ -108,7 +110,7 @@ def flat_plate(s):
     s.run("load", kind="heat", on=[plate], value=P, case="Plate")
     s.run("load", kind="convection", on=[plate], h="forced", velocity=U, vector=[1, 0, 0], case="Plate")
     st = s.run("study", kind="thermal", name="Plate", settings={"case": "Plate", "air": "cfd", "ambient": 25,
-                                                                "cfd": cfd(cell_size=1.0, padding=25, upstream=30, downstream=60, span=span, radiation=False)})
+                                                                "cfd": cfd(cell_size=1.0, padding=75, upstream=30, downstream=60, span=span, radiation=False)})
     T = st["bodies"]["Plate"]["mean_temperature_C"]
     a = air(25 + (T - 25) / 2)
     Re = U * L * 1e-3 / a["nu"]
