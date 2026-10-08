@@ -346,7 +346,7 @@ their animated clips are translated, and Arabic text in drawings is shaped corre
 |---|---|
 | **Windows** (x64) | Built and tested. MSYS2 / MinGW-w64 toolchain. |
 | **Ubuntu 24.04** (also under WSL) | Built and tested. Wayland desktops run through XWayland. |
-| **macOS** | A build preset exists, but it has not been built yet. |
+| **macOS** | Built and tested. |
 
 There are no published binaries yet: OPAD is built from source (see [Installation](#installation)). Besides the normal
 build there is a portable Windows folder (settings and cache kept beside the program) and a single-file Windows
@@ -420,7 +420,7 @@ text: JSON for the history and OCCT ASCII BREP for the bodies.
 
 **What is it not (yet)?**
 There are no 3D annotations (PMI), no paper-space layouts as sheets and no installers yet. DXF and DWG open read-only
-(edit them through Draw on drawing or Drawing to sketch), and macOS has not been built.
+(edit them through Draw on drawing or Drawing to sketch).
 
 **How does it compare with other tools?**
 FreeCAD is the established open-source modeller, with far more workbenches; OPAD is younger and narrower, built around
