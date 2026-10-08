@@ -18,6 +18,7 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QWidget>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <deque>
@@ -387,6 +388,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // The same parts and arrows, in the same order, in other colours, opacities or visibility: aspects in place.
   void restyleCompare(const std::vector<ComparePart>& parts, const std::vector<CompareArrow>& arrows);
   void clearCompare();
+  // Bodies of this document drawn with some faces in colours of their own (Compare: a modified body's added and changed
+  // faces), over the faces the file coloured. The arrays are built on a worker from the base mesh and drawn in place of
+  // the zoom refinement's while the tint lasts. Node id -> colours; empty: none.
+  void setFaceTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints);
+  bool faceTintsPending() const {
+    return std::any_of(m_faceTints.begin(), m_faceTints.end(), [](const auto& t) { return t.second.ais == nullptr; });
+  }
   std::shared_ptr<const BodyPrs> displayArrays(const std::string& key) const;  // the arrays a displayed body key was drawn from; null: none
   void fitBox(const Bnd_Box& box);  // frames a world box as Fit does; void: Fit All
   opad::json benchCompareState() const;  // OPAD_BENCH_COMPARE: each part's id, whether drawn, colour, transparency; the arrows
@@ -400,6 +408,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setSideHidden(const std::vector<std::string>& ids);
   QWidget* sideWidget() const;
   QImage grabSide();
+  // OPAD_BENCH_COMPARE: the orbit pivot a press over the scene point `at` takes, in this view or (side) over A's view.
+  opad::Vec3 benchOrbitPivot(const opad::Vec3& at, bool side);
   opad::json benchSideState();  // a frame as paint runs it, then: both cameras and sizes, the caption, where each part shows
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
@@ -896,6 +906,17 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void discoverCenter();
   void clearCenters();
   bool navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point);
+  // Objects drawn besides the document's bodies (Compare's parts) under navigation stand-ins of their own, so the orbit
+  // pivot and the zoom point land on whatever is on screen: stand-in -> the object and its prototype's box.
+  struct NavExtra {
+    Handle(AIS_InteractiveObject) shown;
+    Bnd_Box box;
+  };
+  std::map<const SelectMgr_SelectableObject*, NavExtra> m_navExtras;
+  // What a navigation pick found when it is drawn in `view` (a body's or part's object; null otherwise), and its box.
+  Handle(AIS_InteractiveObject) navDrawn(const SelectMgr_SelectableObject* picked, const Handle(V3d_View)& view, Bnd_Box* box = nullptr) const;
+  Handle(V3d_View) navView() const;  // the view navigation picks in: A's after a press or wheel over it (side by side)
+  bool m_navSide = false;            // the last press or wheel came from A's view
   // One perspective zoom step at a device pixel (ViewportZoom.cpp): the eye moves along the pixel's ray by a share of the
   // distance to what is drawn there (a body whatever the filter, a sketch's or a drawing's plane; nothing: the model's
   // middle), never less than a floor that keeps that surface in front of the near plane, so it never stalls and goes on
@@ -1167,7 +1188,16 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::pair<QColor, bool>> m_previewLooks;  // previewLooks
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_compareParts;  // ViewportCompare.cpp
   std::vector<char> m_compareViews;                                       // each part's `view`
+  std::vector<Handle(AIS_InteractiveObject)> m_compareNav;                // the parts' navigation stand-ins (m_navExtras)
   Handle(AIS_InteractiveObject) m_compareArrows;
+  struct FaceTint {
+    std::shared_ptr<const opad::FaceColors> colors;
+    const AIS_InteractiveObject* ais = nullptr;  // drawn on this object (null: its arrays are being built)
+    std::string key;
+  };
+  std::map<std::string, FaceTint> m_faceTints;  // setFaceTints
+  unsigned m_faceTintSerial = 0;
+  bool faceTinted(const std::string& id) const { return m_faceTints.count(id) > 0; }
   void styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart& part);
   class SideView;  // side by side (ViewportCompare.cpp)
   SideView* m_side = nullptr;

@@ -304,7 +304,14 @@ opad::json Viewport::benchLookState(const std::string& body) const {
   const gp_XYZ t = ais->LocalTransformation().TranslationPart();
   const Handle(Graphic3d_AspectLine3d)& line = ais->Attributes()->WireAspect()->Aspect();
   const Graphic3d_ZLayerSettings& layer = m_viewer->ZLayerSettings(ais->ZLayer());
-  return {{"displayed", m_ctx->IsDisplayed(ais)}, {"activated", modes.Extent()}, {"transparency", ais->Transparency()}, {"color", {r, g, b}},
+  opad::json faces = nullptr;  // Compare's coloured faces: the faces of each colour, whether drawn yet
+  if (const auto tint = m_faceTints.find(body); tint != m_faceTints.end()) {
+    opad::json counts = opad::json::array();
+    for (size_t c = 0; c < tint->second.colors->colors.size(); ++c) counts.push_back(std::count(tint->second.colors->face.begin(), tint->second.colors->face.end(), int(c)));
+    const auto shape = Handle(BodyShape)::DownCast(ais);
+    faces = {{"faces", counts}, {"drawn", tint->second.ais == ais.get() && !shape.IsNull() && shape->displayPrs() && !shape->displayPrs()->painted.empty()}};
+  }
+  return {{"faceTint", faces}, {"displayed", m_ctx->IsDisplayed(ais)}, {"activated", modes.Extent()}, {"transparency", ais->Transparency()}, {"color", {r, g, b}},
           {"layer", ais->ZLayer()}, {"depth_test", layer.ToEnableDepthTest()}, {"depth_write", layer.ToEnableDepthWrite()},
           {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)},
           {"lineWidth", line->Width()}, {"lineType", int(line->LineType())}, {"linePattern", line->LinePattern()}, {"lineFactor", line->LineStippleFactor()},

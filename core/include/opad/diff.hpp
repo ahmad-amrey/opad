@@ -1,6 +1,9 @@
 #pragma once
 // Versions of a document compared as a person reads them (UI-57). Both sides are usually read in index mode
 // (Document::load_index): only the bodies a caller asks about are ever parsed.
+#include <TopoDS_Shape.hxx>
+
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -51,6 +54,19 @@ struct BodyChange {
 std::vector<BodyChange> body_changes(const Scene& a, const Scene& b);
 const char* body_change_name(BodyChange::Kind kind);  // "added", "removed", "modified", "moved", "unchanged"
 bool same_placement(const Mat4& x, const Mat4& y);     // equal within 1e-9 per entry
+// What became of each face of a body whose geometry changed (Compare), both shapes in their world placement: a
+// face of b is unchanged (the surface, area and centre of one of a's), modified (on the surface of an a face it overlaps,
+// with another extent: the face a join stands on, a cut cut into) or added; a face of a is unchanged, modified or
+// removed. Matched by geometry, so it holds for any history. Indexed by face ordinal (TopExp::MapShapes, as FaceColors).
+// Both empty when the faces cannot be matched (a non-rigid placement, too many faces).
+struct FaceChanges {
+  enum Kind : unsigned char { Unchanged, Added, Removed, Modified };
+  std::vector<Kind> a, b;
+  bool empty() const { return a.empty() && b.empty(); }
+  size_t count_b(Kind k) const { return size_t(std::count(b.begin(), b.end(), k)); }
+  size_t count_a(Kind k) const { return size_t(std::count(a.begin(), a.end(), k)); }
+};
+FaceChanges face_changes(const TopoDS_Shape& a, const Mat4& world_a, const TopoDS_Shape& b, const Mat4& world_b);
 // A semantic diff as text, one change per line under a heading per kind (opad-cli diff --text).
 std::string diff_text(const json& diff);
 // One document as line-oriented text for git's textconv (`diff=opad`): history, parameters, sketches, features, the

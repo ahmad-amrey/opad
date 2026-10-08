@@ -3,6 +3,10 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
+#include <BRep_Builder.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS_Compound.hxx>
 #include <gp_GTrsf.hxx>
 
 #include <QDateTime>
@@ -46,6 +50,7 @@ struct CompareMode::Run {
   std::vector<opad::BodyChange> bodies;
   std::unordered_map<std::string, size_t> at;  // body id -> bodies index
   std::vector<char> sessionDraws;  // per body: the session draws B's body as it is
+  std::vector<std::shared_ptr<const opad::FaceChanges>> faces;  // per body: what became of a modified body's faces (null: not known)
   std::vector<std::string> hidden;  // session bodies B does not show as they are
   std::vector<Bnd_Box> boxA, boxB;  // world boxes of the changed bodies, each side
   std::vector<Bnd_Box> changeBox;   // per change: its changed bodies, both sides
@@ -136,6 +141,25 @@ void dispose(std::shared_ptr<void> value) {
 }
 
 double deflection(const Bnd_Box& box) { return box.IsVoid() ? 0.1 : std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.02, 2.0); }
+
+std::array<double, 3> rgb(const QColor& c) { return {c.redF(), c.greenF(), c.blueF()}; }
+
+// One side of a modified body's faces in their colours: B's added and changed ones, A's removed and changed ones (the
+// added or removed only while that kind is shown). Null when no face is coloured.
+std::shared_ptr<const opad::FaceColors> faceTint(const opad::FaceChanges& f, bool sideA, const Tokens& t, bool newOnes) {
+  using K = opad::FaceChanges::Kind;
+  auto out = std::make_shared<opad::FaceColors>();
+  out->colors = {rgb(sideA ? t.diffRemoved : t.diffAdded), rgb(t.diffModified)};
+  const auto& kinds = sideA ? f.a : f.b;
+  out->face.assign(kinds.size(), -1);
+  for (size_t i = 0; i < kinds.size(); ++i)
+    if (kinds[i] == K::Modified) out->face[i] = 1;
+    else if (newOnes && kinds[i] == (sideA ? K::Removed : K::Added)) out->face[i] = 0;
+  return out->empty() ? nullptr : out;
+}
+
+// The rest of a body whose changed faces are coloured: between the modified colour and the ghost, so they stand out.
+std::array<double, 3> muted(const Tokens& t) { return looks::mix(rgb(t.diffModified), rgb(t.ghost), 0.85); }
 }  // namespace
 
 CompareMode::CompareMode(AreaServices& services, GitWatch* git) : QObject(services.window()), m_services(services), m_git(git) {
@@ -422,6 +446,7 @@ void CompareMode::close() {
     if (std::exchange(m_sideBySide, false)) vp->setSideBySide(false);
     vp->setSideHidden({});
     vp->clearLookLayer(LookSource::Compare);
+    vp->setFaceTints({});
     vp->clearCompare();
   }
   if (TimelineWidget* t = m_services.timeline()) t->setMarkedOps({});
@@ -440,6 +465,7 @@ void CompareMode::failed(const QString& error) {
   m_arrows.clear();
   m_services.viewport()->setSideHidden({});
   m_services.viewport()->clearLookLayer(LookSource::Compare);
+  m_services.viewport()->setFaceTints({});
   m_services.viewport()->clearCompare();
   if (TimelineWidget* t = m_services.timeline()) t->setMarkedOps({});
   if (trace::enabled()) trace::log("compare: " + error);
@@ -540,6 +566,18 @@ void CompareMode::diff(unsigned serial, std::shared_ptr<opad::Document> session,
       if (c.shown_a && !c.key_a.empty()) run->boxA[i] = boxOf(*run->docA, c.key_a, c.world_a);
       if (c.shown_b && !c.key_b.empty()) run->boxB[i] = boxOf(*run->docB, c.key_b, c.world_b);
     }
+    // A modified body's faces, matched by geometry: the view colours the ones the change added, cut into or took away.
+    p.setPhase(CompareMode::tr("Comparing the changed faces"));
+    run->faces.resize(bodies.size());
+    for (size_t i = 0; i < bodies.size(); ++i) {
+      const auto& c = bodies[i];
+      if (c.kind != opad::BodyChange::Kind::Modified || c.key_a.empty() || c.key_b.empty() || p.cancelled()) continue;
+      try {
+        auto f = std::make_shared<opad::FaceChanges>(opad::face_changes(opad::body_shape(*run->docA, c.key_a), c.world_a, opad::body_shape(*run->docB, c.key_b), c.world_b));
+        if (!f->empty()) run->faces[i] = std::move(f);
+      } catch (const std::exception&) {  // not readable: the body is shown changed as a whole
+      }
+    }
     // What each listed change is about, to select and fit it.
     const opad::json& changes = run->diff["changes"];
     run->changeBox.resize(changes.size());
@@ -624,28 +662,48 @@ void CompareMode::buildParts() {
     std::shared_ptr<opad::Document> doc;
     std::string key;
     opad::Mat4 world;
+    std::vector<int> faces;  // only these faces (ordinals); empty: the whole body
+    std::shared_ptr<const opad::FaceColors> colors;
   };
   auto needs = std::make_shared<std::vector<Need>>();
-  auto add = [&](const opad::BodyChange& c, bool sideA) {
+  struct How {
+    Category category;
+    char layout = 0;
+    std::shared_ptr<const opad::FaceColors> colors;
+    std::vector<int> faces;
+  };
+  auto add = [&](const opad::BodyChange& c, bool sideA, How how) {
     Viewport::ComparePart part;
     part.id = c.id;
     part.world = sideA ? c.world_a : c.world_b;
     part.view = c.kind == opad::BodyChange::Kind::Unchanged ? 0 : sideA ? 'A' : 'B';
     const std::string& key = sideA ? c.key_a : c.key_b;
-    if (auto arrays = vp->displayArrays(key)) try {  // the session draws this geometry already: its arrays, nothing to mesh
-        part.shape = opad::body_shape(doc->doc, key);
-        part.prs = std::move(arrays);
-      } catch (const std::exception&) {
-      }
-    if (!part.prs) needs->push_back({m_parts.size(), sideA ? r.docA : r.docB, key, part.world});
+    if (how.faces.empty() && !how.colors)
+      if (auto arrays = vp->displayArrays(key)) try {  // the session draws this geometry already: its arrays, nothing to mesh
+          part.shape = opad::body_shape(doc->doc, key);
+          part.prs = std::move(arrays);
+        } catch (const std::exception&) {
+        }
+    if (!part.prs) needs->push_back({m_parts.size(), sideA ? r.docA : r.docB, key, part.world, std::move(how.faces), how.colors});
     m_parts.push_back(std::move(part));
-    m_partInfo.push_back({categoryOf(c.kind), sideA});
+    m_partInfo.push_back({how.category, sideA, how.layout, how.colors != nullptr});
   };
+  const Tokens& t = theme::current();
   for (size_t i = 0; i < r.bodies.size(); ++i) {
     const auto& c = r.bodies[i];
     using K = opad::BodyChange::Kind;
-    if (c.shown_a && (c.kind == K::Removed || c.kind == K::Moved || c.kind == K::Modified)) add(c, true);
-    if (c.shown_b && !r.sessionDraws[i]) add(c, false);
+    const opad::FaceChanges* faces = c.kind == K::Modified && i < r.faces.size() ? r.faces[i].get() : nullptr;
+    if (faces && c.shown_a) {
+      // Its faces known: A whole only side by side (its removed and changed faces coloured); over B only what it lost.
+      add(c, true, {Category::Modified, 'S', faceTint(*faces, true, t, true), {}});
+      std::vector<int> removed;
+      for (size_t f = 0; f < faces->a.size(); ++f)
+        if (faces->a[f] == opad::FaceChanges::Removed) removed.push_back(int(f));
+      if (!removed.empty()) add(c, true, {Category::Removed, 'O', nullptr, std::move(removed)});
+    } else if (c.shown_a && (c.kind == K::Removed || c.kind == K::Moved || c.kind == K::Modified)) {
+      add(c, true, {categoryOf(c.kind)});
+    }
+    if (c.shown_b && !r.sessionDraws[i]) add(c, false, {categoryOf(c.kind), 0, faces ? faceTint(*faces, false, t, true) : nullptr, {}});
     if (c.kind == K::Moved && !r.boxA[i].IsVoid() && !r.boxB[i].IsVoid()) m_arrows.push_back({centre(r.boxA[i]), centre(r.boxB[i])});
   }
   restyle();
@@ -677,14 +735,24 @@ void CompareMode::buildParts() {
       const Need& n = (*needs)[i];
       p.setPhase(CompareMode::tr("Meshing body %1 of %2").arg(i + 1).arg(needs->size()), int(i * 100 / needs->size()));
       out->worlds[i] = n.world;
-      const bool rigid = opad::mat_is_rigid(n.world);
-      if (const auto it = meshed.find({n.doc.get(), n.key}); rigid && it != meshed.end()) {
+      const bool rigid = opad::mat_is_rigid(n.world), plain = n.faces.empty() && !n.colors;
+      if (const auto it = meshed.find({n.doc.get(), n.key}); rigid && plain && it != meshed.end()) {
         out->shapes[i] = out->shapes[it->second];
         out->prs[i] = out->prs[it->second];
         continue;
       }
       try {
         TopoDS_Shape shape = BRepBuilderAPI_Copy(opad::body_shape(*n.doc, n.key)).Shape();
+        if (!n.faces.empty()) {  // a copy keeps the faces' order: the ordinals are the body's
+          TopTools_IndexedMapOfShape all;
+          TopExp::MapShapes(shape, TopAbs_FACE, all);
+          BRep_Builder builder;
+          TopoDS_Compound some;
+          builder.MakeCompound(some);
+          for (int f : n.faces)
+            if (f >= 0 && f < all.Extent()) builder.Add(some, all(f + 1));
+          shape = some;
+        }
         if (!rigid) {  // a scaled placement: baked into a copy drawn at identity
           gp_GTrsf g;
           for (int row = 0; row < 3; ++row)
@@ -696,8 +764,10 @@ void CompareMode::buildParts() {
         BRepBndLib::Add(shape, box, Standard_False);
         BodyPrs::meshForDisplay(shape, deflection(box));
         out->shapes[i] = shape;
-        out->prs[i] = BodyPrs::build(shape, box, true);
-        if (rigid) meshed[{n.doc.get(), n.key}] = i;
+        auto prs = BodyPrs::build(shape, box, true, n.colors);
+        prs->buildNavigation();  // the orbit pivot lands on it
+        out->prs[i] = std::move(prs);
+        if (rigid && plain) meshed[{n.doc.get(), n.key}] = i;
       } catch (const std::exception&) {  // unreadable: listed, not drawn
       }
     }
@@ -737,10 +807,11 @@ void CompareMode::restyle() {
       part.color = rgb(t.ghost);
       part.opacity = t.ghost.alphaF();
     } else {
-      part.color = rgb(t.*ComparePanel::colour(Category(info.category)));
+      part.color = info.faced ? muted(t) : rgb(t.*ComparePanel::colour(Category(info.category)));
       part.opacity = info.sideA ? opA : opB;
     }
-    part.visible = shown(info.category) && part.opacity > kGone;
+    const bool laidOut = info.layout == 0 || (info.layout == 'S') == m_sideBySide;
+    part.visible = laidOut && shown(info.category) && part.opacity > kGone;
   }
   for (auto& a : m_arrows) a.visible = shown(ComparePanel::Moved);
   // The session's bodies: tinted where B changed them, ghosts where it did not (the roots' entry), left out where B has
@@ -764,14 +835,26 @@ void CompareMode::restyle() {
     }
     return d;
   };
-  for (size_t i = 0; i < r.bodies.size(); ++i)
-    if (r.sessionDraws[i] && r.bodies[i].kind != opad::BodyChange::Kind::Unchanged) deltas[r.bodies[i].id] = tint(categoryOf(r.bodies[i].kind), opB);
+  // A modified body whose faces were matched: the faces the change added or cut into in their colours, the rest muted.
+  std::map<std::string, std::shared_ptr<const opad::FaceColors>> faceTints;
+  for (size_t i = 0; i < r.bodies.size(); ++i) {
+    const auto& c = r.bodies[i];
+    if (!r.sessionDraws[i] || c.kind == opad::BodyChange::Kind::Unchanged) continue;
+    LookDelta d = tint(categoryOf(c.kind), opB);
+    if (d.color && i < r.faces.size() && r.faces[i])
+      if (auto colors = faceTint(*r.faces[i], false, t, shown(ComparePanel::Added))) {
+        d.color = muted(t);
+        faceTints[c.id] = std::move(colors);
+      }
+    deltas[c.id] = d;
+  }
   for (const auto& s : doc->scene.sketches) {
     const auto it = r.sketches.find(s.id);
     deltas[s.id] = it == r.sketches.end() ? ghost : tint(it->second, std::max(opB, 0.5));
   }
   Viewport* vp = m_services.viewport();
   vp->setLookLayer(LookSource::Compare, std::move(deltas));
+  vp->setFaceTints(std::move(faceTints));
   vp->restyleCompare(m_parts, m_arrows);
 }
 
@@ -837,8 +920,15 @@ void CompareMode::documentChanged(bool replaced) {
   m_rerun.start();  // B (or the session under it) changed
 }
 
-bool CompareMode::settled() const { return m_active && m_run && !m_running && !m_meshing && !m_rerun.isActive() && !m_restyle.isActive(); }
+bool CompareMode::settled() const {
+  return m_active && m_run && !m_running && !m_meshing && !m_rerun.isActive() && !m_restyle.isActive() && !m_services.viewport()->faceTintsPending();
+}
 opad::json CompareMode::changes() const { return m_run ? m_run->diff["changes"] : opad::json::array(); }
 std::string CompareMode::relation() const { return m_run ? m_run->diff.value("relation", "") : std::string(); }
+
+Bnd_Box CompareMode::boxInA(const std::string& body) const {
+  const auto it = m_run ? m_run->at.find(body) : std::unordered_map<std::string, size_t>::const_iterator();
+  return m_run && it != m_run->at.end() && it->second < m_run->boxA.size() ? m_run->boxA[it->second] : Bnd_Box();
+}
 
 std::string CompareMode::summary() const { return m_run ? m_run->diff.value("summary", "") : std::string(); }

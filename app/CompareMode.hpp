@@ -70,6 +70,8 @@ class CompareMode : public QObject {
   struct PartInfo {
     int category;  // ComparePanel::Category
     bool sideA;    // a ghost of A (else B's own body)
+    char layout = 0;     // 'O' drawn only over B (overlay), 'S' only side by side, 0 both
+    bool faced = false;  // its changed faces in colours of their own, the rest muted
   };
   void makePanel();
   void release(std::shared_ptr<Run>& run, bool all = true);  // its documents freed on a thread of their own; all: the run too
@@ -87,6 +89,7 @@ class CompareMode : public QObject {
   opad::json changes() const;   // the diff's, as listed
   std::string relation() const;  // how the histories relate ("" before a result)
   std::string summary() const;   // the core's English summary line (benches)
+  Bnd_Box boxInA(const std::string& body) const;  // a changed body's world box in A (benches; void when it has none)
   void otherFile(int side);
   AreaServices& m_services;
   GitWatch* m_git;

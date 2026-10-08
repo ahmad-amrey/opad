@@ -57,16 +57,15 @@ void Viewport::zoomAlongRay(const Handle(V3d_View)& view, const Graphic3d_Vec2i&
   // What is drawn under the pointer: the nearest displayed body (whatever the filter picks), with its own size.
   double depth = -1, size = sceneSize;
   if (!m_navSelector.IsNull()) {
-    m_navSelector->Pick(pixel.x(), pixel.y(), view);
+    const Handle(V3d_View) picking = view == m_view ? navView() : view;  // A's view shares this camera: what is drawn there
+    m_navSelector->Pick(pixel.x(), pixel.y(), picking);
     for (int i = 1; i <= m_navSelector->NbPicked() && depth < 0; ++i) {
-      const auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
-      const auto item = node == m_navNodes.end() ? m_items.end() : m_items.find(node->second);
-      if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) continue;
+      Bnd_Box box;
+      if (navDrawn(m_navSelector->Picked(i)->Selectable().get(), picking, &box).IsNull()) continue;
       const double d = gp_Vec(eye, m_navSelector->PickedPoint(i)).Dot(ray);
       if (d <= 0) continue;
       depth = d;
-      if (const auto prs = m_prs.find(item->second.key); prs != m_prs.end() && prs->second && !prs->second->box.IsVoid())
-        size = std::sqrt(prs->second->box.SquareExtent());
+      if (!box.IsVoid()) size = std::sqrt(box.SquareExtent());
     }
   }
   if (depth < 0) {  // a sketch's plane, or a drawing's inside its bounds

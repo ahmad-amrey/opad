@@ -86,6 +86,16 @@ bool CompareMode::bench(const QString& prefix) {
       if (p.value("id", "") == id) return p;
     return opad::json::object();
   };
+  // Whether a press over the middle of A's ghost of `id` orbits about that ghost (side: a press over A's view).
+  auto pivotsOn = [this, vp](const std::string& id, bool side) {
+    Bnd_Box box = boxInA(id);
+    if (box.IsVoid()) return false;
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    const opad::Vec3 p = vp->benchOrbitPivot({(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2}, side);
+    box.Enlarge(1e-3 * std::sqrt(box.SquareExtent()));
+    return !box.IsOut(gp_Pnt(p[0], p[1], p[2]));
+  };
   auto change = [this](const std::string& kind, const std::string& what, const std::string& name) {
     const opad::json changes = this->changes();
     for (size_t i = 0; i < changes.size(); ++i)
@@ -251,16 +261,31 @@ bool CompareMode::bench(const QString& prefix) {
           const Tokens& t = theme::current();
           const opad::json box1 = vp->benchLookState(st->body["Box1"]), box2 = vp->benchLookState(st->body["Box2"]),
                            sphere = vp->benchLookState(st->body["Sphere1"]), cylinder = vp->benchLookState(st->body["Cylinder1"]);
-          require(sameColour(box1["color"], t.diffModified) && box1["transparency"].get<double>() < 0.05, "Box1 in the modified colour, opaque: " + QString::fromStdString(box1.dump()));
+          // Box1 30 -> 40 mm long about its centre: both ends new, its four sides longer; the body itself muted.
+          const opad::json box1Faces = box1["faceTint"];
+          require(!sameColour(box1["color"], t.diffModified) && box1["transparency"].get<double>() < 0.05 && box1Faces.is_object() && box1Faces["drawn"] == true &&
+                      box1Faces["faces"] == opad::json::array({2, 4}),
+                  "Box1 muted and opaque, its new ends and four longer sides coloured: " + QString::fromStdString(box1.dump()));
           require(sameColour(box2["color"], t.diffMoved) && sameColour(sphere["color"], t.diffAdded), "Box2 moved, Sphere1 added colours");
           require(cylinder["transparency"].get<double>() > 0.5 && cylinder["activated"].get<int>() == 0, "Cylinder1 unchanged: a ghost, not pickable");
           const opad::json parts = vp->benchCompareState();
-          require(parts["parts"].size() == 3 && parts["arrows"].get<int>() == 1, "three ghosts of A and an arrow: " + QString::fromStdString(parts.dump()));
-          const opad::json removed = partOf(st->body["Box3"]), moved = partOf(st->body["Box2"]), modified = partOf(st->body["Box1"]);
+          require(parts["parts"].size() == 4 && parts["arrows"].get<int>() == 1, "four ghosts of A and an arrow: " + QString::fromStdString(parts.dump()));
+          const opad::json removed = partOf(st->body["Box3"]), moved = partOf(st->body["Box2"]);
           require(removed.value("displayed", false) && sameColour(removed["color"], t.diffRemoved), "Box3's ghost in the removed colour");
           require(moved.value("displayed", false) && sameColour(moved["color"], t.diffMoved), "Box2's old place in the moved colour");
-          require(modified.value("displayed", false) && sameColour(modified["color"], t.diffModified) && std::abs(modified["transparency"].get<double>() - 0.55) < 0.02,
-                  "Box1's old geometry, translucent");
+          // Box1's old geometry over B: only the end faces it lost (A whole is for side by side).
+          int box1Parts = 0;
+          for (const auto& p : parts["parts"]) {
+            if (p.value("id", "") != st->body["Box1"]) continue;
+            ++box1Parts;
+            if (p["painted"].get<int>() > 0) require(!p.value("displayed", true), "Box1 whole, its faces coloured: only side by side");
+            else
+              require(p.value("displayed", false) && sameColour(p["color"], t.diffRemoved) && std::abs(p["transparency"].get<double>() - 0.55) < 0.02,
+                      "Box1's lost ends, translucent in the removed colour: " + QString::fromStdString(p.dump()));
+          }
+          require(box1Parts == 2, "Box1 drawn twice from A: whole and its lost faces");
+          require(pivotsOn(st->body["Box3"], false), "a press over Box3's ghost orbits about it (A's parts are navigated about)");
+          vp->grabImage().save(prefix + ".faces.png");
           require(m_chip && m_chip->isVisible(), "the Compare chip over the view");
           pass("A " + m_versions[size_t(m_a)].label + " vs this session: counts " + counts() + ", tints, 3 ghosts, 1 arrow");
           // The rows: Box1's edited feature with what changed.
@@ -358,11 +383,15 @@ bool CompareMode::bench(const QString& prefix) {
             return std::pair<bool, bool>{true, true};
           };
           for (const char* name : {"Box1", "Box2", "Box3"}) require(partIn(st->body[name]) == std::pair<bool, bool>{false, true}, QString("A's %1 only in A's view").arg(name));
+          for (const auto& p : vp->benchCompareState()["parts"])  // Box1 whole with its lost and changed faces coloured, not its lost face alone
+            if (p.value("id", "") == st->body["Box1"])
+              require(p.value("displayed", false) == (p["painted"].get<int>() == 2), "A's Box1 whole in A's view: " + QString::fromStdString(p.dump()));
           const opad::json& bodies = s["bodies"];
           for (const char* name : {"Box1", "Box2", "Sphere1"})
             require(bodies[st->body[name]].value("main", false) && !bodies[st->body[name]].value("side", true), QString("B's %1 only in B's view").arg(name));
           require(bodies[st->body["Cylinder1"]].value("main", false) && bodies[st->body["Cylinder1"]].value("side", false), "Cylinder1 (unchanged) in both");
           require(std::abs(partOf(st->body["Box3"])["transparency"].get<double>()) < 0.02 && !m_panel->slider()->isVisibleTo(m_panel), "A whole (opaque), no emphasis");
+          require(pivotsOn(st->body["Box3"], true) && !pivotsOn(st->body["Box3"], false), "Box3 (only in A) is the orbit pivot over A's view, not over B's");
           m_tool->grab().save(prefix + ".side.panel.png");
           vp->grabSide().save(prefix + ".side-a.png");
           vp->grabImage().save(prefix + ".side-b.png");
@@ -401,7 +430,8 @@ bool CompareMode::bench(const QString& prefix) {
           if (!idle()) return false;
           const opad::json s = vp->benchSideState();
           require(!m_sideBySide && !vp->sideBySide() && s["rect"][2] == s["host"][0] && s["rect"][0] == 0, "Overlay: one view, the whole width");
-          for (const auto& p : vp->benchCompareState()["parts"]) require(p.value("displayed", false), "A's ghosts in the one view again");
+          for (const auto& p : vp->benchCompareState()["parts"])  // but A's modified Box1 whole, drawn only side by side
+            require(p.value("displayed", false) != (p["painted"].get<int>() > 0), "A's ghosts in the one view again: " + QString::fromStdString(p.dump()));
           require(m_panel->slider()->isVisibleTo(m_panel) && m_chip->text() == tr("Compare: %1 → %2").arg(m_versions[size_t(m_a)].label, m_versions[size_t(m_b)].label),
                   "the emphasis and the chip back");
           pass("back to overlay");

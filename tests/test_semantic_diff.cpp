@@ -1,6 +1,10 @@
 // Versions compared as a person reads them (UI-57): index-mode reading, the semantic diff of bodies, design, notes and
 // histories, its text and summary line, and the textconv outline. Fake BREP text except where geometry is measured.
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
 
 #include <algorithm>
 #include <set>
@@ -184,6 +188,42 @@ TEST(bodies_as_a_viewer_overlays_them) {  // Compare (UI-58): world placement, b
   CHECK(it != again.end() && it->kind == BodyChange::Kind::Unchanged && it->shown_a && !it->shown_b);
   // The diff of scenes resolved once is the diff of the documents.
   CHECK_EQ(semantic_diff(t.doc, sa, b, sb)["changes"], semantic_diff(t.doc, b)["changes"]);
+}
+
+TEST(faces_of_a_changed_body) {  // Compare: a join's and a cut's faces, matched by geometry
+  using K = FaceChanges::Kind;
+  const TopoDS_Shape base = BRepPrimAPI_MakeBox(10, 10, 10).Shape();
+  const TopoDS_Shape boss = BRepPrimAPI_MakeBox(gp_Pnt(3, 3, 10), 4, 4, 5).Shape();
+  const TopoDS_Shape joined = BRepAlgoAPI_Fuse(base, boss).Shape();
+  const Mat4 identity;
+  // An extrude joined on the top face: its walls and cap added, the top face changed (it lost the footprint).
+  FaceChanges f = face_changes(base, identity, joined, identity);
+  CHECK_EQ(f.b.size(), 11u);
+  CHECK_EQ(f.count_b(K::Added), 5u);
+  CHECK_EQ(f.count_b(K::Modified), 1u);
+  CHECK_EQ(f.count_b(K::Unchanged), 5u);
+  CHECK_EQ(f.count_a(K::Modified), 1u);
+  CHECK_EQ(f.count_a(K::Unchanged), 5u);
+  CHECK_EQ(f.count_a(K::Removed), 0u);
+  // Back again: the boss's faces removed.
+  f = face_changes(joined, identity, base, identity);
+  CHECK_EQ(f.count_a(K::Removed), 5u);
+  CHECK_EQ(f.count_b(K::Modified), 1u);
+  CHECK_EQ(f.count_b(K::Added), 0u);
+  // A hole through it: the wall added, top and bottom changed, the sides as they were.
+  const TopoDS_Shape drilled = BRepAlgoAPI_Cut(base, BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(5, 5, -1), gp_Dir(0, 0, 1)), 2, 12).Shape()).Shape();
+  f = face_changes(base, identity, drilled, identity);
+  CHECK_EQ(f.count_b(K::Added), 1u);
+  CHECK_EQ(f.count_b(K::Modified), 2u);
+  CHECK_EQ(f.count_b(K::Unchanged), 4u);
+  // The same body placed elsewhere on both sides: nothing changed; placed elsewhere on one side only: every face is new.
+  Mat4 moved;
+  moved.at(0, 3) = 25;
+  f = face_changes(base, moved, BRepBuilderAPI_Transform(base, opad::trsf_from_mat(moved)).Shape(), identity);
+  CHECK_EQ(f.count_b(K::Unchanged), 6u);
+  f = face_changes(base, identity, base, moved);
+  CHECK_EQ(f.count_b(K::Added), 6u);
+  CHECK_EQ(f.count_a(K::Removed), 6u);
 }
 
 TEST(relations_between_histories) {

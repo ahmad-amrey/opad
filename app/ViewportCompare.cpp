@@ -85,6 +85,7 @@ class Viewport::SideView : public QWidget {
     if (!m_forward && e->button() == Qt::LeftButton && !m_vp->cubeAt(e->position())) return;
     m_forward = true;
     m_vp->mousePressEvent(e);
+    m_vp->m_navSide = true;  // its orbit pivot is found among what A's view draws
   }
   void mouseDoubleClickEvent(QMouseEvent* e) override { mousePressEvent(e); }
   void mouseMoveEvent(QMouseEvent* e) override {
@@ -95,7 +96,10 @@ class Viewport::SideView : public QWidget {
     m_vp->mouseReleaseEvent(e);
     if (e->buttons() == Qt::NoButton) m_forward = false;
   }
-  void wheelEvent(QWheelEvent* e) override { m_vp->wheelEvent(e); }
+  void wheelEvent(QWheelEvent* e) override {
+    m_vp->wheelEvent(e);
+    m_vp->m_navSide = true;  // it zooms towards what A's view draws under the pointer
+  }
   bool eventFilter(QObject* object, QEvent* e) override {
     if (object == parentWidget() && e->type() == QEvent::Resize) m_vp->layoutSide();
     return QWidget::eventFilter(object, e);
@@ -161,6 +165,7 @@ void Viewport::styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart&
                                1 - std::clamp(part.opacity, 0.0, 1.0));
   ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
   ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(rgb(edge), Aspect_TOL_SOLID, 1.0));
+  if (const Handle(BodyShape) body = Handle(BodyShape)::DownCast(ais)) body->syncPainted(false);  // changed faces fade with it
 }
 
 void Viewport::setCompare(const std::vector<ComparePart>& parts, const std::vector<CompareArrow>& arrows, const QColor& arrowColor) {
@@ -178,6 +183,15 @@ void Viewport::setCompare(const std::vector<ComparePart>& parts, const std::vect
         if (placed.Form() != gp_Identity) ais->SetLocalTransformation(placed);
         styleComparePart(ais, part);
         if (part.visible) m_ctx->Display(ais, AIS_Shaded, -1, Standard_False);  // mode -1: never picked
+        // Never selected, but navigated about: the orbit pivot and the zoom point land on it while it is drawn.
+        if (part.prs && !part.prs->navigation.IsNull()) {
+          Handle(NavigationShape) nav = new NavigationShape(part.prs->navigation);
+          if (placed.Form() != gp_Identity) nav->SetLocalTransformation(placed);
+          m_navSelection->Load(nav, -1);
+          m_navSelection->Activate(nav, 0);
+          m_navExtras[nav.get()] = {ais, part.prs->box};
+          m_compareNav.push_back(nav);
+        }
       } catch (const std::exception&) {
         ais.Nullify();
       }
@@ -220,6 +234,11 @@ void Viewport::restyleCompare(const std::vector<ComparePart>& parts, const std::
 
 void Viewport::clearCompare() {
   if (!m_initialised || (m_compareParts.empty() && m_compareArrows.IsNull())) return;
+  for (const auto& nav : m_compareNav) {
+    m_navExtras.erase(nav.get());
+    m_navSelection->Remove(nav);
+  }
+  m_compareNav.clear();
   for (const auto& [id, ais] : m_compareParts)
     if (!ais.IsNull()) m_ctx->Remove(ais, Standard_False);  // Remove resets the view affinity
   m_compareParts.clear();
@@ -227,6 +246,117 @@ void Viewport::clearCompare() {
   if (!m_compareArrows.IsNull()) m_ctx->Remove(m_compareArrows, Standard_False);
   m_compareArrows.Nullify();
   redrawScene();
+}
+
+namespace {
+bool sameColors(const opad::FaceColors& x, const opad::FaceColors& y) { return x.colors == y.colors && x.face == y.face; }
+
+// The file's face colours with `tint` over them: a tinted face takes its tint, the others keep theirs.
+std::shared_ptr<const opad::FaceColors> paintedOver(const std::shared_ptr<const opad::FaceColors>& file, const opad::FaceColors& tint) {
+  if (!file || file->empty()) return std::make_shared<const opad::FaceColors>(tint);
+  auto out = std::make_shared<opad::FaceColors>(*file);
+  const int shift = int(out->colors.size());
+  out->colors.insert(out->colors.end(), tint.colors.begin(), tint.colors.end());
+  if (out->face.size() < tint.face.size()) out->face.resize(tint.face.size(), -1);
+  for (size_t i = 0; i < tint.face.size(); ++i)
+    if (tint.face[i] >= 0) out->face[i] = tint.face[i] + shift;
+  return out;
+}
+}  // namespace
+
+void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints) {
+  if (!m_initialised) return;
+  bool redraw = false, glowsStale = false;
+  // An object's drawn arrays changed: its glow was made from the old ones.
+  auto recompute = [&](const Handle(BodyShape)& body) {
+    m_ctx->RecomputePrsOnly(body, Standard_False);
+    redraw = true;
+    if (const auto glow = m_bodyGlows.find(body.get()); glow != m_bodyGlows.end()) {
+      m_ctx->Remove(glow->second, Standard_False);
+      m_bodyGlows.erase(glow);
+      glowsStale = true;
+    }
+  };
+  // Tints no longer wanted (or wanted otherwise, or on a body drawn again since): the body's own arrays again.
+  for (auto it = m_faceTints.begin(); it != m_faceTints.end();) {
+    const auto want = tints.find(it->first);
+    const auto item = m_items.find(it->first);
+    const bool drawnSince = item == m_items.end() || item->second.key != it->second.key || (it->second.ais && item->second.ais.get() != it->second.ais);
+    if (want != tints.end() && want->second && !drawnSince && sameColors(*want->second, *it->second.colors)) {
+      ++it;
+      continue;
+    }
+    if (item != m_items.end() && it->second.ais && item->second.ais.get() == it->second.ais)
+      if (const auto body = Handle(BodyShape)::DownCast(item->second.ais); !body.IsNull()) {
+        const auto refined = m_refined.find(item->second.key);
+        if (body->setDisplayPrs(refined != m_refined.end() ? refined->second.prs : nullptr)) recompute(body);
+      }
+    it = m_faceTints.erase(it);
+  }
+  // New ones: the body's base mesh coloured on a worker (bodies drawn rigidly from worker arrays only).
+  struct Build {
+    std::string id, key;
+    TopoDS_Shape shape;
+    Bnd_Box box;
+    double deflection = 0;
+    std::shared_ptr<const opad::FaceColors> colors;
+    std::shared_ptr<BodyPrs> out;
+  };
+  auto builds = std::make_shared<std::vector<Build>>();
+  for (const auto& [id, colors] : tints) {
+    if (!colors || colors->empty() || m_faceTints.count(id)) continue;
+    const auto item = m_items.find(id);
+    if (item == m_items.end() || !item->second.rigid || item->second.stretch != 1) continue;
+    const auto body = Handle(BodyShape)::DownCast(item->second.ais);
+    if (body.IsNull() || body->curveOnly() || !body->prs() || body->prs()->triangles.IsNull()) continue;
+    m_faceTints[id] = {colors, nullptr, item->second.key};
+  }
+  for (const auto& [id, tint] : m_faceTints) {
+    if (tint.ais) continue;  // drawn already
+    const Item& item = m_items.at(id);
+    const auto& base = Handle(BodyShape)::DownCast(item.ais)->prs();
+    try {
+      builds->push_back({id, item.key, opad::body_shape(m_doc->doc, item.key), base->box, base->deflection, paintedOver(base->faceColors, *tint.colors), nullptr});
+    } catch (const std::exception&) {
+    }
+  }
+  if (glowsStale) applySelectionLayers();
+  if (redraw) {
+    if (m_style == Style::HiddenEdges) scheduleEdgeOverlay();
+    redrawScene();
+  }
+  if (builds->empty() || !m_jobs) return;
+  const unsigned serial = ++m_faceTintSerial;  // the bodies still waiting are in this job too
+  m_jobs->async(tr("Colouring the changed faces"), [builds](Progress p) {
+    for (auto& b : *builds) {
+      if (p.cancelled()) return;
+      b.out = BodyPrs::build(b.shape, b.box, true, b.colors);  // the base mesh's own triangles: drawn as the body is picked
+      b.out->deflection = b.deflection;
+    }
+  }, [this, builds, serial](bool ok, const QString&) {
+    if (!ok || serial != m_faceTintSerial) return;
+    bool redraw = false, glowsStale = false;
+    for (const auto& b : *builds) {
+      const auto tint = m_faceTints.find(b.id);
+      const auto item = m_items.find(b.id);
+      if (!b.out || tint == m_faceTints.end() || tint->second.ais || item == m_items.end() || item->second.key != b.key) continue;
+      const auto body = Handle(BodyShape)::DownCast(item->second.ais);
+      if (body.IsNull()) continue;
+      tint->second.ais = body.get();
+      if (!body->setDisplayPrs(b.out)) continue;
+      m_ctx->RecomputePrsOnly(body, Standard_False);
+      redraw = true;
+      if (const auto glow = m_bodyGlows.find(body.get()); glow != m_bodyGlows.end()) {
+        m_ctx->Remove(glow->second, Standard_False);
+        m_bodyGlows.erase(glow);
+        glowsStale = true;
+      }
+    }
+    if (glowsStale) applySelectionLayers();
+    if (!redraw) return;
+    if (m_style == Style::HiddenEdges) scheduleEdgeOverlay();
+    redrawScene();
+  }, JobKind::Background);
 }
 
 std::shared_ptr<const BodyPrs> Viewport::displayArrays(const std::string& key) const {
@@ -255,7 +385,9 @@ opad::json Viewport::benchCompareState() const {
     ais->Color(c);
     double r = 0, g = 0, b = 0;
     c.Values(r, g, b, Quantity_TOC_sRGB);
-    parts.push_back({{"id", id}, {"displayed", m_initialised && m_ctx->IsDisplayed(ais)}, {"color", {r, g, b}}, {"transparency", ais->Transparency()}});
+    const auto body = Handle(BodyShape)::DownCast(ais);
+    const size_t painted = !body.IsNull() && body->prs() ? body->prs()->painted.size() : 0;  // colours of its own changed faces
+    parts.push_back({{"id", id}, {"displayed", m_initialised && m_ctx->IsDisplayed(ais)}, {"color", {r, g, b}}, {"transparency", ais->Transparency()}, {"painted", painted}});
   }
   const auto arrows = Handle(CompareArrows)::DownCast(m_compareArrows);
   return {{"parts", parts}, {"arrows", arrows.IsNull() ? 0 : arrows->shown()}};
@@ -311,6 +443,8 @@ void Viewport::setSideCaption(const QString& caption) {
 }
 
 QWidget* Viewport::sideWidget() const { return m_side; }
+
+Handle(V3d_View) Viewport::navView() const { return m_side && m_navSide && !m_sideView.IsNull() ? m_sideView : m_view; }
 
 // The parent's left half is A's, the right one this view's (the parent's layout keeps us in its contents rectangle), with
 // a two-pixel gap between them.
@@ -426,6 +560,18 @@ QImage Viewport::grabSide() {
     }
   }
   return img;
+}
+
+opad::Vec3 Viewport::benchOrbitPivot(const opad::Vec3& at, bool side) {
+  if (!m_initialised) return at;
+  FlushViewEvents(m_ctx, m_view, Standard_True);  // the z range the picker clips to (a hidden window paints no frame)
+  if (side) drawSide(true);
+  Standard_Integer x = 0, y = 0;
+  m_view->Convert(at[0], at[1], at[2], x, y);
+  const bool was = std::exchange(m_navSide, side);
+  const gp_Pnt p = orbitPoint(Graphic3d_Vec2i(x, y));
+  m_navSide = was;
+  return {p.X(), p.Y(), p.Z()};
 }
 
 opad::json Viewport::benchSideState() {

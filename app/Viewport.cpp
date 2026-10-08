@@ -3000,6 +3000,7 @@ QRect Viewport::cubeRect() const {
 }
 
 void Viewport::mousePressEvent(QMouseEvent* e) {
+  m_navSide = false;  // A's view sets it again after handing its press over
   if (m_blocked) return;
   m_viewButtons |= e->button();
   finishTrackpadScroll();
@@ -3386,6 +3387,7 @@ void Viewport::setScrollInput(int mode) {
 }
 
 void Viewport::wheelEvent(QWheelEvent* e) {
+  m_navSide = false;  // A's view sets it again after handing its wheel over
   if (!m_initialised || m_blocked) return;
   // Still to ask: another OPAD window may have been answered since this one started, so the settings are read again
   // (once: the first zooming scroll asks or finds it chosen).

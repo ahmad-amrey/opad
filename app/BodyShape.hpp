@@ -96,6 +96,7 @@ struct BodyPrs {
   // BRepMesh at `deflection`, then cylinders and extrusions of any curve as upright strips (test_body_prs pins it).
   static opad::MeshingReport meshForDisplay(const TopoDS_Shape& shape, double deflection);
   size_t triangleCount() const;
+  void buildNavigation();  // worker: `navigation` from the triangles (build() makes it unless drawingOnly)
 };
 
 // Owner of one face, edge or vertex of a BodyShape. It knows its ordinal within the body and leaves the
