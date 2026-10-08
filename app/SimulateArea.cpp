@@ -394,8 +394,9 @@ void Simulate::buildActions() {
 }
 
 void Simulate::ribbon(RibbonLayout& layout) {
-  layout.addWorkspace("simulate", {tr("Simulate"), "simulate", "Ctrl+5",
-                                   tr("Joints and mechanisms, motion and dynamics with Project Chrono, stress and vibration with Netgen and CalculiX."),
+  layout.addWorkspace("simulate", {tr("Simulate (beta)"), "simulate", "Ctrl+5",
+                                   tr("Joints and mechanisms, motion and dynamics with Project Chrono, stress and vibration with Netgen and CalculiX.") + " " +
+                                       tr("Beta: checked against published benchmarks, not yet against measurements on real parts."),
                                    tr("ops: joint · pose · load · study")});
   using Size = RibbonLayout::Size;
   const auto add = [&](const QString& group, const char* id, Size size = Size::Large) {
@@ -446,7 +447,7 @@ void Simulate::ribbon(RibbonLayout& layout) {
 
 void Simulate::ready() {
   m_form = new SimulatePanel;
-  m_panel = new ToolPanel("simulate", "simulate", &Tokens::sel, tr("Simulation"), m_form, 760, services().window());
+  m_panel = new ToolPanel("simulate", "simulate", &Tokens::sel, tr("Simulation (beta)"), m_form, 760, services().window());
   m_panel->setDefaultWidth(400);
   m_panel->setObjectName("simulateToolPanel");
   m_panel->setHelpId("simulate.panel");

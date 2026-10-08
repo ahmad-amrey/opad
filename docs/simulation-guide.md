@@ -1,5 +1,9 @@
 # Simulation guide
 
+> **Beta.** The Simulate workspace is in beta: its solvers are checked against published benchmarks
+> (`tools/validation.py`: NAFEMS T4, Pohlhausen's flat plate, a closed cavity, radiation against CalculiX), not yet
+> against measurements on real parts. Confirm a design that matters with a physical test.
+
 How to use OPAD's simulation tools, step by step, with a use case for each: mechanisms, structures, 3D-printed parts and
 heat. The same use cases are inside the app:
 **Simulate ▸ Simulation guide** (on both Simulate ribbon tabs, in the Help menu and as **Step-by-step guides…** at the
