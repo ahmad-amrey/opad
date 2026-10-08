@@ -18,7 +18,10 @@
 #include <Geom2d_Curve.hxx>
 #include <Geom_Plane.hxx>
 #include <Geom_Surface.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangulation.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -53,6 +56,23 @@ struct Points {
 };
 
 // One wire in (u, v), in order, each edge sampled within the deflection; the last point of an edge is the next one's first.
+// Where an edge is sampled along the face's boundary, in its own parameter's order (both ends included): by the curve's
+// deflection, or a pole's line in (u, v) in eight steps. Empty without a pcurve on the face.
+std::vector<double> edge_parameters(const TopoDS_Edge& edge, const TopoDS_Face& face, double tolerance, double angle) {
+  double first = 0, last = 0;
+  if (BRep_Tool::CurveOnSurface(edge, face, first, last).IsNull()) return {};
+  std::vector<double> at;
+  const bool curve = !BRep_Tool::Degenerated(edge) && !BRep_Tool::Curve(edge, first, last).IsNull();
+  BRep_Tool::Range(edge, face, first, last);
+  if (curve) {
+    GCPnts_TangentialDeflection sample(BRepAdaptor_Curve(edge), first, last, angle, tolerance, 2);
+    for (int i = 1; i <= sample.NbPoints(); ++i) at.push_back(sample.Parameter(i));
+  } else {  // a pole: a line in (u, v), one point in space
+    for (int i = 0; i <= 8; ++i) at.push_back(first + (last - first) * i / 8);
+  }
+  return at;
+}
+
 std::vector<UV> wire_samples(const TopoDS_Wire& wire, const TopoDS_Face& face, double tolerance, double angle) {
   std::vector<UV> ring;
   for (BRepTools_WireExplorer e(wire, face); e.More(); e.Next()) {
@@ -60,15 +80,7 @@ std::vector<UV> wire_samples(const TopoDS_Wire& wire, const TopoDS_Face& face, d
     double first = 0, last = 0;
     const Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(edge, face, first, last);
     if (pcurve.IsNull()) return {};
-    std::vector<double> at;
-    const bool curve = !BRep_Tool::Degenerated(edge) && !BRep_Tool::Curve(edge, first, last).IsNull();
-    BRep_Tool::Range(edge, face, first, last);
-    if (curve) {
-      GCPnts_TangentialDeflection sample(BRepAdaptor_Curve(edge), first, last, angle, tolerance, 2);
-      for (int i = 1; i <= sample.NbPoints(); ++i) at.push_back(sample.Parameter(i));
-    } else {  // a pole: a line in (u, v), one point in space
-      for (int i = 0; i <= 8; ++i) at.push_back(first + (last - first) * i / 8);
-    }
+    std::vector<double> at = edge_parameters(edge, face, tolerance, angle);
     if (edge.Orientation() == TopAbs_REVERSED) std::reverse(at.begin(), at.end());
     for (size_t i = 0; i + 1 < at.size(); ++i) {
       const gp_Pnt2d p = pcurve->Value(at[i]);
@@ -238,6 +250,7 @@ bool triangulate_from_boundary(TopoDS_Face face, double tolerance, double angle)
       rings.push_back(std::move(ring));
     }
     if (rings.empty() || pts.uv.size() > 8000) return false;  // the pinch search is quadratic: ordinary faces only
+    const size_t outline = pts.uv.size();  // the boundary's points come first: the edges' nodes below
     double pinch = 0.1 * tolerance;
     for (TopExp_Explorer e(forward, TopAbs_EDGE); e.More(); e.Next()) pinch = std::max(pinch, 2 * BRep_Tool::Tolerance(TopoDS::Edge(e.Current())));
     const double pinch_uv = 1e-3 * std::max(u1 - u0, v1 - v0);
@@ -324,10 +337,59 @@ bool triangulate_from_boundary(TopoDS_Face face, double tolerance, double angle)
     for (size_t i = 0; i < tris.size(); ++i) mesh->SetTriangle(int(i) + 1, Poly_Triangle(tris[i][0] + 1, tris[i][1] + 1, tris[i][2] + 1));
     mesh->Deflection(tolerance);
     BRep_Builder builder;
+    TopLoc_Location old_location;
+    const Handle(Poly_Triangulation) old = BRep_Tool::Triangulation(face, old_location);
     const bool modified = face.Modified(), checked = face.Checked();
     builder.UpdateFace(face, mesh);
     face.Modified(modified);
     face.Checked(checked);
+    // Each edge's nodes on this mesh, as BRepMesh gives them: the face's outline is drawn from them (an edge's line comes
+    // from its nodes on its first face's mesh; without them the edge was not drawn, though it could still be picked).
+    TopLoc_Location location;
+    BRep_Tool::Triangulation(face, location);
+    const double close_uv = 1e-6 * std::max({u1 - u0, v1 - v0, 1e-9});
+    auto node_at = [&](const gp_Pnt2d& p) {  // the outline's point there (1-based), 0 when none
+      int best = 0;
+      double d = close_uv;
+      for (size_t i = 0; i < outline; ++i)
+        if (const double e = std::max(std::abs(pts.uv[i].u - p.X()), std::abs(pts.uv[i].v - p.Y())); e <= d) d = e, best = int(i) + 1;
+      return best;
+    };
+    auto polygon = [&](const TopoDS_Edge& edge) -> Handle(Poly_PolygonOnTriangulation) {
+      double first = 0, last = 0;
+      const Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(edge, forward, first, last);
+      const std::vector<double> at = edge_parameters(edge, forward, tolerance, angle);
+      if (pcurve.IsNull() || at.size() < 2) return {};
+      TColStd_Array1OfInteger nodes(1, int(at.size()));
+      TColStd_Array1OfReal parameters(1, int(at.size()));
+      for (size_t k = 0; k < at.size(); ++k) {
+        const int node = node_at(pcurve->Value(at[k]));
+        if (node == 0) return {};
+        nodes(int(k) + 1) = node;
+        parameters(int(k) + 1) = at[k];
+      }
+      Handle(Poly_PolygonOnTriangulation) out = new Poly_PolygonOnTriangulation(nodes, parameters);
+      out->Deflection(tolerance);
+      return out;
+    };
+    for (TopExp_Explorer e(forward, TopAbs_EDGE); e.More(); e.Next()) {
+      const TopoDS_Edge edge = TopoDS::Edge(e.Current().Oriented(TopAbs_FORWARD));
+      if (BRep_Tool::Degenerated(edge) || !BRep_Tool::PolygonOnTriangulation(edge, mesh, location).IsNull()) continue;  // a seam: once
+      const Handle(Poly_PolygonOnTriangulation) one = polygon(edge);
+      if (one.IsNull()) continue;
+      const bool edge_modified = edge.Modified(), edge_checked = edge.Checked();
+      TopoDS_Edge shared = edge;
+      if (!old.IsNull()) builder.UpdateEdge(shared, Handle(Poly_PolygonOnTriangulation)(), old, old_location);
+      if (BRep_Tool::IsClosed(edge, forward)) {  // a seam: its two sides, each its own pcurve
+        const Handle(Poly_PolygonOnTriangulation) other = polygon(TopoDS::Edge(edge.Reversed()));
+        if (other.IsNull()) continue;
+        builder.UpdateEdge(shared, one, other, mesh, location);
+      } else {
+        builder.UpdateEdge(shared, one, mesh, location);
+      }
+      shared.Modified(edge_modified);
+      shared.Checked(edge_checked);
+    }
     return true;
   } catch (const Standard_Failure&) {
     return false;

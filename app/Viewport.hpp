@@ -89,6 +89,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_STYLES (ViewportStyleBench.cpp): each style applied in steps within the budget, the wireframe from the
   // worker's arrays, no refinement in it, hidden line hiding what is behind with outlines (UI-48)
   bool benchStyles(const QString& prefix, const std::function<void(const QString&)>& trigger);
+  bool benchRefinedHighlight(const QString& prefix);  // OPAD_BENCH_REFINED_HIGHLIGHT (ViewportRefinedBench.cpp)
   // G: the grid's visibility, one state outside sketches (view/grid) and one inside (sketch/grid, on unless hidden
   // there); gridShownChanged tells the G action which one it shows.
   void setGrid(bool on);

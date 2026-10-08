@@ -21,9 +21,11 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include "CurveSamples.hpp"
 #include <BRepPrimAPI_MakePrism.hxx>
-#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
@@ -535,4 +537,59 @@ TEST(face_colours_are_drawn_as_groups_beside_the_whole_body) {
   CHECK_EQ(count(all->painted[0].triangles), 12);
   const auto plain = BodyPrs::build(box, bounds);
   CHECK(plain->painted.empty() && plain->own.IsNull() && !plain->faceColors);
+}
+
+// A refined mesh's faces and edges (BodyPrs::indexSubShapes): each face's run of the drawn triangles is that face's own
+// triangulation, each edge's line its polyline, so a selected or hovered face or edge lies exactly on what is drawn.
+TEST(refined_arrays_know_their_faces_and_edges) {
+  const TopoDS_Shape shape = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(30, 20, 10).Shape(),
+                                             BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(15, 10, -1), gp_Dir(0, 0, 1)), 4, 12).Shape()).Shape();
+  Bnd_Box bounds;
+  BRepBndLib::Add(shape, bounds);
+  BodyPrs::meshForDisplay(shape, 0.02);
+  const auto prs = BodyPrs::build(shape, bounds, true);
+  CHECK(!prs->indexed());
+  prs->indexSubShapes(shape);
+  CHECK(prs->indexed());
+  TopTools_IndexedMapOfShape faces, edges;
+  TopExp::MapShapes(shape, TopAbs_FACE, faces);
+  TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+  // The drawn arrays hold floats: a corner matches within a micrometre. Each drawn triangle is one of the face's own (its
+  // corners in any order: a reversed face's are flipped), every one of them taken once.
+  auto same = [](const gp_Pnt& a, const gp_Pnt& b) { return a.Distance(b) < 1e-3; };
+  auto sameTriangle = [&](const std::array<gp_Pnt, 3>& x, const std::array<gp_Pnt, 3>& y) {
+    for (const gp_Pnt& p : x)
+      if (!same(p, y[0]) && !same(p, y[1]) && !same(p, y[2])) return false;
+    return true;
+  };
+  for (int i = 1; i <= faces.Extent(); ++i) {
+    TopLoc_Location loc;
+    const auto t = BRep_Tool::Triangulation(TopoDS::Face(faces(i)), loc);
+    std::vector<std::array<gp_Pnt, 3>> own;
+    for (int k = 1; k <= t->NbTriangles(); ++k) {
+      int a, b, c;
+      t->Triangle(k).Get(a, b, c);
+      own.push_back({t->Node(a).Transformed(loc.Transformation()), t->Node(b).Transformed(loc.Transformation()), t->Node(c).Transformed(loc.Transformation())});
+    }
+    std::vector<gp_Pnt> corners;
+    prs->faceTrianglesOf(i - 1, corners);
+    CHECK(!own.empty() && corners.size() == 3 * own.size());
+    std::vector<bool> taken(own.size(), false);
+    size_t matched = 0;
+    for (size_t k = 0; k + 2 < corners.size(); k += 3)
+      for (size_t j = 0; j < own.size(); ++j)
+        if (!taken[j] && sameTriangle({corners[k], corners[k + 1], corners[k + 2]}, own[j])) {
+          taken[j] = true;
+          ++matched;
+          break;
+        }
+    CHECK_EQ(matched, own.size());
+  }
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    const auto line = prs->edgeLineOf(i - 1);
+    const std::vector<gp_Pnt> want = edgePolyline(TopoDS::Edge(edges(i)));
+    CHECK(line && line->size() == want.size());
+    for (size_t k = 0; line && k < want.size() && k < line->size(); ++k) CHECK(same((*line)[k], want[k]));
+  }
+  CHECK(!prs->edgeLineOf(-1) && !prs->edgeLineOf(edges.Extent()));
 }

@@ -57,6 +57,49 @@ class CurvePresentation : public StdSelect_Shape {
   std::shared_ptr<const std::vector<gp_Pnt>> m_points;
 };
 
+// A face's or an edge's hover on a zoom-refined body, from the refined mesh it is drawn with (BodyPrs::indexSubShapes): a
+// face shaded from its own triangles (its outline in the wire mode), an edge along its refined points. The stock one comes
+// from the base mesh, whose chords cut in and out of the finer surface when the hover is depth-tested.
+class RefinedPresentation : public StdSelect_Shape {
+ public:
+  RefinedPresentation(const TopoDS_Shape& shape, std::vector<gp_Pnt> triangles, std::vector<std::shared_ptr<const std::vector<gp_Pnt>>> lines)
+      : StdSelect_Shape(shape), m_triangles(std::move(triangles)), m_lines(std::move(lines)) {}
+  void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, Standard_Integer mode) override {
+    if (mode == 1 && !m_triangles.empty()) {
+      Handle(Graphic3d_ArrayOfTriangles) tris = new Graphic3d_ArrayOfTriangles(int(m_triangles.size()), 0, Graphic3d_ArrayFlags_VertexNormal);
+      for (size_t i = 0; i + 2 < m_triangles.size(); i += 3) {
+        const gp_Pnt &a = m_triangles[i], &b = m_triangles[i + 1], &c = m_triangles[i + 2];
+        gp_Vec n = gp_Vec(a, b).Crossed(gp_Vec(a, c));
+        if (n.Magnitude() > 1e-18) n.Normalize();
+        else n = gp_Vec(0, 0, 1);
+        for (const gp_Pnt* p : {&a, &b, &c}) tris->AddVertex(*p, gp_Dir(n));
+      }
+      Handle(Graphic3d_Group) group = prs->NewGroup();
+      group->SetGroupPrimitivesAspect(myDrawer->ShadingAspect()->Aspect());
+      group->AddPrimitiveArray(tris);
+      return;
+    }
+    size_t segments = 0;
+    for (const auto& line : m_lines)
+      if (line && line->size() > 1) segments += line->size() - 1;
+    if (segments == 0) return;
+    Handle(Graphic3d_ArrayOfSegments) lines = new Graphic3d_ArrayOfSegments(int(segments * 2));
+    for (const auto& line : m_lines)
+      if (line)
+        for (size_t i = 1; i < line->size(); ++i) {
+          lines->AddVertex((*line)[i - 1]);
+          lines->AddVertex((*line)[i]);
+        }
+    Handle(Graphic3d_Group) group = prs->NewGroup();
+    group->SetGroupPrimitivesAspect(myDrawer->WireAspect()->Aspect());
+    group->AddPrimitiveArray(lines);
+  }
+
+ private:
+  std::vector<gp_Pnt> m_triangles;
+  std::vector<std::shared_ptr<const std::vector<gp_Pnt>>> m_lines;
+};
+
 // The free edges of a big body as one picking entity: their sampled segments under one BVH, built on the mesh worker.
 class SegmentSet : public Select3D_SensitiveSet {
   DEFINE_STANDARD_RTTI_INLINE(SegmentSet, Select3D_SensitiveSet)
@@ -329,10 +372,33 @@ void hoverAlike(const Handle(PrsMgr_PresentationManager)& pm, const Handle(PrsMg
 void SubShapeOwner::HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) {
   if(pm->IsImmediateModeOn()) {
     if(curve && curve->size()>1 && myPrsSh.IsNull()) myPrsSh=new CurvePresentation(myShape,curve);
+    // A zoom-refined body: the hover from the mesh it is drawn with (made again when that mesh changes).
+    const auto body=Handle(BodyShape)::DownCast(Selectable());
+    const BodyPrs* refined=!body.IsNull() && body->displayPrs() && body->displayPrs()->indexed() ? body->displayPrs().get() : nullptr;
+    if(!curve && !myShape.IsNull() && refined!=m_hoverFrom && (refined || !myPrsSh.IsNull())) {
+      if(!myPrsSh.IsNull()) pm->Erase(myPrsSh,mode);
+      myPrsSh.Nullify();
+      if(!m_rim.IsNull()) {pm->Erase(m_rim);m_rim.Nullify();}
+      m_hoverFrom=refined;
+      if(refined && (myShape.ShapeType()==TopAbs_FACE || myShape.ShapeType()==TopAbs_EDGE)) {
+        std::vector<gp_Pnt> triangles;
+        std::vector<std::shared_ptr<const std::vector<gp_Pnt>>> lines;
+        TopTools_IndexedMapOfShape edges;
+        TopExp::MapShapes(body->Shape(),TopAbs_EDGE,edges);
+        if(myShape.ShapeType()==TopAbs_FACE) {
+          refined->faceTrianglesOf(m_index,triangles);
+          for(TopExp_Explorer e(myShape,TopAbs_EDGE);e.More();e.Next()) if(auto line=refined->edgeLineOf(edges.FindIndex(e.Current())-1)) lines.push_back(line);
+        } else if(auto line=refined->edgeLineOf(m_index)) {
+          lines.push_back(line);
+        }
+        if(!triangles.empty() || !lines.empty()) myPrsSh=new RefinedPresentation(myShape,std::move(triangles),std::move(lines));
+      }
+    }
     // On a light background an edge's white hover gets a darker rim under it, drawn first (HoverLines).
     if(const auto& rim=HoverLines::current().rim; !rim.IsNull() && HasSelectable() && !myShape.IsNull() && myShape.ShapeType()==TopAbs_EDGE) {
       if(m_rim.IsNull()) {
-        Handle(StdSelect_Shape) wide=curve && curve->size()>1 ? Handle(StdSelect_Shape)(new CurvePresentation(myShape,curve)) : new StdSelect_Shape(myShape);
+        const auto line=curve && curve->size()>1 ? curve : refined ? refined->edgeLineOf(m_index) : nullptr;  // the refined line's too
+        Handle(StdSelect_Shape) wide=line && line->size()>1 ? Handle(StdSelect_Shape)(new CurvePresentation(myShape,line)) : new StdSelect_Shape(myShape);
         wide->Attributes()->SetLink(rim);
         m_rim=wide;
       }
@@ -464,6 +530,43 @@ void BodyPrs::buildNavigation() {
     set->BVH();
     navigation = set;
   }
+}
+
+void BodyPrs::indexSubShapes(const TopoDS_Shape& meshed) {
+  faceTriangles.clear();
+  edgeLines.clear();
+  if (triangles.IsNull()) return;
+  // StdPrs_ShadedShape::FillTriangles takes the faces in the explorer's order, each face's triangles one after the other;
+  // the face ordinals are the map's. Checked against the array: anything else and the index stays empty.
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(meshed, TopAbs_FACE, faces);
+  std::vector<std::pair<int, int>> ranges(size_t(faces.Extent()), {0, 0});
+  int at = 0;
+  for (TopExp_Explorer e(meshed, TopAbs_FACE); e.More(); e.Next()) {
+    TopLoc_Location loc;
+    const Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(e.Current()), loc);
+    if (t.IsNull()) continue;
+    if (const int index = faces.FindIndex(e.Current()); index > 0 && ranges[size_t(index - 1)].second == 0) ranges[size_t(index - 1)] = {at, t->NbTriangles()};
+    at += t->NbTriangles();
+  }
+  if (size_t(at) != triangleCount()) return;
+  faceTriangles = std::move(ranges);
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(meshed, TopAbs_EDGE, edges);
+  edgeLines.resize(size_t(edges.Extent()));
+  for (int i = 1; i <= edges.Extent(); ++i)
+    if (!BRep_Tool::Degenerated(TopoDS::Edge(edges(i)))) edgeLines[size_t(i - 1)] = std::make_shared<const std::vector<gp_Pnt>>(edgePolyline(TopoDS::Edge(edges(i))));
+}
+
+void BodyPrs::faceTrianglesOf(int ordinal, std::vector<gp_Pnt>& out) const {
+  if (ordinal < 0 || size_t(ordinal) >= faceTriangles.size() || triangles.IsNull()) return;
+  const auto [first, count] = faceTriangles[size_t(ordinal)];
+  for (int t = first; t < first + count; ++t)
+    for (int k = 1; k <= 3; ++k) out.push_back(triangles->Vertice(triangles->Edge(3 * t + k)));
+}
+
+std::shared_ptr<const std::vector<gp_Pnt>> BodyPrs::edgeLineOf(int ordinal) const {
+  return ordinal >= 0 && size_t(ordinal) < edgeLines.size() ? edgeLines[size_t(ordinal)] : nullptr;
 }
 
 size_t BodyPrs::triangleCount() const {

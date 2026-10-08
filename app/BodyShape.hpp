@@ -97,6 +97,17 @@ struct BodyPrs {
   static opad::MeshingReport meshForDisplay(const TopoDS_Shape& shape, double deflection);
   size_t triangleCount() const;
   void buildNavigation();  // worker: `navigation` from the triangles (build() makes it unless drawingOnly)
+  // A zoom-refined mesh's faces and edges (indexSubShapes), so that a selected or hovered face or edge is drawn from the
+  // triangles and points the body is drawn with: the base mesh's coarser chords cut in and out of the finer surface when
+  // highlights are depth-tested (X-ray highlight off): stripes over a selected face, a dashed edge. Per face ordinal its
+  // triangles [first, first + count) in `triangles`, per edge ordinal its polyline (the prototype's frame). Empty for a
+  // base mesh, whose own triangulation is the shape's.
+  std::vector<std::pair<int, int>> faceTriangles;
+  std::vector<std::shared_ptr<const std::vector<gp_Pnt>>> edgeLines;
+  void indexSubShapes(const TopoDS_Shape& meshed);  // worker, after build() from the same meshed shape
+  bool indexed() const { return !faceTriangles.empty(); }
+  void faceTrianglesOf(int ordinal, std::vector<gp_Pnt>& out) const;  // its triangles' corners, three a triangle
+  std::shared_ptr<const std::vector<gp_Pnt>> edgeLineOf(int ordinal) const;  // null: not known
 };
 
 // Owner of one face, edge or vertex of a BodyShape. It knows its ordinal within the body and leaves the
@@ -119,6 +130,7 @@ class SubShapeOwner : public StdSelect_BRepOwner {
  private:
   int m_index;
   Handle(PrsMgr_PresentableObject) m_rim;  // the edge drawn wide in the rim colour under the hover (HoverLines)
+  const BodyPrs* m_hoverFrom = nullptr;    // the refined mesh the hover was built from (null: the base mesh's)
 };
 
 class BodyShape : public AIS_Shape {

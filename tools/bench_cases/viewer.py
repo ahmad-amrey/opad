@@ -224,6 +224,7 @@ CASES = [
     # arrays with no zoom refinement, Hidden line drawing the faces in the background's colour and outlining a cylinder
     # where it turns away (no edge there), where Shaded + edges fills it. On the cylinder and the Engine. <prefix>.<style>.png.
     ("styles", "cylinder", {"OPAD_BENCH_STYLES": "{prefix}"}),
+    ("refined-highlight", "cylinder", {"OPAD_BENCH_REFINED_HIGHLIGHT": "{prefix}"}),  # a selected face on a zoom-refined body, X-ray off
     ("styles-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_STYLES": "{prefix}"}),
     ("box-scan-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_BOXSCAN": "{prefix}"}),
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,

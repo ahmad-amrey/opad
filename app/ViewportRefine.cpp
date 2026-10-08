@@ -106,6 +106,7 @@ void Viewport::refineVisible() {
       TopoDS_Shape copy = BRepBuilderAPI_Copy(want.shape, Standard_True, Standard_False).Shape();
       BodyPrs::meshForDisplay(copy, want.deflection);
       auto prs = BodyPrs::build(copy, want.box, true, want.colors);
+      prs->indexSubShapes(copy);  // a selected or hovered face or edge drawn from these triangles too
       prs->deflection = want.deflection;
       (*results)[i] = std::move(prs);
     }
@@ -147,6 +148,7 @@ void Viewport::refineVisible() {
       m_refined.erase(oldest);
     }
     if (glowsStale) applySelectionLayers();
+    if (swapped && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // selected faces and edges: from the arrays drawn
     if (swapped && m_style == Style::HiddenEdges) scheduleEdgeOverlay();  // its rims are the arrays drawn
     redrawScene();
     if (trace::enabled())
