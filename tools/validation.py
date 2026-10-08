@@ -142,6 +142,8 @@ def cavity_box(s, L, dT, Tm, buoyancy):
     s.note(f"dT {dT:.2f} K: the hot wall gives the air {Q:.4f} W, the cold one takes {-Qc:.4f} W (the rest through the frame's corners, "
            f"where the stepped cells meet it); {st.get('cells')} air cells, {st.get('air_passes')} passes, parts and air agreeing to "
            f"{100 * (st.get('air_disagreement') or [0])[-1]:.1f} %; {json.dumps(st.get('seconds'))}")
+    agree = (st.get("air_disagreement") or [0])[-1]
+    s.check("the parts and the air agree on the heat (share apart)", agree, 0.0, 0.05, rel=False)
     return 0.5 * (Q - Qc), st
 
 

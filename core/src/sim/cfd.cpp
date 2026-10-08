@@ -841,7 +841,9 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     // Layers of thin cells along the parts' walls (an air-only, snapped mesh: an enclosure with fans): the air's boundary
     // layers need ten cells across where two or three were (a plate's film came out half as large again as Blasius'
     // layer gives). cfd.layers: how many, 0 for none.
-    const int layers = air_only && !buoyant ? cfd.value("layers", 5) : 0;
+    // Not in still air (a sealed box without fans or gravity): there is no boundary layer, and the thin cells beside an
+    // insulating wall kept its coupling from settling (58 % apart after 30 passes).
+    const int layers = air_only && !buoyant && !(sealed && disks.empty()) ? cfd.value("layers", 5) : 0;
     sh << "castellatedMesh true; snap " << (buoyant ? "false" : "true") << "; addLayers " << (layers > 0 ? "true" : "false") << ";\ngeometry {\n";
     for (const auto& r : region)
       if (!r.empty()) sh << "  " << r << " { type triSurfaceMesh; file \"" << r << ".stl\"; }\n";
