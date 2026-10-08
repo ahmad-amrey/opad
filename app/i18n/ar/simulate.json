@@ -234,5 +234,9 @@
  "Steady, with the air solved (CFD, OpenFOAM): slower, sees where the air goes": "مستقرة، مع حلّ الهواء (CFD، OpenFOAM): أبطأ، وترى أين يذهب الهواء",
  "Air solved (OpenFOAM): %1 cells, %2 streamlines": "الهواء محلول (OpenFOAM): %1 خلية، %2 خط انسياب",
  "%1: %2 m³/h at %3 Pa": "%1: %2 م³/ساعة عند %3 باسكال",
- "Air through %1: %2 m³/h, leaving at %3 °C": "الهواء عبر %1: %2 م³/ساعة، يخرج عند %3 °م"
+ "Air through %1: %2 m³/h, leaving at %3 °C": "الهواء عبر %1: %2 م³/ساعة، يخرج عند %3 °م",
+ "Simulate (beta)": "المحاكاة (تجريبي)",
+ "Simulation (beta)": "المحاكاة (تجريبي)",
+ "Beta: checked against published benchmarks, not yet against measurements on real parts.": "تجريبي: تم التحقق منها مقابل معايير منشورة، وليس بعد مقابل قياسات على قطع حقيقية.",
+ "<b>Beta.</b> The simulations are checked against published benchmarks, not yet against measurements on real parts. Confirm a design that matters with a test.": "<b>تجريبي.</b> تم التحقق من المحاكاة مقابل معايير منشورة، وليس بعد مقابل قياسات على قطع حقيقية. أكّد أي تصميم مهم باختبار فعلي."
 }
