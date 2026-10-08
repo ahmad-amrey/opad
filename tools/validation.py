@@ -12,7 +12,7 @@ Cases (each skipped when its engine is missing):
                  against Pohlhausen's isothermal plate, Nu = 0.664 Re^1/2 Pr^1/3 on both faces. OpenFOAM.
   conduction_gap Still air between a hot and a cold wall: Q = k A dT / L (Nu = 1), the parts-to-air coupling alone.
   cavity_1e4     Natural convection in a cubic cavity, two opposite walls held at different temperatures, the rest insulated:
-  cavity_1e5     the hot wall's mean Nusselt number against Fusegi, Hyun, Kuwahara and Farouk (1991), Int. J. Heat Mass Transfer
+  cavity_1e5     the walls' mean Nusselt number against Fusegi, Hyun, Kuwahara and Farouk (1991), Int. J. Heat Mass Transfer
                  34(6): 2.100 at Ra 1e4, 4.361 at Ra 1e5 (de Vahl Davis's square cavity, 1983, gives 2.243 and 4.519 in two
                  dimensions). A sealed enclosure with warm air rising: OpenFOAM and CalculiX.
   radiation_box  A heated block in a closed box in still air: radiation by rays (OPAD's view factors, the default) against
@@ -139,8 +139,8 @@ def cavity_box(s, L, dT, Tm, buoyancy):
                          "cfd": cfd(enclosure=frame, sealed=True, buoyancy=buoyancy, radiation=False, quality="normal",
                                     buoyant_first=1500, buoyant_pass=500)})
     Q, Qc = st["bodies"]["Hot"].get("to_air_W", float("nan")), st["bodies"]["Cold"].get("to_air_W", float("nan"))
-    s.note(f"dT {dT:.2f} K: the hot wall gives the air {Q:.4f} W, the cold one takes {-Qc:.4f} W (the rest through the frame's corners, "
-           f"where the stepped cells meet it); {st.get('cells')} air cells, {st.get('air_passes')} passes, parts and air agreeing to "
+    s.note(f"dT {dT:.2f} K: the hot wall gives the air {Q:.4f} W, the cold one takes {-Qc:.4f} W; "
+           f"{st.get('cells')} air cells, {st.get('air_passes')} passes, parts and air agreeing to "
            f"{100 * (st.get('air_disagreement') or [0])[-1]:.1f} %; {json.dumps(st.get('seconds'))}")
     agree = (st.get("air_disagreement") or [0])[-1]
     s.check("the parts and the air agree on the heat (share apart)", agree, 0.0, 0.05, rel=False)
