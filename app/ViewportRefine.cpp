@@ -49,6 +49,7 @@ void Viewport::refineVisible() {
   for (const auto& [id, item] : m_items) {
     if (Handle(BodyShape)::DownCast(item.ais).IsNull()) continue;
     if (!(item.world.is_identity() || opad::mat_is_rigid(item.world))) continue;  // drawn from a transformed copy
+    if (faceTinted(id)) continue;  // drawn with Compare's coloured faces meanwhile
     std::shared_ptr<BodyPrs> base;
     {
       std::lock_guard<std::mutex> lock(m_meshMu);
@@ -131,7 +132,7 @@ void Viewport::refineVisible() {
       triangles += prs->triangleCount();
       m_refined[key] = Refined{prs->deflection, prs, m_refineClock};
       for (auto& [id, item] : m_items)
-        if (item.key == key)
+        if (item.key == key && !faceTinted(id))
           if (auto body = Handle(BodyShape)::DownCast(item.ais); !body.IsNull() && body->setDisplayPrs(prs)) { m_ctx->RecomputePrsOnly(body, Standard_False); dropGlow(body); }
     }
     // Keep a bounded amount: the bodies seen least recently go back to their base mesh.
@@ -141,7 +142,7 @@ void Viewport::refineVisible() {
       auto oldest = std::min_element(m_refined.begin(), m_refined.end(), [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
       kept -= double(oldest->second.prs->triangleCount());
       for (auto& [id, item] : m_items)
-        if (item.key == oldest->first)
+        if (item.key == oldest->first && !faceTinted(id))
           if (auto body = Handle(BodyShape)::DownCast(item.ais); !body.IsNull() && body->setDisplayPrs(nullptr)) { m_ctx->RecomputePrsOnly(body, Standard_False); dropGlow(body); }
       m_refined.erase(oldest);
     }

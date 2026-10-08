@@ -161,6 +161,7 @@ void Viewport::styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart&
                                1 - std::clamp(part.opacity, 0.0, 1.0));
   ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
   ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(rgb(edge), Aspect_TOL_SOLID, 1.0));
+  if (const Handle(BodyShape) body = Handle(BodyShape)::DownCast(ais)) body->syncPainted(false);  // changed faces fade with it
 }
 
 void Viewport::setCompare(const std::vector<ComparePart>& parts, const std::vector<CompareArrow>& arrows, const QColor& arrowColor) {
@@ -229,6 +230,117 @@ void Viewport::clearCompare() {
   redrawScene();
 }
 
+namespace {
+bool sameColors(const opad::FaceColors& x, const opad::FaceColors& y) { return x.colors == y.colors && x.face == y.face; }
+
+// The file's face colours with `tint` over them: a tinted face takes its tint, the others keep theirs.
+std::shared_ptr<const opad::FaceColors> paintedOver(const std::shared_ptr<const opad::FaceColors>& file, const opad::FaceColors& tint) {
+  if (!file || file->empty()) return std::make_shared<const opad::FaceColors>(tint);
+  auto out = std::make_shared<opad::FaceColors>(*file);
+  const int shift = int(out->colors.size());
+  out->colors.insert(out->colors.end(), tint.colors.begin(), tint.colors.end());
+  if (out->face.size() < tint.face.size()) out->face.resize(tint.face.size(), -1);
+  for (size_t i = 0; i < tint.face.size(); ++i)
+    if (tint.face[i] >= 0) out->face[i] = tint.face[i] + shift;
+  return out;
+}
+}  // namespace
+
+void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints) {
+  if (!m_initialised) return;
+  bool redraw = false, glowsStale = false;
+  // An object's drawn arrays changed: its glow was made from the old ones.
+  auto recompute = [&](const Handle(BodyShape)& body) {
+    m_ctx->RecomputePrsOnly(body, Standard_False);
+    redraw = true;
+    if (const auto glow = m_bodyGlows.find(body.get()); glow != m_bodyGlows.end()) {
+      m_ctx->Remove(glow->second, Standard_False);
+      m_bodyGlows.erase(glow);
+      glowsStale = true;
+    }
+  };
+  // Tints no longer wanted (or wanted otherwise, or on a body drawn again since): the body's own arrays again.
+  for (auto it = m_faceTints.begin(); it != m_faceTints.end();) {
+    const auto want = tints.find(it->first);
+    const auto item = m_items.find(it->first);
+    const bool drawnSince = item == m_items.end() || item->second.key != it->second.key || (it->second.ais && item->second.ais.get() != it->second.ais);
+    if (want != tints.end() && want->second && !drawnSince && sameColors(*want->second, *it->second.colors)) {
+      ++it;
+      continue;
+    }
+    if (item != m_items.end() && it->second.ais && item->second.ais.get() == it->second.ais)
+      if (const auto body = Handle(BodyShape)::DownCast(item->second.ais); !body.IsNull()) {
+        const auto refined = m_refined.find(item->second.key);
+        if (body->setDisplayPrs(refined != m_refined.end() ? refined->second.prs : nullptr)) recompute(body);
+      }
+    it = m_faceTints.erase(it);
+  }
+  // New ones: the body's base mesh coloured on a worker (bodies drawn rigidly from worker arrays only).
+  struct Build {
+    std::string id, key;
+    TopoDS_Shape shape;
+    Bnd_Box box;
+    double deflection = 0;
+    std::shared_ptr<const opad::FaceColors> colors;
+    std::shared_ptr<BodyPrs> out;
+  };
+  auto builds = std::make_shared<std::vector<Build>>();
+  for (const auto& [id, colors] : tints) {
+    if (!colors || colors->empty() || m_faceTints.count(id)) continue;
+    const auto item = m_items.find(id);
+    if (item == m_items.end() || !item->second.rigid || item->second.stretch != 1) continue;
+    const auto body = Handle(BodyShape)::DownCast(item->second.ais);
+    if (body.IsNull() || body->curveOnly() || !body->prs() || body->prs()->triangles.IsNull()) continue;
+    m_faceTints[id] = {colors, nullptr, item->second.key};
+  }
+  for (const auto& [id, tint] : m_faceTints) {
+    if (tint.ais) continue;  // drawn already
+    const Item& item = m_items.at(id);
+    const auto& base = Handle(BodyShape)::DownCast(item.ais)->prs();
+    try {
+      builds->push_back({id, item.key, opad::body_shape(m_doc->doc, item.key), base->box, base->deflection, paintedOver(base->faceColors, *tint.colors), nullptr});
+    } catch (const std::exception&) {
+    }
+  }
+  if (glowsStale) applySelectionLayers();
+  if (redraw) {
+    if (m_style == Style::HiddenEdges) scheduleEdgeOverlay();
+    redrawScene();
+  }
+  if (builds->empty() || !m_jobs) return;
+  const unsigned serial = ++m_faceTintSerial;  // the bodies still waiting are in this job too
+  m_jobs->async(tr("Colouring the changed faces"), [builds](Progress p) {
+    for (auto& b : *builds) {
+      if (p.cancelled()) return;
+      b.out = BodyPrs::build(b.shape, b.box, true, b.colors);  // the base mesh's own triangles: drawn as the body is picked
+      b.out->deflection = b.deflection;
+    }
+  }, [this, builds, serial](bool ok, const QString&) {
+    if (!ok || serial != m_faceTintSerial) return;
+    bool redraw = false, glowsStale = false;
+    for (const auto& b : *builds) {
+      const auto tint = m_faceTints.find(b.id);
+      const auto item = m_items.find(b.id);
+      if (!b.out || tint == m_faceTints.end() || tint->second.ais || item == m_items.end() || item->second.key != b.key) continue;
+      const auto body = Handle(BodyShape)::DownCast(item->second.ais);
+      if (body.IsNull()) continue;
+      tint->second.ais = body.get();
+      if (!body->setDisplayPrs(b.out)) continue;
+      m_ctx->RecomputePrsOnly(body, Standard_False);
+      redraw = true;
+      if (const auto glow = m_bodyGlows.find(body.get()); glow != m_bodyGlows.end()) {
+        m_ctx->Remove(glow->second, Standard_False);
+        m_bodyGlows.erase(glow);
+        glowsStale = true;
+      }
+    }
+    if (glowsStale) applySelectionLayers();
+    if (!redraw) return;
+    if (m_style == Style::HiddenEdges) scheduleEdgeOverlay();
+    redrawScene();
+  }, JobKind::Background);
+}
+
 std::shared_ptr<const BodyPrs> Viewport::displayArrays(const std::string& key) const {
   std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_meshMu));
   const auto it = m_prs.find(key);
@@ -255,7 +367,9 @@ opad::json Viewport::benchCompareState() const {
     ais->Color(c);
     double r = 0, g = 0, b = 0;
     c.Values(r, g, b, Quantity_TOC_sRGB);
-    parts.push_back({{"id", id}, {"displayed", m_initialised && m_ctx->IsDisplayed(ais)}, {"color", {r, g, b}}, {"transparency", ais->Transparency()}});
+    const auto body = Handle(BodyShape)::DownCast(ais);
+    const size_t painted = !body.IsNull() && body->prs() ? body->prs()->painted.size() : 0;  // colours of its own changed faces
+    parts.push_back({{"id", id}, {"displayed", m_initialised && m_ctx->IsDisplayed(ais)}, {"color", {r, g, b}}, {"transparency", ais->Transparency()}, {"painted", painted}});
   }
   const auto arrows = Handle(CompareArrows)::DownCast(m_compareArrows);
   return {{"parts", parts}, {"arrows", arrows.IsNull() ? 0 : arrows->shown()}};

@@ -218,6 +218,8 @@
  "Reading the versions…": "قراءة النسخ…",
  "The session could not be read.": "تعذّرت قراءة الجلسة.",
  "Comparing versions": "مقارنة النسخ",
+ "Comparing the changed faces": "مقارنة الأوجه المتغيرة",
+ "Colouring the changed faces": "تلوين الأوجه المتغيرة",
  "Comparing": "جارٍ المقارنة",
  "Measuring the changed bodies": "قياس الأجسام المتغيرة",
  "Compare was cancelled.": "أُلغيت المقارنة.",
