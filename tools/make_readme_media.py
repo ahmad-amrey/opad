@@ -19,8 +19,9 @@ the pointer), and the GIFs are assembled wherever Pillow is installed:
   serve/ctl a live session for writing a new scene: `serve [file]` keeps Xvfb + OPAD running and executes the Python
             lines `ctl` sends (`d.click(640, 400)`, `d.snap("/tmp/x.png")`) against the same driver the scenes use.
 
-Scenes use only the STEPcode AS1 test assembly from tests/corpus (python3 tests/corpus/fetch.py) and parts made in the
-scenes themselves. Window coordinates in the scenes assume the default layout of a fresh settings folder on a
+Scenes use only the STEPcode AS1 test assembly from tests/corpus (python3 tests/corpus/fetch.py), parts made in the
+scenes themselves, the mechanisms tools/sim_eval.py builds, and KiCad's pic_programmer demo board, downloaded from
+KiCad's repository with its library models (the kicad scene needs the network; thermal needs CalculiX: OPAD_CCX). Window coordinates in the scenes assume the default layout of a fresh settings folder on a
 1280 x 800 screen; after a UI change, `serve` and `snap` find the new ones.
 """
 import argparse
@@ -960,6 +961,293 @@ def agent(d, s):
         test_live_agent.Client.raw = raw
     orbit(d, 1000, 640, 1100, 620, dur=1.6)
     d.wait(1.5)
+
+
+@scene("explode")
+def explode(d, s):
+    """The AS1 assembly coming apart: the Explode tab at every level, played from assembled to exploded, then orbited."""
+    opened(d, s, corpus(s, "stepcode-as1-oc-214.stp"))
+    d.key("shift+e")  # Exploded view: its tab and panel, level 1 apart
+    d.wait(2.5)
+    d.click(1250, 456)  # level: All
+    d.wait(2.0)
+    d.click(963, 521)  # play: back together, so the picture starts assembled
+    d.wait(2.5)
+    d.wheel(-2, 560, 470)
+    d.move(250, 700, 0.2)  # off the panel: no tooltip
+    d.settle(quiet=1.0, timeout=20)
+    d.record()
+    d.wait(0.8)
+    d.click(963, 521)  # play: every part moves out along its own direction
+    d.wait(3.0)
+    orbit(d, 300, 650, 400, 630, dur=1.6)
+    d.wait(1.5)
+
+
+# ---- version control: a repository of two commits made by a fictional author
+GIT_AUTHOR = {"GIT_AUTHOR_NAME": "Sam", "GIT_AUTHOR_EMAIL": "sam@example.com", "GIT_COMMITTER_NAME": "Sam",
+              "GIT_COMMITTER_EMAIL": "sam@example.com"}
+
+
+def bracket_repository(s):
+    """bracket.opad in a new git repository: a plate with two holes and an upright, then a commit that thickens the
+    plate (a parameter), raises the upright and adds a locating pin."""
+    repo = s.work / "bracket"
+    repo.mkdir()
+    doc = repo / "bracket.opad"
+
+    def feature(kind, name, inputs, **extra):
+        args = ["feature", doc, "--kind", kind, "--name", name, "--inputs", json.dumps(inputs)]
+        for key, value in extra.items():
+            args += [f"--{key}", json.dumps(value)]
+        return s.cli(*args)
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, env=dict(s.env(), **GIT_AUTHOR))
+
+    s.cli("new", doc)
+    s.cli("param", doc, "--name", "thickness", "--expr", "6 mm")
+    plate = feature("box", "Plate", {"plane": {"origin": [0, 0, 0], "normal": [0, 0, 1]}, "length": 80, "width": 50,
+                                     "height": "thickness", "centered": True}, color=[0.62, 0.65, 0.7])["body_ids"][0]
+    for x in (-28, 28):
+        feature("cylinder", "Hole", {"plane": {"origin": [x, 10, -1], "normal": [0, 0, 1]}, "diameter": 8, "height": 30,
+                                     "operation": "cut", "targets": [plate]})
+    upright = feature("box", "Upright", {"plane": {"origin": [0, -22, 6], "normal": [0, 0, 1]}, "length": 80, "width": 6,
+                                         "height": 40, "centered": True}, color=[0.25, 0.45, 0.8])["body_ids"][0]
+    git("init", "-q", "-b", "main")
+    git("add", "bracket.opad")
+    git("commit", "-q", "-m", "Bracket: plate with two holes and an upright")
+    s.cli("param", doc, "--name", "thickness", "--expr", "10 mm")
+    feature("move", "Raise upright", {"bodies": [{"body": upright, "kind": "body", "index": 0}], "dz": "4 mm"})
+    feature("cylinder", "Locating pin", {"plane": {"origin": [0, 12, 10], "normal": [0, 0, 1]}, "diameter": 10,
+                                         "height": 18}, color=[0.85, 0.55, 0.2])
+    git("add", "bracket.opad")
+    git("commit", "-q", "-m", "Thicker plate, upright raised, locating pin added")
+    return doc
+
+
+def tall_panel(d):
+    """The Simulation panel (it opens at the view's right edge, header at y 343) moved up and made taller."""
+    d.drag(1000, 343, 1000, 160, dur=0.5)
+    d.drag(875, 521, 790, 715, dur=0.6)
+    d.wait(0.5)
+
+
+@scene("compare")
+def compare(d, s):
+    """Version control in the window: the document's two commits in the Version control panel, then Compare between
+    the first commit and now: what changed tinted, the overlay slider fading between the versions, the change list."""
+    doc = bracket_repository(s)
+    opened(d, s, doc)
+    # the Compare panel placed once beforehand (moved up, made taller; its place is kept), the part left of it
+    d.click(379, 12)  # Version menu
+    d.wait(0.6)
+    d.click(469, 322)  # Compare versions...
+    d.wait(1.5)
+    d.settle(quiet=1.0, timeout=60)
+    d.drag(1000, 343, 1000, 160, dur=0.5)
+    d.drag(938, 522, 790, 715, dur=0.6)
+    d.wait(0.5)
+    d.click(1213, 683)  # Done
+    d.wait(1.0)
+    d.wheel(-2, 380, 470)
+    d.move(1150, 700, 0.2)
+    d.settle(quiet=1.0, timeout=20)
+    d.record()
+    d.wait(0.5)
+    d.click(379, 12)  # Version menu
+    d.wait(0.6)
+    d.click(453, 43)  # Version control: branch, state, history
+    d.wait(1.5)
+    d.click(1100, 540)  # the first commit
+    d.wait(0.8)
+    d.click(1000, 644)  # Compare it with this session
+    d.wait(1.5)
+    d.settle(quiet=1.0, timeout=60)
+    d.wait(2.0)
+    d.drag(1030, 302, 822, 302, dur=1.4)  # the overlay slider to A: the first commit
+    d.wait(1.2)
+    d.drag(822, 302, 1240, 302, dur=1.6)  # to B: this session
+    d.wait(1.0)
+    d.click(1142, 273)  # Side by side: the first commit and now in two views
+    d.wait(1.5)
+    d.settle(quiet=1.0, timeout=30)
+    d.wait(2.5)
+
+
+# ---- KiCad: the pic_programmer demo board of KiCad 9.0 (from KiCad's own repository)
+KICAD_DEMO = "https://gitlab.com/kicad/code/kicad/-/raw/9.0/demos/pic_programmer/"
+KICAD_FILES = ["pic_programmer.kicad_pcb", "pic_programmer.kicad_pro", "libs/3d_shapes/adjustable_rx2v4.wrl",
+               "libs/3d_shapes/textool_40.wrl"]
+
+
+def kicad_board(s):
+    import urllib.request
+    folder = s.work / "board"
+    for name in KICAD_FILES:
+        target = folder / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(KICAD_DEMO + name, timeout=60) as r:
+            target.write_bytes(r.read())
+    return folder / "pic_programmer.kicad_pcb"
+
+
+def move_footprint(board, ref, dx, dy):
+    """What moving a part in KiCad writes: the footprint's own (at x y) shifted."""
+    import re
+    text = board.read_text(encoding="utf-8")
+    start = text.rindex("(footprint ", 0, text.index(f'(property "Reference" "{ref}"'))
+    m = re.compile(r"\(at ([-\d.]+) ([-\d.]+)((?: [-\d.]+)?)\)").search(text, start)
+    moved = f"(at {float(m.group(1)) + dx:g} {float(m.group(2)) + dy:g}{m.group(3)})"
+    board.write_text(text[:m.start()] + moved + text[m.end():], encoding="utf-8")
+
+
+@scene("kicad")
+def kicad(d, s):
+    """A KiCad board opened: its library models downloaded on request and shown on the board; then (kicad-sync) the
+    board linked into a document, a part moved in the board file, the sync previewed per reference and applied."""
+    board = kicad_board(s)
+    opened(d, s, board)
+    d.record()
+    d.wait(1.5)
+    d.move(450, 421, 0.7)
+    d.click()  # Download the models KiCad's library has (into the user cache)
+    d.wait(1.5)
+    d.record(False)
+    d.wait(3)
+    d.settle(quiet=3.0, timeout=240)
+    d.record()
+    d.wait(1.0)
+    orbit(d, 1000, 650, 1100, 610, dur=1.6)
+    d.wait(1.0)
+    for x, y in [(520, 400), (640, 450), (780, 470)]:
+        d.move(x, y, 0.5)
+        d.wait(0.5)
+    d.wait(1.0)
+    d.record(False)
+    s.app.terminate()
+    s.app.wait(10)
+    doc = s.work / "enclosure.opad"
+    s.cli("new", doc)
+    s.cli("import", doc, board, "--link", "true")
+    opened(d, s, doc)
+    d.record()
+    d.mark("gif:kicad-sync")
+    d.wait(1.0)
+    move_footprint(board, "P3", 0, -15)  # the ZIF socket moved 15 mm in KiCad
+    d.wait(4.0)  # OPAD notices: a Sync badge on the board's row and a toast
+    d.move(787, 683, 0.6)
+    d.click()  # Show changes: the sync preview
+    d.wait(1.5)
+    d.settle(quiet=1.0, timeout=60)
+    d.click(1075, 401)  # P3: shown on the board
+    d.wait(1.8)
+    d.click(1210, 689)  # Sync
+    d.wait(1.5)
+    d.settle(quiet=1.0, timeout=60)
+    d.wait(1.5)
+
+
+# ---- motion and simulation: the documents tools/sim_eval.py builds through the MCP server
+def sim_document(s, name):
+    sys.path.insert(0, str(ROOT / "tools"))
+    import sim_eval
+    fn = next(f for n, _, f in sim_eval.SCENARIOS if n == name)
+    mcp = sim_eval.Mcp(str(s.bin / "opad-cli"), env=s.env())
+    try:
+        sc = sim_eval.Scenario(mcp, s.work, name, False)
+        fn(sc)
+    finally:
+        mcp.close()
+    return Path(sc.doc)
+
+
+def simulation_panel(d):
+    """The Simulate workspace with its Simulation panel, moved up and made taller."""
+    d.key("ctrl+5")
+    d.wait(1.0)
+    d.click(240, 43)  # Mechanism tab
+    d.wait(0.5)
+    d.click(154, 88)  # Simulation panel
+    d.wait(1.2)
+    tall_panel(d)
+
+
+@scene("motion")
+def motion(d, s):
+    """A single-cylinder engine (sim_eval's slider-crank) run as a dynamic study at 3000 rpm with Project Chrono, played
+    back with its kinetic energy and then the motor torque on the chart."""
+    doc = sim_document(s, "engine_slider_crank")
+    opened(d, s, doc)
+    simulation_panel(d)
+    d.wheel(-2, 380, 470)
+    d.move(600, 650, 0.2)
+    d.settle(quiet=1.0, timeout=20)
+    d.record()
+    d.wait(0.6)
+    d.click(495, 88)  # Run study: "3000 rpm · Dynamic", the document's last
+    d.wait(1.0)
+    d.settle(quiet=1.0, timeout=120)
+    d.drag(1264, 320, 1264, 720, dur=0.4)  # the panel scrolled to the results and the chart
+    d.wait(0.6)
+    d.click(817, 427)  # play: crank, rod and piston, the chart's cursor following
+    d.wait(3.8)
+    d.click(1024, 462)  # the chart's series
+    d.wait(0.6)
+    for _ in range(6):
+        d.key("down", pause=0.12)
+    d.key("enter")  # Main bearing motor torque
+    d.wait(0.8)
+    d.click(817, 427)
+    d.wait(3.8)
+
+
+@scene("gears")
+def gears(d, s):
+    """A planetary gear set (sim_eval's: involute gears, ring held, three planets on a carrier) driven by the carrier's
+    joint slider: the planets roll round the ring and the sun turns 3.7 times as fast."""
+    doc = sim_document(s, "planetary_gearset")
+    opened(d, s, doc)
+    simulation_panel(d)
+    d.wheel(-3, 250, 420)
+    d.move(700, 650, 0.2)
+    d.settle(quiet=1.0, timeout=20)
+    d.record()
+    d.wait(0.6)
+    d.move(1022, 324, 0.6)  # the Carrier joint's slider (at 100 degrees)
+    d.inp.button(1, True)
+    d.move(1140, 324, 3.0)
+    d.move(860, 324, 5.0)
+    d.inp.button(1, False)
+    d.wait(1.5)
+
+
+@scene("thermal")
+def thermal(d, s):
+    """A 30 W chip on a finned heatsink with a 60 mm fan (sim_eval's): the warm-up study run with CalculiX, then played
+    back over its 300 s while the chart follows the heatsink's temperature."""
+    doc = sim_document(s, "heatsink_fan")
+    opened(d, s, doc)
+    simulation_panel(d)
+    d.click(421, 43)  # Thermal tab
+    d.wait(0.8)
+    d.wheel(-3, 330, 470)
+    d.move(600, 650, 0.2)
+    d.settle(quiet=1.0, timeout=20)
+    d.record()
+    d.wait(0.6)
+    d.click(1220, 500)  # Run "Warm-up · Thermal"
+    d.wait(1.2)
+    d.record(False)  # meshing and CalculiX take a minute or two
+    d.settle(quiet=2.0, timeout=600)
+    d.record()
+    d.wait(1.0)
+    d.drag(1264, 320, 1264, 720, dur=0.4)  # down to the playback and its chart
+    d.wait(0.6)
+    d.click(817, 391)  # play: the heatsink warming up
+    d.wait(8.5)
+    d.wait(1.0)
+
 
 def record(args):
     names = args.only or list(SCENES)
