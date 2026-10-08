@@ -52,7 +52,7 @@ void checkReferences(const opad::Document& doc,const opad::Scene& scene,const js
 }
 // A small declarative language over existing typed commands, never executable code.
 void modelBatch(opad::Document& doc,const json& args,Progress progress,json& output,const AgentBridge::KnownRefs* known,const AgentBridge::BatchSteps* before){
-  static const std::set<std::string> allowed={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform","joint"};
+  static const std::set<std::string> allowed={"component","param","sketch","sketch_edit","align_sketch","feature","feature_edit","rename","reparent","appearance","transform","joint"};
   std::map<std::string,json> schemas,results;std::set<std::string> earlier,defined;
   for(const auto& step:args.at("steps"))if(step.contains("id") && step["id"].is_string())defined.insert(step["id"].get<std::string>());
   // An id this batch defines is this batch's step (a later one is a forward reference); only others may name a step

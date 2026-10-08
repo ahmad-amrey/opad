@@ -97,13 +97,13 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
 
   // ---------------------------------------------------------------- Design
   layout.addTab("design", "design.solid", tr("Solid"));
-  group("design.solid", "sketch", tr("Sketch"), {{"design.sketch"}});
+  group("design.solid", "sketch", tr("Sketch"), {{"design.sketch", L, {"design.alignSketch"}}});  // Align sketch under its arrow
   group("design.solid", "create", tr("Create"),
         {{"design.extrude"}, {"design.revolve"}, {"design.hole"}, {"design.sweep", S}, {"design.loft", S}, {"design.pipe", S}, {"design.coil", S},
          {"design.thicken", S}, {"design.mesh_solid", S}, {"design.box", S, {"design.cylinder", "design.sphere", "design.cone", "design.torus", "design.gear"}}});
   group("design.solid", "modify", tr("Modify"),
         {{"design.offset_face", L, {"design.remove_faces"}}, {"design.fillet"}, {"design.chamfer", S}, {"design.shell", S}, {"design.draft", S}, {"design.scale", S},
-         {"design.move", S}});
+         {"design.move", S, {"design.align"}}});
   group("design.solid", "combine", tr("Combine"), {{"design.combine", S}, {"design.split", S}, {"design.remove", S}});
   group("design.solid", "pattern", tr("Pattern"), {{"design.mirror", S}, {"design.pattern_rect", S}, {"design.pattern_circ", S, {"design.pattern_points"}}});  // Point pattern under Circular's arrow: one column keeps the tab large at 1600 px
   // What the marker selected on the timeline can do: edit it, or from Edit feature's arrow suppress it or roll back to it
@@ -115,7 +115,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
         {{"design.newcomponent", L, {"design.componentFromSelection"}}, {"assembly.activate"}, {"assembly.activateRoot", S}, {"assembly.activeVisibility", S},
          {"design.reparent", S}});
   group("design.assemble", "explode", tr("Explode"), {{"assembly.explode"}, {"assembly.explodePlay", S}, {"assembly.explodeOff", S}});
-  group("design.assemble", "position", tr("Position"), {{"design.move"}});  // Move / copy, as on Solid > Modify
+  group("design.assemble", "position", tr("Position"), {{"design.move"}, {"design.align"}});  // Move / copy, as on Solid > Modify; Align
   group("design.assemble", "appearance", tr("Appearance"),
         {{"design.colour"}, {"inspect.material", S}, {"design.opacity", S}, {"edit.hide", S}, {"view.isolate", S}, {"design.lock", S}});
   group("design.assemble", "organise", tr("Organise"),
@@ -181,6 +181,7 @@ void MainWindow::sketchTab(RibbonLayout& layout, const QString& tab) {
         {{"sketch.snaps", S, {"sketch.selectionOptions"}},
          {"view.grid", S, {"view.gridSettings"}},
          {"view.2d", S, {"view.alignPlane"}},
+         {"design.alignSketch", S},
          {"sketch.showConstraints", S},
          {"sketch.openEnds", S},
          {"sketch.panel", S}});

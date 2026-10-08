@@ -336,12 +336,9 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         require(triad->dragging() == 1, "the X arrow let go before the release");
         const double dx = evaluated("dx");
         require(closeTo(triad->partPoint(0), view->widgetPoint({st->centre[0] + dx, st->centre[1], st->centre[2]}), 3), "the triad did not follow the pull");
-        Bnd_Box moved;
-        for (const auto& c : design->readyPreview()->changed)
-          if (c.shape && !c.shape->IsNull()) BRepBndLib::Add(*c.shape, moved);
-        double x0, y0, z0, x1, y1, z1;
-        moved.Get(x0, y0, z0, x1, y1, z1);
-        require(std::abs((x0 + x1) / 2 - st->centre[0] - dx) < 0.5, "the preview during the pull is not the box moved by X");
+        // The box's own object drawn moved (Move places it: nothing rebuilt or meshed).
+        const gp_Pnt drawn = gp_Pnt(st->centre[0], st->centre[1], st->centre[2]).Transformed(view->previewMotion(st->box));
+        require(std::abs(drawn.X() - st->centre[0] - dx) < 0.5 && view->previewBodyCount() == 0, "the preview during the pull is not the box drawn moved by X");
         shot("move", false);
         design->values()->input()->shot().save(prefix + ".move.box.png");
         pass("move: pulled along X while held, X is " + form->valueText("dx") + "; the triad and the preview follow; the boxes show the values");
@@ -460,12 +457,8 @@ OPAD_BENCH(OPAD_BENCH_HANDLES, handles) {
         const opad::Vec3 turned{st->centre[0] + 14, st->centre[1], st->centre[2]};  // the box's middle now
         const opad::Vec3 to{turned[0] * std::cos(angle) - turned[1] * std::sin(angle), turned[0] * std::sin(angle) + turned[1] * std::cos(angle), turned[2]};
         require(closeTo(triad->partPoint(0), view->widgetPoint(to), 3), "the triad did not travel along the ring");
-        Bnd_Box moved;
-        for (const auto& c : design->readyPreview()->changed)
-          if (c.shape && !c.shape->IsNull()) BRepBndLib::Add(*c.shape, moved);
-        double x0, y0, z0, x1, y1, z1;
-        moved.Get(x0, y0, z0, x1, y1, z1);
-        require(std::hypot((x0 + x1) / 2 - to[0], (y0 + y1) / 2 - to[1]) < 1, "the preview during the pull is not the box turned by the angle");
+        const gp_Pnt drawn = gp_Pnt(turned[0], turned[1], turned[2]).Transformed(view->previewMotion(st->box));
+        require(std::hypot(drawn.X() - to[0], drawn.Y() - to[1]) < 1 && view->previewBodyCount() == 0, "the preview during the pull is not the box drawn turned by the angle");
         shot("move-turn", false);
         pass("move: pulled round the ring while held, the angle is " + form->valueText("angle") + "; the triad and the preview travel along it");
         mouse(QEvent::MouseButtonRelease, st->last);

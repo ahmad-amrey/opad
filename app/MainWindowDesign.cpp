@@ -82,6 +82,17 @@ void MainWindow::buildDesignActions() {
   addAction("sketch.finish", tr("Finish sketch"), "finish", QKeySequence("Ctrl+Return"), [this] { m_design->finishSketch(); });
   addAction("sketch.panel",tr("Sketch tools"),"sketch",QKeySequence("Ctrl+Alt+S"),[this]{m_design->showSketchPanel();});
   addAction("sketch.replane",tr("Redefine sketch plane"),"plane",QKeySequence(),[this]{m_design->redefineSketchPlane();});
+  // Align a sketch (the one open, else the one selected): onto a face or plane, a point onto a point, a line along a line.
+  QAction* alignSketch = addAction("design.alignSketch", tr("Align sketch"), "align", QKeySequence(), [this] {
+    std::string id = m_design->sketchActive() ? m_design->sketch()->sketchId() : std::string();
+    if (id.empty())
+      for (const auto& s : selectionContext().ids)
+        if (m_doc->scene.sketch(s)) { id = s; break; }
+    if (id.empty()) throw opad::UserHint("Select the sketch to align first (in the view or the browser).", true);
+    if (requireEditable()) m_design->startSketchAlign(id);
+  });
+  alignSketch->setProperty("shortcutHint", tr("Put the sketch's plane on a face or plane, a point of it on a point, or a line of it along a line; what is built on it follows."));
+  shortcuts::updateTooltip(alignSketch);
   addAction("sketch.cancel", tr("Cancel sketch"), "close", QKeySequence(), [this] { m_design->cancelSketch(); });
   addAction("sketch.node",tr("Spline node weights"),"spline",QKeySequence("Alt+W"),[this]{m_design->sketch()->editSplineNode();});
   addAction("sketch.openEnds",tr("Find open ends"),"point",QKeySequence("Alt+E"),[this]{m_design->sketch()->findOpenVertices();});

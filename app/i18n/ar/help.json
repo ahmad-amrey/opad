@@ -1076,5 +1076,12 @@
  "What the pointer is over lights up": "يضيء ما يمر فوقه المؤشر",
  "{press:view.hoverHighlight} to turn the hover highlight off": "{press:view.hoverHighlight} لإيقاف تمييز ما تحت المؤشر",
  "Nothing lights up under the pointer": "لا يضيء شيء تحت المؤشر",
- "A click still selects it": "وما زالت النقرة تحدده"
+ "A click still selects it": "وما زالت النقرة تحدده",
+ "Select the bodies to align": "حدّد الأجسام المراد محاذاتها",
+ "Pick the face, edge or point to align by": "اختر الوجه أو الحافة أو النقطة التي تُحاذى بها",
+ "Pick where it goes: a face, plane, edge or point": "اختر أين تذهب: وجه أو مستوى أو حافة أو نقطة",
+ "Press {fixed:enter}: they turn and move there": "اضغط {fixed:enter}: تدور وتنتقل إلى هناك",
+ "Select the sketch: it aligns by its own plane": "حدّد الرسم التخطيطي: يُحاذى بمستواه هو",
+ "Pick the face or plane it goes onto": "اختر الوجه أو المستوى الذي يذهب إليه",
+ "Press {fixed:enter}: the sketch moves there, and what is built on it follows": "اضغط {fixed:enter}: ينتقل الرسم إلى هناك، ويتبعه ما بُني عليه"
 }

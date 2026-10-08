@@ -2606,7 +2606,7 @@ TEST(locked_bodies_are_left_alone) {
   CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}}}}), locked(name, "changing"));
   CHECK_EQ(refusal("feature", {{"kind", "box"}, {"inputs", {{"length", "4 mm"}, {"width", "4 mm"}, {"height", "20 mm"}, {"operation", "cut"}, {"targets", json::array({body_ref(plate)})}}}}),
            locked(name, "changing"));
-  CHECK_EQ(refusal("feature", {{"kind", "move"}, {"inputs", {{"bodies", json::array({plate})}, {"dz", "5 mm"}}}}), locked(name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "move"}, {"inputs", {{"bodies", json::array({plate})}, {"dz", "5 mm"}}}}), locked(name, "moving"));  // placed, not rebuilt
   CHECK_EQ(refusal("feature", {{"kind", "remove"}, {"inputs", {{"bodies", json::array({plate})}}}}), locked(name, "removing"));
   CHECK_EQ(refusal("feature_edit", {{"target", plate_op}, {"inputs", {{"height", "6 mm"}}}}), locked(name, "changing"));
   CHECK_EQ(refusal("delete", {{"target", plate_op}}), locked(name, "removing"));

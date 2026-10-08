@@ -576,6 +576,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Benches: how far the preview moves a body (identity: it does not).
   gp_Trsf previewMotion(const std::string& node) const;
   size_t previewMovedCount() const { return m_previewMotion.size(); }
+  // Align sketch: the sketch drawn moved by a world motion (its lines and images, a location each: nothing rebuilt);
+  // identity or another sketch puts the last one back. clearPreviewBodies ends it.
+  void setPreviewSketch(const std::string& id, const gp_Trsf& motion);
+  bool previewSketchMoved() const { return !m_previewSketch.empty(); }  // benches
   void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   // A preview stands in for the bodies it changes (they are erased, unpickable, and it takes no picks): holding Ctrl alone
   // over the view while `gate` allows it (a feature is open) shows those bodies as they are, pickable, the preview out of
@@ -1212,6 +1216,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<Handle(AIS_InteractiveObject)> m_overlays;  // showOverlay's: Fit frames the finite ones (a drawing being placed)
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
   std::unordered_map<std::string, gp_Trsf> m_previewMotion;  // setPreviewMotion: bodies drawn moved by these
+  std::string m_previewSketch;                                // setPreviewSketch: the sketch drawn moved, and its objects' own places
+  std::vector<std::pair<Handle(AIS_InteractiveObject), gp_Trsf>> m_previewSketchWas;
   // Where an item is drawn: its look's offset after the preview's motion after its placement (rigid; else in `located`).
   gp_Trsf drawnAt(const std::string& id, const std::array<double, 3>& offset, bool rigid, const gp_Trsf& placement) const;
   void placeItem(const std::string& id, Item& item);  // its object (and orbit pivot, glow) where drawnAt says

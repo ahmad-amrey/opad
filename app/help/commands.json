@@ -2297,6 +2297,14 @@
    "requires": "Open or create a document first; not available while a sketch is open."
   },
   {
+   "id": "design.align",
+   "title": "Align",
+   "summary": "Puts a point, edge or face of bodies or components onto another point, edge, face or plane, moving and turning them as one.",
+   "details": "Pick the bodies or components, then what to align them by and where it goes: a face onto a face or a plane (the two come to face each other; Flip lays them flush), an edge or axis along another, or a point onto a point, a line or a plane. Motion keeps it to a move or to a turn only, Offset leaves a gap from the plane, and Turn about it spins them about the line or the plane's normal. Nothing is rebuilt: the objects move by their placement, keep their geometry, and stay aligned when the face or edge they were put on changes.",
+   "keywords": ["mate", "position", "place", "flush", "face to face", "snap to face"],
+   "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
    "id": "design.remove",
    "title": "Remove",
    "summary": "Takes bodies out of the design from this point on.",
@@ -2367,6 +2375,14 @@
    "details": "Pick a new origin plane, planar face or construction plane, place the sketch origin on it and press OK. Features built on the sketch follow it to the new place.",
    "keywords": ["move sketch", "change plane", "reattach"],
    "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "design.alignSketch",
+   "title": "Align sketch",
+   "summary": "Moves a sketch onto a face or plane, a point of it onto a point, or a line of it along a line.",
+   "details": "Select a sketch, or open it, and start: its own plane is what it aligns by, until you pick a point or a line of it instead. Pick where it goes and press {fixed:enter}: the sketch lies flush on the face or plane (Flip turns it over), Offset lifts it off, and Turn about it rotates it there. Put on a face it stays on that face as the face moves, and the features built on the sketch follow it.",
+   "keywords": ["change plane", "move sketch", "reposition sketch", "sketch plane", "flip sketch"],
+   "requires": "Select a sketch first, or open one."
   },
   {
    "id": "sketch.node",

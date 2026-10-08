@@ -347,7 +347,7 @@ OPAD_BENCH(OPAD_BENCH_LOCK, lock) {
                     w.m_design->applyOps({move}, "move", [s](bool ok, const QString& error) { s->refused = ok ? QString("applied") : error; });
                   }});
   list.push_back({[s] { return !s->refused.isEmpty(); }, [=](bool done) {
-                    require(done && s->refused == lockedWith("“%1” is locked with “%2”: unlock “%2” before changing it"), "moving it with a feature is refused the same way: " + s->refused);
+                    require(done && s->refused == lockedWith("“%1” is locked with “%2”: unlock “%2” before moving it"), "moving it with a feature is refused the same way (placed, not rebuilt): " + s->refused);
                   }});
   // A locked component: what it holds is locked with it.
   list.push_back({[=] { return idle() && v->benchLookState(s->boxA).value("activated", -1) == 0; }, [=, &w](bool held) {

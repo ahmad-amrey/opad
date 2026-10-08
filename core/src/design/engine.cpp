@@ -388,7 +388,22 @@ Frame Ctx::plane(const json& in) const {
       f.to_local(world,u,v);
     }
     if(!std::isfinite(u)||!std::isfinite(v))throw Error("invalid sketch origin coordinates");
-    f.origin=f.to_world(u,v);return f;
+    f.origin=f.to_world(u,v);
+    // Align (sketches): turned on the support ("x": {"world": dir}, laid onto it), facing the other way ("flip"), lifted off
+    // it along its normal ("offset", an expression): still on that face or plane as it changes.
+    if (!in.contains("x") && !in.contains("flip") && !in.contains("offset")) return f;
+    const Vec3 fn = f.normal();
+    gp_Dir n(fn[0], fn[1], fn[2]);
+    gp_Vec x(f.x[0], f.x[1], f.x[2]);
+    if (const json& xs = in.value("x", json()); xs.is_object() && xs.contains("world")) {
+      const Vec3 w = xs.at("world").get<Vec3>();
+      const gp_Vec laid = gp_Vec(w[0], w[1], w[2]) - gp_Vec(n) * gp_Vec(w[0], w[1], w[2]).Dot(gp_Vec(n));
+      if (laid.Magnitude() > 1e-9) x = laid;
+    }
+    gp_Pnt o(f.origin[0], f.origin[1], f.origin[2]);
+    if (in.contains("offset")) o.Translate(gp_Vec(n) * length(in, "offset"));
+    if (in.value("flip", false)) n.Reverse();
+    return frame_from_ax3(gp_Ax3(o, n, gp_Dir(x)));
   }
   if(in.size()==1 && in.contains("frame"))return Frame::from_json(in.at("frame"));
   if (in.contains("base")) return base_frame(in["base"].get<std::string>());
@@ -539,7 +554,7 @@ struct Walk {
         for (const auto& b : scene.bodies_under(id)) nodes.insert(b);
     // A move of a linked file's part places the whole file by its top nodes: where each one is counts (a STEP's other root
     // placed since). Only a move of a linked part names them, so no other feature's fingerprint changes.
-    if (kind == "move") {
+    if (kind == "move" || kind == "align") {
       std::set<std::string> files;
       for (const auto& id : std::set<std::string>(nodes))
         if (const Node* n = scene.node(id); n && n->linked && files.insert(n->source_op).second)
@@ -829,6 +844,7 @@ struct Walk {
     if (plane.contains("face") || plane.contains("feature") || plane.contains("support")) {
       std::set<std::string> nodes, sketches, features;
       collect_refs(plane, nodes, sketches, features);
+      string_refs(plane, false, nodes);  // {"face": "uuid/face/3"} too: else the sketch never followed that face
       for (const auto& n : nodes) s += node_state(ctx.scene, n);
       for (const auto& id : features)
         if (const Feature* f = ctx.scene.feature(id)) s += id + ":" + f->result.value("plane", json()).dump() + ";";
@@ -1318,6 +1334,57 @@ Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane) 
   return ctx.plane(plane);
 }
 
+json align_sketch_plane(const Document& doc, const Scene& scene, const std::string& id, const json& inputs, Frame* world) {
+  const SketchItem* sk = scene.sketch(id);
+  if (!sk) throw Error("pick the sketch to align");
+  std::vector<ParamDef> defs;
+  for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+  const ParamTable params(defs);
+  const std::map<std::string, TopoDS_Shape> fresh;
+  const Ctx ctx{doc, params, scene, fresh, {}};
+  const Frame now = sk->frame.transformed(mat_from_trsf(align_motion(ctx, inputs, false)));
+  if (world) *world = now;
+  const Vec3 n = now.normal();
+  auto on = [&](const json& support, bool* flipped) {  // `now` lies on that plane (facing either way)
+    try {
+      const Frame f = ctx.plane(support);
+      const Vec3 m = f.normal();
+      const double dot = n[0] * m[0] + n[1] * m[1] + n[2] * m[2];
+      const double off = (now.origin[0] - f.origin[0]) * m[0] + (now.origin[1] - f.origin[1]) * m[1] + (now.origin[2] - f.origin[2]) * m[2];
+      if (std::fabs(std::fabs(dot) - 1) > 1e-9) return std::optional<double>();
+      if (flipped) *flipped = dot < 0;
+      return std::optional<double>(off);
+    } catch (const std::exception&) {
+      return std::optional<double>();
+    }
+  };
+  // Where it can stay linked: on the plane or face it was aligned to (with the offset asked for), or on its own support
+  // still (a move or turn within it). Else fixed in the world.
+  json plane;
+  json own = sk->plane.contains("support") ? sk->plane["support"] : sk->plane;
+  if (own.is_object()) own.erase("frame");
+  if (own.is_object() && own.contains("face")) own["frame"] = sk->frame.to_json();  // a face support keeps following it from here
+  bool flipped = false;
+  const bool toPlane = inputs.value("to", std::string("plane")) == "plane" && inputs.contains("to_plane");
+  if (const auto off = toPlane ? on(inputs["to_plane"], &flipped) : std::nullopt; off) {
+    plane = {{"support", inputs["to_plane"]}};
+    const double asked = inputs.contains("offset") ? ctx.length(inputs, "offset") : 0.0;
+    if (std::fabs(*off - asked) < 1e-6 && std::fabs(asked) > 1e-12) plane["offset"] = inputs["offset"];
+    else if (std::fabs(*off) > 1e-6) plane["offset"] = *off;
+  } else if (const auto own_off = own.is_object() && !own.empty() ? on(own, &flipped) : std::nullopt; own_off && std::fabs(*own_off) < 1e-6) {
+    plane = {{"support", own}};
+  } else {
+    plane = {{"origin", now.origin}, {"normal", n}, {"x", now.x}};
+  }
+  if (plane.contains("support")) {
+    plane["origin"] = {{"world", now.origin}};
+    plane["x"] = {{"world", now.x}};
+    if (flipped) plane["flip"] = true;
+  }
+  plane["frame"] = ctx.plane(plane).to_json();
+  return plane_as_made(*sk, std::move(plane));
+}
+
 json plane_as_made(const SketchItem& sketch, json plane) {
   if (sketch.moved.is_identity(1e-12) || !plane.is_object()) return plane;
   const Mat4 back = sketch.moved.inverse();
@@ -1332,6 +1399,7 @@ json plane_as_made(const SketchItem& sketch, json plane) {
       if (p.contains("x")) dir(p["x"]);
     }
     if (p.contains("origin") && p["origin"].is_object() && p["origin"].contains("world")) point(p["origin"]["world"]);
+    if (p.contains("x") && p["x"].is_object() && p["x"].contains("world")) dir(p["x"]["world"]);
     if (!p.contains("support")) return;
     json& support = p["support"];  // resolved again where the sketch is made: a world plane goes in as the frame picked
     if (support.is_object() && support.contains("base") && support["base"].is_string())

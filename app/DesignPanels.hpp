@@ -70,6 +70,7 @@ class FeaturePanel : public QWidget {
   const opad::design::FeatureSpec* spec() const { return m_spec; }
   opad::json inputs() const;      // what is shown and used; hidden (show_if) inputs keep their last value
   QString name() const { return m_name->text().trimmed(); }
+  void setNameShown(bool on) { m_name->setVisible(on); }  // Align sketch names nothing (begin shows it again)
   bool complete(QString* missing = nullptr) const;  // every shown pick has enough, every expression evaluates
   QString activeInput() const { return m_active; }
   const opad::design::InputSpec* input(const QString& name) const;

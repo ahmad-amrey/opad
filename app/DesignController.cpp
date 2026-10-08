@@ -1,6 +1,7 @@
 #include "DesignController.hpp"
 #include "opad/inspect.hpp"
 #include "DimensionHandle.hpp"
+#include "HelpClip.hpp"
 #include "PrimitivePlacer.hpp"
 #include "ToolValues.hpp"
 #include "TranslateTriad.hpp"
@@ -442,9 +443,51 @@ void DesignController::startFeature(const QString& kind, const std::vector<std::
   if (!m_featureOn || !m_form->spec() || m_form->spec()->kind != kind.toStdString()) return;
   m_placer->stop();  // what is given places it
   for (const auto& [name, value] : given)
-    if (m_form->input(name)) value.is_array() ? m_form->setPicks(name, value) : m_form->setValue(name, value);
+    if (const InputSpec* in = m_form->input(name)) {
+      const bool pick = in->type == "bodies" || in->type == "faces" || in->type == "edges" || in->type == "points" || in->type == "profiles" ||
+                        in->type == "plane" || in->type == "axis" || in->type == "path";
+      pick ? m_form->setPicks(name, value) : m_form->setValue(name, value);  // a plane or axis given as its one object too
+    }
   activateInput(m_form->activeInput());  // the view shows the given picks
   schedulePreview();
+}
+
+void DesignController::startSketchAlign(const std::string& sketchId) {
+  if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy) return;
+  if (m_sketch->active()) return finishSketch([this, sketchId] { startSketchAlign(sketchId); });
+  if (m_featureOn) endFeature();
+  if (m_pickPlane) escape();
+  const opad::SketchItem* sk = m_doc->scene.sketch(sketchId);
+  const FeatureSpec* align = feature_spec("align");
+  if (!sk || !align) return;
+  m_sketchAlignSpec = *align;
+  auto& ins = m_sketchAlignSpec.inputs;
+  ins.erase(std::remove_if(ins.begin(), ins.end(), [](const InputSpec& in) { return in.name == "bodies"; }), ins.end());
+  m_sketchAlignSpec.label = "Align sketch";
+  m_sketchAlignSpec.hint = "Put a point, line or the plane of the sketch onto another point, line, face or plane; what is built on it follows.";
+  opad::json inputs = opad::json::object();
+  for (const auto& in : ins)
+    if (!in.def.is_null()) inputs[in.name] = in.type == "length" && in.def.is_string() ? opad::json(units::presetText(QString::fromStdString(in.def.get<std::string>())).toStdString()) : in.def;
+  inputs["from_plane"] = {{"sketch", sketchId}};  // its own plane, until another From is picked
+  m_editing.clear();
+  m_ruleMatches.clear();
+  m_newId.clear();
+  m_alignSketch = sketchId;
+  m_featureOn = true;
+  m_filterBefore = m_viewport->selectionFilter();
+  m_viewport->setPickAccumulate(true);
+  resetRouting();
+  m_form->begin(m_sketchAlignSpec, inputs, QString::fromStdString(sk->name), true);
+  m_form->guide()->setCommand("design.alignSketch");  // its own clip: From is the sketch already, so it waits at To
+  m_form->setNameShown(false);
+  if (m_panel) {
+    m_panel->setHeader(QString::fromStdString(m_sketchAlignSpec.icon), i18n::t(QString::fromStdString(m_sketchAlignSpec.label)));
+    m_panel->setContext(QString::fromStdString(sk->name));
+    m_openPanel(m_panel);
+  }
+  if (m_form->activeInput().isEmpty()) activateInput(QString());
+  schedulePreview();
+  emit stateChanged();
 }
 
 void DesignController::editOp(const std::string& opId) {
@@ -526,6 +569,7 @@ void DesignController::endFeature() {
   m_activating = false;
   m_form->activate(QString());
   m_editing.clear();
+  m_alignSketch.clear();
   m_editResult = opad::json();
   if (m_panel && m_panel->isVisible()) m_panel->hide();
   m_doc->setRollback({});
@@ -1228,7 +1272,7 @@ void DesignController::runPreview(bool commit) {
       return commitDerived(now, component, label);
     // The new bodies' name, colour and component: the rename / appearance / reparent ops of the same step (B14). No
     // reparent into the component the feature is made in: its bodies are there already.
-    opad::json style = m_editing.empty() ? m_form->bodyStyle() : opad::json::object();
+    opad::json style = m_editing.empty() && m_alignSketch.empty() ? m_form->bodyStyle() : opad::json::object();
     if (!component.empty() && style.value("parent", opad::json()) == opad::json(component)) style.erase("parent");
     const std::string op = m_newId;
     whenNobodyReads(this, [this, plan, label, style, op] {
@@ -1249,9 +1293,12 @@ void DesignController::runPreview(bool commit) {
 
   if (Job* j = std::exchange(m_planJob, nullptr)) j->cancel();
   const int serial = ++m_planSerial;
-  const std::string target = m_editing.empty() ? m_newId : m_editing;
+  // Align sketch: the plan is an edit of the sketch's plane; what it changes downstream is all shown.
+  const std::string alignSketch = m_alignSketch;
+  const std::string target = !alignSketch.empty() ? alignSketch : m_editing.empty() ? m_newId : m_editing;
   const std::string kind = m_form->spec()->kind;
   const bool editing = !m_editing.empty();
+  auto sketchMotion = std::make_shared<gp_Trsf>();  // Align sketch: where the sketch is drawn meanwhile
   auto plan = std::make_shared<Plan>();
   auto anchors=std::make_shared<std::vector<DimensionHandle::Segment>>();
   auto meshes = std::make_shared<std::vector<std::shared_ptr<const BodyPrs>>>();  // per plan->changed entry
@@ -1270,13 +1317,26 @@ void DesignController::runPreview(bool commit) {
   auto tool = std::make_shared<std::pair<std::string, Viewport::PreviewPart>>();
   auto motions = std::make_shared<std::vector<std::pair<std::string, gp_Trsf>>>();  // bodies drawn moved as they are
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component, handles, tool, motions](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component, handles, tool, motions, alignSketch, sketchMotion](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
-    if (kind != "extrude") *handles = feature_handles(*doc, *scene, kind, hinted);  // the extrusion's comes with its result
-    opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
-    if (!editing) op["id"] = target;
-    if (!component.empty()) op["component"] = component;
+    if (kind != "extrude" && alignSketch.empty()) *handles = feature_handles(*doc, *scene, kind, hinted);  // the extrusion's comes with its result
+    opad::json op;
+    if (!alignSketch.empty()) {
+      opad::Frame now;
+      op = make_edit_op(target, opad::json{{"plane", align_sketch_plane(*doc, *scene, target, hinted, &now)}});
+      if (const opad::SketchItem* sk = scene->sketch(target)) {
+        auto ax3 = [](const opad::Frame& f) {
+          const opad::Vec3 n = f.normal();
+          return gp_Ax3(gp_Pnt(f.origin[0], f.origin[1], f.origin[2]), gp_Dir(n[0], n[1], n[2]), gp_Dir(f.x[0], f.x[1], f.x[2]));
+        };
+        sketchMotion->SetDisplacement(ax3(sk->frame), ax3(now));
+      }
+    } else {
+      op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
+      if (!editing) op["id"] = target;
+      if (!component.empty()) op["component"] = component;
+    }
     try {
       *plan = plan_ops(*doc, {op}, true, [p] { return p.cancelled(); });
     } catch (const opad::LockedError& e) {
@@ -1306,7 +1366,7 @@ void DesignController::runPreview(bool commit) {
     // edit that changed nothing shows where its stored placements put the file.
     std::vector<std::pair<std::string, opad::Mat4>> placed;
     for (const auto& m : plan->moved)
-      if (m.op == target) placed.push_back({m.node, m.motion});
+      if (m.op == target || !alignSketch.empty()) placed.push_back({m.node, m.motion});
     if (editing && placed.empty())
       for (const auto& p : editResult.value("placements", opad::json::array())) try {
           const opad::Node* n = scene->node(p.value("id", ""));
@@ -1325,7 +1385,7 @@ void DesignController::runPreview(bool commit) {
     meshes->resize(plan->changed.size());
     for (size_t i = 0; i < plan->changed.size(); ++i) {  // the preview is displayed without meshing or walking meshes on the UI thread
       auto& c = plan->changed[i];
-      if (c.op == target && c.shape && !c.shape->IsNull()) {
+      if ((c.op == target || !alignSketch.empty()) && c.shape && !c.shape->IsNull()) {
         if (p.cancelled()) return;
         Bnd_Box box;
         BRepBndLib::Add(*c.shape, box, Standard_False);
@@ -1377,7 +1437,7 @@ void DesignController::runPreview(bool commit) {
         }
       }
     }
-  }, [this, serial, plan, stamp, inputs, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction, handles, tool, motions](bool ok, const QString& error) {
+  }, [this, serial, plan, stamp, inputs, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction, handles, tool, motions, alignSketch, sketchMotion](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
@@ -1457,7 +1517,7 @@ void DesignController::runPreview(bool commit) {
     std::vector<std::string> hidden;
     for (size_t i = 0; i < plan->changed.size(); ++i) {
       const auto& c = plan->changed[i];
-      if (c.op != target) continue;
+      if (c.op != target && alignSketch.empty()) continue;
       if (c.removed) hidden.push_back(c.node);
       else if (c.shape && !c.shape->IsNull()) parts.push_back({m_doc->scene.node(c.node) ? c.node : std::string(), *c.shape, i < meshes->size() ? (*meshes)[i] : nullptr, tint});
     }
@@ -1470,7 +1530,8 @@ void DesignController::runPreview(bool commit) {
     }
     parts.insert(parts.end(), construction->begin(), construction->end());
     m_viewport->setPreviewBodies(parts, hidden);
-    m_viewport->setPreviewMotion(*motions);  // a linked file moving as one
+    m_viewport->setPreviewMotion(*motions);  // moved as they are (Move, Align): their own objects drawn elsewhere
+    m_viewport->setPreviewSketch(alignSketch, *sketchMotion);
     if (m_stretch.valid) for (const auto& part : parts) m_stretch.base.push_back(part.prs);
     if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // this plan is for an older value
   });

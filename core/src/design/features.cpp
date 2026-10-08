@@ -243,6 +243,17 @@ std::vector<FeatureSpec> build_specs() {
   add("move", "Move / copy", "move", "body", "Move bodies by distances and an optional turn; the values can be expressions.",
       {pick("bodies", "Bodies", "bodies", 1, 0), in("dx", "X", "length", "0 mm"), in("dy", "Y", "length", "0 mm"), in("dz", "Z", "length", "0 mm"), in("rotate", "Rotate", "bool", false),
        in("axis", "Axis", "axis", json{{"base", "z"}}, "rotate=true"), in("angle", "Angle", "angle", "90 deg", "rotate=true"), in("copy", "Make a copy", "bool", false)});
+  // A point, line or plane of the bodies (From) onto another (To): moved, turned, or both, as one; placed as they are, like a
+  // linked file's Move (align_motion). Faces put together face each other; Flip lays them flush. Sketches take the same
+  // inputs through align_sketch_plane.
+  add("align", "Align", "align", "body",
+      "Put a point, line or face of bodies or components onto another point, line or plane: a face on a face, an edge along an edge, a hole on an axis.",
+      {pick("bodies", "Bodies", "bodies", 1, 0), choice("from", "Align", {"plane", "line", "point"}), in("from_plane", "From face or plane", "plane", nullptr, "from=plane"),
+       in("from_line", "From edge or axis", "axis", nullptr, "from=line"), pick("from_point", "From point", "points", 1, 1, "from=point"),
+       choice("to", "Onto", {"plane", "line", "point"}), in("to_plane", "To face or plane", "plane", nullptr, "to=plane"),
+       in("to_line", "To edge or axis", "axis", nullptr, "to=line"), pick("to_point", "To point", "points", 1, 1, "to=point"),
+       choice("motion", "Motion", {"move_and_rotate", "move", "rotate"}), in("flip", "Flip", "bool", false), in("offset", "Offset", "length", "0 mm", "to=plane"),
+       in("angle", "Turn about it", "angle", "0 deg", "to=plane|line")});
   add("remove", "Remove", "delete", "body", "Take bodies out of the design from here on (history is kept).", {pick("bodies", "Bodies", "bodies", 1, 0)});
   add("plane", "Construction plane", "plane", "construct", "A plane to sketch on or to mirror, split and draft about.",
       {choice("mode", "Type", {"offset", "angle", "midplane", "three_points", "point_normal"}), in("plane", "From plane", "plane", xy, "mode=offset|angle|midplane"),
@@ -1666,7 +1677,131 @@ std::vector<TopoDS_Shape> world_bodies(const Ctx& ctx, const json& refs, std::ve
   return out;
 }
 
+// The nodes a move places as they are, each once: the picked bodies and components (one under another picked one goes with
+// it), a linked file's part standing for the whole file (its top nodes). Nothing is rebuilt: their geometry and body keys
+// stay, so a preview only draws them elsewhere and a commit only relocates them.
+std::vector<std::string> placed_nodes(const Ctx& ctx, const json& refs) {
+  std::vector<std::string> picked;
+  std::set<std::string> files;  // import ops whose tops are taken
+  auto take = [&](const std::string& id) {
+    if (std::find(picked.begin(), picked.end(), id) == picked.end()) picked.push_back(id);
+  };
+  if (refs.is_array())
+    for (const auto& r : refs) {
+      const std::string id = Ref::from_json(r).body;
+      const Node* n = ctx.scene.node(id);
+      if (!n) throw Error("a referenced body no longer exists");
+      if (!n->linked) take(id);
+      else if (files.insert(n->source_op).second)
+        for (const auto& top : linked_tops(ctx.scene, id)) take(top);
+    }
+  const std::set<std::string> all(picked.begin(), picked.end());
+  std::vector<std::string> out;
+  for (const auto& id : picked) {
+    bool inside = false;
+    for (const Node* n = ctx.scene.node(id); n && !n->parent.empty() && !inside; n = ctx.scene.node(n->parent)) inside = all.count(n->parent) > 0;
+    if (!inside) out.push_back(id);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- align
+// A point, line or plane an Align input names, in world coordinates: where it is and its direction (a plane's normal).
+struct AlignGeo {
+  enum Kind { Point, Line, Plane } kind = Point;
+  gp_Pnt at;
+  gp_Dir dir;
+};
+
+AlignGeo align_geo(const Ctx& ctx, const json& in, const std::string& side) {
+  const std::string what = in.value(side, std::string("plane"));
+  AlignGeo g;
+  if (what == "point") {
+    const Points p = resolve_points(ctx, in.value(side + "_point", json()));
+    if (p.at.empty()) throw Error(side == "from" ? "pick the point to align" : "pick the point to align it to");
+    g.at = p.at.front();
+  } else if (what == "line") {
+    const gp_Ax1 a = ctx.axis(in.value(side + "_line", json()));
+    g.kind = AlignGeo::Line;
+    g.at = a.Location();
+    g.dir = a.Direction();
+  } else if (what == "plane") {
+    const Frame f = ctx.plane(in.value(side + "_plane", json()));
+    g.kind = AlignGeo::Plane;
+    g.at = pnt(f.origin);
+    g.dir = gp_Dir(vec(f.normal()));
+  } else {
+    throw Error("align: \"" + side + "\" must be point, line or plane");
+  }
+  return g;
+}
+
+gp_Dir square_to(const gp_Dir& d) {  // a direction at right angles to d
+  const gp_Vec v = gp_Vec(d).Crossed(std::fabs(d.X()) < 0.9 ? gp_Vec(1, 0, 0) : gp_Vec(0, 1, 0));
+  return gp_Dir(v);
+}
+
+gp_Dir laid_on(const gp_Dir& d, const gp_Dir& normal) {  // d with its part along the normal taken out (any direction in the plane when none is left)
+  const gp_Vec v = gp_Vec(d) - gp_Vec(normal) * gp_Vec(d).Dot(gp_Vec(normal));
+  return v.Magnitude() < 1e-9 ? square_to(normal) : gp_Dir(v);
+}
+
+// The least turn about `at` taking direction a onto b (half a turn when they are opposite).
+gp_Trsf turn(const gp_Pnt& at, const gp_Dir& a, const gp_Dir& b) {
+  gp_Trsf t;
+  const double dot = std::clamp(a.Dot(b), -1.0, 1.0);
+  if (dot > 1 - 1e-12) return t;
+  const gp_Vec axis = gp_Vec(a).Crossed(gp_Vec(b));
+  t.SetRotation(gp_Ax1(at, axis.Magnitude() < 1e-9 ? square_to(a) : gp_Dir(axis)), std::acos(dot));
+  return t;
+}
+
+gp_Pnt nearest_on(const gp_Pnt& p, const gp_Pnt& o, const gp_Dir& d) { return o.Translated(gp_Vec(d) * gp_Vec(o, p).Dot(gp_Vec(d))); }
+
 }  // namespace
+
+gp_Trsf align_motion(const Ctx& ctx, const json& in, bool facing) {
+  const AlignGeo from = align_geo(ctx, in, "from"), to = align_geo(ctx, in, "to");
+  const std::string motion = in.value("motion", std::string("move_and_rotate"));
+  if (motion != "move_and_rotate" && motion != "move" && motion != "rotate") throw Error("align: motion must be move_and_rotate, move or rotate");
+  const bool rotating = motion != "move", moving = motion != "rotate", flip = in.value("flip", false);
+  // The turn, about the From point: a line along the line (the nearer way round), a face against the face (facing it; flush
+  // with Flip, or always for a sketch), a line into the plane, a plane through the line.
+  gp_Trsf turned;
+  if (rotating && (from.kind == AlignGeo::Point || to.kind == AlignGeo::Point)) {
+    if (!moving) throw Error("a point has no direction to turn by: align a line or a plane, or let it move");
+  } else if (rotating) {
+    gp_Dir target;
+    if (from.kind == to.kind) {
+      target = to.dir;
+      if (from.kind == AlignGeo::Line ? from.dir.Dot(to.dir) < 0 : facing) target.Reverse();
+    } else {
+      target = laid_on(from.dir, to.dir);  // a line laid into the plane, or a plane's normal laid square to the line
+    }
+    if (flip) target.Reverse();
+    turned = turn(from.at, from.dir, target);
+  }
+  const gp_Pnt at = from.at.Transformed(turned);
+  const gp_Dir dir = from.kind == AlignGeo::Point ? gp_Dir(0, 0, 1) : from.dir.Transformed(turned);
+  // The move that puts it there: onto the point, the line or the plane, square to them.
+  gp_Vec shift;
+  if (moving) {
+    if (to.kind == AlignGeo::Plane) shift = gp_Vec(to.dir) * gp_Vec(at, to.at).Dot(gp_Vec(to.dir));
+    else if (from.kind == AlignGeo::Plane) shift = gp_Vec(dir) * gp_Vec(at, to.at).Dot(gp_Vec(dir));  // the plane through it
+    else if (to.kind == AlignGeo::Point) shift = gp_Vec(from.kind == AlignGeo::Line ? nearest_on(to.at, at, dir) : at, to.at);
+    else shift = gp_Vec(at, nearest_on(at, to.at, to.dir));
+    if (to.kind == AlignGeo::Plane && in.contains("offset")) shift += gp_Vec(to.dir) * ctx.length(in, "offset");
+  }
+  gp_Trsf moved;
+  moved.SetTranslation(shift);
+  // A turn about the line, or about the plane's normal through where the From point arrived: it stays aligned.
+  gp_Trsf spun;
+  if (to.kind != AlignGeo::Point && in.contains("angle")) {
+    const double a = ctx.angle(in, "angle");
+    if (std::fabs(a) > 1e-12) spun.SetRotation(gp_Ax1(to.kind == AlignGeo::Line ? to.at : at.Translated(shift), to.dir), a);
+  }
+  return spun * moved * turned;
+}
 
 TopoDS_Shape make_gear(const std::string& type, int z, double m, double alpha, double width, double bore, double rim, double backlash, double phase,
                        double rack_height);  // gear.cpp
@@ -2256,9 +2391,30 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     apply_operation(ctx, in, compound_of(copies), out);
     return out;
   }
+  if (kind == "align") {
+    const gp_Trsf t = align_motion(ctx, in, true);
+    for (const auto& id : placed_nodes(ctx, in.value("bodies", json()))) out.placed.push_back({id, t});
+    if (out.placed.empty()) throw Error("pick the bodies or components to align");
+    return out;
+  }
+  if (kind == "move" && !in.value("copy", false)) {
+    // Moved as they are, by their nodes' placement (out.placed): bodies keep their geometry, components their bodies, and a
+    // linked file's part moves the whole file as one. Nothing is rebuilt, so a big selection previews and commits at once.
+    const std::vector<std::string> nodes = placed_nodes(ctx, in.value("bodies", json()));
+    if (nodes.empty()) throw Error("pick at least one body");
+    gp_Trsf t;
+    t.SetTranslation(gp_Vec(ctx.length(in, "dx"), ctx.length(in, "dy"), ctx.length(in, "dz")));
+    if (in.value("rotate", false)) {
+      gp_Trsf r;
+      r.SetRotation(ctx.axis(in.value("axis", json())), ctx.angle(in, "angle"));
+      t = t * r;
+    }
+    if (t.Form() == gp_Identity) throw Error("the move does nothing");
+    for (const auto& id : nodes) out.placed.push_back({id, t});
+    return out;
+  }
   if (kind == "move") {
-    // A linked file's part stands for the whole file: it moves as one, by its top nodes' placement (out.placed), and its parts
-    // stay the file's. Any other body moves as a new shape of its node.
+    // Copies: new bodies after the picked ones (a linked file cannot be copied: its parts would be stored here).
     const bool copying = in.value("copy", false);
     std::vector<std::string> ids, tops;
     std::set<std::string> files;  // import ops whose tops are taken

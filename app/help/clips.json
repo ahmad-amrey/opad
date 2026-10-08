@@ -1132,6 +1132,26 @@
    ]
   },
   {
+   "id": "design.align", "duration": 5.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-16, -22, 30, 12]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 16, 12]}, "height": 8},
+    {"el": "solid", "profile": {"rect": [18, -14, 10, 4]}, "height": 5, "tone": "sel", "toneAmount": 0, "pivot": [18, -14, 0],
+     "keys": [[0.8, {"toneAmount": 0.4}], [3.4, {"offset": [0, 0, 0], "rot": 0}], [4.4, {"offset": [-8, 14, 0], "rot": -90}], [4.6, {"toneAmount": 0.4}], [4.9, {"toneAmount": 0}]]},
+    {"use": "pickFace", "args": {"face": [[13, -16, 0], [23, -16, 0], [23, -16, 5], [13, -16, 5]], "hover": 1.3, "pick": 1.6, "until": 3.4}},
+    {"use": "pickFace", "args": {"face": [[8, -6, 0], [8, 6, 0], [8, 6, 8], [8, -6, 8]], "hover": 2.3, "pick": 2.6, "until": 4.6}},
+    {"el": "key", "fixed": "enter", "press": 3.3, "from": 3.05, "to": 3.8},
+    {"el": "cursor", "keys": [[0, {"pos": [26, -20, 0]}], [0.8, {"pos": [21, -13, 5], "click": 1}], [1.3, {"pos": [17, -16, 3]}], [1.6, {"pos": [17, -16, 3], "click": 1}],
+                              [2.3, {"pos": [8, -1, 5]}], [2.6, {"pos": [8, -1, 5], "click": 1}], [3.6, {"pos": [16, -18, 6]}], [5.0, {"pos": [24, -20, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select the bodies to align"},
+    {"to": 2.0, "caption": "Pick the face, edge or point to align by"},
+    {"to": 3.0, "caption": "Pick where it goes: a face, plane, edge or point"},
+    {"to": 5.4, "caption": "Press {fixed:enter}: they turn and move there"}
+   ]
+  },
+  {
    "id": "design.box", "duration": 5.0, "view": "iso", "extent": [-24, -12, 24, 30],
    "items": [
     {"el": "camera", "center": [-8, 2]},
@@ -2915,6 +2935,25 @@
     {"to": 1.6, "caption": "Pick the new plane or face"},
     {"to": 2.8, "caption": "Place the origin, then OK"},
     {"to": 5.0, "caption": "The sketch moves there, unchanged"}
+   ]
+  },
+  {
+   "id": "design.alignSketch", "duration": 5.0, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-22, -16, 16, 12]}},
+    {"el": "solid", "profile": {"rect": [6, 4, 12, 10]}, "height": 8},
+    {"el": "shape", "at": [-14, -8, 0], "profile": {"rect": [0, 0, 8, 5], "round": 1}, "holes": [{"circle": [0, 0, 1.2]}], "color": "sel", "width": 1.8,
+     "keys": [[0.3, {"opacity": 0.6}], [0.8, {"opacity": 1}], [2.9, {"offset": [0, 0, 0]}], [3.9, {"offset": [20, 12, 8]}]]},
+    {"el": "plane", "center": [-14, -8, 0], "size": [12, 9], "plane": "xy", "color": "sel", "fillOpacity": 0.12, "from": 0.4, "to": 1.4, "fade": 0.2},
+    {"use": "pickFace", "args": {"face": [[0, -1, 8], [12, -1, 8], [12, 9, 8], [0, 9, 8]], "hover": 1.6, "pick": 2.0, "until": 3.9}},
+    {"el": "key", "fixed": "enter", "press": 2.8, "from": 2.55, "to": 3.3},
+    {"el": "cursor", "keys": [[0, {"pos": [-20, -14, 0]}], [0.6, {"pos": [-12, -7, 0], "click": 1}], [1.6, {"pos": [9, 6, 8]}], [2.0, {"pos": [9, 6, 8], "click": 1}],
+                              [3.1, {"pos": [14, -10, 6]}], [4.6, {"pos": [16, -14, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Select the sketch: it aligns by its own plane"},
+    {"to": 2.4, "caption": "Pick the face or plane it goes onto"},
+    {"to": 5.0, "caption": "Press {fixed:enter}: the sketch moves there, and what is built on it follows"}
    ]
   },
   {

@@ -46,7 +46,7 @@ QString text(const opad::Vec3& v) { return QString("(%1, %2, %3)").arg(v[0], 0, 
 
 // OPAD_BENCH_LINKED_MOVE=<prefix> on a document linking a file (a KiCad board in the case) beside an ordinary body: Move with
 // one part of the file and the body picked in the browser says the file moves as one; 15 mm up along Z its preview draws
-// every part of the file moved (their own objects: none stands in, none is meshed), the body's preview moved, the triad at
+// every part of the file and the body moved (their own objects: none stands in, none is meshed), the triad at
 // the middle of the file and the body moved; committed, the file's top node is placed (the Move's result "placements"), its
 // parts keep their keys, the body moved, one undo step. Edited to 25 mm (rolled back, previewed from where the file was),
 // undo and redo, saved and read again (the same text, the same places), synced from next/<file> when there is one (the
@@ -146,10 +146,14 @@ OPAD_BENCH(OPAD_BENCH_LINKED_MOVE, linkedMove) {
   if (plan)
     for (const auto& m : plan->moved) movedTops += std::find(tops.begin(), tops.end(), m.node) != tops.end();
   const size_t underTops = [&] { size_t n = 0; for (const auto& t : tops) n += doc->scene.bodies_under(t).size(); return n; }();
-  require(shown && movedTops == tops.size() && view->previewMovedCount() == underTops && view->previewMotion(other).TranslationPart().Z() == 15 &&
+  const size_t drawnMoved = underTops + (mine.empty() ? 0 : 1);  // the body of its own is placed as it is too
+  require(shown && movedTops == tops.size() && view->previewMovedCount() == drawnMoved && view->previewMotion(other).TranslationPart().Z() == 15 &&
               !view->previewStandsIn(part) && !view->previewStandsIn(other),
-          QString("preview: every part of the file drawn 15 mm up as it is (%1 of %2 parts, none stands in)").arg(view->previewMovedCount()).arg(underTops));
-  if (!mine.empty()) require(view->previewStandsIn(mine) && view->previewBodyCount() == 1, "preview: the body of its own moved as Move moves bodies");
+          QString("preview: every part of the file drawn 15 mm up as it is (%1 drawn moved for %2 parts%3, none stands in)")
+              .arg(view->previewMovedCount()).arg(underTops).arg(mine.empty() ? "" : " and the body"));
+  if (!mine.empty())
+    require(!view->previewStandsIn(mine) && view->previewBodyCount() == 0 && std::abs(view->previewMotion(mine).TranslationPart().Z() - 15) < 1e-9,
+            "preview: the body of its own drawn 15 mm up as it is, nothing meshed");
   TranslateTriad* triad = design->moveTriad();
   require(triad && triad->shown() && closeTo(triad->at(), {pickedMiddle[0], pickedMiddle[1], pickedMiddle[2] + 15}, 1e-3),
           QString("the triad at the middle of the file and the body, moved: %1, expected %2").arg(triad ? text(triad->at()) : "none", text({pickedMiddle[0], pickedMiddle[1], pickedMiddle[2] + 15})));
@@ -162,8 +166,8 @@ OPAD_BENCH(OPAD_BENCH_LINKED_MOVE, linkedMove) {
   const opad::Feature* move = doc->scene.features.empty() ? nullptr : &doc->scene.features.back();
   const std::string moveId = move && move->kind == "move" ? move->id : std::string();
   const opad::json placements = move ? move->result.value("placements", opad::json::array()) : opad::json::array();
-  require(!moveId.empty() && placements.size() == tops.size() && move->error.empty() && doc->doc.ops[ops0].id == moveId && view->previewMovedCount() == 0,
-          QString("committed: the feature op placing the file's %1 top node(s) %2 (%3 ops)").arg(tops.size()).arg(QString::fromStdString(placements.dump()).left(160)).arg(doc->doc.ops.size() - ops0));
+  require(!moveId.empty() && placements.size() == tops.size() + (mine.empty() ? 0 : 1) && move->error.empty() && doc->doc.ops[ops0].id == moveId && view->previewMovedCount() == 0,
+          QString("committed: the feature op placing the file's %1 top node(s) and the body %2 (%3 ops)").arg(tops.size()).arg(QString::fromStdString(placements.dump()).left(160)).arg(doc->doc.ops.size() - ops0));
   auto moved = [&](double dz) {
     return closeTo(at(doc->scene.world(part)), {part0[0], part0[1], part0[2] + dz}) && closeTo(at(doc->scene.world(other)), {other0[0], other0[1], other0[2] + dz}) &&
            closeTo(at(doc->scene.world(tops[0])), {top0[0], top0[1], top0[2] + dz}) &&
@@ -173,7 +177,7 @@ OPAD_BENCH(OPAD_BENCH_LINKED_MOVE, linkedMove) {
   require(moved(15) && keys, QString("the whole file moved 15 mm up, its parts' keys kept and not stored (%1): the part at %2, the other part at %3, the body's middle at %4")
                                  .arg(keys)
                                  .arg(text(at(doc->scene.world(part))), text(at(doc->scene.world(other))), mine.empty() ? QString() : text(middle(box(mine)))));
-  if (!mine.empty()) require(doc->node(mine)->body_key != mineKey, "the body of its own moved as a body (a new shape)");
+  if (!mine.empty()) require(doc->node(mine)->body_key == mineKey, "the body of its own placed as it is (its body key kept)");
   require(doc->undoLabels().value(0).contains("move"), "one undo step: " + doc->undoLabels().value(0));
   require(doc->scene.unresolved.empty(), QString("nothing unresolved (%1)").arg(doc->scene.unresolved.size()));
 
@@ -195,7 +199,7 @@ OPAD_BENCH(OPAD_BENCH_LINKED_MOVE, linkedMove) {
   const bool gone = closeTo(at(doc->scene.world(part)), part0) && closeTo(at(doc->scene.world(other)), other0);
   doc->redo(2);
   require(gone && moved(25), "the Move undone: the file where it was; redone");
-  if (!mine.empty()) require(closeTo(at(doc->scene.world(mine)), mine0), "the body's node stays where it was (its shape moved)");
+  if (!mine.empty()) require(closeTo(at(doc->scene.world(mine)), {mine0[0], mine0[1], mine0[2] + 25}), "the body's node placed 25 mm up (its shape as it was)");
 
   // 4. Saved and read again: the same text, the same places, nothing to regenerate.
   const QString saved = QFileInfo(doc->path()).absolutePath() + "/linked-move-saved.opad";

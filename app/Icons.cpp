@@ -58,6 +58,8 @@ QHash<QString, QString>& table() {
       {"git", R"(<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10M18 10c0 5-12 3-12 7"/>)"},
       {"move", R"(<path d="M12 2v20M2 12h20M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3"/>)"},
       {"reparent", R"(<path d="M4 4h6v5H4zM14 15h6v5h-6zM7 9v9h7"/>)"},
+      // Align: a block brought down onto the face of another, its face over the target face.
+      {"align", R"(<rect x="3" y="15" width="18" height="5" rx="1"/><rect x="7" y="3" width="10" height="5" rx="1"/><path d="M12 9.5v3.5M9.5 11l2.5 2.5 2.5-2.5M4 13h3M17 13h3"/>)"},
       {"doc", R"(<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>)"},
       {"component", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>)"},
       {"body", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z" fill="currentColor" fill-opacity=".35"/><path d="M4 8l8 4 8-4M12 12v8"/>)"},
