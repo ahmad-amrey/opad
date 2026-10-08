@@ -385,8 +385,8 @@ void Simulate::buildActions() {
       {"air", "cooling", "natural convection", "forced convection", "film coefficient", "heat transfer coefficient"});
   add("simulate.radiation", tr("Radiation"), "simRadiation", [this] { addLoad("radiation"); }, doc, {"emissivity", "infrared", "black body"});
   add("simulate.fan", tr("Fan"), "simFan", [this] { addLoad("fan"); }, doc, {"heatsink", "airflow", "CFM", "cooling fan", "blower", "fins"});
-  add("simulate.cooling", tr("Cooling assistant"), "simCooling", [this] { openCooling(); }, doc,
-      {"enclosure", "box", "vents", "fan", "airflow", "CFD", "single-board computer", "electronics cooling", "optimise", "sweep"});
+  add("simulate.cooling", tr("Thermal setup"), "simCooling", [this] { openCooling(); }, doc,
+      {"enclosure", "box", "vents", "fan", "airflow", "CFD", "single-board computer", "electronics cooling", "thermal setup", "guided setup"});
   add("simulate.thermal", tr("Thermal study"), "simThermal", [this] { newStudy("thermal"); }, doc,
       {"temperature", "heat transfer", "heatsink", "cooling", "warm up", "transient", "steady state"});
   add("simulate.results", tr("Result map"), "simResults", [this] { showResults(!resultShown()); },
@@ -790,6 +790,7 @@ void Simulate::openCooling(int step) {
       });
     };
     hooks.busy = [this] { return bool(m_job); };
+    hooks.jobs = [this] { return services().jobs(); };
     hooks.showField = [this](const QString& field) {
       if (!m_run || !m_run->fea) return;
       m_field = field;

@@ -1,11 +1,12 @@
 // OPAD_BENCH_COOLING_WALLS=<prefix>: the Cooling assistant on an enclosure of two bodies, a tray and the cover on it (built
 // here on an empty document: a board, a 3 W chip, a heatsink standing up past the tray's rim, a fan block, a desk under it).
-// Opened from its command, the box found is the tray with the cover ticked as its other wall (the desk offered, not ticked);
+// Opened from its command, the box's bodies ticked are the tray and the cover (the desk and the parts listed, not ticked);
 // the parts inside are those within both, the heatsink too; the cover unticked, the heatsink is no longer inside, ticked
-// again it is; Apply writes the study's enclosure as both; opened again, the cover is ticked from the study. Frame:
-// <prefix>.box.png.
+// again it is; a third body ticked (the desk) makes the box bigger; Apply writes the study's enclosure as the bodies ticked;
+// opened again, they are ticked from the study. Frame: <prefix>.box.png.
 #include <QAction>
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QListWidget>
 #include <QTableWidget>
 #include <QTimer>
@@ -14,6 +15,7 @@
 
 #include "AppDocument.hpp"
 #include "BenchRegistry.hpp"
+#include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "SimulateArea.hpp"
 #include "SimulateCooling.hpp"
@@ -93,13 +95,16 @@ OPAD_BENCH(OPAD_BENCH_COOLING_WALLS, coolingWalls) {
         st->phase = 2;
         return;
       }
-      case 2: {  // the box found: the tray, the cover ticked as its other wall
-        if (!c || !c->isVisible()) return;
-        require(c->boxChoice()->currentData().toString().toStdString() == st->tray, "the box found is the tray: " + c->boxChoice()->currentText());
+      case 2: {  // the box found (by a worker): the tray and the cover ticked
+        if (!c || !c->isVisible() || !c->settled()) return;
+        QListWidgetItem* tray = wall(st->tray);
         QListWidgetItem* cover = wall(st->cover);
         QListWidgetItem* desk = wall(st->desk);
-        require(cover && cover->checkState() == Qt::Checked, "the cover is ticked as the box's other wall");
-        require(!desk || desk->checkState() == Qt::Unchecked, "the desk under it is not a wall");
+        int ticked = 0;
+        for (int i = 0; i < c->wallChoice()->count(); ++i) ticked += c->wallChoice()->item(i)->checkState() == Qt::Checked;
+        require(tray && tray->checkState() == Qt::Checked && cover && cover->checkState() == Qt::Checked && ticked == 2,
+                QString("the box's bodies ticked: the tray and the cover (%1 ticked of %2 listed)").arg(ticked).arg(c->wallChoice()->count()));
+        require(desk && desk->checkState() == Qt::Unchecked, "the desk under it is listed, not ticked");
         const auto in = inside();
         require(has(in, st->board) && has(in, st->chip) && has(in, st->sink) && has(in, st->fan) && !has(in, st->cover) && !has(in, st->desk),
                 QString("inside both: the board, the chip, the heatsink, the fan block (%1 parts)").arg(in.size()));
@@ -108,6 +113,9 @@ OPAD_BENCH(OPAD_BENCH_COOLING_WALLS, coolingWalls) {
         require(!has(inside(), st->sink), "the cover unticked: the heatsink, standing past the tray's rim, is no longer inside");
         cover->setCheckState(Qt::Checked);
         require(has(inside(), st->sink), "ticked again: it is");
+        desk->setCheckState(Qt::Checked);
+        require(has(inside(), st->sink) && has(inside(), st->board), "the desk ticked too: a box of three bodies, the parts still inside");
+        desk->setCheckState(Qt::Unchecked);
         require(c->apply(), "Apply writes the case");
         st->phase = 3;
         return;
@@ -119,8 +127,92 @@ OPAD_BENCH(OPAD_BENCH_COOLING_WALLS, coolingWalls) {
         require(enclosure == opad::json::array({st->tray, st->cover}), "the study's enclosure is the tray and the cover: " + QString::fromStdString(enclosure.dump()));
         c->close();
         c->open(0);
+        st->phase = 4;
+        return;
+      }
+      case 4: {  // opened again: from the study, once the boxes are measured
+        if (!c->settled()) return;
         QListWidgetItem* cover = wall(st->cover);
-        require(c->boxChoice()->currentData().toString().toStdString() == st->tray && cover && cover->checkState() == Qt::Checked, "opened again: the tray, the cover ticked");
+        QListWidgetItem* tray = wall(st->tray);
+        require(tray && tray->checkState() == Qt::Checked && cover && cover->checkState() == Qt::Checked, "opened again: the tray and the cover ticked");
+        return finish();
+      }
+    }
+  });
+  timer->start();
+  return true;
+}
+
+// OPAD_BENCH_COOLING_PERF=<prefix>, meant for the Engine (or any big model): once its bodies are on screen (unhidden in memory,
+// never saved), Thermal setup opened from its command: the command returns at once and nothing stalls the UI over 250 ms while
+// the bodies' boxes are measured and the box is found (a worker); then a body ticked and unticked takes a few milliseconds
+// (from the boxes kept). Opening it used to measure every body's shape again per candidate box on the UI thread: a minute.
+OPAD_BENCH(OPAD_BENCH_COOLING_PERF, coolingPerf) {
+  struct State {
+    int phase = 0, ticks = 0, settled = 0;
+    bool all = true;
+    QElapsedTimer clock;
+  };
+  auto st = std::make_shared<State>();
+  auto* timer = new QTimer(&w);
+  timer->setInterval(50);
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, st, timer] {
+    AppDocument* doc = w.m_doc;
+    Simulate* area = w.findChild<Simulate*>();
+    CoolingAssistant* c = w.findChild<CoolingAssistant*>();
+    auto require = [st](bool ok, const QString& what) {
+      trace::log(QString("bench: cooling perf: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+      st->all = st->all && ok;
+      return ok;
+    };
+    auto finish = [timer, st] {
+      timer->stop();
+      QCoreApplication::exit(st->all ? 0 : 2);
+    };
+    if (++st->ticks > 12000) {
+      require(false, QString("timed out in phase %1").arg(st->phase));
+      return finish();
+    }
+    const bool busy = doc->loading || doc->designBusy || w.m_displayJob || w.m_meshRemaining > 0;
+    switch (st->phase) {
+      case 0: {  // its bodies on screen
+        if (busy) return;
+        const auto bodies = doc->scene.all_bodies();
+        if (std::none_of(bodies.begin(), bodies.end(), [doc](const std::string& id) { return doc->scene.effectively_visible(id); })) {
+          trace::log("bench: cooling perf: nothing visible, unhiding (in memory, never saved)");
+          std::vector<std::string> hidden;
+          for (const auto& [id, node] : doc->scene.nodes)
+            if (!node.visible) hidden.push_back(id);
+          for (const auto& id : hidden) doc->run("appearance", {{"target", id}, {"visible", true}});
+          return;
+        }
+        if (++st->settled < 20 || w.m_jobs->busy()) return;
+        trace::resetStalls();
+        QElapsedTimer t;
+        t.start();
+        area->services().action("simulate.cooling")->trigger();
+        const qint64 call = t.elapsed();
+        require(call < 250, QString("the command returns in %1 ms with %2 bodies").arg(call).arg(doc->scene.all_bodies().size()));
+        st->clock.start();
+        st->phase = 1;
+        return;
+      }
+      case 1: {  // the box found on a worker, the UI never held
+        if (!c || !c->settled()) return;
+        const trace::Stalls stalls = trace::stalls();
+        require(stalls.longest < 250, QString("the box found in %1 ms, the longest stall meanwhile %2 ms").arg(st->clock.elapsed()).arg(stalls.longest));
+        QListWidget* list = c->wallChoice();
+        require(list->count() > 0, QString("%1 bodies listed").arg(list->count()));
+        if (list->count() > 0) {
+          QElapsedTimer t;
+          t.start();
+          QListWidgetItem* item = list->item(list->count() - 1);
+          const auto was = item->checkState();
+          item->setCheckState(was == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+          item->setCheckState(was);
+          require(t.elapsed() < 250, QString("a body ticked and unticked in %1 ms (what is inside follows from the boxes)").arg(t.elapsed()));
+        }
+        c->close();
         return finish();
       }
     }

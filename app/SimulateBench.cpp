@@ -175,7 +175,7 @@ OPAD_BENCH(OPAD_BENCH_SIMULATE, simulate) {
                     require(open != nullptr, "the panel has its Step-by-step guides button");
                     if (open) open->click();
                     auto* guide = w.findChild<SimulateGuide*>();
-                    require(guide && guide->isVisible() && guide->current() == 0 && guide->count() == 11, "the Simulation guide opens at its first use case, of eleven");
+                    require(guide && guide->isVisible() && guide->current() == 0 && guide->count() == 10, "the Simulation guide opens at its first use case, of ten");
                     if (!guide) return;
                     bool keysOk = true, toolsOk = true;
                     for (const auto& u : SimulateGuide::useCases()) {

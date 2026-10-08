@@ -25,8 +25,10 @@
 // Results: the parts' temperatures on their surfaces (the solid cells nearest each point), the air's way through the parts
 // as streamlines, and the summary (temperatures, the fan's flow and pressure, the air's temperature at the outlet).
 // OpenFOAM: OPAD_OPENFOAM (its project directory), else its programs on the PATH with WM_PROJECT_DIR or a known install.
+#include <array>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "study.hpp"
@@ -52,6 +54,20 @@ struct Enclosure {
 Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, const std::string& named = {});
 // The same with the enclosure's bodies named (cfd.enclosure as a list): every one a shown solid.
 Enclosure find_enclosure(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, const std::vector<std::string>& named);
+
+// Every shown solid's world box, measured once (in parallel): what the enclosure is found from. Measuring every body again
+// for each candidate held the UI for a minute on a board with its parts; a caller that asks often keeps one (worker-built).
+struct BodyBoxes {
+  using Box = std::array<double, 6>;  // x0 y0 z0 x1 y1 z1
+  std::vector<std::string> ids;
+  std::vector<Box> boxes;
+  std::unordered_map<std::string, size_t> at;
+};
+BodyBoxes body_boxes(const Document& doc, const Scene& scene);
+// find_enclosure from the boxes: `named` (one body or several), else found around `bodies`; no geometry is read.
+Enclosure find_enclosure(const BodyBoxes& boxes, const std::vector<std::string>& bodies, const std::vector<std::string>& named);
+// The enclosure when nothing makes heat yet: the body that holds the most others, with what closes it. Empty: none.
+std::vector<std::string> likely_enclosure(const BodyBoxes& boxes);
 // A group of walls as the summary names it: "Base + Lid".
 std::string enclosure_name(const Scene& scene, const std::vector<std::string>& walls);
 
