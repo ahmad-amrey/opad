@@ -16,6 +16,7 @@
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QTableWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <Bnd_Box.hxx>
@@ -26,6 +27,7 @@
 
 #include "AppDocument.hpp"
 #include "I18n.hpp"
+#include "DesignPanels.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
 #include "opad/geometry.hpp"
@@ -39,6 +41,10 @@ namespace air = opad::sim::air;
 namespace {
 
 QString num(double v, int decimals = 1) { return QString::number(v, 'f', decimals); }
+
+constexpr int kFaceRole = Qt::UserRole + 1;  // a heat row of a face picked: its Ref::str
+
+bool sameRef(const opad::Ref& a, const opad::Ref& b) { return a.body == b.body && a.kind == b.kind && a.index == b.index; }
 
 QString nameOf(const opad::Scene& s, const std::string& id) {
   const opad::Node* n = s.node(id);
@@ -120,6 +126,7 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
   restyle();
   connect(theme::notifier(), &theme::Notifier::changed, this, restyle);
   connect(m_steps, &QListWidget::currentRowChanged, this, &CoolingAssistant::showStep);
+  if (m_hooks.onFilterApplied) m_hooks.onFilterApplied(this, [this] { filterApplied(); });
   connect(back, &QPushButton::clicked, this, [this] { m_steps->setCurrentRow(std::max(0, m_steps->currentRow() - 1)); });
   connect(next, &QPushButton::clicked, this, [this] { m_steps->setCurrentRow(std::min(steps() - 1, m_steps->currentRow() + 1)); });
   auto page = [this](const QString& title, const QString& intro) {
@@ -137,16 +144,29 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
 
   // ---- 1. the box
   {
-    QVBoxLayout* v = page(tr("The box"), tr("The air is solved inside the box and in a margin of the room around it: its holes are the vents. Tick "
-                                            "every body the box is made of (a base and its lid, a frame and its panels); the ones found around the "
-                                            "parts that make heat are ticked already."));
+    QVBoxLayout* v = page(tr("The box"), tr("The air is solved inside the box and in a margin of the room around it: its holes are the vents. Pick "
+                                            "every body the box is made of (a base and its lid, a frame and its panels) in the view or the browser: a "
+                                            "click adds a body or takes it out. The ones found around the parts that make heat are picked already."));
     m_engine = text(QString(), this);
     v->addWidget(m_engine);
-    v->addWidget(text(tr("The box's bodies:"), this, "sectionHeader"));
-    m_walls = new QListWidget(this);
+    auto* row = new QHBoxLayout();
+    row->addWidget(new QLabel(tr("The box's bodies:"), this));
+    m_pick = new PickBox(this);
+    m_pick->setObjectName("coolingBoxPick");
+    row->addWidget(m_pick, 1);
+    v->addLayout(row);
+    m_walls = new QListWidget(this);  // what is picked, by name
     m_walls->setObjectName("coolingWalls");
-    v->addWidget(m_walls, 1);
-    connect(m_walls, &QListWidget::itemChanged, this, [this] { wallsChanged(); });
+    m_walls->setSelectionMode(QAbstractItemView::NoSelection);
+    m_walls->setMaximumHeight(120);
+    v->addWidget(m_walls);
+    connect(m_pick, &QPushButton::clicked, this, [this] { startPicking(Pick::Box); });
+    connect(m_pick, &PickBox::cleared, this, [this] {
+      m_picked.clear();
+      if (m_picking == Pick::Box && m_hooks.select) m_hooks.select({});
+      showPicked();
+      wallsChanged();
+    });
     v->addWidget(text(tr("Inside it, taking part (the board, chips, heatsink, connectors):"), this, "sectionHeader"));
     m_inside = new QListWidget(this);
     v->addWidget(m_inside, 1);
@@ -159,9 +179,23 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
   }
   // ---- 2. heat
   {
-    QVBoxLayout* v = page(tr("Heat"), tr("Tick each part that makes heat and type its power. Tick Board for a printed circuit board: its copper "
-                                         "spreads heat along it far better than through it (give its copper layers). A chip with no material is "
-                                         "taken as silicon."));
+    QVBoxLayout* v = page(tr("Heat"), tr("Tick each part that makes heat and type its power. A chip joined into its board has no body of its own: "
+                                         "click its face in the view (the Faces filter is on here) and type that face's power. Tick Board for a "
+                                         "printed circuit board: its copper spreads heat along it far better than through it (give its copper "
+                                         "layers). A chip with no material is taken as silicon."));
+    auto* row = new QHBoxLayout();
+    row->addWidget(new QLabel(tr("Faces that make heat:"), this));
+    m_facePick = new PickBox(this);
+    m_facePick->setObjectName("coolingHeatFaces");
+    row->addWidget(m_facePick, 1);
+    v->addLayout(row);
+    connect(m_facePick, &QPushButton::clicked, this, [this] { startPicking(Pick::Faces); });
+    connect(m_facePick, &PickBox::cleared, this, [this] {
+      keepFacePowers();
+      m_faces.clear();
+      if (m_picking == Pick::Faces && m_hooks.select) m_hooks.select({});
+      showFaces();
+    });
     m_heat = new QTableWidget(0, 4, this);
     m_heat->setObjectName("coolingHeat");
     m_heat->setHorizontalHeaderLabels({tr("Part"), tr("Power, watts"), tr("Board"), tr("Copper layers")});
@@ -274,6 +308,11 @@ void CoolingAssistant::open(int at) {
   activateWindow();
 }
 
+void CoolingAssistant::hideEvent(QHideEvent* e) {
+  stopPicking();  // the view's clicks select again
+  QWidget::hideEvent(e);
+}
+
 void CoolingAssistant::keyPressEvent(QKeyEvent* e) {
   if (e->key() == Qt::Key_Escape) close();
   else QWidget::keyPressEvent(e);
@@ -281,6 +320,9 @@ void CoolingAssistant::keyPressEvent(QKeyEvent* e) {
 
 void CoolingAssistant::showStep(int i) {
   if (i >= 0 && i < m_pages->count()) m_pages->setCurrentIndex(i);
+  // The box's page picks its bodies in the view, the Heat page the faces that make heat, as a feature's pick box does.
+  if ((i == 0 || i == 1) && isVisible() && m_boxes) startPicking(i == 0 ? Pick::Box : Pick::Faces);
+  else stopPicking();
 }
 
 // ---------------------------------------------------------------- the pages from the document
@@ -293,10 +335,11 @@ void CoolingAssistant::reload() {
                               "OpenCFD's build) or set OPAD_OPENFOAM to its directory, then open this again."));
   m_engine->setVisible(!foam);
   m_runButton->setEnabled(foam);
-  {
-    const QSignalBlocker quiet(m_walls);
-    m_walls->clear();
-  }
+  stopPicking();
+  m_picked.clear();
+  m_faces.clear();
+  m_facePower.clear();
+  showPicked();
   m_boxes.reset();
   ++m_serial;
   if (Job* j = std::exchange(m_job, nullptr)) j->cancel();
@@ -323,8 +366,7 @@ void CoolingAssistant::reload() {
   auto boxes = std::make_shared<opad::sim::BodyBoxes>();
   auto box = std::make_shared<std::vector<std::string>>();
   m_status->clear();
-  auto* finding = new QListWidgetItem(tr("Finding the box among the bodies…"), m_walls);
-  finding->setFlags(Qt::NoItemFlags);
+  m_pick->setNote(tr("Finding the box among the bodies…"));
   JobRunner* jobs = m_hooks.jobs ? m_hooks.jobs() : nullptr;
   if (!jobs) return;
   const unsigned serial = m_serial;
@@ -344,37 +386,180 @@ void CoolingAssistant::reload() {
     AppDocument* d = m_hooks.document();
     if (!ok || !d || !d->hasDocument) return;
     m_boxes = boxes;
-    const QSignalBlocker quiet(m_walls);
-    m_walls->clear();
-    // Every shown solid, the box's ticked and first.
-    auto add = [&](const std::string& id, bool ticked) {
-      auto* item = new QListWidgetItem(nameOf(d->scene, id), m_walls);
-      item->setData(Qt::UserRole, QString::fromStdString(id));
-      item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-      item->setCheckState(ticked ? Qt::Checked : Qt::Unchecked);
-    };
-    for (const auto& id : *box) add(id, true);
-    for (const auto& id : boxes->ids)
-      if (std::find(box->begin(), box->end(), id) == box->end()) add(id, false);
+    m_pick->setNote(QString());
+    m_picked = *box;
+    showPicked();
+    // The faces the study's heat sources are on (a chip joined into its board), with their powers.
+    for (const auto& l : d->scene.loads)
+      if (l.load_case == kCase && l.kind == "heat")
+        for (const auto& r : l.refs)
+          if (r.kind == opad::Ref::Kind::Face && std::none_of(m_faces.begin(), m_faces.end(), [&](const opad::Ref& f) { return sameRef(f, r); })) {
+            m_faces.push_back(r);
+            m_facePower[r.str()] = l.def.value("value", 0.0) / double(l.refs.size());
+          }
     m_example->setVisible(boxes->ids.empty());
     wallsChanged();
+    if ((step() == 0 || step() == 1) && isVisible()) startPicking(step() == 0 ? Pick::Box : Pick::Faces);
   });
 }
 
-std::vector<std::string> CoolingAssistant::walls() const {
-  std::vector<std::string> out;
-  for (int i = 0; i < m_walls->count(); ++i)
-    if (m_walls->item(i)->checkState() == Qt::Checked) out.push_back(m_walls->item(i)->data(Qt::UserRole).toString().toStdString());
-  return out;
+std::vector<std::string> CoolingAssistant::walls() const { return m_picked; }
+
+// ---------------------------------------------------------------- picking the box's bodies, the faces that make heat
+void CoolingAssistant::startPicking(Pick what) {
+  if (!m_boxes || !isVisible()) return;
+  const Pick was = m_picking;
+  m_picking = Pick::None;  // switching the filter clears the selection: no pick taken out
+  const QString filter = what == Pick::Box ? "select.bodies" : "select.faces";  // pickFilter() once picking
+  QString before = filter;
+  if (m_hooks.filter) {
+    before = m_hooks.filter(filter);
+    if (was == Pick::None) m_filterBefore = before;
+  }
+  if (was == Pick::None && m_hooks.accumulate) m_hooks.accumulate(true);  // a click adds or takes out, as a feature's picks
+  m_picking = what;
+  m_awaiting = before != filter && m_hooks.onFilterApplied;  // the view's picks taken once its targets are built (filterApplied)
+  if (!m_awaiting) reselect();
+  showPicked();
+  showFaces();
+}
+
+QString CoolingAssistant::pickFilter() const { return m_picking == Pick::Box ? "select.bodies" : "select.faces"; }
+
+// Faces can be selected only once the Faces filter has built their pick targets (a sliced job), and a filter switched (here,
+// by hand, by a key) clears the selection, not the picks: once the page's filter is applied the picks are selected again.
+void CoolingAssistant::filterApplied() {
+  if (m_picking == Pick::None || !m_hooks.filter || m_hooks.filter(QString()) != pickFilter()) return;
+  m_awaiting = false;
+  reselect();
+}
+
+void CoolingAssistant::stopPicking() {
+  if (m_picking == Pick::None) return;
+  m_picking = Pick::None;
+  m_awaiting = false;
+  if (m_hooks.accumulate) m_hooks.accumulate(false);
+  if (m_hooks.filter && !m_filterBefore.isEmpty()) m_hooks.filter(m_filterBefore);  // the filter the view had
+  m_filterBefore.clear();
+  showPicked();
+  showFaces();
+}
+
+void CoolingAssistant::reselect() {
+  if (!m_hooks.select || m_picking == Pick::None) return;
+  if (m_picking == Pick::Faces) return m_hooks.select(m_faces);
+  std::vector<opad::Ref> refs;
+  for (const auto& id : m_picked) {
+    opad::Ref r;
+    r.body = id;
+    refs.push_back(r);
+  }
+  m_hooks.select(refs);  // what is picked, shown selected in the view and the browser
+}
+
+void CoolingAssistant::selectionChanged(const std::vector<std::string>& ids, const std::vector<opad::Ref>& refs) {
+  // A filter switched (by the page, by hand) clears the selection, not the picks: shown again once applied (filterApplied).
+  if (m_picking == Pick::None || !m_boxes || m_awaiting || (m_hooks.filterSwitching && m_hooks.filterSwitching())) return;
+  const AppDocument* d = m_hooks.document();
+  if (!d) return;
+  // Another filter switched to while picking (the ribbon, a key): its picks are something else, the page's are kept.
+  if (m_hooks.filter && m_hooks.filter(QString()) != pickFilter()) return;
+  if (m_picking == Pick::Faces) {
+    // The faces picked, on shown solids; those kept stay in their order.
+    std::vector<opad::Ref> now;
+    for (const auto& r : refs)
+      if (r.kind == opad::Ref::Kind::Face && m_boxes->at.count(r.body) &&
+          std::none_of(now.begin(), now.end(), [&](const opad::Ref& f) { return sameRef(f, r); }))
+        now.push_back(r);
+    std::vector<opad::Ref> next;
+    for (const auto& f : m_faces)
+      if (std::any_of(now.begin(), now.end(), [&](const opad::Ref& g) { return sameRef(f, g); })) next.push_back(f);
+    for (const auto& f : now)
+      if (std::none_of(next.begin(), next.end(), [&](const opad::Ref& g) { return sameRef(f, g); })) next.push_back(f);
+    if (next.size() == m_faces.size() && std::equal(next.begin(), next.end(), m_faces.begin(), sameRef)) return;
+    keepFacePowers();
+    m_faces = std::move(next);
+    showFaces();
+    return;
+  }
+  // The bodies picked (a component stands for its bodies), shown solids only; those kept stay in their order.
+  std::vector<std::string> now;
+  auto take = [&](const std::string& id) {
+    if (m_boxes->at.count(id) && std::find(now.begin(), now.end(), id) == now.end()) now.push_back(id);
+  };
+  for (const auto& id : ids)
+    if (const opad::Node* n = d->scene.node(id)) {
+      if (n->kind == opad::Node::Kind::Body) take(id);
+      else
+        for (const auto& b : d->scene.bodies_under(id)) take(b);
+    }
+  std::vector<std::string> next;
+  for (const auto& id : m_picked)
+    if (std::find(now.begin(), now.end(), id) != now.end()) next.push_back(id);
+  for (const auto& id : now)
+    if (std::find(next.begin(), next.end(), id) == next.end()) next.push_back(id);
+  if (next == m_picked) return;
+  m_picked = std::move(next);
+  showPicked();
+  wallsChanged();
+}
+
+void CoolingAssistant::showPicked() {
+  const AppDocument* d = m_hooks.document();
+  QStringList names;
+  m_walls->clear();
+  for (const auto& id : m_picked) {
+    const QString name = d ? nameOf(d->scene, id) : QString::fromStdString(id);
+    names << name;
+    auto* item = new QListWidgetItem(name, m_walls);
+    item->setData(Qt::UserRole, QString::fromStdString(id));
+  }
+  m_pick->set(int(m_picked.size()), names.join(", "), m_picking == Pick::Box, !m_picked.empty());
+}
+
+void CoolingAssistant::keepFacePowers() {
+  for (int r = int(m_parts.size()); r < m_heat->rowCount(); ++r)
+    if (const QTableWidgetItem* part = m_heat->item(r, 0); part && m_heat->item(r, 1))
+      m_facePower[part->data(kFaceRole).toString().toStdString()] = m_heat->item(r, 1)->data(Qt::EditRole).toDouble();
+}
+
+void CoolingAssistant::showFaces() {
+  keepFacePowers();  // the powers typed in the rows made again
+  const AppDocument* d = m_hooks.document();
+  const int first = int(m_parts.size());
+  m_heat->setRowCount(first);
+  m_heat->setRowCount(first + int(m_faces.size()));
+  QStringList names;
+  for (size_t i = 0; i < m_faces.size(); ++i) {
+    const opad::Ref& f = m_faces[i];
+    const int r = first + int(i);
+    const QString name = tr("%1, face %2").arg(d ? nameOf(d->scene, f.body) : QString::fromStdString(f.body)).arg(f.index + 1);
+    names << name;
+    auto* part = new QTableWidgetItem(name);
+    part->setFlags(Qt::ItemIsEnabled);
+    part->setData(kFaceRole, QString::fromStdString(f.str()));
+    part->setToolTip(tr("A face picked in the view: click it again there to take it out."));
+    m_heat->setItem(r, 0, part);
+    auto* w = new QTableWidgetItem();
+    const auto kept = m_facePower.find(f.str());
+    w->setData(Qt::EditRole, kept != m_facePower.end() ? kept->second : 1.0);
+    m_heat->setItem(r, 1, w);
+    m_heat->setItem(r, 2, new QTableWidgetItem());  // a face is no board
+    m_heat->item(r, 2)->setFlags(Qt::NoItemFlags);
+    m_heat->setItem(r, 3, new QTableWidgetItem());
+    m_heat->item(r, 3)->setFlags(Qt::NoItemFlags);
+  }
+  m_facePick->set(int(m_faces.size()), names.join(", "), m_picking == Pick::Faces, true);
 }
 
 void CoolingAssistant::wallsChanged() {
   AppDocument* d = m_hooks.document();
+  keepFacePowers();
   m_parts.clear();
   m_inside->clear();
   m_heat->setRowCount(0);
   m_fans->setRowCount(0);
-  if (!d || !d->hasDocument || !m_boxes || walls().empty()) return;
+  if (!d || !d->hasDocument || !m_boxes || walls().empty()) return showFaces();
   const opad::Scene& s = d->scene;
   try {
     m_parts = opad::sim::find_enclosure(*m_boxes, {}, walls()).inside;  // from the boxes: nothing measured here
@@ -392,7 +577,8 @@ void CoolingAssistant::wallsChanged() {
   for (const auto& l : s.loads) {
     if (l.load_case != kCase) continue;
     if (l.kind == "heat")
-      for (const auto& r : l.refs) watts[r.body] += l.def.value("value", 0.0) / double(l.refs.size());
+      for (const auto& r : l.refs)
+        if (r.kind == opad::Ref::Kind::Body) watts[r.body] += l.def.value("value", 0.0) / double(l.refs.size());  // faces: showFaces
     if (l.kind == "fan" && !l.refs.empty()) fans.push_back({{"body", l.refs.front().body}, {"fan", l.def.value("fan", json("80x25"))}, {"vector", l.def.value("vector", opad::Vec3{1, 0, 0})}});
   }
   m_heat->setRowCount(int(m_parts.size()));
@@ -417,6 +603,7 @@ void CoolingAssistant::wallsChanged() {
     layers->setData(Qt::EditRole, boards.count(id) ? boards[id] : 4);
     m_heat->setItem(int(i), 3, layers);
   }
+  showFaces();
   m_withFans->setChecked(!st || !settings.value("cfd", json::object()).value("buoyancy", false) || !fans.empty());
   for (const auto& f : fans) addFanRow(f["body"].get<std::string>(), f["fan"], f["vector"].get<opad::Vec3>());
   if (fans.empty() && m_withFans->isChecked()) {
@@ -497,18 +684,23 @@ bool CoolingAssistant::apply() {
     return false;
   }
   json materials = json::object();
-  std::vector<std::pair<std::string, double>> heat;
+  std::vector<std::pair<json, double>> heat;  // on a body (its id) or a face (its reference), and the power
   for (int r = 0; r < m_heat->rowCount(); ++r) {
+    const double watts = std::clamp(m_heat->item(r, 1)->data(Qt::EditRole).toDouble(), 0.0, 1000.0);
+    if (const QString face = m_heat->item(r, 0)->data(kFaceRole).toString(); !face.isEmpty()) {
+      heat.push_back({opad::Ref::parse(face.toStdString()).to_json(), watts});
+      continue;
+    }
     const std::string id = m_heat->item(r, 0)->data(Qt::UserRole).toString().toStdString();
     if (m_heat->item(r, 0)->checkState() == Qt::Checked) {
-      heat.push_back({id, std::clamp(m_heat->item(r, 1)->data(Qt::EditRole).toDouble(), 0.0, 1000.0)});
+      heat.push_back({json(id), watts});
       if (opad::material_of(d->doc, d->scene, id).id.empty()) materials[id] = {{"k", 150}, {"cp", 700}, {"density", 2.33}, {"name", "Silicon (assumed)"}};
     }
     if (m_heat->item(r, 2)->checkState() == Qt::Checked)
       materials[id] = {{"pcb", {{"layers", std::clamp(m_heat->item(r, 3)->data(Qt::EditRole).toInt(), 1, 32)}}}};
   }
   if (heat.empty()) {
-    m_status->setText(tr("Nothing makes heat: tick at least one part on the Heat page."));
+    m_status->setText(tr("Nothing makes heat: tick at least one part on the Heat page, or pick a face."));
     m_steps->setCurrentRow(1);
     return false;
   }
@@ -518,8 +710,11 @@ bool CoolingAssistant::apply() {
   for (const auto& l : d->scene.loads)
     if (l.load_case == kCase) old.push_back(l.id);
   for (const auto& id : old) m_hooks.write("delete", {{"target", id}}, tr("Thermal setup"));
-  for (const auto& [id, w] : heat)
-    m_hooks.write("load", {{"kind", "heat"}, {"case", kCase}, {"on", {id}}, {"value", w}, {"name", tr("Heat").toStdString()}}, tr("Thermal setup"));
+  for (const auto& [on, w] : heat) {
+    json list = json::array();
+    list.push_back(on);
+    m_hooks.write("load", {{"kind", "heat"}, {"case", kCase}, {"on", list}, {"value", w}, {"name", tr("Heat").toStdString()}}, tr("Thermal setup"));
+  }
   if (fans)
     for (int r = 0; r < m_fans->rowCount(); ++r) {
       const std::string on = static_cast<QComboBox*>(m_fans->cellWidget(r, 0))->currentData().toString().toStdString();

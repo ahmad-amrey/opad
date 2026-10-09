@@ -524,6 +524,8 @@ void Simulate::positionOverlays(const QRect&) {
 }
 
 void Simulate::selectionChanged(const SelectionContext& selection) {
+  // Thermal setup's box page picks the box's bodies from the selection (the view, the browser).
+  if (auto* setup = services().window()->findChild<CoolingAssistant*>(); setup && setup->picking()) setup->selectionChanged(selection.ids, selection.refs);
   // Rows of the Simulation folder picked in the browser, in the order picked: the joints a relation couples.
   std::vector<std::string> now;
   for (const auto& id : selection.ids)
@@ -791,6 +793,22 @@ void Simulate::openCooling(int step) {
     };
     hooks.busy = [this] { return bool(m_job); };
     hooks.jobs = [this] { return services().jobs(); };
+    hooks.select = [this](const std::vector<opad::Ref>& refs) { services().select(refs); };
+    hooks.accumulate = [this](bool on) { services().viewport()->setPickAccumulate(on); };
+    hooks.onFilterApplied = [this](QObject* context, std::function<void()> then) {
+      QObject::connect(services().viewport(), &Viewport::filterApplied, context, std::move(then));
+    };
+    hooks.filterSwitching = [this] { return services().viewport()->filterSwitching(); };
+    hooks.filter = [this](const QString& id) {
+      const Viewport::SelFilter f = services().viewport()->selectionFilter();
+      const QString was = f == Viewport::SelFilter::Face     ? "select.faces"
+                          : f == Viewport::SelFilter::Edge   ? "select.edges"
+                          : f == Viewport::SelFilter::Vertex ? "select.vertices"
+                                                             : "select.bodies";
+      if (!id.isEmpty() && id != was)
+        if (QAction* a = services().action(id)) a->trigger();
+      return was;
+    };
     hooks.showField = [this](const QString& field) {
       if (!m_run || !m_run->fea) return;
       m_field = field;

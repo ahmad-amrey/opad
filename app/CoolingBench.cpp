@@ -108,14 +108,7 @@ OPAD_BENCH(OPAD_BENCH_COOLING, cooling) {
                             "the example's bodies are made");
                     require(doc->scene.param("vent_z") != nullptr, "its vent height is the parameter vent_z");
                     require(loadsOf("heat").size() == 2 && loadsOf("fan").size() == 1, "two heat sources and a fan in the case Cooling");
-                    int walls = 0;
-                    bool enclosure = false;
-                    for (int i = 0; i < c->wallChoice()->count(); ++i)
-                      if (c->wallChoice()->item(i)->checkState() == Qt::Checked) {
-                        ++walls;
-                        enclosure = enclosure || c->wallChoice()->item(i)->data(Qt::UserRole).toString().toStdString() == box;
-                      }
-                    require(walls == 1 && enclosure, "the box's bodies ticked: the enclosure alone");
+                    require(c->pickedBodies() == std::vector<std::string>{box}, "the box's bodies picked: the enclosure alone");
                     int heated = 0;
                     for (int r = 0; r < c->heatTable()->rowCount(); ++r) heated += c->heatTable()->item(r, 0)->checkState() == Qt::Checked;
                     require(heated == 2, QString("the heat table ticks the two chips (%1)").arg(heated));

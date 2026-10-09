@@ -175,6 +175,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // edges, for the axis through them; other faces are not.
   void setSelectionFilter(SelFilter f, bool roundFaces = false);
   SelFilter selectionFilter() const { return m_filter; }
+  bool filterSwitching() const { return m_filterJob; }  // a filter's pick targets being built (filterApplied follows); its cleared selection may arrive meanwhile
   bool roundFacesPickable() const { return m_roundFaces; }
 
   // Fit, Home and the standard views move the camera at once, or (animate, the commands) in a short animation on screen.

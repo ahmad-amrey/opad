@@ -122,10 +122,11 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
       {tr("Cool a board in a vented box (air solved)"),
        tr("How hot a single-board computer gets in its case, with a fan blowing in, or with vents only and warm air rising."),
        {tr("Model the box with its walls and the openings cut through them, as one solid or several (a base and its lid, a frame and its "
-           "panels); the board, its chips and the heatsink inside it as their own bodies; and a block where each fan sits, as big as the fan "
+           "panels); the board, its chips and the heatsink inside it as their own bodies (or the chips joined into the board); and a block where each fan sits, as big as the fan "
            "(or the fan's own model). On an empty document Thermal setup builds an example."),
-        tr("Press Thermal setup on the Thermal tab. Its first page ticks the bodies the box is made of: check them, tick or untick."),
-        tr("Heat: tick each chip that makes heat with its power in W, and tick Board for the circuit board with its copper layers."),
+        tr("Press Thermal setup on the Thermal tab. Its first page picks the bodies the box is made of: click bodies in the view or rows in the browser to add or take them out."),
+        tr("Heat: tick each chip that makes heat with its power in W (a chip joined into the board: click its face in the view and type that "
+           "face's power), and tick Board for the circuit board with its copper layers."),
         tr("Air: for each fan, the block it is (or the heatsink it blows on), the fan and the way it blows. Untick the fans for vents only."),
         tr("Run: Quick to compare, Normal for the answer. It takes minutes; the status bar shows how far it is."),
         tr("The page lists each part's temperature, the fans' flow and the air through the box. See inside the box hides it to show the "

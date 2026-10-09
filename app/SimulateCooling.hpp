@@ -1,7 +1,8 @@
 #pragma once
 // Thermal setup (simulate.cooling, the CoolingAssistant): the guided setup of a thermal study of a board, its chips and a heatsink in a
-// vented box, cooled by fans or by warm air rising, step by step: the box (its bodies ticked: a base and its lid, a frame and
-// its panels; found by itself), the heat each part makes and which part is a board, how the air moves (fans, each on a block
+// vented box, cooled by fans or by warm air rising, step by step: the box (its bodies picked: a base and its lid, a frame and
+// its panels; found by itself), the heat each part makes (a body, or a face picked: a chip joined into its board) and which part
+// is a board, how the air moves (fans, each on a block
 // standing for it or on a heatsink, or vents only), and the run (the air solved with OpenFOAM, the parts with CalculiX:
 // sim/cfd.hpp) with its results. What it sets up is ordinary loads (case "Cooling") and a study, there to change in the
 // Simulation panel afterwards; an AI agent sees the same.
@@ -9,8 +10,10 @@
 #include <QWidget>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "opad/sim/cfd.hpp"
 #include "opad/sim/study.hpp"
@@ -39,6 +42,11 @@ class CoolingAssistant : public QWidget {
     std::function<void(const QString&)> showField;         // the result map with that field (temperature, air_speed)
     std::function<void(const std::string&, bool)> setVisible;  // a body shown or hidden
     std::function<JobRunner*()> jobs;                      // where the bodies' boxes are measured (a worker)
+    std::function<void(const std::vector<opad::Ref>&)> select;  // bodies or faces selected in the view and the browser
+    std::function<void(bool)> accumulate;                  // the view's clicks add and take out (picking) or select
+    std::function<QString(const QString&)> filter;         // the view's selection filter set to that action (empty: kept); the one before
+    std::function<bool()> filterSwitching;                 // a filter switch is being applied (its cleared selection is no pick)
+    std::function<void(QObject*, std::function<void()>)> onFilterApplied;  // each time the view's filter has built its pick targets
   };
   CoolingAssistant(Hooks hooks, QWidget* parent = nullptr);
 
@@ -53,7 +61,14 @@ class CoolingAssistant : public QWidget {
   static QString studyName();
 
   // For benches.
-  QListWidget* wallChoice() const { return m_walls; }  // the box's bodies, ticked
+  QListWidget* wallChoice() const { return m_walls; }  // the box's bodies picked, by name
+  const std::vector<std::string>& pickedBodies() const { return m_picked; }
+  bool picking() const { return m_picking != Pick::None; }
+  bool pickingFaces() const { return m_picking == Pick::Faces; }
+  const std::vector<opad::Ref>& heatFaces() const { return m_faces; }  // the faces that make heat, picked on the Heat page
+  // The app's selection changed (the view, the browser): while the box's page picks, its bodies are what is selected; while
+  // the Heat page picks, the faces that make heat are.
+  void selectionChanged(const std::vector<std::string>& ids, const std::vector<opad::Ref>& refs);
   QTableWidget* heatTable() const { return m_heat; }
   QTableWidget* fanTable() const { return m_fans; }
   QLabel* resultText() const { return m_result; }
@@ -64,12 +79,20 @@ class CoolingAssistant : public QWidget {
 
  protected:
   void keyPressEvent(class QKeyEvent* e) override;
+  void hideEvent(class QHideEvent* e) override;
 
  private:
   void reload();      // the pages from the document as it is now
   void showStep(int i);
   void addFanRow(const std::string& body, const opad::json& fan, const opad::Vec3& way);
-  std::vector<std::string> walls() const;  // the box's bodies ticked
+  std::vector<std::string> walls() const;  // the box's bodies picked
+  enum class Pick { None, Box, Faces };
+  void startPicking(Pick what);  // the view and the browser pick the box's bodies, or the faces that make heat (their page)
+  void stopPicking();
+  void reselect();      // what is picked, shown selected
+  void showPicked();    // the pick box and the list say what is picked
+  void keepFacePowers();  // the powers typed for faces, kept while their rows are made again
+  void showFaces();     // the faces that make heat: rows of the heat table after the bodies
   void wallsChanged();                     // what is inside them, and the heat and fan tables for it
   std::string studyId() const;
 
@@ -77,7 +100,17 @@ class CoolingAssistant : public QWidget {
   QListWidget* m_steps = nullptr;
   QStackedWidget* m_pages = nullptr;
   QLabel* m_engine = nullptr;
-  QListWidget* m_walls = nullptr;  // every shown solid, the box's bodies ticked
+  class PickBox* m_pick = nullptr;  // the box's bodies, picked in the view or the browser
+  QListWidget* m_walls = nullptr;   // their names
+  std::vector<std::string> m_picked;
+  Pick m_picking = Pick::None;
+  QString m_filterBefore;     // the view's filter before picking
+  bool m_awaiting = false;    // the filter switched: the picks shown again once its targets are built
+  QString pickFilter() const;  // the filter the page picks with
+  void filterApplied();
+  class PickBox* m_facePick = nullptr;   // the faces that make heat (a chip joined into its board has no body of its own)
+  std::vector<opad::Ref> m_faces;
+  std::map<std::string, double> m_facePower;  // by Ref::str
   QListWidget* m_inside = nullptr;
   QPushButton* m_example = nullptr;
   QTableWidget* m_heat = nullptr;
