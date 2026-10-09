@@ -49,6 +49,10 @@ class DesignController : public QObject {
   // A new feature with inputs given (picks as their JSON array, values and flags as typed): Paste's Move / copy (UI-129).
   void startFeature(const QString& kind, const std::vector<std::pair<QString, opad::json>>& given);
   void editOp(const std::string& opId);  // a feature or a sketch, rolled back to when it was made
+  // Align for a sketch: the Align form without its bodies, From the sketch's own plane; committed as an edit of the sketch's
+  // plane, so the features built on it regenerate. An open sketch is finished first.
+  void startSketchAlign(const std::string& sketchId);
+  const std::string& aligningSketch() const { return m_alignSketch; }
   // `command`: what the plane is chosen for (its help, the picker's title): New sketch, Align view to plane, Import's drawing.
   void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin=false,const QString& command="design.sketch");
   ToolPanel* planePanel() const { return m_planePicker->panel(); }
@@ -157,6 +161,8 @@ class DesignController : public QObject {
   opad::json m_editResult;      // what that feature made when editing began: the preview until an input changes it
   bool m_previewPending = false;  // a handle drag changed the value while a preview plan was running
   std::string m_newId;          // id the new feature's op will get (so previews can be matched to it)
+  std::string m_alignSketch;    // startSketchAlign: the sketch whose plane the form edits (empty: a feature)
+  opad::design::FeatureSpec m_sketchAlignSpec;  // the form's spec meanwhile (Align without bodies)
   std::function<void(opad::json,opad::Frame)> m_planePicked;
   bool m_pickPlane = false;
   QString m_planeCommand = "design.sketch";

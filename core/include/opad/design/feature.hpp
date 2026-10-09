@@ -155,6 +155,11 @@ Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane);
 // A plane chosen now for a sketch whose component has moved since it was made, as its op keeps it: where it was made
 // (its frame and world points and directions moved back by sketch.moved; TODO 11 UI-33). Unchanged otherwise.
 json plane_as_made(const SketchItem& sketch, json plane);
+// Align for a sketch: the plane its op takes (as an edit's "plane" stores it) when it is aligned as the align feature's
+// inputs say, all but "bodies" (from/to point, line or plane, motion, flip, offset, angle). Two planes lie flush (Flip:
+// facing). It stays linked to the plane or face it was aligned onto, or to its own support when it moved within it;
+// otherwise it is fixed in the world.
+json align_sketch_plane(const Document& doc, const Scene& scene, const std::string& sketch, const json& inputs, Frame* world = nullptr);  // world: the frame it takes
 // Whether an input is in use for these inputs (its show_if holds).
 bool input_active(const InputSpec& in, const json& inputs);
 // A frame as results report it (TODO 10 B3): origin, x, y and the normal (x cross y).

@@ -1162,6 +1162,7 @@ TEST(every_tool_step_has_a_clip_step) {
   for (const auto& m : QRegularExpression(R"re(\{"(\w+)", \{QT_TR_NOOP\("[^"]+"\), "\w+", (\d+)\}\})re").globalMatch(source("app/MainWindowInspect.cpp")))
     steps("inspect." + m.captured(1), m.captured(2).toInt(), "the measure tool " + m.captured(1));
   steps("sketch.replane", 2, "the plane picker");
+  steps("design.alignSketch", 3, "the Align sketch form (From, To, then the values and OK)");
   steps("design.sketch", 2, "the plane picker");
   if (!wrong.isEmpty()) throw check::Failure(wrong.join(" | ").toStdString());
   CHECK(checked >= 90);

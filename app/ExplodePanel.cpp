@@ -23,6 +23,7 @@
 #include "KeyText.hpp"
 #include "PanelFooter.hpp"
 #include "Theme.hpp"
+#include "SearchCombo.hpp"
 
 namespace {
 QLabel* header(const QString& text, QWidget* parent) {
@@ -227,6 +228,7 @@ ExplodePanel::ExplodePanel(QWidget* parent) : QWidget(parent) {
   connect(m_fasteners, &QCheckBox::toggled, this, &ExplodePanel::fastenersToggled);
   connect(m_lines, &QCheckBox::toggled, this, &ExplodePanel::linesToggled);
   connect(reset, &QPushButton::clicked, this, &ExplodePanel::resetRequested);
+  search_combo::enable(m_views);
   connect(m_views, &QComboBox::activated, this, [this](int i) {
     const std::string id = m_views->itemData(i).toString().toStdString();
     if (!id.empty()) emit viewChosen(id);

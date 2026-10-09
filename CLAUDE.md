@@ -153,7 +153,12 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   number, its component (shape stored in that frame) and colour. Explicit body_name/color/parent (feature command,
   batch, panel's New body section) = `style_new_bodies` appending rename/appearance/reparent ops, never result fields.
 - Creation features end in `apply_operation` (new/join/cut/intersect; automatic targets are written back into the
-  op's inputs). References carry a `hint` (centre, size, entity counts): same counts -> ordinal trusted, else nearest.
+  op's inputs).
+- Move (no copy) and Align (`align`, features.cpp `align_motion`/`placed_nodes`) output `Out::placed`: result
+  `placements`, body keys kept, preview = `setPreviewMotion` (nothing meshed), commit = relocate (Engine, 1295 bodies:
+  preview 0.57 s, commit 0.12 s; the old rebuild took 70 s). Align sketch = `design.alignSketch` -> `startSketchAlign`
+  (the Align form without bodies; plan = `edit` of the sketch's plane via `align_sketch_plane`; `setPreviewSketch`).
+  Benches `align`, `move-perf-engine` (tools/bench_cases/align.py); core `ctest -R align`. References carry a `hint` (centre, size, entity counts): same counts -> ordinal trusted, else nearest.
 - Threads: `design::plan_ops` only reads the document -> `JobRunner::async`; `commit` on the UI thread
   (`DesignController::applyOps`, `runPreview`). A cancelled job reports at once while its thread runs on, so commits
   go through `whenNobodyReads` (the `Reading` counter). `AppDocument::designBusy` makes `run()` refuse meanwhile.

@@ -1,5 +1,6 @@
 #include "opad/mesh.hpp"
 
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Version.hxx>
@@ -173,7 +174,9 @@ Mesh tessellate_body(const Document& doc, const std::string& key, double linear_
       // fall through and rebuild
     }
   }
-  Mesh m = tessellate(body_shape(doc, key), linear_tol);
+  // A copy: the cached shape's triangulation is the one the view draws and highlights (a mesh at another tolerance put
+  // in its place made a selected face's highlight cut in and out of the face drawn).
+  Mesh m = tessellate(BRepBuilderAPI_Copy(body_shape(doc, key), Standard_True, Standard_False).Shape(), linear_tol);
   cache_put("mesh", cache_key, m.serialize());
   return m;
 }

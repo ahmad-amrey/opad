@@ -117,6 +117,13 @@ void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
     const SelectionContext selection = selectionContext();
     for (AreaController* area : m_areas) area->selectionChanged(selection);
   }
+  if (auto* source = findChild<QComboBox*>("meshSolidSource"); source && source->isVisible())  // Mesh to solid's source picked
+    for (const auto& r : refs)
+      for (const auto& body : m_doc->scene.bodies_under(r.body))
+        if (const int at = source->findData(QString::fromStdString(body)); at >= 0) {
+          source->setCurrentIndex(at);
+          break;
+        }
   updateCommands();
   if (!refs.empty() || !m_selRows.empty()) resumePendingPick();  // a command that asked for this selection (UI-109)
   if (!m_propsPanel->isVisible()) return;
@@ -313,7 +320,7 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
     if(!ids.empty()) {
       auto* sketch=m_design->sketch();
       menu.addAction(sketch->visible()?tr("Hide sketch"):tr("Show sketch"),this,[sketch]{sketch->setVisible(!sketch->visible());});
-      menu.addAction(action("sketch.replane"));menu.addAction(action("view.alignPlane"));
+      menu.addAction(action("sketch.replane"));menu.addAction(action("design.alignSketch"));menu.addAction(action("view.alignPlane"));
       forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
       return;
     }
@@ -425,6 +432,7 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
         m_design->editOp(id);
         m_design->redefineSketchPlane();
       });
+      entry("align", tr("Align sketch"), "contextAlignSketch", [this, id = ids.front()] { if (requireEditable()) m_design->startSketchAlign(id); });
     }
     history();
     entry("export", tr("Export sketch"), "contextExportSketch", [this, ids] { exportDialog(ids); });
@@ -443,7 +451,8 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
     menu.addSeparator();
     add("edit.rename");
     looks();
-    if (!components) add("design.move");
+    add("design.move");  // components too: moved by their placement, nothing rebuilt
+    add("design.align");
     if (components && ids.size() == 1) add("design.newcomponent");
     const opad::Node* n = m_doc->node(ids.front());
     if (n && !n->parent.empty()) add("edit.selectparent");

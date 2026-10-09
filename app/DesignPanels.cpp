@@ -22,6 +22,7 @@
 #include "KeyText.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
+#include "SearchCombo.hpp"
 
 namespace {
 
@@ -235,6 +236,7 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     refreshNewBody();
   });
   connect(m_name, &QLineEdit::textChanged, this, [this] { refreshNewBody(); });
+  search_combo::enable(m_bodyParent);  // every component by its path: typed to find one in a big assembly
   connect(m_bodyParent, &QComboBox::currentIndexChanged, this, [this] { refreshNewBody(); });
   connect(m_bodyColour, &QPushButton::clicked, this, [this] {
     const QColor chosen = QColorDialog::getColor(m_colour.isValid() ? m_colour : QColor(190, 190, 195), this, tr("Colour of the new bodies"));
@@ -280,6 +282,7 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
     delete it;
   }
   m_name->setText(name);
+  m_name->setVisible(true);
   m_editingFeature = editing;
   m_bodyName->clear();
   m_colour = QColor();
@@ -428,12 +431,15 @@ void FeaturePanel::refreshVisibility() {
       if (!rule && n == 1 && singlePick(in.type)) {
         const opad::json& one = p;
         if (one.contains("base")) what = (in.type == "plane" ? tr("%1 plane") : tr("%1 axis")).arg(QString::fromStdString(one["base"].get<std::string>()).toUpper());
-        else if (one.contains("sketch")) what = tr("Sketch");
+        else if (one.contains("sketch")) {  // by its name (Align sketch's From: the sketch's own plane)
+          const opad::SketchItem* sk = one["sketch"].is_string() ? m_doc->scene.sketch(one["sketch"].get<std::string>()) : nullptr;
+          what = sk ? QString::fromStdString(sk->name) : tr("Sketch");
+        }
         else if (one.contains("feature")) what = tr("Construction");
         else if (one.contains("direction")) what = tr("Direction");
         else what = in.type == "plane" || one.contains("face") ? tr("Face") : tr("Edge");  // an axis through a round face
       }
-      if (!rule && in.type == "bodies" && m_spec->kind == "move") what = linkedMoveText(p, what);
+      if (!rule && in.type == "bodies" && (m_spec->kind == "move" || m_spec->kind == "align")) what = linkedMoveText(p, what);
       it->second.pick->set(n, what, m_active == it->first, in.optional || n >= std::max(1, in.min_count) || in.min_count == 0);
       const auto note = m_notes.find(it->first);
       it->second.pick->setNote(note == m_notes.end() ? QString() : note->second);

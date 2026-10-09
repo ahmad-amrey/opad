@@ -16,6 +16,7 @@
 
 #include "I18n.hpp"
 #include "opad/sim/printing.hpp"
+#include "SearchCombo.hpp"
 
 using opad::json;
 
@@ -129,6 +130,7 @@ PrintDialog::PrintDialog(const json& print, QWidget* parent) : QDialog(parent) {
     }
   });
   load(print);
+  search_combo::enable(m_material);  // the filaments: typed to find one
   for (QComboBox* c : {m_material, m_up, m_pattern}) connect(c, &QComboBox::currentIndexChanged, this, &PrintDialog::update);
   for (QDoubleSpinBox* s : {m_layer, m_line, m_infill, m_angle, m_flow}) connect(s, &QDoubleSpinBox::valueChanged, this, &PrintDialog::update);
   for (QSpinBox* s : {m_walls, m_top, m_bottom}) connect(s, &QSpinBox::valueChanged, this, &PrintDialog::update);

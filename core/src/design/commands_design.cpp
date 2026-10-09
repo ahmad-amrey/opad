@@ -300,6 +300,20 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         return out;
       });
 
+  reg("align_sketch",
+      "Align a sketch as the align feature aligns bodies (its inputs but bodies); planes lie flush (flip: facing). Edits the "
+      "sketch's plane: features on it regenerate. Result: frame",
+      {{"doc", "path"}, {"target", "uuid - sketch op id"}, {"inputs", "object"}, {"by", "string"}}, true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        const std::string target = a.at("target").get<std::string>();
+        const Scene s = resolve(doc);
+        const json inputs = design::hint_refs(doc, s, parse_if_text(a.at("inputs")));
+        json out = design::apply_ops(doc, {design::make_edit_op(target, {{"plane", design::align_sketch_plane(doc, s, target, inputs)}})}, a.value("by", ""));
+        out["sketch_id"] = target;
+        if (const SketchItem* sk = resolve(doc).sketch(target)) out["frame"] = design::frame_result(sk->frame);
+        return out;
+      });
+
   reg("feature", "Add a feature (extrude, fillet, shell, ...) to the design history; see feature_kinds for the inputs. "
       "The bodies it makes are named after it (numbered when there are several); body_name, color and parent name, colour and place them "
       "in the same step. Result: feature_id, body_ids (the bodies it made or changed), all_body_ids for mirror and patterns (the picked bodies too)",

@@ -1,7 +1,9 @@
 #include "check.hpp"
 #include "opad/geometry.hpp"
+#include "opad/document.hpp"
 #include "opad/mesh.hpp"
 #include "../core/src/mesh_fallback.hpp"
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepGProp.hxx>
@@ -27,6 +29,7 @@
 #include <TColgp_HArray1OfPnt.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <array>
 #include <cstdio>
 #include <map>
 #include <vector>
@@ -369,6 +372,54 @@ TEST(boundary_triangulation_follows_curved_faces_and_holes) {
   CHECK_EQ(wrong_way(holes), 0);
 }
 
+// A face meshed from its boundary has its edges' nodes on that mesh, as BRepMesh gives them: an edge's line is drawn from
+// its nodes on its first face's mesh, and without them it was not drawn at all (though it could be picked). A seam has both
+// sides; the nodes lie on the edge.
+TEST(boundary_triangulation_gives_its_edges_their_nodes) {
+  auto check_edges = [](const TopoDS_Face& face) {
+    TopLoc_Location loc;
+    const auto mesh = BRep_Tool::Triangulation(face, loc);
+    int edges = 0, missing = 0, seams = 0;
+    for (TopExp_Explorer e(face, TopAbs_EDGE); e.More(); e.Next()) {
+      const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+      if (BRep_Tool::Degenerated(edge)) continue;
+      ++edges;
+      const auto poly = BRep_Tool::PolygonOnTriangulation(edge, mesh, loc);
+      if (poly.IsNull() || poly->NbNodes() < 2) {
+        ++missing;
+        continue;
+      }
+      seams += BRep_Tool::IsClosed(edge, mesh, loc);
+      // Its nodes on the edge's curve, end to end.
+      BRepAdaptor_Curve curve(edge);
+      for (int k = 1; k <= poly->NbNodes(); ++k) {
+        const gp_Pnt p = mesh->Node(poly->Node(k)).Transformed(loc.Transformation());
+        const gp_Pnt on = curve.Value(poly->Parameter(k));
+        if (p.Distance(on) > 1e-6) ++missing;
+      }
+    }
+    return std::array<int, 3>{edges, missing, seams};
+  };
+  const TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(5, 12).Shape();
+  for (TopExp_Explorer e(cylinder, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face face = TopoDS::Face(e.Current());
+    if (BRepAdaptor_Surface(face).GetType() != GeomAbs_Cylinder) continue;
+    CHECK(opad::detail::triangulate_from_boundary(face, 0.01, 0.35));
+    const auto [edges, missing, seams] = check_edges(face);
+    CHECK(edges >= 3);  // two rims and the seam (twice in the face's wire)
+    CHECK_EQ(missing, 0);
+    CHECK(seams >= 1);
+  }
+  BRepBuilderAPI_MakeFace plate(gp_Pln(), -10, 10, -10, 10);
+  plate.Add(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(3, 2, 0), gp_Dir(0, 0, -1)), 2)).Edge()).Wire());
+  const TopoDS_Face holed = plate.Face();
+  CHECK(opad::detail::triangulate_from_boundary(holed, 0.01, 0.35));
+  const auto [edges, missing, seams] = check_edges(holed);
+  CHECK_EQ(edges, 5);  // four sides and the hole
+  CHECK_EQ(missing, 0);
+  CHECK_EQ(seams, 0);
+}
+
 TEST(straightening_keeps_faces_it_cannot_match) {
   // A cone is ruled but not along one direction; a sphere is not ruled: both keep BRepMesh's triangles.
   TopoDS_Shape cone = BRepPrimAPI_MakeCone(4, 1, 6).Shape(), sphere = BRepPrimAPI_MakeSphere(5).Shape();
@@ -401,3 +452,24 @@ int main(int argc,char**argv) {
   return check::run_all(argc,argv);
 }
 
+
+// A body's mesh for a render or an export (tessellate_body) is made on a copy: the cached shape keeps the triangulation the
+// view drew and highlights its faces from (meshed again in place, a selected face's highlight cut in and out of it).
+TEST(body_meshes_leave_the_cached_shape_as_drawn) {
+  opad::Document doc = opad::Document::create();
+  const std::string key = doc.add_body(opad::brep_from_shape(BRepPrimAPI_MakeCylinder(5, 12).Shape()), opad::json::object());
+  const TopoDS_Shape cached = opad::body_shape(doc, key);
+  opad::mesh_shape(cached, 0.05);  // as the view meshed it
+  std::vector<Handle(Poly_Triangulation)> drawn;
+  for (TopExp_Explorer e(cached, TopAbs_FACE); e.More(); e.Next()) {
+    TopLoc_Location loc;
+    drawn.push_back(BRep_Tool::Triangulation(TopoDS::Face(e.Current()), loc));
+  }
+  const opad::Mesh fine = opad::tessellate_body(doc, key, 0.002);
+  CHECK(fine.triangle_count() > 0);
+  size_t i = 0;
+  for (TopExp_Explorer e(opad::body_shape(doc, key), TopAbs_FACE); e.More(); e.Next(), ++i) {
+    TopLoc_Location loc;
+    CHECK(BRep_Tool::Triangulation(TopoDS::Face(e.Current()), loc) == drawn[i]);
+  }
+}

@@ -19,6 +19,7 @@
 #include "PanelFooter.hpp"
 #include "SimPlot.hpp"
 #include "Theme.hpp"
+#include "SearchCombo.hpp"
 
 namespace {
 QLabel* header(const QString& text, QWidget* parent) {
@@ -220,6 +221,7 @@ SimulatePanel::SimulatePanel(QWidget* parent) : QWidget(parent) {
   m_footer->setCancel(tr("Close"));
   outer->addWidget(m_footer);
 
+  search_combo::enable(m_joints);  // a joint's row in the browser chooses it too
   connect(m_joints, &QComboBox::currentIndexChanged, this, [this] { emit jointChosen(m_joints->currentData().toString()); });
   auto sliderValue = [this] { return m_lo + (m_hi - m_lo) * m_jointSlider->value() / double(kSliderSteps); };
   connect(m_jointSlider, &QSlider::valueChanged, this, [this, sliderValue] {
@@ -232,6 +234,7 @@ SimulatePanel::SimulatePanel(QWidget* parent) : QWidget(parent) {
   connect(m_jointValue, &QDoubleSpinBox::valueChanged, this, [this](double v) { emit jointValueChosen(v); });
   connect(m_kind, &QComboBox::currentIndexChanged, this, &SimulatePanel::jointKindChanged);
   connect(m_addJoint, &QPushButton::clicked, this, [this] { emit addJointRequested(jointKind()); });
+  search_combo::enable(m_studies);  // a study's row in the browser chooses it too
   connect(m_studies, &QComboBox::currentIndexChanged, this, [this] { emit studyChosen(m_studies->currentData().toString()); });
   connect(m_new, &QPushButton::clicked, this, [this] { emit newStudyRequested(m_newKind->currentData().toString()); });
   connect(m_run, &QPushButton::clicked, this, &SimulatePanel::runRequested);

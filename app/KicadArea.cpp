@@ -48,6 +48,7 @@
 #include "opad/checks.hpp"
 #include "opad/kicad_pcb.hpp"
 #include "opad/scene.hpp"
+#include "SearchCombo.hpp"
 
 OPAD_ICON_TABLE(kicad,
                 {"kicadboard", R"(<rect x="3" y="5" width="18" height="14" rx="1"/><rect x="9" y="9" width="6" height="6"/><path d="M15 12h3M6 9h3M6 15h3"/><circle cx="18" cy="8" r="1"/>)"},
@@ -540,6 +541,7 @@ QDialog* KicadArea::project() {
     }
     filter->clear();
   };
+  search_combo::enable(boards);
   connect(boards, &QComboBox::currentIndexChanged, dialog, fillBoard);
   connect(filter, &QLineEdit::textChanged, dialog, [list](const QString& text) {
     for (int i = 0; i < list->count(); ++i) list->item(i)->setHidden(!text.isEmpty() && !list->item(i)->text().contains(text, Qt::CaseInsensitive));

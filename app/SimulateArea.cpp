@@ -10,6 +10,7 @@
 #include <SelectMgr_Selection.hxx>
 
 #include <QAction>
+#include <QComboBox>
 #include <QEventLoop>
 #include <QInputDialog>
 #include <QLinearGradient>
@@ -48,6 +49,7 @@
 #include "opad/sim/cfd.hpp"
 #include "opad/sim/fea.hpp"
 #include "opad/sim/joints.hpp"
+#include "SearchCombo.hpp"
 
 OPAD_ICON_TABLE(simulate,
                 {"simulate", R"(<circle cx="7" cy="16" r="4"/><circle cx="17" cy="8" r="4"/><path d="M10 13.5l4-3"/><path d="M3 21h18" opacity=".55"/>)"},
@@ -385,8 +387,8 @@ void Simulate::buildActions() {
       {"air", "cooling", "natural convection", "forced convection", "film coefficient", "heat transfer coefficient"});
   add("simulate.radiation", tr("Radiation"), "simRadiation", [this] { addLoad("radiation"); }, doc, {"emissivity", "infrared", "black body"});
   add("simulate.fan", tr("Fan"), "simFan", [this] { addLoad("fan"); }, doc, {"heatsink", "airflow", "CFM", "cooling fan", "blower", "fins"});
-  add("simulate.cooling", tr("Cooling assistant"), "simCooling", [this] { openCooling(); }, doc,
-      {"enclosure", "box", "vents", "fan", "airflow", "CFD", "single-board computer", "electronics cooling", "optimise", "sweep"});
+  add("simulate.cooling", tr("Thermal setup"), "simCooling", [this] { openCooling(); }, doc,
+      {"enclosure", "box", "vents", "fan", "airflow", "CFD", "single-board computer", "electronics cooling", "thermal setup", "guided setup"});
   add("simulate.thermal", tr("Thermal study"), "simThermal", [this] { newStudy("thermal"); }, doc,
       {"temperature", "heat transfer", "heatsink", "cooling", "warm up", "transient", "steady state"});
   add("simulate.results", tr("Result map"), "simResults", [this] { showResults(!resultShown()); },
@@ -524,6 +526,8 @@ void Simulate::positionOverlays(const QRect&) {
 }
 
 void Simulate::selectionChanged(const SelectionContext& selection) {
+  // Thermal setup's box page picks the box's bodies from the selection (the view, the browser).
+  if (auto* setup = services().window()->findChild<CoolingAssistant*>(); setup && setup->picking()) setup->selectionChanged(selection.ids, selection.refs);
   // Rows of the Simulation folder picked in the browser, in the order picked: the joints a relation couples.
   std::vector<std::string> now;
   for (const auto& id : selection.ids)
@@ -535,6 +539,7 @@ void Simulate::selectionChanged(const SelectionContext& selection) {
     if (std::find(kept.begin(), kept.end(), id) == kept.end()) kept.push_back(id);
   m_picked = kept;
   if (m_panel && m_panel->isVisible() && now.size() == 1 && now[0].rfind("sim:j:", 0) == 0) chooseJoint(now[0].substr(6));
+  if (m_panel && m_panel->isVisible() && now.size() == 1 && now[0].rfind("sim:s:", 0) == 0) chooseStudy(now[0].substr(6));  // its row picked
 }
 
 void Simulate::documentChanged(bool replaced) {
@@ -790,6 +795,23 @@ void Simulate::openCooling(int step) {
       });
     };
     hooks.busy = [this] { return bool(m_job); };
+    hooks.jobs = [this] { return services().jobs(); };
+    hooks.select = [this](const std::vector<opad::Ref>& refs) { services().select(refs); };
+    hooks.accumulate = [this](bool on) { services().viewport()->setPickAccumulate(on); };
+    hooks.onFilterApplied = [this](QObject* context, std::function<void()> then) {
+      QObject::connect(services().viewport(), &Viewport::filterApplied, context, std::move(then));
+    };
+    hooks.filterSwitching = [this] { return services().viewport()->filterSwitching(); };
+    hooks.filter = [this](const QString& id) {
+      const Viewport::SelFilter f = services().viewport()->selectionFilter();
+      const QString was = f == Viewport::SelFilter::Face     ? "select.faces"
+                          : f == Viewport::SelFilter::Edge   ? "select.edges"
+                          : f == Viewport::SelFilter::Vertex ? "select.vertices"
+                                                             : "select.bodies";
+      if (!id.isEmpty() && id != was)
+        if (QAction* a = services().action(id)) a->trigger();
+      return was;
+    };
     hooks.showField = [this](const QString& field) {
       if (!m_run || !m_run->fea) return;
       m_field = field;
@@ -1086,8 +1108,15 @@ void Simulate::addLoad(const QString& kind) {
     QStringList names;
     for (const auto& f : opad::sim::air::fans()) names << QString::fromStdString(f.name);
     names << tr("Another fan: its flow and pressure");
-    const QString pick = QInputDialog::getItem(services().window(), tr("Fan"), tr("The fan:"), names, 3, false, &ok);
+    QInputDialog ask(services().window());
+    ask.setWindowTitle(tr("Fan"));
+    ask.setLabelText(tr("The fan:"));
+    ask.setComboBoxItems(names);
+    ask.setTextValue(names[3]);
+    if (auto* combo = ask.findChild<QComboBox*>()) search_combo::enable(combo);  // typed to find a fan
+    ok = ask.exec() == QDialog::Accepted;
     if (!ok) return;
+    const QString pick = ask.textValue();
     const int at = int(names.indexOf(pick));
     if (at >= 0 && at < int(opad::sim::air::fans().size())) {
       args["fan"] = opad::sim::air::fans()[size_t(at)].id;

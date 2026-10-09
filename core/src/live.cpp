@@ -122,7 +122,7 @@ const json& live_tools() {
   render["shading"]={{"type","string"},{"enum",{"flat","smooth"}},{"default","flat"},{"description","smooth shades with vertex normals, so curved surfaces look curved."}};
   render["visible_ids"]={{"type","boolean"},{"default",false},{"description","List the rendered bodies' ids (result.visible_ids); by default only visible_count."}};
   json batchSteps=json::array();
-  const std::set<std::string> batchCommands={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform","joint"};
+  const std::set<std::string> batchCommands={"component","param","sketch","sketch_edit","align_sketch","feature","feature_edit","rename","reparent","appearance","transform","joint"};
   for(const auto& command:commands::list())if(batchCommands.count(command.name)){
     auto arguments=command_schema(command,true);
     // The sketch geometry schema is on the sketch tool; here it is named, and the batch validates it in full (B12).

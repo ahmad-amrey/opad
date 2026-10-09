@@ -510,18 +510,17 @@ TEST(move_places_a_linked_file_as_one) {
   const json picks = json::array({{{"body", a}, {"kind", "body"}}, {{"body", block}, {"kind", "body"}}});
   const json made = commands::run("feature", {{"kind", "move"}, {"inputs", {{"bodies", picks}, {"dx", "10 mm"}}}}, &d);
   const std::string move = made["feature_id"];
-  CHECK_EQ(made["placed_ids"].size(), tops.size());
-  CHECK_EQ(made["body_ids"].size(), 1u);  // the block
+  CHECK_EQ(made["placed_ids"].size(), tops.size() + 1);  // the file's tops and the block: all placed as they are
   s = resolve(d);
   CHECK(s.unresolved.empty());
   const json& result = s.feature(move)->result;
-  CHECK(result.contains("placements") && result["placements"].size() == tops.size());
+  CHECK(result.contains("placements") && result["placements"].size() == tops.size() + 1);
   CHECK_EQ(s.node(a)->body_key, key_a);
   CHECK_EQ(s.node(b)->body_key, key_b);
   CHECK(near3(low_corner(d, s, a), {a0[0] + 10, a0[1], a0[2]}));
   CHECK(near3(low_corner(d, s, b), {b0[0] + 10, b0[1], b0[2]}));  // the part not picked moved too: one unit
   CHECK(near3(low_corner(d, s, block), {block0[0] + 10, block0[1], block0[2]}));
-  CHECK_EQ(d.bodies().size(), stored + 1);  // the moved block's entry; nothing of the file
+  CHECK_EQ(d.bodies().size(), stored);  // nothing stored: the block keeps its body, the file's parts stay the file's
   for (const auto& entry : d.bodies()) CHECK(entry.key != key_a || entry.external);
   // Rolled back to before it: where the file was.
   CHECK(near3(low_corner(d, resolve(d, move), a), a0));

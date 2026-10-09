@@ -99,6 +99,14 @@ Mat material_for(const Document& doc, const Scene& scene, const std::string& bod
   if (c.density > 0) m.rho = c.density;
   if (overrides.is_object()) {
     const json o = overrides.contains(body) ? overrides[body] : overrides.value("all", json());
+    // "material": a library material for this study (a heatsink of several bodies made one metal), before the numbers given.
+    if (const std::string id = o.is_object() ? o.value("material", std::string()) : std::string(); !id.empty()) {
+      const Material* lib = material(id);
+      if (!lib) throw Error("study materials: no library material \"" + id + "\"");
+      if (const Mechanical* mech = mechanical(id)) m.E = mech->youngs, m.nu = mech->poisson, m.yield = mech->yield;
+      if (const Thermal* th = thermal(id)) m.k = th->conductivity, m.cp = th->specific_heat, m.emissivity = th->emissivity, m.thermal_assumed = false;
+      m.rho = lib->density, m.name = lib->name;
+    }
     if (o.is_object()) {
       m.E = o.value("E", m.E), m.nu = o.value("nu", m.nu), m.rho = o.value("density", m.rho), m.yield = o.value("yield", m.yield);
       m.k = o.value("k", m.k), m.cp = o.value("cp", m.cp), m.emissivity = o.value("emissivity", m.emissivity);

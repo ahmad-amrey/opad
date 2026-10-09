@@ -89,6 +89,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_STYLES (ViewportStyleBench.cpp): each style applied in steps within the budget, the wireframe from the
   // worker's arrays, no refinement in it, hidden line hiding what is behind with outlines (UI-48)
   bool benchStyles(const QString& prefix, const std::function<void(const QString&)>& trigger);
+  bool benchRefinedHighlight(const QString& prefix);  // OPAD_BENCH_REFINED_HIGHLIGHT (ViewportRefinedBench.cpp)
   // G: the grid's visibility, one state outside sketches (view/grid) and one inside (sketch/grid, on unless hidden
   // there); gridShownChanged tells the G action which one it shows.
   void setGrid(bool on);
@@ -174,6 +175,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // edges, for the axis through them; other faces are not.
   void setSelectionFilter(SelFilter f, bool roundFaces = false);
   SelFilter selectionFilter() const { return m_filter; }
+  bool filterSwitching() const { return m_filterJob; }  // a filter's pick targets being built (filterApplied follows); its cleared selection may arrive meanwhile
   bool roundFacesPickable() const { return m_roundFaces; }
 
   // Fit, Home and the standard views move the camera at once, or (animate, the commands) in a short animation on screen.
@@ -576,6 +578,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Benches: how far the preview moves a body (identity: it does not).
   gp_Trsf previewMotion(const std::string& node) const;
   size_t previewMovedCount() const { return m_previewMotion.size(); }
+  // Align sketch: the sketch drawn moved by a world motion (its lines and images, a location each: nothing rebuilt);
+  // identity or another sketch puts the last one back. clearPreviewBodies ends it.
+  void setPreviewSketch(const std::string& id, const gp_Trsf& motion);
+  bool previewSketchMoved() const { return !m_previewSketch.empty(); }  // benches
   void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   // A preview stands in for the bodies it changes (they are erased, unpickable, and it takes no picks): holding Ctrl alone
   // over the view while `gate` allows it (a feature is open) shows those bodies as they are, pickable, the preview out of
@@ -1212,6 +1218,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<Handle(AIS_InteractiveObject)> m_overlays;  // showOverlay's: Fit frames the finite ones (a drawing being placed)
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
   std::unordered_map<std::string, gp_Trsf> m_previewMotion;  // setPreviewMotion: bodies drawn moved by these
+  std::string m_previewSketch;                                // setPreviewSketch: the sketch drawn moved, and its objects' own places
+  std::vector<std::pair<Handle(AIS_InteractiveObject), gp_Trsf>> m_previewSketchWas;
   // Where an item is drawn: its look's offset after the preview's motion after its placement (rigid; else in `located`).
   gp_Trsf drawnAt(const std::string& id, const std::array<double, 3>& offset, bool rigid, const gp_Trsf& placement) const;
   void placeItem(const std::string& id, Item& item);  // its object (and orbit pivot, glow) where drawnAt says

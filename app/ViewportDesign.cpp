@@ -552,8 +552,30 @@ gp_Trsf Viewport::previewMotion(const std::string& node) const {
   return it != m_previewMotion.end() ? it->second : gp_Trsf();
 }
 
+void Viewport::setPreviewSketch(const std::string& id, const gp_Trsf& motion) {
+  if (!m_initialised) return;
+  if (m_previewSketch.empty() && (id.empty() || motion.Form() == gp_Identity)) return;
+  for (const auto& [object, was] : m_previewSketchWas) m_ctx->SetLocation(object, TopLoc_Location(was));
+  m_previewSketchWas.clear();
+  m_previewSketch.clear();
+  const auto wire = id.empty() || motion.Form() == gp_Identity ? m_sketchWires.end() : m_sketchWires.find(id);
+  if (wire != m_sketchWires.end()) {
+    m_previewSketch = id;
+    std::vector<Handle(AIS_InteractiveObject)> objects{wire->second.ais};
+    objects.insert(objects.end(), wire->second.backdrops.begin(), wire->second.backdrops.end());
+    for (const auto& object : objects) {
+      if (object.IsNull()) continue;
+      const gp_Trsf was = object->LocalTransformation();
+      m_previewSketchWas.push_back({object, was});
+      m_ctx->SetLocation(object, TopLoc_Location(motion * was));
+    }
+  }
+  redrawScene();
+}
+
 void Viewport::clearPreviewBodies() {
   if (!m_initialised) return;
+  if (!m_previewSketch.empty()) setPreviewSketch({}, gp_Trsf());
   if (!m_previewMotion.empty()) setPreviewMotion({});
   if (m_previewBodies.empty() && m_previewHidden.empty()) return;
   for (const auto& p : m_previewBodies) m_ctx->Remove(p, Standard_False);

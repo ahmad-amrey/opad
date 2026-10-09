@@ -121,28 +121,20 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
           "air really goes and draws its streamlines (minutes rather than seconds).")},
       {tr("Cool a board in a vented box (air solved)"),
        tr("How hot a single-board computer gets in its case, with a fan blowing in, or with vents only and warm air rising."),
-       {tr("Model the box as one solid with its walls and the openings cut through them; the board, its chips and the heatsink inside it as "
-           "their own bodies; and a block where each fan sits, as big as the fan. On an empty document the assistant builds an example."),
-        tr("Press Cooling assistant on the Thermal tab. The box is found by itself: check it on its first page."),
-        tr("Heat: tick each chip that makes heat with its power in W, and tick Board for the circuit board with its copper layers."),
-        tr("Air: for each fan, the block it is (or the heatsink it blows on), the fan and the way it blows. Untick the fans for vents only."),
+       {tr("Model the box with its walls and the openings cut through them, as one solid or several (a base and its lid, a frame and its "
+           "panels); the board, its chips and the heatsink inside it as their own bodies (or the chips joined into the board); and a block where each fan sits, as big as the fan "
+           "(or the fan's own model). On an empty document Thermal setup builds an example."),
+        tr("Press Thermal setup on the Thermal tab. Its first page picks the bodies the box is made of: click bodies in the view or rows in the browser to add or take them out."),
+        tr("Heat: tick each chip that makes heat with its power in W (a chip joined into the board: click its face in the view and type that "
+           "face's power), and tick Board for the circuit board with its copper layers."),
+        tr("Air: for each fan, pick it in the view or the browser (its own model as a component, or a block where it sits),"
+           " the flat face its air goes through (Flip turns it round), the fan (Custom: its flow and pressure typed under it) and the heatsink it blows through with its material. Untick the fans for vents only."),
         tr("Run: Quick to compare, Normal for the answer. It takes minutes; the status bar shows how far it is."),
         tr("The page lists each part's temperature, the fans' flow and the air through the box. See inside the box hides it to show the "
            "temperatures and the streamlines; Air speed colours them by how fast the air goes.")},
        {"simulate.cooling", "inspect.material", "simulate.results"},
        tr("A block standing for a fan is air with the fan's disk in its middle; a fan load on a heatsink sits against the side the air comes "
           "from. The board's copper matters: a 4-layer board spreads heat about eighty times better along it than plain FR-4.")},
-      {tr("Find the best place for the vents (design sweep)"),
-       tr("Which vent height, slot count or fan position keeps the hottest part coolest: each candidate run and compared."),
-       {tr("Make what you want to vary a parameter: edit the feature that cuts the vent (double-click it in the timeline) and type a name "
-           "such as vent_z instead of its position; Parameters on the Design ribbon lists them."),
-        tr("Set the case up in the Cooling assistant and run it once to check it."),
-        tr("On its Best vents page choose the parameter, the range and how many values, and the part to keep cool (or the hottest)."),
-        tr("Keep Compare at Quick quality ticked: every value runs on coarse cells, then the best runs again at full quality."),
-        tr("Press Find the best. The table fills with each value's hottest temperature; Use the best sets the parameter to it.")},
-       {"simulate.cooling", "simulate.run"},
-       tr("Each value is a whole run: five values and two refinements at Quick take about as long as two Normal runs. The sweep works on copies; "
-          "the model changes only when you press Use the best.")},
   };
   for (UseCase& u : list) {
     for (QString& s : u.steps) s = x(s);

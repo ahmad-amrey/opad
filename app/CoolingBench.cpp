@@ -1,8 +1,8 @@
 // The Cooling assistant as a user drives it (OPAD_BENCH_COOLING=<prefix>): opened from its command on an empty document,
 // the example built from its first page (a board, two chips, a heatsink and a fan block in a vented ABS box, the exhaust
 // slots' height the parameter vent_z), the box found, the heat and fan rows filled from what the example set, a power
-// changed in the table and written back as the case's load, the board's copper as the study's material, and the Best vents
-// page offering vent_z with a range around it. With OPAD_BENCH_COOLING_RUN set (and OpenFOAM) it also runs the case at
+// changed in the table and written back as the case's load, the board's copper as the study's material; four pages, no
+// optimising (it sets the study up). With OPAD_BENCH_COOLING_RUN set (and OpenFOAM) it also runs the case at
 // Quick quality and checks that the heat put in leaves. Screenshots of every page at <prefix>.<page>.png.
 #include <QAction>
 #include <QApplication>
@@ -88,7 +88,7 @@ OPAD_BENCH(OPAD_BENCH_COOLING, cooling) {
   auto& list = *steps;
   list.push_back({nullptr, [=, &w](bool) {
                     QAction* a = area->services().action("simulate.cooling");
-                    require(a && a->isEnabled(), "Cooling assistant is a command, enabled on a document");
+                    require(a && a->isEnabled(), "Thermal setup is a command, enabled on a document");
                     if (a) a->trigger();
                   }});
   list.push_back({[assistant] { return assistant() && assistant()->isVisible(); },
@@ -96,22 +96,26 @@ OPAD_BENCH(OPAD_BENCH_COOLING, cooling) {
                     require(ok, "it opens at its first page");
                     if (!ok) return;
                     CoolingAssistant* c = assistant();
-                    require(c->steps() == 5 && c->step() == 0, "five steps, at the first");
+                    require(c->steps() == 4 && c->step() == 0, "four steps (box, heat, air, run), at the first");
                     shot("empty");
                     c->buildExample();
                   }});
-  list.push_back({nullptr, [=](bool) {
+  list.push_back({[assistant] { return assistant() && assistant()->settled(); }, [=](bool ok) {
+                    require(ok, "the box's bodies are found (a worker measures them)");
                     CoolingAssistant* c = assistant();
                     const std::string box = bodyNamed("Enclosure");
                     require(!box.empty() && !bodyNamed("Board").empty() && !bodyNamed("Heatsink").empty() && !bodyNamed("Fan").empty(),
                             "the example's bodies are made");
                     require(doc->scene.param("vent_z") != nullptr, "its vent height is the parameter vent_z");
                     require(loadsOf("heat").size() == 2 && loadsOf("fan").size() == 1, "two heat sources and a fan in the case Cooling");
-                    require(c->boxChoice()->currentData().toString().toStdString() == box, "the box found is the enclosure");
+                    require(c->pickedBodies() == std::vector<std::string>{box}, "the box's bodies picked: the enclosure alone");
                     int heated = 0;
                     for (int r = 0; r < c->heatTable()->rowCount(); ++r) heated += c->heatTable()->item(r, 0)->checkState() == Qt::Checked;
                     require(heated == 2, QString("the heat table ticks the two chips (%1)").arg(heated));
-                    require(c->fanTable()->rowCount() == 1, "the fan table has the fan block");
+                    require(c->fans().size() == 1 && c->fans()[0].on == std::vector<std::string>{bodyNamed("Fan")} &&
+                                c->fans()[0].sink == std::vector<std::string>{bodyNamed("Heatsink")} && c->fans()[0].model.isEmpty() &&
+                                std::fabs(c->fans()[0].flow - 8) < 1e-9,
+                            "the Air page's fan: the fan block, blowing through the heatsink, a custom fan of 8 m3/h");
                     shot("box");
                     c->open(1);
                     shot("heat");
@@ -119,11 +123,11 @@ OPAD_BENCH(OPAD_BENCH_COOLING, cooling) {
                     shot("air");
                     for (int r = 0; r < c->heatTable()->rowCount(); ++r)
                       trace::log(QString("bench: cooling: row %1 %2 W").arg(c->heatTable()->item(r, 0)->text())
-                                     .arg(static_cast<QDoubleSpinBox*>(c->heatTable()->cellWidget(r, 1))->value()));
+                                     .arg(c->heatTable()->item(r, 1)->data(Qt::EditRole).toDouble()));
                     for (const opad::Load* l : loadsOf("heat")) trace::log(QString("bench: cooling: load %1 W").arg(l->def.value("value", 0.0)));
                     // The SoC at 5 W instead of 4, written back by Apply.
                     for (int r = 0; r < c->heatTable()->rowCount(); ++r)
-                      if (c->heatTable()->item(r, 0)->text() == "SoC") static_cast<QDoubleSpinBox*>(c->heatTable()->cellWidget(r, 1))->setValue(5);
+                      if (c->heatTable()->item(r, 0)->text() == "SoC") c->heatTable()->item(r, 1)->setData(Qt::EditRole, 5.0);
                     require(c->apply(), "Apply writes the case");
                   }});
   list.push_back({nullptr, [=](bool) {
@@ -143,9 +147,6 @@ OPAD_BENCH(OPAD_BENCH_COOLING, cooling) {
                     }
                     c->open(3);
                     shot("run");
-                    c->open(4);
-                    require(c->paramChoice()->currentText() == "vent_z", "Best vents offers vent_z");
-                    shot("best");
                   }});
   if (!qEnvironmentVariableIsEmpty("OPAD_BENCH_COOLING_RUN") && opad::sim::openfoam().found()) {
     list.push_back({nullptr, [=](bool) {

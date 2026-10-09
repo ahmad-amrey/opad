@@ -19,6 +19,7 @@
 #include "Theme.hpp"
 #include "opad/drawing/bom.hpp"
 #include "opad/materials.hpp"
+#include "SearchCombo.hpp"
 
 namespace {
 constexpr const char* kContext = "PartProperties";
@@ -145,6 +146,7 @@ PartPropertiesDialog::PartPropertiesDialog(AppDocument* doc, std::vector<std::st
     else m_material->setEditText(shown);
   }
   m_material->lineEdit()->setPlaceholderText(mixed.count("material") ? tr("Several values") : tr("None (from the component or the file)"));
+  search_combo::enable(m_material, true);  // any text is a material too: what is typed stays
   m_materialShown = m_material->currentText();
   connect(m_material, &QComboBox::currentTextChanged, this, &PartPropertiesDialog::refresh);
   form->addRow(tr("Material"), m_material);

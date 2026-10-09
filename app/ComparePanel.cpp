@@ -19,6 +19,7 @@
 #include "Icons.hpp"
 #include "PanelFooter.hpp"
 #include "Units.hpp"
+#include "SearchCombo.hpp"
 
 namespace {
 QString text(const opad::json& j, const char* key) { return j.is_object() && j.contains(key) && j[key].is_string() ? QString::fromStdString(j[key].get<std::string>()) : QString(); }
@@ -160,6 +161,7 @@ ComparePanel::ComparePanel(QWidget* parent) : QWidget(parent) {
   for (QComboBox* c : {m_pickA, m_pickB}) {
     c->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     c->setMinimumContentsLength(12);
+    search_combo::enable(c);  // a long history: typed to find a version
   }
   m_swap = new QToolButton(this);
   m_swap->setIcon(icons::themed("swap", 16));

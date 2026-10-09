@@ -1167,6 +1167,7 @@ void Viewport::refreshSubHighlight() {
     std::vector<gp_Pnt> tv, sv, pv;  // the chunk being filled: triangle nodes, segment ends, points
     std::vector<int> ti;             // triangle indices into tv, 1-based
     Handle(SubHighlight) hl;
+    std::map<const void*, TopTools_IndexedMapOfShape> edgeMaps;  // a refined body's edges by ordinal, mapped once
   };
   auto st = std::make_shared<State>();
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) {
@@ -1226,6 +1227,35 @@ void Viewport::refreshSubHighlight() {
         st->sv.push_back(line[n].Transformed(body));
       }
     };
+    // The face or edge from the arrays the body is drawn with (zoom-refined or not): depth-tested, any other mesh of it (the
+    // base one under a refined body, one meshed again in place) cut in and out of the face drawn: stripes, a dashed edge.
+    const Handle(BodyShape) shape = Handle(BodyShape)::DownCast(o->Selectable());
+    const BodyPrs* refined = shape.IsNull() ? nullptr : shape->drawnIndex();
+    if (refined && (sub.ShapeType() == TopAbs_FACE || sub.ShapeType() == TopAbs_EDGE)) {
+      auto appendLine = [&](const std::shared_ptr<const std::vector<gp_Pnt>>& line) {
+        if (!line) return;
+        for (size_t n = 1; n < line->size(); ++n) {
+          st->sv.push_back((*line)[n - 1].Transformed(body));
+          st->sv.push_back((*line)[n].Transformed(body));
+        }
+      };
+      if (sub.ShapeType() == TopAbs_FACE) {
+        std::vector<gp_Pnt> corners;
+        refined->faceTrianglesOf(o->index(), corners);
+        for (size_t k = 0; k + 2 < corners.size(); k += 3) {
+          const int base = static_cast<int>(st->tv.size());
+          for (size_t c = 0; c < 3; ++c) st->tv.push_back(corners[k + c].Transformed(body));
+          st->ti.insert(st->ti.end(), {base + 1, base + 2, base + 3});
+        }
+        auto& edges = st->edgeMaps[shape.get()];
+        if (edges.IsEmpty()) TopExp::MapShapes(shape->Shape(), TopAbs_EDGE, edges);
+        for (TopExp_Explorer edge(sub, TopAbs_EDGE); edge.More(); edge.Next()) appendLine(refined->edgeLineOf(edges.FindIndex(edge.Current()) - 1));
+      } else {
+        appendLine(refined->edgeLineOf(o->index()));
+      }
+      flush(false);
+      return st->i < st->owners.size();
+    }
     TopLoc_Location loc;
     if (sub.ShapeType() == TopAbs_FACE) {
       Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(sub), loc);
@@ -2071,11 +2101,15 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       try {
         const Bnd_Box box = opad::body_bbox(*cache, j.key, j.shape);
         const auto mesh = BodyPrs::meshForDisplay(j.shape, deflectionForBox(box));
-        if (mesh.status || mesh.recovered_faces || mesh.incomplete_cones)
-          trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4").arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones));
+        if (mesh.status || mesh.recovered_faces || mesh.incomplete_cones || mesh.boundary_faces)
+          trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4 from their boundary=%5")
+                         .arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones).arg(mesh.boundary_faces));
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
         // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
         prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape), false, j.drawing, j.colors);  // so Display() on the UI thread is cheap
+        // Its faces and edges as drawn: a highlight from these stays on the face drawn even when the shape is meshed again
+        // later in place (not a drawing layer's lines: tens of thousands of edges, no faces).
+        if (!j.drawing) prs->indexSubShapes(j.shape);
         prs->deflection = deflectionForBox(box);
       } catch (...) {
       }

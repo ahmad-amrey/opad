@@ -29,6 +29,7 @@
 #include "Units.hpp"
 #include "Viewport.hpp"
 #include "opad/design/mesh_solid.hpp"
+#include "SearchCombo.hpp"
 
 namespace {
 
@@ -114,6 +115,7 @@ void MainWindow::meshToSolid() {
     source->addItem(QString::fromStdString(m_doc->scene.node(id)->name), QString::fromStdString(id));
     if (id == chosen) source->setCurrentIndex(source->count() - 1);
   }
+  search_combo::enable(source);  // a mesh picked in the view or the browser also takes it (MainWindow::selectionMoved)
   auto* mode = new QComboBox(dialog);
   mode->addItem(tr("Sketch and feature"), "auto");
   mode->addItem(tr("Fitted solid only"), "solid");
