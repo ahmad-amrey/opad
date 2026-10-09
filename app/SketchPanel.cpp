@@ -4,6 +4,7 @@
 #include "I18n.hpp"
 #include "Preferences.hpp"
 #include "Units.hpp"
+#include "SearchCombo.hpp"
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
@@ -238,6 +239,7 @@ void SketchPanel::buildFields() {
     for(const auto& feature:m_editor->m_doc->scene.features)if(feature.result.contains("axis"))add(QString::fromStdString(feature.name),{{"feature",feature.id}});
     for(const auto* axis:{"x","y","z"})add(tr("Origin axis %1").arg(axis),{{"base",axis}});
     m_fields->addRow(tr("Add source"),sources);
+    search_combo::enable(sources);  // bodies, sketches, axes: typed to find one
     connect(sources,&QComboBox::activated,this,[this,sources](int index){
       const QString source=sources->itemData(index).toString();
       {QSignalBlocker block(sources);sources->setCurrentIndex(0);}
@@ -259,6 +261,7 @@ void SketchPanel::buildFields() {
     const QString current=m_editor->option("imageId",m_editor->m_sk.images.empty()?"0":QString::number(m_editor->m_sk.images.back().at("id").get<int>()));
     int at=images->findData(current);if(at<0&&m_shown=="image_trace"&&images->count()>0){at=0;m_editor->m_options["imageId"]=images->itemData(0).toString();}
     images->setCurrentIndex(at);m_fields->addRow(tr("Backdrop"),images);const int id=current.toInt();
+    search_combo::enable(images);
     connect(images,&QComboBox::currentIndexChanged,this,[this,images]{m_editor->m_options["imageId"]=images->currentData().toString();m_editor->invalidatePreview();m_editor->m_panelFieldsDirty=true;refresh();});
     if(m_shown=="image_edit") {
       for(const auto& image:m_editor->m_sk.images)if(image.at("id").get<int>()==id) {

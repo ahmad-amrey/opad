@@ -127,7 +127,8 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
         tr("Press Thermal setup on the Thermal tab. Its first page picks the bodies the box is made of: click bodies in the view or rows in the browser to add or take them out."),
         tr("Heat: tick each chip that makes heat with its power in W (a chip joined into the board: click its face in the view and type that "
            "face's power), and tick Board for the circuit board with its copper layers."),
-        tr("Air: for each fan, the block it is (or the heatsink it blows on), the fan and the way it blows. Untick the fans for vents only."),
+        tr("Air: for each fan, pick it in the view or the browser (its own model as a component, or a block where it sits),"
+           " the flat face its air goes through (Flip turns it round), the fan (Custom: its flow and pressure typed under it) and the heatsink it blows through with its material. Untick the fans for vents only."),
         tr("Run: Quick to compare, Normal for the answer. It takes minutes; the status bar shows how far it is."),
         tr("The page lists each part's temperature, the fans' flow and the air through the box. See inside the box hides it to show the "
            "temperatures and the streamlines; Air speed colours them by how fast the air goes.")},

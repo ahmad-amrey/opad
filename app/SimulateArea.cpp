@@ -10,6 +10,7 @@
 #include <SelectMgr_Selection.hxx>
 
 #include <QAction>
+#include <QComboBox>
 #include <QEventLoop>
 #include <QInputDialog>
 #include <QLinearGradient>
@@ -48,6 +49,7 @@
 #include "opad/sim/cfd.hpp"
 #include "opad/sim/fea.hpp"
 #include "opad/sim/joints.hpp"
+#include "SearchCombo.hpp"
 
 OPAD_ICON_TABLE(simulate,
                 {"simulate", R"(<circle cx="7" cy="16" r="4"/><circle cx="17" cy="8" r="4"/><path d="M10 13.5l4-3"/><path d="M3 21h18" opacity=".55"/>)"},
@@ -537,6 +539,7 @@ void Simulate::selectionChanged(const SelectionContext& selection) {
     if (std::find(kept.begin(), kept.end(), id) == kept.end()) kept.push_back(id);
   m_picked = kept;
   if (m_panel && m_panel->isVisible() && now.size() == 1 && now[0].rfind("sim:j:", 0) == 0) chooseJoint(now[0].substr(6));
+  if (m_panel && m_panel->isVisible() && now.size() == 1 && now[0].rfind("sim:s:", 0) == 0) chooseStudy(now[0].substr(6));  // its row picked
 }
 
 void Simulate::documentChanged(bool replaced) {
@@ -1105,8 +1108,15 @@ void Simulate::addLoad(const QString& kind) {
     QStringList names;
     for (const auto& f : opad::sim::air::fans()) names << QString::fromStdString(f.name);
     names << tr("Another fan: its flow and pressure");
-    const QString pick = QInputDialog::getItem(services().window(), tr("Fan"), tr("The fan:"), names, 3, false, &ok);
+    QInputDialog ask(services().window());
+    ask.setWindowTitle(tr("Fan"));
+    ask.setLabelText(tr("The fan:"));
+    ask.setComboBoxItems(names);
+    ask.setTextValue(names[3]);
+    if (auto* combo = ask.findChild<QComboBox*>()) search_combo::enable(combo);  // typed to find a fan
+    ok = ask.exec() == QDialog::Accepted;
     if (!ok) return;
+    const QString pick = ask.textValue();
     const int at = int(names.indexOf(pick));
     if (at >= 0 && at < int(opad::sim::air::fans().size())) {
       args["fan"] = opad::sim::air::fans()[size_t(at)].id;

@@ -117,6 +117,13 @@ void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
     const SelectionContext selection = selectionContext();
     for (AreaController* area : m_areas) area->selectionChanged(selection);
   }
+  if (auto* source = findChild<QComboBox*>("meshSolidSource"); source && source->isVisible())  // Mesh to solid's source picked
+    for (const auto& r : refs)
+      for (const auto& body : m_doc->scene.bodies_under(r.body))
+        if (const int at = source->findData(QString::fromStdString(body)); at >= 0) {
+          source->setCurrentIndex(at);
+          break;
+        }
   updateCommands();
   if (!refs.empty() || !m_selRows.empty()) resumePendingPick();  // a command that asked for this selection (UI-109)
   if (!m_propsPanel->isVisible()) return;

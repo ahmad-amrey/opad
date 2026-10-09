@@ -2,8 +2,8 @@
 // Thermal setup (simulate.cooling, the CoolingAssistant): the guided setup of a thermal study of a board, its chips and a heatsink in a
 // vented box, cooled by fans or by warm air rising, step by step: the box (its bodies picked: a base and its lid, a frame and
 // its panels; found by itself), the heat each part makes (a body, or a face picked: a chip joined into its board) and which part
-// is a board, how the air moves (fans, each on a block
-// standing for it or on a heatsink, or vents only), and the run (the air solved with OpenFOAM, the parts with CalculiX:
+// is a board, how the air moves (fans, each a body or a component of its own model, the face the air crosses, the heatsink it blows
+// through with its material; or vents only), and the run (the air solved with OpenFOAM, the parts with CalculiX:
 // sim/cfd.hpp) with its results. What it sets up is ordinary loads (case "Cooling") and a study, there to change in the
 // Simulation panel afterwards; an AI agent sees the same.
 #include <QPointer>
@@ -70,7 +70,22 @@ class CoolingAssistant : public QWidget {
   // the Heat page picks, the faces that make heat are.
   void selectionChanged(const std::vector<std::string>& ids, const std::vector<opad::Ref>& refs);
   QTableWidget* heatTable() const { return m_heat; }
-  QTableWidget* fanTable() const { return m_fans; }
+  // A fan as the Air page sets it up: written as a fan load (on, fan, vector, across, heatsink) and the heatsink's material.
+  struct FanSpec {
+    std::vector<std::string> on;    // the fan: bodies or a component (its model's bodies, one part)
+    opad::Ref across;               // the flat face the air crosses (body empty: none, the axis below)
+    opad::Vec3 normal{0, 0, 0};     // that face's normal in the world, measured on a worker
+    bool flip = false;
+    int axis = 0;                   // ways(), without a face
+    QString model = "40x10";        // a library fan, empty: custom
+    double flow = 10, pressure = 20;  // custom: m3/h, Pa
+    std::vector<std::string> sink;  // the heatsink it blows through: bodies or a component (one part)
+    QString material;               // the heatsink's library material, empty: as modelled
+    opad::Vec3 vector() const;      // the way the air goes
+  };
+  const std::vector<FanSpec>& fans() const { return m_fanSpecs; }
+  int currentFan() const { return m_fan; }
+  QListWidget* fanList() const { return m_fanList; }
   QLabel* resultText() const { return m_result; }
   QPushButton* runButton() const { return m_runButton; }
   bool apply();         // writes the loads and the study; false when something is missing (said on the page)
@@ -84,16 +99,26 @@ class CoolingAssistant : public QWidget {
  private:
   void reload();      // the pages from the document as it is now
   void showStep(int i);
-  void addFanRow(const std::string& body, const opad::json& fan, const opad::Vec3& way);
   std::vector<std::string> walls() const;  // the box's bodies picked
-  enum class Pick { None, Box, Faces };
-  void startPicking(Pick what);  // the view and the browser pick the box's bodies, or the faces that make heat (their page)
+ public:
+  // What the view and the browser pick: the box's bodies, the parts or faces that make heat, a fan, the face its air crosses,
+  // its heatsink. Each page picks with one of them at a time; its pick boxes choose which.
+  enum class Pick { None, Box, Parts, Faces, Fan, Way, Sink };
+  Pick pickingWhat() const { return m_picking; }
+ private:
+  void startPicking(Pick what);
   void stopPicking();
   void reselect();      // what is picked, shown selected
   void showPicked();    // the pick box and the list say what is picked
   void keepFacePowers();  // the powers typed for faces, kept while their rows are made again
   void showFaces();     // the faces that make heat: rows of the heat table after the bodies
-  void wallsChanged();                     // what is inside them, and the heat and fan tables for it
+  void wallsChanged();                     // what is inside them, and the heat table for it
+  std::vector<std::string> heatedParts() const;  // the parts ticked as making heat
+  void showParts();     // the parts pick box
+  void loadFans(const opad::Scene& s);  // the fans the study's loads set, else a first guess (a body called fan)
+  void showFans();      // the fan list and the current fan's form
+  void showFan();       // the current fan's form
+  void measureWay(int fan);  // the normal of the face the fan's air crosses, on a worker
   std::string studyId() const;
 
   Hooks m_hooks;
@@ -115,7 +140,26 @@ class CoolingAssistant : public QWidget {
   QPushButton* m_example = nullptr;
   QTableWidget* m_heat = nullptr;
   QCheckBox* m_withFans = nullptr;
-  QTableWidget* m_fans = nullptr;
+  std::vector<FanSpec> m_fanSpecs;
+  int m_fan = -1;
+  bool m_fanLoading = false;  // the form being filled: its edits are not the user's
+  QListWidget* m_fanList = nullptr;
+  QWidget* m_fanForm = nullptr;
+  class QFormLayout* m_fanRows = nullptr;
+  class PickBox* m_fanPick = nullptr;
+  class PickBox* m_wayPick = nullptr;
+  class PickBox* m_sinkPick = nullptr;
+  class PickBox* m_partsPick = nullptr;
+  QComboBox* m_axis = nullptr;
+  QPushButton* m_flip = nullptr;
+  QLabel* m_wayText = nullptr;
+  QComboBox* m_model = nullptr;
+  QDoubleSpinBox* m_flow = nullptr;
+  QDoubleSpinBox* m_pressure = nullptr;
+  QComboBox* m_sinkMaterial = nullptr;
+  QPushButton* m_back = nullptr;
+  QPushButton* m_next = nullptr;
+  QLabel* m_runNote = nullptr;  // why Run cannot run (no OpenFOAM)
   QDoubleSpinBox* m_ambient = nullptr;
   QComboBox* m_quality = nullptr;
   QCheckBox* m_radiation = nullptr;

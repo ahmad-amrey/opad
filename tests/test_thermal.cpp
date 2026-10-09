@@ -57,6 +57,20 @@ TEST(conduction_along_a_bar) {
   CHECK_NEAR(run.summary["to_fixed_temperatures_W"].get<double>(), 10, 1e-9);
 }
 
+// A study material by library id ("material": the heatsink of the thermal setup, one metal for all its bodies): copper's
+// conductivity, not the body's own (none here, steel assumed); a name that is no library material is refused.
+TEST(study_material_from_the_library) {
+  if (!engines_ok()) return;
+  Document doc = Document::create();
+  const std::string bar = box(doc, {0, 0, 0}, 100, 10, 10, "Bar");
+  commands::run("load", {{"kind", "temperature"}, {"on", {face_at(bar, "x", 0)}}, {"value", 100}}, &doc);
+  commands::run("load", {{"kind", "heat"}, {"on", {face_at(bar, "x", 100)}}, {"value", 10}}, &doc);
+  const sim::StudyRun run = thermal(doc, {{"mesh_size", 4}, {"materials", {{bar, {{"material", "copper"}}}}}});
+  const double dT = 10 * 0.1 / (390 * 1e-4);
+  CHECK_NEAR(sim::probe(*run.fea, {100, 5, 5}, "temperature"), 100 + dT, 1e-3 * dT);
+  CHECK_THROWS(thermal(doc, {{"mesh_size", 4}, {"materials", {{bar, {{"material", "unobtainium"}}}}}}));
+}
+
 TEST(slab_with_heat_generated_in_it) {
   if (!engines_ok()) return;
   // 1 W spread through a 100 x 10 x 10 mm bar held at 20 degC at both ends: T_max - T_s = q''' L^2 / 8 k half way.

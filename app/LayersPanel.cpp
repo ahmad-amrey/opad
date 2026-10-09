@@ -29,6 +29,7 @@
 #include "PanelFooter.hpp"
 #include "Theme.hpp"
 #include "Viewport.hpp"
+#include "SearchCombo.hpp"
 
 namespace {
 QColor qcolor(const drawing2d::Rgb& c) { return QColor::fromRgbF(float(c[0]), float(c[1]), float(c[2])); }
@@ -160,6 +161,7 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
   statesRow->setSpacing(6);
   m_states = new QComboBox(this);
   m_states->setToolTip(tr("Saved layer states: every layer's settings, kept as a named view of the document"));
+  search_combo::enable(m_states);
   statesRow->addWidget(m_states, 1);
   auto small = [this, statesRow](const QString& text, const QString& tip) {
     auto* b = new QToolButton(this);

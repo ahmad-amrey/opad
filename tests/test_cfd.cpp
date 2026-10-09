@@ -219,6 +219,25 @@ TEST(enclosure_of_a_tray_and_its_cover) {
   CHECK_EQ(sim::enclosure_name(s, e.walls), "Tray + Cover");
 }
 
+// A fan load as Thermal setup writes it: on a component (the fan's own model, its bodies one part), through a heatsink
+// component, with the face its way was taken across; kept as written and changed by id.
+TEST(fan_load_on_components) {
+  Document doc = Document::create();
+  const std::string block = box(doc, {0, 0, 0}, 10, 30, 30, "Fan");
+  const std::string hub = box(doc, {2, 13, 13}, 4, 4, 4, "Hub");
+  const std::string sink = box(doc, {20, 0, 0}, 20, 20, 2, "Heatsink");
+  const std::string fan = commands::run("component", {{"name", "Fan unit"}}, &doc)["id"].get<std::string>();
+  commands::run("reparent", {{"targets", {block, hub}}, {"parent", fan}}, &doc);
+  const json across = {{"body", block}, {"kind", "face"}, {"index", 0}};
+  const json out = commands::run("load", {{"kind", "fan"}, {"on", {fan}}, {"fan", "40x10"}, {"vector", {1, 0, 0}}, {"heatsink", {sink}}, {"across", across}}, &doc);
+  const Scene s = resolve(doc);
+  const Load* l = s.load(out["id"].get<std::string>());
+  CHECK(l && l->error.empty() && l->refs.size() == 1 && l->refs[0].body == fan);
+  CHECK(l && l->def.value("heatsink", json()) == json::array({sink}) && l->def.value("across", json()) == across);
+  commands::run("load", {{"id", out["id"]}, {"heatsink", json::array()}}, &doc);
+  CHECK(resolve(doc).load(out["id"].get<std::string>())->def.value("heatsink", json()) == json::array());
+}
+
 // A box split down the middle into two halves: neither holds the chip that straddles them, the two together do. The board
 // under the chip and the heatsink on it hold it too, but the halves stick through their box: not an enclosure.
 TEST(enclosure_of_two_halves) {

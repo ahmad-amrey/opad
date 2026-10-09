@@ -180,6 +180,8 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
        {"emissivity", "number 0..1 - radiation"},
        {"fan", {{"anyOf", {{{"type", "string"}}, {{"type", "object"}}}}, {"description", "library id or {flow m3/h, pressure Pa, curve}; vector: the air's way"}}},
        {"count", "int - fans side by side"},
+       {"heatsink", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "fan: the heatsink it blows through, bodies or components (one part): its fins get fine cells"}}},
+       {"across", {{"type", "object"}, {"description", "fan: the flat face (a reference) its vector was taken across; kept for the setup"}}},
        {"axis", "object - bolt_preload: the bolt's axis (default: its largest cylinder)"},
        {"id", "string - an existing load to change"},
        {"by", "string"}},
@@ -192,7 +194,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           const Load* l = s.load(a["id"].get<std::string>());
           if (!l) throw Error("no load " + a["id"].get<std::string>());
           json set = json::object();
-          for (const char* k : {"name", "case", "vector", "value", "axis", "h", "ambient", "velocity", "emissivity", "fan", "count"})
+          for (const char* k : {"name", "case", "vector", "value", "axis", "h", "ambient", "velocity", "emissivity", "fan", "count", "heatsink", "across"})
             if (a.contains(k)) set[k] = a[k];
           if (a.contains("on")) set["refs"] = a["on"];
           if (set.empty()) throw Error("load: nothing to change");
@@ -227,7 +229,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
         for (const auto& l : s.loads) taken.push_back(l.name);
         json op = {{"op", "load"}, {"name", a.value("name", free_name(taken, capital(kind) + " "))}, {"kind", kind},
                    {"case", a.value("case", std::string("Load case 1"))}, {"refs", refs}};
-        for (const char* k : {"vector", "value", "axis", "h", "ambient", "velocity", "emissivity", "fan", "count"})
+        for (const char* k : {"vector", "value", "axis", "h", "ambient", "velocity", "emissivity", "fan", "count", "heatsink", "across"})
           if (a.contains(k)) op[k] = a[k];
         const std::string id = doc.append(op, by).id;
         return json{{"id", id}, {"name", op["name"]}, {"kind", kind}, {"case", op["case"]}};

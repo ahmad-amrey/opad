@@ -22,6 +22,7 @@
 #include "KeyText.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
+#include "SearchCombo.hpp"
 
 namespace {
 
@@ -235,6 +236,7 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     refreshNewBody();
   });
   connect(m_name, &QLineEdit::textChanged, this, [this] { refreshNewBody(); });
+  search_combo::enable(m_bodyParent);  // every component by its path: typed to find one in a big assembly
   connect(m_bodyParent, &QComboBox::currentIndexChanged, this, [this] { refreshNewBody(); });
   connect(m_bodyColour, &QPushButton::clicked, this, [this] {
     const QColor chosen = QColorDialog::getColor(m_colour.isValid() ? m_colour : QColor(190, 190, 195), this, tr("Colour of the new bodies"));

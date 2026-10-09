@@ -1,6 +1,8 @@
 #include "opad/sim/cfd.hpp"
 
 #include <BRepBndLib.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <OSD_Parallel.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
@@ -687,8 +689,11 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       for (const auto& r : l->refs) add_body(r.body);
     for (const Load* l : held)
       for (const auto& r : l->refs) add_body(r.body);
-    for (const Load* l : fan_loads)
+    for (const Load* l : fan_loads) {
       for (const auto& r : l->refs) add_body(r.body);
+      for (const auto& h : l->def.value("heatsink", json::array()))
+        if (h.is_string()) add_body(h.get<std::string>());
+    }
     if (stream)
       for (const auto& r : stream->refs) add_body(r.body);
   }
@@ -770,16 +775,30 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
         const double c[3] = {dot(p, way), dot(p, e1), dot(p, e2)};
         for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], c[k]), hi[k] = std::max(hi[k], c[k]);
       }
-  // A body's extent along a direction.
-  auto extent = [&](size_t i, const V& d, double& from, double& to) {
-    Bnd_Box b;
-    BRepBndLib::AddOptimal(world[i], b, false, false);
-    double c[6];
-    b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+  // Several bodies' extent along a direction (a fan's model of a frame, a hub and blades: their union's).
+  auto extent_of = [&](const std::vector<size_t>& parts, const V& d, double& from, double& to) {
     from = 1e300, to = -1e300;
-    for (double x : {c[0], c[3]})
-      for (double y : {c[1], c[4]})
-        for (double z : {c[2], c[5]}) from = std::min(from, dot({x, y, z}, d)), to = std::max(to, dot({x, y, z}, d));
+    for (size_t i : parts) {
+      Bnd_Box b;
+      BRepBndLib::AddOptimal(world[i], b, false, false);
+      double c[6];
+      b.Get(c[0], c[1], c[2], c[3], c[4], c[5]);
+      for (double x : {c[0], c[3]})
+        for (double y : {c[1], c[4]})
+          for (double z : {c[2], c[5]}) from = std::min(from, dot({x, y, z}, d)), to = std::max(to, dot({x, y, z}, d));
+    }
+  };
+  // The parts a list names, bodies or components (a component: its bodies, one part), those taking part only.
+  auto parts_of = [&](const json& names) {
+    std::vector<size_t> out;
+    for (const auto& v : names) {
+      const std::string id = v.is_string() ? v.get<std::string>() : v.is_object() ? v.value("body", std::string()) : std::string();
+      const Node* n = scene.node(id);
+      if (!n) continue;
+      for (const auto& b : n->kind == Node::Kind::Body ? std::vector<std::string>{id} : scene.bodies_under(id))
+        if (const size_t i = index_of(b); i < bodies.size() && std::find(out.begin(), out.end(), i) == out.end()) out.push_back(i);
+    }
+    return out;
   };
   // The finest cell: two thirds of a fin's thickness and a sixth of the gap between fins (the gap's boundary layers want
   // six cells across: on six 3 mm fins 8.4 mm apart, cells of 2, 1.5 and 1 mm gave the parts' rise as 129, 106 and 89 %
@@ -792,15 +811,32 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   json fins_json;
   std::vector<bool> finned(bodies.size(), false);
   std::vector<double> fin_want(bodies.size(), 0.0);
-  for (const Load* l : fan_loads)
+  for (const Load* l : fan_loads) {
+    const V along = unit(l->def.value("vector", V{1, 0, 0}));
     for (const auto& r : l->refs)
       if (const size_t i = index_of(r.body); i < bodies.size())
-        if (const auto f = air::fin_array(world[i], unit(l->def.value("vector", V{1, 0, 0})))) {
+        if (const auto f = air::fin_array(world[i], along)) {
           finned[i] = true;
           fin_want[i] = std::max(0.2, std::min(f->t / 1.5, f->gap / 6) * 1e3);
           if (l == fan_load) fins_json = f->to_json();
           if (given <= 0 && enclosure.empty()) fine = std::min(fine > 0 ? fine : 1e300, fin_want[i]);
         }
+    // The heatsink the fan blows through (load "heatsink": bodies or components, one part): its fins as one array.
+    const std::vector<size_t> sink = parts_of(l->def.value("heatsink", json::array()));
+    if (sink.empty()) continue;
+    TopoDS_Compound all_fins;
+    BRep_Builder bb;
+    bb.MakeCompound(all_fins);
+    for (size_t i : sink) bb.Add(all_fins, world[i]);
+    if (const auto f = air::fin_array(all_fins, along)) {
+      for (size_t i : sink) {
+        finned[i] = true;
+        fin_want[i] = std::max(0.2, std::min(f->t / 1.5, f->gap / 6) * 1e3);
+      }
+      if (l == fan_load && fins_json.is_null()) fins_json = f->to_json();
+      if (given <= 0 && enclosure.empty()) fine = std::min(fine > 0 ? fine : 1e300, fin_want[sink.front()]);
+    }
+  }
   if (fine <= 0) fine = std::max(0.25, size / 40);
   const double coarse = enclosure.empty() ? 2 * fine : given > 0 ? 2 * given : std::max(0.5, size / cfd.value("divisions", 30.0));
 
@@ -869,23 +905,32 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   if (!enclosure.empty())
     for (const Load* l : fan_loads) {
       if (l->refs.empty()) throw Error("fan \"" + l->name + "\" is on nothing");
-      const size_t i = index_of(l->refs.front().body);
+      // What it is on: a block or the fan's own model (a component: its frame, hub and blades as one), or a heatsink.
+      json on = json::array();
+      for (const auto& r : l->refs) on.push_back(r.body);
+      const std::vector<size_t> parts = parts_of(on);
+      if (parts.empty()) throw Error("fan \"" + l->name + "\" is on nothing that takes part");
       Disk d{l, air::fan_from(l->def.value("fan", json("80x25"))), {0, 0, 0}, unit(l->def.value("vector", V{1, 0, 0})), 0};
       if (norm(d.normal) < 0.5) throw Error("fan \"" + l->name + "\": its vector has no length");
       if (l->def.value("count", 1) > 1) run.warnings.push_back("fan \"" + l->name + "\": count is for a duct; in an enclosure, add a fan load per fan");
       V u1 = unit(cross(d.normal, std::fabs(d.normal[0]) < 0.9 ? V{1, 0, 0} : V{0, 1, 0})), u2 = unit(cross(d.normal, u1));
       double n0, n1, p0, p1, q0, q1;
-      extent(i, d.normal, n0, n1);
-      extent(i, u1, p0, p1);
-      extent(i, u2, q0, q1);
-      bool heated = false;
-      for (const Load* h : heats)
-        for (const auto& r : h->refs) heated = heated || r.body == bodies[i];
-      const bool model = !heated && !finned[i] && !is_wall(bodies[i]);
-      const double along = model ? 0.5 * (n0 + n1) : n0 - std::max(1.0, 1.5 * coarse / std::pow(2.0, level[i]));
+      extent_of(parts, d.normal, n0, n1);
+      extent_of(parts, u1, p0, p1);
+      extent_of(parts, u2, q0, q1);
+      bool solid = false;  // a part that makes heat, has fins or is the box's: the fan blows on it
+      int finest = 0;
+      for (size_t i : parts) {
+        for (const Load* h : heats)
+          for (const auto& r : h->refs) solid = solid || r.body == bodies[i];
+        solid = solid || finned[i] || is_wall(bodies[i]);
+        finest = std::max(finest, level[i]);
+      }
+      const double along = !solid ? 0.5 * (n0 + n1) : n0 - std::max(1.0, 1.5 * coarse / std::pow(2.0, finest));
       d.centre = add(add(mul(d.normal, along), mul(u1, 0.5 * (p0 + p1))), mul(u2, 0.5 * (q0 + q1)));
-      d.radius = model || d.fan.size <= 0 ? 0.47 * std::min(p1 - p0, q1 - q0) : 0.47 * d.fan.size;
-      if (model) is_air[i] = true, level[i] = 0;
+      d.radius = !solid || d.fan.size <= 0 ? 0.47 * std::min(p1 - p0, q1 - q0) : 0.47 * d.fan.size;
+      if (!solid)
+        for (size_t i : parts) is_air[i] = true, level[i] = 0;
       disks.push_back(d);
     }
 
@@ -1825,6 +1870,10 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
       if (const Thermal* t = thermal(c.id)) th = *t, assumed = false;
     if (c.density > 0) r = c.density;
     const json o = st.value("materials", json::object()).value(bodies[i], st.value("materials", json::object()).value("all", json()));
+    if (o.is_object() && thermal(o.value("material", std::string()))) {  // a library material for this study (a heatsink's)
+      th = *thermal(o.value("material", std::string())), assumed = false;
+      if (const Material* lib = material(o.value("material", std::string()))) r = lib->density;
+    }
     if (o.is_object()) {
       th.conductivity = o.value("k", th.conductivity), th.specific_heat = o.value("cp", th.specific_heat), r = o.value("density", r);
       assumed = assumed && !o.contains("k");

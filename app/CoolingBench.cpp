@@ -112,7 +112,10 @@ OPAD_BENCH(OPAD_BENCH_COOLING, cooling) {
                     int heated = 0;
                     for (int r = 0; r < c->heatTable()->rowCount(); ++r) heated += c->heatTable()->item(r, 0)->checkState() == Qt::Checked;
                     require(heated == 2, QString("the heat table ticks the two chips (%1)").arg(heated));
-                    require(c->fanTable()->rowCount() == 1, "the fan table has the fan block");
+                    require(c->fans().size() == 1 && c->fans()[0].on == std::vector<std::string>{bodyNamed("Fan")} &&
+                                c->fans()[0].sink == std::vector<std::string>{bodyNamed("Heatsink")} && c->fans()[0].model.isEmpty() &&
+                                std::fabs(c->fans()[0].flow - 8) < 1e-9,
+                            "the Air page's fan: the fan block, blowing through the heatsink, a custom fan of 8 m3/h");
                     shot("box");
                     c->open(1);
                     shot("heat");
