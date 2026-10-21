@@ -218,5 +218,7 @@
  "in front of %1's intake": "أمام مدخل %1",
  "in front of %1's outlet": "أمام مخرج %1",
  "no intake vents found on that side of the fans: the air comes in and goes out through the same vents, half each": "لم توجد فتحات سحب في تلك الجهة من المراوح: يدخل الهواء ويخرج من الفتحات نفسها، نصفها لكل منهما",
- "no exhaust vents found on that side of the fans: the air comes in and goes out through the same vents, half each": "لم توجد فتحات طرد في تلك الجهة من المراوح: يدخل الهواء ويخرج من الفتحات نفسها، نصفها لكل منهما"
+ "no exhaust vents found on that side of the fans: the air comes in and goes out through the same vents, half each": "لم توجد فتحات طرد في تلك الجهة من المراوح: يدخل الهواء ويخرج من الفتحات نفسها، نصفها لكل منهما",
+ "It is %1 mm off them: the box's air also comes round through that gap (%2 mm²)%3.": "تبعد عنها %1 مم: فيلتفّ هواء الصندوق أيضًا عبر تلك الفجوة (%2 مم²)%3.",
+ ", %1 of it": "، منه %1"
 }

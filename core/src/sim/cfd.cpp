@@ -722,6 +722,8 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
     bool mount = false;         // through the fan's own cut-out: no restriction
     std::string part;           // a part covering the opening, whose holes these are
     P dir{0, 0, 0};             // the way out of the fan on this side (towards the room)
+    double gap = 0, leak = 0;   // the gap between the opening and what its holes are in (mm), and the way round through it
+                                // to the box's air (mm2: the opening's outline times the gap), in parallel with the holes
   };
   struct F {
     air::Fan fan;
@@ -865,6 +867,25 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
         if (vents[i].area >= 0.5 * o->area) path->mount = true;  // the cut-out it is mounted in
       }
       path->direct = !path->holes.empty();
+      // Not sealed against the panel or the part: the gap between them (their distance less the panel's thickness) lets the
+      // box's air round to the opening too; through the opening's outline times the gap, in parallel with the holes. (A
+      // blower 2 mm under a perforated lid drew most of its air that way in the run: the holes alone said a third of it.)
+      if (path->direct && !path->mount) {
+        std::vector<double> gaps;
+        for (size_t i : path->holes) gaps.push_back(dot3(minus(vents[i].centre, o->centre), dir) - vents[i].thickness);
+        std::nth_element(gaps.begin(), gaps.begin() + long(gaps.size() / 2), gaps.end());
+        path->gap = std::max(0.0, gaps[gaps.size() / 2]);
+        double perimeter = 0;
+        if (!o->loops.empty())
+          for (size_t k = 0; k < o->loops.front().size(); ++k) {
+            const P& a0 = o->loops.front()[k];
+            const P& b0 = o->loops.front()[(k + 1) % o->loops.front().size()];
+            perimeter += std::sqrt(dot3(minus(b0, a0), minus(b0, a0)));
+          }
+        else
+          perimeter = 2 * std::sqrt(kPi * o->area);
+        if (path->gap > 0.2) path->leak = perimeter * path->gap;
+      }
     }
     const double q = f.fan.Qmax;
     free_flow += q;
@@ -874,7 +895,8 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
   // The box's other holes: intakes behind the fans' air, exhausts ahead of it; all exhausts when no fan draws from the box's
   // air (each takes the room's through holes of its own), all intakes when none blows into it.
   bool fromBox = false, intoBox = false;
-  for (const F& f : list) fromBox = fromBox || !f.in.direct || !f.in.room, intoBox = intoBox || !f.out.direct || !f.out.room;
+  for (const F& f : list)
+    fromBox = fromBox || !f.in.direct || !f.in.room || f.in.leak > 0, intoBox = intoBox || !f.out.direct || !f.out.room || f.out.leak > 0;
   std::vector<size_t> intakes, exhausts;
   for (size_t i = 0; i < vents.size(); ++i)
     if (vents[i].fan < 0) {
@@ -937,32 +959,64 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
     inScale = outScale = 0.5;
   }
   const std::vector<Group> gin = groups(intakes, inScale), gout = groups(exhausts, outScale);
-  std::vector<std::vector<Group>> fin, fout;
-  for (const F& f : list) fin.push_back(f.in.mount ? std::vector<Group>{} : groups(f.in.holes, 1)), fout.push_back(f.out.mount ? std::vector<Group>{} : groups(f.out.holes, 1));
+  std::vector<std::vector<Group>> fin, fout, lin, lout;  // each fan's own holes, and the way round them (the gap) on each side
+  auto leak = [&](double mm2) { return mm2 > 0 ? std::vector<Group>{{a.rho / (2 * std::pow(kCd * mm2 * 1e-6, 2)), 0.0, 1}} : std::vector<Group>{}; };
+  for (const F& f : list) {
+    fin.push_back(f.in.mount ? std::vector<Group>{} : groups(f.in.holes, 1)), fout.push_back(f.out.mount ? std::vector<Group>{} : groups(f.out.holes, 1));
+    lin.push_back(leak(f.in.leak)), lout.push_back(leak(f.out.leak));
+  }
   // The network: the box's air in two parts, before the fans (pU, fed by the intakes) and after them (pD, let out by the
   // exhausts); each fan between where it draws (pU, or the room through its own path) and where it blows (pD, or the room
   // through its own). For given pU and pD each fan's flow is where its curve meets that; pU and pD are where the box's air
   // balances (in = out), found in turns.
   double Pmax = 0;
   for (const F& f : list) Pmax = std::max(Pmax, f.fan.pressure(0));
-  auto fan_flow = [&](size_t i, double pU, double pD, double* dp) {
-    const F& f = list[i];
-    auto rise = [&](double Q) {  // what the fan must make at Q
-      const double pin = f.in.direct ? (f.in.room ? 0.0 : pU) - (f.in.mount ? 0.0 : drop_of(fin[i], Q)) : pU;
-      const double pout = f.out.direct ? (f.out.room ? 0.0 : pD) + (f.out.mount ? 0.0 : drop_of(fout[i], Q)) : pD;
-      return pout - pin;
-    };
-    double lo = 0, hi = f.fan.Qmax;
-    if (f.fan.pressure(0) <= rise(0)) {
-      if (dp) *dp = rise(0);
-      return 0.0;
+  // The pressure at one side of a fan carrying Q, given its zone's (pU before the fans, pD after), and the part of Q that
+  // side takes from (or gives to) the box's air: through the box's air alone; its cut-out; its own holes (to the room, or to
+  // the box's air for a part inside it); or its holes and the gap round them together (the pressure where both carry Q).
+  auto side_at = [&](const Path& p, const std::vector<Group>& holes, const std::vector<Group>& gap, double zone, double Q, bool intake, double* boxShare) {
+    const double sgn = intake ? -1 : 1;  // the side's pressure is below its sources (intake) or above its sinks (outlet)
+    if (!p.direct) return *boxShare = Q, zone;
+    if (p.mount) return *boxShare = p.room ? 0.0 : Q, p.room ? 0.0 : zone;
+    if (!p.room) {  // a part's holes and the gap, both to the box's air
+      std::vector<Group> both = holes;
+      both.insert(both.end(), gap.begin(), gap.end());
+      return *boxShare = Q, zone + sgn * drop_of(both, Q);
     }
+    if (gap.empty()) return *boxShare = 0.0, sgn * drop_of(holes, Q);
+    // The room's through the holes, the box's through the gap: p where they carry Q together.
+    const double edge = intake ? std::min(0.0, zone) : std::max(0.0, zone);
+    double near = edge, far = edge + sgn * std::max(drop_of(holes, Q), drop_of(gap, Q));
     for (int k = 0; k < 50; ++k) {
-      const double m = 0.5 * (lo + hi);
-      (f.fan.pressure(m) > rise(m) ? lo : hi) = m;
+      const double m = 0.5 * (near + far);
+      const double carried = flow_of(holes, sgn * (m - 0.0)) + flow_of(gap, sgn * (m - zone));
+      (carried < Q ? near : far) = m;
     }
-    if (dp) *dp = rise(0.5 * (lo + hi));
-    return 0.5 * (lo + hi);
+    const double at = 0.5 * (near + far);
+    *boxShare = flow_of(gap, std::max(0.0, sgn * (at - zone)));
+    return at;
+  };
+  // A fan's flow for given pU and pD: where its curve meets what its two sides ask; with the part each side takes from the
+  // box's air (inShare: drawn from before the fans, outShare: blown into after them).
+  auto fan_flow = [&](size_t i, double pU, double pD, double* dp, double* inShare = nullptr, double* outShare = nullptr) {
+    const F& f = list[i];
+    double si = 0, so = 0;
+    auto rise = [&](double Q) {  // what the fan must make at Q
+      return side_at(f.out, fout[i], lout[i], pD, Q, false, &so) - side_at(f.in, fin[i], lin[i], pU, Q, true, &si);
+    };
+    double lo = 0, hi = f.fan.Qmax, Q = 0;
+    if (f.fan.pressure(0) > rise(0)) {
+      for (int k = 0; k < 50; ++k) {
+        const double m = 0.5 * (lo + hi);
+        (f.fan.pressure(m) > rise(m) ? lo : hi) = m;
+      }
+      Q = 0.5 * (lo + hi);
+    }
+    const double r = rise(Q);
+    if (dp) *dp = r;
+    if (inShare) *inShare = si;
+    if (outShare) *outShare = so;
+    return Q;
   };
   double pU = 0, pD = 0;
   for (int turn = 0; turn < 16; ++turn) {
@@ -971,8 +1025,11 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
       for (int k = 0; k < 40; ++k) {
         const double m = 0.5 * (lo + hi);
         double drawn = 0;
-        for (size_t i = 0; i < list.size(); ++i)
-          if (!list[i].in.direct || !list[i].in.room) drawn += fan_flow(i, m, pD, nullptr);
+        for (size_t i = 0; i < list.size(); ++i) {
+          double share = 0;
+          fan_flow(i, m, pD, nullptr, &share, nullptr);
+          drawn += share;
+        }
         (flow_of(gin, -m) > drawn ? lo : hi) = m;
       }
       pU = 0.5 * (lo + hi);
@@ -982,15 +1039,19 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
       for (int k = 0; k < 40; ++k) {
         const double m = 0.5 * (lo + hi);
         double blown = 0;
-        for (size_t i = 0; i < list.size(); ++i)
-          if (!list[i].out.direct || !list[i].out.room) blown += fan_flow(i, pU, m, nullptr);
+        for (size_t i = 0; i < list.size(); ++i) {
+          double share = 0;
+          fan_flow(i, pU, m, nullptr, nullptr, &share);
+          blown += share;
+        }
         (blown > flow_of(gout, m) ? lo : hi) = m;
       }
       pD = 0.5 * (lo + hi);
     }
   }
   double Q = 0;
-  for (size_t i = 0; i < list.size(); ++i) list[i].Q = fan_flow(i, pU, pD, &list[i].dp), Q += list[i].Q;
+  std::vector<double> inBox(list.size(), 0.0), outBox(list.size(), 0.0);
+  for (size_t i = 0; i < list.size(); ++i) list[i].Q = fan_flow(i, pU, pD, &list[i].dp, &inBox[i], &outBox[i]), Q += list[i].Q;
   const bool sealed = intakes.empty() && exhausts.empty() &&
                       std::none_of(list.begin(), list.end(), [](const F& f) { return (f.in.direct && f.in.room) || (f.out.direct && f.out.room); });
   if (sealed) {
@@ -1009,8 +1070,11 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
     if (fromBox) consider(-pU, "intake", json());
     if (intoBox) consider(pD, "exhaust", json());
     for (size_t i = 0; i < list.size(); ++i) {
-      if (list[i].in.direct && !list[i].in.mount) consider(drop_of(fin[i], list[i].Q), "fan_intake", {{"fan", list[i].name}, {"side", "intake"}});
-      if (list[i].out.direct && !list[i].out.mount) consider(drop_of(fout[i], list[i].Q), "fan_outlet", {{"fan", list[i].name}, {"side", "outlet"}});
+      double share = 0;  // across its own holes: from where they start to the fan's side
+      if (list[i].in.direct && !list[i].in.mount)
+        consider((list[i].in.room ? 0.0 : pU) - side_at(list[i].in, fin[i], lin[i], pU, list[i].Q, true, &share), "fan_intake", {{"fan", list[i].name}, {"side", "intake"}});
+      if (list[i].out.direct && !list[i].out.mount)
+        consider(side_at(list[i].out, fout[i], lout[i], pD, list[i].Q, false, &share) - (list[i].out.room ? 0.0 : pD), "fan_outlet", {{"fan", list[i].name}, {"side", "outlet"}});
     }
   }
   auto area_of = [&](const std::vector<size_t>& holes) {
@@ -1029,15 +1093,22 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
   json per_fan = json::array();
   for (size_t i = 0; i < list.size(); ++i) {
     const F& f = list[i];
-    auto path = [&](const Path& p, const std::vector<Group>& gs, bool exit) {
-      if (!p.direct) return json{{"through", exit ? "box" : "box"}};
+    auto path = [&](const Path& p, const std::vector<Group>& gs, const std::vector<Group>& gap, double zone, bool exit) {
+      if (!p.direct) return json{{"through", "box"}};
+      double share = 0;
+      const double at = side_at(p, gs, gap, zone, f.Q, !exit, &share);
+      const double across = std::fabs(at - (p.room ? 0.0 : zone));
       json j = {{"through", p.mount ? "mount" : "holes"}, {"openings", int(p.holes.size())}, {"area_mm2", area_of(p.holes)},
-                {"pressure_Pa", p.mount ? 0.0 : drop_of(gs, f.Q)}, {"body", name_of(vents[p.holes.front()].body)}};
+                {"pressure_Pa", p.mount ? 0.0 : across}, {"body", name_of(vents[p.holes.front()].body)}};
       if (!p.part.empty()) j["part"] = name_of(p.part);
+      if (p.leak > 0) {  // the way round through the gap, and what it carries (of the box's air)
+        j["gap_mm"] = p.gap, j["round_mm2"] = p.leak;
+        if (p.room) j["round_m3h"] = share * 3600, j["holes_m3h"] = (f.Q - share) * 3600;
+      }
       return j;
     };
     per_fan.push_back({{"name", f.name}, {"flow_m3h", f.Q * 3600}, {"flow_cfm", f.Q / kCfmM3s}, {"free_flow_cfm", f.fan.Qmax / kCfmM3s},
-                       {"pressure_Pa", f.dp}, {"intake", path(f.in, fin[i], false)}, {"outlet", path(f.out, fout[i], true)}});
+                       {"pressure_Pa", f.dp}, {"intake", path(f.in, fin[i], lin[i], pU, false)}, {"outlet", path(f.out, fout[i], lout[i], pD, true)}});
   }
   json out_j = {{"intake", side(intakes, inScale, fromBox ? -pU : 0.0)},
                 {"exhaust", side(exhausts, outScale, intoBox ? pD : 0.0)},

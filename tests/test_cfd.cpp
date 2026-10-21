@@ -1,8 +1,8 @@
 // Thermal studies with the air solved (sim/cfd.cpp, settings.air cfd) against the correlations of the engineering model
 // (sim/airflow.cpp) and conservation: a fan-cooled heatsink's flow and temperatures, the heat the air carries off against the
 // heat put in, and the streamlines through the fins; a vented box with a fan inside it: the box found, the fan on its curve,
-// as much air out of the box as into it, the heat leaving with it. Skipped when OpenFOAM (or CalculiX, for the comparison)
-// is missing.
+// as much air out of the box as into it, the heat leaving with it. Those solves (minutes each) run as ctest cfd-solve (label
+// slow); skipped when OpenFOAM (or CalculiX, for the comparison) is missing. The rest (vents, profiles, enclosures) is quick.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -70,6 +70,10 @@ sim::StudyRun thermal(Document& doc, json settings) {
   return sim::run_study(doc, resolve(doc), {{"kind", "thermal"}, {"settings", settings}});
 }
 
+// The tests that solve the air with OpenFOAM (minutes each) run as ctest cfd-solve (label slow, OPAD_TEST_CFD set), not in
+// the plain cfd test: a machine with OpenFOAM sat on it for many minutes with nothing said.
+bool solves() { return sim::openfoam().found() && std::getenv("OPAD_TEST_CFD"); }
+
 }  // namespace
 
 TEST(cfd_needs_openfoam_and_moving_air) {
@@ -88,7 +92,7 @@ TEST(cfd_needs_openfoam_and_moving_air) {
 }
 
 TEST(cfd_heatsink_against_the_correlations) {
-  if (!sim::openfoam().found()) return;
+  if (!solves()) return;
   std::string hs;
   Document doc = heatsink(hs);
   // No radiation: the engineering model it is held against has none.
@@ -132,7 +136,7 @@ TEST(cfd_heatsink_against_the_correlations) {
 }
 
 TEST(cfd_fan_cooled_enclosure) {
-  if (!sim::openfoam().found()) return;
+  if (!solves()) return;
   std::string enclosure, fan, block;
   Document doc = vented_box(enclosure, fan, block);
   const sim::StudyRun run = thermal(doc, {{"air", "cfd"}, {"ambient", 25}, {"cfd", {{"cell_size", 2.5}}}});
@@ -162,7 +166,7 @@ TEST(cfd_fan_cooled_enclosure) {
 // room's air in low and out high.
 // About half an hour: run with OPAD_TEST_SLOW set.
 TEST(cfd_passive_enclosure) {
-  if (!sim::openfoam().found() || !std::getenv("OPAD_TEST_SLOW")) return;
+  if (!solves() || !std::getenv("OPAD_TEST_SLOW")) return;
   Document doc = Document::create();
   const std::string enclosure = box(doc, {0, 0, 0}, 90, 60, 40, "Enclosure");
   cut(doc, enclosure, {3, 3, 3}, 84, 54, 34);
@@ -408,20 +412,27 @@ void round_hole(Document& doc, const std::string& target, Vec3 at, Vec3 normal, 
 }
 }  // namespace
 
-// A blower whose intake faces a perforated panel of the box 1 mm away (36 holes of 1.5 mm in a 3 mm wall): those holes are
-// its own intake, in series with it (they once counted as the cut-out it is mounted in, and held nothing back); it blows
-// into the box, which the slots let out. Then the same blower behind a grille inside the box (a plate with 9 holes in front
+// A blower whose intake sits against a perforated panel of the box (36 holes of 1.5 mm in a 3 mm wall): those holes are its
+// own intake, in series with it (they once counted as the cut-out it is mounted in, and held nothing back); it blows into
+// the box, which the slots let out. 2 mm off the panel, the box's air also comes round through the gap (outline x gap), in
+// parallel: more flow (a run of a blower 2 mm under a perforated lid drew most of its air that way). Then the same blower behind a grille inside the box (a plate with 9 holes in front
 // of its intake, a 30 mm opening in the wall beside): the grille's holes are its intake path, from the box's air.
 TEST(vent_estimate_of_a_blower_behind_a_perforated_panel_and_a_grille) {
-  Document doc = Document::create();
-  const std::string e = box(doc, {0, 0, 0}, 90, 60, 40, "Enclosure");
-  cut(doc, e, {3, 3, 3}, 84, 54, 34);
-  for (double z : {10.0, 18.0, 26.0}) cut(doc, e, {86, 10, z}, 5, 40, 4);
-  for (int i = 0; i < 6; ++i)
-    for (int j = 0; j < 6; ++j) round_hole(doc, e, {-1, 22.5 + 3 * i, 12.5 + 3 * j}, {1, 0, 0}, 1.5, 5);
-  const std::string blower = box(doc, {4, 15, 5}, 20, 30, 30, "Blower");
-  json load = {{"name", "Blower 1"}, {"fan", "cbm-3507cf-085-295"}, {"type", "blower"}, {"inlet", face_along(doc, blower, {-1, 0, 0})},
-               {"outlet", face_along(doc, blower, {0, 0, 1})}};
+  auto panel = [&](double x, std::string& e, json& load) {  // the box, its perforated panel and the blower at x
+    Document doc = Document::create();
+    e = box(doc, {0, 0, 0}, 90, 60, 40, "Enclosure");
+    cut(doc, e, {3, 3, 3}, 84, 54, 34);
+    for (double z : {10.0, 18.0, 26.0}) cut(doc, e, {86, 10, z}, 5, 40, 4);
+    for (int i = 0; i < 6; ++i)
+      for (int j = 0; j < 6; ++j) round_hole(doc, e, {-1, 22.5 + 3 * i, 12.5 + 3 * j}, {1, 0, 0}, 1.5, 5);
+    const std::string blower = box(doc, {x, 15, 5}, 20, 30, 30, "Blower");
+    load = {{"name", "Blower 1"}, {"fan", "cbm-3507cf-085-295"}, {"type", "blower"}, {"inlet", face_along(doc, blower, {-1, 0, 0})},
+            {"outlet", face_along(doc, blower, {0, 0, 1})}};
+    return doc;
+  };
+  std::string e;
+  json load;
+  Document doc = panel(3, e, load);
   json r = sim::vent_estimate(doc, resolve(doc), {e}, {load}, 3);
   if (std::getenv("OPAD_TEST_VERBOSE")) std::printf("%s\n", r.dump().substr(0, 1200).c_str());
   const json& f = r["fans"][0];
@@ -436,6 +447,16 @@ TEST(vent_estimate_of_a_blower_behind_a_perforated_panel_and_a_grille) {
   int own = 0;
   for (const auto& o : r["openings"]) own += o["side"] == "fan_intake";
   CHECK_EQ(own, 36);
+  CHECK(!f["intake"].contains("round_mm2"));  // against the panel: sealed
+  const double sealed = r["flow_m3h"].get<double>();
+  // 2 mm off it.
+  Document apart = panel(5, e, load);
+  r = sim::vent_estimate(apart, resolve(apart), {e}, {load}, 3);
+  if (std::getenv("OPAD_TEST_VERBOSE")) std::printf("%s\n", r.dump().substr(0, 1200).c_str());
+  const json& off = r["fans"][0]["intake"];
+  CHECK_NEAR(off.value("gap_mm", 0.0), 2, 0.3);
+  CHECK_NEAR(off.value("round_mm2", 0.0), 120 * off.value("gap_mm", 0.0), 1);  // the opening's outline (30 x 30) x the gap
+  CHECK(off.value("round_m3h", 0.0) > 0 && r["flow_m3h"].get<double>() > sealed);
   // Behind a grille inside the box instead: a 2 mm plate 2 mm in front of the intake with 9 holes of 3 mm, the perforated
   // panel's holes no longer in front of it (the blower moved 6 mm in); a 30 mm opening in the -X wall lets the air in.
   Document g = Document::create();

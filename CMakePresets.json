@@ -63,11 +63,13 @@
       "configurePreset": "macos", "targets": ["opad-single"] }
   ],
   "testPresets": [
-    { "name": "windows", "configurePreset": "windows", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui" } } },
+    { "name": "windows", "configurePreset": "windows", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui|slow" } } },
     { "name": "windows-gui", "configurePreset": "windows", "output": { "outputOnFailure": true }, "filter": { "include": { "label": "gui" } } },
-    { "name": "windows-static", "configurePreset": "windows-static", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui" } } },
-    { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui" } } },
-    { "name": "macos", "configurePreset": "macos", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui" } } }
+    { "name": "windows-slow", "configurePreset": "windows", "output": { "outputOnFailure": true, "verbosity": "verbose" }, "filter": { "include": { "label": "slow" } } },
+    { "name": "windows-static", "configurePreset": "windows-static", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui|slow" } } },
+    { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui|slow" } } },
+    { "name": "linux-slow", "configurePreset": "linux", "output": { "outputOnFailure": true, "verbosity": "verbose" }, "filter": { "include": { "label": "slow" } } },
+    { "name": "macos", "configurePreset": "macos", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui|slow" } } }
   ],
   "workflowPresets": [
     { "name": "windows", "steps": [
