@@ -1612,6 +1612,11 @@ void CoolingAssistant::estimateVents() {
           own << (std::string(which) == "intake" ? tr("%1 draws through %n hole(s) in %2 in front of its intake (%3 mm², %4 Pa across them).", "", p.value("openings", 0))
                                                  : tr("%1 blows through %n hole(s) in %2 in front of its outlet (%3 mm², %4 Pa across them).", "", p.value("openings", 0)))
                      .arg(fan, body).arg(std::lround(p.value("area_mm2", 0.0))).arg(p.value("pressure_Pa", 0.0), 0, 'f', 1);
+        if (p.contains("round_m3h") || p.contains("round_mm2"))  // not sealed against them: the box's air comes round too
+          own.back() += " " + tr("It is %1 mm off them: the box's air also comes round through that gap (%2 mm²)%3.")
+                                  .arg(p.value("gap_mm", 0.0), 0, 'f', 1)
+                                  .arg(std::lround(p.value("round_mm2", 0.0)))
+                                  .arg(p.contains("round_m3h") ? tr(", %1 of it").arg(QString::number(p.value("round_m3h", 0.0) * k, 'g', 2) + " " + u) : QString());
       }
     QString text;
     if (by == "vents") {  // sealed: said first and plainly, not as a flow

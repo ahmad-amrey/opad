@@ -292,8 +292,10 @@ Needs OpenFOAM.
      pocket, a hole a part fills, a loop that leads under a lid are not counted);
    - holes right in front of a fan's opening (within its outline, up to 10 mm away) are that fan's own path, in series
      with it: a perforated panel before a blower's intake, or the holes of another part covering the opening (a grille,
-     taken to seal against it); one hole about as large as the opening is the cut-out the fan sits in and holds nothing
-     back;
+     taken to seal against it); a gap between the opening and them lets the box's air come round too (through the
+     opening's outline times the gap, in parallel: a blower 2 mm under a perforated lid took most of its air that way in
+     the run, and the estimate agrees within a few percent); one hole about as large as the opening is the cut-out the fan
+     sits in and holds nothing back;
    - the box's other holes are intakes on the side the fans draw from and exhausts on the side they blow into;
    - each hole loses its orifice's pressure (discharge 0.6) and the laminar friction along it (a small hole through a
      thick wall: mostly friction); the box's air is solved in two parts, before and after the fans, each fan where its

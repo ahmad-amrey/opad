@@ -279,7 +279,8 @@ Benches: `OPAD_BENCH_DRAWING_IMPORT=<drawing>` (face, then picked plane + offset
 
 ## Safety net (TODO 10 A13)
 
-`ctest --preset windows` = unit tests (74 after TODO 11). `ctest --preset windows-gui` = `tools/gui_benches.py`: the
+`ctest --preset windows` = unit tests (74 after TODO 11; label `slow` left out: `ctest --preset windows-slow` runs `cfd-solve`, the
+OpenFOAM solves, minutes each and silent meanwhile). `ctest --preset windows-gui` = `tools/gui_benches.py`: the
 in-app benches in hidden windows (~253 cases; built-in list plus `tools/bench_cases/<area>.py`, each exposing `CASES`; a
 full run takes about an hour on a loaded machine, so run `--only <case>` while working and the full net before merging).
 Hidden bench windows land at display scale 1.0 or 1.5 at random: `big-drawing` and `highlight` fail at 1.0 (pin the
