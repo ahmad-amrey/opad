@@ -736,11 +736,11 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
   double free_flow = 0;
   constexpr double kFront = 10;  // mm: how far in front of an opening its holes may be
   // Whether a hole (centre c, normal n) lies in front of an opening along `dir`, inside its outline (1 mm to spare).
-  auto in_front = [&](const FanProfile& o, const P& dir, const P& c, const P& n, double far) {
+  auto in_front = [&](const FanProfile& o, const P& dir, const P& c, const P& n, double depth) {
     if (std::fabs(dot3(n, dir)) < 0.9) return false;
     const P d = minus(c, o.centre);
     const double along = dot3(d, dir);
-    if (along < -1 || along > far) return false;
+    if (along < -1 || along > depth) return false;
     const P u = unit(std::fabs(dir[0]) < 0.9 ? P{0, dir[2], -dir[1]} : P{-dir[2], 0, dir[0]});
     const P v{dir[1] * u[2] - dir[2] * u[1], dir[2] * u[0] - dir[0] * u[2], dir[0] * u[1] - dir[1] * u[0]};
     if (o.loops.empty()) return std::sqrt(std::max(0.0, dot3(d, d) - along * along)) < std::sqrt(o.area / kPi) + 1;
@@ -1707,7 +1707,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
             shell.emplace_back();
             shell.back().Load(cap, 1e-6);
           }
-          const double far = std::sqrt(hb.SquareExtent()) + 1;
+          const double reach = std::sqrt(hb.SquareExtent()) + 1;
           for (size_t i = 0; i < bodies.size(); ++i) {
             if (i == b.in_body || i == b.out_body || is_wall(bodies[i]) || is_air[i] || heated.count(bodies[i])) continue;
             Bnd_Box ib;
@@ -1725,7 +1725,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
                   const gp_Lin ray(from, gp_Dir(dx, dy, dz));
                   bool met = false;
                   for (auto& x : shell) {
-                    x.Perform(ray, 0, far);
+                    x.Perform(ray, 0, reach);
                     met = met || (x.IsDone() && x.NbPnt() > 0);
                   }
                   in = met;
