@@ -738,11 +738,11 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
   double free_flow = 0;
   constexpr double kFront = 10;  // mm: how far in front of an opening its holes may be
   // Whether a hole (centre c, normal n) lies in front of an opening along `dir`, inside its outline (1 mm to spare).
-  auto in_front = [&](const FanProfile& o, const P& dir, const P& c, const P& n, double far) {
+  auto in_front = [&](const FanProfile& o, const P& dir, const P& c, const P& n, double depth) {
     if (std::fabs(dot3(n, dir)) < 0.9) return false;
     const P d = minus(c, o.centre);
     const double along = dot3(d, dir);
-    if (along < -1 || along > far) return false;
+    if (along < -1 || along > depth) return false;
     const P u = unit(std::fabs(dir[0]) < 0.9 ? P{0, dir[2], -dir[1]} : P{-dir[2], 0, dir[0]});
     const P v{dir[1] * u[2] - dir[2] * u[1], dir[2] * u[0] - dir[0] * u[2], dir[0] * u[1] - dir[1] * u[0]};
     if (o.loops.empty()) return std::sqrt(std::max(0.0, dot3(d, d) - along * along)) < std::sqrt(o.area / kPi) + 1;
@@ -986,13 +986,13 @@ json vent_estimate(const Document& doc, const Scene& scene, const std::vector<st
     if (gap.empty()) return *boxShare = 0.0, sgn * drop_of(holes, Q);
     // The room's through the holes, the box's through the gap: p where they carry Q together.
     const double edge = intake ? std::min(0.0, zone) : std::max(0.0, zone);
-    double near = edge, far = edge + sgn * std::max(drop_of(holes, Q), drop_of(gap, Q));
+    double p_near = edge, p_far = edge + sgn * std::max(drop_of(holes, Q), drop_of(gap, Q));
     for (int k = 0; k < 50; ++k) {
-      const double m = 0.5 * (near + far);
+      const double m = 0.5 * (p_near + p_far);
       const double carried = flow_of(holes, sgn * (m - 0.0)) + flow_of(gap, sgn * (m - zone));
-      (carried < Q ? near : far) = m;
+      (carried < Q ? p_near : p_far) = m;
     }
-    const double at = 0.5 * (near + far);
+    const double at = 0.5 * (p_near + p_far);
     *boxShare = flow_of(gap, std::max(0.0, sgn * (at - zone)));
     return at;
   };
@@ -1778,7 +1778,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
             shell.emplace_back();
             shell.back().Load(cap, 1e-6);
           }
-          const double far = std::sqrt(hb.SquareExtent()) + 1;
+          const double reach = std::sqrt(hb.SquareExtent()) + 1;
           for (size_t i = 0; i < bodies.size(); ++i) {
             if (i == b.in_body || i == b.out_body || is_wall(bodies[i]) || is_air[i] || heated.count(bodies[i])) continue;
             Bnd_Box ib;
@@ -1796,7 +1796,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
                   const gp_Lin ray(from, gp_Dir(dx, dy, dz));
                   bool met = false;
                   for (auto& x : shell) {
-                    x.Perform(ray, 0, far);
+                    x.Perform(ray, 0, reach);
                     met = met || (x.IsDone() && x.NbPnt() > 0);
                   }
                   in = met;
