@@ -102,3 +102,6 @@ if(WIN32 AND NOT OPAD_STATIC)
   include(${PROJECT_SOURCE_DIR}/cmake/portable.cmake)  # target opad-portable
 endif()
 include(${PROJECT_SOURCE_DIR}/cmake/single.cmake)  # target opad-single: the one-file deliverable of each OS
+if(UNIX AND NOT APPLE AND NOT OPAD_STATIC AND TARGET opad-cli)
+  include(${PROJECT_SOURCE_DIR}/cmake/deb.cmake)  # target opad-deb: the Debian/Ubuntu installer
+endif()

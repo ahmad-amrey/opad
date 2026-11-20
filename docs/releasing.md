@@ -13,7 +13,7 @@ when a version tag is pushed by hand. Both run in GitHub Actions (`.github/workf
 | Actions > Build > Run workflow | Windows, Linux, macOS (tests optional) | kept 7 days | no |
 
 The packages: a Windows installer (`installer/opad.iss`, per user, keeps the user's settings) and single-file exe, a
-macOS dmg and a Linux AppImage. The first run builds OCCT on each machine (about 15 to 40 minutes); the Actions cache
+macOS dmg, a Debian package for Ubuntu and Debian, and a Linux AppImage. The first run builds OCCT on each machine (about 15 to 40 minutes); the Actions cache
 keeps it and the compiled sources (ccache) for the runs after it. Caches saved by `main` runs are the ones pull requests
 and tags can use, and one unused for 7 days is dropped.
 

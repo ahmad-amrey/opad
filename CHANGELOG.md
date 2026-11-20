@@ -34,7 +34,7 @@ First public release: an open-source parametric CAD program whose design files g
 - Windows: an installer (per user, no administrator rights; updates keep your settings) and a single-file exe that runs
   without installing.
 - macOS (Apple Silicon): a dmg.
-- Linux: an AppImage.
+- Linux: a Debian package for Ubuntu and Debian (24.04 or newer), and an AppImage for other distributions.
 
 ### Known limitations
 

@@ -95,6 +95,14 @@ FFmpeg, codec, FreeImage or OpenVR libraries as the portable target does. The dm
 inside the bundle (ad-hoc signed, not notarised; it carries neither opad-cli nor the DWG converters); the AppImage target
 is written but has not been run yet.
 
+## Debian package
+
+`cmake --build --preset linux --target opad-deb` (needs `apt install dpkg-dev patchelf`) writes
+`build/linux/single/OPAD-<version>-linux-amd64.deb`: OPAD and the OCCT it built in `/usr/lib/opad`, `opad` and `opad-cli`
+on the PATH, a menu entry, the `.opad` file type; Qt and the other system libraries become its dependencies
+(dpkg-shlibdeps), so `sudo apt install ./OPAD-<version>-linux-amd64.deb` pulls them in. Built for the Ubuntu it is made on
+(24.04 and newer). LibreDWG's converters are left out (GPLv3); DWG then needs `libredwg-tools` or the ODA File Converter.
+
 ## Builds on GitHub and releases
 
 `.github/workflows/ci.yml` builds and tests Windows, Linux and macOS on GitHub's machines for every pull request to
