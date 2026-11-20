@@ -62,11 +62,11 @@ std::vector<std::vector<std::pair<double, double>>> glyph_lines(char c, double a
     std::stringstream points(stroke);
     std::string pair;
     while (points >> pair) {
-      // from_chars ignores the C locale (a Qt process in an Arabic locale must still read ".5").
+      // Not the process's locale (a Qt process in an Arabic locale must still read ".5"): parse_double.
       const size_t comma = pair.find(',');
       double x = 0, y = 0;
-      std::from_chars(pair.data(), pair.data() + comma, x);
-      std::from_chars(pair.data() + comma + 1, pair.data() + pair.size(), y);
+      parse_double(pair.data(), pair.data() + comma, x);
+      parse_double(pair.data() + comma + 1, pair.data() + pair.size(), y);
       line.push_back({advance + x * kWidth, y});
     }
     out.push_back(std::move(line));

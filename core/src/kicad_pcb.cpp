@@ -97,8 +97,7 @@ struct Sx {
     const std::string& t = text(k);
     double v = 0;
     const char* first = t.data() + (!t.empty() && t[0] == '+');
-    const auto r = std::from_chars(first, t.data() + t.size(), v);
-    return r.ec == std::errc() && std::isfinite(v) ? v : fallback;
+    return parse_double(first, t.data() + t.size(), v) && std::isfinite(v) ? v : fallback;
   }
 };
 

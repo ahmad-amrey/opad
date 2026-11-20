@@ -101,9 +101,9 @@ bool next_number(const char*& p, const char* end, double& out) {
   while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n' || *p == ',')) ++p;
   if (p >= end) return false;
   if (*p == '+') ++p;
-  const auto r = std::from_chars(p, end, out);
-  if (r.ec != std::errc()) return false;
-  p = r.ptr;
+  const char* after = parse_double(p, end, out);
+  if (!after) return false;
+  p = after;
   return std::isfinite(out) && std::abs(out) < 1e12;
 }
 
