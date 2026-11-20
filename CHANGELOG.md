@@ -36,6 +36,8 @@ First public release: an open-source parametric CAD program whose design files g
 ### Known limitations
 
 - The packages are not code-signed yet: Windows and macOS warn on the first start (see *First start* below).
-- Dynamic, static and modal simulation studies need the Chrono and Netgen engines, which these packages leave out;
-  joints and motion studies work.
-- The Python module and the plugin interface are not in the packages; build from source for them.
+- Dynamic, static and modal simulation studies need the Chrono and Netgen engines, which the Windows and Linux
+  packages leave out; joints and motion studies work there.
+- The Python module, the plugin interface and the command-line tool on macOS and Linux are not in the packages; build
+  from source for them.
+- macOS: Apple silicon only (M1 or newer).

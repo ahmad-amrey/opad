@@ -10,9 +10,10 @@
 #   Run workflow (manual)   the builds alone; the packages are the run's artifacts.
 #
 # Packages: Windows = installer (installer/opad.iss) and single-file exe (windows-static preset: Qt and OCCT linked in);
-# Linux = AppImage (linux-single); macOS = dmg (macos-single). OCCT 7.9.2 is built from source on Linux and macOS (no
-# GPL FFmpeg/FreeImage to bundle) and statically on Windows, once: the Actions cache keeps it, and ccache keeps the
-# compiled sources. The simulation engines, Python module and plugins are off in these packages.
+# Linux = AppImage (linux-single); macOS = dmg (macos-single). OCCT 7.9.2 is built from source on Linux (no GPL
+# FFmpeg/FreeImage to bundle) and statically on Windows, once: the Actions cache keeps it, and ccache keeps the compiled
+# sources; macOS takes Homebrew's. The simulation engines, Python module and plugins are off in the Windows and Linux
+# packages; the macOS build keeps the preset's defaults (its dmg carries the app alone).
 name: Build
 
 on:
@@ -186,10 +187,13 @@ jobs:
             build/linux/single/*.AppImage
             build/linux/single/THIRD-PARTY-NOTICES.txt
 
+  # As verified on an Apple-silicon Mac (macOS build session, branch macos-build-fixes; CLAUDE.md "macOS (Apple silicon,
+  # Homebrew)"): Homebrew's OCCT and Qt, the plain macos preset (Chrono and Netgen built at the first configure, kept in
+  # the cache), its unit tests, then the dmg (arm64, ad-hoc signed, every library inside the app).
   macos:
     name: macOS
     needs: version
-    runs-on: macos-latest  # Apple Silicon
+    runs-on: macos-15  # Apple silicon
     timeout-minutes: 300
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -197,16 +201,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: true  # third_party/libredwg (DWG)
       - name: Packages
-        run: brew install ninja ccache qt nlohmann-json rapidjson eigen freetype pkgconf
+        run: brew install cmake ninja ccache opencascade qt nlohmann-json pybind11 python
       - id: cc
         run: echo "version=$(clang -dumpversion)" >> "$GITHUB_OUTPUT"
-      - name: Cache OCCT
+      - name: Cache the simulation engines
         uses: actions/cache@v4
         with:
-          path: build/macos/occt/install
-          key: occt-macos-clang${{ steps.cc.outputs.version }}-${{ hashFiles('cmake/occt_bundled.cmake', 'cmake/occt_source.cmake') }}
+          path: |
+            build/macos/eigen
+            build/macos/chrono/install
+            build/macos/netgen/install
+          key: sim-engines-macos-clang${{ steps.cc.outputs.version }}-${{ hashFiles('cmake/sim_engines.cmake') }}
       - name: Cache ccache
         uses: actions/cache@v4
         with:
@@ -214,7 +221,7 @@ jobs:
           key: ccache-macos-${{ github.sha }}
           restore-keys: ccache-macos-
       - name: Configure
-        run: cmake --preset macos -DOPAD_OCCT_BUILD=ON -DOPAD_CHRONO=OFF -DOPAD_NETGEN=OFF -DOPAD_BUILD_PYTHON=OFF -DOPAD_BUILD_PLUGINS=OFF
+        run: cmake --preset macos
       - name: Build
         run: cmake --build --preset macos
       - name: Test
