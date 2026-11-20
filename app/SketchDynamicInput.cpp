@@ -244,6 +244,11 @@ bool SketchEditor::appliesOnEnter() const {
   if (t == "node") return m_sel.size() == 1;
   if (t == "mirror") return curves() > 0 && (option("mirrorAxis", "picked") != "picked" || (option("mirrorStage", "seed") == "axis" && !m_picked.empty()));
   if (t == "break") return curves() >= 2;
+  if (t == "c:rigid") return !m_picked.empty();
+  if (t == "align") {
+    const QString to = option("alignTo", "vertical");
+    return curves() > 0 && !m_picked.empty() && (m_picked.size() >= 2 || (to != "parallel" && to != "collinear"));
+  }
   if (t == "union" || t == "subtract" || t == "intersect") return m_clicks.size() == 2;
   if (t == "explode") return std::any_of(m_sel.begin(), m_sel.end(), [this](int id) { return pattern_of(m_sk, id, true) != 0; });
   if (t == "heal" || t == "simplify") return true;

@@ -203,6 +203,7 @@ class SketchEditor : public QObject, public SketchInput {
   opad::json primitiveOptions() const;
   void createText(double u,double v);
   bool modifyClick(double u,double v);
+  bool alignClick(double u,double v);  // the Align tool's click (SketchModify.cpp)
   bool applyModify();
   struct Clip {  // what the paste tool places: the clip, its base point, its curves as polylines about the base (a box when many)
     opad::json data;

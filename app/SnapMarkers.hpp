@@ -20,7 +20,7 @@
 namespace snapmarkers {
 struct Seg { double x0 = 0, y0 = 0, x1 = 0, y1 = 0; };
 enum class Marker { Endpoint, Midpoint, Centre, Quadrant, Intersection, Apparent, Nearest, Perpendicular, Tangent, Extension, Tracking, Locked, Grid };
-enum class Glyph { Coincident, OnCurve, Midpoint, Horizontal, Vertical, Perpendicular, Tangent, Parallel, Equal, Concentric, Collinear, Symmetric, Fix, Smooth, Curvature };
+enum class Glyph { Coincident, OnCurve, Midpoint, Horizontal, Vertical, Perpendicular, Tangent, Parallel, Equal, Concentric, Collinear, Symmetric, Fix, Smooth, Curvature, Rigid };
 
 namespace detail {
 inline void poly(std::vector<Seg>& out, std::initializer_list<std::pair<double, double>> pts, bool closed, double k, double dx = 0, double dy = 0) {
@@ -157,6 +157,10 @@ inline std::vector<Seg> glyph(Glyph g, double size = 10) {
       poly(out, {{0, 1}, {0, -0.3}}, false, h);
       poly(out, {{-0.9, -0.3}, {0.9, -0.3}}, false, h);
       for (const double x : {-0.6, 0.0, 0.6}) poly(out, {{x, -0.3}, {x - 0.35, -0.95}}, false, h);
+      break;
+    case Glyph::Rigid:  // a braced triangle: a truss holds its shape
+      poly(out, {{-0.9, -0.75}, {0.9, -0.75}, {0, 0.85}}, true, h);
+      poly(out, {{0, 0.85}, {0, -0.75}}, false, h);
       break;
     case Glyph::Smooth: {  // an S: two curves running on into each other (G2)
       const double pi = std::acos(-1.0);

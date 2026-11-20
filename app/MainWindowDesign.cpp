@@ -122,7 +122,7 @@ void MainWindow::buildDesignActions() {
   const auto registry=SketchPanel::tools();
   // Each tool its own icon (they all showed the generic sketch one): its own name where the table has it.
   const QMap<QString,QString> toolIcons{{"tangent_circle","tangentCircle"},{"tangent_arc","tangentArc"},{"polygon_outer","polygonOuter"},{"control_spline","controlSpline"},
-    {"select","cursor"},{"rect_pattern","patternRect"},{"polar_pattern","patternCirc"},{"break","breakCurve"},{"union","combine"},{"intersect_body","project"},
+    {"select","cursor"},{"c:rigid","cRigid"},{"rect_pattern","patternRect"},{"polar_pattern","patternCirc"},{"break","breakCurve"},{"union","combine"},{"intersect_body","project"},
     {"silhouette","project"},{"include3d","project"},{"break_link","breakLink"},{"image_insert","image"},{"image_edit","image"},{"image_calibrate","image"},
     {"image_trace","image"},{"image_remove","image"},{"vector_import","import"},{"vector_export","export"}};
   for(const auto& tool:registry) {

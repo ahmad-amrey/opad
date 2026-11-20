@@ -63,9 +63,34 @@ double chamferAt(const Sketch& sk,int point,double first,double angle) {
   if(second<=0)throw opad::Error("at that angle the chamfer never meets the other line");
   return second;
 }
-const QStringList tools={"move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","split","extend","break","chamfer","union","subtract","intersect","heal","explode"};
+const QStringList tools={"move","rotate","align","scale","copy","mirror","rect_pattern","polar_pattern","split","extend","break","chamfer","union","subtract","intersect","heal","explode"};
 }
-bool SketchEditor::chainOnClick() const { return option("chain:"+m_tool,m_tool=="offset"?"1":"0")=="1"; }
+// On by default where the whole shape is what is usually meant: an offset, an align, a rigid group.
+bool SketchEditor::chainOnClick() const { return option("chain:"+m_tool,m_tool=="offset"||m_tool=="align"||m_tool=="c:rigid"?"1":"0")=="1"; }
+// Align (Modify): a click on a line takes it (and its chain, the option) into the curves that move and makes it the line to
+// align, turning about its end nearer the click; a line of those curves picked again becomes the line to align; with Parallel
+// or Collinear, a line that stays put is then the line to align with. The preview follows each pick.
+bool SketchEditor::alignClick(double u,double v) {
+  const auto hit=hitTest(u,v);
+  const SkEntity* e=hit.kind==Hit::Entity?m_sk.entity(hit.id):nullptr;
+  if(!e){emit status(tr("Pick a line of the curves to move."));return true;}
+  const QString to=option("alignTo","vertical");
+  const bool target=to=="parallel"||to=="collinear";
+  const std::vector<int> moving=rigid_closure(m_sk,m_sel);
+  const bool moves=std::find(moving.begin(),moving.end(),e->id)!=moving.end();
+  auto reference=[&]{
+    if(e->type!=SkEntity::Type::Line){emit status(tr("Pick a line to align: arcs and circles have no direction."));return;}
+    const SkPoint *a=m_sk.point(e->p[0]),*b=m_sk.point(e->p[1]);
+    const int pivot=std::hypot(a->x-u,a->y-v)<=std::hypot(b->x-u,b->y-v)?a->id:b->id;
+    m_picked={e->id};m_options["alignPivot"]=QString::number(pivot);
+  };
+  if(target && !m_picked.empty() && !moves) {
+    if(e->type!=SkEntity::Type::Line)emit status(tr("Pick a line to align with."));
+    else{m_picked.resize(1);m_picked.push_back(e->id);}
+  } else if(moves) reference();
+  else{pickCurve(e->id);reference();}
+  invalidatePreview();rebuild();toolPrompt();emit changed();scheduleToolPreview();return true;
+}
 void SketchEditor::pickCurve(int id) {
   const bool picked=std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end();
   std::vector<int> ids{id};
@@ -84,6 +109,7 @@ bool SketchEditor::modifyClick(double u,double v) {
     rebuild();toolPrompt();emit changed();return true;
   }
   if(!tools.contains(m_tool))return false;
+  if(m_tool=="align")return alignClick(u,v);
   const auto hit=hitTest(u,v);
   if(m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")=="axis") {
     // The line, then its mirror image as a preview (TODO 11 wave 3, P4): Enter or Apply keeps it.
@@ -121,6 +147,15 @@ bool SketchEditor::applyModify() {
       // Apply with the curves chosen and no line yet: now the line. Never from the preview, which runs 120 ms after each
       // curve picked: that moved the tool on to the line after the first curve, and the next click became the line.
       else if(!m_previewRequested){m_options["mirrorStage"]="axis";toolPrompt();}
+    } else if(m_tool=="align") {
+      const QString to=option("alignTo","vertical");
+      SketchAlign align;
+      align.to=to=="horizontal"?AlignTo::Horizontal:to=="parallel"?AlignTo::Parallel:to=="collinear"?AlignTo::Collinear:AlignTo::Vertical;
+      if(m_picked.empty()){if(m_previewRequested)return true;throw opad::Error("pick the line to align");}
+      if((align.to==AlignTo::Parallel||align.to==AlignTo::Collinear) && m_picked.size()<2){if(m_previewRequested)return true;throw opad::Error("pick the line to align with");}
+      align.reference=m_picked[0];align.pivot=option("alignPivot","0").toInt();align.target=m_picked.size()>1?m_picked[1]:0;
+      align.hold=option("alignHold","0")=="1";
+      runSketchEdit(tr("Align"),[ids,align](Sketch& sk){align_entities(sk,ids,align);});
     } else if(m_tool=="heal") {
       const double tolerance=length("healTolerance","0.05 mm");
       runSketchEdit(tr("Heal endpoints"),[tolerance](Sketch& sk){heal_endpoints(sk,tolerance);heal_to_curves(sk,tolerance);});

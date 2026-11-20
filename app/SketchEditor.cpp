@@ -1006,7 +1006,7 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   // A press on nothing starts a selection window with the tools that act on selected curves (break link too: TODO 11
   // wave 3, P4). Not while mirror waits for its line: a miss there kept the window and dropped the curves to mirror.
   const bool mirrorLine=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")=="axis";
-  const bool edgeSelection=!mirrorLine && QStringList{"offset","move","rotate","scale","copy","rect_pattern","polar_pattern","break","explode","mirror","break_link"}.contains(m_tool);
+  const bool edgeSelection=!mirrorLine && QStringList{"offset","move","rotate","align","scale","copy","rect_pattern","polar_pattern","break","explode","mirror","break_link"}.contains(m_tool);
   if(edgeSelection && hitTest(u,v).kind==Hit::None){
     if(!(mods & (Qt::ShiftModifier|Qt::ControlModifier)))m_sel.clear();
     m_boxSelecting=true;m_dragU=m_boxU=u;m_dragV=m_boxV=v;rebuild();emit changed();return;
@@ -1584,7 +1584,7 @@ void SketchEditor::rebuild() {
       bool held = false;
       for (const auto& c : m_sk.constraints)
         if (!c.reference && std::find(c.refs.begin(), c.refs.end(), e.id) != c.refs.end() &&
-            (c.type == SkConstraint::Type::Radius || c.type == SkConstraint::Type::Diameter || c.type == SkConstraint::Type::Equal || c.type == SkConstraint::Type::Tangent || c.type == SkConstraint::Type::Coincident || c.type == SkConstraint::Type::Fix))
+            (c.type == SkConstraint::Type::Radius || c.type == SkConstraint::Type::Diameter || c.type == SkConstraint::Type::Equal || c.type == SkConstraint::Type::Tangent || c.type == SkConstraint::Type::Coincident || c.type == SkConstraint::Type::Fix || c.type == SkConstraint::Type::Rigid))
           held = true;
       free = free || !held;
     }
@@ -1642,6 +1642,7 @@ void SketchEditor::rebuild() {
       case SkConstraint::Type::Symmetric: return G::Symmetric;
       case SkConstraint::Type::Collinear: return G::Collinear;
       case SkConstraint::Type::Fix: return G::Fix;
+      case SkConstraint::Type::Rigid: return G::Rigid;
       default: return std::nullopt;  // coincident: a dot on its point; dimensions draw themselves
     }
   };
@@ -1685,7 +1686,7 @@ void SketchEditor::rebuild() {
       if (!shownGlyphs.insert({ref, int(*glyph)}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
       const QPoint seen = m_viewport->widgetPoint(W(gu, gv));
       badges.push_back({c.id, *glyph, {double(seen.x()), -double(seen.y())}, gu, gv, colourOf(c), m_conflicts.count(c.id) > 0});
-      if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one badge is enough
+      if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix || c.type == SkConstraint::Type::Rigid) break;  // one badge is enough
     }
   }
   m_joinDots.clear();

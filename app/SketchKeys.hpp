@@ -48,7 +48,7 @@ inline bool chainTool(const std::string& tool) { return tool == "line" || tool =
 // picked), break link (linked curves selected), the image and file tools. The clips may show an Enter cap only for these,
 // the chain tools and typed values (tests/test_help.cpp).
 inline bool entersApply(const std::string& tool) {
-  static const char* const tools[] = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern", "node", "mirror",
+  static const char* const tools[] = {"offset", "chamfer", "move", "copy", "rotate", "align", "c:rigid", "scale", "rect_pattern", "polar_pattern", "node", "mirror",
                                       "break", "union", "subtract", "intersect", "explode", "heal", "simplify", "project", "intersect_body",
                                       "silhouette", "include3d", "break_link", "image_insert", "image_calibrate", "image_edit", "image_trace",
                                       "image_remove", "vector_import", "vector_export"};

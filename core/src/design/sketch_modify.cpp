@@ -40,10 +40,22 @@ std::vector<int> connected_entities(const Sketch& sk,const std::vector<int>& see
     if(ids.insert(e->id).second)for(int p:e->p)if(points.insert(p).second)pending.push_back(p);
   return {ids.begin(),ids.end()};
 }
-std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const SketchTransform& t,bool copy) {
+std::vector<int> rigid_closure(const Sketch& sk,const std::vector<int>& ids) {
+  std::vector<int> out=ids;std::set<int> in(ids.begin(),ids.end());
+  for(bool grew=true;grew;) {
+    grew=false;
+    for(const auto& c:sk.constraints)if(c.type==SkConstraint::Type::Rigid && std::any_of(c.refs.begin(),c.refs.end(),[&](int r){return in.count(r)>0;}))
+      for(int r:c.refs)if(in.insert(r).second){out.push_back(r);grew=true;}
+  }
+  return out;
+}
+std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& picked,const SketchTransform& t,bool copy) {
   if(!std::isfinite(t.scale)||t.scale<=0||!std::isfinite(t.angle)||!std::isfinite(t.x)||!std::isfinite(t.y))throw Error("invalid sketch transform");
+  // Moved in place, a curve of a rigid group takes its whole group along (a copy copies only what was picked).
+  const std::vector<int> ids=copy?picked:rigid_closure(sk,picked);
   std::map<int,int> mapped;std::vector<SkEntity> source;std::vector<int> result;std::set<int> points;
   for(int id:ids)if(const auto* e=sk.entity(id)){source.push_back(*e);for(int p:e->p)points.insert(p);}
+  if(!copy)for(int id:ids)if(sk.point(id))points.insert(id);  // a group's own points
   if(source.empty())throw Error("select curves to transform");
   const std::set<int> selected(ids.begin(),ids.end());
   if(!copy)for(const auto& e:source)if(e.fixed)throw Error("break projection or pattern links before transforming fixed curves");
@@ -72,6 +84,57 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const
     follow(c);
   }
   sk.validate();return result;
+}
+
+SketchTransform align_transform(const Sketch& sk,const SketchAlign& align) {
+  const SkEntity* line=sk.entity(align.reference);
+  if(!line || line->type!=SkEntity::Type::Line)throw Error("pick the line to align");
+  const int pivot=align.pivot==line->p[1]?line->p[1]:line->p[0],other=pivot==line->p[0]?line->p[1]:line->p[0];
+  const SkPoint &p=*sk.point(pivot),&q=*sk.point(other);
+  const double dx=q.x-p.x,dy=q.y-p.y;
+  if(std::hypot(dx,dy)<1e-9)throw Error("that line has no length to align");
+  double tx=0,ty=1,ox=0,oy=0;  // the direction to align with, and a point of the target line
+  if(align.to==AlignTo::Horizontal){tx=1;ty=0;}
+  else if(align.to==AlignTo::Parallel || align.to==AlignTo::Collinear) {
+    const SkEntity* target=sk.entity(align.target);
+    if(!target || target->type!=SkEntity::Type::Line)throw Error("pick the line to align with");
+    if(target->id==line->id)throw Error("pick another line to align with");
+    const SkPoint &a=*sk.point(target->p[0]),&b=*sk.point(target->p[1]);
+    tx=b.x-a.x;ty=b.y-a.y;ox=a.x;oy=a.y;
+    const double l=std::hypot(tx,ty);if(l<1e-9)throw Error("the line to align with has no length");
+    tx/=l;ty/=l;
+  }
+  // The smaller of the two turns that lay the line along the direction (either way along it).
+  double angle=std::atan2(dx*ty-dy*tx,dx*tx+dy*ty);
+  if(angle>M_PI/2)angle-=M_PI;
+  else if(angle<=-M_PI/2)angle+=M_PI;
+  SketchTransform t;t.cx=p.x;t.cy=p.y;t.angle=angle;
+  if(align.to==AlignTo::Collinear) {  // and across onto the line: the pivot to its foot on it
+    const double along=(p.x-ox)*tx+(p.y-oy)*ty;
+    t.x=ox+along*tx-p.x;t.y=oy+along*ty-p.y;
+  }
+  return t;
+}
+
+std::vector<int> align_entities(Sketch& sk,const std::vector<int>& picked,const SketchAlign& align) {
+  const std::vector<int> ids=rigid_closure(sk,picked.empty()?std::vector<int>{align.reference}:picked);
+  if(std::find(ids.begin(),ids.end(),align.reference)==ids.end())throw Error("pick the line to align among the curves that move");
+  if((align.to==AlignTo::Parallel || align.to==AlignTo::Collinear) && std::find(ids.begin(),ids.end(),align.target)!=ids.end())
+    throw Error("align with a line that stays where it is, not one of the curves that move");
+  const SketchTransform t=align_transform(sk,align);
+  const std::vector<int> moved=transform_entities(sk,ids,t,false);
+  // Exactly along it, not within round-off: the far end level with the pivot.
+  const SkEntity& line=*sk.entity(align.reference);
+  const int pivot=align.pivot==line.p[1]?line.p[1]:line.p[0],other=pivot==line.p[0]?line.p[1]:line.p[0];
+  if(align.to==AlignTo::Vertical)sk.point(other)->x=sk.point(pivot)->x;
+  if(align.to==AlignTo::Horizontal)sk.point(other)->y=sk.point(pivot)->y;
+  if(align.hold) {
+    using T=SkConstraint::Type;
+    if(align.to==AlignTo::Vertical)sk.add_constraint(T::Vertical,{align.reference});
+    else if(align.to==AlignTo::Horizontal)sk.add_constraint(T::Horizontal,{align.reference});
+    else sk.add_constraint(align.to==AlignTo::Parallel?T::Parallel:T::Collinear,{align.target,align.reference});
+  }
+  sk.validate();return moved;
 }
 
 std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const Frame& frame,bool construction,bool fixed) {
@@ -143,10 +206,18 @@ void split_entity(Sketch& sk,int id,double x,double y) {
   GeomAPI_ProjectPointOnCurve nearest(gp_Pnt(x,y,0),curve,c.FirstParameter(),c.LastParameter());if(!nearest.NbPoints())throw Error("no split point on the curve");const double at=nearest.LowerDistanceParameter();
   if(at-c.FirstParameter()<1e-8 || c.LastParameter()-at<1e-8)throw Error("pick inside the curve, away from its ends");
   const auto left=BRepBuilderAPI_MakeEdge(curve,c.FirstParameter(),at).Edge(),right=BRepBuilderAPI_MakeEdge(curve,at,c.LastParameter()).Edge();
+  std::vector<int> groups;  // rigid groups the curve belongs to: its pieces stay in them
+  for(const auto& c:sk.constraints)if(c.type==SkConstraint::Type::Rigid && std::find(c.refs.begin(),c.refs.end(),id)!=c.refs.end())groups.push_back(c.id);
   sk.remove(id);const auto a=append_sketch_shape(sk,left,{},source.construction),b=append_sketch_shape(sk,right,{},source.construction);
   // Keep the original ID on the first segment for existing entity selections and downstream references.
   if(!a.empty())sk.entity(a.front())->id=id;
-  heal_endpoints(sk,1e-7);sk.validate();
+  heal_endpoints(sk,1e-7);
+  for(int g:groups) {
+    SkConstraint* c=sk.constraint(g);
+    if(!c){SkConstraint made;made.id=g;made.type=SkConstraint::Type::Rigid;sk.constraints.push_back(made);std::sort(sk.constraints.begin(),sk.constraints.end(),[](const SkConstraint& x,const SkConstraint& y){return x.id<y.id;});c=sk.constraint(g);}
+    for(const auto& piece:{a,b})for(int e:piece){const int pid=!a.empty() && e==a.front()?id:e;if(sk.entity(pid) && std::find(c->refs.begin(),c->refs.end(),pid)==c->refs.end())c->refs.push_back(pid);}
+  }
+  sk.validate();
 }
 
 void break_intersections(Sketch& sk,const std::vector<int>& ids) {

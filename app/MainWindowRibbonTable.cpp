@@ -159,7 +159,7 @@ void MainWindow::sketchTab(RibbonLayout& layout, const QString& tab) {
          {"sketch.offset", S},
          {"sketch.fillet", S, {"sketch.chamfer"}},
          {"sketch.mirror", S},
-         {"sketch.move", S, {"sketch.rotate", "sketch.scale", "sketch.copy"}},
+         {"sketch.move", S, {"sketch.rotate", "sketch.align", "sketch.scale", "sketch.copy"}},
          {"sketch.rect_pattern", S, {"sketch.polar_pattern"}},
          {"sketch.union", S, {"sketch.subtract", "sketch.intersect"}},
          {"sketch.heal", S, {"sketch.explode", "sketch.simplify", "sketch.node"}},
@@ -173,7 +173,7 @@ void MainWindow::sketchTab(RibbonLayout& layout, const QString& tab) {
          {"sketch.c.perpendicular", I},
          {"sketch.c.tangent", I, {"sketch.c.smooth", "sketch.c.curvature"}},
          {"sketch.c.equal", I, {"sketch.c.symmetric"}},
-         {"sketch.c.fix", I},
+         {"sketch.c.fix", I, {"sketch.c.rigid"}},
          {"sketch.constraints", I}});
   group("reference", tr("Reference"),
         {{"sketch.project", L, {"sketch.intersect_body", "sketch.silhouette", "sketch.include3d", "sketch.break_link"}}, {"kicad.project", S}});

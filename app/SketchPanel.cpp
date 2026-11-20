@@ -39,7 +39,7 @@ QList<SketchPanel::Tool> SketchPanel::tools() {
     {QObject::tr("Modify"),"select",QObject::tr("Select")}, {QObject::tr("Modify"),"trim",QObject::tr("Trim")},
     {QObject::tr("Modify"),"fillet",QObject::tr("Sketch fillet")}, {QObject::tr("Modify"),"mirror",QObject::tr("Mirror")},
     {QObject::tr("Modify"),"offset",QObject::tr("Offset")},
-    {QObject::tr("Modify"),"move",QObject::tr("Move")}, {QObject::tr("Modify"),"rotate",QObject::tr("Rotate")},
+    {QObject::tr("Modify"),"move",QObject::tr("Move")}, {QObject::tr("Modify"),"rotate",QObject::tr("Rotate")}, {QObject::tr("Modify"),"align",QObject::tr("Align")},
     {QObject::tr("Modify"),"scale",QObject::tr("Scale")}, {QObject::tr("Modify"),"copy",QObject::tr("Copy with offset")},
     {QObject::tr("Modify"),"rect_pattern",QObject::tr("Rectangular pattern")}, {QObject::tr("Modify"),"polar_pattern",QObject::tr("Polar pattern")},
     {QObject::tr("Modify"),"split",QObject::tr("Split curve")}, {QObject::tr("Modify"),"extend",QObject::tr("Extend curve")},
@@ -55,7 +55,7 @@ QList<SketchPanel::Tool> SketchPanel::tools() {
     {QObject::tr("Constrain"),"c:smooth",QObject::tr("Smooth spline join (G2)")},
     {QObject::tr("Constrain"),"c:curvature",QObject::tr("Equal endpoint curvature")},
     {QObject::tr("Constrain"),"c:concentric",QObject::tr("Concentric")}, {QObject::tr("Constrain"),"c:midpoint",QObject::tr("Midpoint")},
-    {QObject::tr("Constrain"),"c:symmetric",QObject::tr("Symmetric")}, {QObject::tr("Constrain"),"c:fix",QObject::tr("Fix")},
+    {QObject::tr("Constrain"),"c:symmetric",QObject::tr("Symmetric")}, {QObject::tr("Constrain"),"c:fix",QObject::tr("Fix")}, {QObject::tr("Constrain"),"c:rigid",QObject::tr("Rigid")},
     {QObject::tr("Reference"),"project",QObject::tr("Project")},
     {QObject::tr("Reference"),"intersect_body",QObject::tr("Body-plane intersection")},
     {QObject::tr("Reference"),"silhouette",QObject::tr("Silhouette")},
@@ -277,11 +277,11 @@ void SketchPanel::buildFields() {
   }
   if(m_shown=="vector_import"||m_shown=="vector_export")fileField("vectorFile",false,m_shown=="vector_export");
   if(m_shown=="vector_import"||m_shown=="simplify")field("curveTolerance",tr("Curve tolerance"),"0.01 mm");
-  if(QStringList{"image_trace","project","intersect_body","silhouette","include3d","offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","union","subtract","intersect","heal","chamfer","simplify"}.contains(m_shown)) {
+  if(QStringList{"image_trace","project","intersect_body","silhouette","include3d","offset","move","rotate","align","scale","copy","mirror","rect_pattern","polar_pattern","union","subtract","intersect","heal","chamfer","simplify"}.contains(m_shown)) {
     auto* preview=new QPushButton(tr("Preview"),this);m_fields->addRow(preview);connect(preview,&QPushButton::clicked,m_editor,&SketchEditor::previewTool);
   }
   if(m_shown=="offset") {field("distance",tr("Distance"),"5 mm");choice("corners",tr("Corners"),{{"round",tr("Round")},{"sharp",tr("Sharp")}});}
-  if(QStringList{"offset","move","copy","rotate","scale","mirror","rect_pattern","polar_pattern"}.contains(m_shown)) {
+  if(QStringList{"offset","move","copy","rotate","align","scale","mirror","rect_pattern","polar_pattern","c:rigid"}.contains(m_shown)) {
     // The tool's own (offset: on): ticking it for one tool left the others as they were.
     auto* chain=new QCheckBox(tr("Select connected chain on click"),this);chain->setObjectName("sketchOption-chain");chain->setChecked(m_editor->chainOnClick());m_fields->addRow(chain);
     connect(chain,&QCheckBox::toggled,this,[this](bool on){m_editor->m_options["chain:"+m_shown]=on?"1":"0";});
@@ -308,6 +308,12 @@ void SketchPanel::buildFields() {
     if(m_editor->option("chamferMode","distance")=="angle")field("chamferAngle",tr("Angle to the first line"),"45 deg");else field("second",tr("Second distance"),"2 mm");
   }
   if(m_shown=="heal")field("healTolerance",tr("Gap tolerance"),"0.05 mm");
+  if(m_shown=="align") {
+    // Vertical or horizontal: the line picked is enough; along another line: that line is picked next (alignClick).
+    choice("alignTo",tr("Align the line"),{{"vertical",tr("Vertical")},{"horizontal",tr("Horizontal")},{"parallel",tr("Parallel to a line")},{"collinear",tr("Onto a line")}});
+    auto* hold=new QCheckBox(tr("Keep it aligned (adds a constraint)"),this);hold->setObjectName("sketchOption-alignHold");hold->setChecked(m_editor->option("alignHold","0")=="1");m_fields->addRow(hold);
+    connect(hold,&QCheckBox::toggled,this,[this](bool on){m_editor->m_options["alignHold"]=on?"1":"0";});
+  }
   if(m_shown=="mirror") {
     choice("mirrorAxis",tr("Mirror axis"),{{"picked",tr("Picked line")},{"x",tr("X axis")},{"y",tr("Y axis")}});
     auto* pick=new QPushButton(tr("Pick mirror line"),this);m_fields->addRow(pick);

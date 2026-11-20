@@ -205,6 +205,13 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   solver cannot satisfy (never over-constrained). The solver runs on the UI thread on purpose (sketch-sized, ~1 ms,
   needed per mouse move while dragging); region finding for the profile shading is kernel work -> async job.
   Points are shared by id between curves (that is the coincidence); dimensions keep `expr` when it is not a plain number.
+- Rigid (`c:rigid`, `SkConstraint::Type::Rigid`, any number of curves/points): like Fix it takes its shape from the sketch
+  as each solve starts (`System::rigid`: every point in the frame of two of them, 2n-3 rows of at most six variables, radii
+  held), so the group only moves and turns; a dimension inside it that would reshape it is refused. Saved in
+  `more_constraints` (older builds skip it); deleting a member keeps the rest, a split curve's pieces stay in. Moving in
+  place (`transform_entities`, not a copy) takes whole groups (`rigid_closure`), or a partial move would reshape the group.
+  Sketch Align (`align`, `align_entities`): turns the picked curves about the reference line's end nearer the click so the
+  line runs vertical/horizontal/parallel/onto a line, far end snapped exactly; optional holding constraint. `ctest -R sketch-rigid`.
 - Bench without input driving: `opad-cli new x.opad`, then `OPAD_BENCH_DESIGN=<png> [OPAD_BENCH_SKETCHSHOT=<png>]
   opad.exe x.opad --bench-select` draws a dimensioned rectangle + circle through the tool code, extrudes it through
   the panel's plan/commit path, edits the extrude rolled back, fillets, saves, quits; trace lines `bench: design:` /

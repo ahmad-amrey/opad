@@ -37,7 +37,7 @@ int ends(const std::vector<Seg>& segs) {
 const Marker kMarkers[] = {Marker::Endpoint, Marker::Midpoint, Marker::Centre, Marker::Quadrant, Marker::Intersection, Marker::Apparent, Marker::Nearest,
                            Marker::Perpendicular, Marker::Tangent, Marker::Extension, Marker::Tracking, Marker::Locked, Marker::Grid};
 const Glyph kGlyphs[] = {Glyph::Coincident, Glyph::OnCurve, Glyph::Midpoint, Glyph::Horizontal, Glyph::Vertical, Glyph::Perpendicular, Glyph::Tangent,
-                         Glyph::Parallel, Glyph::Equal, Glyph::Concentric, Glyph::Collinear, Glyph::Symmetric, Glyph::Fix, Glyph::Smooth, Glyph::Curvature};
+                         Glyph::Parallel, Glyph::Equal, Glyph::Concentric, Glyph::Collinear, Glyph::Symmetric, Glyph::Fix, Glyph::Smooth, Glyph::Curvature, Glyph::Rigid};
 }  // namespace
 
 TEST(every_marker_fits_its_size_and_has_a_shape_of_its_own) {
