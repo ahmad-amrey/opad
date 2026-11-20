@@ -28,6 +28,7 @@
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
+#include "SettingsBackup.hpp"
 #include "StartUp.hpp"
 #include "opad/core.hpp"
 #include "opad/drawing/paint.hpp"
@@ -153,6 +154,11 @@ int main(int argc, char** argv) {
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dataDir);
     if (qEnvironmentVariableIsEmpty("OPAD_CACHE_DIR"))
       qputenv("OPAD_CACHE_DIR", QDir::toNativeSeparators(dataDir + "/cache").toLocal8Bit());
+  }
+  {  // A copy of the settings before this version's migrations change anything (SettingsBackup.hpp)
+    QSettings settings;
+    const QString kept = settingsbackup::keepBeforeChange(settings, QApplication::applicationVersion(), settingsbackup::defaultDir(settings));
+    if (!kept.isEmpty()) trace::log("startup: settings of an earlier version kept in " + kept);
   }
   i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)
   if (askpass) return GitWatch::askpassDialog(argc, argv);

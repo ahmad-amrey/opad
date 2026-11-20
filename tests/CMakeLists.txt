@@ -50,12 +50,16 @@ if(TARGET opad)
   endif()
   add_test(NAME seams COMMAND opad-test-seams)
   set_tests_properties(seams PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+  add_executable(opad-test-settings-backup test_settings_backup.cpp ../app/SettingsBackup.cpp)
+  target_include_directories(opad-test-settings-backup PRIVATE ../app)
+  target_link_libraries(opad-test-settings-backup PRIVATE Qt6::Core)
+  add_test(NAME settings-backup COMMAND opad-test-settings-backup)
 endif()
 
 # Core tests: every test_<name>.cpp not built elsewhere in this file is opad-test-<name> (underscores -> dashes) on the
 # core, run as ctest <name>; CONFIGURE_DEPENDS re-globs at each build, so a new test is a new file. Its extra settings
 # (environment, libraries, timeout) go into an optional test_<name>.cmake beside it, included with `target` and `name`.
-set(opad_special_tests app_document associations body_prs seams shortcuts sketch_cache step thumbnails)
+set(opad_special_tests app_document associations body_prs seams settings_backup shortcuts sketch_cache step thumbnails)
 file(GLOB opad_core_tests CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 file(GLOB opad_test_settings CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cmake)
 list(SORT opad_core_tests)

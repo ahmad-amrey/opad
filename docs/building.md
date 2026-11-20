@@ -94,6 +94,23 @@ Homebrew formulae (into the bundle, where Help > Third-party licences reads it, 
 FFmpeg, codec, FreeImage or OpenVR libraries as the portable target does. These two targets are written but have not
 been run yet.
 
+## Builds on GitHub and releases
+
+`.github/workflows/ci.yml` builds and tests Windows, Linux and macOS on GitHub's machines for every pull request to
+`main` and every push to it, and publishes a release with the packages when a version tag is pushed. How to cut a
+release, the changelog and the protection of `main`: [releasing.md](releasing.md).
+
+### Windows installer
+
+`installer/opad.iss` (Inno Setup 6) wraps the single-file exes into `OPAD-<version>-windows-x64-setup.exe`:
+`iscc /DAppVersion=<version> installer\opad.iss` after `cmake --workflow --preset windows-single` writes it to
+`build/windows-static/installer`. It installs per user, without administrator rights, into
+`%LOCALAPPDATA%\Programs\OPAD`, with a Start menu entry, an optional desktop icon and an uninstaller in Settings > Apps;
+an open OPAD is offered to be closed first. The settings, cache and recovery snapshots live in the `opad-data` folder
+the exe makes beside itself: the installer never installs, replaces or deletes anything there, so updates keep them and
+uninstalling leaves them. The script's `AppId` must never change (Windows would take the next version for another
+program and install it beside the first).
+
 ## Options
 
 `OPAD_BUILD_APP`, `OPAD_BUILD_CLI`, `OPAD_BUILD_PYTHON`, `OPAD_BUILD_PLUGINS`, `OPAD_BUILD_TESTS` (all ON). Pass them

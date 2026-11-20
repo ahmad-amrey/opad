@@ -1,0 +1,269 @@
+# Build, test and release OPAD on GitHub's machines (standard runners are free for a public repository).
+#
+#   Pull request to main   Windows, Linux and macOS are built and their unit tests run: the checks branch protection
+#                           requires before a merge (docs/releasing.md).
+#   Push to main            the same, on what was merged; it also keeps the build cache on main, where the next pull
+#                           requests and tags find it.
+#   Tag vX.Y.Z              the same builds, then a published release: the CHANGELOG.md section of X.Y.Z, a downloads
+#                           table, GitHub's list of merged pull requests, and the packages. X.Y.Z must be project(VERSION)
+#                           in CMakeLists.txt and have its "## [X.Y.Z] - date" section, else the run stops in seconds.
+#   Run workflow (manual)   the builds alone; the packages are the run's artifacts.
+#
+# Packages: Windows = installer (installer/opad.iss) and single-file exe (windows-static preset: Qt and OCCT linked in);
+# Linux = AppImage (linux-single); macOS = dmg (macos-single). OCCT 7.9.2 is built from source on Linux and macOS (no
+# GPL FFmpeg/FreeImage to bundle) and statically on Windows, once: the Actions cache keeps it, and ccache keeps the
+# compiled sources. The simulation engines, Python module and plugins are off in these packages.
+name: Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "Skip the unit tests"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a newer push to the same pull request replaces the run
+
+env:
+  CCACHE_MAXSIZE: 1500M
+  # Packages of a tag are the release's; those of other runs are kept a week for trying a build.
+  ARTIFACT_DAYS: ${{ github.ref_type == 'tag' && 30 || 7 }}
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Project version, tag and changelog
+        run: |
+          version=$(sed -n 's/^project(opad VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version" || { echo "::error::no project(opad VERSION ...) in CMakeLists.txt"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match project(VERSION $version) in CMakeLists.txt"; exit 1
+          fi
+          if ! sh tools/changelog_section.sh "$version" > /dev/null; then
+            if [ "$GITHUB_REF_TYPE" = tag ]; then
+              echo "::error::CHANGELOG.md has no section for $version: add '## [$version] - YYYY-MM-DD' (docs/releasing.md)"; exit 1
+            fi
+            echo "::warning::CHANGELOG.md has no section for $version yet (needed before tagging v$version)"
+          fi
+
+  windows:
+    name: Windows
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true  # third_party/libredwg (DWG); not its own nested submodules
+      # The runner's MSYS2 in C:\msys64, where the presets expect it.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          release: false
+          update: true
+          install: >-
+            mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-gcc mingw-w64-x86_64-ccache
+            mingw-w64-x86_64-qt6-static mingw-w64-x86_64-qt6-base mingw-w64-x86_64-nlohmann-json
+            mingw-w64-x86_64-rapidjson mingw-w64-x86_64-pkgconf mingw-w64-x86_64-freetype mingw-w64-x86_64-zstd
+            mingw-w64-x86_64-zlib mingw-w64-x86_64-python
+      - id: gcc
+        run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
+      - name: Cache the static OCCT
+        uses: actions/cache@v4
+        with:
+          path: build/windows-static/occt/install
+          key: occt-static-windows-gcc${{ steps.gcc.outputs.version }}-${{ hashFiles('cmake/occt_static.cmake', 'cmake/occt_source.cmake') }}
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
+      - name: Configure
+        run: cmake --preset windows-static
+      - name: Build
+        run: cmake --build --preset windows-static
+      - name: Test
+        if: ${{ !inputs.skip_tests }}
+        run: ctest --preset windows-static
+      - name: Single-file exes
+        run: cmake --build --preset windows-single
+      # The installer (installer/opad.iss): per user, Start menu entry, uninstaller; the user's opad-data is never touched.
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=${{ needs.version.outputs.version }}" installer\opad.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+          if-no-files-found: error
+          path: |
+            build/windows-static/installer/*.exe
+            build/windows-static/single/*.exe
+            build/windows-static/single/THIRD-PARTY-NOTICES.txt
+
+  linux:
+    name: Linux
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      APPIMAGE_EXTRACT_AND_RUN: 1  # linuxdeploy is an AppImage itself; no FUSE on the runner
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config ccache qt6-base-dev \
+            libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev libfontconfig-dev libharfbuzz-dev libzstd-dev \
+            libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev rapidjson-dev libeigen3-dev file
+      - name: linuxdeploy
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cd "$HOME/.local/bin"
+          curl -fsSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - id: gcc
+        run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
+      - name: Cache OCCT
+        uses: actions/cache@v4
+        with:
+          path: build/linux/occt/install
+          key: occt-linux-gcc${{ steps.gcc.outputs.version }}-${{ hashFiles('cmake/occt_bundled.cmake', 'cmake/occt_source.cmake') }}
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
+      - name: Configure
+        run: cmake --preset linux -DOPAD_CHRONO=OFF -DOPAD_NETGEN=OFF -DOPAD_BUILD_PYTHON=OFF -DOPAD_BUILD_PLUGINS=OFF
+      - name: Build
+        run: cmake --build --preset linux
+      - name: Test
+        if: ${{ !inputs.skip_tests }}
+        run: QT_QPA_PLATFORM=offscreen ctest --preset linux
+      - name: AppImage
+        run: cmake --build --preset linux-single
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+          if-no-files-found: error
+          path: |
+            build/linux/single/*.AppImage
+            build/linux/single/THIRD-PARTY-NOTICES.txt
+
+  macos:
+    name: macOS
+    needs: version
+    runs-on: macos-latest  # Apple Silicon
+    timeout-minutes: 300
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Packages
+        run: brew install ninja ccache qt nlohmann-json rapidjson eigen freetype pkgconf
+      - id: cc
+        run: echo "version=$(clang -dumpversion)" >> "$GITHUB_OUTPUT"
+      - name: Cache OCCT
+        uses: actions/cache@v4
+        with:
+          path: build/macos/occt/install
+          key: occt-macos-clang${{ steps.cc.outputs.version }}-${{ hashFiles('cmake/occt_bundled.cmake', 'cmake/occt_source.cmake') }}
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-macos-${{ github.sha }}
+          restore-keys: ccache-macos-
+      - name: Configure
+        run: cmake --preset macos -DOPAD_OCCT_BUILD=ON -DOPAD_CHRONO=OFF -DOPAD_NETGEN=OFF -DOPAD_BUILD_PYTHON=OFF -DOPAD_BUILD_PLUGINS=OFF
+      - name: Build
+        run: cmake --build --preset macos
+      - name: Test
+        if: ${{ !inputs.skip_tests }}
+        run: QT_QPA_PLATFORM=offscreen ctest --preset macos
+      - name: dmg
+        run: cmake --build --preset macos-single
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+          if-no-files-found: error
+          path: |
+            build/macos/single/*.dmg
+            build/macos/single/THIRD-PARTY-NOTICES.txt
+
+  # The release of a tag: every platform built and tested, the changelog's section as the description.
+  release:
+    name: Release
+    needs: [version, windows, linux, macos]
+    if: ${{ github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect the packages
+        run: |
+          mkdir dist
+          # An artifact keeps the folders below its paths' common root: found by name.
+          find artifacts -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.dmg' \) -exec cp {} dist/ \;
+          for os in windows linux macos; do
+            notice=$(find "artifacts/$os" -name THIRD-PARTY-NOTICES.txt | head -1)
+            cp "$notice" "dist/THIRD-PARTY-NOTICES-$os.txt"
+          done
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ls -l dist
+      - name: Release notes
+        run: |
+          sh tools/changelog_section.sh "$VERSION" > notes.md
+          sed "s/@VERSION@/$VERSION/g" tools/release_downloads.md >> notes.md
+          cat notes.md
+      - name: Publish the release
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "OPAD $VERSION" \
+            --notes-file notes.md --generate-notes

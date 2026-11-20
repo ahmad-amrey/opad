@@ -14,5 +14,6 @@ compile_commands.json
 /docs/*
 !/docs/building.md
 !/docs/features.md
+!/docs/releasing.md
 !/docs/simulation-guide.md
 !/docs/media/
