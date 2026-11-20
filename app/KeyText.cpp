@@ -13,7 +13,13 @@ std::function<QAction*(const QString&)>& lookup() {
   return l;
 }
 
+keys::Style& nativeStyle() {
+  static keys::Style style = keys::Style::Native;
+  return style;
+}
+
 keys::Style resolved(keys::Style s) {
+  if (s == keys::Style::Native && nativeStyle() != keys::Style::Native) return nativeStyle();
 #ifdef Q_OS_MACOS
   return s == keys::Style::Native ? keys::Style::Mac : s;
 #else
@@ -83,6 +89,7 @@ Notifier* notifier() {
 
 void announce() { emit notifier()->changed(); }
 
+void setNativeStyle(Style style) { nativeStyle() = style; }
 void setLookup(std::function<QAction*(const QString&)> l) { lookup() = std::move(l); }
 bool hasLookup() { return bool(lookup()); }
 QAction* action(const QString& id) { return lookup() && !id.isEmpty() ? lookup()(id) : nullptr; }

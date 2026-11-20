@@ -33,8 +33,14 @@ set(_ldwg_args
   -DLIBREDWG_DISABLE_JSON=ON  # its JSON reader needs the nested jsmn submodule; OPAD only converts DXF
   -DDISABLE_WERROR=ON
   -DENABLE_LTO=OFF
-  -DBUILD_TESTING=OFF
-  -DCMAKE_C_FLAGS=-w)          # its warnings are not ours to fix
+  -DBUILD_TESTING=OFF)
+if(APPLE)
+  # Its config.h defines _POSIX_C_SOURCE, which on Darwin hides memmem (found by its own configure check, then called
+  # undeclared: an error in clang's C99); _DARWIN_C_SOURCE keeps the Darwin extensions visible.
+  list(APPEND _ldwg_args "-DCMAKE_C_FLAGS=-w -D_DARWIN_C_SOURCE")
+else()
+  list(APPEND _ldwg_args -DCMAKE_C_FLAGS=-w)  # its warnings are not ours to fix
+endif()
 if(MINGW)
   list(APPEND _ldwg_args "-DCMAKE_EXE_LINKER_FLAGS=-static -s")
 endif()

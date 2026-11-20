@@ -19,6 +19,10 @@
 #include <TopoDS_Face.hxx>
 #include <gp_Pln.hxx>
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -61,6 +65,19 @@ V unit(const V& a) {
 std::filesystem::path exe_dir() {
 #ifdef _WIN32
   return {};
+#elif defined(__APPLE__)
+  // In the app bundle (Contents/MacOS) the folder holding the bundle, where the build and a hand install put ccx.
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  std::string buffer(size, '\0');
+  if (size == 0 || _NSGetExecutablePath(buffer.data(), &size) != 0) return {};
+  std::error_code e;
+  auto dir = std::filesystem::canonical(buffer.c_str(), e).parent_path();
+  if (e) return {};
+  if (dir.filename() == "MacOS" && dir.parent_path().filename() == "Contents" &&
+      dir.parent_path().parent_path().extension() == ".app" && !std::filesystem::exists(dir / "ccx", e))
+    dir = dir.parent_path().parent_path().parent_path();
+  return dir;
 #else
   std::error_code e;
   const auto self = std::filesystem::read_symlink("/proc/self/exe", e);

@@ -42,6 +42,12 @@
 #include <set>
 
 namespace {
+// Clears keys::setLookup when a test ends, also through a failed check: a lookup left onto its destroyed actions made the
+// next test that shows a key read freed memory.
+struct LookupReset {
+  ~LookupReset() { keys::setLookup({}); }
+};
+
 QString source(const QString& path) {
   QFile f(QStringLiteral(OPAD_SOURCE_DIR) + "/" + path);
   if (!f.open(QIODevice::ReadOnly)) throw check::Failure("cannot read " + path.toStdString());
@@ -351,6 +357,7 @@ TEST(rich_tip_follows_the_help_key) {
   window.resize(300, 200);
   window.show();
   keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "help.current" ? &current : nullptr; });
+  const LookupReset lookupReset;  // a failed check leaves no lookup onto these actions behind
   QString guided;
   RichTip::setGuideHook([&](const QString& id) { guided = id; });
   RichTip::attach(button, "view.fit");
@@ -546,6 +553,7 @@ TEST(keys_caps_and_text) {
   faces.setShortcut(QKeySequence("Ctrl+Alt+2"));
   home.setObjectName("view.home");
   keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "select.faces" ? &faces : id == "view.home" ? &home : nullptr; });
+  const LookupReset lookupReset;  // a failed check leaves no lookup onto these actions behind
   CHECK(keys::hasLookup() && keys::action("view.fit") == &fit && !keys::action("no.such"));
   CHECK_EQ(keys::text("view.fit", Style::Pc), keys::isolate("Ctrl+Alt+F"));
   shortcuts::suspendOutsideSketch({&faces}, true);  // a sketch holds the filters' keys: still the user's key
@@ -608,7 +616,7 @@ TEST(keys_caps_and_text) {
       if ((*it)->toolTip(0) == "inspect.clear") clearRow = *it;
       if ((*it)->toolTip(0) == "view.fit") fitRow = *it;
     }
-    CHECK(clearRow && clearRow->data(0, Qt::UserRole).toInt() == -1 && clearRow->text(1) == "Esc" && clearRow->parent());  // reserved, not editable
+    CHECK(clearRow && clearRow->data(0, Qt::UserRole).toInt() == -1 && clearRow->text(1) == QKeySequence("Esc").toString(QKeySequence::NativeText) && clearRow->parent());  // reserved, not editable
     CHECK(fitRow);
     tree->setCurrentItem(fitRow);
     editor.findChild<QKeySequenceEdit*>("shortcutBinding")->setKeySequence(QKeySequence("Ctrl+Alt+F"));
@@ -635,6 +643,7 @@ TEST(help_expand_tokens) {
   commands.setObjectName("tools.commands");
   commands.setShortcut(QKeySequence("Ctrl+Space"));
   keys::setLookup([&](const QString& id) { return id == "inspect.pin" ? &pin : id == "view.home" ? &home : id == "tools.commands" ? &commands : nullptr; });
+  const LookupReset lookupReset;  // a failed check leaves no lookup onto these actions behind
   bool bound = false;
   CHECK_EQ(plain(help::expand("Pin ({key:inspect.pin}) keeps it.", &bound)), QString("Pin (Ctrl+Alt+P) keeps it."));
   CHECK(bound);
@@ -714,6 +723,7 @@ TEST(clip_keys_resolve) {
   fit.setShortcut(QKeySequence("Ctrl+Alt+F"));
   home.setObjectName("view.home");
   keys::setLookup([&](const QString& id) { return id == "view.fit" ? &fit : id == "view.home" ? &home : nullptr; });
+  const LookupReset lookupReset;  // a failed check leaves no lookup onto these actions behind
   clips::load(f.fileName());
   const QString problems = clips::problems().join("\n");
   for (const char* expected : {"bad: key: unknown fixed key hyper", "bad: key: one of caps, command or fixed", "keys: key: no command no.such", "bad: key: literal caps Ctrl+S"})
@@ -1469,6 +1479,8 @@ int main(int argc, char** argv) {
   QSettings::setDefaultFormat(QSettings::IniFormat);
   QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
   QSettings().setValue("ui/tipAnimate", false);
+  // The expected texts are written with PC key names; the macOS glyphs are checked through Style::Mac explicitly.
+  keys::setNativeStyle(keys::Style::Pc);
   const int result = check::run_all(argc, argv);
   delete RichTip::instance();
   return result;

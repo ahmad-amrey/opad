@@ -141,7 +141,7 @@ std::vector<int> grow(const Context& c, const Prim& p, const std::vector<int>& s
 // Connected groups of coplanar triangles (within the tolerance and a few degrees), largest triangles first.
 std::vector<std::vector<int>> planar_clusters(const Context& c, const std::vector<int>& tris) {
   std::vector<int> order = tris;
-  std::sort(order.begin(), order.end(), [&](int a, int b) { return c.topo.area[size_t(a)] > c.topo.area[size_t(b)]; });
+  std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return c.topo.area[size_t(a)] > c.topo.area[size_t(b)]; });
   std::vector<char> wanted(c.m.triangles.size(), 0), taken(c.m.triangles.size(), 0);
   for (int t : tris) wanted[size_t(t)] = 1;
   const double flat = std::cos(std::min(c.angle / 4, 3 * M_PI / 180));
@@ -244,7 +244,7 @@ std::vector<Region> segment(const Context& c) {
   // found region is skipped.
   std::vector<char> covered(n, 0);
   std::vector<int> order = all;
-  std::sort(order.begin(), order.end(), [&](int a, int b) { return c.topo.area[size_t(a)] > c.topo.area[size_t(b)]; });
+  std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return c.topo.area[size_t(a)] > c.topo.area[size_t(b)]; });
   const double minTurn = 0.3 * M_PI / 180;
   size_t done = 0;
   for (int seed : order) {

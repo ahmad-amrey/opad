@@ -351,7 +351,7 @@ their animated clips are translated, and Arabic text in drawings is shaped corre
 
 There are no published binaries yet: OPAD is built from source (see [Installation](#installation)). Besides the normal
 build there is a portable Windows folder (settings and cache kept beside the program) and a single-file Windows
-executable. AppImage and dmg packaging recipes exist but have not been run yet.
+executable, and a macOS dmg. An AppImage packaging recipe exists but has not been run yet.
 
 ## Installation
 

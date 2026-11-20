@@ -225,14 +225,14 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
     {
       const double z = tools->plan().value("measured", opad::json::object()).value("hole", opad::json::object()).value("entry", opad::json::array({0, 0, 0}))[2].get<double>();
       const Vec2 opening = paper(front, {28, 10, z});
-      moveTo(plus(opening, {10, z < -6 ? -12 : 12}));
+      moveTo(plus(opening, {10, z < -6 ? -12.0 : 12.0}));
       bool tip = false;
       if (canvas->preview())
         for (const auto& p : canvas->preview()->prims)
           if (p.kind == opad::drawing::Prim::Kind::Curve && p.curve.type == opad::drawing::Curve::Type::Line && !p.curve.pts.empty())
             for (const Vec2 q : {p.curve.pts.front(), p.curve.pts.back()}) tip = tip || std::hypot(q[0] - opening[0], q[1] - opening[1]) < 0.05;
       check(tip, "the preview's leader ends at the opening's end nearer the pointer, not at its centre");
-      click(plus(opening, {10, z < -6 ? -12 : 12}));
+      click(plus(opening, {10, z < -6 ? -12.0 : 12.0}));
       check(added("hole_callout", 3) && items("hole_callout")[2]->def["result"]["shown"] == "2× ⌀6 THRU", "placed: the same callout as from above");
     }
     key(Qt::Key_Escape);

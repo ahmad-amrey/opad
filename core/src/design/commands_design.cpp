@@ -310,7 +310,8 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const json inputs = design::hint_refs(doc, s, parse_if_text(a.at("inputs")));
         json out = design::apply_ops(doc, {design::make_edit_op(target, {{"plane", design::align_sketch_plane(doc, s, target, inputs)}})}, a.value("by", ""));
         out["sketch_id"] = target;
-        if (const SketchItem* sk = resolve(doc).sketch(target)) out["frame"] = design::frame_result(sk->frame);
+        const Scene after = resolve(doc);  // kept: the sketch is read from it (a temporary's pointer dangles in the body)
+        if (const SketchItem* sk = after.sketch(target)) out["frame"] = design::frame_result(sk->frame);
         return out;
       });
 
