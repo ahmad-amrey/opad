@@ -8,7 +8,7 @@
 |---|---|---|
 | Windows 10/11 (64-bit) | `OPAD-windows-x64-setup.exe` | Run the installer: OPAD goes to your Start menu (no administrator needed). Updating keeps your settings. |
 | Windows, no install | `OPAD-windows-x64.exe` | One file: run it from any folder. It keeps its settings in an `opad-data` folder beside itself. |
-| macOS (Apple Silicon) | `OPAD-macos.dmg` | Open the dmg and drag OPAD to Applications. |
+| macOS 15 or later (Apple silicon) | `OPAD-macos.dmg` | Open the dmg and drag OPAD to Applications. |
 | Ubuntu / Debian (24.04 or newer, 64-bit) | `OPAD-linux-amd64.deb` | Open it in the software centre, or run `sudo apt install ./OPAD-linux-amd64.deb`. OPAD appears in the applications menu. |
 | Other Linux (x86-64) | `OPAD-linux-x86_64.AppImage` | Make it executable (`chmod +x`), then run it. |
 

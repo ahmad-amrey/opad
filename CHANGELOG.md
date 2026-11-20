@@ -33,7 +33,7 @@ First public release: an open-source parametric CAD program whose design files g
 
 - Windows: an installer (per user, no administrator rights; updates keep your settings) and a single-file exe that runs
   without installing.
-- macOS (Apple Silicon): a dmg.
+- macOS 15 or later (Apple silicon): a dmg.
 - Linux: a Debian package for Ubuntu and Debian (24.04 or newer), and an AppImage for other distributions.
 
 ### Known limitations
@@ -43,4 +43,4 @@ First public release: an open-source parametric CAD program whose design files g
   packages leave out; joints and motion studies work there.
 - The Python module, the plugin interface and the command-line tool on macOS and Linux are not in the packages; build
   from source for them.
-- macOS: Apple silicon only (M1 or newer).
+- macOS: Apple silicon (M1 or newer) with macOS 15 or later; the app bundles libraries built for macOS 15.

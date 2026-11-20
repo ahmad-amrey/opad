@@ -38,7 +38,8 @@ std::string default_author();
 std::string version_string();
 // Reads a decimal number at [first, last) in the C locale's spelling ("-1.5e3", whatever the process's locale says): the
 // end of what it read, or nullptr when nothing there is a number. std::from_chars where the standard library has it for
-// floating point; Apple's libc++ before Xcode 26 does not (it is deleted there), so strtod_l with the C locale instead.
+// floating point; Apple's libc++ does not declare it (not even with Xcode 26), so macOS always takes strtod_l with the C
+// locale (tests/test_parse_double.cpp in the macOS CI job covers that path).
 const char* parse_double(const char* first, const char* last, double& out);
 // Who else's code this build carries and under which licences (TODO 11 UI-13): THIRD-PARTY-NOTICES.txt beside the
 // program when there is one (the portable package's), else the text compiled in from the link libraries.
