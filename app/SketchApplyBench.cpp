@@ -164,7 +164,7 @@ void SketchEditor::benchApply() {
       case 4: {
         const int symmetric = int(std::count_if(m_sk.constraints.begin(), m_sk.constraints.end(), [](const SkConstraint& c) { return c.type == SkConstraint::Type::Symmetric; }));
         check(int(m_sk.entities.size()) == st["entities"] + 3 && symmetric >= 4 && m_solved.converged, "mirror: Enter adds the three copies, held symmetric");
-        check(option("mirrorStage") == "seed" && m_sel.empty() && m_picked.empty(), "mirror: then it takes the next curves");
+        check(option("mirrorStage") == "seed" && m_sel.empty() && m_picked.empty() && m_tool == "select", "mirror: then it closes (a tool used once), the next mirror starting from its curves");
         // ---- Move and the per-tool chain option
         setTool("move");
         m_sel.clear();
@@ -255,7 +255,7 @@ void SketchEditor::benchApply() {
       case 12: {
         const auto now = linked();
         check(int(m_sk.entities.size()) == st["previewed"] && int(now.size()) == st["previewed"] - st["entities"] && m_sources.isEmpty() && sources() == 0,
-              "project: Enter adds what the preview showed, linked; the tool asks for new sources");
+              "project: Enter adds what the preview showed, linked; the tool closes (used once)");
         check(m_viewport->selection().empty(), "project: the picks added, nothing is highlighted any more");
         // ---- Break link
         setTool("break_link");

@@ -256,6 +256,18 @@ sides (chord sagitta limited by `mesh_sagitta`); arcs need their centre on the e
 not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused. `ctest -R mesh_solid`; bench
 `mesh-to-solid` (OPAD_BENCH_MESHSOLID).
 
+## One-shot tools (close after use, Shift keeps them)
+
+A tool normally used once ends after Apply / OK / Enter and closes its panel; Shift held (Shift+Enter, Shift+click on the
+button) keeps it for another use. Sketch: the table `sketchkeys::afterApply` (app/SketchKeys.hpp, a new Apply tool
+declares itself there); `applyTool(keep)` sets `m_applyCloses`, `applied()` (every Apply that changed the sketch) goes
+back to Select; a failed Apply keeps the tool. The sketch panel's page the user opened (Constraints...) stays
+(`SketchPanel::userPage`). Features: `runPreview(true, keep)` starts the same kind again after the commit (new features
+only, not edits or Align sketch); Shift comes from `PanelFooter::shiftAccepted` (OK clicked), `ToolValues::shift` /
+`DimensionHandle::accepted(bool)` (`DynamicInput::committed(bool)`), the view's eventFilter and a `KeyHook` on the panel.
+Shift+Enter is also `edit.repeat`: the tool takes it only while it has an Apply ready (`keepsOnShiftEnter`, a feature
+open), Repeat everywhere else. `PanelFooter::setShiftKeeps` shows the hint. Benches sketch-oneshot, feature-oneshot.
+
 ## Guided tools (`app/GuidedTool.hpp`, flow in `MainWindow` "guided tools")
 
 Distance, Angle, Radius, Bounding box, Note and the section's "Pick face" are started first and then ask for their

@@ -82,7 +82,7 @@ class DynamicInput : public QWidget {
   void dropped();                       // Esc dropped the typed values
   void chipClicked(const QString& key);
   void stepped(int index, double steps, Qt::KeyboardModifiers modifiers);  // Up/Down or the wheel in a valued box
-  void committed();  // Enter in a box
+  void committed(bool shift);  // Enter in a box (shift: Shift+Enter, which keeps a one-shot tool open)
   void escaped();    // Esc in a box with nothing left to undo there
   void undoPoint();  // Backspace in an empty box
  protected:

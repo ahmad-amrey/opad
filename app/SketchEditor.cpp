@@ -254,11 +254,11 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   connect(&m_toolPreviewTimer,&QTimer::timeout,this,[this]{if(!m_active)return;if(m_editJob){m_toolPreviewTimer.start();return;}previewTool();});
   connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
   m_dimensionHandle->setLabel(tr("Offset"));m_dimensionHandle->setCapturesKeys(false);  // the keys come through sketchKey
-  connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this]{if(m_active && m_tool=="offset" && !m_sel.empty())applyTool();});
+  connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this](bool keep){if(m_active && m_tool=="offset" && !m_sel.empty())applyTool(keep);});
   m_input=new DynamicInput(viewport);
   connect(m_input,&DynamicInput::optionEdited,this,[this](const QString& key,const QString& value){m_options[key]=value;scheduleToolPreview();updateTransient();emit workflowChanged();});
   connect(m_input,&DynamicInput::typedChanged,this,[this]{if(m_active)emit changed();});  // the prompt says what Enter and Esc do now
-  connect(m_input,&DynamicInput::committed,this,[this]{if(!done())m_viewport->setFocus();});
+  connect(m_input,&DynamicInput::committed,this,[this](bool keep){if(!done(keep))m_viewport->setFocus();});
   connect(m_input,&DynamicInput::escaped,this,[this]{escape();});
   connect(m_input,&DynamicInput::undoPoint,this,[this]{undoPoint();});
   connect(m_input,&DynamicInput::valueTyped,this,[this]{if(m_active)retype();});  // the rubber band follows what is typed
@@ -1449,6 +1449,10 @@ void SketchEditor::sketchDoubleClick(double u, double v) {
 bool SketchEditor::sketchKey(QKeyEvent* e) {
   if (!m_active) return false;
   if (typingKey(e)) return true;  // also while a job runs: a digit never falls through to a shortcut
+  // Shift+Enter applies a one-shot tool and keeps it (sketchkeys::keepsOnShiftEnter); otherwise it is the window's Repeat.
+  if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && (e->modifiers() & ~Qt::KeypadModifier) == Qt::ShiftModifier) {
+    return sketchkeys::keepsOnShiftEnter(keyState()) && done(true);
+  }
   if((e->modifiers()&~Qt::KeypadModifier)!=Qt::NoModifier)return false;  // the keypad's Enter is Enter
   const int key = e->key();
   if (key != Qt::Key_Escape && key != Qt::Key_Return && key != Qt::Key_Enter && key != Qt::Key_Backspace && key != Qt::Key_Delete) return false;

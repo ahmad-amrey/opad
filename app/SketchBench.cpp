@@ -32,3 +32,4 @@ OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_CLIPBOARD, sketchClipboard, benchClipboard) 
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_EDITS, sketchEdits, benchEdits)                    // UI-28
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_APPLY, sketchApply, benchApply)                    // TODO 11 wave 3, P4
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_POINTER, sketchPointer, benchPointer)              // TODO 11 wave 3, P5 and P6
+OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_ONESHOT, sketchOneShot, benchOneShot)              // one-shot tools close after Apply

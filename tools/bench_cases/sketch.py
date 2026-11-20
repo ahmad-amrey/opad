@@ -49,6 +49,11 @@ CASES = [
     # and Curvature from a line or an arc, the Constraints page (by the panel's page switch) lighting a row's geometry, an
     # open end dragged shut, a backdrop picture dragged.
     ("sketch-pointer", "empty", {"OPAD_BENCH_SKETCH_POINTER": "{prefix}"}),
+    # A tool normally used once closes after Apply or Enter, Shift keeps it (sketchkeys::afterApply): Move in a sketch
+    # (Enter, Shift+Enter, Shift+click and a click on Apply; the Constraints page the user opened stays; Rigid stays), and
+    # the Move feature (OK, Shift+click on OK, Shift+Enter in the view and in its panel, Enter).
+    ("sketch-oneshot", "empty", {"OPAD_BENCH_SKETCH_ONESHOT": "{prefix}"}),
+    ("feature-oneshot", "box", {"OPAD_BENCH_FEATURE_ONESHOT": "1"}),
     # Tool panels hand the keyboard back to the view after a click on a button or the slider; Esc in a panel is its (UI-05).
     ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),
     # The Section panel's Pick face takes one face, then the view selects as before; Exit section is its main button.

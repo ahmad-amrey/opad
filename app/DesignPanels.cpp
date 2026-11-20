@@ -308,6 +308,7 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
                   (picks ? "\n" + tr("Hold %1 to see the bodies without the preview and pick more on them.").arg(keys::fixedText("ctrl")) : QString()));
   m_guide->setCommand(editing ? QString() : "design." + QString::fromStdString(spec.kind));
   m_footer->setPrimary(PanelFooter::Primary::Close);setEditHidden(false);
+  m_footer->setShiftKeeps(!editing);  // a new feature: Shift with OK makes another (DesignController::runPreview)
   setStatus(QString(), false);
   for (const auto& in : spec.inputs) {
     const QString key = QString::fromStdString(in.name);

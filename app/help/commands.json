@@ -1683,7 +1683,7 @@
    "id": "edit.repeat",
    "title": "Repeat",
    "summary": "Runs the last tool, feature, check or edit again.",
-   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. {fixed:enter} in the view repeats it too while nothing runs, except Delete, Restore, Hide and Show all, which repeat only from here. View navigation, file open and save, panel toggles and plain selection commands are not repeated; Import, Export, Screenshot, Isolate, Save view and Select similar are.",
+   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. {fixed:enter} in the view repeats it too while nothing runs, except Delete, Restore, Hide and Show all, which repeat only from here. View navigation, file open and save, panel toggles and plain selection commands are not repeated; Import, Export, Screenshot, Isolate, Save view and Select similar are. While a tool normally used once has its Apply or OK ready, {fixed:shiftEnter} applies it and keeps the tool open instead of repeating.",
    "keywords": ["again", "redo command", "last command", "repeat last"]
   },
   {

@@ -52,7 +52,7 @@ QString plain(const QKeySequence& key, Style style = Style::Native);   // joined
 QString isolate(const QString& text);                                 // LRI text PDI; empty stays empty
 QString text(const QKeySequence& key, Style style = Style::Native);   // isolate(plain(key))
 QString text(const QString& id, Style style = Style::Native);         // the command's key now; "" when unassigned
-// The keys every tool knows, by name: esc, enter, ctrlEnter, tab, shiftTab, shift, alt, ctrl, del, shiftDel, backspace,
+// The keys every tool knows, by name: esc, enter, ctrlEnter, shiftEnter, tab, shiftTab, shift, alt, ctrl, del, shiftDel, backspace,
 // space, f2 (the browser's and the timeline's own rename key), shiftLeft, shiftRight, shiftEnd (the timeline's roll-back
 // marker), undo, redo, copy (the last three: the platform's standard key). Empty for an unknown name.
 QStringList fixedNames();

@@ -17,7 +17,10 @@
 #include <TopoDS.hxx>
 #include <gp_Trsf.hxx>
 
+#include <QAbstractSpinBox>
+#include <QComboBox>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QKeyEvent>
 #include <QSettings>
 #include <QApplication>
@@ -1430,6 +1433,13 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
     // offers a tool window's keys to) were ambiguous, and neither ran.
     if(widget && key->key()==Qt::Key_Escape && !(key->modifiers()&~Qt::KeypadModifier) && widget->window()!=m_viewport->window() && widget->window()->findChild<SketchPanel*>()){
       key->accept();if(e->type()==QEvent::KeyPress)escape();return true;
+    }
+    // Shift+Enter there (a button had the keyboard, not a text field): apply and keep the tool, before the window's Repeat
+    // takes it (sketchkeys::keepsOnShiftEnter).
+    if(widget && (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && (key->modifiers()&~Qt::KeypadModifier)==Qt::ShiftModifier &&
+       widget->window()!=m_viewport->window() && widget->window()->findChild<SketchPanel*>() && !qobject_cast<QLineEdit*>(widget) &&
+       !qobject_cast<QAbstractSpinBox*>(widget) && !qobject_cast<QComboBox*>(widget) && sketchkeys::keepsOnShiftEnter(keyState())){
+      key->accept();if(e->type()==QEvent::KeyPress)done(true);return true;
     }
   }
   if (o == m_dimEdit && e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {

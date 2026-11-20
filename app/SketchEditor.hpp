@@ -75,7 +75,9 @@ class SketchEditor : public QObject, public SketchInput {
   QString option(const QString& key, const QString& fallback = {}) const;
   void setOption(const QString& key, const QString& value) { m_options[key] = value; }
   QString dimensionText(const opad::design::SkConstraint& c) const;  // "R1 in", "fx: 12.5 mm", "(45°)"
-  void applyTool();
+  // keep: Shift held with Enter or the Apply button: a tool that closes after its Apply (sketchkeys::afterApply) stays for
+  // another use.
+  void applyTool(bool keep = false);
   // References from outside the Project tool (a KiCad board's outline, mounting holes and parts by node, UI-134): read from a
   // copy of the document taken on a worker and derived there into the sketch's frame, all one change of the sketch; linked
   // ones follow their source when the design regenerates. False when the sketch or the document is busy.
@@ -89,7 +91,7 @@ class SketchEditor : public QObject, public SketchInput {
   // the ladder) and Close tool (Esc until the tool is closed). Each returns whether it did something.
   sketchkeys::State keyState() const;
   bool undoPoint();
-  bool done();
+  bool done(bool keep = false);  // keep: Shift+Enter (applyTool)
   bool escape();
   void closeTool();
   QString keyHints() const;  // what Backspace, Enter, Esc and Shift do now, for the prompt
@@ -153,6 +155,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchEdits();
   void benchApply();
   void benchPointer();
+  void benchOneShot();  // OPAD_BENCH_SKETCH_ONESHOT: a tool used once closes after Apply, Shift keeps it
   void benchTrail();  // OPAD_BENCH_OVERLAY_TRAIL's sketch part (OverlayTrailBench.cpp)
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   size_t settingsReads() const { return m_settingsReads; }  // benches: once per change, never per mouse move
@@ -454,6 +457,7 @@ class SketchEditor : public QObject, public SketchInput {
   int m_session=0,m_modelRevision=0;
   Job* m_editJob=nullptr;
   bool m_previewRequested=false,m_previewComputing=false;
+  bool m_applyCloses=false;  // the Apply in progress ends a one-shot tool once it has changed the sketch (applied)
   QTimer m_toolPreviewTimer;
   QPointer<DimensionHandle> m_dimensionHandle;
   QPointer<DynamicInput> m_input;

@@ -2,7 +2,9 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QKeyEvent>
 #include <QPainter>
+#include <utility>
 
 #include "KeyText.hpp"
 #include "Theme.hpp"
@@ -41,7 +43,12 @@ PanelFooter::PanelFooter(QWidget* parent) : QWidget(parent) {
   m_row->insertWidget(0, m_back);
   m_row->insertWidget(1, m_hint);
   connect(m_cancel, &QPushButton::clicked, this, &PanelFooter::cancelled);
-  connect(m_primary, &QPushButton::clicked, this, &PanelFooter::accepted);
+  m_primary->installEventFilter(this);
+  connect(m_primary, &QPushButton::clicked, this, [this] {
+    m_shiftAccepted = std::exchange(m_primaryShift, false);  // read by the receivers while accepted() runs
+    emit accepted();
+    m_shiftAccepted = false;
+  });
   connect(m_back, &QPushButton::clicked, this, &PanelFooter::backRequested);
   connect(keys::notifier(), &keys::Notifier::changed, this, &PanelFooter::rekey);
 }
@@ -76,6 +83,8 @@ void PanelFooter::relabel(QPushButton* b, const QString& text, const QString& ke
     }
   b->setAccessibleName(text);
   b->setToolTip(shown.isEmpty() ? text : text + "  (" + shown + ")");
+  if (b == m_primary && m_shiftKeeps)
+    b->setToolTip(b->toolTip() + "\n" + tr("With %1 held (%2 or %1+click) the tool stays open for another use; with nothing to apply, %2 repeats the last command").arg(keys::fixedText("shift"), keys::fixedText("shiftEnter")));
   b->updateGeometry();
 }
 
@@ -99,8 +108,28 @@ QPushButton* PanelFooter::setBack(const QString& text, const QString& key) {
 void PanelFooter::setBackVisible(bool on) { m_back->setVisible(on); }
 
 void PanelFooter::setHint(const QString& text) {
+  m_hintText = text;
+  showHint();
+}
+
+void PanelFooter::showHint() {
+  const QString text = !m_hintText.isEmpty() ? m_hintText : m_shiftKeeps ? tr("%1 keeps it open").arg(keys::fixedText("shift")) : QString();
   m_hint->setText(text);
   m_hint->setVisible(!text.isEmpty());
+}
+
+void PanelFooter::setShiftKeeps(bool on) {
+  if (m_shiftKeeps == on) return;
+  m_shiftKeeps = on;
+  showHint();
+  relabel(m_primary, text(m_primary), m_primary->property("footerKey").toString());
+}
+
+bool PanelFooter::eventFilter(QObject* watched, QEvent* event) {
+  // clicked() does not say which modifiers its click had: the release that clicks (mouse, or Space let go).
+  if (watched == m_primary && (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::KeyRelease))
+    m_primaryShift = static_cast<QInputEvent*>(event)->modifiers().testFlag(Qt::ShiftModifier);
+  return QWidget::eventFilter(watched, event);
 }
 
 void PanelFooter::setPrimary(Primary kind, const QString& key) { relabel(m_primary, kind == Primary::Close ? tr("OK") : tr("Apply"), key); }

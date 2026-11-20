@@ -36,7 +36,7 @@ void SketchEditor::benchHandles() {
         QApplication::sendEvent(m_dimensionHandle,&release);
         require(option("distance")!=before,"drag did not update distance");break;
       }
-      case 2:require(bool(m_toolPreview),"drag preview missing");m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".png");m_dimensionHandle->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".field.png");applyTool();require(m_sk.entities.size()>4,"offset commit");sketchPress(40,15,Qt::NoModifier);require(!m_sel.empty(),"select another edge after offset");break;
+      case 2:require(bool(m_toolPreview),"drag preview missing");m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".png");m_dimensionHandle->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".field.png");applyTool(true);require(m_sk.entities.size()>4 && m_tool=="offset","offset commit, the tool kept by Shift");sketchPress(40,15,Qt::NoModifier);require(!m_sel.empty(),"select another edge after offset");break;
       case 3:{require(bool(m_toolPreview),"second edge preview missing");
         for(int i=0;i<12;++i){sketchPress(20,0,Qt::NoModifier);sketchPress(40,15,Qt::NoModifier);previewTool();}
         undo();require(m_tool=="select" && m_sk.entities.size()==4,"active offset undo closes tool and restores original");
@@ -51,7 +51,7 @@ void SketchEditor::benchHandles() {
       case 6:require(m_tool=="select" && m_sk.entities.size()==4,"Ctrl+Z in numeric field must undo geometry and close tool");require(!m_dimensionHandle->isVisible(),"stale handle after undo");
         // The offset relationship (the tool's default): 3 mm, sharp corners, then its label double-clicked and 1 typed.
         setTool("offset");m_options["distance"]="3 mm";m_options["corners"]="sharp";sketchPress(20,0,Qt::NoModifier);break;
-      case 7:require(bool(m_toolPreview),"offset relationship preview");applyTool();break;
+      case 7:require(bool(m_toolPreview),"offset relationship preview");applyTool();require(m_tool=="select" && !m_dimensionHandle->isVisible(),"the offset tool closes after Apply");break;
       case 8:{
         const SkConstraint* rel=nullptr;for(const auto& c:m_sk.constraints)if(c.type==SkConstraint::Type::Offset)rel=&c;
         require(rel && rel->sources==4 && rel->refs.size()==8 && std::fabs(std::fabs(rel->value)-3)<1e-9,"the offset is held by an offset relationship of 3 mm");

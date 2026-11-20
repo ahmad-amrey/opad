@@ -1,6 +1,7 @@
 #include "SketchPanel.hpp"
 #include "SketchEditor.hpp"
 #include "HelpClip.hpp"
+#include "KeyText.hpp"
 #include "I18n.hpp"
 #include "Preferences.hpp"
 #include "Units.hpp"
@@ -96,7 +97,12 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   // The chain tools' Apply is Done (Enter): it ends the chain and keeps the tool.
   auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); apply->setProperty("sketchApply",true); layout->addWidget(apply);m_apply=apply;
   connect(tabs,&QTabWidget::currentChanged,apply,[apply](int index){apply->setVisible(index==0);});
-  connect(apply,&QPushButton::clicked,this,[this]{m_editor->applyTool();keysToView();});
+  // A tool normally used once closes after its Apply (sketchkeys::afterApply); Shift held with the click keeps it.
+  apply->installEventFilter(this);
+  connect(apply,&QPushButton::clicked,this,[this]{m_editor->applyTool(std::exchange(m_applyShift,false));keysToView();});
+  m_keepHint=new QLabel(this);m_keepHint->setObjectName("secondary");m_keepHint->setProperty("sketchKeepHint",true);m_keepHint->setWordWrap(true);
+  layout->addWidget(m_keepHint);
+  connect(tabs,&QTabWidget::currentChanged,this,[this]{refresh();});
   m_precise=new QWidget(this);auto* precise=new QFormLayout(m_precise);tool->addWidget(m_precise);
   m_coordinates=new QComboBox(this); m_coordinates->addItems({tr("Absolute coordinates"),tr("Relative coordinates"),tr("Polar: length and angle")});
   m_u=new QLineEdit("0",this); m_v=new QLineEdit("0",this); m_u->setObjectName("sketchPreciseU");
@@ -183,7 +189,8 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(m_closeTool,&QPushButton::clicked,this,[this]{m_editor->closeTool();keysToView();});
   connect(editor,&SketchEditor::status,m_status,&QLabel::setText);
   connect(editor,&SketchEditor::changed,this,&SketchPanel::refresh);
-  connect(editor,&SketchEditor::toolChanged,this,[this]{m_pages->setCurrentIndex(0);refresh();});
+  // A tool shows its own page; when it ends, the page the user had opened comes back (the constraint list stays).
+  connect(editor,&SketchEditor::toolChanged,this,[this]{m_pages->setCurrentIndex(m_editor->tool()=="select"?m_userPage:0);refresh();});
   connect(editor,&SketchEditor::workflowChanged,this,&SketchPanel::refresh);
   connect(units::notifier(),&units::Notifier::changed,this,[this]{m_editor->m_panelFieldsDirty=true;refresh();});  // values and defaults in the shown unit
   connect(m_group,&QComboBox::currentIndexChanged,this,&SketchPanel::chooseGroup);
@@ -365,6 +372,10 @@ void SketchPanel::refresh() {
     using namespace sketchkeys;
     const State keys=m_editor->keyState();const Back back=backspace(keys);const bool chain=chainTool(keys.tool);
     m_apply->setText(chain?tr("Done   Enter"):tr("Apply"));m_apply->setEnabled(!chain || enter(keys)!=Enter::None);
+    const bool closes=closesAfterApply(keys.tool);
+    m_keepHint->setVisible(closes && m_pages->currentIndex()==0);
+    if(closes)m_keepHint->setText(tr("The tool closes after Apply. %1 or %2+click on Apply keeps it open for another use (with nothing to apply, %1 repeats the last command).").arg(keys::fixedText("shiftEnter"),keys::fixedText("shift")));
+    m_apply->setToolTip(closes?tr("Applies and closes the tool; with %1 held it stays open").arg(keys::fixedText("shift")):QString());
     m_undoPoint->setText(back==Back::UndoPick?tr("Undo pick   ⌫"):tr("Undo point   ⌫"));
     m_undoPoint->setEnabled(back==Back::UndoPoint || back==Back::UndoPick);
     m_undoPoint->setVisible(tool!="select");m_closeTool->setVisible(tool!="select");
@@ -398,7 +409,14 @@ void SketchPanel::refresh() {
   // children of a visible widget by a queued call, and until then the layout counts them as hidden.
   QTimer::singleShot(0,this,[this]{emit contentChanged();});
 }
-void SketchPanel::showPage(int page){m_pages->setCurrentIndex(page);refresh();}
+void SketchPanel::showPage(int page){m_userPage=page;m_pages->setCurrentIndex(page);refresh();}
+QString SketchPanel::pageTitle(int page) const {return m_pages->tabText(page);}
+bool SketchPanel::eventFilter(QObject* o,QEvent* e) {
+  // Which modifiers the click on Apply had (its clicked() signal does not say): a mouse release, or Space let go on it.
+  if(o==m_apply && (e->type()==QEvent::MouseButtonRelease || e->type()==QEvent::KeyRelease))
+    m_applyShift=static_cast<QInputEvent*>(e)->modifiers().testFlag(Qt::ShiftModifier);
+  return QWidget::eventFilter(o,e);
+}
 // The steps' own scroll area as tall as its rows at the width they get, so none hides under the fields (UI-25).
 void SketchPanel::fitSteps() {
   const int width=m_steps->isVisible()?m_steps->width():this->width()-28;

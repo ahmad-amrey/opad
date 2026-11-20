@@ -140,8 +140,9 @@ class DesignController : public QObject {
   double modelReach() const;
   void syncSelectionToInput();
   void schedulePreview();
-  void runPreview(bool commit);
-  void commitDerived(const opad::json& inputs, const std::string& component, const QString& label);  // Sketch on face
+  // commit with keep (Shift held with Enter or OK): a new feature starts again, the same kind, once this one is committed.
+  void runPreview(bool commit, bool keep = false);
+  void commitDerived(const opad::json& inputs, const std::string& component, const QString& label, const QString& again = {});  // Sketch on face; again: the kind to start next (Shift)
   QList<DynamicInput::Field> valueFields(const QString& except = {}) const;  // the panel's values shown, as boxes
   void typeValue(const QString& key, QString value);  // typed into a box: into the panel (the preview follows)
   void refreshValues();                                // the boxes follow the panel

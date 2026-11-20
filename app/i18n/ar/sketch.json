@@ -390,5 +390,8 @@
  "Rigid offset": "إزاحة صلبة",
  "None (plain copy)": "بلا (نسخة عادية)",
  "Offset distance": "مسافة الإزاحة",
- "An offset needs a distance other than zero": "تحتاج الإزاحة إلى مسافة غير الصفر"
+ "An offset needs a distance other than zero": "تحتاج الإزاحة إلى مسافة غير الصفر",
+ "The tool closes after Apply. %1 or %2+click on Apply keeps it open for another use (with nothing to apply, %1 repeats the last command).": "تُغلق الأداة بعد التطبيق. يبقيها %1 أو النقر على «تطبيق» مع %2 مفتوحة لاستخدام آخر (وحين لا يوجد ما يُطبَّق يكرر %1 آخر أمر).",
+ "Applies and closes the tool; with %1 held it stays open": "يطبّق ويغلق الأداة؛ مع الضغط على %1 تبقى مفتوحة",
+ "%1 apply, keep tool": "%1 تطبيق مع إبقاء الأداة"
 }
