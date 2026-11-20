@@ -36,6 +36,9 @@ namespace {
 QString bin(const QString& name) {
 #ifdef _WIN32
   return QCoreApplication::applicationDirPath() + "/" + name + ".exe";
+#elif defined(__APPLE__)
+  if (name == "opad") return QCoreApplication::applicationDirPath() + "/opad.app/Contents/MacOS/opad";  // the app bundle
+  return QCoreApplication::applicationDirPath() + "/" + name;
 #else
   return QCoreApplication::applicationDirPath() + "/" + name;
 #endif

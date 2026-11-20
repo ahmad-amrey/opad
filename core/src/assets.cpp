@@ -600,7 +600,7 @@ std::string file_sha256(const fs::path& file, bool compute) {
 #ifdef _WIN32
   where = lower(where);
 #endif
-  const std::string stat = sha256_hex(where + "|" + std::to_string(size) + "|" + std::to_string(time.time_since_epoch().count()));
+  const std::string stat = sha256_hex(where + "|" + std::to_string(size) + "|" + std::to_string(static_cast<long long>(time.time_since_epoch().count())));
   if (const auto known = cache_get("asset-sha", stat); known && known->size() == 64) return *known;
   if (!compute) return {};
   const std::string sha = sha256_file(file);

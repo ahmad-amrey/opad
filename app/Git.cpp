@@ -540,12 +540,21 @@ Install Install::here() {
 #else
   const QString suffix;
 #endif
-  in.cli = dir + "/opad-cli" + suffix;
+  QString cliDir = dir;
+#ifdef __APPLE__
+  // The app runs from opad.app/Contents/MacOS; the build (and a hand install) keeps opad-cli beside the bundle.
+  if (dir.endsWith(QLatin1String(".app/Contents/MacOS")) && !QFileInfo::exists(dir + "/opad-cli"))
+    cliDir = QFileInfo(dir + "/../../..").canonicalFilePath();
+#endif
+  in.cli = cliDir + "/opad-cli" + suffix;
   if (!QFileInfo::exists(in.cli)) in.cli.clear();
   in.app = self;
   if (QFileInfo(self).completeBaseName().startsWith(QLatin1String("opad-cli"))) {  // opad-cli's own git tools (GitAgent.cpp)
     in.cli = self;
     in.app = QFileInfo::exists(dir + "/opad" + suffix) ? dir + "/opad" + suffix : QString();
+#ifdef __APPLE__
+    if (in.app.isEmpty() && QFileInfo::exists(dir + "/opad.app/Contents/MacOS/opad")) in.app = dir + "/opad.app/Contents/MacOS/opad";
+#endif
   }
   return in;
 }

@@ -89,7 +89,8 @@ if(PACMAN OR lib_real MATCHES "/Cellar/" OR EXISTS "/var/lib/dpkg/status")
   check("no inline texts in the package form" at EQUAL -1)
 else()
   string(FIND "${text}" "${lib_name}" at)
-  check("without package information the library is listed by name" NOT at EQUAL -1)
+  string(FIND "${text}" "${real_name}" real_at)  # listed by its real path's name (macOS: libz.tbd -> libz.1.tbd)
+  check("without package information the library is listed by name" NOT at EQUAL -1 OR NOT real_at EQUAL -1)
 endif()
 
 # The wheel's notices read the Python module's link line alone.

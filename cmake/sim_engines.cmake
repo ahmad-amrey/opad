@@ -157,7 +157,9 @@ function(opad_engine_from_source name tag git commit config)
 endfunction()
 
 if(APPLE)
-  set(_opad_engine_rpath "-DCMAKE_INSTALL_RPATH=@loader_path")
+  # Chrono sets CMAKE_MACOSX_RPATH OFF itself, which installs libChronoEngine.dylib under its bare name (dyld then looks
+  # for it in the working directory only); the install name directory puts it under @rpath, where our RPATH finds it.
+  set(_opad_engine_rpath "-DCMAKE_INSTALL_RPATH=@loader_path" "-DCMAKE_INSTALL_NAME_DIR=@rpath")
 else()
   set(_opad_engine_rpath "-DCMAKE_INSTALL_RPATH=\$ORIGIN")
 endif()

@@ -1358,7 +1358,7 @@ class Builder {
       const auto time = std::filesystem::last_write_time(path, error);
       // A file written moments ago may be written again within one tick of the clock that stamps it: never taken as known.
       const bool settled = !error && std::filesystem::file_time_type::clock::now() - time > std::chrono::seconds(2);
-      if (settled) remembered = id + "|" + std::to_string(size) + "|" + std::to_string(time.time_since_epoch().count()) + (opt.heal ? "|heal" : "");
+      if (settled) remembered = id + "|" + std::to_string(size) + "|" + std::to_string(static_cast<long long>(time.time_since_epoch().count())) + (opt.heal ? "|heal" : "");
     }
     if (!remembered.empty()) {
       std::lock_guard<std::mutex> lock(memo_mu);
@@ -1950,7 +1950,7 @@ KicadCli kicad_cli(bool ask) {
   static std::mutex lock;
   static std::map<std::string, std::string> asked;
   const auto stamp = std::filesystem::last_write_time(out.program, e);
-  const std::string key = utf8(out.program) + "|" + std::to_string(stamp.time_since_epoch().count());
+  const std::string key = utf8(out.program) + "|" + std::to_string(static_cast<long long>(stamp.time_since_epoch().count()));
   {
     std::lock_guard<std::mutex> hold(lock);
     if (const auto it = asked.find(key); it != asked.end()) return out.version = it->second, out;

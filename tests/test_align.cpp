@@ -267,7 +267,8 @@ TEST(sketches_align_onto_faces_and_follow_them) {
   json r = commands::run("align_sketch", {{"target", id}, {"inputs", {{"from", "plane"}, {"from_plane", {{"sketch", id}}}, {"to", "plane"}, {"to_plane", {{"face", top}}}}}}, &doc);
   CHECK_NEAR(r["frame"]["origin"][2].get<double>(), 10, 1e-6);
   CHECK_NEAR(r["frame"]["normal"][2].get<double>(), 1, 1e-9);
-  const SketchItem* item = resolve(doc).sketch(id);
+  const Scene linked = resolve(doc);
+  const SketchItem* item = linked.sketch(id);
   CHECK(item->plane.contains("support"));  // linked to the face
   // The box grows: the sketch follows its top.
   commands::run("param", {{"name", "h"}, {"expr", "16 mm"}}, &doc);
@@ -275,7 +276,8 @@ TEST(sketches_align_onto_faces_and_follow_them) {
   // A point of it onto a vertex of the top: moved within the face, still on it.
   r = commands::run("align_sketch", {{"target", id}, {"inputs", {{"from", "point"}, {"from_point", {{{"sketch", id}, {"point", p0}}}}, {"to", "point"},
                                                                   {"to_point", {vertex(doc, base, gp_Pnt(40, 40, 16))}}}}}, &doc);
-  const SketchItem* moved = resolve(doc).sketch(id);
+  const Scene onVertex = resolve(doc);
+  const SketchItem* moved = onVertex.sketch(id);
   CHECK_NEAR(moved->frame.origin[0], 40, 1e-6);
   CHECK_NEAR(moved->frame.origin[1], 40, 1e-6);
   CHECK(moved->plane.contains("support"));

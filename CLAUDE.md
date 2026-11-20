@@ -44,6 +44,20 @@ linuxdeploy not installed (no `opad-single` AppImage target), pybind11-dev missi
 `tests/corpus/*.step` not in git (picking/viewer skip until `tests/corpus/fetch.py` or a copy), sheet-engine needs the
 Engine file. Wayland runs through XWayland (OCCT's viewer needs X11).
 
+## macOS (Apple silicon, Homebrew)
+
+`brew install cmake ninja opencascade qt nlohmann-json pybind11 python` (OCCT 7.9.3, Qt 6.11), `git submodule update --init
+third_party/libredwg`, then `cmake --workflow --preset macos` (90 unit tests) and `cmake --build --preset macos-single`
+(`build/macos/single/OPAD-<ver>-macos.dmg`, ad-hoc signed, every dylib inside: check with `DYLD_PRINT_LIBRARIES=1`).
+No pkg-config needed: HarfBuzz falls back to its CMake config. The app is `bin/opad.app/Contents/MacOS/opad`: lookups
+beside the program (dwg2dxf, ccx, opad-cli, the git merge driver) also look beside the bundle, and tests that run the app
+use that path. Traps met: Chrono sets `CMAKE_MACOSX_RPATH OFF` (built with `CMAKE_INSTALL_NAME_DIR=@rpath`, else every
+binary failed to load it); LibreDWG needs `_DARWIN_C_SOURCE` (memmem); libc++'s `file_time_type` counts in `__int128`
+(cast before `std::to_string`); clang refuses int -> double narrowing in braces; `std::sort` ties order differently
+from libstdc++ (seed orders that matter use `stable_sort`); freed memory is reused at once, so a pointer into a
+temporary `Scene` or a reference into a vector that grows fails here first. Key texts are native (⌘, ↩): tests compare
+with `keys::` output or pin `keys::setNativeStyle(keys::Style::Pc)`. Bench mode works (`OPAD_BENCH_OFFSCREEN=1`).
+
 ## Single-file executable (`cmake --workflow --preset windows-single`)
 
 Preset `windows-static` (`OPAD_STATIC=ON`, `build/windows-static`): Qt from MSYS2's `qt6-static` (first on
