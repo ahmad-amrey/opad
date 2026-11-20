@@ -110,8 +110,10 @@ int main(){try {
   // mesh_to_solid command and the mesh_solid feature kind. Both merged: 155874 live, 88205 headless.
   // Align (+2.2 KB live, measured 158088; +0.73 KB headless, measured 88934): the align feature kind (from/to point, line or
   // plane, motion, flip, offset, angle) and the align_sketch command, also a batch step.
-  CHECK(live<158600);  // 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
-  CHECK(headless<89450);  // 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
+  // Offset relationship (measured 158654 live, 89500 headless): sketch_tool's offset holds its copy by an editable offset
+  // dimension (inputs.relation).
+  CHECK(live<159100);  // 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  CHECK(headless<89950);  // 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

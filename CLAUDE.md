@@ -229,6 +229,13 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   may be an arc or open spline (`align_ends`: its chord; a DXF polyline's straight-looking segment is often a flat bulge
   arc). Align and Rigid pick by the unsnapped press (`curveAtPress`): the snap near a line's end lands on its end point.
   `ctest -R sketch-rigid`, bench `sketch-align` (OPAD_BENCH_SKETCH_ALIGN).
+- Offset relationship (`SkConstraint::Type::Offset`, a dimension: refs = the `sources` curves then what the offset made,
+  `value` signed as the kernel takes it, `built` = the distance the curves were made at, `sharp`): the Offset tool's
+  default (option `relation`, "none" = plain copy; the agent's `sketch_tool` offset too, `inputs.relation`). The solver
+  holds it as Rigid (the chain is not reshaped either); `evaluate_dimensions` ends in `refresh_offsets`, which remakes the
+  offset when value != built (the side read off the curves, so a mirrored copy keeps its side; same curves = points moved
+  in place, ids kept; else replaced). Its label follows the curves (`offsetLeader`, `pos` unused), double-click edits it
+  (the box shows the distance; a plain number keeps the side). Saved in `more_constraints`. `ctest -R sketch-offset`.
 - Bench without input driving: `opad-cli new x.opad`, then `OPAD_BENCH_DESIGN=<png> [OPAD_BENCH_SKETCHSHOT=<png>]
   opad.exe x.opad --bench-select` draws a dimensioned rectangle + circle through the tool code, extrudes it through
   the panel's plan/commit path, edits the extrude rolled back, fillets, saves, quits; trace lines `bench: design:` /

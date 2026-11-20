@@ -511,7 +511,8 @@ struct System {
         break;
       }
       case CType::Fix: fix(ci, c); break;
-      case CType::Rigid: rigid(ci, c); break;
+      case CType::Rigid:
+      case CType::Offset: rigid(ci, c); break;  // an offset holds its curves as a rigid group (its value rebuilt them)
       case CType::Distance: {
         if (c.refs.size() == 1 || is_point(c.refs[1])) {
           P2 p, q;

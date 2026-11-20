@@ -385,5 +385,10 @@
  "pick the line to align among the curves that move": "التقط الخط المراد محاذاته من بين المنحنيات التي تتحرك",
  "align with a line that stays where it is, not one of the curves that move": "حاذِ مع خط يبقى في مكانه، لا مع أحد المنحنيات التي تتحرك",
  "that line has no length to align": "ذلك الخط بلا طول للمحاذاة",
- "the line to align with has no length": "الخط المراد المحاذاة معه بلا طول"
+ "the line to align with has no length": "الخط المراد المحاذاة معه بلا طول",
+ "Relationship": "العلاقة",
+ "Rigid offset": "إزاحة صلبة",
+ "None (plain copy)": "بلا (نسخة عادية)",
+ "Offset distance": "مسافة الإزاحة",
+ "An offset needs a distance other than zero": "تحتاج الإزاحة إلى مسافة غير الصفر"
 }

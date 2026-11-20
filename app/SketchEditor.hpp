@@ -432,6 +432,9 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<std::pair<double, double>> sampled(const opad::design::SkEntity& e) const;  // polyline of a curve, sketch coordinates
   double distanceTo(const opad::design::SkEntity& e, double u, double v) const;
   void labelPosition(const opad::design::SkConstraint& c, double& u, double& v) const;
+  // An offset relationship's leader: from the middle of its first source curve (m) to the nearest point of its offset (n);
+  // its value sits past n, so it follows the curves wherever they move. False when the curves cannot be drawn.
+  bool offsetLeader(const opad::design::SkConstraint& c, double& mu, double& mv, double& nu, double& nv) const;
   void toolPrompt();
   bool isFixedPoint(int id) const;
 

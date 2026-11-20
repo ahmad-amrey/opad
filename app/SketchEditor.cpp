@@ -1790,6 +1790,18 @@ void SketchEditor::rebuild() {
         const double k = len2 < 1e-18 ? 0 : ((qx - ax) * dx + (qy - ay) * dy) / len2;
         d.thin.push_back({W(qx, qy), W(ax + k * dx, ay + k * dy), col});
       }
+    } else if (c.type == T::Offset) {  // a leader from the source to the offset (arrow head on it), on to the value
+      double mu, mv, nu, nv;
+      if (offsetLeader(c, mu, mv, nu, nv)) {
+        const double dx = nu - mu, dy = nv - mv, len = std::hypot(dx, dy);
+        const double tx = len > 1e-9 ? dx / len : 0, ty = len > 1e-9 ? dy / len : 1, nx = -ty, ny = tx;
+        d.thin.push_back({W(mu, mv), W(lu - tx * 8 * px, lv - ty * 8 * px), col});
+        for (double s : {1.0, -1.0}) {  // arrow heads at both curves
+          const double ex = s > 0 ? nu : mu, ey = s > 0 ? nv : mv;
+          d.thin.push_back({W(ex, ey), W(ex - s * (tx * 9 - nx * 3) * px, ey - s * (ty * 9 - ny * 3) * px), col});
+          d.thin.push_back({W(ex, ey), W(ex - s * (tx * 9 + nx * 3) * px, ey - s * (ty * 9 + ny * 3) * px), col});
+        }
+      }
     } else if ((c.type == T::Radius || c.type == T::Diameter) && !c.refs.empty()) {
       const SkEntity* e = m_sk.entity(c.refs[0]);
       if (e && !e->p.empty() && P(e->p[0], ax, ay)) {

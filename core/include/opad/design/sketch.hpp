@@ -75,7 +75,10 @@ struct SkConstraint {
     Radius,         // [circle|arc]
     Diameter,       // [circle|arc]
     Angle,          // [line, line], between their directions p0->p1, 0..pi
-    ArcLength       // [arc], counter-clockwise length
+    ArcLength,      // [arc], counter-clockwise length
+    Offset          // [source curve, ..., offset curve, ...] (an offset relationship): the first `sources` refs offset by
+                    // `value` (negative: the other side) gave the rest. Held like Rigid (the curves keep their shape and move
+                    // and turn together); a new value rebuilds the offset curves from the sources (refresh_offsets)
   };
   int id = 0;
   Type type = Type::Coincident;
@@ -86,6 +89,9 @@ struct SkConstraint {
   bool reference = false; // measured after solving; never removes a degree of freedom
   bool is_signed = false; // hdistance/vdistance between points: the signed q - p, not its size (gap log #11)
   double pos[2] = {0, 0}; // dimensions: where the label sits (display only)
+  int sources = 0;        // offset: how many of `refs` are the curves offset (the rest are the curves it made)
+  bool sharp = false;     // offset: sharp corners (else round)
+  double built = 0;       // offset: the distance its curves were made at; another value rebuilds them
   bool is_dimension() const { return type >= Type::Distance; }
   static const char* type_name(Type t);
   static Type type_from_name(const std::string& s);
@@ -146,7 +152,14 @@ json solved_geometry(const json& sketch_op_data);
 std::string geometry_stamp(const json& geometry);
 double dimension_value(const Sketch& sk, const SkConstraint& c);
 ParamTable sketch_parameters(const Sketch& sk, const ParamTable& params = {});
+// Every dimension's value from its expression; then every offset relationship whose value changed rebuilds its curves
+// (refresh_offsets, sketch_modify.hpp), so whatever solves next holds the new shape. Throws when an offset cannot be made.
 void evaluate_dimensions(Sketch& sk, const ParamTable& params = {});
+// Offset relationships (SkConstraint::Type::Offset) whose value is not the distance their curves were made at: the curves
+// made again from the sources at the value, on the side they are on (a negative value against a positive one made: the
+// other side), points moved in place when the offset gives the same curves (ids kept), else replaced. Defined with the
+// kernel's offset (sketch_modify.cpp). Throws when the offset leaves no curves.
+void refresh_offsets(Sketch& sk);
 // Change local origin without moving any geometry in the sketch plane.
 void shift_sketch_origin(Sketch& sk,double u,double v);
 

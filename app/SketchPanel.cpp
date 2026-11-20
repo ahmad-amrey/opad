@@ -280,7 +280,12 @@ void SketchPanel::buildFields() {
   if(QStringList{"image_trace","project","intersect_body","silhouette","include3d","offset","move","rotate","align","scale","copy","mirror","rect_pattern","polar_pattern","union","subtract","intersect","heal","chamfer","simplify"}.contains(m_shown)) {
     auto* preview=new QPushButton(tr("Preview"),this);m_fields->addRow(preview);connect(preview,&QPushButton::clicked,m_editor,&SketchEditor::previewTool);
   }
-  if(m_shown=="offset") {field("distance",tr("Distance"),"5 mm");choice("corners",tr("Corners"),{{"round",tr("Round")},{"sharp",tr("Sharp")}});}
+  if(m_shown=="offset") {
+    field("distance",tr("Distance"),"5 mm");choice("corners",tr("Corners"),{{"round",tr("Round")},{"sharp",tr("Sharp")}});
+    // Rigid offset (the default): the copy keeps its distance to the chain and moves with it; double-click its label to
+    // change the distance.
+    choice("relation",tr("Relationship"),{{"rigid",tr("Rigid offset")},{"none",tr("None (plain copy)")}});
+  }
   if(QStringList{"offset","move","copy","rotate","align","scale","mirror","rect_pattern","polar_pattern","c:rigid"}.contains(m_shown)) {
     // The tool's own (offset: on): ticking it for one tool left the others as they were.
     auto* chain=new QCheckBox(tr("Select connected chain on click"),this);chain->setObjectName("sketchOption-chain");chain->setChecked(m_editor->chainOnClick());m_fields->addRow(chain);

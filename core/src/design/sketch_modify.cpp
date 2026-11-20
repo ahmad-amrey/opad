@@ -4,6 +4,7 @@
 #include <BRepBndLib.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
+#include <Standard_Failure.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -44,7 +45,7 @@ std::vector<int> rigid_closure(const Sketch& sk,const std::vector<int>& ids) {
   std::vector<int> out=ids;std::set<int> in(ids.begin(),ids.end());
   for(bool grew=true;grew;) {
     grew=false;
-    for(const auto& c:sk.constraints)if(c.type==SkConstraint::Type::Rigid && std::any_of(c.refs.begin(),c.refs.end(),[&](int r){return in.count(r)>0;}))
+    for(const auto& c:sk.constraints)if((c.type==SkConstraint::Type::Rigid || c.type==SkConstraint::Type::Offset) && std::any_of(c.refs.begin(),c.refs.end(),[&](int r){return in.count(r)>0;}))
       for(int r:c.refs)if(in.insert(r).second){out.push_back(r);grew=true;}
   }
   return out;
@@ -172,11 +173,126 @@ std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const 
   sk.validate();return made;
 }
 
-void offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round) {
+namespace {
+// The kernel's offset of the chain `ids` of `sk`, appended to `into` (which may be `sk`): the curves made, in order.
+std::vector<int> offset_into(const Sketch& sk,Sketch& into,const std::vector<int>& ids,double distance,bool round) {
   if(!std::isfinite(distance)||std::fabs(distance)<1e-9)throw Error("offset distance must be nonzero");
   auto wire=sketch_wire(sk,Frame{},ids);BRepOffsetAPI_MakeOffset offset(wire,round?GeomAbs_Arc:GeomAbs_Intersection);
   offset.Perform(distance);if(!offset.IsDone()||offset.Shape().IsNull())throw Error("that offset leaves no curves");
-  if(append_sketch_shape(sk,offset.Shape()).empty())throw Error("that offset leaves no curves");
+  const auto made=append_sketch_shape(into,offset.Shape());
+  if(made.empty())throw Error("that offset leaves no curves");
+  return made;
+}
+// The same, or nothing when the kernel makes none (an inward offset wider than the shape).
+bool try_offset(const Sketch& sk,Sketch& into,const std::vector<int>& ids,double distance,bool round,std::vector<int>& made) {
+  try{made=offset_into(sk,into,ids,distance,round);return true;}
+  catch(const Standard_Failure&){}catch(const std::exception&){}
+  made.clear();return false;
+}
+// Points along the curves, nine on each, to tell which of two offsets lies where curves are.
+std::vector<gp_Pnt> curve_samples(const Sketch& sk,const std::vector<int>& ids) {
+  std::vector<gp_Pnt> out;
+  for(int id:ids)if(const auto* e=sk.entity(id)) {
+    const auto edge=entity_edge(sk,*e,Frame{});if(edge.IsNull())continue;
+    BRepAdaptor_Curve c(edge);const double a=c.FirstParameter(),b=c.LastParameter();
+    for(int k=0;k<=8;++k)out.push_back(c.Value(a+(b-a)*k/8));
+  }
+  return out;
+}
+// How far the points `a` are from the points `b` (each from its nearest, on average); huge when either has none.
+double samples_apart(const std::vector<gp_Pnt>& a,const std::vector<gp_Pnt>& b) {
+  if(a.empty()||b.empty())return 1e300;
+  double sum=0;
+  for(const auto& p:a){double best=1e300;for(const auto& q:b)best=std::min(best,p.SquareDistance(q));sum+=std::sqrt(best);}
+  return sum/double(a.size());
+}
+}  // namespace
+
+std::vector<int> offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round) {
+  const Sketch source=sk;
+  return offset_into(source,sk,ids,distance,round);
+}
+
+int offset_relationship(Sketch& sk,const std::vector<int>& ids,double distance,bool round,const std::string& expr) {
+  std::vector<int> sources;
+  for(int id:ids)if(const auto* e=sk.entity(id);e && e->type!=SkEntity::Type::Point && std::find(sources.begin(),sources.end(),id)==sources.end())sources.push_back(id);
+  if(sources.empty())throw Error("select a connected curve chain first");
+  const auto made=offset_entities(sk,sources,distance,round);
+  SkConstraint c;
+  c.id=sk.next_id();c.type=SkConstraint::Type::Offset;c.refs=sources;c.refs.insert(c.refs.end(),made.begin(),made.end());
+  c.sources=int(sources.size());c.value=c.built=distance;c.expr=expr;c.sharp=!round;
+  sk.constraints.push_back(c);
+  sk.validate();
+  return c.id;
+}
+
+void refresh_offsets(Sketch& sk) {
+  std::vector<int> offsets;
+  for(const auto& c:sk.constraints)if(c.type==SkConstraint::Type::Offset)offsets.push_back(c.id);
+  std::set<int> rebuilt;  // curves made again in this pass: an offset of them is made again too (an offset of an offset)
+  for(int id:offsets) {
+    const SkConstraint* found=sk.constraint(id);
+    if(!found)continue;  // went with curves an earlier one replaced
+    const SkConstraint c=*found;
+    if(c.sources<1 || c.sources>=int(c.refs.size()))continue;
+    const std::vector<int> sources(c.refs.begin(),c.refs.begin()+c.sources),old(c.refs.begin()+c.sources,c.refs.end());
+    const bool sourceRebuilt=std::any_of(sources.begin(),sources.end(),[&](int s){return rebuilt.count(s)>0;});
+    if(!sourceRebuilt && std::fabs(c.value-c.built)<=1e-9*std::max(1.0,std::fabs(c.value)))continue;
+    const bool round=!c.sharp;
+    // Which way the kernel's sign runs for these curves (it follows the chain's direction, which a mirror turns round): the
+    // offset at the distance they were made at, or at its negative, is where they are now.
+    const auto now=curve_samples(sk,old);
+    double sign=1;
+    if(std::fabs(c.built)>1e-9) {
+      Sketch plus,minus;std::vector<int> mp,mm;
+      const double dp=try_offset(sk,plus,sources,c.built,round,mp)?samples_apart(now,curve_samples(plus,mp)):1e300;
+      const double dm=try_offset(sk,minus,sources,-c.built,round,mm)?samples_apart(now,curve_samples(minus,mm)):1e300;
+      if(dm<dp)sign=-1;
+    }
+    Sketch fresh;
+    std::vector<int> made;
+    try{made=offset_into(sk,fresh,sources,sign*c.value,round);}
+    catch(const std::exception&){throw Error("an offset of "+json(c.value).dump()+" mm leaves no curves (offset relationship d"+std::to_string(c.id)+")");}
+    // The same curves (kinds, counts, shared ends) as it made before: the points move in place, every id stays.
+    bool same=made.size()==old.size();
+    std::map<int,int> to,from;  // fresh point -> sketch point, and back
+    for(size_t k=0;same && k<made.size();++k) {
+      const SkEntity& f=*fresh.entity(made[k]);const SkEntity* e=sk.entity(old[k]);
+      if(!e || e->type!=f.type || e->p.size()!=f.p.size() || e->degree!=f.degree || e->fixed){same=false;break;}
+      for(size_t j=0;j<f.p.size();++j) {
+        const int fp=f.p[j],ep=e->p[j];
+        if(to.emplace(fp,ep).first->second!=ep || from.emplace(ep,fp).first->second!=fp || sk.point(ep)->fixed){same=false;break;}
+      }
+    }
+    if(same) {
+      for(const auto& [fp,ep]:to){SkPoint* p=sk.point(ep);const SkPoint* q=fresh.point(fp);p->x=q->x;p->y=q->y;}
+      for(size_t k=0;k<made.size();++k) {
+        const SkEntity& f=*fresh.entity(made[k]);SkEntity* e=sk.entity(old[k]);
+        e->r=f.r;e->knots=f.knots;e->multiplicities=f.multiplicities;e->weights=f.weights;e->periodic=f.periodic;
+      }
+      sk.constraint(id)->built=c.value;
+      rebuilt.insert(old.begin(),old.end());
+      continue;
+    }
+    // Other curves (a side or a corner arc came or went): the old ones go, with what held them, and the new ones join.
+    for(int e:old)if(sk.entity(e))sk.remove(e);
+    std::erase_if(sk.constraints,[&](const SkConstraint& x){return x.id==id;});
+    std::map<int,int> ids;
+    for(const auto& p:fresh.points)ids[p.id]=sk.add_point(p.x,p.y);
+    SkConstraint kept=c;
+    kept.refs.resize(size_t(c.sources));
+    for(int m:made) {
+      SkEntity e=*fresh.entity(m);
+      e.id=sk.next_id();
+      for(int& p:e.p)p=ids.at(p);
+      kept.refs.push_back(e.id);rebuilt.insert(e.id);
+      sk.entities.push_back(std::move(e));
+    }
+    kept.built=c.value;
+    sk.constraints.push_back(kept);
+    std::stable_sort(sk.constraints.begin(),sk.constraints.end(),[](const SkConstraint& a,const SkConstraint& b){return a.id<b.id;});
+  }
+  if(!offsets.empty())sk.validate();
 }
 
 int heal_endpoints(Sketch& sk,double tolerance) {

@@ -367,7 +367,7 @@ void SketchEditor::noteHints() {
 void SketchEditor::toggleReference() {
   if(!m_active)return;
   begin_change();bool any=false;
-  for(int id:m_sel)if(auto* c=m_sk.constraint(id);c && c->is_dimension()) {
+  for(int id:m_sel)if(auto* c=m_sk.constraint(id);c && c->is_dimension() && c->type!=SkConstraint::Type::Offset) {  // an offset always drives
     c->reference=!c->reference;c->expr.clear();c->value=dimension_value(m_sk,*c);any=true;
   }
   if(any)end_change(tr("Driving / reference"));else cancel_change();

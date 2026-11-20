@@ -158,6 +158,7 @@ double dimension_value(const Sketch& sk, const SkConstraint& c) {
     const auto& a = point(c.refs[0]);
     return c.type == T::HDistance ? a.x : a.y;
   }
+  if (c.type == T::Offset) return c.value;  // what its curves were made at (refresh_offsets keeps them so)
   const auto* e = sk.entity(c.refs.at(0));
   if (c.type == T::Radius || c.type == T::Diameter || c.type == T::ArcLength) {
     const double r = e->type == SkEntity::Type::Arc ? dist(point(e->p[0]),point(e->p[1])) : e->r;
@@ -216,6 +217,7 @@ void evaluate_dimensions(Sketch& sk, const ParamTable& params) {
     values.push_back(table.as(c.type == SkConstraint::Type::Angle ? Dim::Angle : Dim::Length, c.expr));
   }
   for (size_t i=0; i<values.size(); ++i) sk.constraints[i].value=values[i];
+  refresh_offsets(sk);
 }
 
 } // namespace opad::design
