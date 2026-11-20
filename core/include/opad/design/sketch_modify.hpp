@@ -9,7 +9,19 @@ struct SketchTransform {
   double x=0,y=0,angle=0,scale=1,cx=0,cy=0;
   bool mirror=false; // reflect about the local x axis through (cx,cy), then rotate/scale/translate
 };
+// Moved in place (not a copy), the curves take the whole of every rigid group they belong to (rigid_closure).
 std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const SketchTransform& transform,bool copy);
+// The ids with every point and curve of each Rigid constraint that names one of them, until nothing more joins.
+std::vector<int> rigid_closure(const Sketch& sk,const std::vector<int>& ids);
+// Align (the sketch's Modify > Align): turns the curves `ids` (and their rigid groups) as one about `pivot`, an end of the
+// line `reference`, so that the line runs along `to`: Vertical or Horizontal (the sketch's axes), Parallel to the line
+// `target`, or Collinear with it (then moved across onto it too). The smaller turn of the two that do it. With `hold` the
+// alignment is kept by a constraint (vertical, horizontal, parallel or collinear). The reference must be one of the curves
+// moved (or of their groups). Returns the curves moved.
+enum class AlignTo { Vertical, Horizontal, Parallel, Collinear };
+struct SketchAlign { int reference=0,pivot=0,target=0; AlignTo to=AlignTo::Vertical; bool hold=false; };
+SketchTransform align_transform(const Sketch& sk,const SketchAlign& align);
+std::vector<int> align_entities(Sketch& sk,const std::vector<int>& ids,const SketchAlign& align);
 std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const Frame& frame={},bool construction=false,bool fixed=false);
 void offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round);
 int heal_endpoints(Sketch& sk,double tolerance);

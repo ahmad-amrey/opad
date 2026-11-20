@@ -94,7 +94,7 @@ void SketchEditor::setTool(const QString& tool) {
   m_panelFieldsDirty = true;
   m_tool = tool;referenceHover();
   if(tool=="mirror")m_options["mirrorStage"]=m_sel.empty()?"seed":"axis";
-  const QStringList preserve={"mirror","offset","node","move","rotate","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break","break_link","copybase"};
+  const QStringList preserve={"mirror","offset","node","move","rotate","align","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break","break_link","copybase"};
   if(tool!="paste")m_clip.reset();
   if(!preserve.contains(tool))m_sel.clear();
   if((tool=="rect_pattern"||tool=="polar_pattern")&&!m_sel.empty()) {
@@ -607,6 +607,13 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
     case CT::Fix:
       for (int id : ids) sets.push_back({id});
       break;
+    case CT::Rigid: {  // the curves (and drawn points), each once, as one group
+      std::vector<int> group;
+      for (int id : ids)
+        if (m_sk.entity(id) && std::find(group.begin(), group.end(), id) == group.end()) group.push_back(id);
+      if (!group.empty()) sets.push_back(group);
+      break;
+    }
     default:
       break;
   }
@@ -628,8 +635,25 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
 
 void SketchEditor::constraintClick(const Hit& h) {
   if (h.kind == Hit::None || h.kind == Hit::Dimension) return;
-  if (std::find(m_picked.begin(), m_picked.end(), h.id) != m_picked.end()) return;
   const CT type = SkConstraint::type_from_name(m_tool.mid(2).toStdString());
+  if (type == CT::Rigid) {  // curves gather (a click takes the connected chain by default) until Enter or Apply
+    if (h.kind != Hit::Entity || !m_sk.entity(h.id)) return emit status(tr("Pick a curve: a group holds curves."));
+    std::vector<int> ids{h.id};
+    if (chainOnClick())
+      for (int e : connected_entities(m_sk, {h.id}))
+        if (e != h.id && m_sk.entity(e)) ids.push_back(e);
+    if (std::find(m_picked.begin(), m_picked.end(), h.id) != m_picked.end()) {  // picked again: dropped, with its chain
+      std::erase_if(m_picked, [&](int id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); });
+    } else {
+      for (int e : ids)
+        if (std::find(m_picked.begin(), m_picked.end(), e) == m_picked.end()) m_picked.push_back(e);
+    }
+    rebuild();
+    toolPrompt();
+    emit changed();
+    return;
+  }
+  if (std::find(m_picked.begin(), m_picked.end(), h.id) != m_picked.end()) return;
   // Smooth, Curvature and Tangent hold a spline by its poles: one drawn through its points (or closed, or of degree 1)
   // cannot take them. It is not picked, and the status line says why (the core's message named a constraint id).
   if (type == CT::Smooth || type == CT::Curvature || type == CT::Tangent)

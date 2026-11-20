@@ -30,7 +30,7 @@ using CType = SkConstraint::Type;
 
 const char* const kEntityNames[] = {"point", "line", "circle", "arc", "ellipse", "spline"};
 const char* const kConstraintNames[] = {"coincident", "horizontal", "vertical", "parallel", "perpendicular", "collinear",
-                                        "tangent",    "equal",      "concentric", "midpoint", "symmetric",   "fix", "smooth", "curvature",
+                                        "tangent",    "equal",      "concentric", "midpoint", "symmetric",   "fix", "smooth", "curvature", "rigid",
                                         "distance",   "hdistance",  "vdistance",  "radius",   "diameter",    "angle", "arc_length"};
 
 bool has_radius(EType t) { return t == EType::Circle || t == EType::Ellipse; }
@@ -108,6 +108,7 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
     case CType::Midpoint: return n == 2 && is(0, Kind::Point) && is(1, Kind::Line);
     case CType::Symmetric: return n == 3 && is(0, Kind::Point) && is(1, Kind::Point) && is(2, Kind::Line);
     case CType::Fix: return n == 1;  // any point or entity
+    case CType::Rigid: return n >= 1;  // any points and curves (each one once: check_constraint)
     case CType::Distance: return pp || ll || (n == 1 && is(0, Kind::Line)) || (n == 2 && is(0, Kind::Point) && is(1, Kind::Line));
     case CType::HDistance:
     case CType::VDistance: return pp || (n == 1 && is(0, Kind::Point));  // one point: its coordinate (gap log #11)
@@ -122,6 +123,7 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
 // between a circle or an arc and a spline. Such a build throws on the whole sketch (and on any later edit of it, which
 // fails the document's replay), so to_json keeps these apart in "more_constraints", a key it ignores.
 bool older_readers_refuse(CType t, const std::vector<Kind>& k) {
+  if (t == CType::Rigid) return true;  // a type they do not know
   if (k.size() != 2) return false;
   if (t == CType::Smooth || t == CType::Curvature) return !(k[0] == Kind::Spline && k[1] == Kind::Spline);
   if (t == CType::Tangent) return (is_round(k[0]) && k[1] == Kind::Spline) || (k[0] == Kind::Spline && is_round(k[1]));
@@ -189,6 +191,8 @@ void check_constraint(const Sketch& sk, const SkConstraint& c, const Index* inde
     kinds.push_back(k);
   }
   if (!refs_fit(c.type, kinds)) throw Error(who + ": references do not fit the constraint type");
+  if (c.type == CType::Rigid && std::set<int>(c.refs.begin(), c.refs.end()).size() != c.refs.size())
+    throw Error(who + ": names a point or curve twice");
   for(int id:c.anchors)if(!has_point(sk,id,index))throw Error(who+": missing endpoint anchor");
   if(c.type==CType::Smooth || c.type==CType::Curvature || (c.type==CType::Tangent && std::find(kinds.begin(),kinds.end(),Kind::Spline)!=kinds.end())) {
     size_t splines=0;
@@ -346,6 +350,9 @@ void Sketch::remove(int id) {
     if(instance || pattern==id)return;
   }
   auto drop_constraints_on = [&](int ref) {
+    // A rigid group loses only that member: the rest of it keeps holding together.
+    for (auto& c : constraints)
+      if (c.type == SkConstraint::Type::Rigid && c.refs.size() > 1) std::erase(c.refs, ref);
     std::erase_if(constraints, [&](const SkConstraint& c) { return std::find(c.refs.begin(), c.refs.end(), ref) != c.refs.end() || std::find(c.anchors.begin(),c.anchors.end(),ref)!=c.anchors.end(); });
   };
   auto used = [&](int pid) {
@@ -449,7 +456,7 @@ json Sketch::to_json() const {
       o["pos"] = json::array({c.pos[0], c.pos[1]});
     }
     bool later = false;
-    if (c.type == CType::Smooth || c.type == CType::Curvature || c.type == CType::Tangent) {
+    if (c.type == CType::Smooth || c.type == CType::Curvature || c.type == CType::Tangent || c.type == CType::Rigid) {
       std::vector<Kind> kinds;
       for (int ref : c.refs) kinds.push_back(kind_of(*this, ref));
       later = older_readers_refuse(c.type, kinds);

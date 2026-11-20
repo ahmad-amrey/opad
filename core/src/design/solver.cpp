@@ -127,6 +127,8 @@ struct System {
   struct Aux {
     double s = 1, target = 0;
     std::vector<double> fix;
+    std::vector<int> ids;  // Rigid: its points, the two that carry its frame first; then its radii's variables
+    std::vector<int> radii;
   };
   std::vector<Aux> aux;
 
@@ -276,6 +278,80 @@ struct System {
       Row& r = next_row(ci);
       r.f = vals[k].second - a.fix[k];
       if (vals[k].first >= 0) r.j.emplace_back(vals[k].first, 1.0);
+    }
+  }
+
+  // Rigid: every point of the group where the frame of two of them (A, B: the first and the one farthest from it) puts
+  // it, P = A + a (B - A) + b perp(B - A), with a and b and |AB| taken when the solve starts. 2n - 3 rows for n points:
+  // the group keeps its shape and handedness, and only moves and turns as one (three freedoms). Circles keep their radii.
+  // Each row touches at most six variables (A, B and its point), so a group of any size fits the dual numbers.
+  void rigid(int ci, const SkConstraint& c) {
+    Aux& a = aux[size_t(ci)];
+    if (init) {
+      a.ids.clear();
+      a.radii.clear();
+      a.fix.clear();
+      std::vector<int> pts;
+      auto add = [&](int pid) { if (std::find(pts.begin(), pts.end(), pid) == pts.end()) pts.push_back(pid); };
+      for (int ref : c.refs) {
+        if (pidx.count(ref)) { add(ref); continue; }
+        const SkEntity& e = ent(ref);
+        for (int pid : e.p) add(pid);
+        if (const int g = vr[size_t(eidx.at(e.id))]; g >= 0) a.radii.push_back(g);
+      }
+      if (!pts.empty()) {
+        auto at = [&](int pid) { nslots = 0; const P2 p = pt(pid); return std::make_pair(p.x.v, p.y.v); };
+        const auto o = at(pts[0]);
+        size_t distant = 0;
+        double best = -1;
+        for (size_t i = 1; i < pts.size(); ++i) {
+          const auto p = at(pts[i]);
+          if (const double d = std::hypot(p.first - o.first, p.second - o.second); d > best) best = d, distant = i;
+        }
+        a.ids.push_back(pts[0]);
+        if (distant) {
+          const auto b = at(pts[distant]);
+          const double vx = b.first - o.first, vy = b.second - o.second, l2 = vx * vx + vy * vy;
+          a.ids.push_back(pts[distant]);
+          a.fix.push_back(std::sqrt(l2));
+          for (size_t i = 1; i < pts.size(); ++i) {
+            if (i == distant) continue;
+            const auto p = at(pts[i]);
+            const double dx = p.first - o.first, dy = p.second - o.second;
+            a.ids.push_back(pts[i]);
+            a.fix.push_back(l2 > kTiny * kTiny ? (dx * vx + dy * vy) / l2 : 0.0);
+            a.fix.push_back(l2 > kTiny * kTiny ? (vx * dy - vy * dx) / l2 : 0.0);
+          }
+        }
+      }
+      for (int g : a.radii) a.fix.push_back((*x)[size_t(g)]);
+    }
+    const size_t points = a.ids.size();
+    if (points >= 2) {
+      nslots = 0;
+      const P2 A = pt(a.ids[0]), B = pt(a.ids[1]);
+      const double d0 = a.fix[0];
+      if (d0 > kTiny) emit(ci, norm(B - A) - d0);
+      else { emit(ci, B.x - A.x); emit(ci, B.y - A.y); }  // they started on one spot: they stay on it
+      for (size_t i = 2; i < points; ++i) {
+        nslots = 0;
+        const P2 o = pt(a.ids[0]), b = pt(a.ids[1]), p = pt(a.ids[i]);
+        const P2 v = b - o;
+        const double ka = a.fix[1 + 2 * (i - 2)], kb = a.fix[2 + 2 * (i - 2)];
+        if (d0 > kTiny) {
+          emit(ci, p.x - o.x - (v.x * ka - v.y * kb));
+          emit(ci, p.y - o.y - (v.y * ka + v.x * kb));
+        } else {
+          emit(ci, p.x - o.x);
+          emit(ci, p.y - o.y);
+        }
+      }
+    }
+    const size_t first = points >= 2 ? 1 + 2 * (points - 2) : 0;
+    for (size_t k = 0; k < a.radii.size(); ++k) {
+      Row& r = next_row(ci);
+      r.f = (*x)[size_t(a.radii[k])] - a.fix[first + k];
+      r.j.emplace_back(a.radii[k], 1.0);
     }
   }
 
@@ -435,6 +511,7 @@ struct System {
         break;
       }
       case CType::Fix: fix(ci, c); break;
+      case CType::Rigid: rigid(ci, c); break;
       case CType::Distance: {
         if (c.refs.size() == 1 || is_point(c.refs[1])) {
           P2 p, q;

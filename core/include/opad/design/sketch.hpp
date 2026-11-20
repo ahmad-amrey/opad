@@ -66,6 +66,8 @@ struct SkConstraint {
                     // spline] or the other way round: the spline's end on it, along it and bending as it does (0 by a line)
     Curvature,      // [spline,spline]: equal signed endpoint curvature along the joined path; with a line, a circle or an
                     // arc: the spline's end curvature that of the line (0) or the circle (1/r, towards its centre)
+    Rigid,          // [curve, ...] (points too): they keep their shape and their places relative to one another, as they are
+                    // when a solve starts (as Fix keeps its values), and move and turn together as one piece
     // driving dimensions (value in mm or radians)
     Distance,       // [point, point], [point, line], [line] = its length, or [line, line] (parallel lines)
     HDistance,      // [point, point] along u (with `is_signed`, q.u - p.u); [point]: its u from the sketch origin

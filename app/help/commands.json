@@ -2812,6 +2812,14 @@
    "requires": "Only while a sketch is open: start one with New sketch."
   },
   {
+   "id": "sketch.align",
+   "title": "Align",
+   "summary": "Turns curves as one piece so that a line of them runs vertical, horizontal or along another line.",
+   "details": "Click the line to align: its connected chain is picked with it, and it turns about its end nearer the click. Choose Vertical, Horizontal, Parallel to a line or Onto a line (then pick that line); the shape keeps its sizes and angles. A curve of a rigid group brings its whole group, and Keep it aligned adds the matching constraint.",
+   "keywords": ["straighten", "level", "plumb", "orient", "make vertical", "turn to"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
    "id": "sketch.scale",
    "title": "Scale",
    "summary": "Resizes the selected curves about a point.",
@@ -3025,6 +3033,14 @@
    "summary": "Locks points or curves where they are.",
    "details": "Fixed geometry no longer moves when you drag or dimension other curves. Select its badge and press {fixed:del} to free it.",
    "keywords": ["lock", "anchor", "pin", "ground", "constraint"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
+   "id": "sketch.c.rigid",
+   "title": "Rigid",
+   "summary": "Holds curves together as one piece that keeps its shape.",
+   "details": "Click curves (a click takes the connected chain) and press {fixed:enter}, or select them before choosing the tool. The group then moves and turns as a whole when you drag it or constrain one of its lines, and a dimension that would reshape it is refused. Select its badge and press {fixed:del} to free the curves.",
+   "keywords": ["group", "block", "lock shape", "rigid set", "keep proportions", "constraint"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },
   {

@@ -178,6 +178,7 @@ QHash<QString, QString>& table() {
       {"cSymmetric", R"(<path d="M12 3v18" stroke-dasharray="3 2"/><path d="M8 8l-4 4 4 4M16 8l4 4-4 4"/>)"},
       {"cCollinear", R"(<path d="M3 17l7-4M14 11l7-4"/><path d="M10 13l4-2" opacity=".4" stroke-dasharray="2 2"/>)"},
       {"cFix", R"(<rect x="5" y="11" width="14" height="10"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>)"},
+      {"cRigid", R"(<path d="M4 19h16L12 5z"/><path d="M12 5v14"/><circle cx="4" cy="19" r="1.5" fill="currentColor"/><circle cx="20" cy="19" r="1.5" fill="currentColor"/><circle cx="12" cy="5" r="1.5" fill="currentColor"/>)"},
   };
   return t;
 }

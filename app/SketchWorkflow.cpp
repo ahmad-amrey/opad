@@ -78,7 +78,15 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   else if (t == "heal") done(0, option("healTolerance", "0.05 mm"));
   else if (t == "simplify") done(0, option("curveTolerance"));
   else if (t == "text") done(0, option("text", "OPAD"));
-  else if (t == "extend" || t == "tangent_circle" || t.startsWith("c:")) {
+  else if (t == "c:rigid") {
+    if (!m_picked.empty()) done(0, m_picked.size() == 1 ? tr("1 curve") : tr("%1 curves").arg(m_picked.size()));
+  } else if (t == "align") {
+    // The click on the line picks the curves that move with it (its chain) too.
+    if (!m_picked.empty()) done(0, tr("%1 of %2").arg(name(m_picked.front()), selection()));
+    const QString to = option("alignTo", "vertical");
+    if (!m_picked.empty() && (to == "vertical" || to == "horizontal")) done(1, to == "vertical" ? tr("Vertical") : tr("Horizontal"));
+    else if (m_picked.size() >= 2) done(1, name(m_picked[1]));
+  } else if (t == "extend" || t == "tangent_circle" || t.startsWith("c:")) {
     for (size_t i = 0; i < m_picked.size(); ++i) done(int(i), name(m_picked[i]));
   } else if (t == "tangent_arc") {
     if (!m_picked.empty() && !m_clicks.empty()) done(0, name(m_picked.front()));
@@ -124,6 +132,12 @@ void SketchEditor::applyTool() {
     emit changed();return;
   }
   if(applyReference()||applyImageTool())return;
+  if(m_tool=="c:rigid") {  // the curves picked, held together as one constraint (Enter or Apply)
+    if(m_picked.empty()){if(!m_previewRequested)emit status(tr("Select the curves that move as one first."));return;}
+    if(m_previewRequested)return;
+    if(applyConstraint(SkConstraint::Type::Rigid,m_picked,false)){m_picked.clear();rebuild();toolPrompt();emit changed();}
+    return;
+  }
   if(applyModify())return;
   if(m_tool=="offset")return offsetSelection();
   if(m_tool=="control_spline")return finishPrimitive();
@@ -535,7 +549,7 @@ void SketchEditor::scheduleToolPreview() {
   // wave 3, P4: the guides show each pick's projection before Enter).
   const bool live=m_dimensionHandle->dragging();
   invalidatePreview(live);updateDimensionHandle();updateInput();
-  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect","node"};
+  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect","node","align"};
   const bool reference=sketchkeys::referenceTool(m_tool.toStdString());
   if(m_active && ((tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) || (reference && !m_sources.isEmpty()))) {
     if(!live)m_toolPreviewTimer.start(120);

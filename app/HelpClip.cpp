@@ -123,7 +123,7 @@ const QStringList kTokens{"bg", "bg2", "bg3", "bg4", "line", "fg", "fg2", "fg3",
                           "mtop", "mleft", "mright", "medge", "cap", "onsel", "glow", "blue", "white", "black", "magenta"};
 const QHash<QString, QStringList> kKinds{
     {"cursor", {"arrow", "cross", "move", "wheel"}},
-    {"glyph", {"horizontal", "vertical", "parallel", "perpendicular", "coincident", "tangent", "equal", "concentric", "fix", "midpoint", "symmetric", "collinear", "smooth", "curvature"}},
+    {"glyph", {"horizontal", "vertical", "parallel", "perpendicular", "coincident", "tangent", "equal", "concentric", "fix", "midpoint", "symmetric", "collinear", "smooth", "curvature", "rigid"}},
     {"snap", {"endpoint", "midpoint", "center", "quadrant", "intersection", "tangent", "nearest", "perpendicular"}},
     {"dim", {"linear", "radial", "diameter", "angular"}},
     {"style", {"shaded", "plain", "wire"}},
@@ -1062,6 +1062,7 @@ void glyph(Ctx& c, const QString& kind, const QPointF& at, const QColor& color) 
     L(-0.4, -0.7, -0.9, 0); L(-0.9, 0, -0.4, 0.7); L(0.4, -0.7, 0.9, 0); L(0.9, 0, 0.4, 0.7);
   }
   else if (kind == "collinear") { L(-1, 0.6, -0.15, 0); L(0.15, -0.2, 1, -0.8); }
+  else if (kind == "rigid") { L(-0.9, 0.75, 0.9, 0.75); L(0.9, 0.75, 0, -0.85); L(0, -0.85, -0.9, 0.75); L(0, -0.85, 0, 0.75); }  // a braced triangle
   else if (kind == "smooth") { QPainterPath s; s.moveTo(o + QPointF(-1, 0.7) * k); s.cubicTo(o + QPointF(0, 0.7) * k, o + QPointF(0, -0.7) * k, o + QPointF(1, -0.7) * k); p.drawPath(s); }
   else if (kind == "curvature") {  // an arc and its radius, as the sketch's Curvature badge (SnapMarkers.hpp)
     const QPointF centre = o + QPointF(0, 0.9) * k;

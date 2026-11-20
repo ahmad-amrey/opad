@@ -65,6 +65,8 @@ inline const std::vector<Tool>& tools() {
       {"offset", tr("Offset"), {tr("Select a connected chain"), tr("Set the distance and apply")}, tr("drag the arrow or type the distance")},
       {"move", tr("Move"), {tr("Select the curves to move"), tr("Set the offset and apply")}},
       {"rotate", tr("Rotate"), {tr("Select the curves to rotate"), tr("Set the angle and centre, then apply")}},
+      {"align", tr("Align"), {tr("Pick the line to align"), tr("Choose vertical or horizontal, or pick the line to align with"), tr("Apply to align them")},
+       tr("a click on a line takes its chain and makes it the line to align · it turns about the end nearer the click · a curve of a rigid group brings the group")},
       {"scale", tr("Scale"), {tr("Select the curves to scale"), tr("Set the factor and centre, then apply")}},
       {"copy", tr("Copy with offset"), {tr("Select the curves to copy"), tr("Set the offset and copies, then apply")}},
       {"rect_pattern", tr("Rectangular pattern"), {tr("Select the curves to repeat"), tr("Set counts and spacing, then apply")}},
@@ -96,6 +98,8 @@ inline const std::vector<Tool>& tools() {
       {"c:midpoint", tr("Midpoint"), {tr("Pick a point"), tr("Pick the line")}},
       {"c:symmetric", tr("Symmetric"), {tr("Pick the first point"), tr("Pick the second point"), tr("Pick the line of symmetry")}},
       {"c:fix", tr("Fix"), {tr("Pick the point or curve to fix")}},
+      {"c:rigid", tr("Rigid"), {tr("Select the curves that move as one"), tr("Apply to hold them together")},
+       tr("a click takes the curve's connected chain (the panel's option) · curves selected before the tool are held at once")},
       // Reference
       {"project", tr("Project"), {tr("Pick the source edges, faces or bodies"), tr("Choose the link and apply")}, tr("they become fixed reference curves")},
       {"intersect_body", tr("Body-plane intersection"), {tr("Pick the source bodies"), tr("Choose the link and apply")}},
