@@ -1,6 +1,7 @@
 #include "SketchEditor.hpp"
 #include "DimensionHandle.hpp"
 #include "ShapeInput.hpp"
+#include "SketchGeometryCache.hpp"
 #include <QApplication>
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -70,26 +71,52 @@ bool SketchEditor::chainOnClick() const { return option("chain:"+m_tool,m_tool==
 // Align (Modify): a click on a line takes it (and its chain, the option) into the curves that move and makes it the line to
 // align, turning about its end nearer the click; a line of those curves picked again becomes the line to align; with Parallel
 // or Collinear, a line that stays put is then the line to align with. The preview follows each pick.
-bool SketchEditor::alignClick(double u,double v) {
-  const auto hit=hitTest(u,v);
-  const SkEntity* e=hit.kind==Hit::Entity?m_sk.entity(hit.id):nullptr;
+// The curve nearest the pointer where it was pressed (m_pressU/V), within the pick distance; lines before other curves
+// with linesFirst. The snapped click lands on a line's end point near its end (where one clicks for Align's pivot), and a
+// hit test there takes the point, not the line.
+int SketchEditor::curveAtPress(bool linesFirst) const {
+  const double u=m_pressU,v=m_pressV,t=tol();
+  const SkEntity* e=nullptr;
+  double best=t;
+  std::vector<const SkEntity*> nearby;  // what the curves' index has about the pointer (a converted drawing has 100k curves)
+  if(m_geometry && !m_geometryJob) {
+    for(size_t i:m_geometry->query(u-t,v-t,u+t,v+t).entities)if(i<m_sk.entities.size())nearby.push_back(&m_sk.entities[i]);
+  } else for(const auto& c:m_sk.entities)nearby.push_back(&c);
+  for(const int pass:{0,1}) {
+    for(const SkEntity* c:nearby) {
+      if(c->type==SkEntity::Type::Point)continue;
+      if(linesFirst && (c->type==SkEntity::Type::Line)!=(pass==0))continue;
+      if(const double d=distanceTo(*c,u,v);d<=best){best=d;e=c;}
+    }
+    if(e || !linesFirst)break;
+  }
+  return e?e->id:0;
+}
+bool SketchEditor::alignClick(double,double) {
+  const SkEntity* e=m_sk.entity(curveAtPress(true));
+  const double u=m_pressU,v=m_pressV;
   if(!e){emit status(tr("Pick a line of the curves to move."));return true;}
   const QString to=option("alignTo","vertical");
   const bool target=to=="parallel"||to=="collinear";
   const std::vector<int> moving=rigid_closure(m_sk,m_sel);
   const bool moves=std::find(moving.begin(),moving.end(),e->id)!=moving.end();
+  int ea=0,eb=0;
+  const bool ends=align_ends(m_sk,e->id,ea,eb);  // a line, or an arc's or open spline's chord (a DXF's straight-looking arc)
+  QString refused;  // said after the prompt, which would overwrite it
   auto reference=[&]{
-    if(e->type!=SkEntity::Type::Line){emit status(tr("Pick a line to align: arcs and circles have no direction."));return;}
-    const SkPoint *a=m_sk.point(e->p[0]),*b=m_sk.point(e->p[1]);
+    if(!ends){refused=tr("Pick a line, an arc or an open spline to align: a circle has no direction.");return;}
+    const SkPoint *a=m_sk.point(ea),*b=m_sk.point(eb);
     const int pivot=std::hypot(a->x-u,a->y-v)<=std::hypot(b->x-u,b->y-v)?a->id:b->id;
     m_picked={e->id};m_options["alignPivot"]=QString::number(pivot);
   };
   if(target && !m_picked.empty() && !moves) {
-    if(e->type!=SkEntity::Type::Line)emit status(tr("Pick a line to align with."));
+    if(!ends)refused=tr("Pick a line to align with.");
     else{m_picked.resize(1);m_picked.push_back(e->id);}
   } else if(moves) reference();
   else{pickCurve(e->id);reference();}
-  invalidatePreview();rebuild();toolPrompt();emit changed();scheduleToolPreview();return true;
+  invalidatePreview();rebuild();toolPrompt();emit changed();scheduleToolPreview();
+  if(!refused.isEmpty())emit status(refused);
+  return true;
 }
 void SketchEditor::pickCurve(int id) {
   const bool picked=std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end();

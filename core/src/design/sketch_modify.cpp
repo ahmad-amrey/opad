@@ -86,20 +86,37 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& picked,co
   sk.validate();return result;
 }
 
+bool align_ends(const Sketch& sk,int curve,int& a,int& b) {
+  const SkEntity* e=sk.entity(curve);
+  if(!e)return false;
+  if(e->type==SkEntity::Type::Line){a=e->p[0];b=e->p[1];return true;}
+  if(e->type==SkEntity::Type::Arc){a=e->p[1];b=e->p[2];return true;}
+  if(e->type==SkEntity::Type::Spline && e->p.size()>=2 && !e->periodic && e->p.front()!=e->p.back()){a=e->p.front();b=e->p.back();return true;}
+  return false;
+}
+
+namespace {
+// The reference's two ends, the pivot first (the end it names, else its first).
+void reference_ends(const Sketch& sk,const SketchAlign& align,int& pivot,int& other) {
+  int a=0,b=0;
+  if(!align_ends(sk,align.reference,a,b))throw Error("pick a line, an arc or an open spline to align");
+  pivot=align.pivot==b?b:a;other=pivot==a?b:a;
+}
+}  // namespace
+
 SketchTransform align_transform(const Sketch& sk,const SketchAlign& align) {
-  const SkEntity* line=sk.entity(align.reference);
-  if(!line || line->type!=SkEntity::Type::Line)throw Error("pick the line to align");
-  const int pivot=align.pivot==line->p[1]?line->p[1]:line->p[0],other=pivot==line->p[0]?line->p[1]:line->p[0];
+  int pivot=0,other=0;
+  reference_ends(sk,align,pivot,other);
   const SkPoint &p=*sk.point(pivot),&q=*sk.point(other);
   const double dx=q.x-p.x,dy=q.y-p.y;
   if(std::hypot(dx,dy)<1e-9)throw Error("that line has no length to align");
   double tx=0,ty=1,ox=0,oy=0;  // the direction to align with, and a point of the target line
   if(align.to==AlignTo::Horizontal){tx=1;ty=0;}
   else if(align.to==AlignTo::Parallel || align.to==AlignTo::Collinear) {
-    const SkEntity* target=sk.entity(align.target);
-    if(!target || target->type!=SkEntity::Type::Line)throw Error("pick the line to align with");
-    if(target->id==line->id)throw Error("pick another line to align with");
-    const SkPoint &a=*sk.point(target->p[0]),&b=*sk.point(target->p[1]);
+    int ta=0,tb=0;
+    if(!align_ends(sk,align.target,ta,tb))throw Error("pick the line to align with");
+    if(align.target==align.reference)throw Error("pick another line to align with");
+    const SkPoint &a=*sk.point(ta),&b=*sk.point(tb);
     tx=b.x-a.x;ty=b.y-a.y;ox=a.x;oy=a.y;
     const double l=std::hypot(tx,ty);if(l<1e-9)throw Error("the line to align with has no length");
     tx/=l;ty/=l;
@@ -123,20 +140,23 @@ std::vector<int> align_entities(Sketch& sk,const std::vector<int>& picked,const 
     throw Error("align with a line that stays where it is, not one of the curves that move");
   const SketchTransform t=align_transform(sk,align);
   const std::vector<int> moved=transform_entities(sk,ids,t,false);
-  // Exactly along it, not within round-off: the far end level with the pivot.
-  const SkEntity& line=*sk.entity(align.reference);
-  const int pivot=align.pivot==line.p[1]?line.p[1]:line.p[0],other=pivot==line.p[0]?line.p[1]:line.p[0];
+  // Exactly along it, not within round-off: the far end level with the pivot (an arc's round is repaired by the solve).
+  int pivot=0,other=0;
+  reference_ends(sk,align,pivot,other);
   if(align.to==AlignTo::Vertical)sk.point(other)->x=sk.point(pivot)->x;
   if(align.to==AlignTo::Horizontal)sk.point(other)->y=sk.point(pivot)->y;
   if(align.hold) {
     using T=SkConstraint::Type;
-    if(align.to==AlignTo::Vertical)sk.add_constraint(T::Vertical,{align.reference});
-    else if(align.to==AlignTo::Horizontal)sk.add_constraint(T::Horizontal,{align.reference});
-    else sk.add_constraint(align.to==AlignTo::Parallel?T::Parallel:T::Collinear,{align.target,align.reference});
+    const bool line=sk.entity(align.reference)->type==SkEntity::Type::Line;
+    // A line holds by itself; an arc or a spline by its two ends.
+    const std::vector<int> along=line?std::vector<int>{align.reference}:std::vector<int>{pivot,other};
+    if(align.to==AlignTo::Vertical)sk.add_constraint(T::Vertical,along);
+    else if(align.to==AlignTo::Horizontal)sk.add_constraint(T::Horizontal,along);
+    else if(line && sk.entity(align.target)->type==SkEntity::Type::Line)  // parallel and collinear take two lines
+      sk.add_constraint(align.to==AlignTo::Parallel?T::Parallel:T::Collinear,{align.target,align.reference});
   }
   sk.validate();return moved;
 }
-
 std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const Frame& frame,bool construction,bool fixed) {
   std::map<std::pair<long long,long long>,int> points;std::vector<int> made;
   auto point=[&](const gp_Pnt& p){double x,y;frame.to_local({p.X(),p.Y(),p.Z()},x,y);const auto key=std::make_pair(std::llround(x*1e8),std::llround(y*1e8));auto it=points.find(key);return it==points.end()?points[key]=sk.add_point(x,y,fixed):it->second;};

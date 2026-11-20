@@ -1003,6 +1003,8 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   invalidatePreview();
   dropPreviewJob();
   if (!m_active || m_editJob || m_geometryJob) return;
+  m_pressU = u;
+  m_pressV = v;
   // A press on nothing starts a selection window with the tools that act on selected curves (break link too: TODO 11
   // wave 3, P4). Not while mirror waits for its line: a miss there kept the window and dropped the curves to mirror.
   const bool mirrorLine=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")=="axis";

@@ -204,6 +204,10 @@ class SketchEditor : public QObject, public SketchInput {
   void createText(double u,double v);
   bool modifyClick(double u,double v);
   bool alignClick(double u,double v);  // the Align tool's click (SketchModify.cpp)
+  int curveAtPress(bool linesFirst) const;  // the curve nearest the unsnapped press, 0: none (SketchModify.cpp)
+  // Where the last press was before snapping: picks of curves (Align, Rigid) go by the pointer, not by the snap (a click
+  // near a line's end snapped onto the end point, which the pick took for that point, not the line).
+  double m_pressU = 0, m_pressV = 0;
   bool applyModify();
   struct Clip {  // what the paste tool places: the clip, its base point, its curves as polylines about the base (a box when many)
     opad::json data;

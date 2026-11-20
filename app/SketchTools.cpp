@@ -634,15 +634,17 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
 }
 
 void SketchEditor::constraintClick(const Hit& h) {
-  if (h.kind == Hit::None || h.kind == Hit::Dimension) return;
   const CT type = SkConstraint::type_from_name(m_tool.mid(2).toStdString());
+  if (type != CT::Rigid && (h.kind == Hit::None || h.kind == Hit::Dimension)) return;
   if (type == CT::Rigid) {  // curves gather (a click takes the connected chain by default) until Enter or Apply
-    if (h.kind != Hit::Entity || !m_sk.entity(h.id)) return emit status(tr("Pick a curve: a group holds curves."));
-    std::vector<int> ids{h.id};
+    // The curve under the pointer, not under the snap (a click near an end snapped onto the end point).
+    const int curve = curveAtPress(false);
+    if (!curve) return emit status(tr("Pick a curve: a group holds curves."));
+    std::vector<int> ids{curve};
     if (chainOnClick())
-      for (int e : connected_entities(m_sk, {h.id}))
-        if (e != h.id && m_sk.entity(e)) ids.push_back(e);
-    if (std::find(m_picked.begin(), m_picked.end(), h.id) != m_picked.end()) {  // picked again: dropped, with its chain
+      for (int e : connected_entities(m_sk, {curve}))
+        if (e != curve && m_sk.entity(e)) ids.push_back(e);
+    if (std::find(m_picked.begin(), m_picked.end(), curve) != m_picked.end()) {  // picked again: dropped, with its chain
       std::erase_if(m_picked, [&](int id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); });
     } else {
       for (int e : ids)
