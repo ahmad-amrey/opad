@@ -4,7 +4,7 @@ What changed in each release of OPAD, newest first. The section of a version is 
 notes (the Build workflow reads it when the tag `vX.Y.Z` is pushed), so write it before tagging: see
 [docs/releasing.md](docs/releasing.md). Entries are written for the people using OPAD, not as a commit log.
 
-## [0.1.0] - unreleased
+## [0.9.0] - unreleased
 
 First public release: an open-source parametric CAD program whose design files git can diff and merge.
 
@@ -25,6 +25,9 @@ First public release: an open-source parametric CAD program whose design files g
 - **Technical drawings, notes and hand drawing** on the model, and **AI agents** working in the same window through
   MCP, with every command also available from `opad-cli` and Python.
 - **English and Arabic** interface.
+- **Tells you about new versions.** OPAD checks GitHub at most once a day (or when you choose *Help > Check for
+  updates*) and, when a newer version is out, says what it brings and offers its download. It can be switched off
+  under *Help*; nothing about you or your files is sent.
 
 ### Downloads
 

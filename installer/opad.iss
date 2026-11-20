@@ -1,7 +1,7 @@
 ; Windows installer for OPAD (Inno Setup 6): OPAD-<version>-windows-x64-setup.exe from the single-file exes of the
 ; windows-static preset (build/windows-static/single, `cmake --workflow --preset windows-single`).
 ;
-;   iscc /DAppVersion=0.1.0 installer\opad.iss
+;   iscc /DAppVersion=0.9.0 installer\opad.iss
 ;
 ; Per user, no administrator: the program goes to %LOCALAPPDATA%\Programs\OPAD, a Start menu entry (and, if ticked, a
 ; desktop icon) and an uninstaller in Settings > Apps.
@@ -16,7 +16,7 @@
 ; first instead of updating it.
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.9.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\build\windows-static\single"

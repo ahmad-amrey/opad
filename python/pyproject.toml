@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "opad"
-version = "0.1.0"
+version = "0.9.0"
 description = "OPAD: git-native CAD and review core - document format, STEP I/O, inspection, headless rendering"
 readme = "../README.md"
 license = { text = "MIT" }

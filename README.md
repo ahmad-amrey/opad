@@ -84,7 +84,7 @@ you did, never a reshuffled file.
 
 ```text
 #opad 2
-{"uuid":"7c1c...","units":"mm","created":"2026-09-15T14:10:40Z","generator":"opad/0.1.0"}
+{"uuid":"7c1c...","units":"mm","created":"2026-09-15T14:10:40Z","generator":"opad/0.9.0"}
 #ops
 {"op":"import","id":"6dda...","by":"alice","source":"gearbox.step","units":"mm","nodes":[...]}
 {"op":"annotation","id":"1ffe...","by":"alice","anchor":{"body":"9dc9...","kind":"face","index":12},"text":"deburr"}
