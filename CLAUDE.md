@@ -539,8 +539,8 @@ filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`,
 
 ## CI and releases (`.github/workflows/ci.yml`, docs/releasing.md)
 
-Every pull request to `main` and every push to it builds and tests Windows (`windows-static`), Linux and macOS (OCCT
-built from source there, `OPAD_OCCT_BUILD=ON`); `main` takes changes only through pull requests whose checks `Version`,
+Every pull request to `main` and every push to it builds and tests Windows (`windows-static-ucrt64`: MSYS2 ships the
+static Qt only for UCRT64/CLANG64 now, not MINGW64), Linux (OCCT built from source) and macOS (Homebrew); `main` takes changes only through pull requests whose checks `Version`,
 `Windows`, `Linux`, `macOS` pass. A release is published only from a tag `vX.Y.Z` pushed by hand: it must equal
 `project(VERSION)` and have its `## [X.Y.Z] - date` section in CHANGELOG.md (`tools/changelog_section.sh`), which becomes
 the release page with `tools/release_downloads.md` and the packages (Windows installer `installer/opad.iss` + single exe,
