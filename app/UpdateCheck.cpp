@@ -24,9 +24,54 @@ std::optional<Release> parseLatest(const QByteArray& json) {
   r.name = o.value("name").toString();
   if (r.name.isEmpty()) r.name = "OPAD " + r.version;
   r.notes = o.value("body").toString();
+  r.summary = summarize(r.notes);
   r.page = o.value("html_url").toString();
   r.published = QDateTime::fromString(o.value("published_at").toString(), Qt::ISODate);
   return r;
+}
+
+namespace {
+// Markdown out of one line of text: links keep their words, emphasis and code marks go.
+QString plainText(QString s) {
+  s.replace(QRegularExpression(R"(!?\[([^\]]*)\]\([^)]*\))"), QStringLiteral("\\1"));
+  s.remove(QRegularExpression(R"((\*\*|__|`))"));
+  s.replace(QRegularExpression(R"((^|\s)[*_]([^*_]+)[*_](?=\s|[.,;:!?]|$))"), QStringLiteral("\\1\\2"));
+  return s.simplified();
+}
+}  // namespace
+
+QString summarize(const QString& notes, int maxChars) {
+  QStringList paragraph, items;
+  bool inParagraph = false, done = false;
+  QString text = notes;
+  text.remove(QChar(13));
+  for (QString line : text.split(QChar(10))) {
+    line = line.trimmed();
+    const bool heading = line.startsWith('#'), rule = line.startsWith("---") || line.startsWith("***");
+    const bool item = line.startsWith("- ") || line.startsWith("* ") || QRegularExpression(R"(^\d+\.\s)").match(line).hasMatch();
+    if (line.isEmpty() || heading || rule || item) {
+      if (inParagraph) done = true;  // the opening paragraph ended
+      inParagraph = false;
+      if (item && items.size() < 3) {
+        QString text = line.mid(line.indexOf(' ') + 1);
+        // "**Arabic interface:** Qt's texts ..." -> "Arabic interface"
+        if (const auto m = QRegularExpression(R"(^\*\*([^*]+?):?\*\*)").match(text); m.hasMatch()) text = m.captured(1);
+        else if (const qsizetype stop = text.indexOf(QRegularExpression(R"([.:;](\s|$))")); stop > 0) text = text.left(stop);
+        items << plainText(text).remove(QRegularExpression(R"([:.]$)"));
+      }
+      continue;
+    }
+    if (!done) {
+      inParagraph = true;
+      paragraph << line;
+    }
+  }
+  QString out = paragraph.isEmpty() ? items.join("; ") : plainText(paragraph.join(' '));
+  if (out.size() > maxChars) {
+    qsizetype cut = out.lastIndexOf(' ', maxChars);
+    out = out.left(cut > maxChars / 2 ? cut : maxChars).trimmed() + QChar(0x2026);
+  }
+  return out;
 }
 
 int compareVersions(const QString& a, const QString& b) {

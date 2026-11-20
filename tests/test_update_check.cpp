@@ -79,6 +79,24 @@ TEST(checker_reports_a_newer_release_and_the_same_one) {
   CHECK(run(false).startsWith("failed"));
 }
 
+// The notice says what a release brings: the changelog section's opening sentences, else its first entries.
+TEST(notes_are_summed_up_for_the_notice) {
+  const QString section = "Fix release for the Arabic interface.\n\n### Fixed\n\n- **Arabic interface:** Qt's texts are Arabic now.\n";
+  CHECK(summarize(section) == "Fix release for the Arabic interface.");
+  const QString lists = "### Added\n\n- **Offset relationship:** curves keep their distance.\n- Align takes **flat arcs**. More text.\n"
+                        "- [Rigid groups](https://x.y) move as one\n- A fourth one\n";
+  CHECK(summarize(lists) == "Offset relationship; Align takes flat arcs; Rigid groups move as one");
+  const QString lone = "One sentence\nwrapped over two lines with *emphasis* and `code`.\n\nAnother paragraph.";
+  CHECK(summarize(lone) == "One sentence wrapped over two lines with emphasis and code.");
+  const QString longer = QString("word ").repeated(100);
+  const QString cut = summarize(longer, 40);
+  CHECK(cut.size() <= 41 && cut.endsWith(QChar(0x2026)) && !cut.contains("  "));
+  CHECK(summarize("").isEmpty());
+  CHECK(summarize("## Only a heading\n---\n").isEmpty());
+  const auto r = parseLatest(release("v0.2.0"));
+  CHECK(r && r->summary == "Align");  // the test release's notes are "## Added / - Align"
+}
+
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   return check::run_all(argc, argv);

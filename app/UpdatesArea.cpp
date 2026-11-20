@@ -1,6 +1,7 @@
 // Updates as an area of the window (AreaController.hpp): Help > Check for updates… and Help > Check for updates
 // automatically (setting updates/autoCheck, on by default; the check runs about 20 s after start, at most once a day).
-// A newer release is offered in a notice (a toast over the view; a message box when the user asked from the start page):
+// A newer release is offered in a notice (a toast over the view; a message box when the user asked from the start page)
+// that says in a line or two what it brings (the notes' opening paragraph or first entries, updates::summarize):
 // What's new shows its notes (the release's CHANGELOG.md section), Download opens its page, Skip this version stays
 // quiet about that version (the automatic check only). Step 1 of updates: nothing is downloaded or installed here.
 #include <QAction>
@@ -104,7 +105,9 @@ class Updates : public AreaController {
     if (!asked && QSettings().value(updates::kSkipKey).toString() == r.version) return;
     trace::log("updates: " + r.version + " is available (this is " + m_checker->current() + ")");
     const QString text = QObject::tr("OPAD %1 is available").arg(r.version);
-    const QString detail = QObject::tr("You have %1.").arg(m_checker->current());
+    // What it brings, then what one has: enough to decide without opening What's new.
+    const QString have = QObject::tr("You have %1.").arg(m_checker->current());
+    const QString detail = r.summary.isEmpty() ? have : r.summary + QChar(10) + have;
     auto notes = [this, r] { showNotes(r); };
     auto download = [r] { QDesktopServices::openUrl(QUrl(r.page)); };
     auto skip = [r] { QSettings().setValue(updates::kSkipKey, r.version); };

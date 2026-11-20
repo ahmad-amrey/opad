@@ -66,7 +66,9 @@ OPAD_BENCH(OPAD_BENCH_UPDATES, updates) {
         if (!t) return;
         if (!t->detail().contains(current) || !t->actionButton(0) || !t->actionButton(1) || !t->actionButton(2))
           return finish(false, "the notice lacks the version you have or its three answers: " + t->text() + " / " + t->detail());
-        trace::log("bench: updates: a newer release is offered with What's new, Download and Skip this version PASS");
+        if (!t->detail().contains("The bench's own release notes"))
+          return finish(false, "the notice does not say what the release brings: " + t->detail());
+        trace::log("bench: updates: a newer release is offered with what it brings, What's new, Download and Skip this version PASS");
         t->actionButton(0)->click();  // What's new
         st->phase = 2;
         return;

@@ -22,12 +22,18 @@ struct Release {
   QString tag;      // "v0.2.0"
   QString name;     // "OPAD 0.2.0"
   QString notes;    // the release's description (its CHANGELOG.md section), Markdown
+  QString summary;  // a few plain sentences out of the notes for the notice (summarize)
   QString page;     // the release's page on GitHub
   QDateTime published;
 };
 
 // The release in GitHub's "latest release" answer; empty when it is not one (a draft, a prerelease, no tag, not JSON).
 std::optional<Release> parseLatest(const QByteArray& json);
+// What a release brings, in a line or two of plain text for the notice that offers it: the notes' opening paragraph (a
+// CHANGELOG.md section starts with one or two sentences on what the release is about, docs/releasing.md), else the
+// first entries of its lists ("Arabic interface; Align takes arcs; ..."), Markdown taken out, cut at about maxChars on a
+// word. Empty when the notes have neither.
+QString summarize(const QString& notes, int maxChars = 220);
 // <0, 0, >0 as a is older than, the same as, or newer than b. A leading "v" is ignored, missing parts count as 0
 // (0.2 == 0.2.0), and a "-suffix" (0.2.0-rc1) comes before the same version without one.
 int compareVersions(const QString& a, const QString& b);
