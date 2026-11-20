@@ -547,6 +547,15 @@ the release page with `tools/release_downloads.md` and the packages (Windows ins
 dmg, AppImage). For each release write that changelog section (for users: added, changed, fixed, notes). The workflow
 file is not called build*.yml: `.gitignore`'s `build*` would hide it; public docs need a `!/docs/<name>` line there.
 
+## Update check (`app/UpdateCheck.*`, `app/UpdatesArea.cpp`)
+
+Help > Check for updates and the automatic check (setting `updates/autoCheck`, ~20 s after start, at most daily) ask
+GitHub's latest-release API anonymously, compare the tag with the app version and offer a newer one in a toast (What's
+new = the release body, Download = its page, Skip this version = `updates/skipVersion`); nothing is downloaded yet. No
+automatic check while any `OPAD_BENCH*` variable is set or with `OPAD_NO_UPDATE_CHECK`; `OPAD_UPDATE_URL` points it at a
+file:// answer (bench `updates`, `ctest -R update-check`). HTTPS needs Qt's TLS plugin: the static build imports
+`Qt6::QSchannelBackendPlugin`, the portable stage copies `tls/qschannelbackend.dll` (OpenSSL's backend stays out).
+
 ## Commits
 
 One-line commit messages, no body or trailer.

@@ -92,9 +92,14 @@ if(OPAD_STATIC)
   # Static Qt links every plugin of every type it knows by default; OPAD reads PNG (built into QtGui) and writes
   # PNG/JPEG screenshots, so the other image formats (TIFF alone drags in zstd, lzma, jbig, lerc, libdeflate) and
   # the SVG icon engine stay out. The Windows platform and style plugins come in as usual, and so does the print support
-  # plugin where the platform has one (CUPS on Linux; Windows prints from QtPrintSupport itself, through winspool). No TLS
-  # or network information plugins either: OPAD talks only through local sockets, and the OpenSSL backend alone carries OpenSSL.
-  qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin EXCLUDE_BY_TYPE iconengines tls networkinformation)
+  # plugin where the platform has one (CUPS on Linux; Windows prints from QtPrintSupport itself, through winspool). TLS
+  # (the update check asks GitHub over HTTPS, UpdateCheck.hpp): Windows' own Schannel backend only, since the OpenSSL one
+  # alone carries OpenSSL; no network information plugin.
+  if(WIN32)
+    qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin tls Qt6::QSchannelBackendPlugin EXCLUDE_BY_TYPE iconengines networkinformation)
+  else()
+    qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin EXCLUDE_BY_TYPE iconengines tls networkinformation)
+  endif()
 endif()
 install(TARGETS opad RUNTIME DESTINATION bin BUNDLE DESTINATION .)
 

@@ -54,12 +54,17 @@ if(TARGET opad)
   target_include_directories(opad-test-settings-backup PRIVATE ../app)
   target_link_libraries(opad-test-settings-backup PRIVATE Qt6::Core)
   add_test(NAME settings-backup COMMAND opad-test-settings-backup)
+  add_executable(opad-test-update-check test_update_check.cpp ../app/UpdateCheck.cpp ../app/UpdateCheck.hpp)
+  set_target_properties(opad-test-update-check PROPERTIES AUTOMOC ON)
+  target_include_directories(opad-test-update-check PRIVATE ../app)
+  target_link_libraries(opad-test-update-check PRIVATE Qt6::Network)
+  add_test(NAME update-check COMMAND opad-test-update-check)
 endif()
 
 # Core tests: every test_<name>.cpp not built elsewhere in this file is opad-test-<name> (underscores -> dashes) on the
 # core, run as ctest <name>; CONFIGURE_DEPENDS re-globs at each build, so a new test is a new file. Its extra settings
 # (environment, libraries, timeout) go into an optional test_<name>.cmake beside it, included with `target` and `name`.
-set(opad_special_tests app_document associations body_prs seams settings_backup shortcuts sketch_cache step thumbnails)
+set(opad_special_tests app_document associations body_prs seams settings_backup shortcuts sketch_cache step thumbnails update_check)
 file(GLOB opad_core_tests CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 file(GLOB opad_test_settings CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cmake)
 list(SORT opad_core_tests)
