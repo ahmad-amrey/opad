@@ -81,6 +81,9 @@ set(_depends "${CMAKE_MATCH_1}")
 if(NOT _depends)
   message(FATAL_ERROR "dpkg-shlibdeps found no dependencies: ${_shlibs} ${_shlibs_err}")
 endif()
+# What is loaded at run time and so not seen above: Qt's TLS plugin (in libqt6network6) opens OpenSSL for HTTPS (the
+# update check, app/UpdateCheck.hpp). Qt's platform and image plugins come with libqt6gui6, a dependency already.
+string(APPEND _depends ", libssl3t64 | libssl3")
 
 # The control file.
 file(GLOB_RECURSE _all LIST_DIRECTORIES false "${OPAD_ROOT}/usr/*")
