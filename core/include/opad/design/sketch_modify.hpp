@@ -14,10 +14,13 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const
 // The ids with every point and curve of each Rigid constraint that names one of them, until nothing more joins.
 std::vector<int> rigid_closure(const Sketch& sk,const std::vector<int>& ids);
 // Align (the sketch's Modify > Align): turns the curves `ids` (and their rigid groups) as one about `pivot`, an end of the
-// line `reference`, so that the line runs along `to`: Vertical or Horizontal (the sketch's axes), Parallel to the line
-// `target`, or Collinear with it (then moved across onto it too). The smaller turn of the two that do it. With `hold` the
-// alignment is kept by a constraint (vertical, horizontal, parallel or collinear). The reference must be one of the curves
-// moved (or of their groups). Returns the curves moved.
+// curve `reference`, so that the straight line between its two ends (align_ends: a line, or an arc's or open spline's
+// chord: a DXF's nearly straight segment is often a flat arc) runs along `to`: Vertical or Horizontal (the sketch's axes),
+// Parallel to `target`'s ends, or Collinear with them (then moved across onto it too). The smaller turn of the two that
+// do it. With `hold` the alignment is kept by a constraint (vertical or horizontal: on the line, or on an arc's or
+// spline's two ends; parallel or collinear: between two lines only). The reference must be one of the curves moved (or of
+// their groups). Returns the curves moved.
+bool align_ends(const Sketch& sk,int curve,int& a,int& b);  // a line's, an arc's or an open spline's two ends
 enum class AlignTo { Vertical, Horizontal, Parallel, Collinear };
 struct SketchAlign { int reference=0,pivot=0,target=0; AlignTo to=AlignTo::Vertical; bool hold=false; };
 SketchTransform align_transform(const Sketch& sk,const SketchAlign& align);

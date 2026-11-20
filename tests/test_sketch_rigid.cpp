@@ -179,6 +179,35 @@ TEST(align_moves_a_rigid_group_from_its_line_alone_and_can_hold_it) {
   CHECK(solve(h.sk).converged);
 }
 
+// A DXF's straight-looking segment is often a very flat arc (a polyline bulge): it aligns by the line between its ends.
+TEST(align_takes_a_flat_arc_by_its_ends_and_turns_its_rigid_group) {
+  Sketch sk;
+  const double r = 71.0, cx = -68.3, cy = -12.9;  // as the imported profile: about 9 mm of arc on a 71 mm radius
+  const int centre = sk.add_point(cx, cy);
+  const int a = sk.add_point(cx + r * std::cos(0.19), cy + r * std::sin(0.19));
+  const int b = sk.add_point(cx + r * std::cos(0.31), cy + r * std::sin(0.31));
+  const int flat = sk.add_arc(centre, a, b);
+  const int c = sk.add_point(sk.point(b)->x + 6, sk.point(b)->y + 1);
+  const int top = sk.add_line(b, c);
+  sk.add_constraint(CT::Rigid, {flat, top});
+  CHECK(solve(sk).converged);
+  const Sketch before = sk;
+  SketchAlign al;
+  al.reference = flat;
+  al.pivot = a;
+  al.hold = true;
+  align_entities(sk, {}, al);
+  const auto r1 = solve(sk);
+  CHECK(r1.converged);
+  CHECK_NEAR(sk.point(a)->x, sk.point(b)->x, 1e-8);  // its ends one above the other
+  CHECK_NEAR(shape_change(before, sk, {centre, a, b, c}), 0, 1e-7);
+  bool held = false;
+  for (const auto& k : sk.constraints) held = held || (k.type == CT::Vertical && k.refs == std::vector<int>{a, b});
+  CHECK(held);
+  int x = 0, y = 0;
+  CHECK(!align_ends(sk, sk.add_circle(sk.add_point(50, 50), 2), x, y));  // a circle has no ends
+}
+
 TEST(align_lays_a_line_onto_another) {
   Hook h = make_hook();
   const int guide = h.sk.add_line(h.sk.add_point(-10, -5), h.sk.add_point(30, 5));

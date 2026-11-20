@@ -211,7 +211,10 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   `more_constraints` (older builds skip it); deleting a member keeps the rest, a split curve's pieces stay in. Moving in
   place (`transform_entities`, not a copy) takes whole groups (`rigid_closure`), or a partial move would reshape the group.
   Sketch Align (`align`, `align_entities`): turns the picked curves about the reference line's end nearer the click so the
-  line runs vertical/horizontal/parallel/onto a line, far end snapped exactly; optional holding constraint. `ctest -R sketch-rigid`.
+  line runs vertical/horizontal/parallel/onto a line, far end snapped exactly; optional holding constraint. The reference
+  may be an arc or open spline (`align_ends`: its chord; a DXF polyline's straight-looking segment is often a flat bulge
+  arc). Align and Rigid pick by the unsnapped press (`curveAtPress`): the snap near a line's end lands on its end point.
+  `ctest -R sketch-rigid`, bench `sketch-align` (OPAD_BENCH_SKETCH_ALIGN).
 - Bench without input driving: `opad-cli new x.opad`, then `OPAD_BENCH_DESIGN=<png> [OPAD_BENCH_SKETCHSHOT=<png>]
   opad.exe x.opad --bench-select` draws a dimensioned rectangle + circle through the tool code, extrudes it through
   the panel's plan/commit path, edits the extrude rolled back, fillets, saves, quits; trace lines `bench: design:` /
