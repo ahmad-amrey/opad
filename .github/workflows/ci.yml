@@ -90,7 +90,7 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ccache
             mingw-w64-ucrt-x86_64-qt6-static mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-nlohmann-json
             mingw-w64-ucrt-x86_64-rapidjson mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-freetype mingw-w64-ucrt-x86_64-zstd
-            mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-openssl
       - id: gcc
         run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
       - name: Cache the static OCCT
